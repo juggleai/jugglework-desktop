@@ -200,7 +200,7 @@ import { buildCommandPaletteSessions } from "./command-palette-sessions";
 import { useCommandPaletteShortcut } from "./use-shell-shortcuts";
 import { type DenSettings } from "@/app/lib/den";
 import { readActiveWorkspaceId, readLastSessionFor, writeActiveWorkspaceId } from "./session-memory";
-import { settingsReturnRoute, workspaceAppsRoute, workspaceChatRoute, workspaceSessionRoute, workspaceSettingsRoute } from "./workspace-routes";
+import { settingsReturnRoute, workspaceAppsRoute, workspaceChatRoute, workspaceReviewsRoute, workspaceSessionRoute, workspaceSettingsRoute } from "./workspace-routes";
 import { getReactQueryClient } from "@/react-app/infra/query-client";
 import { refreshProviderListQueries } from "@/react-app/infra/provider-list-query";
 import { invalidateMediaModelQueries, runProviderMutationWithMediaRefresh, withProviderMediaModelRefresh } from "@/react-app/domains/connections/media-model-queries";
@@ -3027,6 +3027,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         ))}
         onOpenApps={() => navigate(workspaceAppsRoute(selectedWorkspaceId))}
         onOpenChat={() => navigate(workspaceChatRoute(selectedWorkspaceId))}
+        onOpenReviews={() => navigate(workspaceReviewsRoute(selectedWorkspaceId))}
         onOpenTaskSearch={() => setCommandPaletteOpen(true)}
         onOpenCreateWorkspace={(screen = "chooser") => openCreateWorkspace(screen)}
         headerStatus={routeJuggleWorkStatus}

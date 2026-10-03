@@ -211,7 +211,7 @@ import { useRegisterWorkspaceShellActions } from "./workspace-shell-actions";
 import { getReactQueryClient } from "@/react-app/infra/query-client";
 import { imageModelQueryKey, mediaModelQueryScope, videoModelQueryKey } from "@/react-app/domains/connections/media-model-queries";
 import { useSessionControlActions } from "@/react-app/domains/session/control/session-control-actions";
-import { legacySessionRoute, mergeWorkspaceRouteSession, workspaceAppsRoute, workspaceChatRoute, workspaceSessionRoute, workspaceSettingsRoute } from "./workspace-routes";
+import { legacySessionRoute, mergeWorkspaceRouteSession, workspaceAppsRoute, workspaceChatRoute, workspaceReviewsRoute, workspaceSessionRoute, workspaceSettingsRoute } from "./workspace-routes";
 import { WorkspaceProvider } from "./workspace-provider";
 import type { OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
 import { SettingsSurface } from "./settings-route";
@@ -2911,6 +2911,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         onOpenHome: () => navigateToWorkspaceSession(sidebarActiveWorkspaceId, selectedSessionId),
         onOpenApps: () => navigate(workspaceAppsRoute(sidebarActiveWorkspaceId)),
         onOpenChat: () => navigate(workspaceChatRoute(sidebarActiveWorkspaceId)),
+        onOpenReviews: () => navigate(workspaceReviewsRoute(sidebarActiveWorkspaceId)),
         onReorderWorkspaces: handleReorderWorkspaces,
       }}
       surface={surfaceProps ? {

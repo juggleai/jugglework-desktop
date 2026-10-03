@@ -323,6 +323,7 @@ export default {
   "mcp.last_synced": "Синхронизировано",
   "navigation.chat": "Чат",
   "navigation.contacts": "Контакты",
+  "navigation.reviews": "Ревью кода",
   "navigation.cloud_tasks": "Облачные задачи",
   "navigation.home": "Главная",
   "navigation.local_tasks": "Локальные задачи",

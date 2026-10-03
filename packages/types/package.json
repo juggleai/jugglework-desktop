@@ -55,6 +55,11 @@
       "development": "./src/provider-credentials.ts",
       "default": "./dist/provider-credentials.js"
     },
+    "./reviews": {
+      "types": "./src/reviews.ts",
+      "development": "./src/reviews.ts",
+      "default": "./dist/reviews.js"
+    },
     "./den/desktop-app-restrictions": {
       "types": "./src/den/desktop-app-restrictions.ts",
       "development": "./src/den/desktop-app-restrictions.ts",

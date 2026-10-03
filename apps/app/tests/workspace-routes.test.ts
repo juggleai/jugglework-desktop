@@ -14,6 +14,7 @@ import {
   settingsReturnRoute,
   sessionIdForLegacyWorkspaceInference,
   workspaceAppsRoute,
+  workspaceReviewsRoute,
 } from "../src/react-app/shell/workspace-routes";
 
 describe("workspace app path parsing", () => {
@@ -53,6 +54,24 @@ describe("workspace app path parsing", () => {
     });
     expect(workspaceAppsRoute("workspace a")).toBe("/workspace/workspace%20a/apps");
     expect(parseWorkspaceAppPath("/welcome")).toBeNull();
+  });
+
+  test("parses and builds workspace review routes with opaque IDs", () => {
+    expect(parseWorkspaceAppPath("/workspace/workspace-a/reviews")).toEqual({
+      view: "reviews",
+      workspaceId: "workspace-a",
+      reviewId: null,
+    });
+    expect(parseWorkspaceAppPath("/workspace/workspace%20a/reviews/review%2F42/")).toEqual({
+      view: "reviews",
+      workspaceId: "workspace a",
+      reviewId: "review/42",
+    });
+    expect(workspaceReviewsRoute("workspace a")).toBe("/workspace/workspace%20a/reviews");
+    expect(workspaceReviewsRoute("workspace a", "review/42")).toBe(
+      "/workspace/workspace%20a/reviews/review%2F42",
+    );
+    expect(parseWorkspaceAppPath("/reviews")).toBeNull();
   });
 });
 

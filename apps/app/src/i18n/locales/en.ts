@@ -930,6 +930,7 @@ export default {
   "navigation.local_tasks": "Local tasks",
   "navigation.local_workspace": "Local workspace",
   "navigation.primary": "Primary navigation",
+  "navigation.reviews": "Code Review",
   "navigation.settings": "Settings",
   "chat.add": "Add",
   "chat.collapse_sidebar": "Collapse sidebar",

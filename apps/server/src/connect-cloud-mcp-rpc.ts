@@ -38,8 +38,9 @@ function parseJsonOrText(raw: string): unknown {
  * @param response MCP HTTP 响应
  * @returns 解析后的载荷，空响应返回 null
  */
-export async function readMcpPayload(response: Response): Promise<unknown> {
+export async function readMcpPayload(response: Response, maxBytes = 1_048_576): Promise<unknown> {
   const raw = await response.text();
+  if (new TextEncoder().encode(raw).byteLength > maxBytes) throw new Error("MCP response exceeded the configured size limit.");
   if (!raw.trim()) return null;
   if (!response.headers.get("content-type")?.toLowerCase().includes("text/event-stream")) return parseJsonOrText(raw);
   for (const frame of raw.split(/\r?\n\r?\n/)) {
@@ -69,14 +70,26 @@ export function jsonRpcResult(payload: unknown): Record<string, unknown> | null 
  * @param headers 请求头
  * @param body JSON-RPC 请求体
  */
-export async function mcpPost(fetcher: McpFetch, url: string, headers: Record<string, string>, body: unknown) {
+export async function mcpPost(
+  fetcher: McpFetch,
+  url: string,
+  headers: Record<string, string>,
+  body: unknown,
+  options: { signal?: AbortSignal; timeoutMs?: number; maxBytes?: number } = {},
+) {
+  const timeout = AbortSignal.timeout(options.timeoutMs ?? 5_000);
+  const signal = options.signal && typeof AbortSignal.any === "function"
+    ? AbortSignal.any([options.signal, timeout])
+    : options.signal ?? timeout;
+  signal?.throwIfAborted();
   const response = await fetcher(url, {
     method: "POST",
     headers: { accept: "application/json, text/event-stream", "content-type": "application/json", ...headers },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(5_000),
+    redirect: "manual",
+    signal,
   });
-  return { response, payload: await readMcpPayload(response) };
+  return { response, payload: await readMcpPayload(response, options.maxBytes) };
 }
 
 /**
@@ -94,6 +107,7 @@ export async function openCloudMcpSession(
   config: Record<string, unknown>,
   fetcher: McpFetch,
   clientName: string,
+  options: { signal?: AbortSignal; timeoutMs?: number; maxBytes?: number } = {},
 ): Promise<CloudMcpSession | null> {
   const url = typeof config.url === "string" ? config.url : "";
   if (!/^https?:\/\//.test(url) || config.enabled === false) return null;
@@ -107,7 +121,7 @@ export async function openCloudMcpSession(
       clientInfo: { name: clientName, version: "1.0.0" },
       protocolVersion: "2025-06-18",
     },
-  });
+  }, options);
   if (!initialized.response.ok || !jsonRpcResult(initialized.payload)) return null;
   const sessionId = initialized.response.headers.get("mcp-session-id");
   const protocolVersion = initialized.response.headers.get("mcp-protocol-version");
@@ -116,8 +130,41 @@ export async function openCloudMcpSession(
     ...(sessionId ? { "mcp-session-id": sessionId } : {}),
     ...(protocolVersion ? { "mcp-protocol-version": protocolVersion } : {}),
   };
-  await mcpPost(fetcher, url, headers, { jsonrpc: "2.0", method: "notifications/initialized", params: {} });
+  await mcpPost(fetcher, url, headers, { jsonrpc: "2.0", method: "notifications/initialized", params: {} }, options);
   return { url, headers };
+}
+
+export async function callCloudMcpTool(
+  fetcher: McpFetch,
+  session: CloudMcpSession,
+  requestId: number,
+  name: "search_capabilities" | "execute_capability",
+  args: Record<string, unknown>,
+  options: { signal?: AbortSignal; timeoutMs?: number; maxBytes?: number } = {},
+): Promise<Record<string, unknown>> {
+  const call = await mcpPost(fetcher, session.url, session.headers, {
+    id: requestId,
+    jsonrpc: "2.0",
+    method: "tools/call",
+    params: { name, arguments: args },
+  }, options);
+  if (!call.response.ok) throw new Error(`Cloud MCP request failed with HTTP ${call.response.status}.`);
+  const result = jsonRpcResult(call.payload);
+  if (!result) throw new Error("Cloud MCP returned an invalid JSON-RPC response.");
+  return result;
+}
+
+export function cloudMcpToolValue(result: Record<string, unknown>): unknown {
+  if (result.isError === true) {
+    const error = new Error("Cloud MCP capability reported an error.");
+    Object.assign(error, { toolResult: result });
+    throw error;
+  }
+  if (result.structuredContent !== undefined) return result.structuredContent;
+  const content = Array.isArray(result.content) ? result.content : [];
+  const text = content.find((entry) => isRecord(entry) && entry.type === "text" && typeof entry.text === "string");
+  if (!text || typeof text.text !== "string") return null;
+  return parseJsonOrText(text.text);
 }
 
 /**

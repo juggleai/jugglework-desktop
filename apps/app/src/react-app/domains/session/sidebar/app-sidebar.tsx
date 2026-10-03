@@ -723,6 +723,7 @@ export type AppSidebarProps = {
   onOpenHome: () => void;
   onOpenApps: () => void;
   onOpenChat: () => void;
+  onOpenReviews: () => void;
   onOpenSettings: () => void;
   onReorderWorkspaces?: (workspaceIds: string[]) => void;
   onStartResize?: React.PointerEventHandler<HTMLButtonElement>;
@@ -1016,6 +1017,7 @@ export function AppSidebar(props: AppSidebarProps) {
             onOpenHome={props.onOpenHome}
             onOpenApps={props.onOpenApps}
             onOpenChat={props.onOpenChat}
+            onOpenReviews={props.onOpenReviews}
             onOpenSettings={props.onOpenSettings}
           />
 

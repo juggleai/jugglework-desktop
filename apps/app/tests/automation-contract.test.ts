@@ -29,7 +29,7 @@ describe("Desktop automation catalog and routes", () => {
   });
 
   test("places automation immediately below cloud workspace in the primary rail", () => {
-    expect(APP_PRIMARY_RAIL_ORDER).toEqual(["local-workspace", "cloud-workspace", "automations", "chat", "contacts"]);
+    expect(APP_PRIMARY_RAIL_ORDER).toEqual(["local-workspace", "cloud-workspace", "reviews", "automations", "chat", "contacts"]);
   });
 
   test("automation prompt reuses the session editor without a run-task action", () => {

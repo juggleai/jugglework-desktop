@@ -406,6 +406,7 @@ export default {
   "mcp.last_synced": "Sincronizado",
   "navigation.chat": "Chat",
   "navigation.contacts": "Contatos",
+  "navigation.reviews": "Revisão de código",
   "navigation.cloud_tasks": "Tarefas na nuvem",
   "navigation.home": "Início",
   "navigation.local_tasks": "Tarefas locais",

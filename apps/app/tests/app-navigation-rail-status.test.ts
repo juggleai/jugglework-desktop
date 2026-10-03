@@ -19,6 +19,17 @@ describe("local workspace rail status", () => {
   });
 });
 
+describe("Code Review navigation", () => {
+  test("keeps a dedicated workspace-scoped entry in the primary rail", () => {
+    const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
+    const reviews = source.slice(source.indexOf('label={t("navigation.reviews")}'), source.indexOf("<GitPullRequestArrow />"));
+
+    expect(reviews).toContain("active={props.reviewsActive}");
+    expect(reviews).toContain("onClick={props.onOpenReviews}");
+    expect(reviews).toContain('testId="app-rail-reviews"');
+  });
+});
+
 describe("chat unread reminder", () => {
   test("uses a small red dot instead of the unread count", () => {
     const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");

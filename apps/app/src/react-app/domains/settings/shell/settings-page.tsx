@@ -294,6 +294,7 @@ type SettingsSidebarProps = Pick<SettingsPageProps, "activeTab" | "onSelectTab" 
   onOpenHome: () => void;
   onOpenApps: () => void;
   onOpenChat: () => void;
+  onOpenReviews: () => void;
   onOpenTaskSearch?: () => void;
   onOpenCreateWorkspace?: OpenCreateWorkspace;
   onStartResize?: React.PointerEventHandler<HTMLButtonElement>;
@@ -315,6 +316,7 @@ export function SettingsSidebar(props: SettingsSidebarProps) {
           onOpenHome={props.onOpenHome}
           onOpenApps={props.onOpenApps}
           onOpenChat={props.onOpenChat}
+          onOpenReviews={props.onOpenReviews}
           onOpenSettings={() => undefined}
           onOpenTaskSearch={props.onOpenTaskSearch}
           onOpenCreateWorkspace={props.onOpenCreateWorkspace}

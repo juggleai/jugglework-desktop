@@ -48,6 +48,21 @@ import type {
   SessionPermissionModeState,
   SessionPermissionModeUpdateRequest,
 } from "@jugglework/types/session-permission-modes";
+import {
+  reviewChecksResponseSchema,
+  reviewConnectionStatusSchema,
+  reviewDetailSchema,
+  reviewFilesResponseSchema,
+  reviewListResponseSchema,
+  reviewThreadsResponseSchema,
+  type ReviewChecksResponse,
+  type ReviewConnectionStatus,
+  type ReviewDetail,
+  type ReviewFilesResponse,
+  type ReviewListResponse,
+  type ReviewRelationship,
+  type ReviewThreadsResponse,
+} from "@jugglework/types/reviews";
 
 export type JuggleWorkServerCapabilities = {
   skills: { read: boolean; write: boolean; source: "jugglework" | "opencode" };
@@ -1431,8 +1446,11 @@ async function fetchWithTimeout(
   }
 
   const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
-  const signal = controller?.signal;
-  const initWithSignal = signal && !init.signal ? { ...init, signal } : init;
+  const timeoutSignal = controller?.signal;
+  const signal = timeoutSignal && init.signal && typeof AbortSignal !== "undefined" && typeof AbortSignal.any === "function"
+    ? AbortSignal.any([timeoutSignal, init.signal])
+    : init.signal ?? timeoutSignal;
+  const initWithSignal = signal ? { ...init, signal } : init;
 
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
   const timeoutPromise = new Promise<never>((_, reject) => {
@@ -1450,7 +1468,7 @@ async function fetchWithTimeout(
     return await Promise.race([fetchImpl(url, initWithSignal), timeoutPromise]);
   } catch (error) {
     const name = (error && typeof error === "object" && "name" in error ? (error as any).name : "") as string;
-    if (name === "AbortError") {
+    if (name === "AbortError" && !init.signal?.aborted) {
       throw new Error("Request timed out.");
     }
     throw error;
@@ -1462,7 +1480,7 @@ async function fetchWithTimeout(
 async function requestJson<T>(
   baseUrl: string,
   path: string,
-  options: { method?: string; token?: string; hostToken?: string; body?: unknown; timeoutMs?: number } = {},
+  options: { method?: string; token?: string; hostToken?: string; body?: unknown; timeoutMs?: number; signal?: AbortSignal } = {},
 ): Promise<T> {
   const url = `${baseUrl}${path}`;
   const fetchImpl = resolveFetch(url);
@@ -1473,6 +1491,7 @@ async function requestJson<T>(
       method: options.method ?? "GET",
       headers: buildHeaders(options.token, options.hostToken),
       body: options.body ? JSON.stringify(options.body) : undefined,
+      signal: options.signal,
     },
     options.timeoutMs ?? DEFAULT_JUGGLEWORK_SERVER_TIMEOUT_MS,
   );
@@ -1625,6 +1644,7 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
     cloudMcpHealth: 12_000,
     cloudMcpProbeHealth: 30_000,
     cloudMcpReconcile: 60_000,
+    reviews: 30_000,
     workspaceExport: 30_000,
     workspaceImport: 30_000,
     binary: 60_000,
@@ -1691,6 +1711,44 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
         timeoutMs: timeouts.binary,
       }),
     listWorkspaces: () => requestJson<JuggleWorkWorkspaceList>(baseUrl, "/workspaces", { token, hostToken, timeoutMs: timeouts.listWorkspaces }),
+    getReviewConnection: async (workspaceId: string, requestOptions?: { signal?: AbortSignal }): Promise<ReviewConnectionStatus> => {
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/reviews/connection`, { token, hostToken, timeoutMs: timeouts.reviews, signal: requestOptions?.signal });
+      return reviewConnectionStatusSchema.parse(payload);
+    },
+    listReviews: async (workspaceId: string, input: { relationship?: ReviewRelationship; query?: string; cursor?: string; limit?: number } = {}, requestOptions?: { signal?: AbortSignal }): Promise<ReviewListResponse> => {
+      const params = new URLSearchParams();
+      if (input.relationship && input.relationship !== "all") params.set("relationship", input.relationship);
+      if (input.query?.trim()) params.set("query", input.query.trim());
+      if (input.cursor) params.set("cursor", input.cursor);
+      if (input.limit) params.set("limit", String(input.limit));
+      const suffix = params.size ? `?${params.toString()}` : "";
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/reviews${suffix}`, { token, hostToken, timeoutMs: timeouts.reviews, signal: requestOptions?.signal });
+      return reviewListResponseSchema.parse(payload);
+    },
+    getReview: async (workspaceId: string, reviewId: string, requestOptions?: { signal?: AbortSignal }): Promise<ReviewDetail> => {
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/reviews/${encodeURIComponent(reviewId)}`, { token, hostToken, timeoutMs: timeouts.reviews, signal: requestOptions?.signal });
+      return reviewDetailSchema.parse(payload);
+    },
+    listReviewFiles: async (workspaceId: string, reviewId: string, input: { cursor?: string; limit?: number } = {}, requestOptions?: { signal?: AbortSignal }): Promise<ReviewFilesResponse> => {
+      const params = new URLSearchParams();
+      if (input.cursor) params.set("cursor", input.cursor);
+      if (input.limit) params.set("limit", String(input.limit));
+      const suffix = params.size ? `?${params.toString()}` : "";
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/reviews/${encodeURIComponent(reviewId)}/files${suffix}`, { token, hostToken, timeoutMs: timeouts.reviews, signal: requestOptions?.signal });
+      return reviewFilesResponseSchema.parse(payload);
+    },
+    getReviewChecks: async (workspaceId: string, reviewId: string, requestOptions?: { signal?: AbortSignal }): Promise<ReviewChecksResponse> => {
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/reviews/${encodeURIComponent(reviewId)}/checks`, { token, hostToken, timeoutMs: timeouts.reviews, signal: requestOptions?.signal });
+      return reviewChecksResponseSchema.parse(payload);
+    },
+    listReviewThreads: async (workspaceId: string, reviewId: string, input: { cursor?: string; limit?: number } = {}, requestOptions?: { signal?: AbortSignal }): Promise<ReviewThreadsResponse> => {
+      const params = new URLSearchParams();
+      if (input.cursor) params.set("cursor", input.cursor);
+      if (input.limit) params.set("limit", String(input.limit));
+      const suffix = params.size ? `?${params.toString()}` : "";
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/reviews/${encodeURIComponent(reviewId)}/threads${suffix}`, { token, hostToken, timeoutMs: timeouts.reviews, signal: requestOptions?.signal });
+      return reviewThreadsResponseSchema.parse(payload);
+    },
     /** 分页读取本机自动化任务。 */
     listAutomations: (options?: { cursor?: string; limit?: number }) => {
       const query = new URLSearchParams();

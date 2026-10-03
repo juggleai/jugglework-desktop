@@ -401,6 +401,7 @@ export default {
   "mcp.last_synced": "ซิงค์แล้ว",
   "navigation.chat": "แชท",
   "navigation.contacts": "รายชื่อติดต่อ",
+  "navigation.reviews": "ตรวจสอบโค้ด",
   "navigation.cloud_tasks": "งานบนคลาวด์",
   "navigation.home": "หน้าหลัก",
   "navigation.local_tasks": "งานในเครื่อง",

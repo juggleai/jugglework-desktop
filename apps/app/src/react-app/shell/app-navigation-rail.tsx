@@ -15,6 +15,7 @@ import {
   LogOut,
   MessageSquare,
   Plus,
+  GitPullRequestArrow,
   RefreshCw,
   Search,
   Settings,
@@ -62,10 +63,12 @@ type AppNavigationRailProps = {
   appsActive?: boolean;
   settingsActive?: boolean;
   chatActive?: boolean;
+  reviewsActive?: boolean;
   onOpenAccount: () => void;
   onOpenHome: () => void;
   onOpenApps: () => void;
   onOpenChat: () => void;
+  onOpenReviews: () => void;
   onOpenSettings: () => void;
   /** Opens the cross-workspace task search dialog when the session shell owns it. */
   onOpenTaskSearch?: () => void;
@@ -317,6 +320,14 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
           testId="app-rail-cloud-tasks"
         >
           <Cloud className="size-5" strokeWidth={1.8} />
+        </RailButton>
+        <RailButton
+          label={t("navigation.reviews")}
+          active={props.reviewsActive}
+          onClick={props.onOpenReviews}
+          testId="app-rail-reviews"
+        >
+          <GitPullRequestArrow />
         </RailButton>
         {LOCAL_AUTOMATION_ENABLED ? <RailButton
           label={t("navigation.automations")}

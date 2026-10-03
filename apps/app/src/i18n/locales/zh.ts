@@ -933,6 +933,7 @@ export default {
   "navigation.local_tasks": "本地任务",
   "navigation.local_workspace": "本地工作区",
   "navigation.primary": "主导航",
+  "navigation.reviews": "代码审查",
   "navigation.settings": "设置",
   "chat.add": "新增",
   "chat.collapse_sidebar": "折叠左侧区域",
