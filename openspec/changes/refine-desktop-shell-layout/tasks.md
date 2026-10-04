@@ -32,6 +32,7 @@
 - [x] 1.30 Keep the preview open while the pointer remains anywhere inside its menu bounds
 - [x] 1.31 Disable Electron titlebar dragging inside the transient preview header
 - [x] 1.32 Guard the full rectangular preview title strip across rounded corners
+- [x] 1.33 Place the collapsed work surface beside the Rail so its left corners remain visible
 
 ## 2. Utility Actions
 

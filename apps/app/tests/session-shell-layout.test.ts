@@ -33,7 +33,9 @@ describe("desktop session shell layout", () => {
     expect(appSidebar).toContain('md:rounded-l-[18px]');
     expect(appSidebar).toContain('md:border-r-0');
     expect(appSidebar).toContain('bg-background');
-    expect(sessionPage).toContain('md:rounded-l-none md:rounded-r-[18px]');
+    expect(sessionPage).toContain('ml-[52px] rounded-[18px]');
+    expect(sessionPage).toContain('rounded-[18px]');
+    expect(sessionPage).toContain('md:rounded-l-none md:rounded-r-[18px] md:border-l-0');
     expect(sessionPage).toContain('shellConfig.sidebar && sidebarOpen');
   });
 
@@ -124,7 +126,7 @@ describe("desktop session shell layout", () => {
   });
 
   test("keeps quick navigation outside the Rail when the sidebar is collapsed", () => {
-    expect(sessionPage).toContain('quickNavigationLeftOffset={sidebarOpen ? 8 : 56}');
+    expect(sessionPage).toContain('quickNavigationLeftOffset={8}');
     expect(sessionSurface).toContain('quickNavigationLeftOffset?: number');
     expect(sessionSurface).toContain('leftOffset={props.quickNavigationLeftOffset}');
     expect(quickNavigation).toContain('leftOffset = 8');

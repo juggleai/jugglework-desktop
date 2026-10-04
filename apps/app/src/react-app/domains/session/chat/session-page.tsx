@@ -1483,7 +1483,7 @@ export function SessionPage(props: SessionPageProps) {
               "relative mb-1.5 mr-1.5 flex min-h-0 flex-1 overflow-hidden border border-dls-border bg-background shadow-[0_1px_2px_rgba(0,0,0,0.04)]",
               shellConfig.sidebar && sidebarOpen
                 ? "ml-1.5 rounded-[18px] md:ml-0 md:rounded-l-none md:rounded-r-[18px] md:border-l-0"
-                : "ml-1.5 rounded-[18px]",
+                : "ml-[52px] rounded-[18px]",
             )}
             data-session-work-surface
           >
@@ -1675,7 +1675,7 @@ export function SessionPage(props: SessionPageProps) {
                         respondQuestion={props.respondQuestion}
                         safeStringify={props.safeStringify}
                         onOpenTarget={openTarget}
-                        quickNavigationLeftOffset={sidebarOpen ? 8 : 56}
+                        quickNavigationLeftOffset={8}
                       />
                     </div>
                     {canRenderSplitSurface ? (
@@ -1698,7 +1698,7 @@ export function SessionPage(props: SessionPageProps) {
                           opencodeBaseUrl={reactSessionBaseUrl}
                           juggleworkToken={reactSessionToken}
                           onOpenTarget={openTarget}
-                          quickNavigationLeftOffset={sidebarOpen ? 8 : 56}
+                          quickNavigationLeftOffset={8}
                         />
                       </div>
                     ) : null}
