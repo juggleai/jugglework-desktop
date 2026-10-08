@@ -29,7 +29,7 @@ describe("Desktop automation catalog and routes", () => {
   });
 
   test("places automation immediately below cloud workspace in the primary rail", () => {
-    expect(APP_PRIMARY_RAIL_ORDER).toEqual(["local-workspace", "cloud-workspace", "automations", "reviews", "chat", "contacts"]);
+    expect(APP_PRIMARY_RAIL_ORDER).toEqual(["local-workspace", "cloud-workspace", "automations", "chat", "contacts", "more"]);
   });
 
   test("uses compact dashboard typography without changing its layout primitives", () => {

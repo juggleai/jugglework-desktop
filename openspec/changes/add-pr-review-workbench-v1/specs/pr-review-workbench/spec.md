@@ -1,11 +1,19 @@
 ## ADDED Requirements
 
 ### Requirement: Workspace Reviews navigation
-The system SHALL provide a Reviews destination in the left vertical application navigation rail for workspace-scoped PR review work.
+The system SHALL provide a Reviews destination in the left vertical application navigation rail's More menu for workspace-scoped PR review work and SHALL let the user persist a pinned Reviews shortcut below that menu.
 
 #### Scenario: Open Reviews from the rail
-- **WHEN** a user selects Reviews from the left application rail while a workspace is active
-- **THEN** the application navigates to that workspace's Reviews route and marks the Reviews rail item active
+- **WHEN** a user selects Reviews from the left application rail's More menu while a workspace is active
+- **THEN** the application navigates to that workspace's Reviews route and marks the More entry active when no pinned shortcut is present
+
+#### Scenario: Pin Reviews to the rail
+- **WHEN** the user activates the pin action for Reviews in the More menu
+- **THEN** a persistent Reviews shortcut appears below More after a separator and remains available across app reloads
+
+#### Scenario: Unpin Reviews from the rail
+- **WHEN** the user activates the unpin action for Reviews
+- **THEN** the dedicated shortcut is removed while Reviews remains available from the More menu
 
 #### Scenario: Preserve the active session
 - **WHEN** the user opens the Reviews surface from an active session

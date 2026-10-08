@@ -4,7 +4,7 @@ JuggleWork currently has no first-class place for users to triage and inspect re
 
 ## What Changes
 
-- Add a workspace-scoped Reviews route and a persistent entry in the left vertical application navigation rail.
+- Add a workspace-scoped Reviews route exposed from the left rail's More menu, with an optional locally persisted pinned rail shortcut.
 - Add a native, responsive first-version Review workbench with a mock PR Inbox and PR detail views for summary, changes, checks, and threads.
 - Preserve the active session while the full-page Reviews surface is visible, matching the retained-surface behavior of other workspace pages.
 - Expose the active Review route and selected pull request through JuggleWork semantic context.
@@ -23,7 +23,7 @@ None.
 ## Impact
 
 - Affects workspace route parsing and retained full-page surface composition.
-- Adds a new application navigation rail destination.
+- Adds a pinnable application navigation destination and local navigation preference.
 - Adds a new React review domain with static first-version data and local selection state.
 - Extends shared JuggleWork context types and the context projector with a review screen/resource.
 - Adds no provider dependency, credential handling, server API, database migration, or external write operation in this version.

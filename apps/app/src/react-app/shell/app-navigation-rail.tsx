@@ -8,12 +8,14 @@ import {
   Cloud,
   Coins,
   ContactRound,
+  Ellipsis,
   Globe,
   HelpCircle,
   House,
   LogOut,
   MessageSquare,
   GitPullRequestArrow,
+  Pin,
   RefreshCw,
   Settings,
   Sparkles,
@@ -47,6 +49,13 @@ import { SessionCircularProgress } from "@/react-app/domains/session/sidebar/ses
 import type { WorkspaceSessionIndicator } from "@/react-app/domains/session/sidebar/utils";
 import type { OpenCreateWorkspace } from "@/react-app/domains/workspace/types";
 import { APP_PRIMARY_RAIL_ORDER } from "./app-navigation-order";
+import {
+  APP_NAVIGATION_PINS_STORAGE_KEY,
+  appNavigationPinsChangedEvent,
+  readPinnedAppNavigationItems,
+  setAppNavigationItemPinned,
+  type PinnableAppNavigationItem,
+} from "./app-navigation-pins";
 import { LOCAL_AUTOMATION_ENABLED } from "@/react-app/domains/automations/automation-feature-flags";
 import { isIMNavigationVisible, visibleLocalWorkspaceIndicator } from "./app-navigation-status";
 import { accountDisplayName, membershipTierLabel, membershipUpgradeContext, organizationMenuGroups } from "./account-menu-model";
@@ -229,6 +238,32 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
   ));
   const bootstrapChat = useJuggleChatStore((state) => state.bootstrap);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [navigationMenuOpen, setNavigationMenuOpen] = useState(false);
+  const [pinnedNavigationItems, setPinnedNavigationItems] = useState<PinnableAppNavigationItem[]>(
+    readPinnedAppNavigationItems,
+  );
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const syncPinnedItems = (event: Event) => {
+      if (event.type === "storage") {
+        const storageEvent = event as StorageEvent;
+        if (storageEvent.key !== APP_NAVIGATION_PINS_STORAGE_KEY) return;
+        setPinnedNavigationItems(readPinnedAppNavigationItems());
+        return;
+      }
+      const detail = event instanceof CustomEvent
+        ? event.detail as PinnableAppNavigationItem[] | undefined
+        : undefined;
+      setPinnedNavigationItems(detail ?? readPinnedAppNavigationItems());
+    };
+    window.addEventListener("storage", syncPinnedItems);
+    window.addEventListener(appNavigationPinsChangedEvent, syncPinnedItems);
+    return () => {
+      window.removeEventListener("storage", syncPinnedItems);
+      window.removeEventListener(appNavigationPinsChangedEvent, syncPinnedItems);
+    };
+  }, []);
 
   useEffect(() => {
     void bootstrapChat(user);
@@ -242,6 +277,14 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
   const openChatView = (view: "conversations" | "contacts") => {
     useJuggleChatStore.getState().setView(view);
     if (!props.chatActive) props.onOpenChat();
+  };
+  const reviewsPinned = pinnedNavigationItems.includes("reviews");
+  const openReviews = () => {
+    setNavigationMenuOpen(false);
+    props.onOpenReviews();
+  };
+  const toggleReviewsPinned = () => {
+    setPinnedNavigationItems(setAppNavigationItemPinned("reviews", !reviewsPinned));
   };
   const identity = accountDisplayName(user);
   const initial = identity.slice(0, 1).toLocaleUpperCase();
@@ -336,15 +379,6 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
         >
           <AlarmClock />
         </RailButton> : null}
-        <RailButton
-          label={t("navigation.reviews")}
-          active={props.reviewsActive}
-          onClick={props.onOpenReviews}
-          testId="app-rail-reviews"
-          onPreviewMenuChange={props.onPreviewMenuChange}
-        >
-          <GitPullRequestArrow />
-        </RailButton>
         {imNavigationVisible ? (
           <>
             <RailButton
@@ -368,6 +402,92 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
               <ContactRound />
             </RailButton>
           </>
+        ) : null}
+        <DropdownMenu open={navigationMenuOpen} onOpenChange={setNavigationMenuOpen}>
+          <DropdownMenuTrigger
+            render={(
+              <button
+                type="button"
+                aria-label={t("navigation.more")}
+                title={t("navigation.more")}
+                data-testid="app-rail-more"
+                data-app-rail-button
+                data-active={(navigationMenuOpen || (props.reviewsActive && !reviewsPinned)) ? "true" : undefined}
+                className={cn(
+                  "relative flex size-9 items-center justify-center rounded-xl text-dls-secondary/80 transition-[background-color,color,transform] duration-150 mac:titlebar-no-drag",
+                  "hover:bg-dls-hover hover:text-dls-text active:scale-[0.96]",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/35 focus-visible:ring-offset-1 focus-visible:ring-offset-dls-sidebar",
+                  "data-popup-open:bg-dls-active data-popup-open:text-dls-text",
+                  (navigationMenuOpen || (props.reviewsActive && !reviewsPinned)) && "bg-dls-active text-dls-text",
+                )}
+              >
+                <Ellipsis className="size-5" strokeWidth={2} />
+              </button>
+            )}
+          />
+          <DropdownMenuContent
+            side="right"
+            align="start"
+            sideOffset={10}
+            className="w-[180px] rounded-2xl bg-popover/95 p-0.5 shadow-[0_18px_48px_rgba(0,0,0,0.20)] ring-1 ring-foreground/10 backdrop-blur-2xl"
+            data-testid="app-navigation-more-menu"
+          >
+            <div
+              className="group flex items-center gap-1 rounded-2xl transition-colors hover:bg-accent focus-within:bg-accent"
+              data-testid="app-navigation-more-reviews-row"
+            >
+              <DropdownMenuItem
+                onClick={openReviews}
+                className="min-w-0 flex-1 bg-transparent py-[5px] focus:bg-transparent! data-highlighted:bg-transparent!"
+                data-testid="app-navigation-more-reviews"
+              >
+                <GitPullRequestArrow />
+                <span className="truncate">{t("navigation.reviews")}</span>
+              </DropdownMenuItem>
+              <button
+                type="button"
+                aria-label={reviewsPinned ? t("navigation.unpin_item") : t("navigation.pin_item")}
+                title={reviewsPinned ? t("navigation.unpin_item") : t("navigation.pin_item")}
+                tabIndex={reviewsPinned ? 0 : -1}
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  toggleReviewsPinned();
+                }}
+                className={cn(
+                  "flex size-8 shrink-0 items-center justify-center rounded-xl text-muted-foreground transition-[background-color,color,opacity,transform] duration-150",
+                  "hover:text-popover-foreground active:scale-[0.94]",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/35",
+                  reviewsPinned
+                    ? "text-popover-foreground opacity-100"
+                    : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100",
+                )}
+                data-testid="app-navigation-pin-reviews"
+                data-pinned={reviewsPinned ? "true" : undefined}
+              >
+                <Pin className={cn("size-4", reviewsPinned && "fill-current")} />
+              </button>
+            </div>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        {reviewsPinned ? (
+          <div className="mt-0.5 flex flex-col items-center gap-2" data-app-navigation-pinned-items>
+            <div
+              className="h-px w-6 rounded-full bg-dls-secondary/20"
+              aria-hidden="true"
+              data-testid="app-navigation-pinned-separator"
+            />
+            <RailButton
+              label={t("navigation.reviews")}
+              active={props.reviewsActive}
+              onClick={props.onOpenReviews}
+              testId="app-rail-pinned-reviews"
+              onPreviewMenuChange={props.onPreviewMenuChange}
+            >
+              <GitPullRequestArrow />
+            </RailButton>
+          </div>
         ) : null}
       </nav>
 

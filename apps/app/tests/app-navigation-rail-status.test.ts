@@ -20,13 +20,42 @@ describe("local workspace rail status", () => {
 });
 
 describe("Code Review navigation", () => {
-  test("keeps a dedicated workspace-scoped entry in the primary rail", () => {
+  test("moves Code Review into the More menu with a persistent pin action", () => {
     const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
-    const reviews = source.slice(source.indexOf('label={t("navigation.reviews")}'), source.indexOf("<GitPullRequestArrow />"));
+    expect(source).not.toContain('testId="app-rail-reviews"');
+    expect(source).toContain('data-testid="app-rail-more"');
+    expect(source).toContain('data-testid="app-navigation-more-reviews"');
+    expect(source).toContain('data-testid="app-navigation-pin-reviews"');
+    expect(source).toContain("setAppNavigationItemPinned(\"reviews\", !reviewsPinned)");
+    expect(source).toContain("props.onOpenReviews()");
+  });
 
-    expect(reviews).toContain("active={props.reviewsActive}");
-    expect(reviews).toContain("onClick={props.onOpenReviews}");
-    expect(reviews).toContain('testId="app-rail-reviews"');
+  test("shows the separator and pinned Review entry only when Review is pinned", () => {
+    const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
+    const pinnedBlock = source.slice(source.indexOf("{reviewsPinned ? ("), source.indexOf(") : null}", source.indexOf("{reviewsPinned ? (")));
+    expect(pinnedBlock).toContain('data-testid="app-navigation-pinned-separator"');
+    expect(pinnedBlock).toContain('testId="app-rail-pinned-reviews"');
+    expect(pinnedBlock).toContain("active={props.reviewsActive}");
+    expect(pinnedBlock).toContain("onClick={props.onOpenReviews}");
+    expect(pinnedBlock).toContain('className="h-px w-6 rounded-full bg-dls-secondary/20"');
+  });
+
+  test("reveals the pin action on hover unless Review is already pinned", () => {
+    const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
+    const menuRow = source.slice(
+      source.indexOf('data-testid="app-navigation-more-reviews-row"') - 220,
+      source.indexOf('data-testid="app-navigation-pinned-separator"'),
+    );
+    expect(menuRow).toContain('className="group flex items-center gap-1 rounded-2xl transition-colors hover:bg-accent focus-within:bg-accent"');
+    expect(menuRow).toContain('className="min-w-0 flex-1 bg-transparent py-[5px] focus:bg-transparent! data-highlighted:bg-transparent!"');
+    expect(menuRow).toContain('reviewsPinned');
+    expect(menuRow).toContain('tabIndex={reviewsPinned ? 0 : -1}');
+    expect(menuRow).toContain('opacity-100');
+    expect(menuRow).toContain('pointer-events-none opacity-0');
+    expect(menuRow).toContain('group-hover:pointer-events-auto group-hover:opacity-100');
+    expect(menuRow).not.toContain('group-focus-within:pointer-events-auto');
+    expect(menuRow).not.toContain('hover:bg-foreground/10');
+    expect(source).toContain('className="w-[180px] rounded-2xl bg-popover/95 p-0.5');
   });
 });
 
@@ -86,15 +115,17 @@ describe("navigation rail visual proportions", () => {
     expect(source).toContain('rounded-xl border border-dls-border bg-dls-active');
     expect(source).toContain('px-2.5 py-1.5 text-xs font-normal text-dls-text');
     expect(source).toContain('{tooltipLabel ?? label}');
-    for (const testId of ["app-rail-home", "app-rail-cloud-tasks", "app-rail-reviews", "app-rail-automations", "app-rail-chat", "app-rail-contacts"]) {
+    for (const testId of ["app-rail-home", "app-rail-cloud-tasks", "app-rail-pinned-reviews", "app-rail-automations", "app-rail-chat", "app-rail-contacts"]) {
       const button = source.slice(source.indexOf(`testId="${testId}"`) - 220, source.indexOf(`testId="${testId}"`) + 220);
       expect(button).not.toContain('showTooltip={false}');
     }
+    expect(source).toContain('title={t("navigation.more")}');
   });
 
-  test("places Automation before Code Review", () => {
+  test("places More after Contacts and keeps pinned entries below it", () => {
     const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
-    expect(source.indexOf('testId="app-rail-automations"')).toBeLessThan(source.indexOf('testId="app-rail-reviews"'));
+    expect(source.indexOf('testId="app-rail-contacts"')).toBeLessThan(source.indexOf('data-testid="app-rail-more"'));
+    expect(source.indexOf('data-testid="app-rail-more"')).toBeLessThan(source.indexOf('testId="app-rail-pinned-reviews"'));
   });
 
   test("labels the Automation hover tooltip as scheduled tasks", () => {

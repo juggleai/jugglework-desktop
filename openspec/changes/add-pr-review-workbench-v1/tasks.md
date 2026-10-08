@@ -3,6 +3,7 @@
 - [x] 1.1 Add workspace Reviews route parsing/building and focused route tests
 - [x] 1.2 Add a Reviews item to the left application rail and wire it through workspace surfaces
 - [x] 1.3 Add a lazily retained Reviews full-page surface while preserving the active session mount
+- [x] 1.4 Move Reviews into the More menu and add a locally persisted pin/unpin shortcut below it
 
 ## 2. Review Workbench UI
 
@@ -20,3 +21,4 @@
 
 - [x] 4.1 Add or update focused Review workbench component tests
 - [x] 4.2 Run the smallest meaningful test and type-check commands and fix regressions
+- [x] 4.3 Add focused tests for pin persistence, navigation ordering, menu behavior, and localized labels
