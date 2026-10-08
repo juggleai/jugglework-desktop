@@ -99,4 +99,35 @@ describe("Den extension projections", () => {
     expect(plugin.extension?.manifest?.setup?.instructions).toBe("Install from Den.");
     expect(plugin.extension?.manifest?.contributions?.[0]?.ref).toBe("den.claudePlugin.setup");
   });
+
+  test("lists directly granted organization plugins without requiring a marketplace", async () => {
+    const calls: string[] = [];
+    const fetchMock: typeof fetch = async (input) => {
+      calls.push(String(input));
+      return new Response(JSON.stringify({
+        items: [{
+          id: "plugin_personal",
+          name: "Personal Test Plugin",
+          description: "Assigned directly to the current member.",
+          status: "active",
+          memberCount: 2,
+          updatedAt: "2026-10-08T09:00:00.000Z",
+          componentCounts: { skill: 1, mcp: 1 },
+          marketplaces: [],
+        }],
+      }), { headers: { "Content-Type": "application/json" }, status: 200 });
+    };
+    Object.defineProperty(globalThis, "fetch", { configurable: true, value: fetchMock });
+
+    const client = createDenClient({ baseUrl: "http://den.local", token: "token" });
+    const plugins = await client.listOrgPlugins("organization_personal");
+
+    expect(calls).toEqual(["http://den.local/jwork/api/v1/plugins?status=active&limit=100"]);
+    expect(plugins).toEqual([expect.objectContaining({
+      id: "plugin_personal",
+      name: "Personal Test Plugin",
+      componentCounts: { skill: 1, mcp: 1 },
+      marketplaces: [],
+    })]);
+  });
 });

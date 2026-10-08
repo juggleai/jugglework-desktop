@@ -13,7 +13,6 @@ import type { PendingCloudPluginChange } from "@/app/cloud/desktop-cloud-sync";
 import { evaluateEnablement, type EnablementContext } from "@/app/enablement";
 import type {
   DenExternalMcpConnection,
-  DenOrgMarketplaceResolved,
   DenOrgPlugin,
   DenOrgPluginResolved,
   DenPluginMcpComponent,
@@ -77,7 +76,7 @@ type CloudMarketplacesSession = Pick<
 >;
 
 type DenSettingsExtensionsStore = {
-  cloudOrgMarketplaces: () => DenOrgMarketplaceResolved[];
+  cloudOrgPlugins: () => DenOrgPlugin[];
   cloudOrgMarketplacesStatus: () => string | null;
   importedCloudPlugins: () => Record<string, CloudImportedPlugin>;
   pendingCloudPluginChanges: () => Record<string, PendingCloudPluginChange>;
@@ -115,6 +114,8 @@ export type MarketplacePackageRow = {
   source: "cloud";
   marketplaceId: string;
   marketplaceName: string;
+  /** Null for plugins assigned directly to the organization rather than a collection. */
+  sourceMarketplaceId: string | null;
   plugin: DenOrgPlugin;
   imported: CloudImportedPlugin | null;
   item: ExtensionItem | null;
@@ -150,6 +151,8 @@ type OrgMcpMarketplaceRow = {
 };
 
 type MarketplaceRow = MarketplacePackageRow | BuiltInMarketplaceRow | OrgMcpMarketplaceRow;
+
+const ORGANIZATION_PLUGINS_COLLECTION_ID = "organization-plugins";
 
 export function shouldShowMarketplaceRows(isSignedIn: boolean, activeOrgId: string) {
   return isSignedIn && activeOrgId.trim().length > 0;
@@ -210,6 +213,9 @@ export type CloudMarketplacesViewProps = {
   uniformCardHeight?: boolean;
   /** 卡片使用中性配色，不因已安装而整块变绿。 */
   plainCards?: boolean;
+  /** Dedicated catalog surfaces can use a shorter product-facing title. */
+  title?: string;
+  description?: string;
   /** 当前工作区稳定标识，用于隔离详情选择与异步解析结果。 */
   workspaceKey: string;
 };
@@ -300,6 +306,8 @@ export function CloudMarketplacesView({
   hideMarketplaceFilter = false,
   uniformCardHeight = false,
   plainCards = false,
+  title,
+  description,
   workspaceKey,
 }: CloudMarketplacesViewProps) {
   const { activeOrganization: activeOrg, authToken, client, isSignedIn, user } = useCloudSession();
@@ -349,7 +357,7 @@ export function CloudMarketplacesView({
     return () => window.removeEventListener(openMarketplacePluginEvent, handler);
   }, []);
 
-  const marketplaces = extensions.cloudOrgMarketplaces();
+  const plugins = extensions.cloudOrgPlugins();
   const importedPlugins = extensions.importedCloudPlugins();
   const pendingChanges = extensions.pendingCloudPluginChanges();
   const marketplacePluginOperations = extensions.marketplacePluginOperations();
@@ -364,9 +372,12 @@ export function CloudMarketplacesView({
   const rowContextKey = `${activeOrgId}:${workspaceKey}`;
   const lastRowsRef = React.useRef<{ contextKey: string; rows: MarketplaceRow[] }>({ contextKey: rowContextKey, rows: [] });
   const cloudRows = React.useMemo<MarketplacePackageRow[]>(() => {
-    return marketplaces.flatMap((marketplace) => marketplace.plugins.flatMap((plugin) => {
+    return plugins.flatMap((plugin) => {
       if (!includeCloudMarketplaceRows) return [];
       if (skillsOnly && !pluginHasSkill(plugin)) return [];
+      const collection = plugin.marketplaces?.[0] ?? null;
+      const marketplaceId = collection?.id ?? ORGANIZATION_PLUGINS_COLLECTION_ID;
+      const marketplaceName = collection?.name ?? t("marketplace.organization_plugins");
       const imported = importedPlugins[plugin.id] ?? null;
       const composition = pluginComposition(plugin);
       const counts = pluginCounts(plugin);
@@ -388,8 +399,9 @@ export function CloudMarketplacesView({
         ?? (isCloudBuiltInPlugin(plugin) ? "installed" : marketplaceListStatus(lifecycle));
       return [{
         source: "cloud",
-        marketplaceId: marketplace.marketplace.id,
-        marketplaceName: marketplace.marketplace.name,
+        marketplaceId,
+        marketplaceName,
+        sourceMarketplaceId: collection?.id ?? null,
         plugin,
         imported,
         item: item ?? null,
@@ -402,14 +414,14 @@ export function CloudMarketplacesView({
         searchableText: [
           plugin.name,
           plugin.description ?? "",
-          marketplace.marketplace.name,
+          marketplaceName,
           pluginManifestSearchText(plugin),
           ...counts,
           ...(imported?.files.map((file) => `${file.title} ${file.objectType} ${file.path}`) ?? []),
         ].join(" ").toLowerCase(),
       }];
-    }));
-  }, [activeOrgId, extensionItemsByPluginId, importedPlugins, includeCloudMarketplaceRows, marketplacePluginOperations, marketplaces, pendingChanges, resolvedPlugins, skillsOnly]);
+    });
+  }, [activeOrgId, extensionItemsByPluginId, importedPlugins, includeCloudMarketplaceRows, marketplacePluginOperations, pendingChanges, plugins, resolvedPlugins, skillsOnly]);
 
   const builtInRows = React.useMemo<BuiltInMarketplaceRow[]>(() => {
     return builtInEntries.map((entry) => {
@@ -490,10 +502,12 @@ export function CloudMarketplacesView({
   const marketplaceOptions = React.useMemo(
     () => canShowRows ? [
       ...(builtInRows.length > 0 ? [{ id: "jugglework-builtins", name: t("marketplace.builtins_name") }] : []),
-      ...(includeCloudMarketplaceRows ? marketplaces.map((marketplace) => ({ id: marketplace.marketplace.id, name: marketplace.marketplace.name })) : []),
+      ...(includeCloudMarketplaceRows ? [...new Map(
+        cloudRows.map((row) => [row.marketplaceId, { id: row.marketplaceId, name: row.marketplaceName }] as const),
+      ).values()] : []),
       ...(orgMcpRows.length > 0 ? [{ id: "org-mcp-connections", name: t("marketplace.org_mcp_connections") }] : []),
     ] : [],
-    [builtInRows.length, canShowRows, includeCloudMarketplaceRows, marketplaces, orgMcpRows.length],
+    [builtInRows.length, canShowRows, cloudRows, includeCloudMarketplaceRows, orgMcpRows.length],
   );
 
   const visibleRows = React.useMemo(
@@ -513,7 +527,7 @@ export function CloudMarketplacesView({
         await extensions.refreshCloudOrgMarketplaces({ force: true });
         await refreshOrgMcpConnections?.();
         if (!quiet) {
-          const count = extensions.cloudOrgMarketplaces().reduce((total, marketplace) => total + marketplace.plugins.length, 0);
+          const count = extensions.cloudOrgPlugins().length;
           toast.info(
             count > 0
               ? `Loaded ${count} marketplace extension${count === 1 ? "" : "s"} for ${activeOrg?.name ?? t("den.active_org_title")}.`
@@ -609,7 +623,7 @@ export function CloudMarketplacesView({
   );
 
   const installPlugin = React.useCallback(
-    async (marketplaceId: string, plugin: DenOrgPlugin) => {
+    async (marketplaceId: string | null, plugin: DenOrgPlugin) => {
       if (actionId) return;
       setActionId(plugin.id);
       setActionError(null);
@@ -636,9 +650,9 @@ export function CloudMarketplacesView({
       {!hideSectionHeader ? (
         <SettingsSectionHeader>
           <SettingsSectionHeaderContent>
-            <SettingsSectionHeaderTitle>{t("extensions.marketplace_title")}</SettingsSectionHeaderTitle>
+            <SettingsSectionHeaderTitle>{title ?? t("extensions.marketplace_title")}</SettingsSectionHeaderTitle>
             <SettingsSectionHeaderDescription>
-              {t("extensions.marketplace_description")}
+              {description ?? t("extensions.marketplace_description")}
             </SettingsSectionHeaderDescription>
           </SettingsSectionHeaderContent>
           <SettingsSectionHeaderActions>

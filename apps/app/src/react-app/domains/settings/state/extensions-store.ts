@@ -85,6 +85,8 @@ export type ExtensionsStoreSnapshot = {
   skills: SkillCard[];
   skillsStatus: string | null;
   cloudOrgMarketplaces: DenOrgMarketplaceResolved[];
+  /** Canonical organization plugin list, including plugins outside any Marketplace collection. */
+  cloudOrgPlugins: DenOrgPlugin[];
   cloudOrgMarketplacesStatus: string | null;
   importedCloudMarketplaces: Record<string, CloudImportedMarketplace>;
   importedCloudPlugins: Record<string, CloudImportedPlugin>;
@@ -110,6 +112,7 @@ type MutableState = {
   skills: SkillCard[];
   skillsStatus: string | null;
   cloudOrgMarketplaces: DenOrgMarketplaceResolved[];
+  cloudOrgPlugins: DenOrgPlugin[];
   cloudOrgMarketplacesStatus: string | null;
   importedCloudMarketplaces: Record<string, CloudImportedMarketplace>;
   importedCloudPlugins: Record<string, CloudImportedPlugin>;
@@ -606,6 +609,7 @@ export function createExtensionsStore(options: {
     skills: [],
     skillsStatus: null,
     cloudOrgMarketplaces: [],
+    cloudOrgPlugins: [],
     cloudOrgMarketplacesStatus: null,
     importedCloudMarketplaces: {},
     importedCloudPlugins: {},
@@ -808,6 +812,7 @@ export function createExtensionsStore(options: {
       skills: state.skills,
       skillsStatus: state.skillsStatus,
       cloudOrgMarketplaces: state.cloudOrgMarketplaces,
+      cloudOrgPlugins: state.cloudOrgPlugins,
       cloudOrgMarketplacesStatus: state.cloudOrgMarketplacesStatus,
       importedCloudMarketplaces: state.importedCloudMarketplaces,
       importedCloudPlugins: state.importedCloudPlugins,
@@ -1605,6 +1610,7 @@ export function createExtensionsStore(options: {
         mutateState((current) => ({
           ...current,
           cloudOrgMarketplaces: [],
+          cloudOrgPlugins: [],
           cloudOrgMarketplacesStatus: null,
         }));
         cloudOrgMarketplacesContextKey = loadKey;
@@ -1615,14 +1621,20 @@ export function createExtensionsStore(options: {
       }
 
       const client = createDenClient({ baseUrl: settings.baseUrl, token });
-      const marketplaces = await client.listOrgMarketplaces(orgId);
-      const resolved = await Promise.all(
-        marketplaces.map((marketplace) => client.getOrgMarketplaceResolved(orgId, marketplace.id)),
-      );
+      const [plugins, marketplaces] = await Promise.all([
+        client.listOrgPlugins(orgId),
+        client.listOrgMarketplaces(orgId).catch(() => []),
+      ]);
+      const resolved = (await Promise.all(
+        marketplaces.map((marketplace) =>
+          client.getOrgMarketplaceResolved(orgId, marketplace.id).catch(() => null)
+        ),
+      )).filter((marketplace): marketplace is DenOrgMarketplaceResolved => marketplace !== null);
       if (refreshCloudOrgMarketplacesAborted || getCurrentCloudOrgLoadKey() !== loadKey) return;
       mutateState((current) => ({
         ...current,
         cloudOrgMarketplaces: resolved,
+        cloudOrgPlugins: plugins,
         cloudOrgMarketplacesStatus: null,
       }));
       cloudOrgMarketplacesContextKey = loadKey;
@@ -1630,31 +1642,24 @@ export function createExtensionsStore(options: {
       // Notify the user about newly available marketplace plugins. On the
       // first load we seed the seen set silently so only subsequent publishes
       // trigger a notification.
-      const allPluginIds = new Set<string>();
-      for (const marketplace of resolved) {
-        for (const plugin of marketplace.plugins ?? []) {
-          if (plugin.id) allPluginIds.add(plugin.id);
-        }
-      }
+      const allPluginIds = new Set(plugins.flatMap((plugin) => plugin.id ? [plugin.id] : []));
       if (seenMarketplacePluginIds.size === 0) {
         // First load: seed without notifying.
         for (const id of allPluginIds) seenMarketplacePluginIds.add(id);
       } else {
-        for (const marketplace of resolved) {
-          const marketplaceName = marketplace.marketplace?.name ?? "your marketplace";
-          for (const plugin of marketplace.plugins ?? []) {
-            if (plugin.id && !seenMarketplacePluginIds.has(plugin.id)) {
-              seenMarketplacePluginIds.add(plugin.id);
-              notifyEvent({
-                kind: "cloud",
-                severity: "info",
-                title: t("notifications.new_extension_available"),
-                body: `${plugin.name ?? plugin.id} was added to ${marketplaceName}`,
-                dedupeKey: `new-marketplace-plugin:${plugin.id}`,
-                action: { type: "open-extensions-marketplace", pluginName: plugin.name ?? plugin.id },
-                actionLabel: "View in Marketplace",
-              });
-            }
+        for (const plugin of plugins) {
+          if (plugin.id && !seenMarketplacePluginIds.has(plugin.id)) {
+            seenMarketplacePluginIds.add(plugin.id);
+            const collectionName = plugin.marketplaces?.[0]?.name ?? t("marketplace.organization_plugins");
+            notifyEvent({
+              kind: "cloud",
+              severity: "info",
+              title: t("notifications.new_extension_available"),
+              body: `${plugin.name ?? plugin.id} was added to ${collectionName}`,
+              dedupeKey: `new-marketplace-plugin:${plugin.id}`,
+              action: { type: "open-extensions-marketplace", pluginName: plugin.name ?? plugin.id },
+              actionLabel: t("marketplace.view_plugin"),
+            });
           }
         }
       }
@@ -1667,8 +1672,9 @@ export function createExtensionsStore(options: {
       mutateState((current) => ({
         ...current,
         cloudOrgMarketplaces: cloudOrgMarketplacesContextKey === loadKey ? current.cloudOrgMarketplaces : [],
+        cloudOrgPlugins: cloudOrgMarketplacesContextKey === loadKey ? current.cloudOrgPlugins : [],
         cloudOrgMarketplacesStatus:
-          error instanceof Error ? error.message : "Failed to load organization marketplaces.",
+          error instanceof Error ? error.message : "Failed to load organization plugins.",
       }));
     } finally {
       if (refreshCloudOrgMarketplacesInFlightKey === loadKey) {
@@ -2849,6 +2855,7 @@ export function createExtensionsStore(options: {
     mutateState((current) => ({
       ...current,
       cloudOrgMarketplaces: [],
+      cloudOrgPlugins: [],
       cloudOrgMarketplacesStatus: null,
       importedCloudMarketplaces: {},
       importedCloudPlugins: {},
@@ -2897,6 +2904,7 @@ export function createExtensionsStore(options: {
     skills: () => snapshot.skills,
     skillsStatus: () => snapshot.skillsStatus,
     cloudOrgMarketplaces: () => snapshot.cloudOrgMarketplaces,
+    cloudOrgPlugins: () => snapshot.cloudOrgPlugins,
     cloudOrgMarketplacesStatus: () => snapshot.cloudOrgMarketplacesStatus,
     importedCloudMarketplaces: () => snapshot.importedCloudMarketplaces,
     importedCloudPlugins: () => snapshot.importedCloudPlugins,

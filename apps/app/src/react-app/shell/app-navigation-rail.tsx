@@ -59,6 +59,7 @@ import {
 import { LOCAL_AUTOMATION_ENABLED } from "@/react-app/domains/automations/automation-feature-flags";
 import { isIMNavigationVisible, visibleLocalWorkspaceIndicator } from "./app-navigation-status";
 import { accountDisplayName, membershipTierLabel, membershipUpgradeContext, organizationMenuGroups } from "./account-menu-model";
+import { PluginOrbitIcon } from "@/react-app/design-system/plugin-orbit-icon";
 
 export { APP_PRIMARY_RAIL_ORDER } from "./app-navigation-order";
 
@@ -350,14 +351,6 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
         >
           <LocalWorkspaceIcon active={Boolean(props.homeActive && taskScope === "local")} />
         </RailButton>
-        {/* <RailButton
-          label={t("mcp.apps_title")}
-          active={props.appsActive}
-          onClick={props.onOpenApps}
-          testId="app-rail-apps"
-        >
-          <AppWindowMac className="size-5" strokeWidth={1.8} />
-        </RailButton> */}
         <RailButton
           label={t("navigation.cloud_workspace")}
           active={props.homeActive && taskScope === "remote"}
@@ -379,6 +372,15 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
         >
           <AlarmClock />
         </RailButton> : null}
+        <RailButton
+          label={t("project_extensions.group_plugin")}
+          active={props.appsActive}
+          onClick={props.onOpenApps}
+          testId="app-rail-plugins"
+          onPreviewMenuChange={props.onPreviewMenuChange}
+        >
+          <PluginOrbitIcon />
+        </RailButton>
         {imNavigationVisible ? (
           <>
             <RailButton

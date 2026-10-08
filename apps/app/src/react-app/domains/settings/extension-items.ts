@@ -53,6 +53,8 @@ export type ExtensionItemBuildInput = {
   importedCloudPlugins: Record<string, CloudImportedPlugin>;
   pendingCloudPluginChanges?: Record<string, PendingCloudPluginChange>;
   cloudMarketplaces: DenOrgMarketplaceResolved[];
+  /** Canonical organization plugin list. When present, Marketplace is metadata rather than the visibility source. */
+  cloudPlugins?: DenOrgPlugin[];
   orgMcpConnections?: DenExternalMcpConnection[];
   enablementContext: EnablementContext;
   isBuiltInConnected: (entry: McpDirectoryInfo) => boolean;
@@ -73,6 +75,29 @@ export function isJuggleWorkProvidedSkill(skill: Pick<SkillCard, "name" | "path"
 
 export function isToggleControlledExtension(entry: McpDirectoryInfo) {
   return entry.extensionManifest?.enablement?.some((condition) => condition.type === "toggle-enabled") === true;
+}
+
+/**
+ * Returns whether an MCP directory row is only the implementation resource of
+ * a built-in plugin. These rows belong in the plugin catalog; showing them as
+ * standalone connectors duplicates one capability under two categories.
+ */
+export function isBuiltInExtensionMcpEntry(entry: McpDirectoryInfo) {
+  return isBuiltInJuggleWorkExtension(entry) &&
+    entry.extensionManifest?.resources.some((resource) => resource.type === "mcp") === true;
+}
+
+/** MCP server names whose lifecycle is owned by a built-in plugin. */
+export function builtInExtensionMcpServerNames(entries: McpDirectoryInfo[]) {
+  const names = new Set<string>();
+  for (const entry of entries) {
+    if (!isBuiltInExtensionMcpEntry(entry)) continue;
+    const resources = entry.extensionManifest?.resources.filter((resource) => resource.type === "mcp") ?? [];
+    for (const resource of resources) {
+      names.add((resource.mcpServerName ?? getMcpServerName(entry)).trim().toLowerCase());
+    }
+  }
+  return names;
 }
 
 function setupStateFromEnablement(enablement: { active: boolean; results: EnablementResult[] } | null): ExtensionSetupState {
@@ -190,7 +215,10 @@ export function buildExtensionItems(input: ExtensionItemBuildInput) {
     };
   });
 
-  const cloudPluginItems = input.cloudMarketplaces.flatMap((marketplace) => marketplace.plugins.map((plugin): ExtensionItem => {
+  const canonicalCloudPlugins = input.cloudPlugins ?? [...new Map(
+    input.cloudMarketplaces.flatMap((marketplace) => marketplace.plugins).map((plugin) => [plugin.id, plugin] as const),
+  ).values()];
+  const cloudPluginItems = canonicalCloudPlugins.map((plugin): ExtensionItem => {
     const imported = input.importedCloudPlugins[plugin.id] ?? null;
     const manifest = plugin.extension?.manifest ?? undefined;
     const enablement = manifest?.enablement ? evaluateEnablement(manifest.enablement, input.enablementContext) : null;
@@ -207,7 +235,7 @@ export function buildExtensionItems(input: ExtensionItemBuildInput) {
         ? "ready"
         : "needs_setup";
     return {
-      id: `marketplace:${marketplace.marketplace.id}:${plugin.id}`,
+      id: `plugin:${plugin.id}`,
       source: "marketplace",
       name: plugin.extension?.name ?? plugin.name,
       description: plugin.extension?.description ?? plugin.description,
@@ -220,12 +248,12 @@ export function buildExtensionItems(input: ExtensionItemBuildInput) {
         type,
         title: `${count} ${type}${count === 1 ? "" : "s"}`,
       }] : []),
-      marketplaceId: marketplace.marketplace.id,
-      marketplaceName: marketplace.marketplace.name,
+      marketplaceId: plugin.marketplaces?.[0]?.id ?? null,
+      marketplaceName: plugin.marketplaces?.[0]?.name,
       plugin,
       importedPlugin: imported,
     };
-  }));
+  });
 
   const importedPluginItems = Object.values(input.importedCloudPlugins).flatMap((plugin): ExtensionItem[] => {
     if (cloudPluginItems.some((item) => item.importedPlugin?.pluginId === plugin.pluginId)) return [];

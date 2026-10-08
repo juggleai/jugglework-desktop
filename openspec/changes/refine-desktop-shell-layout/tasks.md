@@ -33,6 +33,13 @@
 - [x] 1.31 Disable Electron titlebar dragging inside the transient preview header
 - [x] 1.32 Guard the full rectangular preview title strip across rounded corners
 - [x] 1.33 Place the collapsed work surface beside the Rail so its left corners remain visible
+- [x] 1.34 Add the Plugins Rail entry after Automation and route it to the workspace plugin catalog
+- [x] 1.35 Render the plugin catalog inside the shared inset application surface
+- [x] 1.36 Replace the generic puzzle icon with the plugin orbit mark
+- [x] 1.37 Add the Plugins, Skills, Connectors, and installed-items sidebar to the customization catalog
+- [x] 1.38 Keep plugin catalog refresh dependencies stable so loading state does not repeatedly flash
+- [x] 1.39 Keep MCP resources owned by built-in plugins out of the standalone Connectors catalog
+- [x] 1.40 Use the organization plugin list as the canonical catalog and treat Marketplaces as optional collections
 
 ## 2. Utility Actions
 

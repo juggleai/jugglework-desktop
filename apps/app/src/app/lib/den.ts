@@ -2354,6 +2354,12 @@ function parseOrgPlugin(value: unknown): DenOrgPlugin | null {
     memberCount: typeof value.memberCount === "number" && Number.isFinite(value.memberCount) ? value.memberCount : 0,
     updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : null,
     componentCounts: counts,
+    marketplaces: Array.isArray(value.marketplaces)
+      ? value.marketplaces.flatMap((entry) => {
+        if (!isRecord(entry) || typeof entry.id !== "string" || typeof entry.name !== "string") return [];
+        return [{ id: entry.id, name: entry.name }];
+      })
+      : [],
     extension: parseDenExtensionProjection(value.extension),
     ...(value.cloudReadiness === undefined ? {} : { cloudReadiness: parsePluginCloudReadiness(value.cloudReadiness) ?? undefined }),
   };
@@ -3486,6 +3492,19 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
         { method: "GET", token, organizationId: orgId },
       );
       return getOrgMarketplaces(payload);
+    },
+
+    async listOrgPlugins(orgId: string): Promise<DenOrgPlugin[]> {
+      const payload = await requestJson<unknown>(
+        baseUrls,
+        `/v1/plugins?status=active&limit=100`,
+        { method: "GET", token, organizationId: orgId },
+      );
+      if (!isRecord(payload) || !Array.isArray(payload.items)) return [];
+      return payload.items.flatMap((item) => {
+        const plugin = parseOrgPlugin(item);
+        return plugin ? [plugin] : [];
+      });
     },
 
     async getOrgMarketplaceResolved(orgId: string, marketplaceId: string): Promise<DenOrgMarketplaceResolved> {

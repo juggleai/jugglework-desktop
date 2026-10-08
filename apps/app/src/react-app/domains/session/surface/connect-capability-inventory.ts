@@ -12,6 +12,8 @@ import type { McpServerEntry, McpStatus, McpStatusMap, SkillCard, SlashCommandOp
 import { isOrgMcpConnectionReady } from "@/react-app/domains/connections/native-provider-connections";
 
 type ConnectCapabilityClient = {
+  /** Canonical plugin catalog; optional only for compatibility with older test doubles/servers. */
+  listOrgPlugins?: (organizationId: string) => Promise<DenOrgPlugin[]>;
   listOrgMarketplaces: (organizationId: string) => Promise<DenOrgMarketplace[]>;
   listMcpConnections: (
     organizationId: string,
@@ -56,6 +58,30 @@ type MarketplacePlugin = {
   marketplace: DenOrgMarketplace;
   plugin: DenOrgPlugin;
 };
+
+function pluginCollection(plugin: DenOrgPlugin, marketplaces: DenOrgMarketplace[]): DenOrgMarketplace {
+  const reference = plugin.marketplaces?.[0];
+  const known = reference ? marketplaces.find((marketplace) => marketplace.id === reference.id) : null;
+  if (known) return known;
+  if (reference) {
+    return {
+      id: reference.id,
+      name: reference.name,
+      description: null,
+      status: "active",
+      pluginCount: 0,
+      updatedAt: plugin.updatedAt,
+    };
+  }
+  return {
+    id: "organization-plugins",
+    name: "Organization Plugins",
+    description: null,
+    status: "active",
+    pluginCount: 0,
+    updatedAt: plugin.updatedAt,
+  };
+}
 
 type RemoteMcpSpec = {
   name: string;
@@ -345,24 +371,34 @@ export async function listAssignedConnectCapabilities(input: {
   client: ConnectCapabilityClient;
   organizationId: string;
 }): Promise<ConnectCapabilityInventory> {
-  const [listedMarketplaces, orgMcpConnections] = await Promise.all([
-    input.client.listOrgMarketplaces(input.organizationId),
+  const [listedMarketplaces, listedPlugins, orgMcpConnections] = await Promise.all([
+    input.client.listOrgMarketplaces(input.organizationId).catch(() => []),
+    input.client.listOrgPlugins?.(input.organizationId) ?? Promise.resolve(null),
     input.client.listMcpConnections(input.organizationId, "usable").catch(() => []),
   ]);
   const marketplaces = listedMarketplaces
     .filter((marketplace) => marketplace.status === "active")
     .sort((left, right) => left.name.localeCompare(right.name));
-  const resolvedMarketplaces = await Promise.all(
-    marketplaces.map((marketplace) =>
-      input.client.getOrgMarketplaceResolved(input.organizationId, marketplace.id)
-    ),
-  );
-
   const plugins = new Map<string, MarketplacePlugin>();
-  for (const resolved of resolvedMarketplaces) {
-    for (const plugin of resolved.plugins) {
+  if (listedPlugins) {
+    for (const plugin of listedPlugins) {
       if (plugin.status !== "active" || plugins.has(plugin.id)) continue;
-      plugins.set(plugin.id, { marketplace: resolved.marketplace, plugin });
+      plugins.set(plugin.id, { marketplace: pluginCollection(plugin, marketplaces), plugin });
+    }
+  } else {
+    // Older servers/test doubles only expose Marketplace resolution. Keep that
+    // path as a compatibility fallback, but new clients use /v1/plugins so a
+    // directly granted organization plugin cannot disappear from capabilities.
+    const resolvedMarketplaces = await Promise.all(
+      marketplaces.map((marketplace) =>
+        input.client.getOrgMarketplaceResolved(input.organizationId, marketplace.id)
+      ),
+    );
+    for (const resolved of resolvedMarketplaces) {
+      for (const plugin of resolved.plugins) {
+        if (plugin.status !== "active" || plugins.has(plugin.id)) continue;
+        plugins.set(plugin.id, { marketplace: resolved.marketplace, plugin });
+      }
     }
   }
 

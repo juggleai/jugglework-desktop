@@ -128,6 +128,31 @@ describe("navigation rail visual proportions", () => {
     expect(source.indexOf('data-testid="app-rail-more"')).toBeLessThan(source.indexOf('testId="app-rail-pinned-reviews"'));
   });
 
+  test("places Plugins immediately after scheduled tasks and opens the Apps surface", () => {
+    const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
+    expect(source).toContain('testId="app-rail-plugins"');
+    expect(source).toContain('label={t("project_extensions.group_plugin")}');
+    expect(source).toContain("active={props.appsActive}");
+    expect(source).toContain("onClick={props.onOpenApps}");
+    expect(source).toContain("<PluginOrbitIcon />");
+    expect(source).not.toContain("<Puzzle />");
+    expect(source.indexOf('testId="app-rail-automations"')).toBeLessThan(source.indexOf('testId="app-rail-plugins"'));
+    expect(source.indexOf('testId="app-rail-plugins"')).toBeLessThan(source.indexOf('testId="app-rail-chat"'));
+  });
+
+  test("uses a two-column customization catalog with real category and installed navigation", () => {
+    const route = readFileSync(new URL("../src/react-app/shell/settings-route.tsx", import.meta.url), "utf8");
+    const sidebar = readFileSync(new URL("../src/react-app/domains/settings/shell/customization-catalog-sidebar.tsx", import.meta.url), "utf8");
+    expect(route).toContain('data-testid="customization-catalog-layout"');
+    expect(route).toContain("customizationInstalledItems");
+    expect(route).toContain("<CustomizationCatalogSidebar");
+    expect(sidebar).toContain('data-testid="customization-catalog-sidebar"');
+    expect(sidebar).toContain('id: "plugins"');
+    expect(sidebar).toContain('id: "skills"');
+    expect(sidebar).toContain('id: "connectors"');
+    expect(sidebar).toContain('t("customization.installed")');
+  });
+
   test("labels the Automation hover tooltip as scheduled tasks", () => {
     const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
     const automation = source.slice(source.indexOf('label={t("navigation.automations")}'), source.indexOf('<AlarmClock />'));

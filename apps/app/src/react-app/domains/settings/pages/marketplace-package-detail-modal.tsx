@@ -36,7 +36,7 @@ export type MarketplacePackageDetailModalProps = {
   onOpenAccount: () => void;
   onConnectOrgMcp?: (connectionId: string) => void;
   onRemovePlugin: (pluginId: string, pluginName: string) => void | Promise<void>;
-  onInstallPlugin: (marketplaceId: string, plugin: DenOrgPlugin) => void | Promise<void>;
+  onInstallPlugin: (marketplaceId: string | null, plugin: DenOrgPlugin) => void | Promise<void>;
   onRetryResolve: () => void;
   accessHint: string | null;
   canMutate: boolean;
@@ -113,7 +113,7 @@ export function MarketplacePackageDetailModal(props: MarketplacePackageDetailMod
       void props.onRemovePlugin(row.plugin.id, row.plugin.name);
       return;
     }
-    void props.onInstallPlugin(row.marketplaceId, row.plugin);
+    void props.onInstallPlugin(row.sourceMarketplaceId, row.plugin);
   };
 
   const primaryConnecting = lifecycle.state === "installing";
