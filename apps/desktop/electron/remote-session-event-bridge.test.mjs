@@ -9,7 +9,7 @@ const NOW = Date.parse("2026-08-09T12:00:00.000Z");
 
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
-/** @param {{ publish?: (event: unknown, options: { connectionGeneration: number }) => boolean, observeRun?: (input: any) => Promise<unknown>, listActiveRuns?: () => Promise<unknown>, resolveOwnership?: (input: any) => Promise<unknown>, timers?: any, logger?: any, subscriptionReadinessTimeoutMs?: number, subscriptionRetryDelaysMs?: number[], autoConnect?: boolean }} [input] */
+/** @param {{ publish?: (event: unknown, options: { connectionGeneration: number }) => boolean, publishActivityTaskStatus?: (event: unknown) => boolean | Promise<boolean>, observeRun?: (input: any) => Promise<unknown>, listActiveRuns?: () => Promise<unknown>, resolveOwnership?: (input: any) => Promise<unknown>, timers?: any, logger?: any, subscriptionReadinessTimeoutMs?: number, subscriptionRetryDelaysMs?: number[], autoConnect?: boolean }} [input] */
 function harness({ publish = () => true, publishActivityTaskStatus = null, observeRun, listActiveRuns = async () => ({ items: [] }), resolveOwnership = async ({ targetSessionId }) => ({ rootSessionId: targetSessionId, targetSessionId, parentSessionId: null }), timers = { setTimeout: (callback, delay) => { if (delay < 3_000) callback(); return 1; }, clearTimeout() {} }, logger = {}, subscriptionReadinessTimeoutMs, subscriptionRetryDelaysMs, autoConnect = true } = {}) {
   const subscriptions = [];
   const published = [];
@@ -71,7 +71,7 @@ function harness({ publish = () => true, publishActivityTaskStatus = null, obser
 describe("remote session event bridge", () => {
   it("reuses one global workspace subscription for device activity lifecycle", async () => {
     const lifecycle = [];
-    const h = harness({ publishActivityTaskStatus: (event) => lifecycle.push(event) });
+    const h = harness({ publishActivityTaskStatus: (event) => { lifecycle.push(event); return true; } });
     h.bridge.watch([{ id: "ws_1", name: "Workspace" }]);
     assert.equal(h.subscriptions.length, 1);
     await h.subscriptions[0].onConnected();

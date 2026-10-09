@@ -274,3 +274,11 @@ Release evidence: source commit `d08c5b4b20887725ccc309d1c0f3facf515d8601` (both
 - [ ] 30.3 Build and notarize committed macOS ARM64 `1.2.25` DMG and updater ZIP with final blockmaps and immutable manifest, then fully verify
 - [ ] 30.4 Upload and verify all five immutable Qiniu objects, then promote the Stable object using the exact audited exception without forced CDN convergence
 - [ ] 30.5 Open `1.2.25` in China then overseas Den while preserving `1.2.24`; update and deploy the website Mac download link, leaving Windows download links unchanged
+
+## 31. Prepare notarized macOS ARM64 1.2.26
+
+- [x] 31.1 Record the user's separate explicit authorizations for exact stable macOS ARM64 `1.2.26`: omit only the local real-client upgrade canary and forced mutable Stable cache expiry, refresh, and public convergence validation. These are not notarization exceptions; preserve all signing, app/DMG notarization, staples, Gatekeeper, packaged checks, immutable Qiniu/CDN verification, promotion locking, Stable object metadata verification, and serialized Den gates
+- [x] 31.2 Synchronize App, Desktop, and embedded Server versions to `1.2.26`; extend exact-version Qiniu evidence validation and tests, and validate OpenSpec without changing the lockfile
+- [ ] 31.3 Build, notarize, and verify committed macOS ARM64 `1.2.26` packages, blockmaps, and immutable manifest
+- [ ] 31.4 Upload and verify immutable Qiniu objects, then promote the locked Stable object under the separately audited exceptions
+- [ ] 31.5 Update China then overseas Den and verify public read-back; complete any separately authorized website rollout

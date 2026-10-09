@@ -98,23 +98,26 @@ The update flow SHALL preserve the current installation until a verified replace
 - **AND** an authenticated non-personal organization with a missing or stale local IM bootstrap can reprovision it and open Chat and Contacts after restart
 
 ### Requirement: Windows clients select only their native architecture
-The shared Windows `latest.yml` SHALL describe both x64 and arm64 installers under immutable architecture-specific paths. Its `files` array SHALL be authoritative, and the published manifest MUST NOT contain top-level `path` or `sha512`. Before `NsisUpdater` receives a candidate, the Windows runtime SHALL validate the complete shared inventory, select exactly the entry matching its native packaged architecture, replace the in-memory `files` inventory with that entry, and inject that entry's immutable URL and SHA-512 as the in-memory `path` and `sha512`. Those runtime-only selection fields MUST NOT be written back to or required from the shared manifest.
+The shared Windows `latest.yml` SHALL describe both x64 and arm64 installers under immutable architecture-specific paths. Its `files` array SHALL be authoritative. Before `NsisUpdater` receives a candidate, the Windows runtime SHALL validate the complete inventory and select only its native packaged architecture.
 
 #### Scenario: Windows x64 checks a dual-architecture manifest
 - **WHEN** an x64 package reads a shared manifest containing valid x64 and arm64 entries
 - **THEN** it validates both authoritative `files` entries and selects only the x64 signed EXE
 - **AND** it injects only the verified x64 entry into the in-memory native-updater selection
+- **AND** it replaces the in-memory `files` inventory with that entry and injects its immutable URL and SHA-512 as in-memory `path` and `sha512`
 - **AND** it does not download or execute the arm64 installer
 
 #### Scenario: Windows arm64 checks a dual-architecture manifest
 - **WHEN** an arm64 package reads a shared manifest containing valid x64 and arm64 entries
 - **THEN** it validates both authoritative `files` entries and selects only the arm64 signed EXE
 - **AND** it injects only the verified arm64 entry into the in-memory native-updater selection
+- **AND** it replaces the in-memory `files` inventory with that entry and injects its immutable URL and SHA-512 as in-memory `path` and `sha512`
 - **AND** it does not download or execute the x64 installer through emulation
 
 #### Scenario: Shared manifest contains top-level selection fields
 - **WHEN** the published shared manifest contains top-level `path` or `sha512`
 - **THEN** publication or packaged verification rejects it as architecture-biased
+- **AND** those runtime-only selection fields MUST NOT be written back to or required from the shared manifest
 - **AND** the client does not rely on those fields to select a Windows installer
 
 #### Scenario: Native entry is missing or ambiguous
@@ -162,7 +165,7 @@ Main SHALL issue an opaque, process-local, single-use `updateId` for an availabl
 - **THEN** Main rejects the replay and does not invoke the installer a second time
 
 ### Requirement: Windows upgrades preserve the deployed installer identity
-The Windows package SHALL use electron-builder's standard NSIS installer with the frozen application GUID `6fbd4568-b529-5610-b7ba-24eb7d10b064`. A machine containing only the exact one-off Windows `1.2.18` installation under `%LOCALAPPDATA%\Programs\JuggleWork` SHALL be migrated in place through its legacy uninstaller before the replacement is extracted. The migration MUST NOT accept a different version, path, incomplete installation, or an already-present standard installation as the legacy source.
+The Windows package SHALL use electron-builder's standard NSIS installer with the frozen application GUID `6fbd4568-b529-5610-b7ba-24eb7d10b064`. Only the exact one-off Windows `1.2.18` installation under `%LOCALAPPDATA%\Programs\JuggleWork` SHALL be migrated in place through its legacy uninstaller before replacement extraction.
 
 #### Scenario: Exact legacy 1.2.18 installation is upgraded
 - **WHEN** the legacy uninstall and private registry keys both identify version `1.2.18` at `%LOCALAPPDATA%\Programs\JuggleWork` and the expected executable and uninstaller exist
@@ -172,6 +175,7 @@ The Windows package SHALL use electron-builder's standard NSIS installer with th
 #### Scenario: Legacy identity is ambiguous or incomplete
 - **WHEN** the legacy version, registry paths, uninstall command, executable, or uninstaller does not exactly match the recognized `1.2.18` layout, or the standard GUID already has an installation location
 - **THEN** the installer does not treat that path as the legacy migration source
+- **AND** migration MUST NOT accept a different version, path, incomplete installation, or an already-present standard installation as the legacy source
 - **AND** it does not recursively remove a registry-supplied arbitrary directory
 
 #### Scenario: Legacy migration is interrupted before standard registration

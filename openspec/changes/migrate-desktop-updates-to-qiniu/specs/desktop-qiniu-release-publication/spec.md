@@ -65,26 +65,6 @@ The release process SHALL verify local artifacts, Qiniu object metadata, and pub
 ### Requirement: Stable macOS releases pass signing and notarization gates
 Stable macOS channel promotion SHALL require the expected bundle identity, Developer ID Team identity, hardened runtime, successful Apple notarization, stapling, and Gatekeeper acceptance.
 
-Stable `1.2.15` MAY use an explicitly audited one-time exception for notarization, stapling, and Gatekeeper status. The exception SHALL be rejected for any other version and SHALL NOT bypass Developer ID identity, Team identity, hardened runtime, artifact integrity, remote verification, or real-client canary requirements.
-
-Stable `1.2.16` MAY use a separately audited one-time exception for notarization, stapling, and Gatekeeper status, together with a separately audited pre-canary promotion exception so an operator can expose `1.2.16` to the installed `1.2.15` UI and perform the real-client update canary after promotion. Both exceptions SHALL be restricted to stable `1.2.16`; they SHALL NOT bypass Developer ID identity, Team identity, hardened runtime, artifact integrity, immutable publication, Qiniu/CDN verification, promotion locking, cache refresh, or public channel read-back. A present failed or mismatched canary SHALL NOT be ignored, and the successful post-promotion canary SHALL be recorded before the rollout is considered complete.
-
-Stable `1.2.17` MAY use a separately audited one-time exception for notarization, stapling, and Gatekeeper status only. The exception SHALL be restricted to exact stable `1.2.17` and SHALL NOT bypass a successful lower-version canary, Developer ID identity, Team identity, bundle identity, hardened runtime, artifact integrity, immutable publication, Qiniu/CDN verification, promotion locking, cache refresh, or public channel read-back.
-
-Stable `1.2.18` MAY use separately audited one-time exceptions for notarization, stapling, and Gatekeeper status and for the local macOS canary. Both exceptions SHALL be restricted to exact stable `1.2.18` and SHALL NOT apply to Windows or bypass Developer ID identity, Team identity, bundle identity, hardened runtime, package inventory, artifact integrity, immutable publication, Qiniu/CDN verification, promotion locking, cache refresh, or public channel read-back.
-
-Exact stable macOS `1.2.18` MAY retain the promoted channel object's observed `Cache-Control: public, max-age=31536000` under a separately audited operator exception. This exception SHALL NOT apply to another version, channel, platform, or object, and SHALL NOT permit different manifest bytes, a missing CDN refresh, a digest mismatch, or an absent public read-back.
-
-Exact stable macOS `1.2.19` MAY use separately audited one-time exceptions for notarization, stapling, and Gatekeeper status and for the local installation canary. Both exceptions SHALL be restricted to exact stable macOS `1.2.19`, SHALL NOT apply to Windows, and SHALL NOT bypass Developer ID identity, Team identity, bundle identity, hardened runtime, package inventory, artifact integrity, immutable publication, Qiniu/CDN byte verification, controlled channel cache metadata, promotion locking, cache refresh, public channel read-back, or serialized Den exposure.
-
-Exact stable macOS arm64 `1.2.20` MAY use separately audited one-time recovery exceptions for notarization, stapling, and Gatekeeper status and for the local installation canary. Both exceptions SHALL be restricted to exact stable macOS arm64 `1.2.20`, SHALL NOT apply to Windows or later versions, and SHALL NOT bypass Developer ID identity, Team identity, bundle identity, hardened runtime, packaged runtime-contract verification, complete ZIP/DMG/blockmap inventory, artifact integrity, immutable non-overwrite publication, Qiniu/CDN byte verification, controlled channel cache metadata, promotion locking, cache refresh, public channel read-back, or serialized Den exposure.
-
-Exact stable macOS arm64 `1.2.21` MAY retain the promoted channel object's observed `Cache-Control: public, max-age=31536000` under a separately audited operator exception. This exception SHALL apply only to `stable/mac/latest-mac.yml` carrying the exact verified `1.2.21` immutable-manifest bytes and SHALL NOT bypass Developer ID identity, notarization, stapling, Gatekeeper, immutable byte verification, a real lower-version canary, promotion locking, prior-channel digest comparison, CDN refresh, exact public digest/length read-back, mutable Stable-feed discovery, or serialized Den exposure.
-
-Exact stable macOS arm64 `1.2.22` MAY use a separately audited one-time exception for the local real-client upgrade canary. This exception SHALL be restricted to exact stable macOS arm64 `1.2.22` and SHALL NOT bypass Developer ID identity, Team identity, bundle identity, hardened runtime, successful Apple notarization, stapling, Gatekeeper acceptance, packaged runtime-contract verification, complete ZIP/DMG/blockmap inventory, immutable non-overwrite publication, Qiniu/CDN byte verification, controlled channel cache metadata, promotion locking, cache refresh, public channel read-back, or serialized Den exposure.
-
-Exact stable macOS arm64 `1.2.23` and `1.2.24` MAY each use separately audited one-time exceptions for the local real-client upgrade canary and mutable Stable channel cache convergence. These exceptions SHALL be restricted to the exact stable macOS arm64 version independently. The cache exception SHALL bypass only mutable-channel Cache-Control management, CDN refresh, and public Stable-manifest convergence validation; it SHALL NOT bypass the Stable object write, Qiniu metadata verification of the written channel object, promotion locking, immutable non-overwrite publication, or immutable Qiniu/CDN byte verification. Neither exception SHALL bypass Developer ID identity, Team identity, bundle identity, hardened runtime, successful Apple notarization, stapling, Gatekeeper acceptance, packaged runtime-contract verification, complete ZIP/DMG/blockmap inventory, or serialized Den exposure.
-
 #### Scenario: Stable candidate is fully trusted
 - **WHEN** codesign deep verification, notarization, stapling, and Gatekeeper assessment pass for the candidate
 - **THEN** the candidate may proceed to version-feed canary and stable promotion
@@ -98,6 +78,7 @@ Exact stable macOS arm64 `1.2.23` and `1.2.24` MAY each use separately audited o
 - **WHEN** an operator supplies the audited notarization-exception reason for stable `1.2.15`
 - **THEN** promotion may proceed without notarization, stapling, and Gatekeeper acceptance only after all remaining gates pass
 - **AND** the same exception fails closed for every other version or channel
+- **AND** stable `1.2.15` MAY use this explicitly audited one-time exception for notarization, stapling, and Gatekeeper status; it SHALL NOT bypass Developer ID identity, Team identity, hardened runtime, artifact integrity, remote verification, or real-client canary requirements
 
 #### Scenario: Explicit 1.2.16 live-upgrade exceptions
 - **WHEN** an operator separately authorizes unnotarized stable `1.2.16` publication and promotion before its real `1.2.15` client canary
@@ -105,42 +86,49 @@ Exact stable macOS arm64 `1.2.23` and `1.2.24` MAY each use separately audited o
 - **AND** both audited exception reasons are recorded with scope `stable-1.2.16-only`
 - **AND** the exceptions fail closed for Alpha, every other version, missing or short reasons, invalid signing identity, mismatched artifacts, or an existing failed canary
 - **AND** a real installed `1.2.15` client SHALL subsequently discover, download, install, and restart into `1.2.16`, and that result SHALL be recorded before rollout completion
+- **AND** stable `1.2.16` MAY use separately audited one-time exceptions for notarization, stapling, and Gatekeeper status and for pre-canary promotion to expose `1.2.16` to the installed `1.2.15` UI; neither exception SHALL bypass artifact integrity, immutable publication, Qiniu/CDN verification, promotion locking, cache refresh, or public channel read-back, and a present failed or mismatched canary SHALL NOT be ignored
 
 #### Scenario: Explicit 1.2.17 notarization exception
 - **WHEN** an operator authorizes unnotarized stable `1.2.17` publication
 - **THEN** tooling accepts a signed candidate only with an audited reason scoped to `stable-1.2.17-only`
 - **AND** it still requires a passed `1.2.16 → 1.2.17` canary and every non-Apple publication gate
 - **AND** it rejects the exception for any other version or channel
+- **AND** this one-time exception SHALL NOT bypass Developer ID identity, Team identity, bundle identity, hardened runtime, artifact integrity, immutable publication, Qiniu/CDN verification, promotion locking, cache refresh, or public channel read-back
 
 #### Scenario: Explicit 1.2.18 macOS exceptions
 - **WHEN** an operator authorizes unnotarized stable `1.2.18` publication without a local macOS canary
 - **THEN** tooling accepts a signed candidate only with separate audited notarization and pre-canary reasons scoped to `stable-1.2.18-only`
 - **AND** it still requires every non-Apple and non-canary publication gate
 - **AND** it rejects both exceptions for Windows, every other version, and every other channel
+- **AND** these one-time exceptions SHALL NOT bypass Developer ID identity, Team identity, bundle identity, hardened runtime, package inventory, artifact integrity, immutable publication, Qiniu/CDN verification, promotion locking, cache refresh, or public channel read-back
 
 #### Scenario: Explicit 1.2.18 channel-cache exception
 - **WHEN** exact stable macOS `1.2.18` has been promoted with the verified immutable manifest bytes and its mutable object inherits a one-year public cache response header
 - **THEN** an operator MAY explicitly authorize continuing the rollout without changing that header
 - **AND** the system still requires CDN refresh and exact public digest and length read-back
 - **AND** the exception is invalid for every other coordinate
+- **AND** this separately audited operator exception applies only to the observed `Cache-Control: public, max-age=31536000` on the promoted channel object and SHALL NOT permit different manifest bytes
 
 #### Scenario: Explicit 1.2.19 macOS release exceptions
 - **WHEN** an operator authorizes exact stable macOS `1.2.19` without production notarization or a local installation canary
 - **THEN** tooling accepts a signed candidate only with separate audited reasons scoped to `stable-1.2.19-only`
 - **AND** it still requires every signing, package, immutable publication, CDN byte, controlled cache metadata, lock, refresh, and public read-back gate
 - **AND** it rejects the exceptions for Windows, every other version, and every other channel
+- **AND** these one-time exceptions SHALL NOT bypass Developer ID identity, Team identity, bundle identity, hardened runtime, package inventory, artifact integrity, immutable publication, Qiniu/CDN byte verification, controlled channel cache metadata, promotion locking, cache refresh, public channel read-back, or serialized Den exposure
 
 #### Scenario: Explicit 1.2.20 macOS recovery exceptions
 - **WHEN** an operator authorizes exact stable macOS arm64 `1.2.20` without Apple notarization or a local installation canary
 - **THEN** tooling accepts a signed arm64 candidate only with separate audited reasons scoped to `stable-1.2.20-only`
 - **AND** it still requires packaged runtime-contract, signing, package inventory, immutable publication, CDN byte, controlled cache metadata, lock, refresh, and public read-back gates
 - **AND** it rejects the exceptions for Windows, every other architecture, every other version, and every other channel
+- **AND** these one-time recovery exceptions SHALL NOT bypass Developer ID identity, Team identity, bundle identity, hardened runtime, complete ZIP/DMG/blockmap inventory, artifact integrity, immutable non-overwrite publication, Qiniu/CDN byte verification, controlled channel cache metadata, promotion locking, cache refresh, public channel read-back, or serialized Den exposure
 
 #### Scenario: Explicit 1.2.21 channel-cache exception
 - **WHEN** exact stable macOS arm64 `1.2.21` has passed all release gates except the Qiniu management-API cache-metadata mutation and the operator explicitly directs promotion to continue
 - **THEN** the promoted mutable object MAY retain the observed one-year public cache header
 - **AND** the system still requires the exact verified manifest bytes, promotion lock, prior-digest race check, CDN refresh, digest and length convergence, mutable Stable-feed discovery, and China-then-overseas Den read-back
 - **AND** the exception is invalid for every other coordinate
+- **AND** this separately audited operator exception applies only to `stable/mac/latest-mac.yml` carrying the exact verified `1.2.21` immutable-manifest bytes and SHALL NOT bypass Developer ID identity, notarization, stapling, Gatekeeper, immutable byte verification, or a real lower-version canary
 
 #### Scenario: Explicit 1.2.22 macOS ARM64 pre-canary exception
 
@@ -148,6 +136,7 @@ Exact stable macOS arm64 `1.2.23` and `1.2.24` MAY each use separately audited o
 - **THEN** tooling accepts the fully signed, notarized, stapled, and Gatekeeper-accepted candidate only with an audited reason scoped to `stable-1.2.22-only`
 - **AND** it still requires packaged verification, immutable publication, CDN byte verification, controlled cache metadata, promotion locking, refresh, public read-back, and serialized Den exposure
 - **AND** it rejects the exception for Windows, x64, Alpha, every other version, and every other channel
+- **AND** this one-time exception SHALL NOT bypass Developer ID identity, Team identity, bundle identity, hardened runtime, packaged runtime-contract verification, complete ZIP/DMG/blockmap inventory, or immutable non-overwrite publication
 
 #### Scenario: Explicit 1.2.23 macOS ARM64 cache exception
 
@@ -155,12 +144,21 @@ Exact stable macOS arm64 `1.2.23` and `1.2.24` MAY each use separately audited o
 - **THEN** tooling writes and verifies the channel object under the promotion lock with an audited reason scoped to `stable-1.2.23-only`
 - **AND** it still requires immutable object verification, signed/notarized package verification, channel-object Qiniu metadata verification, and serialized Den exposure
 - **AND** it rejects the exception for Windows, x64, Alpha, every other version, and every other channel
+- **AND** exact stable macOS arm64 `1.2.23` MAY use separately audited one-time exceptions for the local real-client upgrade canary and mutable Stable channel cache convergence; the cache exception SHALL bypass only mutable-channel Cache-Control management, CDN refresh, and public Stable-manifest convergence validation
 
 #### Scenario: Explicit 1.2.24 macOS ARM64 release exceptions
 
 - **WHEN** an operator authorizes exact stable macOS ARM64 `1.2.24` without a local real-client upgrade canary and without forcing cached Stable-manifest convergence
 - **THEN** tooling requires separate audited reasons scoped to `stable-1.2.24-only` and still verifies signed and notarized packages, immutable CDN bytes, the locked Stable object write, and its Qiniu metadata
 - **AND** it rejects these exceptions for Windows, x64, Alpha, any other version, or any other channel
+- **AND** exact stable macOS arm64 `1.2.24` MAY independently use the same one-time pre-canary and cache-convergence exceptions; neither version's exceptions SHALL bypass Developer ID identity, Team identity, bundle identity, hardened runtime, successful Apple notarization, stapling, Gatekeeper acceptance, packaged runtime-contract verification, complete ZIP/DMG/blockmap inventory, immutable non-overwrite publication, immutable Qiniu/CDN byte verification, promotion locking, the Stable object write, Qiniu metadata verification of that object, or serialized Den exposure
+
+#### Scenario: Explicit 1.2.26 macOS ARM64 release exceptions
+
+- **WHEN** a user separately authorizes exact stable macOS ARM64 `1.2.26` without a local real-client upgrade canary and without forced mutable Stable cache expiry, CDN refresh, or public convergence validation
+- **THEN** tooling MAY omit only those two gates and SHALL record separate audited pre-canary and cache reasons scoped to `stable-1.2.26-only`
+- **AND** it SHALL still require Developer ID and Team identity, bundle identity, hardened runtime, accepted app and DMG notarization, staples, Gatekeeper, complete packaged verification, immutable non-overwrite publication and Qiniu/CDN byte verification, promotion locking and prior-digest race checks, Stable object write and Qiniu metadata verification, and serialized Den exposure
+- **AND** it SHALL reject a notarization exception, a present failed or mismatched canary, or either exception for Windows, x64, Alpha, another version, or another channel
 
 ### Requirement: Channel manifests have controlled cache behavior
 Mutable stable/alpha manifests SHALL use short-lived or revalidation-required caching, while immutable version objects SHALL use long-lived immutable caching.
@@ -258,31 +256,35 @@ Every rollout-eligible Windows EXE SHALL carry a valid SHA-256 Authenticode sign
 - **AND** no Windows immutable manifest, stable pointer, or Den metadata is changed
 
 ### Requirement: Windows uses one shared immutable and channel manifest
-The Windows x64 and arm64 inventory SHALL be merged deterministically into one immutable `v<version>/windows/latest.yml`. The manifest `files` array SHALL be the authoritative signed-installer inventory. The shared manifest MUST NOT contain top-level `path` or `sha512`, or architecture-selector fields that bias the shared bytes toward one architecture. Stable promotion SHALL publish those exact verified bytes as `stable/windows/latest.yml`; it MUST NOT independently regenerate, filter, or partially update the channel manifest.
+The Windows x64 and arm64 inventory SHALL be merged deterministically into one immutable `v<version>/windows/latest.yml`. Its `files` array SHALL be authoritative. Stable promotion SHALL publish those exact verified bytes as `stable/windows/latest.yml`.
 
 #### Scenario: Shared manifest is finalized
 - **WHEN** both final signed installers and blockmaps have passed verification
 - **THEN** one deterministic manifest lists exactly one immutable x64 installer URL and one immutable arm64 installer URL
 - **AND** each `files` entry carries the matching final signed EXE size and SHA-512
 - **AND** the manifest contains no top-level `path` or `sha512`
+- **AND** it MUST NOT contain architecture-selector fields that bias the shared bytes toward one architecture
 - **AND** duplicate architecture entries, mutable artifact URLs, cross-version URLs, relative URLs, and inconsistent versions are rejected
 
 #### Scenario: Stable pointer is promoted
 - **WHEN** all Windows promotion gates pass
 - **THEN** `stable/windows/latest.yml` is replaced with bytes whose digest exactly matches the verified immutable version manifest
+- **AND** promotion MUST NOT independently regenerate, filter, or partially update the channel manifest
 - **AND** the mutable manifest receives revalidation-required caching, CDN refresh, and public digest read-back
 
 ### Requirement: Promotion locks are independent by platform and channel
-Each mutable desktop channel manifest SHALL have its own cooperative non-overwrite promotion lock. In particular, `stable/windows`, `stable/mac`, and `alpha/mac` SHALL use independent lock keys, and one `stable/windows` lock SHALL serialize the complete shared x64/arm64 pointer update through CDN read-back. A participating publisher SHALL verify the lock it uploaded and, immediately before replacing the channel manifest, SHALL optimistically recheck lock ownership and the expected previous channel digest. This protocol MUST NOT be represented as a Qiniu/provider atomic compare-and-swap guarantee.
+Each mutable desktop channel manifest SHALL have its own cooperative non-overwrite promotion lock. A participating publisher SHALL verify its uploaded lock and optimistically recheck ownership and the expected previous channel digest immediately before replacement. This protocol MUST NOT be represented as a Qiniu/provider atomic compare-and-swap guarantee.
 
 #### Scenario: Windows and macOS promotions overlap
 - **WHEN** a publisher holds the `stable/windows` lock and another publisher promotes `stable/mac`
 - **THEN** the independent macOS promotion may proceed
+- **AND** `stable/windows`, `stable/mac`, and `alpha/mac` SHALL use independent lock keys
 - **AND** no second publisher may modify `stable/windows/latest.yml` until the Windows lock is released or explicitly recovered
 
 #### Scenario: Competing Windows promotion
 - **WHEN** another cooperating publisher owns the `stable/windows` lock
 - **THEN** the contender fails before changing cache metadata or channel bytes
+- **AND** one `stable/windows` lock SHALL serialize the complete shared x64/arm64 pointer update through CDN read-back
 - **AND** the lock evidence identifies the expected prior digest, candidate digest, owner, and acquisition time
 
 #### Scenario: Lock ownership or channel digest changes
