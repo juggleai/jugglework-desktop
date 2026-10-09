@@ -6,6 +6,7 @@ import {
   desktopRemoteOperationResultSchema,
   desktopRemoteSessionSnapshotV1Schema,
   desktopRemoteSessionSnapshotV2Schema,
+  isSafeDesktopRemoteAttachmentDataUrl,
 } from "../dist/runtime/desktop-remote-control.js";
 
 import {
@@ -181,6 +182,12 @@ export function normalizeRemoteMessagePart(part) {
   if (part.synthetic === true || part.ignored === true) return null;
   if ((part.type === "text" || part.type === "reasoning") && typeof part.text === "string") {
     return { type: part.type, id: part.id, text: safeRemoteText(part.text, SNAPSHOT_PART_TEXT_LIMIT) };
+  }
+  if (part.type === "file") {
+    const mime = typeof part.mime === "string" ? part.mime : part.mediaType;
+    if (typeof part.filename !== "string" || !part.filename.trim() || part.filename.length > 255 ||
+        /[\u0000-\u001f\u007f/\\]/.test(part.filename) || !isSafeDesktopRemoteAttachmentDataUrl(part.url, mime)) return null;
+    return { type: "file", id: part.id, mime, filename: part.filename, url: part.url };
   }
   if (part.type !== "tool" || typeof part.tool !== "string" || !identifierSchema.safeParse(part.tool).success) return null;
   /** @type {Record<string, unknown>} */

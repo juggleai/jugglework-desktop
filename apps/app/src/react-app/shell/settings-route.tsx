@@ -78,7 +78,11 @@ import "@/react-app/domains/settings/browser-extension-config";
 import "@/react-app/domains/settings/jugglework-voice-config";
 import "@/react-app/domains/settings/google-workspace-config";
 import { useSettingsExtensionController } from "@/react-app/domains/settings/settings-extension-controller";
-import { buildExtensionItems } from "@/react-app/domains/settings/extension-items";
+import {
+  buildExtensionItems,
+  builtInExtensionMcpServerNames,
+  isBuiltInExtensionMcpEntry,
+} from "@/react-app/domains/settings/extension-items";
 import { resolveConnectRowWorkspaceScope } from "@/react-app/domains/settings/connect-workspace-scope";
 import { isJuggleWorkExtensionEnabled, JUGGLEWORK_EXTENSION_STATE_CHANGED } from "@/react-app/domains/settings/extension-state";
 import { PreferencesView } from "@/react-app/domains/settings/pages/preferences-view";
@@ -135,6 +139,11 @@ import { useDenSession } from "@/react-app/domains/settings/cloud/use-den-sessio
 import { useControlAction, type JuggleWorkControlAction } from "./control/control-provider";
 import { useBootState } from "./boot-state";
 import { SettingsShell } from "@/react-app/domains/settings/shell/settings-shell";
+import {
+  CustomizationCatalogSidebar,
+  type CustomizationCatalogSection,
+  type CustomizationInstalledItem,
+} from "@/react-app/domains/settings/shell/customization-catalog-sidebar";
 import { createExtensionsStore, useExtensionsStoreSnapshot } from "@/react-app/domains/settings/state/extensions-store";
 import { usePlatform } from "@/react-app/kernel/platform";
 import { createLatestSyncQueue } from "@/react-app/kernel/latest-sync-queue";
@@ -193,14 +202,14 @@ import { recordInspectorEvent } from "../../app/lib/app-inspector";
 import { ensureDesktopLocalJuggleWorkConnection } from "./desktop-local-jugglework";
 import { resolveJuggleWorkConnection } from "./jugglework-connection";
 import { abortSessionSafe } from "@/app/lib/opencode-session";
-import { notifyAlert } from "./notifications";
+import { notifyAlert, requestOpenMarketplacePlugin } from "./notifications";
 import { useReloadCoordinator } from "./reload-coordinator";
 import { CommandPalette } from "./command-palette";
 import { buildCommandPaletteSessions } from "./command-palette-sessions";
 import { useCommandPaletteShortcut } from "./use-shell-shortcuts";
 import { type DenSettings } from "@/app/lib/den";
 import { readActiveWorkspaceId, readLastSessionFor, writeActiveWorkspaceId } from "./session-memory";
-import { settingsReturnRoute, workspaceAppsRoute, workspaceChatRoute, workspaceSessionRoute, workspaceSettingsRoute } from "./workspace-routes";
+import { settingsReturnRoute, workspaceAppsRoute, workspaceChatRoute, workspaceReviewsRoute, workspaceSessionRoute, workspaceSettingsRoute } from "./workspace-routes";
 import { getReactQueryClient } from "@/react-app/infra/query-client";
 import { refreshProviderListQueries } from "@/react-app/infra/provider-list-query";
 import { invalidateMediaModelQueries, runProviderMutationWithMediaRefresh, withProviderMediaModelRefresh } from "@/react-app/domains/connections/media-model-queries";
@@ -393,6 +402,8 @@ function settingsPathForRoute(route: ReturnType<typeof parseSettingsPath>) {
 export type SettingsSurfaceProps = {
   embedded?: boolean;
   contentOnly?: boolean;
+  /** Render the full plugin catalog when the dedicated Plugins app owns this embedded settings runtime. */
+  pluginCatalogOnly?: boolean;
   initialPath?: string;
   /** Keep parsing the retained settings route while this surface is hidden behind another app module. */
   routePath?: string;
@@ -1770,12 +1781,23 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     })),
     [connectionsSnapshot.mcpStatuses, globalMcpEntries],
   );
+  const pluginOwnedMcpServerNames = useMemo(
+    () => builtInExtensionMcpServerNames(connectionsStore.quickConnect),
+    [connectionsStore.quickConnect],
+  );
+  const standaloneGlobalConnectors = useMemo(
+    () => globalConnectors.filter((entry) => !pluginOwnedMcpServerNames.has(entry.name.trim().toLowerCase())),
+    [globalConnectors, pluginOwnedMcpServerNames],
+  );
   const globalUnconnectedConnectors = useMemo(() => {
     const globalNames = new Set(globalConnectors.map((entry) => entry.name.trim().toLowerCase()));
     return connectionsStore.quickConnect.filter((entry) => {
       const name = getMcpServerName(entry);
       // 全局连接器只接受真实 MCP 目录项。Provider、浏览器、Voice 等扩展也在统一
       // catalog 中，但没有 MCP resource，不能因为缺省 type 被误当成 remote MCP。
+      // Computer Use 等内置插件即使包含 MCP resource，也由插件详情管理，不再作为
+      // 独立连接器重复展示。
+      if (isBuiltInExtensionMcpEntry(entry)) return false;
       if ((entry.type !== "remote" && entry.type !== "local") || name === "jugglework-cloud" || entry.defaultHidden) return false;
       return !globalNames.has(name.toLowerCase());
     });
@@ -2139,12 +2161,38 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       importedCloudPlugins: extensionsSnapshot.importedCloudPlugins,
       pendingCloudPluginChanges: extensionsSnapshot.pendingCloudPluginChanges,
       cloudMarketplaces: extensionsSnapshot.cloudOrgMarketplaces,
+      cloudPlugins: extensionsSnapshot.cloudOrgPlugins,
       orgMcpConnections: orgMcpConnections.connections,
       enablementContext,
       isBuiltInConnected: extensionController.isConnected,
     }),
     [connectionsSnapshot.mcpServers, connectionsStore.quickConnect, enablementContext, extensionController, extensionsSnapshot, extensionsStore, orgMcpConnections.connections],
   );
+  const customizationInstalledItems = useMemo<CustomizationInstalledItem[]>(() => {
+    const items = new Map<string, CustomizationInstalledItem>();
+    const add = (item: CustomizationInstalledItem) => {
+      const key = `${item.section}:${item.name.trim().toLocaleLowerCase()}`;
+      if (item.name.trim() && !items.has(key)) items.set(key, item);
+    };
+
+    for (const item of extensionItems.items) {
+      if (item.installState === "available") continue;
+      const section: CustomizationCatalogSection = item.source === "skill"
+        ? "skills"
+        : item.source === "mcp-directory" || item.source === "org-connection"
+          ? "connectors"
+          : "plugins";
+      add({ id: item.id, name: item.name, section });
+    }
+    for (const skill of globalSkills) {
+      add({ id: `global-skill:${skill.path || skill.name}`, name: skill.name, section: "skills" });
+    }
+    for (const connector of standaloneGlobalConnectors) {
+      add({ id: `global-connector:${connector.name}`, name: connector.name, section: "connectors" });
+    }
+
+    return [...items.values()].sort((left, right) => left.name.localeCompare(right.name, currentLocale()));
+  }, [extensionItems.items, globalSkills, standaloneGlobalConnectors]);
   const organizationConnectionsProbe = resolveOrganizationConnectionsProbe({
     signedIn: cloudSession.isSignedIn,
     activeOrganizationId: cloudSession.activeOrganization?.id,
@@ -2655,7 +2703,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         return (
           <GlobalConnectorsView
             busy={busy}
-            connectors={globalConnectors}
+            connectors={standaloneGlobalConnectors}
             unconnected={globalUnconnectedConnectors}
             error={globalConnectorsError}
             pendingConnectorName={pendingGlobalConnector}
@@ -2672,6 +2720,33 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
           />
         );
       case "extensions": {
+        if (props.pluginCatalogOnly) {
+          return (
+            <CloudMarketplacesView
+              extensions={extensionsStore}
+              onOpenAccount={openCloudAccountSettings}
+              session={denSession}
+              builtInEntries={extensionItems.builtInItems.flatMap((item) => item.builtInEntry ? [item.builtInEntry] : [])}
+              enablementContext={enablementContext}
+              builtInExtensionsDisabled={builtInExtensionsDisabled}
+              builtInConnectingName={connectionsSnapshot.mcpConnectingName}
+              configSlotForBuiltIn={extensionController.configSlotForEntry}
+              isBuiltInConnected={extensionController.isConnected}
+              extensionItems={extensionItems.items}
+              orgMcpConnections={orgMcpConnections.connections}
+              orgMcpConnectingId={orgMcpConnections.connectingId}
+              orgMcpDisconnectingId={orgMcpConnections.disconnectingId}
+              onConnectOrgMcp={(connectionId) => { void orgMcpConnections.connect(connectionId); }}
+              onDisconnectOrgMcp={(connectionId) => { void orgMcpConnections.disconnect(connectionId); }}
+              refreshOrgMcpConnections={orgMcpConnections.refresh}
+              workspaceKey={runtimeWorkspaceId || selectedWorkspaceRoot}
+              uniformCardHeight
+              plainCards
+              title={t("project_extensions.group_plugin")}
+              description={t("customization.plugins_description")}
+            />
+          );
+        }
         // TIPS: 仅会话右侧 rail（embedded）改为分组卡片面板；独立设置页维持既有 ExtensionsView。
         if (props.embedded) {
           const projectConnectors = buildProjectConnectors({
@@ -3005,8 +3080,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     }
   })();
 
-  return (
-    <>
+  const settingsSurface = (
       <SettingsShell
         activeTab={route.tab}
         onSelectTab={(tab) => navigateSettingsPath(tab)}
@@ -3027,6 +3101,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         ))}
         onOpenApps={() => navigate(workspaceAppsRoute(selectedWorkspaceId))}
         onOpenChat={() => navigate(workspaceChatRoute(selectedWorkspaceId))}
+        onOpenReviews={() => navigate(workspaceReviewsRoute(selectedWorkspaceId))}
         onOpenTaskSearch={() => setCommandPaletteOpen(true)}
         onOpenCreateWorkspace={(screen = "chooser") => openCreateWorkspace(screen)}
         headerStatus={routeJuggleWorkStatus}
@@ -3041,11 +3116,44 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         ))}
         compact={props.embedded}
         contentOnly={props.contentOnly}
+        suppressContentOnlyTitlebarSpacer={props.pluginCatalogOnly}
         compactTitle={Boolean(props.embedded) && route.tab === "extensions" ? t("project_extensions.panel_title") : undefined}
         hideHeading={Boolean(props.embedded) && route.tab === "extensions"}
       >
         {settingsView}
       </SettingsShell>
+  );
+
+  const customizationActiveSection: CustomizationCatalogSection = route.tab === "skills"
+    ? "skills"
+    : route.tab === "connectors"
+      ? "connectors"
+      : "plugins";
+  const openCustomizationSection = (section: CustomizationCatalogSection) => {
+    navigateSettingsPath(section === "plugins" ? "extensions/plugins" : section);
+  };
+  const openInstalledCustomizationItem = (item: CustomizationInstalledItem) => {
+    openCustomizationSection(item.section);
+    if (item.section === "plugins") {
+      window.requestAnimationFrame(() => requestOpenMarketplacePlugin(item.name));
+    }
+  };
+
+  return (
+    <>
+      {props.pluginCatalogOnly ? (
+        <div className="flex h-full min-h-0 w-full overflow-hidden" data-testid="customization-catalog-layout">
+          <CustomizationCatalogSidebar
+            activeSection={customizationActiveSection}
+            installedItems={customizationInstalledItems}
+            onSelectSection={openCustomizationSection}
+            onSelectInstalledItem={openInstalledCustomizationItem}
+          />
+          <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
+            {settingsSurface}
+          </div>
+        </div>
+      ) : settingsSurface}
 
       <CommandPalette
         open={commandPaletteOpen}

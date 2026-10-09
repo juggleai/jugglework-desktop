@@ -5,6 +5,7 @@ export type WorkspaceAppPath =
   | { view: "settings"; workspaceId: string | null }
   | { view: "apps"; workspaceId: string | null }
   | { view: "chat"; workspaceId: string | null }
+  | { view: "reviews"; workspaceId: string; reviewId: string | null }
   | { view: "automations"; workspaceId: null }
   | null;
 
@@ -72,6 +73,15 @@ export function parseWorkspaceAppPath(pathname: string): WorkspaceAppPath {
     return { view: "chat", workspaceId: null };
   }
 
+  const workspaceReviews = pathname.match(/^\/workspace\/([^/]+)\/reviews(?:\/([^/]+))?\/?$/);
+  if (workspaceReviews) {
+    return {
+      view: "reviews",
+      workspaceId: decodeRoutePart(workspaceReviews[1]),
+      reviewId: decodeRoutePart(workspaceReviews[2]) || null,
+    };
+  }
+
   if (/^\/automations(?:\/.*)?$/.test(pathname)) {
     return { view: "automations", workspaceId: null };
   }
@@ -95,6 +105,14 @@ export function workspaceChatRoute(workspaceId?: string | null) {
 export function workspaceAppsRoute(workspaceId?: string | null) {
   const workspace = workspaceId?.trim();
   return workspace ? `/workspace/${encodeURIComponent(workspace)}/apps` : "/apps";
+}
+
+export function workspaceReviewsRoute(workspaceId: string, reviewId?: string | null) {
+  const workspace = encodeURIComponent(workspaceId.trim());
+  const review = reviewId?.trim();
+  return review
+    ? `/workspace/${workspace}/reviews/${encodeURIComponent(review)}`
+    : `/workspace/${workspace}/reviews`;
 }
 
 export function settingsReturnRoute(

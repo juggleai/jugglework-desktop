@@ -259,6 +259,7 @@ export type SessionSurfaceProps = {
   onOpenTarget?: (target: OpenTarget, options?: OpenTargetOptions, sessionId?: string) => void;
   environmentRuntimeKey?: string | null;
   onApplyEnvironmentChanges?: () => Promise<ApplyEnvironmentChangesResult>;
+  quickNavigationLeftOffset?: number;
 };
 
 function messageToReadableText(message: UIMessage) {
@@ -2487,6 +2488,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
           containerRef={scrollRef}
           contentRef={contentRef}
           onNavigate={sessionScroll.jumpToMessage}
+          leftOffset={props.quickNavigationLeftOffset}
         />
         <SessionFindBar
           sessionId={props.sessionId}

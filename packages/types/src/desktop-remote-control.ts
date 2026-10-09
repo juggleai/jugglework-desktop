@@ -4,6 +4,25 @@ export const DESKTOP_REMOTE_SCHEMA_VERSION = 1 as const
 export const DESKTOP_REMOTE_PROTOCOL_VERSION = 1 as const
 export const DESKTOP_REMOTE_PAYLOAD_VERSION = 1 as const
 export const DESKTOP_REMOTE_DESCENDANT_PAYLOAD_VERSION = 2 as const
+export const DESKTOP_REMOTE_ATTACHMENT_MAX_FILES = 3
+export const DESKTOP_REMOTE_ATTACHMENT_MAX_DECODED_BYTES = 256 * 1024
+// Leaves room for encryption/base64 and envelope metadata under the 2 MiB WSS cap.
+export const DESKTOP_REMOTE_PROMPT_MAX_ENCODED_BYTES = 1_300_000
+
+export const desktopRemoteAttachmentMimeValues = [
+  "image/png",
+  "image/jpeg",
+  "image/gif",
+  "image/webp",
+  "application/pdf",
+  "application/json",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "text/plain",
+  "text/markdown",
+  "text/csv",
+] as const
 
 export const DESKTOP_REMOTE_SUPPORTED_PROTOCOL_VERSIONS = [
   DESKTOP_REMOTE_PROTOCOL_VERSION,
@@ -26,6 +45,55 @@ const identifierSchema = z
   .max(256)
   .refine((value) => !/[\u0000-\u001f\u007f]/.test(value), "identifier cannot contain control characters")
 const displayTextSchema = z.string().trim().min(1).max(500)
+const desktopRemoteAttachmentMimeSchema = z.enum(desktopRemoteAttachmentMimeValues)
+const attachmentFilenameSchema = z.string().trim().min(1).max(255)
+  .refine((value) => !/[\u0000-\u001f\u007f/\\]/.test(value), "filename is invalid")
+
+function decodedBase64ByteLength(value: string): number | null {
+  if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) return null
+  return (value.length / 4) * 3 - (value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0)
+}
+
+export function isSafeDesktopRemoteAttachmentDataUrl(url: unknown, mime: unknown): url is string {
+  if (typeof url !== "string" || typeof mime !== "string" || !desktopRemoteAttachmentMimeSchema.safeParse(mime).success) return false
+  const prefix = `data:${mime};base64,`
+  if (!url.startsWith(prefix)) return false
+  const decodedBytes = decodedBase64ByteLength(url.slice(prefix.length))
+  return decodedBytes !== null && decodedBytes <= DESKTOP_REMOTE_ATTACHMENT_MAX_DECODED_BYTES
+}
+
+const desktopRemotePromptFileShape = {
+  type: z.literal("file"),
+  mime: desktopRemoteAttachmentMimeSchema,
+  filename: attachmentFilenameSchema,
+  url: z.string().max(400_000),
+} as const
+
+export const desktopRemotePromptPartSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("text"), text: z.string().min(1).max(200_000) }).strict(),
+  z.object(desktopRemotePromptFileShape).strict().superRefine((part, context) => {
+    if (!isSafeDesktopRemoteAttachmentDataUrl(part.url, part.mime)) {
+      context.addIssue({ code: "custom", message: "file must be a bounded matching data URL", path: ["url"] })
+    }
+  }),
+])
+export type DesktopRemotePromptPart = z.infer<typeof desktopRemotePromptPartSchema>
+
+const desktopRemotePromptPartsSchema = z.array(desktopRemotePromptPartSchema).min(1).max(1_000).superRefine((parts, context) => {
+  if (parts.filter((part) => part.type === "file").length > DESKTOP_REMOTE_ATTACHMENT_MAX_FILES) {
+    context.addIssue({ code: "custom", message: "prompt may contain at most 3 files" })
+  }
+  const text = parts.flatMap((part) => part.type === "text" ? [part.text] : []).join("")
+  if (new TextEncoder().encode(text).byteLength > 200_000) {
+    context.addIssue({ code: "custom", message: "prompt text must be at most 200000 UTF-8 bytes" })
+  }
+  if (!text.trim() && !parts.some((part) => part.type === "file")) {
+    context.addIssue({ code: "custom", message: "prompt must contain non-blank text or a file" })
+  }
+  if (new TextEncoder().encode(JSON.stringify(parts)).byteLength > DESKTOP_REMOTE_PROMPT_MAX_ENCODED_BYTES) {
+    context.addIssue({ code: "custom", message: "encoded prompt is too large" })
+  }
+})
 
 function sessionCreateTitleScalarCount(value: string): number | null {
   if (/\p{Cc}/u.test(value)) return null
@@ -104,6 +172,7 @@ export const desktopRemoteMutationOperationValues = [
 
 export const desktopRemoteDescendantOperationValues = [
   "session.snapshot",
+  "session.prompt",
   "interaction.permission.reply",
   "interaction.question.reply",
 ] as const satisfies readonly DesktopRemoteOperation[]
@@ -516,6 +585,17 @@ export type DesktopRemoteSessionSummary = z.infer<
 export const desktopRemoteMessagePartSchema = z.discriminatedUnion("type", [
   z
     .object({
+      id: identifierSchema,
+      ...desktopRemotePromptFileShape,
+    })
+    .strict()
+    .superRefine((part, context) => {
+      if (!isSafeDesktopRemoteAttachmentDataUrl(part.url, part.mime)) {
+        context.addIssue({ code: "custom", message: "file must be a bounded matching data URL", path: ["url"] })
+      }
+    }),
+  z
+    .object({
       type: z.literal("text"),
       id: identifierSchema,
       text: z.string().max(2_000_000),
@@ -764,6 +844,18 @@ const sessionPromptRequestSchema = z
       .strict(),
   })
   .strict()
+const sessionPromptV2RequestSchema = z
+  .object({
+    operation: z.literal("session.prompt"),
+    payloadVersion: z.literal(DESKTOP_REMOTE_DESCENDANT_PAYLOAD_VERSION),
+    arguments: z.object({
+      workspaceId: identifierSchema,
+      sessionId: identifierSchema,
+      parts: desktopRemotePromptPartsSchema,
+      whenBusy: z.enum(["reject", "steer", "enqueue"]).default("reject"),
+    }).strict(),
+  })
+  .strict()
 const sessionCreateRequestSchema = z
   .object({
     operation: z.literal("session.create"),
@@ -893,6 +985,7 @@ export const desktopRemoteOperationRequestSchema = z.union([
   ]),
   z.union([
     sessionSnapshotV2RequestSchema,
+    sessionPromptV2RequestSchema,
     permissionReplyV2RequestSchema,
     questionReplyV2RequestSchema,
   ]),
@@ -943,7 +1036,7 @@ export const desktopRemoteOperationResultSchema = z.union([
     z
       .object({
         operation: z.literal("session.prompt"),
-        payloadVersion: z.literal(DESKTOP_REMOTE_PAYLOAD_VERSION),
+        payloadVersion: desktopRemotePayloadVersionSchema,
         result: z.discriminatedUnion("disposition", [
           z.object({ disposition: z.literal("started"), runId: identifierSchema, generation: z.number().int().positive() }).strict(),
           z.object({ disposition: z.literal("steered"), pendingOperationId: identifierSchema, admittedId: identifierSchema }).strict(),

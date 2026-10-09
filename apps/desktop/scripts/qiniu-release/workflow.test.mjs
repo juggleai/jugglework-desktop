@@ -484,7 +484,7 @@ test("stable macOS arm64 1.2.23 cache exception promotes without cache metadata,
   assert.equal(qiniu.state.has("jugglework/releases/locks/stable-mac.lock"), false);
 });
 
-for (const version of ["1.2.24", "1.2.25"]) {
+for (const version of ["1.2.24", "1.2.25", "1.2.26"]) {
   test(`stable macOS arm64 ${version} cache exception still verifies the channel object under lock`, async () => {
     const plan = fixturePlan(version);
     const initial = new Map([...plan.objects, plan.manifest].map((item) => [item.key, { size: item.size, etag: item.etag }]));

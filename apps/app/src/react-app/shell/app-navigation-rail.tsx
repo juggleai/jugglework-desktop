@@ -8,15 +8,15 @@ import {
   Cloud,
   Coins,
   ContactRound,
-  FolderOpen,
-  FolderPlus,
+  Ellipsis,
   Globe,
   HelpCircle,
+  House,
   LogOut,
   MessageSquare,
-  Plus,
+  GitPullRequestArrow,
+  Pin,
   RefreshCw,
-  Search,
   Settings,
   Sparkles,
 } from "lucide-react";
@@ -32,6 +32,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { toast } from "@/components/ui/sonner";
 import { cn } from "@/lib/utils";
 import { currentLocale, t } from "@/i18n";
@@ -42,19 +43,27 @@ import { useJuggleChatStore } from "@/react-app/domains/jugglechat/store";
 import { useUpdateCheckRequestStore } from "@/react-app/domains/settings/state/update-check-request";
 import { useNotificationStore } from "@/react-app/kernel/notification-store";
 import { usePlatform } from "@/react-app/kernel/platform";
-import { setTaskScope, useTaskScope } from "@/react-app/domains/session/sidebar/task-scope-store";
+import { setTaskScope, useTaskScope, type TaskScope } from "@/react-app/domains/session/sidebar/task-scope-store";
 import { useLocalWorkspaceIndicator } from "@/react-app/domains/session/sidebar/workspace-indicator-store";
 import { SessionCircularProgress } from "@/react-app/domains/session/sidebar/session-circular-progress";
 import type { WorkspaceSessionIndicator } from "@/react-app/domains/session/sidebar/utils";
 import type { OpenCreateWorkspace } from "@/react-app/domains/workspace/types";
 import { APP_PRIMARY_RAIL_ORDER } from "./app-navigation-order";
+import {
+  APP_NAVIGATION_PINS_STORAGE_KEY,
+  appNavigationPinsChangedEvent,
+  readPinnedAppNavigationItems,
+  setAppNavigationItemPinned,
+  type PinnableAppNavigationItem,
+} from "./app-navigation-pins";
 import { LOCAL_AUTOMATION_ENABLED } from "@/react-app/domains/automations/automation-feature-flags";
 import { isIMNavigationVisible, visibleLocalWorkspaceIndicator } from "./app-navigation-status";
 import { accountDisplayName, membershipTierLabel, membershipUpgradeContext, organizationMenuGroups } from "./account-menu-model";
+import { PluginOrbitIcon } from "@/react-app/design-system/plugin-orbit-icon";
 
 export { APP_PRIMARY_RAIL_ORDER } from "./app-navigation-order";
 
-export const APP_NAVIGATION_RAIL_WIDTH = 72;
+export const APP_NAVIGATION_RAIL_WIDTH = 48;
 
 type AppNavigationRailProps = {
   /** Home surface is the visible one — its rail button reflects the task scope. */
@@ -62,15 +71,19 @@ type AppNavigationRailProps = {
   appsActive?: boolean;
   settingsActive?: boolean;
   chatActive?: boolean;
+  reviewsActive?: boolean;
   onOpenAccount: () => void;
   onOpenHome: () => void;
   onOpenApps: () => void;
   onOpenChat: () => void;
+  onOpenReviews: () => void;
   onOpenSettings: () => void;
   /** Opens the cross-workspace task search dialog when the session shell owns it. */
   onOpenTaskSearch?: () => void;
   /** Opens the requested workspace creation flow when the session shell owns it. */
   onOpenCreateWorkspace?: OpenCreateWorkspace;
+  onPreviewMenuChange?: (scope: TaskScope | null) => void;
+  suppressPreviewMenuTooltips?: boolean;
 };
 
 type RailButtonProps = {
@@ -84,7 +97,35 @@ type RailButtonProps = {
   badgeLabel?: string;
   badgeVariant?: "count" | "dot";
   statusIndicator?: WorkspaceSessionIndicator;
+  showTooltip?: boolean;
+  tooltipLabel?: string;
+  previewScope?: TaskScope;
+  onPreviewMenuChange?: (scope: TaskScope | null) => void;
 };
+
+function LocalWorkspaceIcon({ active }: { active: boolean }) {
+  if (!active) {
+    return <House className="size-5 text-current" strokeWidth={1.85} data-local-workspace-icon="outline" />;
+  }
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      className="size-5 text-current"
+      data-local-workspace-icon="filled"
+    >
+      <path
+        d="M3.35 10.05c0-.58.25-1.13.69-1.51l6.67-5.72a2 2 0 0 1 2.58 0l6.67 5.72c.44.38.69.93.69 1.51V19a2 2 0 0 1-2 2H5.35a2 2 0 0 1-2-2v-8.95Z"
+        fill="currentColor"
+      />
+      <path
+        d="M9.75 21v-5.8c0-.66.54-1.2 1.2-1.2h2.1c.66 0 1.2.54 1.2 1.2V21h-4.5Z"
+        fill="var(--dls-active)"
+        data-local-workspace-doorway
+      />
+    </svg>
+  );
+}
 
 function RailButton({
   label,
@@ -97,21 +138,30 @@ function RailButton({
   badgeLabel,
   badgeVariant = "count",
   statusIndicator = null,
+  showTooltip = true,
+  tooltipLabel,
+  previewScope,
+  onPreviewMenuChange,
 }: RailButtonProps) {
   const resolvedBadgeLabel = badgeLabel ?? t("chat.unread_count", { count: badge });
-  return (
+  const button = (
     <button
       type="button"
       aria-label={badge > 0 ? `${label}, ${resolvedBadgeLabel}` : label}
-      title={label}
+      title={showTooltip ? label : undefined}
       disabled={disabled}
       onClick={onClick}
+      onMouseEnter={() => onPreviewMenuChange?.(previewScope ?? null)}
+      onMouseLeave={() => onPreviewMenuChange?.(null)}
       data-testid={testId}
+      data-app-rail-button
+      data-active={active ? "true" : undefined}
       className={cn(
-        "relative flex size-11 items-center justify-center rounded-2xl border border-transparent text-dls-secondary transition-colors mac:titlebar-no-drag [&>svg]:size-5 [&>svg]:stroke-[1.8]",
-        "hover:border-dls-border hover:bg-background hover:text-dls-text",
-        active && "border-dls-border bg-background text-dls-text shadow-sm",
-        disabled && "cursor-default opacity-45 hover:border-transparent hover:bg-transparent hover:text-dls-secondary",
+        "relative flex size-9 items-center justify-center rounded-xl text-dls-secondary/80 transition-[background-color,color,transform] duration-150 mac:titlebar-no-drag [&>svg]:size-5 [&>svg]:stroke-[1.85]",
+        "hover:bg-dls-hover hover:text-dls-text active:scale-[0.96]",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/35 focus-visible:ring-offset-1 focus-visible:ring-offset-dls-sidebar",
+        active && "bg-dls-active [&>svg]:fill-current",
+        disabled && "cursor-default opacity-40 hover:bg-transparent hover:text-dls-secondary active:scale-100",
       )}
     >
       {children}
@@ -119,7 +169,7 @@ function RailButton({
         <span
           className={cn(
             "absolute flex items-center justify-center",
-            statusIndicator === "running" ? "right-0 top-0 size-4" : "right-0.5 top-0.5 size-2.5",
+            statusIndicator === "running" ? "-right-0.5 -top-0.5 size-4" : "right-0 top-0 size-2.5",
           )}
           title={statusIndicator === "running" ? t("workspace_list.session_streaming") : t("workspace_list.session_completed_unseen")}
           aria-label={statusIndicator === "running" ? t("workspace_list.session_streaming") : t("workspace_list.session_completed_unseen")}
@@ -133,16 +183,31 @@ function RailButton({
       ) : null}
       {badge > 0 ? badgeVariant === "dot" ? (
         <span
-          className="absolute right-0.5 top-0.5 size-2.5 rounded-full border-2 border-dls-sidebar bg-red-9"
+          className="absolute right-0 top-0 size-2.5 rounded-full border-2 border-dls-sidebar bg-red-9"
           aria-hidden="true"
           data-rail-unread-dot
         />
       ) : (
-        <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full border-2 border-dls-sidebar bg-red-9 px-1 text-[10px] font-semibold leading-none text-white" aria-hidden="true">
+        <span className="absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full border-2 border-dls-sidebar bg-red-9 px-1 text-[10px] font-semibold leading-none text-white" aria-hidden="true">
           {badge > 99 ? "99+" : badge}
         </span>
       ) : null}
     </button>
+  );
+  if (!showTooltip) return button;
+  return (
+    <Tooltip>
+      <TooltipTrigger render={button} />
+      <TooltipContent
+        side="right"
+        sideOffset={6}
+        hideArrow
+        className="rounded-xl border border-dls-border bg-dls-active px-2.5 py-1.5 text-xs font-normal text-dls-text shadow-[0_6px_18px_rgba(0,0,0,0.24)]"
+        data-app-rail-tooltip
+      >
+        {tooltipLabel ?? label}
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -174,6 +239,32 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
   ));
   const bootstrapChat = useJuggleChatStore((state) => state.bootstrap);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [navigationMenuOpen, setNavigationMenuOpen] = useState(false);
+  const [pinnedNavigationItems, setPinnedNavigationItems] = useState<PinnableAppNavigationItem[]>(
+    readPinnedAppNavigationItems,
+  );
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const syncPinnedItems = (event: Event) => {
+      if (event.type === "storage") {
+        const storageEvent = event as StorageEvent;
+        if (storageEvent.key !== APP_NAVIGATION_PINS_STORAGE_KEY) return;
+        setPinnedNavigationItems(readPinnedAppNavigationItems());
+        return;
+      }
+      const detail = event instanceof CustomEvent
+        ? event.detail as PinnableAppNavigationItem[] | undefined
+        : undefined;
+      setPinnedNavigationItems(detail ?? readPinnedAppNavigationItems());
+    };
+    window.addEventListener("storage", syncPinnedItems);
+    window.addEventListener(appNavigationPinsChangedEvent, syncPinnedItems);
+    return () => {
+      window.removeEventListener("storage", syncPinnedItems);
+      window.removeEventListener(appNavigationPinsChangedEvent, syncPinnedItems);
+    };
+  }, []);
 
   useEffect(() => {
     void bootstrapChat(user);
@@ -187,6 +278,14 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
   const openChatView = (view: "conversations" | "contacts") => {
     useJuggleChatStore.getState().setView(view);
     if (!props.chatActive) props.onOpenChat();
+  };
+  const reviewsPinned = pinnedNavigationItems.includes("reviews");
+  const openReviews = () => {
+    setNavigationMenuOpen(false);
+    props.onOpenReviews();
+  };
+  const toggleReviewsPinned = () => {
+    setPinnedNavigationItems(setAppNavigationItemPinned("reviews", !reviewsPinned));
   };
   const identity = accountDisplayName(user);
   const initial = identity.slice(0, 1).toLocaleUpperCase();
@@ -236,96 +335,52 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
   return (
     <aside
       aria-label={t("navigation.primary")}
-      className="flex h-full w-[72px] shrink-0 flex-col items-center border-r border-dls-border bg-dls-sidebar px-2 pb-3 pt-3 mac:titlebar-drag mac:pt-11"
+      data-app-navigation-rail
+      className="flex h-full w-12 shrink-0 flex-col items-center bg-dls-sidebar px-1 pb-2.5 pt-2 mac:titlebar-drag mac:pt-[52px]"
     >
-      <nav className="flex flex-col items-center gap-3" data-rail-order={APP_PRIMARY_RAIL_ORDER.join(",")}>
-        {props.onOpenTaskSearch ? (
-          <RailButton
-            label={t("workspace_list.search_sessions")}
-            onClick={props.onOpenTaskSearch}
-            testId="app-rail-task-search"
-          >
-            <Search />
-          </RailButton>
-        ) : null}
-        {props.onOpenCreateWorkspace ? (
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              render={(
-                <button
-                  type="button"
-                  aria-label={t("workspace.create_workspace")}
-                  title={t("workspace.create_workspace")}
-                  data-testid="app-rail-create-workspace"
-                  className={cn(
-                    "relative flex size-11 items-center justify-center rounded-2xl border border-transparent text-dls-secondary transition-colors mac:titlebar-no-drag",
-                    "hover:border-dls-border hover:bg-background hover:text-dls-text",
-                    "data-popup-open:border-dls-border data-popup-open:bg-background data-popup-open:text-dls-text data-popup-open:shadow-sm",
-                    "[&>svg]:size-5 [&>svg]:stroke-[1.8]",
-                  )}
-                >
-                  <Plus />
-                </button>
-              )}
-            />
-            <DropdownMenuContent
-              side="right"
-              align="start"
-              sideOffset={8}
-              className="workspace-create-menu w-[184px] rounded-2xl bg-popover/95 p-1.5 shadow-[0_12px_32px_rgba(0,0,0,0.16)] ring-1 ring-foreground/10 backdrop-blur-xl"
-            >
-              <DropdownMenuItem
-                onClick={() => props.onOpenCreateWorkspace?.("local")}
-                className="min-h-10 gap-2.5 rounded-[10px] px-2.5 py-2 text-[14px] font-normal leading-5"
-                data-testid="app-rail-create-local-workspace"
-              >
-                <FolderPlus className="size-[18px] stroke-[1.7] text-dls-secondary" />
-                {t("navigation.local_workspace")}
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={() => props.onOpenCreateWorkspace?.("remote")}
-                className="min-h-10 gap-2.5 rounded-[10px] px-2.5 py-2 text-[14px] font-normal leading-5"
-                data-testid="app-rail-create-cloud-workspace"
-              >
-                <Globe className="size-[18px] stroke-[1.7] text-dls-secondary" />
-                {t("navigation.cloud_workspace")}
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        ) : null}
+      <nav className="flex flex-col items-center gap-2" data-rail-order={APP_PRIMARY_RAIL_ORDER.join(",")}>
         <RailButton
           label={t("navigation.local_workspace")}
           active={props.homeActive && taskScope === "local"}
           onClick={() => openTaskScope("local")}
           testId="app-rail-home"
           statusIndicator={visibleLocalWorkspaceIndicator(localWorkspaceIndicator, props.homeActive, taskScope)}
+          previewScope="local"
+          onPreviewMenuChange={props.onPreviewMenuChange}
+          showTooltip={!props.suppressPreviewMenuTooltips}
         >
-          <FolderOpen className="size-5" strokeWidth={1.8} />
+          <LocalWorkspaceIcon active={Boolean(props.homeActive && taskScope === "local")} />
         </RailButton>
-        {/* <RailButton
-          label={t("mcp.apps_title")}
-          active={props.appsActive}
-          onClick={props.onOpenApps}
-          testId="app-rail-apps"
-        >
-          <AppWindowMac className="size-5" strokeWidth={1.8} />
-        </RailButton> */}
         <RailButton
           label={t("navigation.cloud_workspace")}
           active={props.homeActive && taskScope === "remote"}
           onClick={() => openTaskScope("remote")}
           testId="app-rail-cloud-tasks"
+          previewScope="remote"
+          onPreviewMenuChange={props.onPreviewMenuChange}
+          showTooltip={!props.suppressPreviewMenuTooltips}
         >
           <Cloud className="size-5" strokeWidth={1.8} />
         </RailButton>
         {LOCAL_AUTOMATION_ENABLED ? <RailButton
           label={t("navigation.automations")}
+          tooltipLabel={t("automation.tabs.tasks")}
           active={location.pathname.startsWith("/automations")}
           onClick={() => navigate("/automations")}
           testId="app-rail-automations"
+          onPreviewMenuChange={props.onPreviewMenuChange}
         >
           <AlarmClock />
         </RailButton> : null}
+        <RailButton
+          label={t("project_extensions.group_plugin")}
+          active={props.appsActive}
+          onClick={props.onOpenApps}
+          testId="app-rail-plugins"
+          onPreviewMenuChange={props.onPreviewMenuChange}
+        >
+          <PluginOrbitIcon />
+        </RailButton>
         {imNavigationVisible ? (
           <>
             <RailButton
@@ -333,6 +388,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
               active={props.chatActive && chatView !== "contacts"}
               onClick={() => openChatView("conversations")}
               testId="app-rail-chat"
+              onPreviewMenuChange={props.onPreviewMenuChange}
               badge={totalUnreadCount}
               badgeVariant="dot"
             >
@@ -343,14 +399,101 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
               active={props.chatActive && chatView === "contacts"}
               onClick={() => openChatView("contacts")}
               testId="app-rail-contacts"
+              onPreviewMenuChange={props.onPreviewMenuChange}
             >
               <ContactRound />
             </RailButton>
           </>
         ) : null}
+        <DropdownMenu open={navigationMenuOpen} onOpenChange={setNavigationMenuOpen}>
+          <DropdownMenuTrigger
+            render={(
+              <button
+                type="button"
+                aria-label={t("navigation.more")}
+                title={t("navigation.more")}
+                data-testid="app-rail-more"
+                data-app-rail-button
+                data-active={(navigationMenuOpen || (props.reviewsActive && !reviewsPinned)) ? "true" : undefined}
+                className={cn(
+                  "relative flex size-9 items-center justify-center rounded-xl text-dls-secondary/80 transition-[background-color,color,transform] duration-150 mac:titlebar-no-drag",
+                  "hover:bg-dls-hover hover:text-dls-text active:scale-[0.96]",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/35 focus-visible:ring-offset-1 focus-visible:ring-offset-dls-sidebar",
+                  "data-popup-open:bg-dls-active data-popup-open:text-dls-text",
+                  (navigationMenuOpen || (props.reviewsActive && !reviewsPinned)) && "bg-dls-active text-dls-text",
+                )}
+              >
+                <Ellipsis className="size-5" strokeWidth={2} />
+              </button>
+            )}
+          />
+          <DropdownMenuContent
+            side="right"
+            align="start"
+            sideOffset={10}
+            className="w-[180px] rounded-2xl bg-popover/95 p-0.5 shadow-[0_18px_48px_rgba(0,0,0,0.20)] ring-1 ring-foreground/10 backdrop-blur-2xl"
+            data-testid="app-navigation-more-menu"
+          >
+            <div
+              className="group flex items-center gap-1 rounded-2xl transition-colors hover:bg-accent focus-within:bg-accent"
+              data-testid="app-navigation-more-reviews-row"
+            >
+              <DropdownMenuItem
+                onClick={openReviews}
+                className="min-w-0 flex-1 bg-transparent py-[5px] focus:bg-transparent! data-highlighted:bg-transparent!"
+                data-testid="app-navigation-more-reviews"
+              >
+                <GitPullRequestArrow />
+                <span className="truncate">{t("navigation.reviews")}</span>
+              </DropdownMenuItem>
+              <button
+                type="button"
+                aria-label={reviewsPinned ? t("navigation.unpin_item") : t("navigation.pin_item")}
+                title={reviewsPinned ? t("navigation.unpin_item") : t("navigation.pin_item")}
+                tabIndex={reviewsPinned ? 0 : -1}
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  toggleReviewsPinned();
+                }}
+                className={cn(
+                  "flex size-8 shrink-0 items-center justify-center rounded-xl text-muted-foreground transition-[background-color,color,opacity,transform] duration-150",
+                  "hover:text-popover-foreground active:scale-[0.94]",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/35",
+                  reviewsPinned
+                    ? "text-popover-foreground opacity-100"
+                    : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100",
+                )}
+                data-testid="app-navigation-pin-reviews"
+                data-pinned={reviewsPinned ? "true" : undefined}
+              >
+                <Pin className={cn("size-4", reviewsPinned && "fill-current")} />
+              </button>
+            </div>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        {reviewsPinned ? (
+          <div className="mt-0.5 flex flex-col items-center gap-2" data-app-navigation-pinned-items>
+            <div
+              className="h-px w-6 rounded-full bg-dls-secondary/20"
+              aria-hidden="true"
+              data-testid="app-navigation-pinned-separator"
+            />
+            <RailButton
+              label={t("navigation.reviews")}
+              active={props.reviewsActive}
+              onClick={props.onOpenReviews}
+              testId="app-rail-pinned-reviews"
+              onPreviewMenuChange={props.onPreviewMenuChange}
+            >
+              <GitPullRequestArrow />
+            </RailButton>
+          </div>
+        ) : null}
       </nav>
 
-      <div className="relative mt-auto flex h-11 w-full items-center justify-center mac:titlebar-no-drag">
+      <div className="relative mt-auto flex h-9 w-full items-center justify-center mac:titlebar-no-drag">
         <DropdownMenu open={accountMenuOpen} onOpenChange={(open) => { setAccountMenuOpen(open); if (open) void refreshAccount(); }}>
           <DropdownMenuTrigger
             render={(
@@ -359,17 +502,19 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
                 aria-label={t("account_menu.open")}
                 title={identity}
                 data-testid="app-rail-account-menu"
+                data-app-rail-button
                 className={cn(
-                  "relative flex size-11 items-center justify-center rounded-2xl border border-transparent transition-colors",
-                  "hover:border-dls-border hover:bg-background data-popup-open:border-dls-border data-popup-open:bg-background data-popup-open:shadow-sm",
-                  props.settingsActive && "border-dls-accent/30 bg-background",
+                  "relative flex size-9 items-center justify-center rounded-xl transition-[background-color,transform] duration-150",
+                  "hover:bg-dls-hover active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/35 focus-visible:ring-offset-1 focus-visible:ring-offset-dls-sidebar",
+                  "data-popup-open:bg-dls-active",
+                  props.settingsActive && "bg-dls-active",
                 )}
               >
-                <Avatar size="lg" className="size-9 bg-background">
+                <Avatar size="lg" className="size-7 bg-background ring-1 ring-dls-border/70">
                   {user?.avatar ? <AvatarImage src={user.avatar} alt={identity} /> : null}
                   <AvatarFallback className="bg-dls-hover font-semibold text-dls-text">{initial}</AvatarFallback>
                   {notificationUnreadCount > 0 ? (
-                    <span className="absolute right-0 top-0 size-2.5 rounded-full border-2 border-dls-sidebar bg-red-9" aria-hidden="true" data-rail-unread-dot />
+                    <span className="absolute -right-0.5 -top-0.5 size-2.5 rounded-full border-2 border-dls-sidebar bg-red-9" aria-hidden="true" data-rail-unread-dot />
                   ) : null}
                 </Avatar>
               </button>

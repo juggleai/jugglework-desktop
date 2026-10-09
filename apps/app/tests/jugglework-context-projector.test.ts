@@ -182,5 +182,33 @@ describe("JuggleWork context projector", () => {
       kind: "settings",
       panel: "extensions",
     });
+    expect(screenFromRoute("/workspace/workspace-a/reviews")).toEqual({
+      kind: "review",
+      route: "/workspace/workspace-a/reviews",
+      workspaceId: "workspace-a",
+      reviewId: undefined,
+    });
+  });
+
+  test("projects the selected pull request as a semantic review resource", () => {
+    const context = contextForRoute("/workspace/workspace-a/reviews/github-pr-42");
+
+    expect(context.screen).toEqual({
+      kind: "review",
+      route: "/workspace/workspace-a/reviews/github-pr-42",
+      workspaceId: "workspace-a",
+      reviewId: "github-pr-42",
+    });
+    expect(context.resources.find((resource) => resource.kind === "review")).toEqual({
+      ref: "review:github-pr-42",
+      kind: "review",
+      title: "Review github-pr-42",
+      provider: { id: "jugglework-ui", kind: "builtin" },
+      state: {
+        active: true,
+        workspaceId: "workspace-a",
+        reviewId: "github-pr-42",
+      },
+    });
   });
 });

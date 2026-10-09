@@ -20,11 +20,12 @@ export type ListPanelHeaderProps = {
   searchEnd?: React.ReactNode;
   titleEnd?: React.ReactNode;
   addControl: React.ReactNode;
+  insetDivider?: boolean;
 };
 
 export function ListPanelHeader(props: ListPanelHeaderProps) {
   return (
-    <header className={`jw-list-panel-header${isMacPlatform() ? " is-mac" : ""}`}>
+    <header className={`jw-list-panel-header${isMacPlatform() ? " is-mac" : ""}${props.insetDivider ? " has-inset-divider" : ""}`}>
       <div className="jw-list-panel-title-row">
         <h2 className="jw-list-panel-title">{props.title}</h2>
         {props.titleEnd ? <div className="jw-list-panel-title-end">{props.titleEnd}</div> : null}

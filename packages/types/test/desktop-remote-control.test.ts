@@ -182,7 +182,7 @@ describe("desktop remote-control contracts", () => {
     )
   })
 
-  test("negotiates descendant v2 only for snapshot and interaction replies", () => {
+  test("negotiates v2 for snapshots, structured prompts, and interaction replies", () => {
     const gates = {
       ...desktopRemoteDisabledFeatureGates,
       enrollment: true,
@@ -199,6 +199,10 @@ describe("desktop remote-control contracts", () => {
       advertised.operations.find(({ operation }) => operation === "workspace.list")?.payloadVersions,
       [1],
     )
+    assert.deepEqual(
+      advertised.operations.find(({ operation }) => operation === "session.prompt")?.payloadVersions,
+      [1, 2],
+    )
     assert.equal(desktopRemoteOperationRequestSchema.safeParse({
       operation: "session.snapshot",
       payloadVersion: 2,
@@ -211,10 +215,11 @@ describe("desktop remote-control contracts", () => {
     }).success, false)
     assert.deepEqual(desktopRemoteDescendantOperationValues, [
       "session.snapshot",
+      "session.prompt",
       "interaction.permission.reply",
       "interaction.question.reply",
     ])
-    for (const operation of ["workspace.list", "session.list", "session.prompt"] as const) {
+    for (const operation of ["workspace.list", "session.list"] as const) {
       assert.equal(desktopRemoteCapabilityAdvertisementSchema.safeParse({
         schemaVersion: 1,
         operations: [{ operation, payloadVersions: [1, 2] }],
@@ -376,6 +381,47 @@ describe("desktop remote-control contracts", () => {
       operation: "session.prompt",
       payloadVersion: 1,
       arguments: { workspaceId: "workspace-1", sessionId: "session-1", prompt: "界".repeat(66_667), whenBusy: "reject" },
+    }).success, false)
+  })
+
+  test("accepts only ordered, bounded v2 prompt attachments", () => {
+    const png = `data:image/png;base64,${Buffer.from("png").toString("base64")}`
+    const request = {
+      operation: "session.prompt",
+      payloadVersion: 2,
+      arguments: {
+        workspaceId: "workspace-1",
+        sessionId: "session-1",
+        parts: [
+          { type: "text", text: "Inspect " },
+          { type: "file", mime: "image/png", filename: "image.png", url: png },
+          { type: "text", text: " carefully" },
+        ],
+        whenBusy: "reject",
+      },
+    } as const
+    assert.equal(desktopRemoteOperationRequestSchema.safeParse(request).success, true)
+    assert.equal(desktopRemoteOperationResultSchema.safeParse({
+      operation: "session.prompt", payloadVersion: 2,
+      result: { disposition: "started", runId: "run-1", generation: 1 },
+    }).success, true)
+    for (const file of [
+      { type: "file", mime: "image/png", filename: "image.png", url: "file:///tmp/image.png" },
+      { type: "file", mime: "image/png", filename: "image.png", url: "https://example.com/image.png" },
+      { type: "file", mime: "image/png", filename: "image.png", url: "data:image/jpeg;base64,AA==" },
+      { type: "file", mime: "application/octet-stream", filename: "data.bin", url: "data:application/octet-stream;base64,AA==" },
+      { type: "file", mime: "image/png", filename: "../image.png", url: png },
+      { type: "file", mime: "image/png", filename: "large.png", url: `data:image/png;base64,${Buffer.alloc(256 * 1024 + 1).toString("base64")}` },
+    ]) {
+      assert.equal(desktopRemoteOperationRequestSchema.safeParse({
+        ...request, arguments: { ...request.arguments, parts: [file] },
+      }).success, false)
+    }
+    assert.equal(desktopRemoteOperationRequestSchema.safeParse({
+      ...request,
+      arguments: { ...request.arguments, parts: Array.from({ length: 4 }, (_, index) => ({
+        type: "file", mime: "image/png", filename: `${index}.png`, url: png,
+      })) },
     }).success, false)
   })
 

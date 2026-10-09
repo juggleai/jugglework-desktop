@@ -355,6 +355,22 @@ describe("remote-control read adapters", () => {
     });
   });
 
+  it("preserves only bounded safe data URL file parts", () => {
+    const safe = normalizeRemoteMessagePart({
+      id: "prt_file", messageID: "msg_1", sessionID: "ses_1", type: "file",
+      mediaType: "image/webp", filename: "photo.webp", url: "data:image/webp;base64,UklGRg==",
+    });
+    assert.deepEqual(safe, {
+      type: "file", id: "prt_file", mime: "image/webp", filename: "photo.webp", url: "data:image/webp;base64,UklGRg==",
+    });
+    for (const url of ["file:///Users/alice/photo.webp", "https://example.com/photo.webp", "data:image/png;base64,UklGRg=="]) {
+      assert.equal(normalizeRemoteMessagePart({
+        id: "prt_file", messageID: "msg_1", sessionID: "ses_1", type: "file",
+        mediaType: "image/webp", filename: "photo.webp", url,
+      }), null);
+    }
+  });
+
   it("redacts a complete quoted credential before truncating its tool title", () => {
     const secretTail = "alpha beta gamma delta";
     const normalized = normalizeRemoteMessagePart({

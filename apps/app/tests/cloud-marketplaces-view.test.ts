@@ -6,6 +6,7 @@ import {
   shouldIncludeOrgMcpConnectionMarketplaceRow,
   shouldShowMarketplaceRows,
 } from "../src/react-app/domains/settings/pages/cloud-marketplaces-view";
+import { readFileSync } from "node:fs";
 
 describe("Cloud marketplace row visibility", () => {
   test("hides marketplace rows until a signed-in org is available", () => {
@@ -23,6 +24,18 @@ describe("Cloud marketplace row visibility", () => {
   test("keeps organization MCP connections out of both Marketplace surfaces", () => {
     expect(shouldIncludeOrgMcpConnectionMarketplaceRow({ embedded: false })).toBe(false);
     expect(shouldIncludeOrgMcpConnectionMarketplaceRow({ embedded: true })).toBe(false);
+  });
+});
+
+describe("Dedicated plugin catalog refresh lifecycle", () => {
+  test("passes a stable organization connector refresh callback", () => {
+    const source = readFileSync(new URL("../src/react-app/shell/settings-route.tsx", import.meta.url), "utf8");
+    const catalogBranch = source.slice(
+      source.indexOf("if (props.pluginCatalogOnly)"),
+      source.indexOf("// TIPS: 仅会话右侧 rail", source.indexOf("if (props.pluginCatalogOnly)")),
+    );
+    expect(catalogBranch).toContain("refreshOrgMcpConnections={orgMcpConnections.refresh}");
+    expect(catalogBranch).not.toContain("refreshOrgMcpConnections={() => orgMcpConnections.refresh()}");
   });
 });
 

@@ -132,6 +132,8 @@ export type DenOrgPlugin = {
   memberCount: number;
   updatedAt: string | null;
   componentCounts: Record<string, number>;
+  /** Optional collections containing this plugin. An empty list means the plugin belongs directly to the organization. */
+  marketplaces?: Array<{ id: string; name: string }>;
   /** Preferred Den surface: plugins are normalized into JuggleWork extensions. */
   extension?: DenOrgExtensionProjection | null;
   cloudReadiness?: DenPluginCloudReadiness;

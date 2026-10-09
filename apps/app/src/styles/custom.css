@@ -10,3 +10,11 @@
   min-height: var(--app-topbar-height, 50px);
   background: var(--app-page-bg, #ffffff);
 }
+/* Selected Rail destinations use solid monochrome icons in both themes. */
+[data-app-rail-button][data-active="true"] {
+  color: #000;
+}
+
+[data-theme="dark"] [data-app-rail-button][data-active="true"] {
+  color: #fff;
+}

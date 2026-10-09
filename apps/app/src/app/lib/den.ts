@@ -12,6 +12,7 @@ export { normalizeDesktopConfig };
 
 import { isDesktopDeployment } from "./jugglework-deployment";
 import {
+  dispatchDenSessionRevoked,
   dispatchDenSettingsChanged,
 } from "./den-session-events";
 import {
@@ -39,6 +40,7 @@ import type {
 export const STORAGE_BASE_URL = "jugglework.den.baseUrl";
 const LEGACY_STORAGE_API_BASE_URL = "jugglework.den.apiBaseUrl";
 const STORAGE_AUTH_TOKEN = "jugglework.den.authToken";
+const STORAGE_REVOKED_DEV_AUTH_FINGERPRINT = "jugglework.den.revokedDevAuthFingerprint";
 const STORAGE_IM_LOGIN_BOOTSTRAP = "jugglework.den.imLoginBootstrap";
 const STORAGE_ACTIVE_ORG_ID = "jugglework.den.activeOrgId";
 const STORAGE_ACTIVE_ORG_SLUG = "jugglework.den.activeOrgSlug";
@@ -1058,10 +1060,13 @@ export function readDenSettings(): DenSettings {
 
   return {
     ...baseUrls,
-    authToken:
-      BUILD_DEN_DEV_AUTH_TOKEN ||
-      (window.localStorage.getItem(STORAGE_AUTH_TOKEN) ?? "").trim() ||
-      null,
+    authToken: resolveDenAuthToken({
+      developmentToken: BUILD_DEN_DEV_AUTH_TOKEN,
+      persistedToken: window.localStorage.getItem(STORAGE_AUTH_TOKEN),
+      revokedDevelopmentFingerprint: window.localStorage.getItem(
+        STORAGE_REVOKED_DEV_AUTH_FINGERPRINT,
+      ),
+    }),
     activeOrgId: (window.localStorage.getItem(STORAGE_ACTIVE_ORG_ID) ?? "").trim() || null,
     activeOrgSlug: (window.localStorage.getItem(STORAGE_ACTIVE_ORG_SLUG) ?? "").trim() || null,
     activeOrgName: (window.localStorage.getItem(STORAGE_ACTIVE_ORG_NAME) ?? "").trim() || null,
@@ -1144,13 +1149,30 @@ export function resolveDenDefaultOrganization(
   );
 }
 
-function denCredentialFingerprint(value: string) {
+export function denCredentialFingerprint(value: string) {
   let hash = 0x811c9dc5;
   for (let index = 0; index < value.length; index += 1) {
     hash ^= value.charCodeAt(index);
     hash = Math.imul(hash, 0x01000193);
   }
   return `${value.length}:${hash >>> 0}`;
+}
+
+export function resolveDenAuthToken(input: {
+  developmentToken?: string | null;
+  persistedToken?: string | null;
+  revokedDevelopmentFingerprint?: string | null;
+}): string | null {
+  const developmentToken = input.developmentToken?.trim() ?? "";
+  const persistedToken = input.persistedToken?.trim() ?? "";
+  const revokedFingerprint = input.revokedDevelopmentFingerprint?.trim() ?? "";
+  if (
+    developmentToken &&
+    revokedFingerprint !== denCredentialFingerprint(developmentToken)
+  ) {
+    return developmentToken;
+  }
+  return persistedToken || null;
 }
 
 export function readDenIMLoginBootstrap(): DenIMLoginBootstrap | null {
@@ -1327,6 +1349,20 @@ export function clearDenSession(options?: { includeBaseUrls?: boolean }) {
   if (options?.includeBaseUrls) {
     window.localStorage.removeItem(STORAGE_BASE_URL);
     window.localStorage.removeItem(LEGACY_STORAGE_API_BASE_URL);
+  }
+
+  // A Vite development token normally wins over persisted handoff tokens so
+  // rotating the local .env credential is enough to repair a stale session.
+  // Once that exact token is explicitly signed out or confirmed revoked,
+  // remember its non-secret fingerprint so readDenSettings() does not
+  // immediately resurrect it and trap the user outside the sign-in screen.
+  // Changing the .env token changes the fingerprint and re-enables the dev
+  // shortcut automatically.
+  if (BUILD_DEN_DEV_AUTH_TOKEN) {
+    window.localStorage.setItem(
+      STORAGE_REVOKED_DEV_AUTH_FINGERPRINT,
+      denCredentialFingerprint(BUILD_DEN_DEV_AUTH_TOKEN),
+    );
   }
 
   window.localStorage.removeItem(STORAGE_AUTH_TOKEN);
@@ -2318,6 +2354,12 @@ function parseOrgPlugin(value: unknown): DenOrgPlugin | null {
     memberCount: typeof value.memberCount === "number" && Number.isFinite(value.memberCount) ? value.memberCount : 0,
     updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : null,
     componentCounts: counts,
+    marketplaces: Array.isArray(value.marketplaces)
+      ? value.marketplaces.flatMap((entry) => {
+        if (!isRecord(entry) || typeof entry.id !== "string" || typeof entry.name !== "string") return [];
+        return [{ id: entry.id, name: entry.name }];
+      })
+      : [],
     extension: parseDenExtensionProjection(value.extension),
     ...(value.cloudReadiness === undefined ? {} : { cloudReadiness: parsePluginCloudReadiness(value.cloudReadiness) ?? undefined }),
   };
@@ -2848,6 +2890,15 @@ async function requestJson<T>(
     const payload = raw.json;
     const code = isRecord(payload) && typeof payload.error === "string" ? payload.error : "request_failed";
     const message = getErrorMessage(payload, `Request failed with ${raw.status}.`);
+    const token = options.token?.trim() ?? "";
+    if (token && raw.status === 401 && code !== "request_failed") {
+      dispatchDenSessionRevoked({
+        authFingerprint: denCredentialFingerprint(token),
+        status: 401,
+        code,
+        message,
+      });
+    }
     throw new DenApiError(raw.status, code, message, isRecord(payload) ? payload.details : undefined);
   }
   return raw.json as T;
@@ -3441,6 +3492,19 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
         { method: "GET", token, organizationId: orgId },
       );
       return getOrgMarketplaces(payload);
+    },
+
+    async listOrgPlugins(orgId: string): Promise<DenOrgPlugin[]> {
+      const payload = await requestJson<unknown>(
+        baseUrls,
+        `/v1/plugins?status=active&limit=100`,
+        { method: "GET", token, organizationId: orgId },
+      );
+      if (!isRecord(payload) || !Array.isArray(payload.items)) return [];
+      return payload.items.flatMap((item) => {
+        const plugin = parseOrgPlugin(item);
+        return plugin ? [plugin] : [];
+      });
     },
 
     async getOrgMarketplaceResolved(orgId: string, marketplaceId: string): Promise<DenOrgMarketplaceResolved> {

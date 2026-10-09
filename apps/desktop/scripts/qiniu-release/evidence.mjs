@@ -436,7 +436,7 @@ export function assertRecordedPromotion(plan, evidence) {
     && cacheException.reason.length >= 20
     && sameArray(plan.architectures, ["arm64"])
     && plan.channel === "stable"
-    && ["1.2.23", "1.2.24", "1.2.25"].includes(plan.version);
+    && ["1.2.23", "1.2.24", "1.2.25", "1.2.26"].includes(plan.version);
   if (cacheExceptionAllowed) {
     if (promotion?.status !== "verified" || promotion.channelKey !== plan.channelManifest.key
       || promotion.channelObject?.size !== plan.manifest.size
@@ -476,10 +476,10 @@ function assertStableNotarizationException(plan, reason) {
 }
 
 function assertStablePreCanaryException(plan, reason) {
-  if (plan.channel !== "stable" || !["1.2.16", "1.2.18", "1.2.19", "1.2.20", "1.2.22", "1.2.23", "1.2.24", "1.2.25"].includes(plan.version)) {
-    throw new Error("The pre-canary promotion exception is restricted to stable 1.2.16, stable 1.2.18, stable 1.2.19, stable 1.2.20, stable 1.2.22, stable 1.2.23, stable 1.2.24, or stable 1.2.25");
+  if (plan.channel !== "stable" || !["1.2.16", "1.2.18", "1.2.19", "1.2.20", "1.2.22", "1.2.23", "1.2.24", "1.2.25", "1.2.26"].includes(plan.version)) {
+    throw new Error("The pre-canary promotion exception is restricted to stable 1.2.16, stable 1.2.18, stable 1.2.19, stable 1.2.20, stable 1.2.22, stable 1.2.23, stable 1.2.24, stable 1.2.25, or stable 1.2.26");
   }
-  if (["1.2.20", "1.2.22", "1.2.23", "1.2.24", "1.2.25"].includes(plan.version) && !sameArray(plan.architectures, ["arm64"])) {
+  if (["1.2.20", "1.2.22", "1.2.23", "1.2.24", "1.2.25", "1.2.26"].includes(plan.version) && !sameArray(plan.architectures, ["arm64"])) {
     throw new Error(`The stable ${plan.version} pre-canary promotion exception is restricted to macOS arm64`);
   }
   if (typeof reason !== "string" || reason.trim().length < 20) {
@@ -489,8 +489,8 @@ function assertStablePreCanaryException(plan, reason) {
 }
 
 function assertStableCacheException(plan, reason) {
-  if (plan.channel !== "stable" || !["1.2.23", "1.2.24", "1.2.25"].includes(plan.version) || !sameArray(plan.architectures, ["arm64"])) {
-    throw new Error("The cache exception is restricted to stable macOS arm64 1.2.23, 1.2.24, or 1.2.25");
+  if (plan.channel !== "stable" || !["1.2.23", "1.2.24", "1.2.25", "1.2.26"].includes(plan.version) || !sameArray(plan.architectures, ["arm64"])) {
+    throw new Error("The cache exception is restricted to stable macOS arm64 1.2.23, 1.2.24, 1.2.25, or 1.2.26");
   }
   if (typeof reason !== "string" || reason.trim().length < 20) {
     throw new Error(`The stable ${plan.version} cache exception requires an explicit audited reason`);

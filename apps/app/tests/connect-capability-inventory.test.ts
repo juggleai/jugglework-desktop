@@ -6,6 +6,69 @@ import {
 } from "../src/react-app/domains/session/surface/connect-capability-inventory";
 
 describe("assigned JuggleWork Connect capability inventory", () => {
+  test("loads directly assigned organization plugins without resolving a marketplace", async () => {
+    const inventory = await listAssignedConnectCapabilities({
+      organizationId: "org_personal",
+      client: {
+        listMcpConnections: async () => [],
+        listOrgPlugins: async () => [{
+          id: "plugin_direct",
+          name: "Personal coding tools",
+          description: "Assigned directly to the personal organization.",
+          status: "active",
+          memberCount: 1,
+          updatedAt: null,
+          componentCounts: { skill: 1 },
+          marketplaces: [],
+        }],
+        listOrgMarketplaces: async () => {
+          throw new Error("Optional Marketplace metadata is unavailable.");
+        },
+        getOrgMarketplaceResolved: async () => {
+          throw new Error("A direct organization plugin must not require Marketplace resolution.");
+        },
+        getOrgPluginResolved: async (_organizationId, plugin) => ({
+          plugin,
+          memberships: [{
+            id: "membership_direct_skill",
+            pluginId: plugin.id,
+            configObjectId: "skill_direct",
+            configObject: {
+              id: "skill_direct",
+              objectType: "skill",
+              title: "Direct coding skill",
+              description: "A directly assigned skill.",
+              currentFileName: "SKILL.md",
+              currentFileExtension: "md",
+              currentRelativePath: "skills/direct-coding/SKILL.md",
+              status: "active",
+              updatedAt: null,
+              latestVersion: {
+                id: "version_direct_skill",
+                rawSourceText: "# Direct coding skill",
+                normalizedPayloadJson: null,
+                sourceRevisionRef: null,
+                createdAt: null,
+              },
+            },
+          }],
+        }),
+      },
+    });
+
+    expect(inventory.skills).toEqual([
+      expect.objectContaining({
+        name: "Direct coding skill",
+        trigger: "direct-coding",
+        marketplaceName: "Organization Plugins",
+        pluginName: "Personal coding tools",
+        connectPluginId: "plugin_direct",
+      }),
+    ]);
+    expect(inventory.commands).toEqual([]);
+    expect(inventory.mcpServers).toEqual([]);
+  });
+
   test("returns active marketplace skills and MCPs with Connect provenance", async () => {
     const inventory = await listAssignedConnectCapabilities({
       organizationId: "org_1",

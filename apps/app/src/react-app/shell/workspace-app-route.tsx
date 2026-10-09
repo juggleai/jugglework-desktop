@@ -7,6 +7,7 @@ import { ChatPage } from "./chat-page";
 import { SessionRoute } from "./session-route";
 import { SettingsRoute } from "./settings-route";
 import { AutomationPage } from "../domains/automations/automation-page";
+import { ReviewPage } from "../domains/reviews/review-page";
 import { readActiveWorkspaceId, readLastSessionFor } from "./session-memory";
 import {
   WorkspaceShellActionsProvider,
@@ -17,6 +18,7 @@ import {
   parseWorkspaceAppPath,
   workspaceAppsRoute,
   workspaceChatRoute,
+  workspaceReviewsRoute,
   workspaceSessionRoute,
   workspaceSettingsRoute,
 } from "./workspace-routes";
@@ -82,6 +84,7 @@ function WorkspaceAppRouteContent() {
     };
   });
   const [appsMounted, setAppsMounted] = useState(() => appPath?.view === "apps");
+  const [reviewsMounted, setReviewsMounted] = useState(() => appPath?.view === "reviews");
 
   const currentSession = appPath?.view === "session"
     ? { workspaceId: appPath.workspaceId, sessionId: appPath.sessionId }
@@ -89,7 +92,8 @@ function WorkspaceAppRouteContent() {
   const settingsWorkspaceId = appPath?.view === "settings" ? appPath.workspaceId : null;
   const chatWorkspaceId = appPath?.view === "chat" ? appPath.workspaceId : null;
   const appsWorkspaceId = appPath?.view === "apps" ? appPath.workspaceId : null;
-  const surfaceWorkspaceId = settingsWorkspaceId ?? chatWorkspaceId ?? appsWorkspaceId;
+  const reviewsWorkspaceId = appPath?.view === "reviews" ? appPath.workspaceId : null;
+  const surfaceWorkspaceId = settingsWorkspaceId ?? chatWorkspaceId ?? appsWorkspaceId ?? reviewsWorkspaceId;
 
   useEffect(() => {
     const next = currentSession ?? (
@@ -113,6 +117,10 @@ function WorkspaceAppRouteContent() {
   }, [appPath?.view]);
 
   useEffect(() => {
+    if (appPath?.view === "reviews") setReviewsMounted(true);
+  }, [appPath?.view]);
+
+  useEffect(() => {
     if (appPath?.view !== "settings") return;
     setRetainedSettings((current) => (
       current.workspaceId === appPath.workspaceId && current.routePath === location.pathname
@@ -130,12 +138,13 @@ function WorkspaceAppRouteContent() {
   const chatVisible = appPath.view === "chat";
   const appsVisible = appPath.view === "apps";
   const automationsVisible = appPath.view === "automations";
+  const reviewsVisible = appPath.view === "reviews";
   const sessionPath = activeSession.workspaceId
     ? workspaceSessionRoute(activeSession.workspaceId, activeSession.sessionId)
     : legacySessionRoute(activeSession.sessionId);
 
   const openSurfaceSettings = (
-    tab: "cloud-account" | "preferences",
+    tab: "cloud-account" | "preferences" | "connect",
     returnPath: string,
   ) => {
     const target = activeSession.workspaceId
@@ -153,14 +162,14 @@ function WorkspaceAppRouteContent() {
   return (
     <div className="relative h-dvh min-h-screen w-full overflow-hidden">
       <div
-        className={settingsVisible || chatVisible || appsVisible || automationsVisible ? "hidden" : "h-full min-h-0"}
-        aria-hidden={settingsVisible || chatVisible || appsVisible || automationsVisible || undefined}
+        className={settingsVisible || chatVisible || appsVisible || automationsVisible || reviewsVisible ? "hidden" : "h-full min-h-0"}
+        aria-hidden={settingsVisible || chatVisible || appsVisible || automationsVisible || reviewsVisible || undefined}
         data-testid="retained-session-surface"
       >
         <SessionRoute
           routeWorkspaceId={activeSession.workspaceId}
           routeSessionId={activeSession.sessionId}
-          surfaceVisible={!(settingsVisible || chatVisible || appsVisible || automationsVisible)}
+          surfaceVisible={!(settingsVisible || chatVisible || appsVisible || automationsVisible || reviewsVisible)}
         />
       </div>
 
@@ -197,6 +206,7 @@ function WorkspaceAppRouteContent() {
           onOpenAccount={() => openSurfaceSettings("cloud-account", workspaceChatRoute(activeSession.workspaceId))}
           onOpenHome={() => navigate(sessionPath)}
           onOpenApps={() => navigate(workspaceAppsRoute(activeSession.workspaceId))}
+          onOpenReviews={() => navigate(workspaceReviewsRoute(activeSession.workspaceId))}
           onToggleChat={() => navigate(sessionPath)}
           onOpenSettings={() => openSurfaceSettings("preferences", workspaceChatRoute(activeSession.workspaceId))}
           onOpenTaskSearch={workspaceShellActions.openTaskSearch}
@@ -216,7 +226,34 @@ function WorkspaceAppRouteContent() {
             onOpenAccount={() => openSurfaceSettings("cloud-account", workspaceAppsRoute(activeSession.workspaceId))}
             onOpenHome={() => navigate(sessionPath)}
             onOpenChat={() => navigate(workspaceChatRoute(activeSession.workspaceId))}
+            onOpenReviews={() => navigate(workspaceReviewsRoute(activeSession.workspaceId))}
             onOpenSettings={() => openSurfaceSettings("preferences", workspaceAppsRoute(activeSession.workspaceId))}
+            onOpenTaskSearch={workspaceShellActions.openTaskSearch}
+            onOpenCreateWorkspace={workspaceShellActions.openCreateWorkspace}
+          />
+        </div>
+      ) : null}
+
+      {reviewsMounted || reviewsVisible ? (
+        <div
+          className={reviewsVisible ? "absolute inset-0" : "hidden"}
+          aria-hidden={!reviewsVisible || undefined}
+          data-testid="workspace-reviews-surface"
+        >
+          <ReviewPage
+            active={reviewsVisible}
+            workspaceId={reviewsVisible ? appPath.workspaceId : activeSession.workspaceId}
+            reviewId={reviewsVisible ? appPath.reviewId : null}
+            onSelectReview={(reviewId) => navigate(workspaceReviewsRoute(
+              reviewsVisible ? appPath.workspaceId : activeSession.workspaceId,
+              reviewId,
+            ))}
+            onOpenAccount={() => openSurfaceSettings("cloud-account", location.pathname)}
+            onOpenHome={() => navigate(sessionPath)}
+            onOpenApps={() => navigate(workspaceAppsRoute(activeSession.workspaceId))}
+            onOpenChat={() => navigate(workspaceChatRoute(activeSession.workspaceId))}
+            onOpenSettings={() => openSurfaceSettings("preferences", location.pathname)}
+            onOpenConnect={() => openSurfaceSettings("connect", location.pathname)}
             onOpenTaskSearch={workspaceShellActions.openTaskSearch}
             onOpenCreateWorkspace={workspaceShellActions.openCreateWorkspace}
           />
@@ -230,6 +267,7 @@ function WorkspaceAppRouteContent() {
             onOpenAccount={() => openSurfaceSettings("cloud-account", location.pathname)}
             onOpenApps={() => navigate(workspaceAppsRoute(activeSession.workspaceId))}
             onOpenChat={() => navigate(workspaceChatRoute(activeSession.workspaceId))}
+            onOpenReviews={() => navigate(workspaceReviewsRoute(activeSession.workspaceId))}
             onOpenSettings={() => openSurfaceSettings("preferences", location.pathname)}
             onOpenTaskSearch={workspaceShellActions.openTaskSearch}
             onOpenCreateWorkspace={workspaceShellActions.openCreateWorkspace}

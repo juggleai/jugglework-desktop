@@ -294,6 +294,7 @@ type SettingsSidebarProps = Pick<SettingsPageProps, "activeTab" | "onSelectTab" 
   onOpenHome: () => void;
   onOpenApps: () => void;
   onOpenChat: () => void;
+  onOpenReviews: () => void;
   onOpenTaskSearch?: () => void;
   onOpenCreateWorkspace?: OpenCreateWorkspace;
   onStartResize?: React.PointerEventHandler<HTMLButtonElement>;
@@ -306,7 +307,7 @@ export function SettingsSidebar(props: SettingsSidebarProps) {
   const cloudTabs = getCloudSettingsTabs(memoryEnabled);
 
   return (
-    <Sidebar className="mac:**:data-[sidebar=sidebar]:bg-transparent">
+    <Sidebar className="border-e-0! mac:**:data-[sidebar=sidebar]:bg-transparent">
       <div className="flex h-full min-h-0 w-full">
         <AppNavigationRail
           appsActive={props.activeTab === "extensions"}
@@ -315,11 +316,12 @@ export function SettingsSidebar(props: SettingsSidebarProps) {
           onOpenHome={props.onOpenHome}
           onOpenApps={props.onOpenApps}
           onOpenChat={props.onOpenChat}
+          onOpenReviews={props.onOpenReviews}
           onOpenSettings={() => undefined}
           onOpenTaskSearch={props.onOpenTaskSearch}
           onOpenCreateWorkspace={props.onOpenCreateWorkspace}
         />
-        <div className="flex min-w-0 flex-1 flex-col bg-sidebar">
+        <div className="-mr-px mb-1.5 ml-1 mt-11 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-l-[18px] border border-r-0 border-dls-border bg-background shadow-[0_1px_2px_rgba(0,0,0,0.04)] mac:titlebar-no-drag" data-settings-list-surface>
           <header className="box-border flex h-10 min-h-10 shrink-0 items-start px-3 pb-3 pt-[9px] mac:h-[50px] mac:min-h-[50px] mac:pb-[9px] mac:pt-[22px] mac:titlebar-drag">
             <div className="flex h-[18px] min-w-0 items-center">
               <h2 className="truncate text-[14px] font-semibold leading-[18px] text-sidebar-foreground">

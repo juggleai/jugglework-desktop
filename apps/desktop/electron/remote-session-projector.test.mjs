@@ -61,6 +61,25 @@ describe("remote session projector", () => {
     for (const event of h.emitted) desktopRemoteSessionEventSchema.parse(event);
   });
 
+  it("projects safe file data URLs and drops local or network file URLs", () => {
+    const h = harness();
+    h.projector.accept(WORKSPACE, { type: "message.updated", properties: { info: info() } });
+    h.projector.accept(WORKSPACE, { type: "message.part.updated", properties: { part: part({
+      id: "prt_file", type: "file", mediaType: "image/png", filename: "image.png", url: "data:image/png;base64,iVBORw==",
+    }) } });
+    h.flush();
+    assert.deepEqual(h.emitted.at(-1).data.part, {
+      type: "file", id: "prt_file", mime: "image/png", filename: "image.png", url: "data:image/png;base64,iVBORw==",
+    });
+    const emitted = h.emitted.length;
+    h.projector.accept(WORKSPACE, { type: "message.part.updated", properties: { part: part({
+      id: "prt_local", type: "file", mediaType: "image/png", filename: "image.png", url: "file:///tmp/image.png",
+    }) } });
+    h.flush();
+    assert.equal(h.emitted.length, emitted);
+    for (const event of h.emitted) desktopRemoteSessionEventSchema.parse(event);
+  });
+
   it("filters unbound, malformed, and cross-session events and ignores duplicate durable V2 events", () => {
     const h = harness();
     h.projector.accept("ws_other", { type: "message.updated", properties: { info: info() } });

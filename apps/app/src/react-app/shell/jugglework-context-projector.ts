@@ -37,6 +37,16 @@ function decoded(value: string | undefined) {
 }
 
 export function screenFromRoute(route: string): JuggleWorkScreen {
+  const workspaceReview = route.match(/^\/workspace\/([^/]+)\/reviews(?:\/([^/?#]+))?/);
+  if (workspaceReview) {
+    return {
+      kind: "review",
+      route,
+      workspaceId: decoded(workspaceReview[1]) ?? "",
+      reviewId: decoded(workspaceReview[2]),
+    };
+  }
+
   const workspaceSettings = route.match(/^\/workspace\/([^/]+)\/settings(?:\/([^/?#]+))?/);
   if (workspaceSettings) {
     return {
@@ -129,7 +139,11 @@ export function buildJuggleWorkContext(
   const resources: JuggleWorkResourceDescriptor[] = [{
     ref: `screen:${input.route}`,
     kind: "screen",
-    title: screen.kind === "settings" ? `${screen.panel} settings` : "JuggleWork",
+    title: screen.kind === "settings"
+      ? `${screen.panel} settings`
+      : screen.kind === "review"
+        ? screen.reviewId ? `Review ${screen.reviewId}` : "Code Review"
+        : "JuggleWork",
     provider,
     state: { kind: screen.kind, route: input.route },
   }];
@@ -168,6 +182,19 @@ export function buildJuggleWorkContext(
       title: `${screen.panel} settings`,
       provider,
       state: { active: true, workspaceId: screen.workspaceId ?? null },
+    });
+  }
+  if (screen.kind === "review") {
+    resources.push({
+      ref: `review:${screen.reviewId ?? "inbox"}`,
+      kind: "review",
+      title: screen.reviewId ? `Review ${screen.reviewId}` : "Code Review Inbox",
+      provider,
+      state: {
+        active: true,
+        workspaceId: screen.workspaceId,
+        reviewId: screen.reviewId ?? null,
+      },
     });
   }
   if (sidePanelKind) {

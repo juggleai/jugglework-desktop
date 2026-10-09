@@ -13,28 +13,26 @@ describe("managed brand navigation identity", () => {
     expect(source).not.toContain("useBrandLogoUrl");
     expect(source).not.toContain('data-testid="app-rail-account"');
     expect(source).toContain('data-testid="app-rail-account-menu"');
-    expect(source).toMatch(/className="flex h-full w-\[72px\] shrink-0 flex-col items-center/);
+    expect(source).toMatch(/className="flex h-full w-12 shrink-0 flex-col items-center/);
   });
 
   test("uses rail whitespace as a window drag region without swallowing button clicks", () => {
     const source = readFileSync(navigationRailPath, "utf8");
 
-    expect(source).toContain("mac:titlebar-drag mac:pt-11");
+    expect(source).toContain("mac:titlebar-drag mac:pt-[52px]");
     expect(source).toMatch(/data-testid=\{testId\}[\s\S]*mac:titlebar-no-drag/);
-    expect(source).toContain('className="relative mt-auto flex h-11 w-full items-center justify-center mac:titlebar-no-drag"');
+    expect(source).toContain('className="relative mt-auto flex h-9 w-full items-center justify-center mac:titlebar-no-drag"');
     expect(source).toContain('data-testid="app-rail-account-menu"');
   });
 
-  test("starts primary actions at the top and keeps the account menu at the bottom", () => {
+  test("starts workspace navigation at the top and keeps the account menu at the bottom", () => {
     const source = readFileSync(navigationRailPath, "utf8");
-    const searchIndex = source.indexOf('testId="app-rail-task-search"');
-    const createIndex = source.indexOf('data-testid="app-rail-create-workspace"');
     const homeIndex = source.indexOf('testId="app-rail-home"');
     const accountMenuIndex = source.indexOf('data-testid="app-rail-account-menu"');
 
-    expect(searchIndex).toBeGreaterThan(-1);
-    expect(createIndex).toBeGreaterThan(searchIndex);
-    expect(homeIndex).toBeGreaterThan(createIndex);
+    expect(source).not.toContain('testId="app-rail-task-search"');
+    expect(source).not.toContain('data-testid="app-rail-create-workspace"');
+    expect(homeIndex).toBeGreaterThan(-1);
     expect(accountMenuIndex).toBeGreaterThan(homeIndex);
     expect(source).toContain("<AvatarImage src={user.avatar} alt={identity} />");
   });

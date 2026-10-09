@@ -44,6 +44,7 @@ import { startRouterServer, stopRouterServer } from "./router-server.mjs";
 import { createApplicationMenu } from "./app-menu.mjs";
 import { applyBrandAppName } from "./brand-app-name.mjs";
 import { createBrowserPanel } from "./browser-panel.mjs";
+import { selectMainProcessFetch } from "./main-fetch.mjs";
 import { createWorkspaceStore } from "./workspace-store.mjs";
 import { installCloseToHide, windowAllClosedAction } from "./window-close-behavior.mjs";
 import { createRemoteControlSettingsStore } from "./remote-control-settings.mjs";
@@ -123,6 +124,7 @@ const {
 } = require("electron");
 const pty = require(["node", "pty"].join("-"));
 const WebSocketClient = require("ws");
+const nodeFetch = globalThis.fetch.bind(globalThis);
 const NATIVE_DEEP_LINK_EVENT = "jugglework:deep-link-native";
 const REMOTE_CONTROL_POLICY_RECOVERY_EVENT = "jugglework:remote-control:policy-recovery";
 const TAURI_APP_IDENTIFIER = "com.juggleai.jugglework";
@@ -1454,6 +1456,7 @@ function createMainRemoteSessionEventBridge() {
       );
     },
     publish: (event, options) => remoteControlAgent?.publishSessionEvent(event, options) ?? false,
+    publishActivityTaskStatus: (event) => remoteControlAgent?.publishActivityTaskStatus(event) ?? false,
     randomUUID,
     now: Date.now,
     timers: {
@@ -2768,16 +2771,20 @@ const desktopCommandHandlers = {
         credentials: "omit",
         cache: "no-store",
       };
+      const fetchImpl = selectMainProcessFetch(url, {
+        nodeFetch,
+        electronFetch: (input, fetchInit) => electronNet.fetch(input, fetchInit),
+      });
       if (init.agentContextDiagnostics && typeof init.agentContextDiagnostics === "object") {
         return fetchAgentContextDiagnosticsResponse(
-          (input, fetchInit) => electronNet.fetch(input, fetchInit),
+          fetchImpl,
           url,
           requestInit,
           init.agentContextDiagnostics.deadlineAtMs,
         );
       }
       const timeoutMs = Number(init.timeoutMs);
-      const response = await electronNet.fetch(url, {
+      const response = await fetchImpl(url, {
         ...requestInit,
         signal: Number.isFinite(timeoutMs) && timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined,
       });
@@ -3215,6 +3222,8 @@ if (!app.requestSingleInstanceLock()) {
     await remoteControlAgent.start().catch((error) => {
       console.warn("[desktop-remote] failed to initialize", error instanceof Error ? error.name : "unknown_error");
     });
+    const activityWorkspaces = await workspaceStore.readWorkspaceState().catch(() => ({ workspaces: [] }));
+    remoteSessionEventBridge.watch(activityWorkspaces.workspaces.filter((entry) => entry?.workspaceType !== "remote"));
     if (process.platform === "win32") {
       await registerWindowsDisplayShortcut();
     }

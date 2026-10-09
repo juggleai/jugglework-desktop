@@ -2,7 +2,7 @@
 import type { CSSProperties } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePanelRef } from "react-resizable-panels";
-import { ArrowLeft, ArrowRight, Cloud, Columns2, Folders, GitBranch, Globe, Mic2, Settings2, TextSearch, X, Zap } from "lucide-react";
+import { ArrowLeft, ArrowRight, Cloud, Columns2, Folders, GitBranch, Globe, Mic2, Search, Settings2, TextSearch, X, Zap } from "lucide-react";
 
 import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
 import { t } from "../../../../i18n";
@@ -39,8 +39,9 @@ import { resolveJuggleWorkConnectStatus } from "../../connections/jugglework-con
 import ProviderAuthModal, { type ProviderAuthModalProps } from "../../connections/provider-auth/provider-auth-modal";
 import { RenameSessionModal } from "../modals/rename-session-modal";
 import { AppSidebar } from "../sidebar/app-sidebar";
-import { APP_NAVIGATION_RAIL_WIDTH } from "../../../shell/app-navigation-rail";
+import { APP_NAVIGATION_RAIL_WIDTH, AppNavigationRail } from "../../../shell/app-navigation-rail";
 import { useSessionManagementStore } from "../sidebar/session-management-store";
+import type { TaskScope } from "../sidebar/task-scope-store";
 import { SessionSurface, type SessionSurfaceProps } from "../surface/session-surface";
 import { useSessionFindStore } from "../surface/find-store";
 import {
@@ -82,7 +83,7 @@ import {
   type ConversationTabHistory,
   type ConversationHistoryDirection,
 } from "./conversation-tab-history";
-import { useWorkbenchStore, type WorkbenchSessionTab } from "./workbench-store";
+import { resolveWorkbenchActionSessionId, useWorkbenchStore, type WorkbenchSessionTab } from "./workbench-store";
 
 const STARTUP_SKELETON_ROWS = [
   { id: "intro", titleWidth: "42%", bodyWidth: "88%" },
@@ -172,6 +173,7 @@ export type SessionPageSidebarProps = {
   onOpenHome: () => void;
   onOpenApps: () => void;
   onOpenChat: () => void;
+  onOpenReviews: () => void;
   /** Opens the cross-session message search dialog (Cmd/Ctrl+Shift+F). */
   onReorderWorkspaces?: (workspaceIds: string[]) => void;
 };
@@ -357,10 +359,26 @@ export function SessionPage(props: SessionPageProps) {
   const { config: shellConfig } = useShellConfig();
   const platform = usePlatform();
   const denAuth = useDenAuth();
+  const workbenchWorkspaceId = useWorkbenchStore((state) => state.workspaceId);
+  const workbenchPrimarySessionId = useWorkbenchStore((state) => state.primarySessionId);
+  const workbenchTabs = useWorkbenchStore((state) => state.tabs);
+  const workbenchSplitSessionId = useWorkbenchStore((state) => state.splitSessionId);
+  const focusedWorkbenchPane = useWorkbenchStore((state) => state.focusedPane);
+  const sessionTabs = workbenchWorkspaceId === props.selectedWorkspaceId ? workbenchTabs : EMPTY_SESSION_TABS;
+  const splitSessionId = workbenchWorkspaceId === props.selectedWorkspaceId ? workbenchSplitSessionId : null;
+  const actionSessionId = resolveWorkbenchActionSessionId({
+    workspaceId: props.selectedWorkspaceId,
+    selectedSessionId: props.selectedSessionId,
+    workbenchWorkspaceId,
+    primarySessionId: workbenchPrimarySessionId,
+    splitSessionId,
+    focusedPane: focusedWorkbenchPane,
+    tabs: sessionTabs,
+  });
   const sidebarOpen = useUiStateStore((state) => state.sidebarOpen);
   const setSidebarOpen = useUiStateStore((state) => state.setSidebarOpen);
   const sessionSidePanel = useUiStateStore((state) => (
-    props.selectedSessionId ? state.sidePanelState[props.selectedSessionId] ?? null : null
+    actionSessionId ? state.sidePanelState[actionSessionId] ?? null : null
   ));
   const voiceSidePanelOpen = useUiStateStore((state) => state.sidePanelState[GLOBAL_VOICE_SIDE_PANEL_KEY] === "voice");
   const setSidePanelState = useUiStateStore((state) => state.setSidePanelState);
@@ -369,15 +387,15 @@ export function SessionPage(props: SessionPageProps) {
   const closeTab = usePanelTabStore((state) => state.closeTab);
   const selectTab = usePanelTabStore((state) => state.selectTab);
   const transcriptTargets = usePanelTabStore((state) => (
-    props.selectedSessionId ? state.transcriptArtifactTargets[props.selectedSessionId] ?? EMPTY_TRANSCRIPT_TARGETS : EMPTY_TRANSCRIPT_TARGETS
+    actionSessionId ? state.transcriptArtifactTargets[actionSessionId] ?? EMPTY_TRANSCRIPT_TARGETS : EMPTY_TRANSCRIPT_TARGETS
   ));
-  const sessionPanelState = useSessionPanelState(props.selectedSessionId ?? "");
-  const activePanelTab = useActivePanelTab(props.selectedSessionId ?? "");
+  const sessionPanelState = useSessionPanelState(actionSessionId ?? "");
+  const activePanelTab = useActivePanelTab(actionSessionId ?? "");
   const [hiddenTargetRevision, setHiddenTargetRevision] = useState(0);
   const [, setExtensionStateVersion] = useState(0);
   const hiddenAccessibleTargetIds = useMemo(
-    () => readHiddenAccessibleTargetIds(props.selectedWorkspaceId, props.selectedSessionId),
-    [props.selectedSessionId, props.selectedWorkspaceId, hiddenTargetRevision],
+    () => readHiddenAccessibleTargetIds(props.selectedWorkspaceId, actionSessionId),
+    [actionSessionId, props.selectedWorkspaceId, hiddenTargetRevision],
   );
   const accessibleTargets = useMemo(
     () => transcriptTargets.filter((target) => isTrackableAccessibleTarget(target) && !hiddenAccessibleTargetIds.has(target.id)),
@@ -395,11 +413,11 @@ export function SessionPage(props: SessionPageProps) {
   const openFileInPanel = useFilesPanelStore((state) => state.openFile);
   const setFilesPanelFullscreen = useFilesPanelStore((state) => state.setFullscreen);
   const filesPanelFullscreen = useFilesPanelStore((state) => (
-    props.selectedSessionId ? state.sessions[props.selectedSessionId]?.fullscreen ?? false : false
+    actionSessionId ? state.sessions[actionSessionId]?.fullscreen ?? false : false
   ));
-  const filesPanelExpanded = filesRailActive && filesPanelFullscreen && Boolean(props.selectedSessionId);
-  const selectedSessionBusy = props.selectedSessionId
-    ? ACTIVE_SESSION_STATUSES.has(props.sidebar.sessionStatusById[props.selectedSessionId] ?? "")
+  const filesPanelExpanded = filesRailActive && filesPanelFullscreen && Boolean(actionSessionId);
+  const selectedSessionBusy = actionSessionId
+    ? ACTIVE_SESSION_STATUSES.has(props.sidebar.sessionStatusById[actionSessionId] ?? "")
     : false;
   // 全屏时面板改为覆盖层渲染，右侧分栏不再占位
   const sidePanelOpen = activeSidePanel !== null && !filesPanelExpanded;
@@ -453,18 +471,15 @@ export function SessionPage(props: SessionPageProps) {
   const [renameBusy, setRenameBusy] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
+  const [sidebarPreviewScope, setSidebarPreviewScope] = useState<TaskScope | null>(null);
+  const sidebarPreviewCloseTimerRef = useRef<number | null>(null);
+  const sidebarPreviewPointerInsideRef = useRef(false);
   const [sessionActionId, setSessionActionId] = useState<string | null>(null);
-  const workbenchWorkspaceId = useWorkbenchStore((state) => state.workspaceId);
-  const workbenchTabs = useWorkbenchStore((state) => state.tabs);
-  const workbenchSplitSessionId = useWorkbenchStore((state) => state.splitSessionId);
-  const focusedWorkbenchPane = useWorkbenchStore((state) => state.focusedPane);
   const syncWorkbench = useWorkbenchStore((state) => state.sync);
   const juggleWorkbenchTab = useWorkbenchStore((state) => state.openTab);
   const closeWorkbenchTab = useWorkbenchStore((state) => state.closeTab);
   const setWorkbenchSplit = useWorkbenchStore((state) => state.setSplit);
   const focusWorkbenchPane = useWorkbenchStore((state) => state.focusPane);
-  const sessionTabs = workbenchWorkspaceId === props.selectedWorkspaceId ? workbenchTabs : EMPTY_SESSION_TABS;
-  const splitSessionId = workbenchWorkspaceId === props.selectedWorkspaceId ? workbenchSplitSessionId : null;
   const [conversationHistory, setConversationHistory] = useState(() => (
     createConversationTabHistory(props.selectedWorkspaceId, props.selectedSessionId)
   ));
@@ -478,8 +493,8 @@ export function SessionPage(props: SessionPageProps) {
   const setCurrentSidePanel = useCallback((panel: SidePanelItem | null) => {
     setSidePanelState(GLOBAL_VOICE_SIDE_PANEL_KEY, panel === "voice" ? "voice" : null);
     if (panel === "voice") return;
-    setSidePanelState(props.selectedSessionId, panel);
-  }, [props.selectedSessionId, setSidePanelState]);
+    setSidePanelState(actionSessionId, panel);
+  }, [actionSessionId, setSidePanelState]);
 
   const toggleCurrentSidePanel = useCallback((panel: SidePanelItem) => {
     if (panel === "voice") {
@@ -487,8 +502,8 @@ export function SessionPage(props: SessionPageProps) {
       return;
     }
     setSidePanelState(GLOBAL_VOICE_SIDE_PANEL_KEY, null);
-    toggleSidePanelState(props.selectedSessionId, panel);
-  }, [props.selectedSessionId, setSidePanelState, toggleSidePanelState]);
+    toggleSidePanelState(actionSessionId, panel);
+  }, [actionSessionId, setSidePanelState, toggleSidePanelState]);
 
   // When the agent calls a built-in browser tool, the main process opens
   // the WebContentsView and sends panel-opened; when hide_browser is called
@@ -521,7 +536,34 @@ export function SessionPage(props: SessionPageProps) {
   const [browserPanelDefaultWidth, setBrowserPanelDefaultWidth] = useState(browserPanelWidth);
   const sidebarProviderStyle: CSSProperties & Record<"--sidebar-width", string> = {
     "--sidebar-width": `${leftSidebarWidth + APP_NAVIGATION_RAIL_WIDTH}px`,
+    "--session-shell-top-inset": "44px",
   };
+  const sidebarRailPreviewOpen = shellConfig.sidebar && !sidebarOpen && sidebarPreviewScope !== null;
+  const cancelSidebarPreviewClose = useCallback(() => {
+    if (sidebarPreviewCloseTimerRef.current === null) return;
+    window.clearTimeout(sidebarPreviewCloseTimerRef.current);
+    sidebarPreviewCloseTimerRef.current = null;
+  }, []);
+  const scheduleSidebarPreviewClose = useCallback(() => {
+    cancelSidebarPreviewClose();
+    sidebarPreviewCloseTimerRef.current = window.setTimeout(() => {
+      if (sidebarPreviewPointerInsideRef.current) {
+        sidebarPreviewCloseTimerRef.current = null;
+        return;
+      }
+      setSidebarPreviewScope(null);
+      sidebarPreviewCloseTimerRef.current = null;
+    }, 120);
+  }, [cancelSidebarPreviewClose]);
+  const handleSidebarPreviewMenuChange = useCallback((scope: TaskScope | null) => {
+    if (scope) {
+      cancelSidebarPreviewClose();
+      setSidebarPreviewScope(scope);
+      return;
+    }
+    scheduleSidebarPreviewClose();
+  }, [cancelSidebarPreviewClose, scheduleSidebarPreviewClose]);
+  useEffect(() => () => cancelSidebarPreviewClose(), [cancelSidebarPreviewClose]);
   useEffect(() => {
     if (sidePanelOpen) return;
     setBrowserPanelDefaultWidth(browserPanelWidth);
@@ -581,7 +623,7 @@ export function SessionPage(props: SessionPageProps) {
       return;
     }
 
-    const sessionId = sourceSessionId ?? props.selectedSessionId;
+    const sessionId = sourceSessionId ?? actionSessionId;
 
     // TIPS: 本地工作区的文件一律在【文件】面板里以文件标签打开（产物列表入口已并入该面板）；
     // 远程工作区仍走下载/系统打开的旧路径。
@@ -616,11 +658,12 @@ export function SessionPage(props: SessionPageProps) {
     });
     preserveSidePanelOnPanelOpenRef.current = true;
     setCurrentSidePanel("panel");
-  }, [activePanelTab?.id, browserUrlForTarget, downloadOpenTarget, openFileInPanel, openTab, props.selectedSessionId, props.selectedWorkspaceDisplay.workspaceType, props.selectedWorkspaceRoot, setCurrentSidePanel]);
+  }, [actionSessionId, activePanelTab?.id, browserUrlForTarget, downloadOpenTarget, openFileInPanel, openTab, props.selectedWorkspaceDisplay.workspaceType, props.selectedWorkspaceRoot, setCurrentSidePanel]);
   const closeRightPane = useCallback(() => {
     setCurrentSidePanel(null);
   }, [setCurrentSidePanel]);
   const openBrowserRailPane = useCallback(() => {
+    if (!actionSessionId) return;
     // Opening the browser pane should land on a usable page, not an empty
     // panel that forces the user to click "+". If no browser tab exists yet,
     // create one (defaults to the new-tab URL in the main process).
@@ -632,7 +675,7 @@ export function SessionPage(props: SessionPageProps) {
       }
     }
     toggleCurrentSidePanel("panel");
-  }, [panelRailActive, sessionPanelState.tabs, toggleCurrentSidePanel]);
+  }, [actionSessionId, panelRailActive, sessionPanelState.tabs, toggleCurrentSidePanel]);
   const openBrowserUrlControlAction = useMemo<JuggleWorkControlAction>(() => ({
     id: "browser.open_url",
     label: "Open URL in built-in browser",
@@ -680,7 +723,7 @@ export function SessionPage(props: SessionPageProps) {
   }, [toggleCurrentSidePanel]);
   // TIPS: 全屏是覆盖层，没有系统级 Esc 行为可用；输入控件内的 Esc 留给编辑器自己处理。
   useEffect(() => {
-    if (!filesPanelExpanded || !props.selectedSessionId) return;
+    if (!filesPanelExpanded || !actionSessionId) return;
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
@@ -691,13 +734,13 @@ export function SessionPage(props: SessionPageProps) {
       if (tag === "INPUT" || tag === "TEXTAREA" || target?.isContentEditable) return;
 
       event.preventDefault();
-      setFilesPanelFullscreen(props.selectedSessionId!, false);
+      setFilesPanelFullscreen(actionSessionId, false);
     };
 
     window.addEventListener("keydown", handleKeyDown);
 
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [filesPanelExpanded, props.selectedSessionId, setFilesPanelFullscreen]);
+  }, [actionSessionId, filesPanelExpanded, setFilesPanelFullscreen]);
   const openExtensionsRailPane = useCallback(() => {
     toggleCurrentSidePanel("extensions");
   }, [toggleCurrentSidePanel]);
@@ -707,12 +750,12 @@ export function SessionPage(props: SessionPageProps) {
   const removeAccessibleTarget = useCallback((target: OpenTarget) => {
     const nextHiddenIds = new Set(hiddenAccessibleTargetIds);
     nextHiddenIds.add(target.id);
-    writeHiddenAccessibleTargetIds(props.selectedWorkspaceId, props.selectedSessionId, nextHiddenIds);
+    writeHiddenAccessibleTargetIds(props.selectedWorkspaceId, actionSessionId, nextHiddenIds);
     setHiddenTargetRevision((value) => value + 1);
-    if (props.selectedSessionId) {
-      closeTab(props.selectedSessionId, target.id);
+    if (actionSessionId) {
+      closeTab(actionSessionId, target.id);
     }
-  }, [closeTab, hiddenAccessibleTargetIds, props.selectedSessionId, props.selectedWorkspaceId]);
+  }, [actionSessionId, closeTab, hiddenAccessibleTargetIds, props.selectedWorkspaceId]);
   useEffect(() => {
     const open = (event: Event) => {
       const requested = (event as CustomEvent<OpenTarget>).detail;
@@ -953,7 +996,7 @@ export function SessionPage(props: SessionPageProps) {
       props.surface,
   );
   const canRenderSplitSurface = Boolean(canRenderReactSurface && splitSessionId && splitSessionId !== props.selectedSessionId);
-  const findButtonSessionId = props.selectedSessionId;
+  const findButtonSessionId = actionSessionId;
   const canGoBackInConversationHistory = !pendingConversationHistoryNavigation && canNavigateSelectedConversationHistory(
     conversationHistory,
     props.selectedWorkspaceId,
@@ -1110,13 +1153,209 @@ export function SessionPage(props: SessionPageProps) {
     }
   };
 
+  const sessionTopBar = (
+    <header
+      className={cn(
+        "z-10 flex h-[var(--session-shell-top-inset)] min-h-[var(--session-shell-top-inset)] shrink-0 items-center justify-between border-b border-dls-border/70 bg-dls-sidebar px-4 md:px-6 mac:titlebar-drag",
+        shellConfig.sidebar && !sidebarOpen && "mac:pl-[76px]",
+      )}
+      data-session-shell-topbar
+      >
+        {shellConfig.sidebar && !sidebarOpen ? (
+          <span
+            aria-hidden="true"
+            className="absolute left-0 top-0 h-[var(--session-shell-top-inset)] w-[76px] mac:titlebar-drag"
+            style={{ WebkitAppRegion: "drag" } as CSSProperties}
+            data-session-collapsed-drag-region
+          />
+        ) : null}
+        <div className="flex min-w-0 items-center gap-3">
+        {shellConfig.sidebar ? <SidebarTrigger className="mac:hidden" /> : null}
+        {shellConfig.sidebar && !sidebarOpen ? (
+          <div
+            className="hidden shrink-0 items-center gap-0 mac:flex mac:titlebar-no-drag"
+            style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
+            data-session-collapsed-sidebar-controls
+          >
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="pointer-events-auto rounded-xl text-dls-secondary hover:bg-dls-hover hover:text-dls-text mac:titlebar-no-drag"
+              style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
+              onClick={props.sidebar.onOpenTaskSearch}
+              title={t("workspace_list.search_sessions")}
+              aria-label={t("workspace_list.search_sessions")}
+              data-session-collapsed-task-search
+            >
+              <Search size={17} />
+            </Button>
+            <SidebarTrigger
+              className="pointer-events-auto mac:titlebar-no-drag"
+              style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
+              data-session-collapsed-sidebar-toggle
+            />
+          </div>
+        ) : null}
+        <Tooltip>
+          <TooltipTrigger
+            render={(
+              <span
+                data-testid="session-readiness-status"
+                className={cn(
+                  "inline-flex size-2.5 shrink-0 rounded-full mac:titlebar-no-drag",
+                  readinessTone === "ready" && "bg-green-9",
+                  readinessTone === "pending" && "bg-amber-9",
+                  readinessTone === "unavailable" && "bg-red-9",
+                )}
+              />
+            )}
+          />
+          <TooltipContent side="bottom" align="start" className="flex-col items-start gap-2 py-2">
+            <span className="flex items-center gap-2 whitespace-nowrap">
+              <span className={cn("size-2 rounded-full", readinessDotClass(taskTone))} />
+              <span>{t("status.ready_for_tasks")}: {taskStatusLabel}</span>
+            </span>
+            <span className="flex items-center gap-2 whitespace-nowrap">
+              <span className={cn("size-2 rounded-full", readinessDotClass(connectTone))} />
+              <span>JuggleWork Connect: {connectStatusLabel}</span>
+            </span>
+          </TooltipContent>
+        </Tooltip>
+        <h1 className="truncate text-[15px] font-semibold text-dls-text">
+          {showWorkspaceSetupEmptyState
+            ? t("session.create_or_connect_workspace")
+            : selectedSessionTitle || t("session.default_title")}
+        </h1>
+        <span className="hidden truncate text-[13px] text-dls-secondary lg:inline">
+          {workspaceName}
+        </span>
+        {gitBranchLoading ? (
+          <span
+            aria-hidden
+            className="hidden h-3 w-14 shrink-0 animate-pulse rounded-full bg-dls-hover/80 lg:inline-block"
+          />
+        ) : gitBranch ? (
+          <span
+            className="hidden min-w-0 max-w-[180px] items-center gap-1 text-[12px] text-dls-secondary lg:inline-flex"
+            title={gitBranch}
+          >
+            <GitBranch size={12} className="shrink-0" />
+            <span className="truncate">{gitBranch}</span>
+          </span>
+        ) : null}
+        {props.busyHint ? (
+          <span className="hidden text-[12px] text-dls-secondary lg:inline">
+            {props.busyHint}
+          </span>
+        ) : null}
+      </div>
+
+      <div className="flex shrink-0 items-center gap-1.5 text-gray-10 mac:titlebar-no-drag" data-session-topbar-actions>
+        {findButtonSessionId ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className="rounded-xl text-gray-10 transition-colors hover:bg-muted hover:text-foreground mac:titlebar-no-drag"
+                  aria-label="Find in conversation"
+                  onClick={() => useSessionFindStore.getState().openFind({ sessionId: findButtonSessionId })}
+                >
+                  <TextSearch size={17} />
+                </Button>
+              }
+            />
+            <TooltipContent>Find in conversation (⌘F)</TooltipContent>
+          </Tooltip>
+        ) : null}
+        {showCloudSignIn ? (
+          <Button
+            variant="secondary"
+            size="sm"
+            className="mac:titlebar-no-drag"
+            onClick={openCloudSignIn}
+            title={t("den.signin_title")}
+            aria-label={t("den.signin_title")}
+          >
+            <Cloud className="size-3.5" />
+            <span>{t("den.signin_button")}</span>
+          </Button>
+        ) : null}
+        <div className="mx-0.5 hidden h-4 w-px bg-border sm:block" aria-hidden="true" />
+        {isElectronRuntime() && actionSessionId ? (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className={cn(
+              "rounded-xl transition-colors hover:bg-muted hover:text-foreground mac:titlebar-no-drag",
+              panelRailActive && "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary",
+            )}
+            onClick={openBrowserRailPane}
+            title="Browser"
+            aria-label="Browser"
+            aria-pressed={panelRailActive}
+          >
+            <Globe size={17} />
+          </Button>
+        ) : null}
+        {voiceExtensionEnabled ? (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className={cn(
+              "rounded-xl transition-colors hover:bg-muted hover:text-foreground mac:titlebar-no-drag",
+              voiceRailActive && "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary",
+            )}
+            onClick={openVoiceRailPane}
+            title="Voice Mode"
+            aria-label="Voice Mode"
+            aria-pressed={voiceRailActive}
+          >
+            <Mic2 size={17} />
+          </Button>
+        ) : null}
+        {isLocalWorkspace && actionSessionId ? (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className={cn(
+              "rounded-xl transition-colors hover:bg-muted hover:text-foreground mac:titlebar-no-drag",
+              filesRailActive && "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary",
+            )}
+            onClick={openFilesRailPane}
+            title={t("session_files.entry")}
+            aria-label={t("session_files.entry")}
+            aria-pressed={filesRailActive}
+          >
+            <Folders size={17} />
+          </Button>
+        ) : null}
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          className={cn(
+            "rounded-xl transition-colors hover:bg-muted hover:text-foreground mac:titlebar-no-drag",
+            extensionsRailActive && "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary",
+          )}
+          onClick={props.settingsSlot && actionSessionId ? openExtensionsRailPane : props.onOpenSettings}
+          title="Extensions"
+          aria-label="Extensions"
+          aria-pressed={extensionsRailActive}
+        >
+          <Settings2 size={17} />
+        </Button>
+      </div>
+    </header>
+  );
+
   return (
-    <div className="flex h-full min-h-0 flex-col bg-[radial-gradient(circle_at_top,rgba(74,111,255,0.12),transparent_42%),var(--app-bg,#0b1020)] text-dls-text mac:bg-transparent">
+    <div className="flex h-full min-h-0 flex-col bg-dls-sidebar text-dls-text" data-session-shell-chrome>
       <SidebarProvider
         open={sidebarOpen}
         onOpenChange={setSidebarOpen}
         className={cn(
-          "relative min-h-0 flex-1 mac:bg-transparent",
+          "relative min-h-0 flex-1 bg-dls-sidebar",
           leftSidebarResizing &&
             "**:data-[slot=sidebar-container]:transition-none **:data-[slot=sidebar-gap]:transition-none",
           !shellConfig.sidebar && "**:data-[slot=sidebar-container]:hidden **:data-[slot=sidebar-gap]:hidden",
@@ -1168,12 +1407,93 @@ export function SessionPage(props: SessionPageProps) {
           onOpenHome={props.sidebar.onOpenHome}
           onOpenApps={props.sidebar.onOpenApps}
           onOpenChat={props.sidebar.onOpenChat}
+          onOpenReviews={props.sidebar.onOpenReviews}
           onOpenSettings={props.onOpenSettings}
           onReorderWorkspaces={props.sidebar.onReorderWorkspaces}
           onStartResize={startLeftSidebarResize}
+          railPreviewActive={sidebarRailPreviewOpen}
+          previewTaskScope={sidebarPreviewScope ?? undefined}
+          onRailPreviewMenuChange={handleSidebarPreviewMenuChange}
+          onRailPreviewEnter={() => {
+            sidebarPreviewPointerInsideRef.current = true;
+            cancelSidebarPreviewClose();
+          }}
+          onRailPreviewLeave={() => {
+            sidebarPreviewPointerInsideRef.current = false;
+            scheduleSidebarPreviewClose();
+          }}
         />
-        <SidebarInset className="min-h-0 overflow-hidden bg-background mac:bg-background/80 mac:[&_header]:transition-[padding-left] mac:[&_header]:duration-200 mac:[&_header]:ease-linear mac:peer-data-[state=collapsed]:[&_header]:pl-28 mac:max-md:[&_header]:pl-28">
-          <div className="flex min-h-0 flex-1">
+        {shellConfig.sidebar && !sidebarOpen ? (
+          <div
+            className="absolute inset-y-0 left-0 z-40 w-12 overflow-hidden mac:titlebar-no-drag"
+            data-session-rail-preview-trigger
+          >
+            <AppNavigationRail
+              homeActive
+              onOpenTaskSearch={props.sidebar.onOpenTaskSearch}
+              onOpenCreateWorkspace={props.sidebar.onOpenCreateWorkspace}
+              onOpenAccount={props.sidebar.onOpenAccount}
+              onOpenHome={props.sidebar.onOpenHome}
+              onOpenApps={props.sidebar.onOpenApps}
+              onOpenChat={props.sidebar.onOpenChat}
+              onOpenReviews={props.sidebar.onOpenReviews}
+              onOpenSettings={props.onOpenSettings}
+              onPreviewMenuChange={handleSidebarPreviewMenuChange}
+              suppressPreviewMenuTooltips
+            />
+          </div>
+        ) : null}
+        {shellConfig.sidebar && sidebarOpen ? (
+          <>
+            <span
+              aria-hidden="true"
+              className="absolute left-12 top-0 z-20 hidden h-[var(--session-shell-top-inset)] w-[calc(var(--sidebar-width)-7rem)] mac:block mac:titlebar-drag"
+              style={{ WebkitAppRegion: "drag" } as CSSProperties}
+              data-session-expanded-drag-region
+            />
+            <div
+              className="pointer-events-auto absolute left-[calc(var(--sidebar-width)-4rem)] top-1.5 z-30 hidden items-center gap-0 mac:flex mac:titlebar-no-drag"
+              style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
+              data-session-sidebar-controls
+            >
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="pointer-events-auto rounded-xl text-dls-secondary hover:bg-dls-hover hover:text-dls-text mac:titlebar-no-drag"
+                style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
+                onClick={props.sidebar.onOpenTaskSearch}
+                title={t("workspace_list.search_sessions")}
+                aria-label={t("workspace_list.search_sessions")}
+                data-session-task-search
+              >
+                <Search size={17} />
+              </Button>
+              <SidebarTrigger
+                className="pointer-events-auto mac:titlebar-no-drag"
+                style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
+                data-session-sidebar-toggle
+              />
+            </div>
+          </>
+        ) : null}
+        <SidebarInset className="min-h-0 overflow-hidden bg-dls-sidebar md:peer-data-[state=expanded]:before:absolute md:peer-data-[state=expanded]:before:left-0 md:peer-data-[state=expanded]:before:top-2 md:peer-data-[state=expanded]:before:z-20 md:peer-data-[state=expanded]:before:h-7 md:peer-data-[state=expanded]:before:w-px md:peer-data-[state=expanded]:before:bg-dls-border md:peer-data-[state=expanded]:before:content-['']">
+          {sessionTopBar}
+          <div
+            className={cn(
+              "relative mb-1.5 mr-1.5 flex min-h-0 flex-1 overflow-hidden border border-dls-border bg-background shadow-[0_1px_2px_rgba(0,0,0,0.04)]",
+              shellConfig.sidebar && sidebarOpen
+                ? "ml-1.5 rounded-[18px] md:ml-0 md:rounded-l-none md:rounded-r-[18px] md:border-l-0"
+                : "ml-[52px] rounded-[18px]",
+            )}
+            data-session-work-surface
+          >
+          {shellConfig.sidebar && sidebarOpen ? (
+            <span
+              aria-hidden="true"
+              className="absolute -inset-y-px left-0 z-30 hidden w-px bg-dls-border md:block"
+              data-session-content-divider
+            />
+          ) : null}
           <ResizablePanelGroup
             orientation="horizontal"
             onLayoutChanged={sidePanelOpen ? commitBrowserPanelWidth : undefined}
@@ -1181,100 +1501,6 @@ export function SessionPage(props: SessionPageProps) {
           >
             <ResizablePanel minSize="360px" className="min-w-0">
               <main className="flex h-full min-w-0 flex-col overflow-hidden">
-          {/* 顶栏高度统一由 .session-header -> --app-topbar-height 控制（见 styles/custom.css） */}
-          <header className="z-10 flex shrink-0 items-center justify-between border-b border-border px-4 md:px-6 mac:titlebar-drag  mac:backdrop-blur-2xl mac:backdrop-saturate-150 @container/titlebar session-header">
-            <div className="flex min-w-0 items-center gap-3">
-              {shellConfig.sidebar ? <SidebarTrigger className="mac:hidden" /> : null}
-              {shellConfig.sidebar && !sidebarOpen ? <SidebarTrigger className="hidden mac:flex titlebar-no-drag" /> : null}
-              <Tooltip>
-                <TooltipTrigger
-                  render={(
-                    <span
-                      data-testid="session-readiness-status"
-                      className={cn(
-                        "inline-flex size-2.5 shrink-0 rounded-full mac:titlebar-no-drag",
-                        readinessTone === "ready" && "bg-green-9",
-                        readinessTone === "pending" && "bg-amber-9",
-                        readinessTone === "unavailable" && "bg-red-9",
-                      )}
-                    />
-                  )}
-                />
-                <TooltipContent side="bottom" align="start" className="flex-col items-start gap-2 py-2">
-                  <span className="flex items-center gap-2 whitespace-nowrap">
-                    <span className={cn("size-2 rounded-full", readinessDotClass(taskTone))} />
-                    <span>{t("status.ready_for_tasks")}: {taskStatusLabel}</span>
-                  </span>
-                  <span className="flex items-center gap-2 whitespace-nowrap">
-                    <span className={cn("size-2 rounded-full", readinessDotClass(connectTone))} />
-                    <span>JuggleWork Connect: {connectStatusLabel}</span>
-                  </span>
-                </TooltipContent>
-              </Tooltip>
-              <h1 className="truncate text-[15px] font-semibold text-dls-text">
-                {showWorkspaceSetupEmptyState
-                  ? t("session.create_or_connect_workspace")
-                  : selectedSessionTitle || t("session.default_title")}
-              </h1>
-              <span className="hidden truncate text-[13px] text-dls-secondary lg:inline">
-                {workspaceName}
-              </span>
-              {gitBranchLoading ? (
-                <span
-                  aria-hidden
-                  className="hidden h-3 w-14 shrink-0 animate-pulse rounded-full bg-dls-hover/80 lg:inline-block"
-                />
-              ) : gitBranch ? (
-                <span
-                  className="hidden min-w-0 max-w-[180px] items-center gap-1 text-[12px] text-dls-secondary lg:inline-flex"
-                  title={gitBranch}
-                >
-                  <GitBranch size={12} className="shrink-0" />
-                  <span className="truncate">{gitBranch}</span>
-                </span>
-              ) : null}
-              {props.busyHint ? (
-                <span className="hidden text-[12px] text-dls-secondary lg:inline">
-                  {props.busyHint}
-                </span>
-              ) : null}
-            </div>
-
-            <div className="flex items-center gap-1.5 text-gray-10 mac:titlebar-no-drag">
-              {/* Revert/redo moved to per-message actions */}
-              {findButtonSessionId ? (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        className="rounded-xl text-gray-10 transition-colors hover:bg-muted hover:text-foreground"
-                        aria-label="Find in conversation"
-                        onClick={() => useSessionFindStore.getState().openFind({ sessionId: findButtonSessionId })}
-                      >
-                        <TextSearch size={17} />
-                      </Button>
-                    }
-                  />
-                  <TooltipContent>Find in conversation (⌘F)</TooltipContent>
-                </Tooltip>
-              ) : null}
-              {showCloudSignIn ? (
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={openCloudSignIn}
-                  title={t("den.signin_title")}
-                  aria-label={t("den.signin_title")}
-                >
-                  <Cloud className="size-3.5" />
-                  <span>{t("den.signin_button")}</span>
-                </Button>
-              ) : null}
-            </div>
-          </header>
-
           <ResizablePanelGroup orientation="vertical" className="min-h-0 flex-1 overflow-hidden">
             <ResizablePanel minSize="180px" className="min-h-0">
             <div className="relative h-full min-w-0 overflow-hidden bg-dls-surface mac:bg-dls-surface/85 mac:backdrop-blur-2xl mac:backdrop-saturate-150">
@@ -1449,6 +1675,7 @@ export function SessionPage(props: SessionPageProps) {
                         respondQuestion={props.respondQuestion}
                         safeStringify={props.safeStringify}
                         onOpenTarget={openTarget}
+                        quickNavigationLeftOffset={8}
                       />
                     </div>
                     {canRenderSplitSurface ? (
@@ -1471,6 +1698,7 @@ export function SessionPage(props: SessionPageProps) {
                           opencodeBaseUrl={reactSessionBaseUrl}
                           juggleworkToken={reactSessionToken}
                           onOpenTarget={openTarget}
+                          quickNavigationLeftOffset={8}
                         />
                       </div>
                     ) : null}
@@ -1675,12 +1903,12 @@ export function SessionPage(props: SessionPageProps) {
                     <VoicePanel
                       client={props.juggleworkServerClient}
                       workspaceId={props.runtimeWorkspaceId}
-                      sessionId={props.selectedSessionId}
+                      sessionId={actionSessionId}
                       onClose={closeRightPane}
                     />
-                  ) : activeSidePanel === "files" && props.selectedSessionId ? (
+                  ) : activeSidePanel === "files" && actionSessionId ? (
                     <FilesPanel
-                      sessionId={props.selectedSessionId}
+                      sessionId={actionSessionId}
                       client={props.juggleworkServerClient}
                       workspaceId={props.runtimeWorkspaceId}
                       workspaceRoot={props.selectedWorkspaceRoot}
@@ -1688,9 +1916,9 @@ export function SessionPage(props: SessionPageProps) {
                       opencodeToken={reactSessionToken}
                       busy={selectedSessionBusy}
                     />
-                  ) : activeSidePanel === "panel" && props.selectedSessionId ? (
+                  ) : activeSidePanel === "panel" && actionSessionId ? (
                     <SidePanel
-                      sessionId={props.selectedSessionId}
+                      sessionId={actionSessionId}
                       client={props.juggleworkServerClient}
                       workspaceId={props.runtimeWorkspaceId}
                       workspaceRoot={props.selectedWorkspaceRoot}
@@ -1702,84 +1930,21 @@ export function SessionPage(props: SessionPageProps) {
               </>
             ) : null}
           </ResizablePanelGroup>
-          <aside className="flex w-11 shrink-0 flex-col items-center gap-1 border-l border-border bg-background/95 px-1 py-2 text-muted-foreground mac:titlebar-no-drag">
-            {isElectronRuntime() ? (
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                className={cn(
-                  "rounded-xl transition-colors hover:bg-muted hover:text-foreground",
-                  panelRailActive && "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary",
-                )}
-                onClick={openBrowserRailPane}
-                title="Browser"
-                aria-label="Browser"
-                aria-pressed={panelRailActive}
-              >
-                <Globe size={17} />
-              </Button>
-            ) : null}
-            {voiceExtensionEnabled ? (
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                className={cn(
-                  "rounded-xl transition-colors hover:bg-muted hover:text-foreground",
-                  voiceRailActive && "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary",
-                )}
-                onClick={openVoiceRailPane}
-                title="Voice Mode"
-                aria-label="Voice Mode"
-                aria-pressed={voiceRailActive}
-              >
-                <Mic2 size={17} />
-              </Button>
-            ) : null}
-            {isLocalWorkspace && props.selectedSessionId ? (
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                className={cn(
-                  "rounded-xl transition-colors hover:bg-muted hover:text-foreground",
-                  filesRailActive && "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary",
-                )}
-                onClick={openFilesRailPane}
-                title={t("session_files.entry")}
-                aria-label={t("session_files.entry")}
-                aria-pressed={filesRailActive}
-              >
-                <Folders size={17} />
-              </Button>
-            ) : null}
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              className={cn(
-                "rounded-xl transition-colors hover:bg-muted hover:text-foreground",
-                extensionsRailActive && "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary",
-              )}
-              onClick={props.settingsSlot ? openExtensionsRailPane : props.onOpenSettings}
-              title="Extensions"
-              aria-label="Extensions"
-              aria-pressed={extensionsRailActive}
-            >
-              <Settings2 size={17} />
-            </Button>
-          </aside>
           </div>
         </SidebarInset>
-        {filesPanelExpanded && props.selectedSessionId ? (
-          // TIPS: 全屏是覆盖层而不是真窗口全屏 —— 左侧应用导航栏（72px）与右侧入口图标栏
-          // （44px）保持可见，其余（工作区标题、会话列表、会话页头）全部盖住。
+        {filesPanelExpanded && actionSessionId ? (
+          // TIPS: 全屏是圆角工作区内的覆盖层而不是真窗口全屏 —— 左侧应用导航栏
+          // 与四周外围 chrome 保持可见，Files 只覆盖中间的 18px 圆角区域。
           // macOS 顶部是 hiddenInset 系统标题栏：面板头部本身就是拖拽区，
-          // 头部里的按钮单独标 titlebar-no-drag，这样顶上不用留空白也点得动。
+          // 头部里的按钮单独标 titlebar-no-drag，仍可正常点击。
           <div
-            className="absolute bottom-0 right-11 top-0 z-40 flex flex-col overflow-hidden border-l border-border bg-background mac:titlebar-no-drag"
-            style={{ left: `${APP_NAVIGATION_RAIL_WIDTH}px` }}
+            className="absolute bottom-1.5 right-1.5 top-11 z-40 flex flex-col overflow-hidden rounded-[18px] border border-dls-border bg-background shadow-[0_1px_2px_rgba(0,0,0,0.04)] mac:titlebar-no-drag"
+            style={{ left: `${APP_NAVIGATION_RAIL_WIDTH + 4}px` }}
+            data-files-fullscreen-surface
           >
             <div className="flex min-h-0 flex-1 flex-col">
             <FilesPanel
-              sessionId={props.selectedSessionId}
+              sessionId={actionSessionId}
               client={props.juggleworkServerClient}
               workspaceId={props.runtimeWorkspaceId}
               workspaceRoot={props.selectedWorkspaceRoot}

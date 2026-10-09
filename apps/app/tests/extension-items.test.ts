@@ -4,7 +4,9 @@ import type { McpDirectoryInfo } from "../src/app/constants";
 import type { DenExternalMcpConnection } from "../src/app/lib/den";
 import type { McpServerEntry } from "../src/app/types";
 import {
+  builtInExtensionMcpServerNames,
   buildExtensionItems,
+  isBuiltInExtensionMcpEntry,
   isJuggleWorkProvidedSkill,
 } from "../src/react-app/domains/settings/extension-items";
 
@@ -76,6 +78,27 @@ function orgMcpConnection(input: Partial<DenExternalMcpConnection> = {}): DenExt
 }
 
 describe("extension item projection", () => {
+  test("classifies an MCP-backed built-in as a plugin-owned connector resource", () => {
+    const computerUse: McpDirectoryInfo = {
+      ...availableBuiltIn,
+      type: "local",
+      command: ["computer-use", "mcp"],
+      extensionManifest: {
+        ...availableBuiltIn.extensionManifest!,
+        resources: [{
+          id: "computer-use-mcp",
+          type: "mcp",
+          mcpServerName: "computer-use",
+          required: true,
+        }],
+      },
+    };
+
+    expect(isBuiltInExtensionMcpEntry(computerUse)).toBe(true);
+    expect(isBuiltInExtensionMcpEntry(notionQuickConnect)).toBe(false);
+    expect([...builtInExtensionMcpServerNames([computerUse, notionQuickConnect])]).toEqual(["computer-use"]);
+  });
+
   test("attributes only current JuggleWork-provided local skills", () => {
     expect(isJuggleWorkProvidedSkill({
       name: "skill-creator",

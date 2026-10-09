@@ -1,7 +1,10 @@
 import path from "node:path";
 
 import { z } from "zod";
-import { desktopRemoteOperationResultSchema } from "../dist/runtime/desktop-remote-control.js";
+import {
+  desktopRemoteOperationRequestSchema,
+  desktopRemoteOperationResultSchema,
+} from "../dist/runtime/desktop-remote-control.js";
 
 import {
   REMOTE_CONTROL_DESCENDANT_PAYLOAD_VERSION,
@@ -245,7 +248,15 @@ export function createRemoteControlMutationRegistrations({ workspaceStore, manag
         mapClientError(error, "workspace_not_found");
       }
     }),
-    registration("session.prompt", (value) => {
+    registration("session.prompt", (value, payloadVersion) => {
+      if (payloadVersion === REMOTE_CONTROL_DESCENDANT_PAYLOAD_VERSION) {
+        const parsed = desktopRemoteOperationRequestSchema.parse({
+          operation: "session.prompt",
+          payloadVersion,
+          arguments: value,
+        });
+        return Object.freeze(parsed.arguments);
+      }
       if (!value || typeof value !== "object" || Array.isArray(value) || ![3, 4].includes(Object.keys(value).length)) {
         throw new TypeError("Remote mutation arguments are invalid.");
       }
@@ -260,8 +271,9 @@ export function createRemoteControlMutationRegistrations({ workspaceStore, manag
       const whenBusy = Object.hasOwn(value, "whenBusy") ? value.whenBusy : "reject";
       if (!["reject", "steer", "enqueue"].includes(whenBusy)) throw new TypeError("Remote mutation arguments are invalid.");
       return Object.freeze({ workspaceId: String(value.workspaceId), sessionId: String(value.sessionId), prompt: value.prompt, whenBusy });
-    }, async ({ arguments: args, correlationId, signal }) => {
+    }, async ({ arguments: args, correlationId, signal, payloadVersion }) => {
       try {
+        const effectivePayloadVersion = payloadVersion ?? REMOTE_CONTROL_OPERATION_PAYLOAD_VERSION;
         const workspace = await authorizedWorkspace(workspaceStore, managedRuntimeClient, args.workspaceId, signal);
         const session = await readSession(managedRuntimeClient, workspace.id, args.sessionId, signal);
         if (canonicalPath(session.directory) !== workspace.path) {
@@ -270,7 +282,12 @@ export function createRemoteControlMutationRegistrations({ workspaceStore, manag
         assertMutationGeneration(signal);
         const response = await managedRuntimeClient.postJson(
           `/workspace/${encodeURIComponent(workspace.id)}/sessions/${encodeURIComponent(args.sessionId)}/runs/start`,
-          { origin: "remote-control", startCommandCorrelationId: correlationId, whenBusy: args.whenBusy, prompt: { parts: [{ type: "text", text: args.prompt }] } },
+          {
+            origin: "remote-control",
+            startCommandCorrelationId: correlationId,
+            whenBusy: args.whenBusy,
+            prompt: { parts: effectivePayloadVersion === REMOTE_CONTROL_DESCENDANT_PAYLOAD_VERSION ? args.parts : [{ type: "text", text: args.prompt }] },
+          },
         );
         assertMutationGeneration(signal);
         if (!response || typeof response !== "object") throw new TypeError("Invalid start response.");
@@ -286,11 +303,11 @@ export function createRemoteControlMutationRegistrations({ workspaceStore, manag
         } else if (responseRecord.disposition === "steered" && identifierSchema.safeParse(responseRecord.pendingOperationId).success && identifierSchema.safeParse(responseRecord.admittedId).success) {
           result = { disposition: "steered", pendingOperationId: responseRecord.pendingOperationId, admittedId: responseRecord.admittedId };
         } else throw new TypeError("Invalid start response.");
-        return desktopRemoteOperationResultSchema.parse({ operation: "session.prompt", payloadVersion: 1, result }).result;
+        return desktopRemoteOperationResultSchema.parse({ operation: "session.prompt", payloadVersion: effectivePayloadVersion, result }).result;
       } catch (error) {
         mapClientError(error, "session_not_found");
       }
-    }),
+    }, [REMOTE_CONTROL_OPERATION_PAYLOAD_VERSION, REMOTE_CONTROL_DESCENDANT_PAYLOAD_VERSION]),
     registration("session.pending.cancel", (value) => {
       parseArguments(value, ["workspaceId", "sessionId", "pendingOperationId"]);
       return Object.freeze({ workspaceId: String(value.workspaceId), sessionId: String(value.sessionId), pendingOperationId: String(value.pendingOperationId) });

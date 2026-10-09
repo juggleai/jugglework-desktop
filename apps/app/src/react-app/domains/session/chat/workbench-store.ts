@@ -22,6 +22,23 @@ export type SyncWorkbenchInput = {
   sessionsKnown: boolean;
 };
 
+export function resolveWorkbenchActionSessionId(input: {
+  workspaceId: string;
+  selectedSessionId: string | null;
+  workbenchWorkspaceId: string | null;
+  primarySessionId: string | null;
+  splitSessionId: string | null;
+  focusedPane: WorkbenchPane;
+  tabs: JuggleWorkSessionRef[];
+}): string | null {
+  if (input.workbenchWorkspaceId !== input.workspaceId) return input.selectedSessionId;
+  if (input.focusedPane === "secondary" && input.splitSessionId) return input.splitSessionId;
+  return input.selectedSessionId
+    ?? input.primarySessionId
+    ?? input.tabs.find((tab) => tab.workspaceId === input.workspaceId)?.sessionId
+    ?? null;
+}
+
 const initialWorkbenchSnapshot: WorkbenchSnapshot = {
   revision: 0,
   workspaceId: null,

@@ -26,6 +26,22 @@
    user-select: none;
 }
 
+.jw-list-panel-header.has-inset-divider {
+  position: relative;
+  border-bottom: 0;
+}
+
+.jw-list-panel-header.has-inset-divider::after {
+  position: absolute;
+  right: 12px;
+  bottom: 0;
+  left: 12px;
+  height: 1px;
+  background: var(--jw-list-header-border);
+  content: "";
+  pointer-events: none;
+}
+
 [data-theme="dark"] .jw-list-panel-header,
 :host([data-theme="dark"]) .jw-list-panel-header {
   --jw-list-header-border: #34363a;
@@ -39,11 +55,11 @@
 }
 
 .jw-list-panel-header.is-mac {
-  height: 96px;
-  min-height: 96px;
-  flex-basis: 96px;
+  height: 82px;
+  min-height: 82px;
+  flex-basis: 82px;
   justify-content: flex-end;
-  padding-top: 22px;
+  padding-top: 10px;
 }
 
 .jw-list-panel-title-row,
@@ -67,6 +83,16 @@
   white-space: nowrap;
   -webkit-app-region: drag;
 }
+
+/* A collapsed-sidebar preview is a transient interactive popover, not window
+   chrome. Electron drag regions do not dispatch reliable pointer-enter events,
+   so the full title strip must become no-drag while the preview is open. */
+[data-session-list-preview="true"] .jw-list-panel-header,
+[data-session-list-preview="true"] .jw-list-panel-title-row,
+[data-session-list-preview="true"] .jw-list-panel-title {
+  -webkit-app-region: no-drag;
+}
+
 .jw-list-panel-search-row{
   -webkit-app-region: no-drag;
 }

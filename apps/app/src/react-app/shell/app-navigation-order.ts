@@ -1,2 +1,2 @@
-/** 固定主导航顺序；自动化必须紧跟云端工作区。 */
-export const APP_PRIMARY_RAIL_ORDER = ["local-workspace", "cloud-workspace", "automations", "chat", "contacts"] as const;
+/** 固定主导航顺序；可置顶入口由更多菜单下方的动态区域承载。 */
+export const APP_PRIMARY_RAIL_ORDER = ["local-workspace", "cloud-workspace", "automations", "plugins", "chat", "contacts", "more"] as const;

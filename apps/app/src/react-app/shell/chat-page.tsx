@@ -5,6 +5,7 @@ import { JuggleChatApp } from "@/react-app/domains/jugglechat/jugglechat-app";
 import type { OpenCreateWorkspace } from "@/react-app/domains/workspace/types";
 import { useUiStateStore } from "./ui-state-store";
 import { APP_NAVIGATION_RAIL_WIDTH, AppNavigationRail } from "./app-navigation-rail";
+import { AppInsetSurface } from "./app-inset-surface";
 import { useWorkspaceShellLayout } from "./workspace-shell-layout";
 
 export type ChatPageProps = {
@@ -12,6 +13,7 @@ export type ChatPageProps = {
   onOpenHome: () => void;
   onOpenApps: () => void;
   onToggleChat: () => void;
+  onOpenReviews: () => void;
   onOpenSettings: () => void;
   /** Opens the cross-workspace task search dialog owned by the session shell. */
   onOpenTaskSearch: () => void;
@@ -31,7 +33,7 @@ export function ChatPage(props: ChatPageProps) {
   } as CSSProperties;
 
   return (
-    <div className="relative flex h-full min-h-0 w-full overflow-hidden bg-background">
+    <div className="relative flex h-full min-h-0 w-full overflow-hidden bg-dls-sidebar mac:titlebar-drag">
       <div
         className="h-full shrink-0 overflow-hidden transition-[width] duration-200 ease-linear"
         style={{ width: chatSidebarOpen ? APP_NAVIGATION_RAIL_WIDTH : 0 }}
@@ -42,19 +44,20 @@ export function ChatPage(props: ChatPageProps) {
           onOpenHome={props.onOpenHome}
           onOpenApps={props.onOpenApps}
           onOpenChat={props.onToggleChat}
+          onOpenReviews={props.onOpenReviews}
           onOpenSettings={props.onOpenSettings}
           onOpenTaskSearch={props.onOpenTaskSearch}
           onOpenCreateWorkspace={props.onOpenCreateWorkspace}
         />
       </div>
-      <main className="relative min-h-0 min-w-0 flex-1 bg-background" style={chatLayoutStyle}>
+      <AppInsetSurface className="relative" style={chatLayoutStyle} testId="chat-inset-surface">
         <JuggleChatApp
           sidebarOpen={chatSidebarOpen}
           sidebarResizing={leftSidebarResizing}
           onStartSidebarResize={startLeftSidebarResize}
           onToggleSidebar={toggleSidebar}
         />
-      </main>
+      </AppInsetSurface>
     </div>
   );
 }

@@ -1,5 +1,6 @@
 /** @jsxImportSource react */
 import { AppNavigationRail } from "./app-navigation-rail";
+import { AppInsetSurface } from "./app-inset-surface";
 import { SettingsRoute } from "./settings-route";
 import type { OpenCreateWorkspace } from "@/react-app/domains/workspace/types";
 
@@ -10,6 +11,7 @@ export type AppsPageProps = {
   onOpenAccount: () => void;
   onOpenHome: () => void;
   onOpenChat: () => void;
+  onOpenReviews: () => void;
   onOpenSettings: () => void;
   /** Opens the cross-workspace task search dialog owned by the session shell. */
   onOpenTaskSearch: () => void;
@@ -19,26 +21,28 @@ export type AppsPageProps = {
 
 export function AppsPage(props: AppsPageProps) {
   return (
-    <div className="flex h-full min-h-0 w-full overflow-hidden bg-background">
+    <div className="flex h-full min-h-0 w-full overflow-hidden bg-dls-sidebar mac:titlebar-drag">
       <AppNavigationRail
         appsActive
         onOpenAccount={props.onOpenAccount}
         onOpenHome={props.onOpenHome}
         onOpenApps={() => undefined}
         onOpenChat={props.onOpenChat}
+        onOpenReviews={props.onOpenReviews}
         onOpenSettings={props.onOpenSettings}
         onOpenTaskSearch={props.onOpenTaskSearch}
         onOpenCreateWorkspace={props.onOpenCreateWorkspace}
       />
-      <main className="min-h-0 min-w-0 flex-1 overflow-hidden">
+      <AppInsetSurface testId="plugins-inset-surface">
         <SettingsRoute
           embedded
           contentOnly
-          initialPath="extensions/mcp"
+          pluginCatalogOnly
+          initialPath="extensions/plugins"
           workspaceId={props.workspaceId ?? undefined}
           active={props.active}
         />
-      </main>
+      </AppInsetSurface>
     </div>
   );
 }

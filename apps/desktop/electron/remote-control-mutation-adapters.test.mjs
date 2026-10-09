@@ -252,6 +252,24 @@ test("session.prompt uses the semantic start API and forwards command correlatio
   assert.deepEqual(postCall.body, { origin: "remote-control", startCommandCorrelationId: "cmd-prompt", whenBusy: "reject", prompt: { parts: [{ type: "text", text: "do something" }] } });
 });
 
+test("session.prompt v2 preserves ordered safe parts through the managed runtime adapter", async () => {
+  const { registrations, client } = harness();
+  const prompt = registrations.find((r) => r.operation === "session.prompt");
+  assert.deepEqual(prompt.payloadVersions, [1, 2]);
+  const parts = [
+    { type: "text", text: "Inspect " },
+    { type: "file", mime: "application/pdf", filename: "brief.pdf", url: "data:application/pdf;base64,JVBERg==" },
+    { type: "text", text: " now" },
+  ];
+  const args = prompt.validateArguments({ workspaceId: WORKSPACE_ID, sessionId: SESSION_ID, parts, whenBusy: "reject" }, 2);
+  await prompt.execute({ arguments: args, payloadVersion: 2, context: {}, correlationId: "cmd-v2" });
+  assert.deepEqual(client.calls.find((call) => call.method === "POST").body.prompt.parts, parts);
+  assert.throws(() => prompt.validateArguments({
+    workspaceId: WORKSPACE_ID, sessionId: SESSION_ID,
+    parts: [{ type: "file", mime: "image/png", filename: "bad.png", url: "https://example.com/bad.png" }],
+  }, 2));
+});
+
 for (const [name, postResult, expected] of [
   ["enqueued", { disposition: "enqueued", pendingOperationId: "pending_queue", position: 2 }, { disposition: "enqueued", pendingOperationId: "pending_queue", position: 2 }],
   ["steered", { disposition: "steered", pendingOperationId: "pending_steer", admittedId: "pending_steer" }, { disposition: "steered", pendingOperationId: "pending_steer", admittedId: "pending_steer" }],

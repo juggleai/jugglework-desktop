@@ -81,6 +81,7 @@ import { createSessionRunJournal } from "./session-run-journal.js";
 import { registerInteractionRoutes } from "./routes/interactions.js";
 import { registerSessionPermissionRoutes } from "./routes/session-permissions.js";
 import { registerWorkspaceRoutes } from "./routes/workspaces.js";
+import { registerReviewRoutes } from "./routes/reviews.js";
 import { registerCloudMcpRoutes } from "./routes/cloud-mcp.js";
 import { registerAutomationRoutes } from "./routes/automations.js";
 import { registerProviderAuthRoutes } from "./routes/provider-auth.js";
@@ -99,6 +100,8 @@ import { SessionPermissionModeStore } from "./session-permission-mode-store.js";
 import { MediaGenerationRepository } from "./media-generation/repository.js";
 import { filterVideoSubmissionEligibleModels, MediaGenerationService, videoSubmissionAllowed } from "./media-generation/service.js";
 import { MediaGenerationWorker } from "./media-generation/worker.js";
+import { ReviewReadService } from "./reviews/service.js";
+import { ConnectGithubReviewProvider } from "./reviews/connect-github-provider.js";
 import { publicVideoGenerationJob } from "./media-generation/types.js";
 import { openAiCompatibleVideoAdapters } from "./media-generation/provider-registry.js";
 import { discoverVideoModels, listReadyVideoModels, noVideoModelResult, type ProviderCatalogSnapshot } from "./media-generation/model-discovery.js";
@@ -909,6 +912,7 @@ function parseSessionExecutionStartProxyRequest(method: string, proxyPath: strin
 export async function startServer(config: ServerConfig, options: {
   interactionResolutions?: InteractionResolutionCoordinator;
   logger?: ServerLogger;
+  reviewService?: ReviewReadService;
 } = {}): Promise<ServeResult> {
   const approvals = new ApprovalService(config.approval);
   const reloadEvents = new ReloadEventStore();
@@ -963,6 +967,7 @@ export async function startServer(config: ServerConfig, options: {
   const automationRepository = await AutomationRepository.open(config);
   const mediaGenerationRepository = await MediaGenerationRepository.open(config);
   const sessionPermissionStore = await SessionPermissionModeStore.open(config);
+  const reviewService = options.reviewService ?? new ReviewReadService(new ConnectGithubReviewProvider({ config }));
   const migratedLegacyFullAccessCount = await migrateTrustedLegacyLocalHostFullAccess({
     config,
     store: sessionPermissionStore,
@@ -1200,6 +1205,7 @@ export async function startServer(config: ServerConfig, options: {
     githubEventAuthStore,
     automationEventPoller,
     automationSubscriptionSync,
+    reviewService,
     mediaGenerationRuntime,
   );
 
@@ -1387,6 +1393,7 @@ export async function startServer(config: ServerConfig, options: {
     void automationEventPoller.dispose();
     void automationSubscriptionSync.dispose();
     void automationScheduler.dispose();
+    void reviewService.dispose();
     automationExecutor.dispose();
     automationRepository.close();
     mediaGenerationRepository.close();
@@ -1448,6 +1455,7 @@ export async function startServer(config: ServerConfig, options: {
       try { await automationSubscriptionSync.dispose(); } catch (error) { errors.push(error); }
       try { await automationScheduler.dispose(); } catch (error) { errors.push(error); }
       try { await mediaGenerationWorker.dispose(); } catch (error) { errors.push(error); }
+      try { await reviewService.dispose(); } catch (error) { errors.push(error); }
       let pendingPumpClosed = false;
       try { await sessionPendingOperationPump?.close(); pendingPumpClosed = true; } catch (error) {
         errors.push(error);
@@ -2159,6 +2167,7 @@ function createRoutes(
   githubEventAuthStore: GithubEventAuthStore,
   automationEventPoller: AutomationEventPoller,
   automationSubscriptionSync: AutomationSubscriptionSync,
+  reviewService: ReviewReadService,
   mediaGeneration: import("./extensions/media-generation.js").MediaGenerationExtensionRuntime,
 ): Route[] {
   const routes: Route[] = [];
@@ -2198,6 +2207,14 @@ function createRoutes(
     ensureWritable,
     resolveWorkspaceWithoutBootstrap,
     serializeWorkspace,
+  });
+
+  registerReviewRoutes({
+    routes,
+    config,
+    service: reviewService,
+    jsonResponse,
+    resolveWorkspaceForInspection,
   });
 
   registerProviderAuthRoutes({

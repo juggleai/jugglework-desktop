@@ -4,10 +4,40 @@ import {
   closeWorkbenchTab,
   focusWorkbenchPane,
   juggleWorkbenchTab,
+  resolveWorkbenchActionSessionId,
   setWorkbenchSplit,
   syncWorkbenchSnapshot,
   type WorkbenchSnapshot,
 } from "../src/react-app/domains/session/chat/workbench-store";
+
+describe("workbench action session", () => {
+  const tabs = [
+    { workspaceId: "workspace-a", sessionId: "session-primary" },
+    { workspaceId: "workspace-a", sessionId: "session-secondary" },
+  ];
+
+  test("follows the focused secondary pane before the route-selected primary", () => {
+    expect(resolveWorkbenchActionSessionId({
+      workspaceId: "workspace-a",
+      selectedSessionId: "session-primary",
+      workbenchWorkspaceId: "workspace-a",
+      primarySessionId: "session-primary",
+      splitSessionId: "session-secondary",
+      focusedPane: "secondary",
+      tabs,
+    })).toBe("session-secondary");
+  });
+
+  test("falls back through selected, workbench primary, and retained tabs", () => {
+    expect(resolveWorkbenchActionSessionId({ workspaceId: "workspace-a", selectedSessionId: "selected", workbenchWorkspaceId: "workspace-a", primarySessionId: "primary", splitSessionId: null, focusedPane: "primary", tabs })).toBe("selected");
+    expect(resolveWorkbenchActionSessionId({ workspaceId: "workspace-a", selectedSessionId: null, workbenchWorkspaceId: "workspace-a", primarySessionId: "primary", splitSessionId: null, focusedPane: "primary", tabs })).toBe("primary");
+    expect(resolveWorkbenchActionSessionId({ workspaceId: "workspace-a", selectedSessionId: null, workbenchWorkspaceId: "workspace-a", primarySessionId: null, splitSessionId: null, focusedPane: "primary", tabs })).toBe("session-primary");
+  });
+
+  test("does not reuse workbench sessions from another workspace", () => {
+    expect(resolveWorkbenchActionSessionId({ workspaceId: "workspace-b", selectedSessionId: null, workbenchWorkspaceId: "workspace-a", primarySessionId: "session-primary", splitSessionId: "session-secondary", focusedPane: "secondary", tabs })).toBeNull();
+  });
+});
 
 const emptyWorkbench: WorkbenchSnapshot = {
   revision: 0,

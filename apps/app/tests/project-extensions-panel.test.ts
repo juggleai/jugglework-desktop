@@ -56,6 +56,7 @@ describe("session project settings panel", () => {
   test("preserves scoped last-known-good data and exposes fenced mutation operations", () => {
     expect(extensionsStore).toContain("importedCloudPluginsContextKey === operation.cloudKey");
     expect(extensionsStore).toContain("cloudOrgMarketplacesContextKey === loadKey ? current.cloudOrgMarketplaces : []");
+    expect(extensionsStore).toContain("cloudOrgMarketplacesContextKey === loadKey ? current.cloudOrgPlugins : []");
     expect(extensionsStore).toContain("marketplacePluginOperations: state.marketplacePluginOperations");
     expect(extensionsStore).toContain("isWorkspacePluginOperationCurrent({");
     expect(extensionsStore).toContain("applyCloudPluginMutationResult(operation, result");
@@ -74,6 +75,7 @@ describe("session project settings panel", () => {
   test("clears cloud projections synchronously when workspace or organization context changes", () => {
     expect(extensionsStore).toContain("const cloudKey = getCloudContextKey()");
     expect(extensionsStore).toContain("cloudOrgMarketplaces: []");
+    expect(extensionsStore).toContain("cloudOrgPlugins: []");
     expect(extensionsStore).toContain("importedCloudMarketplaces: {}");
     expect(extensionsStore).toContain("importedCloudPlugins: {}");
     expect(extensionsStore).toContain("pendingCloudPluginChanges: {}");
