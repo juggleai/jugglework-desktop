@@ -87,10 +87,11 @@ export async function promoteChannel(plan, evidence, {
   notarizationExceptionReason = "",
   preCanaryExceptionReason = "",
   cacheExceptionReason = "",
+  metadataExceptionReason = "",
   onEvent = () => {},
   onPromotionVerified = async () => {},
 } = {}) {
-  assertPromotionEvidence(plan, evidence, { notarizationExceptionReason, preCanaryExceptionReason, cacheExceptionReason });
+  assertPromotionEvidence(plan, evidence, { notarizationExceptionReason, preCanaryExceptionReason, cacheExceptionReason, metadataExceptionReason });
   const notarizationException = notarizationExceptionReason
     ? { scope: `stable-${plan.version}-only`, reason: notarizationExceptionReason.trim() }
     : null;
@@ -100,9 +101,12 @@ export async function promoteChannel(plan, evidence, {
   const cacheException = cacheExceptionReason
     ? { scope: `stable-${plan.version}-only`, reason: cacheExceptionReason.trim() }
     : null;
+  const metadataException = metadataExceptionReason
+    ? { scope: "stable-1.2.27-only", reason: metadataExceptionReason.trim() }
+    : null;
   if (!cacheException && typeof refresh !== "function") throw new Error("CDN cache refresh operation is unavailable");
   if (!cacheException && typeof readBack !== "function") throw new Error("CDN read-back operation is unavailable");
-  if (!cacheException && typeof qiniu?.setCacheControl !== "function") throw new Error("Qiniu Cache-Control metadata operation is unavailable");
+  if (!cacheException && !metadataException && typeof qiniu?.setCacheControl !== "function") throw new Error("Qiniu Cache-Control metadata operation is unavailable");
   const lockKey = promotionLockKey(plan.channel, plan.platform);
   if (dryRun) {
     return {
@@ -110,12 +114,12 @@ export async function promoteChannel(plan, evidence, {
       lockKey,
       channelKey: plan.channelManifest.key,
       overwrite: true,
-      cacheControl: { conditional: true, value: CHANNEL_MANIFEST_CACHE_CONTROL, verifiedBeforeRefresh: true },
+      cacheControl: metadataException ? null : { conditional: true, value: CHANNEL_MANIFEST_CACHE_CONTROL, verifiedBeforeRefresh: true },
       refreshUrl: plan.channelManifest.url,
       readBack: { sha256: plan.manifest.sha256, size: plan.manifest.size },
     };
   }
-  if (!cacheException && typeof qiniu.prepareCacheControl === "function") await qiniu.prepareCacheControl();
+  if (!cacheException && !metadataException && typeof qiniu.prepareCacheControl === "function") await qiniu.prepareCacheControl();
 
   const existingLock = await qiniu.stat(lockKey);
   if (existingLock) {
@@ -167,6 +171,16 @@ export async function promoteChannel(plan, evidence, {
     }
     if (cacheException) {
       const result = { lockKey, channelKey: plan.channelManifest.key, channelObject: { size: channelRemote.size, etag: channelRemote.etag, verified: true }, lock: lockPayload, notarizationException, preCanaryException, cacheException };
+      await onPromotionVerified(result);
+      channelVerified = true;
+      return result;
+    }
+    if (metadataException) {
+      onEvent({ type: "cdn-refresh", url: plan.channelManifest.url });
+      await refresh([plan.channelManifest.url]);
+      onEvent({ type: "channel-readback", url: plan.channelManifest.url });
+      const readBackResult = await readBack(plan.channelManifest.url, plan.manifest.sha256, { fetchImpl, expectedSize: plan.manifest.size });
+      const result = { lockKey, channelKey: plan.channelManifest.key, channelObject: { size: channelRemote.size, etag: channelRemote.etag, verified: true }, readBack: readBackResult, lock: lockPayload, notarizationException, preCanaryException, metadataException };
       await onPromotionVerified(result);
       channelVerified = true;
       return result;

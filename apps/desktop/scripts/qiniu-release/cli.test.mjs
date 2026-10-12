@@ -19,6 +19,12 @@ test("CLI strictly parses release coordinates and dry-run", () => {
   assert.equal(parsed.options.preCanaryExceptionReason, "Operator authorized the live upgrade validation");
 });
 
+test("CLI parses the separate metadata-only exception reason", () => {
+  const parsed = parseArguments(["promote-channel", ...REQUIRED.with(1, "1.2.27").with(7, "arm64"), "--metadata-exception-reason", "Operator authorized skipping only Qiniu cache metadata verification"]);
+  assert.equal(parsed.options.metadataExceptionReason, "Operator authorized skipping only Qiniu cache metadata verification");
+  assert.match(usage(), /--metadata-exception-reason/);
+});
+
 test("SemVer prereleases are alpha-only and targets stay restricted", () => {
   assert.equal(parseArguments(["plan", ...REQUIRED.with(1, "1.2.16-alpha.1").with(3, "alpha")]).options.version, "1.2.16-alpha.1");
   assert.throws(() => parseArguments(["plan", ...REQUIRED.with(1, "1.2.16-alpha.1")]), /Invalid stable version/);

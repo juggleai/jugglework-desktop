@@ -39,7 +39,7 @@ const COMMANDS = new Set([
 ]);
 const OPTIONS = new Set([
   "version", "channel", "platform", "arch", "dist", "evidence", "bucket", "releaseDate", "actor", "reason",
-  "audit", "commit", "localVerification", "canary", "notarizationExceptionReason", "preCanaryExceptionReason", "cacheExceptionReason",
+  "audit", "commit", "localVerification", "canary", "notarizationExceptionReason", "preCanaryExceptionReason", "cacheExceptionReason", "metadataExceptionReason",
 ]);
 
 export function parseArguments(argv) {
@@ -209,6 +209,7 @@ export async function runCli(argv, {
       notarizationExceptionReason: options.notarizationExceptionReason,
       preCanaryExceptionReason: options.preCanaryExceptionReason,
       cacheExceptionReason: options.cacheExceptionReason,
+      metadataExceptionReason: options.metadataExceptionReason,
       now,
       onPromotionVerified: options.dryRun ? undefined : async (verified) => {
         const persisted = withEvidenceResults(evidence, {
@@ -220,6 +221,7 @@ export async function runCli(argv, {
             notarizationException: verified.notarizationException,
             preCanaryException: verified.preCanaryException,
             cacheException: verified.cacheException,
+            metadataException: verified.metadataException,
             channelObject: verified.channelObject,
             promotedAt: now().toISOString(),
           } },
@@ -236,7 +238,7 @@ export async function runCli(argv, {
 }
 
 export function usage() {
-  return `Usage: node cli.mjs <command> --version VERSION --channel stable|alpha --platform mac|windows --arch ARCH[,ARCH] --dist PATH --evidence PATH [options] [-- argv...]\n\nmac architectures: arm64, x64, universal (universal must be used alone). windows architectures: exactly arm64,x64; input order is normalized and VERSION must be greater than 1.2.17. Stable requires X.Y.Z; alpha also accepts SemVer prereleases. build executes argv after -- without a shell. Windows immutable upload requires persisted, passed local-verification evidence. recover-lock additionally requires --reason TEXT and --audit PATH and recovers only the selected --platform lock. Audited Apple pre-canary exceptions include stable macOS arm64 1.2.22, 1.2.23, 1.2.24, 1.2.25, and 1.2.26. The cache exception is restricted to stable macOS arm64 1.2.23, 1.2.24, 1.2.25, or 1.2.26 and skips only Cache-Control, CDN refresh, and public Stable-manifest convergence validation.\nCommands: plan, build, verify-local, upload-version, verify-cdn, promote-channel, verify-only, resume, recover-lock\n`;
+  return `Usage: node cli.mjs <command> --version VERSION --channel stable|alpha --platform mac|windows --arch ARCH[,ARCH] --dist PATH --evidence PATH [options] [-- argv...]\n\nmac architectures: arm64, x64, universal (universal must be used alone). windows architectures: exactly arm64,x64; input order is normalized and VERSION must be greater than 1.2.17. Stable requires X.Y.Z; alpha also accepts SemVer prereleases. build executes argv after -- without a shell. Windows immutable upload requires persisted, passed local-verification evidence. recover-lock additionally requires --reason TEXT and --audit PATH and recovers only the selected --platform lock. Audited Apple pre-canary exceptions include stable macOS arm64 1.2.22 through 1.2.27. The cache exception is restricted to stable macOS arm64 1.2.23 through 1.2.26 and skips Cache-Control, CDN refresh, and public Stable-manifest convergence validation. Exact stable macOS arm64 1.2.27 accepts --metadata-exception-reason TEXT to skip only Qiniu Cache-Control metadata verification; CDN refresh and public Stable digest/size read-back remain required.\nCommands: plan, build, verify-local, upload-version, verify-cdn, promote-channel, verify-only, resume, recover-lock\n`;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

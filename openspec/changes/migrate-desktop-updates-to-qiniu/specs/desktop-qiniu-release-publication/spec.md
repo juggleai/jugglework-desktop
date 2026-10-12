@@ -160,6 +160,15 @@ Stable macOS channel promotion SHALL require the expected bundle identity, Devel
 - **AND** it SHALL still require Developer ID and Team identity, bundle identity, hardened runtime, accepted app and DMG notarization, staples, Gatekeeper, complete packaged verification, immutable non-overwrite publication and Qiniu/CDN byte verification, promotion locking and prior-digest race checks, Stable object write and Qiniu metadata verification, and serialized Den exposure
 - **AND** it SHALL reject a notarization exception, a present failed or mismatched canary, or either exception for Windows, x64, Alpha, another version, or another channel
 
+#### Scenario: Explicit 1.2.27 macOS ARM64 metadata-only and pre-canary exceptions
+
+- **WHEN** the user authorizes exact stable macOS ARM64 `1.2.27` without a local real-client upgrade canary or Qiniu mutable-channel Cache-Control metadata verification
+- **THEN** tooling SHALL require separate audited reasons scoped to `stable-1.2.27-only` and SHALL skip only those two gates, not use the older cache exception
+- **AND** it SHALL retain Developer ID/Team identity, bundle identity, hardened runtime, app and DMG notarization, staples, Gatekeeper, packaged verification, immutable non-overwrite publication and Qiniu/CDN byte verification, promotion locking, prior-digest race checks, Stable object size/ETag verification, CDN refresh, and exact public Stable digest/size read-back before recording verified promotion
+- **AND** failed refresh, public read-back, or durable evidence SHALL retain the lock for audited recovery; a present failed or mismatched canary SHALL be rejected
+- **AND** tooling SHALL reject notarization and cache-convergence exceptions for `1.2.27`, and SHALL reject the metadata-only or pre-canary exceptions for Windows, x64, Alpha, any other version, or any other channel
+- **AND** skipping Cache-Control metadata verification risks an inherited long-lived public cache header and stale clients even if the observed public read-back matches; missing real-client canary leaves update installation behavior unproven
+
 ### Requirement: Channel manifests have controlled cache behavior
 Mutable stable/alpha manifests SHALL use short-lived or revalidation-required caching, while immutable version objects SHALL use long-lived immutable caching.
 
