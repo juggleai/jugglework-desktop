@@ -79,6 +79,16 @@ export function shouldShowRemoteControlReregister(input: {
     input.status.enrollmentAuthorized && !input.status.replacementPending;
 }
 
+export function shouldShowRemoteControlAuthorizationRefresh(input: {
+  signedIn: boolean;
+  policyAllowsRemote: boolean;
+  settings: DesktopRemoteControlSettings;
+  status: DesktopRemoteControlAgentStatus;
+}) {
+  return input.signedIn && input.policyAllowsRemote && !input.settings.enabled && input.status.locallyDisabled &&
+    !input.status.enrollmentAuthorized && !input.status.replacementPending;
+}
+
 export async function requestRemoteControlReregistration(input: {
   refreshFresh: () => Promise<{ config: { desktopRemoteFeatureGates?: { schemaVersion: number; enrollment: boolean; readOnlyControl: boolean } }; scope: DesktopRemoteControlPolicyScope }>;
   currentScope: () => DesktopRemoteControlPolicyScope | null;
@@ -99,6 +109,21 @@ export async function requestRemoteControlReregistration(input: {
   const enrollmentGrant = await input.createEnrollmentGrant();
   if (!matchesScope()) throw new Error("Remote-control account or organization changed.");
   return input.reregisterAndEnable({ grant: enrollmentGrant.grant, scope: fresh.scope });
+}
+
+export async function refreshRemoteControlRecoveryState(input: {
+  signedIn: boolean;
+  refreshFresh: () => Promise<unknown>;
+  readSettings: () => Promise<DesktopRemoteControlSettings>;
+  readStatus: () => Promise<DesktopRemoteControlAgentStatus>;
+}) {
+  // Re-registration visibility depends on Main receiving a fresh Cloud policy.
+  // Merely re-reading Main leaves enrollmentAuthorized=false forever once the
+  // previous policy expires, so an explicit user refresh must renew policy
+  // before reading the projected recovery state.
+  if (input.signedIn) await input.refreshFresh();
+  const [settings, status] = await Promise.all([input.readSettings(), input.readStatus()]);
+  return { settings, status };
 }
 
 export function statusPresentation(status: DesktopRemoteControlAgentStatus) {
@@ -189,6 +214,27 @@ export function DesktopRemoteControlSection() {
     setStatus(nextStatus);
   }, [desktopRuntime]);
 
+  const refreshRecoveryState = React.useCallback(async () => {
+    if (!desktopRuntime) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const next = await refreshRemoteControlRecoveryState({
+        signedIn: cloud.isSignedIn,
+        refreshFresh: desktopConfig.refreshFresh,
+        readSettings: desktopRemoteControlSettingsRead,
+        readStatus: desktopRemoteControlStatusRead,
+      });
+      setSettings(next.settings);
+      setStatus(next.status);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "无法刷新远程控制授权状态。");
+      await refresh().catch(() => undefined);
+    } finally {
+      setBusy(false);
+    }
+  }, [cloud.isSignedIn, desktopConfig.refreshFresh, desktopRuntime, refresh]);
+
   React.useEffect(() => {
     void refresh().catch(() => undefined);
     if (!desktopRuntime) return;
@@ -267,6 +313,12 @@ export function DesktopRemoteControlSection() {
     settings,
     status,
   });
+  const showAuthorizationRefresh = !reregisterPending && shouldShowRemoteControlAuthorizationRefresh({
+    signedIn: cloud.isSignedIn,
+    policyAllowsRemote,
+    settings,
+    status,
+  });
 
   return (
     <SettingsSection>
@@ -280,7 +332,7 @@ export function DesktopRemoteControlSection() {
               允许此 Desktop 通过出站加密连接向当前组织报告在线状态，并在未来接收已授权的远程操作。
             </SettingsSectionHeaderDescription>
           </SettingsSectionHeaderContent>
-          <RefreshButton busy={busy} onRefresh={refresh} disabled={busy}>刷新状态</RefreshButton>
+          <RefreshButton busy={busy} onRefresh={refreshRecoveryState} disabled={busy}>刷新 Cloud 授权和本机状态</RefreshButton>
       </SettingsSectionHeader>
 
       <LayoutSectionItem>
@@ -320,6 +372,16 @@ export function DesktopRemoteControlSection() {
               disabled={busy || !cloud.activeOrganization}
             >
               {t("settings.remote_control.reregister")}
+            </Button>
+          ) : null}
+          {showAuthorizationRefresh ? (
+            <Button
+              variant="outline"
+              data-testid="remote-control-refresh-authorization"
+              onClick={() => void refreshRecoveryState()}
+              disabled={busy}
+            >
+              刷新 Cloud 授权
             </Button>
           ) : null}
           {settings.enabled && status.enrolled && !status.connected ? (

@@ -7,7 +7,7 @@ Keep unattended remote-control devices reachable and correctly powered across cl
 ## Requirements
 
 ### Requirement: Account remote-control settings
-The desktop application SHALL expose remote-control settings inside Cloud Account. Its values SHALL be device-wide and SHALL NOT vary by workspace. When remote control is locally disabled and the signed-in account is freshly authorized to enroll, the settings SHALL offer `Re-register and enable`; ordinary offline, retry-backoff, and cloud-disabled states MUST NOT offer identity replacement as their recovery path.
+The desktop application SHALL expose remote-control settings inside Cloud Account. Its values SHALL be device-wide and SHALL NOT vary by workspace. When remote control is locally disabled and the signed-in account is freshly authorized to enroll, the settings SHALL offer `Re-register and enable`. When the otherwise eligible signed-in account lacks fresh enrollment authorization, the settings SHALL offer an explicit Cloud-authorization refresh that synchronizes fresh policy into Main before re-reading recovery state; ordinary offline, retry-backoff, and cloud-disabled states MUST NOT offer identity replacement as their recovery path.
 
 #### Scenario: Open Remote Control from account
 - **WHEN** a signed-in user opens Cloud Account settings
@@ -24,6 +24,10 @@ The desktop application SHALL expose remote-control settings inside Cloud Accoun
 #### Scenario: Restart with locally disabled settings
 - **WHEN** Desktop restarts with remote control locally disabled
 - **THEN** Account settings projects the device as disabled without advertising an active or connectable transport and offers re-registration only after fresh enrollment authorization
+
+#### Scenario: Enrollment authorization expires while locally disabled
+- **WHEN** the signed-in user is otherwise eligible to enroll, remote control is locally disabled, and Main no longer has fresh enrollment authorization
+- **THEN** Account settings offers an explicit Cloud-authorization refresh, synchronizes the refreshed policy into Main before reading status, and exposes `Re-register and enable` when the refreshed policy permits enrollment
 
 ### Requirement: Waiting device stays awake by default
 An enabled remote-control device SHALL default to preventing application/system idle suspension while it waits for remote tasks. The assertion SHALL allow display sleep and SHALL be released when remote control is disabled, signed out, revoked, stopped, or no longer freshly authorized.
