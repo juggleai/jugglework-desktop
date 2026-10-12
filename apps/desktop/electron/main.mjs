@@ -44,7 +44,7 @@ import { startRouterServer, stopRouterServer } from "./router-server.mjs";
 import { createApplicationMenu } from "./app-menu.mjs";
 import { applyBrandAppName } from "./brand-app-name.mjs";
 import { createBrowserPanel } from "./browser-panel.mjs";
-import { selectMainProcessFetch } from "./main-fetch.mjs";
+import { mainProcessFetchBody, selectMainProcessFetch } from "./main-fetch.mjs";
 import { createWorkspaceStore } from "./workspace-store.mjs";
 import { installCloseToHide, windowAllClosedAction } from "./window-close-behavior.mjs";
 import { createRemoteControlSettingsStore } from "./remote-control-settings.mjs";
@@ -2767,7 +2767,7 @@ const desktopCommandHandlers = {
       const requestInit = {
         method: typeof init.method === "string" ? init.method : undefined,
         headers: init.headers && typeof init.headers === "object" ? init.headers : undefined,
-        body: typeof init.body === "string" ? init.body : undefined,
+        body: mainProcessFetchBody(init),
         credentials: "omit",
         cache: "no-store",
       };

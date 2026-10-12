@@ -21,3 +21,8 @@ export function isLoopbackHttpUrl(value) {
 export function selectMainProcessFetch(url, { nodeFetch, electronFetch }) {
   return isLoopbackHttpUrl(url) ? nodeFetch : electronFetch;
 }
+
+export function mainProcessFetchBody(init) {
+  if (init?.bodyBytes instanceof Uint8Array) return Buffer.from(init.bodyBytes);
+  return typeof init?.body === "string" ? init.body : undefined;
+}

@@ -402,6 +402,7 @@ export type DesktopFetchInit = {
   method?: string;
   headers?: Record<string, string>;
   body?: string;
+  bodyBytes?: Uint8Array;
   timeoutMs?: number;
   agentContextDiagnostics?: {
     deadlineAtMs: number;
