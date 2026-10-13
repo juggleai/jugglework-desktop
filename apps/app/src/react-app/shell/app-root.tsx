@@ -144,6 +144,16 @@ function DenSigninGate({ children }: DenSigninGateProps) {
             >
               {t("den.refresh")}
             </Button>
+            <Button
+              type="button"
+              size="xs"
+              variant="ghost"
+              disabled={denAuth.signOutBusy}
+              onClick={() => void denAuth.signOut()}
+              data-testid="cloud-unavailable-sign-out"
+            >
+              {t("den.sign_out")}
+            </Button>
           </div>
         </div>
       ) : null}

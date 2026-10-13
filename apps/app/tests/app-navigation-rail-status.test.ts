@@ -236,6 +236,9 @@ describe("account menu", () => {
       source.indexOf('data-testid="account-menu-switch-organization"'),
     );
     expect(source).toContain('data-testid="account-menu-sign-out"');
+    expect(source).toContain('setAccountMenuOpen(false)');
+    expect(source).toContain('disabled={signOutBusy || authStatus === "signed_out"}');
+    expect(source).not.toContain('disabled={!user || accountBusy}');
     expect(source).toContain("<DropdownMenuSubContent");
     expect(source).toContain("organizationGroups.personal.map");
     expect(source).toContain("organizationGroups.others.map");

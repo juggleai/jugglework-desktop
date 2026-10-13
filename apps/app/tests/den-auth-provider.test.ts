@@ -9,6 +9,7 @@ import {
   shouldRetryDenAuthOnSignal,
   shouldValidateSignedInSession,
 } from "../src/react-app/domains/cloud/den-auth-provider";
+import { readFileSync } from "node:fs";
 
 describe("resolveDenAuthFailureStatus", () => {
   test("only treats a confirmed unauthorized response as signed out", () => {
@@ -121,5 +122,25 @@ describe("shouldValidateSignedInSession", () => {
       now: DEN_AUTH_SIGNED_IN_REFRESH_INTERVAL_MS,
       validationInFlight: true,
     })).toBe(false);
+  });
+});
+
+describe("expired-session recovery contract", () => {
+  test("clears local auth before best-effort remote sign-out and dismisses auth modal state", () => {
+    const source = readFileSync(new URL("../src/react-app/domains/cloud/den-auth-provider.tsx", import.meta.url), "utf8");
+    const signOut = source.slice(source.indexOf("const signOut = useCallback"), source.indexOf("const refresh = useCallback"));
+    expect(signOut.indexOf("clearDenSession()"));
+    expect(signOut.indexOf("clearDenSession()")).toBeLessThan(signOut.indexOf("void createDenClient"));
+    expect(signOut).toContain('updateStatus("signed_out")');
+    expect(signOut).toContain("setPendingServerSwitch(null)");
+    expect(signOut).toContain(".signOut().catch(() => undefined)");
+    expect(signOut).not.toContain("await createDenClient");
+  });
+
+  test("offers a direct sign-out escape hatch on the unavailable banner", () => {
+    const source = readFileSync(new URL("../src/react-app/shell/app-root.tsx", import.meta.url), "utf8");
+    expect(source).toContain('data-testid="cloud-unavailable-sign-out"');
+    expect(source).toContain('disabled={denAuth.signOutBusy}');
+    expect(source).toContain('onClick={() => void denAuth.signOut()}');
   });
 });
