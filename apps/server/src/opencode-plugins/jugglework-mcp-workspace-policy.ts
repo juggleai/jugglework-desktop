@@ -131,6 +131,24 @@ export const JuggleWorkMcpWorkspacePolicy = async (factoryInput?: unknown) => {
       const identity = hasCallIdentity
         ? await requestIdentityFrom(serverUrl, token, callContext)
         : factoryIdentity;
+      if (toolId === "skill") {
+        if (!identity.directory && !identity.workspaceId && !identity.sessionId) throw new Error("skill_workspace_identity_unavailable");
+        if (!serverUrl || !token) throw new Error("skill_workspace_policy_unavailable");
+        let decision: { allowed?: boolean; code?: string; skillName?: string };
+        try {
+          const response = await fetch(`${serverUrl}/internal/mcp-tool-policy/check`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ ...identity, operation: "skill", args: output.args }),
+          });
+          if (!response.ok) throw new Error("skill_workspace_policy_unavailable");
+          decision = await response.json() as typeof decision;
+        } catch {
+          throw new Error("skill_workspace_policy_unavailable");
+        }
+        if (decision.allowed !== true) throw new Error(`${decision.code ?? "skill_workspace_policy_unavailable"}${decision.skillName ? `:${decision.skillName}` : ""}`);
+        return;
+      }
       const isGenericResourceTool = toolId === "list_mcp_resources"
         || toolId === "list_mcp_resource_templates"
         || toolId === "read_mcp_resource";

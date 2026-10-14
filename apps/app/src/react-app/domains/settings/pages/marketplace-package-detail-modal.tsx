@@ -40,6 +40,8 @@ export type MarketplacePackageDetailModalProps = {
   onRetryResolve: () => void;
   accessHint: string | null;
   canMutate: boolean;
+  /** Application catalog never mutates the selected workspace's legacy copy. */
+  applicationCatalog?: boolean;
 };
 
 function componentStateLabel(component: MarketplacePluginComponentAvailability) {
@@ -75,15 +77,19 @@ export function MarketplacePackageDetailModal(props: MarketplacePackageDetailMod
   const workspaceComponents = props.resolved?.memberships.flatMap((membership) => {
     const object = membership.configObject;
     if (!object || mcpObjectIds.has(object.id)) return [];
-    const importedFile = row.imported?.files.find((file) => file.configObjectId === object.id);
+    const cloudDelivered = Boolean(props.applicationCatalog)
+      && !["hook", "tool"].includes(object.objectType);
+    const importedFile = props.applicationCatalog
+      ? undefined
+      : row.imported?.files.find((file) => file.configObjectId === object.id);
     const state: MarketplacePluginComponentAvailability["state"] = importedFile?.outcome === "failed" || importedFile?.errorMessage
       ? "failed"
       : importedFile?.outcome === "needs_admin_setup"
         ? "needs_admin"
         : importedFile?.outcome === "needs_signin"
           ? "needs_signin"
-          : importedFile ? "current" : "not_installed";
-    return [{ object, state }];
+          : importedFile || (cloudDelivered && lifecycle.state === "current") ? "current" : "not_installed";
+    return [{ object, state, delivery: cloudDelivered ? "cloud" as const : "workspace" as const }];
   }) ?? [];
   const primary = cloudBuiltIn ? null : lifecycle.primaryAction;
   const secondary = cloudBuiltIn ? null : lifecycle.secondaryAction;
@@ -195,17 +201,21 @@ export function MarketplacePackageDetailModal(props: MarketplacePackageDetailMod
                         </div>
                       );
                     })}
-                    {workspaceComponents.map(({ object, state }) => (
+                    {workspaceComponents.map(({ object, state, delivery }) => (
                       <div key={object.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-dls-border bg-dls-surface px-4 py-3">
                         <div className="flex min-w-0 items-start gap-3">
-                          <MonitorDown className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                          {delivery === "cloud"
+                            ? <Cloud className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                            : <MonitorDown className="mt-0.5 size-4 shrink-0 text-muted-foreground" />}
                           <div className="min-w-0">
                             <div className="truncate text-sm font-medium text-card-foreground">{object.title}</div>
                             <div className="truncate text-xs uppercase text-muted-foreground">{object.objectType}</div>
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
-                          <SettingsPill>{t("marketplace.component_delivery_workspace")}</SettingsPill>
+                          <SettingsPill>{t(delivery === "cloud"
+                            ? "marketplace.component_delivery_cloud"
+                            : "marketplace.component_delivery_workspace")}</SettingsPill>
                           <span className={`text-xs font-semibold ${componentStateTone(state)}`}>
                             {t(`marketplace.component_state_${state}`)}
                           </span>
@@ -276,7 +286,7 @@ export function MarketplacePackageDetailModal(props: MarketplacePackageDetailMod
               ? t(`marketplace.footer_${lifecycle.state}`)
               : t(`marketplace.detail_footer_${props.resolutionState}`)}
           </div>
-          {lifecycle.hasLocalLedger && !cloudBuiltIn ? (
+          {!props.applicationCatalog && lifecycle.hasLocalLedger && !cloudBuiltIn ? (
             <Button variant="destructive" size="sm" disabled={busy || !props.canMutate || !detailCurrent} onClick={() => void props.onRemovePlugin(row.plugin.id, row.plugin.name)}>
               {lifecycle.state === "removing" ? t("marketplace.lifecycle_removing") : t("marketplace.remove")}
             </Button>

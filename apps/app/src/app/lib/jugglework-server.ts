@@ -256,12 +256,30 @@ export type JuggleWorkPluginItem = {
   path?: string;
 };
 
+export type JuggleWorkPluginWorkspacePolicy = {
+  workspaceId: string;
+  disabledPluginSpecs: string[];
+  controllablePluginSpecs: string[];
+  revision: number;
+  updatedAt: number | null;
+  enforcementReady: boolean;
+};
+
 export type JuggleWorkSkillItem = {
   name: string;
   path: string;
   description: string;
   scope: "project" | "global";
   trigger?: string;
+  enabled?: boolean;
+};
+
+export type JuggleWorkSkillWorkspacePolicy = {
+  workspaceId: string;
+  disabledSkillNames: string[];
+  revision: number;
+  updatedAt: number | null;
+  enforcementReady: boolean;
 };
 
 export type JuggleWorkSkillContent = {
@@ -2356,6 +2374,12 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
         { token, hostToken },
       );
     },
+    getPluginPolicy: (workspaceId: string) =>
+      requestJson<JuggleWorkPluginWorkspacePolicy>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/plugin-policy`, { token, hostToken }),
+    setPluginPolicy: (workspaceId: string, disabledPluginSpecs: string[]) =>
+      requestJson<JuggleWorkPluginWorkspacePolicy>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/plugin-policy`, {
+        token, hostToken, method: "PUT", body: { disabledPluginSpecs },
+      }),
     addPlugin: (workspaceId: string, spec: string) =>
       requestJson<{ items: JuggleWorkPluginItem[]; loadOrder: string[] }>(
         baseUrl,
@@ -2378,6 +2402,12 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
         { token, hostToken },
       );
     },
+    getSkillPolicy: (workspaceId: string) =>
+      requestJson<JuggleWorkSkillWorkspacePolicy>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/skill-policy`, { token, hostToken }),
+    setSkillPolicy: (workspaceId: string, disabledSkillNames: string[]) =>
+      requestJson<JuggleWorkSkillWorkspacePolicy>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/skill-policy`, {
+        token, hostToken, method: "PUT", body: { disabledSkillNames },
+      }),
     getSkill: (workspaceId: string, name: string, options?: { includeGlobal?: boolean }) => {
       const query = options?.includeGlobal ? "?includeGlobal=true" : "";
       return requestJson<JuggleWorkSkillContent>(

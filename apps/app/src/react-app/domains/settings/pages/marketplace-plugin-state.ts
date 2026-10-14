@@ -70,7 +70,7 @@ export type MarketplacePluginLifecycle = {
 };
 
 export type ResolveMarketplacePluginLifecycleInput = {
-  plugin: Pick<DenOrgPlugin, "updatedAt" | "memberCount" | "cloudReadiness">;
+  plugin: Pick<DenOrgPlugin, "updatedAt" | "memberCount" | "cloudReadiness" | "componentCounts">;
   imported: CloudImportedPlugin | null;
   pendingChange?: PendingCloudPluginChange;
   components: DenPluginMcpComponent[];
@@ -78,6 +78,8 @@ export type ResolveMarketplacePluginLifecycleInput = {
   operation?: MarketplacePluginOperation;
   operationError?: string | null;
   failedOperation?: "install" | "remove" | null;
+  /** Ignore the selected workspace's materialization state in the app catalog. */
+  catalogMode?: boolean;
 };
 
 function filesForComponent(files: CloudImportedPluginFile[], component: DenPluginMcpComponent) {
@@ -254,10 +256,36 @@ export function resolveMarketplacePluginLifecycle(
     input.resolvedConfigObjectIds ?? null,
     plugin.memberCount,
   );
-  const hasLocalLedger = hasMarketplacePluginLocalLedger(imported);
+  const catalogMode = input.catalogMode === true;
+  const hasLocalLedger = catalogMode ? false : hasMarketplacePluginLocalLedger(imported);
   let state: MarketplacePluginLifecycleState;
 
-  if (input.operation === "removing") state = "removing";
+  if (catalogMode) {
+    const readiness = plugin.cloudReadiness?.state;
+    const hasDesktopMcp = components.some((component) => component.delivery === "desktop");
+    const hasDesktopPackageComponent = Object.entries(plugin.componentCounts).some(
+      ([type, count]) => count > 0 && (type === "hook" || type === "tool"),
+    );
+    const hasCloudInstruction = Object.entries(plugin.componentCounts).some(
+      ([type, count]) => count > 0 && ["agent", "command", "context", "custom", "skill"].includes(type),
+    );
+    const readinessAllowsCloudExecution = readiness === "ready"
+      || (readiness === undefined && hasCloudInstruction && components.length === 0);
+    const canRunWithoutWorkspaceMaterialization = !hasDesktopMcp
+      && !hasDesktopPackageComponent
+      && readinessAllowsCloudExecution;
+    if (
+      availability.some((component) => component.state === "needs_admin")
+      || readiness === "needs_admin_setup"
+    ) state = "needs_admin";
+    else if (
+      availability.some((component) => component.state === "needs_signin")
+      || readiness === "needs_signin"
+    ) state = "needs_signin";
+    else if (canRunWithoutWorkspaceMaterialization) state = "current";
+    else state = "not_installed";
+  }
+  else if (input.operation === "removing") state = "removing";
   else if (input.operation === "installing") state = "installing";
   else if (imported?.status === "repair_required") state = "repair_required";
   else if (
@@ -301,6 +329,14 @@ export function resolveMarketplacePluginLifecycle(
     else state = "current";
   }
 
+  const actions = catalogMode
+    ? {
+        primaryAction: state === "needs_signin"
+          ? { kind: "sign_in" as const, mutatesWorkspace: false }
+          : null,
+        secondaryAction: null,
+      }
+    : resolveMarketplacePluginActions(state, { hasLocalLedger });
   return {
     state,
     delivery,
@@ -308,7 +344,7 @@ export function resolveMarketplacePluginLifecycle(
     hasLocalLedger,
     error: input.operation === "failed" ? input.operationError ?? null : null,
     failedOperation: input.operation === "failed" ? input.failedOperation ?? "install" : null,
-    ...resolveMarketplacePluginActions(state, { hasLocalLedger }),
+    ...actions,
   };
 }
 

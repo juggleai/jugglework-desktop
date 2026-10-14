@@ -4,6 +4,8 @@ import { describe, expect, test } from "bun:test";
 const panel = readFileSync(new URL("../src/react-app/domains/settings/pages/project-extensions/project-extensions-panel.tsx", import.meta.url), "utf8");
 const connectorModal = readFileSync(new URL("../src/react-app/domains/settings/pages/project-extensions/connector-picker-modal.tsx", import.meta.url), "utf8");
 const skillsModal = readFileSync(new URL("../src/react-app/domains/settings/pages/project-extensions/skills-manager-modal.tsx", import.meta.url), "utf8");
+const pluginsModal = readFileSync(new URL("../src/react-app/domains/settings/pages/project-extensions/plugins-manager-modal.tsx", import.meta.url), "utf8");
+const panelTypes = readFileSync(new URL("../src/react-app/domains/settings/pages/project-extensions/types.ts", import.meta.url), "utf8");
 const skillDetail = readFileSync(new URL("../src/react-app/domains/settings/pages/project-extensions/skill-detail-modal.tsx", import.meta.url), "utf8");
 const settingsRoute = readFileSync(new URL("../src/react-app/shell/settings-route.tsx", import.meta.url), "utf8");
 const extensionsStore = readFileSync(new URL("../src/react-app/domains/settings/state/extensions-store.ts", import.meta.url), "utf8");
@@ -16,10 +18,12 @@ describe("session project settings panel", () => {
     expect(zh).toMatch(/"project_extensions\.panel_title": "设置"/);
   });
 
-  test("only shows instructions, connectors and skills", () => {
+  test("shows instructions, connectors, skills and scoped plugins", () => {
     expect(panel).toMatch(/project_extensions\.group_instruction/);
     expect(panel).toMatch(/project_extensions\.group_connector/);
     expect(panel).toMatch(/project_extensions\.group_skill/);
+    expect(panel).toMatch(/project_extensions\.group_plugin/);
+    expect(panel).toContain("<PluginsManagerModal");
     expect(panel).not.toMatch(/project_extensions\.group_expert/);
     expect(panel).not.toMatch(/project_extensions\.group_automation/);
   });
@@ -29,9 +33,14 @@ describe("session project settings panel", () => {
     expect(panel).toMatch(/description=\{t\("project_extensions\.skill_card_desc"\)\}/);
   });
 
-  test("shows the captured workspace installed marketplace plugin count", () => {
-    expect(settingsRoute).toContain("installedMarketplacePluginCount={Object.keys(extensionsSnapshot.importedCloudPlugins).length}");
-    expect(panel).toContain("count={props.installedMarketplacePluginCount || undefined}");
+  test("keeps marketplace browsing out of workspace settings", () => {
+    const embeddedBranch = settingsRoute.slice(
+      settingsRoute.indexOf("if (props.embedded)"),
+      settingsRoute.indexOf("return (\n          <ExtensionsView", settingsRoute.indexOf("if (props.embedded)")),
+    );
+    expect(embeddedBranch).not.toContain("installedMarketplacePluginCount");
+    expect(embeddedBranch).not.toContain("pluginsSlot");
+    expect(embeddedBranch).not.toContain("onRefreshPlugins");
   });
 
   test("gates unsupported and read-only marketplace mutations before requests", () => {
@@ -40,7 +49,7 @@ describe("session project settings panel", () => {
     expect(extensionsStore.indexOf("if (!operation.access.allowed)")).toBeLessThan(
       extensionsStore.indexOf("client.getOrgPluginResolved(orgId, plugin)"),
     );
-    expect(marketplaceView).toContain("canMutate={marketplacePluginAccess.allowed}");
+    expect(marketplaceView).toContain("canMutate={!applicationCatalog && marketplacePluginAccess.allowed}");
     expect(marketplaceModal).toContain("isMarketplacePluginActionDisabled(primary");
     expect(marketplaceModal).toContain("lifecycle.hasLocalLedger && !cloudBuiltIn");
   });
@@ -91,6 +100,38 @@ describe("session project settings panel", () => {
     expect(skillsModal).not.toContain("project_extensions.uninstall_global_warning");
     expect(skillDetail).toContain('skill.scope === "global" ? "project_extensions.scope_global" : "project_extensions.scope_workspace"');
     expect(panel).toContain("const visibleSkillCount = props.installedSkills.length");
+  });
+
+  test("keeps disabled skills visible and provides workspace switches for both scopes only when available", () => {
+    expect(panelTypes).toContain("workspaceSkillPolicy?: WorkspaceSkillPolicy");
+    expect(panelTypes).toContain('"available" | "disabledSkillNames" | "savingName" | "error" | "setSkillEnabled"');
+    expect(skillsModal).toContain("if (!keyword) return skills");
+    expect(skillsModal).toContain("disabledSkillNames.includes(skill.name)");
+    expect(skillsModal).toContain('t(isGlobal ? "project_extensions.scope_global" : "project_extensions.scope_workspace")');
+    expect(skillsModal).toContain('t("connect.workspace_disabled_here")');
+    expect(skillsModal).toContain("workspaceSkillPolicy?.available ? (");
+    expect(skillsModal).toContain("checked={!disabledHere}");
+    expect(skillsModal).toContain("disabled={workspaceSkillPolicy.savingName === skill.name}");
+    expect(skillsModal).toContain("workspaceSkillPolicy.setSkillEnabled(skill.name, enabled)");
+    expect(skillsModal).toContain('aria-label={t("connect.workspace_toggle_label", { name: skill.name })}');
+    expect(skillsModal).toContain('workspaceSkillPolicy?.error ? (');
+    expect(skillsModal).toContain('role="alert"');
+    expect(skillsModal).toContain("onClick={(event) => event.stopPropagation()}");
+    expect(skillsModal).toContain("onKeyDown={(event) => event.stopPropagation()}");
+    expect(skillsModal.indexOf("workspaceSkillPolicy?.available ? (")).toBeLessThan(skillsModal.indexOf("{!isGlobal ? ("));
+    expect(settingsRoute).toContain("useWorkspaceSkillPolicy({ client: policyClient, workspaceId: runtimeWorkspaceId })");
+    expect(settingsRoute).toContain("workspaceSkillPolicy={workspaceSkillPolicy}");
+    expect(panel).toContain("workspaceSkillPolicy={props.workspaceSkillPolicy}");
+  });
+
+  test("lists global and workspace plugins but only switches runtime-controllable specs", () => {
+    expect(settingsRoute).toContain("listPlugins(runtimeWorkspaceId, { includeGlobal: true })");
+    expect(settingsRoute).toContain("workspacePluginPolicy={workspacePluginPolicy}");
+    expect(settingsRoute).toContain("plugins={workspaceVisiblePlugins}");
+    expect(pluginsModal).toContain('plugin.scope === "global"');
+    expect(pluginsModal).toContain("policy.controllablePluginSpecs.includes(plugin.spec)");
+    expect(pluginsModal).toContain("policy?.setPluginEnabled(plugin.spec!, enabled)");
+    expect(pluginsModal).toContain("project_extensions.plugin_policy_unavailable");
   });
 
   test("shows connected and workspace-disabled MCP groups without an unconnected group", () => {

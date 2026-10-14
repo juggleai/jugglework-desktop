@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 import { t } from "@/i18n";
 import { ConnectorPickerModal } from "./connector-picker-modal";
 import { SkillsManagerModal } from "./skills-manager-modal";
-import { PluginsModal } from "./plugins-modal";
+import { PluginsManagerModal } from "./plugins-manager-modal";
 import { InstructionsModal } from "./instructions-modal";
 import type { ProjectExtensionsPanelProps } from "./types";
 
@@ -54,7 +54,7 @@ function GroupCard({ title, description, count, disabled, onAdd, children }: {
 }
 
 /**
- * 会话右侧设置分组卡片面板：只展示当前可配置的指令、连接器和技能。
+ * 会话右侧设置分组卡片面板：指令及当前工作区可见的连接器、技能和插件。
  */
 export function ProjectExtensionsPanel(props: ProjectExtensionsPanelProps) {
   const [modal, setModal] = useState<ActiveModal>(null);
@@ -89,7 +89,7 @@ export function ProjectExtensionsPanel(props: ProjectExtensionsPanelProps) {
       <GroupCard
         title={t("project_extensions.group_plugin")}
         description={t("project_extensions.plugin_card_desc")}
-        count={props.installedMarketplacePluginCount || undefined}
+        count={props.plugins.length || undefined}
         onAdd={() => setModal("plugin")}
       />
 
@@ -112,16 +112,18 @@ export function ProjectExtensionsPanel(props: ProjectExtensionsPanelProps) {
         open={modal === "skill"}
         projectDir={props.projectDir}
         skills={props.installedSkills}
+        workspaceSkillPolicy={props.workspaceSkillPolicy}
         onClose={() => setModal(null)}
         onUninstall={props.onUninstallSkill}
         onUpload={props.onUploadSkill}
         onRefresh={props.onRefreshSkills}
       />
-      <PluginsModal
+      <PluginsManagerModal
         open={modal === "plugin"}
-        contentSlot={props.pluginsSlot}
+        plugins={props.plugins}
+        policy={props.workspacePluginPolicy}
+        error={props.pluginError}
         onClose={() => setModal(null)}
-        onRefresh={props.onRefreshPlugins}
       />
     </div>
   );

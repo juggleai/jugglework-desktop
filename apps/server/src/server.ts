@@ -6,6 +6,7 @@ import type { ApprovalRequest, Capabilities, ServerConfig, WorkspaceInfo, Actor,
 import { agentContextDiagnosticsRequestSchema } from "./agent-context-diagnostics-schema.js";
 import { ApprovalService } from "./approvals.js";
 import { addPlugin, listPlugins, normalizePluginSpec, removePlugin } from "./plugins.js";
+import { readPluginWorkspacePolicy } from "./plugin-workspace-policy.js";
 import { sanitizePortableOpencodeConfig } from "./portable-opencode.js";
 import {
   addMcp,
@@ -17,6 +18,7 @@ import {
 } from "./mcp.js";
 import { exportExtensions } from "./extensions-export.js";
 import { deleteSkill, globalSkillDirs, listSkills, upsertSkill } from "./skills.js";
+import { checkSkillWorkspacePolicy, readSkillWorkspacePolicy, writeSkillWorkspacePolicy } from "./skill-workspace-policy.js";
 import { deleteCommand, listCommands, repairCommands, upsertCommand } from "./commands.js";
 import { ApiError, formatError } from "./errors.js";
 import { admitOpencodePrompt } from "./opencode-admission.js";
@@ -1786,6 +1788,13 @@ async function proxyOpencodeRequest(input: {
       headers,
       body,
     });
+    if (workspace && method === "GET" && (normalizeOpencodeProxyPath(proxyPath) === "/skill" || normalizeOpencodeProxyPath(proxyPath) === "/app/skills") && response.ok) {
+      const disabled = (await readSkillWorkspacePolicy(input.config, workspace.id)).disabledSkillNames;
+      if (disabled.length) {
+        const entries = await response.clone().json() as Array<{ name: string }>;
+        if (Array.isArray(entries)) return jsonResponse(entries.filter((entry) => !disabled.includes(entry.name)));
+      }
+    }
     return sanitizeProxyResponse(response);
   } finally {
     releaseExecutionRun();
@@ -3113,6 +3122,19 @@ function createRoutes(
     return jsonResponse(result);
   });
 
+  addRoute(routes, "GET", "/workspace/:id/plugin-policy", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const policy = await readPluginWorkspacePolicy(config, workspace.id);
+    return jsonResponse(policy);
+  });
+
+  addRoute(routes, "PUT", "/workspace/:id/plugin-policy", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    await resolveWorkspace(config, ctx.params.id);
+    throw new ApiError(409, "plugin_policy_unavailable", "Workspace plugin policy cannot be enforced with a shared OpenCode runtime config");
+  });
+
   addRoute(routes, "POST", "/workspace/:id/plugins", "client", async (ctx) => {
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
@@ -3185,7 +3207,34 @@ function createRoutes(
     const includeGlobal = ctx.url.searchParams.get("includeGlobal") === "true";
     const scope = ctx.url.searchParams.get("scope") === "global" ? "global" : undefined;
     const items = await listSkills(workspace.path, includeGlobal, { scope });
-    return jsonResponse({ items });
+    const disabled = (await readSkillWorkspacePolicy(config, workspace.id)).disabledSkillNames;
+    return jsonResponse({ items: items.map((item) => ({ ...item, enabled: !disabled.includes(item.name) })) });
+  });
+
+  addRoute(routes, "GET", "/workspace/:id/skill-policy", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const policy = await readSkillWorkspacePolicy(config, workspace.id);
+    return jsonResponse({ ...policy, enforcementReady: Boolean(trustedOpencodeProcessIdentity(config, workspace)) });
+  });
+
+  addRoute(routes, "PUT", "/workspace/:id/skill-policy", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    if (!trustedOpencodeProcessIdentity(config, workspace)) {
+      throw new ApiError(409, "skill_policy_unavailable", "Skill policy requires a managed OpenCode runtime");
+    }
+    const body = await readJsonBody(ctx.request);
+    if (!Array.isArray(body.disabledSkillNames) || body.disabledSkillNames.some((name) => typeof name !== "string" || !name.trim())) {
+      throw new ApiError(400, "invalid_payload", "disabledSkillNames must be an array of nonempty strings");
+    }
+    const policy = await writeSkillWorkspacePolicy(config, workspace.id, body.disabledSkillNames);
+    await recordAudit(workspace.path, {
+      id: shortId(), workspaceId: workspace.id, actor: ctx.actor ?? { type: "remote" },
+      action: "skills.workspace-policy.update", target: workspace.id,
+      summary: "Updated workspace skill policy", timestamp: Date.now(),
+    });
+    return jsonResponse(policy);
   });
 
   addRoute(routes, "GET", "/workspace/:id/skills/:name", "client", async (ctx) => {
@@ -3349,6 +3398,10 @@ function createRoutes(
       }
     }
     if (!workspace) throw new ApiError(404, "workspace_not_found", "Workspace not found for directory");
+    if (body.operation === "skill") {
+      const skillPolicy = await readSkillWorkspacePolicy(config, workspace.id);
+      return jsonResponse(checkSkillWorkspacePolicy(body.args, skillPolicy.disabledSkillNames));
+    }
     const policy = await readMcpWorkspaceToolPolicy(config, workspace.id);
     const serverNames = await listWorkspaceMcpServerNames(config, workspace.id);
     if (body.operation === "inventory") {

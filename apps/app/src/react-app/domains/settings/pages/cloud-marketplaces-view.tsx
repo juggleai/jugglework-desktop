@@ -54,6 +54,7 @@ import {
   SettingsListSearchInput,
 } from "@/react-app/domains/settings/settings-list";
 import { MarketplacePackageDetailModal } from "@/react-app/domains/settings/pages/marketplace-package-detail-modal";
+import { CatalogHeader, type CatalogSource } from "./catalog-source";
 import {
   marketplaceResolvedCacheKey,
   resolveMarketplaceDetailResolution,
@@ -82,7 +83,7 @@ type DenSettingsExtensionsStore = {
   pendingCloudPluginChanges: () => Record<string, PendingCloudPluginChange>;
   marketplacePluginOperations: () => Record<string, WorkspacePluginOperationState>;
   marketplacePluginAccess: () => WorkspacePluginAccess;
-  refreshCloudOrgMarketplaces: (options?: { force?: boolean }) => Promise<unknown>;
+  refreshCloudOrgMarketplaces: (options?: { force?: boolean; refreshImported?: boolean }) => Promise<unknown>;
   importCloudOrgPlugin: (
     marketplaceId: string | null,
     plugin: DenOrgPlugin,
@@ -150,12 +151,37 @@ type OrgMcpMarketplaceRow = {
   searchableText: string;
 };
 
-type MarketplaceRow = MarketplacePackageRow | BuiltInMarketplaceRow | OrgMcpMarketplaceRow;
+type PersonalMarketplaceRow = {
+  source: "personal";
+  marketplaceId: "personal-plugins";
+  plugin: { id: string; name: string; description?: string | null };
+  status: "installed";
+  searchableText: string;
+};
+
+type MarketplaceRow = MarketplacePackageRow | BuiltInMarketplaceRow | OrgMcpMarketplaceRow | PersonalMarketplaceRow;
 
 const ORGANIZATION_PLUGINS_COLLECTION_ID = "organization-plugins";
 
 export function shouldShowMarketplaceRows(isSignedIn: boolean, activeOrgId: string) {
   return isSignedIn && activeOrgId.trim().length > 0;
+}
+
+export function selectMarketplaceRowsBySource<T>(input: {
+  source?: CatalogSource;
+  isSignedIn: boolean;
+  activeOrgId: string;
+  builtInRows: T[];
+  cloudRows: T[];
+  personalRows: T[];
+  orgMcpRows: T[];
+  skillsOnly?: boolean;
+}): T[] {
+  if (input.source === "public") return input.builtInRows;
+  if (input.source === "personal") return input.personalRows;
+  if (!shouldShowMarketplaceRows(input.isSignedIn, input.activeOrgId)) return [];
+  if (input.source === "organization" || input.skillsOnly) return input.cloudRows;
+  return [...input.builtInRows, ...input.cloudRows, ...input.orgMcpRows];
 }
 
 export function shouldIncludeCloudMarketplacePluginRow(input: { embedded?: boolean }) {
@@ -183,6 +209,13 @@ export function matchesMarketplaceFilters(
 }
 
 export type CloudMarketplacesViewProps = {
+  onRefreshLocal?: () => void | Promise<unknown>;
+  personalError?: string | null;
+  source?: CatalogSource;
+  onSourceChange?: (source: CatalogSource) => void;
+  organizationName?: string | null;
+  /** Environment-installed inventory, including user-enabled built-ins and global local specs. */
+  personalPlugins?: Array<{ id: string; name: string; description?: string | null }>;
   extensions: DenSettingsExtensionsStore;
   embedded?: boolean;
   onOpenAccount: () => void;
@@ -216,6 +249,12 @@ export type CloudMarketplacesViewProps = {
   /** Dedicated catalog surfaces can use a shorter product-facing title. */
   title?: string;
   description?: string;
+  /**
+   * Application-level catalog mode. Workspace materialization ledgers remain
+   * available to legacy management surfaces, but cannot define whether a
+   * plugin is installed for the account, organization, or execution host.
+   */
+  applicationCatalog?: boolean;
   /** 当前工作区稳定标识，用于隔离详情选择与异步解析结果。 */
   workspaceKey: string;
 };
@@ -276,12 +315,19 @@ function marketplaceLifecycleLabel(lifecycle: MarketplacePluginLifecycle): strin
 }
 
 function marketplaceRowKey(row: MarketplaceRow): string {
+  if (row.source === "personal") return `personal:${row.plugin.id}`;
   if (row.source === "cloud") return `cloud:${row.marketplaceId}:${row.plugin.id}`;
   if (row.source === "built-in") return `built-in:${row.entry.id ?? row.entry.serverName ?? row.entry.name}`;
   return `org-mcp:${row.connection.id}`;
 }
 
 export function CloudMarketplacesView({
+  onRefreshLocal,
+  personalError,
+  source,
+  onSourceChange,
+  organizationName,
+  personalPlugins = [],
   extensions,
   embedded = false,
   onOpenAccount,
@@ -308,6 +354,7 @@ export function CloudMarketplacesView({
   plainCards = false,
   title,
   description,
+  applicationCatalog = false,
   workspaceKey,
 }: CloudMarketplacesViewProps) {
   const { activeOrganization: activeOrg, authToken, client, isSignedIn, user } = useCloudSession();
@@ -336,8 +383,16 @@ export function CloudMarketplacesView({
   const [highlightPluginName, setHighlightPluginName] = React.useState<string | null>(null);
   const activeOrgId = activeOrg?.id ?? "";
   const canShowRows = shouldShowMarketplaceRows(isSignedIn, activeOrgId);
-  const includeCloudMarketplaceRows = shouldIncludeCloudMarketplacePluginRow({ embedded });
+  const showsOrganization = source === undefined || source === "organization";
+  const includeCloudMarketplaceRows = source === "organization" || shouldIncludeCloudMarketplacePluginRow({ embedded });
   const includeOrgMcpRows = shouldIncludeOrgMcpConnectionMarketplaceRow({ embedded });
+  const refreshRequestRef = React.useRef(0);
+
+  React.useLayoutEffect(() => {
+    setBusy(false);
+    setActionError(null);
+    return () => { refreshRequestRef.current += 1; };
+  }, [source, activeOrgId, authToken, isSignedIn, workspaceKey, applicationCatalog]);
 
   // Listen for "open marketplace plugin" requests from notifications.
   React.useEffect(() => {
@@ -358,20 +413,24 @@ export function CloudMarketplacesView({
   }, []);
 
   const plugins = extensions.cloudOrgPlugins();
-  const importedPlugins = extensions.importedCloudPlugins();
-  const pendingChanges = extensions.pendingCloudPluginChanges();
-  const marketplacePluginOperations = extensions.marketplacePluginOperations();
+  // TIPS: 应用级 Plugins 目录不能把「当前选中工作区的本地副本」冒充成
+  // 账号/组织级安装。旧账本仍留给普通 Extensions/Advanced 兼容管理面。
+  const workspaceImportedPlugins = applicationCatalog ? {} : extensions.importedCloudPlugins();
+  const importedPlugins = applicationCatalog ? {} : workspaceImportedPlugins;
+  const pendingChanges = applicationCatalog ? {} : extensions.pendingCloudPluginChanges();
+  const marketplacePluginOperations = applicationCatalog ? {} : extensions.marketplacePluginOperations();
   const marketplacePluginAccess = extensions.marketplacePluginAccess();
-  const marketplacePluginAccessHint = workspacePluginAccessMessage(marketplacePluginAccess);
+  const marketplacePluginAccessHint = applicationCatalog ? null : workspacePluginAccessMessage(marketplacePluginAccess);
   const extensionItemsByBuiltInId = React.useMemo(() => new Map(
     extensionItems.flatMap((item) => item.builtInEntry ? [[item.builtInEntry.id ?? item.builtInEntry.serverName ?? item.builtInEntry.name, item] as const] : []),
   ), [extensionItems]);
   const extensionItemsByPluginId = React.useMemo(() => new Map(
     extensionItems.flatMap((item) => item.plugin ? [[item.plugin.id, item] as const] : []),
   ), [extensionItems]);
-  const rowContextKey = `${activeOrgId}:${workspaceKey}`;
+  const rowContextKey = `${source ?? "legacy"}:${isSignedIn}:${activeOrgId}:${applicationCatalog ? "application-catalog" : workspaceKey}`;
   const lastRowsRef = React.useRef<{ contextKey: string; rows: MarketplaceRow[] }>({ contextKey: rowContextKey, rows: [] });
   const cloudRows = React.useMemo<MarketplacePackageRow[]>(() => {
+    if (source && (!showsOrganization || !canShowRows)) return [];
     return plugins.flatMap((plugin) => {
       if (!includeCloudMarketplaceRows) return [];
       if (skillsOnly && !pluginHasSkill(plugin)) return [];
@@ -394,9 +453,11 @@ export function CloudMarketplacesView({
         operation: operation?.state ?? null,
         operationError: operation?.message ?? null,
         failedOperation: operation?.operation ?? null,
+        catalogMode: applicationCatalog,
       });
-      const status: MarketplacePackageStatus = item?.installState
-        ?? (isCloudBuiltInPlugin(plugin) ? "installed" : marketplaceListStatus(lifecycle));
+      const status: MarketplacePackageStatus = applicationCatalog
+        ? (isCloudBuiltInPlugin(plugin) ? "installed" : marketplaceListStatus(lifecycle))
+        : item?.installState ?? (isCloudBuiltInPlugin(plugin) ? "installed" : marketplaceListStatus(lifecycle));
       return [{
         source: "cloud",
         marketplaceId,
@@ -417,11 +478,11 @@ export function CloudMarketplacesView({
           marketplaceName,
           pluginManifestSearchText(plugin),
           ...counts,
-          ...(imported?.files.map((file) => `${file.title} ${file.objectType} ${file.path}`) ?? []),
+          ...(applicationCatalog ? [] : imported?.files.map((file) => `${file.title} ${file.objectType} ${file.path}`) ?? []),
         ].join(" ").toLowerCase(),
       }];
     });
-  }, [activeOrgId, extensionItemsByPluginId, importedPlugins, includeCloudMarketplaceRows, marketplacePluginOperations, pendingChanges, plugins, resolvedPlugins, skillsOnly]);
+  }, [activeOrgId, applicationCatalog, canShowRows, extensionItemsByPluginId, importedPlugins, includeCloudMarketplaceRows, marketplacePluginOperations, pendingChanges, plugins, resolvedPlugins, showsOrganization, skillsOnly, source]);
 
   const builtInRows = React.useMemo<BuiltInMarketplaceRow[]>(() => {
     return builtInEntries.map((entry) => {
@@ -470,11 +531,17 @@ export function CloudMarketplacesView({
     });
   }, [extensionItems, includeOrgMcpRows]);
 
-  // TIPS: skillsOnly 只保留云端市场包这一路来源，内置项与组织 MCP 连接不属于「技能」。
-  const rows = React.useMemo<MarketplaceRow[]>(
-    () => canShowRows ? (skillsOnly ? [...cloudRows] : [...builtInRows, ...cloudRows, ...orgMcpRows]) : [],
-    [builtInRows, canShowRows, cloudRows, orgMcpRows, skillsOnly],
-  );
+  const personalRows: PersonalMarketplaceRow[] = personalPlugins.map((plugin) => ({
+    source: "personal",
+    marketplaceId: "personal-plugins",
+    plugin,
+    status: "installed",
+    searchableText: `${plugin.name} ${plugin.description ?? ""}`.toLowerCase(),
+  }));
+
+  const rows = selectMarketplaceRowsBySource<MarketplaceRow>({
+    source, isSignedIn, activeOrgId, builtInRows, cloudRows, personalRows, orgMcpRows, skillsOnly,
+  });
 
   React.useEffect(() => {
     if (rows.length > 0) lastRowsRef.current = { contextKey: rowContextKey, rows };
@@ -482,7 +549,7 @@ export function CloudMarketplacesView({
 
   const displayRows = rows.length > 0
     ? rows
-    : busy && lastRowsRef.current.contextKey === rowContextKey ? lastRowsRef.current.rows : rows;
+    : !source && canShowRows && busy && lastRowsRef.current.contextKey === rowContextKey ? lastRowsRef.current.rows : rows;
 
   // TIPS: 详情只保存稳定身份；每次渲染都从当前工作区/组织的最新 rows 派生，安装结果可立即反映。
   const detailRow = React.useMemo(() => resolveMarketplaceDetailSelection(
@@ -511,22 +578,29 @@ export function CloudMarketplacesView({
   );
 
   const visibleRows = React.useMemo(
-    () => displayRows.filter((row) => matchesMarketplaceFilters(row, { search, statusFilter, marketplaceFilter })),
-    [displayRows, marketplaceFilter, search, statusFilter],
+    () => displayRows.filter((row) => matchesMarketplaceFilters(row, {
+      search,
+      statusFilter: source ? "all" : statusFilter,
+      marketplaceFilter: source ? "all" : marketplaceFilter,
+    })),
+    [displayRows, marketplaceFilter, search, source, statusFilter],
   );
 
   const refresh = React.useCallback(
     async (quiet = false) => {
-      if (!authToken.trim() || !activeOrgId) return;
+      if (!showsOrganization || !authToken.trim() || !canShowRows) return;
 
+      const request = ++refreshRequestRef.current;
+      const isCurrent = () => refreshRequestRef.current === request;
       setBusy(true);
       if (!quiet) setActionError(null);
 
       try {
-        session.syncCurrentDenSettings();
-        await extensions.refreshCloudOrgMarketplaces({ force: true });
+        if (!source) session.syncCurrentDenSettings();
+        await extensions.refreshCloudOrgMarketplaces({ force: true, refreshImported: !applicationCatalog });
+        if (!isCurrent()) return;
         await refreshOrgMcpConnections?.();
-        if (!quiet) {
+        if (isCurrent() && !quiet) {
           const count = extensions.cloudOrgPlugins().length;
           toast.info(
             count > 0
@@ -535,15 +609,19 @@ export function CloudMarketplacesView({
           );
         }
       } catch (error) {
-        if (!quiet) {
+        if (isCurrent() && !quiet) {
           setActionError(error instanceof Error ? error.message : "Failed to load marketplace extensions.");
         }
       } finally {
-        setBusy(false);
+        if (isCurrent()) setBusy(false);
       }
     },
     [
       extensions,
+      source,
+      showsOrganization,
+      canShowRows,
+      applicationCatalog,
       activeOrg,
       activeOrgId,
       authToken,
@@ -641,13 +719,26 @@ export function CloudMarketplacesView({
   );
 
   const removedUpstreamPlugins = React.useMemo(
-    () => Object.values(importedPlugins).filter((plugin) => pendingChanges[plugin.pluginId] === "removed"),
-    [importedPlugins, pendingChanges],
+    () => applicationCatalog
+      ? []
+      : Object.values(workspaceImportedPlugins).filter((plugin) => pendingChanges[plugin.pluginId] === "removed"),
+    [applicationCatalog, pendingChanges, workspaceImportedPlugins],
   );
 
   const content = (
     <SettingsSection>
-      {!hideSectionHeader ? (
+      {source ? (
+        <CatalogHeader
+          title={title ?? t("extensions.marketplace_title")}
+          description={description ?? t(`customization.${source}_description`)}
+          busy={showsOrganization && busy}
+          onRefresh={() => { if (source === "organization") void refresh(); else void onRefreshLocal?.(); }}
+          source={source}
+          onSourceChange={onSourceChange}
+          organizationName={organizationName ?? activeOrg?.name}
+          search={!searchControlled ? { value: search, onChange: setSearch, placeholder: t("marketplace.search_placeholder") } : undefined}
+        />
+      ) : !hideSectionHeader ? (
         <SettingsSectionHeader>
           <SettingsSectionHeaderContent>
             <SettingsSectionHeaderTitle>{title ?? t("extensions.marketplace_title")}</SettingsSectionHeaderTitle>
@@ -667,7 +758,8 @@ export function CloudMarketplacesView({
         </SettingsSectionHeader>
       ) : null}
 
-      {!isSignedIn ? (
+      {source === "personal" && personalError ? <SettingsNotice tone="error">{personalError}</SettingsNotice> : null}
+      {showsOrganization && !isSignedIn ? (
         <SettingsNotice>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <span>{t("marketplace.signin_hint")}</span>
@@ -678,19 +770,23 @@ export function CloudMarketplacesView({
         </SettingsNotice>
       ) : null}
 
-      {actionError ?? extensions.cloudOrgMarketplacesStatus() ? (
+      {showsOrganization && (actionError ?? extensions.cloudOrgMarketplacesStatus()) ? (
         <SettingsNotice tone="error">{actionError ?? extensions.cloudOrgMarketplacesStatus()}</SettingsNotice>
       ) : null}
 
-      {marketplacePluginAccessHint ? (
+      {showsOrganization && marketplacePluginAccessHint ? (
         <SettingsNotice>{marketplacePluginAccessHint}</SettingsNotice>
       ) : null}
 
-      {busy ? (
+      {!source && applicationCatalog ? (
+        <SettingsNotice>{t("marketplace.application_catalog_scope_notice")}</SettingsNotice>
+      ) : null}
+
+      {showsOrganization && busy ? (
         <SettingsNotice>{t("marketplace.loading_extensions")}</SettingsNotice>
       ) : null}
 
-      {removedUpstreamPlugins.map((plugin) => (
+      {showsOrganization && removedUpstreamPlugins.map((plugin) => (
         <SettingsNotice key={plugin.pluginId}>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <span>{t("extensions.removed_upstream_notice", { name: plugin.name })}</span>
@@ -706,7 +802,7 @@ export function CloudMarketplacesView({
         </SettingsNotice>
       ))}
 
-      <div className="space-y-3">
+      {!source ? <div className="space-y-3">
         {!searchControlled ? (
           <SettingsListSearchInput
             value={search}
@@ -752,11 +848,14 @@ export function CloudMarketplacesView({
             </div>
           </details>
         </div>
-      </div>
+      </div> : null}
 
-      {!busy && displayRows.length === 0 ? (
+      <div className={source ? "min-h-[20rem] space-y-3" : "space-y-3"}>
+      {!(showsOrganization && busy) && displayRows.length === 0 ? (
         <SettingsListEmptyState>
-          {!isSignedIn
+          {source && (!showsOrganization || canShowRows)
+            ? t("customization.empty_source")
+            : !isSignedIn
             ? t("marketplace.empty_signin")
             : activeOrgId
               ? t("marketplace.empty_no_extensions")
@@ -776,6 +875,15 @@ export function CloudMarketplacesView({
           }`}
         >
           {visibleRows.map((row) => {
+            if (row.source === "personal") {
+              return (
+                <div key={marketplaceRowKey(row)} className="min-w-0 rounded-xl border border-dls-border bg-dls-surface p-4">
+                  <div className="truncate text-sm font-medium text-dls-text">{row.plugin.name}</div>
+                  {row.plugin.description ? <p className="mt-1 line-clamp-2 text-sm text-dls-secondary">{row.plugin.description}</p> : null}
+                  <span className="mt-2 block text-xs text-dls-secondary">{t("marketplace.filter_installed")}</span>
+                </div>
+              );
+            }
             const pluginName = row.source === "cloud" ? row.plugin.name : row.source === "built-in" ? row.entry.name : row.item.name;
             const isHighlighted = highlightPluginName != null && pluginName === highlightPluginName;
             return (
@@ -801,6 +909,7 @@ export function CloudMarketplacesView({
         </div>
       ) : null}
 
+      </div>
       {detailRow?.source === "cloud" ? (
         (() => {
           const cacheKey = marketplaceResolvedCacheKey(activeOrgId, detailRow.plugin);
@@ -830,6 +939,7 @@ export function CloudMarketplacesView({
                 operation: operation?.state ?? null,
                 operationError: operation?.message ?? null,
                 failedOperation: operation?.operation ?? null,
+                catalogMode: applicationCatalog,
               })}
               resolved={resolvedCache.lastKnownGood}
               resolutionState={resolutionState}
@@ -843,7 +953,8 @@ export function CloudMarketplacesView({
               onInstallPlugin={installPlugin}
               onRetryResolve={() => retryDetailResolution(detailRow.plugin)}
               accessHint={marketplacePluginAccessHint}
-              canMutate={marketplacePluginAccess.allowed}
+              canMutate={!applicationCatalog && marketplacePluginAccess.allowed}
+              applicationCatalog={applicationCatalog}
             />
           );
         })()
@@ -870,7 +981,7 @@ export function CloudMarketplacesView({
   );
 
   // hideSectionHeader 时宿主（技能弹窗）自带标题与边距，不再套设置页的分隔线容器。
-  return embedded || hideSectionHeader ? content : (
+  return source || embedded || hideSectionHeader ? content : (
     <SettingsStack>
       <Separator />
       {content}
@@ -890,7 +1001,7 @@ function deliveryCompositionSummary(delivery: PluginDeliveryComposition | null) 
 
 function MarketplaceCard(props: {
   actionId: string | null;
-  row: MarketplaceRow;
+  row: Exclude<MarketplaceRow, PersonalMarketplaceRow>;
   onOpenDetail: (row: MarketplaceRow) => void;
   orgMcpConnectingId: string | null;
   orgMcpDisconnectingId: string | null;

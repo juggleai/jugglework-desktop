@@ -2,8 +2,11 @@
 import type { ComponentType, SVGProps } from "react";
 import { Box, PlugZap } from "lucide-react";
 
+import type { DenOrgPlugin } from "@/app/lib/den";
 import { cn } from "@/lib/utils";
 import { t } from "@/i18n";
+import { resolvePluginMcpComponents } from "@/react-app/domains/settings/connect-cloud-readiness";
+import { resolveMarketplacePluginLifecycle } from "@/react-app/domains/settings/pages/marketplace-plugin-state";
 import { PluginOrbitIcon } from "@/react-app/design-system/plugin-orbit-icon";
 
 export type CustomizationCatalogSection = "plugins" | "skills" | "connectors";
@@ -13,6 +16,30 @@ export type CustomizationInstalledItem = {
   name: string;
   section: CustomizationCatalogSection;
 };
+
+export function globalCustomizationInstalledItems(input: {
+  plugins: DenOrgPlugin[];
+  skills: Array<{ name: string; path: string }>;
+  connectors: Array<{ name: string }>;
+  localPlugins?: Array<{ id: string; name: string }>;
+}): CustomizationInstalledItem[] {
+  const plugins = input.plugins.flatMap((plugin) => {
+    const installed = plugin.extension?.sourceFormat === "jugglework-builtin"
+      || resolveMarketplacePluginLifecycle({
+        plugin,
+        imported: null,
+        components: resolvePluginMcpComponents(plugin),
+        catalogMode: true,
+      }).state === "current";
+    return installed ? [{ id: `cloud-plugin:${plugin.id}`, name: plugin.name, section: "plugins" as const }] : [];
+  });
+  return [
+    ...plugins,
+    ...(input.localPlugins ?? []).map((plugin) => ({ ...plugin, section: "plugins" as const })),
+    ...input.skills.map((skill) => ({ id: `global-skill:${skill.path || skill.name}`, name: skill.name, section: "skills" as const })),
+    ...input.connectors.map((connector) => ({ id: `global-connector:${connector.name}`, name: connector.name, section: "connectors" as const })),
+  ].filter((item) => item.name.trim()).sort((left, right) => left.name.localeCompare(right.name));
+}
 
 const CATALOG_SECTIONS: Array<{
   id: CustomizationCatalogSection;
@@ -39,7 +66,7 @@ export function CustomizationCatalogSidebar(props: {
   return (
     <aside
       aria-label={t("customization.navigation_label")}
-      className="flex h-full w-[216px] shrink-0 flex-col overflow-hidden border-r border-dls-border bg-dls-sidebar/55"
+      className="flex h-full w-[156px] shrink-0 flex-col overflow-hidden border-r border-dls-border bg-dls-sidebar/55 sm:w-[216px]"
       data-testid="customization-catalog-sidebar"
     >
       <div className="shrink-0 px-4 pb-3 pt-5">
@@ -83,6 +110,7 @@ export function CustomizationCatalogSidebar(props: {
                 <button
                   key={item.id}
                   type="button"
+                  data-testid={`customization-installed-${item.id}`}
                   onClick={() => props.onSelectInstalledItem(item)}
                   className="flex h-8 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-[12px] text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/30 [&>svg]:size-4 [&>svg]:shrink-0 [&>svg]:stroke-[1.8]"
                 >
