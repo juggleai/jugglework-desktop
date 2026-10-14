@@ -532,9 +532,10 @@ export function useDenSession({
     setAuthBusy(true);
     setAuthError(null);
     try {
-      if (authToken.trim()) {
-        await client.signOut();
-      }
+      // The global provider signs out locally first and treats remote
+      // revocation as best effort, so expired/unreachable sessions cannot trap
+      // this settings surface in a busy authenticated state.
+      await denAuth.signOut();
       await clearSignedInState(t("den.status_signed_out"));
     } catch (error) {
       setAuthError(
@@ -545,7 +546,7 @@ export function useDenSession({
     } finally {
       setAuthBusy(false);
     }
-  }, [authBusy, authToken, clearSignedInState, client]);
+  }, [authBusy, clearSignedInState, denAuth]);
 
   const handleActiveOrgChange = React.useCallback(
     async (nextId: string) => {

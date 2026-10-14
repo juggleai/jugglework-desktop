@@ -114,6 +114,7 @@ export type DenAuthStore = {
   tenantAccount: DenTenantAccount | null;
   accountBusy: boolean;
   accountError: string | null;
+  signOutBusy: boolean;
   refresh: () => Promise<void>;
   refreshAccount: () => Promise<void>;
   switchOrganization: (organizationId: string) => Promise<void>;
@@ -181,6 +182,7 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
   const [tenantAccount, setTenantAccount] = useState<DenTenantAccount | null>(null);
   const [accountBusy, setAccountBusy] = useState(false);
   const [accountError, setAccountError] = useState<string | null>(null);
+  const [signOutBusy, setSignOutBusy] = useState(false);
   const accountSnapshotRef = useRef(false);
   const accountLastRefreshAtRef = useRef(0);
   const accountRefreshGenerationRef = useRef(0);
@@ -325,19 +327,31 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
   }, [activeOrganization?.id, organizations]);
 
   const signOut = useCallback(async () => {
+    if (signOutBusy) return;
     const settings = readDenSettings();
     const token = settings.authToken?.trim() ?? "";
-    if (token) {
-      await createDenClient({ baseUrl: settings.baseUrl, token }).signOut();
-    }
+    // Explicit user intent must always provide a local escape hatch. Clear the
+    // renderer session before attempting remote revocation so an expired token,
+    // unavailable Den, or proxy-generated 401 cannot strand the old app UI.
+    refreshTokenRef.current += 1;
+    setSignOutBusy(true);
     clearDenSession();
     clearAccountState();
     setAccountBusy(false);
+    setPendingServerSwitch(null);
     setUser(null);
     setError(null);
+    lastSignalRetryAtRef.current = null;
     updateStatus("signed_out");
     dispatchDenSessionUpdated({ status: "signed_out", baseUrl: settings.baseUrl });
-  }, [clearAccountState, updateStatus]);
+
+    setSignOutBusy(false);
+    if (token) {
+      // Server revocation is best effort after local sign-out. Do not await it:
+      // the sign-in surface and its controls must become usable immediately.
+      void createDenClient({ baseUrl: settings.baseUrl, token }).signOut().catch(() => undefined);
+    }
+  }, [clearAccountState, signOutBusy, updateStatus]);
 
   const refresh = useCallback(async () => {
     const currentRun = ++refreshTokenRef.current;
@@ -348,6 +362,8 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
     if (!token) {
       setUser(null);
       clearAccountState();
+      setAccountBusy(false);
+      setPendingServerSwitch(null);
       setError(null);
       lastSignalRetryAtRef.current = null;
       updateStatus("signed_out");
@@ -399,6 +415,9 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
       const failureStatus = resolveDenAuthFailureStatus(nextError);
       if (failureStatus === "signed_out") {
         clearDenSession();
+        clearAccountState();
+        setAccountBusy(false);
+        setPendingServerSwitch(null);
         setUser(null);
         lastSignalRetryAtRef.current = null;
       }
@@ -437,6 +456,7 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
       clearDenSession();
       clearAccountState();
       setAccountBusy(false);
+      setPendingServerSwitch(null);
       setUser(null);
       setError(detail.message || t("den.signed_out"));
       lastSignalRetryAtRef.current = null;
@@ -662,12 +682,13 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
       tenantAccount,
       accountBusy,
       accountError,
+      signOutBusy,
       refresh,
       refreshAccount,
       switchOrganization,
       signOut,
     }),
-    [accountBusy, accountError, activeOrganization, error, organizations, refresh, refreshAccount, signOut, status, switchOrganization, tenantAccount, user],
+    [accountBusy, accountError, activeOrganization, error, organizations, refresh, refreshAccount, signOut, signOutBusy, status, switchOrganization, tenantAccount, user],
   );
 
   return (

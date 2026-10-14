@@ -223,6 +223,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
     tenantAccount,
     accountBusy,
     accountError,
+    signOutBusy,
     refreshAccount,
     switchOrganization,
     signOut,
@@ -325,6 +326,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
     }
   };
   const handleSignOut = async () => {
+    setAccountMenuOpen(false);
     try {
       await signOut();
     } catch (nextError) {
@@ -616,7 +618,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
               <ArrowUpRight />
               {t("account_menu.management_console")}
             </DropdownMenuItem>
-            <DropdownMenuItem variant="destructive" onClick={() => void handleSignOut()} disabled={!user || accountBusy} data-testid="account-menu-sign-out">
+            <DropdownMenuItem variant="destructive" onClick={() => void handleSignOut()} disabled={signOutBusy || authStatus === "signed_out"} data-testid="account-menu-sign-out">
               <LogOut />
               {t("den.sign_out")}
             </DropdownMenuItem>
