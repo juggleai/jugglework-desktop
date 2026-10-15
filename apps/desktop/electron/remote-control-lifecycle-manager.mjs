@@ -7,6 +7,7 @@ const ERROR_MESSAGES = Object.freeze({
   startup_failed: "The new device was saved, but its connection could not be started. Try again.",
   cancelled: "Device identity replacement was cancelled because remote control was disabled.",
 });
+const STARTUP_WELCOME_TIMEOUT_MS = 15_000;
 
 function safeError(code) {
   return Object.freeze({ code, message: ERROR_MESSAGES[code], retryable: code !== "not_eligible" });
@@ -161,6 +162,11 @@ export function createRemoteControlLifecycleManager({
       assertCurrent(epoch, controller.signal);
       if (!started || !["connecting", "awaiting_welcome", "connected"].includes(started.state)) {
         throw new Error("Remote-control startup did not initialize.");
+      }
+      const connected = await agent.waitForWelcome({ timeoutMs: STARTUP_WELCOME_TIMEOUT_MS, signal: controller.signal });
+      assertCurrent(epoch, controller.signal);
+      if (!connected || connected.state !== "connected" || connected.connected !== true) {
+        throw new Error("Remote-control startup did not receive a welcome.");
       }
       await synchronizePendingPolicy();
       replacementStatus = "succeeded";

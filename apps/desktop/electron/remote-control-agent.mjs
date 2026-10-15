@@ -669,6 +669,7 @@ export function createRemoteControlAgent(options) {
   let authorizationActive = false;
   let mutationAuthorizationActive = false;
   let resumePolicyFloor = null;
+  const welcomeWaiters = new Set();
 
   function timestamp() {
     const value = new Date(now());
@@ -680,6 +681,25 @@ export function createRemoteControlAgent(options) {
     const value = randomUUID();
     if (!UUID_PATTERN.test(value)) throw new TypeError("RemoteControlAgent UUID source is invalid.");
     return value;
+  }
+
+  /** @param {string} code @param {string} message */
+  function welcomeWaitError(code, message) {
+    return Object.assign(new Error(message), { code });
+  }
+
+  /** @param {string} code @param {(waiter: any) => boolean} [matches] */
+  function rejectWelcomeWaiters(code, matches = () => true) {
+    for (const waiter of [...welcomeWaiters]) {
+      if (matches(waiter)) waiter.reject(welcomeWaitError(code, "Remote-control connection did not receive a welcome."));
+    }
+  }
+
+  /** @param {RemoteControlSocket} target @param {number} generation */
+  function resolveWelcomeWaiters(target, generation) {
+    for (const waiter of [...welcomeWaiters]) {
+      if (waiter.target === target && waiter.generation === generation && waiter.context === context) waiter.resolve(status());
+    }
   }
 
   /** @param {"debug" | "info" | "warn" | "error"} level @param {string} code @param {object} [metadata] */
@@ -817,6 +837,7 @@ export function createRemoteControlAgent(options) {
 
   /** Synchronously fences async completions, cancels timers, and closes transport. */
   function invalidateTransport() {
+    rejectWelcomeWaiters("welcome_connection_changed");
     notifyTransportReset();
     lifecycleGeneration += 1;
     for (const operation of inFlightCommands.values()) operation.controller.abort();
@@ -835,6 +856,7 @@ export function createRemoteControlAgent(options) {
       context.policyFresh === true && context.featureGates.schemaVersion === 1 &&
       Number.isFinite(policyAge) && policyAge >= 0 && policyAge < policyMaxAgeMs &&
       (resumePolicyFloor === null || validatedAt >= resumePolicyFloor) &&
+      isIdentifier(context.policyVersion) &&
       context.featureGates.enrollment === true && context.featureGates.readOnlyControl === true;
   }
 
@@ -844,6 +866,7 @@ export function createRemoteControlAgent(options) {
     return started && !suspended && context?.signedIn === true && context.policyFresh === true &&
       Number.isFinite(policyAge) && policyAge >= 0 && policyAge < policyMaxAgeMs &&
       (resumePolicyFloor === null || validatedAt >= resumePolicyFloor) &&
+      isIdentifier(context.policyVersion) &&
       context.featureGates.enrollment === true && context.featureGates.readOnlyControl === true;
   }
 
@@ -859,7 +882,7 @@ export function createRemoteControlAgent(options) {
 
   function schedulePolicyExpiry() {
     clearTimer("policy-expiry");
-    if (!context?.policyFresh || context.validatedAt === null) return;
+    if (!context?.policyFresh || !isIdentifier(context.policyVersion) || context.validatedAt === null) return;
     const generation = lifecycleGeneration;
     const delay = Math.max(1, Math.min(Date.parse(context.validatedAt) + policyMaxAgeMs - timestamp().getTime(), MAX_TIMER_DELAY));
     policyExpiryTimer = timers.setTimeout(() => {
@@ -1206,6 +1229,7 @@ export function createRemoteControlAgent(options) {
     // the cache so ordinary network reconnects avoid a new PoP exchange.
     if (state !== REMOTE_CONTROL_AGENT_STATUS.CONNECTED || connectionGeneration === null) {
       clearCachedAgentToken();
+      rejectWelcomeWaiters(code, (waiter) => waiter.target === target);
     }
     notifyTransportReset();
     lastErrorCode = code;
@@ -1359,6 +1383,7 @@ export function createRemoteControlAgent(options) {
       state = REMOTE_CONTROL_AGENT_STATUS.CONNECTED;
       scheduleHeartbeat(payload.heartbeatSeconds, target, generation);
       scheduleLivenessWatchdog(target, generation);
+      resolveWelcomeWaiters(target, generation);
       return;
     }
     if (envelope.type === "cloud.ping") {
@@ -1933,6 +1958,7 @@ export function createRemoteControlAgent(options) {
       state = started ? REMOTE_CONTROL_AGENT_STATUS.WAITING_FOR_CONTEXT : REMOTE_CONTROL_AGENT_STATUS.STOPPED;
       throw error;
     }
+    const contextChanged = context !== null && JSON.stringify(context) !== JSON.stringify(next);
     const switched = identityKey(context) !== identityKey(next);
     if (switched) {
       clearAuthorizations();
@@ -1945,9 +1971,14 @@ export function createRemoteControlAgent(options) {
       revocationVerifyAttempt = 0;
       protocolBlocked = false;
       lastErrorCode = null;
+    } else if (contextChanged && (state === REMOTE_CONTROL_AGENT_STATUS.CONNECTING || state === REMOTE_CONTROL_AGENT_STATUS.AWAITING_WELCOME)) {
+      rejectWelcomeWaiters("welcome_context_changed");
+      invalidateTransport();
     }
     context = next;
-    if (!next.signedIn || !next.policyFresh || !next.featureGates.enrollment || !next.featureGates.readOnlyControl) {
+    if (next.signedIn && !isIdentifier(next.policyVersion)) lastErrorCode = "policy_version_unavailable";
+    else if (lastErrorCode === "policy_version_unavailable") lastErrorCode = null;
+    if (!next.signedIn || !next.policyFresh || !isIdentifier(next.policyVersion) || !next.featureGates.enrollment || !next.featureGates.readOnlyControl) {
       clearAuthorizations();
       clearCachedAgentToken();
       invalidateTransport();
@@ -2077,6 +2108,51 @@ export function createRemoteControlAgent(options) {
     return status();
   }
 
+  /** Resolves only after the current transport receives its matching welcome. */
+  /** @param {{ timeoutMs?: number, signal?: AbortSignal }} [options] */
+  function waitForWelcome({ timeoutMs = 15_000, signal } = {}) {
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 120_000) {
+      return Promise.reject(new TypeError("Remote-control welcome timeout is invalid."));
+    }
+    if (signal?.aborted) return Promise.reject(welcomeWaitError("welcome_aborted", "Remote-control welcome wait was cancelled."));
+    const target = socket;
+    const generation = lifecycleGeneration;
+    const activeContext = context;
+    if (target && state === REMOTE_CONTROL_AGENT_STATUS.CONNECTED && connectionGeneration !== null) {
+      return Promise.resolve(status());
+    }
+    if (!target || !activeContext || (state !== REMOTE_CONTROL_AGENT_STATUS.CONNECTING && state !== REMOTE_CONTROL_AGENT_STATUS.AWAITING_WELCOME)) {
+      return Promise.reject(welcomeWaitError("welcome_unavailable", "Remote-control connection is not awaiting a welcome."));
+    }
+    return new Promise((resolve, reject) => {
+      let timer = null;
+      const onAbort = () => waiter.reject(welcomeWaitError("welcome_aborted", "Remote-control welcome wait was cancelled."));
+      const cleanup = () => {
+        welcomeWaiters.delete(waiter);
+        if (timer !== null) timers.clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
+      };
+      const waiter = {
+        target,
+        generation,
+        context: activeContext,
+        resolve: (value) => { cleanup(); resolve(value); },
+        reject: (error) => { cleanup(); reject(error); },
+      };
+      welcomeWaiters.add(waiter);
+      signal?.addEventListener("abort", onAbort, { once: true });
+      timer = timers.setTimeout(() => {
+        waiter.reject(welcomeWaitError("welcome_timeout", "Remote-control connection welcome timed out."));
+      }, timeoutMs);
+      if (signal?.aborted) onAbort();
+      else if (target !== socket || generation !== lifecycleGeneration || activeContext !== context) {
+        waiter.reject(welcomeWaitError("welcome_connection_changed", "Remote-control connection changed before welcome."));
+      } else if (state === REMOTE_CONTROL_AGENT_STATUS.CONNECTED && connectionGeneration !== null) {
+        waiter.resolve(status());
+      }
+    });
+  }
+
   async function deleteDeviceMaterial() {
     clearCachedAgentToken();
     let credentialError = false;
@@ -2095,6 +2171,7 @@ export function createRemoteControlAgent(options) {
     if (pendingLocalStop) return pendingLocalStop.promise;
     const changed = !localDisabledLatch;
     localDisabledLatch = true;
+    rejectWelcomeWaiters("welcome_disabled");
     revocationPendingSource = null;
     revocationVerifyAttempt = 0;
     clearAuthorizations();
@@ -2290,5 +2367,5 @@ export function createRemoteControlAgent(options) {
     });
   }
 
-  return Object.freeze({ start, syncContext, enroll, replaceIdentity, refreshLocalSettings, stopAll, drainOldOperations, deleteCredential, publishSessionEvent, publishActivityTaskStatus, suspend, resume, stop, status });
+  return Object.freeze({ start, syncContext, enroll, replaceIdentity, refreshLocalSettings, waitForWelcome, stopAll, drainOldOperations, deleteCredential, publishSessionEvent, publishActivityTaskStatus, suspend, resume, stop, status });
 }

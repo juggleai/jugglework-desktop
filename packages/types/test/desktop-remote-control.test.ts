@@ -238,6 +238,31 @@ describe("desktop remote-control contracts", () => {
     )
   })
 
+  test("requires a non-null policy version in desktop connection frames", () => {
+    const hello = {
+      protocolVersion: 1,
+      payloadVersion: 1,
+      messageId: "7398fb8c-7b8c-4ec0-a822-2d52aa621275",
+      sentAt: "2026-08-08T12:00:00.000Z",
+      encryption: { mode: "none", keyId: null },
+      type: "device.hello",
+      payload: {
+        deviceId: "abf98cef-fac7-486d-af73-f81c2bfa070d",
+        connectionGeneration: 1,
+        appVersion: "1.2.3",
+        capabilities,
+        activeRuns: [],
+        policyVersion: "policy-1",
+        localControlEnabled: true,
+      },
+    } as const
+    assert.equal(desktopRemoteWssEnvelopeSchema.safeParse(hello).success, true)
+    assert.equal(desktopRemoteWssEnvelopeSchema.safeParse({
+      ...hello,
+      payload: { ...hello.payload, policyVersion: null },
+    }).success, false)
+  })
+
   test("accepts only strict session.unbound controller rejections", () => {
     const envelope = {
       protocolVersion: 1,

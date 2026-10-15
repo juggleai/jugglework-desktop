@@ -137,11 +137,11 @@ Desktop SHALL project only sessions the local user considers visible. The remote
 - **THEN** the existing binding and its snapshots continue without forced teardown, and the session disappears from subsequent `session.list` results
 
 ### Requirement: Re-registration replaces the remote device identity
-The application SHALL perform re-registration as one serialized, Main-owned operation. It MUST fence and stop old remote execution before deleting the prior remote credential and device-bound encryption material, generate a new signing identity, use a fresh one-time enrollment authorization to obtain a new Cloud `deviceId`, persist the new credential, enable remote control, and start the normal authenticated connection. Private key material MUST NOT be exposed to the renderer.
+The application SHALL perform re-registration as one serialized, Main-owned operation. It MUST fence and stop old remote execution before deleting the prior remote credential and device-bound encryption material, generate a new signing identity, use a fresh one-time enrollment authorization to obtain a new Cloud `deviceId`, persist the new credential, enable remote control, and start the normal authenticated connection. The operation SHALL report success only after a matching authenticated `connection.welcome`; entering `connecting` or `awaiting_welcome` is not success. Private key material MUST NOT be exposed to the renderer.
 
 #### Scenario: User re-registers successfully
 - **WHEN** an eligible user activates `Re-register and enable` and enrollment succeeds
-- **THEN** the old transport and pending remote work are fenced, a distinct device identity is persisted, remote control is enabled, and the new device begins the normal connection flow
+- **THEN** the old transport and pending remote work are fenced, a distinct device identity is persisted, remote control is enabled, and the new device receives a matching `connection.welcome`
 
 #### Scenario: Re-registration is invoked concurrently
 - **WHEN** the action is activated again while identity replacement is in progress
@@ -168,6 +168,14 @@ If replacement fails after old execution has been fenced, the application SHALL 
 #### Scenario: Persistence or startup fails
 - **WHEN** the new identity cannot be durably saved or its transport cannot be initialized
 - **THEN** the operation fails closed without restoring the old identity or exposing secret material in the error
+
+#### Scenario: Policy version is unavailable
+- **WHEN** Desktop has fresh-looking feature gates but no non-empty server policy version
+- **THEN** enrollment and transport startup remain unauthorized, no agent token or WebSocket is created, and diagnostics report `policy_version_unavailable`
+
+#### Scenario: Socket fails before welcome
+- **WHEN** the socket opens but closes, errors, times out, is disabled, or changes identity/context before a matching `connection.welcome`
+- **THEN** re-registration returns the sanitized startup failure, removes the incomplete replacement identity, and leaves remote control disabled for a fresh retry
 
 #### Scenario: Desktop restarts after interrupted replacement
 - **WHEN** the process restarts with enabled settings but without one complete valid remote credential

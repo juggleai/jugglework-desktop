@@ -35,6 +35,15 @@ function harness({ failAt = null, pauseAt = null } = {}) {
       if (settings.enabled) await pause("startup");
       if (failAt === "startup" && settings.enabled) throw new Error("secret-startup");
       if (settings.enabled) status = { ...status, state: "connecting", locallyDisabled: false };
+      else status = { ...status, state: "disabled", connected: false, locallyDisabled: true };
+      return status;
+    },
+    waitForWelcome: async ({ signal }) => {
+      calls.push("welcome");
+      await pause("welcome");
+      if (signal.aborted) throw Object.assign(new Error("cancelled"), { code: "welcome_aborted" });
+      if (failAt === "welcome") throw Object.assign(new Error("rejected"), { code: "transport_closed_1008" });
+      status = { ...status, state: "connected", connected: true };
       return status;
     },
     replaceIdentity: async () => {
@@ -68,7 +77,7 @@ describe("remote-control lifecycle manager", () => {
     assert.equal(result.status.replacementStatus, "succeeded");
     assert.deepEqual(fixture.calls, [
       "disable", "effects-disabled", "stop", "cancel", "refresh", "drain", "replace",
-      "enable", "effects-enabled", "refresh", "policy",
+      "enable", "effects-enabled", "refresh", "welcome", "policy",
     ]);
   });
 
@@ -123,7 +132,7 @@ describe("remote-control lifecycle manager", () => {
   });
 
   it("cleans up after settings persistence and transport startup failures", async () => {
-    for (const [failAt, code] of [["enable", "enable_failed"], ["startup", "startup_failed"]]) {
+    for (const [failAt, code] of [["enable", "enable_failed"], ["startup", "startup_failed"], ["welcome", "startup_failed"]]) {
       const fixture = harness({ failAt });
       const result = await fixture.manager.reregisterAndEnable(INPUT);
       assert.equal(result.ok, false);
@@ -136,7 +145,7 @@ describe("remote-control lifecycle manager", () => {
   });
 
   for (const entryPoint of ["IPC Stop All", "tray Stop All", "direct disable"]) {
-    for (const stage of ["replacement", "enable", "startup"]) {
+    for (const stage of ["replacement", "enable", "startup", "welcome"]) {
       it(`${entryPoint} wins over replacement during ${stage}`, async () => {
         const fixture = harness({ pauseAt: stage });
         const replacement = fixture.manager.reregisterAndEnable(INPUT);

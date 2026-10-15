@@ -1362,7 +1362,7 @@ const desktopHelloEnvelopeSchema = z
         appVersion: semverSchema,
         capabilities: desktopRemoteCapabilityAdvertisementSchema,
         activeRuns: z.array(desktopRemoteActiveRunSchema).max(100),
-        policyVersion: identifierSchema.nullable(),
+        policyVersion: identifierSchema,
         localControlEnabled: z.boolean(),
         payloadEncryption: signedE2EEKeyAdvertisementSchema.nullable().optional(),
       })
@@ -1381,7 +1381,7 @@ const desktopHeartbeatEnvelopeSchema = z
         appVersion: semverSchema,
         capabilities: desktopRemoteCapabilityAdvertisementSchema,
         activeRuns: z.array(desktopRemoteActiveRunSchema).max(100),
-        policyVersion: identifierSchema.nullable(),
+        policyVersion: identifierSchema,
         localControlEnabled: z.boolean(),
         payloadEncryption: signedE2EEKeyAdvertisementSchema.nullable().optional(),
       })

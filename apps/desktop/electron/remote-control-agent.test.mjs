@@ -456,6 +456,18 @@ describe("remote-control agent context and lifecycle", () => {
     assert.equal(fixture.agent.status().state, REMOTE_CONTROL_AGENT_STATUS.WAITING_FOR_CONTEXT);
   });
 
+  it("fails closed without a policy version", async () => {
+    const fixture = harness();
+    await fixture.agent.start();
+    const status = await fixture.agent.syncContext(signedInContext({ policyVersion: null }));
+    assert.equal(fixture.sockets.length, 0);
+    assert.equal(fixture.tokenCalls, 0);
+    assert.equal(fixture.enrollmentCalls, 0);
+    assert.equal(status.localControlEnabled, false);
+    assert.equal(status.enrollmentAuthorized, false);
+    assert.equal(status.lastErrorCode, "policy_version_unavailable");
+  });
+
   it("repairs enabled-without-credential to disabled before fresh replacement", async () => {
     const fixture = harness({ enrolled: false });
     await fixture.agent.start();
@@ -693,6 +705,58 @@ describe("remote-control agent context and lifecycle", () => {
     assert.deepEqual(heartbeat.payload.activeRuns, []);
     assert.equal(heartbeat.payload.policyVersion, "policy-1");
     assert.equal(heartbeat.payload.localControlEnabled, true);
+  });
+
+  it("waits for the matching connection welcome", async () => {
+    const fixture = harness();
+    const socket = await connect(fixture);
+    const messageListeners = socket.listenerCount("message");
+    const waiting = fixture.agent.waitForWelcome({ timeoutMs: 5_000 });
+    socket.receive(welcome(77));
+    const connected = await waiting;
+    assert.equal(connected.state, REMOTE_CONTROL_AGENT_STATUS.CONNECTED);
+    assert.equal(connected.connectionGeneration, 77);
+    assert.equal(socket.listenerCount("message"), messageListeners);
+  });
+
+  it("rejects a welcome wait on a pre-welcome policy close", async () => {
+    const fixture = harness();
+    const socket = await connect(fixture);
+    const waiting = fixture.agent.waitForWelcome({ timeoutMs: 5_000 });
+    socket.unexpectedClose(1008, Buffer.from("policy rejected"));
+    await assert.rejects(waiting, (error) => {
+      assert.equal(/** @type {any} */ (error).code, "transport_closed_1008_policy_rejected");
+      return true;
+    });
+  });
+
+  it("times out a welcome wait without retaining listeners", async () => {
+    const fixture = harness();
+    const socket = await connect(fixture);
+    const messageListeners = socket.listenerCount("message");
+    const waiting = fixture.agent.waitForWelcome({ timeoutMs: 1_000 });
+    await fixture.clock.advance(1_000);
+    await assert.rejects(waiting, (error) => {
+      assert.equal(/** @type {any} */ (error).code, "welcome_timeout");
+      return true;
+    });
+    assert.equal(socket.listenerCount("message"), messageListeners);
+  });
+
+  it("cancels a welcome wait without retaining listeners", async () => {
+    const fixture = harness();
+    const socket = await connect(fixture);
+    const messageListeners = socket.listenerCount("message");
+    const timerCount = fixture.clock.pending.size;
+    const controller = new AbortController();
+    const waiting = fixture.agent.waitForWelcome({ timeoutMs: 5_000, signal: controller.signal });
+    controller.abort();
+    await assert.rejects(waiting, (error) => {
+      assert.equal(/** @type {any} */ (error).code, "welcome_aborted");
+      return true;
+    });
+    assert.equal(socket.listenerCount("message"), messageListeners);
+    assert.equal(fixture.clock.pending.size, timerCount);
   });
 
   it("terminates a silent welcomed socket and reuses its still-valid token", async () => {
