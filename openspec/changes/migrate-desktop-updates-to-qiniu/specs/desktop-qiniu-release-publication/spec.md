@@ -169,6 +169,15 @@ Stable macOS channel promotion SHALL require the expected bundle identity, Devel
 - **AND** tooling SHALL reject notarization and cache-convergence exceptions for `1.2.27`, and SHALL reject the metadata-only or pre-canary exceptions for Windows, x64, Alpha, any other version, or any other channel
 - **AND** skipping Cache-Control metadata verification risks an inherited long-lived public cache header and stale clients even if the observed public read-back matches; missing real-client canary leaves update installation behavior unproven
 
+#### Scenario: Explicit 1.2.28 macOS ARM64 metadata-only and pre-canary exceptions
+
+- **WHEN** the operator separately authorizes exact stable macOS ARM64 `1.2.28` without a real-client upgrade canary and without Qiniu mutable Stable Cache-Control metadata verification
+- **THEN** tooling SHALL require separate audited reasons scoped to `stable-1.2.28-only` and skip only those two gates, not CDN refresh or public digest/size read-back
+- **AND** it SHALL retain signing, app and DMG notarization, staples, Gatekeeper, packaged verification, immutable non-overwrite Qiniu/CDN verification, promotion locking, prior-digest race checks, Stable object size/ETag verification, CDN refresh, and exact public Stable digest/size read-back before recording verified promotion
+- **AND** failed refresh, public read-back, or durable evidence SHALL retain the lock; a present failed or mismatched canary SHALL be rejected
+- **AND** it SHALL reject notarization and cache-convergence exceptions for `1.2.28`, and reject metadata-only or pre-canary exceptions for Windows, x64, Alpha, other versions, or other channels
+- **AND** skipping metadata verification risks stale clients under inherited long-lived cache headers despite an observed read-back; missing a real-client canary leaves installation unproven
+
 ### Requirement: Channel manifests have controlled cache behavior
 Mutable stable/alpha manifests SHALL use short-lived or revalidation-required caching, while immutable version objects SHALL use long-lived immutable caching.
 

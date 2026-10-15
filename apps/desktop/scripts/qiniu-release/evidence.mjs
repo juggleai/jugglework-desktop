@@ -432,11 +432,11 @@ export function assertRecordedPromotion(plan, evidence) {
   const promotion = evidence.workflow?.promotion;
   const cacheException = promotion?.cacheException;
   const metadataException = promotion?.metadataException;
-  const metadataExceptionAllowed = metadataException?.scope === "stable-1.2.27-only"
+  const metadataExceptionAllowed = metadataException?.scope === `stable-${plan.version}-only`
     && typeof metadataException.reason === "string"
     && metadataException.reason.trim().length >= 20
     && plan.channel === "stable" && plan.platform === "mac"
-    && plan.version === "1.2.27" && sameArray(plan.architectures, ["arm64"]);
+    && ["1.2.27", "1.2.28"].includes(plan.version) && sameArray(plan.architectures, ["arm64"]);
   const cacheExceptionAllowed = cacheException?.scope === `stable-${plan.version}-only`
     && typeof cacheException.reason === "string"
     && cacheException.reason.length >= 20
@@ -497,10 +497,10 @@ function assertStableNotarizationException(plan, reason) {
 }
 
 function assertStablePreCanaryException(plan, reason) {
-  if (plan.channel !== "stable" || !["1.2.16", "1.2.18", "1.2.19", "1.2.20", "1.2.22", "1.2.23", "1.2.24", "1.2.25", "1.2.26", "1.2.27"].includes(plan.version)) {
-    throw new Error("The pre-canary promotion exception is restricted to stable 1.2.16, stable 1.2.18, stable 1.2.19, stable 1.2.20, stable 1.2.22, stable 1.2.23, stable 1.2.24, stable 1.2.25, stable 1.2.26, or stable 1.2.27");
+  if (plan.channel !== "stable" || !["1.2.16", "1.2.18", "1.2.19", "1.2.20", "1.2.22", "1.2.23", "1.2.24", "1.2.25", "1.2.26", "1.2.27", "1.2.28"].includes(plan.version)) {
+    throw new Error("The pre-canary promotion exception is restricted to stable 1.2.16, stable 1.2.18, stable 1.2.19, stable 1.2.20, stable 1.2.22, stable 1.2.23, stable 1.2.24, stable 1.2.25, stable 1.2.26, stable 1.2.27, or stable 1.2.28");
   }
-  if (["1.2.20", "1.2.22", "1.2.23", "1.2.24", "1.2.25", "1.2.26", "1.2.27"].includes(plan.version) && !sameArray(plan.architectures, ["arm64"])) {
+  if (["1.2.20", "1.2.22", "1.2.23", "1.2.24", "1.2.25", "1.2.26", "1.2.27", "1.2.28"].includes(plan.version) && !sameArray(plan.architectures, ["arm64"])) {
     throw new Error(`The stable ${plan.version} pre-canary promotion exception is restricted to macOS arm64`);
   }
   if (typeof reason !== "string" || reason.trim().length < 20) {
@@ -520,11 +520,11 @@ function assertStableCacheException(plan, reason) {
 }
 
 function assertStableMetadataException(plan, reason) {
-  if (plan.channel !== "stable" || plan.platform !== "mac" || plan.version !== "1.2.27" || !sameArray(plan.architectures, ["arm64"])) {
-    throw new Error("The metadata exception is restricted to stable macOS arm64 1.2.27");
+  if (plan.channel !== "stable" || plan.platform !== "mac" || !["1.2.27", "1.2.28"].includes(plan.version) || !sameArray(plan.architectures, ["arm64"])) {
+    throw new Error("The metadata exception is restricted to stable macOS arm64 1.2.27 or 1.2.28");
   }
   if (typeof reason !== "string" || reason.trim().length < 20) {
-    throw new Error("The stable 1.2.27 metadata exception requires an explicit audited reason");
+    throw new Error(`The stable ${plan.version} metadata exception requires an explicit audited reason`);
   }
   return reason.trim();
 }

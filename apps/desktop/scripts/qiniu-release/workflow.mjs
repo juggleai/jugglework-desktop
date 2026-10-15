@@ -102,7 +102,7 @@ export async function promoteChannel(plan, evidence, {
     ? { scope: `stable-${plan.version}-only`, reason: cacheExceptionReason.trim() }
     : null;
   const metadataException = metadataExceptionReason
-    ? { scope: "stable-1.2.27-only", reason: metadataExceptionReason.trim() }
+    ? { scope: `stable-${plan.version}-only`, reason: metadataExceptionReason.trim() }
     : null;
   if (!cacheException && typeof refresh !== "function") throw new Error("CDN cache refresh operation is unavailable");
   if (!cacheException && typeof readBack !== "function") throw new Error("CDN read-back operation is unavailable");

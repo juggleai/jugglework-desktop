@@ -452,7 +452,7 @@ test("stable macOS arm64 1.2.22 accepts only the audited pre-canary exception", 
   assert.throws(() => assertPromotionEvidence(x64Plan, x64Evidence, {
     preCanaryExceptionReason: reason,
   }), /restricted to macOS arm64/);
-  assert.throws(() => assertPromotionEvidence(plan("1.2.28"), promotionEvidence(plan("1.2.28")), {
+  assert.throws(() => assertPromotionEvidence(plan("1.2.29"), promotionEvidence(plan("1.2.29")), {
     preCanaryExceptionReason: reason,
   }), /restricted to stable/);
 });
@@ -486,7 +486,7 @@ for (const version of ["1.2.24", "1.2.25", "1.2.26"]) {
     assert.throws(() => assertPromotionEvidence({ ...releasePlan, architectures: ["x64"] }, evidence, options), /architectures|arm64/i);
     const alphaPlan = plan(version, "alpha");
     assert.throws(() => assertPromotionEvidence(alphaPlan, promotionEvidence(alphaPlan), options), /restricted to stable/);
-    const laterPlan = plan("1.2.28");
+    const laterPlan = plan("1.2.29");
     assert.throws(() => assertPromotionEvidence(laterPlan, promotionEvidence(laterPlan), options), /restricted to stable/);
   });
 }
@@ -532,58 +532,63 @@ test("recorded 1.2.26 cache exception requires exact Stable object metadata and 
   }
 });
 
-test("stable macOS arm64 1.2.27 metadata exception requires public read-back and cannot bypass notarization or a failed canary", () => {
-  const releasePlan = plan("1.2.27");
-  const evidence = promotionEvidence(releasePlan);
-  evidence.canary = null;
-  const options = {
-    preCanaryExceptionReason: "Operator authorized stable macOS arm64 1.2.27 without a real-client canary",
-    metadataExceptionReason: "Operator authorized stable macOS arm64 1.2.27 without Qiniu cache metadata verification",
-  };
-  assert.equal(assertPromotionEvidence(releasePlan, evidence, options).schemaVersion, 2);
-  assert.throws(() => assertPromotionEvidence(releasePlan, evidence, { metadataExceptionReason: options.metadataExceptionReason }), /canary/i);
-  assert.throws(() => assertPromotionEvidence(releasePlan, evidence, { ...options, cacheExceptionReason: "Operator authorized cache bypass for this release" }), /cannot be combined/);
-  assert.throws(() => assertPromotionEvidence(releasePlan, evidence, { ...options, notarizationExceptionReason: "Operator authorized no notarization for this release" }), /notarization exception is restricted/);
-  const failed = structuredClone(evidence);
-  failed.canary = canary(releasePlan);
-  failed.canary.result = "failed";
-  assert.throws(() => assertPromotionEvidence(releasePlan, failed, options), /passed machine-generated/);
-  const unnotarized = structuredClone(evidence);
-  unnotarized.localVerification.notarization.status = "unavailable";
-  assert.throws(() => assertPromotionEvidence(releasePlan, unnotarized, options), /accepted notarization/);
-  for (const invalidPlan of [{ ...releasePlan, architectures: ["x64"] }, plan("1.2.27", "alpha"), plan("1.2.28"), { ...releasePlan, platform: "windows" }]) {
-    assert.throws(() => assertPromotionEvidence(invalidPlan, evidence, { metadataExceptionReason: options.metadataExceptionReason }), /release plan|metadata exception is restricted/i);
-  }
-  assert.throws(() => assertPromotionEvidence(releasePlan, evidence, { ...options, metadataExceptionReason: "short" }), /audited reason/);
-});
+for (const version of ["1.2.27", "1.2.28"]) {
+  test(`stable macOS arm64 ${version} metadata exception requires public read-back and cannot bypass notarization or a failed canary`, () => {
+    const releasePlan = plan(version);
+    const evidence = promotionEvidence(releasePlan);
+    evidence.canary = null;
+    const options = {
+      preCanaryExceptionReason: `Operator authorized stable macOS arm64 ${version} without a real-client canary`,
+      metadataExceptionReason: `Operator authorized stable macOS arm64 ${version} without Qiniu cache metadata verification`,
+    };
+    assert.equal(assertPromotionEvidence(releasePlan, evidence, options).schemaVersion, 2);
+    assert.throws(() => assertPromotionEvidence(releasePlan, evidence, { metadataExceptionReason: options.metadataExceptionReason }), /canary/i);
+    assert.throws(() => assertPromotionEvidence(releasePlan, evidence, { ...options, cacheExceptionReason: "Operator authorized cache bypass for this release" }), /cannot be combined/);
+    assert.throws(() => assertPromotionEvidence(releasePlan, evidence, { ...options, notarizationExceptionReason: "Operator authorized no notarization for this release" }), /notarization exception is restricted/);
+    const failed = structuredClone(evidence);
+    failed.canary = canary(releasePlan);
+    failed.canary.result = "failed";
+    assert.throws(() => assertPromotionEvidence(releasePlan, failed, options), /passed machine-generated/);
+    const unnotarized = structuredClone(evidence);
+    unnotarized.localVerification.notarization.status = "unavailable";
+    assert.throws(() => assertPromotionEvidence(releasePlan, unnotarized, options), /accepted notarization/);
+    for (const invalidPlan of [{ ...releasePlan, architectures: ["x64"] }, plan(version, "alpha"), plan("1.2.29"), { ...releasePlan, platform: "windows" }]) {
+      const invalidEvidence = promotionEvidence(invalidPlan);
+      invalidEvidence.canary = null;
+      assert.throws(() => assertPromotionEvidence(invalidPlan, invalidEvidence, options), /metadata exception is restricted/i);
+    }
+    assert.throws(() => assertPromotionEvidence(releasePlan, evidence, { ...options, metadataExceptionReason: "short" }), /audited reason/);
+    assert.throws(() => assertPromotionEvidence(releasePlan, evidence, { ...options, preCanaryExceptionReason: "short" }), /audited reason/);
+  });
 
-test("recorded 1.2.27 metadata exception requires exact Stable object and public digest/size read-back", () => {
-  const releasePlan = { ...plan("1.2.27"), channelManifest: { key: "jugglework/releases/stable/mac/latest-mac.yml" } };
-  const promotion = {
-    status: "verified", channelKey: releasePlan.channelManifest.key,
-    channelObject: { size: releasePlan.manifest.size, etag: releasePlan.manifest.etag, verified: true },
-    metadataException: { scope: "stable-1.2.27-only", reason: "Operator authorized skipping Qiniu cache metadata verification only" },
-    readBack: { sha256: releasePlan.manifest.sha256, size: releasePlan.manifest.size, checkedAt: "2026-10-12T01:00:00.000Z" },
-    promotedAt: "2026-10-12T01:01:00.000Z",
-  };
-  const evidence = withEvidenceResults(createEvidence({ plan: releasePlan, commit: "abc123" }), { workflow: { promotion } });
-  assert.equal(assertRecordedPromotion(releasePlan, evidence).status, "verified");
-  for (const change of [
-    { channelObject: { ...promotion.channelObject, etag: "wrong" } },
-    { metadataException: { ...promotion.metadataException, scope: "stable-1.2.28-only" } },
-    { metadataException: { ...promotion.metadataException, reason: "short" } },
-    { readBack: { ...promotion.readBack, sha256: "wrong" } },
-    { readBack: { ...promotion.readBack, size: 0 } },
-    { readBack: { ...promotion.readBack, checkedAt: "invalid" } },
-    { cacheException: { scope: "stable-1.2.27-only", reason: "Operator authorized skipping refresh and readback" } },
-  ]) {
-    const invalid = structuredClone(evidence);
-    Object.assign(invalid.workflow.promotion, change);
-    assert.throws(() => assertRecordedPromotion(releasePlan, invalid), /Recorded .*promotion|timestamp/i);
-  }
-  const otherPlan = { ...releasePlan, version: "1.2.28" };
-  assert.throws(() => assertRecordedPromotion(otherPlan, evidence), /release plan|evidence/i);
-});
+  test(`recorded ${version} metadata exception requires exact Stable object and public digest/size read-back`, () => {
+    const releasePlan = { ...plan(version), channelManifest: { key: "jugglework/releases/stable/mac/latest-mac.yml" } };
+    const promotion = {
+      status: "verified", channelKey: releasePlan.channelManifest.key,
+      channelObject: { size: releasePlan.manifest.size, etag: releasePlan.manifest.etag, verified: true },
+      metadataException: { scope: `stable-${version}-only`, reason: "Operator authorized skipping Qiniu cache metadata verification only" },
+      readBack: { sha256: releasePlan.manifest.sha256, size: releasePlan.manifest.size, checkedAt: "2026-10-12T01:00:00.000Z" },
+      promotedAt: "2026-10-12T01:01:00.000Z",
+    };
+    const evidence = withEvidenceResults(createEvidence({ plan: releasePlan, commit: "abc123" }), { workflow: { promotion } });
+    assert.equal(assertRecordedPromotion(releasePlan, evidence).status, "verified");
+    for (const change of [
+      { channelObject: { ...promotion.channelObject, etag: "wrong" } },
+      { metadataException: { ...promotion.metadataException, scope: `stable-${version === "1.2.27" ? "1.2.28" : "1.2.27"}-only` } },
+      { metadataException: { ...promotion.metadataException, reason: "short" } },
+      { readBack: { ...promotion.readBack, sha256: "wrong" } },
+      { readBack: { ...promotion.readBack, size: 0 } },
+      { readBack: { ...promotion.readBack, checkedAt: "invalid" } },
+      { cacheException: { scope: `stable-${version}-only`, reason: "Operator authorized skipping refresh and readback" } },
+    ]) {
+      const invalid = structuredClone(evidence);
+      Object.assign(invalid.workflow.promotion, change);
+      assert.throws(() => assertRecordedPromotion(releasePlan, invalid), /Recorded .*promotion|timestamp/i);
+    }
+    const otherPlan = { ...releasePlan, version: version === "1.2.27" ? "1.2.28" : "1.2.27" };
+    assert.throws(() => assertRecordedPromotion(otherPlan, evidence), /release plan|evidence/i);
+  });
+}
 
 test("accepted notarization without an Apple submission ID cannot authorize stable promotion", () => {
   const evidence = promotionEvidence();
