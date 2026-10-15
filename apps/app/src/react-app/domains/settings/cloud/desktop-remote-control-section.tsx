@@ -59,6 +59,7 @@ const stoppedStatus: DesktopRemoteControlAgentStatus = {
   locallyDisabled: true,
   localControlEnabled: false,
   activeControlSessionCount: 0,
+  remoteOperationCount: 0,
   controllerDisplayNames: [],
   lifecycleGeneration: 0,
   connectionGeneration: null,

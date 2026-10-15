@@ -508,6 +508,8 @@ export type DesktopRemoteControlAgentStatus = {
   locallyDisabled: boolean;
   localControlEnabled: boolean;
   activeControlSessionCount: number;
+  /** Content-free count of in-flight remote commands. */
+  remoteOperationCount: number;
   controllerDisplayNames: string[];
   lifecycleGeneration: number;
   connectionGeneration: number | null;

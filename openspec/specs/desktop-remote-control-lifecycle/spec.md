@@ -137,7 +137,7 @@ Desktop SHALL project only sessions the local user considers visible. The remote
 - **THEN** the existing binding and its snapshots continue without forced teardown, and the session disappears from subsequent `session.list` results
 
 ### Requirement: Re-registration replaces the remote device identity
-The application SHALL perform re-registration as one serialized, Main-owned operation. It MUST fence and stop old remote execution before deleting the prior remote credential and device-bound encryption material, generate a new signing identity, use a fresh one-time enrollment authorization to obtain a new Cloud `deviceId`, persist the new credential, enable remote control, and start the normal authenticated connection. The operation SHALL report success only after a matching authenticated `connection.welcome`; entering `connecting` or `awaiting_welcome` is not success. Private key material MUST NOT be exposed to the renderer.
+The application SHALL perform re-registration as one serialized, Main-owned operation. It MUST fence and stop old remote execution before deleting the prior remote credential and device-bound encryption material, generate a new signing identity, use a fresh one-time enrollment authorization to obtain a new Cloud `deviceId`, persist the new credential, enable remote control, and start the normal authenticated connection. Main MUST attempt managed-runtime pending-work cancellation before identity replacement. It MAY continue after a typed managed-runtime unavailable or timeout failure only when content-free agent status captured immediately before and after local stop explicitly reports local disablement, no connection, zero active control sessions or retained bindings, and zero in-flight remote commands. Missing or non-zero evidence, HTTP/authentication/route failures, and every other cancellation failure MUST fail closed. Old-generation operations MUST still drain before identity deletion. The operation SHALL report success only after a matching authenticated `connection.welcome`; entering `connecting` or `awaiting_welcome` is not success. Private key material MUST NOT be exposed to the renderer.
 
 #### Scenario: User re-registers successfully
 - **WHEN** an eligible user activates `Re-register and enable` and enrollment succeeds
@@ -150,6 +150,18 @@ The application SHALL perform re-registration as one serialized, Main-owned oper
 #### Scenario: Old asynchronous work completes late
 - **WHEN** a callback from the old identity or transport completes after replacement begins
 - **THEN** lifecycle fencing prevents it from authorizing work or mutating the new identity and transport
+
+#### Scenario: Fresh disabled device has no managed runtime
+- **WHEN** a locally disabled, disconnected device with explicit zero active sessions and remote operations attempts re-registration and the mandatory pending-work cancellation request fails because the managed runtime is unavailable or times out
+- **THEN** Main tolerates that transport failure, drains old-generation operations, and continues identity replacement
+
+#### Scenario: Cancellation safety evidence is not quiescent
+- **WHEN** pending-work cancellation is unavailable while the pre-stop or post-stop status has an active session, an in-flight command, a retained remote binding, a connection, or missing evidence
+- **THEN** re-registration fails with the sanitized stop failure before identity replacement
+
+#### Scenario: Managed runtime rejects cancellation
+- **WHEN** pending-work cancellation returns an HTTP, authentication, authorization, route, redirect, or invalid-response failure even though local status is quiescent
+- **THEN** re-registration fails with the sanitized stop failure before identity replacement
 
 ### Requirement: Re-registration preserves unrelated application identity
 Identity replacement SHALL preserve the Cloud login token, signed-in account session, providers, workspaces, and unrelated automation installation identity. The application SHALL NOT automatically revoke or permanently delete the old Cloud device record.

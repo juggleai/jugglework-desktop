@@ -1,3 +1,5 @@
+import { ManagedRuntimeClientError } from "./managed-runtime-client.mjs";
+
 const ERROR_MESSAGES = Object.freeze({
   replacement_in_progress: "Device identity replacement is already in progress.",
   not_eligible: "Remote control is not eligible for device identity replacement.",
@@ -20,6 +22,16 @@ function validGrant(input) {
     input.scope && typeof input.scope === "object" && !Array.isArray(input.scope) &&
     Object.keys(input.scope).length === 3 && ["controlPlaneBaseUrl", "userId", "organizationId"].every((key) =>
       typeof input.scope[key] === "string" && input.scope[key].length >= 1 && input.scope[key].length <= 512 && input.scope[key].trim() === input.scope[key]);
+}
+
+function isExplicitlyQuiescent(status) {
+  return status?.locallyDisabled === true && status.connected === false &&
+    status.activeControlSessionCount === 0 && status.remoteOperationCount === 0;
+}
+
+function canIgnorePendingCancellationFailure(error, beforeStopStatus, afterStopStatus) {
+  return error instanceof ManagedRuntimeClientError && ["unavailable", "timeout"].includes(error.code) &&
+    isExplicitlyQuiescent(beforeStopStatus) && isExplicitlyQuiescent(afterStopStatus);
 }
 
 export function createRemoteControlLifecycleManager({
@@ -79,10 +91,12 @@ export function createRemoteControlLifecycleManager({
     const operation = (async () => {
       const settings = await disableSettings();
       applyLocalEffects(settings);
+      const beforeStopStatus = agent.status();
       const stopped = agent.stopAll();
       let cancelError;
       try { await cancelPendingWork(); } catch (error) { cancelError = error; }
       await stopped;
+      if (cancelError && canIgnorePendingCancellationFailure(cancelError, beforeStopStatus, agent.status())) cancelError = undefined;
       await agent.refreshLocalSettings();
       await synchronizePendingPolicy();
       await pendingReplacement;
@@ -138,11 +152,12 @@ export function createRemoteControlLifecycleManager({
       assertCurrent(epoch, controller.signal);
       const disabled = await disableSettings();
       applyLocalEffects(disabled);
+      const beforeStopStatus = agent.status();
       const stopped = agent.stopAll();
       let cancelError;
       try { await cancelPendingWork(); } catch (error) { cancelError = error; }
       await stopped;
-      if (cancelError) throw cancelError;
+      if (cancelError && !canIgnorePendingCancellationFailure(cancelError, beforeStopStatus, agent.status())) throw cancelError;
       await agent.refreshLocalSettings();
       await agent.drainOldOperations();
       assertCurrent(epoch, controller.signal);

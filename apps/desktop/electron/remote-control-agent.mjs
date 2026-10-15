@@ -2359,6 +2359,7 @@ export function createRemoteControlAgent(options) {
       locallyDisabled: settings.enabled !== true,
       localControlEnabled: contextAllowsConnection(),
       activeControlSessionCount: activeControlSessions.size,
+      remoteOperationCount: inFlightCommands.size,
       controllerDisplayNames: controllerDisplayNames(),
       lifecycleGeneration,
       connectionGeneration,

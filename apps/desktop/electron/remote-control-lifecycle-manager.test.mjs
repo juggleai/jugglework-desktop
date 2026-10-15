@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
+import { ManagedRuntimeClientError } from "./managed-runtime-client.mjs";
 import { createRemoteControlLifecycleManager } from "./remote-control-lifecycle-manager.mjs";
 
 const INPUT = Object.freeze({
@@ -8,7 +9,7 @@ const INPUT = Object.freeze({
   scope: { controlPlaneBaseUrl: "https://cloud.example.test/jwork/api", userId: "user-1", organizationId: "org-1" },
 });
 
-function harness({ failAt = null, pauseAt = null } = {}) {
+function harness({ failAt = null, pauseAt = null, status: statusOverrides = {} } = {}) {
   const calls = [];
   /** @type {() => void} */
   let resolveReplacement = () => {};
@@ -26,10 +27,25 @@ function harness({ failAt = null, pauseAt = null } = {}) {
     await stageGate;
   };
   let settings = { enabled: true };
-  let status = { schemaVersion: 1, state: "disabled", enrollmentAuthorized: true, locallyDisabled: true, enrolled: true };
+  let status = {
+    schemaVersion: 1,
+    state: "disabled",
+    connected: false,
+    enrollmentAuthorized: true,
+    locallyDisabled: true,
+    enrolled: true,
+    activeControlSessionCount: 0,
+    remoteOperationCount: 0,
+    ...statusOverrides,
+  };
   const agent = {
     status: () => status,
-    stopAll: async () => { calls.push("stop"); await pause("disable-stop"); if (failAt === "stop") throw new Error("secret-stop"); },
+    stopAll: async () => {
+      calls.push("stop");
+      await pause("disable-stop");
+      if (failAt === "stop") throw new Error("secret-stop");
+      status = { ...status, state: "disabled", connected: false, locallyDisabled: true, activeControlSessionCount: 0 };
+    },
     refreshLocalSettings: async () => {
       calls.push("refresh");
       if (settings.enabled) await pause("startup");
@@ -62,7 +78,19 @@ function harness({ failAt = null, pauseAt = null } = {}) {
     disableSettings: async () => { calls.push("disable"); await pause("disable-settings"); settings = { enabled: false }; return settings; },
     enableSettings: async () => { calls.push("enable"); await pause("enable"); if (failAt === "enable") throw new Error("secret-enable"); settings = { enabled: true }; return settings; },
     applyLocalEffects: (value) => { calls.push(value.enabled ? "effects-enabled" : "effects-disabled"); },
-    cancelPendingWork: async () => { calls.push("cancel"); await pause("disable-cancel"); if (failAt === "cancel") throw new Error("secret-cancel"); },
+    cancelPendingWork: async () => {
+      calls.push("cancel");
+      await pause("disable-cancel");
+      if (failAt === "cancel") throw new Error("secret-cancel");
+      if (failAt === "cancel-unavailable" || failAt === "cancel-timeout") {
+        throw new ManagedRuntimeClientError(failAt === "cancel-unavailable" ? "unavailable" : "timeout");
+      }
+      if (failAt === "cancel-http") {
+        const error = new ManagedRuntimeClientError("http_error", { serverCode: "unauthorized" });
+        error.status = 401;
+        throw error;
+      }
+    },
     synchronizePendingPolicy: async () => { calls.push("policy"); },
   });
   return { manager, calls, resolveReplacement, replacementStarted, releaseStage, stageStarted, get settings() { return settings; } };
@@ -119,6 +147,46 @@ describe("remote-control lifecycle manager", () => {
     assert.ok(!fixture.calls.includes("replace"));
     assert.ok(!fixture.calls.includes("delete"));
     assert.doesNotMatch(JSON.stringify(result), /secret/i);
+  });
+
+  for (const failAt of ["cancel-unavailable", "cancel-timeout"]) {
+    it(`continues a fresh unregistered replacement when the empty managed runtime is ${failAt.replace("cancel-", "")}`, async () => {
+      const fixture = harness({ failAt, status: { enrolled: false } });
+      const result = await fixture.manager.reregisterAndEnable(INPUT);
+      assert.equal(result.ok, true);
+      assert.ok(fixture.calls.includes("cancel"));
+      assert.ok(fixture.calls.indexOf("drain") > fixture.calls.indexOf("cancel"));
+      assert.ok(fixture.calls.indexOf("replace") > fixture.calls.indexOf("drain"));
+    });
+  }
+
+  it("continues a registered offline replacement when both status snapshots prove quiescence", async () => {
+    const fixture = harness({ failAt: "cancel-unavailable", status: { enrolled: true } });
+    assert.equal((await fixture.manager.reregisterAndEnable(INPUT)).ok, true);
+  });
+
+  for (const status of [
+    { connected: true },
+    { activeControlSessionCount: 1 },
+    { remoteOperationCount: 1 },
+    { remoteOperationCount: undefined },
+  ]) {
+    it(`fails closed when unavailable cancellation lacks zero-work evidence ${JSON.stringify(status)}`, async () => {
+      const fixture = harness({ failAt: "cancel-unavailable", status });
+      const result = await fixture.manager.reregisterAndEnable(INPUT);
+      assert.equal(result.ok, false);
+      assert.equal(result.error.code, "stop_failed");
+      assert.equal(fixture.calls.includes("replace"), false);
+      assert.equal(fixture.calls.includes("drain"), false);
+    });
+  }
+
+  it("fails closed on a managed runtime HTTP/authentication error even when quiescent", async () => {
+    const fixture = harness({ failAt: "cancel-http" });
+    const result = await fixture.manager.reregisterAndEnable(INPUT);
+    assert.equal(result.ok, false);
+    assert.equal(result.error.code, "stop_failed");
+    assert.equal(fixture.calls.includes("replace"), false);
   });
 
   it("guards conflicting identity mutations while replacement is pending", async () => {

@@ -1699,6 +1699,7 @@ describe("remote-control agent command handling", () => {
 
     const status = fixture.agent.status();
     assert.equal(status.activeControlSessionCount, 1);
+    assert.equal(status.remoteOperationCount, 1);
     assert.deepEqual(status.controllerDisplayNames, ["A".repeat(80)]);
     assert.doesNotMatch(JSON.stringify(status), /controller-secret-id|workspace\.list|session\.snapshot|ws_1|ses_1|prompt|payloadHash/i);
   });
@@ -2051,8 +2052,10 @@ describe("remote-control agent command handling", () => {
     await started;
     assert.equal(postCalls.length, 1);
     assert.equal(postCalls[0].options, undefined);
+    assert.equal(fixture.agent.status().remoteOperationCount, 1);
     fixture.setSettings({ schemaVersion: 1, enabled: false, backgroundMode: false, launchAtLogin: false });
     const stopping = fixture.agent.stopAll();
+    assert.equal(fixture.agent.status().remoteOperationCount, 1);
     const stopFrame = frames(socket, "device.local_stop")[0];
     socket.receive(envelope("device.local_stop_ack", {
       deviceId: DEVICE_ID,
@@ -2067,6 +2070,7 @@ describe("remote-control agent command handling", () => {
     assert.equal(fixture.deleteCalls, 0);
     releasePost();
     await replacement;
+    assert.equal(fixture.agent.status().remoteOperationCount, 0);
     assert.equal(fixture.deleteCalls, 1);
     assert.equal(fixture.completeCalls.length, 0);
   });

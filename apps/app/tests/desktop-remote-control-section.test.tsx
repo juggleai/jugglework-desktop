@@ -22,6 +22,7 @@ function status(overrides: Partial<DesktopRemoteControlAgentStatus> = {}): Deskt
     locallyDisabled: false,
     localControlEnabled: true,
     activeControlSessionCount: 0,
+    remoteOperationCount: 0,
     controllerDisplayNames: [],
     lifecycleGeneration: 1,
     connectionGeneration: 7,
