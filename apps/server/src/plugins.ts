@@ -1,8 +1,8 @@
-import { homedir } from "node:os";
-import { join, relative } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { readdir } from "node:fs/promises";
 import type { PluginItem, ServerConfig } from "./types.js";
 import { readJsoncFile } from "./jsonc.js";
+import { resolveGlobalOpenCodeConfigPath } from "./mcp.js";
 import { opencodeConfigPath, projectPluginsDir } from "./workspace-files.js";
 import { exists } from "./utils.js";
 import { validatePluginSpec } from "./validators.js";
@@ -76,7 +76,10 @@ export async function listPlugins(serverConfig: ServerConfig, workspaceId: strin
   items.push(...(await listPluginFiles(projectDir, "project", workspaceRoot)));
 
   if (includeGlobal) {
-    const globalDir = join(homedir(), ".config", "opencode", "plugins");
+    const globalConfigPath = resolveGlobalOpenCodeConfigPath();
+    const { data: globalConfig } = await readJsoncFile(globalConfigPath, {} as Record<string, unknown>, { allowInvalid: true });
+    items.push(...pluginListFromConfig(globalConfig).map((spec) => ({ spec, source: "config" as const, scope: "global" as const })));
+    const globalDir = join(dirname(globalConfigPath), "plugins");
     items.push(...(await listPluginFiles(globalDir, "global")));
   }
 

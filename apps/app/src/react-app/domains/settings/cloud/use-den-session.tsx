@@ -28,6 +28,7 @@ import { clearDesktopBootstrapConfig } from "@/app/lib/desktop";
 import { exchangeHandoffAndSignIn } from "@/app/lib/den-handoff";
 import {
   denSessionUpdatedEvent,
+  denSettingsChangedEvent,
   dispatchDenSessionUpdated,
   type DenSessionUpdatedDetail,
 } from "@/app/lib/den-session-events";
@@ -91,6 +92,7 @@ export function useDenSession({
     user,
   } = useCloudSession();
   const initial = React.useMemo(() => readDenSettings(), []);
+  const orgRefreshSequence = React.useRef(0);
 
   const [baseUrlDraft, setBaseUrlDraft] = React.useState(baseUrl);
   const [baseUrlBusy, setBaseUrlBusy] = React.useState(false);
@@ -131,9 +133,13 @@ export function useDenSession({
   }, [authError, isSignedIn, sessionBusy]);
 
   const syncCurrentDenSettings = React.useCallback(() => {
+    const stored = readDenSettings();
+    // An external selection is authoritative until this render catches up.
+    if (stored.baseUrl !== baseUrl || (stored.authToken?.trim() || "") !== authToken ||
+      (stored.activeOrgId?.trim() || "") !== activeOrgId) return;
     const resolved = resolveDenBaseUrls(baseUrl);
     writeDenSettings(
-      mergePassiveDenSettings(readDenSettings(), {
+      mergePassiveDenSettings(stored, {
         baseUrl: resolved.baseUrl,
         authToken: authToken || null,
         activeOrgId: activeOrgId || null,
@@ -375,13 +381,15 @@ export function useDenSession({
 
       setOrgsBusy(true);
       if (!quiet) setOrgsError(null);
+      const sequence = ++orgRefreshSequence.current;
 
       try {
         const response = await client.listOrgs();
+        if (sequence !== orgRefreshSequence.current) return;
         setOrgs(response.orgs);
-        const current = activeOrgId.trim();
+        const current = readDenSettings().activeOrgId?.trim() || "";
 
-        const nextOrg = resolveDenDefaultOrganization(response.orgs, {
+        const nextOrg = response.orgs.find((org) => org.id === current) ?? resolveDenDefaultOrganization(response.orgs, {
           rememberedOrgId: readDenLastOrganization(readDenUserId()),
           currentOrgId: current,
           serverActiveOrgId: response.activeOrgId,
@@ -404,18 +412,20 @@ export function useDenSession({
         }
         if (next) {
           await ensureDenActiveOrganization({ forceServerSync: true }).catch(() => null);
+          if (sequence !== orgRefreshSequence.current) return;
           writeDenLastOrganization(readDenUserId(), next);
         }
         if (!quiet && response.orgs.length > 0) {
           toast.info(t("den.status_loaded_orgs", { count: response.orgs.length }));
         }
       } catch (error) {
+        if (sequence !== orgRefreshSequence.current) return;
         setOrgsError(error instanceof Error ? error.message : t("den.error_load_orgs"));
       } finally {
-        setOrgsBusy(false);
+        if (sequence === orgRefreshSequence.current) setOrgsBusy(false);
       }
     },
-    [activeOrgId, authToken, baseUrl, client, setActiveOrganization],
+    [authToken, baseUrl, client, setActiveOrganization],
   );
 
   React.useEffect(() => {
@@ -424,6 +434,24 @@ export function useDenSession({
   }, [refreshOrgs, user]);
 
   React.useEffect(() => {
+    let previous = readDenSettings();
+    const syncSettings = () => {
+      const next = readDenSettings();
+      const identityChanged = next.baseUrl !== previous.baseUrl || next.authToken !== previous.authToken;
+      if (identityChanged || next.activeOrgId !== previous.activeOrgId) {
+        setOrgsBusy(false);
+        setOrgsError(null);
+      }
+      if (identityChanged) {
+        orgRefreshSequence.current += 1;
+        clearSessionState();
+      }
+      previous = next;
+      setBaseUrl(next.baseUrl || DEFAULT_DEN_BASE_URL);
+      setBaseUrlDraft(next.baseUrl || DEFAULT_DEN_BASE_URL);
+      setAuthToken(next.authToken?.trim() || "");
+      setActiveOrgId(next.activeOrgId?.trim() || "");
+    };
     const handler = (event: WindowEventMap[typeof denSessionUpdatedEvent]) => {
       const nextSettings = readDenSettings();
       const nextBaseUrl =
@@ -436,6 +464,7 @@ export function useDenSession({
       setActiveOrgId(nextSettings.activeOrgId?.trim() || "");
       if (event.detail?.status === "success") {
         clearSessionState();
+        setActiveOrgId(nextSettings.activeOrgId?.trim() || "");
         setSigninFallbackUrl(null);
         if (event.detail.user) {
           setUser(event.detail.user);
@@ -453,7 +482,13 @@ export function useDenSession({
     };
 
     window.addEventListener(denSessionUpdatedEvent, handler);
-    return () => window.removeEventListener(denSessionUpdatedEvent, handler);
+    window.addEventListener(denSettingsChangedEvent, syncSettings);
+    syncSettings();
+    return () => {
+      orgRefreshSequence.current += 1;
+      window.removeEventListener(denSessionUpdatedEvent, handler);
+      window.removeEventListener(denSettingsChangedEvent, syncSettings);
+    };
   }, [clearSessionState, setAuthToken, setBaseUrl]);
 
   const submitManualAuth = React.useCallback(async (input: string) => {
@@ -497,9 +532,10 @@ export function useDenSession({
     setAuthBusy(true);
     setAuthError(null);
     try {
-      if (authToken.trim()) {
-        await client.signOut();
-      }
+      // The global provider signs out locally first and treats remote
+      // revocation as best effort, so expired/unreachable sessions cannot trap
+      // this settings surface in a busy authenticated state.
+      await denAuth.signOut();
       await clearSignedInState(t("den.status_signed_out"));
     } catch (error) {
       setAuthError(
@@ -510,7 +546,7 @@ export function useDenSession({
     } finally {
       setAuthBusy(false);
     }
-  }, [authBusy, authToken, clearSignedInState, client]);
+  }, [authBusy, clearSignedInState, denAuth]);
 
   const handleActiveOrgChange = React.useCallback(
     async (nextId: string) => {

@@ -29,6 +29,14 @@ test("review connection status requires a bounded member action", () => {
   assert.equal(parsed.state, "member_authorization_required")
 })
 
+test("MCP connection action resolves to compiled JavaScript in production", async () => {
+  const runtimeUrl = import.meta.resolve("@jugglework/types/den/mcp-connection-action")
+  assert.match(runtimeUrl, /\/dist\/den\/mcp-connection-action\.js$/)
+
+  const runtime = await import("@jugglework/types/den/mcp-connection-action")
+  assert.equal(runtime.juggleworkCloudMcpConnectionActionSchema.safeParse({}).success, false)
+})
+
 test("review pages reject oversized result sets", () => {
   assert.throws(() => reviewListResponseSchema.parse({
     schemaVersion: 1,

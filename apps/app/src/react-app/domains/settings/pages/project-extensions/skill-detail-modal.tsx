@@ -18,6 +18,7 @@ import { MarkdownBlock } from "../../../session/surface/markdown";
 import { SkillAvatar } from "./skill-avatar";
 
 type DetailTab = "overview" | "files";
+export type SkillDetailLoader = (skill: SkillItem) => Promise<{ content: string; path: string; files: SkillFileEntry[] }>;
 
 // 去掉 SKILL.md 顶部的 YAML frontmatter，只保留正文用于 markdown 渲染。
 function stripFrontmatter(text: string): string {
@@ -114,51 +115,86 @@ function FileTreeNode({ node, depth }: { node: TreeNode; depth: number }) {
  * @param projectDir 项目根目录（读取 SKILL.md 用）
  * @param onClose 关闭回调
  */
-export function SkillDetailModal({ open, skill, projectDir, onClose }: {
+export function SkillDetailModal({ open, skill, projectDir, onClose, presentation = "modal", loadSkillDetail }: {
+  /** Page bodies are hosted by CatalogDetailPage, which supplies the title. */
+  presentation?: "modal" | "page";
+  /** null explicitly disables legacy desktop name lookup when no exact reader exists. */
+  loadSkillDetail?: SkillDetailLoader | null;
   open: boolean;
   skill: SkillItem | null;
   projectDir: string;
   onClose: () => void;
 }) {
   const [tab, setTab] = useState<DetailTab>("overview");
-  const [content, setContent] = useState<string | null>(null);
+  const [loadedDetail, setLoadedDetail] = useState<{
+    skill: SkillItem;
+    loader: typeof loadSkillDetail;
+    projectDir: string;
+    content: string;
+    files: SkillFileEntry[];
+  } | null>(null);
   const [resolvedDir, setResolvedDir] = useState<string | null>(null);
   const [files, setFiles] = useState<SkillFileEntry[] | null>(null);
   const [loadingContent, setLoadingContent] = useState(false);
   const [loadingFiles, setLoadingFiles] = useState(false);
 
   const isLocal = Boolean(skill && skill.origin !== "jugglework-connect");
+  const exact = loadSkillDetail !== undefined || skill?.scope === "global" || presentation === "page";
+  const currentDetail = loadedDetail?.skill === skill && loadedDetail.loader === loadSkillDetail && loadedDetail.projectDir === projectDir
+    ? loadedDetail : null;
+  const content = skill?.content ?? currentDetail?.content ?? null;
+  const detailFiles = exact ? currentDetail?.files ?? [] : files ?? [];
+  // Connect/organization skills provide source text but no local file tree.
+  // Exact local details include SKILL.md in their returned inventory; legacy local
+  // details can discover files lazily after the Files tab is selected.
+  const showFilesTab = isLocal && (!exact || detailFiles.length > 0 || loadingContent);
+
+  useEffect(() => {
+    if (!showFilesTab && tab === "files") setTab("overview");
+  }, [showFilesTab, tab]);
 
   // 打开时重置到概述 tab 并清空缓存。
   useEffect(() => {
-    if (open) setTab("overview");
-    else {
-      setContent(null);
-      setResolvedDir(null);
-      setFiles(null);
-    }
-  }, [open, skill?.name]);
+    setTab("overview");
+    setLoadedDetail(null);
+    setResolvedDir(null);
+    setFiles(null);
+  }, [open, skill, projectDir, loadSkillDetail]);
 
   // 概述：读取 SKILL.md 正文，并由其真实路径推导技能目录（供文件 tab 使用）。
   useEffect(() => {
-    if (!open || !skill || !isLocal) return;
+    if (!open || !skill) return;
+    setLoadingContent(false);
+    if (skill.content !== undefined || !isLocal || (exact && !loadSkillDetail)) return;
     let cancelled = false;
     setLoadingContent(true);
-    void desktopBridge
-      .readLocalSkill(projectDir, skill.name)
+    const detail = loadSkillDetail
+      ? loadSkillDetail(skill)
+      : desktopBridge.readLocalSkill(projectDir, skill.name).then((result) => ({
+          content: result?.content ?? "",
+          path: result?.path ?? "",
+          files: [] as SkillFileEntry[],
+        }));
+    void detail
       .then((r) => {
         if (cancelled) return;
-        setContent(r?.content ?? "");
-        if (r?.path) setResolvedDir(dirnameOf(r.path));
+        setLoadedDetail({
+          skill,
+          loader: loadSkillDetail,
+          projectDir,
+          content: r?.content ?? "",
+          files: r.files,
+        });
+        if (!exact && r?.path) setResolvedDir(dirnameOf(r.path));
       })
-      .catch(() => { if (!cancelled) setContent(""); })
+      .catch(() => { if (!cancelled) setLoadedDetail(null); })
       .finally(() => { if (!cancelled) setLoadingContent(false); });
     return () => { cancelled = true; };
-  }, [open, skill, isLocal, projectDir]);
+  }, [open, skill, isLocal, projectDir, loadSkillDetail, exact]);
 
   // 文件 tab：用解析出的技能目录懒加载文件列表。
   useEffect(() => {
-    if (!open || tab !== "files" || !isLocal || files) return;
+    if (!open || tab !== "files" || !isLocal || exact || files) return;
     const dir = resolvedDir || skill?.path || "";
     if (!dir) return;
     let cancelled = false;
@@ -169,17 +205,18 @@ export function SkillDetailModal({ open, skill, projectDir, onClose }: {
       .catch(() => { if (!cancelled) setFiles([]); })
       .finally(() => { if (!cancelled) setLoadingFiles(false); });
     return () => { cancelled = true; };
-  }, [open, tab, isLocal, files, resolvedDir, skill?.path]);
+  }, [open, tab, isLocal, exact, files, resolvedDir, skill?.path]);
 
-  const tree = useMemo(() => (files ? buildTree(files) : []), [files]);
+  const tree = useMemo(() => buildTree(detailFiles), [detailFiles]);
 
   if (!skill) return null;
 
-  return (
-    <Dialog open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
-      <DialogContent className="flex h-[85vh] max-h-[85vh] max-w-[900px] flex-col sm:max-w-[900px]">
-        <DialogHeader className="gap-3 pr-8">
-          <div className="flex items-center gap-3">
+  const page = presentation === "page";
+  const Header = page ? "div" : DialogHeader;
+  const body = (
+    <>
+        <Header className={page ? "space-y-3" : "gap-3 pr-8"}>
+          {!page ? <div className="flex items-center gap-3">
             <SkillAvatar name={skill.name} sizeClass="size-10" />
             <div className="min-w-0">
               <DialogTitle className="truncate text-lg">{skill.name}</DialogTitle>
@@ -187,9 +224,9 @@ export function SkillDetailModal({ open, skill, projectDir, onClose }: {
                 {t(skill.scope === "global" ? "project_extensions.scope_global" : "project_extensions.scope_workspace")}
               </span>
             </div>
-          </div>
+          </div> : null}
           <div className="flex items-center gap-1.5 border-b border-dls-border">
-            {(["overview", "files"] as DetailTab[]).map((key) => (
+            {(["overview", ...(showFilesTab ? ["files" as const] : [])] as DetailTab[]).map((key) => (
               <button
                 key={key}
                 type="button"
@@ -205,12 +242,14 @@ export function SkillDetailModal({ open, skill, projectDir, onClose }: {
               </button>
             ))}
           </div>
-        </DialogHeader>
+        </Header>
 
         <div className="min-h-0 flex-1 overflow-y-auto">
           {tab === "overview" ? (
             <div className="space-y-3">
-              {!isLocal ? (
+              {content ? (
+                <MarkdownBlock text={stripFrontmatter(content)} />
+              ) : !isLocal ? (
                 <>
                   {skill.description ? (
                     <p className="text-sm leading-relaxed text-dls-text">{skill.description}</p>
@@ -219,8 +258,6 @@ export function SkillDetailModal({ open, skill, projectDir, onClose }: {
                 </>
               ) : loadingContent ? (
                 <div className="flex justify-center py-6"><Loader2 className="size-5 animate-spin text-dls-secondary" /></div>
-              ) : content ? (
-                <MarkdownBlock text={stripFrontmatter(content)} />
               ) : skill.description ? (
                 <p className="text-sm leading-relaxed text-dls-text">{skill.description}</p>
               ) : null}
@@ -229,12 +266,12 @@ export function SkillDetailModal({ open, skill, projectDir, onClose }: {
             <div>
               {!isLocal ? (
                 <p className="py-6 text-center text-sm text-dls-secondary">{t("project_extensions.detail_connect_only")}</p>
-              ) : loadingFiles ? (
+              ) : (exact && loadingContent) || (!exact && loadingFiles) ? (
                 <div className="flex justify-center py-6"><Loader2 className="size-5 animate-spin text-dls-secondary" /></div>
               ) : (
                 <div className="rounded-xl border border-dls-border">
                   <div className="border-b border-dls-border px-3 py-2 text-xs text-dls-secondary">
-                    {t("project_extensions.detail_file_count", { count: files?.length ?? 0 })}
+                    {t("project_extensions.detail_file_count", { count: detailFiles.length })}
                   </div>
                   <div className="py-1">
                     {tree.map((node) => (
@@ -247,9 +284,18 @@ export function SkillDetailModal({ open, skill, projectDir, onClose }: {
           )}
         </div>
 
-        <div className="flex justify-end border-t border-dls-border pt-3">
+        {!page ? <div className="flex justify-end border-t border-dls-border pt-3">
           <Button variant="outline" onClick={onClose}>{t("common.close")}</Button>
-        </div>
+        </div> : null}
+    </>
+  );
+
+  if (page) return open ? <div className="flex min-h-0 flex-col gap-4">{body}</div> : null;
+
+  return (
+    <Dialog open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
+      <DialogContent className="flex h-[85vh] max-h-[85vh] max-w-[900px] flex-col sm:max-w-[900px]">
+        {body}
       </DialogContent>
     </Dialog>
   );

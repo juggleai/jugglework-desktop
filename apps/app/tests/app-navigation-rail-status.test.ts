@@ -2,6 +2,8 @@ import { readFileSync } from "node:fs";
 import { describe, expect, test } from "bun:test";
 import { isIMNavigationVisible, visibleLocalWorkspaceIndicator } from "../src/react-app/shell/app-navigation-status";
 
+const railSource = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
+
 describe("local workspace rail status", () => {
   test("hides running status while the local workspace page is visible", () => {
     expect(visibleLocalWorkspaceIndicator("running", true, "local")).toBeNull();
@@ -10,6 +12,10 @@ describe("local workspace rail status", () => {
   test("shows running status after leaving the local workspace page", () => {
     expect(visibleLocalWorkspaceIndicator("running", false, "local")).toBe("running");
     expect(visibleLocalWorkspaceIndicator("running", true, "remote")).toBe("running");
+  });
+
+  test("uses the shared dark-mode-safe progress indicator for the rail", () => {
+    expect(railSource).toMatch(/statusIndicator === "running"[\s\S]+<SessionCircularProgress \/>/);
   });
 
   test("only suppresses loading and preserves empty or unread aggregate states", () => {
@@ -140,17 +146,22 @@ describe("navigation rail visual proportions", () => {
     expect(source.indexOf('testId="app-rail-plugins"')).toBeLessThan(source.indexOf('testId="app-rail-chat"'));
   });
 
-  test("uses a two-column customization catalog with real category and installed navigation", () => {
+  test("shows global category and installed navigation in the Plugins surface", () => {
     const route = readFileSync(new URL("../src/react-app/shell/settings-route.tsx", import.meta.url), "utf8");
     const sidebar = readFileSync(new URL("../src/react-app/domains/settings/shell/customization-catalog-sidebar.tsx", import.meta.url), "utf8");
+    const catalogBranch = route.slice(
+      route.indexOf("if (props.pluginCatalogOnly)"),
+      route.indexOf("// TIPS: 仅会话右侧 rail", route.indexOf("if (props.pluginCatalogOnly)")),
+    );
+    expect(catalogBranch).toContain("<CloudMarketplacesView");
+    expect(catalogBranch).toContain("applicationCatalog");
     expect(route).toContain('data-testid="customization-catalog-layout"');
-    expect(route).toContain("customizationInstalledItems");
     expect(route).toContain("<CustomizationCatalogSidebar");
+    expect(route).toContain("globalCustomizationInstalledItems({");
     expect(sidebar).toContain('data-testid="customization-catalog-sidebar"');
     expect(sidebar).toContain('id: "plugins"');
     expect(sidebar).toContain('id: "skills"');
     expect(sidebar).toContain('id: "connectors"');
-    expect(sidebar).toContain('t("customization.installed")');
   });
 
   test("labels the Automation hover tooltip as scheduled tasks", () => {
@@ -236,6 +247,9 @@ describe("account menu", () => {
       source.indexOf('data-testid="account-menu-switch-organization"'),
     );
     expect(source).toContain('data-testid="account-menu-sign-out"');
+    expect(source).toContain('setAccountMenuOpen(false)');
+    expect(source).toContain('disabled={signOutBusy || authStatus === "signed_out"}');
+    expect(source).not.toContain('disabled={!user || accountBusy}');
     expect(source).toContain("<DropdownMenuSubContent");
     expect(source).toContain("organizationGroups.personal.map");
     expect(source).toContain("organizationGroups.others.map");

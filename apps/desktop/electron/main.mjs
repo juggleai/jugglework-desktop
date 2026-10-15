@@ -38,13 +38,13 @@ import {
   getJuggleWorkUiMcpEnvironment,
   installBundledUiControlMcp,
 } from "./ui-control-mcp.mjs";
-import { installBundledJuggleChatSkills } from "./bundled-jugglechat-skills.mjs";
+import { installBundledSkillCollection } from "./bundled-jugglechat-skills.mjs";
 import { createJuggleChatSkillBridge } from "./jugglechat-skill-bridge.mjs";
 import { startRouterServer, stopRouterServer } from "./router-server.mjs";
 import { createApplicationMenu } from "./app-menu.mjs";
 import { applyBrandAppName } from "./brand-app-name.mjs";
 import { createBrowserPanel } from "./browser-panel.mjs";
-import { selectMainProcessFetch } from "./main-fetch.mjs";
+import { mainProcessFetchBody, selectMainProcessFetch } from "./main-fetch.mjs";
 import { createWorkspaceStore } from "./workspace-store.mjs";
 import { installCloseToHide, windowAllClosedAction } from "./window-close-behavior.mjs";
 import { createRemoteControlSettingsStore } from "./remote-control-settings.mjs";
@@ -934,13 +934,13 @@ async function stopJuggleChatRouterServer() {
   juggleChatSkillBridge.dispose();
 }
 
-function bundledJuggleChatSkillsPath() {
+function bundledSkillsPath(collection) {
   return app.isPackaged
-    ? path.join(process.resourcesPath, "skills", "jugglechat-skills")
-    : path.resolve(__dirname, "../resources/skills/jugglechat-skills");
+    ? path.join(process.resourcesPath, "skills", collection)
+    : path.resolve(__dirname, "../resources/skills", collection);
 }
 
-async function installJuggleChatSkills() {
+async function installBundledSkills() {
   const destinations = [path.join(globalOpencodeRoot(), "skills")];
   if (isDevMode) {
     destinations.push(path.join(
@@ -953,13 +953,17 @@ async function installJuggleChatSkills() {
   }
   const results = [];
   for (const destination of destinations) {
-    const result = await installBundledJuggleChatSkills(
-      bundledJuggleChatSkillsPath(),
-      destination,
-    );
-    results.push({ destination, ...result });
-    if (!result.skipped) {
-      console.log(`[jugglechat-skills] installed to ${destination}: ${result.installed.join(", ")}`);
+    for (const collection of ["jugglechat-skills", "public-skills"]) {
+      const result = await installBundledSkillCollection(bundledSkillsPath(collection), destination, {
+        ownershipMode: collection === "public-skills" ? "managed" : "force",
+      });
+      results.push({ collection, destination, ...result });
+      if (!result.skipped) {
+        console.log(`[bundled-skills] ${collection} installed to ${destination}: ${result.installed.join(", ")}; updated: ${result.updated.join(", ")}`);
+      }
+      if (result.conflicts.length) {
+        console.warn(`[bundled-skills] ${collection} skipped user-owned conflicts in ${destination}: ${result.conflicts.join(", ")}`);
+      }
     }
   }
   return results;
@@ -1866,6 +1870,7 @@ async function listSkillFiles(skillPath) {
       if (entry.isDirectory()) {
         await walk(abs, relPath);
       } else if (entry.isFile()) {
+        if (!rel && entry.name === ".jugglework-managed-skill.json") continue;
         let size = 0;
         try {
           size = (await stat(abs)).size;
@@ -2767,7 +2772,7 @@ const desktopCommandHandlers = {
       const requestInit = {
         method: typeof init.method === "string" ? init.method : undefined,
         headers: init.headers && typeof init.headers === "object" ? init.headers : undefined,
-        body: typeof init.body === "string" ? init.body : undefined,
+        body: mainProcessFetchBody(init),
         credentials: "omit",
         cache: "no-store",
       };
@@ -3231,8 +3236,8 @@ if (!app.requestSingleInstanceLock()) {
       await applyDesktopBootstrapBrandIcon(bootstrapConfig, applyBrandIconUrl);
     }
     applicationMenu.install();
-    await installJuggleChatSkills().catch((error) => {
-      console.warn("[jugglechat-skills] install failed", error);
+    await installBundledSkills().catch((error) => {
+      console.warn("[bundled-skills] install failed", error);
     });
     await runtimeManager.prepareFreshRuntime().catch(() => undefined);
     // The new managed server remains fenced until a fresh organization policy

@@ -32,6 +32,7 @@ if (args.version) {
 }
 
 const config = await resolveServerConfig(args);
+config.managedRuntime = !config.opencodeBaseUrl && process.env.JUGGLEWORK_MANAGE_OPENCODE === "1";
 const logger = createServerLogger(config);
 const opencodeModelsUrl = process.env.OPENCODE_MODELS_URL?.trim()
   || (process.env.JUGGLEWORK_DEV_MODE === "1"

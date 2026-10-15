@@ -1,4 +1,4 @@
-import { applyEdits, modify, parse } from "jsonc-parser";
+import { applyEdits, findNodeAtLocation, modify, parse, parseTree } from "jsonc-parser";
 
 import { getMcpServerName, type McpDirectoryInfo } from "@/app/constants";
 import type { McpServerConfig, McpServerEntry } from "@/app/types";
@@ -17,7 +17,77 @@ import {
 export type GlobalMcpEntry = {
   name: string;
   config: McpServerConfig;
+  catalogSource?: GlobalMcpProvenance["source"];
+  catalogId?: string;
 };
+
+export type GlobalMcpProvenance = {
+  source: "public" | "personal";
+  catalogId?: string;
+};
+
+type StoredProvenance = GlobalMcpProvenance & { identity: string };
+
+// Only a dedicated leading, single-line comment is metadata, never a config key.
+const SOURCES_HEADER = /^(\uFEFF?[ \t\r\n]*)\/\/ jugglework-connector-sources: ([^\r\n]*)(?:\r?\n|$)/;
+
+function readProvenance(raw: string): Map<string, StoredProvenance> {
+  const header = SOURCES_HEADER.exec(raw);
+  if (!header) return new Map();
+  try {
+    const sources: unknown = JSON.parse(header[2]!);
+    if (!isRecord(sources)) return new Map();
+    const result = new Map<string, StoredProvenance>();
+    for (const [name, value] of Object.entries(sources)) {
+      if (!isRecord(value)
+        || (value.source !== "public" && value.source !== "personal")
+        || (value.catalogId !== undefined && typeof value.catalogId !== "string")
+        || typeof value.identity !== "string"
+        || !/^fnv1a32:[0-9a-f]{8}$/.test(value.identity)
+        || Object.keys(value).some((key) => !["source", "catalogId", "identity"].includes(key))) {
+        return new Map();
+      }
+      result.set(name, {
+        source: value.source,
+        ...(value.catalogId !== undefined ? { catalogId: value.catalogId } : {}),
+        identity: value.identity,
+      });
+    }
+    return result;
+  } catch {
+    return new Map();
+  }
+}
+
+function mcpIdentity(config: McpServerConfig): string | undefined {
+  let identity: string;
+  if (config.type === "remote" && typeof config.url === "string") {
+    identity = JSON.stringify(["remote", config.url.trim()]);
+  } else if (config.type === "local" && Array.isArray(config.command)
+    && config.command.every((argument) => typeof argument === "string")) {
+    identity = JSON.stringify(["local", config.command]);
+  } else {
+    return undefined;
+  }
+  // FNV-1a is a consistency fingerprint, not authentication or secret protection.
+  // Never duplicate URLs, commands, or auth fields in the provenance comment.
+  let hash = 0x811c9dc5;
+  for (const byte of new TextEncoder().encode(identity)) {
+    hash = Math.imul(hash ^ byte, 0x01000193);
+  }
+  return `fnv1a32:${(hash >>> 0).toString(16).padStart(8, "0")}`;
+}
+
+function withProvenance(raw: string, name: string, provenance?: StoredProvenance): string {
+  const sources = readProvenance(raw);
+  if (provenance) sources.set(name, provenance);
+  else sources.delete(name);
+  const body = raw.replace(SOURCES_HEADER, "$1");
+  if (!sources.size) return withTrailingNewline(body);
+  const json = JSON.stringify(Object.fromEntries(sources))
+    .replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
+  return withTrailingNewline(`// jugglework-connector-sources: ${json}\n${body}`);
+}
 
 /**
  * 合并全局配置文件与引擎已识别的全局 MCP。
@@ -94,9 +164,20 @@ export function parseGlobalMcpEntries(raw: string | null | undefined): GlobalMcp
   }
   const mcp = parsed?.mcp;
   if (!isRecord(mcp)) return [];
-  return Object.entries(mcp).flatMap(([name, value]) =>
-    isRecord(value) ? [{ name, config: value as McpServerConfig }] : [],
-  );
+  const sources = readProvenance(raw);
+  return Object.entries(mcp).flatMap(([name, value]) => {
+    if (!isRecord(value)) return [];
+    const config = value as McpServerConfig;
+    const provenance = sources.get(name);
+    return [{
+      name,
+      config,
+      ...(provenance && provenance.identity === mcpIdentity(config) ? {
+        catalogSource: provenance.source,
+        ...(provenance.catalogId !== undefined ? { catalogId: provenance.catalogId } : {}),
+      } : {}),
+    }];
+  });
 }
 
 function withTrailingNewline(value: string) {
@@ -117,15 +198,29 @@ export function formatConfigWithMcpEntry(
   raw: string,
   name: string,
   config: McpServerConfig,
+  provenance?: GlobalMcpProvenance,
 ): string {
-  return editConfig(raw, ["mcp", name], config);
+  const previous = parseGlobalMcpEntries(raw).find((entry) => entry.name === name);
+  const source = provenance ?? (previous?.catalogSource ? {
+    source: previous.catalogSource,
+    ...(previous.catalogId !== undefined ? { catalogId: previous.catalogId } : {}),
+  } : undefined);
+  const identity = mcpIdentity(config);
+  return withProvenance(editConfig(raw, ["mcp", name], config), name,
+    source && identity ? {
+      source: source.source,
+      ...(source.catalogId !== undefined ? { catalogId: source.catalogId } : {}),
+      identity,
+    } : undefined);
 }
 
 /** 移除一个全局连接器。目标不存在时原样返回。 */
 export function formatConfigWithoutMcpEntry(raw: string, name: string): string {
   const entries = parseGlobalMcpEntries(raw);
-  if (!entries.some((entry) => entry.name === name)) return withTrailingNewline(raw);
-  return editConfig(raw, ["mcp", name], undefined);
+  const next = entries.some((entry) => entry.name === name)
+    ? editConfig(raw, ["mcp", name], undefined)
+    : raw;
+  return withProvenance(next, name);
 }
 
 /** 切换一个全局连接器的启用状态。目标不存在时原样返回。 */
@@ -146,17 +241,41 @@ export async function readGlobalMcpEntries(
   return parseGlobalMcpEntries(await readGlobalOpencodeConfig(target));
 }
 
+// Serialize this module's read-modify-write calls, including create collision checks.
+// External writers still require transport-level locking/CAS for full atomicity.
+let pendingMutation: Promise<void> = Promise.resolve();
+
 async function mutateGlobalMcpConfig(
   target: GlobalConfigTarget,
   mutate: (raw: string) => string,
 ): Promise<void> {
-  const current = await readGlobalOpencodeConfig(target);
-  if (current === null) {
-    throw new Error("Global opencode config is not writable in this runtime.");
-  }
-  const next = mutate(current);
-  if (withTrailingNewline(current) === next) return;
-  await writeGlobalOpencodeConfig(target, next);
+  const mutation = pendingMutation.then(async () => {
+    const current = await readGlobalOpencodeConfig(target);
+    if (current === null) {
+      throw new Error("Global opencode config is not writable in this runtime.");
+    }
+    const next = mutate(current);
+    if (withTrailingNewline(current) === next) return;
+    await writeGlobalOpencodeConfig(target, next);
+  });
+  pendingMutation = mutation.catch(() => {});
+  await mutation;
+}
+
+/** Create only: check the freshly read config, not a potentially stale UI list. */
+export async function createGlobalMcp(
+  target: GlobalConfigTarget,
+  name: string,
+  config: McpServerConfig,
+  provenance?: GlobalMcpProvenance,
+): Promise<void> {
+  await mutateGlobalMcpConfig(target, (raw) => {
+    const tree = parseTree(raw);
+    if (tree && findNodeAtLocation(tree, ["mcp", name])) {
+      throw new Error(`Global MCP connector "${name}" already exists.`);
+    }
+    return formatConfigWithMcpEntry(raw, name, config, provenance);
+  });
 }
 
 /** 新增或更新一个全局连接器。 */
@@ -164,8 +283,9 @@ export async function upsertGlobalMcp(
   target: GlobalConfigTarget,
   name: string,
   config: McpServerConfig,
+  provenance?: GlobalMcpProvenance,
 ): Promise<void> {
-  await mutateGlobalMcpConfig(target, (raw) => formatConfigWithMcpEntry(raw, name, config));
+  await mutateGlobalMcpConfig(target, (raw) => formatConfigWithMcpEntry(raw, name, config, provenance));
 }
 
 /** 移除一个全局连接器。 */

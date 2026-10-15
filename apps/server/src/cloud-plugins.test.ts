@@ -3,7 +3,7 @@ import { Database } from "bun:sqlite";
 import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildCloudPluginDeliveryPlan, installCloudPlugin, readCloudPluginResolved, readInstalledCloudPlugins, removeCloudPlugin, resolveCloudPluginRevision, type CloudPluginResolved } from "./cloud-plugins.js";
+import { buildCloudPluginDeliveryPlan, hasLocalMaterialization, installCloudPlugin, readCloudPluginResolved, readInstalledCloudPlugins, removeCloudPlugin, resolveCloudPluginRevision, type CloudImportedPlugin, type CloudPluginResolved } from "./cloud-plugins.js";
 import { addMcp, setMcpEnabled } from "./mcp.js";
 import { readRuntimeOpencodeConfig, writeRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
 import type { ServerConfig } from "./types.js";
@@ -157,6 +157,60 @@ function duplicateMcpPlugin(version: "v1" | "v2", duplicate: boolean): CloudPlug
     memberships: duplicate ? [membership("mcp-a"), membership("mcp-b")] : [membership("mcp-a")],
   };
 }
+
+function importedPlugin(files: CloudImportedPlugin["files"]): CloudImportedPlugin {
+  return {
+    pluginId: "plugin-1",
+    marketplaceId: "marketplace-1",
+    name: "Plugin",
+    description: null,
+    updatedAt: null,
+    files,
+    importedAt: Date.now(),
+  };
+}
+
+describe("hasLocalMaterialization", () => {
+  test("ignores cloud readiness and requires an owned installed local outcome", () => {
+    const base = {
+      configObjectId: "component-1",
+      versionId: "version-1",
+      objectType: "mcp",
+      title: "Component",
+      path: "cloud://component-1",
+      updatedAt: null,
+      ownerPluginId: "plugin-1",
+      ownerConfigObjectId: "component-1",
+    };
+
+    expect(hasLocalMaterialization(importedPlugin([{
+      ...base,
+      delivery: "cloud",
+      outcome: "available_cloud",
+    }]))).toBe(false);
+    expect(hasLocalMaterialization(importedPlugin([{
+      ...base,
+      delivery: "local_file",
+      outcome: "failed",
+    }]))).toBe(false);
+    expect(hasLocalMaterialization(importedPlugin([{
+      ...base,
+      delivery: "runtime_mcp",
+      outcome: "installed_local",
+      ownerPluginId: "another-plugin",
+    }]))).toBe(false);
+    expect(hasLocalMaterialization(importedPlugin([{
+      ...base,
+      delivery: "local_file",
+      outcome: "installed_local",
+    }]))).toBe(true);
+    expect(hasLocalMaterialization(importedPlugin([{
+      ...base,
+      delivery: "runtime_mcp",
+      outcome: "installed_local",
+    }]))).toBe(true);
+  });
+});
 
 describe("cloud plugin installs", () => {
   test("stores installed plugin state in the server DB and projects runtime resources", async () => {

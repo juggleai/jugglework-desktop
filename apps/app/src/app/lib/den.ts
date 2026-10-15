@@ -1560,9 +1560,18 @@ function isDenTenantTierForKind(kind: "personal" | "organization", tier: unknown
 
 function readSafeInteger(value: unknown): number | null {
   if (typeof value === "number") {
-    return Number.isSafeInteger(value) ? value : null;
+    return Number.isSafeInteger(value) && value >= 0 ? value : null;
   }
   if (typeof value !== "string" || !/^(0|[1-9]\d*)$/.test(value)) return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) ? parsed : null;
+}
+
+function readSignedSafeInteger(value: unknown): number | null {
+  if (typeof value === "number") {
+    return Number.isSafeInteger(value) ? value : null;
+  }
+  if (typeof value !== "string" || !/^(0|-?[1-9]\d*)$/.test(value)) return null;
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) ? parsed : null;
 }
@@ -1642,7 +1651,7 @@ function getTenantAccount(payload: unknown): DenTenantAccount | null {
     !isDenTenantTierForKind(payload.kind, payload.tier) ||
     typeof payload.status !== "string" ||
     readSafeInteger(payload.tierVersion) === null ||
-    readSafeInteger(payload.points.available) === null ||
+    readSignedSafeInteger(payload.points.available) === null ||
     readSafeInteger(payload.points.reserved) === null ||
     readSafeInteger(payload.points.version) === null ||
     typeof payload.permissions.canViewLedger !== "boolean" ||
@@ -1658,7 +1667,7 @@ function getTenantAccount(payload: unknown): DenTenantAccount | null {
     status: payload.status,
     tierVersion: readSafeInteger(payload.tierVersion)!,
     points: {
-      available: readSafeInteger(payload.points.available)!,
+      available: readSignedSafeInteger(payload.points.available)!,
       reserved: readSafeInteger(payload.points.reserved)!,
       version: readSafeInteger(payload.points.version)!,
     },
@@ -1968,6 +1977,7 @@ function parsePluginConfigObjectVersion(value: unknown): DenPluginConfigObjectVe
     id: value.id,
     rawSourceText: typeof value.rawSourceText === "string" ? value.rawSourceText : null,
     normalizedPayloadJson: isRecord(value.normalizedPayloadJson) ? value.normalizedPayloadJson : null,
+    ...(value.delivery === "cloud" || value.delivery === "desktop" ? { delivery: value.delivery } : {}),
     sourceRevisionRef: typeof value.sourceRevisionRef === "string" ? value.sourceRevisionRef : null,
     createdAt: typeof value.createdAt === "string" ? value.createdAt : null,
   };
@@ -1986,6 +1996,7 @@ function parsePluginConfigObject(value: unknown): DenPluginConfigObject | null {
     currentFileExtension: typeof value.currentFileExtension === "string" ? value.currentFileExtension : null,
     currentRelativePath: typeof value.currentRelativePath === "string" ? value.currentRelativePath : null,
     status: typeof value.status === "string" ? value.status : "active",
+    ...(value.delivery === "cloud" || value.delivery === "desktop" ? { delivery: value.delivery } : {}),
     updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : null,
     latestVersion: parsePluginConfigObjectVersion(value.latestVersion),
   };
@@ -2386,6 +2397,7 @@ function parsePluginMembership(value: unknown): DenPluginMembership | null {
     id: value.id,
     pluginId: value.pluginId,
     configObjectId: value.configObjectId,
+    ...(value.delivery === "cloud" || value.delivery === "desktop" ? { delivery: value.delivery } : {}),
     ...(configObject ? { configObject } : {}),
   };
 }

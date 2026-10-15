@@ -34,6 +34,28 @@ test("tenant account parses the organization point balance", async () => {
   assert.deepEqual(await client.tenantAccount("session-secret", "org_123"), { availablePoints: 888, reservedPoints: 12 });
 });
 
+test("tenant account accepts signed safe available points without loosening reserved points", async () => {
+  for (const available of ["-888", -888, String(Number.MIN_SAFE_INTEGER), Number.MIN_SAFE_INTEGER, "0", 0, "1", 1]) {
+    const client = new CloudClient(normalizeCloudUrl("https://cloud.example"), (async () => Response.json({
+      points: { available, reserved: "0" },
+    })) as typeof fetch);
+    assert.deepEqual(await client.tenantAccount("session-secret", "org_123"), { availablePoints: Number(available), reservedPoints: 0 });
+  }
+  for (const points of [
+    ...["-0", "-01", "+1", "-1.5", -1.5, "-1e3", " -1", "", null, true, "-9007199254740992", -9007199254740992, "9007199254740992", 9007199254740992]
+      .map((available) => ({ available, reserved: "0" })),
+    { available: "-1", reserved: "-1" },
+    { available: -1, reserved: -1 },
+  ]) {
+    const client = new CloudClient(normalizeCloudUrl("https://cloud.example"), (async () => Response.json({ points })) as typeof fetch);
+    await assert.rejects(client.tenantAccount("session-secret", "org_123"), (error: unknown) => {
+      assert.ok(error instanceof CloudHttpError);
+      assert.equal(error.code, "invalid_tenant_account_payload");
+      return true;
+    });
+  }
+});
+
 test("organization state preserves the Cloud active choice and switching uses the Desktop endpoint", async () => {
   const requests: Array<{ url: string; method: string; authorization: string | null; body: string | null }> = [];
   const client = new CloudClient(normalizeCloudUrl("https://cloud.example"), (async (input, init) => {

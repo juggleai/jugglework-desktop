@@ -73,4 +73,46 @@ describe("composer action menus", () => {
     expect(source).toContain("<FileCog");
     expect(source).toContain("<ScanSearch");
   });
+
+  test("keeps installed unavailable connectors visible and uses only localized status text", () => {
+    const source = readFileSync(composerPath, "utf8");
+    const rows = source.slice(source.indexOf("const activeMcpItems"), source.indexOf("const plusMenuEntries"));
+    expect(rows).toContain("mcpServers.map");
+    expect(rows).toContain("composerMcpStatus(entry, mcpStatuses)");
+    expect(rows).toContain("connectorReadiness(entry.config, mcpStatuses[entry.id ?? entry.name]).hint");
+    expect(rows).toContain('t("connect.workspace_disabled_here")');
+    expect(rows).not.toContain("entry.config.url");
+    expect(rows).not.toContain("entry.config.command");
+    expect(source).not.toContain("detail.error");
+    expect(source).not.toContain("mcpStatusTooltip");
+    expect(source).toContain('case "pending":\n      return t("mcp.friendly_status_pending")');
+    expect(source).toContain("title={disabledTitle ?? entry.description}");
+    expect(source).toContain("const disabled = unavailableMcp");
+    expect(source).toContain("disabled={disabled}");
+    expect(source).toContain('if (status !== "connected" || entry.workspaceEnabled === false || entry.config.enabled === false) return;');
+  });
+
+  test("routes connector management through the existing settings callback for click and keyboard activation", () => {
+    const source = readFileSync(composerPath, "utf8");
+    expect(source).toContain('if (props.onOpenSettings) {\n    plusMenuMcpEntries.push({');
+    expect(source).toContain('label: t("composer.plus_menu_manage_connectors")');
+    expect(source).toContain('if (entry.kind === "mcp-management") {\n      setPlusMenuOpen(false);\n      props.onOpenSettings?.();\n      return;');
+    expect(source).toContain("if (entry) activatePlusEntry(entry)");
+    expect(source).toContain("onClick={() => activatePlusEntry(entry)}");
+    expect(source).toContain('group.entries.every((entry) => entry.kind === "mcp-management")');
+
+    const session = readFileSync(new URL("../src/react-app/domains/session/surface/session-surface.tsx", import.meta.url), "utf8");
+    expect(session).toContain('onOpenSettings={props.onOpenSettingsSection ? () => props.onOpenSettingsSection?.("mcps") : undefined}');
+    expect(session).toContain("servers: selectComposerInstalledMcpEntries(merged.servers)");
+    expect(session).toContain("const servers = projected.servers");
+    expect(session).not.toContain("selectComposerAvailableMcpEntries");
+    expect(session).not.toContain("MCP_QUICK_CONNECT");
+    expect(session).toContain("listAssignedConnectCapabilities({ client, organizationId })");
+    expect(session).toContain(".getMcpWorkspacePolicy(organizationId, workspaceKey)");
+
+    const route = readFileSync(new URL("../src/react-app/shell/session-route.tsx", import.meta.url), "utf8");
+    expect(route).toContain('section === "mcps" ? "/settings/extensions/mcp"');
+    const settings = readFileSync(new URL("../src/react-app/shell/settings-route.tsx", import.meta.url), "utf8");
+    expect(settings).toContain('if (tail === "mcp") return { tab: "extensions", redirectPath: null, extensionsSection: "mcp" }');
+  });
 });

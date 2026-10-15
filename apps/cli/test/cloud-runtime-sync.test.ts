@@ -147,7 +147,7 @@ test("same cloud row is reimported when organization ownership changes", async (
   assert.equal(state.calls.filter((call) => call === "remove-mirror").length, 2);
 });
 
-test("managed organization balance replaces an unaffordable workspace default", async () => {
+test("one posted point preserves an expensive default and admits the first published model", async () => {
   const state = harness();
   const managed: CloudProvider = {
     id: "lpr_router", providerId: "JuggleRouter", name: "JuggleRouter", source: "juggle_router",
@@ -159,10 +159,53 @@ test("managed organization balance replaces an unaffordable workspace default", 
   };
   state.setProviders([managed]);
   state.setConfiguredModel("lpr_router/expensive");
-  state.setAvailablePoints(700);
+  state.setAvailablePoints(1);
   const result = await synchronizeCloudRuntime({ ...state, workspace: { id: "ws" } });
-  assert.equal(result.autoModel, "lpr_router/affordable");
-  assert.ok(state.output.some((line) => line.includes("requires at least 820 points") && line.includes("has 700")));
+  assert.equal(result.autoModel, null);
+  assert.ok(!state.output.some((line) => /requires|reservation/.test(line)));
+  state.setConfiguredModel(null);
+  assert.equal((await synchronizeCloudRuntime({ ...state, workspace: { id: "ws" } })).autoModel, "lpr_router/expensive");
+  state.options.model = "lpr_router/expensive";
+  assert.equal((await synchronizeCloudRuntime({ ...state, workspace: { id: "ws" } })).autoModel, null);
+  assert.equal(state.options.model, "lpr_router/expensive");
+});
+
+test("zero and negative posted balances deny automatic, configured, and explicit managed selections", async () => {
+  for (const balance of [0, -1]) {
+    for (const selection of ["automatic", "configured", "explicit"]) {
+      const state = harness();
+      state.setProviders([{ ...first, source: "juggle_router" }, ...(selection === "automatic" ? [] : [second])]);
+      state.setAvailablePoints(balance);
+      if (selection === "configured") state.setConfiguredModel("lpr_first/model-b");
+      if (selection === "explicit") state.options.model = "lpr_first/model-b";
+      await assert.rejects(synchronizeCloudRuntime({ ...state, workspace: { id: "ws" } }), /managed model requests require a positive points balance/);
+    }
+  }
+});
+
+test("nonpositive managed balances leave BYOK automatic and explicit selections usable", async () => {
+  for (const balance of [0, -1]) {
+    const state = harness();
+    state.setProviders([{ ...first, source: "juggle_router" }, second]);
+    state.setAvailablePoints(balance);
+    assert.equal((await synchronizeCloudRuntime({ ...state, workspace: { id: "ws" } })).autoModel, "lpr_second/model-c");
+    state.setConfiguredModel("lpr_second/model-c");
+    assert.equal((await synchronizeCloudRuntime({ ...state, workspace: { id: "ws" } })).autoModel, null);
+    state.options.model = "lpr_second/model-c";
+    assert.equal((await synchronizeCloudRuntime({ ...state, workspace: { id: "ws" } })).autoModel, null);
+    state.setProviders([{ ...first, source: "juggle_router" }]);
+    state.setConfiguredModel("local/model");
+    state.options.model = null;
+    assert.equal((await synchronizeCloudRuntime({ ...state, workspace: { id: "ws" } })).autoModel, null);
+    state.options.model = "local/explicit";
+    assert.equal((await synchronizeCloudRuntime({ ...state, workspace: { id: "ws" } })).autoModel, null);
+  }
+});
+
+test("BYOK-only inventory does not read managed points", async () => {
+  const state = harness();
+  state.cloud.tenantAccount = async () => { throw new Error("must not read managed points"); };
+  assert.equal((await synchronizeCloudRuntime({ ...state, workspace: { id: "ws" } })).autoModel, "lpr_first/model-b");
 });
 
 test("a configured non-Cloud model is preserved, while stale managed defaults are overridden for the CLI session", async () => {

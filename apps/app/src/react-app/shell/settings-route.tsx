@@ -62,6 +62,8 @@ import { cleanupJuggleWorkCloudMcpAfterSignOut } from "@/react-app/domains/conne
 import { useOrgMcpConnections } from "@/react-app/domains/connections/use-org-mcp-connections";
 import { useWorkspaceMcpPolicy } from "@/react-app/domains/connections/use-workspace-mcp-policy";
 import { useWorkspaceMcpToolPolicy } from "@/react-app/domains/connections/use-workspace-mcp-tool-policy";
+import { useWorkspaceSkillPolicy } from "@/react-app/domains/connections/use-workspace-skill-policy";
+import { useWorkspacePluginPolicy } from "@/react-app/domains/connections/use-workspace-plugin-policy";
 import { createJuggleWorkServerStore, useJuggleWorkServerStoreSnapshot } from "@/react-app/domains/connections/jugglework-server-store";
 import { createProviderAuthStore, useProviderAuthStoreSnapshot } from "@/react-app/domains/connections/provider-auth/store";
 import { getCurrentCloudManagedProviderIds } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
@@ -84,7 +86,12 @@ import {
   isBuiltInExtensionMcpEntry,
 } from "@/react-app/domains/settings/extension-items";
 import { resolveConnectRowWorkspaceScope } from "@/react-app/domains/settings/connect-workspace-scope";
-import { isJuggleWorkExtensionEnabled, JUGGLEWORK_EXTENSION_STATE_CHANGED } from "@/react-app/domains/settings/extension-state";
+import {
+  isJuggleWorkExtensionEnabled,
+  JUGGLEWORK_EXTENSION_STATE_CHANGED,
+  setJuggleWorkExtensionEnabled,
+  setJuggleWorkExtensionEnabledWithLifecycle,
+} from "@/react-app/domains/settings/extension-state";
 import { PreferencesView } from "@/react-app/domains/settings/pages/preferences-view";
 import { ShellCustomizationView } from "@/react-app/domains/settings/pages/shell-view";
 import { GeneralSettingsView } from "@/react-app/domains/settings/pages/general-view";
@@ -108,8 +115,10 @@ import {
   writeGlobalAutoCompaction,
 } from "@/react-app/domains/settings/state/global-compaction-preference";
 import type { GlobalConfigTarget } from "@/react-app/domains/settings/state/global-opencode-config";
+import { removeGlobalPlugin } from "@/react-app/domains/settings/state/global-plugin-config";
 import {
   globalMcpConfigFromDirectory,
+  createGlobalMcp,
   mergeGlobalMcpEntries,
   readGlobalMcpEntries,
   removeGlobalMcp,
@@ -118,6 +127,12 @@ import {
   type GlobalMcpEntry,
 } from "@/react-app/domains/settings/state/global-mcp-config";
 import { GlobalSkillsView } from "@/react-app/domains/settings/pages/global-skills-view";
+import { filterStandaloneCatalogSkills } from "@/react-app/domains/settings/pages/catalog-skill-ownership";
+import type { CatalogSource } from "@/react-app/domains/settings/pages/catalog-source";
+import { Button } from "@/components/ui/button";
+import { matchPublicConnector, resolveConnectorCatalogSource } from "@/react-app/domains/settings/pages/connector-catalog-source";
+import { ExtensionCard } from "@/react-app/design-system/extension-card";
+import { isOrgMcpConnectionReady, orgMcpConnectionActionLabel } from "@/react-app/domains/settings/extension-items";
 import {
   GlobalConnectorsView,
   type GlobalConnectorItem,
@@ -128,23 +143,27 @@ import { ExtensionsView } from "@/react-app/domains/settings/pages/extensions-vi
 import { CloudMarketplacesView } from "@/react-app/domains/settings/pages/cloud-marketplaces-view";
 import { McpView, type SkillItem } from "@/react-app/domains/settings/pages/mcp-view";
 import { ProjectExtensionsPanel } from "@/react-app/domains/settings/pages/project-extensions/project-extensions-panel";
+import type { WorkspacePluginRow } from "@/react-app/domains/settings/pages/project-extensions/types";
 import { buildProjectConnectors } from "@/react-app/domains/settings/pages/project-extensions/connectors-source";
 import { RecoveryView } from "@/react-app/domains/settings/pages/recovery-view";
 import { UpdatesView } from "@/react-app/domains/settings/pages/updates-view";
 import { NotificationCenterView } from "@/react-app/shell/notification-center";
 import { useDebugViewModel } from "@/react-app/domains/settings/state/debug-view-model";
 import { useElectronUpdaterState } from "@/react-app/domains/settings/state/electron-updater-state";
-import { CloudSessionProvider, useCloudSession } from "@/react-app/domains/settings/cloud/cloud-session-provider";
+import { useCloudSession } from "@/react-app/domains/settings/cloud/cloud-session-provider";
 import { useDenSession } from "@/react-app/domains/settings/cloud/use-den-session";
 import { useControlAction, type JuggleWorkControlAction } from "./control/control-provider";
 import { useBootState } from "./boot-state";
 import { SettingsShell } from "@/react-app/domains/settings/shell/settings-shell";
 import {
   CustomizationCatalogSidebar,
+  globalCustomizationInstalledItems,
   type CustomizationCatalogSection,
   type CustomizationInstalledItem,
 } from "@/react-app/domains/settings/shell/customization-catalog-sidebar";
 import { createExtensionsStore, useExtensionsStoreSnapshot } from "@/react-app/domains/settings/state/extensions-store";
+import type { HostMarketplacePluginsController } from "@/react-app/domains/settings/state/host-marketplace-plugins";
+import { useHostMarketplacePlugins } from "@/react-app/domains/settings/state/host-marketplace-plugins-provider";
 import { usePlatform } from "@/react-app/kernel/platform";
 import { createLatestSyncQueue } from "@/react-app/kernel/latest-sync-queue";
 import { useLocal } from "@/react-app/kernel/local-provider";
@@ -399,6 +418,10 @@ function settingsPathForRoute(route: ReturnType<typeof parseSettingsPath>) {
   return route.tab;
 }
 
+function isHostMarketplaceUnauthorized(error: unknown): boolean {
+  return error instanceof JuggleWorkServerError && error.status === 401;
+}
+
 export type SettingsSurfaceProps = {
   embedded?: boolean;
   contentOnly?: boolean;
@@ -521,6 +544,13 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const [autoCompactContextLoaded, setAutoCompactContextLoaded] = useState(false);
   const [globalMcpEntries, setGlobalMcpEntries] = useState<GlobalMcpEntry[]>([]);
   const [globalSkills, setGlobalSkills] = useState<SkillItem[]>([]);
+  const [catalogSource, setCatalogSource] = useState<CatalogSource>("public");
+  const [catalogNavigationRevision, setCatalogNavigationRevision] = useState(0);
+  const catalogDetailNonce = useRef(0);
+  const [catalogDetailRequest, setCatalogDetailRequest] = useState<{ id: string; nonce: number; section: CustomizationCatalogSection; context: string } | null>(null);
+  const [sessionPluginItems, setSessionPluginItems] = useState<WorkspacePluginRow[]>([]);
+  const [sessionPluginError, setSessionPluginError] = useState<string | null>(null);
+  const [pluginInventoryRevision, setPluginInventoryRevision] = useState(0);
   const [globalSkillsStatus, setGlobalSkillsStatus] = useState<string | null>(null);
   const [globalSkillsBusy, setGlobalSkillsBusy] = useState(false);
   const [pendingGlobalConnector, setPendingGlobalConnector] = useState<string | null>(null);
@@ -867,19 +897,29 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     openLink: (url) => platform.openLink(url),
   });
   const cloudSession = useCloudSession();
+  const hostMarketplace = useHostMarketplacePlugins();
   const [connectCapabilities, setConnectCapabilities] = useState<ConnectCapabilityInventory>(
     EMPTY_CONNECT_CAPABILITY_INVENTORY,
   );
   const connectCapabilitiesRequestRef = useRef(0);
+  const [connectCapabilitiesLoading, setConnectCapabilitiesLoading] = useState(false);
+  const [connectCapabilitiesError, setConnectCapabilitiesError] = useState<string | null>(null);
+  const [connectCapabilitiesScope, setConnectCapabilitiesScope] = useState("");
+  const catalogOrganizationKey = `${cloudSession.baseUrl}:${cloudSession.user?.id ?? ""}:${cloudSession.activeOrganization?.id ?? ""}:${cloudSession.isSignedIn}`;
   const refreshConnectCapabilities = useCallback(async () => {
     const requestId = connectCapabilitiesRequestRef.current + 1;
     connectCapabilitiesRequestRef.current = requestId;
+    setConnectCapabilities(EMPTY_CONNECT_CAPABILITY_INVENTORY);
+    setConnectCapabilitiesScope(catalogOrganizationKey);
+    setConnectCapabilitiesError(null);
+    setConnectCapabilitiesLoading(false);
     const organizationId = cloudSession.activeOrganization?.id?.trim() ?? "";
     if (!cloudSession.isSignedIn || !organizationId) {
       setConnectCapabilities(EMPTY_CONNECT_CAPABILITY_INVENTORY);
       return;
     }
     try {
+      setConnectCapabilitiesLoading(true);
       const inventory = await listAssignedConnectCapabilities({
         client: cloudSession.client,
         organizationId,
@@ -887,18 +927,22 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       if (connectCapabilitiesRequestRef.current === requestId) {
         setConnectCapabilities(inventory);
       }
-    } catch {
+    } catch (error) {
       if (connectCapabilitiesRequestRef.current === requestId) {
         setConnectCapabilities(EMPTY_CONNECT_CAPABILITY_INVENTORY);
+        setConnectCapabilitiesError(error instanceof Error ? error.message : String(error));
       }
+    } finally {
+      if (connectCapabilitiesRequestRef.current === requestId) setConnectCapabilitiesLoading(false);
     }
-  }, [cloudSession.activeOrganization?.id, cloudSession.client, cloudSession.isSignedIn]);
+  }, [catalogOrganizationKey, cloudSession.activeOrganization?.id, cloudSession.client, cloudSession.isSignedIn]);
   refreshConnectCapabilitiesRef.current = refreshConnectCapabilities;
 
   useEffect(() => {
-    if (route.tab !== "extensions") return;
+    if (route.tab !== "extensions" && route.tab !== "skills" && !props.pluginCatalogOnly) return;
     void refreshConnectCapabilities();
-  }, [refreshConnectCapabilities, route.tab]);
+    return () => { connectCapabilitiesRequestRef.current += 1; };
+  }, [props.pluginCatalogOnly, refreshConnectCapabilities, route.tab]);
 
   const handleOpenProviderAuth = useCallback(() => {
     if (checkDesktopRestriction({ restriction: "allowCustomProviders" })) {
@@ -1000,6 +1044,85 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     client: selectedWorkspace?.workspaceType === "remote" ? null : (selectedWorkspaceEndpoint?.client ?? juggleworkClient),
     workspaceId: runtimeWorkspaceId,
   });
+  const policyClient = selectedWorkspace?.workspaceType === "remote"
+    ? null
+    : (selectedWorkspaceEndpoint?.client ?? juggleworkClient);
+  const workspaceSkillPolicy = useWorkspaceSkillPolicy({ client: policyClient, workspaceId: runtimeWorkspaceId });
+  const workspacePluginPolicy = useWorkspacePluginPolicy({ client: policyClient, workspaceId: runtimeWorkspaceId });
+  const inventoryClient = selectedWorkspaceEndpoint?.client ?? juggleworkClient;
+  const hostMarketplaceController = hostMarketplace.controller;
+  const hostMarketplaceSnapshot = hostMarketplace.snapshot;
+  const putHostMarketplacePlugin = useCallback(
+    (marketplaceId: string, resolved: Parameters<HostMarketplacePluginsController["put"]>[1], options?: { confirmExecutable?: boolean }) => {
+      if (!hostMarketplaceController) throw new Error("Host Marketplace plugins are unavailable.");
+      return hostMarketplaceController.put(marketplaceId, resolved, options);
+    },
+    [hostMarketplaceController],
+  );
+  const deleteHostMarketplacePlugin = useCallback((pluginId: string) => {
+    if (!hostMarketplaceController) throw new Error("Host Marketplace plugins are unavailable.");
+    return hostMarketplaceController.delete(pluginId);
+  }, [hostMarketplaceController]);
+  const migrateHostMarketplacePlugin = useCallback((request: Parameters<HostMarketplacePluginsController["migrate"]>[0]) => {
+    if (!hostMarketplaceController) throw new Error("Host Marketplace plugins are unavailable.");
+    return hostMarketplaceController.migrate(request);
+  }, [hostMarketplaceController]);
+  const refreshHostMarketplacePlugins = useCallback(() => {
+    if (!hostMarketplaceController) throw new Error("Host Marketplace plugins are unavailable.");
+    const current = hostMarketplaceController.getSnapshot();
+    if (!current.scope || isHostMarketplaceUnauthorized(current.error)) return Promise.resolve(current);
+    return hostMarketplaceController.refresh().catch((error) => {
+      // A collaborator credential can use the workspace while host-scoped
+      // routes reject it. Catalog discovery is Cloud-backed, so keep that
+      // available and present the host projection as read-only instead.
+      if (isHostMarketplaceUnauthorized(error)) return hostMarketplaceController.getSnapshot();
+      throw error;
+    });
+  }, [hostMarketplaceController]);
+  const applicationCatalogHostRegistry = useMemo(() => hostMarketplaceController ? {
+    snapshot: hostMarketplaceSnapshot,
+    put: putHostMarketplacePlugin,
+    migrate: migrateHostMarketplacePlugin,
+    delete: deleteHostMarketplacePlugin,
+    refresh: refreshHostMarketplacePlugins,
+  } : null, [deleteHostMarketplacePlugin, hostMarketplaceController, hostMarketplaceSnapshot, migrateHostMarketplacePlugin, putHostMarketplacePlugin, refreshHostMarketplacePlugins]);
+  const hostCatalogKey = hostMarketplace.requestedKey ?? `${hostMarketplace.hostBaseUrl || "no-host"}:${catalogOrganizationKey}`;
+  const catalogDetailContext = props.pluginCatalogOnly ? hostCatalogKey : `${catalogOrganizationKey}:${inventoryClient?.baseUrl}:${runtimeWorkspaceId}`;
+  const hostMarketplaceErrorHint = !hostMarketplace.supported
+    ? t("marketplace.managed_host_unsupported")
+    : !hostMarketplace.hasCredential || isHostMarketplaceUnauthorized(hostMarketplaceSnapshot.error)
+      ? t("marketplace.managed_host_read_only")
+      : null;
+  const catalogRequestFor = (section: CustomizationCatalogSection) =>
+    props.pluginCatalogOnly && catalogDetailRequest?.context === catalogDetailContext && catalogDetailRequest.section === section
+      ? catalogDetailRequest : undefined;
+  const changeCatalogSource = useCallback((source: CatalogSource) => {
+    setCatalogDetailRequest(null);
+    setCatalogSource(source);
+  }, []);
+  useEffect(() => {
+    let active = true;
+    if ((!props.embedded && !props.pluginCatalogOnly) || (route.tab !== "extensions" && !props.pluginCatalogOnly) || !inventoryClient || !runtimeWorkspaceId) {
+      setSessionPluginItems([]);
+      setSessionPluginError(null);
+      return;
+    }
+    setSessionPluginItems([]);
+    setSessionPluginError(null);
+    void inventoryClient.listPlugins(runtimeWorkspaceId, { includeGlobal: true }).then((result) => {
+      if (!active) return;
+      setSessionPluginItems(result.items.map((item) => ({
+        id: `${item.scope}:${item.source}:${item.spec}`,
+        name: item.spec.startsWith("file://") ? item.spec.split("/").at(-1) || item.spec : item.spec,
+        description: item.path,
+        scope: item.scope === "global" ? "global" : "workspace",
+        spec: item.source === "config" ? item.spec : undefined,
+      })));
+    }).catch((error: unknown) => {
+      if (active) setSessionPluginError(error instanceof Error ? error.message : String(error));
+    });
+    return () => { active = false; };
+  }, [inventoryClient, pluginInventoryRevision, props.embedded, props.pluginCatalogOnly, route.tab, runtimeWorkspaceId]);
 
   const opencodeClient = useMemo(() => {
     if (!selectedWorkspaceEndpoint || !selectedWorkspaceEndpoint.token) return null;
@@ -1714,19 +1837,70 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     }
   }, [autoCompactContext, autoCompactContextBusy, globalConfigTarget, reloadCoordinator]);
 
+  const uninstallPersonalPlugin = useCallback(async (plugin: { name: string; spec?: string }) => {
+    const target = globalConfigTarget();
+    if (!target || !plugin.spec) throw new Error(t("marketplace.uninstall_unavailable"));
+    await removeGlobalPlugin(target, plugin.spec);
+    reloadCoordinator.markReloadRequired("plugins", {
+      type: "plugin",
+      name: plugin.spec,
+      action: "removed",
+    });
+    setPluginInventoryRevision((value) => value + 1);
+    toast.success(t("marketplace.uninstalled_plugin", { name: plugin.name }));
+  }, [globalConfigTarget, reloadCoordinator]);
+
   // ---- 全局技能与全局连接器 ----
 
+  // Old callbacks retain their inactive scope after an environment switch or unmount.
+  const globalInventoryScope = useMemo(() => ({ active: false, skillsRequest: 0, connectorsRequest: 0 }),
+    [inventoryClient, runtimeWorkspaceId, globalConfigTarget]);
+  useEffect(() => {
+    globalInventoryScope.active = true;
+    setGlobalSkills([]);
+    setGlobalSkillsStatus(null);
+    setGlobalSkillsError(null);
+    setGlobalSkillsBusy(false);
+    setDeletingGlobalSkill(null);
+    setGlobalMcpEntries([]);
+    setGlobalConnectorsError(null);
+    return () => {
+      globalInventoryScope.active = false;
+      globalInventoryScope.skillsRequest++;
+      globalInventoryScope.connectorsRequest++;
+    };
+  }, [globalInventoryScope]);
+
+  const loadGlobalSkillDetail = useCallback(async (skill: SkillItem) => {
+    const client = inventoryClient;
+    const workspaceId = runtimeWorkspaceId?.trim();
+    if (!globalInventoryScope.active || !client || !workspaceId || !skill.path.trim()
+      || (selectedWorkspace?.workspaceType === "remote" && !selectedWorkspaceEndpoint?.client)) {
+      throw new Error("Exact skill file reading is unavailable");
+    }
+    const result = await client.getSkillDetail(workspaceId, { path: skill.path, scope: "global" });
+    if (!globalInventoryScope.active || result.item.path !== skill.path) throw new Error("Exact skill file reading is unavailable");
+    return { content: result.content, path: result.item.path, files: result.files };
+  }, [globalInventoryScope, inventoryClient, runtimeWorkspaceId, selectedWorkspaceEndpoint?.client, selectedWorkspace?.workspaceType]);
+
   const refreshGlobalSkills = useCallback(async () => {
-    const workspaceId = routeStateRef.current.runtimeWorkspaceId?.trim() || selectedWorkspaceId;
-    if (!juggleworkClient || !workspaceId) {
+    if (!globalInventoryScope.active) return;
+    const request = ++globalInventoryScope.skillsRequest;
+    const isCurrent = () => globalInventoryScope.active && globalInventoryScope.skillsRequest === request;
+    const client = selectedWorkspaceEndpoint?.client ?? juggleworkClient;
+    const workspaceId = runtimeWorkspaceId?.trim();
+    if (!client || !workspaceId) {
       setGlobalSkills([]);
       setGlobalSkillsStatus(t("skills.pick_workspace_first"));
+      setGlobalSkillsError(null);
+      setGlobalSkillsBusy(false);
       return;
     }
     setGlobalSkillsBusy(true);
     setGlobalSkillsError(null);
     try {
-      const response = await juggleworkClient.listSkills(workspaceId, { scope: "global" });
+      const response = await client.listSkills(workspaceId, { scope: "global" });
+      if (!isCurrent()) return;
       // 旧版服务端可能忽略 scope 查询参数并返回混合列表，客户端仍做最后一道过滤。
       const items = Array.isArray(response.items)
         ? response.items.filter((entry) => entry.scope === "global").map((entry) => ({
@@ -1735,37 +1909,46 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             path: entry.path,
             trigger: entry.trigger,
             scope: entry.scope,
+            ownerPluginId: entry.ownerPluginId,
+            sourceKind: entry.sourceKind,
           }))
         : [];
       setGlobalSkills(items);
       setGlobalSkillsStatus(items.length ? null : t("skills.no_skills_found"));
     } catch (error) {
+      if (!isCurrent()) return;
       setGlobalSkills([]);
       setGlobalSkillsError(error instanceof Error ? error.message : t("skills.failed_to_load"));
     } finally {
-      setGlobalSkillsBusy(false);
+      if (isCurrent()) setGlobalSkillsBusy(false);
     }
-  }, [juggleworkClient, selectedWorkspaceId]);
+  }, [globalInventoryScope, juggleworkClient, runtimeWorkspaceId, selectedWorkspaceEndpoint?.client]);
 
   const refreshGlobalConnectors = useCallback(async () => {
+    if (!globalInventoryScope.active) return;
+    const request = ++globalInventoryScope.connectorsRequest;
+    const isCurrent = () => globalInventoryScope.active && globalInventoryScope.connectorsRequest === request;
     const target = globalConfigTarget();
     if (!target) return;
     try {
-      setGlobalMcpEntries(await readGlobalMcpEntries(target));
+      const entries = await readGlobalMcpEntries(target);
+      if (!isCurrent()) return;
+      setGlobalMcpEntries(entries);
       setGlobalConnectorsError(null);
     } catch (error) {
+      if (!isCurrent()) return;
       setGlobalConnectorsError(error instanceof Error ? error.message : t("mcp.load_failed"));
     }
-  }, [globalConfigTarget]);
+  }, [globalConfigTarget, globalInventoryScope]);
 
   // 只在打开对应页面时读取，避免会话右侧面板和其他设置页付出无谓的配置文件读取。
-  const connectorsTabActive = route.tab === "connectors";
+  const connectorsTabActive = route.tab === "connectors" || Boolean(props.pluginCatalogOnly);
   useEffect(() => {
     if (!connectorsTabActive) return;
     void refreshGlobalConnectors();
   }, [connectorsTabActive, refreshGlobalConnectors]);
 
-  const skillsTabActive = route.tab === "skills";
+  const skillsTabActive = route.tab === "skills" || Boolean(props.pluginCatalogOnly);
   useEffect(() => {
     if (!skillsTabActive) return;
     void refreshGlobalSkills();
@@ -1775,11 +1958,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   // MCP 接口只作用于工作区，不能用来承载全局连接器。
   const globalConnectors = useMemo<GlobalConnectorItem[]>(
     () => mergeGlobalMcpEntries(globalMcpEntries, connectionsSnapshot.mcpServers).map((entry) => ({
-      name: entry.name,
-      config: entry.config,
+      ...entry,
       status: connectionsSnapshot.mcpStatuses[entry.name],
     })),
-    [connectionsSnapshot.mcpStatuses, globalMcpEntries],
+    [connectionsSnapshot.mcpStatuses, connectionsSnapshot.mcpServers, globalMcpEntries],
   );
   const pluginOwnedMcpServerNames = useMemo(
     () => builtInExtensionMcpServerNames(connectionsStore.quickConnect),
@@ -1802,6 +1984,11 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       return !globalNames.has(name.toLowerCase());
     });
   }, [connectionsStore, globalConnectors]);
+  const publicConnectorEntries = useMemo(() => connectionsStore.quickConnect.filter((entry) => {
+    const name = getMcpServerName(entry);
+    return !isBuiltInExtensionMcpEntry(entry) && !entry.defaultHidden && name !== "jugglework-cloud"
+      && (entry.type === "remote" || entry.type === "local");
+  }), [connectionsStore]);
 
   const runGlobalConnectorWrite = useCallback(async (
     name: string,
@@ -1841,14 +2028,26 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   }, [connectionsStore, globalConfigTarget, refreshGlobalConnectors, reloadCoordinator]);
 
   const addGlobalConnector = useCallback(
-    (name: string, config: McpServerConfig) =>
-      runGlobalConnectorWrite(name, (target) => upsertGlobalMcp(target, name, config)),
+    (name: string, config: McpServerConfig) => {
+      const previous = globalConnectors.find((connector) => connector.name === name);
+      const inferredPublic = previous && !previous.catalogSource
+        ? matchPublicConnector(previous, publicConnectorEntries)
+        : undefined;
+      return runGlobalConnectorWrite(name, (target) => upsertGlobalMcp(target, name, config,
+        inferredPublic ? { source: "public", catalogId: inferredPublic.id ?? getMcpServerName(inferredPublic) } : undefined));
+    },
+    [globalConnectors, publicConnectorEntries, runGlobalConnectorWrite],
+  );
+  const createPersonalConnector = useCallback(
+    (name: string, config: McpServerConfig) => runGlobalConnectorWrite(name, (target) => createGlobalMcp(target, name, config, { source: "personal" })),
     [runGlobalConnectorWrite],
   );
 
   const connectGlobalDirectory = useCallback(async (entry: McpDirectoryInfo) => {
     const globalEntry = globalMcpConfigFromDirectory(entry);
-    await addGlobalConnector(globalEntry.name, globalEntry.config);
+    await runGlobalConnectorWrite(globalEntry.name, (target) => createGlobalMcp(target, globalEntry.name, globalEntry.config, {
+      source: "public", catalogId: entry.id ?? getMcpServerName(entry),
+    }));
     if (globalEntry.config.type === "remote" && globalEntry.config.oauth !== false && entry.oauth) {
       connectionsStore.authorizeMcp({
         name: globalEntry.name,
@@ -1856,7 +2055,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         config: globalEntry.config,
       }, { needsReload: true });
     }
-  }, [addGlobalConnector, connectionsStore]);
+  }, [runGlobalConnectorWrite, connectionsStore]);
 
   const toggleGlobalConnector = useCallback(
     (name: string, enabled: boolean) =>
@@ -1870,8 +2069,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   );
 
   const deleteGlobalSkill = useCallback(async (name: string) => {
-    const workspaceId = routeStateRef.current.runtimeWorkspaceId?.trim() || selectedWorkspaceId;
-    if (!juggleworkClient || !workspaceId) {
+    if (!globalInventoryScope.active) return;
+    const client = selectedWorkspaceEndpoint?.client ?? juggleworkClient;
+    const workspaceId = runtimeWorkspaceId?.trim();
+    if (!client || !workspaceId) {
       // 不能静默返回：用户点了删除却毫无反馈，会以为是应用卡住了。
       setGlobalSkillsError(t("skills.uninstall_failed"));
       return;
@@ -1879,22 +2080,28 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     setDeletingGlobalSkill(name);
     setGlobalSkillsError(null);
     try {
-      await juggleworkClient.deleteSkill(workspaceId, name, { scope: "global" });
+      await client.deleteSkill(workspaceId, name, { scope: "global" });
+      if (!globalInventoryScope.active) return;
       await refreshGlobalSkills();
     } catch (error) {
+      if (!globalInventoryScope.active) return;
       setGlobalSkillsError(error instanceof Error ? error.message : t("skills.uninstall_failed"));
     } finally {
-      setDeletingGlobalSkill(null);
+      if (globalInventoryScope.active) setDeletingGlobalSkill(null);
     }
-  }, [juggleworkClient, refreshGlobalSkills, selectedWorkspaceId]);
+  }, [globalInventoryScope, juggleworkClient, refreshGlobalSkills, runtimeWorkspaceId, selectedWorkspaceEndpoint?.client]);
 
+  const canAddSkills = selectedWorkspace?.workspaceType === "local";
   const uploadGlobalSkill = useCallback(async () => {
+    // Import and SkillHub use the desktop bridge, not the selected server.
+    if (!canAddSkills || !globalInventoryScope.active) return false;
     const dir = (await pickDirectory({ title: t("project_extensions.upload_skill") })) as string | null;
-    if (!dir) return;
+    if (!dir || !globalInventoryScope.active) return false;
     setGlobalSkillsBusy(true);
     setGlobalSkillsError(null);
     try {
       const result = await importSkill("", dir, { overwrite: false, scope: "global" });
+      if (!globalInventoryScope.active) return false;
       if (!result.ok) {
         throw new Error(result.stderr || result.stdout || t("skills.import_failed", { status: result.status }));
       }
@@ -1904,12 +2111,15 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         action: "added",
       });
       await refreshGlobalSkills();
+      return globalInventoryScope.active;
     } catch (error) {
+      if (!globalInventoryScope.active) return false;
       setGlobalSkillsError(error instanceof Error ? error.message : t("skills.import_failed", { status: "unknown" }));
+      throw error;
     } finally {
-      setGlobalSkillsBusy(false);
+      if (globalInventoryScope.active) setGlobalSkillsBusy(false);
     }
-  }, [refreshGlobalSkills, reloadCoordinator]);
+  }, [canAddSkills, globalInventoryScope, refreshGlobalSkills, reloadCoordinator]);
 
   useEffect(() => {
     juggleworkServerStore.start();
@@ -2153,6 +2363,12 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       onInstall: installLocalProvider,
     },
   });
+  const setCatalogBuiltInEnabled = useCallback((entry: McpDirectoryInfo, enabled: boolean) => {
+    void setJuggleWorkExtensionEnabledWithLifecycle(entry, enabled, {
+      connectMcp: (target) => connectionsStore.connectMcp(target),
+      removeMcp: (name) => connectionsStore.removeMcp(name),
+    });
+  }, [connectionsStore]);
   const extensionItems = useMemo(
     () => buildExtensionItems({
       quickConnect: connectionsStore.quickConnect,
@@ -2165,34 +2381,61 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       orgMcpConnections: orgMcpConnections.connections,
       enablementContext,
       isBuiltInConnected: extensionController.isConnected,
+      isBuiltInEnabled: isJuggleWorkExtensionEnabled,
     }),
     [connectionsSnapshot.mcpServers, connectionsStore.quickConnect, enablementContext, extensionController, extensionsSnapshot, extensionsStore, orgMcpConnections.connections],
   );
-  const customizationInstalledItems = useMemo<CustomizationInstalledItem[]>(() => {
-    const items = new Map<string, CustomizationInstalledItem>();
-    const add = (item: CustomizationInstalledItem) => {
-      const key = `${item.section}:${item.name.trim().toLocaleLowerCase()}`;
-      if (item.name.trim() && !items.has(key)) items.set(key, item);
-    };
-
-    for (const item of extensionItems.items) {
-      if (item.installState === "available") continue;
-      const section: CustomizationCatalogSection = item.source === "skill"
-        ? "skills"
-        : item.source === "mcp-directory" || item.source === "org-connection"
-          ? "connectors"
-          : "plugins";
-      add({ id: item.id, name: item.name, section });
-    }
-    for (const skill of globalSkills) {
-      add({ id: `global-skill:${skill.path || skill.name}`, name: skill.name, section: "skills" });
-    }
-    for (const connector of standaloneGlobalConnectors) {
-      add({ id: `global-connector:${connector.name}`, name: connector.name, section: "connectors" });
-    }
-
-    return [...items.values()].sort((left, right) => left.name.localeCompare(right.name, currentLocale()));
-  }, [extensionItems.items, globalSkills, standaloneGlobalConnectors]);
+  const standaloneCatalogSkills = useMemo(
+    () => filterStandaloneCatalogSkills(globalSkills),
+    [globalSkills],
+  );
+  const customizationInstalledItems = useMemo(() => globalCustomizationInstalledItems({
+    plugins: extensionsSnapshot.cloudOrgPlugins,
+    hostInstallations: hostMarketplaceSnapshot.registry?.installations ?? [],
+    skills: standaloneCatalogSkills,
+    connectors: standaloneGlobalConnectors.map((connector) => {
+      const publicEntry = matchPublicConnector(connector, publicConnectorEntries);
+      return {
+        name: connector.name,
+        source: resolveConnectorCatalogSource(connector, publicConnectorEntries),
+        iconSrc: publicEntry?.iconSrc,
+        iconSlug: publicEntry?.iconSlug,
+        url: publicEntry?.url ?? (connector.config.type === "remote" ? connector.config.url : undefined),
+      };
+    }),
+    organization: cloudSession.isSignedIn && cloudSession.activeOrganization ? {
+      id: cloudSession.activeOrganization.id,
+      name: cloudSession.activeOrgName ?? "",
+      // Connect inventory skills are plugin memberships. They remain available
+      // to sessions and plugin detail, but are not standalone catalog entries.
+      skills: [],
+      connectors: orgMcpConnections.connections.filter(isOrgMcpConnectionReady),
+    } : undefined,
+    localPlugins: [
+      ...sessionPluginItems.filter((item) => item.scope === "global").map((item) => ({ id: item.id, name: item.name, source: "personal" as const })),
+      ...extensionItems.builtInItems.map((item) => ({
+        id: item.id,
+        name: item.name,
+        source: "public" as const,
+        iconSrc: item.builtInEntry?.iconSrc,
+        iconSlug: item.builtInEntry?.iconSlug,
+        url: item.builtInEntry?.url,
+      })),
+    ],
+  }), [catalogOrganizationKey, cloudSession.activeOrgName, cloudSession.activeOrganization, cloudSession.isSignedIn, extensionItems.builtInItems, extensionsSnapshot.cloudOrgPlugins, hostMarketplaceSnapshot.registry?.installations, orgMcpConnections.connections, publicConnectorEntries, sessionPluginItems, standaloneCatalogSkills, standaloneGlobalConnectors]);
+  const workspaceVisiblePlugins = useMemo<WorkspacePluginRow[]>(() => {
+    const catalogPlugins = customizationInstalledItems.filter((item) => item.section === "plugins").flatMap((item) => {
+      const plugin = extensionsSnapshot.cloudOrgPlugins.find((entry) => item.id === `cloud-plugin:${entry.id}`);
+      return plugin ? [{ id: item.id, name: plugin.name, description: plugin.description, scope: "global" as const }] : [];
+    });
+    const builtIns = extensionItems.builtInItems.filter((item) => item.active).map((item) => ({
+      id: item.id, name: item.name, description: item.description, scope: "global" as const,
+    }));
+    const legacyCopies = Object.values(extensionsSnapshot.importedCloudPlugins).map((plugin) => ({
+      id: `workspace-import:${plugin.pluginId}`, name: plugin.name, description: plugin.description, scope: "workspace" as const,
+    }));
+    return [...sessionPluginItems, ...builtIns, ...catalogPlugins, ...legacyCopies];
+  }, [customizationInstalledItems, extensionItems.builtInItems, extensionsSnapshot.cloudOrgPlugins, extensionsSnapshot.importedCloudPlugins, sessionPluginItems]);
   const organizationConnectionsProbe = resolveOrganizationConnectionsProbe({
     signedIn: cloudSession.isSignedIn,
     activeOrganizationId: cloudSession.activeOrganization?.id,
@@ -2688,26 +2931,83 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       case "skills":
         return (
           <GlobalSkillsView
+            key={props.pluginCatalogOnly ? `${catalogDetailContext}:${catalogNavigationRevision}` : "global-skills"}
+            detailPresentation={props.pluginCatalogOnly ? "page" : "modal"}
+            detailRequest={catalogRequestFor("skills")}
+            loadSkillDetail={loadGlobalSkillDetail}
+            source={props.pluginCatalogOnly ? catalogSource : undefined}
+            onSourceChange={changeCatalogSource}
+            organizationName={cloudSession.activeOrgName}
+            organizationSkills={[]}
+            orgSkillsLoading={connectCapabilitiesLoading}
+            orgSkillsError={!cloudSession.isSignedIn ? t("marketplace.signin_hint") : connectCapabilitiesError}
             busy={busy || globalSkillsBusy}
-            skills={globalSkills}
+            skills={props.pluginCatalogOnly ? standaloneCatalogSkills : globalSkills}
             status={globalSkillsStatus}
             error={globalSkillsError}
             deletingSkillName={deletingGlobalSkill}
             onDeleteSkill={deleteGlobalSkill}
+            canAddSkills={canAddSkills}
             onUploadSkill={uploadGlobalSkill}
-            onRefresh={() => { void refreshGlobalSkills(); }}
+            onRefreshPersonal={refreshGlobalSkills}
+            onRefresh={() => { void (catalogSource === "organization" && props.pluginCatalogOnly ? refreshConnectCapabilities() : refreshGlobalSkills()); }}
             projectDir={selectedWorkspaceRoot}
           />
         );
       case "connectors":
         return (
           <GlobalConnectorsView
+            key={props.pluginCatalogOnly ? `${catalogDetailContext}:${catalogNavigationRevision}` : "global-connectors"}
+            detailPresentation={props.pluginCatalogOnly ? "page" : "modal"}
+            detailRequest={catalogRequestFor("connectors")}
+            source={props.pluginCatalogOnly ? catalogSource : undefined}
+            onSourceChange={changeCatalogSource}
+            organizationName={cloudSession.activeOrgName}
+            publicEntries={publicConnectorEntries}
+            organizationDetail={(id) => {
+              const connection = orgMcpConnections.connections.find((item) => item.id === id);
+              if (!connection || !cloudSession.isSignedIn) return null;
+              return {
+                name: connection.name,
+                description: `${cloudSession.activeOrgName ?? ""} · ${t("customization.organization_description")}`,
+                content: <div className="space-y-5">
+                  <p className="text-sm text-dls-secondary">{orgMcpConnectionActionLabel(connection)}</p>
+                  {orgMcpConnections.error ? <p role="alert">{orgMcpConnections.error}</p> : null}
+                  {!isOrgMcpConnectionReady(connection) ? <Button disabled={orgMcpConnections.connectingId === id} onClick={() => { void orgMcpConnections.connect(id); }}>{orgMcpConnectionActionLabel(connection)}</Button> : null}
+                </div>,
+              };
+            }}
+            organizationContent={(search, openDetail) =>
+              !cloudSession.isSignedIn ? <p>{t("marketplace.signin_hint")}</p>
+              : orgMcpConnections.loading ? <p role="status">{t("common.loading")}</p>
+              : orgMcpConnections.error ? <p role="alert">{orgMcpConnections.error}</p>
+              : orgMcpConnections.connections.length === 0 ? <p>{t("customization.empty_source")}</p>
+              : <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                {orgMcpConnections.connections.filter((connection) => connection.name.toLowerCase().includes(search.trim().toLowerCase())).map((connection) => (
+                  <ExtensionCard
+                    key={connection.id}
+                    name={connection.name}
+                    description={t("customization.organization_description")}
+                    kind="mcp"
+                    url={connection.url}
+                    connected={isOrgMcpConnectionReady(connection)}
+                    connecting={orgMcpConnections.connectingId === connection.id}
+                    connectedLabel={orgMcpConnectionActionLabel(connection)}
+                    actionLabel={orgMcpConnectionActionLabel(connection)}
+                    onClick={() => openDetail(connection.id)}
+                    plain
+                  />
+                ))}
+                {orgMcpConnections.connections.every((connection) => !connection.name.toLowerCase().includes(search.trim().toLowerCase())) ? <p>{t("chat.no_search_results")}</p> : null}
+              </div>
+            }
             busy={busy}
             connectors={standaloneGlobalConnectors}
             unconnected={globalUnconnectedConnectors}
             error={globalConnectorsError}
             pendingConnectorName={pendingGlobalConnector}
             onAddConnector={addGlobalConnector}
+            onCreateConnector={createPersonalConnector}
             onConnectDirectory={connectGlobalDirectory}
             onToggleEnabled={toggleGlobalConnector}
             onAuthorize={(connector) => connectionsStore.authorizeMcp({
@@ -2716,13 +3016,24 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
               config: connector.config,
             })}
             onRemoveConnector={removeGlobalConnector}
-            onRefresh={() => { void refreshGlobalConnectors(); }}
+            onRefresh={() => { void (catalogSource === "organization" && props.pluginCatalogOnly ? orgMcpConnections.refresh() : refreshGlobalConnectors()); }}
           />
         );
       case "extensions": {
         if (props.pluginCatalogOnly) {
           return (
             <CloudMarketplacesView
+              key={`${catalogDetailContext}:${catalogNavigationRevision}`}
+              detailRequest={catalogRequestFor("plugins")}
+              source={catalogSource}
+              onRefreshLocal={() => { setPluginInventoryRevision((value) => value + 1); void connectionsStore.refreshMcpServers(); }}
+              personalError={sessionPluginError}
+              onSourceChange={changeCatalogSource}
+              organizationName={cloudSession.activeOrgName}
+              personalPlugins={[
+                ...sessionPluginItems.filter((item) => item.scope === "global"),
+              ]}
+              onUninstallPersonalPlugin={uninstallPersonalPlugin}
               extensions={extensionsStore}
               onOpenAccount={openCloudAccountSettings}
               session={denSession}
@@ -2739,11 +3050,14 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
               onConnectOrgMcp={(connectionId) => { void orgMcpConnections.connect(connectionId); }}
               onDisconnectOrgMcp={(connectionId) => { void orgMcpConnections.disconnect(connectionId); }}
               refreshOrgMcpConnections={orgMcpConnections.refresh}
-              workspaceKey={runtimeWorkspaceId || selectedWorkspaceRoot}
+              setBuiltInEnabled={setCatalogBuiltInEnabled}
+              workspaceKey={hostCatalogKey}
+              applicationCatalog={applicationCatalogHostRegistry ?? true}
+              errorHint={hostMarketplaceErrorHint}
               uniformCardHeight
               plainCards
               title={t("project_extensions.group_plugin")}
-              description={t("customization.plugins_description")}
+              description={t(`customization.${catalogSource}_description`)}
             />
           );
         }
@@ -2818,24 +3132,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
               onAddCustomMcp={async (entry) => { await connectionsStore.connectMcp(entry); }}
               configSlotForConnector={extensionController.configSlotForEntry}
               installedSkills={sessionSkills}
-              installedMarketplacePluginCount={Object.keys(extensionsSnapshot.importedCloudPlugins).length}
-              pluginsSlot={({ search }) => (
-                <CloudMarketplacesView
-                  extensions={extensionsStore}
-                  onOpenAccount={openCloudAccountSettings}
-                  session={denSession}
-                  workspaceKey={runtimeWorkspaceId || selectedWorkspaceRoot}
-                  hideSectionHeader
-                  hideMarketplaceFilter
-                  uniformCardHeight
-                  plainCards
-                  searchValue={search}
-                />
-              )}
-              onRefreshPlugins={async () => {
-                denSession.syncCurrentDenSettings();
-                await extensionsStore.refreshCloudOrgMarketplaces({ force: true });
-              }}
+              workspaceSkillPolicy={workspaceSkillPolicy}
+              plugins={workspaceVisiblePlugins}
+              workspacePluginPolicy={workspacePluginPolicy}
+              pluginError={sessionPluginError}
               onUninstallSkill={(name) => { void extensionsStore.uninstallSkill(name); }}
               onRefreshSkills={() => { void extensionsStore.refreshSkills({ force: true }); }}
               onUploadSkill={async () => {
@@ -3130,13 +3430,14 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       ? "connectors"
       : "plugins";
   const openCustomizationSection = (section: CustomizationCatalogSection) => {
+    setCatalogDetailRequest(null);
+    setCatalogNavigationRevision((revision) => revision + 1);
     navigateSettingsPath(section === "plugins" ? "extensions/plugins" : section);
   };
   const openInstalledCustomizationItem = (item: CustomizationInstalledItem) => {
-    openCustomizationSection(item.section);
-    if (item.section === "plugins") {
-      window.requestAnimationFrame(() => requestOpenMarketplacePlugin(item.name));
-    }
+    setCatalogSource(item.source ?? (item.id.startsWith("cloud-plugin:") ? "organization" : item.id.startsWith("builtin:") ? "public" : "personal"));
+    navigateSettingsPath(item.section === "plugins" ? "extensions/plugins" : item.section);
+    setCatalogDetailRequest({ id: item.detailId ?? item.id, nonce: ++catalogDetailNonce.current, section: item.section, context: catalogDetailContext });
   };
 
   return (
@@ -3335,9 +3636,5 @@ export function SettingsRoute(props: SettingsSurfaceProps = {}) {
 }
 
 export function SettingsSurface(props: SettingsSurfaceProps) {
-  return (
-    <CloudSessionProvider>
-      <SettingsRouteContent {...props} />
-    </CloudSessionProvider>
-  );
+  return <SettingsRouteContent {...props} />;
 }

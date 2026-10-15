@@ -1,6 +1,27 @@
 import type { McpDirectoryInfo } from "@/app/constants";
 import type { McpServerConfig, McpServerSource } from "@/app/types";
 import type { SkillItem } from "../mcp-view";
+import type { useWorkspaceSkillPolicy } from "@/react-app/domains/connections/use-workspace-skill-policy";
+import type { useWorkspacePluginPolicy } from "@/react-app/domains/connections/use-workspace-plugin-policy";
+
+export type WorkspaceSkillPolicy = Pick<
+  ReturnType<typeof useWorkspaceSkillPolicy>,
+  "available" | "disabledSkillNames" | "savingName" | "error" | "setSkillEnabled"
+>;
+
+export type WorkspacePluginPolicy = Pick<
+  ReturnType<typeof useWorkspacePluginPolicy>,
+  "available" | "disabledPluginSpecs" | "controllablePluginSpecs" | "savingSpec" | "error" | "setPluginEnabled"
+>;
+
+export type WorkspacePluginRow = {
+  id: string;
+  name: string;
+  description?: string | null;
+  scope: "global" | "workspace";
+  /** Exact runtime spec, if this row can participate in the workspace policy. */
+  spec?: string;
+};
 
 /**
  * 连接器(MCP) 选择弹窗中的一行，聚合自「组织下发 / 快速连接目录 / 已装 MCP」。
@@ -73,12 +94,12 @@ export type ProjectExtensionsPanelProps = {
   configSlotForConnector?: (entry: McpDirectoryInfo) => React.ReactNode | null;
   /** 已安装技能（含项目级与全局，带 scope）。 */
   installedSkills: SkillItem[];
-  /** 插件弹窗内容，由宿主注入云端市场视图；入参为标题栏的搜索词。 */
-  pluginsSlot?: (controls: { search: string }) => React.ReactNode;
-  /** 当前工作区已安装的市场插件数量。 */
-  installedMarketplacePluginCount: number;
-  /** 刷新插件（云端市场）列表。 */
-  onRefreshPlugins?: () => void | Promise<void>;
+  /** 当前工作区技能可用性策略，未就绪时不提供开关。 */
+  workspaceSkillPolicy?: WorkspaceSkillPolicy;
+  /** Global/catalog and local plugin inventory; policy is separate from discovery. */
+  plugins: WorkspacePluginRow[];
+  workspacePluginPolicy?: WorkspacePluginPolicy;
+  pluginError?: string | null;
   /** 卸载项目级技能。 */
   onUninstallSkill: (name: string) => void;
   /** 从本地上传技能到项目。 */

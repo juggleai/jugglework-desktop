@@ -44,11 +44,13 @@ test("normalizes Windows ASAR listing separators before contract checks", () => 
       "\\dist\\runtime\\desktop-remote-control.js",
       "\\node_modules\\@jugglework\\types\\dist\\automation.js",
       "\\node_modules\\@jugglework\\types\\dist\\media-generation.js",
+      "\\node_modules\\@jugglework\\types\\dist\\den\\mcp-connection-action.js",
     ]),
     [
       "/dist/runtime/desktop-remote-control.js",
       "/node_modules/@jugglework/types/dist/automation.js",
       "/node_modules/@jugglework/types/dist/media-generation.js",
+      "/node_modules/@jugglework/types/dist/den/mcp-connection-action.js",
     ],
   );
 });
@@ -58,6 +60,7 @@ test("accepts compiled runtime contracts with Windows ASAR separators", () => {
     "\\dist\\runtime\\desktop-remote-control.js",
     "\\node_modules\\@jugglework\\types\\dist\\automation.js",
     "\\node_modules\\@jugglework\\types\\dist\\media-generation.js",
+    "\\node_modules\\@jugglework\\types\\dist\\den\\mcp-connection-action.js",
   ]));
 });
 
@@ -66,8 +69,20 @@ test("rejects a package missing the compiled media-generation runtime", () => {
     () => verifyCompiledRuntimeContractEntries([
       "/dist/runtime/desktop-remote-control.js",
       "/node_modules/@jugglework/types/dist/automation.js",
+      "/node_modules/@jugglework/types/dist/den/mcp-connection-action.js",
     ]),
     /Missing packaged media-generation runtime contract/,
+  );
+});
+
+test("rejects a package missing the compiled MCP connection-action runtime", () => {
+  assert.throws(
+    () => verifyCompiledRuntimeContractEntries([
+      "/dist/runtime/desktop-remote-control.js",
+      "/node_modules/@jugglework/types/dist/automation.js",
+      "/node_modules/@jugglework/types/dist/media-generation.js",
+    ]),
+    /Missing packaged MCP connection-action runtime contract/,
   );
 });
 

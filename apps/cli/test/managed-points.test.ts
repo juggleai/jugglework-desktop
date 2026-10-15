@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { CloudProvider } from "@jugglework/cloud-provider";
-import { managedModelReservationPoints, modelFitsAvailablePoints } from "../src/managed-points.js";
+import { modelFitsAvailablePoints } from "../src/managed-points.js";
 
 const provider: CloudProvider = {
   id: "lpr_router", providerId: "JuggleRouter", name: "JuggleRouter", source: "juggle_router",
@@ -13,10 +13,22 @@ const provider: CloudProvider = {
   }],
 };
 
-test("managed reservation mirrors full-context gateway point admission", () => {
-  const model = provider.models[0]!;
-  assert.equal(managedModelReservationPoints(provider, model), 12_583);
-  assert.equal(modelFitsAvailablePoints(provider, model, 888), false);
-  assert.equal(modelFitsAvailablePoints(provider, model, 12_583), true);
-  assert.equal(managedModelReservationPoints({ ...provider, source: "custom" }, model), null);
+test("one posted point admits expensive managed models without a reservation estimate", () => {
+  assert.equal(modelFitsAvailablePoints(provider, 1), true);
+  assert.equal(modelFitsAvailablePoints(provider, 888), true);
+});
+
+test("managed admission requires a positive balance regardless of cost metadata", () => {
+  for (const available of [0, -1, null]) {
+    assert.equal(modelFitsAvailablePoints(provider, available), false);
+    assert.equal(modelFitsAvailablePoints({ ...provider, models: [{ id: "unknown-cost", name: "Unknown cost" }] }, available), false);
+  }
+});
+
+test("BYOK is not gated by managed points", () => {
+  for (const source of ["custom", "models_dev", undefined]) {
+    for (const available of [1, 0, -1, null]) {
+      assert.equal(modelFitsAvailablePoints({ ...provider, source }, available), true);
+    }
+  }
 });

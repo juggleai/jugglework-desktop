@@ -42,10 +42,8 @@ import {
 } from "@/app/lib/app-inspector";
 import { useControlAction, type JuggleWorkControlAction } from "@/react-app/shell/control/control-provider";
 import { attemptSilentMcpReauth } from "@/react-app/domains/connections/mcp-silent-reauth";
-import { applyWorkspaceMcpInventoryPolicy, isComposerManageableMcpEntry, isInternalCloudMcpTransport, selectComposerAvailableMcpEntries, selectEffectiveMcpEntries } from "@/react-app/domains/connections/workspace-mcp-inventory";
+import { applyWorkspaceMcpInventoryPolicy, selectComposerInstalledMcpEntries } from "@/react-app/domains/connections/workspace-mcp-inventory";
 import { resolveWorkspaceMcpKey } from "@/react-app/domains/connections/workspace-mcp-key";
-import { MCP_QUICK_CONNECT, getMcpServerName } from "@/app/constants";
-import { isMcpConnectorEntry } from "@/react-app/domains/settings/pages/project-extensions/connectors-source";
 import type {
   CloudMcpSubmissionGateState,
   CloudMcpSubmissionResult,
@@ -214,6 +212,7 @@ export type SessionSurfaceProps = {
   modelPickerOpen: boolean;
   modelUnavailable?: boolean;
   taskSubmissionDisabled?: boolean;
+  ensureHostMarketplaceReady?: () => Promise<unknown>;
   selectedModel: ModelRef;
   /** 当前模型声明的上下文窗口上限；0 表示模型目录未提供。 */
   contextWindowTokens: number;
@@ -1937,6 +1936,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }, [loadConnectCapabilityInventory, props.client, props.listCommands, props.workspaceId]);
 
   const listSkills = async (): Promise<SkillCard[]> => {
+    await props.ensureHostMarketplaceReady?.();
     const [response, connect, config] = await Promise.all([
       props.client.listSkills(props.workspaceId, { includeGlobal: true }),
       loadConnectCapabilityInventory(),
@@ -2009,32 +2009,14 @@ export function SessionSurface(props: SessionSurfaceProps) {
     } catch {
       // Cloud policy 暂时不可用时保留 org-level 状态；执行链路仍由服务端 fail closed。
     }
-    // 与右侧连接器保持同一用户可管理集合：Connect Marketplace 插件内部 MCP
-    // 不在输入栏单独展开；独立 Cloud connection 保留，快速目录补齐未连接项。
-    const configuredNames = new Set(merged.servers.map((entry) => entry.name.trim().toLowerCase()));
-    const manageableCloud = merged.servers.filter(isComposerManageableMcpEntry);
-    const directoryServers: McpServerEntry[] = MCP_QUICK_CONNECT
-      .filter((entry) => isMcpConnectorEntry(entry) && getMcpServerName(entry) !== "jugglework-cloud")
-      .filter((entry) => !configuredNames.has(getMcpServerName(entry).toLowerCase()))
-      .map((entry) => ({
-        name: entry.name,
-        localServerName: getMcpServerName(entry),
-        config: entry.type === "local"
-          ? { type: "local", command: entry.command }
-          : { type: "remote", url: entry.url },
-        origin: "local",
-      }));
     const combinedStatuses: McpStatusMap = { ...connect.mcpStatuses, ...merged.statuses, ...localStatuses };
-    for (const entry of directoryServers) {
-      combinedStatuses[entry.name] = { status: "not_installed" };
-    }
     const projected = applyWorkspaceMcpInventoryPolicy({
-      servers: selectEffectiveMcpEntries([...manageableCloud, ...directoryServers].filter((entry) => !isInternalCloudMcpTransport(entry))),
+      servers: selectComposerInstalledMcpEntries(merged.servers),
       statuses: combinedStatuses,
       disabledServerNames,
       cloudPolicy,
     });
-    const servers = selectComposerAvailableMcpEntries(projected);
+    const servers = projected.servers;
     const statuses = projected.statuses;
     const status = servers.length ? null : "No MCP servers loaded.";
     setToolMcpServers(servers);
@@ -2551,6 +2533,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
           createVoiceRealtimeSession={props.client.createVoiceRealtimeSession}
           getVoiceRealtimeStatus={props.client.getVoiceRealtimeStatus}
           onOpenVoiceSettings={props.onOpenSettingsSection ? () => props.onOpenSettingsSection?.("providers") : undefined}
+          onOpenSettings={props.onOpenSettingsSection ? () => props.onOpenSettingsSection?.("mcps") : undefined}
           focusEligible={props.isControlTarget && !props.modelPickerOpen}
           draft={draft}
           mentions={mentions}

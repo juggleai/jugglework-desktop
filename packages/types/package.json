@@ -63,27 +63,27 @@
     "./den/desktop-app-restrictions": {
       "types": "./src/den/desktop-app-restrictions.ts",
       "development": "./src/den/desktop-app-restrictions.ts",
-      "default": "./src/den/desktop-app-restrictions.ts"
+      "default": "./dist/den/desktop-app-restrictions.js"
     },
     "./den/desktop-policies": {
       "types": "./src/den/desktop-policies.ts",
       "development": "./src/den/desktop-policies.ts",
-      "default": "./src/den/desktop-policies.ts"
+      "default": "./dist/den/desktop-policies.js"
     },
     "./den/egress-diagnostics": {
       "types": "./src/den/egress-diagnostics.ts",
       "development": "./src/den/egress-diagnostics.ts",
-      "default": "./src/den/egress-diagnostics.ts"
+      "default": "./dist/den/egress-diagnostics.js"
     },
     "./den/microsoft-365": {
       "types": "./src/den/microsoft-365.ts",
       "development": "./src/den/microsoft-365.ts",
-      "default": "./src/den/microsoft-365.ts"
+      "default": "./dist/den/microsoft-365.js"
     },
     "./den/mcp-connection-action": {
       "types": "./src/den/mcp-connection-action.ts",
       "development": "./src/den/mcp-connection-action.ts",
-      "default": "./src/den/mcp-connection-action.ts"
+      "default": "./dist/den/mcp-connection-action.js"
     },
     "./workspace": {
       "types": "./src/workspace.ts",

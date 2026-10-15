@@ -13,6 +13,7 @@ export type RemoteWorkspaceConnectionTarget = {
   baseUrl: string;
   endpointLabel: string;
   token: string;
+  hostToken: string;
   workspaceId: string | null;
 };
 
@@ -36,6 +37,14 @@ type TestOptions = {
 
 function trim(value: string | null | undefined) {
   return value?.trim() ?? "";
+}
+
+function credentialFingerprint(value: string): string {
+  let hash = 0x811c9dc5;
+  for (const byte of new TextEncoder().encode(value)) {
+    hash = Math.imul(hash ^ byte, 0x01000193);
+  }
+  return `${value.length}:${(hash >>> 0).toString(16).padStart(8, "0")}`;
 }
 
 function fail(
@@ -152,9 +161,9 @@ export function getRemoteWorkspaceConnectionKey(workspace: WorkspaceInfo): strin
     trim(workspace.baseUrl),
     trim(workspace.juggleworkHostUrl),
     trim(workspace.juggleworkWorkspaceId),
-    trim(workspace.juggleworkToken),
-    trim(workspace.juggleworkClientToken),
-    trim(workspace.juggleworkHostToken),
+    credentialFingerprint(trim(workspace.juggleworkToken)),
+    credentialFingerprint(trim(workspace.juggleworkClientToken)),
+    credentialFingerprint(trim(workspace.juggleworkHostToken)),
   ].join("\u001f");
 }
 
@@ -178,6 +187,7 @@ function defaultCreateClient(target: RemoteWorkspaceConnectionTarget) {
   return createJuggleWorkServerClient({
     baseUrl: target.baseUrl,
     token: target.token || undefined,
+    hostToken: target.hostToken || undefined,
   });
 }
 
@@ -236,8 +246,8 @@ export function resolveRemoteWorkspaceConnectionTarget(workspace: WorkspaceInfo)
   const hostBaseUrl = stripJuggleWorkWorkspaceMount(normalizedHostUrl);
   const token =
     trim(workspace.juggleworkToken) ||
-    trim(workspace.juggleworkClientToken) ||
-    trim(workspace.juggleworkHostToken);
+    trim(workspace.juggleworkClientToken);
+  const hostToken = trim(workspace.juggleworkHostToken);
 
   return {
     ok: true,
@@ -246,6 +256,7 @@ export function resolveRemoteWorkspaceConnectionTarget(workspace: WorkspaceInfo)
       baseUrl: hostBaseUrl,
       endpointLabel: endpointLabel(hostBaseUrl),
       token,
+      hostToken,
       workspaceId,
     },
   };

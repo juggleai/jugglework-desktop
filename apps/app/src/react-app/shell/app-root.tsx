@@ -42,6 +42,7 @@ import { WelcomeRoute } from "./welcome-route";
 import { NotificationCenterController } from "./notification-center";
 import { RootJuggleWorkServerProvider } from "../domains/connections/root-jugglework-server-provider";
 import { AutomationRunNotificationCoordinator } from "../domains/automations/automation-run-notification-coordinator";
+import { HostMarketplacePluginsProvider } from "../domains/settings/state/host-marketplace-plugins-provider";
 
 type DenSigninGateProps = {
   children: ReactNode;
@@ -143,6 +144,16 @@ function DenSigninGate({ children }: DenSigninGateProps) {
               onClick={() => void denAuth.refresh()}
             >
               {t("den.refresh")}
+            </Button>
+            <Button
+              type="button"
+              size="xs"
+              variant="ghost"
+              disabled={denAuth.signOutBusy}
+              onClick={() => void denAuth.signOut()}
+              data-testid="cloud-unavailable-sign-out"
+            >
+              {t("den.sign_out")}
             </Button>
           </div>
         </div>
@@ -310,6 +321,7 @@ export function AppRoot() {
           <BrandThemeControlActions />
           <DenSigninGate>
               <RootJuggleWorkServerProvider>
+                <HostMarketplacePluginsProvider>
                 <AutomationRunNotificationCoordinator />
                 <Routes>
               <Route
@@ -348,7 +360,8 @@ export function AppRoot() {
                   </DevProfiler>
                 }
               />
-              </Routes>
+                </Routes>
+                </HostMarketplacePluginsProvider>
             </RootJuggleWorkServerProvider>
           </DenSigninGate>
         </JuggleWorkControlProvider>

@@ -36,6 +36,25 @@ import {
   type RuntimeOpencodeConfig,
 } from "./runtime-opencode-config-store.js";
 
+type HostMarketplaceMcpOverlay = Record<string, Record<string, unknown>>;
+
+const hostMarketplaceMcpOverlayByConfig = new WeakMap<ServerConfig, HostMarketplaceMcpOverlay>();
+
+export function readHostMarketplaceMcpOverlay(config: ServerConfig): HostMarketplaceMcpOverlay {
+  return structuredClone(hostMarketplaceMcpOverlayByConfig.get(config) ?? {});
+}
+
+export function writeHostMarketplaceMcpOverlay(
+  config: ServerConfig,
+  overlay: HostMarketplaceMcpOverlay,
+): void {
+  hostMarketplaceMcpOverlayByConfig.set(config, structuredClone(overlay));
+}
+
+export function clearHostMarketplaceMcpOverlay(config: ServerConfig): void {
+  hostMarketplaceMcpOverlayByConfig.delete(config);
+}
+
 const JUGGLEWORK_AGENT_PROMPT = `You are JuggleWork.
 
 When the user refers to "you", they mean the JuggleWork app and the current workspace.
@@ -93,11 +112,15 @@ export async function buildJuggleWorkRuntimeConfigObject(
   workspaceId?: string,
 ): Promise<Record<string, unknown>> {
   const runtimeConfig = config && workspaceId ? await readRuntimeOpencodeConfig(config, workspaceId) : {};
-  return buildJuggleWorkRuntimeConfigObjectFromSnapshot(runtimeConfig);
+  return buildJuggleWorkRuntimeConfigObjectFromSnapshot(
+    runtimeConfig,
+    config ? readHostMarketplaceMcpOverlay(config) : {},
+  );
 }
 
 export function buildJuggleWorkRuntimeConfigObjectFromSnapshot(
   runtimeConfig: RuntimeOpencodeConfig,
+  hostMarketplaceMcpOverlay: HostMarketplaceMcpOverlay = {},
 ): Record<string, unknown> {
   const disabledProviders = runtimeDisabledProviderList(runtimeConfig);
   return {
@@ -147,7 +170,10 @@ export function buildJuggleWorkRuntimeConfigObjectFromSnapshot(
       ...runtimePluginList(runtimeConfig),
     ],
     ...(disabledProviders.length ? { disabled_providers: disabledProviders } : {}),
-    mcp: runtimeMcpMap(runtimeConfig),
+    mcp: {
+      ...runtimeMcpMap(runtimeConfig),
+      ...hostMarketplaceMcpOverlay,
+    },
   };
 }
 

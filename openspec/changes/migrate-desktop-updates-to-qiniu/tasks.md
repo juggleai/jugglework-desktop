@@ -285,3 +285,19 @@ China and overseas Den were changed serially, configuration only, to `latestAppV
 - [ ] 31.3 Build, notarize, and verify committed macOS ARM64 `1.2.26` packages, blockmaps, and immutable manifest
 - [ ] 31.4 Upload and verify immutable Qiniu objects, then promote the locked Stable object under the separately audited exceptions
 - [ ] 31.5 Update China then overseas Den and verify public read-back; complete the authorized website rollout
+
+## 32. Prepare narrowly scoped macOS ARM64 1.2.27 promotion exceptions
+
+- [x] 32.1 Record user authorization to skip only the real-client canary and Qiniu mutable Stable Cache-Control metadata verification for exact stable macOS ARM64 `1.2.27`; preserve CDN refresh and public Stable digest/size read-back. Risk: inherited long-lived cache headers may leave clients stale despite observed read-back, and installation is unproven without a canary
+- [x] 32.2 Add separate audited metadata exception and pre-canary allowance to release evidence, CLI, workflow, and focused tests; preserve immutable/CDN verification, lock, channel size/ETag check, refresh/read-back, notarization, and all other gates
+- [x] 32.3 Re-verify locally signed/notarized `1.2.27` ARM64 App, ZIP, DMG, both blockmaps, and immutable manifest against existing Qiniu objects and public CDN bytes; promote Stable under lock with the two scoped exceptions, refresh CDN, verify the public manifest digest/size, and open China then overseas Den after separate configuration backups and healthy restarts
+
+Release evidence: source commit `b3bf936d358e24d65c0d8a377cc4b93418e17567`; immutable and promoted Stable manifest SHA-256 `a40bc342592d4d95239377db13cce8b6c9c6286c374c4911e90f966e28656b35`, size 706 bytes, Qiniu ETag `FvqOo1rKOxH57HJZ8evyDJ9Gf51a`. ZIP SHA-256 `3550161916fee8db0f5c8e0973767179f1d26bed0ff940cc892c5391bab3e837`; DMG SHA-256 `79286ae1620c7dd3b9486e74c7a1a8c1c4bd45705eb2cfcb1d014e83c2ea306a`. App and outer DMG received separate Apple Accepted submissions; Developer ID, hardened runtime, staples, Gatekeeper, ARM64 packaged inventory, SQLite, PTY, and UI MCP checks passed. Immutable Qiniu metadata and public CDN digests passed. Stable was promoted under the lock on 2026-10-12, refreshed and publicly read back at the exact digest and size; the lock was released. China then overseas Den publicly reported `latestAppVersion: 1.2.27`, with published and effective allowed lists containing `1.2.27`; their binary checksums stayed unchanged, and health/readiness/runtime-config/console checks passed. Config-only backups: `/root/jugglework-server/backups/desktop-version-1.2.27-china-20261012T025342Z` and `/root/jugglework-server/backups/desktop-version-1.2.27-overseas-20261012T025410Z`. Explicit exceptions: no real-client install canary and no mutable Qiniu Cache-Control metadata change/verification; the public Stable header still reports `public, max-age=31536000`. One observed CDN read-back is not global cache convergence or proof of installed-client upgrade.
+
+## 33. Prepare macOS ARM64 1.2.28 for overseas release
+
+- [x] 33.1 Synchronize App, Desktop, and embedded Server versions to `1.2.28` without changing historical release records or the dependency lockfile
+- [x] 33.2 Run release-critical tests, commit/push `dev`, and merge/push `main` after reviewing both branches
+- [ ] 33.3 Build and notarize the ARM64 App, ZIP, and DMG from the exact release commit; staple and verify both App and DMG, finalize blockmaps and immutable manifest
+- [ ] 33.4 Upload and verify immutable Qiniu objects without overwriting existing version keys
+- [ ] 33.5 Require a real lower-version isolated macOS upgrade canary and revalidating Stable cache policy, public manifest convergence and client discovery before Stable promotion or overseas Den announcement. No 1.2.28 canary or cache exception has been authorized. Do not modify China Den or the public website in this request

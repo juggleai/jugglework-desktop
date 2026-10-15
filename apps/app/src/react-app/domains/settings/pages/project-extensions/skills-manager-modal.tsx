@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 import { useMemo, useState } from "react";
-import { CheckSquare, Search, Trash2 } from "lucide-react";
+import { CheckSquare, Loader2, Search, Trash2 } from "lucide-react";
 
 import {
   Dialog,
@@ -9,6 +9,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { ConfirmModal } from "@/react-app/design-system/modals/confirm-modal";
 import { cn } from "@/lib/utils";
 import { t } from "@/i18n";
@@ -17,20 +18,26 @@ import { SkillAvatar } from "./skill-avatar";
 import { SkillHubModal } from "./skill-hub-modal";
 import { SkillDetailModal } from "./skill-detail-modal";
 import { SkillAddMenu } from "./skill-add-menu";
+import type { WorkspaceSkillPolicy } from "./types";
 
-function SkillCard({ skill, onUninstall, onOpen }: {
+function SkillCard({ skill, workspaceSkillPolicy, onUninstall, onOpen }: {
   skill: SkillItem;
+  workspaceSkillPolicy?: WorkspaceSkillPolicy;
   onUninstall: (skill: SkillItem) => void;
   onOpen: (skill: SkillItem) => void;
 }) {
   const isGlobal = skill.scope === "global";
+  const disabledHere = workspaceSkillPolicy?.disabledSkillNames.includes(skill.name) ?? false;
   return (
     <div
       role="button"
       tabIndex={0}
       onClick={() => onOpen(skill)}
       onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onOpen(skill); } }}
-      className="group relative flex cursor-pointer gap-3 rounded-xl border border-dls-border bg-dls-surface p-3 text-left transition-colors hover:border-dls-border-hover"
+      className={cn(
+        "group flex cursor-pointer gap-3 rounded-xl border border-dls-border bg-dls-surface p-3 text-left transition-colors hover:border-dls-border-hover",
+        disabledHere && "bg-dls-bg/50",
+      )}
     >
       <SkillAvatar name={skill.name} sizeClass="size-9" />
       <div className="min-w-0 flex-1">
@@ -45,42 +52,63 @@ function SkillCard({ skill, onUninstall, onOpen }: {
           >
             {t(isGlobal ? "project_extensions.scope_global" : "project_extensions.scope_workspace")}
           </span>
+          {disabledHere ? (
+            <span className="shrink-0 rounded-full bg-dls-bg px-1.5 py-0.5 text-[10px] text-dls-secondary">
+              {t("connect.workspace_disabled_here")}
+            </span>
+          ) : null}
         </div>
         {skill.description ? (
           <p className="mt-0.5 line-clamp-2 text-xs text-dls-secondary">{skill.description}</p>
         ) : null}
       </div>
-      {/* TIPS: 全局技能在会话设置中只读，只能查看；删除必须到个人设置「全局 › 技能」。 */}
-      {!isGlobal ? (
-        <button
-          type="button"
-          onClick={(event) => { event.stopPropagation(); onUninstall(skill); }}
-          className="absolute right-2 top-2 rounded-md bg-dls-surface p-1 text-dls-secondary opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
-          aria-label={t("project_extensions.uninstall")}
-        >
-          <Trash2 className="size-3.5" />
-        </button>
-      ) : null}
+      <div className="flex shrink-0 items-center gap-2 self-start" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
+        {workspaceSkillPolicy?.available ? (
+          <div className="flex items-center gap-1.5">
+            {workspaceSkillPolicy.savingName === skill.name ? <Loader2 className="size-3.5 animate-spin text-dls-secondary" /> : null}
+            <Switch
+              size="sm"
+              checked={!disabledHere}
+              disabled={workspaceSkillPolicy.savingName === skill.name}
+              onCheckedChange={(enabled) => void workspaceSkillPolicy.setSkillEnabled(skill.name, enabled)}
+              aria-label={t("connect.workspace_toggle_label", { name: skill.name })}
+            />
+          </div>
+        ) : null}
+        {/* Global skills can be disabled here, but can only be uninstalled in global settings. */}
+        {!isGlobal ? (
+          <button
+            type="button"
+            onClick={() => onUninstall(skill)}
+            className="rounded-md p-1 text-dls-secondary transition-colors hover:text-destructive"
+            aria-label={t("project_extensions.uninstall")}
+          >
+            <Trash2 className="size-3.5" />
+          </button>
+        ) : null}
+      </div>
     </div>
   );
 }
 
 /**
  * 技能管理弹窗：展示本地已安装技能，卡片上用标签区分本工作区与全局；
- * 本工作区技能可卸载，全局技能只允许查看。
+ * 本工作区技能可卸载；全局技能不可卸载，但两者都可在当前工作区关闭。
  * 标题行提供搜索、恒为选中态的「我安装的」与「添加技能」入口。
  * @param open 是否打开
  * @param projectDir 项目根目录
  * @param skills 已安装技能（本工作区 + 全局）
+ * @param workspaceSkillPolicy 当前工作区技能可用性策略
  * @param onClose 关闭回调
  * @param onUninstall 卸载本工作区技能
  * @param onUpload 从本地上传技能
  * @param onRefresh 刷新技能列表
  */
-export function SkillsManagerModal({ open, projectDir, skills, onClose, onUninstall, onUpload, onRefresh }: {
+export function SkillsManagerModal({ open, projectDir, skills, workspaceSkillPolicy, onClose, onUninstall, onUpload, onRefresh }: {
   open: boolean;
   projectDir: string;
   skills: SkillItem[];
+  workspaceSkillPolicy?: WorkspaceSkillPolicy;
   onClose: () => void;
   onUninstall: (name: string) => void;
   onUpload: () => void | Promise<void>;
@@ -140,6 +168,12 @@ export function SkillsManagerModal({ open, projectDir, skills, onClose, onUninst
             </div>
           </DialogHeader>
 
+          {workspaceSkillPolicy?.error ? (
+            <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+              {workspaceSkillPolicy.error}
+            </p>
+          ) : null}
+
           <div className="min-h-0 flex-1 overflow-y-auto">
             {skills.length === 0 ? (
               <p className="py-10 text-center text-sm text-dls-secondary">
@@ -155,6 +189,7 @@ export function SkillsManagerModal({ open, projectDir, skills, onClose, onUninst
                   <SkillCard
                     key={`${skill.scope ?? "project"}:${skill.name}`}
                     skill={skill}
+                    workspaceSkillPolicy={workspaceSkillPolicy}
                     onUninstall={setUninstallTarget}
                     onOpen={setDetailSkill}
                   />

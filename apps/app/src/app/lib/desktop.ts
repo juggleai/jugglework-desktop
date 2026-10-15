@@ -341,6 +341,7 @@ async function desktopFetchThroughMain(
   let method: string | undefined;
   let headers: Record<string, string> | undefined;
   let body: string | undefined;
+  let bodyBytes: Uint8Array | undefined;
 
   if (typeof Request !== "undefined" && input instanceof Request) {
     url = input.url;
@@ -349,16 +350,31 @@ async function desktopFetchThroughMain(
     headers = Object.fromEntries(headersSource.entries());
     if (typeof init?.body === "string") {
       body = init.body;
+    } else if (init?.body instanceof FormData) {
+      const request = new Request(url, { method, headers, body: init.body });
+      headers = Object.fromEntries(request.headers.entries());
+      bodyBytes = new Uint8Array(await request.arrayBuffer());
     } else if (input.body) {
-      // Request body is a stream — buffer to text so it survives the IPC hop
-      // to the Electron main process.
-      body = await input.clone().text();
+      // Request bodies are streams. Preserve multipart bytes and boundary;
+      // text bodies can continue through the existing IPC contract.
+      if (headersSource.get("content-type")?.toLowerCase().startsWith("multipart/form-data")) {
+        bodyBytes = new Uint8Array(await input.clone().arrayBuffer());
+      } else {
+        body = await input.clone().text();
+      }
     }
   } else {
     url = typeof input === "string" ? input : input.toString();
     method = init?.method;
     headers = init?.headers ? Object.fromEntries(new Headers(init.headers).entries()) : undefined;
     body = typeof init?.body === "string" ? init.body : undefined;
+    if (init?.body instanceof FormData) {
+      // Let Request supply the boundary: manually setting Content-Type here
+      // would make it disagree with the serialized form body.
+      const request = new Request(url, { method: method ?? "POST", headers, body: init.body });
+      headers = Object.fromEntries(request.headers.entries());
+      bodyBytes = new Uint8Array(await request.arrayBuffer());
+    }
   }
 
   const diagnosticsDeadlineAtMs = options.agentContextDiagnosticsDeadlineAtMs;
@@ -366,6 +382,7 @@ async function desktopFetchThroughMain(
     method,
     headers,
     body,
+    bodyBytes,
     timeoutMs: options.timeoutMs,
     agentContextDiagnostics: diagnosticsDeadlineAtMs === undefined
       ? undefined

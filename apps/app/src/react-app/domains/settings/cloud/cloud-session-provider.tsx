@@ -70,13 +70,31 @@ export function CloudSessionProvider({ children }: CloudSessionProviderProps) {
   React.useEffect(() => {
     if (typeof window === "undefined") return;
 
+    let previous = initial;
     const handleSettingsChanged = () => {
-      setBaseUrl(readDenSettings().baseUrl || DEFAULT_DEN_BASE_URL);
+      const next = readDenSettings();
+      const identityChanged = next.baseUrl !== previous.baseUrl || next.authToken !== previous.authToken;
+      previous = next;
+      setBaseUrl(next.baseUrl || DEFAULT_DEN_BASE_URL);
+      setAuthToken(next.authToken?.trim() || "");
+      if (identityChanged) {
+        setUser(null);
+        setIsSignedIn(false);
+      }
+      setActiveOrganization((current) => {
+        const id = next.activeOrgId?.trim();
+        if (!id) return null;
+        const name = next.activeOrgName?.trim() || "";
+        const slug = next.activeOrgSlug?.trim() || "";
+        if (!identityChanged && current?.id === id && current.name === name && current.slug === slug) return current;
+        return { id, name, slug, role: !identityChanged && current?.id === id ? current.role : "member" };
+      });
     };
 
     window.addEventListener(denSettingsChangedEvent, handleSettingsChanged);
+    handleSettingsChanged();
     return () => window.removeEventListener(denSettingsChangedEvent, handleSettingsChanged);
-  }, []);
+  }, [initial]);
 
   const client = React.useMemo(
     () => createDenClient({ baseUrl, token: authToken }),

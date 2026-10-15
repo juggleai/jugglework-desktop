@@ -18,6 +18,22 @@ afterEach(() => {
 });
 
 describe("JuggleWork MCP workspace policy plugin", () => {
+  test("blocks a stale direct skill invocation and fails closed on policy outage", async () => {
+    process.env.JUGGLEWORK_SERVER_URL = "http://jugglework.test";
+    process.env.JUGGLEWORK_SERVER_TOKEN = "token";
+    process.env.JUGGLEWORK_WORKSPACE_ID = "ws_1";
+    globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+      if (body.operation === "inventory") return Response.json({ serverNames: [] });
+      return Response.json({ allowed: false, code: "skill_disabled_in_workspace", skillName: "demo" });
+    }) as typeof fetch;
+    const plugin = await JuggleWorkMcpWorkspacePolicy();
+    await expect(plugin["tool.execute.before"]({ tool: "skill" }, { args: { name: "demo" } }))
+      .rejects.toThrow("skill_disabled_in_workspace:demo");
+    globalThis.fetch = (async () => { throw new Error("offline"); }) as unknown as typeof fetch;
+    await expect(plugin["tool.execute.before"]({ tool: "skill" }, { args: { name: "demo" } }))
+      .rejects.toThrow("skill_workspace_policy_unavailable");
+  });
   test("reads nested OpenCode context and blocks a disabled MCP tool", async () => {
     process.env.JUGGLEWORK_SERVER_URL = "http://jugglework.test";
     process.env.JUGGLEWORK_SERVER_TOKEN = "token";

@@ -92,6 +92,20 @@ describe("resolveRemoteWorkspaceConnectionTarget", () => {
     expect(target.target.baseUrl).toBe("https://worker.example.com");
     expect(target.target.workspaceId).toBe("ws_remote");
     expect(target.target.token).toBe("ow-token");
+    expect(target.target.hostToken).toBe("");
+  });
+
+  test("keeps legacy host credentials separate from bearer credentials", () => {
+    const target = resolveRemoteWorkspaceConnectionTarget(workspace({
+      juggleworkToken: "",
+      juggleworkClientToken: "",
+      juggleworkHostToken: "legacy-host-token",
+    }));
+
+    expect(target.ok).toBe(true);
+    if (!target.ok) return;
+    expect(target.target.token).toBe("");
+    expect(target.target.hostToken).toBe("legacy-host-token");
   });
 
   test("parses workspace id from a workspace-scoped connect URL", () => {
@@ -374,6 +388,23 @@ describe("remote diagnostic identity", () => {
     const after = getRemoteWorkspaceConnectionKey(workspace({ juggleworkToken: "new-token" }));
 
     expect(before).not.toBe(after);
+  });
+
+  test("fingerprints bearer and host credentials without including their values", () => {
+    const bearer = "remote-bearer-secret";
+    const host = "remote-host-secret";
+    const key = getRemoteWorkspaceConnectionKey(workspace({
+      juggleworkToken: bearer,
+      juggleworkHostToken: host,
+    }));
+    const changedHostKey = getRemoteWorkspaceConnectionKey(workspace({
+      juggleworkToken: bearer,
+      juggleworkHostToken: "changed-host-secret",
+    }));
+
+    expect(key).not.toContain(bearer);
+    expect(key).not.toContain(host);
+    expect(changedHostKey).not.toBe(key);
   });
 });
 

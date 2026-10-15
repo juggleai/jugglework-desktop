@@ -80,7 +80,7 @@ export function SettingsShell(props: SettingsShellProps) {
         {!props.suppressContentOnlyTitlebarSpacer ? (
           <div className="hidden h-10 shrink-0 border-b border-dls-border mac:block mac:titlebar-drag" />
         ) : null}
-        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto p-4 md:p-6 lg:p-8">
+        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto [scrollbar-gutter:stable] [overflow-anchor:none] p-4 md:p-6 lg:p-8">
           <div className="mx-auto flex w-full max-w-6xl flex-col">{props.children}</div>
         </div>
         {props.modalSlot}

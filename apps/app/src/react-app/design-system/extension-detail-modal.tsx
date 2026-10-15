@@ -31,6 +31,8 @@ import { ExtensionMeshAvatar } from "./extension-mesh-avatar";
 import { t } from "@/i18n";
 
 export type ExtensionDetailModalProps = {
+  /** Page bodies are hosted by CatalogDetailPage, which supplies the title. */
+  presentation?: "modal" | "page";
   open: boolean;
   onClose: () => void;
   name: string;
@@ -181,6 +183,7 @@ function stripSkillFrontmatter(content: string): string {
 }
 
 export function ExtensionDetailModal({
+  presentation = "modal",
   open,
   onClose,
   name,
@@ -234,20 +237,13 @@ export function ExtensionDetailModal({
     if (!open) setRemoveArmed(false);
   }, [open]);
 
-  return (
-    <Dialog
-      open={open}
-      onOpenChange={(nextOpen) => {
-        if (!nextOpen) onClose();
-      }}
-    >
-      <DialogContent
-        className={cn(
-          "flex max-h-[90vh] min-h-0 w-full flex-col overflow-hidden",
-          size === "wide" ? "max-w-3xl sm:max-w-3xl" : "max-w-xl sm:max-w-xl",
-        )}
-      >
-        <DialogHeader>
+  const page = presentation === "page";
+  const Body = page ? "div" : ScrollArea;
+  const Viewport = page ? "div" : ScrollAreaViewport;
+  const Footer = page ? "div" : DialogFooter;
+  const content = (
+    <>
+        {!page ? <DialogHeader>
           <div className="flex min-w-0 items-start gap-4">
             {/* Icon */}
             <div className="relative shrink-0">
@@ -293,11 +289,11 @@ export function ExtensionDetailModal({
               </DialogDescription>
             </div>
           </div>
-        </DialogHeader>
+        </DialogHeader> : null}
 
         {/* Body */}
-        <ScrollArea className="flex min-h-0 flex-1 flex-col">
-          <ScrollAreaViewport className="min-h-0 flex-1 h-auto!">
+        <Body className="flex min-h-0 flex-1 flex-col">
+          <Viewport className="min-h-0 flex-1 h-auto!">
             <div className="space-y-5 px-px">
             {/* Description */}
             <div className="text-sm leading-relaxed text-card-foreground">
@@ -510,10 +506,10 @@ export function ExtensionDetailModal({
 
             {configSlot}
             </div>
-          </ScrollAreaViewport>
-        </ScrollArea>
+          </Viewport>
+        </Body>
 
-        <DialogFooter className="shrink-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <Footer className="flex shrink-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex flex-wrap gap-2">
             {hidden && onShow ? (
               <Button
@@ -590,7 +586,21 @@ export function ExtensionDetailModal({
               </Button>
             ) : null}
           </div>
-        </DialogFooter>
+        </Footer>
+    </>
+  );
+
+  if (page) return open ? <div className="min-w-0 space-y-5">{content}</div> : null;
+
+  return (
+    <Dialog open={open} onOpenChange={(nextOpen) => { if (!nextOpen) onClose(); }}>
+      <DialogContent
+        className={cn(
+          "flex max-h-[90vh] min-h-0 w-full flex-col overflow-hidden",
+          size === "wide" ? "max-w-3xl sm:max-w-3xl" : "max-w-xl sm:max-w-xl",
+        )}
+      >
+        {content}
       </DialogContent>
     </Dialog>
   );

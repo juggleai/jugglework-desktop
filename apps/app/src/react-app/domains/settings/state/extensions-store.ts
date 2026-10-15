@@ -52,6 +52,7 @@ import {
   type DenOrgPlugin,
   type DenOrgPluginResolved,
 } from "../../../../app/lib/den";
+import { denSessionUpdatedEvent, denSettingsChangedEvent } from "../../../../app/lib/den-session-events";
 import {
   readWorkspaceCloudImports,
   withWorkspaceCloudImports,
@@ -583,6 +584,8 @@ export function createExtensionsStore(options: {
   let stopDenSessionListener: (() => void) | null = null;
   let lastWorkspaceContextKey = "";
   let lastCloudContextKey = "";
+  let cloudIdentity = "";
+  let cloudIdentityRevision = 0;
   let snapshot: ExtensionsStoreSnapshot;
 
   let refreshSkillsInFlight = false;
@@ -639,8 +642,15 @@ export function createExtensionsStore(options: {
   };
 
   const getCloudContextKey = () => {
-    const orgId = readDenSettings().activeOrgId?.trim() ?? "";
-    return `${getWorkspaceContextKey()}::${orgId}`;
+    const settings = readDenSettings();
+    const orgId = settings.activeOrgId?.trim() ?? "";
+    const identity = JSON.stringify([settings.baseUrl, settings.authToken?.trim() ?? "", orgId]);
+    if (identity !== cloudIdentity) {
+      cloudIdentity = identity;
+      cloudIdentityRevision += 1;
+    }
+    // Keep credentials out of exposed operation keys and fence switch-away/back responses.
+    return `${getWorkspaceContextKey()}::${orgId}::${cloudIdentityRevision}`;
   };
 
   const getJuggleWorkServerSnapshot = () => {
@@ -1573,8 +1583,7 @@ export function createExtensionsStore(options: {
   };
 
   const getCurrentCloudOrgLoadKey = () => {
-    const orgId = readDenSettings().activeOrgId?.trim() ?? "";
-    return `${getWorkspaceContextKey()}::${orgId}`;
+    return getCloudContextKey();
   };
 
   const touch = () => {
@@ -1583,11 +1592,10 @@ export function createExtensionsStore(options: {
   };
 
   async function refreshCloudOrgMarketplaces(optionsOverride?: { force?: boolean; refreshImported?: boolean }) {
-    const wk = getWorkspaceContextKey();
     const settings = readDenSettings();
     const token = settings.authToken?.trim() ?? "";
     const orgId = settings.activeOrgId?.trim() ?? "";
-    const loadKey = `${wk}::${orgId}`;
+    const loadKey = getCloudContextKey();
 
     if (loadKey !== cloudOrgMarketplacesLoadKey) {
       cloudOrgMarketplacesLoaded = false;
@@ -1978,6 +1986,8 @@ export function createExtensionsStore(options: {
               path: entry.path,
               trigger: entry.trigger,
               scope: entry.scope,
+              ownerPluginId: entry.ownerPluginId,
+              sourceKind: entry.sourceKind,
             }))
           : [];
         mutateState((current) => ({
@@ -2815,8 +2825,12 @@ export function createExtensionsStore(options: {
       const onDenSessionUpdated = () => {
         syncFromOptions();
       };
-      window.addEventListener("jugglework-den-session-updated", onDenSessionUpdated);
-      stopDenSessionListener = () => window.removeEventListener("jugglework-den-session-updated", onDenSessionUpdated);
+      window.addEventListener(denSessionUpdatedEvent, onDenSessionUpdated);
+      window.addEventListener(denSettingsChangedEvent, onDenSessionUpdated);
+      stopDenSessionListener = () => {
+        window.removeEventListener(denSessionUpdatedEvent, onDenSessionUpdated);
+        window.removeEventListener(denSettingsChangedEvent, onDenSessionUpdated);
+      };
     }
 
     stopJuggleWorkSubscription = options.juggleworkServer.subscribe(() => {
@@ -2851,6 +2865,7 @@ export function createExtensionsStore(options: {
     importedCloudPluginsLoadKey = "";
     importedCloudPluginsContextKey = "";
     cloudOrgMarketplacesContextKey = "";
+    seenMarketplacePluginIds.clear();
     // TIPS: 上下文切换时同步移除旧组织/工作区投影，异步响应再通过 cloudKey 栅栏恢复当前数据。
     mutateState((current) => ({
       ...current,

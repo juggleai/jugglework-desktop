@@ -515,6 +515,48 @@ test("promotion fails before Qiniu calls when cache metadata management is unava
   assert.deepEqual(qiniu.calls, []);
 });
 
+test("1.2.27 metadata-only exception refreshes and reads back under lock without metadata calls", async () => {
+  const plan = fixturePlan("1.2.27");
+  const qiniu = createFakeQiniu(new Map([...plan.objects, plan.manifest].map((item) => [item.key, { size: item.size, etag: item.etag }])));
+  delete qiniu.setCacheControl;
+  qiniu.prepareCacheControl = async () => { throw new Error("metadata preflight must not run"); };
+  const evidence = verifiedEvidence(plan);
+  evidence.canary = null;
+  const calls = [];
+  const options = {
+    qiniu, preCanaryExceptionReason: "Operator authorized stable macOS arm64 1.2.27 without a real-client canary",
+    metadataExceptionReason: "Operator authorized stable macOS arm64 1.2.27 without Qiniu cache metadata verification",
+    refresh: async (urls) => { calls.push(["refresh", urls]); },
+    readBack: async (url, digest, { expectedSize }) => {
+      calls.push(["readBack", url, digest, expectedSize]);
+      return { sha256: digest, size: expectedSize, checkedAt: "2026-10-12T01:00:00.000Z" };
+    },
+  };
+  const result = await promoteChannel(plan, evidence, options);
+  assert.equal(result.metadataException.scope, "stable-1.2.27-only");
+  assert.deepEqual(result.channelObject, { size: plan.manifest.size, etag: plan.manifest.etag, verified: true });
+  assert.deepEqual(calls, [["refresh", [plan.channelManifest.url]], ["readBack", plan.channelManifest.url, plan.manifest.sha256, plan.manifest.size]]);
+  assert.equal(qiniu.calls.some(([method]) => method === "setCacheControl"), false);
+  assert.equal(qiniu.state.has("jugglework/releases/locks/stable-mac.lock"), false);
+  for (const operation of ["refresh", "readBack"]) {
+    const failedQiniu = createFakeQiniu(new Map([...plan.objects, plan.manifest].map((item) => [item.key, { size: item.size, etag: item.etag }])));
+    const failing = { ...options, qiniu: failedQiniu, [operation]: async () => { throw new Error(`${operation} failed`); } };
+    await assert.rejects(promoteChannel(plan, evidence, failing), /failed/);
+    assert.equal(failedQiniu.state.has("jugglework/releases/locks/stable-mac.lock"), true);
+  }
+  const missingQiniu = createFakeQiniu();
+  await assert.rejects(promoteChannel(plan, evidence, { ...options, qiniu: missingQiniu, refresh: undefined }), /refresh operation is unavailable/);
+  assert.deepEqual(missingQiniu.calls, []);
+  await assert.rejects(promoteChannel(plan, evidence, { ...options, qiniu: missingQiniu, readBack: null }), /read-back operation is unavailable/);
+  assert.deepEqual(missingQiniu.calls, []);
+  const persistenceQiniu = createFakeQiniu(new Map([...plan.objects, plan.manifest].map((item) => [item.key, { size: item.size, etag: item.etag }])));
+  await assert.rejects(promoteChannel(plan, evidence, {
+    ...options, qiniu: persistenceQiniu,
+    onPromotionVerified: async () => { throw new Error("evidence persistence failed"); },
+  }), /evidence persistence failed/);
+  assert.equal(persistenceQiniu.state.has("jugglework/releases/locks/stable-mac.lock"), true);
+});
+
 test("cache metadata preflight fails before acquiring the promotion lock", async () => {
   const plan = fixturePlan();
   const qiniu = createFakeQiniu();

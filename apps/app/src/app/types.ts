@@ -348,6 +348,8 @@ export type SkillCard = {
   marketplaceName?: string;
   pluginName?: string;
   connectCapabilityName?: string;
+  ownerPluginId?: string;
+  sourceKind?: "standalone" | "plugin" | "public";
 };
 
 export type PluginInstallStep = {

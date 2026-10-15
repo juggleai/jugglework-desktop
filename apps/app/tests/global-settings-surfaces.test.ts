@@ -14,6 +14,10 @@ const globalConnectors = readFileSync(
   new URL("../src/react-app/domains/settings/pages/global-connectors-view.tsx", import.meta.url),
   "utf8",
 );
+const catalogSource = readFileSync(
+  new URL("../src/react-app/domains/settings/pages/catalog-source.tsx", import.meta.url),
+  "utf8",
+);
 const route = readFileSync(
   new URL("../src/react-app/shell/settings-route.tsx", import.meta.url),
   "utf8",
@@ -28,16 +32,18 @@ describe("personal global settings surfaces", () => {
     expect(globalSkills).toContain("<Trash2");
     expect(globalSkills).not.toContain("settings.provider_view_details");
     expect(globalSkills).not.toContain('variant="destructive"');
-    expect(globalSkills).toContain('size="icon-sm"');
-    expect(globalSkills).toContain('aria-label={t("common.refresh")}');
+    expect(globalSkills).toContain("<CatalogHeader");
+    expect(catalogSource).toContain('size="icon-sm"');
+    expect(catalogSource).toContain('aria-label={t("common.refresh")}');
     expect(globalSkills).not.toContain('<Button variant="outline" disabled={props.busy} onClick={props.onRefresh}>');
   });
 
   test("global connectors retain their top-right add action", () => {
     expect(globalConnectors).toContain("<Plus size={14} />");
     expect(globalConnectors).toContain("props.onAddConnector");
-    expect(globalConnectors).toContain('size="icon-sm"');
-    expect(globalConnectors).toContain('aria-label={t("common.refresh")}');
+    expect(globalConnectors).toContain("<CatalogHeader");
+    expect(catalogSource).toContain('size="icon-sm"');
+    expect(catalogSource).toContain('aria-label={t("common.refresh")}');
     expect(globalConnectors).not.toContain('<Button variant="outline" disabled={props.busy} onClick={props.onRefresh}>');
     expect(globalConnectors).toContain('onClick={() => openEditor(connector)}');
     expect(globalConnectors).toContain("saveDetail");
@@ -48,12 +54,13 @@ describe("personal global settings surfaces", () => {
     expect(globalConnectors).toContain("<ExtensionMeshAvatar");
     expect(globalConnectors).toContain('<GlobalConnectorAvatar name={connector.name}');
     expect(globalConnectors).toContain('<GlobalConnectorAvatar name={entry.name}');
-    expect(globalConnectors).toContain("props.unconnected.map");
+    expect(globalConnectors).toContain("directoryEntries.map");
     expect(globalConnectors).toContain("props.onConnectDirectory(entry)");
-    expect(globalConnectors).toContain("const [detailTargetName, setDetailTargetName]");
-    expect(globalConnectors).toContain("props.connectors.find((connector) => connector.name === detailTargetName)");
+    expect(globalConnectors).toContain("const [detailSelection, setDetailSelection]");
+    expect(globalConnectors).toContain("connector.name === selection.id");
+    expect(globalConnectors).toContain('resolveConnectorCatalogSource(connector, publicEntries) === props.source');
     expect(globalConnectors).not.toContain("[detailTarget, setDetailTarget] = useState<GlobalConnectorItem | null>(null)");
-    expect(globalConnectors).toContain('connectorStatusLabel(connector.status) ?? t("mcp.enabled_label")');
+    expect(globalConnectors).toContain("connectorReadiness(connector.config, connector.status).label");
     expect(globalConnectors).not.toContain('connectorStatusLabel(connector.status) ?? t("mcp.status_connected")');
   });
 
@@ -83,6 +90,35 @@ describe("personal global settings surfaces", () => {
   test("global skill imports explicitly target global scope", () => {
     expect(route).toContain('listSkills(workspaceId, { scope: "global" })');
     expect(route).toContain('importSkill("", dir, { overwrite: false, scope: "global" })');
+  });
+
+  test("personal skill reads and deletes target the selected runtime", () => {
+    const refresh = route.slice(route.indexOf("const refreshGlobalSkills ="), route.indexOf("const refreshGlobalConnectors ="));
+    const remove = route.slice(route.indexOf("const deleteGlobalSkill ="), route.indexOf("const canAddSkills ="));
+    for (const block of [refresh, remove]) {
+      expect(block).toContain("const client = selectedWorkspaceEndpoint?.client ?? juggleworkClient");
+      expect(block).toContain("const workspaceId = runtimeWorkspaceId?.trim()");
+      expect(block).not.toContain("routeStateRef.current.runtimeWorkspaceId");
+    }
+    expect(remove).toContain('await client.deleteSkill(workspaceId, name, { scope: "global" })');
+    expect(route).toContain('const canAddSkills = selectedWorkspace?.workspaceType === "local"');
+    expect(route).toContain("canAddSkills={canAddSkills}");
+    expect(route).toContain("if (!canAddSkills || !globalInventoryScope.active) return");
+  });
+
+  test("personal inventory reads fence stale success, errors and cleanup", () => {
+    const scope = route.slice(route.indexOf("const globalInventoryScope ="), route.indexOf("const refreshGlobalSkills ="));
+    expect(scope).toContain("[inventoryClient, runtimeWorkspaceId, globalConfigTarget]");
+    expect(scope).toContain("globalInventoryScope.active = false");
+    expect(scope).toContain("globalInventoryScope.skillsRequest++");
+    expect(scope).toContain("globalInventoryScope.connectorsRequest++");
+    const refresh = route.slice(route.indexOf("const refreshGlobalSkills ="), route.indexOf("const connectorsTabActive ="));
+    expect(refresh.match(/if \(!isCurrent\(\)\) return/g)).toHaveLength(4);
+    expect(refresh).toContain("if (isCurrent()) setGlobalSkillsBusy(false)");
+    const plugins = route.slice(route.indexOf("const inventoryClient ="), route.indexOf("const opencodeClient =", route.indexOf("const inventoryClient =")));
+    expect(plugins).toContain("if (!active) return");
+    expect(plugins).toContain("if (active) setSessionPluginError");
+    expect(plugins).toContain("return () => { active = false; }");
   });
 
   test("global connectors merge the selected runtime global inventory", () => {

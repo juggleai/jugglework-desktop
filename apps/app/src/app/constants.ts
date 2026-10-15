@@ -105,6 +105,20 @@ export function getMcpServerName(entry: McpDirectoryInfo): string {
 
 export const MCP_QUICK_CONNECT: McpDirectoryInfo[] = [
   {
+    id: "github",
+    get name() { return t("mcp.quick_connect_github_title"); },
+    serverName: "github",
+    get description() { return t("mcp.quick_connect_github_desc"); },
+    url: "https://api.githubcopilot.com/mcp/",
+    type: "remote",
+    // GitHub does not offer dynamic OAuth registration. Resolve the user's token
+    // in the execution environment instead of shipping client credentials.
+    headers: { Authorization: "Bearer {env:GITHUB_TOKEN}" },
+    oauth: false,
+    kind: "mcp",
+    iconSlug: "github",
+  },
+  {
     get name() { return t("mcp.quick_connect_notion_title"); },
     serverName: "notion",
     get description() { return t("mcp.quick_connect_notion_desc"); },

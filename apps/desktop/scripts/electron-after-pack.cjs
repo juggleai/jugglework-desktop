@@ -157,6 +157,7 @@ function verifyCompiledRuntimeContractEntries(packageEntries) {
   const compiledContract = "/dist/runtime/desktop-remote-control.js";
   const automationContract = `${runtimePackageRoot}dist/automation.js`;
   const mediaGenerationContract = `${runtimePackageRoot}dist/media-generation.js`;
+  const mcpConnectionActionContract = `${runtimePackageRoot}dist/den/mcp-connection-action.js`;
   if (!entries.includes(compiledContract)) {
     throw new Error(`Missing compiled Electron runtime contract: ${compiledContract}`);
   }
@@ -165,6 +166,9 @@ function verifyCompiledRuntimeContractEntries(packageEntries) {
   }
   if (!entries.includes(mediaGenerationContract)) {
     throw new Error(`Missing packaged media-generation runtime contract: ${mediaGenerationContract}`);
+  }
+  if (!entries.includes(mcpConnectionActionContract)) {
+    throw new Error(`Missing packaged MCP connection-action runtime contract: ${mcpConnectionActionContract}`);
   }
 
   const leakedSources = entries.filter((entry) => (

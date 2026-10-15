@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, test } from "bun:test";
 
 const source = readFileSync(new URL("../src/react-app/domains/session/sidebar/app-sidebar.tsx", import.meta.url), "utf8");
+const progressSource = readFileSync(new URL("../src/react-app/domains/session/sidebar/session-circular-progress.tsx", import.meta.url), "utf8");
 
 describe("workspace sidebar actions", () => {
   test("keeps workspace actions hidden until hover and creates sessions from the plus button", () => {
@@ -36,13 +37,17 @@ describe("workspace sidebar actions", () => {
     expect(source).toMatch(/data-session-hover-actions[\s\S]+group-has-\[:focus-visible\]\/menu-sub-item:pointer-events-auto/);
   });
 
-  test("renders the active-session loading indicator in white in dark mode", () => {
+  test("renders every session/workspace loading indicator in white in dark mode", () => {
     const indicator = source.slice(
       source.indexOf("function SessionLoadingIndicator"),
       source.indexOf("interface SessionOutcomeIndicatorProps"),
     );
 
     expect(indicator).toMatch(/<SessionCircularProgress className="dark:text-white" \/>/);
+    expect(progressSource).toContain("text-dls-accent dark:text-white");
+    // The collapsed workspace and rail use the bare shared indicator, so they
+    // inherit this dark-mode contrast rule instead of drifting independently.
+    expect(source).toMatch(/showWorkspaceActivity[\s\S]+<SessionCircularProgress \/>/);
   });
 
   test("keeps the empty left lane after moving session loading to the trailing slot", () => {

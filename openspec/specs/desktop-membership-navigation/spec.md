@@ -15,6 +15,11 @@ Desktop SHALL NOT render or submit its own membership tier-selection dialog. It 
 - **THEN** Desktop opens `/jwork/console/dashboard/?membership=personal` on the configured server
 - **AND** Desktop does not render a local tier-selection dialog
 
+#### Scenario: Eligible tenant exhausts points
+- **WHEN** an otherwise eligible Personal member or organization Owner has zero or negative available points
+- **THEN** Desktop continues to show the membership Upgrade action
+- **AND** the signed balance is displayed without changing billing permission or tier eligibility
+
 #### Scenario: Organization Owner chooses Upgrade
 - **WHEN** a Lite Team, Team, or Business organization Owner with billing permission clicks Upgrade
 - **THEN** Desktop opens `/jwork/console/dashboard/?membership=team` on the configured server

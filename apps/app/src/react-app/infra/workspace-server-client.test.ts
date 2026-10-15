@@ -108,6 +108,33 @@ describe("workspace server client primitive", () => {
     expect(endpoint.opencodeBaseUrl).toBe("https://worker.example.test/workspace/server-workspace-id/opencode");
   });
 
+  test("keys remote bearer and host credentials separately without exposing them", () => {
+    const bearerToken = "remote-bearer-secret";
+    const hostToken = "remote-host-secret";
+    const baseWorkspace = {
+      ...remoteWorkspace,
+      juggleworkToken: bearerToken,
+      juggleworkHostToken: hostToken,
+    };
+    const key = createWorkspaceServerClientCacheKey(baseWorkspace, {
+      baseUrl: "http://127.0.0.1:4096",
+      token: "local-token",
+    });
+    const changedBearerKey = createWorkspaceServerClientCacheKey({
+      ...baseWorkspace,
+      juggleworkToken: "changed-bearer-secret",
+    }, { baseUrl: null, token: null });
+    const changedHostKey = createWorkspaceServerClientCacheKey({
+      ...baseWorkspace,
+      juggleworkHostToken: "changed-host-secret",
+    }, { baseUrl: null, token: null });
+
+    expect(key.includes(bearerToken)).toBe(false);
+    expect(key.includes(hostToken)).toBe(false);
+    expect(changedBearerKey).not.toBe(key);
+    expect(changedHostKey).not.toBe(key);
+  });
+
   test("keeps resolver caches scoped instead of leaking a global singleton", () => {
     const firstResolver = createWorkspaceServerClientResolver({
       baseUrl: "http://127.0.0.1:4096",

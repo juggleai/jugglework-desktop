@@ -70,6 +70,7 @@ export type JuggleWorkServerCapabilities = {
   mcp: { read: boolean; write: boolean };
   commands: { read: boolean; write: boolean };
   config: { read: boolean; write: boolean };
+  hostMarketplacePlugins?: { read: boolean; write: boolean };
   sandbox?: { enabled: boolean; backend: "none" | "docker" | "container" };
   proxy?: { opencode: boolean };
   toolProviders?: {
@@ -89,6 +90,167 @@ export type JuggleWorkServerCapabilities = {
 };
 
 export type JuggleWorkServerStatus = "connected" | "disconnected" | "limited";
+
+export type JuggleWorkHostMarketplaceIdentityScope = {
+  controlPlaneOrigin: string;
+  userId: string;
+  organizationId: string;
+};
+
+export type JuggleWorkHostMarketplaceScope = JuggleWorkHostMarketplaceIdentityScope & {
+  environmentId: string;
+};
+
+export type JuggleWorkHostMarketplaceEnvironment = {
+  schemaVersion: number;
+  environmentId: string;
+  managed: boolean;
+  readOnly: boolean;
+  capability: { read: boolean; write: boolean };
+};
+
+export type JuggleWorkHostMarketplaceDelivery = "desktop" | "cloud";
+export type JuggleWorkHostMarketplaceTextObjectType = "skill" | "agent" | "command" | "context" | "hook" | "tool";
+
+export type JuggleWorkHostMarketplaceComponent =
+  | {
+      id: string;
+      type: JuggleWorkHostMarketplaceTextObjectType;
+      title: string;
+      versionId: string;
+      source: string;
+      delivery: JuggleWorkHostMarketplaceDelivery;
+    }
+  | {
+      id: string;
+      type: "mcp";
+      title: string;
+      versionId: string;
+      payload: Record<string, unknown>;
+      delivery: JuggleWorkHostMarketplaceDelivery;
+    }
+  | {
+      id: string;
+      type: "custom";
+      title: string;
+      versionId: string;
+      payload?: unknown;
+      delivery: JuggleWorkHostMarketplaceDelivery;
+    };
+
+export type JuggleWorkHostMarketplacePackage = {
+  pluginId: string;
+  marketplaceId: string;
+  name: string;
+  description?: string | null;
+  revision: string;
+  confirmedExecutableRevision?: string;
+  components: JuggleWorkHostMarketplaceComponent[];
+};
+
+export type JuggleWorkHostMarketplaceOwnedResource = {
+  kind: "file" | "mcp";
+  componentId: string;
+  target: string;
+  digest: string;
+};
+
+export type JuggleWorkHostMarketplaceRepair = {
+  operation: "install" | "update" | "remove" | "activate" | "deactivate";
+  cause: string;
+  resources: string[];
+  rollbackFailures?: Array<{ stage: string; message: string }>;
+  recordedAt: number;
+};
+
+export type JuggleWorkHostMarketplaceInstallation = {
+  pluginId: string;
+  marketplaceId: string;
+  name: string;
+  description: string | null;
+  packageRevision: string;
+  packageDigest: string;
+  status: "installed" | "repair_required";
+  resources: JuggleWorkHostMarketplaceOwnedResource[];
+  installedAt: number;
+  updatedAt: number;
+  repair?: JuggleWorkHostMarketplaceRepair;
+};
+
+export type JuggleWorkHostMarketplaceRegistryList = {
+  schemaVersion: number;
+  registryRevision: number;
+  scope: JuggleWorkHostMarketplaceScope;
+  active: boolean;
+  installations: JuggleWorkHostMarketplaceInstallation[];
+};
+
+export type JuggleWorkHostMarketplaceMutationResult = {
+  operation: "activate" | "deactivate" | "install" | "update" | "remove" | "cloud_only";
+  changed: boolean;
+  registryRevision: number;
+  activeScope: JuggleWorkHostMarketplaceScope | null;
+  installation: JuggleWorkHostMarketplaceInstallation | null;
+  mcpOverlay: Record<string, Record<string, unknown>>;
+};
+
+export type JuggleWorkHostMarketplaceMutationInput = {
+  scope: JuggleWorkHostMarketplaceIdentityScope;
+  expectedRevision: number;
+  idempotencyKey: string;
+};
+
+export type JuggleWorkHostMarketplaceMigrationResource = {
+  kind: "file" | "mcp";
+  target: string;
+  digest: string;
+};
+
+export type JuggleWorkHostMarketplaceMigrationBlocker = {
+  workspaceId: string;
+  code: string;
+  resource: string;
+  message: string;
+};
+
+export type JuggleWorkHostMarketplaceMigrationWorkspacePlan = {
+  workspaceId: string;
+  label: string;
+  path: string;
+  recordDigest: string;
+  resources: JuggleWorkHostMarketplaceMigrationResource[];
+  blockers: Array<Omit<JuggleWorkHostMarketplaceMigrationBlocker, "workspaceId">>;
+  migratable: boolean;
+};
+
+export type JuggleWorkHostMarketplaceMigrationPlan = {
+  pluginId: string;
+  packageDigest: string;
+  registryRevision: number;
+  workspaces: JuggleWorkHostMarketplaceMigrationWorkspacePlan[];
+  blockers: JuggleWorkHostMarketplaceMigrationBlocker[];
+  migratable: boolean;
+  fingerprint: string;
+  migrationToken: string;
+};
+
+export type JuggleWorkHostMarketplaceMigrationCommitInput = {
+  scope: JuggleWorkHostMarketplaceIdentityScope;
+  package: JuggleWorkHostMarketplacePackage;
+  expectedRevision: number;
+  idempotencyKey: string;
+  workspaceCopies: Array<{ workspaceId: string; recordDigest: string }>;
+  confirmed: true;
+  fingerprint: string;
+  migrationToken: string;
+};
+
+export type JuggleWorkHostMarketplaceMigrationResult = {
+  operation: "migrate_workspace_copies";
+  changed: true;
+  migratedWorkspaces: string[];
+  host: JuggleWorkHostMarketplaceMutationResult;
+};
 
 export type JuggleWorkServerDiagnostics = {
   ok: boolean;
@@ -256,17 +418,68 @@ export type JuggleWorkPluginItem = {
   path?: string;
 };
 
+export type JuggleWorkPluginWorkspacePolicy = {
+  workspaceId: string;
+  disabledPluginSpecs: string[];
+  controllablePluginSpecs: string[];
+  revision: number;
+  updatedAt: number | null;
+  enforcementReady: boolean;
+};
+
 export type JuggleWorkSkillItem = {
   name: string;
   path: string;
   description: string;
   scope: "project" | "global";
   trigger?: string;
+  enabled?: boolean;
+  ownerPluginId?: string;
+  sourceKind?: "standalone" | "plugin" | "public";
+};
+
+export function parseJuggleWorkSkillItems(value: unknown): { items: JuggleWorkSkillItem[] } {
+  if (!isJsonRecord(value) || !Array.isArray(value.items)) return { items: [] };
+  return {
+    items: value.items.flatMap((entry) => {
+      if (!isJsonRecord(entry)
+        || typeof entry.name !== "string"
+        || typeof entry.path !== "string"
+        || typeof entry.description !== "string"
+        || (entry.scope !== "project" && entry.scope !== "global")) return [];
+      return [{
+        name: entry.name,
+        path: entry.path,
+        description: entry.description,
+        scope: entry.scope,
+        ...(typeof entry.trigger === "string" ? { trigger: entry.trigger } : {}),
+        ...(typeof entry.enabled === "boolean" ? { enabled: entry.enabled } : {}),
+        ...(typeof entry.ownerPluginId === "string" && entry.ownerPluginId.trim()
+          ? { ownerPluginId: entry.ownerPluginId }
+          : {}),
+        ...(entry.sourceKind === "standalone" || entry.sourceKind === "plugin" || entry.sourceKind === "public"
+          ? { sourceKind: entry.sourceKind }
+          : {}),
+      }];
+    }),
+  };
+}
+
+export type JuggleWorkSkillWorkspacePolicy = {
+  workspaceId: string;
+  disabledSkillNames: string[];
+  revision: number;
+  updatedAt: number | null;
+  enforcementReady: boolean;
 };
 
 export type JuggleWorkSkillContent = {
   item: JuggleWorkSkillItem;
   content: string;
+};
+
+export type JuggleWorkSkillDetail = JuggleWorkSkillContent & {
+  files: Array<{ relPath: string; size: number }>;
 };
 
 export type JuggleWorkWorkspaceFileContent = {
@@ -1290,6 +1503,368 @@ function isJsonRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+function invalidHostMarketplaceResponse(message: string): never {
+  throw new Error(`Invalid host Marketplace response: ${message}`);
+}
+
+function hostMarketplaceRecord(value: unknown, label: string): Record<string, unknown> {
+  return isJsonRecord(value) ? value : invalidHostMarketplaceResponse(`${label} must be an object.`);
+}
+
+function hostMarketplaceString(value: unknown, label: string): string {
+  return typeof value === "string" ? value : invalidHostMarketplaceResponse(`${label} must be a string.`);
+}
+
+function hostMarketplaceNumber(value: unknown, label: string): number {
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : invalidHostMarketplaceResponse(`${label} must be a finite number.`);
+}
+
+function hostMarketplaceBoolean(value: unknown, label: string): boolean {
+  return typeof value === "boolean" ? value : invalidHostMarketplaceResponse(`${label} must be a boolean.`);
+}
+
+function parseHostMarketplaceScope(value: unknown, label = "scope"): JuggleWorkHostMarketplaceScope {
+  const scope = hostMarketplaceRecord(value, label);
+  return {
+    environmentId: hostMarketplaceString(scope.environmentId, `${label}.environmentId`),
+    controlPlaneOrigin: hostMarketplaceString(scope.controlPlaneOrigin, `${label}.controlPlaneOrigin`),
+    userId: hostMarketplaceString(scope.userId, `${label}.userId`),
+    organizationId: hostMarketplaceString(scope.organizationId, `${label}.organizationId`),
+  };
+}
+
+function parseHostMarketplaceRepair(value: unknown): JuggleWorkHostMarketplaceRepair {
+  const repair = hostMarketplaceRecord(value, "repair");
+  const operation = repair.operation;
+  if (operation !== "install" && operation !== "update" && operation !== "remove" && operation !== "activate" && operation !== "deactivate") {
+    invalidHostMarketplaceResponse("repair.operation is unsupported.");
+  }
+  if (!Array.isArray(repair.resources)) invalidHostMarketplaceResponse("repair.resources must be an array.");
+  const rollbackFailures = repair.rollbackFailures === undefined
+    ? undefined
+    : Array.isArray(repair.rollbackFailures)
+      ? repair.rollbackFailures.map((entry, index) => {
+          const failure = hostMarketplaceRecord(entry, `repair.rollbackFailures[${index}]`);
+          return {
+            stage: hostMarketplaceString(failure.stage, `repair.rollbackFailures[${index}].stage`),
+            message: hostMarketplaceString(failure.message, `repair.rollbackFailures[${index}].message`),
+          };
+        })
+      : invalidHostMarketplaceResponse("repair.rollbackFailures must be an array.");
+  return {
+    operation,
+    cause: hostMarketplaceString(repair.cause, "repair.cause"),
+    resources: repair.resources.map((entry, index) => hostMarketplaceString(entry, `repair.resources[${index}]`)),
+    ...(rollbackFailures ? { rollbackFailures } : {}),
+    recordedAt: hostMarketplaceNumber(repair.recordedAt, "repair.recordedAt"),
+  };
+}
+
+function parseHostMarketplaceInstallation(value: unknown, index?: number): JuggleWorkHostMarketplaceInstallation {
+  const label = index === undefined ? "installation" : `installations[${index}]`;
+  const installation = hostMarketplaceRecord(value, label);
+  if (installation.status !== "installed" && installation.status !== "repair_required") {
+    invalidHostMarketplaceResponse(`${label}.status is unsupported.`);
+  }
+  if (!Array.isArray(installation.resources)) invalidHostMarketplaceResponse(`${label}.resources must be an array.`);
+  const resources: JuggleWorkHostMarketplaceOwnedResource[] = installation.resources.map((entry, resourceIndex) => {
+    const resource = hostMarketplaceRecord(entry, `${label}.resources[${resourceIndex}]`);
+    if (resource.kind !== "file" && resource.kind !== "mcp") {
+      invalidHostMarketplaceResponse(`${label}.resources[${resourceIndex}].kind is unsupported.`);
+    }
+    return {
+      kind: resource.kind as JuggleWorkHostMarketplaceOwnedResource["kind"],
+      componentId: hostMarketplaceString(resource.componentId, `${label}.resources[${resourceIndex}].componentId`),
+      target: hostMarketplaceString(resource.target, `${label}.resources[${resourceIndex}].target`),
+      digest: hostMarketplaceString(resource.digest, `${label}.resources[${resourceIndex}].digest`),
+    };
+  });
+  return {
+    pluginId: hostMarketplaceString(installation.pluginId, `${label}.pluginId`),
+    marketplaceId: hostMarketplaceString(installation.marketplaceId, `${label}.marketplaceId`),
+    name: hostMarketplaceString(installation.name, `${label}.name`),
+    description: installation.description === null
+      ? null
+      : hostMarketplaceString(installation.description, `${label}.description`),
+    packageRevision: hostMarketplaceString(installation.packageRevision, `${label}.packageRevision`),
+    packageDigest: hostMarketplaceString(installation.packageDigest, `${label}.packageDigest`),
+    status: installation.status,
+    resources,
+    installedAt: hostMarketplaceNumber(installation.installedAt, `${label}.installedAt`),
+    updatedAt: hostMarketplaceNumber(installation.updatedAt, `${label}.updatedAt`),
+    ...(installation.repair === undefined ? {} : { repair: parseHostMarketplaceRepair(installation.repair) }),
+  };
+}
+
+export function parseJuggleWorkHostMarketplaceEnvironment(value: unknown): JuggleWorkHostMarketplaceEnvironment {
+  const environment = hostMarketplaceRecord(value, "environment");
+  const capability = hostMarketplaceRecord(environment.capability, "environment.capability");
+  return {
+    schemaVersion: hostMarketplaceNumber(environment.schemaVersion, "environment.schemaVersion"),
+    environmentId: hostMarketplaceString(environment.environmentId, "environment.environmentId"),
+    managed: hostMarketplaceBoolean(environment.managed, "environment.managed"),
+    readOnly: hostMarketplaceBoolean(environment.readOnly, "environment.readOnly"),
+    capability: {
+      read: hostMarketplaceBoolean(capability.read, "environment.capability.read"),
+      write: hostMarketplaceBoolean(capability.write, "environment.capability.write"),
+    },
+  };
+}
+
+export function parseJuggleWorkHostMarketplaceRegistryList(value: unknown): JuggleWorkHostMarketplaceRegistryList {
+  const registry = hostMarketplaceRecord(value, "registry");
+  if (!Array.isArray(registry.installations)) invalidHostMarketplaceResponse("registry.installations must be an array.");
+  return {
+    schemaVersion: hostMarketplaceNumber(registry.schemaVersion, "registry.schemaVersion"),
+    registryRevision: hostMarketplaceNumber(registry.registryRevision, "registry.registryRevision"),
+    scope: parseHostMarketplaceScope(registry.scope),
+    active: hostMarketplaceBoolean(registry.active, "registry.active"),
+    installations: registry.installations.map((entry, index) => parseHostMarketplaceInstallation(entry, index)),
+  };
+}
+
+export function parseJuggleWorkHostMarketplaceMutationResult(value: unknown): JuggleWorkHostMarketplaceMutationResult {
+  const result = hostMarketplaceRecord(value, "mutation result");
+  const operation = result.operation;
+  if (operation !== "activate" && operation !== "deactivate" && operation !== "install" && operation !== "update" && operation !== "remove" && operation !== "cloud_only") {
+    invalidHostMarketplaceResponse("mutation result.operation is unsupported.");
+  }
+  const overlay = hostMarketplaceRecord(result.mcpOverlay, "mutation result.mcpOverlay");
+  for (const [name, config] of Object.entries(overlay)) hostMarketplaceRecord(config, `mutation result.mcpOverlay.${name}`);
+  return {
+    operation,
+    changed: hostMarketplaceBoolean(result.changed, "mutation result.changed"),
+    registryRevision: hostMarketplaceNumber(result.registryRevision, "mutation result.registryRevision"),
+    activeScope: result.activeScope === null ? null : parseHostMarketplaceScope(result.activeScope, "activeScope"),
+    installation: result.installation === null ? null : parseHostMarketplaceInstallation(result.installation),
+    mcpOverlay: overlay as Record<string, Record<string, unknown>>,
+  };
+}
+
+function parseHostMarketplaceMigrationResource(value: unknown, label: string): JuggleWorkHostMarketplaceMigrationResource {
+  const resource = hostMarketplaceRecord(value, label);
+  if (resource.kind !== "file" && resource.kind !== "mcp") {
+    invalidHostMarketplaceResponse(`${label}.kind is unsupported.`);
+  }
+  return {
+    kind: resource.kind as JuggleWorkHostMarketplaceMigrationResource["kind"],
+    target: hostMarketplaceString(resource.target, `${label}.target`),
+    digest: hostMarketplaceString(resource.digest, `${label}.digest`),
+  };
+}
+
+function parseHostMarketplaceMigrationBlocker(
+  value: unknown,
+  label: string,
+  workspaceId?: string,
+): JuggleWorkHostMarketplaceMigrationBlocker {
+  const blocker = hostMarketplaceRecord(value, label);
+  return {
+    workspaceId: workspaceId ?? hostMarketplaceString(blocker.workspaceId, `${label}.workspaceId`),
+    code: hostMarketplaceString(blocker.code, `${label}.code`),
+    resource: hostMarketplaceString(blocker.resource, `${label}.resource`),
+    message: hostMarketplaceString(blocker.message, `${label}.message`),
+  };
+}
+
+export function parseJuggleWorkHostMarketplaceMigrationPlan(value: unknown): JuggleWorkHostMarketplaceMigrationPlan {
+  const plan = hostMarketplaceRecord(value, "migration plan");
+  if (!Array.isArray(plan.workspaces)) invalidHostMarketplaceResponse("migration plan.workspaces must be an array.");
+  if (!Array.isArray(plan.blockers)) invalidHostMarketplaceResponse("migration plan.blockers must be an array.");
+  const workspaces = plan.workspaces.map((entry, index) => {
+    const label = `migration plan.workspaces[${index}]`;
+    const workspace = hostMarketplaceRecord(entry, label);
+    const workspaceId = hostMarketplaceString(workspace.workspaceId, `${label}.workspaceId`);
+    if (!Array.isArray(workspace.resources)) invalidHostMarketplaceResponse(`${label}.resources must be an array.`);
+    if (!Array.isArray(workspace.blockers)) invalidHostMarketplaceResponse(`${label}.blockers must be an array.`);
+    return {
+      workspaceId,
+      label: hostMarketplaceString(workspace.label, `${label}.label`),
+      path: hostMarketplaceString(workspace.path, `${label}.path`),
+      recordDigest: hostMarketplaceString(workspace.recordDigest, `${label}.recordDigest`),
+      resources: workspace.resources.map((resource, resourceIndex) =>
+        parseHostMarketplaceMigrationResource(resource, `${label}.resources[${resourceIndex}]`)),
+      blockers: workspace.blockers.map((blocker, blockerIndex) => {
+        const { workspaceId: _workspaceId, ...parsed } = parseHostMarketplaceMigrationBlocker(
+          blocker,
+          `${label}.blockers[${blockerIndex}]`,
+          workspaceId,
+        );
+        return parsed;
+      }),
+      migratable: hostMarketplaceBoolean(workspace.migratable, `${label}.migratable`),
+    };
+  });
+  return {
+    pluginId: hostMarketplaceString(plan.pluginId, "migration plan.pluginId"),
+    packageDigest: hostMarketplaceString(plan.packageDigest, "migration plan.packageDigest"),
+    registryRevision: hostMarketplaceNumber(plan.registryRevision, "migration plan.registryRevision"),
+    workspaces,
+    blockers: plan.blockers.map((blocker, index) =>
+      parseHostMarketplaceMigrationBlocker(blocker, `migration plan.blockers[${index}]`)),
+    migratable: hostMarketplaceBoolean(plan.migratable, "migration plan.migratable"),
+    fingerprint: hostMarketplaceString(plan.fingerprint, "migration plan.fingerprint"),
+    migrationToken: hostMarketplaceString(plan.migrationToken, "migration plan.migrationToken"),
+  };
+}
+
+export function parseJuggleWorkHostMarketplaceMigrationResult(value: unknown): JuggleWorkHostMarketplaceMigrationResult {
+  const result = hostMarketplaceRecord(value, "migration result");
+  if (result.operation !== "migrate_workspace_copies") {
+    invalidHostMarketplaceResponse("migration result.operation is unsupported.");
+  }
+  if (!Array.isArray(result.migratedWorkspaces)) {
+    invalidHostMarketplaceResponse("migration result.migratedWorkspaces must be an array.");
+  }
+  if (result.changed !== true) invalidHostMarketplaceResponse("migration result.changed must be true.");
+  return {
+    operation: "migrate_workspace_copies",
+    changed: true,
+    migratedWorkspaces: result.migratedWorkspaces.map((workspaceId, index) =>
+      hostMarketplaceString(workspaceId, `migration result.migratedWorkspaces[${index}]`)),
+    host: parseJuggleWorkHostMarketplaceMutationResult(result.host),
+  };
+}
+
+function hostMarketplaceDeliveryMetadata(value: unknown): JuggleWorkHostMarketplaceDelivery | null {
+  if (!isJsonRecord(value)) return null;
+  return value.delivery === "cloud" || value.delivery === "desktop" ? value.delivery : null;
+}
+
+function hostMarketplaceMcpDelivery(
+  resolved: DenOrgPluginResolved,
+  configObjectId: string,
+  payload: Record<string, unknown>,
+): JuggleWorkHostMarketplaceDelivery {
+  const declared = resolved.plugin.cloudReadiness?.components?.filter((component) => component.configObjectId === configObjectId) ?? [];
+  const connected = resolved.plugin.cloudReadiness?.connections.some((connection) =>
+    connection.configObjectId === configObjectId && Boolean(connection.id || connection.url.trim()),
+  ) === true;
+  if (connected || declared.some((component) => component.delivery === "cloud" && Boolean(component.connectionId || component.url?.trim()))) {
+    return "cloud";
+  }
+  const servers = isJsonRecord(payload.mcp) ? payload.mcp : isJsonRecord(payload.mcpServers) ? payload.mcpServers : null;
+  const configs = servers ? Object.values(servers) : [payload];
+  if (configs.some((config) => isJsonRecord(config) && typeof config.url === "string" && config.url.trim())) return "cloud";
+  if (configs.some((config) => isJsonRecord(config) && (
+    (Array.isArray(config.command) && config.command.length > 0)
+    || (typeof config.command === "string" && config.command.trim())
+  ))) return "desktop";
+  if (declared.some((component) => component.delivery === "desktop")) return "desktop";
+  if (declared.length > 0) return "cloud";
+  return "cloud";
+}
+
+function hostMarketplaceObjectDelivery(
+  resolved: DenOrgPluginResolved,
+  membership: DenOrgPluginResolved["memberships"][number],
+): JuggleWorkHostMarketplaceDelivery {
+  const object = membership.configObject!;
+  const declared = hostMarketplaceDeliveryMetadata(membership)
+    ?? hostMarketplaceDeliveryMetadata(object)
+    ?? hostMarketplaceDeliveryMetadata(object.latestVersion)
+    ?? hostMarketplaceDeliveryMetadata(object.latestVersion?.normalizedPayloadJson);
+  if (declared) return declared;
+  if (resolved.plugin.cloudReadiness?.hasInstructional === true
+    && resolved.plugin.cloudReadiness.state !== "not_synced") return "cloud";
+  const sourceFormat = resolved.extension?.sourceFormat ?? resolved.plugin.extension?.sourceFormat;
+  if (sourceFormat === "claude-plugin" || sourceFormat === "opencode-plugin" || sourceFormat === "mcp-directory") {
+    return "desktop";
+  }
+  return resolved.plugin.cloudReadiness?.state === "not_synced" ? "desktop" : "cloud";
+}
+
+/** Convert a resolved Den plugin to the exact package accepted by the host routes. */
+export function hostMarketplacePackageFromDenResolved(
+  marketplaceId: string,
+  resolved: DenOrgPluginResolved,
+  options: { confirmedExecutableRevision?: string } = {},
+): JuggleWorkHostMarketplacePackage {
+  const components = resolved.memberships.flatMap<JuggleWorkHostMarketplaceComponent>((membership) => {
+    const object = membership.configObject;
+    const version = object?.latestVersion;
+    if (!object || object.status !== "active" || !version) return [];
+    if (object.objectType === "mcp") {
+      const payload = version.normalizedPayloadJson;
+      if (!payload) throw new Error(`MCP component "${object.title}" has no normalized payload.`);
+      return [{
+        id: object.id,
+        type: "mcp",
+        title: object.title,
+        versionId: version.id,
+        payload,
+        delivery: hostMarketplaceMcpDelivery(resolved, object.id, payload),
+      }];
+    }
+    if (object.objectType === "custom") {
+      return [{
+        id: object.id,
+        type: "custom",
+        title: object.title,
+        versionId: version.id,
+        delivery: hostMarketplaceObjectDelivery(resolved, membership),
+        ...(version.normalizedPayloadJson === null ? {} : { payload: version.normalizedPayloadJson }),
+      }];
+    }
+    if (version.rawSourceText === null) throw new Error(`Component "${object.title}" has no source text.`);
+    return [{
+      id: object.id,
+      type: object.objectType,
+      title: object.title,
+      versionId: version.id,
+      source: version.rawSourceText,
+      delivery: hostMarketplaceObjectDelivery(resolved, membership),
+    }];
+  });
+  if (components.length === 0) throw new Error(`Marketplace plugin "${resolved.plugin.name}" has no active versioned components.`);
+  const revision = resolved.plugin.updatedAt?.trim()
+    || components.map((component) => `${component.id}:${component.versionId}`).sort().join("|");
+  return {
+    pluginId: resolved.plugin.id,
+    marketplaceId,
+    name: resolved.plugin.name,
+    description: resolved.plugin.description,
+    revision,
+    ...(options.confirmedExecutableRevision ? { confirmedExecutableRevision: options.confirmedExecutableRevision } : {}),
+    components,
+  };
+}
+
+export function hostMarketplacePackageRequiresInstallation(
+  marketplaceId: string,
+  resolved: DenOrgPluginResolved,
+): boolean {
+  try {
+    const packageInput = hostMarketplacePackageFromDenResolved(marketplaceId, resolved);
+    return packageInput.components.some((component) => {
+      if (component.type === "mcp") return component.delivery === "desktop";
+      if (component.type === "custom") return false;
+      return component.delivery === "desktop";
+    });
+  } catch {
+    return false;
+  }
+}
+
+export function hostMarketplacePackageRequiresExecutableConfirmation(
+  marketplaceId: string,
+  resolved: DenOrgPluginResolved,
+): boolean {
+  try {
+    return hostMarketplacePackageFromDenResolved(marketplaceId, resolved).components.some(
+      (component) => component.delivery !== "cloud" && (
+        component.type === "hook"
+        || component.type === "tool"
+        || component.type === "mcp"
+      ),
+    );
+  } catch {
+    return false;
+  }
+}
+
 function readCloudPluginOperationStatus(value: unknown): JuggleWorkCloudPluginInstallResult["status"] {
   return value === "installed" || value === "partial" || value === "failed" || value === "repair_required"
     ? value
@@ -1657,6 +2232,59 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
       requestJson<{ ok: boolean; version: string; uptimeMs: number }>(baseUrl, "/health", { token, hostToken, timeoutMs: timeouts.health }),
     status: () => requestJson<JuggleWorkServerDiagnostics>(baseUrl, "/status", { token, hostToken, timeoutMs: timeouts.status }),
     capabilities: () => requestJson<JuggleWorkServerCapabilities>(baseUrl, "/capabilities", { token, hostToken, timeoutMs: timeouts.capabilities }),
+    getHostMarketplaceEnvironment: async () => parseJuggleWorkHostMarketplaceEnvironment(
+      await requestJson<unknown>(baseUrl, "/host/marketplace-plugins/environment", {
+        token,
+        hostToken,
+        timeoutMs: timeouts.capabilities,
+      }),
+    ),
+    setHostMarketplaceScope: async (input: JuggleWorkHostMarketplaceMutationInput & { active: boolean }) =>
+      parseJuggleWorkHostMarketplaceMutationResult(await requestJson<unknown>(baseUrl, "/host/marketplace-plugins/scope", {
+        token,
+        hostToken,
+        method: "PUT",
+        body: input,
+        timeoutMs: timeouts.config,
+      })),
+    listHostMarketplacePlugins: async (scope: JuggleWorkHostMarketplaceIdentityScope) => {
+      const query = new URLSearchParams(scope);
+      return parseJuggleWorkHostMarketplaceRegistryList(await requestJson<unknown>(
+        baseUrl,
+        `/host/marketplace-plugins?${query.toString()}`,
+        { token, hostToken, timeoutMs: timeouts.config },
+      ));
+    },
+    putHostMarketplacePlugin: async (
+      input: JuggleWorkHostMarketplaceMutationInput & { package: JuggleWorkHostMarketplacePackage },
+    ) => parseJuggleWorkHostMarketplaceMutationResult(await requestJson<unknown>(
+      baseUrl,
+      `/host/marketplace-plugins/${encodeURIComponent(input.package.pluginId)}`,
+      { token, hostToken, method: "PUT", body: input, timeoutMs: timeouts.config },
+    )),
+    planHostMarketplacePluginMigration: async (input: {
+      scope: JuggleWorkHostMarketplaceIdentityScope;
+      package: JuggleWorkHostMarketplacePackage;
+    }) => parseJuggleWorkHostMarketplaceMigrationPlan(await requestJson<unknown>(
+      baseUrl,
+      `/host/marketplace-plugins/${encodeURIComponent(input.package.pluginId)}/migration-plan`,
+      { token, hostToken, method: "POST", body: input, timeoutMs: timeouts.config },
+    )),
+    migrateHostMarketplacePluginWorkspaceCopies: async (
+      input: JuggleWorkHostMarketplaceMigrationCommitInput,
+    ) => parseJuggleWorkHostMarketplaceMigrationResult(await requestJson<unknown>(
+      baseUrl,
+      `/host/marketplace-plugins/${encodeURIComponent(input.package.pluginId)}/migrate-workspace-copies`,
+      { token, hostToken, method: "POST", body: input, timeoutMs: ENGINE_RELOAD_TIMEOUT_MS },
+    )),
+    deleteHostMarketplacePlugin: async (
+      pluginId: string,
+      input: JuggleWorkHostMarketplaceMutationInput,
+    ) => parseJuggleWorkHostMarketplaceMutationResult(await requestJson<unknown>(
+      baseUrl,
+      `/host/marketplace-plugins/${encodeURIComponent(pluginId)}`,
+      { token, hostToken, method: "DELETE", body: input, timeoutMs: timeouts.config },
+    )),
     googleWorkspaceStatus: () => requestJson<GoogleWorkspaceAuthStatus>(baseUrl, "/experimental/google-workspace/status", { token, hostToken, timeoutMs: timeouts.status }),
     setConnectState: (connectEnabled: boolean) => requestJson<JuggleWorkConnectState>(baseUrl, "/experimental/connect/state", { token, hostToken, method: "PUT", body: { connectEnabled }, timeoutMs: timeouts.config }),
     // TIPS: 这是 GitHub 事件触发自动化 resolveAuth 的真实生产落点——apps/server 自己
@@ -2356,6 +2984,12 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
         { token, hostToken },
       );
     },
+    getPluginPolicy: (workspaceId: string) =>
+      requestJson<JuggleWorkPluginWorkspacePolicy>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/plugin-policy`, { token, hostToken }),
+    setPluginPolicy: (workspaceId: string, disabledPluginSpecs: string[]) =>
+      requestJson<JuggleWorkPluginWorkspacePolicy>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/plugin-policy`, {
+        token, hostToken, method: "PUT", body: { disabledPluginSpecs },
+      }),
     addPlugin: (workspaceId: string, spec: string) =>
       requestJson<{ items: JuggleWorkPluginItem[]; loadOrder: string[] }>(
         baseUrl,
@@ -2368,21 +3002,35 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
         `/workspace/${workspaceId}/plugins/${encodeURIComponent(name)}`,
         { token, hostToken, method: "DELETE" },
       ),
-    listSkills: (workspaceId: string, options?: { includeGlobal?: boolean; scope?: "global" }) => {
+    listSkills: async (workspaceId: string, options?: { includeGlobal?: boolean; scope?: "global" }) => {
       const query = new URLSearchParams();
       if (options?.includeGlobal) query.set("includeGlobal", "true");
       if (options?.scope) query.set("scope", options.scope);
-      return requestJson<{ items: JuggleWorkSkillItem[] }>(
+      return parseJuggleWorkSkillItems(await requestJson<unknown>(
         baseUrl,
         `/workspace/${workspaceId}/skills${query.size ? `?${query}` : ""}`,
         { token, hostToken },
-      );
+      ));
     },
+    getSkillPolicy: (workspaceId: string) =>
+      requestJson<JuggleWorkSkillWorkspacePolicy>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/skill-policy`, { token, hostToken }),
+    setSkillPolicy: (workspaceId: string, disabledSkillNames: string[]) =>
+      requestJson<JuggleWorkSkillWorkspacePolicy>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/skill-policy`, {
+        token, hostToken, method: "PUT", body: { disabledSkillNames },
+      }),
     getSkill: (workspaceId: string, name: string, options?: { includeGlobal?: boolean }) => {
       const query = options?.includeGlobal ? "?includeGlobal=true" : "";
       return requestJson<JuggleWorkSkillContent>(
         baseUrl,
         `/workspace/${workspaceId}/skills/${encodeURIComponent(name)}${query}`,
+        { token, hostToken },
+      );
+    },
+    getSkillDetail: (workspaceId: string, input: { path: string; scope: "global" }) => {
+      const query = new URLSearchParams({ scope: input.scope, path: input.path });
+      return requestJson<JuggleWorkSkillDetail>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/skills/detail?${query.toString()}`,
         { token, hostToken },
       );
     },

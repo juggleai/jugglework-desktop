@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { isLoopbackHttpUrl, selectMainProcessFetch } from "./main-fetch.mjs";
+import { isLoopbackHttpUrl, mainProcessFetchBody, selectMainProcessFetch } from "./main-fetch.mjs";
 
 describe("main-process fetch transport", () => {
   it("recognizes supported loopback HTTP URLs", () => {
@@ -24,5 +24,15 @@ describe("main-process fetch transport", () => {
       selectMainProcessFetch("https://work.juggle.im/api", { nodeFetch, electronFetch }),
       electronFetch,
     );
+  });
+
+  it("preserves binary upload bytes and existing string request bodies", () => {
+    const bytes = Uint8Array.of(0, 255, 42, 128);
+    const cloned = structuredClone({ bodyBytes: bytes });
+    const body = mainProcessFetchBody(cloned);
+    assert.ok(Buffer.isBuffer(body));
+    assert.deepEqual(body, Buffer.from(bytes));
+    assert.equal(mainProcessFetchBody({ body: '{"ok":true}' }), '{"ok":true}');
+    assert.equal(mainProcessFetchBody({}), undefined);
   });
 });

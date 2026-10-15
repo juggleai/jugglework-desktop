@@ -39,6 +39,39 @@ export function setJuggleWorkExtensionEnabled(entry: McpDirectoryInfo, enabled: 
   }));
 }
 
+/** Whether the catalog can directly enable or disable this built-in plugin. */
+export function canSetJuggleWorkExtensionEnabled(entry: McpDirectoryInfo): boolean {
+  const manifest = entry.extensionManifest;
+  return Boolean(manifest && manifest.source.origin === "builtin" && manifest.source.trusted);
+}
+
+/**
+ * Apply the catalog enablement action using the plugin's real lifecycle.
+ * Toggle-backed plugins persist a local preference; MCP-backed plugins must
+ * add or remove their configured server instead of writing an unused toggle.
+ */
+export async function setJuggleWorkExtensionEnabledWithLifecycle(
+  entry: McpDirectoryInfo,
+  enabled: boolean,
+  actions: {
+    connectMcp: (entry: McpDirectoryInfo) => void | Promise<unknown>;
+    removeMcp: (name: string) => void | Promise<unknown>;
+  },
+) {
+  const mcpResource = entry.extensionManifest?.resources.find((resource) => resource.type === "mcp");
+  const toggleControlled = entry.extensionManifest?.enablement?.some((condition) => condition.type === "toggle-enabled") === true;
+  if (toggleControlled || !mcpResource) {
+    setJuggleWorkExtensionEnabled(entry, enabled);
+    return;
+  }
+
+  if (enabled) {
+    await actions.connectMcp(entry);
+  } else {
+    await actions.removeMcp(mcpResource.mcpServerName ?? getMcpServerName(entry));
+  }
+}
+
 export function isJuggleWorkExtensionHidden(entryOrId: McpDirectoryInfo | string): boolean {
   const id = typeof entryOrId === "string" ? entryOrId : getExtensionId(entryOrId);
   if (typeof window === "undefined") return false;

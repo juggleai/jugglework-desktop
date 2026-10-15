@@ -17,6 +17,7 @@ import type { GithubEventAuthStore } from "../automation/github-event-auth-store
 import type { AutomationEventPoller } from "../automation/event-poller.js";
 import type { AutomationSubscriptionSync } from "../automation/subscription-sync.js";
 import { ApiError } from "../errors.js";
+import { readSkillWorkspacePolicy } from "../skill-workspace-policy.js";
 import type { McpItem, ServerConfig, TokenScope } from "../types.js";
 import type { WorkspaceInfo } from "../types.js";
 import type { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
@@ -207,11 +208,12 @@ export function registerAutomationRoutes(options: RegisterAutomationRoutesOption
     const workspace = await options.resolveWorkspace(config, workspaceId);
     if (workspace.workspaceType !== "local") throw new ApiError(400, "workspace_unavailable", "Automation requires a local workspace");
     const opencode = options.createWorkspaceOpencodeClient(config, workspace);
-    const [providers, agents, skills, connectors] = await Promise.all([
+    const [providers, agents, skills, connectors, skillPolicy] = await Promise.all([
       opencode.provider.list(),
       opencode.app.agents(),
       opencode.app.skills(),
       options.listWorkspaceMcp?.(config, workspace.id, workspace.path) ?? Promise.resolve([]),
+      readSkillWorkspacePolicy(config, workspace.id),
     ]);
     // TIPS:与会话输入栏的模型选择口径一致——只列 engine 报告为已连接的 provider，
     // 且过滤掉没有模型的自定义 provider；否则 models.dev 全量目录里大量没有凭据的模型都会进来。
@@ -233,7 +235,8 @@ export function registerAutomationRoutes(options: RegisterAutomationRoutesOption
       agents: (agents.data ?? [])
         .filter((agent) => !agent.hidden && agent.mode !== "subagent" && agent.name !== DEFAULT_AGENT_NAME)
         .map((agent) => ({ id: agent.name, name: agent.name, description: agent.description ?? "" })),
-      skills: (skills.data ?? []).map((skill) => ({ id: skill.name, name: skill.name, description: skill.description ?? "" })),
+      skills: (skills.data ?? []).filter((skill) => !skillPolicy.disabledSkillNames.includes(skill.name))
+        .map((skill) => ({ id: skill.name, name: skill.name, description: skill.description ?? "" })),
       connectors: connectors.map((item) => ({ id: item.name, label: item.name, ready: item.disabledByTools !== true })),
     });
   });

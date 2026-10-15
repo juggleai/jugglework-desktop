@@ -44,7 +44,7 @@ export function SkillHubModal({ open, projectDir, scope = "project", installedSl
   scope?: "project" | "global";
   installedSlugs: Set<string>;
   onClose: () => void;
-  onInstalled: () => void | Promise<void>;
+  onInstalled: (result?: { installedCount: number; failedCount: number }) => void | Promise<void>;
 }) {
   const [tab, setTab] = useState<HubTab>("skillhub");
   const [query, setQuery] = useState("");
@@ -148,7 +148,7 @@ export function SkillHubModal({ open, projectDir, scope = "project", installedSl
         failures.push(`${skill.displayName}: ${cause instanceof Error ? cause.message : String(cause)}`);
       }
     }
-    await onInstalled();
+    await onInstalled({ installedCount: targets.length - failures.length, failedCount: failures.length });
     setInstalling(false);
     if (failures.length > 0) {
       setInstallError(failures.join("\n"));

@@ -5,7 +5,7 @@ import TestRenderer, { act } from "react-test-renderer";
 
 import type { DesktopRemoteControlAgentStatus } from "@jugglework/types/desktop-ipc";
 import { setLocale } from "../src/i18n";
-import { RemoteControlActivityIndicator, requestRemoteControlReregistration, shouldShowRemoteControlReregister, statusPresentation } from "../src/react-app/domains/settings/cloud/desktop-remote-control-section";
+import { refreshRemoteControlRecoveryState, RemoteControlActivityIndicator, requestRemoteControlReregistration, shouldShowRemoteControlAuthorizationRefresh, shouldShowRemoteControlReregister, statusPresentation } from "../src/react-app/domains/settings/cloud/desktop-remote-control-section";
 import { CloudSessionProvider, useCloudSession } from "../src/react-app/domains/settings/cloud/cloud-session-provider";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -87,6 +87,11 @@ describe("Desktop remote-control status presentation", () => {
     expect(shouldShowRemoteControlReregister({ ...input, policyAllowsRemote: false })).toBe(false);
     expect(shouldShowRemoteControlReregister({ ...input, status: status({ state: "disabled", replacementPending: true }) })).toBe(false);
     expect(shouldShowRemoteControlReregister({ ...input, status: status({ state: "disabled", enrollmentAuthorized: false }) })).toBe(false);
+    const staleAuthorization = status({ connected: false, state: "disabled", locallyDisabled: true, localControlEnabled: false, enrollmentAuthorized: false });
+    expect(shouldShowRemoteControlAuthorizationRefresh({ ...input, status: staleAuthorization })).toBe(true);
+    expect(shouldShowRemoteControlAuthorizationRefresh(input)).toBe(false);
+    expect(shouldShowRemoteControlAuthorizationRefresh({ ...input, signedIn: false, status: staleAuthorization })).toBe(false);
+    expect(shouldShowRemoteControlAuthorizationRefresh({ ...input, policyAllowsRemote: false, status: staleAuthorization })).toBe(false);
     expect(shouldShowRemoteControlReregister({
       ...input,
       status: status({ connected: false, state: "disabled", locallyDisabled: true, localControlEnabled: false, lastErrorCode: "device_reregistration_required" }),
@@ -126,6 +131,47 @@ describe("Desktop remote-control status presentation", () => {
     });
     expect(result.ok).toBe(true);
     expect(calls).toEqual(["fresh-context-synced", "grant-created", "compound:one-time-grant:org-1"]);
+  });
+
+  test("renews Cloud policy before reading recovery state so re-registration can become eligible", async () => {
+    const calls: string[] = [];
+    let authorized = false;
+    const result = await refreshRemoteControlRecoveryState({
+      signedIn: true,
+      refreshFresh: async () => {
+        calls.push("fresh-context-synced");
+        authorized = true;
+      },
+      readSettings: async () => {
+        calls.push("settings-read");
+        return { schemaVersion: 1, enabled: false, preventSleepWhileWaiting: false, backgroundMode: false, launchAtLogin: false, allowBusySessionSteer: false, allowBusySessionEnqueue: false };
+      },
+      readStatus: async () => {
+        calls.push("status-read");
+        return status({ connected: false, state: "disabled", enrolled: false, locallyDisabled: true, localControlEnabled: false, enrollmentAuthorized: authorized });
+      },
+    });
+
+    expect(calls[0]).toBe("fresh-context-synced");
+    expect(calls.slice(1).sort()).toEqual(["settings-read", "status-read"]);
+    expect(result.status.enrollmentAuthorized).toBe(true);
+    expect(shouldShowRemoteControlReregister({
+      signedIn: true,
+      policyAllowsRemote: true,
+      settings: result.settings,
+      status: result.status,
+    })).toBe(true);
+  });
+
+  test("refreshes only local recovery state while signed out", async () => {
+    let freshCalls = 0;
+    await refreshRemoteControlRecoveryState({
+      signedIn: false,
+      refreshFresh: async () => { freshCalls += 1; },
+      readSettings: async () => ({ schemaVersion: 1, enabled: false, preventSleepWhileWaiting: false, backgroundMode: false, launchAtLogin: false, allowBusySessionSteer: false, allowBusySessionEnqueue: false }),
+      readStatus: async () => status({ connected: false, state: "disabled", enrolled: false, locallyDisabled: true, localControlEnabled: false, enrollmentAuthorized: false }),
+    });
+    expect(freshCalls).toBe(0);
   });
 
   test("does not mint a grant or invoke replacement after account, org, or base URL changes", async () => {

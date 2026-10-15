@@ -102,6 +102,8 @@ export interface ServerConfig {
   workspaces: WorkspaceInfo[];
   authorizedRoots: string[];
   readOnly: boolean;
+  /** True when this process owns the OpenCode runtime it exposes. */
+  managedRuntime?: boolean;
   startedAt: number;
   tokenSource: "cli" | "env" | "file" | "generated";
   hostTokenSource: "cli" | "env" | "file" | "generated";
@@ -118,6 +120,7 @@ export interface Capabilities {
   mcp: { read: boolean; write: boolean };
   commands: { read: boolean; write: boolean };
   config: { read: boolean; write: boolean };
+  hostMarketplacePlugins?: { read: boolean; write: boolean };
 
   approvals: { mode: ApprovalMode; timeoutMs: number };
   sandbox: { enabled: boolean; backend: SandboxBackend };
@@ -192,6 +195,8 @@ export interface SkillItem {
   description: string;
   scope: "project" | "global";
   trigger?: string;
+  ownerPluginId?: string;
+  sourceKind?: "standalone" | "plugin" | "public";
 }
 
 export interface CommandItem {

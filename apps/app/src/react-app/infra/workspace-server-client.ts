@@ -38,9 +38,20 @@ function remoteBaseUrl(workspace: NonNullable<WorkspaceServerClientWorkspace>): 
 function remoteToken(workspace: NonNullable<WorkspaceServerClientWorkspace>): string {
   return (
     trim(workspace.juggleworkToken) ||
-    trim(workspace.juggleworkClientToken) ||
-    trim(workspace.juggleworkHostToken)
+    trim(workspace.juggleworkClientToken)
   );
+}
+
+function remoteHostToken(workspace: NonNullable<WorkspaceServerClientWorkspace>): string {
+  return trim(workspace.juggleworkHostToken);
+}
+
+function credentialFingerprint(value: string): string {
+  let hash = 0x811c9dc5;
+  for (const byte of new TextEncoder().encode(value)) {
+    hash = Math.imul(hash ^ byte, 0x01000193);
+  }
+  return `${value.length}:${(hash >>> 0).toString(16).padStart(8, "0")}`;
 }
 
 function cacheKey(parts: string[]): string {
@@ -58,7 +69,8 @@ export function createWorkspaceServerClientCacheKey(
       "workspace:remote",
       workspaceServerId(workspace),
       remoteBaseUrl(workspace),
-      remoteToken(workspace),
+      credentialFingerprint(remoteToken(workspace)),
+      credentialFingerprint(remoteHostToken(workspace)),
     ]);
   }
 
@@ -67,8 +79,8 @@ export function createWorkspaceServerClientCacheKey(
     "workspace:local",
     trim(workspace.id),
     normalizedLocalServer.baseUrl,
-    normalizedLocalServer.token,
-    normalizedLocalServer.hostToken,
+    credentialFingerprint(normalizedLocalServer.token),
+    credentialFingerprint(normalizedLocalServer.hostToken),
   ]);
 }
 

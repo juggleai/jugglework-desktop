@@ -32,6 +32,8 @@ export type ExtensionItem = {
   installState: ExtensionInstallState;
   setupState: ExtensionSetupState;
   active: boolean;
+  /** All non-toggle runtime/configuration requirements are satisfied. */
+  setupReady?: boolean;
   enablement: { active: boolean; results: EnablementResult[] } | null;
   resources: ExtensionResourceItem[];
   builtInEntry?: McpDirectoryInfo;
@@ -58,6 +60,8 @@ export type ExtensionItemBuildInput = {
   orgMcpConnections?: DenExternalMcpConnection[];
   enablementContext: EnablementContext;
   isBuiltInConnected: (entry: McpDirectoryInfo) => boolean;
+  /** Plugin-level catalog toggle; MCP-backed setup plugins use their MCP lifecycle instead. */
+  isBuiltInEnabled?: (entry: McpDirectoryInfo) => boolean;
 };
 
 const MCP_IMPORT_PATH_PREFIX = "opencode.jsonc#mcp.";
@@ -195,7 +199,17 @@ export function buildExtensionItems(input: ExtensionItemBuildInput) {
     const enablement = entry.extensionManifest?.enablement
       ? evaluateEnablement(entry.extensionManifest.enablement, input.enablementContext)
       : null;
-    const active = enablement?.active ?? input.isBuiltInConnected(entry);
+    const mcpLifecycleManaged = isBuiltInExtensionMcpEntry(entry) && !isToggleControlledExtension(entry);
+    const catalogEnabled = mcpLifecycleManaged ? true : input.isBuiltInEnabled?.(entry) ?? true;
+    const nonToggleResults = enablement?.results.filter((result) => result.condition.type !== "toggle-enabled") ?? [];
+    const hasNonToggleConditions = entry.extensionManifest?.enablement?.some((condition) => condition.type !== "toggle-enabled") === true;
+    const hasToggleCondition = isToggleControlledExtension(entry);
+    const setupReady = hasNonToggleConditions
+      ? nonToggleResults.length > 0 && nonToggleResults.every((result) => result.met)
+      : hasToggleCondition
+        ? true
+        : input.isBuiltInConnected(entry);
+    const active = catalogEnabled && setupReady;
     return {
       id: `builtin:${entry.id ?? entry.serverName ?? entry.name}`,
       source: "builtin",
@@ -204,6 +218,7 @@ export function buildExtensionItems(input: ExtensionItemBuildInput) {
       installState: active ? "installed" : "available",
       setupState: enablement ? setupStateFromEnablement(enablement) : active ? "ready" : "needs_setup",
       active,
+      setupReady,
       enablement,
       resources: entry.extensionManifest?.resources.map((resource) => ({
         id: resource.id,
