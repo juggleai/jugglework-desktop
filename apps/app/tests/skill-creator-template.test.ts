@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 const templatePath = join(import.meta.dir, "..", "src", "app", "data", "skill-creator.md");
+const bundledTemplatePath = join(import.meta.dir, "..", "..", "desktop", "resources", "skills", "public-skills", "skill-creator", "SKILL.md");
 
 describe("bundled skill creator template", () => {
   test("contains only workspace-local authoring guidance", async () => {
@@ -38,5 +39,14 @@ describe("bundled skill creator template", () => {
     ]) {
       expect(template).not.toContain(duplicatedCloudWorkflowTerm);
     }
+  });
+
+  test("keeps the preinstalled public copy identical to the chat template", async () => {
+    const [template, bundledTemplate] = await Promise.all([
+      readFile(templatePath, "utf8"),
+      readFile(bundledTemplatePath, "utf8"),
+    ]);
+
+    expect(bundledTemplate).toBe(template);
   });
 });

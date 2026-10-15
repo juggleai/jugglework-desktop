@@ -1,5 +1,6 @@
 /** @jsxImportSource react */
 import * as React from "react";
+import { Ellipsis, Loader2, Plus, Power, Trash2 } from "lucide-react";
 import { toast } from "@/components/ui/sonner";
 
 import type { McpDirectoryInfo } from "@/app/constants";
@@ -17,7 +18,21 @@ import type {
   DenOrgPluginResolved,
   DenPluginMcpComponent,
 } from "@/app/lib/den";
+import {
+  hostMarketplacePackageRequiresExecutableConfirmation,
+  hostMarketplacePackageRequiresInstallation,
+  JuggleWorkServerError,
+  type JuggleWorkHostMarketplaceInstallation,
+  type JuggleWorkHostMarketplaceMigrationBlocker,
+  type JuggleWorkHostMarketplaceMigrationPlan,
+} from "@/app/lib/jugglework-server";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Separator } from "@/components/ui/separator";
 import { t } from "@/i18n";
 import { canDisconnectNativeProviderAccount } from "@/react-app/domains/connections/native-provider-connections";
@@ -31,7 +46,6 @@ import {
 import {
   isOrgMcpConnectionItem,
   isOrgMcpConnectionReady,
-  isToggleControlledExtension,
   orgMcpConnectionActionLabel,
   type ExtensionItem,
 } from "@/react-app/domains/settings/extension-items";
@@ -54,15 +68,28 @@ import {
   SettingsListSearchInput,
 } from "@/react-app/domains/settings/settings-list";
 import { MarketplacePackageDetailModal } from "@/react-app/domains/settings/pages/marketplace-package-detail-modal";
+import { CatalogDetailPage } from "@/react-app/domains/settings/pages/catalog-detail-page";
+import {
+  canSetJuggleWorkExtensionEnabled,
+  isJuggleWorkExtensionEnabled,
+} from "@/react-app/domains/settings/extension-state";
 import { CatalogHeader, type CatalogSource } from "./catalog-source";
 import {
   marketplaceResolvedCacheKey,
+  resolveMarketplacePluginComponentAvailability,
+  resolveMarketplacePluginDelivery,
+  resolveMarketplacePluginActions,
   resolveMarketplaceDetailResolution,
   resolveMarketplaceDetailSelection,
   resolveMarketplacePluginLifecycle,
   resolveMarketplaceResolvedCache,
   type MarketplacePluginLifecycle,
 } from "@/react-app/domains/settings/pages/marketplace-plugin-state";
+import {
+  HostMarketplaceMigrationRequiredError,
+  type HostMarketplaceMigrationRequest,
+  type HostMarketplacePluginsSnapshot,
+} from "@/react-app/domains/settings/state/host-marketplace-plugins";
 import {
   drainPendingMarketplacePlugin,
   openMarketplacePluginEvent,
@@ -119,6 +146,7 @@ export type MarketplacePackageRow = {
   sourceMarketplaceId: string | null;
   plugin: DenOrgPlugin;
   imported: CloudImportedPlugin | null;
+  hostInstallation: JuggleWorkHostMarketplaceInstallation | null;
   item: ExtensionItem | null;
   status: MarketplacePackageStatus;
   counts: string[];
@@ -131,13 +159,91 @@ export type MarketplacePackageRow = {
   searchableText: string;
 };
 
-type BuiltInMarketplaceRow = {
+export type ApplicationCatalogHostRegistry = {
+  snapshot: HostMarketplacePluginsSnapshot;
+  put: (
+    marketplaceId: string,
+    resolved: DenOrgPluginResolved,
+    options?: { confirmExecutable?: boolean },
+  ) => Promise<JuggleWorkHostMarketplaceInstallation | null>;
+  migrate: (request: HostMarketplaceMigrationRequest) => Promise<JuggleWorkHostMarketplaceInstallation | null>;
+  delete: (pluginId: string) => Promise<void>;
+  refresh: () => Promise<HostMarketplacePluginsSnapshot>;
+};
+
+function hostMigrationBlockerMessage(blocker: JuggleWorkHostMarketplaceMigrationBlocker): string {
+  const key = blocker.code === "repair_required" || blocker.code === "host_marketplace_repair_required"
+    ? "marketplace.host_migration_blocker_repair"
+    : blocker.code === "modified_file"
+      ? "marketplace.host_migration_blocker_file"
+      : blocker.code === "modified_mcp"
+        ? "marketplace.host_migration_blocker_mcp"
+        : blocker.code === "unsafe_path" || blocker.code === "host_marketplace_unsafe_path"
+          ? "marketplace.host_migration_blocker_path"
+          : "marketplace.host_migration_blocker_generic";
+  return t(key, { resource: blocker.resource });
+}
+
+function hostMigrationWorkspaceLabel(plan: JuggleWorkHostMarketplaceMigrationPlan, workspaceId: string): string {
+  return plan.workspaces.find((workspace) => workspace.workspaceId === workspaceId)?.label
+    ?? t("marketplace.host_migration_host_label");
+}
+
+export function hostMarketplaceMigrationBlockersMessage(plan: JuggleWorkHostMarketplaceMigrationPlan): string {
+  const blockers = plan.blockers.map((blocker) =>
+    `- ${hostMigrationWorkspaceLabel(plan, blocker.workspaceId)}: ${hostMigrationBlockerMessage(blocker)}`);
+  return [t("marketplace.host_migration_blocked"), ...blockers].join("\n");
+}
+
+export function hostMarketplaceMigrationConfirmation(
+  pluginName: string,
+  plan: JuggleWorkHostMarketplaceMigrationPlan,
+): string {
+  const workspaces = plan.workspaces.map((workspace) => t("marketplace.host_migration_workspace", {
+    label: workspace.label,
+    count: workspace.resources.length,
+  }));
+  return [
+    t("marketplace.host_migration_confirm", { name: pluginName }),
+    "",
+    ...workspaces,
+    "",
+    t("marketplace.host_migration_warning"),
+  ].join("\n");
+}
+
+function hostMarketplaceMigrationFailureMessage(error: unknown): string {
+  if (error instanceof JuggleWorkServerError && (
+    error.code === "host_marketplace_migration_plan_stale"
+    || error.code === "host_marketplace_migration_workspace_set_mismatch"
+    || error.code === "workspace_plugin_migration_snapshot_stale"
+  )) {
+    return t("marketplace.host_migration_stale");
+  }
+  if (error instanceof JuggleWorkServerError && error.code === "host_marketplace_migration_failed") {
+    return t("marketplace.host_migration_failed");
+  }
+  return t("marketplace.host_migration_uncertain");
+}
+
+export type BuiltInMarketplaceRow = {
   source: "built-in";
   marketplaceId: "jugglework-builtins";
   marketplaceName: string;
   entry: McpDirectoryInfo;
   status: MarketplacePackageStatus;
   active: boolean;
+  setupReady: boolean;
+  unmetRequirements: string[];
+  searchableText: string;
+};
+
+export type HostRegistryMarketplaceRow = {
+  source: "host-registry";
+  marketplaceId: string;
+  marketplaceName: string;
+  installation: JuggleWorkHostMarketplaceInstallation;
+  status: "installed";
   searchableText: string;
 };
 
@@ -154,12 +260,12 @@ type OrgMcpMarketplaceRow = {
 type PersonalMarketplaceRow = {
   source: "personal";
   marketplaceId: "personal-plugins";
-  plugin: { id: string; name: string; description?: string | null };
+  plugin: { id: string; name: string; description?: string | null; spec?: string };
   status: "installed";
   searchableText: string;
 };
 
-type MarketplaceRow = MarketplacePackageRow | BuiltInMarketplaceRow | OrgMcpMarketplaceRow | PersonalMarketplaceRow;
+type MarketplaceRow = MarketplacePackageRow | HostRegistryMarketplaceRow | BuiltInMarketplaceRow | OrgMcpMarketplaceRow | PersonalMarketplaceRow;
 
 const ORGANIZATION_PLUGINS_COLLECTION_ID = "organization-plugins";
 
@@ -192,6 +298,16 @@ export function shouldIncludeOrgMcpConnectionMarketplaceRow(_input: { embedded?:
   return false;
 }
 
+export function marketplacePluginMayRequireHostInstallation(plugin: DenOrgPlugin): boolean {
+  const componentCounts = Object.entries(plugin.componentCounts).filter(([, count]) => count > 0);
+  if (componentCounts.some(([type]) => type === "custom")) return false;
+  if (componentCounts.some(([type]) => type === "hook" || type === "tool")) return true;
+  if (plugin.cloudReadiness?.components?.some((component) => component.delivery === "desktop")) return true;
+  if (plugin.cloudReadiness?.state === "desktop_only" || plugin.cloudReadiness?.state === "not_synced") return true;
+  const hasInstructional = componentCounts.some(([type]) => ["agent", "command", "context", "skill"].includes(type));
+  return hasInstructional && !plugin.cloudReadiness;
+}
+
 /**
  * 市场列表的搜索与筛选判据。
  * @param row 待判定行（只用到 marketplaceId / status / searchableText）
@@ -209,13 +325,16 @@ export function matchesMarketplaceFilters(
 }
 
 export type CloudMarketplacesViewProps = {
+  detailRequest?: { id: string; nonce: number };
+  onDetailOpenChange?: (open: boolean) => void;
   onRefreshLocal?: () => void | Promise<unknown>;
   personalError?: string | null;
   source?: CatalogSource;
   onSourceChange?: (source: CatalogSource) => void;
   organizationName?: string | null;
   /** Environment-installed inventory, including user-enabled built-ins and global local specs. */
-  personalPlugins?: Array<{ id: string; name: string; description?: string | null }>;
+  personalPlugins?: Array<{ id: string; name: string; description?: string | null; spec?: string }>;
+  onUninstallPersonalPlugin?: (plugin: PersonalMarketplaceRow["plugin"]) => void | Promise<void>;
   extensions: DenSettingsExtensionsStore;
   embedded?: boolean;
   onOpenAccount: () => void;
@@ -249,12 +368,13 @@ export type CloudMarketplacesViewProps = {
   /** Dedicated catalog surfaces can use a shorter product-facing title. */
   title?: string;
   description?: string;
+  /** Non-fatal host integration limitation; organization discovery remains available. */
+  errorHint?: string | null;
   /**
-   * Application-level catalog mode. Workspace materialization ledgers remain
-   * available to legacy management surfaces, but cannot define whether a
-   * plugin is installed for the account, organization, or execution host.
+   * Standalone catalog presentation. Discovery is application-level, while
+   * non-built-in Marketplace mutations target the selected workspace.
    */
-  applicationCatalog?: boolean;
+  applicationCatalog?: boolean | ApplicationCatalogHostRegistry;
   /** 当前工作区稳定标识，用于隔离详情选择与异步解析结果。 */
   workspaceKey: string;
 };
@@ -310,24 +430,65 @@ function marketplaceListStatus(lifecycle: MarketplacePluginLifecycle): Marketpla
   return "installed";
 }
 
-function marketplaceLifecycleLabel(lifecycle: MarketplacePluginLifecycle): string {
-  return t(`marketplace.lifecycle_${lifecycle.state}`);
+function hostMarketplaceLifecycle(input: {
+  lifecycle: MarketplacePluginLifecycle;
+  plugin: DenOrgPlugin;
+  installation: JuggleWorkHostMarketplaceInstallation | null;
+  resolved: DenOrgPluginResolved | null;
+  operation: "put" | "delete" | null;
+}): MarketplacePluginLifecycle {
+  const { installation, lifecycle, operation, plugin, resolved } = input;
+  const components = resolvePluginMcpComponents(plugin, resolved);
+  const availability = resolveMarketplacePluginComponentAvailability(components, null).map((component) => (
+    installation && component.delivery === "desktop" ? { ...component, state: "current" as const } : component
+  ));
+  const delivery = resolveMarketplacePluginDelivery(
+    components,
+    resolved?.memberships.flatMap((membership) => membership.configObject ? [membership.configObject.id] : []) ?? null,
+    plugin.memberCount,
+  );
+  const requiresHost = resolved
+    ? hostMarketplacePackageRequiresInstallation(plugin.marketplaces?.[0]?.id ?? ORGANIZATION_PLUGINS_COLLECTION_ID, resolved)
+    : marketplacePluginMayRequireHostInstallation(plugin);
+  const state: MarketplacePluginLifecycle["state"] = operation === "delete"
+    ? "removing"
+    : operation === "put"
+      ? "installing"
+      : installation?.status === "repair_required"
+        ? "repair_required"
+        : installation
+          ? plugin.updatedAt && installation.packageRevision !== plugin.updatedAt ? "update_available" : "current"
+          : requiresHost ? "not_installed" : lifecycle.state;
+  return {
+    ...lifecycle,
+    state,
+    delivery,
+    components: availability,
+    hasLocalLedger: Boolean(installation),
+    error: installation?.repair?.cause ?? lifecycle.error,
+    failedOperation: installation?.status === "repair_required" ? "install" : lifecycle.failedOperation,
+    ...resolveMarketplacePluginActions(state, { hasLocalLedger: Boolean(installation) }),
+  };
 }
 
 function marketplaceRowKey(row: MarketplaceRow): string {
   if (row.source === "personal") return `personal:${row.plugin.id}`;
   if (row.source === "cloud") return `cloud:${row.marketplaceId}:${row.plugin.id}`;
+  if (row.source === "host-registry") return `cloud:${row.marketplaceId}:${row.installation.pluginId}`;
   if (row.source === "built-in") return `built-in:${row.entry.id ?? row.entry.serverName ?? row.entry.name}`;
   return `org-mcp:${row.connection.id}`;
 }
 
 export function CloudMarketplacesView({
+  detailRequest,
+  onDetailOpenChange,
   onRefreshLocal,
   personalError,
   source,
   onSourceChange,
   organizationName,
   personalPlugins = [],
+  onUninstallPersonalPlugin,
   extensions,
   embedded = false,
   onOpenAccount,
@@ -354,12 +515,14 @@ export function CloudMarketplacesView({
   plainCards = false,
   title,
   description,
+  errorHint = null,
   applicationCatalog = false,
   workspaceKey,
 }: CloudMarketplacesViewProps) {
   const { activeOrganization: activeOrg, authToken, client, isSignedIn, user } = useCloudSession();
   const [busy, setBusy] = React.useState(false);
   const [actionId, setActionId] = React.useState<string | null>(null);
+  const [hostAction, setHostAction] = React.useState<"put" | "delete" | null>(null);
   const [actionError, setActionError] = React.useState<string | null>(null);
   const [internalSearch, setInternalSearch] = React.useState("");
   // TIPS: searchValue 受控时由宿主（插件弹窗标题栏）提供搜索词，内置搜索框不再渲染。
@@ -375,6 +538,14 @@ export function CloudMarketplacesView({
     organizationId: string;
     workspaceKey: string;
   } | null>(null);
+  const handledDetailRequest = React.useRef<{ id: string; nonce: number } | null>(null);
+  const applicationCatalogMode = Boolean(applicationCatalog);
+  const hostRegistry = typeof applicationCatalog === "object" ? applicationCatalog : null;
+  const refreshHostRegistry = hostRegistry?.refresh;
+  const putHostRegistry = hostRegistry?.put;
+  const migrateHostRegistry = hostRegistry?.migrate;
+  const deleteHostRegistry = hostRegistry?.delete;
+  const inlineDetails = applicationCatalogMode && !embedded;
   const [resolvedPlugins, setResolvedPlugins] = React.useState<Record<string, DenOrgPluginResolved>>({});
   const [detailLoadingKey, setDetailLoadingKey] = React.useState<string | null>(null);
   const [detailError, setDetailError] = React.useState<{ key: string; message: string } | null>(null);
@@ -392,7 +563,7 @@ export function CloudMarketplacesView({
     setBusy(false);
     setActionError(null);
     return () => { refreshRequestRef.current += 1; };
-  }, [source, activeOrgId, authToken, isSignedIn, workspaceKey, applicationCatalog]);
+  }, [source, activeOrgId, authToken, isSignedIn, workspaceKey, applicationCatalogMode]);
 
   // Listen for "open marketplace plugin" requests from notifications.
   React.useEffect(() => {
@@ -413,21 +584,27 @@ export function CloudMarketplacesView({
   }, []);
 
   const plugins = extensions.cloudOrgPlugins();
-  // TIPS: 应用级 Plugins 目录不能把「当前选中工作区的本地副本」冒充成
-  // 账号/组织级安装。旧账本仍留给普通 Extensions/Advanced 兼容管理面。
-  const workspaceImportedPlugins = applicationCatalog ? {} : extensions.importedCloudPlugins();
-  const importedPlugins = applicationCatalog ? {} : workspaceImportedPlugins;
-  const pendingChanges = applicationCatalog ? {} : extensions.pendingCloudPluginChanges();
-  const marketplacePluginOperations = applicationCatalog ? {} : extensions.marketplacePluginOperations();
+  const workspaceImportedPlugins = extensions.importedCloudPlugins();
+  // Application catalog state must not be inferred from a selected workspace.
+  const importedPlugins = applicationCatalogMode ? {} : workspaceImportedPlugins;
+  const pendingChanges = applicationCatalogMode ? {} : extensions.pendingCloudPluginChanges();
+  const marketplacePluginOperations = applicationCatalogMode ? {} : extensions.marketplacePluginOperations();
   const marketplacePluginAccess = extensions.marketplacePluginAccess();
-  const marketplacePluginAccessHint = applicationCatalog ? null : workspacePluginAccessMessage(marketplacePluginAccess);
+  const marketplacePluginAccessHint = applicationCatalogMode ? null : workspacePluginAccessMessage(marketplacePluginAccess);
   const extensionItemsByBuiltInId = React.useMemo(() => new Map(
     extensionItems.flatMap((item) => item.builtInEntry ? [[item.builtInEntry.id ?? item.builtInEntry.serverName ?? item.builtInEntry.name, item] as const] : []),
   ), [extensionItems]);
   const extensionItemsByPluginId = React.useMemo(() => new Map(
     extensionItems.flatMap((item) => item.plugin ? [[item.plugin.id, item] as const] : []),
   ), [extensionItems]);
-  const rowContextKey = `${source ?? "legacy"}:${isSignedIn}:${activeOrgId}:${applicationCatalog ? "application-catalog" : workspaceKey}`;
+  const hostInstallations = React.useMemo(() => new Map(
+    hostRegistry?.snapshot.registry?.installations.map((installation) => [installation.pluginId, installation]) ?? [],
+  ), [hostRegistry?.snapshot.registry]);
+  const hostCanWrite = Boolean(
+    hostRegistry?.snapshot.registry?.active
+    && hostRegistry.snapshot.writable,
+  );
+  const rowContextKey = `${source ?? "legacy"}:${isSignedIn}:${activeOrgId}:${applicationCatalogMode ? "application-catalog" : workspaceKey}`;
   const lastRowsRef = React.useRef<{ contextKey: string; rows: MarketplaceRow[] }>({ contextKey: rowContextKey, rows: [] });
   const cloudRows = React.useMemo<MarketplacePackageRow[]>(() => {
     if (source && (!showsOrganization || !canShowRows)) return [];
@@ -438,6 +615,7 @@ export function CloudMarketplacesView({
       const marketplaceId = collection?.id ?? ORGANIZATION_PLUGINS_COLLECTION_ID;
       const marketplaceName = collection?.name ?? t("marketplace.organization_plugins");
       const imported = importedPlugins[plugin.id] ?? null;
+      const hostInstallation = hostInstallations.get(plugin.id) ?? null;
       const composition = pluginComposition(plugin);
       const counts = pluginCounts(plugin);
       // TIPS: 详情解析完成后列表也立即复用同一发布版本的数据，避免卡片与弹窗投递语义不一致。
@@ -453,11 +631,16 @@ export function CloudMarketplacesView({
         operation: operation?.state ?? null,
         operationError: operation?.message ?? null,
         failedOperation: operation?.operation ?? null,
-        catalogMode: applicationCatalog,
+        catalogMode: applicationCatalogMode,
+        requireInstallRecord: false,
       });
-      const status: MarketplacePackageStatus = applicationCatalog
-        ? (isCloudBuiltInPlugin(plugin) ? "installed" : marketplaceListStatus(lifecycle))
-        : item?.installState ?? (isCloudBuiltInPlugin(plugin) ? "installed" : marketplaceListStatus(lifecycle));
+      const status: MarketplacePackageStatus = isCloudBuiltInPlugin(plugin)
+        ? "installed"
+        : applicationCatalogMode
+          ? hostInstallation
+            ? plugin.updatedAt && hostInstallation.packageRevision !== plugin.updatedAt ? "update_available" : "installed"
+            : "available"
+          : marketplaceListStatus(lifecycle);
       return [{
         source: "cloud",
         marketplaceId,
@@ -465,6 +648,7 @@ export function CloudMarketplacesView({
         sourceMarketplaceId: collection?.id ?? null,
         plugin,
         imported,
+        hostInstallation,
         item: item ?? null,
         status,
         counts,
@@ -478,11 +662,34 @@ export function CloudMarketplacesView({
           marketplaceName,
           pluginManifestSearchText(plugin),
           ...counts,
-          ...(applicationCatalog ? [] : imported?.files.map((file) => `${file.title} ${file.objectType} ${file.path}`) ?? []),
+          ...(imported?.files.map((file) => `${file.title} ${file.objectType} ${file.path}`) ?? []),
         ].join(" ").toLowerCase(),
       }];
     });
-  }, [activeOrgId, applicationCatalog, canShowRows, extensionItemsByPluginId, importedPlugins, includeCloudMarketplaceRows, marketplacePluginOperations, pendingChanges, plugins, resolvedPlugins, showsOrganization, skillsOnly, source]);
+  }, [activeOrgId, applicationCatalogMode, canShowRows, extensionItemsByPluginId, hostInstallations, importedPlugins, includeCloudMarketplaceRows, marketplacePluginOperations, pendingChanges, plugins, resolvedPlugins, showsOrganization, skillsOnly, source]);
+
+  const hostRegistryRows = React.useMemo<HostRegistryMarketplaceRow[]>(() => {
+    if (!applicationCatalogMode || !includeCloudMarketplaceRows || !canShowRows || skillsOnly) return [];
+    const catalogPluginIds = new Set(plugins.map((plugin) => plugin.id));
+    return [...hostInstallations.values()].flatMap((installation) => {
+      if (catalogPluginIds.has(installation.pluginId)) return [];
+      return [{
+        source: "host-registry",
+        marketplaceId: installation.marketplaceId || ORGANIZATION_PLUGINS_COLLECTION_ID,
+        marketplaceName: t("marketplace.organization_plugins"),
+        installation,
+        status: "installed",
+        searchableText: [
+          installation.name,
+          installation.description ?? "",
+          installation.pluginId,
+          installation.packageRevision,
+          installation.status,
+          ...installation.resources.map((resource) => `${resource.kind} ${resource.componentId} ${resource.target}`),
+        ].join(" ").toLowerCase(),
+      }];
+    });
+  }, [applicationCatalogMode, canShowRows, hostInstallations, includeCloudMarketplaceRows, plugins, skillsOnly]);
 
   const builtInRows = React.useMemo<BuiltInMarketplaceRow[]>(() => {
     return builtInEntries.map((entry) => {
@@ -490,14 +697,32 @@ export function CloudMarketplacesView({
       const enablement = entry.extensionManifest?.enablement && enablementContext
         ? evaluateEnablement(entry.extensionManifest.enablement, enablementContext)
         : null;
-      const active = item?.active ?? enablement?.active ?? isBuiltInConnected?.(entry) ?? false;
+      const runtimeReady = isBuiltInConnected?.(entry) ?? false;
+      const nonToggleConditions = entry.extensionManifest?.enablement?.filter((condition) => condition.type !== "toggle-enabled") ?? [];
+      const nonToggleResults = enablement?.results.filter((result) => result.condition.type !== "toggle-enabled") ?? [];
+      const hasToggleCondition = entry.extensionManifest?.enablement?.some((condition) => condition.type === "toggle-enabled") === true;
+      const setupReady = item?.setupReady ?? (nonToggleConditions.length > 0
+        ? nonToggleResults.length === nonToggleConditions.length && nonToggleResults.every((result) => result.met)
+        : hasToggleCondition ? true : runtimeReady);
+      const mcpLifecycleManaged = entry.extensionManifest?.resources.some((resource) => resource.type === "mcp") === true &&
+        entry.extensionManifest.enablement?.some((condition) => condition.type === "toggle-enabled") !== true;
+      const catalogEnabled = mcpLifecycleManaged ? true : isJuggleWorkExtensionEnabled(entry);
+      const active = item?.active ?? (catalogEnabled && setupReady);
+      const unmetRequirements = nonToggleConditions.flatMap((condition) => {
+        const result = nonToggleResults.find((candidate) => candidate.condition.type === condition.type && candidate.condition.ref === condition.ref);
+        return result?.met ? [] : [condition.label];
+      });
       return {
         source: "built-in",
         marketplaceId: "jugglework-builtins",
         marketplaceName: "JuggleWork Built-ins",
         entry,
         active,
-        status: item?.installState ?? (active ? "installed" : "available"),
+        setupReady,
+        unmetRequirements,
+        // Public built-ins ship with JuggleWork. Enablement is runtime state,
+        // not installation state, so disabled built-ins remain installed.
+        status: "installed",
         searchableText: [
           entry.name,
           entry.description,
@@ -540,7 +765,7 @@ export function CloudMarketplacesView({
   }));
 
   const rows = selectMarketplaceRowsBySource<MarketplaceRow>({
-    source, isSignedIn, activeOrgId, builtInRows, cloudRows, personalRows, orgMcpRows, skillsOnly,
+    source, isSignedIn, activeOrgId, builtInRows, cloudRows: [...cloudRows, ...hostRegistryRows], personalRows, orgMcpRows, skillsOnly,
   });
 
   React.useEffect(() => {
@@ -566,15 +791,42 @@ export function CloudMarketplacesView({
     }
   }, [activeOrgId, detailRow, detailSelection, workspaceKey]);
 
+  React.useEffect(() => {
+    if (!inlineDetails || !detailRequest || busy) return;
+    if (handledDetailRequest.current?.id === detailRequest.id && handledDetailRequest.current.nonce === detailRequest.nonce) return;
+    // Requests use sidebar IDs, not list row keys, and ignore search/status filters.
+    const row = rows.find((row) => {
+      if (row.source === "cloud") return detailRequest.id === `cloud-plugin:${row.plugin.id}`;
+      if (row.source === "host-registry") return detailRequest.id === `cloud-plugin:${row.installation.pluginId}`;
+      if (row.source === "personal") return detailRequest.id === row.plugin.id;
+      if (row.source === "built-in") {
+        const entryId = row.entry.id ?? row.entry.serverName ?? row.entry.name;
+        return detailRequest.id === (extensionItemsByBuiltInId.get(entryId)?.id ?? `builtin:${entryId}`);
+      }
+      return detailRequest.id === row.item.id;
+    });
+    // Do not consume requests before their source inventory has arrived.
+    if (!row) return;
+    handledDetailRequest.current = detailRequest;
+    setDetailSelection({ rowKey: marketplaceRowKey(row), organizationId: activeOrgId, workspaceKey });
+  }, [activeOrgId, busy, detailRequest, extensionItemsByBuiltInId, inlineDetails, rows, workspaceKey]);
+
+  const detailOpen = inlineDetails && Boolean(detailRow);
+  const notifyDetailOpenChange = React.useEffectEvent((open: boolean) => onDetailOpenChange?.(open));
+  React.useEffect(() => {
+    notifyDetailOpenChange(detailOpen);
+  }, [detailOpen]);
+  React.useEffect(() => () => notifyDetailOpenChange(false), []);
+
   const marketplaceOptions = React.useMemo(
     () => canShowRows ? [
       ...(builtInRows.length > 0 ? [{ id: "jugglework-builtins", name: t("marketplace.builtins_name") }] : []),
       ...(includeCloudMarketplaceRows ? [...new Map(
-        cloudRows.map((row) => [row.marketplaceId, { id: row.marketplaceId, name: row.marketplaceName }] as const),
+        [...cloudRows, ...hostRegistryRows].map((row) => [row.marketplaceId, { id: row.marketplaceId, name: row.marketplaceName }] as const),
       ).values()] : []),
       ...(orgMcpRows.length > 0 ? [{ id: "org-mcp-connections", name: t("marketplace.org_mcp_connections") }] : []),
     ] : [],
-    [builtInRows.length, canShowRows, cloudRows, includeCloudMarketplaceRows, orgMcpRows.length],
+    [builtInRows.length, canShowRows, cloudRows, hostRegistryRows, includeCloudMarketplaceRows, orgMcpRows.length],
   );
 
   const visibleRows = React.useMemo(
@@ -597,7 +849,9 @@ export function CloudMarketplacesView({
 
       try {
         if (!source) session.syncCurrentDenSettings();
-        await extensions.refreshCloudOrgMarketplaces({ force: true, refreshImported: !applicationCatalog });
+        await extensions.refreshCloudOrgMarketplaces({ force: true, refreshImported: true });
+        if (!isCurrent()) return;
+        if (refreshHostRegistry) await refreshHostRegistry();
         if (!isCurrent()) return;
         await refreshOrgMcpConnections?.();
         if (isCurrent() && !quiet) {
@@ -621,12 +875,12 @@ export function CloudMarketplacesView({
       source,
       showsOrganization,
       canShowRows,
-      applicationCatalog,
       activeOrg,
       activeOrgId,
       authToken,
       session.syncCurrentDenSettings,
       refreshOrgMcpConnections,
+      refreshHostRegistry,
     ],
   );
 
@@ -718,11 +972,79 @@ export function CloudMarketplacesView({
     [actionId, extensions],
   );
 
+  const putHostPlugin = React.useCallback(async (marketplaceId: string | null, plugin: DenOrgPlugin) => {
+    if (!putHostRegistry || actionId || !activeOrgId) return;
+    setActionId(plugin.id);
+    setHostAction("put");
+    setActionError(null);
+    try {
+      const resolved = await client.getOrgPluginResolved(activeOrgId, plugin);
+      const targetMarketplaceId = marketplaceId ?? ORGANIZATION_PLUGINS_COLLECTION_ID;
+      if (!hostMarketplacePackageRequiresInstallation(targetMarketplaceId, resolved)) return;
+      const confirmExecutable = hostMarketplacePackageRequiresExecutableConfirmation(targetMarketplaceId, resolved);
+      if (confirmExecutable && !window.confirm(t("marketplace.host_executable_confirm", { name: resolved.plugin.name }))) return;
+      try {
+        await putHostRegistry(targetMarketplaceId, resolved, { confirmExecutable });
+      } catch (error) {
+        if (!(error instanceof HostMarketplaceMigrationRequiredError)) throw error;
+        if (!error.request.plan.migratable) {
+          setActionError(hostMarketplaceMigrationBlockersMessage(error.request.plan));
+          return;
+        }
+        if (!migrateHostRegistry || !window.confirm(hostMarketplaceMigrationConfirmation(resolved.plugin.name, error.request.plan))) return;
+        try {
+          await migrateHostRegistry(error.request);
+        } catch (migrationError) {
+          setActionError(hostMarketplaceMigrationFailureMessage(migrationError));
+          return;
+        }
+        setResolvedPlugins((current) => ({
+          ...current,
+          [marketplaceResolvedCacheKey(activeOrgId, resolved.plugin)]: resolved,
+        }));
+        toast.success(t("marketplace.host_migration_success", { name: resolved.plugin.name }));
+        return;
+      }
+      setResolvedPlugins((current) => ({
+        ...current,
+        [marketplaceResolvedCacheKey(activeOrgId, resolved.plugin)]: resolved,
+      }));
+      toast.success(t("marketplace.host_install_success", { name: resolved.plugin.name }));
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : t("marketplace.host_install_failed", { name: plugin.name }));
+    } finally {
+      setHostAction(null);
+      setActionId(null);
+    }
+  }, [actionId, activeOrgId, client, migrateHostRegistry, putHostRegistry]);
+
+  const deleteHostPlugin = React.useCallback(async (pluginId: string, pluginName: string) => {
+    if (!deleteHostRegistry || actionId) return;
+    const resourceCount = hostInstallations.get(pluginId)?.resources.length ?? 0;
+    if (!window.confirm(t("marketplace.host_uninstall_confirm", { name: pluginName, count: resourceCount }))) return;
+    setActionId(pluginId);
+    setHostAction("delete");
+    setActionError(null);
+    try {
+      await deleteHostRegistry(pluginId);
+      setDetailSelection(null);
+      toast.success(t("marketplace.host_remove_success", { name: pluginName }));
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : t("marketplace.host_remove_failed", { name: pluginName }));
+    } finally {
+      setHostAction(null);
+      setActionId(null);
+    }
+  }, [actionId, deleteHostRegistry, hostInstallations]);
+
   const removedUpstreamPlugins = React.useMemo(
-    () => applicationCatalog
+    // Removed-upstream cleanup belongs to the legacy workspace Extensions
+    // surface. The standalone application catalog must not leak the selected
+    // workspace's imported-plugin ledger or offer workspace removal actions.
+    () => applicationCatalogMode
       ? []
       : Object.values(workspaceImportedPlugins).filter((plugin) => pendingChanges[plugin.pluginId] === "removed"),
-    [applicationCatalog, pendingChanges, workspaceImportedPlugins],
+    [applicationCatalogMode, pendingChanges, workspaceImportedPlugins],
   );
 
   const content = (
@@ -774,12 +1096,16 @@ export function CloudMarketplacesView({
         <SettingsNotice tone="error">{actionError ?? extensions.cloudOrgMarketplacesStatus()}</SettingsNotice>
       ) : null}
 
-      {showsOrganization && marketplacePluginAccessHint ? (
-        <SettingsNotice>{marketplacePluginAccessHint}</SettingsNotice>
+      {showsOrganization && errorHint ? (
+        <SettingsNotice>{errorHint}</SettingsNotice>
       ) : null}
 
-      {!source && applicationCatalog ? (
-        <SettingsNotice>{t("marketplace.application_catalog_scope_notice")}</SettingsNotice>
+      {showsOrganization && applicationCatalogMode && hostRegistry?.snapshot.error && !actionError && !errorHint ? (
+        <SettingsNotice tone="error">{hostRegistry.snapshot.error.message}</SettingsNotice>
+      ) : null}
+
+      {showsOrganization && marketplacePluginAccessHint ? (
+        <SettingsNotice>{marketplacePluginAccessHint}</SettingsNotice>
       ) : null}
 
       {showsOrganization && busy ? (
@@ -877,10 +1203,49 @@ export function CloudMarketplacesView({
           {visibleRows.map((row) => {
             if (row.source === "personal") {
               return (
-                <div key={marketplaceRowKey(row)} className="min-w-0 rounded-xl border border-dls-border bg-dls-surface p-4">
-                  <div className="truncate text-sm font-medium text-dls-text">{row.plugin.name}</div>
-                  {row.plugin.description ? <p className="mt-1 line-clamp-2 text-sm text-dls-secondary">{row.plugin.description}</p> : null}
-                  <span className="mt-2 block text-xs text-dls-secondary">{t("marketplace.filter_installed")}</span>
+                <div key={marketplaceRowKey(row)} className="relative min-w-0">
+                  <ExtensionCard
+                    name={row.plugin.name}
+                    description={row.plugin.description ?? ""}
+                    kind="plugin"
+                    plain={plainCards}
+                    onClick={() => setDetailSelection({ rowKey: marketplaceRowKey(row), organizationId: activeOrgId, workspaceKey })}
+                  />
+                  <PluginCardAction
+                    installed
+                    busy={actionId === row.plugin.id}
+                    canUninstall={Boolean(onUninstallPersonalPlugin && row.plugin.spec)}
+                    onUninstall={() => {
+                      if (!onUninstallPersonalPlugin || actionId) return;
+                      setActionId(row.plugin.id);
+                      Promise.resolve(onUninstallPersonalPlugin(row.plugin))
+                        .catch((error) => setActionError(error instanceof Error ? error.message : t("marketplace.uninstall_failed")))
+                        .finally(() => setActionId(null));
+                    }}
+                  />
+                </div>
+              );
+            }
+            if (row.source === "host-registry") {
+              const installation = row.installation;
+              return (
+                <div key={marketplaceRowKey(row)} className="relative min-w-0">
+                  <ExtensionCard
+                    name={installation.name}
+                    description={installation.description || t("marketplace.no_description")}
+                    kind="extension"
+                    connected={installation.status === "installed"}
+                    connectedLabel={t(installation.status === "installed" ? "marketplace.lifecycle_current" : "marketplace.lifecycle_repair_required")}
+                    statusBadge="icon-only"
+                    plain={plainCards}
+                    onClick={() => setDetailSelection({ rowKey: marketplaceRowKey(row), organizationId: activeOrgId, workspaceKey })}
+                  />
+                  <PluginCardAction
+                    installed
+                    busy={actionId === installation.pluginId}
+                    disabled={!hostCanWrite}
+                    onUninstall={() => void deleteHostPlugin(installation.pluginId, installation.name)}
+                  />
                 </div>
               );
             }
@@ -903,6 +1268,14 @@ export function CloudMarketplacesView({
                 builtInConnectingName={builtInConnectingName}
                 highlighted={isHighlighted}
                 plain={plainCards}
+                applicationCatalog={applicationCatalogMode}
+                hostCanWrite={hostCanWrite}
+                resolved={row.source === "cloud" ? resolveMarketplaceResolvedCache(resolvedPlugins, activeOrgId, row.plugin).current : null}
+                hostOperation={row.source === "cloud" && actionId === row.plugin.id ? hostAction : null}
+                canMutate={applicationCatalogMode ? hostCanWrite : marketplacePluginAccess.allowed}
+                onInstallPlugin={applicationCatalogMode ? putHostPlugin : installPlugin}
+                onRemovePlugin={applicationCatalogMode ? deleteHostPlugin : removePlugin}
+                onSetBuiltInEnabled={setBuiltInEnabled}
               />
             );
           })}
@@ -910,56 +1283,76 @@ export function CloudMarketplacesView({
       ) : null}
 
       </div>
-      {detailRow?.source === "cloud" ? (
-        (() => {
-          const cacheKey = marketplaceResolvedCacheKey(activeOrgId, detailRow.plugin);
-          const resolvedCache = resolveMarketplaceResolvedCache(resolvedPlugins, activeOrgId, detailRow.plugin);
-          const currentResolveError = detailError?.key === cacheKey ? detailError.message : null;
-          const resolving = detailLoadingKey === cacheKey || (!resolvedCache.current && !currentResolveError);
-          const resolutionState = resolveMarketplaceDetailResolution({
-            hasCurrent: Boolean(resolvedCache.current),
-            hasLastKnownGood: Boolean(resolvedCache.lastKnownGood),
-            resolving,
-            hasError: Boolean(currentResolveError),
-          });
-          const operation = marketplacePluginOperations[detailRow.plugin.id];
-          return (
-            <MarketplacePackageDetailModal
-              row={detailRow}
-              lifecycle={resolveMarketplacePluginLifecycle({
-                plugin: detailRow.plugin,
-                imported: detailRow.imported,
-                pendingChange: pendingChanges[detailRow.plugin.id],
-                components: resolvePluginMcpComponents(
-                  detailRow.plugin,
-                  resolvedCache.current,
-                ),
-                resolvedConfigObjectIds: resolvedCache.current
-                  ?.memberships.flatMap((membership) => membership.configObject ? [membership.configObject.id] : []) ?? null,
-                operation: operation?.state ?? null,
-                operationError: operation?.message ?? null,
-                failedOperation: operation?.operation ?? null,
-                catalogMode: applicationCatalog,
-              })}
-              resolved={resolvedCache.lastKnownGood}
-              resolutionState={resolutionState}
-              resolveError={currentResolveError}
-              orgMcpConnections={orgMcpConnections}
-              orgMcpConnectingId={orgMcpConnectingId}
-              onClose={() => setDetailSelection(null)}
-              onOpenAccount={onOpenAccount}
-              onConnectOrgMcp={onConnectOrgMcp}
-              onRemovePlugin={removePlugin}
-              onInstallPlugin={installPlugin}
-              onRetryResolve={() => retryDetailResolution(detailRow.plugin)}
-              accessHint={marketplacePluginAccessHint}
-              canMutate={!applicationCatalog && marketplacePluginAccess.allowed}
-              applicationCatalog={applicationCatalog}
-            />
-          );
-        })()
+    </SettingsSection>
+  );
+
+  const cloudDetailContext = detailRow?.source === "cloud" ? (() => {
+    const cacheKey = marketplaceResolvedCacheKey(activeOrgId, detailRow.plugin);
+    const resolvedCache = resolveMarketplaceResolvedCache(resolvedPlugins, activeOrgId, detailRow.plugin);
+    const currentResolveError = detailError?.key === cacheKey ? detailError.message : null;
+    const resolving = detailLoadingKey === cacheKey || (!resolvedCache.current && !currentResolveError);
+    const resolutionState = resolveMarketplaceDetailResolution({
+      hasCurrent: Boolean(resolvedCache.current),
+      hasLastKnownGood: Boolean(resolvedCache.lastKnownGood),
+      resolving,
+      hasError: Boolean(currentResolveError),
+    });
+    const operation = marketplacePluginOperations[detailRow.plugin.id];
+    const lifecycle = resolveMarketplacePluginLifecycle({
+      plugin: detailRow.plugin,
+      imported: detailRow.imported,
+      pendingChange: pendingChanges[detailRow.plugin.id],
+      components: resolvePluginMcpComponents(detailRow.plugin, resolvedCache.current),
+      resolvedConfigObjectIds: resolvedCache.current
+        ?.memberships.flatMap((membership) => membership.configObject ? [membership.configObject.id] : []) ?? null,
+      operation: operation?.state ?? null,
+      operationError: operation?.message ?? null,
+      failedOperation: operation?.operation ?? null,
+      catalogMode: applicationCatalogMode,
+      requireInstallRecord: false,
+    });
+    return {
+      currentResolveError,
+      lifecycle: applicationCatalogMode
+        ? hostMarketplaceLifecycle({
+            lifecycle,
+            plugin: detailRow.plugin,
+            installation: detailRow.hostInstallation,
+            resolved: resolvedCache.current,
+            operation: actionId === detailRow.plugin.id ? hostAction : null,
+          })
+        : lifecycle,
+      resolutionState,
+      resolvedCache,
+    };
+  })() : null;
+
+  const detailContent = detailRow?.source === "cloud" && cloudDetailContext ? (
+        <MarketplacePackageDetailModal
+          presentation={inlineDetails ? "page" : "modal"}
+          row={detailRow}
+          lifecycle={cloudDetailContext.lifecycle}
+          resolved={cloudDetailContext.resolvedCache.lastKnownGood}
+          resolutionState={cloudDetailContext.resolutionState}
+          resolveError={cloudDetailContext.currentResolveError}
+          orgMcpConnections={orgMcpConnections}
+          orgMcpConnectingId={orgMcpConnectingId}
+          onClose={() => setDetailSelection(null)}
+          onOpenAccount={onOpenAccount}
+          onConnectOrgMcp={onConnectOrgMcp}
+          onRemovePlugin={applicationCatalogMode ? deleteHostPlugin : removePlugin}
+          onInstallPlugin={applicationCatalogMode ? putHostPlugin : installPlugin}
+          onRetryResolve={() => retryDetailResolution(detailRow.plugin)}
+          accessHint={errorHint ?? marketplacePluginAccessHint}
+          canMutate={applicationCatalogMode ? hostCanWrite : marketplacePluginAccess.allowed}
+          applicationCatalog={applicationCatalogMode}
+          hostInstallation={detailRow.hostInstallation}
+        />
+      ) : detailRow?.source === "host-registry" ? (
+        <HostRegistryMarketplaceDetail installation={detailRow.installation} />
       ) : detailRow?.source === "built-in" ? (
         <BuiltInMarketplaceDetailModal
+          presentation={inlineDetails ? "page" : "modal"}
           row={detailRow}
           disabled={builtInExtensionsDisabled}
           connecting={builtInConnectingName === detailRow.entry.name}
@@ -976,16 +1369,161 @@ export function CloudMarketplacesView({
           onConnect={onConnectOrgMcp}
           onDisconnect={onDisconnectOrgMcp}
         />
-      ) : null}
-    </SettingsSection>
-  );
+      ) : detailRow?.source === "personal" ? (
+        <ExtensionDetailModal
+          open
+          presentation={inlineDetails ? "page" : "modal"}
+          onClose={() => setDetailSelection(null)}
+          name={detailRow.plugin.name}
+          description={detailRow.plugin.description || t("marketplace.no_description")}
+          kind="plugin"
+          connected
+          showEnablementCard={false}
+          configSlot={(
+            <div className="space-y-1 text-sm">
+              <div className="font-medium">{t("marketplace.technical_plugin_id")}</div>
+              <div className="break-all font-mono text-xs text-dls-secondary">{detailRow.plugin.id}</div>
+            </div>
+          )}
+        />
+      ) : null;
+
+  const detailActions = inlineDetails && detailRow?.source === "built-in" && setBuiltInEnabled && canSetJuggleWorkExtensionEnabled(detailRow.entry) ? (
+    <Button
+      variant={detailRow.active ? "destructive" : "default"}
+      size="sm"
+      disabled={builtInExtensionsDisabled || builtInConnectingName === detailRow.entry.name}
+      onClick={() => requestBuiltInEnabled(detailRow, !detailRow.active, setBuiltInEnabled)}
+    >
+      {builtInConnectingName === detailRow.entry.name ? <Loader2 data-icon="inline-start" className="animate-spin" /> : null}
+      {builtInConnectingName === detailRow.entry.name
+        ? t("marketplace.working")
+        : t(detailRow.active ? "marketplace.disable_plugin" : "marketplace.enable_plugin")}
+    </Button>
+  ) : inlineDetails && detailRow?.source === "host-registry" ? (
+    <Button
+      variant="destructive"
+      size="sm"
+      disabled={Boolean(actionId) || !hostCanWrite}
+      onClick={() => void deleteHostPlugin(detailRow.installation.pluginId, detailRow.installation.name)}
+    >
+      {actionId === detailRow.installation.pluginId ? <Loader2 data-icon="inline-start" className="animate-spin" /> : null}
+      {actionId === detailRow.installation.pluginId ? t("marketplace.lifecycle_removing") : t("marketplace.uninstall_plugin")}
+    </Button>
+  ) : inlineDetails && detailRow?.source === "cloud" && cloudDetailContext && (applicationCatalogMode ? detailRow.hostInstallation : detailRow.imported) && !isCloudBuiltInPlugin(detailRow.plugin) ? (
+    <Button
+      variant="destructive"
+      size="sm"
+      disabled={Boolean(actionId) || !(applicationCatalogMode ? hostCanWrite : marketplacePluginAccess.allowed) || cloudDetailContext.resolutionState !== "current"}
+      onClick={() => void (applicationCatalogMode ? deleteHostPlugin : removePlugin)(detailRow.plugin.id, detailRow.plugin.name)}
+    >
+      {actionId === detailRow.plugin.id ? <Loader2 data-icon="inline-start" className="animate-spin" /> : null}
+      {actionId === detailRow.plugin.id ? t("marketplace.lifecycle_removing") : t("marketplace.uninstall_plugin")}
+    </Button>
+  ) : inlineDetails && detailRow?.source === "cloud" && cloudDetailContext && applicationCatalogMode && !detailRow.hostInstallation && hostCanWrite && cloudDetailContext.resolvedCache.current && hostMarketplacePackageRequiresInstallation(detailRow.sourceMarketplaceId ?? ORGANIZATION_PLUGINS_COLLECTION_ID, cloudDetailContext.resolvedCache.current) ? (
+    <Button
+      size="sm"
+      disabled={Boolean(actionId) || cloudDetailContext.resolutionState !== "current"}
+      onClick={() => void putHostPlugin(detailRow.sourceMarketplaceId, detailRow.plugin)}
+    >
+      {actionId === detailRow.plugin.id ? <Loader2 data-icon="inline-start" className="animate-spin" /> : null}
+      {actionId === detailRow.plugin.id ? t("marketplace.lifecycle_installing") : t("marketplace.install_plugin")}
+    </Button>
+  ) : inlineDetails && detailRow?.source === "personal" && detailRow.plugin.spec && onUninstallPersonalPlugin ? (
+    <Button
+      variant="destructive"
+      size="sm"
+      disabled={Boolean(actionId)}
+      onClick={() => {
+        if (actionId) return;
+        setActionId(detailRow.plugin.id);
+        setActionError(null);
+        Promise.resolve(onUninstallPersonalPlugin(detailRow.plugin))
+          .then(() => setDetailSelection(null))
+          .catch((error) => setActionError(error instanceof Error ? error.message : t("marketplace.uninstall_failed")))
+          .finally(() => setActionId(null));
+      }}
+    >
+      {actionId === detailRow.plugin.id ? <Loader2 data-icon="inline-start" className="animate-spin" /> : null}
+      {actionId === detailRow.plugin.id ? t("marketplace.working") : t("marketplace.uninstall_plugin")}
+    </Button>
+  ) : null;
+
+  if (inlineDetails && detailRow) {
+    const name = detailRow.source === "built-in" ? detailRow.entry.name
+      : detailRow.source === "org-mcp" ? detailRow.item.name
+        : detailRow.source === "host-registry" ? detailRow.installation.name : detailRow.plugin.name;
+    return (
+      <CatalogDetailPage
+        categoryLabel={title ?? t("extensions.marketplace_title")}
+        name={name}
+        description={detailRow.source === "cloud"
+          ? detailRow.plugin.description || t("marketplace.no_description")
+          : detailRow.source === "host-registry"
+            ? detailRow.installation.description || t("marketplace.no_description")
+            : undefined}
+        actions={detailActions}
+        onBack={() => setDetailSelection(null)}
+      >
+        {detailContent}
+      </CatalogDetailPage>
+    );
+  }
 
   // hideSectionHeader 时宿主（技能弹窗）自带标题与边距，不再套设置页的分隔线容器。
-  return source || embedded || hideSectionHeader ? content : (
+  return source || embedded || hideSectionHeader ? <>{content}{detailContent}</> : (
     <SettingsStack>
       <Separator />
       {content}
+      {detailContent}
     </SettingsStack>
+  );
+}
+
+function HostRegistryMarketplaceDetail({ installation }: { installation: JuggleWorkHostMarketplaceInstallation }) {
+  return (
+    <div className="min-w-0 space-y-5 [overflow-wrap:anywhere]">
+      <div className="flex flex-wrap items-center gap-2">
+        <SettingsPill>{t("marketplace.organization_plugins")}</SettingsPill>
+        <SettingsPill>{t(installation.status === "installed" ? "marketplace.lifecycle_current" : "marketplace.lifecycle_repair_required")}</SettingsPill>
+      </div>
+      {installation.status === "repair_required" && installation.repair?.cause ? (
+        <SettingsNotice tone="error">{installation.repair.cause}</SettingsNotice>
+      ) : null}
+      <section className="space-y-3">
+        <div>
+          <h3 className="text-sm font-semibold text-card-foreground">{t("marketplace.host_recorded_resources")}</h3>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {t("marketplace.host_recorded_resources_description", { count: installation.resources.length })}
+          </p>
+        </div>
+        {installation.resources.length > 0 ? (
+          <div className="grid gap-2">
+            {installation.resources.map((resource) => (
+              <div key={`${resource.kind}:${resource.target}`} className="flex min-w-0 items-start justify-between gap-3 rounded-xl border border-dls-border bg-dls-surface px-4 py-3">
+                <div className="min-w-0">
+                  <div className="break-all text-sm font-medium text-card-foreground">{resource.target}</div>
+                  <div className="mt-1 break-all font-mono text-xs text-muted-foreground">{resource.componentId}</div>
+                </div>
+                <SettingsPill>{t(`marketplace.host_resource_${resource.kind}`)}</SettingsPill>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="rounded-xl border border-dls-border bg-dls-hover px-4 py-3 text-sm text-muted-foreground">
+            {t("marketplace.host_recorded_no_resources")}
+          </div>
+        )}
+      </section>
+      <details className="rounded-xl border border-dls-border bg-dls-surface px-4 py-3" open>
+        <summary className="cursor-pointer text-sm font-semibold text-card-foreground">{t("marketplace.technical_details_title")}</summary>
+        <div className="mt-4 grid gap-3 text-xs text-muted-foreground sm:grid-cols-3">
+          <div><span className="font-semibold text-card-foreground">{t("marketplace.technical_plugin_id")}</span><div className="mt-1 break-all font-mono">{installation.pluginId}</div></div>
+          <div><span className="font-semibold text-card-foreground">{t("marketplace.host_recorded_revision")}</span><div className="mt-1 break-all font-mono">{installation.packageRevision}</div></div>
+          <div><span className="font-semibold text-card-foreground">{t("marketplace.host_recorded_status")}</span><div className="mt-1">{t(installation.status === "installed" ? "marketplace.lifecycle_current" : "marketplace.lifecycle_repair_required")}</div></div>
+        </div>
+      </details>
+    </div>
   );
 }
 
@@ -999,9 +1537,27 @@ function deliveryCompositionSummary(delivery: PluginDeliveryComposition | null) 
   });
 }
 
+export function requestBuiltInEnabled(
+  row: BuiltInMarketplaceRow,
+  enabled: boolean,
+  onSetEnabled: (entry: McpDirectoryInfo, enabled: boolean) => void,
+  onSetupRequired?: () => void,
+) {
+  if (enabled && !row.setupReady) {
+    onSetupRequired?.();
+    toast.warning(t("marketplace.enable_setup_required", { name: row.entry.name }), {
+      description: row.unmetRequirements.length > 0
+        ? t("marketplace.enable_setup_missing", { requirements: row.unmetRequirements.join(", ") })
+        : t("marketplace.enable_setup_open_detail"),
+    });
+    return;
+  }
+  onSetEnabled(row.entry, enabled);
+}
+
 function MarketplaceCard(props: {
   actionId: string | null;
-  row: Exclude<MarketplaceRow, PersonalMarketplaceRow>;
+  row: Exclude<MarketplaceRow, PersonalMarketplaceRow | HostRegistryMarketplaceRow>;
   onOpenDetail: (row: MarketplaceRow) => void;
   orgMcpConnectingId: string | null;
   orgMcpDisconnectingId: string | null;
@@ -1010,6 +1566,14 @@ function MarketplaceCard(props: {
   builtInConnectingName: string | null;
   highlighted?: boolean;
   plain?: boolean;
+  applicationCatalog: boolean;
+  hostCanWrite: boolean;
+  hostOperation: "put" | "delete" | null;
+  resolved: DenOrgPluginResolved | null;
+  canMutate: boolean;
+  onInstallPlugin: (marketplaceId: string | null, plugin: DenOrgPlugin) => void | Promise<void>;
+  onRemovePlugin: (pluginId: string, pluginName: string) => void | Promise<void>;
+  onSetBuiltInEnabled?: (entry: McpDirectoryInfo, enabled: boolean) => void;
 }) {
   const { actionId, row, onOpenDetail } = props;
   const highlightRef = React.useRef<HTMLDivElement>(null);
@@ -1026,9 +1590,10 @@ function MarketplaceCard(props: {
 
   if (row.source === "built-in") {
     const actionBusy = props.builtInConnectingName === row.entry.name;
+    const canSetEnabled = canSetJuggleWorkExtensionEnabled(row.entry);
     const entryUrl = typeof row.entry.url === "string" ? row.entry.url : undefined;
     return (
-      <div ref={highlightRef} className={highlightClass}>
+      <div ref={highlightRef} className={`relative ${highlightClass}`}>
         <ExtensionCard
           name={row.entry.name}
           description={row.entry.description}
@@ -1038,13 +1603,27 @@ function MarketplaceCard(props: {
           kind={row.entry.kind ?? "extension"}
           preview={row.entry.preview}
           connected={row.active}
-          connectedLabel={row.entry.defaultEnabled ? "Ready" : "Active"}
+          statusBadge="icon-only"
           connecting={actionBusy}
           disabled={props.builtInDisabled}
           disabledReason={props.builtInDisabled ? "Disabled by organization" : null}
-          actionLabel={row.active ? "Manage" : "View setup"}
           plain={props.plain}
           onClick={() => onOpenDetail(row)}
+        />
+        <PluginCardAction
+          installed
+          busy={actionBusy}
+          builtIn
+          enabled={row.active}
+          disabled={props.builtInDisabled || !canSetEnabled || !props.onSetBuiltInEnabled}
+          onToggle={canSetEnabled && props.onSetBuiltInEnabled
+            ? () => requestBuiltInEnabled(
+                row,
+                !row.active,
+                props.onSetBuiltInEnabled as NonNullable<typeof props.onSetBuiltInEnabled>,
+                () => onOpenDetail(row),
+              )
+            : undefined}
         />
       </div>
     );
@@ -1088,12 +1667,28 @@ function MarketplaceCard(props: {
   const actionBusy = actionId === row.plugin.id;
   const manifest = row.plugin.extension?.manifest;
   const cloudBuiltIn = isCloudBuiltInPlugin(row.plugin);
-  const lifecycle = row.lifecycle;
+  const lifecycle = props.applicationCatalog
+    ? hostMarketplaceLifecycle({
+        lifecycle: row.lifecycle,
+        plugin: row.plugin,
+        installation: row.hostInstallation,
+        resolved: props.resolved,
+        operation: props.hostOperation,
+      })
+    : row.lifecycle;
   const compositionSummary = deliveryCompositionSummary(row.delivery);
   const current = lifecycle.state === "current";
+  const installed = cloudBuiltIn || Boolean(props.applicationCatalog ? row.hostInstallation : row.imported);
+  const requiresHostInstallation = props.resolved
+    ? hostMarketplacePackageRequiresInstallation(
+        row.sourceMarketplaceId ?? ORGANIZATION_PLUGINS_COLLECTION_ID,
+        props.resolved,
+      )
+    : marketplacePluginMayRequireHostInstallation(row.plugin);
+  const canInstall = !props.applicationCatalog || (props.hostCanWrite && requiresHostInstallation);
 
   return (
-    <div ref={highlightRef} className={`flex flex-col gap-2 ${highlightClass}`}>
+    <div ref={highlightRef} className={`relative flex flex-col gap-2 ${highlightClass}`}>
       <ExtensionCard
         name={row.plugin.name}
         description={row.plugin.description || `Marketplace extension from ${row.marketplaceName}.`}
@@ -1101,19 +1696,106 @@ function MarketplaceCard(props: {
         iconSrc={manifest?.icon?.src}
         kind="extension"
         connected={cloudBuiltIn || current}
-        connectedLabel={cloudBuiltIn ? t("marketplace.built_in") : marketplaceLifecycleLabel(lifecycle)}
+        statusBadge="icon-only"
         connecting={actionBusy}
         actionLabel={cloudBuiltIn
           ? t("mcp.view_details")
-          : compositionSummary ?? t(`marketplace.delivery_${lifecycle.delivery}`)}
+          : props.applicationCatalog
+            ? undefined
+            : compositionSummary ?? t(`marketplace.delivery_${lifecycle.delivery}`)}
         plain={props.plain}
         onClick={() => onOpenDetail(row)}
+      />
+      <PluginCardAction
+        installed={installed}
+        busy={actionBusy}
+        builtIn={cloudBuiltIn}
+        disabled={!props.canMutate || (!installed && !canInstall)}
+        canUninstall={!cloudBuiltIn}
+        updateAvailable={props.applicationCatalog && lifecycle.state === "update_available"}
+        onInstall={canInstall ? () => void props.onInstallPlugin(row.sourceMarketplaceId, row.plugin) : undefined}
+        onUninstall={() => void props.onRemovePlugin(row.plugin.id, row.plugin.name)}
       />
     </div>
   );
 }
 
+function PluginCardAction(props: {
+  installed: boolean;
+  busy: boolean;
+  builtIn?: boolean;
+  enabled?: boolean;
+  disabled?: boolean;
+  canUninstall?: boolean;
+  updateAvailable?: boolean;
+  onInstall?: () => void;
+  onUninstall?: () => void;
+  onToggle?: () => void;
+}) {
+  const stop = (event: React.SyntheticEvent) => event.stopPropagation();
+  const buttonClass = "flex size-8 items-center justify-center rounded-lg border border-dls-border bg-dls-surface/95 p-0 text-dls-secondary shadow-sm transition-colors hover:bg-dls-hover hover:text-dls-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
+
+  if (!props.installed) {
+    if (!props.onInstall) return null;
+    return (
+      <div className="absolute right-2.5 top-2.5 z-10 size-8" onClick={stop}>
+        <button
+          type="button"
+          className={buttonClass}
+          aria-label={t("marketplace.install_plugin")}
+          title={t("marketplace.install_plugin")}
+          disabled={props.disabled || props.busy || !props.onInstall}
+          onClick={() => props.onInstall?.()}
+        >
+          {props.busy ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="absolute right-2.5 top-2.5 z-10 size-8" onClick={stop}>
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          className={buttonClass}
+          aria-label={t("marketplace.plugin_actions")}
+          title={t("marketplace.plugin_actions")}
+          disabled={props.busy}
+        >
+          {props.busy ? <Loader2 className="size-4 animate-spin" /> : <Ellipsis className="size-4" />}
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="min-w-40">
+          {props.builtIn ? (
+            <DropdownMenuItem disabled={props.disabled || !props.onToggle} onClick={props.onToggle}>
+              <Power className="size-4" />
+              {t(props.enabled ? "marketplace.disable_plugin" : "marketplace.enable_plugin")}
+            </DropdownMenuItem>
+          ) : (
+            <>
+              {props.updateAvailable ? (
+                <DropdownMenuItem disabled={props.disabled || !props.onInstall} onClick={props.onInstall}>
+                  <Plus className="size-4" />
+                  {t("marketplace.action_update")}
+                </DropdownMenuItem>
+              ) : null}
+              <DropdownMenuItem
+                variant="destructive"
+                disabled={props.disabled || props.canUninstall === false || !props.onUninstall}
+                onClick={props.onUninstall}
+              >
+                <Trash2 className="size-4" />
+                {t("marketplace.uninstall_plugin")}
+              </DropdownMenuItem>
+            </>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
+  );
+}
+
 function BuiltInMarketplaceDetailModal(props: {
+  presentation?: "modal" | "page";
   row: BuiltInMarketplaceRow;
   disabled: boolean;
   connecting: boolean;
@@ -1123,9 +1805,10 @@ function BuiltInMarketplaceDetailModal(props: {
 }) {
   const { row, disabled, connecting, configSlot, onClose, onSetEnabled } = props;
   const entry = row.entry;
-  const toggleControlled = isToggleControlledExtension(entry);
+  const canSetEnabled = canSetJuggleWorkExtensionEnabled(entry);
   return (
     <ExtensionDetailModal
+      presentation={props.presentation}
       open
       onClose={onClose}
       name={entry.name}
@@ -1148,8 +1831,12 @@ function BuiltInMarketplaceDetailModal(props: {
       connectLabel="Enable"
       connectingLabel="Enabling..."
       uninstallLabel="Disable"
-      onConnect={!disabled && toggleControlled && !row.active && onSetEnabled ? () => onSetEnabled(entry, true) : undefined}
-      onUninstall={!disabled && toggleControlled && row.active && onSetEnabled ? () => onSetEnabled(entry, false) : undefined}
+      onConnect={props.presentation !== "page" && !disabled && canSetEnabled && !row.active && onSetEnabled
+        ? () => requestBuiltInEnabled(row, true, onSetEnabled)
+        : undefined}
+      onUninstall={props.presentation !== "page" && !disabled && canSetEnabled && row.active && onSetEnabled
+        ? () => requestBuiltInEnabled(row, false, onSetEnabled)
+        : undefined}
     />
   );
 }

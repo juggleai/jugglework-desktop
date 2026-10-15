@@ -80,6 +80,8 @@ export type ResolveMarketplacePluginLifecycleInput = {
   failedOperation?: "install" | "remove" | null;
   /** Ignore the selected workspace's materialization state in the app catalog. */
   catalogMode?: boolean;
+  /** Require an explicit install record even when every component can already run in Cloud. */
+  requireInstallRecord?: boolean;
 };
 
 function filesForComponent(files: CloudImportedPluginFile[], component: DenPluginMcpComponent) {
@@ -325,7 +327,7 @@ export function resolveMarketplacePluginLifecycle(
       input.pendingChange === "modified"
       || versionChanged
     ) state = "update_available";
-    else if (!imported && requiresWorkspaceInstall) state = "not_installed";
+    else if (!imported && (requiresWorkspaceInstall || input.requireInstallRecord)) state = "not_installed";
     else state = "current";
   }
 

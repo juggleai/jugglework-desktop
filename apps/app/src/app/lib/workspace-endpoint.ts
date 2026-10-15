@@ -5,7 +5,7 @@
  * that actually owns that workspace. For local workspaces that's the user's
  * local JuggleWork server. For workspaces hosted on a remote JuggleWork worker
  * (`id` starts with `rem_` and `workspaceType === "remote"`), it's the
- * `baseUrl`/`juggleworkHostUrl` and `juggleworkToken` saved on the workspace
+ * `baseUrl`/`juggleworkHostUrl` and credentials saved on the workspace
  * record, with the workspace addressed by its server-side id (the `rem_`
  * prefix is stripped, or `juggleworkWorkspaceId` is used when present).
  *
@@ -31,11 +31,13 @@ export type ResolvedWorkspaceEndpoint = {
   baseUrl: string;
   /** Auth token for that server. May be empty for unauthenticated local servers. */
   token: string;
+  /** Host-admin token sent separately from the bearer token. */
+  hostToken: string;
   /** Workspace id as the owning server expects it in URL paths. No `rem_` prefix. */
   workspaceId: string;
   /** True when the workspace lives on a remote JuggleWork worker, not the user's local server. */
   isRemote: boolean;
-  /** JuggleWorkServerClient bound to {@link baseUrl}/{@link token}. */
+  /** JuggleWorkServerClient bound to the resolved URL and credentials. */
   client: JuggleWorkServerClient;
   /** Mounted base url: `<baseUrl>/workspace/<workspaceId>`. No trailing slash. */
   mountedBaseUrl: string;
@@ -94,12 +96,11 @@ function pickRemoteBaseUrl(workspace: WorkspaceEndpointInput): string {
 
 function pickRemoteToken(workspace: WorkspaceEndpointInput): string {
   if (!workspace) return "";
-  return (
-    workspace.juggleworkToken ??
-    workspace.juggleworkClientToken ??
-    workspace.juggleworkHostToken ??
-    ""
-  ).trim();
+  return workspace.juggleworkToken?.trim() || workspace.juggleworkClientToken?.trim() || "";
+}
+
+function pickRemoteHostToken(workspace: WorkspaceEndpointInput): string {
+  return (workspace?.juggleworkHostToken ?? "").trim();
 }
 
 /**
@@ -118,10 +119,12 @@ export function resolveWorkspaceEndpoint(
     const baseUrl = pickRemoteBaseUrl(workspace);
     if (!baseUrl) return null;
     const token = pickRemoteToken(workspace);
+    const hostToken = pickRemoteHostToken(workspace);
     const workspaceId = workspaceServerId(workspace);
     const client = createJuggleWorkServerClient({
       baseUrl,
       token: token || undefined,
+      hostToken: hostToken || undefined,
     });
     const mountedBaseUrl = (
       buildJuggleWorkWorkspaceBaseUrl(baseUrl, workspaceId) ?? baseUrl
@@ -129,6 +132,7 @@ export function resolveWorkspaceEndpoint(
     return {
       baseUrl,
       token,
+      hostToken,
       workspaceId,
       isRemote: true,
       client,
@@ -153,6 +157,7 @@ export function resolveWorkspaceEndpoint(
   return {
     baseUrl: localBaseUrl,
     token: localToken,
+    hostToken: localHostToken,
     workspaceId,
     isRemote: false,
     client,

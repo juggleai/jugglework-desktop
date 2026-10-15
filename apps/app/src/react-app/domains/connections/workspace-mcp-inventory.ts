@@ -49,17 +49,27 @@ export function isComposerManageableMcpEntry(entry: McpServerEntry): boolean {
   return entry.origin !== "jugglework-connect" || entry.id?.startsWith("jugglework-connect:connection:") === true;
 }
 
-/**
- * 输入栏是能力选择面，不是连接管理面：只保留本工作区允许且当前连接成功的 MCP。
- */
+/** Selectable capabilities are a subset of the installed inventory. */
 export function selectComposerAvailableMcpEntries(input: {
   servers: McpServerEntry[];
   statuses: McpStatusMap;
 }): McpServerEntry[] {
-  return input.servers.filter((entry) => {
-    if (entry.workspaceEnabled === false) return false;
-    return input.statuses[entry.id ?? entry.name]?.status === "connected";
-  });
+  return input.servers.filter((entry) => composerMcpStatus(entry, input.statuses) === "connected");
+}
+
+/** Installed inventory is independent of readiness; public directory rows have no config source. */
+export function selectComposerInstalledMcpEntries(servers: McpServerEntry[]): McpServerEntry[] {
+  return selectEffectiveMcpEntries(servers.filter((entry) =>
+    !isInternalCloudMcpTransport(entry) && isComposerManageableMcpEntry(entry) && (
+      entry.source === "config.global" || entry.source === "config.project" || entry.source === "config.remote" ||
+      (entry.origin === "jugglework-connect" && Boolean(cloudConnectionIdFromMcpEntry(entry)))
+    )
+  ));
+}
+
+export function composerMcpStatus(entry: McpServerEntry, statuses: McpStatusMap): McpStatusMap[string]["status"] | "pending" {
+  if (entry.workspaceEnabled === false || entry.config.enabled === false) return "disabled";
+  return statuses[entry.id ?? entry.name]?.status ?? "pending";
 }
 
 /** 按有效配置语义去重：本工作区来源覆盖同名全局来源。 */

@@ -42,6 +42,7 @@ import { WelcomeRoute } from "./welcome-route";
 import { NotificationCenterController } from "./notification-center";
 import { RootJuggleWorkServerProvider } from "../domains/connections/root-jugglework-server-provider";
 import { AutomationRunNotificationCoordinator } from "../domains/automations/automation-run-notification-coordinator";
+import { HostMarketplacePluginsProvider } from "../domains/settings/state/host-marketplace-plugins-provider";
 
 type DenSigninGateProps = {
   children: ReactNode;
@@ -320,6 +321,7 @@ export function AppRoot() {
           <BrandThemeControlActions />
           <DenSigninGate>
               <RootJuggleWorkServerProvider>
+                <HostMarketplacePluginsProvider>
                 <AutomationRunNotificationCoordinator />
                 <Routes>
               <Route
@@ -358,7 +360,8 @@ export function AppRoot() {
                   </DevProfiler>
                 }
               />
-              </Routes>
+                </Routes>
+                </HostMarketplacePluginsProvider>
             </RootJuggleWorkServerProvider>
           </DenSigninGate>
         </JuggleWorkControlProvider>

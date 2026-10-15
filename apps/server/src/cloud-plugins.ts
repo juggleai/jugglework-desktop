@@ -105,6 +105,15 @@ export type CloudImportedPlugin = {
   repair?: CloudPluginRepairDetails;
 };
 
+export function hasLocalMaterialization(plugin: Pick<CloudImportedPlugin, "pluginId" | "files">): boolean {
+  return plugin.files.some((file) =>
+    (file.delivery === "local_file" || file.delivery === "runtime_mcp")
+    && file.outcome === "installed_local"
+    && file.ownerPluginId === plugin.pluginId
+    && file.ownerConfigObjectId === file.configObjectId
+  );
+}
+
 export type CloudPluginOperationStatus = "installed" | "partial" | "failed" | "repair_required";
 export type CloudPluginOperation = "install" | "sync" | "remove";
 
@@ -170,6 +179,31 @@ export type CloudPluginRemoveResult = {
   conflicts: [];
 };
 
+export type WorkspacePluginMigrationBlocker = {
+  code: "repair_required" | "modified_file" | "modified_mcp" | "unsafe_path";
+  resource: string;
+  message: string;
+};
+
+export type WorkspacePluginMigrationResource = {
+  kind: "file" | "mcp";
+  target: string;
+  digest: string;
+};
+
+export type WorkspacePluginMigrationSnapshot = {
+  workspaceId: string;
+  pluginId: string;
+  recordDigest: string;
+  ledgerRow: string;
+  ledgerUpdatedAt: number;
+  plugin: CloudImportedPlugin;
+  resources: WorkspacePluginMigrationResource[];
+  blockers: WorkspacePluginMigrationBlocker[];
+  files: Array<{ path: string; bytesBase64: string | null }>;
+  mcps: Array<{ name: string; config: Record<string, unknown> | null }>;
+};
+
 type CloudPluginFileWrite = {
   path: string;
   content: string;
@@ -206,8 +240,9 @@ const cloudPluginInstallConfigs = sqliteTable("cloud_plugin_install_configs", {
 });
 
 type CloudPluginDb = {
-  get: (workspaceId: string) => { configJson: string } | undefined;
+  get: (workspaceId: string) => { configJson: string; updatedAt: number } | undefined;
   upsert: (value: { workspaceId: string; configJson: string; updatedAt: number }) => void;
+  delete: (workspaceId: string) => void;
 };
 
 type CloudPluginInstallInput = {
@@ -873,20 +908,27 @@ async function openCloudPluginDb(path: string): Promise<CloudPluginDb> {
           })
           .run();
       },
+      delete: (workspaceId) => {
+        sqlite.run("DELETE FROM cloud_plugin_install_configs WHERE workspace_id = ?", [workspaceId]);
+      },
     };
   }
   const sqlite = runtimeDb.sqlite;
   sqlite.exec("CREATE TABLE IF NOT EXISTS cloud_plugin_install_configs (workspace_id TEXT PRIMARY KEY NOT NULL, config_json TEXT NOT NULL, updated_at INTEGER NOT NULL)");
-  const get = sqlite.prepare("SELECT config_json AS configJson FROM cloud_plugin_install_configs WHERE workspace_id = ?");
+  const get = sqlite.prepare("SELECT config_json AS configJson, updated_at AS updatedAt FROM cloud_plugin_install_configs WHERE workspace_id = ?");
   const upsert = sqlite.prepare("INSERT INTO cloud_plugin_install_configs (workspace_id, config_json, updated_at) VALUES (?, ?, ?) ON CONFLICT(workspace_id) DO UPDATE SET config_json = excluded.config_json, updated_at = excluded.updated_at");
+  const remove = sqlite.prepare("DELETE FROM cloud_plugin_install_configs WHERE workspace_id = ?");
   return {
     get: (workspaceId) => {
       const row = get.get(workspaceId);
-      if (!isRecord(row) || typeof row.configJson !== "string") return undefined;
-      return { configJson: row.configJson };
+      if (!isRecord(row) || typeof row.configJson !== "string" || typeof row.updatedAt !== "number") return undefined;
+      return { configJson: row.configJson, updatedAt: row.updatedAt };
     },
     upsert: ({ workspaceId, configJson, updatedAt }) => {
       upsert.run(workspaceId, configJson, updatedAt);
+    },
+    delete: (workspaceId) => {
+      remove.run(workspaceId);
     },
   };
 }
@@ -933,6 +975,19 @@ async function serializeWorkspacePluginMutation<T>(
     release();
     if (workspaceMutationTails.get(key) === current) workspaceMutationTails.delete(key);
   }
+}
+
+/** Holds workspace plugin locks in deterministic order for cross-workspace ownership changes. */
+export async function withWorkspacePluginMutationLocks<T>(
+  config: ServerConfig,
+  workspaceIds: string[],
+  operation: () => Promise<T>,
+): Promise<T> {
+  const ordered = [...new Set(workspaceIds)].sort();
+  const acquire = (index: number): Promise<T> => index >= ordered.length
+    ? operation()
+    : serializeWorkspacePluginMutation(config, ordered[index]!, () => acquire(index + 1));
+  return acquire(0);
 }
 
 function errorMessage(error: unknown): string {
@@ -1030,6 +1085,17 @@ async function writeInstalledCloudPlugins(
   return next;
 }
 
+async function restoreInstalledCloudPluginRow(
+  config: ServerConfig,
+  workspaceId: string,
+  ledgerRow: string | null,
+  updatedAt?: number,
+): Promise<void> {
+  const db = await cloudPluginDb(config);
+  if (ledgerRow === null) db.delete(workspaceId);
+  else db.upsert({ workspaceId, configJson: ledgerRow, updatedAt: updatedAt ?? Date.now() });
+}
+
 function resolveWorkspaceInstallPath(workspaceRoot: string, relativePath: string): string {
   const normalized = relativePath.trim().replace(/^\/+/, "");
   const parts = normalized.split("/").filter(Boolean);
@@ -1086,6 +1152,18 @@ async function writePluginWorkspaceFile(workspaceRoot: string, path: string, con
   await resolveSafeWorkspaceInstallPath(workspaceRoot, path);
   const temporaryPath = `${absolutePath}.jugglework-${process.pid}-${Date.now()}.tmp`;
   await writeFile(temporaryPath, content.endsWith("\n") ? content : `${content}\n`, { encoding: "utf8", flag: "wx" });
+  await rename(temporaryPath, absolutePath).catch(async (error) => {
+    await rm(temporaryPath, { force: true });
+    throw error;
+  });
+}
+
+async function writePluginWorkspaceBytes(workspaceRoot: string, path: string, bytes: Uint8Array): Promise<void> {
+  const absolutePath = await resolveSafeWorkspaceInstallPath(workspaceRoot, path);
+  await mkdir(dirname(absolutePath), { recursive: true });
+  await resolveSafeWorkspaceInstallPath(workspaceRoot, path);
+  const temporaryPath = `${absolutePath}.jugglework-${process.pid}-${Date.now()}.tmp`;
+  await writeFile(temporaryPath, bytes, { flag: "wx" });
   await rename(temporaryPath, absolutePath).catch(async (error) => {
     await rm(temporaryPath, { force: true });
     throw error;
@@ -1895,4 +1973,153 @@ async function removeCloudPluginLocked(input: CloudPluginRemoveInput): Promise<C
  */
 export async function removeCloudPlugin(input: CloudPluginRemoveInput): Promise<CloudPluginRemoveResult> {
   return serializeWorkspacePluginMutation(input.serverConfig, input.workspaceId, () => removeCloudPluginLocked(input));
+}
+
+/** Reads the exact workspace-owned state used by the explicit host migration coordinator. */
+export async function snapshotWorkspacePluginForMigration(input: {
+  serverConfig: ServerConfig;
+  workspaceId: string;
+  workspaceRoot: string;
+  pluginId: string;
+}): Promise<WorkspacePluginMigrationSnapshot | null> {
+  const db = await cloudPluginDb(input.serverConfig);
+  const row = db.get(input.workspaceId);
+  if (!row) return null;
+  let imports: WorkspaceCloudImports;
+  let rawPlugin: unknown;
+  try {
+    const parsed = JSON.parse(row.configJson) as unknown;
+    imports = readCloudImports({ cloudImports: parsed });
+    rawPlugin = isRecord(parsed) && isRecord(parsed.plugins) ? parsed.plugins[input.pluginId] : undefined;
+  } catch {
+    throw new ApiError(409, "workspace_plugin_migration_ledger_invalid", "Workspace plugin ledger is not valid JSON.", { workspaceId: input.workspaceId });
+  }
+  const plugin = imports.plugins[input.pluginId];
+  if (!plugin || !hasLocalMaterialization(plugin)) return null;
+
+  const runtime = runtimeMcpMap(await readRuntimeOpencodeConfig(input.serverConfig, input.workspaceId));
+  const blockers: WorkspacePluginMigrationBlocker[] = [];
+  const files: WorkspacePluginMigrationSnapshot["files"] = [];
+  const mcps: WorkspacePluginMigrationSnapshot["mcps"] = [];
+  const resources: WorkspacePluginMigrationResource[] = [];
+  if (plugin.status === "repair_required") {
+    blockers.push({ code: "repair_required", resource: input.pluginId, message: "Workspace plugin is already marked repair-required." });
+  }
+
+  for (const entry of plugin.files) {
+    if (entry.delivery === "cloud" || entry.outcome !== "installed_local") continue;
+    if (!ledgerOwns(entry, input.pluginId) || !entry.digest) {
+      blockers.push({ code: "repair_required", resource: entry.path, message: "Workspace ledger does not prove ownership of this resource." });
+      continue;
+    }
+    const mcpName = cloudPluginMcpNameFromPath(entry.path);
+    if (mcpName) {
+      const config = runtime[mcpName] ?? null;
+      mcps.push({ name: mcpName, config: config ? structuredClone(config) : null });
+      resources.push({ kind: "mcp", target: mcpName, digest: entry.digest });
+      if (config && mcpOwnershipDigest(config) !== entry.digest) blockers.push({ code: "modified_mcp", resource: mcpName, message: "Owned runtime MCP config was modified." });
+      continue;
+    }
+    resources.push({ kind: "file", target: entry.path, digest: entry.digest });
+    try {
+      const bytes = await readFile(await resolveSafeWorkspaceInstallPath(input.workspaceRoot, entry.path));
+      files.push({ path: entry.path, bytesBase64: bytes.toString("base64") });
+      if (digestValue(bytes.toString("utf8")) !== entry.digest) {
+        blockers.push({ code: "modified_file", resource: entry.path, message: "Owned workspace file was modified." });
+      }
+    } catch (error) {
+      if (isRecord(error) && error.code === "ENOENT") {
+        files.push({ path: entry.path, bytesBase64: null });
+      } else if (error instanceof ApiError && error.code === "invalid_cloud_plugin_path") {
+        blockers.push({ code: "unsafe_path", resource: entry.path, message: error.message });
+      } else {
+        throw error;
+      }
+    }
+  }
+
+  return {
+    workspaceId: input.workspaceId,
+    pluginId: input.pluginId,
+    recordDigest: digestValue(rawPlugin),
+    ledgerRow: row.configJson,
+    ledgerUpdatedAt: row.updatedAt,
+    plugin,
+    resources: resources.sort((left, right) => `${left.kind}:${left.target}`.localeCompare(`${right.kind}:${right.target}`)),
+    blockers: blockers.sort((left, right) => left.resource.localeCompare(right.resource) || left.code.localeCompare(right.code)),
+    files: files.sort((left, right) => left.path.localeCompare(right.path)),
+    mcps: mcps.sort((left, right) => left.name.localeCompare(right.name)),
+  };
+}
+
+/** Removes a preflighted workspace copy. The caller must hold the workspace mutation lock. */
+export async function removeWorkspacePluginForMigration(input: {
+  serverConfig: ServerConfig;
+  workspaceId: string;
+  workspaceRoot: string;
+  snapshot: WorkspacePluginMigrationSnapshot;
+  synchronizeEngine?: (mutation: CloudPluginEngineMutation) => Promise<void>;
+}): Promise<void> {
+  const current = await snapshotWorkspacePluginForMigration({
+    serverConfig: input.serverConfig,
+    workspaceId: input.workspaceId,
+    workspaceRoot: input.workspaceRoot,
+    pluginId: input.snapshot.pluginId,
+  });
+  if (!current || current.recordDigest !== input.snapshot.recordDigest || current.blockers.length > 0
+    || !sameStableValue(current.files, input.snapshot.files) || !sameStableValue(current.mcps, input.snapshot.mcps)) {
+    throw new ApiError(409, "workspace_plugin_migration_snapshot_stale", "Workspace plugin changed after migration planning.", { workspaceId: input.workspaceId });
+  }
+  for (const file of current.files) await removePluginWorkspaceFile(input.workspaceRoot, file.path);
+  if (current.mcps.length > 0) {
+    await writeRuntimeOpencodeConfig(input.serverConfig, input.workspaceId, (config) => {
+      const mcp = { ...runtimeMcpMap(config) };
+      for (const entry of current.mcps) delete mcp[entry.name];
+      if (Object.keys(mcp).length > 0) return { ...config, mcp };
+      const { mcp: _mcp, ...withoutMcp } = config;
+      return withoutMcp;
+    });
+  }
+  const imports = readCloudImports({ cloudImports: JSON.parse(current.ledgerRow) });
+  const plugins = { ...imports.plugins };
+  delete plugins[input.snapshot.pluginId];
+  const marketplaces = Object.fromEntries(Object.entries(imports.marketplaces).flatMap(([id, marketplace]) => {
+    const pluginIds = marketplace.pluginIds.filter((pluginId) => pluginId !== input.snapshot.pluginId);
+    return pluginIds.length > 0 ? [[id, { ...marketplace, pluginIds }]] : [];
+  }));
+  await writeInstalledCloudPlugins(input.serverConfig, input.workspaceId, () => ({ ...imports, plugins, marketplaces }));
+  if (input.synchronizeEngine && current.mcps.length > 0) {
+    await input.synchronizeEngine({ upsertNames: [], removeNames: current.mcps.map((entry) => entry.name) });
+  }
+}
+
+/** Restores exact bytes, affected MCP values, and the full prior workspace ledger row. */
+export async function restoreWorkspacePluginMigrationSnapshot(input: {
+  serverConfig: ServerConfig;
+  workspaceId: string;
+  workspaceRoot: string;
+  snapshot: WorkspacePluginMigrationSnapshot;
+  synchronizeEngine?: (mutation: CloudPluginEngineMutation) => Promise<void>;
+}): Promise<void> {
+  for (const file of input.snapshot.files) {
+    if (file.bytesBase64 === null) await removePluginWorkspaceFile(input.workspaceRoot, file.path);
+    else await writePluginWorkspaceBytes(input.workspaceRoot, file.path, Buffer.from(file.bytesBase64, "base64"));
+  }
+  await writeRuntimeOpencodeConfig(input.serverConfig, input.workspaceId, (config) => {
+    const mcp = { ...runtimeMcpMap(config) };
+    for (const entry of input.snapshot.mcps) {
+      if (entry.config === null) delete mcp[entry.name];
+      else mcp[entry.name] = entry.config;
+    }
+    if (Object.keys(mcp).length > 0) return { ...config, mcp };
+    const { mcp: _mcp, ...withoutMcp } = config;
+    return withoutMcp;
+  });
+  await restoreInstalledCloudPluginRow(input.serverConfig, input.workspaceId, input.snapshot.ledgerRow, input.snapshot.ledgerUpdatedAt);
+  if (input.synchronizeEngine && input.snapshot.mcps.length > 0) {
+    await input.synchronizeEngine(engineMutationForSnapshot(
+      input.snapshot.mcps.map((entry) => entry.name),
+      Object.fromEntries(input.snapshot.mcps.flatMap((entry) => entry.config ? [[entry.name, entry.config]] : [])),
+    ));
+  }
 }

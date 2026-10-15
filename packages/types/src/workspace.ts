@@ -27,9 +27,11 @@ export type WorkspaceWire = {
   directory?: string | null;
   displayName?: string | null;
   juggleworkHostUrl?: string | null;
+  /** Bearer token accepted by client routes (including owner-scoped tokens). */
   juggleworkToken?: string | null;
-  /** Desktop IPC only: tokens for desktop-managed remote workspaces. */
+  /** Desktop IPC only: legacy bearer/client token used when `juggleworkToken` is absent. */
   juggleworkClientToken?: string | null;
+  /** Host-admin token sent only via `X-JuggleWork-Host-Token`. */
   juggleworkHostToken?: string | null;
   juggleworkWorkspaceId?: string | null;
   juggleworkWorkspaceName?: string | null;

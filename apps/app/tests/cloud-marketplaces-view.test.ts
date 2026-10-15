@@ -1,12 +1,14 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, mock, test } from "bun:test";
 
-import {
+// This helper suite does not render the parent-owned detail page.
+mock.module("@/react-app/domains/settings/pages/catalog-detail-page", () => ({ CatalogDetailPage: () => null }));
+const {
   matchesMarketplaceFilters,
   selectMarketplaceRowsBySource,
   shouldIncludeCloudMarketplacePluginRow,
   shouldIncludeOrgMcpConnectionMarketplaceRow,
   shouldShowMarketplaceRows,
-} from "../src/react-app/domains/settings/pages/cloud-marketplaces-view";
+} = await import("../src/react-app/domains/settings/pages/cloud-marketplaces-view");
 import { resolveMarketplacePluginLifecycle } from "../src/react-app/domains/settings/pages/marketplace-plugin-state";
 import { readFileSync } from "node:fs";
 
@@ -71,6 +73,7 @@ describe("Marketplace catalog sources", () => {
 
 describe("Dedicated plugin catalog refresh lifecycle", () => {
   const source = readFileSync(new URL("../src/react-app/shell/settings-route.tsx", import.meta.url), "utf8");
+  const hostProviderSource = readFileSync(new URL("../src/react-app/domains/settings/state/host-marketplace-plugins-provider.tsx", import.meta.url), "utf8");
   const marketplaceSource = readFileSync(new URL("../src/react-app/domains/settings/pages/cloud-marketplaces-view.tsx", import.meta.url), "utf8");
   const detailSource = readFileSync(new URL("../src/react-app/domains/settings/pages/marketplace-package-detail-modal.tsx", import.meta.url), "utf8");
 
@@ -94,11 +97,47 @@ describe("Dedicated plugin catalog refresh lifecycle", () => {
     expect(source).not.toContain("plugins: extensionsSnapshot.importedCloudPlugins");
   });
 
-  test("does not expose workspace ledgers or mutation actions as global installation", () => {
-    expect(marketplaceSource).toContain("const workspaceImportedPlugins = applicationCatalog ? {} : extensions.importedCloudPlugins()");
-    expect(marketplaceSource).toContain("refreshImported: !applicationCatalog");
-    expect(marketplaceSource).toContain("canMutate={!applicationCatalog && marketplacePluginAccess.allowed}");
-    expect(detailSource).toContain("!props.applicationCatalog && lifecycle.hasLocalLedger");
+  test("uses host installation actions behind the application catalog boundary", () => {
+    expect(marketplaceSource).toContain("const workspaceImportedPlugins = extensions.importedCloudPlugins()");
+    expect(marketplaceSource).toContain("const importedPlugins = applicationCatalogMode ? {} : workspaceImportedPlugins");
+    expect(marketplaceSource).toContain("applicationCatalogMode ? hostCanWrite : marketplacePluginAccess.allowed");
+    expect(marketplaceSource).toContain("onInstallPlugin={applicationCatalogMode ? putHostPlugin : installPlugin}");
+    expect(marketplaceSource).toContain("const resolved = await client.getOrgPluginResolved(activeOrgId, plugin)");
+    expect(marketplaceSource).toContain("hostMarketplacePackageRequiresExecutableConfirmation");
+    expect(marketplaceSource).toContain("aria-label={t(\"marketplace.install_plugin\")}");
+    expect(marketplaceSource).toContain("aria-label={t(\"marketplace.plugin_actions\")}");
+    expect(detailSource).toContain("row.imported && !cloudBuiltIn && props.onRemovePlugin");
+    expect(detailSource).toContain("!applicationPage ? <div className=\"mt-3");
+    expect(detailSource).toContain("marketplace.host_component_availability_description");
+  });
+
+  test("keeps removed-upstream workspace cleanup out of the standalone catalog", () => {
+    expect(marketplaceSource).toContain("() => applicationCatalogMode\n      ? []");
+    expect(marketplaceSource).toContain("standalone application catalog must not leak");
+  });
+
+  test("integrates one stable host controller keyed by host and Cloud identity, never workspace id", () => {
+    expect(hostProviderSource).toContain("controllersRef");
+    expect(hostProviderSource).toContain("controllerContext");
+    expect(hostProviderSource).toContain("controllersRef.current.get(controllerContext)");
+    expect(hostProviderSource).toContain("useSyncExternalStore(");
+    expect(hostProviderSource).toContain("controlPlaneOrigin: new URL(cloudSession.baseUrl).origin");
+    expect(hostProviderSource).toContain("hostMarketplacePluginsKey(hostBaseUrl, scope)");
+    expect(source).toContain("hostInstallations: hostMarketplaceSnapshot.registry?.installations ?? []");
+    expect(source).toContain("workspaceKey={hostCatalogKey}");
+    expect(hostProviderSource).toContain("controller.loadScope(scope)");
+    expect(hostProviderSource).toContain("controller.ensureScope(scope)");
+    expect(hostProviderSource).toContain("controller.clear()");
+  });
+
+  test("guards direct remote OpenCode before constructing or using the host registry", () => {
+    expect(hostProviderSource).toContain("const supported = supportsHostMarketplaceWorkspace(target)");
+    expect(hostProviderSource).toContain("if (!target || !supported || !hostBaseUrl || !scope) return null");
+    expect(hostProviderSource).toContain("if (!supportedRef.current) {");
+    expect(hostProviderSource).toContain("controller.abandon()");
+    expect(source).toContain("errorHint={hostMarketplaceErrorHint}");
+    expect(marketplaceSource).toContain("{showsOrganization && errorHint ? (");
+    expect(marketplaceSource).toContain("accessHint={errorHint ?? marketplacePluginAccessHint}");
   });
 });
 
@@ -120,6 +159,17 @@ describe("Application plugin catalog lifecycle", () => {
     expect(lifecycle.state).toBe("current");
     expect(lifecycle.hasLocalLedger).toBe(false);
     expect(lifecycle.primaryAction).toBeNull();
+  });
+
+  test("standalone installation mode requires an explicit record for a Cloud-ready plugin", () => {
+    const lifecycle = resolveMarketplacePluginLifecycle({
+      plugin,
+      imported: null,
+      components: [],
+      requireInstallRecord: true,
+    });
+    expect(lifecycle.state).toBe("not_installed");
+    expect(lifecycle.primaryAction).toEqual({ kind: "install", mutatesWorkspace: true });
   });
 
   test("keeps sign-in available but never offers workspace installation", () => {

@@ -1968,6 +1968,7 @@ function parsePluginConfigObjectVersion(value: unknown): DenPluginConfigObjectVe
     id: value.id,
     rawSourceText: typeof value.rawSourceText === "string" ? value.rawSourceText : null,
     normalizedPayloadJson: isRecord(value.normalizedPayloadJson) ? value.normalizedPayloadJson : null,
+    ...(value.delivery === "cloud" || value.delivery === "desktop" ? { delivery: value.delivery } : {}),
     sourceRevisionRef: typeof value.sourceRevisionRef === "string" ? value.sourceRevisionRef : null,
     createdAt: typeof value.createdAt === "string" ? value.createdAt : null,
   };
@@ -1986,6 +1987,7 @@ function parsePluginConfigObject(value: unknown): DenPluginConfigObject | null {
     currentFileExtension: typeof value.currentFileExtension === "string" ? value.currentFileExtension : null,
     currentRelativePath: typeof value.currentRelativePath === "string" ? value.currentRelativePath : null,
     status: typeof value.status === "string" ? value.status : "active",
+    ...(value.delivery === "cloud" || value.delivery === "desktop" ? { delivery: value.delivery } : {}),
     updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : null,
     latestVersion: parsePluginConfigObjectVersion(value.latestVersion),
   };
@@ -2386,6 +2388,7 @@ function parsePluginMembership(value: unknown): DenPluginMembership | null {
     id: value.id,
     pluginId: value.pluginId,
     configObjectId: value.configObjectId,
+    ...(value.delivery === "cloud" || value.delivery === "desktop" ? { delivery: value.delivery } : {}),
     ...(configObject ? { configObject } : {}),
   };
 }

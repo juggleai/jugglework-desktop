@@ -49,9 +49,9 @@ describe("session project settings panel", () => {
     expect(extensionsStore.indexOf("if (!operation.access.allowed)")).toBeLessThan(
       extensionsStore.indexOf("client.getOrgPluginResolved(orgId, plugin)"),
     );
-    expect(marketplaceView).toContain("canMutate={!applicationCatalog && marketplacePluginAccess.allowed}");
+    expect(marketplaceView).toContain("applicationCatalogMode ? hostCanWrite : marketplacePluginAccess.allowed");
     expect(marketplaceModal).toContain("isMarketplacePluginActionDisabled(primary");
-    expect(marketplaceModal).toContain("lifecycle.hasLocalLedger && !cloudBuiltIn");
+    expect(marketplaceModal).toContain("row.imported && !cloudBuiltIn && props.onRemovePlugin");
   });
 
   test("fences imported plugin refreshes and mutation completion by workspace context", () => {

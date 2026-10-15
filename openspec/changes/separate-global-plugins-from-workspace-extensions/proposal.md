@@ -4,7 +4,7 @@ The dedicated Plugins surface currently reuses a workspace-bound settings runtim
 
 ## What Changes
 
-- Apply Public / selected organization name / Personal source tabs consistently to Plugins, Skills, and Connectors. Public is JuggleWork-curated and visible without organization membership; Personal is environment-local installation, never a personal organization.
+- Apply mutually exclusive Public / selected organization name / Personal source tabs consistently to Plugins, Skills, and Connectors. Public is JuggleWork-curated and visible without organization membership; Personal is custom environment-local additions, never a personal organization or a duplicate of installed Public items.
 - Reset organization inventories and detail dialogs when the selected organization changes, including switches to a personal organization.
 
 - Treat the dedicated Plugins surface as the application-level catalog for built-in, account, and organization plugins.

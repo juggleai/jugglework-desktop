@@ -16,12 +16,16 @@ import { resolveExtensionIconUrl } from "@/react-app/design-system/extension-ico
 import type { McpServerConfig, McpStatus } from "@/app/types";
 import { getMcpServerName, type McpDirectoryInfo } from "@/app/constants";
 import { SettingsNotice } from "../settings-section";
+import type { GlobalMcpEntry } from "../state/global-mcp-config";
 import {
   LayoutSection,
   LayoutSectionItem,
   LayoutStack,
 } from "../settings-layout";
 import { CatalogHeader, type CatalogSource } from "./catalog-source";
+import { CatalogDetailPage } from "./catalog-detail-page";
+import { matchPublicConnector, resolveConnectorCatalogSource } from "./connector-catalog-source";
+import { connectorReadiness } from "@/react-app/domains/connections/connector-readiness";
 
 /**
  * 全局连接器条目
@@ -29,9 +33,7 @@ import { CatalogHeader, type CatalogSource } from "./catalog-source";
  * @param config 全局配置中声明的 MCP 配置
  * @param status 引擎侧的连接状态，未知时为 undefined
  */
-export type GlobalConnectorItem = {
-  name: string;
-  config: McpServerConfig;
+export type GlobalConnectorItem = GlobalMcpEntry & {
   status?: McpStatus;
 };
 
@@ -53,11 +55,14 @@ export function connectorStatusLabel(status: McpStatus | undefined) {
 }
 
 export type GlobalConnectorsViewProps = {
+  detailPresentation?: "modal" | "page";
+  detailRequest?: { id: string; nonce: number };
   source?: CatalogSource;
   onSourceChange?: (source: CatalogSource) => void;
   organizationName?: string | null;
   publicEntries?: McpDirectoryInfo[];
-  organizationContent?: ReactNode | ((search: string) => ReactNode);
+  organizationContent?: ReactNode | ((search: string, openDetail: (id: string) => void) => ReactNode);
+  organizationDetail?: (id: string) => { name: string; content: ReactNode; description?: string } | null;
   busy: boolean;
   connectors: GlobalConnectorItem[];
   unconnected: McpDirectoryInfo[];
@@ -66,6 +71,8 @@ export type GlobalConnectorsViewProps = {
   /** 正在写入的连接器名，用于按条目隔离忙碌状态。 */
   pendingConnectorName?: string | null;
   onAddConnector: (name: string, config: McpServerConfig) => void | Promise<void>;
+  /** Create custom connectors with Personal provenance; onAddConnector edits existing ones. */
+  onCreateConnector?: (name: string, config: McpServerConfig) => void | Promise<void>;
   onConnectDirectory: (entry: McpDirectoryInfo) => void | Promise<void>;
   onToggleEnabled: (name: string, enabled: boolean) => void | Promise<void>;
   onAuthorize: (connector: GlobalConnectorItem) => void;
@@ -129,7 +136,14 @@ function GlobalConnectorAvatar(props: { name: string; url?: string; iconSlug?: s
 
 export function GlobalConnectorsView(props: GlobalConnectorsViewProps) {
   const [addOpen, setAddOpen] = useState(false);
-  const [detailTargetName, setDetailTargetName] = useState<string | null>(null);
+  const [detailSelection, setDetailSelection] = useState<{
+    kind: "installed" | "directory" | "organization";
+    id: string;
+    source?: CatalogSource;
+  } | null>(null);
+  const handledDetailRequest = useRef<GlobalConnectorsViewProps["detailRequest"]>(undefined);
+  const detailGeneration = useRef(0);
+  useLayoutEffect(() => () => { detailGeneration.current += 1; }, [detailSelection, props.source, props.organizationName]);
   const [removeTarget, setRemoveTarget] = useState<GlobalConnectorItem | null>(null);
   const [draftName, setDraftName] = useState("");
   const [draftType, setDraftType] = useState<"remote" | "local">("remote");
@@ -140,40 +154,93 @@ export function GlobalConnectorsView(props: GlobalConnectorsViewProps) {
   const sourceGeneration = useRef(0);
   // Invalidate pending navigation on committed context changes and unmount.
   useLayoutEffect(() => () => { sourceGeneration.current += 1; }, [
-    props.source, props.organizationName, props.onAddConnector, props.onConnectDirectory, props.onSourceChange,
+    props.source, props.organizationName, props.onCreateConnector ?? props.onAddConnector, props.onConnectDirectory, props.onSourceChange,
   ]);
   const personal = !props.source || props.source === "personal";
   const organization = props.source === "organization";
   const query = search.trim().toLowerCase();
+  const publicEntries = props.publicEntries ?? [];
   const connectors = props.connectors.filter((connector) =>
-    [connector.name, connectorTarget(connector.config)].some((text) => text.toLowerCase().includes(query)),
+    (props.source !== "personal" || resolveConnectorCatalogSource(connector, publicEntries) === "personal")
+    && (props.source !== "public" || (resolveConnectorCatalogSource(connector, publicEntries) === "public"
+      && !matchPublicConnector(connector, publicEntries)))
+    && [connector.name, connectorTarget(connector.config)].some((text) => text.toLowerCase().includes(query)),
   );
-  const directoryEntries = (props.source === "public" ? props.publicEntries ?? [] : props.unconnected).filter((entry) =>
-    [entry.name, entry.description, getMcpServerName(entry)].some((text) => text.toLowerCase().includes(query)),
-  );
+  const directoryEntries = (props.source === "public" ? publicEntries : props.unconnected).filter((entry) => {
+    const installed = props.source === "public"
+      ? props.connectors.find((connector) => matchPublicConnector(connector, [entry]))
+      : undefined;
+    return [entry.name, entry.description, getMcpServerName(entry),
+      ...(installed ? [installed.name, connectorTarget(installed.config)] : []),
+    ].some((text) => text.toLowerCase().includes(query));
+  });
   const installedNames = new Set(props.connectors.map((connector) => connector.name));
   useEffect(() => {
-    setDetailTargetName(null);
+    setDetailSelection(null);
     setRemoveTarget(null);
-  }, [props.source]);
-  const detailTarget = detailTargetName
-    ? props.connectors.find((connector) => connector.name === detailTargetName) ?? null
+  }, [props.source, props.organizationName]);
+  const selection = detailSelection?.source === props.source ? detailSelection : null;
+  const detailEntries = props.source === "public" ? publicEntries : props.unconnected;
+  const selectedEntry = selection?.kind === "directory"
+    ? detailEntries.find((entry) => (entry.id ?? getMcpServerName(entry)) === selection.id)
+    : undefined;
+  const detailTarget = !organization && selection
+    ? props.connectors.find((connector) =>
+      (selection.kind === "installed" ? connector.name === selection.id : selectedEntry && matchPublicConnector(connector, [selectedEntry]))
+      && (!props.source || resolveConnectorCatalogSource(connector, publicEntries) === props.source)) ?? null
     : null;
-  const detailPending = Boolean(detailTargetName && props.pendingConnectorName === detailTargetName);
+  const detailEntry = selectedEntry ?? (detailTarget ? matchPublicConnector(detailTarget, publicEntries) : undefined);
+  const organizationDetail = organization && selection?.kind === "organization"
+    ? props.organizationDetail?.(selection.id) : null;
+  const detailName = organizationDetail?.name ?? detailTarget?.name ?? detailEntry?.name;
+  const detailPending = Boolean(detailTarget && props.pendingConnectorName === detailTarget.name);
   const mutationPending = Boolean(props.pendingConnectorName);
 
   const openEditor = (connector: GlobalConnectorItem) => {
-    setDetailTargetName(connector.name);
-    setDraftName(connector.name);
-    setDraftType(connector.config.type);
-    setDraftTarget(connector.config.type === "local"
-      ? formatLocalCommand(connector.config.command)
-      : connector.config.url ?? "");
-    setFormError(null);
+    setDetailSelection({ kind: "installed", id: connector.name, source: props.source });
   };
+  const openDetail = (id: string): boolean => {
+    if (organization) {
+      if (!props.organizationDetail?.(id)) return false;
+      setDetailSelection({ kind: "organization", id, source: props.source });
+      return true;
+    }
+    const name = id.startsWith("global-connector:") ? id.slice("global-connector:".length) : id;
+    const connector = props.connectors.find((item) => item.name === name
+      && (!props.source || resolveConnectorCatalogSource(item, publicEntries) === props.source));
+    const entry = !personal || !props.source
+      ? detailEntries.find((item) => (item.id ?? getMcpServerName(item)) === id) : undefined;
+    // Prefixed installed IDs are unambiguous; raw directory IDs take precedence over raw names.
+    if (connector && (id.startsWith("global-connector:") || !entry)) {
+      openEditor(connector);
+      return true;
+    }
+    if (!entry) return false;
+    const installed = props.connectors.find((item) => matchPublicConnector(item, [entry]));
+    if (installed) openEditor(installed);
+    else setDetailSelection({ kind: "directory", id, source: props.source });
+    return true;
+  };
+  useEffect(() => {
+    const request = props.detailRequest;
+    if (!request || props.busy || addOpen
+      || (handledDetailRequest.current?.id === request.id && handledDetailRequest.current.nonce === request.nonce)) return;
+    // Leave unresolved requests pending while the parent's inventory is loading.
+    if (openDetail(request.id)) handledDetailRequest.current = request;
+  }, [props.detailRequest, props.source, props.busy, props.connectors, props.publicEntries, props.unconnected, props.organizationDetail, addOpen]);
+  useLayoutEffect(() => {
+    if (!detailTarget) return;
+    setDraftName(detailTarget.name);
+    setDraftType(detailTarget.config.type);
+    setDraftTarget(detailTarget.config.type === "local"
+      ? formatLocalCommand(detailTarget.config.command)
+      : detailTarget.config.url ?? "");
+    setFormError(null);
+    // Inventory/status refreshes must not overwrite an in-progress edit.
+  }, [detailSelection, detailTarget?.name, detailTarget?.config.type]);
 
   const saveDetail = async () => {
-    if (!personal || !detailTarget) return;
+    if (organization || !detailTarget || submitting || mutationPending) return;
     const command = detailTarget.config.type === "local" ? parseLocalCommand(draftTarget) : null;
     const target = detailTarget.config.type === "remote" ? draftTarget.trim() : "";
     if (detailTarget.config.type === "local" && !command) {
@@ -183,15 +250,18 @@ export function GlobalConnectorsView(props: GlobalConnectorsViewProps) {
     if (detailTarget.config.type === "remote" && !target) return;
     setSubmitting(true);
     setFormError(null);
+    const generation = detailGeneration.current;
     try {
       const config: McpServerConfig = detailTarget.config.type === "remote"
         ? { ...detailTarget.config, type: "remote", url: target }
         : { ...detailTarget.config, type: "local", command: command! };
       await props.onAddConnector(detailTarget.name, config);
-      setDetailTargetName(null);
-      resetDraft();
+      if (generation === detailGeneration.current) {
+        setDetailSelection(null);
+        resetDraft();
+      }
     } catch (error) {
-      setFormError(error instanceof Error ? error.message : t("mcp.add_failed"));
+      if (generation === detailGeneration.current) setFormError(error instanceof Error ? error.message : t("mcp.add_failed"));
     } finally {
       setSubmitting(false);
     }
@@ -209,6 +279,10 @@ export function GlobalConnectorsView(props: GlobalConnectorsViewProps) {
     const command = draftType === "local" ? parseLocalCommand(draftTarget) : null;
     const target = draftType === "remote" ? draftTarget.trim() : "";
     if (!name) return;
+    if (installedNames.has(name)) {
+      setFormError(t("customization.connector_name_conflict"));
+      return;
+    }
     if (draftType === "local" && !command) {
       setFormError(t("global_connectors.command_invalid"));
       return;
@@ -221,7 +295,7 @@ export function GlobalConnectorsView(props: GlobalConnectorsViewProps) {
       const config: McpServerConfig = draftType === "remote"
         ? { type: "remote", url: target }
         : { type: "local", command: command! };
-      await props.onAddConnector(name, config);
+      await (props.onCreateConnector ?? props.onAddConnector)(name, config);
       setAddOpen(false);
       resetDraft();
       if (generation === sourceGeneration.current) props.onSourceChange?.("personal");
@@ -233,19 +307,86 @@ export function GlobalConnectorsView(props: GlobalConnectorsViewProps) {
   };
 
   const connectDirectory = async (entry: McpDirectoryInfo) => {
-    const generation = sourceGeneration.current;
+    if (installedNames.has(getMcpServerName(entry)) || props.connectors.some((connector) => matchPublicConnector(connector, [entry]))) return;
     await props.onConnectDirectory(entry);
-    if (props.source === "public" && generation === sourceGeneration.current) props.onSourceChange?.("personal");
   };
 
   const draftTargetValid = draftType === "remote"
     ? Boolean(draftTarget.trim())
     : parseLocalCommand(draftTarget) !== null;
   const commandDraftInvalid = draftType === "local" && Boolean(draftTarget.trim()) && !draftTargetValid;
+  const draftNameConflict = installedNames.has(draftName.trim());
+  const pageDetail = props.detailPresentation === "page" && Boolean(detailName);
+  const detailConflict = Boolean(detailEntry && !detailTarget && installedNames.has(getMcpServerName(detailEntry)));
+  const detailActions = detailTarget ? (
+    <div className="flex flex-wrap justify-between gap-2">
+      <Button variant="destructive" disabled={props.busy || mutationPending || submitting} onClick={() => { setDetailSelection(null); setRemoveTarget(detailTarget); }}>
+        {t("mcp.remove_app")}
+      </Button>
+      <div className="flex flex-wrap gap-2">
+        {connectorReadiness(detailTarget.config, detailTarget.status).canAuthorize ? <Button variant="outline" disabled={mutationPending || submitting} onClick={() => props.onAuthorize(detailTarget)}>{t("mcp.connect")}</Button> : null}
+        <Button variant="outline" disabled={props.busy || mutationPending || submitting} onClick={() => runWrite(props.onToggleEnabled(detailTarget.name, detailTarget.config.enabled === false))}>
+          <Power size={13} />
+          {detailTarget.config.enabled === false ? t("mcp.enable_app") : t("mcp.disable_app")}
+        </Button>
+        <Button disabled={submitting || mutationPending || !draftTargetValid} onClick={() => void saveDetail()}>{submitting || detailPending ? t("common.saving") : t("common.save")}</Button>
+      </div>
+    </div>
+  ) : detailEntry ? (
+    <Button disabled={props.busy || mutationPending || detailConflict} onClick={() => runWrite(connectDirectory(detailEntry))}>
+      {t("project_extensions.connect")}
+    </Button>
+  ) : null;
+  const detailBody = organizationDetail ? organizationDetail.content : (
+    <div className="space-y-4">
+      <div className="flex flex-wrap gap-2 text-xs text-dls-secondary">
+        <span>{(detailTarget?.config.type ?? detailEntry?.type ?? "remote") === "remote" ? t("mcp.type_cloud") : t("mcp.type_local")}</span>
+        {detailTarget ? <span>{t("customization.installed")}{" · "}{connectorReadiness(detailTarget.config, detailTarget.status).label}</span> : null}
+      </div>
+      {detailTarget ? <>
+        {connectorReadiness(detailTarget.config, detailTarget.status).hint ? <SettingsNotice>{connectorReadiness(detailTarget.config, detailTarget.status).hint}</SettingsNotice> : null}
+        <label className="grid gap-1.5 text-sm font-medium text-dls-text">
+          {detailTarget.config.type === "remote" ? t("global_connectors.field_url") : t("global_connectors.field_command")}
+          {detailTarget.config.type === "remote" ? (
+            <input value={draftTarget} disabled={submitting || detailPending} onChange={(event) => setDraftTarget(event.currentTarget.value)} className="rounded-lg border border-dls-border bg-dls-surface px-3 py-2 font-mono text-xs font-normal outline-none focus:ring-2 focus:ring-dls-accent/20" />
+          ) : (
+            <textarea
+              value={draftTarget}
+              disabled={submitting || detailPending}
+              onChange={(event) => { setDraftTarget(event.currentTarget.value); setFormError(null); }}
+              rows={5}
+              aria-invalid={commandDraftInvalid}
+              className="resize-y rounded-lg border border-dls-border bg-dls-surface px-3 py-2 font-mono text-xs font-normal outline-none focus:ring-2 focus:ring-dls-accent/20 aria-invalid:border-destructive"
+            />
+          )}
+          {detailTarget.config.type === "local" ? <span className="text-xs font-normal text-dls-secondary">{t("global_connectors.command_help")}</span> : null}
+        </label>
+        {formError || commandDraftInvalid ? <SettingsNotice tone="error">{formError ?? t("global_connectors.command_invalid")}</SettingsNotice> : null}
+      </> : detailEntry ? (
+        <div className="space-y-2">
+          {detailEntry.url || detailEntry.command ? <pre className="whitespace-pre-wrap break-all rounded-lg border border-dls-border bg-dls-surface p-3 text-xs">{detailEntry.type === "local" ? formatLocalCommand(detailEntry.command) : detailEntry.url}</pre> : null}
+          {detailConflict ? <SettingsNotice tone="error">{t("customization.connector_name_conflict")}</SettingsNotice> : null}
+        </div>
+      ) : null}
+      {!pageDetail ? detailActions : null}
+    </div>
+  );
 
   return (
     <>
-      <LayoutStack>
+      {pageDetail ? (
+        <CatalogDetailPage
+          categoryLabel={t("settings.tab_connectors")}
+          name={detailName!}
+          description={organizationDetail?.description ?? detailEntry?.description}
+          icon={<GlobalConnectorAvatar name={detailName!} url={detailTarget?.config.url ?? detailEntry?.url} iconSlug={detailEntry?.iconSlug} iconSrc={detailEntry?.iconSrc} />}
+          actions={detailActions}
+          onBack={() => setDetailSelection(null)}
+        >
+          {detailBody}
+          {!organization && props.error ? <SettingsNotice tone="error">{props.error}</SettingsNotice> : null}
+        </CatalogDetailPage>
+      ) : <LayoutStack>
         <LayoutSection>
           <CatalogHeader
             title={t("settings.tab_connectors")}
@@ -255,6 +396,8 @@ export function GlobalConnectorsView(props: GlobalConnectorsViewProps) {
             source={props.source}
             onSourceChange={(source) => {
               sourceGeneration.current += 1;
+              setDetailSelection(null);
+              setRemoveTarget(null);
               props.onSourceChange?.(source);
             }}
             organizationName={props.organizationName}
@@ -269,11 +412,11 @@ export function GlobalConnectorsView(props: GlobalConnectorsViewProps) {
 
           {organization ? (
             <div className="min-h-[20rem]">
-              {typeof props.organizationContent === "function" ? props.organizationContent(search) : props.organizationContent}
+              {typeof props.organizationContent === "function" ? props.organizationContent(search, openDetail) : props.organizationContent}
             </div>
           ) : (
             <div className="min-h-[20rem] space-y-5">
-              {personal ? (
+              {personal || (props.source === "public" && connectors.length > 0) ? (
                 <div className="space-y-2">
                   {!props.source ? (
                     <div className="flex items-center gap-2 text-sm font-medium text-dls-text">
@@ -295,16 +438,18 @@ export function GlobalConnectorsView(props: GlobalConnectorsViewProps) {
                               <div className="min-w-0 flex-1">
                                 <div className="flex flex-wrap items-center gap-2">
                                   <span className="truncate text-sm font-medium text-dls-text">{connector.name}</span>
+                                  {props.source === "public" ? <span className="text-xs text-dls-secondary">{t("customization.installed")}</span> : null}
                                   <span className="shrink-0 rounded-full border border-dls-border bg-dls-surface px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
                                     {connector.config.type === "remote" ? t("mcp.type_cloud") : t("mcp.type_local")}
                                   </span>
                                   <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium ${enabled && connector.status?.status === "connected" ? "border-green-6 bg-green-2 text-green-11" : "border-gray-6 bg-gray-3 text-gray-11"}`}>
-                                    {enabled ? connectorStatusLabel(connector.status) ?? t("mcp.enabled_label") : t("mcp.disabled_label")}
+                                    {connectorReadiness(connector.config, connector.status).label}
                                   </span>
                                 </div>
                                 <div className="truncate font-mono text-[11px] text-muted-foreground">
                                   {connectorTarget(connector.config)}
                                 </div>
+                                <p className="mt-1 text-xs text-dls-secondary">{connectorReadiness(connector.config, connector.status).hint}</p>
                               </div>
                             </button>
                           </LayoutSectionItem>
@@ -327,33 +472,48 @@ export function GlobalConnectorsView(props: GlobalConnectorsViewProps) {
                   ) : null}
                   {directoryEntries.length ? (
                     <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                      {directoryEntries.map((entry) => (
-                        <LayoutSectionItem
-                          key={entry.serverName ?? entry.id ?? entry.name}
-                          className="flex-row items-center justify-between gap-3 rounded-2xl border border-dls-border px-4 py-3"
-                        >
-                          <GlobalConnectorAvatar name={entry.name} url={entry.url} iconSlug={entry.iconSlug} iconSrc={entry.iconSrc} />
-                          <div className="min-w-0 flex-1">
-                            <p className="truncate text-sm font-medium text-dls-text">{entry.name}</p>
-                            <p className="mt-1 line-clamp-2 text-xs text-dls-secondary">{entry.description}</p>
-                          </div>
-                          {props.source === "public" && installedNames.has(getMcpServerName(entry)) ? (
-                            <span className="shrink-0 rounded-full border border-dls-border bg-dls-surface px-2 py-0.5 text-xs text-dls-secondary">
-                              {t("customization.installed")}
-                            </span>
-                          ) : (
-                            <Button
-                              variant="outline"
-                              disabled={props.busy || mutationPending}
-                              onClick={() => runWrite(connectDirectory(entry))}
-                            >
-                              {t("project_extensions.connect")}
-                            </Button>
-                          )}
-                        </LayoutSectionItem>
-                      ))}
+                      {directoryEntries.map((entry) => {
+                        const existing = props.connectors.find((connector) => connector.name === getMcpServerName(entry));
+                        const installed = props.connectors.find((connector) => matchPublicConnector(connector, [entry]));
+                        const conflict = Boolean(existing && !installed);
+                        return (
+                          <LayoutSectionItem
+                            key={entry.serverName ?? entry.id ?? entry.name}
+                            className="flex-row flex-wrap items-center justify-between gap-3 rounded-2xl border border-dls-border p-0 pr-4 transition-colors hover:bg-dls-hover"
+                          >
+                            <button type="button" onClick={() => installed ? openEditor(installed) : openDetail(entry.id ?? getMcpServerName(entry))} className="flex min-w-0 flex-1 items-center gap-3 px-4 py-3 text-left">
+                              <GlobalConnectorAvatar name={entry.name} url={entry.url} iconSlug={entry.iconSlug} iconSrc={entry.iconSrc} />
+                              <div className="min-w-0 flex-1">
+                                <p className="truncate text-sm font-medium text-dls-text">{entry.name}</p>
+                                <p className="mt-1 line-clamp-2 text-xs text-dls-secondary">{entry.description}</p>
+                                {conflict ? <p className="mt-1 text-xs text-destructive">{t("customization.connector_name_conflict")}</p> : null}
+                                {installed ? <p className="mt-1 text-xs text-dls-secondary">{connectorReadiness(installed.config, installed.status).hint}</p> : null}
+                              </div>
+                            </button>
+                            {installed ? (
+                              <>
+                                <span className="shrink-0 rounded-full border border-dls-border bg-dls-surface px-2 py-0.5 text-xs text-dls-secondary">
+                                  {t("customization.installed")}
+                                  {" · "}{connectorReadiness(installed.config, installed.status).label}
+                                </span>
+                                <Button variant="outline" disabled={props.busy || mutationPending} onClick={() => openEditor(installed)}>
+                                  {t("common.edit")}
+                                </Button>
+                              </>
+                            ) : (
+                              <Button
+                                variant="outline"
+                                disabled={props.busy || mutationPending || conflict}
+                                onClick={() => runWrite(connectDirectory(entry))}
+                              >
+                                {t("project_extensions.connect")}
+                              </Button>
+                            )}
+                          </LayoutSectionItem>
+                        );
+                      })}
                     </div>
-                  ) : <SettingsNotice>{t(props.source === "public" || query ? "chat.no_search_results" : "project_extensions.no_unconnected")}</SettingsNotice>}
+                  ) : props.source === "public" && connectors.length > 0 ? null : <SettingsNotice>{t(props.source === "public" || query ? "chat.no_search_results" : "project_extensions.no_unconnected")}</SettingsNotice>}
                 </div>
               ) : null}
             </div>
@@ -361,7 +521,7 @@ export function GlobalConnectorsView(props: GlobalConnectorsViewProps) {
 
           {!organization && props.error ? <SettingsNotice tone="error">{props.error}</SettingsNotice> : null}
         </LayoutSection>
-      </LayoutStack>
+      </LayoutStack>}
 
       <Dialog open={addOpen} onOpenChange={(open) => { if (!open && !submitting) setAddOpen(false); }}>
         <DialogContent className="sm:max-w-lg">
@@ -374,7 +534,7 @@ export function GlobalConnectorsView(props: GlobalConnectorsViewProps) {
               {t("global_connectors.field_name")}
               <input
                 value={draftName}
-                onChange={(event) => setDraftName(event.currentTarget.value)}
+                onChange={(event) => { setDraftName(event.currentTarget.value); setFormError(null); }}
                 placeholder="context7"
                 className="rounded-lg border border-dls-border bg-dls-surface px-3 py-2 text-sm font-normal outline-none focus:ring-2 focus:ring-dls-accent/20"
               />
@@ -419,13 +579,13 @@ export function GlobalConnectorsView(props: GlobalConnectorsViewProps) {
               )}
               {draftType === "local" ? <span className="text-xs font-normal text-dls-secondary">{t("global_connectors.command_help")}</span> : null}
             </label>
-            {formError || commandDraftInvalid ? <SettingsNotice tone="error">{formError ?? t("global_connectors.command_invalid")}</SettingsNotice> : null}
+            {draftNameConflict || formError || commandDraftInvalid ? <SettingsNotice tone="error">{draftNameConflict ? t("customization.connector_name_conflict") : formError ?? t("global_connectors.command_invalid")}</SettingsNotice> : null}
             <div className="flex justify-end gap-2">
               <Button variant="outline" disabled={submitting} onClick={() => setAddOpen(false)}>
                 {t("common.cancel")}
               </Button>
               <Button
-                disabled={submitting || !draftName.trim() || !draftTargetValid}
+                disabled={submitting || mutationPending || !draftName.trim() || draftNameConflict || !draftTargetValid}
                 onClick={() => void submitDraft()}
               >
                 {submitting ? t("common.saving") : t("common.create")}
@@ -435,49 +595,16 @@ export function GlobalConnectorsView(props: GlobalConnectorsViewProps) {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={personal && Boolean(detailTarget)} onOpenChange={(open) => { if (!open && !submitting && !detailPending) setDetailTargetName(null); }}>
+      {props.detailPresentation !== "page" ? <Dialog open={Boolean(detailName)} onOpenChange={(open) => { if (!open && !submitting && !detailPending) setDetailSelection(null); }}>
         <DialogContent className="sm:max-w-lg">
-          <DialogHeader><DialogTitle>{detailTarget?.name}</DialogTitle></DialogHeader>
-          <div className="space-y-4">
-            <div className="flex flex-wrap gap-2 text-xs text-dls-secondary">
-              <span>{detailTarget?.config.type === "remote" ? t("mcp.type_cloud") : t("mcp.type_local")}</span>
-              <span>{detailTarget?.config.enabled === false ? t("mcp.disabled_label") : connectorStatusLabel(detailTarget?.status) ?? t("mcp.enabled_label")}</span>
-            </div>
-            <label className="grid gap-1.5 text-sm font-medium text-dls-text">
-              {detailTarget?.config.type === "remote" ? t("global_connectors.field_url") : t("global_connectors.field_command")}
-              {detailTarget?.config.type === "remote" ? (
-                <input value={draftTarget} onChange={(event) => setDraftTarget(event.currentTarget.value)} className="rounded-lg border border-dls-border bg-dls-surface px-3 py-2 font-mono text-xs font-normal outline-none focus:ring-2 focus:ring-dls-accent/20" />
-              ) : (
-                <textarea
-                  value={draftTarget}
-                  onChange={(event) => { setDraftTarget(event.currentTarget.value); setFormError(null); }}
-                  rows={5}
-                  aria-invalid={commandDraftInvalid}
-                  className="resize-y rounded-lg border border-dls-border bg-dls-surface px-3 py-2 font-mono text-xs font-normal outline-none focus:ring-2 focus:ring-dls-accent/20 aria-invalid:border-destructive"
-                />
-              )}
-              {detailTarget?.config.type === "local" ? <span className="text-xs font-normal text-dls-secondary">{t("global_connectors.command_help")}</span> : null}
-            </label>
-            {formError || commandDraftInvalid ? <SettingsNotice tone="error">{formError ?? t("global_connectors.command_invalid")}</SettingsNotice> : null}
-            <div className="flex flex-wrap justify-between gap-2">
-              <Button variant="destructive" disabled={props.busy || mutationPending || submitting} onClick={() => { const target = detailTarget; setDetailTargetName(null); if (target) setRemoveTarget(target); }}>
-                {t("mcp.remove_app")}
-              </Button>
-              <div className="flex gap-2">
-                {detailTarget?.config.enabled !== false && detailTarget?.status?.status === "needs_auth" ? <Button variant="outline" disabled={mutationPending || submitting} onClick={() => props.onAuthorize(detailTarget)}>{t("mcp.connect")}</Button> : null}
-                <Button variant="outline" disabled={props.busy || mutationPending || submitting} onClick={() => detailTarget && runWrite(props.onToggleEnabled(detailTarget.name, detailTarget.config.enabled === false))}>
-                  <Power size={13} />
-                  {detailTarget?.config.enabled === false ? t("mcp.enable_app") : t("mcp.disable_app")}
-                </Button>
-                <Button disabled={submitting || mutationPending || !draftTargetValid} onClick={() => void saveDetail()}>{submitting || detailPending ? t("common.saving") : t("common.save")}</Button>
-              </div>
-            </div>
-          </div>
+          <DialogHeader><DialogTitle>{detailName}</DialogTitle></DialogHeader>
+          {!detailTarget && detailEntry ? <p className="text-sm text-dls-secondary">{detailEntry.description}</p> : null}
+          {detailBody}
         </DialogContent>
-      </Dialog>
+      </Dialog> : null}
 
       <ConfirmModal
-        open={personal && Boolean(removeTarget)}
+        open={!organization && Boolean(removeTarget)}
         title={t("mcp.remove_app")}
         message={t("global_connectors.remove_warning").replace("{name}", removeTarget?.name ?? "")}
         confirmLabel={t("mcp.remove_app")}
@@ -487,7 +614,7 @@ export function GlobalConnectorsView(props: GlobalConnectorsViewProps) {
         onConfirm={() => {
           const target = removeTarget;
           setRemoveTarget(null);
-          if (personal && target) runWrite(props.onRemoveConnector(target.name));
+          if (!organization && target) runWrite(props.onRemoveConnector(target.name));
         }}
       />
     </>

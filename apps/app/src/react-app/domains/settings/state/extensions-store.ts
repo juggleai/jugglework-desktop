@@ -1986,6 +1986,8 @@ export function createExtensionsStore(options: {
               path: entry.path,
               trigger: entry.trigger,
               scope: entry.scope,
+              ownerPluginId: entry.ownerPluginId,
+              sourceKind: entry.sourceKind,
             }))
           : [];
         mutateState((current) => ({

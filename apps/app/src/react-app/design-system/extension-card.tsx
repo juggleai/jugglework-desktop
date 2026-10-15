@@ -20,6 +20,8 @@ export type ExtensionCardProps = {
   /** Whether the extension is already installed/connected. */
   connected?: boolean;
   connectedLabel?: string;
+  /** Keep readiness on the icon only when surrounding actions already convey installation. */
+  statusBadge?: "label" | "icon-only";
   /** Per-condition enablement results. When provided, overrides `connected`. */
   enablement?: EnablementResult[];
   /** Whether a connect operation is in progress. */
@@ -73,6 +75,7 @@ export function ExtensionCard(props: ExtensionCardProps) {
     kind = "mcp",
     connected: connectedProp = false,
     connectedLabel = t("ext_card.connected"),
+    statusBadge = "label",
     enablement,
     connecting = false,
     disabled = false,
@@ -145,19 +148,19 @@ export function ExtensionCard(props: ExtensionCardProps) {
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-1.5">
             <h4 className="min-w-0 break-words text-sm font-semibold text-dls-text">{name}</h4>
-            {connected ? (
+            {connected && statusBadge === "label" ? (
               <span className="shrink-0 rounded-md bg-green-3 px-1.5 py-0.5 text-[10px] font-medium text-green-11">
                 {connectedLabel}
               </span>
-            ) : someMet ? (
+            ) : someMet && statusBadge === "label" ? (
               <span className="shrink-0 rounded-md bg-amber-3 px-1.5 py-0.5 text-[10px] font-medium text-amber-11">
                 Partially set up
               </span>
-            ) : (
+            ) : !connected && !someMet && kind !== "extension" ? (
               <span className={`shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-medium ${kindStyle[kind]}`}>
                 {kindLabel[kind]}
               </span>
-            )}
+            ) : null}
             {hidden ? (
               <span className="shrink-0 rounded-md bg-gray-3 px-1.5 py-0.5 text-[10px] font-medium text-gray-11">
                 Hidden

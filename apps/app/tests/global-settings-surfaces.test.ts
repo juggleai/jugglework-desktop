@@ -56,10 +56,11 @@ describe("personal global settings surfaces", () => {
     expect(globalConnectors).toContain('<GlobalConnectorAvatar name={entry.name}');
     expect(globalConnectors).toContain("directoryEntries.map");
     expect(globalConnectors).toContain("props.onConnectDirectory(entry)");
-    expect(globalConnectors).toContain("const [detailTargetName, setDetailTargetName]");
-    expect(globalConnectors).toContain("props.connectors.find((connector) => connector.name === detailTargetName)");
+    expect(globalConnectors).toContain("const [detailSelection, setDetailSelection]");
+    expect(globalConnectors).toContain("connector.name === selection.id");
+    expect(globalConnectors).toContain('resolveConnectorCatalogSource(connector, publicEntries) === props.source');
     expect(globalConnectors).not.toContain("[detailTarget, setDetailTarget] = useState<GlobalConnectorItem | null>(null)");
-    expect(globalConnectors).toContain('connectorStatusLabel(connector.status) ?? t("mcp.enabled_label")');
+    expect(globalConnectors).toContain("connectorReadiness(connector.config, connector.status).label");
     expect(globalConnectors).not.toContain('connectorStatusLabel(connector.status) ?? t("mcp.status_connected")');
   });
 

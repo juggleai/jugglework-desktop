@@ -9,7 +9,9 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { JUGGLEWORK_EXTENSION_CATALOG, type McpDirectoryInfo } from "@/app/constants";
 import type { CloudImportedPlugin, CloudImportedPluginFile } from "@/app/cloud/import-state";
 import type { JuggleWorkServerClient, JuggleWorkSessionMessage } from "@/app/lib/jugglework-server";
-import type { ComposerAttachment, ComposerImageGenerationOptions, ComposerVideoGenerationOptions, McpServerEntry, McpStatus, McpStatusMap, ModelRef, SkillCard, SlashCommandOption } from "@/app/types";
+import type { ComposerAttachment, ComposerImageGenerationOptions, ComposerVideoGenerationOptions, McpServerEntry, McpStatusMap, ModelRef, SkillCard, SlashCommandOption } from "@/app/types";
+import { composerMcpStatus } from "@/react-app/domains/connections/workspace-mcp-inventory";
+import { connectorReadiness } from "@/react-app/domains/connections/connector-readiness";
 import { t } from "@/i18n";
 import { isJuggleWorkExtensionEnabled, isJuggleWorkExtensionHidden, JUGGLEWORK_EXTENSION_STATE_CHANGED } from "@/react-app/domains/settings/extension-state";
 import { useDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider";
@@ -81,7 +83,8 @@ type PlusMenuEntry =
   | { kind: "agent"; id: string; label: string; description: string; name: string | null }
   | { kind: "extension"; id: string; label: string; description: string; extension: McpDirectoryInfo }
   | { kind: "plugin-file"; id: string; label: string; description: string; file: CloudImportedPluginFile }
-  | { kind: "mcp"; id: string; label: string; description: string; entry: McpServerEntry; status: McpServerStatus; detail: McpStatus | undefined };
+  | { kind: "mcp-management"; id: "mcp-management"; label: string; description: string }
+  | { kind: "mcp"; id: string; label: string; description: string; entry: McpServerEntry; status: McpServerStatus };
 
 function plusMenuAgentIcon(name: string | null) {
   const normalizedName = name?.trim().toLowerCase();
@@ -144,6 +147,7 @@ type ComposerProps = {
   createVoiceRealtimeSession: JuggleWorkServerClient["createVoiceRealtimeSession"] | null;
   getVoiceRealtimeStatus: JuggleWorkServerClient["getVoiceRealtimeStatus"] | null;
   onOpenVoiceSettings?: () => void;
+  onOpenSettings?: () => void;
   focusEligible: boolean;
   draft: string;
   mentions: Record<string, ComposerMentionKind>;
@@ -347,42 +351,15 @@ function formatMcpStatusLabel(status: McpServerStatus | undefined) {
       return t("mcp.friendly_status_not_installed");
     case "not_configured":
       return t("mcp.friendly_status_not_configured");
-    case "disconnected":
-      return t("mcp.friendly_status_offline");
+    case "pending":
+      return t("mcp.friendly_status_pending");
     case "failed":
     default:
       return t("mcp.friendly_status_issue");
   }
 }
 
-type McpServerStatus = "connected" | "needs_auth" | "needs_client_registration" | "failed" | "disabled" | "not_installed" | "not_configured" | "disconnected";
-
-function toReactMcpStatus(name: string, entry: McpServerEntry, statuses: McpStatusMap): McpServerStatus {
-  const configured = statuses[name];
-  if (configured?.status === "connected") return "connected";
-  if (configured?.status === "not_installed") return "not_installed";
-  if (configured?.status === "not_configured") return "not_configured";
-  if (configured?.status === "needs_auth") return "needs_auth";
-  if (configured?.status === "needs_client_registration") return "needs_client_registration";
-  if (configured?.status === "failed") return "failed";
-  if (configured?.status === "disabled" || entry.config.enabled === false || entry.config.enabled === undefined && entry.config.type === "local" && entry.config.command?.length === 0) {
-    return entry.config.enabled === false ? "disabled" : configured?.status === "disabled" ? "disabled" : "disconnected";
-  }
-  return "disconnected";
-}
-
-/**
- * MCP 状态徽标的悬浮说明。
- * TIPS: 「异常」可能来自组织未配置、市场未同步、能力未就绪等多种原因，
- * 后端给出的 error 只存在于状态原始数据里，这里补到 title 上，避免界面只剩一个同质徽标。
- * @param status 归一化后的展示状态
- * @param detail 状态原始数据（failed / needs_client_registration 会带 error）
- */
-function mcpStatusTooltip(status: McpServerStatus, detail: McpStatus | undefined) {
-  const label = formatMcpStatusLabel(status);
-  const reason = detail && "error" in detail && typeof detail.error === "string" ? detail.error.trim() : "";
-  return reason ? `${label} · ${reason}` : label;
-}
+type McpServerStatus = ReturnType<typeof composerMcpStatus>;
 
 function mcpStatusBadgeClass(status: McpServerStatus) {
   switch (status) {
@@ -395,7 +372,7 @@ function mcpStatusBadgeClass(status: McpServerStatus) {
     case "not_configured":
       return "bg-amber-3 text-amber-11";
     case "disabled":
-    case "disconnected":
+    case "pending":
       return "bg-gray-3 text-gray-11";
     default:
       return "bg-red-3 text-red-11";
@@ -714,8 +691,7 @@ export function ReactSessionComposer(props: ComposerProps) {
   );
   const activeMcpItems = mcpServers.map((entry) => ({
     entry,
-    status: toReactMcpStatus(entry.id ?? entry.name, entry, mcpStatuses),
-    detail: mcpStatuses[entry.id ?? entry.name],
+    status: composerMcpStatus(entry, mcpStatuses),
   }));
 
   const plusMenuAddEntries = useMemo<PlusMenuEntry[]>(() => [
@@ -751,19 +727,24 @@ export function ReactSessionComposer(props: ComposerProps) {
       file,
     }))),
   ];
-  const plusMenuMcpEntries: PlusMenuEntry[] = activeMcpItems.map(({ entry, status, detail }) => ({
+  const plusMenuMcpEntries: PlusMenuEntry[] = activeMcpItems.map(({ entry, status }) => ({
     kind: "mcp" as const,
     id: `mcp:${entry.id ?? entry.name}`,
     label: entry.name,
-    description: entry.origin === "jugglework-connect"
-      ? [entry.marketplaceName, entry.pluginName].filter(Boolean).join(" · ") || entry.config.url || "Remote MCP"
-      : entry.config.type === "remote"
-        ? entry.config.url ?? entry.config.command?.join(" ") ?? "Remote MCP"
-        : entry.config.command?.join(" ") ?? "Local MCP",
+    description: entry.workspaceEnabled === false
+      ? t("connect.workspace_disabled_here")
+      : connectorReadiness(entry.config, mcpStatuses[entry.id ?? entry.name]).hint ?? connectorReadiness(entry.config, mcpStatuses[entry.id ?? entry.name]).label,
     entry,
     status,
-    detail,
   }));
+  if (props.onOpenSettings) {
+    plusMenuMcpEntries.push({
+      kind: "mcp-management",
+      id: "mcp-management",
+      label: t("composer.plus_menu_manage_connectors"),
+      description: "",
+    });
+  }
   const plusMenuEntries = [...plusMenuAddEntries, ...plusMenuPluginEntries, ...plusMenuMcpEntries];
 
   useEffect(() => {
@@ -1013,7 +994,7 @@ export function ReactSessionComposer(props: ComposerProps) {
         })
         .catch(() => {
           if (cancelled) return;
-          setMcpServers([]);
+          // Keep known installed rows visible, but never reuse stale readiness.
           setMcpStatuses({});
         })
         .finally(() => {
@@ -1214,13 +1195,18 @@ export function ReactSessionComposer(props: ComposerProps) {
    * @param status 归一化后的连接状态，仅 connected 可选
    */
   const applyMcpSelection = (entry: McpServerEntry, status: McpServerStatus) => {
-    if (status !== "connected") return;
+    if (status !== "connected" || entry.workspaceEnabled === false || entry.config.enabled === false) return;
     const selection = resolveMcpCapabilitySelection(entry);
     insertCapabilityTag(selection.kind, entry.name, selection.prompt);
   };
 
   // 普通函数（非 useCallback）：需要始终读取当前渲染的 fileInput 绑定。
   const activatePlusEntry = (entry: PlusMenuEntry) => {
+    if (entry.kind === "mcp-management") {
+      setPlusMenuOpen(false);
+      props.onOpenSettings?.();
+      return;
+    }
     if (entry.kind === "file") {
       if (!props.attachmentsEnabled) {
         toast.warning(props.attachmentsDisabledReason ?? t("composer.attachments_unavailable"));
@@ -1533,9 +1519,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                   const disabledTitle = attachmentAction && disabled
                     ? props.attachmentsDisabledReason ?? t("composer.attachments_unavailable")
                     : entry.kind === "mcp" && disabled
-                      ? entry.entry.workspaceEnabled === false
-                        ? t("connect.workspace_disabled_here")
-                        : mcpStatusTooltip(entry.status, entry.detail)
+                      ? entry.description
                       : undefined;
                   return (
                     <button
@@ -1559,7 +1543,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                         {entry.kind === "agent" ? plusMenuAgentIcon(entry.name) : null}
                         {entry.kind === "extension" ? extensionIcon(entry.extension, 18) : null}
                         {entry.kind === "plugin-file" ? <FileText size={18} strokeWidth={1.8} /> : null}
-                        {entry.kind === "mcp" ? <Plug size={18} strokeWidth={1.8} /> : null}
+                        {entry.kind === "mcp" || entry.kind === "mcp-management" ? <Plug size={18} strokeWidth={1.8} /> : null}
                       </span>
                       <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
                         <span className="shrink-0 text-[13px] font-medium text-gray-12">{entry.label}</span>
@@ -1568,13 +1552,13 @@ export function ReactSessionComposer(props: ComposerProps) {
                       {selected ? <Check size={16} className="shrink-0 text-gray-10" /> : null}
                       {entry.kind === "mcp" ? (
                         <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${mcpStatusBadgeClass(entry.status)}`}>
-                          {entry.entry.workspaceEnabled === false ? t("connect.workspace_disabled_here") : formatMcpStatusLabel(entry.status)}
+                          {entry.entry.workspaceEnabled === false ? t("connect.workspace_disabled_here") : connectorReadiness(entry.entry.config, mcpStatuses[entry.entry.id ?? entry.entry.name]).label}
                         </span>
                       ) : null}
                     </button>
                   );
                 })}
-                {group.entries.length === 0 ? (
+                {group.entries.every((entry) => entry.kind === "mcp-management") ? (
                   <div className="px-2.5 py-1.5 text-[13px] text-gray-9">
                     {group.id === "mcp" && mcpLoading
                       ? t("composer.plus_menu_loading_mcp")

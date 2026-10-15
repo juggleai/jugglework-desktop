@@ -81,6 +81,110 @@ describe("workspace endpoint resolution", () => {
     expect(endpoint?.mountedBaseUrl).toBe("https://worker.example.test/workspace/server-workspace-b");
   });
 
+  test("remote workspace clients keep bearer and host credentials in separate headers", async () => {
+    let requestInit: RequestInit | undefined;
+    globalThis.fetch = (async (_input, init) => {
+      requestInit = init;
+      return new Response(JSON.stringify({ items: [] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    const endpoint = resolveWorkspaceEndpoint({
+      id: "rem_server-workspace-b",
+      workspaceType: "remote",
+      baseUrl: "https://worker.example.test",
+      juggleworkToken: "remote-client-token",
+      juggleworkHostToken: "remote-host-token",
+    }, { baseUrl: null, token: null });
+    if (!endpoint) throw new Error("Expected a remote workspace endpoint.");
+
+    await endpoint.client.listUserEnv();
+
+    const headers = new Headers(requestInit?.headers);
+    expect(headers.get("Authorization")).toBe("Bearer remote-client-token");
+    expect(headers.get("X-JuggleWork-Host-Token")).toBe("remote-host-token");
+  });
+
+  test("legacy host-only remote records never reuse the host token as bearer auth", async () => {
+    let requestInit: RequestInit | undefined;
+    globalThis.fetch = (async (_input, init) => {
+      requestInit = init;
+      return new Response(JSON.stringify({ items: [] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    const endpoint = resolveWorkspaceEndpoint({
+      id: "rem_server-workspace-b",
+      workspaceType: "remote",
+      baseUrl: "https://worker.example.test",
+      juggleworkHostToken: "legacy-host-token",
+    }, { baseUrl: null, token: null });
+    if (!endpoint) throw new Error("Expected a remote workspace endpoint.");
+
+    await endpoint.client.listUserEnv();
+
+    const headers = new Headers(requestInit?.headers);
+    expect(endpoint.token).toBe("");
+    expect(headers.get("Authorization")).toBe(null);
+    expect(headers.get("X-JuggleWork-Host-Token")).toBe("legacy-host-token");
+  });
+
+  test("legacy client tokens remain bearer auth when the primary field is empty", async () => {
+    let requestInit: RequestInit | undefined;
+    globalThis.fetch = (async (_input, init) => {
+      requestInit = init;
+      return new Response(JSON.stringify({ ok: true, version: "test", uptimeMs: 1 }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    const endpoint = resolveWorkspaceEndpoint({
+      id: "rem_server-workspace-b",
+      workspaceType: "remote",
+      baseUrl: "https://worker.example.test",
+      juggleworkToken: " ",
+      juggleworkClientToken: "legacy-client-token",
+      juggleworkHostToken: "remote-host-token",
+    }, { baseUrl: null, token: null });
+    if (!endpoint) throw new Error("Expected a remote workspace endpoint.");
+
+    await endpoint.client.health();
+
+    const headers = new Headers(requestInit?.headers);
+    expect(headers.get("Authorization")).toBe("Bearer legacy-client-token");
+    expect(headers.get("X-JuggleWork-Host-Token")).toBe("remote-host-token");
+  });
+
+  test("remote owner bearer tokens authenticate owner-capable host routes", async () => {
+    let requestInit: RequestInit | undefined;
+    globalThis.fetch = (async (_input, init) => {
+      requestInit = init;
+      return new Response(JSON.stringify({ ok: true, schemaVersion: 1 }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    const endpoint = resolveWorkspaceEndpoint({
+      id: "rem_server-workspace-b",
+      workspaceType: "remote",
+      baseUrl: "https://worker.example.test",
+      juggleworkToken: "remote-owner-token",
+    }, { baseUrl: null, token: null });
+    if (!endpoint) throw new Error("Expected a remote workspace endpoint.");
+
+    await endpoint.client.setConnectState(true);
+
+    const headers = new Headers(requestInit?.headers);
+    expect(headers.get("Authorization")).toBe("Bearer remote-owner-token");
+    expect(headers.get("X-JuggleWork-Host-Token")).toBe(null);
+  });
+
   test("remote workspace ids fall back to stripping rem_ when no explicit server id exists", () => {
     expect(workspaceServerId({
       id: "rem_workspace-c",

@@ -429,8 +429,11 @@ export type WorkspaceCreateRemoteInput = {
   directory?: string | null;
   displayName?: string | null;
   juggleworkHostUrl?: string | null;
+  /** Bearer token for JuggleWork client routes. */
   juggleworkToken?: string | null;
+  /** Legacy bearer/client token. */
   juggleworkClientToken?: string | null;
+  /** Host-admin token; omission on update preserves the stored value. */
   juggleworkHostToken?: string | null;
   juggleworkWorkspaceId?: string | null;
   juggleworkWorkspaceName?: string | null;

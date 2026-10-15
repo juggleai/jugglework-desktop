@@ -7,10 +7,11 @@ import { isWebDeployment } from "@/app/lib/jugglework-deployment";
 import { hydrateJuggleWorkServerSettingsFromEnv } from "@/app/lib/jugglework-server";
 import { isDesktopRuntime } from "@/app/utils";
 import { ConnectLinkProvider } from "@/react-app/domains/cloud/connect-link-provider";
-import { DenAuthProvider } from "@/react-app/domains/cloud/den-auth-provider";
+import { DenAuthProvider, useDenAuth } from "@/react-app/domains/cloud/den-auth-provider";
 import { BrandThemeProvider } from "@/react-app/domains/cloud/brand-theme";
 import { DesktopConfigProvider } from "@/react-app/domains/cloud/desktop-config-provider";
 import { RestrictionNoticeProvider } from "@/react-app/domains/cloud/restriction-notice-provider";
+import { CloudSessionProvider, useCloudSession } from "@/react-app/domains/settings/cloud/cloud-session-provider";
 import { LocalProvider } from "@/react-app/kernel/local-provider";
 import { ServerProvider } from "@/react-app/kernel/server-provider";
 import { ArchitectureMismatchGate } from "./architecture-mismatch-gate";
@@ -46,6 +47,23 @@ type AppProvidersProps = {
   children: ReactNode;
 };
 
+function CloudSessionAuthBridge() {
+  const denAuth = useDenAuth();
+  const cloudSession = useCloudSession();
+
+  useEffect(() => {
+    cloudSession.setUser(denAuth.user);
+    cloudSession.setIsSignedIn(Boolean(denAuth.user) && denAuth.isSignedIn);
+    if (denAuth.activeOrganization) {
+      cloudSession.setActiveOrganization(denAuth.activeOrganization);
+    } else if (denAuth.status === "signed_out") {
+      cloudSession.setActiveOrganization(null);
+    }
+  }, [cloudSession.setActiveOrganization, cloudSession.setIsSignedIn, cloudSession.setUser, denAuth.activeOrganization, denAuth.isSignedIn, denAuth.status, denAuth.user]);
+
+  return null;
+}
+
 export function AppProviders({ children }: AppProvidersProps) {
   hydrateJuggleWorkServerSettingsFromEnv();
 
@@ -68,6 +86,8 @@ export function AppProviders({ children }: AppProvidersProps) {
         <ArchitectureMismatchGate>
           <DesktopRuntimeBoot />
           <DenAuthProvider>
+            <CloudSessionProvider>
+            <CloudSessionAuthBridge />
             <ConnectLinkProvider>
               <DesktopConfigProvider>
                 <BrandThemeProvider>
@@ -80,6 +100,7 @@ export function AppProviders({ children }: AppProvidersProps) {
                 </BrandThemeProvider>
               </DesktopConfigProvider>
             </ConnectLinkProvider>
+            </CloudSessionProvider>
           </DenAuthProvider>
         </ArchitectureMismatchGate>
       </ServerProvider>

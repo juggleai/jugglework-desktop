@@ -5,11 +5,13 @@ import { join } from "node:path";
 
 import {
   buildJuggleWorkRuntimeConfig,
+  clearHostMarketplaceMcpOverlay,
   keepJuggleWorkRuntimeConfigFileFresh,
   juggleworkRuntimeConfigFilePath,
+  writeHostMarketplaceMcpOverlay,
   writeJuggleWorkRuntimeConfigFile,
 } from "./jugglework-runtime-config.js";
-import { writeRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
+import { readRuntimeOpencodeConfig, writeRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
 import type { ServerConfig } from "./types.js";
 
 const roots: string[] = [];
@@ -196,5 +198,29 @@ describe("jugglework runtime config file", () => {
 
     const parsed = JSON.parse(await buildJuggleWorkRuntimeConfig(config, "ws_1")) as Record<string, unknown>;
     expect(parsed.compaction).toEqual({ auto: false, prune: false, reserved: 30_000 });
+  });
+
+  test("merges the host Marketplace MCP overlay without mutating workspace runtime config", async () => {
+    const { config } = await setup();
+    await writeRuntimeOpencodeConfig(config, "ws_1", () => ({
+      mcp: { workspace: { type: "remote", url: "https://workspace.example/mcp" } },
+    }));
+    writeHostMarketplaceMcpOverlay(config, {
+      marketplace: { type: "local", command: ["marketplace-mcp"] },
+    });
+    try {
+      const built = JSON.parse(await buildJuggleWorkRuntimeConfig(config, "ws_1")) as {
+        mcp: Record<string, Record<string, unknown>>;
+      };
+      expect(built.mcp).toMatchObject({
+        workspace: { url: "https://workspace.example/mcp" },
+        marketplace: { command: ["marketplace-mcp"] },
+      });
+      expect(await readRuntimeOpencodeConfig(config, "ws_1")).toEqual({
+        mcp: { workspace: { type: "remote", url: "https://workspace.example/mcp" } },
+      });
+    } finally {
+      clearHostMarketplaceMcpOverlay(config);
+    }
   });
 });

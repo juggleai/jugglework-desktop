@@ -1,8 +1,9 @@
 import { readFile, writeFile, rm, stat } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { homedir, hostname } from "node:os";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
-import type { ApprovalRequest, Capabilities, ServerConfig, WorkspaceInfo, Actor, ReloadReason, ReloadTrigger, TokenScope } from "./types.js";
+import type { ApprovalRequest, AuditEntry, Capabilities, ServerConfig, WorkspaceInfo, Actor, ReloadReason, ReloadTrigger, TokenScope } from "./types.js";
 import { agentContextDiagnosticsRequestSchema } from "./agent-context-diagnostics-schema.js";
 import { ApprovalService } from "./approvals.js";
 import { addPlugin, listPlugins, normalizePluginSpec, removePlugin } from "./plugins.js";
@@ -17,7 +18,7 @@ import {
   setMcpEnabled,
 } from "./mcp.js";
 import { exportExtensions } from "./extensions-export.js";
-import { deleteSkill, globalSkillDirs, listSkills, upsertSkill } from "./skills.js";
+import { deleteSkill, globalSkillDirs, listSkills, readSkillDetail, upsertSkill } from "./skills.js";
 import { checkSkillWorkspacePolicy, readSkillWorkspacePolicy, writeSkillWorkspacePolicy } from "./skill-workspace-policy.js";
 import { deleteCommand, listCommands, repairCommands, upsertCommand } from "./commands.js";
 import { ApiError, formatError } from "./errors.js";
@@ -34,18 +35,35 @@ import { sanitizeCommandName, validateMcpName } from "./validators.js";
 import { TokenService } from "./tokens.js";
 import { EnvService } from "./env-file.js";
 import {
+  createHostMarketplacePluginRegistry,
+  hostMarketplacePluginRegistryOptions,
+  type HostMarketplaceMutationContext,
+  type HostMarketplacePackage,
+  type HostMarketplacePluginRegistry,
+  type HostMarketplaceScope,
+} from "./host-marketplace-plugins.js";
+import {
   normalizeResourceSnapshot,
   readDesktopCloudSyncState,
   readWorkspaceCloudImports,
   syncDesktopCloudResources,
 } from "./desktop-cloud-sync.js";
 import {
+  buildCloudPluginDeliveryPlan,
+  hasLocalMaterialization,
   installCloudPlugin,
   readCloudPluginResolved,
   readInstalledCloudPlugins,
   removeCloudPlugin,
   type CloudPluginEngineMutation,
+  type CloudPluginResolved,
 } from "./cloud-plugins.js";
+import { withPluginOwnershipLock } from "./plugin-ownership-lock.js";
+import {
+  createHostMarketplaceMigrationCoordinator,
+  type HostMarketplaceMigrationCommitInput,
+  type HostMarketplaceMigrationCoordinator,
+} from "./host-marketplace-migration.js";
 import { resolveClaudePluginBundle } from "./claude-plugin-bundle.js";
 import {
   applyMaterializedBlueprintSessions,
@@ -109,6 +127,12 @@ import { openAiCompatibleVideoAdapters } from "./media-generation/provider-regis
 import { discoverVideoModels, listReadyVideoModels, noVideoModelResult, type ProviderCatalogSnapshot } from "./media-generation/model-discovery.js";
 import { createWorkspaceProviderCredentialResolver } from "./provider-credential-resolver.js";
 import { readEffectiveWorkspaceOpencodeConfig } from "./effective-workspace-opencode-config.js";
+import {
+  clearHostMarketplaceMcpOverlay,
+  readHostMarketplaceMcpOverlay,
+  writeHostMarketplaceMcpOverlay,
+} from "./jugglework-runtime-config.js";
+import { readInstallId } from "./workspace-key.js";
 import {
   RootSerialization,
   SessionPermissionBroker,
@@ -915,6 +939,7 @@ export async function startServer(config: ServerConfig, options: {
   interactionResolutions?: InteractionResolutionCoordinator;
   logger?: ServerLogger;
   reviewService?: ReviewReadService;
+  auditWriter?: (workspaceRoot: string, entry: AuditEntry) => Promise<void>;
 } = {}): Promise<ServeResult> {
   const approvals = new ApprovalService(config.approval);
   const reloadEvents = new ReloadEventStore();
@@ -958,6 +983,59 @@ export async function startServer(config: ServerConfig, options: {
       sessionRunJournal.record({ ...event, occurredAt: timestamp });
     },
   });
+  const hostMarketplaceEnvironmentId = await deriveHostMarketplaceEnvironmentId(config);
+  const hostMarketplaceMigrationAuthority = Object.freeze({});
+  let hostMarketplacePlugins: HostMarketplacePluginRegistry | undefined;
+  let hostMarketplaceMigration: HostMarketplaceMigrationCoordinator | undefined;
+  let hostMarketplaceStarting = true;
+  try {
+    hostMarketplacePlugins = await createHostMarketplacePluginRegistry({
+      ...hostMarketplacePluginRegistryOptions(config),
+      readMcpOverlay: async () => readHostMarketplaceMcpOverlay(config),
+      applyMcpOverlay: async (overlay) => {
+        if (hostMarketplaceStarting) {
+          writeHostMarketplaceMcpOverlay(config, overlay);
+          return;
+        }
+        await synchronizeHostMarketplaceMcpOverlay(config, overlay, engineMcpServerState);
+      },
+      findWorkspaceConflicts: async (pluginId) => {
+        const conflicts: string[] = [];
+        for (const workspace of config.workspaces) {
+          const installed = (await readInstalledCloudPlugins(config, workspace.id)).plugins[pluginId];
+          if (installed && hasLocalMaterialization(installed)) {
+            conflicts.push(workspace.id);
+          }
+        }
+        return conflicts;
+      },
+      migrationAuthority: hostMarketplaceMigrationAuthority,
+    });
+    await hostMarketplacePlugins.startupRecoverOperations();
+    hostMarketplaceMigration = await createHostMarketplaceMigrationCoordinator({
+      config,
+      registry: hostMarketplacePlugins,
+      authority: hostMarketplaceMigrationAuthority,
+      environmentId: hostMarketplaceEnvironmentId,
+      synchronizeEngine: (workspace, mutation) => reconcileCloudPluginEngineMutation(config, workspace, mutation, engineMcpServerState),
+    });
+    await hostMarketplaceMigration.recoverNonterminal();
+    await hostMarketplacePlugins.startupDeactivate();
+    writeHostMarketplaceMcpOverlay(config, await hostMarketplacePlugins.getMcpOverlay());
+    hostMarketplaceStarting = false;
+  } catch (error) {
+    hostMarketplacePlugins?.close();
+    hostMarketplaceMigration?.close();
+    invalidateEngineMcpServerState(config, engineMcpServerState);
+    watcherHandle.close();
+    internalReloadDispatchers.delete(config);
+    sessionPendingOperations.close();
+    sessionRunJournal.close();
+    clearHostMarketplaceMcpOverlay(config);
+    throw error;
+  }
+  if (!hostMarketplacePlugins) throw new Error("Host Marketplace registry failed to initialize");
+  if (!hostMarketplaceMigration) throw new Error("Host Marketplace migration coordinator failed to initialize");
   let sessionPendingOperationPump: SessionPendingOperationPump | null = null;
   let sessionPendingOperationsClosed = false;
   const closeSessionPendingOperations = () => {
@@ -1209,6 +1287,12 @@ export async function startServer(config: ServerConfig, options: {
     automationSubscriptionSync,
     reviewService,
     mediaGenerationRuntime,
+    hostMarketplacePlugins,
+    hostMarketplaceMigration,
+    hostMarketplaceEnvironmentId,
+    () => sessionMutations.listActive().length > 0,
+    options.auditWriter ?? recordAudit,
+    logger,
   );
 
   const serverOptions: {
@@ -1400,6 +1484,9 @@ export async function startServer(config: ServerConfig, options: {
     automationRepository.close();
     mediaGenerationRepository.close();
     sessionPermissionStore.close();
+    hostMarketplaceMigration.close();
+    hostMarketplacePlugins.close();
+    clearHostMarketplaceMcpOverlay(config);
     throw error;
   }
 
@@ -1475,6 +1562,9 @@ export async function startServer(config: ServerConfig, options: {
       try { automationRepository.close(); } catch (error) { errors.push(error); }
       try { mediaGenerationRepository.close(); } catch (error) { errors.push(error); }
       try { sessionPermissionStore.close(); } catch (error) { errors.push(error); }
+      try { hostMarketplaceMigration.close(); } catch (error) { errors.push(error); }
+      try { hostMarketplacePlugins.close(); } catch (error) { errors.push(error); }
+      clearHostMarketplaceMcpOverlay(config);
       if (errors.length === 1) throw errors[0];
       if (errors.length > 1) throw new AggregateError(errors, "Failed to stop JuggleWork server");
     },
@@ -1912,6 +2002,10 @@ function buildCapabilities(config: ServerConfig): Capabilities {
     mcp: { read: true, write: writeEnabled },
     commands: { read: true, write: writeEnabled },
     config: { read: true, write: writeEnabled },
+    hostMarketplacePlugins: {
+      read: true,
+      write: writeEnabled && config.managedRuntime === true,
+    },
 
     approvals: { mode: config.approval.mode, timeoutMs: config.approval.timeoutMs },
     sandbox: { enabled: sandboxEnabled, backend: sandboxBackend },
@@ -1931,6 +2025,15 @@ function buildCapabilities(config: ServerConfig): Capabilities {
       },
     },
   };
+}
+
+async function deriveHostMarketplaceEnvironmentId(config: ServerConfig): Promise<string> {
+  const installId = await readInstallId(config);
+  const digest = createHash("sha256")
+    .update("jugglework:host-marketplace-environment:v1\0")
+    .update(installId)
+    .digest("hex");
+  return `env_${digest.slice(0, 32)}`;
 }
 
 function resolveSandboxBackend(): Capabilities["sandbox"]["backend"] {
@@ -2155,6 +2258,322 @@ function serializeWorkspace(workspace: ServerConfig["workspaces"][number]) {
   };
 }
 
+const HOST_MARKETPLACE_MAX_REQUEST_BYTES = 2 * 1024 * 1024;
+
+function assertExactKeys(value: Record<string, unknown>, allowed: readonly string[], label: string): void {
+  const allowedKeys = new Set(allowed);
+  const unknown = Object.keys(value).filter((key) => !allowedKeys.has(key));
+  if (unknown.length > 0) {
+    throw new ApiError(400, "invalid_host_marketplace_payload", `${label} contains unsupported fields.`, {
+      fields: unknown.sort(),
+    });
+  }
+}
+
+function requireRecord(value: unknown, label: string): Record<string, unknown> {
+  if (!isRecord(value)) {
+    throw new ApiError(400, "invalid_host_marketplace_payload", `${label} must be an object.`);
+  }
+  return value;
+}
+
+async function readHostMarketplaceJsonBody(request: Request): Promise<Record<string, unknown>> {
+  const declaredLength = request.headers.get("content-length");
+  if (declaredLength !== null) {
+    const bytes = Number(declaredLength);
+    if (Number.isFinite(bytes) && bytes > HOST_MARKETPLACE_MAX_REQUEST_BYTES) {
+      throw new ApiError(413, "host_marketplace_payload_too_large", "Marketplace request body is too large.");
+    }
+  }
+  const reader = request.body?.getReader();
+  if (!reader) throw new ApiError(400, "invalid_json", "Invalid JSON body");
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  while (true) {
+    const next = await reader.read();
+    if (next.done) break;
+    size += next.value.byteLength;
+    if (size > HOST_MARKETPLACE_MAX_REQUEST_BYTES) {
+      await reader.cancel().catch(() => undefined);
+      throw new ApiError(413, "host_marketplace_payload_too_large", "Marketplace request body is too large.");
+    }
+    chunks.push(next.value);
+  }
+  try {
+    const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
+    return requireRecord(body, "Request body");
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    throw new ApiError(400, "invalid_json", "Invalid JSON body");
+  }
+}
+
+function parseHostMarketplaceScope(value: unknown, environmentId: string): HostMarketplaceScope {
+  const scope = requireRecord(value, "scope");
+  assertExactKeys(scope, ["controlPlaneOrigin", "userId", "organizationId"], "scope");
+  return {
+    environmentId,
+    controlPlaneOrigin: scope.controlPlaneOrigin as string,
+    userId: scope.userId as string,
+    organizationId: scope.organizationId as string,
+  };
+}
+
+function parseHostMarketplaceScopeQuery(url: URL, environmentId: string): HostMarketplaceScope {
+  const supported = new Set(["controlPlaneOrigin", "userId", "organizationId"]);
+  const unknown = [...url.searchParams.keys()].filter((key) => !supported.has(key));
+  if (unknown.length > 0) {
+    throw new ApiError(400, "invalid_host_marketplace_scope", "Marketplace scope query contains unsupported fields.", {
+      fields: [...new Set(unknown)].sort(),
+    });
+  }
+  for (const key of supported) {
+    if (url.searchParams.getAll(key).length !== 1) {
+      throw new ApiError(400, "invalid_host_marketplace_scope", `Marketplace scope query requires exactly one ${key}.`);
+    }
+  }
+  return {
+    environmentId,
+    controlPlaneOrigin: url.searchParams.get("controlPlaneOrigin")!,
+    userId: url.searchParams.get("userId")!,
+    organizationId: url.searchParams.get("organizationId")!,
+  };
+}
+
+function parseHostMarketplacePackage(value: unknown): HostMarketplacePackage {
+  const packageInput = requireRecord(value, "package");
+  assertExactKeys(packageInput, [
+    "pluginId", "marketplaceId", "name", "description", "revision",
+    "confirmedExecutableRevision", "components",
+  ], "package");
+  if (!Array.isArray(packageInput.components)) {
+    throw new ApiError(400, "invalid_host_marketplace_payload", "package.components must be an array.");
+  }
+  for (const rawComponent of packageInput.components) {
+    const component = requireRecord(rawComponent, "package component");
+    if (component.delivery !== "cloud" && component.delivery !== "desktop") {
+      throw new ApiError(400, "invalid_host_marketplace_payload", "package component delivery must be explicit.");
+    }
+    const common = ["id", "type", "title", "versionId", "delivery"];
+    if (component.type === "mcp") assertExactKeys(component, [...common, "payload"], "MCP component");
+    else if (component.type === "custom") assertExactKeys(component, [...common, "payload"], "custom component");
+    else assertExactKeys(component, [...common, "source"], "text component");
+  }
+  return packageInput as HostMarketplacePackage;
+}
+
+function parseHostMarketplaceMutationContext(
+  body: Record<string, unknown>,
+  environmentId: string,
+): HostMarketplaceMutationContext {
+  return {
+    scope: parseHostMarketplaceScope(body.scope, environmentId),
+    authority: "owner",
+    idempotencyKey: body.idempotencyKey as string,
+    expectedRevision: body.expectedRevision as number,
+  };
+}
+
+async function assertPluginNotHostInstalled(input: {
+  registry: HostMarketplacePluginRegistry;
+  config: ServerConfig;
+  workspaceId: string;
+  resolved: CloudPluginResolved;
+  cloudGatewayHosted?: boolean;
+}): Promise<void> {
+  const existing = (await readInstalledCloudPlugins(input.config, input.workspaceId)).plugins[input.resolved.plugin.id];
+  const runtime = await readRuntimeOpencodeConfig(input.config, input.workspaceId);
+  const plan = buildCloudPluginDeliveryPlan({
+    resolved: input.resolved,
+    existing,
+    runtimeMcps: runtimeMcpMap(runtime),
+    cloudGatewayHosted: input.cloudGatewayHosted,
+  });
+  if (!hasLocalMaterialization({ pluginId: input.resolved.plugin.id, files: plan.outcomes })) return;
+
+  const activeScope = await input.registry.getActiveScope();
+  if (!activeScope) return;
+  const current = await input.registry.list(activeScope);
+  if (current.installations.some((installation) => installation.pluginId === input.resolved.plugin.id)) {
+    throw new ApiError(409, "cloud_plugin_host_copy_conflict", "This plugin is already materialized by the execution host.", {
+      pluginId: input.resolved.plugin.id,
+    });
+  }
+}
+
+async function skillOwnerPluginIdsByPath(input: {
+  config: ServerConfig;
+  workspace: WorkspaceInfo;
+  registry: HostMarketplacePluginRegistry;
+}): Promise<Map<string, string>> {
+  const [activeRegistry, workspaceImports] = await Promise.all([
+    input.registry.getActiveRegistry(),
+    readInstalledCloudPlugins(input.config, input.workspace.id),
+  ]);
+  const owners = new Map<string, string>();
+  const globalOpenCodeDirectory = dirname(resolveGlobalOpenCodeConfigPath());
+
+  for (const installation of activeRegistry?.installations ?? []) {
+    for (const resource of installation.resources) {
+      if (resource.kind !== "file" || !/(?:^|[\\/])skills(?:[\\/].+)+[\\/]SKILL\.md$/i.test(resource.target)) continue;
+      const path = isAbsolute(resource.target)
+        ? resolve(resource.target)
+        : resolve(globalOpenCodeDirectory, resource.target);
+      owners.set(path, installation.pluginId);
+    }
+  }
+
+  for (const plugin of Object.values(workspaceImports.plugins)) {
+    for (const file of plugin.files) {
+      if (file.objectType !== "skill" || !/(?:^|[\\/])SKILL\.md$/i.test(file.path)) continue;
+      const legacyOwnership = file.delivery === undefined && file.outcome === undefined;
+      if (!legacyOwnership && (file.delivery !== "local_file" || file.outcome !== "installed_local")) continue;
+      const path = isAbsolute(file.path) ? resolve(file.path) : resolve(input.workspace.path, file.path);
+      owners.set(path, file.ownerPluginId?.trim() || plugin.pluginId);
+    }
+  }
+  return owners;
+}
+
+function registerHostMarketplacePluginRoutes(input: {
+  routes: Route[];
+  config: ServerConfig;
+  registry: HostMarketplacePluginRegistry;
+  migration: HostMarketplaceMigrationCoordinator;
+  environmentId: string;
+  jsonResponse: (data: unknown, status?: number) => Response;
+  hasAnyActiveSessionRuns: () => boolean;
+  auditWriter: (workspaceRoot: string, entry: AuditEntry) => Promise<void>;
+  logger: ServerLogger;
+}): void {
+  const { routes, config, registry, migration, environmentId, jsonResponse, hasAnyActiveSessionRuns, auditWriter, logger } = input;
+  const requireSafeMutation = () => {
+    if (hasAnyActiveSessionRuns()) {
+      throw new ApiError(409, "host_marketplace_mutation_blocked_active_runs", "Host Marketplace changes require all active tasks to finish.");
+    }
+  };
+  addRoute(routes, "GET", "/host/marketplace-plugins/environment", "host", async () => jsonResponse({
+    schemaVersion: 1,
+    environmentId,
+    managed: config.managedRuntime === true,
+    readOnly: config.readOnly,
+    capability: { read: true, write: config.managedRuntime === true && !config.readOnly },
+  }));
+
+  addRoute(routes, "PUT", "/host/marketplace-plugins/scope", "host", async (ctx) => {
+    requireSafeMutation();
+    const body = await readHostMarketplaceJsonBody(ctx.request);
+    assertExactKeys(body, ["scope", "active", "expectedRevision", "idempotencyKey"], "Request body");
+    if (typeof body.active !== "boolean") {
+      throw new ApiError(400, "invalid_host_marketplace_payload", "active must be a boolean.");
+    }
+    const context = parseHostMarketplaceMutationContext(body, environmentId);
+    const result = body.active
+      ? await registry.activateScope(context)
+      : await registry.deactivateScope(context);
+    return jsonResponse(result);
+  });
+
+  addRoute(routes, "GET", "/host/marketplace-plugins", "host", async (ctx) => {
+    return jsonResponse(await registry.list(parseHostMarketplaceScopeQuery(ctx.url, environmentId)));
+  });
+
+  addRoute(routes, "POST", "/host/marketplace-plugins/:pluginId/migration-plan", "host", async (ctx) => {
+    const body = await readHostMarketplaceJsonBody(ctx.request);
+    assertExactKeys(body, ["scope", "package"], "Request body");
+    const scope = parseHostMarketplaceScope(body.scope, environmentId);
+    const packageInput = parseHostMarketplacePackage(body.package);
+    if (packageInput.pluginId !== ctx.params.pluginId) {
+      throw new ApiError(400, "host_marketplace_plugin_id_mismatch", "Package pluginId must match the route pluginId.");
+    }
+    return jsonResponse(await withPluginOwnershipLock(ctx.params.pluginId, () => migration.plan(scope, packageInput)));
+  });
+
+  addRoute(routes, "POST", "/host/marketplace-plugins/:pluginId/migrate-workspace-copies", "host", async (ctx) => {
+    requireSafeMutation();
+    const body = await readHostMarketplaceJsonBody(ctx.request);
+    assertExactKeys(body, [
+      "scope", "package", "expectedRevision", "idempotencyKey", "workspaceCopies",
+      "confirmed", "fingerprint", "migrationToken",
+    ], "Request body");
+    const packageInput = parseHostMarketplacePackage(body.package);
+    if (packageInput.pluginId !== ctx.params.pluginId) {
+      throw new ApiError(400, "host_marketplace_plugin_id_mismatch", "Package pluginId must match the route pluginId.");
+    }
+    if (!Array.isArray(body.workspaceCopies) || body.workspaceCopies.some((entry) => {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) return true;
+      assertExactKeys(entry as Record<string, unknown>, ["workspaceId", "recordDigest"], "workspace copy");
+      return typeof (entry as Record<string, unknown>).workspaceId !== "string" || typeof (entry as Record<string, unknown>).recordDigest !== "string";
+    })) {
+      throw new ApiError(400, "invalid_host_marketplace_payload", "workspaceCopies must contain exact workspaceId and recordDigest values.");
+    }
+    const commit: HostMarketplaceMigrationCommitInput = {
+      scope: parseHostMarketplaceScope(body.scope, environmentId),
+      package: packageInput,
+      expectedRevision: body.expectedRevision as number,
+      idempotencyKey: body.idempotencyKey as string,
+      workspaceCopies: body.workspaceCopies as Array<{ workspaceId: string; recordDigest: string }>,
+      confirmed: body.confirmed as true,
+      fingerprint: body.fingerprint as string,
+      migrationToken: body.migrationToken as string,
+    };
+    const result = await withPluginOwnershipLock(ctx.params.pluginId, () => migration.commit(commit));
+    const auditWarnings: string[] = [];
+    for (const workspaceId of result.migratedWorkspaces) {
+      const workspace = config.workspaces.find((candidate) => candidate.id === workspaceId);
+      if (!workspace) continue;
+      try {
+        await auditWriter(workspace.path, {
+          id: shortId(),
+          workspaceId,
+          actor: ctx.actor ?? { type: "host" },
+          action: "cloud_plugins.migrate_to_host",
+          target: juggleworkConfigPath(workspace.path),
+          summary: `Migrated workspace plugin ${ctx.params.pluginId} to host ownership`,
+          timestamp: Date.now(),
+        });
+      } catch {
+        auditWarnings.push(workspaceId);
+        try {
+          logger.log("warn", "host-marketplace-migration:audit-append-failed", { workspaceId });
+        } catch {
+          // Audit diagnostics must not overturn a committed migration either.
+        }
+      }
+    }
+    return jsonResponse(auditWarnings.length > 0 ? { ...result, auditWarnings } : result);
+  });
+
+  addRoute(routes, "PUT", "/host/marketplace-plugins/:pluginId", "host", async (ctx) => {
+    requireSafeMutation();
+    const body = await readHostMarketplaceJsonBody(ctx.request);
+    assertExactKeys(body, ["scope", "expectedRevision", "idempotencyKey", "package"], "Request body");
+    const packageInput = parseHostMarketplacePackage(body.package);
+    if (packageInput.pluginId !== ctx.params.pluginId) {
+      throw new ApiError(400, "host_marketplace_plugin_id_mismatch", "Package pluginId must match the route pluginId.");
+    }
+    const context = parseHostMarketplaceMutationContext(body, environmentId);
+    const result = await withPluginOwnershipLock(ctx.params.pluginId, async () => {
+      const current = await registry.list(context.scope);
+      const existing = current.installations.find((installation) => installation.pluginId === ctx.params.pluginId);
+      return !existing || existing.packageRevision === packageInput.revision
+        ? registry.install(context, packageInput)
+        : registry.update(context, packageInput);
+    });
+    return jsonResponse(result);
+  });
+
+  addRoute(routes, "DELETE", "/host/marketplace-plugins/:pluginId", "host", async (ctx) => {
+    requireSafeMutation();
+    const body = await readHostMarketplaceJsonBody(ctx.request);
+    assertExactKeys(body, ["scope", "expectedRevision", "idempotencyKey"], "Request body");
+    return jsonResponse(await withPluginOwnershipLock(ctx.params.pluginId, () => registry.remove(
+      parseHostMarketplaceMutationContext(body, environmentId),
+      ctx.params.pluginId,
+    )));
+  });
+}
+
 function createRoutes(
   config: ServerConfig,
   approvals: ApprovalService,
@@ -2178,8 +2597,25 @@ function createRoutes(
   automationSubscriptionSync: AutomationSubscriptionSync,
   reviewService: ReviewReadService,
   mediaGeneration: import("./extensions/media-generation.js").MediaGenerationExtensionRuntime,
+  hostMarketplacePlugins: HostMarketplacePluginRegistry,
+  hostMarketplaceMigration: HostMarketplaceMigrationCoordinator,
+  hostMarketplaceEnvironmentId: string,
+  hasAnyActiveSessionRuns: () => boolean,
+  hostMarketplaceAuditWriter: (workspaceRoot: string, entry: AuditEntry) => Promise<void>,
+  logger: ServerLogger,
 ): Route[] {
   const routes: Route[] = [];
+  registerHostMarketplacePluginRoutes({
+    routes,
+    config,
+    registry: hostMarketplacePlugins,
+    migration: hostMarketplaceMigration,
+    environmentId: hostMarketplaceEnvironmentId,
+    jsonResponse,
+    hasAnyActiveSessionRuns,
+    auditWriter: hostMarketplaceAuditWriter,
+    logger,
+  });
   registerCoreRoutes({
     routes,
     config,
@@ -2476,26 +2912,35 @@ function createRoutes(
       paths: [juggleworkConfigPath(workspace.path), join(workspace.path, ".opencode")],
     });
 
-    const result = await installCloudPlugin({
-      serverConfig: config,
-      workspaceId: workspace.id,
-      workspaceRoot: workspace.path,
-      marketplaceId,
-      marketplace: marketplaceId
-        ? {
-            id: marketplaceId,
-            name: typeof marketplace?.name === "string" ? marketplace.name : marketplaceId,
-            updatedAt: typeof marketplace?.updatedAt === "string" ? marketplace.updatedAt : null,
-          }
-        : null,
-      // 组织云端插件：远程 MCP 走 Connect 网关，不在工作区留本地副本。
-      cloudGatewayHosted: true,
-      synchronizeEngine: createCloudPluginEngineSynchronizer(
+    const result = await withPluginOwnershipLock(resolved.plugin.id, async () => {
+      await assertPluginNotHostInstalled({
+        registry: hostMarketplacePlugins,
         config,
-        workspace,
-        engineMcpServerState,
-      ),
-      resolved,
+        workspaceId: workspace.id,
+        resolved,
+        cloudGatewayHosted: true,
+      });
+      return installCloudPlugin({
+        serverConfig: config,
+        workspaceId: workspace.id,
+        workspaceRoot: workspace.path,
+        marketplaceId,
+        marketplace: marketplaceId
+          ? {
+              id: marketplaceId,
+              name: typeof marketplace?.name === "string" ? marketplace.name : marketplaceId,
+              updatedAt: typeof marketplace?.updatedAt === "string" ? marketplace.updatedAt : null,
+            }
+          : null,
+        // 组织云端插件：远程 MCP 走 Connect 网关，不在工作区留本地副本。
+        cloudGatewayHosted: true,
+        synchronizeEngine: createCloudPluginEngineSynchronizer(
+          config,
+          workspace,
+          engineMcpServerState,
+        ),
+        resolved,
+      });
     });
     const imported = result.item;
 
@@ -2560,17 +3005,25 @@ function createRoutes(
       paths: [juggleworkConfigPath(workspace.path), join(workspace.path, ".opencode")],
     });
 
-    const result = await installCloudPlugin({
-      serverConfig: config,
-      workspaceId: workspace.id,
-      workspaceRoot: workspace.path,
-      marketplaceId: null,
-      resolved: bundle.resolved,
-      synchronizeEngine: createCloudPluginEngineSynchronizer(
+    const result = await withPluginOwnershipLock(bundle.resolved.plugin.id, async () => {
+      await assertPluginNotHostInstalled({
+        registry: hostMarketplacePlugins,
         config,
-        workspace,
-        engineMcpServerState,
-      ),
+        workspaceId: workspace.id,
+        resolved: bundle.resolved,
+      });
+      return installCloudPlugin({
+        serverConfig: config,
+        workspaceId: workspace.id,
+        workspaceRoot: workspace.path,
+        marketplaceId: null,
+        resolved: bundle.resolved,
+        synchronizeEngine: createCloudPluginEngineSynchronizer(
+          config,
+          workspace,
+          engineMcpServerState,
+        ),
+      });
     });
     const imported = result.item;
 
@@ -2623,7 +3076,7 @@ function createRoutes(
       paths: [juggleworkConfigPath(workspace.path), join(workspace.path, ".opencode")],
     });
 
-    const result = await removeCloudPlugin({
+    const result = await withPluginOwnershipLock(pluginId, () => removeCloudPlugin({
       serverConfig: config,
       workspaceId: workspace.id,
       workspaceRoot: workspace.path,
@@ -2633,7 +3086,7 @@ function createRoutes(
         workspace,
         engineMcpServerState,
       ),
-    });
+    }));
     const removed = result.item;
 
     if (result.changed) await recordAudit(workspace.path, {
@@ -3206,9 +3659,23 @@ function createRoutes(
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const includeGlobal = ctx.url.searchParams.get("includeGlobal") === "true";
     const scope = ctx.url.searchParams.get("scope") === "global" ? "global" : undefined;
-    const items = await listSkills(workspace.path, includeGlobal, { scope });
+    const ownership = await skillOwnerPluginIdsByPath({ config, workspace, registry: hostMarketplacePlugins });
+    const items = await listSkills(workspace.path, includeGlobal, {
+      scope,
+      ownerPluginIdForPath: (path) => ownership.get(path),
+    });
     const disabled = (await readSkillWorkspacePolicy(config, workspace.id)).disabledSkillNames;
     return jsonResponse({ items: items.map((item) => ({ ...item, enabled: !disabled.includes(item.name) })) });
+  });
+
+  addRoute(routes, "GET", "/workspace/:id/skills/detail", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const ownership = await skillOwnerPluginIdsByPath({ config, workspace, registry: hostMarketplacePlugins });
+    const result = await readSkillDetail(workspace.path, {
+      scope: ctx.url.searchParams.get("scope") ?? "",
+      path: ctx.url.searchParams.get("path") ?? "",
+    }, { ownerPluginIdForPath: (path) => ownership.get(path) });
+    return jsonResponse(result);
   });
 
   addRoute(routes, "GET", "/workspace/:id/skill-policy", "client", async (ctx) => {
@@ -3244,7 +3711,10 @@ function createRoutes(
     if (!name) {
       throw new ApiError(400, "invalid_skill_name", "Skill name is required");
     }
-    const items = await listSkills(workspace.path, includeGlobal);
+    const ownership = await skillOwnerPluginIdsByPath({ config, workspace, registry: hostMarketplacePlugins });
+    const items = await listSkills(workspace.path, includeGlobal, {
+      ownerPluginIdForPath: (path) => ownership.get(path),
+    });
     const item = items.find((skill) => skill.name === name);
     if (!item) {
       throw new ApiError(404, "skill_not_found", `Skill not found: ${name}`);
@@ -4309,6 +4779,78 @@ async function reloadOpencodeEngine(
   }
 }
 
+async function synchronizeHostMarketplaceMcpOverlay(
+  config: ServerConfig,
+  overlay: Record<string, Record<string, unknown>>,
+  serverState?: EngineMcpServerState | null,
+): Promise<void> {
+  const previous = readHostMarketplaceMcpOverlay(config);
+  writeHostMarketplaceMcpOverlay(config, overlay);
+  const trustedWorkspaces = config.workspaces.filter((workspace) =>
+    Boolean(trustedOpencodeProcessIdentity(config, workspace)));
+  const primary = trustedWorkspaces[0];
+  if (!primary) return;
+
+  const removedNames = Object.keys(previous).filter((name) => overlay[name] === undefined);
+  for (const workspace of trustedWorkspaces) {
+    // Host packages include file-backed agents, skills, commands, hooks, and
+    // tools as well as MCPs. Rebuild each live managed instance so all of those
+    // global resources become visible; the route has already fenced active runs.
+    await reloadOpencodeEngine(config, workspace, serverState ?? undefined);
+    for (const name of removedNames) {
+      await disconnectMcpFromOpencodeEngine(config, workspace, name);
+    }
+    const names = Object.keys(overlay);
+    if (names.length > 0) {
+      const result = await syncRuntimeMcpEntriesToOpencodeEngine(
+        config,
+        workspace,
+        Object.entries(overlay),
+        serverState,
+      );
+      if (result.failures.length > 0) {
+        throw new ApiError(502, "host_marketplace_engine_sync_failed", "Failed to synchronize Marketplace MCPs with the managed engine.", {
+          failures: result.failures,
+        });
+      }
+    }
+  }
+}
+
+async function syncRuntimeMcpEntriesToOpencodeEngine(
+  config: ServerConfig,
+  workspace: WorkspaceInfo,
+  entries: Array<[string, Record<string, unknown>]>,
+  serverState?: EngineMcpServerState | null,
+): Promise<EngineMcpSyncResult> {
+  const activeState = activeEngineMcpServerState(config, serverState);
+  const connection = resolveWorkspaceOpencodeConnection(config, workspace);
+  const baseUrl = connection.baseUrl?.trim() ?? "";
+  if (!baseUrl || !engineMcpConnectionIdentity(config, workspace)) {
+    return { status: "skipped", syncedNames: [], failures: [] };
+  }
+  const url = new URL(baseUrl);
+  url.pathname = "/mcp";
+  url.search = "";
+  const directory = resolveOpencodeDirectory(workspace);
+  if (directory) url.searchParams.set("directory", directory);
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (connection.authHeader) headers.Authorization = connection.authHeader;
+  const failures: EngineMcpSyncFailure[] = [];
+  for (const [name, mcpConfig] of entries) {
+    const registration = await postMcpEntryWithRetry(url, headers, name, mcpConfig);
+    if (registration.failure) failures.push(registration.failure);
+    if (activeState && registration.failure) {
+      deleteEngineMcpRegistration(config, activeState, workspace, name);
+    }
+  }
+  return {
+    status: failures.length > 0 ? "failed" : "ok",
+    syncedNames: entries.map(([name]) => name),
+    failures,
+  };
+}
+
 // Push runtime-DB MCP entries into the running OpenCode engine via its dynamic
 // add endpoint, so adds/toggles take effect without waiting for an engine
 // instance rebuild. Best-effort: callers treat engine sync as advisory and
@@ -5285,6 +5827,7 @@ function logPersistedCloudMcpReconcileError(input: {
 // something re-syncs them. Best-effort.
 export async function syncAllWorkspacesRuntimeMcpToEngine(config: ServerConfig): Promise<void> {
   const serverState = activeEngineMcpServerState(config) ?? null;
+  const hostMarketplaceEntries = Object.entries(readHostMarketplaceMcpOverlay(config));
   for (const workspace of config.workspaces) {
     try {
       await syncRuntimeMcpToOpencodeEngine(
@@ -5296,6 +5839,18 @@ export async function syncAllWorkspacesRuntimeMcpToEngine(config: ServerConfig):
       );
     } catch (error) {
       logRuntimeMcpSyncError({ config, workspace, trigger: "startup", error });
+    }
+    if (hostMarketplaceEntries.length > 0 && trustedOpencodeProcessIdentity(config, workspace)) {
+      try {
+        await syncRuntimeMcpEntriesToOpencodeEngine(
+          config,
+          workspace,
+          hostMarketplaceEntries,
+          serverState,
+        );
+      } catch (error) {
+        logRuntimeMcpSyncError({ config, workspace, trigger: "startup", error });
+      }
     }
     try {
       const health = await reconcilePersistedJuggleWorkCloudMcp({

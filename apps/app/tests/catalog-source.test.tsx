@@ -16,7 +16,7 @@ mock.module("../src/components/ui/dialog", () => ({
 }));
 mock.module("../src/react-app/design-system/modals/confirm-modal", () => ({ ConfirmModal: () => null }));
 mock.module("../src/react-app/domains/settings/pages/project-extensions/skill-detail-modal", () => ({
-  SkillDetailModal: ({ open }: { open: boolean }) => open ? <div data-testid="local-detail" /> : null,
+  SkillDetailModal: ({ open, skill, loadSkillDetail }: { open: boolean; skill?: { content?: string; origin?: string }; loadSkillDetail?: unknown }) => open ? <div data-testid="local-detail"><span>Overview</span><span>Files</span><span>{skill?.content}</span><span data-loader={String(Boolean(loadSkillDetail))}>{skill?.origin}</span></div> : null,
 }));
 mock.module("../src/react-app/domains/settings/pages/project-extensions/skill-hub-modal", () => ({
   SkillHubModal: ({ open }: { open: boolean }) => open ? <div data-testid="skill-hub" /> : null,
@@ -48,8 +48,8 @@ const skillProps = {
   onRefresh: noop,
 };
 const entries: McpDirectoryInfo[] = [
-  { name: "Installed directory", serverName: "existing-server", description: "Installed entry", oauth: false },
-  { name: "Derived Name", description: "Derived server name", oauth: false },
+  { name: "Installed directory", serverName: "existing-server", description: "Installed entry", type: "remote", url: "https://example.com/mcp", oauth: false },
+  { name: "Derived Name", description: "Derived server name", type: "local", command: ["example"], oauth: false },
   { name: "Available directory", serverName: "available-server", description: "Available entry", oauth: false },
 ];
 const connectorProps = {
@@ -185,9 +185,9 @@ describe("global skill sources", () => {
     expect(text()).toContain(t("chat.no_search_results"));
   });
 
-  test("public is explicitly empty but offers personal add without local errors", async () => {
+  test("public lists curated skills, offers personal add, and hides local errors", async () => {
     await render(<GlobalSkillsView {...skillProps} source="public" error="Local error" />);
-    expect(text()).toContain(t("customization.public_skills_empty"));
+    expect(text()).toContain("skill-creator");
     expect(text()).not.toContain("Personal writer");
     expect(text()).not.toContain("Team reviewer");
     expect(text()).not.toContain("Local error");
@@ -203,8 +203,12 @@ describe("global skill sources", () => {
     const card = buttons().find((button) => button.findAllByType("div").some((div) => div.children.includes("Team reviewer")))!;
     await act(async () => card.props.onClick());
     expect(text()).toContain("Team instructions");
-    expect(renderer.root.findAllByProps({ "data-testid": "local-detail" })).toHaveLength(0);
-    expect(renderer.root.findAllByProps({ role: "dialog" })).toHaveLength(1);
+    expect(text()).toContain("Overview");
+    expect(text()).toContain("Files");
+    expect(text()).toContain("jugglework-connect");
+    expect(text()).toContain('data-loader":"false"');
+    expect(renderer.root.findAllByProps({ "data-testid": "local-detail" })).toHaveLength(1);
+    expect(renderer.root.findAllByProps({ role: "dialog" })).toHaveLength(0);
     await act(async () => renderer.update(<GlobalSkillsView {...skillProps} source="personal" />));
     expect(renderer.root.findAllByProps({ role: "dialog" })).toHaveLength(0);
   });
@@ -246,8 +250,11 @@ describe("global connector sources", () => {
   });
 
   test("personal shows only configured connectors and custom add; legacy retains directory", async () => {
-    await render(<GlobalConnectorsView {...connectorProps} source="personal" />);
-    expect(text()).toContain("existing-server");
+    const connectors = [...connectorProps.connectors, { name: "custom-server", config: { type: "remote" as const, url: "https://custom.example/mcp" } }];
+    await render(<GlobalConnectorsView {...connectorProps} connectors={connectors} source="personal" />);
+    expect(text()).toContain("custom-server");
+    expect(text()).not.toContain("existing-server");
+    expect(text()).not.toContain("derived-name");
     expect(text()).not.toContain(entries[2]!.name);
     expect(buttons().some((button) => button.children.includes(t("global_connectors.add")))).toBe(true);
     await act(async () => renderer.update(<GlobalConnectorsView {...connectorProps} />));

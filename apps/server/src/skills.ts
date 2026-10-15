@@ -1,6 +1,6 @@
-import { readdir, readFile, writeFile, mkdir, rm } from "node:fs/promises";
+import { readdir, writeFile, mkdir, rm, lstat, realpath } from "node:fs/promises";
 import type { Dirent } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { homedir } from "node:os";
 import type { SkillItem } from "./types.js";
 import { parseFrontmatter, buildFrontmatter } from "./frontmatter.js";
@@ -8,6 +8,24 @@ import { exists } from "./utils.js";
 import { validateDescription, validateSkillName } from "./validators.js";
 import { ApiError } from "./errors.js";
 import { projectSkillsDir } from "./workspace-files.js";
+import { readBoundedRegularTextFile } from "./jsonc.js";
+
+const SKILL_DETAIL_MAX_BYTES = 5 * 1024 * 1024;
+const SKILL_DETAIL_MAX_FILES = 800;
+const BUNDLED_SKILL_MARKER_MAX_BYTES = 4096;
+const BUNDLED_SKILL_MARKER_FILE = ".jugglework-managed-skill.json";
+const BUNDLED_SKILL_MARKER_OWNER = "jugglework-desktop:public-skill";
+
+export type SkillDetailFile = {
+  relPath: string;
+  size: number;
+};
+
+export type SkillDetail = {
+  item: SkillItem;
+  content: string;
+  files: SkillDetailFile[];
+};
 
 async function findWorkspaceRoots(workspaceRoot: string): Promise<string[]> {
   const roots: string[] = [];
@@ -55,7 +73,13 @@ async function parseSkillEntry(
   entryName: string,
   scope: "project" | "global",
 ): Promise<SkillItem | null> {
-  const content = await readFile(skillPath, "utf8");
+  let content: string;
+  try {
+    content = await readBoundedRegularTextFile(skillPath, { maxBytes: SKILL_DETAIL_MAX_BYTES });
+  } catch (error) {
+    if (["FILE_TOO_LARGE", "ELOOP", "NOT_REGULAR_FILE"].includes(errorCode(error))) return null;
+    throw error;
+  }
   const { data, body } = parseFrontmatter(content);
   const name = typeof data.name === "string" ? data.name : entryName;
   const description = typeof data.description === "string" ? data.description : "";
@@ -116,6 +140,24 @@ async function listSkillsInDir(dir: string, scope: "project" | "global"): Promis
   return items;
 }
 
+async function isPublicSkillPath(skillPath: string): Promise<boolean> {
+  try {
+    const marker = JSON.parse(await readBoundedRegularTextFile(
+      join(dirname(skillPath), BUNDLED_SKILL_MARKER_FILE),
+      { maxBytes: BUNDLED_SKILL_MARKER_MAX_BYTES },
+    )) as unknown;
+    if (!marker || typeof marker !== "object" || Array.isArray(marker)) return false;
+    const record = marker as Record<string, unknown>;
+    return Object.keys(record).length === 3
+      && record.schemaVersion === 1
+      && record.owner === BUNDLED_SKILL_MARKER_OWNER
+      && typeof record.digest === "string"
+      && /^sha256:[a-f0-9]{64}$/.test(record.digest);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * 全局技能目录集合
  * @param input.homeDir 主目录覆盖，仅供测试注入；缺省取当前用户主目录
@@ -129,13 +171,18 @@ export function globalSkillDirs(input?: { homeDir?: string; opencodeConfigDir?: 
     join(home, ".claude", "skills"),
     join(home, ".agents", "skills"),
     join(home, ".agent", "skills"),
-  ];
+  ].map((dir) => resolve(dir));
 }
 
 export async function listSkills(
   workspaceRoot: string,
   includeGlobal: boolean,
-  options?: { homeDir?: string; opencodeConfigDir?: string; scope?: "project" | "global" },
+  options?: {
+    homeDir?: string;
+    opencodeConfigDir?: string;
+    scope?: "project" | "global";
+    ownerPluginIdForPath?: (path: string) => string | undefined;
+  },
 ): Promise<SkillItem[]> {
   const items: SkillItem[] = [];
   if (options?.scope !== "global") {
@@ -154,12 +201,179 @@ export async function listSkills(
     }
   }
 
+  const annotated = await Promise.all(items.map(async (item): Promise<SkillItem> => {
+    const ownerPluginId = options?.ownerPluginIdForPath?.(resolve(item.path));
+    if (ownerPluginId) return { ...item, ownerPluginId, sourceKind: "plugin" };
+    if (item.scope === "global" && await isPublicSkillPath(item.path)) return { ...item, sourceKind: "public" };
+    return { ...item, sourceKind: "standalone" };
+  }));
   const seen = new Set<string>();
-  return items.filter((item) => {
-    if (seen.has(item.name)) return false;
-    seen.add(item.name);
+  return annotated.filter((item) => {
+    // Preserve independently owned entries when their names collide.
+    const key = `${item.name}\0${item.sourceKind}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
     return true;
   });
+}
+
+function errorCode(error: unknown): string {
+  if (!error || typeof error !== "object" || !("code" in error)) return "";
+  return typeof error.code === "string" ? error.code : "";
+}
+
+function isWithinRoot(root: string, candidate: string): boolean {
+  const relPath = relative(root, candidate);
+  return relPath !== "" && relPath !== ".." && !relPath.startsWith(`..${sep}`) && !isAbsolute(relPath);
+}
+
+function normalizedRelativePath(root: string, candidate: string): string {
+  return relative(root, candidate).split(sep).join("/");
+}
+
+function validateSkillDetailPath(path: string): void {
+  if (!path || path.includes("\0") || !isAbsolute(path)) {
+    throw new ApiError(400, "invalid_skill_path", "Skill path must be an absolute path without NUL bytes");
+  }
+  if (path.split(/[\\/]/).some((segment) => segment === "." || segment === "..")) {
+    throw new ApiError(400, "invalid_skill_path", "Skill path must not contain dot segments");
+  }
+  if (basename(path) !== "SKILL.md" || path.split(/[\\/]/).at(-1) !== "SKILL.md") {
+    throw new ApiError(400, "invalid_skill_path", "Skill path must end with SKILL.md");
+  }
+}
+
+async function resolveSafeSkillPath(root: string, candidate: string): Promise<{ realCandidate: string; realSkillDir: string }> {
+  let realRoot: string;
+  try {
+    const rootMetadata = await lstat(root);
+    if (rootMetadata.isSymbolicLink() || !rootMetadata.isDirectory()) {
+      throw new ApiError(400, "unsafe_skill_path", "Global skill root must be a real directory");
+    }
+    realRoot = await realpath(root);
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    if (errorCode(error) === "ENOENT") {
+      throw new ApiError(404, "skill_not_found", `Skill not found: ${candidate}`);
+    }
+    throw error;
+  }
+
+  const relPath = relative(root, candidate);
+  let current = root;
+  for (const segment of relPath.split(sep)) {
+    current = join(current, segment);
+    let metadata;
+    try {
+      metadata = await lstat(current);
+    } catch (error) {
+      if (errorCode(error) === "ENOENT") {
+        throw new ApiError(404, "skill_not_found", `Skill not found: ${candidate}`);
+      }
+      throw error;
+    }
+    if (metadata.isSymbolicLink()) {
+      throw new ApiError(400, "unsafe_skill_path", "Skill path must not contain symbolic links");
+    }
+    if (current === candidate) {
+      if (!metadata.isFile()) {
+        throw new ApiError(400, "unsafe_skill_path", "SKILL.md must be a regular file");
+      }
+      if (metadata.size > SKILL_DETAIL_MAX_BYTES) {
+        throw new ApiError(413, "skill_too_large", `SKILL.md exceeds ${SKILL_DETAIL_MAX_BYTES} bytes`);
+      }
+    }
+  }
+
+  const realCandidate = await realpath(candidate);
+  if (!isWithinRoot(realRoot, realCandidate)) {
+    throw new ApiError(400, "unsafe_skill_path", "Skill path escapes its global skill root");
+  }
+
+  return { realCandidate, realSkillDir: await realpath(dirname(candidate)) };
+}
+
+async function enumerateSkillFiles(skillDir: string, realSkillDir: string): Promise<SkillDetailFile[]> {
+  const files: SkillDetailFile[] = [];
+
+  const visit = async (dir: string): Promise<void> => {
+    const entries = await readdir(dir, { withFileTypes: true });
+    entries.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
+    for (const entry of entries) {
+      const path = join(dir, entry.name);
+      const metadata = await lstat(path);
+      if (metadata.isSymbolicLink()) continue;
+
+      const resolvedPath = await realpath(path);
+      if (!isWithinRoot(realSkillDir, resolvedPath)) {
+        throw new ApiError(400, "unsafe_skill_path", "Skill resource escapes its skill directory");
+      }
+      if (metadata.isDirectory()) {
+        await visit(path);
+        continue;
+      }
+      if (!metadata.isFile()) continue;
+      if (entry.name === BUNDLED_SKILL_MARKER_FILE && dir === skillDir) continue;
+      if (files.length >= SKILL_DETAIL_MAX_FILES) {
+        throw new ApiError(413, "skill_file_limit_exceeded", `Skill contains more than ${SKILL_DETAIL_MAX_FILES} files`);
+      }
+      files.push({ relPath: normalizedRelativePath(skillDir, path), size: metadata.size });
+    }
+  };
+
+  await visit(skillDir);
+  files.sort((left, right) => left.relPath < right.relPath ? -1 : left.relPath > right.relPath ? 1 : 0);
+  return files;
+}
+
+export async function readSkillDetail(
+  workspaceRoot: string,
+  input: { scope: string; path: string },
+  options?: {
+    homeDir?: string;
+    opencodeConfigDir?: string;
+    ownerPluginIdForPath?: (path: string) => string | undefined;
+  },
+): Promise<SkillDetail> {
+  if (input.scope !== "global") {
+    throw new ApiError(400, "invalid_skill_scope", "Only global skill details are supported");
+  }
+  validateSkillDetailPath(input.path);
+
+  const root = globalSkillDirs(options).find((candidate) => isWithinRoot(candidate, input.path));
+  if (!root) {
+    throw new ApiError(400, "unsafe_skill_path", "Skill path is outside the global skill roots");
+  }
+
+  const { realCandidate, realSkillDir } = await resolveSafeSkillPath(root, input.path);
+  const catalog = await listSkills(workspaceRoot, true, { ...options, scope: "global" });
+  const item = catalog.find((candidate) => candidate.path === input.path);
+  if (!item) {
+    throw new ApiError(404, "skill_not_found", `Skill not found: ${input.path}`);
+  }
+
+  let content: string;
+  try {
+    content = await readBoundedRegularTextFile(realCandidate, { maxBytes: SKILL_DETAIL_MAX_BYTES });
+  } catch (error) {
+    const code = errorCode(error);
+    if (code === "FILE_TOO_LARGE") {
+      throw new ApiError(413, "skill_too_large", `SKILL.md exceeds ${SKILL_DETAIL_MAX_BYTES} bytes`);
+    }
+    if (code === "ELOOP" || code === "NOT_REGULAR_FILE") {
+      throw new ApiError(400, "unsafe_skill_path", "SKILL.md must be a regular file without symbolic links");
+    }
+    if (code === "ENOENT") {
+      throw new ApiError(404, "skill_not_found", `Skill not found: ${input.path}`);
+    }
+    throw error;
+  }
+
+  return {
+    item,
+    content,
+    files: await enumerateSkillFiles(dirname(input.path), realSkillDir),
+  };
 }
 
 export type UpsertSkillPayload = {

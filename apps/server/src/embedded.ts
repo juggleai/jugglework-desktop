@@ -60,6 +60,7 @@ export type EmbeddedServerHandle = {
 
 export async function startEmbeddedServer(options: EmbeddedServerOptions): Promise<EmbeddedServerHandle> {
   const config = await resolveServerConfig(options);
+  config.managedRuntime = options.manageOpencode === true;
   config.trustedLegacyHostTokenHashes = [...new Set(
     (options.trustedLegacyHostTokenHashes ?? [])
       .map((value) => value.trim().toLowerCase())

@@ -296,6 +296,60 @@ test("normalizes recovered remote JuggleWork entries before persisting", async (
   }
 });
 
+test("editing a remote workspace preserves an omitted host token", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "jugglework-workspace-store-"));
+  const userData = path.join(root, "userData");
+  await mkdir(userData, { recursive: true });
+  await writeFile(
+    path.join(userData, "jugglework-workspaces.json"),
+    JSON.stringify({
+      selectedId: "rem_ws_remote",
+      activeId: "rem_ws_remote",
+      workspaces: [{
+        id: "rem_ws_remote",
+        name: "Remote",
+        path: "/workspace",
+        workspaceType: "remote",
+        remoteType: "jugglework",
+        baseUrl: "https://worker.example.com",
+        juggleworkHostUrl: "https://worker.example.com",
+        juggleworkWorkspaceId: "ws_remote",
+        juggleworkToken: "old-client-token",
+        juggleworkHostToken: "preserved-host-token",
+      }],
+    }),
+    "utf8",
+  );
+
+  const store = createWorkspaceStore({
+    app: { getPath: (name) => name === "userData" ? userData : root },
+    defaultDenBaseUrl: "https://example.test",
+    defaultRequireSignin: false,
+    forceRequireSignin: false,
+  });
+  const state = await store.updateRemoteWorkspace({
+    workspaceId: "rem_ws_remote",
+    baseUrl: "https://worker.example.com",
+    juggleworkHostUrl: "https://worker.example.com",
+    juggleworkWorkspaceId: "ws_remote",
+    juggleworkToken: "new-client-token",
+    remoteType: "jugglework",
+  });
+
+  assert.equal(state.workspaces[0].juggleworkToken, "new-client-token");
+  assert.equal(state.workspaces[0].juggleworkHostToken, "preserved-host-token");
+
+  const clearedState = await store.updateRemoteWorkspace({
+    workspaceId: "rem_ws_remote",
+    baseUrl: "https://worker.example.com",
+    juggleworkHostUrl: "https://worker.example.com",
+    juggleworkWorkspaceId: "ws_remote",
+    juggleworkHostToken: "",
+    remoteType: "jugglework",
+  });
+  assert.equal(clearedState.workspaces[0].juggleworkHostToken, "");
+});
+
 test("forgetting a local workspace removes its recovery token", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "jugglework-workspace-store-"));
   const userData = path.join(root, "userData");

@@ -91,6 +91,8 @@ export type SkillItem = {
   scope?: "project" | "global";
   marketplaceName?: string;
   pluginName?: string;
+  ownerPluginId?: string;
+  sourceKind?: "standalone" | "plugin" | "public";
 };
 
 const getSkillHiddenId = (skill: SkillItem) => `skill:${skill.name}`;

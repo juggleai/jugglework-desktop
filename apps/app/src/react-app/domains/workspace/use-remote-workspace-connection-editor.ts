@@ -49,9 +49,8 @@ export function useRemoteWorkspaceConnectionEditor<TWorkspace extends WorkspaceI
       return {
         juggleworkHostUrl: mountedUrl,
         juggleworkToken:
-          workspace?.juggleworkToken ??
-          workspace?.juggleworkClientToken ??
-          workspace?.juggleworkHostToken ??
+          workspace?.juggleworkToken?.trim() ||
+          workspace?.juggleworkClientToken?.trim() ||
           "",
         directory: workspace?.directory ?? workspace?.path ?? "",
         displayName: workspace?.displayName ?? workspace?.name ?? "",
@@ -94,7 +93,6 @@ export function useRemoteWorkspaceConnectionEditor<TWorkspace extends WorkspaceI
           juggleworkHostUrl: baseUrl,
           juggleworkToken: fields.juggleworkToken?.trim() ?? "",
           juggleworkClientToken: "",
-          juggleworkHostToken: "",
           displayName: fields.displayName?.trim() || null,
           directory: fields.directory?.trim() || null,
           remoteType: "jugglework",

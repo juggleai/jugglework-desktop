@@ -216,6 +216,10 @@ import { WorkspaceProvider } from "./workspace-provider";
 import type { OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
 import { SettingsSurface } from "./settings-route";
 import {
+  useHostMarketplaceExecutionTarget,
+  useHostMarketplacePlugins,
+} from "@/react-app/domains/settings/state/host-marketplace-plugins-provider";
+import {
   ensureProviderListQuery,
   getConnectedProviderItems,
   getProviderSource,
@@ -557,6 +561,15 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     onServerSettingsChanged: () => setJuggleWorkServerSettingsVersion((value) => value + 1),
     onHostInfo: setJuggleWorkServerHostInfoState,
   });
+  const hostMarketplace = useHostMarketplacePlugins();
+  const hostMarketplaceExecutionTarget = useMemo(() => selectedWorkspaceEndpoint && selectedWorkspace ? ({
+    client: selectedWorkspaceEndpoint.client,
+    token: selectedWorkspaceEndpoint.token,
+    hostToken: selectedWorkspaceEndpoint.hostToken,
+    workspaceType: selectedWorkspace.workspaceType,
+    remoteType: selectedWorkspace.remoteType,
+  }) : null, [selectedWorkspace, selectedWorkspaceEndpoint]);
+  useHostMarketplaceExecutionTarget(hostMarketplaceExecutionTarget);
   activeRouteContextRef.current = `${selectedWorkspaceId ?? ""}:${selectedSessionId ?? ""}`;
   // 会话级模型：每个会话可以固定自己的模型/推理档位，没有单独选过的会话才回落到
   // 全局默认模型。这样在一个会话里换模型不会波及其他会话。
@@ -1204,7 +1217,8 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     // still refuses to run while sessions are active, and the send path
     // re-checks its own preconditions at execution time.
     !reloadCoordinator.reloadBusy &&
-    !reloadCoordinator.reloadError,
+    !reloadCoordinator.reloadError &&
+    hostMarketplace.readiness !== "activating",
   );
 
   const showPreparingStatus =
@@ -1560,6 +1574,23 @@ export function SessionRoute(props: SessionRouteProps = {}) {
           });
         }
 
+        if (hostMarketplace.snapshot.registry?.installations.length) {
+          try {
+            const hostSnapshot = await hostMarketplace.ensureReady();
+            if (!hostSnapshot.registry?.active) {
+              throw hostSnapshot.error ?? new Error("Host Marketplace plugins are not active.");
+            }
+          } catch (error) {
+            return reportCloudMcpSubmissionFailure({
+              code: "host_marketplace_scope_unavailable",
+              stage: "engine_delivery",
+              retryable: true,
+              message: error instanceof Error ? error.message : "Host Marketplace plugins could not be prepared.",
+              recommendedAction: "Wait a moment, then retry the message.",
+            });
+          }
+        }
+
         const requiresCloudMcpReadiness = draft.parts.some((part) => (
           part.type === "capability" &&
           (part.kind === "cloud-skill" || part.kind === "cloud-mcp" || part.kind === "extension")
@@ -1690,6 +1721,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
       },
       attachmentsEnabled: true,
       attachmentsDisabledReason: null,
+      ensureHostMarketplaceReady: hostMarketplace.ensureReady,
       modelVariantLabel,
       modelVariant: modelVariantValue,
       modelBehaviorOptions,
@@ -1780,6 +1812,8 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     handleOpenSettings,
     hasUsableModel,
     handleApplyEnvironmentChanges,
+    hostMarketplace.ensureReady,
+    hostMarketplace.snapshot.registry?.installations.length,
     environmentRuntimeKey,
     local,
     listAgents,

@@ -47,9 +47,12 @@ export type DenPluginConfigObjectVersion = {
   id: string;
   rawSourceText: string | null;
   normalizedPayloadJson: Record<string, unknown> | null;
+  delivery?: DenPluginDelivery;
   sourceRevisionRef: string | null;
   createdAt: string | null;
 };
+
+export type DenPluginDelivery = "cloud" | "desktop";
 
 export type DenPluginConfigObject = {
   id: string;
@@ -60,6 +63,7 @@ export type DenPluginConfigObject = {
   currentFileExtension: string | null;
   currentRelativePath: string | null;
   status: string;
+  delivery?: DenPluginDelivery;
   updatedAt: string | null;
   latestVersion: DenPluginConfigObjectVersion | null;
 };
@@ -68,6 +72,7 @@ export type DenPluginMembership = {
   id: string;
   pluginId: string;
   configObjectId: string;
+  delivery?: DenPluginDelivery;
   configObject?: DenPluginConfigObject;
 };
 
@@ -92,7 +97,7 @@ export type DenPluginCloudReadinessConnection = {
 };
 
 /** MCP server 的承载方式：cloud 走远程端点，desktop 需装到工作区由本地进程运行。 */
-export type DenPluginMcpDelivery = "cloud" | "desktop";
+export type DenPluginMcpDelivery = DenPluginDelivery;
 
 /**
  * 插件里单个 MCP server 的承载明细。
