@@ -30,6 +30,11 @@ function safeString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
+function parseSignedPoints(value: unknown): number | null {
+  const parsed = typeof value === "string" && /^(0|-?[1-9]\d*)$/.test(value) ? Number(value) : value;
+  return typeof parsed === "number" && Number.isSafeInteger(parsed) ? parsed : null;
+}
+
 function parseProvidersPayload(payload: unknown): CloudProvider[] {
   const body = record(payload);
   const values = Array.isArray(body?.llmProviders) ? body.llmProviders : [];
@@ -148,7 +153,7 @@ export class CloudClient {
       const parsed = typeof value === "string" && /^\d+$/.test(value) ? Number(value) : value;
       return typeof parsed === "number" && Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
     };
-    const availablePoints = parsePoints(points?.available);
+    const availablePoints = parseSignedPoints(points?.available);
     const reservedPoints = parsePoints(points?.reserved);
     if (availablePoints === null || reservedPoints === null) {
       throw new CloudHttpError("Cloud tenant account response did not include a valid points balance.", 500, "invalid_tenant_account_payload");

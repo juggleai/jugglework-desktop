@@ -12,7 +12,7 @@ import { CloudClient } from "./cloud-client.js";
 import { resolveCloudOrganization } from "./cloud-organization.js";
 import { CloudProfileStore, cloudProfilePath } from "./cloud-profiles.js";
 import { normalizeCloudUrl } from "./cloud-url.js";
-import { managedModelReservationPoints, modelFitsAvailablePoints, modelReservationPoints } from "./managed-points.js";
+import { modelFitsAvailablePoints } from "./managed-points.js";
 import { availableModels } from "./model-catalog.js";
 import { importProvider, removeProvider } from "./provider-command.js";
 import type { CliRenderer } from "./render.js";
@@ -59,7 +59,7 @@ function recommendedModel(providers: CloudProvider[], statuses: Map<string, Runt
     for (const model of provider.models) {
       const id = `${providerId}/${model.id}`;
       if (selectable.has(id) && status.models.some((item) => item.id === model.id && item.enabled) &&
-        modelFitsAvailablePoints(provider, model, availablePoints)) return id;
+        modelFitsAvailablePoints(provider, availablePoints)) return id;
     }
   }
   return null;
@@ -149,33 +149,30 @@ export async function synchronizeCloudRuntime(input: {
   const preferredLabel = preferred && preferredProvider
     ? `${preferredProvider.name}/${preferred.slice(preferred.indexOf("/") + 1)}`
     : preferred;
-  if (providers.some((provider) => provider.models.length > 0) && !preferred) {
-    const managedRequirements = providers.flatMap((provider) => provider.models.flatMap((model) => {
-      const required = managedModelReservationPoints(provider, model);
-      return required === null ? [] : [required];
-    }));
-    if (availablePoints !== null && managedRequirements.length) {
-      throw new Error(`Organization ${organization.name} has ${availablePoints} available points, but its least expensive managed model requires ${Math.min(...managedRequirements)} points for a safe request reservation.`);
-    }
-    throw new Error(`Organization ${organization.name} has published models, but none are connected and usable in this workspace. Run 'jugglework doctor'.`);
-  }
-
   const configured = typeof config.opencode?.model === "string" ? config.opencode.model.trim() : "";
   const configuredProvider = configured.split("/")[0] ?? "";
   const selectedProvider = options.model?.split("/")[0] ?? "";
   const publishedModels = new Set(providers.flatMap((provider) => provider.models.map((model) => `${getCloudManagedProviderId(provider)}/${model.id}`)));
   const explicitStale = Boolean(options.model && isCloudManagedProviderKey(selectedProvider) && !publishedModels.has(options.model));
   const configuredStale = Boolean(configured && isCloudManagedProviderKey(configuredProvider) && !publishedModels.has(configured));
-  const configuredRequiredPoints = configured ? modelReservationPoints(providers, configured) : null;
-  const configuredUnaffordable = availablePoints !== null && configuredRequiredPoints !== null && configuredRequiredPoints > availablePoints;
+  const selected = options.model || configured;
+  const selectedCloudProvider = providers.find((provider) =>
+    provider.models.some((model) => `${getCloudManagedProviderId(provider)}/${model.id}` === selected));
+  const selectedNonCloud = Boolean(selected && !isCloudManagedProviderKey(selected.split("/")[0] ?? ""));
+  if ((selectedCloudProvider && !modelFitsAvailablePoints(selectedCloudProvider, availablePoints)) ||
+    (!preferred && !selectedNonCloud && hasManagedModels && availablePoints !== null && availablePoints <= 0)) {
+    throw new Error(`Organization ${organization.name} has ${availablePoints} available points; managed model requests require a positive points balance.`);
+  }
+  if (providers.some((provider) => provider.models.length > 0) && !preferred && !selectedNonCloud) {
+    throw new Error(`Organization ${organization.name} has published models, but none are connected and usable in this workspace. Run 'jugglework doctor'.`);
+  }
   if ((explicitStale || configuredStale) && !preferred) {
     throw new Error(`The selected Cloud model no longer belongs to organization ${organization.name}, and no usable organization model is available. Choose an explicit model or use 'jugglework org list'.`);
   }
   if (explicitStale) renderer.warn(`The selected model belongs to a different organization; using ${preferredLabel ?? "the runtime default"} instead.`);
   if (configuredStale) renderer.warn(`The workspace default model belongs to a different organization; using ${preferredLabel ?? "the runtime default"} for this CLI session.`);
-  if (configuredUnaffordable) renderer.warn(`The workspace default model requires at least ${configuredRequiredPoints} points, but organization ${organization.name} has ${availablePoints}; using ${preferredLabel ?? "the runtime default"} for this CLI session.`);
   if (explicitStale) options.model = null;
-  const autoModel = (!options.model && (!configured || configuredStale || configuredUnaffordable || explicitStale)) ? preferred : null;
+  const autoModel = (!options.model && (!configured || configuredStale || explicitStale)) ? preferred : null;
 
   if (imported.length || removed.length) renderer.info(`Organization ${organization.name}: ${imported.length} provider(s) synchronized, ${removed.length} stale provider(s) removed.`);
   if (autoModel) renderer.info(`Organization default model: ${preferredLabel}.`);

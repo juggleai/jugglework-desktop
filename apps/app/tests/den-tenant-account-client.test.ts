@@ -81,6 +81,48 @@ describe("Den tenant account client", () => {
     expect(account).toMatchObject({ tierVersion: 3, points: { available: 1280, reserved: 20, version: 8 }, billing: { paid: true, period: "monthly" } });
   });
 
+  test("accepts signed safe available balances after settlement", async () => {
+    for (const available of [-1280, "-1280", Number.MIN_SAFE_INTEGER, String(Number.MIN_SAFE_INTEGER), 0, "0", 1, "1"]) {
+      setFetch(async () => Response.json({
+        kind: "personal", tier: "normal", status: "active", tierVersion: "1",
+        points: { available, reserved: "0", version: "1" },
+        permissions: { canViewLedger: true, canManageBilling: true },
+      }));
+      const account = await createDenClient({ baseUrl: "https://den.test", token: "tok_test" }).getTenantAccount("org_personal");
+      expect(account.points.available).toBe(Number(available));
+      if (Number(available) < 0) {
+        expect(new Intl.NumberFormat("en-US").format(account.points.available)).toStartWith("-");
+      }
+    }
+  });
+
+  test("rejects malformed or unsafe available balances", async () => {
+    for (const available of ["-01", "+1", "-0", "-1.5", -1.5, "-1e3", " -1", "", null, true, "-9007199254740992", -9007199254740992, "9007199254740992", 9007199254740992]) {
+      setFetch(async () => Response.json({
+        kind: "personal", tier: "normal", status: "active", tierVersion: "1",
+        points: { available, reserved: "0", version: "1" },
+        permissions: { canViewLedger: true, canManageBilling: true },
+      }));
+      await expect(createDenClient({ baseUrl: "https://den.test", token: "tok_test" }).getTenantAccount("org_personal"))
+        .rejects.toMatchObject({ code: "invalid_tenant_account_payload" });
+    }
+  });
+
+  test("keeps reserved points and version counters nonnegative", async () => {
+    for (const negative of [-1, "-1"]) {
+      for (const field of ["reserved", "version", "tierVersion"]) {
+        setFetch(async () => Response.json({
+          kind: "personal", tier: "normal", status: "active",
+          tierVersion: field === "tierVersion" ? negative : "1",
+          points: { available: "-1", reserved: "0", version: "1", ...(field !== "tierVersion" ? { [field]: negative } : {}) },
+          permissions: { canViewLedger: true, canManageBilling: true },
+        }));
+        await expect(createDenClient({ baseUrl: "https://den.test", token: "tok_test" }).getTenantAccount("org_personal"))
+          .rejects.toMatchObject({ code: "invalid_tenant_account_payload" });
+      }
+    }
+  });
+
   test("accepts an explicit null billing projection", async () => {
     setFetch(async () => new Response(JSON.stringify({
       kind: "personal",

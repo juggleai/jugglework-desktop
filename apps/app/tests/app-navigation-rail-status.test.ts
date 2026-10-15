@@ -2,6 +2,8 @@ import { readFileSync } from "node:fs";
 import { describe, expect, test } from "bun:test";
 import { isIMNavigationVisible, visibleLocalWorkspaceIndicator } from "../src/react-app/shell/app-navigation-status";
 
+const railSource = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
+
 describe("local workspace rail status", () => {
   test("hides running status while the local workspace page is visible", () => {
     expect(visibleLocalWorkspaceIndicator("running", true, "local")).toBeNull();
@@ -10,6 +12,10 @@ describe("local workspace rail status", () => {
   test("shows running status after leaving the local workspace page", () => {
     expect(visibleLocalWorkspaceIndicator("running", false, "local")).toBe("running");
     expect(visibleLocalWorkspaceIndicator("running", true, "remote")).toBe("running");
+  });
+
+  test("uses the shared dark-mode-safe progress indicator for the rail", () => {
+    expect(railSource).toMatch(/statusIndicator === "running"[\s\S]+<SessionCircularProgress \/>/);
   });
 
   test("only suppresses loading and preserves empty or unread aggregate states", () => {

@@ -1560,9 +1560,18 @@ function isDenTenantTierForKind(kind: "personal" | "organization", tier: unknown
 
 function readSafeInteger(value: unknown): number | null {
   if (typeof value === "number") {
-    return Number.isSafeInteger(value) ? value : null;
+    return Number.isSafeInteger(value) && value >= 0 ? value : null;
   }
   if (typeof value !== "string" || !/^(0|[1-9]\d*)$/.test(value)) return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) ? parsed : null;
+}
+
+function readSignedSafeInteger(value: unknown): number | null {
+  if (typeof value === "number") {
+    return Number.isSafeInteger(value) ? value : null;
+  }
+  if (typeof value !== "string" || !/^(0|-?[1-9]\d*)$/.test(value)) return null;
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) ? parsed : null;
 }
@@ -1642,7 +1651,7 @@ function getTenantAccount(payload: unknown): DenTenantAccount | null {
     !isDenTenantTierForKind(payload.kind, payload.tier) ||
     typeof payload.status !== "string" ||
     readSafeInteger(payload.tierVersion) === null ||
-    readSafeInteger(payload.points.available) === null ||
+    readSignedSafeInteger(payload.points.available) === null ||
     readSafeInteger(payload.points.reserved) === null ||
     readSafeInteger(payload.points.version) === null ||
     typeof payload.permissions.canViewLedger !== "boolean" ||
@@ -1658,7 +1667,7 @@ function getTenantAccount(payload: unknown): DenTenantAccount | null {
     status: payload.status,
     tierVersion: readSafeInteger(payload.tierVersion)!,
     points: {
-      available: readSafeInteger(payload.points.available)!,
+      available: readSignedSafeInteger(payload.points.available)!,
       reserved: readSafeInteger(payload.points.reserved)!,
       version: readSafeInteger(payload.points.version)!,
     },
