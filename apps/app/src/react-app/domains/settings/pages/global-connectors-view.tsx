@@ -60,6 +60,7 @@ export type GlobalConnectorsViewProps = {
   source?: CatalogSource;
   onSourceChange?: (source: CatalogSource) => void;
   organizationName?: string | null;
+  showOrganization?: boolean;
   publicEntries?: McpDirectoryInfo[];
   organizationContent?: ReactNode | ((search: string, openDetail: (id: string) => void) => ReactNode);
   organizationDetail?: (id: string) => { name: string; content: ReactNode; description?: string } | null;
@@ -401,6 +402,7 @@ export function GlobalConnectorsView(props: GlobalConnectorsViewProps) {
               props.onSourceChange?.(source);
             }}
             organizationName={props.organizationName}
+            showOrganization={props.showOrganization}
             search={{ value: search, onChange: setSearch, placeholder: t("mcp.search_extensions_placeholder") }}
             actions={
               <Button disabled={props.busy} onClick={() => { resetDraft(); setAddOpen(true); }}>

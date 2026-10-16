@@ -226,7 +226,7 @@ import { useReloadCoordinator } from "./reload-coordinator";
 import { CommandPalette } from "./command-palette";
 import { buildCommandPaletteSessions } from "./command-palette-sessions";
 import { useCommandPaletteShortcut } from "./use-shell-shortcuts";
-import { type DenSettings } from "@/app/lib/den";
+import { isPersonalDenOrganization, type DenSettings } from "@/app/lib/den";
 import { readActiveWorkspaceId, readLastSessionFor, writeActiveWorkspaceId } from "./session-memory";
 import { settingsReturnRoute, workspaceAppsRoute, workspaceChatRoute, workspaceReviewsRoute, workspaceSessionRoute, workspaceSettingsRoute } from "./workspace-routes";
 import { getReactQueryClient } from "@/react-app/infra/query-client";
@@ -906,6 +906,12 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const [connectCapabilitiesError, setConnectCapabilitiesError] = useState<string | null>(null);
   const [connectCapabilitiesScope, setConnectCapabilitiesScope] = useState("");
   const catalogOrganizationKey = `${cloudSession.baseUrl}:${cloudSession.user?.id ?? ""}:${cloudSession.activeOrganization?.id ?? ""}:${cloudSession.isSignedIn}`;
+  const hasOrganizationCatalog = cloudSession.isSignedIn
+    && Boolean(cloudSession.activeOrganization)
+    && !isPersonalDenOrganization(cloudSession.activeOrganization);
+  const effectiveCatalogSource: CatalogSource = hasOrganizationCatalog || catalogSource !== "organization"
+    ? catalogSource
+    : "public";
   const refreshConnectCapabilities = useCallback(async () => {
     const requestId = connectCapabilitiesRequestRef.current + 1;
     connectCapabilitiesRequestRef.current = requestId;
@@ -1097,9 +1103,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     props.pluginCatalogOnly && catalogDetailRequest?.context === catalogDetailContext && catalogDetailRequest.section === section
       ? catalogDetailRequest : undefined;
   const changeCatalogSource = useCallback((source: CatalogSource) => {
+    if (source === "organization" && !hasOrganizationCatalog) return;
     setCatalogDetailRequest(null);
     setCatalogSource(source);
-  }, []);
+  }, [hasOrganizationCatalog]);
   useEffect(() => {
     let active = true;
     if ((!props.embedded && !props.pluginCatalogOnly) || (route.tab !== "extensions" && !props.pluginCatalogOnly) || !inventoryClient || !runtimeWorkspaceId) {
@@ -2403,7 +2410,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         url: publicEntry?.url ?? (connector.config.type === "remote" ? connector.config.url : undefined),
       };
     }),
-    organization: cloudSession.isSignedIn && cloudSession.activeOrganization ? {
+    includeOrganization: hasOrganizationCatalog,
+    organization: hasOrganizationCatalog && cloudSession.activeOrganization ? {
       id: cloudSession.activeOrganization.id,
       name: cloudSession.activeOrgName ?? "",
       // Connect inventory skills are plugin memberships. They remain available
@@ -2422,7 +2430,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         url: item.builtInEntry?.url,
       })),
     ],
-  }), [catalogOrganizationKey, cloudSession.activeOrgName, cloudSession.activeOrganization, cloudSession.isSignedIn, extensionItems.builtInItems, extensionsSnapshot.cloudOrgPlugins, hostMarketplaceSnapshot.registry?.installations, orgMcpConnections.connections, publicConnectorEntries, sessionPluginItems, standaloneCatalogSkills, standaloneGlobalConnectors]);
+  }), [catalogOrganizationKey, cloudSession.activeOrgName, cloudSession.activeOrganization, extensionItems.builtInItems, extensionsSnapshot.cloudOrgPlugins, hasOrganizationCatalog, hostMarketplaceSnapshot.registry?.installations, orgMcpConnections.connections, publicConnectorEntries, sessionPluginItems, standaloneCatalogSkills, standaloneGlobalConnectors]);
   const workspaceVisiblePlugins = useMemo<WorkspacePluginRow[]>(() => {
     const catalogPlugins = customizationInstalledItems.filter((item) => item.section === "plugins").flatMap((item) => {
       const plugin = extensionsSnapshot.cloudOrgPlugins.find((entry) => item.id === `cloud-plugin:${entry.id}`);
@@ -2935,9 +2943,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             detailPresentation={props.pluginCatalogOnly ? "page" : "modal"}
             detailRequest={catalogRequestFor("skills")}
             loadSkillDetail={loadGlobalSkillDetail}
-            source={props.pluginCatalogOnly ? catalogSource : undefined}
+            source={props.pluginCatalogOnly ? effectiveCatalogSource : undefined}
             onSourceChange={changeCatalogSource}
             organizationName={cloudSession.activeOrgName}
+            showOrganization={hasOrganizationCatalog}
             organizationSkills={[]}
             orgSkillsLoading={connectCapabilitiesLoading}
             orgSkillsError={!cloudSession.isSignedIn ? t("marketplace.signin_hint") : connectCapabilitiesError}
@@ -2950,7 +2959,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             canAddSkills={canAddSkills}
             onUploadSkill={uploadGlobalSkill}
             onRefreshPersonal={refreshGlobalSkills}
-            onRefresh={() => { void (catalogSource === "organization" && props.pluginCatalogOnly ? refreshConnectCapabilities() : refreshGlobalSkills()); }}
+            onRefresh={() => { void (effectiveCatalogSource === "organization" && props.pluginCatalogOnly ? refreshConnectCapabilities() : refreshGlobalSkills()); }}
             projectDir={selectedWorkspaceRoot}
           />
         );
@@ -2960,9 +2969,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             key={props.pluginCatalogOnly ? `${catalogDetailContext}:${catalogNavigationRevision}` : "global-connectors"}
             detailPresentation={props.pluginCatalogOnly ? "page" : "modal"}
             detailRequest={catalogRequestFor("connectors")}
-            source={props.pluginCatalogOnly ? catalogSource : undefined}
+            source={props.pluginCatalogOnly ? effectiveCatalogSource : undefined}
             onSourceChange={changeCatalogSource}
             organizationName={cloudSession.activeOrgName}
+            showOrganization={hasOrganizationCatalog}
             publicEntries={publicConnectorEntries}
             organizationDetail={(id) => {
               const connection = orgMcpConnections.connections.find((item) => item.id === id);
@@ -3016,7 +3026,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
               config: connector.config,
             })}
             onRemoveConnector={removeGlobalConnector}
-            onRefresh={() => { void (catalogSource === "organization" && props.pluginCatalogOnly ? orgMcpConnections.refresh() : refreshGlobalConnectors()); }}
+            onRefresh={() => { void (effectiveCatalogSource === "organization" && props.pluginCatalogOnly ? orgMcpConnections.refresh() : refreshGlobalConnectors()); }}
           />
         );
       case "extensions": {
@@ -3025,11 +3035,12 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             <CloudMarketplacesView
               key={`${catalogDetailContext}:${catalogNavigationRevision}`}
               detailRequest={catalogRequestFor("plugins")}
-              source={catalogSource}
+              source={effectiveCatalogSource}
               onRefreshLocal={() => { setPluginInventoryRevision((value) => value + 1); void connectionsStore.refreshMcpServers(); }}
               personalError={sessionPluginError}
               onSourceChange={changeCatalogSource}
               organizationName={cloudSession.activeOrgName}
+              showOrganization={hasOrganizationCatalog}
               personalPlugins={[
                 ...sessionPluginItems.filter((item) => item.scope === "global"),
               ]}
@@ -3057,7 +3068,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
               uniformCardHeight
               plainCards
               title={t("project_extensions.group_plugin")}
-              description={t(`customization.${catalogSource}_description`)}
+              description={t(`customization.${effectiveCatalogSource}_description`)}
             />
           );
         }

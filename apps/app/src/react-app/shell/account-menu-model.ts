@@ -1,4 +1,4 @@
-import type { DenMembershipUpgradeContext, DenOrgSummary, DenTenantAccount, DenTenantTier } from "@/app/lib/den";
+import { isPersonalDenOrganization, type DenMembershipUpgradeContext, type DenOrgSummary, type DenTenantAccount, type DenTenantTier } from "@/app/lib/den";
 import { t } from "@/i18n";
 
 export function membershipTierLabel(tier: DenTenantTier | null | undefined): string {
@@ -24,7 +24,7 @@ export function organizationMenuGroups(organizations: DenOrgSummary[]): {
   const personal: DenOrgSummary[] = [];
   const others: DenOrgSummary[] = [];
   for (const organization of organizations) {
-    if (organization.kind === "personal" || organization.slug.toLowerCase() === "personal") {
+    if (isPersonalDenOrganization(organization)) {
       personal.push(organization);
     } else {
       others.push(organization);

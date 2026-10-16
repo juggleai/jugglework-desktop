@@ -41,6 +41,11 @@ describe("global Plugins sidebar", () => {
     expect(route).toContain('route.tab === "connectors" || Boolean(props.pluginCatalogOnly)');
     expect(route).toContain('skills={props.pluginCatalogOnly ? standaloneCatalogSkills : globalSkills}');
     expect(route).toContain('organizationSkills={[]}');
+    expect(route).toContain('const hasOrganizationCatalog = cloudSession.isSignedIn');
+    expect(route).toContain('!isPersonalDenOrganization(cloudSession.activeOrganization)');
+    expect(route).toContain('showOrganization={hasOrganizationCatalog}');
+    expect(route).toContain('includeOrganization: hasOrganizationCatalog');
+    expect(route).toContain('source={effectiveCatalogSource}');
     expect(route).not.toContain('plugins: extensionsSnapshot.importedCloudPlugins');
   });
 
@@ -141,6 +146,24 @@ describe("global Plugins sidebar", () => {
     const switched = globalCustomizationInstalledItems({ ...base, organization: { ...organization, id: "personal-org", name: "My org", skills: [], connectors: [] } });
     expect(switched).toHaveLength(2);
     expect(switched.some((item) => item.id.includes("team-a"))).toBe(false);
+  });
+
+  test("omits organization-installed shortcuts for a personal organization", () => {
+    const items = globalCustomizationInstalledItems({
+      plugins: [plugin("cloud-plugin", "ready")],
+      installedPluginIds: ["cloud-plugin"],
+      skills: [{ name: "Personal Skill", path: "/skills/personal" }],
+      connectors: [{ name: "Personal Connector" }],
+      organization: {
+        id: "personal-org",
+        name: "Personal",
+        skills: [{ id: "org-skill", name: "Organization Skill" }],
+        connectors: [{ id: "org-connector", name: "Organization Connector" }],
+      },
+      includeOrganization: false,
+    });
+    expect(items.map((item) => item.name)).toEqual(["Personal Connector", "Personal Skill"]);
+    expect(items.some((item) => item.source === "organization")).toBe(false);
   });
 
   test("carries installed plugin and connector icon metadata", () => {

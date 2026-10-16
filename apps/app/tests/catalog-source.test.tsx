@@ -83,6 +83,17 @@ describe("catalog source header", () => {
     expect(text()).toContain(t("customization.source_organization"));
   });
 
+  test("hides the organization source for a personal organization", async () => {
+    const changes: CatalogSource[] = [];
+    await render(<CatalogSourceTabs value="public" organizationName="Personal" showOrganization={false} onChange={(source) => changes.push(source)} />);
+    expect(buttons().map((button) => button.findByType("span").children.join(""))).toEqual([
+      t("customization.source_public"),
+      t("customization.source_personal"),
+    ]);
+    for (const button of buttons()) await act(async () => button.props.onClick());
+    expect(changes).toEqual(["public", "personal"]);
+  });
+
   test("exposes search and refresh while keeping source pills optional", async () => {
     const refresh = mock(noop);
     const search = mock(noop);

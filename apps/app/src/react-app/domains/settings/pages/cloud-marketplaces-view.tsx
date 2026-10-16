@@ -332,6 +332,7 @@ export type CloudMarketplacesViewProps = {
   source?: CatalogSource;
   onSourceChange?: (source: CatalogSource) => void;
   organizationName?: string | null;
+  showOrganization?: boolean;
   /** Environment-installed inventory, including user-enabled built-ins and global local specs. */
   personalPlugins?: Array<{ id: string; name: string; description?: string | null; spec?: string }>;
   onUninstallPersonalPlugin?: (plugin: PersonalMarketplaceRow["plugin"]) => void | Promise<void>;
@@ -487,6 +488,7 @@ export function CloudMarketplacesView({
   source,
   onSourceChange,
   organizationName,
+  showOrganization,
   personalPlugins = [],
   onUninstallPersonalPlugin,
   extensions,
@@ -1058,6 +1060,7 @@ export function CloudMarketplacesView({
           source={source}
           onSourceChange={onSourceChange}
           organizationName={organizationName ?? activeOrg?.name}
+          showOrganization={showOrganization}
           search={!searchControlled ? { value: search, onChange: setSearch, placeholder: t("marketplace.search_placeholder") } : undefined}
         />
       ) : !hideSectionHeader ? (

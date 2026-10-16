@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import { setLocale } from "../src/i18n";
 import { accountDisplayName, membershipTierLabel, organizationMenuGroups } from "../src/react-app/shell/account-menu-model";
+import { isPersonalDenOrganization } from "../src/app/lib/den";
 
 describe("account menu presentation", () => {
   test("maps tenant tiers to product labels", () => {
@@ -36,5 +37,11 @@ describe("account menu presentation", () => {
     const personal = { id: "personal", name: "Personal", slug: "personal", role: "owner" as const, tier: "normal" as const };
     const team = { id: "team", name: "Studio", slug: "studio", role: "member" as const, kind: "organization" as const, tier: "team" as const };
     expect(organizationMenuGroups([team, personal])).toEqual({ personal: [personal], others: [team] });
+  });
+
+  test("detects personal organizations by kind with a legacy slug fallback, never by owner role", () => {
+    expect(isPersonalDenOrganization({ kind: "personal", slug: "user-workspace" })).toBe(true);
+    expect(isPersonalDenOrganization({ kind: undefined, slug: " Personal " })).toBe(true);
+    expect(isPersonalDenOrganization({ kind: "organization", slug: "studio" })).toBe(false);
   });
 });

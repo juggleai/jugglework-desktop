@@ -12,7 +12,7 @@ import {
 } from "../../../../app/lib/den";
 import { denSettingsChangedEvent } from "../../../../app/lib/den-session-events";
 
-type CloudActiveOrganization = Pick<DenOrgSummary, "id" | "name" | "role" | "slug">;
+type CloudActiveOrganization = Pick<DenOrgSummary, "id" | "name" | "role" | "slug" | "kind">;
 
 type CloudSessionContextValue = {
   client: DenClient;
@@ -87,7 +87,13 @@ export function CloudSessionProvider({ children }: CloudSessionProviderProps) {
         const name = next.activeOrgName?.trim() || "";
         const slug = next.activeOrgSlug?.trim() || "";
         if (!identityChanged && current?.id === id && current.name === name && current.slug === slug) return current;
-        return { id, name, slug, role: !identityChanged && current?.id === id ? current.role : "member" };
+        return {
+          id,
+          name,
+          slug,
+          role: !identityChanged && current?.id === id ? current.role : "member",
+          kind: !identityChanged && current?.id === id ? current.kind : undefined,
+        };
       });
     };
 

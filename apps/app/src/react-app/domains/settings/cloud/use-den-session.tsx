@@ -406,7 +406,7 @@ export function useDenSession({
         });
         // Push to context immediately so consumers see the new org
         if (nextOrg) {
-          setActiveOrganization({ id: nextOrg.id, name: nextOrg.name, role: nextOrg.role, slug: nextOrg.slug });
+          setActiveOrganization({ id: nextOrg.id, name: nextOrg.name, role: nextOrg.role, slug: nextOrg.slug, kind: nextOrg.kind });
         } else if (!next) {
           setActiveOrganization(null);
         }
@@ -592,6 +592,7 @@ export function useDenSession({
         name: nextOrg.name,
         role: nextOrg.role,
         slug: nextOrg.slug,
+        kind: nextOrg.kind,
       });
 
       // 5. Force a full server sync (Den + localStorage reconciliation)

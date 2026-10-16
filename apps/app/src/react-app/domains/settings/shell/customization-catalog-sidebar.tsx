@@ -33,9 +33,10 @@ export function globalCustomizationInstalledItems(input: {
   installedPluginIds?: string[];
   hostInstallations?: JuggleWorkHostMarketplaceInstallation[];
   organization?: { id: string; name: string; skills: Array<{ id?: string; name: string }>; connectors: Array<{ id: string; name: string; url?: string }> };
+  includeOrganization?: boolean;
 }): CustomizationInstalledItem[] {
   const installedPluginIds = new Set(input.installedPluginIds ?? []);
-  const plugins = input.hostInstallations ? input.hostInstallations.map((installation) => {
+  const plugins = input.includeOrganization === false ? [] : input.hostInstallations ? input.hostInstallations.map((installation) => {
     const plugin = input.plugins.find((candidate) => candidate.id === installation.pluginId);
     const icon = plugin?.extension?.manifest?.icon;
     return {
@@ -71,8 +72,8 @@ export function globalCustomizationInstalledItems(input: {
       source: skill.sourceKind === "public" ? "public" as const : "personal" as const,
     })),
     ...input.connectors.map((connector) => ({ id: `global-connector:${connector.name}`, ...connector, section: "connectors" as const, source: connector.source ?? "personal" as const })),
-    ...(input.organization?.skills ?? []).map((skill) => ({ id: `org-skill:${input.organization!.id}:${skill.id ?? skill.name}`, detailId: skill.id ?? skill.name, name: skill.name, section: "skills" as const, source: "organization" as const, sourceLabel: input.organization!.name })),
-    ...(input.organization?.connectors ?? []).map((connector) => ({ id: `org-connector:${input.organization!.id}:${connector.id}`, detailId: connector.id, name: connector.name, section: "connectors" as const, source: "organization" as const, sourceLabel: input.organization!.name, ...(connector.url ? { url: connector.url } : {}) })),
+    ...(input.includeOrganization === false ? [] : (input.organization?.skills ?? []).map((skill) => ({ id: `org-skill:${input.organization!.id}:${skill.id ?? skill.name}`, detailId: skill.id ?? skill.name, name: skill.name, section: "skills" as const, source: "organization" as const, sourceLabel: input.organization!.name }))),
+    ...(input.includeOrganization === false ? [] : (input.organization?.connectors ?? []).map((connector) => ({ id: `org-connector:${input.organization!.id}:${connector.id}`, detailId: connector.id, name: connector.name, section: "connectors" as const, source: "organization" as const, sourceLabel: input.organization!.name, ...(connector.url ? { url: connector.url } : {}) }))),
   ].filter((item) => item.name.trim()).sort((left, right) => left.name.localeCompare(right.name));
 }
 

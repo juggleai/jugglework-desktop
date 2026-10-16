@@ -207,12 +207,19 @@ Plugins, Skills, and Connectors SHALL each offer mutually exclusive Public, the 
 - **AND** its description states that authentication requires `GITHUB_TOKEN` in the MCP execution environment, without claiming automatic browser OAuth
 - **AND** generated configuration references the environment variable instead of embedding a credential, and installing from the directory retains Public provenance
 
-#### Scenario: Switch organizations including personal organization
+#### Scenario: Switch team organizations
 
-- **WHEN** the active organization changes
+- **WHEN** the active organization changes between team organizations
 - **THEN** the middle tab displays its name and only its authorized inventory
 - **AND** old requests and details cannot repopulate the previous organization's data
-- **AND** Personal continues to refer to the execution environment, not that organization's kind
+
+#### Scenario: Personal organization identity
+
+- **WHEN** the active organization has kind `personal`, including the legacy `personal` slug fallback
+- **THEN** Plugins, Skills, and Connectors hide the Organization source category
+- **AND** their Installed lists omit organization-sourced plugin, skill, and connector shortcuts
+- **AND** Public and Personal continue to refer to public catalog inventory and execution-environment additions respectively
+- **AND** an Organization source selected before switching falls back to Public without showing stale organization inventory
 
 #### Scenario: No public skills feed
 

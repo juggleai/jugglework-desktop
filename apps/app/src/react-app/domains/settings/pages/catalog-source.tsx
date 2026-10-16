@@ -10,14 +10,18 @@ import { SettingsListSearchInput } from "../settings-list";
 
 export type CatalogSource = "public" | "organization" | "personal";
 
-export function CatalogSourceTabs({ value, onChange, organizationName }: {
+export function CatalogSourceTabs({ value, onChange, organizationName, showOrganization }: {
   value: CatalogSource;
   onChange: (source: CatalogSource) => void;
   organizationName?: string | null;
+  showOrganization?: boolean;
 }) {
+  const sources = (["public", "organization", "personal"] as const).filter(
+    (source) => source !== "organization" || showOrganization !== false,
+  );
   return (
     <div className="flex flex-wrap items-center gap-2">
-      {(["public", "organization", "personal"] as const).map((source) => (
+      {sources.map((source) => (
         <button
           key={source}
           type="button"
@@ -47,6 +51,7 @@ export function CatalogHeader(props: {
   source?: CatalogSource;
   onSourceChange?: (source: CatalogSource) => void;
   organizationName?: string | null;
+  showOrganization?: boolean;
   search?: { value: string; onChange: (value: string) => void; placeholder: string };
   actions?: ReactNode;
 }) {
@@ -89,6 +94,7 @@ export function CatalogHeader(props: {
             value={props.source}
             onChange={(source) => props.onSourceChange?.(source)}
             organizationName={props.organizationName}
+            showOrganization={props.showOrganization}
           />
         </div>
       ) : null}

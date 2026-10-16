@@ -34,6 +34,7 @@
 - [x] 1.32 Guard the full rectangular preview title strip across rounded corners
 - [x] 1.33 Place the collapsed work surface beside the Rail so its left corners remain visible
 - [x] 1.41 Keep expired Cloud sessions locally sign-out capable and re-authenticatable
+- [x] 1.42 Hide organization catalog categories for personal-organization identities
 - [x] 1.34 Add the Plugins Rail entry after Automation and route it to the workspace plugin catalog
 - [x] 1.35 Render the plugin catalog inside the shared inset application surface
 - [x] 1.36 Replace the generic puzzle icon with the plugin orbit mark

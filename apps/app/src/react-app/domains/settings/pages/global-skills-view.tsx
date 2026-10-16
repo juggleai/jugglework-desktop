@@ -27,6 +27,7 @@ export type GlobalSkillsViewProps = {
   source?: CatalogSource;
   onSourceChange?: (source: CatalogSource) => void;
   organizationName?: string | null;
+  showOrganization?: boolean;
   organizationSkills?: (SkillItem & { id?: string })[];
   orgSkillsLoading?: boolean;
   orgSkillsError?: string | null;
@@ -177,6 +178,7 @@ export function GlobalSkillsView(props: GlobalSkillsViewProps) {
             source={props.source}
             onSourceChange={props.onSourceChange}
             organizationName={props.organizationName}
+            showOrganization={props.showOrganization}
             search={{ value: search, onChange: setSearch, placeholder: t("mcp.search_extensions_placeholder") }}
             actions={(
               <SkillAddMenu

@@ -194,6 +194,13 @@ export type DenOrgSummary = {
   accountStatus?: string | null;
 };
 
+export function isPersonalDenOrganization(
+  organization: Pick<DenOrgSummary, "kind" | "slug"> | null | undefined,
+): boolean {
+  return organization?.kind === "personal"
+    || organization?.slug.trim().toLowerCase() === "personal";
+}
+
 export type DenTenantTier = "normal" | "pro" | "power" | "lite_team" | "team" | "business";
 
 export type DenTenantAccount = {
