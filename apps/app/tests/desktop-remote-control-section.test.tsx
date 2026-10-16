@@ -5,7 +5,7 @@ import TestRenderer, { act } from "react-test-renderer";
 
 import type { DesktopRemoteControlAgentStatus } from "@jugglework/types/desktop-ipc";
 import { setLocale } from "../src/i18n";
-import { refreshRemoteControlRecoveryState, RemoteControlActivityIndicator, requestRemoteControlReregistration, shouldShowRemoteControlAuthorizationRefresh, shouldShowRemoteControlReregister, statusPresentation } from "../src/react-app/domains/settings/cloud/desktop-remote-control-section";
+import { refreshRemoteControlRecoveryState, RemoteControlActivityIndicator, requestRemoteControlReregistration, shouldShowRemoteControlAuthorizationRefresh, shouldShowRemoteControlReconnect, shouldShowRemoteControlReregister, statusPresentation } from "../src/react-app/domains/settings/cloud/desktop-remote-control-section";
 import { CloudSessionProvider, useCloudSession } from "../src/react-app/domains/settings/cloud/cloud-session-provider";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -83,12 +83,13 @@ describe("Desktop remote-control status presentation", () => {
 
   test("shows re-registration only for freshly authorized local-disabled idle state", () => {
     const disabled = { schemaVersion: 1 as const, enabled: false, preventSleepWhileWaiting: false, backgroundMode: false, launchAtLogin: false, allowBusySessionSteer: false, allowBusySessionEnqueue: false };
-    const input = { signedIn: true, policyAllowsRemote: true, settings: disabled, status: status({ connected: false, state: "disabled", locallyDisabled: true, localControlEnabled: false }) };
+    const input = { signedIn: true, policyAllowsRemote: true, settings: disabled, status: status({ connected: false, state: "disabled", enrolled: false, locallyDisabled: true, localControlEnabled: false }) };
     expect(shouldShowRemoteControlReregister(input)).toBe(true);
     expect(shouldShowRemoteControlReregister({ ...input, signedIn: false })).toBe(false);
     expect(shouldShowRemoteControlReregister({ ...input, policyAllowsRemote: false })).toBe(false);
     expect(shouldShowRemoteControlReregister({ ...input, status: status({ state: "disabled", replacementPending: true }) })).toBe(false);
     expect(shouldShowRemoteControlReregister({ ...input, status: status({ state: "disabled", enrollmentAuthorized: false }) })).toBe(false);
+    expect(shouldShowRemoteControlReregister({ ...input, status: status({ connected: false, state: "disabled", enrolled: true, locallyDisabled: true }) })).toBe(false);
     const staleAuthorization = status({ connected: false, state: "disabled", locallyDisabled: true, localControlEnabled: false, enrollmentAuthorized: false });
     expect(shouldShowRemoteControlAuthorizationRefresh({ ...input, status: staleAuthorization })).toBe(true);
     expect(shouldShowRemoteControlAuthorizationRefresh(input)).toBe(false);
@@ -96,8 +97,30 @@ describe("Desktop remote-control status presentation", () => {
     expect(shouldShowRemoteControlAuthorizationRefresh({ ...input, policyAllowsRemote: false, status: staleAuthorization })).toBe(false);
     expect(shouldShowRemoteControlReregister({
       ...input,
-      status: status({ connected: false, state: "disabled", locallyDisabled: true, localControlEnabled: false, lastErrorCode: "device_reregistration_required" }),
+      status: status({ connected: false, state: "disabled", enrolled: false, locallyDisabled: true, localControlEnabled: false, lastErrorCode: "device_reregistration_required" }),
     })).toBe(true);
+  });
+
+  test("offers reconnect rather than re-registration for a preserved authenticated identity", () => {
+    const preserved = status({
+      connected: false,
+      state: "disabled",
+      enrolled: true,
+      locallyDisabled: true,
+      localControlEnabled: false,
+      replacementFailure: {
+        stage: "pending_policy",
+        code: "pending_policy_timeout",
+        agentErrorCode: null,
+        closeCode: null,
+        lifecycleGeneration: 2,
+        connectionGeneration: 7,
+      },
+    });
+    expect(shouldShowRemoteControlReconnect({ signedIn: true, policyAllowsRemote: true, status: preserved })).toBe(true);
+    expect(shouldShowRemoteControlReconnect({ signedIn: false, policyAllowsRemote: true, status: preserved })).toBe(false);
+    expect(shouldShowRemoteControlReconnect({ signedIn: true, policyAllowsRemote: false, status: preserved })).toBe(false);
+    expect(shouldShowRemoteControlReconnect({ signedIn: true, policyAllowsRemote: true, status: status() })).toBe(false);
   });
 
   test("excludes ordinary offline, backoff, and cloud-disabled transport while locally enabled", () => {

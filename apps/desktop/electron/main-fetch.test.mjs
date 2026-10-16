@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { isLoopbackHttpUrl, mainProcessFetchBody, selectMainProcessFetch } from "./main-fetch.mjs";
+import { createMainProcessFetch, isLoopbackHttpUrl, mainProcessFetchBody, selectMainProcessFetch } from "./main-fetch.mjs";
 
 describe("main-process fetch transport", () => {
   it("recognizes supported loopback HTTP URLs", () => {
@@ -24,6 +24,20 @@ describe("main-process fetch transport", () => {
       selectMainProcessFetch("https://work.juggle.im/api", { nodeFetch, electronFetch }),
       electronFetch,
     );
+  });
+
+  it("routes both URL objects and strings through the loopback-aware wrapper", async () => {
+    const calls = [];
+    const fetcher = createMainProcessFetch({
+      nodeFetch: async (input) => { calls.push(["node", String(input)]); return new Response("{}"); },
+      electronFetch: async (input) => { calls.push(["electron", String(input)]); return new Response("{}"); },
+    });
+
+    await fetcher(new URL("http://127.0.0.1:53078/health"));
+    await fetcher("http://localhost:53078/health");
+    await fetcher(new URL("http://[::1]:53078/health"));
+    await fetcher("https://work.juggle.im/api");
+    assert.deepEqual(calls.map(([transport]) => transport), ["node", "node", "node", "electron"]);
   });
 
   it("preserves binary upload bytes and existing string request bodies", () => {

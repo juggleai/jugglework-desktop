@@ -572,6 +572,23 @@ describe("authoritative session mutation APIs", () => {
     expect(engine.v2Prompts).toHaveLength(0);
   });
 
+  test("fully disabled pending policy returns immediately for an empty queue", async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    const response = await fetch(`${harness.base}/remote-control/pending/enable`, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+      body: JSON.stringify({ enabled: false, steer: false, enqueue: false }),
+    });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      enabled: false,
+      steer: false,
+      enqueue: false,
+      cancelled: 0,
+    });
+  });
+
   test("restart pump admits an idle persisted queue row once with its durable ID", async () => {
     const engine = startMockOpencode();
     const harness = await startHarness(engine.server.port);

@@ -175,6 +175,22 @@ describe("session pending operation reconciliation pump", () => {
     store.close();
   });
 
+  test("cancel all resolves immediately when no pending operation exists", async () => {
+    const { store } = await storeFixture();
+    const pump = createSessionPendingOperationPump({
+      store,
+      sessionMutations: createSessionMutationCoordinator(),
+      intervalMs: 60_000,
+      getSessionStatus: async () => "idle",
+      admit: async () => {},
+    });
+    await pump.drained();
+    await expect(pump.cancelAll("policy_disabled")).resolves.toBe(0);
+    expect(store.acceptance()).toMatchObject({ enabled: false, steer: false, enqueue: false });
+    await pump.close();
+    store.close();
+  });
+
   test("close preserves an interrupted admission as ambiguous dispatching", async () => {
     const { store } = await storeFixture();
     const operation = store.create({ workspaceId: "ws", sessionId: "ses", mode: "enqueue", prompt: "queued", commandCorrelationId: "cmd" });

@@ -22,6 +22,13 @@ export function selectMainProcessFetch(url, { nodeFetch, electronFetch }) {
   return isLoopbackHttpUrl(url) ? nodeFetch : electronFetch;
 }
 
+export function createMainProcessFetch({ nodeFetch, electronFetch }) {
+  if (typeof nodeFetch !== "function" || typeof electronFetch !== "function") {
+    throw new TypeError("Main-process fetch transports are invalid.");
+  }
+  return (input, init) => selectMainProcessFetch(input, { nodeFetch, electronFetch })(input, init);
+}
+
 export function mainProcessFetchBody(init) {
   if (init?.bodyBytes instanceof Uint8Array) return Buffer.from(init.bodyBytes);
   return typeof init?.body === "string" ? init.body : undefined;

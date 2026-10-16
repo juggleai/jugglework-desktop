@@ -246,7 +246,7 @@ describe("remote-control lifecycle manager", () => {
     assert.doesNotMatch(JSON.stringify(result.status.replacementFailure), /policy_rejected|secret/i);
   });
 
-  it("distinguishes managed-runtime policy failure after a successful welcome", async () => {
+  it("preserves the authenticated identity when managed-runtime policy fails after welcome", async () => {
     const fixture = harness({ failAt: "policy-timeout" });
     const result = await fixture.manager.reregisterAndEnable(INPUT);
     assert.equal(result.ok, false);
@@ -255,7 +255,10 @@ describe("remote-control lifecycle manager", () => {
     assert.equal(result.status.replacementFailure.code, "pending_policy_timeout");
     assert.equal(result.status.replacementFailure.agentErrorCode, null);
     assert.ok(fixture.calls.indexOf("policy") > fixture.calls.indexOf("welcome"));
-    assert.ok(fixture.calls.indexOf("delete") > fixture.calls.indexOf("policy"));
+    assert.equal(fixture.calls.includes("delete"), false);
+    assert.equal(result.status.enrolled, true);
+    assert.equal(result.status.locallyDisabled, true);
+    assert.equal(result.status.connected, false);
   });
 
   it("keeps replacement pending while post-welcome policy synchronization is queued", async () => {
@@ -285,6 +288,7 @@ describe("remote-control lifecycle manager", () => {
         assert.equal(result.error.code, "cancelled");
         assert.equal(fixture.settings.enabled, false);
         assert.equal(fixture.manager.status().locallyDisabled, true);
+        if (stage === "policy") assert.equal(fixture.calls.includes("delete"), false);
       });
     }
   }

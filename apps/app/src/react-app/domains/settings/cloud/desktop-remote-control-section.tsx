@@ -78,7 +78,16 @@ export function shouldShowRemoteControlReregister(input: {
   status: DesktopRemoteControlAgentStatus;
 }) {
   return input.signedIn && input.policyAllowsRemote && !input.settings.enabled && input.status.locallyDisabled &&
-    input.status.enrollmentAuthorized && !input.status.replacementPending;
+    !input.status.enrolled && input.status.enrollmentAuthorized && !input.status.replacementPending;
+}
+
+export function shouldShowRemoteControlReconnect(input: {
+  signedIn: boolean;
+  policyAllowsRemote: boolean;
+  status: DesktopRemoteControlAgentStatus;
+}) {
+  return input.signedIn && input.policyAllowsRemote && input.status.enrolled && !input.status.connected &&
+    input.status.enrollmentAuthorized && !input.status.replacementPending && !input.status.revoked;
 }
 
 export function shouldShowRemoteControlAuthorizationRefresh(input: {
@@ -321,6 +330,11 @@ export function DesktopRemoteControlSection() {
     settings,
     status,
   });
+  const showReconnect = !reregisterPending && shouldShowRemoteControlReconnect({
+    signedIn: cloud.isSignedIn,
+    policyAllowsRemote,
+    status,
+  });
 
   return (
     <SettingsSection>
@@ -365,7 +379,7 @@ export function DesktopRemoteControlSection() {
       {status.lastErrorCode ? (
         <SettingsNotice tone="error">最近错误：{status.lastErrorCode}</SettingsNotice>
       ) : null}
-      {status.replacementFailure ? (
+      {status.replacementFailure && !status.connected ? (
         <SettingsNotice tone="error">
           注册失败阶段：{status.replacementFailure.stage} · {status.replacementFailure.code}
           {status.replacementFailure.closeCode ? ` · WebSocket ${status.replacementFailure.closeCode}` : ""}
@@ -392,7 +406,7 @@ export function DesktopRemoteControlSection() {
               刷新 Cloud 授权
             </Button>
           ) : null}
-          {settings.enabled && status.enrolled && !status.connected ? (
+          {showReconnect ? (
             <Button variant="outline" onClick={() => void setEnabled(true)} disabled={busy || !policyAllowsRemote}>
               重新连接
             </Button>

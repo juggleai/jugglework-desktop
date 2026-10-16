@@ -44,7 +44,7 @@ import { startRouterServer, stopRouterServer } from "./router-server.mjs";
 import { createApplicationMenu } from "./app-menu.mjs";
 import { applyBrandAppName } from "./brand-app-name.mjs";
 import { createBrowserPanel } from "./browser-panel.mjs";
-import { mainProcessFetchBody, selectMainProcessFetch } from "./main-fetch.mjs";
+import { createMainProcessFetch, mainProcessFetchBody, selectMainProcessFetch } from "./main-fetch.mjs";
 import { createWorkspaceStore } from "./workspace-store.mjs";
 import { installCloseToHide, windowAllClosedAction } from "./window-close-behavior.mjs";
 import { createRemoteControlSettingsStore } from "./remote-control-settings.mjs";
@@ -125,6 +125,10 @@ const {
 const pty = require(["node", "pty"].join("-"));
 const WebSocketClient = require("ws");
 const nodeFetch = globalThis.fetch.bind(globalThis);
+const mainProcessFetch = createMainProcessFetch({
+  nodeFetch,
+  electronFetch: (input, init) => electronNet.fetch(input, init),
+});
 const NATIVE_DEEP_LINK_EVENT = "jugglework:deep-link-native";
 const REMOTE_CONTROL_POLICY_RECOVERY_EVENT = "jugglework:remote-control:policy-recovery";
 const TAURI_APP_IDENTIFIER = "com.juggleai.jugglework";
@@ -1011,7 +1015,7 @@ const remoteControlPendingPolicy = createRemoteControlPendingPolicySynchronizer(
   postPolicy: async (policy) => {
     const managedRuntimeClient = createManagedRuntimeClient({
       getAccess: () => runtimeManager.managedServerAccess(),
-      fetcher: electronNet.fetch,
+      fetcher: mainProcessFetch,
     });
     await managedRuntimeClient.postJson("/remote-control/pending/enable", policy);
   },
@@ -1408,14 +1412,14 @@ const runtimeIpcHandlers = createRuntimeIpcHandlers(runtimeManager);
 const remoteControlInteractionStore = createRemoteControlInteractionStore({
   managedRuntimeClient: createManagedRuntimeClient({
     getAccess: () => runtimeManager.managedServerAccess(),
-    fetcher: electronNet.fetch,
+    fetcher: mainProcessFetch,
   }),
 });
 remoteControlReadRegistrations = createRemoteControlReadRegistrations({
   workspaceStore,
   managedRuntimeClient: createManagedRuntimeClient({
     getAccess: () => runtimeManager.managedServerAccess(),
-    fetcher: electronNet.fetch,
+    fetcher: mainProcessFetch,
   }),
   interactions: remoteControlInteractionStore,
   logger: {
@@ -1427,14 +1431,14 @@ remoteControlSessionRootVerifier = createRemoteSessionRootVerifier({
   workspaceStore,
   managedRuntimeClient: createManagedRuntimeClient({
     getAccess: () => runtimeManager.managedServerAccess(),
-    fetcher: electronNet.fetch,
+    fetcher: mainProcessFetch,
   }),
 });
 remoteControlMutationRegistrations = createRemoteControlMutationRegistrations({
   workspaceStore,
   managedRuntimeClient: createManagedRuntimeClient({
     getAccess: () => runtimeManager.managedServerAccess(),
-    fetcher: electronNet.fetch,
+    fetcher: mainProcessFetch,
   }),
   coordinator: sessionMutationCoordinator,
   interactions: remoteControlInteractionStore,
@@ -1443,12 +1447,12 @@ remoteControlMutationRegistrations = createRemoteControlMutationRegistrations({
 function createMainRemoteSessionEventBridge() {
   const managedRuntimeClient = createManagedRuntimeClient({
     getAccess: () => runtimeManager.managedServerAccess(),
-    fetcher: electronNet.fetch,
+    fetcher: mainProcessFetch,
   });
   return createRemoteSessionEventBridge({
     sseClient: createManagedRuntimeSseClient({
       getAccess: () => runtimeManager.managedServerAccess(),
-      fetcher: electronNet.fetch,
+      fetcher: mainProcessFetch,
       logger: remoteEventDiagnostics,
     }),
     coordinator: sessionMutationCoordinator,
@@ -2116,7 +2120,7 @@ async function executeRemoteControlStopAll() {
 async function cancelRemoteControlPendingWork() {
   const managedRuntimeClient = createManagedRuntimeClient({
     getAccess: () => runtimeManager.managedServerAccess(),
-    fetcher: electronNet.fetch,
+    fetcher: mainProcessFetch,
   });
   await managedRuntimeClient.postJson("/remote-control/pending/cancel-all", {
     commandCorrelationId: randomUUID(),

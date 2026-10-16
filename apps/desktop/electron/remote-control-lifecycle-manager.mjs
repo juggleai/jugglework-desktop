@@ -289,7 +289,11 @@ export function createRemoteControlLifecycleManager({
       replacementFailure = failureSnapshot(stage, cause, failedStatus);
       try { logger?.warn?.("remote_control_replacement_failed", replacementFailure); } catch {}
       await cleanup(agent, {
-        deleteIdentity: identityReplacementStarted && (!cancelled || stage !== "enrollment"),
+        // A matching authenticated welcome proves the replacement identity is
+        // complete. A later local policy-publication failure must still disable
+        // and fence control, but deleting that identity would orphan another
+        // valid Cloud device and force a fresh one-time enrollment.
+        deleteIdentity: identityReplacementStarted && stage !== "pending_policy" && (!cancelled || stage !== "enrollment"),
       });
       replacementStatus = "failed";
       replacementErrorCode = code;

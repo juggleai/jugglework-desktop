@@ -175,7 +175,7 @@ Identity replacement SHALL preserve the Cloud login token, signed-in account ses
 - **THEN** the user remains signed in with existing providers and workspaces while the prior Cloud device remains manageable through its normal Console lifecycle
 
 ### Requirement: Re-registration fails closed and remains retryable
-If replacement fails after old execution has been fenced, the application SHALL leave remote control disabled, close transport and sessions, remove incomplete new credential material, return a sanitized stable error, and allow retry with a fresh one-time enrollment authorization. Before cleanup, Main SHALL retain a content-free failure snapshot containing a fixed lifecycle stage and diagnostic code, sanitized agent error category, numeric WebSocket close code when applicable, and transport generations so a welcome failure can be distinguished from post-welcome managed-runtime policy synchronization failure after destructive cleanup. Startup MUST NOT connect when settings and credential state represent an incomplete replacement.
+If replacement fails after old execution has been fenced, the application SHALL leave remote control disabled, close transport and sessions, remove incomplete new credential material, return a sanitized stable error, and allow retry. Before cleanup, Main SHALL retain a content-free failure snapshot containing a fixed lifecycle stage and diagnostic code, sanitized agent error category, numeric WebSocket close code when applicable, and transport generations so a welcome failure can be distinguished from post-welcome managed-runtime policy synchronization failure. A replacement identity that has not received its matching authenticated welcome is incomplete and SHALL be removed. Once matching welcome succeeds, a later managed-runtime policy synchronization failure SHALL keep local control disabled and fenced but preserve the authenticated credential and device-bound encryption material rather than orphaning another valid Cloud device. Startup MUST NOT connect when settings and credential state represent an incomplete replacement.
 
 #### Scenario: Enrollment exchange fails
 - **WHEN** the one-time authorization expires or the enrollment request fails after old credentials are removed
@@ -195,7 +195,15 @@ If replacement fails after old execution has been fenced, the application SHALL 
 
 #### Scenario: Managed-runtime policy synchronization fails after welcome
 - **WHEN** the replacement transport receives its matching `connection.welcome` but post-welcome managed-runtime pending-policy synchronization fails
-- **THEN** re-registration retains a `pending_policy` failure snapshot distinct from a `welcome` failure before applying the existing fail-closed cleanup, without recording tokens, payloads, server reason strings, or arbitrary error messages
+- **THEN** re-registration retains a `pending_policy` failure snapshot distinct from a `welcome` failure, disables and fences remote control, preserves the authenticated replacement credential, and does not record tokens, payloads, server reason strings, or arbitrary error messages
+
+#### Scenario: User retries after post-welcome policy failure
+- **WHEN** a locally disabled device retains the authenticated replacement credential after a `pending_policy` failure and fresh Cloud policy still authorizes enrollment
+- **THEN** Settings offers a non-destructive reconnect that reuses that identity instead of requesting another one-time enrollment grant
+
+#### Scenario: Main calls its in-process managed runtime
+- **WHEN** Desktop publishes pending policy, cancels pending work, reads or mutates managed runtime state, or consumes managed runtime events through a loopback URL
+- **THEN** Main uses the Node HTTP transport rather than Chromium's network service so an in-process embedded server cannot deadlock the request
 
 #### Scenario: Desktop restarts after interrupted replacement
 - **WHEN** the process restarts with enabled settings but without one complete valid remote credential
