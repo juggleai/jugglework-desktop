@@ -37,6 +37,22 @@ function mediaModelQueryKey(kind: "image" | "video", scope: MediaModelQueryScope
 
 export const imageModelQueryKey = (scope: MediaModelQueryScope) => mediaModelQueryKey("image", scope);
 export const videoModelQueryKey = (scope: MediaModelQueryScope) => mediaModelQueryKey("video", scope);
+export const toonMediaModelQueryKey = (
+  scope: MediaModelQueryScope,
+  imageMode: string,
+  videoMode: string,
+): QueryKey => {
+  const normalized = mediaModelQueryScope(scope);
+  return [
+    ...MEDIA_MODEL_QUERY_ROOT,
+    "toon-factory",
+    normalized.endpoint,
+    normalized.workspaceId,
+    normalized.workspaceRoot,
+    imageMode,
+    videoMode,
+  ] as const;
+};
 
 export async function invalidateMediaModelQueries(
   queryClient: QueryClient,
@@ -45,6 +61,10 @@ export async function invalidateMediaModelQueries(
   const queryKeys = [imageModelQueryKey(scope), videoModelQueryKey(scope)];
   await Promise.all(queryKeys.map((queryKey) => queryClient.cancelQueries({ queryKey, exact: true })));
   await Promise.all(queryKeys.map((queryKey) => queryClient.invalidateQueries({ queryKey, exact: true, refetchType: "active" })));
+  const normalized = mediaModelQueryScope(scope);
+  const toonKey = [...MEDIA_MODEL_QUERY_ROOT, "toon-factory", normalized.endpoint, normalized.workspaceId, normalized.workspaceRoot] as const;
+  await queryClient.cancelQueries({ queryKey: toonKey });
+  await queryClient.invalidateQueries({ queryKey: toonKey, refetchType: "active" });
 }
 
 export async function refreshMediaModelsAfterProviderListTransition(input: {

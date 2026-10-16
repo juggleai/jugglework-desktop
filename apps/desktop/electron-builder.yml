@@ -38,6 +38,8 @@ extraResources:
     to: jugglework-ui-mcp
     filter:
       - index.mjs
+  - from: ../cli/distribution/THIRD_PARTY_NOTICES.md
+    to: THIRD_PARTY_NOTICES.md
 asar: true
 asarUnpack:
   - node_modules/.pnpm/@lydell+node-pty*/**

@@ -100,6 +100,10 @@ test("distribution staging writes a checksummed manifest using small local fixtu
     });
     const stored = parseDistributionManifest(JSON.parse(await readFile(join(distribution, "manifest.json"), "utf8")));
     assert.deepEqual(stored, manifest);
+    const notices = await readFile(join(distribution, "THIRD_PARTY_NOTICES.md"), "utf8");
+    assert.match(notices, /Toonflow/);
+    assert.match(notices, /Copyright \(c\) 2026 HBAI-Ltd/);
+    assert.match(notices, /MIT License/);
     for (const file of [stored.cli.file, stored.opencode.file, ...stored.plugins.files, ...stored.notices]) {
       assert.equal(await sha256File(join(distribution, file.path)), file.sha256);
     }

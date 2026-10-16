@@ -64,6 +64,40 @@ import {
   type ReviewRelationship,
   type ReviewThreadsResponse,
 } from "@jugglework/types/reviews";
+import {
+  toonCanvasResponseSchema,
+  toonDeliveryManifestListResponseSchema,
+  toonDeliveryManifestResponseSchema,
+  toonModelCatalogResponseSchema,
+  toonProjectListResponseSchema,
+  toonProjectResponseSchema,
+  toonTextResponseSchema,
+  toonTextJobResponseSchema,
+  toonMediaJobListResponseSchema,
+  toonMediaJobResponseSchema,
+  toonMediaJobCreateRequestSchema,
+  type ToonCanvasResponse,
+  type ToonCanvasWriteRequest,
+  type ToonDeliveryManifestCreateRequest,
+  type ToonDeliveryManifestListResponse,
+  type ToonDeliveryManifestResponse,
+  type ToonImageGenerationMode,
+  type ToonModelCatalogResponse,
+  type ToonProjectCreateRequest,
+  type ToonProjectListResponse,
+  type ToonProjectResponse,
+  type ToonProjectUpdateRequest,
+  type ToonTextResponse,
+  type ToonTextJobCreateRequest,
+  type ToonTextJobResponse,
+  type ToonTextWriteRequest,
+  type ToonVideoGenerationMode,
+  type ToonMediaAuthorization,
+  type ToonMediaAuthorizationRequest,
+  type ToonMediaJobCreateRequest,
+  type ToonMediaJobListResponse,
+  type ToonMediaJobResponse,
+} from "@jugglework/types/toon-factory";
 
 export type JuggleWorkServerCapabilities = {
   skills: { read: boolean; write: boolean; source: "jugglework" | "opencode" };
@@ -2221,6 +2255,7 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
     cloudMcpProbeHealth: 30_000,
     cloudMcpReconcile: 60_000,
     reviews: 30_000,
+    toonFactory: 30_000,
     workspaceExport: 30_000,
     workspaceImport: 30_000,
     binary: 60_000,
@@ -2340,6 +2375,154 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
         timeoutMs: timeouts.binary,
       }),
     listWorkspaces: () => requestJson<JuggleWorkWorkspaceList>(baseUrl, "/workspaces", { token, hostToken, timeoutMs: timeouts.listWorkspaces }),
+    listToonProjects: async (workspaceId: string): Promise<ToonProjectListResponse> => {
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/projects`, {
+        token, hostToken, timeoutMs: timeouts.toonFactory,
+      });
+      return toonProjectListResponseSchema.parse(payload);
+    },
+    getToonModelCatalog: async (
+      workspaceId: string,
+      input: { imageMode: ToonImageGenerationMode; videoMode: ToonVideoGenerationMode },
+    ): Promise<ToonModelCatalogResponse> => {
+      const params = new URLSearchParams({ imageMode: input.imageMode, videoMode: input.videoMode });
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/models?${params.toString()}`, {
+        token, hostToken, timeoutMs: timeouts.toonFactory,
+      });
+      return toonModelCatalogResponseSchema.parse(payload);
+    },
+    createToonProject: async (workspaceId: string, input: ToonProjectCreateRequest): Promise<ToonProjectResponse> => {
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/projects`, {
+        token, hostToken, method: "POST", body: input, timeoutMs: timeouts.toonFactory,
+      });
+      return toonProjectResponseSchema.parse(payload);
+    },
+    getToonProject: async (workspaceId: string, projectId: string): Promise<ToonProjectResponse> => {
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/projects/${encodeURIComponent(projectId)}`, {
+        token, hostToken, timeoutMs: timeouts.toonFactory,
+      });
+      return toonProjectResponseSchema.parse(payload);
+    },
+    updateToonProject: async (workspaceId: string, projectId: string, input: ToonProjectUpdateRequest): Promise<ToonProjectResponse> => {
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/projects/${encodeURIComponent(projectId)}`, {
+        token, hostToken, method: "PUT", body: input, timeoutMs: timeouts.toonFactory,
+      });
+      return toonProjectResponseSchema.parse(payload);
+    },
+    readToonCanvas: async (workspaceId: string, projectId: string, canvasId: string): Promise<ToonCanvasResponse> => {
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/projects/${encodeURIComponent(projectId)}/canvases/${encodeURIComponent(canvasId)}`, {
+        token, hostToken, timeoutMs: timeouts.toonFactory,
+      });
+      return toonCanvasResponseSchema.parse(payload);
+    },
+    writeToonCanvas: async (workspaceId: string, projectId: string, canvasId: string, input: ToonCanvasWriteRequest): Promise<ToonCanvasResponse> => {
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/projects/${encodeURIComponent(projectId)}/canvases/${encodeURIComponent(canvasId)}`, {
+        token, hostToken, method: "PUT", body: input, timeoutMs: timeouts.toonFactory,
+      });
+      return toonCanvasResponseSchema.parse(payload);
+    },
+    readToonText: async (workspaceId: string, projectId: string, nodeId: string): Promise<ToonTextResponse> => {
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/projects/${encodeURIComponent(projectId)}/content/nodes/${encodeURIComponent(nodeId)}`, {
+        token, hostToken, timeoutMs: timeouts.toonFactory,
+      });
+      return toonTextResponseSchema.parse(payload);
+    },
+    writeToonText: async (workspaceId: string, projectId: string, nodeId: string, input: ToonTextWriteRequest): Promise<ToonTextResponse> => {
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/projects/${encodeURIComponent(projectId)}/content/nodes/${encodeURIComponent(nodeId)}`, {
+        token, hostToken, method: "PUT", body: input, timeoutMs: timeouts.toonFactory,
+      });
+      return toonTextResponseSchema.parse(payload);
+    },
+    createToonTextJob: async (workspaceId: string, projectId: string, input: ToonTextJobCreateRequest): Promise<ToonTextJobResponse> => {
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/projects/${encodeURIComponent(projectId)}/text-jobs`, {
+        token, hostToken, method: "POST", body: input, timeoutMs: timeouts.toonFactory,
+      });
+      return toonTextJobResponseSchema.parse(payload);
+    },
+    getToonTextJob: async (workspaceId: string, projectId: string, jobId: string): Promise<ToonTextJobResponse> => {
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/projects/${encodeURIComponent(projectId)}/text-jobs/${encodeURIComponent(jobId)}`, {
+        token, hostToken, timeoutMs: timeouts.toonFactory,
+      });
+      return toonTextJobResponseSchema.parse(payload);
+    },
+    cancelToonTextJob: async (workspaceId: string, projectId: string, jobId: string): Promise<ToonTextJobResponse> => {
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/projects/${encodeURIComponent(projectId)}/text-jobs/${encodeURIComponent(jobId)}/cancel`, {
+        token, hostToken, method: "POST", timeoutMs: timeouts.toonFactory,
+      });
+      return toonTextJobResponseSchema.parse(payload);
+    },
+    authorizeToonMediaJob: async (workspaceId: string, projectId: string, input: ToonMediaAuthorizationRequest): Promise<{ requestHash: string; authorization: ToonMediaAuthorization }> => {
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/projects/${encodeURIComponent(projectId)}/media-jobs/authorize`, {
+        token, hostToken, method: "POST", body: input, timeoutMs: timeouts.toonFactory,
+      });
+      if (!isJsonRecord(payload) || typeof payload.requestHash !== "string" || !isJsonRecord(payload.authorization)) throw new Error("Invalid Toon Factory media authorization response");
+      return { requestHash: payload.requestHash, authorization: payload.authorization as ToonMediaAuthorization };
+    },
+    createToonMediaJob: async (workspaceId: string, projectId: string, input: ToonMediaJobCreateRequest): Promise<ToonMediaJobResponse> => {
+      const parsedInput = toonMediaJobCreateRequestSchema.parse(input);
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/projects/${encodeURIComponent(projectId)}/media-jobs`, {
+        token, hostToken, method: "POST", body: parsedInput, timeoutMs: timeouts.toonFactory,
+      });
+      return toonMediaJobResponseSchema.parse(payload);
+    },
+    listToonMediaJobs: async (workspaceId: string, projectId: string): Promise<ToonMediaJobListResponse> => {
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/projects/${encodeURIComponent(projectId)}/media-jobs`, {
+        token, hostToken, timeoutMs: timeouts.toonFactory,
+      });
+      return toonMediaJobListResponseSchema.parse(payload);
+    },
+    getToonMediaJob: async (workspaceId: string, projectId: string, jobId: string): Promise<ToonMediaJobResponse> => {
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/projects/${encodeURIComponent(projectId)}/media-jobs/${encodeURIComponent(jobId)}`, {
+        token, hostToken, timeoutMs: timeouts.toonFactory,
+      });
+      return toonMediaJobResponseSchema.parse(payload);
+    },
+    cancelToonMediaJob: async (workspaceId: string, projectId: string, jobId: string): Promise<ToonMediaJobResponse> => {
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/projects/${encodeURIComponent(projectId)}/media-jobs/${encodeURIComponent(jobId)}/cancel`, {
+        token, hostToken, method: "POST", timeoutMs: timeouts.toonFactory,
+      });
+      return toonMediaJobResponseSchema.parse(payload);
+    },
+    reviewToonMediaJob: async (workspaceId: string, projectId: string, jobId: string, candidateId: string, decision: "adopt" | "reject"): Promise<ToonMediaJobResponse> => {
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/projects/${encodeURIComponent(projectId)}/media-jobs/${encodeURIComponent(jobId)}/${decision}`, {
+        token, hostToken, method: "POST", body: { candidateId }, timeoutMs: timeouts.toonFactory,
+      });
+      return toonMediaJobResponseSchema.parse(payload);
+    },
+    retryToonMediaJob: async (workspaceId: string, projectId: string, jobId: string, input: ToonMediaJobCreateRequest): Promise<ToonMediaJobResponse> => {
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/projects/${encodeURIComponent(projectId)}/media-jobs/${encodeURIComponent(jobId)}/retry`, {
+        token, hostToken, method: "POST", body: input, timeoutMs: timeouts.toonFactory,
+      });
+      return toonMediaJobResponseSchema.parse(payload);
+    },
+    listToonDeliveryManifests: async (workspaceId: string, projectId: string): Promise<ToonDeliveryManifestListResponse> => {
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/projects/${encodeURIComponent(projectId)}/delivery-manifests`, {
+        token, hostToken, timeoutMs: timeouts.toonFactory,
+      });
+      return toonDeliveryManifestListResponseSchema.parse(payload);
+    },
+    getToonDeliveryManifest: async (workspaceId: string, projectId: string, episodeId: string): Promise<ToonDeliveryManifestResponse> => {
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/projects/${encodeURIComponent(projectId)}/episodes/${encodeURIComponent(episodeId)}/delivery-manifest`, {
+        token, hostToken, timeoutMs: timeouts.toonFactory,
+      });
+      return toonDeliveryManifestResponseSchema.parse(payload);
+    },
+    createToonDeliveryManifest: async (workspaceId: string, projectId: string, episodeId: string, input: ToonDeliveryManifestCreateRequest): Promise<ToonDeliveryManifestResponse> => {
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/projects/${encodeURIComponent(projectId)}/episodes/${encodeURIComponent(episodeId)}/delivery-manifest`, {
+        token, hostToken, method: "POST", body: input, timeoutMs: timeouts.toonFactory,
+      });
+      return toonDeliveryManifestResponseSchema.parse(payload);
+    },
+    downloadToonDeliveryManifest: (workspaceId: string, projectId: string, episodeId: string) => requestBinary(
+      baseUrl,
+      `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/projects/${encodeURIComponent(projectId)}/episodes/${encodeURIComponent(episodeId)}/delivery-manifest/download`,
+      { token, hostToken, timeoutMs: timeouts.binary },
+    ),
+    downloadToonDeliveryArtifact: (workspaceId: string, projectId: string, episodeId: string, artifactId: string) => requestBinary(
+      baseUrl,
+      `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/projects/${encodeURIComponent(projectId)}/episodes/${encodeURIComponent(episodeId)}/delivery-artifacts/${encodeURIComponent(artifactId)}`,
+      { token, hostToken, timeoutMs: timeouts.binary },
+    ),
     getReviewConnection: async (workspaceId: string, requestOptions?: { signal?: AbortSignal }): Promise<ReviewConnectionStatus> => {
       const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/reviews/connection`, { token, hostToken, timeoutMs: timeouts.reviews, signal: requestOptions?.signal });
       return reviewConnectionStatusSchema.parse(payload);

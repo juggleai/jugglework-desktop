@@ -21,7 +21,7 @@ import {
   useCheckDesktopRestriction,
   useDesktopAllowedModels,
 } from "@/react-app/domains/cloud/desktop-config-provider";
-import { getChatSelectableModelEntries, getConnectedProviderItems, useProviderListQuery } from "@/react-app/infra/provider-list-query";
+import { getAllowedConnectedTextModels, useProviderListQuery } from "@/react-app/infra/provider-list-query";
 import {
   Command,
   CommandCollection,
@@ -33,7 +33,6 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command";
-import { isDesktopModelBlocked } from "@/app/cloud/desktop-app-restrictions";
 import { openModelPickerEvent } from "@/react-app/shell/new-providers-listener";
 import { newProvidersEvent } from "@/app/lib/provider-events";
 
@@ -85,23 +84,25 @@ function useModelOptions(open: boolean) {
       restriction: "allowCustomProviders",
     });
 
-    const options = getConnectedProviderItems(data)
-      .flatMap((provider) =>
-        getChatSelectableModelEntries(provider.models).map(([id, model]) => ({
-          providerID: provider.id,
-          modelID: id,
-          title: model.name,
-          description: provider.name,
+    const options = getAllowedConnectedTextModels(data, {
+      checkRestriction: checkDesktopRestriction,
+      allowedModels,
+    }).map((model) => ({
+          providerID: model.providerID,
+          modelID: model.modelID,
+          title: model.modelName,
+          description: model.providerName,
           behaviorTitle: "Reasoning",
           behaviorLabel: "Default",
           behaviorDescription: "",
           behaviorValue: null,
           isFree: false,
           isConnected: true,
-          providerSource: provider.source,
-          capabilities: parseNormalizedModelCapabilities(model),
-        })),
-      );
+          providerSource: model.providerSource,
+          capabilities: parseNormalizedModelCapabilities(
+            data?.all.find((provider) => provider.id === model.providerID)?.models?.[model.modelID],
+          ),
+        }));
 
     return options.filter((option) => {
       // Hosted JuggleWork Models is no longer a desktop provider. Also hide
@@ -109,17 +110,6 @@ function useModelOptions(open: boolean) {
       if (option.providerID.trim().toLowerCase() === "jugglework") {
         return false;
       }
-      if (
-        isDesktopModelBlocked({
-          model: { providerID: option.providerID, modelID: option.modelID },
-          checkRestriction: checkDesktopRestriction,
-          allowedModels,
-          providerSource: option.providerSource,
-        })
-      ) {
-        return false;
-      }
-
       if (restrictToCloud && !option.isConnected) {
         return false;
       }

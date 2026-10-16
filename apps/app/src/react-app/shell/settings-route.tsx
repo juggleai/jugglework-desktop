@@ -230,7 +230,7 @@ import { buildCommandPaletteSessions } from "./command-palette-sessions";
 import { useCommandPaletteShortcut } from "./use-shell-shortcuts";
 import { isPersonalDenOrganization, type DenSettings } from "@/app/lib/den";
 import { readActiveWorkspaceId, readLastSessionFor, writeActiveWorkspaceId } from "./session-memory";
-import { settingsReturnRoute, workspaceAppsRoute, workspaceChatRoute, workspaceReviewsRoute, workspaceSessionRoute, workspaceSettingsRoute } from "./workspace-routes";
+import { settingsReturnRoute, workspaceAppsRoute, workspaceChatRoute, workspaceReviewsRoute, workspaceSessionRoute, workspaceSettingsRoute, workspaceToonFactoryRoute } from "./workspace-routes";
 import { getReactQueryClient } from "@/react-app/infra/query-client";
 import { refreshProviderListQueries } from "@/react-app/infra/provider-list-query";
 import { invalidateMediaModelQueries, runProviderMutationWithMediaRefresh, withProviderMediaModelRefresh } from "@/react-app/domains/connections/media-model-queries";
@@ -444,6 +444,7 @@ export type SettingsSurfaceProps = {
    */
   active?: boolean;
   workspaceId?: string;
+  onOpenToonFactory?: (workspaceId: string) => void;
   onClose?: () => void;
 };
 
@@ -3418,6 +3419,9 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         onOpenApps={() => navigate(workspaceAppsRoute(selectedWorkspaceId))}
         onOpenChat={() => navigate(workspaceChatRoute(selectedWorkspaceId))}
         onOpenReviews={() => navigate(workspaceReviewsRoute(selectedWorkspaceId))}
+        onOpenToonFactory={() => props.onOpenToonFactory
+          ? props.onOpenToonFactory(selectedWorkspaceId)
+          : navigate(workspaceToonFactoryRoute(selectedWorkspaceId))}
         onOpenTaskSearch={() => setCommandPaletteOpen(true)}
         onOpenCreateWorkspace={(screen = "chooser") => openCreateWorkspace(screen)}
         headerStatus={routeJuggleWorkStatus}

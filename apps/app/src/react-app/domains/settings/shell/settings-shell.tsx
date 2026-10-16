@@ -55,6 +55,7 @@ export type SettingsShellProps = SettingsPageFrameProps & {
   onOpenApps: () => void;
   onOpenChat: () => void;
   onOpenReviews: () => void;
+  onOpenToonFactory: () => void;
   onOpenTaskSearch?: () => void;
   onOpenCreateWorkspace?: OpenCreateWorkspace;
   onClose: () => void;
@@ -153,6 +154,7 @@ export function SettingsShell(props: SettingsShellProps) {
           onOpenApps={props.onOpenApps}
           onOpenChat={props.onOpenChat}
           onOpenReviews={props.onOpenReviews}
+          onOpenToonFactory={props.onOpenToonFactory}
           onOpenTaskSearch={props.onOpenTaskSearch}
           onOpenCreateWorkspace={props.onOpenCreateWorkspace}
           onStartResize={startLeftSidebarResize}

@@ -30,7 +30,10 @@ afterEach(() => {
 
 describe("app navigation pins", () => {
   test("accepts only known, unique pinnable destinations", () => {
-    expect(parsePinnedAppNavigationItems('["reviews","unknown","reviews"]')).toEqual(["reviews"]);
+    expect(parsePinnedAppNavigationItems('["toon-factory","reviews","unknown","reviews"]')).toEqual([
+      "reviews",
+      "toon-factory",
+    ]);
     expect(parsePinnedAppNavigationItems("not json")).toEqual([]);
     expect(parsePinnedAppNavigationItems(null)).toEqual([]);
   });
@@ -65,8 +68,15 @@ describe("app navigation pins", () => {
     expect(storage.getItem(APP_NAVIGATION_PINS_STORAGE_KEY)).toBe('["reviews"]');
     expect(events.at(-1)).toEqual({ type: appNavigationPinsChangedEvent, detail: ["reviews"] });
 
-    expect(setAppNavigationItemPinned("reviews", false)).toEqual([]);
-    expect(readPinnedAppNavigationItems()).toEqual([]);
+    expect(setAppNavigationItemPinned("toon-factory", true)).toEqual(["reviews", "toon-factory"]);
+    expect(storage.getItem(APP_NAVIGATION_PINS_STORAGE_KEY)).toBe('["reviews","toon-factory"]');
+
+    expect(setAppNavigationItemPinned("reviews", false)).toEqual(["toon-factory"]);
+    expect(setAppNavigationItemPinned("reviews", true)).toEqual(["reviews", "toon-factory"]);
+
+    expect(setAppNavigationItemPinned("reviews", false)).toEqual(["toon-factory"]);
+    expect(readPinnedAppNavigationItems()).toEqual(["toon-factory"]);
+    expect(setAppNavigationItemPinned("toon-factory", false)).toEqual([]);
     expect(events.at(-1)).toEqual({ type: appNavigationPinsChangedEvent, detail: [] });
   });
 });

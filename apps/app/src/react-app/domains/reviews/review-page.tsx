@@ -59,6 +59,7 @@ type ReviewPageProps = {
   onOpenHome: () => void;
   onOpenApps: () => void;
   onOpenChat: () => void;
+  onOpenToonFactory: () => void;
   onOpenSettings: () => void;
   onOpenConnect: () => void;
   onOpenTaskSearch: () => void;
@@ -423,6 +424,7 @@ export function ReviewPage(props: ReviewPageProps) {
         onOpenApps={props.onOpenApps}
         onOpenChat={props.onOpenChat}
         onOpenReviews={() => undefined}
+        onOpenToonFactory={props.onOpenToonFactory}
         onOpenSettings={props.onOpenSettings}
         onOpenTaskSearch={props.onOpenTaskSearch}
         onOpenCreateWorkspace={props.onOpenCreateWorkspace}

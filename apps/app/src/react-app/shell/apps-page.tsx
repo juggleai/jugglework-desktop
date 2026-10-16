@@ -17,6 +17,7 @@ export type AppsPageProps = {
   onOpenHome: () => void;
   onOpenChat: () => void;
   onOpenReviews: () => void;
+  onOpenToonFactory: () => void;
   onOpenSettings: () => void;
   /** Opens the cross-workspace task search dialog owned by the session shell. */
   onOpenTaskSearch: () => void;
@@ -40,6 +41,7 @@ export function AppsPage(props: AppsPageProps) {
         onOpenApps={() => undefined}
         onOpenChat={props.onOpenChat}
         onOpenReviews={props.onOpenReviews}
+        onOpenToonFactory={props.onOpenToonFactory}
         onOpenSettings={props.onOpenSettings}
         onOpenTaskSearch={props.onOpenTaskSearch}
         onOpenCreateWorkspace={props.onOpenCreateWorkspace}

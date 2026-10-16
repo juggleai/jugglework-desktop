@@ -381,6 +381,24 @@ function getSessionCreatedInfo(event: OpencodeEvent): Session | null {
   return record as Session;
 }
 
+function isToonFactoryTransientSession(session: Session): boolean {
+  const metadata = (session as Session & { metadata?: Record<string, unknown> }).metadata;
+  return metadata?.kind === "toon-factory" && metadata.transient === true;
+}
+
+function eventSessionId(event: OpencodeEvent): string {
+  const properties = event.properties as Record<string, unknown> | undefined;
+  if (!properties) return "";
+  if (typeof properties.sessionID === "string") return properties.sessionID;
+  const info = properties.info as Record<string, unknown> | undefined;
+  if (typeof info?.sessionID === "string") return info.sessionID;
+  const message = properties.message as Record<string, unknown> | undefined;
+  if (typeof message?.sessionID === "string") return message.sessionID;
+  if (event.type.startsWith("session.") && typeof info?.id === "string") return info.id;
+  const part = properties.part as Record<string, unknown> | undefined;
+  return typeof part?.sessionID === "string" ? part.sessionID : "";
+}
+
 function isLiveStatus(status: SessionStatus | null | undefined) {
   return status?.type === "busy" || status?.type === "retry";
 }
@@ -996,6 +1014,7 @@ export function coalescePendingDeltas(items: PendingDelta[]) {
 const FILE_CHANGE_EVENT_TYPES = new Set(["session.diff", "file.edited", "file.watcher.updated"]);
 
 const fileChangeListeners = new Map<string, Set<() => void>>();
+const hiddenTransientSessionIds = new Map<string, Set<string>>();
 
 /**
  * 订阅某个工作区的文件改动事件
@@ -1031,6 +1050,12 @@ export function subscribeWorkspaceFileChanges(workspaceId: string, listener: () 
 function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent) {
   const queryClient = getReactQueryClient();
   const input = entry.input;
+  const hidden = hiddenTransientSessionIds.get(workspaceId) ?? new Set<string>();
+  const sessionId = eventSessionId(event);
+  if (sessionId && hidden.has(sessionId)) {
+    if (event.type === "session.deleted") hidden.delete(sessionId);
+    return;
+  }
 
   if (FILE_CHANGE_EVENT_TYPES.has(event.type)) {
     for (const listener of fileChangeListeners.get(workspaceId) ?? []) listener();
@@ -1040,6 +1065,11 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
   if (event.type === "session.created") {
     const session = getSessionCreatedInfo(event);
     if (!session) return;
+    if (isToonFactoryTransientSession(session)) {
+      hidden.add(session.id);
+      hiddenTransientSessionIds.set(workspaceId, hidden);
+      return;
+    }
     seedWorkspaceSessionAncestry(workspaceId, [session]);
     for (const listener of entry.sessionCreatedListeners) listener(session);
     return;

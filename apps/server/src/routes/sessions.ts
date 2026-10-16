@@ -88,6 +88,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+export function isToonFactoryTransientSession(value: unknown): boolean {
+  return isRecord(value)
+    && isRecord(value.metadata)
+    && value.metadata.kind === "toon-factory"
+    && value.metadata.transient === true;
+}
+
 function sessionCreateTitleScalarCount(value: string): number | null {
   if (/\p{Cc}/u.test(value)) return null;
   let count = 0;
@@ -437,7 +444,7 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
         opencode.session.status()
           .then((result) => unwrapOpencodeResult(result, "/session/status")),
       ]);
-      return buildSessionList(sessions, statuses);
+      return buildSessionList(sessions.filter((session) => !isToonFactoryTransientSession(session)), statuses);
     } catch (error) {
       remapSessionReadError(error);
     }
@@ -467,12 +474,12 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
   async function readWorkspaceSession(workspace: WorkspaceInfo, sessionId: string) {
     try {
       const opencode = createWorkspaceOpencodeClient(config, workspace);
-      return buildSession(
-        unwrapOpencodeResult(
-          await opencode.session.get({ sessionID: sessionId }),
-          `/session/${encodeURIComponent(sessionId)}`,
-        ),
+      const raw = unwrapOpencodeResult(
+        await opencode.session.get({ sessionID: sessionId }),
+        `/session/${encodeURIComponent(sessionId)}`,
       );
+      if (isToonFactoryTransientSession(raw)) throw new ApiError(404, "session_not_found", "Session not found");
+      return buildSession(raw);
     } catch (error) {
       remapSessionReadError(error);
     }
@@ -485,6 +492,8 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
   ) {
     try {
       const opencode = createWorkspaceOpencodeClient(config, workspace);
+      const raw = unwrapOpencodeResult(await opencode.session.get({ sessionID: sessionId }), `/session/${encodeURIComponent(sessionId)}`);
+      if (isToonFactoryTransientSession(raw)) throw new ApiError(404, "session_not_found", "Session not found");
       return buildSessionMessages(
         unwrapOpencodeResult(
           await opencode.session.messages({ sessionID: sessionId, limit: input.limit }),
@@ -515,6 +524,7 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
           .then((result) => unwrapOpencodeResult(result, `/session/${encodeURIComponent(sessionId)}/todo`)),
         opencode.session.status().then((result) => unwrapOpencodeResult(result, "/session/status")),
       ]);
+      if (isToonFactoryTransientSession(session)) throw new ApiError(404, "session_not_found", "Session not found");
       return buildSessionSnapshot({ session, messages, todos, statuses });
     } catch (error) {
       remapSessionReadError(error);
@@ -743,6 +753,7 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const sessionId = parseRunIdentifier(ctx.params.sessionId, "sessionId");
+    await readWorkspaceSession(workspace, sessionId);
     const body = parseRunBody(forkSessionBodySchema, await readJsonBody(ctx.request));
     const opencode = createWorkspaceOpencodeClient(config, workspace);
     const item = buildSession(unwrapOpencodeResult(
@@ -758,6 +769,7 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const sessionId = parseRunIdentifier(ctx.params.sessionId, "sessionId");
+    await readWorkspaceSession(workspace, sessionId);
     const body = parseRunBody(updateSessionBodySchema, await readJsonBody(ctx.request));
     const title = body.title === undefined ? undefined : parseSessionCreateTitle(body.title);
     const opencode = createWorkspaceOpencodeClient(config, workspace);
@@ -777,6 +789,7 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const sessionId = parseRunIdentifier(ctx.params.sessionId, "sessionId");
+    await readWorkspaceSession(workspace, sessionId);
     const body = parseRunBody(queueSessionBodySchema, await readJsonBody(ctx.request));
     await admitOpencodePrompt(createWorkspaceOpencodeClient(config, workspace), {
       workspaceId: workspace.id,
@@ -806,6 +819,7 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspace(config, ctx.params.id);
+    await readWorkspaceSession(workspace, input.sessionId);
     let run;
     try {
       let engineStatus = await readEngineSessionStatus(workspace, input.sessionId);
@@ -981,6 +995,7 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspace(config, ctx.params.id);
+    await readWorkspaceSession(workspace, input.sessionId);
     let reservation;
     try {
       reservation = sessionMutations.reserveAbort({
@@ -1065,6 +1080,7 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
   ) {
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
+    await readWorkspaceSession(workspace, input.sessionId);
     try {
       const observation = sessionMutations.observe({ workspaceId: workspace.id, ...input });
       if (observation.cleared) {
@@ -1088,6 +1104,7 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
     const sessionId = parseRunIdentifier(ctx.params.sessionId, "sessionId");
+    await readWorkspaceSession(workspace, sessionId);
     const pendingOperationId = parseRunIdentifier(ctx.params.pendingOperationId, "pendingOperationId");
     const body = parseRunBody(cancelPendingBodySchema, await readJsonBody(ctx.request));
     const pending = sessionPendingOperations.get(pendingOperationId);
@@ -1107,6 +1124,7 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
     const sessionId = parseRunIdentifier(ctx.params.sessionId, "sessionId");
+    await readWorkspaceSession(workspace, sessionId);
     const pending = sessionPendingOperations.list(workspace.id, sessionId)
       .filter((item) => item.state === "pending");
     return jsonResponse({ items: pending.map((item, index) => ({ id: item.id, mode: item.mode, position: index + 1, status: "pending" })) });
@@ -1204,6 +1222,7 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     if (!sessionId) {
       throw new ApiError(400, "invalid_payload", "sessionId is required");
     }
+    await readWorkspaceSession(workspace, sessionId);
 
     const opencode = createWorkspaceOpencodeClient(config, workspace);
     unwrapOpencodeResult(

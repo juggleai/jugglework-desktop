@@ -35,6 +35,12 @@ export const juggleworkScreenSchema = z.discriminatedUnion("kind", [
     reviewId: z.string().optional(),
   }),
   z.object({
+    kind: z.literal("toon-factory"),
+    route: z.string(),
+    workspaceId: z.string(),
+    projectId: z.string().optional(),
+  }),
+  z.object({
     kind: z.literal("other"),
     route: z.string(),
   }),
@@ -67,7 +73,7 @@ export type JuggleWorkPanelTab = z.infer<typeof juggleworkPanelTabSchema>
 
 export const juggleworkResourceDescriptorSchema = z.object({
   ref: z.string().trim().min(1),
-  kind: z.enum(["workspace", "session", "screen", "side-panel", "settings", "review"]),
+  kind: z.enum(["workspace", "session", "screen", "side-panel", "settings", "review", "toon-factory"]),
   title: z.string(),
   provider: juggleworkProviderRefSchema,
   state: z.record(z.string(), z.unknown()),

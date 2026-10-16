@@ -10,6 +10,9 @@ const sessionSurface = readFileSync(new URL("../src/react-app/domains/session/su
 const composer = readFileSync(new URL("../src/react-app/domains/session/surface/composer/composer.tsx", import.meta.url), "utf8");
 const messageList = readFileSync(new URL("../src/components/chat/message-list.tsx", import.meta.url), "utf8");
 const quickNavigation = readFileSync(new URL("../src/react-app/domains/session/surface/session-quick-navigation.tsx", import.meta.url), "utf8");
+const toonFactoryPage = readFileSync(new URL("../src/react-app/domains/toon-factory/toon-factory-page.tsx", import.meta.url), "utf8");
+const toonFactoryWorkbench = readFileSync(new URL("../src/react-app/domains/toon-factory/toon-factory-workbench.tsx", import.meta.url), "utf8");
+const toonFactorySource = `${toonFactoryPage}\n${toonFactoryWorkbench}`;
 
 describe("desktop session shell layout", () => {
   test("aligns the desktop transcript text width with the composer", () => {
@@ -29,6 +32,30 @@ describe("desktop session shell layout", () => {
     expect(appStyles).toContain('--app-list-bg: #f7f7f8');
     expect(appStyles).toContain('[data-theme="dark"]');
     expect(appStyles).toContain('--app-list-bg: var(--slate-2)');
+  });
+
+  test("uses the shared inset shell and theme tokens for Toon Factory", () => {
+    expect(toonFactoryPage).toContain("<AppNavigationRail");
+    expect(toonFactoryPage).toContain("<AppInsetSurface");
+    expect(toonFactoryPage).toContain("<AppSecondarySidebarTopControls");
+    expect(toonFactoryPage).toContain("<AppSecondarySidebarResizeHandle");
+    expect(toonFactoryPage).toContain("appInsetSidebarCssWidth(leftSidebarWidth)");
+    expect(toonFactoryPage).toContain("bg-[var(--app-page-bg)]");
+    expect(toonFactorySource).toContain("bg-[var(--app-list-bg)]");
+    expect(toonFactorySource).toContain("h-[var(--app-topbar-height)]");
+    expect(toonFactoryPage).not.toContain("bg-white");
+  });
+
+  test("provides a project sidebar and six-stage Toon Factory skeleton without fake data", () => {
+    expect(toonFactorySource).toContain('data-testid="toon-factory-workbench"');
+    expect(toonFactorySource).toContain('"content-script"');
+    expect(toonFactorySource).toContain('"assets"');
+    expect(toonFactorySource).toContain('"directing-storyboard"');
+    expect(toonFactorySource).toContain('"images"');
+    expect(toonFactorySource).toContain('"videos"');
+    expect(toonFactorySource).toContain('"adoption-delivery"');
+    expect(toonFactoryPage).toContain('data-workbench-suspended={props.visible ? undefined : "true"}');
+    expect(toonFactoryPage).not.toContain("window.fetch(");
   });
 
   test("extends the rounded session surface around the conversation list", () => {

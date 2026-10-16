@@ -58,6 +58,7 @@ describe("desktop remote session event integration", () => {
       port: 0,
       fetch(request) {
         const url = new URL(request.url);
+        if (url.pathname === "/session") return Response.json([{ id: "ses_1", metadata: {} }]);
         if (url.pathname !== "/event") return Response.json({ code: "not_found" }, { status: 404 });
         upstreamRequest = {
           pathname: url.pathname,
@@ -180,5 +181,44 @@ describe("desktop remote session event integration", () => {
       sessionId: "ses_1",
       data: { type: "message.upsert", message: { id: "msg_1", parts: [{ id: "prt_1", text: "reply" }] } },
     });
+  });
+
+  test("fails closed before opening the event stream when session prewarm fails", async () => {
+    let eventRequests = 0;
+    const upstream = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch(request) {
+        const url = new URL(request.url);
+        if (url.pathname === "/session") return Response.json({ code: "unavailable" }, { status: 503 });
+        if (url.pathname === "/event") {
+          eventRequests += 1;
+          return new Response('data: {"type":"message.updated","properties":{"info":{"sessionID":"transient-secret"}}}\n\n', {
+            headers: { "Content-Type": "text/event-stream" },
+          });
+        }
+        return Response.json({ code: "not_found" }, { status: 404 });
+      },
+    }) as Served;
+    stops.push(() => upstream.stop(true));
+
+    const root = await workspaceRoot();
+    const config: ServerConfig = {
+      host: "127.0.0.1", port: 0, token: "owt_collaborator_token", hostToken: "owt_host_token",
+      approval: { mode: "auto", timeoutMs: 1_000 }, corsOrigins: ["*"],
+      workspaces: [{ id: "ws_1", name: "Workspace", path: root, preset: "starter", workspaceType: "local", baseUrl: `http://127.0.0.1:${upstream.port}` }],
+      authorizedRoots: [root], readOnly: true, startedAt: Date.now(), tokenSource: "cli", hostTokenSource: "cli",
+      logFormat: "pretty", logRequests: false,
+    };
+    const local = await startServer(config) as Served;
+    stops.push(() => local.stop(true));
+
+    const response = await fetch(`http://127.0.0.1:${local.port}/workspace/ws_1/opencode/event`, {
+      headers: { Authorization: `Bearer ${config.token}` },
+    });
+    expect(response.status).toBe(503);
+    expect(response.headers.get("content-type")).toContain("application/json");
+    expect(await response.text()).not.toContain("transient-secret");
+    expect(eventRequests).toBe(0);
   });
 });

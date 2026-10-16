@@ -6,6 +6,7 @@ export type WorkspaceAppPath =
   | { view: "apps"; workspaceId: string | null }
   | { view: "chat"; workspaceId: string | null }
   | { view: "reviews"; workspaceId: string; reviewId: string | null }
+  | { view: "toon-factory"; workspaceId: string; projectId: string | null }
   | { view: "automations"; workspaceId: null }
   | null;
 
@@ -82,6 +83,15 @@ export function parseWorkspaceAppPath(pathname: string): WorkspaceAppPath {
     };
   }
 
+  const workspaceToonFactory = pathname.match(/^\/workspace\/([^/]+)\/toon-factory(?:\/([^/]+))?\/?$/);
+  if (workspaceToonFactory) {
+    return {
+      view: "toon-factory",
+      workspaceId: decodeRoutePart(workspaceToonFactory[1]),
+      projectId: decodeRoutePart(workspaceToonFactory[2]) || null,
+    };
+  }
+
   if (/^\/automations(?:\/.*)?$/.test(pathname)) {
     return { view: "automations", workspaceId: null };
   }
@@ -113,6 +123,14 @@ export function workspaceReviewsRoute(workspaceId: string, reviewId?: string | n
   return review
     ? `/workspace/${workspace}/reviews/${encodeURIComponent(review)}`
     : `/workspace/${workspace}/reviews`;
+}
+
+export function workspaceToonFactoryRoute(workspaceId: string, projectId?: string | null) {
+  const workspace = encodeURIComponent(workspaceId.trim());
+  const project = projectId?.trim();
+  return project
+    ? `/workspace/${workspace}/toon-factory/${encodeURIComponent(project)}`
+    : `/workspace/${workspace}/toon-factory`;
 }
 
 export function settingsReturnRoute(

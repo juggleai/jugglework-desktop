@@ -724,6 +724,7 @@ export type AppSidebarProps = {
   onOpenApps: () => void;
   onOpenChat: () => void;
   onOpenReviews: () => void;
+  onOpenToonFactory: () => void;
   onOpenSettings: () => void;
   railPreviewActive?: boolean;
   railPreviewMotionDisabled?: boolean;
@@ -1044,6 +1045,7 @@ export function AppSidebar(props: AppSidebarProps) {
               onOpenApps={props.onOpenApps}
               onOpenChat={props.onOpenChat}
               onOpenReviews={props.onOpenReviews}
+              onOpenToonFactory={props.onOpenToonFactory}
               onOpenSettings={props.onOpenSettings}
             />
           )}

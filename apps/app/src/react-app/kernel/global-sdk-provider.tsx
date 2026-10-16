@@ -128,6 +128,34 @@ export function GlobalSDKProvider({ children }: GlobalSDKProviderProps) {
     const coalesced = new Map<string, number>();
     let timer: ReturnType<typeof setTimeout> | undefined;
     let last = 0;
+    const hiddenTransientSessionIds = new Set<string>();
+
+    const sessionIdForEvent = (payload: Event): string => {
+      const properties = payload.properties as Record<string, unknown>;
+      if (typeof properties.sessionID === "string") return properties.sessionID;
+      const info = properties.info as Record<string, unknown> | undefined;
+      if (typeof info?.sessionID === "string") return info.sessionID;
+      const message = properties.message as Record<string, unknown> | undefined;
+      if (typeof message?.sessionID === "string") return message.sessionID;
+      if (payload.type.startsWith("session.") && typeof info?.id === "string") return info.id;
+      const part = properties.part as Record<string, unknown> | undefined;
+      return typeof part?.sessionID === "string" ? part.sessionID : "";
+    };
+
+    const hiddenTransientEvent = (directory: string, payload: Event): boolean => {
+      const properties = payload.properties as Record<string, unknown>;
+      const info = properties.info as Record<string, unknown> | undefined;
+      const metadata = info?.metadata as Record<string, unknown> | undefined;
+      const sessionId = sessionIdForEvent(payload);
+      const key = `${directory}\0${sessionId}`;
+      if (payload.type === "session.created" && metadata?.kind === "toon-factory" && metadata.transient === true) {
+        if (sessionId) hiddenTransientSessionIds.add(key);
+        return true;
+      }
+      if (!sessionId || !hiddenTransientSessionIds.has(key)) return false;
+      if (payload.type === "session.deleted") hiddenTransientSessionIds.delete(key);
+      return true;
+    };
 
     const keyForEvent = (directory: string, payload: Event): string | undefined => {
       if (payload.type === "session.status")
@@ -176,6 +204,7 @@ export function GlobalSDKProvider({ children }: GlobalSDKProviderProps) {
         if (!payload?.type) continue;
         const directory =
           typeof record.directory === "string" ? record.directory : "global";
+        if (hiddenTransientEvent(directory, payload)) continue;
         const key = keyForEvent(directory, payload);
         if (key) {
           const index = coalesced.get(key);

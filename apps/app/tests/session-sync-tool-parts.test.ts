@@ -1381,6 +1381,31 @@ describe("tool part mapper", () => {
     }
   });
 
+  test("ignores transient Toon Factory lifecycle and message events", () => {
+    const createdIds: string[] = [];
+    const syncInput = {
+      workspaceId: "workspace-transient",
+      baseUrl: "http://127.0.0.1:1234",
+      juggleworkToken: "token",
+      onSessionCreated: (session: Session) => createdIds.push(session.id),
+    };
+    const cleanup = __createWorkspaceSessionSyncForTest(syncInput);
+    try {
+      __applySessionSyncEventForTest(syncInput, {
+        type: "session.created",
+        properties: { info: { id: "toon-hidden", metadata: { kind: "toon-factory", transient: true } } },
+      } as any);
+      __applySessionSyncEventForTest(syncInput, {
+        type: "message.updated",
+        properties: { info: { id: "secret", role: "assistant", sessionID: "toon-hidden" } },
+      } as any);
+      expect(createdIds).toEqual([]);
+      expect(getReactQueryClient().getQueryData(transcriptKey("workspace-transient", "toon-hidden"))).toBeUndefined();
+    } finally {
+      cleanup();
+    }
+  });
+
   test("an aborted assistant message ends the run even without session.idle", () => {
     const syncInput = { workspaceId: "workspace-abort", baseUrl: "http://127.0.0.1:1234", juggleworkToken: "token" };
     const cleanup = __createWorkspaceSessionSyncForTest(syncInput);

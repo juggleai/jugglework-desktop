@@ -37,6 +37,16 @@ function decoded(value: string | undefined) {
 }
 
 export function screenFromRoute(route: string): JuggleWorkScreen {
+  const workspaceToonFactory = route.match(/^\/workspace\/([^/]+)\/toon-factory(?:\/([^/?#]+))?\/?$/);
+  if (workspaceToonFactory) {
+    return {
+      kind: "toon-factory",
+      route,
+      workspaceId: decoded(workspaceToonFactory[1]) ?? "",
+      projectId: decoded(workspaceToonFactory[2]),
+    };
+  }
+
   const workspaceReview = route.match(/^\/workspace\/([^/]+)\/reviews(?:\/([^/?#]+))?/);
   if (workspaceReview) {
     return {
@@ -143,6 +153,8 @@ export function buildJuggleWorkContext(
       ? `${screen.panel} settings`
       : screen.kind === "review"
         ? screen.reviewId ? `Review ${screen.reviewId}` : "Code Review"
+        : screen.kind === "toon-factory"
+          ? screen.projectId ? `Toon Factory project ${screen.projectId}` : "Toon Factory"
         : "JuggleWork",
     provider,
     state: { kind: screen.kind, route: input.route },
@@ -194,6 +206,19 @@ export function buildJuggleWorkContext(
         active: true,
         workspaceId: screen.workspaceId,
         reviewId: screen.reviewId ?? null,
+      },
+    });
+  }
+  if (screen.kind === "toon-factory") {
+    resources.push({
+      ref: `toon-factory:${screen.projectId ?? "projects"}`,
+      kind: "toon-factory",
+      title: screen.projectId ? `Toon Factory project ${screen.projectId}` : "Toon Factory Projects",
+      provider,
+      state: {
+        active: true,
+        workspaceId: screen.workspaceId,
+        projectId: screen.projectId ?? null,
       },
     });
   }

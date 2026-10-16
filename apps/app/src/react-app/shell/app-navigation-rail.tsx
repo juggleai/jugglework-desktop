@@ -15,6 +15,7 @@ import {
   LogOut,
   MessageSquare,
   GitPullRequestArrow,
+  PanelsTopLeft,
   Pin,
   RefreshCw,
   Settings,
@@ -73,11 +74,13 @@ type AppNavigationRailProps = {
   settingsActive?: boolean;
   chatActive?: boolean;
   reviewsActive?: boolean;
+  toonFactoryActive?: boolean;
   onOpenAccount: () => void;
   onOpenHome: () => void;
   onOpenApps: () => void;
   onOpenChat: () => void;
   onOpenReviews: () => void;
+  onOpenToonFactory: () => void;
   onOpenSettings: () => void;
   /** Opens the cross-workspace task search dialog when the session shell owns it. */
   onOpenTaskSearch?: () => void;
@@ -302,12 +305,20 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
     if (!props.chatActive) props.onOpenChat();
   };
   const reviewsPinned = pinnedNavigationItems.includes("reviews");
+  const toonFactoryPinned = pinnedNavigationItems.includes("toon-factory");
   const openReviews = () => {
     setNavigationMenuOpen(false);
     props.onOpenReviews();
   };
   const toggleReviewsPinned = () => {
     setPinnedNavigationItems(setAppNavigationItemPinned("reviews", !reviewsPinned));
+  };
+  const openToonFactory = () => {
+    setNavigationMenuOpen(false);
+    props.onOpenToonFactory();
+  };
+  const toggleToonFactoryPinned = () => {
+    setPinnedNavigationItems(setAppNavigationItemPinned("toon-factory", !toonFactoryPinned));
   };
   const identity = accountDisplayName(user);
   const initial = identity.slice(0, 1).toLocaleUpperCase();
@@ -447,13 +458,13 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
                 title={t("navigation.more")}
                 data-testid="app-rail-more"
                 data-app-rail-button
-                data-active={(navigationMenuOpen || (props.reviewsActive && !reviewsPinned)) ? "true" : undefined}
+                data-active={(navigationMenuOpen || (props.reviewsActive && !reviewsPinned) || (props.toonFactoryActive && !toonFactoryPinned)) ? "true" : undefined}
                 className={cn(
                   "relative flex size-9 items-center justify-center rounded-xl text-dls-secondary/80 transition-[background-color,color,transform] duration-150 mac:titlebar-no-drag",
                   "hover:bg-dls-hover hover:text-dls-text active:scale-[0.96]",
                   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/35 focus-visible:ring-offset-1 focus-visible:ring-offset-dls-sidebar",
                   "data-popup-open:bg-dls-active data-popup-open:text-dls-text",
-                  (navigationMenuOpen || (props.reviewsActive && !reviewsPinned)) && "bg-dls-active text-dls-text",
+                  (navigationMenuOpen || (props.reviewsActive && !reviewsPinned) || (props.toonFactoryActive && !toonFactoryPinned)) && "bg-dls-active text-dls-text",
                 )}
               >
                 <Ellipsis className="size-5" strokeWidth={2} />
@@ -483,7 +494,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
                 type="button"
                 aria-label={reviewsPinned ? t("navigation.unpin_item") : t("navigation.pin_item")}
                 title={reviewsPinned ? t("navigation.unpin_item") : t("navigation.pin_item")}
-                tabIndex={reviewsPinned ? 0 : -1}
+                tabIndex={0}
                 onPointerDown={(event) => event.stopPropagation()}
                 onClick={(event) => {
                   event.preventDefault();
@@ -496,7 +507,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
                   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/35",
                   reviewsPinned
                     ? "text-popover-foreground opacity-100"
-                    : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100",
+                    : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100",
                 )}
                 data-testid="app-navigation-pin-reviews"
                 data-pinned={reviewsPinned ? "true" : undefined}
@@ -504,24 +515,75 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
                 <Pin className={cn("size-4", reviewsPinned && "fill-current")} />
               </button>
             </div>
+            <div
+              className="group flex items-center gap-1 rounded-2xl transition-colors hover:bg-accent focus-within:bg-accent"
+              data-testid="app-navigation-more-toon-factory-row"
+            >
+              <DropdownMenuItem
+                onClick={openToonFactory}
+                className="min-w-0 flex-1 bg-transparent py-[5px] focus:bg-transparent! data-highlighted:bg-transparent!"
+                data-testid="app-navigation-more-toon-factory"
+              >
+                <PanelsTopLeft />
+                <span className="truncate">{t("navigation.toon_factory")}</span>
+              </DropdownMenuItem>
+              <button
+                type="button"
+                aria-label={toonFactoryPinned ? t("navigation.unpin_item") : t("navigation.pin_item")}
+                title={toonFactoryPinned ? t("navigation.unpin_item") : t("navigation.pin_item")}
+                tabIndex={0}
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  toggleToonFactoryPinned();
+                }}
+                className={cn(
+                  "flex size-8 shrink-0 items-center justify-center rounded-xl text-muted-foreground transition-[background-color,color,opacity,transform] duration-150",
+                  "hover:text-popover-foreground active:scale-[0.94]",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/35",
+                  toonFactoryPinned
+                    ? "text-popover-foreground opacity-100"
+                    : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100",
+                )}
+                data-testid="app-navigation-pin-toon-factory"
+                data-pinned={toonFactoryPinned ? "true" : undefined}
+              >
+                <Pin className={cn("size-4", toonFactoryPinned && "fill-current")} />
+              </button>
+            </div>
           </DropdownMenuContent>
         </DropdownMenu>
-        {reviewsPinned ? (
+        {pinnedNavigationItems.length > 0 ? (
           <div className="mt-0.5 flex flex-col items-center gap-2" data-app-navigation-pinned-items>
             <div
               className="h-px w-6 rounded-full bg-dls-secondary/20"
               aria-hidden="true"
               data-testid="app-navigation-pinned-separator"
             />
-            <RailButton
-              label={t("navigation.reviews")}
-              active={props.reviewsActive}
-              onClick={props.onOpenReviews}
-              testId="app-rail-pinned-reviews"
-              onPreviewMenuChange={props.onPreviewMenuChange}
-            >
-              <GitPullRequestArrow />
-            </RailButton>
+            {pinnedNavigationItems.map((item) => item === "reviews" ? (
+              <RailButton
+                key={item}
+                label={t("navigation.reviews")}
+                active={props.reviewsActive}
+                onClick={props.onOpenReviews}
+                testId="app-rail-pinned-reviews"
+                onPreviewMenuChange={props.onPreviewMenuChange}
+              >
+                <GitPullRequestArrow />
+              </RailButton>
+            ) : (
+              <RailButton
+                key={item}
+                label={t("navigation.toon_factory")}
+                active={props.toonFactoryActive}
+                onClick={props.onOpenToonFactory}
+                testId="app-rail-pinned-toon-factory"
+                onPreviewMenuChange={props.onPreviewMenuChange}
+              >
+                <PanelsTopLeft />
+              </RailButton>
+            ))}
           </div>
         ) : null}
       </nav>

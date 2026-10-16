@@ -94,7 +94,7 @@ import { registerCoreRoutes } from "./routes/core.js";
 import { registerFileRoutes } from "./routes/files.js";
 import { registerOperationRoutes } from "./routes/operations.js";
 import { addRoute, matchRoute, type AuthMode, type RequestContext, type Route } from "./routes/registry.js";
-import { registerSessionRoutes } from "./routes/sessions.js";
+import { isToonFactoryTransientSession, registerSessionRoutes } from "./routes/sessions.js";
 import { createSessionPendingOperationStore, type SessionPendingOperationStore } from "./session-pending-operations.js";
 import { createSessionPendingOperationPump, type SessionPendingOperationPump } from "./session-pending-operation-pump.js";
 import { createSessionRunJournal } from "./session-run-journal.js";
@@ -105,6 +105,21 @@ import { registerReviewRoutes } from "./routes/reviews.js";
 import { registerCloudMcpRoutes } from "./routes/cloud-mcp.js";
 import { registerAutomationRoutes } from "./routes/automations.js";
 import { registerProviderAuthRoutes } from "./routes/provider-auth.js";
+import { registerToonFactoryRoutes } from "./routes/toon-factory.js";
+import { ToonTextJobRepository } from "./toon-factory/text-job-repository.js";
+import { ToonTextJobService } from "./toon-factory/text-job-service.js";
+import { ToonMediaJobRepository } from "./toon-factory/media-job-repository.js";
+import { ToonMediaJobService } from "./toon-factory/media-job-service.js";
+import { ToonFactoryRepository } from "./toon-factory/repository.js";
+import {
+  clearWorkspaceSessionRegistry,
+  isRegisteredToonFactoryTransientSession,
+  isRegisteredVisibleSession,
+  registerToonFactoryTransientSession,
+  registerVisibleSession,
+  unregisterSession,
+} from "./toon-factory/transient-session-registry.js";
+import { callOpenAiImageGenerationExtensionAction } from "./extensions/openai-image-generation.js";
 import {
   applyMcpWorkspacePolicyToPrompt,
   checkMcpWorkspaceToolPolicy,
@@ -942,11 +957,21 @@ export async function startServer(config: ServerConfig, options: {
   reviewService?: ReviewReadService;
   auditWriter?: (workspaceRoot: string, entry: AuditEntry) => Promise<void>;
 } = {}): Promise<ServeResult> {
+  for (const workspace of config.workspaces) clearWorkspaceSessionRegistry(workspace.id);
   const approvals = new ApprovalService(config.approval);
   const reloadEvents = new ReloadEventStore();
   const tokens = new TokenService(config);
   const env = new EnvService();
   const logger = options.logger ?? createServerLogger(config);
+  for (const workspace of config.workspaces) {
+    if (workspace.workspaceType === "remote") continue;
+    await new ToonFactoryRepository(workspace.path).recoverWorkspace().catch((error) => {
+      logger.log("warn", "toon-factory:startup-recovery-deferred", {
+        workspaceId: workspace.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  }
   let watcherHandle = startReloadWatchers({ config, reloadEvents, logger });
   const dispatchInternalReloadRequired = async (workspaceId: string, reasons: ReloadReason[] = []) => {
     // Internal repairs write the same files watched below. Advance the
@@ -1045,10 +1070,32 @@ export async function startServer(config: ServerConfig, options: {
     sessionPendingOperations.close();
   };
   const interactionResolutions = options.interactionResolutions ?? createInteractionResolutionCoordinator();
-  const automationRepository = await AutomationRepository.open(config);
-  const mediaGenerationRepository = await MediaGenerationRepository.open(config);
-  const sessionPermissionStore = await SessionPermissionModeStore.open(config);
-  const sessionResponseLanguageStore = await SessionResponseLanguageStore.open(config);
+  let automationRepository: Awaited<ReturnType<typeof AutomationRepository.open>>;
+  let mediaGenerationRepository: Awaited<ReturnType<typeof MediaGenerationRepository.open>>;
+  let toonTextJobRepository: Awaited<ReturnType<typeof ToonTextJobRepository.open>>;
+  let toonMediaJobRepository: Awaited<ReturnType<typeof ToonMediaJobRepository.open>>;
+  let sessionPermissionStore: Awaited<ReturnType<typeof SessionPermissionModeStore.open>>;
+  let sessionResponseLanguageStore: Awaited<ReturnType<typeof SessionResponseLanguageStore.open>>;
+  const startupResources: Array<{ close(): void }> = [];
+  try {
+    automationRepository = await AutomationRepository.open(config); startupResources.push(automationRepository);
+    mediaGenerationRepository = await MediaGenerationRepository.open(config); startupResources.push(mediaGenerationRepository);
+    toonTextJobRepository = await ToonTextJobRepository.open(config); startupResources.push(toonTextJobRepository);
+    toonMediaJobRepository = await ToonMediaJobRepository.open(config); startupResources.push(toonMediaJobRepository);
+    sessionPermissionStore = await SessionPermissionModeStore.open(config); startupResources.push(sessionPermissionStore);
+    sessionResponseLanguageStore = await SessionResponseLanguageStore.open(config); startupResources.push(sessionResponseLanguageStore);
+  } catch (error) {
+    for (const resource of startupResources.reverse()) resource.close();
+    hostMarketplaceMigration.close();
+    hostMarketplacePlugins.close();
+    invalidateEngineMcpServerState(config, engineMcpServerState);
+    watcherHandle.close();
+    internalReloadDispatchers.delete(config);
+    closeSessionPendingOperations();
+    sessionRunJournal.close();
+    clearHostMarketplaceMcpOverlay(config);
+    throw error;
+  }
   const reviewService = options.reviewService ?? new ReviewReadService(new ConnectGithubReviewProvider({ config }));
   const migratedLegacyFullAccessCount = await migrateTrustedLegacyLocalHostFullAccess({
     config,
@@ -1109,6 +1156,12 @@ export async function startServer(config: ServerConfig, options: {
         await syncRuntimeMcpToOpencodeEngine(config, workspace, [name], undefined, engineMcpServerState).catch(() => undefined);
       },
     },
+  });
+  const toonTextJobService = new ToonTextJobService({
+    config,
+    jobs: toonTextJobRepository,
+    resolveWorkspace,
+    createWorkspaceOpencodeClient,
   });
   const automationScheduler = new AutomationScheduler({
     repository: automationRepository,
@@ -1266,6 +1319,12 @@ export async function startServer(config: ServerConfig, options: {
       return { job: publicVideoGenerationJob(mediaGenerationRepository.requestCancellation(jobId)) };
     },
   };
+  const toonMediaJobService = new ToonMediaJobService({
+    jobs: toonMediaJobRepository,
+    repository: async (workspaceId) => new (await import("./toon-factory/repository.js")).ToonFactoryRepository((await resolveWorkspace(config, workspaceId)).path),
+    imageAction: (action, args, context) => callOpenAiImageGenerationExtensionAction(config, env, action, args, context),
+    mediaGeneration: mediaGenerationRuntime,
+  });
   const routes = createRoutes(
     config,
     approvals,
@@ -1290,6 +1349,10 @@ export async function startServer(config: ServerConfig, options: {
     automationSubscriptionSync,
     reviewService,
     mediaGenerationRuntime,
+    toonTextJobRepository,
+    toonTextJobService,
+    toonMediaJobRepository,
+    toonMediaJobService,
     hostMarketplacePlugins,
     hostMarketplaceMigration,
     hostMarketplaceEnvironmentId,
@@ -1486,6 +1549,8 @@ export async function startServer(config: ServerConfig, options: {
     automationExecutor.dispose();
     automationRepository.close();
     mediaGenerationRepository.close();
+    toonTextJobRepository.close();
+    toonMediaJobRepository.close();
     sessionPermissionStore.close();
     sessionResponseLanguageStore.close();
     hostMarketplaceMigration.close();
@@ -1533,7 +1598,11 @@ export async function startServer(config: ServerConfig, options: {
   if (!config.readOnly) {
     sessionPermissionBroker.start();
   }
-  mediaGenerationWorker.start();
+  if (!config.readOnly) {
+    mediaGenerationWorker.start();
+    toonTextJobService.start();
+    toonMediaJobService.start();
+  }
 
   return {
     ...server,
@@ -1543,6 +1612,8 @@ export async function startServer(config: ServerConfig, options: {
       internalReloadDispatchers.delete(config);
       const errors: unknown[] = [];
       automationExecutor.dispose();
+      try { await toonTextJobService.dispose(); } catch (error) { errors.push(error); }
+      try { await toonMediaJobService.dispose(); } catch (error) { errors.push(error); }
       sessionPermissionBroker.stop();
       try { await automationEventPoller.dispose(); } catch (error) { errors.push(error); }
       try { await automationSubscriptionSync.dispose(); } catch (error) { errors.push(error); }
@@ -1565,6 +1636,8 @@ export async function startServer(config: ServerConfig, options: {
       try { sessionRunJournal.close(); } catch (error) { errors.push(error); }
       try { automationRepository.close(); } catch (error) { errors.push(error); }
       try { mediaGenerationRepository.close(); } catch (error) { errors.push(error); }
+      try { toonTextJobRepository.close(); } catch (error) { errors.push(error); }
+      try { toonMediaJobRepository.close(); } catch (error) { errors.push(error); }
       try { sessionPermissionStore.close(); } catch (error) { errors.push(error); }
       try { sessionResponseLanguageStore.close(); } catch (error) { errors.push(error); }
       try { hostMarketplaceMigration.close(); } catch (error) { errors.push(error); }
@@ -1796,6 +1869,29 @@ async function proxyOpencodeRequest(input: {
   }
 
   const method = input.request.method.toUpperCase();
+  const normalizedProxyPath = normalizeOpencodeProxyPath(proxyPath);
+  if (workspace && method === "GET" && normalizedProxyPath === "/event") {
+    const listed = await createWorkspaceOpencodeClient(input.config, workspace).session.list({ roots: false }).catch(() => null);
+    if (!Array.isArray(listed?.data)) {
+      return jsonResponse({
+        code: "toon_factory_session_filter_unavailable",
+        message: "Session visibility could not be established safely; retry the event stream.",
+      }, 503);
+    }
+    for (const session of listed.data) {
+      if (isToonFactoryTransientSession(session)) registerToonFactoryTransientSession(workspace.id, session.id);
+      else registerVisibleSession(workspace.id, session.id);
+    }
+  }
+  const scopedSessionMatch = normalizedProxyPath.match(/^\/session\/([^/]+)/);
+  if (workspace && scopedSessionMatch?.[1]) {
+    let sessionId: string;
+    try { sessionId = decodeURIComponent(scopedSessionMatch[1]); } catch { throw new ApiError(400, "invalid_payload", "sessionId is invalid"); }
+    const session = await createWorkspaceOpencodeClient(input.config, workspace).session.get({ sessionID: sessionId }).catch(() => null);
+    if (session?.data && isToonFactoryTransientSession(session.data)) {
+      throw new ApiError(404, "session_not_found", "Session not found");
+    }
+  }
   // Buffer the request body so it can be forwarded reliably across Node.js
   // stream boundaries (Readable.toWeb streams from the HTTP adapter aren't
   // always accepted directly by Node's global fetch as a body).
@@ -1883,6 +1979,23 @@ async function proxyOpencodeRequest(input: {
       headers,
       body,
     });
+    if (workspace && method === "GET" && normalizedProxyPath === "/session" && response.ok) {
+      const entries = await response.clone().json().catch(() => null) as unknown;
+      if (Array.isArray(entries)) return jsonResponse(entries.filter((entry) => !isToonFactoryTransientSession(entry)));
+    }
+    if (workspace && method === "GET" && normalizedProxyPath === "/session/status" && response.ok) {
+      const statuses = await response.clone().json().catch(() => null) as unknown;
+      if (isRecord(statuses)) {
+        const opencode = createWorkspaceOpencodeClient(input.config, workspace);
+        const sessions = await opencode.session.list({ roots: false }).catch(() => null);
+        const hidden = new Set((sessions?.data ?? []).filter(isToonFactoryTransientSession).map((session) => session.id));
+        return jsonResponse(Object.fromEntries(Object.entries(statuses).filter(([sessionId]) => !hidden.has(sessionId))));
+      }
+    }
+    if (workspace && method === "GET" && normalizedProxyPath === "/event" && response.ok
+      && response.headers.get("content-type")?.toLowerCase().includes("text/event-stream")) {
+      return filterToonFactoryTransientSse(response, workspace.id);
+    }
     if (workspace && method === "GET" && (normalizeOpencodeProxyPath(proxyPath) === "/skill" || normalizeOpencodeProxyPath(proxyPath) === "/app/skills") && response.ok) {
       const disabled = (await readSkillWorkspacePolicy(input.config, workspace.id)).disabledSkillNames;
       if (disabled.length) {
@@ -1913,6 +2026,62 @@ function sanitizeProxyResponse(response: Response): Response {
     statusText: response.statusText,
     headers,
   });
+}
+
+export function filterToonFactoryTransientSse(response: Response, workspaceId = "test"): Response {
+  if (!response.body) return sanitizeProxyResponse(response);
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+  let pending = "";
+  const stream = response.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      pending += decoder.decode(chunk, { stream: true });
+      const frames = pending.split(/\r?\n\r?\n/);
+      pending = frames.pop() ?? "";
+      for (const frame of frames) {
+        if (!shouldHideSseFrame(frame, workspaceId)) controller.enqueue(encoder.encode(`${frame}\n\n`));
+      }
+    },
+    flush(controller) {
+      pending += decoder.decode();
+      if (pending && !shouldHideSseFrame(pending, workspaceId)) controller.enqueue(encoder.encode(pending));
+    },
+  }));
+  const headers = new Headers(response.headers);
+  headers.delete("content-encoding");
+  headers.delete("transfer-encoding");
+  headers.delete("content-length");
+  return new Response(stream, { status: response.status, statusText: response.statusText, headers });
+}
+
+function shouldHideSseFrame(frame: string, workspaceId: string): boolean {
+  const data = frame.split(/\r?\n/).filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).replace(/^ /, "")).join("\n");
+  if (!data || data === "[DONE]") return false;
+  let event: unknown;
+  try { event = JSON.parse(data); } catch { return true; }
+  const payload = isRecord(event) && isRecord(event.payload) ? event.payload : event;
+  if (!isRecord(payload)) return true;
+  const properties = isRecord(payload.properties) ? payload.properties : {};
+  const info = isRecord(properties.info) ? properties.info : {};
+  const message = isRecord(properties.message) ? properties.message : {};
+  const part = isRecord(properties.part) ? properties.part : {};
+  const sessionId = typeof properties.sessionID === "string" ? properties.sessionID
+    : typeof info.sessionID === "string" ? info.sessionID
+      : typeof message.sessionID === "string" ? message.sessionID
+        : typeof info.id === "string" && typeof payload.type === "string" && payload.type.startsWith("session.") ? info.id
+          : typeof part.sessionID === "string" ? part.sessionID : "";
+  if (payload.type === "session.created" && isToonFactoryTransientSession(info)) {
+    registerToonFactoryTransientSession(workspaceId, sessionId);
+    return true;
+  }
+  if (payload.type === "session.created" && sessionId) registerVisibleSession(workspaceId, sessionId);
+  const transient = Boolean(sessionId && isRegisteredToonFactoryTransientSession(workspaceId, sessionId));
+  const visible = Boolean(sessionId && isRegisteredVisibleSession(workspaceId, sessionId));
+  if (payload.type === "session.deleted" && sessionId) unregisterSession(workspaceId, sessionId);
+  if (transient) return true;
+  if (sessionId) return !visible;
+  return typeof payload.type === "string" && /^(message|session|permission|question)\./.test(payload.type);
 }
 
 function jsonResponse(data: unknown, status = 200) {
@@ -2603,6 +2772,10 @@ function createRoutes(
   automationSubscriptionSync: AutomationSubscriptionSync,
   reviewService: ReviewReadService,
   mediaGeneration: import("./extensions/media-generation.js").MediaGenerationExtensionRuntime,
+  toonTextJobRepository: ToonTextJobRepository,
+  toonTextJobService: ToonTextJobService,
+  toonMediaJobRepository: ToonMediaJobRepository,
+  toonMediaJobService: ToonMediaJobService,
   hostMarketplacePlugins: HostMarketplacePluginRegistry,
   hostMarketplaceMigration: HostMarketplaceMigrationCoordinator,
   hostMarketplaceEnvironmentId: string,
@@ -2666,6 +2839,22 @@ function createRoutes(
     service: reviewService,
     jsonResponse,
     resolveWorkspaceForInspection,
+  });
+
+  registerToonFactoryRoutes({
+    routes,
+    config,
+    env,
+    mediaGeneration,
+    jsonResponse,
+    readJsonBody,
+    ensureWritable,
+    requireClientScope,
+    resolveWorkspace,
+    textJobs: toonTextJobRepository,
+    textJobService: toonTextJobService,
+    mediaJobs: toonMediaJobRepository,
+    mediaJobService: toonMediaJobService,
   });
 
   registerProviderAuthRoutes({

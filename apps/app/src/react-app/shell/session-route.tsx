@@ -213,7 +213,7 @@ import { useRegisterWorkspaceShellActions } from "./workspace-shell-actions";
 import { getReactQueryClient } from "@/react-app/infra/query-client";
 import { imageModelQueryKey, mediaModelQueryScope, videoModelQueryKey } from "@/react-app/domains/connections/media-model-queries";
 import { useSessionControlActions } from "@/react-app/domains/session/control/session-control-actions";
-import { legacySessionRoute, mergeWorkspaceRouteSession, workspaceAppsRoute, workspaceChatRoute, workspaceReviewsRoute, workspaceSessionRoute, workspaceSettingsRoute } from "./workspace-routes";
+import { legacySessionRoute, mergeWorkspaceRouteSession, workspaceAppsRoute, workspaceChatRoute, workspaceReviewsRoute, workspaceSessionRoute, workspaceSettingsRoute, workspaceToonFactoryRoute } from "./workspace-routes";
 import { WorkspaceProvider } from "./workspace-provider";
 import type { OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
 import { SettingsSurface } from "./settings-route";
@@ -479,6 +479,7 @@ async function draftToParts(
 export type SessionRouteProps = {
   routeWorkspaceId?: string;
   routeSessionId?: string | null;
+  onOpenToonFactory?: (workspaceId: string) => void;
   /**
    * 会话面当前是否可见。工作台外壳里会话页与设置/聊天/应用页同时常驻挂载、
    * 靠 display:none 互切；隐藏时它内部的模型选择器不应响应全局打开事件，
@@ -2953,6 +2954,9 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         onOpenApps: () => navigate(workspaceAppsRoute(sidebarActiveWorkspaceId)),
         onOpenChat: () => navigate(workspaceChatRoute(sidebarActiveWorkspaceId)),
         onOpenReviews: () => navigate(workspaceReviewsRoute(sidebarActiveWorkspaceId)),
+        onOpenToonFactory: () => props.onOpenToonFactory
+          ? props.onOpenToonFactory(sidebarActiveWorkspaceId)
+          : navigate(workspaceToonFactoryRoute(sidebarActiveWorkspaceId)),
         onReorderWorkspaces: handleReorderWorkspaces,
       }}
       surface={surfaceProps ? {

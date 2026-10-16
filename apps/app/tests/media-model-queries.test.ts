@@ -6,6 +6,7 @@ import {
   invalidateMediaModelQueries,
   refreshMediaModelsAfterProviderListTransition,
   runProviderMutationWithMediaRefresh,
+  toonMediaModelQueryKey,
   videoModelQueryKey,
   withProviderMediaModelRefresh,
 } from "../src/react-app/domains/connections/media-model-queries";
@@ -22,12 +23,14 @@ describe("media model queries", () => {
     const otherScope = { ...scope, workspaceId: "workspace-b", workspaceRoot: "/work/b" };
     queryClient.setQueryData(imageModelQueryKey(scope), ["image-a"]);
     queryClient.setQueryData(videoModelQueryKey(scope), ["video-a"]);
+    queryClient.setQueryData(toonMediaModelQueryKey(scope, "text-to-image", "text-to-video"), ["toon-a"]);
     queryClient.setQueryData(imageModelQueryKey(otherScope), ["image-b"]);
 
     await invalidateMediaModelQueries(queryClient, scope);
 
     expect(queryClient.getQueryState(imageModelQueryKey(scope))?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(videoModelQueryKey(scope))?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(toonMediaModelQueryKey(scope, "text-to-image", "text-to-video"))?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(imageModelQueryKey(otherScope))?.isInvalidated).toBe(false);
   });
 
@@ -123,6 +126,8 @@ describe("media model queries", () => {
         "cancel:video",
         "invalidate:image",
         "invalidate:video",
+        "cancel:toon-factory",
+        "invalidate:toon-factory",
       ]);
     }
 
@@ -162,7 +167,7 @@ describe("media model queries", () => {
       queryClient,
       scope,
     });
-    expect(calls).toEqual(["cancel", "cancel", "invalidate", "invalidate"]);
+    expect(calls).toEqual(["cancel", "cancel", "invalidate", "invalidate", "cancel", "invalidate"]);
     calls.length = 0;
     await refreshMediaModelsAfterProviderListTransition({
       refreshProviders: async () => ({ connected: ["pictest"] }),

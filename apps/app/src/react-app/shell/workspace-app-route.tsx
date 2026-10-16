@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
 
 import { AppsPage } from "./apps-page";
@@ -23,7 +23,13 @@ import {
   workspaceReviewsRoute,
   workspaceSessionRoute,
   workspaceSettingsRoute,
+  workspaceToonFactoryRoute,
 } from "./workspace-routes";
+
+const LazyToonFactoryPage = lazy(async () => {
+  const module = await import("../domains/toon-factory/toon-factory-page");
+  return { default: module.ToonFactoryPage };
+});
 
 type RetainedSessionTarget = {
   workspaceId: string;
@@ -88,6 +94,11 @@ function WorkspaceAppRouteContent() {
   });
   const [appsMounted, setAppsMounted] = useState(() => appPath?.view === "apps");
   const [reviewsMounted, setReviewsMounted] = useState(() => appPath?.view === "reviews");
+  const [toonFactoryMounted, setToonFactoryMounted] = useState(() => appPath?.view === "toon-factory");
+  const [retainedToonFactory, setRetainedToonFactory] = useState(() => ({
+    workspaceId: appPath?.view === "toon-factory" ? appPath.workspaceId : initialSessionTarget(location.pathname, location.state).workspaceId,
+    projectId: appPath?.view === "toon-factory" ? appPath.projectId : null,
+  }));
 
   const currentSession = appPath?.view === "session"
     ? { workspaceId: appPath.workspaceId, sessionId: appPath.sessionId }
@@ -96,7 +107,8 @@ function WorkspaceAppRouteContent() {
   const chatWorkspaceId = appPath?.view === "chat" ? appPath.workspaceId : null;
   const appsWorkspaceId = appPath?.view === "apps" ? appPath.workspaceId : null;
   const reviewsWorkspaceId = appPath?.view === "reviews" ? appPath.workspaceId : null;
-  const surfaceWorkspaceId = settingsWorkspaceId ?? chatWorkspaceId ?? appsWorkspaceId ?? reviewsWorkspaceId;
+  const toonFactoryWorkspaceId = appPath?.view === "toon-factory" ? appPath.workspaceId : null;
+  const surfaceWorkspaceId = settingsWorkspaceId ?? chatWorkspaceId ?? appsWorkspaceId ?? reviewsWorkspaceId ?? toonFactoryWorkspaceId;
 
   useEffect(() => {
     const next = currentSession ?? (
@@ -124,6 +136,16 @@ function WorkspaceAppRouteContent() {
   }, [appPath?.view]);
 
   useEffect(() => {
+    if (appPath?.view !== "toon-factory") return;
+    setToonFactoryMounted(true);
+    setRetainedToonFactory((current) => (
+      current.workspaceId === appPath.workspaceId && current.projectId === appPath.projectId
+        ? current
+        : { workspaceId: appPath.workspaceId, projectId: appPath.projectId }
+    ));
+  }, [appPath]);
+
+  useEffect(() => {
     if (appPath?.view !== "settings") return;
     setRetainedSettings((current) => (
       current.workspaceId === appPath.workspaceId && current.routePath === location.pathname
@@ -142,9 +164,14 @@ function WorkspaceAppRouteContent() {
   const appsVisible = appPath.view === "apps";
   const automationsVisible = appPath.view === "automations";
   const reviewsVisible = appPath.view === "reviews";
+  const toonFactoryVisible = appPath.view === "toon-factory";
   const sessionPath = activeSession.workspaceId
     ? workspaceSessionRoute(activeSession.workspaceId, activeSession.sessionId)
     : legacySessionRoute(activeSession.sessionId);
+  const openToonFactory = (workspaceId: string) => navigate(workspaceToonFactoryRoute(
+    workspaceId,
+    retainedToonFactory.workspaceId === workspaceId ? retainedToonFactory.projectId : null,
+  ));
 
   const openSurfaceSettings = (
     tab: "cloud-account" | "preferences" | "connect",
@@ -165,12 +192,12 @@ function WorkspaceAppRouteContent() {
   return (
     <div className="relative h-dvh min-h-screen w-full overflow-hidden">
       <div
-        className={settingsVisible || chatVisible || appsVisible || automationsVisible || reviewsVisible
+        className={settingsVisible || chatVisible || appsVisible || automationsVisible || reviewsVisible || toonFactoryVisible
           ? navigationPreview.workspaceTarget
             ? "invisible absolute inset-0 z-50 h-full min-h-0 pointer-events-none [&_[data-session-list-preview=true]]:visible [&_[data-session-list-preview=true]]:pointer-events-auto [&_[data-session-preview-title-hover-guard]]:visible"
             : "hidden"
           : "h-full min-h-0"}
-        aria-hidden={(settingsVisible || chatVisible || appsVisible || automationsVisible || reviewsVisible) && !navigationPreview.workspaceTarget || undefined}
+        aria-hidden={(settingsVisible || chatVisible || appsVisible || automationsVisible || reviewsVisible || toonFactoryVisible) && !navigationPreview.workspaceTarget || undefined}
         data-testid="retained-session-surface"
       >
         {/* surfaceVisible gates behavior, not paint. Only the preview list and
@@ -178,7 +205,8 @@ function WorkspaceAppRouteContent() {
         <SessionRoute
           routeWorkspaceId={activeSession.workspaceId}
           routeSessionId={activeSession.sessionId}
-          surfaceVisible={!(settingsVisible || chatVisible || appsVisible || automationsVisible || reviewsVisible)}
+          surfaceVisible={!(settingsVisible || chatVisible || appsVisible || automationsVisible || reviewsVisible || toonFactoryVisible)}
+          onOpenToonFactory={openToonFactory}
         />
       </div>
 
@@ -199,6 +227,7 @@ function WorkspaceAppRouteContent() {
           active={settingsVisible}
           workspaceId={(settingsVisible ? appPath.workspaceId : retainedSettings.workspaceId) ?? undefined}
           routePath={settingsVisible ? location.pathname : retainedSettings.routePath}
+          onOpenToonFactory={openToonFactory}
         />
       </div>
 
@@ -216,6 +245,7 @@ function WorkspaceAppRouteContent() {
           onOpenHome={() => navigate(sessionPath)}
           onOpenApps={() => navigate(workspaceAppsRoute(activeSession.workspaceId))}
           onOpenReviews={() => navigate(workspaceReviewsRoute(activeSession.workspaceId))}
+          onOpenToonFactory={() => openToonFactory(activeSession.workspaceId)}
           onToggleChat={() => navigate(sessionPath)}
           onOpenSettings={() => openSurfaceSettings("preferences", workspaceChatRoute(activeSession.workspaceId))}
           onOpenTaskSearch={workspaceShellActions.openTaskSearch}
@@ -236,6 +266,7 @@ function WorkspaceAppRouteContent() {
             onOpenHome={() => navigate(sessionPath)}
             onOpenChat={() => navigate(workspaceChatRoute(activeSession.workspaceId))}
             onOpenReviews={() => navigate(workspaceReviewsRoute(activeSession.workspaceId))}
+            onOpenToonFactory={() => openToonFactory(activeSession.workspaceId)}
             onOpenSettings={() => openSurfaceSettings("preferences", workspaceAppsRoute(activeSession.workspaceId))}
             onOpenTaskSearch={workspaceShellActions.openTaskSearch}
             onOpenCreateWorkspace={workspaceShellActions.openCreateWorkspace}
@@ -261,11 +292,44 @@ function WorkspaceAppRouteContent() {
             onOpenHome={() => navigate(sessionPath)}
             onOpenApps={() => navigate(workspaceAppsRoute(activeSession.workspaceId))}
             onOpenChat={() => navigate(workspaceChatRoute(activeSession.workspaceId))}
+            onOpenToonFactory={() => openToonFactory(activeSession.workspaceId)}
             onOpenSettings={() => openSurfaceSettings("preferences", location.pathname)}
             onOpenConnect={() => openSurfaceSettings("connect", location.pathname)}
             onOpenTaskSearch={workspaceShellActions.openTaskSearch}
             onOpenCreateWorkspace={workspaceShellActions.openCreateWorkspace}
           />
+        </div>
+      ) : null}
+
+      {toonFactoryMounted || toonFactoryVisible ? (
+        <div
+          className={toonFactoryVisible ? "absolute inset-0" : "hidden"}
+          aria-hidden={!toonFactoryVisible || undefined}
+          data-testid="workspace-toon-factory-surface"
+        >
+          <Suspense fallback={<div className="h-full bg-dls-sidebar" data-testid="toon-factory-loading" />}>
+            <LazyToonFactoryPage
+              visible={toonFactoryVisible}
+              workspaceId={toonFactoryVisible ? appPath.workspaceId : retainedToonFactory.workspaceId}
+              projectId={toonFactoryVisible ? appPath.projectId : retainedToonFactory.projectId}
+              onSelectProject={(projectId) => navigate(workspaceToonFactoryRoute(
+                toonFactoryVisible ? appPath.workspaceId : retainedToonFactory.workspaceId,
+                projectId,
+              ))}
+              onOpenAccount={() => openSurfaceSettings("cloud-account", location.pathname)}
+              onOpenHome={() => navigate(sessionPath)}
+              onOpenApps={() => navigate(workspaceAppsRoute(activeSession.workspaceId))}
+              onOpenChat={() => navigate(workspaceChatRoute(activeSession.workspaceId))}
+              onOpenReviews={() => navigate(workspaceReviewsRoute(activeSession.workspaceId))}
+              onOpenSettings={() => openSurfaceSettings("preferences", location.pathname)}
+              onOpenProviderSettings={() => navigate(workspaceSettingsRoute(
+                toonFactoryVisible ? appPath.workspaceId : retainedToonFactory.workspaceId,
+                "ai",
+              ), { state: { returnPath: location.pathname } })}
+              onOpenTaskSearch={workspaceShellActions.openTaskSearch}
+              onOpenCreateWorkspace={workspaceShellActions.openCreateWorkspace}
+            />
+          </Suspense>
         </div>
       ) : null}
 
@@ -277,6 +341,7 @@ function WorkspaceAppRouteContent() {
             onOpenApps={() => navigate(workspaceAppsRoute(activeSession.workspaceId))}
             onOpenChat={() => navigate(workspaceChatRoute(activeSession.workspaceId))}
             onOpenReviews={() => navigate(workspaceReviewsRoute(activeSession.workspaceId))}
+            onOpenToonFactory={() => openToonFactory(activeSession.workspaceId)}
             onOpenSettings={() => openSurfaceSettings("preferences", location.pathname)}
             onOpenTaskSearch={workspaceShellActions.openTaskSearch}
             onOpenCreateWorkspace={workspaceShellActions.openCreateWorkspace}

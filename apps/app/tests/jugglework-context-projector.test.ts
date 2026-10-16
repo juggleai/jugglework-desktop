@@ -188,6 +188,16 @@ describe("JuggleWork context projector", () => {
       workspaceId: "workspace-a",
       reviewId: undefined,
     });
+    expect(screenFromRoute("/workspace/workspace-a/toon-factory/project%2F42")).toEqual({
+      kind: "toon-factory",
+      route: "/workspace/workspace-a/toon-factory/project%2F42",
+      workspaceId: "workspace-a",
+      projectId: "project/42",
+    });
+    expect(screenFromRoute("/workspace/workspace-a/toon-factory-preview")).toEqual({
+      kind: "other",
+      route: "/workspace/workspace-a/toon-factory-preview",
+    });
   });
 
   test("projects the selected pull request as a semantic review resource", () => {
@@ -208,6 +218,28 @@ describe("JuggleWork context projector", () => {
         active: true,
         workspaceId: "workspace-a",
         reviewId: "github-pr-42",
+      },
+    });
+  });
+
+  test("projects the selected Toon Factory project as a semantic resource", () => {
+    const context = contextForRoute("/workspace/workspace-a/toon-factory/project-a");
+
+    expect(context.screen).toEqual({
+      kind: "toon-factory",
+      route: "/workspace/workspace-a/toon-factory/project-a",
+      workspaceId: "workspace-a",
+      projectId: "project-a",
+    });
+    expect(context.resources.find((resource) => resource.kind === "toon-factory")).toEqual({
+      ref: "toon-factory:project-a",
+      kind: "toon-factory",
+      title: "Toon Factory project project-a",
+      provider: { id: "jugglework-ui", kind: "builtin" },
+      state: {
+        active: true,
+        workspaceId: "workspace-a",
+        projectId: "project-a",
       },
     });
   });

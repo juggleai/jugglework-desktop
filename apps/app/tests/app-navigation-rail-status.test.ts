@@ -25,28 +25,49 @@ describe("local workspace rail status", () => {
   });
 });
 
-describe("Code Review navigation", () => {
-  test("moves Code Review into the More menu with a persistent pin action", () => {
+describe("pinnable app navigation", () => {
+  test("places Toon Factory immediately after Code Review in More with persistent pin actions", () => {
     const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
     expect(source).not.toContain('testId="app-rail-reviews"');
     expect(source).toContain('data-testid="app-rail-more"');
     expect(source).toContain('data-testid="app-navigation-more-reviews"');
     expect(source).toContain('data-testid="app-navigation-pin-reviews"');
+    expect(source).toContain('data-testid="app-navigation-more-toon-factory"');
+    expect(source).toContain('data-testid="app-navigation-pin-toon-factory"');
+    expect(source).toContain('tabIndex={0}');
+    expect(source).toContain('group-focus-within:opacity-100');
+    expect(source.indexOf('data-testid="app-navigation-more-reviews-row"')).toBeLessThan(
+      source.indexOf('data-testid="app-navigation-more-toon-factory-row"'),
+    );
     expect(source).toContain("setAppNavigationItemPinned(\"reviews\", !reviewsPinned)");
+    expect(source).toContain("setAppNavigationItemPinned(\"toon-factory\", !toonFactoryPinned)");
     expect(source).toContain("props.onOpenReviews()");
+    expect(source).toContain("props.onOpenToonFactory()");
   });
 
-  test("shows the separator and pinned Review entry only when Review is pinned", () => {
+  test("renders one separator and stable mapped pin entries when any destination is pinned", () => {
     const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
-    const pinnedBlock = source.slice(source.indexOf("{reviewsPinned ? ("), source.indexOf(") : null}", source.indexOf("{reviewsPinned ? (")));
+    const pinnedBlock = source.slice(source.indexOf("{pinnedNavigationItems.length > 0 ? ("), source.indexOf("</nav>"));
     expect(pinnedBlock).toContain('data-testid="app-navigation-pinned-separator"');
     expect(pinnedBlock).toContain('testId="app-rail-pinned-reviews"');
+    expect(pinnedBlock).toContain('testId="app-rail-pinned-toon-factory"');
     expect(pinnedBlock).toContain("active={props.reviewsActive}");
+    expect(pinnedBlock).toContain("active={props.toonFactoryActive}");
     expect(pinnedBlock).toContain("onClick={props.onOpenReviews}");
+    expect(pinnedBlock).toContain("onClick={props.onOpenToonFactory}");
+    expect(pinnedBlock).toContain("pinnedNavigationItems.map");
     expect(pinnedBlock).toContain('className="h-px w-6 rounded-full bg-dls-secondary/20"');
   });
 
-  test("reveals the pin action on hover unless Review is already pinned", () => {
+  test("moves Toon Factory active state between More and its pinned button", () => {
+    const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
+    const moreButton = source.slice(source.indexOf('data-testid="app-rail-more"') - 300, source.indexOf("<DropdownMenuContent"));
+    const pinnedButton = source.slice(source.indexOf('testId="app-rail-pinned-toon-factory"') - 300, source.indexOf('testId="app-rail-pinned-toon-factory"') + 300);
+    expect(moreButton).toContain("props.toonFactoryActive && !toonFactoryPinned");
+    expect(pinnedButton).toContain("active={props.toonFactoryActive}");
+  });
+
+  test("reveals the pin action on hover and keeps it keyboard reachable", () => {
     const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
     const menuRow = source.slice(
       source.indexOf('data-testid="app-navigation-more-reviews-row"') - 220,
@@ -55,11 +76,10 @@ describe("Code Review navigation", () => {
     expect(menuRow).toContain('className="group flex items-center gap-1 rounded-2xl transition-colors hover:bg-accent focus-within:bg-accent"');
     expect(menuRow).toContain('className="min-w-0 flex-1 bg-transparent py-[5px] focus:bg-transparent! data-highlighted:bg-transparent!"');
     expect(menuRow).toContain('reviewsPinned');
-    expect(menuRow).toContain('tabIndex={reviewsPinned ? 0 : -1}');
+    expect(menuRow).toContain('tabIndex={0}');
     expect(menuRow).toContain('opacity-100');
-    expect(menuRow).toContain('pointer-events-none opacity-0');
-    expect(menuRow).toContain('group-hover:pointer-events-auto group-hover:opacity-100');
-    expect(menuRow).not.toContain('group-focus-within:pointer-events-auto');
+    expect(menuRow).toContain('opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100');
+    expect(menuRow).not.toContain('pointer-events-none');
     expect(menuRow).not.toContain('hover:bg-foreground/10');
     expect(source).toContain('className="w-[180px] rounded-2xl bg-popover/95 p-0.5');
   });
@@ -121,7 +141,7 @@ describe("navigation rail visual proportions", () => {
     expect(source).toContain('rounded-xl border border-dls-border bg-dls-active');
     expect(source).toContain('px-2.5 py-1.5 text-xs font-normal text-dls-text');
     expect(source).toContain('{tooltipLabel ?? label}');
-    for (const testId of ["app-rail-home", "app-rail-cloud-tasks", "app-rail-pinned-reviews", "app-rail-automations", "app-rail-chat", "app-rail-contacts"]) {
+    for (const testId of ["app-rail-home", "app-rail-cloud-tasks", "app-rail-pinned-reviews", "app-rail-pinned-toon-factory", "app-rail-automations", "app-rail-chat", "app-rail-contacts"]) {
       const button = source.slice(source.indexOf(`testId="${testId}"`) - 220, source.indexOf(`testId="${testId}"`) + 220);
       expect(button).not.toContain('showTooltip={false}');
     }

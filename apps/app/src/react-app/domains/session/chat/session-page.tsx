@@ -175,6 +175,7 @@ export type SessionPageSidebarProps = {
   onOpenApps: () => void;
   onOpenChat: () => void;
   onOpenReviews: () => void;
+  onOpenToonFactory: () => void;
   /** Opens the cross-session message search dialog (Cmd/Ctrl+Shift+F). */
   onReorderWorkspaces?: (workspaceIds: string[]) => void;
 };
@@ -1459,6 +1460,7 @@ export function SessionPage(props: SessionPageProps) {
           onOpenApps={props.sidebar.onOpenApps}
           onOpenChat={props.sidebar.onOpenChat}
           onOpenReviews={props.sidebar.onOpenReviews}
+          onOpenToonFactory={props.sidebar.onOpenToonFactory}
           onOpenSettings={props.onOpenSettings}
           onReorderWorkspaces={props.sidebar.onReorderWorkspaces}
           onStartResize={startLeftSidebarResize}
@@ -1490,6 +1492,7 @@ export function SessionPage(props: SessionPageProps) {
               onOpenApps={props.sidebar.onOpenApps}
               onOpenChat={props.sidebar.onOpenChat}
               onOpenReviews={props.sidebar.onOpenReviews}
+              onOpenToonFactory={props.sidebar.onOpenToonFactory}
               onOpenSettings={props.onOpenSettings}
               onPreviewMenuChange={handleSidebarPreviewMenuChange}
               suppressPreviewMenuTooltips

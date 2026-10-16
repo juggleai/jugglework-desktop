@@ -81,6 +81,7 @@ type AutomationPageProps = {
   onOpenApps: () => void;
   onOpenChat: () => void;
   onOpenReviews: () => void;
+  onOpenToonFactory: () => void;
   onOpenSettings: () => void;
   onOpenTaskSearch?: () => void;
   onOpenCreateWorkspace?: () => void;
@@ -182,6 +183,7 @@ export function AutomationPage(props: AutomationPageProps) {
         onOpenApps={() => navigateAfterDiscard(props.onOpenApps)}
         onOpenChat={() => navigateAfterDiscard(props.onOpenChat)}
         onOpenReviews={() => navigateAfterDiscard(props.onOpenReviews)}
+        onOpenToonFactory={() => navigateAfterDiscard(props.onOpenToonFactory)}
         onOpenSettings={() => navigateAfterDiscard(props.onOpenSettings)}
         onOpenTaskSearch={props.onOpenTaskSearch}
         onOpenCreateWorkspace={props.onOpenCreateWorkspace}

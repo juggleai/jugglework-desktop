@@ -5,6 +5,10 @@ import { unwrap } from "../../app/lib/opencode";
 import { dispatchNewProviders } from "../../app/lib/provider-events";
 import type { ProviderListResponse } from "@opencode-ai/sdk/v2/client";
 import { parseNormalizedModelCapabilities } from "@jugglework/types/media-generation";
+import {
+  isDesktopModelBlocked,
+  type DesktopAppRestrictionChecker,
+} from "../../app/cloud/desktop-app-restrictions";
 
 export const PROVIDER_LIST_CACHE_MS = 5 * 60 * 1000;
 const PROVIDER_LIST_QUERY_ROOT = ["opencode-provider-list"] as const;
@@ -118,6 +122,7 @@ export function isChatSelectableProviderModel(model: unknown): boolean {
   }
   const capabilities = parseNormalizedModelCapabilities(model);
   const output = capabilities?.modalities?.output ?? [];
+  if ((capabilities?.mediaGeneration || capabilities?.imageGeneration) && !output.includes("text")) return false;
   return !((output.includes("video") || output.includes("image")) && !output.includes("text"));
 }
 
@@ -125,6 +130,41 @@ export function getChatSelectableModelEntries<T>(
   models: Record<string, T> | null | undefined,
 ): Array<[string, T]> {
   return Object.entries(models ?? {}).filter(([, model]) => isChatSelectableProviderModel(model));
+}
+
+export type ConnectedTextModelOption = {
+  providerID: string;
+  modelID: string;
+  providerName: string;
+  modelName: string;
+  providerSource: ProviderListItem["source"];
+};
+
+export function getAllowedConnectedTextModels(
+  value: ProviderListResponse | null | undefined,
+  policy: {
+    checkRestriction: DesktopAppRestrictionChecker;
+    allowedModels?: readonly string[];
+  },
+): ConnectedTextModelOption[] {
+  return getConnectedProviderItems(value).flatMap((provider) =>
+    getChatSelectableModelEntries(provider.models).flatMap(([modelID, model]) => {
+      if (provider.id.trim().toLowerCase() === "jugglework") return [];
+      if (isDesktopModelBlocked({
+        model: { providerID: provider.id, modelID },
+        checkRestriction: policy.checkRestriction,
+        allowedModels: policy.allowedModels,
+        providerSource: provider.source,
+      })) return [];
+      return [{
+        providerID: provider.id,
+        modelID,
+        providerName: provider.name,
+        modelName: model.name,
+        providerSource: provider.source,
+      }];
+    }),
+  );
 }
 
 /**
