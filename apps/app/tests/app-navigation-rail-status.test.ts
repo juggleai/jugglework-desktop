@@ -176,13 +176,29 @@ describe("navigation rail visual proportions", () => {
     const cloud = source.slice(source.indexOf('testId="app-rail-cloud-tasks"') - 360, source.indexOf('testId="app-rail-cloud-tasks"') + 360);
     const automation = source.slice(source.indexOf('testId="app-rail-automations"') - 360, source.indexOf('testId="app-rail-automations"') + 360);
     expect(local).toContain('previewScope="local"');
+    expect(local).toContain('onWorkspacePreviewOpen={appSidebarPreview.closePreview}');
     expect(local).toContain('showTooltip={!props.suppressPreviewMenuTooltips}');
     expect(cloud).toContain('previewScope="remote"');
+    expect(cloud).toContain('onWorkspacePreviewOpen={appSidebarPreview.closePreview}');
     expect(cloud).toContain('showTooltip={!props.suppressPreviewMenuTooltips}');
     expect(automation).not.toContain('previewScope=');
     expect(automation).not.toContain('showTooltip={!props.suppressPreviewMenuTooltips}');
-    expect(source).toContain('onMouseEnter={() => onPreviewMenuChange?.(previewScope ?? null)}');
+    expect(source).toContain('onPreviewMenuChange?.(previewScope ?? null)');
+    expect(source).toContain('onAppPreviewChange?.(appPreviewTarget, true)');
+    expect(source).toContain('onAppPreviewChange?.(appPreviewTarget, false)');
     expect(source).toContain('title={showTooltip ? label : undefined}');
+  });
+
+  test("routes Automation and Plugins hover to the global sidebar preview host", () => {
+    const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
+    const automation = source.slice(source.indexOf('label={t("navigation.automations")}'), source.indexOf('<AlarmClock />'));
+    const plugins = source.slice(source.indexOf('label={t("project_extensions.group_plugin")}'), source.indexOf('<PluginOrbitIcon />'));
+    expect(automation).toContain('appPreviewTarget="automation"');
+    expect(automation).toContain('onAppPreviewChange={appSidebarPreview.onTriggerChange}');
+    expect(automation).toContain('showTooltip={!appSidebarPreview.enabled}');
+    expect(plugins).toContain('appPreviewTarget="plugins"');
+    expect(plugins).toContain('onAppPreviewChange={appSidebarPreview.onTriggerChange}');
+    expect(plugins).toContain('showTooltip={!appSidebarPreview.enabled}');
   });
 });
 

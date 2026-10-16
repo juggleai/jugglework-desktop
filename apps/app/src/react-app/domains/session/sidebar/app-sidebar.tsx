@@ -726,6 +726,7 @@ export type AppSidebarProps = {
   onOpenReviews: () => void;
   onOpenSettings: () => void;
   railPreviewActive?: boolean;
+  railPreviewMotionDisabled?: boolean;
   previewTaskScope?: TaskScope;
   onRailPreviewEnter?: React.MouseEventHandler<HTMLElement>;
   onRailPreviewLeave?: React.MouseEventHandler<HTMLElement>;
@@ -1014,7 +1015,8 @@ export function AppSidebar(props: AppSidebarProps) {
         collapsible="offcanvas"
         className={cn(
           "border-e-0! mac:**:data-[sidebar=sidebar]:bg-transparent",
-          props.railPreviewActive && "pointer-events-none w-[348px]!",
+          props.railPreviewActive && "pointer-events-none",
+          props.railPreviewMotionDisabled && "!transition-none",
         )}
       >
         <div

@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 import type { CSSProperties } from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { usePanelRef } from "react-resizable-panels";
 import { ArrowLeft, ArrowRight, Cloud, Columns2, Folders, GitBranch, Globe, Mic2, Search, Settings2, TextSearch, X, Zap } from "lucide-react";
 
@@ -40,6 +40,7 @@ import ProviderAuthModal, { type ProviderAuthModalProps } from "../../connection
 import { RenameSessionModal } from "../modals/rename-session-modal";
 import { AppSidebar } from "../sidebar/app-sidebar";
 import { APP_NAVIGATION_RAIL_WIDTH, AppNavigationRail } from "../../../shell/app-navigation-rail";
+import { useAppNavigationSidebarPreview } from "../../../shell/app-navigation-sidebar-preview";
 import { useSessionManagementStore } from "../sidebar/session-management-store";
 import type { TaskScope } from "../sidebar/task-scope-store";
 import { SessionSurface, type SessionSurfaceProps } from "../surface/session-surface";
@@ -472,8 +473,11 @@ export function SessionPage(props: SessionPageProps) {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [sidebarPreviewScope, setSidebarPreviewScope] = useState<TaskScope | null>(null);
+  const [sidebarPreviewMotionDisabled, setSidebarPreviewMotionDisabled] = useState(false);
   const sidebarPreviewCloseTimerRef = useRef<number | null>(null);
+  const sidebarPreviewMotionFrameRef = useRef<number | null>(null);
   const sidebarPreviewPointerInsideRef = useRef(false);
+  const appSidebarPreview = useAppNavigationSidebarPreview();
   const [sessionActionId, setSessionActionId] = useState<string | null>(null);
   const syncWorkbench = useWorkbenchStore((state) => state.sync);
   const juggleWorkbenchTab = useWorkbenchStore((state) => state.openTab);
@@ -544,6 +548,18 @@ export function SessionPage(props: SessionPageProps) {
     window.clearTimeout(sidebarPreviewCloseTimerRef.current);
     sidebarPreviewCloseTimerRef.current = null;
   }, []);
+  const keepSidebarPreviewMotionDisabledThroughPaint = useCallback(() => {
+    setSidebarPreviewMotionDisabled(true);
+    if (sidebarPreviewMotionFrameRef.current !== null) {
+      window.cancelAnimationFrame(sidebarPreviewMotionFrameRef.current);
+    }
+    sidebarPreviewMotionFrameRef.current = window.requestAnimationFrame(() => {
+      sidebarPreviewMotionFrameRef.current = window.requestAnimationFrame(() => {
+        sidebarPreviewMotionFrameRef.current = null;
+        setSidebarPreviewMotionDisabled(false);
+      });
+    });
+  }, []);
   const scheduleSidebarPreviewClose = useCallback(() => {
     cancelSidebarPreviewClose();
     sidebarPreviewCloseTimerRef.current = window.setTimeout(() => {
@@ -551,23 +567,46 @@ export function SessionPage(props: SessionPageProps) {
         sidebarPreviewCloseTimerRef.current = null;
         return;
       }
+      // Keep the off-canvas container transition disabled until the hidden
+      // position has painted. This makes workspace previews appear/disappear
+      // like Automation and Plugins instead of sliding horizontally.
+      keepSidebarPreviewMotionDisabledThroughPaint();
       setSidebarPreviewScope(null);
       sidebarPreviewCloseTimerRef.current = null;
     }, 120);
-  }, [cancelSidebarPreviewClose]);
+  }, [cancelSidebarPreviewClose, keepSidebarPreviewMotionDisabledThroughPaint]);
   const handleSidebarPreviewMenuChange = useCallback((scope: TaskScope | null) => {
     if (scope) {
       cancelSidebarPreviewClose();
+      appSidebarPreview.closePreview();
+      setSidebarPreviewMotionDisabled(true);
       setSidebarPreviewScope(scope);
       return;
     }
     scheduleSidebarPreviewClose();
-  }, [cancelSidebarPreviewClose, scheduleSidebarPreviewClose]);
-  useEffect(() => () => cancelSidebarPreviewClose(), [cancelSidebarPreviewClose]);
+  }, [appSidebarPreview.closePreview, cancelSidebarPreviewClose, scheduleSidebarPreviewClose]);
+  useLayoutEffect(() => {
+    if (!appSidebarPreview.target) return;
+    cancelSidebarPreviewClose();
+    sidebarPreviewPointerInsideRef.current = false;
+    keepSidebarPreviewMotionDisabledThroughPaint();
+    setSidebarPreviewScope(null);
+  }, [appSidebarPreview.target, cancelSidebarPreviewClose, keepSidebarPreviewMotionDisabledThroughPaint]);
+  useEffect(() => () => {
+    cancelSidebarPreviewClose();
+    if (sidebarPreviewMotionFrameRef.current !== null) {
+      window.cancelAnimationFrame(sidebarPreviewMotionFrameRef.current);
+    }
+  }, [cancelSidebarPreviewClose]);
   useEffect(() => {
     if (!sidebarOpen) return;
     cancelSidebarPreviewClose();
+    if (sidebarPreviewMotionFrameRef.current !== null) {
+      window.cancelAnimationFrame(sidebarPreviewMotionFrameRef.current);
+      sidebarPreviewMotionFrameRef.current = null;
+    }
     sidebarPreviewPointerInsideRef.current = false;
+    setSidebarPreviewMotionDisabled(false);
     setSidebarPreviewScope(null);
   }, [sidebarOpen, cancelSidebarPreviewClose]);
   useEffect(() => {
@@ -1418,6 +1457,7 @@ export function SessionPage(props: SessionPageProps) {
           onReorderWorkspaces={props.sidebar.onReorderWorkspaces}
           onStartResize={startLeftSidebarResize}
           railPreviewActive={sidebarRailPreviewOpen}
+          railPreviewMotionDisabled={sidebarPreviewMotionDisabled}
           previewTaskScope={sidebarRailPreviewOpen ? sidebarPreviewScope ?? undefined : undefined}
           onRailPreviewEnter={() => {
             sidebarPreviewPointerInsideRef.current = true;

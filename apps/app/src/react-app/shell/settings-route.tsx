@@ -40,6 +40,8 @@ import type {
 } from "@/app/types";
 import { getWorkspaceTaskLoadErrorDisplay } from "@/app/utils";
 import { currentLocale, t, setLocale, type Language } from "@/i18n";
+import { cn } from "@/lib/utils";
+import { usePublishAppNavigationPluginItems } from "./app-navigation-sidebar-preview";
 import { useModelPicker } from "@/react-app/domains/session/modals/use-model-picker";
 import {
   type RouteWorkspace,
@@ -2433,6 +2435,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       })),
     ],
   }), [catalogOrganizationKey, cloudSession.activeOrgName, cloudSession.activeOrganization, extensionItems.builtInItems, extensionsSnapshot.cloudOrgPlugins, hasOrganizationCatalog, hostMarketplaceSnapshot.registry?.installations, orgMcpConnections.connections, publicConnectorEntries, sessionPluginItems, standaloneCatalogSkills, standaloneGlobalConnectors]);
+  usePublishAppNavigationPluginItems(props.pluginCatalogOnly ? customizationInstalledItems : null);
   const workspaceVisiblePlugins = useMemo<WorkspacePluginRow[]>(() => {
     const catalogPlugins = customizationInstalledItems.filter((item) => item.section === "plugins").flatMap((item) => {
       const plugin = extensionsSnapshot.cloudOrgPlugins.find((entry) => item.id === `cloud-plugin:${entry.id}`);
@@ -3457,14 +3460,21 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     <>
       {props.pluginCatalogOnly ? (
         <div className="flex h-full min-h-0 w-full overflow-hidden" data-testid="customization-catalog-layout">
-          {props.secondarySidebarOpen !== false ? (
-            <CustomizationCatalogSidebar
-              activeSection={customizationActiveSection}
-              installedItems={customizationInstalledItems}
-              onSelectSection={openCustomizationSection}
-              onSelectInstalledItem={openInstalledCustomizationItem}
-            />
-          ) : null}
+          <div className={cn(
+            "h-full shrink-0 overflow-hidden transition-[width] duration-200 ease-linear",
+            props.secondarySidebarOpen !== false ? "w-[var(--jugglework-left-sidebar-width)]" : "w-0",
+          )}
+          data-app-secondary-sidebar-frame
+          >
+            {props.secondarySidebarOpen !== false ? (
+              <CustomizationCatalogSidebar
+                activeSection={customizationActiveSection}
+                installedItems={customizationInstalledItems}
+                onSelectSection={openCustomizationSection}
+                onSelectInstalledItem={openInstalledCustomizationItem}
+              />
+            ) : null}
+          </div>
           <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
             {settingsSurface}
           </div>

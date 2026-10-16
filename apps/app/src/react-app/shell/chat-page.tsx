@@ -36,7 +36,7 @@ export function ChatPage(props: ChatPageProps) {
     <div className="relative flex h-full min-h-0 w-full overflow-hidden bg-dls-sidebar mac:titlebar-drag">
       <div
         className="h-full shrink-0 overflow-hidden transition-[width] duration-200 ease-linear"
-        style={{ width: chatSidebarOpen ? APP_NAVIGATION_RAIL_WIDTH : 0 }}
+        style={{ width: APP_NAVIGATION_RAIL_WIDTH }}
       >
         <AppNavigationRail
           chatActive

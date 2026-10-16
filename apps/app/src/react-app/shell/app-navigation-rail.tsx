@@ -60,6 +60,7 @@ import { LOCAL_AUTOMATION_ENABLED } from "@/react-app/domains/automations/automa
 import { isIMNavigationVisible, visibleLocalWorkspaceIndicator } from "./app-navigation-status";
 import { accountDisplayName, membershipTierLabel, membershipUpgradeContext, organizationMenuGroups } from "./account-menu-model";
 import { PluginOrbitIcon } from "@/react-app/design-system/plugin-orbit-icon";
+import { useAppNavigationSidebarPreview, type AppNavigationSidebarPreviewTarget } from "./app-navigation-sidebar-preview";
 
 export { APP_PRIMARY_RAIL_ORDER } from "./app-navigation-order";
 
@@ -101,6 +102,9 @@ type RailButtonProps = {
   tooltipLabel?: string;
   previewScope?: TaskScope;
   onPreviewMenuChange?: (scope: TaskScope | null) => void;
+  onWorkspacePreviewOpen?: () => void;
+  appPreviewTarget?: AppNavigationSidebarPreviewTarget;
+  onAppPreviewChange?: (target: AppNavigationSidebarPreviewTarget, open: boolean) => void;
 };
 
 function LocalWorkspaceIcon({ active }: { active: boolean }) {
@@ -142,6 +146,9 @@ function RailButton({
   tooltipLabel,
   previewScope,
   onPreviewMenuChange,
+  onWorkspacePreviewOpen,
+  appPreviewTarget,
+  onAppPreviewChange,
 }: RailButtonProps) {
   const resolvedBadgeLabel = badgeLabel ?? t("chat.unread_count", { count: badge });
   const button = (
@@ -151,8 +158,15 @@ function RailButton({
       title={showTooltip ? label : undefined}
       disabled={disabled}
       onClick={onClick}
-      onMouseEnter={() => onPreviewMenuChange?.(previewScope ?? null)}
-      onMouseLeave={() => onPreviewMenuChange?.(null)}
+      onMouseEnter={() => {
+        if (previewScope) onWorkspacePreviewOpen?.();
+        onPreviewMenuChange?.(previewScope ?? null);
+        if (appPreviewTarget) onAppPreviewChange?.(appPreviewTarget, true);
+      }}
+      onMouseLeave={() => {
+        onPreviewMenuChange?.(null);
+        if (appPreviewTarget) onAppPreviewChange?.(appPreviewTarget, false);
+      }}
       data-testid={testId}
       data-app-rail-button
       data-active={active ? "true" : undefined}
@@ -215,6 +229,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const platform = usePlatform();
+  const appSidebarPreview = useAppNavigationSidebarPreview();
   const {
     status: authStatus,
     user,
@@ -349,6 +364,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
           statusIndicator={visibleLocalWorkspaceIndicator(localWorkspaceIndicator, props.homeActive, taskScope)}
           previewScope="local"
           onPreviewMenuChange={props.onPreviewMenuChange}
+          onWorkspacePreviewOpen={appSidebarPreview.closePreview}
           showTooltip={!props.suppressPreviewMenuTooltips}
         >
           <LocalWorkspaceIcon active={Boolean(props.homeActive && taskScope === "local")} />
@@ -360,6 +376,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
           testId="app-rail-cloud-tasks"
           previewScope="remote"
           onPreviewMenuChange={props.onPreviewMenuChange}
+          onWorkspacePreviewOpen={appSidebarPreview.closePreview}
           showTooltip={!props.suppressPreviewMenuTooltips}
         >
           <Cloud className="size-5" strokeWidth={1.8} />
@@ -371,6 +388,9 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
           onClick={() => navigate("/automations")}
           testId="app-rail-automations"
           onPreviewMenuChange={props.onPreviewMenuChange}
+          appPreviewTarget="automation"
+          onAppPreviewChange={appSidebarPreview.onTriggerChange}
+          showTooltip={!appSidebarPreview.enabled}
         >
           <AlarmClock />
         </RailButton> : null}
@@ -380,6 +400,9 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
           onClick={props.onOpenApps}
           testId="app-rail-plugins"
           onPreviewMenuChange={props.onPreviewMenuChange}
+          appPreviewTarget="plugins"
+          onAppPreviewChange={appSidebarPreview.onTriggerChange}
+          showTooltip={!appSidebarPreview.enabled}
         >
           <PluginOrbitIcon />
         </RailButton>

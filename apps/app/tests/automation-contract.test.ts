@@ -38,7 +38,8 @@ describe("Desktop automation catalog and routes", () => {
     const catalog = page.slice(page.indexOf("function TemplateCatalog"), page.indexOf("function AutomationEditor"));
     expect(page).toContain('data-testid="automation-sidebar"');
     expect(page).toContain('data-testid="automation-main"');
-    expect(page).toContain('w-[var(--jugglework-left-sidebar-width)] shrink-0');
+    expect(page).toContain('props.sidebarOpen ? "w-[var(--jugglework-left-sidebar-width)]" : "w-0"');
+    expect(page).toContain('transition-[width] duration-200 ease-linear');
     expect(landing).toContain('max-w-4xl');
     expect(landing).toContain('automation.schedule_tasks');
     expect(catalog).toContain('block text-[13px] font-medium');

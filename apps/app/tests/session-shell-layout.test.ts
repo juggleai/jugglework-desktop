@@ -97,7 +97,7 @@ describe("desktop session shell layout", () => {
     expect(sessionPage).toContain('absolute inset-y-0 left-0 z-40 w-12 overflow-hidden');
     expect(sessionPage).toContain('sidebarRailPreviewOpen');
     expect(sessionPage).toContain('handleSidebarPreviewMenuChange');
-    expect(sessionPage).toContain('previewTaskScope={sidebarPreviewScope ?? undefined}');
+    expect(sessionPage).toContain('previewTaskScope={sidebarRailPreviewOpen ? sidebarPreviewScope ?? undefined : undefined}');
     expect(sessionPage).toContain('suppressPreviewMenuTooltips');
     expect(sessionPage).toContain('setTimeout(() =>');
     expect(sessionPage).toContain('}, 120)');
@@ -105,7 +105,11 @@ describe("desktop session shell layout", () => {
     expect(sessionPage).toContain('if (sidebarPreviewPointerInsideRef.current)');
     expect(sessionPage).toContain('sidebarPreviewPointerInsideRef.current = true');
     expect(sessionPage).toContain('sidebarPreviewPointerInsideRef.current = false');
+    expect(sessionPage).toContain('sidebarPreviewMotionDisabled');
+    expect(sessionPage).toContain('keepSidebarPreviewMotionDisabledThroughPaint');
+    expect(sessionPage).toContain('railPreviewMotionDisabled={sidebarPreviewMotionDisabled}');
     expect(appSidebar).toContain('data-session-list-preview={props.railPreviewActive ? "true" : undefined}');
+    expect(appSidebar).toContain('props.railPreviewMotionDisabled && "!transition-none"');
     expect(appSidebar).toContain('props.railPreviewActive && "pointer-events-none"');
     expect(appSidebar).toContain('props.railPreviewActive && "pointer-events-auto"');
     expect(appSidebar).toContain('data-session-preview-title-hover-guard');
@@ -114,7 +118,11 @@ describe("desktop session shell layout", () => {
     expect(appSidebar).toContain('onMouseEnter={props.onRailPreviewEnter}');
     expect(appSidebar).toContain('onMouseLeave={props.onRailPreviewLeave}');
     expect(appSidebar).toContain('md:rounded-r-[18px]');
-    expect(appSidebar).toContain('props.railPreviewActive && "pointer-events-none w-[348px]!"');
+    expect(appSidebar).toContain('props.railPreviewActive && "pointer-events-none"');
+    expect(appSidebar).not.toContain('w-[348px]!');
+    expect(sessionPage).toContain("useLayoutEffect(() => {");
+    expect(sessionPage).toContain("if (!appSidebarPreview.target) return;");
+    expect(sessionPage).toContain("appSidebarPreview.closePreview();");
     expect(appSidebar).toContain('const taskScope = props.previewTaskScope ?? storedTaskScope');
     expect(appSidebar).not.toContain('suppressPreviewMenuTooltips={props.railPreviewActive}');
     expect(sidebarPrimitive).toContain('has-[[data-session-list-preview=true]]:left-0');

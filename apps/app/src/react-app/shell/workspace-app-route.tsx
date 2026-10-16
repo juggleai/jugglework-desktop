@@ -8,6 +8,7 @@ import { SessionRoute } from "./session-route";
 import { SettingsRoute } from "./settings-route";
 import { AutomationPage } from "../domains/automations/automation-page";
 import { ReviewPage } from "../domains/reviews/review-page";
+import { AppNavigationSidebarPreviewProvider } from "./app-navigation-sidebar-preview";
 import { readActiveWorkspaceId, readLastSessionFor } from "./session-memory";
 import {
   WorkspaceShellActionsProvider,
@@ -281,7 +282,9 @@ function WorkspaceAppRouteContent() {
 export function WorkspaceAppRoute() {
   return (
     <WorkspaceShellActionsProvider>
-      <WorkspaceAppRouteContent />
+      <AppNavigationSidebarPreviewProvider>
+        <WorkspaceAppRouteContent />
+      </AppNavigationSidebarPreviewProvider>
     </WorkspaceShellActionsProvider>
   );
 }

@@ -8,6 +8,9 @@ import { APP_NAVIGATION_RAIL_WIDTH } from "./app-navigation-rail";
 import { APP_INSET_SIDEBAR_OFFSET } from "./workspace-shell-layout";
 
 const CONTROL_GROUP_WIDTH = 64;
+// Match the collapsed local-workspace header: the work surface begins at 52px
+// and its controls are inset another 24px into the header.
+const COLLAPSED_CONTROL_LEFT = 76;
 
 /**
  * Keeps the workspace search/collapse controls stable when moving between
@@ -18,11 +21,11 @@ export function AppSecondarySidebarTopControls(props: {
   onOpenTaskSearch: () => void;
   onToggleSidebar: () => void;
 }) {
-  const boundary = props.sidebarOpen
-    ? `calc(${APP_NAVIGATION_RAIL_WIDTH + APP_INSET_SIDEBAR_OFFSET}px + var(--jugglework-left-sidebar-width))`
-    : `${APP_NAVIGATION_RAIL_WIDTH + APP_INSET_SIDEBAR_OFFSET + CONTROL_GROUP_WIDTH}px`;
+  const expandedBoundary = `calc(${APP_NAVIGATION_RAIL_WIDTH + APP_INSET_SIDEBAR_OFFSET}px + var(--jugglework-left-sidebar-width))`;
   const controlStyle = {
-    left: `calc(${boundary} - ${CONTROL_GROUP_WIDTH}px)`,
+    left: props.sidebarOpen
+      ? `calc(${expandedBoundary} - ${CONTROL_GROUP_WIDTH}px)`
+      : `${COLLAPSED_CONTROL_LEFT}px`,
     WebkitAppRegion: "no-drag",
   } as CSSProperties;
 
@@ -54,15 +57,15 @@ export function AppSecondarySidebarTopControls(props: {
           aria-expanded={props.sidebarOpen}
           data-app-secondary-sidebar-toggle
         >
-          <PanelLeftIcon className="size-3.5" />
+          <PanelLeftIcon className="size-3.5 rtl:rotate-180" />
         </Button>
       </div>
-      <span
+      {props.sidebarOpen ? <span
         aria-hidden="true"
         className="absolute top-2 z-40 block h-7 w-px bg-dls-border"
-        style={{ left: boundary }}
+        style={{ left: expandedBoundary }}
         data-app-secondary-sidebar-top-divider
-      />
+      /> : null}
     </>
   );
 }

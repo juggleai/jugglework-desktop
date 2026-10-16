@@ -506,6 +506,10 @@ export function ReviewWorkbench(props: {
 }) {
   return (
     <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden" data-testid="review-workbench">
+      <div className={cn(
+        "h-full shrink-0 overflow-hidden transition-[width] duration-200 ease-linear",
+        props.sidebarOpen !== false ? "w-[var(--jugglework-left-sidebar-width)]" : "w-0",
+      )} data-app-secondary-sidebar-frame>
       {props.sidebarOpen !== false ? <ReviewInbox
         reviews={props.reviews}
         reviewId={props.reviewId}
@@ -524,6 +528,7 @@ export function ReviewWorkbench(props: {
         onRetry={props.onRetryInbox}
         onRefresh={props.onRefreshInbox}
       /> : null}
+      </div>
       <ReviewDetail review={props.review} unknown={props.unknown} loading={props.loading} tab={props.tab ?? "summary"} onTabChange={props.onTabChange ?? (() => undefined)} tabLoading={props.tabLoading} tabError={props.tabError} truncated={props.truncated} revisionChanged={props.revisionChanged} onRetryTab={props.onRetryTab} onBack={() => props.onSelectReview(null)} />
     </div>
   );

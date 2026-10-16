@@ -67,6 +67,7 @@ import { AppSecondarySidebarTopControls } from "@/react-app/shell/app-secondary-
 import { useUiStateStore } from "@/react-app/shell/ui-state-store";
 import { appInsetSidebarCssWidth, useWorkspaceShellLayout } from "@/react-app/shell/workspace-shell-layout";
 import { ConfirmModal } from "@/react-app/design-system/modals/confirm-modal";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { currentLocale, t } from "@/i18n";
 import { AUTOMATION_TEMPLATES, type AutomationTemplate } from "./templates";
@@ -114,7 +115,8 @@ export function AutomationPage(props: AutomationPageProps) {
   }, [store]);
   const editMatch = location.pathname.match(/^\/automations\/([^/]+)$/);
   const editingId = editMatch && !AUTOMATION_RESERVED_SEGMENTS.has(editMatch[1]) ? decodeURIComponent(editMatch[1]) : null;
-  const editorVisible = location.pathname === "/automations/new" || Boolean(editingId);
+  const creating = location.pathname === "/automations/new";
+  const editorVisible = creating || Boolean(editingId);
   const templatesVisible = location.pathname === "/automations/templates";
   const [editorDirty, setEditorDirty] = useState(false);
   const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false);
@@ -184,7 +186,7 @@ export function AutomationPage(props: AutomationPageProps) {
         onOpenTaskSearch={props.onOpenTaskSearch}
         onOpenCreateWorkspace={props.onOpenCreateWorkspace}
       />
-      {!templatesVisible && !editorVisible ? (
+      {!templatesVisible && !editingId ? (
         <AppSecondarySidebarTopControls
           sidebarOpen={sidebarOpen}
           onOpenTaskSearch={props.onOpenTaskSearch ?? (() => undefined)}
@@ -199,15 +201,16 @@ export function AutomationPage(props: AutomationPageProps) {
             onBack={() => navigate("/automations")}
             onSelect={(template) => navigate("/automations/new", { state: { templateId: template.id } })}
           />
-        ) : editorVisible ? (
+        ) : editingId ? (
           localServerPending ? (
             <AutomationServerLoading />
           ) : client ? (
             <AutomationEditor
               client={client}
+              presentation="page"
               onManageConnectors={props.onOpenSettings}
               automationId={editingId}
-              duplicateSourceId={location.pathname === "/automations/new" ? new URLSearchParams(location.search).get("duplicate") : null}
+              duplicateSourceId={null}
               templateId={readTemplateId(location.state)}
               onDirtyChange={setEditorDirty}
               onCancel={cancelEditor}
@@ -228,6 +231,30 @@ export function AutomationPage(props: AutomationPageProps) {
           />
         )}
       </AppInsetSurface>
+      <Dialog open={creating} onOpenChange={(open) => { if (!open) cancelEditor(); }}>
+        <DialogContent
+          className="flex h-[min(860px,calc(100dvh-2rem))] max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-[760px] flex-col gap-0 overflow-hidden rounded-[28px] p-0 sm:max-w-[760px]"
+          data-testid="automation-create-dialog"
+        >
+          {localServerPending ? (
+            <AutomationServerLoading />
+          ) : client ? (
+            <AutomationEditor
+              client={client}
+              presentation="modal"
+              onManageConnectors={props.onOpenSettings}
+              automationId={null}
+              duplicateSourceId={new URLSearchParams(location.search).get("duplicate")}
+              templateId={readTemplateId(location.state)}
+              onDirtyChange={setEditorDirty}
+              onCancel={cancelEditor}
+              onSaved={() => { setEditorDirty(false); navigate("/automations"); }}
+            />
+          ) : (
+            <AutomationServerUnavailable onRetry={reconnectLocalServer} />
+          )}
+        </DialogContent>
+      </Dialog>
       <ConfirmModal
         open={discardConfirmOpen}
         title={t("automation.cancel")}
@@ -341,7 +368,13 @@ function AutomationDashboard(props: {
 
   return (
     <div className="relative flex h-full min-h-0 w-full overflow-hidden bg-background">
-      {props.sidebarOpen ? <aside data-testid="automation-sidebar" className="flex w-[var(--jugglework-left-sidebar-width)] shrink-0 flex-col border-r border-dls-border bg-[var(--app-secondary-sidebar-bg)] mac:titlebar-drag">
+      <div className={cn(
+        "h-full shrink-0 overflow-hidden transition-[width] duration-200 ease-linear",
+        props.sidebarOpen ? "w-[var(--jugglework-left-sidebar-width)]" : "w-0",
+      )}
+      data-app-secondary-sidebar-frame
+      >
+      {props.sidebarOpen ? <aside data-testid="automation-sidebar" className="flex h-full w-[var(--jugglework-left-sidebar-width)] shrink-0 flex-col border-r border-dls-border bg-[var(--app-secondary-sidebar-bg)] mac:titlebar-drag">
         <div className="flex h-[var(--app-topbar-height)] shrink-0 items-center gap-2 px-4 mac:titlebar-no-drag">
           <h1 className="min-w-0 flex-1 truncate text-base font-semibold">
             {props.history ? t("automation.tabs.runs") : t("automation.tabs.tasks")}
@@ -442,6 +475,7 @@ function AutomationDashboard(props: {
           </button>
         </nav>
       </aside> : null}
+      </div>
 
       {props.sidebarOpen ? (
         <AppSecondarySidebarResizeHandle
@@ -1008,6 +1042,7 @@ function TemplateCatalog({ onSelect }: { onSelect: (template: AutomationTemplate
 
 function AutomationEditor(props: {
   client: JuggleWorkServerClient | null;
+  presentation: "page" | "modal";
   onManageConnectors?: () => void;
   automationId: string | null;
   duplicateSourceId: string | null;
@@ -1283,9 +1318,16 @@ function AutomationEditor(props: {
   };
 
   if (loading) return <div className="flex h-full items-center justify-center text-dls-secondary">正在加载…</div>;
+  const modal = props.presentation === "modal";
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden" aria-busy={saving}>
-      <header className="z-30 shrink-0 border-b border-dls-border bg-background mac:titlebar-drag">
+      {modal ? (
+        <header className="shrink-0 px-6 pb-3 pt-6 pr-16">
+          <h1 className="text-[18px] font-semibold tracking-[-0.015em] text-dls-text">
+            {t("automation.new_task")}
+          </h1>
+        </header>
+      ) : <header className="z-30 shrink-0 border-b border-dls-border bg-background mac:titlebar-drag">
         <div className="mx-auto flex h-[var(--app-topbar-height)] w-full max-w-6xl items-center gap-3 px-6 lg:px-10">
           <div className="min-w-0 mac:titlebar-no-drag">
             <AutomationBreadcrumb
@@ -1312,9 +1354,12 @@ function AutomationEditor(props: {
             </button>
           </div>
         </div>
-      </header>
+      </header>}
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto w-full max-w-6xl px-6 pb-8 pt-3 lg:px-10">
+        <div className={cn(
+          "mx-auto w-full",
+          modal ? "px-6 pb-6 pt-1" : "max-w-6xl px-6 pb-8 pt-3 lg:px-10",
+        )}>
           {warningVisible ? <Notice>{t("automation.warning")}<button type="button" aria-label="关闭自动化运行提示" onClick={() => setWarningVisible(false)} className="float-right rounded p-0.5"><X className="size-4" /></button></Notice> : null}
           {error ? <Notice tone="error">{error}</Notice> : null}
 
@@ -1446,6 +1491,27 @@ function AutomationEditor(props: {
           </div>
         </div>
       </div>
+
+      {modal ? (
+        <footer className="flex shrink-0 items-center justify-end gap-2 border-t border-dls-border bg-background px-6 py-4">
+          <button
+            type="button"
+            disabled={saving}
+            onClick={props.onCancel}
+            className="inline-flex h-10 items-center rounded-full bg-dls-hover px-5 text-[13px] font-medium text-dls-text transition-colors hover:bg-dls-active disabled:opacity-50"
+          >
+            {t("automation.cancel")}
+          </button>
+          <button
+            type="button"
+            disabled={saving}
+            onClick={requestSave}
+            className="inline-flex h-10 items-center rounded-full bg-dls-text px-5 text-[13px] font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-35"
+          >
+            {saving ? t("automation.saving") : t("common.create")}
+          </button>
+        </footer>
+      ) : null}
 
       {permissionOpen ? <PermissionDialog accepted={riskAccepted} saving={saving} onAccepted={setRiskAccepted} onCancel={() => setPermissionOpen(false)} onConfirm={() => void save()} /> : null}
     </div>
