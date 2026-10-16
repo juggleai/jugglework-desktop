@@ -89,7 +89,10 @@ import {
   removeGatewayMirror,
   writeGatewayMirror,
 } from "./gateway-mirror";
-import { cleanupCloudProviderIndependently, registerOrganizationCleanup } from "./cloud-provider-cleanup";
+import {
+  cleanupCloudProviderIndependently,
+  registerOrganizationCloudCleanup,
+} from "./cloud-provider-cleanup";
 import {
   buildCustomProviderConfig,
   customProviderCredentialEnvEntry,
@@ -252,7 +255,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   let disposed = false;
   let started = false;
   let denSessionCleanup: (() => void) | null = null;
-  let organizationCleanup: (() => void) | null = null;
+  let organizationCloudCleanup: (() => void) | null = null;
   let lastWorkspaceKey = "";
 
   let state: MutableState = {
@@ -2424,7 +2427,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     // StrictMode double-mount re-arms after dispose.
     disposed = false;
     started = true;
-    organizationCleanup = registerOrganizationCleanup(purgeWorkspaceCloudState);
+    organizationCloudCleanup = registerOrganizationCloudCleanup(purgeWorkspaceCloudState);
     lastWorkspaceKey = currentWorkspaceKey();
     if (typeof window !== "undefined") {
       const handleDenSessionUpdate = (event: Event) => {
@@ -2474,8 +2477,8 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     started = false;
     denSessionCleanup?.();
     denSessionCleanup = null;
-    organizationCleanup?.();
-    organizationCleanup = null;
+    organizationCloudCleanup?.();
+    organizationCloudCleanup = null;
     listeners.clear();
   };
 

@@ -153,6 +153,12 @@ describe("session project settings panel", () => {
     expect(connectorModal).toContain("md:grid-cols-[repeat(2,minmax(0,1fr))]");
   });
 
+  test("shows connector origin in both rows and details so same-name sources remain distinguishable", () => {
+    expect(panelTypes).toContain("catalogSource: CatalogSource");
+    expect(connectorModal).toContain('t(`customization.source_${row.catalogSource}`)');
+    expect(connectorModal).toContain("contextLabels={[");
+  });
+
   test("uses soft workspace policy for runtime MCP switches without calling enabled config", () => {
     expect(settingsRoute).toContain("workspaceMcpToolPolicy.setServerEnabled");
     expect(settingsRoute).toContain('row.mcpSource === "config.global"');

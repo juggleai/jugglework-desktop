@@ -112,6 +112,7 @@ describe("project connector source", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]?.name).toBe("Notion");
     expect(rows[0]?.key).toBe("installed:Notion-MCP");
+    expect(rows[0]?.catalogSource).toBe("public");
   });
 
   test("keeps global and current-workspace MCP entries with their scopes", () => {
@@ -226,6 +227,7 @@ describe("project connector source", () => {
 
     expect(rows).toHaveLength(1);
     expect(rows[0]?.source).toBe("org");
+    expect(rows[0]?.catalogSource).toBe("organization");
     expect(rows[0]?.connected).toBe(true);
     expect(rows[0]?.key).toBe("org:connection-github");
   });
@@ -258,6 +260,7 @@ describe("project connector source", () => {
     });
 
     expect(rows.map((row) => row.key)).toEqual(["installed:github", "org:connection-github"]);
+    expect(rows.map((row) => row.catalogSource)).toEqual(["personal", "organization"]);
   });
 });
 

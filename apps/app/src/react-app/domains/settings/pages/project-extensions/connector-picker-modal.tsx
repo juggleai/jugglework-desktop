@@ -55,6 +55,7 @@ function ConnectorIcon({ row }: { row: ConnectorRow }) {
 }
 
 function ConnectorItem({ row, onOpenDetail }: { row: ConnectorRow; onOpenDetail: (row: ConnectorRow) => void }) {
+  const sourceLabel = t(`customization.source_${row.catalogSource}`);
   const scopeLabel = row.mcpSource === "config.global"
     ? t("project_extensions.scope_global")
     : row.mcpSource === "config.project" || row.mcpSource === "config.remote"
@@ -76,6 +77,9 @@ function ConnectorItem({ row, onOpenDetail }: { row: ConnectorRow; onOpenDetail:
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-2">
           <p className="truncate text-sm font-medium text-dls-text">{row.name}</p>
+          <span className="shrink-0 rounded-full bg-dls-active px-2 py-0.5 text-[10px] font-medium text-dls-text">
+            {sourceLabel}
+          </span>
           {scopeLabel ? (
             <span className="shrink-0 rounded-full bg-dls-bg px-2 py-0.5 text-[10px] text-dls-secondary">
               {scopeLabel}
@@ -336,6 +340,11 @@ function ConnectorDetailModal({ row, configSlotForEntry, onEdit, onClose }: {
   const configSlot = entry && row.mcpSource !== "config.global"
     ? configSlotForEntry?.(entry) ?? null
     : null;
+  const scopeLabel = row.mcpSource === "config.global"
+    ? t("project_extensions.scope_global")
+    : row.mcpSource === "config.project" || row.mcpSource === "config.remote"
+      ? t("project_extensions.scope_workspace")
+      : null;
 
   return (
     <ExtensionDetailModal
@@ -346,6 +355,10 @@ function ConnectorDetailModal({ row, configSlotForEntry, onEdit, onClose }: {
       iconSlug={row.iconSlug}
       iconSrc={row.iconSrc}
       kind={entry?.kind ?? "mcp"}
+      contextLabels={[
+        t(`customization.source_${row.catalogSource}`),
+        ...(scopeLabel ? [scopeLabel] : []),
+      ]}
       connected={row.connected}
       connecting={row.busy}
       preview={row.preview}

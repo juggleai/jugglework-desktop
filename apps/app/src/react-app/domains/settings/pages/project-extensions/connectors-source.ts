@@ -128,6 +128,7 @@ export function buildProjectConnectors(input: BuildConnectorsInput): ConnectorRo
         description: directory?.description,
         connected,
         source: "installed",
+        catalogSource: directory ? "public" : "personal",
         mcpSource: server.source,
         busy: input.mcpConnectingName === server.name,
         iconSlug: directory?.iconSlug,
@@ -184,6 +185,7 @@ export function buildProjectConnectors(input: BuildConnectorsInput): ConnectorRo
         // 但不能因此把已授权 MCP 移到未连接分组并让工作区开关消失。
         connected: policyConnected,
         source: "org",
+        catalogSource: "organization",
         busy: input.orgMcpConnectingId === connection.id || input.orgMcpDisconnectingId === connection.id,
         url: connection.url,
         onConnect: connected ? undefined : () => input.connectOrg(connection.id),
@@ -205,6 +207,7 @@ export function buildProjectConnectors(input: BuildConnectorsInput): ConnectorRo
         description: entry.description,
         connected: false,
         source: "directory",
+        catalogSource: "public",
         busy: input.mcpConnectingName === identity,
         iconSlug: entry.iconSlug,
         iconSrc: entry.iconSrc,

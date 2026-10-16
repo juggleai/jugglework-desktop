@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { cleanupCloudProviderIndependently, registerOrganizationCleanup, requireOrganizationCleanup } from "../src/react-app/domains/connections/provider-auth/cloud-provider-cleanup";
+import {
+  cleanupCloudProviderIndependently,
+  registerOrganizationCloudCleanup,
+  runOrganizationCloudCleanup,
+} from "../src/react-app/domains/connections/provider-auth/cloud-provider-cleanup";
 
 describe("cloud provider organization cleanup", () => {
   test("attempts mirror, auth, and runtime independently and fails closed", async () => {
@@ -14,14 +18,24 @@ describe("cloud provider organization cleanup", () => {
     expect(baselineRetained).toBe(true);
   });
 
-  test("blocks activation while any registered workspace cleanup is unresolved", async () => {
+  test("does not block organization activation when cloud cleanup fails", async () => {
     let activations = 0;
-    const unregister = registerOrganizationCleanup(async () => { throw new Error("fault"); });
+    let laterCleanupRan = false;
+    const unregister = registerOrganizationCloudCleanup(async () => {
+      throw new Error("fault");
+    });
+    const unregisterLater = registerOrganizationCloudCleanup(async () => {
+      laterCleanupRan = true;
+    });
     try {
-      await expect(requireOrganizationCleanup().then(() => { activations += 1; })).rejects.toThrow("Retry before switching organizations");
-      expect(activations).toBe(0);
+      await expect(runOrganizationCloudCleanup().then(() => {
+        activations += 1;
+      })).resolves.toBeUndefined();
+      expect(activations).toBe(1);
+      expect(laterCleanupRan).toBe(true);
     } finally {
       unregister();
+      unregisterLater();
     }
   });
 });

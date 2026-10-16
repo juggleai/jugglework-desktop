@@ -1,6 +1,7 @@
 import type { McpDirectoryInfo } from "@/app/constants";
 import type { McpServerConfig, McpServerSource } from "@/app/types";
 import type { SkillItem } from "../mcp-view";
+import type { CatalogSource } from "../catalog-source";
 import type { useWorkspaceSkillPolicy } from "@/react-app/domains/connections/use-workspace-skill-policy";
 import type { useWorkspacePluginPolicy } from "@/react-app/domains/connections/use-workspace-plugin-policy";
 
@@ -31,6 +32,7 @@ export type WorkspacePluginRow = {
  * @param connected 是否已连接
  * @param busy 是否正在连接/断开中
  * @param source 来源类别
+ * @param catalogSource 面向用户展示的来源：组织、公开目录或个人添加
  * @param mcpSource 已配置 MCP 的配置层，用于区分全局与当前工作区
  * @param iconSlug Simple Icons 品牌图标 slug
  * @param iconSrc 直接指定的图标地址，优先级高于 iconSlug
@@ -55,6 +57,7 @@ export type ConnectorRow = {
   connected: boolean;
   busy?: boolean;
   source: "org" | "directory" | "installed";
+  catalogSource: CatalogSource;
   mcpSource?: McpServerSource;
   iconSlug?: string;
   iconSrc?: string;

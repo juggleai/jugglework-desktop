@@ -40,6 +40,8 @@ export type ExtensionDetailModalProps = {
   iconSlug?: string;
   iconSrc?: string;
   kind?: ExtensionKind;
+  /** Compact origin/scope labels shown beside the extension kind. */
+  contextLabels?: string[];
   connected?: boolean;
   connectedLabel?: string;
   disconnectedLabel?: string;
@@ -191,6 +193,7 @@ export function ExtensionDetailModal({
   iconSlug,
   iconSrc,
   kind = "mcp",
+  contextLabels = [],
   connected = false,
   connectedLabel,
   disconnectedLabel,
@@ -276,6 +279,11 @@ export function ExtensionDetailModal({
               <DialogTitle>{name}</DialogTitle>
               <DialogDescription className="flex flex-wrap items-center gap-2">
                 <span>{kindLabel[kind]}</span>
+                {contextLabels.map((label) => (
+                  <span key={label} className="rounded-md bg-dls-active px-1.5 py-0.5 text-[10px] font-medium text-dls-text">
+                    {label}
+                  </span>
+                ))}
                 {preview ? (
                   <span className="rounded-md bg-blue-3 px-1.5 py-0.5 text-[10px] font-medium text-blue-11">
                     Preview
