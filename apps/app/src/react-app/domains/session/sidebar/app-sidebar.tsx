@@ -727,7 +727,6 @@ export type AppSidebarProps = {
   onOpenSettings: () => void;
   railPreviewActive?: boolean;
   previewTaskScope?: TaskScope;
-  onRailPreviewMenuChange?: (scope: TaskScope | null) => void;
   onRailPreviewEnter?: React.MouseEventHandler<HTMLElement>;
   onRailPreviewLeave?: React.MouseEventHandler<HTMLElement>;
   onReorderWorkspaces?: (workspaceIds: string[]) => void;
@@ -1044,7 +1043,6 @@ export function AppSidebar(props: AppSidebarProps) {
               onOpenChat={props.onOpenChat}
               onOpenReviews={props.onOpenReviews}
               onOpenSettings={props.onOpenSettings}
-              onPreviewMenuChange={props.onRailPreviewMenuChange}
             />
           )}
 

@@ -565,6 +565,12 @@ export function SessionPage(props: SessionPageProps) {
   }, [cancelSidebarPreviewClose, scheduleSidebarPreviewClose]);
   useEffect(() => () => cancelSidebarPreviewClose(), [cancelSidebarPreviewClose]);
   useEffect(() => {
+    if (!sidebarOpen) return;
+    cancelSidebarPreviewClose();
+    sidebarPreviewPointerInsideRef.current = false;
+    setSidebarPreviewScope(null);
+  }, [sidebarOpen, cancelSidebarPreviewClose]);
+  useEffect(() => {
     if (sidePanelOpen) return;
     setBrowserPanelDefaultWidth(browserPanelWidth);
   }, [sidePanelOpen, browserPanelWidth]);
@@ -1412,8 +1418,7 @@ export function SessionPage(props: SessionPageProps) {
           onReorderWorkspaces={props.sidebar.onReorderWorkspaces}
           onStartResize={startLeftSidebarResize}
           railPreviewActive={sidebarRailPreviewOpen}
-          previewTaskScope={sidebarPreviewScope ?? undefined}
-          onRailPreviewMenuChange={handleSidebarPreviewMenuChange}
+          previewTaskScope={sidebarRailPreviewOpen ? sidebarPreviewScope ?? undefined : undefined}
           onRailPreviewEnter={() => {
             sidebarPreviewPointerInsideRef.current = true;
             cancelSidebarPreviewClose();
