@@ -143,6 +143,10 @@ The application SHALL perform re-registration as one serialized, Main-owned oper
 - **WHEN** an eligible user activates `Re-register and enable` and enrollment succeeds
 - **THEN** the old transport and pending remote work are fenced, a distinct device identity is persisted, remote control is enabled, and the new device receives a matching `connection.welcome`
 
+#### Scenario: Equivalent fresh policy is republished during startup
+- **WHEN** Renderer republishes the same account, organization, feature gates, and policy version with only a newer policy validation timestamp while the new transport awaits `connection.welcome`
+- **THEN** Main retains the transport and the matching welcome waiter instead of treating the freshness renewal as an authorization-context change
+
 #### Scenario: Re-registration is invoked concurrently
 - **WHEN** the action is activated again while identity replacement is in progress
 - **THEN** the application prevents a second overlapping replacement and does not create multiple local identities
@@ -171,7 +175,7 @@ Identity replacement SHALL preserve the Cloud login token, signed-in account ses
 - **THEN** the user remains signed in with existing providers and workspaces while the prior Cloud device remains manageable through its normal Console lifecycle
 
 ### Requirement: Re-registration fails closed and remains retryable
-If replacement fails after old execution has been fenced, the application SHALL leave remote control disabled, close transport and sessions, remove incomplete new credential material, return a sanitized stable error, and allow retry with a fresh one-time enrollment authorization. Startup MUST NOT connect when settings and credential state represent an incomplete replacement.
+If replacement fails after old execution has been fenced, the application SHALL leave remote control disabled, close transport and sessions, remove incomplete new credential material, return a sanitized stable error, and allow retry with a fresh one-time enrollment authorization. Before cleanup, Main SHALL retain a content-free failure snapshot containing a fixed lifecycle stage and diagnostic code, sanitized agent error category, numeric WebSocket close code when applicable, and transport generations so a welcome failure can be distinguished from post-welcome managed-runtime policy synchronization failure after destructive cleanup. Startup MUST NOT connect when settings and credential state represent an incomplete replacement.
 
 #### Scenario: Enrollment exchange fails
 - **WHEN** the one-time authorization expires or the enrollment request fails after old credentials are removed
@@ -188,6 +192,10 @@ If replacement fails after old execution has been fenced, the application SHALL 
 #### Scenario: Socket fails before welcome
 - **WHEN** the socket opens but closes, errors, times out, is disabled, or changes identity/context before a matching `connection.welcome`
 - **THEN** re-registration returns the sanitized startup failure, removes the incomplete replacement identity, and leaves remote control disabled for a fresh retry
+
+#### Scenario: Managed-runtime policy synchronization fails after welcome
+- **WHEN** the replacement transport receives its matching `connection.welcome` but post-welcome managed-runtime pending-policy synchronization fails
+- **THEN** re-registration retains a `pending_policy` failure snapshot distinct from a `welcome` failure before applying the existing fail-closed cleanup, without recording tokens, payloads, server reason strings, or arbitrary error messages
 
 #### Scenario: Desktop restarts after interrupted replacement
 - **WHEN** the process restarts with enabled settings but without one complete valid remote credential

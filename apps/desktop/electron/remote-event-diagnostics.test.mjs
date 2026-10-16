@@ -25,6 +25,11 @@ describe("remote event diagnostics", () => {
     logger.debug("remote_session_raw_received", {
       eventType: "message.part.updated",
       projectedCount: 1,
+      stage: "welcome",
+      agentErrorCode: "transport_closed",
+      closeCode: 1008,
+      lifecycleGeneration: 12,
+      connectionGeneration: 7,
       workspaceId: "secret-workspace",
       token: "secret-token",
       body: "secret-content",
@@ -34,6 +39,8 @@ describe("remote event diagnostics", () => {
     const text = await readFile(logger.filePath, "utf8");
     assert.match(text, /remote_session_raw_received/);
     assert.match(text, /message\.part\.updated/);
+    assert.match(text, /"stage":"welcome"/);
+    assert.match(text, /"closeCode":1008/);
     assert.doesNotMatch(text, /secret|workspaceId|token|body/);
     assert.equal(consoleRecords.length, 1);
   });

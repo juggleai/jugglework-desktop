@@ -1075,6 +1075,7 @@ function stoppedRemoteControlAgentStatus() {
     replacementPending: false,
     replacementStatus: "idle",
     replacementErrorCode: null,
+    replacementFailure: null,
   };
 }
 
@@ -2132,6 +2133,7 @@ const remoteControlLifecycleManager = createRemoteControlLifecycleManager({
   },
   cancelPendingWork: cancelRemoteControlPendingWork,
   synchronizePendingPolicy: () => remoteControlPendingPolicy.synchronize(),
+  logger: remoteEventDiagnostics,
 });
 
 // Desktop IPC command registry. Every command invokable from the renderer's

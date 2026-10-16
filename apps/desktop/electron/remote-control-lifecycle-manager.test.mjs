@@ -11,6 +11,7 @@ const INPUT = Object.freeze({
 
 function harness({ failAt = null, pauseAt = null, status: statusOverrides = {} } = {}) {
   const calls = [];
+  const diagnostics = [];
   /** @type {() => void} */
   let resolveReplacement = () => {};
   /** @type {() => void} */
@@ -36,6 +37,9 @@ function harness({ failAt = null, pauseAt = null, status: statusOverrides = {} }
     enrolled: true,
     activeControlSessionCount: 0,
     remoteOperationCount: 0,
+    lifecycleGeneration: 1,
+    connectionGeneration: null,
+    lastErrorCode: null,
     ...statusOverrides,
   };
   const agent = {
@@ -58,7 +62,10 @@ function harness({ failAt = null, pauseAt = null, status: statusOverrides = {} }
       calls.push("welcome");
       await pause("welcome");
       if (signal.aborted) throw Object.assign(new Error("cancelled"), { code: "welcome_aborted" });
-      if (failAt === "welcome") throw Object.assign(new Error("rejected"), { code: "transport_closed_1008" });
+      if (failAt === "welcome") {
+        status = { ...status, lastErrorCode: "transport_closed_1008_policy_rejected" };
+        throw Object.assign(new Error("rejected"), { code: "transport_closed_1008_policy_rejected" });
+      }
       status = { ...status, state: "connected", connected: true };
       return status;
     },
@@ -91,9 +98,15 @@ function harness({ failAt = null, pauseAt = null, status: statusOverrides = {} }
         throw error;
       }
     },
-    synchronizePendingPolicy: async () => { calls.push("policy"); },
+    synchronizePendingPolicy: async () => {
+      calls.push("policy");
+      await pause("policy");
+      if (failAt === "policy-timeout") throw new ManagedRuntimeClientError("timeout");
+      if (failAt === "policy") throw new Error("secret-policy-failure");
+    },
+    logger: { warn: (message, metadata) => diagnostics.push({ message, metadata }) },
   });
-  return { manager, calls, resolveReplacement, replacementStarted, releaseStage, stageStarted, get settings() { return settings; } };
+  return { manager, calls, diagnostics, resolveReplacement, replacementStarted, releaseStage, stageStarted, get settings() { return settings; } };
 }
 
 describe("remote-control lifecycle manager", () => {
@@ -212,8 +225,53 @@ describe("remote-control lifecycle manager", () => {
     }
   });
 
+  it("retains a content-free welcome failure snapshot after cleanup", async () => {
+    const fixture = harness({ failAt: "welcome" });
+    const result = await fixture.manager.reregisterAndEnable(INPUT);
+    assert.equal(result.ok, false);
+    assert.equal(result.error.code, "startup_failed");
+    assert.deepEqual(result.status.replacementFailure, {
+      stage: "welcome",
+      code: "welcome_transport_closed",
+      agentErrorCode: "transport_closed",
+      closeCode: 1008,
+      lifecycleGeneration: 1,
+      connectionGeneration: null,
+    });
+    assert.deepEqual(fixture.manager.status().replacementFailure, result.status.replacementFailure);
+    assert.deepEqual(fixture.diagnostics, [{
+      message: "remote_control_replacement_failed",
+      metadata: result.status.replacementFailure,
+    }]);
+    assert.doesNotMatch(JSON.stringify(result.status.replacementFailure), /policy_rejected|secret/i);
+  });
+
+  it("distinguishes managed-runtime policy failure after a successful welcome", async () => {
+    const fixture = harness({ failAt: "policy-timeout" });
+    const result = await fixture.manager.reregisterAndEnable(INPUT);
+    assert.equal(result.ok, false);
+    assert.equal(result.error.code, "startup_failed");
+    assert.equal(result.status.replacementFailure.stage, "pending_policy");
+    assert.equal(result.status.replacementFailure.code, "pending_policy_timeout");
+    assert.equal(result.status.replacementFailure.agentErrorCode, null);
+    assert.ok(fixture.calls.indexOf("policy") > fixture.calls.indexOf("welcome"));
+    assert.ok(fixture.calls.indexOf("delete") > fixture.calls.indexOf("policy"));
+  });
+
+  it("keeps replacement pending while post-welcome policy synchronization is queued", async () => {
+    const fixture = harness({ pauseAt: "policy" });
+    const replacement = fixture.manager.reregisterAndEnable(INPUT);
+    await fixture.stageStarted;
+    const pending = fixture.manager.status();
+    assert.equal(pending.connected, true);
+    assert.equal(pending.replacementPending, true);
+    assert.equal(pending.replacementFailure, null);
+    fixture.releaseStage();
+    assert.equal((await replacement).ok, true);
+  });
+
   for (const entryPoint of ["IPC Stop All", "tray Stop All", "direct disable"]) {
-    for (const stage of ["replacement", "enable", "startup", "welcome"]) {
+    for (const stage of ["replacement", "enable", "startup", "welcome", "policy"]) {
       it(`${entryPoint} wins over replacement during ${stage}`, async () => {
         const fixture = harness({ pauseAt: stage });
         const replacement = fixture.manager.reregisterAndEnable(INPUT);

@@ -719,6 +719,32 @@ describe("remote-control agent context and lifecycle", () => {
     assert.equal(socket.listenerCount("message"), messageListeners);
   });
 
+  it("observes a welcome that arrived before the lifecycle waiter was registered", async () => {
+    const fixture = harness();
+    const socket = await connect(fixture);
+    socket.receive(welcome(77));
+    await settle();
+    const connected = await fixture.agent.waitForWelcome({ timeoutMs: 5_000 });
+    assert.equal(connected.state, REMOTE_CONTROL_AGENT_STATUS.CONNECTED);
+    assert.equal(connected.connectionGeneration, 77);
+  });
+
+  it("keeps the pending welcome across an equivalent policy freshness renewal", async () => {
+    const fixture = harness();
+    const socket = await connect(fixture);
+    const waiting = fixture.agent.waitForWelcome({ timeoutMs: 5_000 });
+    fixture.clock.time += 1;
+    await fixture.agent.syncContext(signedInContext({
+      validatedAt: new Date(fixture.clock.time).toISOString(),
+    }));
+    assert.equal(fixture.sockets.length, 1);
+    assert.equal(socket.closeCalls + socket.terminateCalls, 0);
+    socket.receive(welcome(77));
+    const connected = await waiting;
+    assert.equal(connected.state, REMOTE_CONTROL_AGENT_STATUS.CONNECTED);
+    assert.equal(connected.connectionGeneration, 77);
+  });
+
   it("rejects a welcome wait on a pre-welcome policy close", async () => {
     const fixture = harness();
     const socket = await connect(fixture);

@@ -10,6 +10,47 @@ const ERROR_MESSAGES = Object.freeze({
   cancelled: "Device identity replacement was cancelled because remote control was disabled.",
 });
 const STARTUP_WELCOME_TIMEOUT_MS = 15_000;
+const REPLACEMENT_FAILURE_STAGES = new Set([
+  "eligibility",
+  "stop",
+  "enrollment",
+  "enable",
+  "startup",
+  "welcome",
+  "pending_policy",
+]);
+const WELCOME_FAILURE_CODES = new Set([
+  "welcome_aborted",
+  "welcome_unavailable",
+  "welcome_timeout",
+  "welcome_connection_changed",
+  "welcome_context_changed",
+  "welcome_disabled",
+  "invalid_welcome",
+  "invalid_message",
+  "transport_error",
+  "transport_send_failed",
+]);
+const AGENT_FAILURE_CODES = new Set([
+  "policy_version_unavailable",
+  "policy_unavailable",
+  "credentials_unavailable",
+  "credentials_context_mismatch",
+  "settings_disable_failed",
+  "credentials_delete_failed",
+  "device_disabled",
+  "token_unavailable",
+  "invalid_token",
+  "transport_create_failed",
+  "transport_error",
+  "transport_send_failed",
+  "transport_stale",
+  "invalid_welcome",
+  "invalid_message",
+  "invalid_protocol",
+  "encryption_negotiation_failed",
+  "identity_replacement_failed",
+]);
 
 function safeError(code) {
   return Object.freeze({ code, message: ERROR_MESSAGES[code], retryable: code !== "not_eligible" });
@@ -34,6 +75,48 @@ function canIgnorePendingCancellationFailure(error, beforeStopStatus, afterStopS
     isExplicitlyQuiescent(beforeStopStatus) && isExplicitlyQuiescent(afterStopStatus);
 }
 
+function closeCode(value) {
+  const match = /^transport_closed_(\d{3,4})(?:_|$)/.exec(typeof value === "string" ? value : "");
+  if (!match) return null;
+  const code = Number(match[1]);
+  return Number.isSafeInteger(code) && code >= 1000 && code <= 4999 ? code : null;
+}
+
+function stableAgentErrorCode(value) {
+  if (closeCode(value) !== null) return "transport_closed";
+  return AGENT_FAILURE_CODES.has(value) ? value : null;
+}
+
+function stableFailureCode(stage, cause) {
+  if (cause?.code === "replacement_cancelled") return "replacement_cancelled";
+  if (stage === "pending_policy" && cause instanceof ManagedRuntimeClientError) {
+    return `pending_policy_${cause.code}`;
+  }
+  if (stage === "welcome") {
+    if (closeCode(cause?.code) !== null) return "welcome_transport_closed";
+    if (WELCOME_FAILURE_CODES.has(cause?.code)) return cause.code;
+    return "welcome_failed";
+  }
+  return stage === "eligibility" ? "not_eligible"
+    : stage === "stop" ? "stop_failed"
+      : stage === "enrollment" ? "enrollment_failed"
+        : stage === "enable" ? "enable_failed"
+          : stage === "startup" ? "startup_initialize_failed"
+            : "pending_policy_failed";
+}
+
+function failureSnapshot(stage, cause, agentStatus) {
+  const normalizedStage = REPLACEMENT_FAILURE_STAGES.has(stage) ? stage : "startup";
+  return Object.freeze({
+    stage: normalizedStage,
+    code: stableFailureCode(normalizedStage, cause),
+    agentErrorCode: stableAgentErrorCode(agentStatus?.lastErrorCode),
+    closeCode: closeCode(cause?.code) ?? closeCode(agentStatus?.lastErrorCode),
+    lifecycleGeneration: Number.isSafeInteger(agentStatus?.lifecycleGeneration) ? agentStatus.lifecycleGeneration : 0,
+    connectionGeneration: Number.isSafeInteger(agentStatus?.connectionGeneration) ? agentStatus.connectionGeneration : null,
+  });
+}
+
 export function createRemoteControlLifecycleManager({
   getAgent,
   disableSettings,
@@ -41,6 +124,7 @@ export function createRemoteControlLifecycleManager({
   applyLocalEffects,
   cancelPendingWork,
   synchronizePendingPolicy,
+  logger = null,
 }) {
   if (typeof getAgent !== "function" || typeof disableSettings !== "function" ||
       typeof enableSettings !== "function" || typeof applyLocalEffects !== "function" ||
@@ -51,6 +135,7 @@ export function createRemoteControlLifecycleManager({
   let pending = false;
   let replacementStatus = "idle";
   let replacementErrorCode = null;
+  let replacementFailure = null;
   let cancellationEpoch = 0;
   let replacementController = null;
   let replacementSettled = Promise.resolve();
@@ -64,6 +149,7 @@ export function createRemoteControlLifecycleManager({
       replacementPending: pending,
       replacementStatus,
       replacementErrorCode,
+      replacementFailure,
     });
   }
 
@@ -135,6 +221,7 @@ export function createRemoteControlLifecycleManager({
     if (!validGrant(input) || !initialStatus.enrollmentAuthorized || !initialStatus.locallyDisabled) {
       replacementStatus = "failed";
       replacementErrorCode = "not_eligible";
+      replacementFailure = failureSnapshot("eligibility", null, initialStatus);
       const error = safeError("not_eligible");
       return Object.freeze({ ok: false, status: status(), error });
     }
@@ -142,6 +229,7 @@ export function createRemoteControlLifecycleManager({
     pending = true;
     replacementStatus = "idle";
     replacementErrorCode = null;
+    replacementFailure = null;
     let stage = "stop";
     let identityReplacementStarted = false;
     const epoch = cancellationEpoch;
@@ -178,13 +266,17 @@ export function createRemoteControlLifecycleManager({
       if (!started || !["connecting", "awaiting_welcome", "connected"].includes(started.state)) {
         throw new Error("Remote-control startup did not initialize.");
       }
+      stage = "welcome";
       const connected = await agent.waitForWelcome({ timeoutMs: STARTUP_WELCOME_TIMEOUT_MS, signal: controller.signal });
       assertCurrent(epoch, controller.signal);
       if (!connected || connected.state !== "connected" || connected.connected !== true) {
         throw new Error("Remote-control startup did not receive a welcome.");
       }
+      stage = "pending_policy";
       await synchronizePendingPolicy();
+      assertCurrent(epoch, controller.signal);
       replacementStatus = "succeeded";
+      replacementFailure = null;
       pending = false;
       return Object.freeze({ ok: true, status: project(agent.status()), error: null });
     } catch (cause) {
@@ -193,6 +285,9 @@ export function createRemoteControlLifecycleManager({
         : stage === "enrollment" ? "enrollment_failed"
           : stage === "enable" ? "enable_failed"
             : "startup_failed";
+      const failedStatus = agent.status();
+      replacementFailure = failureSnapshot(stage, cause, failedStatus);
+      try { logger?.warn?.("remote_control_replacement_failed", replacementFailure); } catch {}
       await cleanup(agent, {
         deleteIdentity: identityReplacementStarted && (!cancelled || stage !== "enrollment"),
       });

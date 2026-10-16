@@ -518,6 +518,17 @@ export type DesktopRemoteControlAgentStatus = {
   replacementPending: boolean;
   replacementStatus: "idle" | "succeeded" | "failed";
   replacementErrorCode: DesktopRemoteControlReregisterErrorCode | null;
+  /** Content-free snapshot captured before replacement failure cleanup. */
+  replacementFailure: DesktopRemoteControlReplacementFailure | null;
+};
+
+export type DesktopRemoteControlReplacementFailure = {
+  stage: "eligibility" | "stop" | "enrollment" | "enable" | "startup" | "welcome" | "pending_policy";
+  code: string;
+  agentErrorCode: string | null;
+  closeCode: number | null;
+  lifecycleGeneration: number;
+  connectionGeneration: number | null;
 };
 
 export type DesktopRemoteControlReregisterErrorCode =

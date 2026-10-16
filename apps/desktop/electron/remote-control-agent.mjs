@@ -337,6 +337,25 @@ function identityKey(context) {
     : null;
 }
 
+/**
+ * Compares authorization semantics without treating a freshness timestamp
+ * renewal as a transport policy change. Renderer policy refresh can publish
+ * the same validated policy twice with different validatedAt values.
+ * @param {RemoteControlAgentContext | null} context
+ */
+function authorizationKey(context) {
+  if (!context) return null;
+  return JSON.stringify({
+    signedIn: context.signedIn,
+    controlPlaneBaseUrl: context.controlPlaneBaseUrl,
+    userId: context.userId,
+    organizationId: context.organizationId,
+    policyFresh: context.policyFresh,
+    featureGates: context.featureGates,
+    policyVersion: context.policyVersion,
+  });
+}
+
 /** @param {RemoteControlAgentContext} context */
 function credentialContext(context) {
   return {
@@ -698,7 +717,11 @@ export function createRemoteControlAgent(options) {
   /** @param {RemoteControlSocket} target @param {number} generation */
   function resolveWelcomeWaiters(target, generation) {
     for (const waiter of [...welcomeWaiters]) {
-      if (waiter.target === target && waiter.generation === generation && waiter.context === context) waiter.resolve(status());
+      // A semantically identical policy refresh may replace the normalized
+      // context object while this socket is awaiting welcome. Real identity or
+      // authorization changes invalidate the transport and reject waiters, so
+      // matching the live socket and lifecycle generation is sufficient here.
+      if (waiter.target === target && waiter.generation === generation) waiter.resolve(status());
     }
   }
 
@@ -1958,7 +1981,7 @@ export function createRemoteControlAgent(options) {
       state = started ? REMOTE_CONTROL_AGENT_STATUS.WAITING_FOR_CONTEXT : REMOTE_CONTROL_AGENT_STATUS.STOPPED;
       throw error;
     }
-    const contextChanged = context !== null && JSON.stringify(context) !== JSON.stringify(next);
+    const contextChanged = context !== null && authorizationKey(context) !== authorizationKey(next);
     const switched = identityKey(context) !== identityKey(next);
     if (switched) {
       clearAuthorizations();
@@ -2117,11 +2140,10 @@ export function createRemoteControlAgent(options) {
     if (signal?.aborted) return Promise.reject(welcomeWaitError("welcome_aborted", "Remote-control welcome wait was cancelled."));
     const target = socket;
     const generation = lifecycleGeneration;
-    const activeContext = context;
     if (target && state === REMOTE_CONTROL_AGENT_STATUS.CONNECTED && connectionGeneration !== null) {
       return Promise.resolve(status());
     }
-    if (!target || !activeContext || (state !== REMOTE_CONTROL_AGENT_STATUS.CONNECTING && state !== REMOTE_CONTROL_AGENT_STATUS.AWAITING_WELCOME)) {
+    if (!target || !context || (state !== REMOTE_CONTROL_AGENT_STATUS.CONNECTING && state !== REMOTE_CONTROL_AGENT_STATUS.AWAITING_WELCOME)) {
       return Promise.reject(welcomeWaitError("welcome_unavailable", "Remote-control connection is not awaiting a welcome."));
     }
     return new Promise((resolve, reject) => {
@@ -2135,7 +2157,6 @@ export function createRemoteControlAgent(options) {
       const waiter = {
         target,
         generation,
-        context: activeContext,
         resolve: (value) => { cleanup(); resolve(value); },
         reject: (error) => { cleanup(); reject(error); },
       };
@@ -2145,7 +2166,7 @@ export function createRemoteControlAgent(options) {
         waiter.reject(welcomeWaitError("welcome_timeout", "Remote-control connection welcome timed out."));
       }, timeoutMs);
       if (signal?.aborted) onAbort();
-      else if (target !== socket || generation !== lifecycleGeneration || activeContext !== context) {
+      else if (target !== socket || generation !== lifecycleGeneration) {
         waiter.reject(welcomeWaitError("welcome_connection_changed", "Remote-control connection changed before welcome."));
       } else if (state === REMOTE_CONTROL_AGENT_STATUS.CONNECTED && connectionGeneration !== null) {
         waiter.resolve(status());

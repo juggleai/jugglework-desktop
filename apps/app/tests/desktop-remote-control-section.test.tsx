@@ -31,6 +31,7 @@ function status(overrides: Partial<DesktopRemoteControlAgentStatus> = {}): Deskt
     replacementPending: false,
     replacementStatus: "idle",
     replacementErrorCode: null,
+    replacementFailure: null,
     ...overrides,
   };
 }

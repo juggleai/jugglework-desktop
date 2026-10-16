@@ -68,6 +68,7 @@ const stoppedStatus: DesktopRemoteControlAgentStatus = {
   replacementPending: false,
   replacementStatus: "idle",
   replacementErrorCode: null,
+  replacementFailure: null,
 };
 
 export function shouldShowRemoteControlReregister(input: {
@@ -363,6 +364,12 @@ export function DesktopRemoteControlSection() {
       ) : null}
       {status.lastErrorCode ? (
         <SettingsNotice tone="error">最近错误：{status.lastErrorCode}</SettingsNotice>
+      ) : null}
+      {status.replacementFailure ? (
+        <SettingsNotice tone="error">
+          注册失败阶段：{status.replacementFailure.stage} · {status.replacementFailure.code}
+          {status.replacementFailure.closeCode ? ` · WebSocket ${status.replacementFailure.closeCode}` : ""}
+        </SettingsNotice>
       ) : null}
 
         <div className="flex flex-wrap items-center gap-2">

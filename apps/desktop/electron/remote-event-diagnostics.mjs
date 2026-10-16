@@ -4,10 +4,13 @@ import path from "node:path";
 const MAX_LOG_BYTES = 1024 * 1024;
 const ALLOWED_METADATA_KEYS = new Set([
   "accepted",
+  "agentErrorCode",
   "attempt",
   "bindingCount",
   "code",
   "contentType",
+  "connectionGeneration",
+  "closeCode",
   "eventType",
   "hasAuthorization",
   "hasCursor",
@@ -15,6 +18,8 @@ const ALLOWED_METADATA_KEYS = new Set([
   "reason",
   "retryDelayMs",
   "status",
+  "stage",
+  "lifecycleGeneration",
 ]);
 
 /** @param {unknown} value */
