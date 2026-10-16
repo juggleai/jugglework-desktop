@@ -685,9 +685,15 @@ describe("authoritative session mutation APIs", () => {
     const localRequest = fetch(`${runPath(harness.base, "ses_race")}/start`, {
       method: "POST",
       headers: harness.collaboratorHeaders,
-      body: JSON.stringify({ origin: "local-renderer", startCommandCorrelationId: "cmd_local", prompt }),
+      body: JSON.stringify({
+        origin: "local-renderer",
+        startCommandCorrelationId: "cmd_local",
+        responseLanguage: { detected: "zh", fallback: "en" },
+        prompt,
+      }),
     });
     await waitUntil(() => engine.prompts.length === 1);
+    expect(JSON.stringify(engine.prompts[0]?.body)).toContain("Use Simplified Chinese for all user-facing responses");
 
     const remoteResponse = await fetch(`${runPath(harness.base, "ses_race")}/start`, {
       method: "POST",
@@ -704,7 +710,11 @@ describe("authoritative session mutation APIs", () => {
     expect(busy.details.currentRunId).toMatch(/^[0-9a-f-]{36}$/i);
     expect(engine.prompts).toHaveLength(1);
     expect(engine.statusRequests).toEqual([harness.root, harness.root]);
-    expect(engine.prompts[0]).toEqual({ sessionId: "ses_race", body: prompt, directory: harness.root });
+    expect(engine.prompts[0]).toMatchObject({
+      sessionId: "ses_race",
+      body: { ...prompt, system: expect.stringContaining("Use Simplified Chinese for all user-facing responses") },
+      directory: harness.root,
+    });
 
     hold.resolve();
     const localResponse = await localRequest;
@@ -755,6 +765,78 @@ describe("authoritative session mutation APIs", () => {
       run: { generation: 2, origin: "remote-control", startCommandCorrelationId: "cmd_retry" },
     });
     expect(engine.prompts).toHaveLength(2);
+  });
+
+  test("failed prompt admission rolls back its response-language change", async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+
+    const first = await fetch(`${runPath(harness.base, "ses_language_failure")}/start`, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+      body: JSON.stringify({
+        origin: "local-renderer",
+        startCommandCorrelationId: "language-zh",
+        responseLanguage: { detected: "zh", fallback: "en" },
+        prompt: { parts: [{ type: "text", text: "中文请求" }] },
+      }),
+    });
+    expect(first.status).toBe(202);
+
+    const active = (await first.json() as { run: { runId: string } }).run;
+    engine.statuses.set("ses_language_failure", { type: "idle" });
+    await fetch(`${runPath(harness.base, "ses_language_failure")}/${active.runId}/observations`, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+      body: JSON.stringify({ status: "completed" }),
+    });
+    engine.failedPrompts.add("ses_language_failure");
+
+    const failed = await fetch(`${runPath(harness.base, "ses_language_failure")}/start`, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+      body: JSON.stringify({
+        origin: "local-renderer",
+        startCommandCorrelationId: "language-en-failed",
+        responseLanguage: { detected: "en", fallback: "en" },
+        prompt: { parts: [{ type: "text", text: "English request" }] },
+      }),
+    });
+    expect(failed.status).toBe(502);
+
+    const db = new Database(runtimeDbPath(harness.config), { readonly: true });
+    try {
+      expect(db.query(
+        "SELECT response_language FROM session_response_languages WHERE workspace_id = ? AND session_id = ?",
+      ).get("ws_1", "ses_language_failure")).toEqual({ response_language: "zh" });
+    } finally {
+      db.close();
+    }
+  });
+
+  test("remote user prose updates the durable language without a UI locale", async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+
+    const response = await fetch(`${runPath(harness.base, "ses_remote_language")}/start`, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+      body: JSON.stringify({
+        origin: "remote-control",
+        startCommandCorrelationId: "remote-language-zh",
+        prompt: { parts: [{ type: "text", text: "请帮我检查这个改动" }] },
+      }),
+    });
+    expect(response.status).toBe(202);
+
+    const db = new Database(runtimeDbPath(harness.config), { readonly: true });
+    try {
+      expect(db.query(
+        "SELECT response_language FROM session_response_languages WHERE workspace_id = ? AND session_id = ?",
+      ).get("ws_1", "ses_remote_language")).toEqual({ response_language: "zh" });
+    } finally {
+      db.close();
+    }
   });
 
   test("proxied command activity reserves the session while preserving immediate acknowledgement", async () => {

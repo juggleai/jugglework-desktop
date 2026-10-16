@@ -1,7 +1,12 @@
 /** @jsxImportSource react */
+import type { CSSProperties } from "react";
 import { AppNavigationRail } from "./app-navigation-rail";
 import { AppInsetSurface } from "./app-inset-surface";
+import { AppSecondarySidebarResizeHandle } from "./app-secondary-sidebar-resize-handle";
+import { AppSecondarySidebarTopControls } from "./app-secondary-sidebar-top-controls";
 import { SettingsRoute } from "./settings-route";
+import { useUiStateStore } from "./ui-state-store";
+import { appInsetSidebarCssWidth, useWorkspaceShellLayout } from "./workspace-shell-layout";
 import type { OpenCreateWorkspace } from "@/react-app/domains/workspace/types";
 
 export type AppsPageProps = {
@@ -20,8 +25,14 @@ export type AppsPageProps = {
 };
 
 export function AppsPage(props: AppsPageProps) {
+  const sidebarOpen = useUiStateStore((state) => state.sidebarOpen);
+  const toggleSidebar = useUiStateStore((state) => state.toggleSidebar);
+  const { leftSidebarResizing, leftSidebarWidth, startLeftSidebarResize } = useWorkspaceShellLayout({ expandedRightWidth: 520 });
+  const pageStyle = {
+    "--jugglework-left-sidebar-width": appInsetSidebarCssWidth(leftSidebarWidth),
+  } as CSSProperties;
   return (
-    <div className="flex h-full min-h-0 w-full overflow-hidden bg-dls-sidebar mac:titlebar-drag">
+    <div className="relative flex h-full min-h-0 w-full overflow-hidden bg-dls-sidebar mac:titlebar-drag" style={pageStyle}>
       <AppNavigationRail
         appsActive
         onOpenAccount={props.onOpenAccount}
@@ -33,7 +44,12 @@ export function AppsPage(props: AppsPageProps) {
         onOpenTaskSearch={props.onOpenTaskSearch}
         onOpenCreateWorkspace={props.onOpenCreateWorkspace}
       />
-      <AppInsetSurface testId="plugins-inset-surface">
+      <AppSecondarySidebarTopControls
+        sidebarOpen={sidebarOpen}
+        onOpenTaskSearch={props.onOpenTaskSearch}
+        onToggleSidebar={toggleSidebar}
+      />
+      <AppInsetSurface className="relative" testId="plugins-inset-surface">
         <SettingsRoute
           embedded
           contentOnly
@@ -41,7 +57,14 @@ export function AppsPage(props: AppsPageProps) {
           initialPath="extensions/plugins"
           workspaceId={props.workspaceId ?? undefined}
           active={props.active}
+          secondarySidebarOpen={sidebarOpen}
         />
+        {sidebarOpen ? (
+          <AppSecondarySidebarResizeHandle
+            resizing={leftSidebarResizing}
+            onPointerDown={startLeftSidebarResize}
+          />
+        ) : null}
       </AppInsetSurface>
     </div>
   );

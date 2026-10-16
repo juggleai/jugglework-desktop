@@ -16,7 +16,7 @@ The session shell currently uses a tinted left application/workspace region, an 
 - Redesigning side-panel contents or data.
 - Changing navigation order or side-panel persistence.
 - Changing the native Electron titlebar mode.
-- Applying the rounded session shell to unrelated full-page Settings, Chat, Automation, or Review surfaces in this slice.
+- Redesigning the data or primary content of unrelated full-page Settings, Chat, Automation, or Review surfaces; those surfaces may reuse the shared inset shell and secondary-sidebar geometry.
 
 ## Decisions
 
@@ -35,6 +35,10 @@ Browser, Voice, Files, and Extensions buttons move to the existing `mac:titlebar
 ### Remove right-rail geometry completely
 
 The vertical `<aside>` is removed rather than visually hidden. Expanded Files changes from `right-11` to `right-0`, because there is no longer a reserved right edge.
+
+### Reuse secondary-sidebar geometry across dedicated app surfaces
+
+Automation, Plugins, and Reviews reuse the persisted workspace sidebar width, collapse state, and resize interaction so navigation boundaries remain stable between primary Rail destinations. Dedicated inset surfaces subtract their outer gap and clamp the effective sidebar width against the viewport to preserve a usable content pane. Collapse controls remain available on every desktop platform, while macOS retains the existing no-drag titlebar treatment.
 
 ## Risks / Trade-offs
 

@@ -180,6 +180,8 @@
      暗色主题在 [data-theme="dark"] / .dark 块中重新映射，不影响亮色。 */
   --app-page-bg: #ffffff;
   --app-list-bg: #f7f7f8;
+  /* 二级侧栏统一使用不透明的混合结果，避免同一个半透明背景叠在不同父层上产生色差。 */
+  --app-secondary-sidebar-bg: color-mix(in srgb, var(--app-list-bg) 45%, var(--app-page-bg));
   /* TIPS 已发送消息气泡背景 token（唯一来源，改色只改这里）：
      工作区会话内容、消息页（jugglechat）发送出的消息气泡统一引用。 */
   --app-msg-sent-bg: #f3f3f4;
@@ -249,6 +251,7 @@
   /* 暗色下统一背景 token 回映射到 slate 灰阶（页面 slate-1 / 列表 slate-2） */
   --app-page-bg: var(--slate-1);
   --app-list-bg: var(--slate-2);
+  --app-secondary-sidebar-bg: color-mix(in srgb, var(--app-list-bg) 45%, var(--app-page-bg));
   --app-msg-sent-bg: var(--slate-3);
   --dls-surface: var(--app-page-bg);
   --dls-sidebar: var(--app-list-bg);

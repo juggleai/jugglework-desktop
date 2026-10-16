@@ -29,20 +29,24 @@ describe("Desktop automation catalog and routes", () => {
   });
 
   test("places automation immediately below cloud workspace in the primary rail", () => {
-    expect(APP_PRIMARY_RAIL_ORDER).toEqual(["local-workspace", "cloud-workspace", "automations", "chat", "contacts", "more"]);
+    expect(APP_PRIMARY_RAIL_ORDER).toEqual(["local-workspace", "cloud-workspace", "automations", "plugins", "chat", "contacts", "more"]);
   });
 
-  test("uses compact dashboard typography without changing its layout primitives", () => {
+  test("uses a compact two-pane dashboard with a centered template landing", () => {
     const page = readFileSync(new URL("../src/react-app/domains/automations/automation-page.tsx", import.meta.url), "utf8");
-    const firstAutomation = page.slice(page.indexOf("function FirstAutomation"), page.indexOf("function TaskList"));
+    const landing = page.slice(page.indexOf("function AutomationTaskLanding"), page.indexOf("function TaskList"));
     const catalog = page.slice(page.indexOf("function TemplateCatalog"), page.indexOf("function AutomationEditor"));
-    expect(firstAutomation).toContain('text-base font-medium');
-    expect(firstAutomation).toContain('text-[13px] font-medium');
-    expect(catalog).toContain('text-lg font-medium');
-    expect(catalog).toContain('block text-sm font-medium');
+    expect(page).toContain('data-testid="automation-sidebar"');
+    expect(page).toContain('data-testid="automation-main"');
+    expect(page).toContain('w-[var(--jugglework-left-sidebar-width)] shrink-0');
+    expect(landing).toContain('max-w-4xl');
+    expect(landing).toContain('automation.schedule_tasks');
+    expect(catalog).toContain('block text-[13px] font-medium');
     expect(catalog).toContain('block text-xs leading-5 text-dls-secondary');
-    expect(catalog).toContain('grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3');
-    expect(catalog).toContain('min-h-32');
+    expect(catalog).toContain('grid grid-cols-1 gap-4 md:grid-cols-2');
+    expect(catalog).toContain('min-h-28');
+    expect(catalog).toContain('border-dashed');
+    expect(page).toContain('triggerSummaryLabel(task.trigger)');
   });
 
   test("automation prompt reuses the session editor without a run-task action", () => {
@@ -67,8 +71,8 @@ describe("Desktop automation catalog and routes", () => {
     const rail = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
     expect(page).toMatch(/grid-cols-1[^\n]+md:grid-cols-2[^\n]+xl:grid-cols-3/);
     expect(page).toMatch(/navigate\("\/automations\/new", \{ state: \{ templateId:/);
-    expect(page).toMatch(/!loading && !props\.history[\s\S]+<TemplateCatalog/);
-    expect(page).toMatch(/tasks\.length === 0 \? <FirstAutomation/);
+    expect(page).toMatch(/<AutomationTaskLanding onSelect=/);
+    expect(page).toMatch(/AUTOMATION_TEMPLATES\.slice\(0, 6\)/);
     expect(page).toMatch(/onOpenHome=\{\(\) => navigateAfterDiscard\(\(\) => navigate\(props\.sessionPath\)\)\}/);
     expect(rail).toMatch(/active=\{location\.pathname\.startsWith\("\/automations"\)\}/);
     expect(page).toMatch(/value\.schedule\.kind === "once"[\s\S]+请选择单次任务的未来日期和时间/);
@@ -97,8 +101,9 @@ describe("Desktop automation catalog and routes", () => {
     expect(page).toMatch(/AUTOMATION_RESERVED_SEGMENTS = new Set\(\["new", "runs", "templates"\]\)/);
     expect(page).toMatch(/templatesVisible = location\.pathname === "\/automations\/templates"/);
     expect(parseWorkspaceAppPath("/automations/templates")).toEqual({ view: "automations", workspaceId: null });
-    // 有任务时模板画廊只在「从模版添加」页出现，列表底部不再重复一份。
-    expect(page).toMatch(/tasks\.length === 0 \? <TemplateCatalog/);
+    // 左侧任务栏始终保留完整模板入口，右侧只展示六个快速建议。
+    expect(page).toMatch(/navigate\("\/automations\/templates"\)/);
+    expect(page).toMatch(/AUTOMATION_TEMPLATES\.slice\(0, 6\)/);
     expect(page).toMatch(/t\("automation\.batch_manage"\)/);
     for (const locale of ["zh", "en"]) {
       const table = readFileSync(new URL(`../src/i18n/locales/${locale}.ts`, import.meta.url), "utf8");
@@ -123,12 +128,12 @@ describe("Desktop automation catalog and routes", () => {
     expect(page).toMatch(/ensureLocalJuggleWorkServerClient\(\)/);
   });
 
-  test("matches automation header controls to the default create-workspace button size", () => {
+  test("keeps search and creation controls compact inside the task sidebar", () => {
     const page = readFileSync(new URL("../src/react-app/domains/automations/automation-page.tsx", import.meta.url), "utf8");
-    expect(page).toMatch(/inline-flex h-9 rounded-xl bg-dls-hover/);
-    expect(page).toMatch(/placeholder=\{t\("automation\.search"\)\} className="h-9[^\"]+text-sm/);
-    expect(page).toMatch(/inline-flex h-9 items-center gap-1\.5 rounded-xl border[^\"]+text-sm font-medium/);
-    expect(page).not.toMatch(/inline-flex h-11|placeholder=\{t\("automation\.search"\)\} className="h-11/);
+    expect(page).toMatch(/aria-expanded=\{searchVisible\}/);
+    expect(page).toMatch(/placeholder=\{t\("automation\.search"\)\} className="h-9[^\"]+text-\[13px\]/);
+    expect(page).toMatch(/navigate\("\/automations\/new"\)[\s\S]+automation\.new_task/);
+    expect(page).not.toMatch(/placeholder=\{t\("automation\.search"\)\} className="h-11/);
   });
 
   test("matches the automation editor actions to the session Run task button", () => {
@@ -163,12 +168,12 @@ describe("Desktop automation catalog and routes", () => {
     expect(connectorSelect).toMatch(/aria-multiselectable="true"/);
   });
 
-  test("keeps the empty automation state compact and uses its internal create action", () => {
+  test("keeps empty-task copy in the sidebar and creation available above it", () => {
     const page = readFileSync(new URL("../src/react-app/domains/automations/automation-page.tsx", import.meta.url), "utf8");
-    expect(page).toMatch(/!props\.history && tasks\.length > 0 \? \([\s\S]+navigate\("\/automations\/new"\)/);
-    expect(page).toMatch(/<section className="flex min-h-\[364px\] flex-col items-center justify-center text-center">/);
-    expect(page).not.toMatch(/min-h-\[520px\]/);
-    expect(page).toMatch(/tasks\.length === 0 \? <FirstAutomation/);
+    expect(page).toMatch(/navigate\("\/automations\/new"\)[\s\S]+t\("automation\.new_task"\)/);
+    expect(page).toMatch(/!loading && tasks\.length === 0/);
+    expect(page).toMatch(/t\("automation\.no_scheduled_tasks"\)/);
+    expect(page).toMatch(/<AutomationTaskLanding onSelect=/);
   });
 
   test("uses project confirm dialogs for single and batch automation deletion", () => {
@@ -254,16 +259,15 @@ describe("Desktop automation catalog and routes", () => {
     expect(editor).toMatch(/<div className="mt-4 space-y-7">/);
   });
 
-  test("matches the fixed draggable editor header on task and run-list pages", () => {
+  test("keeps draggable chrome and independent scrolling in the dashboard panes", () => {
     const page = readFileSync(new URL("../src/react-app/domains/automations/automation-page.tsx", import.meta.url), "utf8");
-    const dashboard = page.slice(page.indexOf("function AutomationDashboard"), page.indexOf("function SegmentedTabs"));
+    const dashboard = page.slice(page.indexOf("function AutomationDashboard"), page.indexOf("function AutomationServerLoading"));
     expect(page).toMatch(/templatesVisible \? "overflow-auto" : "overflow-hidden"/);
-    expect(dashboard).toMatch(/flex h-full min-h-0 flex-col overflow-hidden/);
-    expect(dashboard).toMatch(/<header className="z-30 shrink-0 border-b border-dls-border bg-background\/95 mac:titlebar-drag">/);
-    expect(dashboard).toMatch(/mx-auto flex h-14 w-full max-w-\[1500px\]/);
-    expect(dashboard).toMatch(/<div className="mac:titlebar-no-drag">[\s\S]+<SegmentedTabs/);
-    expect(dashboard).toMatch(/ml-auto flex items-center gap-3 mac:titlebar-no-drag/);
-    expect(dashboard).toMatch(/<div className="min-h-0 flex-1 overflow-y-auto">/);
+    expect(dashboard).toMatch(/relative flex h-full min-h-0 w-full overflow-hidden bg-background/);
+    expect(dashboard).toMatch(/<aside[^>]+mac:titlebar-drag/);
+    expect(dashboard).toMatch(/h-\[var\(--app-topbar-height\)\][^\"]+mac:titlebar-no-drag/);
+    expect(dashboard).toMatch(/min-h-0 flex-1 overflow-y-auto px-2 pb-3/);
+    expect(dashboard).toMatch(/<main data-testid="automation-main" className="min-w-0 flex-1 overflow-hidden">/);
   });
 });
 

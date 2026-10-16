@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { homedir, platform } from "node:os";
 import { z } from "zod";
 import type { JuggleWorkAffordanceEffects } from "@jugglework/types/jugglework-affordance";
+import { responseLanguageInstruction } from "@jugglework/types/response-language";
 import {
   combineInstructionSections,
   composeAgentInstructions,
@@ -28,6 +29,8 @@ type ExtensionActionPayload = {
   args: Record<string, unknown>;
   context: ReturnType<typeof contextPayload>;
 };
+
+type ResponseLanguage = "en" | "zh";
 
 const listActionsArgsSchema = z.object({
   extensionId: z.string().optional().describe("Optional extension id to filter by, such as google-workspace."),
@@ -437,6 +440,29 @@ async function serverGet(path: string): Promise<unknown> {
   const payload = await parseResponse(response);
   if (!response.ok) throw new Error(errorMessage(payload, "JuggleWork server request failed"));
   return payload;
+}
+
+async function readSessionResponseLanguage(
+  sessionID: string | undefined,
+  context: OpenCodeContext,
+): Promise<ResponseLanguage | null> {
+  if (!sessionID) return null;
+  const directory = context.directory?.trim() || context.worktree?.trim();
+  const workspaceId = context.workspaceId?.trim() || context.workspaceID?.trim();
+  if (!directory && !workspaceId) return null;
+  const query = new URLSearchParams();
+  if (directory) query.set("directory", directory);
+  else if (workspaceId) query.set("workspaceId", workspaceId);
+  try {
+    const payload = objectRecord(await serverGet(
+      `/internal/session-response-language/${encodeURIComponent(sessionID)}?${query.toString()}`,
+    ));
+    return payload?.language === "zh" || payload?.language === "en" ? payload.language : null;
+  } catch {
+    // Language steering is best effort: a transient local-server read failure
+    // must not prevent the model request from running.
+    return null;
+  }
 }
 
 async function readConnectSkillDescriptors(): Promise<ConnectSkillDescriptor[]> {
@@ -970,12 +996,20 @@ export const JuggleWorkExtensionsPreview = async (factoryInput?: unknown) => {
   return {
   "experimental.chat.system.transform": async (input: unknown, output: { system: string[] }) => {
     const mergedInput = mergeTransformInputWithFactoryContext(input, factoryContext);
-    const [extensionDiscovery, skillCatalog] = await Promise.all([
+    const hookContext = normalizeOpenCodeContext(input);
+    const requestContext = {
+      ...factoryContext,
+      ...hookContext,
+      ...(isRecord(input) && isRecord(input.context) ? normalizeOpenCodeContext(input.context) : {}),
+    };
+    const sessionID = optionalStringProperty(input, "sessionID") ?? hookContext.sessionID;
+    const [extensionDiscovery, skillCatalog, responseLanguage] = await Promise.all([
       resolveJuggleWorkExtensionDiscovery(mergedInput, fetch, {
         client: engineMcpStatusClient,
         directory: engineMcpStatusDirectory,
       }),
       resolveJuggleWorkConnectSkillPromptCatalog(mergedInput, fetch),
+      readSessionResponseLanguage(sessionID, requestContext),
     ]);
     const skillAuthoring = composeSkillAuthoringInstruction({
       cloudReady: extensionDiscovery.cloudReady,
@@ -996,6 +1030,7 @@ export const JuggleWorkExtensionsPreview = async (factoryInput?: unknown) => {
       createInstructionSection("skill-authoring", skillAuthoring.prompt),
       createInstructionSection("connect-skills", skillCatalog.instruction),
       createInstructionSection("browser", JUGGLEWORK_BROWSER_INSTRUCTION),
+      createInstructionSection("response-language", responseLanguage ? responseLanguageInstruction(responseLanguage) : ""),
     );
     output.system.push(...composeAgentInstructions(sections));
   },

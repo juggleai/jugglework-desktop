@@ -1,6 +1,11 @@
 import type { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import { desktopRemotePromptPartSchema } from "@jugglework/types/desktop-remote-control";
 import { z } from "zod";
+import {
+  detectResponseLanguageFromText,
+  responseLanguageInstruction,
+  type ResponseLanguage,
+} from "@jugglework/types/response-language";
 import { ApiError } from "../errors.js";
 import { admitOpencodePrompt } from "../opencode-admission.js";
 import {
@@ -62,6 +67,19 @@ interface RegisterSessionRoutesOptions {
   sessionMutations: SessionMutationCoordinator;
   sessionPendingOperations: SessionPendingOperationStore;
   sessionPendingOperationPump: SessionPendingOperationPump;
+  applySessionResponseLanguage?: (input: {
+    workspaceId: string;
+    sessionId: string;
+    detected?: ResponseLanguage;
+    fallback: ResponseLanguage;
+  }) => { language: ResponseLanguage; rollback: () => void };
+  resolveSessionResponseLanguage?: (input: {
+    workspaceId: string;
+    sessionId: string;
+    detected?: ResponseLanguage;
+    fallback: ResponseLanguage;
+  }) => ResponseLanguage;
+  copySessionResponseLanguage?: (workspaceId: string, sourceSessionId: string, targetSessionId: string) => void;
   /** Post-delete cleanup for session-scoped server-owned state. */
   onSessionDeleted?: (workspaceId: string, sessionId: string) => void;
 }
@@ -94,6 +112,11 @@ function parseSessionCreateTitle(value: unknown): string {
 }
 
 const runIdentifierSchema = z.string().trim().min(1).max(256).refine((value) => !/[\u0000-\u001f\u007f]/.test(value));
+const responseLanguageSchema = z.enum(["en", "zh"]);
+const responseLanguageSignalSchema = z.object({
+  detected: responseLanguageSchema.optional(),
+  fallback: responseLanguageSchema,
+}).strict();
 const promptBodySchema = z.object({
   messageID: runIdentifierSchema.optional(),
   model: z.object({ providerID: runIdentifierSchema, modelID: runIdentifierSchema }).strict().optional(),
@@ -124,6 +147,7 @@ const startRunBodySchema = z.discriminatedUnion("origin", [
     origin: z.literal("local-renderer"),
     startCommandCorrelationId: runIdentifierSchema.nullable(),
     prompt: promptBodySchema,
+    responseLanguage: responseLanguageSignalSchema.optional(),
     whenBusy: z.enum(["reject", "steer"]).default("reject"),
   }).strict(),
   z.object({
@@ -211,6 +235,17 @@ function promptBodyToV2Input(prompt: Record<string, unknown>) {
   };
 }
 
+function promptText(prompt: Record<string, unknown>): string {
+  return Array.isArray(prompt.parts)
+    ? prompt.parts.flatMap((part) => isRecord(part) && part.type === "text" && typeof part.text === "string" ? [part.text] : []).join("\n")
+    : "";
+}
+
+function withResponseLanguageSystem(prompt: Record<string, unknown>, language: ResponseLanguage): Record<string, unknown> {
+  const existing = typeof prompt.system === "string" && prompt.system.trim() ? `${prompt.system.trim()}\n\n` : "";
+  return { ...prompt, system: `${existing}${responseLanguageInstruction(language)}` };
+}
+
 function remapSessionMutationError(error: unknown): never {
   if (error instanceof SessionMutationError) {
     const message = error.code === "session_busy"
@@ -241,6 +276,9 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     sessionMutations,
     sessionPendingOperations,
     sessionPendingOperationPump,
+    applySessionResponseLanguage,
+    resolveSessionResponseLanguage,
+    copySessionResponseLanguage,
     onSessionDeleted,
   } = options;
   const sessionGroupEvents = new SessionGroupEventStore();
@@ -711,6 +749,7 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
       await opencode.session.fork({ sessionID: sessionId, messageID: body.messageId }),
       `/session/${encodeURIComponent(sessionId)}/fork`,
     ));
+    copySessionResponseLanguage?.(workspace.id, sessionId, item.id);
     return jsonResponse({ item }, 201);
   });
 
@@ -757,6 +796,10 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
       origin: SessionMutationOrigin;
       startCommandCorrelationId: string | null;
       prompt: Record<string, unknown>;
+      responseLanguage?: {
+        detected?: ResponseLanguage;
+        fallback: ResponseLanguage;
+      };
       whenBusy?: "reject" | "steer" | "enqueue";
     },
   ) {
@@ -824,14 +867,26 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
           if (!input.startCommandCorrelationId) {
             throw new ApiError(400, "invalid_payload", "Local steer requires an admission id");
           }
-          await admitOpencodePrompt(createWorkspaceOpencodeClient(config, workspace), {
-            workspaceId: workspace.id,
-            sessionId: input.sessionId,
-            source: "local-steer",
-            id: input.startCommandCorrelationId,
-            prompt: promptBodyToV2Input(input.prompt),
-            delivery: "steer",
-          });
+          const languageMutation = input.responseLanguage
+            ? applySessionResponseLanguage?.({
+              workspaceId: workspace.id,
+              sessionId: input.sessionId,
+              ...input.responseLanguage,
+            })
+            : undefined;
+          try {
+            await admitOpencodePrompt(createWorkspaceOpencodeClient(config, workspace), {
+              workspaceId: workspace.id,
+              sessionId: input.sessionId,
+              source: "local-steer",
+              id: input.startCommandCorrelationId,
+              prompt: promptBodyToV2Input(input.prompt),
+              delivery: "steer",
+            });
+          } catch (error) {
+            languageMutation?.rollback();
+            throw error;
+          }
           return jsonResponse({ disposition: "steered", admissionId: input.startCommandCorrelationId }, 202);
         }
         if (input.origin === "remote-control" && input.whenBusy && input.whenBusy !== "reject") {
@@ -878,7 +933,37 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
       remapSessionMutationError(error);
     }
     try {
-      await dispatchSessionPromptAsync(config, workspace, input.sessionId, input.prompt);
+      const responseLanguage = input.origin === "local-renderer"
+        ? input.responseLanguage
+        : (() => {
+            const detected = detectResponseLanguageFromText(promptText(input.prompt));
+            return detected ? { detected, fallback: "en" as const } : null;
+          })();
+      const languageMutation = responseLanguage
+        ? applySessionResponseLanguage?.({
+          workspaceId: workspace.id,
+          sessionId: input.sessionId,
+          ...responseLanguage,
+        })
+        : undefined;
+      const selectedResponseLanguage = languageMutation?.language ?? (responseLanguage
+        ? resolveSessionResponseLanguage?.({
+            workspaceId: workspace.id,
+            sessionId: input.sessionId,
+            ...responseLanguage,
+          }) ?? responseLanguage.detected ?? responseLanguage.fallback
+        : null);
+      try {
+        await dispatchSessionPromptAsync(
+          config,
+          workspace,
+          input.sessionId,
+          selectedResponseLanguage ? withResponseLanguageSystem(input.prompt, selectedResponseLanguage) : input.prompt,
+        );
+      } catch (error) {
+        languageMutation?.rollback();
+        throw error;
+      }
       return jsonResponse({
         disposition: "started",
         run: sessionMutations.acceptStart({ workspaceId: workspace.id, sessionId: input.sessionId, runId: run.runId }) ?? run,

@@ -1048,7 +1048,7 @@ export function AppSidebar(props: AppSidebarProps) {
 
           <div
             className={cn(
-              "flex min-h-0 min-w-0 flex-1 flex-col bg-background md:-mr-px md:mb-1.5 md:ml-1 md:mt-[var(--session-shell-top-inset)] md:overflow-hidden md:rounded-l-[18px] md:border md:border-r-0 md:border-dls-border md:shadow-[0_1px_2px_rgba(0,0,0,0.04)]",
+              "flex min-h-0 min-w-0 flex-1 flex-col bg-[var(--app-secondary-sidebar-bg)] md:-mr-px md:mb-1.5 md:ml-1 md:mt-[var(--session-shell-top-inset)] md:overflow-hidden md:rounded-l-[18px] md:border md:border-r-0 md:border-dls-border md:shadow-[0_1px_2px_rgba(0,0,0,0.04)]",
               props.railPreviewActive && "md:rounded-r-[18px] md:border-r md:shadow-[0_18px_48px_rgba(15,23,42,0.18)] dark:md:shadow-[0_18px_48px_rgba(0,0,0,0.42)]",
               props.railPreviewActive && "pointer-events-auto",
             )}

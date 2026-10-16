@@ -42,6 +42,8 @@
 - [x] 1.38 Keep plugin catalog refresh dependencies stable so loading state does not repeatedly flash
 - [x] 1.39 Keep MCP resources owned by built-in plugins out of the standalone Connectors catalog
 - [x] 1.40 Use the organization plugin list as the canonical catalog and treat Marketplaces as optional collections
+- [x] 1.43 Reuse the persisted workspace sidebar width, resize handle, and collapse controls across Automation, Plugins, and Reviews while preserving a usable compact-window content pane
+- [x] 1.44 Apply one opaque theme-aware secondary-sidebar background across workspace and dedicated app surfaces
 
 ## 2. Utility Actions
 
@@ -52,3 +54,4 @@
 
 - [x] 3.1 Add focused desktop shell layout contracts for chrome, rounded work surface, and horizontal utility actions
 - [x] 3.2 Run focused tests, type checks, production build, OpenSpec validation, and diff checks
+- [x] 3.3 Add focused contracts for shared app-sidebars, cross-platform collapse recovery, compact-width clamping, and Review collapse behavior

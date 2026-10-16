@@ -77,7 +77,7 @@ async function transformedSystem(plugin: Awaited<ReturnType<typeof JuggleWorkExt
   return output.system.join("\n");
 }
 
-function startFakeJuggleWorkServer(options: { createSkillAvailable?: boolean } = {}) {
+function startFakeJuggleWorkServer(options: { createSkillAvailable?: boolean; responseLanguage?: "en" | "zh" } = {}) {
   const requests: Array<{ pathname: string; search: string; authorization: string | null; method: string; body?: unknown }> = [];
 
   const workspaceOne = { id: "ws_1", name: "Main", path: "/tmp/main" };
@@ -122,6 +122,10 @@ function startFakeJuggleWorkServer(options: { createSkillAvailable?: boolean } =
           workspace: { resolution: "resolved", id: "ws_2", directory: "/tmp/archive" },
           googleWorkspace: { legacyConfigured: false },
         });
+      }
+
+      if (url.pathname.startsWith("/internal/session-response-language/")) {
+        return Response.json({ language: options.responseLanguage ?? null });
       }
 
       if (url.pathname === "/experimental/connect/skills") {
@@ -235,6 +239,38 @@ function startFakeJuggleWorkServer(options: { createSkillAvailable?: boolean } =
 describe("JuggleWorkExtensionsPreview session tools", () => {
   test("plugin entry exposes only the factory export for the OpenCode loader", () => {
     expect(Object.keys(JuggleWorkExtensionsPreviewEntry)).toEqual(["JuggleWorkExtensionsPreview"]);
+  });
+
+  test("reinjects the genuine user response language after compaction continuations", async () => {
+    const server = startFakeJuggleWorkServer({ responseLanguage: "zh" });
+    const plugin = await JuggleWorkExtensionsPreview({ directory: "/tmp/main" });
+    const output: { system: string[] } = { system: [] };
+
+    await plugin["experimental.chat.system.transform"]({ sessionID: "ses_alpha" }, output);
+
+    expect(output.system.join("\n")).toContain("Use Simplified Chinese for all user-facing responses");
+    expect(output.system.join("\n")).toContain("synthetic continuation messages");
+    expect(server.requests).toContainEqual(expect.objectContaining({
+      pathname: "/internal/session-response-language/ses_alpha",
+      search: "?directory=%2Ftmp%2Fmain",
+    }));
+  });
+
+  test("uses per-request workspace context for response-language lookup", async () => {
+    const server = startFakeJuggleWorkServer({ responseLanguage: "en" });
+    const plugin = await JuggleWorkExtensionsPreview({ directory: "/tmp/archive" });
+    const output: { system: string[] } = { system: [] };
+
+    await plugin["experimental.chat.system.transform"]({
+      sessionID: "ses_alpha",
+      context: { directory: "/tmp/main" },
+    }, output);
+
+    expect(output.system.join("\n")).toContain("Use English for all user-facing responses");
+    expect(server.requests).toContainEqual(expect.objectContaining({
+      pathname: "/internal/session-response-language/ses_alpha",
+      search: "?directory=%2Ftmp%2Fmain",
+    }));
   });
 
   test("projects built-in, extension, and Connect providers into one agent context", async () => {

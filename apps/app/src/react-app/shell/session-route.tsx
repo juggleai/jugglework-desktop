@@ -14,6 +14,7 @@ import type {
   ProviderListResponse,
   TextPartInput,
 } from "@opencode-ai/sdk/v2/client";
+import type { ResponseLanguage } from "@jugglework/types/response-language";
 
 import { captureAnalyticsEvent, markTaskRunStart } from "@/app/lib/analytics";
 import { createLocalWorkspaceForRuntime } from "@/app/lib/local-workspace-create";
@@ -79,7 +80,7 @@ import {
   resolveModelDisplayName,
   safeStringify,
 } from "@/app/utils";
-import { t } from "@/i18n";
+import { currentLocale, t } from "@/i18n";
 import {
   type RouteWorkspace,
   type RouteSession,
@@ -127,6 +128,7 @@ import { useRestrictionNotice } from "@/react-app/domains/cloud/restriction-noti
 import { ReactSessionRuntime } from "@/react-app/domains/session/sync/runtime-sync";
 import { useSessionActivityStore } from "@/react-app/domains/session/status/session-activity-store";
 import { buildJuggleWorkEnvSystemContext } from "@/react-app/domains/session/sync/env-context";
+import { detectResponseLanguage } from "@/react-app/domains/session/sync/response-language";
 import {
   applySessionRevert,
 } from "@/react-app/domains/session/sync/session-sync";
@@ -1695,9 +1697,13 @@ export function SessionRoute(props: SessionRouteProps = {}) {
               return;
             }
 
-            const result = await opencodeClient.session.promptAsync({
+            // Keep JuggleWork-only language metadata outside the OpenCode prompt
+            // contract; the mounted client strips it into the run-start envelope.
+            const promptRequest = {
               sessionID: targetSessionId,
               parts: preparedParts ?? [],
+              juggleworkDetectedResponseLanguage: detectResponseLanguage(draft) ?? undefined,
+              juggleworkDefaultResponseLanguage: (currentLocale() === "zh" ? "zh" : "en") satisfies ResponseLanguage,
               model: targetModel ?? undefined,
               agent: readSessionAgentChoice(selectedWorkspaceId, targetSessionId) ?? undefined,
               ...(targetVariant ? { variant: targetVariant } : {}),
@@ -1706,7 +1712,8 @@ export function SessionRoute(props: SessionRouteProps = {}) {
                 juggleworkDelivery: "steer" as const,
                 juggleworkAdmissionId: submission.admissionId,
               } : {}),
-            });
+            };
+            const result = await opencodeClient.session.promptAsync(promptRequest);
             if (result.error) {
               if (result.error instanceof Error) throw result.error;
               throw new Error(serializeSDKError(result.error));

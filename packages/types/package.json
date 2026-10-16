@@ -60,6 +60,11 @@
       "development": "./src/reviews.ts",
       "default": "./dist/reviews.js"
     },
+    "./response-language": {
+      "types": "./src/response-language.ts",
+      "development": "./src/response-language.ts",
+      "default": "./dist/response-language.js"
+    },
     "./den/desktop-app-restrictions": {
       "types": "./src/den/desktop-app-restrictions.ts",
       "development": "./src/den/desktop-app-restrictions.ts",

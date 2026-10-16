@@ -48,6 +48,7 @@ import type {
   SessionPermissionModeState,
   SessionPermissionModeUpdateRequest,
 } from "@jugglework/types/session-permission-modes";
+import type { ResponseLanguageSignal } from "@jugglework/types/response-language";
 import {
   reviewChecksResponseSchema,
   reviewConnectionStatusSchema,
@@ -2671,6 +2672,12 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
         { token, hostToken, timeoutMs: timeouts.sessionRead },
       );
     },
+    forkSession: (workspaceId: string, sessionId: string, input: { messageId?: string }) =>
+      requestJson<{ item: Session }>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/fork`,
+        { token, hostToken, method: "POST", body: input, timeoutMs: timeouts.sessionRead },
+      ),
     startSessionRun: (
       workspaceId: string,
       sessionId: string,
@@ -2678,6 +2685,7 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
         origin: JuggleWorkSessionRunOrigin;
         startCommandCorrelationId: string | null;
         prompt: JuggleWorkSessionPrompt;
+        responseLanguage?: ResponseLanguageSignal;
         whenBusy?: "reject" | "steer";
       },
     ) => requestJson<JuggleWorkSessionStartResult>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/runs/start`, {

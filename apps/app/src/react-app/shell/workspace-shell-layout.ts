@@ -22,6 +22,22 @@ type WorkspaceShellLayoutOptions = {
   maxRightWidth?: number;
 };
 
+/** AppInsetSurface 在主导航右侧额外保留的水平间距。 */
+export const APP_INSET_SIDEBAR_OFFSET = 4;
+
+/**
+ * 专用页面的二级侧栏位于 AppInsetSurface 内，需扣除 inset 间距，
+ * 才能让它的右边界与本地/云端工作区的列表边界完全重合。
+ */
+export function appInsetSidebarWidth(workspaceSidebarWidth: number) {
+  return Math.max(0, workspaceSidebarWidth - APP_INSET_SIDEBAR_OFFSET);
+}
+
+/** Preserve a usable content pane at compact desktop window sizes. */
+export function appInsetSidebarCssWidth(workspaceSidebarWidth: number) {
+  return `min(${appInsetSidebarWidth(workspaceSidebarWidth)}px, max(156px, calc(100vw - 320px)))`;
+}
+
 function clampNumber(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }

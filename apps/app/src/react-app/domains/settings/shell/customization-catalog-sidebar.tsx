@@ -111,7 +111,7 @@ export function CustomizationCatalogSidebar(props: {
   return (
     <aside
       aria-label={t("customization.navigation_label")}
-      className="flex h-full w-[156px] shrink-0 flex-col overflow-hidden border-r border-dls-border bg-dls-sidebar/55 sm:w-[216px]"
+      className="flex h-full w-[var(--jugglework-left-sidebar-width)] shrink-0 flex-col overflow-hidden border-r border-dls-border bg-dls-sidebar/55"
       data-testid="customization-catalog-sidebar"
     >
       <div className="shrink-0 px-4 pb-3 pt-5">

@@ -121,6 +121,8 @@ describe("mounted JuggleWork session mutations", () => {
       variant: "high",
       parts: [{ type: "text" as const, text: "hello" }],
       reasoning_effort: "medium",
+      juggleworkDetectedResponseLanguage: "zh" as const,
+      juggleworkDefaultResponseLanguage: "en" as const,
     };
 
     const result = await mountedClient().session.promptAsync(prompt);
@@ -133,6 +135,7 @@ describe("mounted JuggleWork session mutations", () => {
     expect(calls[0]?.body).toEqual({
       origin: "local-renderer",
       startCommandCorrelationId: expect.any(String),
+      responseLanguage: { detected: "zh", fallback: "en" },
       prompt: {
         messageID: prompt.messageID,
         model: prompt.model,
@@ -181,6 +184,21 @@ describe("mounted JuggleWork session mutations", () => {
         ],
       },
     });
+  });
+
+  test("routes session forks through the semantic JuggleWork endpoint", async () => {
+    const calls = mockFetch((call) => {
+      if (call.url.endsWith("/workspace/workspace-1/sessions/session-1/fork")) {
+        return jsonResponse({ item: { id: "session-fork", title: "Fork", time: { created: 1, updated: 1 } } }, 201);
+      }
+      throw new Error(`Unexpected request: ${call.method} ${call.url}`);
+    });
+
+    const result = await mountedClient().session.fork({ sessionID: "session-1", messageID: "message-1" });
+
+    expect(result.error).toBeUndefined();
+    expect(calls[0]?.body).toEqual({ messageId: "message-1" });
+    expect(result.data).toMatchObject({ id: "session-fork" });
   });
 
   test("returns session_busy from a local/remote start race without direct fallback", async () => {

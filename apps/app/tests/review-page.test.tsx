@@ -19,7 +19,7 @@ const { ConnectedState, ReviewWorkbench, reviewMatches } = await import("../src/
 
 const noop = () => undefined;
 
-function renderWorkbench(reviewId: string | null) {
+function renderWorkbench(reviewId: string | null, sidebarOpen = true) {
   const review = reviewPreviewById(reviewId);
   return renderToStaticMarkup(
     <ReviewWorkbench
@@ -32,6 +32,7 @@ function renderWorkbench(reviewId: string | null) {
       onQueryChange={noop}
       onRelationshipChange={noop}
       onSelectReview={noop}
+      sidebarOpen={sidebarOpen}
     />,
   );
 }
@@ -43,8 +44,15 @@ describe("Review workbench preview", () => {
     expect(html).toContain("Connected");
     expect(html).toContain("Pull request inbox");
     expect(html).toContain("Select a pull request");
-    expect(html).toContain("md:w-[360px]");
+    expect(html).toContain("md:w-[var(--jugglework-left-sidebar-width)]");
     expect(html.match(/data-testid="review-inbox-item-/g)).toHaveLength(REVIEW_PREVIEWS.length);
+  });
+
+  test("hides the Inbox when the shared secondary sidebar is collapsed", () => {
+    const html = renderWorkbench(null, false);
+
+    expect(html).not.toContain("Pull request inbox");
+    expect(html).toContain("Select a pull request");
   });
 
   test("renders summary and deferred external operations for a selected pull request", () => {

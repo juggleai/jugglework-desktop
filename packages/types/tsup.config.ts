@@ -13,6 +13,7 @@ export default defineConfig({
     "media-generation": "src/media-generation.ts",
     "provider-credentials": "src/provider-credentials.ts",
     reviews: "src/reviews.ts",
+    "response-language": "src/response-language.ts",
     "den/desktop-app-restrictions": "src/den/desktop-app-restrictions.ts",
     "den/desktop-policies": "src/den/desktop-policies.ts",
     "den/egress-diagnostics": "src/den/egress-diagnostics.ts",

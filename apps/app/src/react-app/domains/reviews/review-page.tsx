@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useDeferredValue, useEffect, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useState, type CSSProperties } from "react";
 import {
   ArrowLeft,
   AlertCircle,
@@ -26,6 +26,10 @@ import { currentLocale } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { AppNavigationRail } from "@/react-app/shell/app-navigation-rail";
 import { AppInsetSurface } from "@/react-app/shell/app-inset-surface";
+import { AppSecondarySidebarResizeHandle } from "@/react-app/shell/app-secondary-sidebar-resize-handle";
+import { AppSecondarySidebarTopControls } from "@/react-app/shell/app-secondary-sidebar-top-controls";
+import { useUiStateStore } from "@/react-app/shell/ui-state-store";
+import { appInsetSidebarCssWidth, useWorkspaceShellLayout } from "@/react-app/shell/workspace-shell-layout";
 import type { OpenCreateWorkspace } from "@/react-app/domains/workspace/types";
 import type { ReviewConnectionStatus, ReviewRelationship as WireReviewRelationship } from "@jugglework/types/reviews";
 
@@ -154,7 +158,7 @@ function ReviewInbox(props: {
 }) {
   return (
     <aside className={cn(
-      "min-h-0 w-full shrink-0 flex-col border-r border-dls-border bg-dls-sidebar md:flex md:w-[360px] lg:w-[400px] xl:w-[440px]",
+      "min-h-0 w-full shrink-0 flex-col border-r border-dls-border bg-dls-sidebar md:flex md:w-[var(--jugglework-left-sidebar-width)]",
       props.reviewId ? "hidden" : "flex",
     )} aria-label={text("Pull request inbox", "拉取请求收件箱")}>
       <div className="shrink-0 border-b border-dls-border px-4 pb-3 pt-3 mac:pt-5">
@@ -379,6 +383,12 @@ function ReviewDetail({ review, unknown, loading, tab, onTabChange, tabLoading, 
 }
 
 export function ReviewPage(props: ReviewPageProps) {
+  const sidebarOpen = useUiStateStore((state) => state.sidebarOpen);
+  const toggleSidebar = useUiStateStore((state) => state.toggleSidebar);
+  const { leftSidebarResizing, leftSidebarWidth, startLeftSidebarResize } = useWorkspaceShellLayout({ expandedRightWidth: 520 });
+  const pageStyle = {
+    "--jugglework-left-sidebar-width": appInsetSidebarCssWidth(leftSidebarWidth),
+  } as CSSProperties;
   const [query, setQuery] = useState("");
   const [relationship, setRelationship] = useState<"all" | ReviewRelationship>("all");
   const [tab, setTab] = useState<ReviewDetailTab>("summary");
@@ -402,6 +412,7 @@ export function ReviewPage(props: ReviewPageProps) {
   return (
     <div
       className="flex h-full min-h-0 w-full overflow-hidden bg-dls-sidebar mac:titlebar-drag"
+      style={pageStyle}
       data-testid="review-page"
       data-workspace-id={props.workspaceId}
     >
@@ -416,7 +427,12 @@ export function ReviewPage(props: ReviewPageProps) {
         onOpenTaskSearch={props.onOpenTaskSearch}
         onOpenCreateWorkspace={props.onOpenCreateWorkspace}
       />
-      <AppInsetSurface testId="review-inset-surface">
+      <AppSecondarySidebarTopControls
+        sidebarOpen={sidebarOpen}
+        onOpenTaskSearch={props.onOpenTaskSearch}
+        onToggleSidebar={toggleSidebar}
+      />
+      <AppInsetSurface className="relative" testId="review-inset-surface">
         {workspace.loading || connection.isLoading ? <ConnectedState loading /> : connection.data?.state !== "ready" ? <ConnectedState connection={connection.data} error={workspace.error ?? (connection.error instanceof Error ? connection.error.message : null)} onConnect={props.onOpenConnect} onRetry={() => void connection.refetch()} /> : (
           <ReviewWorkbench
           reviews={reviews}
@@ -445,8 +461,15 @@ export function ReviewPage(props: ReviewPageProps) {
           onQueryChange={setQuery}
           onRelationshipChange={setRelationship}
           onSelectReview={props.onSelectReview}
+          sidebarOpen={sidebarOpen}
           />
         )}
+        {connection.data?.state === "ready" && sidebarOpen ? (
+          <AppSecondarySidebarResizeHandle
+            resizing={leftSidebarResizing}
+            onPointerDown={startLeftSidebarResize}
+          />
+        ) : null}
       </AppInsetSurface>
     </div>
   );
@@ -479,10 +502,11 @@ export function ReviewWorkbench(props: {
   onQueryChange: (query: string) => void;
   onRelationshipChange: (relationship: "all" | ReviewRelationship) => void;
   onSelectReview: (reviewId: string | null) => void;
+  sidebarOpen?: boolean;
 }) {
   return (
     <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden" data-testid="review-workbench">
-      <ReviewInbox
+      {props.sidebarOpen !== false ? <ReviewInbox
         reviews={props.reviews}
         reviewId={props.reviewId}
         query={props.query}
@@ -499,7 +523,7 @@ export function ReviewWorkbench(props: {
         error={props.inboxError}
         onRetry={props.onRetryInbox}
         onRefresh={props.onRefreshInbox}
-      />
+      /> : null}
       <ReviewDetail review={props.review} unknown={props.unknown} loading={props.loading} tab={props.tab ?? "summary"} onTabChange={props.onTabChange ?? (() => undefined)} tabLoading={props.tabLoading} tabError={props.tabError} truncated={props.truncated} revisionChanged={props.revisionChanged} onRetryTab={props.onRetryTab} onBack={() => props.onSelectReview(null)} />
     </div>
   );

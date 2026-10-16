@@ -117,6 +117,7 @@ import {
 } from "./mcp-workspace-tool-policy.js";
 import { AutomationRepository } from "./automation/repository.js";
 import { SessionPermissionModeStore } from "./session-permission-mode-store.js";
+import { SessionResponseLanguageStore } from "./session-response-language-store.js";
 import { MediaGenerationRepository } from "./media-generation/repository.js";
 import { filterVideoSubmissionEligibleModels, MediaGenerationService, videoSubmissionAllowed } from "./media-generation/service.js";
 import { MediaGenerationWorker } from "./media-generation/worker.js";
@@ -1047,6 +1048,7 @@ export async function startServer(config: ServerConfig, options: {
   const automationRepository = await AutomationRepository.open(config);
   const mediaGenerationRepository = await MediaGenerationRepository.open(config);
   const sessionPermissionStore = await SessionPermissionModeStore.open(config);
+  const sessionResponseLanguageStore = await SessionResponseLanguageStore.open(config);
   const reviewService = options.reviewService ?? new ReviewReadService(new ConnectGithubReviewProvider({ config }));
   const migratedLegacyFullAccessCount = await migrateTrustedLegacyLocalHostFullAccess({
     config,
@@ -1278,6 +1280,7 @@ export async function startServer(config: ServerConfig, options: {
     automationRepository,
     automationScheduler,
     sessionPermissionStore,
+    sessionResponseLanguageStore,
     sessionPermissionRootLocks,
     sessionPermissionBroker,
     (event, fields) => logger.log("info", event, fields),
@@ -1484,6 +1487,7 @@ export async function startServer(config: ServerConfig, options: {
     automationRepository.close();
     mediaGenerationRepository.close();
     sessionPermissionStore.close();
+    sessionResponseLanguageStore.close();
     hostMarketplaceMigration.close();
     hostMarketplacePlugins.close();
     clearHostMarketplaceMcpOverlay(config);
@@ -1562,6 +1566,7 @@ export async function startServer(config: ServerConfig, options: {
       try { automationRepository.close(); } catch (error) { errors.push(error); }
       try { mediaGenerationRepository.close(); } catch (error) { errors.push(error); }
       try { sessionPermissionStore.close(); } catch (error) { errors.push(error); }
+      try { sessionResponseLanguageStore.close(); } catch (error) { errors.push(error); }
       try { hostMarketplaceMigration.close(); } catch (error) { errors.push(error); }
       try { hostMarketplacePlugins.close(); } catch (error) { errors.push(error); }
       clearHostMarketplaceMcpOverlay(config);
@@ -2588,6 +2593,7 @@ function createRoutes(
   automationRepository: AutomationRepository,
   automationScheduler: AutomationScheduler,
   sessionPermissionStore: SessionPermissionModeStore,
+  sessionResponseLanguageStore: SessionResponseLanguageStore,
   sessionPermissionRootLocks: RootSerialization,
   sessionPermissionBroker: SessionPermissionBroker,
   automationLog: (event: string, fields: Record<string, string | number | boolean | null>) => void,
@@ -2700,10 +2706,35 @@ function createRoutes(
       close: () => getSessionPendingOperationPump()?.close() ?? Promise.resolve(),
       drained: () => getSessionPendingOperationPump()?.drained() ?? Promise.resolve(),
     },
+    applySessionResponseLanguage: (input) => {
+      const mutation = sessionResponseLanguageStore.apply(input);
+      return {
+        language: mutation.language,
+        rollback: () => sessionResponseLanguageStore.rollback(mutation),
+      };
+    },
+    resolveSessionResponseLanguage: (input) => sessionResponseLanguageStore.resolve(input),
+    copySessionResponseLanguage: (workspaceId, sourceSessionId, targetSessionId) => {
+      sessionResponseLanguageStore.copy(workspaceId, sourceSessionId, targetSessionId);
+    },
     onSessionDeleted: (workspaceId, sessionId) => {
       // Remove server-owned permission-mode state for the deleted root tree.
       sessionPermissionStore.deleteRootSessionRecords(workspaceId, sessionId);
+      sessionResponseLanguageStore.delete(workspaceId, sessionId);
     },
+  });
+
+  addRoute(routes, "GET", "/internal/session-response-language/:sessionId", "client", async (ctx) => {
+    const directory = ctx.url.searchParams.get("directory")?.trim() ?? "";
+    const workspaceId = ctx.url.searchParams.get("workspaceId")?.trim() ?? "";
+    const workspace = directory
+      ? findWorkspaceByDirectory(config, directory)
+      : workspaceId
+        ? config.workspaces.find((entry) => entry.id === workspaceId && entry.workspaceType !== "remote") ?? null
+        : null;
+    if (!workspace) throw new ApiError(404, "workspace_not_found", "Workspace not found for response language");
+    const language = sessionResponseLanguageStore.read(workspace.id, ctx.params.sessionId);
+    return jsonResponse({ language });
   });
 
   registerInteractionRoutes({

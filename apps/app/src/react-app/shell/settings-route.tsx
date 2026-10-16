@@ -427,6 +427,8 @@ export type SettingsSurfaceProps = {
   contentOnly?: boolean;
   /** Render the full plugin catalog when the dedicated Plugins app owns this embedded settings runtime. */
   pluginCatalogOnly?: boolean;
+  /** Whether the dedicated Plugins page should show its secondary catalog sidebar. */
+  secondarySidebarOpen?: boolean;
   initialPath?: string;
   /** Keep parsing the retained settings route while this surface is hidden behind another app module. */
   routePath?: string;
@@ -3455,12 +3457,14 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     <>
       {props.pluginCatalogOnly ? (
         <div className="flex h-full min-h-0 w-full overflow-hidden" data-testid="customization-catalog-layout">
-          <CustomizationCatalogSidebar
-            activeSection={customizationActiveSection}
-            installedItems={customizationInstalledItems}
-            onSelectSection={openCustomizationSection}
-            onSelectInstalledItem={openInstalledCustomizationItem}
-          />
+          {props.secondarySidebarOpen !== false ? (
+            <CustomizationCatalogSidebar
+              activeSection={customizationActiveSection}
+              installedItems={customizationInstalledItems}
+              onSelectSection={openCustomizationSection}
+              onSelectInstalledItem={openInstalledCustomizationItem}
+            />
+          ) : null}
           <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
             {settingsSurface}
           </div>

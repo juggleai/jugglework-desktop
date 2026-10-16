@@ -8,6 +8,7 @@ import {
   type Session,
   type Todo,
 } from "@opencode-ai/sdk/v2/client";
+import type { ResponseLanguage } from "@jugglework/types/response-language";
 
 import { desktopFetch } from "./desktop";
 import {
@@ -26,6 +27,8 @@ type PromptAsyncParameters = Parameters<ReturnType<typeof createOpencodeClient>[
   reasoning_effort?: string;
   juggleworkDelivery?: "steer";
   juggleworkAdmissionId?: string;
+  juggleworkDetectedResponseLanguage?: ResponseLanguage;
+  juggleworkDefaultResponseLanguage?: ResponseLanguage;
 };
 
 type CommandParameters = {
@@ -63,6 +66,13 @@ type SessionMessagesParameters = {
 type SessionAbortParameters = {
   sessionID: string;
   directory?: string;
+};
+
+type SessionForkParameters = {
+  sessionID: string;
+  directory?: string;
+  workspace?: string;
+  messageID?: string;
 };
 
 type MutationOptions = { throwOnError?: boolean };
@@ -699,6 +709,17 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
     );
   };
 
+  const forkOriginal = session.fork.bind(session);
+  session.fork = ((parameters: SessionForkParameters, options?: { throwOnError?: boolean }) => {
+    if (!juggleworkMount || !juggleworkSessionClient) return forkOriginal(parameters, options);
+    const url = `${juggleworkMount.baseUrl}/workspace/${encodeURIComponent(juggleworkMount.workspaceId)}/sessions/${encodeURIComponent(parameters.sessionID)}/fork`;
+    return wrapJuggleWorkMutation(url, async () => (
+      await juggleworkSessionClient.forkSession(juggleworkMount.workspaceId, parameters.sessionID, {
+        ...(parameters.messageID ? { messageId: parameters.messageID } : {}),
+      })
+    ).item, options);
+  }) as typeof session.fork;
+
   const promptAsyncOriginal = sessionOverrides.promptAsync.bind(session);
   sessionOverrides.promptAsync = (parameters: PromptAsyncParameters, options?: { throwOnError?: boolean }) => {
     const {
@@ -707,6 +728,8 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
       workspace: _requestWorkspace,
       juggleworkDelivery,
       juggleworkAdmissionId,
+      juggleworkDetectedResponseLanguage,
+      juggleworkDefaultResponseLanguage,
       ...body
     } = parameters;
     if (!juggleworkMount && !("reasoning_effort" in parameters)) {
@@ -719,6 +742,12 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
           origin: "local-renderer",
           startCommandCorrelationId: juggleworkAdmissionId ?? commandCorrelationId(),
           prompt: body,
+          ...(juggleworkDefaultResponseLanguage ? {
+            responseLanguage: {
+              ...(juggleworkDetectedResponseLanguage ? { detected: juggleworkDetectedResponseLanguage } : {}),
+              fallback: juggleworkDefaultResponseLanguage,
+            },
+          } : {}),
           ...(juggleworkDelivery === "steer" ? { whenBusy: "steer" as const } : {}),
         });
         if ("run" in result) {

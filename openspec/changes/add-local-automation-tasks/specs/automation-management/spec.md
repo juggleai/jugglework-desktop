@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Global automation management surface
-The Desktop SHALL provide global `/automations` and `/automations/runs` routes with separate `定时任务` and `运行记录` tabs. The scheduled-task list SHALL display each task's name, required workspace, schedule summary, active range, enabled state, next run, and cloud sync state, and SHALL support search without requiring a workspace to be open. The tab selection SHALL be route-backed so refresh and deep linking preserve it.
+The Desktop SHALL provide global `/automations` and `/automations/runs` routes with separate `定时任务` and `运行记录` navigation destinations. A shared collapsible secondary sidebar SHALL provide route navigation, task/run search, task creation, and the scheduled-task list while the main pane presents task setup guidance or run history. The scheduled-task list SHALL display each task's name, required workspace, schedule summary, active range, enabled state, and next run, and SHALL support search without requiring a workspace to be open. The destination selection SHALL be route-backed so refresh and deep linking preserve it.
 
 #### Scenario: User opens Automation from another workspace
 - **WHEN** the user opens the global Automation route while any workspace or session is active
@@ -29,13 +29,13 @@ Opening Automation MUST NOT change the local/remote task scope, selected workspa
 - **THEN** its localized label and focus indicator are available and Enter or Space opens `/automations`
 
 ### Requirement: Scheduled-task landing and empty state
-The `定时任务` route SHALL always render the two top-left segmented tabs. When no non-deleted automation exists, it SHALL render a centered muted alarm/check illustration, `开启你的第一个自动化任务吧` copy, a primary `+ 添加自动化` action, and the built-in `自动化任务模板` section below the main empty area as shown in the supplied reference. Search and task-row actions SHALL be hidden in this state.
+The `定时任务` route SHALL always provide route-backed access to `运行记录` from its secondary sidebar. When no non-deleted automation exists, the sidebar SHALL show its empty-task copy and persistent New automation action, while the main pane SHALL render centered scheduling guidance and a quick-selection subset of the built-in templates. Search and task-row actions SHALL be hidden in this state.
 
-The Add action SHALL open a blank create draft without writing a task. When tasks exist, the empty-state illustration/copy SHALL be replaced by the scheduled-task controls/list while the template section remains available below the list. The `运行记录` route SHALL use its own history empty state and SHALL NOT render task templates.
+The Add action SHALL open a blank create draft without writing a task. When tasks exist, the sidebar empty state SHALL be replaced by the scheduled-task controls/list while the main-pane quick template suggestions remain available. The `运行记录` route SHALL use its own history empty state and SHALL NOT render task templates.
 
 #### Scenario: First-time user opens Scheduled tasks
 - **WHEN** the local repository contains no non-deleted automation definition
-- **THEN** the user sees the first-task empty state, Add automation action, and template catalog without search or row actions
+- **THEN** the user sees the sidebar empty state, New automation action, and main-pane quick template suggestions without task-row actions
 
 #### Scenario: User starts without a template
 - **WHEN** the user activates `+ 添加自动化` in the empty state
@@ -43,18 +43,18 @@ The Add action SHALL open a blank create draft without writing a task. When task
 
 #### Scenario: First task has been created
 - **WHEN** at least one non-deleted task exists
-- **THEN** the scheduled-task list replaces the first-task empty state and the template catalog remains below the list
+- **THEN** the scheduled-task list replaces the sidebar empty state and quick template suggestions remain in the main pane
 
 #### Scenario: Run history is empty
 - **WHEN** the user opens `运行记录` and no runs exist
 - **THEN** a run-history-specific empty state is shown without the automation-template catalog
 
 ### Requirement: Built-in automation template catalog
-The template catalog SHALL be shown inline only while no automation exists. Once the list has at least one automation the catalog SHALL move behind an `Add from template` entry that opens a dedicated `/automations/templates` page, keeping the list page to the tasks themselves. That page and the editor SHALL both render an `Automation / <page>` breadcrumb whose root segment returns to the list, subject to the editor's unsaved-draft confirmation.
+The scheduled-task main pane SHALL show a bounded six-card quick-selection subset whether or not tasks exist. The secondary sidebar SHALL also expose an `Add from template` entry that opens the dedicated `/automations/templates` page containing the complete catalog. That page and the editor SHALL both render an `Automation / <page>` breadcrumb whose root segment returns to the list, subject to the editor's unsaved-draft confirmation.
 
 The Desktop SHALL ship a versioned local template catalog with stable template ids, localized title/description, an icon key, durable prompt parts, an optional supported schedule draft, and optional recommended connector ids. Its initial Chinese catalog SHALL contain cards for `每日 AI 新闻推送`, `每日 5 个英语单词`, `每日儿童睡前故事`, `每周工作周报`, `经典电影推荐`, `历史上的今天`, `每日一个为什么`, `父母联系提醒`, `体检预约提醒`, `面试准备提醒`, `会议前准备`, and `可爱萌宠手机壁纸`.
 
-Cards SHALL form a three-column desktop grid and collapse to two or one columns at the application's existing content breakpoints. Each card SHALL be a keyboard-operable button with its icon, title, and at most two visible description lines with overflow ellipsis.
+The complete catalog SHALL form a three-column desktop grid and collapse to two or one columns at the application's existing content breakpoints. The six-card quick subset SHALL use a two-column desktop grid and collapse to one column. Each card SHALL be a keyboard-operable button with its icon, title, and at most two visible description lines with overflow ellipsis.
 
 Activating a template SHALL open the ordinary create editor and prefill only fields represented by the template. It MUST NOT create, save, schedule, synchronize, acknowledge full access, authorize a connector, or execute a task. Workspace SHALL remain unselected. Recommended connectors SHALL be suggestions requiring explicit user selection and the existing authorization flow. Missing or time-sensitive schedule values, including a future date for a one-time reminder, SHALL remain invalid until the user supplies them. Template copy MUST NOT promise event-relative, workday-only, or other trigger semantics that the supported schedule model cannot encode.
 
