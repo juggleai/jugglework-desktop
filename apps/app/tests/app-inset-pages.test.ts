@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, test } from "bun:test";
+import { compile } from "tailwindcss";
 
 const read = (path: string) => readFileSync(new URL(`../src/${path}`, import.meta.url), "utf8");
 
@@ -112,13 +113,35 @@ describe("secondary app inset shells", () => {
     expect(apps).not.toContain("useAppSecondarySidebarHoverPreview");
   });
 
-  test("keeps the retained workspace list available above dedicated app surfaces", () => {
+  test("reveals only the retained workspace list above dedicated app surfaces", () => {
     const workspaceRoute = read("react-app/shell/workspace-app-route.tsx");
     const previewHost = read("react-app/shell/app-navigation-sidebar-preview.tsx");
+    const wrapper = workspaceRoute.slice(workspaceRoute.indexOf("className={settingsVisible ||"), workspaceRoute.indexOf('data-testid="retained-session-surface"'));
     expect(workspaceRoute).toContain("navigationPreview.workspaceTarget");
-    expect(workspaceRoute).toContain('"absolute inset-0 z-50 h-full min-h-0 pointer-events-none [&_[data-session-list-preview=true]]:pointer-events-auto"');
+    expect(wrapper).toContain("settingsVisible || chatVisible || appsVisible || automationsVisible || reviewsVisible");
+    expect(wrapper).toContain('"invisible absolute inset-0 z-50');
+    expect(wrapper).toContain("[&_[data-session-list-preview=true]]:visible");
+    expect(wrapper).toContain("[&_[data-session-list-preview=true]]:pointer-events-auto");
+    expect(wrapper).toContain("[&_[data-session-preview-title-hover-guard]]:visible");
+    expect(wrapper).toContain(': "hidden"');
+    expect(wrapper).toContain(': "h-full min-h-0"');
+    expect(wrapper).not.toContain("opacity-0");
+    expect(workspaceRoute).toContain("surfaceVisible={!(settingsVisible || chatVisible || appsVisible || automationsVisible || reviewsVisible)}");
     expect(previewHost).toContain("workspaceTarget: TaskScope | null");
     expect(previewHost).toContain("onWorkspaceTriggerChange");
+  });
+
+  test("generates inherited invisibility with visibility overrides only for the list and hover guard", async () => {
+    const workspaceRoute = read("react-app/shell/workspace-app-route.tsx");
+    const previewClasses = workspaceRoute.match(/\? "(invisible absolute inset-0 z-50[^"\n]+)"/)?.[1];
+    expect(previewClasses).toBeDefined();
+    const compiler = await compile("@tailwind utilities;");
+    const css = compiler.build(previewClasses!.split(" "));
+    expect(css).toContain(".invisible {\n  visibility: hidden;");
+    expect(css).toContain("& [data-session-list-preview=true] {\n    visibility: visible;");
+    expect(css).toContain("& [data-session-list-preview=true] {\n    pointer-events: auto;");
+    expect(css).toContain("& [data-session-preview-title-hover-guard] {\n    visibility: visible;");
+    expect(css.match(/visibility: visible;/g)).toHaveLength(2);
   });
 
   test("joins the Settings navigation and content into one rounded surface", () => {

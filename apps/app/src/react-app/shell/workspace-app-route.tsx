@@ -167,12 +167,14 @@ function WorkspaceAppRouteContent() {
       <div
         className={settingsVisible || chatVisible || appsVisible || automationsVisible || reviewsVisible
           ? navigationPreview.workspaceTarget
-            ? "absolute inset-0 z-50 h-full min-h-0 pointer-events-none [&_[data-session-list-preview=true]]:pointer-events-auto"
+            ? "invisible absolute inset-0 z-50 h-full min-h-0 pointer-events-none [&_[data-session-list-preview=true]]:visible [&_[data-session-list-preview=true]]:pointer-events-auto [&_[data-session-preview-title-hover-guard]]:visible"
             : "hidden"
           : "h-full min-h-0"}
         aria-hidden={(settingsVisible || chatVisible || appsVisible || automationsVisible || reviewsVisible) && !navigationPreview.workspaceTarget || undefined}
         data-testid="retained-session-surface"
       >
+        {/* surfaceVisible gates behavior, not paint. Only the preview list and
+            its transparent title hover guard may escape inherited invisibility. */}
         <SessionRoute
           routeWorkspaceId={activeSession.workspaceId}
           routeSessionId={activeSession.sessionId}

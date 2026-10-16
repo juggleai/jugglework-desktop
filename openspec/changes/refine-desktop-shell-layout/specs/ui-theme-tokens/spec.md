@@ -9,9 +9,10 @@
 - **AND** 圆角会话工作区距离窗口上边缘为 44px
 - **AND** 内嵌白色会话工作区中的会话顶栏与右侧文件/扩展/设置面板头渲染高度均为 50px、背景为 `--app-page-bg`
 
-#### Scenario: 其他页面顶栏对齐
-- **WHEN** 用户依次打开设置页、自动化任务页、消息页会话、通讯录页
-- **THEN** 各页面级顶栏渲染高度均为 50px，背景为 `--app-page-bg`
+#### Scenario: 跨页面顶栏对齐
+- **WHEN** 用户依次打开工作区会话页、设置页、自动化任务页、消息页会话、通讯录页
+- **THEN** 各页面级顶栏（含会话右侧文件/扩展/设置面板头）渲染高度均为 50px，背景为 `--app-page-bg`
+- **AND** 会话 Shell 的 44px 顶部外围 chrome 不作为页面级顶栏计算
 
 #### Scenario: 通讯录顶栏 flex-basis 同步
 - **WHEN** 通讯录页内容顶栏位于 column flex 容器内
@@ -53,6 +54,12 @@
 - **AND** 浮层标题条在预览期间作为 `no-drag` 交互区域接收指针事件，常规展开侧栏的标题条仍可拖动窗口
 - **AND** 标题条的完整矩形范围包含透明悬停保护区，不受 18px 圆角切角影响
 - **AND** 鼠标离开 Rail 与浮层后经过短暂容错延迟自动关闭预览
+
+#### Scenario: Workspace preview over a dedicated app
+- **WHEN** Settings, Apps, Chat, Automation, or Reviews is active and the user hovers a local or cloud workspace Rail icon with the sidebar collapsed
+- **THEN** only the matching session-list preview and its transparent title hover guard become visible and interactive above the active app
+- **AND** retained session chrome, transcript, composer, and side panels SHALL NOT paint over or intercept the active app
+- **AND** the session stays mounted with its draft and transient state preserved; closing the preview hides the retained surface and returning to the session restores normal visibility
 
 #### Scenario: 折叠状态会话快速导航
 - **WHEN** 会话列表折叠且当前会话具有任务快速导航

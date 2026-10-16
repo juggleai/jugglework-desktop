@@ -515,7 +515,7 @@ test("promotion fails before Qiniu calls when cache metadata management is unava
   assert.deepEqual(qiniu.calls, []);
 });
 
-for (const version of ["1.2.27", "1.2.28"]) {
+for (const version of ["1.2.27", "1.2.28", "1.2.29"]) {
   test(`${version} metadata-only exception refreshes and reads back under lock without metadata calls`, async () => {
     const plan = fixturePlan(version);
     const qiniu = createFakeQiniu(new Map([...plan.objects, plan.manifest].map((item) => [item.key, { size: item.size, etag: item.etag }])));
@@ -532,8 +532,13 @@ for (const version of ["1.2.27", "1.2.28"]) {
         calls.push(["readBack", url, digest, expectedSize]);
         return { sha256: digest, size: expectedSize, checkedAt: "2026-10-12T01:00:00.000Z" };
       },
+      onPromotionVerified: async () => {
+        assert.equal(qiniu.state.has("jugglework/releases/locks/stable-mac.lock"), true);
+        assert.deepEqual(calls.map(([operation]) => operation), ["refresh", "readBack"]);
+      },
     };
     const result = await promoteChannel(plan, evidence, options);
+    assert.equal(result.preCanaryException.scope, `stable-${version}-only`);
     assert.equal(result.metadataException.scope, `stable-${version}-only`);
     assert.deepEqual(result.channelObject, { size: plan.manifest.size, etag: plan.manifest.etag, verified: true });
     assert.deepEqual(calls, [["refresh", [plan.channelManifest.url]], ["readBack", plan.channelManifest.url, plan.manifest.sha256, plan.manifest.size]]);

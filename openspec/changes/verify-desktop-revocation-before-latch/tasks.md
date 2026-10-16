@@ -16,6 +16,7 @@
 
 - [x] 3.1 IPC status 增加 `revocationPending`（或等价字段），`packages/types/src/desktop-ipc.ts` 的 `DesktopRemoteControlAgentStatus` 同步扩展
 - [x] 3.2 `desktop-remote-control-section.tsx` 的 `statusPresentation`：「核验中」未决态展示为中性/警示样式与文案（中英 i18n），确认撤销才显示「已撤销」错误样式
+- [x] 3.3 Offer explicit re-registration for locally disabled, freshly authorized `device_reregistration_required` even with retained enrollment; exclude this state from ordinary reconnect while preserving non-destructive offline and post-welcome pending-policy recovery
 
 ## 4. 测试与联调
 
@@ -24,6 +25,9 @@
 - [x] 4.3 单测：探针不可用 → 退避限频、凭据保留、状态未决；明确 disabled → 可逆路径
 - [x] 4.4 状态快照/IPC 契约测试更新（类型与渲染快照）
 - [x] 4.5 与服务端完成源码契约联调与两侧聚焦测试：已认证 WS 撤销终态；匹配凭据 challenge/token 明确 revoked/disabled；伪 protocol revoked 健康恢复；deleted/generic 404 保留凭据且有界要求重新注册（真实部署环境观察仍未完成）
+- [x] 4.6 Verify retained-enrollment recovery eligibility and all authorization guards, ordinary reconnect, bounded-404 credential preservation, post-welcome pending-policy cleanup, app typecheck, and strict OpenSpec validation without a production build
+
+Fix verification: 53 focused app tests and 127 Electron remote-control tests passed (agent, lifecycle manager, pending policy, and settings lifecycle). App typecheck, strict OpenSpec validation, and diff checks passed. Recovery changes only UI eligibility; identity replacement still requires the existing explicit fresh-policy/grant command, and Main credential-preservation behavior is unchanged. No production build or live device recovery was performed; the existing manual matrix remains pending.
 
 ## 5. 验证与发布
 

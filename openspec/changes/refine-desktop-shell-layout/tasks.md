@@ -44,6 +44,7 @@
 - [x] 1.40 Use the organization plugin list as the canonical catalog and treat Marketplaces as optional collections
 - [x] 1.43 Reuse the persisted workspace sidebar width, resize handle, and collapse controls across Automation, Plugins, and Reviews while preserving a usable compact-window content pane
 - [x] 1.44 Apply one opaque theme-aware secondary-sidebar background across workspace and dedicated app surfaces
+- [x] 1.45 Hide retained session paint during dedicated-app workspace hover previews, revealing only the session list and transparent title hover guard without unmounting the session
 
 ## 2. Utility Actions
 
@@ -55,3 +56,6 @@
 - [x] 3.1 Add focused desktop shell layout contracts for chrome, rounded work surface, and horizontal utility actions
 - [x] 3.2 Run focused tests, type checks, production build, OpenSpec validation, and diff checks
 - [x] 3.3 Add focused contracts for shared app-sidebars, cross-platform collapse recovery, compact-width clamping, and Review collapse behavior
+- [x] 3.4 Verify dedicated-app local/cloud preview isolation, mounted session/draft retention, sidebar CSS interaction contracts, app typecheck, and OpenSpec validation without a production build
+
+Fix verification: 53 focused app tests passed across seven files, including a mounted route/draft regression and generated Tailwind visibility rules. App typecheck, strict OpenSpec validation, and diff checks passed. Reviewed `sidebar.tsx`, `app-sidebar.tsx`, and `list-panel-header.css`; existing positioning, pointer handling, and no-drag header rules remain unchanged. No production build or live Electron hover check was performed.

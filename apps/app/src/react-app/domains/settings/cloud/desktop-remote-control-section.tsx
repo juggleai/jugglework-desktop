@@ -78,7 +78,8 @@ export function shouldShowRemoteControlReregister(input: {
   status: DesktopRemoteControlAgentStatus;
 }) {
   return input.signedIn && input.policyAllowsRemote && !input.settings.enabled && input.status.locallyDisabled &&
-    !input.status.enrolled && input.status.enrollmentAuthorized && !input.status.replacementPending;
+    (!input.status.enrolled || input.status.lastErrorCode === "device_reregistration_required") &&
+    input.status.enrollmentAuthorized && !input.status.replacementPending;
 }
 
 export function shouldShowRemoteControlReconnect(input: {
@@ -87,7 +88,8 @@ export function shouldShowRemoteControlReconnect(input: {
   status: DesktopRemoteControlAgentStatus;
 }) {
   return input.signedIn && input.policyAllowsRemote && input.status.enrolled && !input.status.connected &&
-    input.status.enrollmentAuthorized && !input.status.replacementPending && !input.status.revoked;
+    input.status.enrollmentAuthorized && !input.status.replacementPending && !input.status.revoked &&
+    input.status.lastErrorCode !== "device_reregistration_required";
 }
 
 export function shouldShowRemoteControlAuthorizationRefresh(input: {

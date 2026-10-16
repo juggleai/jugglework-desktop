@@ -121,6 +121,40 @@ describe("Desktop remote-control status presentation", () => {
     expect(shouldShowRemoteControlReconnect({ signedIn: false, policyAllowsRemote: true, status: preserved })).toBe(false);
     expect(shouldShowRemoteControlReconnect({ signedIn: true, policyAllowsRemote: false, status: preserved })).toBe(false);
     expect(shouldShowRemoteControlReconnect({ signedIn: true, policyAllowsRemote: true, status: status() })).toBe(false);
+    expect(shouldShowRemoteControlReregister({
+      signedIn: true,
+      policyAllowsRemote: true,
+      settings: { schemaVersion: 1, enabled: false, preventSleepWhileWaiting: false, backgroundMode: false, launchAtLogin: false, allowBusySessionSteer: false, allowBusySessionEnqueue: false },
+      status: preserved,
+    })).toBe(false);
+  });
+
+  test("offers explicit identity recovery for retained credentials only when re-registration is required", () => {
+    const input = {
+      signedIn: true,
+      policyAllowsRemote: true,
+      settings: { schemaVersion: 1 as const, enabled: false, preventSleepWhileWaiting: false, backgroundMode: false, launchAtLogin: false, allowBusySessionSteer: false, allowBusySessionEnqueue: false },
+      status: status({ connected: false, state: "disabled", enrolled: true, locallyDisabled: true, localControlEnabled: false, lastErrorCode: "device_reregistration_required" }),
+    };
+    expect(shouldShowRemoteControlReregister(input)).toBe(true);
+    expect(shouldShowRemoteControlReconnect(input)).toBe(false);
+    for (const candidate of [
+      { ...input, signedIn: false },
+      { ...input, policyAllowsRemote: false },
+      { ...input, settings: { ...input.settings, enabled: true } },
+      { ...input, status: { ...input.status, locallyDisabled: false } },
+      { ...input, status: { ...input.status, enrollmentAuthorized: false } },
+      { ...input, status: { ...input.status, replacementPending: true } },
+    ]) {
+      expect(shouldShowRemoteControlReregister(candidate)).toBe(false);
+    }
+    for (const lastErrorCode of [null, "device_disabled", "revocation_unconfirmed", "transport_closed"]) {
+      const ordinary = { ...input, status: { ...input.status, lastErrorCode } };
+      expect(shouldShowRemoteControlReregister(ordinary)).toBe(false);
+      expect(shouldShowRemoteControlReconnect(ordinary)).toBe(true);
+    }
+    const stale = { ...input, status: { ...input.status, enrollmentAuthorized: false } };
+    expect(shouldShowRemoteControlAuthorizationRefresh(stale)).toBe(true);
   });
 
   test("excludes ordinary offline, backoff, and cloud-disabled transport while locally enabled", () => {
