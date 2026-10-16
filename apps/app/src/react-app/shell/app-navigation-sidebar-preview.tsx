@@ -11,22 +11,31 @@ import {
 import { useUiStateStore } from "./ui-state-store";
 import { appInsetSidebarCssWidth } from "./workspace-shell-layout";
 import { workspaceAppsRoute } from "./workspace-routes";
+import type { TaskScope } from "@/react-app/domains/session/sidebar/task-scope-store";
 
 export type AppNavigationSidebarPreviewTarget = "automation" | "plugins";
 const CLOSE_DELAY = 120;
 
 type PreviewContextValue = {
   target: AppNavigationSidebarPreviewTarget | null;
+  workspaceTarget: TaskScope | null;
   enabled: boolean;
   onTriggerChange: (target: AppNavigationSidebarPreviewTarget, open: boolean) => void;
+  onWorkspaceTriggerChange: (target: TaskScope, open: boolean) => void;
+  onPreviewEnter: () => void;
+  onPreviewLeave: () => void;
   closePreview: () => void;
   publishPluginItems: (items: CustomizationInstalledItem[]) => void;
 };
 
 const PreviewContext = createContext<PreviewContextValue>({
   target: null,
+  workspaceTarget: null,
   enabled: false,
   onTriggerChange: () => undefined,
+  onWorkspaceTriggerChange: () => undefined,
+  onPreviewEnter: () => undefined,
+  onPreviewLeave: () => undefined,
   closePreview: () => undefined,
   publishPluginItems: () => undefined,
 });
@@ -35,6 +44,7 @@ export function AppNavigationSidebarPreviewProvider(props: { children: ReactNode
   const location = useLocation();
   const sidebarOpen = useUiStateStore((state) => state.sidebarOpen);
   const [target, setTarget] = useState<AppNavigationSidebarPreviewTarget | null>(null);
+  const [workspaceTarget, setWorkspaceTarget] = useState<TaskScope | null>(null);
   const [pluginItems, setPluginItems] = useState<CustomizationInstalledItem[]>([]);
   const closeTimerRef = useRef<number | null>(null);
   const pointerInsideRef = useRef(false);
@@ -47,7 +57,10 @@ export function AppNavigationSidebarPreviewProvider(props: { children: ReactNode
   const scheduleClose = useCallback(() => {
     cancelClose();
     closeTimerRef.current = window.setTimeout(() => {
-      if (!pointerInsideRef.current) setTarget(null);
+      if (!pointerInsideRef.current) {
+        setTarget(null);
+        setWorkspaceTarget(null);
+      }
       closeTimerRef.current = null;
     }, CLOSE_DELAY);
   }, [cancelClose]);
@@ -55,15 +68,35 @@ export function AppNavigationSidebarPreviewProvider(props: { children: ReactNode
     if (sidebarOpen) return;
     if (open) {
       cancelClose();
+      setWorkspaceTarget(null);
       setTarget(nextTarget);
     } else {
       scheduleClose();
     }
   }, [cancelClose, scheduleClose, sidebarOpen]);
+  const onWorkspaceTriggerChange = useCallback((nextTarget: TaskScope, open: boolean) => {
+    if (sidebarOpen) return;
+    if (open) {
+      cancelClose();
+      setTarget(null);
+      setWorkspaceTarget(nextTarget);
+    } else {
+      scheduleClose();
+    }
+  }, [cancelClose, scheduleClose, sidebarOpen]);
+  const onPreviewEnter = useCallback(() => {
+    pointerInsideRef.current = true;
+    cancelClose();
+  }, [cancelClose]);
+  const onPreviewLeave = useCallback(() => {
+    pointerInsideRef.current = false;
+    scheduleClose();
+  }, [scheduleClose]);
   const closePreview = useCallback(() => {
     cancelClose();
     pointerInsideRef.current = false;
     setTarget(null);
+    setWorkspaceTarget(null);
   }, [cancelClose]);
   const publishPluginItems = useCallback((items: CustomizationInstalledItem[]) => setPluginItems(items), []);
 
@@ -72,15 +105,20 @@ export function AppNavigationSidebarPreviewProvider(props: { children: ReactNode
     cancelClose();
     pointerInsideRef.current = false;
     setTarget(null);
+    setWorkspaceTarget(null);
   }, [cancelClose, location.pathname, sidebarOpen]);
 
   const value = useMemo<PreviewContextValue>(() => ({
     target: sidebarOpen ? null : target,
+    workspaceTarget: sidebarOpen ? null : workspaceTarget,
     enabled: !sidebarOpen,
     onTriggerChange,
+    onWorkspaceTriggerChange,
+    onPreviewEnter,
+    onPreviewLeave,
     closePreview,
     publishPluginItems,
-  }), [closePreview, onTriggerChange, publishPluginItems, sidebarOpen, target]);
+  }), [closePreview, onPreviewEnter, onPreviewLeave, onTriggerChange, onWorkspaceTriggerChange, publishPluginItems, sidebarOpen, target, workspaceTarget]);
 
   return (
     <PreviewContext.Provider value={value}>
@@ -89,14 +127,8 @@ export function AppNavigationSidebarPreviewProvider(props: { children: ReactNode
         <AppNavigationSidebarPreviewHost
           target={target}
           pluginItems={pluginItems}
-          onMouseEnter={() => {
-            pointerInsideRef.current = true;
-            cancelClose();
-          }}
-          onMouseLeave={() => {
-            pointerInsideRef.current = false;
-            scheduleClose();
-          }}
+          onMouseEnter={onPreviewEnter}
+          onMouseLeave={onPreviewLeave}
         />
       ) : null}
     </PreviewContext.Provider>
@@ -134,7 +166,7 @@ function AppNavigationSidebarPreviewHost(props: {
 
   return (
     <div
-      className="pointer-events-auto absolute bottom-1.5 left-[52px] top-11 z-[60] overflow-hidden rounded-r-[18px] shadow-[0_18px_48px_rgba(15,23,42,0.18)] dark:shadow-[0_18px_48px_rgba(0,0,0,0.42)] mac:titlebar-no-drag"
+      className="pointer-events-auto absolute bottom-1.5 left-[52px] top-11 z-[60] overflow-hidden rounded-[18px] shadow-[0_18px_48px_rgba(15,23,42,0.18)] dark:shadow-[0_18px_48px_rgba(0,0,0,0.42)] mac:titlebar-no-drag"
       style={{ width: appInsetSidebarCssWidth(width) }}
       onMouseEnter={props.onMouseEnter}
       onMouseLeave={props.onMouseLeave}
@@ -142,6 +174,7 @@ function AppNavigationSidebarPreviewHost(props: {
     >
       {props.target === "automation" ? <AutomationSidebarPreview /> : (
         <CustomizationCatalogSidebar
+          preview
           activeSection={pluginSection}
           installedItems={props.pluginItems}
           onSelectSection={openPluginSection}

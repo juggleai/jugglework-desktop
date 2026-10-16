@@ -172,14 +172,16 @@ describe("navigation rail visual proportions", () => {
 
   test("routes hover previews only for Rail destinations with workspace menus", () => {
     const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
-    const local = source.slice(source.indexOf('testId="app-rail-home"') - 360, source.indexOf('testId="app-rail-home"') + 360);
-    const cloud = source.slice(source.indexOf('testId="app-rail-cloud-tasks"') - 360, source.indexOf('testId="app-rail-cloud-tasks"') + 360);
+    const local = source.slice(source.indexOf('testId="app-rail-home"') - 360, source.indexOf('testId="app-rail-home"') + 520);
+    const cloud = source.slice(source.indexOf('testId="app-rail-cloud-tasks"') - 360, source.indexOf('testId="app-rail-cloud-tasks"') + 520);
     const automation = source.slice(source.indexOf('testId="app-rail-automations"') - 360, source.indexOf('testId="app-rail-automations"') + 360);
     expect(local).toContain('previewScope="local"');
     expect(local).toContain('onWorkspacePreviewOpen={appSidebarPreview.closePreview}');
+    expect(local).toContain('onWorkspacePreviewChange={appSidebarPreview.onWorkspaceTriggerChange}');
     expect(local).toContain('showTooltip={!props.suppressPreviewMenuTooltips}');
     expect(cloud).toContain('previewScope="remote"');
     expect(cloud).toContain('onWorkspacePreviewOpen={appSidebarPreview.closePreview}');
+    expect(cloud).toContain('onWorkspacePreviewChange={appSidebarPreview.onWorkspaceTriggerChange}');
     expect(cloud).toContain('showTooltip={!props.suppressPreviewMenuTooltips}');
     expect(automation).not.toContain('previewScope=');
     expect(automation).not.toContain('showTooltip={!props.suppressPreviewMenuTooltips}');

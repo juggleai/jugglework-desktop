@@ -29,6 +29,7 @@ type MarkdownProfile = {
   codeSpanClassName: string;
   linkPresentation: "chat" | "simple";
   imagePresentation: "chat" | "simple";
+  tableWrapperClassName: string;
   tableHeaderClassName: string;
   tableCellClassName: string;
   shikiContainer: string;
@@ -213,11 +214,12 @@ function markdownProfileForPresentation(presentation: MarkdownPresentation): Mar
           ? "my-4 text-lg font-semibold"
           : "my-3 text-base font-semibold",
       listClassName: (ordered) => ordered ? "my-3 list-decimal pl-6" : "my-3 list-disc pl-6",
-      blockquoteClassName: "my-4 rounded-r-lg border-l border-dls-border bg-dls-hover/40 pl-4 italic text-muted-foreground",
+      blockquoteClassName: "my-4 rounded-lg bg-dls-hover/40 px-4 py-0.5 italic text-muted-foreground",
       codeBlockHtml: copyable ? surfaceCopyableCodeBlockHtml : surfaceCodeBlockHtml,
       codeSpanClassName: "rounded-md bg-gray-2/70 px-1.5 py-0.5 font-mono text-sm text-foreground",
       linkPresentation: "simple",
       imagePresentation: "simple",
+      tableWrapperClassName: "rounded-lg border border-dls-border",
       tableHeaderClassName: "border border-dls-border bg-dls-hover p-2 text-left",
       tableCellClassName: "border border-dls-border p-2 align-top",
       shikiContainer: copyable
@@ -235,11 +237,12 @@ function markdownProfileForPresentation(presentation: MarkdownPresentation): Mar
         ? "font-semibold my-4 text-lg"
         : "font-semibold my-3 text-base",
     listClassName: (ordered) => ordered ? "my-3 pl-6 list-decimal" : "my-3 pl-6 list-disc",
-    blockquoteClassName: "my-4 rounded-r-lg border-l border-border bg-muted/40 pl-4 italic text-muted-foreground",
+    blockquoteClassName: "my-4 rounded-lg bg-muted/40 px-4 py-0.5 italic text-muted-foreground",
     codeBlockHtml: chatCodeBlockHtml,
     codeSpanClassName: "rounded-md bg-gray-2/70 px-1.5 py-0.5 font-mono text-sm text-foreground",
     linkPresentation: "chat",
     imagePresentation: "chat",
+    tableWrapperClassName: "rounded-lg border border-border",
     tableHeaderClassName: "border border-border p-2 bg-muted text-left",
     tableCellClassName: "border border-border p-2 align-top",
     shikiContainer: chatCodeBlockContainer(`<div class="overflow-x-auto px-4 pb-3 pt-11">%s</div>`, true),
@@ -336,7 +339,9 @@ function createMarkedOptions(profile: MarkdownProfile, isAsync: boolean) {
         const header = token.header.map((cell) => this.tablecell({ ...cell, header: true })).join("");
         const body = token.rows.map((row) => this.tablerow({ text: row.map((cell) => this.tablecell(cell)).join("") })).join("");
 
-        return `<div data-jugglework-markdown-table="" class="my-4 w-full overflow-x-auto"><table class="w-full min-w-max border-collapse"><thead>${this.tablerow({ text: header })}</thead><tbody>${body}</tbody></table></div>`;
+        // The wrapper owns the outer border and rounded clipping; outer cell
+        // edges are removed so the collapsed table border cannot square the corners.
+        return `<div data-jugglework-markdown-table="" class="my-4 w-full overflow-x-auto ${profile.tableWrapperClassName}"><table class="w-full min-w-max border-collapse [&_tr>*:first-child]:border-l-0 [&_tr>*:last-child]:border-r-0 [&_thead_tr>*]:border-t-0 [&_tbody_tr:last-child>*]:border-b-0"><thead>${this.tablerow({ text: header })}</thead><tbody>${body}</tbody></table></div>`;
       },
       tablerow({ text }) {
         return `<tr>${text}</tr>`;

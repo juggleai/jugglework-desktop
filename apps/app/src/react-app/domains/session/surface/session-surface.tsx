@@ -2381,9 +2381,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
           // the first message (short transcripts cannot scroll it clear).
           className={`subtle-scrollbar absolute inset-0 overflow-x-hidden overflow-y-auto overscroll-y-contain px-3 pb-4 sm:px-5 ${findOwned ? "pt-16" : "pt-4"}`}
         >
-          {/* Chat column: tighter than the composer (800px) so messages
-               keep a comfortable reading width and don't feel "too big". */}
-          <div ref={contentRef} className="mx-auto w-full max-w-[720px]">
+          {/* Assistant rows add 32px horizontal padding on each side at the
+               desktop breakpoint, so an 864px column aligns their 800px text
+               area with the composer while preserving the narrower cap below lg. */}
+          <div ref={contentRef} className="mx-auto w-full max-w-[720px] lg:max-w-[864px]">
             {showDelayedLoading && pendingSessionLoad ? (
               <div className="px-6 py-16">
                 <div className="mx-auto max-w-sm rounded-3xl border border-dls-border bg-dls-hover/60 px-8 py-10 text-center">

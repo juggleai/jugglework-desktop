@@ -112,6 +112,20 @@ describe("markdown rich blocks", () => {
     expect(html).toContain('style="text-align: right"');
   });
 
+  test("rounds all four corners of tables and blockquotes", () => {
+    for (const presentation of ["surface", "chat"] as const) {
+      const table = renderPrimitiveMarkdownHtml("| A | B |\n| --- | --- |\n| 1 | 2 |", presentation);
+      expect(table).toMatch(/data-jugglework-markdown-table="" class="[^"]*overflow-x-auto[^"]*rounded-lg border/);
+      expect(table).toContain("[&_tr>*:first-child]:border-l-0");
+      expect(table).toContain("[&_tbody_tr:last-child>*]:border-b-0");
+
+      const quote = renderPrimitiveMarkdownHtml("> 注意：需要确认", presentation);
+      expect(quote).toContain('<blockquote class="my-4 rounded-lg');
+      expect(quote).not.toContain("rounded-r-lg");
+      expect(quote).not.toContain("border-l");
+    }
+  });
+
   test("detects backtick and tilde Mermaid fences without matching other code", () => {
     expect(hasMermaidCodeBlock("```mermaid\nflowchart LR\nA --> B\n```" )).toBe(true);
     expect(hasMermaidCodeBlock("```Mermaid\nflowchart LR\nA --> B\n```" )).toBe(true);

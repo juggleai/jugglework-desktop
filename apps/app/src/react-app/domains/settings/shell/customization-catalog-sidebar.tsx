@@ -106,12 +106,16 @@ export function CustomizationCatalogSidebar(props: {
   installedItems: CustomizationInstalledItem[];
   onSelectSection: (section: CustomizationCatalogSection) => void;
   onSelectInstalledItem: (item: CustomizationInstalledItem) => void;
+  preview?: boolean;
 }) {
   const visibleInstalledItems = props.installedItems.filter((item) => item.section === props.activeSection);
   return (
     <aside
       aria-label={t("customization.navigation_label")}
-      className="flex h-full w-full shrink-0 flex-col overflow-hidden border-r border-dls-border bg-[var(--app-secondary-sidebar-bg)] mac:titlebar-no-drag"
+      className={cn(
+        "flex h-full w-full shrink-0 flex-col overflow-hidden bg-[var(--app-secondary-sidebar-bg)] mac:titlebar-no-drag",
+        props.preview ? "rounded-[18px] border border-dls-border" : "border-r border-dls-border",
+      )}
       data-testid="customization-catalog-sidebar"
     >
       <div className="shrink-0 px-4 pb-3 pt-5">

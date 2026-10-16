@@ -96,16 +96,29 @@ describe("secondary app inset shells", () => {
     expect(previewHost).toContain('AppNavigationSidebarPreviewTarget = "automation" | "plugins"');
     expect(previewHost).toContain("data-app-navigation-sidebar-preview={props.target}");
     expect(previewHost).toContain("left-[52px] top-11");
-    expect(previewHost).toContain("rounded-r-[18px]");
+    expect(previewHost).toContain("rounded-[18px]");
     expect(previewHost).toContain("shadow-[0_18px_48px_rgba(15,23,42,0.18)]");
     expect(previewHost).toContain("const CLOSE_DELAY = 120");
     expect(previewHost).toContain("pointerInsideRef.current");
     expect(previewHost).toContain("<AutomationSidebarPreview />");
     expect(previewHost).toContain("<CustomizationCatalogSidebar");
     expect(automationPreview).toContain('data-testid="automation-sidebar-preview"');
+    expect(automationPreview).toContain("rounded-[18px] border border-dls-border");
     expect(settingsRoute).toContain("usePublishAppNavigationPluginItems");
+    const pluginSidebar = read("react-app/domains/settings/shell/customization-catalog-sidebar.tsx");
+    expect(pluginSidebar).toContain('props.preview ? "rounded-[18px] border border-dls-border" : "border-r border-dls-border"');
+    expect(previewHost).toContain("preview");
     expect(automation).not.toContain("useAppSecondarySidebarHoverPreview");
     expect(apps).not.toContain("useAppSecondarySidebarHoverPreview");
+  });
+
+  test("keeps the retained workspace list available above dedicated app surfaces", () => {
+    const workspaceRoute = read("react-app/shell/workspace-app-route.tsx");
+    const previewHost = read("react-app/shell/app-navigation-sidebar-preview.tsx");
+    expect(workspaceRoute).toContain("navigationPreview.workspaceTarget");
+    expect(workspaceRoute).toContain('"absolute inset-0 z-50 h-full min-h-0 pointer-events-none [&_[data-session-list-preview=true]]:pointer-events-auto"');
+    expect(previewHost).toContain("workspaceTarget: TaskScope | null");
+    expect(previewHost).toContain("onWorkspaceTriggerChange");
   });
 
   test("joins the Settings navigation and content into one rounded surface", () => {

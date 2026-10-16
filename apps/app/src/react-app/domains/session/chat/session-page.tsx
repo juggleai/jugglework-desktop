@@ -592,6 +592,12 @@ export function SessionPage(props: SessionPageProps) {
     keepSidebarPreviewMotionDisabledThroughPaint();
     setSidebarPreviewScope(null);
   }, [appSidebarPreview.target, cancelSidebarPreviewClose, keepSidebarPreviewMotionDisabledThroughPaint]);
+  useLayoutEffect(() => {
+    if (!appSidebarPreview.workspaceTarget) return;
+    cancelSidebarPreviewClose();
+    setSidebarPreviewMotionDisabled(true);
+    setSidebarPreviewScope(appSidebarPreview.workspaceTarget);
+  }, [appSidebarPreview.workspaceTarget, cancelSidebarPreviewClose]);
   useEffect(() => () => {
     cancelSidebarPreviewClose();
     if (sidebarPreviewMotionFrameRef.current !== null) {
@@ -1462,10 +1468,12 @@ export function SessionPage(props: SessionPageProps) {
           onRailPreviewEnter={() => {
             sidebarPreviewPointerInsideRef.current = true;
             cancelSidebarPreviewClose();
+            appSidebarPreview.onPreviewEnter();
           }}
           onRailPreviewLeave={() => {
             sidebarPreviewPointerInsideRef.current = false;
             scheduleSidebarPreviewClose();
+            appSidebarPreview.onPreviewLeave();
           }}
         />
         {shellConfig.sidebar && !sidebarOpen ? (

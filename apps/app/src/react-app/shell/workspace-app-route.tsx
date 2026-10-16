@@ -9,6 +9,7 @@ import { SettingsRoute } from "./settings-route";
 import { AutomationPage } from "../domains/automations/automation-page";
 import { ReviewPage } from "../domains/reviews/review-page";
 import { AppNavigationSidebarPreviewProvider } from "./app-navigation-sidebar-preview";
+import { useAppNavigationSidebarPreview } from "./app-navigation-sidebar-preview";
 import { readActiveWorkspaceId, readLastSessionFor } from "./session-memory";
 import {
   WorkspaceShellActionsProvider,
@@ -62,6 +63,7 @@ function WorkspaceAppRouteContent() {
   const location = useLocation();
   const navigate = useNavigate();
   const workspaceShellActions = useWorkspaceShellActions();
+  const navigationPreview = useAppNavigationSidebarPreview();
   const appPath = useMemo(
     () => parseWorkspaceAppPath(location.pathname),
     [location.pathname],
@@ -163,8 +165,12 @@ function WorkspaceAppRouteContent() {
   return (
     <div className="relative h-dvh min-h-screen w-full overflow-hidden">
       <div
-        className={settingsVisible || chatVisible || appsVisible || automationsVisible || reviewsVisible ? "hidden" : "h-full min-h-0"}
-        aria-hidden={settingsVisible || chatVisible || appsVisible || automationsVisible || reviewsVisible || undefined}
+        className={settingsVisible || chatVisible || appsVisible || automationsVisible || reviewsVisible
+          ? navigationPreview.workspaceTarget
+            ? "absolute inset-0 z-50 h-full min-h-0 pointer-events-none [&_[data-session-list-preview=true]]:pointer-events-auto"
+            : "hidden"
+          : "h-full min-h-0"}
+        aria-hidden={(settingsVisible || chatVisible || appsVisible || automationsVisible || reviewsVisible) && !navigationPreview.workspaceTarget || undefined}
         data-testid="retained-session-surface"
       >
         <SessionRoute

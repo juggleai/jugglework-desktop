@@ -103,6 +103,7 @@ type RailButtonProps = {
   previewScope?: TaskScope;
   onPreviewMenuChange?: (scope: TaskScope | null) => void;
   onWorkspacePreviewOpen?: () => void;
+  onWorkspacePreviewChange?: (target: TaskScope, open: boolean) => void;
   appPreviewTarget?: AppNavigationSidebarPreviewTarget;
   onAppPreviewChange?: (target: AppNavigationSidebarPreviewTarget, open: boolean) => void;
 };
@@ -147,6 +148,7 @@ function RailButton({
   previewScope,
   onPreviewMenuChange,
   onWorkspacePreviewOpen,
+  onWorkspacePreviewChange,
   appPreviewTarget,
   onAppPreviewChange,
 }: RailButtonProps) {
@@ -159,12 +161,16 @@ function RailButton({
       disabled={disabled}
       onClick={onClick}
       onMouseEnter={() => {
-        if (previewScope) onWorkspacePreviewOpen?.();
+        if (previewScope) {
+          onWorkspacePreviewOpen?.();
+          onWorkspacePreviewChange?.(previewScope, true);
+        }
         onPreviewMenuChange?.(previewScope ?? null);
         if (appPreviewTarget) onAppPreviewChange?.(appPreviewTarget, true);
       }}
       onMouseLeave={() => {
         onPreviewMenuChange?.(null);
+        if (previewScope) onWorkspacePreviewChange?.(previewScope, false);
         if (appPreviewTarget) onAppPreviewChange?.(appPreviewTarget, false);
       }}
       data-testid={testId}
@@ -365,6 +371,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
           previewScope="local"
           onPreviewMenuChange={props.onPreviewMenuChange}
           onWorkspacePreviewOpen={appSidebarPreview.closePreview}
+          onWorkspacePreviewChange={appSidebarPreview.onWorkspaceTriggerChange}
           showTooltip={!props.suppressPreviewMenuTooltips}
         >
           <LocalWorkspaceIcon active={Boolean(props.homeActive && taskScope === "local")} />
@@ -377,6 +384,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
           previewScope="remote"
           onPreviewMenuChange={props.onPreviewMenuChange}
           onWorkspacePreviewOpen={appSidebarPreview.closePreview}
+          onWorkspacePreviewChange={appSidebarPreview.onWorkspaceTriggerChange}
           showTooltip={!props.suppressPreviewMenuTooltips}
         >
           <Cloud className="size-5" strokeWidth={1.8} />

@@ -48,7 +48,7 @@ export function AutomationSidebarPreview() {
 
   return (
     <aside
-      className="flex h-full w-full flex-col overflow-hidden rounded-r-[18px] border-r border-dls-border bg-[var(--app-secondary-sidebar-bg)] mac:titlebar-no-drag"
+      className="flex h-full w-full flex-col overflow-hidden rounded-[18px] border border-dls-border bg-[var(--app-secondary-sidebar-bg)] mac:titlebar-no-drag"
       data-testid="automation-sidebar-preview"
     >
       <div className="flex h-[var(--app-topbar-height)] shrink-0 items-center gap-2 px-4">
