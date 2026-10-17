@@ -17,15 +17,15 @@ git lfs pull
 
 Git LFS 仅用于开发与构建时检出源资源，用户运行安装包无需 Git、Git LFS、系统 Node 或联网下载 SDK。
 
-本地导入会将固定供应版本的 JS 包装层适配为统一的 Office 包名、入口、导出接口和配置名称。适配版本独立标识，原生内核不改写；内嵌页面的固定通信字段及许可原文保持兼容。再次导入使用相同规则，不恢复旧包名或入口。
+本地导入只接收当前 Office 资源格式：根目录包含 wrapper、目标平台目录及版本清单。导入复用打包资源校验，确认包名、配套版本及原生 SHA-256 后复制文件，保留原生内核和许可原文；不提供其他包格式的转换。包装层不包含未使用的预览主题/语言消息辅助接口，实际编辑页面由桌面宿主管理。
 
 每个平台使用 `<platform>/version.json`，记录配套版本、相对路径和二进制 SHA-256。根 `version.json` 保留单平台资源兼容；随安装包交付时仅包含该包的目标平台。
 
-取得完整本地 SDK 后，可在任意开发主机上导入目标平台，不需要启动那个平台的二进制：
+取得当前格式的完整 Office 资源目录后，可在任意开发主机上导入目标平台，不需要启动该平台的二进制：
 
 ```sh
-node scripts/import-office-engine.mjs /path/to/local/sdk apps/desktop/resources/office-engine win32-x64
-node scripts/import-office-engine.mjs /path/to/local/sdk apps/desktop/resources/office-engine darwin-x64
+node scripts/import-office-engine.mjs /path/to/office-engine apps/desktop/resources/office-engine win32-x64
+node scripts/import-office-engine.mjs /path/to/office-engine apps/desktop/resources/office-engine darwin-x64
 ```
 
 ### 平台供应清单

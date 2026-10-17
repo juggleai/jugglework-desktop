@@ -553,20 +553,20 @@ apps/desktop/resources/office-engine/
 
 macOS ARM64 和 Intel 分别使用对应的 ARM64、x86_64 Mach-O；Windows x64 使用 PE32+ x64。Intel 内核声明最低 macOS 10.15，JuggleWork 仍沿用自身系统基线。平台内核不可互换，跨平台构建不会转换原生架构。Intel 与 Windows 资源从显式提供的本地供应包静态解包后导入；JuggleWork 的构建和运行读取项目自带资源，不依赖这些安装包或外部 App。
 
-在仓库根目录执行以下命令，从显式提供的本地 SDK 包复制完整平台资源及 wrapper，并生成根清单和各平台 `version.json`：
+在仓库根目录执行以下命令，从当前格式的本地 Office 资源根目录复制完整平台资源及 wrapper，并保留根清单和各平台 `version.json`：
 
 ```sh
 git lfs install --local
 git lfs pull
-node scripts/import-office-engine.mjs /absolute/path/to/office-docs-ai-engine
+node scripts/import-office-engine.mjs /absolute/path/to/office-engine
 # 可在任意主机导入已取得的 Windows / Intel 本地 SDK。
-node scripts/import-office-engine.mjs /absolute/path/to/office-docs-ai-engine apps/desktop/resources/office-engine win32-x64
-node scripts/import-office-engine.mjs /absolute/path/to/office-docs-ai-engine apps/desktop/resources/office-engine darwin-x64
+node scripts/import-office-engine.mjs /absolute/path/to/office-engine apps/desktop/resources/office-engine win32-x64
+node scripts/import-office-engine.mjs /absolute/path/to/office-engine apps/desktop/resources/office-engine darwin-x64
 # 可指定另一资源目录；本地 Server 使用同一目录。
 JUGGLEWORK_OFFICE_ENGINE_DIR=/absolute/path/to/office-engine bun apps/server/src/cli.ts
 ```
 
-本地适配包统一使用 Office 包名、服务入口、导出接口、日志和配置命名。导入脚本对固定供应版本执行相同适配，保留原生二进制、固定页面协议与许可原文，不引入旧名称别名。
+本地适配包统一使用 Office 包名、服务入口、导出接口、日志和配置命名。导入脚本只接收包含 wrapper、平台目录及版本清单的当前 Office 资源格式，复用打包资源校验，不提供其他包格式转换。原生二进制及许可原文保持不变。未使用的预览主题/语言消息辅助模块不纳入包装层，实际编辑页面由桌面宿主管理。
 
 SDK 不通过 npm postinstall 获取；格式清单 `wrapper/supported-extensions.cjs` 随包装层供应，包入口可直接加载。Server 直接从上述资源目录加载 `wrapper/lib/common/office-docs-service.js`，并显式传入 `editorSdkPath`。该启动模块使用 Node 内置模块，不加载 stdio bridge 或额外 MCP SDK。默认目录为仓库中的 `apps/desktop/resources/office-engine`，设置 `JUGGLEWORK_OFFICE_ENABLED=0` 可关闭内置编辑。桌面宿主显式传入自身资源目录：开发时为项目 resources/office-engine，安装后为 process.resourcesPath/office-engine；不使用环境变量切换到外部 App。独立 CLI Server 仍可显式配置本地目录。
 

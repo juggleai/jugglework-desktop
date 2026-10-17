@@ -25,14 +25,14 @@
 - 会话交付通过 `sessions/:sessionId/file-deliveries` 批量查询，存在 collecting/finalizing 记录时轮询；运行结束由 Server 生命周期确认，重启恢复先核实引擎空闲。普通工具、受控生成和媒体请求分别绑定来源，不按当前焦点补填。
 - `jugglework_artifact_generate` 承载 `artifact.generate_files`，复用工具上下文的 Bash 权限及取消信号，直接传递可执行程序和参数；专用输出目录自动枚举，失败残留不交付。local-queue、local-steer、remote-pending 在 admission 前按既有确定性映射绑定真实引擎用户消息 ID，使用稳定的 admission 批次标识，不额外创建宿主 run；受控生成与 Office、媒体工具按实际 parentID 归属。只有实际 assistant 完成、工具结束且引擎空闲时才最终确认，排队回执不能提前结束；重启重试沿用同一记录，旧会话没有绑定时保留兼容路径。
 - Office 原生内容查询/修改通过现有语义工具按需发现并由宿主调用 HTTP MCP；不向 OpenCode 注册完整原生目录；创建、打开、保存、关闭和导出由宿主控制。最终交付必须等待保存成功，不能依赖模型主动保存或自动保存定时器。
-- 包装层统一使用 Office 包名、文件名、导出接口、配置与日志名称；本地导入同步执行命名适配，原生内核、固定页面协议及许可原文保持兼容。
+- 包装层统一使用 Office 包名、文件名、导出接口、配置与日志名称；本地导入仅接收当前 Office 资源格式并复用打包校验，原生内核及许可原文保持不变；不包含旧格式转换及未使用的预览消息辅助模块。
 - SDK 仅从显式本地资源启动，默认不依赖外部应用；格式、平台、离线能力与分发范围分别验收。
 - 本地供应资源包含 darwin-arm64、darwin-x64、win32-x64 的 0.0.0.499 原生内核，共用项目内适配包 office-docs-ai-engine 0.2.196-office.1，完整平台目录通过 Git LFS 和独立版本/哈希清单纳入项目。Intel 的 Rosetta 四格式保存重开及三个平台实际资源复制验证已通过；Windows 运行、Intel 实机和完整签名安装包仍单独验收，不据此开放跨窗口迁移。
 - 内置 Server 的生产依赖必须同时声明于桌面打包入口，包含 XML/ZIP 处理库；依赖归属回归保证配套版本一致。构建先暂存 Server，再使用 Electron 内置 Node 导入 embedded.js，不能以源码 Server 可运行推定安装包依赖完整。
 - SDK 0.0.0.499 的 XLSX 公式导出由 OfficeEngine.save 统一适配：通过固定版本 jszip 和 XML 解析器移除工作表 f 节点的界面前导等号，保留数组/共享公式属性、缓存和其他部件，同目录原子替换后才确认保存；不重建工作簿，不扩展 Agent 原生保存权限。
 - 原生进程启动前向系统申请空闲端口，wrapper 确认最终实际端口；避免快速重启连续绑定默认端口附近的端口失败。预览 URL、保存请求和 MCP 连接仍由实际启动结果派生，不固定为默认端口。
 - DOCX、CSV、XLSX、PPTX 页面由 Electron WebContentsView 承载，隐藏和切换标签保留模型。原生页面的保存请求和快捷键统一转到 Server 保存接口；禁止 SDK 原生另存路径及生命周期操作绕过宿主。
-- 本地资源包含 wrapper、配套脚本、完整平台目录和版本/哈希清单，通过 `scripts/import-office-engine.mjs` 导入。使用环境变量 `JUGGLEWORK_OFFICE_ENGINE_DIR` 指定目录；缺失时保持普通文件功能可用。
+- 本地资源包含 wrapper、配套脚本、完整平台目录和版本/哈希清单，通过 `scripts/import-office-engine.mjs` 从当前格式的本地资源根目录导入。使用环境变量 `JUGGLEWORK_OFFICE_ENGINE_DIR` 指定目录；缺失时保持普通文件功能可用。
 - 已打开的 DOCX、CSV、XLSX、PPTX 通过现有语义工具提供 `office.current_document` 和 `office.save_document`，身份取实际工具调用的聊天；每轮系统提示重新查询实际模型，格式对应 doc、sheet、slide 内容工具；手动新建 Word 由文件浏览器调用宿主 API；不提供 Agent 新建语义动作。
 - 文件窗口页面准备及原生页重挂成功后才提交归属。重挂失败恢复原宿主及可见性，不关闭重开模型。交接前通过 Server 查询所属聊天运行、当前文档交付及保存状态，等待期间由原宿主显示可取消原生提示；取消或宿主关闭不提交迁移。卡片、更多菜单、已有窗口和内容区接续共用宿主流程，首次打开没有现有页面时不执行迁移等待。
 - macOS ARM64 隔离宿主已验证 Word 选区和用户/MCP 编辑的撤销重做在迁移后保留。AI 按版本撤销须先查询实际编辑记录；界面撤销重做已经覆盖的原始 revision 可能被 SDK 拒绝，保持错误，不猜测其他版本或改用删除文本模拟撤销。真实中文输入按格式验收；原生编辑区组合期间阻止文档保存、关闭和打开快捷键，不执行宿主动作，也不放行 SDK 自身的文档快捷键。
