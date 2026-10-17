@@ -9,10 +9,18 @@ import {
   rmSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, dirname } from "node:path";
+import { join, dirname, basename } from "node:path";
 import { createRequire } from "node:module";
 import { createHash } from "node:crypto";
 import { importOfficeEngine } from "./import-office-engine.mjs";
+
+// TIPS: 原始供应字段放在独立样例中，不从生产替换规则派生，防止规则和断言同时出错。
+const sourceFixture = JSON.parse(
+  readFileSync(
+    new URL("./fixtures/office-engine-source.json", import.meta.url),
+    "utf8",
+  ),
+);
 
 test("可以跨平台导入本地 Windows 与 Intel SDK，保留独立平台清单并排除临时输出", (t) => {
   const root = mkdtempSync(join(tmpdir(), "office-import-"));
@@ -23,35 +31,25 @@ test("可以跨平台导入本地 Windows 与 Intel SDK，保留独立平台清�
     mkdirSync(dirname(join(source, name)), { recursive: true });
     writeFileSync(join(source, name), value);
   };
-  put(
-    "package.json",
-    JSON.stringify({
-      name: "@tencent/tencent-docs-ai-engine",
-      version: "0.2.196-wb",
-      license: "MIT",
-      main: "lib/common/index.js",
-    }),
-  );
+  put("package.json", JSON.stringify(sourceFixture.package));
   put("editor-sdk-version.json", JSON.stringify({ version: "0.0.0.499" }));
   put(
     "supported-extensions.cjs",
     "module.exports=['.docx','.csv','.xlsx','.pptx'];",
   );
-  put(
-    "lib/common/tencent-docs-service.js",
-    "exports.TencentDocsService = class TencentDocsService {};",
-  );
+  const serviceSource = `exports.${sourceFixture.service.exportName} = class {};`;
+  put(sourceFixture.service.entry, serviceSource);
   put(
     "lib/common/index.js",
-    "module.exports = require('./tencent-docs-service');",
+    `module.exports = require('./${basename(sourceFixture.service.entry, ".js")}');`,
   );
   put(
     "lib/common/preview-runtime.js",
-    "exports.theme = 'workbuddyTheme'; exports.themeMessage = 'workbuddy:themeChanged'; exports.localeMessage = 'workbuddy:localeChanged';",
+    `exports.protocol = ${JSON.stringify(sourceFixture.preview)};`,
   );
   put(
     "lib/common/engine-port-file.js",
-    "exports.TENCENT_DOCS_ENGINE_PORT_FILE_ENV = 'TENCENT_DOCS_ENGINE_PORT_FILE'; exports.config = 'CODEBUDDY_CONFIG_DIR';",
+    `exports.${sourceFixture.port.environment}_ENV = ${JSON.stringify(sourceFixture.port.environment)}; exports.config = ${JSON.stringify(sourceFixture.port.configEnvironment)};`,
   );
   put("LICENSE", "Original copyright and license notice\n");
   put("scripts/editor-sdk-platforms.js", "module.exports={}");
@@ -91,40 +89,32 @@ test("可以跨平台导入本地 Windows 与 Intel SDK，保留独立平台清�
     true,
   );
   assert.equal(
-    existsSync(join(destination, "wrapper/lib/common/tencent-docs-service.js")),
+    existsSync(join(destination, "wrapper", sourceFixture.service.entry)),
     false,
   );
-  const sdk = createRequire(import.meta.url)(join(destination, "wrapper"));
+  const require = createRequire(import.meta.url);
+  const sdk = require(join(destination, "wrapper"));
   assert.equal(typeof sdk.OfficeDocsService, "function");
-  assert.equal(sdk.TencentDocsService, undefined);
+  assert.equal(sdk[sourceFixture.service.exportName], undefined);
   assert.equal(
     readFileSync(join(destination, "wrapper/LICENSE"), "utf8"),
     "Original copyright and license notice\n",
   );
-  assert.match(
-    readFileSync(
-      join(destination, "wrapper/lib/common/engine-port-file.js"),
-      "utf8",
-    ),
-    /OFFICE_DOCS_ENGINE_PORT_FILE/,
+  assert.deepEqual(
+    require(join(destination, "wrapper/lib/common/engine-port-file.js")),
+    {
+      OFFICE_DOCS_ENGINE_PORT_FILE_ENV: "OFFICE_DOCS_ENGINE_PORT_FILE",
+      config: "JUGGLEWORK_CONFIG_DIR",
+    },
   );
-  assert.match(
-    readFileSync(
-      join(destination, "wrapper/lib/common/engine-port-file.js"),
-      "utf8",
-    ),
-    /JUGGLEWORK_CONFIG_DIR/,
+  assert.deepEqual(
+    require(join(destination, "wrapper/lib/common/preview-runtime.js"))
+      .protocol,
+    sourceFixture.preview,
   );
-  assert.match(
-    readFileSync(
-      join(destination, "wrapper/lib/common/preview-runtime.js"),
-      "utf8",
-    ),
-    /workbuddy:themeChanged/,
-  );
-  assert.match(
-    readFileSync(join(source, "lib/common/tencent-docs-service.js"), "utf8"),
-    /exports.TencentDocsService/,
+  assert.equal(
+    readFileSync(join(source, sourceFixture.service.entry), "utf8"),
+    serviceSource,
   );
   assert.throws(
     () => importOfficeEngine(source, destination, "darwin-arm64"),

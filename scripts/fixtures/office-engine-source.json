@@ -1,0 +1,21 @@
+{
+  "package": {
+    "name": "@tencent/tencent-docs-ai-engine",
+    "version": "0.2.196-wb",
+    "license": "MIT",
+    "main": "lib/common/index.js"
+  },
+  "service": {
+    "entry": "lib/common/tencent-docs-service.js",
+    "exportName": "TencentDocsService"
+  },
+  "port": {
+    "environment": "TENCENT_DOCS_ENGINE_PORT_FILE",
+    "configEnvironment": "CODEBUDDY_CONFIG_DIR"
+  },
+  "preview": {
+    "themeParameter": "workbuddyTheme",
+    "themeChanged": "workbuddy:themeChanged",
+    "localeChanged": "workbuddy:localeChanged"
+  }
+}
