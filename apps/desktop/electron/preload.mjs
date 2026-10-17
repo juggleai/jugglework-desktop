@@ -184,6 +184,80 @@ contextBridge.exposeInMainWorld("__JUGGLEWORK_ELECTRON__", {
       };
     },
   },
+  office: {
+    /** 原生确认丢弃未保存内容后恢复故障文档，取消返回 null。 */
+    recover: (workspaceId, documentId) => ipcRenderer.invoke("jugglework:office:recover", { workspaceId, documentId }),
+    /** 同步文档故障及已保存版本恢复。 */
+    onDocumentChanged(callback) {
+      const handler = (_event, document) => callback(document);
+      ipcRenderer.on("jugglework:office:document", handler);
+      return () => ipcRenderer.removeListener("jugglework:office:document", handler);
+    },
+    /** 为另一处文件视图返回同一存活编辑页面的当前内容。 */
+    snapshot: (id) => ipcRenderer.invoke("jugglework:office:snapshot", id),
+    /** 显示已绑定文档的原生编辑页面并更新宿主区域。 */
+    show(input) { return ipcRenderer.invoke("jugglework:office:show", input); },
+    /** 隐藏页面并保留文档模型与撤销记录。 */
+    hide(documentId, snapshot = false) { return ipcRenderer.invoke("jugglework:office:hide", documentId, snapshot); },
+    /** 根据用户保存、放弃或取消的决定关闭文档。 */
+    close(workspaceId, documentId) { return ipcRenderer.invoke("jugglework:office:close", { workspaceId, documentId }); },
+    /** 文档已释放或转入外部编辑后销毁原生页面。 */
+    destroy(documentId) { return ipcRenderer.invoke("jugglework:office:destroy", documentId); },
+    /** 监听原生快捷键关闭文档，供对应聊天移除文件标签。 */
+    onClosed(callback) {
+      const handler = (_event, input) => callback(input);
+      ipcRenderer.on("jugglework:office:closed", handler);
+      return () => ipcRenderer.removeListener("jugglework:office:closed", handler);
+    },
+    /** 监听存活页面在主面板和独立窗口之间的迁移。 */
+    onLocation(callback) {
+      const handler = (_event, input) => callback(input);
+      ipcRenderer.on("jugglework:office:location", handler);
+      return () => ipcRenderer.removeListener("jugglework:office:location", handler);
+    },
+  },
+  fileEditor: {
+    /** 查询共享草稿及保存结果。 */
+    state: (input) => ipcRenderer.invoke("jugglework:file-editor:state", input),
+    /** 将单元格或文本修改同步到同一文件的其他视图。 */
+    update: (input, draft) => ipcRenderer.invoke("jugglework:file-editor:update", input, draft),
+    /** 保存共享草稿，失败保留内容。 */
+    save: (input) => ipcRenderer.invoke("jugglework:file-editor:save", input),
+    /** 原生文件操作前先保存或取消。 */
+    prepare: (input) => ipcRenderer.invoke("jugglework:file-editor:prepare", input),
+    /** 关闭前处理共享草稿。 */
+    close: (input) => ipcRenderer.invoke("jugglework:file-editor:close", input),
+    /** 同步外部应用接管标记。 */
+    external: (input, external) => ipcRenderer.invoke("jugglework:file-editor:external", input, external),
+    /** 监听同一文件的草稿与保存更新。 */
+    onChanged(callback) {
+      const handler = (_event, value) => callback(value);
+      ipcRenderer.on("jugglework:file-editor:changed", handler);
+      return () => ipcRenderer.removeListener("jugglework:file-editor:changed", handler);
+    },
+  },
+  fileWindow: {
+    /** 旧主进程缺少入口时返回不可用，不把底层 IPC 错误暴露给用户。 */
+    available: () => ipcRenderer.invoke("jugglework:file-window:available").catch(() => false),
+    /** 打开或激活所属聊天的文件窗口。 */
+    open: (input) => ipcRenderer.invoke("jugglework:file-window:open", input),
+    /** 主窗口无需读取子窗口状态。 */
+    state: () => ipcRenderer.invoke("jugglework:file-window:state"),
+    /** 将操作路由到所属文件窗口。 */
+    action: (action, path) => ipcRenderer.invoke("jugglework:file-window:action", action, path),
+    /** 监听文件窗口标签变化。 */
+    onChanged(callback) {
+      const handler = (_event, input) => callback(input);
+      ipcRenderer.on("jugglework:file-window:changed", handler);
+      return () => ipcRenderer.removeListener("jugglework:file-window:changed", handler);
+    },
+    /** 在所属聊天右侧复用文件标签。 */
+    onOpenInPanel(callback) {
+      const handler = (_event, input) => callback(input);
+      ipcRenderer.on("jugglework:file-window:open-in-panel", handler);
+      return () => ipcRenderer.removeListener("jugglework:file-window:open-in-panel", handler);
+    },
+  },
   browser: {
     show(bounds) { return ipcRenderer.invoke("jugglework:browser:show", bounds); },
     hide() { return ipcRenderer.invoke("jugglework:browser:hide"); },

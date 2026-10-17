@@ -46,6 +46,10 @@ npmRebuild: true
 afterPack: scripts/electron-after-pack.cjs
 afterSign: scripts/electron-after-sign.cjs
 mac:
+  # 使用 builder 实际选定的身份签 SDK、刷新哈希，再封存主应用；不能重复改写 SDK。
+  sign: scripts/electron-sign-macos.cjs
+  signIgnore:
+    - "/Contents/Resources/office-engine/"
   icon: resources/icons/icon.icns
   category: public.app-category.developer-tools
   minimumSystemVersion: "14.0"
@@ -86,6 +90,7 @@ mac:
       to: helpers
       filter:
         - "JuggleWork Computer Use.app/**"
+        - "JuggleWork File Browser.app/**"
   target:
     - dmg
     - zip

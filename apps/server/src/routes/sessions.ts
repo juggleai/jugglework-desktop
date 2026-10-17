@@ -7,7 +7,7 @@ import {
   type ResponseLanguage,
 } from "@jugglework/types/response-language";
 import { ApiError } from "../errors.js";
-import { admitOpencodePrompt } from "../opencode-admission.js";
+import { admitOpencodePrompt, type AdmissionIdentity } from "../opencode-admission.js";
 import {
   SessionMutationError,
   type SessionMutationCoordinator,
@@ -80,6 +80,8 @@ interface RegisterSessionRoutesOptions {
     fallback: ResponseLanguage;
   }) => ResponseLanguage;
   copySessionResponseLanguage?: (workspaceId: string, sourceSessionId: string, targetSessionId: string) => void;
+  /** 在提交引擎 admission 前登记真实用户消息归属，不创建额外宿主运行。 */
+  preparePromptAdmission: (identity: AdmissionIdentity) => void;
   /** Post-delete cleanup for session-scoped server-owned state. */
   onSessionDeleted?: (workspaceId: string, sessionId: string) => void;
 }
@@ -778,6 +780,7 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const sessionId = parseRunIdentifier(ctx.params.sessionId, "sessionId");
     const body = parseRunBody(queueSessionBodySchema, await readJsonBody(ctx.request));
+    options.preparePromptAdmission({ workspaceId: workspace.id, sessionId, source: "local-queue", id: body.id });
     await admitOpencodePrompt(createWorkspaceOpencodeClient(config, workspace), {
       workspaceId: workspace.id,
       sessionId,
@@ -875,6 +878,7 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
             })
             : undefined;
           try {
+            options.preparePromptAdmission({ workspaceId: workspace.id, sessionId: input.sessionId, source: "local-steer", id: input.startCommandCorrelationId });
             await admitOpencodePrompt(createWorkspaceOpencodeClient(config, workspace), {
               workspaceId: workspace.id,
               sessionId: input.sessionId,

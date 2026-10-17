@@ -17,6 +17,15 @@ const FILE_SESSION_MAX_FILE_BYTES = 5_000_000;
 const FILE_SESSION_CATALOG_DEFAULT_LIMIT = 2000;
 const FILE_SESSION_CATALOG_MAX_LIMIT = 10000;
 
+/** 中文和特殊文件名使用 UTF-8 扩展参数，避免原始 Unicode 使 HTTP Headers 构造失败。 */
+function fileContentDisposition(mode: "inline" | "attachment", path: string): string {
+  const name = basename(path);
+  const fallback = name.replace(/[^\x20-\x7e]|["\\]/g, "_");
+  if (fallback === name) return `${mode}; filename="${name}"`;
+  const encoded = encodeURIComponent(name).replace(/[!'()*]/g, (value) => `%${value.charCodeAt(0).toString(16).toUpperCase()}`);
+  return `${mode}; filename="${fallback}"; filename*=UTF-8''${encoded}`;
+}
+
 type JsonResponse = (data: unknown, status?: number) => Response;
 type ReadJsonBody = (request: Request) => Promise<Record<string, unknown>>;
 
@@ -33,6 +42,10 @@ interface RegisterFileRoutesOptions {
   resolveOutboxEnabled: () => boolean;
   resolveInboxMaxBytes: () => number;
   scopeRank: (scope: TokenScope) => number;
+  /** 宿主重命名后同步产物身份，不改写历史快照。 */
+  onFileRenamed?: (workspaceId: string, from: string, to: string) => void;
+  /** 在修改磁盘路径前校验编辑模型，覆盖文件和父目录操作。 */
+  beforeFileMutation?: (workspaceId: string, paths: string[]) => void;
 }
 
 function resolveInboxDir(workspaceRoot: string): string {
@@ -200,6 +213,7 @@ function normalizeUrlTarget(value: string): string | null {
   }
 }
 
+/** 批量确认文件目标及实际元信息，POSIX 文件身份保留大小写。 */
 export async function resolveWorkspaceArtifactTargets(workspaceRoot: string, input: unknown): Promise<Array<Record<string, unknown>>> {
   const targets = Array.isArray(input) ? input.slice(0, 80) : [];
   const results = new Map<string, Record<string, unknown>>();
@@ -248,7 +262,7 @@ export async function resolveWorkspaceArtifactTargets(workspaceRoot: string, inp
     } catch {
       continue;
     }
-    const key = `file:${relativePath.toLowerCase()}`;
+    const key = `file:${process.platform === "win32" ? relativePath.toLowerCase() : relativePath}`;
     const absPath = resolveSafeChildPath(workspaceRoot, relativePath);
     let existsFile = false;
     let size: number | undefined;
@@ -542,6 +556,7 @@ export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
   };
 
   const recordWorkspaceFileEvent = (workspaceId: string, input: { type: "write" | "delete" | "rename" | "mkdir"; path: string; toPath?: string; revision?: string }) => {
+    if (input.type === "rename" && input.toPath) options.onFileRenamed?.(workspaceId, input.path, input.toPath);
     return fileSessions.recordWorkspaceEvent({ workspaceId, ...input });
   };
 
@@ -574,7 +589,7 @@ export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
     const headers = new Headers();
     headers.set("Content-Type", "application/octet-stream");
     headers.set("Content-Length", String(info.size));
-    headers.set("Content-Disposition", `attachment; filename=\"${basename(relativePath)}\"`);
+    headers.set("Content-Disposition", fileContentDisposition("attachment", relativePath));
     const stream = Readable.toWeb(createReadStream(absPath)) as unknown as ReadableStream;
     return new Response(stream, { status: 200, headers });
   });
@@ -664,7 +679,7 @@ export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
     const headers = new Headers();
     headers.set("Content-Type", "application/octet-stream");
     headers.set("Content-Length", String(info.size));
-    headers.set("Content-Disposition", `attachment; filename="${basename(relativePath)}"`);
+    headers.set("Content-Disposition", fileContentDisposition("attachment", relativePath));
     const stream = Readable.toWeb(createReadStream(absPath)) as unknown as ReadableStream;
     return new Response(stream, { status: 200, headers });
   });
@@ -899,6 +914,7 @@ export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
           continue;
         }
 
+        options.beforeFileMutation?.(workspace.id, [entry.path]);
         await ensureDir(dirname(entry.absPath));
         const tmp = `${entry.absPath}.tmp-${shortId()}`;
         await writeFile(tmp, entry.bytes);
@@ -997,6 +1013,7 @@ export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
             items.push({ ok: false, type, path, code: "file_not_found", message: "Path not found" });
             continue;
           }
+          options.beforeFileMutation?.(workspace.id, [path]);
           await rm(absPath, { recursive: op.recursive === true, force: false });
           recordWorkspaceFileEvent(workspace.id, { type: "delete", path });
           items.push({ ok: true, type, path });
@@ -1012,6 +1029,7 @@ export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
             items.push({ ok: false, type, from, to, code: "file_not_found", message: "Source path not found" });
             continue;
           }
+          options.beforeFileMutation?.(workspace.id, [from, to]);
           await ensureDir(dirname(toAbs));
           await rename(fromAbs, toAbs);
           recordWorkspaceFileEvent(workspace.id, { type: "rename", path: from, toPath: to });
@@ -1022,7 +1040,7 @@ export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
         items.push({ ok: false, type, code: "invalid_operation", message: `Unsupported operation type: ${type}` });
       } catch (error) {
         const message = error instanceof Error ? error.message : "Operation failed";
-        items.push({ ok: false, type, code: "operation_failed", message });
+        items.push({ ok: false, type, code: error instanceof ApiError ? error.code : "operation_failed", message });
       }
     }
 
@@ -1091,7 +1109,7 @@ export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
     const headers = new Headers();
     headers.set("Content-Type", contentTypeForPath(relativePath));
     headers.set("Content-Length", String(info.size));
-    headers.set("Content-Disposition", `inline; filename="${basename(relativePath)}"`);
+    headers.set("Content-Disposition", fileContentDisposition("inline", relativePath));
     const stream = Readable.toWeb(createReadStream(absPath)) as unknown as ReadableStream;
     return new Response(stream, { status: 200, headers });
   });
@@ -1140,6 +1158,7 @@ export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
 
     await ensureDir(dirname(absPath));
     const tmp = `${absPath}.tmp-${shortId()}`;
+    options.beforeFileMutation?.(workspace.id, [relativePath]);
     await writeFile(tmp, bytes);
     await rename(tmp, absPath);
     const after = await stat(absPath);
@@ -1207,6 +1226,7 @@ export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
 
     await ensureDir(dirname(absPath));
     const tmp = `${absPath}.tmp-${shortId()}`;
+    options.beforeFileMutation?.(workspace.id, [relativePath]);
     await writeFile(tmp, content, "utf8");
     await rename(tmp, absPath);
     const after = await stat(absPath);

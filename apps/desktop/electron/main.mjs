@@ -44,7 +44,12 @@ import { startRouterServer, stopRouterServer } from "./router-server.mjs";
 import { createApplicationMenu } from "./app-menu.mjs";
 import { applyBrandAppName } from "./brand-app-name.mjs";
 import { createBrowserPanel } from "./browser-panel.mjs";
-import { createMainProcessFetch, mainProcessFetchBody, selectMainProcessFetch } from "./main-fetch.mjs";
+import { createOfficePanel } from "./office-panel.mjs";
+import { createFileWindows } from "./file-windows.mjs";
+import { createFileEditor } from "./file-editor.mjs";
+import { createFileWindowDock } from "./file-window-dock.mjs";
+import { saveArtifactFileCopy } from "./artifact-file-operations.mjs";
+import { createMainProcessFetch, mainProcessFetchBody, mainProcessFetchResponse, selectMainProcessFetch } from "./main-fetch.mjs";
 import { createWorkspaceStore } from "./workspace-store.mjs";
 import { installCloseToHide, windowAllClosedAction } from "./window-close-behavior.mjs";
 import { createRemoteControlSettingsStore } from "./remote-control-settings.mjs";
@@ -161,6 +166,8 @@ const uiControlServer = createUiControlServer({
   appName: APP_NAME,
   appIdentifier: APP_IDENTIFIER,
   getWindow: () => createMainWindow(),
+  prepareOfficeSave: (document) => officePanel.prepareSave(document),
+  readOfficeSelection: (document) => officePanel.readSelection(document),
 });
 
 const terminalProcesses = new Map();
@@ -1409,6 +1416,43 @@ const runtimeManager = createRuntimeManager({
   readDenBaseUrl: () => workspaceStore.readDesktopBootstrapConfigSync()?.baseUrl ?? null,
 });
 const runtimeIpcHandlers = createRuntimeIpcHandlers(runtimeManager);
+const fileEditor = createFileEditor({
+  client: createManagedRuntimeClient({ getAccess: () => runtimeManager.managedServerAccess(), fetcher: nodeFetch, timeoutMs: 60_000 }),
+  getWindows: () => [mainWindow, ...fileWindows.windows()].filter(Boolean),
+  resolveWindow: (sender) => sender.id === mainWindow?.webContents.id ? mainWindow : fileWindows.windowFor(sender),
+});
+const officePanel = createOfficePanel({
+  getWindow: () => mainWindow,
+  getWindows: () => fileWindows.windows(),
+  resolveWindow: (sender) => sender.id === mainWindow?.webContents.id ? mainWindow : fileWindows.windowFor(sender),
+  onDocumentClosed: (id) => fileWindows.documentClosed(id),
+  onOpenFile: (window, input) => fileWindows.openDialog(window, input),
+  client: createManagedRuntimeClient({ getAccess: () => runtimeManager.managedServerAccess(), fetcher: nodeFetch, timeoutMs: 60_000 }),
+});
+const fileWindowIconPath = app.isPackaged ? path.join(process.resourcesPath, "app-dist/file-window-logo.png") : path.resolve(__dirname, "../../app/public/file-window-logo.png");
+const fileWindowDock = createFileWindowDock({
+  iconPath: fileWindowIconPath,
+  helperPath: path.join(app.isPackaged ? process.resourcesPath : path.resolve(__dirname, "../resources"), "helpers/JuggleWork File Browser.app/Contents/MacOS/DocumentDock"),
+  cachePath: app.getPath("userData"),
+  activate: (id) => fileWindows.activate(id),
+  closeAll: () => fileWindows.closeAll(),
+});
+const fileWindows = createFileWindows({
+  fileEditor,
+  dock: fileWindowDock,
+  client: createManagedRuntimeClient({ getAccess: () => runtimeManager.managedServerAccess(), fetcher: nodeFetch, timeoutMs: 60_000 }),
+  getAccess: () => runtimeManager.managedServerAccess(),
+  office: officePanel,
+  getMainWindow: () => mainWindow,
+  preloadPath: path.join(__dirname, "file-window-preload.mjs"),
+  iconPath: fileWindowIconPath,
+  recentPath: path.join(app.getPath("userData"), "file-window-recent.json"),
+  async loadWindow(window) {
+    const startUrl = process.env.JUGGLEWORK_ELECTRON_START_URL?.trim() || process.env.ELECTRON_START_URL?.trim();
+    if (startUrl) await window.loadURL(new URL("/file-window.html", startUrl).href);
+    else await window.loadFile(app.isPackaged ? path.join(process.resourcesPath, "app-dist/file-window.html") : path.resolve(__dirname, "../../app/dist/file-window.html"));
+  },
+});
 const remoteControlInteractionStore = createRemoteControlInteractionStore({
   managedRuntimeClient: createManagedRuntimeClient({
     getAccess: () => runtimeManager.managedServerAccess(),
@@ -2472,6 +2516,17 @@ const desktopCommandHandlers = {
       });
       return result.canceled ? null : (result.filePath ?? null);
   },
+  "saveArtifactCopy": async (event, options) => saveArtifactFileCopy({
+      workspaceRoot: options.workspaceRoot,
+      relativePath: options.relativePath,
+      choosePath: async (name) => {
+        const result = await dialog.showSaveDialog(activeWindowFromEvent(event), {
+          title: options.title,
+          defaultPath: name,
+        });
+        return result.canceled ? null : result.filePath ?? null;
+      },
+  }),
   "saveFileContent": async (event, ...args) => {
       const options = args[0] ?? {};
       const dataBase64 = typeof options.dataBase64 === "string" ? options.dataBase64.trim() : "";
@@ -2800,12 +2855,7 @@ const desktopCommandHandlers = {
         ...requestInit,
         signal: Number.isFinite(timeoutMs) && timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined,
       });
-      return {
-        status: response.status,
-        statusText: response.statusText,
-        headers: Array.from(response.headers.entries()),
-        body: await response.text(),
-      };
+      return mainProcessFetchResponse(response);
   },
   "__homeDir": async (event, ...args) => {
       return os.homedir();
@@ -3002,6 +3052,18 @@ async function createMainWindow() {
     canHide: () => appTrayIndicator.active(),
   });
 
+  let closingOfficeWindow = false;
+  mainWindow.on("close", (event) => {
+    if (event.defaultPrevented || quitCleanupComplete || quitCleanupInProgress || !officePanel.hasViews()) return;
+    event.preventDefault();
+    if (closingOfficeWindow) return;
+    closingOfficeWindow = true;
+    const window = mainWindow;
+    void officePanel.closeWindow(window).then((confirmed) => { if (confirmed && window && !window.isDestroyed()) window.destroy(); })
+      .catch((error) => dialog.showErrorBox("文档未能保存，已取消关闭", error instanceof Error ? error.message : String(error)))
+      .finally(() => { closingOfficeWindow = false; });
+  });
+
   mainWindow.on("closed", () => {
     browserPanel.destroy();
     mainWindow = null;
@@ -3143,6 +3205,9 @@ ipcMain.handle("jugglework:terminal:kill", (event, terminalId) => {
 });
 
 browserPanel.registerIpc(ipcMain);
+officePanel.registerIpc(ipcMain);
+fileWindows.registerIpc(ipcMain);
+fileEditor.registerIpc(ipcMain);
 
 registerMigrationIpc({ app, ipcMain });
 const { ensureAutoUpdater } = registerUpdaterIpc({
@@ -3150,6 +3215,10 @@ const { ensureAutoUpdater } = registerUpdaterIpc({
   ipcMain,
   getMainWindow: () => mainWindow,
   onInstallAndRestart: async () => {
+    if (!(await fileEditor.prepareQuit())) throw new Error("已取消更新，文件修改保持打开");
+    // TIPS: 更新器会先停止 Runtime，必须在此之前完成 Word 的保存或取消决定。
+    if (!(await officePanel.prepareQuit())) throw new Error("已取消更新，Word 文档保持打开");
+    fileWindows.dispose();
     await disposeRuntimeBeforeQuit();
     // Keep ordinary close-to-tray behavior active while shutdown is pending.
     // Set intent only after critical cleanup, immediately before the native
@@ -3169,27 +3238,39 @@ if (!app.requestSingleInstanceLock()) {
     event.preventDefault();
     if (quitCleanupInProgress) return;
     quitCleanupInProgress = true;
-    remoteControlPowerMonitorController.stop();
-    appTrayIndicator.stop();
-    remoteControlSleepController.stop();
-    showShutdownScreen();
-    void waitForQuitCleanup([
-      remoteSessionEventBridge?.stop(),
-      remoteControlAgent?.stop(),
-      remoteEventDiagnostics.flush(),
-      disposeRuntimeBeforeQuit(),
-      uiControlServer.stop(),
-      stopJuggleChatRouterServer(),
-    ]).then(({ timedOut, results }) => {
-      if (timedOut) console.warn("[quit] cleanup timed out; allowing updater exit");
-      else if (results.some((result) => result.status === "rejected")) {
-        console.warn("[quit] one or more cleanup tasks failed; allowing exit");
+    void (async () => {
+      try {
+        if (!await fileEditor.prepareQuit()) { quitCleanupInProgress = false; return; }
+        if (!await officePanel.prepareQuit()) { quitCleanupInProgress = false; return; }
+      } catch (error) {
+        dialog.showErrorBox("文档未能保存，已取消退出", error instanceof Error ? error.message : String(error));
+        quitCleanupInProgress = false;
+        return;
       }
-    }).finally(() => {
-      quitCleanupComplete = true;
-      quitCleanupInProgress = false;
-      app.quit();
-    });
+      fileWindows.dispose();
+      remoteControlPowerMonitorController.stop();
+      appTrayIndicator.stop();
+      remoteControlSleepController.stop();
+      showShutdownScreen();
+      void waitForQuitCleanup([
+        remoteSessionEventBridge?.stop(),
+        remoteControlAgent?.stop(),
+        remoteEventDiagnostics.flush(),
+        disposeRuntimeBeforeQuit(),
+        uiControlServer.stop(),
+        stopJuggleChatRouterServer(),
+      ]).then(({ timedOut, results }) => {
+        if (timedOut) console.warn("[quit] cleanup timed out; allowing updater exit");
+        else if (results.some((result) => result.status === "rejected")) {
+          console.warn("[quit] one or more cleanup tasks failed; allowing exit");
+        }
+      }).finally(() => {
+        quitCleanupComplete = true;
+        quitCleanupInProgress = false;
+        officePanel.destroy();
+        app.quit();
+      });
+    })();
   });
 
   app.on("second-instance", async (_event, argv) => {

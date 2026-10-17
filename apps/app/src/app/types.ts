@@ -114,6 +114,8 @@ export type ComposerAttachment = {
   kind: "image" | "file";
   file: File;
   previewUrl?: string;
+  /** 点击预览后复用工作区副本，发送时使用编辑后的同一文件。 */
+  workspaceCopy?: { workspaceId: string; path: string };
 };
 
 export type SlashCommandOption = {

@@ -7,10 +7,11 @@ import {
  * 文件在面板中的呈现形态
  *
  * - `markdown` / `text`：可编辑的文本
+ * - `sheet`：CSV/TSV 表格预览，编辑时仍使用统一文本草稿
  * - `image` / `pdf` / `html`：只读预览
  * - `binary`：不可预览，只提供下载与在系统中打开
  */
-export type FilePresentation = "markdown" | "text" | "image" | "pdf" | "html" | "binary";
+export type FilePresentation = "markdown" | "text" | "sheet" | "image" | "pdf" | "html" | "binary";
 
 /**
  * 已加载的文件内容
@@ -93,6 +94,7 @@ export function resolvePresentation(path: string, bytes: ArrayBuffer): FilePrese
   if (ext === ".pdf") return "pdf";
   if (BINARY_EXTENSIONS.includes(ext)) return "binary";
   if (!looksLikeText(bytes)) return "binary";
+  if (ext === ".csv" || ext === ".tsv") return "sheet";
   if (MARKDOWN_EXTENSIONS.includes(ext)) return "markdown";
   if (HTML_EXTENSIONS.includes(ext)) return "html";
 

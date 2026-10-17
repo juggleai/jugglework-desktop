@@ -259,6 +259,35 @@ async function uploadedAttachmentFilePart(item: UploadedChatAttachment): Promise
   };
 }
 
+/**
+ * 为预览或发送创建一次工作区附件副本，后续发送保留在文件视图中的编辑结果。
+ * @param input 附件、所属工作区和会话
+ */
+export async function materializeComposerAttachment(input: {
+  attachment: ComposerAttachment;
+  endpoint: ChatAttachmentWorkspaceEndpoint;
+  sessionId: string;
+  createId?: () => string;
+}): Promise<string> {
+  const workspaceId = input.endpoint.workspaceId.trim();
+  if (!workspaceId) throw new Error("Workspace endpoint is unavailable.");
+  if (input.attachment.workspaceCopy?.workspaceId === workspaceId)
+    return input.attachment.workspaceCopy.path;
+  const metadata = resolveAttachmentFileMetadata(input.attachment.file);
+  const path = buildChatAttachmentInboxPath({ sessionId: input.sessionId, filename: metadata.filename, id: input.createId ? input.createId() : randomAttachmentId() });
+  let result: InboxUploadResult;
+  try {
+    result = await input.endpoint.client.uploadInbox(workspaceId, input.attachment.file, { path });
+    if (!result.ok) throw new Error("upload was rejected");
+    if (!result.path.trim()) throw new Error("upload did not return a path");
+    if (result.bytes !== input.attachment.file.size)
+      throw new Error(`expected ${input.attachment.file.size} bytes, wrote ${result.bytes}`);
+  } catch (error) { throw new Error(uploadErrorMessage(metadata.filename, error)); }
+  const workspacePath = workspaceInboxPath(result.path);
+  input.attachment.workspaceCopy = { workspaceId, path: workspacePath };
+  return workspacePath;
+}
+
 export async function composerAttachmentsToWorkspaceFileParts(input: {
   attachments: ComposerAttachment[];
   endpoint: ChatAttachmentWorkspaceEndpoint;
@@ -281,36 +310,12 @@ export async function composerAttachmentsToWorkspaceFileParts(input: {
   const uploaded: UploadedChatAttachment[] = [];
   for (const attachment of input.attachments) {
     const metadata = resolveAttachmentFileMetadata(attachment.file);
-    const id = input.createId ? input.createId() : randomAttachmentId();
-    const inboxPath = buildChatAttachmentInboxPath({
-      sessionId: input.sessionId,
-      filename: metadata.filename,
-      id,
-    });
-
-    let result: InboxUploadResult;
-    try {
-      result = await input.endpoint.client.uploadInbox(workspaceId, attachment.file, { path: inboxPath });
-    } catch (error) {
-      throw new Error(uploadErrorMessage(metadata.filename, error));
-    }
-
-    if (result.ok === false) {
-      throw new Error(`Failed to copy attachment "${metadata.filename}" into this worker workspace: upload was rejected`);
-    }
-    if (!result.path.trim()) {
-      throw new Error(`Failed to copy attachment "${metadata.filename}" into this worker workspace: upload did not return a path`);
-    }
-    if (result.bytes !== attachment.file.size) {
-      throw new Error(`Failed to copy attachment "${metadata.filename}" into this worker workspace: expected ${attachment.file.size} bytes, wrote ${result.bytes}`);
-    }
-
-    const workspacePath = workspaceInboxPath(result.path);
+    const workspacePath = await materializeComposerAttachment({ ...input, attachment });
     const absolutePath = joinWorkspaceRelativePath(workspaceRoot, workspacePath);
     uploaded.push({
       filename: metadata.filename,
       mime: metadata.mime,
-      bytes: result.bytes,
+      bytes: attachment.file.size,
       workspacePath,
       url: toFileUrl(absolutePath),
       file: attachment.file,

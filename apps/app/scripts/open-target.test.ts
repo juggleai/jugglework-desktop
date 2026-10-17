@@ -112,6 +112,17 @@ describe("deriveOpenTargets", () => {
     expect(deck ? isCollectibleArtifactTarget({ ...deck, exists: true }) : false).toBe(true);
   });
 
+  it("keeps Chinese, quoted space names, Windows paths and case-distinct PPTX references", () => {
+    const targets = deriveOpenTargets([
+      message("ppt", "assistant", '文件：演示/季度汇报.pptx，另见 `演示/季度汇报 Q1.pptx`；以及 "C:\\reports\\演示 Q1.PPTX"。\nReport.pptx\nreport.pptx'),
+    ], { includeFileMentions: true });
+    expect(targets.map((target) => target.value)).toEqual(expect.arrayContaining([
+      "演示/季度汇报.pptx", "演示/季度汇报 Q1.pptx", "C:/reports/演示 Q1.PPTX", "Report.pptx", "report.pptx",
+    ]));
+    expect(targets.every((target) => target.preview === "slides")).toBe(true);
+    expect(new Set(targets.map((target) => target.id)).size).toBe(targets.length);
+  });
+
   it("extracts artifact paths from JuggleWork extension call metadata", () => {
     const targets = deriveOpenTargets([
       toolMessage("msg_tool", "jugglework_extension_call", {
@@ -282,4 +293,13 @@ describe("deriveOpenTargets", () => {
 
     expect(selectAutoOpenTarget(targets)).toBeNull();
   });
+});
+
+
+it("已发送 Word 和 Excel 附件解析文件 URL，保留中文与 Windows 路径", () => {
+  const targets = deriveOpenTargets([{ id: "user", role: "user", parts: [
+    { type: "file", filename: "报告.docx", mediaType: "application/octet-stream", url: "file:///workspace/inbox/%E6%8A%A5%E5%91%8A.docx" },
+    { type: "file", filename: "预算.xlsx", mediaType: "application/octet-stream", url: "file:///C:/workspace/%E9%A2%84%E7%AE%97.xlsx" },
+  ] }]);
+  expect(targets.map((item) => item.value)).toEqual(["/workspace/inbox/报告.docx", "C:/workspace/预算.xlsx"]);
 });

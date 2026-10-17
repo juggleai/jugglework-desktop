@@ -13,11 +13,8 @@ describe("artifact spreadsheet model", () => {
     expect(output).toEqual({ kind: "text", data: "name,revenue\nAda,11\n" });
   });
 
-  it("round-trips XLSX edits", async () => {
-    const output = await serializeSpreadsheet("artifact-eval.xlsx", [["name", "revenue"], ["Ada", "10"]]);
-    expect(output.kind).toBe("binary");
-    if (output.kind !== "binary") throw new Error("expected binary");
-    const parsed = await parseSpreadsheet({ name: "artifact-eval.xlsx", content: output });
-    expect(parsed.slice(0, 2)).toEqual([["name", "revenue"], ["Ada", "10"]]);
+  it("拒绝使用二维字符串重建二进制工作簿，避免单表写回丢失内容", async () => {
+    for (const name of ["book.xlsx", "book.xls", "book.ods"])
+      await expect(serializeSpreadsheet(name, [["name", "revenue"], ["Ada", "10"]])).rejects.toThrow("Office 原生编辑器");
   });
 });

@@ -22,6 +22,17 @@ type OpenTargetProviderProps = {
 };
 
 const EMPTY_OPEN_TARGETS: OpenTarget[] = [];
+const FileReferenceContext = React.createContext<OpenTarget[]>(EMPTY_OPEN_TARGETS);
+
+/** 为单轮消息限定可引用文件，不将其他轮次的同名文件注入正文。 */
+export function FileReferenceProvider({ children, targets }: { children: React.ReactNode; targets: OpenTarget[] }) {
+  return React.createElement(FileReferenceContext.Provider, { value: targets }, children);
+}
+
+/** 读取当前消息轮次中已确认的文件引用。 */
+export function useFileReferences() {
+  return React.useContext(FileReferenceContext);
+}
 
 const OpenTargetContext = React.createContext<OpenTargetContextValue>({
   openTargets: EMPTY_OPEN_TARGETS,

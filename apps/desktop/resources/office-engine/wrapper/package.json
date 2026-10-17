@@ -1,0 +1,43 @@
+{
+  "name": "@tencent/tencent-docs-ai-engine",
+  "version": "0.2.196-wb",
+  "description": "Tencent Docs AI Engine. Spawn-and-supervise wrapper around the bundled `editor_sdk` binary (serves the JSON-RPC MCP endpoint /mcp consumed by agent CLIs and the editor preview assets /static/<type>/pc.html on a single port, default :39099; lazy start, stdout-based readiness detection, graceful shutdown) plus the local-docs scenario layer (prompt fragment + variable collector + cwd-based detector) used by host system-prompt renderers.",
+  "main": "lib/common/index.js",
+  "typings": "lib/common/index.d.ts",
+  "license": "MIT",
+  "bin": {
+    "tencent-docs-mcp": "./lib/mcp/stdio-mcp-bridge.js"
+  },
+  "files": [
+    "lib",
+    "src",
+    "supported-extensions.cjs",
+    "scripts/download-editor-sdk.js",
+    "scripts/editor-sdk-platforms.d.ts",
+    "scripts/editor-sdk-platforms.js",
+    "scripts/allowed-hosts.cjs",
+    "editor-sdk-version.json"
+  ],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.20.1"
+  },
+  "devDependencies": {
+    "@types/chai": "^4.3.11",
+    "@types/mocha": "^10.0.0",
+    "@types/node": "18.15.0",
+    "@types/sinon": "^17.0.3",
+    "chai": "^4.3.10",
+    "esbuild": "^0.25.0",
+    "mocha": "^10.0.0",
+    "rimraf": "^5.0.5",
+    "sinon": "^17.0.2",
+    "ts-node": "^10.9.1",
+    "typescript": "^5.4.5"
+  },
+  "peerDependencies": {
+    "electron": ">=29"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

@@ -599,6 +599,8 @@ describe("JuggleWorkExtensionsPreview semantic tool surface", () => {
     const tools = Object.keys(plugin.tool).sort();
 
     expect(tools).toEqual([
+      "jugglework_artifact_generate",
+      "jugglework_artifact_register",
       "jugglework_context",
       "jugglework_execute",
       "jugglework_image_generate",

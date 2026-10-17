@@ -91,7 +91,15 @@ import {
 import { serve, type ServeResult } from "./serve-node.js";
 import { externalFetch, loopbackFetch } from "./server-fetch.js";
 import { registerCoreRoutes } from "./routes/core.js";
-import { registerFileRoutes } from "./routes/files.js";
+import { registerFileRoutes, resolveWorkspaceArtifactTargets, normalizeWorkspaceRelativePath } from "./routes/files.js";
+import { OfficeEngine } from "./office/engine.js";
+import { OfficeDocuments } from "./office/documents.js";
+import { assertOfficeFileEditable } from "./office/file-compatibility.js";
+import { prepareOfficePageSave, readOfficePageSelection } from "./office/page-bridge.js";
+import { registerOfficeRoutes } from "./routes/office.js";
+import { runtimeStorageDir } from "./runtime-db.js";
+import { FileDeliveryService } from "./artifacts/delivery.js";
+import { registerFileDeliveryRoutes } from "./routes/file-deliveries.js";
 import { registerOperationRoutes } from "./routes/operations.js";
 import { addRoute, matchRoute, type AuthMode, type RequestContext, type Route } from "./routes/registry.js";
 import { registerSessionRoutes } from "./routes/sessions.js";
@@ -936,7 +944,19 @@ function parseSessionExecutionStartProxyRequest(method: string, proxyPath: strin
   }
 }
 
+/** 统一解释引擎会话活动状态，供队列、交付和 Office 迁移复用。 */
+async function readSessionActivity(config: ServerConfig, workspace: WorkspaceInfo, sessionId: string, signal?: AbortSignal): Promise<"idle" | "busy"> {
+  const statuses = unwrapOpencodeResult(await createWorkspaceOpencodeClient(config, workspace).session.status(undefined, { signal }), "/session/status");
+  if (!isRecord(statuses)) throw new ApiError(502, "opencode_invalid_response", "Invalid session status");
+  const status = statuses[sessionId];
+  if (status === undefined) return "idle";
+  if (!isRecord(status) || typeof status.type !== "string") throw new ApiError(502, "opencode_invalid_response", "Invalid session status");
+  return status.type === "idle" ? "idle" : "busy";
+}
+
 export async function startServer(config: ServerConfig, options: {
+  /** 显式 Office SDK 本地资源目录；桌面安装包优先使用自身资源。 */
+  officeResourceDirectory?: string;
   interactionResolutions?: InteractionResolutionCoordinator;
   logger?: ServerLogger;
   reviewService?: ReviewReadService;
@@ -971,6 +991,8 @@ export async function startServer(config: ServerConfig, options: {
     throw error;
   }
   const lastJournalProgressAtByRun = new Map<string, number>();
+  let fileDeliveries: FileDeliveryService | undefined;
+  let officeDocuments: OfficeDocuments | undefined;
   const sessionMutations = createSessionMutationCoordinator({
     onLifecycleEvent: (event) => {
       const timestamp = Date.now();
@@ -982,6 +1004,82 @@ export async function startServer(config: ServerConfig, options: {
         lastJournalProgressAtByRun.delete(event.run.runId);
       }
       sessionRunJournal.record({ ...event, occurredAt: timestamp });
+      if (event.event === "run_terminal" || event.event === "start_rolled_back") {
+        void fileDeliveries?.finishRun(event.run.workspaceId, event.run.sessionId, event.run.runId)
+          .catch((error) => logger.log("warn", "artifact_finalization_failed", { runId: event.run.runId, error: String(error) }));
+      }
+    },
+  });
+  fileDeliveries = new FileDeliveryService({
+    workspace(workspaceId) {
+      const workspace = config.workspaces.find((item) => item.id === workspaceId && item.workspaceType !== "remote");
+      if (!workspace) throw new ApiError(404, "workspace_not_found", "Local workspace not found");
+      return workspace;
+    },
+    async readMessages(workspaceId, sessionId) {
+      const workspace = await resolveWorkspaceWithoutBootstrap(config, workspaceId);
+      return unwrapOpencodeResult(await createWorkspaceOpencodeClient(config, workspace).session.messages({ sessionID: sessionId }), "/session/messages");
+    },
+    async inspect(workspaceId, path) {
+      const workspace = await resolveWorkspaceWithoutBootstrap(config, workspaceId);
+      const targets = await resolveWorkspaceArtifactTargets(workspace.path, [{ kind: "file", value: path }]);
+      const target = targets[0];
+      if (!target) return null;
+      return {
+        value: String(target.value), name: String(target.name), preview: String(target.preview), exists: target.exists === true,
+        contentType: typeof target.contentType === "string" ? target.contentType : undefined,
+        size: typeof target.size === "number" ? target.size : undefined,
+        updatedAt: typeof target.updatedAt === "number" ? target.updatedAt : undefined,
+      };
+    },
+    readMediaJob: (workspaceId, sessionId, requestId) => mediaGenerationRepository.getByRequest(workspaceId, sessionId, requestId),
+    async saveTarget(workspaceId, _origin, target) {
+      if (!officeDocuments || !target.documentId) throw new Error("Office 保存服务不可用");
+      await officeDocuments.save(workspaceId, target.documentId, true);
+    },
+  });
+  const officeEngine = new OfficeEngine({
+    resourceDirectory: options.officeResourceDirectory,
+    logDirectory: join(runtimeStorageDir(config), "office-engine"),
+    onExit: () => {
+      officeDocuments?.invalidate();
+    },
+  });
+  officeDocuments = new OfficeDocuments({
+    checkFile: assertOfficeFileEditable,
+    engine: officeEngine,
+    prepareSave: prepareOfficePageSave,
+    readSelection: readOfficePageSelection,
+    async resolveFile(workspaceId, path, allowMissing) {
+      const workspace = await resolveWorkspaceWithoutBootstrap(config, workspaceId);
+      if (workspace.workspaceType === "remote") throw new ApiError(400, "local_workspace_required", "Office 仅支持本机工作区");
+      const relativePath = normalizeWorkspaceRelativePath(path, { allowSubdirs: true });
+      const registry = fileDeliveries!.registry(workspaceId);
+      const targets = await resolveWorkspaceArtifactTargets(workspace.path, [{ kind: "file", value: relativePath }]);
+      const target = targets[0];
+      if (!target || (!allowMissing && target.exists !== true)) throw new ApiError(404, "file_not_found", "文档不存在");
+      const file = registry.resolve({ value: String(target.value), name: String(target.name), preview: String(target.preview), exists: target.exists === true,
+        size: typeof target.size === "number" ? target.size : undefined, updatedAt: typeof target.updatedAt === "number" ? target.updatedAt : undefined,
+        contentType: typeof target.contentType === "string" ? target.contentType : undefined });
+      return { absolutePath: join(workspace.path, file.relativePath), file };
+    },
+    async onSaved(workspaceId, path) {
+      const workspace = await resolveWorkspaceWithoutBootstrap(config, workspaceId);
+      const targets = await resolveWorkspaceArtifactTargets(workspace.path, [{ kind: "file", value: path }]);
+      const target = targets[0];
+      if (target?.exists) fileDeliveries!.registry(workspaceId).resolve({ value: String(target.value), name: String(target.name), preview: String(target.preview), exists: true,
+        size: typeof target.size === "number" ? target.size : undefined, updatedAt: typeof target.updatedAt === "number" ? target.updatedAt : undefined,
+        contentType: typeof target.contentType === "string" ? target.contentType : undefined });
+    },
+    onModified: (...args) => fileDeliveries!.bindOfficeModification(...args),
+    onOwnership: async (workspaceId, path, owner) => { fileDeliveries!.registry(workspaceId).setEditingOwner(path, owner); },
+    isBusy: (workspaceId, sessionId) => Boolean(sessionMutations.getActive(workspaceId, sessionId)),
+    async activityBlocker(workspaceId, sessionId, documentId) {
+      const workspace = await resolveWorkspaceWithoutBootstrap(config, workspaceId);
+      if (await readSessionActivity(config, workspace, sessionId, AbortSignal.timeout(5_000)) !== "idle") return "running";
+      // TIPS: 已结束的运行仍可能在保存 Office 产物；只等待当前文档的交付，不等待无关媒体任务。
+      const delivery = fileDeliveries!.registry(workspaceId).list(sessionId);
+      return delivery.turns.some((turn) => ["collecting", "finalizing"].includes(turn.status) && turn.targets.some((target) => target.documentId === documentId && target.status === "pending")) ? "finalizing" : null;
     },
   });
   const hostMarketplaceEnvironmentId = await deriveHostMarketplaceEnvironmentId(config);
@@ -1250,7 +1348,17 @@ export async function startServer(config: ServerConfig, options: {
         : typeof context.sessionId === "string"
           ? context.sessionId
           : undefined;
-      const job = await service.submit({ workspace, sessionId, clientRequestId: input.clientRequestId, prompt: input.prompt, mode: input.mode, model: selected.ref, ...(input.sourceImagePath ? { sourceImagePath: input.sourceImagePath } : {}), options: { ...(input.durationSeconds ? { durationSeconds: input.durationSeconds } : {}), ...(input.resolution ? { resolution: input.resolution } : {}) } });
+      const messageId = typeof context.messageID === "string" ? context.messageID : typeof context.messageId === "string" ? context.messageId : undefined;
+      const origin = sessionId && messageId ? await fileDeliveries!.bindMediaSubmission(workspace.id, sessionId, messageId, input.clientRequestId) : null;
+      let job;
+      try {
+        job = await service.submit({ workspace, sessionId, clientRequestId: input.clientRequestId, prompt: input.prompt, mode: input.mode, model: selected.ref, ...(input.sourceImagePath ? { sourceImagePath: input.sourceImagePath } : {}), options: { ...(input.durationSeconds ? { durationSeconds: input.durationSeconds } : {}), ...(input.resolution ? { resolution: input.resolution } : {}) } });
+      } catch (error) {
+        if (origin && !mediaGenerationRepository.getByRequest(workspace.id, sessionId, input.clientRequestId)) {
+          fileDeliveries!.registry(workspace.id).fail(origin, `media:${input.clientRequestId}`, "媒体任务提交失败", false);
+        }
+        throw error;
+      }
       return { job: publicVideoGenerationJob(job) };
     },
     async getJob(jobId: string, context: Record<string, unknown>) {
@@ -1296,6 +1404,8 @@ export async function startServer(config: ServerConfig, options: {
     () => sessionMutations.listActive().length > 0,
     options.auditWriter ?? recordAudit,
     logger,
+    fileDeliveries,
+    officeDocuments,
   );
 
   const serverOptions: {
@@ -1491,6 +1601,7 @@ export async function startServer(config: ServerConfig, options: {
     hostMarketplaceMigration.close();
     hostMarketplacePlugins.close();
     clearHostMarketplaceMcpOverlay(config);
+    await officeDocuments.dispose();
     throw error;
   }
 
@@ -1499,17 +1610,11 @@ export async function startServer(config: ServerConfig, options: {
     sessionMutations,
     async getSessionStatus(workspaceId, sessionId, signal) {
       const workspace = await resolveWorkspaceWithoutBootstrap(config, workspaceId);
-      const statuses = unwrapOpencodeResult(await createWorkspaceOpencodeClient(config, workspace).session.status(undefined, { signal }), "/session/status");
-      if (!isRecord(statuses)) throw new ApiError(502, "opencode_invalid_response", "OpenCode returned invalid session status");
-      const status = statuses[sessionId];
-      if (status === undefined) return "idle";
-      if (!isRecord(status) || typeof status.type !== "string") {
-        throw new ApiError(502, "opencode_invalid_response", "OpenCode returned invalid session status");
-      }
-      return status.type === "idle" ? "idle" : "busy";
+      return readSessionActivity(config, workspace, sessionId, signal);
     },
     async admit(operation, signal) {
       const workspace = await resolveWorkspaceWithoutBootstrap(config, operation.workspaceId);
+      if (workspace.workspaceType !== "remote") fileDeliveries.prepareAdmission({ workspaceId: workspace.id, sessionId: operation.sessionId, source: "remote-pending", id: operation.id });
       await admitOpencodePrompt(createWorkspaceOpencodeClient(config, workspace), {
         workspaceId: workspace.id,
         sessionId: operation.sessionId,
@@ -1548,6 +1653,7 @@ export async function startServer(config: ServerConfig, options: {
       try { await automationSubscriptionSync.dispose(); } catch (error) { errors.push(error); }
       try { await automationScheduler.dispose(); } catch (error) { errors.push(error); }
       try { await mediaGenerationWorker.dispose(); } catch (error) { errors.push(error); }
+      try { await officeDocuments!.dispose(); } catch (error) { errors.push(error); }
       try { await reviewService.dispose(); } catch (error) { errors.push(error); }
       let pendingPumpClosed = false;
       try { await sessionPendingOperationPump?.close(); pendingPumpClosed = true; } catch (error) {
@@ -2609,6 +2715,8 @@ function createRoutes(
   hasAnyActiveSessionRuns: () => boolean,
   hostMarketplaceAuditWriter: (workspaceRoot: string, entry: AuditEntry) => Promise<void>,
   logger: ServerLogger,
+  fileDeliveries: FileDeliveryService,
+  officeDocuments: OfficeDocuments,
 ): Route[] {
   const routes: Route[] = [];
   registerHostMarketplacePluginRoutes({
@@ -2693,8 +2801,18 @@ function createRoutes(
     resolveWorkspaceWithoutBootstrap,
     createWorkspaceOpencodeClient,
     unwrapOpencodeResult,
-    dispatchSessionPromptAsync,
+    dispatchSessionPromptAsync: async (routeConfig, workspace, sessionId, prompt) => {
+      const run = sessionMutations.getActive(workspace.id, sessionId);
+      const boundPrompt = run && workspace.workspaceType !== "remote"
+        ? fileDeliveries.preparePrompt(workspace.id, sessionId, run.runId, prompt)
+        : prompt;
+      await dispatchSessionPromptAsync(routeConfig, workspace, sessionId, boundPrompt);
+    },
     dispatchSessionAbort,
+    preparePromptAdmission: (identity) => {
+      const workspace = config.workspaces.find((item) => item.id === identity.workspaceId);
+      if (workspace?.workspaceType !== "remote") fileDeliveries.prepareAdmission(identity);
+    },
     sessionMutations,
     sessionPendingOperations,
     sessionPendingOperationPump: {
@@ -3597,7 +3715,23 @@ function createRoutes(
     resolveOutboxEnabled,
     resolveInboxMaxBytes,
     scopeRank,
+    beforeFileMutation: (workspaceId, paths) => officeDocuments.assertFileMutationAllowed(workspaceId, paths),
+    onFileRenamed: (workspaceId, from, to) => {
+      if (config.workspaces.find((workspace) => workspace.id === workspaceId)?.workspaceType !== "remote") {
+        fileDeliveries.registry(workspaceId).rename(from, to);
+      }
+    },
   });
+
+  registerFileDeliveryRoutes({
+    routes, config, service: fileDeliveries, jsonResponse, readJsonBody, ensureWritable,
+    requireClientScope, resolveWorkspace,
+    async isIdle(workspace, sessionId) {
+      if (sessionMutations.getActive(workspace.id, sessionId)) return false;
+      return await readSessionActivity(config, workspace, sessionId) === "idle";
+    },
+  });
+  registerOfficeRoutes({ routes, config, documents: officeDocuments, jsonResponse, readJsonBody, ensureWritable, requireClientScope, resolveWorkspace });
 
   addRoute(routes, "GET", "/workspace/:id/plugins", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
@@ -3909,12 +4043,14 @@ function createRoutes(
       return jsonResponse({ allowed: true, workspaceId: workspace.id, serverNames, revision: policy.revision });
     }
     if (!toolId) throw new ApiError(400, "invalid_payload", "toolId is required");
-    return jsonResponse(checkMcpWorkspaceToolPolicy({
+    const decision = checkMcpWorkspaceToolPolicy({
       toolId,
       args: body.args,
       serverNames,
       disabledServerNames: policy.disabledServerNames,
-    }));
+    });
+    if (toolId.startsWith("jugglework-office_")) return jsonResponse({ allowed: false, code: "office_tool_host_owned", serverName: "jugglework-office" });
+    return jsonResponse(decision);
   });
 
   // Portable export of installed skills and MCP servers (including

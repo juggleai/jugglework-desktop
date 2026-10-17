@@ -1,4 +1,5 @@
 import type { UIMessage } from "ai";
+import type { SessionFileArtifacts } from "@jugglework/types/file-artifacts";
 import * as React from "react";
 
 import {
@@ -9,7 +10,8 @@ import {
 import { generatedImageResultFromToolPart } from "@/components/chat/generated-image-result";
 import { generatedVideoJobFromToolPart } from "@/components/chat/generated-video-result";
 import { useOpenTargets } from "@/lib/target-provider";
-import { isCollectibleArtifactTarget, isOpenableFileTarget, type OpenTarget, type OpenTargetPreview } from "@/react-app/domains/session/artifacts/open-target";
+import { deriveOpenTargets, extractFilePathsFromText, isCollectibleArtifactTarget, isOpenableFileTarget, type OpenTarget, type OpenTargetPreview } from "@/react-app/domains/session/artifacts/open-target";
+import { resolveFileReference } from "@/lib/file-references";
 
 export type ArtifactType = "website" | "markdown" | "sheet" | "slides" | "document" | "image" | "video" | "audio" | "pdf" | "html" | "text" | "unknown";
 
@@ -21,7 +23,31 @@ export type ArtifactItem = {
   messageId: string
   messageIndex: number
   updatedAt?: number
+  sizeBytes?: number
+  hasSuccessfulWrite?: boolean
   legacy_target: OpenTarget
+}
+
+/** 使用轮次快照显示名称和大小，使用文件当前身份打开，后续修改不覆写旧卡片。 */
+export function artifactsFromDelivery(data: SessionFileArtifacts, turnId: string): ArtifactItem[] {
+  const turn = data.turns.find((entry) => entry.turnId === turnId);
+  if (!turn) return [];
+  const files = new Map(data.files.map((file) => [file.artifactId, file]));
+  return turn.items.flatMap((item) => {
+    const file = files.get(item.artifactId);
+    if (!file) return [];
+    const type = getArtifactType(item.snapshot.name);
+    return [{
+      id: file.artifactId, name: item.snapshot.name, path: file.relativePath, type,
+      messageId: turnId, messageIndex: -1, sizeBytes: item.snapshot.sizeBytes ?? undefined,
+      updatedAt: item.snapshot.updatedAt ?? undefined, hasSuccessfulWrite: true,
+      legacy_target: {
+        id: file.artifactId, kind: "file" as const, value: file.relativePath, name: file.name,
+        preview: artifactTypeToPreview(getArtifactType(file.name)), confidence: 100, reason: "turn-delivery",
+        exists: file.exists, size: file.sizeBytes ?? undefined, updatedAt: file.updatedAt ?? undefined,
+      },
+    }];
+  });
 }
 
 type ArtifactEntry = ArtifactItem & {
@@ -30,6 +56,8 @@ type ArtifactEntry = ArtifactItem & {
 
 type GetArtifactsOptions = {
   includeTargetFallbacks?: boolean
+  deliverablesOnly?: boolean
+  stableOrder?: boolean
 }
 
 const WORKSPACES_PREFIX_PATTERN = /^workspaces\/[^/]+\//i;
@@ -144,6 +172,12 @@ export function canOpenArtifact(artifact: ArtifactItem) {
   return canPreviewArtifact(artifact) || isOpenableFileTarget(artifact.legacy_target);
 }
 
+/** 显示已确认文件，或历史成功写入后已缺失的文件；未知候选不作为完成产物。 */
+export function canDisplayArtifact(artifact: ArtifactItem) {
+  return artifact.legacy_target.exists === true
+    || (artifact.legacy_target.exists === false && artifact.hasSuccessfulWrite === true);
+}
+
 function getArtifactName(path: string) {
   const segments = path.split(/[/\\]/);
   
@@ -174,8 +208,8 @@ function artifactTypeToPreview(type: ArtifactType): OpenTargetPreview {
 }
 
 function artifactPathMatchesTarget(path: string, targetValue: string) {
-  const normalized = normalizeArtifactPath(path).toLowerCase();
-  const target = normalizeArtifactPath(targetValue).toLowerCase();
+  const normalized = normalizeArtifactPath(path);
+  const target = normalizeArtifactPath(targetValue);
   return normalized === target || normalized.endsWith(`/${target}`);
 }
 
@@ -186,10 +220,11 @@ function openTargetFromArtifactPath(
   verifiedTargets: OpenTarget[],
 ): OpenTarget {
   const normalized = normalizeArtifactPath(path);
-  const id = `file:${normalized.toLowerCase()}`;
-  const verified = verifiedTargets.find(
-    (target) => target.id === id || artifactPathMatchesTarget(normalized, target.value),
-  );
+  const id = `file:${normalized}`;
+  const exact = verifiedTargets.find((target) => target.kind === "file" && normalizeArtifactPath(target.value) === normalized);
+  const matches = verifiedTargets.filter((target) => target.kind === "file" && artifactPathMatchesTarget(normalized, target.value));
+  // TIPS: 绝对路径可以映射回服务端相对路径，但同名候选必须唯一，不能取整个会话的第一个匹配。
+  const verified = exact ?? (matches.length === 1 ? matches[0] : undefined);
 
   return verified ?? {
     id,
@@ -204,6 +239,7 @@ function openTargetFromArtifactPath(
 
 function parseApplyPatchPaths(patchText: string) {
   const paths: string[] = [];
+  if (typeof patchText !== "string") return paths;
 
   for (const line of patchText.split("\n")) {
     if (line.startsWith("*** Add File:")) {
@@ -224,24 +260,24 @@ function parseApplyPatchPaths(patchText: string) {
   return paths;
 }
 
-const FILE_PATTERN = /(?:^|[\s"'`([{])((?:\.{1,2}[/\\]|~[/\\]|[/\\])?[\w.\-]+(?:[/\\][\w.\-]+)+\.[a-z][a-z0-9]{0,9}|[\w.\-]+\.[a-z][a-z0-9]{0,9})/gi;
-const ASSISTANT_ARTIFACT_MENTION_PATTERN = /\b(?:artifact|created|deck|deliverable|exported|file|generated|opened|presentation|saved|slides?|updated|wrote)\b/i;
+const ASSISTANT_ARTIFACT_MENTION_PATTERN = /\b(?:created|deliverable|exported|generated|saved|updated|wrote)\b|生成|创建|导出|保存|交付|更新/iu;
+const FAILED_DELIVERY_PATTERN = /(?:未能|无法|未|不能).{0,8}(?:生成|创建|保存|导出)|(?:生成|创建|保存|导出).{0,8}失败|\b(?:failed|unable|could not|cannot)\b/iu;
+
+/** 判断输出是否适合作为用户交付文件，源码和内部运行文件不自动计入。 */
+export function isDeliverableArtifactPath(path: string): boolean {
+  const normalized = normalizeArtifactPath(path);
+  if (/(?:^|\/)(?:node_modules|\.git|\.opencode|\.cache|__pycache__)(?:\/|$)/.test(normalized)) return false;
+  if (/^(?:src|vendor)\//.test(normalized)) return false;
+  return !/\.(?:tsx?|jsx?|mjs|cjs|py|rb|go|rs|java|kt|swift|php|[ch]|cpp|cs|sh|bash|zsh|lock)$/i.test(normalized);
+}
 
 function getArtifactPathsFromText(text: string) {
-  if (!ASSISTANT_ARTIFACT_MENTION_PATTERN.test(text)) return [];
-  const paths: string[] = [];
-
-  FILE_PATTERN.lastIndex = 0;
-  for (const match of text.matchAll(FILE_PATTERN)) {
-    if (match[1] && getArtifactType(match[1]) !== "unknown") {
-      paths.push(match[1]);
-    }
-  }
-
-  return paths;
+  if (!ASSISTANT_ARTIFACT_MENTION_PATTERN.test(text) || FAILED_DELIVERY_PATTERN.test(text)) return [];
+  return extractFilePathsFromText(text).filter((path) => getArtifactType(path) !== "unknown");
 }
 
 function getArtifactPathsFromMessage(message: UIMessage) {
+  if (message.role !== "assistant") return [];
   const paths: (string | undefined)[] = [];
 
   for (const part of message.parts) {
@@ -290,7 +326,7 @@ function getArtifactPathsFromMessage(message: UIMessage) {
   }
 
   return paths.flatMap((path) => {
-    const normalized = path?.trim().toLowerCase();
+    const normalized = path?.trim();
     return normalized ? [normalized] : [];
   });
 }
@@ -305,30 +341,51 @@ function addArtifact(
   verifiedTarget?: OpenTarget,
 ) {
   const normalized = normalizeArtifactPath(path);
-  const key = normalized.toLowerCase();
   const type = getArtifactType(normalized);
   const legacyTarget = verifiedTarget ?? openTargetFromArtifactPath(normalized, getArtifactName(normalized), type, verifiedTargets);
+  const key = normalizeArtifactPath(legacyTarget.value);
   const name = legacyTarget.name;
 
   artifacts.set(key, {
     id: key,
     name,
-    path: normalized,
+    path: key,
     type,
     messageId,
     messageIndex,
-    sequence,
+    sequence: artifacts.get(key)?.sequence ?? sequence,
     updatedAt: legacyTarget.updatedAt,
+    sizeBytes: legacyTarget.size,
     legacy_target: legacyTarget,
   });
 }
 
+/** 从指定消息范围提取产物候选；服务端已确认目标只用于匹配，不默认当作本轮输出。 */
 export function getArtifactsFromMessages(messages: UIMessage[], openTargets: OpenTarget[] = [], options: GetArtifactsOptions = {}) {
   const artifacts = new Map<string, ArtifactEntry>();
+  const writeOutcomes = new Map<string, boolean>();
   let sequence = 0;
+
+  for (const message of messages) {
+    if (message.role !== "assistant") continue;
+    for (const part of message.parts) {
+      if (part.type !== "dynamic-tool" || !["output-available", "output-error"].includes(part.state)) continue;
+      const paths = isWriteToolPart(part) || isEditToolPart(part)
+        ? [part.input?.filePath]
+        : isApplyPatchToolPart(part) ? parseApplyPatchPaths(part.input?.patchText) : [];
+      for (const path of paths) {
+        if (typeof path !== "string" || !path.trim()) continue;
+        const target = openTargetFromArtifactPath(path, getArtifactName(path), getArtifactType(path), openTargets);
+        writeOutcomes.set(normalizeArtifactPath(target.value), part.state === "output-available");
+      }
+    }
+  }
 
   messages.forEach((message, messageIndex) => {
     for (const path of getArtifactPathsFromMessage(message)) {
+      if (options.deliverablesOnly && !isDeliverableArtifactPath(path)) continue;
+      const target = openTargetFromArtifactPath(path, getArtifactName(path), getArtifactType(path), openTargets);
+      if (writeOutcomes.get(normalizeArtifactPath(target.value)) === false) continue;
       addArtifact(artifacts, path, message.id, messageIndex, sequence, openTargets);
       sequence += 1;
     }
@@ -344,7 +401,11 @@ export function getArtifactsFromMessages(messages: UIMessage[], openTargets: Ope
     }
   }
 
-  return [...artifacts.values()].sort((left, right) => {
+  return [...artifacts.values()].map((artifact) => ({
+    ...artifact,
+    hasSuccessfulWrite: writeOutcomes.get(artifact.path) === true,
+  })).sort((left, right) => {
+    if (options.stableOrder) return left.sequence - right.sequence;
     const updatedAtDelta = (right.updatedAt ?? 0) - (left.updatedAt ?? 0);
     if (updatedAtDelta !== 0) return updatedAtDelta;
 
@@ -355,14 +416,37 @@ export function getArtifactsFromMessages(messages: UIMessage[], openTargets: Ope
   });
 }
 
+/** 按消息范围读取产物及服务端确认的元信息，调用方可启用交付过滤和稳定顺序。 */
 export function useArtifacts(messages: UIMessage[], options: GetArtifactsOptions = {}) {
   const { openTargets } = useOpenTargets();
   const includeTargetFallbacks = options.includeTargetFallbacks ?? false;
+  const deliverablesOnly = options.deliverablesOnly ?? false;
+  const stableOrder = options.stableOrder ?? false;
 
   return React.useMemo(
-    () => getArtifactsFromMessages(messages, openTargets, { includeTargetFallbacks }),
-    [includeTargetFallbacks, messages, openTargets],
+    () => getArtifactsFromMessages(messages, openTargets, { includeTargetFallbacks, deliverablesOnly, stableOrder }),
+    [includeTargetFallbacks, deliverablesOnly, stableOrder, messages, openTargets],
   );
+}
+
+/**
+ * 正文引用独立于交付快照：本轮提及且服务端确认存在的文件均可打开。
+ * @param messages 当前轮次消息，不混入其他轮次的同名引用
+ * @param targets 服务端确认的文件目标
+ * @param delivered 当前轮次权威交付，保留其文件身份
+ */
+export function getArtifactFileReferences(messages: UIMessage[], targets: OpenTarget[], delivered: ArtifactItem[]): OpenTarget[] {
+  const candidates = deriveOpenTargets(messages, { includeFileMentions: true })
+    .filter((target) => target.kind === "file" && isDeliverableArtifactPath(target.value))
+    .flatMap((candidate) => {
+      const target = resolveFileReference(candidate.value, targets)
+        ?? openTargetFromArtifactPath(candidate.value, candidate.name, getArtifactType(candidate.value), targets);
+      return target.exists === true ? [target] : [];
+    });
+  // TIPS: 普通引用不依赖“生成/保存”等交付措辞；只读引用不会因此登记为本轮产物。
+  return [...new Map([...candidates, ...delivered.map((item) => item.legacy_target)]
+    .filter((target) => target.exists === true)
+    .map((target) => [target.value, target])).values()];
 }
 
 export function usePreviewArtifact() {

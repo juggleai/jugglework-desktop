@@ -1,4 +1,6 @@
 /** @jsxImportSource react */
+import { getOfficeDocumentKind } from "@jugglework/types/office";
+import { OfficeEditor } from "../office/office-editor";
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Download, ExternalLink, FolderOpen, X } from "lucide-react";
@@ -20,6 +22,8 @@ const ArtifactTextEditor = lazy(() =>
 const ArtifactSpreadsheetEditor = lazy(() =>
   import("./artifact-spreadsheet-editor").then((module) => ({ default: module.ArtifactSpreadsheetEditor })),
 );
+
+const WorkbookFileView = lazy(() => import("../files/workbook-file-view").then((module) => ({ default: module.WorkbookFileView })));
 
 const EMPTY_TRANSCRIPT_TARGETS: OpenTarget[] = [];
 const MARKDOWN_PRIMITIVE_EVAL_ARTIFACT_PATH = "artifacts/markdown-primitive-proof.md";
@@ -44,6 +48,7 @@ type ArtifactPanelProps = {
 };
 
 type ArtifactPanelViewProps = {
+  sessionId: string;
   client: JuggleWorkServerClient;
   workspaceId: string;
   workspaceRoot: string;
@@ -78,8 +83,13 @@ export function ArtifactPanel({ sessionId, tab, client, workspaceId, workspaceRo
     return null;
   }
 
+  // TIPS: 历史产物标签同样进入原生模型，不能回退到旧的单表写回逻辑。
+  if (target.kind === "file" && !isRemoteWorkspace && getOfficeDocumentKind(target.value))
+    return <OfficeEditor client={client} workspaceId={workspaceId} sessionId={sessionId} path={target.value} />;
+
   return (
     <ArtifactPanelView
+      sessionId={sessionId}
       client={client}
       workspaceId={workspaceId}
       workspaceRoot={workspaceRoot}
@@ -90,7 +100,7 @@ export function ArtifactPanel({ sessionId, tab, client, workspaceId, workspaceRo
   );
 }
 
-function ArtifactPanelView({ client, workspaceId, workspaceRoot, isRemoteWorkspace = false, target, onClose }: ArtifactPanelViewProps) {
+function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRemoteWorkspace = false, target, onClose }: ArtifactPanelViewProps) {
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
@@ -189,6 +199,7 @@ function ArtifactPanelView({ client, workspaceId, workspaceRoot, isRemoteWorkspa
       return;
     }
     
+    if (!isRemoteWorkspace && target.value.toLowerCase().endsWith(".docx")) await client.prepareOfficeFile(workspaceId, sessionId, target.value);
     const result = await client.downloadWorkspaceFile(workspaceId, target.value);
     const url = URL.createObjectURL(new Blob([result.data], { type: result.contentType ?? "application/octet-stream" }));
     const anchor = document.createElement("a");
@@ -208,6 +219,10 @@ function ArtifactPanelView({ client, workspaceId, workspaceRoot, isRemoteWorkspa
     }
     else if (!isRemoteWorkspace) {
       try {
+        if (target.value.toLowerCase().endsWith(".docx")) {
+          const prepared = await client.prepareOfficeFile(workspaceId, sessionId, target.value, true);
+          if (prepared.document) await window.__JUGGLEWORK_ELECTRON__?.office?.destroy(prepared.document.documentId);
+        }
         await openDesktopPath(externalPath);
       } catch (cause) {
         toast.error(cause instanceof Error ? cause.message : "Could not open this file.");
@@ -369,6 +384,8 @@ function ArtifactPanelView({ client, workspaceId, workspaceRoot, isRemoteWorkspa
           <TextEditor value={draft} language={target.preview === "markdown" ? "markdown" : "text"} onChange={setDraft} />
         ) : target.preview === "markdown" && data?.kind === "text" ? (
           <MarkdownPreview content={data.data} />
+        ) : target.preview === "sheet" && data?.kind === "binary" ? (
+          <Suspense fallback={<PreviewLoading />}><WorkbookFileView bytes={data.data} /></Suspense>
         ) : target.preview === "sheet" ? (
           <SheetEditor
             name={target.name}

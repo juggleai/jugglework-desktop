@@ -297,6 +297,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
+          lfs: true
           ref: ${{ env.RELEASE_TAG }}
           fetch-depth: 0
 

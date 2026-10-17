@@ -78,7 +78,7 @@ async function requestIdentityFrom(
 /** 常驻执行拦截器：策略更新后无需重新加载 OpenCode。 */
 export const JuggleWorkMcpWorkspacePolicy = async (factoryInput?: unknown) => {
   const factoryContext = contextFrom(factoryInput);
-  const knownMcpPrefixes = new Set<string>();
+  const knownMcpPrefixes = new Set<string>(["jugglework-office_"]);
   const serverUrl = String(process.env.JUGGLEWORK_SERVER_URL || "").replace(/\/$/, "");
   const token = String(process.env.JUGGLEWORK_SERVER_TOKEN || "");
   const fallbackWorkspaceId = String(process.env.JUGGLEWORK_WORKSPACE_ID || "").trim() || undefined;
@@ -171,11 +171,12 @@ export const JuggleWorkMcpWorkspacePolicy = async (factoryInput?: unknown) => {
         body: JSON.stringify({ ...identity, toolId, args: output.args }),
       });
       if (!response.ok) throw new Error("mcp_workspace_policy_unavailable");
-      const decision = await response.json() as { allowed?: boolean; code?: string; serverName?: string | null };
+      const decision = await response.json() as { allowed?: boolean; code?: string; serverName?: string | null; args?: unknown };
       if (decision.serverName) knownMcpPrefixes.add(`${decision.serverName.replace(/[^a-zA-Z0-9_-]/g, "_")}_`);
       if (decision.allowed === false) {
         throw new Error(`${decision.code ?? "mcp_disabled_in_workspace"}${decision.serverName ? `:${decision.serverName}` : ""}`);
       }
     },
+
   };
 };

@@ -617,6 +617,15 @@ export function mergeSystemCaChildEnv(baseEnv = {}, caEnv = {}, extra = {}) {
   };
 }
 
+/** 选择桌面自身的 Office 资源目录；安装包必须使用 ASAR 外的 Resources，不搜索其他 App。 */
+export function resolveOfficeEngineResourceDirectory({ isPackaged, desktopRoot, resourcesPath = undefined }) {
+  if (isPackaged) {
+    if (!resourcesPath) throw new Error("安装包缺少 Resources 路径");
+    return path.join(resourcesPath, "office-engine");
+  }
+  return path.join(desktopRoot, "resources", "office-engine");
+}
+
 export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths, readDenBaseUrl, startEmbeddedServer: startEmbeddedServerOverride = null, sandboxRuntime: sandboxRuntimeOverride = null }) {
   const engineState = createEngineState();
   const juggleworkServerState = createJuggleWorkServerState();
@@ -1131,6 +1140,8 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     // into EADDRINUSE (see apps/server/src/serve-node.ts), so the bound port
     // below is authoritative.
     const handle = await startEmbeddedServer({
+      // TIPS: 安装包路径不落入 ASAR，且不允许环境变量将桌面 SDK 切到外部 App。
+      officeResourceDirectory: resolveOfficeEngineResourceDirectory({ isPackaged: app.isPackaged, desktopRoot, resourcesPath: process.resourcesPath }),
       host,
       port: portSelection.port,
       corsOrigins: ["*"],

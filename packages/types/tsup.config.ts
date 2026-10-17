@@ -2,6 +2,10 @@ import { defineConfig } from "tsup"
 
 export default defineConfig({
   entry: {
+    "file-editor": "src/file-editor.ts",
+    "file-window": "src/file-window.ts",
+    office: "src/office.ts",
+    "file-artifacts": "src/file-artifacts.ts",
     index: "src/index.ts",
     "agent-context-diagnostics": "src/agent-context-diagnostics.ts",
     "desktop-remote-control": "src/desktop-remote-control.ts",

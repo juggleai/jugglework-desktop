@@ -9,6 +9,8 @@ import type {
   TextPartInput,
   Todo,
 } from "@opencode-ai/sdk/v2/client";
+import type { SessionFileArtifacts } from "@jugglework/types/file-artifacts";
+import type { OfficeCapabilities, OfficeDocumentSession } from "@jugglework/types/office";
 import {
   agentContextDiagnosticsReportSchema,
   agentContextDiagnosticsRequestSchema,
@@ -3403,6 +3405,37 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
         token,
         hostToken,
       }),
+
+    /** 查询本机 Word 编辑资源，不触发引擎启动。 */
+    officeCapabilities: (workspaceId: string) => requestJson<OfficeCapabilities>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/office/capabilities`, { token, hostToken }),
+    /** 打开页面编辑会话，模型就绪由后续状态查询确认。 */
+    openOfficeDocument: (workspaceId: string, sessionId: string, path: string) => requestJson<{ document: OfficeDocumentSession }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/office/open`, { token, hostToken, method: "POST", body: { sessionId, path } }),
+    /** 查询指定文档及实际模型状态。 */
+    getOfficeDocument: (workspaceId: string, documentId: string) => requestJson<{ document: OfficeDocumentSession }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/office/${encodeURIComponent(documentId)}`, { token, hostToken }),
+    /** 读取所属聊天的当前文档，不借用其他聊天焦点。 */
+    currentOfficeDocument: (workspaceId: string, sessionId: string) => requestJson<{ document: OfficeDocumentSession | null }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/office/current?sessionId=${encodeURIComponent(sessionId)}`, { token, hostToken }),
+    /** 查找已打开的文件，不切换文档焦点或建立新模型。 */
+    findOfficeDocument: (workspaceId: string, sessionId: string, path: string) => requestJson<{ document: OfficeDocumentSession | null }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/office/by-path?sessionId=${encodeURIComponent(sessionId)}&path=${encodeURIComponent(path)}`, { token, hostToken }),
+    /** 保存模型绑定的原文件，不允许另传文件路径。 */
+    saveOfficeDocument: (workspaceId: string, documentId: string) => requestJson<{ document: OfficeDocumentSession }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/office/${encodeURIComponent(documentId)}/save`, { token, hostToken, method: "POST", body: {} }),
+    /** 按用户的保存、放弃或取消决定关闭模型。 */
+    closeOfficeDocument: (workspaceId: string, documentId: string, decision: "save" | "discard" | "cancel") => requestJson<{ document: OfficeDocumentSession }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/office/${encodeURIComponent(documentId)}/close`, { token, hostToken, method: "POST", body: { decision } }),
+    /** 文件复制、附件或外部打开前完成模型保存。 */
+    prepareOfficeFile: (workspaceId: string, sessionId: string, path: string, external = false) => requestJson<{ ok: boolean; document?: OfficeDocumentSession | null }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/office/prepare-file`, { token, hostToken, method: "POST", body: { sessionId, path, external } }),
+    /** 用户确认外部已保存关闭后，重新导入原路径并建立新模型。 */
+    reopenOfficeDocument: (workspaceId: string, sessionId: string, path: string) => requestJson<{ document: OfficeDocumentSession }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/office/reopen`, { token, hostToken, method: "POST", body: { sessionId, path } }),
+
+    /** 查询服务端记录的轮次交付，历史快照与文件当前状态分别返回。 */
+    listFileDeliveries: (workspaceId: string, sessionId: string) =>
+      requestJson<SessionFileArtifacts>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/file-deliveries`, { token, hostToken }),
+
+    /** 引擎空闲时恢复交付确认，不执行生成命令。 */
+    syncFileDeliveries: (workspaceId: string, sessionId: string) =>
+      requestJson<SessionFileArtifacts>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/file-deliveries/sync`, { token, hostToken, method: "POST" }),
+
+    /** 仅重试指定轮次的保存及文件校验。 */
+    retryFileDelivery: (workspaceId: string, sessionId: string, turnId: string) =>
+      requestJson<SessionFileArtifacts>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/file-deliveries/retry`, { token, hostToken, method: "POST", body: { turnId } }),
 
     resolveArtifacts: (
       workspaceId: string,

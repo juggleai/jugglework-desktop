@@ -10,7 +10,8 @@ import path from "node:path";
 
 import { app } from "electron";
 
-export function createUiControlServer({ appName, appIdentifier, getWindow }) {
+/** 创建本机控制服务；保存确认发送到文档所属原生页面，不激活窗口。 */
+export function createUiControlServer({ appName, appIdentifier, getWindow, prepareOfficeSave, readOfficeSelection }) {
   let uiControlServer = null;
   let uiControlDiscoveryPath = null;
   const uiControlToken = randomBytes(32).toString("hex");
@@ -128,6 +129,18 @@ export function createUiControlServer({ appName, appIdentifier, getWindow }) {
         }
         if (!authorizedUiControlRequest(request)) {
           sendJsonResponse(response, 401, { ok: false, error: "Unauthorized" });
+          return;
+        }
+        if (request.method === "POST" && url.pathname === "/office/prepare-save") {
+          if (!prepareOfficeSave) throw new Error("文档保存通道不可用");
+          await prepareOfficeSave(await readJsonRequestBody(request));
+          sendJsonResponse(response, 200, { ok: true });
+          return;
+        }
+        if (request.method === "POST" && url.pathname === "/office/selection") {
+          if (!readOfficeSelection) throw new Error("文档选区通道不可用");
+          const selection = await readOfficeSelection(await readJsonRequestBody(request));
+          sendJsonResponse(response, 200, { ok: true, selection });
           return;
         }
         if (request.method === "GET" && url.pathname === "/snapshot") {

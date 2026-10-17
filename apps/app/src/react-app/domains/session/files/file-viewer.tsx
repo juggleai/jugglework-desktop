@@ -1,3 +1,4 @@
+import { getOfficeDocumentKind } from "@jugglework/types/office";
 /** @jsxImportSource react */
 import * as React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -12,16 +13,28 @@ import {
   ImagePreview,
   MarkdownPreview,
   PdfPreview,
+  PlainText,
   PreviewError,
   PreviewLoading,
   PreviewUnavailable,
 } from "../artifacts/preview";
-import { FileAccessError, loadWorkspaceFile, saveWorkspaceTextFile, type LoadedFile } from "./file-content";
+import {
+  FileAccessError,
+  loadWorkspaceFile,
+  type LoadedFile,
+} from "./file-content";
 import { useFilesPanelStore, type FilesPanelDraft } from "./files-panel-store";
+import { OfficeEditor } from "../office/office-editor";
+import { DelimitedFileView } from "./delimited-file-view";
+import { useSharedFileEditor, saveSharedFileText } from "./shared-file-editor";
 
 const ArtifactTextEditor = React.lazy(() =>
-  import("../artifacts/artifact-text-editor").then((module) => ({ default: module.ArtifactTextEditor })),
+  import("../artifacts/artifact-text-editor").then((module) => ({
+    default: module.ArtifactTextEditor,
+  })),
 );
+
+const WorkbookFileView = React.lazy(() => import("./workbook-file-view").then((module) => ({ default: module.WorkbookFileView })));
 
 type FileViewerProps = {
   client: JuggleWorkServerClient;
@@ -30,6 +43,7 @@ type FileViewerProps = {
   path: string;
   name: string;
   draft: FilesPanelDraft | undefined;
+  hideOfficeHeader?: boolean;
 };
 
 function describeError(cause: unknown): string {
@@ -52,10 +66,65 @@ function describeError(cause: unknown): string {
  * @param name 文件名
  * @param draft 该文件的未保存草稿
  */
-export function FileViewer({ client, workspaceId, sessionId, path, name, draft }: FileViewerProps) {
+export function FileViewer({
+  client,
+  workspaceId,
+  sessionId,
+  path,
+  name,
+  draft,
+  hideOfficeHeader,
+}: FileViewerProps) {
+  if (getOfficeDocumentKind(path))
+    return (
+      <OfficeEditor
+        client={client}
+        workspaceId={workspaceId}
+        sessionId={sessionId}
+        path={path}
+        hideHeader={hideOfficeHeader}
+      />
+    );
+  return (
+    <StandardFileViewer
+      client={client}
+      workspaceId={workspaceId}
+      sessionId={sessionId}
+      path={path}
+      name={name}
+      draft={draft}
+    />
+  );
+}
+
+function StandardFileViewer({
+  client,
+  workspaceId,
+  sessionId,
+  path,
+  name,
+  draft: initialDraft,
+}: FileViewerProps) {
   const queryClient = useQueryClient();
-  const setDraft = useFilesPanelStore((state) => state.setDraft);
-  const queryKey = React.useMemo(() => ["workspace-file", workspaceId, path] as const, [path, workspaceId]);
+  const { draft, setDraft: updateDraft } = useSharedFileEditor(
+    workspaceId,
+    sessionId,
+    path,
+    initialDraft,
+  );
+  const setDraft = (
+    _session: string,
+    _path: string,
+    value: FilesPanelDraft | null,
+  ) => updateDraft(value);
+  const external = useFilesPanelStore(
+    (state) =>
+      state.sessions[sessionId]?.externalPaths?.includes(path) ?? false,
+  );
+  const queryKey = React.useMemo(
+    () => ["workspace-file", workspaceId, path] as const,
+    [path, workspaceId],
+  );
 
   const { data, error, isError, isLoading, refetch } = useQuery<LoadedFile>({
     queryKey,
@@ -67,22 +136,32 @@ export function FileViewer({ client, workspaceId, sessionId, path, name, draft }
 
   const [objectUrl, setObjectUrl] = React.useState<string | null>(null);
   const [markdownEditing, setMarkdownEditing] = React.useState(false);
+  const [sheetEditing, setSheetEditing] = React.useState(true);
   const activePathRef = React.useRef(path);
 
   React.useEffect(() => {
     activePathRef.current = path;
     setMarkdownEditing(false);
+    setSheetEditing(true);
   }, [path]);
 
   React.useEffect(() => {
-    if (!data || (data.presentation !== "image" && data.presentation !== "pdf")) {
+    if (
+      !data ||
+      (data.presentation !== "image" && data.presentation !== "pdf")
+    ) {
       setObjectUrl(null);
 
       return;
     }
 
-    const fallbackType = data.presentation === "pdf" ? "application/pdf" : "application/octet-stream";
-    const url = URL.createObjectURL(new Blob([data.bytes], { type: data.contentType ?? fallbackType }));
+    const fallbackType =
+      data.presentation === "pdf"
+        ? "application/pdf"
+        : "application/octet-stream";
+    const url = URL.createObjectURL(
+      new Blob([data.bytes], { type: data.contentType ?? fallbackType }),
+    );
 
     setObjectUrl(url);
 
@@ -90,15 +169,38 @@ export function FileViewer({ client, workspaceId, sessionId, path, name, draft }
   }, [data]);
 
   const { mutate: save, isPending: isSaving } = useMutation({
-    mutationFn: async (input: { content: string; baseUpdatedAt: number | null; path: string }) => ({
-      updatedAt: await saveWorkspaceTextFile(client, workspaceId, input.path, input.content, input.baseUpdatedAt),
+    mutationFn: async (input: {
+      content: string;
+      baseUpdatedAt: number | null;
+      path: string;
+    }) => ({
+      ...(await saveSharedFileText(
+        client,
+        workspaceId,
+        input.path,
+        input.content,
+        input.baseUpdatedAt,
+      )),
       queryKey: ["workspace-file", workspaceId, input.path] as const,
     }),
     onSuccess: (result, input) => {
-      queryClient.setQueryData<LoadedFile>(result.queryKey, (current) => (
-        current ? { ...current, text: input.content, updatedAt: result.updatedAt, size: new TextEncoder().encode(input.content).length } : current
-      ));
-      setDraft(sessionId, input.path, null);
+      queryClient.setQueryData<LoadedFile>(result.queryKey, (current) =>
+        current
+          ? {
+              ...current,
+              text: result.content,
+              updatedAt: result.updatedAt,
+              size: new TextEncoder().encode(result.content).length,
+            }
+          : current,
+      );
+      if (
+        (typeof window === "undefined" ||
+          !window.__JUGGLEWORK_ELECTRON__?.fileEditor) &&
+        useFilesPanelStore.getState().sessions[sessionId]?.drafts[input.path]
+          ?.content === input.content
+      )
+        setDraft(sessionId, input.path, null);
       if (activePathRef.current === input.path) setMarkdownEditing(false);
       toast.success(t("session_files.saved"));
     },
@@ -114,7 +216,10 @@ export function FileViewer({ client, workspaceId, sessionId, path, name, draft }
               if (activePathRef.current === input.path) {
                 void refetch();
               } else {
-                void queryClient.invalidateQueries({ queryKey: ["workspace-file", workspaceId, input.path], exact: true });
+                void queryClient.invalidateQueries({
+                  queryKey: ["workspace-file", workspaceId, input.path],
+                  exact: true,
+                });
               }
             },
           },
@@ -128,12 +233,65 @@ export function FileViewer({ client, workspaceId, sessionId, path, name, draft }
   });
 
   const isMarkdown = data?.presentation === "markdown";
-  const editable = isMarkdown || data?.presentation === "text";
+  const editable =
+    !external &&
+    (isMarkdown ||
+      data?.presentation === "text" ||
+      data?.presentation === "sheet");
   const value = draft?.content ?? data?.text ?? "";
-  const dirty = editable && draft !== undefined && draft.content !== (data?.text ?? "");
+  const dirty =
+    editable && draft !== undefined && draft.content !== (data?.text ?? "");
+  React.useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onKey = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "s")
+        return;
+      event.preventDefault();
+      if (dirty && !isSaving)
+        save({
+          path,
+          content: value,
+          baseUpdatedAt: draft?.baseUpdatedAt ?? data?.updatedAt ?? null,
+        });
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [
+    data?.updatedAt,
+    dirty,
+    draft?.baseUpdatedAt,
+    isSaving,
+    path,
+    save,
+    value,
+  ]);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
+      {external ? (
+        <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2 text-xs text-muted-foreground">
+          <span>{t("artifact.external_active")}</span>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={async () => {
+              if (!window.confirm(t("artifact.external_return_hint"))) return;
+              const result = await refetch();
+              if (!result.isError) {
+                await window.__JUGGLEWORK_ELECTRON__?.fileEditor?.external(
+                  { workspaceId, path },
+                  false,
+                );
+                useFilesPanelStore
+                  .getState()
+                  .setExternal(sessionId, path, false);
+              }
+            }}
+          >
+            {t("artifact.reload_internal")}
+          </Button>
+        </div>
+      ) : null}
       {/* TIPS: 内容区上方常态不放任何工具栏 —— 文件名在标签上已经有了；只有出现未保存
           修改时才浮出保存/放弃这一行，让编辑器尽量占满面板。 */}
       {editable && dirty ? (
@@ -153,7 +311,13 @@ export function FileViewer({ client, workspaceId, sessionId, path, name, draft }
             variant="default"
             size="sm"
             disabled={isSaving}
-            onClick={() => save({ path, content: value, baseUpdatedAt: draft?.baseUpdatedAt ?? data?.updatedAt ?? null })}
+            onClick={() =>
+              save({
+                path,
+                content: value,
+                baseUpdatedAt: draft?.baseUpdatedAt ?? data?.updatedAt ?? null,
+              })
+            }
           >
             {isSaving ? t("session_files.saving") : t("session_files.save")}
           </Button>
@@ -162,12 +326,21 @@ export function FileViewer({ client, workspaceId, sessionId, path, name, draft }
       <div className="min-h-0 flex-1 overflow-hidden">
         {isLoading ? <PreviewLoading /> : null}
         {isError ? <PreviewError message={describeError(error)} /> : null}
-        {data && (data.presentation === "text" || markdownEditing) ? (
+        {external &&
+        data &&
+        (data.presentation === "text" || data.presentation === "markdown") ? (
+          <PlainText content={data.text ?? ""} />
+        ) : null}
+        {!external &&
+        data &&
+        (data.presentation === "text" || markdownEditing) ? (
           <React.Suspense fallback={<PreviewLoading />}>
             <div className="relative h-full min-h-0">
               <ArtifactTextEditor
                 value={value}
-                language={data.presentation === "markdown" ? "markdown" : "text"}
+                language={
+                  data.presentation === "markdown" ? "markdown" : "text"
+                }
                 onChange={(next) => {
                   if (next === (data.text ?? "")) {
                     setDraft(sessionId, path, null);
@@ -175,7 +348,10 @@ export function FileViewer({ client, workspaceId, sessionId, path, name, draft }
                     return;
                   }
 
-                  setDraft(sessionId, path, { content: next, baseUpdatedAt: data.updatedAt });
+                  setDraft(sessionId, path, {
+                    content: next,
+                    baseUpdatedAt: data.updatedAt,
+                  });
                 }}
               />
               {isMarkdown && !dirty ? (
@@ -193,7 +369,7 @@ export function FileViewer({ client, workspaceId, sessionId, path, name, draft }
             </div>
           </React.Suspense>
         ) : null}
-        {data?.presentation === "markdown" && !markdownEditing ? (
+        {!external && data?.presentation === "markdown" && !markdownEditing ? (
           <div className="relative h-full min-h-0">
             <MarkdownPreview content={value} />
             <Button
@@ -208,10 +384,56 @@ export function FileViewer({ client, workspaceId, sessionId, path, name, draft }
             </Button>
           </div>
         ) : null}
-        {data?.presentation === "image" && objectUrl ? <ImagePreview src={objectUrl} alt={name} /> : null}
-        {data?.presentation === "pdf" && objectUrl ? <PdfPreview url={objectUrl} title={name} /> : null}
-        {data?.presentation === "html" ? <HTMLPreview title={name} content={data.text ?? ""} /> : null}
-        {data?.presentation === "binary" ? <PreviewUnavailable /> : null}
+        {data?.presentation === "image" && objectUrl ? (
+          <ImagePreview src={objectUrl} alt={name} />
+        ) : null}
+        {data?.presentation === "pdf" && objectUrl ? (
+          <PdfPreview url={objectUrl} title={name} />
+        ) : null}
+        {data?.presentation === "html" ? (
+          <HTMLPreview title={name} content={data.text ?? ""} />
+        ) : null}
+        {data?.presentation === "sheet" ? (
+          <div className="relative h-full min-h-0">
+            <DelimitedFileView
+              name={name}
+              content={value}
+              editable={!external && sheetEditing}
+              onChange={(content) =>
+                setDraft(
+                  sessionId,
+                  path,
+                  content === data.text
+                    ? null
+                    : { content, baseUpdatedAt: data.updatedAt },
+                )
+              }
+            />
+            {!external ? (
+              <Button
+                variant="outline"
+                size="icon-sm"
+                className="absolute right-3 top-12 z-10 bg-background/95 shadow-sm"
+                onClick={() => setSheetEditing((value) => !value)}
+                aria-label={
+                  sheetEditing
+                    ? t("session_files.table_preview")
+                    : t("common.edit")
+                }
+                title={
+                  sheetEditing
+                    ? t("session_files.table_preview")
+                    : t("common.edit")
+                }
+              >
+                {sheetEditing ? <Eye /> : <Pencil />}
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
+        {data?.presentation === "binary" ? (
+          /\.(xls|ods)$/i.test(path) ? <React.Suspense fallback={<PreviewLoading />}><WorkbookFileView bytes={data.bytes} /></React.Suspense> : <PreviewUnavailable />
+        ) : null}
       </div>
     </div>
   );

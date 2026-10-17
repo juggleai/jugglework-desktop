@@ -136,6 +136,7 @@ test("selects only the requested sidecar and processes the macOS helper", async 
   let helperContext = null;
 
   await runAfterPack(context, {
+    packageOfficeResources() {},
     verifyContracts() {},
     verifyUiControlMcpRuntime() {},
     signHelper(receivedContext) {

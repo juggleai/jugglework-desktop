@@ -31,7 +31,8 @@ export type OpenTarget = {
 const WORKSPACES_PREFIX_PATTERN = /^workspaces\/[^/]+\//i;
 const WORKSPACE_ID_PREFIX_PATTERN = /^workspace\/(?:ws_[^/]+|\d+|[0-9a-f-]{6,})\//i;
 
-const FILE_PATTERN = /(?:^|[\s"'`([{])((?:\.{1,2}[/\\]|~[/\\]|[/\\])?[\w.\-]+(?:[/\\][\w.\-]+)+\.[a-z][a-z0-9]{0,9}|[\w.\-]+\.[a-z][a-z0-9]{0,9})/gi;
+const FILE_PATTERN = /(?:^|[\s"'`([{（【<：:])((?:[A-Za-z]:[/\\]|\.{1,2}[/\\]|~[/\\]|[/\\])?[\p{L}\p{N}_.\-]+(?:[/\\][\p{L}\p{N}_.\-]+)*\.[a-z][a-z0-9]{0,9})/giu;
+const QUOTED_FILE_PATTERN = /[`"“]([^`"”\n]+\.[a-z][a-z0-9]{0,9})[`"”]/giu;
 const URL_PATTERN = /https?:\/\/[^\s)\]}>"'`]+/gi;
 const SOCKET_PATTERN = /(?:ws|wss):\/\/[^\s)\]}>"'`]+/gi;
 const SIDEBAR_ARTIFACT_FILE_PREVIEWS = new Set<OpenTargetPreview>(["markdown", "sheet", "slides", "document", "image", "video", "pdf", "html"]);
@@ -106,11 +107,19 @@ function textWithoutRedundantMarkdownLinkLabels(text: string) {
   });
 }
 
+/** 从正文提取文件路径候选；中文和带空格的引用由同一规则识别，存在性由 Server 确认。 */
+export function extractFilePathsFromText(text: string): string[] {
+  return [...new Set([FILE_PATTERN, QUOTED_FILE_PATTERN].flatMap((pattern) => {
+    pattern.lastIndex = 0;
+    return [...text.matchAll(pattern)].flatMap((match) => match[1] ? [match[1]] : []);
+  }))];
+}
+
 function targetFromFile(path: string, confidence: number, reason: string): OpenTarget | null {
   const normalized = normalizePath(path).replace(/[.,;:]+$/, "");
   if (!normalized || normalized.length > 500 || !normalized.includes(".")) return null;
   return {
-    id: `file:${normalized.toLowerCase()}`,
+    id: `file:${normalized}`,
     kind: "file",
     value: normalized,
     name: basename(normalized),
@@ -211,9 +220,8 @@ function scanText(
 
   if (!options.includeFiles) return;
 
-  FILE_PATTERN.lastIndex = 0;
-  for (const match of scanValue.matchAll(FILE_PATTERN)) {
-    if (match[1]) addTarget(map, targetFromFile(match[1], confidence, reason));
+  for (const path of extractFilePathsFromText(scanValue)) {
+    addTarget(map, targetFromFile(path, confidence, reason));
   }
 }
 
@@ -289,6 +297,14 @@ export function deriveOpenTargets(messages: UIMessage[], options: DeriveOpenTarg
         scanText(targets, part.text, message.role === "assistant" ? 65 : 40, "message", {
           includeFiles: options.includeFileMentions === true || (message.role === "assistant" && shouldScanAssistantFileMentions(part.text)),
         });
+        continue;
+      }
+
+      if (part.type === "file" && /^file:/i.test(part.url)) {
+        try {
+          const path = decodeURIComponent(new URL(part.url).pathname).replace(/^\/([A-Za-z]:\/)/, "$1");
+          addTarget(targets, targetFromFile(path, 100, "attachment file"));
+        } catch { /* 无效附件地址不生成文件入口。 */ }
         continue;
       }
 

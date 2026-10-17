@@ -33,6 +33,7 @@ function run(command, args, cwd, env) {
 
 run(nodeCmd, [resolve(__dirname, "prepare-sidecar.mjs"), "--force", "--outdir", electronSidecarDir], desktopRoot);
 run(nodeCmd, [resolve(__dirname, "prepare-computer-use-helper.mjs"), "--force", "--outdir", electronHelperDir], desktopRoot);
+run(nodeCmd, [resolve(__dirname, "prepare-file-window-helper.mjs"), "--outdir", electronHelperDir], desktopRoot);
 run(nodeCmd, [resolve(__dirname, "prepare-jugglework-ui-mcp.mjs")], desktopRoot);
 run(nodeCmd, [resolve(__dirname, "verify-jugglework-ui-mcp.mjs"), "--entry", resolve(uiControlMcpDir, "index.mjs")], desktopRoot);
 // Electron's embedded Node runtime cannot execute workspace TypeScript source.

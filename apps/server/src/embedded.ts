@@ -24,6 +24,8 @@ import type { ServeResult } from "./serve-node.js";
 import type { ServerConfig } from "./types.js";
 
 export type EmbeddedServerOptions = CliArgs & {
+  /** 桌面宿主显式传入随安装包交付的 SDK 目录，不从外部 App 查找。 */
+  officeResourceDirectory?: string;
   /** Historical local-host token hashes used for a bounded upgrade migration. */
   trustedLegacyHostTokenHashes?: string[];
   /** When true, spawn a managed OpenCode child process. */
@@ -160,7 +162,7 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
   // legitimately replace port 0 (or an address-in-use preferred port) with an
   // OS-assigned port, and the engine plugin must receive that authoritative
   // callback URL rather than the requested port.
-  server = await duringStartup(() => startServer(config, { logger: options.logger }));
+  server = await duringStartup(() => startServer(config, { logger: options.logger, officeResourceDirectory: options.officeResourceDirectory }));
   config.port = server.port;
   const serverUrl = `http://${config.host === "0.0.0.0" ? "127.0.0.1" : config.host}:${server.port}`;
 

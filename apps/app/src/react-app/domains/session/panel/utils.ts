@@ -57,7 +57,8 @@ export function sameBounds(
 }
 
 export function hasNativeBrowserOccluder() {
-  const overlays = document.querySelectorAll('[role="dialog"], [role="alertdialog"]');
+  // TIPS: 原生页面总在 DOM 上方，文件菜单和选择列表打开时也必须暂时隐藏，否则会遮住菜单下半部分。
+  const overlays = document.querySelectorAll('[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]');
   for (const overlay of overlays) {
     if (!(overlay instanceof HTMLElement)) {
       continue;

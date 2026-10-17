@@ -14,6 +14,7 @@ import {
   embeddedServerImportUrl,
   prioritizeWorkspacePaths,
   resolveJuggleWorkServerConfigPath,
+  resolveOfficeEngineResourceDirectory,
   seedWorkspacePathsForEmbeddedServer,
   selectStickyJuggleWorkPortWorkspace,
   shouldReuseHealthyManagedRuntime,
@@ -162,6 +163,13 @@ describe("commandMatchesPackagedSidecar", () => {
 });
 
 describe("Electron managed runtime", () => {
+  it("resolves Office resources from the application rather than working directory or external App", () => {
+    for (const resourcesPath of ["/Applications/JuggleWork.app/Contents/Resources", "C:/Program Files/JuggleWork/resources"]) {
+      assert.equal(resolveOfficeEngineResourceDirectory({ isPackaged: true, desktopRoot: "/unrelated/app.asar", resourcesPath }), path.join(resourcesPath, "office-engine"));
+    }
+    assert.equal(resolveOfficeEngineResourceDirectory({ isPackaged: false, desktopRoot: "/project/apps/desktop", resourcesPath: "/electron/resources" }), path.join("/project/apps/desktop", "resources/office-engine"));
+    assert.throws(() => resolveOfficeEngineResourceDirectory({ isPackaged: true, desktopRoot: "/unrelated" }), /Resources/);
+  });
   it("starts through embedded Server without locating or spawning orchestrator", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "jugglework-electron-runtime-"));
     const desktopRoot = path.join(root, "desktop");
@@ -262,6 +270,7 @@ describe("Electron managed runtime", () => {
       assert.equal(engine.running, true);
       assert.equal(engine.managedByServer, true);
       assert.equal(embeddedStartOptions.manageOpencode, true);
+      assert.equal(embeddedStartOptions.officeResourceDirectory, path.join(desktopRoot, "resources/office-engine"));
       assert.equal(embeddedStartOptions.opencodeBin, opencodePath);
       assert.equal(embeddedStartOptions.workspaces[0], workspacePath);
       assert.deepEqual(manager.managedServerAccess(), {
