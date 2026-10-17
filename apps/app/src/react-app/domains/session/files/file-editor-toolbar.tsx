@@ -21,6 +21,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { t } from "@/i18n";
+import { OfficeResourceControls } from "../office/office-resource-controls";
 
 export type FileEditorStatus =
   | "saved"
@@ -76,6 +77,7 @@ export function FileEditorToolbar({
   showFolderShortcut = false,
   fileActionsDisabled = false,
   openWindowDisabled = fileActionsDisabled,
+  officeDocumentId,
   children,
 }: {
   name: string;
@@ -89,6 +91,7 @@ export function FileEditorToolbar({
   fileActionsDisabled?: boolean;
   /** Office 开窗可以进入等待流程，其他需要保存的操作仍受任务运行限制。 */
   openWindowDisabled?: boolean;
+  officeDocumentId?: string;
   children?: React.ReactNode;
 }) {
   // TIPS：失败原因由内容区统一展示，顶栏保留内部状态用于禁用保存，不重复显示通用失败文案。
@@ -135,6 +138,9 @@ export function FileEditorToolbar({
       </div>
       <div className="flex shrink-0 items-center gap-1 text-muted-foreground">
         {children}
+        {officeDocumentId && (
+          <OfficeResourceControls documentId={officeDocumentId} />
+        )}
         <Button
           variant="ghost"
           size="icon-sm"

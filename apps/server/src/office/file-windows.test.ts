@@ -4,6 +4,7 @@ import { EventEmitter } from "node:events";
 import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 let sequence = 0;
 const answers = {
@@ -113,18 +114,20 @@ mock.module("electron", () => ({
     fromPartition: (name: string) => {
       if (!partitions.has(name)) {
         const partition = new EventEmitter() as any;
-        let handled = false;
+        const handled = new Map();
         partition.protocol = {
+          handlers: handled,
           handle(
-            _scheme: string,
+            scheme: string,
             handler: (request: Request) => Promise<Response>,
           ) {
-            if (handled) throw new Error("protocol already handled");
-            handled = true;
-            partition.protocol.handler = handler;
+            if (handled.has(scheme))
+              throw new Error("protocol already handled");
+            handled.set(scheme, handler);
+            if (scheme === "http") partition.protocol.handler = handler;
           },
-          unhandle() {
-            handled = false;
+          unhandle(scheme: string) {
+            handled.delete(scheme);
           },
         };
         partitions.set(name, partition);
@@ -135,6 +138,8 @@ mock.module("electron", () => ({
 }));
 const { createOfficePanel } =
   await import("../../../desktop/electron/office-panel.mjs");
+const { createOfficeResources } =
+  await import("../../../desktop/electron/office-resources.mjs");
 const { createFileWindows } =
   await import("../../../desktop/electron/file-windows.mjs");
 const { triggerUpdaterInstall } =
@@ -152,6 +157,7 @@ async function fixture(
     platform: "darwin",
     arch: "arm64",
   },
+  resources?: any,
 ) {
   partitions.clear();
   answers.open = { canceled: true, filePaths: [] };
@@ -262,6 +268,14 @@ async function fixture(
       return operation;
     },
     client,
+    resources:
+      resources ??
+      createOfficeResources({
+        assetsDirectory: fileURLToPath(
+          new URL("../../../desktop/resources/office-assets", import.meta.url),
+        ),
+        cacheDirectory: join(root, "fonts"),
+      }),
   });
   files = createFileWindows({
     dock,
@@ -315,6 +329,65 @@ async function fixture(
     root,
   };
 }
+
+test("三平台的两种宿主共用资源偏好，必需页面失败释放双协议并同步文档故障", async () => {
+  for (const target of [
+    { platform: "darwin", arch: "arm64" },
+    { platform: "darwin", arch: "x64" },
+    { platform: "win32", arch: "x64" },
+  ] as const) {
+    for (const standalone of [false, true]) {
+      const cache = await mkdtemp(join(tmpdir(), "office-resource-host-"));
+      roots.push(cache);
+      const resources = createOfficeResources({
+        assetsDirectory: fileURLToPath(
+          new URL("../../../desktop/resources/office-assets", import.meta.url),
+        ),
+        cacheDirectory: cache,
+      });
+      const f = await fixture("数据.csv", undefined, target, resources);
+      if (standalone)
+        await f.files.open({
+          workspaceId: "ws",
+          sessionId: "ses",
+          path: "数据.csv",
+        });
+      const host = standalone ? f.files.windows()[0] : f.main;
+      await f.show(host);
+      const partition = partitions.get("office-od_A");
+      expect(partition.protocol.handlers.size).toBe(2);
+      expect(
+        (
+          await f.call("jugglework:office:resources", host, {
+            documentId: "od_A",
+          })
+        ).online,
+      ).toBe(true);
+      await f.call("jugglework:office:font-online", host, false);
+      expect((await resources.settings()).online).toBe(false);
+      if (target.arch === "arm64" && !standalone) {
+        const view = [...f.main.children][0];
+        await f.files.open({
+          workspaceId: "ws",
+          sessionId: "ses",
+          path: "数据.csv",
+        });
+        await f.show(f.files.windows()[0]);
+        expect([...f.files.windows()[0].children][0]).toBe(view);
+        expect(partition.protocol.handlers.size).toBe(2);
+      }
+      partition.fetch = async () => new Response(null, { status: 404 });
+      await partition.protocol.handler(
+        new Request("http://127.0.0.1:39999/static/sheet/pc.html"),
+      );
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(f.document.state).toBe("error");
+      expect(partition.protocol.handlers.size).toBe(0);
+      f.panel.destroy();
+      f.files.dispose();
+    }
+  }
+});
 
 test("四种 Office 格式独立窗口另存共用任务准备及目标保护，拒绝后不保存或复制", async () => {
   for (const name of ["报告.docx", "数据.csv", "预算.xlsx", "汇报.pptx"]) {
@@ -901,14 +974,15 @@ for (const name of ["报告.docx", "数据.csv", "预算.xlsx", "汇报.pptx"]) 
     const page = [...window.children][0];
     f.document.dirty = true;
     const calls: string[] = [];
-    const install = () => triggerUpdaterInstall(
-      { quitAndInstall: () => calls.push("install") },
-      async () => {
-        if (!(await f.panel.prepareQuit())) throw new Error("已取消更新");
-        f.files.dispose();
-        calls.push("runtime:stop");
-      },
-    );
+    const install = () =>
+      triggerUpdaterInstall(
+        { quitAndInstall: () => calls.push("install") },
+        async () => {
+          if (!(await f.panel.prepareQuit())) throw new Error("已取消更新");
+          f.files.dispose();
+          calls.push("runtime:stop");
+        },
+      );
     try {
       answers.close = 2;
       await expect(install()).rejects.toThrow("已取消更新");

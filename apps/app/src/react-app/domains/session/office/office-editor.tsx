@@ -352,6 +352,7 @@ export function OfficeEditor({
     >
       {!hideHeader && (
         <FileEditorToolbar
+          officeDocumentId={documentId ?? undefined}
           name={document?.name ?? path.split(/[\\/]/).pop() ?? path}
           status={
             readOnlyReason

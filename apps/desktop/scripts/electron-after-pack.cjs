@@ -3,6 +3,7 @@ const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const asar = require("@electron/asar");
 const { OFFICE_ENGINE_PLATFORMS, copyOfficeEngineResources } = require("./office-engine-resources.cjs");
+const { copyOfficeAssets } = require("./office-assets.cjs");
 
 const computerUseHelperAppName = "JuggleWork Computer Use.app";
 const macTrayTemplateImages = [
@@ -110,6 +111,7 @@ function packageBundledOfficeResources(context) {
   if (!OFFICE_ENGINE_PLATFORMS.includes(platform)) return;
   const resourcesDirectory = resolvePackagedResourcesPath(context);
   if (!resourcesDirectory) throw new Error("无法确定安装包 Office SDK 资源目录");
+  copyOfficeAssets(path.join(__dirname, "../resources/office-assets"), resourcesDirectory);
   return copyOfficeEngineResources({
     sourceDirectory: path.join(__dirname, "../resources/office-engine"),
     resourcesDirectory,

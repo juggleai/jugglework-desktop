@@ -172,6 +172,14 @@ declare global {
       fileWindow?: import("@jugglework/types/file-window").FileWindowBridge;
       fileEditor?: import("@jugglework/types/file-editor").FileEditorBridge;
       office?: {
+        /** 当前字体请求状态；目录中尚未使用的字体不计为缺失。 */
+        resources?: (documentId?: string) => Promise<{ online: boolean; fontFailures?: number; coreFailures?: number; readyOnReopen?: boolean; retryableFonts?: number } | null>;
+        /** 设置两种宿主共用的静态字体联网偏好。 */
+        setFontOnline?: (value: boolean) => Promise<{ online: boolean }>;
+        /** 预取缺失字体，下次打开生效；不刷新模型或改变文档声明。 */
+        retryFonts?: (documentId: string) => Promise<void>;
+        /** 订阅资源及偏好变化。 */
+        onResourcesChanged?: (callback: (input: { documentId: string | null }) => void) => () => void;
         show: (input: { workspaceId: string; documentId: string; bounds: { x: number; y: number; width: number; height: number }; activate?: boolean }) => Promise<{ here: boolean } | void>;
         snapshot?: (documentId: string) => Promise<string | null>;
         hide: (documentId: string, snapshot?: boolean) => Promise<string | void>;

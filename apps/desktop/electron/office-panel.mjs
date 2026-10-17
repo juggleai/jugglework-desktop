@@ -1,9 +1,5 @@
 import { getOfficeDocumentKind } from "@jugglework/types/office";
 import { WebContentsView, dialog, session } from "electron";
-import {
-  fetchOfficePageResource,
-  handleOfficeSaveRequest,
-} from "./office-save-request.mjs";
 import { waitForOfficeTransfer } from "./office-transfer.mjs";
 import { readOfficePageSelection } from "./office-page-selection.mjs";
 import {
@@ -16,7 +12,7 @@ import {
 
 /**
  * 承载唯一存活的 Office 页面；隐藏或切换标签时保留模型和撤销记录。
- * @param {{ getWindow: () => Electron.BrowserWindow | null, getWindows?: () => Electron.BrowserWindow[], resolveWindow?: (sender: Electron.WebContents) => Electron.BrowserWindow | null, onDocumentClosed?: (id: string) => void, onOpenFile?: (window: Electron.BrowserWindow, input: { workspaceId: string, sessionId: string }) => Promise<void>, client: { getJson: (path: string, options?: { signal?: AbortSignal }) => Promise<any>, postJson: (path: string, body: unknown) => Promise<any> }, platform?: NodeJS.Platform, arch?: string }} options 宿主窗口、已有 Server 客户端及平台能力
+ * @param {{ getWindow: () => Electron.BrowserWindow | null, getWindows?: () => Electron.BrowserWindow[], resolveWindow?: (sender: Electron.WebContents) => Electron.BrowserWindow | null, onDocumentClosed?: (id: string) => void, onOpenFile?: (window: Electron.BrowserWindow, input: { workspaceId: string, sessionId: string }) => Promise<void>, client: { getJson: (path: string, options?: { signal?: AbortSignal }) => Promise<any>, postJson: (path: string, body: unknown) => Promise<any> }, resources: ReturnType<import('./office-resources.mjs').createOfficeResources> | (() => ReturnType<import('./office-resources.mjs').createOfficeResources>), platform?: NodeJS.Platform, arch?: string }} options 宿主窗口、资源服务、已有 Server 客户端及平台能力
  */
 export function createOfficePanel({
   getWindow,
@@ -25,12 +21,15 @@ export function createOfficePanel({
   onDocumentClosed,
   onOpenFile,
   client,
+  resources,
   platform = process.platform,
   arch = process.arch,
 }) {
   const views = new Map();
   const assignedWindows = new Map();
   const visibleDocuments = new Map();
+  const getResources = () =>
+    typeof resources === "function" ? resources() : resources;
   const requireTransferSupport = () => {
     // TIPS: 首次创建页面不等于跨窗口迁移；仅开放已验证平台，不能关闭重开来冒充状态保留。
     if (platform !== "darwin" || arch !== "arm64")
@@ -235,35 +234,36 @@ export function createOfficePanel({
       const partition = session.fromPartition(`office-${documentId}`);
       const kind = getOfficeDocumentKind(document.relativePath);
       const commit = { error: null };
-      partition.protocol.handle("http", async (request) => {
-        const handled = await handleOfficeSaveRequest(request, {
-          origin: preview.origin,
-          filePath: preview.searchParams.get("localFilePath"),
-          save: () => save(workspaceId, documentId),
-        });
-        return (
-          handled ??
-          fetchOfficePageResource(request, {
-            origin: preview.origin,
-            kind,
-            commit,
-            fetch: (request) =>
-              partition.fetch(request, { bypassCustomProtocolHandlers: true }),
-          })
-        );
-      });
+      const resourceService = getResources();
+      const resourceHost = {
+        documentId,
+        origin: preview.origin,
+        filePath: preview.searchParams.get("localFilePath"),
+        kind,
+        commit,
+        save: () => save(workspaceId, documentId),
+        onCoreFailure: () => failPage(),
+      };
+      const resourceSession = resourceService.attach(partition, resourceHost);
       const preventDownload = (event) => {
         event.preventDefault();
       };
       partition.on("will-download", preventDownload);
-      const view = new WebContentsView({
-        webPreferences: {
-          session: partition,
-          nodeIntegration: false,
-          contextIsolation: true,
-          sandbox: true,
-        },
-      });
+      let view;
+      try {
+        view = new WebContentsView({
+          webPreferences: {
+            session: partition,
+            nodeIntegration: false,
+            contextIsolation: true,
+            sandbox: true,
+          },
+        });
+      } catch (error) {
+        resourceSession.dispose();
+        partition.removeListener("will-download", preventDownload);
+        throw error;
+      }
       entry = {
         view,
         window,
@@ -271,9 +271,10 @@ export function createOfficePanel({
         pageId: document.pageId,
         kind,
         commit,
+        resourceSession,
         attached: true,
         disposeProtocol() {
-          partition.protocol.unhandle("http");
+          resourceSession.dispose();
           partition.removeListener("will-download", preventDownload);
         },
       };
@@ -412,6 +413,27 @@ export function createOfficePanel({
       };
       ipcMain.handle("jugglework:office:show", async (event, input) => {
         return show(input, owner(event));
+      });
+      ipcMain.handle(
+        "jugglework:office:resources",
+        async (event, input = {}) => {
+          owner(event);
+          const service = getResources();
+          if (input.documentId && !views.has(input.documentId)) return null;
+          return {
+            ...(await service.settings()),
+            ...(input.documentId ? service.state(input.documentId) : {}),
+          };
+        },
+      );
+      ipcMain.handle("jugglework:office:font-online", async (event, value) => {
+        owner(event);
+        return getResources().setOnline(value);
+      });
+      ipcMain.handle("jugglework:office:font-retry", async (event, id) => {
+        owner(event);
+        const entry = views.get(id);
+        await entry?.resourceSession?.retry();
       });
       ipcMain.handle("jugglework:office:recover", async (event, input) => {
         const window = owner(event);

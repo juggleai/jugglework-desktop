@@ -16,6 +16,14 @@ contextBridge.exposeInMainWorld("__JUGGLEWORK_ELECTRON__", {
     return ipcRenderer.invoke("jugglework:desktop", command, ...args);
   },
   office: {
+    /** 读取两种宿主共用的资源状态与字体联网设置。 */
+    resources: (documentId) => ipcRenderer.invoke("jugglework:office:resources", { documentId }),
+    /** 更新字体联网偏好，保持页面和模型不变。 */
+    setFontOnline: (value) => ipcRenderer.invoke("jugglework:office:font-online", value),
+    /** 主动获取当前页面缺失字体，下次打开生效。 */
+    retryFonts: (documentId) => ipcRenderer.invoke("jugglework:office:font-retry", documentId),
+    /** 订阅资源变化并提供清理函数。 */
+    onResourcesChanged: (callback) => listen("jugglework:office:resources-changed", callback),
     /** 原生确认丢弃未保存内容后恢复故障文档，取消返回 null。 */
     recover: (workspaceId, documentId) => ipcRenderer.invoke("jugglework:office:recover", { workspaceId, documentId }),
     /** 同步文档故障及已保存版本恢复。 */

@@ -249,6 +249,7 @@ export function FileWindowApp() {
       </header>
       {active && (
         <FileEditorToolbar
+          officeDocumentId={active.documentId}
           name={active.name}
           status={
             active.readOnly

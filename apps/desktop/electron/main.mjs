@@ -53,6 +53,7 @@ import { createMainProcessFetch, mainProcessFetchBody, mainProcessFetchResponse,
 import { createWorkspaceStore } from "./workspace-store.mjs";
 import { installCloseToHide, windowAllClosedAction } from "./window-close-behavior.mjs";
 import { createRemoteControlSettingsStore } from "./remote-control-settings.mjs";
+import { createOfficeResources } from "./office-resources.mjs";
 import { createRemoteControlCredentialStore } from "./remote-control-credentials.mjs";
 import { createRemoteControlCloudClient } from "./remote-control-cloud-client.mjs";
 import { createRemoteControlOperationRegistry } from "./remote-control-operations.mjs";
@@ -1422,6 +1423,21 @@ const fileEditor = createFileEditor({
   getWindows: () => [mainWindow, ...fileWindows.windows()].filter(Boolean),
   resolveWindow: (sender) => sender.id === mainWindow?.webContents.id ? mainWindow : fileWindows.windowFor(sender),
 });
+let officeResources;
+/** 延迟初始化配套资源，让未供应 Office 的平台仍可启动普通文件浏览器。 */
+function getOfficeResources() {
+  if (!officeResources) {
+    officeResources = createOfficeResources({
+      assetsDirectory: path.join(app.isPackaged ? process.resourcesPath : path.resolve(__dirname, "../resources"), "office-assets"),
+      cacheDirectory: path.join(app.getPath("userData"), "office-fonts"),
+    });
+    officeResources.subscribe((documentId) => {
+      for (const window of [mainWindow, ...fileWindows.windows()])
+        if (window && !window.isDestroyed()) window.webContents.send("jugglework:office:resources-changed", { documentId });
+    });
+  }
+  return officeResources;
+}
 const officePanel = createOfficePanel({
   getWindow: () => mainWindow,
   getWindows: () => fileWindows.windows(),
@@ -1429,6 +1445,7 @@ const officePanel = createOfficePanel({
   onDocumentClosed: (id) => fileWindows.documentClosed(id),
   onOpenFile: (window, input) => fileWindows.openDialog(window, input),
   client: fileHostClient,
+  resources: getOfficeResources,
 });
 const fileWindowIconPath = app.isPackaged ? path.join(process.resourcesPath, "app-dist/file-window-logo.png") : path.resolve(__dirname, "../../app/public/file-window-logo.png");
 const fileWindowDock = createFileWindowDock({
@@ -2520,7 +2537,7 @@ const desktopCommandHandlers = {
   "saveArtifactCopy": async (event, options) => saveArtifactFileCopy({
       workspaceRoot: options.workspaceRoot,
       relativePath: options.relativePath,
-      assertDestination: (destination) => fileHostClient.postJson("/office/check-copy-target", { path: destination }),
+      assertDestination: async (destination) => { await fileHostClient.postJson("/office/check-copy-target", { path: destination }); },
       choosePath: async (name) => {
         const result = await dialog.showSaveDialog(activeWindowFromEvent(event), {
           title: options.title,

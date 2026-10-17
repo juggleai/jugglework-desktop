@@ -185,6 +185,18 @@ contextBridge.exposeInMainWorld("__JUGGLEWORK_ELECTRON__", {
     },
   },
   office: {
+    /** 读取字体联网设置及当前文档的资源状态。 */
+    resources: (documentId) => ipcRenderer.invoke("jugglework:office:resources", { documentId }),
+    /** 设置所有 Office 页面的联网补充字体偏好。 */
+    setFontOnline: (value) => ipcRenderer.invoke("jugglework:office:font-online", value),
+    /** 预取当前页面缺失字体，下次打开生效，不重载编辑模型。 */
+    retryFonts: (documentId) => ipcRenderer.invoke("jugglework:office:font-retry", documentId),
+    /** 订阅资源及字体设置变更，返回取消订阅函数。 */
+    onResourcesChanged(callback) {
+      const handler = (_event, value) => callback(value);
+      ipcRenderer.on("jugglework:office:resources-changed", handler);
+      return () => ipcRenderer.removeListener("jugglework:office:resources-changed", handler);
+    },
     /** 原生确认丢弃未保存内容后恢复故障文档，取消返回 null。 */
     recover: (workspaceId, documentId) => ipcRenderer.invoke("jugglework:office:recover", { workspaceId, documentId }),
     /** 同步文档故障及已保存版本恢复。 */
