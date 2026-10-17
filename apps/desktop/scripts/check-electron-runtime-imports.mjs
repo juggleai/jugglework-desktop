@@ -15,3 +15,8 @@ const { desktopRemoteOperationResultSchema } = await import(
 assert.equal(typeof desktopRemoteOperationResultSchema?.parse, "function");
 
 console.log(`Electron runtime contract resolved to ${contractUrl}`);
+
+const serverUrl = new URL("../server/dist/embedded.js", import.meta.url).href;
+const { startEmbeddedServer } = await import(serverUrl);
+assert.equal(typeof startEmbeddedServer, "function");
+console.log(`Electron embedded Server imports resolved from ${serverUrl}`);

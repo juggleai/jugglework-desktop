@@ -520,6 +520,7 @@ Word、Excel 和 PowerPoint 共用一个原生 `editor_sdk`，无需分别采购
 | `@tencent/tencent-docs-ai-engine` JS wrapper | 本方案默认使用，可替代 | 管理启动、健康探测、端口、预览地址及保存状态；可使用项目内本地包，不要求从公共 npm 获取 |
 | `@modelcontextprotocol/sdk` | 视接入方式准备 | 腾讯包声明该传递依赖；保留完整包或使用 stdio bridge 时按清单供应。默认 HTTP 连接由现有 OpenCode 承接，不另建客户端进程 |
 | Electron、内嵌 Node、OpenCode SDK | 项目已有 | 宿主运行环境与 MCP 客户端，无需用户额外安装 Office 或系统 Node |
+| `jszip 3.10.1`、`@xmldom/xmldom 0.8.15` | 必需，已接入 | 检查 OOXML 兼容性及适配 XLSX 公式导出；Server 与桌面生产依赖均声明配套版本，随安装包交付 |
 | TypeScript、现有构建及打包工具 | 项目已有构建依赖 | 编译、打包和验包；完全离线构建时提前缓存依赖与工具资源 |
 
 包内开发测试依赖如 Mocha、Chai、Sinon 不属于产品运行必需项。编辑页面的 HTML、JS、WASM 已由本机原生引擎提供，默认不额外部署三套前端工程。现有 SheetJS 不用于保存原生 Office 编辑会话。
@@ -597,9 +598,15 @@ resources/office-engine/
 
 electron-builder 的 afterPack 钩子已接入 SDK 资源复制：仅复制 wrapper、平台解析脚本、版本清单及目标平台完整目录到 ASAR 外的 Resources/office-engine，排除日志及临时目录。目标平台缺失、版本不匹配、二进制哈希异常或只有 LFS 指针时停止 macOS/Windows 打包，不联网补装。macOS 自定义签名钩子取得 electron-builder 已解析的实际身份和钥匙串，先签 SDK、刷新安装包清单 SHA-256，再沿用默认签名器封存主应用；signIgnore 避免默认签名器再次改写 SDK。源快照不被签名或改写。
 
+桌面 package.json 是 electron-builder 收集生产依赖的入口，暂存 Server 的 package.json 不能代替桌面声明。内置 Server 的全部生产依赖，包括 jszip 与 @xmldom/xmldom，必须在桌面声明配套版本；依赖归属回归保护这一边界。构建先生成并复制 Server，再通过 Electron 内置 Node 从桌面暂存目录导入 embedded.js；缺依赖在打包前失败，避免源码 Server 的 node_modules 掩盖漏包。
+
 Server 通过显式资源目录加载 SDK，原生进程工作目录与日志目录均在用户数据区，安装资源保持只读。macOS ARM64 已实测使用实际复制并签名后的 Resources 路径，在资源目录只读、外网禁止且无系统 Node 的条件下完成四种格式编辑保存与重开，20 个资源文件内容及目录清单不变。该验证覆盖资源复制、原生签名与引擎运行，不等于完整应用 Developer ID 签名、公证或 DMG/安装后的桌面验收。
 
 三个平台的实际供应资源均通过按目标平台复制、唯一原生目录及清单 SHA-256 校验。Intel 内核在 Apple Silicon 上通过 Rosetta，使用项目内 wrapper 和复制后的只读资源，完成中文及带空格路径中的 DOCX、CSV、XLSX、PPTX 内容工具修改、保存、关闭和重开回读；四种本地编辑入口返回 HTTP 200，资源树未改变。独立磁盘读取确认目标文字、XLSX 两张表及跨表 SUM 公式、PPT 第二页保留。该验证不涵盖 Windows 运行、Intel 实机 GUI、输入法、字体、完整页面离线资源或完整签名安装包；获取内核不改变已有页面迁移的平台限制。
+
+macOS ARM64 完整 ad-hoc 签名应用的独立副本已通过严格签名、21 个 Mach-O 的单架构及版本/系统基线校验。桌面从自身 Resources 启动 Server 和 SDK，环境变量中的无效 SDK 路径不改变资源选择。文件浏览器实际加载四种格式的原生页面，页面公网请求被拦截时仍可完成基础内容修改与宿主保存，磁盘保留 XLSX 两表及跨表公式、PPT 第二页和 CSV 非目标行。CSV 公式栏粘贴中文后未回车直接 Cmd+S 的新内容落盘，Cmd+O 打开系统对话框且取消保留标签；已保存文档退出后 SDK、Dock 辅助程序和 OpenCode 均被清理，20 个 SDK 资源文件不变。此验证使用测试文件及内容工具，不代表真实模型对话或 DMG 安装验收。
+
+完整应用的页面层验证不等于系统级断网：SDK 页面仍请求远程字体、遥测和网络探测地址，拦截后基础样例可编辑，但精确字体、其他 worker/剪贴板路径和全部离线行为仍需验收。正式团队签名、公证及其他平台安装包验收独立保留，不能以本地 ad-hoc 签名通过替代发行门禁。
 
 | 平台 | 交付策略 |
 | --- | --- |

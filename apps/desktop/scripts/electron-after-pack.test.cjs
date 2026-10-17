@@ -24,6 +24,14 @@ function copyMacTrayResources(resourcesDir) {
   }
 }
 
+test("桌面安装包声明内置 Server 的全部生产依赖，避免源码依赖掩盖漏包", () => {
+  const desktop = JSON.parse(fs.readFileSync(path.join(__dirname, "../package.json"), "utf8"));
+  const server = JSON.parse(fs.readFileSync(path.join(__dirname, "../../server/package.json"), "utf8"));
+  for (const [name, version] of Object.entries(server.dependencies)) {
+    assert.equal(desktop.dependencies[name], version, `桌面缺少内置 Server 的配套生产依赖：${name}`);
+  }
+});
+
 test("normalizes electron-builder numeric and string architectures", () => {
   assert.equal(normalizeArch(1), "x64");
   assert.equal(normalizeArch(3), "arm64");

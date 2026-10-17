@@ -192,6 +192,10 @@ SDK 原生资源 SHALL 使用 Git LFS 纳入版本管理，wrapper 和清单 SHA
 - **WHEN** 源资源包含 darwin-arm64、darwin-x64、win32-x64 的配套引擎，构建选择其中一个目标平台
 - **THEN** 使用该平台独立清单校验和复制完整目录，安装资源只包含其原生引擎与匹配 wrapper；不复制其他平台、不把 ARM64 文件重命名成 x64；取得资源不代表目标平台桌面及跨窗口迁移已经验收
 
+#### Scenario: 内置 Server 的生产依赖随桌面交付
+- **WHEN** 构建桌面安装包并暂存内置 Server
+- **THEN** 桌面打包入口包含 Server 配套的生产依赖，XML/ZIP 处理库不因只声明在源码 Server 中而漏包；使用 Electron 内置 Node 验证暂存 embedded.js 可导入，依赖缺失时构建失败，不以源码目录能够解析依赖作为通过依据
+
 #### Scenario: 目标平台资源缺失或未检出 LFS 实体
 - **WHEN** macOS 或 Windows 安装包的目标平台未提供完整 SDK，或原生文件只是 LFS 指针
 - **THEN** 打包明确失败，不复制其他架构代替，不联网下载或从外部 App 找资源
