@@ -101,7 +101,7 @@ export class OfficeEngine {
         throw new Error("缺少当前平台的 Office 引擎资源");
       if (
         manifest.engineVersion !== "0.0.0.499" ||
-        manifest.wrapperVersion !== "0.2.196-wb"
+        manifest.wrapperVersion !== "0.2.196-office.1"
       )
         throw new Error("Office 引擎版本尚未适配");
       const marker = await readFile(
@@ -161,10 +161,10 @@ export class OfficeEngine {
     const require = createRequire(
       join(this.resourceDirectory, "wrapper", "package.json"),
     );
-    const { TencentDocsService } = require(
+    const { OfficeDocsService } = require(
       join(this.resourceDirectory, manifest.wrapper),
     ) as {
-      TencentDocsService: new (
+      OfficeDocsService: new (
         options: Record<string, unknown>,
       ) => NativeService;
     };
@@ -178,7 +178,7 @@ export class OfficeEngine {
         probe.close((error) => (error ? reject(error) : resolve(address.port)));
       });
     });
-    const native = new TencentDocsService({
+    const native = new OfficeDocsService({
       port: String(port),
       editorSdkPath: join(this.resourceDirectory, manifest.binary),
       // TIPS: 安装目录和签名资源只读；SDK 的相对临时文件必须留在用户数据目录。

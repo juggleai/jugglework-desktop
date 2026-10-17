@@ -10,6 +10,14 @@ const {
 } = require("./office-engine-resources.cjs");
 const { signMacApplication } = require("./electron-sign-macos.cjs");
 
+test("项目本地适配包可按 package 入口加载，Office 服务及格式定义完整", () => {
+  const sdk = require("../resources/office-engine/wrapper");
+  assert.equal(typeof sdk.OfficeDocsService, "function");
+  assert.equal(typeof sdk.buildOfficeDocsHttpMcpConfig, "function");
+  for (const extension of [".docx", ".csv", ".xlsx", ".pptx"])
+    assert.ok(sdk.SUPPORTED_EXTENSIONS.includes(extension));
+});
+
 function fixture(t, platform) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "office-package-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -21,11 +29,12 @@ function fixture(t, platform) {
     [`${platform}/tmp/private.txt`]: "runtime data",
     [`${platform}/editor_sdk.000.log`]: "runtime log",
     "other-platform/editor_sdk": "must not package",
-    "wrapper/package.json": JSON.stringify({ version: "0.2.196-wb" }),
+    "wrapper/package.json": JSON.stringify({ version: "0.2.196-office.1" }),
+    "wrapper/supported-extensions.cjs": "module.exports=['.docx']",
     "wrapper/scripts/editor-sdk-platforms.js": "module.exports={}",
   };
   for (const name of [
-    "tencent-docs-service",
+    "office-docs-service",
     "document-types",
     "engine-port-file",
     "editor-sdk-process-launcher",
@@ -40,10 +49,10 @@ function fixture(t, platform) {
   const manifest = {
     schema: 1,
     platform,
-    wrapperVersion: "0.2.196-wb",
+    wrapperVersion: "0.2.196-office.1",
     engineVersion: "0.0.0.499",
     binary,
-    wrapper: "wrapper/lib/common/tencent-docs-service.js",
+    wrapper: "wrapper/lib/common/office-docs-service.js",
     sha256: createHash("sha256").update(files[binary]).digest("hex"),
   };
   fs.writeFileSync(

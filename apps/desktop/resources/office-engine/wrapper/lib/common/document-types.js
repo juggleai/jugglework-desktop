@@ -1,11 +1,11 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.TENCENT_DOCS_ENGINE_SUPPORTED_EXTENSIONS = exports.TENCENT_DOCS_ENGINE_FILE_TYPES = void 0;
-exports.getTencentDocsEngineDocType = getTencentDocsEngineDocType;
-exports.getTencentDocsSelectionFileType = getTencentDocsSelectionFileType;
-exports.isTencentDocsEngineSupportedExtension = isTencentDocsEngineSupportedExtension;
-exports.isTencentDocsEngineDocType = isTencentDocsEngineDocType;
-exports.TENCENT_DOCS_ENGINE_FILE_TYPES = Object.freeze([
+exports.OFFICE_DOCS_ENGINE_SUPPORTED_EXTENSIONS = exports.OFFICE_DOCS_ENGINE_FILE_TYPES = void 0;
+exports.getOfficeDocsEngineDocType = getOfficeDocsEngineDocType;
+exports.getOfficeDocsSelectionFileType = getOfficeDocsSelectionFileType;
+exports.isOfficeDocsEngineSupportedExtension = isOfficeDocsEngineSupportedExtension;
+exports.isOfficeDocsEngineDocType = isOfficeDocsEngineDocType;
+exports.OFFICE_DOCS_ENGINE_FILE_TYPES = Object.freeze([
     Object.freeze({
         engineType: 'doc',
         selectionFileType: 'word',
@@ -46,15 +46,15 @@ exports.TENCENT_DOCS_ENGINE_FILE_TYPES = Object.freeze([
         extensions: Object.freeze(['.pdf']),
     }),
 ]);
-exports.TENCENT_DOCS_ENGINE_SUPPORTED_EXTENSIONS = Object.freeze(exports.TENCENT_DOCS_ENGINE_FILE_TYPES.flatMap((item) => item.extensions));
-const engineDocTypeSet = new Set(exports.TENCENT_DOCS_ENGINE_FILE_TYPES.map((item) => item.engineType));
+exports.OFFICE_DOCS_ENGINE_SUPPORTED_EXTENSIONS = Object.freeze(exports.OFFICE_DOCS_ENGINE_FILE_TYPES.flatMap((item) => item.extensions));
+const engineDocTypeSet = new Set(exports.OFFICE_DOCS_ENGINE_FILE_TYPES.map((item) => item.engineType));
 const extensionToFileType = new Map();
-for (const item of exports.TENCENT_DOCS_ENGINE_FILE_TYPES) {
+for (const item of exports.OFFICE_DOCS_ENGINE_FILE_TYPES) {
     for (const ext of item.extensions) {
         extensionToFileType.set(ext, item);
     }
 }
-function normalizeTencentDocsFileExtension(value) {
+function normalizeOfficeDocsFileExtension(value) {
     const trimmed = value.trim();
     if (!trimmed) {
         return '';
@@ -79,19 +79,19 @@ function normalizeTencentDocsFileExtension(value) {
     const extToken = fileName.slice(dotIndex + 1).split(/[?#]/, 1)[0] ?? '';
     return extToken ? `.${extToken.toLowerCase()}` : '';
 }
-function getTencentDocsEngineFileType(value) {
-    return extensionToFileType.get(normalizeTencentDocsFileExtension(value));
+function getOfficeDocsEngineFileType(value) {
+    return extensionToFileType.get(normalizeOfficeDocsFileExtension(value));
 }
-function getTencentDocsEngineDocType(value) {
-    return getTencentDocsEngineFileType(value)?.engineType;
+function getOfficeDocsEngineDocType(value) {
+    return getOfficeDocsEngineFileType(value)?.engineType;
 }
-function getTencentDocsSelectionFileType(value) {
-    return getTencentDocsEngineFileType(value)?.selectionFileType;
+function getOfficeDocsSelectionFileType(value) {
+    return getOfficeDocsEngineFileType(value)?.selectionFileType;
 }
-function isTencentDocsEngineSupportedExtension(value) {
-    return Boolean(getTencentDocsEngineFileType(value));
+function isOfficeDocsEngineSupportedExtension(value) {
+    return Boolean(getOfficeDocsEngineFileType(value));
 }
-function isTencentDocsEngineDocType(value) {
+function isOfficeDocsEngineDocType(value) {
     return Boolean(value && engineDocTypeSet.has(value));
 }
 //# sourceMappingURL=document-types.js.map

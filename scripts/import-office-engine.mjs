@@ -3,15 +3,98 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
+  renameSync,
   writeFileSync,
 } from "node:fs";
 import { createHash } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+const LOCAL_WRAPPER_VERSION = "0.2.196-office.1";
+
+/**
+ * 将固定供应版本的 JS 包装层适配为项目内 Office 命名，保留原生协议和许可文件。
+ * @param {string} wrapper 已复制到项目的包装层目录，不修改供应源文件
+ */
+export function adaptOfficeWrapper(wrapper) {
+  const replacements = [
+    ["@tencent/tencent-docs-ai-engine", "office-docs-ai-engine"],
+    ["TencentDocs", "OfficeDocs"],
+    ["TENCENT_DOCS", "OFFICE_DOCS"],
+    ["tencent_docs", "office_docs"],
+    ["tencent-docs", "office-docs"],
+    ["tencent-local-office-edit", "office-local-edit"],
+    ["Tencent Docs", "Office Docs"],
+    ["Tencent Doc", "Office Doc"],
+    ["Tencent-Docs", "Office-Docs"],
+    ["Tencent", "Office"],
+    ["腾讯", "Office"],
+    ["WorkBuddy", "JuggleWork"],
+    ["workbuddy", "jugglework"],
+    ["CODEBUDDY_CONFIG_DIR", "JUGGLEWORK_CONFIG_DIR"],
+    ["CodeBuddy", "JuggleWork"],
+  ];
+  // TIPS: 这些字符串属于二进制内嵌页面的固定协议，修改会使主题与语言消息失效。
+  const nativeProtocol = [
+    "workbuddyTheme",
+    "workbuddy:themeChanged",
+    "workbuddy:localeChanged",
+  ];
+  function visit(directory) {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const file = join(directory, entry.name);
+      if (entry.isDirectory()) visit(file);
+      else if (entry.name.endsWith(".js")) {
+        let text = readFileSync(file, "utf8");
+        nativeProtocol.forEach((value, index) => {
+          text = text.replaceAll(value, `__OFFICE_NATIVE_PROTOCOL_${index}__`);
+        });
+        for (const [source, target] of replacements)
+          text = text.replaceAll(source, target);
+        nativeProtocol.forEach((value, index) => {
+          text = text.replaceAll(`__OFFICE_NATIVE_PROTOCOL_${index}__`, value);
+        });
+        writeFileSync(file, text);
+      }
+    }
+  }
+  visit(join(wrapper, "lib"));
+  const preview = join(wrapper, "lib/common/preview-runtime.js");
+  const previewTip =
+    "// TIPS: 内嵌页面的固定主题/语言协议字段保持原值，避免名称适配破坏消息兼容。\n";
+  if (
+    existsSync(preview) &&
+    !readFileSync(preview, "utf8").startsWith(previewTip)
+  )
+    writeFileSync(preview, previewTip + readFileSync(preview, "utf8"));
+  const sourceEntry = join(wrapper, "lib/common/tencent-docs-service.js");
+  if (existsSync(sourceEntry))
+    renameSync(sourceEntry, join(wrapper, "lib/common/office-docs-service.js"));
+  const pkg = JSON.parse(readFileSync(join(wrapper, "package.json"), "utf8"));
+  pkg.name = "office-docs-ai-engine";
+  pkg.version = LOCAL_WRAPPER_VERSION;
+  pkg.private = true;
+  pkg.description =
+    "Office 本地文档引擎适配包，管理原生进程、编辑页面与 MCP 接口。";
+  pkg.bin = { "office-docs-mcp": "./lib/mcp/stdio-mcp-bridge.js" };
+  pkg.files = [
+    "lib",
+    "supported-extensions.cjs",
+    "scripts/editor-sdk-platforms.js",
+    "editor-sdk-version.json",
+  ];
+  delete pkg.typings;
+  delete pkg.publishConfig;
+  writeFileSync(
+    join(wrapper, "package.json"),
+    JSON.stringify(pkg, null, 2) + "\n",
+  );
+}
+
 /**
  * 导入显式提供的本地 Office SDK，保持原生目录和配套版本，不联网下载。
- * @param {string} source 腾讯 SDK 包根目录
+ * @param {string} source 本地 SDK 包根目录
  * @param {string} destination JuggleWork 本地资源目录
  * @param {string} platform 目标平台，可在 macOS 上导入本地 Windows 或 Intel SDK
  */
@@ -55,19 +138,24 @@ export function importOfficeEngine(
   );
   cpSync(join(source, "package.json"), join(wrapper, "package.json"));
   cpSync(
+    join(source, "supported-extensions.cjs"),
+    join(wrapper, "supported-extensions.cjs"),
+  );
+  cpSync(
     join(source, "editor-sdk-version.json"),
     join(wrapper, "editor-sdk-version.json"),
   );
   for (const name of ["LICENSE", "LICENSE.md", "NOTICE"])
     if (existsSync(join(source, name)))
       cpSync(join(source, name), join(wrapper, name));
+  adaptOfficeWrapper(wrapper);
   const manifest = {
     schema: 1,
     platform,
-    wrapperVersion: pkg.version,
+    wrapperVersion: LOCAL_WRAPPER_VERSION,
     engineVersion: version,
     binary: `${platform}/${binaryName}`,
-    wrapper: "wrapper/lib/common/tencent-docs-service.js",
+    wrapper: "wrapper/lib/common/office-docs-service.js",
     sha256: createHash("sha256").update(readFileSync(binary)).digest("hex"),
   };
   writeFileSync(

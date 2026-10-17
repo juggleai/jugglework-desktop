@@ -1,6 +1,6 @@
 "use strict";
 /**
- * Scenario detector for the local Tencent Docs editing scenario.
+ * Scenario detector for the local Office Docs editing scenario.
  *
  * Strategy (S1): scan the **top level** of `cwd` once and check for any
  * "office binary" file. If at least one is found, the scenario is
@@ -21,7 +21,7 @@
  *     when calling the detector directly. Hosts that wrap a collector around this
  *     helper should pass the same extension set to their own collector wiring.
  * Doing so widens the detector to the engine's true supported set (≈25
- * extensions, including legacy formats and Tencent's `.wps` family).
+ * extensions, including legacy formats and Office's `.wps` family).
  *
  * Topology: we do NOT recurse — recursion would balloon cost on big
  * workspaces and the false-positive risk grows quickly.

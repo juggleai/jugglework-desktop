@@ -7,7 +7,7 @@
  * simultaneously exposes:
  *   - `/mcp`               - JSON-RPC streamable-HTTP MCP endpoint consumed by
  *                            the agent CLI (registered under
- *                            `tencent-docs-local` in the host's MCP config).
+ *                            `office-docs-local` in the host's MCP config).
  *   - `/static/{type}/...` - editor preview HTML / JS / WASM iframed by the
  *                            renderer. The four `{type}` namespaces are
  *                            `doc`, `sheet`, `slide`, and `pdf`;
@@ -68,7 +68,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.TencentDocsService = exports.SUPPORTED_EXTENSIONS_FROM_BINARY = void 0;
+exports.OfficeDocsService = exports.SUPPORTED_EXTENSIONS_FROM_BINARY = void 0;
 exports.resolveEditorSdkPlatformDir = resolveEditorSdkPlatformDir;
 exports.resolveEditorSdkCwd = resolveEditorSdkCwd;
 exports.buildPreviewUrl = buildPreviewUrl;
@@ -76,7 +76,7 @@ exports.getGlobalPadIdFromPreviewUrl = getGlobalPadIdFromPreviewUrl;
 exports.buildEditorSdkSpawnArgs = buildEditorSdkSpawnArgs;
 exports.resolveBinaryPath = resolveBinaryPath;
 exports.resolveEditorSdkBinaryPath = resolveEditorSdkBinaryPath;
-exports.normalizeTencentDocsDebugRestartOptions = normalizeTencentDocsDebugRestartOptions;
+exports.normalizeOfficeDocsDebugRestartOptions = normalizeOfficeDocsDebugRestartOptions;
 exports.findAvailablePort = findAvailablePort;
 const node_crypto_1 = require("node:crypto");
 const fs = __importStar(require("node:fs"));
@@ -88,7 +88,7 @@ const engine_port_file_1 = require("./engine-port-file");
 const editor_sdk_process_launcher_1 = require("./editor-sdk-process-launcher");
 const { resolveEditorSdkPlatformId } = editor_sdk_platforms_js_1.default;
 const DEFAULT_PORT = '39099';
-const DEFAULT_LOG_TAG = 'tencent-docs';
+const DEFAULT_LOG_TAG = 'office-docs';
 /**
  * Max time to wait for the binary's health endpoint after `spawn`.
  * The cold-boot path on a fresh machine inflates `Embedded
@@ -218,7 +218,7 @@ function getPreviewUrlParams(type, mode) {
  * Flat list of every file extension this engine knows how to preview.
  * Lower-case, leading-dot. Used by `extensions.ts` as the live SSOT.
  */
-exports.SUPPORTED_EXTENSIONS_FROM_BINARY = document_types_1.TENCENT_DOCS_ENGINE_SUPPORTED_EXTENSIONS;
+exports.SUPPORTED_EXTENSIONS_FROM_BINARY = document_types_1.OFFICE_DOCS_ENGINE_SUPPORTED_EXTENSIONS;
 /**
  * Pure: given an engine port and an absolute local file path, return the
  * `/static/<type>/pc.html?...` URL that the renderer can iframe to preview
@@ -228,7 +228,7 @@ exports.SUPPORTED_EXTENSIONS_FROM_BINARY = document_types_1.TENCENT_DOCS_ENGINE_
  * derive the URL without spawning the engine.
  */
 function buildPreviewUrl(port, filePath, options = {}) {
-    const type = (0, document_types_1.getTencentDocsEngineDocType)(filePath);
+    const type = (0, document_types_1.getOfficeDocsEngineDocType)(filePath);
     if (!type) {
         throw new Error(`Unsupported file type: ${path.extname(filePath).toLowerCase()}`);
     }
@@ -272,7 +272,7 @@ function normalizeEditorSdkCorsOrigins(origins) {
 function buildEditorSdkSpawnArgs(port, staticDirOrOptions, legacyEnableTdProxy) {
     // Back-compat: historical signature was `(port, staticDir)`. Accept
     // either a string (legacy) or an options object so existing callers
-    // (and the snapshot tests in `tencent-docs-service.spec.ts`) keep
+    // (and the snapshot tests in `office-docs-service.spec.ts`) keep
     // working unchanged.
     const options = typeof staticDirOrOptions === 'string' || staticDirOrOptions === undefined
         ? { staticDir: staticDirOrOptions, enableTdProxy: legacyEnableTdProxy }
@@ -365,11 +365,11 @@ function resolveEditorSdkBinaryPath(editorSdkPath, hotUpdateDir) {
     }
     return resolveBinaryPath(hotUpdateDir);
 }
-function normalizeTencentDocsDebugRestartOptions({ staticDir, editorSdkPath, }) {
+function normalizeOfficeDocsDebugRestartOptions({ staticDir, editorSdkPath, }) {
     const normalizedStaticDir = staticDir?.trim() || undefined;
     const normalizedEditorSdkPath = editorSdkPath?.trim() || undefined;
     if (!normalizedStaticDir && !normalizedEditorSdkPath) {
-        throw new Error('Tencent Docs debug restart requires static_dir or editor_sdk path');
+        throw new Error('Office Docs debug restart requires static_dir or editor_sdk path');
     }
     return {
         ...(normalizedStaticDir ? { staticDir: normalizedStaticDir } : {}),
@@ -426,9 +426,9 @@ function tryBind(port, host) {
  *      sees an empty `tools/list` and the local-doc scenario collapses to
  *      a misleading Bash / Read fallback with no error breadcrumb.
  *
- *      Observed in the wild when this repo's workbuddy dev and
+ *      Observed in the wild when this repo's jugglework dev and
  *      `electron-app` dev (which runs its own IPv4 IPC server on the same
- *      port range) coexist: workbuddy spawned `editor_sdk` on `:::39100`,
+ *      port range) coexist: jugglework spawned `editor_sdk` on `:::39100`,
  *      `electron-app` already held `127.0.0.1:39100`, the dual-stack-only
  *      probe reported "free", and the agent's MCP calls were routed into
  *      electron-app's `{"error":"not_found"}` endpoint instead.
@@ -584,7 +584,7 @@ function readOpenEditors(value) {
  * Wrapper around the bundled `editor_sdk` binary that owns lazy boot,
  * stdout-based readiness detection, and graceful shutdown.
  */
-class TencentDocsService {
+class OfficeDocsService {
     constructor(options = {}) {
         this.proc = null;
         this.started = false;
@@ -649,7 +649,7 @@ class TencentDocsService {
      * Engine HTTP port (decimal string, e.g. `'39099'`). Returns the
      * preferred port before `ensureStarted()` resolves and the
      * actually-bound port after — call sites that need URL accuracy should
-     * `await ensureStarted()` first (see `TencentDocsServiceOptions.port`).
+     * `await ensureStarted()` first (see `OfficeDocsServiceOptions.port`).
      */
     getPort() {
         return this.port;
@@ -670,7 +670,7 @@ class TencentDocsService {
         await this.starting;
     }
     async restartWithStaticDir(staticDir, editorSdkPath) {
-        const config = normalizeTencentDocsDebugRestartOptions({ staticDir, editorSdkPath });
+        const config = normalizeOfficeDocsDebugRestartOptions({ staticDir, editorSdkPath });
         if (this.starting) {
             try {
                 await this.starting;
@@ -696,8 +696,8 @@ class TencentDocsService {
     /**
      * Query the editor pool by the local path registered through the preview
      * page's SDK open flow. This is the HTTP equivalent of MCP
-     * `get_pool_status`, but scoped inside the Tencent Docs engine wrapper so
-     * WorkBuddy callers do not need to know the SDK endpoint shape.
+     * `get_pool_status`, but scoped inside the Office Docs engine wrapper so
+     * JuggleWork callers do not need to know the SDK endpoint shape.
      */
     async getEditorStatusByFilePath(filePath) {
         return this.getEditorStatus({ filePath });
@@ -707,7 +707,7 @@ class TencentDocsService {
     }
     async getEditorStatus(params) {
         if (!this.started) {
-            return { success: false, error: 'Tencent Docs editor_sdk is not started' };
+            return { success: false, error: 'Office Docs editor_sdk is not started' };
         }
         const url = new URL(`http://127.0.0.1:${this.port}${LOCAL_EDITOR_STATUS_PATH}`);
         if (params.fileId) {
@@ -769,7 +769,7 @@ class TencentDocsService {
      */
     async saveEditor(fileId, options = {}) {
         if (!this.started) {
-            return { success: false, fileId, error: 'Tencent Docs editor_sdk is not started' };
+            return { success: false, fileId, error: 'Office Docs editor_sdk is not started' };
         }
         try {
             const response = await fetchLocalApiWithTimeout(`http://127.0.0.1:${this.port}/localapi/save`, {
@@ -811,7 +811,7 @@ class TencentDocsService {
     /**
      * Close one editor in the local SDK pool.
      *
-     * Current WorkBuddy preview close policy is forceful: when a user
+     * Current JuggleWork preview close policy is forceful: when a user
      * closes the independent window we release the SDK editor even if it is
      * dirty. If this changes to non-force close later, the caller must add a
      * save/discard/cancel interaction before passing `force: false`; simply
@@ -819,7 +819,7 @@ class TencentDocsService {
      */
     async closeEditor(fileId, options = {}) {
         if (!this.started) {
-            return { success: false, fileId, error: 'Tencent Docs editor_sdk is not started' };
+            return { success: false, fileId, error: 'Office Docs editor_sdk is not started' };
         }
         try {
             const response = await fetchLocalApiWithTimeout(`http://127.0.0.1:${this.port}/localapi/editor/close`, {
@@ -922,7 +922,7 @@ class TencentDocsService {
         const binaryPath = resolveEditorSdkBinaryPath(this.editorSdkPath, this.editorSdkHotUpdateDir);
         if (!binaryPath) {
             if (this.editorSdkPath) {
-                throw new Error(`Tencent Docs editor_sdk path is not a file: ${this.editorSdkPath}`);
+                throw new Error(`Office Docs editor_sdk path is not a file: ${this.editorSdkPath}`);
             }
             // Binary missing for this platform: leave us "unstarted" so
             // callers and env-checks degrade gracefully. Reset `starting`
@@ -1236,5 +1236,5 @@ class TencentDocsService {
         });
     }
 }
-exports.TencentDocsService = TencentDocsService;
-//# sourceMappingURL=tencent-docs-service.js.map
+exports.OfficeDocsService = OfficeDocsService;
+//# sourceMappingURL=office-docs-service.js.map

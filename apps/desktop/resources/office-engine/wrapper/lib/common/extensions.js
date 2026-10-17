@@ -38,11 +38,11 @@ exports.FALLBACK_SUPPORTED_EXTENSIONS = supportedExtensionsForAssociation;
  * `editor_sdk` binary, sourced from `document-types.ts`.
  * Lower-case, leading-dot.
  */
-exports.SUPPORTED_EXTENSIONS = document_types_1.TENCENT_DOCS_ENGINE_SUPPORTED_EXTENSIONS;
+exports.SUPPORTED_EXTENSIONS = document_types_1.OFFICE_DOCS_ENGINE_SUPPORTED_EXTENSIONS;
 /**
  * Extensions in `SUPPORTED_EXTENSIONS` that are too noisy to use as a
  * scenario signal. `.csv` shows up in plain data / analysis projects
- * unrelated to Tencent Docs editing; treating it as a scenario hit would
+ * unrelated to Office Docs editing; treating it as a scenario hit would
  * cause widespread false positives in the cwd-gated detector.
  *
  * Hosts running the scenario detector should subtract this set from

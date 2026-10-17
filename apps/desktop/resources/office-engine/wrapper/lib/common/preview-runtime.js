@@ -1,42 +1,43 @@
+// TIPS: 内嵌页面的固定主题/语言协议字段保持原值，避免名称适配破坏消息兼容。
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DEFAULT_TENCENT_DOCS_PREVIEW_LOCALE = void 0;
-exports.resolveTencentDocsPreviewLocale = resolveTencentDocsPreviewLocale;
-exports.isTencentDocsLocalSdkPreviewUrl = isTencentDocsLocalSdkPreviewUrl;
-exports.appendTencentDocsLocalSdkPreviewParams = appendTencentDocsLocalSdkPreviewParams;
-exports.buildTencentDocsPreviewThemeMessage = buildTencentDocsPreviewThemeMessage;
-exports.buildTencentDocsPreviewLocaleMessage = buildTencentDocsPreviewLocaleMessage;
-exports.DEFAULT_TENCENT_DOCS_PREVIEW_LOCALE = 'zh-CN';
-const TENCENT_DOCS_PREVIEW_LOCALE_BY_APP_LOCALE = {
+exports.DEFAULT_OFFICE_DOCS_PREVIEW_LOCALE = void 0;
+exports.resolveOfficeDocsPreviewLocale = resolveOfficeDocsPreviewLocale;
+exports.isOfficeDocsLocalSdkPreviewUrl = isOfficeDocsLocalSdkPreviewUrl;
+exports.appendOfficeDocsLocalSdkPreviewParams = appendOfficeDocsLocalSdkPreviewParams;
+exports.buildOfficeDocsPreviewThemeMessage = buildOfficeDocsPreviewThemeMessage;
+exports.buildOfficeDocsPreviewLocaleMessage = buildOfficeDocsPreviewLocaleMessage;
+exports.DEFAULT_OFFICE_DOCS_PREVIEW_LOCALE = 'zh-CN';
+const OFFICE_DOCS_PREVIEW_LOCALE_BY_APP_LOCALE = {
     zh: 'zh-CN',
     'zh-cn': 'zh-CN',
     en: 'en-US',
     'en-us': 'en-US',
 };
-const TENCENT_DOCS_LOCAL_SDK_PREVIEW_PATH_PATTERN = /^\/static\/(?:doc|sheet|slide|pdf)\/pc\.html$/;
-function resolveTencentDocsPreviewLocale(locale) {
+const OFFICE_DOCS_LOCAL_SDK_PREVIEW_PATH_PATTERN = /^\/static\/(?:doc|sheet|slide|pdf)\/pc\.html$/;
+function resolveOfficeDocsPreviewLocale(locale) {
     const normalizedLocale = locale?.trim().toLowerCase();
     if (!normalizedLocale) {
-        return exports.DEFAULT_TENCENT_DOCS_PREVIEW_LOCALE;
+        return exports.DEFAULT_OFFICE_DOCS_PREVIEW_LOCALE;
     }
-    return (TENCENT_DOCS_PREVIEW_LOCALE_BY_APP_LOCALE[normalizedLocale] ??
-        exports.DEFAULT_TENCENT_DOCS_PREVIEW_LOCALE);
+    return (OFFICE_DOCS_PREVIEW_LOCALE_BY_APP_LOCALE[normalizedLocale] ??
+        exports.DEFAULT_OFFICE_DOCS_PREVIEW_LOCALE);
 }
-function isTencentDocsLocalSdkPreviewUrl(value) {
+function isOfficeDocsLocalSdkPreviewUrl(value) {
     try {
         const url = typeof value === 'string' ? new URL(value) : value;
         return (url.protocol === 'http:' &&
             (url.hostname === '127.0.0.1' || url.hostname === 'localhost') &&
-            TENCENT_DOCS_LOCAL_SDK_PREVIEW_PATH_PATTERN.test(url.pathname));
+            OFFICE_DOCS_LOCAL_SDK_PREVIEW_PATH_PATTERN.test(url.pathname));
     }
     catch {
         return false;
     }
 }
-function appendTencentDocsLocalSdkPreviewParams(src, params) {
+function appendOfficeDocsLocalSdkPreviewParams(src, params) {
     try {
         const url = new URL(src);
-        if (!isTencentDocsLocalSdkPreviewUrl(url)) {
+        if (!isOfficeDocsLocalSdkPreviewUrl(url)) {
             return src;
         }
         if (params.theme) {
@@ -53,7 +54,7 @@ function appendTencentDocsLocalSdkPreviewParams(src, params) {
         return src;
     }
 }
-function buildTencentDocsPreviewThemeMessage(theme) {
+function buildOfficeDocsPreviewThemeMessage(theme) {
     return {
         type: 'workbuddy:themeChanged',
         theme,
@@ -61,7 +62,7 @@ function buildTencentDocsPreviewThemeMessage(theme) {
         shouldUseDarkColors: theme === 'dark',
     };
 }
-function buildTencentDocsPreviewLocaleMessage(locale) {
+function buildOfficeDocsPreviewLocaleMessage(locale) {
     return {
         type: 'workbuddy:localeChanged',
         locale,

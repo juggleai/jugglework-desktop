@@ -104,7 +104,9 @@
 - [x] 6.5 SDK 取消整体 Git 忽略并配置原生二进制 Git LFS、桌面构建 CI 检出；wrapper 和清单为普通 Git，日志/临时文件排除。支持在任意主机导入已取得的目标平台 SDK，并保留独立平台清单；实际供应范围见 6.7
 - [x] 6.6 afterPack 复制唯一目标平台及 wrapper 到 ASAR 外，缺失或 LFS 指针失败；macOS 按 builder 实际签名身份先签内核、刷新哈希再封存主应用。桌面通过 embedded Server 显式传入自身 Resources 路径，原生临时文件使用用户数据目录。macOS ARM64 的实际签名资源在只读、禁公网、无系统 Node 下四种格式保存重开通过，资源树不变；完整安装包签名/公证及桌面安装验收仍列于 6.1
 
-- [x] 6.7 导入本地安装包中的 darwin-x64、win32-x64 SDK 0.0.0.499 及独立平台清单，wrapper 0.2.196-wb 与已有文件逐字节一致；原生文件按 Git LFS 管理。Mach-O/PE 架构、配套版本和系统动态依赖静态核对通过，三个平台实际资源通过按目标复制及 SHA-256 校验。Intel 内核在 Apple Silicon 上经 Rosetta 验证中文/带空格路径、四种格式修改保存重开及本地 HTML 入口，只读资源目录不变，磁盘核对 XLSX 两表/跨表公式和 PPT 第二页保留；该项不声明 Windows 执行、Intel 实机页面、输入法、完整离线页面或完整安装包验收通过
+- [x] 6.7 导入本地安装包中的 darwin-x64、win32-x64 SDK 0.0.0.499 及独立平台清单，三个平台共用本地适配包 office-docs-ai-engine 0.2.196-office.1；原生文件按 Git LFS 管理。Mach-O/PE 架构、配套版本和系统动态依赖静态核对通过，三个平台实际资源通过按目标复制及 SHA-256 校验。Intel 内核在 Apple Silicon 上经 Rosetta 验证中文/带空格路径、四种格式修改保存重开及本地 HTML 入口，只读资源目录不变，磁盘核对 XLSX 两表/跨表公式和 PPT 第二页保留；该项不声明 Windows 执行、Intel 实机页面、输入法、完整离线页面或完整安装包验收通过
 
 - [x] 6.8 桌面声明与内置 Server 配套的全部生产依赖，包含 jszip 3.10.1 和 @xmldom/xmldom 0.8.15；依赖归属回归覆盖漏包，构建在暂存 Server 后使用 Electron 内置 Node 导入 embedded.js，避免源码 node_modules 掩盖安装包启动失败
 - [x] 6.9 macOS ARM64 完整 ad-hoc 签名应用严格签名、21 个 Mach-O 单架构及元数据校验通过，独立副本从自身 Resources 启动 Server/SDK；环境变量指向不存在的 SDK 仍可打开四种格式。文件浏览器实际加载四种原生页面，页面公网请求拦截期间完成内容工具修改及宿主保存；磁盘确认 XLSX 两表/跨表公式、PPT 第二页和 CSV 非目标行保留。CSV 公式栏中文粘贴后不回车 Cmd+S 落盘，Cmd+O/取消保留四个标签；已保存文档 Cmd+Q 后应用、SDK、Dock 辅助程序及 OpenCode 全部退出，20 个 SDK 资源文件不变。该项不声明 DMG 安装、正式团队签名/公证、真实模型对话、跨平台、系统级断网或完整字体/worker/剪贴板验收通过
+
+- [x] 6.10 文档、包名、服务文件、导出接口、配置及日志统一使用 Office 命名，本地适配包为 office-docs-ai-engine 0.2.196-office.1；重复导入保持命名，格式清单随包供应，原生二进制、固定协议及许可原文不变。导入/包入口/打包 20 项回归、Server 构建和三平台实际资源复制校验通过；macOS ARM64 使用 Electron 内置 Node 从 Resources 路径在无系统 Node、拒绝公网条件下完成四格式修改保存重开，Intel 内核经 Rosetta 的同项验证通过；不新增 Windows 执行、Intel 实机或完整安装包验收声明

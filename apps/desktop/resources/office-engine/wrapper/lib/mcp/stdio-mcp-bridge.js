@@ -17762,23 +17762,23 @@ var fs = __toESM(require("node:fs"));
 var path = __toESM(require("node:path"));
 
 // src/common/mcp-constants.ts
-var TENCENT_DOCS_LOCAL_MCP_NAME = "tencent_docs_local";
-var TENCENT_DOCS_LOCAL_MCP_TOOL_PREFIX = `mcp__${TENCENT_DOCS_LOCAL_MCP_NAME}__`;
-var TENCENT_DOCS_REMOTE_CONNECTOR_NAME = "tencent_docs";
-var TENCENT_DOCS_REMOTE_MCP_TOOL_PREFIX = `mcp__${TENCENT_DOCS_REMOTE_CONNECTOR_NAME}__`;
+var OFFICE_DOCS_LOCAL_MCP_NAME = "office_docs_local";
+var OFFICE_DOCS_LOCAL_MCP_TOOL_PREFIX = `mcp__${OFFICE_DOCS_LOCAL_MCP_NAME}__`;
+var OFFICE_DOCS_REMOTE_CONNECTOR_NAME = "office_docs";
+var OFFICE_DOCS_REMOTE_MCP_TOOL_PREFIX = `mcp__${OFFICE_DOCS_REMOTE_CONNECTOR_NAME}__`;
 
 // src/common/engine-port-file.ts
-var TENCENT_DOCS_ENGINE_PORT_FILE_ENV = "TENCENT_DOCS_ENGINE_PORT_FILE";
-var TENCENT_DOCS_ENGINE_PORT_FILENAME = "tencent-docs-engine.port";
+var OFFICE_DOCS_ENGINE_PORT_FILE_ENV = "OFFICE_DOCS_ENGINE_PORT_FILE";
+var OFFICE_DOCS_ENGINE_PORT_FILENAME = "office-docs-engine.port";
 function resolveEnginePortFilePathFromEnv() {
-  return process.env[TENCENT_DOCS_ENGINE_PORT_FILE_ENV];
+  return process.env[OFFICE_DOCS_ENGINE_PORT_FILE_ENV];
 }
 function resolveEnginePortFilePathFromConfigDir() {
-  const configDir = process.env.CODEBUDDY_CONFIG_DIR;
+  const configDir = process.env.JUGGLEWORK_CONFIG_DIR;
   if (!configDir) {
     return void 0;
   }
-  return path.join(configDir, TENCENT_DOCS_ENGINE_PORT_FILENAME);
+  return path.join(configDir, OFFICE_DOCS_ENGINE_PORT_FILENAME);
 }
 function readPortFile(portFilePath) {
   try {
@@ -17796,7 +17796,7 @@ function readPortFile(portFilePath) {
 var POLL_INTERVAL_MS = 500;
 var POLL_TIMEOUT_MS = 3e4;
 function log(msg) {
-  process.stderr.write(`[tencent-docs-mcp-bridge] ${msg}
+  process.stderr.write(`[office-docs-mcp-bridge] ${msg}
 `);
 }
 async function waitForPortFile(portFilePath) {
@@ -17814,7 +17814,7 @@ async function connectUpstream(port) {
   const url2 = new URL(`http://127.0.0.1:${port}/mcp`);
   const transport = new StreamableHTTPClientTransport(url2);
   const client = new Client(
-    { name: "tencent-docs-mcp-bridge", version: "1.0.0" },
+    { name: "office-docs-mcp-bridge", version: "1.0.0" },
     { capabilities: {} }
   );
   await client.connect(transport);
@@ -17831,7 +17831,7 @@ async function main() {
   const portFilePath = resolveEnginePortFilePathFromEnv() ?? resolveEnginePortFilePathFromConfigDir();
   if (!portFilePath) {
     log(
-      "ERROR: cannot determine port file path (neither TENCENT_DOCS_ENGINE_PORT_FILE nor CODEBUDDY_CONFIG_DIR is set)"
+      "ERROR: cannot determine port file path (neither OFFICE_DOCS_ENGINE_PORT_FILE nor JUGGLEWORK_CONFIG_DIR is set)"
     );
     process.exit(1);
   }
@@ -17863,7 +17863,7 @@ async function main() {
     return pendingReconnect;
   }
   const server = new Server(
-    { name: "tencent-docs-local", version: "1.0.0" },
+    { name: "office-docs-local", version: "1.0.0" },
     {
       capabilities: {
         tools: {},

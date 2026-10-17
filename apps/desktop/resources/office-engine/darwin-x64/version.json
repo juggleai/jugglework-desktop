@@ -1,9 +1,9 @@
 {
   "schema": 1,
   "platform": "darwin-x64",
-  "wrapperVersion": "0.2.196-wb",
+  "wrapperVersion": "0.2.196-office.1",
   "engineVersion": "0.0.0.499",
   "binary": "darwin-x64/editor_sdk",
-  "wrapper": "wrapper/lib/common/tencent-docs-service.js",
+  "wrapper": "wrapper/lib/common/office-docs-service.js",
   "sha256": "1d07fd2e060f2300f0229852a8e2935dcdb66955dfc8c5202d667d3810ce0a24"
 }

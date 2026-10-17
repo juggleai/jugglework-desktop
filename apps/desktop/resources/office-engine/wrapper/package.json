@@ -1,21 +1,16 @@
 {
-  "name": "@tencent/tencent-docs-ai-engine",
-  "version": "0.2.196-wb",
-  "description": "Tencent Docs AI Engine. Spawn-and-supervise wrapper around the bundled `editor_sdk` binary (serves the JSON-RPC MCP endpoint /mcp consumed by agent CLIs and the editor preview assets /static/<type>/pc.html on a single port, default :39099; lazy start, stdout-based readiness detection, graceful shutdown) plus the local-docs scenario layer (prompt fragment + variable collector + cwd-based detector) used by host system-prompt renderers.",
+  "name": "office-docs-ai-engine",
+  "version": "0.2.196-office.1",
+  "description": "Office 本地文档引擎适配包，管理原生进程、编辑页面与 MCP 接口。",
   "main": "lib/common/index.js",
-  "typings": "lib/common/index.d.ts",
   "license": "MIT",
   "bin": {
-    "tencent-docs-mcp": "./lib/mcp/stdio-mcp-bridge.js"
+    "office-docs-mcp": "./lib/mcp/stdio-mcp-bridge.js"
   },
   "files": [
     "lib",
-    "src",
     "supported-extensions.cjs",
-    "scripts/download-editor-sdk.js",
-    "scripts/editor-sdk-platforms.d.ts",
     "scripts/editor-sdk-platforms.js",
-    "scripts/allowed-hosts.cjs",
     "editor-sdk-version.json"
   ],
   "dependencies": {
@@ -37,7 +32,5 @@
   "peerDependencies": {
     "electron": ">=29"
   },
-  "publishConfig": {
-    "access": "public"
-  }
+  "private": true
 }

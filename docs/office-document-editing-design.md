@@ -32,7 +32,7 @@ CSV 点击正文引用、卡片或附件后，在右侧文件 tab 使用 `Office
 
 ## 文档类型与交付范围
 
-当前技术基线为 `@tencent/tencent-docs-ai-engine 0.2.196-wb`，配套 `editor_sdk 0.0.0.499`。引擎工具目录包含 70 个 `doc_*`、60 个 `sheet_*`、80 个 `slide_*` 工具，以及创建、打开、保存、查找等共享工具。工具存在与复杂文件兼容性分别验收。
+当前技术基线为 `office-docs-ai-engine 0.2.196-office.1`，配套 `editor_sdk 0.0.0.499`。引擎工具目录包含 70 个 `doc_*`、60 个 `sheet_*`、80 个 `slide_*` 工具，以及创建、打开、保存、查找等共享工具。工具存在与复杂文件兼容性分别验收。
 
 | 类型 | 引擎能力 | 当前验证边界 | 产品交付范围 |
 | --- | --- | --- | --- |
@@ -44,7 +44,7 @@ CSV 点击正文引用、卡片或附件后，在右侧文件 tab 使用 `Office
 | PDF | 包含预览资源 | 不计入 Office 编辑能力 | 保留现有 PDF 阅读方式 |
 | `.doc`、`.xls`、`.ppt` 等旧格式 | SDK 扩展名表列出，但内核原生保存为 OOXML | 格式导入和转换尚需样本验收 | 后续提供兼容打开、另存为现代格式 |
 | `.docm`、`.xlsm`、`.pptm` 等 | 扩展名表列出 | 宏执行及完整保留没有验证 | 首版不开放编辑，不承诺宏兼容 |
-| ODT、ODS、ODP、Pages、Keynote | 不在该 SDK 当前扩展名清单中 | 不作为该引擎支持项 | 保留原有处理方式，不路由到腾讯引擎 |
+| ODT、ODS、ODP、Pages、Keynote | 不在该 SDK 当前扩展名清单中 | 不作为该引擎支持项 | 保留原有处理方式，不路由到 Office 引擎 |
 
 macOS ARM64 开发桌面已验证 Excel 页面输入与 MCP 双向同步、两表保留及宿主保存重开；PPT 已验证原生页面加载、MCP 文本回显、页面字号修改回传模型和宿主保存重开。三种格式均需通过真实 Microsoft Office 或目标用户使用的 WPS 保存往返验收，ZIP 和 XML 可解析不足以证明完整兼容。全部功能离线使用、Windows 运行和复杂文档保真亦属于发布验收项。
 
@@ -517,8 +517,8 @@ Word、Excel 和 PowerPoint 共用一个原生 `editor_sdk`，无需分别采购
 | 依赖 | 是否新增必需依赖 | 用途及本地供应方式 |
 | --- | --- | --- |
 | 原生 `editor_sdk` / `editor_sdk.exe` | 必需，按平台准备 | 文档内核、HTTP MCP 及内嵌编辑页面；完整平台目录作为本地资源随安装包交付 |
-| `@tencent/tencent-docs-ai-engine` JS wrapper | 本方案默认使用，可替代 | 管理启动、健康探测、端口、预览地址及保存状态；可使用项目内本地包，不要求从公共 npm 获取 |
-| `@modelcontextprotocol/sdk` | 视接入方式准备 | 腾讯包声明该传递依赖；保留完整包或使用 stdio bridge 时按清单供应。默认 HTTP 连接由现有 OpenCode 承接，不另建客户端进程 |
+| `office-docs-ai-engine` JS wrapper | 本方案默认使用，可替代 | 管理启动、健康探测、端口、预览地址及保存状态；可使用项目内本地包，不要求从公共 npm 获取 |
+| `@modelcontextprotocol/sdk` | 视接入方式准备 | 包装层声明该传递依赖；保留完整包或使用 stdio bridge 时按清单供应。默认 HTTP 连接由现有 OpenCode 承接，不另建客户端进程 |
 | Electron、内嵌 Node、OpenCode SDK | 项目已有 | 宿主运行环境与 MCP 客户端，无需用户额外安装 Office 或系统 Node |
 | `jszip 3.10.1`、`@xmldom/xmldom 0.8.15` | 必需，已接入 | 检查 OOXML 兼容性及适配 XLSX 公式导出；Server 与桌面生产依赖均声明配套版本，随安装包交付 |
 | TypeScript、现有构建及打包工具 | 项目已有构建依赖 | 编译、打包和验包；完全离线构建时提前缓存依赖与工具资源 |
@@ -549,36 +549,38 @@ apps/desktop/resources/office-engine/
   version.json
 ```
 
-项目已具有 `darwin-arm64`、`darwin-x64`、`win32-x64` 的实际平台目录及独立清单，配套内核均为 0.0.0.499，三个安装来源的 wrapper 0.2.196-wb 逐字节一致。具体安装包身份、文件大小及 SHA-256 记录在 `apps/desktop/resources/office-engine/README.md`。Windows 原包平台目录仅有 EXE 和版本标记，没有附带 DLL；静态导入均为系统库、无延迟导入表，动态加载行为仍须实机验证。导入始终复制完整平台目录，不根据 macOS 文件布局推测其他平台的文件集合。
+项目已具有 `darwin-arm64`、`darwin-x64`、`win32-x64` 的实际平台目录及独立清单，配套内核均为 0.0.0.499，三个平台共用项目内适配包 office-docs-ai-engine 0.2.196-office.1。供应包校验值、文件大小及 SHA-256 记录在 `apps/desktop/resources/office-engine/README.md`。Windows 原包平台目录仅有 EXE 和版本标记，没有附带 DLL；静态导入均为系统库、无延迟导入表，动态加载行为仍须实机验证。导入始终复制完整平台目录，不根据 macOS 文件布局推测其他平台的文件集合。
 
-macOS ARM64 和 Intel 分别使用对应的 ARM64、x86_64 Mach-O；Windows x64 使用 PE32+ x64。Intel 内核声明最低 macOS 10.15，JuggleWork 仍沿用自身系统基线。平台内核不可互换，跨平台构建不会转换原生架构。Intel 与 Windows 资源从显式提供的本地 WorkBuddy 安装包静态解包后导入；JuggleWork 的构建和运行读取项目自带资源，不依赖这些安装包或外部 App。
+macOS ARM64 和 Intel 分别使用对应的 ARM64、x86_64 Mach-O；Windows x64 使用 PE32+ x64。Intel 内核声明最低 macOS 10.15，JuggleWork 仍沿用自身系统基线。平台内核不可互换，跨平台构建不会转换原生架构。Intel 与 Windows 资源从显式提供的本地供应包静态解包后导入；JuggleWork 的构建和运行读取项目自带资源，不依赖这些安装包或外部 App。
 
 在仓库根目录执行以下命令，从显式提供的本地 SDK 包复制完整平台资源及 wrapper，并生成根清单和各平台 `version.json`：
 
 ```sh
 git lfs install --local
 git lfs pull
-node scripts/import-office-engine.mjs /absolute/path/to/tencent-docs-ai-engine
+node scripts/import-office-engine.mjs /absolute/path/to/office-docs-ai-engine
 # 可在任意主机导入已取得的 Windows / Intel 本地 SDK。
-node scripts/import-office-engine.mjs /absolute/path/to/tencent-docs-ai-engine apps/desktop/resources/office-engine win32-x64
-node scripts/import-office-engine.mjs /absolute/path/to/tencent-docs-ai-engine apps/desktop/resources/office-engine darwin-x64
+node scripts/import-office-engine.mjs /absolute/path/to/office-docs-ai-engine apps/desktop/resources/office-engine win32-x64
+node scripts/import-office-engine.mjs /absolute/path/to/office-docs-ai-engine apps/desktop/resources/office-engine darwin-x64
 # 可指定另一资源目录；本地 Server 使用同一目录。
 JUGGLEWORK_OFFICE_ENGINE_DIR=/absolute/path/to/office-engine bun apps/server/src/cli.ts
 ```
 
-SDK 不通过 npm postinstall 获取；Server 直接从上述资源目录加载 `wrapper/lib/common/tencent-docs-service.js`，并显式传入 `editorSdkPath`。该启动模块使用 Node 内置模块，不加载 stdio bridge 或额外 MCP SDK。默认目录为仓库中的 `apps/desktop/resources/office-engine`，设置 `JUGGLEWORK_OFFICE_ENABLED=0` 可关闭内置编辑。桌面宿主显式传入自身资源目录：开发时为项目 resources/office-engine，安装后为 process.resourcesPath/office-engine；不使用环境变量切换到外部 App。独立 CLI Server 仍可显式配置本地目录。
+本地适配包统一使用 Office 包名、服务入口、导出接口、日志和配置命名。导入脚本对固定供应版本执行相同适配，保留原生二进制、固定页面协议与许可原文，不引入旧名称别名。
+
+SDK 不通过 npm postinstall 获取；格式清单 `wrapper/supported-extensions.cjs` 随包装层供应，包入口可直接加载。Server 直接从上述资源目录加载 `wrapper/lib/common/office-docs-service.js`，并显式传入 `editorSdkPath`。该启动模块使用 Node 内置模块，不加载 stdio bridge 或额外 MCP SDK。默认目录为仓库中的 `apps/desktop/resources/office-engine`，设置 `JUGGLEWORK_OFFICE_ENABLED=0` 可关闭内置编辑。桌面宿主显式传入自身资源目录：开发时为项目 resources/office-engine，安装后为 process.resourcesPath/office-engine；不使用环境变量切换到外部 App。独立 CLI Server 仍可显式配置本地目录。
 
 启动只检查本地平台文件、配套版本和原生 SHA-256；缺失即报告对应平台资源不足，不调用下载脚本，也不自动回退到网络。导入保持平台目录和配套文件权限，清单记录 wrapper 版本、原生版本、平台及哈希；来源和使用范围由供应清单管理。Git LFS 仅在检出源码时取得大文件，应用运行不需要 Git、Git LFS 或 SDK 下载。桌面构建 CI 已启用 LFS 检出；打包时只存在指针会校验失败。Windows x64、macOS Intel 已通过本地安装包补齐资源，构建无需访问供应方下载地址；Windows ARM64 等其他平台仍不能根据平台声明视为已有资源。
 
 ### wrapper 不可获取时的替代
 
-若拥有可用原生引擎，但没有可直接安装的腾讯 JS 包，可以在 `office/engine.ts` 中实现小型启动适配器：启动匹配平台的本地进程、探测健康状态、记录实际端口、生成配套编辑地址、调用状态和保存接口、退出时清理。相关接口需要按固定引擎版本验收，不视为腾讯承诺的长期稳定接口。
+若拥有可用原生引擎，但没有可直接安装的 Office JS 适配包，可以在 `office/engine.ts` 中实现小型启动适配器：启动匹配平台的本地进程、探测健康状态、记录实际端口、生成配套编辑地址、调用状态和保存接口、退出时清理。相关接口需要按固定引擎版本验收，不视为供应方承诺的长期稳定接口。
 
-这一路线可移除腾讯 JS wrapper 的安装依赖，并继续由 Server 连接原生 HTTP MCP。原生引擎及其编辑资源仍然必需；仅有 JS wrapper 或接口说明不能恢复原生 Office 内核。
+这一路线可移除 Office JS wrapper 的安装依赖，并继续由 Server 连接原生 HTTP MCP。原生引擎及其编辑资源仍然必需；仅有 JS wrapper 或接口说明不能恢复原生 Office 内核。
 
 ### 离线使用边界
 
-“不下载 SDK”通过显式本地资源实现。“从零离线构建整个 JuggleWork”还需要准备 pnpm 完整依赖缓存、Electron 和各平台打包工具缓存、现有 sidecar 资源及构建所需的其他文件。本地复制只解决腾讯 SDK 的来源，不会让其他依赖自动离线。
+“不下载 SDK”通过显式本地资源实现。“从零离线构建整个 JuggleWork”还需要准备 pnpm 完整依赖缓存、Electron 和各平台打包工具缓存、现有 sidecar 资源及构建所需的其他文件。本地复制只解决 Office SDK 的来源，不会让其他依赖自动离线。
 
 macOS ARM64 已验证引擎层不需要系统 Node 或公网：使用 Electron 44 内置 Node 24.18.1 执行编译后的 Server 适配器，PATH 中 node、npm、npx、bun 均为 ENOENT；独立进程沙盒仅允许本机回环网络，公网连接负向检查为 EPERM。真实 SDK 0.0.0.499 完成 DOCX 插入文字、CSV 单元格修改、XLSX 多表工作簿修改、PPTX 添加文本后的原路径保存和重开回读；独立 ZIP/XML/CSV 读取确认原有正文、表格数值和跨表公式、PPT 第二页保留，原样例未改写。各格式本地页面入口返回 HTTP 200；SDK 资源缺失时报告不可用，不尝试下载。该结果限定引擎与入口 HTML，不涵盖完整编辑页面渲染、字体、worker、剪贴板、远程 AI 模型或签名安装包。
 
@@ -682,7 +684,7 @@ macOS ARM64 完整 ad-hoc 签名应用的独立副本已通过严格签名、21 
 
 ## 发布依赖与开关
 
-截至 2026 年 10 月 16 日，公开 npm registry 查询该包及目标版本返回 404，对应下载脚本地址也未验证可获取。正式分发需确认原生内核、内嵌页面与附属资源的使用范围，不能仅以 manifest 的 MIT 字段判断。开发评估可显式配置已有本地 SDK，发行包不能依赖用户安装 WorkBuddy。
+本地适配包通过仓库供应，不依赖公共 npm 下载。正式分发需确认原生内核、内嵌页面与附属资源的使用范围，不能仅以 manifest 的 MIT 字段判断。开发评估可显式配置已有本地 SDK，发行包使用自身资源目录。
 
 文件卡片、正文引用和通用操作独立于 `officeEditing.enabled`。Office 总开关及各格式开关只控制内置编辑能力；未通过验收的格式保留文件信息、下载或默认应用打开。Office 首次独立打开与保持状态迁移按平台分别验收并控制能力，禁止用关闭重开冒充无损迁移。文本与 TSV 在两种宿主中共享草稿，DOCX、CSV、XLSX、PPTX 共用原生 Office 模型；图片、PDF 等保持各自的只读预览能力。分享与上传由后续服务能力开关控制。
 

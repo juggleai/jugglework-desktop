@@ -13,16 +13,16 @@ test("多平台源码资源按当前平台清单加载，不能使用根目录�
     await writeFile(join(root, platform, ".editor-sdk-version"), "0.0.0.499");
     await writeFile(join(root, platform, "editor_sdk"), "fixture");
     await writeFile(
-      join(root, "wrapper/lib/common/tencent-docs-service.js"),
+      join(root, "wrapper/lib/common/office-docs-service.js"),
       "fixture",
     );
     const manifest = {
       schema: 1,
       platform,
-      wrapperVersion: "0.2.196-wb",
+      wrapperVersion: "0.2.196-office.1",
       engineVersion: "0.0.0.499",
       binary: `${platform}/editor_sdk`,
-      wrapper: "wrapper/lib/common/tencent-docs-service.js",
+      wrapper: "wrapper/lib/common/office-docs-service.js",
     };
     await writeFile(
       join(root, "version.json"),

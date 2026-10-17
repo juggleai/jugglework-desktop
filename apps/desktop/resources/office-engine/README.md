@@ -1,10 +1,11 @@
 # Office 本地供应资源
 
-本目录是 JuggleWork 自带的 SDK 快照，不从 WorkBuddy、Office 或 WPS 安装目录加载文件。
+本目录是 JuggleWork 自带的 SDK 快照，不从外部应用安装目录加载文件。
 
-- wrapper：`@tencent/tencent-docs-ai-engine 0.2.196-wb`。
+- wrapper：`office-docs-ai-engine 0.2.196-office.1`。
+- 服务入口：`wrapper/lib/common/office-docs-service.js`，导出 `OfficeDocsService`。
 - 原生内核：`editor_sdk 0.0.0.499`，编辑页面 HTML/JS/WASM 内嵌在原生二进制中。
-- 已有实际资源：`darwin-arm64`、`darwin-x64`、`win32-x64`。三个平台共用逐字节一致的 wrapper，分别使用原生内核。
+- 已有实际资源：`darwin-arm64`、`darwin-x64`、`win32-x64`。三个平台共用项目内适配的 wrapper，分别使用原生内核。
 - 原生二进制使用 Git LFS；wrapper、平台标记和版本清单为普通 Git 文件。日志和临时目录不纳入供应资源。
 
 检出仓库后，准备实际的大文件，再构建：
@@ -15,6 +16,8 @@ git lfs pull
 ```
 
 Git LFS 仅用于开发与构建时检出源资源，用户运行安装包无需 Git、Git LFS、系统 Node 或联网下载 SDK。
+
+本地导入会将固定供应版本的 JS 包装层适配为统一的 Office 包名、入口、导出接口和配置名称。适配版本独立标识，原生内核不改写；内嵌页面的固定通信字段及许可原文保持兼容。再次导入使用相同规则，不恢复旧包名或入口。
 
 每个平台使用 `<platform>/version.json`，记录配套版本、相对路径和二进制 SHA-256。根 `version.json` 保留单平台资源兼容；随安装包交付时仅包含该包的目标平台。
 
@@ -33,7 +36,7 @@ node scripts/import-office-engine.mjs /path/to/local/sdk apps/desktop/resources/
 | `darwin-x64` | 238583472 | `1d07fd2e060f2300f0229852a8e2935dcdb66955dfc8c5202d667d3810ce0a24` |
 | `win32-x64` | 209234760 | `b372679233c2ea586cc9e2ee9f491b06a702780bf72b8ef15cec1761994fd45c` |
 
-Intel 资源来自 `WorkBuddy-darwin-x64-5.8.3.41334564-db0e9b51.dmg`，安装包 SHA-256 为 `be38d473d41d3aed0958c80170213c90e6dba6404668849e4f7d0fda74b24f6e`。Windows 资源来自 `WorkBuddy-win32-x64-user-5.8.4.41366630-73952edb.exe`，安装包 SHA-256 为 `1ca65684338e8b803afb246a0c4b7d49c90dcefcc30c296a1424bbfb9c80b843`。本地解包后导入完整 SDK 平台目录，产品运行无需这些安装包或 WorkBuddy。
+Intel 本地供应包 SHA-256 为 `be38d473d41d3aed0958c80170213c90e6dba6404668849e4f7d0fda74b24f6e`。Windows 本地供应包 SHA-256 为 `1ca65684338e8b803afb246a0c4b7d49c90dcefcc30c296a1424bbfb9c80b843`。本地解包后导入完整 SDK 平台目录，产品运行无需这些供应包或外部应用。
 
 Intel 原生文件为单架构 x86_64 Mach-O，声明最低 macOS 10.15，11 项动态依赖均为系统框架或库；JuggleWork 仍沿用自身系统基线。Windows 原生文件为 PE32+ x64，原包平台目录只有 EXE 和版本标记，11 项静态导入均为 Windows 系统 DLL，没有延迟导入表；动态加载行为尚未在 Windows 实机验证。
 

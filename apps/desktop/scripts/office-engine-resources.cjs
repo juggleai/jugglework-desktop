@@ -20,9 +20,9 @@ function readOfficeEngineManifest(root, platform) {
     );
   if (
     manifest.engineVersion !== "0.0.0.499" ||
-    manifest.wrapperVersion !== "0.2.196-wb" ||
+    manifest.wrapperVersion !== "0.2.196-office.1" ||
     manifest.binary !== `${platform}/${executable}` ||
-    manifest.wrapper !== "wrapper/lib/common/tencent-docs-service.js"
+    manifest.wrapper !== "wrapper/lib/common/office-docs-service.js"
   )
     throw new Error("Office SDK 清单与已适配版本或路径不一致");
   const marker = fs
@@ -41,6 +41,7 @@ function readOfficeEngineManifest(root, platform) {
     throw new Error("Office SDK 校验失败，请确认 Git LFS 资源已完整检出");
   for (const file of [
     manifest.wrapper,
+    "wrapper/supported-extensions.cjs",
     "wrapper/scripts/editor-sdk-platforms.js",
     "wrapper/lib/common/document-types.js",
     "wrapper/lib/common/engine-port-file.js",

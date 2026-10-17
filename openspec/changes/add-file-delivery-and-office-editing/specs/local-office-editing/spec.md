@@ -188,6 +188,10 @@ DOCX、CSV、XLSX、PPTX 统一保存 SHALL 等待所属存活页面的输入提
 ### Requirement: SDK 随源码与安装包自包含交付
 SDK 原生资源 SHALL 使用 Git LFS 纳入版本管理，wrapper 和清单 SHALL 使用普通 Git；仅运行日志和临时文件可忽略。桌面构建 SHALL 检出 LFS 实体，安装包 SHALL 在 ASAR 外包含唯一目标平台的完整 SDK、wrapper 及版本哈希清单，不得依赖外部 App 或运行时下载补全。
 
+#### Scenario: 本地适配包命名及重复导入
+- **WHEN** 导入固定版本的本地 SDK，或构建包含该 SDK 的安装包
+- **THEN** 项目文档和自有接口统一使用 Office 命名，包装层名为 office-docs-ai-engine，服务入口为 office-docs-service.js 并导出 OfficeDocsService；重复导入不得恢复旧包名、入口或导出别名，版本清单与加载方保持一致，原生二进制、固定页面通信字段及许可原文保持不变
+
 #### Scenario: 多平台资源共存并分别交付
 - **WHEN** 源资源包含 darwin-arm64、darwin-x64、win32-x64 的配套引擎，构建选择其中一个目标平台
 - **THEN** 使用该平台独立清单校验和复制完整目录，安装资源只包含其原生引擎与匹配 wrapper；不复制其他平台、不把 ARM64 文件重命名成 x64；取得资源不代表目标平台桌面及跨窗口迁移已经验收

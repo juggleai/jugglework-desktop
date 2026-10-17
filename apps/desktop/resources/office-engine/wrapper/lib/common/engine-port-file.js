@@ -33,42 +33,42 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.STDIO_MCP_BRIDGE_RELATIVE_PATH = exports.TENCENT_DOCS_ENGINE_PORT_FILENAME = exports.TENCENT_DOCS_ENGINE_PORT_FILE_ENV = void 0;
+exports.STDIO_MCP_BRIDGE_RELATIVE_PATH = exports.OFFICE_DOCS_ENGINE_PORT_FILENAME = exports.OFFICE_DOCS_ENGINE_PORT_FILE_ENV = void 0;
 exports.resolveEnginePortFilePath = resolveEnginePortFilePath;
 exports.resolveEnginePortFilePathFromEnv = resolveEnginePortFilePathFromEnv;
 exports.resolveEnginePortFilePathFromConfigDir = resolveEnginePortFilePathFromConfigDir;
 exports.writePortFile = writePortFile;
 exports.deletePortFile = deletePortFile;
 exports.readPortFile = readPortFile;
-exports.buildTencentDocsStdioMcpConfig = buildTencentDocsStdioMcpConfig;
-exports.buildTencentDocsHttpMcpConfig = buildTencentDocsHttpMcpConfig;
-exports.buildTencentDocsLocalMcpEnv = buildTencentDocsLocalMcpEnv;
+exports.buildOfficeDocsStdioMcpConfig = buildOfficeDocsStdioMcpConfig;
+exports.buildOfficeDocsHttpMcpConfig = buildOfficeDocsHttpMcpConfig;
+exports.buildOfficeDocsLocalMcpEnv = buildOfficeDocsLocalMcpEnv;
 const fs = __importStar(require("node:fs"));
 const path = __importStar(require("node:path"));
 const mcp_constants_1 = require("./mcp-constants");
-exports.TENCENT_DOCS_ENGINE_PORT_FILE_ENV = 'TENCENT_DOCS_ENGINE_PORT_FILE';
-exports.TENCENT_DOCS_ENGINE_PORT_FILENAME = 'tencent-docs-engine.port';
+exports.OFFICE_DOCS_ENGINE_PORT_FILE_ENV = 'OFFICE_DOCS_ENGINE_PORT_FILE';
+exports.OFFICE_DOCS_ENGINE_PORT_FILENAME = 'office-docs-engine.port';
 /** Compiled bridge entry relative to the package root (`lib/mcp/...`). */
 exports.STDIO_MCP_BRIDGE_RELATIVE_PATH = 'lib/mcp/stdio-mcp-bridge.js';
 function resolveEnginePortFilePath(portFileRootDir) {
-    return path.join(portFileRootDir, exports.TENCENT_DOCS_ENGINE_PORT_FILENAME);
+    return path.join(portFileRootDir, exports.OFFICE_DOCS_ENGINE_PORT_FILENAME);
 }
 /**
- * Read port file path from process.env.TENCENT_DOCS_ENGINE_PORT_FILE (explicit override).
+ * Read port file path from process.env.OFFICE_DOCS_ENGINE_PORT_FILE (explicit override).
  */
 function resolveEnginePortFilePathFromEnv() {
-    return process.env[exports.TENCENT_DOCS_ENGINE_PORT_FILE_ENV];
+    return process.env[exports.OFFICE_DOCS_ENGINE_PORT_FILE_ENV];
 }
 /**
- * Derive port file path from CODEBUDDY_CONFIG_DIR (already present in CLI env).
- * Used as fallback when TENCENT_DOCS_ENGINE_PORT_FILE is not explicitly set.
+ * Derive port file path from JUGGLEWORK_CONFIG_DIR (already present in CLI env).
+ * Used as fallback when OFFICE_DOCS_ENGINE_PORT_FILE is not explicitly set.
  */
 function resolveEnginePortFilePathFromConfigDir() {
-    const configDir = process.env.CODEBUDDY_CONFIG_DIR;
+    const configDir = process.env.JUGGLEWORK_CONFIG_DIR;
     if (!configDir) {
         return undefined;
     }
-    return path.join(configDir, exports.TENCENT_DOCS_ENGINE_PORT_FILENAME);
+    return path.join(configDir, exports.OFFICE_DOCS_ENGINE_PORT_FILENAME);
 }
 function writePortFile(portFilePath, port) {
     const dir = path.dirname(portFilePath);
@@ -99,10 +99,10 @@ function readPortFile(portFilePath) {
 }
 /**
  * Build stdio MCP config JSON for the bridge.
- * Bridge discovers the port file via TENCENT_DOCS_ENGINE_PORT_FILE env (explicit)
- * or falls back to CODEBUDDY_CONFIG_DIR + filename (workbuddy-hosted CLI).
+ * Bridge discovers the port file via OFFICE_DOCS_ENGINE_PORT_FILE env (explicit)
+ * or falls back to JUGGLEWORK_CONFIG_DIR + filename (jugglework-hosted CLI).
  */
-function buildTencentDocsStdioMcpConfig() {
+function buildOfficeDocsStdioMcpConfig() {
     const raw = path.resolve(__dirname, '../mcp/stdio-mcp-bridge.js');
     // In packaged Electron apps, __dirname points inside app.asar which plain
     // `node` (spawned by the agent CLI) cannot read. The bridge is unpacked to
@@ -111,7 +111,7 @@ function buildTencentDocsStdioMcpConfig() {
     const bridgeScript = raw.replace(/([\\/])app\.asar\1/, '$1app.asar.unpacked$1');
     return JSON.stringify({
         mcpServers: {
-            [mcp_constants_1.TENCENT_DOCS_LOCAL_MCP_NAME]: {
+            [mcp_constants_1.OFFICE_DOCS_LOCAL_MCP_NAME]: {
                 type: 'stdio',
                 command: 'node',
                 args: [bridgeScript],
@@ -128,14 +128,14 @@ function buildTencentDocsStdioMcpConfig() {
  * string for missing/invalid ports so callers can feed the result through
  * `mergeMcpConfigJson` without crashing.
  */
-function buildTencentDocsHttpMcpConfig(port) {
+function buildOfficeDocsHttpMcpConfig(port) {
     const portStr = typeof port === 'number' ? String(port) : (port ?? '').trim();
     if (!portStr || !/^\d+$/.test(portStr)) {
         return '';
     }
     return JSON.stringify({
         mcpServers: {
-            [mcp_constants_1.TENCENT_DOCS_LOCAL_MCP_NAME]: {
+            [mcp_constants_1.OFFICE_DOCS_LOCAL_MCP_NAME]: {
                 type: 'http',
                 url: `http://127.0.0.1:${portStr}/mcp`,
             },
@@ -146,21 +146,21 @@ function buildTencentDocsHttpMcpConfig(port) {
  * Build env-var record for injecting the engine's HTTP MCP endpoint
  * into agent / plugin child processes.
  *
- * Returns `{ TENCENT_DOCS_LOCAL_MCP: "http://127.0.0.1:<port>/mcp",
- *            TENCENT_DOCS_LOCAL_SERVER: "http://127.0.0.1:<port>" }`
+ * Returns `{ OFFICE_DOCS_LOCAL_MCP: "http://127.0.0.1:<port>/mcp",
+ *            OFFICE_DOCS_LOCAL_SERVER: "http://127.0.0.1:<port>" }`
  * when the port is valid, or `{}` otherwise.
  *
  * Host apps should call this at session start (after the engine is up)
  * and merge the result into the child-process environment.
  */
-function buildTencentDocsLocalMcpEnv(port) {
+function buildOfficeDocsLocalMcpEnv(port) {
     const portStr = typeof port === 'number' ? String(port) : (port ?? '').trim();
     if (!portStr || !/^\d+$/.test(portStr)) {
         return {};
     }
     return {
-        TENCENT_DOCS_LOCAL_MCP: `http://127.0.0.1:${portStr}/mcp`,
-        TENCENT_DOCS_LOCAL_SERVER: `http://127.0.0.1:${portStr}`,
+        OFFICE_DOCS_LOCAL_MCP: `http://127.0.0.1:${portStr}/mcp`,
+        OFFICE_DOCS_LOCAL_SERVER: `http://127.0.0.1:${portStr}`,
     };
 }
 //# sourceMappingURL=engine-port-file.js.map
