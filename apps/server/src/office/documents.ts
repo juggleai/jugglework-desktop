@@ -28,7 +28,8 @@ type Engine = Pick<
 interface DocumentRecord {
   session: OfficeDocumentSession;
   absolutePath: string;
-  openedAt: number;
+  identity: FileIdentity;
+  loadingStartedAt: number | null;
 }
 
 const CONTENT_QUERY = {
@@ -45,9 +46,31 @@ async function fileIdentity(path: string) {
       info: await stat(path, { bigint: true }),
     };
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    if (
+      !["ENOENT", "ENOTDIR"].includes(
+        (error as NodeJS.ErrnoException).code ?? "",
+      )
+    )
+      throw error;
     return { path: resolve(path), info: null };
   }
+}
+type FileIdentity = Awaited<ReturnType<typeof fileIdentity>>;
+
+/** 比较已有身份；磁盘未提供有效 inode 时只能使用路径，不能把零值当成共享身份。 */
+function sameFileIdentity(left: FileIdentity, right: FileIdentity): boolean {
+  const key = (path: string) =>
+    process.platform === "win32" ? path.toLowerCase() : path;
+  return (
+    key(left.path) === key(right.path) ||
+    Boolean(
+      left.info &&
+        right.info &&
+        left.info.ino !== 0n &&
+        left.info.dev === right.info.dev &&
+        left.info.ino === right.info.ino,
+    )
+  );
 }
 
 /** 单一 Server 管理的 Office 会话，页面先创建模型，所有保存绑定原路径。 */
@@ -100,20 +123,42 @@ export class OfficeDocuments {
   async findByAbsolutePath(
     path: string,
   ): Promise<OfficeDocumentSession | null> {
-    const target = await fileIdentity(path);
+    const record = await this.findRecordByIdentity(await fileIdentity(path));
+    return record ? structuredClone(record.session) : null;
+  }
+
+  private async findRecordByIdentity(
+    target: FileIdentity,
+  ): Promise<DocumentRecord | undefined> {
     for (const record of [...this.documents.values()].reverse()) {
       if (record.session.state === "closed") continue;
-      const candidate = await fileIdentity(record.absolutePath);
-      if (
-        target.path === candidate.path ||
-        (target.info &&
-          candidate.info &&
-          target.info.dev === candidate.info.dev &&
-          target.info.ino === candidate.info.ino)
-      )
-        return structuredClone(record.session);
+      if (await this.matchesFile(record, target)) return record;
     }
-    return null;
+    return undefined;
+  }
+
+  /** 旧位置失效只影响相关身份；未知别名不能复用或覆盖仍由旧模型持有的文件。 */
+  private async matchesFile(
+    record: DocumentRecord,
+    target: FileIdentity,
+  ): Promise<boolean> {
+    let current: FileIdentity;
+    try {
+      current = await fileIdentity(record.absolutePath);
+    } catch (error) {
+      // 此边界只执行文件系统查询，带错误码的失败保留为不可用身份，不枚举平台错误码。
+      if (typeof (error as NodeJS.ErrnoException)?.code !== "string") throw error;
+      current = { path: record.identity.path, info: null };
+    }
+    // TIPS: 保留最后一次可靠身份。旧目录不可访问时，不能拖垮无关文件，也不能把疑似同一硬链接当成新文件。
+    if (!current.info && sameFileIdentity(record.identity, target))
+      throw new ApiError(
+        409,
+        "office_file_identity_unavailable",
+        `“${record.session.name}”的原位置暂不可访问，请先关闭该文档后重试`,
+      );
+    if (current.info) record.identity = current;
+    return sameFileIdentity(current, target);
   }
 
   /** 打开已支持格式的 Office 文件，先返回 opening 页面地址，真实模型由后续状态查询确认。 */
@@ -132,10 +177,8 @@ export class OfficeDocuments {
     const resolved = await this.options.resolveFile(workspaceId, path);
     if (!resolved.file.exists)
       throw new ApiError(404, "file_not_found", "文档已不存在");
-    const matched = await this.findByAbsolutePath(resolved.absolutePath);
-    const existing = matched
-      ? this.documents.get(matched.documentId)
-      : undefined;
+    const identity = await fileIdentity(resolved.absolutePath);
+    const existing = await this.findRecordByIdentity(identity);
     if (
       existing &&
       (existing.session.ownerSessionId !== sessionId ||
@@ -154,7 +197,6 @@ export class OfficeDocuments {
           "请先在外部应用保存并关闭文档，再重新载入",
         );
       this.activateRecord(existing);
-      if (existing.session.state === "opening") existing.openedAt = Date.now();
       return structuredClone(existing.session);
     }
     if (resolved.file.editingOwner === "external" && !reopening)
@@ -191,7 +233,8 @@ export class OfficeDocuments {
     const record: DocumentRecord = {
       session,
       absolutePath: resolved.absolutePath,
-      openedAt: Date.now(),
+      identity,
+      loadingStartedAt: null,
     };
     this.documents.set(session.documentId, record);
     this.activateRecord(record);
@@ -260,6 +303,8 @@ export class OfficeDocuments {
     if (record.session !== session) return structuredClone(record.session);
     if (editor) {
       if (session.state === "opening") {
+        // TIPS: 后台标签可能仅登记、尚未创建页面；只有页面挂载或实际模型开始导入才计时。
+        record.loadingStartedAt ??= Date.now();
         try {
           const kind = getOfficeDocumentKind(session.relativePath)!;
           const content = await this.options.engine.tool(CONTENT_QUERY[kind], {
@@ -278,7 +323,7 @@ export class OfficeDocuments {
         } catch {
           if (record.session !== session)
             return structuredClone(record.session);
-          if (Date.now() - record.openedAt > 60_000) {
+          if (Date.now() - record.loadingStartedAt > 60_000) {
             session.state = "error";
             session.error = "文档加载超时，请关闭后重新打开";
           }
@@ -298,7 +343,10 @@ export class OfficeDocuments {
       session.state = "error";
       session.engineFileId = null;
       session.error = "文档模型已失效，请关闭后重新打开";
-    } else if (Date.now() - record.openedAt > 60_000) {
+    } else if (
+      record.loadingStartedAt !== null &&
+      Date.now() - record.loadingStartedAt > 60_000
+    ) {
       session.state = "error";
       session.error = "文档加载超时，请关闭后重新打开";
     }
@@ -364,20 +412,10 @@ export class OfficeDocuments {
     if (!isAbsolute(path))
       throw new ApiError(400, "invalid_path", "副本目标必须是绝对路径");
     const target = await fileIdentity(path);
-    const key = (path: string) =>
-      process.platform === "win32" ? path.toLowerCase() : path;
     for (const record of this.documents.values()) {
       if (["closed", "external"].includes(record.session.state)) continue;
-      const current = await fileIdentity(record.absolutePath);
       // TIPS: 只比较路径会漏过别名，copyFile 也会透过硬链接覆盖仍由模型持有的文件。
-      if (
-        key(target.path) === key(current.path) ||
-        (target.info &&
-          current.info &&
-          target.info.ino !== 0n &&
-          target.info.dev === current.info.dev &&
-          target.info.ino === current.info.ino)
-      )
+      if (await this.matchesFile(record, target))
         throw new ApiError(
           409,
           "office_document_in_use",
@@ -449,6 +487,7 @@ export class OfficeDocuments {
     )
       throw new ApiError(409, "office_page_invalidated", "选区所属页面已失效");
     if (activate) this.activateRecord(record);
+    if (session.state === "opening") record.loadingStartedAt ??= Date.now();
   }
 
   /** 当前文档按聊天保存，选区仅在查询时读取，不缓存标签切换前的坐标。 */
@@ -596,7 +635,7 @@ export class OfficeDocuments {
       error: undefined,
     };
     record.session = next;
-    record.openedAt = Date.now();
+    record.loadingStartedAt = null;
     return this.loadRecord(record);
   }
 
@@ -633,7 +672,11 @@ export class OfficeDocuments {
       return structuredClone(record.session);
     await this.requireIdle(record);
     const session = await this.get(workspaceId, documentId);
-    if (decision === "save" && session.state === "opening")
+    if (
+      decision === "save" &&
+      session.state === "opening" &&
+      record.loadingStartedAt !== null
+    )
       throw new ApiError(409, "office_not_ready", "文档正在载入，请稍候再关闭");
     if (decision === "save" && session.state === "ready")
       await this.save(workspaceId, documentId, true);

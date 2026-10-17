@@ -10,6 +10,8 @@ import {
 } from "./office-resources.mjs";
 import { createRequire } from "node:module";
 import { createOfficeNetworkPolicy } from "./office-network.mjs";
+import { runInNewContext } from "node:vm";
+import { configureOfficePageResponse } from "./office-page-config.mjs";
 const require = createRequire(import.meta.url);
 const { copyOfficeAssets } = require("../scripts/office-assets.cjs");
 
@@ -92,6 +94,69 @@ test("classification keeps exact origin/query identity and leaves unknown worker
     ).kind,
     "unknown",
   );
+});
+
+test("PPT 配置在 SDK 缓存建立前关闭内置 AI 编辑，保留普通编辑、保存及其他页面配置", async (t) => {
+  const { create } = await fixture(t);
+  const session = partition();
+  session.fetch = async () => new Response(`<!doctype html><html><head>
+    <script>window.AppConfig={normal:{custom:{toolbarFileMenu:{aiEdit:true,localFileSave:true}},feature:{comment:false}},reading:{toolbar:false}};</script>
+    </head><body>演示内容<script>window.cachedConfig=JSON.parse(JSON.stringify(window.AppConfig));</script></body></html>`, {
+    headers: { "Content-Type": "text/html", "Content-Length": "100", "ETag": "old" },
+  });
+  const attached = create().attach(session, {
+    documentId: "slide", origin, filePath: "/tmp/a.pptx", kind: "slide",
+    commit: { error: null }, save: async () => ({ engineFileId: "slide" }), onCoreFailure() {},
+  });
+  t.after(() => attached.dispose());
+  const response = await session.handlers.get("http")(
+    new Request(origin + "/static/slide/pc.html?localFilePath=/tmp/a.pptx"),
+  );
+  assert.equal(response.headers.get("content-length"), null);
+  assert.equal(response.headers.get("etag"), null);
+  const html = await response.text();
+  const scope = {};
+  for (const script of html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g))
+    runInNewContext(script[1], { window: scope });
+  assert.deepEqual(JSON.parse(JSON.stringify(scope.cachedConfig)), {
+    normal: { custom: { toolbarFileMenu: { aiEdit: false, localFileSave: true } }, feature: { comment: false } },
+    reading: { toolbar: false, custom: { toolbarFileMenu: { aiEdit: false } } },
+  });
+  assert.match(html, /演示内容/);
+});
+
+test("界面配置只作用于当前来源的成功 PPT HTML，不改变其他格式、资源和错误响应", async () => {
+  /** @type {Array<[string, string, ResponseInit]>} */
+  const cases = [
+    ["doc", origin + "/static/doc/pc.html", { headers: { "Content-Type": "text/html" } }],
+    ["sheet", origin + "/static/sheet/pc.html", { headers: { "Content-Type": "text/html" } }],
+    ["slide", origin + "/static/slide/pc.js", {}],
+    ["slide", "http://127.0.0.1:9900/static/slide/pc.html", { headers: { "Content-Type": "text/html" } }],
+    ["slide", origin + "/static/slide/pc.html", { status: 404, headers: { "Content-Type": "text/html" } }],
+  ];
+  for (const [kind, url, init] of cases) {
+    const response = new Response("original", init);
+    assert.equal(await configureOfficePageResponse(new Request(url), response, { origin, kind }), response);
+    assert.equal(await response.text(), "original");
+  }
+});
+
+test("PPT 页面结构不匹配时报告实际故障，不能悄悄跳过配置仍声称入口已关闭", async (t) => {
+  const { create } = await fixture(t);
+  const session = partition();
+  session.fetch = async () => new Response("<html><body>unknown</body></html>", { headers: { "Content-Type": "text/html" } });
+  let failures = 0;
+  const attached = create().attach(session, {
+    documentId: "slide", origin, filePath: "/tmp/a.pptx", kind: "slide",
+    commit: { error: null }, save: async () => ({ engineFileId: "slide" }), onCoreFailure() { failures++; },
+  });
+  t.after(() => attached.dispose());
+  await assert.rejects(
+    session.handlers.get("http")(new Request(origin + "/static/slide/pc.html")),
+    /PPT 页面配置尚未适配/,
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(failures, 1);
 });
 
 test("local mode uses an origin and exact font allowlist for HTTP, WebSocket and embedded workers", () => {

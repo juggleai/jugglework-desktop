@@ -1,6 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import {
   link,
+  mkdir,
   mkdtemp,
   readFile,
   rm,
@@ -196,6 +197,45 @@ test("系统打开按真实路径和硬链接复用模型，其他工作区及�
   ).rejects.toMatchObject({ code: "office_document_in_use" });
 });
 
+test("旧文件目录失效不阻断无关文件打开及副本检查，旧身份的硬链接仍禁止另建模型或覆盖", async () => {
+  const f = await fixture();
+  const directory = join(f.root, "旧目录");
+  await mkdir(directory);
+  const path = "旧目录/原文档.docx";
+  await writeFile(join(f.root, path), "old content");
+  f.files.set(path, {
+    ...f.files.get("报告 A.docx")!,
+    artifactId: path,
+    relativePath: path,
+    name: "原文档.docx",
+  });
+  const original = await f.openReady(path);
+  const alias = "原文件硬链接.docx";
+  await link(join(f.root, path), join(f.root, alias));
+  f.files.set(alias, {
+    ...f.files.get(path)!,
+    artifactId: alias,
+    relativePath: alias,
+    name: alias,
+  });
+  await rm(directory, { recursive: true });
+  await writeFile(directory, "directory replaced by a file");
+
+  expect((await f.documents.open("ws", "ses_A", "报告 B.docx")).state).toBe(
+    "opening",
+  );
+  await f.documents.assertCopyTargetAllowed(join(f.root, "新副本.docx"));
+  await expect(f.documents.open("ws", "ses_A", alias)).rejects.toMatchObject({
+    code: "office_file_identity_unavailable",
+  });
+  await expect(
+    f.documents.assertCopyTargetAllowed(join(f.root, alias)),
+  ).rejects.toMatchObject({ code: "office_file_identity_unavailable" });
+  expect(await readFile(join(f.root, alias), "utf8")).toBe("old content");
+  await f.documents.close("ws", original.documentId, "discard");
+  expect((await f.documents.open("ws", "ses_A", alias)).state).toBe("opening");
+});
+
 test("只读文件在创建模型前被拒绝且清空旧 AI 目标，保存和故障恢复同样检查原文件", async () => {
   const f = await fixture();
   const original = await f.openReady();
@@ -358,6 +398,7 @@ test("内容导入一直失败时超时，而不是永久 opening", async () => 
   const document = await f.documents.open("ws", "ses_A", "报告 A.docx");
   f.mount("报告 A.docx", "model_A");
   f.state.contentReady = false;
+  await f.documents.get("ws", document.documentId);
   const start = now();
   try {
     Date.now = () => start + 61_000;
@@ -368,6 +409,56 @@ test("内容导入一直失败时超时，而不是永久 opening", async () => 
   } finally {
     Date.now = now;
   }
+});
+
+test("未访问的后台标签不计加载超时，页面首次挂载才计时，重复打开不能延长期限", async () => {
+  const f = await fixture();
+  const now = Date.now;
+  let time = now();
+  try {
+    Date.now = () => time;
+    const background = await f.documents.open("ws", "ses_A", "报告 A.docx");
+    time += 120_000;
+    expect((await f.documents.list())[0]?.state).toBe("opening");
+    expect(
+      (await f.documents.open("ws", "ses_A", "报告 A.docx")).documentId,
+    ).toBe(background.documentId);
+    f.documents.updateContext(
+      "ws", background.documentId, background.pageId, true,
+    );
+    expect((await f.documents.get("ws", background.documentId)).state).toBe(
+      "opening",
+    );
+    time += 61_000;
+    await f.documents.open("ws", "ses_A", "报告 A.docx");
+    expect((await f.documents.get("ws", background.documentId)).state).toBe(
+      "error",
+    );
+    const recovered = await f.documents.recover("ws", background.documentId);
+    time += 120_000;
+    expect((await f.documents.get("ws", recovered.documentId)).state).toBe(
+      "opening",
+    );
+    f.documents.updateContext("ws", recovered.documentId, recovered.pageId, true);
+    f.mount("报告 A.docx", "recovered_A");
+    expect((await f.documents.get("ws", recovered.documentId)).state).toBe("ready");
+  } finally {
+    Date.now = now;
+  }
+});
+
+test("从未加载的后台标签可关闭且不写盘，已开始加载的页面仍阻止提前保存关闭", async () => {
+  const f = await fixture();
+  const queued = await f.documents.open("ws", "ses_A", "报告 A.docx");
+  expect((await f.documents.close("ws", queued.documentId, "save")).state).toBe(
+    "closed",
+  );
+  expect(f.state.saveCalls).toEqual([]);
+  const loading = await f.documents.open("ws", "ses_A", "报告 B.docx");
+  f.documents.updateContext("ws", loading.documentId, loading.pageId, true);
+  await expect(
+    f.documents.close("ws", loading.documentId, "save"),
+  ).rejects.toMatchObject({ code: "office_not_ready" });
 });
 
 test("当前文档按聊天隔离，关闭非当前标签的查询不改变 Agent 目标", async () => {

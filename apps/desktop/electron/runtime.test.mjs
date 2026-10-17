@@ -187,6 +187,8 @@ describe("Electron managed runtime", () => {
     /** @type {any} */
     let embeddedStartOptions = null;
     let legacyStateRequests = 0;
+    let stopFailure = null;
+    let stopChecks = 0;
 
     try {
       await mkdir(sidecarDir, { recursive: true });
@@ -230,6 +232,10 @@ describe("Electron managed runtime", () => {
         desktopRoot,
         listLocalWorkspacePaths: async () => [workspacePath],
         readDenBaseUrl: () => null,
+        beforeStop: async () => {
+          stopChecks++;
+          if (stopFailure) throw stopFailure;
+        },
         startEmbeddedServer: async (options) => {
           embeddedStartOptions = options;
           const server = http.createServer((request, response) => {
@@ -295,6 +301,30 @@ describe("Electron managed runtime", () => {
       assert.equal(await manager.engineDispose(workspacePath), true);
       assert.equal(legacyStateRequests, 0);
       await assert.rejects(readFile(orchestratorMarker, "utf8"), { code: "ENOENT" });
+
+      // TIPS: 所有实际替换/停止入口都必须先保护文档；取消后原服务、凭据和健康状态保持有效。
+      const accessBefore = manager.managedServerAccess();
+      const operations = [
+        () => manager.juggleworkServerRestart({}),
+        () => manager.engineRestart({}),
+        () => manager.engineStop(),
+        () => manager.prepareFreshRuntime(),
+      ];
+      for (const failure of [new Error("用户取消"), new Error("磁盘写入失败")]) {
+        stopFailure = failure;
+        for (const operation of operations) {
+          await assert.rejects(operation, (error) => error === failure);
+          assert.deepEqual(manager.managedServerAccess(), accessBefore);
+          assert.equal((await manager.runtimeStatus()).lifecycleState, "healthy");
+          assert.equal(embeddedStartOptions, firstServer);
+        }
+      }
+      assert.equal(stopChecks, 8);
+      stopFailure = null;
+      await manager.juggleworkServerRestart({});
+      assert.equal(stopChecks, 9);
+      assert.notEqual(embeddedStartOptions, firstServer);
+      assert.equal((await manager.juggleworkServerInfo()).running, true);
     } finally {
       if (manager) await manager.dispose().catch(() => undefined);
       for (const server of servers) {

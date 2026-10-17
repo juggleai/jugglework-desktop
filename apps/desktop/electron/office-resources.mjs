@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import assets from "./office-assets.cjs";
 import { createOfficeFonts } from "./office-fonts.mjs";
 import { createOfficeNetworkPolicy } from "./office-network.mjs";
+import { configureOfficePageResponse } from "./office-page-config.mjs";
 import {
   fetchOfficePageResource,
   handleOfficeSaveRequest,
@@ -216,7 +217,7 @@ export function createOfficeResources({
           }
           if (resource.kind === "unknown" && !response.ok)
             diagnostics.unknownFailures++;
-          return response;
+          return await configureOfficePageResponse(request, response, host);
         } catch (error) {
           if (resource.kind === "unknown") diagnostics.unknownFailures++;
           if (resource.kind === "core" && !controller.signal.aborted) {

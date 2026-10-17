@@ -438,13 +438,9 @@ export function createOfficePanel({
             dialog.showErrorBox("文档保存失败", error.message),
           );
         if (key === "w")
-          void close(workspaceId, documentId)
-            .then((closed) => {
-              if (closed) onDocumentClosed?.(documentId);
-            })
-            .catch((error) =>
-              dialog.showErrorBox("文档关闭失败", error.message),
-            );
+          void close(workspaceId, documentId).catch((error) =>
+            dialog.showErrorBox("文档关闭失败", error.message),
+          );
         if (key === "o" && !input.shift)
           void onOpenFile?.(entry.window, {
             workspaceId,
@@ -531,6 +527,8 @@ export function createOfficePanel({
         path: document.relativePath,
         sessionId: document.ownerSessionId,
       });
+    // TIPS: 退出或重启中途取消时，已经关闭的模型也必须同步移除标签。
+    onDocumentClosed?.(documentId);
     return true;
   };
   return {

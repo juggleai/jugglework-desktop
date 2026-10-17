@@ -1429,6 +1429,10 @@ const runtimeManager = createRuntimeManager({
   // Lets the engine read its provider catalog from the connected private
   // cloud instead of the public mirror.
   readDenBaseUrl: () => workspaceStore.readDesktopBootstrapConfigSync()?.baseUrl ?? null,
+  beforeStop: async () => {
+    if (!(await fileWindows.prepareRuntimeStop()))
+      throw new Error("已取消运行时重启，文件修改保持打开");
+  },
 });
 const runtimeIpcHandlers = createRuntimeIpcHandlers(runtimeManager);
 const fileHostClient = createManagedRuntimeClient({ getAccess: () => runtimeManager.managedServerAccess(), fetcher: nodeFetch, timeoutMs: 60_000 });

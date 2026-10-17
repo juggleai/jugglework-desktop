@@ -356,6 +356,14 @@ export function createFileWindows({
       }
       return true;
     },
+    /** 重启前共用退出保存确认；取消或失败保留服务与窗口，确认后释放旧上下文及页面。 */
+    async prepareRuntimeStop() {
+      if (fileEditor && !(await fileEditor.prepareQuit())) return false;
+      if (!(await office.prepareQuit())) return false;
+      this.dispose();
+      office.destroy();
+      return true;
+    },
     /** 全局文档退出检查通过后销毁窗口，避免服务停止后再次调用保存接口。 */
     dispose() {
       for (const entry of [...entries.values()]) {

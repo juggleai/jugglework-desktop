@@ -290,6 +290,7 @@ async function fixture(
     ...target,
     getWindow: () => main as any,
     getWindows: () => files.windows(),
+    onDocumentClosed: (id: string) => files.documentClosed(id),
     resolveWindow: (sender: any) =>
       sender.id === main.webContents.id ? main : files.windowFor(sender),
     onOpenFile: (window: any, input: any) => {
@@ -1488,6 +1489,57 @@ test("PPT 文档快捷键按页面组合状态决定执行，原生缺少标志�
   await Promise.resolve();
   await Promise.resolve();
   expect(f.saves).toHaveLength(1);
+});
+
+test("批量关闭模型也同步清除文件标签，保留尚未销毁的文件浏览器主页", async () => {
+  const f = await fixture();
+  await f.files.open({
+    workspaceId: "ws", sessionId: "ses", path: f.document.name,
+  });
+  const host = f.files.windows()[0];
+  await f.show(host);
+  expect(await f.panel.prepareQuit()).toBe(true);
+  expect((await f.state(host)).tabs).toHaveLength(0);
+  expect(host.destroyed).toBe(false);
+  expect(host.title).toBe("JuggleWork 文件浏览器");
+  f.panel.destroy();
+  f.files.dispose();
+});
+
+test("运行时重启先处理双宿主文档，取消或保存失败保留页面，确认后释放窗口和旧模型标签", async () => {
+  for (const standalone of [false, true]) {
+    const f = await fixture("数据.csv");
+    if (standalone)
+      await f.files.open({
+        workspaceId: "ws", sessionId: "ses", path: "数据.csv",
+      });
+    const host = standalone ? f.files.windows()[0] : f.main;
+    await f.show(host);
+    const view = [...host.children][0];
+    f.document.dirty = true;
+    answers.close = 2;
+    expect(await f.files.prepareRuntimeStop()).toBe(false);
+    expect(view.webContents.destroyed).toBe(false);
+    expect(host.destroyed).toBe(false);
+    expect(f.document.state).toBe("ready");
+    if (standalone) expect((await f.state(host)).tabs).toHaveLength(1);
+
+    answers.close = 0;
+    f.preparation.closeError = "保存失败";
+    await expect(f.files.prepareRuntimeStop()).rejects.toThrow("保存失败");
+    expect(view.webContents.destroyed).toBe(false);
+    expect(host.destroyed).toBe(false);
+    f.preparation.closeError = null;
+    expect(await f.files.prepareRuntimeStop()).toBe(true);
+    expect(f.document.state).toBe("closed");
+    expect(view.webContents.destroyed).toBe(true);
+    expect(f.files.windows()).toHaveLength(0);
+    expect(
+      host.webContents.messages.some(
+        (item: { name: string }) => item.name === "jugglework:office:closed",
+      ),
+    ).toBe(true);
+  }
 });
 
 test("系统外部文件复用一个多标签窗口，最近路径重新登记，关闭取消保留模型且副本使用原文件", async () => {

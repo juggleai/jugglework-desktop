@@ -626,7 +626,8 @@ export function resolveOfficeEngineResourceDirectory({ isPackaged, desktopRoot, 
   return path.join(desktopRoot, "resources", "office-engine");
 }
 
-export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths, readDenBaseUrl, startEmbeddedServer: startEmbeddedServerOverride = null, sandboxRuntime: sandboxRuntimeOverride = null }) {
+/** 创建桌面运行时；替换或停止存活 Server 前，先由文件宿主完成保存确认。 */
+export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths, readDenBaseUrl, beforeStop = async () => {}, startEmbeddedServer: startEmbeddedServerOverride = null, sandboxRuntime: sandboxRuntimeOverride = null }) {
   const engineState = createEngineState();
   const juggleworkServerState = createJuggleWorkServerState();
 
@@ -1075,6 +1076,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
   let inProcessServer = null;
 
   async function startJuggleWorkServer(options) {
+    if (inProcessServer) await beforeStop();
     const currentPort = juggleworkServerState.port;
     // Stop any previously running in-process server
     if (inProcessServer) {
@@ -1304,6 +1306,8 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
   }
 
   async function prepareFreshRuntime() {
+    // TIPS: 确认期间保留原生命周期和服务访问；取消或保存失败不能先停服务再补救。
+    if (inProcessServer) await beforeStop();
     lifecycleState = "cleaning";
     await stopAllRuntimeChildren();
     await cleanupPackagedSidecars();
@@ -1395,6 +1399,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
   }
 
   async function engineStop() {
+    if (inProcessServer) await beforeStop();
     lifecycleState = "stopping";
     await stopAllRuntimeChildren();
     lifecycleState = "idle";
