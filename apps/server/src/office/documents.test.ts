@@ -172,6 +172,30 @@ async function fixture(
   return { root, documents, state, files, editors, mount, openReady };
 }
 
+test("系统打开按真实路径和硬链接复用模型，其他工作区及聊天不能建立第二个写模型", async () => {
+  const f = await fixture();
+  const opened = await f.openReady();
+  const alias = "别名.docx";
+  await link(join(f.root, opened.name), join(f.root, alias));
+  f.files.set(alias, {
+    ...f.files.get(opened.name)!,
+    artifactId: "alias",
+    relativePath: alias,
+  });
+  expect(
+    (await f.documents.findByAbsolutePath(join(f.root, alias)))?.documentId,
+  ).toBe(opened.documentId);
+  expect((await f.documents.open("ws", "ses_A", alias)).documentId).toBe(
+    opened.documentId,
+  );
+  await expect(
+    f.documents.open("other-workspace", "ses_A", alias),
+  ).rejects.toMatchObject({ code: "office_document_in_use" });
+  await expect(
+    f.documents.open("ws", "other-session", alias),
+  ).rejects.toMatchObject({ code: "office_document_in_use" });
+});
+
 test("只读文件在创建模型前被拒绝且清空旧 AI 目标，保存和故障恢复同样检查原文件", async () => {
   const f = await fixture();
   const original = await f.openReady();

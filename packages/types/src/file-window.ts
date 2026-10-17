@@ -2,6 +2,8 @@
 export interface FileWindowTab {
   path: string;
   name: string;
+  /** 系统明确选择文件的原位置，仅本机文件标签提供；不授予父目录能力。 */
+  absolutePath?: string;
   documentId?: string;
   /** 已确认存在导入损失时，使用原文件只读预览，不创建编辑模型。 */
   readOnly?: boolean;
@@ -12,6 +14,8 @@ export interface FileWindowState {
   workspaceId: string;
   sessionId: string;
   workspaceRoot: string;
+  /** 系统明确打开的文件集合，不是聊天工作区；不提供工作区新建入口。 */
+  local?: boolean;
   tabs: FileWindowTab[];
   activePath: string | null;
   recent: FileWindowTab[];

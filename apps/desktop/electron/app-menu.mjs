@@ -10,9 +10,11 @@ const NATIVE_MENU_TOGGLE_SIDEBAR_EVENT = "jugglework:native-menu:toggle-sidebar"
 const NATIVE_MENU_CHECK_UPDATES_EVENT = "jugglework:native-menu:check-updates";
 const NATIVE_MENU_ZOOM_EVENT = "jugglework:native-menu:zoom";
 
+/** 创建应用菜单；活动文件窗口只改变显示名称，品牌与应用身份仍由主应用维护。 */
 export function createApplicationMenu({ appName, docsUrl, getWindow }) {
   let applicationMenuVisible = process.platform === "darwin";
   let currentAppName = appName;
+  let fileWindowActive = false;
 
   async function openSettingsFromNativeMenu() {
     const win = await getWindow();
@@ -46,11 +48,13 @@ export function createApplicationMenu({ appName, docsUrl, getWindow }) {
 
   function install() {
     const isMac = process.platform === "darwin";
+    // TIPS: AppKit 的应用菜单名还取自进程显示标题，不能只改菜单模板 label。
+    if (isMac) process.title = fileWindowActive ? "JuggleWork 文件浏览器" : currentAppName;
     const template = /** @type {import("electron").MenuItemConstructorOptions[]} */ ([
       ...(isMac
         ? [
             {
-              label: currentAppName,
+              label: fileWindowActive ? "JuggleWork 文件浏览器" : currentAppName,
               submenu: [
                 { role: "about" },
                 {
@@ -239,5 +243,13 @@ export function createApplicationMenu({ appName, docsUrl, getWindow }) {
     return currentAppName;
   }
 
-  return { install, applyVisibility, setVisible, setAppName };
+  /** macOS 激活独立文件窗口时切换菜单标题，切回主窗口恢复品牌名。 */
+  function setFileWindowActive(active) {
+    const next = active === true;
+    if (process.platform !== "darwin" || next === fileWindowActive) return;
+    fileWindowActive = next;
+    install();
+  }
+
+  return { install, applyVisibility, setVisible, setAppName, setFileWindowActive };
 }

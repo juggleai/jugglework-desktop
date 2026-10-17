@@ -1,4 +1,5 @@
 import type { OfficeDocuments } from "../office/documents.js";
+import type { LocalOfficeFiles } from "../office/local-files.js";
 import { ApiError } from "../errors.js";
 import type { ServerConfig, TokenScope, WorkspaceInfo } from "../types.js";
 import { addRoute, type RequestContext, type Route } from "./registry.js";
@@ -7,6 +8,7 @@ interface OfficeRouteOptions {
   routes: Route[];
   config: ServerConfig;
   documents: OfficeDocuments;
+  localFiles?: LocalOfficeFiles;
   jsonResponse: (data: unknown, status?: number) => Response;
   readJsonBody: (request: Request) => Promise<Record<string, unknown>>;
   ensureWritable: (config: ServerConfig) => void;
@@ -30,6 +32,20 @@ export function registerOfficeRoutes(options: OfficeRouteOptions): void {
     if (write) {
       options.ensureWritable(config);
       options.requireClientScope(ctx, "collaborator");
+    }
+    if (options.localFiles?.owns(ctx.params.id)) {
+      // TIPS: 本机上下文只供编辑器生命周期使用，不成为 Agent 的工作区或工具目标。
+      if (
+        ["tools", "call", "create"].includes(
+          ctx.url.pathname.split("/").at(-1) ?? "",
+        )
+      )
+        throw new ApiError(
+          400,
+          "local_file_operation_unavailable",
+          "此操作需要聊天工作区",
+        );
+      return { id: ctx.params.id };
     }
     const result = await options.resolveWorkspace(config, ctx.params.id);
     if (result.workspaceType === "remote")

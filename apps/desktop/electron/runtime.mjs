@@ -1445,6 +1445,24 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     return snapshot.running && baseUrl && clientToken ? { baseUrl, clientToken } : null;
   }
 
+  /** 文件入口没有已选工作区时启动同一本机运行时，不使用文档父目录作为工作区。 */
+  async function ensureFileRuntime() {
+    if (managedServerAccess()) return snapshotJuggleWorkServerState(juggleworkServerState);
+    lifecycleState = "starting";
+    try {
+      const info = await startJuggleWorkServer({
+        workspacePaths: await listLocalWorkspacePaths(),
+        manageOpencode: true,
+        remoteAccessEnabled: false,
+      });
+      lifecycleState = "healthy";
+      return info;
+    } catch (error) {
+      lifecycleState = "error";
+      throw error;
+    }
+  }
+
   async function juggleworkServerRestart(options = {}) {
     const workspacePaths = prioritizeWorkspacePaths(engineState.projectDir, await listLocalWorkspacePaths());
     const shouldManageOpencode = Boolean(
@@ -1555,6 +1573,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     engineInstall,
     juggleworkServerInfo,
     managedServerAccess,
+    ensureFileRuntime: () => withRuntimeLifecycle(() => ensureFileRuntime()),
     juggleworkServerRestart: (options) => withRuntimeLifecycle(() => juggleworkServerRestart(options)),
     workspaceActivate: (input) => withRuntimeLifecycle(() => workspaceActivate(input)),
     engineDispose: (workspacePath) => withRuntimeLifecycle(() => engineDispose(workspacePath)),

@@ -198,18 +198,20 @@ export function FileWindowApp() {
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" className="w-72">
             <DropdownMenuGroup>
-              <DropdownMenuSub>
-                <DropdownMenuSubTrigger>
-                  <Plus />
-                  {t("file_window.new")}
-                </DropdownMenuSubTrigger>
-                <DropdownMenuSubContent>
-                  <DropdownMenuItem onClick={() => void action("create")}>
-                    <FilePlus2 />
-                    {t("file_window.word")}
-                  </DropdownMenuItem>
-                </DropdownMenuSubContent>
-              </DropdownMenuSub>
+              {!state?.local && (
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger>
+                    <Plus />
+                    {t("file_window.new")}
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent>
+                    <DropdownMenuItem onClick={() => void action("create")}>
+                      <FilePlus2 />
+                      {t("file_window.word")}
+                    </DropdownMenuItem>
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+              )}
               <DropdownMenuItem onClick={() => void action("open")}>
                 <FileText />
                 {t("file_window.open")}
@@ -292,7 +294,9 @@ export function FileWindowApp() {
         ) : (
           <div className="file-window-empty">
             <img src="./file-window-logo.png" alt="" />
-            <p>{t("file_window.empty")}</p>
+            <p>
+              {t(state.local ? "file_window.empty_local" : "file_window.empty")}
+            </p>
             <Button variant="outline" onClick={() => void action("open")}>
               <FolderOpen />
               {t("file_window.open")}

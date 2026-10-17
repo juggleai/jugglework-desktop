@@ -96,6 +96,26 @@ export class OfficeDocuments {
     return this.options.engine.capabilities();
   }
 
+  /** 系统打开沿用真实文件身份对应的存活模型，覆盖符号链接和硬链接入口。 */
+  async findByAbsolutePath(
+    path: string,
+  ): Promise<OfficeDocumentSession | null> {
+    const target = await fileIdentity(path);
+    for (const record of [...this.documents.values()].reverse()) {
+      if (record.session.state === "closed") continue;
+      const candidate = await fileIdentity(record.absolutePath);
+      if (
+        target.path === candidate.path ||
+        (target.info &&
+          candidate.info &&
+          target.info.dev === candidate.info.dev &&
+          target.info.ino === candidate.info.ino)
+      )
+        return structuredClone(record.session);
+    }
+    return null;
+  }
+
   /** 打开已支持格式的 Office 文件，先返回 opening 页面地址，真实模型由后续状态查询确认。 */
   async open(
     workspaceId: string,
@@ -112,15 +132,15 @@ export class OfficeDocuments {
     const resolved = await this.options.resolveFile(workspaceId, path);
     if (!resolved.file.exists)
       throw new ApiError(404, "file_not_found", "文档已不存在");
-    const existing = [...this.documents.values()]
-      .reverse()
-      .find(
-        (record) =>
-          record.session.artifactId === resolved.file.artifactId &&
-          record.session.workspaceId === workspaceId &&
-          record.session.state !== "closed",
-      );
-    if (existing && existing.session.ownerSessionId !== sessionId)
+    const matched = await this.findByAbsolutePath(resolved.absolutePath);
+    const existing = matched
+      ? this.documents.get(matched.documentId)
+      : undefined;
+    if (
+      existing &&
+      (existing.session.ownerSessionId !== sessionId ||
+        existing.session.workspaceId !== workspaceId)
+    )
       throw new ApiError(
         409,
         "office_document_in_use",

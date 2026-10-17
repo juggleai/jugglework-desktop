@@ -45,6 +45,7 @@ import { createApplicationMenu } from "./app-menu.mjs";
 import { applyBrandAppName } from "./brand-app-name.mjs";
 import { createBrowserPanel } from "./browser-panel.mjs";
 import { createOfficePanel } from "./office-panel.mjs";
+import { createSystemFileOpening, systemOfficeFilePaths } from "./system-file-opening.mjs";
 import { createFileWindows } from "./file-windows.mjs";
 import { createFileEditor } from "./file-editor.mjs";
 import { createFileWindowDock } from "./file-window-dock.mjs";
@@ -145,6 +146,19 @@ const APP_NAME =
   process.env.JUGGLEWORK_ELECTRON_APP_NAME?.trim() ||
   (isDevMode ? "JuggleWork - Dev" : "JuggleWork");
 let currentDisplayAppName = APP_NAME;
+const systemFiles = createSystemFileOpening({
+  app,
+  openFile: async (file) => {
+    await ensureRuntimeBootstrap();
+    await runtimeManager.ensureFileRuntime();
+    await fileWindows.openLocal(file);
+  },
+  onError: (file, error) => dialog.showErrorBox(
+    "无法打开文件",
+    `${path.basename(file)}\n${error instanceof Error ? error.message : String(error)}`,
+  ),
+});
+systemFiles.enqueue(systemOfficeFilePaths(process.argv, { packaged: app.isPackaged }));
 const APP_IDENTIFIER =
   process.env.JUGGLEWORK_ELECTRON_APP_IDENTIFIER?.trim() ||
   (isDevMode ? DEV_APP_IDENTIFIER : TAURI_APP_IDENTIFIER);
@@ -1456,6 +1470,20 @@ const fileWindowDock = createFileWindowDock({
   closeAll: () => fileWindows.closeAll(),
 });
 const fileWindows = createFileWindows({
+  registerLocalFile: async (file) => {
+    const access = await runtimeManager.juggleworkServerInfo();
+    if (!access?.baseUrl || !access.hostToken) throw new Error("本机文件服务不可用");
+    const response = await nodeFetch(`${access.baseUrl}/office/local-files/open`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-JuggleWork-Host-Token": access.hostToken },
+      body: JSON.stringify({ path: file }),
+      signal: AbortSignal.timeout(60_000),
+      redirect: "error",
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.message ?? result.error?.message ?? "文件打开失败");
+    return result;
+  },
   fileEditor,
   dock: fileWindowDock,
   client: fileHostClient,
@@ -3292,7 +3320,15 @@ if (!app.requestSingleInstanceLock()) {
     })();
   });
 
-  app.on("second-instance", async (_event, argv) => {
+  app.on("browser-window-focus", (_event, window) => {
+    applicationMenu.setFileWindowActive(Boolean(fileWindows.windowFor(window.webContents)));
+  });
+
+  app.on("second-instance", async (_event, argv, workingDirectory) => {
+    const openedFiles = systemFiles.enqueue(systemOfficeFilePaths(argv, {
+      cwd: workingDirectory, packaged: app.isPackaged,
+    }));
+    if (openedFiles && !forwardedDeepLinks(argv).length) return;
     startMainWindowHidden = false;
     await createMainWindow();
     await focusMainWindowFromNotification();
@@ -3372,11 +3408,13 @@ if (!app.requestSingleInstanceLock()) {
     // TIPS: fail-closed —— 托盘创建失败时禁止隐藏启动，否则会得到一个
     // 没有任何可见入口的后台进程。
     if (!appTrayIndicator.start()) startMainWindowHidden = false;
-    const win = await createMainWindow();
+    await systemFiles.start();
+    const fileOnlyStartup = systemFiles.requested() && fileWindows.windows().length && !forwardedDeepLinks(process.argv).length;
+    const win = fileOnlyStartup ? null : await createMainWindow();
     if (process.platform === "linux") {
       await applyDesktopBootstrapBrandIcon(bootstrapConfig, applyBrandIconUrl);
     }
-    win.webContents.on("did-finish-load", () => {
+    win?.webContents.on("did-finish-load", () => {
       flushPendingDeepLinks();
     });
 
@@ -3387,6 +3425,13 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.on("activate", async () => {
+    if (systemFiles.requested() && !mainWindow) {
+      if (fileWindows.windows().length) {
+        fileWindows.activate();
+        return;
+      }
+      if (systemFiles.processing()) return;
+    }
     startMainWindowHidden = false;
     if (BrowserWindow.getAllWindows().length === 0) {
       await createMainWindow();

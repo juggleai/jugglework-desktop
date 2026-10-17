@@ -1,3 +1,21 @@
+# Register candidates only: never replace .ext's default ProgID or UserChoice.
+!macro JuggleWorkOfficeCandidate EXT
+  WriteRegNone SHELL_CONTEXT "Software\Classes\.${EXT}\OpenWithProgids" "JuggleWork.Office.${EXT}"
+  WriteRegStr SHELL_CONTEXT "Software\Classes\JuggleWork.Office.${EXT}" "" "JuggleWork ${EXT}"
+  WriteRegStr SHELL_CONTEXT "Software\Classes\JuggleWork.Office.${EXT}\Application" "ApplicationName" "JuggleWork"
+  WriteRegStr SHELL_CONTEXT "Software\Classes\JuggleWork.Office.${EXT}\DefaultIcon" "" '$\"$INSTDIR\${APP_EXECUTABLE_FILENAME}$\",0'
+  WriteRegStr SHELL_CONTEXT "Software\Classes\JuggleWork.Office.${EXT}\shell\open\command" "" '$\"$INSTDIR\${APP_EXECUTABLE_FILENAME}$\" $\"%1$\"'
+!macroend
+
+!macro JuggleWorkRemoveOfficeCandidate EXT
+  ReadRegStr $R8 SHELL_CONTEXT "Software\Classes\JuggleWork.Office.${EXT}\shell\open\command" ""
+  # An older installation must not remove a newer installation's command.
+  ${If} $R8 == '$\"$INSTDIR\${APP_EXECUTABLE_FILENAME}$\" $\"%1$\"'
+    DeleteRegValue SHELL_CONTEXT "Software\Classes\.${EXT}\OpenWithProgids" "JuggleWork.Office.${EXT}"
+    DeleteRegKey SHELL_CONTEXT "Software\Classes\JuggleWork.Office.${EXT}"
+  ${EndIf}
+!macroend
+
 !macro customInit
   # The one-off 1.2.18 Windows installer used a different registry identity
   # and install directory. Recognize only that exact layout, repair its
@@ -54,12 +72,22 @@
 !macroend
 
 !macro customInstall
+  !insertmacro JuggleWorkOfficeCandidate "docx"
+  !insertmacro JuggleWorkOfficeCandidate "xlsx"
+  !insertmacro JuggleWorkOfficeCandidate "csv"
+  !insertmacro JuggleWorkOfficeCandidate "pptx"
+  System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'
   # Standard registration and extraction completed; the bridge is no longer
   # needed. A stopped installer leaves these markers for customInit recovery.
   DeleteRegValue HKCU "${INSTALL_REGISTRY_KEY}" "JuggleWorkLegacyMigrationBridge"
 !macroend
 
 !macro customUnInstall
+  !insertmacro JuggleWorkRemoveOfficeCandidate "docx"
+  !insertmacro JuggleWorkRemoveOfficeCandidate "xlsx"
+  !insertmacro JuggleWorkRemoveOfficeCandidate "csv"
+  !insertmacro JuggleWorkRemoveOfficeCandidate "pptx"
+  System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'
   StrCpy $1 ""
   FileOpen $0 "$APPDATA\com.juggleai.jugglework\windows-brand-shortcut.txt" r
   IfErrors +3

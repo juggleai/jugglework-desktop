@@ -265,7 +265,12 @@ describe("Electron managed runtime", () => {
       });
 
       assert.equal(manager.managedServerAccess(), null);
+      // 系统文件先启动，再进入聊天时仍复用相同 Server，避免丢失本机文档模型。
+      const fileRuntime = await manager.ensureFileRuntime();
+      assert.equal(fileRuntime.running, true);
+      const firstServer = embeddedStartOptions;
       const engine = await manager.engineStart(workspacePath, { workspacePaths: [workspacePath] });
+      assert.equal(embeddedStartOptions, firstServer);
       assert.equal(engine.runtime, "direct");
       assert.equal(engine.running, true);
       assert.equal(engine.managedByServer, true);

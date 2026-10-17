@@ -19,6 +19,7 @@ export default {
   "file_window.saved_version": "已保存版本",
   "office.activate_here": "点击编辑文档",
   "file_window.empty": "打开文件或新建 Word 文档",
+  "file_window.empty_local": "打开 Office 文件以开始编辑",
   "office.loading": "正在载入文档…",
   "office.saved": "已保存",
   "office.font_unavailable": "部分字体未加载",

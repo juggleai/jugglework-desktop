@@ -96,6 +96,8 @@ import { OfficeEngine } from "./office/engine.js";
 import { OfficeDocuments } from "./office/documents.js";
 import { assertOfficeFileEditable } from "./office/file-compatibility.js";
 import { prepareOfficePageSave, readOfficePageSelection } from "./office/page-bridge.js";
+import { LocalOfficeFiles } from "./office/local-files.js";
+import { registerLocalOfficeRoutes } from "./routes/office-local-files.js";
 import { registerOfficeRoutes } from "./routes/office.js";
 import { runtimeStorageDir } from "./runtime-db.js";
 import { FileDeliveryService } from "./artifacts/delivery.js";
@@ -1045,12 +1047,14 @@ export async function startServer(config: ServerConfig, options: {
       officeDocuments?.invalidate();
     },
   });
+  const localOfficeFiles = new LocalOfficeFiles();
   officeDocuments = new OfficeDocuments({
     checkFile: assertOfficeFileEditable,
     engine: officeEngine,
     prepareSave: prepareOfficePageSave,
     readSelection: readOfficePageSelection,
     async resolveFile(workspaceId, path, allowMissing) {
+      if (localOfficeFiles.owns(workspaceId)) return localOfficeFiles.resolve(path);
       const workspace = await resolveWorkspaceWithoutBootstrap(config, workspaceId);
       if (workspace.workspaceType === "remote") throw new ApiError(400, "local_workspace_required", "Office 仅支持本机工作区");
       const relativePath = normalizeWorkspaceRelativePath(path, { allowSubdirs: true });
@@ -1064,6 +1068,7 @@ export async function startServer(config: ServerConfig, options: {
       return { absolutePath: join(workspace.path, file.relativePath), file };
     },
     async onSaved(workspaceId, path) {
+      if (localOfficeFiles.owns(workspaceId)) return;
       const workspace = await resolveWorkspaceWithoutBootstrap(config, workspaceId);
       const targets = await resolveWorkspaceArtifactTargets(workspace.path, [{ kind: "file", value: path }]);
       const target = targets[0];
@@ -1072,9 +1077,16 @@ export async function startServer(config: ServerConfig, options: {
         contentType: typeof target.contentType === "string" ? target.contentType : undefined });
     },
     onModified: (...args) => fileDeliveries!.bindOfficeModification(...args),
-    onOwnership: async (workspaceId, path, owner) => { fileDeliveries!.registry(workspaceId).setEditingOwner(path, owner); },
+    onOwnership: async (workspaceId, path, owner) => {
+      if (localOfficeFiles.owns(workspaceId)) {
+        localOfficeFiles.setOwner(path, owner);
+        return;
+      }
+      fileDeliveries!.registry(workspaceId).setEditingOwner(path, owner);
+    },
     isBusy: (workspaceId, sessionId) => Boolean(sessionMutations.getActive(workspaceId, sessionId)),
     async activityBlocker(workspaceId, sessionId, documentId) {
+      if (localOfficeFiles.owns(workspaceId)) return null;
       const workspace = await resolveWorkspaceWithoutBootstrap(config, workspaceId);
       if (await readSessionActivity(config, workspace, sessionId, AbortSignal.timeout(5_000)) !== "idle") return "running";
       // TIPS: 已结束的运行仍可能在保存 Office 产物；只等待当前文档的交付，不等待无关媒体任务。
@@ -1406,6 +1418,7 @@ export async function startServer(config: ServerConfig, options: {
     logger,
     fileDeliveries,
     officeDocuments,
+    localOfficeFiles,
   );
 
   const serverOptions: {
@@ -2717,6 +2730,7 @@ function createRoutes(
   logger: ServerLogger,
   fileDeliveries: FileDeliveryService,
   officeDocuments: OfficeDocuments,
+  localOfficeFiles: LocalOfficeFiles,
 ): Route[] {
   const routes: Route[] = [];
   registerHostMarketplacePluginRoutes({
@@ -3702,6 +3716,8 @@ function createRoutes(
       reloadOpencodeEngine(routeConfig, workspace, engineMcpServerState),
   });
 
+  registerLocalOfficeRoutes({ routes, files: localOfficeFiles, documents: officeDocuments, jsonResponse, readJsonBody, ensureWritable: () => ensureWritable(config) });
+
   registerFileRoutes({
     routes,
     config,
@@ -3731,7 +3747,7 @@ function createRoutes(
       return await readSessionActivity(config, workspace, sessionId) === "idle";
     },
   });
-  registerOfficeRoutes({ routes, config, documents: officeDocuments, jsonResponse, readJsonBody, ensureWritable, requireClientScope, resolveWorkspace });
+  registerOfficeRoutes({ routes, config, documents: officeDocuments, localFiles: localOfficeFiles, jsonResponse, readJsonBody, ensureWritable, requireClientScope, resolveWorkspace });
 
   addRoute(routes, "GET", "/workspace/:id/plugins", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);

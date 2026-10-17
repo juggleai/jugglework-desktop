@@ -16,6 +16,7 @@ export default {
   "file_window.saved_version": "Saved version",
   "office.activate_here": "Click to edit document",
   "file_window.empty": "Open a file or create a Word document",
+  "file_window.empty_local": "Open an Office file to start editing",
   "office.loading": "Loading document…",
   "office.saved": "Saved",
   "office.font_unavailable": "Some fonts could not load",

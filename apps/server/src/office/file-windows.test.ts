@@ -1181,6 +1181,24 @@ test("重复打开激活已有窗口，关闭一个文件保留其他标签，�
   ]);
 });
 
+test("关闭全部 tab 后保留文件浏览器主页和窗口归属，再打开复用原窗口", async () => {
+  const f = await fixture();
+  await f.files.open({ workspaceId: "ws", sessionId: "ses", path: "报告.docx" });
+  const window = f.files.windows()[0];
+  await f.action(window, "close", "报告.docx");
+  const home = await f.state(window);
+  expect(home.tabs).toEqual([]);
+  expect(home.activePath).toBeNull();
+  expect(window.title).toBe("JuggleWork 文件浏览器");
+  expect(window.isDestroyed()).toBe(false);
+  // TIPS: macOS 菜单按宿主窗口归属命名，空白主页仍是文件窗口，不能按 tab 数量降级成聊天窗口。
+  expect(f.files.windowFor(window.webContents)).toBe(window);
+  expect(f.files.windowFor(f.main.webContents)).toBeNull();
+  await f.files.open({ workspaceId: "ws", sessionId: "ses", path: "说明.md" });
+  expect(f.files.windows()).toEqual([window]);
+  expect((await f.state(window)).activePath).toBe("说明.md");
+});
+
 test("原生编辑区的打开快捷键按当前宿主复用右侧或独立窗口标签，取消不改变文档", async () => {
   const f = await fixture();
   await f.show(f.main);
@@ -1470,4 +1488,78 @@ test("PPT 文档快捷键按页面组合状态决定执行，原生缺少标志�
   await Promise.resolve();
   await Promise.resolve();
   expect(f.saves).toHaveLength(1);
+});
+
+test("系统外部文件复用一个多标签窗口，最近路径重新登记，关闭取消保留模型且副本使用原文件", async () => {
+  const root = await mkdtemp(join(tmpdir(), "local-file-window-"));
+  roots.push(root);
+  const source = join(root, "外部 预算.csv");
+  await writeFile(source, "名称,金额\n预算,20\n");
+  const main = new FakeWindow();
+  const requests: string[] = [];
+  const registrations: string[] = [];
+  let canClose = false;
+  const windows = createFileWindows({
+    client: {
+      async getJson(url: string) {
+        requests.push(url);
+        if (url.includes("/files/stat")) return { exists: true, kind: "file" };
+        if (url.endsWith("/capabilities")) return { available: true };
+        throw new Error(`不应读取工作区: ${url}`);
+      },
+      async postJson(url: string, body: any) {
+        requests.push(url);
+        return { document: { documentId: body.path, state: "opening" } };
+      },
+    },
+    registerLocalFile: async (absolute: string) => {
+      registrations.push(absolute);
+      return {
+        workspaceId: "local-context",
+        sessionId: "file-browser",
+        path: `id/${absolute.split("/").at(-1)}`,
+        local: true,
+        absolutePath: absolute,
+      };
+    },
+    getAccess: async () => ({
+      baseUrl: "http://127.0.0.1:1234",
+      clientToken: "fixture",
+    }),
+    office: { transfer: async () => true, close: async () => canClose },
+    getMainWindow: () => main,
+    loadWindow: async () => {},
+    preloadPath: "fixture",
+    iconPath: "fixture",
+    recentPath: join(root, "recent.json"),
+  });
+  const handlers = new Map<string, (...args: any[]) => any>();
+  windows.registerIpc({
+    handle: (name: string, handler: any) => handlers.set(name, handler),
+  });
+  await windows.openLocal(source);
+  await windows.openLocal(source);
+  const window = windows.windows()[0];
+  const call = (name: string, ...args: any[]) =>
+    handlers.get(name)!({ sender: window.webContents }, ...args);
+  expect(windows.windows()).toHaveLength(1);
+  let state = await call("jugglework:file-window:state");
+  expect(state.local).toBe(true);
+  expect(state.workspaceRoot).toBe("");
+  expect(state.tabs).toHaveLength(1);
+  expect(state.recent[0].path).toBe(source);
+  await call("jugglework:file-window:action", "open", source);
+  expect(registrations).toHaveLength(3);
+  const copy = join(root, "副本.csv");
+  answers.save = { canceled: false, filePath: copy };
+  await call("jugglework:file-window:action", "save-copy");
+  expect(await readFile(copy, "utf8")).toBe(await readFile(source, "utf8"));
+  await windows.openLocal(join(root, "报告.docx"));
+  state = await call("jugglework:file-window:state");
+  expect(state.tabs).toHaveLength(2);
+  expect(await windows.closeAll()).toBe(false);
+  expect(window.isDestroyed()).toBe(false);
+  canClose = true;
+  expect(await windows.closeAll()).toBe(true);
+  expect(requests).not.toContain("/workspaces");
 });

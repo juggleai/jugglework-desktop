@@ -18,7 +18,7 @@ export function workspaceFilePath(root, absolute) {
 }
 
 /**
- * 独立文件窗口管理器；每个聊天复用一个多标签窗口，共用已有 Server 和 Office 页面。
+ * 独立文件窗口管理器；聊天及本机明确文件集合各自复用多标签窗口，共用 Server 和 Office 页面。
  * @param {object} options 运行时客户端、原生 Office 宿主及应用资源位置
  */
 export function createFileWindows({
@@ -32,6 +32,7 @@ export function createFileWindows({
   recentPath,
   dock,
   fileEditor,
+  registerLocalFile,
 }) {
   const entries = new Map();
   let recent = [];
@@ -66,10 +67,14 @@ export function createFileWindows({
     workspaceId: entry.workspaceId,
     sessionId: entry.sessionId,
     workspaceRoot: entry.workspaceRoot,
+    local: entry.local,
     tabs: entry.tabs,
     activePath: entry.activePath,
     recent: recent
-      .filter((item) => item.workspaceId === entry.workspaceId)
+      .filter(
+        (item) =>
+          item.workspaceId === (entry.local ? "local" : entry.workspaceId),
+      )
       .map(({ path, name }) => ({ path, name })),
     platform: process.platform,
   });
@@ -85,10 +90,15 @@ export function createFileWindows({
   };
   const remember = async (entry, tab) => {
     recent = [
-      { workspaceId: entry.workspaceId, path: tab.path, name: tab.name },
+      {
+        workspaceId: entry.local ? "local" : entry.workspaceId,
+        path: entry.local ? tab.absolutePath : tab.path,
+        name: tab.name,
+      },
       ...recent.filter(
         (item) =>
-          item.workspaceId !== entry.workspaceId || item.path !== tab.path,
+          item.workspaceId !== (entry.local ? "local" : entry.workspaceId) ||
+          item.path !== (entry.local ? tab.absolutePath : tab.path),
       ),
     ].slice(0, 30);
     await writeFile(recentPath, JSON.stringify(recent)).catch(() => {});
@@ -100,7 +110,7 @@ export function createFileWindows({
     if (!entry) throw new Error("文件窗口已关闭");
     return entry;
   };
-  const addFile = async (entry, relativePath) => {
+  const addFile = async (entry, relativePath, absolutePath) => {
     const response = await client.getJson(
       `/workspace/${encodeURIComponent(entry.workspaceId)}/files/stat?path=${encodeURIComponent(relativePath)}`,
     );
@@ -108,7 +118,11 @@ export function createFileWindows({
       throw new Error("文件不存在");
     let tab = entry.tabs.find((tab) => tab.path === relativePath);
     if (!tab) {
-      tab = { path: relativePath, name: path.basename(relativePath) };
+      tab = {
+        path: relativePath,
+        name: path.basename(relativePath),
+        ...(entry.local ? { absolutePath } : {}),
+      };
       if (getOfficeDocumentKind(relativePath)) {
         const { available } = await client.getJson(
           `${base(entry)}/capabilities`,
@@ -165,16 +179,24 @@ export function createFileWindows({
     publish(entry);
     return true;
   };
-  const open = async ({ workspaceId, sessionId, path: relativePath }) => {
+  const open = async ({
+    workspaceId,
+    sessionId,
+    path: relativePath,
+    local = false,
+    absolutePath = undefined,
+  }) => {
     await loaded;
     const key = JSON.stringify([workspaceId, sessionId]);
     let entry = entries.get(key);
     if (!entry) {
-      const workspaces = await client.getJson("/workspaces");
+      const workspaces = local
+        ? { items: [] }
+        : await client.getJson("/workspaces");
       const workspace = workspaces.items?.find(
         (item) => item.id === workspaceId && item.workspaceType !== "remote",
       );
-      if (!workspace?.path) throw new Error("工作区不可用");
+      if (!local && !workspace?.path) throw new Error("工作区不可用");
       const window = new BrowserWindow({
         width: 1280,
         height: 860,
@@ -204,7 +226,8 @@ export function createFileWindows({
         window,
         workspaceId,
         sessionId,
-        workspaceRoot: workspace.path,
+        workspaceRoot: workspace?.path ?? "",
+        local,
         tabs: [],
         activePath: null,
         closing: false,
@@ -240,7 +263,7 @@ export function createFileWindows({
       });
       try {
         await loadWindow(window);
-        if (!(await addFile(entry, relativePath))) {
+        if (!(await addFile(entry, relativePath, absolutePath))) {
           entry.closed = true;
           if (!window.isDestroyed()) window.destroy();
           return;
@@ -254,14 +277,31 @@ export function createFileWindows({
         window.destroy();
         throw error;
       }
-    } else if (!(await addFile(entry, relativePath))) return;
+    } else if (!(await addFile(entry, relativePath, absolutePath))) return;
+    if (entry.window.isMinimized()) entry.window.restore();
     entry.window.show();
     entry.window.focus();
+  };
+  const openLocal = async (absolutePath) => {
+    if (!registerLocalFile) throw new Error("本机文件入口不可用");
+    await open(await registerLocalFile(absolutePath));
   };
   const openDialog = async (window, { workspaceId, sessionId }) => {
     const entry = [...entries.values()].find(
       (item) => item.window.id === window.id,
     );
+    if (entry?.local) {
+      const picked = await dialog.showOpenDialog(window, {
+        title: "打开文件",
+        properties: ["openFile", "multiSelections"],
+        filters: [
+          { name: "Office 文档", extensions: ["docx", "xlsx", "csv", "pptx"] },
+        ],
+      });
+      if (!picked.canceled && !window.isDestroyed())
+        for (const absolute of picked.filePaths) await openLocal(absolute);
+      return;
+    }
     const workspaceRoot =
       entry?.workspaceRoot ??
       (await client.getJson("/workspaces")).items?.find(
@@ -288,6 +328,8 @@ export function createFileWindows({
   return {
     /** 打开或激活所属聊天的独立文件窗口。 */
     open,
+    /** 从系统或本机文件选择器打开明确文件，不创建工作区和聊天。 */
+    openLocal,
     /** 原生编辑区与标签菜单共用文件选择器，按当前宿主打开到右侧或独立窗口标签。 */
     openDialog,
     /** 返回当前存活文件窗口，供 Office 校验和迁移宿主。 */
@@ -347,7 +389,12 @@ export function createFileWindows({
           !this.windowFor(event.sender)
         )
           throw new Error("文件窗口宿主不可用");
-        await open(input);
+        // TIPS: Renderer 入口仍只能打开已有工作区文件；本机路径必须经过主进程登记。
+        await open({
+          workspaceId: input.workspaceId,
+          sessionId: input.sessionId,
+          path: input.path,
+        });
       });
       ipcMain.handle("jugglework:file-window:state", async (event) => {
         const entry = resolve(event);
@@ -379,13 +426,15 @@ export function createFileWindows({
           }
           if (action === "open") {
             if (requestedPath) {
-              await addFile(entry, requestedPath);
+              if (entry.local) await openLocal(requestedPath);
+              else await addFile(entry, requestedPath);
               return;
             }
             await openDialog(entry.window, entry);
             return;
           }
           if (action === "create") {
+            if (entry.local) throw new Error("请在聊天工作区中新建文档");
             const picked = await dialog.showSaveDialog(entry.window, {
               title: "新建 Word 文档",
               defaultPath: path.join(entry.workspaceRoot, "未命名文档.docx"),
@@ -405,7 +454,11 @@ export function createFileWindows({
           }
           if (!tab) return;
           if (action === "reveal") {
-            shell.showItemInFolder(path.join(entry.workspaceRoot, tab.path));
+            shell.showItemInFolder(
+              entry.local
+                ? tab.absolutePath
+                : path.join(entry.workspaceRoot, tab.path),
+            );
             return;
           }
           if (action === "save-copy") {
@@ -419,14 +472,21 @@ export function createFileWindows({
             )
               return;
             if (getOfficeDocumentKind(tab.path))
-              await client.postJson(
-                `${base(entry)}/prepare-file`,
-                { sessionId: entry.sessionId, path: tab.path },
-              );
+              await client.postJson(`${base(entry)}/prepare-file`, {
+                sessionId: entry.sessionId,
+                path: tab.path,
+              });
             await saveArtifactFileCopy({
-              workspaceRoot: entry.workspaceRoot,
-              relativePath: tab.path,
-              assertDestination: (destination) => client.postJson("/office/check-copy-target", { path: destination }),
+              workspaceRoot: entry.local
+                ? path.dirname(tab.absolutePath)
+                : entry.workspaceRoot,
+              relativePath: entry.local
+                ? path.basename(tab.absolutePath)
+                : tab.path,
+              assertDestination: (destination) =>
+                client.postJson("/office/check-copy-target", {
+                  path: destination,
+                }),
               choosePath: async (name) => {
                 const result = await dialog.showSaveDialog(entry.window, {
                   title: "另存为",

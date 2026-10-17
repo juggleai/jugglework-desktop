@@ -46,6 +46,27 @@ npmRebuild: true
 afterPack: scripts/electron-after-pack.cjs
 afterSign: scripts/electron-after-sign.cjs
 mac:
+  fileAssociations:
+    - ext: docx
+      name: Word Document
+      mimeType: application/vnd.openxmlformats-officedocument.wordprocessingml.document
+      role: Editor
+      rank: Alternate
+    - ext: xlsx
+      name: Excel Workbook
+      mimeType: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+      role: Editor
+      rank: Alternate
+    - ext: csv
+      name: CSV Document
+      mimeType: text/csv
+      role: Editor
+      rank: Alternate
+    - ext: pptx
+      name: PowerPoint Presentation
+      mimeType: application/vnd.openxmlformats-officedocument.presentationml.presentation
+      role: Editor
+      rank: Alternate
   # 使用 builder 实际选定的身份签 SDK、刷新哈希，再封存主应用；不能重复改写 SDK。
   sign: scripts/electron-sign-macos.cjs
   signIgnore:
