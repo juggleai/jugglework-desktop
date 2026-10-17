@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { link, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -73,6 +73,13 @@ function auth(token: string) {
   expect(await (await fetch(url, { headers: auth(token) })).json()).toMatchObject({ documentId: document.documentId, reason: "running" });
   const documentUrl = `${base}/workspace/ws_1/office/${document.documentId}`;
   const post = (url: string, body: unknown) => fetch(url, { method: "POST", headers: auth(token), body: JSON.stringify(body) });
+  const copyTarget = `${base}/office/check-copy-target`;
+  const target = join(root, "reports/artifact-eval.csv");
+  const alias = join(root, "reports/alias.csv");
+  await link(target, alias);
+  for (const path of [target, alias])
+    expect((await post(copyTarget, { path })).status).toBe(409);
+  expect((await post(copyTarget, { path: join(root, "reports/new-copy.csv") })).status).toBe(200);
   expect((await post(`${documentUrl}/context`, { pageId: document.pageId, activate: true, selection: { sheetId: "s", ranges: [], drawingIds: [] } })).status).toBe(200);
   expect(await (await fetch(`${base}/workspace/ws_1/office/current?sessionId=ses_transfer`, { headers: auth(token) })).json()).toMatchObject({ document: { documentId: document.documentId, state: "opening" }, selection: null });
   expect(await (await fetch(`${base}/workspace/ws_1/office/current?sessionId=ses_other`, { headers: auth(token) })).json()).toEqual({ document: null, selection: null });
@@ -103,6 +110,7 @@ function auth(token: string) {
   expect((await post(`${documentUrl}/close`, { decision: "discard" })).status).toBe(502);
   status = {};
   expect((await post(`${documentUrl}/close`, { decision: "discard" })).status).toBe(200);
+  expect((await post(copyTarget, { path: target })).status).toBe(200);
   expect(await (await post(opsUrl, { operations: [operations[0]] })).json()).toMatchObject({ items: [{ ok: true }] });
   expect(await readFile(join(root, "reports/renamed.csv"), "utf8")).toBe(savedContent);
 }, 30_000);

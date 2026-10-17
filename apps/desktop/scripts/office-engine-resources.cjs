@@ -2,6 +2,13 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { createHash } = require("node:crypto");
 
+// TIPS: 桌面发布平台与 Office SDK 供应平台分开；未供应的平台保留桌面应用和普通文件功能。
+const OFFICE_ENGINE_PLATFORMS = Object.freeze([
+  "darwin-arm64",
+  "darwin-x64",
+  "win32-x64",
+]);
+
 /** 读取指定目标平台的供应清单，缺少资源时禁止生成漏带 Office SDK 的安装包。 */
 function readOfficeEngineManifest(root, platform) {
   const target = path.join(root, platform, "version.json");
@@ -90,4 +97,8 @@ function copyOfficeEngineResources({
   return { directory: destination, manifest: packaged };
 }
 
-module.exports = { copyOfficeEngineResources, readOfficeEngineManifest };
+module.exports = {
+  OFFICE_ENGINE_PLATFORMS,
+  copyOfficeEngineResources,
+  readOfficeEngineManifest,
+};

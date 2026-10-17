@@ -11,7 +11,6 @@ import {
   MoreHorizontal,
   Save,
   SquareArrowOutUpRight,
-  TriangleAlert,
 } from "lucide-react";
 import type { OfficeDocumentSession } from "@jugglework/types/office";
 import { Button } from "@/components/ui/button";
@@ -51,7 +50,6 @@ const statusLabels = {
   unsaved: "office.unsaved",
   saving: "session_files.saving",
   loading: "office.loading",
-  error: "office.open_failed",
   external: "artifact.external_active",
 } as const;
 const statusIcons = {
@@ -60,7 +58,6 @@ const statusIcons = {
   unsaved: Clock3,
   saving: LoaderCircle,
   loading: LoaderCircle,
-  error: TriangleAlert,
   external: ExternalLink,
 };
 
@@ -94,8 +91,9 @@ export function FileEditorToolbar({
   openWindowDisabled?: boolean;
   children?: React.ReactNode;
 }) {
-  const StatusIcon = statusIcons[status];
-  const label = t(statusLabels[status]);
+  // TIPS：失败原因由内容区统一展示，顶栏保留内部状态用于禁用保存，不重复显示通用失败文案。
+  const StatusIcon = status === "error" ? null : statusIcons[status];
+  const label = status === "error" ? null : t(statusLabels[status]);
   return (
     <div
       data-file-editor-toolbar
@@ -120,18 +118,20 @@ export function FileEditorToolbar({
             <FolderOpen className="size-4" />
           </Button>
         )}
-        <span
-          role="status"
-          aria-live="polite"
-          className="flex shrink-0 items-center gap-1 whitespace-nowrap text-xs text-muted-foreground"
-          title={label}
-        >
-          <StatusIcon
-            aria-hidden="true"
-            className={`size-3.5 ${status === "saving" || status === "loading" ? "animate-spin" : ""}`}
-          />
-          {label}
-        </span>
+        {StatusIcon && (
+          <span
+            role="status"
+            aria-live="polite"
+            className="flex shrink-0 items-center gap-1 whitespace-nowrap text-xs text-muted-foreground"
+            title={label ?? undefined}
+          >
+            <StatusIcon
+              aria-hidden="true"
+              className={`size-3.5 ${status === "saving" || status === "loading" ? "animate-spin" : ""}`}
+            />
+            {label}
+          </span>
+        )}
       </div>
       <div className="flex shrink-0 items-center gap-1 text-muted-foreground">
         {children}

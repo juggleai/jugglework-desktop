@@ -1,7 +1,7 @@
 import { afterEach, expect, mock, test } from "bun:test";
 import { getOfficeDocumentKind } from "@jugglework/types/office";
 import { EventEmitter } from "node:events";
-import { mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -9,6 +9,7 @@ let sequence = 0;
 const answers = {
   close: 2,
   open: { canceled: true, filePaths: [] as string[] },
+  save: { canceled: true, filePath: "" },
   wait: undefined as ((options: any) => Promise<any>) | undefined,
   openError: null as string | null,
 };
@@ -98,6 +99,7 @@ mock.module("electron", () => ({
   WebContentsView: FakeView,
   dialog: {
     showOpenDialog: async () => answers.open,
+    showSaveDialog: async () => answers.save,
     showMessageBox: async (...args: any[]) => {
       const options = args.at(-1);
       return options.signal && answers.wait
@@ -135,6 +137,8 @@ const { createOfficePanel } =
   await import("../../../desktop/electron/office-panel.mjs");
 const { createFileWindows } =
   await import("../../../desktop/electron/file-windows.mjs");
+const { triggerUpdaterInstall } =
+  await import("../../../desktop/electron/updater.mjs");
 const roots: string[] = [];
 afterEach(async () => {
   for (const root of roots.splice(0))
@@ -152,6 +156,7 @@ async function fixture(
   partitions.clear();
   answers.open = { canceled: true, filePaths: [] };
   answers.openError = null;
+  answers.save = { canceled: true, filePath: "" };
   const root = await mkdtemp(join(tmpdir(), "file-window-"));
   roots.push(root);
   const main = new FakeWindow();
@@ -169,6 +174,13 @@ async function fixture(
   };
   const saves: Array<string | null> = [];
   const contexts: unknown[] = [];
+  const preparation = {
+    error: null as string | null,
+    closeError: null as string | null,
+    targetError: null as string | null,
+    calls: [] as unknown[],
+    targets: [] as unknown[],
+  };
   const opens: Promise<void>[] = [];
   const transfer = {
     reasons: [null] as Array<"running" | "finalizing" | "saving" | null>,
@@ -176,6 +188,8 @@ async function fixture(
   };
   const client = {
     async getJson(path: string) {
+      if (path === "/office/documents")
+        return { items: document.state === "closed" ? [] : [{ ...document }] };
       if (path === "/workspaces") return { items: [{ id: "ws", path: root }] };
       if (path.includes("/files/stat")) return { exists: true, kind: "file" };
       if (path.endsWith("/capabilities")) return { available: true };
@@ -192,6 +206,16 @@ async function fixture(
       return { document: { ...document } };
     },
     async postJson(path: string, _body: unknown) {
+      if (path.endsWith("/prepare-file")) {
+        preparation.calls.push(_body);
+        if (preparation.error) throw new Error(preparation.error);
+        return { ok: true };
+      }
+      if (path === "/office/check-copy-target") {
+        preparation.targets.push(_body);
+        if (preparation.targetError) throw new Error(preparation.targetError);
+        return { ok: true };
+      }
       if (path.endsWith("/open") && answers.openError)
         throw Object.assign(new Error("Open failed"), {
           serverCode: answers.openError,
@@ -201,7 +225,10 @@ async function fixture(
         saves.push(document.engineFileId);
         document.dirty = false;
       }
-      if (path.endsWith("/close")) document.state = "closed";
+      if (path.endsWith("/close")) {
+        if (preparation.closeError) throw new Error(preparation.closeError);
+        document.state = "closed";
+      }
       if (path.endsWith("/page-failed")) {
         document.state = "error";
         document.engineFileId = null;
@@ -276,6 +303,7 @@ async function fixture(
     files,
     document,
     saves,
+    preparation,
     contexts,
     show,
     call,
@@ -287,6 +315,38 @@ async function fixture(
     root,
   };
 }
+
+test("四种 Office 格式独立窗口另存共用任务准备及目标保护，拒绝后不保存或复制", async () => {
+  for (const name of ["报告.docx", "数据.csv", "预算.xlsx", "汇报.pptx"]) {
+    const f = await fixture(name);
+    const destination = join(f.root, "copy-" + name);
+    await writeFile(join(f.root, name), "saved source");
+    await f.files.open({ workspaceId: "ws", sessionId: "ses", path: name });
+    const window = f.files.windows()[0]!;
+    for (const reason of ["任务运行中", "交付尚未完成"]) {
+      f.preparation.error = reason;
+      await expect(f.action(window, "save-copy")).rejects.toThrow(reason);
+      await expect(access(destination)).rejects.toThrow();
+      expect(f.saves).toEqual([]);
+      expect(f.preparation.targets).toEqual([]);
+    }
+    f.preparation.error = null;
+    answers.save = { canceled: false, filePath: destination };
+    f.preparation.targetError = "目标文档仍在编辑";
+    await expect(f.action(window, "save-copy")).rejects.toThrow("仍在编辑");
+    await expect(access(destination)).rejects.toThrow();
+    f.preparation.targetError = null;
+    await f.action(window, "save-copy");
+    expect(f.preparation.calls).toEqual(
+      Array(4).fill({ sessionId: "ses", path: name }),
+    );
+    expect(f.preparation.targets).toEqual([
+      { path: destination },
+      { path: destination },
+    ]);
+    expect(await readFile(destination, "utf8")).toBe("saved source");
+  }
+});
 
 for (const target of [
   { platform: "win32", arch: "x64" },
@@ -831,6 +891,46 @@ test("Dock 显示真实标题、激活原窗口，取消退出保留入口，清
   expect(f.dockStates.at(-1)).toEqual([]);
   expect(f.saves).toEqual([]);
 });
+
+for (const name of ["报告.docx", "数据.csv", "预算.xlsx", "汇报.pptx"]) {
+  test(`${name} 更新退出取消或保存失败保留页面，成功关闭后才启动安装器`, async () => {
+    const f = await fixture(name);
+    await f.files.open({ workspaceId: "ws", sessionId: "ses", path: name });
+    const window = f.files.windows()[0]!;
+    await f.show(window);
+    const page = [...window.children][0];
+    f.document.dirty = true;
+    const calls: string[] = [];
+    const install = () => triggerUpdaterInstall(
+      { quitAndInstall: () => calls.push("install") },
+      async () => {
+        if (!(await f.panel.prepareQuit())) throw new Error("已取消更新");
+        f.files.dispose();
+        calls.push("runtime:stop");
+      },
+    );
+    try {
+      answers.close = 2;
+      await expect(install()).rejects.toThrow("已取消更新");
+      answers.close = 0;
+      f.preparation.closeError = "文档保存失败";
+      await expect(install()).rejects.toThrow("文档保存失败");
+      expect(calls).toEqual([]);
+      expect(f.files.windows()).toEqual([window]);
+      expect([...window.children]).toEqual([page]);
+      expect(page.webContents.isDestroyed()).toBe(false);
+      expect(f.document).toMatchObject({ state: "ready", dirty: true });
+      f.preparation.closeError = null;
+      await install();
+      expect(f.document.state).toBe("closed");
+      expect(page.webContents.isDestroyed()).toBe(true);
+      expect(f.files.windows()).toEqual([]);
+      expect(calls).toEqual(["runtime:stop", "install"]);
+    } finally {
+      answers.close = 2;
+    }
+  });
+}
 
 for (const name of ["预算.xlsx", "汇报.pptx"]) {
   test(`${name} 的独立窗口复用对应原生页面与模型，迁移不重新加载`, async () => {

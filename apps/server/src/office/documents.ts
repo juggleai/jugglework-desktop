@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, stat } from "node:fs/promises";
-import { dirname } from "node:path";
+import { mkdir, realpath, stat } from "node:fs/promises";
+import { dirname, isAbsolute, resolve } from "node:path";
 import type { FileArtifact } from "@jugglework/types/file-artifacts";
 import {
   getOfficeDocumentKind,
@@ -36,6 +36,19 @@ const CONTENT_QUERY = {
   sheet: "sheet_get_sheet_info",
   slide: "slide_get_info",
 } as const;
+
+/** 读取文件的真实路径和磁盘身份；尚不存在的目标保留绝对路径供比较。 */
+async function fileIdentity(path: string) {
+  try {
+    return {
+      path: await realpath(path),
+      info: await stat(path, { bigint: true }),
+    };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    return { path: resolve(path), info: null };
+  }
+}
 
 /** 单一 Server 管理的 Office 会话，页面先创建模型，所有保存绑定原路径。 */
 export class OfficeDocuments {
@@ -319,6 +332,36 @@ export class OfficeDocuments {
           409,
           "office_document_in_use",
           `请先保存并关闭“${session.name}”，再重命名、覆盖或删除文件及所在目录`,
+        );
+    }
+  }
+
+  /**
+   * 原生另存副本覆盖前检查所有聊天的存活模型，包含符号链接及硬链接指向的同一文件。
+   * @param path 用户在保存对话框中选择的绝对目标路径
+   */
+  async assertCopyTargetAllowed(path: string): Promise<void> {
+    if (!isAbsolute(path))
+      throw new ApiError(400, "invalid_path", "副本目标必须是绝对路径");
+    const target = await fileIdentity(path);
+    const key = (path: string) =>
+      process.platform === "win32" ? path.toLowerCase() : path;
+    for (const record of this.documents.values()) {
+      if (["closed", "external"].includes(record.session.state)) continue;
+      const current = await fileIdentity(record.absolutePath);
+      // TIPS: 只比较路径会漏过别名，copyFile 也会透过硬链接覆盖仍由模型持有的文件。
+      if (
+        key(target.path) === key(current.path) ||
+        (target.info &&
+          current.info &&
+          target.info.ino !== 0n &&
+          target.info.dev === current.info.dev &&
+          target.info.ino === current.info.ino)
+      )
+        throw new ApiError(
+          409,
+          "office_document_in_use",
+          `请先保存并关闭目标文档“${record.session.name}”，再覆盖该文件`,
         );
     }
   }

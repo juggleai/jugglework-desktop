@@ -329,10 +329,21 @@ export function OfficeEditor({
       setSaving(false);
     }
   };
+  // TIPS：文档会话建立前也可能失败，顶栏和正文必须使用同一失败原因，不能把缺少模型一直视为加载中。
+  const unavailableReason = documentId
+    ? null
+    : !native
+      ? t("office.desktop_required")
+      : capabilities.isError
+        ? capabilities.error.message
+        : capabilities.data && !capabilities.data.available
+          ? (capabilities.data.reason ?? t("office.unavailable"))
+          : null;
   const error =
     openError ??
     document?.error ??
-    (query.isError ? String(query.error) : null);
+    (query.isError ? String(query.error) : null) ??
+    unavailableReason;
   const externalView = external || document?.state === "external";
   return (
     <div
@@ -347,7 +358,9 @@ export function OfficeEditor({
               ? "readonly"
               : externalView
                 ? "external"
-                : getOfficeEditorStatus(document, saving)
+                : error
+                  ? "error"
+                  : getOfficeEditorStatus(document, saving)
           }
           saveDisabled={saving || externalView || document?.state !== "ready"}
           onSave={() => void save()}
@@ -482,17 +495,14 @@ export function OfficeEditor({
               {t("office.activate_here")}
             </span>
           </button>
-        ) : externalView ||
-          (!capabilities.isLoading &&
-            (!capabilities.data?.available || !native)) ||
-          error ? (
-          <div className="flex h-full items-center justify-center p-6 text-center text-sm text-muted-foreground">
+        ) : externalView || error ? (
+          <div
+            role={externalView ? "status" : "alert"}
+            className="flex h-full items-center justify-center p-6 text-center text-sm text-muted-foreground"
+          >
             {externalView
               ? t("artifact.external_active")
-              : (error ??
-                (!native
-                  ? t("office.desktop_required")
-                  : (capabilities.data?.reason ?? t("office.unavailable"))))}
+              : error}
           </div>
         ) : (
           document?.state !== "ready" &&

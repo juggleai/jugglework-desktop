@@ -289,6 +289,8 @@ Office 编辑页面由独立的 `WebContentsView` 承载，Electron 管理其位
 
 右侧 Office 编辑面板和独立文件窗口共用 `FileEditorToolbar`。顶栏左侧显示完整文件名的截断文本与原名提示，以及“已保存 / 未保存 / 保存中”状态；已保存使用勾选图标，未保存使用时钟图标，导入及保存中显示转动图标。加载、故障和外部接管状态不能显示为已保存。右侧依次显示保存、上传、分享及更多图标，只有存在可保存修改时保存按钮才可用。右侧面板在文件名旁提供打开文件夹入口，更多菜单包含在独立窗口打开、打开文件夹和另存为；独立窗口更多菜单保留后两项。两种宿主沿用各自已有文件操作与保存管线，云端能力未接入前保持禁用。
 
+Office 文档会话建立前，引擎版本未适配、能力查询失败、桌面桥缺失及打开请求失败均结束加载。两种宿主的内容区显示具体原因，顶栏不重复显示“文档打开失败”，保存保持禁用，不挂载原生页面；能力查询尚未完成时继续显示加载。已有文档会话沿用自身生命周期状态，不因后续能力查询失败丢失当前编辑页面。
+
 ### 独立窗口 Logo 与任务栏
 
 独立窗口统一命名为 **JuggleWork 文件浏览器**，原生窗口标题、HTML 标题、macOS Dock 名称和 Windows 任务栏显示名称保持一致，不使用 Word Preview 等测试名称。文件名显示在窗口内部的标签和内容标题中，Dock 文档列表使用当前文件名区分多个窗口。
@@ -420,7 +422,7 @@ SDK 0.0.0.499 对含数据透视表的 XLSX 存在导入损失：Apache POI 公�
 
 Server 每 30 秒检查 ready 且 dirty 文档，作为运行中的自动保存保护；它不能代替轮次结束的必经保存。显式保存及最终交付确认复用同一文档正在执行的保存承诺，保存过程中又出现修改时仍保持 dirty，并在确认交付前保存到最新内容。保存成功后刷新当前文件元信息、大小与保存时间，历史交付快照不被静默重写；失败保留 dirty 与原因。无需引入分布式锁或跨进程并发控制。
 
-“另存为”统一定义为导出副本：先保存当前原文件，再由原生对话框选择目标并复制已保存文件，不更换当前编辑身份；取消对话框不产生副本。页面内部另存为接入相同宿主行为，未适配前禁用。若要编辑副本，用户通过文件入口打开副本，建立自己的文件身份。旧二进制格式后续开放时，导出转换使用现代扩展名，不以 `.doc`、`.xls`、`.ppt` 静默保存 OOXML；宏格式首版仍使用外部应用。
+“另存为”统一定义为导出副本：先保存当前原文件，再由原生对话框选择目标并复制已保存文件，不更换当前编辑身份；取消对话框不产生副本。两种宿主的 Office 导出均调用 `prepare-file`，所属任务运行或交付未完成时拒绝导出；不能直接调用保存接口跳过准备。选定目标后，复制前通过 `POST /office/check-copy-target` 检查所有聊天及工作区的存活 Office 模型，按真实路径及文件标识识别符号链接和硬链接，目标仍被模型持有时要求先保存关闭；检查失败不改写目标。页面内部另存为接入相同宿主行为，未适配前禁用。若要编辑副本，用户通过文件入口打开副本，建立自己的文件身份。旧二进制格式后续开放时，导出转换使用现代扩展名，不以 `.doc`、`.xls`、`.ppt` 静默保存 OOXML；宏格式首版仍使用外部应用。
 
 添加到输入框、导出副本和后续分享/上传先执行所属编辑器的保存准备，失败停止动作。非 Office 使用两种宿主共用的文本保存入口，Office 使用本节统一服务；只读预览不冒充可保存编辑器。
 
@@ -439,6 +441,8 @@ Server 每 30 秒检查 ready 且 dirty 文档，作为运行中的自动保存�
 ### 关闭与故障
 
 关闭 dirty 文档提供“保存并关闭”“放弃修改”“取消”。明确放弃才强制关闭；保存失败保持视图。实际关闭前先等待或取消关联运行，防止关闭后 Agent 继续写入已失效模型。系统强制终止后仅承诺恢复最后成功保存的磁盘文件。引擎意外退出时所有模型 ID 失效，页面重新打开前停用写入；不能自动重放使用旧坐标的工具调用。
+
+更新安装同样先处理全部文本草稿和 Office 文档，覆盖 DOCX、CSV、XLSX、PPTX。取消或保存失败时不停止 Runtime、不启动安装器，保留尚未关闭的文档页面和未保存内容；文档处理完成后才清理文件窗口、停止 Runtime 并启动安装器。宿主边界回归不替代正式安装包的真实更新验收。
 
 ## 本地接口与桌面桥契约
 
@@ -467,6 +471,7 @@ Server 每 30 秒检查 ready 且 dirty 文档，作为运行中的自动保存�
 | `POST /workspace/:id/office/:documentId/context` | `pageId, activate?` | 原生宿主按页面身份激活当前文件；选区仅通过当前文档查询即时读取，过期页面拒绝，后台文件不抢占当前目标 |
 | `GET /workspace/:id/office/by-path` | `sessionId, path` | 查询自己已打开的文档，不切换当前目标 |
 | `GET /office/documents` | 本机 client 身份 | 查询退出前需处理的文档 |
+| `POST /office/check-copy-target` | `path`（绝对路径） | 复制前检查目标是否被任何存活 Office 模型占用；别名指向同一文件也拒绝覆盖 |
 | `POST /workspace/:id/office/prepare-file` | `sessionId, path, external?` | 附件与副本操作先保存；外部打开还要释放模型并持久化 external 标记 |
 | `POST /workspace/:id/office/reopen` | `sessionId, path` | 用户确认外部已保存关闭后重新导入；内容查询确认 ready 后恢复内部写入 |
 | 桌面桥 `office.show/hide/close/destroy/onClosed/onLocation` | 已绑定的文档身份和显示区域 | 管理聊天窗口或文件浏览器的原生页面和宿主位置，关闭前提供保存、放弃和取消 |
@@ -566,7 +571,7 @@ node scripts/import-office-engine.mjs /absolute/path/to/office-engine apps/deskt
 JUGGLEWORK_OFFICE_ENGINE_DIR=/absolute/path/to/office-engine bun apps/server/src/cli.ts
 ```
 
-本地适配包统一使用 Office 包名、服务入口、导出接口、日志和配置命名。导入脚本只接收包含 wrapper、平台目录及版本清单的当前 Office 资源格式，复用打包资源校验，不提供其他包格式转换。原生二进制及许可原文保持不变。未使用的预览主题/语言消息辅助模块不纳入包装层，实际编辑页面由桌面宿主管理。
+本地适配包统一使用 Office 包名、服务入口、导出接口、日志和配置命名。导入脚本只接收包含 wrapper、平台目录及版本清单的当前 Office 资源格式，复用打包资源校验，不提供其他包格式转换。导入按真实目录身份识别源和目标；目录别名指向同一资源时只校验，真实路径互相嵌套时拒绝复制，目标尚不存在时先解析其最近的真实父目录。原生二进制及许可原文保持不变。未使用的预览主题/语言消息辅助模块不纳入包装层，实际编辑页面由桌面宿主管理。
 
 SDK 不通过 npm postinstall 获取；格式清单 `wrapper/supported-extensions.cjs` 随包装层供应，包入口可直接加载。Server 直接从上述资源目录加载 `wrapper/lib/common/office-docs-service.js`，并显式传入 `editorSdkPath`。该启动模块使用 Node 内置模块，不加载 stdio bridge 或额外 MCP SDK。默认目录为仓库中的 `apps/desktop/resources/office-engine`，设置 `JUGGLEWORK_OFFICE_ENABLED=0` 可关闭内置编辑。桌面宿主显式传入自身资源目录：开发时为项目 resources/office-engine，安装后为 process.resourcesPath/office-engine；不使用环境变量切换到外部 App。独立 CLI Server 仍可显式配置本地目录。
 
@@ -598,7 +603,7 @@ resources/office-engine/
   version.json
 ```
 
-electron-builder 的 afterPack 钩子已接入 SDK 资源复制：仅复制 wrapper、平台解析脚本、版本清单及目标平台完整目录到 ASAR 外的 Resources/office-engine，排除日志及临时目录。目标平台缺失、版本不匹配、二进制哈希异常或只有 LFS 指针时停止 macOS/Windows 打包，不联网补装。macOS 自定义签名钩子取得 electron-builder 已解析的实际身份和钥匙串，先签 SDK、刷新安装包清单 SHA-256，再沿用默认签名器封存主应用；signIgnore 避免默认签名器再次改写 SDK。源快照不被签名或改写。
+electron-builder 的 afterPack 钩子已接入 SDK 资源复制：仅复制 wrapper、平台解析脚本、版本清单及目标平台完整目录到 ASAR 外的 Resources/office-engine，排除日志及临时目录。Office 供应平台明确限定为 darwin-arm64、darwin-x64、win32-x64；这些平台资源缺失、版本不匹配、二进制哈希异常或只有 LFS 指针时停止打包，不联网补装。Windows ARM64 等未供应 Office SDK 的桌面目标继续构建，安装包不复制其他架构内核，运行时不开放原生 Office 编辑，保留普通文件操作。macOS 自定义签名钩子取得 electron-builder 已解析的实际身份和钥匙串，先签 SDK、刷新安装包清单 SHA-256，再沿用默认签名器封存主应用；signIgnore 避免默认签名器再次改写 SDK。源快照不被签名或改写。
 
 桌面 package.json 是 electron-builder 收集生产依赖的入口，暂存 Server 的 package.json 不能代替桌面声明。内置 Server 的全部生产依赖，包括 jszip 与 @xmldom/xmldom，必须在桌面声明配套版本；依赖归属回归保护这一边界。构建先生成并复制 Server，再通过 Electron 内置 Node 从桌面暂存目录导入 embedded.js；缺依赖在打包前失败，避免源码 Server 的 node_modules 掩盖漏包。
 

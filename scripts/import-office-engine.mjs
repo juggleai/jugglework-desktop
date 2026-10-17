@@ -2,12 +2,28 @@ import {
   cpSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { join, resolve, sep } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import officeResources from "../apps/desktop/scripts/office-engine-resources.cjs";
+
+/** 目标可尚未创建；先解析最近的真实父目录，避免目录别名绕过同源及嵌套检查。 */
+function canonicalDirectory(path) {
+  let parent = resolve(path);
+  const pending = [];
+  for (;;) {
+    try {
+      return resolve(realpathSync(parent), ...pending);
+    } catch (error) {
+      if (error.code !== "ENOENT" || dirname(parent) === parent) throw error;
+      pending.unshift(basename(parent));
+      parent = dirname(parent);
+    }
+  }
+}
 
 /**
  * 导入当前格式的本地 Office 资源，校验配套版本和哈希，不转换其他包格式。
@@ -22,17 +38,23 @@ export function importOfficeEngine(
 ) {
   if (!/^(darwin|linux)-(arm64|x64)$|^win32-(arm64|x64|ia32)$/.test(platform))
     throw new Error("不支持的 SDK 目标平台");
-  const input = resolve(source);
-  const output = resolve(destination);
+  const input = realpathSync(resolve(source));
+  const output = canonicalDirectory(destination);
   const manifest = officeResources.readOfficeEngineManifest(input, platform);
   const pkg = JSON.parse(
     readFileSync(join(input, "wrapper/package.json"), "utf8"),
   );
   if (pkg.name !== "office-docs-ai-engine")
     throw new Error("请提供当前 Office 适配包资源");
-  if (input === output) return manifest;
+  const key = (path) =>
+    process.platform === "win32" ? path.toLowerCase() : path;
+  const inputKey = key(input),
+    outputKey = key(output);
+  if (inputKey === outputKey) return manifest;
   // TIPS: 避免替换 wrapper 时删除嵌套的供应源，平台资源可在不同根目录间复制。
-  if (input.startsWith(output + sep) || output.startsWith(input + sep))
+  const inside = (parent, child) =>
+    child.startsWith(parent.endsWith(sep) ? parent : parent + sep);
+  if (inside(outputKey, inputKey) || inside(inputKey, outputKey))
     throw new Error("Office 供应源与目标目录不能互相嵌套");
   mkdirSync(output, { recursive: true });
   const wrapper = join(output, "wrapper");

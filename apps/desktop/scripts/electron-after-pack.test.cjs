@@ -13,7 +13,17 @@ const {
   verifyPackagedMacTrayResources,
   windowsPublisherNames,
   writePackagedUpdateConfiguration,
+  packageBundledOfficeResources,
 } = require("./electron-after-pack.cjs");
+
+test("Windows ARM64 保留桌面打包，不要求不存在的 Office SDK 或复制 x64 内核", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "office-unsupported-package-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  for (const arch of ["arm64", 3]) {
+    assert.equal(packageBundledOfficeResources({ electronPlatformName: "win32", arch, appOutDir: root }), undefined);
+    assert.equal(fs.existsSync(path.join(root, "resources", "office-engine")), false);
+  }
+});
 
 function copyMacTrayResources(resourcesDir) {
   const sourceDir = path.join(__dirname, "..", "resources", "tray");

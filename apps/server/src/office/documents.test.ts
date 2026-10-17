@@ -1,5 +1,12 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  link,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { FileArtifact } from "@jugglework/types/file-artifacts";
@@ -557,6 +564,31 @@ test("存活模型阻止源、目标及父目录修改，关闭后才允许宿�
   expect(() =>
     f.documents.assertFileMutationAllowed("ws", ["report"]),
   ).not.toThrow();
+});
+
+test("副本目标检查跨聊天保护存活文档及文件别名，关闭后才允许覆盖", async () => {
+  const f = await fixture();
+  await f.openReady();
+  const other = await f.openReady("报告 B.docx", "model_B", "ses_B");
+  const target = join(f.root, "报告 B.docx");
+  const aliases = [target, join(f.root, "硬链接.docx")];
+  await link(target, aliases[1]!);
+  if (process.platform !== "win32") {
+    aliases.push(join(f.root, "符号链接.docx"));
+    await symlink(target, aliases.at(-1)!);
+  }
+  for (const path of aliases)
+    await expect(f.documents.assertCopyTargetAllowed(path)).rejects.toThrow(
+      "保存并关闭目标",
+    );
+  await f.documents.assertCopyTargetAllowed(join(f.root, "新副本.docx"));
+  f.documents.failPage("ws", other.documentId);
+  await expect(f.documents.assertCopyTargetAllowed(target)).rejects.toThrow(
+    "保存并关闭目标",
+  );
+  expect(await readFile(target, "utf8")).toBe("saved");
+  await f.documents.close("ws", other.documentId, "discard");
+  for (const path of aliases) await f.documents.assertCopyTargetAllowed(path);
 });
 
 test("页面故障仅废弃当前模型身份，阻止晚到保存确认并保留磁盘版本恢复入口", async () => {

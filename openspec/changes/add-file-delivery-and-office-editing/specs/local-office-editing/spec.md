@@ -34,6 +34,10 @@ Server SHALL 管理唯一的本地 Office 引擎，按实际平台和配套版�
 - **WHEN** 当前平台缺少可用 SDK
 - **THEN** 内置编辑不开放，卡片、文件信息和默认应用打开仍可使用
 
+#### Scenario: 建立文档会话前失败
+- **WHEN** Office 引擎版本未适配、能力查询失败、桌面桥缺失或打开文档请求失败
+- **THEN** 右侧编辑面板结束载入，内容区显示具体原因，顶栏不重复显示“文档打开失败”；独立窗口的编辑内容区同样结束载入并显示原因；未建立会话时保存保持禁用，不挂载原生页面。能力查询尚未完成时仍显示载入状态
+
 #### Scenario: 本地引擎不依赖系统 Node 或 SDK 下载
 - **WHEN** 宿主使用 Electron 内置运行时，PATH 中没有 Node/npm/npx/Bun，外网不可用但本机回环可用
 - **THEN** 已配置的本地 SDK 能通过宿主内容工具修改和保存基础 DOCX、CSV、XLSX、PPTX，再次打开能读取保存内容；缺少 SDK 资源时报告不可用，不尝试联网安装；此能力不声明远程模型或未经验证的页面资源离线可用
@@ -190,7 +194,7 @@ SDK 原生资源 SHALL 使用 Git LFS 纳入版本管理，wrapper 和清单 SHA
 
 #### Scenario: 当前 Office 资源导入
 - **WHEN** 导入包含 wrapper、平台目录及版本清单的当前 Office 资源
-- **THEN** 复用打包资源校验并确认包名为 office-docs-ai-engine，服务入口为 office-docs-service.js 且导出 OfficeDocsService；配套版本、文件及 SHA-256 不匹配时拒绝复制，不提供其他包格式转换或旧名称别名，原生二进制与许可原文保持不变
+- **THEN** 复用打包资源校验并确认包名为 office-docs-ai-engine，服务入口为 office-docs-service.js 且导出 OfficeDocsService；配套版本、文件及 SHA-256 不匹配时拒绝复制，不提供其他包格式转换或旧名称别名，原生二进制与许可原文保持不变；源与目标按真实目录身份比较，同源别名只校验，真实路径互相嵌套则拒绝复制，尚不存在的目标先解析其最近的真实父目录
 
 #### Scenario: 多平台资源共存并分别交付
 - **WHEN** 源资源包含 darwin-arm64、darwin-x64、win32-x64 的配套引擎，构建选择其中一个目标平台
@@ -200,9 +204,13 @@ SDK 原生资源 SHALL 使用 Git LFS 纳入版本管理，wrapper 和清单 SHA
 - **WHEN** 构建桌面安装包并暂存内置 Server
 - **THEN** 桌面打包入口包含 Server 配套的生产依赖，XML/ZIP 处理库不因只声明在源码 Server 中而漏包；使用 Electron 内置 Node 验证暂存 embedded.js 可导入，依赖缺失时构建失败，不以源码目录能够解析依赖作为通过依据
 
-#### Scenario: 目标平台资源缺失或未检出 LFS 实体
-- **WHEN** macOS 或 Windows 安装包的目标平台未提供完整 SDK，或原生文件只是 LFS 指针
+#### Scenario: 供应平台资源缺失或未检出 LFS 实体
+- **WHEN** darwin-arm64、darwin-x64 或 win32-x64 安装包的目标平台未提供完整 SDK，或原生文件只是 LFS 指针
 - **THEN** 打包明确失败，不复制其他架构代替，不联网下载或从外部 App 找资源
+
+#### Scenario: 未供应 Office SDK 的桌面平台
+- **WHEN** 构建 Windows ARM64 等未列入 Office SDK 供应范围的桌面目标
+- **THEN** 保留桌面构建及普通文件功能，不要求不存在的 Office SDK，不复制其他架构内核；运行时报告原生 Office 编辑不可用
 
 #### Scenario: 安装后从桌面启动 Office
 - **WHEN** JuggleWork 安装后打开支持的本地文档

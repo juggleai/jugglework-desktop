@@ -418,14 +418,15 @@ export function createFileWindows({
               ))
             )
               return;
-            if (tab.documentId)
+            if (getOfficeDocumentKind(tab.path))
               await client.postJson(
-                `${base(entry)}/${encodeURIComponent(tab.documentId)}/save`,
-                {},
+                `${base(entry)}/prepare-file`,
+                { sessionId: entry.sessionId, path: tab.path },
               );
             await saveArtifactFileCopy({
               workspaceRoot: entry.workspaceRoot,
               relativePath: tab.path,
+              assertDestination: (destination) => client.postJson("/office/check-copy-target", { path: destination }),
               choosePath: async (name) => {
                 const result = await dialog.showSaveDialog(entry.window, {
                   title: "另存为",

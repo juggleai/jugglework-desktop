@@ -22,6 +22,7 @@ test("copies zero-byte and large files with Unicode names without changing the s
     await writeFile(source, bytes);
     assert.equal(
       await saveArtifactFileCopy({
+        assertDestination: async () => {},
         workspaceRoot: root,
         relativePath: name,
         choosePath: async (suggestion) => {
@@ -43,6 +44,9 @@ test("cancelling creates no copy and selecting the original is rejected", async 
   await writeFile(source, "original");
   assert.equal(
     await saveArtifactFileCopy({
+      assertDestination: async () => {
+        assert.fail("取消时不检查目标");
+      },
       workspaceRoot: root,
       relativePath: "report.docx",
       choosePath: async () => null,
@@ -51,6 +55,7 @@ test("cancelling creates no copy and selecting the original is rejected", async 
   );
   await assert.rejects(
     saveArtifactFileCopy({
+      assertDestination: async () => {},
       workspaceRoot: root,
       relativePath: "report.docx",
       choosePath: async () => source,
@@ -58,4 +63,27 @@ test("cancelling creates no copy and selecting the original is rejected", async 
     /different file/,
   );
   assert.equal(await readFile(source, "utf8"), "original");
+});
+
+test("覆盖前等待目标模型检查，拒绝或检查失败时不改写文件", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "jugglework-file-copy-"));
+  roots.push(root);
+  const target = path.join(root, "target.csv");
+  await writeFile(path.join(root, "source.csv"), "source");
+  await writeFile(target, "target");
+  const checked = [];
+  await assert.rejects(
+    saveArtifactFileCopy({
+      workspaceRoot: root,
+      relativePath: "source.csv",
+      choosePath: async () => target,
+      assertDestination: async (destination) => {
+        checked.push(destination);
+        throw new Error("目标文档仍在编辑");
+      },
+    }),
+    /仍在编辑/,
+  );
+  assert.deepEqual(checked, [target]);
+  assert.equal(await readFile(target, "utf8"), "target");
 });

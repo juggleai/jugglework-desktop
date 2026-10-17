@@ -51,6 +51,17 @@ export function registerOfficeRoutes(options: OfficeRouteOptions): void {
   addRoute(routes, "GET", "/office/documents", "client", async () =>
     jsonResponse({ items: await documents.list() }),
   );
+  addRoute(
+    routes,
+    "POST",
+    "/office/check-copy-target",
+    "client",
+    async (ctx) => {
+      const body = await options.readJsonBody(ctx.request);
+      await documents.assertCopyTargetAllowed(text(body.path, "path"));
+      return jsonResponse({ ok: true });
+    },
+  );
   addRoute(routes, "GET", `${base}/current`, "client", async (ctx) => {
     const target = await workspace(ctx);
     return jsonResponse(

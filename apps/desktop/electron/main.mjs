@@ -1416,8 +1416,9 @@ const runtimeManager = createRuntimeManager({
   readDenBaseUrl: () => workspaceStore.readDesktopBootstrapConfigSync()?.baseUrl ?? null,
 });
 const runtimeIpcHandlers = createRuntimeIpcHandlers(runtimeManager);
+const fileHostClient = createManagedRuntimeClient({ getAccess: () => runtimeManager.managedServerAccess(), fetcher: nodeFetch, timeoutMs: 60_000 });
 const fileEditor = createFileEditor({
-  client: createManagedRuntimeClient({ getAccess: () => runtimeManager.managedServerAccess(), fetcher: nodeFetch, timeoutMs: 60_000 }),
+  client: fileHostClient,
   getWindows: () => [mainWindow, ...fileWindows.windows()].filter(Boolean),
   resolveWindow: (sender) => sender.id === mainWindow?.webContents.id ? mainWindow : fileWindows.windowFor(sender),
 });
@@ -1427,7 +1428,7 @@ const officePanel = createOfficePanel({
   resolveWindow: (sender) => sender.id === mainWindow?.webContents.id ? mainWindow : fileWindows.windowFor(sender),
   onDocumentClosed: (id) => fileWindows.documentClosed(id),
   onOpenFile: (window, input) => fileWindows.openDialog(window, input),
-  client: createManagedRuntimeClient({ getAccess: () => runtimeManager.managedServerAccess(), fetcher: nodeFetch, timeoutMs: 60_000 }),
+  client: fileHostClient,
 });
 const fileWindowIconPath = app.isPackaged ? path.join(process.resourcesPath, "app-dist/file-window-logo.png") : path.resolve(__dirname, "../../app/public/file-window-logo.png");
 const fileWindowDock = createFileWindowDock({
@@ -1440,7 +1441,7 @@ const fileWindowDock = createFileWindowDock({
 const fileWindows = createFileWindows({
   fileEditor,
   dock: fileWindowDock,
-  client: createManagedRuntimeClient({ getAccess: () => runtimeManager.managedServerAccess(), fetcher: nodeFetch, timeoutMs: 60_000 }),
+  client: fileHostClient,
   getAccess: () => runtimeManager.managedServerAccess(),
   office: officePanel,
   getMainWindow: () => mainWindow,
@@ -2519,6 +2520,7 @@ const desktopCommandHandlers = {
   "saveArtifactCopy": async (event, options) => saveArtifactFileCopy({
       workspaceRoot: options.workspaceRoot,
       relativePath: options.relativePath,
+      assertDestination: (destination) => fileHostClient.postJson("/office/check-copy-target", { path: destination }),
       choosePath: async (name) => {
         const result = await dialog.showSaveDialog(activeWindowFromEvent(event), {
           title: options.title,
@@ -3216,8 +3218,8 @@ const { ensureAutoUpdater } = registerUpdaterIpc({
   getMainWindow: () => mainWindow,
   onInstallAndRestart: async () => {
     if (!(await fileEditor.prepareQuit())) throw new Error("已取消更新，文件修改保持打开");
-    // TIPS: 更新器会先停止 Runtime，必须在此之前完成 Word 的保存或取消决定。
-    if (!(await officePanel.prepareQuit())) throw new Error("已取消更新，Word 文档保持打开");
+    // TIPS: 更新器会先停止 Runtime，必须在此之前完成全部 Office 文档的保存或取消决定。
+    if (!(await officePanel.prepareQuit())) throw new Error("已取消更新，Office 文档保持打开");
     fileWindows.dispose();
     await disposeRuntimeBeforeQuit();
     // Keep ordinary close-to-tray behavior active while shutdown is pending.
