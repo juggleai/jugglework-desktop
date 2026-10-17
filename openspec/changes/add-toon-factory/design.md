@@ -27,9 +27,15 @@ Toonflow is a Vue/Electrobun application whose post-creation experience is a fil
 
 ### Build a native React workbench instead of embedding Toonflow
 
-The Toon Factory surface will be implemented as a React domain under the existing workspace router. It will reuse `AppNavigationRail`, `AppInsetSurface`, shared secondary-sidebar sizing, theme tokens, i18n, and accessibility conventions. A React node-graph library with a data model compatible with nodes, edges, handles, and viewport state will back the canvas.
+The Toon Factory surface will be implemented as a React domain under the existing workspace router. It will reuse `AppNavigationRail`, `AppInsetSurface`, theme tokens, i18n, and accessibility conventions. Its project index uses a focused inspiration composer and responsive project cards; an opened project uses a full-surface canvas with floating workspace controls and a dockable assistant rather than a permanent project sidebar. A native React node canvas with a data model compatible with nodes, edges, handles, and viewport state backs the workspace.
 
 Embedding Toonflow in an iframe or shipping Vue alongside React was rejected because it would duplicate provider settings, routing, design systems, accessibility behavior, and desktop/server lifecycle. A webview boundary would also make workspace authorization, model policy, job state, and theme synchronization harder to reason about.
+
+### Use a creation home and spatial project workspace
+
+The project index presents a large inspiration composer, explicit workspace-relative project location, current text model, and project cards. The initial idea is persisted as a recoverable, scope-keyed initialization operation and becomes the first episode's source text rather than being discarded after project creation. Initialization uses stable IDs and can reconcile uncertain client responses without replacing existing episodes or duplicating canvas content.
+
+An opened project dedicates the inset surface to a dotted node canvas. Project and episode controls live in a floating top toolbar; node creation and canvas controls live near the bottom; workflow, generation, text editing, and delivery remain in a dockable right-side creation assistant. Narrow layouts present the assistant as a bottom sheet. Controls without a real implementation are disabled and described rather than presented as working actions.
 
 ### Store portable project truth in workspace files
 

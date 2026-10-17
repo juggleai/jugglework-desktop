@@ -72,7 +72,7 @@ function startMockOpencode() {
       if (request.method === "GET" && sessionMatch) {
         const sessionId = decodeURIComponent(sessionMatch[1]!);
         const session = sessions.get(sessionId);
-        return session ? Response.json(session) : Response.json({ code: "not_found" }, { status: 404 });
+        return Response.json(session ?? { id: sessionId, title: sessionId, time: { created: 1, updated: 1 } });
       }
       if (request.method === "POST" && url.pathname === "/instance/dispose") {
         disposes.push({ directory: url.searchParams.get("directory") });

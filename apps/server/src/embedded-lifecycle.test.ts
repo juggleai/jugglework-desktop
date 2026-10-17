@@ -164,6 +164,8 @@ describe("embedded server lifecycle", () => {
       expect(handle.port).toBeGreaterThan(0);
       expect(handle.config.port).toBe(handle.port);
       expect(await logLines(fixture.logPath)).toContain(`SERVER_URL=${handle.url}`);
+      expect(handle.managedOpencodeExecution?.env).toContainEqual({ name: "TOON_BRIDGE_TOKEN", value: "<redacted>", redacted: true });
+      expect(JSON.stringify(handle.managedOpencodeExecution)).not.toContain(handle.config.token);
     } finally {
       await fixture.restore();
     }

@@ -73,6 +73,12 @@ const DESKTOP_CONFIG_REFRESH_MS = 5 * 60 * 1000;
 export const remoteControlPolicyRecoveryEvent = "jugglework:remote-control:policy-recovery";
 const REMOTE_POLICY_RECOVERY_DELAYS_MS = [0, 1_000, 2_000, 4_000, 8_000, 15_000, 30_000] as const;
 const DESKTOP_CONFIG_CACHE_PREFIX = "jugglework.den.desktopConfig:";
+const toonModelPolicyPushState = new Map<string, { revision: number; digest: string | null }>();
+function canonicalPolicy(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalPolicy).join(",")}]`;
+  if (value && typeof value === "object") return `{${Object.entries(value as Record<string, unknown>).filter(([, child]) => child !== undefined).sort(([left], [right]) => left.localeCompare(right)).map(([key, child]) => `${JSON.stringify(key)}:${canonicalPolicy(child)}`).join(",")}}`;
+  return JSON.stringify(value);
+}
 const DESKTOP_CONFIG_ITEMS = [
   ...desktopPolicyKeys,
   "allowedDesktopVersions",
@@ -556,6 +562,43 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
       cancelled = true;
     };
   }, [connectEnabled, loading]);
+
+  useEffect(() => {
+    if (loading) return;
+    let cancelled = false;
+    void (async () => {
+      const connection = await resolveJuggleWorkConnection();
+      if (cancelled || !connection.normalizedBaseUrl || !connection.resolvedHostToken) return;
+      const client = createJuggleWorkServerClient({ baseUrl: connection.normalizedBaseUrl, token: connection.resolvedToken, hostToken: connection.resolvedHostToken });
+      const workspaces = (await client.listWorkspaces()).items;
+      const settings = readDenSettings();
+      const signedIn = denAuth.status === "signed_in";
+      const policyFresh = signedIn && Boolean(remotePolicyValidation?.contextKey === currentRemotePolicyContextKey(denAuth.user?.id));
+      await Promise.all(workspaces.map(async (workspace) => {
+        const content = {
+          workspaceId: workspace.id,
+          signedIn,
+          policyFresh,
+          organizationId: signedIn ? settings.activeOrgId?.trim() || null : null,
+          userId: signedIn ? denAuth.user?.id?.trim() || null : null,
+          allowedModels: [...(config.allowedModels ?? [])],
+          ...(config.allowCustomProviders !== undefined ? { allowCustomProviders: config.allowCustomProviders } : {}),
+          ...(config.allowZenModel !== undefined ? { allowZenModel: config.allowZenModel } : {}),
+          validatedAt: policyFresh ? remotePolicyValidation?.validatedAt ?? new Date().toISOString() : null,
+        };
+        const bytes = new TextEncoder().encode(canonicalPolicy(content));
+        const digest = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), (byte) => byte.toString(16).padStart(2, "0")).join("");
+        const previous = toonModelPolicyPushState.get(workspace.id) ?? { revision: 0, digest: null };
+        if (previous.digest === digest) return;
+        const revision = Math.max(previous.revision + 1, Date.now());
+        toonModelPolicyPushState.set(workspace.id, { revision, digest: previous.digest });
+        await client.setToonModelPolicy({ ...content, revision, digest });
+        const current = toonModelPolicyPushState.get(workspace.id);
+        if (!cancelled && current?.revision === revision) toonModelPolicyPushState.set(workspace.id, { revision, digest });
+      }));
+    })().catch(() => null);
+    return () => { cancelled = true; };
+  }, [config.allowCustomProviders, config.allowZenModel, config.allowedModels, denAuth.status, denAuth.user?.id, loading, remotePolicyValidation]);
 
   // TIPS: 这是 GitHub 事件触发自动化 resolveAuth 的真实生产落点（见
   // apps/server/src/automation/github-event-auth-store.ts 和这次改动的 tasks.md 3.1）——

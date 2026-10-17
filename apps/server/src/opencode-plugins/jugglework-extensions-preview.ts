@@ -78,6 +78,15 @@ const videoJobArgsSchema = z.object({
   jobId: z.string().trim().min(1).describe("Video job id returned by jugglework_video_generate."),
 });
 
+const toonWorkspaceBridgeArgsSchema = z.object({
+  action: z.enum(["project.read", "canvas.read", "canvas.propose", "generation.prepare"]),
+  canvasId: z.string().trim().min(1).optional(),
+  proposal: z.record(z.string(), z.unknown()).optional(),
+}).strict().superRefine((value, ctx) => {
+  if (value.action === "canvas.read" && !value.canvasId) ctx.addIssue({ code: "custom", path: ["canvasId"], message: "canvasId is required for canvas.read" });
+  if (["canvas.propose", "generation.prepare"].includes(value.action) && !value.proposal) ctx.addIssue({ code: "custom", path: ["proposal"], message: "proposal is required for this action" });
+});
+
 async function callLocalExtension(
   extensionId: string,
   action: string,
@@ -343,6 +352,7 @@ function normalizeOpenCodeContext(value: unknown): OpenCodeContext {
   const agent = optionalStringProperty(nested, "agent");
   const sessionID = optionalStringProperty(nested, "sessionID");
   const messageID = optionalStringProperty(nested, "messageID");
+  const callID = optionalStringProperty(nested, "callID");
   const directory = optionalStringProperty(nested, "directory");
   const worktree = optionalStringProperty(nested, "worktree");
   const workspaceId = optionalStringProperty(nested, "workspaceId");
@@ -351,6 +361,7 @@ function normalizeOpenCodeContext(value: unknown): OpenCodeContext {
     ...(agent ? { agent } : {}),
     ...(sessionID ? { sessionID } : {}),
     ...(messageID ? { messageID } : {}),
+    ...(callID ? { callID } : {}),
     ...(directory ? { directory } : {}),
     ...(worktree ? { worktree } : {}),
     ...(workspaceId ? { workspaceId } : {}),
@@ -861,6 +872,10 @@ function serverToken(): string {
   return String(process.env.JUGGLEWORK_SERVER_TOKEN || "");
 }
 
+function toonBridgeToken(): string {
+  return String(process.env.TOON_BRIDGE_TOKEN || "");
+}
+
 function requireJuggleWorkServer(): { url: string; token: string } {
   const url = serverUrl();
   const token = serverToken();
@@ -978,6 +993,21 @@ async function postJson(path: string, body: ExtensionActionPayload | Record<stri
   return payload;
 }
 
+async function postToonBridge(body: Record<string, unknown>): Promise<unknown> {
+  const url = serverUrl();
+  const token = toonBridgeToken();
+  if (!url) throw new Error("Toon workspace bridge is only available when OpenCode is launched by JuggleWork.");
+  if (!token) throw new Error("TOON_BRIDGE_TOKEN is required for toon_workspace_bridge.");
+  const response = await fetch(url + "/experimental/toon-factory/assistant-bridge", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const payload = await parseResponse(response);
+  if (!response.ok) throw new Error(errorMessage(payload, "Toon workspace bridge call failed"));
+  return payload;
+}
+
 function contextPayload(context: OpenCodeContext) {
   return {
     agent: context.agent,
@@ -1035,6 +1065,19 @@ export const JuggleWorkExtensionsPreview = async (factoryInput?: unknown) => {
     output.system.push(...composeAgentInstructions(sections));
   },
   tool: {
+    toon_workspace_bridge: {
+      description: "Execute an explicit Toon project.read, canvas.read, canvas.propose, or generation.prepare action in the current project conversation. This bridge never performs protected workflow transitions or paid submission.",
+      args: toonWorkspaceBridgeArgsSchema.shape,
+      async execute(rawArgs: unknown, context: OpenCodeContext) {
+        const call = toonWorkspaceBridgeArgsSchema.parse(rawArgs);
+        const merged = { ...factoryContext, ...normalizeOpenCodeContext(context) };
+        const workspaceId = merged.workspaceId ?? merged.workspaceID;
+        const sessionId = merged.sessionID;
+        const toolCallId = merged.callID;
+        if (!workspaceId || !sessionId || !toolCallId) throw new Error("toon_workspace_bridge_scope_missing");
+        return JSON.stringify(await postToonBridge({ workspaceId, sessionId, toolCallId, call }), null, 2);
+      },
+    },
     jugglework_image_models_list: {
       description: "List locally configured ready image-generation models. Use this before Cloud search, skills, Pillow, SVG, canvas, or other fallbacks for image generation requests.",
       args: imageModelsListArgsSchema.shape,

@@ -4,13 +4,15 @@ import React from "react";
 import TestRenderer, { act } from "react-test-renderer";
 import { TOON_TEXT_OUTPUT_SCHEMAS, type ToonCanvas, type ToonEpisode, type ToonProjectResponse, type ToonTextJob } from "@jugglework/types/toon-factory";
 
-import { ToonFactoryWorkbench } from "../src/react-app/domains/toon-factory/toon-factory-workbench";
+import { JuggleWorkServerError } from "../src/app/lib/jugglework-server";
+import { fitToonCanvasViewport, ToonFactoryWorkbench } from "../src/react-app/domains/toon-factory/toon-factory-workbench";
 import { createEpisodeWorkflowSteps } from "../src/react-app/domains/toon-factory/toon-factory-workflow";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const NOW = "2026-10-17T10:00:00.000Z";
 const REVISION = "a".repeat(64);
+const notFound = () => new JuggleWorkServerError(404, "toon_factory_content_not_found", "not found");
 
 function projectResponse(): ToonProjectResponse {
   const episode: ToonEpisode = {
@@ -85,9 +87,9 @@ test("lists, creates, and opens workspace-backed projects", async () => {
     createToonProject: async (_workspaceId: string, input: unknown) => { createdInput = input; return response; },
     getToonProject: async () => response,
     updateToonProject: async () => response,
-    readToonCanvas: async () => ({ canvas: canvas(), revision: REVISION }),
+    readToonCanvas: async () => { throw notFound(); },
     writeToonCanvas: async (_workspaceId: string, _projectId: string, _canvasId: string, input: { canvas: ToonCanvas }) => ({ canvas: input.canvas, revision: "b".repeat(64) }),
-    readToonText: async () => ({ nodeId: "node", content: "", revision: REVISION }),
+    readToonText: async () => { throw notFound(); },
     writeToonText: async () => ({ nodeId: "node", content: "", revision: REVISION }),
     getToonModelCatalog: async () => modelCatalog,
   };
@@ -97,7 +99,10 @@ test("lists, creates, and opens workspace-backed projects", async () => {
     await waitForTestId(renderer!, "toon-project-project-1");
     await act(async () => { renderer!.root.findByProps({ "data-testid": "toon-project-project-1" }).props.onClick(); });
     expect(selected).toBe("project-1");
-    await act(async () => { renderer!.root.findByProps({ "data-testid": "toon-factory-new-project" }).props.onClick(); });
+    expect(renderer!.root.findByProps({ "data-testid": "toon-factory-home" })).toBeDefined();
+    expect(renderer!.root.findByProps({ "data-testid": "toon-project-grid" })).toBeDefined();
+    expect(renderer!.root.findByProps({ title: "Add files to the project and the initial assistant turn" }).props.disabled).toBeUndefined();
+    expect(renderer!.root.findByProps({ title: "Direct Toonflow conversion is not supported. JuggleWork never starts Toonflow's server or loads its runtime code." }).props.disabled).toBe(true);
     const inputs = renderer!.root.findAllByType("input");
     await act(async () => {
       inputs[0]!.props.onChange({ target: { value: "New series" } });
@@ -106,6 +111,405 @@ test("lists, creates, and opens workspace-backed projects", async () => {
     await act(async () => { await renderer!.root.findByProps({ "data-testid": "toon-factory-create-form" }).props.onSubmit({ preventDefault() {} }); });
     expect(createdInput).toEqual({ name: "New series", directory: "toons/new-series" });
     expect(selected).toBe("project-1");
+  } finally {
+    await act(async () => { renderer!.unmount(); });
+  }
+});
+
+test("initializes a v2 idea with attachments in the project asset catalog and first assistant turn", async () => {
+  let uploadInput: { file: File; metadata: Record<string, unknown> } | null = null;
+  let assistantInput: Record<string, unknown> | null = null;
+  let selected: string | null = null;
+  const client = {
+    ...textJobClient,
+    baseUrl: "http://v2-home.test",
+    listToonProjects: async () => ({ schemaVersion: 1 as const, items: [] }),
+    listToonWorkspaceProjects: async () => ({ schemaVersion: 2 as const, items: [] }),
+    getToonWorkspaceFeatures: async () => ({ advancedWorkspace: true, v2Read: true as const, v2Export: true as const, automaticDowngrade: false as const, toonflowImport: "disabled" as const }),
+    initializeToonWorkspaceProject: async () => ({ operationId: "home-source", payloadHash: REVISION, status: "committed" as const, origin: "human-ui" as const, actor: { kind: "human" as const }, affected: [{ kind: "project" as const, id: "toon-home" }], revisions: {}, committedAt: NOW }),
+    executeToonWorkspaceCommand: async () => ({ operationId: "model", payloadHash: REVISION, status: "committed" as const, origin: "human-ui" as const, actor: { kind: "human" as const }, affected: [], revisions: {}, committedAt: NOW }),
+    uploadToonProjectAsset: async (_workspaceId: string, _projectId: string, file: File, metadata: Record<string, unknown>) => { uploadInput = { file, metadata }; return { operationId: String(metadata.operationId), payloadHash: REVISION, status: "committed" as const, origin: "human-ui" as const, actor: { kind: "human" as const }, affected: [{ kind: "asset" as const, id: String(metadata.assetId) }], revisions: {}, result: { asset: { id: String(metadata.assetId), title: file.name, checksum: REVISION, mimeType: file.type } }, committedAt: NOW }; },
+    createToonAssistantConversation: async (_workspaceId: string, _projectId: string, input: any) => ({ id: "conversation", projectId: "toon-home", title: "Attached idea", model: input.model, visibility: "toon_project_assistant" as const, archived: false, createdAt: NOW, updatedAt: NOW }),
+    sendToonAssistantMessage: async (_workspaceId: string, _projectId: string, _conversationId: string, input: Record<string, unknown>) => { assistantInput = input; return { accepted: true, turnId: String(input.turnId), contextDiagnostics: [] }; },
+    createToonProject: async () => projectResponse(),
+    getToonProject: async () => projectResponse(),
+    updateToonProject: async () => projectResponse(),
+    readToonCanvas: async () => ({ canvas: canvas(), revision: REVISION }),
+    writeToonCanvas: async () => ({ canvas: canvas(), revision: REVISION }),
+    readToonText: async () => { throw notFound(); },
+    writeToonText: async () => ({ nodeId: "node", content: "", revision: REVISION }),
+    getToonModelCatalog: async () => modelCatalog,
+  };
+  const textModels = [{ providerID: "provider", modelID: "text", providerName: "Provider", modelName: "Text", providerSource: "api" as const }];
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = render(<ToonFactoryWorkbench {...workbenchProps} textModels={textModels} client={client} workspaceId="v2-home" projectId={null} visible sidebarOpen onSelectProject={(id) => { selected = id; }} />); });
+  try {
+    await waitForTestId(renderer!, "toon-inspiration-composer");
+    const inputs = renderer!.root.findAllByType("input");
+    await act(async () => {
+      inputs.find((input) => input.props["aria-label"] === "Project name")!.props.onChange({ target: { value: "Attached idea" } });
+      inputs.find((input) => input.props["aria-label"] === "Project directory")!.props.onChange({ target: { value: "toons/attached" } });
+      renderer!.root.findByProps({ "data-testid": "toon-inspiration-input" }).props.onChange({ target: { value: "Build from this reference" } });
+      renderer!.root.findAllByType("select").find((select) => select.props.value === "")!.props.onChange({ target: { value: "provider\u0000text" } });
+      renderer!.root.findAllByType("input").find((input) => input.props.type === "file")!.props.onChange({ target: { files: [new File(["reference"], "reference.txt", { type: "text/plain" })] }, currentTarget: { value: "" } });
+    });
+    await act(async () => { await renderer!.root.findByProps({ "data-testid": "toon-factory-create-form" }).props.onSubmit({ preventDefault() {} }); });
+    expect(uploadInput?.file.name).toBe("reference.txt");
+    expect(uploadInput?.metadata).toMatchObject({ filename: "reference.txt", origin: "imported", actor: { kind: "human" } });
+    expect(assistantInput).toMatchObject({ text: "Build from this reference", model: { kind: "text", providerID: "provider", modelID: "text" }, attachments: [{ kind: "asset", label: "reference.txt", revision: REVISION }] });
+    expect(selected).toBe("toon-home");
+  } finally {
+    await act(async () => { renderer!.unmount(); });
+  }
+});
+
+test("offers a project-home action for project load errors and zero-episode projects", async () => {
+  const empty = projectResponse();
+  empty.project = { ...empty.project, episodes: [] };
+  const selected: Array<string | null> = [];
+  let failLoad = true;
+  const client = {
+    ...textJobClient,
+    baseUrl: "http://project-state.test",
+    listToonProjects: async () => ({ schemaVersion: 1 as const, items: [] }),
+    createToonProject: async () => empty,
+    getToonProject: async () => { if (failLoad) throw new Error("load failed"); return empty; },
+    updateToonProject: async () => empty,
+    readToonCanvas: async () => ({ canvas: canvas(), revision: REVISION }),
+    writeToonCanvas: async () => ({ canvas: canvas(), revision: REVISION }),
+    readToonText: async () => { throw notFound(); },
+    writeToonText: async () => ({ nodeId: "node", content: "", revision: REVISION }),
+    getToonModelCatalog: async () => modelCatalog,
+  };
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = render(<ToonFactoryWorkbench {...workbenchProps} client={client} workspaceId="project-state" projectId="project-1" visible sidebarOpen onSelectProject={(id) => selected.push(id)} />); });
+  try {
+    await waitForTestId(renderer!, "toon-factory-workbench");
+    await waitForTestId(renderer!, "toon-project-error-back");
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "toon-project-error-back" }).props.onClick(); });
+    expect(selected).toEqual([null]);
+    failLoad = false;
+    await act(async () => { await renderer!.root.findByProps({ "data-testid": "toon-main-error-retry" }).props.onClick(); });
+    await waitForTestId(renderer!, "toon-zero-episode-back");
+  } finally {
+    await act(async () => { renderer!.unmount(); });
+  }
+});
+
+test("persists the home inspiration into the first episode source node without changing the create protocol", async () => {
+  const created = projectResponse();
+  created.project = { ...created.project, episodes: [] };
+  let createInput: unknown = null;
+  let writtenText: { nodeId: string; content: string } | null = null;
+  let updatedProject: ToonProjectResponse["project"] | null = null;
+  const client = {
+    ...textJobClient,
+    baseUrl: "http://intent.test",
+    listToonProjects: async () => ({ schemaVersion: 1 as const, items: [] }),
+    createToonProject: async (_workspaceId: string, input: unknown) => { createInput = input; return created; },
+    getToonProject: async () => created,
+    updateToonProject: async (_workspaceId: string, _projectId: string, input: { project: ToonProjectResponse["project"] }) => { updatedProject = input.project; return { ...created, project: input.project, revision: "b".repeat(64) }; },
+    readToonCanvas: async () => { throw notFound(); },
+    writeToonCanvas: async (_workspaceId: string, _projectId: string, _canvasId: string, input: { canvas: ToonCanvas }) => ({ canvas: input.canvas, revision: REVISION }),
+    readToonText: async () => { throw notFound(); },
+    writeToonText: async (_workspaceId: string, _projectId: string, nodeId: string, input: { content: string }) => { writtenText = { nodeId, content: input.content }; return { nodeId, content: input.content, revision: "c".repeat(64) }; },
+    getToonModelCatalog: async () => modelCatalog,
+  };
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = render(<ToonFactoryWorkbench {...workbenchProps} client={client} workspaceId="intent-workspace" projectId={null} visible sidebarOpen onSelectProject={() => {}} />); });
+  try {
+    await waitForTestId(renderer!, "toon-inspiration-composer");
+    const inputs = renderer!.root.findAllByType("input");
+    await act(async () => {
+      inputs[0]!.props.onChange({ target: { value: "Moon Harbor" } });
+      inputs[1]!.props.onChange({ target: { value: "toons/moon-harbor" } });
+      renderer!.root.findByProps({ "data-testid": "toon-inspiration-input" }).props.onChange({ target: { value: "A courier discovers a city hidden in moonlight." } });
+    });
+    await act(async () => { await renderer!.root.findByProps({ "data-testid": "toon-factory-create-form" }).props.onSubmit({ preventDefault() {} }); });
+    expect(createInput).toEqual({ name: "Moon Harbor", directory: "toons/moon-harbor" });
+    expect(writtenText?.content).toBe("A courier discovers a city hidden in moonlight.");
+    expect(updatedProject?.episodes).toHaveLength(1);
+    expect(updatedProject?.episodes[0]?.steps?.find((step) => step.id === "source-material")?.outputRevision).toBe("c".repeat(64));
+  } finally {
+    await act(async () => { renderer!.unmount(); });
+  }
+});
+
+test("retains the inspiration draft when first-episode initialization fails", async () => {
+  const created = projectResponse();
+  created.project = { ...created.project, episodes: [] };
+  let createCalls = 0;
+  let getCalls = 0;
+  let setupFails = true;
+  const client = {
+    ...textJobClient,
+    baseUrl: "http://retained-intent.test",
+    listToonProjects: async () => ({ schemaVersion: 1 as const, items: [] }),
+    createToonProject: async () => { createCalls += 1; return created; },
+    getToonProject: async () => { getCalls += 1; return created; },
+    updateToonProject: async () => created,
+    readToonCanvas: async () => { throw notFound(); },
+    writeToonCanvas: async (_workspaceId: string, _projectId: string, _canvasId: string, input: { canvas: ToonCanvas }) => { if (setupFails) throw new Error("canvas setup failed"); return { canvas: input.canvas, revision: REVISION }; },
+    readToonText: async () => { throw notFound(); },
+    writeToonText: async () => ({ nodeId: "node", content: "", revision: REVISION }),
+    getToonModelCatalog: async () => modelCatalog,
+  };
+  const ui = () => <ToonFactoryWorkbench {...workbenchProps} client={client} workspaceId="retained-intent-workspace" projectId={null} visible sidebarOpen onSelectProject={() => {}} />;
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = render(ui()); });
+  await waitForTestId(renderer!, "toon-inspiration-composer");
+  const inputs = renderer!.root.findAllByType("input");
+  await act(async () => {
+    inputs[0]!.props.onChange({ target: { value: "Retained" } });
+    inputs[1]!.props.onChange({ target: { value: "toons/retained" } });
+    renderer!.root.findByProps({ "data-testid": "toon-inspiration-input" }).props.onChange({ target: { value: "Do not lose this intent" } });
+  });
+  await act(async () => { await renderer!.root.findByProps({ "data-testid": "toon-factory-create-form" }).props.onSubmit({ preventDefault() {} }); });
+  await act(async () => { renderer!.unmount(); });
+
+  let restored: TestRenderer.ReactTestRenderer;
+  await act(async () => { restored = render(ui()); });
+  try {
+    await waitForTestId(restored!, "toon-inspiration-input");
+    expect(restored!.root.findByProps({ "data-testid": "toon-inspiration-input" }).props.value).toBe("Do not lose this intent");
+    setupFails = false;
+    await act(async () => { await restored!.root.findByProps({ "data-testid": "toon-factory-create-form" }).props.onSubmit({ preventDefault() {} }); });
+    expect(createCalls).toBe(1);
+    expect(getCalls).toBe(2);
+  } finally {
+    await act(async () => { restored!.unmount(); });
+  }
+});
+
+for (const uncertainStage of ["canvas", "text", "project-update"] as const) {
+  test(`recovers idempotently when the ${uncertainStage} response fails after success`, async () => {
+    const legacyEpisode = projectResponse().project.episodes[0]!;
+    let current = { ...projectResponse(), project: { ...projectResponse().project, episodes: [legacyEpisode] } };
+    let storedCanvas = canvas();
+    let storedText: { nodeId: string; content: string; revision: string } | null = null;
+    const calls = { create: 0, canvas: 0, text: 0, update: 0 };
+    const failed = new Set<string>();
+    const failOnceAfterSuccess = (stage: string) => {
+      if (stage !== uncertainStage || failed.has(stage)) return;
+      failed.add(stage);
+      throw new Error(`${stage} response lost`);
+    };
+    const client = {
+      ...textJobClient,
+      baseUrl: `http://uncertain-${uncertainStage}.test`,
+      listToonProjects: async () => ({ schemaVersion: 1 as const, items: [{ id: current.project.id, name: current.project.name, directory: current.directory, updatedAt: current.project.updatedAt, episodeCount: current.project.episodes.length, revision: current.revision }] }),
+      createToonProject: async () => { calls.create += 1; current = { ...current, project: { ...current.project, episodes: [legacyEpisode] } }; return current; },
+      getToonProject: async () => current,
+      updateToonProject: async (_workspaceId: string, _projectId: string, input: { project: ToonProjectResponse["project"] }) => {
+        calls.update += 1;
+        current = { ...current, project: input.project, revision: "d".repeat(64) };
+        failOnceAfterSuccess("project-update");
+        return current;
+      },
+      readToonCanvas: async () => ({ canvas: storedCanvas, revision: "b".repeat(64) }),
+      writeToonCanvas: async (_workspaceId: string, _projectId: string, _canvasId: string, input: { canvas: ToonCanvas }) => {
+        calls.canvas += 1;
+        storedCanvas = input.canvas;
+        failOnceAfterSuccess("canvas");
+        return { canvas: storedCanvas, revision: "b".repeat(64) };
+      },
+      readToonText: async () => {
+        if (!storedText) throw notFound();
+        return storedText;
+      },
+      writeToonText: async (_workspaceId: string, _projectId: string, nodeId: string, input: { content: string }) => {
+        calls.text += 1;
+        storedText = { nodeId, content: input.content, revision: "c".repeat(64) };
+        failOnceAfterSuccess("text");
+        return storedText;
+      },
+      getToonModelCatalog: async () => modelCatalog,
+    };
+    const ui = () => <ToonFactoryWorkbench {...workbenchProps} client={client} workspaceId={`uncertain-${uncertainStage}`} projectId={null} visible sidebarOpen onSelectProject={() => {}} />;
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => { renderer = render(ui()); });
+    try {
+      await waitForTestId(renderer!, "toon-inspiration-composer");
+      const inputs = renderer!.root.findAllByType("input");
+      await act(async () => {
+        inputs[0]!.props.onChange({ target: { value: "Recovered" } });
+        inputs[1]!.props.onChange({ target: { value: `toons/recovered-${uncertainStage}` } });
+        renderer!.root.findByProps({ "data-testid": "toon-inspiration-input" }).props.onChange({ target: { value: "Recover this exact intent" } });
+      });
+      await act(async () => { await renderer!.root.findByProps({ "data-testid": "toon-factory-create-form" }).props.onSubmit({ preventDefault() {} }); });
+      expect(calls).toEqual({ create: 1, canvas: 1, text: 1, update: 1 });
+      expect(current.project.episodes.filter((episode) => episode.id === legacyEpisode.id)).toHaveLength(1);
+      expect(current.project.episodes).toHaveLength(2);
+      expect(storedCanvas.nodes.filter((node) => node.kind === "text")).toHaveLength(1);
+      expect(storedText?.content).toBe("Recover this exact intent");
+    } finally {
+      await act(async () => { renderer!.unmount(); });
+    }
+  });
+}
+
+test("does not navigate after creation when the page became hidden and offers continuation on return", async () => {
+  const response = projectResponse();
+  response.project = { ...response.project, episodes: [] };
+  let resolveCreate: ((value: ToonProjectResponse) => void) | null = null;
+  const createPromise = new Promise<ToonProjectResponse>((resolve) => { resolveCreate = resolve; });
+  const selected: Array<string | null> = [];
+  const client = {
+    ...textJobClient,
+    baseUrl: "http://hidden-create.test",
+    listToonProjects: async () => ({ schemaVersion: 1 as const, items: [] }),
+    createToonProject: async () => createPromise,
+    getToonProject: async () => response,
+    updateToonProject: async () => response,
+    readToonCanvas: async () => ({ canvas: canvas(), revision: REVISION }),
+    writeToonCanvas: async () => ({ canvas: canvas(), revision: REVISION }),
+    readToonText: async () => { throw notFound(); },
+    writeToonText: async () => ({ nodeId: "node", content: "", revision: REVISION }),
+    getToonModelCatalog: async () => modelCatalog,
+  };
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } } });
+  const ui = (visible: boolean) => <QueryClientProvider client={queryClient}><ToonFactoryWorkbench {...workbenchProps} client={client} workspaceId="hidden-create" projectId={null} visible={visible} sidebarOpen onSelectProject={(id) => selected.push(id)} /></QueryClientProvider>;
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(ui(true)); });
+  try {
+    await waitForTestId(renderer!, "toon-inspiration-composer");
+    const inputs = renderer!.root.findAllByType("input");
+    await act(async () => {
+      inputs[0]!.props.onChange({ target: { value: "Background project" } });
+      inputs[1]!.props.onChange({ target: { value: "toons/background" } });
+    });
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "toon-factory-create-form" }).props.onSubmit({ preventDefault() {} }); });
+    await act(async () => { renderer!.update(ui(false)); resolveCreate!(response); await createPromise; });
+    expect(selected).toEqual([]);
+    await act(async () => { renderer!.update(ui(true)); });
+    await waitForTestId(renderer!, "toon-project-created");
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "toon-project-created" }).findByType("button").props.onClick(); });
+    expect(selected).toEqual(["project-1"]);
+  } finally {
+    await act(async () => { renderer!.unmount(); });
+  }
+});
+
+test("resets and restores the keyed home draft when the workspace or endpoint changes", async () => {
+  const baseClient = {
+    ...textJobClient,
+    listToonProjects: async () => ({ schemaVersion: 1 as const, items: [] }),
+    createToonProject: async () => projectResponse(),
+    getToonProject: async () => projectResponse(),
+    updateToonProject: async () => projectResponse(),
+    readToonCanvas: async () => ({ canvas: canvas(), revision: REVISION }),
+    writeToonCanvas: async () => ({ canvas: canvas(), revision: REVISION }),
+    readToonText: async () => { throw notFound(); },
+    writeToonText: async () => ({ nodeId: "node", content: "", revision: REVISION }),
+    getToonModelCatalog: async () => modelCatalog,
+  };
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } } });
+  const ui = (workspaceId: string, baseUrl = "http://scope-draft.test") => <QueryClientProvider client={queryClient}><ToonFactoryWorkbench {...workbenchProps} client={{ ...baseClient, baseUrl }} workspaceId={workspaceId} projectId={null} visible sidebarOpen onSelectProject={() => {}} /></QueryClientProvider>;
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(ui("scope-one")); });
+  try {
+    await waitForTestId(renderer!, "toon-inspiration-input");
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "toon-inspiration-input" }).props.onChange({ target: { value: "only workspace one" } }); });
+    await act(async () => { renderer!.update(ui("scope-two")); });
+    expect(renderer!.root.findByProps({ "data-testid": "toon-inspiration-input" }).props.value).toBe("");
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "toon-inspiration-input" }).props.onChange({ target: { value: "only workspace two" } }); });
+    await act(async () => { renderer!.update(ui("scope-one", "http://another-endpoint.test")); });
+    expect(renderer!.root.findByProps({ "data-testid": "toon-inspiration-input" }).props.value).toBe("");
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "toon-inspiration-input" }).props.onChange({ target: { value: "only endpoint two" } }); });
+    await act(async () => { renderer!.update(ui("scope-one")); });
+    expect(renderer!.root.findByProps({ "data-testid": "toon-inspiration-input" }).props.value).toBe("only workspace one");
+  } finally {
+    await act(async () => { renderer!.unmount(); });
+  }
+});
+
+test("supports the floating assistant, empty-canvas actions, double-click creation, and real zoom controls", async () => {
+  const response = projectResponse();
+  const writes: ToonCanvas[] = [];
+  const client = {
+    ...textJobClient,
+    baseUrl: "http://workspace-ui.test",
+    listToonProjects: async () => ({ schemaVersion: 1 as const, items: [{ id: "project-1", name: "Series", directory: "toons/series", updatedAt: NOW, episodeCount: 1, revision: REVISION }] }),
+    createToonProject: async () => response,
+    getToonProject: async () => response,
+    updateToonProject: async () => response,
+    readToonCanvas: async () => ({ canvas: canvas(), revision: REVISION }),
+    writeToonCanvas: async (_workspaceId: string, _projectId: string, _canvasId: string, input: { canvas: ToonCanvas }) => { writes.push(input.canvas); return { canvas: input.canvas, revision: REVISION }; },
+    readToonText: async () => ({ nodeId: "node", content: "", revision: REVISION }),
+    writeToonText: async () => ({ nodeId: "node", content: "", revision: REVISION }),
+    getToonModelCatalog: async () => modelCatalog,
+  };
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = render(<ToonFactoryWorkbench {...workbenchProps} client={client} workspaceId="workspace-ui" projectId="project-1" visible sidebarOpen onSelectProject={() => {}} />); });
+  try {
+    await waitForTestId(renderer!, "toon-canvas-empty");
+    expect(renderer!.root.findByProps({ "data-testid": "toon-project-workspace" })).toBeDefined();
+    expect(renderer!.root.findByProps({ "data-testid": "toon-assistant-panel" })).toBeDefined();
+    const emptyActions = renderer!.root.findByProps({ "data-testid": "toon-canvas-empty" }).findAllByType("button");
+    expect(emptyActions).toHaveLength(2);
+    expect(emptyActions.every((button) => button.props.disabled)).toBe(true);
+
+    const controls = renderer!.root.findByProps({ "data-testid": "toon-canvas-controls" });
+    expect(renderer!.root.findByProps({ title: "Canvas help is not available yet." }).props.disabled).toBe(true);
+    await act(async () => { controls.findByProps({ "data-testid": "toon-canvas-zoom-in" }).props.onClick(); });
+    expect(renderer!.root.findByProps({ "data-testid": "toon-canvas-zoom-reset" }).children.join("")).toBe("130%");
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "toon-canvas-zoom-out" }).props.onClick(); });
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "toon-canvas-zoom-reset" }).props.onClick(); });
+    expect(renderer!.root.findByProps({ "data-testid": "toon-canvas-zoom-reset" }).children.join("")).toBe("100%");
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "toon-canvas-fit" }).props.onClick(); });
+
+    const assistantToggle = renderer!.root.findByProps({ "data-testid": "toon-assistant-toggle" });
+    await act(async () => { assistantToggle.props.onClick(); });
+    expect(renderer!.root.findAllByProps({ "data-testid": "toon-assistant-panel" })).toHaveLength(0);
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "toon-assistant-toggle" }).props.onClick(); });
+    expect(renderer!.root.findByProps({ "data-testid": "toon-assistant-panel" })).toBeDefined();
+
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "toon-node-canvas" }).props.onDoubleClick({ target: { closest: () => null } }); });
+    expect(renderer!.root.findByProps({ "data-testid": "toon-node-text" })).toBeDefined();
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 700)); });
+    expect(writes.length).toBeGreaterThan(0);
+  } finally {
+    await act(async () => { renderer!.unmount(); });
+  }
+});
+
+test("fits widely distributed nodes into the available centered viewport", () => {
+  const nodes = [
+    { id: "left", kind: "text" as const, position: { x: -900, y: -100 }, handles: [], data: { contentRef: "content/nodes/left.md" as const } },
+    { id: "right", kind: "text" as const, position: { x: 1_900, y: 500 }, handles: [], data: { contentRef: "content/nodes/right.md" as const } },
+  ];
+  const viewport = fitToonCanvasViewport(nodes, 1_200, 800, 360);
+  expect(viewport.zoom).toBeCloseTo(712 / 3_020, 5);
+  const left = nodes[0]!.position.x * viewport.zoom + viewport.x;
+  const right = (nodes[1]!.position.x + 220) * viewport.zoom + viewport.x;
+  expect(left).toBeGreaterThanOrEqual(63);
+  expect(right).toBeLessThanOrEqual(1_200 - 360 - 63);
+  expect((left + right) / 2).toBeCloseTo((1_200 - 360) / 2, 5);
+});
+
+test("adds a text node when building the canvas even if another node already exists", async () => {
+  const response = projectResponse();
+  const imageNode = { id: "image", kind: "image-generation" as const, position: { x: 20, y: 30 }, handles: [], data: { label: "Image" } };
+  const client = {
+    ...textJobClient,
+    baseUrl: "http://assistant-text.test",
+    listToonProjects: async () => ({ schemaVersion: 1 as const, items: [] }),
+    createToonProject: async () => response,
+    getToonProject: async () => response,
+    updateToonProject: async () => response,
+    readToonCanvas: async () => ({ canvas: { ...canvas(), nodes: [imageNode] }, revision: REVISION }),
+    writeToonCanvas: async (_workspaceId: string, _projectId: string, _canvasId: string, input: { canvas: ToonCanvas }) => ({ canvas: input.canvas, revision: REVISION }),
+    readToonText: async () => { throw notFound(); },
+    writeToonText: async () => ({ nodeId: "node", content: "", revision: REVISION }),
+    getToonModelCatalog: async () => modelCatalog,
+  };
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = render(<ToonFactoryWorkbench {...workbenchProps} client={client} workspaceId="assistant-workspace" projectId="project-1" visible sidebarOpen onSelectProject={() => {}} />); });
+  try {
+    await waitForTestId(renderer!, "toon-node-image-generation");
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "toon-assistant-build-canvas" }).props.onClick(); });
+    expect(renderer!.root.findAllByProps({ "data-testid": "toon-node-text" })).toHaveLength(1);
+    expect(renderer!.root.findAllByProps({ "data-testid": "toon-node-image-generation" })).toHaveLength(1);
   } finally {
     await act(async () => { renderer!.unmount(); });
   }
@@ -134,6 +538,8 @@ test("restores canvas viewport and selection state, then debounces a typed canva
     await waitForTestId(renderer!, "toon-node-text");
     expect(renderer!.root.findByProps({ "data-testid": "toon-node-text" })).toBeDefined();
     expect(renderer!.root.findByProps({ "data-testid": "toon-text-editor" })).toBeDefined();
+    const toolbar = renderer!.root.findByProps({ "data-testid": "toon-canvas-bottom-toolbar" });
+    await act(async () => { toolbar.findByProps({ "aria-label": "Add node" }).props.onClick(); });
     await act(async () => { renderer!.root.findByProps({ "data-testid": "toon-add-node-video-generation" }).props.onClick(); });
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 750)); });
     expect(writes).toHaveLength(1);
@@ -239,6 +645,8 @@ test("shows blocking model states and persists an explicit selection with the pr
   await act(async () => { renderer = render(<ToonFactoryWorkbench {...workbenchProps} textModels={textModels} client={client} workspaceId="workspace-1" projectId="project-1" visible sidebarOpen onSelectProject={() => {}} />); });
   try {
     await waitForTestId(renderer!, "toon-model-settings");
+    expect(renderer!.root.findByProps({ "data-testid": "toon-factory-stage-images" }).props["aria-label"]).toBe("Images: In progress");
+    expect(renderer!.root.findByProps({ "data-testid": "toon-factory-stage-images" }).props.title).toBe("Images");
     await act(async () => { renderer!.root.findByProps({ "data-testid": "toon-factory-stage-images" }).props.onClick(); });
     await waitForTestId(renderer!, "toon-model-block-no_image_model_available");
     expect(renderer!.root.findByProps({ "data-testid": "toon-model-block-no_image_model_available" })).toBeDefined();
@@ -449,7 +857,7 @@ test("previews an exact media plan and invalidates scoped authorization when the
     }),
     authorizeToonMediaJob: async (_workspaceId: string, _projectId: string, input: Record<string, unknown>) => {
       authorizedInput = input;
-      return { requestHash: "b".repeat(64), authorization: { id: "authorization-1", scopeHash: "b".repeat(64), authorizedAt: NOW } };
+      return { requestSnapshot: { ...input, projectId: "project-1" }, requestHash: "b".repeat(64), planFingerprint: "b".repeat(64), planSummary: (input as any).plan, authorizationId: "authorization-1", expiresAt: NOW };
     },
   };
   let renderer: TestRenderer.ReactTestRenderer;
@@ -474,6 +882,46 @@ test("previews an exact media plan and invalidates scoped authorization when the
     expect(renderer!.root.findByProps({ "data-testid": "toon-media-submit" }).props.disabled).toBe(true);
   } finally {
     await act(async () => { renderer!.unmount(); });
+  }
+});
+
+test("ignores an authorization response after the exact media plan changes", async () => {
+  const response = projectResponse();
+  response.project.episodes[0]!.steps = response.project.episodes[0]!.steps!.map((step) => ["storyboard", "asset-plan"].includes(step.id) ? { ...step, status: "approved" } : step);
+  response.project.selectedModels = { image: { kind: "image", providerID: "images", modelID: "painter" } };
+  const imageNode = { id: "image-node", kind: "image-generation" as const, position: { x: 20, y: 30 }, handles: [], data: { label: "Hero" } };
+  let resolveAuthorization!: (value: any) => void;
+  const client = {
+    ...textJobClient,
+    baseUrl: "http://127.0.0.1:8787",
+    listToonProjects: async () => ({ schemaVersion: 1 as const, items: [{ id: "project-1", name: "Series", directory: "toons/series", updatedAt: NOW, episodeCount: 1, revision: REVISION }] }),
+    createToonProject: async () => response,
+    getToonProject: async () => response,
+    updateToonProject: async () => response,
+    readToonCanvas: async () => ({ canvas: { ...canvas(), nodes: [imageNode], selectedNodeId: imageNode.id }, revision: REVISION }),
+    writeToonCanvas: async (_workspaceId: string, _projectId: string, _canvasId: string, input: { canvas: ToonCanvas }) => ({ canvas: input.canvas, revision: REVISION }),
+    readToonText: async () => ({ nodeId: "image-node", content: "", revision: REVISION }),
+    writeToonText: async () => ({ nodeId: "image-node", content: "", revision: REVISION }),
+    getToonModelCatalog: async () => ({ image: { mode: "text-to-image" as const, models: [{ ref: { providerID: "images", modelID: "painter" }, providerName: "Images", modelName: "Painter", capabilities: { protocol: "openai" as const, textToImage: true } }] }, video: modelCatalog.video }),
+    authorizeToonMediaJob: async (_workspaceId: string, _projectId: string, input: any) => new Promise((resolve) => { resolveAuthorization = resolve; }).then(() => ({ requestSnapshot: { ...input, projectId: "project-1" }, requestHash: "b".repeat(64), planFingerprint: "b".repeat(64), planSummary: input.plan, authorizationId: "late-authorization", expiresAt: NOW })),
+  };
+  let renderer!: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = render(<ToonFactoryWorkbench {...workbenchProps} client={client} workspaceId="workspace-1" projectId="project-1" visible sidebarOpen onSelectProject={() => {}} />); });
+  try {
+    await waitForTestId(renderer, "toon-node-image-generation");
+    await act(async () => { renderer.root.findByProps({ "data-testid": "toon-factory-stage-images" }).props.onClick(); });
+    await waitForTestId(renderer, "toon-media-generation");
+    await act(async () => {
+      renderer.root.findByProps({ "data-testid": "toon-media-object" }).props.onChange({ target: { value: "Hero" } });
+      renderer.root.findByProps({ "data-testid": "toon-media-prompt" }).props.onChange({ target: { value: "Original" } });
+    });
+    await act(async () => { renderer.root.findByProps({ "data-testid": "toon-media-authorize" }).props.onClick(); });
+    await act(async () => { renderer.root.findByProps({ "data-testid": "toon-media-prompt" }).props.onChange({ target: { value: "Changed while authorizing" } }); });
+    await act(async () => { resolveAuthorization(undefined); await new Promise((resolve) => setTimeout(resolve, 0)); });
+    expect(renderer.root.findByProps({ "data-testid": "toon-media-submit" }).props.disabled).toBe(true);
+    expect(renderer.root.findAllByProps({ "data-testid": "toon-media-authorized-plan-summary" })).toHaveLength(0);
+  } finally {
+    await act(async () => { renderer.unmount(); });
   }
 });
 

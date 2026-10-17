@@ -204,6 +204,12 @@ describe("Toon Factory project routes", () => {
     ({ base, token } = await startJuggleWorkServer(root, true));
     const response = await jsonRequest(base, token, `/workspace/ws_1/toon-factory/projects/${created.project.id}`);
     expect(response.response.status).toBe(200);
+    const rejectedAssistantWrite = await jsonRequest(base, token, `/workspace/ws_1/toon-factory/v2/projects/${created.project.id}/assistant/conversations`, {
+      method: "POST",
+      body: JSON.stringify({ model: { kind: "text", providerID: "provider", modelID: "model" } }),
+    });
+    expect(rejectedAssistantWrite.response.status).toBe(403);
+    expect(rejectedAssistantWrite.body).toMatchObject({ code: "read_only" });
     await Bun.sleep(25);
     const after = await stat(join(root, "toons/demo/toon-project.json"));
     expect(after.mtimeMs).toBe(before.mtimeMs);
@@ -391,8 +397,8 @@ describe("Toon Factory project routes", () => {
         authorization: { id: "forged-authorization", scopeHash: "a".repeat(64), authorizedAt: now },
       }),
     });
-    expect(bypassedMediaCreate.response.status).toBe(409);
-    expect(bypassedMediaCreate.body.code).toBe("workflow_prerequisite_incomplete");
+    expect(bypassedMediaCreate.response.status).toBe(400);
+    expect(bypassedMediaCreate.body.code).toBe("invalid_toon_media_job");
 
     const createdJob = await jsonRequest(base, token, `/workspace/ws_1/toon-factory/projects/${created.project.id}/text-jobs`, {
       method: "POST",

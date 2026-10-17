@@ -11,6 +11,8 @@ import {
 import { buildSessionAncestry, type SessionAncestryRecord } from "../session-ancestry.js";
 import type { ServerConfig, TokenScope, WorkspaceInfo } from "../types.js";
 import { addRoute, type RequestContext, type Route } from "./registry.js";
+import { resolveSessionVisibility } from "../toon-factory/transient-session-registry.js";
+import type { ToonWorkspaceRuntimeStore } from "../toon-factory/workspace-runtime-store.js";
 
 type JsonResponse = (data: unknown, status?: number) => Response;
 type WorkspaceOpencodeClient = ReturnType<typeof createOpencodeClient>;
@@ -29,6 +31,7 @@ interface RegisterInteractionRoutesOptions {
   resolveWorkspace: (config: ServerConfig, id: string) => Promise<WorkspaceInfo>;
   createWorkspaceOpencodeClient: (config: ServerConfig, workspace: WorkspaceInfo) => WorkspaceOpencodeClient;
   interactionResolutions: InteractionResolutionCoordinator;
+  workspaceRuntime?: ToonWorkspaceRuntimeStore;
   /** Optional shared approval ceiling applied to manual one-time approvals. */
   evaluatePermissionCeiling?: (
     workspaceId: string,
@@ -277,7 +280,10 @@ export async function readInteractionSnapshot(
   client: WorkspaceOpencodeClient,
   requestedSessionId: string,
   includeDescendants: boolean,
-) {  const snapshotStartedAt = Date.now();
+  workspaceId?: string,
+  workspaceRuntime?: ToonWorkspaceRuntimeStore,
+) {
+  const snapshotStartedAt = Date.now();
   const [sessionResult, legacyPermissionResult, legacyQuestionResult] = await Promise.all([
     client.session.list(),
     client.permission.list(),
@@ -285,7 +291,35 @@ export async function readInteractionSnapshot(
   ]);
   const rawSessions = resultItems(sessionResult, false);
   if (!rawSessions) throwUpstream(sessionResult, "/session");
-  const ancestry = buildSessionAncestry(rawSessions.flatMap((value) => {
+  const sessionsById = new Map(rawSessions.flatMap((value) => {
+    const record = sessionAncestryRecord(value);
+    return record ? [[record.id, value] as const] : [];
+  }));
+  const readSession = async (sessionId: string) => {
+    const listed = sessionsById.get(sessionId);
+    if (listed) return listed;
+    const result = await client.session.get({ sessionID: sessionId }).catch(() => null);
+    const session = result ? successfulData(result) ?? null : null;
+    if (session) sessionsById.set(sessionId, session);
+    return session;
+  };
+  const requested = await readSession(requestedSessionId);
+  if (!requested) throw new ApiError(404, "session_not_found", "Session not found");
+  const visibilityOf = async (session: unknown) => {
+    if (!workspaceId) return "normal" as const;
+    return resolveSessionVisibility(workspaceId, session, readSession, (sessionId) => workspaceRuntime?.sessionVisibility(workspaceId, sessionId)?.visibility ?? null);
+  };
+  const requestedVisibility = await visibilityOf(requested);
+  if (requestedVisibility === "unknown") throw new ApiError(503, "session_visibility_temporarily_unavailable", "Session visibility is temporarily unavailable");
+  if (requestedVisibility !== "normal") throw new ApiError(404, "session_not_found", "Session not found");
+  let cursor: unknown = requested;
+  for (let depth = 0; depth < 64; depth += 1) {
+    const record = sessionAncestryRecord(cursor);
+    if (!record?.parentId || sessionsById.has(record.parentId)) break;
+    cursor = await readSession(record.parentId);
+    if (!cursor) throw new ApiError(503, "session_visibility_temporarily_unavailable", "Session visibility is temporarily unavailable");
+  }
+  const ancestry = buildSessionAncestry([...sessionsById.values()].flatMap((value) => {
     const record = sessionAncestryRecord(value);
     return record ? [record] : [];
   }));
@@ -299,7 +333,10 @@ export async function readInteractionSnapshot(
   if (includeDescendants && rootSessionId !== requestedSessionId) {
     throw new ApiError(400, "session_not_root", "includeDescendants requires a root session");
   }
-  const sessionIds = includeDescendants ? ancestry.descendantsOf(rootSessionId) : [requestedSessionId];
+  const candidates = includeDescendants ? ancestry.descendantsOf(rootSessionId) : [requestedSessionId];
+  const visibility = await Promise.all(candidates.map(async (sessionId) => ({ sessionId, visibility: await visibilityOf(sessionsById.get(sessionId)) })));
+  if (visibility.some((item) => item.visibility === "unknown")) throw new ApiError(503, "session_visibility_temporarily_unavailable", "Session visibility is temporarily unavailable");
+  const sessionIds = visibility.filter((item) => item.visibility === "normal").map((item) => item.sessionId);
   const reads = sessionIds.flatMap((sessionId) => [
     { sessionId, kind: "permission" as const },
     { sessionId, kind: "question" as const },
@@ -522,6 +559,7 @@ export function registerInteractionRoutes(options: RegisterInteractionRoutesOpti
     resolveWorkspace,
     createWorkspaceOpencodeClient,
     interactionResolutions,
+    workspaceRuntime,
     evaluatePermissionCeiling,
   } = options;
 
@@ -539,7 +577,25 @@ export function registerInteractionRoutes(options: RegisterInteractionRoutesOpti
       kind,
     } satisfies InteractionScope;
     requireUnresolved(interactionResolutions, scope);
-    return { workspace, client: createWorkspaceOpencodeClient(config, workspace), scope };
+    const client = createWorkspaceOpencodeClient(config, workspace);
+    const listed = await client.session.list();
+    const sessions = resultItems(listed, false);
+    if (!sessions) throwUpstream(listed, "/session");
+    const byId = new Map(sessions.flatMap((value) => {
+      const record = sessionAncestryRecord(value);
+      return record ? [[record.id, value] as const] : [];
+    }));
+    const session = byId.get(scope.sessionId) ?? null;
+    if (!session) throw new ApiError(404, "interaction_not_found", "The interaction was not found");
+    const visibility = await resolveSessionVisibility(workspace.id, session, async (parentId) => {
+      const listedParent = byId.get(parentId);
+      if (listedParent) return listedParent;
+      const result = await client.session.get({ sessionID: parentId }).catch(() => null);
+      return result ? successfulData(result) ?? null : null;
+    }, (sessionId) => workspaceRuntime?.sessionVisibility(workspace.id, sessionId)?.visibility ?? null);
+    if (visibility === "unknown") throw new ApiError(503, "session_visibility_temporarily_unavailable", "Session visibility is temporarily unavailable");
+    if (visibility !== "normal") throw new ApiError(404, "interaction_not_found", "The interaction was not found");
+    return { workspace, client, scope };
   }
 
   addRoute(routes, "GET", "/workspace/:id/sessions/:sessionId/interactions/snapshot", "client", async (ctx) => {
@@ -547,7 +603,7 @@ export function registerInteractionRoutes(options: RegisterInteractionRoutesOpti
     const sessionId = parseIdentifier(ctx.params.sessionId, "sessionId");
     const includeDescendants = parseIncludeDescendants(ctx.url.searchParams.get("includeDescendants"));
     const client = createWorkspaceOpencodeClient(config, workspace);
-    return jsonResponse({ item: await readInteractionSnapshot(client, sessionId, includeDescendants) });
+    return jsonResponse({ item: await readInteractionSnapshot(client, sessionId, includeDescendants, workspace.id, workspaceRuntime) });
   });
 
   addRoute(routes, "POST", "/workspace/:id/sessions/:sessionId/interactions/:interactionId/permission/reply", "client", async (ctx) => {

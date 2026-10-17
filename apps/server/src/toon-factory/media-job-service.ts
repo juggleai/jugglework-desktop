@@ -7,6 +7,8 @@ import { ApiError } from "../errors.js";
 import type { MediaGenerationExtensionRuntime } from "../extensions/media-generation.js";
 import type { ToonFactoryRepository } from "./repository.js";
 import { ToonMediaJobRepository } from "./media-job-repository.js";
+import type { ToonModelPolicyStore } from "./model-policy-store.js";
+import type { ToonWorkspaceMediaProjector } from "./workspace-media-projector.js";
 
 type ImageAction = (action: string, args: Record<string, unknown>, context: Record<string, unknown>) => Promise<unknown>;
 
@@ -33,13 +35,21 @@ export class ToonMediaJobService {
   private readonly active = new Map<string, Promise<void>>();
   private timer: ReturnType<typeof setTimeout> | null = null;
   private stopped = true;
+  private readonly unsubscribePolicy?: () => void;
 
   constructor(private readonly options: {
     jobs: ToonMediaJobRepository;
     repository: (workspaceId: string) => Promise<ToonFactoryRepository>;
     imageAction: ImageAction;
     mediaGeneration: MediaGenerationExtensionRuntime;
-  }) {}
+    modelPolicy?: ToonModelPolicyStore;
+    providerSource?: (workspaceId: string, providerID: string) => Promise<unknown>;
+    workspaceProjector?: ToonWorkspaceMediaProjector;
+  }) {
+    this.unsubscribePolicy = options.modelPolicy?.subscribe((workspaceId) => {
+      for (const job of this.options.jobs.listActive().filter((candidate) => candidate.workspaceId === workspaceId)) this.dispatch(job.id);
+    });
+  }
 
   start(): void {
     if (!this.stopped) return;
@@ -52,6 +62,7 @@ export class ToonMediaJobService {
     this.stopped = true;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
+    this.unsubscribePolicy?.();
     await Promise.allSettled(this.active.values());
   }
 
@@ -104,14 +115,21 @@ export class ToonMediaJobService {
     return this.options.jobs.require(id);
   }
 
-  async review(id: string, candidateId: string, decision: "adopted" | "rejected"): Promise<ToonMediaJob> {
-    const selected = this.options.jobs.require(id).candidates.find((candidate) => candidate.id === candidateId);
+  async review(id: string, candidateId: string, decision: "adopted" | "rejected", humanOperation?: { operationId: string; adoptionId: string; principalId: string; episodeId: string; workflowRecordId: string }): Promise<ToonMediaJob> {
+    const current = this.options.jobs.require(id);
+    const selected = current.candidates.find((candidate) => candidate.id === candidateId);
     if (!selected) throw new ApiError(404, "toon_media_candidate_not_found", "Toon Factory media candidate not found");
     if (!selected.artifact || !["awaiting-review", "adopted", "rejected"].includes(selected.status) || decision === "rejected" && selected.status === "adopted") {
       throw new ApiError(409, "toon_media_candidate_not_reviewable", "The media candidate is not ready for review");
     }
+    if (decision === "adopted" && this.runtimeGeneration(current)) {
+      if (!humanOperation) throw new ApiError(403, "toon_human_action_required", "V2 candidate adoption requires an explicit human operation");
+      // Portable truth commits first. If the process stops before the SQLite
+      // review update, retrying the same human operation safely completes it.
+      await this.options.workspaceProjector!.adopt(current, selected, humanOperation);
+    }
     const now = new Date().toISOString();
-    let job = this.options.jobs.update(id, (stored) => {
+    const job = this.options.jobs.update(id, (stored) => {
       const storedSelected = stored.candidates.find((candidate) => candidate.id === candidateId);
       if (!storedSelected?.artifact || !["awaiting-review", "adopted", "rejected"].includes(storedSelected.status)
         || decision === "rejected" && storedSelected.status === "adopted") {
@@ -146,11 +164,12 @@ export class ToonMediaJobService {
   private async run(id: string): Promise<void> {
     let job = this.options.jobs.require(id);
     const repository = await this.options.repository(job.workspaceId);
+    const v2 = this.runtimeGeneration(job);
     if (job.projectionPending && TERMINAL.has(job.status)) {
       await this.persist(job);
       return;
     }
-    if (!TERMINAL.has(job.status) && !await repository.ownsMediaJob(job)) {
+    if (!TERMINAL.has(job.status) && !(v2 ? await this.options.workspaceProjector!.owns(job) : await repository.ownsMediaJob(job))) {
       job = this.options.jobs.update(id, (current, now) => {
         const uncertain = current.candidates.some((candidate) => candidate.status === "submitting" && !candidate.runtimeJobId);
         const candidates = current.candidates.map((candidate) => {
@@ -175,22 +194,34 @@ export class ToonMediaJobService {
       await this.persist(job);
       return;
     }
-    if (!TERMINAL.has(job.status)) {
+    if (!TERMINAL.has(job.status) && job.kind === "video" && job.candidates.some((candidate) => candidate.runtimeJobId && !TERMINAL.has(candidate.status))) {
+      await this.reconcileVideo(id);
+      job = this.options.jobs.require(id);
+    }
+    const requiresSubmission = !TERMINAL.has(job.status) && (job.kind === "image"
+      || job.candidates.some((candidate) => !candidate.runtimeJobId && ["queued", "submitting"].includes(candidate.status)));
+    if (requiresSubmission) {
       try {
-        await repository.assertMediaJobPrerequisites(job.projectId, job);
+        if (v2) await this.options.workspaceProjector!.assertPrerequisites(job);
+        else await repository.assertMediaJobPrerequisites(job.projectId, job);
+        this.options.modelPolicy?.assertAllowed(job.workspaceId, job.requestSnapshot.plan.model, await this.options.providerSource?.(job.workspaceId, job.requestSnapshot.plan.model.providerID));
       } catch (error) {
-        if (!(error instanceof ApiError && error.code === "workflow_prerequisite_incomplete")) throw error;
-        job = this.options.jobs.update(id, (current, now) => ({
-          ...current,
-          status: "failed",
-          candidates: current.candidates.map((candidate) => TERMINAL.has(candidate.status) ? candidate : {
+        if (error instanceof ApiError && error.code === "model_policy_pending") return;
+        if (!(error instanceof ApiError && ["workflow_prerequisite_incomplete", "selected_model_unavailable"].includes(error.code))) throw error;
+        job = this.options.jobs.update(id, (current, now) => {
+          const candidates = current.candidates.map((candidate) => TERMINAL.has(candidate.status) || candidate.runtimeJobId ? candidate : {
             ...candidate,
-            status: "failed",
+            status: "failed" as const,
             error: { code: error.code, message: error.message, retryable: false },
             updatedAt: now,
-          }),
-          error: { code: error.code, message: error.message },
-        }));
+          });
+          return {
+            ...current,
+            status: aggregateStatus(candidates),
+            candidates,
+            ...(current.candidates.some((candidate) => candidate.runtimeJobId && !TERMINAL.has(candidate.status)) ? {} : { error: { code: error.code, message: error.message } }),
+          };
+        });
         await this.persist(job);
         return;
       }
@@ -198,7 +229,7 @@ export class ToonMediaJobService {
     if (TERMINAL.has(job.status)) await this.persist(job);
     else if (job.kind === "image") await this.runImages(id);
     else if (job.candidates.some((candidate) => !candidate.runtimeJobId && (candidate.status === "queued" || candidate.status === "submitting"))) await this.submitVideos(id);
-    else await this.reconcileVideo(id);
+    else if (!job.candidates.some((candidate) => candidate.runtimeJobId && !TERMINAL.has(candidate.status))) await this.reconcileVideo(id);
   }
 
   private async runImages(id: string): Promise<void> {
@@ -219,9 +250,12 @@ export class ToonMediaJobService {
       return;
     }
     const repository = await this.options.repository(job.workspaceId);
-    await repository.assertMediaJobPrerequisites(job.projectId, job);
+    if (this.runtimeGeneration(job)) await this.options.workspaceProjector!.assertPrerequisites(job);
+    else await repository.assertMediaJobPrerequisites(job.projectId, job);
     const context = { workspaceId: job.workspaceId };
-    const sourceImagePaths = await Promise.all(plan.referencePaths.map((path) => repository.resolveMediaReference(job.projectId, { scope: plan.referenceScope, path })));
+    const sourceImagePaths = await Promise.all(plan.referencePaths.map((path) => this.runtimeGeneration(job)
+      ? this.options.workspaceProjector!.resolveReference(job.workspaceId, job.projectId, path)
+      : repository.resolveMediaReference(job.projectId, { scope: plan.referenceScope, path })));
     for (const snapshot of job.candidates) {
       const claimed = this.options.jobs.updateIf(id, (current) => current.status !== "cancel_requested"
         && current.candidates.some((candidate) => candidate.id === snapshot.id && candidate.status === "queued"), (current, now) => ({
@@ -242,7 +276,7 @@ export class ToonMediaJobService {
           model: { providerID: plan.model.providerID, modelID: plan.model.modelID },
           sourceImagePaths,
           ...(plan.size ? { size: plan.size } : {}),
-          filename: `toon-${job.id}-${snapshot.ordinal}`,
+          filename: `toon-${job.requestSnapshot.requestId}-${snapshot.ordinal}`,
         }, context));
         const result = record(response?.result);
         const artifact = record(result?.artifact);
@@ -284,9 +318,12 @@ export class ToonMediaJobService {
     const plan = job.requestSnapshot.plan;
     if (plan.kind !== "video") return;
     const repository = await this.options.repository(job.workspaceId);
-    await repository.assertMediaJobPrerequisites(job.projectId, job);
+    if (this.runtimeGeneration(job)) await this.options.workspaceProjector!.assertPrerequisites(job);
+    else await repository.assertMediaJobPrerequisites(job.projectId, job);
     const sourceImagePath = plan.referencePaths[0]
-      ? await repository.resolveMediaReference(job.projectId, { scope: plan.referenceScope, path: plan.referencePaths[0] })
+      ? this.runtimeGeneration(job)
+        ? await this.options.workspaceProjector!.resolveReference(job.workspaceId, job.projectId, plan.referencePaths[0])
+        : await repository.resolveMediaReference(job.projectId, { scope: plan.referenceScope, path: plan.referencePaths[0] })
       : undefined;
     const context = { workspaceId: job.workspaceId, sessionId: `toon-factory:${job.projectId}` };
     for (const snapshot of job.candidates) {
@@ -311,7 +348,7 @@ export class ToonMediaJobService {
           ...(sourceImagePath ? { sourceImagePath } : {}),
           durationSeconds: plan.durationSeconds,
           resolution: plan.resolution,
-          filename: `toon-${job.id}-${snapshot.ordinal}`,
+          filename: `toon-${job.requestSnapshot.requestId}-${snapshot.ordinal}`,
           clientRequestId: snapshot.clientRequestId,
         }, context);
         const generated = runtimeJob(response);
@@ -376,6 +413,11 @@ export class ToonMediaJobService {
   private async persist(job: ToonMediaJob): Promise<void> {
     job = this.options.jobs.require(job.id);
     try {
+      if (this.runtimeGeneration(job)) {
+        await this.options.workspaceProjector!.project(job);
+        this.options.jobs.markProjectionClean(job.id);
+        return;
+      }
       const repository = await this.options.repository(job.workspaceId);
       await repository.writeMediaJobManifest(job);
       const adopted = job.candidates.find((candidate) => candidate.status === "adopted" && candidate.review.decision === "adopted");
@@ -393,5 +435,9 @@ export class ToonMediaJobService {
     } catch {
       this.options.jobs.markProjectionFailed(job.id);
     }
+  }
+
+  private runtimeGeneration(job: ToonMediaJob) {
+    return this.options.workspaceProjector && this.options.workspaceProjector["options"].runtime.generationLinkByJob(job.id);
   }
 }

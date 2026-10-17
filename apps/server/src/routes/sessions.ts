@@ -31,6 +31,8 @@ import {
   type SessionPendingOperationPump,
 } from "../session-pending-operation-pump.js";
 import { addRoute, type RequestContext, type Route } from "./registry.js";
+import { resolveSessionVisibility } from "../toon-factory/transient-session-registry.js";
+import type { ToonWorkspaceRuntimeStore } from "../toon-factory/workspace-runtime-store.js";
 
 type JsonResponse = (data: unknown, status?: number) => Response;
 type ParseOptionalBoolean = (value: string | null, name: string) => boolean | undefined;
@@ -82,6 +84,7 @@ interface RegisterSessionRoutesOptions {
   copySessionResponseLanguage?: (workspaceId: string, sourceSessionId: string, targetSessionId: string) => void;
   /** Post-delete cleanup for session-scoped server-owned state. */
   onSessionDeleted?: (workspaceId: string, sessionId: string) => void;
+  workspaceRuntime?: ToonWorkspaceRuntimeStore;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -287,6 +290,7 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     resolveSessionResponseLanguage,
     copySessionResponseLanguage,
     onSessionDeleted,
+    workspaceRuntime,
   } = options;
   const sessionGroupEvents = new SessionGroupEventStore();
 
@@ -444,7 +448,21 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
         opencode.session.status()
           .then((result) => unwrapOpencodeResult(result, "/session/status")),
       ]);
-      return buildSessionList(sessions.filter((session) => !isToonFactoryTransientSession(session)), statuses);
+      if (!Array.isArray(sessions)) return buildSessionList(sessions, statuses);
+      const byId = new Map(sessions.map((session) => [session.id, session]));
+      const parentCache = new Map<string, unknown | null>();
+      const readParent = async (sessionId: string) => {
+        if (byId.has(sessionId)) return byId.get(sessionId)!;
+        if (parentCache.has(sessionId)) return parentCache.get(sessionId) ?? null;
+        const result = await opencode.session.get({ sessionID: sessionId }).catch(() => null);
+        const parent = result?.data ?? null;
+        parentCache.set(sessionId, parent);
+        return parent;
+      };
+      const visibility = new Map<string, Awaited<ReturnType<typeof resolveSessionVisibility>>>();
+      await Promise.all(sessions.map(async (session) => visibility.set(session.id, await resolveSessionVisibility(workspace.id, session, readParent, (sessionId) => workspaceRuntime?.sessionVisibility(workspace.id, sessionId)?.visibility ?? null))));
+      if ([...visibility.values()].includes("unknown")) throw new ApiError(503, "session_visibility_temporarily_unavailable", "Session visibility is temporarily unavailable");
+      return buildSessionList(sessions.filter((session) => visibility.get(session.id) === "normal"), Object.fromEntries(Object.entries(statuses).filter(([sessionId]) => visibility.get(sessionId) === "normal")));
     } catch (error) {
       remapSessionReadError(error);
     }
@@ -478,7 +496,12 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
         await opencode.session.get({ sessionID: sessionId }),
         `/session/${encodeURIComponent(sessionId)}`,
       );
-      if (isToonFactoryTransientSession(raw)) throw new ApiError(404, "session_not_found", "Session not found");
+      const visibility = await resolveSessionVisibility(workspace.id, raw, async (parentId) => {
+        const result = await opencode.session.get({ sessionID: parentId });
+        return result.error === undefined ? result.data ?? null : Promise.reject(result.error);
+      }, (id) => workspaceRuntime?.sessionVisibility(workspace.id, id)?.visibility ?? null);
+      if (visibility === "unknown") throw new ApiError(503, "session_visibility_temporarily_unavailable", "Session visibility is temporarily unavailable");
+      if (visibility !== "normal") throw new ApiError(404, "session_not_found", "Session not found");
       return buildSession(raw);
     } catch (error) {
       remapSessionReadError(error);
@@ -493,7 +516,12 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     try {
       const opencode = createWorkspaceOpencodeClient(config, workspace);
       const raw = unwrapOpencodeResult(await opencode.session.get({ sessionID: sessionId }), `/session/${encodeURIComponent(sessionId)}`);
-      if (isToonFactoryTransientSession(raw)) throw new ApiError(404, "session_not_found", "Session not found");
+      const visibility = await resolveSessionVisibility(workspace.id, raw, async (parentId) => {
+        const result = await opencode.session.get({ sessionID: parentId });
+        return result.error === undefined ? result.data ?? null : Promise.reject(result.error);
+      }, (id) => workspaceRuntime?.sessionVisibility(workspace.id, id)?.visibility ?? null);
+      if (visibility === "unknown") throw new ApiError(503, "session_visibility_temporarily_unavailable", "Session visibility is temporarily unavailable");
+      if (visibility !== "normal") throw new ApiError(404, "session_not_found", "Session not found");
       return buildSessionMessages(
         unwrapOpencodeResult(
           await opencode.session.messages({ sessionID: sessionId, limit: input.limit }),
@@ -524,7 +552,12 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
           .then((result) => unwrapOpencodeResult(result, `/session/${encodeURIComponent(sessionId)}/todo`)),
         opencode.session.status().then((result) => unwrapOpencodeResult(result, "/session/status")),
       ]);
-      if (isToonFactoryTransientSession(session)) throw new ApiError(404, "session_not_found", "Session not found");
+      const visibility = await resolveSessionVisibility(workspace.id, session, async (parentId) => {
+        const result = await opencode.session.get({ sessionID: parentId });
+        return result.error === undefined ? result.data ?? null : Promise.reject(result.error);
+      }, (id) => workspaceRuntime?.sessionVisibility(workspace.id, id)?.visibility ?? null);
+      if (visibility === "unknown") throw new ApiError(503, "session_visibility_temporarily_unavailable", "Session visibility is temporarily unavailable");
+      if (visibility !== "normal") throw new ApiError(404, "session_not_found", "Session not found");
       return buildSessionSnapshot({ session, messages, todos, statuses });
     } catch (error) {
       remapSessionReadError(error);

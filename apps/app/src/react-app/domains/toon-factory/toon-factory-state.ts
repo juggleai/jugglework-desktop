@@ -60,6 +60,112 @@ export type ToonRetainedTextDraft = {
 const DRAFT_PREFIX = "jugglework.toonFactory.textDraft.v1";
 const memoryDrafts = new Map<string, ToonRetainedTextDraft>();
 const draftFlushers = new Map<string, () => Promise<void>>();
+const workspaceFlushers = new Map<string, () => Promise<boolean>>();
+
+export type ToonRecoveryDraft = {
+  kind: "canvas" | "document";
+  workspaceId: string;
+  projectId: string;
+  entityId: string;
+  revision: string;
+  content: unknown;
+  updatedAt: string;
+};
+
+const RECOVERY_PREFIX = "jugglework.toonFactory.recoveryDraft.v1";
+const memoryRecoveryDrafts = new Map<string, ToonRecoveryDraft>();
+
+export type ToonProjectIntentDraft = {
+  name: string;
+  directory: string;
+  prompt: string;
+  textModel?: ToonModelReference;
+  operation?: ToonProjectIntentOperation;
+  completedProjectId?: string;
+};
+
+export type ToonProjectIntentOperation = {
+  version: 1;
+  projectId?: string;
+  episodeId: string;
+  canvasId: string;
+  sourceNodeId: string;
+  phase: "project" | "canvas" | "text" | "project-update" | "complete";
+};
+
+const INTENT_PREFIX = "jugglework.toonFactory.projectIntent.v1";
+const memoryIntents = new Map<string, ToonProjectIntentDraft>();
+
+export function toonProjectIntentDraftKey(scope: ToonQueryScope): string {
+  const normalized = toonQueryScope(scope.endpoint, scope.workspaceId);
+  return [normalized.endpoint, normalized.workspaceId].map((part) => encodeURIComponent(part)).join(":");
+}
+
+function readIntentOperation(value: unknown): ToonProjectIntentOperation | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const operation = value as Partial<ToonProjectIntentOperation>;
+  if (operation.version !== 1
+    || typeof operation.episodeId !== "string"
+    || typeof operation.canvasId !== "string"
+    || typeof operation.sourceNodeId !== "string"
+    || !["project", "canvas", "text", "project-update", "complete"].includes(operation.phase ?? "")) return undefined;
+  return {
+    version: 1,
+    ...(typeof operation.projectId === "string" ? { projectId: operation.projectId } : {}),
+    episodeId: operation.episodeId,
+    canvasId: operation.canvasId,
+    sourceNodeId: operation.sourceNodeId,
+    phase: operation.phase!,
+  };
+}
+
+export function readToonProjectIntentDraft(scope: ToonQueryScope): ToonProjectIntentDraft | null {
+  const key = toonProjectIntentDraftKey(scope);
+  const retained = memoryIntents.get(key);
+  if (retained) return retained;
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(`${INTENT_PREFIX}:${key}`);
+    if (!raw) return null;
+    const value = JSON.parse(raw) as Partial<ToonProjectIntentDraft>;
+    if (typeof value.name !== "string" || typeof value.directory !== "string" || typeof value.prompt !== "string") return null;
+    const operation = readIntentOperation(value.operation);
+    const draft: ToonProjectIntentDraft = {
+      name: value.name,
+      directory: value.directory,
+      prompt: value.prompt,
+      ...(value.textModel ? { textModel: value.textModel } : {}),
+      ...(operation ? { operation } : {}),
+      ...(typeof value.completedProjectId === "string" ? { completedProjectId: value.completedProjectId } : {}),
+    };
+    memoryIntents.set(key, draft);
+    return draft;
+  } catch {
+    return null;
+  }
+}
+
+export function writeToonProjectIntentDraft(scope: ToonQueryScope, draft: ToonProjectIntentDraft): void {
+  const key = toonProjectIntentDraftKey(scope);
+  memoryIntents.set(key, draft);
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(`${INTENT_PREFIX}:${key}`, JSON.stringify(draft));
+  } catch {
+    // The in-memory copy still protects this intent for the current run.
+  }
+}
+
+export function clearToonProjectIntentDraft(scope: ToonQueryScope): void {
+  const key = toonProjectIntentDraftKey(scope);
+  memoryIntents.delete(key);
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(`${INTENT_PREFIX}:${key}`);
+  } catch {
+    // Ignore storage restrictions after the intent was persisted to the project.
+  }
+}
 
 export function toonTextDraftKey(workspaceId: string, projectId: string, episodeId: string, nodeId: string): string {
   return [workspaceId, projectId, episodeId, nodeId].map((part) => encodeURIComponent(part)).join(":");
@@ -120,4 +226,77 @@ export function registerToonTextDraftFlusher(key: string, flush: () => Promise<v
 
 export async function flushToonTextDrafts(): Promise<void> {
   for (const flush of [...draftFlushers.values()]) await flush();
+}
+
+export function registerToonWorkspaceFlusher(key: string, flush: () => Promise<boolean>): () => void {
+  workspaceFlushers.set(key, flush);
+  return () => {
+    if (workspaceFlushers.get(key) === flush) workspaceFlushers.delete(key);
+  };
+}
+
+export async function flushToonWorkspaceDrafts(): Promise<boolean> {
+  for (const flush of [...workspaceFlushers.values()]) if (!await flush()) return false;
+  return true;
+}
+
+export async function flushAllToonDrafts(): Promise<boolean> {
+  try {
+    await flushToonTextDrafts();
+    return await flushToonWorkspaceDrafts();
+  } catch {
+    return false;
+  }
+}
+
+export function createToonGenerationGuard() {
+  let current = 0;
+  return {
+    next: () => ++current,
+    isCurrent: (generation: number) => generation === current,
+    invalidate: () => { current += 1; },
+  };
+}
+
+function recoveryKey(draft: Pick<ToonRecoveryDraft, "kind" | "workspaceId" | "projectId" | "entityId">): string {
+  return [draft.kind, draft.workspaceId, draft.projectId, draft.entityId].map(encodeURIComponent).join(":");
+}
+
+export function writeToonRecoveryDraft(draft: ToonRecoveryDraft): void {
+  const key = recoveryKey(draft);
+  memoryRecoveryDrafts.set(key, draft);
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(`${RECOVERY_PREFIX}:${key}`, JSON.stringify(draft));
+  } catch {
+    // The retained in-memory draft still protects navigation in this run.
+  }
+}
+
+export function readToonRecoveryDraft(input: Pick<ToonRecoveryDraft, "kind" | "workspaceId" | "projectId" | "entityId">): ToonRecoveryDraft | null {
+  const key = recoveryKey(input);
+  const retained = memoryRecoveryDrafts.get(key);
+  if (retained) return retained;
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(`${RECOVERY_PREFIX}:${key}`);
+    if (!raw) return null;
+    const value = JSON.parse(raw) as ToonRecoveryDraft;
+    if (value.kind !== input.kind || value.workspaceId !== input.workspaceId || value.projectId !== input.projectId || value.entityId !== input.entityId || typeof value.revision !== "string") return null;
+    memoryRecoveryDrafts.set(key, value);
+    return value;
+  } catch {
+    return null;
+  }
+}
+
+export function clearToonRecoveryDraft(input: Pick<ToonRecoveryDraft, "kind" | "workspaceId" | "projectId" | "entityId">): void {
+  const key = recoveryKey(input);
+  memoryRecoveryDrafts.delete(key);
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(`${RECOVERY_PREFIX}:${key}`);
+  } catch {
+    // Ignore storage restrictions after the authoritative save completed.
+  }
 }

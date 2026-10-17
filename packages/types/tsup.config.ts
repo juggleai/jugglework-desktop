@@ -15,6 +15,8 @@ export default defineConfig({
     reviews: "src/reviews.ts",
     "response-language": "src/response-language.ts",
     "toon-factory": "src/toon-factory.ts",
+    "toon-assistant": "src/toon-assistant.ts",
+    "toon-workspace": "src/toon-workspace.ts",
     "den/desktop-app-restrictions": "src/den/desktop-app-restrictions.ts",
     "den/desktop-policies": "src/den/desktop-policies.ts",
     "den/egress-diagnostics": "src/den/egress-diagnostics.ts",

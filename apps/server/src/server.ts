@@ -1,5 +1,5 @@
 import { readFile, writeFile, rm, stat } from "node:fs/promises";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { homedir, hostname } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
@@ -110,13 +110,24 @@ import { ToonTextJobRepository } from "./toon-factory/text-job-repository.js";
 import { ToonTextJobService } from "./toon-factory/text-job-service.js";
 import { ToonMediaJobRepository } from "./toon-factory/media-job-repository.js";
 import { ToonMediaJobService } from "./toon-factory/media-job-service.js";
+import { ToonWorkspaceRuntimeStore } from "./toon-factory/workspace-runtime-store.js";
+import { ToonWorkspaceCoordinator } from "./toon-factory/workspace-coordinator.js";
+import { ToonWorkspaceMediaProjector } from "./toon-factory/workspace-media-projector.js";
+import { ToonProjectAssistantService } from "./toon-factory/project-assistant-service.js";
+import { ToonModelPolicyStore } from "./toon-factory/model-policy-store.js";
 import { ToonFactoryRepository } from "./toon-factory/repository.js";
 import {
   clearWorkspaceSessionRegistry,
+  classifySessionVisibilityFamily,
   isRegisteredToonFactoryTransientSession,
+  registeredSessionVisibility,
   isRegisteredVisibleSession,
   registerToonFactoryTransientSession,
+  registerToonProjectSession,
   registerVisibleSession,
+  resolveSessionVisibility,
+  sessionIsNormal,
+  sessionMetadataVisibility,
   unregisterSession,
 } from "./toon-factory/transient-session-registry.js";
 import { callOpenAiImageGenerationExtensionAction } from "./extensions/openai-image-generation.js";
@@ -227,6 +238,13 @@ const AGENT_DIAGNOSTICS_MAX_IN_FLIGHT_PER_SERVER = 16;
 const AGENT_DIAGNOSTICS_MAX_REQUEST_BYTES = 256 * 1024;
 const AGENT_DIAGNOSTICS_DEFAULT_BODY_DEADLINE_MS = 2_000;
 const AGENT_DIAGNOSTICS_ERROR_FLUSH_MS = 25;
+const toonBridgeCredentials = new WeakMap<ServerConfig, { token: string }>();
+
+export function requireManagedToonBridgeCredential(config: ServerConfig): { token: string } {
+  const credential = toonBridgeCredentials.get(config);
+  if (!credential) throw new Error("Managed Toon engine bridge credential is unavailable");
+  return credential;
+}
 
 function agentDiagnosticsActorWorkspaceKey(actor: Actor | undefined, workspaceId: string): string {
   const actorKey = actor?.tokenHash ?? actor?.clientId ?? actor?.type ?? "unknown";
@@ -915,6 +933,10 @@ export function assertOpencodeProxyAllowed(actor: Actor, method: string, proxyPa
   const scope = actor.scope ?? "viewer";
   const normalized = normalizeOpencodeProxyPath(proxyPath);
 
+  if (/^\/(?:api\/session\/[^/]+\/)?(?:permission|question)(?:\/|$)/.test(normalized)) {
+    throw new ApiError(403, "forbidden", "Permission and question operations require the scoped JuggleWork interaction API");
+  }
+
   if ((m === "PUT" || m === "DELETE") && /^\/auth\/[^/]+$/.test(normalized)) {
     throw new ApiError(403, "forbidden", "Provider authentication requires host authorization");
   }
@@ -956,7 +978,17 @@ export async function startServer(config: ServerConfig, options: {
   logger?: ServerLogger;
   reviewService?: ReviewReadService;
   auditWriter?: (workspaceRoot: string, entry: AuditEntry) => Promise<void>;
+  projectAssistantReconciliation?: {
+    intervalMs?: number;
+    timeoutMs?: number;
+    shutdownDrainMs?: number;
+  };
+  toonTextMaintenance?: {
+    timeoutMs?: number;
+    shutdownDrainMs?: number;
+  };
 } = {}): Promise<ServeResult> {
+  toonBridgeCredentials.delete(config);
   for (const workspace of config.workspaces) clearWorkspaceSessionRegistry(workspace.id);
   const approvals = new ApprovalService(config.approval);
   const reloadEvents = new ReloadEventStore();
@@ -1074,6 +1106,7 @@ export async function startServer(config: ServerConfig, options: {
   let mediaGenerationRepository: Awaited<ReturnType<typeof MediaGenerationRepository.open>>;
   let toonTextJobRepository: Awaited<ReturnType<typeof ToonTextJobRepository.open>>;
   let toonMediaJobRepository: Awaited<ReturnType<typeof ToonMediaJobRepository.open>>;
+  let toonWorkspaceRuntime: Awaited<ReturnType<typeof ToonWorkspaceRuntimeStore.open>>;
   let sessionPermissionStore: Awaited<ReturnType<typeof SessionPermissionModeStore.open>>;
   let sessionResponseLanguageStore: Awaited<ReturnType<typeof SessionResponseLanguageStore.open>>;
   const startupResources: Array<{ close(): void }> = [];
@@ -1082,6 +1115,21 @@ export async function startServer(config: ServerConfig, options: {
     mediaGenerationRepository = await MediaGenerationRepository.open(config); startupResources.push(mediaGenerationRepository);
     toonTextJobRepository = await ToonTextJobRepository.open(config); startupResources.push(toonTextJobRepository);
     toonMediaJobRepository = await ToonMediaJobRepository.open(config); startupResources.push(toonMediaJobRepository);
+    toonWorkspaceRuntime = await ToonWorkspaceRuntimeStore.open(config); startupResources.push(toonWorkspaceRuntime);
+    for (const lineage of toonWorkspaceRuntime.listSessionLineage()) {
+      if (lineage.visibility === "toon_project_assistant" || lineage.visibility === "toon_project_subagent") {
+        registerToonProjectSession(lineage.workspaceScope, lineage.sessionId, lineage.visibility);
+      } else if (lineage.visibility === "toon_transient_generation") {
+        registerToonFactoryTransientSession(lineage.workspaceScope, lineage.sessionId);
+      }
+    }
+    if (!config.readOnly) {
+      for (const workspace of config.workspaces.filter((entry) => entry.workspaceType !== "remote")) {
+        const coordinator = new ToonWorkspaceCoordinator(workspace.id, resolve(workspace.path), toonWorkspaceRuntime);
+        await coordinator.recover();
+        await coordinator.cleanupLifecycle().catch(() => undefined);
+      }
+    }
     sessionPermissionStore = await SessionPermissionModeStore.open(config); startupResources.push(sessionPermissionStore);
     sessionResponseLanguageStore = await SessionResponseLanguageStore.open(config); startupResources.push(sessionResponseLanguageStore);
   } catch (error) {
@@ -1114,6 +1162,7 @@ export async function startServer(config: ServerConfig, options: {
     resolveWorkspace,
     createWorkspaceOpencodeClient,
     interactionResolutions,
+    workspaceRuntime: toonWorkspaceRuntime,
     rootLocks: sessionPermissionRootLocks,
     log: (event, fields) => logger.log("info", event, fields),
   });
@@ -1157,11 +1206,29 @@ export async function startServer(config: ServerConfig, options: {
       },
     },
   });
+  const toonModelPolicy = new ToonModelPolicyStore(toonWorkspaceRuntime);
   const toonTextJobService = new ToonTextJobService({
     config,
     jobs: toonTextJobRepository,
     resolveWorkspace,
     createWorkspaceOpencodeClient,
+    modelPolicy: toonModelPolicy,
+    maintenanceTimeoutMs: options.toonTextMaintenance?.timeoutMs,
+    shutdownDrainMs: options.toonTextMaintenance?.shutdownDrainMs,
+    log: (event, fields) => logger.log("warn", event, fields),
+  });
+  const toonProjectAssistant = new ToonProjectAssistantService({
+    config,
+    runtime: toonWorkspaceRuntime,
+    resolveWorkspace,
+    createWorkspaceOpencodeClient,
+    dispatchPrompt: dispatchSessionPromptAsync,
+    dispatchAbort: dispatchSessionAbort,
+    modelPolicy: toonModelPolicy,
+    reconcileIntervalMs: options.projectAssistantReconciliation?.intervalMs,
+    reconcileTimeoutMs: options.projectAssistantReconciliation?.timeoutMs,
+    shutdownDrainMs: options.projectAssistantReconciliation?.shutdownDrainMs,
+    log: (event, fields) => logger.log("warn", event, fields),
   });
   const automationScheduler = new AutomationScheduler({
     repository: automationRepository,
@@ -1319,11 +1386,25 @@ export async function startServer(config: ServerConfig, options: {
       return { job: publicVideoGenerationJob(mediaGenerationRepository.requestCancellation(jobId)) };
     },
   };
+  const toonWorkspaceMediaProjector = new ToonWorkspaceMediaProjector({
+    runtime: toonWorkspaceRuntime,
+    coordinator: async (workspaceId) => {
+      const workspace = await resolveWorkspace(config, workspaceId);
+      return new ToonWorkspaceCoordinator(workspace.id, workspace.path, toonWorkspaceRuntime);
+    },
+  });
   const toonMediaJobService = new ToonMediaJobService({
     jobs: toonMediaJobRepository,
     repository: async (workspaceId) => new (await import("./toon-factory/repository.js")).ToonFactoryRepository((await resolveWorkspace(config, workspaceId)).path),
     imageAction: (action, args, context) => callOpenAiImageGenerationExtensionAction(config, env, action, args, context),
     mediaGeneration: mediaGenerationRuntime,
+    workspaceProjector: toonWorkspaceMediaProjector,
+    modelPolicy: toonModelPolicy,
+    providerSource: async (workspaceId, providerID) => {
+      const workspace = await resolveWorkspace(config, workspaceId);
+      const providers = await createWorkspaceOpencodeClient(config, workspace).provider.list();
+      return providers.data?.all?.find((provider) => provider.id === providerID)?.source;
+    },
   });
   const routes = createRoutes(
     config,
@@ -1353,6 +1434,10 @@ export async function startServer(config: ServerConfig, options: {
     toonTextJobService,
     toonMediaJobRepository,
     toonMediaJobService,
+    toonWorkspaceRuntime,
+    toonWorkspaceMediaProjector,
+    toonProjectAssistant,
+    toonModelPolicy,
     hostMarketplacePlugins,
     hostMarketplaceMigration,
     hostMarketplaceEnvironmentId,
@@ -1408,6 +1493,7 @@ export async function startServer(config: ServerConfig, options: {
             workspace,
             proxyPath: mount.restPath,
             sessionMutations,
+            workspaceRuntime: toonWorkspaceRuntime,
           });
           return finalize(response);
         } catch (error) {
@@ -1463,6 +1549,7 @@ export async function startServer(config: ServerConfig, options: {
             url,
             workspace: config.workspaces[0],
             sessionMutations,
+            workspaceRuntime: toonWorkspaceRuntime,
           });
           return finalize(response);
         } catch (error) {
@@ -1485,11 +1572,13 @@ export async function startServer(config: ServerConfig, options: {
         const actor =
           route.auth === "host-token"
             ? requireHostToken(request, config)
-            : route.auth === "host"
-              ? await requireHost(request, config, tokens)
-              : route.auth === "client"
-                ? await requireClient(request, config, tokens)
-                : undefined;
+            : route.auth === "host-or-toon-bridge"
+              ? await requireHostOrToonBridge(request, config, tokens)
+              : route.auth === "host"
+                ? await requireHost(request, config, tokens)
+                : route.auth === "client"
+                  ? await requireClient(request, config, tokens)
+                  : undefined;
         const response = await route.handler({
           request,
           url,
@@ -1530,6 +1619,13 @@ export async function startServer(config: ServerConfig, options: {
     },
   };
 
+  const hasManagedToonBridgeWorkspace = config.managedRuntime
+    && config.workspaces.some((workspace) => workspace.workspaceType !== "remote" && workspace.path.trim());
+  if (hasManagedToonBridgeWorkspace) {
+    toonBridgeCredentials.set(config, {
+      token: randomBytes(32).toString("base64url"),
+    });
+  }
   let server: ServeResult;
   try {
     server = await serve({
@@ -1537,6 +1633,7 @@ export async function startServer(config: ServerConfig, options: {
       idleTimeout: 120,
     });
   } catch (error) {
+    toonBridgeCredentials.delete(config);
     invalidateEngineMcpServerState(config, engineMcpServerState);
     watcherHandle.close();
     internalReloadDispatchers.delete(config);
@@ -1547,10 +1644,12 @@ export async function startServer(config: ServerConfig, options: {
     void automationScheduler.dispose();
     void reviewService.dispose();
     automationExecutor.dispose();
+    await toonProjectAssistant.dispose();
     automationRepository.close();
     mediaGenerationRepository.close();
     toonTextJobRepository.close();
     toonMediaJobRepository.close();
+    toonWorkspaceRuntime.close();
     sessionPermissionStore.close();
     sessionResponseLanguageStore.close();
     hostMarketplaceMigration.close();
@@ -1598,20 +1697,25 @@ export async function startServer(config: ServerConfig, options: {
   if (!config.readOnly) {
     sessionPermissionBroker.start();
   }
+  let toonTextMaintenanceReady: Promise<void> = Promise.resolve();
   if (!config.readOnly) {
     mediaGenerationWorker.start();
-    toonTextJobService.start();
+    toonTextMaintenanceReady = toonTextJobService.start();
     toonMediaJobService.start();
+    toonProjectAssistant.start();
   }
+  await toonTextMaintenanceReady;
 
   return {
     ...server,
     stop: async () => {
+      toonBridgeCredentials.delete(config);
       invalidateEngineMcpServerState(config, engineMcpServerState);
       watcherHandle.close();
       internalReloadDispatchers.delete(config);
       const errors: unknown[] = [];
       automationExecutor.dispose();
+      try { await toonProjectAssistant.dispose(); } catch (error) { errors.push(error); }
       try { await toonTextJobService.dispose(); } catch (error) { errors.push(error); }
       try { await toonMediaJobService.dispose(); } catch (error) { errors.push(error); }
       sessionPermissionBroker.stop();
@@ -1638,6 +1742,7 @@ export async function startServer(config: ServerConfig, options: {
       try { mediaGenerationRepository.close(); } catch (error) { errors.push(error); }
       try { toonTextJobRepository.close(); } catch (error) { errors.push(error); }
       try { toonMediaJobRepository.close(); } catch (error) { errors.push(error); }
+      try { toonWorkspaceRuntime.close(); } catch (error) { errors.push(error); }
       try { sessionPermissionStore.close(); } catch (error) { errors.push(error); }
       try { sessionResponseLanguageStore.close(); } catch (error) { errors.push(error); }
       try { hostMarketplaceMigration.close(); } catch (error) { errors.push(error); }
@@ -1775,6 +1880,7 @@ async function dispatchSessionPromptAsync(
   workspace: WorkspaceInfo,
   sessionId: string,
   prompt: Record<string, unknown>,
+  signal?: AbortSignal,
 ): Promise<void> {
   const path = `/session/${encodeURIComponent(sessionId)}/prompt_async`;
   let effectivePrompt = prompt;
@@ -1789,6 +1895,7 @@ async function dispatchSessionPromptAsync(
     method: "POST",
     headers: workspaceOpencodeHeaders(config, workspace),
     body: JSON.stringify(effectivePrompt),
+    signal,
   });
   if (!response.ok) {
     throw new ApiError(502, "opencode_request_failed", "OpenCode request failed", {
@@ -1803,11 +1910,13 @@ async function dispatchSessionAbort(
   config: ServerConfig,
   workspace: WorkspaceInfo,
   sessionId: string,
+  signal?: AbortSignal,
 ): Promise<boolean> {
   const path = `/session/${encodeURIComponent(sessionId)}/abort`;
   const response = await loopbackFetch(workspaceOpencodeUrl(config, workspace, path), {
     method: "POST",
     headers: workspaceOpencodeHeaders(config, workspace),
+    signal,
   });
   if (!response.ok) {
     throw new ApiError(502, "opencode_request_failed", "OpenCode request failed", {
@@ -1842,6 +1951,7 @@ async function proxyOpencodeRequest(input: {
   workspace?: WorkspaceInfo;
   proxyPath?: string;
   sessionMutations: SessionMutationCoordinator;
+  workspaceRuntime?: ToonWorkspaceRuntimeStore;
 }) {
   const workspace = input.workspace;
   const baseUrl = workspace ? resolveWorkspaceOpencodeConnection(input.config, workspace).baseUrl?.trim() ?? "" : "";
@@ -1878,17 +1988,33 @@ async function proxyOpencodeRequest(input: {
         message: "Session visibility could not be established safely; retry the event stream.",
       }, 503);
     }
+    const family = classifySessionVisibilityFamily(
+      listed.data,
+      workspace.id,
+      true,
+      (sessionId) => input.workspaceRuntime?.sessionVisibility(workspace.id, sessionId)?.visibility ?? null,
+    );
     for (const session of listed.data) {
-      if (isToonFactoryTransientSession(session)) registerToonFactoryTransientSession(workspace.id, session.id);
-      else registerVisibleSession(workspace.id, session.id);
+      const visibility = family.get(session.id) ?? "toon_project_subagent";
+      if (visibility === "normal") registerVisibleSession(workspace.id, session.id);
+      else if (visibility === "toon_project_assistant" || visibility === "toon_project_subagent") registerToonProjectSession(workspace.id, session.id, visibility);
+      else registerToonFactoryTransientSession(workspace.id, session.id);
     }
   }
-  const scopedSessionMatch = normalizedProxyPath.match(/^\/session\/([^/]+)/);
+  const exactSessionStatus = method === "GET" && normalizedProxyPath === "/session/status";
+  const scopedSessionMatch = exactSessionStatus ? null : normalizedProxyPath.match(/^\/session\/(?!status(?:\/|$))([^/]+)(?:\/|$)/);
   if (workspace && scopedSessionMatch?.[1]) {
     let sessionId: string;
     try { sessionId = decodeURIComponent(scopedSessionMatch[1]); } catch { throw new ApiError(400, "invalid_payload", "sessionId is invalid"); }
-    const session = await createWorkspaceOpencodeClient(input.config, workspace).session.get({ sessionID: sessionId }).catch(() => null);
-    if (session?.data && isToonFactoryTransientSession(session.data)) {
+    const opencode = createWorkspaceOpencodeClient(input.config, workspace);
+    const session = await opencode.session.get({ sessionID: sessionId }).catch(() => null);
+    if (!session?.data) throw new ApiError(404, "session_not_found", "Session not found");
+    const visibility = await resolveSessionVisibility(workspace.id, session.data, async (parentId) => {
+      const result = await opencode.session.get({ sessionID: parentId });
+      return result.error === undefined ? result.data ?? null : Promise.reject(result.error);
+    }, (id) => input.workspaceRuntime?.sessionVisibility(workspace.id, id)?.visibility ?? null);
+    if (visibility === "unknown") throw new ApiError(503, "session_visibility_temporarily_unavailable", "Session visibility is temporarily unavailable");
+    if (visibility !== "normal") {
       throw new ApiError(404, "session_not_found", "Session not found");
     }
   }
@@ -1981,15 +2107,45 @@ async function proxyOpencodeRequest(input: {
     });
     if (workspace && method === "GET" && normalizedProxyPath === "/session" && response.ok) {
       const entries = await response.clone().json().catch(() => null) as unknown;
-      if (Array.isArray(entries)) return jsonResponse(entries.filter((entry) => !isToonFactoryTransientSession(entry)));
+      if (Array.isArray(entries)) {
+        const opencode = createWorkspaceOpencodeClient(input.config, workspace);
+        const byId = new Map(entries.filter(isRecord).flatMap((entry) => typeof entry.id === "string" ? [[entry.id, entry] as const] : []));
+        const visibility = await Promise.all(entries.map(async (entry) => isRecord(entry) && typeof entry.id === "string"
+          ? resolveSessionVisibility(workspace.id, entry, async (parentId) => {
+              if (byId.has(parentId)) return byId.get(parentId)!;
+              const result = await opencode.session.get({ sessionID: parentId });
+              return result.error === undefined ? result.data ?? null : Promise.reject(result.error);
+            }, (id) => input.workspaceRuntime?.sessionVisibility(workspace.id, id)?.visibility ?? null)
+          : Promise.resolve("unknown" as const)));
+        if (visibility.includes("unknown")) return jsonResponse({ code: "toon_factory_session_filter_unavailable", message: "Session visibility could not be established safely." }, 503);
+        return jsonResponse(entries.filter((_, index) => visibility[index] === "normal"));
+      }
     }
     if (workspace && method === "GET" && normalizedProxyPath === "/session/status" && response.ok) {
       const statuses = await response.clone().json().catch(() => null) as unknown;
       if (isRecord(statuses)) {
         const opencode = createWorkspaceOpencodeClient(input.config, workspace);
         const sessions = await opencode.session.list({ roots: false }).catch(() => null);
-        const hidden = new Set((sessions?.data ?? []).filter(isToonFactoryTransientSession).map((session) => session.id));
-        return jsonResponse(Object.fromEntries(Object.entries(statuses).filter(([sessionId]) => !hidden.has(sessionId))));
+        if (!Array.isArray(sessions?.data)) return jsonResponse({ code: "toon_factory_session_filter_unavailable", message: "Session visibility could not be established safely." }, 503);
+        const byId = new Map(sessions.data.map((session) => [session.id, session]));
+        const visible = new Set<string>();
+        let visibilityUnavailable = false;
+        await Promise.all(Object.keys(statuses).map(async (sessionId) => {
+          const session = byId.get(sessionId) ?? (await opencode.session.get({ sessionID: sessionId }).catch(() => null))?.data;
+          if (!session) {
+            visibilityUnavailable = true;
+            return;
+          }
+          const visibility = await resolveSessionVisibility(workspace.id, session, async (parentId) => {
+            if (byId.has(parentId)) return byId.get(parentId)!;
+            const result = await opencode.session.get({ sessionID: parentId });
+            return result.error === undefined ? result.data ?? null : Promise.reject(result.error);
+          }, (id) => input.workspaceRuntime?.sessionVisibility(workspace.id, id)?.visibility ?? null);
+          if (visibility === "unknown") visibilityUnavailable = true;
+          else if (visibility === "normal") visible.add(sessionId);
+        }));
+        if (visibilityUnavailable) return jsonResponse({ code: "toon_factory_session_filter_unavailable", message: "Session visibility could not be established safely." }, 503);
+        return jsonResponse(Object.fromEntries(Object.entries(statuses).filter(([sessionId]) => visible.has(sessionId))));
       }
     }
     if (workspace && method === "GET" && normalizedProxyPath === "/event" && response.ok
@@ -2071,11 +2227,25 @@ function shouldHideSseFrame(frame: string, workspaceId: string): boolean {
       : typeof message.sessionID === "string" ? message.sessionID
         : typeof info.id === "string" && typeof payload.type === "string" && payload.type.startsWith("session.") ? info.id
           : typeof part.sessionID === "string" ? part.sessionID : "";
-  if (payload.type === "session.created" && isToonFactoryTransientSession(info)) {
-    registerToonFactoryTransientSession(workspaceId, sessionId);
-    return true;
+  if (payload.type === "session.created" && sessionId) {
+    const parentId = typeof info.parentID === "string" ? info.parentID : "";
+    const parentVisibility = parentId ? registeredSessionVisibility(workspaceId, parentId) : null;
+    const registeredVisibility = registeredSessionVisibility(workspaceId, sessionId);
+    const ownVisibility = registeredVisibility && registeredVisibility !== "normal"
+      ? registeredVisibility
+      : sessionMetadataVisibility(info);
+    const visibility = ownVisibility === "normal" && parentId
+      ? parentVisibility === "normal"
+        ? "normal"
+        : parentVisibility === "toon_transient_generation"
+          ? "toon_transient_generation"
+          : "toon_project_subagent"
+      : ownVisibility;
+    if (visibility === "normal") registerVisibleSession(workspaceId, sessionId);
+    else if (visibility === "toon_project_assistant" || visibility === "toon_project_subagent") registerToonProjectSession(workspaceId, sessionId, visibility);
+    else registerToonFactoryTransientSession(workspaceId, sessionId);
+    if (visibility !== "normal") return true;
   }
-  if (payload.type === "session.created" && sessionId) registerVisibleSession(workspaceId, sessionId);
   const transient = Boolean(sessionId && isRegisteredToonFactoryTransientSession(workspaceId, sessionId));
   const visible = Boolean(sessionId && isRegisteredVisibleSession(workspaceId, sessionId));
   if (payload.type === "session.deleted" && sessionId) unregisterSession(workspaceId, sessionId);
@@ -2106,7 +2276,7 @@ function withCors(response: Response, request: Request, config: ServerConfig) {
   headers.set("Access-Control-Allow-Origin", allowOrigin);
   headers.set(
     "Access-Control-Allow-Headers",
-    "Authorization, Content-Type, X-JuggleWork-Host-Token, X-JuggleWork-Client-Id, X-OpenCode-Directory, X-Opencode-Directory, x-opencode-directory",
+    "Authorization, Content-Type, X-JuggleWork-Host-Token, X-JuggleWork-Client-Id, X-JuggleWork-Toon-Asset, X-OpenCode-Directory, X-Opencode-Directory, x-opencode-directory",
   );
   headers.set("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
   headers.set("Vary", "Origin");
@@ -2154,6 +2324,18 @@ async function requireHost(request: Request, config: ServerConfig, tokens: Token
   }
   const clientId = request.headers.get("x-jugglework-client-id") ?? undefined;
   return { type: "remote", clientId, tokenHash: hashToken(bearer), scope };
+}
+
+async function requireHostOrToonBridge(request: Request, config: ServerConfig, tokens: TokenService): Promise<Actor> {
+  const bridge = toonBridgeCredentials.get(config);
+  const header = request.headers.get("authorization") ?? "";
+  const bearer = header.match(/^Bearer\s+(.+)$/i)?.[1];
+  const presentedHash = bearer ? Buffer.from(hashToken(bearer), "hex") : null;
+  const bridgeHash = bridge ? Buffer.from(hashToken(bridge.token), "hex") : null;
+  if (bridge && bearer && presentedHash && bridgeHash && presentedHash.length === bridgeHash.length && timingSafeEqual(presentedHash, bridgeHash)) {
+    return { type: "toon-bridge", tokenHash: hashToken(bearer) };
+  }
+  return requireHost(request, config, tokens);
 }
 
 function buildCapabilities(config: ServerConfig): Capabilities {
@@ -2776,6 +2958,10 @@ function createRoutes(
   toonTextJobService: ToonTextJobService,
   toonMediaJobRepository: ToonMediaJobRepository,
   toonMediaJobService: ToonMediaJobService,
+  toonWorkspaceRuntime: ToonWorkspaceRuntimeStore,
+  toonWorkspaceMediaProjector: ToonWorkspaceMediaProjector,
+  toonProjectAssistant: ToonProjectAssistantService,
+  toonModelPolicy: ToonModelPolicyStore,
   hostMarketplacePlugins: HostMarketplacePluginRegistry,
   hostMarketplaceMigration: HostMarketplaceMigrationCoordinator,
   hostMarketplaceEnvironmentId: string,
@@ -2851,10 +3037,15 @@ function createRoutes(
     ensureWritable,
     requireClientScope,
     resolveWorkspace,
+    createWorkspaceOpencodeClient,
     textJobs: toonTextJobRepository,
     textJobService: toonTextJobService,
     mediaJobs: toonMediaJobRepository,
     mediaJobService: toonMediaJobService,
+    workspaceRuntime: toonWorkspaceRuntime,
+    workspaceProjector: toonWorkspaceMediaProjector,
+    projectAssistant: toonProjectAssistant,
+    modelPolicy: toonModelPolicy,
   });
 
   registerProviderAuthRoutes({
@@ -2911,6 +3102,7 @@ function createRoutes(
       sessionPermissionStore.deleteRootSessionRecords(workspaceId, sessionId);
       sessionResponseLanguageStore.delete(workspaceId, sessionId);
     },
+    workspaceRuntime: toonWorkspaceRuntime,
   });
 
   addRoute(routes, "GET", "/internal/session-response-language/:sessionId", "client", async (ctx) => {
@@ -2936,6 +3128,7 @@ function createRoutes(
     resolveWorkspace,
     createWorkspaceOpencodeClient,
     interactionResolutions,
+    workspaceRuntime: toonWorkspaceRuntime,
     evaluatePermissionCeiling: createInteractionPermissionCeiling(config),
   });
 
@@ -2951,6 +3144,7 @@ function createRoutes(
     resolveWorkspace,
     createWorkspaceOpencodeClient,
     interactionResolutions,
+    workspaceRuntime: toonWorkspaceRuntime,
   });
 
   registerCloudMcpRoutes({

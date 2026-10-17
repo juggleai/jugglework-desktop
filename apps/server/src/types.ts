@@ -210,7 +210,7 @@ export interface CommandItem {
 }
 
 export interface Actor {
-  type: "remote" | "host";
+  type: "remote" | "host" | "toon-bridge";
   clientId?: string;
   tokenHash?: string;
   scope?: TokenScope;

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -9,7 +10,9 @@ import type { MediaGenerationExtensionRuntime } from "../extensions/media-genera
 import { ApiError } from "../errors.js";
 import { ToonMediaJobRepository, createToonMediaAuthorization, toonMediaRequestHash } from "./media-job-repository.js";
 import { ToonMediaJobService } from "./media-job-service.js";
+import { ToonModelPolicyStore } from "./model-policy-store.js";
 import { ToonFactoryRepository } from "./repository.js";
+import { ToonWorkspaceRuntimeStore } from "./workspace-runtime-store.js";
 
 const repositories: ToonMediaJobRepository[] = [];
 const roots: string[] = [];
@@ -55,6 +58,7 @@ function harness(input: {
   jobs?: ToonMediaJobRepository;
   imageAction?: (action: string, args: Record<string, unknown>, context: Record<string, unknown>) => Promise<unknown>;
   runtime?: MediaGenerationExtensionRuntime;
+  modelPolicy?: ToonModelPolicyStore;
 }) {
   const manifests: string[] = [];
   const adoptions: Array<{ jobId: string; candidateId: string }> = [];
@@ -78,6 +82,8 @@ function harness(input: {
     }) as never,
     imageAction: input.imageAction ?? (async () => ({ ok: true, result: { artifact: { path: "artifacts/fake.png", mimeType: "image/png", bytes: 8 } } })),
     mediaGeneration: runtime,
+    modelPolicy: input.modelPolicy,
+    providerSource: async () => "api",
   });
   return { jobs, service, manifests, adoptions };
 }
@@ -104,6 +110,34 @@ describe("Toon media generation jobs", () => {
     ]) {
       expect(() => jobs.create("workspace-1", "project-1", { ...authorized, requestId: `changed-${Math.random()}`, ...changed } as ToonMediaJobCreateRequest)).toThrow("generation plan changed");
     }
+  });
+
+  test("server-issued authorization is consumed atomically once and a failed create rolls back consumption", () => {
+    const sqlite = new Database(":memory:");
+    const adapter = automationSqliteAdapter({ kind: "bun", sqlite, db: null as never, close: () => sqlite.close() });
+    const runtime = ToonWorkspaceRuntimeStore.fromDatabase(adapter);
+    const jobs = ToonMediaJobRepository.fromDatabase(adapter);
+    const input = request("video");
+    const authorizationId = "authorization-ledger";
+    input.authorization = { ...input.authorization, id: authorizationId };
+    const { authorization: _authorization, ...authorizedInput } = input;
+    runtime.issueAuthorization({ authorizationId, principalId: "member", workspaceScope: "workspace-1", projectId: "project-1", generationId: "generation-1", requestHash: input.authorization.scopeHash, requestSnapshot: { ...authorizedInput, projectId: "project-1" }, expiresAt: 10_000 }, 1);
+    const first = jobs.consumeAuthorizationAndCreate({ authorizationId, principalId: "member", workspaceId: "workspace-1", projectId: "project-1", generationId: "generation-1" }, 2);
+    expect(runtime.scopedGenerationAuthorization({ authorizationId, principalId: "member", workspaceScope: "workspace-1", projectId: "project-1", generationId: "generation-1", requestHash: input.authorization.scopeHash }, 2)).toMatchObject({ authorizationId, state: "consumed", consumedAt: new Date(2).toISOString() });
+    const retry = jobs.consumeAuthorizationAndCreate({ authorizationId, principalId: "member", workspaceId: "workspace-1", projectId: "project-1", generationId: "generation-1" }, 3);
+    expect(retry).toMatchObject({ job: { id: first.job.id }, created: false });
+    expect(jobs.list("workspace-1", "project-1")).toHaveLength(1);
+    expect(() => jobs.consumeAuthorizationAndCreate({ authorizationId, principalId: "other", workspaceId: "workspace-1", projectId: "project-1", generationId: "generation-1" }, 4)).toThrow("does not match this principal");
+    expect(runtime.scopedGenerationAuthorization({ authorizationId, principalId: "other", workspaceScope: "workspace-1", projectId: "project-1", generationId: "generation-1", requestHash: input.authorization.scopeHash }, 4)).toBeNull();
+
+    const rollbackInput = request("video", { requestId: "rollback-request" });
+    const rollbackId = "authorization-rollback";
+    const { authorization: _rollbackAuthorization, ...rollbackAuthorizedInput } = rollbackInput;
+    runtime.issueAuthorization({ authorizationId: rollbackId, principalId: "member", workspaceScope: "workspace-1", projectId: "project-1", generationId: "generation-2", requestHash: "f".repeat(64), requestSnapshot: { ...rollbackAuthorizedInput, projectId: "project-1" }, expiresAt: 10_000 }, 1);
+    expect(runtime.scopedGenerationAuthorization({ authorizationId: rollbackId, principalId: "member", workspaceScope: "workspace-1", projectId: "project-1", generationId: "generation-2", requestHash: "f".repeat(64) }, 10_000)).toMatchObject({ state: "expired", consumedAt: null });
+    expect(() => jobs.consumeAuthorizationAndCreate({ authorizationId: rollbackId, principalId: "member", workspaceId: "workspace-1", projectId: "project-1", generationId: "generation-2" }, 5)).toThrow("does not match this principal");
+    expect(runtime.requireAuthorization(rollbackId).consumedAt).toBeNull();
+    sqlite.close();
   });
 
   test("server-owned image execution persists artifacts, provenance, review, adoption, rejection, and history", async () => {
@@ -189,6 +223,99 @@ describe("Toon media generation jobs", () => {
     expect(submissions).toHaveLength(1);
     expect(jobs.require(job.id).candidates[0]?.artifact).toEqual({ scope: "workspace", path: "artifacts/jugglework-video-runtime-video-1.mp4", mimeType: "video/mp4", bytes: 12 });
     await restarted.service.dispose();
+  });
+
+  test("queued image and video jobs remain nonterminal without policy and submit nothing", async () => {
+    let imageSubmissions = 0;
+    let videoSubmissions = 0;
+    const runtime: MediaGenerationExtensionRuntime = {
+      status: async () => ({}), listModels: async () => ({ models: [] }),
+      generate: async () => { videoSubmissions += 1; return { job: { id: "runtime-pending", status: "submitted" } }; },
+      getJob: async () => ({ job: { id: "runtime-pending", status: "running" } }),
+      cancelJob: async () => ({}),
+    };
+    const fx = harness({
+      runtime,
+      modelPolicy: new ToonModelPolicyStore(),
+      imageAction: async () => { imageSubmissions += 1; return {}; },
+    });
+    const image = fx.jobs.create("workspace-1", "project-1", request("image", { requestId: "pending-image" }));
+    const video = fx.jobs.create("workspace-1", "project-1", request("video", { requestId: "pending-video" }));
+    fx.service.start();
+    await Bun.sleep(25);
+    expect(fx.jobs.require(image.id).status).toBe("queued");
+    expect(fx.jobs.require(video.id).status).toBe("queued");
+    expect(imageSubmissions).toBe(0);
+    expect(videoSubmissions).toBe(0);
+    await fx.service.dispose();
+  });
+
+  test("persisted policy restores queued image and video submission after restart", async () => {
+    const sqlite = new Database(":memory:");
+    const policyRuntime = ToonWorkspaceRuntimeStore.fromDatabase(automationSqliteAdapter({ kind: "bun", sqlite, db: null as never, close: () => sqlite.close() }));
+    new ToonModelPolicyStore(policyRuntime).update(policySnapshot(4, ["provider/image-model", "provider/video-model"]));
+    const policy = new ToonModelPolicyStore(policyRuntime);
+    let imageSubmissions = 0;
+    let videoSubmissions = 0;
+    const fx = harness({
+      modelPolicy: policy,
+      imageAction: async () => { imageSubmissions += 1; return { ok: true, result: { artifact: { path: "artifacts/restarted.png", mimeType: "image/png", bytes: 8 } } }; },
+      runtime: {
+        status: async () => ({}), listModels: async () => ({ models: [] }),
+        generate: async () => { videoSubmissions += 1; return { job: { id: "runtime-restarted", status: "submitted" } }; },
+        getJob: async () => ({ job: { id: "runtime-restarted", status: "running" } }),
+        cancelJob: async () => ({}),
+      },
+    });
+    const image = fx.jobs.create("workspace-1", "project-1", request("image", { requestId: "restart-image", plan: { ...request("image").plan, quantity: 1, executionCount: 1 } }));
+    const video = fx.jobs.create("workspace-1", "project-1", request("video", { requestId: "restart-video" }));
+    fx.service.start();
+    await waitFor(() => fx.jobs.require(image.id).status === "awaiting-review" && Boolean(fx.jobs.require(video.id).candidates[0]?.runtimeJobId));
+    expect(imageSubmissions).toBe(1);
+    expect(videoSubmissions).toBe(1);
+    await fx.service.dispose();
+    policyRuntime.close();
+  });
+
+  test("policy sync automatically continues pending media jobs", async () => {
+    const policy = new ToonModelPolicyStore();
+    let submissions = 0;
+    const fx = harness({ modelPolicy: policy, imageAction: async () => {
+      submissions += 1;
+      return { ok: true, result: { artifact: { path: "artifacts/synced.png", mimeType: "image/png", bytes: 8 } } };
+    } });
+    const job = fx.jobs.create("workspace-1", "project-1", request("image", { requestId: "sync-image", plan: { ...request("image").plan, quantity: 1, executionCount: 1 } }));
+    fx.service.start();
+    await Bun.sleep(25);
+    expect(fx.jobs.require(job.id).status).toBe("queued");
+    policy.update(policySnapshot(1, ["provider/image-model"]));
+    await waitFor(() => fx.jobs.require(job.id).status === "awaiting-review");
+    expect(submissions).toBe(1);
+    await fx.service.dispose();
+  });
+
+  test("an already submitted video keeps polling with missing policy and is never resubmitted", async () => {
+    let submissions = 0;
+    let polls = 0;
+    const jobs = repository();
+    const created = jobs.create("workspace-1", "project-1", request("video", { requestId: "submitted-video" }));
+    jobs.update(created.id, (current, now) => ({
+      ...current,
+      status: "running",
+      candidates: current.candidates.map((candidate) => ({ ...candidate, runtimeJobId: "runtime-existing", status: "running", updatedAt: now })),
+    }));
+    const fx = harness({ jobs, modelPolicy: new ToonModelPolicyStore(), runtime: {
+      status: async () => ({}), listModels: async () => ({ models: [] }),
+      generate: async () => { submissions += 1; return { job: { id: "runtime-duplicate", status: "submitted" } }; },
+      getJob: async () => { polls += 1; return { job: { id: "runtime-existing", status: "completed", artifact: { path: "artifacts/existing.mp4", mimeType: "video/mp4", bytes: 12 } } }; },
+      cancelJob: async () => ({}),
+    } });
+    fx.service.start();
+    await waitFor(() => jobs.require(created.id).status === "awaiting-review");
+    expect(polls).toBeGreaterThan(0);
+    expect(submissions).toBe(0);
+    expect(jobs.require(created.id).candidates[0]?.runtimeJobId).toBe("runtime-existing");
+    await fx.service.dispose();
   });
 
   test("uses a generated workspace image as the real image-to-video source and rejects traversal", async () => {
@@ -448,3 +575,9 @@ describe("Toon media generation jobs", () => {
     expect((await projectRepository.readCanvas(created.project.id, "canvas-1")).canvas.nodes[0]?.data.generationRecordId).toBe(job.id);
   });
 });
+
+function policySnapshot(revision: number, allowedModels: string[]) {
+  const content = { workspaceId: "workspace-1", signedIn: true, policyFresh: true, organizationId: "org-1", userId: "user-1", allowedModels, validatedAt: new Date().toISOString() };
+  const canonical = (value: unknown): string => Array.isArray(value) ? `[${value.map(canonical).join(",")}]` : value && typeof value === "object" ? `{${Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right)).map(([key, child]) => `${JSON.stringify(key)}:${canonical(child)}`).join(",")}}` : JSON.stringify(value);
+  return { ...content, revision, digest: createHash("sha256").update(canonical(content)).digest("hex") };
+}

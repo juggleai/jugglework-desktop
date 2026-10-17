@@ -316,6 +316,7 @@ function WorkspaceAppRouteContent() {
                 toonFactoryVisible ? appPath.workspaceId : retainedToonFactory.workspaceId,
                 projectId,
               ))}
+              onScopeSwitchCancelled={(workspaceId, projectId) => navigate(workspaceToonFactoryRoute(workspaceId, projectId), { replace: true })}
               onOpenAccount={() => openSurfaceSettings("cloud-account", location.pathname)}
               onOpenHome={() => navigate(sessionPath)}
               onOpenApps={() => navigate(workspaceAppsRoute(activeSession.workspaceId))}

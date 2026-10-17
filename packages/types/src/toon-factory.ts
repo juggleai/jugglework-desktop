@@ -312,6 +312,20 @@ export const toonModelReferenceSchema = z.object({
   modelID: boundedString(512),
 }).strict()
 
+export const toonModelPolicySnapshotSchema = z.object({
+  workspaceId: boundedString(512),
+  revision: z.number().int().nonnegative(),
+  digest: z.string().regex(/^[a-f0-9]{64}$/),
+  signedIn: z.boolean(),
+  policyFresh: z.boolean(),
+  organizationId: boundedString(512).nullable(),
+  userId: boundedString(512).nullable(),
+  allowedModels: z.array(boundedString(256)).max(100_000),
+  allowCustomProviders: z.boolean().optional(),
+  allowZenModel: z.boolean().optional(),
+  validatedAt: timestampSchema.nullable(),
+}).strict()
+
 export const toonProjectSchema = z.object({
   schemaVersion: z.literal(TOON_FACTORY_SCHEMA_VERSION),
   id: identifierSchema,
@@ -546,6 +560,11 @@ export const toonMediaJobCreateRequestSchema = z.object({
 
 export const toonMediaAuthorizationRequestSchema = toonMediaJobCreateRequestSchema.omit({ authorization: true }).strict()
 
+export const toonMediaJobSubmitRequestSchema = z.object({
+  authorizationId: identifierSchema,
+  expectedPlanFingerprint: revisionSchema,
+}).strict()
+
 export const toonMediaJobRequestSnapshotSchema = toonMediaJobCreateRequestSchema.omit({ authorization: true }).extend({
   projectId: identifierSchema,
 }).strict()
@@ -629,7 +648,7 @@ export const toonMediaJobSchema = z.object({
 export const toonMediaJobResponseSchema = z.object({ job: toonMediaJobSchema }).strict()
 export const toonMediaJobListResponseSchema = z.object({ items: z.array(toonMediaJobSchema) }).strict()
 export const toonMediaJobReviewRequestSchema = z.object({ candidateId: identifierSchema }).strict()
-export const toonMediaJobRetryRequestSchema = toonMediaJobCreateRequestSchema
+export const toonMediaJobRetryRequestSchema = toonMediaJobSubmitRequestSchema
 
 export const toonGenerationRecordSchema = z.object({
   schemaVersion: z.literal(TOON_FACTORY_SCHEMA_VERSION),
@@ -944,8 +963,10 @@ export type ToonImageGenerationPlan = z.infer<typeof toonImageGenerationPlanSche
 export type ToonVideoGenerationPlan = z.infer<typeof toonVideoGenerationPlanSchema>
 export type ToonMediaGenerationPlan = z.infer<typeof toonMediaGenerationPlanSchema>
 export type ToonMediaAuthorization = z.infer<typeof toonMediaAuthorizationSchema>
+export type ToonModelPolicySnapshot = z.infer<typeof toonModelPolicySnapshotSchema>
 export type ToonMediaJobCreateRequest = z.infer<typeof toonMediaJobCreateRequestSchema>
 export type ToonMediaAuthorizationRequest = z.infer<typeof toonMediaAuthorizationRequestSchema>
+export type ToonMediaJobSubmitRequest = z.infer<typeof toonMediaJobSubmitRequestSchema>
 export type ToonMediaJobRequestSnapshot = z.infer<typeof toonMediaJobRequestSnapshotSchema>
 export type ToonMediaCandidateStatus = z.infer<typeof toonMediaCandidateStatusSchema>
 export type ToonMediaArtifact = z.infer<typeof toonMediaArtifactSchema>

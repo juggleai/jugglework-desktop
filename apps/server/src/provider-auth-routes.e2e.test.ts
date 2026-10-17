@@ -70,6 +70,7 @@ async function boot() {
   };
   const server = await startServer(config);
   stops.push(() => server.stop());
+  upstreamRequests.length = 0;
   return { root, config, upstreamRequests, base: `http://127.0.0.1:${server.port}` };
 }
 

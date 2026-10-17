@@ -1597,6 +1597,7 @@ describe("agent context diagnostics route", () => {
       throw new Error("Selected engine is unavailable");
     }) as unknown as typeof fetch;
     const base = await startJuggleWork(fixture.config);
+    downstreamFetches.length = 0;
     const before = await snapshotTree(fixture.root);
 
     const response = await nativeFetch(`${base}/workspace/${fixture.workspace.id}/diagnostics/agent-context`, {
@@ -1633,6 +1634,7 @@ describe("agent context diagnostics route", () => {
       throw new Error("Viewer request unexpectedly performed downstream fetch");
     }) as unknown as typeof fetch;
     const base = await startJuggleWork(fixture.config);
+    downstreamFetches.length = 0;
     const issued = await nativeFetch(`${base}/tokens`, {
       method: "POST",
       headers: hostHeaders(),
@@ -1660,6 +1662,7 @@ describe("agent context diagnostics route", () => {
       throw new Error("Invalid request unexpectedly performed downstream fetch");
     }) as unknown as typeof fetch;
     const base = await startJuggleWork(fixture.config);
+    downstreamFetches.length = 0;
 
     const response = await nativeFetch(`${base}/workspace/${fixture.workspace.id}/diagnostics/agent-context`, {
       method: "POST",

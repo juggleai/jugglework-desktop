@@ -48,6 +48,7 @@ async function harness(managed = true) {
   });
   const server = await startServer(config);
   stops.push(() => server.stop());
+  requests.length = 0;
   return { base: `http://127.0.0.1:${server.port}`, config, requests, processState };
 }
 

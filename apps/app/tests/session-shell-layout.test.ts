@@ -12,7 +12,10 @@ const messageList = readFileSync(new URL("../src/components/chat/message-list.ts
 const quickNavigation = readFileSync(new URL("../src/react-app/domains/session/surface/session-quick-navigation.tsx", import.meta.url), "utf8");
 const toonFactoryPage = readFileSync(new URL("../src/react-app/domains/toon-factory/toon-factory-page.tsx", import.meta.url), "utf8");
 const toonFactoryWorkbench = readFileSync(new URL("../src/react-app/domains/toon-factory/toon-factory-workbench.tsx", import.meta.url), "utf8");
-const toonFactorySource = `${toonFactoryPage}\n${toonFactoryWorkbench}`;
+const toonLegacyCanvas = readFileSync(new URL("../src/react-app/domains/toon-factory/canvas/toon-legacy-canvas.tsx", import.meta.url), "utf8");
+const toonSpatialCanvas = readFileSync(new URL("../src/react-app/domains/toon-factory/canvas/toon-spatial-canvas.tsx", import.meta.url), "utf8");
+const toonWorkspace = readFileSync(new URL("../src/react-app/domains/toon-factory/workspace/toon-workspace.tsx", import.meta.url), "utf8");
+const toonFactorySource = `${toonFactoryPage}\n${toonFactoryWorkbench}\n${toonLegacyCanvas}\n${toonSpatialCanvas}\n${toonWorkspace}`;
 
 describe("desktop session shell layout", () => {
   test("aligns the desktop transcript text width with the composer", () => {
@@ -37,17 +40,30 @@ describe("desktop session shell layout", () => {
   test("uses the shared inset shell and theme tokens for Toon Factory", () => {
     expect(toonFactoryPage).toContain("<AppNavigationRail");
     expect(toonFactoryPage).toContain("<AppInsetSurface");
-    expect(toonFactoryPage).toContain("<AppSecondarySidebarTopControls");
-    expect(toonFactoryPage).toContain("<AppSecondarySidebarResizeHandle");
-    expect(toonFactoryPage).toContain("appInsetSidebarCssWidth(leftSidebarWidth)");
     expect(toonFactoryPage).toContain("bg-[var(--app-page-bg)]");
     expect(toonFactorySource).toContain("bg-[var(--app-list-bg)]");
-    expect(toonFactorySource).toContain("h-[var(--app-topbar-height)]");
+    expect(toonFactoryWorkbench).toContain('data-testid="toon-factory-home"');
+    expect(toonFactoryWorkbench).toContain('data-testid="toon-project-workspace"');
+    expect(toonFactoryWorkbench).not.toContain("--jugglework-left-sidebar-width");
     expect(toonFactoryPage).not.toContain("bg-white");
   });
 
-  test("provides a project sidebar and six-stage Toon Factory skeleton without fake data", () => {
+  test("fences a failed Toon workspace scope switch until retry or route restore", () => {
+    expect(toonFactoryPage).toContain("onScopeSwitchCancelled");
+    expect(toonFactoryPage).toContain("readOnly={switchingScope && blockedScopeKey === desiredScopeKey}");
+    expect(toonFactoryPage).toContain("inert={switchingScope ? true : undefined}");
+    expect(toonFactoryPage).not.toContain("cancelledScopeKey");
+  });
+
+  test("provides project cards and a floating six-stage Toon Factory workspace without fake actions", () => {
     expect(toonFactorySource).toContain('data-testid="toon-factory-workbench"');
+    expect(toonFactorySource).toContain('data-testid="toon-inspiration-composer"');
+    expect(toonFactorySource).toContain('data-testid="toon-project-grid"');
+    expect(toonFactorySource).toContain('data-testid="toon-workspace-toolbar"');
+    expect(toonFactorySource).toContain('data-testid="toon-assistant-panel"');
+    expect(toonFactorySource).toContain('data-testid="toon-canvas-bottom-toolbar"');
+    expect(toonFactorySource).toContain('data-testid="toon-canvas-controls"');
+    expect(toonFactorySource).toContain('data-testid="toon-canvas-empty"');
     expect(toonFactorySource).toContain('"content-script"');
     expect(toonFactorySource).toContain('"assets"');
     expect(toonFactorySource).toContain('"directing-storyboard"');
@@ -56,6 +72,9 @@ describe("desktop session shell layout", () => {
     expect(toonFactorySource).toContain('"adoption-delivery"');
     expect(toonFactoryPage).toContain('data-workbench-suspended={props.visible ? undefined : "true"}');
     expect(toonFactoryPage).not.toContain("window.fetch(");
+    expect(toonFactorySource).toContain('t("toon_factory.open_project")');
+    expect(toonFactorySource).toContain('t("toon_factory.toonflow_import_disabled_hint")');
+    expect(toonFactorySource).not.toContain('t("toon_factory.import_unavailable_hint")');
   });
 
   test("extends the rounded session surface around the conversation list", () => {

@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
 
 import {
+  createToonGenerationGuard,
+  clearToonRecoveryDraft,
+  flushAllToonDrafts,
   clearToonTextDraft,
   flushToonTextDrafts,
   readToonTextDraft,
@@ -9,7 +12,10 @@ import {
   toonTextDraftKey,
   toonTextRequestFingerprint,
   registerToonTextDraftFlusher,
+  registerToonWorkspaceFlusher,
+  readToonRecoveryDraft,
   writeToonTextDraft,
+  writeToonRecoveryDraft,
 } from "../src/react-app/domains/toon-factory/toon-factory-state";
 
 const originalWindow = globalThis.window;
@@ -75,5 +81,37 @@ describe("Toon Factory request and retained state", () => {
     } finally {
       unregister();
     }
+  });
+
+  test("rejects stale A-B-A lease completions by generation", () => {
+    const guard = createToonGenerationGuard();
+    const firstA = guard.next();
+    guard.invalidate();
+    const b = guard.next();
+    guard.invalidate();
+    const secondA = guard.next();
+    expect(guard.isCurrent(firstA)).toBe(false);
+    expect(guard.isCurrent(b)).toBe(false);
+    expect(guard.isCurrent(secondA)).toBe(true);
+  });
+
+  test("blocks a retained route transition when any workspace flush fails", async () => {
+    const order: string[] = [];
+    const unregisterA = registerToonWorkspaceFlusher("workspace-a", async () => { order.push("a"); return true; });
+    const unregisterB = registerToonWorkspaceFlusher("workspace-b", async () => { order.push("b"); return false; });
+    try {
+      expect(await flushAllToonDrafts()).toBe(false);
+      expect(order).toEqual(["a", "b"]);
+    } finally {
+      unregisterA(); unregisterB();
+    }
+  });
+
+  test("retains and clears a local recovery draft by entity scope", () => {
+    const identity = { kind: "canvas" as const, workspaceId: "workspace-recovery", projectId: "project-recovery", entityId: "canvas-recovery" };
+    writeToonRecoveryDraft({ ...identity, revision: "a".repeat(64), content: { nodes: ["draft"] }, updatedAt: "2026-01-01T00:00:00.000Z" });
+    expect(readToonRecoveryDraft(identity)?.content).toEqual({ nodes: ["draft"] });
+    clearToonRecoveryDraft(identity);
+    expect(readToonRecoveryDraft(identity)).toBeNull();
   });
 });

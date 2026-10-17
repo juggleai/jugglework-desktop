@@ -48,6 +48,51 @@ export class ToonMediaJobRepository {
   close(): void { this.database.close(); }
 
   createOrGet(workspaceId: string, projectId: string, request: ToonMediaJobCreateRequest, now = Date.now()): ToonMediaJobCreateResult {
+    return this.database.transaction(() => this.createOrGetInTransaction(workspaceId, projectId, request, now));
+  }
+
+  consumeAuthorizationAndCreate(input: {
+    authorizationId: string;
+    principalId: string;
+    workspaceId: string;
+    projectId: string;
+    generationId: string;
+  }, now = Date.now()): ToonMediaJobCreateResult {
+    return this.database.transaction(() => {
+      const authorization = this.database.get<{
+        principal_id: string; workspace_scope: string; project_id: string; generation_id: string;
+        request_hash: string; request_json: string | null; invalidated_at: number | null; expires_at: number; consumed_at: number | null; runtime_job_id: string | null; created_at: number;
+      }>(`SELECT principal_id, workspace_scope, project_id, generation_id, request_hash, request_json, invalidated_at, expires_at, consumed_at, runtime_job_id, created_at
+        FROM toon_workspace_authorizations WHERE authorization_id = ?`, [input.authorizationId]);
+      if (!authorization) throw new ApiError(404, "toon_compute_authorization_not_found", "Compute authorization not found");
+      if (!authorization.request_json) throw new ApiError(409, "toon_compute_authorization_legacy", "Compute authorization must be issued again");
+      const snapshot = JSON.parse(authorization.request_json) as ToonMediaJobRequestSnapshot;
+      const requestHash = toonMediaRequestHash(snapshot);
+      if (authorization.principal_id !== input.principalId || authorization.workspace_scope !== input.workspaceId
+        || authorization.project_id !== input.projectId || authorization.generation_id !== input.generationId
+        || snapshot.projectId !== input.projectId || authorization.request_hash !== requestHash) {
+        throw new ApiError(403, "toon_compute_authorization_scope_changed", "Compute authorization does not match this principal or generation");
+      }
+      if (authorization.consumed_at !== null) {
+        if (!authorization.runtime_job_id) throw new ApiError(409, "toon_compute_authorization_consumed", "Compute authorization was already consumed");
+        return { job: this.require(authorization.runtime_job_id), created: false };
+      }
+      if (authorization.expires_at <= now) throw new ApiError(410, "toon_compute_authorization_expired", "Compute authorization expired");
+      if (authorization.invalidated_at !== null) throw new ApiError(409, "toon_compute_authorization_scope_changed", "Compute authorization was invalidated by an upstream dependency change");
+      const { projectId: _projectId, ...authorizedRequest } = snapshot;
+      const request = {
+        ...authorizedRequest,
+        authorization: { id: input.authorizationId, scopeHash: requestHash, authorizedAt: new Date(authorization.created_at).toISOString() },
+      } as ToonMediaJobCreateRequest;
+      const created = this.createOrGetInTransaction(input.workspaceId, input.projectId, request, now);
+      const consumed = this.database.run(`UPDATE toon_workspace_authorizations SET consumed_at = ?, runtime_job_id = ?
+        WHERE authorization_id = ? AND consumed_at IS NULL`, [now, created.job.id, input.authorizationId]);
+      if (consumed.changes !== 1) throw new ApiError(409, "toon_compute_authorization_consumed", "Compute authorization was already consumed");
+      return created;
+    });
+  }
+
+  private createOrGetInTransaction(workspaceId: string, projectId: string, request: ToonMediaJobCreateRequest, now: number): ToonMediaJobCreateResult {
     const snapshot: ToonMediaJobRequestSnapshot = {
       requestId: request.requestId,
       projectId,
@@ -65,15 +110,14 @@ export class ToonMediaJobRepository {
         currentScopeHash: requestHash,
       });
     }
-    return this.database.transaction(() => {
-      const existing = this.getByRequest(workspaceId, projectId, request.requestId);
-      if (existing) {
-        if (existing.requestHash !== requestHash) throw new ApiError(409, "toon_media_request_id_conflict", "The request ID is already used for a different generation plan");
-        return { job: existing, created: false };
-      }
-      const createdAt = new Date(now).toISOString();
-      const id = `media-job-${randomUUID()}`;
-      const provenance = {
+    const existing = this.getByRequest(workspaceId, projectId, request.requestId);
+    if (existing) {
+      if (existing.requestHash !== requestHash) throw new ApiError(409, "toon_media_request_id_conflict", "The request ID is already used for a different generation plan");
+      return { job: existing, created: false };
+    }
+    const createdAt = new Date(now).toISOString();
+    const id = `media-job-${randomUUID()}`;
+    const provenance = {
         model: request.plan.model,
         prompt: request.plan.prompt,
         mode: request.plan.mode,
@@ -82,19 +126,19 @@ export class ToonMediaJobRepository {
         parameters: request.plan.kind === "image"
           ? { size: request.plan.size }
           : { durationSeconds: request.plan.durationSeconds, resolution: request.plan.resolution },
-      };
-      const candidates: ToonMediaCandidate[] = Array.from({ length: request.plan.executionCount }, (_, index) => ({
+    };
+    const candidates: ToonMediaCandidate[] = Array.from({ length: request.plan.executionCount }, (_, index) => ({
         id: `candidate-${randomUUID()}`,
         ordinal: index + 1,
         status: "queued",
         runtime: request.plan.kind === "image" ? "openai-image-generation" : "media-generation",
-        ...(request.plan.kind === "video" ? { clientRequestId: `${id}-${index + 1}` } : {}),
+        clientRequestId: `${request.requestId}-${index + 1}`,
         provenance,
         review: { decision: "pending" },
         createdAt,
         updatedAt: createdAt,
-      }));
-      const job = toonMediaJobSchema.parse({
+    }));
+    const job = toonMediaJobSchema.parse({
         schemaVersion: TOON_FACTORY_SCHEMA_VERSION,
         id,
         workspaceId,
@@ -111,12 +155,11 @@ export class ToonMediaJobRepository {
         candidates,
         createdAt,
         updatedAt: createdAt,
-      });
-      this.database.run(`INSERT INTO toon_factory_media_jobs
-        (id, workspace_id, project_id, request_id, request_hash, job_json, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, [id, workspaceId, projectId, request.requestId, requestHash, JSON.stringify(job), now, now]);
-      return { job, created: true };
     });
+    this.database.run(`INSERT INTO toon_factory_media_jobs
+      (id, workspace_id, project_id, request_id, request_hash, job_json, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, [id, workspaceId, projectId, request.requestId, requestHash, JSON.stringify(job), now, now]);
+    return { job, created: true };
   }
 
   create(workspaceId: string, projectId: string, request: ToonMediaJobCreateRequest, now = Date.now()): ToonMediaJob {

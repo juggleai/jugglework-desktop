@@ -9,19 +9,16 @@ const actor = (scope: TokenScope | undefined): Actor => ({ type: "remote", scope
 const PERMISSION_REPLY_PATH = "/opencode/permission/req_123/reply";
 
 describe("assertOpencodeProxyAllowed", () => {
-  test("collaborators can reply to permission requests (#1918)", () => {
-    // The SPA's only credential is the collaborator-scoped client token
-    // (JUGGLEWORK_TOKEN); an owner-only gate made every permission dialog
-    // un-answerable.
+  test("collaborators must use the scoped interaction API for permission replies", () => {
     expect(() =>
       assertOpencodeProxyAllowed(actor("collaborator"), "POST", PERMISSION_REPLY_PATH),
-    ).not.toThrow();
+    ).toThrow(ApiError);
   });
 
-  test("owners can reply to permission requests", () => {
+  test("owners cannot bypass the scoped interaction API", () => {
     expect(() =>
       assertOpencodeProxyAllowed(actor("owner"), "POST", PERMISSION_REPLY_PATH),
-    ).not.toThrow();
+    ).toThrow(ApiError);
   });
 
   test("viewers cannot send any mutating request", () => {
@@ -33,10 +30,13 @@ describe("assertOpencodeProxyAllowed", () => {
     ).toThrow(ApiError);
   });
 
-  test("viewers can still read", () => {
+  test("permission and question reads also use scoped APIs", () => {
     expect(() =>
       assertOpencodeProxyAllowed(actor("viewer"), "GET", "/opencode/permission"),
-    ).not.toThrow();
+    ).toThrow(ApiError);
+    expect(() =>
+      assertOpencodeProxyAllowed(actor("owner"), "GET", "/opencode/question"),
+    ).toThrow(ApiError);
   });
 
   test("missing scope defaults to viewer (read-only)", () => {
@@ -45,7 +45,7 @@ describe("assertOpencodeProxyAllowed", () => {
     ).toThrow(ApiError);
     expect(() =>
       assertOpencodeProxyAllowed(actor(undefined), "GET", "/opencode/permission"),
-    ).not.toThrow();
+    ).toThrow(ApiError);
   });
 
   test("provider auth mutations cannot bypass host-authorized routes", () => {

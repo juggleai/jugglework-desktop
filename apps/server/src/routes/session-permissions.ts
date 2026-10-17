@@ -29,6 +29,7 @@ import {
   type RootSerialization,
 } from "../session-permission-broker.js";
 import type { SessionPermissionModeStore } from "../session-permission-mode-store.js";
+import type { ToonWorkspaceRuntimeStore } from "../toon-factory/workspace-runtime-store.js";
 import type { ServerConfig, TokenScope, WorkspaceInfo } from "../types.js";
 import {
   dispatchPermissionReply,
@@ -54,6 +55,7 @@ interface RegisterSessionPermissionRoutesOptions {
   resolveWorkspace: (config: ServerConfig, id: string) => Promise<WorkspaceInfo>;
   createWorkspaceOpencodeClient: WorkspaceOpencodeClientFactory;
   interactionResolutions: InteractionResolutionCoordinator;
+  workspaceRuntime?: ToonWorkspaceRuntimeStore;
 }
 
 const modeUpdateSchema = z.object({
@@ -109,6 +111,7 @@ export function registerSessionPermissionRoutes(options: RegisterSessionPermissi
     resolveWorkspace,
     createWorkspaceOpencodeClient,
     interactionResolutions,
+    workspaceRuntime,
   } = options;
 
   addRoute(routes, "GET", "/workspace/:id/sessions/:sessionId/permission-mode", "client", async (ctx) => {
@@ -136,7 +139,7 @@ export function registerSessionPermissionRoutes(options: RegisterSessionPermissi
 
     const client = createWorkspaceOpencodeClient(config, workspace);
     // The pane session must be an authoritative root for mode configuration.
-    const ancestrySnapshot = await readInteractionSnapshot(client, rootSessionId, false);
+    const ancestrySnapshot = await readInteractionSnapshot(client, rootSessionId, false, workspace.id, workspaceRuntime);
     if (ancestrySnapshot.rootSessionId !== rootSessionId) {
       throw new ApiError(400, "session_not_root", "Permission mode requires a root session");
     }
@@ -165,7 +168,7 @@ export function registerSessionPermissionRoutes(options: RegisterSessionPermissi
         // point. Upstream failure fails the activation closed (task 4.3).
         let activationExclusionRequestIds: string[];
         try {
-          activationExclusionRequestIds = await captureActivationBoundary(client, rootSessionId);
+          activationExclusionRequestIds = await captureActivationBoundary(client, rootSessionId, { workspaceId: workspace.id, workspaceRuntime });
         } catch (error) {
           if (error instanceof ApiError) throw error;
           throw new ApiError(502, "activation_snapshot_unavailable", "Activation snapshot could not be read");
@@ -303,7 +306,7 @@ export function registerSessionPermissionRoutes(options: RegisterSessionPermissi
     }
 
     // Resolve the authoritative root for this target.
-    const targetSnapshot = await readInteractionSnapshot(client, targetSessionId, false);
+    const targetSnapshot = await readInteractionSnapshot(client, targetSessionId, false, workspace.id, workspaceRuntime);
     const rootSessionId = targetSnapshot.rootSessionId;
 
     const scope = {
@@ -319,6 +322,8 @@ export function registerSessionPermissionRoutes(options: RegisterSessionPermissi
       let exclusionRequestIds: string[];
       try {
         exclusionRequestIds = (await captureActivationBoundary(client, rootSessionId, {
+          workspaceId: workspace.id,
+          workspaceRuntime,
           matchingOnly: (candidate) =>
             candidate.protocol === request.protocol &&
             candidate.permissionAction === request.permissionAction &&

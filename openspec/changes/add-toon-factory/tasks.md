@@ -51,3 +51,11 @@
 - [x] 7.2 Add project export/download affordances for manifests and validated clips while keeping a complete-film timeline and composition explicitly out of scope.
 - [x] 7.3 Add Toonflow MIT attribution to the repository's third-party notice or equivalent distribution artifact for substantially reused material.
 - [x] 7.4 Run focused app and server tests, typechecks, i18n coverage, and OpenSpec validation; resolve regressions and mark completed tasks accurately.
+
+## 8. Screenshot-guided workbench refinement
+
+- [x] 8.1 Replace the permanent project sidebar with an inspiration-led project home, responsive project cards, sorting, and explicit unavailable import behavior.
+- [x] 8.2 Persist and idempotently initialize the home inspiration as first-episode source content without losing or duplicating work across retries and workspace changes.
+- [x] 8.3 Recompose an opened project as a full-surface dotted canvas with floating project controls, real canvas viewport controls, empty-canvas actions, and a dockable creation assistant.
+- [x] 8.4 Preserve workflow, text, image, video, review, adoption, and delivery behavior inside the new responsive assistant layout.
+- [x] 8.5 Add accessibility labels, disabled-state truthfulness, responsive behavior, and focused regression tests for the refined home and workbench.

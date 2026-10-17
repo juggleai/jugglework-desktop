@@ -27,6 +27,7 @@ import { ApiError } from "./errors.js";
 import type { InteractionResolutionCoordinator } from "./interaction-resolution-coordinator.js";
 import { readMcpWorkspaceToolPolicy } from "./mcp-workspace-tool-policy.js";
 import { SessionPermissionModeStore } from "./session-permission-mode-store.js";
+import type { ToonWorkspaceRuntimeStore } from "./toon-factory/workspace-runtime-store.js";
 import type { ServerConfig, TokenScope, WorkspaceInfo } from "./types.js";
 import type { TokenService } from "./tokens.js";
 import { hashToken } from "./utils.js";
@@ -343,9 +344,9 @@ export function normalizePendingPermissionRequest(
 export async function captureActivationBoundary(
   client: InteractionWorkspaceOpencodeClient,
   rootSessionId: string,
-  options?: { matchingOnly?: (request: NormalizedPermissionRequest) => boolean },
+  options?: { matchingOnly?: (request: NormalizedPermissionRequest) => boolean; workspaceId?: string; workspaceRuntime?: ToonWorkspaceRuntimeStore },
 ): Promise<string[]> {
-  const snapshot = await readInteractionSnapshot(client, rootSessionId, true);
+  const snapshot = await readInteractionSnapshot(client, rootSessionId, true, options?.workspaceId, options?.workspaceRuntime);
   const ids: string[] = [];
   for (const permission of snapshot.permissions) {
     const normalized = normalizePendingPermissionRequest(permission);
@@ -367,6 +368,7 @@ export type SessionPermissionBrokerOptions = {
   resolveWorkspace: (config: ServerConfig, id: string) => Promise<WorkspaceInfo>;
   createWorkspaceOpencodeClient: (config: ServerConfig, workspace: WorkspaceInfo) => InteractionWorkspaceOpencodeClient;
   interactionResolutions: InteractionResolutionCoordinator;
+  workspaceRuntime?: ToonWorkspaceRuntimeStore;
   rootLocks: RootSerialization;
   pollIntervalMs?: number;
   now?: () => number;
@@ -480,7 +482,7 @@ export class SessionPermissionBroker {
     if (fullAccessActive && state?.authorizingPrincipal == null) return;
 
     const client = this.options.createWorkspaceOpencodeClient(this.options.config, workspace);
-    const snapshot = await readInteractionSnapshot(client, rootSessionId, true);
+    const snapshot = await readInteractionSnapshot(client, rootSessionId, true, workspaceId, this.options.workspaceRuntime);
     if (snapshot.rootSessionId !== rootSessionId) return; // ancestry changed under us
 
     const ceiling = await this.ceilingContext(workspaceId);

@@ -606,6 +606,10 @@ export class ToonFactoryRepository {
       const entries = await readdir(directory, { withFileTypes: true });
       if (entries.some((entry) => entry.name === PROJECT_FILE && entry.isFile() && !entry.isSymbolicLink())) {
         const projectPath = await existingSafeFile(this.workspaceRoot, relative(this.workspaceRoot, join(directory, PROJECT_FILE)));
+        const snapshot = await readRegularTextSnapshot(this.workspaceRoot, projectPath, MAX_PROJECT_BYTES);
+        let raw: unknown;
+        try { raw = snapshot ? JSON.parse(snapshot.content) : null; } catch { raw = null; }
+        if (raw && typeof raw === "object" && (raw as { schemaVersion?: unknown }).schemaVersion === 2) return;
         const result = await readJsonFile(this.workspaceRoot, projectPath, toonProjectSchema, "project");
         items.push({
           id: result.value.id,

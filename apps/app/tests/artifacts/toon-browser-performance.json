@@ -1,0 +1,19 @@
+{
+  "mountedAt": 1761.7000000029802,
+  "readyAt": 2139.7999999970198,
+  "nodeCount": 1000,
+  "edgeCount": 999,
+  "domNodes": 7026,
+  "renderedNodes": 1000,
+  "renderedEdges": 999,
+  "heap": 60966950,
+  "firstPaintMs": 378.09999999403954,
+  "zoomFrameP95Ms": 18.5,
+  "dragFrameP95Ms": 17.899999991059303,
+  "thresholds": {
+    "frameP95Ms": 20,
+    "domNodes": 12000,
+    "heapBytes": 134217728
+  },
+  "passed": true
+}

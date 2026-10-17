@@ -21,7 +21,7 @@ type PendingQuestion = {
     custom?: boolean;
   }>;
 };
-type EngineSession = { id: string; parentID?: unknown };
+type EngineSession = { id: string; parentID?: unknown; metadata?: Record<string, unknown> };
 
 const stops: Array<() => void | Promise<void>> = [];
 const roots: string[] = [];
@@ -67,6 +67,11 @@ function startMockOpencode() {
     async fetch(request) {
       const url = new URL(request.url);
       if (request.method === "GET" && url.pathname === "/session") return Response.json(sessions);
+      const sessionGet = url.pathname.match(/^\/session\/([^/]+)$/);
+      if (request.method === "GET" && sessionGet) {
+        const session = sessions.find((item) => item.id === decodeURIComponent(sessionGet[1]!));
+        return session ? Response.json(session) : Response.json({ code: "not_found" }, { status: 404 });
+      }
       if (request.method === "GET" && url.pathname === "/permission") {
         permissionReads += 1;
         const failure = legacyFailures.get("permission");
@@ -177,6 +182,8 @@ function startMockOpencode() {
 async function startHarness(enginePort: number, interactionResolutions = createInteractionResolutionCoordinator()) {
   const root = await mkdtemp(join(tmpdir(), "jugglework-interactions-"));
   roots.push(root);
+  const previousRuntimeDb = process.env.JUGGLEWORK_RUNTIME_DB;
+  process.env.JUGGLEWORK_RUNTIME_DB = join(root, "runtime.sqlite");
   await mkdir(join(root, ".opencode"), { recursive: true });
   const config: ServerConfig = {
     host: "127.0.0.1",
@@ -203,7 +210,11 @@ async function startHarness(enginePort: number, interactionResolutions = createI
     logRequests: false,
   };
   const server = await startServer(config, { interactionResolutions }) as Served;
-  stops.push(() => server.stop(true));
+  stops.push(async () => {
+    await server.stop(true);
+    if (previousRuntimeDb === undefined) delete process.env.JUGGLEWORK_RUNTIME_DB;
+    else process.env.JUGGLEWORK_RUNTIME_DB = previousRuntimeDb;
+  });
   return {
     base: `http://127.0.0.1:${server.port}`,
     headers: { Authorization: `Bearer ${config.token}`, "Content-Type": "application/json" },
@@ -326,8 +337,37 @@ describe("authoritative interaction reply APIs", () => {
 
     engine.sessions.push({ id: "cycle-a", parentID: "cycle-b" }, { id: "cycle-b", parentID: "cycle-a" });
     const malformed = await fetch(snapshotUrl(harness.base, "cycle-a"), { headers: harness.headers });
-    expect(malformed.status).toBe(409);
-    await expect(malformed.json()).resolves.toMatchObject({ code: "invalid_session_ancestry" });
+    expect(malformed.status).toBe(503);
+    await expect(malformed.json()).resolves.toMatchObject({ code: "session_visibility_temporarily_unavailable" });
+  });
+
+  test("ordinary interaction APIs fail closed for missing parents and hide Toon visibility families", async () => {
+    const engine = startMockOpencode();
+    engine.sessions.push(
+      { id: "orphan", parentID: "missing" },
+      { id: "toon-root", metadata: { kind: "toon-factory", visibility: "toon_project_assistant" } } as EngineSession,
+      { id: "toon-child", parentID: "toon-root", metadata: { visibility: "normal" } },
+    );
+    engine.permissions.push(permission("orphan-permission", "orphan"), permission("toon-permission", "toon-child"));
+    const harness = await startHarness(engine.server.port);
+
+    const orphanSnapshot = await fetch(snapshotUrl(harness.base, "orphan", false), { headers: harness.headers });
+    expect(orphanSnapshot.status).toBe(503);
+    await expect(orphanSnapshot.json()).resolves.toMatchObject({ code: "session_visibility_temporarily_unavailable" });
+    const orphanReply = await fetch(replyUrl(harness.base, "orphan", "orphan-permission", "permission"), {
+      method: "POST", headers: harness.headers,
+      body: JSON.stringify({ origin: "local-renderer", commandCorrelationId: null, response: "reject" }),
+    });
+    expect(orphanReply.status).toBe(503);
+
+    const toonSnapshot = await fetch(snapshotUrl(harness.base, "toon-root", true), { headers: harness.headers });
+    expect(toonSnapshot.status).toBe(404);
+    const toonReply = await fetch(replyUrl(harness.base, "toon-child", "toon-permission", "permission"), {
+      method: "POST", headers: harness.headers,
+      body: JSON.stringify({ origin: "local-renderer", commandCorrelationId: null, response: "reject" }),
+    });
+    expect(toonReply.status).toBe(404);
+    expect(engine.permissionReplies).toHaveLength(0);
   });
 
   test("snapshot fails closed on partial or total v2 5xx and only falls back when every v2 read is unsupported", async () => {
@@ -552,6 +592,7 @@ describe("authoritative interaction reply APIs", () => {
 
   test("dispatches v2 permission and question replies with their v2 payloads", async () => {
     const engine = startMockOpencode();
+    engine.sessions.push({ id: "session-a" });
     engine.v2Permissions.push(permission("permission-v2", "session-a"));
     engine.v2Questions.push(question("question-v2", "session-a"));
     const harness = await startHarness(engine.server.port);
@@ -713,6 +754,7 @@ describe("authoritative interaction reply APIs", () => {
   test("successful tombstones are bounded and contain no interaction content", async () => {
     const coordinator = createInteractionResolutionCoordinator({ maxTerminal: 1 });
     const engine = startMockOpencode();
+    engine.sessions.push({ id: "session-a" });
     engine.permissions.push(permission("first", "session-a"), permission("second", "session-a"));
     engine.v2Failures.set("permission:session-a", 404);
     const harness = await startHarness(engine.server.port, coordinator);

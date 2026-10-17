@@ -12,6 +12,7 @@ import {
 
 const originalServerUrl = process.env.JUGGLEWORK_SERVER_URL;
 const originalServerToken = process.env.JUGGLEWORK_SERVER_TOKEN;
+const originalToonBridgeToken = process.env.TOON_BRIDGE_TOKEN;
 const stops: Array<() => void> = [];
 
 const searchResultSchema = z.object({
@@ -69,6 +70,8 @@ afterEach(() => {
   else process.env.JUGGLEWORK_SERVER_URL = originalServerUrl;
   if (originalServerToken === undefined) delete process.env.JUGGLEWORK_SERVER_TOKEN;
   else process.env.JUGGLEWORK_SERVER_TOKEN = originalServerToken;
+  if (originalToonBridgeToken === undefined) delete process.env.TOON_BRIDGE_TOKEN;
+  else process.env.TOON_BRIDGE_TOKEN = originalToonBridgeToken;
 });
 
 async function transformedSystem(plugin: Awaited<ReturnType<typeof JuggleWorkExtensionsPreview>>): Promise<string> {
@@ -100,7 +103,7 @@ function startFakeJuggleWorkServer(options: { createSkillAvailable?: boolean; re
       if (request.method === "POST") record.body = await request.json();
       requests.push(record);
 
-      if (request.headers.get("authorization") !== "Bearer test-token") {
+      if (!["Bearer test-token", "Bearer toon-bridge-test-token"].includes(request.headers.get("authorization") ?? "")) {
         return Response.json({ message: "Unauthorized" }, { status: 401 });
       }
 
@@ -226,6 +229,7 @@ function startFakeJuggleWorkServer(options: { createSkillAvailable?: boolean; re
         }
         return Response.json({ ok: true, received: record.body });
       }
+      if (url.pathname === "/experimental/toon-factory/assistant-bridge") return Response.json({ item: { ok: true } });
 
       return Response.json({ message: "Not found" }, { status: 404 });
     },
@@ -233,6 +237,7 @@ function startFakeJuggleWorkServer(options: { createSkillAvailable?: boolean; re
   stops.push(() => server.stop(true));
   process.env.JUGGLEWORK_SERVER_URL = `http://127.0.0.1:${server.port}`;
   process.env.JUGGLEWORK_SERVER_TOKEN = "test-token";
+  process.env.TOON_BRIDGE_TOKEN = "toon-bridge-test-token";
   return { requests };
 }
 
@@ -608,6 +613,7 @@ describe("JuggleWorkExtensionsPreview semantic tool surface", () => {
       "jugglework_video_job_cancel",
       "jugglework_video_job_get",
       "jugglework_video_models_list",
+      "toon_workspace_bridge",
     ]);
 
     const system = await transformedSystem(plugin);
@@ -639,6 +645,40 @@ describe("JuggleWorkExtensionsPreview semantic tool surface", () => {
         args: { prompt: "a puppy", mode: "text-to-image" },
       },
     });
+  });
+
+  test("routes exact Toon executor actions through the workspace bridge", async () => {
+    const fake = startFakeJuggleWorkServer();
+    const plugin = await JuggleWorkExtensionsPreview({ directory: "/tmp/archive", workspaceId: "ws_2" });
+    await plugin.tool.toon_workspace_bridge.execute({ action: "project.read" }, { workspaceId: "ws_2", sessionID: "ses_archive", callID: "call_project_read" });
+    expect(fake.requests.at(-1)).toMatchObject({ pathname: "/experimental/toon-factory/assistant-bridge", method: "POST", body: { workspaceId: "ws_2", sessionId: "ses_archive", toolCallId: "call_project_read", call: { action: "project.read" } } });
+    expect(fake.requests.at(-1)?.authorization).toBe("Bearer toon-bridge-test-token");
+    await plugin.tool.toon_workspace_bridge.execute({ action: "canvas.read", canvasId: "main" }, { workspaceId: "ws_2", sessionID: "ses_archive", callID: "call_canvas_read" });
+    expect((fake.requests.at(-1)?.body as any).toolCallId).toBe("call_canvas_read");
+    expect((fake.requests.at(-1)?.body as any).call).toEqual({ action: "canvas.read", canvasId: "main" });
+  });
+
+  test("fails Toon workspace bridge explicitly when its dedicated credential is absent", async () => {
+    const fake = startFakeJuggleWorkServer();
+    delete process.env.TOON_BRIDGE_TOKEN;
+    const plugin = await JuggleWorkExtensionsPreview({ directory: "/tmp/archive", workspaceId: "ws_2" });
+    const requestCount = fake.requests.length;
+    await expect(plugin.tool.toon_workspace_bridge.execute(
+      { action: "project.read" },
+      { workspaceId: "ws_2", sessionID: "ses_archive", callID: "call_project_read" },
+    )).rejects.toThrow("TOON_BRIDGE_TOKEN is required");
+    expect(fake.requests).toHaveLength(requestCount);
+  });
+
+  test("rejects Toon workspace bridge calls without a real callID", async () => {
+    const fake = startFakeJuggleWorkServer();
+    const plugin = await JuggleWorkExtensionsPreview({ directory: "/tmp/archive", workspaceId: "ws_2" });
+    const requestCount = fake.requests.length;
+    await expect(plugin.tool.toon_workspace_bridge.execute(
+      { action: "project.read" },
+      { workspaceId: "ws_2", sessionID: "ses_archive" },
+    )).rejects.toThrow("toon_workspace_bridge_scope_missing");
+    expect(fake.requests).toHaveLength(requestCount);
   });
 
   test("routes the complete direct video job lifecycle to the configured local extension", async () => {

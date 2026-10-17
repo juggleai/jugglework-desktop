@@ -11,12 +11,15 @@ import type { ServerConfig, WorkspaceInfo } from "../types.js";
 import { ToonFactoryRepository } from "./repository.js";
 import { ToonTextJobRepository } from "./text-job-repository.js";
 import { registerToonFactoryTransientSession, unregisterSession } from "./transient-session-registry.js";
+import type { ToonModelPolicyStore } from "./model-policy-store.js";
 
 type WorkspaceOpencodeClient = ReturnType<typeof createOpencodeClient>;
 
 const TRANSIENT_TITLE_PREFIX = "[Transient Toon Factory]";
 const DEFAULT_STALE_AGE_MS = 6 * 60 * 60 * 1_000;
 const DEFAULT_CLEANUP_LIMIT = 25;
+const DEFAULT_MAINTENANCE_TIMEOUT_MS = 500;
+const DEFAULT_SHUTDOWN_DRAIN_MS = 1_000;
 
 export type ToonTextJobServiceOptions = {
   config: ServerConfig;
@@ -27,7 +30,11 @@ export type ToonTextJobServiceOptions = {
   wait?: (milliseconds: number) => Promise<void>;
   staleAgeMs?: number;
   cleanupLimit?: number;
+  maintenanceTimeoutMs?: number;
+  shutdownDrainMs?: number;
   projectionRepository?: (workspace: WorkspaceInfo) => ToonFactoryRepository;
+  modelPolicy?: ToonModelPolicyStore;
+  log?: (event: string, fields: Record<string, unknown>) => void;
 };
 
 export class ToonTextJobService {
@@ -37,28 +44,71 @@ export class ToonTextJobService {
   private disposed = false;
   private projectionTimer: ReturnType<typeof setTimeout> | null = null;
   private projectionRunning = false;
+  private maintenanceStarted = false;
+  private maintenancePromise: Promise<void> = Promise.resolve();
+  private maintenanceAbort: AbortController | null = null;
+  private readonly unsubscribePolicy?: () => void;
 
   constructor(private readonly options: ToonTextJobServiceOptions) {
     this.now = options.now ?? Date.now;
     this.wait = options.wait ?? ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
+    this.unsubscribePolicy = options.modelPolicy?.subscribe((workspaceId) => {
+      for (const job of this.options.jobs.listActive().filter((candidate) => candidate.workspaceId === workspaceId)) this.dispatch(job.id);
+    });
   }
 
-  start(): void {
+  start(): Promise<void> {
+    if (this.maintenanceStarted || this.disposed || this.options.config.readOnly) return this.maintenancePromise;
+    this.maintenanceStarted = true;
     const activeJobs = this.options.jobs.listActive();
     for (const job of activeJobs) {
       if (job.transientSessionId) registerToonFactoryTransientSession(job.workspaceId, job.transientSessionId);
     }
-    void this.cleanupStaleSessions().catch(() => 0).finally(() => {
+    const controller = new AbortController();
+    this.maintenanceAbort = controller;
+    const timeoutMs = this.options.maintenanceTimeoutMs ?? DEFAULT_MAINTENANCE_TIMEOUT_MS;
+    const timeout = setTimeout(() => {
+      controller.abort(new DOMException("Toon text startup maintenance timed out", "TimeoutError"));
+    }, timeoutMs);
+    timeout.unref?.();
+    this.maintenancePromise = this.cleanupStaleSessions(controller.signal).then(() => undefined).catch((error) => {
+      if (!this.disposed) {
+        this.options.log?.(
+          controller.signal.reason instanceof DOMException && controller.signal.reason.name === "TimeoutError"
+            ? "toon-text:startup-maintenance-timeout"
+            : "toon-text:startup-maintenance-deferred",
+          { timeoutMs },
+        );
+      }
+    }).finally(() => {
+      clearTimeout(timeout);
+      if (this.maintenanceAbort === controller) this.maintenanceAbort = null;
+      if (this.disposed) return;
       for (const job of activeJobs) this.dispatch(job.id);
       this.scheduleProjectionReconcile(0);
     });
+    return this.maintenancePromise;
   }
 
   async dispose(): Promise<void> {
     this.disposed = true;
     if (this.projectionTimer) clearTimeout(this.projectionTimer);
     this.projectionTimer = null;
-    await Promise.allSettled(this.active.values());
+    this.unsubscribePolicy?.();
+    this.maintenanceAbort?.abort(new DOMException("Toon text service stopped", "AbortError"));
+    const drain = Promise.allSettled([this.maintenancePromise, ...this.active.values()]);
+    const shutdownDrainMs = this.options.shutdownDrainMs ?? DEFAULT_SHUTDOWN_DRAIN_MS;
+    let drained = false;
+    let drainTimer: ReturnType<typeof setTimeout> | null = null;
+    await Promise.race([
+      drain.then(() => { drained = true; }),
+      new Promise<void>((resolve) => {
+        drainTimer = setTimeout(resolve, shutdownDrainMs);
+        drainTimer.unref?.();
+      }),
+    ]);
+    if (drainTimer) clearTimeout(drainTimer);
+    if (!drained) this.options.log?.("toon-text:shutdown-drain-timeout", { timeoutMs: shutdownDrainMs });
   }
 
   dispatch(jobId: string): void {
@@ -79,19 +129,30 @@ export class ToonTextJobService {
     return this.options.jobs.require(jobId);
   }
 
-  async cleanupStaleSessions(): Promise<number> {
+  async cleanupStaleSessions(signal?: AbortSignal): Promise<number> {
     const cutoff = this.now() - (this.options.staleAgeMs ?? DEFAULT_STALE_AGE_MS);
     const limit = Math.max(1, Math.min(100, this.options.cleanupLimit ?? DEFAULT_CLEANUP_LIMIT));
     let removed = 0;
     for (const workspaceRef of this.options.config.workspaces) {
+      throwIfAborted(signal);
       if (removed >= limit) break;
       if (workspaceRef.workspaceType === "remote") continue;
       let workspace: WorkspaceInfo;
       try { workspace = await this.resolveLocalWorkspace(workspaceRef.id); } catch { continue; }
       const opencode = this.options.createWorkspaceOpencodeClient(this.options.config, workspace);
-      const listed = await opencode.session.list({ roots: true, search: TRANSIENT_TITLE_PREFIX, limit: limit - removed }).catch(() => null);
+      let listed: Awaited<ReturnType<WorkspaceOpencodeClient["session"]["list"]>> | null;
+      try {
+        listed = await abortable(
+          opencode.session.list({ roots: true, search: TRANSIENT_TITLE_PREFIX, limit: limit - removed }, { signal }),
+          signal,
+        );
+      } catch (error) {
+        throwIfAborted(signal, error);
+        listed = null;
+      }
       if (!listed) continue;
       for (const session of listed.data ?? []) {
+        throwIfAborted(signal);
         if (removed >= limit) break;
         const metadata = session.metadata;
         if (
@@ -108,7 +169,7 @@ export class ToonTextJobService {
             }, this.now());
           }
         }
-        await this.deleteTransientSession(opencode, workspace.id, session.id);
+        await this.deleteTransientSession(opencode, workspace.id, session.id, signal);
         removed += 1;
       }
     }
@@ -118,6 +179,7 @@ export class ToonTextJobService {
   private async execute(jobId: string): Promise<void> {
     let sessionId: string | undefined;
     let opencode: WorkspaceOpencodeClient | undefined;
+    let retainSession = false;
     try {
       let job = this.options.jobs.require(jobId);
       if (!["queued", "running", "cancel_requested"].includes(job.status)) return;
@@ -135,7 +197,6 @@ export class ToonTextJobService {
         throw jobFailure("toon_text_job_target_changed", "The Toon Factory workflow target is unavailable");
       }
       await projectRepository.assertTextJobPrerequisites(job.projectId, job);
-      await this.validateRequest(job, projectRepository, opencode);
 
       const committed = await projectRepository.readCommittedTextJobResult(job);
       if (committed) {
@@ -171,6 +232,7 @@ export class ToonTextJobService {
         if (job.status === "running") {
           throw jobFailure("toon_text_session_lost", "The temporary Toon Factory session is no longer available");
         }
+        await this.validateRequest(job, projectRepository, opencode);
         const created = await opencode.session.create({
           title: `${TRANSIENT_TITLE_PREFIX} ${job.action} · ${job.id}`,
           model: { id: job.selectedModel.modelID, providerID: job.selectedModel.providerID },
@@ -215,6 +277,10 @@ export class ToonTextJobService {
       let job: ToonTextJob | null;
       try { job = this.options.jobs.get(jobId); } catch { return; }
       if (job && !["completed", "failed", "cancelled"].includes(job.status)) {
+        if (error instanceof ApiError && error.code === "model_policy_pending") {
+          retainSession = true;
+          return;
+        }
         if (opencode && sessionId) {
           await this.deleteTransientSession(opencode, job.workspaceId, sessionId);
           sessionId = undefined;
@@ -226,16 +292,27 @@ export class ToonTextJobService {
         await this.reconcileProjection(terminal).catch(() => undefined);
       }
     } finally {
-      if (!this.disposed && opencode && sessionId) {
+      if (!this.disposed && !retainSession && opencode && sessionId) {
         const job = this.options.jobs.get(jobId);
         if (job) await this.deleteTransientSession(opencode, job.workspaceId, sessionId);
       }
     }
   }
 
-  private async deleteTransientSession(opencode: WorkspaceOpencodeClient, workspaceId: string, sessionId: string): Promise<void> {
-    const deleted = await opencode.session.delete({ sessionID: sessionId }).catch(() => null);
-    if (deleted && deleted.error === undefined && deleted.data === true) unregisterSession(workspaceId, sessionId);
+  private async deleteTransientSession(
+    opencode: WorkspaceOpencodeClient,
+    workspaceId: string,
+    sessionId: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    let deleted: Awaited<ReturnType<WorkspaceOpencodeClient["session"]["delete"]>> | null;
+    try {
+      deleted = await abortable(opencode.session.delete({ sessionID: sessionId }, { signal }), signal);
+    } catch (error) {
+      throwIfAborted(signal, error);
+      deleted = null;
+    }
+    if (deleted?.data === true) unregisterSession(workspaceId, sessionId);
   }
 
   private async validateRequest(
@@ -260,6 +337,7 @@ export class ToonTextJobService {
     if (!provider || !connected.has(provider.id) || !model || !isTextCapable(model)) {
       throw jobFailure("selected_model_unavailable", "The selected Toon Factory text model is unavailable");
     }
+    this.options.modelPolicy?.assertAllowed(job.workspaceId, job.selectedModel, provider.source);
   }
 
   private async waitForTerminal(opencode: WorkspaceOpencodeClient, sessionId: string, jobId: string): Promise<void> {
@@ -362,6 +440,7 @@ export class ToonTextJobService {
       this.projectionTimer = null;
       if (this.projectionRunning) return this.scheduleProjectionReconcile(2_000);
       this.projectionRunning = true;
+      for (const job of this.options.jobs.listActive()) this.dispatch(job.id);
       void Promise.allSettled(this.options.jobs.listProjectionDirty(this.now()).map((job) => this.reconcileProjection(job)))
         .finally(() => {
           this.projectionRunning = false;
@@ -369,6 +448,30 @@ export class ToonTextJobService {
         });
     }, delay);
   }
+}
+
+function throwIfAborted(signal?: AbortSignal, error?: unknown): void {
+  if (!signal?.aborted) return;
+  throw signal.reason ?? error ?? new DOMException("The operation was aborted", "AbortError");
+}
+
+async function abortable<T>(operation: Promise<T>, signal?: AbortSignal): Promise<T> {
+  throwIfAborted(signal);
+  if (!signal) return operation;
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => reject(signal.reason ?? new DOMException("The operation was aborted", "AbortError"));
+    signal.addEventListener("abort", abort, { once: true });
+    operation.then(
+      (value) => {
+        signal.removeEventListener("abort", abort);
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener("abort", abort);
+        reject(error);
+      },
+    );
+  });
 }
 
 function isTextCapable(model: unknown): boolean {

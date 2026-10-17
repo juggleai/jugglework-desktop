@@ -46,6 +46,7 @@ describe("standalone server lifecycle", () => {
       "const port = Number(process.argv[portIndex + 1]);",
       "const logPath = process.env.JUGGLEWORK_CLI_TEST_LOG;",
       "const append = (line) => appendFileSync(logPath, `${line}\\n`);",
+      "append(`TOON_BRIDGE_TOKEN_PRESENT=${process.env.TOON_BRIDGE_TOKEN ? 'yes' : 'no'}`);",
       "const server = Bun.serve({ hostname: '127.0.0.1', port, fetch: () => Response.json({}) });",
       "console.log(`opencode server listening on http://127.0.0.1:${server.port}`);",
       "append('READY');",
@@ -86,7 +87,7 @@ describe("standalone server lifecycle", () => {
       const result = await exit;
 
       expect(result).toEqual({ code: 0, signal: null });
-      expect((await readFile(logPath, "utf8")).split("\n")).toContain("CLEANED");
+      expect((await readFile(logPath, "utf8")).split("\n")).toEqual(expect.arrayContaining(["TOON_BRIDGE_TOKEN_PRESENT=yes", "CLEANED"]));
     } finally {
       if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
       await rm(root, { recursive: true, force: true });

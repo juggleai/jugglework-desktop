@@ -3,7 +3,7 @@ import type { ReloadEventStore } from "../events.js";
 import type { TokenService } from "../tokens.js";
 import type { Actor, ServerConfig } from "../types.js";
 
-export type AuthMode = "none" | "client" | "host" | "host-token";
+export type AuthMode = "none" | "client" | "host" | "host-token" | "host-or-toon-bridge";
 
 export interface RequestContext {
   request: Request;

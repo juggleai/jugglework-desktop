@@ -40,6 +40,9 @@ function startMockOpencode(input?: {
   holdCommand?: Promise<void>;
   config?: Record<string, unknown>;
   statuses?: unknown;
+  sessions?: Array<Record<string, unknown>>;
+  paginateSessions?: boolean;
+  unavailableSessionIds?: string[];
 }) {
   const requests: Array<{ pathname: string; search: string; directory: string | null; method: string; body?: unknown }> = [];
   let config = input?.config ?? {};
@@ -80,7 +83,7 @@ function startMockOpencode(input?: {
         if (input?.invalidList) {
           return Response.json({ nope: true });
         }
-        return Response.json([
+        const sessions = input?.sessions ?? [
           {
             id: "ses_1",
             title: "Hostname Check",
@@ -88,7 +91,13 @@ function startMockOpencode(input?: {
             directory: request.headers.get("x-opencode-directory"),
             time: { created: 100, updated: 200 },
           },
-        ]);
+        ];
+        if (input?.paginateSessions) {
+          const start = Number(url.searchParams.get("start") ?? "0");
+          const limit = Number(url.searchParams.get("limit") ?? String(sessions.length));
+          return Response.json(sessions.slice(start, start + limit));
+        }
+        return Response.json(sessions);
       }
 
       if (url.pathname === "/session/status") {
@@ -114,6 +123,13 @@ function startMockOpencode(input?: {
           directory: request.headers.get("x-opencode-directory"),
           time: { created: 100, updated: 200 },
         });
+      }
+
+      const requestedSessionId = url.pathname.match(/^\/session\/([^/]+)$/)?.[1];
+      if (requestedSessionId) {
+        if (input?.unavailableSessionIds?.includes(requestedSessionId)) return Response.json({ code: "not_found" }, { status: 404 });
+        const session = input?.sessions?.find((entry) => entry.id === requestedSessionId);
+        if (session) return Response.json({ ...session, directory: request.headers.get("x-opencode-directory") });
       }
 
       if (url.pathname === "/session/ses_1/fork" && request.method === "POST") {
@@ -148,6 +164,12 @@ function startMockOpencode(input?: {
         ]);
       }
 
+      const sessionMessages = url.pathname.match(/^\/session\/([^/]+)\/message$/);
+      if (request.method === "GET" && sessionMessages) {
+        const sessionID = decodeURIComponent(sessionMessages[1]!);
+        return Response.json([{ info: { id: `msg-${sessionID}`, sessionID, role: "assistant", time: { created: 1 } }, parts: [] }]);
+      }
+
       if (url.pathname === "/session/ses_created/prompt_async" && request.method === "POST") {
         return new Response(null, { status: 204 });
       }
@@ -161,6 +183,8 @@ function startMockOpencode(input?: {
           },
         ]);
       }
+
+      if (request.method === "GET" && /^\/session\/[^/]+\/todo$/.test(url.pathname)) return Response.json([]);
 
       if (url.pathname === "/session/ses_1/command" && request.method === "POST") {
         await input?.holdCommand;
@@ -387,6 +411,80 @@ describe("workspace session read APIs", () => {
     await expect(response.json()).resolves.toMatchObject({
       items: [{ id: "ses_1", status: { type: "idle" } }],
     });
+  });
+
+  test("keeps ordinary child sessions visible when pagination omits their parent", async () => {
+    const workspaceRoot = await createWorkspaceRoot();
+    const child = { id: "ses_child", parentID: "ses_parent", title: "Paged child", slug: "paged-child", time: { created: 1, updated: 2 } };
+    const parent = { id: "ses_parent", title: "Ordinary parent", slug: "ordinary-parent", time: { created: 1, updated: 2 } };
+    const mock = startMockOpencode({ sessions: [child, parent], paginateSessions: true, statuses: { ses_child: { type: "idle" } } });
+    const jugglework = await startJuggleWorkServer({ workspaceRoot, opencodeBaseUrl: `http://127.0.0.1:${mock.server.port}` });
+    const response = await fetch(`http://127.0.0.1:${jugglework.server.port}/workspace/ws_1/sessions?limit=1`, { headers: auth(jugglework.token) });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ items: [expect.objectContaining({ id: "ses_child" })] });
+  });
+
+  test("returns temporary unavailable when an unclassified parent chain cannot be resolved", async () => {
+    const workspaceRoot = await createWorkspaceRoot();
+    const child = { id: "ses_child", parentID: "ses_parent", title: "Eventually consistent child", slug: "eventually-consistent", time: { created: 1, updated: 2 } };
+    const mock = startMockOpencode({ sessions: [child], unavailableSessionIds: ["ses_parent"], statuses: { ses_child: { type: "idle" } } });
+    const jugglework = await startJuggleWorkServer({ workspaceRoot, opencodeBaseUrl: `http://127.0.0.1:${mock.server.port}` });
+    const response = await fetch(`http://127.0.0.1:${jugglework.server.port}/workspace/ws_1/sessions/ses_child`, { headers: auth(jugglework.token) });
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({ code: "session_visibility_temporarily_unavailable" });
+  });
+
+  test("fails closed when an explicitly normal child has an unavailable parent", async () => {
+    const workspaceRoot = await createWorkspaceRoot();
+    const child = { id: "ses_child", parentID: "ses_parent", metadata: { visibility: "normal" }, title: "Explicit normal child", slug: "explicit-normal", time: { created: 1, updated: 2 } };
+    const mock = startMockOpencode({ sessions: [child], unavailableSessionIds: ["ses_parent"], statuses: { ses_child: { type: "idle" } } });
+    const jugglework = await startJuggleWorkServer({ workspaceRoot, opencodeBaseUrl: `http://127.0.0.1:${mock.server.port}` });
+    const response = await fetch(`http://127.0.0.1:${jugglework.server.port}/workspace/ws_1/sessions/ses_child`, { headers: auth(jugglework.token) });
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({ code: "session_visibility_temporarily_unavailable" });
+  });
+
+  test("enforces parent visibility across list, detail, messages, snapshot, and proxy reads", async () => {
+    const workspaceRoot = await createWorkspaceRoot();
+    const sessions = [
+      { id: "ordinary-root", title: "Ordinary root", slug: "ordinary-root", time: { created: 1, updated: 2 } },
+      { id: "ordinary-child", parentID: "ordinary-root", metadata: { visibility: "normal" }, title: "Ordinary child", slug: "ordinary-child", time: { created: 1, updated: 2 } },
+      { id: "toon-root", metadata: { kind: "toon-factory", visibility: "toon_project_assistant" }, title: "Toon root", slug: "toon-root", time: { created: 1, updated: 2 } },
+      { id: "toon-child", parentID: "toon-root", metadata: { visibility: "normal" }, title: "Toon child", slug: "toon-child", time: { created: 1, updated: 2 } },
+    ];
+    const statuses = Object.fromEntries(sessions.map((session) => [session.id, { type: "idle" }]));
+    const mock = startMockOpencode({ sessions, statuses });
+    const jugglework = await startJuggleWorkServer({ workspaceRoot, opencodeBaseUrl: `http://127.0.0.1:${mock.server.port}` });
+    const base = `http://127.0.0.1:${jugglework.server.port}`;
+
+    const list = await fetch(`${base}/workspace/ws_1/sessions`, { headers: auth(jugglework.token) });
+    expect(list.status).toBe(200);
+    expect((await list.json()).items.map((item: { id: string }) => item.id)).toEqual(["ordinary-root", "ordinary-child"]);
+    for (const suffix of ["", "/messages", "/snapshot"]) {
+      const ordinary = await fetch(`${base}/workspace/ws_1/sessions/ordinary-child${suffix}`, { headers: auth(jugglework.token) });
+      expect(ordinary.status).toBe(200);
+      const hidden = await fetch(`${base}/workspace/ws_1/sessions/toon-child${suffix}`, { headers: auth(jugglework.token) });
+      expect(hidden.status).toBe(404);
+    }
+
+    const proxyList = await fetch(`${base}/workspace/ws_1/opencode/session`, { headers: auth(jugglework.token) });
+    expect(proxyList.status).toBe(200);
+    expect((await proxyList.json()).map((item: { id: string }) => item.id)).toEqual(["ordinary-root", "ordinary-child"]);
+    const proxyStatus = await fetch(`${base}/workspace/ws_1/opencode/session/status`, { headers: auth(jugglework.token) });
+    expect(proxyStatus.status).toBe(200);
+    expect(await proxyStatus.json()).toEqual({ "ordinary-root": { type: "idle" }, "ordinary-child": { type: "idle" } });
+    expect((await fetch(`${base}/workspace/ws_1/opencode/session/ordinary-child`, { headers: auth(jugglework.token) })).status).toBe(200);
+    expect((await fetch(`${base}/workspace/ws_1/opencode/session/toon-child`, { headers: auth(jugglework.token) })).status).toBe(404);
+  });
+
+  test("proxy list fails closed when a parent lineage cannot be resolved", async () => {
+    const workspaceRoot = await createWorkspaceRoot();
+    const child = { id: "ses_child", parentID: "missing", metadata: { visibility: "normal" }, title: "Unknown child", slug: "unknown-child", time: { created: 1, updated: 2 } };
+    const mock = startMockOpencode({ sessions: [child], unavailableSessionIds: ["missing"], statuses: { ses_child: { type: "idle" } } });
+    const jugglework = await startJuggleWorkServer({ workspaceRoot, opencodeBaseUrl: `http://127.0.0.1:${mock.server.port}` });
+    const response = await fetch(`http://127.0.0.1:${jugglework.server.port}/workspace/ws_1/opencode/session`, { headers: auth(jugglework.token) });
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({ code: "toon_factory_session_filter_unavailable" });
   });
 
   test("rejects a malformed target status but ignores malformed statuses outside the listed page", async () => {

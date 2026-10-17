@@ -4,6 +4,7 @@ export type OpenCodeContext = {
   agent?: string;
   sessionID?: string;
   messageID?: string;
+  callID?: string;
   directory?: string;
   worktree?: string;
   workspaceId?: string;

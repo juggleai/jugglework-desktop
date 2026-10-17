@@ -39,6 +39,7 @@ async function harness(managed: boolean) {
   if (managed) registerTrustedOpencodeProcess(config, { baseUrl, identity: "test-managed-engine", isAlive: () => true });
   const server = await startServer(config);
   stops.push(() => server.stop());
+  requests.length = 0;
   const base = `http://127.0.0.1:${server.port}`;
   const headers = { authorization: "Bearer plugin-client", "content-type": "application/json" };
   const put = (id: string, body: unknown) => fetch(`${base}/workspace/${id}/plugin-policy`, {

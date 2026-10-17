@@ -9,6 +9,7 @@ import {
   clearTrustedOpencodeProcess,
   createServerLogger,
   registerTrustedOpencodeProcess,
+  requireManagedToonBridgeCredential,
   startServer,
   syncAllWorkspacesRuntimeMcpToEngine,
 } from "./server.js";
@@ -134,6 +135,7 @@ if (!config.opencodeBaseUrl && process.env.JUGGLEWORK_MANAGE_OPENCODE === "1") {
     const runtimeConfigPath = await writeJuggleWorkRuntimeConfigFile(config, workspace.id);
     stopRuntimeConfigFileRefresh = keepJuggleWorkRuntimeConfigFileFresh(config, workspace.id);
     const managedOpencodeCwd = process.env.JUGGLEWORK_MANAGED_OPENCODE_CWD?.trim() || workspace.path;
+    const toonBridgeCredential = requireManagedToonBridgeCredential(config);
     await duringStartup(() => mkdir(managedOpencodeCwd, { recursive: true }));
     managedOpencode = await duringStartup(() => createManagedOpencodeServer({
       bin: process.env.JUGGLEWORK_OPENCODE_BIN,
@@ -144,6 +146,7 @@ if (!config.opencodeBaseUrl && process.env.JUGGLEWORK_MANAGE_OPENCODE === "1") {
         ...(process.env.JUGGLEWORK_UI_CONTROL_DISCOVERY ? { JUGGLEWORK_UI_CONTROL_DISCOVERY: process.env.JUGGLEWORK_UI_CONTROL_DISCOVERY } : {}),
         JUGGLEWORK_SERVER_URL: serverUrl,
         JUGGLEWORK_SERVER_TOKEN: config.token,
+        TOON_BRIDGE_TOKEN: toonBridgeCredential.token,
         JUGGLEWORK_WORKSPACE_ID: workspace.id,
         OPENCODE_CONFIG: runtimeConfigPath,
         ...(opencodeModelsUrl ? { OPENCODE_MODELS_URL: opencodeModelsUrl } : {}),

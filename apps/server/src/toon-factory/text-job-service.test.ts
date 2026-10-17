@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,8 +15,10 @@ import { openRuntimeSqliteDatabase } from "../runtime-db.js";
 import type { ServerConfig } from "../types.js";
 import { automationSqliteAdapter } from "../automation/sqlite.js";
 import { ToonFactoryRepository } from "./repository.js";
+import { ToonModelPolicyStore } from "./model-policy-store.js";
 import { ToonTextJobRepository } from "./text-job-repository.js";
 import { ToonTextJobService } from "./text-job-service.js";
+import { ToonWorkspaceRuntimeStore } from "./workspace-runtime-store.js";
 import {
   clearWorkspaceSessionRegistry,
   isRegisteredToonFactoryTransientSession,
@@ -29,6 +33,7 @@ type FakeOptions = {
   promptError?: unknown;
   sessions?: Array<Record<string, any>>;
   stayBusy?: boolean;
+  modelPolicy?: ToonModelPolicyStore;
 };
 
 async function fixture(options: FakeOptions = {}) {
@@ -77,6 +82,7 @@ async function fixture(options: FakeOptions = {}) {
     resolveWorkspace: async () => config.workspaces[0]!,
     createWorkspaceOpencodeClient: () => opencode as never,
     wait: async () => { await new Promise((resolve) => setTimeout(resolve, 1)); },
+    modelPolicy: options.modelPolicy,
   });
   opencode.session.messages = async () => ({ data: [{ info: {
     id: "assistant-1", sessionID: "transient-1", role: "assistant", parentID: `toon-${jobs.listAll()[0]?.id ?? "missing"}`,
@@ -220,6 +226,89 @@ describe("Toon Factory text jobs", () => {
     }
   });
 
+  test("dispose aborts and bounds an in-flight startup cleanup", async () => {
+    const fx = await fixture();
+    let markListed: (() => void) | undefined;
+    const listed = new Promise<void>((resolve) => { markListed = resolve; });
+    const service = new ToonTextJobService({
+      config: fx.config,
+      jobs: fx.jobs,
+      resolveWorkspace: async () => fx.config.workspaces[0]!,
+      createWorkspaceOpencodeClient: () => ({
+        session: {
+          list: async (_input: unknown, request?: { signal?: AbortSignal }) => {
+            markListed?.();
+            await new Promise<void>((_resolve, reject) => {
+              request?.signal?.addEventListener("abort", () => reject(request.signal?.reason), { once: true });
+            });
+            return { data: [] };
+          },
+        },
+      }) as never,
+      maintenanceTimeoutMs: 30_000,
+      shutdownDrainMs: 25,
+    });
+    try {
+      void service.start();
+      await listed;
+      const stoppedAt = Date.now();
+      await service.dispose();
+      expect(Date.now() - stoppedAt).toBeLessThan(500);
+    } finally {
+      fx.jobs.close();
+    }
+  });
+
+  test("keeps a queued job nonterminal without policy and continues automatically after renderer sync", async () => {
+    const policy = new ToonModelPolicyStore();
+    const output = { title: "Synced", logline: "Policy arrived.", scenes: [{ id: "scene-1", heading: "INT.", summary: "Continue.", dialogue: [] }] };
+    const fx = await fixture({ structured: output, modelPolicy: policy });
+    try {
+      const job = fx.jobs.create("ws-1", fx.project.project.id, request());
+      await fx.projectRepository.queueTextJob(job);
+      fx.service.start();
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      expect(fx.jobs.require(job.id).status).toBe("queued");
+      expect(fx.createdInputs).toHaveLength(0);
+      expect(fx.promptInputs).toHaveLength(0);
+
+      policy.update(policySnapshot(1));
+      await waitFor(() => fx.jobs.require(job.id).status === "completed");
+      expect(fx.promptInputs).toHaveLength(1);
+    } finally { await fx.service.dispose(); fx.jobs.close(); }
+  });
+
+  test("restart loads persisted policy before recovering queued text work", async () => {
+    const sqlite = new Database(":memory:");
+    const runtime = ToonWorkspaceRuntimeStore.fromDatabase(automationSqliteAdapter({ kind: "bun", sqlite, db: null as never, close: () => sqlite.close() }));
+    new ToonModelPolicyStore(runtime).update(policySnapshot(3));
+    const restartedPolicy = new ToonModelPolicyStore(runtime);
+    const output = { title: "Restarted", logline: "Loaded first.", scenes: [{ id: "scene-1", heading: "EXT.", summary: "Continue.", dialogue: [] }] };
+    const fx = await fixture({ structured: output, modelPolicy: restartedPolicy });
+    try {
+      const job = fx.jobs.create("ws-1", fx.project.project.id, request());
+      await fx.projectRepository.queueTextJob(job);
+      fx.service.start();
+      await waitFor(() => fx.jobs.require(job.id).status === "completed");
+      expect(fx.promptInputs).toHaveLength(1);
+    } finally { await fx.service.dispose(); fx.jobs.close(); runtime.close(); }
+  });
+
+  test("a running text session reconciles while policy is pending", async () => {
+    const output = { title: "Recovered", logline: "No new dispatch.", scenes: [{ id: "scene-1", heading: "INT.", summary: "Done.", dialogue: [] }] };
+    const fx = await fixture({ structured: output, modelPolicy: new ToonModelPolicyStore() });
+    try {
+      const job = fx.jobs.create("ws-1", fx.project.project.id, request());
+      await fx.projectRepository.queueTextJob(job);
+      fx.jobs.start(job.id, "transient-1");
+      fx.jobs.markDispatched(job.id);
+      fx.service.dispatch(job.id);
+      await waitFor(() => ["completed", "failed"].includes(fx.jobs.require(job.id).status));
+      expect(fx.jobs.require(job.id).status, JSON.stringify(fx.jobs.require(job.id).error)).toBe("completed");
+      expect(fx.promptInputs).toHaveLength(0);
+    } finally { await fx.service.dispose(); fx.jobs.close(); }
+  });
+
   test("recovers a committed project result before the job completion write without resending", async () => {
     const output = { title: "Committed", logline: "Persisted first.", scenes: [{ id: "scene-1", heading: "EXT.", summary: "Done.", dialogue: [] }] };
     const fx = await fixture({ structured: undefined });
@@ -280,6 +369,12 @@ function request(): ToonTextJobCreateRequest {
     selectedModel: { kind: "text", providerID: "provider", modelID: "model" },
     outputSchema: TOON_TEXT_OUTPUT_SCHEMAS.script, contentApproved: true,
   };
+}
+
+function policySnapshot(revision: number) {
+  const content = { workspaceId: "ws-1", signedIn: true, policyFresh: true, organizationId: "org-1", userId: "user-1", allowedModels: ["provider/model"], validatedAt: new Date().toISOString() };
+  const canonical = (value: unknown): string => Array.isArray(value) ? `[${value.map(canonical).join(",")}]` : value && typeof value === "object" ? `{${Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right)).map(([key, child]) => `${JSON.stringify(key)}:${canonical(child)}`).join(",")}}` : JSON.stringify(value);
+  return { ...content, revision, digest: createHash("sha256").update(canonical(content)).digest("hex") };
 }
 
 async function addEpisodeAndSelection(repository: ToonFactoryRepository, created: ToonProjectResponse): Promise<ToonProjectResponse> {

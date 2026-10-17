@@ -70,6 +70,16 @@
       "development": "./src/toon-factory.ts",
       "default": "./dist/toon-factory.js"
     },
+    "./toon-assistant": {
+      "types": "./src/toon-assistant.ts",
+      "development": "./src/toon-assistant.ts",
+      "default": "./dist/toon-assistant.js"
+    },
+    "./toon-workspace": {
+      "types": "./src/toon-workspace.ts",
+      "development": "./src/toon-workspace.ts",
+      "default": "./dist/toon-workspace.js"
+    },
     "./den/desktop-app-restrictions": {
       "types": "./src/den/desktop-app-restrictions.ts",
       "development": "./src/den/desktop-app-restrictions.ts",

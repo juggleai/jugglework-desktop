@@ -12,6 +12,7 @@ import { createManagedOpencodeServer, type ManagedOpencodeServer, type OpencodeE
 import {
   clearTrustedOpencodeProcess,
   registerTrustedOpencodeProcess,
+  requireManagedToonBridgeCredential,
   startServer,
   syncAllWorkspacesRuntimeMcpToEngine,
   type ServerLogger,
@@ -175,6 +176,7 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
       const cwd = options.opencodeCwd
         || process.env.JUGGLEWORK_MANAGED_OPENCODE_CWD?.trim()
         || workspace.path;
+      const toonBridgeCredential = requireManagedToonBridgeCredential(config);
       await duringStartup(() => mkdir(cwd, { recursive: true }));
       await sweepLegacyOpenCodeConfig(config).catch(() => undefined);
 
@@ -187,6 +189,7 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
           ...(process.env.JUGGLEWORK_UI_CONTROL_DISCOVERY ? { JUGGLEWORK_UI_CONTROL_DISCOVERY: process.env.JUGGLEWORK_UI_CONTROL_DISCOVERY } : {}),
           JUGGLEWORK_SERVER_URL: serverUrl,
           JUGGLEWORK_SERVER_TOKEN: config.token,
+          TOON_BRIDGE_TOKEN: toonBridgeCredential.token,
           // 一个受管 OpenCode 实例可能服务多个目录；启动 workspace 是稳定 fallback，
           // tool hook 仍优先使用 factory context/session 推导的具体 workspace。
           JUGGLEWORK_WORKSPACE_ID: workspace.id,

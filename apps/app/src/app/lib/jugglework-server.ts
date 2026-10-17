@@ -10,6 +10,26 @@ import type {
   Todo,
 } from "@opencode-ai/sdk/v2/client";
 import {
+  toonAssistantCanvasExecutionResponseSchema,
+  toonAssistantCompletionResponseSchema,
+  toonAssistantConversationListSchema,
+  toonAssistantConversationResponseSchema,
+  toonAssistantEventPageSchema,
+  toonAssistantSendResponseSchema,
+  toonAssistantSnapshotResponseSchema,
+  toonAssistantStreamEventSchema,
+  type ToonAssistantConversation,
+  type ToonAssistantCanvasProposal,
+  type ToonAssistantGenerationProposal,
+  type ToonAssistantCreateRequest,
+  type ToonAssistantEditResendRequest,
+  type ToonAssistantEventPage,
+  type ToonAssistantSendRequest,
+  type ToonAssistantSnapshot,
+  type ToonAssistantStopRequest,
+  type ToonAssistantUpdateRequest,
+} from "@jugglework/types/toon-assistant";
+import {
   agentContextDiagnosticsReportSchema,
   agentContextDiagnosticsRequestSchema,
   type AgentContextDiagnosticsReport,
@@ -75,7 +95,6 @@ import {
   toonTextJobResponseSchema,
   toonMediaJobListResponseSchema,
   toonMediaJobResponseSchema,
-  toonMediaJobCreateRequestSchema,
   type ToonCanvasResponse,
   type ToonCanvasWriteRequest,
   type ToonDeliveryManifestCreateRequest,
@@ -92,12 +111,56 @@ import {
   type ToonTextJobResponse,
   type ToonTextWriteRequest,
   type ToonVideoGenerationMode,
-  type ToonMediaAuthorization,
   type ToonMediaAuthorizationRequest,
-  type ToonMediaJobCreateRequest,
   type ToonMediaJobListResponse,
   type ToonMediaJobResponse,
+  type ToonModelPolicySnapshot,
 } from "@jugglework/types/toon-factory";
+import {
+  toonMigrationPreflightSchema,
+  toonAssetAuthorizedImportRequestSchema,
+  toonAssetImportMetadataSchema,
+  toonCanvasCheckpointListResponseSchema,
+  toonCanvasLeaseResponseSchema,
+  toonDocumentRevisionListResponseSchema,
+  toonDocumentSearchResponseSchema,
+  toonPortableProjectBundleSchema,
+  toonWorkspaceFeatureExposureSchema,
+  toonWorkspaceOperationOutcomeSchema,
+  toonWorkspaceProjectOpenResponseSchema,
+  toonWorkspaceProjectListResponseSchema,
+  toonWorkspaceQueryResponseSchema,
+  completeToonWorkspaceClientCommand,
+  type ToonMigrationApplyRequest,
+  type ToonAssetAuthorizedImportRequest,
+  type ToonAssetImportMetadata,
+  type ToonCanvasCheckpointCreateRequest,
+  type ToonCanvasCheckpointListResponse,
+  type ToonCanvasCheckpointRestoreRequest,
+  type ToonCanvasLeaseRequest,
+  type ToonCanvasLeaseResponse,
+  type ToonDocumentRevisionListResponse,
+  type ToonDocumentRevisionRestoreRequest,
+  type ToonDocumentSearchRequest,
+  type ToonDocumentSearchResponse,
+  type ToonMigrationPreflight,
+  type ToonPortableProjectBundle,
+  type ToonProjectInitializeRequest,
+  type ToonWorkspaceClientCommand,
+  type ToonWorkspaceFeatureExposure,
+  type ToonWorkspaceOperationOutcome,
+  type ToonWorkspaceProjectOpenRequest,
+  type ToonWorkspaceProjectOpenResponse,
+  type ToonWorkspaceQuery,
+  type ToonWorkspaceQueryResponse,
+  type ToonWorkspaceProjectListResponse,
+  type ToonWorkspaceGenerationRecord,
+  type ToonGenerationAuthorizationState,
+  type ToonWorkflowApproveRequest,
+  type ToonWorkflowDeliveryRequest,
+  type ToonWorkflowEnsureRequest,
+  type ToonWorkflowSkipRequest,
+} from "@jugglework/types/toon-workspace";
 
 export type JuggleWorkServerCapabilities = {
   skills: { read: boolean; write: boolean; source: "jugglework" | "opencode" };
@@ -1534,6 +1597,10 @@ export class JuggleWorkServerError extends Error {
   }
 }
 
+function parseToonAssistantConversation(value: unknown): ToonAssistantConversation {
+  return toonAssistantConversationResponseSchema.parse({ item: value }).item;
+}
+
 function isJsonRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -2159,10 +2226,10 @@ async function requestAgentContextDiagnosticsJson(
   return result.payload;
 }
 
-async function requestMultipartRaw(
+async function requestUploadRaw(
   baseUrl: string,
   path: string,
-  options: { method?: string; token?: string; hostToken?: string; body?: FormData; timeoutMs?: number } = {},
+  options: { method?: string; token?: string; hostToken?: string; body: Blob; metadata: unknown; timeoutMs?: number },
 ): Promise<{ ok: boolean; status: number; text: string }>{
   const url = `${baseUrl}${path}`;
   const fetchImpl = resolveFetch(url);
@@ -2171,7 +2238,11 @@ async function requestMultipartRaw(
     url,
     {
       method: options.method ?? "POST",
-      headers: buildAuthHeaders(options.token, options.hostToken),
+      headers: {
+        ...buildAuthHeaders(options.token, options.hostToken),
+        "Content-Type": "application/octet-stream",
+        "X-JuggleWork-Toon-Asset": encodeURIComponent(JSON.stringify(options.metadata)),
+      },
       body: options.body,
     },
     options.timeoutMs ?? DEFAULT_JUGGLEWORK_SERVER_TIMEOUT_MS,
@@ -2180,10 +2251,24 @@ async function requestMultipartRaw(
   return { ok: response.ok, status: response.status, text };
 }
 
+async function requestMultipartRaw(
+  baseUrl: string,
+  path: string,
+  options: { method?: string; token?: string; hostToken?: string; body?: FormData; timeoutMs?: number } = {},
+): Promise<{ ok: boolean; status: number; text: string }> {
+  const url = `${baseUrl}${path}`;
+  const response = await fetchWithTimeout(resolveFetch(url), url, {
+    method: options.method ?? "POST",
+    headers: buildAuthHeaders(options.token, options.hostToken),
+    body: options.body,
+  }, options.timeoutMs ?? DEFAULT_JUGGLEWORK_SERVER_TIMEOUT_MS);
+  return { ok: response.ok, status: response.status, text: await response.text() };
+}
+
 async function requestBinary(
   baseUrl: string,
   path: string,
-  options: { method?: string; token?: string; hostToken?: string; timeoutMs?: number } = {},
+  options: { method?: string; token?: string; hostToken?: string; timeoutMs?: number; signal?: AbortSignal } = {},
 ): Promise<{ data: ArrayBuffer; contentType: string | null; filename: string | null }>{
   const url = `${baseUrl}${path}`;
   const fetchImpl = resolveFetch(url);
@@ -2193,6 +2278,7 @@ async function requestBinary(
     {
       method: options.method ?? "GET",
       headers: buildAuthHeaders(options.token, options.hostToken),
+      signal: options.signal,
     },
     options.timeoutMs ?? DEFAULT_JUGGLEWORK_SERVER_TIMEOUT_MS,
   );
@@ -2323,6 +2409,7 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
     )),
     googleWorkspaceStatus: () => requestJson<GoogleWorkspaceAuthStatus>(baseUrl, "/experimental/google-workspace/status", { token, hostToken, timeoutMs: timeouts.status }),
     setConnectState: (connectEnabled: boolean) => requestJson<JuggleWorkConnectState>(baseUrl, "/experimental/connect/state", { token, hostToken, method: "PUT", body: { connectEnabled }, timeoutMs: timeouts.config }),
+    setToonModelPolicy: (snapshot: ToonModelPolicySnapshot) => requestJson<{ ok: true; snapshot: ToonModelPolicySnapshot; applied: boolean }>(baseUrl, "/experimental/toon-factory/model-policy", { token, hostToken, method: "PUT", body: snapshot, timeoutMs: timeouts.config }),
     // TIPS: 这是 GitHub 事件触发自动化 resolveAuth 的真实生产落点——apps/server 自己
     // 从来没有登录态，渲染进程本来就持有真实的云端 session，登录/刷新后把它转发进
     // apps/server 的内存，别的什么都不用做。cloudBaseUrl 是云端 API 根地址（不是这个
@@ -2375,6 +2462,201 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
         timeoutMs: timeouts.binary,
       }),
     listWorkspaces: () => requestJson<JuggleWorkWorkspaceList>(baseUrl, "/workspaces", { token, hostToken, timeoutMs: timeouts.listWorkspaces }),
+    getToonWorkspaceFeatures: async (workspaceId: string): Promise<ToonWorkspaceFeatureExposure> => {
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/workspace-features`, { token, hostToken, timeoutMs: timeouts.toonFactory });
+      return toonWorkspaceFeatureExposureSchema.parse(payload);
+    },
+    initializeToonWorkspaceProject: async (workspaceId: string, input: ToonProjectInitializeRequest): Promise<ToonWorkspaceOperationOutcome> => {
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/v2/projects/initialize`, {
+        token, hostToken, method: "POST", body: input, timeoutMs: timeouts.toonFactory,
+      });
+      return toonWorkspaceOperationOutcomeSchema.parse(payload);
+    },
+    ensureToonWorkspaceWorkflow: async (workspaceId: string, projectId: string, input: ToonWorkflowEnsureRequest): Promise<ToonWorkspaceOperationOutcome> => {
+      const { actor: _actor, origin: _origin, ...intent } = input;
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/v2/projects/${encodeURIComponent(projectId)}/workflow/ensure`, { token, hostToken, method: "POST", body: intent, timeoutMs: timeouts.toonFactory });
+      return toonWorkspaceOperationOutcomeSchema.parse(payload);
+    },
+    approveToonWorkspaceWorkflowStep: async (workspaceId: string, projectId: string, workflowRecordId: string, input: ToonWorkflowApproveRequest): Promise<ToonWorkspaceOperationOutcome> => {
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/v2/projects/${encodeURIComponent(projectId)}/workflow/${encodeURIComponent(workflowRecordId)}/approve`, { token, hostToken, method: "POST", body: input, timeoutMs: timeouts.toonFactory });
+      return toonWorkspaceOperationOutcomeSchema.parse(payload);
+    },
+    skipToonWorkspaceWorkflowStep: async (workspaceId: string, projectId: string, workflowRecordId: string, input: ToonWorkflowSkipRequest): Promise<ToonWorkspaceOperationOutcome> => {
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/v2/projects/${encodeURIComponent(projectId)}/workflow/${encodeURIComponent(workflowRecordId)}/skip`, { token, hostToken, method: "POST", body: input, timeoutMs: timeouts.toonFactory });
+      return toonWorkspaceOperationOutcomeSchema.parse(payload);
+    },
+    deliverToonWorkspaceWorkflowStep: async (workspaceId: string, projectId: string, workflowRecordId: string, input: ToonWorkflowDeliveryRequest): Promise<ToonWorkspaceOperationOutcome> => {
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/v2/projects/${encodeURIComponent(projectId)}/workflow/${encodeURIComponent(workflowRecordId)}/delivery`, { token, hostToken, method: "POST", body: input, timeoutMs: timeouts.toonFactory });
+      return toonWorkspaceOperationOutcomeSchema.parse(payload);
+    },
+    listToonWorkspaceProjects: async (workspaceId: string): Promise<ToonWorkspaceProjectListResponse> => {
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/v2/projects`, { token, hostToken, timeoutMs: timeouts.toonFactory });
+      return toonWorkspaceProjectListResponseSchema.parse(payload);
+    },
+    openToonWorkspaceProject: async (workspaceId: string, input: ToonWorkspaceProjectOpenRequest): Promise<ToonWorkspaceProjectOpenResponse> => {
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/v2/projects/open`, { token, hostToken, method: "POST", body: input, timeoutMs: timeouts.toonFactory });
+      return toonWorkspaceProjectOpenResponseSchema.parse(payload);
+    },
+    createToonAssistantConversation: async (workspaceId: string, projectId: string, input: ToonAssistantCreateRequest): Promise<ToonAssistantConversation> => {
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/v2/projects/${encodeURIComponent(projectId)}/assistant/conversations`, { token, hostToken, method: "POST", body: input, timeoutMs: timeouts.toonFactory });
+      return parseToonAssistantConversation(isJsonRecord(payload) ? payload.item : undefined);
+    },
+    listToonAssistantConversations: async (workspaceId: string, projectId: string, includeArchived = false): Promise<ToonAssistantConversation[]> => {
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/v2/projects/${encodeURIComponent(projectId)}/assistant/conversations?archived=${includeArchived}`, { token, hostToken, timeoutMs: timeouts.toonFactory });
+      const items = isJsonRecord(payload) && Array.isArray(payload.items) ? payload.items : toonAssistantConversationListSchema.parse(payload).items;
+      return items.map(parseToonAssistantConversation);
+    },
+    getToonAssistantSnapshot: async (workspaceId: string, projectId: string, conversationId: string): Promise<ToonAssistantSnapshot> => {
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/v2/projects/${encodeURIComponent(projectId)}/assistant/conversations/${encodeURIComponent(conversationId)}`, { token, hostToken, timeoutMs: timeouts.toonFactory });
+      if (!isJsonRecord(payload) || !isJsonRecord(payload.item)) return toonAssistantSnapshotResponseSchema.parse(payload).item;
+      return toonAssistantSnapshotResponseSchema.parse(payload).item;
+    },
+    updateToonAssistantConversation: async (workspaceId: string, projectId: string, conversationId: string, input: ToonAssistantUpdateRequest): Promise<ToonAssistantConversation> => {
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/v2/projects/${encodeURIComponent(projectId)}/assistant/conversations/${encodeURIComponent(conversationId)}`, { token, hostToken, method: "PATCH", body: input, timeoutMs: timeouts.toonFactory });
+      return parseToonAssistantConversation(isJsonRecord(payload) ? payload.item : undefined);
+    },
+    deleteToonAssistantConversation: (workspaceId: string, projectId: string, conversationId: string): Promise<{ deleted: boolean; cleanupPending?: true }> => requestJson(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/v2/projects/${encodeURIComponent(projectId)}/assistant/conversations/${encodeURIComponent(conversationId)}`, { token, hostToken, method: "DELETE", timeoutMs: timeouts.toonFactory }),
+    sendToonAssistantMessage: async (workspaceId: string, projectId: string, conversationId: string, input: ToonAssistantSendRequest) => {
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/v2/projects/${encodeURIComponent(projectId)}/assistant/conversations/${encodeURIComponent(conversationId)}/messages`, { token, hostToken, method: "POST", body: input, timeoutMs: timeouts.toonFactory });
+      return toonAssistantSendResponseSchema.parse(payload);
+    },
+    stopToonAssistantTurn: async (workspaceId: string, projectId: string, conversationId: string, input: ToonAssistantStopRequest) => {
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/v2/projects/${encodeURIComponent(projectId)}/assistant/conversations/${encodeURIComponent(conversationId)}/stop`, { token, hostToken, method: "POST", body: input, timeoutMs: timeouts.toonFactory });
+      return toonAssistantStreamEventSchema.parse(payload);
+    },
+    acknowledgeToonAssistantRemoteWarning: (workspaceId: string, projectId: string, conversationId: string, input: ToonAssistantStopRequest): Promise<{ acknowledged: true; turnId: string }> => requestJson(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/v2/projects/${encodeURIComponent(projectId)}/assistant/conversations/${encodeURIComponent(conversationId)}/remote-warning/acknowledge`, { token, hostToken, method: "POST", body: input, timeoutMs: timeouts.toonFactory }),
+    editResendToonAssistantMessage: async (workspaceId: string, projectId: string, conversationId: string, input: ToonAssistantEditResendRequest) => {
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/v2/projects/${encodeURIComponent(projectId)}/assistant/conversations/${encodeURIComponent(conversationId)}/edit-resend`, { token, hostToken, method: "POST", body: input, timeoutMs: timeouts.toonFactory });
+      return toonAssistantSendResponseSchema.parse(payload);
+    },
+    listToonAssistantEvents: async (workspaceId: string, projectId: string, conversationId: string, cursor?: string | null): Promise<ToonAssistantEventPage> => {
+      const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/v2/projects/${encodeURIComponent(projectId)}/assistant/conversations/${encodeURIComponent(conversationId)}/events${query}`, { token, hostToken, timeoutMs: timeouts.toonFactory });
+      return toonAssistantEventPageSchema.parse(payload);
+    },
+    listToonAssistantCompletions: async (workspaceId: string, projectId: string, query: string) => {
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/v2/projects/${encodeURIComponent(projectId)}/assistant/completions?query=${encodeURIComponent(query)}`, { token, hostToken, timeoutMs: timeouts.toonFactory });
+      return toonAssistantCompletionResponseSchema.parse(payload);
+    },
+    replyToonAssistantInteraction: (workspaceId: string, projectId: string, conversationId: string, interactionId: string, answer: unknown) => requestJson<{ item: unknown }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/v2/projects/${encodeURIComponent(projectId)}/assistant/conversations/${encodeURIComponent(conversationId)}/interactions/${encodeURIComponent(interactionId)}/reply`, { token, hostToken, method: "POST", body: { answer }, timeoutMs: timeouts.toonFactory }),
+    executeToonAssistantCanvasProposal: async (workspaceId: string, projectId: string, conversationId: string, proposalId: string, input: { decision: "approve" | "deny"; leaseToken?: string; leaseGeneration?: number }) => {
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/v2/projects/${encodeURIComponent(projectId)}/assistant/conversations/${encodeURIComponent(conversationId)}/canvas-proposals/${encodeURIComponent(proposalId)}/decision`, { token, hostToken, method: "POST", body: { proposalId, ...input }, timeoutMs: timeouts.toonFactory });
+      return toonAssistantCanvasExecutionResponseSchema.parse(payload).item;
+    },
+    prepareToonAssistantGeneration: async (workspaceId: string, projectId: string, conversationId: string, proposal: ToonAssistantGenerationProposal) => {
+      const payload = await requestJson<{ item: ToonAssistantGenerationProposal }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/v2/projects/${encodeURIComponent(projectId)}/assistant/conversations/${encodeURIComponent(conversationId)}/generation-proposals`, { token, hostToken, method: "POST", body: proposal, timeoutMs: timeouts.toonFactory });
+      return payload.item;
+    },
+    authorizeToonWorkspaceGeneration: (workspaceId: string, projectId: string, generationId: string, input: ToonMediaAuthorizationRequest & { operationId: string; workflowRecordId: string }) => requestJson<{ requestSnapshot: ToonMediaAuthorizationRequest & { projectId: string }; requestHash: string; planFingerprint: string; planSummary: ToonMediaAuthorizationRequest["plan"]; authorizationId: string; expiresAt: string }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/v2/projects/${encodeURIComponent(projectId)}/generations/${encodeURIComponent(generationId)}/authorize`, { token, hostToken, method: "POST", body: input, timeoutMs: timeouts.toonFactory }),
+    submitToonWorkspaceGeneration: (workspaceId: string, projectId: string, generationId: string, input: { authorizationId: string; expectedPlanFingerprint: string }) => requestJson<ToonMediaJobResponse>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/v2/projects/${encodeURIComponent(projectId)}/generations/${encodeURIComponent(generationId)}/submit`, { token, hostToken, method: "POST", body: input, timeoutMs: timeouts.toonFactory }),
+    getToonWorkspaceGeneration: (workspaceId: string, projectId: string, generationId: string) => requestJson<{ generation: ToonWorkspaceGenerationRecord; job: ToonMediaJobResponse["job"] | null; authorization: ToonGenerationAuthorizationState | null }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/v2/projects/${encodeURIComponent(projectId)}/generations/${encodeURIComponent(generationId)}`, { token, hostToken, timeoutMs: timeouts.toonFactory }),
+    adoptToonWorkspaceGenerationCandidate: (workspaceId: string, projectId: string, jobId: string, input: { operationId: string; adoptionId: string; candidateId: string; episodeId: string; workflowRecordId: string }) => requestJson<ToonMediaJobResponse>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/v2/projects/${encodeURIComponent(projectId)}/media-jobs/${encodeURIComponent(jobId)}/adopt`, { token, hostToken, method: "POST", body: input, timeoutMs: timeouts.toonFactory }),
+    queryToonWorkspace: async (workspaceId: string, projectId: string, query: ToonWorkspaceQuery): Promise<ToonWorkspaceQueryResponse> => {
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/v2/projects/${encodeURIComponent(projectId)}/query`, {
+        token, hostToken, method: "POST", body: query, timeoutMs: timeouts.toonFactory,
+      });
+      return toonWorkspaceQueryResponseSchema.parse(payload);
+    },
+    executeToonWorkspaceCommand: async (workspaceId: string, projectId: string, command: ToonWorkspaceClientCommand): Promise<ToonWorkspaceOperationOutcome> => {
+      const snapshot = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/v2/projects/${encodeURIComponent(projectId)}/query`, {
+        token, hostToken, method: "POST", body: { kind: "catalogs.read" }, timeoutMs: timeouts.toonFactory,
+      });
+      const current = toonWorkspaceQueryResponseSchema.parse(snapshot);
+      if (current.kind !== "catalogs.read") throw new Error("Unexpected Toon workspace catalog response");
+      const canvasIds = command.kind === "canvas.write"
+        ? [command.canvasId]
+        : command.kind === "asset.delete" && command.replacementAssetId
+          ? current.canvases.canvases.map((canvas) => canvas.id)
+          : [];
+      const canvasReads = await Promise.all(canvasIds.map((canvasId) => requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/v2/projects/${encodeURIComponent(projectId)}/query`, {
+        token, hostToken, method: "POST", body: { kind: "canvas.read", canvasId }, timeoutMs: timeouts.toonFactory,
+      }).then((payload) => toonWorkspaceQueryResponseSchema.parse(payload))));
+      const canvases = Object.fromEntries(canvasReads.flatMap((response) => response.kind === "canvas.read" ? [[response.descriptor.file, response.canvas] as const] : []));
+      const completeCommand = completeToonWorkspaceClientCommand(command, current, { canvases });
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/v2/projects/${encodeURIComponent(projectId)}/commands`, {
+        token, hostToken, method: "POST", body: completeCommand, timeoutMs: timeouts.toonFactory,
+      });
+      return toonWorkspaceOperationOutcomeSchema.parse(payload);
+    },
+    uploadToonProjectAsset: async (workspaceId: string, projectId: string, file: File, metadata: ToonAssetImportMetadata): Promise<ToonWorkspaceOperationOutcome> => {
+      toonAssetImportMetadataSchema.parse(metadata);
+      const { actor: _actor, ...intent } = metadata;
+      const response = await requestUploadRaw(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/v2/projects/${encodeURIComponent(projectId)}/assets/upload`, { token, hostToken, body: file, metadata: intent, timeoutMs: timeouts.binary });
+      let payload: unknown = null;
+      try { payload = response.text ? JSON.parse(response.text) : null; } catch { payload = null; }
+      if (!response.ok) {
+        const error = payload as { code?: string; message?: string; details?: unknown } | null;
+        throw new JuggleWorkServerError(response.status, error?.code ?? "request_failed", error?.message ?? "Asset upload failed", error?.details);
+      }
+      return toonWorkspaceOperationOutcomeSchema.parse(payload);
+    },
+    importToonProjectAsset: async (workspaceId: string, projectId: string, input: ToonAssetAuthorizedImportRequest): Promise<ToonWorkspaceOperationOutcome> => {
+      const body = toonAssetAuthorizedImportRequestSchema.parse(input);
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/v2/projects/${encodeURIComponent(projectId)}/assets/import`, { token, hostToken, method: "POST", body, timeoutMs: timeouts.binary });
+      return toonWorkspaceOperationOutcomeSchema.parse(payload);
+    },
+    downloadToonProjectAsset: (workspaceId: string, projectId: string, assetId: string, preview = false, signal?: AbortSignal) => requestBinary(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/v2/projects/${encodeURIComponent(projectId)}/assets/${encodeURIComponent(assetId)}/${preview ? "preview" : "download"}`, { token, hostToken, timeoutMs: timeouts.binary, signal }),
+    searchToonDocuments: async (workspaceId: string, projectId: string, input: ToonDocumentSearchRequest, signal?: AbortSignal): Promise<ToonDocumentSearchResponse> => {
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/v2/projects/${encodeURIComponent(projectId)}/documents/search`, {
+        token, hostToken, method: "POST", body: input, signal, timeoutMs: timeouts.toonFactory,
+      });
+      return toonDocumentSearchResponseSchema.parse(payload);
+    },
+    listToonDocumentRevisions: async (workspaceId: string, projectId: string, documentId: string): Promise<ToonDocumentRevisionListResponse> => {
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/v2/projects/${encodeURIComponent(projectId)}/documents/${encodeURIComponent(documentId)}/revisions`, { token, hostToken, timeoutMs: timeouts.toonFactory });
+      return toonDocumentRevisionListResponseSchema.parse(payload);
+    },
+    restoreToonDocumentRevision: async (workspaceId: string, projectId: string, documentId: string, revisionId: string, input: ToonDocumentRevisionRestoreRequest): Promise<ToonWorkspaceOperationOutcome> => {
+      const { actor: _actor, origin: _origin, ...intent } = input;
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/v2/projects/${encodeURIComponent(projectId)}/documents/${encodeURIComponent(documentId)}/revisions/${encodeURIComponent(revisionId)}/restore`, { token, hostToken, method: "POST", body: intent, timeoutMs: timeouts.toonFactory });
+      return toonWorkspaceOperationOutcomeSchema.parse(payload);
+    },
+    acquireToonCanvasLease: async (workspaceId: string, projectId: string, canvasId: string, input: Omit<ToonCanvasLeaseRequest, "canvasId">): Promise<ToonCanvasLeaseResponse> => {
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/v2/projects/${encodeURIComponent(projectId)}/canvases/${encodeURIComponent(canvasId)}/lease`, {
+        token, hostToken, method: "POST", body: input, timeoutMs: timeouts.toonFactory,
+      });
+      return toonCanvasLeaseResponseSchema.parse(payload);
+    },
+    releaseToonCanvasLease: (workspaceId: string, projectId: string, canvasId: string, leaseId: string): Promise<{ released: boolean }> => requestJson(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/v2/projects/${encodeURIComponent(projectId)}/canvases/${encodeURIComponent(canvasId)}/lease/${encodeURIComponent(leaseId)}`, {
+      token, hostToken, method: "DELETE", timeoutMs: timeouts.toonFactory,
+    }),
+    listToonCanvasCheckpoints: async (workspaceId: string, projectId: string, canvasId: string): Promise<ToonCanvasCheckpointListResponse> => {
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/v2/projects/${encodeURIComponent(projectId)}/canvases/${encodeURIComponent(canvasId)}/checkpoints`, { token, hostToken, timeoutMs: timeouts.toonFactory });
+      return toonCanvasCheckpointListResponseSchema.parse(payload);
+    },
+    createToonCanvasCheckpoint: async (workspaceId: string, projectId: string, canvasId: string, input: Omit<ToonCanvasCheckpointCreateRequest, "canvasId">): Promise<ToonWorkspaceOperationOutcome> => {
+      const { actor: _actor, origin: _origin, ...intent } = input;
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/v2/projects/${encodeURIComponent(projectId)}/canvases/${encodeURIComponent(canvasId)}/checkpoints`, {
+        token, hostToken, method: "POST", body: intent, timeoutMs: timeouts.toonFactory,
+      });
+      return toonWorkspaceOperationOutcomeSchema.parse(payload);
+    },
+    restoreToonCanvasCheckpoint: async (workspaceId: string, projectId: string, canvasId: string, checkpointId: string, input: Omit<ToonCanvasCheckpointRestoreRequest, "checkpointId">): Promise<ToonWorkspaceOperationOutcome> => {
+      const { actor: _actor, origin: _origin, ...intent } = input;
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/v2/projects/${encodeURIComponent(projectId)}/canvases/${encodeURIComponent(canvasId)}/checkpoints/${encodeURIComponent(checkpointId)}/restore`, {
+        token, hostToken, method: "POST", body: intent, timeoutMs: timeouts.toonFactory,
+      });
+      return toonWorkspaceOperationOutcomeSchema.parse(payload);
+    },
+    exportToonWorkspaceProject: async (workspaceId: string, projectId: string): Promise<ToonPortableProjectBundle> => {
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/v2/projects/${encodeURIComponent(projectId)}/export`, {
+        token, hostToken, timeoutMs: timeouts.toonFactory,
+      });
+      return toonPortableProjectBundleSchema.parse(payload);
+    },
+    preflightToonWorkspaceMigration: async (workspaceId: string, projectId: string): Promise<ToonMigrationPreflight> => {
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/projects/${encodeURIComponent(projectId)}/migration-preflight`, {
+        token, hostToken, timeoutMs: timeouts.toonFactory,
+      });
+      return toonMigrationPreflightSchema.parse(payload);
+    },
+    migrateToonWorkspaceProject: async (workspaceId: string, projectId: string, input: ToonMigrationApplyRequest): Promise<ToonWorkspaceOperationOutcome> => {
+      const { actor: _actor, ...intent } = input;
+      const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/projects/${encodeURIComponent(projectId)}/migrate-v2`, {
+        token, hostToken, method: "POST", body: intent, timeoutMs: timeouts.toonFactory,
+      });
+      return toonWorkspaceOperationOutcomeSchema.parse(payload);
+    },
     listToonProjects: async (workspaceId: string): Promise<ToonProjectListResponse> => {
       const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/projects`, {
         token, hostToken, timeoutMs: timeouts.toonFactory,
@@ -2451,17 +2733,16 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
       });
       return toonTextJobResponseSchema.parse(payload);
     },
-    authorizeToonMediaJob: async (workspaceId: string, projectId: string, input: ToonMediaAuthorizationRequest): Promise<{ requestHash: string; authorization: ToonMediaAuthorization }> => {
+    authorizeToonMediaJob: async (workspaceId: string, projectId: string, input: ToonMediaAuthorizationRequest): Promise<{ requestSnapshot: ToonMediaAuthorizationRequest & { projectId: string }; requestHash: string; planFingerprint: string; planSummary: ToonMediaAuthorizationRequest["plan"]; authorizationId: string; expiresAt: string }> => {
       const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/projects/${encodeURIComponent(projectId)}/media-jobs/authorize`, {
         token, hostToken, method: "POST", body: input, timeoutMs: timeouts.toonFactory,
       });
-      if (!isJsonRecord(payload) || typeof payload.requestHash !== "string" || !isJsonRecord(payload.authorization)) throw new Error("Invalid Toon Factory media authorization response");
-      return { requestHash: payload.requestHash, authorization: payload.authorization as ToonMediaAuthorization };
+      if (!isJsonRecord(payload) || !isJsonRecord(payload.requestSnapshot) || typeof payload.requestSnapshot.requestId !== "string" || typeof payload.requestHash !== "string" || typeof payload.planFingerprint !== "string" || !isJsonRecord(payload.planSummary) || typeof payload.authorizationId !== "string" || typeof payload.expiresAt !== "string") throw new Error("Invalid Toon Factory media authorization response");
+      return { requestSnapshot: payload.requestSnapshot as ToonMediaAuthorizationRequest & { projectId: string }, requestHash: payload.requestHash, planFingerprint: payload.planFingerprint, planSummary: payload.planSummary as ToonMediaAuthorizationRequest["plan"], authorizationId: payload.authorizationId, expiresAt: payload.expiresAt };
     },
-    createToonMediaJob: async (workspaceId: string, projectId: string, input: ToonMediaJobCreateRequest): Promise<ToonMediaJobResponse> => {
-      const parsedInput = toonMediaJobCreateRequestSchema.parse(input);
+    createToonMediaJob: async (workspaceId: string, projectId: string, input: { authorizationId: string; expectedPlanFingerprint: string }): Promise<ToonMediaJobResponse> => {
       const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/projects/${encodeURIComponent(projectId)}/media-jobs`, {
-        token, hostToken, method: "POST", body: parsedInput, timeoutMs: timeouts.toonFactory,
+        token, hostToken, method: "POST", body: input, timeoutMs: timeouts.toonFactory,
       });
       return toonMediaJobResponseSchema.parse(payload);
     },
@@ -2489,7 +2770,7 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
       });
       return toonMediaJobResponseSchema.parse(payload);
     },
-    retryToonMediaJob: async (workspaceId: string, projectId: string, jobId: string, input: ToonMediaJobCreateRequest): Promise<ToonMediaJobResponse> => {
+    retryToonMediaJob: async (workspaceId: string, projectId: string, jobId: string, input: { authorizationId: string; expectedPlanFingerprint: string }): Promise<ToonMediaJobResponse> => {
       const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/toon-factory/projects/${encodeURIComponent(projectId)}/media-jobs/${encodeURIComponent(jobId)}/retry`, {
         token, hostToken, method: "POST", body: input, timeoutMs: timeouts.toonFactory,
       });
