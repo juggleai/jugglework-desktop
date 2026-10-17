@@ -539,14 +539,18 @@ apps/desktop/resources/office-engine/
   darwin-arm64/editor_sdk
   darwin-arm64/.editor-sdk-version
   darwin-arm64/version.json
-  darwin-x64/<完整平台目录>
-  win32-x64/<完整平台目录，含 editor_sdk.exe 及随附运行文件>
+  darwin-x64/editor_sdk
+  darwin-x64/.editor-sdk-version
+  darwin-x64/version.json
+  win32-x64/editor_sdk.exe
+  win32-x64/.editor-sdk-version
+  win32-x64/version.json
   version.json
 ```
 
-布局中的平台目录是交付清单，不表示当前项目已具有这些文件。Windows 随附 DLL 或运行文件以供应的实际 SDK 包为准，不能只凭 macOS 目录推定复制一个 EXE 就足够。
+项目已具有 `darwin-arm64`、`darwin-x64`、`win32-x64` 的实际平台目录及独立清单，配套内核均为 0.0.0.499，三个安装来源的 wrapper 0.2.196-wb 逐字节一致。具体安装包身份、文件大小及 SHA-256 记录在 `apps/desktop/resources/office-engine/README.md`。Windows 原包平台目录仅有 EXE 和版本标记，没有附带 DLL；静态导入均为系统库、无延迟导入表，动态加载行为仍须实机验证。导入始终复制完整平台目录，不根据 macOS 文件布局推测其他平台的文件集合。
 
-本机已安装的引擎只有 `darwin-arm64`，原生文件为 ARM64 Mach-O，大小约 217 MiB；系统动态依赖来自 macOS 框架与库。它可以用于本机技术验证，不能用于 Windows 或原生 Intel Mac。跨平台构建也不会把一个平台的原生引擎转换成另一个平台的实现。
+macOS ARM64 和 Intel 分别使用对应的 ARM64、x86_64 Mach-O；Windows x64 使用 PE32+ x64。Intel 内核声明最低 macOS 10.15，JuggleWork 仍沿用自身系统基线。平台内核不可互换，跨平台构建不会转换原生架构。Intel 与 Windows 资源从显式提供的本地 WorkBuddy 安装包静态解包后导入；JuggleWork 的构建和运行读取项目自带资源，不依赖这些安装包或外部 App。
 
 在仓库根目录执行以下命令，从显式提供的本地 SDK 包复制完整平台资源及 wrapper，并生成根清单和各平台 `version.json`：
 
@@ -563,7 +567,7 @@ JUGGLEWORK_OFFICE_ENGINE_DIR=/absolute/path/to/office-engine bun apps/server/src
 
 SDK 不通过 npm postinstall 获取；Server 直接从上述资源目录加载 `wrapper/lib/common/tencent-docs-service.js`，并显式传入 `editorSdkPath`。该启动模块使用 Node 内置模块，不加载 stdio bridge 或额外 MCP SDK。默认目录为仓库中的 `apps/desktop/resources/office-engine`，设置 `JUGGLEWORK_OFFICE_ENABLED=0` 可关闭内置编辑。桌面宿主显式传入自身资源目录：开发时为项目 resources/office-engine，安装后为 process.resourcesPath/office-engine；不使用环境变量切换到外部 App。独立 CLI Server 仍可显式配置本地目录。
 
-启动只检查本地平台文件、配套版本和原生 SHA-256；缺失即报告对应平台资源不足，不调用下载脚本，也不自动回退到网络。导入保持平台目录和配套文件权限，清单记录 wrapper 版本、原生版本、平台及哈希；来源和使用范围由供应清单管理。Git LFS 仅在检出源码时取得大文件，应用运行不需要 Git、Git LFS 或 SDK 下载。桌面构建 CI 已启用 LFS 检出；打包时只存在指针会校验失败。Windows x64、macOS Intel 的 0.0.0.499 配套下载地址于 2026-10-17 返回 404；平台清单不是二进制文件，须取得对应完整 SDK 后导入，不能把 ARM64 引擎转换或重命名为其他平台。
+启动只检查本地平台文件、配套版本和原生 SHA-256；缺失即报告对应平台资源不足，不调用下载脚本，也不自动回退到网络。导入保持平台目录和配套文件权限，清单记录 wrapper 版本、原生版本、平台及哈希；来源和使用范围由供应清单管理。Git LFS 仅在检出源码时取得大文件，应用运行不需要 Git、Git LFS 或 SDK 下载。桌面构建 CI 已启用 LFS 检出；打包时只存在指针会校验失败。Windows x64、macOS Intel 已通过本地安装包补齐资源，构建无需访问供应方下载地址；Windows ARM64 等其他平台仍不能根据平台声明视为已有资源。
 
 ### wrapper 不可获取时的替代
 
@@ -595,11 +599,13 @@ electron-builder 的 afterPack 钩子已接入 SDK 资源复制：仅复制 wrap
 
 Server 通过显式资源目录加载 SDK，原生进程工作目录与日志目录均在用户数据区，安装资源保持只读。macOS ARM64 已实测使用实际复制并签名后的 Resources 路径，在资源目录只读、外网禁止且无系统 Node 的条件下完成四种格式编辑保存与重开，20 个资源文件内容及目录清单不变。该验证覆盖资源复制、原生签名与引擎运行，不等于完整应用 Developer ID 签名、公证或 DMG/安装后的桌面验收。
 
+三个平台的实际供应资源均通过按目标平台复制、唯一原生目录及清单 SHA-256 校验。Intel 内核在 Apple Silicon 上通过 Rosetta，使用项目内 wrapper 和复制后的只读资源，完成中文及带空格路径中的 DOCX、CSV、XLSX、PPTX 内容工具修改、保存、关闭和重开回读；四种本地编辑入口返回 HTTP 200，资源树未改变。独立磁盘读取确认目标文字、XLSX 两张表及跨表 SUM 公式、PPT 第二页保留。该验证不涵盖 Windows 运行、Intel 实机 GUI、输入法、字体、完整页面离线资源或完整签名安装包；获取内核不改变已有页面迁移的平台限制。
+
 | 平台 | 交付策略 |
 | --- | --- |
 | macOS ARM64 | 首发验证平台，继续满足项目 macOS 14 基线 |
-| macOS x64 | 单独获取并验收匹配 SDK；符合现有架构纯净要求，不混入其他架构可执行文件 |
-| Windows x64 | 首发 Windows 目标；验证安装路径、中文路径、字体、启动与退出 |
+| macOS x64 | 匹配 SDK 已纳入项目，Rosetta 引擎验证通过；待 Intel 实机桌面及签名安装包验收，安装资源仅包含 x64 内核 |
+| Windows x64 | 匹配 SDK 已纳入项目，静态架构/依赖及资源复制验证通过；待实机验证安装路径、中文路径、字体、启动、编辑、保存与退出 |
 | Windows ARM64 | 产品需要时另列交付，不根据版本清单直接宣称已支持 |
 
 固定 wrapper、原生引擎和静态资源的配套版本，首版随应用整体更新，不新增独立热更新器。macOS 把该原生资源纳入现有签名、公证和验包；Windows 纳入现有签名与安装包验证。

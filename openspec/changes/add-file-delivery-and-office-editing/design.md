@@ -26,6 +26,7 @@
 - `jugglework_artifact_generate` 承载 `artifact.generate_files`，复用工具上下文的 Bash 权限及取消信号，直接传递可执行程序和参数；专用输出目录自动枚举，失败残留不交付。local-queue、local-steer、remote-pending 在 admission 前按既有确定性映射绑定真实引擎用户消息 ID，使用稳定的 admission 批次标识，不额外创建宿主 run；受控生成与 Office、媒体工具按实际 parentID 归属。只有实际 assistant 完成、工具结束且引擎空闲时才最终确认，排队回执不能提前结束；重启重试沿用同一记录，旧会话没有绑定时保留兼容路径。
 - Office 原生内容查询/修改通过现有语义工具按需发现并由宿主调用 HTTP MCP；不向 OpenCode 注册完整原生目录；创建、打开、保存、关闭和导出由宿主控制。最终交付必须等待保存成功，不能依赖模型主动保存或自动保存定时器。
 - SDK 仅从显式本地资源启动，默认不依赖已安装 WorkBuddy；格式、平台、离线能力与分发范围分别验收。
+- 本地供应资源包含 darwin-arm64、darwin-x64、win32-x64 的 0.0.0.499 原生内核，复用逐字节一致的 0.2.196-wb wrapper，完整平台目录通过 Git LFS 和独立版本/哈希清单纳入项目。Intel 的 Rosetta 四格式保存重开及三个平台实际资源复制验证已通过；Windows 运行、Intel 实机和完整签名安装包仍单独验收，不据此开放跨窗口迁移。
 - SDK 0.0.0.499 的 XLSX 公式导出由 OfficeEngine.save 统一适配：通过固定版本 jszip 和 XML 解析器移除工作表 f 节点的界面前导等号，保留数组/共享公式属性、缓存和其他部件，同目录原子替换后才确认保存；不重建工作簿，不扩展 Agent 原生保存权限。
 - 原生进程启动前向系统申请空闲端口，wrapper 确认最终实际端口；避免快速重启连续绑定默认端口附近的端口失败。预览 URL、保存请求和 MCP 连接仍由实际启动结果派生，不固定为默认端口。
 - DOCX、CSV、XLSX、PPTX 页面由 Electron WebContentsView 承载，隐藏和切换标签保留模型。原生页面的保存请求和快捷键统一转到 Server 保存接口；禁止 SDK 原生另存路径及生命周期操作绕过宿主。
