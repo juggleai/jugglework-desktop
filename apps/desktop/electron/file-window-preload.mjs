@@ -16,10 +16,8 @@ contextBridge.exposeInMainWorld("__JUGGLEWORK_ELECTRON__", {
     return ipcRenderer.invoke("jugglework:desktop", command, ...args);
   },
   office: {
-    /** 读取两种宿主共用的资源状态与字体联网设置。 */
+    /** 读取两种宿主共用的文档资源状态。 */
     resources: (documentId) => ipcRenderer.invoke("jugglework:office:resources", { documentId }),
-    /** 更新字体联网偏好，保持页面和模型不变。 */
-    setFontOnline: (value) => ipcRenderer.invoke("jugglework:office:font-online", value),
     /** 主动获取当前页面缺失字体，下次打开生效。 */
     retryFonts: (documentId) => ipcRenderer.invoke("jugglework:office:font-retry", documentId),
     /** 订阅资源变化并提供清理函数。 */
@@ -45,6 +43,8 @@ contextBridge.exposeInMainWorld("__JUGGLEWORK_ELECTRON__", {
     destroy: (id) => ipcRenderer.invoke("jugglework:office:destroy", id),
     /** 接收快捷键关闭事件。 */
     onClosed: (callback) => listen("jugglework:office:closed", callback),
+    /** 宿主恢复显示后重新确认当前文件区域，不沿用旧坐标。 */
+    onLayoutInvalidated: (callback) => listen("jugglework:office:layout-invalidated", callback),
     /** 接收存活页面迁移后的宿主位置。 */
     onLocation: (callback) => listen("jugglework:office:location", callback),
   },

@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createServer } from "node:http";
+import { createHash } from "node:crypto";
 
 // 此入口只由 verify-office-offline.mjs 在隔离的 Electron 验收宿主中启动。
 const { root, resources } = JSON.parse(process.argv.at(-1));
@@ -23,17 +25,35 @@ async function run() {
   } = await import(
     pathToFileURL(join(resources, "app.asar/electron/office-page-commit.mjs"))
   );
+  const { createOfficeResources } = await import(
+    pathToFileURL(join(resources, "app.asar/electron/office-resources.mjs"))
+  );
+  const resourceService = createOfficeResources({
+    assetsDirectory: join(resources, "office-assets"),
+    cacheDirectory: join(root, "font-cache"),
+  });
   const engine = new OfficeEngine({
     resourceDirectory: join(resources, "office-engine"),
     logDirectory: join(root, "logs"),
   });
   let current;
+  let attached;
   process.once("SIGTERM", () => {
     current?.destroy();
+    attached?.dispose();
     void engine.dispose().finally(() => app.exit(1));
   });
   const templates = [];
   const reports = [];
+  let trapRequests = 0;
+  const trap = createServer((_request, response) => {
+    trapRequests++;
+    response.end("unexpected");
+  });
+  trap.on("upgrade", (_request, socket) => {
+    trapRequests++;
+    socket.destroy();
+  });
   const wait = (delay) => new Promise((resolve) => setTimeout(resolve, delay));
   /** 等待真实 SDK 或页面就绪，超过期限保留实际失败原因。 */
   async function eventually(action) {
@@ -51,6 +71,7 @@ async function run() {
     throw last ?? new Error("Timed out waiting for native editor");
   }
   try {
+    await new Promise((resolve) => trap.listen(0, "127.0.0.1", resolve));
     for (const command of ["node", "npm", "npx", "bun"])
       assert.equal(spawnSync(command, ["--version"]).error?.code, "ENOENT");
     await assert.rejects(
@@ -111,6 +132,11 @@ async function run() {
       }
       const requests = [];
       const partition = session.fromPartition("offline-" + extension);
+      const outgoing = [];
+      partition.webRequest.onSendHeaders((details) => {
+        if (new URL(details.url).hostname !== "127.0.0.1")
+          outgoing.push(details.resourceType);
+      });
       partition.webRequest.onCompleted((details) => {
         const url = new URL(details.url);
         if (url.protocol === "http:" || url.protocol === "https:")
@@ -131,6 +157,23 @@ async function run() {
             type: details.resourceType,
           });
       });
+      const preview = new URL(await engine.previewUrl(path));
+      let coreFailure = false;
+      attached = resourceService.attach(partition, {
+        documentId: extension,
+        origin: preview.origin,
+        filePath: path,
+        kind,
+        commit: { error: null },
+        save: async () => {
+          const editor = await engine.editor(path);
+          await engine.save(editor.file_id);
+          return { engineFileId: editor.file_id };
+        },
+        onCoreFailure: () => {
+          coreFailure = true;
+        },
+      });
       current = new BrowserWindow({
         show: false,
         width: 1200,
@@ -142,8 +185,31 @@ async function run() {
           backgroundThrottling: false,
         },
       });
-      await current.loadURL(await engine.previewUrl(path));
+      await current.loadURL(preview.href);
       const id = (await eventually(() => engine.editor(path))).file_id;
+      let workerResource = null;
+      if (kind === "sheet") {
+        const uri = await current.webContents.executeJavaScript(
+          "window.__globalWorkerURI ?? null",
+        );
+        assert.equal(typeof uri, "string");
+        const workerUrl = new URL(uri, preview.origin);
+        assert.equal(workerUrl.origin, preview.origin);
+        const response = await partition.fetch(workerUrl.href, {
+          redirect: "manual",
+        });
+        assert.equal(response.status, 200);
+        const bytes = Buffer.from(await response.arrayBuffer());
+        assert.ok(bytes.length > 0);
+        // 此处仅证明页面声明的 Worker 脚本可在本地取得，不把读取脚本冒充 Worker 功能已执行。
+        workerResource = {
+          path: workerUrl.pathname,
+          status: response.status,
+          bytes: bytes.length,
+          sha256: createHash("sha256").update(bytes).digest("hex"),
+        };
+      }
+
       const page = await eventually(async () => {
         const result = await current.webContents.executeJavaScript(
           '({canvas:document.querySelectorAll("canvas").length, buttons:document.querySelectorAll("button,[role=button]").length,text:document.body.innerText.length, fonts:[...document.fonts].reduce((a,f)=>(a[f.status]=(a[f.status]??0)+1,a),{})})',
@@ -163,6 +229,22 @@ async function run() {
         );
         return true;
       });
+      // TIPS: 另一回环端口在系统沙盒中可达，零接收才能证明是页面白名单拦截，而非公网沙盒兜底。
+      const trapUrl = `http://127.0.0.1:${trap.address().port}/network-policy-probe`;
+      const blocked = await current.webContents
+        .executeJavaScript(`(async () => {
+        const url = ${JSON.stringify(trapUrl)};
+        const request = await fetch(url, {method: 'POST', body: 'fixture'}).then(() => false, () => true);
+        const socket = await new Promise((resolve) => {
+          const ws = new WebSocket(url.replace('http:', 'ws:'));
+          const timer = setTimeout(() => { ws.close(); resolve(false); }, 3000);
+          ws.onopen = () => { clearTimeout(timer); ws.close(); resolve(false); };
+          ws.onerror = () => { clearTimeout(timer); resolve(true); };
+        });
+        return request && socket;
+      })()`);
+      assert.equal(blocked, true);
+      assert.equal(trapRequests, 0);
       if (kind === "sheet") {
         const info = await engine.tool("sheet_get_sheet_info", { file_id: id });
         await engine.tool("sheet_set_cell_value", {
@@ -192,8 +274,14 @@ async function run() {
           text: "离线保存",
         });
       await engine.save(id);
+      assert.equal(coreFailure, false);
+      assert.deepEqual(outgoing, []);
+      // TIPS: 页面销毁会取消预取请求；只保留保存完成前的观察，不能将正常清理误报为资源缺失。
+      const observedRequests = requests.slice();
       current.destroy();
       current = undefined;
+      attached.dispose();
+      attached = undefined;
       await engine.close(id);
       await engine.tool("open_file", { file_path: path, wait: true });
       const reopened = (await engine.editor(path)).file_id;
@@ -227,18 +315,47 @@ async function run() {
         extension,
         page,
         bytes: (await readFile(path)).length,
-        localRequests: requests.filter((request) => request.local).length,
+        localRequests: observedRequests.filter((request) => request.local)
+          .length,
         localHttpErrors: [
           ...new Set(
-            requests
+            observedRequests
               .filter((request) => request.local && request.status >= 400)
               .map((request) => request.status),
           ),
         ],
-        remoteRequests: requests.filter((request) => !request.local).length,
-        remoteResourceTypes: [
+        observationWindow: "page-load-through-save",
+        localCancelledRequests: observedRequests.filter(
+          (request) => request.local && request.error === "net::ERR_ABORTED",
+        ).length,
+        localResourceFailures: [
+          ...new Map(
+            observedRequests
+              .filter(
+                (request) =>
+                  request.local &&
+                  request.path.startsWith("/static/") &&
+                  (request.status >= 400 ||
+                    (request.error && request.error !== "net::ERR_ABORTED")),
+              )
+              .map(({ path, type, status, error }) => [
+                JSON.stringify([path, type, status, error]),
+                {
+                  path,
+                  type,
+                  ...(status ? { status } : {}),
+                  ...(error ? { error } : {}),
+                },
+              ]),
+          ).values(),
+        ],
+        workerResource,
+        remoteAttempts: observedRequests.filter((request) => !request.local)
+          .length,
+        outgoingRemoteRequests: outgoing.length,
+        remoteAttemptTypes: [
           ...new Set(
-            requests
+            observedRequests
               .filter((request) => !request.local)
               .map((request) => request.type),
           ),
@@ -254,6 +371,8 @@ async function run() {
         {
           ok: true,
           scope: "basic-native-pages-and-content-tools",
+          localModeResourcePolicy: true,
+          crossOriginTransportBlocked: true,
           platform: process.platform + "-" + process.arch,
           publicNetworkDenied: true,
           externalRuntimeCommandsAbsent: true,
@@ -262,7 +381,7 @@ async function run() {
           formats: reports,
           limitations: [
             "Clipboard and feature-specific workers are not exercised",
-            "Remote fonts and optional online resources are not guaranteed offline",
+            "Exact native font layout and export fidelity are not established",
           ],
         },
         null,
@@ -271,6 +390,8 @@ async function run() {
     );
   } finally {
     current?.destroy();
+    attached?.dispose();
+    trap.close();
     await engine.dispose();
     for (const path of templates) await rm(path, { force: true });
   }

@@ -26,7 +26,7 @@ test("按 OOXML 内容类型保护透视表及独立透视缓存，原始文件�
         code: "office_readonly_required",
         status: 409,
       });
-      expect(await readFile(path)).toEqual(bytes);
+      expect((await readFile(path)).equals(bytes)).toBe(true);
     }
     const zip = new JSZip();
     zip.file(

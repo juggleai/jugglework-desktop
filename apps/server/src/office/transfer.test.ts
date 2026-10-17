@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+// @ts-expect-error Electron 的真实 JS 模块由桌面 checkJs 独立检查，跨包测试不使用重复声明。
 import { waitForOfficeTransfer } from "../../../desktop/electron/office-transfer.mjs";
 
 test("等待期间宿主关闭会中断检查，保留迁移未完成状态", async () => {
@@ -11,7 +12,7 @@ test("等待期间宿主关闭会中断检查，保留迁移未完成状态", as
       checked++;
       return { documentId: "od_A", reason: "saving" };
     },
-    showWait: async (signal) => {
+    showWait: async (signal: AbortSignal) => {
       host.abort();
       expect(signal.aborted).toBe(true);
     },

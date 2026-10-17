@@ -8,6 +8,7 @@ mock.module("electron", () => ({
   dialog: { showMessageBox: async () => ({ response: answer }) },
 }));
 const { createFileEditor } =
+  // @ts-expect-error Electron 的真实 JS 模块由桌面 checkJs 独立检查，跨包测试不使用重复声明。
   await import("../../../desktop/electron/file-editor.mjs");
 const roots: string[] = [];
 afterEach(async () => {

@@ -185,13 +185,11 @@ contextBridge.exposeInMainWorld("__JUGGLEWORK_ELECTRON__", {
     },
   },
   office: {
-    /** 读取字体联网设置及当前文档的资源状态。 */
+    /** 读取当前文档的字体及必需资源状态。 */
     resources: (documentId) => ipcRenderer.invoke("jugglework:office:resources", { documentId }),
-    /** 设置所有 Office 页面的联网补充字体偏好。 */
-    setFontOnline: (value) => ipcRenderer.invoke("jugglework:office:font-online", value),
     /** 预取当前页面缺失字体，下次打开生效，不重载编辑模型。 */
     retryFonts: (documentId) => ipcRenderer.invoke("jugglework:office:font-retry", documentId),
-    /** 订阅资源及字体设置变更，返回取消订阅函数。 */
+    /** 订阅字体及必需资源状态变更，返回取消订阅函数。 */
     onResourcesChanged(callback) {
       const handler = (_event, value) => callback(value);
       ipcRenderer.on("jugglework:office:resources-changed", handler);
@@ -220,6 +218,12 @@ contextBridge.exposeInMainWorld("__JUGGLEWORK_ELECTRON__", {
       const handler = (_event, input) => callback(input);
       ipcRenderer.on("jugglework:office:closed", handler);
       return () => ipcRenderer.removeListener("jugglework:office:closed", handler);
+    },
+    /** 宿主恢复显示后重新确认当前文件面板区域，不沿用旧坐标。 */
+    onLayoutInvalidated(callback) {
+      const handler = () => callback();
+      ipcRenderer.on("jugglework:office:layout-invalidated", handler);
+      return () => ipcRenderer.removeListener("jugglework:office:layout-invalidated", handler);
     },
     /** 监听存活页面在主面板和独立窗口之间的迁移。 */
     onLocation(callback) {

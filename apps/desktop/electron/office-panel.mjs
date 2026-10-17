@@ -28,6 +28,7 @@ export function createOfficePanel({
   const views = new Map();
   const assignedWindows = new Map();
   const visibleDocuments = new Map();
+  const hosts = new Map();
   const getResources = () =>
     typeof resources === "function" ? resources() : resources;
   const requireTransferSupport = () => {
@@ -70,12 +71,105 @@ export function createOfficePanel({
       if (visible === documentId && (!window || window.id === id))
         visibleDocuments.delete(id);
     if (entry) {
+      const host = hosts.get(entry.window.id);
+      if (
+        host?.focusedDocument === documentId &&
+        (!window ||
+          window.isDestroyed() ||
+          (window.isVisible() && !window.isMinimized()))
+      )
+        host.focusedDocument = null;
       entry.view.setVisible(false);
       // TIPS: SDK 页面隐藏后仍可能请求输入焦点；临时卸下存活 view，避免菜单点击被原生层截走。
       if (entry.attached && !entry.window.isDestroyed())
         entry.window.contentView.removeChildView(entry.view);
       entry.attached = false;
     }
+  };
+  /** 宿主布局随页面生命周期失效；只卸下原生视图，不关闭文档模型。 */
+  const observeHost = (window) => {
+    const existing = hosts.get(window.id);
+    if (existing) return existing;
+    const host = {
+      revision: 0,
+      active: window.isFocused(),
+      focusedDocument: null,
+      focusRevision: 0,
+      dispose: () => {},
+    };
+    const suspend = (preserveFocus = false) => {
+      const focusedDocument = preserveFocus ? host.focusedDocument : null;
+      host.revision++;
+      visibleDocuments.delete(window.id);
+      for (const [id, entry] of views)
+        if (entry.window.id === window.id) hide(id, window);
+      host.focusedDocument = focusedDocument;
+    };
+    const navigate = (_event, _url, isInPlace, isMainFrame) => {
+      if (isMainFrame && !isInPlace) suspend();
+    };
+    const requestLayout = () => {
+      // TIPS: 聚焦只要求重新测量；卸下有效视图会丢失原输入焦点。隐藏及导航由各自事件卸载。
+      host.revision++;
+      if (!window.isDestroyed())
+        window.webContents.send("jugglework:office:layout-invalidated");
+    };
+    const focus = () => {
+      host.active = true;
+      requestLayout();
+    };
+    const suspendWindow = () => {
+      host.active = false;
+      suspend(true);
+    };
+    const releaseFocus = () => {
+      host.focusedDocument = null;
+      // TIPS: 用户已开始操作宿主页，之前仍在等待 Server 的显式激活也必须放弃抢焦点。
+      host.focusRevision++;
+    };
+    const hostInput = (_event, input) => {
+      if (input.type === "mouseDown" || input.type === "keyDown")
+        releaseFocus();
+    };
+    const closed = () => {
+      suspend();
+      host.dispose();
+    };
+    const events = [
+      [window.webContents, "did-start-navigation", navigate],
+      [window.webContents, "render-process-gone", () => suspend()],
+      // TIPS: 失活窗口切回时，Electron 可能先聚焦宿主页再发窗口 focus；这不是用户切换输入目标。
+      [
+        window.webContents,
+        "focus",
+        () => {
+          if (host.active) releaseFocus();
+        },
+      ],
+      [window.webContents, "before-input-event", hostInput],
+      [window.webContents, "before-mouse-event", hostInput],
+      [
+        window,
+        "blur",
+        () => {
+          host.active = false;
+        },
+      ],
+      [window, "hide", suspendWindow],
+      [window, "minimize", suspendWindow],
+      [window, "show", requestLayout],
+      [window, "restore", requestLayout],
+      [window, "focus", focus],
+      [window, "closed", closed],
+    ];
+    for (const [source, event, listener] of events) source.on(event, listener);
+    host.dispose = () => {
+      for (const [source, event, listener] of events)
+        source.removeListener(event, listener);
+      hosts.delete(window.id);
+    };
+    hosts.set(window.id, host);
+    return host;
   };
   const destroy = (documentId) => {
     hide(documentId);
@@ -100,6 +194,7 @@ export function createOfficePanel({
   };
   const assign = (documentId, window) => {
     if (!window || window.isDestroyed()) throw new Error("目标文件窗口已关闭");
+    observeHost(window);
     const entry = views.get(documentId);
     if (entry && entry.window.id !== window.id) {
       requireTransferSupport();
@@ -126,13 +221,16 @@ export function createOfficePanel({
       }
       if (visibleDocuments.get(previous.id) === documentId)
         visibleDocuments.delete(previous.id);
+      const previousHost = hosts.get(previous.id);
+      if (previousHost?.focusedDocument === documentId)
+        previousHost.focusedDocument = null;
       entry.window = window;
       entry.attached = true;
     }
     assignedWindows.set(documentId, window.id);
     publishLocation(documentId);
   };
-  const transfer = async (documentId, window) => {
+  const transfer = async (documentId, window, isCurrent = () => true) => {
     if (!window || window.isDestroyed()) return false;
     const entry = views.get(documentId);
     if (entry && entry.window.id !== window.id) {
@@ -172,6 +270,7 @@ export function createOfficePanel({
         window.removeListener("closed", stop);
       }
     }
+    if (!isCurrent()) return false;
     assign(documentId, window);
     return true;
   };
@@ -180,14 +279,36 @@ export function createOfficePanel({
     window = getWindow(),
   ) => {
     if (!window || window.isDestroyed()) return;
+    const host = observeHost(window);
+    const revision = host.revision;
+    const focusRevision = host.focusRevision;
+    // TIPS: 刷新/隐藏使旧布局失效；异步查询返回后也不能把旧视图重新挂回聊天界面。
+    const isCurrent = () =>
+      host.revision === revision &&
+      !window.isDestroyed() &&
+      window.isVisible() &&
+      !window.isMinimized();
+    /** 仅恢复所属可见页面的原焦点；用户已经转向聊天或请求过期时不接管输入。 */
+    const restoreFocus = (entry) => {
+      if (
+        isCurrent() &&
+        views.get(documentId) === entry &&
+        visibleDocuments.get(window.id) === documentId &&
+        assignedWindows.get(documentId) === window.id &&
+        window.isFocused() &&
+        ((activate && host.focusRevision === focusRevision) ||
+          host.focusedDocument === documentId)
+      )
+        entry.view.webContents.focus();
+    };
+    if (!isCurrent()) return;
     const wasVisible = visibleDocuments.get(window.id) === documentId;
     // TIPS: 只在用户激活内容区时交接编辑页面；后台尺寸更新不能抢走另一窗口的输入焦点。
-    if (
-      activate &&
-      assignedWindows.get(documentId) !== window.id &&
-      !(await transfer(documentId, window))
-    )
-      return { here: false };
+    if (activate && assignedWindows.get(documentId) !== window.id) {
+      const transferred = await transfer(documentId, window, isCurrent);
+      if (!isCurrent()) return;
+      if (!transferred) return { here: false };
+    }
     if (
       assignedWindows.has(documentId) &&
       assignedWindows.get(documentId) !== window.id
@@ -218,7 +339,7 @@ export function createOfficePanel({
       if (
         visibleDocuments.get(window.id) !== documentId ||
         assignedWindows.get(documentId) !== window.id ||
-        window.isDestroyed()
+        !isCurrent()
       )
         return;
       entry = views.get(documentId);
@@ -229,6 +350,7 @@ export function createOfficePanel({
         }
         bounds(entry, rectangle);
         entry.view.setVisible(true);
+        restoreFocus(entry);
         return { here: true };
       }
       const partition = session.fromPartition(`office-${documentId}`);
@@ -281,6 +403,16 @@ export function createOfficePanel({
       // TIPS: 先登记存活页面再加载，重复 show 不会并发建立第二份文档模型。
       views.set(documentId, entry);
       window.contentView.addChildView(view);
+      view.webContents.on("focus", () => {
+        const currentHost = hosts.get(entry.window.id);
+        if (
+          currentHost &&
+          views.get(documentId) === entry &&
+          entry.attached &&
+          visibleDocuments.get(entry.window.id) === documentId
+        )
+          currentHost.focusedDocument = documentId;
+      });
       view.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
       view.webContents.on("will-navigate", (event, target) => {
         if (target !== document.previewUrl) event.preventDefault();
@@ -342,6 +474,7 @@ export function createOfficePanel({
       void view.webContents.loadURL(document.previewUrl).catch(failPage);
     }
     if (
+      !isCurrent() ||
       !views.has(documentId) ||
       visibleDocuments.get(window.id) !== documentId ||
       assignedWindows.get(documentId) !== window.id
@@ -358,7 +491,8 @@ export function createOfficePanel({
         pageId: entry.pageId,
         activate: true,
       });
-    if (activate) entry.view.webContents.focus();
+    if (!isCurrent()) return;
+    restoreFocus(entry);
     return { here: true };
   };
   const close = async (workspaceId, documentId) => {
@@ -419,17 +553,10 @@ export function createOfficePanel({
         async (event, input = {}) => {
           owner(event);
           const service = getResources();
-          if (input.documentId && !views.has(input.documentId)) return null;
-          return {
-            ...(await service.settings()),
-            ...(input.documentId ? service.state(input.documentId) : {}),
-          };
+          if (!input.documentId || !views.has(input.documentId)) return null;
+          return service.state(input.documentId);
         },
       );
-      ipcMain.handle("jugglework:office:font-online", async (event, value) => {
-        owner(event);
-        return getResources().setOnline(value);
-      });
       ipcMain.handle("jugglework:office:font-retry", async (event, id) => {
         owner(event);
         const entry = views.get(id);
@@ -592,6 +719,7 @@ export function createOfficePanel({
     /** Runtime 已完成关闭后释放所有视图。 */
     destroy() {
       for (const id of [...views.keys()]) destroy(id);
+      for (const host of [...hosts.values()]) host.dispose();
     },
   };
 }

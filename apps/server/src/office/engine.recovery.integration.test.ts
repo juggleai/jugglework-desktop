@@ -51,6 +51,7 @@ for (const failure of ["engine", "page"] as const)
         await engine.tool("open_file", { file_path: path, wait: true });
         const ready = await documents.get("ws", opened.documentId);
         expect(ready.state).toBe("ready");
+        if (!ready.engineFileId) throw new Error("就绪文档缺少原生模型身份");
         const info = await engine.tool("sheet_get_sheet_info", {
           file_id: ready.engineFileId,
         });

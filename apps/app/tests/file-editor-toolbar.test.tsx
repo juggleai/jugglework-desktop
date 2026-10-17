@@ -10,11 +10,6 @@ mock.module("../src/components/ui/dropdown-menu", () => ({
   DropdownMenuTrigger: ({ render, children }: any) =>
     React.cloneElement(render, {}, children),
   DropdownMenuContent: Container,
-  DropdownMenuCheckboxItem: ({ children, ...props }: any) => (
-    <button data-font-toggle {...props}>
-      {children}
-    </button>
-  ),
   DropdownMenuItem: ({ children, ...props }: any) => (
     <button data-menu-item {...props}>
       {children}
@@ -24,12 +19,11 @@ mock.module("../src/components/ui/dropdown-menu", () => ({
 const { FileEditorToolbar, getOfficeEditorStatus } =
   await import("../src/react-app/domains/session/files/file-editor-toolbar");
 
-test("两种宿主共享字体联网开关和请求状态，预取成功提示下次打开，卸载后取消订阅", async () => {
+test("两种宿主自动补充字体且不显示设置开关，仅实际失败时显示重试，预取后提示下次打开", async () => {
   const previousWindow = Reflect.get(globalThis, "window");
   const previousAct = Reflect.get(globalThis, "IS_REACT_ACT_ENVIRONMENT");
   Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
-  let state = {
-    online: true,
+  const state = {
     fontFailures: 0,
     readyOnReopen: false,
     retryableFonts: 0,
@@ -43,11 +37,6 @@ test("两种宿主共享字体联网开关和请求状态，预取成功提示�
     onResourcesChanged: (callback: (value: any) => void) => {
       subscribers.add(callback);
       return () => subscribers.delete(callback);
-    },
-    setFontOnline: async (value: boolean) => {
-      state.online = value;
-      publish();
-      return { online: value };
     },
     retryFonts: async () => {
       state.readyOnReopen = true;
@@ -75,23 +64,17 @@ test("两种宿主共享字体联网开关和请求状态，预取成功提示�
         </>,
       );
     });
-    const toggles = () =>
-      view!.root
-        .findAllByType("button")
-        .filter((button) => button.props["data-font-toggle"] !== undefined);
-    expect(toggles()).toHaveLength(2);
-    expect(toggles().every((toggle) => toggle.props.checked)).toBe(true);
+    expect(JSON.stringify(view!.toJSON())).not.toContain("联网补充字体");
+    expect(view!.root.findAllByProps({ role: "checkbox" })).toHaveLength(0);
     expect(JSON.stringify(view!.toJSON())).not.toContain(
       t("office.font_unavailable"),
     );
-    await act(async () => {
-      await toggles()[0]!.props.onCheckedChange(false);
-    });
-    expect(toggles().every((toggle) => !toggle.props.checked)).toBe(true);
+    expect(
+      view!.root.findAllByProps({ "aria-label": t("office.font_retry") }),
+    ).toHaveLength(0);
     await act(async () => {
       state.fontFailures = 1;
       state.retryableFonts = 1;
-      state.online = true;
       publish();
     });
     expect(JSON.stringify(view!.toJSON())).toContain(
@@ -99,11 +82,7 @@ test("两种宿主共享字体联网开关和请求状态，预取成功提示�
     );
     const retry = view!.root
       .findAllByType("button")
-      .find(
-        (button) =>
-          button.props["data-menu-item"] !== undefined &&
-          button.props.children === t("office.font_retry"),
-      );
+      .find((button) => button.props["aria-label"] === t("office.font_retry"));
     await act(async () => {
       await retry!.props.onClick();
     });

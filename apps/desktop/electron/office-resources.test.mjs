@@ -9,6 +9,7 @@ import {
   classifyOfficeResource,
 } from "./office-resources.mjs";
 import { createRequire } from "node:module";
+import { createOfficeNetworkPolicy } from "./office-network.mjs";
 const require = createRequire(import.meta.url);
 const { copyOfficeAssets } = require("../scripts/office-assets.cjs");
 
@@ -44,6 +45,12 @@ function partition() {
   return {
     handlers,
     forwarded,
+    webRequest: {
+      listener: null,
+      onBeforeRequest(listener) {
+        this.listener = listener;
+      },
+    },
     protocol: {
       handle(scheme, handler) {
         assert.equal(handlers.has(scheme), false);
@@ -75,7 +82,7 @@ test("classification keeps exact origin/query identity and leaves unknown worker
   );
   assert.equal(
     classifyOfficeResource("https://other.test/metrics", origin, manifest).kind,
-    "unknown",
+    "online",
   );
   assert.equal(
     classifyOfficeResource(
@@ -87,7 +94,116 @@ test("classification keeps exact origin/query identity and leaves unknown worker
   );
 });
 
-test("remote executable and unlisted font requests cannot download outside the catalog", async (t) => {
+test("local mode uses an origin and exact font allowlist for HTTP, WebSocket and embedded workers", () => {
+  const font = "https://fonts.example.test/fixed.woff";
+  const policy = createOfficeNetworkPolicy(origin, [
+    { kind: "font", url: font },
+  ]);
+  for (const url of [
+    origin + "/mcp",
+    origin + "/static/lib/docs.qq.com/worker.js",
+    "ws://127.0.0.1:8800/socket",
+    "blob:" + origin + "/worker",
+    "data:font/woff;base64,d09GRg==",
+    font,
+  ])
+    assert.equal(policy.allows({ url }), true, url);
+  for (const url of [
+    "https://qq.com/api",
+    "https://docs.qq.com/flags",
+    "https://docs.qq.com./flags",
+    "https://service.example.test/account",
+    "wss://docs.qq.com/socket",
+    "ws://127.0.0.1:8801/socket",
+    "http://127.0.0.1:8801/redirect",
+    font + "?text=private",
+    "blob:https://service.example.test/worker",
+    "file:///tmp/secret",
+    "invalid-url",
+  ])
+    assert.equal(policy.allows({ url }), false, url);
+  assert.equal(policy.allows({ url: font, method: "POST" }), false);
+});
+
+test("the session guard cancels every remote service method and WebSocket before forwarding; disposal releases the guard", async (t) => {
+  const { create } = await fixture(t);
+  const service = create();
+  const session = partition();
+  const attached = service.attach(session, {
+    documentId: "doc",
+    origin,
+    filePath: "/tmp/a.docx",
+    kind: "doc",
+    commit: { error: null },
+    save: async () => ({ engineFileId: "file" }),
+    onCoreFailure() {
+      assert.fail("online services cannot fail local editing");
+    },
+  });
+  for (const method of ["GET", "POST", "OPTIONS", "HEAD", "PUT", "DELETE"]) {
+    const request = {
+      url: "https://docs.qq.com/api/unknown?xsrf=private",
+      method,
+    };
+    session.webRequest.listener(request, (response) =>
+      assert.equal(response.cancel, true),
+    );
+    assert.equal(
+      (
+        await session.handlers.get("https")(
+          new Request(request.url, { method }),
+        )
+      ).status,
+      410,
+    );
+  }
+  session.webRequest.listener(
+    { url: "wss://service.example.test/socket" },
+    (response) => assert.equal(response.cancel, true),
+  );
+  session.webRequest.listener(
+    { url: origin + "/static/worker.js" },
+    (response) => assert.equal(response.cancel, false),
+  );
+  assert.equal(session.forwarded.length, 0);
+  attached.dispose();
+  assert.equal(session.webRequest.listener, null);
+});
+
+test("local forwarding returns redirects without automatically following them outside the session policy", async (t) => {
+  const { create } = await fixture(t);
+  const session = partition();
+  session.fetch = async (request, options) => {
+    session.forwarded.push({ request, options });
+    assert.equal(options.redirect, "manual");
+    return new Response(null, {
+      status: 302,
+      headers: { Location: "https://service.example.test/account" },
+    });
+  };
+  const attached = create().attach(session, {
+    documentId: "doc",
+    origin,
+    filePath: "/tmp/a.docx",
+    kind: "doc",
+    commit: { error: null },
+    save: async () => ({ engineFileId: "file" }),
+    onCoreFailure() {},
+  });
+  assert.equal(
+    (await session.handlers.get("http")(new Request(origin + "/redirect")))
+      .status,
+    302,
+  );
+  session.webRequest.listener(
+    { url: "https://service.example.test/account" },
+    (response) => assert.equal(response.cancel, true),
+  );
+  assert.equal(session.forwarded.length, 1);
+  attached.dispose();
+});
+
+test("online services, executable code and unlisted fonts cannot leave the local-mode boundary", async (t) => {
   const { create } = await fixture(t);
   const service = create();
   const session = partition();
@@ -108,7 +224,7 @@ test("remote executable and unlisted font requests cannot download outside the c
   ]) {
     assert.equal(
       (await session.handlers.get("https")(new Request(url))).status,
-      503,
+      410,
     );
   }
   assert.equal(
@@ -118,7 +234,7 @@ test("remote executable and unlisted font requests cannot download outside the c
       manifest,
       "worker",
     ).kind,
-    "remote-code",
+    "online",
   );
   assert.equal(
     classifyOfficeResource(
@@ -131,55 +247,6 @@ test("remote executable and unlisted font requests cannot download outside the c
   );
   assert.equal(session.forwarded.length, 0);
   attached.dispose();
-});
-
-test("optional remote configuration matches only the audited HTTPS origin and path without forwarding account query parameters", async (t) => {
-  const config = {
-    origin: "https://config.example.test",
-    path: "/flags",
-    purpose: "失败时沿用调用方默认值",
-  };
-  const value = { ...manifest, optional: [...manifest.optional, config] };
-  const { create } = await fixture(t, value);
-  const service = create();
-  const session = partition();
-  const attached = service.attach(session, {
-    documentId: "doc",
-    origin,
-    filePath: "/tmp/a.docx",
-    kind: "doc",
-    commit: { error: null },
-    save: async () => ({ engineFileId: "file" }),
-    onCoreFailure() {
-      assert.fail("configuration must not fail editor");
-    },
-  });
-  const response = await session.handlers.get("https")(
-    new Request(config.origin + config.path + "?xsrf=private-value", {
-      method: "POST",
-      body: "private-body",
-    }),
-  );
-  assert.equal(response.status, 410);
-  assert.equal(response.headers.get("Cache-Control"), "no-store");
-  assert.equal(session.forwarded.length, 0);
-  for (const url of [
-    origin + "/flags",
-    "https://other.test/flags",
-    config.origin + "/flags/extra",
-    "http://config.example.test/flags",
-  ]) {
-    assert.equal(classifyOfficeResource(url, origin, value).kind, "unknown");
-  }
-  attached.dispose();
-  const { source, root } = await fixture(t, {
-    ...value,
-    optional: [{ ...config, origin: "https://config.example.test/path" }],
-  });
-  assert.throws(
-    () => copyOfficeAssets(source, path.join(root, "target")),
-    /来源无效/,
-  );
 });
 
 test("both schemes share routing; save priority, optional failure, unknown response and cleanup remain distinct", async (t) => {

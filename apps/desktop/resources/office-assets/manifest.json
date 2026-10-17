@@ -2,7 +2,7 @@
   "schema": 1,
   "engineVersion": "0.0.0.499",
   "wrapperVersion": "0.2.196-office.1",
-  "assetVersion": "2",
+  "assetVersion": "3",
   "entries": [
     {
       "id": "supplemental-glyphs-v1",
@@ -28,12 +28,6 @@
     {
       "path": "/api/vipcenter/info/all",
       "purpose": "页面会员信息查询；本地编辑不提供会员服务，保留明确的不可用响应"
-    },
-    {
-      "origin": "https://docs.qq.com",
-      "path": "/api/frontedcfgreader/without_login/scenes_calc",
-      "purpose": "远程功能开关查询；SDK 调用方在网络失败时使用传入默认值，本地编辑沿用该回退，不请求远程配置",
-      "evidence": "ev_905c706068ff98dc35d3b6f57fcc79c09a9c2f51ef851c02f6f69ec356d55cf8"
     }
   ]
 }

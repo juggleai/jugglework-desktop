@@ -339,7 +339,7 @@ describe("JuggleWorkExtensionsPreview session tools", () => {
     const output = await plugin.tool.jugglework_query.execute({
       id: "session.read",
       args: { sessionId: "ses_archive", count: 2 },
-    });
+    }, {});
     const parsed = z.object({
       ok: z.literal(true),
       id: z.literal("session.read"),
@@ -366,7 +366,7 @@ describe("JuggleWorkExtensionsPreview session tools", () => {
         limit: 5,
         scanLimit: 10,
       },
-    });
+    }, {});
     const parsed = affordanceResultSchema("session.search", searchResultSchema).parse(JSON.parse(output));
 
     expect(parsed.result.scannedSessions).toBe(3);
@@ -513,7 +513,7 @@ describe("JuggleWorkExtensionsPreview session tools", () => {
     const output = await plugin.tool.jugglework_query.execute({
       id: "session.read",
       args: { sessionId: "ses_archive", count: 2 },
-    });
+    }, {});
     const parsed = affordanceResultSchema("session.read", readResultSchema).parse(JSON.parse(output));
 
     expect(parsed.result).toMatchObject({

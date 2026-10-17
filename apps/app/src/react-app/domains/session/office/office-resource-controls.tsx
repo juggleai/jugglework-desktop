@@ -1,24 +1,16 @@
 import * as React from "react";
-import { Languages } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuCheckboxItem,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { toast } from "@/components/ui/sonner";
 import { t } from "@/i18n";
 
-/** 两种文件宿主共用字体偏好及实际请求失败提示，不把未使用的目录字体标为缺失。 */
+/** 两种文件宿主共用实际字体失败提示及重试；字体自动补充，无需用户设置。 */
 export function OfficeResourceControls({ documentId }: { documentId: string }) {
   const native =
     typeof window !== "undefined"
       ? window.__JUGGLEWORK_ELECTRON__?.office
       : undefined;
   const [state, setState] = React.useState<{
-    online: boolean;
     fontFailures?: number;
     readyOnReopen?: boolean;
     retryableFonts?: number;
@@ -43,61 +35,41 @@ export function OfficeResourceControls({ documentId }: { documentId: string }) {
       stop?.();
     };
   }, [native, documentId]);
-  if (!state || !native?.setFontOnline) return null;
-  const change = async (operation: () => Promise<unknown>) => {
+  const hint = state?.readyOnReopen
+    ? t("office.font_ready_reopen")
+    : state?.fontFailures
+      ? t("office.font_unavailable")
+      : null;
+  if (!hint) return null;
+  const retry = async () => {
     setBusy(true);
     try {
-      await operation();
+      await native?.retryFonts?.(documentId);
     } catch {
-      toast.error(t("office.font_update_failed"));
+      toast.error(t("office.font_retry_failed"));
     } finally {
       setBusy(false);
     }
   };
-  const hint = state.readyOnReopen
-    ? t("office.font_ready_reopen")
-    : state.fontFailures
-      ? t("office.font_unavailable")
-      : null;
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        render={
+    <div className="flex items-center gap-1 text-xs">
+      <span role="status" title={hint} className="max-w-40 truncate">
+        {hint}
+      </span>
+      {Boolean(state?.retryableFonts) &&
+        !state?.readyOnReopen &&
+        native?.retryFonts && (
           <Button
             variant="ghost"
-            size="sm"
-            className="h-7 gap-1 text-xs"
-            title={hint ?? t("office.font_settings")}
-            aria-label={t("office.font_settings")}
-          />
-        }
-      >
-        <Languages className="size-4" />
-        {hint && (
-          <span role="status" className="max-w-40 truncate">
-            {hint}
-          </span>
-        )}
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
-        <DropdownMenuCheckboxItem
-          checked={state.online}
-          disabled={busy}
-          onCheckedChange={(value) =>
-            void change(() => native.setFontOnline!(value))
-          }
-        >
-          {t("office.font_online")}
-        </DropdownMenuCheckboxItem>
-        {Boolean(state.retryableFonts) && native.retryFonts && (
-          <DropdownMenuItem
-            disabled={busy || !state.online}
-            onClick={() => void change(() => native.retryFonts!(documentId))}
+            size="icon-sm"
+            title={t("office.font_retry")}
+            aria-label={t("office.font_retry")}
+            disabled={busy}
+            onClick={() => void retry()}
           >
-            {t("office.font_retry")}
-          </DropdownMenuItem>
+            <RefreshCw className={`size-3.5 ${busy ? "animate-spin" : ""}`} />
+          </Button>
         )}
-      </DropdownMenuContent>
-    </DropdownMenu>
+    </div>
   );
 }

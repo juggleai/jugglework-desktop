@@ -40,7 +40,6 @@ test("cold network fetch pins bytes without forwarding document credentials; war
     return new Response(bytes);
   });
   assert.deepEqual((await fonts.resolve(entry)).bytes, bytes);
-  await fonts.setOnline(false);
   const restarted = createOfficeFonts({
     directory,
     assetsDirectory: directory,
@@ -49,33 +48,35 @@ test("cold network fetch pins bytes without forwarding document credentials; war
       throw new Error("offline");
     },
   });
-  assert.deepEqual(await restarted.settings(), { online: false });
   assert.deepEqual((await restarted.resolve(entry)).bytes, bytes);
   assert.equal(calls, 1);
-  assert.deepEqual(
-    (await readdir(directory)).sort(),
-    [`${entry.sha256}.font`, "settings.json"].sort(),
-  );
+  assert.deepEqual((await readdir(directory)).sort(), [`${entry.sha256}.font`]);
 });
 
-test("corrupt cache is removed and cold offline lookup fails without fetching", async (t) => {
-  const { fonts, directory } = await fixture(t, () =>
-    assert.fail("must not download"),
-  );
+test("corrupt cache is removed; unavailable network leaves no partial font", async (t) => {
+  let calls = 0;
+  const { fonts, directory } = await fixture(t, () => {
+    calls++;
+    throw new Error("offline");
+  });
   await writeFile(path.join(directory, `${entry.sha256}.font`), "damaged");
-  await fonts.setOnline(false);
-  assert.equal((await fonts.resolve(entry)).error, "offline");
-  assert.deepEqual(await readdir(directory), ["settings.json"]);
+  assert.equal((await fonts.resolve(entry)).error, "unavailable");
+  assert.equal(calls, 1);
+  assert.deepEqual(await readdir(directory), []);
 });
 
-test("malformed preferences keep verified local fonts usable and do not re-enable online", async (t) => {
-  const { fonts, directory } = await fixture(t, () =>
-    assert.fail("must remain offline"),
-  );
-  await writeFile(path.join(directory, "settings.json"), "broken-json");
-  await writeFile(path.join(directory, `${entry.sha256}.font`), bytes);
-  assert.deepEqual(await fonts.settings(), { online: false });
-  assert.deepEqual((await fonts.resolve(entry)).bytes, bytes);
+test("automatic font supply ignores and removes obsolete disabled or damaged preferences", async (t) => {
+  for (const setting of ['{"online":false}', "broken-json"]) {
+    let calls = 0;
+    const { fonts, directory } = await fixture(t, async () => {
+      calls++;
+      return new Response(bytes);
+    });
+    await writeFile(path.join(directory, "settings.json"), setting);
+    assert.deepEqual((await fonts.resolve(entry)).bytes, bytes);
+    assert.equal(calls, 1);
+    assert.deepEqual(await readdir(directory), [`${entry.sha256}.font`]);
+  }
 });
 
 test("startup removes only its own interrupted download files", async (t) => {
@@ -91,8 +92,12 @@ test("startup removes only its own interrupted download files", async (t) => {
     "partial",
   );
   await writeFile(path.join(directory, "other.tmp"), "preserve");
-  await fonts.settings();
-  assert.deepEqual(await readdir(directory), ["other.tmp"]);
+  await writeFile(path.join(directory, `${entry.sha256}.font`), bytes);
+  await fonts.resolve(entry);
+  assert.deepEqual(
+    (await readdir(directory)).sort(),
+    [`${entry.sha256}.font`, "other.tmp"].sort(),
+  );
 });
 
 test("cache budget evicts old completed files while retaining the response being downloaded", async (t) => {
@@ -121,8 +126,8 @@ test("invalid bytes and oversized streaming responses never enter cache", async 
   }
 });
 
-test("timeout, document cancellation and disabling online abort downloads without temporary files", async (t) => {
-  for (const mode of ["timeout", "cancel", "disable"]) {
+test("timeout and document cancellation abort downloads without temporary files", async (t) => {
+  for (const mode of ["timeout", "cancel"]) {
     let started;
     const ready = new Promise((resolve) => {
       started = resolve;
@@ -144,7 +149,6 @@ test("timeout, document cancellation and disabling online abort downloads withou
     const pending = fonts.resolve(entry, controller.signal);
     await ready;
     if (mode === "cancel") controller.abort();
-    if (mode === "disable") await fonts.setOnline(false);
     assert.ok((await pending).error);
     assert.equal(
       (await readdir(directory)).some(

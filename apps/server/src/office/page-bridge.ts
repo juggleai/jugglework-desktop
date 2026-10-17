@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import type { OfficeDocumentSession } from "@jugglework/types/office";
+import { loopbackFetch } from "../server-fetch.js";
 
 /** 向所属桌面原生页面发送固定契约请求，不激活窗口或解释页面模型。 */
 async function requestOfficePage(
@@ -11,7 +12,7 @@ async function requestOfficePage(
   const bridge = JSON.parse(await readFile(discovery, "utf8"));
   if (typeof bridge.baseUrl !== "string" || typeof bridge.token !== "string")
     throw new Error("桌面文档保存通道不可用");
-  const response = await fetch(`${bridge.baseUrl}/office/${route}`, {
+  const response = await loopbackFetch(`${bridge.baseUrl}/office/${route}`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${bridge.token}`,

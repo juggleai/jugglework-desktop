@@ -15,12 +15,15 @@ const answers = {
   openError: null as string | null,
 };
 const partitions = new Map<string, any>();
+const rendererIpc = new EventEmitter();
+const rendererBridges: any[] = [];
 class FakeContents extends EventEmitter {
   id = ++sequence;
   destroyed = false;
   messages: Array<{ name: string; value: any }> = [];
   loads: string[] = [];
   evaluations: string[] = [];
+  focusCalls = 0;
   evaluationResult: unknown = false;
   evaluationGate?: () => Promise<void>;
   async executeJavaScript(source: string) {
@@ -38,7 +41,9 @@ class FakeContents extends EventEmitter {
     this.messages.push({ name, value });
   }
   setWindowOpenHandler() {}
-  focus() {}
+  focus() {
+    this.focusCalls++;
+  }
   async loadURL(url: string) {
     this.loads.push(url);
   }
@@ -56,6 +61,8 @@ class FakeWindow extends EventEmitter {
   destroyed = false;
   title = "";
   focused = false;
+  visible = true;
+  minimized = false;
   contentView = {
     addChildView: (view: any) => this.children.add(view),
     removeChildView: (view: any) => this.children.delete(view),
@@ -76,8 +83,11 @@ class FakeWindow extends EventEmitter {
   isFocused() {
     return this.focused;
   }
+  isVisible() {
+    return this.visible;
+  }
   isMinimized() {
-    return false;
+    return this.minimized;
   }
   show() {}
   focus() {
@@ -96,6 +106,12 @@ class FakeView {
   }
 }
 mock.module("electron", () => ({
+  contextBridge: {
+    exposeInMainWorld: (_name: string, value: any) =>
+      rendererBridges.push(value),
+  },
+  ipcRenderer: rendererIpc,
+  webUtils: {},
   BrowserWindow: FakeWindow,
   WebContentsView: FakeView,
   dialog: {
@@ -115,6 +131,12 @@ mock.module("electron", () => ({
       if (!partitions.has(name)) {
         const partition = new EventEmitter() as any;
         const handled = new Map();
+        partition.webRequest = {
+          listener: null,
+          onBeforeRequest(listener: any) {
+            this.listener = listener;
+          },
+        };
         partition.protocol = {
           handlers: handled,
           handle(
@@ -136,13 +158,21 @@ mock.module("electron", () => ({
     },
   },
 }));
+// @ts-expect-error Electron 的真实 JS 模块由桌面 checkJs 独立检查，跨包测试不使用重复声明。
+await import("../../../desktop/electron/preload.mjs");
+// @ts-expect-error Electron 的真实 JS 模块由桌面 checkJs 独立检查，跨包测试不使用重复声明。
+await import("../../../desktop/electron/file-window-preload.mjs");
 const { createOfficePanel } =
+  // @ts-expect-error Electron 的真实 JS 模块由桌面 checkJs 独立检查，跨包测试不使用重复声明。
   await import("../../../desktop/electron/office-panel.mjs");
 const { createOfficeResources } =
+  // @ts-expect-error Electron 的真实 JS 模块由桌面 checkJs 独立检查，跨包测试不使用重复声明。
   await import("../../../desktop/electron/office-resources.mjs");
 const { createFileWindows } =
+  // @ts-expect-error Electron 的真实 JS 模块由桌面 checkJs 独立检查，跨包测试不使用重复声明。
   await import("../../../desktop/electron/file-windows.mjs");
 const { triggerUpdaterInstall } =
+  // @ts-expect-error Electron 的真实 JS 模块由桌面 checkJs 独立检查，跨包测试不使用重复声明。
   await import("../../../desktop/electron/updater.mjs");
 const roots: string[] = [];
 afterEach(async () => {
@@ -327,10 +357,29 @@ async function fixture(
     transfer,
     opens,
     root,
+    client,
   };
 }
 
-test("三平台的两种宿主共用资源偏好，必需页面失败释放双协议并同步文档故障", async () => {
+test("主窗口和独立窗口的实际 preload 均向编辑容器传递布局失效，并能释放订阅", () => {
+  expect(rendererBridges).toHaveLength(2);
+  for (const bridge of rendererBridges) {
+    let refreshes = 0;
+    const stop = bridge.office.onLayoutInvalidated(() => {
+      refreshes++;
+    });
+    rendererIpc.emit("jugglework:office:layout-invalidated", {});
+    expect(refreshes).toBe(1);
+    stop();
+    rendererIpc.emit("jugglework:office:layout-invalidated", {});
+    expect(refreshes).toBe(1);
+  }
+  expect(
+    rendererIpc.listenerCount("jugglework:office:layout-invalidated"),
+  ).toBe(0);
+});
+
+test("三平台的两种宿主共用自动字体资源状态和网络边界，必需页面失败释放处理器并同步文档故障", async () => {
   for (const target of [
     { platform: "darwin", arch: "arm64" },
     { platform: "darwin", arch: "x64" },
@@ -356,15 +405,13 @@ test("三平台的两种宿主共用资源偏好，必需页面失败释放双�
       await f.show(host);
       const partition = partitions.get("office-od_A");
       expect(partition.protocol.handlers.size).toBe(2);
+      const networkGuard = partition.webRequest.listener;
+      expect(typeof networkGuard).toBe("function");
       expect(
-        (
-          await f.call("jugglework:office:resources", host, {
-            documentId: "od_A",
-          })
-        ).online,
-      ).toBe(true);
-      await f.call("jugglework:office:font-online", host, false);
-      expect((await resources.settings()).online).toBe(false);
+        await f.call("jugglework:office:resources", host, {
+          documentId: "od_A",
+        }),
+      ).toEqual({ fontFailures: 0, coreFailures: 0 });
       if (target.arch === "arm64" && !standalone) {
         const view = [...f.main.children][0];
         await f.files.open({
@@ -375,6 +422,7 @@ test("三平台的两种宿主共用资源偏好，必需页面失败释放双�
         await f.show(f.files.windows()[0]);
         expect([...f.files.windows()[0].children][0]).toBe(view);
         expect(partition.protocol.handlers.size).toBe(2);
+        expect(partition.webRequest.listener).toBe(networkGuard);
       }
       partition.fetch = async () => new Response(null, { status: 404 });
       await partition.protocol.handler(
@@ -383,9 +431,263 @@ test("三平台的两种宿主共用资源偏好，必需页面失败释放双�
       await new Promise((resolve) => setImmediate(resolve));
       expect(f.document.state).toBe("error");
       expect(partition.protocol.handlers.size).toBe(0);
+      expect(partition.webRequest.listener).toBeNull();
       f.panel.destroy();
       f.files.dispose();
     }
+  }
+});
+
+test("两种宿主刷新或宿主渲染崩溃时卸下旧页面，重新展示沿用未保存模型和网络边界", async () => {
+  for (const standalone of [false, true]) {
+    for (const event of ["did-start-navigation", "render-process-gone"]) {
+      const f = await fixture("数据.csv");
+      if (standalone)
+        await f.files.open({
+          workspaceId: "ws",
+          sessionId: "ses",
+          path: "数据.csv",
+        });
+      const host = standalone ? f.files.windows()[0] : f.main;
+      await f.show(host);
+      const view = [...host.children][0];
+      const guard = partitions.get("office-od_A").webRequest.listener;
+      f.document.dirty = true;
+      // 同页路由及子框架导航不影响当前文件页。
+      host.webContents.emit(
+        "did-start-navigation",
+        {},
+        "http://fixture/#/session",
+        true,
+        true,
+      );
+      host.webContents.emit(
+        "did-start-navigation",
+        {},
+        "http://fixture/frame",
+        false,
+        false,
+      );
+      expect(host.children.has(view)).toBe(true);
+      host.webContents.emit(event, {}, "http://fixture/", false, true);
+      expect(host.children.size).toBe(0);
+      expect(view.visible).toBe(false);
+      expect(view.webContents.destroyed).toBe(false);
+      host.emit("focus");
+      expect(host.children.size).toBe(0);
+      expect(host.webContents.messages.at(-1)?.name).toBe(
+        "jugglework:office:layout-invalidated",
+      );
+      await f.show(host);
+      expect([...host.children][0]).toBe(view);
+      expect(view.webContents.loads).toHaveLength(1);
+      expect(f.document.dirty).toBe(true);
+      expect(f.document.engineFileId).toBe("actual_A");
+      expect(f.saves).toHaveLength(0);
+      expect(partitions.get("office-od_A").webRequest.listener).toBe(guard);
+      f.panel.destroy();
+      expect(host.webContents.listenerCount("did-start-navigation")).toBe(0);
+      expect(host.listenerCount("focus")).toBe(0);
+      f.files.dispose();
+    }
+  }
+});
+
+test("宿主隐藏或最小化后不使用旧坐标恢复，只有当前面板重新确认后才显示原页面", async () => {
+  for (const event of ["hide", "minimize"]) {
+    const f = await fixture();
+    await f.show(f.main);
+    const view = [...f.main.children][0];
+    f.document.dirty = true;
+    f.main.visible = event !== "hide";
+    f.main.minimized = event === "minimize";
+    f.main.emit(event);
+    expect(f.main.children.size).toBe(0);
+    await f.show(f.main);
+    expect(f.main.children.size).toBe(0);
+    f.main.visible = true;
+    f.main.minimized = false;
+    f.main.emit(event === "hide" ? "show" : "restore");
+    expect(f.main.children.size).toBe(0);
+    await f.show(f.main);
+    expect([...f.main.children][0]).toBe(view);
+    f.main.emit("focus");
+    expect([...f.main.children][0]).toBe(view);
+    await f.show(f.main);
+    expect([...f.main.children][0]).toBe(view);
+    expect(f.document.dirty).toBe(true);
+    f.panel.destroy();
+  }
+});
+
+test.each([
+  { platform: "darwin", arch: "arm64" },
+  { platform: "darwin", arch: "x64" },
+  { platform: "win32", arch: "x64" },
+] as const)(
+  "$platform-$arch 两种宿主普通聚焦保留有效编辑视图，重测布局不抢聊天焦点",
+  async (target) => {
+    for (const standalone of [false, true]) {
+      const f = await fixture("数据.xlsx", undefined, target);
+      if (standalone)
+        await f.files.open({
+          workspaceId: "ws",
+          sessionId: "ses",
+          path: "数据.xlsx",
+        });
+      const host = standalone ? f.files.windows()[0] : f.main;
+      await f.show(host);
+      const view = [...host.children][0];
+      // TIPS: removeChildView 会丢失真实 Electron 的输入焦点，不能在 mock 中让卸载后自动恢复掩盖回归。
+      let removals = 0;
+      const remove = host.contentView.removeChildView;
+      host.contentView.removeChildView = (child: any) => {
+        removals++;
+        remove(child);
+      };
+      const initialFocusCalls = view.webContents.focusCalls;
+      for (const event of ["show", "restore", "focus"]) {
+        host.emit(event);
+        expect([...host.children][0]).toBe(view);
+        expect(view.visible).toBe(true);
+        expect(host.webContents.messages.at(-1)?.name).toBe(
+          "jugglework:office:layout-invalidated",
+        );
+        await f.show(host);
+        expect(view.webContents.focusCalls).toBe(initialFocusCalls);
+      }
+      expect(removals).toBe(0);
+      expect(view.webContents.loads).toHaveLength(1);
+      f.panel.destroy();
+      f.files.dispose();
+    }
+  },
+);
+
+test.each([
+  { platform: "darwin", arch: "arm64" },
+  { platform: "darwin", arch: "x64" },
+  { platform: "win32", arch: "x64" },
+] as const)(
+  "$platform-$arch 恢复原编辑焦点，用户转向宿主输入后不再接管",
+  async (target) => {
+    for (const standalone of [false, true]) {
+      const f = await fixture("数据.xlsx", undefined, target);
+      if (standalone)
+        await f.files.open({
+          workspaceId: "ws",
+          sessionId: "ses",
+          path: "数据.xlsx",
+        });
+      const host = standalone ? f.files.windows()[0] : f.main;
+      await f.show(host);
+      const view = [...host.children][0];
+      host.focused = true;
+      view.webContents.emit("focus");
+      host.emit("blur");
+      // Electron 切回窗口时可以先聚焦宿主，再通知 BrowserWindow；不能误判为用户点击聊天。
+      host.webContents.emit("focus");
+      host.emit("focus");
+      await f.show(host);
+      expect(view.webContents.focusCalls).toBe(1);
+      host.webContents.emit("focus");
+      await f.show(host);
+      expect(view.webContents.focusCalls).toBe(1);
+
+      for (const [event, input] of [
+        ["before-mouse-event", { type: "mouseDown" }],
+        ["before-input-event", { type: "keyDown" }],
+      ] as const) {
+        view.webContents.emit("focus");
+        host.emit("blur");
+        host.webContents.emit(event, {}, input);
+        host.emit("focus");
+        await f.show(host);
+        expect(view.webContents.focusCalls).toBe(1);
+      }
+      view.webContents.emit("focus");
+      host.emit("blur");
+      host.minimized = true;
+      host.emit("minimize");
+      // 隐藏页面的渲染层也会上报 hide，不能清掉窗口生命周期已保存的输入目标。
+      await f.call("jugglework:office:hide", host, "od_A", false);
+      host.minimized = false;
+      host.emit("restore");
+      host.webContents.emit("focus");
+      host.emit("focus");
+      await f.show(host);
+      expect([...host.children][0]).toBe(view);
+      expect(view.webContents.focusCalls).toBe(2);
+      // 原页面关闭或导航后不保留待恢复焦点，新的聊天页面不能被旧文档接管。
+      host.webContents.emit(
+        "did-start-navigation",
+        {},
+        "http://fixture",
+        false,
+        true,
+      );
+      await f.show(host);
+      expect(view.webContents.focusCalls).toBe(2);
+      f.panel.destroy();
+      expect(host.listenerCount("blur")).toBe(0);
+      expect(host.webContents.listenerCount("focus")).toBe(0);
+      expect(host.webContents.listenerCount("before-input-event")).toBe(0);
+      expect(host.webContents.listenerCount("before-mouse-event")).toBe(0);
+      f.files.dispose();
+    }
+  },
+);
+
+test("显式激活等待期间用户转向聊天输入，旧请求不能抢回焦点", async () => {
+  const f = await fixture();
+  f.main.focused = true;
+  const original = f.client.postJson;
+  const context = Promise.withResolvers<void>();
+  const requested = Promise.withResolvers<void>();
+  f.client.postJson = async (path: string, body: unknown) => {
+    if (path.endsWith("/context")) {
+      requested.resolve();
+      await context.promise;
+    }
+    return original(path, body);
+  };
+  const showing = f.call("jugglework:office:show", f.main, {
+    workspaceId: "ws",
+    documentId: "od_A",
+    activate: true,
+    bounds: { x: 0, y: 86, width: 1000, height: 700 },
+  });
+  await requested.promise;
+  const view = [...f.main.children][0];
+  f.main.webContents.emit("before-input-event", {}, { type: "keyDown" });
+  context.resolve();
+  await showing;
+  expect(view.visible).toBe(true);
+  expect(view.webContents.focusCalls).toBe(0);
+  f.panel.destroy();
+});
+
+test("刷新、隐藏或重新聚焦发生在文档查询期间，旧 show 返回不能重新挂载视图", async () => {
+  for (const event of ["did-start-navigation", "hide", "focus"]) {
+    const f = await fixture();
+    let complete!: (value: any) => void;
+    const getJson = f.client.getJson;
+    f.client.getJson = (path: string) =>
+      path.endsWith("/od_A")
+        ? new Promise<any>((resolve) => {
+            complete = resolve;
+          })
+        : getJson(path);
+    const pending = f.show(f.main);
+    if (event === "hide" || event === "focus") f.main.emit(event);
+    else f.main.webContents.emit(event, {}, "http://fixture", false, true);
+    complete({ document: { ...f.document } });
+    await pending;
+    expect(f.main.children.size).toBe(0);
+    f.client.getJson = getJson;
+    await f.show(f.main);
+    expect(f.main.children.size).toBe(1);
+    f.panel.destroy();
   }
 });
 

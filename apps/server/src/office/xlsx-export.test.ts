@@ -79,7 +79,7 @@ test("无效导出不能替换文件，成功适配不残留临时文件", async
     const wrong = await archive.generateAsync({ type: "nodebuffer" });
     await writeFile(path, wrong);
     await expect(finalizeXlsxExport(path)).rejects.toThrow("有效工作表");
-    expect(await readFile(path)).toEqual(wrong);
+    expect((await readFile(path)).equals(wrong)).toBe(true);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

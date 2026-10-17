@@ -3,12 +3,13 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import assets from "./office-assets.cjs";
 import { createOfficeFonts } from "./office-fonts.mjs";
+import { createOfficeNetworkPolicy } from "./office-network.mjs";
 import {
   fetchOfficePageResource,
   handleOfficeSaveRequest,
 } from "./office-save-request.mjs";
 
-/** 按来源和精确身份分类；未知资源仍保留原响应，不使用宽泛的外网代理。 */
+/** 按来源和精确身份分类；未知本地资源保留原响应，在线资源统一受本地模式约束。 */
 export function classifyOfficeResource(
   url,
   origin,
@@ -26,9 +27,7 @@ export function classifyOfficeResource(
   );
   if (entry) return { kind: entry.kind, entry };
   const optional = manifest.optional.find(
-    (item) =>
-      (item.origin ?? origin) === parsed.origin &&
-      item.path === parsed.pathname,
+    (item) => origin === parsed.origin && item.path === parsed.pathname,
   );
   if (optional) return { kind: "optional", entry: optional };
   if (
@@ -36,12 +35,6 @@ export function classifyOfficeResource(
     (destination === "font" || /\.(?:woff2?|ttf|otf)$/i.test(parsed.pathname))
   )
     return { kind: "unknown-font" };
-  if (
-    parsed.origin !== origin &&
-    (["script", "style", "worker", "sharedworker"].includes(destination) ||
-      /\.(?:js|mjs|css|wasm)$/i.test(parsed.pathname))
-  )
-    return { kind: "remote-code" };
   if (parsed.origin === origin) {
     if (
       [
@@ -52,7 +45,7 @@ export function classifyOfficeResource(
     )
       return { kind: "core" };
   }
-  return { kind: "unknown" };
+  return { kind: parsed.origin === origin ? "unknown" : "online" };
 }
 
 /**
@@ -82,28 +75,26 @@ export function createOfficeResources({
     state(id) {
       return states.get(id) ?? { fontFailures: 0, coreFailures: 0 };
     },
-    /** 订阅文档资源或联网偏好变更。 */
+    /** 订阅文档字体及必需资源状态变更。 */
     subscribe(listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
-    settings: () => fonts.settings(),
-    /** 更新偏好并通知所有文件宿主；不重载存活页面。 */
-    async setOnline(value) {
-      const result = await fonts.setOnline(value);
-      for (const listener of listeners) listener(null, null);
-      return result;
-    },
     /**
      * 为唯一 Office 页面注册 HTTP/HTTPS；返回与页面同寿命的清理器。
-     * @param {{protocol: Pick<Electron.Protocol, 'handle' | 'unhandle'>, fetch: Electron.Session['fetch']}} partition 页面分区
+     * @param {{protocol: Pick<Electron.Protocol, 'handle' | 'unhandle'>, webRequest: Pick<Electron.WebRequest, 'onBeforeRequest'>, fetch: Electron.Session['fetch']}} partition 页面分区
      * @param {{documentId: string, origin: string, filePath: string, kind: string, commit: {error: Error | null}, save: () => Promise<{engineFileId: string}>, onCoreFailure: () => void}} host 页面保存及故障归属
      */
     attach(partition, host) {
       const controller = new AbortController();
       const failures = { fonts: new Set(), core: new Set() };
       const attempted = new Set();
-      const diagnostics = { optionalRequests: 0, unknownFailures: 0 };
+      const diagnostics = {
+        optionalRequests: 0,
+        unknownFailures: 0,
+        blockedRequests: 0,
+      };
+      const network = createOfficeNetworkPolicy(host.origin, manifest.entries);
       const report = (kind, identity, failed) => {
         if (controller.signal.aborted) return;
         const set = kind === "font" ? failures.fonts : failures.core;
@@ -117,7 +108,24 @@ export function createOfficeResources({
           ).length,
         });
       };
+      const rejectNetwork = (request) => {
+        if (network.allows(request)) return false;
+        diagnostics.blockedRequests++;
+        const resource = classifyOfficeResource(
+          request.url,
+          host.origin,
+          manifest,
+          request.destination ?? request.resourceType,
+        );
+        if (resource.kind === "unknown-font") report("font", "unlisted", true);
+        return true;
+      };
       const handler = async (request) => {
+        if (rejectNetwork(request))
+          return new Response(null, {
+            status: 410,
+            headers: { "Cache-Control": "no-store" },
+          });
         // TIPS: 保存/关闭及原生提交响应的拥有者不变，资源适配不能绕过宿主保护。
         const saved = await handleOfficeSaveRequest(request, host);
         if (saved) return saved;
@@ -136,14 +144,6 @@ export function createOfficeResources({
             status: 410,
             headers: { "Cache-Control": "no-store" },
           });
-        }
-        if (resource.kind === "unknown-font") {
-          report("font", "unlisted", true);
-          return new Response(null, { status: 503 });
-        }
-        if (resource.kind === "remote-code") {
-          diagnostics.unknownFailures++;
-          return new Response(null, { status: 503 });
         }
         if (resource.kind === "font" && request.method !== "GET")
           return new Response(null, { status: 405 });
@@ -202,7 +202,10 @@ export function createOfficeResources({
           const response = await fetchOfficePageResource(request, {
             ...host,
             fetch: (input) =>
-              partition.fetch(input, { bypassCustomProtocolHandlers: true }),
+              partition.fetch(input, {
+                bypassCustomProtocolHandlers: true,
+                redirect: "manual",
+              }),
           });
           if (resource.kind === "core" && !response.ok) {
             report("core", new URL(request.url).pathname, true);
@@ -225,11 +228,18 @@ export function createOfficeResources({
           throw error;
         }
       };
-      partition.protocol.handle("http", handler);
+      // TIPS: 协议处理器不能覆盖 WebSocket/重定向，分区边界也必须在建立连接前执行同一策略。
+      partition.webRequest.onBeforeRequest((request, callback) =>
+        callback({ cancel: rejectNetwork(request) }),
+      );
+      let httpHandled = false;
       try {
+        partition.protocol.handle("http", handler);
+        httpHandled = true;
         partition.protocol.handle("https", handler);
       } catch (error) {
-        partition.protocol.unhandle("http");
+        if (httpHandled) partition.protocol.unhandle("http");
+        partition.webRequest.onBeforeRequest(null);
         throw error;
       }
       publish(host.documentId, { fontFailures: 0, coreFailures: 0 });
@@ -259,9 +269,14 @@ export function createOfficeResources({
           controller.abort();
           partition.protocol.unhandle("http");
           partition.protocol.unhandle("https");
+          partition.webRequest.onBeforeRequest(null);
           states.delete(host.documentId);
           for (const listener of listeners) listener(host.documentId, null);
-          if (diagnostics.optionalRequests || diagnostics.unknownFailures)
+          if (
+            diagnostics.optionalRequests ||
+            diagnostics.unknownFailures ||
+            diagnostics.blockedRequests
+          )
             console.info("[office-resources]", {
               kind: host.kind,
               ...diagnostics,

@@ -259,10 +259,13 @@ export function OfficeEditor({
     const watch = () => {
       if (cancelled) return;
       const bounds = computeBounds(element);
-      const visible =
-        bounds.width > 0 && bounds.height > 0 && !hasNativeBrowserOccluder();
+      const pageVisible =
+        globalThis.document.visibilityState !== "hidden" && element.isConnected;
+      const hasArea = bounds.width > 0 && bounds.height > 0;
+      const visible = pageVisible && hasArea && !hasNativeBrowserOccluder();
       if (!visible && shown) {
-        void native.hide(documentId, true).then((image) => {
+        // 后台隐藏无需菜单快照，也不能把输入焦点交回已隐藏的宿主。
+        void native.hide(documentId, pageVisible && hasArea).then((image) => {
           if (!cancelled && !shown && typeof image === "string")
             setSnapshot(image);
         });
@@ -295,9 +298,21 @@ export function OfficeEditor({
       }
       frame = window.requestAnimationFrame(watch);
     };
+    // TIPS: 后台 RAF 可能暂停；窗口恢复后强制重报当前区域，不能直接恢复主进程记录的旧坐标。
+    const refreshLayout = () => {
+      last = null;
+      window.cancelAnimationFrame(frame);
+      watch();
+    };
+    const unsubscribeLayout = native.onLayoutInvalidated?.(refreshLayout);
+    globalThis.document.addEventListener("visibilitychange", refreshLayout);
+    window.addEventListener("pageshow", refreshLayout);
     watch();
     return () => {
       cancelled = true;
+      unsubscribeLayout?.();
+      globalThis.document.removeEventListener("visibilitychange", refreshLayout);
+      window.removeEventListener("pageshow", refreshLayout);
       window.cancelAnimationFrame(frame);
       void native.hide(documentId);
     };

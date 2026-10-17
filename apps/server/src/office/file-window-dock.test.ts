@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 
 mock.module("electron", () => ({ nativeImage: {} }));
 const { createFileWindowDock } =
+  // @ts-expect-error Electron 的真实 JS 模块由桌面 checkJs 独立检查，跨包测试不使用重复声明。
   await import("../../../desktop/electron/file-window-dock.mjs");
 
 test("Dock 入口只传窗口摘要，激活及退出交由宿主，零窗口清理且可重新打开", async () => {

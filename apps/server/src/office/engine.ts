@@ -12,6 +12,7 @@ import {
 } from "@jugglework/types/office";
 import type { OfficeToolDefinition } from "./content-tools.js";
 import { finalizeXlsxExport } from "./xlsx-export.js";
+import { loopbackFetch } from "../server-fetch.js";
 
 interface NativeEditor {
   file_id: string;
@@ -181,6 +182,8 @@ export class OfficeEngine {
     const native = new OfficeDocsService({
       port: String(port),
       editorSdkPath: join(this.resourceDirectory, manifest.binary),
+      // TIPS: 本地编辑不提供在线业务代理，页面的本地接口不能转发到外部账号或配置服务。
+      enableTdProxy: false,
       // TIPS: 安装目录和签名资源只读；SDK 的相对临时文件必须留在用户数据目录。
       editorSdkProcessLauncher: {
         launch: (request: { binaryPath: string; args: readonly string[] }) => {
@@ -310,7 +313,7 @@ export class OfficeEngine {
     method: string,
     params: Record<string, unknown>,
   ): Promise<Record<string, any>> {
-    const response = await fetch(this.mcpUrl, {
+    const response = await loopbackFetch(this.mcpUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

@@ -30,21 +30,15 @@ export function createOfficeFonts({
   timeoutMs = 5000,
   budget = 256 * 1024 * 1024,
 }) {
-  let online = true;
   let initialization;
   const active = new Map();
-  const downloads = new Set();
-  const settingsPath = path.join(directory, "settings.json");
   const cachePath = (entry) => path.join(directory, `${entry.sha256}.font`);
-  const loadSettings = () =>
+  const initialize = () =>
     (initialization ??= (async () => {
-      try {
-        online =
-          JSON.parse(await readFile(settingsPath, "utf8")).online !== false;
-      } catch (error) {
-        // TIPS: 损坏偏好不能导致离线缓存不可读，也不能擅自重新开启用户可能已关闭的联网。
-        if (error.code !== "ENOENT") online = false;
-      }
+      // TIPS: 字体补充固定启用；旧版本偏好不再参与决策，清除自身遗留设置，不删除验证缓存。
+      await rm(path.join(directory, "settings.json"), { force: true }).catch(
+        () => {},
+      );
       // TIPS: 单一资源服务首次下载前回收上次进程中断的临时文件，避免清理当前请求的写入。
       const names = await readdir(directory).catch((error) => {
         if (error.code !== "ENOENT") throw error;
@@ -94,14 +88,12 @@ export function createOfficeFonts({
   /** 仅读取清单内字体，失败返回真实原因，由页面自身执行字体替代。 */
   const resolve = async (entry, signal) => {
     try {
-      await loadSettings();
+      await initialize();
       signal?.throwIfAborted();
       const cached = await read(entry);
       if (cached) return { bytes: cached, source: "local" };
-      if (!online) return { error: "offline" };
       // TIPS: 只复制固定 URL，不复用浏览器 Request；重定向也不能把静态下载变成账号请求。
       const controller = new AbortController();
-      downloads.add(controller);
       const stop = () => controller.abort();
       signal?.addEventListener("abort", stop, { once: true });
       active.set(entry.sha256, (active.get(entry.sha256) ?? 0) + 1);
@@ -145,7 +137,6 @@ export function createOfficeFonts({
       } finally {
         clearTimeout(timer);
         controller.abort();
-        downloads.delete(controller);
         signal?.removeEventListener("abort", stop);
         const count = active.get(entry.sha256) - 1;
         if (count) active.set(entry.sha256, count);
@@ -158,29 +149,6 @@ export function createOfficeFonts({
   };
   return {
     resolve,
-    /** 读取字体联网偏好；缺少设置时默认允许目录内静态字体。 */
-    async settings() {
-      await loadSettings();
-      return { online };
-    },
-    /** 保存联网偏好；两种宿主共用，禁用不删除已验证缓存。 */
-    async setOnline(value) {
-      if (typeof value !== "boolean") throw new Error("字体联网设置无效");
-      await loadSettings();
-      await mkdir(directory, { recursive: true });
-      const temporary = path.join(directory, `settings.${randomUUID()}.tmp`);
-      try {
-        await writeFile(temporary, JSON.stringify({ online: value }), {
-          flag: "wx",
-        });
-        await rename(temporary, settingsPath);
-        online = value;
-        if (!online) for (const controller of downloads) controller.abort();
-      } finally {
-        await rm(temporary, { force: true });
-      }
-      return { online };
-    },
     entries: entries.filter((entry) => entry.kind === "font"),
   };
 }

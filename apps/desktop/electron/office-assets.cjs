@@ -105,21 +105,16 @@ function readOfficeAssets(directory) {
     }
   }
   for (const item of manifest.optional) {
-    const identity = `${item.origin ?? ""}${item.path}`;
+    const identity = item.path;
     if (
       !item.path?.startsWith("/") ||
       item.path.includes("?") ||
       item.path.includes("#") ||
+      item.origin !== undefined ||
       !item.purpose ||
       identities.has(identity)
     )
       throw new Error("Office 可选资源分类无效");
-    if (item.origin) {
-      const origin = new URL(item.origin);
-      // TIPS: 可选远程端点只按固定 HTTPS 来源和路径匹配，不将查询参数作为日志或代理地址。
-      if (origin.protocol !== "https:" || origin.origin !== item.origin)
-        throw new Error("Office 可选资源来源无效");
-    }
     identities.add(identity);
   }
   return manifest;
