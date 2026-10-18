@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { callOpenAiImageGenerationExtensionAction } from "./openai-image-generation.js";
+import { callOpenAiImageGenerationExtensionAction, downloadPublicImageResult, readValidatedImageArtifact } from "./openai-image-generation.js";
 import { cloudGatewayCredentialEnvName, cloudGatewayMirrorEnvName, cloudGatewayMirrorOwnerId, cloudProviderConfigFingerprint } from "@jugglework/types/provider-credentials";
 import { writeRuntimeOpencodeConfig } from "../runtime-opencode-config-store.js";
 import { writeJuggleWorkWorkspaceConfig } from "../jugglework-workspace-config-store.js";
@@ -179,5 +179,54 @@ describe("configured OpenAI image generation", () => {
     try {
       await expect(callOpenAiImageGenerationExtensionAction(fx.config, env, "image_generate", { prompt: "cat" }, fx.context)).rejects.toThrow("credential [REDACTED] rejected");
     } finally { globalThis.fetch = originalFetch; }
+  });
+
+  test("rejects provider result URLs that resolve to a private network", async () => {
+    const fx = await fixture();
+    await writeRuntime(fx.config);
+    const originalFetch = globalThis.fetch;
+    let requests = 0;
+    globalThis.fetch = mock(async () => {
+      requests += 1;
+      return Response.json({ data: [{ url: "https://127.0.0.1/private.png" }] });
+    }) as never;
+    try {
+      await expect(callOpenAiImageGenerationExtensionAction(fx.config, fx.env, "image_generate", { prompt: "cat" }, fx.context)).rejects.toThrow("non-public network");
+      expect(requests).toBe(1);
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
+  test("downloads a provider URL inside JuggleWork through its pinned public address", async () => {
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const seen: Array<{ hostname: string; address: string }> = [];
+    const bytes = await downloadPublicImageResult("https://images.example.test/generated.png", {
+      resolver: async () => [{ address: "8.8.8.8" }],
+      fetch: async ({ url, address }) => {
+        seen.push({ hostname: url.hostname, address });
+        return new Response(png, { headers: { "content-length": String(png.byteLength), "content-type": "image/png" } });
+      },
+    });
+    expect(seen).toEqual([{ hostname: "images.example.test", address: "8.8.8.8" }]);
+    expect(Buffer.from(bytes)).toEqual(png);
+  });
+
+  test("rejects unsafe or inconsistent image artifacts", async () => {
+    const fx = await fixture();
+    const artifacts = join(fx.workspace, "artifacts");
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    await mkdir(artifacts);
+    await writeFile(join(artifacts, "safe.png"), png);
+    const artifact = { path: "artifacts/safe.png", mimeType: "image/png", bytes: png.byteLength };
+    expect(await readValidatedImageArtifact({ workspaceRoot: fx.workspace, artifact })).toEqual(png);
+    await expect(readValidatedImageArtifact({ workspaceRoot: fx.workspace, artifact: { ...artifact, path: join(artifacts, "safe.png") } })).rejects.toThrow("invalid_image_artifact_path");
+    await expect(readValidatedImageArtifact({ workspaceRoot: fx.workspace, artifact: { ...artifact, bytes: png.byteLength + 1 } })).rejects.toThrow("invalid_image_artifact");
+    await writeFile(join(artifacts, "spoof.png"), Buffer.alloc(png.byteLength));
+    await expect(readValidatedImageArtifact({ workspaceRoot: fx.workspace, artifact: { ...artifact, path: "artifacts/spoof.png" } })).rejects.toThrow("invalid_image_artifact_signature");
+    if (process.platform !== "win32") {
+      const outside = await mkdtemp(join(tmpdir(), "jugglework-image-outside-")); roots.push(outside);
+      await writeFile(join(outside, "outside.png"), png);
+      await symlink(join(outside, "outside.png"), join(artifacts, "linked.png"));
+      await expect(readValidatedImageArtifact({ workspaceRoot: fx.workspace, artifact: { ...artifact, path: "artifacts/linked.png" } })).rejects.toThrow("invalid_image_artifact");
+    }
   });
 });

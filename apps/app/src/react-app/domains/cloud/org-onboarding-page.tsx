@@ -34,12 +34,17 @@ import {
   relaunchDesktopApp,
 } from "@/app/lib/desktop";
 import {
+  createDenCredentialAuthorityChange,
+  denSettingsChangedEvent,
+  dispatchDenSessionUpdated,
+} from "@/app/lib/den-session-events";
+import { closeToonFactoryForDenSession } from "@/app/lib/toon-factory-auth-lifecycle";
+import {
   isAlphaChannelAllowedByDesktopConfig,
   isAlphaUpdateAllowed,
   resolveFreshStableDesktopUpdate,
 } from "@/app/lib/version-gate";
 import { exchangeHandoffAndSignIn } from "@/app/lib/den-handoff";
-import { denSettingsChangedEvent } from "@/app/lib/den-session-events";
 import { usePlatform } from "../../kernel/platform";
 import { useLocal } from "../../kernel/local-provider";
 import { useBootState } from "../../shell/boot-state";
@@ -1113,10 +1118,19 @@ function OrganizationSelectionPage({
   }, [authToken, onContinue, settings]);
   const { error, isPending, mutate } = useMutation({
     mutationFn: async (nextOrg: DenOrgSummary) => {
+      const authorityChange = createDenCredentialAuthorityChange("organization_switched");
+      await closeToonFactoryForDenSession(authorityChange);
       await denClient.setActiveOrganization({ organizationId: nextOrg.id });
-      return nextOrg;
+      return { nextOrg, authorityChange };
     },
-    onSuccess: applyOrganization,
+    onSuccess: ({ nextOrg, authorityChange }) => {
+      applyOrganization(nextOrg);
+      dispatchDenSessionUpdated({
+        status: "authority_changed",
+        ...authorityChange,
+        baseUrl: settings.baseUrl,
+      });
+    },
   });
 
   const autoContinueStartedRef = useRef(false);

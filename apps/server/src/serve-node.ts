@@ -79,7 +79,7 @@ async function waitForDrainOrClose(nodeRes: ServerResponse): Promise<void> {
 /**
  * Convert a Node.js IncomingMessage into a Web API Request.
  */
-function toWebRequest(nodeReq: IncomingMessage, hostname: string, port: number): Request {
+function toWebRequest(nodeReq: IncomingMessage, hostname: string, port: number, signal: AbortSignal): Request {
   const url = `http://${hostname}:${port}${nodeReq.url ?? "/"}`;
   const method = nodeReq.method ?? "GET";
   const headers = new Headers();
@@ -106,6 +106,7 @@ function toWebRequest(nodeReq: IncomingMessage, hostname: string, port: number):
     method,
     headers,
     body,
+    signal,
     // @ts-expect-error duplex is required for streaming request bodies in Node
     duplex: hasBody ? "half" : undefined,
   });
@@ -135,16 +136,24 @@ async function writeWebResponse(webRes: Response, nodeRes: ServerResponse): Prom
   }
 
   const reader = webRes.body.getReader();
+  let completed = false;
+  const cancelBody = () => { void reader.cancel().catch(() => undefined); };
+  nodeRes.once("close", cancelBody);
   try {
     while (true) {
       const { done, value } = await reader.read();
-      if (done) break;
+      if (done) {
+        completed = true;
+        break;
+      }
       if (!isResponseWritable(nodeRes)) break;
       if (!nodeRes.write(value)) {
         await waitForDrainOrClose(nodeRes);
       }
     }
   } finally {
+    nodeRes.off("close", cancelBody);
+    if (!completed) await reader.cancel().catch(() => undefined);
     reader.releaseLock();
     endResponse(nodeRes);
   }
@@ -167,8 +176,15 @@ export function serve(options: ServeOptions): Promise<ServeResult> {
       console.error("[serve-node] Response stream error:", error);
     });
 
+    const controller = new AbortController();
+    const abortRequest = () => controller.abort(new DOMException("Client disconnected", "AbortError"));
+    const abortIncompleteResponse = () => {
+      if (!nodeRes.writableEnded) abortRequest();
+    };
+    nodeReq.once("aborted", abortRequest);
+    nodeRes.once("close", abortIncompleteResponse);
     try {
-      const webReq = toWebRequest(nodeReq, hostname, boundPort);
+      const webReq = toWebRequest(nodeReq, hostname, boundPort, controller.signal);
       const webRes = await fetchHandler(webReq);
       await writeWebResponse(webRes, nodeRes);
     } catch (error) {
@@ -184,6 +200,9 @@ export function serve(options: ServeOptions): Promise<ServeResult> {
         nodeRes.writeHead(500, { "Content-Type": "application/json" });
       }
       endResponse(nodeRes, JSON.stringify({ error: "internal_error" }));
+    } finally {
+      nodeReq.off("aborted", abortRequest);
+      nodeRes.off("close", abortIncompleteResponse);
     }
   });
 

@@ -104,6 +104,7 @@ import { registerWorkspaceRoutes } from "./routes/workspaces.js";
 import { registerReviewRoutes } from "./routes/reviews.js";
 import { registerCloudMcpRoutes } from "./routes/cloud-mcp.js";
 import { registerAutomationRoutes } from "./routes/automations.js";
+import { registerToonflowRoutes } from "./routes/toonflow.js";
 import { registerProviderAuthRoutes } from "./routes/provider-auth.js";
 import {
   applyMcpWorkspacePolicyToPrompt,
@@ -118,7 +119,8 @@ import {
 import { AutomationRepository } from "./automation/repository.js";
 import { SessionPermissionModeStore } from "./session-permission-mode-store.js";
 import { SessionResponseLanguageStore } from "./session-response-language-store.js";
-import { MediaGenerationRepository } from "./media-generation/repository.js";
+import { ImageGenerationRepository, MediaGenerationRepository } from "./media-generation/repository.js";
+import { ToonflowImageRuntime } from "./media-generation/image-runtime.js";
 import { filterVideoSubmissionEligibleModels, MediaGenerationService, videoSubmissionAllowed } from "./media-generation/service.js";
 import { MediaGenerationWorker } from "./media-generation/worker.js";
 import { ReviewReadService } from "./reviews/service.js";
@@ -1047,6 +1049,7 @@ export async function startServer(config: ServerConfig, options: {
   const interactionResolutions = options.interactionResolutions ?? createInteractionResolutionCoordinator();
   const automationRepository = await AutomationRepository.open(config);
   const mediaGenerationRepository = await MediaGenerationRepository.open(config);
+  const imageGenerationRepository = await ImageGenerationRepository.open(config);
   const sessionPermissionStore = await SessionPermissionModeStore.open(config);
   const sessionResponseLanguageStore = await SessionResponseLanguageStore.open(config);
   const reviewService = options.reviewService ?? new ReviewReadService(new ConnectGithubReviewProvider({ config }));
@@ -1170,7 +1173,7 @@ export async function startServer(config: ServerConfig, options: {
     const credentialReady = async (ref: { providerID: string; modelID: string }) => {
       const provider = ensurePlainObject(providerRecords[ref.providerID]);
       const keys = Array.isArray(provider.env) ? provider.env.filter((key): key is string => typeof key === "string") : [];
-      return Boolean(await mediaCredentials.resolve({ workspaceId: workspace.id, providerID: ref.providerID, modelID: ref.modelID, declaredEnvKeys: keys }));
+      return Boolean(await mediaCredentials.resolve({ workspaceId: workspace.id, providerID: ref.providerID, modelID: ref.modelID, declaredEnvKeys: keys, providerConfig: provider }));
     };
     const disabledProviders = Array.isArray(runtimeConfig.disabled_providers)
       ? runtimeConfig.disabled_providers.filter((providerID): providerID is string => typeof providerID === "string")
@@ -1251,6 +1254,7 @@ export async function startServer(config: ServerConfig, options: {
           ? context.sessionId
           : undefined;
       const job = await service.submit({ workspace, sessionId, clientRequestId: input.clientRequestId, prompt: input.prompt, mode: input.mode, model: selected.ref, ...(input.sourceImagePath ? { sourceImagePath: input.sourceImagePath } : {}), options: { ...(input.durationSeconds ? { durationSeconds: input.durationSeconds } : {}), ...(input.resolution ? { resolution: input.resolution } : {}) } });
+      mediaGenerationWorker.wake();
       return { job: publicVideoGenerationJob(job) };
     },
     async getJob(jobId: string, context: Record<string, unknown>) {
@@ -1263,9 +1267,12 @@ export async function startServer(config: ServerConfig, options: {
       const workspace = resolveMediaWorkspace(context);
       const job = mediaGenerationRepository.get(jobId);
       if (!job || job.workspaceId !== workspace.id) throw new ApiError(404, "video_job_not_found", "Video job not found");
-      return { job: publicVideoGenerationJob(mediaGenerationRepository.requestCancellation(jobId)) };
+      const cancelled = mediaGenerationRepository.requestCancellation(jobId);
+      mediaGenerationWorker.wake();
+      return { job: publicVideoGenerationJob(cancelled) };
     },
   };
+  const imageGenerationRuntime = new ToonflowImageRuntime({ config, env, repository: imageGenerationRepository });
   const routes = createRoutes(
     config,
     approvals,
@@ -1290,6 +1297,7 @@ export async function startServer(config: ServerConfig, options: {
     automationSubscriptionSync,
     reviewService,
     mediaGenerationRuntime,
+    imageGenerationRuntime,
     hostMarketplacePlugins,
     hostMarketplaceMigration,
     hostMarketplaceEnvironmentId,
@@ -1486,6 +1494,7 @@ export async function startServer(config: ServerConfig, options: {
     automationExecutor.dispose();
     automationRepository.close();
     mediaGenerationRepository.close();
+    imageGenerationRepository.close();
     sessionPermissionStore.close();
     sessionResponseLanguageStore.close();
     hostMarketplaceMigration.close();
@@ -1565,6 +1574,7 @@ export async function startServer(config: ServerConfig, options: {
       try { sessionRunJournal.close(); } catch (error) { errors.push(error); }
       try { automationRepository.close(); } catch (error) { errors.push(error); }
       try { mediaGenerationRepository.close(); } catch (error) { errors.push(error); }
+      try { imageGenerationRepository.close(); } catch (error) { errors.push(error); }
       try { sessionPermissionStore.close(); } catch (error) { errors.push(error); }
       try { sessionResponseLanguageStore.close(); } catch (error) { errors.push(error); }
       try { hostMarketplaceMigration.close(); } catch (error) { errors.push(error); }
@@ -2603,6 +2613,7 @@ function createRoutes(
   automationSubscriptionSync: AutomationSubscriptionSync,
   reviewService: ReviewReadService,
   mediaGeneration: import("./extensions/media-generation.js").MediaGenerationExtensionRuntime,
+  imageGeneration: ToonflowImageRuntime,
   hostMarketplacePlugins: HostMarketplacePluginRegistry,
   hostMarketplaceMigration: HostMarketplaceMigrationCoordinator,
   hostMarketplaceEnvironmentId: string,
@@ -2666,6 +2677,14 @@ function createRoutes(
     service: reviewService,
     jsonResponse,
     resolveWorkspaceForInspection,
+  });
+
+  registerToonflowRoutes({ routes, config, env, mediaGenerationRuntime: mediaGeneration, imageGenerationRuntime: imageGeneration, resolveWorkspace, jsonResponse,
+    listProviders: async (workspace) => {
+      const result = await createWorkspaceOpencodeClient(config, workspace).provider.list();
+      if (!result.response.ok || !result.data) throw new ApiError(502, "model_catalog_unavailable", "模型目录暂不可用");
+      return result.data;
+    },
   });
 
   registerProviderAuthRoutes({

@@ -15,6 +15,7 @@ import {
   sessionIdForLegacyWorkspaceInference,
   workspaceAppsRoute,
   workspaceReviewsRoute,
+  workspaceToonFactoryRoute,
 } from "../src/react-app/shell/workspace-routes";
 
 describe("workspace app path parsing", () => {
@@ -72,6 +73,17 @@ describe("workspace app path parsing", () => {
       "/workspace/workspace%20a/reviews/review%2F42",
     );
     expect(parseWorkspaceAppPath("/reviews")).toBeNull();
+  });
+
+  test("parses and builds workspace-bound Toon Factory routes", () => {
+    expect(parseWorkspaceAppPath("/workspace/workspace%20a/toon-factory/")).toEqual({
+      view: "toon-factory",
+      workspaceId: "workspace a",
+    });
+    expect(workspaceToonFactoryRoute(" workspace a ")).toBe("/workspace/workspace%20a/toon-factory");
+    expect(parseWorkspaceAppPath("/toon-factory")).toBeNull();
+    expect(parseWorkspaceAppPath("/workspace/%20/toon-factory")).toBeNull();
+    expect(() => workspaceToonFactoryRoute("   ")).toThrow("workspaceId is required");
   });
 });
 

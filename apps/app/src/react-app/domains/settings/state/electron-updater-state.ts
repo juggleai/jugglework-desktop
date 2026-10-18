@@ -14,6 +14,7 @@ import {
 import type { ReleaseChannel } from "../../../../app/types";
 import { isElectronRuntime, safeStringify } from "../../../../app/utils";
 import { t } from "../../../../i18n";
+import { useDesktopUpdateIndicatorStore } from "./desktop-update-indicator-store";
 import { useUpdateCheckRequestStore } from "./update-check-request";
 
 export type SettingsUpdateStatus = {
@@ -153,6 +154,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
   const availableUpdateIdRef = useRef<string | null>(null);
   const downloadedUpdateIdRef = useRef<string | null>(null);
   const operationGenerationRef = useRef(0);
+  const indicatorOwnerRef = useRef(Symbol("electron-updater-controller"));
   const enabledRef = useRef(enabled);
   enabledRef.current = enabled;
   const desktopConfigRef = useRef(desktopConfig);
@@ -614,6 +616,33 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
       }
     }
   }, [onReleaseChannelChange, resolvePolicyReleaseChannel, setError]);
+
+  const downloadUpdateActionRef = useRef(downloadUpdate);
+  downloadUpdateActionRef.current = downloadUpdate;
+  const installUpdateActionRef = useRef(installUpdateAndRestart);
+  installUpdateActionRef.current = installUpdateAndRestart;
+
+  useEffect(() => {
+    if (!enabled) return;
+    const owner = indicatorOwnerRef.current;
+    useDesktopUpdateIndicatorStore.getState().register({
+      owner,
+      status: updateStatus,
+      downloadUpdate: () => downloadUpdateActionRef.current(),
+      installUpdateAndRestart: () => installUpdateActionRef.current(),
+    });
+    return () => {
+      useDesktopUpdateIndicatorStore.getState().clear(owner);
+    };
+  }, [enabled]);
+
+  useEffect(() => {
+    if (!enabled) return;
+    useDesktopUpdateIndicatorStore.getState().updateStatus(
+      indicatorOwnerRef.current,
+      updateStatus,
+    );
+  }, [enabled, updateStatus]);
 
   const setReleaseChannel = useCallback(
     async (next: ReleaseChannel) => {

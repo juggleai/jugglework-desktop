@@ -564,11 +564,55 @@ export type DesktopRemoteControlPolicyScope = {
   organizationId: string;
 };
 
+export type ToonFactoryStatus = {
+  running: boolean;
+  workspaceId: string | null;
+  error: string | null;
+};
+
+export type ToonFactoryBounds = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  clipLeft?: number;
+  borderRadius?: number;
+};
+
+export type ToonFactoryProject = {
+  directory: string;
+  name: string;
+  lastOpenedAt: number;
+};
+
+export type ToonFactoryProjectState = {
+  projects: ToonFactoryProject[];
+  currentDirectory: string | null;
+};
+
+export type ToonFactoryProjectOpenResult = ToonFactoryProjectState & {
+  mode: "created" | "imported";
+};
+
 // ---------------------------------------------------------------------------
 // The command map
 // ---------------------------------------------------------------------------
 
 export type DesktopCommandMap = {
+  toonFactoryOpen: { args: [workspaceId: string]; result: ToonFactoryStatus };
+  toonFactoryHide: { args: []; result: void };
+  toonFactoryClose: { args: []; result: void };
+  toonFactoryCloseAndClearGrants: { args: []; result: void };
+  toonFactoryRestart: { args: [workspaceId: string]; result: ToonFactoryStatus };
+  toonFactoryLayout: { args: [bounds: ToonFactoryBounds | null]; result: void };
+  toonFactorySnapshot: { args: []; result: string };
+  toonFactoryStatus: { args: []; result: ToonFactoryStatus };
+  toonFactoryProjectState: { args: []; result: ToonFactoryProjectState };
+  toonFactoryEnter: { args: []; result: ToonFactoryProjectState };
+  toonFactoryChooseProject: { args: []; result: ToonFactoryProjectOpenResult | null };
+  toonFactoryOpenProject: { args: [directory: string]; result: ToonFactoryProjectOpenResult };
+  toonFactoryRenameProject: { args: [directory: string, name: string]; result: ToonFactoryProjectState };
+  toonFactoryRemoveProject: { args: [directory: string]; result: ToonFactoryProjectState };
   // Workspace state
   workspaceBootstrap: { args: []; result: WorkspaceList };
   workspaceSetSelected: { args: [workspaceId: string]; result: WorkspaceList };

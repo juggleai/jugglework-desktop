@@ -8,10 +8,97 @@ import {
   useElectronUpdaterState,
 } from "../src/react-app/domains/settings/state/electron-updater-state";
 import { useUpdateCheckRequestStore } from "../src/react-app/domains/settings/state/update-check-request";
+import { useDesktopUpdateIndicatorStore } from "../src/react-app/domains/settings/state/desktop-update-indicator-store";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 describe("electron updater operation generation", () => {
+  test("publishes the enabled updater actions and clears them when its owner unmounts", async () => {
+    let installCount = 0;
+    const bridge = {
+      getChannel: async () => ({
+        channel: "stable" as const,
+        currentVersion: "1.0.0",
+      }),
+      check: async () => ({
+        available: true,
+        currentVersion: "1.0.0",
+        latestVersion: "1.0.1",
+        channel: "stable" as const,
+        updateId: "update-1",
+      }),
+      download: async (updateId: string) => ({ ok: true, updateId }),
+      installAndRestart: async (updateId: string) => {
+        installCount += 1;
+        return { ok: true, updateId };
+      },
+    };
+    const originalWindow = globalThis.window;
+    globalThis.window = {
+      __JUGGLEWORK_ELECTRON__: {
+        updater: bridge,
+        invokeDesktop: async (command: string) => {
+          if (command !== "__fetch") throw new Error(`unexpected command: ${command}`);
+          return {
+            status: 200,
+            statusText: "OK",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              minAppVersion: "1.0.0",
+              latestAppVersion: "1.0.1",
+              publishedDesktopVersions: ["1.0.0", "1.0.1"],
+            }),
+          };
+        },
+      },
+      localStorage: { getItem: () => null },
+    } as unknown as Window & typeof globalThis;
+
+    let updaterState: ReturnType<typeof useElectronUpdaterState> | null = null;
+    const desktopConfig = { allowAlphaUpdates: true };
+    const onReleaseChannelChange = () => {};
+    const refreshDesktopConfig = async () => desktopConfig;
+    const setError = () => {};
+    function Probe() {
+      updaterState = useElectronUpdaterState({
+        enabled: true,
+        releaseChannel: "stable",
+        onReleaseChannelChange,
+        updateAutoCheck: false,
+        updateAutoDownload: false,
+        desktopConfig,
+        refreshDesktopConfig,
+        setError,
+      });
+      return null;
+    }
+
+    let renderer: TestRenderer.ReactTestRenderer | null = null;
+    try {
+      await act(async () => { renderer = TestRenderer.create(<Probe />); });
+      await act(async () => { await updaterState!.checkForUpdates(); });
+      expect(useDesktopUpdateIndicatorStore.getState().controller?.status).toMatchObject({
+        state: "available",
+        version: "1.0.1",
+      });
+      await act(async () => {
+        await useDesktopUpdateIndicatorStore.getState().controller!.downloadUpdate();
+      });
+      expect(useDesktopUpdateIndicatorStore.getState().controller?.status).toMatchObject({
+        state: "ready",
+        version: "1.0.1",
+      });
+      await act(async () => {
+        await useDesktopUpdateIndicatorStore.getState().controller!.installUpdateAndRestart();
+      });
+      expect(installCount).toBe(1);
+    } finally {
+      await act(async () => renderer?.unmount());
+      expect(useDesktopUpdateIndicatorStore.getState().controller).toBeNull();
+      globalThis.window = originalWindow;
+    }
+  });
+
   test("old check and download continuations cannot commit after a newer request", async () => {
     const generation = { current: 0 };
     const committed: string[] = [];

@@ -2436,7 +2436,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         cloudOrgProvidersInFlight = null;
         const detail = (event as CustomEvent<DenSessionUpdatedDetail>).detail;
 
-        if (detail?.status === "success") {
+        if (detail?.status === "success" || detail?.status === "authority_changed") {
           mutateState((current) => ({
             ...current,
             cloudOrgProviders: [],

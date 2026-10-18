@@ -20,6 +20,8 @@ files:
   - "!node_modules/.pnpm/@jugglework+types*/node_modules/@jugglework/types/src/**"
   - package.json
 extraResources:
+  - from: resources/toonFactoryV2
+    to: toonFactoryV2
   - from: ../app/dist
     to: app-dist
   - from: resources/skills

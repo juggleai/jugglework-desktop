@@ -7,6 +7,17 @@ import { VolcengineArkV3VideoAdapter } from "./volcengine-ark-v3-adapter.js";
 const credential = async () => "ark-secret";
 
 describe("VolcengineArkV3VideoAdapter", () => {
+  function resultAdapter(options: {
+    resolver: (hostname: string) => Promise<{ address: string }[]>;
+    fetch?: (target: { url: URL; address: string }) => Promise<Response>;
+  }) {
+    return new VolcengineArkV3VideoAdapter({
+      providerID: "ark", modelIDs: ["seedance"], baseURL: "https://ark.example.test/api/v3", credential,
+      resultResolver: options.resolver,
+      resultFetch: options.fetch ? (async (target) => options.fetch!(target)) : undefined,
+    });
+  }
+
   test("submits text-to-video and maps Ark task completion", async () => {
     const requests: Array<{ url: string; init: RequestInit }> = [];
     const adapter = new VolcengineArkV3VideoAdapter({
@@ -63,5 +74,62 @@ describe("VolcengineArkV3VideoAdapter", () => {
     response = Response.json({ status: "failed", error: { message: "Bearer sk-secret-token rejected" } });
     const failed = await adapter.inspect("cgt-1", new AbortController().signal);
     expect(failed).toEqual({ status: "failed", error: { code: "video_provider_failed", message: "Bearer [REDACTED] rejected", retryable: false } });
+  });
+
+  test.each([
+    ["private initial target", "https://127.0.0.1/result.mp4", "8.8.8.8"],
+    ["IPv4-mapped IPv6", "https://video.example.test/result.mp4", "::ffff:127.0.0.1"],
+    ["6to4", "https://video.example.test/result.mp4", "2002:0808:0808::1"],
+    ["Teredo", "https://video.example.test/result.mp4", "2001:0000:4136:e378:8000:63bf:3fff:fdd2"],
+    ["reserved 6bone", "https://video.example.test/result.mp4", "3ffe::1"],
+  ])("rejects %s without requesting it", async (_name, url, address) => {
+    let requests = 0;
+    const adapter = resultAdapter({ resolver: async () => [{ address }], fetch: async () => { requests += 1; return new Response(); } });
+    await expect(adapter.acquireResult(url, new AbortController().signal)).rejects.toThrow("external_media_unsafe_url");
+    expect(requests).toBe(0);
+  });
+
+  test.each(["http://video.example.test/result.mp4", "https://user:secret@video.example.test/result.mp4"])("rejects insecure result URL %s", async (url) => {
+    let requests = 0;
+    const adapter = resultAdapter({ resolver: async () => [{ address: "8.8.8.8" }], fetch: async () => { requests += 1; return new Response(); } });
+    await expect(adapter.acquireResult(url, new AbortController().signal)).rejects.toThrow("external_media_insecure_url");
+    expect(requests).toBe(0);
+  });
+
+  test("rejects a public redirect to a private target before the second request", async () => {
+    const requests: string[] = [];
+    const adapter = resultAdapter({
+      resolver: async (hostname) => [{ address: hostname === "public.example.test" ? "8.8.8.8" : "169.254.169.254" }],
+      fetch: async ({ url, address }) => {
+        requests.push(`${url.hostname}@${address}`);
+        return new Response(null, { status: 302, headers: { location: "https://metadata.example.test/latest/meta-data" } });
+      },
+    });
+    await expect(adapter.acquireResult("https://public.example.test/result.mp4", new AbortController().signal)).rejects.toThrow("external_media_unsafe_url");
+    expect(requests).toEqual(["public.example.test@8.8.8.8"]);
+  });
+
+  test("rejects a hostname when any DNS answer is private", async () => {
+    let requests = 0;
+    const adapter = resultAdapter({
+      resolver: async () => [{ address: "8.8.8.8" }, { address: "192.168.1.2" }],
+      fetch: async () => { requests += 1; return new Response(); },
+    });
+    await expect(adapter.acquireResult("https://video.example.test/result.mp4", new AbortController().signal)).rejects.toThrow("external_media_unsafe_url");
+    expect(requests).toBe(0);
+  });
+
+  test("downloads public HTTPS through a pinned resolved address", async () => {
+    const seen: Array<{ url: string; address: string }> = [];
+    const adapter = resultAdapter({
+      resolver: async () => [{ address: "8.8.8.8" }, { address: "2606:4700:4700::1111" }],
+      fetch: async ({ url, address }) => {
+        seen.push({ url: url.toString(), address });
+        return new Response("video", { status: 200, headers: { "content-type": "video/mp4" } });
+      },
+    });
+    const response = await adapter.acquireResult("https://video.example.test/result.mp4", new AbortController().signal);
+    expect(await response.text()).toBe("video");
+    expect(seen).toEqual([{ url: "https://video.example.test/result.mp4", address: "8.8.8.8" }]);
   });
 });

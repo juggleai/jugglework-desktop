@@ -32,16 +32,19 @@ import {
   type DenTenantAccount,
   type DenUser,
 } from "../../../app/lib/den";
-import { reconcileDenAccountIdentity } from "./den-account-switch";
+import { classifyAccountTransition, reconcileDenAccountIdentity } from "./den-account-switch";
 import { runOrganizationCloudCleanup } from "../connections/provider-auth/cloud-provider-cleanup";
 import { exchangeHandoffAndSignIn } from "../../../app/lib/den-handoff";
 import {
   denSessionRevokedEvent,
   denSessionUpdatedEvent,
   denSettingsChangedEvent,
+  createDenCredentialAuthorityChange,
   dispatchDenSessionUpdated,
+  type DenSessionUpdatedDetail,
   type DenSessionRevokedDetail,
 } from "../../../app/lib/den-session-events";
+import { closeToonFactoryForDenSession } from "../../../app/lib/toon-factory-auth-lifecycle";
 import {
   deepLinkBridgeEvent,
   drainPendingDeepLinks,
@@ -194,6 +197,7 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
   const signalRetryInFlightRef = useRef(false);
   const lastSessionValidationAtRef = useRef(0);
   const handledGrantsRef = useRef<Set<string>>(new Set());
+  const pendingSessionAuthorityRef = useRef<DenSessionUpdatedDetail | null>(null);
   const [pendingServerSwitch, setPendingServerSwitch] = useState<PendingServerSwitch | null>(null);
 
   const updateStatus = useCallback((nextStatus: DenAuthStatus) => {
@@ -290,12 +294,15 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
     const settings = readDenSettings();
     const token = settings.authToken?.trim() ?? "";
     if (!token) throw new Error(t("den.signed_out"));
+    if (next.id === activeOrganization?.id || next.id === settings.activeOrgId?.trim()) return;
 
     accountRefreshGenerationRef.current += 1;
     accountRefreshInFlightRef.current = null;
     setAccountBusy(true);
     setAccountError(null);
     try {
+      const authorityChange = createDenCredentialAuthorityChange("organization_switched");
+      await closeToonFactoryForDenSession(authorityChange);
       await runOrganizationCloudCleanup();
       const client = createDenClient({ baseUrl: settings.baseUrl, token });
       // TIPS: 这次切换的响应里带着新组织重新供给的 IM 凭据（可能是 null，比如切进一个
@@ -317,6 +324,11 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
       accountSnapshotRef.current = true;
       accountLastRefreshAtRef.current = Date.now();
       await ensureDenActiveOrganization({ forceServerSync: true }).catch(() => null);
+      dispatchDenSessionUpdated({
+        status: "authority_changed",
+        ...authorityChange,
+        baseUrl: settings.baseUrl,
+      });
     } catch (nextError) {
       const message = nextError instanceof Error ? nextError.message : t("den.error_load_orgs");
       setAccountError(message);
@@ -355,6 +367,8 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
 
   const refresh = useCallback(async () => {
     const currentRun = ++refreshTokenRef.current;
+    const pendingSessionAuthority = pendingSessionAuthorityRef.current;
+    pendingSessionAuthorityRef.current = null;
     lastSessionValidationAtRef.current = Date.now();
     const settings = readDenSettings();
     const token = settings.authToken?.trim() ?? "";
@@ -390,6 +404,15 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
       // that can tell a re-login from a different person. Runs before the org
       // sync so the switch is recorded and the stale local state dropped
       // before anything reads it under the new account.
+      const accountTransition = classifyAccountTransition(readDenUserId(), nextUser?.id);
+      if (accountTransition === "switched") {
+        await closeToonFactoryForDenSession(
+          pendingSessionAuthority?.reason === "account_switched"
+            ? pendingSessionAuthority
+            : createDenCredentialAuthorityChange("account_switched"),
+        );
+        if (currentRun !== refreshTokenRef.current) return;
+      }
       reconcileDenAccountIdentity(nextUser?.id);
 
       // TIPS: 之前这里只在本地完全没有 activeOrgId 时才 forceServerSync——但 handoff
@@ -477,7 +500,10 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
 
     if (typeof window === "undefined") return;
 
-    const handleSessionUpdated = () => {
+    const handleSessionUpdated = (event: WindowEventMap[typeof denSessionUpdatedEvent]) => {
+      if (event.detail?.status === "success") {
+        pendingSessionAuthorityRef.current = event.detail;
+      }
       void refresh();
     };
 

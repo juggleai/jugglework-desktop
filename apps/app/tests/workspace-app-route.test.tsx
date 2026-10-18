@@ -24,6 +24,9 @@ mock.module("../src/react-app/shell/session-route", () => ({
 mock.module("../src/react-app/shell/settings-route", () => ({ SettingsRoute: () => null }));
 mock.module("../src/react-app/shell/apps-page", () => ({ AppsPage: () => null }));
 mock.module("../src/react-app/shell/chat-page", () => ({ ChatPage: () => null }));
+mock.module("../src/react-app/shell/toonFactoryPage", () => ({
+  ToonFactoryPage: (props: { workspaceId: string }) => <div data-toon-factory-workspace-id={props.workspaceId} />,
+}));
 mock.module("../src/react-app/domains/automations/automation-page", () => ({ AutomationPage: () => null }));
 mock.module("../src/react-app/domains/reviews/review-page", () => ({ ReviewPage: () => null }));
 mock.module("../src/react-app/shell/workspace-shell-actions", () => ({
@@ -63,10 +66,14 @@ test("retains the session and draft while only the list is revealed over every d
       "/workspace/workspace-1/chat",
       "/automations",
       "/workspace/workspace-1/reviews",
+      "/workspace/workspace%201/toon-factory",
     ]) {
       await act(async () => { navigate!(path); });
       const wrapper = () => renderer!.root.findByProps({ "data-testid": "retained-session-surface" });
       expect(wrapper().props.className).toBe("hidden");
+      if (path.endsWith("/toon-factory")) {
+        expect(renderer!.root.findByProps({ "data-toon-factory-workspace-id": "workspace 1" })).toBeDefined();
+      }
       expect(wrapper().props["aria-hidden"]).toBe(true);
       for (const target of ["local", "remote"] as const) {
         workspaceTarget = target;

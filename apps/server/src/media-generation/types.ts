@@ -20,6 +20,7 @@ export type VideoGenerationJob = {
   workspaceId: string;
   sessionId?: string;
   clientRequestId: string;
+  requestHash?: string;
   model: VideoModelRef;
   mode: VideoGenerationMode;
   status: VideoJobStatus;
@@ -36,7 +37,7 @@ export type VideoGenerationJob = {
   updatedAt: number;
 };
 
-export type PublicVideoGenerationJob = Omit<VideoGenerationJob, "clientRequestId" | "adapterBinding">;
+export type PublicVideoGenerationJob = Omit<VideoGenerationJob, "clientRequestId" | "requestHash" | "adapterBinding">;
 
 export function publicVideoGenerationJob(job: VideoGenerationJob): PublicVideoGenerationJob {
   return {

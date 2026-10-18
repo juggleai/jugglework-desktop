@@ -1,3 +1,4 @@
+import { createToonFactoryRuntime } from "./toonFactoryRuntime.mjs";
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
@@ -1408,6 +1409,10 @@ const runtimeManager = createRuntimeManager({
   // cloud instead of the public mirror.
   readDenBaseUrl: () => workspaceStore.readDesktopBootstrapConfigSync()?.baseUrl ?? null,
 });
+const toonFactoryRuntime = createToonFactoryRuntime({
+  app, getWindow: () => mainWindow, getAccess: () => runtimeManager.managedServerAccess(),
+  moduleRoot: app.isPackaged ? path.join(process.resourcesPath, "toonFactoryV2") : path.resolve(__dirname, "../resources/toonFactoryV2"),
+});
 const runtimeIpcHandlers = createRuntimeIpcHandlers(runtimeManager);
 const remoteControlInteractionStore = createRemoteControlInteractionStore({
   managedRuntimeClient: createManagedRuntimeClient({
@@ -2149,6 +2154,63 @@ const remoteControlLifecycleManager = createRemoteControlLifecycleManager({
 // typecheck:electron`.
 /** @type {import("@jugglework/types/desktop-ipc").DesktopCommandHandlers<import("electron").IpcMainInvokeEvent>} */
 const desktopCommandHandlers = {
+  "toonFactoryOpen": async (event, ...args) => {
+    if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error("仅主窗口可打开漫剧工厂");
+    return toonFactoryRuntime.open(args[0]);
+  },
+  "toonFactoryHide": async (event) => {
+    if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error("仅主窗口可隐藏漫剧工厂");
+    toonFactoryRuntime.hide();
+  },
+  "toonFactoryClose": async (event) => {
+    if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error("仅主窗口可关闭漫剧工厂");
+    await toonFactoryRuntime.close();
+  },
+  "toonFactoryCloseAndClearGrants": async (event) => {
+    if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error("仅主窗口可撤销漫剧工厂授权");
+    await toonFactoryRuntime.close();
+    await toonFactoryRuntime.clearAllProjectGrants();
+  },
+  "toonFactoryRestart": async (event, ...args) => {
+    if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error("仅主窗口可重启漫剧工厂");
+    return toonFactoryRuntime.restart(args[0]);
+  },
+  "toonFactoryLayout": async (event, ...args) => {
+    if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error("仅主窗口可控制漫剧工厂");
+    toonFactoryRuntime.layout(args[0]);
+  },
+  "toonFactorySnapshot": async (event) => {
+    if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error("仅主窗口可捕获漫剧工厂画面");
+    return toonFactoryRuntime.snapshot();
+  },
+  "toonFactoryStatus": async (event, ...args) => {
+    if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error("仅主窗口可读取模块状态");
+    return toonFactoryRuntime.state();
+  },
+  "toonFactoryProjectState": async (event) => {
+    if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error("仅主窗口可读取漫剧项目");
+    return toonFactoryRuntime.projectState();
+  },
+  "toonFactoryEnter": async (event) => {
+    if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error("仅主窗口可进入漫剧工厂");
+    return toonFactoryRuntime.enter();
+  },
+  "toonFactoryChooseProject": async (event) => {
+    if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error("仅主窗口可选择漫剧项目");
+    return toonFactoryRuntime.chooseProject();
+  },
+  "toonFactoryOpenProject": async (event, ...args) => {
+    if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error("仅主窗口可打开漫剧项目");
+    return toonFactoryRuntime.openProject(args[0]);
+  },
+  "toonFactoryRenameProject": async (event, ...args) => {
+    if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error("仅主窗口可重命名漫剧项目");
+    return toonFactoryRuntime.renameProject(args[0], args[1]);
+  },
+  "toonFactoryRemoveProject": async (event, ...args) => {
+    if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error("仅主窗口可移除漫剧项目");
+    return toonFactoryRuntime.removeProject(args[0]);
+  },
   "desktopRemoteControlSettingsRead": async (event) => {
       void event;
       return remoteControlSettingsStore.read();
@@ -2223,7 +2285,10 @@ const desktopCommandHandlers = {
       return workspaceStore.updateWorkspaceDisplayName(args[0] ?? {});
   },
   "workspaceForget": async (event, ...args) => {
-      return workspaceStore.forgetWorkspace(String(args[0] ?? "").trim());
+      const workspaceId = String(args[0] ?? "").trim();
+      if (toonFactoryRuntime.state().workspaceId === workspaceId) await toonFactoryRuntime.close();
+      await toonFactoryRuntime.clearProjectGrants(workspaceId);
+      return workspaceStore.forgetWorkspace(workspaceId);
   },
   "workspaceAddAuthorizedRoot": async (event, ...args) => {
       return workspaceStore.addAuthorizedRoot(args[0] ?? {});
@@ -2621,6 +2686,8 @@ const desktopCommandHandlers = {
       );
   },
   "resetJuggleWorkState": async (event, ...args) => {
+      await toonFactoryRuntime.close();
+      await toonFactoryRuntime.clearAllProjectGrants();
       return workspaceStore.resetJuggleWorkState();
   },
   "resetOpencodeCache": async (event, ...args) => {
@@ -3004,6 +3071,7 @@ async function createMainWindow() {
 
   mainWindow.on("closed", () => {
     browserPanel.destroy();
+    void toonFactoryRuntime.close().catch(() => {});
     mainWindow = null;
   });
 
@@ -3177,6 +3245,7 @@ if (!app.requestSingleInstanceLock()) {
       remoteSessionEventBridge?.stop(),
       remoteControlAgent?.stop(),
       remoteEventDiagnostics.flush(),
+      toonFactoryRuntime.dispose(),
       disposeRuntimeBeforeQuit(),
       uiControlServer.stop(),
       stopJuggleChatRouterServer(),

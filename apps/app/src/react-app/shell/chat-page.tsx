@@ -9,6 +9,7 @@ import { AppInsetSurface } from "./app-inset-surface";
 import { useWorkspaceShellLayout } from "./workspace-shell-layout";
 
 export type ChatPageProps = {
+  workspaceId: string;
   onOpenAccount: () => void;
   onOpenHome: () => void;
   onOpenApps: () => void;
@@ -39,6 +40,7 @@ export function ChatPage(props: ChatPageProps) {
         style={{ width: APP_NAVIGATION_RAIL_WIDTH }}
       >
         <AppNavigationRail
+          workspaceId={props.workspaceId}
           chatActive
           onOpenAccount={props.onOpenAccount}
           onOpenHome={props.onOpenHome}

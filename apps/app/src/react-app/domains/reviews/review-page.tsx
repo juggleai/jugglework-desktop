@@ -417,6 +417,7 @@ export function ReviewPage(props: ReviewPageProps) {
       data-workspace-id={props.workspaceId}
     >
       <AppNavigationRail
+        workspaceId={props.workspaceId}
         reviewsActive
         onOpenAccount={props.onOpenAccount}
         onOpenHome={props.onOpenHome}

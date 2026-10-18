@@ -1,27 +1,49 @@
-import type { DenIMLoginBootstrap, DenSettings, DenUser } from "./den-types";
+import type { DenSettings, DenUser } from "./den-types";
 
 export const denSessionUpdatedEvent = "jugglework-den-session-updated";
 export const denSettingsChangedEvent = "jugglework-den-settings-changed";
 export const denSessionRevokedEvent = "jugglework-den-session-revoked";
 
+export type DenCredentialAuthorityChangeReason =
+  | "session_established"
+  | "account_switched"
+  | "organization_switched"
+  | "signed_out";
+
 export type DenSessionUpdatedDetail = {
-  status?: "success" | "error" | "signed_out";
+  status?: "success" | "error" | "signed_out" | "authority_changed";
+  /** Non-secret generation for deduplicating credential-authority cleanup. */
+  authEpoch?: number;
+  reason?: DenCredentialAuthorityChangeReason;
   baseUrl?: string | null;
-  token?: string | null;
   user?: DenUser | null;
-  im?: DenIMLoginBootstrap | null;
   email?: string | null;
   message?: string | null;
 };
+
+let credentialAuthorityEpoch = Date.now();
+
+export function createDenCredentialAuthorityChange(
+  reason: DenCredentialAuthorityChangeReason,
+): Pick<DenSessionUpdatedDetail, "authEpoch" | "reason"> {
+  credentialAuthorityEpoch += 1;
+  return { authEpoch: credentialAuthorityEpoch, reason };
+}
 
 export function dispatchDenSessionUpdated(detail: DenSessionUpdatedDetail) {
   if (typeof window === "undefined") {
     return;
   }
 
+  const normalizedDetail = detail.reason && detail.authEpoch
+    ? detail
+    : detail.status === "signed_out"
+      ? { ...detail, ...createDenCredentialAuthorityChange("signed_out") }
+      : detail;
+
   window.dispatchEvent(
     new CustomEvent<DenSessionUpdatedDetail>(denSessionUpdatedEvent, {
-      detail,
+      detail: normalizedDetail,
     }),
   );
 }

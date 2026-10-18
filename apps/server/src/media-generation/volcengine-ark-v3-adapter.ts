@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { extname } from "node:path";
 import type { VideoModelRef } from "@jugglework/types/media-generation";
 import { externalFetch } from "../server-fetch.js";
+import { protectedMediaFetch, type ProtectedMediaRequest, type ProtectedMediaResolver } from "../protected-media-fetch.js";
 import type { VideoAdapterBinding, VideoAdapterSubmitInput, VideoGenerationAdapter, VideoProviderJobState } from "./types.js";
 import { redactProviderMessage, VideoSubmissionError } from "./redaction.js";
 
@@ -12,6 +13,8 @@ type VolcengineArkV3VideoAdapterOptions = {
   credential: () => Promise<string | null>;
   binding?: Omit<VideoAdapterBinding, "adapterId" | "protocol" | "origin">;
   fetch?: typeof externalFetch;
+  resultResolver?: ProtectedMediaResolver;
+  resultFetch?: ProtectedMediaRequest;
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -153,8 +156,6 @@ export class VolcengineArkV3VideoAdapter implements VideoGenerationAdapter {
   }
 
   acquireResult(resultReference: string, signal: AbortSignal): Promise<Response> {
-    const url = new URL(resultReference);
-    if (url.protocol !== "https:") throw new Error("video_result_insecure_url");
-    return this.fetch(url.toString(), { method: "GET", signal, redirect: "follow" });
+    return protectedMediaFetch(resultReference, { signal, resolver: this.options.resultResolver, fetch: this.options.resultFetch });
   }
 }

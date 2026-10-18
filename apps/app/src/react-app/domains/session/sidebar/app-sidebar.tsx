@@ -1036,6 +1036,7 @@ export function AppSidebar(props: AppSidebarProps) {
           ) : null}
           {props.railPreviewActive ? <div className="w-12 shrink-0" aria-hidden="true" /> : (
             <AppNavigationRail
+              workspaceId={props.selectedWorkspaceId}
               homeActive
               onOpenTaskSearch={props.onOpenTaskSearch}
               onOpenCreateWorkspace={props.onOpenCreateWorkspace}

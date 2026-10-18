@@ -1482,6 +1482,7 @@ export function SessionPage(props: SessionPageProps) {
             data-session-rail-preview-trigger
           >
             <AppNavigationRail
+              workspaceId={props.sidebar.selectedWorkspaceId}
               homeActive
               onOpenTaskSearch={props.sidebar.onOpenTaskSearch}
               onOpenCreateWorkspace={props.sidebar.onOpenCreateWorkspace}

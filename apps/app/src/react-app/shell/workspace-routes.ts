@@ -1,6 +1,7 @@
 import type { SettingsTab } from "../../app/types";
 
 export type WorkspaceAppPath =
+  | { view: "toon-factory"; workspaceId: string }
   | { view: "session"; workspaceId: string; sessionId: string | null }
   | { view: "settings"; workspaceId: string | null }
   | { view: "apps"; workspaceId: string | null }
@@ -19,6 +20,11 @@ function decodeRoutePart(value: string | undefined): string {
 }
 
 export function parseWorkspaceAppPath(pathname: string): WorkspaceAppPath {
+  const workspaceToonFactory = pathname.match(/^\/workspace\/([^/]+)\/toon-factory\/?$/);
+  if (workspaceToonFactory) {
+    const workspaceId = decodeRoutePart(workspaceToonFactory[1]);
+    return workspaceId ? { view: "toon-factory", workspaceId } : null;
+  }
   const modernSession = pathname.match(/^\/workspace\/([^/]+)\/session(?:\/([^/]+))?\/?$/);
   if (modernSession) {
     return {
@@ -113,6 +119,12 @@ export function workspaceReviewsRoute(workspaceId: string, reviewId?: string | n
   return review
     ? `/workspace/${workspace}/reviews/${encodeURIComponent(review)}`
     : `/workspace/${workspace}/reviews`;
+}
+
+export function workspaceToonFactoryRoute(workspaceId: string) {
+  const workspace = workspaceId.trim();
+  if (!workspace) throw new Error("workspaceId is required for the Toon Factory route");
+  return `/workspace/${encodeURIComponent(workspace)}/toon-factory`;
 }
 
 export function settingsReturnRoute(

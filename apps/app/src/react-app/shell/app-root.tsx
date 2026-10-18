@@ -16,6 +16,8 @@ import {
   denSessionUpdatedEvent,
 } from "../../app/lib/den-session-events";
 import { evalRelaunchDesktopApp } from "../../app/lib/desktop";
+import { isDesktopRuntime } from "../../app/lib/runtime-env";
+import { closeToonFactoryForDenSession } from "../../app/lib/toon-factory-auth-lifecycle";
 import { Button } from "../../components/ui/button";
 import { t } from "../../i18n";
 import { useLocale } from "../../i18n/use-locale";
@@ -306,6 +308,15 @@ export function AppRoot() {
     appOpenedCaptured = true;
     initAnalytics();
     captureAnalyticsEvent("app_opened", {});
+  }, []);
+
+  useEffect(() => {
+    if (!isDesktopRuntime()) return;
+    const closeOnCredentialAuthorityChange = (event: WindowEventMap[typeof denSessionUpdatedEvent]) => {
+      void closeToonFactoryForDenSession(event.detail);
+    };
+    window.addEventListener(denSessionUpdatedEvent, closeOnCredentialAuthorityChange);
+    return () => window.removeEventListener(denSessionUpdatedEvent, closeOnCredentialAuthorityChange);
   }, []);
 
   return (

@@ -318,3 +318,7 @@ Operator authorization for the two narrowly scoped exceptions was given for `1.2
 No `1.2.29` build, publication, promotion, or Den change is performed by this preparation. Inherited long-lived cache headers can leave clients stale despite observed read-back; installation/relaunch and retained state remain unproven without the real-client canary.
 
 Preparation verification: 136 focused tests passed (Qiniu release suite, packaging/workflow configuration, macOS notarization helpers, artifact finalization, and packaged-macOS evidence). Strict `migrate-desktop-updates-to-qiniu` OpenSpec validation passed via an isolated npm CLI invocation because `openspec` was not installed locally. All three package versions read back as `1.2.29`; `git diff --check` passed. No commit, push, build, or production action occurred.
+
+## 35. Desktop update navigation lifecycle
+
+- [x] 35.1 Surface the shared updater lifecycle above the navigation Rail account avatar: click available to download, show an in-progress state, and click ready to explicitly install and restart without enabling automatic installation

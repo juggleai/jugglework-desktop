@@ -46,7 +46,9 @@
     "release:prepare": "node scripts/release/prepare.mjs",
     "release:prepare:dry": "node scripts/release/prepare.mjs --dry-run",
     "release:ship": "node scripts/release/ship.mjs",
-    "release:ship:watch": "node scripts/release/ship.mjs --watch"
+    "release:ship:watch": "node scripts/release/ship.mjs --watch",
+    "build:toon-factory": "node apps/desktop/scripts/buildToonFactory.mjs",
+    "test:toon-factory-build": "node --test apps/desktop/scripts/buildToonFactory.test.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

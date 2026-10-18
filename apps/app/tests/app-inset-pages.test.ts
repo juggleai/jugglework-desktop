@@ -14,10 +14,11 @@ describe("secondary app inset shells", () => {
     expect(source).toContain("data-app-inset-surface");
   });
 
-  test("places Automation, Review, Chat, and Contacts inside the shared surface", () => {
+  test("places Automation, Review, Chat, Contacts, and Toon Factory inside the shared surface", () => {
     const automation = read("react-app/domains/automations/automation-page.tsx");
     const reviews = read("react-app/domains/reviews/review-page.tsx");
     const chat = read("react-app/shell/chat-page.tsx");
+    const toonFactory = read("react-app/shell/toonFactoryPage.tsx");
     for (const source of [automation, reviews, chat]) {
       expect(source).toContain("bg-dls-sidebar mac:titlebar-drag");
       expect(source).toContain("<AppInsetSurface");
@@ -26,6 +27,46 @@ describe("secondary app inset shells", () => {
     expect(reviews).toContain('testId="review-inset-surface"');
     expect(chat).toContain('testId="chat-inset-surface"');
     expect(chat).toContain("<JuggleChatApp");
+    expect(toonFactory).toContain("<AppInsetSurface");
+    expect(toonFactory).toContain('testId="toon-factory-inset-surface"');
+    expect(toonFactory).toContain('sidebarOpen ? "rounded-r-[17px]" : "rounded-[17px]"');
+    expect(toonFactory).toContain("borderRadius: sidebarOpen ? 0 : 17");
+    expect(toonFactory).toContain("<ToonFactoryProjectSidebar");
+    expect(toonFactory).toContain("<ToonFactoryProjectDialog");
+    expect(toonFactory).toContain("<AppSecondarySidebarTopControls");
+    expect(toonFactory).toContain("<AppSecondarySidebarResizeHandle");
+    expect(toonFactory).toContain("usePublishToonFactorySidebar");
+    expect(toonFactory).toContain("useAppNavigationSidebarPreview");
+    expect(toonFactory).toContain("toonFactorySnapshot");
+    expect(toonFactory).toContain("toonFactoryEnter");
+    expect(toonFactory).toContain("toonFactoryChooseProject");
+    expect(toonFactory).not.toContain("pickDirectory");
+    expect(toonFactory).not.toContain('toast.success(result.mode === "imported" ? "已导入漫剧项目" : "已新建漫剧项目");\n      return true;');
+    expect(toonFactory).toContain("data-toon-factory-overlay-snapshot");
+    expect(toonFactory).toContain("hostOverlayOpen = navigationPreviewOpen || blockingOverlayOpen");
+    expect(toonFactory).toContain("[data-jugglework-toast]");
+    expect(toonFactory).toContain('[role="menu"]');
+    expect(toonFactory).toContain("if (hostOverlayOpen) return");
+    expect(toonFactory).toContain("visibleWidth < 240 ? null");
+    expect(toonFactory).toContain("visibleLeft = Math.max");
+    expect(toonFactory).toContain("clipLeft: Math.max(0, visibleLeft - rect.left)");
+    expect(toonFactory).toContain("[data-session-list-preview=\"true\"]");
+    expect(toonFactory).toContain("[data-app-rail-tooltip]");
+    expect(toonFactory).toContain('attributeFilter: ["class", "style", "data-session-list-preview"]');
+    const toonFactorySidebar = read("react-app/shell/toon-factory-sidebar.tsx");
+    expect(toonFactorySidebar).toContain(">漫剧工厂</h1>");
+    expect(toonFactorySidebar).toContain('<Plus className="size-4" />新建项目');
+    expect(toonFactorySidebar).toContain('className="mx-4 shrink-0 border-t border-dls-border"');
+    expect(toonFactorySidebar).not.toContain(">项目列表</div>");
+    expect(toonFactorySidebar).toContain("group/project relative flex h-10 w-full items-center");
+    expect(toonFactorySidebar).toContain("group-hover/project:opacity-100");
+    expect(toonFactorySidebar).toContain("data-popup-open:opacity-100");
+    expect(toonFactorySidebar).toContain("编辑名称");
+    expect(toonFactorySidebar).toContain("在 Finder 中显示");
+    expect(toonFactorySidebar).toContain("移除项目");
+    expect(toonFactorySidebar).toContain("不会删除文件夹或其中的任何文件");
+    expect(toonFactorySidebar).toContain("project.directory.split(/[\\\\/]/).filter(Boolean).at(-1) || project.name");
+    expect(toonFactorySidebar).not.toContain("title={project.directory}");
   });
 
   test("shares the workspace sidebar width across primary app surfaces", () => {
@@ -42,6 +83,10 @@ describe("secondary app inset shells", () => {
       expect(source).toContain("<AppSecondarySidebarTopControls");
     }
     expect(automation).toContain("w-[var(--jugglework-left-sidebar-width)]");
+    const toonFactory = read("react-app/shell/toonFactoryPage.tsx");
+    expect(toonFactory).toContain("useWorkspaceShellLayout({ expandedRightWidth: 520 })");
+    expect(toonFactory).toContain('"--jugglework-left-sidebar-width": appInsetSidebarCssWidth(leftSidebarWidth)');
+    expect(toonFactory).toContain("w-[var(--jugglework-left-sidebar-width)]");
     expect(reviews).toContain("md:w-[var(--jugglework-left-sidebar-width)]");
     expect(pluginSidebar).toContain("w-full");
 
@@ -85,7 +130,7 @@ describe("secondary app inset shells", () => {
     expect(workspaceSidebar).toContain("data-session-list-surface");
   });
 
-  test("reveals collapsed Automation and Plugins sidebars as Rail hover flyouts", () => {
+  test("reveals collapsed Automation, Plugins, and Toon Factory sidebars as Rail hover flyouts", () => {
     const automation = read("react-app/domains/automations/automation-page.tsx");
     const apps = read("react-app/shell/apps-page.tsx");
     const settingsRoute = read("react-app/shell/settings-route.tsx");
@@ -94,7 +139,7 @@ describe("secondary app inset shells", () => {
     const automationPreview = read("react-app/domains/automations/automation-sidebar-preview.tsx");
 
     expect(workspaceRoute).toContain("<AppNavigationSidebarPreviewProvider>");
-    expect(previewHost).toContain('AppNavigationSidebarPreviewTarget = "automation" | "plugins"');
+    expect(previewHost).toContain('AppNavigationSidebarPreviewTarget = "automation" | "plugins" | "toon-factory"');
     expect(previewHost).toContain("data-app-navigation-sidebar-preview={props.target}");
     expect(previewHost).toContain("left-[52px] top-11");
     expect(previewHost).toContain("rounded-[18px]");
@@ -102,7 +147,9 @@ describe("secondary app inset shells", () => {
     expect(previewHost).toContain("const CLOSE_DELAY = 120");
     expect(previewHost).toContain("pointerInsideRef.current");
     expect(previewHost).toContain("<AutomationSidebarPreview />");
+    expect(previewHost).toContain("<ToonFactoryProjectSidebar preview");
     expect(previewHost).toContain("<CustomizationCatalogSidebar");
+    expect(previewHost).toContain("usePublishToonFactorySidebar");
     expect(automationPreview).toContain('data-testid="automation-sidebar-preview"');
     expect(automationPreview).toContain("rounded-[18px] border border-dls-border");
     expect(settingsRoute).toContain("usePublishAppNavigationPluginItems");
@@ -118,7 +165,7 @@ describe("secondary app inset shells", () => {
     const previewHost = read("react-app/shell/app-navigation-sidebar-preview.tsx");
     const wrapper = workspaceRoute.slice(workspaceRoute.indexOf("className={settingsVisible ||"), workspaceRoute.indexOf('data-testid="retained-session-surface"'));
     expect(workspaceRoute).toContain("navigationPreview.workspaceTarget");
-    expect(wrapper).toContain("settingsVisible || chatVisible || appsVisible || automationsVisible || reviewsVisible");
+    expect(wrapper).toContain("settingsVisible || chatVisible || appsVisible || automationsVisible || reviewsVisible || toonFactoryVisible");
     expect(wrapper).toContain('"invisible absolute inset-0 z-50');
     expect(wrapper).toContain("[&_[data-session-list-preview=true]]:visible");
     expect(wrapper).toContain("[&_[data-session-list-preview=true]]:pointer-events-auto");
@@ -126,7 +173,7 @@ describe("secondary app inset shells", () => {
     expect(wrapper).toContain(': "hidden"');
     expect(wrapper).toContain(': "h-full min-h-0"');
     expect(wrapper).not.toContain("opacity-0");
-    expect(workspaceRoute).toContain("surfaceVisible={!(settingsVisible || chatVisible || appsVisible || automationsVisible || reviewsVisible)}");
+    expect(workspaceRoute).toContain("surfaceVisible={!(settingsVisible || chatVisible || appsVisible || automationsVisible || reviewsVisible || toonFactoryVisible)}");
     expect(previewHost).toContain("workspaceTarget: TaskScope | null");
     expect(previewHost).toContain("onWorkspaceTriggerChange");
   });

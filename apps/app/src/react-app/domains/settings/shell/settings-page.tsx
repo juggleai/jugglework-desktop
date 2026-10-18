@@ -310,6 +310,7 @@ export function SettingsSidebar(props: SettingsSidebarProps) {
     <Sidebar className="border-e-0! mac:**:data-[sidebar=sidebar]:bg-transparent">
       <div className="flex h-full min-h-0 w-full">
         <AppNavigationRail
+          workspaceId={props.selectedWorkspaceId}
           appsActive={props.activeTab === "extensions"}
           settingsActive={props.activeTab !== "extensions"}
           onOpenAccount={props.onOpenAccount}

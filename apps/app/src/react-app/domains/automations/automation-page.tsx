@@ -76,6 +76,7 @@ import { AUTOMATION_CLOUD_CONNECTOR_SCOPE_ENABLED, LOCAL_AUTOMATION_ENABLED } fr
 import { readAutomationDeviceId } from "./automation-device-identity";
 
 type AutomationPageProps = {
+  workspaceId: string;
   sessionPath: string;
   onOpenAccount: () => void;
   onOpenApps: () => void;
@@ -177,6 +178,7 @@ export function AutomationPage(props: AutomationPageProps) {
   return (
     <div className="relative flex h-full min-h-0 w-full overflow-hidden bg-dls-sidebar mac:titlebar-drag" style={pageStyle}>
       <AppNavigationRail
+        workspaceId={props.workspaceId}
         onOpenAccount={() => navigateAfterDiscard(props.onOpenAccount)}
         onOpenHome={() => navigateAfterDiscard(() => navigate(props.sessionPath))}
         onOpenApps={() => navigateAfterDiscard(props.onOpenApps)}

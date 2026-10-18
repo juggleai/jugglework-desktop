@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
@@ -14,6 +14,7 @@ import {
 } from "./verify-packaged-windows.mjs";
 import { assertLocalVerification } from "./qiniu-release/evidence.mjs";
 import { inspectArtifact } from "./qiniu-release/metadata.mjs";
+import { inventoryToonFactoryBundle, sha256File, trustedBunForTarget } from "../electron/toonFactoryBundle.mjs";
 
 const VERSION = "1.2.18";
 const PUBLISHER = "CN=Example Publisher, O=Example Corp, C=US";
@@ -37,6 +38,21 @@ function pe(machine, marker) {
   buffer.writeUInt16LE(machine, 0x84);
   return buffer;
 }
+
+const FIXTURE_BUN_RELEASE = {
+  version: "1.3.14",
+  repositoryUrl: "https://github.com/oven-sh/bun",
+  releaseUrl: "https://github.com/oven-sh/bun/releases/tag/bun-v1.3.14",
+  shasumsUrl: "https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/SHASUMS256.txt",
+  targets: Object.fromEntries([
+    ["arm64", 0xaa64],
+    ["x64", 0x8664],
+  ].map(([arch, machine]) => [`win32-${arch}`, {
+    archiveName: `bun-windows-${arch}.zip`,
+    archiveSha256: "a".repeat(64),
+    binarySha256: createHash("sha256").update(pe(machine, 0x62)).digest("hex"),
+  }])),
+};
 
 function signature(subject = PUBLISHER) {
   return {
@@ -66,6 +82,24 @@ function writeManifest(filePath, value) {
   writeFileSync(filePath, stringifyYaml(value), "utf8");
 }
 
+function createToonFactoryBundle(resources, arch, machine) {
+  const root = path.join(resources, "toonFactoryV2");
+  for (const name of ["server", "web", "tools", "nodes", "skills"]) mkdirSync(path.join(root, name), { recursive: true });
+  writeFileSync(path.join(root, "server", "jugglework.js"), "server");
+  for (const name of ["web", "tools", "nodes", "skills"]) writeFileSync(path.join(root, name, "fixture.txt"), name);
+  const executablePath = path.join(root, "bun.exe");
+  writeFileSync(executablePath, pe(machine, 0x62));
+  const trusted = trustedBunForTarget("win32", arch, FIXTURE_BUN_RELEASE);
+  const files = inventoryToonFactoryBundle(root);
+  writeFileSync(path.join(root, "build-manifest.json"), JSON.stringify({
+    schemaVersion: 3,
+    target: { platform: "win32", arch, executableName: "bun.exe", format: "pe" },
+    bun: { version: "1.3.14", platform: "win32", arch, executableName: "bun.exe", format: "pe", bytes: statSync(executablePath).size, sha256: sha256File(executablePath), provenance: trusted.provenance },
+    inventorySha256: createHash("sha256").update(JSON.stringify(files)).digest("hex"),
+    files,
+  }));
+}
+
 function createFixture(t) {
   const root = mkdtempSync(path.join(tmpdir(), "jugglework-verify-windows-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -91,6 +125,7 @@ function createFixture(t) {
       url: FEED,
       publisherName: [PUBLISHER],
     });
+    createToonFactoryBundle(resources, arch, machine);
     artifacts[arch] = { directory, name, executable, blockmap, executablePath };
   }
 
@@ -134,6 +169,7 @@ function dependencies(overrides = {}) {
       const arch = path.basename(executablePath).includes("arm64") ? "arm64" : "x64";
       writeFileSync(outputPath, `blockmap-${arch}`);
     },
+    trustedBunRelease: FIXTURE_BUN_RELEASE,
     ...overrides,
   };
 }
@@ -213,6 +249,10 @@ describe("Windows packaged release verifier", () => {
       result.localVerification.artifacts.filter((artifact) => artifact.type === "exe").map((artifact) => artifact.peArchitecture),
       ["arm64", "x64"],
     );
+    assert.deepEqual(result.architectureResults.map(({ arch, toonFactory }) => ({ arch, executable: toonFactory.executable })), [
+      { arch: "arm64", executable: { platform: "win32", arch: "arm64", format: "pe" } },
+      { arch: "x64", executable: { platform: "win32", arch: "x64", format: "pe" } },
+    ]);
     assert.equal(result.localVerification.artifacts.filter((artifact) => artifact.type === "exe").every((artifact) => (
       artifact.authenticode.status === "valid"
       && artifact.authenticode.digestAlgorithm === "SHA256"

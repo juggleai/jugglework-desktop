@@ -1,5 +1,7 @@
-import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
-import { dirname, resolve, sep } from "node:path";
+import { randomUUID } from "node:crypto";
+import { mkdir, rename, rm, writeFile } from "node:fs/promises";
+import { dirname, isAbsolute, resolve, sep } from "node:path";
+import { readWorkspaceArtifact } from "./artifact-file.js";
 import type { VideoArtifact } from "./types.js";
 
 const MIME_EXTENSION: Record<string, string> = { "video/mp4": "mp4", "video/webm": "webm", "video/quicktime": "mov" };
@@ -17,15 +19,32 @@ function validSignature(mimeType: string, bytes: Uint8Array): boolean {
   return false;
 }
 
+export async function readValidatedVideoArtifact(input: { workspaceRoot: string; artifact: VideoArtifact; maxBytes: number }): Promise<Uint8Array> {
+  if (isAbsolute(input.artifact.path) || !input.artifact.path.startsWith("artifacts/")) throw new Error("invalid_video_artifact_path");
+  const bytes = await readWorkspaceArtifact({
+    workspaceRoot: input.workspaceRoot,
+    relativePath: input.artifact.path,
+    expectedBytes: input.artifact.bytes,
+    maxBytes: input.maxBytes,
+    pathError: "invalid_video_artifact_path",
+    artifactError: "invalid_video_artifact",
+  });
+  if (!validSignature(input.artifact.mimeType, bytes)) throw new Error("invalid_video_artifact_signature");
+  return bytes;
+}
+
 export async function existingVideoArtifact(input: { workspaceRoot: string; jobId: string; filename?: string; maxBytes: number }): Promise<VideoArtifact | null> {
   const slug = artifactSlug(input.filename);
   for (const [mimeType, extension] of Object.entries(MIME_EXTENSION)) {
     const relativePath = `artifacts/${slug}-${input.jobId}.${extension}`;
-    const path = safeWorkspaceChild(input.workspaceRoot, relativePath);
     try {
-      const metadata = await stat(path);
-      if (!metadata.isFile() || metadata.size <= 0 || metadata.size > input.maxBytes) continue;
-      const bytes = new Uint8Array(await readFile(path));
+      const bytes = await readWorkspaceArtifact({
+        workspaceRoot: input.workspaceRoot,
+        relativePath,
+        maxBytes: input.maxBytes,
+        pathError: "invalid_video_artifact_path",
+        artifactError: "invalid_video_artifact",
+      });
       if (validSignature(mimeType, bytes)) return { path: relativePath, mimeType, bytes: bytes.byteLength };
     } catch {
       // Missing or incomplete files are handled by normal provider result acquisition.
@@ -68,8 +87,8 @@ export async function publishVideoArtifact(input: { response: Response; workspac
   const slug = artifactSlug(input.filename);
   const relativePath = `artifacts/${slug}-${input.jobId}.${extension}`;
   const finalPath = safeWorkspaceChild(input.workspaceRoot, relativePath);
-  const tempPath = `${finalPath}.partial`;
+  const tempPath = `${finalPath}.${randomUUID()}.partial`;
   await mkdir(dirname(finalPath), { recursive: true });
-  try { await writeFile(tempPath, bytes); await rename(tempPath, finalPath); } catch (error) { await rm(tempPath, { force: true }).catch(() => undefined); throw error; }
+  try { await writeFile(tempPath, bytes, { flag: "wx" }); await rename(tempPath, finalPath); } catch (error) { await rm(tempPath, { force: true }).catch(() => undefined); throw error; }
   return { path: relativePath, mimeType, bytes: bytes.byteLength };
 }

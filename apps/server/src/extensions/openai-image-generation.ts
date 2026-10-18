@@ -1,5 +1,5 @@
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { basename, dirname, extname, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, resolve, sep } from "node:path";
 import { randomUUID } from "node:crypto";
 import {
   IMAGE_GENERATION_MODES,
@@ -17,12 +17,16 @@ import { readEffectiveWorkspaceOpencodeConfig } from "../effective-workspace-ope
 import type { ServerConfig, WorkspaceInfo } from "../types.js";
 import { createWorkspaceProviderCredentialResolver } from "../provider-credential-resolver.js";
 import { redactProviderMessage } from "../media-generation/redaction.js";
+import { protectedMediaFetch, type ProtectedMediaRequest, type ProtectedMediaResolver } from "../protected-media-fetch.js";
+import { readWorkspaceArtifact } from "../media-generation/artifact-file.js";
 
 export const OPENAI_IMAGE_GENERATION_EXTENSION_ID = "openai-image-generation";
 const IMAGE_API_TIMEOUT_MS = 120_000;
 const MAX_INPUT_IMAGE_BYTES = 25 * 1024 * 1024;
 const MAX_OUTPUT_IMAGE_BYTES = 50 * 1024 * 1024;
 const ALLOWED_IMAGE_MIME = new Set(["image/png", "image/jpeg", "image/webp"]);
+
+export type ImageArtifact = { path: string; bytes: number; mimeType: string };
 
 export const OPENAI_IMAGE_GENERATION_EXTENSION_ACTIONS = [
   { extensionId: OPENAI_IMAGE_GENERATION_EXTENSION_ID, action: "status", title: "Configured image generation status", description: "List configured ready image-generation models.", inputSchema: { type: "object", properties: {}, additionalProperties: false } },
@@ -84,6 +88,40 @@ function imageMime(bytes: Uint8Array): string | null {
   return null;
 }
 
+export async function downloadPublicImageResult(
+  value: string,
+  options: { resolver?: ProtectedMediaResolver; fetch?: ProtectedMediaRequest } = {},
+): Promise<Uint8Array> {
+  let response: Response;
+  try { response = await protectedMediaFetch(value, { ...options, timeoutMs: IMAGE_API_TIMEOUT_MS }); }
+  catch (error) {
+    const code = error instanceof Error ? error.message : "external_media_unsafe_url";
+    if (code === "external_media_insecure_url") throw new ApiError(502, "image_result_insecure_url", "Image result URL must be credential-free HTTPS.");
+    if (code === "external_media_redirect_invalid") throw new ApiError(502, "image_result_redirect_invalid", "Image result redirect was rejected.");
+    if (["external_media_invalid_url", "external_media_unsafe_url"].includes(code)) throw new ApiError(502, "image_result_unsafe_url", "Image result URL resolves to a non-public network.");
+    throw new ApiError(502, "image_result_download_failed", "Image result download failed.");
+  }
+  if (!response.ok) { await response.body?.cancel().catch(() => undefined); throw new ApiError(502, "image_result_download_failed", "Image result download failed."); }
+  const declared = Number(response.headers.get("content-length") ?? 0);
+  if (declared > MAX_OUTPUT_IMAGE_BYTES) { await response.body?.cancel().catch(() => undefined); throw new ApiError(413, "image_result_too_large", "Generated image exceeds the 50 MB limit."); }
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  if (response.body) {
+    const reader = response.body.getReader();
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      size += chunk.value.byteLength;
+      if (size > MAX_OUTPUT_IMAGE_BYTES) { await reader.cancel(); throw new ApiError(413, "image_result_too_large", "Generated image exceeds the 50 MB limit."); }
+      chunks.push(chunk.value);
+    }
+  }
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+  return bytes;
+}
+
 async function configuredImageModels(config: ServerConfig, env: EnvService, workspace: WorkspaceInfo): Promise<ImageModelDescriptor[]> {
   const effective = await readEffectiveWorkspaceOpencodeConfig(config, workspace);
   const credentials = createWorkspaceProviderCredentialResolver({ config, env });
@@ -102,7 +140,11 @@ async function configuredImageModels(config: ServerConfig, env: EnvService, work
     const baseURL = typeof options.baseURL === "string" ? options.baseURL.trim().replace(/\/+$/, "") : "";
     const envKeys = Array.isArray(rawProvider.env) ? rawProvider.env.filter((key): key is string => typeof key === "string") : [];
     const providerName = typeof rawProvider.name === "string" && rawProvider.name.trim() ? rawProvider.name.trim() : providerID;
-    const adapterSupported = /^https:\/\//i.test(baseURL) && String(rawProvider.npm ?? "").includes("openai");
+    const parsedBaseURL = URL.canParse(baseURL) ? new URL(baseURL) : null;
+    const adapterSupported = Boolean(parsedBaseURL && String(rawProvider.npm ?? "").includes("openai") && (
+      parsedBaseURL.protocol === "https:" ||
+      (parsedBaseURL.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(parsedBaseURL.hostname))
+    ));
     const models = isRecord(rawProvider.models) ? rawProvider.models : {};
     for (const [modelID, rawModel] of Object.entries(models)) {
       if (!isRecord(rawModel)) continue;
@@ -183,16 +225,18 @@ async function resultBytes(payload: unknown): Promise<Uint8Array> {
   const data = isRecord(payload) && Array.isArray(payload.data) ? payload.data : [];
   const first = data.find(isRecord);
   const b64 = typeof first?.b64_json === "string" ? first.b64_json.trim() : "";
-  if (b64) return Buffer.from(b64, "base64");
+  if (b64) {
+    const normalized = b64.replace(/\s/g, "");
+    if (normalized.length > Math.ceil(MAX_OUTPUT_IMAGE_BYTES / 3) * 4 || normalized.length % 4 === 1 || !/^[a-zA-Z0-9+/]*={0,2}$/.test(normalized)) {
+      throw new ApiError(502, "image_invalid_response", "The provider returned invalid or oversized image data.");
+    }
+    const bytes = Buffer.from(normalized, "base64");
+    if (bytes.byteLength > MAX_OUTPUT_IMAGE_BYTES) throw new ApiError(413, "image_result_too_large", "Generated image exceeds the 50 MB limit.");
+    return bytes;
+  }
   const url = typeof first?.url === "string" ? first.url.trim() : "";
   if (!url) throw new ApiError(502, "image_invalid_response", "The provider did not return image data.");
-  const parsed = new URL(url);
-  if (parsed.protocol !== "https:") throw new ApiError(502, "image_result_insecure_url", "Image result URL must use HTTPS.");
-  const response = await externalFetch(parsed.toString(), { redirect: "follow" });
-  if (!response.ok) throw new ApiError(502, "image_result_download_failed", "Image result download failed.");
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  if (bytes.byteLength > MAX_OUTPUT_IMAGE_BYTES) throw new ApiError(413, "image_result_too_large", "Generated image exceeds the 50 MB limit.");
-  return bytes;
+  return downloadPublicImageResult(url);
 }
 
 async function publishImage(workspace: WorkspaceInfo, bytes: Uint8Array, requestedName: string | undefined) {
@@ -206,6 +250,22 @@ async function publishImage(workspace: WorkspaceInfo, bytes: Uint8Array, request
   await mkdir(dirname(output), { recursive: true });
   try { await writeFile(temporary, bytes, { flag: "wx" }); await rename(temporary, output); } finally { await rm(temporary, { force: true }).catch(() => undefined); }
   return { path: relativePath, bytes: bytes.byteLength, mimeType };
+}
+
+export async function readValidatedImageArtifact(input: { workspaceRoot: string; artifact: ImageArtifact; maxBytes?: number }): Promise<Uint8Array> {
+  if (isAbsolute(input.artifact.path) || !input.artifact.path.startsWith("artifacts/") || !ALLOWED_IMAGE_MIME.has(input.artifact.mimeType)) {
+    throw new Error("invalid_image_artifact_path");
+  }
+  const bytes = await readWorkspaceArtifact({
+    workspaceRoot: input.workspaceRoot,
+    relativePath: input.artifact.path,
+    expectedBytes: input.artifact.bytes,
+    maxBytes: input.maxBytes ?? MAX_OUTPUT_IMAGE_BYTES,
+    pathError: "invalid_image_artifact_path",
+    artifactError: "invalid_image_artifact",
+  });
+  if (imageMime(bytes) !== input.artifact.mimeType) throw new Error("invalid_image_artifact_signature");
+  return bytes;
 }
 
 export async function callOpenAiImageGenerationExtensionAction(config: ServerConfig, env: EnvService, action: string, args: Record<string, unknown>, context: Record<string, unknown>) {

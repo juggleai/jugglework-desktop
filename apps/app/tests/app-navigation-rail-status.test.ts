@@ -36,14 +36,19 @@ describe("Code Review navigation", () => {
     expect(source).toContain("props.onOpenReviews()");
   });
 
-  test("shows the separator and pinned Review entry only when Review is pinned", () => {
+  test("shares the pinned separator while keeping the Review entry conditional", () => {
     const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
+    const pinnedSection = source.slice(
+      source.indexOf("{reviewsPinned || toonFactoryPinned ? ("),
+      source.indexOf("</nav>"),
+    );
     const pinnedBlock = source.slice(source.indexOf("{reviewsPinned ? ("), source.indexOf(") : null}", source.indexOf("{reviewsPinned ? (")));
-    expect(pinnedBlock).toContain('data-testid="app-navigation-pinned-separator"');
+    expect(pinnedSection).toContain('data-testid="app-navigation-pinned-separator"');
+    expect(pinnedSection).toContain("{reviewsPinned ? (");
     expect(pinnedBlock).toContain('testId="app-rail-pinned-reviews"');
     expect(pinnedBlock).toContain("active={props.reviewsActive}");
     expect(pinnedBlock).toContain("onClick={props.onOpenReviews}");
-    expect(pinnedBlock).toContain('className="h-px w-6 rounded-full bg-dls-secondary/20"');
+    expect(pinnedSection).toContain('className="h-px w-6 rounded-full bg-dls-secondary/20"');
   });
 
   test("reveals the pin action on hover unless Review is already pinned", () => {
@@ -62,6 +67,26 @@ describe("Code Review navigation", () => {
     expect(menuRow).not.toContain('group-focus-within:pointer-events-auto');
     expect(menuRow).not.toContain('hover:bg-foreground/10');
     expect(source).toContain('className="w-[180px] rounded-2xl bg-popover/95 p-0.5');
+  });
+});
+
+describe("Toon Factory navigation", () => {
+  test("keeps Toon Factory below Code Review in More and supports pinning", () => {
+    expect(railSource.indexOf('data-testid="app-navigation-more-reviews-row"')).toBeLessThan(
+      railSource.indexOf('data-testid="app-navigation-more-toon-factory-row"'),
+    );
+    expect(railSource).toContain('data-testid="app-navigation-pin-toon-factory"');
+    expect(railSource).toContain('testId="app-rail-pinned-toon-factory"');
+    expect(railSource).toContain('appPreviewTarget={toonFactoryActive ? "toon-factory" : undefined}');
+    expect(railSource).toContain('setAppNavigationItemPinned("toon-factory", !toonFactoryPinned)');
+  });
+
+  test("opens and activates only the current encoded workspace route", () => {
+    expect(railSource).toContain("const workspaceId = props.workspaceId.trim()");
+    expect(railSource).toContain('appPath?.view === "toon-factory" && appPath.workspaceId === workspaceId');
+    expect(railSource).toContain("navigate(workspaceToonFactoryRoute(workspaceId))");
+    expect(railSource).not.toContain('navigate("/toon-factory")');
+    expect(railSource).toContain("disabled={!workspaceId}");
   });
 });
 
@@ -166,8 +191,19 @@ describe("navigation rail visual proportions", () => {
 
   test("labels the Automation hover tooltip as scheduled tasks", () => {
     const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
-    const automation = source.slice(source.indexOf('label={t("navigation.automations")}'), source.indexOf('<AlarmClock />'));
+    const automation = source.slice(source.indexOf('label={t("navigation.automations")}'), source.indexOf('</RailButton>', source.indexOf('label={t("navigation.automations")}')));
     expect(automation).toContain('tooltipLabel={t("automation.tabs.tasks")}');
+  });
+
+  test("keeps selected Automation and Toon Factory icon details visible", () => {
+    const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
+    const automationIcon = source.slice(source.indexOf("function AutomationRailIcon"), source.indexOf("function ToonFactoryRailIcon"));
+    const toonFactoryIcon = source.slice(source.indexOf("function ToonFactoryRailIcon"), source.indexOf("function RailButton"));
+    expect(automationIcon).toContain('stroke={detailColor} data-automation-clock-hands');
+    expect(toonFactoryIcon.match(/data-toon-factory-clapper-detail/g)).toHaveLength(2);
+    expect(toonFactoryIcon).toContain('active ? "var(--dls-active)" : "currentColor"');
+    expect(toonFactoryIcon).toContain('const bodyStroke = active ? "none" : "currentColor"');
+    expect(toonFactoryIcon.match(/stroke=\{bodyStroke\}/g)).toHaveLength(2);
   });
 
   test("routes hover previews only for Rail destinations with workspace menus", () => {
@@ -193,7 +229,7 @@ describe("navigation rail visual proportions", () => {
 
   test("routes Automation and Plugins hover to the global sidebar preview host", () => {
     const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
-    const automation = source.slice(source.indexOf('label={t("navigation.automations")}'), source.indexOf('<AlarmClock />'));
+    const automation = source.slice(source.indexOf('label={t("navigation.automations")}'), source.indexOf('</RailButton>', source.indexOf('label={t("navigation.automations")}')));
     const plugins = source.slice(source.indexOf('label={t("project_extensions.group_plugin")}'), source.indexOf('<PluginOrbitIcon />'));
     expect(automation).toContain('appPreviewTarget="automation"');
     expect(automation).toContain('onAppPreviewChange={appSidebarPreview.onTriggerChange}');
@@ -234,6 +270,22 @@ describe("chat unread reminder", () => {
 });
 
 describe("account menu", () => {
+  test("shows manual download and install-ready controls immediately above the account avatar", () => {
+    const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
+    const updateControl = source.indexOf('testId="app-rail-desktop-update"');
+    const accountTrigger = source.indexOf('data-testid="app-rail-account-menu"');
+    expect(source).toContain("useDesktopUpdateIndicatorStore");
+    expect(updateControl).toBeGreaterThan(0);
+    expect(updateControl).toBeLessThan(accountTrigger);
+    expect(source).toContain('desktopUpdateState === "available"');
+    expect(source).toContain("desktopUpdateController.downloadUpdate()");
+    expect(source).toContain('desktopUpdateState === "ready"');
+    expect(source).toContain("desktopUpdateController.installUpdateAndRestart()");
+    expect(source).toContain('disabled={desktopUpdateState === "downloading"}');
+    expect(source).toContain('<Download className="size-4" />');
+    expect(source).toContain('<PackageCheck className="size-4" />');
+  });
+
   test("moves the settings notification dot into the bottom account trigger and settings row", () => {
     const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
     expect(source).not.toContain('testId="app-rail-settings"');

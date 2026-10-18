@@ -27,11 +27,13 @@ import {
 import { clearDesktopBootstrapConfig } from "@/app/lib/desktop";
 import { exchangeHandoffAndSignIn } from "@/app/lib/den-handoff";
 import {
+  createDenCredentialAuthorityChange,
   denSessionUpdatedEvent,
   denSettingsChangedEvent,
   dispatchDenSessionUpdated,
   type DenSessionUpdatedDetail,
 } from "@/app/lib/den-session-events";
+import { closeToonFactoryForDenSession } from "@/app/lib/toon-factory-auth-lifecycle";
 import { t } from "@/i18n";
 import { useDenAuth } from "../../cloud/den-auth-provider";
 import { runOrganizationCloudCleanup } from "../../connections/provider-auth/cloud-provider-cleanup";
@@ -173,7 +175,7 @@ export function useDenSession({
     (
       message?: string | null,
       eventDetail?: Pick<DenSessionUpdatedDetail, "baseUrl">,
-      options?: { includeBaseUrls?: boolean },
+      options?: { includeBaseUrls?: boolean; dispatchEvent?: boolean },
     ) => {
       const includeBaseUrls = options?.includeBaseUrls ?? !developerMode;
       const previousSettings = readDenSettings();
@@ -210,7 +212,9 @@ export function useDenSession({
         }
       } catch {}
       // Notify provider auth store so it can clean up cloud-imported providers
-      dispatchDenSessionUpdated({ status: "signed_out", ...eventDetail });
+      if (options?.dispatchEvent !== false) {
+        dispatchDenSessionUpdated({ status: "signed_out", ...eventDetail });
+      }
       });
     },
     [clearSessionState, developerMode, onBeforeSignedOut, setAuthToken, setBaseUrl],
@@ -456,8 +460,7 @@ export function useDenSession({
       const nextSettings = readDenSettings();
       const nextBaseUrl =
         event.detail?.baseUrl?.trim() || nextSettings.baseUrl || DEFAULT_DEN_BASE_URL;
-      const nextToken =
-        event.detail?.token?.trim() || nextSettings.authToken?.trim() || "";
+      const nextToken = nextSettings.authToken?.trim() || "";
       setBaseUrl(nextBaseUrl);
       setBaseUrlDraft(nextBaseUrl);
       setAuthToken(nextToken);
@@ -536,7 +539,7 @@ export function useDenSession({
       // revocation as best effort, so expired/unreachable sessions cannot trap
       // this settings surface in a busy authenticated state.
       await denAuth.signOut();
-      await clearSignedInState(t("den.status_signed_out"));
+      await clearSignedInState(t("den.status_signed_out"), undefined, { dispatchEvent: false });
     } catch (error) {
       setAuthError(
         error instanceof DenApiError
@@ -560,47 +563,43 @@ export function useDenSession({
       setOrgsError(null);
 
       try {
+        if (nextOrg.id === readDenSettings().activeOrgId?.trim()) {
+          setOrgsBusy(false);
+          return;
+        }
+        const authorityChange = createDenCredentialAuthorityChange("organization_switched");
+        await closeToonFactoryForDenSession(authorityChange);
         await runOrganizationCloudCleanup();
         // 1. Sync Den server-side (cookie/session)
         await client.setActiveOrganization({ organizationId: nextOrg.id });
+
+        // The event is published only after the server confirms the switch.
+        writeDenSettings({
+          baseUrl,
+          authToken: authToken ? authToken : null,
+          activeOrgId: nextId ? nextId : null,
+          activeOrgSlug: nextOrg?.slug ?? null,
+          activeOrgName: nextOrg?.name ?? null,
+        });
+        writeDenLastOrganization(readDenUserId(), nextId);
+        setActiveOrgId(nextId);
+        setActiveOrganization({
+          id: nextOrg.id,
+          name: nextOrg.name,
+          role: nextOrg.role,
+          slug: nextOrg.slug,
+          kind: nextOrg.kind,
+        });
+        await ensureDenActiveOrganization({ forceServerSync: true }).catch(() => null);
+        dispatchDenSessionUpdated({
+          status: "authority_changed",
+          ...authorityChange,
+          baseUrl,
+        });
       } catch (error) {
         setOrgsError(error instanceof Error ? error.message : t("den.error_load_orgs"));
         setOrgsBusy(false);
         return;
-      }
-
-      // 2. Persist to localStorage FIRST so any code that reads from settings
-      //    (e.g. refreshCloudOrgProviders which reads readDenSettings()) sees
-      //    the new org immediately.
-      writeDenSettings({
-        baseUrl,
-        authToken: authToken ? authToken : null,
-        activeOrgId: nextId ? nextId : null,
-        activeOrgSlug: nextOrg?.slug ?? null,
-        activeOrgName: nextOrg?.name ?? null,
-      });
-      writeDenLastOrganization(readDenUserId(), nextId);
-
-      // 3. Update local state
-      setActiveOrgId(nextId);
-
-      // 4. Update CloudSessionProvider context IMMEDIATELY so consumers
-      //    (cloud providers / marketplace / workers views) re-fetch with
-      //    the new org without waiting for the sync effect to fire.
-      setActiveOrganization({
-        id: nextOrg.id,
-        name: nextOrg.name,
-        role: nextOrg.role,
-        slug: nextOrg.slug,
-        kind: nextOrg.kind,
-      });
-
-      // 5. Force a full server sync (Den + localStorage reconciliation)
-      try {
-        await ensureDenActiveOrganization({ forceServerSync: true });
-      } catch {
-        // Best-effort; the explicit setActiveOrganization above already
-        // covered the critical path.
       }
 
       setOrgsBusy(false);

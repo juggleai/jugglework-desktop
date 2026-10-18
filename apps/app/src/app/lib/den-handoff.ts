@@ -1,10 +1,15 @@
 import {
   createDenClient,
+  readDenUserId,
   writeDenIMLoginBootstrap,
   writeDenSettings,
   type DenDesktopHandoffExchange,
 } from "./den";
-import { dispatchDenSessionUpdated } from "./den-session-events";
+import {
+  createDenCredentialAuthorityChange,
+  dispatchDenSessionUpdated,
+} from "./den-session-events";
+import { closeToonFactoryForDenSession } from "./toon-factory-auth-lifecycle";
 
 type DenClient = ReturnType<typeof createDenClient>;
 
@@ -51,6 +56,17 @@ export async function exchangeHandoffAndSignIn(
       throw new Error(fallback);
     }
 
+    const storedUserId = readDenUserId()?.trim() ?? "";
+    const nextUserId = exchange.user?.id?.trim() ?? "";
+    const authorityChange = createDenCredentialAuthorityChange(
+      storedUserId && nextUserId && storedUserId !== nextUserId
+        ? "account_switched"
+        : "session_established",
+    );
+    // Stop the old authority before publishing credentials that provider sync
+    // can consume. Failure is intentionally swallowed by the lifecycle helper.
+    await closeToonFactoryForDenSession(authorityChange);
+
     writeDenSettings({
       baseUrl: options.baseUrl,
       authToken: exchange.token,
@@ -62,10 +78,9 @@ export async function exchangeHandoffAndSignIn(
 
     dispatchDenSessionUpdated({
       status: "success",
+      ...authorityChange,
       baseUrl: options.baseUrl,
-      token: exchange.token,
       user: exchange.user,
-      im: exchange.im,
       email: exchange.user?.email ?? null,
     });
 

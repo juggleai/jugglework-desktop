@@ -18,10 +18,13 @@ on:
     paths:
       - apps/app/**
       - apps/desktop/**
-      - packages/jugglework-ui-mcp/**
-      - packages/ui/**
+      - apps/server/**
+      - modules/toonflowV2/**
+      - packages/**
+      - patches/**
       - constants.json
       - pnpm-lock.yaml
+      - pnpm-workspace.yaml
       - package.json
       - .github/workflows/build-electron-desktop.yml
 
@@ -36,6 +39,8 @@ jobs:
             artifact: macos
           - os: ubuntu-latest
             artifact: linux
+            expected_arch: x64
+            linux_unpacked_dir: linux-unpacked
           - os: windows-latest
             artifact: windows
           - os: windows-11-arm
@@ -62,14 +67,17 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          # Bun >= 1.3.10 is required to compile bun-windows-arm64 sidecars.
-          bun-version: 1.3.10
+          bun-version: 1.3.14
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
       - name: Package Electron desktop (unpacked)
         run: pnpm --filter @jugglework/desktop package:electron:dir
+
+      - name: Verify packaged Linux Toon Factory bundle
+        if: matrix.artifact == 'linux'
+        run: pnpm --dir apps/desktop verify:linux-package -- --dir "dist-electron/${{ matrix.linux_unpacked_dir }}" --arch "${{ matrix.expected_arch }}"
 
       - name: Upload Electron artifacts
         uses: actions/upload-artifact@v4
@@ -99,7 +107,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.9
+          bun-version: 1.3.14
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -156,7 +164,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.10
+          bun-version: 1.3.14
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -221,7 +229,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.10
+          bun-version: 1.3.14
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile

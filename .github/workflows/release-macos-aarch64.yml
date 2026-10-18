@@ -277,11 +277,15 @@ jobs:
             artifact: electron-linux-x64
             electron_args: "--linux --x64"
             target_triple: x86_64-unknown-linux-gnu
+            expected_arch: x64
+            linux_unpacked_dir: linux-unpacked
           - platform: ubuntu-22.04-arm
             os_type: linux
             artifact: electron-linux-arm64
             electron_args: "--linux --arm64"
             target_triple: aarch64-unknown-linux-gnu
+            expected_arch: arm64
+            linux_unpacked_dir: linux-arm64-unpacked
           - platform: windows-2022
             os_type: windows
             artifact: electron-windows-x64
@@ -318,8 +322,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          # Bun >= 1.3.10 is required to compile bun-windows-arm64 sidecars.
-          bun-version: 1.3.10
+          bun-version: 1.3.14
 
       - name: Get pnpm store path
         id: pnpm-store
@@ -420,6 +423,11 @@ jobs:
             --config electron-builder.yml \
             ${{ matrix.electron_args }} \
             --publish never
+
+      - name: Verify packaged Linux Toon Factory bundle
+        if: matrix.os_type == 'linux'
+        shell: bash
+        run: pnpm --dir apps/desktop verify:linux-package -- --dir "dist-electron/${{ matrix.linux_unpacked_dir }}" --arch "${{ matrix.expected_arch }}"
 
       - name: Package Electron (Windows)
         if: matrix.os_type == 'windows'

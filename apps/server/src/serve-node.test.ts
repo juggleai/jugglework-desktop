@@ -120,4 +120,35 @@ describe("serve", () => {
       await server.stop();
     }
   });
+
+  test("aborts the request signal when the client disconnects", async () => {
+    let requestAborted = false;
+    let resolveStarted!: () => void;
+    const started = new Promise<void>((resolve) => { resolveStarted = resolve; });
+    const server = await serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: (request) => {
+        request.signal.addEventListener("abort", () => { requestAborted = true; }, { once: true });
+        return new Response(new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("partial"));
+            resolveStarted();
+          },
+        }));
+      },
+    });
+
+    try {
+      const controller = new AbortController();
+      const response = await fetch(`http://127.0.0.1:${server.port}/stream`, { signal: controller.signal });
+      await started;
+      controller.abort();
+      await response.text().catch(() => undefined);
+      for (let attempt = 0; attempt < 20 && !requestAborted; attempt++) await delay(10);
+      expect(requestAborted).toBe(true);
+    } finally {
+      await server.stop();
+    }
+  });
 });

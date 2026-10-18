@@ -2,19 +2,22 @@
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
-  AlarmClock,
+  Clapperboard,
   ArrowUpRight,
   Check,
   Cloud,
   Coins,
   ContactRound,
+  Download,
   Ellipsis,
   Globe,
   HelpCircle,
   House,
+  LoaderCircle,
   LogOut,
   MessageSquare,
   GitPullRequestArrow,
+  PackageCheck,
   Pin,
   RefreshCw,
   Settings,
@@ -41,6 +44,7 @@ import { buildFeedbackUrl } from "@/app/lib/feedback";
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider";
 import { useJuggleChatStore } from "@/react-app/domains/jugglechat/store";
 import { useUpdateCheckRequestStore } from "@/react-app/domains/settings/state/update-check-request";
+import { useDesktopUpdateIndicatorStore } from "@/react-app/domains/settings/state/desktop-update-indicator-store";
 import { useNotificationStore } from "@/react-app/kernel/notification-store";
 import { usePlatform } from "@/react-app/kernel/platform";
 import { setTaskScope, useTaskScope, type TaskScope } from "@/react-app/domains/session/sidebar/task-scope-store";
@@ -61,12 +65,15 @@ import { isIMNavigationVisible, visibleLocalWorkspaceIndicator } from "./app-nav
 import { accountDisplayName, membershipTierLabel, membershipUpgradeContext, organizationMenuGroups } from "./account-menu-model";
 import { PluginOrbitIcon } from "@/react-app/design-system/plugin-orbit-icon";
 import { useAppNavigationSidebarPreview, type AppNavigationSidebarPreviewTarget } from "./app-navigation-sidebar-preview";
+import { parseWorkspaceAppPath, workspaceToonFactoryRoute } from "./workspace-routes";
 
 export { APP_PRIMARY_RAIL_ORDER } from "./app-navigation-order";
 
 export const APP_NAVIGATION_RAIL_WIDTH = 48;
 
 type AppNavigationRailProps = {
+  /** Workspace used by workspace-bound destinations such as Toon Factory. */
+  workspaceId: string;
   /** Home surface is the visible one — its rail button reflects the task scope. */
   homeActive?: boolean;
   appsActive?: boolean;
@@ -128,6 +135,50 @@ function LocalWorkspaceIcon({ active }: { active: boolean }) {
         fill="var(--dls-active)"
         data-local-workspace-doorway
       />
+    </svg>
+  );
+}
+
+function AutomationRailIcon({ active }: { active: boolean }) {
+  const detailColor = active ? "var(--dls-active)" : "currentColor";
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      data-automation-rail-icon
+    >
+      <circle cx="12" cy="13" r="8" fill={active ? "currentColor" : "none"} />
+      <path d="M12 9v4l2 2" fill="none" stroke={detailColor} data-automation-clock-hands />
+      <path d="M5 3 2 6" fill="none" />
+      <path d="m22 6-3-3" fill="none" />
+      <path d="M6.38 18.7 4 21" fill="none" />
+      <path d="M17.64 18.67 20 21" fill="none" />
+    </svg>
+  );
+}
+
+function ToonFactoryRailIcon({ active }: { active: boolean }) {
+  const detailColor = active ? "var(--dls-active)" : "currentColor";
+  const bodyFill = active ? "currentColor" : "none";
+  const bodyStroke = active ? "none" : "currentColor";
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      data-toon-factory-rail-icon
+    >
+      <path d="M20.2 6 3 11l-.9-2.4c-.3-1.1.3-2.2 1.3-2.5l13.5-4c1.1-.3 2.2.3 2.5 1.3z" fill={bodyFill} stroke={bodyStroke} />
+      <path d="M3 11h18v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" fill={bodyFill} stroke={bodyStroke} />
+      <path d="m12.296 3.464 3.02 3.956" fill="none" stroke={detailColor} data-toon-factory-clapper-detail />
+      <path d="m6.18 5.276 3.1 3.899" fill="none" stroke={detailColor} data-toon-factory-clapper-detail />
     </svg>
   );
 }
@@ -250,6 +301,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
     signOut,
   } = useDenAuth();
   const taskScope = useTaskScope();
+  const automationsActive = location.pathname.startsWith("/automations");
   const localWorkspaceIndicator = useLocalWorkspaceIndicator();
   const chatView = useJuggleChatStore((state) => state.view);
   const totalUnreadCount = useJuggleChatStore((state) => state.totalUnreadCount);
@@ -259,6 +311,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
       0,
     )
   ));
+  const desktopUpdateController = useDesktopUpdateIndicatorStore((state) => state.controller);
   const bootstrapChat = useJuggleChatStore((state) => state.bootstrap);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [navigationMenuOpen, setNavigationMenuOpen] = useState(false);
@@ -301,6 +354,16 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
     useJuggleChatStore.getState().setView(view);
     if (!props.chatActive) props.onOpenChat();
   };
+  const workspaceId = props.workspaceId.trim();
+  const appPath = parseWorkspaceAppPath(location.pathname);
+  const toonFactoryActive = appPath?.view === "toon-factory" && appPath.workspaceId === workspaceId;
+  const toonFactoryPinned = pinnedNavigationItems.includes("toon-factory");
+  const openToonFactory = () => {
+    if (!workspaceId) return;
+    setNavigationMenuOpen(false);
+    navigate(workspaceToonFactoryRoute(workspaceId));
+  };
+  const toggleToonFactoryPinned = () => setPinnedNavigationItems(setAppNavigationItemPinned("toon-factory", !toonFactoryPinned));
   const reviewsPinned = pinnedNavigationItems.includes("reviews");
   const openReviews = () => {
     setNavigationMenuOpen(false);
@@ -354,6 +417,26 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
       toast.error(nextError instanceof Error ? nextError.message : t("den.error_signout_failed"));
     }
   };
+  const desktopUpdateState = desktopUpdateController?.status?.state ?? "idle";
+  const desktopUpdateVersion = desktopUpdateController?.status?.version ?? "";
+  const desktopUpdateVisible = desktopUpdateState === "available"
+    || desktopUpdateState === "downloading"
+    || desktopUpdateState === "ready";
+  const desktopUpdateLabel = desktopUpdateState === "ready"
+    ? `${t("settings.update_ready_version", undefined, { version: desktopUpdateVersion })} · ${t("settings.update_install_button")}`
+    : desktopUpdateState === "downloading"
+      ? t("settings.update_downloading")
+      : `${t("settings.update_available_version", undefined, { version: desktopUpdateVersion })} · ${t("settings.update_download_button")}`;
+  const activateDesktopUpdate = () => {
+    if (!desktopUpdateController) return;
+    if (desktopUpdateState === "available") {
+      void desktopUpdateController.downloadUpdate();
+      return;
+    }
+    if (desktopUpdateState === "ready") {
+      void desktopUpdateController.installUpdateAndRestart();
+    }
+  };
 
   return (
     <aside
@@ -392,7 +475,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
         {LOCAL_AUTOMATION_ENABLED ? <RailButton
           label={t("navigation.automations")}
           tooltipLabel={t("automation.tabs.tasks")}
-          active={location.pathname.startsWith("/automations")}
+          active={automationsActive}
           onClick={() => navigate("/automations")}
           testId="app-rail-automations"
           onPreviewMenuChange={props.onPreviewMenuChange}
@@ -400,7 +483,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
           onAppPreviewChange={appSidebarPreview.onTriggerChange}
           showTooltip={!appSidebarPreview.enabled}
         >
-          <AlarmClock />
+          <AutomationRailIcon active={automationsActive} />
         </RailButton> : null}
         <RailButton
           label={t("project_extensions.group_plugin")}
@@ -447,13 +530,13 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
                 title={t("navigation.more")}
                 data-testid="app-rail-more"
                 data-app-rail-button
-                data-active={(navigationMenuOpen || (props.reviewsActive && !reviewsPinned)) ? "true" : undefined}
+                data-active={(navigationMenuOpen || (props.reviewsActive && !reviewsPinned) || (toonFactoryActive && !toonFactoryPinned)) ? "true" : undefined}
                 className={cn(
                   "relative flex size-9 items-center justify-center rounded-xl text-dls-secondary/80 transition-[background-color,color,transform] duration-150 mac:titlebar-no-drag",
                   "hover:bg-dls-hover hover:text-dls-text active:scale-[0.96]",
                   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/35 focus-visible:ring-offset-1 focus-visible:ring-offset-dls-sidebar",
                   "data-popup-open:bg-dls-active data-popup-open:text-dls-text",
-                  (navigationMenuOpen || (props.reviewsActive && !reviewsPinned)) && "bg-dls-active text-dls-text",
+                  (navigationMenuOpen || (props.reviewsActive && !reviewsPinned) || (toonFactoryActive && !toonFactoryPinned)) && "bg-dls-active text-dls-text",
                 )}
               >
                 <Ellipsis className="size-5" strokeWidth={2} />
@@ -504,15 +587,54 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
                 <Pin className={cn("size-4", reviewsPinned && "fill-current")} />
               </button>
             </div>
+            <div
+              className="group flex items-center gap-1 rounded-2xl transition-colors hover:bg-accent focus-within:bg-accent"
+              data-testid="app-navigation-more-toon-factory-row"
+            >
+              <DropdownMenuItem
+                onClick={openToonFactory}
+                disabled={!workspaceId}
+                className="min-w-0 flex-1 bg-transparent py-[5px] focus:bg-transparent! data-highlighted:bg-transparent!"
+                data-testid="app-navigation-more-toon-factory"
+              >
+                <Clapperboard />
+                <span className="truncate">{t("navigation.toon_factory")}</span>
+              </DropdownMenuItem>
+              <button
+                type="button"
+                aria-label={toonFactoryPinned ? t("navigation.unpin_item") : t("navigation.pin_item")}
+                title={toonFactoryPinned ? t("navigation.unpin_item") : t("navigation.pin_item")}
+                tabIndex={0}
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  toggleToonFactoryPinned();
+                }}
+                className={cn(
+                  "flex size-8 shrink-0 items-center justify-center rounded-xl text-muted-foreground transition-[background-color,color,opacity,transform] duration-150",
+                  "hover:text-popover-foreground active:scale-[0.94]",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/35",
+                  toonFactoryPinned
+                    ? "text-popover-foreground opacity-100"
+                    : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 focus:opacity-100 focus:pointer-events-auto",
+                )}
+                data-testid="app-navigation-pin-toon-factory"
+                data-pinned={toonFactoryPinned ? "true" : undefined}
+              >
+                <Pin className={cn("size-4", toonFactoryPinned && "fill-current")} />
+              </button>
+            </div>
           </DropdownMenuContent>
         </DropdownMenu>
-        {reviewsPinned ? (
+        {reviewsPinned || toonFactoryPinned ? (
           <div className="mt-0.5 flex flex-col items-center gap-2" data-app-navigation-pinned-items>
             <div
               className="h-px w-6 rounded-full bg-dls-secondary/20"
               aria-hidden="true"
               data-testid="app-navigation-pinned-separator"
             />
+            {reviewsPinned ? (
             <RailButton
               label={t("navigation.reviews")}
               active={props.reviewsActive}
@@ -522,11 +644,54 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
             >
               <GitPullRequestArrow />
             </RailButton>
+            ) : null}
+            {toonFactoryPinned ? (
+            <RailButton
+              label={t("navigation.toon_factory")}
+              active={toonFactoryActive}
+              disabled={!workspaceId}
+              onClick={openToonFactory}
+              testId="app-rail-pinned-toon-factory"
+              onPreviewMenuChange={props.onPreviewMenuChange}
+              appPreviewTarget={toonFactoryActive ? "toon-factory" : undefined}
+              onAppPreviewChange={appSidebarPreview.onTriggerChange}
+              showTooltip={!toonFactoryActive || !appSidebarPreview.enabled}
+            >
+              <ToonFactoryRailIcon active={toonFactoryActive} />
+            </RailButton>
+            ) : null}
           </div>
         ) : null}
       </nav>
 
-      <div className="relative mt-auto flex h-9 w-full items-center justify-center mac:titlebar-no-drag">
+      <div className="mt-auto flex w-full flex-col items-center gap-2 mac:titlebar-no-drag">
+        {desktopUpdateVisible ? (
+          <RailButton
+            label={desktopUpdateLabel}
+            disabled={desktopUpdateState === "downloading"}
+            onClick={activateDesktopUpdate}
+            testId="app-rail-desktop-update"
+          >
+            <span
+              className={cn(
+                "flex size-7 items-center justify-center rounded-full ring-1",
+                desktopUpdateState === "ready"
+                  ? "bg-green-3 text-green-11 ring-green-7/50"
+                  : "bg-blue-3 text-blue-11 ring-blue-7/50",
+              )}
+              data-desktop-update-state={desktopUpdateState}
+            >
+              {desktopUpdateState === "downloading" ? (
+                <LoaderCircle className="size-4 animate-spin" />
+              ) : desktopUpdateState === "ready" ? (
+                <PackageCheck className="size-4" />
+              ) : (
+                <Download className="size-4" />
+              )}
+            </span>
+          </RailButton>
+        ) : null}
+        <div className="relative flex h-9 w-full items-center justify-center">
         <DropdownMenu open={accountMenuOpen} onOpenChange={(open) => { setAccountMenuOpen(open); if (open) void refreshAccount(); }}>
           <DropdownMenuTrigger
             render={(
@@ -656,6 +821,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
             {accountError ? <div className="px-3 pb-1 pt-2 text-[11px] leading-4 text-destructive">{accountError}</div> : null}
           </DropdownMenuContent>
         </DropdownMenu>
+        </div>
       </div>
     </aside>
   );

@@ -82,5 +82,36 @@ export function migrateMediaGenerationDatabase(database: AutomationSqlite): void
       }
       database.run("INSERT INTO media_generation_schema_migrations(version, applied_at) VALUES (?, ?)", [3, Date.now()]);
     }
+    if (applied < 4) {
+      database.exec(`CREATE TABLE IF NOT EXISTS image_generation_jobs (
+        id TEXT PRIMARY KEY NOT NULL,
+        workspace_id TEXT NOT NULL,
+        client_request_id TEXT NOT NULL,
+        request_hash TEXT NOT NULL,
+        provider_id TEXT NOT NULL,
+        model_id TEXT NOT NULL,
+        mode TEXT NOT NULL,
+        status TEXT NOT NULL,
+        artifact_json TEXT,
+        error_code TEXT,
+        error_message TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        CHECK (mode IN ('text-to-image','image-to-image','multi-image-to-image')),
+        CHECK (status IN ('running','completed','failed','submission_unknown')),
+        UNIQUE (workspace_id, client_request_id)
+      )`);
+      database.exec("CREATE INDEX IF NOT EXISTS idx_image_jobs_workspace ON image_generation_jobs(workspace_id, created_at DESC)");
+      database.run("INSERT INTO media_generation_schema_migrations(version, applied_at) VALUES (?, ?)", [4, Date.now()]);
+    }
+    if (applied < 5) {
+      const columns = new Set(database.all<{ name: string }>("PRAGMA table_info(video_generation_jobs)").map((column) => column.name));
+      if (!columns.has("request_hash")) database.exec("ALTER TABLE video_generation_jobs ADD COLUMN request_hash TEXT");
+      database.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_video_jobs_request_without_session
+        ON video_generation_jobs(workspace_id, client_request_id) WHERE session_id IS NULL AND request_hash IS NOT NULL`);
+      database.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_video_jobs_request_with_session
+        ON video_generation_jobs(workspace_id, session_id, client_request_id) WHERE session_id IS NOT NULL AND request_hash IS NOT NULL`);
+      database.run("INSERT INTO media_generation_schema_migrations(version, applied_at) VALUES (?, ?)", [5, Date.now()]);
+    }
   });
 }

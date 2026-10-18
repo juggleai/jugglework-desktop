@@ -19,6 +19,7 @@ import { pathToFileURL } from "node:url";
 import { parse as parseYaml } from "yaml";
 import { assertWindowsReleaseVersion } from "./qiniu-release/constants.mjs";
 import { inspectArtifact } from "./qiniu-release/metadata.mjs";
+import { verifyToonFactoryBundle } from "../electron/toonFactoryBundle.mjs";
 
 const ARCHITECTURES = ["arm64", "x64"];
 const PE_MACHINE = { x64: 0x8664, arm64: 0xaa64 };
@@ -443,6 +444,7 @@ export async function verifyPackagedWindows(options, dependencies = {}) {
   const inspectSignatureDetails = dependencies.inspectSignatureDetails ?? signToolAuthenticodeSignatureDetails;
   const inspectMachine = dependencies.inspectMachine ?? readPeMachine;
   const generateBlockmap = dependencies.generateBlockmap ?? regenerateBlockmap;
+  const verifyBundle = dependencies.verifyToonFactoryBundle ?? verifyToonFactoryBundle;
   const version = String(options.version ?? "").trim();
   if (!STABLE_VERSION.test(version)) fail(`A stable x.y.z release version is required, found ${version || "<empty>"}`);
   try {
@@ -466,8 +468,15 @@ export async function verifyPackagedWindows(options, dependencies = {}) {
     if (!existsSync(blockmapPath) || !statSync(blockmapPath).isFile()) fail(`Missing published blockmap: ${blockmapPath}`);
     const latestPath = path.join(stagingDirectory, "latest.yml");
     if (!existsSync(latestPath)) fail(`Missing ${arch} staging latest.yml: ${latestPath}`);
+    const toonFactoryRoot = findSingle(
+      filesRecursively(stagingDirectory)
+        .filter((filePath) => path.basename(filePath) === "build-manifest.json" && path.basename(path.dirname(filePath)) === "toonFactoryV2")
+        .map((filePath) => path.dirname(filePath)),
+      `${arch} packaged toonFactoryV2 bundle`,
+    );
 
     const pe = verifyPeArchitecture(executablePath, arch, inspectMachine);
+    const toonFactory = verifyBundle(toonFactoryRoot, { platform: "win32", arch }, dependencies.trustedBunRelease);
     const signature = verifyAuthenticodeSignature(
       executablePath,
       publisherNames,
@@ -488,6 +497,7 @@ export async function verifyPackagedWindows(options, dependencies = {}) {
       updater,
       latest,
       latestPath,
+      toonFactory,
       executable: { path: executablePath, name: executableName, metadata },
       blockmap: { path: blockmapPath, name: path.basename(blockmapPath), metadata: blockmapMetadata },
     });

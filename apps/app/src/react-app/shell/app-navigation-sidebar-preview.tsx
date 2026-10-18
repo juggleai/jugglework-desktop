@@ -12,8 +12,9 @@ import { useUiStateStore } from "./ui-state-store";
 import { appInsetSidebarCssWidth } from "./workspace-shell-layout";
 import { workspaceAppsRoute } from "./workspace-routes";
 import type { TaskScope } from "@/react-app/domains/session/sidebar/task-scope-store";
+import { ToonFactoryProjectSidebar, type ToonFactorySidebarRegistration } from "./toon-factory-sidebar";
 
-export type AppNavigationSidebarPreviewTarget = "automation" | "plugins";
+export type AppNavigationSidebarPreviewTarget = "automation" | "plugins" | "toon-factory";
 const CLOSE_DELAY = 120;
 
 type PreviewContextValue = {
@@ -26,6 +27,7 @@ type PreviewContextValue = {
   onPreviewLeave: () => void;
   closePreview: () => void;
   publishPluginItems: (items: CustomizationInstalledItem[]) => void;
+  publishToonFactorySidebar: (registration: ToonFactorySidebarRegistration | null) => void;
 };
 
 const PreviewContext = createContext<PreviewContextValue>({
@@ -38,6 +40,7 @@ const PreviewContext = createContext<PreviewContextValue>({
   onPreviewLeave: () => undefined,
   closePreview: () => undefined,
   publishPluginItems: () => undefined,
+  publishToonFactorySidebar: () => undefined,
 });
 
 export function AppNavigationSidebarPreviewProvider(props: { children: ReactNode }) {
@@ -46,6 +49,7 @@ export function AppNavigationSidebarPreviewProvider(props: { children: ReactNode
   const [target, setTarget] = useState<AppNavigationSidebarPreviewTarget | null>(null);
   const [workspaceTarget, setWorkspaceTarget] = useState<TaskScope | null>(null);
   const [pluginItems, setPluginItems] = useState<CustomizationInstalledItem[]>([]);
+  const [toonFactorySidebar, setToonFactorySidebar] = useState<ToonFactorySidebarRegistration | null>(null);
   const closeTimerRef = useRef<number | null>(null);
   const pointerInsideRef = useRef(false);
 
@@ -99,6 +103,7 @@ export function AppNavigationSidebarPreviewProvider(props: { children: ReactNode
     setWorkspaceTarget(null);
   }, [cancelClose]);
   const publishPluginItems = useCallback((items: CustomizationInstalledItem[]) => setPluginItems(items), []);
+  const publishToonFactorySidebar = useCallback((registration: ToonFactorySidebarRegistration | null) => setToonFactorySidebar(registration), []);
 
   useEffect(() => () => cancelClose(), [cancelClose]);
   useEffect(() => {
@@ -118,7 +123,8 @@ export function AppNavigationSidebarPreviewProvider(props: { children: ReactNode
     onPreviewLeave,
     closePreview,
     publishPluginItems,
-  }), [closePreview, onPreviewEnter, onPreviewLeave, onTriggerChange, onWorkspaceTriggerChange, publishPluginItems, sidebarOpen, target, workspaceTarget]);
+    publishToonFactorySidebar,
+  }), [closePreview, onPreviewEnter, onPreviewLeave, onTriggerChange, onWorkspaceTriggerChange, publishPluginItems, publishToonFactorySidebar, sidebarOpen, target, workspaceTarget]);
 
   return (
     <PreviewContext.Provider value={value}>
@@ -127,6 +133,7 @@ export function AppNavigationSidebarPreviewProvider(props: { children: ReactNode
         <AppNavigationSidebarPreviewHost
           target={target}
           pluginItems={pluginItems}
+          toonFactorySidebar={toonFactorySidebar}
           onMouseEnter={onPreviewEnter}
           onMouseLeave={onPreviewLeave}
         />
@@ -146,9 +153,18 @@ export function usePublishAppNavigationPluginItems(items: CustomizationInstalled
   }, [items, publishPluginItems]);
 }
 
+export function usePublishToonFactorySidebar(registration: ToonFactorySidebarRegistration | null) {
+  const { publishToonFactorySidebar } = use(PreviewContext);
+  useEffect(() => {
+    publishToonFactorySidebar(registration);
+    return () => publishToonFactorySidebar(null);
+  }, [publishToonFactorySidebar, registration]);
+}
+
 function AppNavigationSidebarPreviewHost(props: {
   target: AppNavigationSidebarPreviewTarget;
   pluginItems: CustomizationInstalledItem[];
+  toonFactorySidebar: ToonFactorySidebarRegistration | null;
   onMouseEnter: () => void;
   onMouseLeave: () => void;
 }) {
@@ -172,7 +188,9 @@ function AppNavigationSidebarPreviewHost(props: {
       onMouseLeave={props.onMouseLeave}
       data-app-navigation-sidebar-preview={props.target}
     >
-      {props.target === "automation" ? <AutomationSidebarPreview /> : (
+      {props.target === "automation" ? <AutomationSidebarPreview /> : props.target === "toon-factory" ? (
+        props.toonFactorySidebar ? <ToonFactoryProjectSidebar preview {...props.toonFactorySidebar} /> : null
+      ) : (
         <CustomizationCatalogSidebar
           preview
           activeSection={pluginSection}

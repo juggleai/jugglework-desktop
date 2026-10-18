@@ -128,6 +128,14 @@ The shared Windows `latest.yml` SHALL describe both x64 and arm64 installers und
 ### Requirement: Pending updates do not install on ordinary exit
 The desktop updater SHALL keep automatic installation on application quit disabled. A downloaded update MUST NOT install because the user closes all windows, chooses the ordinary Quit action, signs out of the operating system, shuts down, or restarts the machine. Only a current explicit `Install and restart` action may invoke the updater's native installer.
 
+#### Scenario: Navigation rail exposes the manual update lifecycle
+- **WHEN** the desktop detects an available update
+- **THEN** it shows a pending-download control immediately above the account avatar in the primary navigation rail
+- **AND** downloading starts only when the user selects that control unless the separate automatic-download preference is enabled
+- **AND** while the download is in progress the control communicates progress and cannot start a duplicate download
+- **AND** after verification and staging completes the control changes to an install-ready state
+- **AND** installation is invoked only when the user explicitly selects the install-ready control
+
 #### Scenario: User exits after downloading an update
 - **WHEN** a verified update is pending and the application exits without an accepted `Install and restart` request
 - **THEN** the process exits without invoking the native installer

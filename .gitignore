@@ -82,3 +82,5 @@ evals/results/
 !.github/workflows/
 !.github/workflows/release-cli.yml
 .devcontainer
+
+/apps/desktop/resources/toonFactoryV2/

@@ -10,7 +10,7 @@ import { appInsetSidebarCssWidth, useWorkspaceShellLayout } from "./workspace-sh
 import type { OpenCreateWorkspace } from "@/react-app/domains/workspace/types";
 
 export type AppsPageProps = {
-  workspaceId?: string | null;
+  workspaceId: string;
   /** 应用页当前是否可见；隐藏时内嵌设置面的模型选择器不响应全局打开事件。 */
   active?: boolean;
   onOpenAccount: () => void;
@@ -34,6 +34,7 @@ export function AppsPage(props: AppsPageProps) {
   return (
     <div className="relative flex h-full min-h-0 w-full overflow-hidden bg-dls-sidebar mac:titlebar-drag" style={pageStyle}>
       <AppNavigationRail
+        workspaceId={props.workspaceId}
         appsActive
         onOpenAccount={props.onOpenAccount}
         onOpenHome={props.onOpenHome}
@@ -55,7 +56,7 @@ export function AppsPage(props: AppsPageProps) {
           contentOnly
           pluginCatalogOnly
           initialPath="extensions/plugins"
-          workspaceId={props.workspaceId ?? undefined}
+          workspaceId={props.workspaceId || undefined}
           active={props.active}
           secondarySidebarOpen={sidebarOpen}
         />

@@ -25,7 +25,7 @@ describe("MediaGenerationWorker", () => {
   test("recovers a submitted job and publishes its completed result", async () => {
     const repo = repository();
     const root = await mkdtemp(join(tmpdir(), "jugglework-worker-")); cleanup.push(() => rm(root, { recursive: true, force: true }));
-    let job = repo.createOrGet({ workspaceId: "ws", clientRequestId: "request", model: { providerID: "provider", modelID: "video" }, mode: "text-to-video" });
+    let job = repo.createOrGet({ workspaceId: "ws", clientRequestId: "request", requestHash: "request-hash", model: { providerID: "provider", modelID: "video" }, mode: "text-to-video" });
     job = repo.transition(job.id, job.revision, "submitting", { adapterBinding: binding });
     job = repo.transition(job.id, job.revision, "submitted", { providerJobId: "external", adapterBinding: binding, nextPollAt: 0 });
     const adapter: VideoGenerationAdapter = {
@@ -43,7 +43,7 @@ describe("MediaGenerationWorker", () => {
 
   test("keeps best-effort cancellation reconcilable when provider has no cancel endpoint", async () => {
     const repo = repository();
-    let job = repo.createOrGet({ workspaceId: "ws", clientRequestId: "cancel", model: { providerID: "provider", modelID: "video" }, mode: "text-to-video" });
+    let job = repo.createOrGet({ workspaceId: "ws", clientRequestId: "cancel", requestHash: "cancel-hash", model: { providerID: "provider", modelID: "video" }, mode: "text-to-video" });
     job = repo.transition(job.id, job.revision, "submitting", { adapterBinding: binding });
     job = repo.transition(job.id, job.revision, "submitted", { providerJobId: "external", adapterBinding: binding, nextPollAt: 0 });
     job = repo.requestCancellation(job.id);
@@ -63,7 +63,7 @@ describe("MediaGenerationWorker", () => {
   test("resolves the current workspace adapters on every reconciliation pass", async () => {
     const repo = repository();
     const root = await mkdtemp(join(tmpdir(), "jugglework-worker-dynamic-")); cleanup.push(() => rm(root, { recursive: true, force: true }));
-    let job = repo.createOrGet({ workspaceId: "ws", clientRequestId: "dynamic", model: { providerID: "provider", modelID: "video" }, mode: "text-to-video" });
+    let job = repo.createOrGet({ workspaceId: "ws", clientRequestId: "dynamic", requestHash: "dynamic-hash", model: { providerID: "provider", modelID: "video" }, mode: "text-to-video" });
     const dynamicBinding = { ...binding, adapterId: "dynamic" };
     job = repo.transition(job.id, job.revision, "submitting", { adapterBinding: dynamicBinding });
     job = repo.transition(job.id, job.revision, "submitted", { providerJobId: "external", adapterBinding: dynamicBinding, nextPollAt: 0 });
@@ -93,7 +93,7 @@ describe("MediaGenerationWorker", () => {
 
   test("bounds a missing adapter and rejects a changed origin", async () => {
     const repo = repository();
-    let job = repo.createOrGet({ workspaceId: "ws", clientRequestId: "missing", model: { providerID: "provider", modelID: "video" }, mode: "text-to-video" });
+    let job = repo.createOrGet({ workspaceId: "ws", clientRequestId: "missing", requestHash: "missing-hash", model: { providerID: "provider", modelID: "video" }, mode: "text-to-video" });
     job = repo.transition(job.id, job.revision, "submitting", { adapterBinding: binding });
     job = repo.transition(job.id, job.revision, "submitted", { providerJobId: "external", adapterBinding: binding, nextPollAt: 0 });
     const changed: VideoGenerationAdapter = {
@@ -110,7 +110,7 @@ describe("MediaGenerationWorker", () => {
   test("recovers a persisted downloading job from its valid existing artifact", async () => {
     const repo = repository();
     const root = await mkdtemp(join(tmpdir(), "jugglework-worker-download-")); cleanup.push(() => rm(root, { recursive: true, force: true }));
-    let job = repo.createOrGet({ workspaceId: "ws", clientRequestId: "download", model: { providerID: "provider", modelID: "video" }, mode: "text-to-video" });
+    let job = repo.createOrGet({ workspaceId: "ws", clientRequestId: "download", requestHash: "download-hash", model: { providerID: "provider", modelID: "video" }, mode: "text-to-video" });
     job = repo.transition(job.id, job.revision, "submitting", { adapterBinding: binding });
     job = repo.transition(job.id, job.revision, "submitted", { providerJobId: "external", adapterBinding: binding, nextPollAt: 0 });
     job = repo.transition(job.id, job.revision, "downloading");
@@ -127,7 +127,7 @@ describe("MediaGenerationWorker", () => {
 
   test("recovers a crash during paid submission as terminal unknown without resubmitting", async () => {
     const repo = repository();
-    let job = repo.createOrGet({ workspaceId: "ws", clientRequestId: "crashed", model: { providerID: "provider", modelID: "video" }, mode: "text-to-video" });
+    let job = repo.createOrGet({ workspaceId: "ws", clientRequestId: "crashed", requestHash: "crashed-hash", model: { providerID: "provider", modelID: "video" }, mode: "text-to-video" });
     job = repo.transition(job.id, job.revision, "submitting", { adapterBinding: binding });
     let submissions = 0;
     const adapter: VideoGenerationAdapter = {

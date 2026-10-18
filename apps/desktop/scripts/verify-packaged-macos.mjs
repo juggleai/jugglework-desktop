@@ -18,6 +18,7 @@ import { pathToFileURL } from "node:url";
 import { extractFile } from "@electron/asar";
 import { verifyJuggleWorkUiMcp } from "./verify-jugglework-ui-mcp.mjs";
 import { inspectArtifact } from "./qiniu-release/metadata.mjs";
+import { verifyToonFactoryBundle } from "../electron/toonFactoryBundle.mjs";
 
 const require = createRequire(import.meta.url);
 const { hasNotaryCredentials } = require("./macos-notary.cjs");
@@ -203,6 +204,19 @@ export function verifyCodeSignature(appPath) {
   return { identifier, teamIdentifier, hardenedRuntime: true };
 }
 
+export function verifyMacToonFactoryBundle(appPath, requestedArch) {
+  const root = path.join(appPath, "Contents", "Resources", "toonFactoryV2");
+  const bundle = verifyToonFactoryBundle(root, { platform: "darwin", arch: requestedArch });
+  const verify = spawnSync("codesign", ["--verify", "--strict", "--verbose=2", bundle.executablePath], { encoding: "utf8" });
+  if (verify.error) fail(`Unable to verify bundled Bun signature: ${verify.error.message}`);
+  if (verify.status !== 0) fail(`Bundled Bun signature verification failed: ${verify.stderr.trim()}`);
+  const details = spawnSync("codesign", ["--display", "--verbose=4", bundle.executablePath], { encoding: "utf8" });
+  if (details.error || details.status !== 0) fail(`Unable to inspect bundled Bun signature: ${details.error?.message || details.stderr.trim()}`);
+  const teamIdentifier = `${details.stdout}\n${details.stderr}`.match(/^TeamIdentifier=(.+)$/m)?.[1]?.trim();
+  if (!teamIdentifier) fail("Bundled Bun signature does not contain a TeamIdentifier");
+  return { ...bundle, executableSigned: true, teamIdentifier };
+}
+
 function commandAssessment(command, args) {
   const result = spawnSync(command, args, { encoding: "utf8" });
   return {
@@ -367,8 +381,9 @@ function verifyReleaseBundle(appPath, { expectedArch, expectedVersion }) {
   const metadata = verifyBundleMetadata(appPath, expectedVersion);
   const signature = verifyCodeSignature(appPath);
   const architecture = verifyMachOArchitectures(appPath, expectedArch);
+  const toonFactory = verifyMacToonFactoryBundle(appPath, expectedArch);
   if (metadata.bundleIdentifier !== signature.identifier) fail("Bundle metadata and signed identifier disagree");
-  return { architecture, metadata, signature };
+  return { architecture, metadata, signature, toonFactory };
 }
 
 export function verifyZipBundle(zipPath, expected) {
@@ -545,6 +560,7 @@ export async function main() {
   const metadata = verifyBundleMetadata(appPath, version || null);
   const updater = verifyPackagedUpdaterConfiguration(appPath);
   const signature = verifyCodeSignature(appPath);
+  const toonFactory = verifyMacToonFactoryBundle(appPath, requestedArch);
   const trust = verifyAppleTrust(appPath);
   const expectedContainer = { expectedArch: requestedArch, expectedVersion: version || null };
   const zip = zipPath ? verifyZipBundle(zipPath, expectedContainer) : null;
@@ -588,7 +604,7 @@ export async function main() {
     const outputPath = path.resolve(verificationOutput);
     writeFileSync(outputPath, `${JSON.stringify(localVerification, null, 2)}\n`, { encoding: "utf8", flag: "wx", mode: 0o600 });
   }
-  process.stdout.write(`${JSON.stringify({ ok: true, appPath, architecture, metadata, updater, signature, trust, zip, dmg, dmgTrust, verificationOutput: verificationOutput || null, localVerification, tray, nativeModules, uiControlMcp }, null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify({ ok: true, appPath, architecture, metadata, updater, signature, toonFactory, trust, zip, dmg, dmgTrust, verificationOutput: verificationOutput || null, localVerification, tray, nativeModules, uiControlMcp }, null, 2)}\n`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
