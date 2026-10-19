@@ -117,13 +117,17 @@ import {
   type DesktopAppRestrictionChecker,
 } from "../../../../app/cloud/desktop-app-restrictions";
 import {
+  assertCloudProviderAuthorityCurrent,
+  createKeyedSerialQueue,
   createKeyedSingleflight,
   createLatestSyncQueue,
+  StaleCloudProviderAuthorityError,
   shouldAdoptWorkspaceSnapshot,
 } from "./cloud-provider-sync-queue";
 
 const cloudProviderConnectionSingleflight =
   createKeyedSingleflight<string, DenOrgLlmProviderConnection>();
+const cloudProviderWorkspaceMutationQueue = createKeyedSerialQueue<string>();
 
 type ProviderReturnFocusTarget = "none" | "composer";
 type CloudProviderSyncReason =
@@ -1679,7 +1683,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
 
   async function connectCloudProviderInternal(
     cloudProviderId: string,
-    optionsArg?: { silent?: boolean },
+    optionsArg?: { silent?: boolean; authorityKey?: string },
   ) {
     if (!optionsArg?.silent) {
       setStateField("providerAuthError", null);
@@ -1695,6 +1699,12 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     if (!token || !orgId) {
       throw new Error("Sign in to JuggleWork Cloud and choose an organization first.");
     }
+    const authorityKey = optionsArg?.authorityKey ?? getCloudProviderAuthorityKey();
+    const assertCurrentAuthority = () => {
+      assertCloudProviderAuthorityCurrent(authorityKey, getCloudProviderAuthorityKey());
+    };
+    let staleCredentialProviderId: string | null = null;
+    let staleMirrorTarget: Awaited<ReturnType<typeof resolveJuggleWorkConfigTarget>> | null = null;
 
     try {
       const den = createDenClient({
@@ -1711,6 +1721,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         connectionKey,
         () => den.getOrgLlmProviderConnection(orgId, cloudProviderId),
       );
+      assertCurrentAuthority();
       assertProviderAllowedByDesktopPolicy(provider.providerId);
       const existingImported = state.importedCloudProviders[cloudProviderId] ?? null;
       const localProviderId = getCloudManagedProviderId(provider);
@@ -1724,6 +1735,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       }
 
       await assertCloudProviderImportSafe(provider);
+      assertCurrentAuthority();
 
       if (envEntries.length > 0) {
         const juggleworkClient = options.juggleworkServer.getSnapshot().juggleworkServerClient;
@@ -1735,12 +1747,17 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
           );
         }
         await juggleworkClient.upsertUserEnv(envEntries);
+        assertCurrentAuthority();
       }
       if (primaryApiKey) {
+        assertCurrentAuthority();
         await setProviderAuthCredentials(localProviderId, { type: "api", key: primaryApiKey });
+        staleCredentialProviderId = localProviderId;
+        assertCurrentAuthority();
         // Store a workspace/org/cloud-row owned mirror for server-side media
         // resolution. It is intentionally excluded from broad process injection.
         const mirrorTarget = await resolveJuggleWorkConfigTarget("write");
+        staleMirrorTarget = mirrorTarget;
         providerGatewayMirror = await writeGatewayMirror(
           mirrorTarget.juggleworkClient,
           mirrorTarget.juggleworkWorkspaceId ?? "",
@@ -1748,6 +1765,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
           cloudProviderId,
           primaryApiKey,
         );
+        assertCurrentAuthority();
         if (!providerGatewayMirror) {
           throw new Error("This JuggleWork server cannot securely own the cloud gateway credential. Update it and retry the import.");
         }
@@ -1781,6 +1799,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       // model metadata Den did not publish — the `lpr_*` key means the engine
       // will never resolve it on its own.
       const catalog = await loadDeploymentModelCatalog(settings.baseUrl);
+      assertCurrentAuthority();
       await patchRuntimeProviders(
         buildRuntimeProviderPatch(
           provider,
@@ -1789,6 +1808,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
           catalog,
         ),
       );
+      assertCurrentAuthority();
       await stripLegacyCloudProviderBlocks([existingImported?.providerId]);
       await removeCloudProviderDisabledState([
         localProviderId,
@@ -1801,12 +1821,31 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         [provider.id]: buildCloudImportedProvider(provider, Date.now(), orgId, providerGatewayMirror, catalog),
       };
       await persistImportedCloudProviders(nextImportedProviders);
+      assertCurrentAuthority();
 
       await refreshProviders({ dispose: true });
+      assertCurrentAuthority();
       refreshSnapshot();
       emitChange();
       return `${t("status.connected")} ${provider.name}`;
     } catch (error) {
+      if (error instanceof StaleCloudProviderAuthorityError) {
+        // The authority can change while an awaited credential write is in
+        // progress. This workspace mutation queue prevents the new account
+        // from committing until this task exits, so it is safe to roll back
+        // anything the stale task managed to write before yielding.
+        if (staleMirrorTarget) {
+          await removeGatewayMirror(
+            staleMirrorTarget.juggleworkClient,
+            staleMirrorTarget.juggleworkWorkspaceId ?? "",
+            cloudProviderId,
+          ).catch(() => undefined);
+        }
+        if (staleCredentialProviderId) {
+          await removeProviderAuthCredentials(staleCredentialProviderId).catch(() => undefined);
+        }
+        throw error;
+      }
       const message = describeProviderError(error, "Failed to connect organization provider.");
       if (!optionsArg?.silent) {
         setStateField("providerAuthError", message);
@@ -1816,7 +1855,11 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   }
 
   async function connectCloudProvider(cloudProviderId: string) {
-    return await connectCloudProviderInternal(cloudProviderId);
+    const workspaceKey = currentWorkspaceKey();
+    return await cloudProviderWorkspaceMutationQueue.run(workspaceKey, async () => {
+      const authorityKey = getCloudProviderAuthorityKey();
+      return await connectCloudProviderInternal(cloudProviderId, { authorityKey });
+    });
   }
 
   async function removeCloudProviderInternal(
@@ -1903,6 +1946,12 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       options.client() ? "connected" : "disconnected",
     ].join("::");
   };
+
+  const getCloudProviderAuthorityKey = () => [
+    getCloudProviderSyncContextKey(),
+    readDenUserId()?.trim() ?? "",
+    currentWorkspaceKey(),
+  ].join("::");
 
   const hasCloudProviderSyncPrerequisites = () => {
     const settings = readDenSettings();
@@ -2079,10 +2128,16 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     if (!target.canUseJuggleWorkServer || !target.juggleworkClient || !target.juggleworkWorkspaceId) {
       return false;
     }
+    const authorityKey = getCloudProviderAuthorityKey();
+    const assertCurrentAuthority = () => {
+      assertCloudProviderAuthorityCurrent(authorityKey, getCloudProviderAuthorityKey());
+    };
+    assertCurrentAuthority();
 
     let importedProviders: Record<string, CloudImportedProvider>;
     try {
       importedProviders = await refreshImportedCloudProviders({ strict: true });
+      assertCurrentAuthority();
     } catch (error) {
       logCloudProviderSyncError(reason, error);
       return false;
@@ -2105,12 +2160,14 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     });
     if (ownerAction === "purge") {
       await purgeWorkspaceCloudState();
+      assertCurrentAuthority();
       importedProviders = {};
     }
     if (ownerAction !== "keep") {
       writeWorkspaceCloudStateOwner(target.juggleworkWorkspaceId, currentOwnerId);
     }
     const liveProviders = await refreshCloudOrgProviders({ force: true });
+    assertCurrentAuthority();
     const liveProviderMap = new Map(liveProviders.map((provider) => [provider.id, provider]));
     // The import baseline only says that we *previously* wrote a cloud
     // provider. It is not proof that its runtime config block still exists:
@@ -2120,6 +2177,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     // Treat an unreadable engine list as unknown rather than re-importing on
     // a transient startup/network error.
     const engineProviderList = await refreshProviders().catch(() => null);
+    assertCurrentAuthority();
     const engineProviderIds = engineProviderList
       ? new Set((engineProviderList.all ?? []).map((provider) => provider.id))
       : null;
@@ -2155,9 +2213,10 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         // remove-then-reconnect dance could leave the block deleted if the
         // reconnect aborted on a stale in-memory connected-providers guard,
         // so the workspace kept the first-import snapshot forever (#2346).
-        await connectCloudProviderInternal(liveProvider.id, { silent: true });
+        await connectCloudProviderInternal(liveProvider.id, { silent: true, authorityKey });
         configChanged = true;
       } catch (error) {
+        if (error instanceof StaleCloudProviderAuthorityError) throw error;
         failures.push(logCloudProviderSyncError(reason, error));
       }
     }
@@ -2173,7 +2232,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       }
 
       try {
-        await connectCloudProviderInternal(liveProvider.id, { silent: true });
+        await connectCloudProviderInternal(liveProvider.id, { silent: true, authorityKey });
         configChanged = true;
         const firstModel = liveProvider.models[0] ?? null;
         newlyImported.push({
@@ -2184,6 +2243,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
           firstModelName: firstModel?.name ?? firstModel?.id,
         });
       } catch (error) {
+        if (error instanceof StaleCloudProviderAuthorityError) throw error;
         failures.push(logCloudProviderSyncError(reason, error));
       }
     }
@@ -2191,6 +2251,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     let reloadedProviderList: ProviderListResponse | null = null;
     if (configChanged) {
       reloadedProviderList = await refreshProviders({ dispose: true }).catch(() => null);
+      assertCurrentAuthority();
     }
 
     // Runs whether or not this pass changed anything: the import that needs
@@ -2219,9 +2280,11 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   const cloudProviderSyncQueue = createLatestSyncQueue<CloudProviderSyncReason>(
     async (reason) => {
       latestCloudProviderSyncSucceeded = false;
-      await performCloudProviderSync(reason).then((succeeded) => {
+      const workspaceKey = currentWorkspaceKey();
+      await cloudProviderWorkspaceMutationQueue.run(workspaceKey, () => performCloudProviderSync(reason)).then((succeeded) => {
         latestCloudProviderSyncSucceeded = succeeded;
       }).catch((error) => {
+        if (error instanceof StaleCloudProviderAuthorityError) return;
         const message = logCloudProviderSyncError(reason, error);
         if (reason === "settings_cloud_opened") {
           setStateField("providerAuthError", message);
@@ -2445,7 +2508,8 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
           void runCloudProviderSync("sign_in");
         } else {
           // Sign-out or error: this workspace keeps nothing from the session.
-          void purgeWorkspaceCloudState();
+          const workspaceKey = currentWorkspaceKey();
+          void cloudProviderWorkspaceMutationQueue.run(workspaceKey, purgeWorkspaceCloudState);
         }
       };
       window.addEventListener(
