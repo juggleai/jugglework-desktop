@@ -19,9 +19,9 @@ const MAX_EMPTY_STREAM_PROBE_BYTES = 128 * 1024;
 const TLS_RETRY_DELAY_MS = 150;
 const EMPTY_STREAM_RETRY_DELAYS_MS = [1_000, 3_000] as const;
 const EMPTY_STREAM_RETRY_HEADER = "x-jugglework-empty-stream-retry";
-const PROVIDER_RESPONSE_TIMEOUT_MS = 30_000;
-const PROVIDER_FIRST_BYTE_TIMEOUT_MS = 30_000;
-const PROVIDER_NO_PROGRESS_TIMEOUT_MS = 45_000;
+const PROVIDER_RESPONSE_TIMEOUT_MS = 60_000;
+const PROVIDER_FIRST_BYTE_TIMEOUT_MS = 60_000;
+const PROVIDER_NO_PROGRESS_TIMEOUT_MS = 120_000;
 
 type EmptyStreamRetryReason = "empty" | "response_timeout" | "first_byte_timeout" | "no_progress_timeout";
 
@@ -253,13 +253,38 @@ function responseWithBody(response: Response, body: ReadableStream<Uint8Array>):
 async function inspectEmptyProviderStream(
   response: Response,
   signal: AbortSignal | null,
+  abortAttempt: (reason?: unknown) => void,
 ): Promise<{ retry: boolean; reason?: EmptyStreamRetryReason; response?: Response }> {
   if (!response.ok || !response.body || !response.headers.get("content-type")?.toLowerCase().includes("text/event-stream")) {
     return { retry: false, response };
   }
 
-  const [probeBody, passThroughBody] = response.body.tee();
-  const reader = probeBody.getReader();
+  // Keep one owner of the network reader. Tee cancellation can leave the
+  // sibling alive during retries, and can deadlock while handing off output.
+  const reader = response.body.getReader();
+  const prefix: Uint8Array[] = [];
+  const handoff = () => {
+    let index = 0;
+    return responseWithBody(response, new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        if (index < prefix.length) {
+          controller.enqueue(prefix[index++]!);
+          return;
+        }
+        try {
+          const chunk = await reader.read();
+          if (chunk.done) controller.close();
+          else controller.enqueue(chunk.value);
+        } catch (error) {
+          controller.error(error);
+        }
+      },
+      async cancel(reason) {
+        abortAttempt(reason);
+        await reader.cancel(reason).catch(() => undefined);
+      },
+    }));
+  };
   const decoder = new TextDecoder();
   const state: StreamProbeState = {
     meaningful: false,
@@ -312,6 +337,7 @@ async function inspectEmptyProviderStream(
         break;
       }
       if (!value) continue;
+      prefix.push(value);
       if (!firstByteReceived && value.byteLength > 0) {
         firstByteReceived = true;
         progressDeadline = Date.now() + providerTimeoutMs(
@@ -328,17 +354,16 @@ async function inspectEmptyProviderStream(
         for (const frame of frames) inspectSseFrame(frame, state);
       }
       if (state.meaningful || state.ambiguous) {
-        // A tee branch's cancel promise does not settle until the sibling is
-        // consumed or cancelled. Awaiting it here deadlocks: OpenCode cannot
-        // consume passThroughBody until this function returns. Request probe
-        // cancellation, but hand the sibling to OpenCode immediately.
-        void reader.cancel().catch(() => undefined);
-        return { retry: false, response: responseWithBody(response, passThroughBody) };
+        return { retry: false, response: handoff() };
       }
     }
     if (buffered.trim()) inspectSseFrame(buffered, state);
   } catch (error) {
-    await Promise.allSettled([reader.cancel(), passThroughBody.cancel()]);
+    // Abort the actual fetch before releasing its body or starting a retry.
+    // Cancelling only a stream wrapper does not reliably stop every runtime's
+    // upstream transport. Use the caller's signal to distinguish user abort.
+    abortAttempt(error);
+    await reader.cancel(error).catch(() => undefined);
     if (error instanceof ProviderStreamTimeoutError && !signal?.aborted) {
       return { retry: true, reason: error.reason };
     }
@@ -349,16 +374,17 @@ async function inspectEmptyProviderStream(
     state.finishReasons.every((reason) => reason === "unknown" || reason === "other");
   const retry = !state.meaningful && !state.ambiguous && retryableFinish && (state.completionTokens ?? 0) === 0;
   if (retry) {
-    await passThroughBody.cancel().catch(() => undefined);
+    abortAttempt();
+    await reader.cancel().catch(() => undefined);
     return { retry: true, reason: "empty" };
   }
-  return { retry: false, response: responseWithBody(response, passThroughBody) };
+  return { retry: false, response: handoff() };
 }
 
 async function fetchProviderResponse(
   base: typeof fetch,
   request: Request,
-): Promise<{ response: Response; signal: AbortSignal }> {
+): Promise<{ response: Response; abort: (reason?: unknown) => void }> {
   const timeoutController = new AbortController();
   const combinedSignal = AbortSignal.any([request.signal, timeoutController.signal]);
   const timeoutMs = providerTimeoutMs("JUGGLEWORK_PROVIDER_RESPONSE_TIMEOUT_MS", PROVIDER_RESPONSE_TIMEOUT_MS);
@@ -368,7 +394,7 @@ async function fetchProviderResponse(
   );
   try {
     const response = await fetchWithTransientTlsRetry(base, new Request(request.clone(), { signal: combinedSignal }));
-    return { response, signal: combinedSignal };
+    return { response, abort: (reason) => timeoutController.abort(reason) };
   } catch (error) {
     if (timeoutController.signal.aborted && !request.signal.aborted) {
       throw new ProviderStreamTimeoutError("response_timeout");
@@ -436,7 +462,7 @@ async function fetchWithEmptyStreamRetry(
     let inspected: Awaited<ReturnType<typeof inspectEmptyProviderStream>>;
     try {
       const provider = await fetchProviderResponse(base, marked.request);
-      inspected = await inspectEmptyProviderStream(provider.response, provider.signal);
+      inspected = await inspectEmptyProviderStream(provider.response, marked.signal, provider.abort);
     } catch (error) {
       if (!(error instanceof ProviderStreamTimeoutError) || marked.signal?.aborted) throw error;
       inspected = { retry: true, reason: error.reason };
@@ -449,7 +475,7 @@ async function fetchWithEmptyStreamRetry(
     if (attempt === EMPTY_STREAM_RETRY_DELAYS_MS.length) {
       const message = lastReason === "empty"
         ? `Provider returned an empty response after ${attempt + 1} attempts.`
-        : `Provider stream timed out before producing output after ${attempt + 1} attempts.`;
+        : `Provider stream timed out before producing output after ${attempt + 1} attempts (${lastReason}).`;
       throw new Error(message);
     }
     console.warn("JuggleWork provider stream produced no output; retrying", {
