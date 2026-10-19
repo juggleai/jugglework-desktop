@@ -7,9 +7,12 @@ let responseQueue: Response[] = [];
 let nextError: unknown = null;
 let fetchCalls = 0;
 let receivedHeaders: Headers[] = [];
+let fetchHandler: ((request: Request) => Promise<Response>) | null = null;
 const fakeBase = Object.assign(async (input: Parameters<typeof fetch>[0], init?: RequestInit): Promise<Response> => {
   fetchCalls += 1;
-  receivedHeaders.push(new Request(input, init).headers);
+  const request = new Request(input, init);
+  receivedHeaders.push(request.headers);
+  if (fetchHandler) return fetchHandler(request);
   if (nextError) {
     const error = nextError;
     nextError = null;
@@ -190,6 +193,137 @@ describe("JuggleWorkContextOverflow fetch patch", () => {
     expect(fetchCalls).toBe(1);
     expect(await response.text()).toBe(chunks.join(""));
   });
+
+  test("returns a meaningful stream before its upstream connection closes", async () => {
+    fetchCalls = 0;
+    responseQueue = [];
+    const encoder = new TextEncoder();
+    let upstreamCancelled = false;
+    nextResponse = new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode(
+          'data: {"choices":[{"index":0,"delta":{"content":"streaming"},"finish_reason":null}]}\n\n',
+        ));
+        // Deliberately leave the provider connection open. A streaming fetch
+        // must return as soon as meaningful output exists, not at stream EOF.
+      },
+      cancel() {
+        upstreamCancelled = true;
+      },
+    }), { headers: { "content-type": "text/event-stream" } });
+
+    const response = await patchedFetch("https://provider.test/v1/chat/completions", {
+      method: "POST",
+      headers: { "x-jugglework-empty-stream-retry": "1" },
+      body: JSON.stringify({ stream: true }),
+    });
+    const reader = response.body!.getReader();
+    const first = await reader.read();
+    expect(new TextDecoder().decode(first.value)).toContain("streaming");
+    await reader.cancel();
+    expect(fetchCalls).toBe(1);
+    expect(upstreamCancelled).toBe(true);
+  }, 2_000);
+
+  test("retries when the provider sends no first byte before the deadline", async () => {
+    fetchCalls = 0;
+    fetchHandler = null;
+    process.env.JUGGLEWORK_PROVIDER_FIRST_BYTE_TIMEOUT_MS = "20";
+    const hanging = new Response(new ReadableStream<Uint8Array>({}), {
+      headers: { "content-type": "text/event-stream" },
+    });
+    const recoveredBody = 'data: {"choices":[{"index":0,"delta":{"content":"recovered"},"finish_reason":null}]}\n\ndata: [DONE]\n\n';
+    responseQueue = [hanging, new Response(recoveredBody, { headers: { "content-type": "text/event-stream" } })];
+    try {
+      const response = await patchedFetch("https://provider.test/v1/chat/completions", {
+        method: "POST",
+        headers: { "x-jugglework-empty-stream-retry": "1" },
+        body: JSON.stringify({ stream: true }),
+      });
+      expect(fetchCalls).toBe(2);
+      expect(await response.text()).toBe(recoveredBody);
+    } finally {
+      delete process.env.JUGGLEWORK_PROVIDER_FIRST_BYTE_TIMEOUT_MS;
+    }
+  }, 10_000);
+
+  test("retries when metadata heartbeats never produce model output", async () => {
+    fetchCalls = 0;
+    fetchHandler = null;
+    process.env.JUGGLEWORK_PROVIDER_FIRST_BYTE_TIMEOUT_MS = "20";
+    process.env.JUGGLEWORK_PROVIDER_NO_PROGRESS_TIMEOUT_MS = "30";
+    const encoder = new TextEncoder();
+    let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+    const heartbeat = new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode(": connected\n\n"));
+        heartbeatTimer = setInterval(() => controller.enqueue(encoder.encode(": keepalive\n\n")), 5);
+      },
+      cancel() {
+        if (heartbeatTimer) clearInterval(heartbeatTimer);
+      },
+    }), { headers: { "content-type": "text/event-stream" } });
+    const recoveredBody = 'data: {"choices":[{"index":0,"delta":{"content":"after heartbeat"},"finish_reason":null}]}\n\ndata: [DONE]\n\n';
+    responseQueue = [heartbeat, new Response(recoveredBody, { headers: { "content-type": "text/event-stream" } })];
+    try {
+      const response = await patchedFetch("https://provider.test/v1/chat/completions", {
+        method: "POST",
+        headers: { "x-jugglework-empty-stream-retry": "1" },
+        body: JSON.stringify({ stream: true }),
+      });
+      expect(fetchCalls).toBe(2);
+      expect(await response.text()).toBe(recoveredBody);
+    } finally {
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
+      delete process.env.JUGGLEWORK_PROVIDER_FIRST_BYTE_TIMEOUT_MS;
+      delete process.env.JUGGLEWORK_PROVIDER_NO_PROGRESS_TIMEOUT_MS;
+    }
+  }, 10_000);
+
+  test("retries when response headers never arrive", async () => {
+    fetchCalls = 0;
+    process.env.JUGGLEWORK_PROVIDER_RESPONSE_TIMEOUT_MS = "20";
+    let attempt = 0;
+    const recoveredBody = 'data: {"choices":[{"index":0,"delta":{"content":"headers recovered"},"finish_reason":null}]}\n\ndata: [DONE]\n\n';
+    fetchHandler = async (request) => {
+      attempt += 1;
+      if (attempt > 1) return new Response(recoveredBody, { headers: { "content-type": "text/event-stream" } });
+      return await new Promise<Response>((_resolve, reject) => {
+        request.signal.addEventListener("abort", () => reject(request.signal.reason), { once: true });
+      });
+    };
+    try {
+      const response = await patchedFetch("https://provider.test/v1/chat/completions", {
+        method: "POST",
+        headers: { "x-jugglework-empty-stream-retry": "1" },
+        body: JSON.stringify({ stream: true }),
+      });
+      expect(fetchCalls).toBe(2);
+      expect(await response.text()).toBe(recoveredBody);
+    } finally {
+      fetchHandler = null;
+      delete process.env.JUGGLEWORK_PROVIDER_RESPONSE_TIMEOUT_MS;
+    }
+  }, 10_000);
+
+  test("fails clearly after response-header timeouts exhaust all attempts", async () => {
+    fetchCalls = 0;
+    process.env.JUGGLEWORK_PROVIDER_RESPONSE_TIMEOUT_MS = "10";
+    fetchHandler = async (request) => await new Promise<Response>((_resolve, reject) => {
+      request.signal.addEventListener("abort", () => reject(request.signal.reason), { once: true });
+    });
+    try {
+      await expect(patchedFetch("https://provider.test/v1/chat/completions", {
+        method: "POST",
+        headers: { "x-jugglework-empty-stream-retry": "1" },
+        body: JSON.stringify({ stream: true }),
+      })).rejects.toThrow("Provider stream timed out before producing output after 3 attempts.");
+      expect(fetchCalls).toBe(3);
+    } finally {
+      fetchHandler = null;
+      delete process.env.JUGGLEWORK_PROVIDER_RESPONSE_TIMEOUT_MS;
+    }
+  }, 10_000);
 
   test("marks only lpr providers for empty-stream retry", async () => {
     const hooks = await JuggleWorkContextOverflow() as {

@@ -19,6 +19,11 @@ const MAX_EMPTY_STREAM_PROBE_BYTES = 128 * 1024;
 const TLS_RETRY_DELAY_MS = 150;
 const EMPTY_STREAM_RETRY_DELAYS_MS = [1_000, 3_000] as const;
 const EMPTY_STREAM_RETRY_HEADER = "x-jugglework-empty-stream-retry";
+const PROVIDER_RESPONSE_TIMEOUT_MS = 30_000;
+const PROVIDER_FIRST_BYTE_TIMEOUT_MS = 30_000;
+const PROVIDER_NO_PROGRESS_TIMEOUT_MS = 45_000;
+
+type EmptyStreamRetryReason = "empty" | "response_timeout" | "first_byte_timeout" | "no_progress_timeout";
 
 type StreamProbeState = {
   meaningful: boolean;
@@ -26,6 +31,20 @@ type StreamProbeState = {
   completionTokens: number | null;
   finishReasons: string[];
 };
+
+class ProviderStreamTimeoutError extends Error {
+  constructor(public readonly reason: Exclude<EmptyStreamRetryReason, "empty">) {
+    super(reason);
+    this.name = "ProviderStreamTimeoutError";
+  }
+}
+
+function providerTimeoutMs(name: string, fallback: number): number {
+  const configured = Number(process.env[name]);
+  return Number.isFinite(configured) && configured >= 10 && configured <= 10 * 60_000
+    ? Math.floor(configured)
+    : fallback;
+}
 
 function errorRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" ? value as Record<string, unknown> : null;
@@ -234,7 +253,7 @@ function responseWithBody(response: Response, body: ReadableStream<Uint8Array>):
 async function inspectEmptyProviderStream(
   response: Response,
   signal: AbortSignal | null,
-): Promise<{ retry: boolean; response?: Response }> {
+): Promise<{ retry: boolean; reason?: EmptyStreamRetryReason; response?: Response }> {
   if (!response.ok || !response.body || !response.headers.get("content-type")?.toLowerCase().includes("text/event-stream")) {
     return { retry: false, response };
   }
@@ -250,14 +269,55 @@ async function inspectEmptyProviderStream(
   };
   let buffered = "";
   let observedBytes = 0;
+  let firstByteReceived = false;
+  let progressDeadline = Date.now() + providerTimeoutMs(
+    "JUGGLEWORK_PROVIDER_FIRST_BYTE_TIMEOUT_MS",
+    PROVIDER_FIRST_BYTE_TIMEOUT_MS,
+  );
+
+  const readBeforeDeadline = async (): Promise<{ done: boolean; value?: Uint8Array }> => {
+    const timeoutMs = Math.max(0, progressDeadline - Date.now());
+    const timeoutReason = firstByteReceived ? "no_progress_timeout" : "first_byte_timeout";
+    return await new Promise<{ done: boolean; value?: Uint8Array }>((resolve, reject) => {
+      let settled = false;
+      const cleanup = () => {
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
+      };
+      const settle = (work: () => void) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        work();
+      };
+      const onAbort = () => settle(() => reject(signal?.reason ?? new DOMException("The operation was aborted", "AbortError")));
+      const timer = setTimeout(
+        () => settle(() => reject(new ProviderStreamTimeoutError(timeoutReason))),
+        timeoutMs,
+      );
+      signal?.addEventListener("abort", onAbort, { once: true });
+      reader.read().then(
+        (result) => settle(() => resolve(result)),
+        (error) => settle(() => reject(error)),
+      );
+    });
+  };
 
   try {
     while (true) {
       if (signal?.aborted) throw signal.reason ?? new DOMException("The operation was aborted", "AbortError");
-      const { done, value } = await reader.read();
+      const { done, value } = await readBeforeDeadline();
       if (done) {
         buffered += decoder.decode();
         break;
+      }
+      if (!value) continue;
+      if (!firstByteReceived && value.byteLength > 0) {
+        firstByteReceived = true;
+        progressDeadline = Date.now() + providerTimeoutMs(
+          "JUGGLEWORK_PROVIDER_NO_PROGRESS_TIMEOUT_MS",
+          PROVIDER_NO_PROGRESS_TIMEOUT_MS,
+        );
       }
       observedBytes += value.byteLength;
       if (observedBytes > MAX_EMPTY_STREAM_PROBE_BYTES) state.ambiguous = true;
@@ -268,13 +328,20 @@ async function inspectEmptyProviderStream(
         for (const frame of frames) inspectSseFrame(frame, state);
       }
       if (state.meaningful || state.ambiguous) {
-        await reader.cancel().catch(() => undefined);
+        // A tee branch's cancel promise does not settle until the sibling is
+        // consumed or cancelled. Awaiting it here deadlocks: OpenCode cannot
+        // consume passThroughBody until this function returns. Request probe
+        // cancellation, but hand the sibling to OpenCode immediately.
+        void reader.cancel().catch(() => undefined);
         return { retry: false, response: responseWithBody(response, passThroughBody) };
       }
     }
     if (buffered.trim()) inspectSseFrame(buffered, state);
   } catch (error) {
     await Promise.allSettled([reader.cancel(), passThroughBody.cancel()]);
+    if (error instanceof ProviderStreamTimeoutError && !signal?.aborted) {
+      return { retry: true, reason: error.reason };
+    }
     throw error;
   }
 
@@ -283,9 +350,33 @@ async function inspectEmptyProviderStream(
   const retry = !state.meaningful && !state.ambiguous && retryableFinish && (state.completionTokens ?? 0) === 0;
   if (retry) {
     await passThroughBody.cancel().catch(() => undefined);
-    return { retry: true };
+    return { retry: true, reason: "empty" };
   }
   return { retry: false, response: responseWithBody(response, passThroughBody) };
+}
+
+async function fetchProviderResponse(
+  base: typeof fetch,
+  request: Request,
+): Promise<{ response: Response; signal: AbortSignal }> {
+  const timeoutController = new AbortController();
+  const combinedSignal = AbortSignal.any([request.signal, timeoutController.signal]);
+  const timeoutMs = providerTimeoutMs("JUGGLEWORK_PROVIDER_RESPONSE_TIMEOUT_MS", PROVIDER_RESPONSE_TIMEOUT_MS);
+  const timer = setTimeout(
+    () => timeoutController.abort(new ProviderStreamTimeoutError("response_timeout")),
+    timeoutMs,
+  );
+  try {
+    const response = await fetchWithTransientTlsRetry(base, new Request(request.clone(), { signal: combinedSignal }));
+    return { response, signal: combinedSignal };
+  } catch (error) {
+    if (timeoutController.signal.aborted && !request.signal.aborted) {
+      throw new ProviderStreamTimeoutError("response_timeout");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function waitForRetry(delayMs: number, signal: AbortSignal | null): Promise<void> {
@@ -340,17 +431,32 @@ async function fetchWithEmptyStreamRetry(
   // sanitized before dispatch, but is deliberately not retried.
   if (!marked.stream) return fetchWithTransientTlsRetry(base, marked.request.clone());
 
+  let lastReason: EmptyStreamRetryReason = "empty";
   for (let attempt = 0; attempt <= EMPTY_STREAM_RETRY_DELAYS_MS.length; attempt += 1) {
-    const response = await fetchWithTransientTlsRetry(base, marked.request.clone());
-    const inspected = await inspectEmptyProviderStream(response, marked.signal);
-    if (!inspected.retry) return inspected.response ?? response;
-    if (attempt === EMPTY_STREAM_RETRY_DELAYS_MS.length) {
-      throw new Error(`Provider returned an empty response after ${attempt + 1} attempts.`);
+    let inspected: Awaited<ReturnType<typeof inspectEmptyProviderStream>>;
+    try {
+      const provider = await fetchProviderResponse(base, marked.request);
+      inspected = await inspectEmptyProviderStream(provider.response, provider.signal);
+    } catch (error) {
+      if (!(error instanceof ProviderStreamTimeoutError) || marked.signal?.aborted) throw error;
+      inspected = { retry: true, reason: error.reason };
     }
-    console.warn("JuggleWork provider returned an empty stream; retrying", {
+    if (!inspected.retry) {
+      if (!inspected.response) throw new Error("Provider stream inspection returned no response.");
+      return inspected.response;
+    }
+    lastReason = inspected.reason ?? "empty";
+    if (attempt === EMPTY_STREAM_RETRY_DELAYS_MS.length) {
+      const message = lastReason === "empty"
+        ? `Provider returned an empty response after ${attempt + 1} attempts.`
+        : `Provider stream timed out before producing output after ${attempt + 1} attempts.`;
+      throw new Error(message);
+    }
+    console.warn("JuggleWork provider stream produced no output; retrying", {
       host: sanitizedHost(marked.request),
       attempt: attempt + 1,
       maxAttempts: EMPTY_STREAM_RETRY_DELAYS_MS.length,
+      reason: lastReason,
     });
     await waitForRetry(EMPTY_STREAM_RETRY_DELAYS_MS[attempt]!, marked.signal);
   }
