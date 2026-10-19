@@ -466,6 +466,7 @@ describe("authoritative session mutation APIs", () => {
     const engine = startMockOpencode();
     const harness = await startHarness(engine.server.port);
     engine.statuses.set("ses_queue", { type: "idle" });
+    engine.messages.set("ses_queue", [{ info: { id: "msg_queue_first", role: "assistant", finish: "stop", time: { created: Number.MAX_SAFE_INTEGER, completed: Number.MAX_SAFE_INTEGER } }, parts: [] }]);
     const started = await fetch(`${runPath(harness.base, "ses_queue")}/start`, {
       method: "POST", headers: harness.collaboratorHeaders,
       body: JSON.stringify({ origin: "remote-control", startCommandCorrelationId: "cmd_running", prompt: { parts: [{ type: "text", text: "Current" }] } }),
@@ -502,6 +503,7 @@ describe("authoritative session mutation APIs", () => {
 
     const active = await fetch(`${harness.base}/workspace/ws_1/session-runs`, { headers: harness.collaboratorHeaders });
     const promotedRun = (await active.json() as { items: Array<{ runId: string }> }).items[0]!;
+    engine.messages.set("ses_queue", [{ info: { id: "msg_queue_second", role: "assistant", finish: "stop", time: { created: Number.MAX_SAFE_INTEGER, completed: Number.MAX_SAFE_INTEGER } }, parts: [] }]);
     await fetch(`${runPath(harness.base, "ses_queue")}/${promotedRun.runId}/observations`, {
       method: "POST", headers: harness.collaboratorHeaders, body: JSON.stringify({ status: "completed" }),
     });
@@ -863,6 +865,7 @@ describe("authoritative session mutation APIs", () => {
 
     const active = (await first.json() as { run: { runId: string } }).run;
     engine.statuses.set("ses_language_failure", { type: "idle" });
+    engine.messages.set("ses_language_failure", [{ info: { id: "msg_language", role: "assistant", finish: "stop", time: { created: Date.now(), completed: Date.now() } }, parts: [] }]);
     await fetch(`${runPath(harness.base, "ses_language_failure")}/${active.runId}/observations`, {
       method: "POST",
       headers: harness.collaboratorHeaders,
@@ -1211,6 +1214,7 @@ describe("authoritative session mutation APIs", () => {
     });
     await expect(prematureIdle.json()).resolves.toMatchObject({ cleared: false, run: { observedActive: false } });
 
+    engine.messages.set("ses_fence", [{ info: { id: "msg_fence", role: "assistant", finish: "stop", time: { created: Date.now(), completed: Date.now() } }, parts: [] }]);
     const terminal = await fetch(`${runPath(harness.base, "ses_fence")}/${first.runId}/observations`, {
       method: "POST",
       headers: harness.collaboratorHeaders,
@@ -1230,7 +1234,7 @@ describe("authoritative session mutation APIs", () => {
     await expect(active.json()).resolves.toMatchObject({ items: [{ runId: second.runId }] });
   });
 
-  test("a new start self-heals an accepted run whose active event was missed", async () => {
+  test("a new start remains fenced when an accepted run has no final assistant", async () => {
     const engine = startMockOpencode();
     const harness = await startHarness(engine.server.port);
     const firstResponse = await fetch(`${runPath(harness.base, "ses_self_heal")}/start`, {
@@ -1261,15 +1265,13 @@ describe("authoritative session mutation APIs", () => {
         prompt: { parts: [{ type: "text", text: "Second" }] },
       }),
     });
-    expect(secondResponse.status).toBe(202);
-    await expect(secondResponse.json()).resolves.toMatchObject({
-      run: { generation: 2, startCommandCorrelationId: "cmd_second" },
-    });
-    expect(engine.prompts.map((item) => item.sessionId)).toEqual(["ses_self_heal", "ses_self_heal"]);
+    expect(secondResponse.status).toBe(409);
+    await expect(secondResponse.json()).resolves.toMatchObject({ code: "session_busy" });
+    expect(engine.prompts.map((item) => item.sessionId)).toEqual(["ses_self_heal"]);
     expect(engine.statusRequests.length).toBeGreaterThanOrEqual(3);
   });
 
-  test("active-run reads eventually reconcile an accepted run against authoritative idle", async () => {
+  test("active-run reads retain an accepted run without a final assistant", async () => {
     const engine = startMockOpencode();
     const harness = await startHarness(engine.server.port);
     const started = await fetch(`${runPath(harness.base, "ses_list_reconcile")}/start`, {
@@ -1287,7 +1289,7 @@ describe("authoritative session mutation APIs", () => {
     await expect(first.json()).resolves.toMatchObject({ items: [{ sessionId: "ses_list_reconcile" }] });
     await new Promise((resolve) => setTimeout(resolve, 510));
     const second = await fetch(`${harness.base}/workspace/ws_1/session-runs`, { headers: harness.collaboratorHeaders });
-    await expect(second.json()).resolves.toEqual({ items: [] });
+    await expect(second.json()).resolves.toMatchObject({ items: [{ sessionId: "ses_list_reconcile" }] });
   });
 
   test("startup idle and an old stop cannot complete a new run before its final assistant", async () => {
@@ -1363,6 +1365,7 @@ describe("authoritative session mutation APIs", () => {
     await expect(active.json()).resolves.toMatchObject({ items: [{ sessionId: "ses_parent" }] });
 
     engine.statuses.set("ses_grandchild", { type: "idle" });
+    engine.messages.set("ses_parent", [{ info: { id: "msg_parent", role: "assistant", finish: "stop", time: { created: Date.now(), completed: Date.now() } }, parts: [] }]);
     await fetch(`${harness.base}/workspace/ws_1/session-runs`, { headers: harness.collaboratorHeaders });
     await new Promise((resolve) => setTimeout(resolve, 510));
     const terminal = await fetch(`${harness.base}/workspace/ws_1/session-runs`, { headers: harness.collaboratorHeaders });
@@ -1391,6 +1394,7 @@ describe("authoritative session mutation APIs", () => {
     await expect(blocked.json()).resolves.toMatchObject({ code: "engine_reload_blocked_active_runs" });
     expect(engine.disposes).toEqual([]);
 
+    engine.messages.set("ses_reload_gate", [{ info: { id: "msg_reload", role: "assistant", finish: "stop", time: { created: Date.now(), completed: Date.now() } }, parts: [] }]);
     const terminal = await fetch(`${runPath(harness.base, "ses_reload_gate")}/${run.runId}/observations`, {
       method: "POST",
       headers: harness.collaboratorHeaders,
