@@ -47,6 +47,22 @@ interface ResourceManifest {
   sha256: string;
 }
 
+const GIT_LFS_POINTER_PREFIX = "version https://git-lfs.github.com/spec/v1";
+
+async function assertNativeBinaryAvailable(path: string): Promise<void> {
+  const info = await stat(path);
+  if (!info.isFile()) throw new Error("Office 本地资源不完整");
+  // A Git LFS pointer is a small text file that still passes stat().isFile().
+  // Detect it before advertising Office as available so dev checkouts get an
+  // actionable setup error instead of a generic hash failure on first open.
+  if (info.size <= 1024) {
+    const content = await readFile(path, "utf8").catch(() => "");
+    if (content.startsWith(GIT_LFS_POINTER_PREFIX)) {
+      throw new Error("Office SDK 尚未通过 Git LFS 完整检出，请运行 git lfs pull");
+    }
+  }
+}
+
 /** Server 独占的本地引擎适配器，只加载显式本地资源，不安装或下载 SDK。 */
 export class OfficeEngine {
   private native: NativeService | null = null;
@@ -114,10 +130,10 @@ export class OfficeEngine {
       );
       if (marker.trim() !== manifest.engineVersion)
         throw new Error("Office 引擎配套版本不一致");
-      if (
-        !(await stat(join(this.resourceDirectory, manifest.binary))).isFile() ||
-        !(await stat(join(this.resourceDirectory, manifest.wrapper))).isFile()
-      )
+      await assertNativeBinaryAvailable(
+        join(this.resourceDirectory, manifest.binary),
+      );
+      if (!(await stat(join(this.resourceDirectory, manifest.wrapper))).isFile())
         throw new Error("Office 本地资源不完整");
       this.manifest = manifest;
       return {

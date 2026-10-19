@@ -103,6 +103,53 @@ test("真实静默进程无需打印或追加注册，宿主自动收集中文�
   );
 });
 
+test("声明生成目录内的相对输出不会重复登记为缺失文件", async () => {
+  const { service, host } = await harness();
+  const result = (await generateArtifactFiles(
+    {
+      program: process.execPath,
+      args: ["-e", 'require("node:fs").writeFileSync("报告.docx", "saved");'],
+      outputs: ["./报告.docx"],
+    },
+    { ask: async () => {} },
+    host,
+  )) as {
+    ok: boolean;
+    generationId: string;
+    delivery: { files: unknown[]; targets: Array<{ path?: string; status: string }> };
+  };
+
+  expect(result.ok).toBe(true);
+  expect(result.delivery.files).toHaveLength(1);
+  expect(result.delivery.targets).toHaveLength(2);
+  expect(result.delivery.targets.every((target) => target.status === "ready")).toBe(true);
+  expect(result.delivery.targets.filter((target) => target.path === "./报告.docx")).toHaveLength(0);
+  expect((await service.list("ws_1", "ses_1")).turns[0]?.items).toHaveLength(1);
+});
+
+test("生成目录之外的声明输出仍作为独立路径校验", async () => {
+  const { host } = await harness();
+  const result = (await generateArtifactFiles(
+    {
+      program: process.execPath,
+      args: ["-e", 'require("node:fs").writeFileSync("报告.docx", "saved");'],
+      outputs: ["artifacts/final/报告.docx"],
+    },
+    { ask: async () => {} },
+    host,
+  )) as {
+    ok: boolean;
+    delivery: { files: unknown[]; targets: Array<{ path?: string; status: string }> };
+  };
+
+  expect(result.ok).toBe(false);
+  expect(result.delivery.files).toHaveLength(1);
+  expect(result.delivery.targets).toContainEqual(expect.objectContaining({
+    path: "artifacts/final/报告.docx",
+    status: "failed",
+  }));
+});
+
 test("拒绝权限或缺少权限上下文时，不分配目录、不执行程序", async () => {
   let allocated = false;
   const host = {

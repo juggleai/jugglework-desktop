@@ -97,3 +97,51 @@ test("其他平台或不匹配的配套版本不会启用编辑", async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("Git LFS 指针不会被误报为可用的 Office 原生资源", async () => {
+  const root = await mkdtemp(join(tmpdir(), "office-lfs-pointer-"));
+  const platform = `${process.platform}-${process.arch}`;
+  try {
+    await mkdir(join(root, platform), { recursive: true });
+    await mkdir(join(root, "wrapper/lib/common"), { recursive: true });
+    await writeFile(join(root, platform, ".editor-sdk-version"), "0.0.0.499");
+    await writeFile(
+      join(root, platform, "editor_sdk"),
+      [
+        "version https://git-lfs.github.com/spec/v1",
+        `oid sha256:${"a".repeat(64)}`,
+        "size 227697760",
+        "",
+      ].join("\n"),
+    );
+    await writeFile(
+      join(root, "wrapper/lib/common/office-docs-service.js"),
+      "fixture",
+    );
+    await writeFile(
+      join(root, platform, "version.json"),
+      JSON.stringify({
+        schema: 1,
+        platform,
+        wrapperVersion: "0.2.196-office.1",
+        engineVersion: "0.0.0.499",
+        binary: `${platform}/editor_sdk`,
+        wrapper: "wrapper/lib/common/office-docs-service.js",
+        sha256: "a".repeat(64),
+      }),
+    );
+
+    const engine = new OfficeEngine({
+      resourceDirectory: root,
+      logDirectory: join(root, "logs"),
+    });
+    expect(await engine.capabilities()).toEqual({
+      available: false,
+      formats: [],
+      reason: "Office SDK 尚未通过 Git LFS 完整检出，请运行 git lfs pull",
+    });
+    await expect(engine.ensureStarted()).rejects.toThrow("git lfs pull");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

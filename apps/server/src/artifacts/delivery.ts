@@ -319,17 +319,18 @@ export class FileDeliveryService {
       );
       return this.list(workspaceId, sessionId);
     }
-    const paths = [...(target.outputs ?? [])];
+    const declaredPaths = [...(target.outputs ?? [])];
+    const generatedPaths: string[] = [];
     const workspace = this.options.workspace(workspaceId);
     const walk = async (directory: string): Promise<void> => {
       for (const entry of await readdir(join(workspace.path, directory), {
         withFileTypes: true,
       })) {
-        if (paths.length >= 2000)
+        if (generatedPaths.length >= 2000)
           throw new Error("生成文件过多，请缩小输出范围");
         const path = `${directory}/${entry.name}`;
         if (entry.isDirectory()) await walk(path);
-        else if (entry.isFile()) paths.push(path);
+        else if (entry.isFile()) generatedPaths.push(path);
       }
     };
     try {
@@ -343,7 +344,25 @@ export class FileDeliveryService {
       );
       return this.list(workspaceId, sessionId);
     }
-    const uniquePaths = [...new Set(paths)];
+    const normalizedOutput = (value: string) =>
+      value.replace(/\\/g, "/").replace(/^\.\//, "");
+    const generatedRelativePaths = new Set(
+      generatedPaths.map((path) => {
+        const prefix = `${target.outputDirectory}/`;
+        return normalizedOutput(path).startsWith(prefix)
+          ? normalizedOutput(path).slice(prefix.length)
+          : normalizedOutput(path);
+      }),
+    );
+    // Programs run inside the dedicated generation directory. A declared
+    // output such as "report.docx" therefore names the same file as the
+    // automatically collected "artifacts/generated/<id>/report.docx". Do not
+    // create a second failed target for that alias; declarations elsewhere in
+    // the workspace remain independent and are still validated explicitly.
+    const externalDeclaredPaths = declaredPaths.filter(
+      (path) => !generatedRelativePaths.has(normalizedOutput(path)),
+    );
+    const uniquePaths = [...new Set([...externalDeclaredPaths, ...generatedPaths])];
     if (!uniquePaths.length) {
       registry.fail(origin, generationId, "未找到交付文件", false);
       return this.list(workspaceId, sessionId);
