@@ -178,7 +178,6 @@ function startMockOpencode() {
     statuses,
     messages,
     sessions,
-    messages,
     heldPrompts,
     heldMessageIds,
     heldAborts,
@@ -1297,7 +1296,7 @@ describe("authoritative session mutation APIs", () => {
     const harness = await startHarness(engine.server.port);
     const sessionId = "ses_startup_race";
     engine.messages.set(sessionId, [{ info: {
-      role: "assistant", finish: "stop", time: { created: 1, completed: 2 },
+      id: "msg_startup_old", role: "assistant", finish: "stop", time: { created: 1, completed: 2 },
     }, parts: [] }]);
     const started = await fetch(`${runPath(harness.base, sessionId)}/start`, {
       method: "POST", headers: harness.collaboratorHeaders,
@@ -1314,11 +1313,11 @@ describe("authoritative session mutation APIs", () => {
     await new Promise((resolve) => setTimeout(resolve, 510));
     await expect((await observe("completed")).json()).resolves.toMatchObject({ cleared: false });
     engine.messages.set(sessionId, [{ info: {
-      role: "assistant", finish: "tool-calls", time: { created: Date.now(), completed: Date.now() },
+      id: "msg_startup_tool", role: "assistant", finish: "tool-calls", time: { created: Date.now(), completed: Date.now() },
     }, parts: [] }]);
     await expect((await observe("idle")).json()).resolves.toMatchObject({ cleared: false });
     engine.messages.set(sessionId, [{ info: {
-      role: "assistant", finish: "stop", time: { created: Date.now(), completed: Date.now() },
+      id: "msg_startup_final", role: "assistant", finish: "stop", time: { created: Date.now(), completed: Date.now() },
     }, parts: [] }]);
     await expect((await observe("idle")).json()).resolves.toMatchObject({ cleared: false });
     await new Promise((resolve) => setTimeout(resolve, 510));

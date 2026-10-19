@@ -16,7 +16,11 @@ assert.equal(typeof desktopRemoteOperationResultSchema?.parse, "function");
 
 console.log(`Electron runtime contract resolved to ${contractUrl}`);
 
-const serverUrl = new URL("../server/dist/embedded.js", import.meta.url).href;
+// Development builds apps/server/dist, not the electron-builder staging copy.
+// Packaging deliberately defaults to the staged copy to expose missing deps.
+const serverUrl = new URL(process.argv.includes("--dev")
+  ? "../../server/dist/embedded.js"
+  : "../server/dist/embedded.js", import.meta.url).href;
 const { startEmbeddedServer } = await import(serverUrl);
 assert.equal(typeof startEmbeddedServer, "function");
 console.log(`Electron embedded Server imports resolved from ${serverUrl}`);

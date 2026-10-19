@@ -71,3 +71,15 @@ A clean checkout SHALL build the pinned Toonflow module without pre-existing nes
 #### Scenario: Wrong-architecture Bun is staged
 - **WHEN** package verification detects a Bun executable that does not match the package target
 - **THEN** the build fails before publication
+
+#### Scenario: macOS preserves the trusted upstream Bun signature
+- **WHEN** Desktop signs a macOS package containing the pinned official Bun runtime
+- **THEN** before any package signing it verifies the trusted upstream binary SHA-256, provenance, complete bundle inventory, and an Apple-anchored Developer ID Application signature from upstream Team `7FRXF46ZSN` with hardened runtime and a secure timestamp
+- **AND** the default macOS signer excludes only the exact `Contents/Resources/toonFactoryV2/bun` executable, not the Toonflow directory or other native resources
+- **AND** after signing it rechecks the original trusted binary hash and inventory without rewriting the Toonflow manifest or accepting a locally re-signed hash
+- **AND** packaged verification repeats the upstream signature and integrity checks; enclosing app and outer-DMG notarization, stapling, and Gatekeeper release gates remain mandatory
+
+#### Scenario: Upstream Bun cannot satisfy macOS release trust
+- **WHEN** the pinned Bun is unsigned, ad-hoc signed, fails Apple Developer ID trust, lacks hardened runtime or a secure timestamp, or changes during signing
+- **THEN** signing fails closed without re-signing Bun, refreshing its trusted hash or inventory, or waiving any notarization gate
+- **AND** release remains blocked until a separately reviewed compatible upstream runtime is pinned

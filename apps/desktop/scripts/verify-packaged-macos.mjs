@@ -22,6 +22,7 @@ import { verifyToonFactoryBundle } from "../electron/toonFactoryBundle.mjs";
 
 const require = createRequire(import.meta.url);
 const { hasNotaryCredentials } = require("./macos-notary.cjs");
+const { verifyMacBunSignature } = require("./macos-bun-signature.cjs");
 
 const EXPECTED_APP_ID = "com.juggleai.jugglework";
 const EXPECTED_TEAM_ID = "H7PDHSK3C7";
@@ -207,14 +208,7 @@ export function verifyCodeSignature(appPath) {
 export function verifyMacToonFactoryBundle(appPath, requestedArch) {
   const root = path.join(appPath, "Contents", "Resources", "toonFactoryV2");
   const bundle = verifyToonFactoryBundle(root, { platform: "darwin", arch: requestedArch });
-  const verify = spawnSync("codesign", ["--verify", "--strict", "--verbose=2", bundle.executablePath], { encoding: "utf8" });
-  if (verify.error) fail(`Unable to verify bundled Bun signature: ${verify.error.message}`);
-  if (verify.status !== 0) fail(`Bundled Bun signature verification failed: ${verify.stderr.trim()}`);
-  const details = spawnSync("codesign", ["--display", "--verbose=4", bundle.executablePath], { encoding: "utf8" });
-  if (details.error || details.status !== 0) fail(`Unable to inspect bundled Bun signature: ${details.error?.message || details.stderr.trim()}`);
-  const teamIdentifier = `${details.stdout}\n${details.stderr}`.match(/^TeamIdentifier=(.+)$/m)?.[1]?.trim();
-  if (!teamIdentifier) fail("Bundled Bun signature does not contain a TeamIdentifier");
-  return { ...bundle, executableSigned: true, teamIdentifier };
+  return { ...bundle, ...verifyMacBunSignature(bundle.executablePath) };
 }
 
 function commandAssessment(command, args) {

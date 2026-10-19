@@ -147,11 +147,27 @@ test("macOS uses the selected app identity/keychain, records signed bytes before
     app,
     identity: "selected-identity-hash",
     keychain: "/private/signing.keychain",
-    ignore: (file) => file.includes("/office-engine/"),
+    ignore: (file) => file.includes("/office-engine/") || file.endsWith("/Contents/Resources/toonFactoryV2/bun"),
+  };
+  const executablePath = path.join(resourcesDirectory, "toonFactoryV2/bun");
+  const steps = [];
+  const toonDependencies = {
+    verifyToonBundle(directory, target) {
+      assert.equal(directory, path.dirname(executablePath));
+      assert.deepEqual(target, { platform: "darwin", arch: "arm64" });
+      steps.push("inventory");
+      return { executablePath };
+    },
+    verifyBunSignature(file) {
+      assert.equal(file, executablePath);
+      steps.push("upstream-signature");
+    },
   };
   let sealed = false;
   await signMacApplication(options, {
+    ...toonDependencies,
     run(command, args) {
+      steps.push("office-sign");
       assert.equal(command, "codesign");
       assert.equal(args[args.indexOf("--sign") + 1], options.identity);
       assert.equal(args[args.indexOf("--keychain") + 1], options.keychain);
@@ -159,6 +175,7 @@ test("macOS uses the selected app identity/keychain, records signed bytes before
       return { status: 0 };
     },
     signApp(received) {
+      steps.push("app-sign");
       assert.equal(received, options);
       assert.notEqual(
         readOfficeEngineManifest(root, f.platform).sha256,
@@ -168,11 +185,38 @@ test("macOS uses the selected app identity/keychain, records signed bytes before
     },
   });
   assert.equal(sealed, true);
+  assert.deepEqual(steps, ["inventory", "upstream-signature", "office-sign", "app-sign", "inventory"]);
   await assert.rejects(
     signMacApplication(options, {
+      ...toonDependencies,
       run: () => ({ status: 1 }),
       signApp: () => assert.fail("不能封存签名失败的应用"),
     }),
     /签名失败/,
   );
+
+  for (const boundary of ["verifyToonBundle", "verifyBunSignature"]) {
+    await assert.rejects(signMacApplication(options, {
+      ...toonDependencies,
+      [boundary]: () => { throw new Error(`${boundary} rejected`); },
+      run: () => assert.fail("must not sign anything before Bun passes"),
+      signApp: () => assert.fail("must not seal an untrusted Bun"),
+    }), new RegExp(`${boundary} rejected`));
+  }
+  await assert.rejects(signMacApplication({ ...options, ignore: () => false }, {
+    ...toonDependencies,
+    run: () => assert.fail("must preserve upstream Bun before signing"),
+    signApp: () => assert.fail("must not seal a mutable Bun"),
+  }), /must ignore exactly/);
+
+  let signed = false;
+  await assert.rejects(signMacApplication(options, {
+    ...toonDependencies,
+    verifyToonBundle(...args) {
+      if (signed) throw new Error("Bundled Bun SHA-256 is not trusted");
+      return toonDependencies.verifyToonBundle(...args);
+    },
+    run: () => ({ status: 0 }),
+    signApp() { signed = true; },
+  }), /Bundled Bun SHA-256 is not trusted/);
 });

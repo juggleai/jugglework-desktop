@@ -184,9 +184,20 @@ Stable macOS channel promotion SHALL require the expected bundle identity, Devel
 - **THEN** tooling SHALL require separate audited reasons scoped to `stable-1.2.29-only` and skip only those two gates, not CDN refresh or exact public Stable digest/size read-back
 - **AND** it SHALL retain Developer ID/Team and bundle identity, hardened runtime, app and outer-DMG notarization, staples, Gatekeeper, complete ZIP/DMG/blockmap/package verification, immutable non-overwrite Qiniu/CDN integrity checks, promotion locking, prior-digest race checks, and Stable object size/ETag verification
 - **AND** failed refresh, public read-back, or durable evidence SHALL retain the lock; a present failed or mismatched canary SHALL be rejected
-- **AND** it SHALL reject notarization and older cache-convergence exceptions for `1.2.29`, and reject either new allowance for Windows, x64/mixed/universal architectures, Alpha, other channels, or future `1.2.30`; previous exact-version authorizations remain unchanged
+- **AND** it SHALL reject notarization and older cache-convergence exceptions for `1.2.29`, and reject either new allowance for Windows, x64/mixed/universal architectures, Alpha, other channels, or later versions without separate exact-version authorization; previous exact-version authorizations remain unchanged
 - **AND** after verified Stable promotion, Den exposure SHALL be configuration-only in China first and overseas second with independent backups and health, inventory, effective allowlist, and unchanged binary verification; Windows and the public website SHALL remain unchanged
 - **AND** operational tasks SHALL remain pending until the corresponding authorized build, publication, promotion, and Den verification have actually completed
+- **AND** inherited long-lived cache headers can leave clients stale despite observed read-back; omitted real-client canary leaves installation/relaunch and retained state unproven
+
+#### Scenario: Explicit 1.2.30 macOS ARM64 metadata-only and pre-canary exceptions
+
+- **WHEN** the operator separately authorizes exact stable macOS ARM64 `1.2.30` without a real-client upgrade canary and without Qiniu mutable Stable Cache-Control metadata change/verification
+- **THEN** tooling SHALL require separate audited reasons scoped to `stable-1.2.30-only` and skip only those two gates, not CDN refresh or exact public Stable digest/size read-back
+- **AND** it SHALL retain Developer ID/Team and bundle identity, hardened runtime, separate accepted app and outer-DMG notarization receipts, staples, Gatekeeper, complete ZIP/DMG/blockmap/package verification, immutable non-overwrite Qiniu/CDN integrity checks, promotion locking, prior-digest race checks, and Stable object size/ETag verification
+- **AND** failed refresh, public read-back, or durable evidence SHALL retain the lock; a present failed or mismatched canary SHALL be rejected
+- **AND** it SHALL reject notarization and older cache-convergence exceptions for `1.2.30`, and reject either new allowance for Windows, x64/mixed/universal architectures, Alpha, other channels, or future `1.2.31`; previous exact-version authorizations remain unchanged
+- **AND** after verified Stable promotion, Den exposure SHALL be configuration-only in China first and overseas second with independent backups and health, inventory, effective allowlist, and unchanged binary verification; Windows and the public website SHALL remain unchanged
+- **AND** code/docs preparation SHALL synchronize App, Desktop, and embedded Server to `1.2.30` without changing dependency lockfiles or historical evidence; authorized commit/push dev, merge/push main, build, publication, promotion, and Den tasks SHALL remain pending until actually executed and verified
 - **AND** inherited long-lived cache headers can leave clients stale despite observed read-back; omitted real-client canary leaves installation/relaunch and retained state unproven
 
 ### Requirement: Channel manifests have controlled cache behavior

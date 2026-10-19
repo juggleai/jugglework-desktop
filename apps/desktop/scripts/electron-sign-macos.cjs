@@ -4,6 +4,7 @@ const { createHash } = require("node:crypto");
 const { createRequire } = require("node:module");
 const { spawnSync } = require("node:child_process");
 const { readOfficeEngineManifest } = require("./office-engine-resources.cjs");
+const { verifyMacBunSignature } = require("./macos-bun-signature.cjs");
 
 /**
  * 在主应用封存前，用 electron-builder 已解析的身份和钥匙串签署 Office 内核并更新哈希。
@@ -15,6 +16,15 @@ async function signMacApplication(options, dependencies = {}) {
   const platform = JSON.parse(
     fs.readFileSync(path.join(root, "version.json"), "utf8"),
   ).platform;
+  const { verifyToonFactoryBundle } = await import("../electron/toonFactoryBundle.mjs");
+  const toonRoot = path.join(options.app, "Contents/Resources/toonFactoryV2");
+  const toonTarget = { platform: "darwin", arch: platform.replace(/^darwin-/, "") };
+  const verifyBundle = dependencies.verifyToonBundle ?? verifyToonFactoryBundle;
+  const toonBundle = verifyBundle(toonRoot, toonTarget);
+  (dependencies.verifyBunSignature ?? verifyMacBunSignature)(toonBundle.executablePath);
+  if (!options.ignore?.(toonBundle.executablePath)) {
+    throw new Error("The macOS signer must ignore exactly Contents/Resources/toonFactoryV2/bun to preserve the trusted upstream bytes");
+  }
   const manifest = readOfficeEngineManifest(root, platform);
   const binary = path.join(root, manifest.binary);
   if (!options.identity)
@@ -47,14 +57,14 @@ async function signMacApplication(options, dependencies = {}) {
   ])
     fs.writeFileSync(file, JSON.stringify(packaged, null, 2) + "\n");
   readOfficeEngineManifest(root, platform);
-  if (dependencies.signApp) return dependencies.signApp(options);
   // 沿用已安装 electron-builder 的默认签名器及其重试，不另装第二套签名依赖。
-  const builderRequire = createRequire(
+  const signApp = dependencies.signApp ?? createRequire(
     require.resolve("electron-builder/package.json"),
-  );
-  return builderRequire("app-builder-lib/out/codeSign/macCodeSign.js").sign(
-    options,
-  );
+  )("app-builder-lib/out/codeSign/macCodeSign.js").sign;
+  const signed = await signApp(options);
+  // Never refresh the Toon manifest to legitimize bytes changed by signing.
+  verifyBundle(toonRoot, toonTarget);
+  return signed;
 }
 
 function sign(options) {

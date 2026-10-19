@@ -1,7 +1,68 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { createRequire } from "node:module";
 
 import { createLocalVerificationRecord } from "./verify-packaged-macos.mjs";
+const { verifyMacBunSignature } = createRequire(import.meta.url)("./macos-bun-signature.cjs");
+
+describe("upstream macOS Bun signature gate", () => {
+  const executable = "/tmp/JuggleWork.app/Contents/Resources/toonFactoryV2/bun";
+  const details = [
+    "Identifier=bun",
+    "CodeDirectory v=20500 flags=0x10000(runtime)",
+    "Authority=Developer ID Application: Jarred Sumner (7FRXF46ZSN)",
+    "Authority=Developer ID Certification Authority",
+    "Authority=Apple Root CA",
+    "TeamIdentifier=7FRXF46ZSN",
+    "Timestamp=May 13, 2026 at 06:55:32",
+  ].join("\n");
+
+  function runner(output = details, status = 0) {
+    return (command, args, options) => {
+      assert.equal(command, "codesign");
+      assert.equal(args.at(-1), executable);
+      assert.equal(options.encoding, "utf8");
+      if (args.includes("--verify")) {
+        assert.ok(args.includes("--strict"));
+        const requirement = args[args.indexOf("--test-requirement") + 1];
+        assert.match(requirement, /^=anchor apple generic/);
+        assert.ok(requirement.includes("certificate 1[field.1.2.840.113635.100.6.2.6] exists"));
+        assert.ok(requirement.includes("certificate leaf[field.1.2.840.113635.100.6.1.13] exists"));
+        assert.ok(requirement.includes('certificate leaf[subject.OU] = "7FRXF46ZSN"'));
+        assert.ok(requirement.includes('identifier "bun"'));
+        return { status, stdout: "", stderr: "signature requirement" };
+      }
+      assert.ok(args.includes("--display"));
+      return { status: 0, stdout: "", stderr: output };
+    };
+  }
+
+  it("requires cryptographic Apple Developer ID trust, upstream Team, hardened runtime, and secure timestamp", () => {
+    assert.deepEqual(verifyMacBunSignature(executable, runner()), {
+      executableSigned: true, teamIdentifier: "7FRXF46ZSN", hardenedRuntime: true, secureTimestamp: true,
+    });
+  });
+
+  it("rejects unsigned, untrusted, ad-hoc, re-signed, untimestamped, and non-hardened binaries", () => {
+    assert.throws(() => verifyMacBunSignature(executable, runner(details, 1)), /Apple Developer ID signature verification failed/);
+    for (const output of [
+      `${details}\nSignature=adhoc`,
+      details.replace("TeamIdentifier=7FRXF46ZSN", "TeamIdentifier=not set"),
+      details.replace("TeamIdentifier=7FRXF46ZSN", "TeamIdentifier=H7PDHSK3C7"),
+      details.replace(/^Authority=Developer ID Application:.*$/m, ""),
+      details.replace(/^Timestamp=.*$/m, ""),
+      details.replace("flags=0x10000(runtime)", "flags=0x2(adhoc)"),
+    ]) {
+      assert.throws(() => verifyMacBunSignature(executable, runner(output)), /must retain its upstream/);
+    }
+  });
+
+  it("fails closed when codesign cannot run or inspect the signature", () => {
+    assert.throws(() => verifyMacBunSignature(executable, () => ({ error: new Error("ENOENT") })), /verification failed.*ENOENT/);
+    assert.throws(() => verifyMacBunSignature(executable, (_command, args) => args.includes("--verify")
+      ? { status: 0 } : { status: 1, stderr: "inspection failed" }), /Unable to inspect.*inspection failed/);
+  });
+});
 
 const signature = {
   identifier: "com.juggleai.jugglework",

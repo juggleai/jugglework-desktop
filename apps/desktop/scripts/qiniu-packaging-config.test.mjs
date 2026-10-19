@@ -31,6 +31,33 @@ describe("Qiniu packaged updater configuration", () => {
     assert.equal(config.dmg.sign, true);
   });
 
+  it("packages the metadata filenames produced by prepare-sidecar on every target", () => {
+    const triples = {
+      mac: ["aarch64-apple-darwin", "x86_64-apple-darwin"],
+      linux: ["aarch64-unknown-linux-gnu", "x86_64-unknown-linux-gnu"],
+      win: ["aarch64-pc-windows-msvc", "x86_64-pc-windows-msvc"],
+    };
+    for (const [platform, targets] of Object.entries(triples)) {
+      const resources = config[platform].extraResources.filter((entry) => entry.from === "resources/sidecars");
+      assert.equal(resources.length, 1);
+      assert.equal(resources[0].to, "sidecars");
+      assert.deepEqual(resources[0].filter.filter((name) => name.startsWith("versions")).sort(),
+        ["versions.json", ...targets.map((target) => `versions-${target}.json`)].sort());
+    }
+    const prepare = readFileSync(new URL("./prepare-sidecar.mjs", import.meta.url), "utf8");
+    assert.ok(prepare.includes("`versions-${resolvedTargetTriple}.json`"));
+  });
+
+  it("excludes only the exact upstream Bun executable from default mac signing", () => {
+    assert.equal(config.mac.sign, "scripts/electron-sign-macos.cjs");
+    const ignores = config.mac.signIgnore.map((pattern) => new RegExp(pattern));
+    const ignored = (suffix) => ignores.some((pattern) => pattern.test(`/tmp/JuggleWork.app/Contents/Resources/${suffix}`));
+    assert.equal(ignored("toonFactoryV2/bun"), true);
+    for (const suffix of ["toonFactoryV2", "toonFactoryV2/", "toonFactoryV2/bun-helper", "toonFactoryV2/bun/child", "toonFactoryV2/server/native.node", "sidecars/opencode"]) {
+      assert.equal(ignored(suffix), false, suffix);
+    }
+  });
+
   it("passes an unprefixed certificate name to electron-builder while keeping the full helper identity", () => {
     assert.match(macReleaseWrapper, /CSC_NAME:\s*electronBuilderIdentity/);
     assert.match(macReleaseWrapper, /electronBuilderIdentity !== EXPECTED_CERTIFICATE_NAME/);

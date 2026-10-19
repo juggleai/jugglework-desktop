@@ -209,14 +209,14 @@ if (process.env.JUGGLEWORK_ELECTRON_SKIP_SHARED_PREPARE !== "1") {
 console.log("[electron-dev] Building @jugglework/types (tsup)...");
 runSync(pnpmCmd, ["--filter", "@jugglework/types", "build"], { cwd: repoRoot });
 runSync(pnpmCmd, ["--filter", "@jugglework/types", "build:electron-runtime"], { cwd: repoRoot });
-runSync(pnpmCmd, ["--dir", desktopRoot, "exec", "electron", resolve(__dirname, "check-electron-runtime-imports.mjs")], {
+
+// Build the server TS to JS before checking its development import graph.
+console.log("[electron-dev] Building jugglework-server (tsc)...");
+runSync(pnpmCmd, ["--filter", "jugglework-server", "build"], { cwd: repoRoot });
+runSync(pnpmCmd, ["--dir", desktopRoot, "exec", "electron", resolve(__dirname, "check-electron-runtime-imports.mjs"), "--dev"], {
   cwd: repoRoot,
   env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
 });
-
-// Build the server TS → JS so Electron can import it in-process
-console.log("[electron-dev] Building jugglework-server (tsc)...");
-runSync(pnpmCmd, ["--filter", "jugglework-server", "build"], { cwd: repoRoot });
 
 const initialProbeUrls = [startUrl, ...viteProbeUrls].filter(Boolean);
 let viteReady = false;

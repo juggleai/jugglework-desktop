@@ -19,15 +19,15 @@ test("CLI strictly parses release coordinates and dry-run", () => {
   assert.equal(parsed.options.preCanaryExceptionReason, "Operator authorized the live upgrade validation");
 });
 
-for (const version of ["1.2.28", "1.2.29"]) {
+for (const version of ["1.2.28", "1.2.29", "1.2.30"]) {
   test(`CLI parses separate ${version} exception reasons and documents retained gates`, () => {
     const parsed = parseArguments(["promote-channel", ...REQUIRED.with(1, version).with(7, "arm64"), "--pre-canary-exception-reason", "Operator authorized skipping only the canary", "--metadata-exception-reason", "Operator authorized skipping only Qiniu cache metadata verification"]);
     assert.equal(parsed.options.preCanaryExceptionReason, "Operator authorized skipping only the canary");
     assert.equal(parsed.options.metadataExceptionReason, "Operator authorized skipping only Qiniu cache metadata verification");
     assert.match(usage(), /--metadata-exception-reason/);
-    assert.match(usage(), /1\.2\.27, 1\.2\.28, or 1\.2\.29/);
+    assert.match(usage(), /1\.2\.27, 1\.2\.28, 1\.2\.29, or 1\.2\.30/);
     assert.match(usage(), /CDN refresh and public Stable digest\/size read-back remain required/);
-    assert.match(usage(), /Future 1\.2\.30 is not authorized/);
+    assert.match(usage(), /Future 1\.2\.31 is not authorized/);
   });
 }
 
