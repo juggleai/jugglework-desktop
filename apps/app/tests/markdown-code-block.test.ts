@@ -135,6 +135,44 @@ describe("markdown rich blocks", () => {
   });
 });
 
+describe("CJK Markdown emphasis compatibility", () => {
+  const affectedMarkdown = "**优先放在模型调用 / 执行引擎层，而不是 UI 层。**这一层知道本次流是否结束。";
+
+  test("renders punctuation-ending CJK strong text without leaking source markers", () => {
+    for (const presentation of ["chat", "surface", "surface-copyable"] as const) {
+      const html = renderPrimitiveMarkdownHtml(affectedMarkdown, presentation);
+      expect(html).toContain("<strong>优先放在模型调用 / 执行引擎层，而不是 UI 层。</strong>这一层知道本次流是否结束。");
+      expect(html).not.toContain("**优先");
+    }
+  });
+
+  test("applies the same CJK rule in the asynchronous highlighted renderer", async () => {
+    for (const presentation of ["chat", "surface", "surface-copyable"] as const) {
+      const html = await renderPrimitiveHighlightedMarkdownHtml(affectedMarkdown, presentation);
+      expect(html).toContain("<strong>优先放在模型调用 / 执行引擎层，而不是 UI 层。</strong>这一层知道本次流是否结束。");
+      expect(html).not.toContain("**优先");
+    }
+  });
+
+  test("does not reinterpret escaped, code, fenced, or non-CJK boundary markers", () => {
+    const escaped = renderPrimitiveMarkdownHtml("\\**中文。**后续", "chat");
+    expect(escaped).not.toContain("<strong>");
+    expect(escaped).toContain("**中文。**后续");
+
+    const inlineCode = renderPrimitiveMarkdownHtml("`**中文。**后续`", "chat");
+    expect(inlineCode).not.toContain("<strong>");
+    expect(inlineCode).toContain("**中文。**后续");
+
+    const fencedCode = renderPrimitiveMarkdownHtml("```text\n**中文。**后续\n```", "chat");
+    expect(fencedCode).not.toContain("<strong>");
+    expect(fencedCode).toContain("**中文。**后续");
+
+    const strictCommonMarkBoundary = renderPrimitiveMarkdownHtml("**text.**Next", "chat");
+    expect(strictCommonMarkBoundary).not.toContain("<strong>");
+    expect(strictCommonMarkBoundary).toContain("**text.**Next");
+  });
+});
+
 describe("markdown text highlighting", () => {
   test("splits matching text without changing the original casing", () => {
     expect(textHighlightParts("Markdown makes marks in markdown.", "MARK")).toEqual([

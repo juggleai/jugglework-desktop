@@ -960,6 +960,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     activityRunActive: sessionActivityRunActive,
     activityRunEnded: sessionActivityRunEnded,
     coordinatorActive: coordinatorRun !== null,
+    activityTerminalFailure: sessionActivityStatus === "error" || sessionActivityStatus === "incomplete",
   });
   const showTaskProgress = shouldShowTaskProgress({
     kind: taskProgressKind,

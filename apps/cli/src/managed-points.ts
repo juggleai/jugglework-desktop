@@ -1,6 +1,6 @@
-import type { CloudProvider } from "@jugglework/cloud-provider";
+import { isManagedJWorkRouter, type CloudProvider } from "@jugglework/cloud-provider";
 
 export function modelFitsAvailablePoints(provider: CloudProvider, availablePoints: number | null): boolean {
-  return provider.source?.trim().toLowerCase() !== "juggle_router" ||
+  return !isManagedJWorkRouter(provider) ||
     (availablePoints !== null && availablePoints > 0);
 }

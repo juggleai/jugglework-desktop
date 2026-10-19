@@ -5,6 +5,14 @@ import { useSessionCompletionStore } from "../src/react-app/domains/session/side
 const accessible = new Set(["session-a", "session-b"]);
 
 describe("session completion store", () => {
+  it("never reports failed or incomplete work with a green success marker", () => {
+    const store = useSessionCompletionStore.getState();
+    for (const terminal of ["error", "incomplete"]) {
+      store.reconcile({ "session-a": "running" }, accessible, new Set());
+      store.reconcile({ "session-a": terminal }, accessible, new Set());
+      expect(useSessionCompletionStore.getState().unseenSessionIds).toEqual([]);
+    }
+  });
   beforeEach(() => {
     useSessionCompletionStore.setState({ unseenSessionIds: [], previousStatusBySessionId: {} });
   });
@@ -31,7 +39,7 @@ describe("session completion store", () => {
     const store = useSessionCompletionStore.getState();
     store.reconcile({ "session-a": "running" }, accessible, new Set());
     store.reconcile({ "session-a": "error" }, accessible, new Set());
-    expect(useSessionCompletionStore.getState().unseenSessionIds).toEqual(["session-a"]);
+    expect(useSessionCompletionStore.getState().unseenSessionIds).toEqual([]);
     store.reconcile({ "session-a": "retrying" }, accessible, new Set());
     expect(useSessionCompletionStore.getState().unseenSessionIds).toEqual([]);
   });

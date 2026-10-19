@@ -2,6 +2,12 @@ import { describe, expect, test } from "bun:test";
 
 import { sessionRunObservation } from "../src/app/lib/opencode";
 
+test("persisting a user message is not evidence that the engine started work", () => {
+  expect(sessionRunObservation({ type: "message.updated", properties: {
+    info: { role: "user", sessionID: "ses_start" },
+  } })).toBeNull();
+});
+
 describe("mounted session run observations", () => {
   test("records provider bytes and persisted parts as run progress", () => {
     expect(sessionRunObservation({

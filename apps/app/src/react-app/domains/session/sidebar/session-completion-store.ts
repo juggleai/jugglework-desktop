@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-import { isActiveWorkSessionStatus, isTerminalSessionStatus } from "./utils";
+import { isActiveWorkSessionStatus } from "./utils";
 
 type SessionCompletionState = {
   unseenSessionIds: string[];
@@ -32,9 +32,9 @@ export const useSessionCompletionStore = create<SessionCompletionState>((set) =>
 
       const previousStatus = state.previousStatusBySessionId[sessionId];
       const active = isActiveWorkSessionStatus(status);
-      if (active || visibleSessionIds.has(sessionId)) {
+      if (active || status === "error" || status === "incomplete" || visibleSessionIds.has(sessionId)) {
         unseen.delete(sessionId);
-      } else if (isActiveWorkSessionStatus(previousStatus) && isTerminalSessionStatus(status)) {
+      } else if (isActiveWorkSessionStatus(previousStatus) && status === "idle") {
         unseen.add(sessionId);
       }
       previousStatusBySessionId[sessionId] = status;

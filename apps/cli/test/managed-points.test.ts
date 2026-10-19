@@ -32,3 +32,7 @@ test("BYOK is not gated by managed points", () => {
     }
   }
 });
+
+test("explicit ordinary JuggleRouter identity is not gated by managed points", () => {
+  assert.equal(modelFitsAvailablePoints({ ...provider, managedIdentity: null }, 0), true);
+});

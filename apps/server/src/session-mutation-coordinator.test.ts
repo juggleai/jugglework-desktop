@@ -137,6 +137,10 @@ describe("session mutation coordinator", () => {
       sessionId: "ses",
       runId: run.runId,
       minimumIntervalMs: 500,
+    })).toMatchObject({ cleared: false, retryAfterMs: 500 });
+    timestamp += 500;
+    expect(coordinator.reconcileAuthoritativeIdle({
+      workspaceId: "ws", sessionId: "ses", runId: run.runId, minimumIntervalMs: 500,
     })).toEqual({ cleared: true, run: null, terminalStatus: "completed", retryAfterMs: null });
   });
 

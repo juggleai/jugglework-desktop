@@ -48,7 +48,7 @@ function startMockOpencode() {
   const statusRequests: string[] = [];
   const disposes: Array<{ directory: string | null }> = [];
   const statuses = new Map<string, unknown>();
-  const messages = new Map<string, ArtifactEngineMessage[]>();
+  const messages = new Map<string, Array<ArtifactEngineMessage & { info: ArtifactEngineMessage["info"] & { finish?: string; summary?: boolean; error?: unknown } }>>();
   const sessions = new Map<string, { id: string; title: string; parentID?: string; directory?: string; time: { created: number; updated: number } }>();
   const heldPrompts = new Map<string, ReturnType<typeof deferred<void>>>();
   const heldMessageIds = new Map<string, ReturnType<typeof deferred<void>>>();
@@ -73,6 +73,13 @@ function startMockOpencode() {
       const messageMatch = url.pathname.match(/^\/session\/([^/]+)\/message$/);
       if (request.method === "GET" && messageMatch) return Response.json(messages.get(decodeURIComponent(messageMatch[1]!)) ?? []);
       const sessionMatch = url.pathname.match(/^\/session\/([^/]+)$/);
+      const messagesMatch = url.pathname.match(/^\/session\/([^/]+)\/message$/);
+      if (request.method === "GET" && messagesMatch) {
+        const id = decodeURIComponent(messagesMatch[1]!);
+        return Response.json(messages.get(id) ?? [{
+          info: { role: "assistant", finish: "stop", time: { created: Date.now(), completed: Date.now() } }, parts: [],
+        }]);
+      }
       if (request.method === "GET" && sessionMatch) {
         const sessionId = decodeURIComponent(sessionMatch[1]!);
         const session = sessions.get(sessionId);
@@ -171,6 +178,7 @@ function startMockOpencode() {
     statuses,
     messages,
     sessions,
+    messages,
     heldPrompts,
     heldMessageIds,
     heldAborts,
@@ -1282,6 +1290,39 @@ describe("authoritative session mutation APIs", () => {
     await expect(second.json()).resolves.toEqual({ items: [] });
   });
 
+  test("startup idle and an old stop cannot complete a new run before its final assistant", async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    const sessionId = "ses_startup_race";
+    engine.messages.set(sessionId, [{ info: {
+      role: "assistant", finish: "stop", time: { created: 1, completed: 2 },
+    }, parts: [] }]);
+    const started = await fetch(`${runPath(harness.base, sessionId)}/start`, {
+      method: "POST", headers: harness.collaboratorHeaders,
+      body: JSON.stringify({ origin: "local-renderer", startCommandCorrelationId: "cmd_race",
+        prompt: { parts: [{ type: "text", text: "Start work" }] } }),
+    });
+    expect(started.status).toBe(202);
+    const { run } = await started.json() as { run: { runId: string } };
+    const observe = (status: string) => fetch(`${runPath(harness.base, sessionId)}/${run.runId}/observations`, {
+      method: "POST", headers: harness.collaboratorHeaders, body: JSON.stringify({ status }),
+    });
+    await observe("running");
+    await expect((await observe("idle")).json()).resolves.toMatchObject({ cleared: false });
+    await new Promise((resolve) => setTimeout(resolve, 510));
+    await expect((await observe("completed")).json()).resolves.toMatchObject({ cleared: false });
+    engine.messages.set(sessionId, [{ info: {
+      role: "assistant", finish: "tool-calls", time: { created: Date.now(), completed: Date.now() },
+    }, parts: [] }]);
+    await expect((await observe("idle")).json()).resolves.toMatchObject({ cleared: false });
+    engine.messages.set(sessionId, [{ info: {
+      role: "assistant", finish: "stop", time: { created: Date.now(), completed: Date.now() },
+    }, parts: [] }]);
+    await expect((await observe("idle")).json()).resolves.toMatchObject({ cleared: false });
+    await new Promise((resolve) => setTimeout(resolve, 510));
+    await expect((await observe("idle")).json()).resolves.toMatchObject({ cleared: true, terminalStatus: "completed" });
+  });
+
   test("active-run reads retain an idle parent while a delegated descendant is busy", async () => {
     const engine = startMockOpencode();
     const harness = await startHarness(engine.server.port);
@@ -1322,6 +1363,8 @@ describe("authoritative session mutation APIs", () => {
     await expect(active.json()).resolves.toMatchObject({ items: [{ sessionId: "ses_parent" }] });
 
     engine.statuses.set("ses_grandchild", { type: "idle" });
+    await fetch(`${harness.base}/workspace/ws_1/session-runs`, { headers: harness.collaboratorHeaders });
+    await new Promise((resolve) => setTimeout(resolve, 510));
     const terminal = await fetch(`${harness.base}/workspace/ws_1/session-runs`, { headers: harness.collaboratorHeaders });
     await expect(terminal.json()).resolves.toEqual({ items: [] });
   });

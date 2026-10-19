@@ -59,6 +59,14 @@ const managedListProvider = {
   updatedAt: "2026-08-25T01:02:03Z",
 };
 
+const managedJWorkRouter = {
+  ...managedListProvider,
+  providerId: "JWorkRouter",
+  name: "JWorkRouter",
+  managedIdentity: "jwork_router",
+  providerConfig: { ...managedListProvider.providerConfig, id: "jworkrouter", name: "JWorkRouter" },
+};
+
 describe("managed JuggleRouter Den provider parser", () => {
   afterEach(() => {
     Object.defineProperty(globalThis, "fetch", {
@@ -95,6 +103,7 @@ describe("managed JuggleRouter Den provider parser", () => {
       providerId: "JuggleRouter",
       managed: true,
       managedKind: "juggle_router",
+      managedIdentity: "jwork_router",
       accessScope: "organization",
       enabled: true,
     });
@@ -103,6 +112,12 @@ describe("managed JuggleRouter Den provider parser", () => {
       "deepseek-v4-pro",
     ]);
     expect(providers[1]?.enabled).toBe(false);
+  });
+
+  test("parses canonical JWorkRouter while preserving the legacy source discriminator", async () => {
+    Object.defineProperty(globalThis, "fetch", { configurable: true, value: async () => new Response(JSON.stringify({ llmProviders: [managedJWorkRouter] }), { status: 200, headers: { "Content-Type": "application/json" } }) });
+    const [provider] = await createDenClient({ baseUrl: "https://cloud.example.test", token: "session-token" }).listOrgLlmProviders("org_test");
+    expect(provider).toMatchObject({ id: PROVIDER_ID, providerId: "JWorkRouter", name: "JWorkRouter", source: "juggle_router", managedKind: "juggle_router", managedIdentity: "jwork_router" });
   });
 
   test("still parses a legacy hosted row so import filtering can reject it", async () => {

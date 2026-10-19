@@ -327,6 +327,7 @@ const PROVIDER_LABELS: Record<string, string> = {
   google: "Google",
   openrouter: "OpenRouter",
   jugglerouter: "JuggleRouter",
+  jworkrouter: "JWorkRouter",
 };
 
 export type CustomProviderConnectInput = CustomProviderInput & { apiKey: string };

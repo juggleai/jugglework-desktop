@@ -1,6 +1,6 @@
 import DOMPurify from "dompurify";
 import emojiKeywords from "emojilib";
-import { Marked, type Tokens } from "marked";
+import { Marked, type MarkedExtension, type Tokens } from "marked";
 import { markedEmoji } from "marked-emoji";
 import markedShiki from "marked-shiki";
 import {
@@ -42,6 +42,37 @@ const MARKDOWN_IMAGE_PREVIEW_MAX_HEIGHT = 160;
 const MARKDOWN_IMAGE_PREVIEW_MAX_WIDTH = 280;
 const CODE_COPY_ICON = `<svg data-jugglework-code-copy-icon="" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-3.5 w-3.5" aria-hidden="true"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>`;
 const CODE_COPIED_ICON = `<svg data-jugglework-code-copy-check-icon="" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-3.5 w-3.5" aria-hidden="true" hidden><path d="M20 6 9 17l-5-5"/></svg>`;
+
+/**
+ * CommonMark does not close `**` when punctuation precedes the delimiter and
+ * a letter immediately follows it. That makes natural CJK output such as
+ * `**重点。**下一句` leak the Markdown markers because CJK prose normally has
+ * no space after `。`. Keep the compatibility rule deliberately narrow:
+ * CJK-leading content, Unicode punctuation at the end, no nested asterisks or
+ * line breaks, and another CJK character immediately after the closing run.
+ */
+const cjkStrongBoundaryExtension = {
+  extensions: [
+    {
+      name: "cjkStrongBoundary",
+      level: "inline",
+      tokenizer(src) {
+        const match = /^\*\*(?!\*)([\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}][^\n*]*?\p{P})\*\*(?=[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}])/u.exec(src);
+        if (!match) return undefined;
+        return {
+          type: "cjkStrongBoundary",
+          raw: match[0],
+          text: match[1],
+          tokens: this.lexer.inlineTokens(match[1]),
+        };
+      },
+      renderer(token) {
+        return `<strong>${this.parser.parseInline(token.tokens ?? [])}</strong>`;
+      },
+      childTokens: ["tokens"],
+    },
+  ],
+} satisfies MarkedExtension<string, string>;
 
 function escapeHtml(value: string) {
   return value
@@ -388,12 +419,14 @@ function markdownTransformers() {
 function createMarkdownParsers(presentation: MarkdownPresentation, references: OpenTarget[] = []) {
   const profile = markdownProfileForPresentation(presentation);
   const markdownParser = new Marked<string, string>(createMarkedOptions(profile, false, references)).use(
+    cjkStrongBoundaryExtension,
     markedEmoji({
       emojis: emojiAliases,
       renderer: (token) => escapeHtml(token.emoji),
     }),
   );
   const highlightedMarkdownParser = new Marked<string, string>(createMarkedOptions(profile, true, references)).use(
+    cjkStrongBoundaryExtension,
     markedEmoji({
       emojis: emojiAliases,
       renderer: (token) => escapeHtml(token.emoji),

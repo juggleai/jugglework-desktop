@@ -298,12 +298,6 @@ export function createSessionMutationCoordinator(options: {
       return { cleared: true, run: null, terminalStatus: "aborted", retryAfterMs: null };
     }
 
-    if (run.observedActive) {
-      runs.delete(key);
-      emit({ event: "run_terminal", run: publicRun(run), terminalReason: "completed" });
-      return { cleared: true, run: null, terminalStatus: "completed", retryAfterMs: null };
-    }
-
     const timestamp = now();
     if (run.authoritativeIdleObservedAt === null) {
       run.authoritativeIdleObservedAt = timestamp;

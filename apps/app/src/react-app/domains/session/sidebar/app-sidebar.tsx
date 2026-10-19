@@ -1155,7 +1155,7 @@ function GlobalPinnedSessions({ entries }: { entries: GlobalPinnedSessionEntry[]
   return (
     <SidebarGroup data-global-pinned-sessions className="pb-1 pt-2">
       <SidebarGroupContent>
-        <div className="px-3 pb-1 text-[11px] font-normal uppercase tracking-[0.04em] text-muted-foreground">
+        <div className="px-3 pb-1 text-[13px] font-normal leading-5 tracking-normal text-muted-foreground">
           {t("session_management.pinned")}
         </div>
         <SidebarMenu>
@@ -1196,12 +1196,12 @@ function GlobalArchivedSessions({ entries }: { entries: GlobalArchivedSessionEnt
             render={
               <button
                 type="button"
-                className="group/separator relative flex h-10 w-full cursor-pointer items-center gap-1.5 rounded-xl px-2.5 text-left transition-colors duration-150 hover:bg-sidebar-accent/25"
+                className="group/separator relative flex h-8 w-full cursor-pointer items-center gap-1.5 rounded-xl px-2.5 text-left transition-colors duration-150 hover:bg-sidebar-accent/25"
               >
                 <span className="relative flex size-5 shrink-0 items-center justify-center text-sidebar-foreground">
                   <Archive className="size-4" strokeWidth={1.8} />
                 </span>
-                <span className="min-w-0 truncate text-[13px] font-normal text-sidebar-foreground">
+                <span className="min-w-0 truncate text-[14px] font-normal text-sidebar-foreground">
                   {t("session_management.archived_label")}
                 </span>
                 <ChevronRight className="size-3.5 shrink-0 text-muted-foreground transition-transform duration-200 group-data-open/archived:rotate-90" />
@@ -1320,7 +1320,7 @@ function WorkspaceHeader({
       {...props}
       className={cn(
         // TIPS: gap-1.5 + size-5 图标槽，让工作区名称贴近文件夹图标；名称起点与会话行标题对齐。
-        "relative h-10 gap-1.5 rounded-xl border-0 bg-transparent px-2.5 shadow-none transition-colors duration-150",
+        "relative h-8 gap-1.5 rounded-xl border-0 bg-transparent px-2.5 leading-5 tracking-normal shadow-none transition-colors duration-150",
         "group-hover/workspace-header:bg-sidebar-accent/25",
       )}
       onClick={(event) => {
@@ -1344,7 +1344,7 @@ function WorkspaceHeader({
           showActivity ? "pr-6" : "pr-0",
         )}
       >
-        <span className="block truncate text-[13px] font-normal text-sidebar-foreground">{workspaceLabel(workspace)}</span>
+        <span className="block truncate text-[14px] font-normal text-sidebar-foreground">{workspaceLabel(workspace)}</span>
         {statusLabel ? (
           <span className={cn("mt-0.5 block truncate text-[11px] leading-none", isError ? "text-destructive" : "text-muted-foreground")}>
             {statusLabel}
@@ -1865,7 +1865,7 @@ function SessionGroupSeparator({ label, count, expanded, onToggle, group, groups
     >
       <ChevronRight className={cn("size-3.5 shrink-0 text-muted-foreground transition-transform duration-200", expanded && "rotate-90")} />
       <span
-        className="min-w-0 flex-1 cursor-grab touch-none truncate text-[11px] font-normal uppercase tracking-[0.04em] text-muted-foreground active:cursor-grabbing"
+        className="min-w-0 flex-1 cursor-grab touch-none truncate text-[13px] font-normal leading-5 tracking-normal text-muted-foreground active:cursor-grabbing"
         onPointerDown={onTitlePointerDown}
       >
         {label}
@@ -2277,7 +2277,7 @@ function SessionMenuItem({
   const rowButtonClass = cn(
     // Soft pill @ 11px radius from Paper; overlay tint adapts to theme
     // (light: --ow-light-hover ≈ black/5, dark: #FFFFFF17 ≈ white/9).
-    "relative h-10 rounded-[11px] transition-[padding,background-color] duration-150 ps-3 pe-7 group-hover/menu-sub-item:pe-20 group-has-data-popup-open/menu-sub-item:pe-20 data-active:font-medium",
+    "relative h-8 rounded-[11px] text-[14px] data-[size=md]:text-[14px] leading-5 tracking-normal transition-[padding,background-color] duration-150 ps-3 pe-7 group-hover/menu-sub-item:pe-20 group-has-data-popup-open/menu-sub-item:pe-20 data-active:font-medium",
     isSelected
       ? "!bg-black/[0.045] hover:!bg-black/[0.055] group-hover/menu-sub-item:!bg-black/[0.055] dark:!bg-white/[0.08] dark:hover:!bg-white/[0.095] dark:group-hover/menu-sub-item:!bg-white/[0.095]"
       : "hover:!bg-black/[0.025] group-hover/menu-sub-item:!bg-black/[0.025] dark:hover:!bg-white/[0.045] dark:group-hover/menu-sub-item:!bg-white/[0.045]",

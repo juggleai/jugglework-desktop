@@ -688,8 +688,8 @@ const AssistantMessage = React.memo(
                   className={cn(
                     "prose w-full min-w-0 flex-1 rounded-lg bg-transparent p-0 text-foreground",
                     isProcess
-                      ? "text-sm leading-6 text-foreground/90 [&_li]:my-1 [&_p]:my-2 [&_p]:leading-6"
-                      : "text-[15px] leading-7 [&_li]:my-1.5 [&_p]:my-2.5 [&_p]:leading-7",
+                      ? "text-[15px] leading-6 tracking-normal text-foreground/90 [&_li]:my-0.5 [&_p]:my-2 [&_p]:leading-6"
+                      : "text-[15px] leading-6 tracking-normal [&_li]:my-0.5 [&_p]:my-3 [&_p]:leading-6",
                   )}
                   markdown
                   highlightQuery={highlightQuery}
@@ -706,8 +706,8 @@ const AssistantMessage = React.memo(
                   className={cn(
                     "prose w-full min-w-0 flex-1 rounded-lg bg-transparent p-0 text-muted-foreground",
                     isProcess
-                      ? "text-sm leading-6 [&_li]:my-1 [&_p]:my-2 [&_p]:leading-6"
-                      : "text-[15px] leading-7 [&_p]:leading-7",
+                      ? "text-[15px] leading-6 tracking-normal [&_li]:my-0.5 [&_p]:my-2 [&_p]:leading-6"
+                      : "text-[15px] leading-6 tracking-normal [&_p]:my-3 [&_p]:leading-6",
                   )}
                   markdown
                 >
@@ -841,7 +841,7 @@ const UserMessage = React.memo(
                 {hasContent ? (
                   /* 发送消息气泡背景统一 token --app-msg-sent-bg（定义于 app/index.css，消息页同源） */
                   <MessageContent
-                    className="bg-[var(--app-msg-sent-bg)] text-foreground max-w-[85%] rounded-3xl px-4 py-2.5 leading-6 sm:max-w-[75%] !select-text not-prose"
+                    className="bg-[var(--app-msg-sent-bg)] text-foreground max-w-[85%] rounded-3xl px-4 py-2.5 text-[15px] leading-6 tracking-normal sm:max-w-[75%] !select-text not-prose"
                     style={{ userSelect: "text" }}
                   >
                     {inlineParts.map((part, index) => {

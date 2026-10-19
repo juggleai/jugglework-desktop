@@ -8,6 +8,12 @@ import {
 } from "../src/react-app/domains/session/surface/session-run-recovery";
 
 describe("session run recovery", () => {
+  test("a temporary engine idle cannot hide a server-owned active task", () => {
+    expect(effectiveSessionRunning({
+      sending: false, liveStatus: "idle", activityRunActive: false,
+      activityRunEnded: true, coordinatorActive: true,
+    })).toBe(true);
+  });
   test("keeps Stop/Queue mode when the coordinator is active but OpenCode is idle", () => {
     expect(effectiveSessionRunning({
       sending: false,
@@ -35,6 +41,7 @@ describe("session run recovery", () => {
       activityRunActive: false,
       activityRunEnded: true,
       coordinatorActive: true,
+      activityTerminalFailure: true,
     })).toBe(false);
   });
 

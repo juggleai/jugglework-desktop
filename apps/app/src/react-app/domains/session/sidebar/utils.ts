@@ -36,7 +36,7 @@ export const isStreamingSessionStatus = (status: string | undefined) =>
   isActiveWorkSessionStatus(status) || status === "waiting";
 
 export const isNeedsAttentionSessionStatus = (status: string | undefined) =>
-  status === "waiting";
+  status === "waiting" || status === "error" || status === "incomplete";
 
 export const isTerminalSessionStatus = (status: string | undefined) =>
   status === "idle" || status === "error" || status === "incomplete";

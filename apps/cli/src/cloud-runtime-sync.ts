@@ -5,6 +5,7 @@ import {
   isCloudProviderOutOfSync,
   type CloudImportedProvider,
   type CloudProvider,
+  isManagedJWorkRouter,
 } from "@jugglework/cloud-provider";
 import type { CliOptions } from "./args.js";
 import { JuggleWorkApiError, type JuggleWorkApiClient, type RuntimeProviderStatus, type WorkspaceInfo } from "./api.js";
@@ -99,7 +100,7 @@ export async function synchronizeCloudRuntime(input: {
   if (profile.organizationId !== organization.id) await store.selectOrganization(urls.origin, organization.id);
 
   const providers = filterImportableCloudOrgProviders(await cloud.providers(profile.token, organization.id));
-  const hasManagedModels = providers.some((provider) => provider.source?.trim().toLowerCase() === "juggle_router" && provider.models.length > 0);
+  const hasManagedModels = providers.some((provider) => isManagedJWorkRouter(provider) && provider.models.length > 0);
   const availablePoints = hasManagedModels ? (await cloud.tenantAccount(profile.token, organization.id)).availablePoints : null;
   const config = await api.workspaceConfig(workspace.id);
   const previous = importedCloudProviders(config);

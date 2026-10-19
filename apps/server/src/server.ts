@@ -1,5 +1,6 @@
 import { readFile, writeFile, rm, stat } from "node:fs/promises";
 import { createHash } from "node:crypto";
+import { hasCurrentRunFinalResponse } from "./session-completion-evidence.js";
 import { homedir, hostname } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
@@ -1632,7 +1633,20 @@ export async function startServer(config: ServerConfig, options: {
     sessionMutations,
     async getSessionStatus(workspaceId, sessionId, signal) {
       const workspace = await resolveWorkspaceWithoutBootstrap(config, workspaceId);
-      return readSessionActivity(config, workspace, sessionId, signal);
+      const statuses = unwrapOpencodeResult(await createWorkspaceOpencodeClient(config, workspace).session.status(undefined, { signal }), "/session/status");
+      if (!isRecord(statuses)) throw new ApiError(502, "opencode_invalid_response", "OpenCode returned invalid session status");
+      const status = statuses[sessionId];
+      if (status !== undefined && (!isRecord(status) || typeof status.type !== "string")) {
+        throw new ApiError(502, "opencode_invalid_response", "OpenCode returned invalid session status");
+      }
+      if (isRecord(status) && status.type !== "idle") return "busy";
+      const active = sessionMutations.getActive(workspaceId, sessionId);
+      if (active && active.status !== "aborting") {
+        const messages = unwrapOpencodeResult(await createWorkspaceOpencodeClient(config, workspace)
+          .session.messages({ sessionID: sessionId, limit: 10 }, { signal }), "/session/message");
+        if (!hasCurrentRunFinalResponse(messages, active.startedAt)) return "busy";
+      }
+      return "idle";
     },
     async admit(operation, signal) {
       const workspace = await resolveWorkspaceWithoutBootstrap(config, operation.workspaceId);

@@ -10,10 +10,12 @@ export function effectiveSessionRunning(input: {
   activityRunActive: boolean;
   activityRunEnded: boolean;
   coordinatorActive: boolean;
+  activityTerminalFailure?: boolean;
 }): boolean {
   if (input.sending) return true;
-  // TIPS: session.error / 消息级中断是当前客户端已看到的终态，优先级高于尚未完成
-  // reconciliation 的 coordinator 与 live status 缓存，避免错误后继续展示停止按钮。
+  if (input.coordinatorActive && !input.activityTerminalFailure) return true;
+  // A plain engine idle may be a delegation/turn boundary. Explicit failure
+  // still ends the local presentation while its server receipt reconciles.
   if (input.activityRunEnded) return false;
   return input.activityRunActive || input.coordinatorActive ||
     input.liveStatus === "busy" || input.liveStatus === "retry";

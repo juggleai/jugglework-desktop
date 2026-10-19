@@ -334,6 +334,7 @@ export function sessionRunObservation(raw: unknown): { sessionId: string; status
         ? nestedPart.sessionID
         : null;
   if (!sessionId) return null;
+  if (event.type === "message.updated" && nestedInfo?.role !== "assistant") return null;
   if (event.type === "session.idle") return { sessionId, status: "idle" };
   if (event.type === "session.error") return { sessionId, status: "failed" };
   if (

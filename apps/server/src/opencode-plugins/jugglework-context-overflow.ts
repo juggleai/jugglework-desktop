@@ -1,14 +1,31 @@
 /**
- * Normalizes non-streaming provider context-overflow responses for OpenCode.
+ * Normalizes provider transport edge cases for OpenCode.
  *
  * OpenCode 1.18.x already understands `error.code=context_length_exceeded`,
  * but OpenAI-compatible relays sometimes return only plain text. Converting
  * that narrow failure shape preserves the provider message while allowing the
  * engine's existing automatic-compaction recovery to run.
+ *
+ * Cloud-managed OpenAI-compatible providers are also guarded against the
+ * narrow HTTP-200 empty-stream failure that otherwise becomes a zero-token
+ * `finish=unknown` assistant turn. The first stream is withheld from OpenCode
+ * until it contains meaningful output; a proven empty/unknown stream is
+ * retried twice inside the same logical model call, so no session input or
+ * completed tool call is replayed.
  */
 
 const MAX_ERROR_BODY_BYTES = 64 * 1024;
+const MAX_EMPTY_STREAM_PROBE_BYTES = 128 * 1024;
 const TLS_RETRY_DELAY_MS = 150;
+const EMPTY_STREAM_RETRY_DELAYS_MS = [1_000, 3_000] as const;
+const EMPTY_STREAM_RETRY_HEADER = "x-jugglework-empty-stream-retry";
+
+type StreamProbeState = {
+  meaningful: boolean;
+  ambiguous: boolean;
+  completionTokens: number | null;
+  finishReasons: string[];
+};
 
 function errorRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" ? value as Record<string, unknown> : null;
@@ -84,6 +101,260 @@ async function fetchWithTransientTlsRetry(
     if (signal?.aborted) throw error;
     return base(retryInput, init);
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function hasContent(value: unknown): boolean {
+  if (typeof value === "string") return value.length > 0;
+  if (Array.isArray(value)) return value.length > 0;
+  return value !== null && value !== undefined;
+}
+
+function inspectUsage(value: unknown, state: StreamProbeState): void {
+  if (!isRecord(value)) return;
+  for (const key of ["completion_tokens", "output_tokens"]) {
+    const tokens = value[key];
+    if (typeof tokens === "number" && Number.isFinite(tokens)) {
+      state.completionTokens = Math.max(state.completionTokens ?? 0, tokens);
+    }
+  }
+}
+
+function inspectChatDelta(value: unknown, state: StreamProbeState): void {
+  if (!isRecord(value)) {
+    if (value !== null && value !== undefined) state.ambiguous = true;
+    return;
+  }
+  for (const [key, item] of Object.entries(value)) {
+    if (key === "role" || item === null || item === undefined || item === "") continue;
+    if (key === "content" || key === "reasoning" || key === "reasoning_content" || key === "refusal") {
+      if (hasContent(item)) state.meaningful = true;
+      continue;
+    }
+    // A tool call must never be replayed, including a partial argument delta.
+    if (key === "tool_calls" || key === "function_call" || key === "audio") {
+      if (hasContent(item)) state.meaningful = true;
+      continue;
+    }
+    // Unknown non-empty deltas fail closed: pass the original stream through.
+    if (hasContent(item)) state.ambiguous = true;
+  }
+}
+
+function inspectSsePayload(payload: string, state: StreamProbeState): void {
+  if (payload === "[DONE]") return;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(payload);
+  } catch {
+    state.ambiguous = true;
+    return;
+  }
+  if (!isRecord(parsed)) {
+    state.ambiguous = true;
+    return;
+  }
+  if (parsed.error !== undefined) {
+    state.meaningful = true;
+    return;
+  }
+  inspectUsage(parsed.usage, state);
+
+  if (Array.isArray(parsed.choices)) {
+    for (const choice of parsed.choices) {
+      if (!isRecord(choice)) {
+        state.ambiguous = true;
+        continue;
+      }
+      inspectChatDelta(choice.delta, state);
+      if (hasContent(choice.message)) state.meaningful = true;
+      if (hasContent(choice.logprobs)) state.meaningful = true;
+      if (typeof choice.finish_reason === "string" && choice.finish_reason.trim()) {
+        state.finishReasons.push(choice.finish_reason.trim().toLowerCase());
+      }
+    }
+    return;
+  }
+
+  // Responses-style streams are also used by some OpenAI-compatible relays.
+  const eventType = typeof parsed.type === "string" ? parsed.type.toLowerCase() : "";
+  if (eventType) {
+    if (eventType.includes("error") || eventType.includes("failed")) {
+      state.meaningful = true;
+      return;
+    }
+    if (eventType.includes("function_call") || eventType.includes("tool_call") || eventType.includes("output_item")) {
+      state.meaningful = true;
+      return;
+    }
+    if (eventType.includes("delta")) {
+      if (hasContent(parsed.delta) || hasContent(parsed.text)) state.meaningful = true;
+      return;
+    }
+    // A completed Responses event can contain output without a delta.
+    if (isRecord(parsed.response)) {
+      inspectUsage(parsed.response.usage, state);
+      if (hasContent(parsed.response.output)) state.meaningful = true;
+      else state.ambiguous = true;
+      return;
+    }
+  }
+
+  // Metadata-only chat chunks without choices are tolerated; unknown payloads
+  // are not considered safely replayable.
+  const metadataKeys = new Set(["id", "object", "created", "model", "system_fingerprint", "service_tier", "usage"]);
+  if (Object.keys(parsed).some((key) => !metadataKeys.has(key))) state.ambiguous = true;
+}
+
+function inspectSseFrame(frame: string, state: StreamProbeState): void {
+  const data: string[] = [];
+  for (const rawLine of frame.split(/\r?\n/)) {
+    if (!rawLine || rawLine.startsWith(":")) continue;
+    const separator = rawLine.indexOf(":");
+    const field = separator < 0 ? rawLine : rawLine.slice(0, separator);
+    const value = separator < 0 ? "" : rawLine.slice(separator + 1).replace(/^ /, "");
+    if (field === "data") data.push(value);
+    else if (field === "event" && (value === "error" || value === "failed")) state.meaningful = true;
+    else if (field !== "event" && field !== "id" && field !== "retry") state.ambiguous = true;
+  }
+  if (data.length) inspectSsePayload(data.join("\n"), state);
+}
+
+function responseWithBody(response: Response, body: ReadableStream<Uint8Array>): Response {
+  return new Response(body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
+}
+
+async function inspectEmptyProviderStream(
+  response: Response,
+  signal: AbortSignal | null,
+): Promise<{ retry: boolean; response?: Response }> {
+  if (!response.ok || !response.body || !response.headers.get("content-type")?.toLowerCase().includes("text/event-stream")) {
+    return { retry: false, response };
+  }
+
+  const [probeBody, passThroughBody] = response.body.tee();
+  const reader = probeBody.getReader();
+  const decoder = new TextDecoder();
+  const state: StreamProbeState = {
+    meaningful: false,
+    ambiguous: false,
+    completionTokens: null,
+    finishReasons: [],
+  };
+  let buffered = "";
+  let observedBytes = 0;
+
+  try {
+    while (true) {
+      if (signal?.aborted) throw signal.reason ?? new DOMException("The operation was aborted", "AbortError");
+      const { done, value } = await reader.read();
+      if (done) {
+        buffered += decoder.decode();
+        break;
+      }
+      observedBytes += value.byteLength;
+      if (observedBytes > MAX_EMPTY_STREAM_PROBE_BYTES) state.ambiguous = true;
+      if (!state.ambiguous) {
+        buffered += decoder.decode(value, { stream: true });
+        const frames = buffered.split(/\r?\n\r?\n/);
+        buffered = frames.pop() ?? "";
+        for (const frame of frames) inspectSseFrame(frame, state);
+      }
+      if (state.meaningful || state.ambiguous) {
+        await reader.cancel().catch(() => undefined);
+        return { retry: false, response: responseWithBody(response, passThroughBody) };
+      }
+    }
+    if (buffered.trim()) inspectSseFrame(buffered, state);
+  } catch (error) {
+    await Promise.allSettled([reader.cancel(), passThroughBody.cancel()]);
+    throw error;
+  }
+
+  const retryableFinish = state.finishReasons.length > 0 &&
+    state.finishReasons.every((reason) => reason === "unknown" || reason === "other");
+  const retry = !state.meaningful && !state.ambiguous && retryableFinish && (state.completionTokens ?? 0) === 0;
+  if (retry) {
+    await passThroughBody.cancel().catch(() => undefined);
+    return { retry: true };
+  }
+  return { retry: false, response: responseWithBody(response, passThroughBody) };
+}
+
+async function waitForRetry(delayMs: number, signal: AbortSignal | null): Promise<void> {
+  if (signal?.aborted) throw signal.reason ?? new DOMException("The operation was aborted", "AbortError");
+  await new Promise<void>((resolve, reject) => {
+    const cleanup = () => signal?.removeEventListener("abort", onAbort);
+    const timer = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, delayMs);
+    const onAbort = () => {
+      clearTimeout(timer);
+      cleanup();
+      reject(signal?.reason ?? new DOMException("The operation was aborted", "AbortError"));
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+async function markedStreamingRequest(
+  input: Parameters<typeof fetch>[0],
+  init?: RequestInit,
+): Promise<{ request: Request; signal: AbortSignal | null; stream: boolean } | null> {
+  let request: Request;
+  try {
+    request = new Request(input, init);
+  } catch {
+    return null;
+  }
+  if (request.headers.get(EMPTY_STREAM_RETRY_HEADER) !== "1") return null;
+  const headers = new Headers(request.headers);
+  headers.delete(EMPTY_STREAM_RETRY_HEADER);
+  const sanitized = new Request(request.clone(), { headers });
+  if (sanitized.method !== "POST") return { request: sanitized, signal: sanitized.signal, stream: false };
+  try {
+    const payload = await sanitized.clone().json() as { stream?: unknown };
+    return { request: sanitized, signal: sanitized.signal, stream: payload.stream === true };
+  } catch {
+    return { request: sanitized, signal: sanitized.signal, stream: false };
+  }
+}
+
+async function fetchWithEmptyStreamRetry(
+  base: typeof fetch,
+  input: Parameters<typeof fetch>[0],
+  init?: RequestInit,
+): Promise<Response> {
+  const marked = await markedStreamingRequest(input, init);
+  if (!marked) return fetchWithTransientTlsRetry(base, input, init);
+
+  // A marked request that is not a replayable streaming JSON request is still
+  // sanitized before dispatch, but is deliberately not retried.
+  if (!marked.stream) return fetchWithTransientTlsRetry(base, marked.request.clone());
+
+  for (let attempt = 0; attempt <= EMPTY_STREAM_RETRY_DELAYS_MS.length; attempt += 1) {
+    const response = await fetchWithTransientTlsRetry(base, marked.request.clone());
+    const inspected = await inspectEmptyProviderStream(response, marked.signal);
+    if (!inspected.retry) return inspected.response ?? response;
+    if (attempt === EMPTY_STREAM_RETRY_DELAYS_MS.length) {
+      throw new Error(`Provider returned an empty response after ${attempt + 1} attempts.`);
+    }
+    console.warn("JuggleWork provider returned an empty stream; retrying", {
+      host: sanitizedHost(marked.request),
+      attempt: attempt + 1,
+      maxAttempts: EMPTY_STREAM_RETRY_DELAYS_MS.length,
+    });
+    await waitForRetry(EMPTY_STREAM_RETRY_DELAYS_MS[attempt]!, marked.signal);
+  }
+  throw new Error("unreachable");
 }
 
 function contextOverflowMessage(text: string): string | null {
@@ -162,7 +433,7 @@ function installContextOverflowFetchPatch(): void {
   installed = true;
   const base = globalThis.fetch;
   const patched = async (input: Parameters<typeof fetch>[0], init?: RequestInit): Promise<Response> => {
-    return normalizedOverflowResponse(await fetchWithTransientTlsRetry(base, input, init));
+    return normalizedOverflowResponse(await fetchWithEmptyStreamRetry(base, input, init));
   };
   globalThis.fetch = Object.assign(patched, base);
 }
@@ -170,5 +441,14 @@ function installContextOverflowFetchPatch(): void {
 // Single export: the OpenCode plugin loader treats every export as a factory.
 export const JuggleWorkContextOverflow = async () => {
   installContextOverflowFetchPatch();
-  return {};
+  return {
+    "chat.headers": async (
+      input: { model?: { providerID?: string } },
+      output: { headers: Record<string, string> },
+    ) => {
+      if (/^lpr_/i.test(input.model?.providerID ?? "")) {
+        output.headers[EMPTY_STREAM_RETRY_HEADER] = "1";
+      }
+    },
+  };
 };

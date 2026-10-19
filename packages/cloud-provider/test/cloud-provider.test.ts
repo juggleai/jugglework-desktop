@@ -5,6 +5,7 @@ import {
   filterImportableCloudOrgProviders,
   gatewayMirrorEnvName,
   isCloudProviderOutOfSync,
+  isManagedJWorkRouter,
   resolveCloudProviderCredentials,
   type CloudProviderConnection,
 } from "../src/index";
@@ -25,6 +26,12 @@ const provider: CloudProviderConnection = {
 };
 
 describe("shared cloud provider transformations", () => {
+  test("distinguishes managed JWorkRouter from ordinary JuggleRouter", () => {
+    expect(isManagedJWorkRouter({ source: "juggle_router", managedKind: "juggle_router" })).toBe(true);
+    expect(isManagedJWorkRouter({ source: "juggle_router", managedIdentity: "jwork_router" })).toBe(true);
+    expect(isManagedJWorkRouter({ source: "juggle_router", managedKind: "juggle_router", managedIdentity: null })).toBe(false);
+    expect(isManagedJWorkRouter({ source: "models_dev", managedIdentity: null })).toBe(false);
+  });
   test("resolves ordered credentials and gateway environment names", () => {
     expect(resolveCloudProviderCredentials(provider)).toEqual({
       envEntries: [

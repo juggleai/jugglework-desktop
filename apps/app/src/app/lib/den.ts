@@ -359,6 +359,7 @@ export type DenOrgLlmProvider = {
   hasApiKey: boolean;
   managed?: boolean;
   managedKind?: "juggle_router" | null;
+  managedIdentity?: "jwork_router" | null;
   accessScope?: "explicit" | "organization";
   enabled?: boolean;
   models: DenOrgLlmProviderModel[];
@@ -1858,6 +1859,11 @@ function parseDenOrgLlmProvider(value: unknown): DenOrgLlmProvider | null {
     ...(value.managedKind === "juggle_router" || value.managedKind === null
       ? { managedKind: value.managedKind }
       : {}),
+    ...(value.managedIdentity === "jwork_router" || value.managedIdentity === null
+      ? { managedIdentity: value.managedIdentity }
+      : value.managedIdentity === undefined && value.managedKind === "juggle_router"
+        ? { managedIdentity: "jwork_router" as const }
+        : {}),
     ...(value.accessScope === "explicit" || value.accessScope === "organization"
       ? { accessScope: value.accessScope }
       : {}),

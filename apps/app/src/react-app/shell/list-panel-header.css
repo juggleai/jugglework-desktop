@@ -76,9 +76,10 @@
   overflow: hidden;
   margin: 0;
   color: inherit;
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 600;
-  line-height: 18px;
+  line-height: 20px;
+  letter-spacing: normal;
   text-overflow: ellipsis;
   white-space: nowrap;
   -webkit-app-region: drag;
@@ -185,7 +186,7 @@
 }
 
 .jw-list-panel-search > input::-webkit-search-cancel-button { display: none; }
-.jw-list-panel-search > input::placeholder { color: var(--jw-list-header-secondary); font-size: 0.725rem; }
+.jw-list-panel-search > input::placeholder { color: var(--jw-list-header-secondary); font-size: 14px; letter-spacing: normal; }
 .jw-list-panel-search > input:focus { border-color: var(--jw-list-header-focus); box-shadow: 0 0 0 2px rgba(80, 130, 255, .14); }
 
 .jw-list-panel-search-end {

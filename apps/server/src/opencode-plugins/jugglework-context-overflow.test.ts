@@ -3,16 +3,19 @@ import { JuggleWorkContextOverflow } from "./jugglework-context-overflow.js";
 
 const originalFetch = globalThis.fetch;
 let nextResponse = new Response("ok");
+let responseQueue: Response[] = [];
 let nextError: unknown = null;
 let fetchCalls = 0;
-const fakeBase = Object.assign(async (): Promise<Response> => {
+let receivedHeaders: Headers[] = [];
+const fakeBase = Object.assign(async (input: Parameters<typeof fetch>[0], init?: RequestInit): Promise<Response> => {
   fetchCalls += 1;
+  receivedHeaders.push(new Request(input, init).headers);
   if (nextError) {
     const error = nextError;
     nextError = null;
     throw error;
   }
-  return nextResponse;
+  return responseQueue.shift() ?? nextResponse;
 }, originalFetch);
 let patchedFetch: typeof fetch;
 
@@ -74,6 +77,165 @@ describe("JuggleWorkContextOverflow fetch patch", () => {
         message: "Your input exceeds the context window of this model.",
       },
     });
+  });
+
+  test("retries an empty unknown SSE response inside one logical model call", async () => {
+    fetchCalls = 0;
+    receivedHeaders = [];
+    responseQueue = [
+      new Response([
+        'data: {"choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}',
+        'data: {"choices":[{"index":0,"delta":{},"finish_reason":"unknown"}],"usage":{"completion_tokens":0}}',
+        "data: [DONE]",
+        "",
+      ].join("\n\n"), { headers: { "content-type": "text/event-stream" } }),
+      new Response([
+        'data: {"choices":[{"index":0,"delta":{"content":"continued"},"finish_reason":null}]}',
+        'data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}',
+        "data: [DONE]",
+        "",
+      ].join("\n\n"), { headers: { "content-type": "text/event-stream", "x-request-id": "req_retry" } }),
+    ];
+
+    const response = await patchedFetch("https://provider.test/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-jugglework-empty-stream-retry": "1" },
+      body: JSON.stringify({ model: "gpt-5.6-sol", stream: true, messages: [] }),
+    });
+
+    expect(fetchCalls).toBe(2);
+    expect(receivedHeaders.every((headers) => !headers.has("x-jugglework-empty-stream-retry"))).toBe(true);
+    expect(response.headers.get("x-request-id")).toBe("req_retry");
+    expect(await response.text()).toContain("continued");
+    expect(await Promise.resolve(responseQueue.length)).toBe(0);
+  }, 10_000);
+
+  test("does not retry after any text or tool-call output", async () => {
+    const bodies = [
+      'data: {"choices":[{"index":0,"delta":{"content":"visible"},"finish_reason":null}]}\n\ndata: [DONE]\n\n',
+      'data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\\"x\\":1}"}}]},"finish_reason":null}]}\n\ndata: [DONE]\n\n',
+    ];
+    for (const body of bodies) {
+      fetchCalls = 0;
+      responseQueue = [];
+      nextResponse = new Response(body, { headers: { "content-type": "text/event-stream" } });
+      const response = await patchedFetch("https://provider.test/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-jugglework-empty-stream-retry": "1" },
+        body: JSON.stringify({ stream: true }),
+      });
+      expect(fetchCalls).toBe(1);
+      expect(await response.text()).toBe(body);
+    }
+  });
+
+  test("does not retry a deliberate empty stop or a non-zero-token response", async () => {
+    const bodies = [
+      'data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"completion_tokens":0}}\n\ndata: [DONE]\n\n',
+      'data: {"choices":[{"index":0,"delta":{},"finish_reason":"unknown"}],"usage":{"completion_tokens":4}}\n\ndata: [DONE]\n\n',
+      'data: {"choices":[{"index":0,"delta":{},"finish_reason":null}],"usage":{"completion_tokens":0}}\n\ndata: [DONE]\n\n',
+    ];
+    for (const body of bodies) {
+      fetchCalls = 0;
+      nextResponse = new Response(body, { headers: { "content-type": "text/event-stream" } });
+      const response = await patchedFetch("https://provider.test/v1/chat/completions", {
+        method: "POST",
+        headers: { "x-jugglework-empty-stream-retry": "1" },
+        body: JSON.stringify({ stream: true }),
+      });
+      expect(fetchCalls).toBe(1);
+      expect(await response.text()).toBe(body);
+    }
+  });
+
+  test("stops after two retries when every provider attempt is empty", async () => {
+    fetchCalls = 0;
+    const empty = () => new Response([
+      'data: {"choices":[{"index":0,"delta":{},"finish_reason":"other"}],"usage":{"completion_tokens":0}}',
+      "data: [DONE]",
+      "",
+    ].join("\n\n"), { headers: { "content-type": "text/event-stream" } });
+    responseQueue = [empty(), empty(), empty()];
+
+    await expect(patchedFetch("https://provider.test/v1/chat/completions", {
+      method: "POST",
+      headers: { "x-jugglework-empty-stream-retry": "1" },
+      body: JSON.stringify({ stream: true }),
+    })).rejects.toThrow("Provider returned an empty response after 3 attempts.");
+
+    expect(fetchCalls).toBe(3);
+  }, 10_000);
+
+  test("recognizes meaningful output when an SSE frame spans chunks", async () => {
+    fetchCalls = 0;
+    responseQueue = [];
+    const encoder = new TextEncoder();
+    const chunks = [
+      'data: {"choices":[{"index":0,"delta":{"conte',
+      'nt":"continued"},"finish_reason":null}]}\n\ndata: [DONE]\n\n',
+    ];
+    nextResponse = new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+        controller.close();
+      },
+    }), { headers: { "content-type": "text/event-stream" } });
+
+    const response = await patchedFetch("https://provider.test/v1/chat/completions", {
+      method: "POST",
+      headers: { "x-jugglework-empty-stream-retry": "1" },
+      body: JSON.stringify({ stream: true }),
+    });
+
+    expect(fetchCalls).toBe(1);
+    expect(await response.text()).toBe(chunks.join(""));
+  });
+
+  test("marks only lpr providers for empty-stream retry", async () => {
+    const hooks = await JuggleWorkContextOverflow() as {
+      "chat.headers": (
+        input: { model: { providerID: string } },
+        output: { headers: Record<string, string> },
+      ) => Promise<void>;
+    };
+    const managed = { headers: {} as Record<string, string> };
+    const local = { headers: {} as Record<string, string> };
+    await hooks["chat.headers"]({ model: { providerID: "lpr_router" } }, managed);
+    await hooks["chat.headers"]({ model: { providerID: "openai" } }, local);
+    expect(managed.headers["x-jugglework-empty-stream-retry"]).toBe("1");
+    expect(local.headers["x-jugglework-empty-stream-retry"]).toBeUndefined();
+  });
+
+  test("does not continue retrying after the request is aborted", async () => {
+    fetchCalls = 0;
+    responseQueue = [new Response([
+      'data: {"choices":[{"index":0,"delta":{},"finish_reason":"unknown"}],"usage":{"completion_tokens":0}}',
+      "data: [DONE]",
+      "",
+    ].join("\n\n"), { headers: { "content-type": "text/event-stream" } })];
+    const controller = new AbortController();
+    const promise = patchedFetch("https://provider.test/v1/chat/completions", {
+      method: "POST",
+      signal: controller.signal,
+      headers: { "x-jugglework-empty-stream-retry": "1" },
+      body: JSON.stringify({ stream: true }),
+    });
+    setTimeout(() => controller.abort(), 10);
+    await expect(promise).rejects.toThrow();
+    expect(fetchCalls).toBe(1);
+  });
+
+  test("fails open on malformed SSE instead of replaying an uncertain response", async () => {
+    fetchCalls = 0;
+    const body = "data: {not-json}\n\ndata: [DONE]\n\n";
+    nextResponse = new Response(body, { headers: { "content-type": "text/event-stream" } });
+    const response = await patchedFetch("https://provider.test/v1/chat/completions", {
+      method: "POST",
+      headers: { "x-jugglework-empty-stream-retry": "1" },
+      body: JSON.stringify({ stream: true }),
+    });
+    expect(fetchCalls).toBe(1);
+    expect(await response.text()).toBe(body);
   });
 
   test("leaves successful, structured, rate-limit, and oversized responses untouched", async () => {

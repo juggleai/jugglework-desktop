@@ -21,10 +21,17 @@ export type CloudProvider = {
   providerConfig?: Record<string, unknown>;
   hasApiKey?: boolean;
   enabled?: boolean;
+  managed?: boolean;
+  managedKind?: string | null;
+  managedIdentity?: string | null;
   models: CloudProviderModel[];
   createdAt?: string | null;
   updatedAt?: string | null;
 };
+
+export const isManagedJWorkRouter = (provider: Pick<CloudProvider, "source" | "managedKind" | "managedIdentity">) =>
+  provider.managedIdentity === "jwork_router" ||
+  (provider.managedIdentity === undefined && (provider.managedKind?.trim().toLowerCase() === "juggle_router" || provider.source?.trim().toLowerCase() === "juggle_router"));
 
 export type CloudProviderConnection = CloudProvider & {
   apiKey?: string | null;
