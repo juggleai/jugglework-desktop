@@ -148,8 +148,8 @@ win:
         - opencode-aarch64-pc-windows-msvc.exe
         - opencode-x86_64-pc-windows-msvc.exe
         - versions.json
-        - versions.json-aarch64-pc-windows-msvc.exe
-        - versions.json-x86_64-pc-windows-msvc.exe
+        - versions-aarch64-pc-windows-msvc.json
+        - versions-x86_64-pc-windows-msvc.json
   target:
     - nsis
   publish:
