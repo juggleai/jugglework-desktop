@@ -12,6 +12,8 @@ import electron from "electron";
 import { createToonFactoryRuntime } from "../electron/toonFactoryRuntime.mjs";
 
 const { app, BrowserWindow } = electron;
+// Keep default shutdown from skipping async cleanup and masking failures as exit 0.
+app.on("window-all-closed", () => {});
 const execute = promisify(execFile);
 const smokeTimeoutMs = 120_000;
 
@@ -118,12 +120,12 @@ async function run() {
     assert.equal(await pageJson(firstView, "typeof require"), "undefined");
     assert.equal(await pageJson(firstView, "typeof window.__JUGGLEWORK_ELECTRON__"), "undefined");
     runtime.layout({ x: 48, y: 0, width: 1232, height: 900 });
-    await waitFor(() => pageJson(firstView, "location.hash === '#/home' && Boolean(document.querySelector('.home .creationPanel'))"), "managed home render");
+    await waitFor(() => pageJson(firstView, "location.hash === '#/home' && Boolean(document.querySelector('.home.managedHome .introduction .startHint')) && document.querySelectorAll('.home.managedHome .introduction .featureCard').length === 6"), "managed home render");
     const initialProjectState = await runtime.enter();
     assert.equal(initialProjectState.currentDirectory, null);
     const home = await pageJson(firstView, `(() => ({ hash: location.hash, text: document.body.innerText, href: location.href }))()`);
     assert.equal(home.hash, "#/home");
-    assert.ok(home.text.includes("灵感创作模式") && home.text.includes("工作目录"), home.text);
+    assert.ok(home.text.includes("漫剧工厂") && home.text.includes("新建项目") && home.text.includes("开始你的第一部作品"), home.text);
     assert.ok(!home.href.includes("hello") && !home.text.includes("启动失败"), home.text);
 
     const directoryGrant = await pageJson(firstView, `(async () => {
@@ -284,7 +286,7 @@ async function run() {
     const secondClipView = window.contentView.children[0];
     const secondView = secondClipView.children[0];
     assert.notEqual(secondView, firstView);
-    await waitFor(() => pageJson(secondView, "location.hash === '#/home' && Boolean(document.querySelector('.home .creationPanel'))"), "workspace B managed home render");
+    await waitFor(() => pageJson(secondView, "location.hash === '#/home' && Boolean(document.querySelector('.home.managedHome .introduction .startHint')) && document.querySelectorAll('.home.managedHome .introduction .featureCard').length === 6"), "workspace B managed home render");
     const settingsB = await pageJson(secondView, `(async () => (await (await fetch('/api/settings/get', { headers: { 'x-toonflow-workspace': '1' } })).json()).data)()`);
     assert.notEqual(settingsB.ui?.smokeWorkspace, "A");
     const revokedGrant = await pageJson(secondView, `(async () => {

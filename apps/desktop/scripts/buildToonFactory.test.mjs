@@ -22,6 +22,18 @@ const temporaryDirectories = [];
 const requiresPosixExecuteBits = { skip: process.platform === "win32" };
 const electronBuildSource = readFileSync(new URL("./electron-build.mjs", import.meta.url), "utf8");
 
+it("keeps smoke timeout failures nonzero through window destruction and async cleanup", () => {
+  const source = readFileSync(new URL("./toonFactorySmoke.mjs", import.meta.url), "utf8");
+  const handler = source.indexOf('app.on("window-all-closed", () => {});');
+  assert.ok(handler >= 0 && handler < source.indexOf("async function run()"));
+  assert.match(source, /throw new Error\(`\$\{label\} timed out/);
+  assert.match(source, /catch \(error\) \{\s*console\.error\([^\n]+\);\s*exitCode = 1;\s*\} finally \{/);
+  assert.match(source, /finally \{\s*clearTimeout\(hardTimeout\);\s*await runtime\?\.dispose\(\)\.catch\(\(\) => \{\}\);\s*if \(window && !window\.isDestroyed\(\)\) window\.destroy\(\);\s*host\?\.closeAllConnections\(\);\s*await new Promise\([^\n]+\);\s*await rm\(temporary, \{ recursive: true, force: true \}\);\s*app\.exit\(exitCode\);/);
+  const hardTimeout = source.slice(source.indexOf("const hardTimeout = setTimeout"), source.indexOf("}, smokeTimeoutMs);"));
+  assert.match(hardTimeout, /finally\(\(\) => app\.exit\(1\)\)/);
+  assert.match(hardTimeout, /setTimeout\(\(\) => app\.exit\(1\), 5000\)/);
+});
+
 function fixture() {
   const directory = mkdtempSync(path.join(os.tmpdir(), "toonflow-build-"));
   temporaryDirectories.push(directory);
