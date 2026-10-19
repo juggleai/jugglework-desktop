@@ -2,6 +2,8 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const asar = require("@electron/asar");
+const { OFFICE_ENGINE_PLATFORMS, copyOfficeEngineResources } = require("./office-engine-resources.cjs");
+const { copyOfficeAssets } = require("./office-assets.cjs");
 
 const computerUseHelperAppName = "JuggleWork Computer Use.app";
 const macTrayTemplateImages = [
@@ -98,6 +100,23 @@ function resolvePackagedResourcesPath(context) {
     return appPath ? path.join(appPath, "Contents", "Resources") : null;
   }
   return path.join(context.appOutDir, "resources");
+}
+
+/** 将已提供的本地 Office SDK 复制到安装包；不联网下载或读取外部 App。 */
+function packageBundledOfficeResources(context) {
+  if (!["darwin", "win32"].includes(context.electronPlatformName)) return;
+  const arch = normalizeArch(context.arch);
+  if (!arch) return;
+  const platform = `${context.electronPlatformName}-${arch}`;
+  if (!OFFICE_ENGINE_PLATFORMS.includes(platform)) return;
+  const resourcesDirectory = resolvePackagedResourcesPath(context);
+  if (!resourcesDirectory) throw new Error("无法确定安装包 Office SDK 资源目录");
+  copyOfficeAssets(path.join(__dirname, "../resources/office-assets"), resourcesDirectory);
+  return copyOfficeEngineResources({
+    sourceDirectory: path.join(__dirname, "../resources/office-engine"),
+    resourcesDirectory,
+    platform,
+  });
 }
 
 function writePackagedUpdateConfiguration(context, environment = process.env) {
@@ -288,27 +307,30 @@ function pruneNodePtyPrebuildPackages(context, arch) {
   }
 }
 
-function signComputerUseHelper(context) {
+/** 为所有随包原生辅助应用签名，保持与主应用相同的发布身份。 */
+function signBundledHelpers(context) {
   const appPath = resolveMacAppPath(context);
   if (!appPath) return;
 
-  const helperPath = path.join(appPath, "Contents", "Resources", "helpers", computerUseHelperAppName);
-  if (!fs.existsSync(helperPath)) {
-    throw new Error(`Missing Computer Use helper app at ${helperPath}`);
-  }
+  for (const helperName of [computerUseHelperAppName, "JuggleWork File Browser.app"]) {
+    const helperPath = path.join(appPath, "Contents", "Resources", "helpers", helperName);
+    if (!fs.existsSync(helperPath)) {
+      throw new Error(`Missing native helper app at ${helperPath}`);
+    }
 
-  const identity = process.env.JUGGLEWORK_COMPUTER_USE_CODESIGN_IDENTITY
-    || process.env.CSC_NAME
-    || process.env.APPLE_CODESIGN_IDENTITY
-    || "-";
-  const args = ["--force", "--deep", "--options", "runtime", "--sign", identity];
-  if (identity !== "-") args.push("--timestamp");
-  args.push(helperPath);
+    const identity = process.env.JUGGLEWORK_COMPUTER_USE_CODESIGN_IDENTITY
+      || process.env.CSC_NAME
+      || process.env.APPLE_CODESIGN_IDENTITY
+      || "-";
+    const args = ["--force", "--deep", "--options", "runtime", "--sign", identity];
+    if (identity !== "-") args.push("--timestamp");
+    args.push(helperPath);
 
-  const result = spawnSync("codesign", args, { stdio: "inherit" });
-  if (result.error) throw result.error;
-  if (result.status !== 0) {
-    throw new Error(`codesign failed for Computer Use helper app with status ${result.status}`);
+    const result = spawnSync("codesign", args, { stdio: "inherit" });
+    if (result.error) throw result.error;
+    if (result.status !== 0) {
+      throw new Error(`codesign failed for ${helperName} with status ${result.status}`);
+    }
   }
 }
 
@@ -328,17 +350,19 @@ function copyExecutableTargetToAlias(sidecarsDir, targetName, aliasName) {
 }
 
 async function runAfterPack(context, dependencies = {}) {
+  const packageOfficeResources = dependencies.packageOfficeResources ?? packageBundledOfficeResources;
   const verifyContracts = dependencies.verifyContracts ?? verifyCompiledRuntimeContracts;
   const verifyUiControlMcp = dependencies.verifyUiControlMcp ?? verifyBundledUiControlMcp;
   const verifyUiControlMcpRuntime = dependencies.verifyUiControlMcpRuntime ?? verifyBundledUiControlMcpRuntime;
   const verifyMacTrayResources = dependencies.verifyMacTrayResources ?? verifyPackagedMacTrayResources;
-  const signHelper = dependencies.signHelper ?? signComputerUseHelper;
+  const signHelper = dependencies.signHelper ?? signBundledHelpers;
   const writeUpdateConfiguration = dependencies.writeUpdateConfiguration ?? writePackagedUpdateConfiguration;
   verifyContracts(context);
   verifyUiControlMcp(context);
   await verifyUiControlMcpRuntime(context);
   verifyMacTrayResources(context);
   writeUpdateConfiguration(context);
+  packageOfficeResources(context);
 
   const triple = targetTriple(context.electronPlatformName, context.arch);
   if (!triple) return;
@@ -361,7 +385,7 @@ async function runAfterPack(context, dependencies = {}) {
   }
 
   const versionsAlias = "versions.json";
-  const versionsTarget = `versions.json-${triple}${executableSuffix}`;
+  const versionsTarget = `versions-${triple}.json`;
   const versionsTargetPath = path.join(sidecarsDir, versionsTarget);
   if (!fs.existsSync(versionsTargetPath)) {
     throw new Error(`Missing packaged sidecar metadata for target: ${versionsTarget}`);
@@ -397,3 +421,4 @@ module.exports.verifyBundledUiControlMcp = verifyBundledUiControlMcp;
 module.exports.verifyBundledUiControlMcpRuntime = verifyBundledUiControlMcpRuntime;
 module.exports.writePackagedUpdateConfiguration = writePackagedUpdateConfiguration;
 module.exports.windowsPublisherNames = windowsPublisherNames;
+module.exports.packageBundledOfficeResources = packageBundledOfficeResources;

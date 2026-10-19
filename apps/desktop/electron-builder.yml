@@ -48,6 +48,31 @@ npmRebuild: true
 afterPack: scripts/electron-after-pack.cjs
 afterSign: scripts/electron-after-sign.cjs
 mac:
+  fileAssociations:
+    - ext: docx
+      name: Word Document
+      mimeType: application/vnd.openxmlformats-officedocument.wordprocessingml.document
+      role: Editor
+      rank: Alternate
+    - ext: xlsx
+      name: Excel Workbook
+      mimeType: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+      role: Editor
+      rank: Alternate
+    - ext: csv
+      name: CSV Document
+      mimeType: text/csv
+      role: Editor
+      rank: Alternate
+    - ext: pptx
+      name: PowerPoint Presentation
+      mimeType: application/vnd.openxmlformats-officedocument.presentationml.presentation
+      role: Editor
+      rank: Alternate
+  # 使用 builder 实际选定的身份签 SDK、刷新哈希，再封存主应用；不能重复改写 SDK。
+  sign: scripts/electron-sign-macos.cjs
+  signIgnore:
+    - "/Contents/Resources/office-engine/"
   icon: resources/icons/icon.icns
   category: public.app-category.developer-tools
   minimumSystemVersion: "14.0"
@@ -88,6 +113,7 @@ mac:
       to: helpers
       filter:
         - "JuggleWork Computer Use.app/**"
+        - "JuggleWork File Browser.app/**"
   target:
     - dmg
     - zip
@@ -124,8 +150,8 @@ win:
         - opencode-aarch64-pc-windows-msvc.exe
         - opencode-x86_64-pc-windows-msvc.exe
         - versions.json
-        - versions.json-aarch64-pc-windows-msvc.exe
-        - versions.json-x86_64-pc-windows-msvc.exe
+        - versions-aarch64-pc-windows-msvc.json
+        - versions-x86_64-pc-windows-msvc.json
   target:
     - nsis
   publish:

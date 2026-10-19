@@ -1,0 +1,110 @@
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+.file-window-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  color: var(--foreground);
+  background: var(--background);
+}
+.file-window-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 40px;
+  min-height: 40px;
+  padding: 4px 12px;
+  background: color-mix(in srgb, var(--muted) 75%, var(--background));
+  -webkit-app-region: drag;
+}
+.file-window-tabs.is-mac {
+  padding-left: 82px;
+}
+.file-window-tab-list {
+  display: flex;
+  gap: 4px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-app-region: no-drag;
+}
+.file-window-tab {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  max-width: 240px;
+  height: 30px;
+  border-radius: 8px;
+  color: var(--muted-foreground);
+}
+.file-window-tab.is-active {
+  color: var(--foreground);
+  background: var(--background);
+  box-shadow: 0 1px 3px #00000005;
+}
+.file-window-tab-select {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 8px;
+  min-width: 0;
+  height: 100%;
+  font-size: 12px;
+  cursor: default;
+}
+.file-window-tab-select span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.file-window-close {
+  display: grid;
+  place-items: center;
+  margin-right: 4px;
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  cursor: default;
+}
+.file-window-close:hover {
+  background: var(--muted);
+}
+.file-window-add {
+  flex-shrink: 0;
+  -webkit-app-region: no-drag;
+}
+.file-window-drag {
+  flex: 1;
+  min-width: 20px;
+}
+.file-window-logo {
+  height: 25px;
+  width: 25px;
+  border-radius: 6px;
+  object-fit: contain;
+}
+.file-window-content {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--muted) 35%, var(--background));
+}
+.file-window-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  height: 100%;
+  color: var(--muted-foreground);
+  font-size: 14px;
+}
+.file-window-empty > img {
+  width: 80px;
+  height: 80px;
+  border-radius: 20px;
+}

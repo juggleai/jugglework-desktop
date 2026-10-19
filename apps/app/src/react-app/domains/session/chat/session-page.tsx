@@ -22,6 +22,7 @@ import type {
 import type { OpenCreateWorkspace, ShareWorkspaceModalProps } from "../../workspace/types";
 import { isRemoteWorkerUnreachableState } from "../../workspace/remote-workspace-diagnostics";
 import { Button } from "@/components/ui/button";
+import { toast } from "@/components/ui/sonner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   Dialog,
@@ -500,6 +501,12 @@ export function SessionPage(props: SessionPageProps) {
     setSidePanelState(actionSessionId, panel);
   }, [actionSessionId, setSidePanelState]);
 
+  useEffect(() => window.__JUGGLEWORK_ELECTRON__?.fileWindow?.onOpenInPanel?.((file) => {
+    props.sidebar.onOpenSession(file.workspaceId, file.sessionId);
+    openFileInPanel(file.sessionId, { path: file.path, name: file.path.split("/").pop() ?? file.path });
+    setSidePanelState(file.sessionId, "files");
+  }), [props.sidebar.onOpenSession, openFileInPanel, setSidePanelState]);
+
   const toggleCurrentSidePanel = useCallback((panel: SidePanelItem) => {
     if (panel === "voice") {
       toggleSidePanelState(GLOBAL_VOICE_SIDE_PANEL_KEY, "voice");
@@ -646,6 +653,8 @@ export function SessionPage(props: SessionPageProps) {
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   }, [props.juggleworkServerClient, props.runtimeWorkspaceId]);
   const openTarget = useCallback((target: OpenTarget, options?: OpenTargetOptions, sourceSessionId?: string) => {
+    // TIPS: 生成产物不抢占用户正在查看的文件；只有显式点击才打开文件 tab。
+    if (options?.auto && target.kind === "file") return;
     if (target.kind === "url" || target.preview === "browser") {
       const url = browserUrlForTarget(target);
       if (isElectronRuntime()) {
@@ -664,10 +673,16 @@ export function SessionPage(props: SessionPageProps) {
             if (options.reveal) {
               await revealDesktopItemInDir(path);
             } else {
+              const sessionId = sourceSessionId ?? actionSessionId;
+              if (target.value.toLowerCase().endsWith(".docx") && sessionId && props.juggleworkServerClient && props.runtimeWorkspaceId) {
+                const prepared = await props.juggleworkServerClient.prepareOfficeFile(props.runtimeWorkspaceId, sessionId, target.value, true);
+                if (prepared.document) await window.__JUGGLEWORK_ELECTRON__?.office?.destroy(prepared.document.documentId);
+                useFilesPanelStore.getState().setExternal(sessionId, target.value, true);
+              }
               await openDesktopPath(path);
             }
-          } catch {
-            await revealDesktopItemInDir(path).catch(() => undefined);
+          } catch (error) {
+            toast.error(error instanceof Error ? error.message : t("office.open_failed"));
           }
         })();
       }
@@ -709,7 +724,7 @@ export function SessionPage(props: SessionPageProps) {
     });
     preserveSidePanelOnPanelOpenRef.current = true;
     setCurrentSidePanel("panel");
-  }, [actionSessionId, activePanelTab?.id, browserUrlForTarget, downloadOpenTarget, openFileInPanel, openTab, props.selectedWorkspaceDisplay.workspaceType, props.selectedWorkspaceRoot, setCurrentSidePanel]);
+  }, [actionSessionId, activePanelTab?.id, browserUrlForTarget, downloadOpenTarget, openFileInPanel, openTab, props.selectedWorkspaceDisplay.workspaceType, props.selectedWorkspaceRoot, props.juggleworkServerClient, props.runtimeWorkspaceId, setCurrentSidePanel]);
   const closeRightPane = useCallback(() => {
     setCurrentSidePanel(null);
   }, [setCurrentSidePanel]);
@@ -1969,6 +1984,7 @@ export function SessionPage(props: SessionPageProps) {
                       opencodeBaseUrl={reactSessionBaseUrl}
                       opencodeToken={reactSessionToken}
                       busy={selectedSessionBusy}
+                      isRemoteWorkspace={props.selectedWorkspaceDisplay.workspaceType === "remote"}
                     />
                   ) : activeSidePanel === "panel" && actionSessionId ? (
                     <SidePanel
@@ -2005,6 +2021,7 @@ export function SessionPage(props: SessionPageProps) {
               opencodeBaseUrl={reactSessionBaseUrl}
               opencodeToken={reactSessionToken}
               busy={selectedSessionBusy}
+              isRemoteWorkspace={props.selectedWorkspaceDisplay.workspaceType === "remote"}
             />
             </div>
           </div>

@@ -201,6 +201,7 @@ process.once("SIGTERM", () => void stopAll(143));
 if (process.env.JUGGLEWORK_ELECTRON_SKIP_SHARED_PREPARE !== "1") {
   runSync(nodeCmd, [resolve(__dirname, "prepare-sidecar.mjs"), "--force", "--outdir", electronSidecarDir], { cwd: desktopRoot });
   runSync(nodeCmd, [resolve(__dirname, "prepare-computer-use-helper.mjs"), "--force", "--outdir", electronHelperDir], { cwd: desktopRoot });
+  runSync(nodeCmd, [resolve(__dirname, "prepare-file-window-helper.mjs"), "--outdir", electronHelperDir], { cwd: desktopRoot });
 }
 
 // Keep Electron on compiled shared contracts even in local development. The

@@ -6,6 +6,7 @@ import {
   composerAttachmentsToWorkspaceFileParts,
   composerAttachmentToFilePart,
   materializeGenerationSourceImage,
+  materializeComposerAttachment,
   resolveAttachmentFileMetadata,
   safeAttachmentFilename,
   workspaceInboxPath,
@@ -422,4 +423,19 @@ describe("composer attachment file parts", () => {
       createId: () => "nonce-a",
     })).rejects.toThrow("Failed to copy attachment \"scan.pdf\" into this worker workspace: upload was rejected");
   });
+});
+
+
+test.each(["报告.docx", "预算.xlsx", "客户.csv"])("点击预览后发送复用编辑的工作区副本，不覆盖 %s", async (name) => {
+  const attachment = attachmentFor(new File([DOCX_BYTES], name));
+  const { endpoint, calls } = uploadRecorder("workspace-1");
+  const input = { attachment, endpoint, sessionId: "session-1", createId: () => "preview" };
+  const path = await materializeComposerAttachment(input);
+  expect(await materializeComposerAttachment(input)).toBe(path);
+  const parts = await composerAttachmentsToWorkspaceFileParts({ attachments: [attachment], endpoint, sessionId: "session-1", workspaceRoot: "/workspace" });
+  expect(calls).toHaveLength(1);
+  expect(filePartUrl(parts, 1)).toBe(`file:///workspace/${encodeURI(path)}`);
+  const next = uploadRecorder("workspace-2");
+  await materializeComposerAttachment({ ...input, endpoint: next.endpoint });
+  expect(next.calls).toHaveLength(1);
 });

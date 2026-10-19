@@ -1,3 +1,9 @@
+import { toast } from "@/components/ui/sonner"
+import type { OpenTarget } from "@/react-app/domains/session/artifacts/open-target"
+import { materializeComposerAttachment } from "@/react-app/domains/session/sync/attachment-file-part"
+import type { ComposerAttachment } from "@/app/types"
+import { getArtifactFileReferences } from "@/lib/artifacts"
+import { resolveFileReference } from "@/lib/file-references"
 "use memo";
 
 import * as React from "react"
@@ -38,7 +44,10 @@ import { WebfetchTool } from "@/components/tools/webfetch"
 import { WebsearchTool } from "@/components/tools/websearch"
 import { useMessageList, useSessionErrorMessage } from "@/components/chat/message-list-provider"
 import { SessionErrorMessage } from "@/components/chat/session-error-message"
-import { ArtifactList } from "@/components/chat/artifact"
+import { ArtifactCards, ArtifactDeliveryStatus } from "@/components/chat/artifact"
+import { artifactsFromDelivery, canDisplayArtifact, useArtifacts } from "@/lib/artifacts"
+import { useFileDeliveries } from "@/react-app/domains/session/artifacts/file-deliveries-provider"
+import { FileReferenceProvider, useOpenTargets } from "@/lib/target-provider"
 import { TaskSuggestions } from "@/components/chat/task-suggestions"
 import {
   DescriptiveButtonContent,
@@ -516,6 +525,31 @@ function FileMessage({ part, tone }: FileMessageProps) {
   const badge = getMediaBadge(part)
   const isImage = part.mediaType.startsWith("image/") && Boolean(part.url)
   const downloadUrl = getSafeFileDownloadUrl(part)
+  const { openTargets, onOpenTarget } = useOpenTargets()
+  const target = resolveFileReference(part.url, openTargets)
+  const { client, workspaceId, sessionId } = useMessageList()
+  const materialized = React.useRef<{ url: string; attachment: ComposerAttachment } | null>(null)
+  const [opening, setOpening] = React.useState(false)
+  const handleOpen = async () => {
+    if (!onOpenTarget) return
+    if (target) { onOpenTarget({ ...target, name: title }); return }
+    if (!downloadUrl || !client) return
+    setOpening(true)
+    try {
+      // TIPS: 兼容历史消息中的内嵌附件；先建立同一工作区文件，再复用右侧编辑入口。
+      if (materialized.current?.url !== part.url) {
+        const blob = await fetch(downloadUrl).then((response) => response.blob())
+        const file = new File([blob], title, { type: part.mediaType })
+        materialized.current = { url: part.url, attachment: { id: part.url, file, name: title, size: file.size, mimeType: part.mediaType, kind: "file" } }
+      }
+      const path = await materializeComposerAttachment({ attachment: materialized.current.attachment, endpoint: { client, workspaceId }, sessionId })
+      const result = await client.resolveArtifacts(workspaceId, [{ kind: "file", value: path }])
+      const resolved = result.items.find((item) => item.kind === "file" && item.exists === true) as OpenTarget | undefined
+      if (!resolved) throw new Error(t("artifact.file_missing"))
+      onOpenTarget({ ...resolved, name: title })
+    } catch (error) { toast.error(error instanceof Error ? error.message : t("artifact.operation_failed")) }
+    finally { setOpening(false) }
+  }
 
   const handleDownload = React.useCallback(() => {
     if (!downloadUrl) return
@@ -548,7 +582,7 @@ function FileMessage({ part, tone }: FileMessageProps) {
 
   return (
     <div className="flex h-auto w-fit min-w-0 max-w-full shrink items-center justify-start gap-2 rounded-xl border border-border/70 bg-background/40 ps-2 pe-2 py-1 text-left text-sm font-medium whitespace-normal">
-      <div className="flex min-w-0 items-center gap-2 pe-2">
+      <button type="button" className="flex min-w-0 items-center gap-2 pe-2 text-left hover:text-primary disabled:cursor-default" disabled={opening || !onOpenTarget || (!target && (!downloadUrl || !client))} onClick={() => void handleOpen()} aria-label={`${t("file_window.open")} ${title}`}>
         <DescriptiveButtonIcon>
           <FileIcon className="size-5 shrink-0" />
         </DescriptiveButtonIcon>
@@ -560,7 +594,7 @@ function FileMessage({ part, tone }: FileMessageProps) {
             </DescriptiveButtonDescription>
           ) : null}
         </DescriptiveButtonContent>
-      </div>
+      </button>
       {downloadUrl ? (
         <Button
           type="button"
@@ -1040,10 +1074,6 @@ function getRenderableMessage(message: UIMessage) {
   return parts.length > 0 ? { ...message, parts } : null;
 }
 
-function MessageArtifacts(props: { message: UIMessage }) {
-  return <ArtifactList messages={[props.message]} includeTargetFallbacks={false} />;
-}
-
 function GeneratedImageResultList({ messages }: { messages: UIMessage[] }) {
   const results = React.useMemo(() => generatedImageResultsFromMessages(messages), [messages])
   if (results.length === 0) return null
@@ -1106,6 +1136,26 @@ function MessageGroup({
   const lastRealItem = items.findLast((item) => !isSessionErrorMessage(item.message))
   const isLiveGroup = isStreaming && lastItem !== undefined && lastItem.index === messages.length - 1
   const [processOpen, setProcessOpen] = React.useState(() => isLiveGroup)
+  const turnMessages = React.useMemo(() => items.map((item) => item.message), [items])
+  let userMessageIndex = items[0]?.index ?? -1
+  while (userMessageIndex > 0 && messages[userMessageIndex - 1]?.role !== "user") userMessageIndex -= 1
+  userMessageIndex = messages[userMessageIndex - 1]?.role === "user" ? userMessageIndex - 1 : -1
+  const turnId = messages[userMessageIndex]?.id
+  const deliveries = useFileDeliveries()
+  const delivery = deliveries?.data?.turns.find((turn) => turn.turnId === turnId)
+  const candidates = useArtifacts(turnMessages, { includeTargetFallbacks: false, deliverablesOnly: true, stableOrder: true })
+  const artifacts = React.useMemo(() => delivery && deliveries?.data && turnId
+    ? artifactsFromDelivery(deliveries.data, turnId)
+    : candidates.filter(canDisplayArtifact).map((artifact) => deliveries?.data ? { ...artifact, sizeBytes: undefined } : artifact), [delivery, deliveries?.data, turnId, candidates])
+  const { openTargets: verifiedTargets } = useOpenTargets()
+  const fileReferences = React.useMemo(() => getArtifactFileReferences(turnMessages, verifiedTargets, artifacts), [turnMessages, verifiedTargets, artifacts])
+  const cardArtifacts = React.useMemo(() => {
+    const mediaPaths = [
+      ...generatedImageResultsFromMessages(turnMessages).map((result) => result.path),
+      ...generatedVideoJobsForMessageScope(turnMessages, messages).flatMap((job) => job.artifact ? [job.artifact.path] : []),
+    ].map((path) => path.replace(/\\/g, "/"))
+    return artifacts.filter((artifact) => !mediaPaths.some((path) => path === artifact.path || path.endsWith(`/${artifact.path}`)))
+  }, [artifacts, turnMessages, messages])
 
   React.useEffect(() => {
     setProcessOpen(isLiveGroup)
@@ -1143,11 +1193,6 @@ function MessageGroup({
   // 任务一结束并产出结论，整个折叠器（连同「耗时」后面的箭头）就消失，
   // 于是流式期间折起来的过程再也展不开。
   const showProcessDisclosure = processItems.length > 0
-  let userMessageIndex = items[0]?.index ?? -1
-  while (userMessageIndex > 0 && messages[userMessageIndex - 1]?.role !== "user") {
-    userMessageIndex -= 1
-  }
-  userMessageIndex = messages[userMessageIndex - 1]?.role === "user" ? userMessageIndex - 1 : -1
   const showTaskTiming = userMessageIndex >= 0 && getMessageCreated(messages[userMessageIndex]) !== null
 
   const renderItem = (
@@ -1166,12 +1211,12 @@ function MessageGroup({
           isLastStep={groupIndex === items.length - 1}
           presentation={presentation}
         />
-        <MessageArtifacts message={item.message} />
       </React.Fragment>
     )
   }
 
   return (
+    <FileReferenceProvider targets={fileReferences}>
     <div className="group/message-actions group/message-group mt-5 flex flex-col gap-0">
       {showProcessDisclosure ? (
         <Collapsible open={processOpen} onOpenChange={setProcessOpen} className="mx-auto w-full max-w-5xl px-3 md:px-8">
@@ -1208,7 +1253,6 @@ function MessageGroup({
                   presentation="process"
                 />
               ) : null}
-              <ArtifactList messages={processItems.map((item) => item.message)} includeTargetFallbacks={false} />
             </div>
           </CollapsibleContent>
         </Collapsible>
@@ -1228,6 +1272,8 @@ function MessageGroup({
       )}>
         {summaryItems.map((item, groupIndex) => renderItem(item, processItems.length + groupIndex, "summary"))}
       </div>
+      {!isLiveGroup ? <ArtifactCards artifacts={cardArtifacts} /> : null}
+      {!isLiveGroup && delivery ? <ArtifactDeliveryStatus delivery={delivery} onRetry={() => deliveries!.retry(delivery.turnId)} /> : null}
       <GeneratedImageResultList messages={items.map((item) => item.message)} />
       <GeneratedVideoResultList
         messages={items.map((item) => item.message)}
@@ -1274,6 +1320,7 @@ function MessageGroup({
         </div>
       )}
       </div>
+    </FileReferenceProvider>
   )
 }
 
@@ -1335,7 +1382,6 @@ export function MessageList({ messages, status, activityStatus = "idle", retryAc
               isStreaming={isLastMessage && isStreaming}
               isLastStep={isLastStep}
             />
-            <MessageArtifacts message={item.message} />
             <GeneratedImageResultList messages={[item.message]} />
             <GeneratedVideoResultList messages={[item.message]} allMessages={messages} />
           </div>

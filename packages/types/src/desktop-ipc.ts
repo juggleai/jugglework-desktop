@@ -413,7 +413,8 @@ export type DesktopFetchResult = {
   status: number;
   statusText: string;
   headers: [string, string][];
-  body: string;
+  /** 新宿主保留原始字节，字符串兼容旧宿主及诊断接口。 */
+  body: string | ArrayBuffer;
 };
 
 export type WorkspaceCreateInput = {
@@ -777,6 +778,11 @@ export type DesktopCommandMap = {
       filters?: { name: string; extensions: string[] }[];
       dataBase64: string;
     }];
+    result: string | null;
+  };
+  /** 导出已保存的工作区文件副本，不改变原文件路径或编辑身份。 */
+  saveArtifactCopy: {
+    args: [options: { workspaceRoot: string; relativePath: string; title?: string }];
     result: string | null;
   };
 

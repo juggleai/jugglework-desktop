@@ -1,0 +1,36 @@
+{
+  "name": "office-docs-ai-engine",
+  "version": "0.2.196-office.1",
+  "description": "Office 本地文档引擎适配包，管理原生进程、编辑页面与 MCP 接口。",
+  "main": "lib/common/index.js",
+  "license": "MIT",
+  "bin": {
+    "office-docs-mcp": "./lib/mcp/stdio-mcp-bridge.js"
+  },
+  "files": [
+    "lib",
+    "supported-extensions.cjs",
+    "scripts/editor-sdk-platforms.js",
+    "editor-sdk-version.json"
+  ],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.20.1"
+  },
+  "devDependencies": {
+    "@types/chai": "^4.3.11",
+    "@types/mocha": "^10.0.0",
+    "@types/node": "18.15.0",
+    "@types/sinon": "^17.0.3",
+    "chai": "^4.3.10",
+    "esbuild": "^0.25.0",
+    "mocha": "^10.0.0",
+    "rimraf": "^5.0.5",
+    "sinon": "^17.0.2",
+    "ts-node": "^10.9.1",
+    "typescript": "^5.4.5"
+  },
+  "peerDependencies": {
+    "electron": ">=29"
+  },
+  "private": true
+}

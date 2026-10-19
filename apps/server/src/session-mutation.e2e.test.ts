@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { startServer } from "./server.js";
 import { opencodeAdmissionId } from "./opencode-admission.js";
 import { runtimeDbPath } from "./runtime-db.js";
+import type { ArtifactEngineMessage } from "./artifacts/delivery.js";
 import type { ServerConfig } from "./types.js";
 
 type Served = {
@@ -47,6 +48,7 @@ function startMockOpencode() {
   const statusRequests: string[] = [];
   const disposes: Array<{ directory: string | null }> = [];
   const statuses = new Map<string, unknown>();
+  const messages = new Map<string, ArtifactEngineMessage[]>();
   const sessions = new Map<string, { id: string; title: string; parentID?: string; directory?: string; time: { created: number; updated: number } }>();
   const heldPrompts = new Map<string, ReturnType<typeof deferred<void>>>();
   const heldMessageIds = new Map<string, ReturnType<typeof deferred<void>>>();
@@ -68,6 +70,8 @@ function startMockOpencode() {
         statusRequests.push(request.headers.get("x-opencode-directory") ?? "");
         return Response.json(Object.fromEntries(statuses));
       }
+      const messageMatch = url.pathname.match(/^\/session\/([^/]+)\/message$/);
+      if (request.method === "GET" && messageMatch) return Response.json(messages.get(decodeURIComponent(messageMatch[1]!)) ?? []);
       const sessionMatch = url.pathname.match(/^\/session\/([^/]+)$/);
       if (request.method === "GET" && sessionMatch) {
         const sessionId = decodeURIComponent(sessionMatch[1]!);
@@ -165,6 +169,7 @@ function startMockOpencode() {
     statusRequests,
     disposes,
     statuses,
+    messages,
     sessions,
     heldPrompts,
     heldMessageIds,
@@ -244,6 +249,50 @@ function runPath(base: string, sessionId: string): string {
 }
 
 describe("authoritative session mutation APIs", () => {
+  for (const mode of ["local-queue", "local-steer", "remote-steer"] as const) {
+    test(`${mode} 真实入口绑定文件交付，队列执行前不结束，生成工具可定位原轮次`, async () => {
+      const engine = startMockOpencode();
+      const harness = await startHarness(engine.server.port);
+      const sessionId = `ses_delivery_${mode}`;
+      const remote = mode.startsWith("remote-");
+      engine.statuses.set(sessionId, { type: "busy" });
+      const response = await fetch(mode === "local-queue"
+        ? `${harness.base}/workspace/ws_1/sessions/${sessionId}/queue`
+        : `${runPath(harness.base, sessionId)}/start`, {
+        method: "POST", headers: harness.collaboratorHeaders,
+        body: JSON.stringify(mode === "local-queue" ? { id: "file-queue", prompt: "生成文档" } : {
+          origin: remote ? "remote-control" : "local-renderer", startCommandCorrelationId: "file-queue",
+          whenBusy: "steer", prompt: { parts: [{ type: "text", text: "生成文档" }] },
+        }),
+      });
+      expect(response.status).toBe(202);
+      await response.json();
+      await waitUntil(() => engine.v2Prompts.length === 1);
+      const messageId = engine.v2Prompts[0]!.body.id!;
+      const base = `${harness.base}/workspace/ws_1/sessions/${sessionId}/file-deliveries`;
+      engine.statuses.set(sessionId, { type: "idle" });
+      const sync = async () => {
+        const result = await fetch(`${base}/sync`, { method: "POST", headers: harness.collaboratorHeaders });
+        expect(result.status).toBe(200);
+        return result.json();
+      };
+      expect(await sync()).toMatchObject({ turns: [{ turnId: messageId, status: "collecting", finishedRunIds: [], items: [] }] });
+      engine.messages.set(sessionId, [{ info: { id: "msg_tool", role: "assistant", parentID: messageId }, parts: [] }]);
+      const prepared = await fetch(`${base}/generations/prepare`, { method: "POST", headers: harness.collaboratorHeaders, body: JSON.stringify({ messageId: "msg_tool", outputs: [] }) });
+      expect(prepared.status).toBe(200);
+      const generation = await prepared.json() as { generationId: string; outputDirectory: string };
+      await writeFile(join(generation.outputDirectory, "排队产物.docx"), "admitted output");
+      const completed = await fetch(`${base}/generations/complete`, { method: "POST", headers: harness.collaboratorHeaders, body: JSON.stringify({ generationId: generation.generationId, exitCode: 0 }) });
+      expect(completed.status).toBe(200);
+      expect(await sync()).toMatchObject({ turns: [{ status: "collecting" }] });
+      engine.messages.get(sessionId)![0]!.info.time = { completed: Date.now() };
+      expect(await sync()).toMatchObject({ turns: [{ turnId: messageId, status: "ready", items: [expect.objectContaining({ snapshot: expect.objectContaining({ name: "排队产物.docx", sizeBytes: 15 }) })] }] });
+      const runs = await fetch(`${harness.base}/workspace/ws_1/session-runs`, { headers: harness.collaboratorHeaders });
+      expect(await runs.json()).toMatchObject({ items: [] });
+      expect(engine.prompts).toHaveLength(0);
+    });
+  }
+
   test("local collaborator queue uses OpenCode v2 queue delivery without remote pending policy", async () => {
     const engine = startMockOpencode();
     const harness = await startHarness(engine.server.port);
@@ -434,6 +483,10 @@ describe("authoritative session mutation APIs", () => {
     });
     await waitUntil(() => engine.v2Prompts.length === 1);
     expect(engine.v2Prompts[0]?.body).toMatchObject({ id: opencodeAdmissionId({ workspaceId: "ws_1", sessionId: "ses_queue", source: "remote-pending", id: queued[0]!.pendingOperationId }), delivery: "queue", prompt: { text: "First" } });
+    const deliveries = await fetch(`${harness.base}/workspace/ws_1/sessions/ses_queue/file-deliveries`, { headers: harness.collaboratorHeaders });
+    const delivery = await deliveries.json() as { turns: Array<{ turnId: string; runIds: string[]; status: string }> };
+    const admittedMessageId = engine.v2Prompts[0]!.body.id!;
+    expect(delivery.turns.find((turn) => turn.turnId === admittedMessageId)).toMatchObject({ runIds: [`admission:${admittedMessageId}`], status: "collecting" });
     const admittedCancel = await fetch(`${harness.base}/workspace/ws_1/sessions/ses_queue/pending/${queued[0]!.pendingOperationId}/cancel`, {
       method: "POST", headers: harness.collaboratorHeaders, body: JSON.stringify({ commandCorrelationId: "cancel_admitted" }),
     });

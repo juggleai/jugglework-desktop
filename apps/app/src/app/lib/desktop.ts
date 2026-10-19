@@ -169,6 +169,29 @@ declare global {
           delta: number;
         }) => void) => () => void;
       };
+      fileWindow?: import("@jugglework/types/file-window").FileWindowBridge;
+      fileEditor?: import("@jugglework/types/file-editor").FileEditorBridge;
+      office?: {
+        /** 当前字体请求状态；目录中尚未使用的字体不计为缺失。 */
+        resources?: (documentId?: string) => Promise<{ fontFailures?: number; coreFailures?: number; readyOnReopen?: boolean; retryableFonts?: number } | null>;
+        /** 预取缺失字体，下次打开生效；不刷新模型或改变文档声明。 */
+        retryFonts?: (documentId: string) => Promise<void>;
+        /** 订阅文档资源状态变化。 */
+        onResourcesChanged?: (callback: (input: { documentId: string | null }) => void) => () => void;
+        show: (input: { workspaceId: string; documentId: string; bounds: { x: number; y: number; width: number; height: number }; activate?: boolean }) => Promise<{ here: boolean } | void>;
+        snapshot?: (documentId: string) => Promise<string | null>;
+        hide: (documentId: string, snapshot?: boolean) => Promise<string | void>;
+        close: (workspaceId: string, documentId: string) => Promise<boolean>;
+        destroy: (documentId: string) => Promise<void>;
+        /** 原生确认后重新打开故障文档的已保存版本；取消返回 null。 */
+        recover?: (workspaceId: string, documentId: string) => Promise<import("@jugglework/types/office").OfficeDocumentSession | null>;
+        /** 同步文档故障及恢复结果，保留文件标签身份。 */
+        onDocumentChanged?: (callback: (document: import("@jugglework/types/office").OfficeDocumentSession) => void) => () => void;
+        onClosed: (callback: (input: { documentId: string; workspaceId: string; path: string; sessionId: string }) => void) => () => void;
+        /** 宿主恢复前台时重新上报当前文件区域，避免旧原生视图残留。 */
+        onLayoutInvalidated?: (callback: () => void) => () => void;
+        onLocation?: (callback: (input: { documentId: string; here: boolean }) => void) => () => void;
+      };
       browser?: {
         show?: (bounds: { x: number; y: number; width: number; height: number }) => Promise<void>;
         hide?: () => Promise<void>;
@@ -442,6 +465,16 @@ export async function openDesktopPath(target: string): Promise<void> {
   if (typeof result === "string" && result.trim()) {
     throw new Error(result);
   }
+}
+
+/**
+ * 用原生对话框导出工作区文件副本；取消不产生文件。
+ * @param workspaceRoot 本机工作区根目录
+ * @param relativePath 已确认文件的相对路径
+ * @param title 对话框标题
+ */
+export async function saveDesktopArtifactCopy(workspaceRoot: string, relativePath: string, title: string): Promise<string | null> {
+  return invokeElectronHelper("saveArtifactCopy", { workspaceRoot, relativePath, title });
 }
 
 export async function revealDesktopItemInDir(target: string): Promise<void> {

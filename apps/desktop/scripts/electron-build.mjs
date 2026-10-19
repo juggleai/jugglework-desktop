@@ -35,15 +35,13 @@ run(nodeCmd, [resolve(__dirname, "buildToonFactory.mjs")], repoRoot);
 
 run(nodeCmd, [resolve(__dirname, "prepare-sidecar.mjs"), "--force", "--outdir", electronSidecarDir], desktopRoot);
 run(nodeCmd, [resolve(__dirname, "prepare-computer-use-helper.mjs"), "--force", "--outdir", electronHelperDir], desktopRoot);
+run(nodeCmd, [resolve(__dirname, "prepare-file-window-helper.mjs"), "--outdir", electronHelperDir], desktopRoot);
 run(nodeCmd, [resolve(__dirname, "prepare-jugglework-ui-mcp.mjs")], desktopRoot);
 run(nodeCmd, [resolve(__dirname, "verify-jugglework-ui-mcp.mjs"), "--entry", resolve(uiControlMcpDir, "index.mjs")], desktopRoot);
 // Electron's embedded Node runtime cannot execute workspace TypeScript source.
 // Build shared runtime contracts first, then verify Electron resolves their JS output.
 run(pnpmCmd, ["--filter", "@jugglework/types", "build"], repoRoot);
 run(pnpmCmd, ["--filter", "@jugglework/types", "build:electron-runtime"], repoRoot);
-run(pnpmCmd, ["--dir", desktopRoot, "exec", "electron", resolve(__dirname, "check-electron-runtime-imports.mjs")], repoRoot, {
-  ELECTRON_RUN_AS_NODE: "1",
-});
 // Build the server TS → JS so Electron can import it in-process
 run(pnpmCmd, ["--filter", "jugglework-server", "build"], repoRoot);
 // JUGGLEWORK_ELECTRON_BUILD tells Vite to emit relative asset paths so
@@ -69,6 +67,10 @@ if (patched !== serverJsSrc) {
 rmSync(packagedServerRoot, { recursive: true, force: true });
 cpSync(serverDistDir, resolve(packagedServerRoot, "dist"), { recursive: true });
 copyFileSync(resolve(repoRoot, "apps", "server", "package.json"), resolve(packagedServerRoot, "package.json"));
+// TIPS: 从桌面暂存目录导入 Server，避免源码 Server 的 node_modules 掩盖安装包漏带的依赖。
+run(pnpmCmd, ["--dir", desktopRoot, "exec", "electron", resolve(__dirname, "check-electron-runtime-imports.mjs")], repoRoot, {
+  ELECTRON_RUN_AS_NODE: "1",
+});
 for (const fileName of readdirSync(electronRoot).filter((name) => name.endsWith(".mjs")).sort()) {
   run(nodeCmd, ["--check", resolve(electronRoot, fileName)], repoRoot);
 }

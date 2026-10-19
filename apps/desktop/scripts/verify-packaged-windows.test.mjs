@@ -481,3 +481,19 @@ describe("Windows packaged release verifier", () => {
     );
   });
 });
+
+it("Office 系统关联只声明候选应用，不覆盖 Windows 默认应用，四种格式与 macOS 一致", () => {
+  const config = parseYaml(readFileSync(new URL("../electron-builder.yml", import.meta.url), "utf8"));
+  assert.equal(config.fileAssociations, undefined, "通用关联宏会覆盖 Windows 扩展名默认 ProgID");
+  assert.deepEqual(config.mac.fileAssociations.map((item) => item.ext).sort(), ["csv", "docx", "pptx", "xlsx"]);
+  assert.equal(config.mac.fileAssociations.every((item) => item.rank === "Alternate" && item.role === "Editor"), true);
+  const source = readFileSync(new URL("../build/installer.nsh", import.meta.url), "utf8");
+  for (const ext of ["csv", "docx", "pptx", "xlsx"]) {
+    assert.ok(source.includes(`!insertmacro JuggleWorkOfficeCandidate "${ext}"`));
+    assert.ok(source.includes(`!insertmacro JuggleWorkRemoveOfficeCandidate "${ext}"`));
+  }
+  const writes = source.split("\n").filter((line) => /^\s*(WriteReg|DeleteReg)/.test(line) && line.includes("Software\\Classes"));
+  assert.ok(writes.length > 0);
+  assert.equal(writes.every((line) => line.includes("OpenWithProgids") || line.includes("Software\\Classes\\JuggleWork.Office.")), true);
+  assert.ok(source.includes('${If} $R8 =='));
+});

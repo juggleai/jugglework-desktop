@@ -13,7 +13,17 @@ const {
   verifyPackagedMacTrayResources,
   windowsPublisherNames,
   writePackagedUpdateConfiguration,
+  packageBundledOfficeResources,
 } = require("./electron-after-pack.cjs");
+
+test("Windows ARM64 保留桌面打包，不要求不存在的 Office SDK 或复制 x64 内核", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "office-unsupported-package-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  for (const arch of ["arm64", 3]) {
+    assert.equal(packageBundledOfficeResources({ electronPlatformName: "win32", arch, appOutDir: root }), undefined);
+    assert.equal(fs.existsSync(path.join(root, "resources", "office-engine")), false);
+  }
+});
 
 function copyMacTrayResources(resourcesDir) {
   const sourceDir = path.join(__dirname, "..", "resources", "tray");
@@ -23,6 +33,14 @@ function copyMacTrayResources(resourcesDir) {
     fs.copyFileSync(path.join(sourceDir, name), path.join(trayDir, name));
   }
 }
+
+test("桌面安装包声明内置 Server 的全部生产依赖，避免源码依赖掩盖漏包", () => {
+  const desktop = JSON.parse(fs.readFileSync(path.join(__dirname, "../package.json"), "utf8"));
+  const server = JSON.parse(fs.readFileSync(path.join(__dirname, "../../server/package.json"), "utf8"));
+  for (const [name, version] of Object.entries(server.dependencies)) {
+    assert.equal(desktop.dependencies[name], version, `桌面缺少内置 Server 的配套生产依赖：${name}`);
+  }
+});
 
 test("normalizes electron-builder numeric and string architectures", () => {
   assert.equal(normalizeArch(1), "x64");
@@ -120,8 +138,8 @@ test("selects only the requested sidecar and processes the macOS helper", async 
   copyMacTrayResources(path.join(appOutDir, "JuggleWork.app", "Contents", "Resources"));
   fs.writeFileSync(path.join(sidecarsDir, "opencode-aarch64-apple-darwin"), "arm64");
   fs.writeFileSync(path.join(sidecarsDir, "opencode-x86_64-apple-darwin"), "x64");
-  fs.writeFileSync(path.join(sidecarsDir, "versions.json-aarch64-apple-darwin"), "arm64 metadata");
-  fs.writeFileSync(path.join(sidecarsDir, "versions.json-x86_64-apple-darwin"), "x64 metadata");
+  fs.writeFileSync(path.join(sidecarsDir, "versions-aarch64-apple-darwin.json"), "arm64 metadata");
+  fs.writeFileSync(path.join(sidecarsDir, "versions-x86_64-apple-darwin.json"), "x64 metadata");
   fs.writeFileSync(path.join(sqlitePrebuildsDir, "darwin-arm64.node"), "arm64 native module");
   fs.writeFileSync(path.join(sqlitePrebuildsDir, "darwin-x64.node"), "x64 native module");
   fs.writeFileSync(path.join(sqlitePrebuildsDir, "linux-arm64.node"), "linux native module");
@@ -136,6 +154,7 @@ test("selects only the requested sidecar and processes the macOS helper", async 
   let helperContext = null;
 
   await runAfterPack(context, {
+    packageOfficeResources() {},
     verifyContracts() {},
     verifyUiControlMcpRuntime() {},
     signHelper(receivedContext) {
@@ -148,12 +167,44 @@ test("selects only the requested sidecar and processes the macOS helper", async 
   assert.deepEqual(fs.readdirSync(sidecarsDir).sort(), [
     "opencode",
     "opencode-aarch64-apple-darwin",
+    "versions-aarch64-apple-darwin.json",
     "versions.json",
-    "versions.json-aarch64-apple-darwin",
   ]);
   assert.deepEqual(fs.readdirSync(sqlitePrebuildsDir), ["darwin-arm64.node"]);
   assert.deepEqual(fs.readdirSync(ptyPackagesDir), ["node-pty-darwin-arm64"]);
   assert.equal(helperContext, context);
+});
+
+test("Windows sidecar metadata remains JSON without an executable suffix during signed packaging", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "jugglework-after-pack-win-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const resources = path.join(root, "resources");
+  const sidecarsDir = path.join(resources, "sidecars");
+  const sqliteDir = path.join(resources, "app.asar.unpacked", "node_modules", "better-sqlite3", "prebuilds");
+  const ptyDir = path.join(resources, "app.asar.unpacked", "node_modules", "@lydell", "node-pty-win32-x64");
+  fs.mkdirSync(sidecarsDir, { recursive: true });
+  fs.mkdirSync(sqliteDir, { recursive: true });
+  fs.mkdirSync(ptyDir, { recursive: true });
+  fs.writeFileSync(path.join(sidecarsDir, "opencode-x86_64-pc-windows-msvc.exe"), "sidecar");
+  fs.writeFileSync(path.join(sidecarsDir, "versions-x86_64-pc-windows-msvc.json"), '{"version":"test"}');
+  fs.writeFileSync(path.join(sqliteDir, "win32-x64.node"), "native module");
+
+  await runAfterPack({ appOutDir: root, arch: "x64", electronPlatformName: "win32" }, {
+    verifyContracts() {},
+    verifyUiControlMcp() {},
+    verifyUiControlMcpRuntime() {},
+    writeUpdateConfiguration() {},
+    packageOfficeResources() {},
+    signHelper() {},
+  });
+
+  assert.equal(fs.readFileSync(path.join(sidecarsDir, "versions.json"), "utf8"), '{"version":"test"}');
+  assert.deepEqual(fs.readdirSync(sidecarsDir).sort(), [
+    "opencode-x86_64-pc-windows-msvc.exe",
+    "opencode.exe",
+    "versions-x86_64-pc-windows-msvc.json",
+    "versions.json",
+  ]);
 });
 
 test("skips architecture processing for unsupported targets", async () => {

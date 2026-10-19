@@ -28,6 +28,10 @@ _worktrees/
 # Desktop sidecars
 apps/desktop/resources/sidecars/
 apps/desktop/resources/jugglework-ui-mcp/
+# SDK 本体纳入 Git；运行时输出不属于供应资源。
+apps/desktop/resources/office-engine/**/*.log
+apps/desktop/resources/office-engine/**/tmp/
+apps/desktop/resources/office-engine/**/logs/
 apps/desktop/server/
 
 # Env

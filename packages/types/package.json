@@ -4,6 +4,26 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./file-editor": {
+      "types": "./src/file-editor.ts",
+      "development": "./src/file-editor.ts",
+      "default": "./dist/file-editor.js"
+    },
+    "./file-window": {
+      "types": "./src/file-window.ts",
+      "development": "./src/file-window.ts",
+      "default": "./dist/file-window.js"
+    },
+    "./office": {
+      "types": "./src/office.ts",
+      "development": "./src/office.ts",
+      "default": "./dist/office.js"
+    },
+    "./file-artifacts": {
+      "types": "./src/file-artifacts.ts",
+      "development": "./src/file-artifacts.ts",
+      "default": "./dist/file-artifacts.js"
+    },
     ".": {
       "types": "./src/index.ts",
       "development": "./src/index.ts",

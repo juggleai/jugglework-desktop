@@ -33,8 +33,8 @@ describe("Office attachment UI affordances", () => {
       },
     ]);
 
-    const docx = artifacts.find((artifact) => artifact.path === "artifacts/quarterlybrief.docx");
-    const pptx = artifacts.find((artifact) => artifact.path === "artifacts/launchroadmap.pptx");
+    const docx = artifacts.find((artifact) => artifact.path === "artifacts/QuarterlyBrief.docx");
+    const pptx = artifacts.find((artifact) => artifact.path === "artifacts/LaunchRoadmap.pptx");
 
     expect(docx?.type).toBe("document");
     expect(docx?.legacy_target.preview).toBe("document");

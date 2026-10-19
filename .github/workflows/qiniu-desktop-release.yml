@@ -63,6 +63,7 @@ jobs:
       - name: Checkout exact release source
         uses: actions/checkout@v6
         with:
+          lfs: true
           ref: dev
           fetch-depth: 0
 
@@ -330,6 +331,7 @@ jobs:
       - name: Checkout pinned release source
         uses: actions/checkout@v6
         with:
+          lfs: true
           ref: ${{ needs.resolve-windows-source.outputs.commit }}
           fetch-depth: 0
 

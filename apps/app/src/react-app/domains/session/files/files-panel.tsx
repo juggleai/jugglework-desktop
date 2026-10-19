@@ -1,3 +1,4 @@
+import { getOfficeDocumentKind } from "@jugglework/types/office";
 /** @jsxImportSource react */
 import * as React from "react";
 import { Folders, Maximize2, Menu, Minimize2 } from "lucide-react";
@@ -5,6 +6,7 @@ import { Folders, Maximize2, Menu, Minimize2 } from "lucide-react";
 import type { JuggleWorkServerClient } from "@/app/lib/jugglework-server";
 import { createClient } from "@/app/lib/opencode";
 import { Button } from "@/components/ui/button";
+import { toast } from "@/components/ui/sonner";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import { t } from "../../../../i18n";
@@ -12,6 +14,7 @@ import { ChangesView } from "./changes-view";
 import { FileTabs } from "./file-tabs";
 import { FileTree } from "./file-tree";
 import { FileViewer } from "./file-viewer";
+import { ArtifactActionsProvider } from "../artifacts/artifact-actions-provider";
 import { useFilesPanelSession, useFilesPanelStore } from "./files-panel-store";
 import { useRefreshWorkspaceChanges, useWorkspaceChanges, type WorkspaceChange } from "./use-workspace-changes";
 
@@ -24,6 +27,8 @@ type FilesPanelProps = {
   opencodeToken: string;
   /** 会话是否正在执行，用于在回合结束后刷新变更列表 */
   busy: boolean;
+  /** 远程工作区不启用本机文件操作。 */
+  isRemoteWorkspace?: boolean;
 };
 
 /**
@@ -49,6 +54,7 @@ export function FilesPanel({
   opencodeBaseUrl,
   opencodeToken,
   busy,
+  isRemoteWorkspace = false,
 }: FilesPanelProps) {
   const session = useFilesPanelSession(sessionId);
   // TIPS: 逐个取 action 而不是整包订阅 store —— 整包订阅会让任意会话的状态变化都触发本面板重渲染
@@ -88,13 +94,35 @@ export function FilesPanel({
     }
   }, [changesQuery.isLoading, hasChanges, session.activeKey, sessionId, setActiveKey]);
 
-  const closeFile = (path: string) => {
+  const closeFile = async (path: string) => {
+    if (!getOfficeDocumentKind(path) && workspaceId && window.__JUGGLEWORK_ELECTRON__?.fileEditor) {
+      try {
+        if (!await window.__JUGGLEWORK_ELECTRON__.fileEditor.close({ workspaceId, path })) return;
+        closeFileTab(sessionId, path);
+      } catch (error) { toast.error(String(error)); }
+      return;
+    }
+    if (getOfficeDocumentKind(path) && client && workspaceId) {
+      try {
+        // TIPS: 关闭非活动标签只查自己的模型，不打开或改变当前另一个文档。
+        const opened = await client.findOfficeDocument(workspaceId, sessionId, path);
+        const native = window.__JUGGLEWORK_ELECTRON__?.office;
+        if (opened.document && native && !await native.close(workspaceId, opened.document.documentId)) return;
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : t("office.open_failed"));
+        return;
+      }
+    }
     if (dirtyPaths.has(path) && !window.confirm(t("session_files.close_dirty_confirm"))) {
       return;
     }
 
     closeFileTab(sessionId, path);
   };
+
+  React.useEffect(() => window.__JUGGLEWORK_ELECTRON__?.office?.onClosed((input) => {
+    if (input.workspaceId === workspaceId && input.sessionId === sessionId) closeFileTab(sessionId, input.path);
+  }), [workspaceId, sessionId, closeFileTab]);
 
   const openChangeFile = (change: WorkspaceChange) => {
     openFile(sessionId, { path: change.path, name: change.path.split("/").pop() ?? change.path });
@@ -202,14 +230,23 @@ export function FilesPanel({
                 onRefresh={refreshChanges}
               />
             ) : activeTab && client && workspaceId ? (
-              <FileViewer
+              <ArtifactActionsProvider
                 client={client}
                 workspaceId={workspaceId}
+                workspaceRoot={workspaceRoot}
                 sessionId={sessionId}
-                path={activeTab.path}
-                name={activeTab.name}
-                draft={session.drafts[activeTab.path]}
-              />
+                remote={isRemoteWorkspace}
+                running={busy}
+              >
+                <FileViewer
+                  client={client}
+                  workspaceId={workspaceId}
+                  sessionId={sessionId}
+                  path={activeTab.path}
+                  name={activeTab.name}
+                  draft={session.drafts[activeTab.path]}
+                />
+              </ArtifactActionsProvider>
             ) : (
               <div className="flex min-h-0 flex-1 items-center justify-center p-4 text-sm text-muted-foreground">
                 {t("session_files.no_open_file")}

@@ -42,6 +42,7 @@ type FilesPanelSessionState = {
   treeCollapsed: boolean;
   selectedChangePath: string | null;
   drafts: Record<string, FilesPanelDraft>;
+  externalPaths: string[];
 };
 
 const EMPTY_SESSION: FilesPanelSessionState = {
@@ -53,6 +54,7 @@ const EMPTY_SESSION: FilesPanelSessionState = {
   treeCollapsed: false,
   selectedChangePath: null,
   drafts: {},
+  externalPaths: [],
 };
 
 export type FilesPanelStore = {
@@ -67,6 +69,8 @@ export type FilesPanelStore = {
   toggleTreeCollapsed: (sessionId: string) => void;
   selectChange: (sessionId: string, path: string | null) => void;
   setDraft: (sessionId: string, path: string, draft: FilesPanelDraft | null) => void;
+  /** 暂停或恢复外部应用接管文件的内置编辑。 */
+  setExternal: (sessionId: string, path: string, external: boolean) => void;
   clearSession: (sessionId: string) => void;
 };
 
@@ -176,6 +180,15 @@ export const useFilesPanelStore = create<FilesPanelStore>()(
           else delete drafts[path];
 
           return writeSession(state, sessionId, { ...session, drafts });
+        }),
+
+      setExternal: (sessionId, path, external) =>
+        set((state) => {
+          const session = readSession(state, sessionId);
+          const paths = new Set(session.externalPaths ?? []);
+          if (external) paths.add(path);
+          else paths.delete(path);
+          return writeSession(state, sessionId, { ...session, externalPaths: [...paths] });
         }),
 
       clearSession: (sessionId) =>

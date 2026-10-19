@@ -87,10 +87,11 @@ describe("markdown safety and links", () => {
     expect(surfaceHtml).not.toContain("<script");
   });
 
-  test("keeps chat file link actions separate from simple surface links", () => {
+  test("chat and surface links use plain link text, while chat retains its click target", () => {
     const markdown = `[Open docs](./docs/readme.md) and [JuggleWork](https://juggle.im)`;
     const chatHtml = renderMarkdownHtml(markdown);
-    expect(chatHtml).toContain("data-jugglework-link-chevron");
+    expect(chatHtml).not.toContain("data-jugglework-link-chevron");
+    expect(chatHtml).not.toMatch(/bg-|<button|<svg/);
     expect(chatHtml).toContain("data-jugglework-link-href");
     expect(chatHtml).toContain('href="https://juggle.im"');
 

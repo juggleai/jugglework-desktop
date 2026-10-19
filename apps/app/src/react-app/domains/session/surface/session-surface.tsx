@@ -81,7 +81,7 @@ import { useReactRenderWatchdog } from "@/react-app/shell/react-render-watchdog"
 import { SessionDebugPanel } from "./debug-panel";
 import { deriveContextEstimationMessages, deriveRenderedSessionMessages, resolveRenderedSessionSnapshot } from "./session-render-state";
 import { useLocal } from "@/react-app/kernel/local-provider";
-import { isAttachmentFileReadable, resolveAttachmentFileMetadata } from "@/react-app/domains/session/sync/attachment-file-part";
+import { isAttachmentFileReadable, resolveAttachmentFileMetadata, materializeComposerAttachment } from "@/react-app/domains/session/sync/attachment-file-part";
 import { deriveSessionRenderModel } from "@/react-app/domains/session/sync/transition-controller";
 import { useSessionScrollController } from "./scroll-controller";
 import { SessionScrollOverlay } from "./scroll-overlay";
@@ -95,7 +95,7 @@ import { QuestionPanel } from "@/react-app/domains/session/modals/question-modal
 import { useSessionInteractions } from "@/react-app/domains/session/sync/use-session-interactions";
 import { QueuedMessagesPanel } from "@/react-app/domains/session/modals/queued-messages-panel";
 import { canSteerQueuedDraft, shouldDrainQueuedTask } from "./queued-draft-policy";
-import { deriveOpenTargets, selectAutoOpenTarget, type OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
+import { deriveOpenTargets, type OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
 import { usePanelTabStore } from "@/react-app/domains/session/panel/panel-tab-store";
 import {
   captureTodoSnapshotRevision,
@@ -140,6 +140,9 @@ import {
   type ChatMcpReconnectScope,
 } from "./mcp-chat-reconnect";
 import { OpenTargetProvider, type OpenTargetOptions } from "@/lib/target-provider";
+import { getArtifactsFromMessages } from "@/lib/artifacts";
+import { ArtifactActionsProvider } from "../artifacts/artifact-actions-provider";
+import { FileDeliveriesProvider } from "../artifacts/file-deliveries-provider";
 import type { ThreadStatus } from "@/lib/messages";
 import {
   EnvironmentVariableProvider,
@@ -631,8 +634,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const queuedRunObservedBusyRef = useRef(false);
   const composerShellRef = useRef<HTMLDivElement>(null);
   const hydratedKeyRef = useRef<string | null>(null);
-  const autoOpenedTargetRef = useRef<string | null>(null);
-  const initializedAutoOpenSessionRef = useRef<string | null>(null);
   const activeSurfaceIdentityRef = useRef(`${props.workspaceId}:${props.sessionId}`);
   const inFlightSendIdentitiesRef = useRef(new Set<string>());
   activeSurfaceIdentityRef.current = `${props.workspaceId}:${props.sessionId}`;
@@ -861,8 +862,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
     taskProgressRunEndedAtRef.current = 0;
     // Composer draft state lives in the shared store keyed by session id, so
     // switching sessions preserves each session's own in-progress composer.
-    autoOpenedTargetRef.current = null;
-    initializedAutoOpenSessionRef.current = null;
     setVerifiedOpenTargets([]);
   }, [props.sessionId, props.workspaceId]);
 
@@ -1057,12 +1056,21 @@ export function SessionSurface(props: SessionSurfaceProps) {
     };
   }, [props.sessionId]);
   useControlAction(props.isControlTarget ? seedMarkdownPrimitiveControlAction : null);
-  const openTargets = useMemo(() => deriveOpenTargets(renderedMessages), [renderedMessages]);
+  const openArtifactTarget = useCallback((target: OpenTarget, options?: OpenTargetOptions) => {
+    props.onOpenTarget?.(target, options, props.sessionId);
+  }, [props.onOpenTarget, props.sessionId]);
+  const openTargets = useMemo(() => {
+    const targets = [
+      ...deriveOpenTargets(renderedMessages, { includeFileMentions: true }),
+      ...getArtifactsFromMessages(renderedMessages, [], { includeTargetFallbacks: false, deliverablesOnly: true })
+        .map((artifact) => artifact.legacy_target),
+    ];
+    return [...new Map(targets.map((target) => [`${target.kind}:${target.value}`, target])).values()];
+  }, [renderedMessages]);
   const openTargetsFingerprint = useMemo(
     () => openTargets.map((target) => `${target.kind}:${target.value}:${target.confidence}`).join("|"),
     [openTargets],
   );
-  const autoOpenTarget = selectAutoOpenTarget(verifiedOpenTargets);
   const pendingSessionLoad = !snapshot && snapshotQuery.isLoading && renderedMessages.length === 0;
   const assistantOutputAfterAwaitStart = useMemo(() => {
     if (awaitingAssistantBaseline === null) return false;
@@ -1093,37 +1101,26 @@ export function SessionSurface(props: SessionSurfaceProps) {
   });
 
   useEffect(() => {
-    if (!autoOpenTarget || chatStreaming) return;
-    if (autoOpenedTargetRef.current === autoOpenTarget.id) return;
-    autoOpenedTargetRef.current = autoOpenTarget.id;
-    props.onOpenTarget?.(autoOpenTarget, { auto: true }, props.sessionId);
-  }, [autoOpenTarget, chatStreaming, props.onOpenTarget, props.sessionId]);
-
-  useEffect(() => {
     let cancelled = false;
-    function initializeAutoOpenState(targets: OpenTarget[]) {
-      if (initializedAutoOpenSessionRef.current === props.sessionId) return;
-      initializedAutoOpenSessionRef.current = props.sessionId;
-      autoOpenedTargetRef.current = selectAutoOpenTarget(targets)?.id ?? null;
-    }
 
     async function verifyTargets() {
       if (!openTargets.length) {
-        initializeAutoOpenState([]);
         setVerifiedOpenTargets([]);
         return;
       }
       try {
-        const response = await props.client.resolveArtifacts(props.workspaceId, openTargets);
+        const batches = [];
+        for (let offset = 0; offset < openTargets.length; offset += 80) {
+          batches.push(props.client.resolveArtifacts(props.workspaceId, openTargets.slice(offset, offset + 80)));
+        }
+        const responses = await Promise.all(batches);
         if (!cancelled) {
-          const nextTargets = response.items as OpenTarget[];
-          initializeAutoOpenState(nextTargets);
+          const nextTargets = responses.flatMap((response) => response.items) as OpenTarget[];
           setVerifiedOpenTargets(nextTargets);
         }
       } catch {
         if (!cancelled) {
           const nextTargets = openTargets.map((target) => ({ ...target, exists: target.kind === "url" }));
-          initializeAutoOpenState(nextTargets);
           setVerifiedOpenTargets(nextTargets);
         }
       }
@@ -1712,6 +1709,17 @@ export function SessionSurface(props: SessionSurfaceProps) {
       props.sessionId,
       `${draft}${next.map((attachment) => `[attachment ${attachment.id}]`).join("")}`,
     );
+  };
+
+  /** 点击输入栏文件时建立工作区副本，并在当前会话右侧打开；不发送消息。 */
+  const handleOpenAttachment = async (attachment: ComposerAttachment) => {
+    try {
+      const path = await materializeComposerAttachment({ attachment, endpoint: { client: props.client, workspaceId: props.workspaceId }, sessionId: props.sessionId });
+      const result = await props.client.resolveArtifacts(props.workspaceId, [{ kind: "file", value: path, name: attachment.name, preview: "external", confidence: 100, reason: "composer attachment" }]);
+      const target = result.items.find((item) => item.kind === "file" && item.exists === true) as OpenTarget | undefined;
+      if (!target) throw new Error(t("artifact.file_missing"));
+      openArtifactTarget({ ...target, name: attachment.name });
+    } catch (error) { toast.error(error instanceof Error ? error.message : t("office.open_failed")); }
   };
 
   const handleRemoveAttachment = (id: string) => {
@@ -2421,8 +2429,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
               <DevProfiler id="MessageList">
                 <OpenTargetProvider
                   openTargets={verifiedOpenTargets}
-                  onOpenTarget={props.onOpenTarget}
+                  onOpenTarget={openArtifactTarget}
                 >
+                  <ArtifactActionsProvider client={props.client} workspaceId={props.workspaceId} workspaceRoot={props.workspaceRoot} sessionId={props.sessionId} remote={Boolean(props.isRemoteWorkspace)} running={chatStreaming}>
+                  <FileDeliveriesProvider client={props.client} workspaceId={props.workspaceId} sessionId={props.sessionId} enabled={!props.isRemoteWorkspace} running={chatStreaming} messageKey={`${renderedMessages.length}:${renderedMessages.at(-1)?.id ?? ""}`}>
                   <EnvironmentVariableProvider
                     client={props.isRemoteWorkspace ? null : props.environmentClient ?? props.client}
                     runtimeKey={props.environmentRuntimeKey}
@@ -2455,6 +2465,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
                       />
                     </MessageListProvider>
                   </EnvironmentVariableProvider>
+                  </FileDeliveriesProvider>
+                  </ArtifactActionsProvider>
                 </OpenTargetProvider>
               </DevProfiler>
             )}
@@ -2562,6 +2574,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         attachments={attachments}
         onAttachFiles={handleAttachFiles}
         onRemoveAttachment={handleRemoveAttachment}
+        onOpenAttachment={handleOpenAttachment}
         attachmentsEnabled={props.attachmentsEnabled}
         attachmentsDisabledReason={props.attachmentsDisabledReason}
         imageGenerationModels={imageGenerationModels}

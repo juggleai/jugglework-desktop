@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "platform": "win32-x64",
+  "wrapperVersion": "0.2.196-office.1",
+  "engineVersion": "0.0.0.499",
+  "binary": "win32-x64/editor_sdk.exe",
+  "wrapper": "wrapper/lib/common/office-docs-service.js",
+  "sha256": "b372679233c2ea586cc9e2ee9f491b06a702780bf72b8ef15cec1761994fd45c"
+}

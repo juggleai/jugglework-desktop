@@ -617,7 +617,17 @@ export function mergeSystemCaChildEnv(baseEnv = {}, caEnv = {}, extra = {}) {
   };
 }
 
-export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths, readDenBaseUrl, startEmbeddedServer: startEmbeddedServerOverride = null, sandboxRuntime: sandboxRuntimeOverride = null }) {
+/** 选择桌面自身的 Office 资源目录；安装包必须使用 ASAR 外的 Resources，不搜索其他 App。 */
+export function resolveOfficeEngineResourceDirectory({ isPackaged, desktopRoot, resourcesPath = undefined }) {
+  if (isPackaged) {
+    if (!resourcesPath) throw new Error("安装包缺少 Resources 路径");
+    return path.join(resourcesPath, "office-engine");
+  }
+  return path.join(desktopRoot, "resources", "office-engine");
+}
+
+/** 创建桌面运行时；替换或停止存活 Server 前，先由文件宿主完成保存确认。 */
+export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths, readDenBaseUrl, beforeStop = async () => {}, startEmbeddedServer: startEmbeddedServerOverride = null, sandboxRuntime: sandboxRuntimeOverride = null }) {
   const engineState = createEngineState();
   const juggleworkServerState = createJuggleWorkServerState();
 
@@ -1066,6 +1076,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
   let inProcessServer = null;
 
   async function startJuggleWorkServer(options) {
+    if (inProcessServer) await beforeStop();
     const currentPort = juggleworkServerState.port;
     // Stop any previously running in-process server
     if (inProcessServer) {
@@ -1131,6 +1142,8 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     // into EADDRINUSE (see apps/server/src/serve-node.ts), so the bound port
     // below is authoritative.
     const handle = await startEmbeddedServer({
+      // TIPS: 安装包路径不落入 ASAR，且不允许环境变量将桌面 SDK 切到外部 App。
+      officeResourceDirectory: resolveOfficeEngineResourceDirectory({ isPackaged: app.isPackaged, desktopRoot, resourcesPath: process.resourcesPath }),
       host,
       port: portSelection.port,
       corsOrigins: ["*"],
@@ -1293,6 +1306,8 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
   }
 
   async function prepareFreshRuntime() {
+    // TIPS: 确认期间保留原生命周期和服务访问；取消或保存失败不能先停服务再补救。
+    if (inProcessServer) await beforeStop();
     lifecycleState = "cleaning";
     await stopAllRuntimeChildren();
     await cleanupPackagedSidecars();
@@ -1384,6 +1399,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
   }
 
   async function engineStop() {
+    if (inProcessServer) await beforeStop();
     lifecycleState = "stopping";
     await stopAllRuntimeChildren();
     lifecycleState = "idle";
@@ -1432,6 +1448,24 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     const baseUrl = typeof snapshot.baseUrl === "string" ? snapshot.baseUrl.trim() : "";
     const clientToken = typeof snapshot.clientToken === "string" ? snapshot.clientToken.trim() : "";
     return snapshot.running && baseUrl && clientToken ? { baseUrl, clientToken } : null;
+  }
+
+  /** 文件入口没有已选工作区时启动同一本机运行时，不使用文档父目录作为工作区。 */
+  async function ensureFileRuntime() {
+    if (managedServerAccess()) return snapshotJuggleWorkServerState(juggleworkServerState);
+    lifecycleState = "starting";
+    try {
+      const info = await startJuggleWorkServer({
+        workspacePaths: await listLocalWorkspacePaths(),
+        manageOpencode: true,
+        remoteAccessEnabled: false,
+      });
+      lifecycleState = "healthy";
+      return info;
+    } catch (error) {
+      lifecycleState = "error";
+      throw error;
+    }
   }
 
   async function juggleworkServerRestart(options = {}) {
@@ -1544,6 +1578,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     engineInstall,
     juggleworkServerInfo,
     managedServerAccess,
+    ensureFileRuntime: () => withRuntimeLifecycle(() => ensureFileRuntime()),
     juggleworkServerRestart: (options) => withRuntimeLifecycle(() => juggleworkServerRestart(options)),
     workspaceActivate: (input) => withRuntimeLifecycle(() => workspaceActivate(input)),
     engineDispose: (workspacePath) => withRuntimeLifecycle(() => engineDispose(workspacePath)),

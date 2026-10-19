@@ -83,6 +83,16 @@ function serializeDelimited(rows: SpreadsheetRows, delimiter: string) {
     .join("\n") + "\n";
 }
 
+/** 按 CSV/TSV 文件名解析文本，保留引号中的分隔符、换行和转义双引号。 */
+export function parseDelimitedSpreadsheet(name: string, content: string): SpreadsheetRows {
+  return parseDelimited(content.replace(/^\uFEFF/, ""), delimiterForName(name));
+}
+
+/** 将 CSV/TSV 表格序列化回文本，复用现有引号转义规则。 */
+export function serializeDelimitedSpreadsheet(name: string, rows: SpreadsheetRows): string {
+  return serializeDelimited(rows, delimiterForName(name));
+}
+
 function normalizeRows(rows: unknown[][]): SpreadsheetRows {
   const next = rows.map((row) => row.map((cell) => cell == null ? "" : String(cell)));
 
@@ -93,7 +103,7 @@ export async function parseSpreadsheet(input: { name: string; content: Data }): 
   const ext = extension(input.name);
 
   if (ext === "csv" || ext === "tsv") { 
-    return parseDelimited(input.content.kind === "text" ? input.content.data : "", delimiterForName(input.name));
+    return parseDelimitedSpreadsheet(input.name, input.content.kind === "text" ? input.content.data : "");
   }
 
   const XLSX = await import("xlsx");
@@ -113,25 +123,9 @@ export async function serializeSpreadsheet(name: string, rows: SpreadsheetRows):
   const ext = extension(name);
 
   if (ext === "csv" || ext === "tsv") {
-    return { kind: "text", data: serializeDelimited(rows, delimiterForName(name)) };
+    return { kind: "text", data: serializeDelimitedSpreadsheet(name, rows) };
   }
 
-  const XLSX = await import("xlsx");
-  const workbook = XLSX.utils.book_new();
-
-  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(rows), "Sheet1");
-
-  const bookType = ext === "xls" ? "xls" : ext === "ods" ? "ods" : "xlsx";
-  const output = XLSX.write(workbook, { type: "array", bookType });
-
-  if (output instanceof ArrayBuffer) {
-    return { kind: "binary", data: output };
-  }
-
-  const view = output as Uint8Array;
-  const copy = new Uint8Array(view.byteLength);
-
-  copy.set(view);
-
-  return { kind: "binary", data: copy.buffer };
+  // TIPS: 从二维字符串重建 Sheet1 会丢失其他工作表、公式和格式，二进制表格只能由原生引擎保存。
+  throw new Error("二进制表格请使用 Office 原生编辑器保存");
 }

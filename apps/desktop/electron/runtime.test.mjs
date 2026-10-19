@@ -14,6 +14,7 @@ import {
   embeddedServerImportUrl,
   prioritizeWorkspacePaths,
   resolveJuggleWorkServerConfigPath,
+  resolveOfficeEngineResourceDirectory,
   seedWorkspacePathsForEmbeddedServer,
   selectStickyJuggleWorkPortWorkspace,
   shouldReuseHealthyManagedRuntime,
@@ -162,6 +163,13 @@ describe("commandMatchesPackagedSidecar", () => {
 });
 
 describe("Electron managed runtime", () => {
+  it("resolves Office resources from the application rather than working directory or external App", () => {
+    for (const resourcesPath of ["/Applications/JuggleWork.app/Contents/Resources", "C:/Program Files/JuggleWork/resources"]) {
+      assert.equal(resolveOfficeEngineResourceDirectory({ isPackaged: true, desktopRoot: "/unrelated/app.asar", resourcesPath }), path.join(resourcesPath, "office-engine"));
+    }
+    assert.equal(resolveOfficeEngineResourceDirectory({ isPackaged: false, desktopRoot: "/project/apps/desktop", resourcesPath: "/electron/resources" }), path.join("/project/apps/desktop", "resources/office-engine"));
+    assert.throws(() => resolveOfficeEngineResourceDirectory({ isPackaged: true, desktopRoot: "/unrelated" }), /Resources/);
+  });
   it("starts through embedded Server without locating or spawning orchestrator", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "jugglework-electron-runtime-"));
     const desktopRoot = path.join(root, "desktop");
@@ -179,6 +187,8 @@ describe("Electron managed runtime", () => {
     /** @type {any} */
     let embeddedStartOptions = null;
     let legacyStateRequests = 0;
+    let stopFailure = null;
+    let stopChecks = 0;
 
     try {
       await mkdir(sidecarDir, { recursive: true });
@@ -222,6 +232,10 @@ describe("Electron managed runtime", () => {
         desktopRoot,
         listLocalWorkspacePaths: async () => [workspacePath],
         readDenBaseUrl: () => null,
+        beforeStop: async () => {
+          stopChecks++;
+          if (stopFailure) throw stopFailure;
+        },
         startEmbeddedServer: async (options) => {
           embeddedStartOptions = options;
           const server = http.createServer((request, response) => {
@@ -257,11 +271,17 @@ describe("Electron managed runtime", () => {
       });
 
       assert.equal(manager.managedServerAccess(), null);
+      // 系统文件先启动，再进入聊天时仍复用相同 Server，避免丢失本机文档模型。
+      const fileRuntime = await manager.ensureFileRuntime();
+      assert.equal(fileRuntime.running, true);
+      const firstServer = embeddedStartOptions;
       const engine = await manager.engineStart(workspacePath, { workspacePaths: [workspacePath] });
+      assert.equal(embeddedStartOptions, firstServer);
       assert.equal(engine.runtime, "direct");
       assert.equal(engine.running, true);
       assert.equal(engine.managedByServer, true);
       assert.equal(embeddedStartOptions.manageOpencode, true);
+      assert.equal(embeddedStartOptions.officeResourceDirectory, path.join(desktopRoot, "resources/office-engine"));
       assert.equal(embeddedStartOptions.opencodeBin, opencodePath);
       assert.equal(embeddedStartOptions.workspaces[0], workspacePath);
       assert.deepEqual(manager.managedServerAccess(), {
@@ -281,6 +301,30 @@ describe("Electron managed runtime", () => {
       assert.equal(await manager.engineDispose(workspacePath), true);
       assert.equal(legacyStateRequests, 0);
       await assert.rejects(readFile(orchestratorMarker, "utf8"), { code: "ENOENT" });
+
+      // TIPS: 所有实际替换/停止入口都必须先保护文档；取消后原服务、凭据和健康状态保持有效。
+      const accessBefore = manager.managedServerAccess();
+      const operations = [
+        () => manager.juggleworkServerRestart({}),
+        () => manager.engineRestart({}),
+        () => manager.engineStop(),
+        () => manager.prepareFreshRuntime(),
+      ];
+      for (const failure of [new Error("用户取消"), new Error("磁盘写入失败")]) {
+        stopFailure = failure;
+        for (const operation of operations) {
+          await assert.rejects(operation, (error) => error === failure);
+          assert.deepEqual(manager.managedServerAccess(), accessBefore);
+          assert.equal((await manager.runtimeStatus()).lifecycleState, "healthy");
+          assert.equal(embeddedStartOptions, firstServer);
+        }
+      }
+      assert.equal(stopChecks, 8);
+      stopFailure = null;
+      await manager.juggleworkServerRestart({});
+      assert.equal(stopChecks, 9);
+      assert.notEqual(embeddedStartOptions, firstServer);
+      assert.equal((await manager.juggleworkServerInfo()).running, true);
     } finally {
       if (manager) await manager.dispose().catch(() => undefined);
       for (const server of servers) {

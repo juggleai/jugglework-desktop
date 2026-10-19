@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "engineVersion": "0.0.0.499",
+  "wrapperVersion": "0.2.196-office.1",
+  "assetVersion": "3",
+  "entries": [
+    {
+      "id": "supplemental-glyphs-v1",
+      "kind": "font",
+      "required": false,
+      "url": "https://docs.gtimg.com/common-cdn/ttf/HYZhongHei-Subset.woff",
+      "sha256": "8d1bcc0e3f6b16bc593f83fd390b5f13546e4876c530977e541353a536d5baa7",
+      "size": 132176,
+      "mime": "font/woff",
+      "fontId": "supplemental-glyphs",
+      "family": "TdocsUncommon",
+      "version": "1",
+      "purpose": "SDK 页面按需请求的补充字形",
+      "coverage": "上游字体子集，未确认为完整中文字体",
+      "use": "仅缓存 SDK 已请求的公开静态资源；不随安装包分发字体字节，不扩大原有使用范围"
+    }
+  ],
+  "optional": [
+    {
+      "path": "/static/sheet/externals/weblog_proxy-547505.js",
+      "purpose": "页面日志代理；调用方为日志模块，不属于文档模型及保存契约"
+    },
+    {
+      "path": "/api/vipcenter/info/all",
+      "purpose": "页面会员信息查询；本地编辑不提供会员服务，保留明确的不可用响应"
+    }
+  ]
+}

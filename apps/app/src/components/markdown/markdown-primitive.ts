@@ -13,6 +13,8 @@ import {
   transformerNotationWordHighlight,
 } from "@shikijs/transformers";
 import { bundledLanguages, codeToHtml } from "shiki";
+import type { OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
+import { resolveFileReference, splitFileReferences } from "@/lib/file-references";
 
 export type MarkdownPresentation = "chat" | "surface" | "surface-copyable";
 type RawHtmlMode = "passthrough" | "shiki-only";
@@ -189,7 +191,6 @@ function sanitizeMarkdownHtml(value: string) {
       "aria-label",
       "data-jugglework-image-preview",
       "data-jugglework-link-href",
-      "data-jugglework-link-chevron",
       "data-jugglework-shiki",
       "decoding",
       "disabled",
@@ -250,25 +251,14 @@ function markdownProfileForPresentation(presentation: MarkdownPresentation): Mar
   };
 }
 
+const LINK_CLASS = "text-indigo-10 no-underline transition-colors hover:text-indigo-8";
+
 function renderLink(profile: MarkdownProfile, href: string, title: string | null | undefined, text: string) {
   const safe = escapeAttribute(safeHref(href));
   const titleAttr = title ? ` title="${escapeAttribute(title)}"` : "";
 
-  if (profile.linkPresentation === "chat") {
-    const originalHref = escapeAttribute(href);
-    const isFilePath = !/^(https?|wss?|ftp|mailto|tel|file):/i.test(href);
-
-    if (isFilePath) {
-      const fileIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 text-muted-foreground"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v5h5"/></svg>`;
-      const chevron = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 text-muted-foreground"><path d="m6 9 6 6 6-6"/></svg>`;
-
-      return `<span class="inline-flex items-stretch overflow-hidden rounded-md border border-border/60 bg-muted/40 text-xs font-medium text-foreground align-middle"><a href="${safe}" data-jugglework-link-href="${originalHref}"${titleAttr} target="_blank" rel="noreferrer noopener" class="inline-flex items-center gap-1 px-1.5 py-0.5 no-underline transition-colors hover:bg-muted">${fileIcon}${text}</a><button type="button" data-jugglework-link-chevron="${originalHref}" class="inline-flex items-center border-l border-border/60 px-1 transition-colors hover:bg-muted" aria-label="Open with">${chevron}</button></span>`;
-    }
-
-    return `<a href="${safe}" data-jugglework-link-href="${originalHref}"${titleAttr} target="_blank" rel="noreferrer noopener" class="text-indigo-10 underline underline-offset-2 transition-colors hover:text-indigo-8">${text}</a>`;
-  }
-
-  return `<a href="${safe}"${titleAttr} target="_blank" rel="noreferrer noopener" class="text-indigo-10 underline underline-offset-2 transition-colors hover:text-indigo-8">${text}</a>`;
+  const targetAttr = profile.linkPresentation === "chat" ? ` data-jugglework-link-href="${escapeAttribute(href)}"` : "";
+  return `<a href="${safe}"${targetAttr}${titleAttr} target="_blank" rel="noreferrer noopener" class="${LINK_CLASS}">${text}</a>`;
 }
 
 function renderImage(profile: MarkdownProfile, href: string, title: string | null | undefined, text: string) {
@@ -282,7 +272,12 @@ function renderImage(profile: MarkdownProfile, href: string, title: string | nul
   return `<img src="${safe}" alt="${escapeAttribute(text)}"${titleAttr} loading="lazy" decoding="async" class="my-4 max-w-full rounded-[18px] border border-dls-border/70">`;
 }
 
-function createMarkedOptions(profile: MarkdownProfile, isAsync: boolean) {
+function renderFileReference(target: OpenTarget, label: string) {
+  return `<a href="./${escapeAttribute(encodeURI(target.value))}" data-jugglework-link-href="${escapeAttribute(target.value)}" data-jugglework-artifact-link="true" class="${LINK_CLASS}">${label}</a>`;
+}
+
+function createMarkedOptions(profile: MarkdownProfile, isAsync: boolean, references: OpenTarget[] = []) {
+  let linkDepth = 0;
   return {
     async: isAsync,
     breaks: false,
@@ -290,6 +285,12 @@ function createMarkedOptions(profile: MarkdownProfile, isAsync: boolean) {
     pedantic: false,
     silent: true,
     renderer: {
+      text(token) {
+        if ("tokens" in token && token.tokens) return this.parser.parseInline(token.tokens);
+        if (linkDepth || !references.length) return token.text;
+        return splitFileReferences(token.text, references)
+          .map((part) => part.target ? renderFileReference(part.target, part.text) : part.text).join("");
+      },
       html({ text }) {
         return profile.rawHtmlMode === "shiki-only" && !text.includes('data-jugglework-shiki="true"') ? "" : text;
       },
@@ -320,6 +321,10 @@ function createMarkedOptions(profile: MarkdownProfile, isAsync: boolean) {
         return profile.codeBlockHtml(text, lang);
       },
       codespan({ text }) {
+        // TIPS: 链接标签中的行内代码只保留文字，避免继承代码底色形成文件胶囊。
+        if (linkDepth) return escapeHtml(text);
+        const target = resolveFileReference(text, references);
+        if (target) return renderFileReference(target, escapeHtml(text));
         return `<code class="${profile.codeSpanClassName}">${escapeHtml(text)}</code>`;
       },
       del({ raw, tokens }) {
@@ -330,7 +335,16 @@ function createMarkedOptions(profile: MarkdownProfile, isAsync: boolean) {
         return `<del>${this.parser.parseInline(tokens)}</del>`;
       },
       link({ href, title, tokens }) {
-        return renderLink(profile, href, title, this.parser.parseInline(tokens));
+        // TIPS: 链接标签内部不能再自动插入文件链接，避免嵌套 a 标签及错误点击目标。
+        linkDepth += 1;
+        let label: string;
+        try {
+          label = this.parser.parseInline(tokens);
+        } finally {
+          linkDepth -= 1;
+        }
+        const target = resolveFileReference(href, references);
+        return target ? renderFileReference(target, label) : renderLink(profile, href, title, label);
       },
       image({ href, title, text }) {
         return renderImage(profile, href, title, text);
@@ -371,15 +385,15 @@ function markdownTransformers() {
   ];
 }
 
-function createMarkdownParsers(presentation: MarkdownPresentation) {
+function createMarkdownParsers(presentation: MarkdownPresentation, references: OpenTarget[] = []) {
   const profile = markdownProfileForPresentation(presentation);
-  const markdownParser = new Marked<string, string>(createMarkedOptions(profile, false)).use(
+  const markdownParser = new Marked<string, string>(createMarkedOptions(profile, false, references)).use(
     markedEmoji({
       emojis: emojiAliases,
       renderer: (token) => escapeHtml(token.emoji),
     }),
   );
-  const highlightedMarkdownParser = new Marked<string, string>(createMarkedOptions(profile, true)).use(
+  const highlightedMarkdownParser = new Marked<string, string>(createMarkedOptions(profile, true, references)).use(
     markedEmoji({
       emojis: emojiAliases,
       renderer: (token) => escapeHtml(token.emoji),
@@ -424,17 +438,19 @@ function parsersForPresentation(presentation: MarkdownPresentation) {
   return chatParsers;
 }
 
-export function renderMarkdownHtml(text: string, presentation: MarkdownPresentation = "chat") {
+/** 渲染 Markdown；文件引用仅由调用方提供的当前轮次已确认目标生成。 */
+export function renderMarkdownHtml(text: string, presentation: MarkdownPresentation = "chat", references: OpenTarget[] = []) {
   if (!text.trim()) {
     return "";
   }
 
-  const { markdownParser } = parsersForPresentation(presentation);
+  const { markdownParser } = references.length ? createMarkdownParsers(presentation, references) : parsersForPresentation(presentation);
   return sanitizeMarkdownHtml(markdownParser.parse(text, { async: false }));
 }
 
-export async function renderHighlightedMarkdownHtml(text: string, presentation: MarkdownPresentation = "chat") {
-  const { highlightedMarkdownParser } = parsersForPresentation(presentation);
+/** 异步渲染语法高亮，并维持与同步渲染相同的文件引用范围。 */
+export async function renderHighlightedMarkdownHtml(text: string, presentation: MarkdownPresentation = "chat", references: OpenTarget[] = []) {
+  const { highlightedMarkdownParser } = references.length ? createMarkdownParsers(presentation, references) : parsersForPresentation(presentation);
   const html = await highlightedMarkdownParser.parse(text, { async: true });
   return sanitizeMarkdownHtml(html);
 }

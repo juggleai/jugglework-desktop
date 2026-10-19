@@ -397,8 +397,9 @@ try {
   const content = JSON.stringify(versions, null, 2) + "\n";
   writeFileSync(versionsPath, content, "utf8");
   if (resolvedTargetTriple) {
-    const targetSuffix = isWindowsTarget ? ".exe" : "";
-    const targetVersionsPath = join(sidecarDir, `versions.json-${resolvedTargetTriple}${targetSuffix}`);
+    // Metadata must never look like an executable: Windows code signing treats
+    // every .exe in extraResources as a PE file and fails on JSON contents.
+    const targetVersionsPath = join(sidecarDir, `versions-${resolvedTargetTriple}.json`);
     writeFileSync(targetVersionsPath, content, "utf8");
   }
 } catch (error) {

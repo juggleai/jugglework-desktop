@@ -33,3 +33,16 @@ export function mainProcessFetchBody(init) {
   if (init?.bodyBytes instanceof Uint8Array) return Buffer.from(init.bodyBytes);
   return typeof init?.body === "string" ? init.body : undefined;
 }
+
+/**
+ * 保留 HTTP 响应原始字节传过桌面桥，避免将 Office、PDF 等二进制按 UTF-8 损坏。
+ * @param {Response} response 主进程收到的 HTTP 响应
+ */
+export async function mainProcessFetchResponse(response) {
+  return {
+    status: response.status,
+    statusText: response.statusText,
+    headers: Array.from(response.headers.entries()),
+    body: await response.arrayBuffer(),
+  };
+}

@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "platform": "darwin-arm64",
+  "wrapperVersion": "0.2.196-office.1",
+  "engineVersion": "0.0.0.499",
+  "binary": "darwin-arm64/editor_sdk",
+  "wrapper": "wrapper/lib/common/office-docs-service.js",
+  "sha256": "4108b17c870cc3d5b6aa6b42f7030c3a59be992d52b4fa4c7e1eb5d55a836201"
+}

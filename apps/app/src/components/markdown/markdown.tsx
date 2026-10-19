@@ -8,7 +8,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
-import { useOpenTargets } from "@/lib/target-provider";
+import { useFileReferences, useOpenTargets } from "@/lib/target-provider";
+import { resolveFileReference } from "@/lib/file-references";
 import type { OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
 
 import { applyTextHighlights } from "./text-highlights";
@@ -18,7 +19,6 @@ import {
   renderMarkdownHtml,
   syncMarkdownImagePreviews,
 } from "./markdown-primitive";
-import { LinkActionMenu } from "./link-action-menu";
 import { useCodeBlockCopy } from "./use-code-block-copy";
 
 export { renderHighlightedMarkdownHtml, renderMarkdownHtml } from "./markdown-primitive";
@@ -60,8 +60,7 @@ function normalizeFilePathForMatch(path: string) {
     .replace(/^\.\//, "")
     .replace(WORKSPACES_PREFIX_PATTERN, "")
     .replace(WORKSPACE_ID_PREFIX_PATTERN, "")
-    .replace(/[/]+$/, "")
-    .toLowerCase();
+    .replace(/[/]+$/, "");
 }
 
 function filePathMatchesTarget(path: string, targetValue: string) {
@@ -78,7 +77,8 @@ function openTargetForHref(href: string, openTargets: OpenTarget[]) {
     return null;
   }
 
-  return openTargets.find((target) => target.kind === "file" && filePathMatchesTarget(path, target.value)) ?? null;
+  const matches = openTargets.filter((target) => target.kind === "file" && target.exists === true && filePathMatchesTarget(path, target.value));
+  return matches.length === 1 ? matches[0]! : null;
 }
 
 type MarkdownBlockInnerProps = {
@@ -101,12 +101,12 @@ function MarkdownBlockInner({
   const rootRef = useRef<HTMLDivElement>(null);
   useCodeBlockCopy(rootRef);
   const { openTargets, onOpenTarget } = useOpenTargets();
-  const [linkMenu, setLinkMenu] = useState<{ target: OpenTarget; rect: DOMRect } | null>(null);
+  const references = useFileReferences();
   const [imagePreview, setImagePreview] = useState<{ src: string; alt: string } | null>(null);
   const syncHtml = useMemo(() => {
-    return renderMarkdownHtml(text);
-  }, [text]);
-  const [highlightedHtml, setHighlightedHtml] = useState<{ text: string; html: string } | null>(null);
+    return renderMarkdownHtml(text, "chat", references);
+  }, [text, references]);
+  const [highlightedHtml, setHighlightedHtml] = useState<{ text: string; references: OpenTarget[]; html: string } | null>(null);
 
   useEffect(() => {
     if (streaming || !hasFencedCodeBlock(text)) {
@@ -115,9 +115,9 @@ function MarkdownBlockInner({
     }
 
     let cancelled = false;
-    void renderHighlightedMarkdownHtml(text).then((html) => {
+    void renderHighlightedMarkdownHtml(text, "chat", references).then((html) => {
       if (!cancelled && html.trim()) {
-        setHighlightedHtml({ text, html });
+        setHighlightedHtml({ text, references, html });
       }
     }).catch(() => {
       if (!cancelled) {
@@ -127,9 +127,9 @@ function MarkdownBlockInner({
     return () => {
       cancelled = true;
     };
-  }, [streaming, text]);
+  }, [streaming, text, references]);
 
-  const html = !streaming && highlightedHtml?.text === text ? highlightedHtml.html : syncHtml;
+  const html = !streaming && highlightedHtml?.text === text && highlightedHtml.references === references ? highlightedHtml.html : syncHtml;
 
   // Re-apply search highlights after EVERY render (no dependency array on
   // purpose): motion.div re-sets dangerouslySetInnerHTML on unrelated
@@ -167,26 +167,14 @@ function MarkdownBlockInner({
     const handleClick = (event: MouseEvent) => {
       if (!(event.target instanceof Element)) return;
 
-      const chevron = event.target.closest("[data-jugglework-link-chevron]");
-      if (chevron instanceof HTMLElement) {
-        event.preventDefault();
-        event.stopPropagation();
-        const href = chevron.dataset.juggleworkLinkChevron ?? "";
-        const target = openTargetForHref(href, openTargets);
-        if (target) {
-          setLinkMenu({ target, rect: chevron.getBoundingClientRect() });
-        }
-        return;
-      }
-
       const link = event.target.closest("a[data-jugglework-link-href]");
       if (link instanceof HTMLAnchorElement) {
         const href = link.dataset.juggleworkLinkHref ?? link.getAttribute("href") ?? "";
-        const target = openTargetForHref(href, openTargets);
+        const target = resolveFileReference(href, references) ?? openTargetForHref(href, openTargets);
 
         if (target && onOpenTarget) {
           event.preventDefault();
-          onOpenTarget(target, { external: true });
+          onOpenTarget(target);
           return;
         }
       }
@@ -219,7 +207,7 @@ function MarkdownBlockInner({
       root.removeEventListener("load", handleLoad, true);
       root.removeEventListener("click", handleClick);
     };
-  }, [html, onOpenTarget, openTargets]);
+  }, [html, onOpenTarget, openTargets, references]);
 
   if (!html) {
     return null;
@@ -233,14 +221,6 @@ function MarkdownBlockInner({
         dangerouslySetInnerHTML={{ __html: html }}
         {...props}
       />
-      {linkMenu && onOpenTarget ? (
-        <LinkActionMenu
-          target={linkMenu.target}
-          anchorRect={linkMenu.rect}
-          onOpenTarget={onOpenTarget}
-          onClose={() => setLinkMenu(null)}
-        />
-      ) : null}
       <Dialog
         open={imagePreview !== null}
         onOpenChange={(open) => {

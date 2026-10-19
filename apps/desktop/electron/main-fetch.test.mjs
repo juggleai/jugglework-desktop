@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { createMainProcessFetch, isLoopbackHttpUrl, mainProcessFetchBody, selectMainProcessFetch } from "./main-fetch.mjs";
+import { createMainProcessFetch, isLoopbackHttpUrl, mainProcessFetchBody, mainProcessFetchResponse, selectMainProcessFetch } from "./main-fetch.mjs";
 
 describe("main-process fetch transport", () => {
   it("recognizes supported loopback HTTP URLs", () => {
@@ -49,4 +49,16 @@ describe("main-process fetch transport", () => {
     assert.equal(mainProcessFetchBody({ body: '{"ok":true}' }), '{"ok":true}');
     assert.equal(mainProcessFetchBody({}), undefined);
   });
+});
+
+
+it("二进制响应跨 IPC 后保留 ZIP 及非 UTF-8 字节，同时兼容 JSON 和空响应", async () => {
+  const bytes = Uint8Array.of(0x50, 0x4b, 0x03, 0x04, 0, 0xff, 0x80, 0xfe);
+  const result = structuredClone(await mainProcessFetchResponse(new Response(bytes)));
+  const response = new Response(result.body, result);
+  assert.deepEqual(new Uint8Array(await response.arrayBuffer()), bytes);
+  const json = await mainProcessFetchResponse(Response.json({ name: "中文" }));
+  assert.deepEqual(await new Response(json.body, json).json(), { name: "中文" });
+  const empty = await mainProcessFetchResponse(new Response(null, { status: 204 }));
+  assert.equal(empty.body.byteLength, 0);
 });

@@ -3,8 +3,10 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { homedir, platform } from "node:os";
 import { z } from "zod";
-import type { JuggleWorkAffordanceEffects } from "@jugglework/types/jugglework-affordance";
 import { responseLanguageInstruction } from "@jugglework/types/response-language";
+import { generateArtifactFiles } from "./artifact-generate.js";
+import { OFFICE_EDITING_INSTRUCTION, renderOfficeEditingContext } from "./office-editing-context.js";
+import type { JuggleWorkAffordanceDescriptor, JuggleWorkAffordanceEffects } from "@jugglework/types/jugglework-affordance";
 import {
   combineInstructionSections,
   composeAgentInstructions,
@@ -298,6 +300,43 @@ const affordanceReadEffects: JuggleWorkAffordanceEffects = { data: "read", ui: "
 const affordanceWriteEffects: JuggleWorkAffordanceEffects = { data: "write", ui: "none", external: false };
 const affordanceExternalWriteEffects: JuggleWorkAffordanceEffects = { data: "write", ui: "none", external: true };
 
+const officeAffordances: JuggleWorkAffordanceDescriptor[] = [
+  {
+    id: "office.tools", kind: "query", title: "Office content tool schema",
+    description: "List names/descriptions for this chat's current document format. Pass name to get one tool's exact inputSchema, before office.call.",
+    provider: { id: "jugglework-office", kind: "builtin" }, arguments: [{name: "name", type: "string", required: false, description: "Exact native content tool name; omit to list names."}],
+    effects: affordanceReadEffects, confirmation: "never", availability: { enabled: true }, executor: { kind: "jugglework" },
+  },
+  {
+    id: "office.call", kind: "command", title: "Edit current Office document",
+    description: "Run a content tool with {name,args}, against this chat's live model. Get its schema using office.tools first. Lifecycle and save_file are forbidden; save with office.save_document.",
+    provider: { id: "jugglework-office", kind: "builtin" }, arguments: [{name: "name", type: "string", required: true, description: "Exact content tool name."}, {name: "args", type: "object", required: true, description: "Arguments matching the tool schema."}],
+    effects: affordanceWriteEffects, confirmation: "never", availability: { enabled: true }, executor: { kind: "jugglework" },
+  },
+  {
+    id: "office.current_document", kind: "query", title: "Current Office document",
+    description: "Read this chat's DOCX, CSV, XLSX or PPTX document, readiness, actual engineFileId and current selection. Does not use global window focus.",
+    provider: { id: "jugglework-office", kind: "builtin" }, arguments: [],
+    effects: affordanceReadEffects, confirmation: "never", availability: { enabled: true }, executor: { kind: "jugglework" },
+  },
+  {
+    id: "office.save_document", kind: "command", title: "Save current Office document",
+    description: "Save this chat's current DOCX, CSV, XLSX or PPTX to its bound original path. No path or format arguments.",
+    provider: { id: "jugglework-office", kind: "builtin" }, arguments: [],
+    effects: affordanceWriteEffects, confirmation: "never", availability: { enabled: true }, executor: { kind: "jugglework" },
+  },
+];
+
+/** 按真实工具上下文解析当前聊天文档，禁止用 UI 全局焦点替代执行归属。 */
+async function currentOfficeDocument(context: OpenCodeContext) {
+  if (!context.sessionID) throw new Error("Office requires the calling session");
+  const signal = AbortSignal.timeout(5_000);
+  const workspace = await resolveContextWorkspace(context.workspaceId ?? context.workspaceID, context, signal);
+  const response = await serverGet(`/workspace/${encodeURIComponent(workspace.id)}/office/current?sessionId=${encodeURIComponent(context.sessionID)}`, signal);
+  if (!isRecord(response) || !(response.document === null || isRecord(response.document))) throw new Error("Invalid Office document context");
+  return { workspaceId: workspace.id, document: response.document, selection: response.selection ?? null };
+}
+
 function affordanceResult(
   id: string,
   result: unknown,
@@ -339,7 +378,7 @@ function readEngineMcpStatusClient(value: unknown): JuggleWorkEngineMcpStatusCli
 }
 
 function normalizeOpenCodeContext(value: unknown): OpenCodeContext {
-  const nested = isRecord(value) && isRecord(value.context) ? value.context : value;
+  const nested = isRecord(value) ? { ...value, ...(isRecord(value.context) ? value.context : {}) } : value;
   const agent = optionalStringProperty(nested, "agent");
   const sessionID = optionalStringProperty(nested, "sessionID");
   const messageID = optionalStringProperty(nested, "messageID");
@@ -361,7 +400,7 @@ function normalizeOpenCodeContext(value: unknown): OpenCodeContext {
 function mergeTransformInputWithFactoryContext(input: unknown, factoryContext: OpenCodeContext): unknown {
   if (Object.keys(factoryContext).length === 0) return input;
   const inputRecord = isRecord(input) ? input : {};
-  const inputContext = isRecord(inputRecord.context) ? inputRecord.context : {};
+  const inputContext = normalizeOpenCodeContext(inputRecord);
   return {
     ...inputRecord,
     context: {
@@ -432,10 +471,11 @@ async function uiBridgeRequest(path: string, options: { method?: string; body?: 
   }
 }
 
-async function serverGet(path: string): Promise<unknown> {
+async function serverGet(path: string, signal?: AbortSignal): Promise<unknown> {
   const { url, token } = requireJuggleWorkServer();
   const response = await fetch(`${url}${path}`, {
     headers: { Authorization: `Bearer ${token}` },
+    signal,
   });
   const payload = await parseResponse(response);
   if (!response.ok) throw new Error(errorMessage(payload, "JuggleWork server request failed"));
@@ -506,7 +546,7 @@ async function readJuggleWorkAgentContext(
     readEngineMcpDescriptors(engineMcpStatusClient, engineMcpStatusDirectory),
   ]);
   const contributions = buildJuggleWorkProviderContributions(skills, mcps);
-  const providerAffordances = contributions.flatMap((contribution) => contribution.affordances);
+  const providerAffordances = [...contributions.flatMap((contribution) => contribution.affordances), ...officeAffordances];
   const uiContext = isRecord(uiResult) && isRecord(uiResult.context) ? uiResult.context : null;
   if (!uiContext) {
     return {
@@ -530,8 +570,18 @@ async function readJuggleWorkAgentContext(
   };
 }
 
-async function queryJuggleWorkAffordance(rawArgs: unknown): Promise<unknown> {
+async function queryJuggleWorkAffordance(rawArgs: unknown, context: OpenCodeContext): Promise<unknown> {
   const request = juggleworkAffordanceRequestSchema.parse(rawArgs);
+  if (request.id === "office.tools") {
+    if (!context.sessionID) throw new Error("Office requires the calling session");
+    const args = z.object({ name: z.string().min(1).optional() }).strict().parse(request.args ?? {});
+    const workspace = await resolveContextWorkspace(context.workspaceId ?? context.workspaceID, context);
+    const query = new URLSearchParams({sessionId: context.sessionID, ...(args.name ? {name: args.name} : {})});
+    return affordanceResult(request.id, await serverGet(`/workspace/${encodeURIComponent(workspace.id)}/office/tools?${query}`, AbortSignal.timeout(5_000)), affordanceReadEffects);
+  }
+  if (request.id === "office.current_document") {
+    return affordanceResult(request.id, await currentOfficeDocument(context), affordanceReadEffects);
+  }
   if (request.id === "session.search") {
     return affordanceResult(
       request.id,
@@ -575,6 +625,20 @@ async function executeJuggleWorkAffordance(
   context: OpenCodeContext,
 ): Promise<unknown> {
   const request = juggleworkAffordanceRequestSchema.parse(rawArgs);
+  if (request.id === "office.call") {
+    if (!context.sessionID || !context.messageID) throw new Error("Office editing requires the calling session and message");
+    const args = z.object({name: z.string().min(1), args: z.record(z.string(), z.unknown())}).strict().parse(request.args ?? {});
+    const workspace = await resolveContextWorkspace(context.workspaceId ?? context.workspaceID, context);
+    return affordanceResult(request.id, await postJson(`/workspace/${encodeURIComponent(workspace.id)}/office/call`, {sessionId: context.sessionID, messageId: context.messageID, ...args}), affordanceWriteEffects);
+  }
+  if (request.id === "office.save_document") {
+    if (Object.keys(request.args ?? {}).length) throw new Error("Office save does not accept path or format arguments");
+    const { workspaceId, document } = await currentOfficeDocument(context);
+    if (!document || document.state !== "ready" || typeof document.documentId !== "string") {
+      return unavailableAffordance(request.id, "Open the intended DOCX, CSV, XLSX or PPTX in this chat and wait until ready");
+    }
+    return affordanceResult(request.id, await postJson(`/workspace/${encodeURIComponent(workspaceId)}/office/${encodeURIComponent(document.documentId)}/save`, {}), affordanceWriteEffects);
+  }
   if (request.id === "session.create") {
     return affordanceResult(
       request.id,
@@ -709,8 +773,8 @@ function messageSearchResult(workspace: JuggleWorkWorkspace, session: SessionInf
   return fallback;
 }
 
-async function listJuggleWorkWorkspaces(): Promise<JuggleWorkWorkspace[]> {
-  return workspaceListEnvelopeSchema.parse(await serverGet("/workspaces")).items;
+async function listJuggleWorkWorkspaces(signal?: AbortSignal): Promise<JuggleWorkWorkspace[]> {
+  return workspaceListEnvelopeSchema.parse(await serverGet("/workspaces", signal)).items;
 }
 
 function filterWorkspaces(workspaces: JuggleWorkWorkspace[], workspaceId?: string): JuggleWorkWorkspace[] {
@@ -899,15 +963,16 @@ function normalizeDirPath(path: string): string {
   return path.replace(/\/+$/, "");
 }
 
-async function resolveContextWorkspace(workspaceId: string | undefined, context: OpenCodeContext): Promise<JuggleWorkWorkspace> {
-  const workspaces = await listJuggleWorkWorkspaces();
+async function resolveContextWorkspace(workspaceId: string | undefined, context: OpenCodeContext, signal?: AbortSignal): Promise<JuggleWorkWorkspace> {
+  const workspaces = await listJuggleWorkWorkspaces(signal);
   if (!workspaces.length) throw new Error("No JuggleWork workspaces are available");
   if (workspaceId) {
     const match = filterWorkspaces(workspaces, workspaceId).at(0);
     if (!match) throw new Error(`No workspace matched ${workspaceId}`);
     return match;
   }
-  const directory = context.worktree?.trim() || context.directory?.trim();
+  // TIPS: 非 Git 工作区的 worktree 可能是 /，优先使用本轮实际工作目录。
+  const directory = context.directory?.trim() || context.worktree?.trim();
   if (directory) {
     const dir = normalizeDirPath(directory);
     const match = workspaces
@@ -989,6 +1054,14 @@ function contextPayload(context: OpenCodeContext) {
   };
 }
 
+function summarizeFileDelivery(response: unknown, include: (key: string) => boolean) {
+  if (!isRecord(response) || !Array.isArray(response.turns) || !Array.isArray(response.files)) throw new Error("Invalid file confirmation");
+  const targets = response.turns.filter(isRecord).flatMap((turn) => Array.isArray(turn.targets) ? turn.targets.filter(isRecord).filter((target) => include(String(target.key))) : []);
+  const ids = new Set(targets.map((target) => target.artifactId));
+  const files = response.files.filter((file) => isRecord(file) && ids.has(file.artifactId));
+  return { ok: files.length > 0 && targets.every((target) => target.status === "ready"), files, targets };
+}
+
 export const JuggleWorkExtensionsPreview = async (factoryInput?: unknown) => {
   const factoryContext = normalizeOpenCodeContext(factoryInput);
   const engineMcpStatusClient = readEngineMcpStatusClient(factoryInput);
@@ -1003,13 +1076,14 @@ export const JuggleWorkExtensionsPreview = async (factoryInput?: unknown) => {
       ...(isRecord(input) && isRecord(input.context) ? normalizeOpenCodeContext(input.context) : {}),
     };
     const sessionID = optionalStringProperty(input, "sessionID") ?? hookContext.sessionID;
-    const [extensionDiscovery, skillCatalog, responseLanguage] = await Promise.all([
+    const [extensionDiscovery, skillCatalog, responseLanguage, officeContext] = await Promise.all([
       resolveJuggleWorkExtensionDiscovery(mergedInput, fetch, {
         client: engineMcpStatusClient,
         directory: engineMcpStatusDirectory,
       }),
       resolveJuggleWorkConnectSkillPromptCatalog(mergedInput, fetch),
       readSessionResponseLanguage(sessionID, requestContext),
+      sessionID ? currentOfficeDocument({ ...requestContext, sessionID }).catch(() => undefined) : Promise.resolve(undefined),
     ]);
     const skillAuthoring = composeSkillAuthoringInstruction({
       cloudReady: extensionDiscovery.cloudReady,
@@ -1027,6 +1101,8 @@ export const JuggleWorkExtensionsPreview = async (factoryInput?: unknown) => {
     const sections = combineInstructionSections(
       createInstructionSection("routing", extensionDiscovery.instruction),
       createInstructionSection("agent-surface", JUGGLEWORK_AGENT_SURFACE_INSTRUCTION),
+      createInstructionSection("office-editing", `${OFFICE_EDITING_INSTRUCTION}\n${renderOfficeEditingContext(officeContext)}`),
+      createInstructionSection("file-delivery", "For Shell/Python document generation use jugglework_artifact_generate (artifact.generate_files). It runs the executable in a dedicated output directory and automatically collects files, even with silent stdout. Save only deliverables there; use the system temporary directory for scripts/cache. Use absolute input/script paths. Declare outputs for files written elsewhere in the workspace. Do not use background child processes."),
       createInstructionSection("skill-authoring", skillAuthoring.prompt),
       createInstructionSection("connect-skills", skillCatalog.instruction),
       createInstructionSection("browser", JUGGLEWORK_BROWSER_INSTRUCTION),
@@ -1035,6 +1111,47 @@ export const JuggleWorkExtensionsPreview = async (factoryInput?: unknown) => {
     output.system.push(...composeAgentInstructions(sections));
   },
   tool: {
+    jugglework_artifact_generate: {
+      description: "artifact.generate_files: execute a program to generate deliverable files with existing bash permission approval. The host supplies JUGGLEWORK_ARTIFACT_DIR as cwd, then automatically collects outputs after a successful exit. Use an executable (python3, node, python.exe, etc.) and literal arguments; use absolute script/input paths. Does not invoke a shell. Do not launch background children.",
+      args: {
+        program: z.string().trim().min(1),
+        args: z.array(z.string()).max(256),
+        outputs: z.array(z.string().min(1)).max(200).optional(),
+        timeoutMs: z.number().int().min(1000).max(600000).optional(),
+      },
+      async execute(args: { program: string; args: string[]; outputs?: string[]; timeoutMs?: number }, context: unknown) {
+        const merged = { ...factoryContext, ...normalizeOpenCodeContext(context) };
+        if (!merged.sessionID || !merged.messageID) throw new Error("File generation requires a session and tool message");
+        const workspace = await resolveContextWorkspace(merged.workspaceId ?? merged.workspaceID, merged);
+        const base = `/workspace/${encodeURIComponent(workspace.id)}/sessions/${encodeURIComponent(merged.sessionID)}/file-deliveries/generations`;
+        const result = await generateArtifactFiles(args, context as Parameters<typeof generateArtifactFiles>[1], {
+          prepare: async (outputs) => {
+            const response = await postJson(`${base}/prepare`, { messageId: merged.messageID, outputs });
+            if (!isRecord(response) || typeof response.generationId !== "string" || typeof response.outputDirectory !== "string") throw new Error("Invalid generation allocation");
+            return { generationId: response.generationId, outputDirectory: response.outputDirectory };
+          },
+          complete: async (generationId, exitCode) => {
+            const response = await postJson(`${base}/complete`, { generationId, exitCode });
+            return summarizeFileDelivery(response, (key) => key === generationId || key.startsWith(`${generationId}:`));
+          },
+        });
+        return JSON.stringify(result, null, 2);
+      },
+    },
+    jugglework_artifact_register: {
+      description: "artifact.register_outputs: register explicit existing workspace files requested by the user. Supplemental only; generation should use jugglework_artifact_generate for automatic collection. Do not register residue from failed generation as successful outputs.",
+      args: { outputs: z.array(z.string().min(1)).min(1).max(200) },
+      async execute(args: { outputs: string[] }, context: unknown) {
+        const merged = { ...factoryContext, ...normalizeOpenCodeContext(context) };
+        if (!merged.sessionID || !merged.messageID) throw new Error("File registration requires a session and tool message");
+        const permission = context as Parameters<typeof generateArtifactFiles>[1];
+        if (typeof permission?.ask !== "function") throw new Error("File registration requires the engine permission context");
+        await permission.ask({ permission: "read", patterns: args.outputs, always: [], metadata: { paths: args.outputs } });
+        const workspace = await resolveContextWorkspace(merged.workspaceId ?? merged.workspaceID, merged);
+        const response = await postJson(`/workspace/${encodeURIComponent(workspace.id)}/sessions/${encodeURIComponent(merged.sessionID)}/file-deliveries/register`, { messageId: merged.messageID, outputs: args.outputs });
+        return JSON.stringify(summarizeFileDelivery(response, (key) => key.startsWith(`register:${merged.messageID}:`)), null, 2);
+      },
+    },
     jugglework_image_models_list: {
       description: "List locally configured ready image-generation models. Use this before Cloud search, skills, Pillow, SVG, canvas, or other fallbacks for image generation requests.",
       args: imageModelsListArgsSchema.shape,
@@ -1100,8 +1217,9 @@ export const JuggleWorkExtensionsPreview = async (factoryInput?: unknown) => {
     jugglework_query: {
       description: "Run a side-effect-free JuggleWork affordance whose executor is JuggleWork. Use the exact id and arguments from jugglework_context. This reads backend or app state without navigation or window focus.",
       args: juggleworkAffordanceRequestSchema.shape,
-      async execute(rawArgs: unknown) {
-        return JSON.stringify(await queryJuggleWorkAffordance(rawArgs), null, 2);
+      async execute(rawArgs: unknown, context: OpenCodeContext) {
+        const mergedContext = { ...factoryContext, ...normalizeOpenCodeContext(context) };
+        return JSON.stringify(await queryJuggleWorkAffordance(rawArgs, mergedContext), null, 2);
       },
     },
     jugglework_execute: {

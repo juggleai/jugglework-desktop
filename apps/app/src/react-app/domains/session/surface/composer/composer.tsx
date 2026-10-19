@@ -178,6 +178,8 @@ type ComposerProps = {
   attachments: ComposerAttachment[];
   onAttachFiles: (files: File[]) => void;
   onRemoveAttachment: (id: string) => void;
+  /** 在所属会话右侧打开文件附件，不触发发送。 */
+  onOpenAttachment?: (attachment: ComposerAttachment) => void | Promise<void>;
   attachmentsEnabled: boolean;
   attachmentsDisabledReason: string | null;
   imageGenerationModels: ComposerImageModelOption[];
@@ -424,6 +426,7 @@ export function ReactSessionComposer(props: ComposerProps) {
   const [plusMenuOpen, setPlusMenuOpen] = useState(false);
   const [plusMenuIndex, setPlusMenuIndex] = useState(0);
   const [sketchOpen, setSketchOpen] = useState(false);
+  const [openingAttachment, setOpeningAttachment] = useState(false);
   const plusItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const [mentionItems, setMentionItems] = useState<MentionItem[]>([]);
   const [mentionOpen, setMentionOpen] = useState(false);
@@ -1801,17 +1804,32 @@ export function ReactSessionComposer(props: ComposerProps) {
                       />
                     ) : (
                       <div className="relative flex w-[220px] max-w-[220px] items-center gap-2 rounded-xl border border-border/70 bg-muted/40 py-1.5 pl-2.5 pr-7">
-                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-background text-muted-foreground">
-                          <FileText size={18} />
-                        </div>
-                        <div className="flex min-w-0 flex-1 flex-col">
-                          <span className="truncate text-[13px] font-medium leading-tight text-foreground">
-                            {attachment.name}
-                          </span>
-                          <span className="truncate text-[11px] font-medium uppercase leading-tight text-muted-foreground">
-                            {attachmentTypeLabel(attachment.name)}
-                          </span>
-                        </div>
+                        <button
+                          type="button"
+                          className="flex min-w-0 flex-1 items-center gap-2 text-left hover:text-primary"
+                          disabled={openingAttachment || !props.onOpenAttachment}
+                          onClick={async () => {
+                            setOpeningAttachment(true);
+                            try {
+                              await props.onOpenAttachment?.(attachment);
+                            } finally {
+                              setOpeningAttachment(false);
+                            }
+                          }}
+                          aria-label={`${t("file_window.open")} ${attachment.name}`}
+                        >
+                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-background text-muted-foreground">
+                            <FileText size={18} />
+                          </div>
+                          <div className="flex min-w-0 flex-1 flex-col">
+                            <span className="truncate text-[13px] font-medium leading-tight text-foreground">
+                              {attachment.name}
+                            </span>
+                            <span className="truncate text-[11px] font-medium uppercase leading-tight text-muted-foreground">
+                              {attachmentTypeLabel(attachment.name)}
+                            </span>
+                          </div>
+                        </button>
                         <button
                           type="button"
                           className="absolute right-1 top-1 inline-flex h-5 w-5 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"

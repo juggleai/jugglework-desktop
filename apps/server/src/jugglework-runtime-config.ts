@@ -39,7 +39,6 @@ import {
 type HostMarketplaceMcpOverlay = Record<string, Record<string, unknown>>;
 
 const hostMarketplaceMcpOverlayByConfig = new WeakMap<ServerConfig, HostMarketplaceMcpOverlay>();
-
 export function readHostMarketplaceMcpOverlay(config: ServerConfig): HostMarketplaceMcpOverlay {
   return structuredClone(hostMarketplaceMcpOverlayByConfig.get(config) ?? {});
 }
