@@ -1,4 +1,5 @@
 import { isToolUIPart, type UIMessage } from "ai";
+import { officeSelectionDisplay } from "./office-selection-display";
 import type { FilePart, Part, PermissionRequest, PermissionV2Request, QuestionRequest, Session, SessionStatus, Todo } from "@opencode-ai/sdk/v2/client";
 
 import { getReactQueryClient } from "../../../infra/query-client";
@@ -764,11 +765,12 @@ function toFileUIParts(part: FilePart): UIMessage["parts"] {
 function toUIPart(part: Part): UIMessage["parts"][number] | null {
   if (part.type === "text") {
     if (part.synthetic || part.ignored) return null;
+    const officeSelection = officeSelectionDisplay(part.metadata);
     return {
       type: "text",
       text: part.text,
       state: "done",
-      providerMetadata: { opencode: { partId: part.id } },
+      providerMetadata: { opencode: { partId: part.id, ...(officeSelection ? { officeSelection } : {}) } },
     };
   }
   if (part.type === "reasoning") {

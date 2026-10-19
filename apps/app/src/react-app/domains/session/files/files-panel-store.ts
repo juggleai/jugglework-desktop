@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
+import { commitOfficeFileSwitch } from "./office-file-switch";
 
 export const PERSISTED_FILES_PANEL_STORE_KEY = "jugglework:files-panel:v1";
 
@@ -102,7 +103,7 @@ export const useFilesPanelStore = create<FilesPanelStore>()(
         set((state) => writeSession(state, sessionId, { ...readSession(state, sessionId), activeKey: key })),
 
       openFile: (sessionId, tab) =>
-        set((state) => {
+        commitOfficeFileSwitch(sessionId, tab.path, () => set((state) => {
           const session = readSession(state, sessionId);
           const exists = session.tabs.some((item) => item.path === tab.path);
 
@@ -112,7 +113,7 @@ export const useFilesPanelStore = create<FilesPanelStore>()(
             tabs: exists ? session.tabs : [...session.tabs, tab],
             activePath: tab.path,
           });
-        }),
+        })),
 
       closeFile: (sessionId, path) =>
         set((state) => {
@@ -134,11 +135,11 @@ export const useFilesPanelStore = create<FilesPanelStore>()(
         }),
 
       selectFile: (sessionId, path) =>
-        set((state) => writeSession(state, sessionId, {
+        commitOfficeFileSwitch(sessionId, path, () => set((state) => writeSession(state, sessionId, {
           ...readSession(state, sessionId),
           activeKey: "files",
           activePath: path,
-        })),
+        }))),
 
       toggleDir: (sessionId, path) =>
         set((state) => {
@@ -169,7 +170,8 @@ export const useFilesPanelStore = create<FilesPanelStore>()(
         }),
 
       selectChange: (sessionId, path) =>
-        set((state) => writeSession(state, sessionId, { ...readSession(state, sessionId), selectedChangePath: path })),
+        path ? commitOfficeFileSwitch(sessionId, path, () => set((state) => writeSession(state, sessionId, { ...readSession(state, sessionId), selectedChangePath: path })))
+          : set((state) => writeSession(state, sessionId, { ...readSession(state, sessionId), selectedChangePath: path })),
 
       setDraft: (sessionId, path, draft) =>
         set((state) => {

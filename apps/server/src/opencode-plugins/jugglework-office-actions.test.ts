@@ -26,7 +26,7 @@ test("Office 语义查询和保存使用调用聊天身份，不使用窗口焦�
           },
         });
       }
-      if (url.pathname === "/workspace/ws_B/office/od_B/save") {
+      if (url.pathname === "/workspace/ws_B/office/save-for-actor") {
         saved.push(await request.json());
         return Response.json({
           document: { documentId: "od_B", dirty: false },
@@ -55,7 +55,7 @@ test("Office 语义查询和保存使用调用聊天身份，不使用窗口焦�
       directory: "/workspace/A",
       sessionID: "factory_A",
     });
-    const context = { directory: "/workspace/B", worktree: "/", sessionID: "calling_B" };
+    const context = { directory: "/workspace/B", worktree: "/", sessionID: "calling_B", messageID: "msg_B" };
     const current = JSON.parse(
       await plugin.tool.jugglework_query.execute(
         { id: "office.current_document" },
@@ -73,8 +73,8 @@ test("Office 语义查询和保存使用调用聊天身份，不使用窗口焦�
       ),
     );
     expect(savedResult.ok).toBe(true);
-    expect(saved).toEqual([{}]);
-    expect(sessions).toEqual(["calling_B", "calling_B"]);
+    expect(saved).toEqual([{ sessionId: "calling_B", messageId: "msg_B" }]);
+    expect(sessions).toEqual(["calling_B"]);
     await expect(
       plugin.tool.jugglework_execute.execute(
         { id: "office.save_document", args: { file_path: "/wrong.docx" } },
@@ -123,7 +123,7 @@ test("Office 语义查询和保存使用调用聊天身份，不使用窗口焦�
     await expect(
       plugin.tool.jugglework_execute.execute(
         { id: "office.call", args: { name: "sheet_get_sheet_info", args: {} } },
-        context,
+        { ...context, messageID: undefined },
       ),
     ).rejects.toThrow("message");
   } finally {

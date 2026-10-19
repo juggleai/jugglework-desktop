@@ -1038,9 +1038,11 @@ export async function startServer(config: ServerConfig, options: {
       };
     },
     readMediaJob: (workspaceId, sessionId, requestId) => mediaGenerationRepository.getByRequest(workspaceId, sessionId, requestId),
-    async saveTarget(workspaceId, _origin, target) {
+    async saveTarget(workspaceId, origin, target) {
       if (!officeDocuments || !target.documentId) throw new Error("Office 保存服务不可用");
-      await officeDocuments.save(workspaceId, target.documentId, true);
+      if (fileDeliveries!.registry(workspaceId).list(origin.sessionId).turns.find((turn) => turn.turnId === origin.turnId)?.officeSelection &&
+        officeDocuments.selections.context(workspaceId, origin.sessionId, origin.turnId).mode !== "selection") throw new Error("应用已重启，请核对文档后重新选择");
+      await officeDocuments.saveDeliveryTarget(workspaceId, origin.sessionId, origin.turnId, target.documentId);
     },
   });
   const officeEngine = new OfficeEngine({
@@ -1056,6 +1058,13 @@ export async function startServer(config: ServerConfig, options: {
     engine: officeEngine,
     prepareSave: prepareOfficePageSave,
     readSelection: readOfficePageSelection,
+    resolveTurn: async (workspaceId, sessionId, messageId) => {
+      const origin = await fileDeliveries!.messageOrigin(workspaceId, sessionId, messageId);
+      if (origin && fileDeliveries!.registry(workspaceId).list(sessionId).turns.find((turn) => turn.turnId === origin.turnId)?.officeSelection &&
+        officeDocuments!.selections.context(workspaceId, sessionId, origin.turnId).mode !== "selection")
+        throw new ApiError(409, "office_selection_stale", "应用已重启，请重新选择内容后发送新要求");
+      return origin?.turnId ?? null;
+    },
     async resolveFile(workspaceId, path, allowMissing) {
       if (localOfficeFiles.owns(workspaceId)) return localOfficeFiles.resolve(path);
       const workspace = await resolveWorkspaceWithoutBootstrap(config, workspaceId);
@@ -2853,12 +2862,43 @@ function createRoutes(
       const boundPrompt = run && workspace.workspaceType !== "remote"
         ? fileDeliveries.preparePrompt(workspace.id, sessionId, run.runId, prompt)
         : prompt;
-      await dispatchSessionPromptAsync(routeConfig, workspace, sessionId, boundPrompt);
+      const { officeSelectionRefs, officeInstructions, ...enginePrompt } = boundPrompt;
+      if (workspace.workspaceType === "remote" && ((Array.isArray(officeSelectionRefs) && officeSelectionRefs.length) || (Array.isArray(officeInstructions) && officeInstructions.length)))
+        throw new ApiError(409, "office_selection_local_only", "选区编辑需要本机文档会话");
+      if (workspace.workspaceType !== "remote" && typeof enginePrompt.messageID === "string") {
+        await officeDocuments!.prepareSelectionTurn(workspace.id, sessionId, enginePrompt.messageID, {
+          officeSelectionRefs: officeSelectionRefs as string[] | undefined,
+          officeInstructions: officeInstructions as import("./office/selection-edits.js").OfficeSelectionSubmission["officeInstructions"],
+        });
+        if (Array.isArray(officeSelectionRefs) && officeSelectionRefs.length && run) {
+          const context = officeDocuments!.selections.context(workspace.id, sessionId, enginePrompt.messageID);
+          fileDeliveries.registry(workspace.id).recordOfficeSelection({ sessionId, turnId: enginePrompt.messageID, runId: run.runId }, {
+            references: context.references.map((ref) => ({ referenceId: ref.referenceId, kind: ref.locator.kind, preview: ref.preview })), instructions: context.instructions as import("@jugglework/types/office").OfficeSelectionInstruction[],
+          });
+        }
+        if (Array.isArray(officeSelectionRefs) && officeSelectionRefs.length && Array.isArray(enginePrompt.parts)) {
+          const previews = officeDocuments!.selections.context(workspace.id, sessionId, enginePrompt.messageID).references;
+          const part = enginePrompt.parts.find((part: any) => part?.type === "text");
+          if (part) part.metadata = { ...part.metadata, officeSelections: previews.map(({ referenceId, preview }) => ({ referenceId, preview })), officeInstructions };
+        }
+      }
+      await dispatchSessionPromptAsync(routeConfig, workspace, sessionId, enginePrompt);
     },
     dispatchSessionAbort,
-    preparePromptAdmission: (identity) => {
+    preparePromptAdmission: async (identity, selection = {}) => {
       const workspace = config.workspaces.find((item) => item.id === identity.workspaceId);
-      if (workspace?.workspaceType !== "remote") fileDeliveries.prepareAdmission(identity);
+      if (workspace?.workspaceType === "remote" && (selection.officeSelectionRefs?.length || selection.officeInstructions?.length))
+        throw new ApiError(409, "office_selection_local_only", "选区编辑需要本机文档会话");
+      if (workspace?.workspaceType !== "remote") {
+        const origin = fileDeliveries.prepareAdmission(identity);
+        await officeDocuments!.prepareSelectionTurn(identity.workspaceId, identity.sessionId, origin.turnId, selection);
+        if (selection.officeSelectionRefs?.length) {
+          const context = officeDocuments!.selections.context(identity.workspaceId, identity.sessionId, origin.turnId);
+          fileDeliveries.registry(identity.workspaceId).recordOfficeSelection(origin, {
+            references: context.references.map((ref) => ({ referenceId: ref.referenceId, kind: ref.locator.kind, preview: ref.preview })), instructions: context.instructions as import("@jugglework/types/office").OfficeSelectionInstruction[],
+          });
+        }
+      }
     },
     sessionMutations,
     sessionPendingOperations,

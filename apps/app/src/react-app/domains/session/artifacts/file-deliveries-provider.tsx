@@ -50,7 +50,10 @@ export function FileDeliveriesProvider({
     let cancelled = false;
     void client
       .syncFileDeliveries(workspaceId, sessionId)
-      .then((data) => {
+      .then(async (data) => {
+        if (cancelled) return;
+        // TIPS: 同步已确认保存后，较早启动的列表读取不能晚到并覆盖成“交付失败”。
+        await queryClient.cancelQueries({ queryKey, exact: true });
         if (!cancelled) queryClient.setQueryData(queryKey, data);
       })
       .catch(() => {
@@ -76,6 +79,7 @@ export function FileDeliveriesProvider({
         sessionId,
         turnId,
       );
+      await queryClient.cancelQueries({ queryKey, exact: true });
       queryClient.setQueryData(queryKey, data);
     },
     [client, workspaceId, sessionId, queryClient, queryKey],

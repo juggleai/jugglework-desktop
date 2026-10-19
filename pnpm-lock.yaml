@@ -229,6 +229,12 @@ importers:
         specifier: ^5.0.12
         version: 5.0.12(@types/react@19.2.14)(react@19.2.4)(use-sync-external-store@1.6.0(react@19.2.4))
     devDependencies:
+      '@lexical/history':
+        specifier: 0.35.0
+        version: 0.35.0
+      '@lexical/plain-text':
+        specifier: 0.35.0
+        version: 0.35.0
       '@tailwindcss/vite':
         specifier: ^4.1.18
         version: 4.1.18(vite@6.4.3(@types/node@25.6.0)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.23.13)(yaml@2.9.1))

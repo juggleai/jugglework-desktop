@@ -814,6 +814,8 @@ function renderUserTextWithSkillChips(text: string, highlightQuery: string | und
 const UserMessage = React.memo(
   ({ message, isStreaming }: UserMessageProps) => {
     const { onRevertToUserMessage, onForkAtMessage, onEditUserMessage, highlightQuery } = useMessageList()
+    const deliveries = useFileDeliveries()
+    const officeHistory = deliveries?.data?.turns.find((turn) => turn.turnId === message.id)?.officeSelection
     const messageText = React.useMemo(() => getMessagesText([message]), [message])
     const inlineParts = React.useMemo(
       () => message.parts.filter((part) => (part.type === "text" && Boolean(part.text)) || isFileUIPart(part)),
@@ -844,8 +846,25 @@ const UserMessage = React.memo(
                     className="bg-[var(--app-msg-sent-bg)] text-foreground max-w-[85%] rounded-3xl px-4 py-2.5 text-[15px] leading-6 tracking-normal sm:max-w-[75%] !select-text not-prose"
                     style={{ userSelect: "text" }}
                   >
+                    {officeHistory && !inlineParts.some((part) => part.type === "text" && part.providerMetadata?.opencode?.officeSelection) ? <span className="mb-1 flex flex-wrap gap-1">
+                      {officeHistory.references.map((ref) => <span key={ref.referenceId} tabIndex={0} className="inline-flex items-center gap-1 rounded-lg bg-foreground/5 px-2 py-0.5 text-sm" title={`${ref.preview.name}\n${ref.preview.range}\n${ref.preview.text}`}>
+                        <FileIcon size={14} aria-hidden />{ref.kind.startsWith("sheet-") ? "表格选区" : ref.kind.startsWith("slide-") ? "幻灯片选区" : "文档选区"}
+                      </span>)}
+                    </span> : null}
                     {inlineParts.map((part, index) => {
                       if (part.type === "text") {
+                        const selection = part.providerMetadata?.opencode?.officeSelection as { text: string; selections: Array<{ label: string; name: string; range: string; text: string }> } | undefined;
+                        if (selection && typeof selection.text === "string" && Array.isArray(selection.selections)) return (
+                          <span key={`office-${index}`} className="my-0.5 inline-flex w-full flex-wrap items-start gap-1.5">
+                            {selection.selections.map((item, position) => <span key={position} tabIndex={0} className="group/selection relative inline-flex items-center gap-1 rounded-lg bg-foreground/5 px-2 py-0.5 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                              <FileIcon size={14} aria-hidden />{item.label}
+                              <span role="tooltip" className="pointer-events-none absolute bottom-full left-0 z-30 mb-2 hidden w-max max-w-80 rounded-xl border bg-popover p-3 text-sm font-normal text-popover-foreground shadow-lg group-hover/selection:block group-focus/selection:block">
+                                <span className="mb-1 block font-medium">{item.name}</span><span className="block">{item.range}</span>{item.text ? <span className="mt-1 line-clamp-3 block whitespace-pre-wrap text-muted-foreground">{item.text}</span> : null}
+                              </span>
+                            </span>)}
+                            <span className="whitespace-pre-wrap">{renderUserTextWithSkillChips(selection.text, highlightQuery)}</span>
+                          </span>
+                        );
                         return (
                           <span key={`text-${index}`} className="whitespace-pre-wrap">
                             {renderUserTextWithSkillChips(part.text, highlightQuery)}

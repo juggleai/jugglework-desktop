@@ -27,6 +27,7 @@ import {
   KEY_BACKSPACE_COMMAND,
   KEY_ENTER_COMMAND,
   PASTE_COMMAND,
+  HISTORIC_TAG,
   type SerializedTextNode,
   type Spread,
   TextNode,
@@ -46,6 +47,9 @@ import {
 import { shouldCollapsePastedText } from "./pasted-text";
 import { insertStyledPastedText } from "./pasted-text-insertion";
 import { insertTextAtSelection } from "./editor-insertion";
+import { ComposerOfficeInstructionNode, ComposerOfficeSelectionTagNode, $createOfficeInstructionNode, $readOfficeComposerDraft, $syncOfficeInstructionNode, registerOfficeSelectionEditing, OfficeComposerContext } from "./office-selection-node";
+import { getComposerOfficeGroups, releasableOfficeReferences, useComposerStateStore } from "../composer-state-store";
+import type { OfficeComposerGroup } from "./office-selection-draft";
 
 type PastedTextToken = { label: string; lines: number; text: string };
 
@@ -57,6 +61,8 @@ export type ComposerAttachmentToken = {
 };
 
 type EditorProps = {
+  officeSessionId?: string;
+  officeGroups?: OfficeComposerGroup[];
   value: string;
   mentions: Record<string, ComposerMentionKind>;
   pastedText?: PastedTextToken[];
@@ -724,6 +730,7 @@ function setPrompt(
   mentions: Record<string, ComposerMentionKind>,
   pastedText?: PastedTextToken[],
   attachments?: ComposerAttachmentToken[],
+  officeGroups?: OfficeComposerGroup[],
 ) {
   const root = $getRoot();
   root.clear();
@@ -742,6 +749,16 @@ function setPrompt(
   const attachmentsById = new Map((attachments ?? []).map((item) => [item.id, item]));
   for (const segment of segments) {
     if (!segment) continue;
+    const officeMatch = /^\[office-instruction ([\w-]+)\]$/.exec(segment);
+    const officeGroup = officeMatch ? officeGroups?.find((group) => group.instruction.instructionId === officeMatch[1]) : undefined;
+    if (officeGroup) {
+      // TIPS: 指令组本身是可编辑段落，避免 inline 容器在换行和粘贴时拆出要求文字。
+      const instruction = $createOfficeInstructionNode(officeGroup);
+      if (paragraph.isEmpty()) paragraph.replace(instruction);
+      else paragraph.insertAfter(instruction);
+      paragraph = instruction;
+      continue;
+    }
     const attachmentMatch = segment.match(/^\[attachment (.+)\]$/);
     if (attachmentMatch?.[1]) {
       const target = attachmentsById.get(attachmentMatch[1]);
@@ -805,14 +822,37 @@ function insertSkillAtSelection(skillName: string, kind: ComposerCapabilityKind)
 // walk root children ourselves and join with a single "\n" so every newline
 // the user sees onscreen is preserved exactly in the stored draft.
 function serializePromptFromRoot(): string {
-  const root = $getRoot();
-  return root
-    .getChildren()
-    .map((child) => child.getTextContent())
-    .join("\n");
+  return $readOfficeComposerDraft([]).draft;
+}
+
+/** 外部重绑或模型失效只更新标签；保持文本节点身份，不因普通输入重设选区。 */
+function OfficeSelectionEditingPlugin(props: { sessionId?: string; groups?: OfficeComposerGroup[] }) {
+  const [editor] = useLexicalComposerContext();
+  useEffect(() => registerOfficeSelectionEditing(editor), [editor]);
+  useEffect(() => {
+    const groups = props.sessionId ? getComposerOfficeGroups(useComposerStateStore.getState(), props.sessionId) : props.groups ?? [];
+    const needsSync = editor.getEditorState().read(() => $nodesOfType(ComposerOfficeInstructionNode).some((node) => {
+      const group = groups.find((item) => item.instruction.instructionId === node.__instructionId);
+      if (!group) return false;
+      const children = node.getChildren();
+      const ids = children.filter((child): child is ComposerOfficeSelectionTagNode => child instanceof ComposerOfficeSelectionTagNode).map((tag) => tag.__referenceId);
+      const expected = group.instruction.bindingState === "needs-selection" ? [null] : group.references.map((ref) => ref.referenceId);
+      const text = children.filter((child) => !(child instanceof ComposerOfficeSelectionTagNode)).map((child) => child.getTextContent()).join("");
+      return JSON.stringify(ids) !== JSON.stringify(expected) || text !== group.instruction.text;
+    }));
+    if (!needsSync) return;
+    editor.update(() => {
+      for (const node of $nodesOfType(ComposerOfficeInstructionNode)) {
+        const group = groups.find((item) => item.instruction.instructionId === node.__instructionId);
+        if (group) $syncOfficeInstructionNode(node, group);
+      }
+    }, { tag: HISTORIC_TAG });
+  }, [editor, props.sessionId, props.groups]);
+  return null;
 }
 
 function SyncPlugin(props: {
+  officeGroups?: OfficeComposerGroup[];
   value: string;
   mentions: Record<string, ComposerMentionKind>;
   pastedText?: PastedTextToken[];
@@ -850,7 +890,7 @@ function SyncPlugin(props: {
       // Double-check inside the update in case another queued update
       // changed the state between the read above and this callback.
       if (!forceRebuild && serializePromptFromRoot() === props.value) return;
-      setPrompt(props.value, props.mentions, props.pastedText, props.attachments);
+      setPrompt(props.value, props.mentions, props.pastedText, props.attachments, props.officeGroups);
       // $getRoot().selectEnd() doesn't work when the last node is a
       // token (chip) — Lexical can't position a cursor inside a token,
       // so the selection collapses to position 0. Use element-level
@@ -864,7 +904,7 @@ function SyncPlugin(props: {
         $getRoot().selectEnd();
       }
     });
-  }, [editor, props.attachments, props.mentions, props.pastedText, props.value]);
+  }, [editor, props.attachments, props.mentions, props.pastedText, props.value, props.officeGroups]);
 
   return null;
 }
@@ -1189,6 +1229,8 @@ function AttachmentRemovePlugin(props: { onRemoveAttachment?: (id: string) => vo
 export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorProps>(function LexicalPromptEditor(props, ref) {
   const valueRef = useRef(props.value);
   const onChangeRef = useRef(props.onChange);
+  const officeSessionRef = useRef(props.officeSessionId);
+  officeSessionRef.current = props.officeSessionId;
 
   useEffect(() => {
     valueRef.current = props.value;
@@ -1205,9 +1247,9 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
         throw error;
       },
         editable: !props.disabled,
-        nodes: [ComposerMentionNode, ComposerSlashCommandNode, ComposerSkillNode, ComposerPastedTextNode, ComposerAttachmentNode],
+        nodes: [ComposerMentionNode, ComposerSlashCommandNode, ComposerSkillNode, ComposerPastedTextNode, ComposerAttachmentNode, ComposerOfficeInstructionNode, ComposerOfficeSelectionTagNode],
         editorState: () => {
-          setPrompt(props.value, props.mentions, props.pastedText, props.attachments);
+          setPrompt(props.value, props.mentions, props.pastedText, props.attachments, props.officeGroups);
         },
       }),
     [],
@@ -1216,7 +1258,19 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
   const syncPromptFromEditorState = useCallback(
     (state: Parameters<NonNullable<React.ComponentProps<typeof OnChangePlugin>["onChange"]>>[0]) => {
       state.read(() => {
-        const next = serializePromptFromRoot();
+        const sessionId = officeSessionRef.current;
+        const store = useComposerStateStore.getState();
+        const priorGroups = sessionId ? getComposerOfficeGroups(store, sessionId) : [];
+        const parsed = $readOfficeComposerDraft(priorGroups);
+        if (sessionId) {
+          store.syncOfficeEditor(sessionId, parsed.draft, parsed.groups);
+          const ids = releasableOfficeReferences(useComposerStateStore.getState(), sessionId, priorGroups.flatMap((group) => group.references.map((ref) => ref.referenceId)));
+          for (const workspaceId of new Set(priorGroups.flatMap((group) => group.references.filter((ref) => ids.includes(ref.referenceId)).map((ref) => ref.workspaceId)))) {
+            const referenceIds = priorGroups.flatMap((group) => group.references.filter((ref) => ref.workspaceId === workspaceId && ids.includes(ref.referenceId)).map((ref) => ref.referenceId));
+            if (typeof window !== "undefined") void window.__JUGGLEWORK_ELECTRON__?.office?.releaseReferences?.({ workspaceId, sessionId, referenceIds }).catch(() => {});
+          }
+        }
+        const next = parsed.draft;
         if (next === valueRef.current) return;
         valueRef.current = next;
         onChangeRef.current(next);
@@ -1226,6 +1280,7 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
   );
 
   return (
+    <OfficeComposerContext.Provider value={{ sessionId: props.officeSessionId, disabled: props.disabled }}>
     <LexicalComposer initialConfig={initialConfig}>
       {/*
         Tight start, bounded growth:
@@ -1255,7 +1310,9 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
         />
         <OnChangePlugin onChange={syncPromptFromEditorState} />
         <HistoryPlugin />
+        <OfficeSelectionEditingPlugin sessionId={props.officeSessionId} groups={props.officeGroups} />
         <SyncPlugin
+          officeGroups={props.officeGroups}
           value={props.value}
           mentions={props.mentions}
           pastedText={props.pastedText}
@@ -1270,5 +1327,6 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
         <ImperativeHandlePlugin editorRef={ref} />
       </div>
     </LexicalComposer>
+    </OfficeComposerContext.Provider>
   );
 });

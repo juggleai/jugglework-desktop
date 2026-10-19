@@ -172,6 +172,14 @@ declare global {
       fileWindow?: import("@jugglework/types/file-window").FileWindowBridge;
       fileEditor?: import("@jugglework/types/file-editor").FileEditorBridge;
       office?: {
+        /** 用于文件 tab、产物、正文及附件的统一切文件检查。 */
+        confirmFileSwitch?: (input: { workspaceId: string; sessionId: string; path: string }) => Promise<boolean>;
+        /** 释放未发送引用，不能改变已接收轮次。 */
+        releaseReferences?: (input: { workspaceId: string; sessionId: string; referenceIds: string[] }) => Promise<unknown>;
+        /** 定位仍有效的草稿选区，不用文字搜索替代坐标。 */
+        revealSelection?: (input: { workspaceId: string; sessionId: string; referenceId: string }) => Promise<unknown>;
+        /** 接收原生文档发往所属聊天草稿的有限请求。 */
+        onComposerRequest?: (callback: (input: import("@jugglework/types/office").OfficeComposerRequest) => Promise<unknown>) => () => void;
         /** 当前字体请求状态；目录中尚未使用的字体不计为缺失。 */
         resources?: (documentId?: string) => Promise<{ fontFailures?: number; coreFailures?: number; readyOnReopen?: boolean; retryableFonts?: number } | null>;
         /** 预取缺失字体，下次打开生效；不刷新模型或改变文档声明。 */

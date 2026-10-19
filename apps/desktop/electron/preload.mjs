@@ -185,6 +185,25 @@ contextBridge.exposeInMainWorld("__JUGGLEWORK_ELECTRON__", {
     },
   },
   office: {
+    /** 文件目标变化前核对所属聊天草稿；目标准备失败不清理选区。 */
+    confirmFileSwitch: (input) => ipcRenderer.invoke("jugglework:office:confirm-file-switch", input),
+    /** 仅移除未发送引用登记，已接收和排队任务不随草稿清理。 */
+    releaseReferences: (input) => ipcRenderer.invoke("jugglework:office:release-selections", input),
+    /** 由主窗口处理所属聊天草稿的有限请求，并把错误回传至原请求。 */
+    onComposerRequest(callback) {
+      const handler = async (_event, input) => {
+        try {
+          const result = await callback(input);
+          ipcRenderer.send("jugglework:office:composer-reply", { requestId: input.requestId, result });
+        } catch (error) {
+          ipcRenderer.send("jugglework:office:composer-reply", { requestId: input.requestId, error: error instanceof Error ? error.message : String(error) });
+        }
+      };
+      ipcRenderer.on("jugglework:office:composer-request", handler);
+      return () => ipcRenderer.removeListener("jugglework:office:composer-request", handler);
+    },
+    /** 在已核对的文档中定位固定草稿选区。 */
+    revealSelection: (input) => ipcRenderer.invoke("jugglework:office:reveal-selection", input),
     /** 读取当前文档的字体及必需资源状态。 */
     resources: (documentId) => ipcRenderer.invoke("jugglework:office:resources", { documentId }),
     /** 预取当前页面缺失字体，下次打开生效，不重载编辑模型。 */

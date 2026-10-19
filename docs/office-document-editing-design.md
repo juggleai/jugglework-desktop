@@ -6,6 +6,8 @@ JuggleWork 将每轮任务生成或更新且已成功保存的交付文件汇总
 
 Word、Excel、PowerPoint 使用同一个本地文档引擎，Agent 与用户编辑同一份文档。产物记录、文件操作和编辑会话统一由本地 JuggleWork Server 管理，Electron 负责窗口和原生系统能力，React 负责展示。编辑器、正文链接、卡片和产物列表共用同一份文件身份与操作定义。
 
+页面内本地 AI 浮层、输入栏指令组、固定选区修改及验收边界见 [Office 选区 AI 编辑技术方案](office-selection-ai-editing-design.md)。选区消息按真实用户轮次、模型代次和内容证明执行；普通消息保留当前文档规则。SDK 在线 AI 保持关闭，编辑页使用宿主维护的本地入口。三格式隔离页面及真实 SDK 范围修改已验证；完整桌面会话、物理输入法与其他平台实机验收尚有待完成项。
+
 ## 交付范围
 
 | 能力 | 本期定义 |
@@ -408,7 +410,7 @@ Agent 指引按格式使用 `doc_*`、`sheet_*`、`slide_*` 内容工具。CSV �
 
 选区通过已有本地桌面桥按需读取。每次 Agent 上下文或 `office.current_document` 查询时，Server 先确定所属聊天的当前文档，再以 workspaceId、documentId、pageId 请求该文档的可见存活页面；读取前后核对页面和模型身份。页面自带 fileId、标题和提示词不参与目标选择。不缓存通知坐标，不依赖全局窗口焦点；未知契约、读取超时、隐藏、切换、关闭或恢复后返回 null，Agent 需要选区时应要求明确范围。纯引擎宿主没有桌面选区。
 
-页面适配绑定 SDK 0.0.0.499：Word 从 `pad.editor` 读取连续 begin/end/length 字符范围；CSV/XLSX 从 `SpreadsheetApp` 读取当前子表与行列范围，整行/整列末端按当前模型网格限制；PPT 从自身 selectionService 读取 pageIndex 和 shapeIds；普通单个文本形状处于编辑状态时，读取真实 anchor/focus，转换为 textSelection（shapeId、start、count、可选 selectedText）。位置按 UTF-16 码元计数，跨段落计入一个 `\r`，支持反向选择及折叠光标。Word 跨单元格、表格浮动对象以及 PPT 备注、框选和组内选择尚未适配，返回 null；只有普通单个文本形状的有效 textSelection 代表内部文字范围；其他形状身份不能代替文字范围，编辑中的非法坐标返回 null。当前 SDK 可用 `slide_set_text_property` 精确修改范围格式；整框替换工具会重建字符样式，不能宣称是保留其他格式的局部文字替换。配套 SDK 的 MobX 数组先通过 slice 转为普通值数组再解析。只读这些状态，不触发内部 AI 浮层，不模拟点击或改变焦点。原通知 preload、环境开关和 IPC 已移除，Server 不保存历史选区。
+页面适配绑定 SDK 0.0.0.499：Word 从 `pad.editor` 读取连续 begin/end/length 字符范围；CSV/XLSX 从 `SpreadsheetApp` 读取当前子表与行列范围，整行/整列末端按当前模型网格限制；PPT 从自身 selectionService 读取 pageIndex 和 shapeIds；普通单个文本形状处于编辑状态时，读取真实 anchor/focus，转换为 textSelection（shapeId、start、count、可选 selectedText）。位置按 UTF-16 码元计数，跨段落计入一个 `\r`，支持反向选择及折叠光标。Word 跨单元格、表格浮动对象以及 PPT 备注、框选和组内选择尚未适配，返回 null；只有普通单个文本形状的有效 textSelection 代表内部文字范围；其他形状身份不能代替文字范围，编辑中的非法坐标返回 null。当前 SDK 可用 `slide_set_text_property` 精确修改范围格式；整框替换工具会重建字符样式，不能宣称是保留其他格式的局部文字替换。配套 SDK 的 MobX 数组先通过 slice 转为普通值数组再解析。只读这些状态，不触发内部 AI 浮层，不模拟点击或改变焦点。原通知 preload、环境开关和 IPC 已移除，实时选区不作为后续写入授权；固定引用、执行与历史展示采用独立契约。
 
 PPT 页面内置的 AI 编辑入口通过配套配置 `custom.toolbarFileMenu.aiEdit=false` 关闭，覆盖选区浮动工具栏及菜单的能力判断。共享资源服务在 PPT HTML 的 head 结束前补充 normal、reading 配置，早于 SDK 配置缓存初始化；右侧与独立窗口使用同一链路，不改写 SDK 二进制或脚本，不使用按钮文案匹配及 CSS 隐藏。macOS ARM64 隔离真实页面已验证选中形状时浮动工具栏存在而 AI 编辑入口为零，文本修改、保存及重新打开通过；该验证不代表其他平台实机已验收。
 
@@ -416,7 +418,7 @@ PPT 页面内置的 AI 编辑入口通过配套配置 `custom.toolbarFileMenu.ai
 
 macOS ARM64 真实模型对话已验证基于实时选区的编辑：在独立文件浏览器选中 CSV A2，所属聊天仅要求修改“选中单元格”，模型查询真实子表及行列范围、修改同一模型、通过宿主保存并回读确认。原生页面与磁盘均为“选区验收通过”，表头、数量及其他行保留。该流程不需要 SDK 内部 AI 输入或选区通知。
 
-基础选区的 macOS ARM64 桌面验收还覆盖 Word 六个标题字符在独立窗口迁移到右侧后范围不变；聊天仅按选区指令替换为“选区标题”，原生页面、保存回读和 OOXML 一致，其他正文保留。XLSX 切换到第二张工作表后选择 A1:B2，查询返回该表真实 sheetId 和范围；PPT 返回当前页及真实形状 ID。侧栏隐藏后选区为 null，窗口无需成为全局焦点。其他平台及复杂选区列为独立待办。
+基础选区的 macOS ARM64 桌面验收还覆盖 Word 六个标题字符在独立窗口迁移到右侧后范围不变；聊天仅按选区指令替换为“选区标题”，原生页面、保存回读和 OOXML 一致，其他正文保留。Word 固定引用支持连续跨段正文、首尾部分文字及中间空段，按原段数分别改写或设置正文样式，不合并或拆分段落；真实 SDK 和隔离页面已验证采集、提交、改写及保存，完整桌面模型对话另行验收，详见选区 AI 编辑方案。XLSX 切换到第二张工作表后选择 A1:B2，查询返回该表真实 sheetId 和范围；PPT 返回当前页及真实形状 ID。侧栏隐藏后选区为 null，窗口无需成为全局焦点。其他平台及复杂选区列为独立待办。
 
 macOS ARM64 的 PPT 内部文字选区已通过真实模型对话：独立窗口选中“发布”，查询返回形状 000061、start=2、count=2；所属聊天按该范围设置红色和加粗，页面回显、保存回读及 OOXML 仅该两个字的格式改变，前后文字和第二页保留。UTF-16、跨段落、反向及折叠范围另有适配回归，尚未代表复杂文本对象或其他平台实测通过。
 

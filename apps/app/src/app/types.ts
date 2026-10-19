@@ -96,6 +96,7 @@ export type MessageGroup =
 export type PromptMode = "prompt" | "shell";
 
 export type ComposerPart =
+  | { type: "office-selection"; instruction: import("@jugglework/types/office").OfficeSelectionInstruction; references: import("@jugglework/types/office").OfficeSelectionReference[] }
   | { type: "text"; text: string }
   | { type: "agent"; name: string }
   | { type: "skill"; name: string }

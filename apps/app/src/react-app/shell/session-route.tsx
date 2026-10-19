@@ -22,6 +22,8 @@ import { trackSessionActive, trackTaskStarted } from "@/app/lib/den-telemetry";
 import { buildDiagnosticsBundleJson } from "@/app/lib/diagnostics-bundle";
 import { downloadTextAsFile } from "@/app/lib/download";
 import { createClient, unwrap } from "@/app/lib/opencode";
+import { installOfficeComposerBridge } from "@/react-app/domains/session/surface/composer/office-composer-bridge";
+import { officeSubmissionFromDraft, officeGroupText, officeGroupDisplay } from "@/react-app/domains/session/surface/composer/office-selection-draft";
 import { abortSessionSafe, compactSession, forkSession, isCompactSessionCommand, listCommands, revertSession, setSessionArchived, shellInSession } from "@/app/lib/opencode-session";
 import { isNewSessionCommand } from "@/react-app/domains/session/surface/composer/slash-command";
 import { resolveModelContextLimit } from "@/react-app/domains/session/surface/composer/context-usage-data";
@@ -373,6 +375,12 @@ async function draftToParts(
     );
     for (const segment of draft.text.split(COMPOSER_TOKEN_SPLIT_RE)) {
       if (!segment) continue;
+      const officeMatch = /^\[office-instruction ([\w-]+)\]$/.exec(segment);
+      const officeGroup = officeMatch ? draft.parts.find((part) => part.type === "office-selection" && part.instruction.instructionId === officeMatch[1]) : null;
+      if (officeGroup?.type === "office-selection") {
+        parts.push({ type: "text", text: officeGroupText(officeGroup), metadata: { officeSelectionGroup: officeGroupDisplay(officeGroup) } });
+        continue;
+      }
       const attachmentMatch = segment.match(/^\[attachment (.+)\]$/);
       if (attachmentMatch?.[1]) {
         const filePart = attachmentFileById.get(attachmentMatch[1]);
@@ -436,6 +444,10 @@ async function draftToParts(
     }
   } else {
     for (const part of draft.parts) {
+      if (part.type === "office-selection") {
+        parts.push({ type: "text", text: officeGroupText(part), metadata: { officeSelectionGroup: officeGroupDisplay(part) } });
+        continue;
+      }
       if (part.type === "text") {
         parts.push({ type: "text", text: part.text });
         continue;
@@ -573,6 +585,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
   }) : null, [selectedWorkspace, selectedWorkspaceEndpoint]);
   useHostMarketplaceExecutionTarget(hostMarketplaceExecutionTarget);
   activeRouteContextRef.current = `${selectedWorkspaceId ?? ""}:${selectedSessionId ?? ""}`;
+  useEffect(() => installOfficeComposerBridge({ navigate, scope: () => activeRouteContextRef.current }), [navigate]);
   // 会话级模型：每个会话可以固定自己的模型/推理档位，没有单独选过的会话才回落到
   // 全局默认模型。这样在一个会话里换模型不会波及其他会话。
   const sessionModelChoices = useSessionModelChoices(selectedWorkspaceId);
@@ -1702,6 +1715,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
             const promptRequest = {
               sessionID: targetSessionId,
               parts: preparedParts ?? [],
+              juggleworkOfficeSelections: officeSubmissionFromDraft(draft),
               juggleworkDetectedResponseLanguage: detectResponseLanguage(draft) ?? undefined,
               juggleworkDefaultResponseLanguage: (currentLocale() === "zh" ? "zh" : "en") satisfies ResponseLanguage,
               model: targetModel ?? undefined,

@@ -21,7 +21,7 @@ const CAPABILITY_TOKEN_GLOBAL_RE = /\[(cloud-skill|cloud-mcp|skill|extension|mcp
  * 否则两边对同一段草稿的理解会漂移。
  */
 export const COMPOSER_TOKEN_SPLIT_RE =
-  /(\[attachment [^\]]+\]|\[pasted text [^\]]+\]|\[(?:cloud-skill|cloud-mcp|skill|extension|mcp) [^\]]+\]|@[^\s@]+)/;
+  /(\[office-instruction [\w-]+\]|\[attachment [^\]]+\]|\[pasted text [^\]]+\]|\[(?:cloud-skill|cloud-mcp|skill|extension|mcp) [^\]]+\]|@[^\s@]+)/;
 
 /**
  * 构造能力标签 token

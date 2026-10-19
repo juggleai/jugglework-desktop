@@ -30,6 +30,27 @@ test("Word 字符选区保留真实坐标，跨单元格及未知页面不冒充
   assert.equal(readOfficePageSelection("doc", {}), null);
 });
 
+test("Word 单段与跨段段尾选择只排除最后一个结构回车，保留空白、空段和原坐标", () => {
+  let begin = 26, end = 30, text = "是多少\r";
+  const scope = { pad: { editor: {
+    selection: { gcpRange: { begin: () => begin, end: () => end } },
+    service: { getSelection: () => ({ getTableSelectionArea: () => ({ cellRanges: [] }) }) },
+    getRefText: () => text,
+  } } };
+  assert.deepEqual(readOfficePageSelection("doc", scope), { ranges: [{ begin: 26, end: 29, length: 3 }], selectedText: "是多少" });
+  begin = 0; end = 4; text = "字  \r";
+  assert.deepEqual(readOfficePageSelection("doc", scope), { ranges: [{ begin: 0, end: 3, length: 3 }], selectedText: "字  " });
+  end = 1; text = "\r";
+  assert.deepEqual(readOfficePageSelection("doc", scope), { ranges: [{ begin: 0, end: 0, length: 0 }], selectedText: "" });
+  text = "甲\r\r乙\r"; end = text.length;
+  assert.deepEqual(readOfficePageSelection("doc", scope), { ranges: [{ begin: 0, end: 4, length: 4 }], selectedText: "甲\r\r乙" });
+  for (const raw of ["甲\n乙\r", "甲[line_break]\r"]) {
+    text = raw; end = raw === "甲[line_break]\r" ? 2 : raw.length;
+    assert.equal(readOfficePageSelection("doc", scope).ranges[0].end, end);
+    assert.equal(readOfficePageSelection("doc", scope).selectedText, raw);
+  }
+});
+
 test("表格选区使用当前真实子表和模型边界，浮动对象不泄漏旧单元格坐标", () => {
   let type = 1;
   const scope = {
@@ -71,6 +92,19 @@ test("表格选区使用当前真实子表和模型边界，浮动对象不泄�
   type = 3;
   assert.equal(readOfficePageSelection("sheet", scope), null);
   assert.equal(readOfficePageSelection("sheet", {}), null);
+});
+
+test("表格仅以已验证的维度哨兵建立行列意图，有限全宽矩形和全表不冒充整行", () => {
+  let endCol = 2147483647, endRow = 2;
+  const scope = { SpreadsheetApp: { workbook: { activeSheet: { getSheetId: () => "s", getRowCount: () => 20, getColCount: () => 8 } },
+    view: { getSelectionType: () => 1, getSelectionRanges: () => [{ sheetId: "s", startRowIndex: 0, endRowIndex: endRow, startColIndex: 0, endColIndex: endCol }] } } };
+  assert.equal(readOfficePageSelection("sheet", scope).selectionKind, "rows");
+  endCol = 7;
+  assert.equal(readOfficePageSelection("sheet", scope).selectionKind, undefined);
+  endRow = 2147483647;
+  assert.equal(readOfficePageSelection("sheet", scope).selectionKind, "columns");
+  endCol = 2147483647;
+  assert.equal(readOfficePageSelection("sheet", scope).selectionKind, undefined);
 });
 
 test("PPT 采集页面及形状身份，多页选择保留所有页且不沿用形状，备注和组内选区返回空", () => {

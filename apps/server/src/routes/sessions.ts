@@ -9,6 +9,7 @@ import {
 import { ApiError } from "../errors.js";
 import { admitOpencodePrompt, type AdmissionIdentity } from "../opencode-admission.js";
 import { hasCurrentRunFinalResponse } from "../session-completion-evidence.js";
+import { officeSelectionSubmissionSchema, type OfficeSelectionSubmission } from "../office/selection-edits.js";
 import {
   SessionMutationError,
   type SessionMutationCoordinator,
@@ -82,7 +83,7 @@ interface RegisterSessionRoutesOptions {
   }) => ResponseLanguage;
   copySessionResponseLanguage?: (workspaceId: string, sourceSessionId: string, targetSessionId: string) => void;
   /** 在提交引擎 admission 前登记真实用户消息归属，不创建额外宿主运行。 */
-  preparePromptAdmission: (identity: AdmissionIdentity) => void;
+  preparePromptAdmission: (identity: AdmissionIdentity, selection?: OfficeSelectionSubmission) => void | Promise<void>;
   /** Post-delete cleanup for session-scoped server-owned state. */
   onSessionDeleted?: (workspaceId: string, sessionId: string) => void;
 }
@@ -134,7 +135,7 @@ const promptBodySchema = z.object({
   variant: z.string().max(256).optional(),
   parts: z.array(z.json()).max(10_000).optional(),
   reasoning_effort: z.string().max(256).optional(),
-}).strict().refine((value) => JSON.stringify(value).length <= 16 * 1024 * 1024, "prompt payload is too large");
+}).extend(officeSelectionSubmissionSchema.shape).strict().refine((value) => JSON.stringify(value).length <= 16 * 1024 * 1024, "prompt payload is too large");
 const remotePromptBodySchema = z.object({
   parts: z.array(desktopRemotePromptPartSchema).min(1).max(1_000),
 }).strict().superRefine((prompt, context) => {
@@ -174,7 +175,7 @@ const updateSessionBodySchema = z.object({
 const queueSessionBodySchema = z.object({
   id: runIdentifierSchema,
   prompt: z.string().min(1).refine((value) => value.trim().length > 0).refine((value) => Buffer.byteLength(value, "utf8") <= 200_000),
-}).strict();
+}).extend(officeSelectionSubmissionSchema.shape).strict();
 const legacyAbortRunBodySchema = z.object({ expectedRunId: runIdentifierSchema, commandId: runIdentifierSchema }).strict();
 const observeRunBodySchema = z.object({
   status: z.enum(["starting", "running", "waiting", "retrying", "aborting", "idle", "completed", "failed", "aborted"]),
@@ -798,7 +799,9 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const sessionId = parseRunIdentifier(ctx.params.sessionId, "sessionId");
     const body = parseRunBody(queueSessionBodySchema, await readJsonBody(ctx.request));
-    options.preparePromptAdmission({ workspaceId: workspace.id, sessionId, source: "local-queue", id: body.id });
+    await options.preparePromptAdmission({ workspaceId: workspace.id, sessionId, source: "local-queue", id: body.id }, {
+      officeSelectionRefs: body.officeSelectionRefs, officeInstructions: body.officeInstructions,
+    });
     await admitOpencodePrompt(createWorkspaceOpencodeClient(config, workspace), {
       workspaceId: workspace.id,
       sessionId,
@@ -896,7 +899,10 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
             })
             : undefined;
           try {
-            options.preparePromptAdmission({ workspaceId: workspace.id, sessionId: input.sessionId, source: "local-steer", id: input.startCommandCorrelationId });
+            await options.preparePromptAdmission({ workspaceId: workspace.id, sessionId: input.sessionId, source: "local-steer", id: input.startCommandCorrelationId }, {
+              officeSelectionRefs: input.prompt.officeSelectionRefs as string[] | undefined,
+              officeInstructions: input.prompt.officeInstructions as OfficeSelectionSubmission["officeInstructions"],
+            });
             await admitOpencodePrompt(createWorkspaceOpencodeClient(config, workspace), {
               workspaceId: workspace.id,
               sessionId: input.sessionId,

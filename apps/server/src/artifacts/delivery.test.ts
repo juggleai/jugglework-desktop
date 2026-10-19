@@ -41,6 +41,19 @@ async function root() {
   return value;
 }
 
+test("选区轮次的展示和模式标记在重启后保留，同一消息不能改换引用", async () => {
+  const path = await root();
+  const registry = new ArtifactRegistry("ws_1", path);
+  registry.begin(origin);
+  const selection = { references: [{ referenceId: "r", kind: "sheet-cells" as const, preview: { name: "数据.xlsx", range: "第二表!A8", text: "" } }],
+    instructions: [{ instructionId: "i", text: "改为 10", bindingState: "bound" as const, referenceIds: ["r"] }] };
+  registry.recordOfficeSelection(origin, selection);
+  registry.recordOfficeSelection(origin, selection);
+  expect(() => registry.recordOfficeSelection(origin, { ...selection, references: [] })).toThrow("changed");
+  expect(new ArtifactRegistry("ws_1", path).list(origin.sessionId).turns[0].officeSelection).toEqual(selection);
+  expect(JSON.stringify(selection)).not.toContain("modelGeneration");
+});
+
 test("历史快照在后续轮次修改、事件重放、宿主重命名和重启后保持不变", async () => {
   const path = await root();
   const registry = new ArtifactRegistry("ws_1", path);

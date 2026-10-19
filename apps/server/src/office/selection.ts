@@ -1,4 +1,8 @@
-import type { OfficeSelection } from "@jugglework/types/office";
+import type {
+  OfficeSelection,
+  OfficeSelectionLocator,
+  OfficeTextRange,
+} from "@jugglework/types/office";
 import { ApiError } from "../errors.js";
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -10,6 +14,16 @@ function index(value: unknown): value is number {
 function strings(value: unknown): value is string[] {
   return (
     Array.isArray(value) && value.every((item) => typeof item === "string")
+  );
+}
+
+/** 重叠或重复的半开文字区间不能被当作多次独立修改；相邻区间仍各自保留。 */
+function disjointTextRanges(ranges: OfficeTextRange[]): boolean {
+  const sorted = [...ranges].sort((left, right) => left.begin - right.begin);
+  return sorted.every(
+    (range, position) =>
+      range.end > range.begin &&
+      (!position || sorted[position - 1].end <= range.begin),
   );
 }
 
@@ -33,6 +47,7 @@ export function parseOfficeSelection(
         ? value.selectedText
         : "";
   let data: Record<string, unknown>;
+  let locator: OfficeSelectionLocator | null = null;
   // TIPS: Word 使用 begin/end 字符坐标，表格使用行列范围，PPT 使用页和对象身份，不能互相猜测转换。
   if (kind === "doc") {
     if (
@@ -56,6 +71,11 @@ export function parseOfficeSelection(
       })),
       description,
     };
+    const ranges = value.ranges.map(({ begin, end }) => ({ begin, end }));
+    if (ranges.length === 1 && ranges[0].begin === ranges[0].end)
+      locator = { kind: "doc-caret", idx: ranges[0].begin };
+    else if (disjointTextRanges(ranges))
+      locator = { kind: "doc-text", ranges };
   } else if (kind === "sheet") {
     if (
       typeof value.sheetId !== "string" ||
@@ -73,6 +93,7 @@ export function parseOfficeSelection(
           range.endColIndex >= range.startColIndex,
       ) ||
       (value.drawingIds !== undefined && !strings(value.drawingIds))
+      || (value.selectionKind !== undefined && !["rows", "columns", "cells"].includes(String(value.selectionKind)))
     )
       throw invalid();
     if (
@@ -100,6 +121,26 @@ export function parseOfficeSelection(
       drawingIds: value.drawingIds ?? [],
       description,
     };
+    // TIPS: 完整行列只接受已适配采集器的原生维度意图，有限全网格矩形不能自行升级。
+    if (value.ranges.length && !(value.drawingIds as string[] | undefined)?.length)
+      locator = value.selectionKind === "rows" || value.selectionKind === "columns" ? {
+        kind: value.selectionKind === "rows" ? "sheet-rows" : "sheet-columns", sheetId: value.sheetId,
+        ranges: value.ranges.map((range) => value.selectionKind === "rows" ? { start: range.startRowIndex, end: range.endRowIndex } : { start: range.startColIndex, end: range.endColIndex }),
+      } : {
+        kind: "sheet-cells",
+        sheetId: value.sheetId,
+        ranges: value.ranges.map((range) => ({
+          startRow: range.startRowIndex,
+          endRow: range.endRowIndex,
+          startCol: range.startColIndex,
+          endCol: range.endColIndex,
+        })),
+      };
+    if (locator?.kind === "sheet-rows" || locator?.kind === "sheet-columns") {
+      data.selectionKind = value.selectionKind;
+      const ranges = [...locator.ranges].sort((a, b) => a.start - b.start);
+      if (ranges.some((range, i) => i > 0 && range.start <= ranges[i - 1].end)) locator = null;
+    }
   } else {
     if (
       !(
@@ -111,7 +152,9 @@ export function parseOfficeSelection(
       !strings(value.shapeIds)
     )
       throw invalid();
-    let textSelection: Record<string, unknown> | undefined;
+    let textSelection:
+      | { shapeId: string; start: number; count: number; selectedText?: string }
+      | undefined;
     if (value.textSelection !== undefined) {
       const text = value.textSelection;
       if (
@@ -143,6 +186,32 @@ export function parseOfficeSelection(
       ...(textSelection ? { textSelection } : {}),
       description,
     };
+    const pageIndices = Array.isArray(value.pageIndex)
+      ? [...value.pageIndex]
+      : [value.pageIndex];
+    const uniquePages = new Set(pageIndices).size === pageIndices.length;
+    const uniqueShapes =
+      value.shapeIds.every((id) => id.length > 0) &&
+      new Set(value.shapeIds).size === value.shapeIds.length;
+    if (textSelection && index(value.pageIndex)) {
+      if (uniqueShapes && textSelection.count > 0)
+        locator = {
+          kind: "slide-text",
+          pageIndex: value.pageIndex,
+          shapeId: textSelection.shapeId,
+          start: textSelection.start,
+          count: textSelection.count,
+        };
+    } else if (uniquePages && uniqueShapes) {
+      if (!value.shapeIds.length)
+        locator = { kind: "slide-pages", pageIndices };
+      else if (index(value.pageIndex))
+        locator = {
+          kind: "slide-shapes",
+          pageIndex: value.pageIndex,
+          shapeIds: [...value.shapeIds],
+        };
+    }
   }
   const json = JSON.stringify(data);
   if (Buffer.byteLength(json, "utf8") > 32_768)
@@ -151,5 +220,5 @@ export function parseOfficeSelection(
       "office_selection_too_large",
       "选区过大，请缩小选择范围",
     );
-  return { kind, data: JSON.parse(json), capturedAt: Date.now() };
+  return { kind, data: JSON.parse(json), locator, capturedAt: Date.now() };
 }

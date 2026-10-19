@@ -7,6 +7,7 @@ import { safeStringify } from "../../../../app/utils";
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "../../../../app/types";
 import { createSessionCompactionUIPart } from "../../../../app/lib/session-compaction";
 import { t } from "../../../../i18n";
+import { officeSelectionDisplay } from "./office-selection-display";
 import {
   classifyProviderLimit,
   type ProviderLimitKind,
@@ -318,11 +319,12 @@ export function snapshotToUIMessages(snapshot: JuggleWorkSessionSnapshot): UIMes
         ...message.parts.flatMap<UIMessage["parts"][number]>((part) => {
         if (part.type === "text") {
           if (part.synthetic || part.ignored) return [];
+          const officeSelection = officeSelectionDisplay(part.metadata);
           return [{
             type: "text",
             text: getTextPartValue(part),
             state: "done" as const,
-            providerMetadata: { opencode: { partId: part.id } },
+            providerMetadata: { opencode: { partId: part.id, ...(officeSelection ? { officeSelection } : {}) } },
           }];
         }
         if (part.type === "reasoning") {

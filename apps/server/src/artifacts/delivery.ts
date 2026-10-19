@@ -407,7 +407,8 @@ export class FileDeliveryService {
     return this.list(workspaceId, sessionId);
   }
 
-  private async messageOrigin(
+  /** 按真实 assistant parentID 解析活动用户轮次，Office 等消费者复用此事实，不重新解析原始消息。 */
+  async messageOrigin(
     workspaceId: string,
     sessionId: string,
     messageId: string,

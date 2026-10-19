@@ -341,6 +341,8 @@ export type JuggleWorkSessionStartResult =
   | { disposition: "steered"; admissionId: string };
 
 export type JuggleWorkSessionPrompt = {
+  officeSelectionRefs?: string[];
+  officeInstructions?: import("@jugglework/types/office").OfficeSelectionInstruction[];
   messageID?: string;
   model?: { providerID: string; modelID: string };
   agent?: string;
@@ -3408,6 +3410,10 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
 
     /** 查询本机 Word 编辑资源，不触发引擎启动。 */
     officeCapabilities: (workspaceId: string) => requestJson<OfficeCapabilities>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/office/capabilities`, { token, hostToken }),
+    /** 发送或入队前核对固定引用，不重读当前光标。 */
+    validateOfficeSelections: (workspaceId: string, sessionId: string, referenceIds: string[]) => requestJson<{ ok: boolean }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/office/selection-references/validate`, { token, hostToken, method: "POST", body: { sessionId, referenceIds } }),
+    /** 只释放未发送登记，已接收任务持有独立快照。 */
+    releaseOfficeSelections: (workspaceId: string, sessionId: string, referenceIds: string[]) => requestJson<{ ok: boolean }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/office/selection-references/release`, { token, hostToken, method: "POST", body: { sessionId, referenceIds } }),
     /** 打开页面编辑会话，模型就绪由后续状态查询确认。 */
     openOfficeDocument: (workspaceId: string, sessionId: string, path: string) => requestJson<{ document: OfficeDocumentSession }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/office/open`, { token, hostToken, method: "POST", body: { sessionId, path } }),
     /** 查询指定文档及实际模型状态。 */

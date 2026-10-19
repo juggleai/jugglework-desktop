@@ -3,6 +3,8 @@ import { create } from "zustand";
 import type { ComposerAttachment, ComposerDraft } from "../../../../app/types";
 import type { ComposerMentionKind } from "./composer/mention-encoding";
 import type { ComposerCapabilityKind } from "./composer/capability-tags";
+import { officeInstructionToken, type OfficeComposerGroup } from "./composer/office-selection-draft";
+import type { OfficeSelectionReference } from "@jugglework/types/office";
 
 export type ComposerPastePart = {
   id: string;
@@ -29,6 +31,9 @@ export type ComposerSessionState = {
   mentions: Record<string, ComposerMentionKind>;
   pasteParts: ComposerPastePart[];
   capabilities: ComposerCapabilityPart[];
+  officeGroups: OfficeComposerGroup[];
+  officeRebind: string | null;
+  officeSend: string | null;
 };
 
 export type QueuedComposerDraft = {
@@ -46,6 +51,21 @@ export type ComposerStateStore = {
    * send and must not wipe the recall history (#2012).
    */
   history: Record<string, string[]>;
+  officeEpochs: Record<string, number>;
+  /** 发送预检至消息接收期间仍持有的引用，独立于可随时修改的输入栏和队列。 */
+  officePendingSubmissions: Record<string, { sessionId: string; referenceIds: string[] }>;
+  /** 固定一次提交的引用；完成后返回当前已无其他所有者、可以释放的引用。 */
+  holdOfficeSubmission: (sessionId: string, referenceIds: string[]) => () => string[];
+  appendOfficeSelection: (input: { sessionId: string; reference: OfficeSelectionReference; instructionId: string; text: string; epoch: number; mode: "add" | "send" }) => void;
+  editOfficeInstruction: (sessionId: string, instructionId: string, text: string) => void;
+  /** 同步编辑器内的正常文字和原子标签；文字变化不重建节点，已释放引用不会因撤销恢复权限。 */
+  syncOfficeEditor: (sessionId: string, draft: string, groups: OfficeComposerGroup[]) => void;
+  removeOfficeReference: (sessionId: string, instructionId: string, referenceId: string) => void;
+  detachOfficeInstruction: (sessionId: string, instructionId: string) => void;
+  rebindOfficeInstruction: (sessionId: string, instructionId: string) => void;
+  /** 清理引用；主动删除解除选区绑定，模型失效或切换文件保留重选状态。 */
+  clearOfficeReferences: (sessionId: string, epoch: number, referenceIds: string[], reason?: "remove" | "invalidate") => boolean;
+  consumeOfficeSend: (sessionId: string, instructionId: string) => void;
   setDraft: (sessionId: string, draft: string) => void;
   setAttachments: (sessionId: string, attachments: ComposerAttachment[]) => void;
   setMentions: (sessionId: string, mentions: Record<string, ComposerMentionKind>) => void;
@@ -66,6 +86,7 @@ const EMPTY_PASTE_PARTS: ComposerPastePart[] = [];
 const EMPTY_CAPABILITIES: ComposerCapabilityPart[] = [];
 const EMPTY_HISTORY: string[] = [];
 const EMPTY_QUEUED_DRAFTS: QueuedComposerDraft[] = [];
+const EMPTY_OFFICE_GROUPS: OfficeComposerGroup[] = [];
 const HISTORY_LIMIT = 50;
 
 function createEmptyComposerSession(): ComposerSessionState {
@@ -75,11 +96,12 @@ function createEmptyComposerSession(): ComposerSessionState {
     mentions: {},
     pasteParts: [],
     capabilities: [],
+    officeGroups: [], officeRebind: null, officeSend: null,
   };
 }
 
 function getWritableSession(state: ComposerStateStore, sessionId: string): ComposerSessionState {
-  return state.sessions[sessionId] ?? createEmptyComposerSession();
+  return { ...createEmptyComposerSession(), ...state.sessions[sessionId] };
 }
 
 function queuedDraftId() {
@@ -92,7 +114,9 @@ function composerStateFromDraft(draft: ComposerDraft): ComposerSessionState {
   const mentions: Record<string, ComposerMentionKind> = {};
   const pasteParts: ComposerPastePart[] = [];
   const capabilities: ComposerCapabilityPart[] = [];
+  const officeGroups: OfficeComposerGroup[] = [];
   for (const part of draft.parts) {
+    if (part.type === "office-selection") officeGroups.push({ instruction: structuredClone(part.instruction), references: structuredClone(part.references) });
     if (part.type === "capability") {
       capabilities.push({ kind: part.kind, name: part.name, prompt: part.prompt });
     }
@@ -114,17 +138,104 @@ function composerStateFromDraft(draft: ComposerDraft): ComposerSessionState {
     mentions,
     pasteParts,
     capabilities,
+    officeGroups, officeRebind: null, officeSend: null,
   };
 }
 
-export const useComposerStateStore = create<ComposerStateStore>((set) => ({
+export const useComposerStateStore = create<ComposerStateStore>((set, get) => ({
   sessions: {},
   queuedDrafts: {},
   history: {},
+  officeEpochs: {},
+  officePendingSubmissions: {},
+  holdOfficeSubmission: (sessionId, referenceIds) => {
+    if (!referenceIds.length) return () => [];
+    const id = queuedDraftId();
+    const ids = [...new Set(referenceIds)];
+    set((state) => ({ officePendingSubmissions: { ...state.officePendingSubmissions, [id]: { sessionId, referenceIds: ids } } }));
+    return () => {
+      if (!get().officePendingSubmissions[id]) return [];
+      set((state) => { const pending = { ...state.officePendingSubmissions }; delete pending[id]; return { officePendingSubmissions: pending }; });
+      return releasableOfficeReferences(get(), sessionId, ids);
+    };
+  },
+  appendOfficeSelection: (input) => set((state) => {
+    const current = getWritableSession(state, input.sessionId);
+    if ((state.officeEpochs[input.sessionId] ?? 0) !== input.epoch) throw new Error("文件或草稿已变化，请重新选择");
+    if (input.reference.ownerSessionId !== input.sessionId) throw new Error("选区不属于目标聊天");
+    if (current.officeGroups.some((group) => group.references.some((ref) => ref.captureId === input.reference.captureId))) return state;
+    if (current.officeGroups.some((group) => group.references.some((ref) => ref.documentId !== input.reference.documentId))) throw new Error("请先确认切换文件，再添加新文件的选区");
+    const old = current.officeRebind ? current.officeGroups.find((group) => group.instruction.instructionId === current.officeRebind && group.instruction.bindingState === "needs-selection") : null;
+    const instructionId = old?.instruction.instructionId ?? input.instructionId;
+    const group: OfficeComposerGroup = { references: [structuredClone(input.reference)], instruction: {
+      instructionId, text: old && !input.text.trim() ? old.instruction.text : input.text,
+      bindingState: "bound", referenceIds: [input.reference.referenceId],
+    } };
+    const officeGroups = old ? current.officeGroups.map((item) => item === old ? group : item) : [...current.officeGroups, group];
+    if (officeGroups.length > 32) throw new Error("修改要求过多，请拆分发送");
+    const draft = old ? current.draft : `${current.draft}${current.draft && !current.draft.endsWith("\n") ? "\n" : ""}${officeInstructionToken(instructionId)}\n`;
+    return { sessions: { ...state.sessions, [input.sessionId]: { ...current, officeGroups, draft, officeRebind: null, officeSend: input.mode === "send" ? instructionId : current.officeSend } },
+      officeEpochs: { ...state.officeEpochs, [input.sessionId]: input.epoch + 1 } };
+  }),
+  editOfficeInstruction: (sessionId, instructionId, text) => set((state) => {
+    const current = getWritableSession(state, sessionId);
+    return { sessions: { ...state.sessions, [sessionId]: { ...current, officeGroups: current.officeGroups.map((group) => group.instruction.instructionId === instructionId ? { ...group, instruction: { ...group.instruction, text: text.slice(0, 32_768) } } : group) } } };
+  }),
+  syncOfficeEditor: (sessionId, draft, officeGroups) => set((state) => {
+    const current = getWritableSession(state, sessionId);
+    if (current.draft === draft && JSON.stringify(current.officeGroups) === JSON.stringify(officeGroups)) return state;
+    const previousRefs = current.officeGroups.flatMap((group) => group.references.map((ref) => ref.referenceId));
+    const nextRefs = new Set(officeGroups.flatMap((group) => group.references.map((ref) => ref.referenceId)));
+    const removed = previousRefs.some((id) => !nextRefs.has(id));
+    return { sessions: { ...state.sessions, [sessionId]: { ...current, draft, officeGroups,
+      officeRebind: officeGroups.some((group) => group.instruction.instructionId === current.officeRebind && group.instruction.bindingState === "needs-selection") ? current.officeRebind : null,
+      officeSend: removed ? null : current.officeSend } },
+      ...(removed ? { officeEpochs: { ...state.officeEpochs, [sessionId]: (state.officeEpochs[sessionId] ?? 0) + 1 } } : {}) };
+  }),
+  removeOfficeReference: (sessionId, instructionId, referenceId) => {
+    const state = get(); const epoch = state.officeEpochs[sessionId] ?? 0;
+    const group = state.sessions[sessionId]?.officeGroups.find((group) => group.instruction.instructionId === instructionId);
+    if (!group?.references.some((ref) => ref.referenceId === referenceId)) return;
+    state.clearOfficeReferences(sessionId, epoch, [referenceId], "remove");
+  },
+  detachOfficeInstruction: (sessionId, instructionId) => set((state) => {
+    const current = getWritableSession(state, sessionId);
+    return { sessions: { ...state.sessions, [sessionId]: { ...current, officeGroups: current.officeGroups.map((group) => group.instruction.instructionId === instructionId ? {
+      references: [], instruction: { instructionId, text: group.instruction.text, bindingState: "detached", referenceIds: [] },
+    } : group), officeRebind: null } }, officeEpochs: { ...state.officeEpochs, [sessionId]: (state.officeEpochs[sessionId] ?? 0) + 1 } };
+  }),
+  rebindOfficeInstruction: (sessionId, instructionId) => set((state) => {
+    const current = getWritableSession(state, sessionId);
+    return { sessions: { ...state.sessions, [sessionId]: { ...current, officeRebind: instructionId } } };
+  }),
+  clearOfficeReferences: (sessionId, epoch, referenceIds, reason = "invalidate") => {
+    let cleared = false;
+    set((state) => {
+      if ((state.officeEpochs[sessionId] ?? 0) !== epoch) return state;
+      const current = getWritableSession(state, sessionId);
+      const officeGroups = current.officeGroups.map((group): OfficeComposerGroup => {
+        const references = group.references.filter((ref) => !referenceIds.includes(ref.referenceId));
+        if (references.length === group.references.length) return group;
+        return { references, instruction: { instructionId: group.instruction.instructionId, text: group.instruction.text,
+          // TIPS: 点击删除即明确取消该选区上下文；系统失效不能被当成用户主动改为普通文字。
+          ...(references.length ? { bindingState: "bound" as const, referenceIds: references.map((ref) => ref.referenceId) }
+            : { bindingState: reason === "remove" ? "detached" as const : "needs-selection" as const, referenceIds: [] as [] }) } };
+      });
+      cleared = true;
+      const officeRebind = officeGroups.some((group) => group.instruction.instructionId === current.officeRebind && group.instruction.bindingState === "needs-selection") ? current.officeRebind : null;
+      return { sessions: { ...state.sessions, [sessionId]: { ...current, officeGroups, officeRebind, officeSend: null } }, officeEpochs: { ...state.officeEpochs, [sessionId]: epoch + 1 } };
+    });
+    return cleared;
+  },
+  consumeOfficeSend: (sessionId, instructionId) => set((state) => {
+    const current = getWritableSession(state, sessionId);
+    if (current.officeSend !== instructionId) return state;
+    return { sessions: { ...state.sessions, [sessionId]: { ...current, officeSend: null } } };
+  }),
   setDraft: (sessionId, draft) => set((state) => {
     const current = getWritableSession(state, sessionId);
     if (current.draft === draft) return state;
-    return { sessions: { ...state.sessions, [sessionId]: { ...current, draft } } };
+    return { sessions: { ...state.sessions, [sessionId]: { ...current, draft, officeGroups: current.officeGroups.filter((group) => draft.includes(officeInstructionToken(group.instruction.instructionId))) } } };
   }),
   setAttachments: (sessionId, attachments) => set((state) => {
     const current = getWritableSession(state, sessionId);
@@ -217,10 +328,9 @@ export const useComposerStateStore = create<ComposerStateStore>((set) => ({
     return { queuedDrafts };
   }),
   clearSession: (sessionId) => set((state) => {
-    if (!state.sessions[sessionId]) return state;
     const sessions = { ...state.sessions };
     delete sessions[sessionId];
-    return { sessions };
+    return { sessions, officeEpochs: { ...state.officeEpochs, [sessionId]: (state.officeEpochs[sessionId] ?? 0) + 1 } };
   }),
 }));
 
@@ -250,4 +360,22 @@ export function getComposerHistory(state: ComposerStateStore, sessionId: string)
 
 export function getComposerQueuedDrafts(state: ComposerStateStore, sessionId: string): QueuedComposerDraft[] {
   return state.queuedDrafts[sessionId] ?? EMPTY_QUEUED_DRAFTS;
+}
+
+/** 仅释放草稿、排队任务和发送中请求均不再持有的引用；已接收轮次由服务端持有独立快照。 */
+export function releasableOfficeReferences(state: ComposerStateStore, sessionId: string, ids: string[]): string[] {
+  const retained = new Set(getComposerOfficeGroups(state, sessionId).flatMap((group) => group.references.map((ref) => ref.referenceId)));
+  for (const pending of Object.values(state.officePendingSubmissions)) {
+    if (pending.sessionId === sessionId) for (const id of pending.referenceIds) retained.add(id);
+  }
+  for (const item of getComposerQueuedDrafts(state, sessionId)) {
+    for (const part of item.draft.parts) if (part.type === "office-selection")
+      for (const ref of part.references) retained.add(ref.referenceId);
+  }
+  return [...new Set(ids)].filter((id) => !retained.has(id));
+}
+
+/** 读取所属聊天的选区组，不从字符串中的 ID 重建执行引用。 */
+export function getComposerOfficeGroups(state: ComposerStateStore, sessionId: string): OfficeComposerGroup[] {
+  return state.sessions[sessionId]?.officeGroups ?? EMPTY_OFFICE_GROUPS;
 }

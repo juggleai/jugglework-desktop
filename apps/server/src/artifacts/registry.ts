@@ -95,6 +95,17 @@ export class ArtifactRegistry {
     return structuredClone(turn);
   }
 
+  /** 保存固定轮次的选区展示和模式标记；重试不能替换同消息的引用。 */
+  recordOfficeSelection(origin: ArtifactOrigin, selection: NonNullable<TurnDelivery["officeSelection"]>): void {
+    const turn = this.requireTurn(origin);
+    if (turn.officeSelection) {
+      if (JSON.stringify(turn.officeSelection) !== JSON.stringify(selection)) throw new Error("office_selection_admission_changed");
+      return;
+    }
+    turn.officeSelection = structuredClone(selection);
+    this.persist();
+  }
+
   /** 记录文件或后台任务目标；已有 key 保留已确认结果及原始归属。 */
   track(
     origin: ArtifactOrigin,

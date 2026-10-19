@@ -1,3 +1,5 @@
+import type { OfficeSelectionInstruction, OfficeSelectionLocator, OfficeSelectionPreview } from "./office.js";
+
 /** 文件在工作区中的稳定身份，历史交付快照与当前元信息分别维护。 */
 export interface FileArtifact {
   artifactId: string;
@@ -60,6 +62,11 @@ export interface TurnDelivery {
   status: FileDeliveryStatus;
   targets: FileDeliveryTarget[];
   items: TurnArtifact[];
+  /** 仅作历史展示及重启后的模式标记；没有模型、坐标或执行内容证明。 */
+  officeSelection?: {
+    references: Array<{ referenceId: string; kind: OfficeSelectionLocator["kind"]; preview: OfficeSelectionPreview }>;
+    instructions: OfficeSelectionInstruction[];
+  };
 }
 
 /** 会话级批量查询响应，文件当前状态与各轮历史快照分离。 */

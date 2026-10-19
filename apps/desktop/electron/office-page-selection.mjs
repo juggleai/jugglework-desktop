@@ -18,7 +18,7 @@ export function readOfficePageSelection(kind, scope = window) {
     // TIPS: 跨单元格选择可能不是连续字符，不能用外包范围替代真实选区。
     if (selection.getTableSelectionArea()?.cellRanges?.length) return null;
     const begin = range.begin();
-    const end = range.end();
+    let end = range.end();
     if (
       !Number.isSafeInteger(begin) ||
       !Number.isSafeInteger(end) ||
@@ -26,12 +26,18 @@ export function readOfficePageSelection(kind, scope = window) {
       end < begin
     )
       return null;
+    let selectedText = end - begin <= 4096 && typeof app.getRefText === "function"
+      ? app.getRefText(range) : "";
+    // TIPS: Word 将段尾结构标记 \r 包含在 GCP 范围中，但界面字数不包含它。
+    // 单段和跨段都只排除最后一个结构回车；中间段落边界与空段完整保留，不 trim 或猜测展开占位符长度。
+    if (typeof selectedText === "string" && selectedText.length === end - begin && selectedText.endsWith("\r") &&
+        !selectedText.includes("\n")) {
+      end--;
+      selectedText = selectedText.slice(0, -1);
+    }
     return {
       ranges: [{ begin, end, length: end - begin }],
-      selectedText:
-        end - begin <= 4096 && typeof app.getRefText === "function"
-          ? app.getRefText(range)
-          : "",
+      selectedText,
     };
   }
   if (kind === "sheet") {
@@ -66,6 +72,9 @@ export function readOfficePageSelection(kind, scope = window) {
       return null;
     return {
       sheetId,
+      // 配套 SDK 的行/列选择 API 用精确哨兵表达维度意图；有限全网格矩形仍是 cells。
+      ...(ranges.length && ranges.every((range) => range.startColIndex === 0 && range.endColIndex === 2147483647 && Number.isSafeInteger(range.endRowIndex) && range.endRowIndex < rows) ? { selectionKind: "rows" }
+        : ranges.length && ranges.every((range) => range.startRowIndex === 0 && range.endRowIndex === 2147483647 && Number.isSafeInteger(range.endColIndex) && range.endColIndex < cols) ? { selectionKind: "columns" } : {}),
       ranges: ranges.map((range) => ({
         sheetId: range.sheetId,
         startRowIndex: range.startRowIndex,

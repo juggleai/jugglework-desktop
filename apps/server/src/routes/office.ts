@@ -104,6 +104,8 @@ export function registerOfficeRoutes(options: OfficeRouteOptions): void {
         target.id,
         text(ctx.url.searchParams.get("sessionId"), "sessionId"),
         ctx.url.searchParams.get("name") ?? undefined,
+        ctx.url.searchParams.get("messageId") ?? undefined,
+        ctx.url.searchParams.get("selectionRef") ?? undefined,
       ),
     );
   });
@@ -119,8 +121,51 @@ export function registerOfficeRoutes(options: OfficeRouteOptions): void {
         text(body.messageId, "messageId"),
         text(body.name, "name"),
         body.args as Record<string, unknown>,
+        body.selectionRef === undefined ? undefined : text(body.selectionRef, "selectionRef"),
       ),
     );
+  });
+  addRoute(routes, "GET", `${base}/selection`, "client", async (ctx) => {
+    const target = await workspace(ctx);
+    return jsonResponse(await documents.selectionContext(target.id,
+      text(ctx.url.searchParams.get("sessionId"), "sessionId"),
+      text(ctx.url.searchParams.get("messageId"), "messageId")));
+  });
+  addRoute(routes, "POST", `${base}/save-for-actor`, "client", async (ctx) => {
+    const target = await workspace(ctx, true);
+    const body = await options.readJsonBody(ctx.request);
+    return jsonResponse(await documents.saveForActor(target.id, text(body.sessionId, "sessionId"),
+      text(body.messageId, "messageId"), body.selectionRef === undefined ? undefined : text(body.selectionRef, "selectionRef")));
+  });
+  addRoute(routes, "POST", `${base}/selection-references/release`, "client", async (ctx) => {
+    const target = await workspace(ctx, true);
+    const body = await options.readJsonBody(ctx.request);
+    if (!Array.isArray(body.referenceIds) || body.referenceIds.length > 64 || body.referenceIds.some((id) => typeof id !== "string"))
+      throw new ApiError(400, "invalid_payload", "referenceIds 必须是选区身份列表");
+    documents.selections.release(target.id, text(body.sessionId, "sessionId"), body.referenceIds);
+    return jsonResponse({ ok: true });
+  });
+  addRoute(routes, "POST", `${base}/selection-references/reveal`, "client", async (ctx) => {
+    const target = await workspace(ctx, true);
+    const body = await options.readJsonBody(ctx.request);
+    return jsonResponse({ reference: await documents.selections.reveal(target.id, text(body.sessionId, "sessionId"), text(body.referenceId, "referenceId")) });
+  });
+  addRoute(routes, "POST", `${base}/selection-references/validate`, "client", async (ctx) => {
+    const target = await workspace(ctx, true);
+    const body = await options.readJsonBody(ctx.request);
+    if (!Array.isArray(body.referenceIds) || body.referenceIds.length > 16 || body.referenceIds.some((id) => typeof id !== "string"))
+      throw new ApiError(400, "invalid_payload", "referenceIds 必须是选区身份列表");
+    await documents.selections.validate(target.id, text(body.sessionId, "sessionId"), body.referenceIds);
+    return jsonResponse({ ok: true });
+  });
+  addRoute(routes, "POST", `${base}/:documentId/selection-references`, "client", async (ctx) => {
+    const target = await workspace(ctx, true);
+    if (options.localFiles?.owns(target.id)) throw new ApiError(409, "office_chat_required", "请先将文档添加到目标聊天，再使用 AI 编辑");
+    const body = await options.readJsonBody(ctx.request);
+    const document = await documents.get(target.id, ctx.params.documentId);
+    if (document.ownerSessionId !== text(body.sessionId, "sessionId")) throw new ApiError(409, "office_wrong_document", "选区不属于当前聊天");
+    documents.updateContext(target.id, document.documentId, text(body.pageId, "pageId"));
+    return jsonResponse({ reference: await documents.selections.capture(document, text(body.captureId, "captureId"), body.expectedSelection) });
   });
   addRoute(routes, "POST", `${base}/open`, "client", async (ctx) => {
     const target = await workspace(ctx, true);
@@ -130,8 +175,15 @@ export function registerOfficeRoutes(options: OfficeRouteOptions): void {
         target.id,
         text(body.sessionId, "sessionId"),
         text(body.path, "path"),
+        false,
+        body.activate !== false,
       ),
     });
+  });
+  addRoute(routes, "POST", `${base}/check-open-target`, "client", async (ctx) => {
+    const target = await workspace(ctx, true);
+    const body = await options.readJsonBody(ctx.request);
+    return jsonResponse(await documents.checkOpenTarget(target.id, text(body.sessionId, "sessionId"), text(body.path, "path")));
   });
   addRoute(routes, "POST", `${base}/create`, "client", async (ctx) => {
     const target = await workspace(ctx, true);

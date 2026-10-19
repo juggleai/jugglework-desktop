@@ -24,6 +24,7 @@ type FieldsResult<T> =
   | ({ data?: undefined; error: unknown } & { request: Request; response: Response });
 
 type PromptAsyncParameters = Parameters<ReturnType<typeof createOpencodeClient>["session"]["promptAsync"]>[0] & {
+  juggleworkOfficeSelections?: { officeSelectionRefs?: string[]; officeInstructions?: import("@jugglework/types/office").OfficeSelectionInstruction[] };
   reasoning_effort?: string;
   juggleworkDelivery?: "steer";
   juggleworkAdmissionId?: string;
@@ -731,8 +732,12 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
       juggleworkAdmissionId,
       juggleworkDetectedResponseLanguage,
       juggleworkDefaultResponseLanguage,
+      juggleworkOfficeSelections,
       ...body
     } = parameters;
+    if (juggleworkOfficeSelections?.officeSelectionRefs?.length && (!juggleworkMount || !juggleworkSessionClient)) {
+      return Promise.reject(new Error("选区编辑需要本机文档会话，请重新打开文档后发送"));
+    }
     if (!juggleworkMount && !("reasoning_effort" in parameters)) {
       return promptAsyncOriginal({ sessionID, directory: requestDirectory, workspace: _requestWorkspace, ...body }, options);
     }
@@ -742,7 +747,7 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
         const result = await juggleworkSessionClient.startSessionRun(juggleworkMount.workspaceId, sessionID, {
           origin: "local-renderer",
           startCommandCorrelationId: juggleworkAdmissionId ?? commandCorrelationId(),
-          prompt: body,
+          prompt: { ...body, ...juggleworkOfficeSelections },
           ...(juggleworkDefaultResponseLanguage ? {
             responseLanguage: {
               ...(juggleworkDetectedResponseLanguage ? { detected: juggleworkDetectedResponseLanguage } : {}),

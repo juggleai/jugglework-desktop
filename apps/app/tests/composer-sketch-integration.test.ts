@@ -92,7 +92,8 @@ describe("composer sketch integration", () => {
     expect(source).toContain('resolveComposerSubmitAction(props.busy) === "queue"');
     expect(source).toContain("void props.onQueue()");
     expect(source).toContain("props.onRemoveAttachment(attachment.id)");
-    expect(sessionSurface).toContain("appendQueuedDraft(props.sessionId, buildDraft(text, attachments))");
+    expect(sessionSurface).toContain("const nextDraft = buildDraft(text, attachments)");
+    expect(sessionSurface).toContain("appendQueuedDraft(props.sessionId, nextDraft)");
     expect(sessionSurface).toContain('sendDraft(claimed.draft, { delivery: "steer", admissionId: claimed.id })');
     expect(sessionSurface).toContain("claimed.draft.attachments.forEach(revokeAttachmentPreview)");
   });

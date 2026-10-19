@@ -73,6 +73,8 @@ import {
   shouldSynthesizeBusyAfterAcceptance,
 } from "./task-progress-state";
 import { decodeComposerMentionValue, encodeComposerMentionValue, type ComposerMentionKind } from "./composer/mention-encoding";
+import { getComposerOfficeGroups, releasableOfficeReferences } from "./composer-state-store";
+import { officeGroupText, officeSubmissionFromDraft } from "./composer/office-selection-draft";
 import { desktopBridge, openDesktopUrl } from "@/app/lib/desktop";
 import { isNewSessionCommand, parseSlashCommandInvocation, withBuiltinSlashCommands } from "./composer/slash-command";
 import { DevProfiler } from "@/react-app/shell/dev-profiler";
@@ -574,6 +576,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const mentions = useComposerStateStore((state) => getComposerMentions(state, props.sessionId));
   const pasteParts = useComposerStateStore((state) => getComposerPasteParts(state, props.sessionId));
   const capabilities = useComposerStateStore((state) => getComposerCapabilities(state, props.sessionId));
+  const officeGroups = useComposerStateStore((state) => getComposerOfficeGroups(state, props.sessionId));
+  const officeSend = useComposerStateStore((state) => state.sessions[props.sessionId]?.officeSend ?? null);
   const setComposerDraft = useComposerStateStore((state) => state.setDraft);
   const setComposerAttachments = useComposerStateStore((state) => state.setAttachments);
   const setComposerMentions = useComposerStateStore((state) => state.setMentions);
@@ -1169,6 +1173,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
     );
     const parts: ComposerPart[] = text.split(COMPOSER_TOKEN_SPLIT_RE).flatMap((segment) => {
       if (!segment) return [] as ComposerDraft["parts"];
+      const officeMatch = /^\[office-instruction ([\w-]+)\]$/.exec(segment);
+      const officeGroup = officeMatch ? officeGroups.find((group) => group.instruction.instructionId === officeMatch[1]) : undefined;
+      if (officeGroup) return [{ type: "office-selection", ...structuredClone(officeGroup) } satisfies ComposerPart];
       const attachmentMatch = segment.match(/^\[attachment (.+)\]$/);
       if (attachmentMatch) {
         // Attachment chips are visual tokens only; bytes travel via draft.attachments.
@@ -1208,6 +1215,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     // Expand paste placeholders in resolvedText so the model receives
     // the actual pasted content instead of "[pasted text <label>]".
     let resolved = text;
+    for (const group of officeGroups) resolved = resolved.replaceAll(`[office-instruction ${group.instruction.instructionId}]`, officeGroupText(group));
     for (const part of pasteParts) {
       resolved = resolved.replace(`[pasted text ${part.label}]`, part.text);
     }
@@ -1241,10 +1249,13 @@ export function SessionSurface(props: SessionSurfaceProps) {
       ...(includeVideoGeneration && activeVideoGeneration ? { videoGeneration: activeVideoGeneration } : {}),
       command: slashCommand ?? undefined,
     };
-  }, [capabilities, effectiveImageGeneration.selection, effectiveVideoGeneration.selection, mentions, pasteParts]);
+  }, [capabilities, effectiveImageGeneration.selection, effectiveVideoGeneration.selection, mentions, pasteParts, officeGroups]);
 
   const handleComposerDraftChange = useCallback((value: string) => {
+    const priorIds = getComposerOfficeGroups(useComposerStateStore.getState(), props.sessionId).flatMap((group) => group.references.map((ref) => ref.referenceId));
     setComposerDraft(props.sessionId, value);
+    const referenceIds = releasableOfficeReferences(useComposerStateStore.getState(), props.sessionId, priorIds);
+    if (referenceIds.length) void props.client.releaseOfficeSelections(props.workspaceId, props.sessionId, referenceIds).catch(() => {});
     const idsInDraft = new Set(
       [...value.matchAll(/\[attachment ([^\]]+)\]/g)].map((match) => match[1]).filter((id): id is string => Boolean(id)),
     );
@@ -1254,7 +1265,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       if (!idsInDraft.has(attachment.id)) revokeAttachmentPreview(attachment);
     }
     setComposerAttachments(props.sessionId, retained);
-  }, [attachments, props.sessionId, setComposerAttachments, setComposerDraft]);
+  }, [attachments, props.sessionId, props.workspaceId, props.client, setComposerAttachments, setComposerDraft]);
 
   const handleCopyTranscript = async () => {
     try {
@@ -1305,12 +1316,18 @@ export function SessionSurface(props: SessionSurfaceProps) {
     if (submission.delivery !== "steer") {
       clearSessionTodos(workspaceId, sessionId);
     }
+    let finishOfficeSubmission: () => string[] = () => [];
     try {
+      const selection = officeSubmissionFromDraft(nextDraft);
+      if (selection.officeInstructions?.length && (nextDraft.mode !== "prompt" || nextDraft.command)) throw new Error("选区修改要求请作为普通消息发送");
+      // TIPS: 预检和 admission 均会等待；这段时间输入栏删除标签不能释放本次已固定的引用。
+      finishOfficeSubmission = useComposerStateStore.getState().holdOfficeSubmission(sessionId, selection.officeSelectionRefs ?? []);
+      if (selection.officeSelectionRefs?.length) await props.client.validateOfficeSelections(workspaceId, sessionId, selection.officeSelectionRefs);
       const result = await props.onSendDraft(nextDraft, sessionId, submission);
       if (result.outcome === "blocked" || result.outcome === "cancelled") return result;
       // Only report a run after the pre-send gate released the exact queued
       // submission and the route accepted or sent it.
-      appendComposerHistory(sessionId, nextDraft.text);
+      appendComposerHistory(sessionId, nextDraft.parts.some((part) => part.type === "office-selection") ? nextDraft.resolvedText ?? nextDraft.text : nextDraft.text);
       const activityStore = useSessionActivityStore.getState();
       const activityAfterSend = activityStore.recordsByWorkspaceId[workspaceId]?.[sessionId];
       const synthesizeBusy = shouldSynthesizeBusyAfterAcceptance({
@@ -1350,14 +1367,21 @@ export function SessionSurface(props: SessionSurfaceProps) {
       useSessionActivityStore.getState().setError(workspaceId, sessionId, parsed.message);
       throw nextError;
     } finally {
+      const referenceIds = finishOfficeSubmission();
+      if (referenceIds.length) void props.client.releaseOfficeSelections(workspaceId, sessionId, referenceIds).catch(() => {});
       inFlightSendIdentitiesRef.current.delete(surfaceIdentity);
     }
-  }, [activeRunsQuery.refetch, appendComposerHistory, imageGenerationModels, imageGenerationUnavailable, props.onSendDraft, props.sessionId, props.taskSubmissionDisabled, props.workspaceId, renderedMessages.length, videoGenerationModels, videoGenerationUnavailable]);
+  }, [activeRunsQuery.refetch, appendComposerHistory, imageGenerationModels, imageGenerationUnavailable, props.onSendDraft, props.sessionId, props.taskSubmissionDisabled, props.workspaceId, props.client, renderedMessages.length, videoGenerationModels, videoGenerationUnavailable]);
 
-  const clearComposer = useCallback(() => {
+  const clearComposer = useCallback((release = false) => {
+    const ids = getComposerOfficeGroups(useComposerStateStore.getState(), props.sessionId).flatMap((group) => group.references.map((ref) => ref.referenceId));
     clearComposerSession(props.sessionId);
+    if (release) {
+      const referenceIds = releasableOfficeReferences(useComposerStateStore.getState(), props.sessionId, ids);
+      if (referenceIds.length) void props.client.releaseOfficeSelections(props.workspaceId, props.sessionId, referenceIds).catch(() => {});
+    }
     props.onDraftChange(buildDraft("", []));
-  }, [buildDraft, clearComposerSession, props.onDraftChange, props.sessionId]);
+  }, [buildDraft, clearComposerSession, props.onDraftChange, props.sessionId, props.workspaceId, props.client]);
 
   // Initial send (agent idle) and explicit "Steer" follow-up (agent busy)
   // share the same immediate path.
@@ -1373,6 +1397,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
     const nextDraft = buildDraft(text, attachments);
     const sentAttachments = attachments;
     try {
+      officeSubmissionFromDraft(nextDraft);
+      if (nextDraft.command && nextDraft.parts.some((part) => part.type === "office-selection")) throw new Error("选区修改要求请单独发送，不与快捷指令混用");
       if (isNewSessionCommand(nextDraft.command)) {
         const sessionId = await props.onCreateNewSession();
         if (!sessionId) return;
@@ -1411,8 +1437,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
       const currentState = useComposerStateStore.getState();
       const currentDraft = getComposerDraft(currentState, props.sessionId);
       const currentAttachments = getComposerAttachments(currentState, props.sessionId);
-      if (currentDraft === originalDraft && sameAttachments(currentAttachments, sentAttachments)) {
-        clearComposer();
+      const currentInstructions = getComposerOfficeGroups(currentState, props.sessionId).map((group) => group.instruction);
+      const sentInstructions = nextDraft.parts.filter((part) => part.type === "office-selection").map((part) => part.instruction);
+      if (currentDraft === originalDraft && sameAttachments(currentAttachments, sentAttachments) && JSON.stringify(currentInstructions) === JSON.stringify(sentInstructions)) {
+        clearComposer(true);
         sentAttachments.forEach(revokeAttachmentPreview);
       } else {
         const retainedIds = new Set(currentAttachments.map((attachment) => attachment.id));
@@ -1455,20 +1483,44 @@ export function SessionSurface(props: SessionSurfaceProps) {
 
   // Queue: hold the draft locally and clear the composer. The drain effect
   // sends it once the session reports idle.
-  const handleQueue = useCallback(() => {
+  const handleQueue = useCallback(async () => {
     if (props.taskSubmissionDisabled) return;
     if ((imageGeneration && !effectiveImageGeneration.selection) || (videoGeneration && !effectiveVideoGeneration.selection)) return;
     const text = draft.trim();
     if (!text && attachments.length === 0) return;
-    appendQueuedDraft(props.sessionId, buildDraft(text, attachments));
-    queueWaitsForIdleRef.current = true;
-    clearComposer();
-  }, [appendQueuedDraft, attachments, buildDraft, clearComposer, draft, effectiveImageGeneration.selection, effectiveVideoGeneration.selection, imageGeneration, props.sessionId, props.taskSubmissionDisabled, videoGeneration]);
+    const nextDraft = buildDraft(text, attachments);
+    let finishOfficeSubmission: () => string[] = () => [];
+    try {
+      const selection = officeSubmissionFromDraft(nextDraft);
+      finishOfficeSubmission = useComposerStateStore.getState().holdOfficeSubmission(props.sessionId, selection.officeSelectionRefs ?? []);
+      if (selection.officeSelectionRefs?.length) await props.client.validateOfficeSelections(props.workspaceId, props.sessionId, selection.officeSelectionRefs);
+      appendQueuedDraft(props.sessionId, nextDraft);
+      queueWaitsForIdleRef.current = true;
+      const current = useComposerStateStore.getState();
+      const instructions = nextDraft.parts.filter((part) => part.type === "office-selection").map((part) => part.instruction);
+      if (getComposerDraft(current, props.sessionId) === draft && sameAttachments(getComposerAttachments(current, props.sessionId), attachments) &&
+        JSON.stringify(getComposerOfficeGroups(current, props.sessionId).map((group) => group.instruction)) === JSON.stringify(instructions)) clearComposer();
+    } catch (error) { setError(parseSessionError(error)); }
+    finally {
+      const referenceIds = finishOfficeSubmission();
+      if (referenceIds.length) void props.client.releaseOfficeSelections(props.workspaceId, props.sessionId, referenceIds).catch(() => {});
+    }
+  }, [appendQueuedDraft, attachments, buildDraft, clearComposer, draft, effectiveImageGeneration.selection, effectiveVideoGeneration.selection, imageGeneration, props.sessionId, props.workspaceId, props.client, props.taskSubmissionDisabled, videoGeneration]);
+
+  useEffect(() => {
+    if (!officeSend || props.taskSubmissionDisabled || sending) return;
+    useComposerStateStore.getState().consumeOfficeSend(props.sessionId, officeSend);
+    if (chatStreaming) void handleQueue();
+    else void handleSend();
+  }, [officeSend, props.taskSubmissionDisabled, props.sessionId, sending, chatStreaming, handleQueue, handleSend]);
 
   const removeQueuedDraft = useCallback((id: string) => {
     const removed = removeQueuedDraftFromStore(props.sessionId, id);
     removed?.draft.attachments.forEach(revokeAttachmentPreview);
-  }, [props.sessionId, removeQueuedDraftFromStore]);
+    const ids = removed?.draft.parts.flatMap((part) => part.type === "office-selection" ? part.references.map((ref) => ref.referenceId) : []) ?? [];
+    const referenceIds = releasableOfficeReferences(useComposerStateStore.getState(), props.sessionId, ids);
+    if (referenceIds.length) void props.client.releaseOfficeSelections(props.workspaceId, props.sessionId, referenceIds).catch(() => {});
+  }, [props.sessionId, props.workspaceId, props.client, removeQueuedDraftFromStore]);
 
   const editQueuedDraft = useCallback((id: string) => {
     if (draft.trim() || attachments.length > 0) {
@@ -1540,6 +1592,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
     // lands and the session reports idle (#2014).
     queuedDrafts.forEach((item) => item.draft.attachments.forEach(revokeAttachmentPreview));
     clearQueuedDrafts(props.sessionId);
+    const cancelledIds = queuedDrafts.flatMap((item) => item.draft.parts.flatMap((part) => part.type === "office-selection" ? part.references.map((ref) => ref.referenceId) : []));
+    const referenceIds = releasableOfficeReferences(useComposerStateStore.getState(), props.sessionId, cancelledIds);
+    if (referenceIds.length) void props.client.releaseOfficeSelections(props.workspaceId, props.sessionId, referenceIds).catch(() => {});
     // The prompt was sent through a directory-scoped client (session-route
     // passes the workspace root), so the abort must target the same scope —
     // without it the server resolves the default project, finds no live run,
@@ -2543,6 +2598,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
           />
         ) : null}
         <ReactSessionComposer
+          officeGroups={officeGroups}
           sessionId={props.sessionId}
           createVoiceRealtimeSession={props.client.createVoiceRealtimeSession}
           getVoiceRealtimeStatus={props.client.getVoiceRealtimeStatus}

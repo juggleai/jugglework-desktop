@@ -20,6 +20,7 @@ import { ModelBehaviorSelect } from "@/components/model-behavior-select";
 import { ModelSelect } from "@/components/model-select";
 import { ImageAttachmentBadge } from "@/components/chat/image-attachment-badge";
 import { LexicalPromptEditor, type LexicalPromptEditorHandle } from "./editor";
+import type { OfficeComposerGroup } from "./office-selection-draft";
 import { listRunningAppsForMention } from "./app-mentions";
 import type { ComposerMentionKind } from "./mention-encoding";
 import {
@@ -144,6 +145,7 @@ function isComposerExtensionAvailable(entry: McpDirectoryInfo) {
 
 type ComposerProps = {
   sessionId: string;
+  officeGroups?: OfficeComposerGroup[];
   createVoiceRealtimeSession: JuggleWorkServerClient["createVoiceRealtimeSession"] | null;
   getVoiceRealtimeStatus: JuggleWorkServerClient["getVoiceRealtimeStatus"] | null;
   onOpenVoiceSettings?: () => void;
@@ -1847,6 +1849,9 @@ export function ReactSessionComposer(props: ComposerProps) {
             ) : null}
             {/* Editor */}
             <LexicalPromptEditor
+              key={props.sessionId}
+              officeSessionId={props.sessionId}
+              officeGroups={props.officeGroups}
               ref={editorRef}
               value={draftWithoutAttachments}
               mentions={props.mentions}

@@ -4,7 +4,7 @@
   "version": "1.2.30",
   "type": "module",
   "scripts": {
-    "test": "bun test --isolate tests/",
+    "test": "bun --conditions=development test --isolate tests/",
     "dev": "cross-env JUGGLEWORK_DEV_MODE=1 vite",
     "build": "vite build",
     "dev:web": "cross-env JUGGLEWORK_DEV_MODE=1 vite",
@@ -97,6 +97,8 @@
     "zustand": "^5.0.12"
   },
   "devDependencies": {
+    "@lexical/history": "0.35.0",
+    "@lexical/plain-text": "0.35.0",
     "@tailwindcss/vite": "^4.1.18",
     "@types/crypto-js": "^4.2.2",
     "@types/node": "^25.6.0",

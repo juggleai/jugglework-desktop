@@ -46,6 +46,7 @@ import { createApplicationMenu } from "./app-menu.mjs";
 import { applyBrandAppName } from "./brand-app-name.mjs";
 import { createBrowserPanel } from "./browser-panel.mjs";
 import { createOfficePanel } from "./office-panel.mjs";
+import { createOfficeSelectionBridge } from "./office-selection-bridge.mjs";
 import { createSystemFileOpening, systemOfficeFilePaths } from "./system-file-opening.mjs";
 import { createFileWindows } from "./file-windows.mjs";
 import { createFileEditor } from "./file-editor.mjs";
@@ -1461,6 +1462,7 @@ function getOfficeResources() {
   }
   return officeResources;
 }
+const officeSelectionBridge = createOfficeSelectionBridge({ ipcMain, getWindow: () => mainWindow });
 const officePanel = createOfficePanel({
   getWindow: () => mainWindow,
   getWindows: () => fileWindows.windows(),
@@ -1469,6 +1471,13 @@ const officePanel = createOfficePanel({
   onOpenFile: (window, input) => fileWindows.openDialog(window, input),
   client: fileHostClient,
   resources: getOfficeResources,
+  composer: {
+    async request(input) {
+      const result = await officeSelectionBridge.request(input);
+      if (input.action === "append" && mainWindow && !mainWindow.isDestroyed()) { mainWindow.show(); mainWindow.focus(); }
+      return result;
+    },
+  },
 });
 const fileWindowIconPath = app.isPackaged ? path.join(process.resourcesPath, "app-dist/file-window-logo.png") : path.resolve(__dirname, "../../app/public/file-window-logo.png");
 const fileWindowDock = createFileWindowDock({
@@ -3183,6 +3192,7 @@ async function createMainWindow() {
   });
 
   mainWindow.on("closed", () => {
+    officeSelectionBridge.cancel();
     browserPanel.destroy();
     void toonFactoryRuntime.close().catch(() => {});
     mainWindow = null;
@@ -3223,6 +3233,7 @@ async function createMainWindow() {
   // reroute the URL into a built-in browser tab instead.
   mainWindow.webContents.on("did-start-navigation", (_event, url, isInPlace, isMainFrame) => {
     if (!isMainFrame || isInPlace) return;
+    officeSelectionBridge.cancel();
     if (browserPanel.isMainWindowAllowedNavigation(url)) return;
     try {
       mainWindow?.webContents.stop();

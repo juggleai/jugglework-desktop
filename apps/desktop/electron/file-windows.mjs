@@ -111,6 +111,9 @@ export function createFileWindows({
     return entry;
   };
   const addFile = async (entry, relativePath, absolutePath) => {
+    if (!entry.local && office.confirmFileTarget && !await office.confirmFileTarget(entry.window, {
+      workspaceId: entry.workspaceId, sessionId: entry.sessionId, path: relativePath,
+    })) return null;
     const response = await client.getJson(
       `/workspace/${encodeURIComponent(entry.workspaceId)}/files/stat?path=${encodeURIComponent(relativePath)}`,
     );
@@ -423,6 +426,9 @@ export function createFileWindows({
           );
           if (action === "select") {
             if (tab) {
+              if (!entry.local && entry.activePath !== tab.path && office.confirmFileTarget && !await office.confirmFileTarget(entry.window, {
+                workspaceId: entry.workspaceId, sessionId: entry.sessionId, path: tab.path,
+              })) return;
               entry.activePath = tab.path;
               publish(entry);
             }

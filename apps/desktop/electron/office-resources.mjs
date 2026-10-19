@@ -84,7 +84,7 @@ export function createOfficeResources({
     /**
      * 为唯一 Office 页面注册 HTTP/HTTPS；返回与页面同寿命的清理器。
      * @param {{protocol: Pick<Electron.Protocol, 'handle' | 'unhandle'>, webRequest: Pick<Electron.WebRequest, 'onBeforeRequest'>, fetch: Electron.Session['fetch']}} partition 页面分区
-     * @param {{documentId: string, origin: string, filePath: string, kind: string, commit: {error: Error | null}, save: () => Promise<{engineFileId: string}>, onCoreFailure: () => void}} host 页面保存及故障归属
+     * @param {{documentId: string, origin: string, filePath: string, kind: string, selectionUi?: boolean, commit: {error: Error | null}, save: () => Promise<{engineFileId: string}>, onCoreFailure: () => void}} host 页面保存及故障归属
      */
     attach(partition, host) {
       const controller = new AbortController();

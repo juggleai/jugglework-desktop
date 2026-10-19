@@ -302,15 +302,21 @@ const affordanceExternalWriteEffects: JuggleWorkAffordanceEffects = { data: "wri
 
 const officeAffordances: JuggleWorkAffordanceDescriptor[] = [
   {
+    id: "office.selection", kind: "query", title: "Office selections for this turn",
+    description: "Read this exact user turn's fixed selection references before editing. A selection turn requires selectionRef for discovery, calls and saving; never fall back to the current tab.",
+    provider: { id: "jugglework-office", kind: "builtin" }, arguments: [],
+    effects: affordanceReadEffects, confirmation: "never", availability: { enabled: true }, executor: { kind: "jugglework" },
+  },
+  {
     id: "office.tools", kind: "query", title: "Office content tool schema",
     description: "List names/descriptions for this chat's current document format. Pass name to get one tool's exact inputSchema, before office.call.",
-    provider: { id: "jugglework-office", kind: "builtin" }, arguments: [{name: "name", type: "string", required: false, description: "Exact native content tool name; omit to list names."}],
+    provider: { id: "jugglework-office", kind: "builtin" }, arguments: [{name: "name", type: "string", required: false, description: "Exact native content tool name; omit to list names."}, {name: "selectionRef", type: "string", required: false, description: "Required for selection turns; use a reference returned by office.selection."}],
     effects: affordanceReadEffects, confirmation: "never", availability: { enabled: true }, executor: { kind: "jugglework" },
   },
   {
     id: "office.call", kind: "command", title: "Edit current Office document",
     description: "Run a content tool with {name,args}, against this chat's live model. Get its schema using office.tools first. Lifecycle and save_file are forbidden; save with office.save_document.",
-    provider: { id: "jugglework-office", kind: "builtin" }, arguments: [{name: "name", type: "string", required: true, description: "Exact content tool name."}, {name: "args", type: "object", required: true, description: "Arguments matching the tool schema."}],
+    provider: { id: "jugglework-office", kind: "builtin" }, arguments: [{name: "name", type: "string", required: true, description: "Exact content tool name."}, {name: "args", type: "object", required: true, description: "Arguments matching the tool schema."}, {name: "selectionRef", type: "string", required: false, description: "Required for selection turns; binds the original document and permitted range."}],
     effects: affordanceWriteEffects, confirmation: "never", availability: { enabled: true }, executor: { kind: "jugglework" },
   },
   {
@@ -322,7 +328,7 @@ const officeAffordances: JuggleWorkAffordanceDescriptor[] = [
   {
     id: "office.save_document", kind: "command", title: "Save current Office document",
     description: "Save this chat's current DOCX, CSV, XLSX or PPTX to its bound original path. No path or format arguments.",
-    provider: { id: "jugglework-office", kind: "builtin" }, arguments: [],
+    provider: { id: "jugglework-office", kind: "builtin" }, arguments: [{name: "selectionRef", type: "string", required: false, description: "Required to save the original document in a selection turn."}],
     effects: affordanceWriteEffects, confirmation: "never", availability: { enabled: true }, executor: { kind: "jugglework" },
   },
 ];
@@ -573,11 +579,18 @@ async function readJuggleWorkAgentContext(
 async function queryJuggleWorkAffordance(rawArgs: unknown, context: OpenCodeContext): Promise<unknown> {
   const request = juggleworkAffordanceRequestSchema.parse(rawArgs);
   if (request.id === "office.tools") {
-    if (!context.sessionID) throw new Error("Office requires the calling session");
-    const args = z.object({ name: z.string().min(1).optional() }).strict().parse(request.args ?? {});
+    if (!context.sessionID || !context.messageID) throw new Error("Office requires the calling session and message");
+    const args = z.object({ name: z.string().min(1).optional(), selectionRef: z.string().min(1).optional() }).strict().parse(request.args ?? {});
     const workspace = await resolveContextWorkspace(context.workspaceId ?? context.workspaceID, context);
-    const query = new URLSearchParams({sessionId: context.sessionID, ...(args.name ? {name: args.name} : {})});
+    const query = new URLSearchParams({sessionId: context.sessionID, messageId: context.messageID, ...(args.name ? {name: args.name} : {}), ...(args.selectionRef ? {selectionRef: args.selectionRef} : {})});
     return affordanceResult(request.id, await serverGet(`/workspace/${encodeURIComponent(workspace.id)}/office/tools?${query}`, AbortSignal.timeout(5_000)), affordanceReadEffects);
+  }
+  if (request.id === "office.selection") {
+    if (!context.sessionID || !context.messageID) throw new Error("Office selections require the calling session and message");
+    if (Object.keys(request.args ?? {}).length) throw new Error("Office selection query does not accept target overrides");
+    const workspace = await resolveContextWorkspace(context.workspaceId ?? context.workspaceID, context);
+    const query = new URLSearchParams({ sessionId: context.sessionID, messageId: context.messageID });
+    return affordanceResult(request.id, await serverGet(`/workspace/${encodeURIComponent(workspace.id)}/office/selection?${query}`), affordanceReadEffects);
   }
   if (request.id === "office.current_document") {
     return affordanceResult(request.id, await currentOfficeDocument(context), affordanceReadEffects);
@@ -627,17 +640,18 @@ async function executeJuggleWorkAffordance(
   const request = juggleworkAffordanceRequestSchema.parse(rawArgs);
   if (request.id === "office.call") {
     if (!context.sessionID || !context.messageID) throw new Error("Office editing requires the calling session and message");
-    const args = z.object({name: z.string().min(1), args: z.record(z.string(), z.unknown())}).strict().parse(request.args ?? {});
+    const args = z.object({name: z.string().min(1), args: z.record(z.string(), z.unknown()), selectionRef: z.string().min(1).optional()}).strict().parse(request.args ?? {});
     const workspace = await resolveContextWorkspace(context.workspaceId ?? context.workspaceID, context);
     return affordanceResult(request.id, await postJson(`/workspace/${encodeURIComponent(workspace.id)}/office/call`, {sessionId: context.sessionID, messageId: context.messageID, ...args}), affordanceWriteEffects);
   }
   if (request.id === "office.save_document") {
-    if (Object.keys(request.args ?? {}).length) throw new Error("Office save does not accept path or format arguments");
-    const { workspaceId, document } = await currentOfficeDocument(context);
-    if (!document || document.state !== "ready" || typeof document.documentId !== "string") {
-      return unavailableAffordance(request.id, "Open the intended DOCX, CSV, XLSX or PPTX in this chat and wait until ready");
-    }
-    return affordanceResult(request.id, await postJson(`/workspace/${encodeURIComponent(workspaceId)}/office/${encodeURIComponent(document.documentId)}/save`, {}), affordanceWriteEffects);
+    if (Object.keys(request.args ?? {}).some((key) => key !== "selectionRef")) throw new Error("Office save does not accept path or format arguments");
+    if (!context.sessionID || !context.messageID) throw new Error("Office save requires the calling session and message");
+    const args = z.object({ selectionRef: z.string().min(1).optional() }).strict().parse(request.args ?? {});
+    const workspace = await resolveContextWorkspace(context.workspaceId ?? context.workspaceID, context);
+    return affordanceResult(request.id, await postJson(`/workspace/${encodeURIComponent(workspace.id)}/office/save-for-actor`, {
+      sessionId: context.sessionID, messageId: context.messageID, ...args,
+    }), affordanceWriteEffects);
   }
   if (request.id === "session.create") {
     return affordanceResult(
