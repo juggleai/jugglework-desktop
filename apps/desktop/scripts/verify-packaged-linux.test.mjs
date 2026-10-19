@@ -9,6 +9,8 @@ import { inventoryToonFactoryBundle, sha256File, trustedBunForTarget } from "../
 import { findPackagedToonFactoryBundle, verifyPackagedLinux } from "./verify-packaged-linux.mjs";
 
 const ELF_MACHINE = { x64: 62, arm64: 183 };
+// Windows does not preserve POSIX execute bits on these temporary ELF fixtures.
+const requiresPosixExecuteBits = { skip: process.platform === "win32" };
 
 function writeElf(filePath, arch) {
   const buffer = Buffer.alloc(64);
@@ -66,7 +68,7 @@ function createFixture(t, arch, relativeRoot = "linux-unpacked/resources/toonFac
 }
 
 describe("Linux packaged Toon Factory verifier", () => {
-  it("verifies an x64 electron-builder unpacked directory", (t) => {
+  it("verifies an x64 electron-builder unpacked directory", requiresPosixExecuteBits, (t) => {
     const fixture = createFixture(t, "x64");
     const unpacked = path.join(fixture.staging, "linux-unpacked");
     const result = verifyPackagedLinux(unpacked, "x86_64", fixture.trustedRelease);
@@ -75,7 +77,7 @@ describe("Linux packaged Toon Factory verifier", () => {
     assert.deepEqual(result.bundle.executable, { platform: "linux", arch: "x64", format: "elf" });
   });
 
-  it("verifies arm64 in an AppImage or tar extraction staging tree", (t) => {
+  it("verifies arm64 in an AppImage or tar extraction staging tree", requiresPosixExecuteBits, (t) => {
     const fixture = createFixture(t, "arm64", "squashfs-root/usr/lib/jugglework/resources/toonFactoryV2");
     const result = verifyPackagedLinux(fixture.staging, "aarch64", fixture.trustedRelease);
 
@@ -101,7 +103,7 @@ describe("Linux packaged Toon Factory verifier", () => {
     assert.throws(() => verifyPackagedLinux(fixture.staging, "x64", fixture.trustedRelease), /Bundled Bun is not executable/);
   });
 
-  it("rejects a file hash tamper", (t) => {
+  it("rejects a file hash tamper", requiresPosixExecuteBits, (t) => {
     const fixture = createFixture(t, "x64");
     writeFileSync(path.join(fixture.root, "tools", "fixture.txt"), "TOOL!");
     assert.throws(() => verifyPackagedLinux(fixture.staging, "x64", fixture.trustedRelease), /Bundle file inventory does not match/);

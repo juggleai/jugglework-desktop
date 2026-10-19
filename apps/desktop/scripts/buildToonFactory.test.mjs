@@ -18,6 +18,8 @@ import {
 } from "../electron/toonFactoryBundle.mjs";
 
 const temporaryDirectories = [];
+// Windows cannot represent POSIX execute bits for temporary Mach-O fixtures.
+const requiresPosixExecuteBits = { skip: process.platform === "win32" };
 const electronBuildSource = readFileSync(new URL("./electron-build.mjs", import.meta.url), "utf8");
 
 function fixture() {
@@ -152,7 +154,7 @@ describe("Toonflow bundle target and integrity", () => {
     );
   });
 
-  it("verifies required resources, executable format, permissions, and hashes", async () => {
+  it("verifies required resources, executable format, permissions, and hashes", requiresPosixExecuteBits, async () => {
     const directory = fixture();
     const { executablePath, trustedRelease } = createBundle(directory);
     const result = verifyToonFactoryBundle(directory, { platform: "mac", arch: "aarch64" }, trustedRelease);
@@ -191,7 +193,7 @@ describe("Toonflow bundle target and integrity", () => {
     );
   });
 
-  it("rejects forged provenance and additional files", () => {
+  it("rejects forged provenance and additional files", requiresPosixExecuteBits, () => {
     const forged = fixture();
     const forgedBundle = createBundle(forged);
     const manifestPath = path.join(forged, "build-manifest.json");

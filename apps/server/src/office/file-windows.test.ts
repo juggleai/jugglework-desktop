@@ -262,7 +262,13 @@ async function fixture(
         document.dirty = false;
       }
       if (path.endsWith("/close")) {
-        if (preparation.closeError) throw new Error(preparation.closeError);
+        if (preparation.closeError) {
+          if (preparation.closeError === "office_run_active")
+            throw Object.assign(new Error("The managed runtime request failed."), {
+              status: 409, serverCode: "office_run_active",
+            });
+          throw new Error(preparation.closeError);
+        }
         document.state = "closed";
       }
       if (path.endsWith("/page-failed")) {
@@ -1504,6 +1510,30 @@ test("批量关闭模型也同步清除文件标签，保留尚未销毁的文�
   expect(host.title).toBe("JuggleWork 文件浏览器");
   f.panel.destroy();
   f.files.dispose();
+});
+
+test("运行任务时关闭 Word 不销毁模型、原生视图或标签，任务结束后可以重试", async () => {
+  const f = await fixture("报告.docx");
+  await f.files.open({ workspaceId: "ws", sessionId: "ses", path: f.document.name });
+  const host = f.files.windows()[0];
+  await f.show(host);
+  const view = [...host.children][0];
+  f.preparation.closeError = "office_run_active";
+  await expect(f.call("jugglework:office:close", host, {
+    workspaceId: "ws", documentId: f.document.documentId,
+  })).rejects.toThrow("请等待文档相关任务结束及交付完成后重试");
+  expect(f.document.state).toBe("ready");
+  expect(view.webContents.destroyed).toBe(false);
+  expect((await f.state(host)).tabs).toHaveLength(1);
+  expect(host.webContents.messages.some((item: { name: string }) => item.name === "jugglework:office:closed")).toBe(false);
+
+  f.preparation.closeError = null;
+  expect(await f.call("jugglework:office:close", host, {
+    workspaceId: "ws", documentId: f.document.documentId,
+  })).toBe(true);
+  expect(f.document.state).toBe("closed");
+  expect(view.webContents.destroyed).toBe(true);
+  expect((await f.state(host)).tabs).toHaveLength(0);
 });
 
 test("运行时重启先处理双宿主文档，取消或保存失败保留页面，确认后释放窗口和旧模型标签", async () => {

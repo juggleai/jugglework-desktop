@@ -206,3 +206,35 @@ test("两种宿主顶栏同步显示保存状态，独立窗口菜单只在侧�
     Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", previousAct);
   }
 });
+
+test("运行中的 Word 仍允许从侧栏菜单打开独立窗口，其余文件操作可保持禁用", async () => {
+  const previousAct = Reflect.get(globalThis, "IS_REACT_ACT_ENVIRONMENT");
+  Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
+  let view: ReactTestRenderer | undefined;
+  let opened = 0;
+  try {
+    await act(async () => {
+      view = create(
+        <FileEditorToolbar
+          name="报告.docx"
+          status="unsaved"
+          saveDisabled
+          onSave={() => {}}
+          onSaveCopy={() => {}}
+          onOpenWindow={() => { opened++; }}
+          fileActionsDisabled
+          openWindowDisabled={false}
+        />,
+      );
+    });
+    const item = view!.root.findAllByType("button").find(
+      (button) => button.props["data-menu-item"] !== undefined && button.props.children.at(-1) === t("artifact.open_window"),
+    );
+    expect(item?.props.disabled).toBe(false);
+    item?.props.onClick();
+    expect(opened).toBe(1);
+  } finally {
+    if (view) await act(async () => view!.unmount());
+    Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", previousAct);
+  }
+});

@@ -516,9 +516,17 @@ export function createOfficePanel({
       if (result.response === 2) return false;
       decision = result.response === 0 ? "save" : "discard";
     }
-    await client.postJson(`${base(workspaceId, documentId)}/close`, {
-      decision,
-    });
+    try {
+      await client.postJson(`${base(workspaceId, documentId)}/close`, {
+        decision,
+      });
+    } catch (error) {
+      // A running agent may still use the model. Keep its view and tab intact,
+      // but surface the server's actionable 409 instead of a generic IPC error.
+      if (error?.status === 409 && error?.serverCode === "office_run_active")
+        throw new Error("请等待文档相关任务结束及交付完成后重试");
+      throw error;
+    }
     destroy(documentId);
     for (const window of windows())
       window.webContents.send("jugglework:office:closed", {
