@@ -123,6 +123,31 @@ describe("run completion diagnostics", () => {
     expect(result).toBeNull();
   });
 
+  test("does not mark a successful stop incomplete solely because the last edit lacks a recognized verification command", () => {
+    const result = analyzeRunCompletion([
+      textMessage("user-1", "user", "Publish the release"),
+      toolMessage("assistant-write", "apply_patch", { patchText: "*** Begin Patch" }),
+      toolMessage("assistant-push", "bash", { command: "git commit -m release && git push" }),
+      textMessage("assistant-final", "assistant", "Release published and verified remotely.", "stop"),
+    ], []);
+
+    expect(result).toBeNull();
+  });
+
+  test("keeps missing verification as context when another incomplete signal exists", () => {
+    const result = analyzeRunCompletion([
+      textMessage("user-1", "user", "Implement everything"),
+      toolMessage("assistant-write", "write", { filePath: "src/a.ts", content: "ok" }),
+      textMessage("assistant-final", "assistant", "Implemented the first part.", "stop"),
+    ], openTodo);
+
+    expect(result).toMatchObject({ incomplete: true, unverified: true });
+    expect(result?.message.parts[0]).toMatchObject({
+      type: "text",
+      text: expect.stringContaining("Changes applied but not verified"),
+    });
+  });
+
   test("records an explicit interruption without replacing the real summary", () => {
     const reconciled = reconcileRunCompletionDiagnostic([
       textMessage("user-1", "user", "Implement it"),

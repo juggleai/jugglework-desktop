@@ -118,7 +118,13 @@ export function analyzeRunCompletion(
   // TIPS: 部分 Provider/网关在工具调用后的下一轮推理失败时不会返回结构化 error，
   // 只会留下 finish=unknown 的零 token 空消息。该状态必须作为异常终态，而不能静默当成 stop。
   const abnormalFinish = effectiveFinishReason !== "stop";
-  const incomplete = openTodos.length > 0 || anomalousEmptyTurn || unverified || abnormalFinish || interruptedTool;
+  // A missing verification command is useful context when a run already ended
+  // abnormally, but it is not by itself proof that a completed task needs user
+  // attention. Deployment/documentation flows often finish with a final write
+  // followed by commit/push or remote verification that this heuristic cannot
+  // recognize. Treating `unverified` alone as incomplete leaves a misleading
+  // orange dot beside otherwise successful sessions.
+  const incomplete = openTodos.length > 0 || anomalousEmptyTurn || abnormalFinish || interruptedTool;
   if (!incomplete) return null;
 
   const finishReason = interruptedTool
@@ -133,7 +139,7 @@ export function analyzeRunCompletion(
   if (anomalousEmptyTurn) {
     lines.push("A successful file modification was followed by an empty assistant turn; this was treated as an abnormal end.");
   }
-  if (unverified) {
+  if (unverified && incomplete) {
     lines.push("Changes applied but not verified");
   }
   if (interruptedTool) {
