@@ -203,6 +203,7 @@ export class AutomationRepository {
     expectedRevision: number,
   ): AutomationDefinitionRecord {
     this.database.transaction(() => {
+      const previous = this.getDefinition(definition.id)?.definition;
       const current = this.database.get<{ revision: number; deleted_at: number | null; compatibility_state: string }>(
         "SELECT revision, deleted_at, compatibility_state FROM automation_tasks WHERE id = ?",
         [definition.id],
@@ -219,6 +220,7 @@ export class AutomationRepository {
         [...taskUpdateValues(definition, rawDocument), definition.id, expectedRevision],
       );
       if (result.changes !== 1) conflict();
+      if (previous?.workspace?.id !== definition.workspace?.id || (previous?.newChatPerRun ?? true) !== (definition.newChatPerRun ?? true)) this.clearTaskExecutionBinding(definition.id);
     });
     return requiredDefinition(this.getDefinition(definition.id));
   }
@@ -337,6 +339,19 @@ export class AutomationRepository {
       items: pageRows.map(runFromRow),
       ...(hasMore && last ? { nextCursor: encodeCursor({ at: last.scheduled_for, id: last.id }) } : {}),
     };
+  }
+
+  clearTaskExecutionBinding(automationId: string): void {
+    this.database.run("DELETE FROM automation_execution_bindings WHERE binding_key = ?", [`task:${automationId}`]);
+  }
+
+  getExecutionBinding(key: string): { workspace: import("../types.js").WorkspaceInfo; sessionId?: string } | null {
+    const row = this.database.get<{ value_json: string }>("SELECT value_json FROM automation_execution_bindings WHERE binding_key = ?", [key]);
+    return row ? JSON.parse(row.value_json) : null;
+  }
+
+  setExecutionBinding(key: string, value: { workspace: import("../types.js").WorkspaceInfo; sessionId?: string }): void {
+    this.database.run("INSERT INTO automation_execution_bindings (binding_key, value_json) VALUES (?, ?) ON CONFLICT(binding_key) DO UPDATE SET value_json = excluded.value_json", [key, JSON.stringify(value)]);
   }
 
   /** 按 ID 读取单条运行记录。 */
@@ -543,7 +558,7 @@ export class AutomationRepository {
   updateRun(
     id: string,
     expectedRevision: number,
-    patch: Partial<Pick<AutomationRun, "state" | "sessionId" | "startedAt" | "endedAt" | "concreteModel" | "agentId" | "connectorIds" | "errorCode" | "errorMessage" | "eventMetadata">>,
+    patch: Partial<Pick<AutomationRun, "workspaceId" | "workspaceName" | "state" | "sessionId" | "startedAt" | "endedAt" | "concreteModel" | "agentId" | "connectorIds" | "errorCode" | "errorMessage" | "eventMetadata">>,
     now: number,
   ): AutomationRun {
     return this.database.transaction(() => {
@@ -561,10 +576,12 @@ export class AutomationRepository {
         ...(patch.eventMetadata ? { eventMetadata: { ...current.eventMetadata, ...patch.eventMetadata } } : {}),
       };
       const result = this.database.run(
-        `UPDATE automation_runs SET state = ?, session_id = ?, concrete_selection_json = ?, error_code = ?, error_message = ?,
+        `UPDATE automation_runs SET workspace_id = ?, workspace_name = ?, state = ?, session_id = ?, concrete_selection_json = ?, error_code = ?, error_message = ?,
           started_at = ?, ended_at = ?, revision = ?, sync_state = 'synced', sync_error_code = NULL, event_metadata_json = ?, updated_at = ?
          WHERE id = ? AND revision = ?`,
         [
+          next.workspaceId,
+          next.workspaceName,
           next.state,
           next.sessionId ?? null,
           JSON.stringify({ concreteModel: next.concreteModel, agentId: next.agentId, connectorIds: next.connectorIds }),
@@ -712,8 +729,8 @@ function taskValues(definition: AutomationDefinition, rawDocument: Record<string
   return [
     definition.id,
     definition.name,
-    definition.workspace.id,
-    definition.workspace.name,
+    (definition.workspace?.id ?? ""),
+    (definition.workspace?.name ?? "自动分配"),
     definition.schema,
     JSON.stringify(definition),
     JSON.stringify(rawDocument),
@@ -811,8 +828,8 @@ function newRun(
     triggerSource,
     state: terminal?.state ?? "queued",
     scheduledFor,
-    workspaceId: definition.workspace.id,
-    workspaceName: definition.workspace.name,
+    workspaceId: (definition.workspace?.id ?? ""),
+    workspaceName: (definition.workspace?.name ?? "自动分配"),
     queuedAt: now,
     ...(terminal ? { endedAt: terminal.endedAt, errorCode: terminal.errorCode } : {}),
     connectorIds: definition.connectors.map((connector) => connector.id),

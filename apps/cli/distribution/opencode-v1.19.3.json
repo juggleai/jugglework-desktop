@@ -1,45 +1,45 @@
 {
   "name": "OpenCode",
-  "version": "1.18.15",
+  "version": "1.19.3",
   "repository": "https://github.com/anomalyco/opencode",
-  "release": "https://github.com/anomalyco/opencode/releases/tag/v1.18.15",
-  "sourceCommit": "325529761beb79a004de6d86e48b8db69cf4eba3",
+  "release": "https://github.com/anomalyco/opencode/releases/tag/v1.19.3",
+  "sourceCommit": "e3c4eb242585dcd77be1a867391b7c25fd47ce52",
   "license": "MIT",
   "targets": {
     "bun-darwin-arm64": {
       "archive": "opencode-darwin-arm64.zip",
       "format": "zip",
-      "sha256": "bd60b57cb9fe0494a5352c807424d36d6d7853cf6dbddb97065c7ccd3c5d391c",
+      "sha256": "c2d0fecd27acf6e08be02c1f5d384614d07495587766bcc4a6bff3971749bb64",
       "executable": "opencode"
     },
     "bun-darwin-x64": {
       "archive": "opencode-darwin-x64.zip",
       "format": "zip",
-      "sha256": "e97e8185e7b7942f6e14f51b8727dbe023b54772e075bc16fead813680455d17",
+      "sha256": "4e29dbe2f61ace728370523c88027d0742b3a79edcdd2c70e404f616d4ef8f36",
       "executable": "opencode"
     },
     "bun-linux-arm64": {
       "archive": "opencode-linux-arm64.tar.gz",
       "format": "tar.gz",
-      "sha256": "500611819ff88916b185649990505a9be76ad13ca5bb4b9323e5abdd39b1c6fb",
+      "sha256": "7900818a6a98881edbbadab4b7525940eff3b9750040c200481f9f56cacee405",
       "executable": "opencode"
     },
     "bun-linux-x64": {
       "archive": "opencode-linux-x64.tar.gz",
       "format": "tar.gz",
-      "sha256": "d842e0e8c622c672a481b7dc6f0329009b64db96b2ba6041e56f4f93f0293b1c",
+      "sha256": "13a8fb2978302071b86f9d7e00da9c8895f9cd846978379c3bdc6a5333536c9b",
       "executable": "opencode"
     },
     "bun-windows-arm64": {
       "archive": "opencode-windows-arm64.zip",
       "format": "zip",
-      "sha256": "7815f7a980fc4273e3fc1ada5a51e9dff17e62f5a119ab769b44e06b50c1d9da",
+      "sha256": "c1b9daf18c97564b2d171703279621f7edc3613e70750d796ef78db87257ad89",
       "executable": "opencode.exe"
     },
     "bun-windows-x64": {
       "archive": "opencode-windows-x64.zip",
       "format": "zip",
-      "sha256": "a80785874978ccbb93b7bfe4345f5aed41696f5ae76c109cd6dbbb934dbe795d",
+      "sha256": "e4ce9117f55fc068414513789f8c7d1049f855d7518bb4e350b9170a3a20d8c3",
       "executable": "opencode.exe"
     }
   }

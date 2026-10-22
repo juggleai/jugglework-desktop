@@ -54,7 +54,7 @@
     "@jugglework/types": "workspace:*",
     "@jugglework/ui": "workspace:*",
     "@lexical/react": "^0.35.0",
-    "@opencode-ai/sdk": "1.18.15",
+    "@opencode-ai/sdk": "1.19.3",
     "@paper-design/shaders-react": "0.0.72",
     "@radix-ui/colors": "^3.0.0",
     "@radix-ui/react-use-controllable-state": "^1.2.2",

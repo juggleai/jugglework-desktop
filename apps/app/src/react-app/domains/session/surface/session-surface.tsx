@@ -371,17 +371,31 @@ function AssistantWaitingCard({ label = liveActivityLabel("responding") }: { lab
 
 function TodoPanel(props: { todos: TodoItem[] }) {
   const [expanded, setExpanded] = useState(false);
+  const panelRef = useRef<HTMLDivElement>(null);
   const todos = props.todos.filter((todo) => todo.content.trim());
   const completedTodos = todos.filter((todo) => todo.status === "completed").length;
   const progressLabel = t("session.todo_progress_label");
   const label = expanded ? progressLabel : `${progressLabel} · ${completedTodos}/${todos.length}`;
 
+  useEffect(() => {
+    const panel = panelRef.current;
+    if (!expanded || !panel) return;
+
+    const ownerDocument = panel.ownerDocument;
+    const collapseOnOutsidePointerDown = (event: PointerEvent) => {
+      if (!event.composedPath().includes(panel)) setExpanded(false);
+    };
+    ownerDocument.addEventListener("pointerdown", collapseOnOutsidePointerDown, true);
+    return () => ownerDocument.removeEventListener("pointerdown", collapseOnOutsidePointerDown, true);
+  }, [expanded, todos.length]);
+
   if (todos.length === 0) return null;
 
   return (
-    <div className="overflow-hidden border-b border-dls-border bg-transparent">
+    <div ref={panelRef} className="overflow-hidden border-b border-dls-border bg-transparent">
         <button
           type="button"
+          aria-expanded={expanded}
           className="flex w-full items-center justify-between px-4 py-3 text-xs text-gray-9 transition-colors hover:bg-gray-2/50"
           onClick={() => setExpanded((current) => !current)}
         >

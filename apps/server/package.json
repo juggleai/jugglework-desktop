@@ -56,7 +56,7 @@
   "types": "./dist/index.d.ts",
   "dependencies": {
     "@jugglework/types": "workspace:*",
-    "@opencode-ai/sdk": "1.18.15",
+    "@opencode-ai/sdk": "1.19.3",
     "@xmldom/xmldom": "0.8.15",
     "better-sqlite3": "^13.0.3",
     "drizzle-orm": "^0.45.2",

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { AutomationSchedule } from "@jugglework/types/automation";
-import { latestAutomationOccurrenceAtOrBefore, nextAutomationOccurrence, zonedLocalToEpoch } from "./schedule.js";
+import { automationScheduleSummary, latestAutomationOccurrenceAtOrBefore, nextAutomationOccurrence, zonedLocalToEpoch } from "./schedule.js";
 
 test("calendar recurrence observes timezone, DST gaps and overlaps deterministically", () => {
   const daily = (localTime: string): AutomationSchedule => ({
@@ -72,6 +72,36 @@ test("monthly days and yearly months support multiple selected values", () => {
     }, undefined, Date.parse("2026-02-21T09:00:00Z")),
     Date.parse("2026-08-21T09:00:00Z"),
   );
+});
+
+test("calendar cadence honors day, week, month and year anchors", () => {
+  const cases: Array<{ schedule: AutomationSchedule; after: string; expected: string }> = [
+    {
+      schedule: { version: 1, kind: "calendar", frequency: "daily", every: 2, anchorLocalDate: "2026-08-11", localTime: "09:00", timezone: "UTC" },
+      after: "2026-08-11T09:00:00Z",
+      expected: "2026-08-13T09:00:00Z",
+    },
+    {
+      schedule: { version: 1, kind: "calendar", frequency: "weekly", every: 2, anchorLocalDate: "2026-08-10", weekdays: [1, 5], localTime: "09:00", timezone: "UTC" },
+      after: "2026-08-14T09:00:00Z",
+      expected: "2026-08-24T09:00:00Z",
+    },
+    {
+      schedule: { version: 1, kind: "calendar", frequency: "monthly", every: 2, anchorLocalDate: "2026-08-01", dayOfMonths: [10], localTime: "09:00", timezone: "UTC" },
+      after: "2026-08-10T09:00:00Z",
+      expected: "2026-10-10T09:00:00Z",
+    },
+    {
+      schedule: { version: 1, kind: "calendar", frequency: "yearly", every: 2, anchorLocalDate: "2026-10-22", months: [2], dayOfMonth: 21, localTime: "09:00", timezone: "UTC" },
+      after: "2026-10-22T00:00:00Z",
+      expected: "2028-02-21T09:00:00Z",
+    },
+  ];
+  for (const item of cases) {
+    assert.equal(nextAutomationOccurrence(item.schedule, undefined, Date.parse(item.after)), Date.parse(item.expected));
+  }
+  assert.equal(latestAutomationOccurrenceAtOrBefore(cases[0].schedule, undefined, Date.parse("2026-08-14T00:00:00Z")), Date.parse("2026-08-13T09:00:00Z"));
+  assert.equal(automationScheduleSummary(cases[1].schedule), "每 2 周 周一、周五 09:00 · UTC");
 });
 
 test("weekly multi-day and one-time variants calculate exact stored-timezone occurrences", () => {

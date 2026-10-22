@@ -69,7 +69,7 @@ test("doctor probes an explicitly connected runtime and keeps human output redac
   const server = createServer((request, response) => {
     if (request.url === "/jwork/models/api.json") return send(response, {});
     assert.equal(request.headers.authorization, "Bearer runtime-secret");
-    if (request.url === "/health") return send(response, { ok: true, version: "1.2.3", opencodeVersion: "1.18.15" });
+    if (request.url === "/health") return send(response, { ok: true, version: "1.2.3", opencodeVersion: "1.19.3" });
     if (request.url === "/status") return send(response, { ok: true, readOnly: false });
     if (request.url === "/workspaces") return send(response, { items: [{ id: "ws_1" }] });
     if (request.url === "/workspace/ws_1/runtime-config") return send(response, { runtimeKeys: ["provider"], effectiveRuntime: { provider: { safe: { apiKey: "must-not-leak" } } } });

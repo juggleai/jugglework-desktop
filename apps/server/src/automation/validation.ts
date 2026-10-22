@@ -38,6 +38,7 @@ export type AutomationValidationContext = {
 export function createAutomationDraftDefaults(executorDeviceId: string): AutomationDraft {
   return {
     name: "",
+    newChatPerRun: false,
     prompt: { version: 1, parts: [] },
     timezone: systemAutomationTimezone(),
     model: { mode: "auto" },
@@ -54,6 +55,8 @@ export function automationDraftFromUnknown(value: unknown, executorDeviceId: str
   rejectCredentialShapedProperties(value);
   const defaults = createAutomationDraftDefaults(executorDeviceId);
   return {
+    newChatPerRun: typeof value.newChatPerRun === "boolean" ? value.newChatPerRun : false,
+    ...(typeof value.directoryName === "string" ? { directoryName: value.directoryName } : {}),
     name: typeof value.name === "string" ? value.name : "",
     ...(isRecord(value.workspace) ? { workspace: value.workspace as AutomationWorkspaceSnapshot } : {}),
     prompt: isRecord(value.prompt) && Array.isArray(value.prompt.parts)
@@ -102,14 +105,15 @@ export function validateAutomationDraft(
   identity: { id: string; revision: number; createdAt: number },
 ): AutomationDefinition {
   rejectCredentialShapedProperties(draft);
-  const name = draft.name.trim();
+  const prompt = validatePrompt(draft.prompt);
+  const name = draft.name.trim() || prompt.parts.filter((part) => part.type === "text").map((part) => part.text).join(" ").trim().slice(0, 60);
   const nameLength = [...name].length;
   if (nameLength < 1 || nameLength > 100) {
     invalid("name", "名称必须为 1–100 个字符");
   }
 
-  const workspace = validateWorkspace(draft.workspace, context.workspaces);
-  const prompt = validatePrompt(draft.prompt);
+  const workspace = draft.workspace || draft.trigger?.kind === "event"
+    ? validateWorkspace(draft.workspace, context.workspaces) : undefined;
   if (!isIanaTimezone(draft.timezone)) invalid("timezone", "请选择有效的 IANA 时区");
 
   // TIPS: 事件触发和定时触发是互斥的两种 trigger.kind，nextRunAt/activeRange 只对定时触发有意义——
@@ -157,6 +161,8 @@ export function validateAutomationDraft(
     id: identity.id,
     name,
     workspace,
+    newChatPerRun: draft.newChatPerRun ?? false,
+    ...(draft.directoryName ? { directoryName: draft.directoryName } : {}),
     prompt,
     trigger,
     ...(activeRange ? { activeRange } : {}),
@@ -191,7 +197,7 @@ export function mergeAutomationRawDocument(
   return {
     ...restRaw,
     ...definition,
-    workspace: preserveUnknownObject(raw.workspace, definition.workspace, new Set(["id", "name", "path", "workspaceType"])),
+    workspace: definition.workspace ? preserveUnknownObject(raw.workspace, definition.workspace, new Set(["id", "name", "path", "workspaceType"])) : undefined,
     prompt: preserveUnknownObject(raw.prompt, definition.prompt, new Set(["version", "parts"])),
     trigger: { ...unknownTrigger, ...definition.trigger },
     model: preserveUnknownObject(raw.model, definition.model, new Set(["mode", "providerId", "modelId", "variant"])),
@@ -261,24 +267,33 @@ export function validateAutomationSchedule(schedule: AutomationSchedule | undefi
   }
   if (schedule.kind !== "calendar") invalid("schedule.kind", "执行频率类型无效");
   requireTime(schedule.localTime, "schedule.localTime");
-  if (schedule.frequency === "daily") return { ...schedule };
+  const cadence = validateCalendarCadence(schedule);
+  if (schedule.frequency === "daily") return { ...schedule, ...cadence };
   if (schedule.frequency === "weekly") {
     const weekdays = [...new Set(schedule.weekdays)].sort((a, b) => a - b);
     if (!weekdays.length || weekdays.some((day) => !Number.isInteger(day) || day < 1 || day > 7)) {
       invalid("schedule.weekdays", "每周任务至少选择一个有效星期");
     }
-    return { ...schedule, weekdays };
+    return { ...schedule, ...cadence, weekdays };
   }
   if (schedule.frequency === "monthly") {
     const dayOfMonths = normalizeIntegerChoices(schedule.dayOfMonths ?? (schedule.dayOfMonth ? [schedule.dayOfMonth] : []), 1, 31, "schedule.dayOfMonths", "每月任务至少选择一个有效日期");
-    return { version: 1, kind: "calendar", frequency: "monthly", timezone: schedule.timezone, localTime: schedule.localTime, dayOfMonths };
+    return { version: 1, kind: "calendar", frequency: "monthly", timezone: schedule.timezone, localTime: schedule.localTime, ...cadence, dayOfMonths };
   }
   if (schedule.frequency === "yearly") {
     const months = normalizeIntegerChoices(schedule.months ?? (schedule.month ? [schedule.month] : []), 1, 12, "schedule.months", "每年任务至少选择一个有效月份");
     requireRange(schedule.dayOfMonth, 1, 31, "schedule.dayOfMonth");
-    return { version: 1, kind: "calendar", frequency: "yearly", timezone: schedule.timezone, localTime: schedule.localTime, months, dayOfMonth: schedule.dayOfMonth };
+    return { version: 1, kind: "calendar", frequency: "yearly", timezone: schedule.timezone, localTime: schedule.localTime, ...cadence, months, dayOfMonth: schedule.dayOfMonth };
   }
   invalid("schedule.frequency", "周期频率无效");
+}
+
+function validateCalendarCadence(schedule: Extract<AutomationSchedule, { kind: "calendar" }>): { every?: number; anchorLocalDate?: string } {
+  if (schedule.every === undefined && schedule.anchorLocalDate === undefined) return {};
+  if (!isPositiveInteger(schedule.every)) invalid("schedule.every", "周期间隔必须为正整数");
+  if (!schedule.anchorLocalDate) invalid("schedule.anchorLocalDate", "周期起始日期不能为空");
+  requireDate(schedule.anchorLocalDate, "schedule.anchorLocalDate");
+  return { every: schedule.every, anchorLocalDate: schedule.anchorLocalDate };
 }
 
 /**

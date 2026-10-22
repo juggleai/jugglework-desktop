@@ -268,6 +268,7 @@ const migrations: AutomationMigration[] = [
       )`,
     ],
   },
+  { version: 6, statements: [`CREATE TABLE IF NOT EXISTS automation_execution_bindings (binding_key TEXT PRIMARY KEY NOT NULL, value_json TEXT NOT NULL)`] },
 ];
 
 /** 按版本顺序执行自动化模块的前向 SQLite 迁移。 */

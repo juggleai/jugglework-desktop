@@ -43,7 +43,7 @@ export function AutomationSidebarPreview() {
 
   const normalized = query.trim().toLocaleLowerCase();
   const visibleTasks = useMemo(() => tasks.filter(({ definition }) => (
-    !normalized || `${definition.name} ${definition.workspace.name}`.toLocaleLowerCase().includes(normalized)
+    !normalized || `${definition.name} ${(definition.workspace?.name ?? t("automation.workspace_automatic_short"))}`.toLocaleLowerCase().includes(normalized)
   )), [normalized, tasks]);
 
   return (
@@ -89,7 +89,7 @@ export function AutomationSidebarPreview() {
                 className="flex min-h-[58px] w-full flex-col justify-center overflow-hidden rounded-xl px-2 py-2 text-left transition-colors hover:bg-dls-hover/60"
               >
                 <span className="truncate text-[13px] font-medium">{definition.name}</span>
-                <span className="mt-0.5 truncate text-xs text-dls-secondary">{definition.workspace.name}</span>
+                <span className="mt-0.5 truncate text-xs text-dls-secondary">{(definition.workspace?.name ?? t("automation.workspace_automatic_short"))}</span>
               </button>
             ))}
           </div>

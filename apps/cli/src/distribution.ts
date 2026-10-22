@@ -2,10 +2,10 @@ import { createHash } from "node:crypto";
 import { constants, readFileSync } from "node:fs";
 import { access, readFile, stat } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
-import descriptorJson from "../distribution/opencode-v1.18.15.json" with { type: "json" };
+import descriptorJson from "../distribution/opencode-v1.19.3.json" with { type: "json" };
 
 export const DISTRIBUTION_MANIFEST = "manifest.json";
-export const OPENCODE_VERSION = "1.18.15";
+export const OPENCODE_VERSION = "1.19.3";
 export const REQUIRED_PLUGIN_FILES = [
   "jugglework-extensions-preview.js",
   "jugglework-capabilities-knowledge.js",

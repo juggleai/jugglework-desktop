@@ -1,11 +1,15 @@
 /** @jsxImportSource react */
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEventHandler } from "react";
+import { createPortal } from "react-dom";
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import {
   AlarmClock,
   CalendarDays,
   Check,
   ChevronDown,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
   ChevronsUpDown,
   CircleCheck,
   Clock3,
@@ -20,6 +24,7 @@ import {
   MoreHorizontal,
   Newspaper,
   Pause,
+  Pencil,
   Play,
   Plus,
   Search,
@@ -235,7 +240,7 @@ export function AutomationPage(props: AutomationPageProps) {
       </AppInsetSurface>
       <Dialog open={creating} onOpenChange={(open) => { if (!open) cancelEditor(); }}>
         <DialogContent
-          className="flex h-[min(860px,calc(100dvh-2rem))] max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-[760px] flex-col gap-0 overflow-hidden rounded-[28px] p-0 sm:max-w-[760px]"
+          className="flex max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-[680px] flex-col gap-0 overflow-hidden rounded-[28px] p-0 sm:max-w-[680px]"
           data-testid="automation-create-dialog"
         >
           {localServerPending ? (
@@ -365,7 +370,7 @@ function AutomationDashboard(props: {
 
   useEffect(() => { setNextCursor(undefined); void load(); }, [load]);
   const normalized = query.trim().toLocaleLowerCase();
-  const visibleTasks = tasks.filter(({ definition }) => !normalized || `${definition.name} ${definition.workspace.name}`.toLocaleLowerCase().includes(normalized));
+  const visibleTasks = tasks.filter(({ definition }) => !normalized || `${definition.name} ${definition.workspace?.name ?? t("automation.workspace_automatic_short")}`.toLocaleLowerCase().includes(normalized));
   const visibleRuns = runs.filter((run) => !normalized || `${run.automationName} ${run.workspaceName} ${run.errorMessage ?? ""}`.toLocaleLowerCase().includes(normalized));
 
   return (
@@ -467,15 +472,6 @@ function AutomationDashboard(props: {
           )}
         </div>
 
-        <nav className="shrink-0 space-y-1 border-t border-dls-border p-3 mac:titlebar-no-drag" aria-label={t("automation.navigation")}>
-          <button type="button" onClick={() => navigate(props.history ? "/automations" : "/automations/runs")} className="flex h-9 w-full items-center gap-2 rounded-xl px-2 text-left text-[13px] transition-colors hover:bg-dls-hover">
-            {props.history ? <AlarmClock className="size-4 text-dls-secondary" /> : <Clock3 className="size-4 text-dls-secondary" />}
-            {props.history ? t("automation.tabs.tasks") : t("automation.tabs.runs")}
-          </button>
-          <button type="button" onClick={() => navigate("/automations/templates")} className="flex h-9 w-full items-center gap-2 rounded-xl px-2 text-left text-[13px] transition-colors hover:bg-dls-hover">
-            <Newspaper className="size-4 text-dls-secondary" />{t("automation.from_template")}
-          </button>
-        </nav>
       </aside> : null}
       </div>
 
@@ -643,7 +639,7 @@ function TaskList(props: {
                   selecting={props.selecting}
                   selected={props.selectedIds.has(record.definition.id)}
                   onToggleSelected={() => props.onToggleSelected(record.definition.id)}
-                  onOpen={() => navigate(`/automations/${encodeURIComponent(record.definition.id)}`)}
+                  onEdit={() => navigate(`/automations/${encodeURIComponent(record.definition.id)}`)}
                   onAction={(action) => {
                     if (action === "delete") {
                       setPendingDelete(record.definition);
@@ -683,10 +679,10 @@ function TaskList(props: {
  *
  * @param record 任务定义及同步状态
  * @param busy 该行正在执行操作
- * @param onOpen 打开编辑页
+ * @param onEdit 打开编辑页
  * @param onAction 触发立即执行 / 暂停 / 恢复 / 删除
  */
-function TaskRow({ compact = false, record, client, busy, selecting, selected, onToggleSelected, onOpen, onAction }: {
+function TaskRow({ compact = false, record, client, busy, selecting, selected, onToggleSelected, onEdit, onAction }: {
   compact?: boolean;
   record: AutomationDefinitionRecord;
   client: JuggleWorkServerClient | null;
@@ -694,16 +690,74 @@ function TaskRow({ compact = false, record, client, busy, selecting, selected, o
   selecting: boolean;
   selected: boolean;
   onToggleSelected: () => void;
-  onOpen: () => void;
+  onEdit: () => void;
   onAction: (action: "run" | "pause" | "resume" | "delete") => void;
 }) {
+  const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const [sessionRuns, setSessionRuns] = useState<AutomationRun[]>([]);
+  const [sessionsLoaded, setSessionsLoaded] = useState(false);
+  const [sessionsLoading, setSessionsLoading] = useState(false);
+  const [sessionsCursor, setSessionsCursor] = useState<string | undefined>();
   const menuRef = useRef<HTMLDivElement>(null);
   const dismiss = useCallback(() => setMenuOpen(false), []);
   useDismissOnOutside(menuRef, menuOpen, dismiss);
   const now = useNowTick(30_000);
   const task = record.definition;
   const paused = task.lifecycle === "paused";
+  // 旧版本没有持久化这个字段，当时的既有语义就是每次创建新会话。
+  const createsNewChatPerRun = task.newChatPerRun !== false;
+  const visibleSessionRuns = useMemo(() => {
+    const seen = new Set<string>();
+    return sessionRuns.filter((run) => {
+      if (!run.sessionId || !run.workspaceId || seen.has(run.sessionId)) return false;
+      seen.add(run.sessionId);
+      return true;
+    });
+  }, [sessionRuns]);
+
+  const loadSessions = useCallback(async (append = false) => {
+    if (!client || sessionsLoading) return [] as AutomationRun[];
+    setSessionsLoading(true);
+    try {
+      const page = await client.listAutomationRuns({
+        automationId: task.id,
+        limit: 50,
+        ...(append && sessionsCursor ? { cursor: sessionsCursor } : {}),
+      });
+      setSessionRuns((current) => append ? [...current, ...page.items] : page.items);
+      setSessionsCursor(page.nextCursor);
+      setSessionsLoaded(true);
+      return page.items;
+    } catch (error) {
+      toast.error(describeError(error));
+      return [] as AutomationRun[];
+    } finally {
+      setSessionsLoading(false);
+    }
+  }, [client, sessionsCursor, sessionsLoading, task.id]);
+
+  const openPrimaryTarget = async () => {
+    if (selecting) {
+      onToggleSelected();
+      return;
+    }
+    if (createsNewChatPerRun) {
+      const nextExpanded = !expanded;
+      setExpanded(nextExpanded);
+      if (nextExpanded) void loadSessions(false);
+      return;
+    }
+    const cached = visibleSessionRuns[0];
+    const loaded = cached ? [] : await loadSessions(false);
+    const target = cached ?? loaded.find((run) => run.sessionId && run.workspaceId);
+    if (!target?.sessionId) {
+      onEdit();
+      return;
+    }
+    navigate(`/workspace/${encodeURIComponent(target.workspaceId)}/session/${encodeURIComponent(target.sessionId)}`);
+  };
   // TIPS:任务 6.1——只有事件触发的自动化才需要这个检测，定时任务没有"服务端订阅账号"这个概念。
   const accountStatus = useAutomationSubscriptionAccountStatus(client, task.id, task.trigger.kind === "event");
   // TIPS:任务 2.3b——同理，只有事件触发才有"目标仓库就不就绪"这回事。
@@ -714,10 +768,11 @@ function TaskRow({ compact = false, record, client, busy, selecting, selected, o
   );
 
   return (
-    <article className={cn(
-      "group relative flex items-center gap-2 rounded-xl transition-colors hover:bg-dls-hover/60",
-      compact ? "min-h-[58px] px-2 py-2" : "h-14 gap-3 px-4",
-    )}>
+    <article className="group/row relative rounded-xl transition-colors hover:bg-dls-hover/60">
+      <div className={cn(
+        "flex items-center gap-2",
+        compact ? "min-h-[58px] px-2 py-2" : "h-14 gap-3 px-4",
+      )}>
       {selecting ? (
         <button
           type="button"
@@ -734,10 +789,20 @@ function TaskRow({ compact = false, record, client, busy, selecting, selected, o
         </button>
       ) : null}
       <span className={cn("flex min-w-0 flex-1", compact ? "items-start" : "items-center truncate")}>
-        <button type="button" onClick={selecting ? onToggleSelected : onOpen} className={cn("min-w-0 text-left text-[13px]", compact ? "flex flex-1 flex-col overflow-hidden" : "truncate")}>
-          <span className="truncate font-medium">{task.name}</span>
+        <button
+          type="button"
+          aria-expanded={createsNewChatPerRun ? expanded : undefined}
+          onClick={() => void openPrimaryTarget()}
+          className={cn("min-w-0 text-left text-[13px]", compact ? "flex flex-1 flex-col overflow-hidden" : "truncate")}
+        >
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span className="truncate font-medium">{task.name}</span>
+            {createsNewChatPerRun && !selecting ? (
+              <ChevronRight className={cn("size-3.5 shrink-0 text-dls-secondary transition-transform", expanded && "rotate-90")} />
+            ) : null}
+          </span>
           <span className={cn("text-xs text-dls-secondary", compact ? "mt-0.5 truncate" : "ml-3")}>
-            {compact ? `${task.workspace.name} · ${triggerSummaryLabel(task.trigger)} · ${taskTimingLabel(record, now)}` : task.workspace.name}
+            {compact ? `${task.workspace?.name ?? t("automation.workspace_automatic_short")} · ${triggerSummaryLabel(task.trigger)} · ${taskTimingLabel(record, now)}` : (task.workspace?.name ?? t("automation.workspace_automatic_short"))}
           </span>
           {!compact ? <span className="ml-3 text-xs text-dls-secondary">{triggerSummaryLabel(task.trigger)}</span> : null}
           {task.activeRange ? (
@@ -746,8 +811,8 @@ function TaskRow({ compact = false, record, client, busy, selecting, selected, o
             </span>
           ) : null}
         </button>
-        {/* TIPS:任务 6.1——放在打开编辑页的按钮之外，避免嵌套两层可交互元素；点击徽标
-            本身不该顺带触发 onOpen。 */}
+        {/* TIPS:任务 6.1——放在主按钮之外，避免嵌套两层可交互元素；点击徽标
+            本身不该顺带触发展开或打开会话。 */}
         <EventTriggerReadinessBadge state={readinessState} />
         <AccountMismatchBadge
           status={accountStatus}
@@ -763,15 +828,15 @@ function TaskRow({ compact = false, record, client, busy, selecting, selected, o
       <div className={cn("relative h-9 shrink-0", compact ? "w-[58px]" : "w-[168px]")}>
         <span className={cn(
           "absolute inset-0 flex items-center justify-end truncate text-xs text-dls-secondary transition-opacity",
-          compact && "hidden",
-          menuOpen ? "opacity-0" : "group-hover:opacity-0",
+            compact && "hidden",
+          menuOpen ? "opacity-0" : "group-hover/row:opacity-0",
         )}>
           {taskTimingLabel(record, now)}
         </span>
         <div className={cn(
           "absolute inset-0 flex items-center justify-end gap-1 opacity-0 transition-opacity",
-          selecting ? "hidden" : "group-hover:opacity-100",
-          menuOpen ? "opacity-100" : "pointer-events-none group-hover:pointer-events-auto",
+          selecting ? "hidden" : "group-hover/row:opacity-100",
+          menuOpen ? "opacity-100" : "pointer-events-none group-hover/row:pointer-events-auto",
         )}>
         <button
           type="button"
@@ -801,6 +866,15 @@ function TaskRow({ compact = false, record, client, busy, selecting, selected, o
               <button
                 type="button"
                 role="menuitem"
+                onClick={() => { setMenuOpen(false); onEdit(); }}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-dls-hover"
+              >
+                <Pencil className="size-4" />
+                {t("automation.edit_task")}
+              </button>
+              <button
+                type="button"
+                role="menuitem"
                 disabled={task.lifecycle === "completed"}
                 onClick={() => { setMenuOpen(false); onAction(paused ? "resume" : "pause"); }}
                 className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-dls-hover disabled:opacity-40"
@@ -822,7 +896,37 @@ function TaskRow({ compact = false, record, client, busy, selecting, selected, o
         </div>
         </div>
       </div>
-
+      </div>
+      {createsNewChatPerRun && expanded && !selecting ? (
+        <div className="mx-2 mb-2 space-y-1 border-l border-dls-border pl-3">
+          {sessionsLoading && !sessionsLoaded ? (
+            <div className="px-2 py-2 text-xs text-dls-secondary">{t("automation.loading")}</div>
+          ) : visibleSessionRuns.length === 0 ? (
+            <div className="px-2 py-2 text-xs text-dls-secondary">{t("automation.empty_runs")}</div>
+          ) : visibleSessionRuns.map((run) => (
+            <button
+              key={run.sessionId}
+              type="button"
+              onClick={() => navigate(`/workspace/${encodeURIComponent(run.workspaceId)}/session/${encodeURIComponent(run.sessionId!)}`)}
+              className="flex w-full min-w-0 items-center gap-2 rounded-lg px-2 py-2 text-left transition-colors hover:bg-dls-hover"
+            >
+              <MessageCircle className="size-3.5 shrink-0 text-dls-secondary" />
+              <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{task.name}</span>
+              <span className="shrink-0 text-[11px] text-dls-secondary">{formatDateTime(run.startedAt ?? run.queuedAt)}</span>
+            </button>
+          ))}
+          {sessionsCursor ? (
+            <button
+              type="button"
+              disabled={sessionsLoading}
+              onClick={() => void loadSessions(true)}
+              className="rounded-lg px-2 py-1.5 text-xs text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text disabled:opacity-40"
+            >
+              {sessionsLoading ? t("automation.loading") : t("automation.load_more")}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
     </article>
   );
 }
@@ -1059,6 +1163,8 @@ function AutomationEditor(props: {
   const [baseRevision, setBaseRevision] = useState<number | null>(null);
   const [name, setName] = useState(template?.title ?? "");
   const [workspaceId, setWorkspaceId] = useState("");
+  const [advanced, setAdvanced] = useState(false);
+  const [newChatPerRun, setNewChatPerRun] = useState(false);
   const [prompt, setPrompt] = useState(template?.prompt ?? "");
   const [schedule, setSchedule] = useState<AutomationSchedule>(() => templateSchedule(template, timezone));
   // TIPS:`triggerKind` 独立于 `schedule`/`eventTrigger` 两份草稿状态存在——切换 tab 只换展示，
@@ -1101,7 +1207,8 @@ function AutomationEditor(props: {
       const definition = item.definition;
       setBaseRevision(definition.revision);
       setName(definition.name);
-      setWorkspaceId(definition.workspace.id);
+      setWorkspaceId(definition.workspace?.id ?? "");
+      setNewChatPerRun(definition.newChatPerRun ?? true);
       setPrompt(serializeAutomationPrompt(definition.prompt));
       if (isAutomationEventTrigger(definition.trigger)) {
         setTriggerKind("event");
@@ -1126,6 +1233,7 @@ function AutomationEditor(props: {
     void props.client.duplicateAutomation(props.duplicateSourceId).then(({ draft }) => {
       setName(draft.name);
       setWorkspaceId(draft.workspace?.id ?? "");
+      setNewChatPerRun(draft.newChatPerRun ?? false);
       setPrompt(serializeAutomationPrompt(draft.prompt));
       if (draft.trigger && isAutomationEventTrigger(draft.trigger)) {
         setTriggerKind("event");
@@ -1238,7 +1346,7 @@ function AutomationEditor(props: {
   }, []);
   // TIPS:技能以 tag 形式内嵌在提示词里，skillIds 从草稿反推，避免出现「输入框里没有但仍被当作依赖」的幽灵技能。
   const skillIds = useMemo(() => { try { return readAutomationSkillIds(prompt); } catch { return []; } }, [prompt]);
-  const fingerprint = editorFingerprint({ name, workspaceId, prompt, triggerKind, schedule, eventTrigger, startDate, endDate, connectors, model, agentId, skillIds, lifecycle, permission });
+  const fingerprint = editorFingerprint({ name, newChatPerRun, workspaceId, prompt, triggerKind, schedule, eventTrigger, startDate, endDate, connectors, model, agentId, skillIds, lifecycle, permission });
 
   useEffect(() => {
     if (!loading && baseline === null) setBaseline(fingerprint);
@@ -1277,18 +1385,19 @@ function AutomationEditor(props: {
     setPermissionOpen(true);
   };
   const save = async (acknowledged = riskAccepted) => {
-    if (!props.client || !selectedWorkspace || !acknowledged) return;
+    if (!props.client || !acknowledged) return;
     setSaving(true);
     setError(null);
     const now = Date.now();
     const draft: AutomationDraft = {
       name,
-      workspace: {
+      newChatPerRun,
+      workspace: selectedWorkspace ? {
         id: selectedWorkspace.id,
         name: selectedWorkspace.displayName?.trim() || selectedWorkspace.name || selectedWorkspace.id,
         path: selectedWorkspace.path,
         workspaceType: "local",
-      },
+      } : undefined,
       prompt: parseAutomationPrompt(prompt),
       timezone: triggerKind === "event" ? timezone : schedule.timezone,
       trigger: triggerKind === "event" ? eventTrigger : schedule,
@@ -1326,7 +1435,7 @@ function AutomationEditor(props: {
       {modal ? (
         <header className="shrink-0 px-6 pb-3 pt-6 pr-16">
           <h1 className="text-[18px] font-semibold tracking-[-0.015em] text-dls-text">
-            {t("automation.new_task")}
+            {t("automation.setup_task")}
           </h1>
         </header>
       ) : <header className="z-30 shrink-0 border-b border-dls-border bg-background mac:titlebar-drag">
@@ -1343,7 +1452,7 @@ function AutomationEditor(props: {
             </button>
             <button
               type="button"
-              disabled={saving}
+              disabled={saving || !prompt.trim()}
               onClick={requestSave}
               className={cn(
                 "inline-flex h-9 max-h-9 items-center rounded-full px-4 text-[13px] font-medium transition-colors",
@@ -1362,20 +1471,12 @@ function AutomationEditor(props: {
           "mx-auto w-full",
           modal ? "px-6 pb-6 pt-1" : "max-w-6xl px-6 pb-8 pt-3 lg:px-10",
         )}>
-          {warningVisible ? <Notice>{t("automation.warning")}<button type="button" aria-label="关闭自动化运行提示" onClick={() => setWarningVisible(false)} className="float-right rounded p-0.5"><X className="size-4" /></button></Notice> : null}
+          {warningVisible && advanced ? <Notice>{t("automation.warning")}<button type="button" aria-label="关闭自动化运行提示" onClick={() => setWarningVisible(false)} className="float-right rounded p-0.5"><X className="size-4" /></button></Notice> : null}
           {error ? <Notice tone="error">{error}</Notice> : null}
 
           <div className="mt-4 space-y-7">
-            <Field label={t("automation.name")}><input maxLength={100} value={name} onChange={(event) => setName(event.target.value)} className={FIELD} placeholder={t("automation.name_placeholder")} aria-label={t("automation.name")} /></Field>
-            <Field label={t("automation.workspace")} hint={t("automation.workspace_hint")}>
-              <WorkspaceSingleSelect
-                selectedId={workspaceId}
-                options={workspaces}
-                onSelect={setWorkspaceId}
-              />
-            </Field>
-            <Field label={t("automation.prompt")}>
-              <AutomationPromptComposer
+            <div role="group" aria-label={t("automation.prompt")}>
+              <AutomationPromptComposer hideControls
                 value={prompt}
                 onChange={setPrompt}
                 dependencies={selectableDependencies}
@@ -1391,14 +1492,47 @@ function AutomationEditor(props: {
                 permission={permission}
                 onPermissionChange={setPermission}
               />
-              <p className="mt-2 text-xs text-dls-secondary">{t("automation.prompt_hint")}</p>
               {dependenciesError ? (
                 <p className="mt-2 text-xs text-red-9">
                   {t("automation.dependencies_failed")}{dependenciesError}
                   <button type="button" className="ml-2 underline" onClick={() => setReloadDependenciesToken((value) => value + 1)}>{t("automation.retry")}</button>
                 </p>
               ) : null}
+            </div>
+            {triggerKind === "schedule" ? <CompactScheduleEditor value={schedule} onChange={applySchedule} client={props.client} activeRange={startDate && endDate ? { startDate, endDate } : undefined} /> : null}
+            <button type="button" aria-expanded={advanced} onClick={() => setAdvanced(!advanced)} className="flex items-center gap-2 py-1 text-sm text-dls-secondary">
+              {t("automation.advanced")} <ChevronDown size={16} className={advanced ? "rotate-180" : ""} />
+            </button>
+            {advanced ? <div className="space-y-5" data-testid="automation-advanced">
+            <Field label={t("automation.workspace")} hint={t("automation.workspace_hint")}>
+              <WorkspaceSingleSelect
+                selectedId={workspaceId}
+                options={workspaces}
+                onSelect={setWorkspaceId}
+              />
             </Field>
+            {triggerKind === "schedule" ? <label className="flex items-center justify-between gap-4 rounded-2xl border border-dls-border px-5 py-4 text-sm">
+              {t("automation.new_chat_per_run")}
+              <button type="button" role="switch" aria-label={t("automation.new_chat_per_run")} aria-checked={newChatPerRun} onClick={() => setNewChatPerRun(!newChatPerRun)} className={cn("h-6 w-11 shrink-0 rounded-full p-0.5 transition-colors", newChatPerRun ? "bg-dls-accent" : "bg-dls-active")}>
+                <span className={cn("block size-5 rounded-full bg-white shadow transition-transform", newChatPerRun && "translate-x-5")} />
+              </button>
+            </label> : null}
+              <AutomationPromptComposer controlsOnly
+                value={prompt}
+                onChange={setPrompt}
+                dependencies={selectableDependencies}
+                dependenciesLoading={dependenciesLoading}
+                model={model}
+                onModelChange={applyModel}
+                selectedModel={selectedModel}
+                agentId={agentId}
+                onAgentChange={setAgentId}
+                editorRef={promptEditorRef}
+                skillIds={skillIds}
+                onInsertSkill={insertSkill}
+                permission={permission}
+                onPermissionChange={setPermission}
+              />
             <Field label={t("automation.connectors")} hint={t("automation.connectors_hint")}>
               <ConnectorMultiSelect
                 selected={connectors}
@@ -1433,6 +1567,7 @@ function AutomationEditor(props: {
                 onConfirm={() => { setTriggerKind(pendingTriggerKind); setEventTrigger(defaultEventTrigger("")); setPendingTriggerKind(null); }}
               />
             ) : null}
+            <Field label={t("automation.name")}><input maxLength={100} aria-label={t("automation.name")} value={name} onChange={(event) => setName(event.target.value)} className={FIELD} placeholder={t("automation.name_generated")} /></Field>
             {triggerKind === "event" ? (
               <>
                 <EventTriggerEditor
@@ -1472,12 +1607,6 @@ function AutomationEditor(props: {
               </>
             ) : (
               <>
-                <ScheduleEditor
-                  value={schedule}
-                  onChange={applySchedule}
-                  client={props.client}
-                  activeRange={startDate && endDate ? { startDate, endDate } : undefined}
-                />
                 {/* TIPS:单次任务的执行日期本身就是唯一一次触发，再叠加生效区间只会互相矛盾，因此不展示。 */}
                 {schedule.kind !== "once" ? (
               <Field label={t("automation.active_range")} hint={t("automation.active_range_hint")}>
@@ -1490,12 +1619,13 @@ function AutomationEditor(props: {
                 ) : null}
               </>
             )}
+            </div> : null}
           </div>
         </div>
       </div>
 
       {modal ? (
-        <footer className="flex shrink-0 items-center justify-end gap-2 border-t border-dls-border bg-background px-6 py-4">
+        <footer className="flex shrink-0 items-center justify-end gap-2 bg-popover px-6 py-4">
           <button
             type="button"
             disabled={saving}
@@ -1506,7 +1636,7 @@ function AutomationEditor(props: {
           </button>
           <button
             type="button"
-            disabled={saving}
+            disabled={saving || !prompt.trim()}
             onClick={requestSave}
             className="inline-flex h-10 items-center rounded-full bg-dls-text px-5 text-[13px] font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-35"
           >
@@ -1617,13 +1747,14 @@ function WorkspaceSingleSelect(props: {
         className={cn(FIELD, "flex items-center gap-2 pr-4 text-left")}
       >
         <span className={cn("min-w-0 flex-1 truncate", !selectedLabel && "text-dls-secondary")}>
-          {selectedLabel || t("automation.workspace_placeholder")}
+          {selectedLabel || t("automation.workspace_automatic")}
         </span>
         <ChevronDown className={cn("size-4 shrink-0 text-dls-secondary transition-transform", open && "rotate-180")} />
       </button>
       {open ? (
         <div role="listbox" aria-label={t("automation.workspace")} className="absolute left-0 right-0 top-full z-40 mt-2 overflow-hidden rounded-2xl border border-dls-border bg-background shadow-[var(--dls-shell-shadow)]">
           <div className="max-h-64 overflow-y-auto p-2">
+            <button type="button" role="option" aria-selected={!props.selectedId} onClick={() => { props.onSelect(""); setOpen(false); }} className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-dls-hover">{t("automation.workspace_automatic")}</button>
             {props.options.length ? props.options.map((workspace) => {
               const selectedOption = workspace.id === props.selectedId;
               return (
@@ -1659,6 +1790,8 @@ function workspaceOptionLabel(workspace: WorkspaceInfo): string {
 }
 
 type AutomationPromptComposerProps = {
+  hideControls?: boolean;
+  controlsOnly?: boolean;
   value: string;
   onChange: (value: string) => void;
   editorRef: React.RefObject<LexicalPromptEditorHandle | null>;
@@ -1706,12 +1839,41 @@ function AutomationPromptComposer(props: AutomationPromptComposerProps) {
   const variants = props.model.mode === "explicit" ? props.selectedModel?.variants ?? [] : [];
   const modelGroups = groupModelsByProvider(props.dependencies.models);
 
+  if (props.controlsOnly) return <div className="space-y-4">
+    <label className="flex items-center justify-between gap-4 rounded-2xl border border-dls-border px-5 py-4 text-sm">
+      {t("automation.model")}
+      <select aria-label={t("automation.model")} className="max-w-[65%] bg-transparent text-right text-dls-secondary outline-none" value={props.model.mode === "explicit" ? JSON.stringify([props.model.providerId, props.model.modelId]) : "auto"} disabled={props.dependenciesLoading} onChange={(event) => {
+        if (event.target.value === "auto") props.onModelChange({ mode: "auto" });
+        else { const [providerId, modelId] = JSON.parse(event.target.value); props.onModelChange({ mode: "explicit", providerId, modelId }); }
+      }}>
+        <option value="auto">{t("automation.model_auto")}</option>
+        {modelGroups.map((group) => <optgroup key={group.providerName} label={group.providerName}>{group.models.map((item) => <option key={`${item.providerId}:${item.modelId}`} value={JSON.stringify([item.providerId, item.modelId])}>{item.modelName}</option>)}</optgroup>)}
+      </select>
+    </label>
+    <label className="flex items-center justify-between gap-4 rounded-2xl border border-dls-border px-5 py-4 text-sm">
+      {t("automation.effort")}
+      <select aria-label={t("automation.effort")} className="bg-transparent text-right text-dls-secondary outline-none" disabled={!variants.length} value={props.model.mode === "explicit" ? props.model.variant ?? "" : ""} onChange={(event) => { if (props.model.mode === "explicit") props.onModelChange({ ...props.model, variant: event.target.value || undefined }); }}>
+        <option value="">{t("automation.model_variant_default")}</option>{variants.map((variant) => <option key={variant} value={variant}>{variant}</option>)}
+      </select>
+    </label>
+    <div className="flex flex-wrap items-center gap-3">
+      <ComposerMenu label={t("automation.skills")} title={t("automation.skills")} disabled={props.dependenciesLoading}>
+        {props.dependencies.skills.map((skill) => <ComposerMenuItem key={skill.id} selected={props.skillIds.includes(skill.id)} onSelect={() => props.onInsertSkill(skill.id)}>{skill.name}</ComposerMenuItem>)}
+      </ComposerMenu>
+      <ComposerMenu label={agentLabel} title={t("automation.agent")} disabled={props.dependenciesLoading}>
+        <ComposerMenuItem selected={!props.agentId} onSelect={() => props.onAgentChange("")}>{t("automation.default_agent")}</ComposerMenuItem>
+        {props.dependencies.agents.map((agent) => <ComposerMenuItem key={agent.id} selected={props.agentId === agent.id} onSelect={() => props.onAgentChange(agent.id)}>{agent.name}</ComposerMenuItem>)}
+      </ComposerMenu>
+      <PermissionMenu value={props.permission} onChange={props.onPermissionChange} />
+    </div>
+  </div>;
+
   return (
     <div
       className={cn("relative overflow-visible rounded-[24px] border border-[#ebebeb] bg-background transition focus-within:border-dls-accent dark:border-dls-border", CARD_SHADOW)}
       data-testid="automation-prompt-composer"
     >
-      <div className="min-h-44 px-5 pt-5">
+      <div className="min-h-44 px-5 py-5">
         <LexicalPromptEditor
           ref={props.editorRef}
           value={props.value}
@@ -1722,7 +1884,7 @@ function AutomationPromptComposer(props: AutomationPromptComposerProps) {
         />
       </div>
 
-      <div className="flex flex-wrap items-center gap-1.5 px-3 pb-2.5 pt-2">
+      {!props.hideControls ? <div className="flex flex-wrap items-center gap-1.5 px-3 pb-2.5 pt-2">
         <ComposerMenu
           label={t("automation.skills")}
           title={t("automation.skills")}
@@ -1791,7 +1953,7 @@ function AutomationPromptComposer(props: AutomationPromptComposerProps) {
         ) : null}
 
         <PermissionMenu value={props.permission} onChange={props.onPermissionChange} />
-      </div>
+      </div> : null}
     </div>
   );
 }
@@ -1984,11 +2146,12 @@ function ConnectorMultiSelect(props: {
 }
 
 /** 点击外部或按 Esc 收起浮层。 */
-function useDismissOnOutside(ref: React.RefObject<HTMLElement | null>, active: boolean, onDismiss: () => void) {
+function useDismissOnOutside(ref: React.RefObject<HTMLElement | null>, active: boolean, onDismiss: () => void, floatingRef?: React.RefObject<HTMLElement | null>) {
   useEffect(() => {
     if (!active) return;
     const onPointerDown = (event: MouseEvent) => {
-      if (!ref.current?.contains(event.target as Node)) onDismiss();
+      const target = event.target as Node;
+      if (!ref.current?.contains(target) && !floatingRef?.current?.contains(target)) onDismiss();
     };
     const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") onDismiss(); };
     document.addEventListener("mousedown", onPointerDown);
@@ -1997,7 +2160,7 @@ function useDismissOnOutside(ref: React.RefObject<HTMLElement | null>, active: b
       document.removeEventListener("mousedown", onPointerDown);
       document.removeEventListener("keydown", onKeyDown);
     };
-  }, [active, onDismiss, ref]);
+  }, [active, floatingRef, onDismiss, ref]);
 }
 
 /** 输入栏工具条上的下拉菜单，交互与会话输入栏的模型/智能体选择器一致。 */
@@ -2064,6 +2227,275 @@ function ComposerMenuEmpty({ children }: { children: React.ReactNode }) {
   return <p className="px-3 py-2 text-xs text-gray-10">{children}</p>;
 }
 
+type ScheduleTab = "workdays" | "minute" | "hour" | "daily" | "weekly" | "monthly" | "yearly";
+
+const COMPACT_SCHEDULE_TABS: ScheduleTab[] = ["workdays", "daily", "weekly", "monthly"];
+const ALL_SCHEDULE_TABS: ScheduleTab[] = ["workdays", "minute", "hour", "daily", "weekly", "monthly", "yearly"];
+
+function CompactScheduleEditor({ value, onChange, client, activeRange }: { value: AutomationSchedule; onChange: (value: AutomationSchedule) => void; client: JuggleWorkServerClient | null; activeRange?: { startDate: string; endDate: string } }) {
+  const [expanded, setExpanded] = useState(() => !COMPACT_SCHEDULE_TABS.includes(scheduleTab(value)));
+  const [preview, setPreview] = useState<{ summary: string; nextRunAt: number | null } | null>(null);
+  const activeTab = scheduleTab(value);
+  const tabs = expanded ? ALL_SCHEDULE_TABS : COMPACT_SCHEDULE_TABS;
+
+  useEffect(() => {
+    if (!client || (value.kind === "once" && !value.localDate)) {
+      setPreview(null);
+      return;
+    }
+    let cancelled = false;
+    const timeout = window.setTimeout(() => {
+      void client.previewAutomationSchedule(value, activeRange).then((next) => {
+        if (!cancelled) setPreview(next);
+      }).catch(() => { if (!cancelled) setPreview(null); });
+    }, 200);
+    return () => { cancelled = true; window.clearTimeout(timeout); };
+  }, [activeRange?.endDate, activeRange?.startDate, client, value]);
+
+  const selectTab = (tab: ScheduleTab) => {
+    const timezone = value.timezone;
+    const localTime = scheduleLocalTime(value);
+    const anchorLocalDate = today();
+    if (tab === "workdays") onChange({ version: 1, kind: "calendar", frequency: "weekly", every: 1, anchorLocalDate, weekdays: [1, 2, 3, 4, 5], localTime, timezone });
+    if (tab === "minute") onChange({ version: 1, kind: "interval", every: 30, unit: "minute", anchorLocalDate, anchorLocalTime: "00:00", timezone });
+    if (tab === "hour") onChange({ version: 1, kind: "interval", every: 1, unit: "hour", anchorLocalDate, anchorLocalTime: "00:00", timezone });
+    if (tab === "daily") onChange({ version: 1, kind: "calendar", frequency: "daily", every: 1, anchorLocalDate, localTime, timezone });
+    if (tab === "weekly") onChange({ version: 1, kind: "calendar", frequency: "weekly", every: 1, anchorLocalDate, weekdays: value.kind === "calendar" && value.frequency === "weekly" && !isWorkdaySchedule(value) ? value.weekdays : [1], localTime, timezone });
+    if (tab === "monthly") onChange({ version: 1, kind: "calendar", frequency: "monthly", every: 1, anchorLocalDate, dayOfMonths: [1], localTime, timezone });
+    if (tab === "yearly") onChange({ version: 1, kind: "calendar", frequency: "yearly", every: 1, anchorLocalDate, months: [1], dayOfMonth: 1, localTime, timezone });
+  };
+
+  return <div className="rounded-[24px] border border-dls-border p-5">
+    <div className="inline-flex max-w-full items-center gap-1 overflow-x-auto rounded-2xl bg-dls-hover p-1" role="tablist" aria-label={t("automation.frequency")}>
+      {tabs.map((tab) => <button key={tab} type="button" role="tab" aria-selected={activeTab === tab} onClick={() => selectTab(tab)} className={cn("shrink-0 rounded-xl px-4 py-2 text-sm text-dls-secondary transition-colors", activeTab === tab && "bg-background font-medium text-dls-text shadow-sm")}>
+        {scheduleTabLabel(tab)}
+      </button>)}
+      <button type="button" aria-label={t(expanded ? "automation.schedule_collapse_tabs" : "automation.schedule_expand_tabs")} aria-expanded={expanded} onClick={() => setExpanded((current) => !current)} className="flex size-9 shrink-0 items-center justify-center rounded-xl text-dls-secondary transition-colors hover:bg-background/70 hover:text-dls-text">
+        {expanded ? <ChevronsLeft className="size-5" /> : <ChevronsRight className="size-5" />}
+      </button>
+    </div>
+    <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-dls-border pt-4">
+      <ScheduleTabFields tab={activeTab} value={value} onChange={onChange} />
+    </div>
+    <p className="mt-3 text-xs text-dls-secondary">{summaryWithoutTimezone(preview?.summary ?? scheduleLabel(value), value.timezone)}{preview?.nextRunAt ? ` · ${t("automation.schedule_next_run")} ${formatDateTime(preview.nextRunAt)}` : ""}</p>
+  </div>;
+}
+
+function ScheduleTabFields({ tab, value, onChange }: { tab: ScheduleTab; value: AutomationSchedule; onChange: (value: AutomationSchedule) => void }) {
+  if (tab === "minute" && value.kind === "interval") return <ScheduleNumberField label={t("automation.schedule_interval_minutes")} value={value.every} min={1} suffix={t("automation.schedule_unit_minute")} options={[1, 5, 10, 15, 20, 30, 45, 60]} onChange={(every) => onChange({ ...value, every })} />;
+  if (tab === "hour" && value.kind === "interval") {
+    const minute = Number(value.anchorLocalTime.split(":")[1] ?? 0);
+    return <>
+      <ScheduleNumberField label={t("automation.schedule_interval_hours")} value={value.every} min={1} suffix={t("automation.schedule_unit_hour")} options={[1, 2, 3, 4, 6, 8, 12, 24]} onChange={(every) => onChange({ ...value, every })} />
+      <ScheduleNumberField label={t("automation.schedule_minute_of_hour")} value={minute} min={0} max={59} suffix={t("automation.schedule_minute_short")} options={[0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55]} onChange={(nextMinute) => onChange({ ...value, anchorLocalTime: `00:${String(nextMinute).padStart(2, "0")}` })} />
+    </>;
+  }
+  if (tab === "daily" && value.kind === "interval" && value.unit === "day") return <>
+    <ScheduleNumberField label={t("automation.schedule_interval_days")} value={value.every} min={1} suffix={t("automation.schedule_unit_day")} options={numberRange(1, 30)} onChange={(every) => onChange({ ...value, every })} />
+    <QuarterHourTimeSelect value={value.anchorLocalTime} timezone={value.timezone} onChange={(anchorLocalTime) => onChange({ ...value, anchorLocalTime })} />
+  </>;
+  if (value.kind !== "calendar") return null;
+  if (tab === "workdays") return <QuarterHourTimeSelect value={value.localTime} timezone={value.timezone} onChange={(localTime) => onChange({ ...value, localTime })} />;
+  if (tab === "daily" && value.frequency === "daily") return <>
+    <ScheduleNumberField label={t("automation.schedule_interval_days")} value={value.every ?? 1} min={1} suffix={t("automation.schedule_unit_day")} options={numberRange(1, 30)} onChange={(every) => onChange({ ...value, every, anchorLocalDate: value.anchorLocalDate ?? today() })} />
+    <QuarterHourTimeSelect value={value.localTime} timezone={value.timezone} onChange={(localTime) => onChange({ ...value, localTime })} />
+  </>;
+  if (tab === "weekly" && value.frequency === "weekly") return <>
+    <ScheduleNumberField label={t("automation.schedule_interval_weeks")} value={value.every ?? 1} min={1} suffix={t("automation.schedule_unit_week")} options={numberRange(1, 12)} onChange={(every) => onChange({ ...value, every, anchorLocalDate: value.anchorLocalDate ?? today() })} />
+    <span className="text-sm text-dls-secondary">{t("automation.schedule_at")}</span>
+    <CompactMultiSelect value={value.weekdays} options={weekdayShortLabels().map((label, index) => ({ value: index + 1, label }))} onChange={(weekdays) => onChange({ ...value, weekdays })} label={t("automation.schedule_weekday_pick")} columns={7} triggerClassName="w-24" />
+    <QuarterHourTimeSelect value={value.localTime} timezone={value.timezone} onChange={(localTime) => onChange({ ...value, localTime })} />
+  </>;
+  if (tab === "monthly" && value.frequency === "monthly") return <>
+    <ScheduleNumberField label={t("automation.schedule_interval_months")} value={value.every ?? 1} min={1} suffix={t("automation.schedule_unit_month")} options={numberRange(1, 12)} onChange={(every) => onChange({ ...value, every, anchorLocalDate: value.anchorLocalDate ?? today() })} />
+    <ScheduleNumberField label={t("automation.schedule_at")} ariaLabel={t("automation.schedule_day_of_month")} value={monthlyScheduleDays(value)[0] ?? 1} min={1} max={31} suffix={t("automation.schedule_day_suffix")} options={numberRange(1, 31)} onChange={(day) => onChange({ ...value, dayOfMonths: [day] })} />
+    <QuarterHourTimeSelect value={value.localTime} timezone={value.timezone} onChange={(localTime) => onChange({ ...value, localTime })} />
+  </>;
+  if (tab === "yearly" && value.frequency === "yearly") return <>
+    <ScheduleNumberField label={t("automation.schedule_interval_years")} value={value.every ?? 1} min={1} suffix={t("automation.schedule_unit_year")} options={numberRange(1, 10)} onChange={(every) => onChange({ ...value, every, anchorLocalDate: value.anchorLocalDate ?? today() })} />
+    <ScheduleNumberField label={t("automation.schedule_at")} ariaLabel={t("automation.schedule_month")} value={yearlyScheduleMonths(value)[0] ?? 1} min={1} max={12} suffix={t("automation.schedule_month_suffix")} options={numberRange(1, 12)} onChange={(month) => onChange({ ...value, months: [month] })} />
+    <ScheduleNumberField label="" ariaLabel={t("automation.schedule_day_of_month")} value={value.dayOfMonth} min={1} max={31} suffix={t("automation.schedule_day_suffix")} options={numberRange(1, 31)} onChange={(dayOfMonth) => onChange({ ...value, dayOfMonth })} />
+    <QuarterHourTimeSelect value={value.localTime} timezone={value.timezone} onChange={(localTime) => onChange({ ...value, localTime })} />
+  </>;
+  return null;
+}
+
+function ScheduleNumberField({ label, ariaLabel = label, value, min, max, suffix, options, onChange }: { label: string; ariaLabel?: string; value: number; min: number; max?: number; suffix: string; options: number[]; onChange: (value: number) => void }) {
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState(String(value));
+  const anchorRef = useRef<HTMLDivElement>(null);
+  const floatingRef = useRef<HTMLDivElement>(null);
+  const floatingStyle = useAnchoredFloating(open, anchorRef, { width: 208, maxHeight: 240 });
+  const dismiss = useCallback(() => setOpen(false), []);
+  useDismissOnOutside(anchorRef, open, dismiss, floatingRef);
+  useEffect(() => setDraft(String(value)), [value]);
+  const selectValue = (next: number) => {
+    setDraft(String(next));
+    onChange(next);
+    setOpen(false);
+  };
+  return <div ref={anchorRef} className="flex shrink-0 items-center gap-2 text-sm text-dls-secondary">
+    {label ? <span>{label}</span> : null}
+    <div className="relative w-16">
+      <input
+        type="text"
+        inputMode="numeric"
+        role="combobox"
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        aria-label={`${ariaLabel}${suffix}`}
+        value={draft}
+        onFocus={() => setOpen(true)}
+        onClick={() => setOpen(true)}
+        onChange={(event) => {
+          const next = event.target.value;
+          if (!/^\d*$/.test(next)) return;
+          setDraft(next);
+          const numeric = Number(next);
+          if (next && Number.isInteger(numeric) && numeric >= min && (max === undefined || numeric <= max)) onChange(numeric);
+        }}
+        onBlur={() => {
+          const numeric = Number(draft);
+          if (!draft || !Number.isInteger(numeric) || numeric < min || (max !== undefined && numeric > max)) setDraft(String(value));
+        }}
+        className={cn(FIELD, "w-16 pr-6 text-center text-dls-text")}
+      />
+      <ChevronDown className={cn("pointer-events-none absolute right-2 top-1/2 size-4 -translate-y-1/2 transition-transform", open && "rotate-180")} />
+    </div>
+    <span>{suffix}</span>
+    {open && floatingStyle ? createPortal(
+      <div ref={floatingRef} role="listbox" aria-label={`${ariaLabel}${suffix}`} style={floatingStyle} className="overflow-y-auto rounded-2xl border border-dls-border bg-background p-2 shadow-[var(--dls-shell-shadow)]">
+        <div className="grid grid-cols-4 gap-1">
+          {options.map((option) => <button key={option} type="button" role="option" aria-selected={option === value} onClick={() => selectValue(option)} className={cn("flex h-9 items-center justify-center rounded-lg text-sm tabular-nums transition-colors hover:bg-dls-hover", option === value && "bg-dls-hover font-medium")}>
+            {option}
+          </button>)}
+        </div>
+      </div>,
+      document.body,
+    ) : null}
+  </div>;
+}
+
+function numberRange(start: number, end: number): number[] {
+  return Array.from({ length: end - start + 1 }, (_, index) => start + index);
+}
+
+type FloatingStyle = CSSProperties & { position: "fixed"; zIndex: number; maxHeight: number };
+
+function useAnchoredFloating(open: boolean, anchorRef: React.RefObject<HTMLElement | null>, size: { width: number; maxHeight: number }): FloatingStyle | null {
+  const [style, setStyle] = useState<FloatingStyle | null>(null);
+  useEffect(() => {
+    if (!open) {
+      setStyle(null);
+      return;
+    }
+    const update = () => {
+      const anchor = anchorRef.current;
+      if (!anchor) return;
+      const rect = anchor.getBoundingClientRect();
+      const margin = 12;
+      const gap = 8;
+      const width = Math.min(size.width, window.innerWidth - margin * 2);
+      const below = window.innerHeight - rect.bottom - gap - margin;
+      const above = rect.top - gap - margin;
+      const placeBelow = below >= Math.min(size.maxHeight, 180) || below >= above;
+      const maxHeight = Math.max(120, Math.min(size.maxHeight, placeBelow ? below : above));
+      const left = Math.min(Math.max(margin, rect.left), window.innerWidth - width - margin);
+      const top = placeBelow ? rect.bottom + gap : Math.max(margin, rect.top - gap - maxHeight);
+      setStyle({ position: "fixed", zIndex: 100, left, top, width, maxHeight });
+    };
+    update();
+    const handleScroll = (event: Event) => {
+      const target = event.target;
+      if (target instanceof Element && !target.contains(anchorRef.current)) return;
+      update();
+    };
+    window.addEventListener("resize", update);
+    window.addEventListener("scroll", handleScroll, true);
+    return () => {
+      window.removeEventListener("resize", update);
+      window.removeEventListener("scroll", handleScroll, true);
+    };
+  }, [anchorRef, open, size.maxHeight, size.width]);
+  return style;
+}
+
+function scheduleTab(value: AutomationSchedule): ScheduleTab {
+  if (value.kind === "interval") return value.unit === "minute" ? "minute" : value.unit === "hour" ? "hour" : "daily";
+  if (value.kind === "calendar") {
+    if (value.frequency === "weekly") return isWorkdaySchedule(value) ? "workdays" : "weekly";
+    return value.frequency;
+  }
+  return "daily";
+}
+
+function scheduleTabLabel(tab: ScheduleTab): string {
+  if (tab === "workdays") return t("automation.schedule_workdays");
+  if (tab === "minute") return t("automation.schedule_every_minute");
+  if (tab === "hour") return t("automation.schedule_every_hour");
+  if (tab === "daily") return t("automation.schedule_daily");
+  if (tab === "weekly") return t("automation.schedule_weekly");
+  if (tab === "monthly") return t("automation.schedule_monthly");
+  return t("automation.schedule_yearly");
+}
+
+function scheduleLocalTime(value: AutomationSchedule): string {
+  if (value.kind === "interval") return value.anchorLocalTime;
+  return value.localTime;
+}
+
+function QuarterHourTimeSelect({ value, timezone, onChange }: { value: string; timezone: string; onChange: (value: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const floatingRef = useRef<HTMLDivElement>(null);
+  const selectedRef = useRef<HTMLButtonElement>(null);
+  const positionedForOpenRef = useRef(false);
+  const floatingStyle = useAnchoredFloating(open, containerRef, { width: 224, maxHeight: 280 });
+  const floatingReady = floatingStyle !== null;
+  const dismiss = useCallback(() => setOpen(false), []);
+  useDismissOnOutside(containerRef, open, dismiss, floatingRef);
+  useEffect(() => {
+    if (!open) {
+      positionedForOpenRef.current = false;
+      return;
+    }
+    if (floatingReady && !positionedForOpenRef.current) {
+      selectedRef.current?.scrollIntoView({ block: "center" });
+      positionedForOpenRef.current = true;
+    }
+  }, [floatingReady, open]);
+  const options = quarterHourOptions();
+  return <div ref={containerRef} className="w-40 shrink-0">
+    <button type="button" aria-haspopup="listbox" aria-expanded={open} aria-label={t("automation.schedule_run_time")} onClick={() => setOpen((current) => !current)} className={cn(FIELD, "flex items-center gap-2 pr-3 text-left text-dls-secondary")}>
+      <span className="min-w-0 flex-1 truncate">{automationTimezoneLabel(timezone)} {value}</span>
+      <ChevronDown className={cn("size-4 shrink-0 transition-transform", open && "rotate-180")} />
+    </button>
+    {open && floatingStyle ? createPortal(<div ref={floatingRef} role="listbox" aria-label={t("automation.schedule_run_time")} style={floatingStyle} className="overflow-y-auto rounded-2xl border border-dls-border bg-background p-2 shadow-[var(--dls-shell-shadow)]">
+      {options.map((option) => <button key={option} ref={option === value ? selectedRef : undefined} type="button" role="option" aria-selected={option === value} onClick={() => { onChange(option); setOpen(false); }} className={cn("flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm tabular-nums transition-colors hover:bg-dls-hover", option === value && "bg-dls-hover")}>
+        <span>{formatQuarterHour(option)}</span>{option === value ? <Check className="size-5 shrink-0" /> : null}
+      </button>)}
+    </div>, document.body) : null}
+  </div>;
+}
+
+function isWorkdaySchedule(value: Extract<AutomationSchedule, { kind: "calendar" }>): boolean {
+  return value.frequency === "weekly" && (value.every ?? 1) === 1 && value.weekdays.length === 5 && value.weekdays.every((day, index) => day === index + 1);
+}
+
+function quarterHourOptions(): string[] {
+  return Array.from({ length: 96 }, (_, index) => `${String(Math.floor(index / 4)).padStart(2, "0")}:${String((index % 4) * 15).padStart(2, "0")}`);
+}
+
+function formatQuarterHour(value: string): string {
+  const [hour, minute] = value.split(":");
+  return `${Number(hour)}:${minute}`;
+}
+
+function automationTimezoneLabel(timezone: string): string {
+  if (timezone === "Asia/Shanghai") return t("automation.timezone_china");
+  return timezone;
+}
+
 function ScheduleEditor({ value, onChange, client, activeRange }: {
   value: AutomationSchedule;
   onChange: (schedule: AutomationSchedule) => void;
@@ -2093,7 +2525,7 @@ function ScheduleEditor({ value, onChange, client, activeRange }: {
     if (kind === "once") onChange({ version: 1, kind, localDate: today(), localTime: inMinutes(5), timezone });
   };
   return (
-    <Field label={t("automation.frequency")} hint={t("automation.frequency_hint")}>
+    <Field label={t("automation.frequency")}>
       <div className="mb-4 inline-flex rounded-xl bg-dls-hover p-1">{(["calendar", "interval", "once"] as const).map((kind) => <button key={kind} type="button" onClick={() => setKind(kind)} className={cn("rounded-lg px-5 py-2 text-sm", value.kind === kind && "bg-background font-medium shadow-sm")}>{kind === "calendar" ? t("automation.period") : kind === "interval" ? t("automation.interval") : t("automation.once")}</button>)}</div>
       {value.kind === "calendar" ? <CalendarFields value={value} onChange={onChange} /> : null}
       {value.kind === "interval" ? (
@@ -2506,30 +2938,33 @@ type MultiSelectOption = { value: number; label: string };
  * @param label 无障碍名称
  * @param columns 浮层网格列数
  */
-function CompactMultiSelect({ value, options, onChange, label, columns }: {
+function CompactMultiSelect({ value, options, onChange, label, columns, triggerClassName = "w-44" }: {
   value: number[];
   options: MultiSelectOption[];
   onChange: (value: number[]) => void;
   label: string;
   columns: number;
+  triggerClassName?: string;
 }) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const floatingRef = useRef<HTMLDivElement>(null);
+  const floatingStyle = useAnchoredFloating(open, containerRef, { width: columns === 7 ? 390 : 240, maxHeight: 320 });
   const dismiss = useCallback(() => setOpen(false), []);
-  useDismissOnOutside(containerRef, open, dismiss);
+  useDismissOnOutside(containerRef, open, dismiss, floatingRef);
   const selected = options.filter((option) => value.includes(option.value));
   const selectedLabel = selected.length <= 2
     ? selected.map((option) => option.label).join("、")
     : t("automation.schedule_selected_count").replace("{count}", String(selected.length));
 
   return (
-    <div ref={containerRef} className="relative w-44 shrink-0">
+    <div ref={containerRef} className={cn("relative shrink-0", triggerClassName)}>
       <button type="button" aria-haspopup="listbox" aria-expanded={open} aria-label={label} onClick={() => setOpen((current) => !current)} className={cn(FIELD, "flex items-center gap-2 pr-3 text-left")}>
         <span className="min-w-0 flex-1 truncate">{selectedLabel || label}</span>
         <ChevronDown className={cn("size-4 shrink-0 text-dls-secondary transition-transform", open && "rotate-180")} />
       </button>
-      {open ? (
-        <div role="listbox" aria-label={label} aria-multiselectable="true" className="absolute bottom-full left-0 z-40 mb-2 w-max min-w-full rounded-2xl border border-dls-border bg-background p-2 shadow-[var(--dls-shell-shadow)]">
+      {open && floatingStyle ? createPortal(
+        <div ref={floatingRef} role="listbox" aria-label={label} aria-multiselectable="true" style={floatingStyle} className="overflow-y-auto rounded-2xl border border-dls-border bg-background p-2 shadow-[var(--dls-shell-shadow)]">
           <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${columns}, minmax(42px, 1fr))` }}>
             {options.map((option) => {
               const checked = value.includes(option.value);
@@ -2547,7 +2982,8 @@ function CompactMultiSelect({ value, options, onChange, label, columns }: {
               );
             })}
           </div>
-        </div>
+        </div>,
+        document.body,
       ) : null}
     </div>
   );
@@ -2684,7 +3120,7 @@ function Notice({ tone = "info", children }: { tone?: "info" | "error"; children
 
 function templateSchedule(template: AutomationTemplate | undefined, timezone: string): AutomationSchedule {
   if (template?.schedule) return { ...template.schedule, timezone } as AutomationSchedule;
-  return { version: 1, kind: "once", localDate: today(), localTime: inMinutes(5), timezone };
+  return { version: 1, kind: "calendar", frequency: "daily", every: 1, anchorLocalDate: today(), localTime: "09:00", timezone };
 }
 
 /** 返回本地时间偏移若干分钟后的 HH:mm。 */
@@ -2695,13 +3131,13 @@ function inMinutes(minutes: number): string {
 
 function validateEditor(value: { name: string; workspaceId: string; prompt: string; schedule: AutomationSchedule; startDate: string; endDate: string }): string | null {
   const nameLength = [...value.name.trim()].length;
-  if (nameLength < 1 || nameLength > 100) return "名称必须为 1–100 个字符";
-  if (!value.workspaceId) return "请选择一个本机工作空间";
+  if (nameLength > 100) return "名称必须为 1–100 个字符";
   try { parseAutomationPrompt(value.prompt); } catch (error) { return describeError(error); }
   if (Boolean(value.startDate) !== Boolean(value.endDate)) return "生效日期必须同时填写开始和结束日期";
   if (value.startDate && value.endDate < value.startDate) return "结束日期不能早于开始日期";
   if (value.schedule.kind === "once" && (!value.schedule.localDate || !value.schedule.localTime)) return "请选择单次任务的未来日期和时间";
   if (value.schedule.kind === "interval" && (!Number.isInteger(value.schedule.every) || value.schedule.every < 1)) return "间隔必须为正整数";
+  if (value.schedule.kind === "calendar" && (!Number.isInteger(value.schedule.every ?? 1) || (value.schedule.every ?? 1) < 1)) return "周期间隔必须为正整数";
   if (value.schedule.kind === "calendar" && value.schedule.frequency === "weekly" && !value.schedule.weekdays.length) return "每周任务至少选择一个星期";
   if (value.schedule.kind === "calendar" && value.schedule.frequency === "monthly" && !monthlyScheduleDays(value.schedule).length) return "每月任务至少选择一个日期";
   if (value.schedule.kind === "calendar" && value.schedule.frequency === "yearly" && !yearlyScheduleMonths(value.schedule).length) return "每年任务至少选择一个月份";
@@ -2751,6 +3187,7 @@ function connectorKey(connector: Pick<AutomationConnectorSelection, "id" | "sour
 
 function editorFingerprint(value: {
   name: string;
+  newChatPerRun: boolean;
   workspaceId: string;
   prompt: string;
   triggerKind: "schedule" | "event";
@@ -2793,10 +3230,11 @@ function scheduleLabel(schedule: AutomationSchedule): string {
       : "";
     return `每 ${schedule.every} ${unit}${weekdays} · ${schedule.timezone}`;
   }
-  if (schedule.frequency === "daily") return `每天 ${schedule.localTime} · ${schedule.timezone}`;
-  if (schedule.frequency === "weekly") return `每周 ${schedule.weekdays.map((day) => `周${"一二三四五六日"[day - 1]}`).join("、")} ${schedule.localTime} · ${schedule.timezone}`;
-  if (schedule.frequency === "monthly") return `每月 ${monthlyScheduleDays(schedule).map((day) => `${day} 日`).join("、")} ${schedule.localTime} · ${schedule.timezone}`;
-  return `每年 ${yearlyScheduleMonths(schedule).map((month) => `${month} 月`).join("、")} ${schedule.dayOfMonth} 日 ${schedule.localTime} · ${schedule.timezone}`;
+  const cadence = schedule.every ?? 1;
+  if (schedule.frequency === "daily") return `${cadence === 1 ? "每天" : `每 ${cadence} 天`} ${schedule.localTime} · ${schedule.timezone}`;
+  if (schedule.frequency === "weekly") return `${cadence === 1 ? "每周" : `每 ${cadence} 周`} ${schedule.weekdays.map((day) => `周${"一二三四五六日"[day - 1]}`).join("、")} ${schedule.localTime} · ${schedule.timezone}`;
+  if (schedule.frequency === "monthly") return `${cadence === 1 ? "每月" : `每 ${cadence} 月`} ${monthlyScheduleDays(schedule).map((day) => `${day} 日`).join("、")} ${schedule.localTime} · ${schedule.timezone}`;
+  return `${cadence === 1 ? "每年" : `每 ${cadence} 年`} ${yearlyScheduleMonths(schedule).map((month) => `${month} 月`).join("、")} ${schedule.dayOfMonth} 日 ${schedule.localTime} · ${schedule.timezone}`;
 }
 
 function readTemplateId(state: unknown): string | null {

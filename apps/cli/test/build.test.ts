@@ -31,8 +31,8 @@ test("build and runtime require the same eight plugin assets", () => {
   assert.deepEqual(BUILD_PLUGIN_FILES, RUNTIME_PLUGIN_FILES);
 });
 
-test("committed OpenCode descriptor pins v1.18.15 assets and digests for all six targets", () => {
-  assert.equal(OPENCODE_DISTRIBUTION.version, "1.18.15");
+test("committed OpenCode descriptor pins v1.19.3 assets and digests for all six targets", () => {
+  assert.equal(OPENCODE_DISTRIBUTION.version, "1.19.3");
   assert.deepEqual(Object.keys(OPENCODE_DISTRIBUTION.targets).sort(), [...DISTRIBUTION_TARGETS].sort());
   for (const target of DISTRIBUTION_TARGETS) {
     assert.match(OPENCODE_DISTRIBUTION.targets[target].sha256, /^[a-f0-9]{64}$/);

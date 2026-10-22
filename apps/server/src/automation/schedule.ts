@@ -123,24 +123,25 @@ export function automationScheduleSummary(schedule: AutomationSchedule, locale =
     const days = weekdays ? ` (${weekdays.join(", ")})` : "";
     return `Every ${schedule.every} ${units[schedule.unit]}${days} · ${timeZone}`;
   }
+  const cadence = schedule.every ?? 1;
   if (schedule.frequency === "daily") return locale.startsWith("zh")
-    ? `每天 ${schedule.localTime} · ${timeZone}`
-    : `Daily at ${schedule.localTime} · ${timeZone}`;
+    ? `${cadence === 1 ? "每天" : `每 ${cadence} 天`} ${schedule.localTime} · ${timeZone}`
+    : `${cadence === 1 ? "Daily" : `Every ${cadence} days`} at ${schedule.localTime} · ${timeZone}`;
   if (schedule.frequency === "weekly") {
     const zh = ["一", "二", "三", "四", "五", "六", "日"];
     const days = locale.startsWith("zh")
       ? schedule.weekdays.map((day) => `周${zh[day - 1]}`).join("、")
       : schedule.weekdays.join(", ");
     return locale.startsWith("zh")
-      ? `每周 ${days} ${schedule.localTime} · ${timeZone}`
-      : `Weekly on ${days} at ${schedule.localTime} · ${timeZone}`;
+      ? `${cadence === 1 ? "每周" : `每 ${cadence} 周`} ${days} ${schedule.localTime} · ${timeZone}`
+      : `${cadence === 1 ? "Weekly" : `Every ${cadence} weeks`} on ${days} at ${schedule.localTime} · ${timeZone}`;
   }
   if (schedule.frequency === "monthly") return locale.startsWith("zh")
-    ? `每月 ${monthlyDays(schedule).map((day) => `${day} 日`).join("、")} ${schedule.localTime} · ${timeZone}`
-    : `Monthly on day ${monthlyDays(schedule).join(", ")} at ${schedule.localTime} · ${timeZone}`;
+    ? `${cadence === 1 ? "每月" : `每 ${cadence} 月`} ${monthlyDays(schedule).map((day) => `${day} 日`).join("、")} ${schedule.localTime} · ${timeZone}`
+    : `${cadence === 1 ? "Monthly" : `Every ${cadence} months`} on day ${monthlyDays(schedule).join(", ")} at ${schedule.localTime} · ${timeZone}`;
   return locale.startsWith("zh")
-    ? `每年 ${yearlyMonths(schedule).map((month) => `${month} 月`).join("、")} ${schedule.dayOfMonth} 日 ${schedule.localTime} · ${timeZone}`
-    : `Yearly in month ${yearlyMonths(schedule).join(", ")} on day ${schedule.dayOfMonth} at ${schedule.localTime} · ${timeZone}`;
+    ? `${cadence === 1 ? "每年" : `每 ${cadence} 年`} ${yearlyMonths(schedule).map((month) => `${month} 月`).join("、")} ${schedule.dayOfMonth} 日 ${schedule.localTime} · ${timeZone}`
+    : `${cadence === 1 ? "Yearly" : `Every ${cadence} years`} in month ${yearlyMonths(schedule).join(", ")} on day ${schedule.dayOfMonth} at ${schedule.localTime} · ${timeZone}`;
 }
 
 /** 同时返回摘要和精确的下一次触发时间。 */
@@ -186,6 +187,7 @@ export function zonedLocalToEpoch(localDateTime: string, timeZone: string): numb
 
 function calendarMatches(schedule: Extract<AutomationSchedule, { kind: "calendar" }>, date: number): boolean {
   const value = new Date(date);
+  if (!calendarCadenceMatches(schedule, date)) return false;
   if (schedule.frequency === "daily") return true;
   if (schedule.frequency === "weekly") {
     const weekday = value.getUTCDay() || 7;
@@ -193,6 +195,26 @@ function calendarMatches(schedule: Extract<AutomationSchedule, { kind: "calendar
   }
   if (schedule.frequency === "monthly") return monthlyDays(schedule).includes(value.getUTCDate());
   return yearlyMonths(schedule).includes(value.getUTCMonth() + 1) && value.getUTCDate() === schedule.dayOfMonth;
+}
+
+function calendarCadenceMatches(schedule: Extract<AutomationSchedule, { kind: "calendar" }>, date: number): boolean {
+  const every = schedule.every ?? 1;
+  if (!schedule.anchorLocalDate) return true;
+  const anchor = parseDate(schedule.anchorLocalDate);
+  if (date < anchor) return false;
+  if (every === 1) return true;
+  if (schedule.frequency === "daily") return Math.floor((date - anchor) / DAY_MS) % every === 0;
+  if (schedule.frequency === "weekly") {
+    const weekStart = (value: number) => value - (((new Date(value).getUTCDay() || 7) - 1) * DAY_MS);
+    return Math.floor((weekStart(date) - weekStart(anchor)) / (7 * DAY_MS)) % every === 0;
+  }
+  const current = new Date(date);
+  const start = new Date(anchor);
+  if (schedule.frequency === "monthly") {
+    const months = (current.getUTCFullYear() - start.getUTCFullYear()) * 12 + current.getUTCMonth() - start.getUTCMonth();
+    return months % every === 0;
+  }
+  return (current.getUTCFullYear() - start.getUTCFullYear()) % every === 0;
 }
 
 /** 读取每月执行日，并兼容旧版单值字段。 */

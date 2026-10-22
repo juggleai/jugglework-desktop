@@ -21,7 +21,7 @@ test("release validation, clean-home smoke, archive, and archive checksum use lo
     await mkdir(plugins);
     for (const filename of REQUIRED_PLUGIN_FILES) await writeFile(join(plugins, filename), `// ${filename}\n`);
     await writeFile(cli, `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "${packageJson.version}"; exit 0; fi\nif [ "$1" = "status" ]; then exit 0; fi\nexit 2\n`);
-    await writeFile(opencode, "#!/bin/sh\necho 'opencode 1.18.15'\n");
+    await writeFile(opencode, "#!/bin/sh\necho 'opencode 1.19.3'\n");
     await chmod(cli, 0o755);
     await chmod(opencode, 0o755);
     stageDistribution({ target: "bun-darwin-arm64", root: distribution, cliBinary: cli, opencodeBinary: opencode, pluginSource: plugins });

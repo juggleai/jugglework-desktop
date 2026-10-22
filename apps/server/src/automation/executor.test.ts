@@ -860,10 +860,107 @@ function serverConfig(): ServerConfig {
 async function repositoryFixture() {
   const root = await mkdtemp(join(tmpdir(), "jugglework-executor-"));
   const runtime = await openRuntimeSqliteDatabase(join(root, "runtime.sqlite"));
-  const repository = AutomationRepository.fromDatabase(automationSqliteAdapter(runtime));
-  return { repository, close: async () => { repository.close(); await rm(root, { recursive: true, force: true }); } };
+  let repository = AutomationRepository.fromDatabase(automationSqliteAdapter(runtime));
+  return {
+    get repository() { return repository; },
+    reopen: async () => {
+      repository.close();
+      repository = AutomationRepository.fromDatabase(automationSqliteAdapter(await openRuntimeSqliteDatabase(join(root, "runtime.sqlite"))));
+    },
+    close: async () => { repository.close(); await rm(root, { recursive: true, force: true }); },
+  };
 }
 
 async function* events(values: unknown[]): AsyncGenerator<unknown> {
   for (const value of values) yield value;
+}
+
+for (const selected of [false, true]) {
+  for (const newChatPerRun of [false, true]) {
+    test(`scheduled execution: selected=${selected}, newChatPerRun=${newChatPerRun}, survives database restart`, async () => {
+      const fixture = await repositoryFixture();
+      const root = await mkdtemp(join(tmpdir(), "jw-scheduled-workspaces-"));
+      const definition = { ...automationDefinition(), workspace: selected ? automationDefinition().workspace : undefined, newChatPerRun, directoryName: "daily_news" };
+      const creates: string[] = [];
+      const prompted: string[] = [];
+      const workspaces: string[] = [];
+      const opencode = {
+        session: {
+          create: async () => { const id = `session-${creates.length}`; creates.push(id); return { data: { id } }; },
+          get: async ({ sessionID }: { sessionID: string }) => ({ data: { id: sessionID } }),
+          promptAsync: async ({ sessionID }: { sessionID: string }) => { prompted.push(sessionID); return { data: true }; },
+          status: async () => ({ data: Object.fromEntries(creates.map((id) => [id, { type: "idle" }])) }),
+          messages: async () => ({ data: [] }),
+        },
+        provider: { list: async () => ({ data: { all: [] } }) },
+        app: { agents: async () => ({ data: [] }), skills: async () => ({ data: [] }) },
+        mcp: { status: async () => ({ data: {} }) },
+        tool: { ids: async () => ({ data: [] }) },
+      };
+      try {
+        fixture.repository.createDefinition(definition, definition);
+        for (let index = 0; index < 3; index++) {
+          const now = Date.parse(index === 2 ? "2026-10-22T08:00:00Z" : "2026-10-21T08:00:00Z");
+          const run = fixture.repository.createManualRun(definition, `combination-${index}`, now);
+          const executor = new AutomationExecutor({
+            config: serverConfig(), repository: fixture.repository, workspaceRoot: root,
+            resolveWorkspace: async () => serverConfig().workspaces[0], registerWorkspace: async (workspace) => workspace,
+            createWorkspaceOpencodeClient: (_config, workspace) => { workspaces.push(workspace.path); return opencode as never; },
+            now: () => now, wait: async () => undefined,
+          });
+          await executor.execute(fixture.repository.getRunSnapshot(run.id)!);
+          const result = fixture.repository.getRun(run.id)!;
+          assert.equal(result.state, "succeeded", result.errorMessage);
+          assert.ok(result.workspaceId);
+          assert.equal(result.sessionId, prompted.at(-1));
+          assert.equal(fixture.repository.getExecutionBinding(`run:${run.id}`)?.sessionId, result.sessionId);
+          assert.equal(fixture.repository.getExecutionBinding(`run:${run.id}`)?.workspace.path, workspaces.at(-1));
+          await fixture.reopen();
+        }
+        assert.equal(creates.length, newChatPerRun ? 3 : 1);
+        assert.equal(new Set(workspaces).size, !selected && newChatPerRun ? 3 : 1);
+        if (!selected && newChatPerRun) {
+          assert.equal(workspaces[0], join(root, "2026-10-21", "daily_news"));
+          assert.equal(workspaces[1], join(root, "2026-10-21", "daily_news_2"));
+          assert.equal(workspaces[2], join(root, "2026-10-22", "daily_news"));
+        }
+      } finally { await fixture.close(); await rm(root, { recursive: true, force: true }); }
+    });
+  }
+}
+
+
+for (const scenario of ["missing", "busy", "unavailable"] as const) {
+  test(`reused scheduled session handles ${scenario} without duplicate dispatch`, async () => {
+    const fixture = await repositoryFixture();
+    const definition = { ...automationDefinition(), newChatPerRun: false };
+    let created = 0;
+    let dispatched = 0;
+    const opencode = {
+      session: {
+        get: async () => scenario === "missing" ? { error: { name: "NotFoundError" } } : scenario === "unavailable" ? { error: { message: "service unavailable" } } : { data: { id: "old-session" } },
+        status: async () => ({ data: { "old-session": { type: "busy" } } }),
+        create: async () => { created++; return { data: { id: "new-session" } }; },
+        promptAsync: async () => { dispatched++; return { data: true }; },
+        messages: async () => ({ data: [] }),
+      },
+      provider: { list: async () => ({ data: { all: [] } }) },
+      app: { agents: async () => ({ data: [] }), skills: async () => ({ data: [] }) },
+      mcp: { status: async () => ({ data: {} }) }, tool: { ids: async () => ({ data: [] }) },
+    };
+    try {
+      fixture.repository.createDefinition(definition, definition);
+      fixture.repository.setExecutionBinding(`task:${definition.id}`, { workspace: serverConfig().workspaces[0], sessionId: "old-session" });
+      const run = fixture.repository.createManualRun(definition, `reuse-${scenario}`, 100);
+      const executor = new AutomationExecutor({ config: serverConfig(), repository: fixture.repository,
+        resolveWorkspace: async () => serverConfig().workspaces[0], createWorkspaceOpencodeClient: () => opencode as never,
+        now: () => 101, wait: async () => undefined });
+      await executor.execute(fixture.repository.getRunSnapshot(run.id)!);
+      const result = fixture.repository.getRun(run.id)!;
+      assert.equal(created, scenario === "missing" ? 1 : 0);
+      assert.equal(dispatched, scenario === "missing" ? 1 : 0);
+      assert.equal(result.state, scenario === "missing" ? "succeeded" : "failed");
+      if (scenario !== "missing") assert.equal(result.errorCode, scenario === "busy" ? "overlap_blocked" : "execution_failed");
+    } finally { await fixture.close(); }
+  });
 }

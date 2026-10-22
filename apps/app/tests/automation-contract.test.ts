@@ -57,6 +57,29 @@ describe("Desktop automation catalog and routes", () => {
     expect(adapter).not.toMatch(/run_task|运行任务|onSend/);
   });
 
+  test("uses compact expandable schedule tabs and quarter-hour time menus", () => {
+    const source = readFileSync(new URL("../src/react-app/domains/automations/automation-page.tsx", import.meta.url), "utf8");
+    const editor = source.slice(source.indexOf("function AutomationEditor"), source.indexOf("type ConnectorOption"));
+    const compact = source.slice(source.indexOf("type ScheduleTab"), source.indexOf("function ScheduleEditor"));
+    expect(source).toMatch(/return \{ version: 1, kind: "calendar", frequency: "daily", every: 1, anchorLocalDate: today\(\), localTime: "09:00", timezone \}/);
+    expect(editor).not.toMatch(/<Field label=\{t\("automation\.prompt"\)\}>/);
+    expect(editor).not.toMatch(/t\("automation\.prompt_hint"\)/);
+    expect(compact).toMatch(/"workdays" \| "minute" \| "hour" \| "daily" \| "weekly" \| "monthly" \| "yearly"/);
+    expect(compact).toMatch(/COMPACT_SCHEDULE_TABS[^\n]+\["workdays", "daily", "weekly", "monthly"\]/);
+    expect(compact).toMatch(/ALL_SCHEDULE_TABS[^\n]+\["workdays", "minute", "hour", "daily", "weekly", "monthly", "yearly"\]/);
+    expect(compact).toMatch(/ChevronsRight/);
+    expect(compact).toMatch(/inline-flex max-w-full items-center gap-1 overflow-x-auto/);
+    expect(compact).toMatch(/every: 30, unit: "minute"/);
+    expect(compact).toMatch(/every: 1, unit: "hour"/);
+    expect(compact).toMatch(/role="combobox"/);
+    expect(compact).toMatch(/createPortal/);
+    expect(compact).toMatch(/useAnchoredFloating/);
+    expect(compact).not.toMatch(/CompactFrequencySelect|automation\.schedule_custom|automation\.frequency_hint/);
+    expect(compact).toMatch(/Array\.from\(\{ length: 96 \}/);
+    expect(compact).toMatch(/\(index % 4\) \* 15/);
+    expect(compact).toMatch(/role="listbox"[\s\S]+aria-selected=\{option === value\}/);
+  });
+
   test("characterizes the live session composer contract before shared reuse", () => {
     const source = readFileSync(new URL("../src/react-app/domains/session/surface/composer/composer.tsx", import.meta.url), "utf8");
     expect(source).toMatch(/busy: boolean/);
@@ -75,7 +98,8 @@ describe("Desktop automation catalog and routes", () => {
     expect(page).toMatch(/<AutomationTaskLanding onSelect=/);
     expect(page).toMatch(/AUTOMATION_TEMPLATES\.slice\(0, 6\)/);
     expect(page).toMatch(/onOpenHome=\{\(\) => navigateAfterDiscard\(\(\) => navigate\(props\.sessionPath\)\)\}/);
-    expect(rail).toMatch(/active=\{location\.pathname\.startsWith\("\/automations"\)\}/);
+    expect(rail).toContain("active={automationsActive}");
+    expect(rail).toContain('location.pathname.startsWith("/automations")');
     expect(page).toMatch(/value\.schedule\.kind === "once"[\s\S]+请选择单次任务的未来日期和时间/);
     expect(catalog).not.toMatch(/fetch\(|createAutomation|updateAutomation|serverId/);
     expect(AUTOMATION_TEMPLATES.filter((template) => !template.schedule).length).toBeGreaterThan(0);
@@ -96,14 +120,16 @@ describe("Desktop automation catalog and routes", () => {
     }
   });
 
-  test("reserves non-id automation segments and keeps batch/template entries out of the empty state", () => {
+  test("reserves non-id automation segments and keeps secondary actions out of the task sidebar", () => {
     const page = readFileSync(new URL("../src/react-app/domains/automations/automation-page.tsx", import.meta.url), "utf8");
     // /automations/templates 必须走模板页，不能被解析成 id 为 "templates" 的任务。
     expect(page).toMatch(/AUTOMATION_RESERVED_SEGMENTS = new Set\(\["new", "runs", "templates"\]\)/);
     expect(page).toMatch(/templatesVisible = location\.pathname === "\/automations\/templates"/);
     expect(parseWorkspaceAppPath("/automations/templates")).toEqual({ view: "automations", workspaceId: null });
-    // 左侧任务栏始终保留完整模板入口，右侧只展示六个快速建议。
-    expect(page).toMatch(/navigate\("\/automations\/templates"\)/);
+    // 模板页和运行记录的深链接继续兼容，但左侧任务栏不再显示这两个固定入口。
+    const dashboard = page.slice(page.indexOf("function AutomationDashboard"), page.indexOf("function AutomationServerLoading"));
+    expect(dashboard).not.toMatch(/<nav/);
+    expect(dashboard).not.toMatch(/automation\.from_template/);
     expect(page).toMatch(/AUTOMATION_TEMPLATES\.slice\(0, 6\)/);
     expect(page).toMatch(/t\("automation\.batch_manage"\)/);
     for (const locale of ["zh", "en"]) {
@@ -112,6 +138,16 @@ describe("Desktop automation catalog and routes", () => {
         expect(table).toMatch(new RegExp(`"automation\\.${key}"`));
       }
     }
+  });
+
+  test("expands new-chat automations and opens the reusable chat from the task row", () => {
+    const page = readFileSync(new URL("../src/react-app/domains/automations/automation-page.tsx", import.meta.url), "utf8");
+    const row = page.slice(page.indexOf("function TaskRow"), page.indexOf("function taskTimingLabel"));
+    expect(row).toMatch(/task\.newChatPerRun !== false/);
+    expect(row).toMatch(/listAutomationRuns\(\{[\s\S]+automationId: task\.id/);
+    expect(row).toMatch(/createsNewChatPerRun[\s\S]+setExpanded/);
+    expect(row).toMatch(/\/workspace\/\$\{encodeURIComponent\(target\.workspaceId\)\}\/session\/\$\{encodeURIComponent\(target\.sessionId\)\}/);
+    expect(row).toMatch(/automation\.edit_task/);
   });
 
   test("starts the shared local-server connection and keeps local automations out of cloud sync", () => {
@@ -139,7 +175,8 @@ describe("Desktop automation catalog and routes", () => {
 
   test("matches the automation editor actions to the session Run task button", () => {
     const page = readFileSync(new URL("../src/react-app/domains/automations/automation-page.tsx", import.meta.url), "utf8");
-    const editorActions = page.slice(page.indexOf('className="ml-auto flex shrink-0 gap-1.5 mac:titlebar-no-drag"'), page.indexOf("<ScheduleEditor"));
+    const actionsStart = page.indexOf('className="ml-auto flex shrink-0 gap-1.5 mac:titlebar-no-drag"');
+    const editorActions = page.slice(actionsStart, page.indexOf("</header>}", actionsStart));
     expect(editorActions).toMatch(/h-9 max-h-9 items-center rounded-full[^\"]+text-\[13px\] font-medium/);
     expect(editorActions).toMatch(/bg-\[var\(--dls-accent\)\] text-\[var\(--dls-accent-fg\)\]/);
     expect(editorActions).toMatch(/border border-dls-border bg-transparent/);
@@ -219,8 +256,11 @@ describe("Desktop automation catalog and routes", () => {
     expect(fields).toMatch(/frequency === "yearly"[\s\S]+<CompactMultiSelect value=\{yearlyScheduleMonths\(value\)\}/);
     expect(fields).toMatch(/months: \[1\][\s\S]+dayOfMonth: 1/);
     expect(multiSelect).toMatch(/aria-multiselectable="true"/);
-    expect(multiSelect).toMatch(/relative w-44 shrink-0/);
-    expect(multiSelect).toMatch(/absolute bottom-full left-0[^"]+mb-2/);
+    expect(multiSelect).toMatch(/triggerClassName = "w-44"/);
+    expect(multiSelect).toMatch(/cn\("relative shrink-0", triggerClassName\)/);
+    expect(multiSelect).toMatch(/columns === 7 \? 390 : 240/);
+    expect(multiSelect).toMatch(/useAnchoredFloating/);
+    expect(multiSelect).toMatch(/createPortal/);
   });
 
   test("uses theme-matched time and single-date pickers instead of native browser popups", () => {

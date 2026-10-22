@@ -34,7 +34,7 @@ publish an npm package, or update an installation. Do not publish
 
 ## Stage A Target
 
-1. Read `distribution/opencode-v1.18.15.json` and acquire the exact archive for the target from its declared upstream release.
+1. Read `distribution/opencode-v1.19.3.json` and acquire the exact archive for the target from its declared upstream release.
 2. Verify the archive SHA-256 from that descriptor before extraction.
 3. Extract only `opencode` or `opencode.exe` into `<sidecar-dir>/<bun-target>/`.
 4. Build `jugglework-server` and its required plugin assets.

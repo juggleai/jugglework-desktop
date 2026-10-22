@@ -10,7 +10,7 @@ import { automationDatabaseVersion, migrateAutomationDatabase } from "./migratio
 import { createAutomationEnvelope } from "./envelope.js";
 import { AutomationRepository } from "./repository.js";
 import { automationSqliteAdapter } from "./sqlite.js";
-import { automationDraftFromUnknown, mergeAutomationRawDocument, validateAutomationDraft } from "./validation.js";
+import { automationDraftFromUnknown, mergeAutomationRawDocument, validateAutomationDraft, validateAutomationSchedule } from "./validation.js";
 
 const NOW = Date.parse("2026-08-11T00:00:00Z");
 
@@ -38,6 +38,29 @@ test("validation applies defaults, rejects secrets and preserves unknown fields"
     () => automationDraftFromUnknown({ ...draft, accessToken: "secret" }, "device-1"),
     (error) => error instanceof ApiError && error.code === "invalid_automation_definition",
   );
+});
+
+test("validation preserves valid calendar cadence and rejects incomplete cadence", () => {
+  const schedule = validateAutomationSchedule({
+    version: 1,
+    kind: "calendar",
+    frequency: "monthly",
+    every: 3,
+    anchorLocalDate: "2026-08-11",
+    dayOfMonths: [20],
+    localTime: "09:00",
+    timezone: "Asia/Shanghai",
+  });
+  assert.equal(schedule.kind === "calendar" ? schedule.every : undefined, 3);
+  assert.equal(schedule.kind === "calendar" ? schedule.anchorLocalDate : undefined, "2026-08-11");
+  assert.throws(() => validateAutomationSchedule({
+    version: 1,
+    kind: "calendar",
+    frequency: "daily",
+    every: 2,
+    localTime: "09:00",
+    timezone: "Asia/Shanghai",
+  }), /周期起始日期不能为空/);
 });
 
 test("cloud envelopes strip the workspace path and reject every other external absolute path", () => {
@@ -80,7 +103,7 @@ test("automation migrations preserve an existing populated runtime database and 
   const reopenedDatabase = automationSqliteAdapter(reopenedRuntime);
   try {
     migrateAutomationDatabase(reopenedDatabase, NOW + 1);
-    assert.equal(automationDatabaseVersion(reopenedDatabase), 5);
+    assert.equal(automationDatabaseVersion(reopenedDatabase), 6);
     assert.equal(reopenedDatabase.get<{ value: string }>("SELECT value FROM existing_runtime_records WHERE id = ?", ["legacy-1"])?.value, "preserved");
   } finally {
     reopenedDatabase.close();
@@ -95,7 +118,7 @@ test("migration replay, revisions, pagination and local-only persistence are ato
   try {
     migrateAutomationDatabase(database, NOW);
     migrateAutomationDatabase(database, NOW + 1);
-    assert.equal(automationDatabaseVersion(database), 5);
+    assert.equal(automationDatabaseVersion(database), 6);
     const repository = AutomationRepository.fromDatabase(database);
     const first = definition("task-1", "任务一", 1, NOW);
     const second = definition("task-2", "任务二", 1, NOW + 1);
@@ -341,3 +364,40 @@ function workspace() {
 function context() {
   return { now: NOW, workspaces: [workspace()] };
 }
+
+
+test("schedules allow automatic workspaces and default to conversation reuse", () => {
+  const draft = automationDraftFromUnknown({
+    ...definition("automatic", "", 1, NOW), workspace: undefined,
+  }, "device-1");
+  const value = validateAutomationDraft(draft, context(), { id: "automatic", revision: 1, createdAt: NOW });
+  assert.equal(value.workspace, undefined);
+  assert.equal(value.newChatPerRun, false);
+  assert.equal(value.name, "执行任务");
+  const raw = mergeAutomationRawDocument({ workspace: workspace() }, value);
+  assert.equal(raw.workspace, undefined);
+  assert.doesNotThrow(() => createAutomationEnvelope("definition", value));
+});
+
+test("changing workspace or chat policy invalidates task binding but preserves historical run bindings", async () => {
+  const root = await mkdtemp(join(tmpdir(), "jw-binding-edit-"));
+  const repository = AutomationRepository.fromDatabase(automationSqliteAdapter(await openRuntimeSqliteDatabase(join(root, "runtime.sqlite"))));
+  try {
+    let value = { ...definition("binding-task", "Task", 1, NOW), newChatPerRun: false };
+    repository.createDefinition(value, value);
+    const binding = { workspace: { ...workspace(), preset: "starter" }, sessionId: "original-session" };
+    repository.setExecutionBinding("task:binding-task", binding);
+    repository.setExecutionBinding("run:original-run", binding);
+    value = { ...value, name: "Renamed", revision: 2 };
+    repository.updateDefinition(value, value, 1);
+    assert.deepEqual(repository.getExecutionBinding("task:binding-task"), binding);
+    value = { ...value, workspace: { ...workspace(), id: "different-workspace" }, revision: 3 };
+    repository.updateDefinition(value, value, 2);
+    assert.equal(repository.getExecutionBinding("task:binding-task"), null);
+    repository.setExecutionBinding("task:binding-task", binding);
+    value = { ...value, newChatPerRun: true, revision: 4 };
+    repository.updateDefinition(value, value, 3);
+    assert.equal(repository.getExecutionBinding("task:binding-task"), null);
+    assert.deepEqual(repository.getExecutionBinding("run:original-run"), binding);
+  } finally { repository.close(); await rm(root, { recursive: true, force: true }); }
+});

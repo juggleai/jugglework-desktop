@@ -331,9 +331,9 @@ controls, not extra installation steps for a native release.
 
 ## Native Distribution Staging
 
-OpenCode is pinned to upstream version `1.18.15` from
-`https://github.com/anomalyco/opencode/releases/tag/v1.18.15`. The committed
-descriptor at `distribution/opencode-v1.18.15.json` records the source commit,
+OpenCode is pinned to upstream version `1.19.3` from
+`https://github.com/anomalyco/opencode/releases/tag/v1.19.3`. The committed
+descriptor at `distribution/opencode-v1.19.3.json` records the source commit,
 archive name, format, and upstream SHA-256 digest for macOS arm64/x64, Linux
 arm64/x64, and Windows arm64/x64.
 

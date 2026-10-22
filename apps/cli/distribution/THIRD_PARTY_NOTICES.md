@@ -1,12 +1,12 @@
 # Third-Party Notices
 
-The JuggleWork CLI native distribution includes OpenCode 1.18.15 as an
+The JuggleWork CLI native distribution includes OpenCode 1.19.3 as an
 unmodified executable sidecar.
 
 - Project: OpenCode
 - Source: https://github.com/anomalyco/opencode
-- Release: https://github.com/anomalyco/opencode/releases/tag/v1.18.15
-- Source commit: `325529761beb79a004de6d86e48b8db69cf4eba3`
+- Release: https://github.com/anomalyco/opencode/releases/tag/v1.19.3
+- Source commit: `e3c4eb242585dcd77be1a867391b7c25fd47ce52`
 - License: MIT
 
 The complete OpenCode license is distributed as

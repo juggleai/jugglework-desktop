@@ -1,3 +1,4 @@
+import { nameAutomation } from "../automation/naming.js";
 import { randomUUID } from "node:crypto";
 import type { AutomationDefinition, AutomationDraft, AutomationPromptPart, AutomationRun, AutomationSchedule } from "@jugglework/types/automation";
 import type { AutomationRepository } from "../automation/repository.js";
@@ -275,6 +276,9 @@ export function registerAutomationRoutes(options: RegisterAutomationRoutesOption
     const source = body.draft ?? body;
     const draft = automationDraftFromUnknown(source, requireExecutorDeviceId(source));
     const definition = validateAutomationDraft(draft, validationContext(config, now), { id, revision: 1, createdAt: now });
+    if (definition.trigger.kind !== "event" && options.createWorkspaceOpencodeClient) {
+      await nameAutomation(definition, (workspace) => options.createWorkspaceOpencodeClient!(config, workspace), Boolean(draft.name.trim()));
+    }
     const rawDocument = mergeAutomationRawDocument(undefined, definition);
     const item = repository.createDefinition(definition, rawDocument);
     options.onChanged?.();
@@ -289,11 +293,16 @@ export function registerAutomationRoutes(options: RegisterAutomationRoutesOption
     const baseRevision = requiredPositiveInteger(body.baseRevision, "baseRevision");
     const now = Date.now();
     const draft = automationDraftFromUnknown(body.draft ?? body, current.definition.executorDeviceId);
+    if (!Object.prototype.hasOwnProperty.call(body.draft ?? body, "newChatPerRun")) draft.newChatPerRun = current.definition.newChatPerRun ?? true;
     const definition = validateAutomationDraft(draft, validationContext(config, now), {
       id: current.definition.id,
       revision: baseRevision + 1,
       createdAt: current.definition.createdAt,
     });
+    if (!draft.directoryName) definition.directoryName = current.definition.directoryName;
+    if (definition.trigger.kind !== "event" && options.createWorkspaceOpencodeClient && (!draft.name.trim() || JSON.stringify(current.definition.prompt) !== JSON.stringify(definition.prompt))) {
+      await nameAutomation(definition, (workspace) => options.createWorkspaceOpencodeClient!(config, workspace), Boolean(draft.name.trim()));
+    }
     const rawDocument = mergeAutomationRawDocument(current.rawDocument, definition);
     const item = repository.updateDefinition(definition, rawDocument, baseRevision);
     options.onChanged?.();
@@ -415,6 +424,8 @@ function definitionToDraft(definition: AutomationDefinition, patch: Partial<Auto
   return {
     name: definition.name,
     workspace: definition.workspace,
+    newChatPerRun: definition.newChatPerRun ?? true,
+    directoryName: definition.directoryName,
     prompt: definition.prompt,
     timezone: definition.trigger.kind === "event" ? systemAutomationTimezone() : definition.trigger.timezone,
     trigger: definition.trigger,

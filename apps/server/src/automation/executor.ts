@@ -1,3 +1,4 @@
+import { allocateAutomationWorkspace } from "./workspace.js";
 import { access } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -37,6 +38,8 @@ export type AutomationExecutorOptions = {
   githubEventRelay?: GithubEventRelayClient;
   /** 把铸造出的写回授权真正接到 agent 能调用的工具上；省略时同样判定 `github-app` preflight 不可用——见 `WriteBackMcpProvisioner` 的 TIPS。 */
   writeBackMcp?: WriteBackMcpProvisioner;
+  registerWorkspace?: (workspace: WorkspaceInfo) => Promise<WorkspaceInfo>;
+  workspaceRoot?: string;
   now?: () => number;
   wait?: (milliseconds: number) => Promise<void>;
 };
@@ -70,7 +73,7 @@ export class AutomationExecutor {
 
   /**
    * 执行单个冻结版本的运行，并把所有状态变化持久化。
-   * @param eventContext 事件触发的会话延续上下文；省略时保持原有"每次触发都新建会话"的行为。
+   * @param eventContext 事件触发的实体会话上下文；定时任务按 newChatPerRun 决定是否复用。
    */
   async execute(snapshot: AutomationRunSnapshot, eventContext?: AutomationEventExecutionContext): Promise<void> {
     let current = snapshot.run;
@@ -90,7 +93,10 @@ export class AutomationExecutor {
       }
 
       const resolved = await this.resolveSessionId(definition, workspace, opencode, current, eventContext);
+      this.options.repository.setExecutionBinding(`run:${current.id}`, { workspace: executionWorkspace(workspace), sessionId: resolved.sessionId });
       current = this.options.repository.updateRun(current.id, current.revision, {
+        workspaceId: workspace.id,
+        workspaceName: workspace.name,
         sessionId: resolved.sessionId,
         ...(resolved.previousSessionUnavailable ? { eventMetadata: { previousSessionUnavailable: true } } : {}),
         ...(resolved.graduatedFromSessionId ? { eventMetadata: { graduatedFromSessionId: resolved.graduatedFromSessionId } } : {}),
@@ -232,9 +238,7 @@ export class AutomationExecutor {
 
   /**
    * 决定这一轮触发用新会话还是复用已有会话。
-   * TIPS: 只有事件触发（`eventContext` 有值）才会走复用路径；定时/手动触发的行为完全不变，
-   * 继续每次新建——这是 add-local-automation-tasks 决策 #6 对事件触发场景的一次例外，不是
-   * 全局改动，见 design.md 决策 8。
+   * 事件任务按实体复用，定时任务按任务绑定复用。旧定义没有 newChatPerRun 时保留每次新建。
    */
   private async resolveSessionId(
     definition: AutomationRunSnapshot["definition"],
@@ -275,8 +279,25 @@ export class AutomationExecutor {
         // 会话查询失败视同不可解析，走下面的新建分支，不在这里重试或抛出。
       }
     }
+    const bindingKey = `task:${definition.id}`;
+    if (!eventContext && definition.newChatPerRun === false) {
+      const binding = this.options.repository.getExecutionBinding(bindingKey);
+      if (binding?.sessionId && binding.workspace.id === workspace.id) {
+        const existing = await opencode.session.get({ sessionID: binding.sessionId });
+        if (existing.error && !JSON.stringify(existing.error).toLowerCase().includes("notfound") && !JSON.stringify(existing.error).includes("404")) {
+          throw failure("execution_failed", "暂时无法读取已有会话，请稍后重试");
+        }
+        if (existing.data) {
+          const statuses = await opencode.session.status();
+          if (statuses.error) throw failure("execution_failed", "无法读取已有会话状态");
+          const status = statuses.data?.[binding.sessionId];
+          if (status && status.type !== "idle") throw failure("overlap_blocked", "已有会话仍在运行，本次不重复发送任务");
+          return { sessionId: binding.sessionId, previousSessionUnavailable: false };
+        }
+      }
+    }
     const created = await opencode.session.create({
-      title: `自动化 · ${definition.name} · ${new Date(current.scheduledFor).toLocaleString("zh-CN")}`,
+      title: definition.name,
       ...(definition.agentId ? { agent: definition.agentId } : {}),
       ...(definition.model.mode === "explicit" ? {
         model: {
@@ -302,6 +323,10 @@ export class AutomationExecutor {
       } : {}),
     });
     if (!created.data) throw failure("execution_failed", "无法创建自动化会话");
+    const latestDefinition = this.options.repository.getDefinition(definition.id)?.definition;
+    if (!eventContext && definition.newChatPerRun === false && latestDefinition?.newChatPerRun === false && latestDefinition.workspace?.id === definition.workspace?.id) {
+      this.options.repository.setExecutionBinding(bindingKey, { workspace: executionWorkspace(workspace), sessionId: created.data.id });
+    }
     if (eventContext) {
       this.options.repository.upsertEntitySessionMapping(definition.id, eventContext.entityRef, workspace.id, created.data.id, this.now());
     }
@@ -362,7 +387,30 @@ export class AutomationExecutor {
 
   private async resolveLocalWorkspace(snapshot: AutomationRunSnapshot): Promise<WorkspaceInfo> {
     try {
-      const workspace = await this.options.resolveWorkspace(this.options.config, snapshot.definition.workspace.id);
+      const definition = snapshot.definition;
+      const runKey = `run:${snapshot.run.id}`;
+      const taskKey = `task:${definition.id}`;
+      const runBinding = this.options.repository.getExecutionBinding(runKey);
+      let workspace: WorkspaceInfo;
+      if (definition.workspace) {
+        workspace = await this.options.resolveWorkspace(this.options.config, definition.workspace.id);
+      } else {
+        const binding = runBinding ?? (definition.newChatPerRun === false ? this.options.repository.getExecutionBinding(taskKey) : null);
+        if (binding) {
+          await access(binding.workspace.path);
+          workspace = binding.workspace;
+          this.options.repository.setExecutionBinding(runKey, binding);
+        } else {
+          workspace = await allocateAutomationWorkspace({ name: definition.name, directoryName: definition.directoryName ?? definition.name, timezone: definition.trigger.kind === "event" ? "UTC" : definition.trigger.timezone, now: this.now(), root: this.options.workspaceRoot });
+          this.options.repository.setExecutionBinding(runKey, { workspace });
+          const latestDefinition = this.options.repository.getDefinition(definition.id)?.definition;
+          if (definition.newChatPerRun === false && latestDefinition?.newChatPerRun === false && !latestDefinition.workspace) {
+            this.options.repository.setExecutionBinding(taskKey, { workspace });
+          }
+        }
+        if (!this.options.registerWorkspace) throw new Error("自动工作区注册不可用");
+        workspace = await this.options.registerWorkspace(workspace);
+      }
       if (workspace.workspaceType !== "local") throw new Error("remote workspace");
       return workspace;
     } catch {
@@ -645,4 +693,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isTerminal(state: AutomationRunSnapshot["run"]["state"]): boolean {
   return ["succeeded", "failed", "skipped", "cancelled"].includes(state);
+}
+
+/** Persist only workspace identity, never runtime connection credentials. */
+function executionWorkspace(workspace: WorkspaceInfo): WorkspaceInfo {
+  return { id: workspace.id, path: workspace.path, name: workspace.name, preset: workspace.preset, workspaceType: "local" };
 }

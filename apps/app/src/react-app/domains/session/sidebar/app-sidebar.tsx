@@ -1088,46 +1088,48 @@ export function AppSidebar(props: AppSidebarProps) {
             />
 
             <LazyMotion features={domMax}>
-              <m.div
-                layoutScroll
-                data-slot="sidebar-content"
-                data-sidebar="content"
-                className="no-scrollbar flex min-h-0 flex-1 flex-col gap-0.5 overflow-auto [--radius:var(--radius-xl)] group-data-[collapsible=icon]:overflow-hidden"
-              >
-                {pinnedSessions.length > 0 ? (
-                  <GlobalPinnedSessions entries={pinnedSessions} />
-                ) : null}
-                <div className="flex flex-col gap-0.5">
-                  {visibleWorkspaceSessionGroups.map((group) => (
-                    <m.div
-                      key={group.workspace.id}
-                      layout="position"
-                      transition={{ layout: { duration: 0.2, ease: [0.22, 1, 0.36, 1] } }}
-                    >
-                      {/* Keep session projection local to its workspace. When a
-                          preceding workspace changes height, this outer block
-                          slides once and its session rows travel with it. */}
-                      <LayoutGroup id={`workspace-sessions-${group.workspace.id}`} inherit={false}>
-                        <WorkspaceSidebarGroup
-                          group={group}
-                          className="py-0"
-                          showInitialLoading={props.showInitialLoading}
-                          previewCount={isFiltering ? Number.MAX_SAFE_INTEGER : previewCount(group.workspace.id)}
-                          showMoreSessions={showMoreSessions}
-                        />
-                      </LayoutGroup>
-                    </m.div>
-                  ))}
-                </div>
-                {visibleWorkspaceSessionGroups.length === 0 ? (
-                  <div className="flex flex-1 items-center justify-center px-5 py-10 text-center text-xs text-dls-secondary">
-                    {isFiltering ? t("workspace_list.no_matching_sessions") : t("workspace.no_tasks")}
+              <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                <m.div
+                  layoutScroll
+                  data-slot="sidebar-content"
+                  data-sidebar="content"
+                  className="no-scrollbar flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto overscroll-contain [--radius:var(--radius-xl)] group-data-[collapsible=icon]:overflow-hidden"
+                >
+                  {pinnedSessions.length > 0 ? (
+                    <GlobalPinnedSessions entries={pinnedSessions} />
+                  ) : null}
+                  <div className="flex shrink-0 flex-col gap-0.5">
+                    {visibleWorkspaceSessionGroups.map((group) => (
+                      <m.div
+                        key={group.workspace.id}
+                        layout="position"
+                        transition={{ layout: { duration: 0.2, ease: [0.22, 1, 0.36, 1] } }}
+                      >
+                        {/* Keep session projection local to its workspace. When a
+                            preceding workspace changes height, this outer block
+                            slides once and its session rows travel with it. */}
+                        <LayoutGroup id={`workspace-sessions-${group.workspace.id}`} inherit={false}>
+                          <WorkspaceSidebarGroup
+                            group={group}
+                            className="py-0"
+                            showInitialLoading={props.showInitialLoading}
+                            previewCount={isFiltering ? Number.MAX_SAFE_INTEGER : previewCount(group.workspace.id)}
+                            showMoreSessions={showMoreSessions}
+                          />
+                        </LayoutGroup>
+                      </m.div>
+                    ))}
                   </div>
-                ) : null}
+                  {visibleWorkspaceSessionGroups.length === 0 ? (
+                    <div className="flex flex-1 items-center justify-center px-5 py-10 text-center text-xs text-dls-secondary">
+                      {isFiltering ? t("workspace_list.no_matching_sessions") : t("workspace.no_tasks")}
+                    </div>
+                  ) : null}
+                </m.div>
                 {archivedSessions.length > 0 ? (
                   <GlobalArchivedSessions entries={archivedSessions} />
                 ) : null}
-              </m.div>
+              </div>
             </LazyMotion>
           </div>
         </div>
@@ -1153,7 +1155,7 @@ type GlobalPinnedSessionEntry = {
 
 function GlobalPinnedSessions({ entries }: { entries: GlobalPinnedSessionEntry[] }) {
   return (
-    <SidebarGroup data-global-pinned-sessions className="pb-1 pt-2">
+    <SidebarGroup data-global-pinned-sessions className="shrink-0 pb-1 pt-2">
       <SidebarGroupContent>
         <div className="px-3 pb-1 text-[13px] font-normal leading-5 tracking-normal text-muted-foreground">
           {t("session_management.pinned")}
@@ -1187,16 +1189,20 @@ function GlobalArchivedSessions({ entries }: { entries: GlobalArchivedSessionEnt
   const open = ctx.filteringSessions || expanded;
 
   return (
-    <SidebarGroup data-global-archived-sessions className="py-0">
-      <SidebarGroupContent>
-        <Collapsible open={open} onOpenChange={setExpanded} className="group/archived">
-          {/* TIPS: 与 WorkspaceHeader 同规格（h-10 / rounded-xl / px-2.5 / gap-1.5 / size-5 图标槽），
-              让「已归档」读起来是又一个可展开的分组，而不是一条另类的小标题。 */}
+    <SidebarGroup
+      data-global-archived-sessions
+      className={cn(
+        "min-h-0 shrink-0 overflow-hidden border-t border-dls-border py-1 transition-[flex-basis] duration-200 ease-out motion-reduce:transition-none",
+        open ? "basis-1/3" : "basis-10",
+      )}
+    >
+      <SidebarGroupContent className="flex min-h-0 flex-1 flex-col">
+        <Collapsible open={open} onOpenChange={setExpanded} className="group/archived flex min-h-0 flex-1 flex-col">
           <CollapsibleTrigger
             render={
               <button
                 type="button"
-                className="group/separator relative flex h-8 w-full cursor-pointer items-center gap-1.5 rounded-xl px-2.5 text-left transition-colors duration-150 hover:bg-sidebar-accent/25"
+                className="group/separator relative flex h-8 w-full shrink-0 cursor-pointer items-center gap-1.5 rounded-xl px-2.5 text-left transition-colors duration-150 hover:bg-sidebar-accent/25"
               >
                 <span className="relative flex size-5 shrink-0 items-center justify-center text-sidebar-foreground">
                   <Archive className="size-4" strokeWidth={1.8} />
@@ -1208,7 +1214,7 @@ function GlobalArchivedSessions({ entries }: { entries: GlobalArchivedSessionEnt
               </button>
             }
           />
-          <CollapsibleContent className="flex flex-col gap-0.5">
+          <CollapsibleContent className="no-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain">
             <SidebarMenu>
               <SidebarMenuItem>
                 <SidebarMenuSub className="gap-0.5">

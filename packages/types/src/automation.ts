@@ -64,6 +64,10 @@ export type AutomationCalendarSchedule = {
   kind: "calendar";
   timezone: string;
   localTime: string;
+  /** Calendar cadence. Missing means every period for legacy definitions. */
+  every?: number;
+  /** Local date used to keep multi-period schedules on a stable cadence. */
+  anchorLocalDate?: string;
 } & (
   | { frequency: "daily" }
   | { frequency: "weekly"; weekdays: number[] }
@@ -213,7 +217,10 @@ export type AutomationDefinition = {
   schema: typeof AUTOMATION_DEFINITION_SCHEMA;
   id: string;
   name: string;
-  workspace: AutomationWorkspaceSnapshot;
+  workspace?: AutomationWorkspaceSnapshot;
+  /** Missing on legacy definitions means a fresh chat per run. */
+  newChatPerRun?: boolean;
+  directoryName?: string;
   prompt: AutomationPromptTemplate;
   trigger: AutomationTrigger;
   activeRange?: AutomationActiveRange;
@@ -235,6 +242,8 @@ export type AutomationDefinition = {
 export type AutomationDraft = {
   name: string;
   workspace?: AutomationWorkspaceSnapshot;
+  newChatPerRun?: boolean;
+  directoryName?: string;
   prompt: AutomationPromptTemplate;
   timezone: string;
   trigger?: AutomationTrigger;

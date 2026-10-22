@@ -1,6 +1,7 @@
 import { readFile, writeFile, rm, stat } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { hasCurrentRunFinalResponse } from "./session-completion-evidence.js";
+import { persistServerWorkspaceState } from "./routes/workspaces.js";
 import { homedir, hostname } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
@@ -1210,6 +1211,16 @@ export async function startServer(config: ServerConfig, options: {
   const automationExecutor = new AutomationExecutor({
     config,
     repository: automationRepository,
+    registerWorkspace: async (workspace) => {
+      await ensureWorkspaceFiles(workspace.path, "starter");
+      await seedJuggleWorkWorkspaceConfigIfEmpty(config, workspace.id, defaultWorkspaceJuggleWorkConfig(workspace.path, "starter"));
+      const added = !config.workspaces.some((item) => item.id === workspace.id);
+      if (added) config.workspaces.push(workspace);
+      if (!config.authorizedRoots.includes(workspace.path)) config.authorizedRoots.push(workspace.path);
+      await persistServerWorkspaceState(config);
+      if (added) restartReloadWatchers();
+      return resolveWorkspace(config, workspace.id);
+    },
     resolveWorkspace,
     createWorkspaceOpencodeClient,
     githubEventRelay: githubEventRelayClient,

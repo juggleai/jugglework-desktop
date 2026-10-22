@@ -867,6 +867,7 @@ if (remoteDebugPort > 0) {
 // Make the resolved port available to the embedded server so it flows into
 // agent instructions via ensureJuggleWorkAgent → resolveAgentTemplate.
 process.env.JUGGLEWORK_ELECTRON_REMOTE_DEBUG_PORT = String(remoteDebugPort);
+process.env.JUGGLEWORK_AUTOMATION_ROOT = path.join(app.getPath("documents"), "JuggleWork", "Automations");
 
 // Apply extra Chromium flags from ELECTRON_EXTRA_LAUNCH_ARGS.
 // Used in headless/Daytona environments to pass e.g. --disable-gpu.
