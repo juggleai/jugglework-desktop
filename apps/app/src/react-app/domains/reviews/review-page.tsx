@@ -43,6 +43,7 @@ import {
 } from "./review-queries";
 import { reviewViewModel } from "./review-view-model";
 import { useReviewWorkspaceEndpoint } from "./use-review-workspace-endpoint";
+import { ReviewGitHubConnection } from "./review-github-connection";
 import type {
   ReviewCheckState,
   ReviewDetailTab,
@@ -158,7 +159,7 @@ function ReviewInbox(props: {
 }) {
   return (
     <aside className={cn(
-      "min-h-0 w-full shrink-0 flex-col border-r border-dls-border bg-dls-sidebar md:flex md:w-[var(--jugglework-left-sidebar-width)]",
+      "h-full min-h-0 w-full shrink-0 flex-col overflow-hidden border-r border-dls-border bg-[var(--app-secondary-sidebar-bg)] md:flex md:w-[var(--jugglework-left-sidebar-width)]",
       props.reviewId ? "hidden" : "flex",
     )} aria-label={text("Pull request inbox", "拉取请求收件箱")}>
       <div className="shrink-0 border-b border-dls-border px-4 pb-3 pt-3 mac:pt-5">
@@ -434,7 +435,9 @@ export function ReviewPage(props: ReviewPageProps) {
         onToggleSidebar={toggleSidebar}
       />
       <AppInsetSurface className="relative" testId="review-inset-surface">
-        {workspace.loading || connection.isLoading ? <ConnectedState loading /> : connection.data?.state !== "ready" ? <ConnectedState connection={connection.data} error={workspace.error ?? (connection.error instanceof Error ? connection.error.message : null)} onConnect={props.onOpenConnect} onRetry={() => void connection.refetch()} /> : (
+        {workspace.loading || connection.isLoading ? <ConnectedState loading /> : connection.data?.state !== "ready" ? <ReviewGitHubConnection key={props.workspaceId} connectionId={connection.data?.connectionId} onConnected={() => { void connection.refetch(); }}>
+          {(open) => <ConnectedState connection={connection.data} error={workspace.error ?? (connection.error instanceof Error ? connection.error.message : null)} onConnect={connection.data?.state === "disabled_in_workspace" ? props.onOpenConnect : open} onRetry={() => void connection.refetch()} />}
+        </ReviewGitHubConnection> : (
           <ReviewWorkbench
           reviews={reviews}
           reviewId={props.reviewId}
@@ -537,6 +540,47 @@ export function ReviewWorkbench(props: {
 
 export function ConnectedState(props: { loading?: boolean; connection?: ReviewConnectionStatus; error?: string | null; onConnect?: () => void; onRetry?: () => void }) {
   const state = props.connection?.state;
+  const requiresAdministrator = state === "not_connected"
+    || state === "organization_admin_action_required"
+    || state === "provider_admin_action_required";
+  if (!props.loading && !props.error && (requiresAdministrator || state === "member_authorization_required")) {
+    return (
+      <section
+        className="relative isolate flex min-h-0 min-w-0 flex-1 overflow-y-auto bg-dls-surface px-6 py-12 mac:titlebar-no-drag sm:px-10"
+        aria-labelledby="review-setup-title"
+        data-testid="review-connection-state"
+      >
+        <div aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden font-mono text-3xl text-dls-text/[0.025] select-none">
+          <span className="absolute left-[4%] top-[8%] -rotate-12">{"{ / }"}</span>
+          <span className="absolute bottom-[12%] left-[6%] rotate-12">{"< + >"}</span>
+          <span className="absolute right-[5%] top-[24%] rotate-12">{"( )"}</span>
+          <span className="absolute bottom-[8%] right-[7%] -rotate-12">{"[ ; ]"}</span>
+        </div>
+        <div className="relative m-auto flex w-full max-w-xl flex-col items-center text-center" data-testid="review-github-setup">
+          <div aria-hidden="true" className="mb-7 flex size-14 items-center justify-center rounded-2xl bg-black text-white sm:mb-8 sm:size-16 sm:rounded-[18px]">
+            <GitPullRequestArrow className="size-9 sm:size-10" strokeWidth={2.25} />
+          </div>
+          <h1 id="review-setup-title" className="text-2xl font-semibold tracking-tight text-dls-text sm:text-[28px] sm:leading-9">
+            {text("Code review", "代码审查")}
+          </h1>
+          <p className="mt-4 text-sm leading-6 text-dls-text sm:text-base">
+            {requiresAdministrator
+              ? text(
+                "Code Review only uses GitHub connections provided by your organization. Ask an organization administrator to add and configure GitHub.",
+                "代码评审只使用组织下发的 GitHub 连接。请联系组织管理员添加并配置 GitHub。",
+              )
+              : text(
+                "Your organization provides GitHub. Authorize your account in Connect settings to start reviewing pull requests.",
+                "你的组织已提供 GitHub。请在连接设置中授权你的账号，然后开始评审 Pull Request。",
+              )}
+          </p>
+          <Button size="lg" className="mt-7 h-10 w-48 max-w-full gap-2 rounded-full text-sm sm:mt-8" onClick={props.onConnect}>
+            {text("Open Connect settings", "打开连接设置")}
+          </Button>
+        </div>
+      </section>
+    );
+  }
   const unavailable = !props.loading && (!state || state === "unavailable");
   const title = props.loading
     ? text("Checking GitHub connection…", "正在检查 GitHub 连接…")

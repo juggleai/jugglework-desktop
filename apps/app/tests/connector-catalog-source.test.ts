@@ -57,6 +57,21 @@ describe("connector catalog source", () => {
     expect(matchPublicConnector({ ...connector, catalogSource: undefined }, [remote])).toBe(remote);
   });
 
+  test.each(["github", "notion", "linear", "sentry", "stripe", "context7"])(
+    "migrates retired Public connector %s to Personal without deleting its configuration",
+    (catalogId) => {
+      const connector = {
+        name: catalogId,
+        config: { type: "remote" as const, url: `https://${catalogId}.example/mcp`, enabled: false },
+        catalogSource: "public" as const,
+        catalogId,
+      };
+      expect(matchPublicConnector(connector, [])).toBeUndefined();
+      expect(resolveConnectorCatalogSource(connector, [])).toBe("personal");
+      expect(connector.config).toEqual({ type: "remote", url: `https://${catalogId}.example/mcp`, enabled: false });
+    },
+  );
+
   test("matches exact server name and trimmed URL regardless of enabled or auth settings", () => {
     const connector = {
       name: "public-service",

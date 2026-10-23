@@ -13,6 +13,7 @@ mock.module("../src/components/ui/dialog", () => ({
   DialogContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   DialogHeader: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   DialogTitle: ({ children }: { children: ReactNode }) => <h2>{children}</h2>,
+  DialogDescription: ({ children }: { children: ReactNode }) => <p>{children}</p>,
 }));
 mock.module("../src/react-app/design-system/modals/confirm-modal", () => ({ ConfirmModal: () => null }));
 mock.module("../src/react-app/domains/settings/pages/project-extensions/skill-detail-modal", () => ({
@@ -73,7 +74,7 @@ describe("catalog source header", () => {
     const changes: CatalogSource[] = [];
     await render(<CatalogSourceTabs value="organization" organizationName="Example Team" onChange={(source) => changes.push(source)} />);
     expect(buttons().map((button) => button.findByType("span").children.join(""))).toEqual([
-      t("customization.source_public"), "Example Team", t("customization.source_personal"),
+      t("customization.source_public"), `${t("customization.source_organization")}(Example Team)`, t("customization.source_personal"),
     ]);
     expect(buttons().map((button) => button.props["aria-pressed"])).toEqual([false, true, false]);
     for (const button of buttons()) await act(async () => button.props.onClick());
@@ -83,7 +84,20 @@ describe("catalog source header", () => {
     expect(text()).toContain(t("customization.source_organization"));
   });
 
-  test("hides the organization source for a personal organization", async () => {
+  test("shows a named personal organization between Public and Personal", async () => {
+    const changes: CatalogSource[] = [];
+    await render(<CatalogSourceTabs value="organization" organizationName=" Personal " showOrganization onChange={(source) => changes.push(source)} />);
+    expect(buttons().map((button) => button.findByType("span").children.join(""))).toEqual([
+      t("customization.source_public"),
+      `${t("customization.source_organization")}(Personal)`,
+      t("customization.source_personal"),
+    ]);
+    expect(buttons().map((button) => button.props["aria-pressed"])).toEqual([false, true, false]);
+    await act(async () => buttons()[1]!.props.onClick());
+    expect(changes).toEqual(["organization"]);
+  });
+
+  test("hides the organization source when no signed-in organization is available", async () => {
     const changes: CatalogSource[] = [];
     await render(<CatalogSourceTabs value="public" organizationName="Personal" showOrganization={false} onChange={(source) => changes.push(source)} />);
     expect(buttons().map((button) => button.findByType("span").children.join(""))).toEqual([
@@ -244,8 +258,10 @@ describe("global connector sources", () => {
     for (const entry of entries) expect(text()).toContain(entry.name);
     expect(renderer.root.findAllByType("span").filter((span) => span.children.includes(t("customization.installed")))).toHaveLength(2);
     const addButtons = buttons().filter((button) => button.children.includes(t("project_extensions.connect")));
-    expect(addButtons).toHaveLength(1);
-    await act(async () => addButtons[0]!.props.onClick());
+    expect(addButtons).toHaveLength(3);
+    await act(async () => addButtons[2]!.props.onClick());
+    expect(connect).not.toHaveBeenCalled();
+    await act(async () => buttons().find((button) => button.children.includes("Continue connecting to Available directory"))!.props.onClick());
     expect(connect).toHaveBeenCalledWith(entries[2]);
     expect(buttons().some((button) => button.children.includes(t("global_connectors.add")))).toBe(true);
     await act(async () => renderer.root.findByType("input").props.onChange({ currentTarget: { value: "existing-server" } }));

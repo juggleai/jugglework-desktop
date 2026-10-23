@@ -143,6 +143,6 @@ describe("personal global settings surfaces", () => {
     expect(route).toContain("globalConnectorWriteInFlightRef.current");
     expect(route).toContain('if (globalConnectorWriteInFlightRef.current) throw new Error(t("common.saving"))');
     expect(globalConnectors).toContain("const mutationPending = Boolean(props.pendingConnectorName)");
-    expect(globalConnectors).toContain("disabled={props.busy || mutationPending}");
+    expect(globalConnectors).toContain("disabled={props.busy || mutationPending || submitting || authorizationBusy}");
   });
 });

@@ -14,6 +14,9 @@ import type {
 } from "@jugglework/types/reviews";
 
 import type { ResolvedWorkspaceEndpoint } from "@/app/lib/workspace-endpoint";
+import { readDenSettings } from "@/app/lib/den";
+import { syncCloudControlMcpInBackground } from "../connections/use-session-mcp-maintenance";
+import { readReviewConnectionWithRecovery } from "./review-connection-recovery";
 
 function endpointKey(endpoint: ResolvedWorkspaceEndpoint | null) {
   return endpoint ? [endpoint.baseUrl, endpoint.workspaceId] as const : ["unavailable", ""] as const;
@@ -40,7 +43,26 @@ export function useReviewConnection(endpoint: ResolvedWorkspaceEndpoint | null, 
   return useQuery({
     queryKey: reviewQueryKeys.connection(endpoint),
     enabled: active && Boolean(endpoint),
-    queryFn: ({ signal }) => endpoint!.client.getReviewConnection(endpoint!.workspaceId, { signal }),
+    queryFn: ({ signal }) => {
+      const target = endpoint!;
+      const settings = readDenSettings();
+      const isScopeCurrent = () => {
+        const current = readDenSettings();
+        return !signal.aborted && current.baseUrl === settings.baseUrl
+          && current.authToken === settings.authToken && current.activeOrgId === settings.activeOrgId;
+      };
+      return readReviewConnectionWithRecovery({
+        signal,
+        isScopeCurrent,
+        readConnection: () => target.client.getReviewConnection(target.workspaceId, { signal }),
+        repairTransport: () => syncCloudControlMcpInBackground({
+          client: target.client,
+          workspaceId: target.workspaceId,
+          settings,
+          isScopeCurrent,
+        }),
+      });
+    },
     staleTime: 30_000,
     refetchInterval: reviewVisiblePollInterval(active, 60_000),
     refetchOnWindowFocus: true,

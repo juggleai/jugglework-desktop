@@ -62,6 +62,8 @@ import {
 import { createConnectionsStore, useConnectionsStoreSnapshot } from "@/react-app/domains/connections/store";
 import { cleanupJuggleWorkCloudMcpAfterSignOut } from "@/react-app/domains/connections/cloud-mcp-reconciler";
 import { useOrgMcpConnections } from "@/react-app/domains/connections/use-org-mcp-connections";
+import { ConnectorAuthorizationDialog } from "@/react-app/domains/connections/connector-authorization-dialog";
+import { OrganizationConnectorAction, OrganizationConnectorCard } from "@/react-app/domains/settings/pages/organization-connector-card";
 import { useWorkspaceMcpPolicy } from "@/react-app/domains/connections/use-workspace-mcp-policy";
 import { useWorkspaceMcpToolPolicy } from "@/react-app/domains/connections/use-workspace-mcp-tool-policy";
 import { useWorkspaceSkillPolicy } from "@/react-app/domains/connections/use-workspace-skill-policy";
@@ -228,7 +230,7 @@ import { useReloadCoordinator } from "./reload-coordinator";
 import { CommandPalette } from "./command-palette";
 import { buildCommandPaletteSessions } from "./command-palette-sessions";
 import { useCommandPaletteShortcut } from "./use-shell-shortcuts";
-import { isPersonalDenOrganization, type DenSettings } from "@/app/lib/den";
+import type { DenSettings } from "@/app/lib/den";
 import { readActiveWorkspaceId, readLastSessionFor, writeActiveWorkspaceId } from "./session-memory";
 import { settingsReturnRoute, workspaceAppsRoute, workspaceChatRoute, workspaceReviewsRoute, workspaceSessionRoute, workspaceSettingsRoute } from "./workspace-routes";
 import { getReactQueryClient } from "@/react-app/infra/query-client";
@@ -910,12 +912,33 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const [connectCapabilitiesError, setConnectCapabilitiesError] = useState<string | null>(null);
   const [connectCapabilitiesScope, setConnectCapabilitiesScope] = useState("");
   const catalogOrganizationKey = `${cloudSession.baseUrl}:${cloudSession.user?.id ?? ""}:${cloudSession.activeOrganization?.id ?? ""}:${cloudSession.isSignedIn}`;
+  const [orgConnectorAuthorization, setOrgConnectorAuthorization] = useState<{ scope: string; id: string; started: boolean } | null>(null);
+  useEffect(() => { setOrgConnectorAuthorization(null); }, [catalogOrganizationKey]);
+  const authorizingOrgConnector = orgConnectorAuthorization?.scope === catalogOrganizationKey
+    ? orgMcpConnections.connections.find((entry) => entry.id === orgConnectorAuthorization.id) : undefined;
+  const canManageSharedConnector = cloudSession.activeOrganization?.role === "owner" || cloudSession.activeOrganization?.role === "admin";
+  useEffect(() => {
+    if (orgConnectorAuthorization?.started && authorizingOrgConnector && isOrgMcpConnectionReady(authorizingOrgConnector)) {
+      setOrgConnectorAuthorization(null);
+    }
+  }, [orgConnectorAuthorization?.started, authorizingOrgConnector]);
+  const orgConnectorActions = (connection: (typeof orgMcpConnections.connections)[number]) => ({
+    connection,
+    connecting: orgMcpConnections.connectingId === connection.id,
+    disconnecting: orgMcpConnections.disconnectingId === connection.id,
+    canManageShared: canManageSharedConnector,
+    onConnect: () => setOrgConnectorAuthorization({ scope: catalogOrganizationKey, id: connection.id, started: false }),
+    onDisconnect: () => { void orgMcpConnections.disconnect(connection.id, { allowShared: canManageSharedConnector }); },
+  });
   const hasOrganizationCatalog = cloudSession.isSignedIn
-    && Boolean(cloudSession.activeOrganization)
-    && !isPersonalDenOrganization(cloudSession.activeOrganization);
+    && Boolean(cloudSession.activeOrganization);
   const effectiveCatalogSource: CatalogSource = hasOrganizationCatalog || catalogSource !== "organization"
     ? catalogSource
     : "public";
+  useEffect(() => {
+    if (route.tab !== "connectors" || effectiveCatalogSource !== "organization") return;
+    void orgMcpConnections.refresh(undefined, { silent: true });
+  }, [route.tab, effectiveCatalogSource, catalogOrganizationKey, orgMcpConnections.refresh]);
   const refreshConnectCapabilities = useCallback(async () => {
     const requestId = connectCapabilitiesRequestRef.current + 1;
     connectCapabilitiesRequestRef.current = requestId;
@@ -2970,69 +2993,76 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         );
       case "connectors":
         return (
-          <GlobalConnectorsView
-            key={props.pluginCatalogOnly ? `${catalogDetailContext}:${catalogNavigationRevision}` : "global-connectors"}
-            detailPresentation={props.pluginCatalogOnly ? "page" : "modal"}
-            detailRequest={catalogRequestFor("connectors")}
-            source={props.pluginCatalogOnly ? effectiveCatalogSource : undefined}
-            onSourceChange={changeCatalogSource}
-            organizationName={cloudSession.activeOrgName}
-            showOrganization={hasOrganizationCatalog}
-            publicEntries={publicConnectorEntries}
-            organizationDetail={(id) => {
-              const connection = orgMcpConnections.connections.find((item) => item.id === id);
-              if (!connection || !cloudSession.isSignedIn) return null;
-              return {
-                name: connection.name,
-                description: `${cloudSession.activeOrgName ?? ""} · ${t("customization.organization_description")}`,
-                content: <div className="space-y-5">
-                  <p className="text-sm text-dls-secondary">{orgMcpConnectionActionLabel(connection)}</p>
-                  {orgMcpConnections.error ? <p role="alert">{orgMcpConnections.error}</p> : null}
-                  {!isOrgMcpConnectionReady(connection) ? <Button disabled={orgMcpConnections.connectingId === id} onClick={() => { void orgMcpConnections.connect(id); }}>{orgMcpConnectionActionLabel(connection)}</Button> : null}
-                </div>,
-              };
-            }}
-            organizationContent={(search, openDetail) =>
-              !cloudSession.isSignedIn ? <p>{t("marketplace.signin_hint")}</p>
-              : orgMcpConnections.loading ? <p role="status">{t("common.loading")}</p>
-              : orgMcpConnections.error ? <p role="alert">{orgMcpConnections.error}</p>
-              : orgMcpConnections.connections.length === 0 ? <p>{t("customization.empty_source")}</p>
-              : <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                {orgMcpConnections.connections.filter((connection) => connection.name.toLowerCase().includes(search.trim().toLowerCase())).map((connection) => (
-                  <ExtensionCard
-                    key={connection.id}
-                    name={connection.name}
-                    description={t("customization.organization_description")}
-                    kind="mcp"
-                    url={connection.url}
-                    connected={isOrgMcpConnectionReady(connection)}
-                    connecting={orgMcpConnections.connectingId === connection.id}
-                    connectedLabel={orgMcpConnectionActionLabel(connection)}
-                    actionLabel={orgMcpConnectionActionLabel(connection)}
-                    onClick={() => openDetail(connection.id)}
-                    plain
-                  />
-                ))}
-                {orgMcpConnections.connections.every((connection) => !connection.name.toLowerCase().includes(search.trim().toLowerCase())) ? <p>{t("chat.no_search_results")}</p> : null}
-              </div>
-            }
-            busy={busy}
-            connectors={standaloneGlobalConnectors}
-            unconnected={globalUnconnectedConnectors}
-            error={globalConnectorsError}
-            pendingConnectorName={pendingGlobalConnector}
-            onAddConnector={addGlobalConnector}
-            onCreateConnector={createPersonalConnector}
-            onConnectDirectory={connectGlobalDirectory}
-            onToggleEnabled={toggleGlobalConnector}
-            onAuthorize={(connector) => connectionsStore.authorizeMcp({
-              name: connector.name,
-              source: "config.global",
-              config: connector.config,
-            })}
-            onRemoveConnector={removeGlobalConnector}
-            onRefresh={() => { void (effectiveCatalogSource === "organization" && props.pluginCatalogOnly ? orgMcpConnections.refresh() : refreshGlobalConnectors()); }}
-          />
+          <>
+            <GlobalConnectorsView
+              key={props.pluginCatalogOnly ? `${catalogDetailContext}:${catalogNavigationRevision}` : "global-connectors"}
+              detailPresentation={props.pluginCatalogOnly ? "page" : "modal"}
+              detailRequest={catalogRequestFor("connectors")}
+              source={props.pluginCatalogOnly ? effectiveCatalogSource : undefined}
+              onSourceChange={changeCatalogSource}
+              organizationName={cloudSession.activeOrgName}
+              showOrganization={hasOrganizationCatalog}
+              publicEntries={publicConnectorEntries}
+              organizationDetail={(id) => {
+                const connection = orgMcpConnections.connections.find((item) => item.id === id);
+                if (!connection || !cloudSession.isSignedIn) return null;
+                return {
+                  name: connection.name,
+                  description: `${cloudSession.activeOrgName ?? ""} · ${t("customization.organization_description")}`,
+                  actions: <OrganizationConnectorAction {...orgConnectorActions(connection)} />,
+                  content: <div className="space-y-5">
+                    <p className="text-sm text-dls-secondary">{orgMcpConnectionActionLabel(connection)}</p>
+                    {orgMcpConnections.error ? <p role="alert">{orgMcpConnections.error}</p> : null}
+                  </div>,
+                };
+              }}
+              organizationContent={(search, openDetail) =>
+                !cloudSession.isSignedIn ? <p>{t("marketplace.signin_hint")}</p>
+                : orgMcpConnections.loading ? <p role="status">{t("common.loading")}</p>
+                : orgMcpConnections.error ? <p role="alert">{orgMcpConnections.error}</p>
+                : orgMcpConnections.connections.length === 0 ? <p>{t("customization.empty_source")}</p>
+                : <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  {orgMcpConnections.connections.filter((connection) => connection.name.toLowerCase().includes(search.trim().toLowerCase())).map((connection) => (
+                    <OrganizationConnectorCard
+                      key={connection.id}
+                      {...orgConnectorActions(connection)}
+                      onOpenDetail={() => openDetail(connection.id)}
+                    />
+                  ))}
+                  {orgMcpConnections.connections.every((connection) => !connection.name.toLowerCase().includes(search.trim().toLowerCase())) ? <p>{t("chat.no_search_results")}</p> : null}
+                </div>
+              }
+              busy={busy}
+              connectors={standaloneGlobalConnectors}
+              unconnected={globalUnconnectedConnectors}
+              error={globalConnectorsError}
+              pendingConnectorName={pendingGlobalConnector}
+              onAddConnector={addGlobalConnector}
+              onCreateConnector={createPersonalConnector}
+              onConnectDirectory={connectGlobalDirectory}
+              onToggleEnabled={toggleGlobalConnector}
+              onAuthorize={(connector) => connectionsStore.authorizeMcp({
+                name: connector.name,
+                source: "config.global",
+                config: connector.config,
+              })}
+              onRemoveConnector={removeGlobalConnector}
+              onRefresh={() => { void (effectiveCatalogSource === "organization" && props.pluginCatalogOnly ? orgMcpConnections.refresh() : refreshGlobalConnectors()); }}
+            />
+            <ConnectorAuthorizationDialog
+              open={Boolean(authorizingOrgConnector)}
+              onOpenChange={(open) => { if (!open) setOrgConnectorAuthorization(null); }}
+              name={authorizingOrgConnector?.name ?? ""}
+              approvedByOrganization
+              busy={Boolean(orgMcpConnections.connectingId)}
+              error={orgMcpConnections.error}
+              onContinue={() => {
+                if (!authorizingOrgConnector || orgConnectorAuthorization?.scope !== catalogOrganizationKey) return;
+                setOrgConnectorAuthorization({ scope: catalogOrganizationKey, id: authorizingOrgConnector.id, started: true });
+                void orgMcpConnections.connect(authorizingOrgConnector.id);
+              }}
+            />
+          </>
         );
       case "extensions": {
         if (props.pluginCatalogOnly) {

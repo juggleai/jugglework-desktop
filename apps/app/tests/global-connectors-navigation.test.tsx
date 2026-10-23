@@ -17,6 +17,7 @@ mock.module("../src/components/ui/dialog", () => ({
   DialogContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   DialogHeader: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   DialogTitle: ({ children }: { children: ReactNode }) => <h2>{children}</h2>,
+  DialogDescription: ({ children }: { children: ReactNode }) => <p>{children}</p>,
 }));
 mock.module("../src/react-app/design-system/modals/confirm-modal", () => ({
   ConfirmModal: ({ open, onConfirm }: { open: boolean; onConfirm: () => void }) => open ? <div data-testid="remove-dialog"><button onClick={onConfirm}>Confirm removal</button></div> : null,
@@ -66,6 +67,13 @@ const text = () => JSON.stringify(renderer!.toJSON());
 async function click(label: string) {
   await act(async () => { root().findAllByType("button").find((button) => button.children.includes(label))!.props.onClick(); });
 }
+async function openFirstCard() {
+  await act(async () => { root().findAllByType("button").find((button) => button.props.className?.includes("text-left"))!.props.onClick(); });
+}
+async function confirmConnection() {
+  const button = root().findAllByType("button").find((button) => button.children.some((child) => typeof child === "string" && child.startsWith("Continue connecting to ")));
+  if (button) await act(async () => { button.props.onClick(); });
+}
 async function fill(placeholder: string, value: string) {
   await act(async () => { root().findByProps({ placeholder }).props.onChange({ currentTarget: { value } }); });
 }
@@ -81,24 +89,29 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
-test("public installed GitHub shows actual readiness and never offers OAuth for token configuration", async () => {
-  const github: McpDirectoryInfo = { id: "github", serverName: "github", name: "GitHub", description: "Runtime token required", type: "remote", url: "https://example.com/github", oauth: false };
-  const connector = { name: "github", config: { type: "remote" as const, url: github.url, oauth: false as const }, catalogSource: "public" as const, catalogId: "github" };
-  await render({ publicEntries: [github], connectors: [connector] });
+test("public installed connector shows actual readiness without exposing private errors", async () => {
+  const connectorEntry: McpDirectoryInfo = { id: "test-public", serverName: "test-public", name: "Test Public", description: "Test directory entry", type: "remote", url: "https://example.com/mcp", oauth: false };
+  const connector = { name: "test-public", config: { type: "remote" as const, url: connectorEntry.url, oauth: false as const }, catalogSource: "public" as const, catalogId: "test-public" };
+  await render({ publicEntries: [connectorEntry], connectors: [connector] });
   expect(text()).toContain(t("customization.installed"));
   expect(text()).toContain(t("mcp.readiness_unverified"));
   await update({ connectors: [{ ...connector, status: { status: "failed", error: "synthetic-private-detail" } }] });
   expect(text()).toContain(t("mcp.readiness_disconnected"));
-  expect(text()).not.toContain(t("mcp.readiness_token_hint"));
-  expect(text()).not.toContain(t("mcp.readiness_failed_hint"));
   expect(text()).not.toContain("synthetic-private-detail");
-  await click(t("common.edit"));
-  await update({ connectors: [{ ...connector, status: { status: "needs_auth" } }] });
-  expect(text()).toContain(t("mcp.readiness_credentials"));
-  expect(root().findAllByType("button").filter((button) => button.children.includes(t("mcp.connect")))).toHaveLength(0);
-  await update({ connectors: [{ ...connector, status: { status: "connected" } }] });
-  expect(text()).toContain(t("mcp.status_connected"));
-  expect(text()).not.toContain(t("mcp.readiness_token_hint"));
+});
+
+test("retired Public GitHub is absent from Public and remains manageable under Personal", async () => {
+  const github = {
+    name: "github",
+    config: { type: "remote" as const, url: "https://api.githubcopilot.com/mcp/", enabled: false },
+    catalogSource: "public" as const,
+    catalogId: "github",
+  };
+  await render({ source: "public", publicEntries: [], connectors: [github] });
+  expect(text()).not.toContain("github");
+
+  await update({ source: "personal" });
+  expect(text()).toContain("github");
 });
 
 for (const source of ["public", "organization", "personal"] as const) {
@@ -140,13 +153,16 @@ test("public directory stays public after success and rejected or thrown failure
   const change = mock(noop);
   await render({ onSourceChange: change, onConnectDirectory: () => pending.promise });
   await click(t("project_extensions.connect"));
+  await confirmConnection();
   expect(change).not.toHaveBeenCalled();
   await act(async () => { pending.resolve(); });
   expect(change).not.toHaveBeenCalled();
   await update({ onConnectDirectory: () => Promise.reject(new Error("Install failed")) });
   await click(t("project_extensions.connect"));
+  await confirmConnection();
   await update({ onConnectDirectory: () => { throw new Error("Install failed"); } });
   await click(t("project_extensions.connect"));
+  await confirmConnection();
   expect(change).not.toHaveBeenCalled();
 });
 
@@ -162,6 +178,7 @@ for (const operation of ["custom", "directory"] as const) {
         await click(t("common.create"));
       } else {
         await click(t("project_extensions.connect"));
+        await confirmConnection();
       }
       if (invalidation === "unmount") await unmount();
       if (invalidation === "source") {
@@ -263,10 +280,11 @@ test("public install remains Public after inventory refresh and is absent from P
   const change = mock(noop);
   await render({ connectors: [], publicEntries: [publicEntry], onConnectDirectory: connect, onSourceChange: change });
   await click(t("project_extensions.connect"));
+  await confirmConnection();
   expect(connect).toHaveBeenCalledWith(publicEntry);
   await update({ connectors: [installedPublic] });
   expect(text()).toContain(t("customization.installed"));
-  expect(root().findAllByType("button").some((button) => button.children.includes(t("common.edit")))).toBe(true);
+  expect(root().findAllByType("button").some((button) => button.children.includes(t("mcp.connect")))).toBe(true);
   expect(change).not.toHaveBeenCalled();
   await update({ source: "personal" });
   expect(text()).not.toContain("public-server");
@@ -288,14 +306,17 @@ test("installed public detail supports enable, authorization, edit and removal w
     onToggleEnabled: toggle, onAuthorize: authorize, onAddConnector: save,
     onRemoveConnector: remove, onSourceChange: change,
   });
-  await click(t("common.edit"));
-  await click(t("mcp.enable_app"));
+  await openFirstCard();
+  await click(t("mcp.connect"));
+  await confirmConnection();
   expect(toggle).toHaveBeenCalledWith("public-server", true);
   const authorizedTarget = { ...installedPublic, config: { ...installedPublic.config, enabled: true, headers: { "X-Custom": "retained" } }, status: { status: "needs_auth" as const } };
   await update({ connectors: [authorizedTarget] });
   await click(t("mcp.connect"));
+  await confirmConnection();
   expect(authorize).toHaveBeenCalledWith(authorizedTarget);
-  await click(t("mcp.disable_app"));
+  await update({ connectors: [{ ...authorizedTarget, status: { status: "connected" } }] });
+  await click(t("mcp.org_connection_disconnect_action"));
   expect(toggle).toHaveBeenCalledWith("public-server", false);
   const editedConfig = { ...authorizedTarget.config, url: "https://custom.example/mcp" };
   await act(async () => {
@@ -310,7 +331,7 @@ test("installed public detail supports enable, authorization, edit and removal w
   await update({ source: "personal" });
   expect(text()).not.toContain("public-server");
   await update({ source: "public" });
-  await click(t("common.edit"));
+  await openFirstCard();
   await click(t("mcp.remove_app"));
   await click("Confirm removal");
   expect(remove).toHaveBeenCalledWith("public-server");
@@ -326,7 +347,7 @@ test("public name collision shows a disabled connect and hint, never installed o
   });
   expect(text()).not.toContain(t("customization.installed"));
   expect(text()).toContain(t("customization.connector_name_conflict"));
-  expect(root().findAllByType("button").find((button) => button.children.includes(t("project_extensions.connect")))!.props.disabled).toBe(true);
+  expect(root().findAllByType("button").find((button) => button.children.includes(t("project_extensions.connect")) && button.props.disabled)!.props.disabled).toBe(true);
   await act(async () => {
     root().findAllByType(Button).find((button) => button.props.children === t("project_extensions.connect"))!.props.onClick();
   });
@@ -356,7 +377,7 @@ for (const source of ["public", "organization", "personal"] as const) {
 test("public detail closes if the same name is replaced by a custom endpoint", async () => {
   const save = mock(noop);
   await render({ publicEntries: [publicEntry], connectors: [installedPublic], onAddConnector: save });
-  await click(t("common.edit"));
+  await openFirstCard();
   expect(root().findAllByProps({ role: "dialog" })).toHaveLength(1);
   await update({ connectors: [{ ...installedPublic, config: { type: "remote", url: "https://custom.example/mcp" } }] });
   expect(root().findAllByProps({ role: "dialog" })).toHaveLength(0);
@@ -374,7 +395,7 @@ test("stored public provenance retains directory management after endpoint and c
   await render({ publicEntries: [entry], connectors: [connector], onAddConnector: save, onCreateConnector: create });
   expect(text()).toContain(t("customization.installed"));
   expect(text()).not.toContain(t("customization.connector_name_conflict"));
-  await click(t("common.edit"));
+  await openFirstCard();
   expect(root().findByProps({ role: "dialog" }).findByType("input").props.value).toBe(connector.config.url);
   await update({ publicEntries: [] });
   expect(root().findAllByProps({ role: "dialog" })).toHaveLength(1);
@@ -395,7 +416,7 @@ test("public cards search installed names, URLs and commands after catalog ident
   for (const query of [connector.name, " EDITED.EXAMPLE ", entry.serverName, entry.description]) {
     await fill(t("mcp.search_extensions_placeholder"), query);
     expect(text()).toContain(t("customization.installed"));
-    await click(t("common.edit"));
+    await openFirstCard();
     expect(root().findByProps({ role: "dialog" }).findByType("input").props.value).toBe(connector.config.url);
     await click(t("common.save"));
   }
@@ -431,7 +452,7 @@ test("a stale public catalog ID remains an orphan instead of claiming a same-nam
   expect(text()).toContain(connector.name);
   expect(text()).toContain(t("customization.installed"));
   expect(text()).toContain(t("customization.connector_name_conflict"));
-  expect(root().findAllByType("button").find((button) => button.children.includes(t("project_extensions.connect")))!.props.disabled).toBe(true);
+  expect(root().findAllByType("button").find((button) => button.children.includes(t("project_extensions.connect")) && button.props.disabled)!.props.disabled).toBe(true);
   await act(async () => { root().findAllByType("button").find((button) => button.props.className?.includes("text-left"))!.props.onClick(); });
   expect(root().findAllByProps({ role: "dialog" })).toHaveLength(1);
 });
@@ -461,8 +482,10 @@ test("orphaned public connectors remain searchable and fully manageable without 
   };
   await openOrphan();
   await click(t("mcp.connect"));
+  await confirmConnection();
   expect(authorize).toHaveBeenCalledWith(connector);
-  await click(t("mcp.disable_app"));
+  await update({ connectors: [{ ...connector, status: { status: "connected" } }] });
+  await click(t("mcp.org_connection_disconnect_action"));
   expect(toggle).toHaveBeenCalledWith(connector.name, false);
   await click(t("common.save"));
   expect(save).toHaveBeenCalledWith(connector.name, connector.config);
@@ -496,7 +519,7 @@ for (const source of ["public", "organization", "personal"] as const) {
     await update({ source: "public" });
     expect(text()).not.toContain(t("customization.installed"));
     expect(text()).toContain(t("customization.connector_name_conflict"));
-    expect(root().findAllByType("button").find((button) => button.children.includes(t("project_extensions.connect")))!.props.disabled).toBe(true);
+    expect(root().findAllByType("button").find((button) => button.children.includes(t("project_extensions.connect")) && button.props.disabled)!.props.disabled).toBe(true);
   });
 }
 
@@ -525,6 +548,26 @@ async function card(name: string) {
   });
 }
 
+test("Personal card Connect waits for consent and Disconnect keeps the saved connector", async () => {
+  const authorize = mock(noop), toggle = mock(noop), remove = mock(noop);
+  const connector = { name: "GitHub", config: { type: "remote" as const, url: "https://api.githubcopilot.com/mcp/" }, status: { status: "needs_auth" as const } };
+  await render({ source: "personal", detailPresentation: "page", connectors: [connector], publicEntries: [], onAuthorize: authorize, onToggleEnabled: toggle, onRemoveConnector: remove });
+  await click(t("mcp.connect"));
+  expect(text()).toContain("Continue connecting to GitHub");
+  expect(pages()).toHaveLength(0);
+  expect(authorize).not.toHaveBeenCalled(); expect(toggle).not.toHaveBeenCalled();
+  await confirmConnection();
+  expect(authorize).toHaveBeenCalledWith(connector);
+  expect(toggle).toHaveBeenCalledWith("GitHub", true);
+  await update({ connectors: [{ ...connector, status: { status: "connected" } }] });
+  await card("GitHub");
+  expect(pages()).toHaveLength(1);
+  expect(root().findByType("h1").children).toEqual(["GitHub"]);
+  await click(t("mcp.org_connection_disconnect_action"));
+  expect(toggle).toHaveBeenCalledWith("GitHub", false);
+  expect(remove).not.toHaveBeenCalled();
+});
+
 test("page public overview is read-only until explicit install, then uses live config without duplicating the card", async () => {
   const entry = { ...publicEntry, id: "directory-id" };
   const connect = mock(noop);
@@ -542,11 +585,12 @@ test("page public overview is read-only until explicit install, then uses live c
   expect(save).not.toHaveBeenCalled();
   expect(toggle).not.toHaveBeenCalled();
   await click(t("project_extensions.connect"));
+  await confirmConnection();
   expect(connect).toHaveBeenCalledWith(entry);
   const connector = { ...installedPublic, catalogSource: "public" as const, catalogId: entry.id, config: { ...installedPublic.config, url: "https://edited.example/mcp", headers: { "X-Custom": "keep" } } };
   await update({ connectors: [connector] });
   expect(root().findByType("input").props.value).toBe(connector.config.url);
-  expect(root().findAllByType("button").some((button) => button.children.includes(t("project_extensions.connect")))).toBe(false);
+  expect(root().findAllByType("button").some((button) => button.children.includes(t("mcp.connect")))).toBe(true);
   await click(t("settings.tab_connectors"));
   expect(root().findByProps({ placeholder: t("mcp.search_extensions_placeholder") }).props.value).toBe("Public");
   expect(root().findAllByType("button").filter((button) => button.props.className?.includes("text-left"))).toHaveLength(1);
@@ -684,8 +728,10 @@ test.each(["global-connector:public-server", "public-server", "stable-id"])("ins
   expect(root().findByType("input").props.value).toBe(connector.config.url);
   expect(root().findAllByProps({ role: "dialog" })).toHaveLength(0);
   await click(t("mcp.connect"));
+  await confirmConnection();
   expect(authorize).toHaveBeenCalledWith(connector);
-  await click(t("mcp.disable_app"));
+  await update({ connectors: [{ ...connector, status: { status: "connected" } }] });
+  await click(t("mcp.org_connection_disconnect_action"));
   expect(toggle).toHaveBeenCalledWith(connector.name, false);
   await act(async () => root().findByType("input").props.onChange({ currentTarget: { value: "https://draft.example/mcp" } }));
   await click(t("common.save"));

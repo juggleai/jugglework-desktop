@@ -60,6 +60,54 @@ function provider(scenario: FetchScenario) {
 }
 
 describe("Connect GitHub Review provider", () => {
+  test("an existing Connect gateway without GitHub capabilities requires organization administrator setup", async () => {
+    for (const matches of [[], [{ name: "skill:review_guide", summary: "Review guidance" }]]) {
+      const observed: Array<Record<string, unknown>> = [];
+      const instance = provider({ observed, search: { matches } });
+      expect(await instance.getConnection({ workspace })).toMatchObject({
+        state: "organization_admin_action_required",
+        hint: "Your organization has not configured GitHub for Code Review. Ask an organization administrator to add a GitHub connection.",
+      });
+      await expect(instance.listInbox({ workspace, relationship: "all", limit: 30 })).rejects.toMatchObject({ code: "github_organization_admin_action_required" });
+      expect(observed.some((entry) => (entry.params as { name?: string } | undefined)?.name === "execute_capability")).toBe(false);
+    }
+  });
+
+  test("partial, ambiguous, or malformed discovery remains unavailable instead of suggesting missing setup", async () => {
+    for (const search of [
+      { matches: [{ name: "mcp:github:pull_request_read" }] },
+      { matches: [
+        { name: "mcp:a:search_pull_requests" },
+        { name: "mcp:b:search_pull_requests" },
+        { name: "mcp:a:pull_request_read" },
+      ] },
+      {},
+      { matches: null },
+      { matches: [null] },
+    ]) {
+      expect(await provider({ search }).getConnection({ workspace })).toMatchObject({ state: "unavailable" });
+    }
+  });
+
+  test("GitHub setup can recover immediately after empty discovery without caching the missing state", async () => {
+    const scenario: FetchScenario = { search: { matches: [] } };
+    const instance = provider(scenario);
+    expect((await instance.getConnection({ workspace })).state).toBe("organization_admin_action_required");
+    scenario.search = { matches: [
+      { name: "mcp:github:search_pull_requests" },
+      { name: "mcp:github:pull_request_read" },
+    ] };
+    expect((await instance.getConnection({ workspace })).state).toBe("ready");
+  });
+
+  test("requires both review capabilities to come from the same organization connection", async () => {
+    const status = await provider({ search: { matches: [
+      { name: "mcp:github-a:search_pull_requests" },
+      { name: "mcp:github-b:pull_request_read" },
+    ] } }).getConnection({ workspace });
+    expect(status).toMatchObject({ state: "unavailable", hint: "GitHub review capabilities resolve to different organization connections." });
+  });
+
   test("discovers only the fixed read capabilities and normalizes a paginated Inbox", async () => {
     const observed: Array<Record<string, unknown>> = [];
     const result = await provider({ observed, execute: {

@@ -136,6 +136,18 @@ Installed connector cards and details SHALL show installation separately from co
 - **AND** uninstalled directory entries and internal transports remain excluded
 - **AND** Manage connectors opens the current workspace connector settings
 
+#### Scenario: Connector connection controls in the standalone catalog
+
+- **WHEN** a connector is displayed in the standalone Connectors list or detail page
+- **THEN** an unconnected connector shows Connect and a connected connector shows Disconnect, with the detail action in the upper-right header
+- **AND** clicking the card opens details without authorizing or disconnecting
+- **AND** clicking Connect first opens the same authorization dialog used by Code Review; only its Continue button starts the existing connector flow
+- **AND** organization GitHub authorization uses the same organization connection API, browser authorization, and completion polling as Code Review
+- **AND** successful connection or disconnection updates both card and detail controls without removing the connector
+- **AND** organization shared credentials can be connected or disconnected only by administrators, while members manage their own per-member authorizations
+- **AND** disconnecting an environment-local connector disables its runtime configuration without deleting its saved configuration
+- **AND** closing the consent dialog or switching organization before continuing does not authorize an account
+
 #### Scenario: Status refresh fails
 
 - **WHEN** refreshing connector inventory fails
@@ -160,7 +172,7 @@ Skills and Connectors SHALL expose custom Add in all source tabs. Custom Add SHA
 
 ### Requirement: Shared source classification
 
-Plugins, Skills, and Connectors SHALL each offer mutually exclusive Public, the selected organization's actual name, and Personal source tabs. Public SHALL be curated by JuggleWork and visible independently of sign-in. Personal SHALL show custom environment-local additions only, not installations originating from Public or the organization, and SHALL NOT mean a personal organization. Unsupported installers SHALL NOT claim successful local installation.
+Plugins, Skills, and Connectors SHALL each offer mutually exclusive Public, Organization(name), and Personal source tabs in that order. The organization tab SHALL include the selected organization's actual name and SHALL be available for both personal and team organizations when signed in. Public SHALL be curated by JuggleWork and visible independently of sign-in. Personal SHALL show custom environment-local additions only, not installations originating from Public or the organization, and SHALL NOT mean a personal organization. Unsupported installers SHALL NOT claim successful local installation.
 
 #### Scenario: Bundled skill creator is Public
 
@@ -196,16 +208,17 @@ Plugins, Skills, and Connectors SHALL each offer mutually exclusive Public, the 
 #### Scenario: Public plugins and connectors
 
 - **WHEN** the user selects Public
-- **THEN** Browser and Voice are in Plugins, and Notion and Linear are in Connectors
-- **AND** GitHub is a Public connector using its official remote MCP endpoint and an execution-environment token reference, without claiming unconfigured OAuth login
+- **THEN** Browser and Voice are in Plugins
+- **AND** Connectors does not list GitHub, Notion, Linear, Sentry, Stripe, or Context7 under Public
 - **AND** installed public entries remain discoverable with installation state distinct from provenance
 
-#### Scenario: GitHub public connector
+#### Scenario: No public external MCP catalog
 
 - **WHEN** the user opens Public Connectors
-- **THEN** GitHub is visible with the official remote MCP endpoint `https://api.githubcopilot.com/mcp/`
-- **AND** its description states that authentication requires `GITHUB_TOKEN` in the MCP execution environment, without claiming automatic browser OAuth
-- **AND** generated configuration references the environment variable instead of embedding a credential, and installing from the directory retains Public provenance
+- **THEN** the catalog does not offer external MCP connections for member-managed installation
+- **AND** organization-provided connectors remain available under the organization source
+- **AND** previously installed GitHub, Notion, Linear, Sentry, Stripe, or Context7 directory entries no longer appear under Public
+- **AND** those existing local configurations remain manageable under Personal rather than being silently deleted
 
 #### Scenario: Switch team organizations
 
@@ -216,10 +229,10 @@ Plugins, Skills, and Connectors SHALL each offer mutually exclusive Public, the 
 #### Scenario: Personal organization identity
 
 - **WHEN** the active organization has kind `personal`, including the legacy `personal` slug fallback
-- **THEN** Plugins, Skills, and Connectors hide the Organization source category
-- **AND** their Installed lists omit organization-sourced plugin, skill, and connector shortcuts
+- **THEN** Plugins, Skills, and Connectors show the Organization source category between Public and Personal, labeled `组织(组织名)` in Chinese using the active organization's name
+- **AND** their Installed lists include authorized organization-sourced plugin, skill, and connector shortcuts
 - **AND** Public and Personal continue to refer to public catalog inventory and execution-environment additions respectively
-- **AND** an Organization source selected before switching falls back to Public without showing stale organization inventory
+- **AND** an Organization source selected before switching remains selected and shows only the newly selected organization's authorized inventory without stale organization data
 
 #### Scenario: No public skills feed
 

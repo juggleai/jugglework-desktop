@@ -85,6 +85,30 @@ function connectionIdFromCapability(name: string): string {
   return match?.[1] ?? "github";
 }
 
+function organizationSetupRequired(): ApiError {
+  return new ApiError(
+    409,
+    "github_organization_admin_action_required",
+    "Your organization has not configured GitHub for Code Review. Ask an organization administrator to add a GitHub connection.",
+    { retryable: false },
+  );
+}
+
+function connectionError(connection: ReviewConnectionStatus): ApiError {
+  const code = connection.state === "disabled_in_workspace"
+    ? "github_connection_disabled_in_workspace"
+    : connection.state === "member_authorization_required"
+      ? "github_member_authorization_required"
+      : connection.state === "organization_admin_action_required"
+        ? "github_organization_admin_action_required"
+        : "github_provider_admin_action_required";
+  return new ApiError(409, code, connection.hint ?? "GitHub connection requires attention.", {
+    retryable: false,
+    connectionId: connection.connectionId,
+    ...(connection.action ? { action: connection.action } : {}),
+  });
+}
+
 function relationQuery(relationship: ReviewRelationship): string {
   if (relationship === "all") return "is:open involves:@me";
   if (relationship === "authored") return "is:open author:@me";
@@ -254,7 +278,7 @@ export class ConnectGithubReviewProvider implements ReviewReadProvider {
       ? await this.options.resolveCloudConfig(input.workspace.id)
       : (() => inspectRuntimeOpencodeConfigState(this.options.config, input.workspace.id, { signal: input.signal })
         .then((inspection) => inspection.status === "available" ? runtimeMcpMap(inspection.config)[JUGGLEWORK_CLOUD_MCP_NAME] ?? null : null))());
-    if (!config) throw new ApiError(503, "github_connection_missing", "GitHub is not connected through JuggleWork Connect.", { retryable: false });
+    if (!config) throw new ApiError(503, "github_provider_unavailable", "JuggleWork Connect is unavailable for this workspace.", { retryable: true });
     try {
       const session = await openCloudMcpSession(config, this.fetcher(), "jugglework-review-readonly", { signal: input.signal, timeoutMs: 12_000, maxBytes: 1_048_576 });
       if (!session) throw new ApiError(503, "github_provider_unavailable", "JuggleWork Connect is unavailable.", { retryable: true });
@@ -276,19 +300,36 @@ export class ConnectGithubReviewProvider implements ReviewReadProvider {
     const credentialKey = createHash("sha256").update(session.headers.authorization ?? session.headers.Authorization ?? "anonymous").digest("hex").slice(0, 24);
     const { value } = await this.cache.getOrLoad(`capabilities:${input.workspace.id}:${session.url}:${credentialKey}`, 30_000, async () => {
       const values = await Promise.all(SEARCH_NAMES.map((name) => this.search(session, `GitHub ${name.replaceAll("_", " ")}`, input.signal)));
+      if (values.some((value) => !isRecord(value) || !Array.isArray(value.matches) || value.matches.some((match) => !isRecord(match)))) {
+        throw new ApiError(502, "review_contract_unsupported", "GitHub capability discovery returned an invalid response.", { retryable: false });
+      }
       const matches = values.flatMap((value) => isRecord(value) ? array(value.matches) : []).filter(isRecord);
       for (const match of matches) {
         const connection = mapConnectionValue(match);
-        if (connection) throw new ApiError(409, connection.state === "disabled_in_workspace" ? "github_connection_disabled_in_workspace" : connection.state === "member_authorization_required" ? "github_member_authorization_required" : connection.state === "organization_admin_action_required" ? "github_organization_admin_action_required" : "github_provider_admin_action_required", connection.hint ?? "GitHub connection requires attention.", { retryable: false, connectionId: connection.connectionId, ...(connection.action ? { action: connection.action } : {}) });
+        if (connection) throw connectionError(connection);
+      }
+      // A healthy Connect gateway can exist without a GitHub connector (for
+      // example after an administrator deletes it). Empty discovery is setup,
+      // not a broken provider contract. Partial or ambiguous discovery remains
+      // an error so genuine integration problems are still recoverable.
+      const namesFor = (suffix: CapabilityKind) => [...new Set(matches
+        .map((match) => string(match.name, "", 1_000))
+        .filter((name) => name.endsWith(`:${suffix}`)))];
+      if (SEARCH_NAMES.every((name) => namesFor(name).length === 0)) {
+        throw organizationSetupRequired();
       }
       const exact = (suffix: CapabilityKind) => {
-        const names = [...new Set(matches.map((match) => string(match.name, "", 1_000)).filter((name) => name.endsWith(`:${suffix}`)))];
+        const names = namesFor(suffix);
         if (names.length !== 1) throw new ApiError(502, "review_contract_unsupported", `GitHub ${suffix} capability is unavailable or ambiguous.`, { retryable: false });
         return names[0];
       };
       const searchPullRequests = exact("search_pull_requests");
       const pullRequestRead = exact("pull_request_read");
-      return { connectionId: connectionIdFromCapability(searchPullRequests), connectionName: "GitHub", credentialKey, searchPullRequests, pullRequestRead };
+      const connectionId = connectionIdFromCapability(searchPullRequests);
+      if (connectionIdFromCapability(pullRequestRead) !== connectionId) {
+        throw new ApiError(502, "review_contract_unsupported", "GitHub review capabilities resolve to different organization connections.", { retryable: false });
+      }
+      return { connectionId, connectionName: "GitHub", credentialKey, searchPullRequests, pullRequestRead };
     });
     return { session, capabilities: value };
   }
@@ -300,7 +341,7 @@ export class ConnectGithubReviewProvider implements ReviewReadProvider {
     } catch (error) {
       const remote = toolErrorValue(error);
       const connection = mapConnectionValue(remote);
-      if (connection) throw new ApiError(409, connection.state === "member_authorization_required" ? "github_member_authorization_required" : "github_provider_unavailable", connection.hint ?? "GitHub connection requires attention.", { retryable: false, connectionId: connection.connectionId, ...(connection.action ? { action: connection.action } : {}) });
+      if (connection) throw connectionError(connection);
       const message = error instanceof Error ? error.message.toLowerCase() : "";
       if (message.includes("rate") || message.includes("429")) throw new ApiError(429, "github_rate_limited", "GitHub rate limit reached.", { retryable: true });
       if (message.includes("timed out") || message.includes("timeout")) throw new ApiError(504, "github_provider_timeout", "GitHub request timed out.", { retryable: true });

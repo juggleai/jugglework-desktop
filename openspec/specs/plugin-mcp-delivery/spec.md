@@ -4,6 +4,21 @@
 
 ## Requirements
 
+### Requirement: 组织连接器列表自动同步
+桌面端 SHALL 在返回组织连接器页面、窗口重新获得焦点、页面恢复可见或网络恢复时重新获取当前组织连接器列表。页面持续可见时 SHALL 每 30 秒检查一次；隐藏时 MUST NOT 发起周期同步。成功响应 SHALL 替换旧列表，包括清除云端已删除的条目。自动同步 MUST NOT 显示整页加载状态；短暂失败 SHALL 保留最后一次成功列表，并在后续触发时重试。账号或组织切换后 MUST NOT 应用旧作用域的响应。
+
+#### Scenario: 云端删除后返回桌面
+- **WHEN** 管理员在云端删除 GitHub 连接器，成员返回桌面窗口或组织连接器页面
+- **THEN** 桌面自动获取最新列表，并移除 GitHub 卡片及其已安装导航项，无需点击刷新
+
+#### Scenario: 页面保持打开
+- **WHEN** 云端连接器发生变化且桌面页面持续可见
+- **THEN** 桌面在下一次周期同步成功后反映最新状态，隐藏期间暂停周期请求
+
+#### Scenario: 网络暂时不可用
+- **WHEN** 自动同步请求失败
+- **THEN** 保留最后一次成功列表，不闪烁加载状态，在网络恢复或后续同步时重试
+
 ### Requirement: MCP 组件投递方式判定
 桌面端 SHALL 按每个 MCP 组件独立判定承载位置：配置对象 payload（`mcp` 或 `mcpServers` 两种键名）中带 HTTPS `url` 的 server 判为 `cloud`，仅带启动命令 `command` 的 server 判为 `desktop`。服务端下发 `cloudReadiness.components` 时 MUST 以其 `delivery` 为准；该字段缺失时 MUST 回退到已解析的配置对象 payload 自行推断，不得因缺失而把组件标记为故障。
 

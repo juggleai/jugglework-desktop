@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { Plus, Power } from "lucide-react";
+import { Plus } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -26,6 +26,7 @@ import { CatalogHeader, type CatalogSource } from "./catalog-source";
 import { CatalogDetailPage } from "./catalog-detail-page";
 import { matchPublicConnector, resolveConnectorCatalogSource } from "./connector-catalog-source";
 import { connectorReadiness } from "@/react-app/domains/connections/connector-readiness";
+import { ConnectorAuthorizationDialog } from "@/react-app/domains/connections/connector-authorization-dialog";
 
 /**
  * 全局连接器条目
@@ -63,7 +64,7 @@ export type GlobalConnectorsViewProps = {
   showOrganization?: boolean;
   publicEntries?: McpDirectoryInfo[];
   organizationContent?: ReactNode | ((search: string, openDetail: (id: string) => void) => ReactNode);
-  organizationDetail?: (id: string) => { name: string; content: ReactNode; description?: string } | null;
+  organizationDetail?: (id: string) => { name: string; content: ReactNode; description?: string; actions?: ReactNode } | null;
   busy: boolean;
   connectors: GlobalConnectorItem[];
   unconnected: McpDirectoryInfo[];
@@ -152,6 +153,9 @@ export function GlobalConnectorsView(props: GlobalConnectorsViewProps) {
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [authorizationTarget, setAuthorizationTarget] = useState<{ kind: "installed" | "directory"; id: string } | null>(null);
+  const [authorizationBusy, setAuthorizationBusy] = useState(false);
+  const [authorizationError, setAuthorizationError] = useState<string | null>(null);
   const sourceGeneration = useRef(0);
   // Invalidate pending navigation on committed context changes and unmount.
   useLayoutEffect(() => () => { sourceGeneration.current += 1; }, [
@@ -179,6 +183,8 @@ export function GlobalConnectorsView(props: GlobalConnectorsViewProps) {
   useEffect(() => {
     setDetailSelection(null);
     setRemoveTarget(null);
+    setAuthorizationTarget(null);
+    setAuthorizationError(null);
   }, [props.source, props.organizationName]);
   const selection = detailSelection?.source === props.source ? detailSelection : null;
   const detailEntries = props.source === "public" ? publicEntries : props.unconnected;
@@ -312,6 +318,45 @@ export function GlobalConnectorsView(props: GlobalConnectorsViewProps) {
     await props.onConnectDirectory(entry);
   };
 
+  const requestAuthorization = (kind: "installed" | "directory", id: string) => {
+    setAuthorizationError(null);
+    setAuthorizationTarget({ kind, id });
+  };
+  const authorizationConnector = authorizationTarget?.kind === "installed"
+    ? props.connectors.find((entry) => entry.name === authorizationTarget.id) : undefined;
+  const authorizationEntry = authorizationTarget?.kind === "directory"
+    ? detailEntries.find((entry) => (entry.id ?? getMcpServerName(entry)) === authorizationTarget.id) : undefined;
+  const continueAuthorization = async () => {
+    if (authorizationBusy) return;
+    const generation = sourceGeneration.current;
+    setAuthorizationBusy(true);
+    try {
+      if (authorizationEntry) await connectDirectory(authorizationEntry);
+      else if (authorizationConnector) {
+        await props.onToggleEnabled(authorizationConnector.name, true);
+        if (generation !== sourceGeneration.current) return;
+        if (authorizationConnector.config.type === "remote" && authorizationConnector.config.oauth !== false
+          && !authorizationConnector.config.headers?.Authorization && !authorizationConnector.config.headers?.authorization) {
+          props.onAuthorize(authorizationConnector.config.enabled === false
+            ? { ...authorizationConnector, config: { ...authorizationConnector.config, enabled: true } }
+            : authorizationConnector);
+        }
+      }
+      if (generation === sourceGeneration.current) setAuthorizationTarget(null);
+    } catch (error) {
+      if (generation === sourceGeneration.current) setAuthorizationError(error instanceof Error ? error.message : t("mcp.connect_failed"));
+    } finally {
+      setAuthorizationBusy(false);
+    }
+  };
+  const connectorAction = (connector: GlobalConnectorItem) => {
+    const connected = connector.config.enabled !== false && connector.status?.status === "connected";
+    return <Button variant="outline" disabled={props.busy || mutationPending || submitting || authorizationBusy}
+      onClick={() => connected ? runWrite(props.onToggleEnabled(connector.name, false)) : requestAuthorization("installed", connector.name)}>
+      {t(connected ? "mcp.org_connection_disconnect_action" : "mcp.connect")}
+    </Button>;
+  };
+
   const draftTargetValid = draftType === "remote"
     ? Boolean(draftTarget.trim())
     : parseLocalCommand(draftTarget) !== null;
@@ -319,26 +364,22 @@ export function GlobalConnectorsView(props: GlobalConnectorsViewProps) {
   const draftNameConflict = installedNames.has(draftName.trim());
   const pageDetail = props.detailPresentation === "page" && Boolean(detailName);
   const detailConflict = Boolean(detailEntry && !detailTarget && installedNames.has(getMcpServerName(detailEntry)));
-  const detailActions = detailTarget ? (
+  const detailActions = organizationDetail ? organizationDetail.actions : detailTarget ? (
     <div className="flex flex-wrap justify-between gap-2">
       <Button variant="destructive" disabled={props.busy || mutationPending || submitting} onClick={() => { setDetailSelection(null); setRemoveTarget(detailTarget); }}>
         {t("mcp.remove_app")}
       </Button>
       <div className="flex flex-wrap gap-2">
-        {connectorReadiness(detailTarget.config, detailTarget.status).canAuthorize ? <Button variant="outline" disabled={mutationPending || submitting} onClick={() => props.onAuthorize(detailTarget)}>{t("mcp.connect")}</Button> : null}
-        <Button variant="outline" disabled={props.busy || mutationPending || submitting} onClick={() => runWrite(props.onToggleEnabled(detailTarget.name, detailTarget.config.enabled === false))}>
-          <Power size={13} />
-          {detailTarget.config.enabled === false ? t("mcp.enable_app") : t("mcp.disable_app")}
-        </Button>
+        {connectorAction(detailTarget)}
         <Button disabled={submitting || mutationPending || !draftTargetValid} onClick={() => void saveDetail()}>{submitting || detailPending ? t("common.saving") : t("common.save")}</Button>
       </div>
     </div>
   ) : detailEntry ? (
-    <Button disabled={props.busy || mutationPending || detailConflict} onClick={() => runWrite(connectDirectory(detailEntry))}>
+    <Button disabled={props.busy || mutationPending || detailConflict} onClick={() => requestAuthorization("directory", detailEntry.id ?? getMcpServerName(detailEntry))}>
       {t("project_extensions.connect")}
     </Button>
   ) : null;
-  const detailBody = organizationDetail ? organizationDetail.content : (
+  const detailBody = organizationDetail ? <>{organizationDetail.content}{!pageDetail ? organizationDetail.actions : null}</> : (
     <div className="space-y-4">
       <div className="flex flex-wrap gap-2 text-xs text-dls-secondary">
         <span>{(detailTarget?.config.type ?? detailEntry?.type ?? "remote") === "remote" ? t("mcp.type_cloud") : t("mcp.type_local")}</span>
@@ -433,7 +474,7 @@ export function GlobalConnectorsView(props: GlobalConnectorsViewProps) {
                         return (
                           <LayoutSectionItem
                             key={connector.name}
-                            className="rounded-2xl border border-dls-border p-0 transition-colors hover:bg-dls-hover"
+                            className="flex-row items-center rounded-2xl border border-dls-border p-0 pr-4 transition-colors hover:bg-dls-hover"
                           >
                             <button type="button" disabled={mutationPending} onClick={() => openEditor(connector)} className="flex min-w-0 flex-1 items-center gap-3 px-4 py-3 text-left disabled:cursor-wait">
                               <GlobalConnectorAvatar name={connector.name} url={connector.config.url} />
@@ -454,6 +495,7 @@ export function GlobalConnectorsView(props: GlobalConnectorsViewProps) {
                                 <p className="mt-1 text-xs text-dls-secondary">{connectorReadiness(connector.config, connector.status).hint}</p>
                               </div>
                             </button>
+                            {connectorAction(connector)}
                           </LayoutSectionItem>
                         );
                       })}
@@ -498,15 +540,13 @@ export function GlobalConnectorsView(props: GlobalConnectorsViewProps) {
                                   {t("customization.installed")}
                                   {" · "}{connectorReadiness(installed.config, installed.status).label}
                                 </span>
-                                <Button variant="outline" disabled={props.busy || mutationPending} onClick={() => openEditor(installed)}>
-                                  {t("common.edit")}
-                                </Button>
+                                {connectorAction(installed)}
                               </>
                             ) : (
                               <Button
                                 variant="outline"
                                 disabled={props.busy || mutationPending || conflict}
-                                onClick={() => runWrite(connectDirectory(entry))}
+                                onClick={() => requestAuthorization("directory", entry.id ?? getMcpServerName(entry))}
                               >
                                 {t("project_extensions.connect")}
                               </Button>
@@ -525,6 +565,14 @@ export function GlobalConnectorsView(props: GlobalConnectorsViewProps) {
         </LayoutSection>
       </LayoutStack>}
 
+      <ConnectorAuthorizationDialog
+        open={Boolean(authorizationConnector || authorizationEntry)}
+        onOpenChange={(open) => { if (!open && !authorizationBusy) setAuthorizationTarget(null); }}
+        name={authorizationEntry?.name ?? authorizationConnector?.name ?? ""}
+        busy={authorizationBusy || mutationPending}
+        error={authorizationError ?? props.error}
+        onContinue={() => { void continueAuthorization(); }}
+      />
       <Dialog open={addOpen} onOpenChange={(open) => { if (!open && !submitting) setAddOpen(false); }}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>

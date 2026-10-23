@@ -93,9 +93,41 @@ describe("Review workbench preview", () => {
         onRetry={noop}
       />,
     );
-    expect(html).toContain("Connect your GitHub account");
+    expect(html).toContain("Your organization provides GitHub");
     expect(html).toContain("Open Connect settings");
+    expect(html).toContain('data-testid="review-github-setup"');
     expect(html).not.toContain("Review me");
+  });
+
+  test("missing GitHub asks an organization administrator to add the connection", () => {
+    const html = renderToStaticMarkup(
+      <ConnectedState connection={{ schemaVersion: 1, provider: "github", state: "not_connected" }} onConnect={noop} />,
+    );
+    expect(html).toContain("Code review");
+    expect(html).toContain("only uses GitHub connections provided by your organization");
+    expect(html).toContain("Ask an organization administrator to add and configure GitHub");
+    expect(html).toContain("Open Connect settings");
+    expect(html.match(/<button\b/g)).toHaveLength(1);
+    expect(html).not.toContain("GitLab");
+    expect(html).not.toContain("Pull request inbox");
+    expect(html).not.toContain("Retry");
+  });
+
+  test("administrator setup stays actionable without presenting member authorization as sufficient", () => {
+    for (const state of ["organization_admin_action_required", "provider_admin_action_required"] as const) {
+      const html = renderToStaticMarkup(<ConnectedState connection={{ schemaVersion: 1, provider: "github", state }} onConnect={noop} />);
+      expect(html).toContain("Open Connect settings");
+      expect(html).toContain("Ask an organization administrator");
+    }
+  });
+
+  test("loading and workspace-disabled states do not show the setup introduction", () => {
+    const loading = renderToStaticMarkup(<ConnectedState loading connection={{ schemaVersion: 1, provider: "github", state: "not_connected" }} />);
+    expect(loading).toContain("Checking GitHub connection");
+    expect(loading).not.toContain("review-github-setup");
+    const disabled = renderToStaticMarkup(<ConnectedState connection={{ schemaVersion: 1, provider: "github", state: "disabled_in_workspace" }} onConnect={noop} />);
+    expect(disabled).toContain("GitHub is disabled for this workspace");
+    expect(disabled).not.toContain("review-github-setup");
   });
 
   test("guides unavailable GitHub connections to Connect settings and also allows retry", () => {

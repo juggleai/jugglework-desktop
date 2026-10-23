@@ -50,9 +50,9 @@ Clarification: navigation to Personal applies to custom Add, not installing/conn
 - [x] 7.2 Keep built-in public plugins out of Personal; aggregate installed sources with origin labels and correct navigation, including organization capabilities.
 - [x] 7.3 Verify provenance persistence, legacy identity matching, custom collisions, installed-source aggregation and typecheck (179 focused tests passed).
 
-## 8. GitHub public connector
+## 8. Public connector retirement
 
-- [x] 8.1 Include GitHub in the public directory with official remote MCP, environment-variable token reference, localized setup notice, and public-source regression coverage (81 focused tests and app typecheck passed; live authentication not exercised).
+- [x] 8.1 Remove GitHub, Notion, Linear, Sentry, Stripe, and Context7 from Public Connectors; organization-provided connectors remain available under the organization source.
 
 ## 9. Connector readiness visibility
 

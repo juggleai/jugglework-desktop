@@ -1895,7 +1895,7 @@ function parseDenExternalMcpConnection(value: unknown): DenExternalMcpConnection
     !isRecord(value) ||
     typeof value.id !== "string" ||
     typeof value.name !== "string" ||
-    typeof value.url !== "string" ||
+    (value.url != null && typeof value.url !== "string") ||
     (value.authType !== "oauth" && value.authType !== "apikey" && value.authType !== "none") ||
     (value.credentialMode !== "shared" && value.credentialMode !== "per_member")
   ) {
@@ -1905,10 +1905,12 @@ function parseDenExternalMcpConnection(value: unknown): DenExternalMcpConnection
   return {
     id: value.id,
     name: value.name,
-    url: value.url,
+    // Member-safe responses omit the endpoint. Keep the connection identity
+    // so members can still authorize it by ID through Connect.
+    url: typeof value.url === "string" ? value.url : "",
     authType: value.authType,
     credentialMode: value.credentialMode,
-    connected: value.connected === true,
+    connected: typeof value.connected === "boolean" ? value.connected : value.connectedForMe === true,
     connectedAt: typeof value.connectedAt === "string" ? value.connectedAt : null,
     connectedForMe: value.connectedForMe === true,
     ...(typeof value.needsReconnect === "boolean" ? { needsReconnect: value.needsReconnect } : {}),

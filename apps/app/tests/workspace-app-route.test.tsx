@@ -7,6 +7,7 @@ import { MemoryRouter, useNavigate } from "react-router-dom";
 
 let workspaceTarget: "local" | "remote" | null = null;
 let mounts = 0;
+let latestReviewProps: Record<string, any> | null = null;
 mock.module("../src/react-app/shell/session-route", () => ({
   SessionRoute: (props: { surfaceVisible: boolean }) => {
     const [instance] = useState(() => ++mounts);
@@ -28,7 +29,7 @@ mock.module("../src/react-app/shell/toonFactoryPage", () => ({
   ToonFactoryPage: (props: { workspaceId: string }) => <div data-toon-factory-workspace-id={props.workspaceId} />,
 }));
 mock.module("../src/react-app/domains/automations/automation-page", () => ({ AutomationPage: () => null }));
-mock.module("../src/react-app/domains/reviews/review-page", () => ({ ReviewPage: () => null }));
+mock.module("../src/react-app/domains/reviews/review-page", () => ({ ReviewPage: (props: Record<string, any>) => { latestReviewProps = props; return null; } }));
 mock.module("../src/react-app/shell/workspace-shell-actions", () => ({
   WorkspaceShellActionsProvider: ({ children }: { children: React.ReactNode }) => children,
   useWorkspaceShellActions: () => ({}),
@@ -99,5 +100,24 @@ test("retains the session and draft while only the list is revealed over every d
   } finally {
     workspaceTarget = null;
     await act(async () => { renderer!.unmount(); });
+  }
+});
+
+test("hands GitHub setup to organization Connect settings", async () => {
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => {
+    renderer = TestRenderer.create(
+      <MemoryRouter initialEntries={["/workspace/workspace-1/reviews"]}>
+        <WorkspaceAppRoute />
+      </MemoryRouter>,
+    );
+  });
+  try {
+    expect(latestReviewProps?.onOpenConnect).toBeFunction();
+    await act(async () => { latestReviewProps?.onOpenConnect(); });
+    expect(renderer!.root.findByProps({ "data-testid": "workspace-settings-surface" }).props.className).toContain("absolute inset-0");
+  } finally {
+    await act(async () => { renderer!.unmount(); });
+    latestReviewProps = null;
   }
 });

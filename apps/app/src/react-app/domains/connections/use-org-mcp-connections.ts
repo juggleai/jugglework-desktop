@@ -4,6 +4,7 @@ import { createDenClient, readDenSettings, type DenExternalMcpConnection } from 
 import { denSettingsChangedEvent } from "@/app/lib/den-session-events";
 import { openDesktopUrl } from "@/app/lib/desktop";
 import { isDesktopRuntime } from "@/app/utils";
+import { subscribeOrgMcpSync } from "./org-mcp-sync";
 import {
   canDisconnectOrgMcpConnection,
   connectionNeedsReconnect,
@@ -112,6 +113,7 @@ export function useOrgMcpConnections() {
   const pollRef = useRef<number | null>(null);
   const pollGenerationRef = useRef(0);
   const refreshRunRef = useRef(0);
+  const hasSnapshotRef = useRef(false);
   // TIPS: disconnect 需要读取「最新连接列表」判断凭证模式，用 ref 避免把 connections
   // 塞进 useCallback 依赖导致回调每次刷新都重建。
   const connectionsRef = useRef<DenExternalMcpConnection[]>([]);
@@ -134,7 +136,7 @@ export function useOrgMcpConnections() {
     );
   }, []);
 
-  const refresh = useCallback(async (expectedScope?: OrgMcpPollScope) => {
+  const refresh = useCallback(async (expectedScope?: OrgMcpPollScope, options?: { silent: boolean }) => {
     const run = refreshRunRef.current + 1;
     refreshRunRef.current = run;
     const settings = readDenSettings();
@@ -142,14 +144,17 @@ export function useOrgMcpConnections() {
     const orgId = settings.activeOrgId?.trim() ?? "";
     if (!token || !orgId) {
       setConnections([]);
+      hasSnapshotRef.current = false;
       setError(null);
       setLoading(false);
       setLoaded(true);
       return;
     }
 
-    setLoading(true);
-    setError(null);
+    if (!options?.silent) {
+      setLoading(true);
+      setError(null);
+    }
     try {
       const client = createDenClient({ baseUrl: settings.baseUrl, token });
       const result = await client.listMcpConnections(orgId, "usable");
@@ -158,12 +163,18 @@ export function useOrgMcpConnections() {
         || (expectedScope && !isActionScopeCurrent(expectedScope))
       ) return;
       setConnections(result);
+      hasSnapshotRef.current = true;
+      setError(null);
     } catch (fetchError) {
       if (
         refreshRunRef.current !== run
         || (expectedScope && !isActionScopeCurrent(expectedScope))
       ) return;
-      setError(fetchError instanceof Error ? fetchError.message : "Failed to load organization MCP connections.");
+      // Keep the last successful list on transient background failures; manual
+      // refresh still surfaces an actionable error and can retry immediately.
+      if (!options?.silent || !hasSnapshotRef.current) {
+        setError(fetchError instanceof Error ? fetchError.message : "Failed to load organization MCP connections.");
+      }
     } finally {
       if (
         refreshRunRef.current === run
@@ -188,6 +199,7 @@ export function useOrgMcpConnections() {
     };
     setDisconnectingId(null);
     setConnectingId(connectionId);
+    setError(null);
     try {
       const client = createDenClient({ baseUrl: settings.baseUrl, token });
       const result = await client.startMcpConnectionConnect(orgId, connectionId);
@@ -256,13 +268,15 @@ export function useOrgMcpConnections() {
    * TIPS: 两条断开通道——原生 Provider（Google Workspace / Microsoft 365）走
    * `/v1/oauth-providers/:id/disconnect`；其余服务端下发的 MCP 连接（如 GitHub）走
    * `/v1/mcp-connections/:id/disconnect`。此前只放行原生 Provider，导致其它连接器
-   * 的「断开」按钮点击后静默无响应。
+   * 的「断开」按钮点击后静默无响应。组织共享凭证仅由管理入口显式传入
+   * allowShared 才发送断开请求，最终权限仍由服务端校验。
    */
-  const disconnect = useCallback(async (connectionId: string) => {
+  const disconnect = useCallback(async (connectionId: string, options?: { allowShared?: boolean }) => {
     const connection = connectionsRef.current.find((entry) => entry.id === connectionId);
     const nativeProvider = isNativeProviderConnectionId(connectionId);
     // 列表尚未加载到该连接时，仅对原生 Provider 保留旧的直连行为。
-    if (connection ? !canDisconnectOrgMcpConnection(connection) : !nativeProvider) return;
+    const sharedAdminAction = options?.allowShared && connection?.credentialMode === "shared" && connection.connected;
+    if (!sharedAdminAction && (connection ? !canDisconnectOrgMcpConnection(connection) : !nativeProvider)) return;
 
     const settings = readDenSettings();
     const token = settings.authToken?.trim() ?? "";
@@ -300,6 +314,7 @@ export function useOrgMcpConnections() {
     const handleSettingsChanged = () => {
       stopPolling();
       setConnections([]);
+      hasSnapshotRef.current = false;
       setError(null);
       setLoaded(false);
       setConnectingId(null);
@@ -313,6 +328,21 @@ export function useOrgMcpConnections() {
       window.removeEventListener(denSettingsChangedEvent, handleSettingsChanged);
     };
   }, [refresh, stopPolling]);
+
+  useEffect(() => subscribeOrgMcpSync({
+    windowTarget: window,
+    documentTarget: document,
+    isVisible: () => document.visibilityState === "visible",
+    refresh: async () => {
+      const settings = readDenSettings();
+      if (!settings.authToken?.trim() || !settings.activeOrgId?.trim()) return;
+      // OAuth already polls every two seconds until authorization completes.
+      if (pollRef.current !== null) return;
+      await refresh(undefined, { silent: true });
+    },
+    setInterval: (callback, delay) => window.setInterval(callback, delay),
+    clearInterval: (id) => window.clearInterval(id),
+  }), [refresh]);
 
   return { connections, loading, loaded, error, connectingId, disconnectingId, refresh, connect, disconnect };
 }

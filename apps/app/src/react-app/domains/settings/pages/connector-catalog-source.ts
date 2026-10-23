@@ -1,11 +1,28 @@
 import { getMcpServerName, type McpDirectoryInfo } from "@/app/constants";
 import type { GlobalMcpEntry } from "../state/global-mcp-config";
 
+const RETIRED_PUBLIC_CONNECTOR_IDS = new Set([
+  "github",
+  "notion",
+  "linear",
+  "sentry",
+  "stripe",
+  "context7",
+]);
+
+/** Retired directory installs remain usable as personal connectors, but no longer appear under Public. */
+function isRetiredPublicConnector(connector: GlobalMcpEntry): boolean {
+  return connector.catalogSource === "public"
+    && typeof connector.catalogId === "string"
+    && RETIRED_PUBLIC_CONNECTOR_IDS.has(connector.catalogId.trim().toLowerCase());
+}
+
 /** Prefer stored provenance; legacy entries require exact name and endpoint identity. */
 export function matchPublicConnector(
   connector: GlobalMcpEntry,
   entries: readonly McpDirectoryInfo[],
 ): McpDirectoryInfo | undefined {
+  if (isRetiredPublicConnector(connector)) return undefined;
   if (connector.catalogSource === "personal") return undefined;
   if (connector.catalogSource === "public" && connector.catalogId !== undefined) {
     return entries.find((entry) => (entry.id ?? getMcpServerName(entry)) === connector.catalogId);
@@ -29,5 +46,6 @@ export function resolveConnectorCatalogSource(
   connector: GlobalMcpEntry,
   entries: readonly McpDirectoryInfo[],
 ): "public" | "personal" {
+  if (isRetiredPublicConnector(connector)) return "personal";
   return connector.catalogSource ?? (matchPublicConnector(connector, entries) ? "public" : "personal");
 }

@@ -42,7 +42,8 @@ describe("global Plugins sidebar", () => {
     expect(route).toContain('skills={props.pluginCatalogOnly ? standaloneCatalogSkills : globalSkills}');
     expect(route).toContain('organizationSkills={[]}');
     expect(route).toContain('const hasOrganizationCatalog = cloudSession.isSignedIn');
-    expect(route).toContain('!isPersonalDenOrganization(cloudSession.activeOrganization)');
+    expect(route).toContain('&& Boolean(cloudSession.activeOrganization);');
+    expect(route).not.toContain('isPersonalDenOrganization');
     expect(route).toContain('showOrganization={hasOrganizationCatalog}');
     expect(route).toContain('includeOrganization: hasOrganizationCatalog');
     expect(route).toContain('source={effectiveCatalogSource}');
@@ -148,7 +149,7 @@ describe("global Plugins sidebar", () => {
     expect(switched.some((item) => item.id.includes("team-a"))).toBe(false);
   });
 
-  test("omits organization-installed shortcuts for a personal organization", () => {
+  test("omits organization-installed shortcuts when explicitly disabled", () => {
     const items = globalCustomizationInstalledItems({
       plugins: [plugin("cloud-plugin", "ready")],
       installedPluginIds: ["cloud-plugin"],

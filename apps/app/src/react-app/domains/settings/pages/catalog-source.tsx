@@ -35,7 +35,9 @@ export function CatalogSourceTabs({ value, onChange, organizationName, showOrgan
           )}
         >
           <span className="block truncate">
-            {source === "organization" ? organizationName?.trim() || t("customization.source_organization") : t(`customization.source_${source}`)}
+            {source === "organization"
+              ? `${t("customization.source_organization")}${organizationName?.trim() ? `(${organizationName.trim()})` : ""}`
+              : t(`customization.source_${source}`)}
           </span>
         </button>
       ))}
