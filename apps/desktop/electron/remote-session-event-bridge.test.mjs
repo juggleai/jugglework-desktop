@@ -83,6 +83,41 @@ describe("remote session event bridge", () => {
       status: "running", title: "Build release", workspaceName: "Workspace", occurredAt: new Date(NOW).toISOString(),
     });
   });
+
+  it("diffs watched workspaces by adding and removing subscriptions", () => {
+    const h = harness({ autoConnect: false, timers: globalThis });
+    h.bridge.watch([{ id: "ws_1", name: "First" }]);
+    assert.equal(h.subscriptions.length, 1);
+
+    h.bridge.watch([{ id: "ws_2", name: "Second" }]);
+
+    assert.equal(h.subscriptions.length, 2);
+    assert.equal(h.subscriptions[0].signal.aborted, true);
+    assert.equal(h.subscriptions[1].signal.aborted, false);
+  });
+
+  it("restores watched workspace subscriptions after a transport reset", () => {
+    const h = harness({ autoConnect: false, timers: globalThis });
+    h.bridge.watch([{ id: "ws_1", name: "Workspace" }]);
+    const stale = h.subscriptions[0];
+
+    h.bridge.clear();
+
+    assert.equal(stale.signal.aborted, true);
+    assert.equal(h.subscriptions.length, 2);
+    assert.equal(h.subscriptions[1].signal.aborted, false);
+  });
+
+  it("keeps a watched workspace subscribed after its last control binding is removed", async () => {
+    const h = harness();
+    h.bridge.watch([{ id: "ws_1", name: "Workspace" }]);
+    await h.bridge.bind(h.binding);
+
+    assert.equal(h.bridge.unbind(h.binding.controlSessionId), true);
+
+    assert.equal(h.subscriptions.length, 1);
+    assert.equal(h.subscriptions[0].signal.aborted, false);
+  });
   it("shares one workspace subscription and treats exact bindings as immutable", async () => {
     const h = harness();
     assert.equal(await h.bridge.bind(h.binding), true);

@@ -54,6 +54,7 @@ import { createFileWindowDock } from "./file-window-dock.mjs";
 import { saveArtifactFileCopy } from "./artifact-file-operations.mjs";
 import { createMainProcessFetch, mainProcessFetchBody, mainProcessFetchResponse, selectMainProcessFetch } from "./main-fetch.mjs";
 import { createWorkspaceStore } from "./workspace-store.mjs";
+import { createWorkspaceActivityWatcher } from "./workspace-activity-watcher.mjs";
 import { installCloseToHide, windowAllClosedAction } from "./window-close-behavior.mjs";
 import { createRemoteControlSettingsStore } from "./remote-control-settings.mjs";
 import { createOfficeResources } from "./office-resources.mjs";
@@ -1017,6 +1018,11 @@ const remoteControlNotificationController = createRemoteControlNotificationContr
 });
 let remoteControlAgent = null;
 let remoteSessionEventBridge = null;
+const workspaceActivityWatcher = createWorkspaceActivityWatcher({
+  workspaceStore,
+  getBridge: () => remoteSessionEventBridge,
+  logger: console,
+});
 const remoteEventDiagnostics = createRemoteEventDiagnostics({
   enabled: process.env.JUGGLEWORK_REMOTE_EVENT_DIAGNOSTICS === "1",
   logsDirectory: app.getPath("logs"),
@@ -2377,7 +2383,7 @@ const desktopCommandHandlers = {
       return workspaceStore.setRuntimeActiveWorkspace(typeof args[0] === "string" && args[0].trim() ? args[0] : null);
   },
   "workspaceCreate": async (event, ...args) => {
-      return workspaceStore.createWorkspace(args[0] ?? {});
+      return workspaceActivityWatcher.mutate(() => workspaceStore.createWorkspace(args[0] ?? {}));
   },
   "workspaceCreateRemote": async (event, ...args) => {
       return workspaceStore.createRemoteWorkspace(args[0] ?? {});
@@ -2392,7 +2398,7 @@ const desktopCommandHandlers = {
       const workspaceId = String(args[0] ?? "").trim();
       if (toonFactoryRuntime.state().workspaceId === workspaceId) await toonFactoryRuntime.close();
       await toonFactoryRuntime.clearProjectGrants(workspaceId);
-      return workspaceStore.forgetWorkspace(workspaceId);
+      return workspaceActivityWatcher.mutate(() => workspaceStore.forgetWorkspace(workspaceId));
   },
   "workspaceAddAuthorizedRoot": async (event, ...args) => {
       return workspaceStore.addAuthorizedRoot(args[0] ?? {});
@@ -2410,7 +2416,7 @@ const desktopCommandHandlers = {
       return workspaceStore.exportConfig(args[0] ?? {});
   },
   "workspaceImportConfig": async (event, ...args) => {
-      return workspaceStore.importConfig(args[0] ?? {});
+      return workspaceActivityWatcher.mutate(() => workspaceStore.importConfig(args[0] ?? {}));
   },
   "opencodeCommandList": async (event, ...args) => {
       return listCommandNames(String(args[0]?.scope ?? "").trim(), String(args[0]?.projectDir ?? "").trim());
@@ -2804,7 +2810,7 @@ const desktopCommandHandlers = {
   "resetJuggleWorkState": async (event, ...args) => {
       await toonFactoryRuntime.close();
       await toonFactoryRuntime.clearAllProjectGrants();
-      return workspaceStore.resetJuggleWorkState();
+      return workspaceActivityWatcher.mutate(() => workspaceStore.resetJuggleWorkState());
   },
   "resetOpencodeCache": async (event, ...args) => {
       return { removed: [], missing: [], errors: [] };
@@ -3450,13 +3456,12 @@ if (!app.requestSingleInstanceLock()) {
       applicationMenu,
     });
     remoteSessionEventBridge = createMainRemoteSessionEventBridge();
+    await workspaceActivityWatcher.initialize();
     remoteControlAgent = createMainRemoteControlAgent();
     remoteControlPowerMonitorController.start();
     await remoteControlAgent.start().catch((error) => {
       console.warn("[desktop-remote] failed to initialize", error instanceof Error ? error.name : "unknown_error");
     });
-    const activityWorkspaces = await workspaceStore.readWorkspaceState().catch(() => ({ workspaces: [] }));
-    remoteSessionEventBridge.watch(activityWorkspaces.workspaces.filter((entry) => entry?.workspaceType !== "remote"));
     if (process.platform === "win32") {
       await registerWindowsDisplayShortcut();
     }
@@ -3471,10 +3476,6 @@ if (!app.requestSingleInstanceLock()) {
     // The new managed server remains fenced until a fresh organization policy
     // context is synchronized by the renderer.
 
-    // Use Tauri's existing workspace state file as canonical so rollback and
-    // Electron see the same workspace list. Import the short-lived
-    // Electron-only filename only when the shared file is missing.
-    await workspaceStore.migrateLegacyElectronWorkspaceStateIfNeeded();
     await uiControlServer.start().catch((error) => {
       console.warn("[ui-control] failed to start", error);
     });

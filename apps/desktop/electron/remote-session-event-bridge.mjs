@@ -520,7 +520,7 @@ export function createRemoteSessionEventBridge({ sseClient, coordinator, listAct
     bindings.delete(controlSessionId);
     projector.unbind(controlSessionId);
     clearObservationChain(binding.workspaceId, binding.sessionId);
-    if (![...bindings.values()].some((candidate) => candidate.workspaceId === binding.workspaceId)) {
+    if (!workspaceNeeded(binding.workspaceId)) {
       const subscription = subscriptions.get(binding.workspaceId);
       if (subscription) settleWaiters(subscription, false);
       subscription?.controller.abort();
