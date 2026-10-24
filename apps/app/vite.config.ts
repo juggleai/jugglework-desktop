@@ -140,6 +140,7 @@ export default defineConfig({
         app: resolve(appRoot, "index.html"),
         overlay: resolve(appRoot, "overlay.html"),
         fileWindow: resolve(appRoot, "file-window.html"),
+        pet: resolve(appRoot, "pet.html"),
       },
     },
   },

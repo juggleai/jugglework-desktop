@@ -111,7 +111,7 @@ import {
   workspaceInteractionsKey,
 } from "@/react-app/domains/session/sync/workspace-interactions"
 import type { ThreadStatus } from "@/lib/messages"
-import { getToolActivityLabel, getToolActivitySummary, isToolPartInFlight, type ToolActivitySummary } from "@/lib/tool-activity"
+import { formatToolProgressSummary, getToolActivityLabel, getToolActivitySummary, isToolPartInFlight, type ToolActivitySummary } from "@/lib/tool-activity"
 import { cn } from "@/lib/utils"
 import { getLiveActivityKind, liveActivityLabel } from "@/lib/live-activity"
 import {
@@ -1132,15 +1132,7 @@ interface AssistantMessageGroupProps {
   isStreaming: boolean
 }
 
-export function formatToolProgressSummary(
-  action: string,
-  summary: ToolActivitySummary,
-  locale: ReturnType<typeof currentLocale> = currentLocale(),
-) {
-  return locale === "zh"
-    ? `${action} · 已完成 ${summary.completed}/${summary.total} 个工具步骤`
-    : `${action} · ${summary.completed}/${summary.total} tool steps completed`
-}
+export { formatToolProgressSummary } from "@/lib/tool-activity"
 
 function MessageGroup({
   items,

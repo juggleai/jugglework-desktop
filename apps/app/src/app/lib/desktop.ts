@@ -1,4 +1,5 @@
 import { nativeDeepLinkEvent } from "./deep-link-bridge";
+import type { DesktopPetBridge } from "./desktop-pet-types";
 
 export type * from "./desktop-types";
 export type {
@@ -63,6 +64,7 @@ export type BrowserProxyState = {
 declare global {
   interface Window {
     __JUGGLEWORK_ELECTRON__?: {
+      pet?: DesktopPetBridge;
       invokeDesktop?: <C extends DesktopCommandName>(
         command: C,
         ...args: DesktopCommandArgs<C>

@@ -22,6 +22,7 @@ import {
   RefreshCw,
   Settings,
   Sparkles,
+  Bot,
 } from "lucide-react";
 
 import {
@@ -66,6 +67,7 @@ import { accountDisplayName, membershipTierLabel, membershipUpgradeContext, orga
 import { PluginOrbitIcon } from "@/react-app/design-system/plugin-orbit-icon";
 import { useAppNavigationSidebarPreview, type AppNavigationSidebarPreviewTarget } from "./app-navigation-sidebar-preview";
 import { parseWorkspaceAppPath, workspaceToonFactoryRoute } from "./workspace-routes";
+import { useDesktopPet } from "@/react-app/domains/pet/use-desktop-pet";
 
 export { APP_PRIMARY_RAIL_ORDER } from "./app-navigation-order";
 
@@ -283,6 +285,7 @@ function RailButton({
 }
 
 export function AppNavigationRail(props: AppNavigationRailProps) {
+  const pet = useDesktopPet();
   const navigate = useNavigate();
   const location = useLocation();
   const platform = usePlatform();
@@ -757,6 +760,13 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
               <RefreshCw />
               {t("account_menu.check_updates")}
             </DropdownMenuItem>
+            {pet.bridge ? <DropdownMenuItem
+              data-testid="account-menu-toggle-pet"
+              onClick={() => void pet.bridge?.setVisible(!pet.snapshot?.visible).catch((error) => toast.error(error instanceof Error ? error.message : t("pet.unavailable")))}
+            >
+              <Bot />
+              {t(pet.snapshot?.visible ? "pet.hide" : "pet.show")}
+            </DropdownMenuItem> : null}
             <DropdownMenuItem onClick={openHelpAndFeedback} data-testid="account-menu-help-feedback">
               <HelpCircle />
               {t("account_menu.help_feedback")}

@@ -22,6 +22,7 @@ import {
 } from "./parse-tool-parts";
 import type { JuggleWorkServerClient, JuggleWorkSessionSnapshot } from "@/app/lib/jugglework-server";
 import { applyRevertCursor, reconcileTranscriptMessages } from "./transcript-reconcile";
+import { mergeSnapshotAndLiveMessages } from "./message-merge";
 import {
   SESSION_STALLED_AFTER_MS,
   useSessionActivityStore,
@@ -225,6 +226,11 @@ const retainedSessionTtlMs = 10 * 60_000;
 const idleRetainedSessionTtlMs = 10_000;
 const continuationSuppressionCapacityPerSession = 256;
 const liveTodoRevision = new Map<string, number>();
+const liveSessionRevision = new Map<string, number>();
+// 历史删除或回退前发出的请求不能再补历史，避免补缺时复活已删除消息。
+const sessionHistoryRevision = new Map<string, number>();
+const snapshotSessionRevisions = new WeakMap<JuggleWorkSessionSnapshot, number>();
+let sessionRevision = 0;
 let todoRevision = 0;
 let legacyInteractionRevision = 0;
 
@@ -310,6 +316,30 @@ export const questionKey = (workspaceId: string, sessionId: string) =>
 const todoRevisionKey = (workspaceId: string, sessionId: string) => `${workspaceId}:${sessionId}`;
 export function captureTodoSnapshotRevision(): number {
   return todoRevision;
+}
+
+/** 读取单会话快照请求开始时的实时版本；其他会话的事件不会使该请求失效。 */
+export function captureSessionSnapshotRevision(workspaceId: string, sessionId: string): number {
+  const key = todoRevisionKey(workspaceId, sessionId);
+  if (!liveSessionRevision.has(key)) liveSessionRevision.set(key, sessionRevision);
+  return liveSessionRevision.get(key)!;
+}
+
+/** 将请求前版本绑定到快照对象，缓存重放仍遵守同一实时版本边界。 */
+export function recordSessionSnapshotRevision(snapshot: JuggleWorkSessionSnapshot, revision: number) {
+  snapshotSessionRevisions.set(snapshot, Math.min(snapshotSessionRevisions.get(snapshot) ?? revision, revision));
+}
+
+/** 判断快照是否仍覆盖当前实时版本；失效快照只补缺失历史，状态需重新读取。 */
+export function isSessionSnapshotCurrent(workspaceId: string, snapshot: JuggleWorkSessionSnapshot): boolean {
+  const revision = snapshotSessionRevisions.get(snapshot);
+  return revision === undefined || revision >= captureSessionSnapshotRevision(workspaceId, snapshot.session.id);
+}
+
+/** 更新缓存的局部字段时保留原读取版本，不能把旧正文和状态包装成新的权威快照。 */
+function inheritSessionSnapshotRevision(workspaceId: string, current: JuggleWorkSessionSnapshot, next: JuggleWorkSessionSnapshot) {
+  recordSessionSnapshotRevision(next, snapshotSessionRevisions.get(current) ?? captureSessionSnapshotRevision(workspaceId, current.session.id));
+  return next;
 }
 
 /**
@@ -1033,6 +1063,16 @@ export function subscribeWorkspaceFileChanges(workspaceId: string, listener: () 
 function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent) {
   const queryClient = getReactQueryClient();
   const input = entry.input;
+  // TIPS: 会话实时事实推进版本；todo独立保护，其他会话的事件不能使本次快照失效。
+  if (/^(?:message\.|permission\.|question\.|session\.(?:status|idle|error|compaction|compacted|next\.))/.test(event.type)) {
+    const properties = event.properties as { sessionID?: string; info?: { sessionID?: string }; part?: { sessionID?: string } } | undefined;
+    const id = properties?.sessionID ?? properties?.info?.sessionID ?? properties?.part?.sessionID;
+    if (id) {
+      const key = todoRevisionKey(workspaceId, id);
+      liveSessionRevision.set(key, ++sessionRevision);
+      if (event.type === "message.removed") sessionHistoryRevision.set(key, sessionRevision);
+    }
+  }
 
   if (FILE_CHANGE_EVENT_TYPES.has(event.type)) {
     for (const listener of fileChangeListeners.get(workspaceId) ?? []) listener();
@@ -1050,6 +1090,13 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
   if (event.type === "session.updated") {
     const update = getSessionUpdatedInfo(event);
     if (!update) return;
+    const cachedSnapshot = queryClient.getQueryData<JuggleWorkSessionSnapshot>(snapshotKey(workspaceId, update.sessionId));
+    const nextRevert = (update.info as { revert?: JuggleWorkSessionSnapshot["session"]["revert"] }).revert;
+    if (cachedSnapshot?.session.revert?.messageID !== nextRevert?.messageID) {
+      const key = todoRevisionKey(workspaceId, update.sessionId);
+      liveSessionRevision.set(key, ++sessionRevision);
+      sessionHistoryRevision.set(key, sessionRevision);
+    }
     if (Object.prototype.hasOwnProperty.call(update.info, "parentID")) {
       seedWorkspaceSessionAncestry(workspaceId, [{
         id: update.sessionId,
@@ -1066,7 +1113,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       (current) => {
         if (!current) return current;
         const revert = (update.info as { revert?: JuggleWorkSessionSnapshot["session"]["revert"] }).revert;
-        return { ...current, session: { ...current.session, revert } };
+        return inheritSessionSnapshotRevision(workspaceId, current, { ...current, session: { ...current.session, revert } });
       },
     );
     for (const listener of entry.sessionUpdatedListeners) listener(update);
@@ -1391,7 +1438,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       snapshotKey(workspaceId, props.sessionID),
       (current) => {
         if (!current) return current;
-        return { ...current, messages: current.messages.filter((message) => message.info.id !== props.messageID) };
+        return inheritSessionSnapshotRevision(workspaceId, current, { ...current, messages: current.messages.filter((message) => message.info.id !== props.messageID) });
       },
     );
     return;
@@ -1954,14 +2001,34 @@ function releaseWorkspaceSessionSync(input: SyncOptions) {
   }
 }
 
+/**
+ * 将会话快照补入共享缓存，保留请求期间到达的实时事实。
+ * @param workspaceId 项目服务端标识
+ * @param snapshot 带原始请求版本的会话快照
+ * @param options todo请求版本及是否跳过todo回填
+ */
 export function seedSessionState(
   workspaceId: string,
   snapshot: JuggleWorkSessionSnapshot,
   options?: { snapshotTodoRevision?: number; skipTodos?: boolean },
 ) {
+  // TIPS: 延迟快照不能推翻请求期间到达的实时终态；同一对象从共享缓存重放时也不重新取得权限。
+  const liveRevision = captureSessionSnapshotRevision(workspaceId, snapshot.session.id);
+  const snapshotRevision = snapshotSessionRevisions.get(snapshot) ?? liveRevision;
+  recordSessionSnapshotRevision(snapshot, snapshotRevision);
   const queryClient = getReactQueryClient();
   const key = transcriptKey(workspaceId, snapshot.session.id);
   const incomingSnapshotMessages = snapshotToUIMessages(snapshot);
+  if (!isSessionSnapshotCurrent(workspaceId, snapshot)) {
+    // TIPS: 首次读取期间可能只有助手增量；旧快照仍需补齐用户及历史，但不覆盖实时正文、终态、todo和回退。
+    if (snapshotRevision >= (sessionHistoryRevision.get(todoRevisionKey(workspaceId, snapshot.session.id)) ?? 0)) {
+      const history = filterSuppressedContinuationMessages(workspaceId, snapshot.session.id, applyRevertCursor(incomingSnapshotMessages, snapshot.session.revert?.messageID));
+      queryClient.setQueryData<UIMessage[]>(key, (current = []) => mergeSnapshotAndLiveMessages(
+        history, current, { appendLiveOnlyMessages: true, preserveLiveMessages: true },
+      ));
+    }
+    return;
+  }
   const completion = snapshot.status.type === "idle"
     ? reconcileRunCompletionDiagnostic(incomingSnapshotMessages, snapshot.todos)
     : { messages: incomingSnapshotMessages, diagnostic: null };
@@ -1974,6 +2041,13 @@ export function seedSessionState(
   const existing = queryClient.getQueryData<UIMessage[]>(key);
 
   const activityStore = useSessionActivityStore.getState();
+  // TIPS: 先用权威快照解除旧诊断，再恢复运行状态；否则旧断线标记会屏蔽busy快照。
+  activityStore.setCompletionDiagnostic(
+    workspaceId,
+    snapshot.session.id,
+    Boolean(completion.diagnostic),
+    completion.diagnostic?.finishReason ?? null,
+  );
   activityStore.seedSessionRun(
     workspaceId,
     snapshot.session.id,
@@ -1984,13 +2058,6 @@ export function seedSessionState(
   if (snapshotRetry && snapshot.status.type !== "retry") {
     activityStore.setProviderRetry(workspaceId, snapshot.session.id, snapshotRetry);
   }
-  activityStore.setCompletionDiagnostic(
-    workspaceId,
-    snapshot.session.id,
-    Boolean(completion.diagnostic),
-    completion.diagnostic?.finishReason ?? null,
-  );
-
   // The snapshot's revert cursor is authoritative: messages at/after it are
   // reverted server-side, so the cache must not keep them alive (a later
   // merge would resurrect them once the server deletes them on next prompt).
@@ -2023,10 +2090,12 @@ export function seedSessionState(
 export function applySessionRevert(workspaceId: string, session: Session) {
   const queryClient = getReactQueryClient();
   const revertMessageId = session.revert?.messageID ?? null;
+  liveSessionRevision.set(todoRevisionKey(workspaceId, session.id), ++sessionRevision);
+  sessionHistoryRevision.set(todoRevisionKey(workspaceId, session.id), sessionRevision);
 
   queryClient.setQueryData<JuggleWorkSessionSnapshot>(
     snapshotKey(workspaceId, session.id),
-    (current) => (current ? { ...current, session: { ...current.session, revert: session.revert } } : current),
+    (current) => (current ? inheritSessionSnapshotRevision(workspaceId, current, { ...current, session: { ...current.session, revert: session.revert } }) : current),
   );
   queryClient.setQueryData<UIMessage[]>(
     transcriptKey(workspaceId, session.id),

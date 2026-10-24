@@ -176,3 +176,18 @@ describe("run completion diagnostics", () => {
     expect(reconciled.messages.map((message) => message.id)).toEqual(["user-1", "assistant-1"]);
   });
 });
+
+test("a persisted stopped assistant is resumable even without todos", () => {
+  const stopped = textMessage("assistant-stop", "assistant", "", "stop");
+  stopped.metadata = { opencode: { finish: "stop", stopped: true } };
+  expect(analyzeRunCompletion([textMessage("user-stop", "user", "Work"), stopped], []))
+    .toMatchObject({ incomplete: true, finishReason: "user_cancelled" });
+});
+
+test("a successful new user turn is not contaminated by an older stopped turn", () => {
+  const stopped = textMessage("assistant-stop", "assistant", "", "stop");
+  stopped.metadata = { opencode: { stopped: true } };
+  expect(analyzeRunCompletion([textMessage("user-old", "user", "Work"), stopped,
+    textMessage("user-new", "user", "Continue"), textMessage("assistant-new", "assistant", "Done", "stop")], []))
+    .toBeNull();
+});

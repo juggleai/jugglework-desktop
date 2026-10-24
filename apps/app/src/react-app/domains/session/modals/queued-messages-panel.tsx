@@ -151,7 +151,7 @@ export function QueuedMessagesPanel(props: QueuedMessagesPanelProps) {
       {props.drafts.map((item) => {
         const steering = props.steeringId === item.id;
         const actionsDisabled = Boolean(props.sending || props.steeringId);
-        const steerable = props.canSteer?.(item.draft) ?? true;
+        const steerable = !item.petBlockedReason && (props.canSteer?.(item.draft) ?? true);
         return (
           <div
             key={item.id}
@@ -164,6 +164,7 @@ export function QueuedMessagesPanel(props: QueuedMessagesPanelProps) {
               title={queuedDraftTitle(item.draft)}
             >
               <QueuedDraftContent draft={item.draft} />
+              {item.petBlockedReason ? <span className="block truncate text-xs font-normal text-amber-11" title={item.petBlockedReason}>{item.petBlockedReason}</span> : null}
             </div>
             <div className="flex shrink-0 items-center gap-1 opacity-70 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
               <button

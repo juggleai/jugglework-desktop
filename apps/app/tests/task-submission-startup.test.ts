@@ -40,11 +40,10 @@ describe("task submission startup feedback", () => {
   });
 
   test("keeps ordinary tasks on the fast path and gates explicit Cloud capabilities", () => {
-    expect(sessionRoute).toContain("const requiresCloudMcpReadiness = draft.parts.some");
-    expect(sessionRoute).toContain('part.kind === "cloud-skill"');
-    expect(sessionRoute).toContain('part.kind === "cloud-mcp"');
-    expect(sessionRoute).toContain('part.kind === "extension"');
-    expect(sessionRoute).toContain("skipGate: !requiresCloudMcpReadiness");
+    const sender = readFileSync(new URL("../src/react-app/domains/session/sync/draft-submission.ts", import.meta.url), "utf8");
+    expect(sessionRoute).toContain("return submitSessionDraft({");
+    expect(sender).toContain('skipGate: !draft.parts.some');
+    expect(sender).toContain('["cloud-skill", "cloud-mcp", "extension"].includes(part.kind)');
   });
 
   test("does not make the composer unavailable during background workspace activation", () => {

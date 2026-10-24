@@ -105,6 +105,35 @@ contextBridge.exposeInMainWorld("__JUGGLEWORK_ELECTRON__", {
   invokeDesktop(command, ...args) {
     return ipcRenderer.invoke("jugglework:desktop", command, ...args);
   },
+  pet: {
+    /** 读取原生宠物的实际可见状态与任务展示快照。 */
+    getState: () => ipcRenderer.invoke("jugglework:pet:state"),
+    /** 显示或隐藏唯一宠物窗口。 */
+    setVisible: (visible) => ipcRenderer.invoke("jugglework:pet:visible", visible),
+    /** 用户明确要求键盘操作时聚焦宠物工具条。 */
+    focus: () => ipcRenderer.invoke("jugglework:pet:focus"),
+    /** 发布主宿主产生的业务展示数据，不传递客户端凭据。 */
+    publish: (state) => ipcRenderer.send("jugglework:pet:publish", state),
+    /** 监听原生可见状态及任务展示变化。 */
+    onState(callback) {
+      const handler = (_event, state) => callback(state);
+      ipcRenderer.on("jugglework:pet:state-changed", handler);
+      return () => ipcRenderer.removeListener("jugglework:pet:state-changed", handler);
+    },
+    /** 将宠物操作交给保留的主任务宿主，结果回到原宠物请求。 */
+    onAction(callback) {
+      const handler = async (_event, request) => {
+        try {
+          const result = await callback(request.action);
+          ipcRenderer.send("jugglework:pet:host-reply", { requestId: request.requestId, result });
+        } catch (error) {
+          ipcRenderer.send("jugglework:pet:host-reply", { requestId: request.requestId, error: error instanceof Error ? error.message : String(error) });
+        }
+      };
+      ipcRenderer.on("jugglework:pet:host-action", handler);
+      return () => ipcRenderer.removeListener("jugglework:pet:host-action", handler);
+    },
+  },
   shell: {
     openExternal(url) {
       return ipcRenderer.invoke("jugglework:shell:openExternal", url);

@@ -123,11 +123,15 @@ describe("composer image generation", () => {
   test("discovers models in the active workspace and attaches options to the draft", () => {
     const surface = readFileSync(sessionSurfacePath, "utf8");
     const route = readFileSync(sessionRoutePath, "utf8");
-    expect(surface).toContain('action: "image_models_list"');
-    expect(surface).toContain('args: { mode: "text-to-image" }');
+    expect(route).toContain("return submitSessionDraft({");
+    const discovery = readFileSync(new URL("../src/react-app/domains/connections/media-model-queries.ts", import.meta.url), "utf8");
+    const sender = readFileSync(new URL("../src/react-app/domains/session/sync/draft-submission.ts", import.meta.url), "utf8");
+    expect(discovery).toContain('action: "image_models_list"');
+    expect(discovery).toContain('args: { mode: "text-to-image" }');
     expect(surface).toContain("buildImageGenerationInstruction(resolved.trim(), activeImageGeneration)");
     expect(surface).toContain("{ imageGeneration: activeImageGeneration }");
-    expect(route).toContain("mergeImageGenerationSystemContext(draft, envSystemContext)");
-    expect(route).toContain("...(preparedSystemContext ? { system: preparedSystemContext } : {})");
+    expect(surface).toContain("imageModelsQueryOptions(props.client, mediaQueryScope)");
+    expect(sender).toContain("mergeImageGenerationSystemContext(draft,");
+    expect(sender).toContain("...(system ? { system } : {})");
   });
 });

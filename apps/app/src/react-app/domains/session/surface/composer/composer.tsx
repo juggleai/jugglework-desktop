@@ -1,4 +1,5 @@
 /** @jsxImportSource react */
+import { useVoiceService } from "./use-voice-service";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
 import type { UIMessage } from "ai";
@@ -457,7 +458,7 @@ export function ReactSessionComposer(props: ComposerProps) {
   const voiceDictationRef = useRef<VoiceDictationController | null>(null);
   const onOpenVoiceSettingsRef = useRef(props.onOpenVoiceSettings);
   const [voiceDictation, setVoiceDictation] = useState<VoiceDictationSnapshot>({ phase: "idle" });
-  const [voiceServiceAvailability, setVoiceServiceAvailability] = useState<"checking" | "available" | "unavailable">("checking");
+  const voiceServiceAvailability = useVoiceService(props.getVoiceRealtimeStatus, Boolean(props.createVoiceRealtimeSession));
   // IME composition guard: while an IME composition is active, we must not
   // treat Enter as a submit. Three signals keep this reliable across WebKit,
   // Chrome, and Safari: event.isComposing, event.keyCode === 229, and the
@@ -472,38 +473,6 @@ export function ReactSessionComposer(props: ComposerProps) {
     onOpenVoiceSettingsRef.current = props.onOpenVoiceSettings;
   }, [props.onOpenVoiceSettings]);
 
-  useEffect(() => {
-    const getVoiceRealtimeStatus = props.getVoiceRealtimeStatus;
-    if (!getVoiceRealtimeStatus || !props.createVoiceRealtimeSession) {
-      setVoiceServiceAvailability("unavailable");
-      return;
-    }
-
-    let disposed = false;
-    const refresh = async () => {
-      try {
-        const status = await getVoiceRealtimeStatus();
-        if (!disposed) setVoiceServiceAvailability(status.configured ? "available" : "unavailable");
-      } catch {
-        // A status probe failure should not disable a service that may still be
-        // usable (for example while reconnecting to an older remote server).
-        if (!disposed) setVoiceServiceAvailability("available");
-      }
-    };
-    const refreshWhenVisible = () => {
-      if (document.visibilityState === "visible") void refresh();
-    };
-
-    setVoiceServiceAvailability("checking");
-    void refresh();
-    window.addEventListener("focus", refresh);
-    document.addEventListener("visibilitychange", refreshWhenVisible);
-    return () => {
-      disposed = true;
-      window.removeEventListener("focus", refresh);
-      document.removeEventListener("visibilitychange", refreshWhenVisible);
-    };
-  }, [props.createVoiceRealtimeSession, props.getVoiceRealtimeStatus]);
 
   useEffect(() => {
     const createVoiceRealtimeSession = props.createVoiceRealtimeSession;

@@ -1,3 +1,8 @@
+import type { JuggleWorkServerClient } from "@/app/lib/jugglework-server";
+import type { ComposerDraft } from "@/app/types";
+import { parseComposerImageModels, imageModelKey, type ComposerImageModelOption } from "../session/surface/composer/image-generation";
+import { parseComposerVideoModels, videoModelKey, type ComposerVideoModelOption } from "../session/surface/composer/video-generation";
+import { generationDraftAvailable } from "../session/surface/composer/generation-model-reconciliation";
 import type { QueryClient, QueryKey } from "@tanstack/react-query";
 
 import type { ProviderAuthStore } from "./provider-auth/store";
@@ -131,4 +136,66 @@ export function withProviderMediaModelRefresh(
     runCloudProviderSync: wrap(store.runCloudProviderSync),
     runCloudProviderSyncForReadiness: wrap(store.runCloudProviderSyncForReadiness, Boolean),
   };
+}
+
+/** 主输入栏及后台队列共用image模型发现，使用目标工作区的服务与目录。 */
+export function imageModelsQueryOptions(client: JuggleWorkServerClient, scope: MediaModelQueryScope) {
+  return { queryKey: imageModelQueryKey(scope),
+    queryFn: async () => {
+      const response = await client.callExtensionAction({
+        extensionId: "openai-image-generation",
+        action: "image_models_list",
+        args: { mode: "text-to-image" },
+        context: {
+          workspaceId: scope.workspaceId,
+          directory: scope.workspaceRoot,
+        },
+      });
+      if (!response.ok) throw new Error(response.message);
+      return parseComposerImageModels(response.result);
+    },
+    staleTime: 30_000, retry: 1,
+  };
+}
+
+/** 主输入栏及后台队列共用video模型发现，使用目标工作区的服务与目录。 */
+export function videoModelsQueryOptions(client: JuggleWorkServerClient, scope: MediaModelQueryScope) {
+  return { queryKey: videoModelQueryKey(scope),
+    queryFn: async () => {
+      const context = {
+        workspaceId: scope.workspaceId,
+        directory: scope.workspaceRoot,
+      };
+      const [modelsResponse, statusResponse] = await Promise.all([
+        client.callExtensionAction({
+          extensionId: "media-generation",
+          action: "video_models_list",
+          args: { mode: "text-to-video" },
+          context,
+        }),
+        client.callExtensionAction({
+          extensionId: "media-generation",
+          action: "status",
+          args: {},
+          context,
+        }),
+      ]);
+      if (!modelsResponse.ok) throw new Error(modelsResponse.message);
+      if (!statusResponse.ok) throw new Error(statusResponse.message);
+      const status = statusResponse.result && typeof statusResponse.result === "object"
+        ? statusResponse.result as Record<string, unknown>
+        : null;
+      if (status?.submissionEnabled !== true) return [];
+      return parseComposerVideoModels(modelsResponse.result);
+    },
+    staleTime: 30_000, retry: 1,
+  };
+}
+
+/** 在异步准备后复查原目标的生成模型；无生成选项时不发起额外探测。 */
+export function generationDraftAvailableInCache(query: QueryClient, scope: MediaModelQueryScope, draft: ComposerDraft) {
+  const imageKey = imageModelQueryKey(scope), videoKey = videoModelQueryKey(scope);
+  const unavailable = (key: QueryKey) => { const state = query.getQueryState(key); return !state || state.status !== "success" || state.fetchStatus !== "idle" || state.isInvalidated; };
+  return generationDraftAvailable({ selection: draft.imageGeneration, models: query.getQueryData<ComposerImageModelOption[]>(imageKey) ?? [], unavailable: unavailable(imageKey), modelKey: imageModelKey })
+    && generationDraftAvailable({ selection: draft.videoGeneration, models: query.getQueryData<ComposerVideoModelOption[]>(videoKey) ?? [], unavailable: unavailable(videoKey), modelKey: videoModelKey });
 }

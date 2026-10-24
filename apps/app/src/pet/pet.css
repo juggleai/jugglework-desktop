@@ -1,0 +1,271 @@
+:root {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color-scheme: light;
+  --pet-bg: rgba(250, 250, 250, .94);
+  --pet-text: #202124;
+  --pet-muted: #727376;
+  --pet-line: rgba(255, 255, 255, .98);
+  --pet-divider: rgba(0, 0, 0, .09);
+  --pet-field: rgba(0, 0, 0, .055);
+  --pet-menu-bg: #fff;
+  --pet-accent: #81aaf6;
+  --pet-shadow: 0 12px 28px rgba(0, 0, 0, .11), 0 2px 8px rgba(0, 0, 0, .025);
+  --pet-card-shadow: 0 5px 14px rgba(0, 0, 0, .05), 0 1px 4px rgba(0, 0, 0, .015);
+  --pet-card-bottom-shadow: 0 3px 10px rgba(0, 0, 0, .035);
+}
+:root[data-theme=dark] {
+  color-scheme: dark;
+  --pet-bg: rgba(39, 40, 43, .96);
+  --pet-text: #f3f3f4;
+  --pet-muted: #b7b8bc;
+  --pet-line: rgba(255, 255, 255, .15);
+  --pet-divider: rgba(255, 255, 255, .13);
+  --pet-field: rgba(255, 255, 255, .08);
+  --pet-menu-bg: #27282b;
+  --pet-accent: #80aaff;
+  --pet-shadow: 0 12px 28px rgba(0, 0, 0, .27), 0 2px 8px rgba(0, 0, 0, .08);
+  --pet-card-shadow: 0 5px 14px rgba(0, 0, 0, .14), 0 1px 4px rgba(0, 0, 0, .04);
+  --pet-card-bottom-shadow: 0 3px 10px rgba(0, 0, 0, .10);
+}
+* { box-sizing: border-box; }
+html, body, #root { margin: 0; background: transparent; overflow: hidden; }
+button, textarea { font: inherit; color: inherit; }
+button { border: 0; background: transparent; cursor: pointer; }
+button:disabled { cursor: default; }
+button svg { flex: none; }
+button:focus-visible { outline: 2px solid var(--pet-accent); outline-offset: 2px; }
+textarea:focus { outline: none; }
+.pet-root {
+  /* TIPS: 画布尺寸不随面板开合改变，人物和操作栏独立定位，避免透明原生窗口重分配造成闪帧。 */
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: var(--pet-window-width, 400px);
+  height: var(--pet-window-height, 100vh);
+  visibility: hidden;
+  color: var(--pet-text);
+  font-size: 13px;
+  user-select: none;
+  pointer-events: none;
+}
+.pet-root[data-positioned=true] { visibility: visible; }
+.pet-root > * { pointer-events: auto; }
+.pet-root > .pet-panels { position: absolute; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+.pet-panels > * { pointer-events: auto; }
+.pet-character {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform: translate3d(var(--pet-x), var(--pet-y), 0);
+  will-change: transform;
+  width: var(--pet-width);
+  height: var(--pet-height);
+  flex: none;
+  padding: 0;
+  touch-action: none;
+  cursor: grab;
+}
+.pet-character:active { cursor: grabbing; }
+.pet-sprite { display: block; width: var(--pet-width); height: var(--pet-height); background-repeat: no-repeat; }
+.pet-root > .pet-controls { --pet-tools-width: 120px; position: absolute; left: 0; top: 0; transform: translate3d(calc(var(--pet-x) - 8px), calc(var(--pet-y) + var(--pet-height) + 8px), 0); will-change: transform; width: 120px; height: 40px; pointer-events: none; }
+.pet-controls[data-has-tasks=false] { --pet-tools-width: 80px; }
+/* TIPS: 同一胶囊固定上沿和中轴，直接改变宽高，避免两张气泡交替淡化或缩放图标。 */
+.pet-control-surface {
+  position: absolute;
+  top: -6px;
+  left: 50%;
+  width: 24px;
+  height: 6px;
+  transform: translateX(-50%);
+  border: 1px solid var(--pet-line);
+  border-radius: 24px;
+  background: var(--pet-bg);
+  box-shadow: 0 7px 18px rgba(0, 0, 0, .12);
+  transition: width 260ms cubic-bezier(.22, 1, .36, 1), height 260ms cubic-bezier(.22, 1, .36, 1), background-color 260ms ease, box-shadow 260ms ease;
+}
+.pet-controls[data-completed=true][data-expanded=false] .pet-control-surface { background: #00a442; }
+.pet-controls[data-expanded=true] .pet-control-surface { width: var(--pet-tools-width); height: 40px; box-shadow: var(--pet-shadow); }
+.pet-bubble {
+  position: absolute;
+  top: -6px;
+  left: 40px;
+  width: 40px;
+  height: 20px;
+  padding: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+.pet-bubble[data-visible=true] { opacity: 1; pointer-events: auto; }
+.pet-tools {
+  position: absolute;
+  top: -6px;
+  left: calc((120px - var(--pet-tools-width)) / 2);
+  display: flex;
+  align-items: center;
+  width: var(--pet-tools-width);
+  height: 40px;
+  margin: 0;
+  padding: 1px;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 100ms ease, visibility 0s linear 100ms;
+}
+.pet-tools[data-visible=true] { opacity: 1; visibility: visible; pointer-events: auto; transition-delay: 80ms, 0s; }
+.pet-tools button {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  height: 38px;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  padding: 0;
+  border-radius: 50%;
+}
+.pet-tools button:disabled { color: var(--pet-muted); opacity: .45; }
+.pet-tools button:hover:not(:disabled), .pet-icon:hover:not(:disabled) { background: var(--pet-field); }
+.pet-tools i { flex: none; width: 1px; height: 18px; background: var(--pet-divider); }
+.pet-badge {
+  position: absolute;
+  right: 0;
+  top: -3px;
+  display: grid;
+  place-items: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 3px;
+  border: 1.5px solid var(--pet-bg);
+  border-radius: 10px;
+  background: #3d82f6;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1;
+}
+.pet-task-panel { width: 100%; opacity: 1; transition: opacity 180ms ease; }
+.pet-task-panel[data-visible=false] { opacity: 0; pointer-events: none; }
+@starting-style { .pet-task-panel[data-visible=true] { opacity: 0; } }
+/* TIPS: 滚动区留出阴影和左上角关闭按钮的空间，不能在卡片边缘直接裁切。 */
+.pet-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: var(--pet-list-limit, 360px);
+  padding: 16px 32px 24px;
+  margin: 0 -32px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: var(--pet-divider) transparent;
+}
+.pet-cards::-webkit-scrollbar { width: 4px; }
+.pet-cards::-webkit-scrollbar-thumb { background: var(--pet-divider); border-radius: 4px; }
+.pet-card-shell { position: relative; flex: none; isolation: isolate; padding-bottom: calc(var(--pet-stack-depth, 0) * 6px); }
+.pet-stack-layer { position: absolute; top: calc(var(--pet-stack-level) * 6px); left: var(--pet-stack-inset); right: var(--pet-stack-inset); height: calc(100% - var(--pet-stack-depth) * 6px); border: 1px solid var(--pet-line); border-radius: 28px; background: var(--pet-bg); z-index: calc(-1 * var(--pet-stack-level)); pointer-events: none; }
+.pet-card {
+  position: relative;
+  z-index: 0;
+  flex: none;
+  min-height: 56px;
+  padding: 10px 15px;
+  border: 1px solid var(--pet-line);
+  border-radius: 28px;
+  background: var(--pet-bg);
+  box-shadow: var(--pet-card-shadow);
+  isolation: isolate;
+}
+.pet-card-shell:last-child .pet-card { box-shadow: var(--pet-card-bottom-shadow); }
+.pet-completed { display: inline-flex; vertical-align: -1px; align-items: center; justify-content: center; width: 14px; height: 14px; margin-right: 5px; border-radius: 50%; background: #00a442; color: #fff; }
+.pet-stopped { display: inline-block; vertical-align: 1px; width: 8px; height: 8px; margin: 0 8px 0 3px; border-radius: 50%; background: #f59e0b; }
+.pet-card-head { display: flex; align-items: center; gap: 0; min-height: 34px; }
+.pet-title { flex: 1; min-width: 0; text-align: left; padding: 0; }
+.pet-title strong, .pet-title span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pet-title strong { font-size: 14px; font-weight: 600; line-height: 18px; }
+.pet-title span { font-size: 13px; line-height: 17px; color: var(--pet-muted); }
+.pet-card-actions { display: flex; flex: none; align-items: center; gap: 8px; width: 0; opacity: 0; overflow: hidden; }
+/* TIPS: 展开堆叠后标题会保留点击焦点；仅悬停或键盘选中操作按钮时显示，避免首项常驻操作区。 */
+.pet-card:hover .pet-card-actions, .pet-card:has(.pet-card-actions :focus-visible, .pet-close:focus-visible) .pet-card-actions { width: auto; opacity: 1; padding-left: 10px; overflow: visible; }
+.pet-icon { display: grid; place-items: center; width: 32px; height: 32px; flex: none; padding: 0; border-radius: 50%; background: var(--pet-field); }
+.pet-icon:disabled { opacity: .4; }
+.pet-card-actions .pet-icon { color: #999; }
+.pet-close {
+  position: absolute;
+  left: -5px;
+  top: -5px;
+  width: 20px;
+  height: 20px;
+  background: var(--pet-bg);
+  border: 1px solid var(--pet-line);
+  opacity: 0;
+  pointer-events: none;
+}
+.pet-card:hover .pet-close, .pet-card:has(.pet-card-actions :focus-visible, .pet-close:focus-visible) .pet-close { opacity: 1; pointer-events: auto; }
+.pet-follow { display: flex; align-items: center; gap: 7px; border-radius: 22px; background: var(--pet-field); padding: 3px 5px 3px 10px; margin-top: 8px; }
+.pet-follow textarea, .pet-composer textarea {
+  display: block;
+  background: transparent;
+  border: 0;
+  resize: none;
+  min-width: 0;
+  width: 100%;
+  min-height: 24px;
+  height: 24px;
+  max-height: 96px;
+  font-size: 14px;
+  line-height: 24px;
+  padding: 0;
+  user-select: text;
+}
+.pet-follow textarea::placeholder, .pet-composer textarea::placeholder { color: var(--pet-muted); opacity: .65; }
+.pet-composer textarea::placeholder { opacity: .45; }
+:root[data-theme=dark] .pet-composer textarea::placeholder { opacity: .65; }
+.pet-send { display: grid; place-items: center; width: 28px; height: 28px; flex: none; padding: 0; border-radius: 50%; background: var(--pet-accent); color: #fff; }
+.pet-send:disabled { background: #b1ccfb; }
+:root[data-theme=dark] .pet-send:disabled { background: #42608d; color: #b8c8e2; }
+.pet-card .pet-send:disabled { display: none; }
+.pet-note, .pet-message { color: var(--pet-muted); font-size: 12px; line-height: 1.45; margin: 5px 0; overflow-wrap: anywhere; }
+.pet-message { max-width: 100%; background: var(--pet-bg); padding: 8px 12px; border: 1px solid var(--pet-line); border-radius: 15px; user-select: text; }
+.pet-message button { display: block; padding: 4px 0; color: var(--pet-accent); text-decoration: underline; }
+.pet-restore { font-size: 12px; color: var(--pet-muted); padding: 6px 0; }
+.pet-drafts { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; max-height: 96px; overflow-y: auto; scrollbar-width: thin; font-size: 12px; color: var(--pet-muted); }
+.pet-drafts button { flex: none; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; text-decoration: underline; }
+.pet-quick { position: relative; width: 100%; }
+.pet-target-row { display: flex; align-items: center; min-height: 18px; padding: 0 12px; margin-bottom: 5px; }
+.pet-target { min-width: 0; padding: 0; color: var(--pet-muted); font-size: 11px; line-height: 18px; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pet-composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  min-height: 40px;
+  padding: 5px 7px;
+  border: 1px solid var(--pet-line);
+  border-radius: 24px;
+  background: var(--pet-bg);
+  box-shadow: var(--pet-shadow);
+}
+.pet-composer textarea { margin: 2px 0; }
+.pet-input-plus { display: grid; place-items: center; flex: none; width: 26px; height: 26px; margin: 1px 0; padding: 0; border-radius: 50%; background: var(--pet-field); }
+.pet-input-plus[aria-expanded=true] { background: var(--pet-divider); }
+.pet-input-options { position: absolute; left: 0; z-index: 3; display: flex; flex-direction: column; width: 100%; padding: 10px 6px 8px; overflow: hidden; border: 1px solid var(--pet-divider); border-radius: 24px; background: var(--pet-menu-bg); box-shadow: var(--pet-card-shadow); }
+.pet-input-options > .pet-note { flex: none; margin: 0; padding: 0 7px 6px; font-size: 12px; line-height: 18px; }
+/* TIPS: 向上菜单紧邻胶囊，会覆盖其上方的目标提示；关闭后原位恢复，输入栏不位移。 */
+.pet-panels[data-options-side=above] .pet-target-row { visibility: hidden; }
+.pet-session-list { flex: 0 1 auto; min-height: 0; list-style: none; margin: 0; padding: 0 2px; max-height: 280px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--pet-divider) transparent; }
+.pet-session-list::-webkit-scrollbar { width: 6px; }
+.pet-session-list::-webkit-scrollbar-thumb { border-radius: 4px; background: var(--pet-divider); }
+.pet-session-option { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 30px; padding: 6px 8px; border-radius: 16px; text-align: left; }
+.pet-session-option:hover, .pet-session-option[aria-pressed=true] { background: var(--pet-field); }
+.pet-session-option > span { display: flex; align-items: baseline; gap: 8px; flex: 1; min-width: 0; }
+.pet-session-option strong, .pet-session-option small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 18px; }
+.pet-session-option strong { flex: 0 1 auto; max-width: 65%; font-size: 13px; font-weight: 400; }
+.pet-session-option small { flex: 1; min-width: 0; font-size: 12px; color: var(--pet-muted); }
+.pet-session-option > svg { color: var(--pet-accent); }
+.pet-retarget { font-size: 12px; color: var(--pet-text); padding: 5px; text-align: left; }
+.pet-retarget:hover { background: var(--pet-field); border-radius: 8px; }
+.pet-voice { display: flex; gap: 8px; flex-wrap: wrap; font-size: 12px; padding: 8px 12px; color: var(--pet-muted); }
+.pet-voice button { text-decoration: underline; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; }
+  .pet-tools, .pet-control-surface, .pet-task-panel { transition: none; }
+}

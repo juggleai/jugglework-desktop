@@ -1,4 +1,7 @@
 /** @jsxImportSource react */
+import { isSessionSubmissionPreparing } from "../sync/submission-guard";
+import { clearQueuedSessionDrafts } from "./queued-draft-cleanup";
+import { sessionTaskPresentation } from "../status/task-presentation";
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import type { UIMessage } from "ai";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -64,7 +67,7 @@ import {
   type ComposerVideoModelOption,
 } from "./composer/video-generation";
 import { effectiveSessionRunning, isSessionBusyError, shouldReportAbortFailure } from "./session-run-recovery";
-import { imageModelQueryKey, mediaModelQueryScope, videoModelQueryKey } from "@/react-app/domains/connections/media-model-queries";
+import { imageModelsQueryOptions, mediaModelQueryScope, videoModelsQueryOptions } from "@/react-app/domains/connections/media-model-queries";
 import { effectiveGenerationState, generationDraftAvailable } from "./composer/generation-model-reconciliation";
 import {
   classifyTaskProgress,
@@ -100,7 +103,10 @@ import { canSteerQueuedDraft, shouldDrainQueuedTask } from "./queued-draft-polic
 import { deriveOpenTargets, type OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
 import { usePanelTabStore } from "@/react-app/domains/session/panel/panel-tab-store";
 import {
+  captureSessionSnapshotRevision,
+  isSessionSnapshotCurrent,
   captureTodoSnapshotRevision,
+  recordSessionSnapshotRevision,
   clearSessionTodos,
   seedSessionState,
   snapshotKey as reactSnapshotKey,
@@ -691,25 +697,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     workspaceId: props.workspaceId,
     workspaceRoot: props.workspaceRoot,
   });
-  const imageGenerationModelsQuery = useQuery({
-    queryKey: imageModelQueryKey(mediaQueryScope),
-    queryFn: async () => {
-      const response = await props.client.callExtensionAction({
-        extensionId: "openai-image-generation",
-        action: "image_models_list",
-        args: { mode: "text-to-image" },
-        context: {
-          workspaceId: props.workspaceId,
-          directory: props.workspaceRoot,
-        },
-      });
-      if (!response.ok) throw new Error(response.message);
-      return parseComposerImageModels(response.result);
-    },
-    staleTime: 30_000,
-    retry: 1,
-    refetchOnWindowFocus: true,
-  });
+  const imageGenerationModelsQuery = useQuery({ ...imageModelsQueryOptions(props.client, mediaQueryScope), refetchOnWindowFocus: true });
   const imageGenerationUnavailable = imageGenerationModelsQuery.isPending
     || imageGenerationModelsQuery.isFetching
     || imageGenerationModelsQuery.isError;
@@ -764,39 +752,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     }
     setImageGeneration(null);
   }, [imageGeneration, imageGenerationModels, imageGenerationUnavailable, setImageGeneration]);
-  const videoGenerationModelsQuery = useQuery({
-    queryKey: videoModelQueryKey(mediaQueryScope),
-    queryFn: async () => {
-      const context = {
-        workspaceId: props.workspaceId,
-        directory: props.workspaceRoot,
-      };
-      const [modelsResponse, statusResponse] = await Promise.all([
-        props.client.callExtensionAction({
-          extensionId: "media-generation",
-          action: "video_models_list",
-          args: { mode: "text-to-video" },
-          context,
-        }),
-        props.client.callExtensionAction({
-          extensionId: "media-generation",
-          action: "status",
-          args: {},
-          context,
-        }),
-      ]);
-      if (!modelsResponse.ok) throw new Error(modelsResponse.message);
-      if (!statusResponse.ok) throw new Error(statusResponse.message);
-      const status = statusResponse.result && typeof statusResponse.result === "object"
-        ? statusResponse.result as Record<string, unknown>
-        : null;
-      if (status?.submissionEnabled !== true) return [];
-      return parseComposerVideoModels(modelsResponse.result);
-    },
-    staleTime: 30_000,
-    retry: 1,
-    refetchOnWindowFocus: true,
-  });
+  const videoGenerationModelsQuery = useQuery({ ...videoModelsQueryOptions(props.client, mediaQueryScope), refetchOnWindowFocus: true });
   const videoGenerationUnavailable = videoGenerationModelsQuery.isPending
     || videoGenerationModelsQuery.isFetching
     || videoGenerationModelsQuery.isError;
@@ -855,11 +811,15 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const snapshotQuery = useQuery<JuggleWorkSessionSnapshot>({
     queryKey: snapshotQueryKey,
     queryFn: async () => {
+      const revision = captureSessionSnapshotRevision(props.workspaceId, props.sessionId);
       const todoRevision = captureTodoSnapshotRevision();
       const snapshot = (await props.client.getSessionSnapshot(props.workspaceId, props.sessionId, { limit: 140 })).item;
+      recordSessionSnapshotRevision(snapshot, revision);
       snapshotTodoRevisionBySnapshotRef.current.set(snapshot, todoRevision);
       return snapshot;
     },
+    // TIPS: 请求版本绑定在快照对象上，保留其身份，缓存重放不能把旧响应当成新读取。
+    structuralSharing: false,
     staleTime: 500,
   });
 
@@ -1049,12 +1009,12 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }, [props.sessionId]);
 
   const baseRenderedMessages = useMemo(
-    () => deriveRenderedSessionMessages({ transcriptState, snapshot }),
-    [snapshot, transcriptState],
+    () => deriveRenderedSessionMessages({ transcriptState, snapshot, snapshotCurrent: !snapshot || isSessionSnapshotCurrent(props.workspaceId, snapshot) }),
+    [snapshot, transcriptState, props.workspaceId],
   );
   const contextEstimationMessages = useMemo(
-    () => deriveContextEstimationMessages({ transcriptState, snapshot }),
-    [snapshot, transcriptState],
+    () => deriveContextEstimationMessages({ transcriptState, snapshot, snapshotCurrent: !snapshot || isSessionSnapshotCurrent(props.workspaceId, snapshot) }),
+    [snapshot, transcriptState, props.workspaceId],
   );
   const renderedMessages = useMemo(() => {
     if (evalMarkdownMessages.length === 0) return baseRenderedMessages;
@@ -1113,6 +1073,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       : showAssistantRespondingState
         ? "responding"
         : "idle";
+  const sharedTaskPresentation = sessionTaskPresentation(renderedMessages, todos, useSessionActivityStore.getState().recordsByWorkspaceId[props.workspaceId]?.[props.sessionId]);
   useReactRenderWatchdog("SessionSurface", {
     sessionId: props.sessionId,
     workspaceId: props.workspaceId,
@@ -1337,13 +1298,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     if (submission.delivery !== "steer") {
       clearSessionTodos(workspaceId, sessionId);
     }
-    let finishOfficeSubmission: () => string[] = () => [];
     try {
-      const selection = officeSubmissionFromDraft(nextDraft);
-      if (selection.officeInstructions?.length && (nextDraft.mode !== "prompt" || nextDraft.command)) throw new Error("选区修改要求请作为普通消息发送");
-      // TIPS: 预检和 admission 均会等待；这段时间输入栏删除标签不能释放本次已固定的引用。
-      finishOfficeSubmission = useComposerStateStore.getState().holdOfficeSubmission(sessionId, selection.officeSelectionRefs ?? []);
-      if (selection.officeSelectionRefs?.length) await props.client.validateOfficeSelections(workspaceId, sessionId, selection.officeSelectionRefs);
       const result = await props.onSendDraft(nextDraft, sessionId, submission);
       if (result.outcome === "blocked" || result.outcome === "cancelled") return result;
       // Only report a run after the pre-send gate released the exact queued
@@ -1388,8 +1343,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
       useSessionActivityStore.getState().setError(workspaceId, sessionId, parsed.message);
       throw nextError;
     } finally {
-      const referenceIds = finishOfficeSubmission();
-      if (referenceIds.length) void props.client.releaseOfficeSelections(workspaceId, sessionId, referenceIds).catch(() => {});
       inFlightSendIdentitiesRef.current.delete(surfaceIdentity);
     }
   }, [activeRunsQuery.refetch, appendComposerHistory, imageGenerationModels, imageGenerationUnavailable, props.onSendDraft, props.sessionId, props.taskSubmissionDisabled, props.workspaceId, props.client, renderedMessages.length, videoGenerationModels, videoGenerationUnavailable]);
@@ -1616,11 +1569,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     // Stop means stop: drop queued follow-ups before aborting, otherwise the
     // queue-drain effect below re-prompts the agent the moment the abort
     // lands and the session reports idle (#2014).
-    queuedDrafts.forEach((item) => item.draft.attachments.forEach(revokeAttachmentPreview));
-    clearQueuedDrafts(props.sessionId);
-    const cancelledIds = queuedDrafts.flatMap((item) => item.draft.parts.flatMap((part) => part.type === "office-selection" ? part.references.map((ref) => ref.referenceId) : []));
-    const referenceIds = releasableOfficeReferences(useComposerStateStore.getState(), props.sessionId, cancelledIds);
-    if (referenceIds.length) void props.client.releaseOfficeSelections(props.workspaceId, props.sessionId, referenceIds).catch(() => {});
+    clearQueuedSessionDrafts(props.client, props.workspaceId, props.sessionId);
     // The prompt was sent through a directory-scoped client (session-route
     // passes the workspace root), so the abort must target the same scope —
     // without it the server resolves the default project, finds no live run,
@@ -1679,7 +1628,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     })) return;
     if (props.taskSubmissionDisabled) return;
     const target = queuedDrafts[0];
-    if (!target) return;
+    if (!target || target.petWorkspaceId || target.petBlockedReason || isSessionSubmissionPreparing(props.workspaceId, props.sessionId)) return;
     drainingQueueRef.current = true;
     queueWaitsForIdleRef.current = false;
     queuedRunObservedBusyRef.current = false;
@@ -2504,7 +2453,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
               </div>
             ) : renderedMessages.length === 0 && effectiveActivityStatus !== "idle" ? (
               <div className="px-6 py-12">
-                <AssistantWaitingCard label={getSessionActivityStatusLabel(effectiveActivityStatus)} />
+                <AssistantWaitingCard label={sharedTaskPresentation.active || sharedTaskPresentation.waiting ? sharedTaskPresentation.statusText : getSessionActivityStatusLabel(effectiveActivityStatus)} />
               </div>
             ) : renderedMessages.length === 0 && snapshot && snapshot.messages.length === 0 && error ? (
               <SessionErrorCard

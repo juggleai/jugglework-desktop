@@ -9,27 +9,20 @@ import {
 import { useNavigate, useParams } from "react-router-dom";
 import { toast } from "@/components/ui/sonner";
 import type {
-  AgentPartInput,
-  FilePartInput,
   ProviderListResponse,
-  TextPartInput,
 } from "@opencode-ai/sdk/v2/client";
-import type { ResponseLanguage } from "@jugglework/types/response-language";
 
-import { captureAnalyticsEvent, markTaskRunStart } from "@/app/lib/analytics";
+import { captureAnalyticsEvent } from "@/app/lib/analytics";
 import { createLocalWorkspaceForRuntime } from "@/app/lib/local-workspace-create";
-import { trackSessionActive, trackTaskStarted } from "@/app/lib/den-telemetry";
 import { buildDiagnosticsBundleJson } from "@/app/lib/diagnostics-bundle";
 import { downloadTextAsFile } from "@/app/lib/download";
 import { createClient, unwrap } from "@/app/lib/opencode";
+import { submitSessionDraft } from "@/react-app/domains/session/sync/draft-submission";
+import { useDesktopPet } from "@/react-app/domains/pet/use-desktop-pet";
+import { DesktopPetHost } from "@/react-app/domains/pet/desktop-pet-host";
 import { installOfficeComposerBridge } from "@/react-app/domains/session/surface/composer/office-composer-bridge";
-import { officeSubmissionFromDraft, officeGroupText, officeGroupDisplay } from "@/react-app/domains/session/surface/composer/office-selection-draft";
-import { abortSessionSafe, compactSession, forkSession, isCompactSessionCommand, listCommands, revertSession, setSessionArchived, shellInSession } from "@/app/lib/opencode-session";
-import { isNewSessionCommand } from "@/react-app/domains/session/surface/composer/slash-command";
+import { abortSessionSafe, forkSession, listCommands, revertSession, setSessionArchived } from "@/app/lib/opencode-session";
 import { resolveModelContextLimit } from "@/react-app/domains/session/surface/composer/context-usage-data";
-import { imageModelKey, mergeImageGenerationSystemContext, type ComposerImageModelOption } from "@/react-app/domains/session/surface/composer/image-generation";
-import { mergeVideoGenerationSystemContext, videoModelKey, type ComposerVideoModelOption } from "@/react-app/domains/session/surface/composer/video-generation";
-import { generationDraftAvailable } from "@/react-app/domains/session/surface/composer/generation-model-reconciliation";
 import { requestComposerFocus } from "@/react-app/domains/session/surface/composer/focus-request";
 import { useSessionManagementStore as sessionManagementStore } from "@/react-app/domains/session/sidebar/session-management-store";
 import {
@@ -61,7 +54,6 @@ import {
 } from "@/app/lib/desktop";
 import type {
   ComposerDraft,
-  ComposerPart,
   ComposerSubmissionOptions,
   ModelOption,
   ModelRef,
@@ -82,7 +74,7 @@ import {
   resolveModelDisplayName,
   safeStringify,
 } from "@/app/utils";
-import { currentLocale, t } from "@/i18n";
+import { t } from "@/i18n";
 import {
   type RouteWorkspace,
   type RouteSession,
@@ -129,18 +121,12 @@ import {
 import { useRestrictionNotice } from "@/react-app/domains/cloud/restriction-notice-provider";
 import { ReactSessionRuntime } from "@/react-app/domains/session/sync/runtime-sync";
 import { useSessionActivityStore } from "@/react-app/domains/session/status/session-activity-store";
-import { buildJuggleWorkEnvSystemContext } from "@/react-app/domains/session/sync/env-context";
-import { detectResponseLanguage } from "@/react-app/domains/session/sync/response-language";
 import {
   applySessionRevert,
 } from "@/react-app/domains/session/sync/session-sync";
-import { composerFilePartToPromptPart } from "@/react-app/domains/session/sync/prompt-file-parts";
-import { composerAttachmentsToWorkspaceFileParts } from "@/react-app/domains/session/sync/attachment-file-part";
 import { useModelBehavior } from "@/react-app/domains/session/surface/use-model-behavior";
 import { useSessionFindStore } from "@/react-app/domains/session/surface/find-store";
 import { useModelPicker } from "@/react-app/domains/session/modals/use-model-picker";
-import { appMentionInstruction } from "@/react-app/domains/session/surface/composer/app-mentions";
-import { decodeComposerMentionValue } from "@/react-app/domains/session/surface/composer/mention-encoding";
 import { CreateRemoteWorkspaceModal } from "@/react-app/domains/workspace/create-remote-workspace-modal";
 import { CreateWorkspaceModal } from "@/react-app/domains/workspace/create-workspace-modal";
 import type {
@@ -176,7 +162,6 @@ import { useBootState } from "./boot-state";
 import {
   forgetWorkspaceMemory,
   readLastSessionFor,
-  readWorkspaceProjectDimension,
   readWorkspaceOrderIds,
   writeActiveWorkspaceId,
   writeLastSessionFor,
@@ -205,15 +190,9 @@ import { useEngineReload } from "./use-engine-reload";
 import { useSessionGroupSync } from "./use-session-group-sync";
 import { useWorkspaceRouteState } from "./use-workspace-route-state";
 import { serializeWorkspaceActivation } from "./workspace-activation-coordinator";
-import {
-  COMPOSER_TOKEN_SPLIT_RE,
-  buildCapabilityInstruction,
-  fallbackCapabilityPrompt,
-  parseComposerCapabilityToken,
-} from "@/react-app/domains/session/surface/composer/capability-tags";
 import { useRegisterWorkspaceShellActions } from "./workspace-shell-actions";
 import { getReactQueryClient } from "@/react-app/infra/query-client";
-import { imageModelQueryKey, mediaModelQueryScope, videoModelQueryKey } from "@/react-app/domains/connections/media-model-queries";
+import { generationDraftAvailableInCache, mediaModelQueryScope } from "@/react-app/domains/connections/media-model-queries";
 import { useSessionControlActions } from "@/react-app/domains/session/control/session-control-actions";
 import { legacySessionRoute, mergeWorkspaceRouteSession, workspaceAppsRoute, workspaceChatRoute, workspaceReviewsRoute, workspaceSessionRoute, workspaceSettingsRoute } from "./workspace-routes";
 import { WorkspaceProvider } from "./workspace-provider";
@@ -234,25 +213,6 @@ import {
   useProviderListQuery,
 } from "@/react-app/infra/provider-list-query";
 
-/**
- * Serialize an SDK error value into a string that parseSessionError can parse.
- * Preserves the original shape (name, data, message) as JSON when possible,
- * so the session surface can detect ProviderModelNotFoundError and offer
- * recovery actions like "Change model".
- */
-function serializeSDKError(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  if (typeof error === "string") return error;
-  if (typeof error === "object" && error !== null) {
-    try {
-      return JSON.stringify(error);
-    } catch {
-      const msg = (error as Record<string, unknown>).message;
-      return typeof msg === "string" ? msg : String(error);
-    }
-  }
-  return String(error);
-}
 
 /**
  * A cloud admin can replace a provider instead of editing it in place. Cloud
@@ -316,150 +276,6 @@ function nextEvalUnavailableModel(current: ModelRef | null | undefined) {
 // `resolveWorkspaceEndpoint` in apps/app/src/app/lib/workspace-endpoint.ts.
 // Don't compose `<baseUrl>/workspace/<id>` here.
 
-async function draftToParts(
-  draft: ComposerDraft,
-  workspaceRoot: string,
-  sessionId: string,
-  endpoint: ResolvedWorkspaceEndpoint | null,
-) {
-  const parts: Array<TextPartInput | FilePartInput | AgentPartInput> = [];
-  const root = workspaceRoot.trim();
-
-  const attachmentFileById = new Map<string, FilePartInput>();
-  if (draft.attachments.length > 0) {
-    if (!endpoint) {
-      throw new Error("Workspace endpoint is unavailable; attachments could not be copied for tool access.");
-    }
-    const uploaded = await composerAttachmentsToWorkspaceFileParts({
-      attachments: draft.attachments,
-      endpoint,
-      sessionId,
-      workspaceRoot: root,
-    });
-    for (const part of uploaded) {
-      if (part.type === "text") {
-        parts.push(part);
-        continue;
-      }
-    }
-    const fileParts = uploaded.filter((part): part is FilePartInput => part.type === "file");
-    for (const [index, attachment] of draft.attachments.entries()) {
-      const filePart = fileParts[index];
-      if (filePart) attachmentFileById.set(attachment.id, filePart);
-    }
-  }
-
-  // Prefer draft.text token order so attachment chips stay inline with surrounding text
-  // (same positions as the composer), instead of dumping every file part at the end.
-  const hasAttachmentTokens = /\[attachment [^\]]+\]/.test(draft.text);
-  if (hasAttachmentTokens || attachmentFileById.size > 0) {
-    const pasteByLabel = new Map(
-      draft.parts
-        .filter((part): part is Extract<ComposerPart, { type: "paste" }> => part.type === "paste")
-        .map((part) => [part.label, part.text] as const),
-    );
-    for (const segment of draft.text.split(COMPOSER_TOKEN_SPLIT_RE)) {
-      if (!segment) continue;
-      const officeMatch = /^\[office-instruction ([\w-]+)\]$/.exec(segment);
-      const officeGroup = officeMatch ? draft.parts.find((part) => part.type === "office-selection" && part.instruction.instructionId === officeMatch[1]) : null;
-      if (officeGroup?.type === "office-selection") {
-        parts.push({ type: "text", text: officeGroupText(officeGroup), metadata: { officeSelectionGroup: officeGroupDisplay(officeGroup) } });
-        continue;
-      }
-      const attachmentMatch = segment.match(/^\[attachment (.+)\]$/);
-      if (attachmentMatch?.[1]) {
-        const filePart = attachmentFileById.get(attachmentMatch[1]);
-        if (filePart) {
-          parts.push(filePart);
-          attachmentFileById.delete(attachmentMatch[1]);
-        }
-        continue;
-      }
-      const pasteMatch = segment.match(/^\[pasted text (.+)\]$/);
-      if (pasteMatch?.[1]) {
-        const pasted = pasteByLabel.get(pasteMatch[1]);
-        if (pasted) parts.push({ type: "text", text: pasted });
-        continue;
-      }
-      const capability = parseComposerCapabilityToken(segment);
-      if (capability) {
-        if (capability.kind === "skill") {
-          parts.push({ type: "text", text: buildCapabilityInstruction("skill", capability.name) });
-        } else {
-          // 云端技能/扩展/MCP：发送插入时登记的完整指令，而不是裸 token。
-          const registered = draft.parts.find(
-            (part): part is Extract<ComposerPart, { type: "capability" }> =>
-              part.type === "capability" && part.kind === capability.kind && part.name === capability.name,
-          );
-          parts.push({ type: "text", text: registered?.prompt ?? fallbackCapabilityPrompt(capability.kind, capability.name) });
-        }
-        continue;
-      }
-      if (segment.startsWith("@")) {
-        const value = decodeComposerMentionValue(segment.slice(1));
-        const mentionPart = draft.parts.find((part) =>
-          (part.type === "agent" && part.name === value)
-          || (part.type === "app" && part.name === value)
-          || (part.type === "file" && part.path === value),
-        );
-        if (mentionPart?.type === "agent") {
-          parts.push({ type: "agent", name: mentionPart.name });
-          continue;
-        }
-        if (mentionPart?.type === "app") {
-          parts.push({ type: "text", text: appMentionInstruction(mentionPart.name) });
-          continue;
-        }
-        if (mentionPart?.type === "file") {
-          const filePart = composerFilePartToPromptPart(mentionPart, root);
-          if (filePart) parts.push(filePart);
-          continue;
-        }
-      }
-      parts.push({ type: "text", text: segment });
-    }
-    for (const filePart of attachmentFileById.values()) {
-      parts.push(filePart);
-    }
-  } else {
-    for (const part of draft.parts) {
-      if (part.type === "office-selection") {
-        parts.push({ type: "text", text: officeGroupText(part), metadata: { officeSelectionGroup: officeGroupDisplay(part) } });
-        continue;
-      }
-      if (part.type === "text") {
-        parts.push({ type: "text", text: part.text });
-        continue;
-      }
-      if (part.type === "paste") {
-        parts.push({ type: "text", text: part.text });
-        continue;
-      }
-      if (part.type === "agent") {
-        parts.push({ type: "agent", name: part.name });
-        continue;
-      }
-      if (part.type === "skill") {
-        parts.push({ type: "text", text: buildCapabilityInstruction("skill", part.name) });
-        continue;
-      }
-      if (part.type === "capability") {
-        parts.push({ type: "text", text: part.prompt });
-        continue;
-      }
-      if (part.type === "app") {
-        parts.push({ type: "text", text: appMentionInstruction(part.name) });
-        continue;
-      }
-      if (part.type === "file") {
-        const filePart = composerFilePartToPromptPart(part, root);
-        if (filePart) parts.push(filePart);
-      }
-    }
-  }
-
-  return parts;
-}
 
 export type SessionRouteProps = {
   routeWorkspaceId?: string;
@@ -548,6 +364,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     onServerSettingsChanged: () => setJuggleWorkServerSettingsVersion((value) => value + 1),
     onHostInfo: setJuggleWorkServerHostInfoState,
   });
+  const { snapshot: petState } = useDesktopPet();
   const hostMarketplace = useHostMarketplacePlugins();
   const hostMarketplaceExecutionTarget = useMemo(() => selectedWorkspaceEndpoint && selectedWorkspace ? ({
     client: selectedWorkspaceEndpoint.client,
@@ -871,6 +688,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
 
   const coordinatorTrackedWorkspaceIds = useMemo(() => {
     const ids = new Set(activityTrackedWorkspaceIds);
+    if (petState?.visible) workspaces.forEach((workspace) => ids.add(workspace.id));
     for (const [workspaceId, sessionIds] of Object.entries(coordinatorProbeSessionIdsByWorkspace)) {
       if (sessionIds.length > 0) ids.add(workspaceId);
     }
@@ -878,7 +696,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
       if (sessionIds.length > 0) ids.add(workspaceId);
     }
     return [...ids].sort();
-  }, [activityTrackedWorkspaceIds, coordinatorProbeSessionIdsByWorkspace, coordinatorSessionIdsByWorkspace]);
+  }, [activityTrackedWorkspaceIds, coordinatorProbeSessionIdsByWorkspace, coordinatorSessionIdsByWorkspace, petState?.visible, workspaces]);
 
   useEffect(() => {
     if (coordinatorTrackedWorkspaceIds.length === 0) return;
@@ -1500,89 +1318,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         const targetSessionId = sessionId.trim() || selectedSessionId;
         if (!targetSessionId) return { outcome: "cancelled", reason: "context_changed" };
         if (!canAcceptTask) return { outcome: "cancelled", reason: "context_changed" };
-        const text = (draft.resolvedText ?? draft.text).trim();
-        if (!text && draft.attachments.length === 0) {
-          return { outcome: "cancelled", reason: "context_changed" };
-        }
-        if (submission.delivery === "steer" && (draft.mode !== "prompt" || draft.command)) {
-          return {
-            outcome: "blocked",
-            issue: {
-              code: "unsupported_steer_draft",
-              stage: "engine_delivery",
-              retryable: false,
-              message: "Commands and shell tasks cannot steer an active task.",
-              recommendedAction: "Edit the queued item into a normal message, then steer it again.",
-            },
-          };
-        }
-        // 用目标会话自己的模型发送（分屏时两个面板的会话可能用不同模型）。
-        const targetChoice = resolveModelForSession(targetSessionId);
-        const targetModel = targetChoice.model;
-        const targetVariant = describeModel(targetModel, targetChoice.variant).modelVariantValue;
-        if (isNewSessionCommand(draft.command)) {
-          throw new Error("/new must be handled by the session interface.");
-        }
-        const isCompactCommand = isCompactSessionCommand(draft.command);
-        if (isCompactCommand && !targetModel) {
-          throw new Error("Choose a model before compacting this session.");
-        }
-        if (
-          targetModel &&
-          isCloudManagedProviderKey(targetModel.providerID) &&
-          !isManagedModelReady(targetModel)
-        ) {
-          throw new Error(t("app.error_managed_model_preparing"));
-        }
-        if (isModelUnavailable(targetModel)) throw new Error("Selected model is unavailable. Choose another model before sending.");
-
-        // TIPS: 页面从后台或休眠恢复时，Connect maintenance 会重建可能失效的
-        // first-party transport。这里只等待已经在运行的恢复任务，不为普通消息额外探活。
         const routeContext = activeRouteContextRef.current;
-        const resumeMaintenance = await waitForSessionMcpResumeMaintenance();
-        if (activeRouteContextRef.current !== routeContext) {
-          return { outcome: "cancelled", reason: "context_changed" };
-        }
-        if (resumeMaintenance.outcome === "timed_out") {
-          return reportCloudMcpSubmissionFailure({
-              code: "cloud_mcp_resume_maintenance_timeout",
-              stage: "engine_delivery",
-              retryable: true,
-              message: "JuggleWork Connect is still restoring after the app resumed.",
-              recommendedAction: "Wait a moment, then retry the message.",
-          });
-        }
-        if (resumeMaintenance.outcome === "failed") {
-          return reportCloudMcpSubmissionFailure({
-              code: "cloud_mcp_resume_maintenance_failed",
-              stage: "engine_delivery",
-              retryable: true,
-              message: "JuggleWork Connect could not finish restoring after the app resumed.",
-              recommendedAction: "Retry the message, then open Settings → Connect if the problem continues.",
-          });
-        }
-
-        if (hostMarketplace.snapshot.registry?.installations.length) {
-          try {
-            const hostSnapshot = await hostMarketplace.ensureReady();
-            if (!hostSnapshot.registry?.active) {
-              throw hostSnapshot.error ?? new Error("Host Marketplace plugins are not active.");
-            }
-          } catch (error) {
-            return reportCloudMcpSubmissionFailure({
-              code: "host_marketplace_scope_unavailable",
-              stage: "engine_delivery",
-              retryable: true,
-              message: error instanceof Error ? error.message : "Host Marketplace plugins could not be prepared.",
-              recommendedAction: "Wait a moment, then retry the message.",
-            });
-          }
-        }
-
-        const requiresCloudMcpReadiness = draft.parts.some((part) => (
-          part.type === "capability" &&
-          (part.kind === "cloud-skill" || part.kind === "cloud-mcp" || part.kind === "extension")
-        ));
         const validateGenerationDraftBeforeSend = () => {
           if (!draft.imageGeneration && !draft.videoGeneration) return true;
           if (activeRouteContextRef.current !== routeContext) return false;
@@ -1591,121 +1327,70 @@ export function SessionRoute(props: SessionRouteProps = {}) {
             workspaceId: selectedWorkspaceEndpoint?.workspaceId ?? "",
             workspaceRoot: selectedWorkspaceRoot,
           });
-          const queryClient = getReactQueryClient();
-          const imageQuery = queryClient.getQueryState(imageModelQueryKey(mediaScope));
-          const videoQuery = queryClient.getQueryState(videoModelQueryKey(mediaScope));
-          return generationDraftAvailable({
-            selection: draft.imageGeneration,
-            models: queryClient.getQueryData<ComposerImageModelOption[]>(imageModelQueryKey(mediaScope)) ?? [],
-            unavailable: !imageQuery || imageQuery.status !== "success" || imageQuery.fetchStatus !== "idle" || imageQuery.isInvalidated,
-            modelKey: imageModelKey,
-          }) && generationDraftAvailable({
-            selection: draft.videoGeneration,
-            models: queryClient.getQueryData<ComposerVideoModelOption[]>(videoModelQueryKey(mediaScope)) ?? [],
-            unavailable: !videoQuery || videoQuery.status !== "success" || videoQuery.fetchStatus !== "idle" || videoQuery.isInvalidated,
-            modelKey: videoModelKey,
-          });
+          return generationDraftAvailableInCache(getReactQueryClient(), mediaScope, draft);
         };
-        return submitWithCloudMcpReadiness({
-          // Ordinary coding/chat tasks must not wait for a Connect probe they
-          // did not request. Explicit Cloud capabilities keep the strict gate.
-          skipGate: !requiresCloudMcpReadiness,
-          sessionId: targetSessionId,
-          providerModel: targetModel ? { provider: targetModel.providerID, model: targetModel.modelID } : undefined,
-          validateBeforeSend: validateGenerationDraftBeforeSend,
-          send: async () => {
-            let preparedParts: Awaited<ReturnType<typeof draftToParts>> | null = null;
-            let preparedSystemContext: string | undefined;
-            if (draft.mode !== "shell" && !isCompactCommand && !draft.command) {
-              preparedParts = await draftToParts(draft, selectedWorkspaceRoot, targetSessionId, selectedWorkspaceEndpoint);
-              const envSystemContext = await buildJuggleWorkEnvSystemContext(client, {
-                cacheKey: targetSessionId,
-                runtimeKey: environmentRuntimeKey,
+        return submitSessionDraft({
+          draft, sessionId: targetSessionId, workspaceId: selectedWorkspaceId, workspaceRoot: selectedWorkspaceRoot,
+          client: opencodeClient, host: client, endpoint: selectedWorkspaceEndpoint,
+          runtimeKey: environmentRuntimeKey, workspaceType: selectedWorkspace?.workspaceType, submission,
+          isCurrent: () => canAcceptTask && activeRouteContextRef.current === routeContext,
+          cloudSubmit: submitWithCloudMcpReadiness, validateGeneration: validateGenerationDraftBeforeSend,
+          prepare: async () => {
+            const targetChoice = resolveModelForSession(targetSessionId);
+            const targetModel = targetChoice.model;
+            const targetVariant = describeModel(targetModel, targetChoice.variant).modelVariantValue;
+            if (
+              targetModel &&
+              isCloudManagedProviderKey(targetModel.providerID) &&
+              !isManagedModelReady(targetModel)
+            ) {
+              throw new Error(t("app.error_managed_model_preparing"));
+            }
+            if (isModelUnavailable(targetModel)) throw new Error("Selected model is unavailable. Choose another model before sending.");
+
+            // TIPS: 页面从后台或休眠恢复时，Connect maintenance 会重建可能失效的
+            // first-party transport。这里只等待已经在运行的恢复任务，不为普通消息额外探活。
+            const resumeMaintenance = await waitForSessionMcpResumeMaintenance();
+            if (activeRouteContextRef.current !== routeContext) {
+              return { outcome: "cancelled", reason: "context_changed" };
+            }
+            if (resumeMaintenance.outcome === "timed_out") {
+              return reportCloudMcpSubmissionFailure({
+                  code: "cloud_mcp_resume_maintenance_timeout",
+                  stage: "engine_delivery",
+                  retryable: true,
+                  message: "JuggleWork Connect is still restoring after the app resumed.",
+                  recommendedAction: "Wait a moment, then retry the message.",
               });
-              const imageSystemContext = mergeImageGenerationSystemContext(draft, envSystemContext);
-              preparedSystemContext = mergeVideoGenerationSystemContext(draft, imageSystemContext);
             }
-            // This check is intentionally after every asynchronous preparation
-            // and immediately before task bookkeeping plus promptAsync. A
-            // provider mutation during file/env preparation therefore cancels
-            // and restores a queued generation draft instead of sending it.
-            if (!validateGenerationDraftBeforeSend()) return false;
-            captureAnalyticsEvent("task_message_sent", {
-              mode: draft.mode ?? "prompt",
-              delivery: submission.delivery ?? "start",
-              is_command: Boolean(draft.command),
-              attachment_count: draft.attachments.length,
-              text_length: text.length,
-              workspace_type: selectedWorkspace?.workspaceType ?? "unknown",
-              provider_id: targetModel?.providerID ?? null,
-              model_id: targetModel?.modelID ?? null,
-            });
-            if (submission.delivery !== "steer") {
-              markTaskRunStart(targetSessionId);
-            }
-            // Den org adoption signals (auth-gated inside; no-op when signed out).
-            // This remains inside the post-readiness send closure so a blocked
-            // Cloud submission cannot create a run or report that one started.
-            const projectDimension = readWorkspaceProjectDimension(selectedWorkspaceId);
-            const telemetryDimensions = projectDimension
-              ? [{
-                  type: "project",
-                  label: projectDimension.label,
-                }]
-              : undefined;
-            trackSessionActive(targetSessionId, telemetryDimensions);
-            if (submission.delivery !== "steer") {
-              trackTaskStarted(targetSessionId, telemetryDimensions);
+            if (resumeMaintenance.outcome === "failed") {
+              return reportCloudMcpSubmissionFailure({
+                  code: "cloud_mcp_resume_maintenance_failed",
+                  stage: "engine_delivery",
+                  retryable: true,
+                  message: "JuggleWork Connect could not finish restoring after the app resumed.",
+                  recommendedAction: "Retry the message, then open Settings → Connect if the problem continues.",
+              });
             }
 
-            if (draft.mode === "shell") {
-              await shellInSession(opencodeClient, targetSessionId, text);
-              return;
-            }
-
-            if (isCompactCommand && targetModel) {
-              await compactSession(opencodeClient, targetSessionId, targetModel, {
-                directory: selectedWorkspaceRoot || undefined,
-                variant: targetVariant ?? undefined,
-              });
-              return;
-            }
-
-            if (draft.command) {
-              const result = await opencodeClient.session.command({
-                sessionID: targetSessionId,
-                command: draft.command.name,
-                arguments: draft.command.arguments,
-              });
-              if (result.error) {
-                throw new Error(serializeSDKError(result.error));
+            if (hostMarketplace.snapshot.registry?.installations.length) {
+              try {
+                const hostSnapshot = await hostMarketplace.ensureReady();
+                if (!hostSnapshot.registry?.active) {
+                  throw hostSnapshot.error ?? new Error("Host Marketplace plugins are not active.");
+                }
+              } catch (error) {
+                return reportCloudMcpSubmissionFailure({
+                  code: "host_marketplace_scope_unavailable",
+                  stage: "engine_delivery",
+                  retryable: true,
+                  message: error instanceof Error ? error.message : "Host Marketplace plugins could not be prepared.",
+                  recommendedAction: "Wait a moment, then retry the message.",
+                });
               }
-              return;
             }
 
-            // Keep JuggleWork-only language metadata outside the OpenCode prompt
-            // contract; the mounted client strips it into the run-start envelope.
-            const promptRequest = {
-              sessionID: targetSessionId,
-              ...(submission.delivery !== "steer" && submission.messageID ? { messageID: submission.messageID } : {}),
-              parts: preparedParts ?? [],
-              juggleworkOfficeSelections: officeSubmissionFromDraft(draft),
-              juggleworkDetectedResponseLanguage: detectResponseLanguage(draft) ?? undefined,
-              juggleworkDefaultResponseLanguage: (currentLocale() === "zh" ? "zh" : "en") satisfies ResponseLanguage,
-              model: targetModel ?? undefined,
-              agent: readSessionAgentChoice(selectedWorkspaceId, targetSessionId) ?? undefined,
-              ...(targetVariant ? { variant: targetVariant } : {}),
-              ...(preparedSystemContext ? { system: preparedSystemContext } : {}),
-              ...(submission.delivery === "steer" ? {
-                juggleworkDelivery: "steer" as const,
-                juggleworkAdmissionId: submission.admissionId,
-              } : {}),
-            };
-            const result = await opencodeClient.session.promptAsync(promptRequest);
-            if (result.error) {
-              if (result.error instanceof Error) throw result.error;
-              throw new Error(serializeSDKError(result.error));
-            }
+            return { model: targetModel, variant: targetVariant ?? null };
           },
         });
       },
@@ -2677,6 +2362,14 @@ export function SessionRoute(props: SessionRouteProps = {}) {
       opencodeBaseUrl={opencodeBaseUrl}
       selectedWorkspaceRoot={selectedWorkspaceRoot}
     >
+    <DesktopPetHost coordinatorIds={coordinatorSessionIdsByWorkspace} workspaces={workspaces} endpointForWorkspace={endpointForWorkspace}
+      contextKey={`${denAuth.status}:${readDenSettings().activeOrgId ?? ""}:${denAuth.user?.id ?? ""}`}
+      defaultModel={local.prefs.defaultModel} defaultVariant={local.prefs.modelVariant ?? null}
+      selectedWorkspaceId={selectedWorkspaceId} selectedSend={surfaceProps?.onSendDraft ?? null}
+      reloadBusy={reloadCoordinator.reloadBusy || Boolean(reloadCoordinator.reloadError)} cloudSignedIn={denAuth.isSignedIn} cloudAuthStatus={denAuth.status}
+      onOpen={(workspaceId, sessionId) => { navigateToWorkspaceSession(workspaceId, sessionId); }}
+      onOpenApp={() => { navigateToWorkspaceSession(selectedWorkspaceId); }}
+    />
     {opencodeClient && selectedWorkspaceEndpoint && opencodeBaseUrl && selectedWorkspaceServerToken ? (
       <ReactSessionRuntime
         // Use the server-side workspace id (the one without the `rem_`

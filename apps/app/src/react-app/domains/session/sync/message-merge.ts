@@ -129,10 +129,11 @@ export function messageListContainsAll(container: UIMessage[], required: UIMessa
   return required.every((message) => ids.has(message.id));
 }
 
+/** 合并历史快照和实时消息；失效快照只能补缺，不能改写已有实时消息。 */
 export function mergeSnapshotAndLiveMessages(
   snapshotMessages: UIMessage[],
   liveMessages: UIMessage[],
-  options: { appendLiveOnlyMessages?: boolean } = {},
+  options: { appendLiveOnlyMessages?: boolean; preserveLiveMessages?: boolean } = {},
 ) {
   if (snapshotMessages.length === 0) return liveMessages;
   if (liveMessages.length === 0) return snapshotMessages;
@@ -141,7 +142,7 @@ export function mergeSnapshotAndLiveMessages(
   const snapshotIds = new Set(snapshotMessages.map((message) => message.id));
   const merged = snapshotMessages.map((snapshotMessage) => {
     const liveMessage = liveById.get(snapshotMessage.id);
-    return liveMessage ? mergeSnapshotMessageWithCached(snapshotMessage, liveMessage) : snapshotMessage;
+    return liveMessage ? (options.preserveLiveMessages ? liveMessage : mergeSnapshotMessageWithCached(snapshotMessage, liveMessage)) : snapshotMessage;
   });
 
   if (options.appendLiveOnlyMessages) {

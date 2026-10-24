@@ -51,6 +51,7 @@ type HostMarketplacePluginsContextValue = {
   supported: boolean;
   readiness: "idle" | "activating" | "ready" | "unavailable";
   ensureReady: () => Promise<HostMarketplacePluginsSnapshot>;
+  ensureReadyForTarget: (target: ExecutionTarget) => Promise<void>;
   setExecutionTarget: (target: ExecutionTarget | null) => void;
 };
 
@@ -145,6 +146,18 @@ export function HostMarketplacePluginsProvider(props: { children: ReactNode }) {
       return next;
     });
   }, []);
+  /** 为后台任务准备同一身份的目标宿主插件，不切换当前页面的执行目标。 */
+  const ensureReadyForTarget = useCallback(async (next: ExecutionTarget) => {
+    if (!scope || !supportsHostMarketplaceWorkspace(next)) return;
+    const key = [next.client.baseUrl.replace(/\/+$/, ""), next.token, next.hostToken, scope.controlPlaneOrigin, scope.userId, scope.organizationId].join("\0");
+    let targetController = controllersRef.current.get(key);
+    if (!targetController) {
+      targetController = new HostMarketplacePluginsController(next.client);
+      controllersRef.current.set(key, targetController);
+    }
+    const prepared = await targetController.ensureScope(scope);
+    if (prepared.registry?.installations.length && !prepared.registry.active) throw prepared.error ?? new Error("Host Marketplace plugins are not active.");
+  }, [scope]);
   const readiness = !controller || !scope || !hasCredential
     ? "idle"
     : snapshot.status === "loading"
@@ -165,8 +178,9 @@ export function HostMarketplacePluginsProvider(props: { children: ReactNode }) {
     supported,
     readiness,
     ensureReady,
+    ensureReadyForTarget,
     setExecutionTarget,
-  }), [controller, ensureReady, hasCredential, hostBaseUrl, readiness, requestedKey, setExecutionTarget, snapshot, supported]);
+  }), [controller, ensureReady, ensureReadyForTarget, hasCredential, hostBaseUrl, readiness, requestedKey, setExecutionTarget, snapshot, supported]);
 
   return <HostMarketplacePluginsContext.Provider value={value}>{props.children}</HostMarketplacePluginsContext.Provider>;
 }

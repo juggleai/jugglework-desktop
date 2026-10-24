@@ -10,7 +10,9 @@ const readSource = (relativePath: string) => readFileSync(
 describe("session-scoped agent selection wiring", () => {
   test("sends the agent selected for the target session, not the routed session", () => {
     const route = readSource("../src/react-app/shell/session-route.tsx");
-    expect(route).toContain("agent: readSessionAgentChoice(selectedWorkspaceId, targetSessionId) ?? undefined");
+    const sender = readSource("../src/react-app/domains/session/sync/draft-submission.ts");
+    expect(route).toContain("return submitSessionDraft({");
+    expect(sender).toContain("agent: readSessionAgentChoice(workspaceId, sessionId) ?? undefined");
     expect(route).not.toContain("agent: selectedAgent ?? undefined");
     expect(route).toContain("migrateLegacyAgentChoice(selectedWorkspaceId, selectedSessionId, legacySelectedAgent)");
     expect(route).toContain("selectedAgent: null");

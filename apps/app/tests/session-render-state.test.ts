@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { UIMessage } from "ai";
+import type { JuggleWorkSessionSnapshot } from "../src/app/lib/jugglework-server";
 
 import { deriveRenderedSessionMessages } from "../src/react-app/domains/session/surface/session-render-state";
 import { createSessionCompactionUIPart, getSessionCompactionFromMessage } from "../src/app/lib/session-compaction";
@@ -11,6 +12,11 @@ const message = (id: string, text: string): UIMessage => ({
 });
 
 describe("session render state", () => {
+  test("an obsolete revert cursor cannot truncate the recovered live history", () => {
+    const live = [message("answer", "restored answer")];
+    const snapshot = { session: { id: "root", revert: { messageID: "answer" } }, messages: [], status: { type: "idle" }, todos: [] } as unknown as JuggleWorkSessionSnapshot;
+    expect(deriveRenderedSessionMessages({ snapshot, transcriptState: live, snapshotCurrent: false })).toEqual(live);
+  });
   test("removes legacy completion diagnostics before presentation", () => {
     const rendered = deriveRenderedSessionMessages({
       snapshot: null,

@@ -142,6 +142,16 @@ describe("session activity reconciliation", () => {
     expect(useSessionActivityStore.getState().getFinishReason(workspaceId, sessionId)).toBeNull();
   });
 
+  test("snapshot diagnostic recovery clears transient disconnects but preserves known user stops", () => {
+    const store = useSessionActivityStore.getState();
+    store.setCompletionDiagnostic(workspaceId, sessionId, true, "provider_disconnected");
+    store.setCompletionDiagnostic(workspaceId, sessionId, false, null);
+    expect(useSessionActivityStore.getState().getFinishReason(workspaceId, sessionId)).toBeNull();
+    store.setCompletionDiagnostic(workspaceId, sessionId, true, "user_cancelled");
+    store.setCompletionDiagnostic(workspaceId, sessionId, false, null);
+    expect(useSessionActivityStore.getState().getFinishReason(workspaceId, sessionId)).toBe("user_cancelled");
+  });
+
   test("a stale busy workspace snapshot cannot revive a run the live stream already ended", () => {
     const store = useSessionActivityStore.getState();
     store.setRunStatus(workspaceId, sessionId, { type: "busy" });

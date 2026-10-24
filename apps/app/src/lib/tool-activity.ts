@@ -1,3 +1,4 @@
+import { currentLocale } from "@/i18n"
 import type { DynamicToolUIPart, ToolUIPart, UIMessage } from "ai"
 import {
   isApplyPatchToolPart,
@@ -148,4 +149,11 @@ export function getActiveToolLabel(parts: DynamicToolUIPart[]): string | null {
     }
   }
   return null
+}
+
+/** 会话和桌面宠物共用的可观察工具步骤文案，不推算任务完成百分比。 */
+export function formatToolProgressSummary(action: string, summary: ToolActivitySummary, locale: ReturnType<typeof currentLocale> = currentLocale()) {
+  return locale === "zh"
+    ? `${action} · 已完成 ${summary.completed}/${summary.total} 个工具步骤`
+    : `${action} · ${summary.completed}/${summary.total} tool steps completed`
 }

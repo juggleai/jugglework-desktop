@@ -78,6 +78,7 @@ type SessionActivityStore = {
   setWaitingRequest: (workspaceId: string, sessionId: string, kind: "permission" | "question", requestId: string, waiting: boolean) => void;
   replaceWaitingRequests: (workspaceId: string, sessionId: string, kind: "permission" | "question", requestIds: string[]) => void;
   setError: (workspaceId: string, sessionId: string, message?: string) => void;
+  /** 更新终态诊断；null解除临时断线原因，其他已知终态保留到新运行开始。 */
   setCompletionDiagnostic: (workspaceId: string, sessionId: string, blocked: boolean, finishReason?: string | null) => void;
   markFinishReason: (workspaceId: string, sessionId: string, finishReason: string) => void;
   markProviderDisconnected: (workspaceId: string) => void;
@@ -315,6 +316,8 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
       return {
         ...record,
         runActive,
+        // TIPS: 实时启动也推进轮次，发送回执不能把已经结束的新一轮重新标记为busy。
+        runGeneration: starting ? record.runGeneration + 1 : record.runGeneration,
         // 实时状态是唯一权威：running 解除封印，idle 立刻封印住后续的陈旧 busy 快照。
         liveRunEnded: !runActive,
         assistantOutput: runActive && record.runActive ? record.assistantOutput : false,
@@ -524,7 +527,8 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
     set((state) => updateRecord(state, workspace, session, (record) => ({
       ...record,
       completionBlocked: blocked,
-      finishReason: finishReason?.trim() || record.finishReason,
+      // TIPS: 快照恢复只解除临时断线；滞后的空快照不能清掉用户停止等已知终态。
+      finishReason: finishReason?.trim() || (finishReason === null && record.finishReason === "provider_disconnected" ? null : record.finishReason),
       // Task incomplete 是终态而不是活动状态。即使 provider 断连或 idle 事件乱序，也必须立即
       // 清掉 loading 相关字段；否则切换会话后旧 busy/stalled 状态会再次出现在侧栏。
       runActive: blocked ? false : record.runActive,

@@ -106,17 +106,21 @@ describe("composer video generation", () => {
     const composer = readFileSync(composerPath, "utf8");
     const surface = readFileSync(sessionSurfacePath, "utf8");
     const route = readFileSync(sessionRoutePath, "utf8");
+    expect(route).toContain("return submitSessionDraft({");
+    const discovery = readFileSync(new URL("../src/react-app/domains/connections/media-model-queries.ts", import.meta.url), "utf8");
+    const sender = readFileSync(new URL("../src/react-app/domains/session/sync/draft-submission.ts", import.meta.url), "utf8");
 
     expect(composer).toContain('kind: "video-generation" as const');
     expect(composer).toContain("props.videoGenerationModels.length > 0");
     expect(composer).toContain("<VideoGenerationControls");
-    expect(surface).toContain('action: "video_models_list"');
-    expect(surface).toContain('action: "status"');
-    expect(surface).toContain('args: { mode: "text-to-video" }');
-    expect(surface).toContain("status?.submissionEnabled !== true");
+    expect(discovery).toContain('action: "video_models_list"');
+    expect(discovery).toContain('action: "status"');
+    expect(discovery).toContain('args: { mode: "text-to-video" }');
+    expect(discovery).toContain("status?.submissionEnabled !== true");
     expect(surface).toContain("buildVideoGenerationInstruction(resolved.trim(), activeVideoGeneration)");
     expect(surface).toContain("{ videoGeneration: activeVideoGeneration }");
-    expect(route).toContain("mergeVideoGenerationSystemContext(draft, imageSystemContext)");
+    expect(surface).toContain("videoModelsQueryOptions(props.client, mediaQueryScope)");
+    expect(sender).toContain("mergeVideoGenerationSystemContext(draft, mergeImageGenerationSystemContext(draft,");
   });
 
   test("keeps the settings popover compact and uses a two-stage overflow menu in narrow windows", () => {

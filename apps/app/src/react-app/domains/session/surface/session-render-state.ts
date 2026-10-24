@@ -24,9 +24,11 @@ export function resolveRenderedSessionSnapshot(input: {
   return null;
 }
 
+/** 生成聊天展示消息，失效快照不能覆盖同步层保留的实时结果。 */
 export function deriveRenderedSessionMessages(input: {
   transcriptState: UIMessage[] | null | undefined;
   snapshot: JuggleWorkSessionSnapshot | null | undefined;
+  snapshotCurrent?: boolean;
 }) {
   return deriveContextEstimationMessages(input).map(toCompactionPresentationMessage);
 }
@@ -35,16 +37,19 @@ export function deriveRenderedSessionMessages(input: {
  * 合并快照与实时 Transcript，同时保留压缩摘要正文供上下文估算使用。
  * @param input.transcriptState 当前会话的实时消息缓存
  * @param input.snapshot 当前会话快照
+ * @param input.snapshotCurrent 快照是否覆盖当前实时版本，失效时只使用已恢复历史的实时缓存
  * @returns 已应用回退边界但尚未做展示层压缩脱敏的消息
  */
 export function deriveContextEstimationMessages(input: {
   transcriptState: UIMessage[] | null | undefined;
   snapshot: JuggleWorkSessionSnapshot | null | undefined;
+  snapshotCurrent?: boolean;
 }) {
-  const revertMessageId = (input.snapshot?.session as any)?.revert?.messageID ?? null;
+  const revertMessageId = input.snapshotCurrent === false ? null : (input.snapshot?.session as any)?.revert?.messageID ?? null;
   const liveMessages = input.transcriptState ?? [];
 
-  const snapshotMessages = input.snapshot && input.snapshot.messages.length > 0
+  // TIPS: 失效快照的缺失历史已由同步层补入缓存；展示层不能再次合并旧元数据而丢失停止和完成时间。
+  const snapshotMessages = input.snapshotCurrent !== false && input.snapshot && input.snapshot.messages.length > 0
     ? snapshotToUIMessages(input.snapshot)
     : [];
 

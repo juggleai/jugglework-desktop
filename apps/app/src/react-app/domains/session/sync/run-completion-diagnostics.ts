@@ -114,7 +114,8 @@ export function analyzeRunCompletion(
   const providerFinish = typeof metadata.finish === "string" && metadata.finish.trim()
     ? metadata.finish.trim()
     : "stop";
-  const effectiveFinishReason = explicitFinishReason ?? providerFinish;
+  // TIPS: 用户停止可能没有todo，刷新后仍须从当前轮的持久化stopped标记恢复中断状态。
+  const effectiveFinishReason = explicitFinishReason ?? (metadata.stopped === true ? "user_cancelled" : providerFinish);
   // TIPS: 部分 Provider/网关在工具调用后的下一轮推理失败时不会返回结构化 error，
   // 只会留下 finish=unknown 的零 token 空消息。该状态必须作为异常终态，而不能静默当成 stop。
   const abnormalFinish = effectiveFinishReason !== "stop";

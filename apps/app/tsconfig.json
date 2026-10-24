@@ -21,6 +21,7 @@
   "include": [
     "globals.d.ts",
     "src/index.react.tsx",
+    "src/pet/**/*",
     "src/components/**/*",
     "src/i18n/**/*",
     "src/lib/**/*",

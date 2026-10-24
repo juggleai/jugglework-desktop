@@ -55,6 +55,7 @@ import { saveArtifactFileCopy } from "./artifact-file-operations.mjs";
 import { createMainProcessFetch, mainProcessFetchBody, mainProcessFetchResponse, selectMainProcessFetch } from "./main-fetch.mjs";
 import { createWorkspaceStore } from "./workspace-store.mjs";
 import { createWorkspaceActivityWatcher } from "./workspace-activity-watcher.mjs";
+import { createDesktopPet } from "./pet-window.mjs";
 import { installCloseToHide, windowAllClosedAction } from "./window-close-behavior.mjs";
 import { createRemoteControlSettingsStore } from "./remote-control-settings.mjs";
 import { createOfficeResources } from "./office-resources.mjs";
@@ -127,6 +128,7 @@ const {
   Notification: ElectronNotification,
   powerMonitor,
   powerSaveBlocker,
+  screen,
   session,
   shell,
   systemPreferences,
@@ -944,6 +946,7 @@ const IDLE_ROUTER_INFO = Object.freeze({
 });
 
 let mainWindow = null;
+let desktopPet = null;
 const pendingDeepLinks = [];
 const juggleChatSkillBridge = createJuggleChatSkillBridge({
   ipcMain,
@@ -3158,6 +3161,23 @@ async function createMainWindow() {
     },
   });
   ensureJuggleChatRouterServer();
+  if (!desktopPet) {
+    desktopPet = createDesktopPet({
+      BrowserWindow, screen, ipcMain, Menu,
+      getMainWindow: () => mainWindow,
+      preferencesPath: path.join(app.getPath("userData"), "desktop-pet.json"),
+      preloadPath: path.join(__dirname, "pet-preload.mjs"),
+      loadPage: async (window) => {
+        const url = process.env.JUGGLEWORK_ELECTRON_START_URL?.trim() || process.env.ELECTRON_START_URL?.trim();
+        if (url) await window.loadURL(new URL("/pet.html", url).href);
+        else await window.loadFile(app.isPackaged ? path.join(process.resourcesPath, "app-dist/pet.html") : path.resolve(__dirname, "../../app/dist/pet.html"));
+      },
+    });
+  }
+  // TIPS: hash会话跳转也会触发loading，但宿主没有重载；仅跨文档主框架导航才失效未决操作。
+  mainWindow.webContents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => {
+    if (isMainFrame && !isInPlace) desktopPet?.resetHost();
+  });
   if (cachedBrandImage && bootSourceUrl) {
     await applyCachedBrandIcon(cachedBrandImage, bootSourceUrl);
   }
@@ -3199,6 +3219,7 @@ async function createMainWindow() {
   });
 
   mainWindow.on("closed", () => {
+    desktopPet?.closeHost();
     officeSelectionBridge.cancel();
     browserPanel.destroy();
     void toonFactoryRuntime.close().catch(() => {});
@@ -3260,6 +3281,7 @@ async function createMainWindow() {
   }
 
   openDevelopmentDevTools(mainWindow.webContents, isDevMode);
+  void desktopPet?.restore().catch((error) => console.warn("[pet] 无法恢复宠物窗口", error));
 
   return mainWindow;
 }
@@ -3384,6 +3406,7 @@ if (!app.requestSingleInstanceLock()) {
         quitCleanupInProgress = false;
         return;
       }
+      desktopPet?.dispose();
       fileWindows.dispose();
       remoteControlPowerMonitorController.stop();
       appTrayIndicator.stop();
@@ -3511,6 +3534,7 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.on("activate", async () => {
+    if (desktopPet?.isKeyboardActive()) return;
     if (systemFiles.requested() && !mainWindow) {
       if (fileWindows.windows().length) {
         fileWindows.activate();

@@ -40,6 +40,10 @@ export type QueuedComposerDraft = {
   id: string;
   draft: ComposerDraft;
   enqueuedAt: number;
+  /** 宠物入口加入的普通文本；仍保存在原会话FIFO中。 */
+  petWorkspaceId?: string;
+  /** 后台发送失败后保留在原队列，必须由用户编辑后重试，不自动重发。 */
+  petBlockedReason?: string;
 };
 
 export type ComposerStateStore = {
@@ -73,6 +77,8 @@ export type ComposerStateStore = {
   setCapabilities: (sessionId: string, capabilities: ComposerCapabilityPart[]) => void;
   appendHistory: (sessionId: string, text: string) => void;
   appendQueuedDraft: (sessionId: string, draft: ComposerDraft) => QueuedComposerDraft;
+  /** 标记后台可接管的宠物普通文本队列项。 */
+  markPetQueuedDraft: (sessionId: string, id: string, workspaceId: string) => void;
   removeQueuedDraft: (sessionId: string, id: string) => QueuedComposerDraft | null;
   restoreQueuedDraft: (sessionId: string, item: QueuedComposerDraft, index?: number) => void;
   editQueuedDraft: (sessionId: string, id: string) => QueuedComposerDraft | null;
@@ -275,6 +281,7 @@ export const useComposerStateStore = create<ComposerStateStore>((set, get) => ({
     });
     return item;
   },
+  markPetQueuedDraft: (sessionId, id, workspaceId) => set((state) => ({ queuedDrafts: { ...state.queuedDrafts, [sessionId]: (state.queuedDrafts[sessionId] ?? []).map((item) => item.id === id ? { ...item, petWorkspaceId: workspaceId } : item) } })),
   removeQueuedDraft: (sessionId, id) => {
     let removed: QueuedComposerDraft | null = null;
     set((state) => {
