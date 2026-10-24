@@ -4,9 +4,14 @@ import type { OpenTarget } from "@/react-app/domains/session/artifacts/open-targ
 
 export type OpenTargetOptions = {
   auto?: boolean;
+  intent?: "presentation-creation";
   external?: boolean;
   reveal?: boolean;
 };
+
+export function allowsAutomaticFileOpen(options: OpenTargetOptions | undefined): boolean {
+  return options?.auto !== true || options.intent === "presentation-creation";
+}
 
 type OpenTargetHandler = (target: OpenTarget, options?: OpenTargetOptions) => void;
 

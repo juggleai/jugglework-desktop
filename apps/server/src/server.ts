@@ -113,7 +113,7 @@ import { createSessionRunJournal } from "./session-run-journal.js";
 import { registerInteractionRoutes } from "./routes/interactions.js";
 import { registerSessionPermissionRoutes } from "./routes/session-permissions.js";
 import { registerWorkspaceRoutes } from "./routes/workspaces.js";
-import { registerReviewRoutes } from "./routes/reviews.js";
+import { registerReviewRoutes, registerReviewWorkflowRoutes } from "./routes/reviews.js";
 import { registerCloudMcpRoutes } from "./routes/cloud-mcp.js";
 import { registerAutomationRoutes } from "./routes/automations.js";
 import { registerToonflowRoutes } from "./routes/toonflow.js";
@@ -136,6 +136,7 @@ import { ToonflowImageRuntime } from "./media-generation/image-runtime.js";
 import { filterVideoSubmissionEligibleModels, MediaGenerationService, videoSubmissionAllowed } from "./media-generation/service.js";
 import { MediaGenerationWorker } from "./media-generation/worker.js";
 import { ReviewReadService } from "./reviews/service.js";
+import { ReviewWorkflow, REVIEW_ANALYSIS_SYSTEM } from "./reviews/workflow.js";
 import { ConnectGithubReviewProvider } from "./reviews/connect-github-provider.js";
 import { publicVideoGenerationJob } from "./media-generation/types.js";
 import { openAiCompatibleVideoAdapters } from "./media-generation/provider-registry.js";
@@ -1173,7 +1174,36 @@ export async function startServer(config: ServerConfig, options: {
   const imageGenerationRepository = await ImageGenerationRepository.open(config);
   const sessionPermissionStore = await SessionPermissionModeStore.open(config);
   const sessionResponseLanguageStore = await SessionResponseLanguageStore.open(config);
-  const reviewService = options.reviewService ?? new ReviewReadService(new ConnectGithubReviewProvider({ config }));
+  const reviewProvider = new ConnectGithubReviewProvider({ config });
+  const reviewService = options.reviewService ?? new ReviewReadService(reviewProvider);
+  const reviewWorkflow = new ReviewWorkflow({
+    provider: reviewProvider,
+    directory: join(runtimeStorageDir(config), "review-workflows"),
+    analyze: async ({ workspace, prompt, model, signal, onSession }) => {
+      const client = createWorkspaceOpencodeClient(config, workspace);
+      const deadline = AbortSignal.any([signal, AbortSignal.timeout(180_000)]);
+      const created = await client.session.create({ title: "AI code review", permission: [{ permission: "*", pattern: "*", action: "deny" }] }, { signal: deadline });
+      const id = created.data?.id;
+      if (!id) throw new Error("Could not create the AI review task.");
+      await onSession(id);
+      const abort = () => { void client.session.abort({ sessionID: id }).catch(() => undefined); };
+      deadline.addEventListener("abort", abort, { once: true });
+      try {
+        deadline.throwIfAborted();
+        const response = await client.session.prompt({ sessionID: id, ...(model ? { model } : {}), system: REVIEW_ANALYSIS_SYSTEM, tools: {}, parts: [{ type: "text", text: prompt }] }, { signal: deadline });
+        if (response.error || response.data?.info.error) throw new Error("AI review failed.");
+        return response.data?.parts.flatMap((part) => part.type === "text" ? [part.text] : []).join("\n") ?? "";
+      } finally { deadline.removeEventListener("abort", abort); }
+    },
+    createFix: async ({ workspace, title, prompt }) => {
+      const client = createWorkspaceOpencodeClient(config, workspace);
+      const created = await client.session.create({ title });
+      const id = created.data?.id;
+      if (!id) throw new Error("Could not create the fix task.");
+      await dispatchSessionPromptAsync(config, workspace, id, { parts: [{ type: "text", text: prompt }] });
+      return id;
+    },
+  });
   const migratedLegacyFullAccessCount = await migrateTrustedLegacyLocalHostFullAccess({
     config,
     store: sessionPermissionStore,
@@ -1437,6 +1467,7 @@ export async function startServer(config: ServerConfig, options: {
     automationEventPoller,
     automationSubscriptionSync,
     reviewService,
+    reviewWorkflow,
     mediaGenerationRuntime,
     imageGenerationRuntime,
     hostMarketplacePlugins,
@@ -1634,6 +1665,7 @@ export async function startServer(config: ServerConfig, options: {
     void automationEventPoller.dispose();
     void automationSubscriptionSync.dispose();
     void automationScheduler.dispose();
+    void reviewWorkflow.dispose();
     void reviewService.dispose();
     automationExecutor.dispose();
     automationRepository.close();
@@ -1710,6 +1742,7 @@ export async function startServer(config: ServerConfig, options: {
       try { await automationScheduler.dispose(); } catch (error) { errors.push(error); }
       try { await mediaGenerationWorker.dispose(); } catch (error) { errors.push(error); }
       try { await officeDocuments!.dispose(); } catch (error) { errors.push(error); }
+      try { await reviewWorkflow.dispose(); } catch (error) { errors.push(error); }
       try { await reviewService.dispose(); } catch (error) { errors.push(error); }
       let pendingPumpClosed = false;
       try { await sessionPendingOperationPump?.close(); pendingPumpClosed = true; } catch (error) {
@@ -2765,6 +2798,7 @@ function createRoutes(
   automationEventPoller: AutomationEventPoller,
   automationSubscriptionSync: AutomationSubscriptionSync,
   reviewService: ReviewReadService,
+  reviewWorkflow: ReviewWorkflow,
   mediaGeneration: import("./extensions/media-generation.js").MediaGenerationExtensionRuntime,
   imageGeneration: ToonflowImageRuntime,
   hostMarketplacePlugins: HostMarketplacePluginRegistry,
@@ -2833,6 +2867,12 @@ function createRoutes(
     service: reviewService,
     jsonResponse,
     resolveWorkspaceForInspection,
+  });
+
+  registerReviewWorkflowRoutes({
+    routes, workflow: reviewWorkflow, jsonResponse, readJsonBody,
+    authorizeWrite: (ctx) => { ensureWritable(config); requireClientScope(ctx, "collaborator"); },
+    resolveWorkspace: (id, inspection) => inspection ? resolveWorkspaceForInspection(config, id) : resolveWorkspace(config, id),
   });
 
   registerToonflowRoutes({ routes, config, env, mediaGenerationRuntime: mediaGeneration, imageGenerationRuntime: imageGeneration, resolveWorkspace, jsonResponse,

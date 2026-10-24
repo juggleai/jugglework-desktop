@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, realpath, stat } from "node:fs/promises";
+import { mkdir, realpath, rm, stat } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
 import type { FileArtifact } from "@jugglework/types/file-artifacts";
 import {
@@ -312,17 +312,22 @@ export class OfficeDocuments {
     return { path: resolved.file.relativePath, documentId: existing?.session.documentId ?? null, office: Boolean(getOfficeDocumentKind(path)) };
   }
 
-  /** 创建空白 DOCX 并保存后释放临时模型；编辑模型仍由页面首次打开建立。 */
+  /** 创建空白 DOCX/PPTX 并保存后释放临时模型；编辑模型仍由页面首次打开建立。 */
   async create(
     workspaceId: string,
     sessionId: string,
     path: string,
   ): Promise<OfficeDocumentSession> {
-    if (!path.toLowerCase().endsWith(".docx"))
+    const kind = path.toLowerCase().endsWith(".docx")
+      ? "doc"
+      : path.toLowerCase().endsWith(".pptx")
+        ? "slide"
+        : null;
+    if (!kind)
       throw new ApiError(
         400,
         "office_format_unavailable",
-        "当前仅支持创建 DOCX",
+        "当前仅支持创建 DOCX 和 PPTX",
       );
     const resolved = await this.options.resolveFile(workspaceId, path, true);
     if (resolved.file.exists)
@@ -331,19 +336,38 @@ export class OfficeDocuments {
         "file_exists",
         "目标文件已存在，请打开编辑或使用新文件名",
       );
+    const createTool = kind === "doc" ? "create_doc" : "create_slide";
+    const readyTool = CONTENT_QUERY[kind];
+    const availableTools = new Set(
+      (await this.options.engine.listTools()).map((tool) => tool.name),
+    );
+    if (![createTool, readyTool, "save_file"].every((tool) => availableTools.has(tool)))
+      throw new ApiError(
+        409,
+        "office_creation_unavailable",
+        `当前 Office 引擎不支持创建 ${kind === "doc" ? "DOCX" : "PPTX"}`,
+      );
     await mkdir(dirname(resolved.absolutePath), { recursive: true });
-    const created = await this.options.engine.tool("create_doc", {});
+    const created = await this.options.engine.tool(createTool, {});
     const fileId =
       typeof created.file_id === "string" ? created.file_id : undefined;
-    if (!fileId) throw new Error("创建文档没有返回模型 ID");
+    const temporaryPath =
+      typeof created.file_path === "string" ? created.file_path : undefined;
+    if (!fileId) {
+      if (temporaryPath) await rm(temporaryPath, { force: true });
+      throw new Error("创建文档没有返回模型 ID");
+    }
+    let closed = false;
     try {
-      // TIPS: create_doc 返回时导入可能尚未完成，必须用真实内容查询确认后再保存。
+      // TIPS: create 返回时导入可能尚未完成，必须用对应格式的真实内容查询确认后再保存。
       const deadline = Date.now() + 30_000;
       for (;;) {
         try {
-          await this.options.engine.tool("doc_get_last_operable_pos", {
+          const content = await this.options.engine.tool(readyTool, {
             file_id: fileId,
           });
+          if (kind === "slide" && content.is_open !== true)
+            throw new Error("幻灯片模型仍在导入");
           break;
         } catch (error) {
           if (Date.now() >= deadline) throw error;
@@ -354,8 +378,17 @@ export class OfficeDocuments {
         file_id: fileId,
         file_path: resolved.absolutePath,
       });
-    } finally {
       await this.options.engine.close(fileId, true);
+      closed = true;
+      if (temporaryPath && resolve(temporaryPath) !== resolve(resolved.absolutePath))
+        await rm(temporaryPath, { force: true }).catch(() => undefined);
+    } catch (error) {
+      if (!closed)
+        await this.options.engine.close(fileId, true).catch(() => undefined);
+      await rm(resolved.absolutePath, { force: true }).catch(() => undefined);
+      if (temporaryPath && resolve(temporaryPath) !== resolve(resolved.absolutePath))
+        await rm(temporaryPath, { force: true }).catch(() => undefined);
+      throw error;
     }
     await this.options.onSaved(workspaceId, resolved.file.relativePath);
     return this.open(workspaceId, sessionId, resolved.file.relativePath);

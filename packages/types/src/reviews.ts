@@ -12,6 +12,7 @@ export const reviewRelationshipSchema = z.enum([
   "team_review_requested",
   "authored",
   "reviewed",
+  "recently_merged",
 ])
 
 export const reviewConnectionStateSchema = z.enum([
@@ -34,6 +35,16 @@ export const reviewConnectionStatusSchema = z.object({
   accountAvatarUrl: optionalUrl,
   hint: boundedText(1_000).optional(),
   action: juggleworkCloudMcpConnectionActionSchema.optional(),
+  operations: z.object({
+    comment: z.boolean(),
+    submitReview: z.boolean(),
+    markDraft: z.boolean(),
+    markReady: z.boolean(),
+    close: z.boolean(),
+    reopen: z.boolean(),
+    merge: z.boolean(),
+    enableAutoMerge: z.boolean(),
+  }).optional(),
 })
 
 export const reviewAuthorSchema = z.object({
@@ -68,7 +79,7 @@ export const reviewListItemSchema = z.object({
   author: reviewAuthorSchema,
   state: z.enum(["open", "closed", "merged"]),
   draft: z.boolean(),
-  relationships: z.array(reviewRelationshipSchema.exclude(["all"])).max(5),
+  relationships: z.array(reviewRelationshipSchema.exclude(["all"])).max(6),
   reviewDecision: reviewDecisionSchema,
   headRevision: boundedText(128),
   updatedAt: z.string().datetime(),
@@ -185,6 +196,7 @@ export const reviewThreadSchema = z.object({
   outdated: z.boolean(),
   resolved: z.boolean(),
   comments: z.array(reviewThreadCommentSchema).max(100),
+  reviewDecision: z.enum(["approved", "changes_requested"]).optional(),
 })
 
 export const reviewThreadsResponseSchema = reviewPageSchema(reviewThreadSchema).extend({
@@ -233,3 +245,76 @@ export type ReviewThread = z.infer<typeof reviewThreadSchema>
 export type ReviewThreadsResponse = z.infer<typeof reviewThreadsResponseSchema>
 export type ReviewErrorCode = z.infer<typeof reviewErrorCodeSchema>
 export type ReviewErrorDetails = z.infer<typeof reviewErrorDetailsSchema>
+
+export const reviewMutationInputSchema = z.object({
+  requestId: z.string().uuid(),
+  expectedHeadRevision: z.string().regex(/^[a-f0-9]{40,64}$/i),
+  kind: z.enum(["comment", "review"]),
+  body: z.string().trim().max(60_000),
+  event: z.enum(["COMMENT", "APPROVE", "REQUEST_CHANGES"]).optional(),
+}).strict().superRefine((value, ctx) => {
+  if (value.kind === "review" && !value.event) ctx.addIssue({ code: "custom", message: "A review decision is required." });
+  if ((value.kind === "comment" || value.event !== "APPROVE") && !value.body) ctx.addIssue({ code: "custom", message: "A comment is required." });
+});
+export const reviewMutationResultSchema = z.object({ ok: z.literal(true) });
+export type ReviewMutationInput = z.infer<typeof reviewMutationInputSchema>;
+
+export const reviewPullRequestActionSchema = z.enum([
+  "mark_draft",
+  "mark_ready",
+  "close",
+  "reopen",
+  "merge",
+  "enable_auto_merge",
+]);
+export const reviewPullRequestActionInputSchema = z.object({
+  requestId: z.string().uuid(),
+  expectedHeadRevision: z.string().regex(/^[a-f0-9]{40,64}$/i),
+  action: reviewPullRequestActionSchema,
+  mergeMethod: z.enum(["merge", "squash", "rebase"]).optional(),
+}).strict().superRefine((value, ctx) => {
+  if (value.action !== "merge" && value.mergeMethod) ctx.addIssue({ code: "custom", message: "Merge method is only valid for merge." });
+});
+export const reviewPullRequestActionResultSchema = z.object({ ok: z.literal(true) });
+export type ReviewPullRequestAction = z.infer<typeof reviewPullRequestActionSchema>;
+export type ReviewPullRequestActionInput = z.infer<typeof reviewPullRequestActionInputSchema>;
+
+export const reviewFindingSchema = z.object({
+  id: z.string().max(100),
+  priority: z.number().int().min(0).max(3),
+  title: z.string().trim().min(1).max(300),
+  body: z.string().trim().min(1).max(8_000),
+  path: z.string().max(4_096).optional(),
+  line: z.number().int().positive().optional(),
+});
+export const reviewAnalysisSchema = z.object({
+  summary: z.string().max(12_000),
+  findings: z.array(reviewFindingSchema).max(50),
+});
+export const reviewRunSchema = z.object({
+  id: z.string().uuid(),
+  reviewId: z.string().max(2_048),
+  headRevision: z.string().max(128),
+  status: z.enum(["running", "completed", "failed", "cancelled"]),
+  createdAt: z.string().datetime(),
+  sessionId: z.string().optional(),
+  analysis: reviewAnalysisSchema.optional(),
+  error: z.string().max(1_000).optional(),
+  partial: z.boolean(),
+  fixSessionId: z.string().optional(),
+  fixedFindingIds: z.array(z.string().max(100)).optional(),
+});
+export const reviewRunResponseSchema = z.object({ run: reviewRunSchema.nullable() });
+export const reviewTaskInputSchema = z.object({
+  expectedHeadRevision: z.string().regex(/^[a-f0-9]{40,64}$/i),
+  model: z.object({ providerID: z.string().min(1).max(256), modelID: z.string().min(1).max(256) }).optional(),
+}).strict();
+export const reviewFixInputSchema = z.object({
+  runId: z.string().uuid(),
+  findingIds: z.array(z.string().max(100)).min(1).max(50),
+  expectedHeadRevision: z.string().regex(/^[a-f0-9]{40,64}$/i),
+}).strict();
+export type ReviewRun = z.infer<typeof reviewRunSchema>;
+export type ReviewFinding = z.infer<typeof reviewFindingSchema>;
+export type ReviewTaskInput = z.infer<typeof reviewTaskInputSchema>;
+export type ReviewFixInput = z.infer<typeof reviewFixInputSchema>;

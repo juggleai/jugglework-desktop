@@ -76,6 +76,8 @@ contextBridge.exposeInMainWorld("__JUGGLEWORK_ELECTRON__", {
     open: (input) => ipcRenderer.invoke("jugglework:file-window:open", input),
     /** 读取当前窗口状态及已有本机连接。 */
     state: () => ipcRenderer.invoke("jugglework:file-window:state"),
+    /** 由主进程选择工作区内的 Word 或 PowerPoint 目标并创建。 */
+    create: (input) => ipcRenderer.invoke("jugglework:file-window:create", input),
     /** 执行原生文件动作。 */
     action: (action, path) =>
       ipcRenderer.invoke("jugglework:file-window:action", action, path),

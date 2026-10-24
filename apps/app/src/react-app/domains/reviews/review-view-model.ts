@@ -24,6 +24,7 @@ function age(value: string) {
 function relationship(item: ReviewListItem): ReviewRelationship {
   if (item.relationships.includes("authored")) return "authored";
   if (item.relationships.includes("team_review_requested")) return "team";
+  if (item.relationships.includes("recently_merged")) return "recently_merged";
   if (item.relationships.includes("reviewed")) return "reviewed";
   return "requested";
 }
@@ -39,6 +40,8 @@ function thread(value: WireThread): ReviewThread {
     line: value.line,
     age: first ? age(first.createdAt) : "",
     resolved: value.resolved,
+    comments: value.comments.map((comment) => ({ id: comment.id, author: comment.author.displayName ?? comment.author.login, body: comment.body, age: age(comment.createdAt) })),
+    reviewDecision: value.reviewDecision,
   };
 }
 
@@ -57,10 +60,13 @@ export function reviewViewModel(input: {
     owner: item.repository.owner,
     repository: item.repository.name,
     number: item.number,
+    url: item.url,
+    state: item.state,
     title: item.title,
     body: input.detail?.item.body ?? "",
     author: item.author.displayName ?? item.author.login,
     authorInitials: initials(item.author.login),
+    authorAvatarUrl: item.author.avatarUrl,
     relationship: relationship(item),
     updatedAt: age(item.updatedAt),
     baseBranch: input.detail?.item.baseBranch ?? "",
@@ -71,6 +77,8 @@ export function reviewViewModel(input: {
     changedFiles: item.changedFiles ?? 0,
     comments: item.commentCount ?? 0,
     draft: item.draft,
+    mergeable: input.detail?.item.mergeable ?? "unknown",
+    viewerPermission: input.detail?.item.viewerPermission ?? "unknown",
     labels: item.labels.map((label) => label.name),
     summary: input.detail ? [input.detail.item.body || "No pull request description was provided."] : [],
     files: (input.files?.items ?? []).map((file) => ({ path: file.path, additions: file.additions, deletions: file.deletions, language: "", patch: file.patch ?? [] })),

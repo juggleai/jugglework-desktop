@@ -264,6 +264,7 @@ function WorkspaceAppRouteContent() {
               reviewsVisible ? appPath.workspaceId : activeSession.workspaceId,
               reviewId,
             ))}
+            onOpenReviewSession={(sessionId) => navigate(workspaceSessionRoute(reviewsVisible ? appPath.workspaceId : activeSession.workspaceId, sessionId))}
             onOpenAccount={() => openSurfaceSettings("cloud-account", location.pathname)}
             onOpenHome={() => navigate(sessionPath)}
             onOpenApps={() => navigate(workspaceAppsRoute(activeSession.workspaceId))}

@@ -6,6 +6,8 @@ import type {
   ReviewListResponse,
   ReviewRelationship,
   ReviewThreadsResponse,
+  ReviewMutationInput,
+  ReviewPullRequestActionInput,
 } from "@jugglework/types/reviews";
 import type { WorkspaceInfo } from "../types.js";
 
@@ -32,5 +34,10 @@ export interface ReviewReadProvider {
   listFiles(input: ReviewTargetInput & { cursor?: string; limit: number }): Promise<ReviewFilesResponse>;
   getChecks(input: ReviewTargetInput): Promise<ReviewChecksResponse>;
   listThreads(input: ReviewTargetInput & { cursor?: string; limit: number }): Promise<ReviewThreadsResponse>;
+  mutate?(input: ReviewTargetInput & ReviewMutationInput): Promise<{ ok: true }>;
+  mutatePullRequest?(input: ReviewTargetInput & ReviewPullRequestActionInput): Promise<{ ok: true }>;
+  executionScope?(input: ReviewRequestContext): Promise<string>;
+  freshDetail?(input: ReviewTargetInput): Promise<ReviewDetail>;
+  resolveUrl?(input: ReviewRequestContext & { url: string }): Promise<ReviewDetail>;
   dispose?(): void | Promise<void>;
 }

@@ -58,6 +58,13 @@ import {
   reviewFilesResponseSchema,
   reviewListResponseSchema,
   reviewThreadsResponseSchema,
+  reviewRunResponseSchema,
+  reviewMutationResultSchema,
+  reviewPullRequestActionResultSchema,
+  type ReviewMutationInput,
+  type ReviewPullRequestActionInput,
+  type ReviewTaskInput,
+  type ReviewFixInput,
   type ReviewChecksResponse,
   type ReviewConnectionStatus,
   type ReviewDetail,
@@ -2350,7 +2357,7 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
     },
     listReviews: async (workspaceId: string, input: { relationship?: ReviewRelationship; query?: string; cursor?: string; limit?: number } = {}, requestOptions?: { signal?: AbortSignal }): Promise<ReviewListResponse> => {
       const params = new URLSearchParams();
-      if (input.relationship && input.relationship !== "all") params.set("relationship", input.relationship);
+      if (input.relationship) params.set("relationship", input.relationship);
       if (input.query?.trim()) params.set("query", input.query.trim());
       if (input.cursor) params.set("cursor", input.cursor);
       if (input.limit) params.set("limit", String(input.limit));
@@ -2382,6 +2389,13 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
       const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/reviews/${encodeURIComponent(reviewId)}/threads${suffix}`, { token, hostToken, timeoutMs: timeouts.reviews, signal: requestOptions?.signal });
       return reviewThreadsResponseSchema.parse(payload);
     },
+    getReviewRun: async (workspaceId: string, reviewId: string, options?: { signal?: AbortSignal }) => reviewRunResponseSchema.parse(await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/reviews/${encodeURIComponent(reviewId)}/ai-review`, { token, hostToken, timeoutMs: timeouts.reviews, signal: options?.signal })),
+    startReviewRun: async (workspaceId: string, reviewId: string, input: ReviewTaskInput) => reviewRunResponseSchema.parse(await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/reviews/${encodeURIComponent(reviewId)}/ai-review`, { token, hostToken, method: "POST", body: input, timeoutMs: timeouts.reviews })),
+    cancelReviewRun: async (workspaceId: string, reviewId: string) => reviewRunResponseSchema.parse(await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/reviews/${encodeURIComponent(reviewId)}/ai-review/cancel`, { token, hostToken, method: "POST", timeoutMs: timeouts.reviews })),
+    publishReview: async (workspaceId: string, reviewId: string, input: ReviewMutationInput) => reviewMutationResultSchema.parse(await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/reviews/${encodeURIComponent(reviewId)}/publish`, { token, hostToken, method: "POST", body: input, timeoutMs: timeouts.reviews })),
+    mutatePullRequest: async (workspaceId: string, reviewId: string, input: ReviewPullRequestActionInput) => reviewPullRequestActionResultSchema.parse(await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/reviews/${encodeURIComponent(reviewId)}/action`, { token, hostToken, method: "POST", body: input, timeoutMs: timeouts.reviews })),
+    createReviewFix: (workspaceId: string, reviewId: string, input: ReviewFixInput) => requestJson<{ sessionId: string }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/reviews/${encodeURIComponent(reviewId)}/fix`, { token, hostToken, method: "POST", body: input, timeoutMs: timeouts.reviews }),
+    resolveReviewUrl: async (workspaceId: string, url: string) => reviewDetailSchema.parse(await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/reviews/resolve/url?${new URLSearchParams({ url })}`, { token, hostToken, timeoutMs: timeouts.reviews })),
     /** 分页读取本机自动化任务。 */
     listAutomations: (options?: { cursor?: string; limit?: number }) => {
       const query = new URLSearchParams();

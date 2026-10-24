@@ -145,6 +145,10 @@ import { OpenTargetProvider, type OpenTargetOptions } from "@/lib/target-provide
 import { getArtifactsFromMessages } from "@/lib/artifacts";
 import { ArtifactActionsProvider } from "../artifacts/artifact-actions-provider";
 import { FileDeliveriesProvider } from "../artifacts/file-deliveries-provider";
+import { useFilesPanelStore } from "../files/files-panel-store";
+import { PresentationDeliveryCoordinator } from "../presentation/presentation-delivery-coordinator";
+import { presentationSourcePath, type PresentationRequest } from "../presentation/presentation-request";
+import { submitPresentationCreation } from "../presentation/presentation-submit";
 import type { ThreadStatus } from "@/lib/messages";
 import {
   EnvironmentVariableProvider,
@@ -586,6 +590,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
     (state) => state.recordsByWorkspaceId[props.workspaceId]?.[props.sessionId]?.providerRetry ?? null,
   );
   const draft = useComposerStateStore((state) => getComposerDraft(state, props.sessionId));
+  const currentFile = useFilesPanelStore((state) => presentationSourcePath(state.sessions[props.sessionId]?.activePath));
+  const [presentationTurnId, setPresentationTurnId] = useState<string | null>(null);
   const attachments = useComposerStateStore((state) => getComposerAttachments(state, props.sessionId));
   const mentions = useComposerStateStore((state) => getComposerMentions(state, props.sessionId));
   const pasteParts = useComposerStateStore((state) => getComposerPasteParts(state, props.sessionId));
@@ -1480,6 +1486,15 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const handleSend = useCallback(async () => {
     await submitComposerDraft();
   }, [submitComposerDraft]);
+
+  const handleCreatePresentation = useCallback(async (request: PresentationRequest) => {
+    const turnId = await submitPresentationCreation(request, sendDraft);
+    if (turnId) setPresentationTurnId(turnId);
+  }, [sendDraft]);
+
+  const finishPresentationDelivery = useCallback((turnId: string) => {
+    setPresentationTurnId((current) => current === turnId ? null : current);
+  }, []);
 
   const handleSteer = useCallback(async () => {
     setSteering(true);
@@ -2503,6 +2518,12 @@ export function SessionSurface(props: SessionSurfaceProps) {
                 >
                   <ArtifactActionsProvider client={props.client} workspaceId={props.workspaceId} workspaceRoot={props.workspaceRoot} sessionId={props.sessionId} remote={Boolean(props.isRemoteWorkspace)} running={chatStreaming}>
                   <FileDeliveriesProvider client={props.client} workspaceId={props.workspaceId} sessionId={props.sessionId} enabled={!props.isRemoteWorkspace} running={chatStreaming} messageKey={`${renderedMessages.length}:${renderedMessages.at(-1)?.id ?? ""}`}>
+                  <PresentationDeliveryCoordinator
+                    sessionId={props.sessionId}
+                    turnId={presentationTurnId}
+                    onOpenTarget={props.onOpenTarget}
+                    onFinished={finishPresentationDelivery}
+                  />
                   <EnvironmentVariableProvider
                     client={props.isRemoteWorkspace ? null : props.environmentClient ?? props.client}
                     runtimeKey={props.environmentRuntimeKey}
@@ -2618,6 +2639,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
           getVoiceRealtimeStatus={props.client.getVoiceRealtimeStatus}
           onOpenVoiceSettings={props.onOpenSettingsSection ? () => props.onOpenSettingsSection?.("providers") : undefined}
           onOpenSettings={props.onOpenSettingsSection ? () => props.onOpenSettingsSection?.("mcps") : undefined}
+          currentFile={currentFile}
+          onCreatePresentation={props.isRemoteWorkspace ? undefined : handleCreatePresentation}
           focusEligible={props.isControlTarget && !props.modelPickerOpen}
           draft={draft}
           mentions={mentions}

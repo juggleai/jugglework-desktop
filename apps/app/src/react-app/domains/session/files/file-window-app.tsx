@@ -1,6 +1,6 @@
 import * as React from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { FilePlus2, FileText, FolderOpen, Plus, X } from "lucide-react";
+import { FileText, FolderOpen, Plus, X } from "lucide-react";
 import {
   FileEditorToolbar,
   getOfficeEditorStatus,
@@ -31,6 +31,8 @@ import { FileViewer } from "./file-viewer";
 import { useFilesPanelStore } from "./files-panel-store";
 import { saveSharedFileText } from "./shared-file-editor";
 import { PreviewError, PreviewLoading } from "../artifacts/preview";
+import { createOfficeFile } from "./office-create";
+import { OfficeCreateItems } from "./office-create-items";
 
 /** 独立文件窗口：原生标签栏、保存状态及文件操作；文档模型复用现有宿主。 */
 export function FileWindowApp() {
@@ -88,6 +90,18 @@ export function FileWindowApp() {
   ) => {
     try {
       await bridge?.action(name, path);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error));
+    }
+  };
+  const create = async (kind: "docx" | "pptx") => {
+    if (!bridge || !state) return;
+    try {
+      await createOfficeFile(
+        bridge,
+        { workspaceId: state.workspaceId, sessionId: state.sessionId, kind },
+        (file) => action("open", file.path),
+      );
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error));
     }
@@ -205,10 +219,7 @@ export function FileWindowApp() {
                     {t("file_window.new")}
                   </DropdownMenuSubTrigger>
                   <DropdownMenuSubContent>
-                    <DropdownMenuItem onClick={() => void action("create")}>
-                      <FilePlus2 />
-                      {t("file_window.word")}
-                    </DropdownMenuItem>
+                    <OfficeCreateItems onCreate={(kind) => void create(kind)} />
                   </DropdownMenuSubContent>
                 </DropdownMenuSub>
               )}

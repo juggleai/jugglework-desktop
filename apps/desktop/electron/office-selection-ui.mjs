@@ -27,9 +27,24 @@ export function installOfficeSelectionUi(kind, readSelection, scope = window) {
   `;
   root.append(style);
   const entry = doc.createElement("button");
-  entry.type = "button"; entry.textContent = "✦ AI 编辑";
-  entry.setAttribute("aria-label", "AI 编辑选区");
-  entry.style.cssText = "display:none;padding:8px 13px;border:1px solid #e1e1e1;border-radius:12px;background:#fff;box-shadow:0 3px 12px #0002;color:#181818;white-space:nowrap";
+  entry.type = "button";
+  entry.setAttribute("data-jugglework-office-action", "request-edits");
+  if (kind === "slide") {
+    const icon = doc.createElementNS("http://www.w3.org/2000/svg", "svg");
+    icon.setAttribute("data-jugglework-office-icon", "presentation");
+    icon.setAttribute("viewBox", "0 0 24 24"); icon.setAttribute("width", "16"); icon.setAttribute("height", "16");
+    icon.setAttribute("fill", "none"); icon.setAttribute("stroke", "currentColor"); icon.setAttribute("stroke-width", "2");
+    icon.setAttribute("stroke-linecap", "round"); icon.setAttribute("stroke-linejoin", "round"); icon.setAttribute("aria-hidden", "true");
+    for (const pathData of ["M2 3h20", "M21 3v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V3", "m7 21 5-5 5 5"]) {
+      const path = doc.createElementNS("http://www.w3.org/2000/svg", "path"); path.setAttribute("d", pathData); icon.append(path);
+    }
+    const label = doc.createElement("span"); label.textContent = "Slides · Request edits / 请求修改";
+    entry.append(icon, label); entry.setAttribute("aria-label", label.textContent);
+    entry.style.cssText = "display:none;align-items:center;gap:7px;padding:8px 13px;border:1px solid #f5d08a;border-radius:12px;background:#fffbeb;box-shadow:0 3px 12px #92400e24;color:#92400e;font-weight:600;white-space:nowrap";
+  } else {
+    entry.textContent = "✦ AI 编辑"; entry.setAttribute("aria-label", "AI 编辑选区");
+    entry.style.cssText = "display:none;padding:8px 13px;border:1px solid #e1e1e1;border-radius:12px;background:#fff;box-shadow:0 3px 12px #0002;color:#181818;white-space:nowrap";
+  }
   root.append(entry); doc.body.append(root);
   let composing = false, pending = false, submitting = false, frozen = null, panel = null, candidateSelection = null, captureRequest = null;
   let handleInputKey = null;
@@ -46,8 +61,8 @@ export function installOfficeSelectionUi(kind, readSelection, scope = window) {
       : kind === "sheet" ? selection?.ranges?.length
         : selection?.shapeIds?.length && (!selection.textSelection || selection.textSelection.count > 0);
     candidateSelection = usable ? JSON.stringify(selection) : null;
-    entry.style.display = usable ? "block" : "none";
-    place();
+    entry.style.display = usable ? (kind === "slide" ? "flex" : "block") : "none";
+    place(kind === "slide" ? Math.min(280, scope.innerWidth - 24) : 150);
   };
   const cancel = () => {
     const previous = captureRequest; captureRequest = null; frozen = null;

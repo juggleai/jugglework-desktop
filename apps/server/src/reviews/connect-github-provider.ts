@@ -13,6 +13,8 @@ import {
   type ReviewListItem,
   type ReviewRelationship,
   type ReviewThread,
+  type ReviewMutationInput,
+  type ReviewPullRequestActionInput,
 } from "@jugglework/types/reviews";
 import { juggleworkCloudMcpConnectionActionSchema } from "@jugglework/types/den/mcp-connection-action";
 import { ApiError } from "../errors.js";
@@ -113,6 +115,7 @@ function relationQuery(relationship: ReviewRelationship): string {
   if (relationship === "all") return "is:open involves:@me";
   if (relationship === "authored") return "is:open author:@me";
   if (relationship === "reviewed") return "is:open reviewed-by:@me";
+  if (relationship === "recently_merged") return "is:merged involves:@me sort:updated-desc";
   if (relationship === "team_review_requested") return "is:open team-review-requested:@me";
   return "is:open review-requested:@me";
 }
@@ -122,7 +125,9 @@ function readItems(value: unknown): unknown[] {
   if (!isRecord(value)) return [];
   for (const key of ["items", "pull_requests", "pullRequests", "results", "files", "check_runs", "checkRuns", "reviewThreads", "threads", "comments", "reviews"]) {
     if (Array.isArray(value[key])) return value[key] as unknown[];
+    if (isRecord(value[key]) && Array.isArray(value[key].nodes)) return value[key].nodes as unknown[];
   }
+  if (Array.isArray(value.nodes)) return value.nodes;
   return [];
 }
 
@@ -225,11 +230,11 @@ function normalizeCheck(value: unknown, index: number): ReviewCheck | null {
 
 function normalizeThread(value: unknown, index: number): ReviewThread | null {
   if (!isRecord(value)) return null;
-  const comments = array(value.comments).map((entry) => isRecord(entry) ? { id: string(entry.id ?? entry.node_id, String(index), 512), author: normalizeAuthor(entry.user ?? entry.author), body: string(entry.body, "", 50_000), createdAt: iso(entry.created_at), ...(typeof entry.updated_at === "string" ? { updatedAt: iso(entry.updated_at) } : {}), ...(typeof entry.html_url === "string" ? { url: string(entry.html_url, "", 2_048) } : {}) } : null).filter((entry): entry is NonNullable<typeof entry> => Boolean(entry)).slice(0, 100);
-  if (!comments.length && typeof value.body === "string") comments.push({ id: string(value.id, String(index), 512), author: normalizeAuthor(value.user), body: string(value.body, "", 50_000), createdAt: iso(value.created_at), ...(typeof value.updated_at === "string" ? { updatedAt: iso(value.updated_at) } : {}), ...(typeof value.html_url === "string" ? { url: string(value.html_url, "", 2_048) } : {}) });
+  const comments = readItems(value.comments).map((entry) => isRecord(entry) ? { id: string(entry.id ?? entry.node_id, String(index), 512), author: normalizeAuthor(entry.user ?? entry.author), body: string(entry.body, "", 50_000), createdAt: iso(entry.created_at ?? entry.createdAt), ...(typeof entry.updated_at === "string" ? { updatedAt: iso(entry.updated_at) } : {}), ...(typeof entry.html_url === "string" ? { url: string(entry.html_url, "", 2_048) } : {}) } : null).filter((entry): entry is NonNullable<typeof entry> => Boolean(entry)).slice(0, 100);
+  if (!comments.length && typeof value.body === "string") comments.push({ id: string(value.id, String(index), 512), author: normalizeAuthor(value.user ?? value.author), body: string(value.body, "", 50_000), createdAt: iso(value.created_at ?? value.submitted_at ?? value.createdAt), ...(typeof value.updated_at === "string" ? { updatedAt: iso(value.updated_at) } : {}), ...(typeof value.html_url === "string" ? { url: string(value.html_url, "", 2_048) } : {}) });
   if (!comments.length) return null;
   const side = string(value.side).toLowerCase();
-  return { id: string(value.id ?? value.node_id, String(index), 512), ...(typeof value.path === "string" ? { path: string(value.path, "", 4_096) } : {}), ...(number(value.line) ? { line: number(value.line) } : {}), ...(number(value.start_line) ? { startLine: number(value.start_line) } : {}), ...(["left", "right"].includes(side) ? { side: side as "left" | "right" } : {}), outdated: value.isOutdated === true || value.outdated === true, resolved: value.isResolved === true || value.resolved === true, comments };
+  return { ...(value.state === "APPROVED" ? { reviewDecision: "approved" as const } : value.state === "CHANGES_REQUESTED" ? { reviewDecision: "changes_requested" as const } : {}), id: string(value.id ?? value.node_id, String(index), 512), ...(typeof value.path === "string" ? { path: string(value.path, "", 4_096) } : {}), ...(number(value.line) ? { line: number(value.line) } : {}), ...(number(value.start_line) ? { startLine: number(value.start_line) } : {}), ...(["left", "right"].includes(side) ? { side: side as "left" | "right" } : {}), outdated: value.isOutdated === true || value.outdated === true, resolved: value.isResolved === true || value.resolved === true, comments };
 }
 
 function nextPage(value: unknown, page: number, itemCount: number, limit: number): string | null {
@@ -246,6 +251,18 @@ function safeAction(value: unknown) {
 
 function toolErrorValue(error: unknown): unknown {
   return isRecord(error) && isRecord(error.toolResult) ? (() => { try { return cloudMcpToolValue({ ...error.toolResult, isError: false }); } catch { return null; } })() : null;
+}
+
+function githubCapabilityValue(result: RecordValue): unknown {
+  // The organization gateway wraps the downstream MCP CallToolResult in its
+  // own CallToolResult. Decode both structured and text-only envelopes before
+  // interpreting GitHub data, and preserve downstream isError failures.
+  let value: unknown = result;
+  for (let depth = 0; depth < 4; depth += 1) {
+    if (!isRecord(value) || (!Array.isArray(value.content) && value.structuredContent === undefined && value.isError !== true)) return value;
+    value = cloudMcpToolValue(value);
+  }
+  throw new ApiError(502, "review_contract_unsupported", "GitHub returned too many nested MCP result envelopes.", { retryable: false });
 }
 
 function mapConnectionValue(value: unknown): ReviewConnectionStatus | null {
@@ -337,7 +354,7 @@ export class ConnectGithubReviewProvider implements ReviewReadProvider {
   private async execute(session: CloudMcpSession, name: string, body: RecordValue, signal?: AbortSignal): Promise<unknown> {
     try {
       const result = await callCloudMcpTool(this.fetcher(), session, this.requestId++, "execute_capability", { name, body }, { signal, timeoutMs: 25_000, maxBytes: 4_194_304 });
-      return cloudMcpToolValue(result);
+      return githubCapabilityValue(result);
     } catch (error) {
       const remote = toolErrorValue(error);
       const connection = mapConnectionValue(remote);
@@ -351,14 +368,152 @@ export class ConnectGithubReviewProvider implements ReviewReadProvider {
 
   async getConnection(input: ReviewRequestContext) {
     try {
-      const { capabilities } = await this.capabilities(input);
-      return reviewConnectionStatusSchema.parse({ schemaVersion: 1, provider: "github", state: "ready", connectionId: capabilities.connectionId, connectionName: capabilities.connectionName });
+      const { session, capabilities } = await this.capabilities(input);
+      const writes = await this.writeCapabilities(session, capabilities, input.signal).catch(() => ({} as Record<string, string>));
+      return reviewConnectionStatusSchema.parse({
+        schemaVersion: 1,
+        provider: "github",
+        state: "ready",
+        connectionId: capabilities.connectionId,
+        connectionName: capabilities.connectionName,
+        operations: {
+          comment: Boolean(writes.add_issue_comment),
+          submitReview: Boolean(writes.pull_request_review_write),
+          markDraft: Boolean(writes.convert_pull_request_to_draft),
+          markReady: Boolean(writes.mark_pull_request_ready_for_review),
+          close: Boolean(writes.update_pull_request),
+          reopen: Boolean(writes.update_pull_request),
+          merge: Boolean(writes.merge_pull_request),
+          enableAutoMerge: Boolean(writes.enable_auto_merge),
+        },
+      });
     } catch (error) {
       if (!(error instanceof ApiError)) throw error;
       const details = isRecord(error.details) ? error.details : {};
       const state = error.code === "github_connection_disabled_in_workspace" ? "disabled_in_workspace" : error.code === "github_member_authorization_required" ? "member_authorization_required" : error.code === "github_organization_admin_action_required" ? "organization_admin_action_required" : error.code === "github_provider_admin_action_required" ? "provider_admin_action_required" : error.code === "github_connection_missing" ? "not_connected" : "unavailable";
       return reviewConnectionStatusSchema.parse({ schemaVersion: 1, provider: "github", state, connectionId: typeof details.connectionId === "string" ? details.connectionId : undefined, connectionName: "GitHub", hint: error.message, action: safeAction(details.action) });
     }
+  }
+
+  async executionScope(input: ReviewRequestContext): Promise<string> {
+    const { capabilities } = await this.capabilities(input);
+    return `${capabilities.connectionId}:${capabilities.credentialKey}`;
+  }
+
+  private async writeCapabilities(session: CloudMcpSession, capabilities: CapabilitySet, signal?: AbortSignal): Promise<Record<string, string>> {
+    const fixed = [
+      "pull_request_review_write",
+      "add_issue_comment",
+      "convert_pull_request_to_draft",
+      "mark_pull_request_ready_for_review",
+      "update_pull_request",
+      "merge_pull_request",
+      "enable_auto_merge",
+    ] as const;
+    const value = await this.search(session, `GitHub ${fixed.join(" ")}`, signal);
+    const matches = isRecord(value) ? array(value.matches).filter(isRecord) : [];
+    return Object.fromEntries(fixed.flatMap((suffix) => {
+      const expected = `mcp:${capabilities.connectionId}:${suffix}`;
+      return matches.some((entry) => entry.name === expected) ? [[suffix, expected]] : [];
+    }));
+  }
+
+  async freshDetail(input: ReviewTargetInput) {
+    this.cache.clear();
+    return this.getDetail(input);
+  }
+
+  async resolveUrl(input: ReviewRequestContext & { url: string }) {
+    let url: URL;
+    try { url = new URL(input.url); } catch { throw new ApiError(400, "invalid_review_url", "Enter a GitHub pull request URL."); }
+    const match = url.pathname.match(/^\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\/pull\/(\d+)\/?$/);
+    if (url.protocol !== "https:" || url.hostname !== "github.com" || url.username || url.password || url.port || !match || !Number.isSafeInteger(Number(match[3])) || Number(match[3]) < 1) throw new ApiError(400, "invalid_review_url", "Enter an https://github.com/owner/repository/pull/number URL.");
+    const { capabilities } = await this.capabilities(input);
+    const reviewId = encodeReviewId({ version: 1, provider: "github", connectionId: capabilities.connectionId, hostname: url.hostname, owner: match[1], repository: match[2], number: Number(match[3]) });
+    return this.freshDetail({ ...input, reviewId });
+  }
+
+  async mutate(input: ReviewTargetInput & ReviewMutationInput): Promise<{ ok: true }> {
+    const { identity, session, capabilities } = await this.target(input);
+    const names = await this.writeCapabilities(session, capabilities, input.signal);
+    const name = input.kind === "comment" ? names.add_issue_comment : names.pull_request_review_write;
+    if (!name) throw new ApiError(403, "github_review_write_unavailable", "Your organization GitHub connection does not provide this write operation. Ask the organization owner to check GitHub permissions.", { retryable: false });
+    const target = { owner: identity.owner, repo: identity.repository, pullNumber: identity.number };
+    const fresh = await this.execute(session, capabilities.pullRequestRead, { ...target, method: "get" }, input.signal);
+    const raw = isRecord(fresh) && isRecord(fresh.pull_request) ? fresh.pull_request : fresh;
+    const head = isRecord(raw) && isRecord(raw.head) ? raw.head.sha : null;
+    if (head !== input.expectedHeadRevision) throw new ApiError(409, "review_revision_changed", "The pull request changed. Refresh and review the latest revision before publishing.", { retryable: false });
+    if (!isRecord(raw) || raw.state !== "open") throw new ApiError(409, "review_pull_request_closed", "This pull request is no longer open.", { retryable: false });
+    try {
+      const result = await callCloudMcpTool(this.fetcher(), session, this.requestId++, "execute_capability", {
+        name,
+        body: input.kind === "comment"
+          ? { owner: identity.owner, repo: identity.repository, issue_number: identity.number, body: input.body }
+          : { ...target, method: "create", event: input.event, body: input.body, commitID: input.expectedHeadRevision },
+      }, { signal: input.signal, timeoutMs: 25_000, maxBytes: 1_048_576 });
+      githubCapabilityValue(result);
+    } catch (error) {
+      const connection = mapConnectionValue(toolErrorValue(error));
+      if (connection) throw connectionError(connection);
+      throw new ApiError(502, "github_review_publish_unconfirmed", "GitHub did not confirm this operation. Check the pull request before trying again; it may already have been published.", { retryable: false });
+    } finally {
+      this.cache.clear();
+    }
+    return { ok: true };
+  }
+
+  async mutatePullRequest(input: ReviewTargetInput & ReviewPullRequestActionInput): Promise<{ ok: true }> {
+    const { identity, session, capabilities } = await this.target(input);
+    const names = await this.writeCapabilities(session, capabilities, input.signal);
+    const suffix = input.action === "mark_draft"
+      ? "convert_pull_request_to_draft"
+      : input.action === "mark_ready"
+        ? "mark_pull_request_ready_for_review"
+        : input.action === "merge"
+          ? "merge_pull_request"
+          : input.action === "enable_auto_merge"
+            ? "enable_auto_merge"
+            : "update_pull_request";
+    const name = names[suffix];
+    if (!name) throw new ApiError(403, "github_pull_request_write_unavailable", "Your organization GitHub connection does not provide this pull request operation. Ask the organization owner to check GitHub permissions.", { retryable: false });
+
+    const target = { owner: identity.owner, repo: identity.repository, pullNumber: identity.number };
+    const fresh = await this.execute(session, capabilities.pullRequestRead, { ...target, method: "get" }, input.signal);
+    const raw = isRecord(fresh) && isRecord(fresh.pull_request) ? fresh.pull_request : fresh;
+    const head = isRecord(raw) && isRecord(raw.head) ? raw.head.sha : null;
+    if (head !== input.expectedHeadRevision) throw new ApiError(409, "review_revision_changed", "The pull request changed. Refresh before changing it.", { retryable: false });
+    if (!isRecord(raw)) throw new ApiError(502, "github_invalid_response", "GitHub returned an invalid pull request.", { retryable: true });
+    const state = raw.merged === true ? "merged" : raw.state === "closed" ? "closed" : "open";
+    if (["mark_draft", "mark_ready", "close", "merge", "enable_auto_merge"].includes(input.action) && state !== "open") {
+      throw new ApiError(409, "review_pull_request_closed", "This pull request is no longer open.", { retryable: false });
+    }
+    if (input.action === "reopen" && state !== "closed") {
+      throw new ApiError(409, "review_pull_request_not_closed", "Only a closed pull request can be reopened.", { retryable: false });
+    }
+
+    const repository = `${identity.owner}/${identity.repository}`;
+    const body = input.action === "close"
+      ? { repository_full_name: repository, pr_number: identity.number, state: "closed" }
+      : input.action === "reopen"
+        ? { repository_full_name: repository, pr_number: identity.number, state: "open" }
+        : input.action === "merge"
+          ? { repository_full_name: repository, pr_number: identity.number, expected_head_sha: input.expectedHeadRevision, merge_method: input.mergeMethod ?? "merge" }
+          : { repository_full_name: repository, pr_number: identity.number };
+    try {
+      const result = await callCloudMcpTool(this.fetcher(), session, this.requestId++, "execute_capability", { name, body }, { signal: input.signal, timeoutMs: 25_000, maxBytes: 1_048_576 });
+      const value = githubCapabilityValue(result);
+      if (input.action === "merge" && isRecord(value) && value.merged === false) {
+        throw new ApiError(409, "github_merge_rejected", string(value.message, "GitHub did not merge this pull request.", 1_000), { retryable: false });
+      }
+    } catch (error) {
+      if (error instanceof ApiError) throw error;
+      const connection = mapConnectionValue(toolErrorValue(error));
+      if (connection) throw connectionError(connection);
+      throw new ApiError(502, "github_pull_request_action_unconfirmed", "GitHub did not confirm this operation. Check the pull request before trying again; it may already have completed.", { retryable: false });
+    } finally {
+      this.cache.clear();
+    }
+    return { ok: true };
   }
 
   async listInbox(input: ReviewInboxInput) {
@@ -409,10 +564,20 @@ export class ConnectGithubReviewProvider implements ReviewReadProvider {
 
   async listThreads(input: ReviewTargetInput & { cursor?: string; limit: number }) {
     const { identity, session, capabilities } = await this.target(input);
-    const { value, cacheHit } = await this.cache.getOrLoad(`threads:${input.workspace.id}:${capabilities.credentialKey}:${input.reviewId}:${input.cursor ?? ""}:${input.limit}`, 30_000, () => this.execute(session, capabilities.pullRequestRead, { method: "get_review_comments", owner: identity.owner, repo: identity.repository, pullNumber: identity.number, perPage: input.limit, ...(input.cursor ? { after: input.cursor } : {}) }, input.signal));
+    const { value, cacheHit } = await this.cache.getOrLoad(`threads:${input.workspace.id}:${capabilities.credentialKey}:${input.reviewId}:${input.cursor ?? ""}:${input.limit}`, 30_000, async () => {
+      const target = { owner: identity.owner, repo: identity.repository, pullNumber: identity.number, perPage: input.limit, ...(input.cursor ? { after: input.cursor } : {}) };
+      const reviewComments = await this.execute(session, capabilities.pullRequestRead, { ...target, method: "get_review_comments" }, input.signal);
+      // Discussion comments and submitted review bodies are separate GitHub
+      // resources. Include both so explicit publishing is visible on refresh.
+      const others = input.cursor ? [] : await Promise.all([
+        this.execute(session, capabilities.pullRequestRead, { ...target, method: "get_comments" }, input.signal),
+        this.execute(session, capabilities.pullRequestRead, { ...target, method: "get_reviews" }, input.signal),
+      ]);
+      return { items: [...readItems(reviewComments), ...others.flatMap(readItems)].slice(0, input.limit), pageInfo: isRecord(reviewComments) ? reviewComments.pageInfo : undefined, head_sha: isRecord(reviewComments) ? reviewComments.head_sha ?? reviewComments.headRevision : undefined };
+    });
     const threads = readItems(value).slice(0, input.limit).map(normalizeThread).filter((entry): entry is ReviewThread => Boolean(entry));
     const pageInfo = isRecord(value) && isRecord(value.pageInfo) ? value.pageInfo : {};
-    return reviewThreadsResponseSchema.parse({ schemaVersion: 1, items: threads, nextCursor: pageInfo.hasNextPage === true && typeof pageInfo.endCursor === "string" ? pageInfo.endCursor : null, snapshotAt: this.now().toISOString(), source: { provider: "github", connectionId: capabilities.connectionId, connectionName: capabilities.connectionName }, cache: { source: cacheHit ? "memory" : "provider", fetchedAt: this.now().toISOString(), stale: false }, headRevision: isRecord(value) ? string(value.head_sha ?? value.headRevision, "unknown", 128) : "unknown", truncated: false });
+    return reviewThreadsResponseSchema.parse({ schemaVersion: 1, items: threads, nextCursor: pageInfo.hasNextPage === true && typeof pageInfo.endCursor === "string" ? pageInfo.endCursor : null, snapshotAt: this.now().toISOString(), source: { provider: "github", connectionId: capabilities.connectionId, connectionName: capabilities.connectionName }, cache: { source: cacheHit ? "memory" : "provider", fetchedAt: this.now().toISOString(), stale: false }, headRevision: string(value.head_sha, "unknown", 128), truncated: false });
   }
 
   dispose(): void {

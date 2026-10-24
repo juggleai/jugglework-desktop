@@ -175,7 +175,12 @@ export type ComposerVideoGenerationOptions = {
 };
 
 export type ComposerSubmissionOptions =
-  | { delivery?: "start" }
+  | {
+      delivery?: "start";
+      /** Stable user-message identity for workflows that observe exact-turn delivery. */
+      messageID?: string;
+      intent?: "presentation-creation";
+    }
   | { delivery: "steer"; admissionId: string };
 
 export type ArtifactItem = {

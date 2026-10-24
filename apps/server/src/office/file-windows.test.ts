@@ -209,6 +209,7 @@ async function fixture(
     engineFileId: "actual_A" as string | null,
   };
   const saves: Array<string | null> = [];
+  const creations: Array<{ path: string; body: unknown }> = [];
   const contexts: unknown[] = [];
   const preparation = {
     error: null as string | null,
@@ -242,6 +243,10 @@ async function fixture(
       return { document: { ...document } };
     },
     async postJson(path: string, _body: unknown) {
+      if (path.endsWith("/create")) {
+        creations.push({ path, body: _body });
+        return { document: { ...document } };
+      }
       if (path.endsWith("/prepare-file")) {
         preparation.calls.push(_body);
         if (preparation.error) throw new Error(preparation.error);
@@ -354,6 +359,7 @@ async function fixture(
     files,
     document,
     saves,
+    creations,
     preparation,
     contexts,
     show,
@@ -384,6 +390,80 @@ test("主窗口和独立窗口的实际 preload 均向编辑容器传递布局�
   expect(
     rendererIpc.listenerCount("jugglework:office:layout-invalidated"),
   ).toBe(0);
+});
+
+test("Word/PPTX 创建桥由宿主解析路径，取消不请求服务，越界目标被拒绝", async () => {
+  const f = await fixture();
+  expect(rendererBridges.every((bridge) => typeof bridge.fileWindow.create === "function")).toBe(true);
+  expect(await f.call("jugglework:file-window:create", f.main, {
+    workspaceId: "ws",
+    sessionId: "ses",
+    kind: "pptx",
+  })).toBeNull();
+  expect(f.creations).toEqual([]);
+
+  answers.save = {
+    canceled: false,
+    filePath: join(f.root, "slides", "计划.pptx"),
+  };
+  expect(await f.call("jugglework:file-window:create", f.main, {
+    workspaceId: "ws",
+    sessionId: "ses",
+    kind: "pptx",
+  })).toEqual({ path: "slides/计划.pptx" });
+  expect(f.creations).toEqual([{
+    path: "/workspace/ws/office/create",
+    body: { sessionId: "ses", path: "slides/计划.pptx" },
+  }]);
+
+  answers.save = {
+    canceled: false,
+    filePath: join(f.root, "..", "外部.docx"),
+  };
+  await expect(f.call("jugglework:file-window:create", f.main, {
+    workspaceId: "ws",
+    sessionId: "ses",
+    kind: "docx",
+  })).rejects.toThrow("请选择当前工作区中的文件");
+  expect(f.creations).toHaveLength(1);
+
+  answers.save = {
+    canceled: false,
+    filePath: join(f.root, "扩展名不符.docx"),
+  };
+  await expect(f.call("jugglework:file-window:create", f.main, {
+    workspaceId: "ws",
+    sessionId: "ses",
+    kind: "pptx",
+  })).rejects.toThrow("请选择 .pptx 文件");
+  expect(f.creations).toHaveLength(1);
+});
+
+test("文件窗口创建 PPTX 后可通过现有打开动作成为 Office 标签", async () => {
+  const f = await fixture("汇报.pptx");
+  await f.files.open({ workspaceId: "ws", sessionId: "ses", path: "汇报.pptx" });
+  const window = f.files.windows()[0];
+  answers.save = {
+    canceled: false,
+    filePath: join(f.root, "新汇报.pptx"),
+  };
+  const created = await f.call("jugglework:file-window:create", window, {
+    workspaceId: "ignored",
+    sessionId: "ignored",
+    kind: "pptx",
+  });
+  await f.action(window, "open", created.path);
+  expect(await f.state(window)).toMatchObject({
+    activePath: "新汇报.pptx",
+    tabs: [
+      { path: "汇报.pptx", documentId: "od_A" },
+      { path: "新汇报.pptx", documentId: "od_A" },
+    ],
+  });
+  expect(f.creations.at(-1)).toEqual({
+    path: "/workspace/ws/office/create",
+    body: { sessionId: "ses", path: "新汇报.pptx" },
+  });
 });
 
 test("三平台的两种宿主共用自动字体资源状态和网络边界，必需页面失败释放处理器并同步文档故障", async () => {

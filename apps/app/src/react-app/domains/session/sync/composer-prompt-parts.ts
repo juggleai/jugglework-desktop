@@ -8,7 +8,7 @@ import type {
 import type { ComposerDraft } from "../../../../app/types";
 import { appMentionInstruction } from "../surface/composer/app-mentions";
 import { composerAttachmentToFilePart } from "./attachment-file-part";
-import { joinWorkspaceRelativePath, toFileUrl } from "./prompt-file-parts";
+import { composerFilePartToPromptPart } from "./prompt-file-parts";
 
 export type ComposerPromptPartInput = TextPartInput | FilePartInput | AgentPartInput | SubtaskPartInput;
 
@@ -27,20 +27,6 @@ export async function composerDraftToPromptParts(
   const text = draft.resolvedText ?? draft.text;
   parts.push({ type: "text", text });
 
-  const root = workspaceRoot.trim();
-  const toAbsolutePath = (path: string) => {
-    const trimmed = path.trim();
-    if (!trimmed) return "";
-    if (trimmed.startsWith("/")) return trimmed;
-    if (/^[a-zA-Z]:[\\/]/.test(trimmed)) return trimmed;
-    return root ? joinWorkspaceRelativePath(root, trimmed) : "";
-  };
-  const filenameFromPath = (path: string) => {
-    const normalized = path.replace(/\\/g, "/");
-    const segments = normalized.split("/").filter(Boolean);
-    return segments[segments.length - 1] ?? "file";
-  };
-
   for (const part of draft.parts) {
     if (part.type === "agent") {
       parts.push({ type: "agent", name: part.name });
@@ -51,14 +37,8 @@ export async function composerDraftToPromptParts(
       continue;
     }
     if (part.type === "file") {
-      const absolute = toAbsolutePath(part.path);
-      if (!absolute) continue;
-      parts.push({
-        type: "file",
-        mime: "text/plain",
-        url: toFileUrl(absolute),
-        filename: filenameFromPath(part.path),
-      });
+      const filePart = composerFilePartToPromptPart(part, workspaceRoot);
+      if (filePart) parts.push(filePart);
     }
   }
 

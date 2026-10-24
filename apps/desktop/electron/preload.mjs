@@ -278,6 +278,8 @@ contextBridge.exposeInMainWorld("__JUGGLEWORK_ELECTRON__", {
     open: (input) => ipcRenderer.invoke("jugglework:file-window:open", input),
     /** 主窗口无需读取子窗口状态。 */
     state: () => ipcRenderer.invoke("jugglework:file-window:state"),
+    /** 由主进程选择工作区内的 Word 或 PowerPoint 目标并创建。 */
+    create: (input) => ipcRenderer.invoke("jugglework:file-window:create", input),
     /** 将操作路由到所属文件窗口。 */
     action: (action, path) => ipcRenderer.invoke("jugglework:file-window:action", action, path),
     /** 监听文件窗口标签变化。 */

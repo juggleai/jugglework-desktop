@@ -328,6 +328,45 @@ export function createFileWindows({
         });
     }
   };
+  const createDocument = async (window, input) => {
+    const entry = [...entries.values()].find(
+      (item) => item.window.id === window.id,
+    );
+    if (entry?.local) throw new Error("请在聊天工作区中新建文档");
+    const workspaceId = entry?.workspaceId ?? input?.workspaceId;
+    const sessionId = entry?.sessionId ?? input?.sessionId;
+    const kind = input?.kind;
+    if (!workspaceId || !sessionId || !["docx", "pptx"].includes(kind))
+      throw new Error("新建文档参数无效");
+    const workspaceRoot =
+      entry?.workspaceRoot ??
+      (await client.getJson("/workspaces")).items?.find(
+        (item) => item.id === workspaceId && item.workspaceType !== "remote",
+      )?.path;
+    if (!workspaceRoot) throw new Error("工作区不可用");
+    const presentation = kind === "pptx";
+    const picked = await dialog.showSaveDialog(window, {
+      title: presentation ? "新建 PowerPoint 演示文稿" : "新建 Word 文档",
+      defaultPath: path.join(
+        workspaceRoot,
+        presentation ? "未命名演示文稿.pptx" : "未命名文档.docx",
+      ),
+      filters: [
+        presentation
+          ? { name: "PowerPoint 演示文稿", extensions: ["pptx"] }
+          : { name: "Word 文档", extensions: ["docx"] },
+      ],
+    });
+    if (picked.canceled || !picked.filePath || window.isDestroyed()) return null;
+    if (path.extname(picked.filePath).toLowerCase() !== `.${kind}`)
+      throw new Error(`请选择 .${kind} 文件`);
+    const relativePath = workspaceFilePath(workspaceRoot, picked.filePath);
+    await client.postJson(
+      `/workspace/${encodeURIComponent(workspaceId)}/office/create`,
+      { sessionId, path: relativePath },
+    );
+    return { path: relativePath };
+  };
   return {
     /** 打开或激活所属聊天的独立文件窗口。 */
     open,
@@ -417,6 +456,13 @@ export function createFileWindows({
           token: access.clientToken,
         };
       });
+      ipcMain.handle("jugglework:file-window:create", async (event, input) => {
+        const main = getMainWindow();
+        const window = this.windowFor(event.sender) ??
+          (event.sender.id === main?.webContents.id ? main : null);
+        if (!window) throw new Error("文件窗口宿主不可用");
+        return createDocument(window, input);
+      });
       ipcMain.handle(
         "jugglework:file-window:action",
         async (event, action, requestedPath) => {
@@ -445,25 +491,6 @@ export function createFileWindows({
               return;
             }
             await openDialog(entry.window, entry);
-            return;
-          }
-          if (action === "create") {
-            if (entry.local) throw new Error("请在聊天工作区中新建文档");
-            const picked = await dialog.showSaveDialog(entry.window, {
-              title: "新建 Word 文档",
-              defaultPath: path.join(entry.workspaceRoot, "未命名文档.docx"),
-              filters: [{ name: "Word 文档", extensions: ["docx"] }],
-            });
-            if (picked.canceled || !picked.filePath) return;
-            const relative = workspaceFilePath(
-              entry.workspaceRoot,
-              picked.filePath,
-            );
-            await client.postJson(`${base(entry)}/create`, {
-              sessionId: entry.sessionId,
-              path: relative,
-            });
-            await addFile(entry, relative);
             return;
           }
           if (!tab) return;

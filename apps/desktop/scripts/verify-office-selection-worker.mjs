@@ -25,6 +25,7 @@ const reports = [];
 const captures = [];
 const referencesByCapture = new Map();
 const canceledCaptures = new Set();
+const selectionActionSelector = '[data-jugglework-office-action="request-edits"]';
 let holdCaptureReply = false, releaseCaptureReply = null;
 const fontUrls = new Set(JSON.parse(await readFile(join(desktop, "resources/office-assets/manifest.json"), "utf8")).entries.filter((entry) => entry.kind === "font").map((entry) => entry.url));
 async function eventually(action) {
@@ -38,10 +39,10 @@ const read = () => evaluate(readOfficePageSelection, document.kind);
 async function clickSelectionEntry() {
   app.focus({ steal: true }); current.focus();
   await eventually(() => current.isFocused());
-  const point = await evaluate(() => {
-    const rect = window.document.querySelector('[aria-label="AI 编辑选区"]').getBoundingClientRect();
+  const point = await evaluate((selector) => {
+    const rect = window.document.querySelector(selector).getBoundingClientRect();
     return { x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2) };
-  });
+  }, selectionActionSelector);
   current.webContents.sendInputEvent({ type: "mouseDown", ...point, button: "left", clickCount: 1 });
   current.webContents.sendInputEvent({ type: "mouseUp", ...point, button: "left", clickCount: 1 });
 }
@@ -167,15 +168,25 @@ try {
       current.webContents.sendInputEvent({ type: "mouseMove", x: point.x + 65, y: point.y, modifiers: ["leftButtonDown"] });
       current.webContents.sendInputEvent({ type: "mouseUp", x: point.x + 65, y: point.y, button: "left", clickCount: 1 });
       await wait(150);
-      if (process.argv.includes("--inspect")) console.log(JSON.stringify({ slidePointer: await read(), entry: await evaluate(() => window.document.querySelector('[aria-label="AI 编辑选区"]').style.display) }));
-      await eventually(() => current.webContents.executeJavaScript("document.querySelector('[aria-label=\"AI 编辑选区\"]')?.style.display==='block'"));
+      if (process.argv.includes("--inspect")) console.log(JSON.stringify({ slidePointer: await read(), entry: await evaluate((selector) => window.document.querySelector(selector).style.display, selectionActionSelector) }));
+      await eventually(() => evaluate((selector) => window.document.querySelector(selector)?.style.display === "flex", selectionActionSelector));
     };
     if (kind === "slide") await selectFixtureRange();
     {
       const selected = await read(); assert.ok(selected);
       await current.webContents.executeJavaScript("document.dispatchEvent(new Event('selectionchange'))");
-      if (process.argv.includes("--inspect")) { await wait(100); console.log(JSON.stringify({ui:await current.webContents.executeJavaScript("({root:!!document.getElementById('juggle-office-selection-ui'),button:document.querySelector('[aria-label=\"AI 编辑选区\"]')?.style.cssText,visibility:document.visibilityState})"),selection:await read(),visible:current.isVisible(),focused:current.isFocused()})); }
-      await eventually(() => current.webContents.executeJavaScript("document.querySelector('[aria-label=\"AI 编辑选区\"]')?.style.display==='block'"));
+      if (process.argv.includes("--inspect")) { await wait(100); console.log(JSON.stringify({ui:await evaluate((selector) => ({root:!!document.getElementById("juggle-office-selection-ui"),button:document.querySelector(selector)?.style.cssText,visibility:document.visibilityState}), selectionActionSelector),selection:await read(),visible:current.isVisible(),focused:current.isFocused()})); }
+      await eventually(() => evaluate((selector, display) => window.document.querySelector(selector)?.style.display === display, selectionActionSelector, kind === "slide" ? "flex" : "block"));
+      const entryPresentation = await evaluate((selector) => {
+        const entry = window.document.querySelector(selector); const style = getComputedStyle(entry);
+        return { text: entry.textContent, ariaLabel: entry.getAttribute("aria-label"), presentationIcon: !!entry.querySelector('[data-jugglework-office-icon="presentation"]'), color: style.color, backgroundColor: style.backgroundColor, borderColor: style.borderColor };
+      }, selectionActionSelector);
+      if (kind === "slide") {
+        assert.deepEqual(entryPresentation, { text: "Slides · Request edits / 请求修改", ariaLabel: "Slides · Request edits / 请求修改", presentationIcon: true, color: "rgb(146, 64, 14)", backgroundColor: "rgb(255, 251, 235)", borderColor: "rgb(245, 208, 138)" });
+      } else {
+        assert.equal(entryPresentation.text, "✦ AI 编辑"); assert.equal(entryPresentation.ariaLabel, "AI 编辑选区"); assert.equal(entryPresentation.presentationIcon, false);
+        assert.notEqual(entryPresentation.backgroundColor, "rgb(255, 251, 235)"); assert.notEqual(entryPresentation.borderColor, "rgb(245, 208, 138)");
+      }
       if (kind === "doc") {
         holdCaptureReply = true;
         await clickSelectionEntry();
@@ -190,7 +201,7 @@ try {
         assert.equal(await evaluate(() => !!window.document.querySelector('[aria-label="编辑所选内容"]')), false, "外部点击取消后，迟到采集不能重新弹窗");
         await selectFixtureRange(reference.locator);
         await current.webContents.executeJavaScript("document.dispatchEvent(new Event('selectionchange'))");
-        await eventually(() => current.webContents.executeJavaScript("document.querySelector('[aria-label=\"AI 编辑选区\"]')?.style.display==='block'"));
+        await eventually(() => evaluate((selector) => window.document.querySelector(selector)?.style.display === "block", selectionActionSelector));
       }
       await clickSelectionEntry();
       await eventually(() => current.webContents.executeJavaScript("document.activeElement?.getAttribute('aria-label')==='说说你想怎么修改'")).catch(async (error) => {
@@ -218,7 +229,7 @@ try {
       assert.equal(reports.filter((report) => report.kind === kind).length, 0, "外部点击不提交要求");
       await selectFixtureRange(dismissed.locator);
       await current.webContents.executeJavaScript("document.dispatchEvent(new Event('selectionchange'))");
-      await eventually(() => current.webContents.executeJavaScript("document.querySelector('[aria-label=\"AI 编辑选区\"]')?.style.display==='block'"));
+      await eventually(() => evaluate((selector, display) => window.document.querySelector(selector)?.style.display === display, selectionActionSelector, kind === "slide" ? "flex" : "block"));
       await clickSelectionEntry();
       await eventually(() => current.webContents.executeJavaScript("document.activeElement?.getAttribute('aria-label')==='说说你想怎么修改'"));
       await current.webContents.executeJavaScript("(()=>{const input=document.activeElement;input.value='中文修改要求';input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',isComposing:true,bubbles:true}));})()");

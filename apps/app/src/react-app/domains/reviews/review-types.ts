@@ -1,6 +1,6 @@
 export type ReviewProvider = "github" | "gitlab";
 
-export type ReviewRelationship = "requested" | "authored" | "team" | "reviewed";
+export type ReviewRelationship = "requested" | "authored" | "team" | "reviewed" | "recently_merged";
 
 export type ReviewCheckState = "success" | "failure" | "running" | "queued" | "unknown";
 
@@ -29,6 +29,8 @@ export type ReviewThread = {
   line?: number;
   age: string;
   resolved?: boolean;
+  comments?: Array<{ id: string; author: string; body: string; age: string }>;
+  reviewDecision?: "approved" | "changes_requested";
 };
 
 export type ReviewPreview = {
@@ -38,10 +40,13 @@ export type ReviewPreview = {
   owner: string;
   repository: string;
   number: number;
+  url: string;
+  state: "open" | "closed" | "merged";
   title: string;
   body: string;
   author: string;
   authorInitials: string;
+  authorAvatarUrl?: string;
   relationship: ReviewRelationship;
   updatedAt: string;
   baseBranch: string;
@@ -52,6 +57,8 @@ export type ReviewPreview = {
   changedFiles: number;
   comments: number;
   draft?: boolean;
+  mergeable: "mergeable" | "conflicting" | "unknown";
+  viewerPermission: "read" | "triage" | "write" | "maintain" | "admin" | "unknown";
   pinned?: boolean;
   labels: string[];
   summary: string[];

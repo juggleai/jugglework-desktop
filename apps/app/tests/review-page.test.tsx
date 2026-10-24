@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
+import { PlatformProvider, type Platform } from "../src/react-app/kernel/platform";
+import type { ResolvedWorkspaceEndpoint } from "../src/app/lib/workspace-endpoint";
 
 import { REVIEW_PREVIEWS, reviewPreviewById } from "../src/react-app/domains/reviews/review-preview-data";
 
@@ -21,19 +23,31 @@ const noop = () => undefined;
 
 function renderWorkbench(reviewId: string | null, sidebarOpen = true) {
   const review = reviewPreviewById(reviewId);
+  const platform: Platform = { platform: "desktop", openLink: noop, restart: async () => undefined, notify: async () => undefined };
+  const endpoint = { baseUrl: "http://127.0.0.1:1234", workspaceId: "ws", client: {} } as ResolvedWorkspaceEndpoint;
+  const sections = ["authored", "requested", "team", "recently_merged"].map((relationship) => ({
+    relationship,
+    reviews: REVIEW_PREVIEWS.filter((item) => relationship === "recently_merged" ? item.state === "merged" : item.relationship === relationship),
+  }));
   return renderToStaticMarkup(
-    <ReviewWorkbench
-      reviews={REVIEW_PREVIEWS}
+    <PlatformProvider value={platform}><ReviewWorkbench
+      endpoint={review ? endpoint : undefined}
+      operations={review ? { comment: true, submitReview: true, markDraft: true, markReady: true, close: true, reopen: true, merge: true, enableAutoMerge: true } : undefined}
+      pinned={Boolean(review?.pinned)}
+      onTogglePin={noop}
+      onChanged={noop}
+      actions={review ? <><button>Review with JuggleWork</button><button>Submit review</button></> : undefined}
+      sections={sections as Parameters<typeof ReviewWorkbench>[0]["sections"]}
+      expandedSections={["authored", "requested", "team", "recently_merged"]}
       reviewId={reviewId}
       query=""
-      relationship="all"
       review={review}
       unknown={reviewId !== null && review === null}
       onQueryChange={noop}
-      onRelationshipChange={noop}
+      onToggleSection={noop}
       onSelectReview={noop}
       sidebarOpen={sidebarOpen}
-    />,
+    /></PlatformProvider>,
   );
 }
 
@@ -41,11 +55,17 @@ describe("Review workbench preview", () => {
   test("renders an explicit preview Inbox and responsive empty detail", () => {
     const html = renderWorkbench(null);
 
-    expect(html).toContain("Connected");
+    expect(html).toContain("Code Review");
     expect(html).toContain("Pull request inbox");
+    expect(html).toContain("My pull requests");
+    expect(html).toContain("Review requests");
+    expect(html).toContain("My team&#x27;s review requests");
+    expect(html).toContain("Recently merged");
+    expect(html).not.toContain('aria-label="Review relationship"');
+    expect(html.match(/aria-expanded="true"/g)).toHaveLength(4);
     expect(html).toContain("Select a pull request");
     expect(html).toContain("md:w-[var(--jugglework-left-sidebar-width)]");
-    expect(html.match(/data-testid="review-inbox-item-/g)).toHaveLength(REVIEW_PREVIEWS.length);
+    expect(html.match(/data-testid="review-inbox-item-/g)).toHaveLength(REVIEW_PREVIEWS.filter((item) => item.relationship !== "reviewed").length);
   });
 
   test("hides the Inbox when the shared secondary sidebar is collapsed", () => {
@@ -60,9 +80,17 @@ describe("Review workbench preview", () => {
     const html = renderWorkbench(selected.id);
 
     expect(html).toContain(selected.title);
-    expect(html).toContain("Pull request overview");
+    expect(html).toContain(selected.body);
+    expect(html).toContain("Changes");
+    expect(html).toContain("Threads");
+    expect(html).toContain("Reviewers");
+    expect(html).toContain("Checks");
     expect(html).toContain("Review with JuggleWork");
     expect(html).toContain("Submit review");
+    expect(html).toContain("Unpin from sidebar");
+    expect(html).toContain("Copy URL");
+    expect(html).toContain("Open in GitHub");
+    expect(html).toContain("Merge");
     expect(html).toContain("disabled");
     expect(html).toContain('role="tablist"');
   });
@@ -147,17 +175,20 @@ describe("Review workbench preview", () => {
   test("keeps a recoverable Inbox error separate from the detail workbench", () => {
     const html = renderToStaticMarkup(
       <ReviewWorkbench
-        reviews={[]}
+        sections={[
+          { relationship: "authored", reviews: [], error: "GitHub rate limit reached." },
+          { relationship: "requested", reviews: [] },
+          { relationship: "team", reviews: [] },
+          { relationship: "recently_merged", reviews: [] },
+        ]}
+        expandedSections={["authored"]}
         reviewId={null}
         query=""
-        relationship="all"
         review={null}
         unknown={false}
-        inboxError="GitHub rate limit reached."
         onQueryChange={noop}
-        onRelationshipChange={noop}
+        onToggleSection={noop}
         onSelectReview={noop}
-        onRetryInbox={noop}
       />,
     );
     expect(html).toContain("Pull requests could not be loaded");

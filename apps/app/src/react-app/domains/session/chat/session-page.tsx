@@ -65,7 +65,7 @@ import { type SidePanelItem, useUiStateStore } from "../../../shell/ui-state-sto
 
 import { isElectronRuntime } from "../../../../app/utils";
 import { isCollectibleArtifactTarget, isLocalhostBrowserTarget, isOpenableFileTarget, type OpenTarget } from "../artifacts/open-target";
-import type { OpenTargetOptions } from "@/lib/target-provider";
+import { allowsAutomaticFileOpen, type OpenTargetOptions } from "@/lib/target-provider";
 import { VoicePanel } from "../voice/voice-panel";
 import { SidePanel } from "../panel/side-panel";
 import { FilesPanel } from "../files/files-panel";
@@ -654,7 +654,7 @@ export function SessionPage(props: SessionPageProps) {
   }, [props.juggleworkServerClient, props.runtimeWorkspaceId]);
   const openTarget = useCallback((target: OpenTarget, options?: OpenTargetOptions, sourceSessionId?: string) => {
     // TIPS: 生成产物不抢占用户正在查看的文件；只有显式点击才打开文件 tab。
-    if (options?.auto && target.kind === "file") return;
+    if (target.kind === "file" && !allowsAutomaticFileOpen(options)) return;
     if (target.kind === "url" || target.preview === "browser") {
       const url = browserUrlForTarget(target);
       if (isElectronRuntime()) {

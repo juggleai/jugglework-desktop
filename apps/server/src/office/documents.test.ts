@@ -1,5 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import {
+  access,
   link,
   mkdir,
   mkdtemp,
@@ -60,6 +61,19 @@ async function fixture(
     transferChecks: [] as string[][],
     sheetCount: 1,
     slideOpen: true,
+    availableTools: [
+      "create_doc",
+      "create_slide",
+      "save_file",
+      "doc_get_last_operable_pos",
+      "sheet_get_sheet_info",
+      "sheet_delete_dimension",
+      "slide_get_info",
+      "open_file",
+      "doc_batch_execute",
+    ],
+    failCreateSave: false,
+    createdTemporaryPaths: [] as string[],
     toolCalls: [] as string[],
     saveCalls: [] as string[],
     saveGate: undefined as (() => Promise<void>) | undefined,
@@ -95,21 +109,26 @@ async function fixture(
         if (editor.file_id === id) editors.delete(path);
     },
     listTools: async () =>
-      [
-        "doc_get_last_operable_pos",
-        "sheet_get_sheet_info",
-        "sheet_delete_dimension",
-        "slide_get_info",
-        "open_file",
-        "doc_batch_execute",
-      ].map((name) => ({
+      state.availableTools.map((name) => ({
         name,
         description: name,
         inputSchema: { type: "object" },
       })),
-    tool: async (name: string) => {
+    tool: async (name: string, args: Record<string, unknown> = {}) => {
       state.toolCalls.push(name);
       await state.queryGate?.();
+      if (name === "create_doc" || name === "create_slide") {
+        const temporaryPath = join(root, `${name}-${state.createdTemporaryPaths.length}.tmp`);
+        await writeFile(temporaryPath, "temporary model");
+        state.createdTemporaryPaths.push(temporaryPath);
+        return { file_id: `created_${name}`, file_path: temporaryPath };
+      }
+      if (name === "save_file") {
+        const target = String(args.file_path);
+        await writeFile(target, "partial model");
+        if (state.failCreateSave) throw new Error("create save failed");
+        return { success: true };
+      }
       if (!state.contentReady) throw new Error("model still importing");
       if (name === "slide_get_info")
         return { is_open: state.slideOpen, slide_count: 2 };
@@ -132,12 +151,22 @@ async function fixture(
     prepareSave: async () => {
       await state.prepareSave?.();
     },
-    resolveFile: async (_workspace, path) => ({
-      absolutePath: join(root, path),
-      file: files.get(path)!,
-    }),
+    resolveFile: async (_workspace, path) => {
+      const file = files.get(path) ?? {
+        ...files.get("报告 A.docx")!,
+        artifactId: `af_${path}`,
+        relativePath: path,
+        name: path.split("/").at(-1) ?? path,
+        sizeBytes: 0,
+        updatedAt: 0,
+        exists: false,
+      };
+      files.set(path, file);
+      return { absolutePath: join(root, path), file };
+    },
     onSaved: async (_workspace, path) => {
       state.saved.push(path);
+      files.get(path)!.exists = true;
     },
     onModified: async (...args) => {
       state.modified.push(args);
@@ -172,6 +201,72 @@ async function fixture(
   };
   return { root, documents, state, files, editors, mount, openReady };
 }
+
+test("创建 DOCX 和 PPTX 使用真实格式工具，PPTX is_open 后才保存并通过正常生命周期打开", async () => {
+  const f = await fixture();
+  expect(await f.documents.create("ws", "ses_A", "新文档.docx")).toMatchObject({
+    relativePath: "新文档.docx",
+    state: "opening",
+  });
+  f.state.slideOpen = false;
+  let slideQueries = 0;
+  f.state.queryGate = async () => {
+    if (f.state.toolCalls.at(-1) === "slide_get_info" && ++slideQueries === 2)
+      f.state.slideOpen = true;
+  };
+  expect(await f.documents.create("ws", "ses_A", "新演示.pptx")).toMatchObject({
+    relativePath: "新演示.pptx",
+    state: "opening",
+  });
+  expect(f.state.toolCalls).toEqual([
+    "create_doc",
+    "doc_get_last_operable_pos",
+    "save_file",
+    "create_slide",
+    "slide_get_info",
+    "slide_get_info",
+    "save_file",
+  ]);
+  expect(f.state.saved).toEqual(["新文档.docx", "新演示.pptx"]);
+  expect(f.state.closes).toEqual([
+    { id: "created_create_doc", discard: true },
+    { id: "created_create_slide", discard: true },
+  ]);
+});
+
+test("创建在工具缺失、目标已存在或格式不支持时不建立模型或覆盖文件", async () => {
+  const f = await fixture();
+  f.state.availableTools = f.state.availableTools.filter((name) => name !== "create_slide");
+  await expect(
+    f.documents.create("ws", "ses_A", "不可用.pptx"),
+  ).rejects.toMatchObject({ code: "office_creation_unavailable" });
+  await expect(
+    f.documents.create("ws", "ses_A", "报告 A.docx"),
+  ).rejects.toMatchObject({ code: "file_exists" });
+  await expect(
+    f.documents.create("ws", "ses_A", "表格.xlsx"),
+  ).rejects.toMatchObject({ code: "office_format_unavailable" });
+  expect(f.state.toolCalls).toEqual([]);
+  expect(await readFile(join(f.root, "报告 A.docx"), "utf8")).toBe("saved");
+});
+
+test("创建保存失败会关闭临时模型并清理目标和 SDK 临时文件", async () => {
+  const f = await fixture();
+  f.state.failCreateSave = true;
+  await expect(
+    f.documents.create("ws", "ses_A", "失败.pptx"),
+  ).rejects.toThrow("create save failed");
+  expect(f.state.closes).toEqual([
+    { id: "created_create_slide", discard: true },
+  ]);
+  await expect(access(join(f.root, "失败.pptx"))).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+  await expect(access(f.state.createdTemporaryPaths[0]!)).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+  expect(f.state.saved).toEqual([]);
+});
 
 test("系统打开按真实路径和硬链接复用模型，其他工作区及聊天不能建立第二个写模型", async () => {
   const f = await fixture();
@@ -488,6 +583,7 @@ test("Agent 不得绕过宿主生命周期或改写其他模型，缺省 ID 使�
     "open_file",
     "close_file",
     "create_doc",
+    "create_slide",
     "shutdown",
     "doc_batch_execute",
     "doc_to_image",

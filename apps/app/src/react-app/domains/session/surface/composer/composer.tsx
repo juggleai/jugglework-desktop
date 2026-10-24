@@ -2,7 +2,7 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
 import type { UIMessage } from "ai";
-import { AppWindowMac, ArrowUp, Check, FileCog, FileText, ImagePlus, Lightbulb, LoaderCircle, MessageCirclePlus, Mic, Minimize2, Paperclip, PenLine, Plus, Plug, ScanSearch, Square, SquarePlay, Terminal, X, Zap } from "lucide-react";
+import { AppWindowMac, ArrowUp, Check, FileCog, FileText, ImagePlus, Lightbulb, LoaderCircle, MessageCirclePlus, Mic, Minimize2, Paperclip, PenLine, Plus, Plug, Presentation, ScanSearch, Square, SquarePlay, Terminal, X, Zap } from "lucide-react";
 import fuzzysort from "fuzzysort";
 import { toast } from "@/components/ui/sonner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -38,6 +38,8 @@ import {
 } from "./slash-command";
 import { FILE_URL_RE, HTTP_URL_RE } from "./pasted-text";
 import { resolveComposerSubmitAction } from "../queued-draft-policy";
+import { PresentationDialog } from "../../presentation/presentation-dialog";
+import type { PresentationRequest } from "../../presentation/presentation-request";
 import { ContextUsage } from "./context-usage";
 import { ImageGenerationControls } from "./image-generation-controls";
 import type { ComposerImageModelOption } from "./image-generation";
@@ -78,6 +80,7 @@ type PastedTextChip = {
  */
 type PlusMenuEntry =
   | { kind: "file"; id: "file"; label: string; description: string }
+  | { kind: "presentation"; id: "presentation"; label: string; description: string }
   | { kind: "sketch"; id: "sketch"; label: string; description: string }
   | { kind: "image-generation"; id: "image-generation"; label: string; description: string }
   | { kind: "video-generation"; id: "video-generation"; label: string; description: string }
@@ -150,6 +153,8 @@ type ComposerProps = {
   getVoiceRealtimeStatus: JuggleWorkServerClient["getVoiceRealtimeStatus"] | null;
   onOpenVoiceSettings?: () => void;
   onOpenSettings?: () => void;
+  currentFile?: string | null;
+  onCreatePresentation?: (request: PresentationRequest) => void | Promise<void>;
   focusEligible: boolean;
   draft: string;
   mentions: Record<string, ComposerMentionKind>;
@@ -428,6 +433,7 @@ export function ReactSessionComposer(props: ComposerProps) {
   const [plusMenuOpen, setPlusMenuOpen] = useState(false);
   const [plusMenuIndex, setPlusMenuIndex] = useState(0);
   const [sketchOpen, setSketchOpen] = useState(false);
+  const [presentationOpen, setPresentationOpen] = useState(false);
   const [openingAttachment, setOpeningAttachment] = useState(false);
   const plusItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const [mentionItems, setMentionItems] = useState<MentionItem[]>([]);
@@ -701,6 +707,7 @@ export function ReactSessionComposer(props: ComposerProps) {
 
   const plusMenuAddEntries = useMemo<PlusMenuEntry[]>(() => [
     { kind: "file", id: "file", label: t("composer.plus_menu_file"), description: t("composer.plus_menu_file_description") },
+    ...(props.onCreatePresentation ? [{ kind: "presentation" as const, id: "presentation" as const, label: "Create presentation", description: "Build an editable PowerPoint from this session" }] : []),
     { kind: "sketch", id: "sketch", label: t("composer.plus_menu_draw"), description: t("composer.plus_menu_draw_description") },
     ...(props.imageGenerationModels.length > 0
       ? [{ kind: "image-generation" as const, id: "image-generation" as const, label: t("composer.image_generation"), description: t("composer.plus_menu_image_description") }]
@@ -715,7 +722,7 @@ export function ReactSessionComposer(props: ComposerProps) {
       description: entry.description,
       name: entry.name,
     })),
-  ], [plusMenuAgentEntries, props.imageGenerationModels.length, props.videoGenerationModels.length]);
+  ], [plusMenuAgentEntries, props.imageGenerationModels.length, props.onCreatePresentation, props.videoGenerationModels.length]);
   const plusMenuPluginEntries: PlusMenuEntry[] = [
     ...composerExtensions.map((extension) => ({
       kind: "extension" as const,
@@ -1221,6 +1228,12 @@ export function ReactSessionComposer(props: ComposerProps) {
       fileInput?.click();
       return;
     }
+    if (entry.kind === "presentation") {
+      if (props.busy) return;
+      setPlusMenuOpen(false);
+      setPresentationOpen(true);
+      return;
+    }
     if (entry.kind === "sketch") {
       if (!props.attachmentsEnabled) {
         toast.warning(props.attachmentsDisabledReason ?? t("composer.attachments_unavailable"));
@@ -1514,7 +1527,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                       ? false
                       : attachmentAction
                         ? !props.attachmentsEnabled
-                        : entry.kind === "agent" && props.busy
+                        : (entry.kind === "agent" || entry.kind === "presentation") && props.busy
                   );
                   const selected = entry.kind === "agent"
                     ? entry.name === null ? !props.selectedAgent : props.selectedAgent === entry.name
@@ -1542,6 +1555,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                     >
                       <span className="flex size-5 shrink-0 items-center justify-center text-gray-10">
                         {entry.kind === "file" ? <Paperclip size={18} strokeWidth={1.8} /> : null}
+                        {entry.kind === "presentation" ? <Presentation size={18} strokeWidth={1.8} /> : null}
                         {entry.kind === "sketch" ? <PenLine size={18} strokeWidth={1.8} /> : null}
                         {entry.kind === "image-generation" ? <ImagePlus size={18} strokeWidth={1.8} /> : null}
                         {entry.kind === "video-generation" ? <SquarePlay size={18} strokeWidth={1.8} /> : null}
@@ -2101,6 +2115,15 @@ export function ReactSessionComposer(props: ComposerProps) {
           </div>
         </div>
 
+        {props.onCreatePresentation ? (
+          <PresentationDialog
+            open={presentationOpen}
+            currentFile={props.currentFile ?? null}
+            busy={props.busy || props.submissionPreparing}
+            onOpenChange={setPresentationOpen}
+            onSubmit={props.onCreatePresentation}
+          />
+        ) : null}
         {sketchOpen ? (
           <Suspense fallback={null}>
             <SketchDialog

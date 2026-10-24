@@ -1,3 +1,6 @@
+import type { FilePartInput } from "@opencode-ai/sdk/v2/client";
+import type { ComposerPart } from "@/app/types";
+
 function encodeFilePath(path: string) {
   return path.replace(/\\/g, "/").split("/").map(encodeURIComponent).join("/");
 }
@@ -13,4 +16,18 @@ export function joinWorkspaceRelativePath(workspaceRoot: string, relativePath: s
   const relative = relativePath.trim().replace(/\\/g, "/").replace(/^\/+/, "");
   if (!root || !relative) return "";
   return `${root}/${relative}`;
+}
+
+export function composerFilePartToPromptPart(
+  part: Extract<ComposerPart, { type: "file" }>,
+  workspaceRoot: string,
+): FilePartInput | null {
+  const path = part.path.trim();
+  if (!path) return null;
+  const absolute = path.startsWith("/") || /^[a-zA-Z]:[\\/]/.test(path)
+    ? path
+    : joinWorkspaceRelativePath(workspaceRoot, path);
+  if (!absolute) return null;
+  const filename = path.replace(/\\/g, "/").split("/").filter(Boolean).at(-1) ?? "file";
+  return { type: "file", mime: "text/plain", url: toFileUrl(absolute), filename };
 }

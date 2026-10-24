@@ -134,7 +134,7 @@ import { detectResponseLanguage } from "@/react-app/domains/session/sync/respons
 import {
   applySessionRevert,
 } from "@/react-app/domains/session/sync/session-sync";
-import { joinWorkspaceRelativePath, toFileUrl } from "@/react-app/domains/session/sync/prompt-file-parts";
+import { composerFilePartToPromptPart } from "@/react-app/domains/session/sync/prompt-file-parts";
 import { composerAttachmentsToWorkspaceFileParts } from "@/react-app/domains/session/sync/attachment-file-part";
 import { useModelBehavior } from "@/react-app/domains/session/surface/use-model-behavior";
 import { useSessionFindStore } from "@/react-app/domains/session/surface/find-store";
@@ -325,21 +325,6 @@ async function draftToParts(
   const parts: Array<TextPartInput | FilePartInput | AgentPartInput> = [];
   const root = workspaceRoot.trim();
 
-  const toAbsolutePath = (path: string) => {
-    const trimmed = path.trim();
-    if (!trimmed) return "";
-    if (trimmed.startsWith("/")) return trimmed;
-    if (/^[a-zA-Z]:[\\/]/.test(trimmed)) return trimmed;
-    if (!root) return "";
-    return joinWorkspaceRelativePath(root, trimmed);
-  };
-
-  const filenameFromPath = (path: string) => {
-    const normalized = path.replace(/\\/g, "/");
-    const segments = normalized.split("/").filter(Boolean);
-    return segments[segments.length - 1] ?? "file";
-  };
-
   const attachmentFileById = new Map<string, FilePartInput>();
   if (draft.attachments.length > 0) {
     if (!endpoint) {
@@ -426,14 +411,8 @@ async function draftToParts(
           continue;
         }
         if (mentionPart?.type === "file") {
-          const absolute = toAbsolutePath(mentionPart.path);
-          if (!absolute) continue;
-          parts.push({
-            type: "file",
-            mime: "text/plain",
-            url: toFileUrl(absolute),
-            filename: filenameFromPath(mentionPart.path),
-          });
+          const filePart = composerFilePartToPromptPart(mentionPart, root);
+          if (filePart) parts.push(filePart);
           continue;
         }
       }
@@ -473,14 +452,8 @@ async function draftToParts(
         continue;
       }
       if (part.type === "file") {
-        const absolute = toAbsolutePath(part.path);
-        if (!absolute) continue;
-        parts.push({
-          type: "file",
-          mime: "text/plain",
-          url: toFileUrl(absolute),
-          filename: filenameFromPath(part.path),
-        });
+        const filePart = composerFilePartToPromptPart(part, root);
+        if (filePart) parts.push(filePart);
       }
     }
   }
@@ -1714,6 +1687,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
             // contract; the mounted client strips it into the run-start envelope.
             const promptRequest = {
               sessionID: targetSessionId,
+              ...(submission.delivery !== "steer" && submission.messageID ? { messageID: submission.messageID } : {}),
               parts: preparedParts ?? [],
               juggleworkOfficeSelections: officeSubmissionFromDraft(draft),
               juggleworkDetectedResponseLanguage: detectResponseLanguage(draft) ?? undefined,

@@ -1,22 +1,26 @@
 /** @jsxImportSource react */
-import { useDeferredValue, useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { readDenSettings } from "@/app/lib/den";
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import {
   ArrowLeft,
   AlertCircle,
   Bot,
-  Check,
   CheckCircle2,
+  ChevronDown,
   ChevronRight,
   Circle,
   Clock3,
+  Ellipsis,
   FileCode2,
-  GitBranch,
   GitPullRequestArrow,
   MessageSquareText,
   LoaderCircle,
+  Pin,
   RefreshCw,
   Search,
-  ShieldCheck,
+  Users,
   XCircle,
 } from "lucide-react";
 
@@ -31,7 +35,7 @@ import { AppSecondarySidebarTopControls } from "@/react-app/shell/app-secondary-
 import { useUiStateStore } from "@/react-app/shell/ui-state-store";
 import { appInsetSidebarCssWidth, useWorkspaceShellLayout } from "@/react-app/shell/workspace-shell-layout";
 import type { OpenCreateWorkspace } from "@/react-app/domains/workspace/types";
-import type { ReviewConnectionStatus, ReviewRelationship as WireReviewRelationship } from "@jugglework/types/reviews";
+import type { ReviewConnectionStatus } from "@jugglework/types/reviews";
 
 import {
   useReviewChecks,
@@ -40,10 +44,14 @@ import {
   useReviewFiles,
   useReviewInbox,
   useReviewThreads,
+  reviewQueryKeys,
 } from "./review-queries";
 import { reviewViewModel } from "./review-view-model";
 import { useReviewWorkspaceEndpoint } from "./use-review-workspace-endpoint";
+import { ReviewWorkflowControls } from "./review-workflow-controls";
+import { ReviewHeaderActions } from "./review-header-actions";
 import { ReviewGitHubConnection } from "./review-github-connection";
+import { MarkdownBlock } from "@/react-app/domains/session/surface/markdown";
 import type {
   ReviewCheckState,
   ReviewDetailTab,
@@ -56,6 +64,7 @@ type ReviewPageProps = {
   reviewId: string | null;
   active: boolean;
   onSelectReview: (reviewId: string | null) => void;
+  onOpenReviewSession?: (sessionId: string) => void;
   onOpenAccount: () => void;
   onOpenHome: () => void;
   onOpenApps: () => void;
@@ -66,12 +75,11 @@ type ReviewPageProps = {
   onOpenCreateWorkspace: OpenCreateWorkspace;
 };
 
-const FILTERS: Array<{ value: "all" | ReviewRelationship; en: string; zh: string }> = [
-  { value: "all", en: "All open", zh: "全部待处理" },
-  { value: "requested", en: "Requested", zh: "等待我审查" },
-  { value: "team", en: "My team", zh: "等待团队审查" },
-  { value: "authored", en: "Authored", zh: "我创建的" },
-  { value: "reviewed", en: "Reviewed", zh: "已审查" },
+const INBOX_SECTIONS: Array<{ value: ReviewRelationship; en: string; zh: string }> = [
+  { value: "authored", en: "My pull requests", zh: "我创建的" },
+  { value: "requested", en: "Review requests", zh: "待我审查" },
+  { value: "team", en: "My team's review requests", zh: "需要我的团队审查" },
+  { value: "recently_merged", en: "Recently merged", zh: "最近合并" },
 ];
 
 const TABS: Array<{ value: ReviewDetailTab; en: string; zh: string }> = [
@@ -80,6 +88,14 @@ const TABS: Array<{ value: ReviewDetailTab; en: string; zh: string }> = [
   { value: "checks", en: "Checks", zh: "检查" },
   { value: "threads", en: "Threads", zh: "讨论" },
 ];
+
+function pinnedStorageKey(workspaceId: string) { return `jugglework:review-pins:${workspaceId}`; }
+function readPinnedReviews(workspaceId: string): string[] {
+  try {
+    const value = JSON.parse(localStorage.getItem(pinnedStorageKey(workspaceId)) ?? "[]");
+    return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string").slice(0, 100) : [];
+  } catch { return []; }
+}
 
 function text(en: string, zh: string) {
   return currentLocale() === "zh" ? zh : en;
@@ -96,10 +112,13 @@ export function reviewMatches(review: ReviewPreview, query: string, relationship
 }
 
 function ReviewAvatar({ review, size = "md" }: { review: ReviewPreview; size?: "sm" | "md" }) {
+  if (review.authorAvatarUrl) {
+    return <img src={review.authorAvatarUrl} alt="" className={cn("shrink-0 rounded-full object-cover ring-1 ring-dls-border", size === "sm" ? "size-6" : "size-8")} />;
+  }
   return (
     <span className={cn(
       "inline-flex shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-violet-5 to-blue-5 font-semibold text-violet-11 ring-1 ring-violet-7/40",
-      size === "sm" ? "size-7 text-[10px]" : "size-9 text-xs",
+      size === "sm" ? "size-6 text-[9px]" : "size-8 text-xs",
     )} aria-hidden="true">
       {review.authorInitials}
     </span>
@@ -114,104 +133,101 @@ function InboxRow({ review, selected, onSelect }: { review: ReviewPreview; selec
       data-testid={`review-inbox-item-${review.id}`}
       aria-current={selected ? "page" : undefined}
       className={cn(
-        "group flex w-full items-start gap-3 border-b border-dls-border px-4 py-3.5 text-left transition-colors hover:bg-dls-hover/70",
-        selected && "bg-dls-active/70 hover:bg-dls-active",
+        "group flex w-full items-start gap-2.5 rounded-lg px-2 py-2 text-left transition-colors hover:bg-dls-hover/70",
+        selected && "bg-dls-hover/60",
       )}
     >
-      <ReviewAvatar review={review} />
       <span className="min-w-0 flex-1">
-        <span className="flex items-center gap-2 text-[11px] text-dls-secondary">
-          <span className="truncate font-medium text-dls-text">{review.owner}/{review.repository}</span>
-          <span>#{review.number}</span>
-          <span className="ml-auto shrink-0">{review.updatedAt}</span>
-        </span>
-        <span className="mt-1.5 line-clamp-2 text-[13px] font-medium leading-5 text-dls-text">{review.title}</span>
-        <span className="mt-2 flex items-center gap-2 text-[11px] text-dls-secondary">
+        <span className="line-clamp-2 text-[15px] font-medium leading-[1.45] text-dls-text">{review.title}</span>
+        <span className="mt-1.5 flex min-w-0 items-center gap-2 text-[13px] text-dls-secondary">
+          <ReviewAvatar review={review} size="sm" />
+          <span className="truncate">{review.author}</span>
+          <span>·</span>
+          <span className="shrink-0">{review.updatedAt}</span>
           {review.draft ? <Badge variant="outline" className="h-4 px-1.5 text-[10px]">{text("Draft", "草稿")}</Badge> : null}
-          {review.pinned ? <span className="font-medium text-violet-11">{text("Pinned", "已置顶")}</span> : null}
-          <span className="ml-auto flex items-center gap-1"><MessageSquareText className="size-3" />{review.comments}</span>
-          <span className="text-green-11">+{review.additions}</span>
-          <span className="text-red-11">-{review.deletions}</span>
+          {review.pinned ? <Pin className="ml-auto size-3 fill-current text-dls-secondary" aria-label={text("Pinned", "已固定")} /> : null}
+          {selected ? <span className={cn("size-2 rounded-full bg-blue-9", !review.pinned && "ml-auto")} aria-hidden="true" /> : null}
         </span>
       </span>
-      <ChevronRight className="mt-5 size-4 shrink-0 text-dls-secondary opacity-0 transition-opacity group-hover:opacity-100" />
     </button>
   );
 }
 
-function ReviewInbox(props: {
+type ReviewInboxSectionState = {
+  relationship: ReviewRelationship;
   reviews: ReviewPreview[];
-  reviewId: string | null;
-  query: string;
-  relationship: "all" | ReviewRelationship;
-  onQueryChange: (query: string) => void;
-  onRelationshipChange: (relationship: "all" | ReviewRelationship) => void;
-  onSelectReview: (reviewId: string) => void;
   loading?: boolean;
   refreshing?: boolean;
   hasNextPage?: boolean;
   loadingNextPage?: boolean;
-  onLoadMore?: () => void;
-  connectionName?: string;
   error?: string | null;
+  onLoadMore?: () => void;
   onRetry?: () => void;
-  onRefresh?: () => void;
+};
+
+function ReviewInbox(props: {
+  sections: ReviewInboxSectionState[];
+  expandedSections: ReviewRelationship[];
+  reviewId: string | null;
+  query: string;
+  onQueryChange: (query: string) => void;
+  onToggleSection: (relationship: ReviewRelationship) => void;
+  onSelectReview: (reviewId: string) => void;
+  onOpenUrl?: () => void;
 }) {
+  const refreshing = props.sections.some((section) => props.expandedSections.includes(section.relationship) && section.refreshing);
   return (
     <aside className={cn(
       "h-full min-h-0 w-full shrink-0 flex-col overflow-hidden border-r border-dls-border bg-[var(--app-secondary-sidebar-bg)] md:flex md:w-[var(--jugglework-left-sidebar-width)]",
       props.reviewId ? "hidden" : "flex",
     )} aria-label={text("Pull request inbox", "拉取请求收件箱")}>
-      <div className="shrink-0 border-b border-dls-border px-4 pb-3 pt-3 mac:pt-5">
+      <div className="shrink-0 px-5 pb-2 pt-5 mac:pt-7">
         <div className="flex items-center gap-2">
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-[15px] font-semibold text-dls-text">{text("Code Review", "代码审查")}</h1>
-              <Badge variant="secondary" className="bg-green-4 text-[10px] text-green-11">{text("Connected", "已连接")}</Badge>
-              {props.refreshing ? <RefreshCw className="size-3 animate-spin text-dls-secondary" aria-label={text("Refreshing", "正在刷新")} /> : null}
-            </div>
-            <p className="mt-0.5 text-[11px] text-dls-secondary">{props.connectionName ?? "GitHub"} · {text("Read only", "只读")}</p>
-          </div>
-          <span className="ml-auto rounded-full bg-dls-hover px-2 py-1 text-[11px] font-medium text-dls-secondary">{props.reviews.length}</span>
-          <Button variant="ghost" size="icon-sm" onClick={props.onRefresh} disabled={props.refreshing} aria-label={text("Refresh pull requests", "刷新拉取请求")}><RefreshCw className={cn("size-3.5", props.refreshing && "animate-spin")} /></Button>
+          <h1 className="text-[24px] font-semibold tracking-tight text-dls-text">{text("Code Review", "代码审查")}</h1>
+          {refreshing ? <RefreshCw className="size-3 animate-spin text-dls-secondary" aria-label={text("Refreshing", "正在刷新")} /> : null}
+          {props.onOpenUrl ? <Button className="ml-auto" variant="ghost" size="icon-sm" onClick={props.onOpenUrl} aria-label={text("Open pull request URL", "打开拉取请求链接")}><Ellipsis className="size-5" /></Button> : null}
         </div>
-        <label className="relative mt-3 block">
-          <Search className="absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-dls-secondary" />
+        <label className="relative mt-5 block">
+          <Search className="absolute left-4 top-1/2 size-5 -translate-y-1/2 text-dls-secondary" />
           <input
             value={props.query}
             onChange={(event) => props.onQueryChange(event.target.value)}
-            placeholder={text("Search pull requests", "搜索拉取请求")}
-            className="h-9 w-full rounded-xl border border-dls-border bg-background pl-9 pr-3 text-xs text-dls-text outline-none transition focus:border-dls-accent"
+            placeholder={text("Search or paste Pull Request URL", "搜索或粘贴 Pull Request 链接")}
+            className="h-12 w-full rounded-full border-0 bg-dls-hover pl-12 pr-4 text-[15px] text-dls-text outline-none ring-1 ring-transparent transition placeholder:text-dls-secondary focus:ring-dls-border"
           />
         </label>
-        <select
-          value={props.relationship}
-          onChange={(event) => props.onRelationshipChange(event.target.value as "all" | ReviewRelationship)}
-          aria-label={text("Review relationship", "审查关系")}
-          className="mt-2 h-8 w-full rounded-lg border border-dls-border bg-background px-2.5 text-xs text-dls-text outline-none"
-        >
-          {FILTERS.map((filter) => <option key={filter.value} value={filter.value}>{text(filter.en, filter.zh)}</option>)}
-        </select>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto" role="list">
-        {props.loading ? (
-          <div className="flex min-h-56 items-center justify-center gap-2 text-xs text-dls-secondary"><LoaderCircle className="size-4 animate-spin" />{text("Loading pull requests…", "正在加载拉取请求…")}</div>
-        ) : props.error && !props.reviews.length ? (
-          <div className="flex min-h-56 flex-col items-center justify-center px-8 text-center"><AlertCircle className="size-7 text-amber-10" /><p className="mt-3 text-sm font-medium text-dls-text">{text("Pull requests could not be loaded", "无法加载拉取请求")}</p><p className="mt-1 text-xs leading-5 text-dls-secondary">{props.error}</p><Button variant="outline" className="mt-4" onClick={props.onRetry}><RefreshCw />{text("Retry", "重试")}</Button></div>
-        ) : props.reviews.length ? <>
-          {props.reviews.map((review) => (
-          <div role="listitem" key={review.id}>
-            <InboxRow review={review} selected={review.id === props.reviewId} onSelect={() => props.onSelectReview(review.id)} />
-          </div>
-          ))}
-          {props.hasNextPage ? <div className="p-3"><Button variant="outline" className="w-full" disabled={props.loadingNextPage} onClick={props.onLoadMore}>{props.loadingNextPage ? <LoaderCircle className="animate-spin" /> : null}{text("Load more", "加载更多")}</Button></div> : null}
-        </> : (
-          <div className="flex min-h-56 flex-col items-center justify-center px-8 text-center">
-            <Search className="size-7 text-dls-secondary/60" />
-            <p className="mt-3 text-sm font-medium text-dls-text">{text("No matching pull requests", "没有匹配的拉取请求")}</p>
-            <p className="mt-1 text-xs leading-5 text-dls-secondary">{text("Try another search or relationship filter.", "请尝试其他搜索词或审查筛选条件。")}</p>
-          </div>
-        )}
+      <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-6">
+        <nav className="space-y-1" aria-label={text("Review sections", "代码审查分组")}>
+          {INBOX_SECTIONS.map((definition) => {
+            const section = props.sections.find((candidate) => candidate.relationship === definition.value) ?? { relationship: definition.value, reviews: [] };
+            const expanded = props.expandedSections.includes(definition.value);
+            return <section key={definition.value} aria-labelledby={`review-section-${definition.value}`}>
+            <button
+              type="button"
+              id={`review-section-${definition.value}`}
+              aria-expanded={expanded}
+              onClick={() => props.onToggleSection(definition.value)}
+              className="flex min-h-11 w-full items-center gap-1 rounded-lg px-2 text-left text-[15px] font-semibold text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
+            >
+              <span>{text(definition.en, definition.zh)}</span>
+              {expanded ? <ChevronDown className="size-4" strokeWidth={2} /> : <ChevronRight className="size-4" strokeWidth={2} />}
+            </button>
+            {expanded ? <div className="pb-3" role="list">
+              {section.loading ? (
+                <div className="flex min-h-20 items-center justify-center gap-2 text-xs text-dls-secondary"><LoaderCircle className="size-4 animate-spin" />{text("Loading pull requests…", "正在加载拉取请求…")}</div>
+              ) : section.error && !section.reviews.length ? (
+                <div className="flex min-h-24 flex-col items-center justify-center px-5 text-center"><AlertCircle className="size-5 text-amber-10" /><p className="mt-2 text-xs font-medium text-dls-text">{text("Pull requests could not be loaded", "无法加载拉取请求")}</p><p className="mt-1 text-xs text-dls-secondary">{section.error}</p><Button variant="outline" size="sm" className="mt-3" onClick={section.onRetry}><RefreshCw />{text("Retry", "重试")}</Button></div>
+              ) : section.reviews.length ? <>
+                <div className="space-y-0.5">
+                  {section.reviews.map((review) => <div role="listitem" key={review.id}><InboxRow review={review} selected={review.id === props.reviewId} onSelect={() => props.onSelectReview(review.id)} /></div>)}
+                </div>
+                {section.hasNextPage ? <div className="p-2"><Button variant="outline" size="sm" className="w-full" disabled={section.loadingNextPage} onClick={section.onLoadMore}>{section.loadingNextPage ? <LoaderCircle className="animate-spin" /> : null}{text("Load more", "加载更多")}</Button></div> : null}
+              </> : <p className="px-2 pb-2 text-xs leading-5 text-dls-secondary">{props.query.trim() ? text("No matching pull requests", "没有匹配的拉取请求") : text("No pull requests", "暂无 Pull Request")}</p>}
+            </div> : null}
+            </section>;
+          })}
+        </nav>
       </div>
     </aside>
   );
@@ -238,65 +254,77 @@ function UnknownDetail({ onBack }: { onBack: () => void }) {
   );
 }
 
-function ReviewHeader({ review, onBack }: { review: ReviewPreview; onBack: () => void }) {
+function ReviewHeader(props: {
+  review: ReviewPreview;
+  onBack: () => void;
+  actions?: ReactNode;
+  endpoint?: ReturnType<typeof useReviewWorkspaceEndpoint>["endpoint"];
+  operations?: ReviewConnectionStatus["operations"];
+  pinned?: boolean;
+  onTogglePin?: () => void;
+  onChanged?: () => void | Promise<void>;
+}) {
+  const { review, onBack } = props;
   return (
-    <header className="shrink-0 border-b border-dls-border bg-background px-4 py-3 md:px-6 mac:pt-5">
-      <div className="flex items-start gap-3">
+    <header className="shrink-0 bg-background px-5 pb-3 pt-4 md:px-7 mac:pt-5">
+      <div className="flex flex-wrap items-center gap-3">
         <Button variant="ghost" size="icon-sm" className="md:hidden" onClick={onBack} aria-label={text("Back to Inbox", "返回收件箱")}><ArrowLeft /></Button>
-        <ReviewAvatar review={review} />
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-dls-secondary">
-            <span className="font-medium text-dls-text">{review.owner}/{review.repository}</span>
-            <span>#{review.number}</span>
-            {review.draft ? <Badge variant="outline" className="h-4 px-1.5 text-[10px]">{text("Draft", "草稿")}</Badge> : <Badge variant="secondary" className="h-4 bg-green-4 px-1.5 text-[10px] text-green-11">{text("Open", "开放")}</Badge>}
-          </div>
-          <h2 className="mt-1 truncate text-[16px] font-semibold text-dls-text">{review.title}</h2>
-          <div className="mt-1.5 flex flex-wrap items-center gap-3 text-[11px] text-dls-secondary">
-            <span>{text("by", "作者")} {review.author}</span>
-            <span className="flex items-center gap-1"><GitBranch className="size-3" />{review.baseBranch} ← {review.headBranch}</span>
-            <span className="font-mono">{review.headRevision}</span>
-          </div>
-        </div>
-        <div className="hidden shrink-0 items-center gap-2 lg:flex">
+        {props.endpoint ? <ReviewHeaderActions endpoint={props.endpoint} review={review} operations={props.operations} pinned={Boolean(props.pinned)} onTogglePin={props.onTogglePin ?? (() => undefined)} onChanged={props.onChanged ?? (() => undefined)} workflowActions={props.actions} /> : <>
+          {review.draft ? <Badge variant="outline" className="h-8 rounded-full px-3 text-xs">{text("Draft", "草稿")}</Badge> : <Badge variant="secondary" className="h-8 rounded-full bg-green-4 px-3 text-xs text-green-11"><GitPullRequestArrow className="mr-1 size-3.5" />Open</Badge>}
+          <div className="min-w-0 text-xs text-dls-secondary"><span>{review.repository}</span> <span>#{review.number}</span></div>
+          <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-2">{props.actions ?? <>
           <Button variant="outline" disabled title={text("Available after AI Review is connected", "接入 AI Review 后可用")}><Bot />{text("Review with JuggleWork", "使用 JuggleWork 审查")}</Button>
           <Button disabled title={text("Available after provider write access is connected", "接入平台写权限后可用")}>{text("Submit review", "提交审查")}</Button>
-        </div>
+          </>}</div>
+        </>}
+      </div>
+      <h2 className="mt-5 text-[22px] font-semibold leading-8 tracking-tight text-dls-text">{review.title}</h2>
+      <div className="mt-3 flex min-w-0 flex-wrap items-center gap-2 text-xs text-dls-secondary">
+        <ReviewAvatar review={review} size="sm" />
+        <span className="font-medium text-dls-text">{review.author}</span>
+        <span>{review.updatedAt}</span>
+        <span>·</span>
+        <span className="max-w-52 truncate font-mono">{review.headBranch}</span>
+        <span>→</span>
+        <span className="font-mono">{review.baseBranch}</span>
+        <span className="hidden font-mono text-[10px] xl:inline">{review.headRevision.slice(0, 8)}</span>
       </div>
     </header>
   );
 }
 
-function SummaryView({ review }: { review: ReviewPreview }) {
+function SummaryView({ review, onTabChange }: { review: ReviewPreview; onTabChange: (tab: ReviewDetailTab) => void }) {
+  const failedChecks = review.checks.filter((check) => check.state === "failure");
+  const pendingChecks = review.checks.filter((check) => check.state === "running" || check.state === "queued");
   return (
-    <div className="mx-auto grid w-full max-w-5xl gap-5 p-4 md:p-6 lg:grid-cols-[minmax(0,1fr)_280px]">
-      <div className="space-y-5">
-        <section className="rounded-2xl border border-dls-border bg-background p-5 shadow-[var(--dls-card-shadow)]">
-          <div className="flex items-center gap-2"><GitPullRequestArrow className="size-4 text-violet-11" /><h3 className="text-sm font-semibold text-dls-text">{text("Pull request overview", "拉取请求概览")}</h3><Badge variant="secondary" className="ml-auto text-[10px]">{text("GitHub", "GitHub")}</Badge></div>
-          <ul className="mt-4 space-y-3">
-            {review.summary.map((item) => <li key={item} className="flex gap-2.5 text-sm leading-6 text-dls-text"><Check className="mt-1 size-4 shrink-0 text-green-10" /><span>{item}</span></li>)}
-          </ul>
-        </section>
-        <section className="rounded-2xl border border-dls-border bg-background p-5">
-          <h3 className="text-sm font-semibold text-dls-text">{text("Description", "描述")}</h3>
-          <p className="mt-3 text-sm leading-6 text-dls-secondary">{review.body}</p>
-        </section>
-        <section className="rounded-2xl border border-dashed border-violet-7 bg-violet-2/60 p-5">
-          <div className="flex items-start gap-3"><ShieldCheck className="mt-0.5 size-5 text-violet-11" /><div><h3 className="text-sm font-semibold text-dls-text">{text("Private AI review is coming next", "下一步将接入私有 AI 审查")}</h3><p className="mt-1 text-xs leading-5 text-dls-secondary">{text("Findings will stay private until you explicitly choose to publish a comment or review decision.", "AI 发现默认保持私有，只有在你明确选择后才会发布评论或审查结论。")}</p></div></div>
-        </section>
-      </div>
-      <aside className="space-y-4">
-        <section className="rounded-2xl border border-dls-border bg-background p-4">
-          <h3 className="text-xs font-semibold uppercase tracking-[0.12em] text-dls-secondary">{text("Change", "变更")}</h3>
-          <dl className="mt-3 grid grid-cols-3 gap-2 text-center">
-            <div className="rounded-xl bg-dls-hover p-2"><dt className="text-[10px] text-dls-secondary">{text("Files", "文件")}</dt><dd className="mt-1 text-sm font-semibold">{review.changedFiles}</dd></div>
-            <div className="rounded-xl bg-green-3 p-2"><dt className="text-[10px] text-green-11">{text("Added", "新增")}</dt><dd className="mt-1 text-sm font-semibold text-green-11">+{review.additions}</dd></div>
-            <div className="rounded-xl bg-red-3 p-2"><dt className="text-[10px] text-red-11">{text("Removed", "删除")}</dt><dd className="mt-1 text-sm font-semibold text-red-11">-{review.deletions}</dd></div>
-          </dl>
-        </section>
-        <section className="rounded-2xl border border-dls-border bg-background p-4">
-          <h3 className="text-xs font-semibold uppercase tracking-[0.12em] text-dls-secondary">{text("Labels", "标签")}</h3>
-          <div className="mt-3 flex flex-wrap gap-2">{review.labels.map((label) => <Badge key={label} variant="outline">{label}</Badge>)}</div>
-        </section>
+    <div className="mx-auto grid w-full max-w-[1240px] gap-8 px-5 pb-12 pt-2 md:px-7 lg:grid-cols-[minmax(0,1fr)_260px] xl:grid-cols-[minmax(0,1fr)_300px]">
+      <article className="min-w-0 pb-12 pt-2 text-[15px] leading-7 text-dls-text">
+        {review.body ? <MarkdownBlock text={review.body} copyCodeBlocks /> : <p className="text-dls-secondary">{text("No pull request description was provided.", "该 Pull Request 没有填写描述。")}</p>}
+      </article>
+      <aside className="divide-y divide-dls-border text-sm lg:border-l lg:border-dls-border lg:pl-6 xl:pl-7">
+        <button type="button" onClick={() => onTabChange("changes")} className="w-full py-4 text-left">
+          <span className="text-xs text-dls-secondary">{text("Changes", "变更")}</span>
+          <span className="mt-2 flex items-center gap-3 font-medium text-dls-text"><FileCode2 className="size-4" />{review.changedFiles} {text(review.changedFiles === 1 ? "file" : "files", "个文件")} <span className="ml-auto text-green-11">+{review.additions}</span><span className="text-red-11">-{review.deletions}</span></span>
+        </button>
+        <button type="button" onClick={() => onTabChange("threads")} className="w-full py-4 text-left">
+          <span className="text-xs text-dls-secondary">{text("Threads", "讨论")}</span>
+          <span className="mt-2 flex items-center gap-3 font-medium text-dls-text"><MessageSquareText className="size-4" />{text("Code review", "代码审查")}<span className="ml-auto text-xs text-dls-secondary">{review.threads.length || text("No comments", "无评论")}</span></span>
+        </button>
+        <div className="py-4">
+          <span className="text-xs text-dls-secondary">{text("Reviewers", "评审人")}</span>
+          <span className="mt-2 flex items-center gap-3 text-dls-secondary"><Users className="size-4" />{text("No reviewers", "暂无评审人")}</span>
+        </div>
+        <button type="button" onClick={() => onTabChange("checks")} className="w-full py-4 text-left">
+          <span className="flex items-center text-xs text-dls-secondary"><span>{text("Checks", "检查")}</span><ChevronRight className="ml-auto size-4" /></span>
+          {!review.checks.length ? <span className="mt-2 block text-dls-secondary">{text("No checks", "暂无检查")}</span> : (
+            <span className="mt-2 block space-y-2">
+              {review.checks.slice(0, 5).map((check) => <span key={check.id} className="flex min-w-0 items-center gap-2"><CheckIcon state={check.state} /><span className="truncate text-xs text-dls-text">{check.name}</span></span>)}
+              {review.checks.length > 5 ? <span className="block text-xs text-dls-secondary">{text("Show more", "显示更多")}</span> : null}
+            </span>
+          )}
+          {review.checks.length ? <span className="mt-3 block text-[11px] text-dls-secondary">{failedChecks.length ? text(`${failedChecks.length} failed`, `${failedChecks.length} 项失败`) : pendingChecks.length ? text(`${pendingChecks.length} pending`, `${pendingChecks.length} 项进行中`) : text("All checks passed", "所有检查均已通过")}</span> : null}
+        </button>
+        {review.labels.length ? <div className="py-4"><span className="text-xs text-dls-secondary">{text("Labels", "标签")}</span><div className="mt-2 flex flex-wrap gap-2">{review.labels.map((label) => <Badge key={label} variant="outline">{label}</Badge>)}</div></div> : null}
       </aside>
     </div>
   );
@@ -351,8 +379,8 @@ function ThreadsView({ review }: { review: ReviewPreview }) {
   return (
     <div className="mx-auto w-full max-w-4xl space-y-4 p-4 md:p-6">
       {!review.threads.length ? <EmptyTab>{text("No review threads yet.", "暂无审查讨论。")}</EmptyTab> : null}
-      {review.threads.map((thread) => <article key={thread.id} className={cn("rounded-2xl border bg-background p-4", thread.resolved ? "border-dls-border opacity-75" : "border-dls-border")}><div className="flex items-center gap-2"><span className="flex size-7 items-center justify-center rounded-full bg-dls-hover text-[10px] font-semibold">{thread.initials}</span><span className="text-xs font-semibold text-dls-text">{thread.author}</span><span className="text-[11px] text-dls-secondary">{thread.age}</span>{thread.resolved ? <Badge variant="secondary" className="ml-auto">{text("Resolved", "已解决")}</Badge> : null}</div>{thread.path ? <div className="mt-3 rounded-lg bg-dls-hover px-3 py-2 font-mono text-[11px] text-dls-secondary">{thread.path}{thread.line ? `:${thread.line}` : ""}</div> : null}<p className="mt-3 text-sm leading-6 text-dls-text">{thread.body}</p></article>)}
-      <div className="rounded-2xl border border-dashed border-dls-border p-5 text-center text-xs text-dls-secondary">{text("Replying and resolving threads will be available after provider write access is connected.", "接入平台写权限后，可回复或解决讨论。")}</div>
+      {review.threads.map((thread) => <article key={thread.id} className={cn("rounded-2xl border bg-background p-4", thread.resolved ? "border-dls-border opacity-75" : "border-dls-border")}><div className="flex items-center gap-2"><span className="flex size-7 items-center justify-center rounded-full bg-dls-hover text-[10px] font-semibold">{thread.initials}</span><span className="text-xs font-semibold text-dls-text">{thread.author}</span><span className="text-[11px] text-dls-secondary">{thread.age}</span>{thread.reviewDecision ? <Badge variant="secondary" className="ml-auto">{thread.reviewDecision === "approved" ? text("Approved", "已批准") : text("Changes requested", "请求修改")}</Badge> : null}{thread.resolved ? <Badge variant="secondary" className="ml-auto">{text("Resolved", "已解决")}</Badge> : null}</div>{thread.path ? <div className="mt-3 rounded-lg bg-dls-hover px-3 py-2 font-mono text-[11px] text-dls-secondary">{thread.path}{thread.line ? `:${thread.line}` : ""}</div> : null}{(thread.comments?.length ? thread.comments : [{ id: thread.id, author: thread.author, body: thread.body, age: thread.age }]).map((comment, index) => <div key={comment.id} className={cn("mt-3", index > 0 && "border-t border-dls-border pt-3")}>{index > 0 ? <p className="text-xs text-dls-secondary">{comment.author} · {comment.age}</p> : null}<p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-dls-text">{comment.body}</p></div>)}</article>)}
+      <div className="rounded-2xl border border-dashed border-dls-border p-5 text-center text-xs text-dls-secondary">{text("Use Submit review to publish a review or discussion comment to GitHub.", "接入平台写权限后，可回复或解决讨论。")}</div>
     </div>
   );
 }
@@ -361,18 +389,18 @@ function DetailState(props: { loading?: boolean; error?: boolean; onRetry?: () =
   return <div className="flex min-h-64 flex-col items-center justify-center gap-3 p-8 text-center text-sm text-dls-secondary">{props.loading ? <><LoaderCircle className="size-6 animate-spin" /><span>{text("Loading pull request…", "正在加载拉取请求…")}</span></> : <><AlertCircle className="size-6 text-amber-10" /><span>{text("This section could not be loaded.", "无法加载此内容。")}</span>{props.onRetry ? <Button variant="outline" onClick={props.onRetry}><RefreshCw />{text("Retry", "重试")}</Button> : null}</>}</div>;
 }
 
-function ReviewDetail({ review, unknown, loading, tab, onTabChange, tabLoading, tabError, truncated, revisionChanged, onRetryTab, onBack }: { review: ReviewPreview | null; unknown: boolean; loading?: boolean; tab: ReviewDetailTab; onTabChange: (tab: ReviewDetailTab) => void; tabLoading?: boolean; tabError?: boolean; truncated?: boolean; revisionChanged?: boolean; onRetryTab?: () => void; onBack: () => void }) {
+function ReviewDetail({ review, unknown, loading, actions, endpoint, operations, pinned, onTogglePin, onChanged, tab, onTabChange, tabLoading, tabError, truncated, revisionChanged, onRetryTab, onBack }: { review: ReviewPreview | null; unknown: boolean; loading?: boolean; actions?: ReactNode; endpoint?: ReturnType<typeof useReviewWorkspaceEndpoint>["endpoint"]; operations?: ReviewConnectionStatus["operations"]; pinned?: boolean; onTogglePin?: () => void; onChanged?: () => void | Promise<void>; tab: ReviewDetailTab; onTabChange: (tab: ReviewDetailTab) => void; tabLoading?: boolean; tabError?: boolean; truncated?: boolean; revisionChanged?: boolean; onRetryTab?: () => void; onBack: () => void }) {
 
   return (
-    <main className={cn("min-h-0 min-w-0 flex-1 flex-col bg-dls-surface/40", review || unknown || loading ? "flex" : "hidden md:flex")}>
+    <main className={cn("min-h-0 min-w-0 flex-1 flex-col bg-background", review || unknown || loading ? "flex" : "hidden md:flex")}>
       {loading ? <DetailState loading /> : unknown ? <UnknownDetail onBack={onBack} /> : review ? (
         <>
-          <ReviewHeader review={review} onBack={onBack} />
-          <div className="shrink-0 overflow-x-auto border-b border-dls-border bg-background px-4 md:px-6" role="tablist" aria-label={text("Pull request sections", "拉取请求内容")}>{TABS.map((item) => <button key={item.value} type="button" role="tab" aria-selected={tab === item.value} onClick={() => onTabChange(item.value)} className={cn("relative h-10 whitespace-nowrap px-3 text-xs font-medium text-dls-secondary transition-colors hover:text-dls-text", tab === item.value && "text-dls-text after:absolute after:inset-x-3 after:bottom-0 after:h-0.5 after:rounded-full after:bg-dls-text")}>{text(item.en, item.zh)}{item.value === "changes" ? ` ${review.changedFiles}` : item.value === "checks" ? ` ${review.checks.length}` : item.value === "threads" ? ` ${review.threads.length}` : ""}</button>)}</div>
+          <ReviewHeader review={review} onBack={onBack} actions={actions} endpoint={endpoint} operations={operations} pinned={pinned} onTogglePin={onTogglePin} onChanged={onChanged} />
+          <div className="shrink-0 overflow-x-auto border-b border-dls-border bg-background px-5 md:px-7" role="tablist" aria-label={text("Pull request sections", "拉取请求内容")}>{TABS.map((item) => <button key={item.value} type="button" role="tab" aria-selected={tab === item.value} onClick={() => onTabChange(item.value)} className={cn("relative h-9 whitespace-nowrap px-2.5 text-[11px] font-medium text-dls-secondary transition-colors hover:text-dls-text", tab === item.value && "text-dls-text after:absolute after:inset-x-2.5 after:bottom-0 after:h-0.5 after:rounded-full after:bg-dls-text")}>{text(item.en, item.zh)}{item.value === "changes" ? ` ${review.changedFiles}` : item.value === "checks" ? ` ${review.checks.length}` : item.value === "threads" ? ` ${review.threads.length}` : ""}</button>)}</div>
           <div className="min-h-0 flex-1 overflow-y-auto" role="tabpanel">
             {revisionChanged ? <div className="m-4 rounded-xl border border-amber-7 bg-amber-3 px-4 py-3 text-xs text-amber-11">{text("The pull request revision changed while this tab was loading. Refresh before relying on line positions.", "加载期间拉取请求版本发生变化，请刷新后再依赖行位置。")}</div> : null}
             {tabLoading || tabError ? <DetailState loading={tabLoading} error={tabError} onRetry={onRetryTab} /> : null}
-            {!tabLoading && !tabError && tab === "summary" ? <SummaryView review={review} /> : null}
+            {!tabLoading && !tabError && tab === "summary" ? <SummaryView review={review} onTabChange={onTabChange} /> : null}
             {!tabLoading && !tabError && tab === "changes" ? <ChangesView review={review} truncated={truncated} /> : null}
             {!tabLoading && !tabError && tab === "checks" ? <ChecksView review={review} /> : null}
             {!tabLoading && !tabError && tab === "threads" ? <ThreadsView review={review} /> : null}
@@ -384,6 +412,12 @@ function ReviewDetail({ review, unknown, loading, tab, onTabChange, tabLoading, 
 }
 
 export function ReviewPage(props: ReviewPageProps) {
+  const queryClient = useQueryClient();
+  const [urlDialog, setUrlDialog] = useState(false);
+  const [url, setUrl] = useState("");
+  const [openingUrl, setOpeningUrl] = useState(false);
+  const [urlError, setUrlError] = useState<string | null>(null);
+  const openUrlGeneration = useRef(0);
   const sidebarOpen = useUiStateStore((state) => state.sidebarOpen);
   const toggleSidebar = useUiStateStore((state) => state.toggleSidebar);
   const { leftSidebarResizing, leftSidebarWidth, startLeftSidebarResize } = useWorkspaceShellLayout({ expandedRightWidth: 520 });
@@ -391,21 +425,56 @@ export function ReviewPage(props: ReviewPageProps) {
     "--jugglework-left-sidebar-width": appInsetSidebarCssWidth(leftSidebarWidth),
   } as CSSProperties;
   const [query, setQuery] = useState("");
-  const [relationship, setRelationship] = useState<"all" | ReviewRelationship>("all");
+  const [expandedSections, setExpandedSections] = useState<ReviewRelationship[]>(["authored"]);
   const [tab, setTab] = useState<ReviewDetailTab>("summary");
+  const [pinnedReviewIds, setPinnedReviewIds] = useState<string[]>(() => readPinnedReviews(props.workspaceId));
+  useEffect(() => setPinnedReviewIds(readPinnedReviews(props.workspaceId)), [props.workspaceId]);
+  const togglePinnedReview = (reviewId: string) => setPinnedReviewIds((current) => {
+    const next = current.includes(reviewId) ? current.filter((id) => id !== reviewId) : [reviewId, ...current.filter((id) => id !== reviewId)];
+    localStorage.setItem(pinnedStorageKey(props.workspaceId), JSON.stringify(next));
+    return next;
+  });
   const deferredQuery = useDeferredValue(query);
   const workspace = useReviewWorkspaceEndpoint(props.workspaceId, props.active);
+  useEffect(() => { openUrlGeneration.current++; setUrlDialog(false); setOpeningUrl(false); setExpandedSections(["authored"]); }, [props.workspaceId, workspace.endpoint]);
+  const toggleInboxSection = (relationship: ReviewRelationship) => setExpandedSections((current) => current.includes(relationship) ? current.filter((item) => item !== relationship) : [...current, relationship]);
+  async function openReviewUrl() {
+    if (!workspace.endpoint || openingUrl) return;
+    const endpoint = workspace.endpoint;
+    const generation = openUrlGeneration.current;
+    const settings = readDenSettings();
+    setOpeningUrl(true); setUrlError(null);
+    try {
+      const result = await endpoint.client.resolveReviewUrl(endpoint.workspaceId, url.trim());
+      const current = readDenSettings();
+      if (generation !== openUrlGeneration.current || current.authToken !== settings.authToken || current.activeOrgId !== settings.activeOrgId || current.baseUrl !== settings.baseUrl) return;
+      queryClient.setQueryData(reviewQueryKeys.detail(endpoint, result.item.id), result);
+      setUrlDialog(false);
+      props.onSelectReview(result.item.id);
+    } catch (error) { if (generation === openUrlGeneration.current) setUrlError(error instanceof Error ? error.message : String(error)); }
+    finally { if (generation === openUrlGeneration.current) setOpeningUrl(false); }
+  }
   const connection = useReviewConnection(workspace.endpoint, props.active);
-  const wireRelationship: WireReviewRelationship = relationship === "requested" ? "review_requested" : relationship === "team" ? "team_review_requested" : relationship;
-  const inbox = useReviewInbox(workspace.endpoint, { active: props.active, ready: connection.data?.state === "ready", relationship: wireRelationship, query: deferredQuery });
+  const inboxReady = connection.data?.state === "ready";
+  const authoredInbox = useReviewInbox(workspace.endpoint, { active: props.active && expandedSections.includes("authored"), ready: inboxReady, relationship: "authored", query: deferredQuery });
+  const requestedInbox = useReviewInbox(workspace.endpoint, { active: props.active && expandedSections.includes("requested"), ready: inboxReady, relationship: "review_requested", query: deferredQuery });
+  const teamInbox = useReviewInbox(workspace.endpoint, { active: props.active && expandedSections.includes("team"), ready: inboxReady, relationship: "team_review_requested", query: deferredQuery });
+  const mergedInbox = useReviewInbox(workspace.endpoint, { active: props.active && expandedSections.includes("recently_merged"), ready: inboxReady, relationship: "recently_merged", query: deferredQuery });
   const detail = useReviewDetail(workspace.endpoint, props.reviewId, props.active);
-  const files = useReviewFiles(workspace.endpoint, props.reviewId, props.active && tab === "changes");
-  const checks = useReviewChecks(workspace.endpoint, props.reviewId, props.active && tab === "checks");
-  const threads = useReviewThreads(workspace.endpoint, props.reviewId, props.active && tab === "threads");
-  const listItems = useMemo(() => inbox.data?.pages.flatMap((page) => page.items) ?? [], [inbox.data]);
+  const selectedReviewActive = props.active && Boolean(props.reviewId);
+  const files = useReviewFiles(workspace.endpoint, props.reviewId, selectedReviewActive && tab === "changes");
+  const checks = useReviewChecks(workspace.endpoint, props.reviewId, selectedReviewActive);
+  const threads = useReviewThreads(workspace.endpoint, props.reviewId, selectedReviewActive);
+  const listItems = useMemo(() => [authoredInbox.data, requestedInbox.data, teamInbox.data, mergedInbox.data].flatMap((data) => data?.pages.flatMap((page) => page.items) ?? []), [authoredInbox.data, mergedInbox.data, requestedInbox.data, teamInbox.data]);
   const selectedItem = detail.data?.item ?? listItems.find((item) => item.id === props.reviewId) ?? null;
-  const reviews = useMemo(() => listItems.map((item) => reviewViewModel({ item })), [listItems]);
-  const review = useMemo(() => selectedItem ? reviewViewModel({ item: selectedItem, detail: detail.data, files: files.data, checks: checks.data, threads: threads.data }) : null, [checks.data, detail.data, files.data, selectedItem, threads.data]);
+  const reviewsFor = (data: typeof authoredInbox.data) => (data?.pages.flatMap((page) => page.items) ?? []).map((item) => ({ ...reviewViewModel({ item }), pinned: pinnedReviewIds.includes(item.id) })).sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)));
+  const inboxSections: ReviewInboxSectionState[] = [
+    { relationship: "authored", reviews: reviewsFor(authoredInbox.data), loading: authoredInbox.isLoading, refreshing: authoredInbox.isFetching && !authoredInbox.isLoading, error: authoredInbox.error instanceof Error ? authoredInbox.error.message : null, hasNextPage: authoredInbox.hasNextPage, loadingNextPage: authoredInbox.isFetchingNextPage, onLoadMore: () => void authoredInbox.fetchNextPage(), onRetry: () => void authoredInbox.refetch() },
+    { relationship: "requested", reviews: reviewsFor(requestedInbox.data), loading: requestedInbox.isLoading, refreshing: requestedInbox.isFetching && !requestedInbox.isLoading, error: requestedInbox.error instanceof Error ? requestedInbox.error.message : null, hasNextPage: requestedInbox.hasNextPage, loadingNextPage: requestedInbox.isFetchingNextPage, onLoadMore: () => void requestedInbox.fetchNextPage(), onRetry: () => void requestedInbox.refetch() },
+    { relationship: "team", reviews: reviewsFor(teamInbox.data), loading: teamInbox.isLoading, refreshing: teamInbox.isFetching && !teamInbox.isLoading, error: teamInbox.error instanceof Error ? teamInbox.error.message : null, hasNextPage: teamInbox.hasNextPage, loadingNextPage: teamInbox.isFetchingNextPage, onLoadMore: () => void teamInbox.fetchNextPage(), onRetry: () => void teamInbox.refetch() },
+    { relationship: "recently_merged", reviews: reviewsFor(mergedInbox.data), loading: mergedInbox.isLoading, refreshing: mergedInbox.isFetching && !mergedInbox.isLoading, error: mergedInbox.error instanceof Error ? mergedInbox.error.message : null, hasNextPage: mergedInbox.hasNextPage, loadingNextPage: mergedInbox.isFetchingNextPage, onLoadMore: () => void mergedInbox.fetchNextPage(), onRetry: () => void mergedInbox.refetch() },
+  ];
+  const review = useMemo(() => selectedItem ? { ...reviewViewModel({ item: selectedItem, detail: detail.data, files: files.data, checks: checks.data, threads: threads.data }), pinned: pinnedReviewIds.includes(selectedItem.id) } : null, [checks.data, detail.data, files.data, pinnedReviewIds, selectedItem, threads.data]);
   const unknown = props.reviewId !== null && detail.isError;
   const tabQuery = tab === "changes" ? files : tab === "checks" ? checks : tab === "threads" ? threads : detail;
   useEffect(() => setTab("summary"), [props.reviewId]);
@@ -439,22 +508,28 @@ export function ReviewPage(props: ReviewPageProps) {
           {(open) => <ConnectedState connection={connection.data} error={workspace.error ?? (connection.error instanceof Error ? connection.error.message : null)} onConnect={connection.data?.state === "disabled_in_workspace" ? props.onOpenConnect : open} onRetry={() => void connection.refetch()} />}
         </ReviewGitHubConnection> : (
           <ReviewWorkbench
-          reviews={reviews}
+          endpoint={workspace.endpoint}
+          operations={connection.data.operations}
+          pinned={Boolean(review?.pinned)}
+          onTogglePin={() => { if (review) togglePinnedReview(review.id); }}
+          onChanged={async () => {
+            if (!workspace.endpoint) return;
+            await queryClient.invalidateQueries({ queryKey: ["reviews", workspace.endpoint.baseUrl, workspace.endpoint.workspaceId] });
+          }}
+          actions={workspace.endpoint && review ? <ReviewWorkflowControls
+            key={`${workspace.endpoint.baseUrl}:${workspace.endpoint.workspaceId}:${review.id}`}
+            endpoint={workspace.endpoint} review={review} active={props.active}
+            operations={connection.data.operations}
+            onOpenSession={(id) => props.onOpenReviewSession?.(id)}
+          /> : undefined}
+          onOpenUrl={() => { setUrlError(null); setUrlDialog(true); }}
+          sections={inboxSections}
+          expandedSections={expandedSections}
           reviewId={props.reviewId}
           query={query}
-          relationship={relationship}
           review={review}
           unknown={unknown}
           loading={Boolean(props.reviewId && detail.isLoading)}
-          inboxLoading={inbox.isLoading}
-          inboxRefreshing={inbox.isFetching && !inbox.isLoading}
-          inboxError={inbox.error instanceof Error ? inbox.error.message : null}
-          hasNextPage={inbox.hasNextPage}
-          loadingNextPage={inbox.isFetchingNextPage}
-          onLoadMore={() => void inbox.fetchNextPage()}
-          onRetryInbox={() => void inbox.refetch()}
-          onRefreshInbox={() => void inbox.refetch()}
-          connectionName={connection.data.connectionName}
           tab={tab}
           onTabChange={setTab}
           tabLoading={tab !== "summary" && tabQuery.isLoading}
@@ -463,7 +538,7 @@ export function ReviewPage(props: ReviewPageProps) {
           revisionChanged={tab !== "summary" && Boolean((tab === "changes" ? files.data?.headRevision : tab === "checks" ? checks.data?.headRevision : threads.data?.headRevision) && detail.data?.item.headRevision !== "unknown" && (tab === "changes" ? files.data?.headRevision : tab === "checks" ? checks.data?.headRevision : threads.data?.headRevision) !== "unknown" && (tab === "changes" ? files.data?.headRevision : tab === "checks" ? checks.data?.headRevision : threads.data?.headRevision) !== detail.data?.item.headRevision)}
           onRetryTab={() => void tabQuery.refetch()}
           onQueryChange={setQuery}
-          onRelationshipChange={setRelationship}
+          onToggleSection={toggleInboxSection}
           onSelectReview={props.onSelectReview}
           sidebarOpen={sidebarOpen}
           />
@@ -475,27 +550,34 @@ export function ReviewPage(props: ReviewPageProps) {
           />
         ) : null}
       </AppInsetSurface>
+      <Dialog open={urlDialog} onOpenChange={(open) => { setUrlDialog(open); if (!open) { openUrlGeneration.current++; setOpeningUrl(false); } }}>
+        <DialogContent className="sm:max-w-[520px]">
+          <DialogTitle>{text("Open a pull request", "打开拉取请求")}</DialogTitle>
+          <DialogDescription>{text("Paste a GitHub pull request URL. Access uses your existing organization connector.", "粘贴 GitHub 拉取请求链接，使用当前组织连接器读取。")}</DialogDescription>
+          <input aria-label={text("Pull request URL", "拉取请求链接")} className="h-10 w-full rounded-xl border border-dls-border bg-background px-3 text-sm" value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://github.com/owner/repository/pull/123" onKeyDown={(event) => { if (event.key === "Enter") void openReviewUrl(); }} />
+          {urlError ? <p role="alert" className="text-sm text-red-11">{urlError}</p> : null}
+          <Button disabled={openingUrl || !url.trim()} onClick={() => { void openReviewUrl(); }}>{openingUrl ? <LoaderCircle className="animate-spin" /> : null}{text("Open pull request", "打开拉取请求")}</Button>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
 
 export function ReviewWorkbench(props: {
-  reviews: ReviewPreview[];
+  actions?: ReactNode;
+  endpoint?: ReturnType<typeof useReviewWorkspaceEndpoint>["endpoint"];
+  operations?: ReviewConnectionStatus["operations"];
+  pinned?: boolean;
+  onTogglePin?: () => void;
+  onChanged?: () => void | Promise<void>;
+  onOpenUrl?: () => void;
+  sections: ReviewInboxSectionState[];
+  expandedSections: ReviewRelationship[];
   reviewId: string | null;
   query: string;
-  relationship: "all" | ReviewRelationship;
   review: ReviewPreview | null;
   unknown: boolean;
   loading?: boolean;
-  inboxLoading?: boolean;
-  inboxRefreshing?: boolean;
-  hasNextPage?: boolean;
-  loadingNextPage?: boolean;
-  onLoadMore?: () => void;
-  connectionName?: string;
-  inboxError?: string | null;
-  onRetryInbox?: () => void;
-  onRefreshInbox?: () => void;
   tab?: ReviewDetailTab;
   onTabChange?: (tab: ReviewDetailTab) => void;
   tabLoading?: boolean;
@@ -504,7 +586,7 @@ export function ReviewWorkbench(props: {
   revisionChanged?: boolean;
   onRetryTab?: () => void;
   onQueryChange: (query: string) => void;
-  onRelationshipChange: (relationship: "all" | ReviewRelationship) => void;
+  onToggleSection: (relationship: ReviewRelationship) => void;
   onSelectReview: (reviewId: string | null) => void;
   sidebarOpen?: boolean;
 }) {
@@ -512,28 +594,21 @@ export function ReviewWorkbench(props: {
     <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden" data-testid="review-workbench">
       <div className={cn(
         "h-full shrink-0 overflow-hidden transition-[width] duration-200 ease-linear",
-        props.sidebarOpen !== false ? "w-[var(--jugglework-left-sidebar-width)]" : "w-0",
+        props.sidebarOpen !== false ? "w-full md:w-[var(--jugglework-left-sidebar-width)]" : "w-0",
+        props.reviewId && "hidden md:block",
       )} data-app-secondary-sidebar-frame>
       {props.sidebarOpen !== false ? <ReviewInbox
-        reviews={props.reviews}
+        sections={props.sections}
+        expandedSections={props.expandedSections}
         reviewId={props.reviewId}
         query={props.query}
-        relationship={props.relationship}
         onQueryChange={props.onQueryChange}
-        onRelationshipChange={props.onRelationshipChange}
+        onToggleSection={props.onToggleSection}
         onSelectReview={props.onSelectReview}
-        loading={props.inboxLoading}
-        refreshing={props.inboxRefreshing}
-        hasNextPage={props.hasNextPage}
-        loadingNextPage={props.loadingNextPage}
-        onLoadMore={props.onLoadMore}
-        connectionName={props.connectionName}
-        error={props.inboxError}
-        onRetry={props.onRetryInbox}
-        onRefresh={props.onRefreshInbox}
+        onOpenUrl={props.onOpenUrl}
       /> : null}
       </div>
-      <ReviewDetail review={props.review} unknown={props.unknown} loading={props.loading} tab={props.tab ?? "summary"} onTabChange={props.onTabChange ?? (() => undefined)} tabLoading={props.tabLoading} tabError={props.tabError} truncated={props.truncated} revisionChanged={props.revisionChanged} onRetryTab={props.onRetryTab} onBack={() => props.onSelectReview(null)} />
+      <ReviewDetail actions={props.actions} endpoint={props.endpoint} operations={props.operations} pinned={props.pinned} onTogglePin={props.onTogglePin} onChanged={props.onChanged} review={props.review} unknown={props.unknown} loading={props.loading} tab={props.tab ?? "summary"} onTabChange={props.onTabChange ?? (() => undefined)} tabLoading={props.tabLoading} tabError={props.tabError} truncated={props.truncated} revisionChanged={props.revisionChanged} onRetryTab={props.onRetryTab} onBack={() => props.onSelectReview(null)} />
     </div>
   );
 }

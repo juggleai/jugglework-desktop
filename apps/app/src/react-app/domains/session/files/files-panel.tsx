@@ -1,13 +1,18 @@
 import { getOfficeDocumentKind } from "@jugglework/types/office";
 /** @jsxImportSource react */
 import * as React from "react";
-import { Folders, Maximize2, Menu, Minimize2 } from "lucide-react";
+import { Folders, Maximize2, Menu, Minimize2, Plus } from "lucide-react";
 
 import type { JuggleWorkServerClient } from "@/app/lib/jugglework-server";
 import { createClient } from "@/app/lib/opencode";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/sonner";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { t } from "../../../../i18n";
 import { ChangesView } from "./changes-view";
@@ -17,6 +22,8 @@ import { FileViewer } from "./file-viewer";
 import { ArtifactActionsProvider } from "../artifacts/artifact-actions-provider";
 import { useFilesPanelSession, useFilesPanelStore } from "./files-panel-store";
 import { useRefreshWorkspaceChanges, useWorkspaceChanges, type WorkspaceChange } from "./use-workspace-changes";
+import { createOfficeFile } from "./office-create";
+import { OfficeCreateItems } from "./office-create-items";
 
 type FilesPanelProps = {
   sessionId: string;
@@ -128,6 +135,20 @@ export function FilesPanel({
     openFile(sessionId, { path: change.path, name: change.path.split("/").pop() ?? change.path });
   };
 
+  const createOffice = async (kind: "docx" | "pptx") => {
+    const bridge = window.__JUGGLEWORK_ELECTRON__?.fileWindow;
+    if (!bridge || !workspaceId) return;
+    try {
+      await createOfficeFile(
+        bridge,
+        { workspaceId, sessionId, kind },
+        (file) => openFile(sessionId, file),
+      );
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error));
+    }
+  };
+
   const treeNode = (onOpened?: () => void, onContextMenuOpenChange?: (open: boolean) => void) => (
     <FileTree
       client={opencodeClient}
@@ -174,6 +195,26 @@ export function FilesPanel({
             {(close, onContextMenuOpenChange) => treeNode(close, onContextMenuOpenChange)}
           </TreePopover>
         )}
+        {!isRemoteWorkspace && workspaceId ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className="shrink-0 mac:titlebar-no-drag"
+                  aria-label={t("file_window.new")}
+                  title={t("file_window.new")}
+                />
+              }
+            >
+              <Plus className="size-4" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start">
+              <OfficeCreateItems onCreate={(kind) => void createOffice(kind)} />
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : null}
         <div className="min-w-0 flex-1 overflow-hidden">
           <FileTabs
             tabs={session.tabs}

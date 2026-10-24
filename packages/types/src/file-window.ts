@@ -22,6 +22,9 @@ export interface FileWindowState {
   platform: string;
 }
 
+/** 宿主允许用户手动新建的 Office 格式。 */
+export type OfficeCreationKind = "docx" | "pptx";
+
 /** 独立窗口最小桥；文件操作通过同一 Server 和原生对话框执行。 */
 export interface FileWindowBridge {
   /** 查询当前主进程是否已注册文件窗口入口，兼容开发时尚未重启的旧主进程。 */
@@ -32,8 +35,14 @@ export interface FileWindowBridge {
     path: string;
   }): Promise<void>;
   state(): Promise<FileWindowState & { baseUrl: string; token: string }>;
+  /** 原生选择目标路径并创建文件；取消时返回 null。 */
+  create(input: {
+    workspaceId: string;
+    sessionId: string;
+    kind: OfficeCreationKind;
+  }): Promise<{ path: string } | null>;
   action(
-    action: "select" | "close" | "open" | "create" | "reveal" | "save-copy",
+    action: "select" | "close" | "open" | "reveal" | "save-copy",
     path?: string,
   ): Promise<void>;
   onChanged(callback: (state: FileWindowState) => void): () => void;

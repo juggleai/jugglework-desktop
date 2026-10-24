@@ -1,8 +1,9 @@
-import { reviewRelationshipSchema } from "@jugglework/types/reviews";
+import { reviewRelationshipSchema, reviewMutationInputSchema, reviewPullRequestActionInputSchema, reviewTaskInputSchema, reviewFixInputSchema } from "@jugglework/types/reviews";
 import { ApiError } from "../errors.js";
 import type { ReviewReadService } from "../reviews/service.js";
 import type { ServerConfig, WorkspaceInfo } from "../types.js";
-import { addRoute, type Route } from "./registry.js";
+import { addRoute, type Route, type RequestContext } from "./registry.js";
+import type { ReviewWorkflow } from "../reviews/workflow.js";
 
 type JsonResponse = (data: unknown, status?: number) => Response;
 
@@ -12,6 +13,52 @@ export interface RegisterReviewRoutesOptions {
   service: Pick<ReviewReadService, "getConnection" | "listInbox" | "getDetail" | "listFiles" | "getChecks" | "listThreads">;
   jsonResponse: JsonResponse;
   resolveWorkspaceForInspection: (config: ServerConfig, id: string) => Promise<WorkspaceInfo>;
+}
+
+export function registerReviewWorkflowRoutes(options: {
+  routes: Route[];
+  workflow: ReviewWorkflow;
+  jsonResponse: JsonResponse;
+  authorizeWrite: (ctx: RequestContext) => void;
+  resolveWorkspace: (id: string, inspection: boolean) => Promise<WorkspaceInfo>;
+  readJsonBody: (request: Request) => Promise<Record<string, unknown>>;
+}) {
+  const base = "/workspace/:id/reviews/:reviewId";
+  addRoute(options.routes, "GET", "/workspace/:id/reviews/resolve/url", "client", async (ctx) => {
+    const url = ctx.url.searchParams.get("url") ?? "";
+    if (!url || url.length > 2_048) throw new ApiError(400, "invalid_review_url", "Enter a valid GitHub pull request URL.");
+    return options.jsonResponse(await options.workflow.resolveUrl({ workspace: await options.resolveWorkspace(ctx.params.id, true), url, signal: ctx.request.signal }));
+  });
+  const context = async (ctx: RequestContext, inspection = false) => ({ workspace: await options.resolveWorkspace(ctx.params.id, inspection), reviewId: ctx.params.reviewId, signal: ctx.request.signal });
+  addRoute(options.routes, "GET", `${base}/ai-review`, "client", async (ctx) => options.jsonResponse(await options.workflow.latest(await context(ctx, true))));
+  addRoute(options.routes, "POST", `${base}/ai-review`, "client", async (ctx) => {
+    options.authorizeWrite(ctx);
+    const body = reviewTaskInputSchema.safeParse(await options.readJsonBody(ctx.request));
+    if (!body.success) throw new ApiError(400, "invalid_payload", "A valid revision and optional model are required.");
+    return options.jsonResponse(await options.workflow.start({ ...await context(ctx), ...body.data }), 202);
+  });
+  addRoute(options.routes, "POST", `${base}/ai-review/cancel`, "client", async (ctx) => {
+    options.authorizeWrite(ctx);
+    return options.jsonResponse(await options.workflow.cancel(await context(ctx, true)));
+  });
+  addRoute(options.routes, "POST", `${base}/publish`, "client", async (ctx) => {
+    options.authorizeWrite(ctx);
+    const body = reviewMutationInputSchema.safeParse(await options.readJsonBody(ctx.request));
+    if (!body.success) throw new ApiError(400, "invalid_payload", "Choose a review decision and provide the current revision and comment.");
+    return options.jsonResponse(await options.workflow.mutate({ ...await context(ctx, true), ...body.data }));
+  });
+  addRoute(options.routes, "POST", `${base}/action`, "client", async (ctx) => {
+    options.authorizeWrite(ctx);
+    const body = reviewPullRequestActionInputSchema.safeParse(await options.readJsonBody(ctx.request));
+    if (!body.success) throw new ApiError(400, "invalid_payload", "Choose a supported pull request action and provide the current revision.");
+    return options.jsonResponse(await options.workflow.mutatePullRequest({ ...await context(ctx, true), ...body.data }));
+  });
+  addRoute(options.routes, "POST", `${base}/fix`, "client", async (ctx) => {
+    options.authorizeWrite(ctx);
+    const body = reviewFixInputSchema.safeParse(await options.readJsonBody(ctx.request));
+    if (!body.success) throw new ApiError(400, "invalid_payload", "Select findings and the current review revision.");
+    return options.jsonResponse(await options.workflow.fix({ ...await context(ctx), ...body.data }), 201);
+  });
 }
 
 function positiveInteger(value: string | null, fallback: number): number {
