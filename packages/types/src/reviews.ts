@@ -291,9 +291,13 @@ export const reviewAnalysisSchema = z.object({
   summary: z.string().max(12_000),
   findings: z.array(reviewFindingSchema).max(50),
 });
-export const reviewRunSchema = z.object({
+export const reviewFixTaskSchema = z.object({
+  sessionId: z.string(),
+  findingIds: z.array(z.string().max(100)).min(1).max(50),
+  createdAt: z.string().datetime(),
+}).strict();
+export const reviewRunSnapshotSchema = z.object({
   id: z.string().uuid(),
-  reviewId: z.string().max(2_048),
   headRevision: z.string().max(128),
   status: z.enum(["running", "completed", "failed", "cancelled"]),
   createdAt: z.string().datetime(),
@@ -303,6 +307,11 @@ export const reviewRunSchema = z.object({
   partial: z.boolean(),
   fixSessionId: z.string().optional(),
   fixedFindingIds: z.array(z.string().max(100)).optional(),
+  fixTasks: z.array(reviewFixTaskSchema).max(20).optional(),
+}).strict();
+export const reviewRunSchema = reviewRunSnapshotSchema.extend({
+  reviewId: z.string().max(2_048),
+  history: z.array(reviewRunSnapshotSchema).max(20).optional(),
 });
 export const reviewRunResponseSchema = z.object({ run: reviewRunSchema.nullable() });
 export const reviewTaskInputSchema = z.object({
@@ -315,6 +324,7 @@ export const reviewFixInputSchema = z.object({
   expectedHeadRevision: z.string().regex(/^[a-f0-9]{40,64}$/i),
 }).strict();
 export type ReviewRun = z.infer<typeof reviewRunSchema>;
+export type ReviewRunSnapshot = z.infer<typeof reviewRunSnapshotSchema>;
 export type ReviewFinding = z.infer<typeof reviewFindingSchema>;
 export type ReviewTaskInput = z.infer<typeof reviewTaskInputSchema>;
 export type ReviewFixInput = z.infer<typeof reviewFixInputSchema>;

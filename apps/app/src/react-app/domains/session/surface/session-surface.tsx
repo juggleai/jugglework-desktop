@@ -147,6 +147,7 @@ import { ArtifactActionsProvider } from "../artifacts/artifact-actions-provider"
 import { FileDeliveriesProvider } from "../artifacts/file-deliveries-provider";
 import { useFilesPanelStore } from "../files/files-panel-store";
 import { PresentationDeliveryCoordinator } from "../presentation/presentation-delivery-coordinator";
+import { usePresentationPendingStore } from "../presentation/presentation-pending-store";
 import { presentationSourcePath, type PresentationRequest } from "../presentation/presentation-request";
 import { submitPresentationCreation } from "../presentation/presentation-submit";
 import type { ThreadStatus } from "@/lib/messages";
@@ -591,7 +592,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   );
   const draft = useComposerStateStore((state) => getComposerDraft(state, props.sessionId));
   const currentFile = useFilesPanelStore((state) => presentationSourcePath(state.sessions[props.sessionId]?.activePath));
-  const [presentationTurnId, setPresentationTurnId] = useState<string | null>(null);
+  const addPendingPresentation = usePresentationPendingStore((state) => state.add);
   const attachments = useComposerStateStore((state) => getComposerAttachments(state, props.sessionId));
   const mentions = useComposerStateStore((state) => getComposerMentions(state, props.sessionId));
   const pasteParts = useComposerStateStore((state) => getComposerPasteParts(state, props.sessionId));
@@ -1489,12 +1490,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
 
   const handleCreatePresentation = useCallback(async (request: PresentationRequest) => {
     const turnId = await submitPresentationCreation(request, sendDraft);
-    if (turnId) setPresentationTurnId(turnId);
-  }, [sendDraft]);
-
-  const finishPresentationDelivery = useCallback((turnId: string) => {
-    setPresentationTurnId((current) => current === turnId ? null : current);
-  }, []);
+    if (turnId) addPendingPresentation(props.workspaceId, props.sessionId, turnId);
+  }, [addPendingPresentation, props.sessionId, props.workspaceId, sendDraft]);
 
   const handleSteer = useCallback(async () => {
     setSteering(true);
@@ -2478,6 +2475,12 @@ export function SessionSurface(props: SessionSurfaceProps) {
                desktop breakpoint, so an 864px column aligns their 800px text
                area with the composer while preserving the narrower cap below lg. */}
           <div ref={contentRef} className="mx-auto w-full max-w-[720px] lg:max-w-[864px]">
+            <FileDeliveriesProvider client={props.client} workspaceId={props.workspaceId} sessionId={props.sessionId} enabled={!props.isRemoteWorkspace} running={chatStreaming} messageKey={`${renderedMessages.length}:${renderedMessages.at(-1)?.id ?? ""}`}>
+            <PresentationDeliveryCoordinator
+              workspaceId={props.workspaceId}
+              sessionId={props.sessionId}
+              onOpenTarget={props.onOpenTarget}
+            />
             {showDelayedLoading && pendingSessionLoad ? (
               <div className="px-6 py-16">
                 <div className="mx-auto max-w-sm rounded-3xl border border-dls-border bg-dls-hover/60 px-8 py-10 text-center">
@@ -2517,13 +2520,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
                   onOpenTarget={openArtifactTarget}
                 >
                   <ArtifactActionsProvider client={props.client} workspaceId={props.workspaceId} workspaceRoot={props.workspaceRoot} sessionId={props.sessionId} remote={Boolean(props.isRemoteWorkspace)} running={chatStreaming}>
-                  <FileDeliveriesProvider client={props.client} workspaceId={props.workspaceId} sessionId={props.sessionId} enabled={!props.isRemoteWorkspace} running={chatStreaming} messageKey={`${renderedMessages.length}:${renderedMessages.at(-1)?.id ?? ""}`}>
-                  <PresentationDeliveryCoordinator
-                    sessionId={props.sessionId}
-                    turnId={presentationTurnId}
-                    onOpenTarget={props.onOpenTarget}
-                    onFinished={finishPresentationDelivery}
-                  />
                   <EnvironmentVariableProvider
                     client={props.isRemoteWorkspace ? null : props.environmentClient ?? props.client}
                     runtimeKey={props.environmentRuntimeKey}
@@ -2556,11 +2552,11 @@ export function SessionSurface(props: SessionSurfaceProps) {
                       />
                     </MessageListProvider>
                   </EnvironmentVariableProvider>
-                  </FileDeliveriesProvider>
                   </ArtifactActionsProvider>
                 </OpenTargetProvider>
               </DevProfiler>
             )}
+            </FileDeliveriesProvider>
           </div>
         </div>
         <SessionScrollOverlay

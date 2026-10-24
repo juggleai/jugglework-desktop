@@ -52,6 +52,15 @@ export function ReviewWorkflowControls(props: {
   });
   const dependencies = useQuery({ queryKey: ["review-models", endpoint.baseUrl, endpoint.workspaceId], queryFn: () => endpoint.client.listAutomationDependencies(endpoint.workspaceId), enabled: dialog === "ai", staleTime: 60_000 });
   const run = runs.data?.run;
+  const relatedSessions = [
+    ...(run?.sessionId ? [{ id: run.sessionId, kind: "review" as const, revision: run.headRevision }] : []),
+    ...(run?.fixSessionId ? [{ id: run.fixSessionId, kind: "fix" as const, revision: run.headRevision }] : []),
+    ...(run?.fixTasks ?? []).map((item) => ({ id: item.sessionId, kind: "fix" as const, revision: run?.headRevision ?? review.headRevision })),
+    ...(run?.history ?? []).flatMap((item) => [
+      ...(item.fixSessionId ? [{ id: item.fixSessionId, kind: "fix" as const, revision: item.headRevision }] : []),
+      ...(item.fixTasks ?? []).map((task) => ({ id: task.sessionId, kind: "fix" as const, revision: item.headRevision })),
+    ]),
+  ].filter((item, index, items) => items.findIndex((candidate) => candidate.id === item.id) === index);
   const stale = Boolean(run && run.headRevision !== review.headRevision);
   const running = run?.status === "running";
   const revisionKnown = /^[a-f0-9]{40,64}$/i.test(review.headRevision);
@@ -125,8 +134,12 @@ export function ReviewWorkflowControls(props: {
                 <Button disabled={stale || running || !props.operations?.submitReview} onClick={() => { selectBody(findingsReviewBody(run)); setDecision("COMMENT"); openPublish(); }}>{text("Use in review…", "用于提交评审…")}</Button>
               </div>
             </> : null}
-            {run?.sessionId ? <Button variant="ghost" onClick={() => props.onOpenSession(run.sessionId!)}><ExternalLink />{text("Open review task", "查看审查任务")}</Button> : null}
-            {run?.fixSessionId ? <Button variant="ghost" onClick={() => props.onOpenSession(run.fixSessionId!)}><ExternalLink />{text("Open fix task", "查看修复任务")}</Button> : null}
+            {relatedSessions.length ? <div className="rounded-xl border border-dls-border p-3" data-testid="review-related-tasks">
+              <p className="text-xs font-semibold text-dls-secondary">{text("Related tasks", "相关任务")}</p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {relatedSessions.map((item) => <Button key={item.id} variant="ghost" onClick={() => props.onOpenSession(item.id)}><ExternalLink />{item.kind === "review" ? text("Open review task", "查看审查任务") : `${text("Open fix task", "查看修复任务")} · ${item.revision.slice(0, 8)}`}</Button>)}
+              </div>
+            </div> : null}
           </> : <>
             {publishRevision !== review.headRevision ? <p role="alert" className="rounded-xl bg-amber-3 p-3 text-sm text-amber-11">{text("The PR changed while you were writing. Close this dialog and review the latest changes before publishing.", "填写期间 PR 已更新，请关闭弹窗并检查最新代码后再提交。")}</p> : null}
             <p className="text-sm text-dls-secondary">{text("This action publishes the text below to GitHub using your organization's connector.", "此操作会通过组织连接器，将下方内容发布到 GitHub。")}</p>

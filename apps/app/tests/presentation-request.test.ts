@@ -40,16 +40,16 @@ describe("presentation request", () => {
     expect(() => validatePresentationRequest({ ...request, currentFile: { path: "source.exe" } })).toThrow("not supported");
   });
 
-  test("builds one complete constrained prompt plus a skill and real current-file part", () => {
+  test("builds one self-contained host capability prompt and a real current-file part", () => {
     const prompt = buildPresentationPrompt(request);
-    expect(prompt).toContain("presentation-generator skill");
+    expect(prompt).toContain("bundled presentation generator");
     expect(prompt).toContain("jugglework_artifact_generate exactly once");
+    expect(prompt).toContain("program='jugglework:presentation-generator'");
     expect(prompt).toContain('"template": "executive"');
     const draft = createPresentationDraft(request);
     expect(draft.text).toBe(prompt);
     expect(draft.parts).toEqual([
       { type: "text", text: prompt },
-      { type: "skill", name: "presentation-generator" },
       { type: "file", path: "reports/source.pdf", label: "source.pdf" },
     ]);
     expect(composerFilePartToPromptPart(
@@ -57,10 +57,30 @@ describe("presentation request", () => {
       "/workspace",
     )).toEqual({
       type: "file",
-      mime: "text/plain",
+      mime: "application/pdf",
       url: "file:///workspace/reports/source.pdf",
       filename: "source.pdf",
     });
+  });
+
+  test("uses canonical MIME types for supported file parts", () => {
+    const cases = [
+      ["source.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
+      ["slides.pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation"],
+      ["data.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
+      ["brief.pdf", "application/pdf"],
+      ["table.csv", "text/csv"],
+      ["notes.md", "text/markdown"],
+      ["readme.txt", "text/plain"],
+    ] as const;
+
+    for (const [path, mime] of cases) {
+      expect(composerFilePartToPromptPart({ type: "file", path, label: path }, "/workspace")).toMatchObject({
+        type: "file",
+        filename: path,
+        mime,
+      });
+    }
   });
 
   test("omits the file part when no current file was selected", () => {

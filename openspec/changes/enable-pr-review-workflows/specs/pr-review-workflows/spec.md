@@ -9,6 +9,18 @@ The application SHALL analyze the selected PR revision with a workspace model, p
 - **AND** the result includes validated findings and an explicit partial-coverage indicator when applicable
 - **AND** navigation does not cancel the run, explicit cancellation stops it, and interrupted runs can be restarted after a server restart
 
+#### Scenario: Create or reuse the PR review task
+- **WHEN** a member starts the first AI review for a pull request
+- **THEN** the current workspace creates a root task named `Review <repo> #<number>: <PR title>`, truncating only the title when necessary
+- **AND** rerunning the same pull request, including after its head revision changes, appends a new review turn to the existing task rather than creating another review task
+- **AND** prior run snapshots remain revision-scoped and related review/fix tasks remain discoverable from the pull request
+
+#### Scenario: Enrich from a matching local repository
+- **WHEN** the current local workspace Git remote matches the pull request repository and contains the selected head revision
+- **THEN** the server supplies bounded changed-file snapshots and applicable root/nested `AGENTS.md` guidance from that exact revision
+- **AND** the model receives no write, shell, commit, push, or GitHub publication tools
+- **AND** a remote mismatch, missing revision, remote workspace, oversized file, or binary file degrades to connector diff-only review and is reported as partial coverage instead of reading unrelated local code
+
 #### Scenario: Stale or invalid findings
 - **WHEN** the PR head changed or AI locations do not match the supplied changed-file context
 - **THEN** old findings cannot be used to publish or create fixes for the new revision, and invalid results are shown as failed rather than valid findings

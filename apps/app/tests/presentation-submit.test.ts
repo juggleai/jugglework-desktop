@@ -20,7 +20,8 @@ test("submits through sendDraft with one stable exact turn identity", async () =
     messageID: "msg_presentation_stable",
     intent: "presentation-creation",
   });
-  expect(sendDraft.mock.calls[0]?.[0].parts.some((part) => part.type === "skill" && part.name === "presentation-generator")).toBe(true);
+  expect(sendDraft.mock.calls[0]?.[0].text).toContain("program='jugglework:presentation-generator'");
+  expect(sendDraft.mock.calls[0]?.[0].parts.some((part) => part.type === "skill")).toBe(false);
 });
 
 test("rejects a blocked or cancelled submission instead of starting observation", async () => {

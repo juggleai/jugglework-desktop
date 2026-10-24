@@ -77,7 +77,8 @@ test("bundled skill requires exactly one controlled generation call", async () =
   const skill = await readFile(new URL("../resources/skills/public-skills/presentation-generator/SKILL.md", import.meta.url), "utf8");
   assert.match(skill, /Call `jugglework_artifact_generate` exactly once/);
   assert.equal((skill.match(/jugglework_artifact_generate/g) ?? []).length, 1);
-  assert.equal((skill.match(/"program": "node"/g) ?? []).length, 1);
+  assert.equal((skill.match(/"program": "jugglework:presentation-generator"/g) ?? []).length, 1);
+  assert.doesNotMatch(skill, /"program": "node"/);
   assert.match(skill, /Do not install packages/);
   assert.match(skill, /Do not make a second generation call/);
   assert.match(skill, /`jugglework_artifact_register`/);

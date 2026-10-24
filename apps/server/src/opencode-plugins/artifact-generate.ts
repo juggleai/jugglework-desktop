@@ -1,7 +1,45 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { realpath, stat, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
+
+const PRESENTATION_GENERATOR_ALIAS = "jugglework:presentation-generator";
+
+async function resolveProgram(input: GenerationInput): Promise<{
+  program: string;
+  args: string[];
+  env: NodeJS.ProcessEnv;
+}> {
+  if (input.program !== PRESENTATION_GENERATOR_ALIAS)
+    return { program: input.program, args: input.args, env: process.env };
+
+  const runtime = process.env.JUGGLEWORK_NODE_RUNTIME?.trim() ?? "";
+  const configuredGenerator =
+    process.env.JUGGLEWORK_PRESENTATION_GENERATOR?.trim() ?? "";
+  if (!isAbsolute(runtime) || !isAbsolute(configuredGenerator))
+    throw new Error("JuggleWork 演示文稿生成器未随当前桌面运行时配置");
+  const [runtimePath, generatorPath] = await Promise.all([
+    realpath(runtime),
+    realpath(configuredGenerator),
+  ]);
+  const [runtimeInfo, generatorInfo] = await Promise.all([
+    stat(runtimePath),
+    stat(generatorPath),
+  ]);
+  if (!runtimeInfo.isFile() || !generatorInfo.isFile())
+    throw new Error("JuggleWork 演示文稿生成器资源不完整");
+  if (!generatorPath.endsWith("/presentation-generator/generate-presentation.mjs") &&
+      !generatorPath.endsWith("\\presentation-generator\\generate-presentation.mjs"))
+    throw new Error("JuggleWork 演示文稿生成器路径无效");
+
+  return {
+    program: runtimePath,
+    args: [generatorPath, ...input.args],
+    // Electron is the bundled Node runtime in Desktop packages. This flag makes
+    // the executable run the trusted script instead of launching another app.
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+  };
+}
 
 interface GenerationInput {
   program: string;
@@ -41,6 +79,7 @@ export async function generateArtifactFiles(
 ): Promise<unknown> {
   if (typeof context?.ask !== "function")
     throw new Error("当前引擎缺少执行权限上下文，无法生成文件");
+  const resolved = await resolveProgram(input);
   const command = [input.program, ...input.args].join(" ");
   await context.ask({
     permission: "bash",
@@ -59,12 +98,12 @@ export async function generateArtifactFiles(
     ]);
     exitCode = await new Promise<number | null>((resolve) => {
       // TIPS: 不拼接 Shell，参数原样传递；脚本和缓存应写独立临时目录，专用目录只存交付物。
-      const child = spawn(input.program, input.args, {
+      const child = spawn(resolved.program, resolved.args, {
         cwd: allocation.outputDirectory,
         signal,
         windowsHide: true,
         env: {
-          ...process.env,
+          ...resolved.env,
           JUGGLEWORK_ARTIFACT_DIR: allocation.outputDirectory,
           TMPDIR: temporary,
           TEMP: temporary,

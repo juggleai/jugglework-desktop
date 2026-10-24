@@ -5,8 +5,18 @@ import type { SessionFileArtifacts } from "@jugglework/types/file-artifacts";
 
 let data: SessionFileArtifacts | undefined;
 mock.module("../src/react-app/domains/session/artifacts/file-deliveries-provider", () => ({ useFileDeliveries: () => ({ data }) }));
+const storage = new Map<string, string>();
+Object.defineProperty(globalThis, "localStorage", {
+  configurable: true,
+  value: {
+    getItem: (key: string) => storage.get(key) ?? null,
+    setItem: (key: string, value: string) => storage.set(key, value),
+    removeItem: (key: string) => storage.delete(key),
+  },
+});
 const { PresentationDeliveryCoordinator } = await import("../src/react-app/domains/session/presentation/presentation-delivery-coordinator");
 const { resetPresentationDeliveryConsumptionForTest } = await import("../src/react-app/domains/session/presentation/presentation-delivery");
+const { getPendingPresentationTurnIds, usePresentationPendingStore } = await import("../src/react-app/domains/session/presentation/presentation-pending-store");
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 let view: TestRenderer.ReactTestRenderer | undefined;
 
@@ -19,15 +29,16 @@ function ready(): SessionFileArtifacts {
 
 beforeEach(() => {
   data = undefined;
+  storage.clear();
   resetPresentationDeliveryConsumptionForTest();
-  Object.defineProperty(globalThis, "localStorage", { configurable: true, value: { getItem: () => null, setItem: () => undefined } });
+  usePresentationPendingStore.setState({ turnsByWorkspaceId: {} });
 });
 afterEach(async () => { await act(async () => view?.unmount()); });
 
 test("opens the exact ready PPTX once with presentation intent", async () => {
   const onOpenTarget = mock(() => undefined);
-  const onFinished = mock(() => undefined);
-  const node = () => <PresentationDeliveryCoordinator sessionId="session" turnId="turn" onOpenTarget={onOpenTarget} onFinished={onFinished} />;
+  usePresentationPendingStore.getState().add("workspace", "session", "turn");
+  const node = () => <PresentationDeliveryCoordinator workspaceId="workspace" sessionId="session" onOpenTarget={onOpenTarget} />;
   await act(async () => { view = TestRenderer.create(node()); });
   data = ready();
   await act(async () => { view!.update(node()); });
@@ -37,27 +48,34 @@ test("opens the exact ready PPTX once with presentation intent", async () => {
     { auto: true, intent: "presentation-creation" },
     "session",
   ]);
-  expect(onFinished).toHaveBeenCalledWith("turn");
+  expect(getPendingPresentationTurnIds(usePresentationPendingStore.getState(), "workspace", "session")).toEqual([]);
   await act(async () => { view!.update(node()); });
   expect(onOpenTarget).toHaveBeenCalledTimes(1);
 });
 
 test("does not consume ready delivery before an open handler exists", async () => {
   data = ready();
-  const onFinished = mock(() => undefined);
-  await act(async () => { view = TestRenderer.create(<PresentationDeliveryCoordinator sessionId="session" turnId="turn" onFinished={onFinished} />); });
-  expect(onFinished).not.toHaveBeenCalled();
+  usePresentationPendingStore.getState().add("workspace", "session", "turn");
+  await act(async () => { view = TestRenderer.create(<PresentationDeliveryCoordinator workspaceId="workspace" sessionId="session" />); });
+  expect(getPendingPresentationTurnIds(usePresentationPendingStore.getState(), "workspace", "session")).toEqual(["turn"]);
   const onOpenTarget = mock(() => undefined);
-  await act(async () => { view!.update(<PresentationDeliveryCoordinator sessionId="session" turnId="turn" onOpenTarget={onOpenTarget} onFinished={onFinished} />); });
+  await act(async () => { view!.update(<PresentationDeliveryCoordinator workspaceId="workspace" sessionId="session" onOpenTarget={onOpenTarget} />); });
   expect(onOpenTarget).toHaveBeenCalledTimes(1);
+  expect(getPendingPresentationTurnIds(usePresentationPendingStore.getState(), "workspace", "session")).toEqual([]);
 });
 
-test("finishes failed or ambiguous terminal delivery without opening", async () => {
-  data = ready();
-  data.turns[0]!.status = "failed";
-  const onOpenTarget = mock(() => undefined);
-  const onFinished = mock(() => undefined);
-  await act(async () => { view = TestRenderer.create(<PresentationDeliveryCoordinator sessionId="session" turnId="turn" onOpenTarget={onOpenTarget} onFinished={onFinished} />); });
-  expect(onOpenTarget).not.toHaveBeenCalled();
-  expect(onFinished).toHaveBeenCalledWith("turn");
+test("clears failed and partial terminal deliveries without opening", async () => {
+  for (const status of ["failed", "partial"] as const) {
+    data = ready();
+    data.turns[0]!.status = status;
+    const onOpenTarget = mock(() => undefined);
+    usePresentationPendingStore.getState().add("workspace", "session", "turn");
+    await act(async () => {
+      view = TestRenderer.create(<PresentationDeliveryCoordinator workspaceId="workspace" sessionId="session" onOpenTarget={onOpenTarget} />);
+    });
+    expect(onOpenTarget).not.toHaveBeenCalled();
+    expect(getPendingPresentationTurnIds(usePresentationPendingStore.getState(), "workspace", "session")).toEqual([]);
+    await act(async () => view?.unmount());
+    view = undefined;
+  }
 });

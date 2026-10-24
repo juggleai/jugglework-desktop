@@ -30,6 +30,8 @@ The implementation spans React, the local JuggleWork Server, Electron, bundled r
 
 This avoids a conflicting `kind` request field and keeps extension, output format, and file path consistent. CSV/XLSX creation remains unavailable.
 
+The Server resolves the real workspace root and target parent before creating a file. The native engine saves only to an operation-owned staging file in the verified target directory; the host validates that file and publishes it without overwriting an existing target. Failure cleanup removes only that staging file, so a concurrent writer cannot be deleted by a failed create operation.
+
 ### User-facing creation goes through Electron path resolution
 
 The desktop bridge owns the native save dialog and workspace-relative path conversion. Both the file window and the session Files panel invoke a finite `docx | pptx` create action. The renderer does not recreate Windows drive, path traversal, or symlink boundary logic.
@@ -40,13 +42,13 @@ The dialog creates a normal `ComposerDraft` containing the user-visible request,
 
 ### The generator is bundled and deterministic
 
-A bundled presentation skill invokes a version-controlled Node generator through `jugglework_artifact_generate`. The generator writes a valid editable PPTX into `JUGGLEWORK_ARTIFACT_DIR`; it does not install dependencies, invoke a shell, call Office lifecycle tools, or register files by parsing stdout. A small in-repo OOXML generator is preferred for the initial constrained template set so installation remains self-contained.
+A bundled presentation resource is invoked through `jugglework_artifact_generate` using the fixed `jugglework:presentation-generator` alias. The host resolves that alias to the packaged desktop runtime and one trusted version-controlled generator path, so the flow does not depend on a system `node` executable or a user-overridable skill. The generator writes a valid editable PPTX into `JUGGLEWORK_ARTIFACT_DIR`; it does not install dependencies, invoke a shell, call Office lifecycle tools, or register files by parsing stdout. A small in-repo OOXML generator is used for the initial constrained template set so installation remains self-contained.
 
 The MVP supports a defined set of layouts and editable text/shape elements. More advanced charts, animations, and arbitrary template import remain outside this change.
 
 ### Explicit generation turns receive a stable identity
 
-The presentation flow supplies a stable message/turn ID through the existing start submission. Artifact delivery already uses that identity as `TurnDelivery.turnId`. The UI observes the exact delivery and does not search for the latest `.pptx` or parse the assistant reply.
+The presentation flow supplies a stable message/turn ID through the existing start submission. Artifact delivery already uses that identity as `TurnDelivery.turnId`. Pending intents are persisted and scoped by workspace and session, allowing multiple sessions to finish independently across navigation or renderer restart. The UI observes the exact delivery and does not search for the latest `.pptx` or parse the assistant reply.
 
 ### Automatic opening is scoped to explicit presentation creation
 

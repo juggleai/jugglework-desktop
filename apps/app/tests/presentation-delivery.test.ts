@@ -47,8 +47,9 @@ describe("presentation delivery", () => {
   test("recognizes terminal failure and consumes a result once", () => {
     expect(presentationDeliveryTerminal(deliveries("failed", []), "session", "turn")).toBe(true);
     expect(presentationDeliveryTerminal(deliveries("collecting", []), "session", "turn")).toBe(false);
-    expect(consumePresentationDelivery("session", "turn", "artifact")).toBe(true);
-    expect(consumePresentationDelivery("session", "turn", "artifact")).toBe(false);
+    expect(consumePresentationDelivery("workspace", "session", "turn", "artifact")).toBe(true);
+    expect(consumePresentationDelivery("workspace", "session", "turn", "artifact")).toBe(false);
+    expect(consumePresentationDelivery("other-workspace", "session", "turn", "artifact")).toBe(true);
   });
 
   test("preserves no-auto-open except for explicit presentation creation", () => {

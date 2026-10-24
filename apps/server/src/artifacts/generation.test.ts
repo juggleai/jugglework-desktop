@@ -127,6 +127,68 @@ test("声明生成目录内的相对输出不会重复登记为缺失文件", as
   expect((await service.list("ws_1", "ses_1")).turns[0]?.items).toHaveLength(1);
 });
 
+test("内置演示文稿别名不依赖 PATH 中的 node，并且只能执行宿主固定脚本", async () => {
+  const { service, host } = await harness();
+  const previous = {
+    path: process.env.PATH,
+    runtime: process.env.JUGGLEWORK_NODE_RUNTIME,
+    generator: process.env.JUGGLEWORK_PRESENTATION_GENERATOR,
+  };
+  const generator = join(
+    import.meta.dir,
+    "../../../desktop/resources/skills/public-skills/presentation-generator/generate-presentation.mjs",
+  );
+  try {
+    process.env.PATH = "";
+    process.env.JUGGLEWORK_NODE_RUNTIME = process.execPath;
+    process.env.JUGGLEWORK_PRESENTATION_GENERATOR = generator;
+    const specification = JSON.stringify({
+      version: 1,
+      template: "minimal",
+      outputName: "alias.pptx",
+      slides: [{ title: "Bundled runtime" }],
+    });
+    const result = (await generateArtifactFiles(
+      {
+        program: "jugglework:presentation-generator",
+        args: ["--spec-json", specification, "--output", "alias.pptx"],
+        outputs: ["alias.pptx"],
+      },
+      { ask: async () => {} },
+      host,
+    )) as { ok: boolean; generationId: string };
+    expect(result.ok).toBe(true);
+    expect((await service.list("ws_1", "ses_1")).files[0]?.name).toBe("alias.pptx");
+  } finally {
+    if (previous.path === undefined) delete process.env.PATH;
+    else process.env.PATH = previous.path;
+    if (previous.runtime === undefined) delete process.env.JUGGLEWORK_NODE_RUNTIME;
+    else process.env.JUGGLEWORK_NODE_RUNTIME = previous.runtime;
+    if (previous.generator === undefined) delete process.env.JUGGLEWORK_PRESENTATION_GENERATOR;
+    else process.env.JUGGLEWORK_PRESENTATION_GENERATOR = previous.generator;
+  }
+});
+
+test("内置演示文稿别名拒绝非受信任生成器路径", async () => {
+  const { host } = await harness();
+  const previousRuntime = process.env.JUGGLEWORK_NODE_RUNTIME;
+  const previousGenerator = process.env.JUGGLEWORK_PRESENTATION_GENERATOR;
+  try {
+    process.env.JUGGLEWORK_NODE_RUNTIME = process.execPath;
+    process.env.JUGGLEWORK_PRESENTATION_GENERATOR = import.meta.filename;
+    await expect(generateArtifactFiles(
+      { program: "jugglework:presentation-generator", args: [] },
+      { ask: async () => {} },
+      host,
+    )).rejects.toThrow("路径无效");
+  } finally {
+    if (previousRuntime === undefined) delete process.env.JUGGLEWORK_NODE_RUNTIME;
+    else process.env.JUGGLEWORK_NODE_RUNTIME = previousRuntime;
+    if (previousGenerator === undefined) delete process.env.JUGGLEWORK_PRESENTATION_GENERATOR;
+    else process.env.JUGGLEWORK_PRESENTATION_GENERATOR = previousGenerator;
+  }
+});
+
 test("生成目录之外的声明输出仍作为独立路径校验", async () => {
   const { host } = await harness();
   const result = (await generateArtifactFiles(

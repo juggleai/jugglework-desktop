@@ -11,6 +11,7 @@ The workbench SHALL expose private AI review, explicit comment/review publishing
 - **AND** copying AI findings into a review draft remains private until the final Publish action
 - **AND** a PR update while composing blocks publication of the outdated draft
 - **AND** changing organization dismisses dialogs and prevents late task navigation for the previous organization
+- **AND** the AI review dialog lists the review task and any linked fix task for the selected pull request without automatically navigating away
 
 #### Scenario: Match native layout
 - **WHEN** review controls are displayed on compact or wide windows

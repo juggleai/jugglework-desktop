@@ -1,5 +1,6 @@
 import type { FilePartInput } from "@opencode-ai/sdk/v2/client";
 import type { ComposerPart } from "@/app/types";
+import { GENERIC_BINARY_MIME, resolveAttachmentMimeFromFilename } from "./attachment-mime";
 
 function encodeFilePath(path: string) {
   return path.replace(/\\/g, "/").split("/").map(encodeURIComponent).join("/");
@@ -29,5 +30,10 @@ export function composerFilePartToPromptPart(
     : joinWorkspaceRelativePath(workspaceRoot, path);
   if (!absolute) return null;
   const filename = path.replace(/\\/g, "/").split("/").filter(Boolean).at(-1) ?? "file";
-  return { type: "file", mime: "text/plain", url: toFileUrl(absolute), filename };
+  return {
+    type: "file",
+    mime: resolveAttachmentMimeFromFilename(filename) ?? GENERIC_BINARY_MIME,
+    url: toFileUrl(absolute),
+    filename,
+  };
 }

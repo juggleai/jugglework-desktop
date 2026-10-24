@@ -9,6 +9,8 @@ The connected Code Review workbench can only inspect PRs. Members need to analyz
 - Run cancellable, model-selectable AI analysis on bounded PR context in a tool-denied session, persist private findings, and link its transcript.
 - Create normal workspace repair tasks from selected server-owned findings, carrying repository/revision verification and explicit no-push instructions.
 - Add native review dialogs, findings selection, private-to-published review drafts, PR status menus, local sidebar pinning, GitHub shortcuts, and recovery states.
+- Associate review and fix tasks with the pull request, use predictable repository/PR titles, and reuse the review task across revisions instead of creating duplicate opaque sessions.
+- Enrich AI review with bounded repository context read from the exact PR revision when the current local workspace matches the GitHub repository, including applicable `AGENTS.md` guidance, without granting the model write or shell tools.
 
 ## Capabilities
 

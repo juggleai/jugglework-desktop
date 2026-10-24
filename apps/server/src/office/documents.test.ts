@@ -73,7 +73,10 @@ async function fixture(
       "doc_batch_execute",
     ],
     failCreateSave: false,
+    createSaveGate: undefined as (() => Promise<void>) | undefined,
     createdTemporaryPaths: [] as string[],
+    createSaveTargets: [] as string[],
+    createdSequence: 0,
     toolCalls: [] as string[],
     saveCalls: [] as string[],
     saveGate: undefined as (() => Promise<void>) | undefined,
@@ -118,14 +121,16 @@ async function fixture(
       state.toolCalls.push(name);
       await state.queryGate?.();
       if (name === "create_doc" || name === "create_slide") {
-        const temporaryPath = join(root, `${name}-${state.createdTemporaryPaths.length}.tmp`);
+        const temporaryPath = join(root, `${name}-${state.createdSequence++}.tmp`);
         await writeFile(temporaryPath, "temporary model");
         state.createdTemporaryPaths.push(temporaryPath);
         return { file_id: `created_${name}`, file_path: temporaryPath };
       }
       if (name === "save_file") {
         const target = String(args.file_path);
+        state.createSaveTargets.push(target);
         await writeFile(target, "partial model");
+        await state.createSaveGate?.();
         if (state.failCreateSave) throw new Error("create save failed");
         return { success: true };
       }
@@ -162,7 +167,7 @@ async function fixture(
         exists: false,
       };
       files.set(path, file);
-      return { absolutePath: join(root, path), file };
+      return { absolutePath: join(root, path), file, workspaceRoot: root };
     },
     onSaved: async (_workspace, path) => {
       state.saved.push(path);
@@ -266,6 +271,60 @@ test("创建保存失败会关闭临时模型并清理目标和 SDK 临时文件
     code: "ENOENT",
   });
   expect(f.state.saved).toEqual([]);
+});
+
+test("创建拒绝解析到工作区外的 symlink 父目录", async () => {
+  const f = await fixture();
+  const outside = await mkdtemp(join(tmpdir(), "jugglework-office-outside-"));
+  cleanups.push(() => rm(outside, { recursive: true, force: true }));
+  await symlink(outside, join(f.root, "外部目录"), "dir");
+
+  await expect(
+    f.documents.create("ws", "ses_A", "外部目录/越界.pptx"),
+  ).rejects.toMatchObject({ code: "path_escape" });
+  await expect(access(join(outside, "越界.pptx"))).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+  expect(f.state.toolCalls).toEqual([]);
+});
+
+test("引擎失败期间外部创建最终文件不会被清理", async () => {
+  const f = await fixture();
+  const target = join(f.root, "竞态.pptx");
+  f.state.failCreateSave = true;
+  f.state.createSaveGate = async () => {
+    await writeFile(target, "external content", { flag: "wx" });
+  };
+
+  await expect(
+    f.documents.create("ws", "ses_A", "竞态.pptx"),
+  ).rejects.toThrow("create save failed");
+  expect(await readFile(target, "utf8")).toBe("external content");
+  await expect(access(f.state.createSaveTargets[0]!)).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+  expect(f.state.saved).toEqual([]);
+});
+
+test("两个并发创建同一路径仅发布一个且不互相清理", async () => {
+  const f = await fixture();
+  const results = await Promise.allSettled([
+    f.documents.create("ws", "ses_A", "并发.pptx"),
+    f.documents.create("ws", "ses_A", "并发.pptx"),
+  ]);
+
+  expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+  const rejected = results.find((result) => result.status === "rejected");
+  expect(rejected).toMatchObject({
+    status: "rejected",
+    reason: { code: "file_exists" },
+  });
+  expect(await readFile(join(f.root, "并发.pptx"), "utf8")).toBe(
+    "partial model",
+  );
+  for (const path of f.state.createSaveTargets)
+    await expect(access(path)).rejects.toMatchObject({ code: "ENOENT" });
+  expect(f.state.saved).toEqual(["并发.pptx"]);
 });
 
 test("系统打开按真实路径和硬链接复用模型，其他工作区及聊天不能建立第二个写模型", async () => {

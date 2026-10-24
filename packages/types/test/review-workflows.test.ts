@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { reviewMutationInputSchema, reviewPullRequestActionInputSchema, reviewFixInputSchema, reviewRelationshipSchema } from "../src/reviews";
+import { reviewMutationInputSchema, reviewPullRequestActionInputSchema, reviewFixInputSchema, reviewRelationshipSchema, reviewRunSchema } from "../src/reviews";
 
 test("review inbox relationships include recently merged pull requests", () => {
   expect(reviewRelationshipSchema.safeParse("recently_merged").success).toBe(true);
@@ -32,4 +32,10 @@ test("pull request actions use a fixed allowlist and revision guard", () => {
   expect(reviewPullRequestActionInputSchema.safeParse({ ...input, action: "delete_repository" }).success).toBe(false);
   expect(reviewPullRequestActionInputSchema.safeParse({ ...input, action: "close", mergeMethod: "squash" }).success).toBe(false);
   expect(reviewPullRequestActionInputSchema.safeParse({ ...input, capability: "arbitrary_tool" }).success).toBe(false);
+});
+
+test("review runs retain bounded revision-scoped history without nested histories", () => {
+  const snapshot = { id: crypto.randomUUID(), headRevision: "a".repeat(40), status: "completed", createdAt: new Date().toISOString(), partial: false, sessionId: "review-session", fixTasks: [{ sessionId: "fix", findingIds: ["finding-1"], createdAt: new Date().toISOString() }] };
+  expect(reviewRunSchema.safeParse({ ...snapshot, reviewId: "review", history: [snapshot] }).success).toBe(true);
+  expect(reviewRunSchema.safeParse({ ...snapshot, reviewId: "review", history: [{ ...snapshot, history: [] }] }).success).toBe(false);
 });

@@ -37,12 +37,12 @@ Convert the user's request and any attached source file into one compact JSON ob
 
 ## Generate
 
-Call `jugglework_artifact_generate` exactly once. Use the absolute `generate-presentation.mjs` path next to this `SKILL.md`, not a copied script and not a relative path.
+Call `jugglework_artifact_generate` exactly once. Use the host-owned `jugglework:presentation-generator` program alias. The host resolves that alias to the bundled runtime and trusted generator; do not use `node`, a copied script, a relative path, or any other executable.
 
 ```json
 {
-  "program": "node",
-  "args": ["<absolute-skill-directory>/generate-presentation.mjs", "--spec-json", "<compact-json>", "--output", "<outputName>"],
+  "program": "jugglework:presentation-generator",
+  "args": ["--spec-json", "<compact-json>", "--output", "<outputName>"],
   "outputs": ["<outputName>"],
   "timeoutMs": 60000
 }

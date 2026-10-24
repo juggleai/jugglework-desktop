@@ -57,3 +57,21 @@ test("cancel closes without submission and invalid submission stays open", async
   await act(async () => { view!.root.findAllByType("button").find((button) => button.children.includes("Cancel"))!.props.onClick(); });
   expect(onOpenChange).toHaveBeenCalledWith(false);
 });
+
+test("submission rejection keeps the dialog open and displays the error", async () => {
+  const onSubmit = mock(async () => { throw new Error("Session is busy"); });
+  const onOpenChange = mock(() => undefined);
+  await act(async () => {
+    view = TestRenderer.create(<PresentationDialog open currentFile={null} onOpenChange={onOpenChange} onSubmit={onSubmit} />);
+  });
+  await act(async () => {
+    field("Presentation purpose").props.onChange({ target: { value: "Board update" } });
+    field("Presentation audience").props.onChange({ target: { value: "Board" } });
+    field("Presentation outline").props.onChange({ target: { value: "Results and next steps" } });
+  });
+  await act(async () => { await view!.root.findByType("form").props.onSubmit({ preventDefault() {} }); });
+
+  expect(onSubmit).toHaveBeenCalledTimes(1);
+  expect(onOpenChange).not.toHaveBeenCalled();
+  expect(view!.root.findByProps({ role: "alert" }).children.join("")).toContain("Session is busy");
+});

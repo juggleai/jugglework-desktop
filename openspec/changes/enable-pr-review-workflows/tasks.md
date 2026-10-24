@@ -12,3 +12,9 @@
 - [x] Verify contracts, provider writes, operation replay, private AI results, cancellation, stale revisions, and UI confirmation with focused tests (70 tests passed).
 - [x] Run app/server/type checks and production builds.
 - [x] Validate OpenSpec and inspect the updated local development UI; verify real connector comment/review capabilities and workflow reads, and inspect publish/fix dialogs with isolated example data without publishing live GitHub content.
+
+## PR-associated review task refinement
+- [x] Add predictable bounded PR review task titles and reuse one review session across reruns and revisions.
+- [x] Preserve bounded revision-scoped run history and expose related review/fix tasks in the PR workflow dialog.
+- [x] Add bounded exact-revision local repository context with Git remote verification and applicable `AGENTS.md` guidance while retaining deny-all model tools.
+- [x] Verify title truncation, session reuse, history, repository mismatch degradation, exact-revision context, UI navigation, and existing publish/fix revision guards (37 focused tests passed; app/server/shared-types checks passed).

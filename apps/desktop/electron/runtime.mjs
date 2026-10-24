@@ -1103,7 +1103,15 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     }
 
     // Inject user env vars so the server and managed OpenCode inherit them.
-    const serverEnv = await buildChildEnv({});
+    const trustedPresentationGenerator = app.isPackaged
+      ? path.join(process.resourcesPath, "skills", "public-skills", "presentation-generator", "generate-presentation.mjs")
+      : path.resolve(__runtimeDir, "..", "resources", "skills", "public-skills", "presentation-generator", "generate-presentation.mjs");
+    const serverEnv = await buildChildEnv({
+      // The OpenCode plugin accepts only a fixed alias and resolves it through
+      // these host-owned absolute paths. User PATH contents are never required.
+      JUGGLEWORK_NODE_RUNTIME: process.execPath,
+      JUGGLEWORK_PRESENTATION_GENERATOR: trustedPresentationGenerator,
+    });
     Object.assign(process.env, serverEnv);
 
     // Once the embedded server has a persisted registry, it is the source of

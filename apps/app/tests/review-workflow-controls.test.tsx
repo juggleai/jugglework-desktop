@@ -66,6 +66,20 @@ test("selected findings create a fix task and navigate to the returned session",
   expect(publish).not.toHaveBeenCalled();
 });
 
+test("shows deduplicated PR-related review and historical fix tasks", async () => {
+  run = {
+    id: crypto.randomUUID(), reviewId: review.id, headRevision: head, status: "completed", createdAt: new Date().toISOString(), partial: false,
+    sessionId: "review-session", fixSessionId: "latest-fix", analysis: { summary: "Done", findings: [] },
+    history: [{ id: crypto.randomUUID(), headRevision: "b".repeat(40), status: "completed", createdAt: new Date().toISOString(), partial: false, sessionId: "review-session", fixSessionId: "old-fix", analysis: { summary: "Old", findings: [] } }],
+  };
+  await render();
+  await act(async () => { button("Review with JuggleWork").props.onClick(); });
+  expect(view.root.findByProps({ "data-testid": "review-related-tasks" })).toBeTruthy();
+  await act(async () => { button("Open review task").props.onClick(); });
+  expect(openSession).toHaveBeenCalledWith("review-session");
+  expect(view.root.findAllByType("button").filter((item) => item.children.some((child) => typeof child === "string" && child.startsWith("Open fix task")))).toHaveLength(2);
+});
+
 test("findings for an old PR revision cannot be published or fixed", async () => {
   run = { id: crypto.randomUUID(), reviewId: review.id, headRevision: "b".repeat(40), status: "completed", createdAt: new Date().toISOString(), partial: false, analysis: { summary: "Old revision", findings: [{ id: "finding-1", priority: 1, title: "Old bug", body: "Impact" }] } };
   await render();

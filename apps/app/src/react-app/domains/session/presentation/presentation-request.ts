@@ -1,7 +1,6 @@
 import type { ComposerDraft } from "@/app/types";
 
 export const PRESENTATION_REQUEST_VERSION = 1 as const;
-export const PRESENTATION_SKILL_NAME = "presentation-generator";
 export const PRESENTATION_MIN_SLIDES = 1;
 export const PRESENTATION_MAX_SLIDES = 30;
 
@@ -92,10 +91,11 @@ export function buildPresentationPrompt(value: unknown): string {
     ? `Use the attached structured file part named ${JSON.stringify(request.currentFile.name)} as source material.`
     : "Use this session's conversation as the source material; no current file was selected.";
   return [
-    "Create one editable PowerPoint presentation using the bundled presentation-generator skill.",
+    "Create one editable PowerPoint presentation using JuggleWork's bundled presentation generator.",
     source,
     "Do not install packages, call Office lifecycle tools, handcraft an unvalidated artifact, or use artifact.register_outputs.",
-    "First turn the request into the skill's bounded version-1 slide JSON specification, then invoke jugglework_artifact_generate exactly once as documented by the skill.",
+    "First turn the request into one compact JSON object with exactly: version=1; template=executive, editorial, or minimal; outputName as a safe .pptx filename; and slides as 1-30 objects containing title, optional subtitle, and optional bullets.",
+    "Invoke jugglework_artifact_generate exactly once with program='jugglework:presentation-generator', args=['--spec-json', '<compact-json>', '--output', '<outputName>'], outputs=['<outputName>'], and timeoutMs=60000.",
     "The generator must write the requested PPTX into JUGGLEWORK_ARTIFACT_DIR. Return the delivered PPTX and no second PPTX.",
     "Presentation request:",
     JSON.stringify(request, null, 2),
@@ -112,7 +112,6 @@ export function createPresentationDraft(value: unknown): ComposerDraft {
     attachments: [],
     parts: [
       { type: "text", text: prompt },
-      { type: "skill", name: PRESENTATION_SKILL_NAME },
       ...(request.currentFile ? [{ type: "file" as const, path: request.currentFile.path, label: request.currentFile.name }] : []),
     ],
   };

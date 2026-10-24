@@ -2,6 +2,16 @@ import type { FilePartInput, TextPartInput } from "@opencode-ai/sdk/v2/client";
 
 import type { ComposerAttachment } from "../../../../app/types";
 import { joinWorkspaceRelativePath, toFileUrl } from "./prompt-file-parts";
+import {
+  DOCX_MIME,
+  extensionFromFilename,
+  isOfficeMime,
+  normalizedMime,
+  PPTX_MIME,
+  resolveAttachmentMime,
+  resolveAttachmentMimeFromFilename,
+  XLSX_MIME,
+} from "./attachment-mime";
 
 type AttachmentKind = "image" | "file";
 
@@ -13,11 +23,6 @@ type AttachmentFileMetadata = {
   kind: AttachmentKind;
   readable: boolean;
 };
-
-const GENERIC_BINARY_MIME = "application/octet-stream";
-const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-const PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
-const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
 type InboxUploadResult = {
   ok: boolean;
@@ -45,40 +50,6 @@ type UploadedChatAttachment = {
 
 const WORKSPACE_INBOX_ROOT = ".opencode/jugglework/inbox";
 
-const EXTENSION_MIME_TYPES: Record<string, string> = {
-  jpg: "image/jpeg",
-  jpeg: "image/jpeg",
-  png: "image/png",
-  gif: "image/gif",
-  webp: "image/webp",
-  pdf: "application/pdf",
-  docx: DOCX_MIME,
-  pptx: PPTX_MIME,
-  xlsx: XLSX_MIME,
-  txt: "text/plain",
-  text: "text/plain",
-  md: "text/markdown",
-  markdown: "text/markdown",
-  csv: "text/csv",
-  tsv: "text/tab-separated-values",
-  json: "application/json",
-  jsonl: "application/json",
-  js: "application/javascript",
-  jsx: "application/javascript",
-  mjs: "application/javascript",
-  cjs: "application/javascript",
-  ts: "text/plain",
-  tsx: "text/plain",
-  css: "text/css",
-  html: "text/html",
-  htm: "text/html",
-  xml: "application/xml",
-  yaml: "text/yaml",
-  yml: "text/yaml",
-  toml: "text/plain",
-  log: "text/plain",
-};
-
 const MIME_FILENAME_EXTENSIONS: Record<string, string> = {
   "image/jpeg": "jpg",
   "image/png": "png",
@@ -100,36 +71,7 @@ const MIME_FILENAME_EXTENSIONS: Record<string, string> = {
   "text/plain": "txt",
 };
 
-function normalizedMime(mimeType: string) {
-  return mimeType.trim().toLowerCase().split(";")[0]?.trim() ?? "";
-}
-
-function isGenericMime(mime: string) {
-  return mime === "" || mime === GENERIC_BINARY_MIME;
-}
-
-function isOfficeMime(mime: string) {
-  return mime === DOCX_MIME || mime === PPTX_MIME || mime === XLSX_MIME;
-}
-
-function extensionFromFilename(filename: string) {
-  const slash = Math.max(filename.lastIndexOf("/"), filename.lastIndexOf("\\"));
-  const basename = filename.slice(slash + 1);
-  const dot = basename.lastIndexOf(".");
-  if (dot <= 0 || dot === basename.length - 1) return "";
-  return basename.slice(dot + 1).toLowerCase();
-}
-
-function mimeFromFilename(filename: string) {
-  const extension = extensionFromFilename(filename);
-  return extension ? EXTENSION_MIME_TYPES[extension] : undefined;
-}
-
-export function resolveAttachmentMime(file: Pick<File, "name" | "type">) {
-  const mime = normalizedMime(file.type);
-  if (!isGenericMime(mime)) return mime;
-  return mimeFromFilename(file.name) ?? GENERIC_BINARY_MIME;
-}
+export { resolveAttachmentMime } from "./attachment-mime";
 
 export function isResolvedAttachmentMimeReadable(mimeType: string) {
   const mime = normalizedMime(mimeType);
@@ -145,7 +87,7 @@ function normalizeFilenameExtension(filename: string, mime: string) {
   if (!preferredExtension) return original;
 
   const extension = extensionFromFilename(original);
-  const extensionMime = extension ? EXTENSION_MIME_TYPES[extension] : undefined;
+  const extensionMime = extension ? resolveAttachmentMimeFromFilename(original) : undefined;
   if (extensionMime === mime) return original;
 
   const strictMime = mime.startsWith("image/") || mime === "application/pdf" || mime === "application/json" || isOfficeMime(mime);

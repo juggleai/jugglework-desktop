@@ -22,6 +22,6 @@
 
 ## 4. Verification
 
-- [ ] 4.1 Run focused Server, App, Electron, generator, artifact-delivery, and Office-selection tests
-- [ ] 4.2 Run relevant type checks and record unrelated baseline failures without modifying unrelated Review work
-- [ ] 4.3 Inspect the final diff to confirm only intended Slides/Office files and the new OpenSpec change are included
+- [x] 4.1 Run focused Server, App, Electron, generator, artifact-delivery, and Office-selection tests
+- [x] 4.2 Run relevant type checks and record unrelated baseline failures without modifying unrelated Review work
+- [x] 4.3 Inspect the final diff to confirm the Slides/Office scope is isolated from the pre-existing Review work retained in the workspace

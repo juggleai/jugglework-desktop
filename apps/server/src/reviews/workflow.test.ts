@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { ApiError } from "../errors.js";
-import { ReviewWorkflow } from "./workflow.js";
+import { ReviewWorkflow, reviewSessionTitle } from "./workflow.js";
 import type { ReviewReadProvider } from "./types.js";
 import type { ReviewDetail, ReviewRun } from "@jugglework/types/reviews";
 import type { WorkspaceInfo } from "../types.js";
@@ -24,6 +24,7 @@ async function setup(overrides: Partial<ConstructorParameters<typeof ReviewWorkf
   let revision = head;
   let fixes = 0;
   let writes = 0;
+  const analyses: Array<{ title: string; sessionId?: string; prompt: string }> = [];
   const provider = {
     executionScope: async () => scope,
     getDetail: async () => ({ ...detail, item: { ...detail.item, headRevision: revision } }),
@@ -33,12 +34,12 @@ async function setup(overrides: Partial<ConstructorParameters<typeof ReviewWorkf
   } as unknown as ReviewReadProvider;
   const options = {
     provider, directory,
-    analyze: async ({ onSession }: Parameters<ConstructorParameters<typeof ReviewWorkflow>[0]["analyze"]>[0]) => { await onSession("session-review"); return JSON.stringify({ summary: "One concrete bug", findings: [{ id: "arbitrary-ai-id", priority: 1, title: "Bug", body: "Concrete impact", path: "src/a.ts", line: 2 }] }); },
+    analyze: async ({ onSession, title, sessionId, prompt }: Parameters<ConstructorParameters<typeof ReviewWorkflow>[0]["analyze"]>[0]) => { analyses.push({ title, sessionId, prompt }); await onSession(sessionId ?? "session-review"); return JSON.stringify({ summary: "One concrete bug", findings: [{ id: "arbitrary-ai-id", priority: 1, title: "Bug", body: "Concrete impact", path: "src/a.ts", line: 2 }] }); },
     createFix: async () => { fixes++; return "session-fix"; },
     ...overrides,
   };
   const instance = new ReviewWorkflow(options); instances.push(instance);
-  return { instance, options, provider, setScope: (value: string) => { scope = value; }, setRevision: (value: string) => { revision = value; }, fixes: () => fixes, writes: () => writes };
+  return { instance, options, provider, analyses, setScope: (value: string) => { scope = value; }, setRevision: (value: string) => { revision = value; }, fixes: () => fixes, writes: () => writes };
 }
 
 async function completed(instance: ReviewWorkflow): Promise<ReviewRun> {
@@ -51,6 +52,29 @@ async function completed(instance: ReviewWorkflow): Promise<ReviewRun> {
 }
 
 describe("Review workflow", () => {
+  test("uses a bounded PR task title and reuses the same review session across revisions", async () => {
+    expect(reviewSessionTitle("team/repo", 12, "A ".repeat(100))).toStartWith("Review repo #12: ");
+    expect([...reviewSessionTitle("team/repo", 12, "A ".repeat(100))]).toHaveLength(80);
+    expect(reviewSessionTitle(`team/${"r".repeat(90)}`, 12, "Title")).toContain("#12:");
+    const state = await setup();
+    await state.instance.start({ ...context, expectedHeadRevision: head });
+    const first = await completed(state.instance);
+    expect(state.analyses[0]).toMatchObject({ title: "Review repo #1: Untrusted PR title", sessionId: undefined });
+    state.setRevision("b".repeat(40));
+    await state.instance.start({ ...context, expectedHeadRevision: "b".repeat(40) });
+    const second = await completed(state.instance);
+    expect(state.analyses[1]?.sessionId).toBe("session-review");
+    expect(second.sessionId).toBe("session-review");
+    expect(second.history?.at(-1)).toMatchObject({ id: first.id, headRevision: head, status: "completed" });
+  });
+
+  test("adds bounded repository context to the untrusted review payload", async () => {
+    const state = await setup({ repositoryContext: async () => ({ matched: true, partial: false, note: "exact revision", guidance: [{ path: "AGENTS.md", content: "Review carefully" }], files: [{ path: "src/a.ts", content: "unsafe()" }] }) });
+    await state.instance.start({ ...context, expectedHeadRevision: head });
+    await completed(state.instance);
+    expect(state.analyses[0]?.prompt).toContain('"note":"exact revision"');
+    expect(state.analyses[0]?.prompt).toContain('"path":"AGENTS.md"');
+  });
   test("AI findings remain private, persist across restart, and stay isolated to the authorizing member", async () => {
     const state = await setup();
     await state.instance.start({ ...context, expectedHeadRevision: head });
@@ -80,6 +104,25 @@ describe("Review workflow", () => {
     await expect(state.instance.fix({ ...input, findingIds: ["forged"] })).rejects.toMatchObject({ code: "review_findings_invalid" });
     state.setRevision("b".repeat(40));
     await expect(state.instance.fix(input)).rejects.toMatchObject({ code: "review_revision_changed" });
+  });
+
+  test("retains and reuses separate fix tasks for different finding selections", async () => {
+    let next = 0;
+    const state = await setup({
+      analyze: async ({ onSession }) => { await onSession("session-review"); return JSON.stringify({ summary: "Two bugs", findings: [
+        { id: "one", priority: 1, title: "One", body: "First", path: "src/a.ts", line: 2 },
+        { id: "two", priority: 1, title: "Two", body: "Second", path: "src/a.ts", line: 2 },
+      ] }); },
+      createFix: async () => `fix-${++next}`,
+    });
+    await state.instance.start({ ...context, expectedHeadRevision: head });
+    const run = await completed(state.instance);
+    const first = { ...context, runId: run.id, expectedHeadRevision: head, findingIds: ["finding-1"] };
+    const second = { ...first, findingIds: ["finding-2"] };
+    expect(await state.instance.fix(first)).toEqual({ sessionId: "fix-1" });
+    expect(await state.instance.fix(second)).toEqual({ sessionId: "fix-2" });
+    expect(await state.instance.fix(first)).toEqual({ sessionId: "fix-1" });
+    expect((await state.instance.latest(context)).run?.fixTasks).toHaveLength(2);
   });
 
   test("invalid AI locations fail instead of presenting invented findings", async () => {

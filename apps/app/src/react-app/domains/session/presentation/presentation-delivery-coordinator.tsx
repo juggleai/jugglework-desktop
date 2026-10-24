@@ -7,33 +7,37 @@ import {
   presentationDeliveryTerminal,
   resolvePresentationDelivery,
 } from "./presentation-delivery";
+import { getPendingPresentationTurnIds, usePresentationPendingStore } from "./presentation-pending-store";
 
 export function PresentationDeliveryCoordinator({
+  workspaceId,
   sessionId,
-  turnId,
   onOpenTarget,
-  onFinished,
 }: {
+  workspaceId: string;
   sessionId: string;
-  turnId: string | null;
   onOpenTarget?: (target: OpenTarget, options?: OpenTargetOptions, sessionId?: string) => void;
-  onFinished: (turnId: string) => void;
 }) {
   const deliveries = useFileDeliveries();
+  const turnIds = usePresentationPendingStore((state) => getPendingPresentationTurnIds(state, workspaceId, sessionId));
+  const remove = usePresentationPendingStore((state) => state.remove);
 
   React.useEffect(() => {
-    if (!turnId) return;
-    const match = resolvePresentationDelivery(deliveries?.data, sessionId, turnId);
-    if (match) {
-      if (!onOpenTarget) return;
-      if (consumePresentationDelivery(sessionId, turnId, match.artifactId)) {
-        onOpenTarget(match.target, { auto: true, intent: "presentation-creation" }, sessionId);
+    for (const turnId of turnIds) {
+      const match = resolvePresentationDelivery(deliveries?.data, sessionId, turnId);
+      if (match) {
+        if (!onOpenTarget) continue;
+        if (consumePresentationDelivery(workspaceId, sessionId, turnId, match.artifactId)) {
+          onOpenTarget(match.target, { auto: true, intent: "presentation-creation" }, sessionId);
+        }
+        remove(workspaceId, sessionId, turnId);
+        continue;
       }
-      onFinished(turnId);
-      return;
+      if (presentationDeliveryTerminal(deliveries?.data, sessionId, turnId)) {
+        remove(workspaceId, sessionId, turnId);
+      }
     }
-    if (presentationDeliveryTerminal(deliveries?.data, sessionId, turnId)) onFinished(turnId);
-  }, [deliveries?.data, onFinished, onOpenTarget, sessionId, turnId]);
+  }, [deliveries?.data, onOpenTarget, remove, sessionId, turnIds, workspaceId]);
 
   return null;
 }

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, realpath, rm, stat } from "node:fs/promises";
-import { dirname, isAbsolute, resolve } from "node:path";
+import { constants } from "node:fs";
+import { copyFile, lstat, mkdir, open, realpath, rm, stat } from "node:fs/promises";
+import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import type { FileArtifact } from "@jugglework/types/file-artifacts";
 import {
   getOfficeDocumentKind,
@@ -75,6 +76,43 @@ function sameFileIdentity(left: FileIdentity, right: FileIdentity): boolean {
   );
 }
 
+function isWithin(root: string, path: string): boolean {
+  const child = relative(root, path);
+  return child !== ".." && !child.startsWith(`..${sep}`) && !isAbsolute(child);
+}
+
+/** 缺失目标创建前后都核对真实父目录，不能经工作区内 symlink 写到外部。 */
+async function resolveCreateTarget(workspaceRoot: string, path: string) {
+  const lexicalRoot = resolve(workspaceRoot);
+  const lexicalTarget = resolve(path);
+  if (!isWithin(lexicalRoot, lexicalTarget) || lexicalTarget === lexicalRoot)
+    throw new ApiError(400, "path_escape", "目标文件必须位于当前工作区内");
+
+  const realRoot = await realpath(lexicalRoot);
+  const parent = dirname(lexicalTarget);
+  let ancestor = parent;
+  for (;;) {
+    try {
+      const realAncestor = await realpath(ancestor);
+      if (!isWithin(realRoot, realAncestor))
+        throw new ApiError(400, "path_escape", "目标文件必须位于当前工作区内");
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      const next = dirname(ancestor);
+      if (next === ancestor)
+        throw new ApiError(400, "path_escape", "无法确认目标文件的父目录");
+      ancestor = next;
+    }
+  }
+
+  await mkdir(parent, { recursive: true });
+  const realParent = await realpath(parent);
+  if (!isWithin(realRoot, realParent))
+    throw new ApiError(400, "path_escape", "目标文件必须位于当前工作区内");
+  return resolve(realParent, basename(lexicalTarget));
+}
+
 /** 单一 Server 管理的 Office 会话，页面先创建模型，所有保存绑定原路径。 */
 export class OfficeDocuments {
   private readonly documents = new Map<string, DocumentRecord>();
@@ -90,7 +128,11 @@ export class OfficeDocuments {
         workspaceId: string,
         path: string,
         allowMissing?: boolean,
-      ) => Promise<{ absolutePath: string; file: FileArtifact }>;
+      ) => Promise<{
+        absolutePath: string;
+        file: FileArtifact;
+        workspaceRoot?: string;
+      }>;
       onSaved: (workspaceId: string, path: string) => Promise<void>;
       prepareSave?: (document: OfficeDocumentSession) => Promise<void>;
       readSelection?: (document: OfficeDocumentSession) => Promise<unknown>;
@@ -336,6 +378,8 @@ export class OfficeDocuments {
         "file_exists",
         "目标文件已存在，请打开编辑或使用新文件名",
       );
+    if (!resolved.workspaceRoot)
+      throw new ApiError(400, "local_workspace_required", "创建 Office 文件需要本机工作区");
     const createTool = kind === "doc" ? "create_doc" : "create_slide";
     const readyTool = CONTENT_QUERY[kind];
     const availableTools = new Set(
@@ -347,14 +391,36 @@ export class OfficeDocuments {
         "office_creation_unavailable",
         `当前 Office 引擎不支持创建 ${kind === "doc" ? "DOCX" : "PPTX"}`,
       );
-    await mkdir(dirname(resolved.absolutePath), { recursive: true });
-    const created = await this.options.engine.tool(createTool, {});
+    const targetPath = await resolveCreateTarget(
+      resolved.workspaceRoot,
+      resolved.absolutePath,
+    );
+    const extension = kind === "doc" ? ".docx" : ".pptx";
+    const stagingPath = resolve(
+      dirname(targetPath),
+      `.${randomUUID()}-${basename(targetPath, extension)}${extension}`,
+    );
+    const reservation = await open(stagingPath, "wx", 0o600);
+    await reservation.close();
+    let created: Record<string, unknown>;
+    try {
+      created = await this.options.engine.tool(createTool, {});
+    } catch (error) {
+      await rm(stagingPath, { force: true }).catch(() => undefined);
+      throw error;
+    }
     const fileId =
       typeof created.file_id === "string" ? created.file_id : undefined;
     const temporaryPath =
       typeof created.file_path === "string" ? created.file_path : undefined;
     if (!fileId) {
-      if (temporaryPath) await rm(temporaryPath, { force: true });
+      if (
+        temporaryPath &&
+        resolve(temporaryPath) !== resolve(targetPath) &&
+        resolve(temporaryPath) !== resolve(stagingPath)
+      )
+        await rm(temporaryPath, { force: true }).catch(() => undefined);
+      await rm(stagingPath, { force: true }).catch(() => undefined);
       throw new Error("创建文档没有返回模型 ID");
     }
     let closed = false;
@@ -376,19 +442,36 @@ export class OfficeDocuments {
       }
       await this.options.engine.tool("save_file", {
         file_id: fileId,
-        file_path: resolved.absolutePath,
+        file_path: stagingPath,
       });
+      const output = await lstat(stagingPath);
+      if (output.isSymbolicLink() || !output.isFile() || output.size === 0)
+        throw new Error("Office 引擎没有生成有效文件");
       await this.options.engine.close(fileId, true);
       closed = true;
-      if (temporaryPath && resolve(temporaryPath) !== resolve(resolved.absolutePath))
-        await rm(temporaryPath, { force: true }).catch(() => undefined);
+      try {
+        await copyFile(stagingPath, targetPath, constants.COPYFILE_EXCL);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "EEXIST")
+          throw new ApiError(
+            409,
+            "file_exists",
+            "目标文件已存在，请打开编辑或使用新文件名",
+          );
+        throw error;
+      }
     } catch (error) {
       if (!closed)
         await this.options.engine.close(fileId, true).catch(() => undefined);
-      await rm(resolved.absolutePath, { force: true }).catch(() => undefined);
-      if (temporaryPath && resolve(temporaryPath) !== resolve(resolved.absolutePath))
-        await rm(temporaryPath, { force: true }).catch(() => undefined);
       throw error;
+    } finally {
+      await rm(stagingPath, { force: true }).catch(() => undefined);
+      if (
+        temporaryPath &&
+        resolve(temporaryPath) !== resolve(targetPath) &&
+        resolve(temporaryPath) !== resolve(stagingPath)
+      )
+        await rm(temporaryPath, { force: true }).catch(() => undefined);
     }
     await this.options.onSaved(workspaceId, resolved.file.relativePath);
     return this.open(workspaceId, sessionId, resolved.file.relativePath);

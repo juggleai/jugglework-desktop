@@ -137,6 +137,7 @@ import { filterVideoSubmissionEligibleModels, MediaGenerationService, videoSubmi
 import { MediaGenerationWorker } from "./media-generation/worker.js";
 import { ReviewReadService } from "./reviews/service.js";
 import { ReviewWorkflow, REVIEW_ANALYSIS_SYSTEM } from "./reviews/workflow.js";
+import { loadReviewRepositoryContext } from "./reviews/repository-context.js";
 import { ConnectGithubReviewProvider } from "./reviews/connect-github-provider.js";
 import { publicVideoGenerationJob } from "./media-generation/types.js";
 import { openAiCompatibleVideoAdapters } from "./media-generation/provider-registry.js";
@@ -1079,7 +1080,7 @@ export async function startServer(config: ServerConfig, options: {
       const file = registry.resolve({ value: String(target.value), name: String(target.name), preview: String(target.preview), exists: target.exists === true,
         size: typeof target.size === "number" ? target.size : undefined, updatedAt: typeof target.updatedAt === "number" ? target.updatedAt : undefined,
         contentType: typeof target.contentType === "string" ? target.contentType : undefined });
-      return { absolutePath: join(workspace.path, file.relativePath), file };
+      return { absolutePath: join(workspace.path, file.relativePath), file, workspaceRoot: workspace.path };
     },
     async onSaved(workspaceId, path) {
       if (localOfficeFiles.owns(workspaceId)) return;
@@ -1179,13 +1180,22 @@ export async function startServer(config: ServerConfig, options: {
   const reviewWorkflow = new ReviewWorkflow({
     provider: reviewProvider,
     directory: join(runtimeStorageDir(config), "review-workflows"),
-    analyze: async ({ workspace, prompt, model, signal, onSession }) => {
+    repositoryContext: loadReviewRepositoryContext,
+    analyze: async ({ workspace, title, sessionId, prompt, model, signal, onSession }) => {
       const client = createWorkspaceOpencodeClient(config, workspace);
       const deadline = AbortSignal.any([signal, AbortSignal.timeout(180_000)]);
-      const created = await client.session.create({ title: "AI code review", permission: [{ permission: "*", pattern: "*", action: "deny" }] }, { signal: deadline });
-      const id = created.data?.id;
-      if (!id) throw new Error("Could not create the AI review task.");
-      await onSession(id);
+      let id = sessionId;
+      if (id) {
+        const existing = await client.session.get({ sessionID: id }, { signal: deadline }).catch(() => null);
+        if (!existing?.data?.id) id = undefined;
+        else if (existing.data.title !== title) await client.session.update({ sessionID: id, title }, { signal: deadline });
+      }
+      if (!id) {
+        const created = await client.session.create({ title, permission: [{ permission: "*", pattern: "*", action: "deny" }] }, { signal: deadline });
+        id = created.data?.id;
+        if (!id) throw new Error("Could not create the AI review task.");
+        await onSession(id);
+      }
       const abort = () => { void client.session.abort({ sessionID: id }).catch(() => undefined); };
       deadline.addEventListener("abort", abort, { once: true });
       try {

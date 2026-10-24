@@ -41,8 +41,8 @@ export function presentationDeliveryTerminal(data: SessionFileArtifacts | undefi
   return status === "ready" || status === "partial" || status === "failed";
 }
 
-export function consumePresentationDelivery(sessionId: string, turnId: string, artifactId: string): boolean {
-  const key = `${sessionId}:${turnId}:${artifactId}`;
+export function consumePresentationDelivery(workspaceId: string, sessionId: string, turnId: string, artifactId: string): boolean {
+  const key = `${workspaceId}:${sessionId}:${turnId}:${artifactId}`;
   if (consumed.has(key)) return false;
   try {
     if (globalThis.localStorage?.getItem(`${STORAGE_PREFIX}${key}`) === "1") return false;
