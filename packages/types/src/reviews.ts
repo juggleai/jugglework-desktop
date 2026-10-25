@@ -38,10 +38,13 @@ export const reviewConnectionStatusSchema = z.object({
   operations: z.object({
     comment: z.boolean(),
     submitReview: z.boolean(),
+    react: z.boolean().optional(),
+    requestReviewers: z.boolean().optional(),
     markDraft: z.boolean(),
     markReady: z.boolean(),
     close: z.boolean(),
     reopen: z.boolean(),
+    edit: z.boolean().optional(),
     merge: z.boolean(),
     enableAutoMerge: z.boolean(),
   }).optional(),
@@ -130,6 +133,7 @@ export const reviewDetailSchema = z.object({
     body: boundedText(100_000),
     baseBranch: boundedText(512),
     headBranch: boundedText(512),
+    reviewers: z.array(reviewAuthorSchema).max(100).optional(),
     mergeable: z.enum(["mergeable", "conflicting", "unknown"]),
     viewerPermission: z.enum(["read", "triage", "write", "maintain", "admin", "unknown"]),
   }),
@@ -249,17 +253,28 @@ export type ReviewErrorDetails = z.infer<typeof reviewErrorDetailsSchema>
 export const reviewMutationInputSchema = z.object({
   requestId: z.string().uuid(),
   expectedHeadRevision: z.string().regex(/^[a-f0-9]{40,64}$/i),
-  kind: z.enum(["comment", "review"]),
+  kind: z.enum(["comment", "review", "reaction"]),
   body: z.string().trim().max(60_000),
   event: z.enum(["COMMENT", "APPROVE", "REQUEST_CHANGES"]).optional(),
+  commentId: z.string().regex(/^[1-9]\d{0,15}$/).optional(),
+  reactionTarget: z.enum(["pull_request", "issue_comment", "pull_request_review_comment"]).optional(),
 }).strict().superRefine((value, ctx) => {
   if (value.kind === "review" && !value.event) ctx.addIssue({ code: "custom", message: "A review decision is required." });
-  if ((value.kind === "comment" || value.event !== "APPROVE") && !value.body) ctx.addIssue({ code: "custom", message: "A comment is required." });
+  if (value.kind !== "review" && value.event) ctx.addIssue({ code: "custom", message: "A review decision is only valid for reviews." });
+  if (value.kind !== "reaction" && (value.commentId !== undefined || value.reactionTarget !== undefined)) ctx.addIssue({ code: "custom", message: "Reaction targets are only valid for reactions." });
+  if (value.kind === "reaction") {
+    if (!value.reactionTarget) ctx.addIssue({ code: "custom", message: "A reaction target is required." });
+    if (value.reactionTarget !== "pull_request" && !value.commentId) ctx.addIssue({ code: "custom", message: "A comment ID is required for comment reactions." });
+    if (value.reactionTarget === "pull_request" && value.commentId !== undefined) ctx.addIssue({ code: "custom", message: "Pull request reactions do not accept a comment ID." });
+    if (!["+1", "-1", "laugh", "hooray", "confused", "heart", "rocket", "eyes"].includes(value.body)) ctx.addIssue({ code: "custom", message: "Unsupported GitHub reaction." });
+  } else if ((value.kind === "comment" || value.event !== "APPROVE") && !value.body) ctx.addIssue({ code: "custom", message: "A comment is required." });
 });
 export const reviewMutationResultSchema = z.object({ ok: z.literal(true) });
 export type ReviewMutationInput = z.infer<typeof reviewMutationInputSchema>;
 
 export const reviewPullRequestActionSchema = z.enum([
+  "edit",
+  "request_reviewers",
   "mark_draft",
   "mark_ready",
   "close",
@@ -271,9 +286,16 @@ export const reviewPullRequestActionInputSchema = z.object({
   requestId: z.string().uuid(),
   expectedHeadRevision: z.string().regex(/^[a-f0-9]{40,64}$/i),
   action: reviewPullRequestActionSchema,
+  title: z.string().trim().min(1).max(1_000).optional(),
+  body: z.string().max(100_000).optional(),
+  reviewers: z.array(z.string().trim().min(1).max(256)).min(1).max(15).optional(),
   mergeMethod: z.enum(["merge", "squash", "rebase"]).optional(),
 }).strict().superRefine((value, ctx) => {
   if (value.action !== "merge" && value.mergeMethod) ctx.addIssue({ code: "custom", message: "Merge method is only valid for merge." });
+  if (value.action === "edit" && value.title === undefined && value.body === undefined) ctx.addIssue({ code: "custom", message: "A title or body is required when editing a pull request." });
+  if (value.action !== "edit" && (value.title !== undefined || value.body !== undefined)) ctx.addIssue({ code: "custom", message: "Title and body are only valid when editing a pull request." });
+  if (value.action === "request_reviewers" && !value.reviewers?.length) ctx.addIssue({ code: "custom", message: "At least one GitHub username is required when requesting reviewers." });
+  if (value.action !== "request_reviewers" && value.reviewers !== undefined) ctx.addIssue({ code: "custom", message: "Reviewers are only valid when requesting reviewers." });
 });
 export const reviewPullRequestActionResultSchema = z.object({ ok: z.literal(true) });
 export type ReviewPullRequestAction = z.infer<typeof reviewPullRequestActionSchema>;

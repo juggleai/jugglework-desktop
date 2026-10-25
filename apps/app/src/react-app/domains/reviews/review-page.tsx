@@ -1,10 +1,9 @@
 /** @jsxImportSource react */
 import { useDeferredValue, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { useQueryClient } from "@tanstack/react-query";
-import { readDenSettings } from "@/app/lib/den";
-import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
+  ArrowUpRight,
   AlertCircle,
   Bot,
   CheckCircle2,
@@ -12,26 +11,55 @@ import {
   ChevronRight,
   Circle,
   Clock3,
+  Columns2,
+  Copy,
   Ellipsis,
+  Filter,
   FileCode2,
+  FileSearch,
+  FolderOpen,
+  GitCommitHorizontal,
   GitPullRequestArrow,
+  ListFilter,
   MessageSquareText,
   LoaderCircle,
   Pin,
+  Pencil,
+  Plus,
   RefreshCw,
   Search,
+  Send,
+  SmilePlus,
   Users,
+  WrapText,
   XCircle,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogTitle } from "@/components/ui/dialog";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { toast } from "sonner";
 import { currentLocale } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { AppNavigationRail } from "@/react-app/shell/app-navigation-rail";
 import { AppInsetSurface } from "@/react-app/shell/app-inset-surface";
 import { AppSecondarySidebarResizeHandle } from "@/react-app/shell/app-secondary-sidebar-resize-handle";
 import { AppSecondarySidebarTopControls } from "@/react-app/shell/app-secondary-sidebar-top-controls";
+import { ListPanelHeader } from "@/react-app/shell/list-panel-header";
 import { useUiStateStore } from "@/react-app/shell/ui-state-store";
 import { appInsetSidebarCssWidth, useWorkspaceShellLayout } from "@/react-app/shell/workspace-shell-layout";
 import type { OpenCreateWorkspace } from "@/react-app/domains/workspace/types";
@@ -82,23 +110,81 @@ const INBOX_SECTIONS: Array<{ value: ReviewRelationship; en: string; zh: string 
   { value: "recently_merged", en: "Recently merged", zh: "最近合并" },
 ];
 
-const TABS: Array<{ value: ReviewDetailTab; en: string; zh: string }> = [
-  { value: "summary", en: "Summary", zh: "摘要" },
-  { value: "changes", en: "Changes", zh: "变更" },
-  { value: "checks", en: "Checks", zh: "检查" },
-  { value: "threads", en: "Threads", zh: "讨论" },
-];
+type ReviewInboxSectionKey = ReviewRelationship | "pinned";
+type ReviewInboxViewMode = "compact" | "detailed";
+
+const PINNED_SECTION = { value: "pinned" as const, en: "Pinned", zh: "置顶" };
+
+const REVIEW_INBOX_PREFERENCES_KEY = "jugglework:review-inbox-preferences";
+
+function readReviewInboxPreferences(): { viewMode: ReviewInboxViewMode; visibleSections: ReviewRelationship[] } {
+  const defaults = { viewMode: "detailed" as const, visibleSections: INBOX_SECTIONS.map((section) => section.value) };
+  try {
+    const value = JSON.parse(localStorage.getItem(REVIEW_INBOX_PREFERENCES_KEY) ?? "null") as {
+      viewMode?: unknown;
+      visibleSections?: unknown;
+    } | null;
+    if (!value) return defaults;
+    const allowedSections = new Set(INBOX_SECTIONS.map((section) => section.value));
+    return {
+      viewMode: value.viewMode === "compact" ? "compact" : "detailed",
+      visibleSections: Array.isArray(value.visibleSections)
+        ? value.visibleSections.filter((section): section is ReviewRelationship => typeof section === "string" && allowedSections.has(section as ReviewRelationship))
+        : defaults.visibleSections,
+    };
+  } catch {
+    return defaults;
+  }
+}
 
 function pinnedStorageKey(workspaceId: string) { return `jugglework:review-pins:${workspaceId}`; }
-function readPinnedReviews(workspaceId: string): string[] {
+type PinnedReviewState = { ids: string[]; reviews: ReviewPreview[] };
+
+function isPinnedReviewSnapshot(value: unknown): value is ReviewPreview {
+  if (!value || typeof value !== "object") return false;
+  const review = value as Partial<ReviewPreview>;
+  return typeof review.id === "string"
+    && typeof review.title === "string"
+    && typeof review.author === "string"
+    && typeof review.authorInitials === "string"
+    && typeof review.owner === "string"
+    && typeof review.repository === "string"
+    && typeof review.number === "number"
+    && Array.isArray(review.labels);
+}
+
+function pinnedReviewSnapshot(review: ReviewPreview): ReviewPreview {
+  return {
+    ...review,
+    body: "",
+    summary: [],
+    files: [],
+    checks: [],
+    threads: [],
+    pinned: true,
+  };
+}
+
+function readPinnedReviews(workspaceId: string): PinnedReviewState {
   try {
     const value = JSON.parse(localStorage.getItem(pinnedStorageKey(workspaceId)) ?? "[]");
-    return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string").slice(0, 100) : [];
-  } catch { return []; }
+    if (Array.isArray(value)) {
+      return { ids: value.filter((item): item is string => typeof item === "string").slice(0, 100), reviews: [] };
+    }
+    if (!value || typeof value !== "object") return { ids: [], reviews: [] };
+    const stored = value as { ids?: unknown; reviews?: unknown };
+    const ids = Array.isArray(stored.ids) ? stored.ids.filter((item): item is string => typeof item === "string").slice(0, 100) : [];
+    const reviews = Array.isArray(stored.reviews) ? stored.reviews.filter(isPinnedReviewSnapshot).filter((review) => ids.includes(review.id)).slice(0, 100) : [];
+    return { ids, reviews };
+  } catch { return { ids: [], reviews: [] }; }
 }
 
 function text(en: string, zh: string) {
   return currentLocale() === "zh" ? zh : en;
+}
+
+function ReviewToolbarTip(props: { label: string; children: ReactNode }) {
+  return <Tooltip><TooltipTrigger render={<span className="inline-flex" />}>{props.children}</TooltipTrigger><TooltipContent hideArrow>{props.label}</TooltipContent></Tooltip>;
 }
 
 export function reviewMatches(review: ReviewPreview, query: string, relationship: "all" | ReviewRelationship) {
@@ -111,21 +197,41 @@ export function reviewMatches(review: ReviewPreview, query: string, relationship
     .includes(normalized);
 }
 
-function ReviewAvatar({ review, size = "md" }: { review: ReviewPreview; size?: "sm" | "md" }) {
+function ReviewAvatar({ review, size = "md" }: { review: ReviewPreview; size?: "xs" | "sm" | "md" }) {
+  const sizeClass = size === "xs" ? "size-5" : size === "sm" ? "size-6" : "size-8";
   if (review.authorAvatarUrl) {
-    return <img src={review.authorAvatarUrl} alt="" className={cn("shrink-0 rounded-full object-cover ring-1 ring-dls-border", size === "sm" ? "size-6" : "size-8")} />;
+    return <img src={review.authorAvatarUrl} alt="" className={cn("shrink-0 rounded-full object-cover ring-1 ring-dls-border", sizeClass)} />;
   }
   return (
     <span className={cn(
       "inline-flex shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-violet-5 to-blue-5 font-semibold text-violet-11 ring-1 ring-violet-7/40",
-      size === "sm" ? "size-6 text-[9px]" : "size-8 text-xs",
+      size === "xs" ? "size-5 text-[8px]" : size === "sm" ? "size-6 text-[9px]" : "size-8 text-xs",
     )} aria-hidden="true">
       {review.authorInitials}
     </span>
   );
 }
 
-function InboxRow({ review, selected, onSelect }: { review: ReviewPreview; selected: boolean; onSelect: () => void }) {
+function GitHubUserAvatar({ name, avatarUrl, size = "md" }: { name: string; avatarUrl?: string; size?: "xs" | "sm" | "md" }) {
+  const sizeClass = size === "xs" ? "size-5 text-[8px]" : size === "sm" ? "size-7 text-[9px]" : "size-9 text-[11px]";
+  const initials = name.split(/[^A-Za-z0-9]+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("") || "GH";
+  if (avatarUrl) return <img src={avatarUrl} alt={name} className={cn("shrink-0 rounded-full object-cover ring-1 ring-dls-border", sizeClass)} />;
+  return <span className={cn("inline-flex shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-violet-5 to-blue-5 font-semibold text-violet-11 ring-1 ring-violet-7/40", sizeClass)} aria-hidden="true">{initials}</span>;
+}
+
+const GITHUB_REACTIONS = [
+  { emoji: "👍", value: "+1" },
+  { emoji: "👎", value: "-1" },
+  { emoji: "😄", value: "laugh" },
+  { emoji: "🎉", value: "hooray" },
+  { emoji: "😕", value: "confused" },
+  { emoji: "❤️", value: "heart" },
+  { emoji: "🚀", value: "rocket" },
+  { emoji: "👀", value: "eyes" },
+] as const;
+
+function InboxRow({ review, selected, viewMode, onSelect }: { review: ReviewPreview; selected: boolean; viewMode: ReviewInboxViewMode; onSelect: () => void }) {
+  const compact = viewMode === "compact";
   return (
     <button
       type="button"
@@ -133,28 +239,32 @@ function InboxRow({ review, selected, onSelect }: { review: ReviewPreview; selec
       data-testid={`review-inbox-item-${review.id}`}
       aria-current={selected ? "page" : undefined}
       className={cn(
-        "group flex w-full items-start gap-2.5 rounded-lg px-2 py-2 text-left transition-colors hover:bg-dls-hover/70",
+        "group flex w-full gap-2 rounded-lg px-2.5 text-left transition-colors hover:bg-dls-hover/70",
+        compact ? "items-center py-1" : "items-start py-1.5",
         selected && "bg-dls-hover/60",
       )}
     >
       <span className="min-w-0 flex-1">
-        <span className="line-clamp-2 text-[15px] font-medium leading-[1.45] text-dls-text">{review.title}</span>
-        <span className="mt-1.5 flex min-w-0 items-center gap-2 text-[13px] text-dls-secondary">
-          <ReviewAvatar review={review} size="sm" />
+        <span className={cn("block font-normal text-dls-text", compact ? "truncate text-[13px] leading-6" : "line-clamp-2 text-[14px] leading-5")}>{review.title}</span>
+        {!compact ? <span className="mt-1 flex min-w-0 items-center gap-1.5 text-[12px] leading-4 text-dls-secondary">
+          <ReviewAvatar review={review} size="xs" />
           <span className="truncate">{review.author}</span>
           <span>·</span>
           <span className="shrink-0">{review.updatedAt}</span>
           {review.draft ? <Badge variant="outline" className="h-4 px-1.5 text-[10px]">{text("Draft", "草稿")}</Badge> : null}
           {review.pinned ? <Pin className="ml-auto size-3 fill-current text-dls-secondary" aria-label={text("Pinned", "已固定")} /> : null}
           {selected ? <span className={cn("size-2 rounded-full bg-blue-9", !review.pinned && "ml-auto")} aria-hidden="true" /> : null}
-        </span>
+        </span> : null}
       </span>
+      {compact && review.draft ? <Badge variant="outline" className="h-4 shrink-0 px-1.5 text-[10px]">{text("Draft", "草稿")}</Badge> : null}
+      {compact && review.pinned ? <Pin className="size-3 shrink-0 fill-current text-dls-secondary" aria-label={text("Pinned", "已固定")} /> : null}
+      {compact && selected ? <span className="size-2 shrink-0 rounded-full bg-blue-9" aria-hidden="true" /> : null}
     </button>
   );
 }
 
 type ReviewInboxSectionState = {
-  relationship: ReviewRelationship;
+  relationship: ReviewInboxSectionKey;
   reviews: ReviewPreview[];
   loading?: boolean;
   refreshing?: boolean;
@@ -167,39 +277,73 @@ type ReviewInboxSectionState = {
 
 function ReviewInbox(props: {
   sections: ReviewInboxSectionState[];
-  expandedSections: ReviewRelationship[];
+  expandedSections: ReviewInboxSectionKey[];
+  pinnedReviews: ReviewPreview[];
+  visibleSections: ReviewRelationship[];
+  viewMode: ReviewInboxViewMode;
   reviewId: string | null;
   query: string;
   onQueryChange: (query: string) => void;
-  onToggleSection: (relationship: ReviewRelationship) => void;
+  onToggleSection: (relationship: ReviewInboxSectionKey) => void;
+  onToggleSectionVisibility: (relationship: ReviewRelationship) => void;
+  onViewModeChange: (viewMode: ReviewInboxViewMode) => void;
   onSelectReview: (reviewId: string) => void;
-  onOpenUrl?: () => void;
 }) {
   const refreshing = props.sections.some((section) => props.expandedSections.includes(section.relationship) && section.refreshing);
+  const sectionDefinitions = props.pinnedReviews.length
+    ? [PINNED_SECTION, ...INBOX_SECTIONS.filter((definition) => props.visibleSections.includes(definition.value))]
+    : INBOX_SECTIONS.filter((definition) => props.visibleSections.includes(definition.value));
   return (
     <aside className={cn(
       "h-full min-h-0 w-full shrink-0 flex-col overflow-hidden border-r border-dls-border bg-[var(--app-secondary-sidebar-bg)] md:flex md:w-[var(--jugglework-left-sidebar-width)]",
       props.reviewId ? "hidden" : "flex",
     )} aria-label={text("Pull request inbox", "拉取请求收件箱")}>
-      <div className="shrink-0 px-5 pb-2 pt-5 mac:pt-7">
-        <div className="flex items-center gap-2">
-          <h1 className="text-[24px] font-semibold tracking-tight text-dls-text">{text("Code Review", "代码审查")}</h1>
+      <ListPanelHeader
+        title={text("Code Review", "代码审查")}
+        searchValue={props.query}
+        searchPlaceholder={text("Search or paste Pull Request URL", "搜索或粘贴 Pull Request 链接")}
+        onSearchChange={props.onQueryChange}
+        onSearchKeyDown={(event) => {
+          if (event.key !== "Escape" || !props.query) return;
+          event.preventDefault();
+          props.onQueryChange("");
+        }}
+        onClearSearch={() => props.onQueryChange("")}
+        showClear={Boolean(props.query)}
+        insetDivider
+        titleEnd={<>
           {refreshing ? <RefreshCw className="size-3 animate-spin text-dls-secondary" aria-label={text("Refreshing", "正在刷新")} /> : null}
-          {props.onOpenUrl ? <Button className="ml-auto" variant="ghost" size="icon-sm" onClick={props.onOpenUrl} aria-label={text("Open pull request URL", "打开拉取请求链接")}><Ellipsis className="size-5" /></Button> : null}
-        </div>
-        <label className="relative mt-5 block">
-          <Search className="absolute left-4 top-1/2 size-5 -translate-y-1/2 text-dls-secondary" />
-          <input
-            value={props.query}
-            onChange={(event) => props.onQueryChange(event.target.value)}
-            placeholder={text("Search or paste Pull Request URL", "搜索或粘贴 Pull Request 链接")}
-            className="h-12 w-full rounded-full border-0 bg-dls-hover pl-12 pr-4 text-[15px] text-dls-text outline-none ring-1 ring-transparent transition placeholder:text-dls-secondary focus:ring-dls-border"
-          />
-        </label>
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-6">
+          <DropdownMenu>
+            <DropdownMenuTrigger render={<Button className="jw-list-panel-icon-button" variant="ghost" size="icon-sm" aria-label={text("Review view options", "代码审查视图选项")} />}>
+              <Ellipsis />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" sideOffset={4} className="w-56 rounded-2xl p-1.5">
+              <DropdownMenuGroup>
+                <DropdownMenuLabel className="px-2.5 py-1.5 text-[12px]">{text("View", "视图")}</DropdownMenuLabel>
+                <DropdownMenuRadioGroup value={props.viewMode} onValueChange={(value) => props.onViewModeChange(value as ReviewInboxViewMode)}>
+                  <DropdownMenuRadioItem value="compact" className="rounded-lg px-2.5 py-1.5 text-[14px] font-normal">{text("Compact", "紧凑")}</DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="detailed" className="rounded-lg px-2.5 py-1.5 text-[14px] font-normal">{text("Detailed", "详细")}</DropdownMenuRadioItem>
+                </DropdownMenuRadioGroup>
+              </DropdownMenuGroup>
+              <DropdownMenuSeparator className="my-1" />
+              <DropdownMenuGroup>
+                <DropdownMenuLabel className="px-2.5 py-1.5 text-[12px]">{text("Sections", "板块")}</DropdownMenuLabel>
+                {INBOX_SECTIONS.map((definition) => <DropdownMenuCheckboxItem
+                  key={definition.value}
+                  checked={props.visibleSections.includes(definition.value)}
+                  onCheckedChange={() => props.onToggleSectionVisibility(definition.value)}
+                  className="rounded-lg px-2.5 py-1.5 pe-8 text-[14px] font-normal"
+                >
+                  {text(definition.en, definition.zh)}
+                </DropdownMenuCheckboxItem>)}
+              </DropdownMenuGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </>}
+      />
+      <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-5 pt-1.5">
         <nav className="space-y-1" aria-label={text("Review sections", "代码审查分组")}>
-          {INBOX_SECTIONS.map((definition) => {
+          {sectionDefinitions.map((definition) => {
             const section = props.sections.find((candidate) => candidate.relationship === definition.value) ?? { relationship: definition.value, reviews: [] };
             const expanded = props.expandedSections.includes(definition.value);
             return <section key={definition.value} aria-labelledby={`review-section-${definition.value}`}>
@@ -208,19 +352,19 @@ function ReviewInbox(props: {
               id={`review-section-${definition.value}`}
               aria-expanded={expanded}
               onClick={() => props.onToggleSection(definition.value)}
-              className="flex min-h-11 w-full items-center gap-1 rounded-lg px-2 text-left text-[15px] font-semibold text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
+              className="flex h-8 w-full items-center gap-1 rounded-lg px-2.5 text-left text-[14px] font-normal text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
             >
               <span>{text(definition.en, definition.zh)}</span>
-              {expanded ? <ChevronDown className="size-4" strokeWidth={2} /> : <ChevronRight className="size-4" strokeWidth={2} />}
+              {expanded ? <ChevronDown className="size-3.5" strokeWidth={2} /> : <ChevronRight className="size-3.5" strokeWidth={2} />}
             </button>
-            {expanded ? <div className="pb-3" role="list">
+            {expanded ? <div className="pb-2" role="list">
               {section.loading ? (
                 <div className="flex min-h-20 items-center justify-center gap-2 text-xs text-dls-secondary"><LoaderCircle className="size-4 animate-spin" />{text("Loading pull requests…", "正在加载拉取请求…")}</div>
               ) : section.error && !section.reviews.length ? (
                 <div className="flex min-h-24 flex-col items-center justify-center px-5 text-center"><AlertCircle className="size-5 text-amber-10" /><p className="mt-2 text-xs font-medium text-dls-text">{text("Pull requests could not be loaded", "无法加载拉取请求")}</p><p className="mt-1 text-xs text-dls-secondary">{section.error}</p><Button variant="outline" size="sm" className="mt-3" onClick={section.onRetry}><RefreshCw />{text("Retry", "重试")}</Button></div>
               ) : section.reviews.length ? <>
                 <div className="space-y-0.5">
-                  {section.reviews.map((review) => <div role="listitem" key={review.id}><InboxRow review={review} selected={review.id === props.reviewId} onSelect={() => props.onSelectReview(review.id)} /></div>)}
+                  {section.reviews.map((review) => <div role="listitem" key={review.id}><InboxRow review={review} selected={review.id === props.reviewId} viewMode={props.viewMode} onSelect={() => props.onSelectReview(review.id)} /></div>)}
                 </div>
                 {section.hasNextPage ? <div className="p-2"><Button variant="outline" size="sm" className="w-full" disabled={section.loadingNextPage} onClick={section.onLoadMore}>{section.loadingNextPage ? <LoaderCircle className="animate-spin" /> : null}{text("Load more", "加载更多")}</Button></div> : null}
               </> : <p className="px-2 pb-2 text-xs leading-5 text-dls-secondary">{props.query.trim() ? text("No matching pull requests", "没有匹配的拉取请求") : text("No pull requests", "暂无 Pull Request")}</p>}
@@ -263,23 +407,26 @@ function ReviewHeader(props: {
   pinned?: boolean;
   onTogglePin?: () => void;
   onChanged?: () => void | Promise<void>;
+  viewSwitcher?: ReactNode;
+  changesTools?: ReactNode;
+  showDetails?: boolean;
 }) {
   const { review, onBack } = props;
   return (
-    <header className="shrink-0 bg-background px-5 pb-3 pt-4 md:px-7 mac:pt-5">
-      <div className="flex flex-wrap items-center gap-3">
-        <Button variant="ghost" size="icon-sm" className="md:hidden" onClick={onBack} aria-label={text("Back to Inbox", "返回收件箱")}><ArrowLeft /></Button>
-        {props.endpoint ? <ReviewHeaderActions endpoint={props.endpoint} review={review} operations={props.operations} pinned={Boolean(props.pinned)} onTogglePin={props.onTogglePin ?? (() => undefined)} onChanged={props.onChanged ?? (() => undefined)} workflowActions={props.actions} /> : <>
-          {review.draft ? <Badge variant="outline" className="h-8 rounded-full px-3 text-xs">{text("Draft", "草稿")}</Badge> : <Badge variant="secondary" className="h-8 rounded-full bg-green-4 px-3 text-xs text-green-11"><GitPullRequestArrow className="mr-1 size-3.5" />Open</Badge>}
-          <div className="min-w-0 text-xs text-dls-secondary"><span>{review.repository}</span> <span>#{review.number}</span></div>
-          <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-2">{props.actions ?? <>
-          <Button variant="outline" disabled title={text("Available after AI Review is connected", "接入 AI Review 后可用")}><Bot />{text("Review with JuggleWork", "使用 JuggleWork 审查")}</Button>
-          <Button disabled title={text("Available after provider write access is connected", "接入平台写权限后可用")}>{text("Submit review", "提交审查")}</Button>
+    <header className="shrink-0 bg-background px-5 pb-4 pt-2 md:px-6 mac:pt-2">
+      <div className="flex items-center gap-2 md:hidden"><Button variant="ghost" size="icon-sm" onClick={onBack} aria-label={text("Back to Inbox", "返回收件箱")}><ArrowLeft /></Button></div>
+      {props.endpoint ? <ReviewHeaderActions endpoint={props.endpoint} review={review} operations={props.operations} pinned={Boolean(props.pinned)} onTogglePin={props.onTogglePin ?? (() => undefined)} onChanged={props.onChanged ?? (() => undefined)} workflowActions={props.actions} viewSwitcher={props.viewSwitcher} changesTools={props.changesTools} showStatus={props.showDetails !== false} /> : <>
+        <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
+          {props.viewSwitcher}
+          <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-2">{props.changesTools}{props.actions ?? <>
+            <Button variant="outline" className="h-8 rounded-full px-3.5 text-sm" disabled title={text("Available after AI Review is connected", "接入 AI Review 后可用")}><Bot />{text("Review with JuggleWork", "使用 JuggleWork 审查")}</Button>
+            <Button className="h-8 rounded-full px-3.5 text-sm" disabled title={text("Available after provider write access is connected", "接入平台写权限后可用")}>{text("Submit review", "提交审查")}</Button>
           </>}</div>
-        </>}
-      </div>
-      <h2 className="mt-5 text-[22px] font-semibold leading-8 tracking-tight text-dls-text">{review.title}</h2>
-      <div className="mt-3 flex min-w-0 flex-wrap items-center gap-2 text-xs text-dls-secondary">
+        </div>
+        {props.showDetails !== false ? <div className="mt-3 flex items-center gap-3">{review.draft ? <Badge variant="outline" className="h-8 rounded-full px-3 text-xs">{text("Draft", "草稿")}</Badge> : <Badge variant="secondary" className="h-8 rounded-full bg-green-4 px-3 text-xs text-green-11"><GitPullRequestArrow className="mr-1 size-3.5" />Open</Badge>}<div className="min-w-0 text-xs text-dls-secondary"><span>{review.repository}</span> <span>#{review.number}</span></div></div> : null}
+      </>}
+      {props.showDetails !== false ? <><h2 className="mt-3 text-[20px] font-semibold leading-7 tracking-tight text-dls-text">{review.title}</h2>
+      <div className="mt-2 flex min-w-0 flex-wrap items-center gap-2 text-xs leading-5 text-dls-secondary">
         <ReviewAvatar review={review} size="sm" />
         <span className="font-medium text-dls-text">{review.author}</span>
         <span>{review.updatedAt}</span>
@@ -288,42 +435,242 @@ function ReviewHeader(props: {
         <span>→</span>
         <span className="font-mono">{review.baseBranch}</span>
         <span className="hidden font-mono text-[10px] xl:inline">{review.headRevision.slice(0, 8)}</span>
-      </div>
+      </div></> : null}
     </header>
   );
 }
 
-function SummaryView({ review, onTabChange }: { review: ReviewPreview; onTabChange: (tab: ReviewDetailTab) => void }) {
-  const failedChecks = review.checks.filter((check) => check.state === "failure");
-  const pendingChecks = review.checks.filter((check) => check.state === "running" || check.state === "queued");
+function SummaryView(props: {
+  review: ReviewPreview;
+  endpoint?: ReturnType<typeof useReviewWorkspaceEndpoint>["endpoint"];
+  operations?: ReviewConnectionStatus["operations"];
+  viewerLogin?: string;
+  viewerAvatarUrl?: string;
+  isOwnPullRequest?: boolean;
+  onChanged?: () => void | Promise<void>;
+  onTabChange: (tab: ReviewDetailTab) => void;
+}) {
+  const { review, onTabChange } = props;
+  const [comment, setComment] = useState("");
+  const [activityFilter, setActivityFilter] = useState<"all" | "commits" | "comments">("all");
+  const [editing, setEditing] = useState(false);
+  const [checksExpanded, setChecksExpanded] = useState(false);
+  const [reviewerOpen, setReviewerOpen] = useState(false);
+  const [reviewerQuery, setReviewerQuery] = useState("");
+  const [editTitle, setEditTitle] = useState(review.title);
+  const [editBody, setEditBody] = useState(review.body);
+  useEffect(() => {
+    setEditTitle(review.title);
+    setEditBody(review.body);
+    setEditing(false);
+    setComment("");
+    setChecksExpanded(false);
+    setReviewerOpen(false);
+    setReviewerQuery("");
+  }, [review.id, review.title, review.body]);
+  const revisionKnown = /^[a-f0-9]{40,64}$/i.test(review.headRevision);
+  const commentMutation = useMutation({
+    retry: false,
+    mutationFn: (body: string) => props.endpoint!.client.publishReview(props.endpoint!.workspaceId, review.id, {
+      requestId: crypto.randomUUID(), expectedHeadRevision: review.headRevision, kind: "comment", body,
+    }),
+    onSuccess: async () => {
+      setComment("");
+      toast.success(text("Comment published to GitHub.", "评论已发布到 GitHub。"));
+      await props.onChanged?.();
+    },
+  });
+  const reactionMutation = useMutation({
+    retry: false,
+    mutationFn: ({ commentId, reaction, target }: { commentId?: string; reaction: string; target: "pull_request" | "issue_comment" | "pull_request_review_comment" }) => props.endpoint!.client.publishReview(props.endpoint!.workspaceId, review.id, {
+      requestId: crypto.randomUUID(), expectedHeadRevision: review.headRevision, kind: "reaction", body: reaction, reactionTarget: target, ...(commentId ? { commentId } : {}),
+    }),
+    onSuccess: async () => {
+      toast.success(text("Emoji response published to GitHub.", "表情回应已发布到 GitHub。"));
+      await props.onChanged?.();
+    },
+    onError: (error) => toast.error(error instanceof Error ? error.message : text("Could not add the reaction.", "添加表情失败。")),
+  });
+  const editMutation = useMutation({
+    retry: false,
+    mutationFn: () => props.endpoint!.client.mutatePullRequest(props.endpoint!.workspaceId, review.id, {
+      requestId: crypto.randomUUID(), expectedHeadRevision: review.headRevision, action: "edit", title: editTitle.trim(), body: editBody,
+    }),
+    onSuccess: async () => {
+      setEditing(false);
+      toast.success(text("Pull request updated.", "Pull Request 已更新。"));
+      await props.onChanged?.();
+    },
+  });
+  const reviewerMutation = useMutation({
+    retry: false,
+    mutationFn: (username: string) => props.endpoint!.client.mutatePullRequest(props.endpoint!.workspaceId, review.id, {
+      requestId: crypto.randomUUID(), expectedHeadRevision: review.headRevision, action: "request_reviewers", reviewers: [username],
+    }),
+    onSuccess: async () => {
+      setReviewerQuery("");
+      setReviewerOpen(false);
+      toast.success(text("Reviewer requested on GitHub.", "已在 GitHub 请求评审人。"));
+      await props.onChanged?.();
+    },
+  });
+  const activityComments = review.threads.flatMap((thread) => thread.comments?.length
+    ? thread.comments.map((item) => ({ ...item, path: thread.path, line: thread.line, decision: thread.reviewDecision }))
+    : [{ id: thread.id, author: thread.author, authorLogin: thread.authorLogin, avatarUrl: thread.authorAvatarUrl, body: thread.body, age: thread.age, path: thread.path, line: thread.line, decision: thread.reviewDecision }]);
+  const mutationError = commentMutation.error ?? reactionMutation.error ?? editMutation.error ?? reviewerMutation.error;
+  // Keep the reviewer picker reachable even when capability discovery returns a
+  // stale/partial operations snapshot. The mutation endpoint remains the source
+  // of truth and will return an actionable error if GitHub rejects the request.
+  const canRequestReviewer = Boolean(props.endpoint && revisionKnown);
+  const requestReviewer = () => {
+    const username = reviewerQuery.trim().replace(/^@/, "");
+    if (!username || !canRequestReviewer || reviewerMutation.isPending) return;
+    reviewerMutation.mutate(username);
+  };
   return (
-    <div className="mx-auto grid w-full max-w-[1240px] gap-8 px-5 pb-12 pt-2 md:px-7 lg:grid-cols-[minmax(0,1fr)_260px] xl:grid-cols-[minmax(0,1fr)_300px]">
-      <article className="min-w-0 pb-12 pt-2 text-[15px] leading-7 text-dls-text">
-        {review.body ? <MarkdownBlock text={review.body} copyCodeBlocks /> : <p className="text-dls-secondary">{text("No pull request description was provided.", "该 Pull Request 没有填写描述。")}</p>}
+    <div className="mx-auto grid w-full max-w-[1160px] items-start gap-6 px-5 pb-10 pt-3 md:px-6 lg:grid-cols-[minmax(0,1fr)_240px] xl:grid-cols-[minmax(0,1fr)_270px]">
+      <article className="min-w-0 pb-10 text-[14px] leading-6 text-dls-text">
+        <section>
+          {review.body ? <div className="[&_.markdown-content>:first-child]:mt-0"><MarkdownBlock text={review.body} copyCodeBlocks /></div> : <p className="text-dls-secondary">{text("No pull request description was provided.", "该 Pull Request 没有填写描述。")}</p>}
+          <div className="mt-4 flex items-center justify-between border-b border-dls-border pb-4">
+            <DropdownMenu>
+              <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" disabled={!props.endpoint || reactionMutation.isPending || !revisionKnown} aria-label={text("Quick reaction", "快速回应")} title={text("Publish an emoji response to GitHub", "向 GitHub 发布表情回应")} />}><SmilePlus /></DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="grid w-72 min-w-72 grid-cols-8 gap-1 overflow-hidden p-1.5">
+                {GITHUB_REACTIONS.map(({ emoji, value }) => <DropdownMenuItem key={value} className="size-8 justify-center p-0 text-base" onClick={() => reactionMutation.mutate({ reaction: value, target: "pull_request" })} aria-label={emoji}>{emoji}</DropdownMenuItem>)}
+              </DropdownMenuContent>
+            </DropdownMenu>
+            {props.isOwnPullRequest ? <Button variant="ghost" size="sm" className="h-8 text-[13px] text-dls-secondary" disabled={!props.operations?.edit || !revisionKnown} onClick={() => setEditing(true)}><Pencil />{text("Edit", "编辑")}</Button> : null}
+          </div>
+        </section>
+
+        <section className="pt-5" aria-labelledby="review-activity-title">
+          <div className="flex items-center justify-between gap-3">
+            <h3 id="review-activity-title" className="text-lg font-semibold tracking-tight">{text("Activity", "活动")}</h3>
+            <DropdownMenu>
+              <DropdownMenuTrigger render={<Button variant="ghost" size="sm" className="h-8 text-[13px] text-dls-secondary" />}><Filter />{activityFilter === "all" ? text("All activity", "全部活动") : activityFilter === "commits" ? text("Commits", "提交") : text("Comments", "评论")}<ChevronDown /></DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => setActivityFilter("all")}>{text("All activity", "全部活动")}</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setActivityFilter("commits")}>{text("Commits", "提交")}</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setActivityFilter("comments")}>{text("Comments and reviews", "评论与评审")}</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+          <div className="mt-3 space-y-2">
+            {activityFilter !== "comments" ? <>
+              <div className="flex min-w-0 items-center gap-2.5 rounded-xl border border-dls-border px-3.5 py-2.5">
+                <GitCommitHorizontal className="size-4 shrink-0 text-dls-secondary" />
+                <span className="min-w-0 flex-1 truncate font-medium">{text("Latest commit on", "最新提交位于")} {review.headBranch}</span>
+                <span className="shrink-0 font-mono text-xs text-dls-secondary">{review.headRevision.slice(0, 7)}</span>
+                <ReviewAvatar review={review} size="xs" /><span className="shrink-0 text-xs text-dls-secondary">{review.updatedAt}</span>
+              </div>
+              <div className="flex min-w-0 items-center gap-2.5 rounded-xl border border-dls-border px-3.5 py-2.5">
+                <GitPullRequestArrow className="size-4 shrink-0 text-green-10" />
+                <span className="min-w-0 flex-1 truncate"><strong>{review.author}</strong> {text("opened this pull request", "打开了此 Pull Request")}</span>
+                <span className="shrink-0 text-xs text-dls-secondary">{review.updatedAt}</span>
+              </div>
+            </> : null}
+            {activityFilter !== "commits" ? activityComments.map((item) => <article key={item.id} className="rounded-xl border border-dls-border bg-background px-3.5 py-3 shadow-sm">
+              <div className="flex min-w-0 items-start gap-2.5">
+                <GitHubUserAvatar name={item.authorLogin ?? item.author} avatarUrl={item.avatarUrl} />
+                <div className="min-w-0 flex-1">
+                  <header className="flex min-w-0 items-center gap-2">
+                    <strong className="min-w-0 truncate text-sm font-semibold text-dls-text">{item.author}</strong>
+                    {item.decision ? <Badge variant="secondary">{item.decision === "approved" ? text("Approved", "已批准") : text("Requested changes", "请求修改")}</Badge> : null}
+                    <DropdownMenu>
+                      <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" className="ml-auto rounded-full text-dls-secondary" aria-label={text("Comment actions", "评论操作")} />}><Ellipsis /></DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={() => { void navigator.clipboard.writeText(item.body); toast.success(text("Comment copied.", "评论已复制。")); }}><Copy />{text("Copy comment", "复制评论")}</DropdownMenuItem>
+                        {item.url ? <DropdownMenuItem onClick={() => window.open(item.url, "_blank", "noopener,noreferrer")}><ArrowUpRight />{text("Open in GitHub", "在 GitHub 中打开")}</DropdownMenuItem> : null}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                    <span className="shrink-0 text-xs text-dls-secondary">{item.age}</span>
+                  </header>
+                  {item.path ? <p className="mt-2 truncate rounded-lg bg-dls-hover px-2.5 py-1 font-mono text-[11px] text-dls-secondary">{item.path}{item.line ? `:${item.line}` : ""}</p> : null}
+                  <p className="mt-1.5 whitespace-pre-wrap text-sm leading-6 text-dls-text">{item.body}</p>
+                  <div className="mt-2 flex items-center">
+                    <DropdownMenu>
+                      <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" className="rounded-full text-dls-secondary" disabled={!props.endpoint || reactionMutation.isPending || !revisionKnown} aria-label={text("Add emoji response", "添加表情回应")} title={text("Publish an emoji response to GitHub", "向 GitHub 发布表情回应")} />}>
+                        {reactionMutation.isPending && reactionMutation.variables?.commentId === item.id ? <LoaderCircle className="animate-spin" /> : <SmilePlus />}
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="start" className="grid w-72 min-w-72 grid-cols-8 gap-1 overflow-hidden p-1.5">
+                        {GITHUB_REACTIONS.map(({ emoji, value }) => <DropdownMenuItem key={value} className="size-8 justify-center p-0 text-base" onClick={() => reactionMutation.mutate({ commentId: item.id, reaction: value, target: item.path ? "pull_request_review_comment" : "issue_comment" })} aria-label={emoji}>{emoji}</DropdownMenuItem>)}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+                </div>
+              </div>
+            </article>) : null}
+            {activityFilter === "comments" && !activityComments.length ? <p className="rounded-2xl border border-dashed border-dls-border px-4 py-6 text-center text-sm text-dls-secondary">{text("No comments or reviews yet.", "暂无评论或评审。")}</p> : null}
+          </div>
+        </section>
+
+        <section className="mt-4 rounded-xl border border-dls-border p-3.5" aria-label={text("Leave a comment", "发表评论")}>
+          <div className="flex items-start gap-3">
+            <GitHubUserAvatar name={props.viewerLogin ?? review.author} avatarUrl={props.viewerAvatarUrl ?? (props.isOwnPullRequest ? review.authorAvatarUrl : undefined)} size="sm" />
+            <textarea className="min-h-16 flex-1 resize-y bg-transparent text-sm leading-6 outline-none placeholder:text-dls-secondary" placeholder={text("Leave a comment", "发表评论")} value={comment} onChange={(event) => setComment(event.target.value)} disabled={!props.operations?.comment || commentMutation.isPending} maxLength={60_000} />
+          </div>
+          <div className="mt-2.5 flex justify-end"><Button size="sm" className="h-8" disabled={!props.operations?.comment || !revisionKnown || !comment.trim() || commentMutation.isPending} onClick={() => commentMutation.mutate(comment.trim())}>{commentMutation.isPending ? <LoaderCircle className="animate-spin" /> : <Send />}{text("Comment", "评论")}</Button></div>
+        </section>
+        {mutationError ? <p role="alert" className="mt-3 rounded-xl bg-red-3 px-3 py-2 text-sm text-red-11">{mutationError instanceof Error ? mutationError.message : String(mutationError)}</p> : null}
+
+        <Dialog open={editing} onOpenChange={(open) => { if (!editMutation.isPending) setEditing(open); }}>
+          <DialogContent className="flex max-h-[88vh] flex-col sm:max-w-[720px]">
+            <DialogTitle>{text("Edit pull request", "编辑 Pull Request")}</DialogTitle>
+            <DialogDescription>{review.owner}/{review.repository} #{review.number}</DialogDescription>
+            <label className="text-sm font-medium">{text("Title", "标题")}<input className="mt-2 h-10 w-full rounded-xl border border-dls-border bg-background px-3 font-normal outline-none focus:border-dls-accent" value={editTitle} onChange={(event) => setEditTitle(event.target.value)} maxLength={1_000} /></label>
+            <label className="min-h-0 text-sm font-medium">{text("Description", "描述")}<textarea className="mt-2 min-h-64 w-full resize-y rounded-xl border border-dls-border bg-background p-3 font-normal leading-6 outline-none focus:border-dls-accent" value={editBody} onChange={(event) => setEditBody(event.target.value)} maxLength={100_000} /></label>
+            {editMutation.error ? <p role="alert" className="text-sm text-red-11">{editMutation.error instanceof Error ? editMutation.error.message : String(editMutation.error)}</p> : null}
+            <DialogFooter><Button variant="outline" disabled={editMutation.isPending} onClick={() => setEditing(false)}>{text("Cancel", "取消")}</Button><Button disabled={editMutation.isPending || !editTitle.trim() || (editTitle === review.title && editBody === review.body)} onClick={() => editMutation.mutate()}>{editMutation.isPending ? <LoaderCircle className="animate-spin" /> : null}{text("Save", "保存")}</Button></DialogFooter>
+          </DialogContent>
+        </Dialog>
       </article>
-      <aside className="divide-y divide-dls-border text-sm lg:border-l lg:border-dls-border lg:pl-6 xl:pl-7">
-        <button type="button" onClick={() => onTabChange("changes")} className="w-full py-4 text-left">
+      <aside className="relative z-10 divide-y divide-dls-border bg-background text-[13px] lg:-mt-28 lg:pl-5 xl:pl-6">
+        <button type="button" onClick={() => onTabChange("changes")} className="group w-full py-3.5 text-left">
           <span className="text-xs text-dls-secondary">{text("Changes", "变更")}</span>
-          <span className="mt-2 flex items-center gap-3 font-medium text-dls-text"><FileCode2 className="size-4" />{review.changedFiles} {text(review.changedFiles === 1 ? "file" : "files", "个文件")} <span className="ml-auto text-green-11">+{review.additions}</span><span className="text-red-11">-{review.deletions}</span></span>
+          <span className="mt-2 flex items-center gap-3 font-medium text-dls-text"><FileCode2 className="size-4" />{review.changedFiles} {text(review.changedFiles === 1 ? "file" : "files", "个文件")} <span className="ml-auto text-green-11">+{review.additions}</span><span className="text-red-11">-{review.deletions}</span><ArrowUpRight className="size-4 text-dls-secondary opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" /></span>
         </button>
-        <button type="button" onClick={() => onTabChange("threads")} className="w-full py-4 text-left">
+        <button type="button" onClick={() => onTabChange("threads")} className="w-full py-3.5 text-left">
           <span className="text-xs text-dls-secondary">{text("Threads", "讨论")}</span>
           <span className="mt-2 flex items-center gap-3 font-medium text-dls-text"><MessageSquareText className="size-4" />{text("Code review", "代码审查")}<span className="ml-auto text-xs text-dls-secondary">{review.threads.length || text("No comments", "无评论")}</span></span>
         </button>
-        <div className="py-4">
-          <span className="text-xs text-dls-secondary">{text("Reviewers", "评审人")}</span>
-          <span className="mt-2 flex items-center gap-3 text-dls-secondary"><Users className="size-4" />{text("No reviewers", "暂无评审人")}</span>
+        <div className="py-3.5">
+          <span className="flex items-center text-xs text-dls-secondary">
+            <span>{text("Reviewers", "评审人")}</span>
+            <Popover open={reviewerOpen} onOpenChange={setReviewerOpen}>
+              <PopoverTrigger render={<Button variant="ghost" size="icon-sm" className="ml-auto size-7 rounded-full bg-dls-hover" disabled={reviewerMutation.isPending} aria-label={text("Request a reviewer", "请求评审人")} />}>
+                {reviewerMutation.isPending ? <LoaderCircle className="animate-spin" /> : <Plus />}
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-80 gap-0 rounded-2xl p-2">
+                <div className="flex h-10 items-center gap-2 border-b border-dls-border px-2">
+                  <Search className="size-4 text-dls-secondary" />
+                  <input
+                    autoFocus
+                    className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-dls-secondary"
+                    value={reviewerQuery}
+                    onChange={(event) => setReviewerQuery(event.target.value)}
+                    onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); requestReviewer(); } }}
+                    placeholder={text("Request review from…", "输入 GitHub 用户名…")}
+                    maxLength={256}
+                  />
+                </div>
+                <button type="button" className="mt-1 flex min-h-10 w-full items-center rounded-xl px-3 text-left text-sm text-dls-secondary hover:bg-dls-hover disabled:opacity-50" disabled={!reviewerQuery.trim() || !canRequestReviewer || reviewerMutation.isPending} onClick={requestReviewer}>
+                  {reviewerQuery.trim() ? text(`Request review from @${reviewerQuery.trim().replace(/^@/, "")}`, `请求 @${reviewerQuery.trim().replace(/^@/, "")} 评审`) : text("Search by GitHub username", "按 GitHub 用户名添加")}
+                </button>
+              </PopoverContent>
+            </Popover>
+          </span>
+          {review.reviewers.length ? <div className="mt-2 space-y-2">{review.reviewers.map((reviewer) => <div key={reviewer.login} className="flex items-center gap-2 text-dls-text">
+            {reviewer.avatarUrl ? <img src={reviewer.avatarUrl} alt="" className="size-5 rounded-full object-cover" /> : <span className="flex size-5 items-center justify-center rounded-full bg-dls-hover text-[9px] font-medium">{reviewer.login.slice(0, 2).toUpperCase()}</span>}
+            <span className="min-w-0 truncate text-xs">{reviewer.displayName ?? reviewer.login}</span>
+          </div>)}</div> : <span className="mt-2 flex items-center gap-3 text-dls-secondary"><Users className="size-4" />{text("No reviewers", "暂无评审人")}</span>}
         </div>
-        <button type="button" onClick={() => onTabChange("checks")} className="w-full py-4 text-left">
-          <span className="flex items-center text-xs text-dls-secondary"><span>{text("Checks", "检查")}</span><ChevronRight className="ml-auto size-4" /></span>
-          {!review.checks.length ? <span className="mt-2 block text-dls-secondary">{text("No checks", "暂无检查")}</span> : (
-            <span className="mt-2 block space-y-2">
-              {review.checks.slice(0, 5).map((check) => <span key={check.id} className="flex min-w-0 items-center gap-2"><CheckIcon state={check.state} /><span className="truncate text-xs text-dls-text">{check.name}</span></span>)}
-              {review.checks.length > 5 ? <span className="block text-xs text-dls-secondary">{text("Show more", "显示更多")}</span> : null}
-            </span>
-          )}
-          {review.checks.length ? <span className="mt-3 block text-[11px] text-dls-secondary">{failedChecks.length ? text(`${failedChecks.length} failed`, `${failedChecks.length} 项失败`) : pendingChecks.length ? text(`${pendingChecks.length} pending`, `${pendingChecks.length} 项进行中`) : text("All checks passed", "所有检查均已通过")}</span> : null}
-        </button>
+        <div className="py-4">
+          <span className="block text-xs text-dls-secondary">{text("Checks", "检查")}</span>
+          {!review.checks.length ? <span className="mt-2 block text-dls-secondary">{text("No checks", "暂无检查")}</span> : <div className="mt-2 space-y-2">
+            {review.checks.slice(0, checksExpanded ? undefined : 5).map((check) => <div key={check.id} className="flex min-w-0 items-center gap-2"><CheckIcon state={check.state} /><span className="truncate text-xs text-dls-text">{check.name}</span></div>)}
+            {review.checks.length > 5 ? <button type="button" className="text-xs text-dls-secondary hover:text-dls-text" onClick={() => setChecksExpanded((expanded) => !expanded)}>{checksExpanded ? text("Show less", "收起") : text("Show more", "显示更多")}</button> : null}
+          </div>}
+        </div>
         {review.labels.length ? <div className="py-4"><span className="text-xs text-dls-secondary">{text("Labels", "标签")}</span><div className="mt-2 flex flex-wrap gap-2">{review.labels.map((label) => <Badge key={label} variant="outline">{label}</Badge>)}</div></div> : null}
       </aside>
     </div>
@@ -334,23 +681,69 @@ function EmptyTab({ children }: { children: string }) {
   return <div className="flex min-h-64 items-center justify-center p-8 text-center text-sm text-dls-secondary">{children}</div>;
 }
 
-function ChangesView({ review, truncated }: { review: ReviewPreview; truncated?: boolean }) {
+type ReviewDiffLayout = "unified" | "split";
+
+function ChangesView({ review, truncated, showFileTree, showFileSearch, diffLayout, hideWhitespaceOnly, wrapLines }: { review: ReviewPreview; truncated?: boolean; showFileTree: boolean; showFileSearch: boolean; diffLayout: ReviewDiffLayout; hideWhitespaceOnly: boolean; wrapLines: boolean }) {
+  const firstPath = review.files[0]?.path ?? "";
+  const [selectedPath, setSelectedPath] = useState(firstPath);
+  const [fileQuery, setFileQuery] = useState("");
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    setSelectedPath(firstPath);
+    setFileQuery("");
+  }, [firstPath, review.id]);
+  useEffect(() => {
+    if (showFileSearch) searchInputRef.current?.focus();
+  }, [showFileSearch]);
+  const filteredFiles = review.files.filter((file) => file.path.toLocaleLowerCase().includes(fileQuery.trim().toLocaleLowerCase()));
+  const selectedFile = review.files.find((file) => file.path === selectedPath) ?? review.files[0];
+  const visiblePatch = selectedFile?.patch.filter((line) => !hideWhitespaceOnly || line.kind === "context" || line.kind === "meta" || line.text.trim().length > 0) ?? [];
+  const fileGroups = useMemo(() => {
+    const groups = new Map<string, typeof filteredFiles>();
+    for (const file of filteredFiles) {
+      const slash = file.path.lastIndexOf("/");
+      const directory = slash >= 0 ? file.path.slice(0, slash) : ".";
+      groups.set(directory, [...(groups.get(directory) ?? []), file]);
+    }
+    return [...groups.entries()];
+  }, [filteredFiles]);
   return (
-    <div className="mx-auto w-full max-w-6xl space-y-4 p-4 md:p-6">
-      {truncated ? <div className="rounded-xl border border-amber-7 bg-amber-3 px-4 py-3 text-xs text-amber-11">{text("Some patches were truncated to keep this review responsive.", "部分补丁已截断，以保持审查页面流畅。")}</div> : null}
-      {!review.files.length ? <EmptyTab>{text("No changed files were returned.", "没有返回变更文件。")}</EmptyTab> : null}
-      {review.files.map((file) => (
-        <section key={file.path} className="overflow-hidden rounded-2xl border border-dls-border bg-background">
-          <header className="flex items-center gap-2 border-b border-dls-border bg-dls-hover/50 px-4 py-3"><FileCode2 className="size-4 text-dls-secondary" /><span className="min-w-0 flex-1 truncate font-mono text-xs font-medium text-dls-text">{file.path}</span><span className="text-[11px] text-green-11">+{file.additions}</span><span className="text-[11px] text-red-11">-{file.deletions}</span></header>
-          <div className="overflow-x-auto bg-[#0d1117] py-2 font-mono text-[12px] leading-5 text-[#c9d1d9]">
-            {file.patch.map((line, index) => (
-              <div key={`${line.kind}-${index}`} className={cn("grid min-w-[720px] grid-cols-[46px_46px_1fr] px-2", line.kind === "addition" && "bg-[#1b4721]/55", line.kind === "deletion" && "bg-[#5a1e24]/55")}>
-                <span className="select-none pr-2 text-right text-[#6e7681]">{line.oldLine ?? ""}</span><span className="select-none pr-3 text-right text-[#6e7681]">{line.newLine ?? ""}</span><code className="whitespace-pre">{line.kind === "addition" ? "+" : line.kind === "deletion" ? "-" : " "}{line.text}</code>
-              </div>
-            ))}
-          </div>
-        </section>
-      ))}
+    <div className={cn("grid min-h-[560px] w-full", showFileTree && "lg:grid-cols-[minmax(0,1fr)_280px]")}>
+      <div className="min-w-0">
+        {truncated ? <div className="mb-4 rounded-xl border border-amber-7 bg-amber-3 px-4 py-3 text-xs text-amber-11">{text("Some patches were truncated to keep this review responsive.", "部分补丁已截断，以保持审查页面流畅。")}</div> : null}
+        {!selectedFile ? <EmptyTab>{text("No changed files were returned.", "没有返回变更文件。")}</EmptyTab> : <section className="overflow-hidden border-b border-dls-border bg-background">
+          <header className="flex items-center gap-2 border-b border-dls-border bg-dls-hover/50 px-4 py-3"><FileCode2 className="size-4 text-dls-secondary" /><span className="min-w-0 flex-1 truncate font-mono text-xs font-medium text-dls-text">{selectedFile.path}</span><span className="text-[11px] text-green-11">+{selectedFile.additions}</span><span className="text-[11px] text-red-11">-{selectedFile.deletions}</span></header>
+          {visiblePatch.length ? diffLayout === "unified" ? <div className="overflow-x-auto bg-[#0d1117] py-2 font-mono text-[12px] leading-5 text-[#c9d1d9]">
+            {visiblePatch.map((line, index) => <div key={`${line.kind}-${index}`} className={cn("grid min-w-[720px] grid-cols-[46px_46px_1fr] px-2", line.kind === "addition" && "bg-[#1b4721]/55", line.kind === "deletion" && "bg-[#5a1e24]/55")}>
+              <span className="select-none pr-2 text-right text-[#6e7681]">{line.oldLine ?? ""}</span><span className="select-none pr-3 text-right text-[#6e7681]">{line.newLine ?? ""}</span><code className={wrapLines ? "whitespace-pre-wrap break-all" : "whitespace-pre"}>{line.kind === "addition" ? "+" : line.kind === "deletion" ? "-" : " "}{line.text}</code>
+            </div>)}
+          </div> : <div className="overflow-x-auto bg-[#0d1117] py-2 font-mono text-[12px] leading-5 text-[#c9d1d9]">
+            {visiblePatch.map((line, index) => line.kind === "meta" ? <div key={`meta-${index}`} className="min-w-[900px] bg-[#161b22] px-3 py-1 text-[#8b949e]">{line.text}</div> : <div key={`${line.kind}-${index}`} className="grid min-w-[900px] grid-cols-2 border-b border-white/5 last:border-b-0">
+              <div className={cn("grid grid-cols-[46px_1fr] px-2", line.kind === "deletion" && "bg-[#5a1e24]/55")}><span className="select-none pr-2 text-right text-[#6e7681]">{line.kind === "addition" ? "" : line.oldLine ?? ""}</span><code className={cn(wrapLines ? "whitespace-pre-wrap break-all" : "whitespace-pre", line.kind === "addition" && "opacity-0")}>{line.kind === "deletion" ? "-" : " "}{line.text}</code></div>
+              <div className={cn("grid grid-cols-[46px_1fr] border-l border-white/10 px-2", line.kind === "addition" && "bg-[#1b4721]/55")}><span className="select-none pr-2 text-right text-[#6e7681]">{line.kind === "deletion" ? "" : line.newLine ?? ""}</span><code className={cn(wrapLines ? "whitespace-pre-wrap break-all" : "whitespace-pre", line.kind === "deletion" && "opacity-0")}>{line.kind === "addition" ? "+" : " "}{line.text}</code></div>
+            </div>)}
+          </div> : <EmptyTab>{text("No text diff is available for this file.", "此文件没有可显示的文本差异。")}</EmptyTab>}
+        </section>}
+      </div>
+      {showFileTree ? <aside className="border-t border-dls-border p-4 lg:border-l lg:border-t-0">
+        {showFileSearch ? <label className="flex h-9 items-center gap-2 rounded-full border border-dls-border px-3">
+          <Search className="size-4 text-dls-secondary" />
+          <input ref={searchInputRef} value={fileQuery} onChange={(event) => setFileQuery(event.target.value)} className="min-w-0 flex-1 bg-transparent text-xs outline-none placeholder:text-dls-secondary" placeholder={text("Filter files…", "筛选文件…")} />
+        </label> : null}
+        <div className="mt-4 space-y-1">
+          {fileGroups.map(([directory, files]) => <div key={directory} className="pb-2"><div className="flex items-center gap-2 px-2 py-1 text-xs font-medium text-dls-secondary"><FolderOpen className="size-3.5" /><span className="truncate">{directory}</span></div>{files.map((file) => {
+            const slash = file.path.lastIndexOf("/");
+            const name = slash >= 0 ? file.path.slice(slash + 1) : file.path;
+            return <button key={file.path} type="button" onClick={() => setSelectedPath(file.path)} className={cn("flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-xs transition-colors hover:bg-dls-hover", selectedFile?.path === file.path && "bg-dls-hover")}>
+              <FileCode2 className="size-4 shrink-0 text-green-10" />
+              <span className="min-w-0 flex-1 truncate font-mono" title={file.path}>{name}</span>
+              <span className="shrink-0 text-green-11">+{file.additions}</span>
+              <span className="shrink-0 text-red-11">-{file.deletions}</span>
+            </button>;
+          })}</div>)}
+          {!filteredFiles.length ? <p className="px-3 py-6 text-center text-xs text-dls-secondary">{text("No matching files", "没有匹配的文件")}</p> : null}
+        </div>
+      </aside> : null}
     </div>
   );
 }
@@ -389,23 +782,75 @@ function DetailState(props: { loading?: boolean; error?: boolean; onRetry?: () =
   return <div className="flex min-h-64 flex-col items-center justify-center gap-3 p-8 text-center text-sm text-dls-secondary">{props.loading ? <><LoaderCircle className="size-6 animate-spin" /><span>{text("Loading pull request…", "正在加载拉取请求…")}</span></> : <><AlertCircle className="size-6 text-amber-10" /><span>{text("This section could not be loaded.", "无法加载此内容。")}</span>{props.onRetry ? <Button variant="outline" onClick={props.onRetry}><RefreshCw />{text("Retry", "重试")}</Button> : null}</>}</div>;
 }
 
-function ReviewDetail({ review, unknown, loading, actions, endpoint, operations, pinned, onTogglePin, onChanged, tab, onTabChange, tabLoading, tabError, truncated, revisionChanged, onRetryTab, onBack }: { review: ReviewPreview | null; unknown: boolean; loading?: boolean; actions?: ReactNode; endpoint?: ReturnType<typeof useReviewWorkspaceEndpoint>["endpoint"]; operations?: ReviewConnectionStatus["operations"]; pinned?: boolean; onTogglePin?: () => void; onChanged?: () => void | Promise<void>; tab: ReviewDetailTab; onTabChange: (tab: ReviewDetailTab) => void; tabLoading?: boolean; tabError?: boolean; truncated?: boolean; revisionChanged?: boolean; onRetryTab?: () => void; onBack: () => void }) {
+function ReviewDetail({ review, unknown, loading, actions, endpoint, operations, viewerLogin, viewerAvatarUrl, isOwnPullRequest, pinned, onTogglePin, onChanged, tab, onTabChange, tabLoading, tabError, truncated, revisionChanged, onRetryTab, onBack }: { review: ReviewPreview | null; unknown: boolean; loading?: boolean; actions?: ReactNode; endpoint?: ReturnType<typeof useReviewWorkspaceEndpoint>["endpoint"]; operations?: ReviewConnectionStatus["operations"]; viewerLogin?: string; viewerAvatarUrl?: string; isOwnPullRequest?: boolean; pinned?: boolean; onTogglePin?: () => void; onChanged?: () => void | Promise<void>; tab: ReviewDetailTab; onTabChange: (tab: ReviewDetailTab) => void; tabLoading?: boolean; tabError?: boolean; truncated?: boolean; revisionChanged?: boolean; onRetryTab?: () => void; onBack: () => void }) {
+  const [showFileTree, setShowFileTree] = useState(true);
+  const [showFileSearch, setShowFileSearch] = useState(true);
+  const [diffLayout, setDiffLayout] = useState<ReviewDiffLayout>("unified");
+  const [hideWhitespaceOnly, setHideWhitespaceOnly] = useState(false);
+  const [wrapDiffLines, setWrapDiffLines] = useState(false);
+
+  useEffect(() => {
+    setShowFileTree(true);
+    setShowFileSearch(true);
+    setDiffLayout("unified");
+    setHideWhitespaceOnly(false);
+    setWrapDiffLines(false);
+  }, [review?.id]);
+
+  const copyChangedFilePaths = async () => {
+    if (!review) return;
+    await navigator.clipboard.writeText(review.files.map((file) => file.path).join("\n"));
+    toast.success(text("Changed file paths copied.", "已复制变更文件路径。"));
+  };
+
+  const copyDiff = async () => {
+    if (!review) return;
+    const value = review.files.map((file) => [`diff -- ${file.path}`, ...file.patch.map((line) => `${line.kind === "addition" ? "+" : line.kind === "deletion" ? "-" : " "}${line.text}`)].join("\n")).join("\n\n");
+    await navigator.clipboard.writeText(value);
+    toast.success(text("Pull request diff copied.", "已复制 Pull Request 差异。"));
+  };
+
+  const viewSwitcher = review && (tab === "summary" || tab === "changes") ? <div className="flex shrink-0 rounded-full border border-dls-border bg-dls-hover/50 p-0.5" role="tablist" aria-label={text("Pull request view", "Pull Request 视图")}>
+    <button type="button" role="tab" aria-selected={tab === "summary"} className={cn("h-7 rounded-full px-3.5 text-[13px] transition-colors", tab === "summary" ? "bg-background font-medium text-dls-text shadow-sm" : "text-dls-secondary hover:text-dls-text")} onClick={() => onTabChange("summary")}>{text("Summary", "摘要")}</button>
+    <button type="button" role="tab" aria-selected={tab === "changes"} className={cn("flex h-7 items-center gap-1.5 rounded-full px-3.5 text-[13px] transition-colors", tab === "changes" ? "bg-background font-medium text-dls-text shadow-sm" : "text-dls-secondary hover:text-dls-text")} onClick={() => onTabChange("changes")}><span>{text("Changes", "变更")}</span><span className="text-green-11">+{review.additions}</span><span className="text-red-11">-{review.deletions}</span></button>
+  </div> : null;
+
+  const changesTools = review && tab === "changes" ? <div className="flex h-8 shrink-0 items-center rounded-full border border-dls-border bg-background p-0.5 shadow-sm" aria-label={text("Changes tools", "变更工具")}>
+    <DropdownMenu>
+      <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" className="size-7 rounded-full" aria-label={text("More changes actions", "更多变更操作")} />}><Ellipsis /></DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="min-w-52">
+        <DropdownMenuItem onClick={() => void copyChangedFilePaths()}><Copy />{text("Copy changed file paths", "复制变更文件路径")}</DropdownMenuItem>
+        <DropdownMenuItem onClick={() => void copyDiff()}><FileCode2 />{text("Copy pull request diff", "复制 Pull Request 差异")}</DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+    <DropdownMenu>
+      <ReviewToolbarTip label={text("Diff display options", "差异显示选项")}><DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" className="size-7 rounded-full" aria-label={text("Diff display options", "差异显示选项")} />}><ListFilter /></DropdownMenuTrigger></ReviewToolbarTip>
+      <DropdownMenuContent align="end" className="min-w-56">
+        <DropdownMenuLabel>{text("Diff display", "差异显示")}</DropdownMenuLabel>
+        <DropdownMenuCheckboxItem checked={hideWhitespaceOnly} onCheckedChange={setHideWhitespaceOnly}>{text("Hide whitespace-only lines", "隐藏仅空白字符的变更")}</DropdownMenuCheckboxItem>
+        <DropdownMenuCheckboxItem checked={wrapDiffLines} onCheckedChange={setWrapDiffLines}><WrapText />{text("Wrap long lines", "长行自动换行")}</DropdownMenuCheckboxItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+    <ReviewToolbarTip label={showFileSearch ? text("Hide file search", "隐藏文件搜索") : text("Search changed files", "搜索变更文件")}><Button variant="ghost" size="icon-sm" className={cn("size-7 rounded-full", showFileSearch && "bg-dls-hover")} aria-label={showFileSearch ? text("Hide file search", "隐藏文件搜索") : text("Search changed files", "搜索变更文件")} aria-pressed={showFileSearch} onClick={() => { setShowFileTree(true); setShowFileSearch((value) => !value); }}><FileSearch /></Button></ReviewToolbarTip>
+    <ReviewToolbarTip label={diffLayout === "unified" ? text("Use split diff", "切换为并排差异") : text("Use unified diff", "切换为统一差异")}><Button variant="ghost" size="icon-sm" className={cn("size-7 rounded-full", diffLayout === "split" && "bg-dls-hover")} aria-label={diffLayout === "unified" ? text("Use split diff", "切换为并排差异") : text("Use unified diff", "切换为统一差异")} aria-pressed={diffLayout === "split"} onClick={() => setDiffLayout((value) => value === "unified" ? "split" : "unified")}><Columns2 /></Button></ReviewToolbarTip>
+    <ReviewToolbarTip label={showFileTree ? text("Hide file tree", "隐藏文件树") : text("Show file tree", "显示文件树")}><Button variant="ghost" size="icon-sm" className={cn("size-7 rounded-full", showFileTree && "bg-blue-4 text-blue-11")} aria-label={showFileTree ? text("Hide file tree", "隐藏文件树") : text("Show file tree", "显示文件树")} aria-pressed={showFileTree} onClick={() => setShowFileTree((value) => !value)}><FolderOpen /></Button></ReviewToolbarTip>
+  </div> : null;
 
   return (
     <main className={cn("min-h-0 min-w-0 flex-1 flex-col bg-background", review || unknown || loading ? "flex" : "hidden md:flex")}>
       {loading ? <DetailState loading /> : unknown ? <UnknownDetail onBack={onBack} /> : review ? (
-        <>
-          <ReviewHeader review={review} onBack={onBack} actions={actions} endpoint={endpoint} operations={operations} pinned={pinned} onTogglePin={onTogglePin} onChanged={onChanged} />
-          <div className="shrink-0 overflow-x-auto border-b border-dls-border bg-background px-5 md:px-7" role="tablist" aria-label={text("Pull request sections", "拉取请求内容")}>{TABS.map((item) => <button key={item.value} type="button" role="tab" aria-selected={tab === item.value} onClick={() => onTabChange(item.value)} className={cn("relative h-9 whitespace-nowrap px-2.5 text-[11px] font-medium text-dls-secondary transition-colors hover:text-dls-text", tab === item.value && "text-dls-text after:absolute after:inset-x-2.5 after:bottom-0 after:h-0.5 after:rounded-full after:bg-dls-text")}>{text(item.en, item.zh)}{item.value === "changes" ? ` ${review.changedFiles}` : item.value === "checks" ? ` ${review.checks.length}` : item.value === "threads" ? ` ${review.threads.length}` : ""}</button>)}</div>
-          <div className="min-h-0 flex-1 overflow-y-auto" role="tabpanel">
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <ReviewHeader review={review} onBack={onBack} actions={actions} endpoint={endpoint} operations={operations} pinned={pinned} onTogglePin={onTogglePin} onChanged={onChanged} viewSwitcher={viewSwitcher} changesTools={changesTools} showDetails={tab !== "changes"} />
+          <div>
+            {tab !== "summary" && tab !== "changes" ? <div className="border-b border-dls-border px-5 py-2 md:px-6"><Button variant="ghost" size="sm" onClick={() => onTabChange("summary")}><ArrowLeft />{text("Back to pull request", "返回 Pull Request")}</Button></div> : null}
             {revisionChanged ? <div className="m-4 rounded-xl border border-amber-7 bg-amber-3 px-4 py-3 text-xs text-amber-11">{text("The pull request revision changed while this tab was loading. Refresh before relying on line positions.", "加载期间拉取请求版本发生变化，请刷新后再依赖行位置。")}</div> : null}
             {tabLoading || tabError ? <DetailState loading={tabLoading} error={tabError} onRetry={onRetryTab} /> : null}
-            {!tabLoading && !tabError && tab === "summary" ? <SummaryView review={review} onTabChange={onTabChange} /> : null}
-            {!tabLoading && !tabError && tab === "changes" ? <ChangesView review={review} truncated={truncated} /> : null}
+            {!tabLoading && !tabError && tab === "summary" ? <SummaryView review={review} endpoint={endpoint} operations={operations} viewerLogin={viewerLogin} viewerAvatarUrl={viewerAvatarUrl} isOwnPullRequest={isOwnPullRequest} onChanged={onChanged} onTabChange={onTabChange} /> : null}
+            {!tabLoading && !tabError && tab === "changes" ? <ChangesView review={review} truncated={truncated} showFileTree={showFileTree} showFileSearch={showFileSearch} diffLayout={diffLayout} hideWhitespaceOnly={hideWhitespaceOnly} wrapLines={wrapDiffLines} /> : null}
             {!tabLoading && !tabError && tab === "checks" ? <ChecksView review={review} /> : null}
             {!tabLoading && !tabError && tab === "threads" ? <ThreadsView review={review} /> : null}
           </div>
-        </>
+        </div>
       ) : <EmptyDetail />}
     </main>
   );
@@ -413,11 +858,6 @@ function ReviewDetail({ review, unknown, loading, actions, endpoint, operations,
 
 export function ReviewPage(props: ReviewPageProps) {
   const queryClient = useQueryClient();
-  const [urlDialog, setUrlDialog] = useState(false);
-  const [url, setUrl] = useState("");
-  const [openingUrl, setOpeningUrl] = useState(false);
-  const [urlError, setUrlError] = useState<string | null>(null);
-  const openUrlGeneration = useRef(0);
   const sidebarOpen = useUiStateStore((state) => state.sidebarOpen);
   const toggleSidebar = useUiStateStore((state) => state.toggleSidebar);
   const { leftSidebarResizing, leftSidebarWidth, startLeftSidebarResize } = useWorkspaceShellLayout({ expandedRightWidth: 520 });
@@ -425,41 +865,43 @@ export function ReviewPage(props: ReviewPageProps) {
     "--jugglework-left-sidebar-width": appInsetSidebarCssWidth(leftSidebarWidth),
   } as CSSProperties;
   const [query, setQuery] = useState("");
-  const [expandedSections, setExpandedSections] = useState<ReviewRelationship[]>(["authored"]);
+  const [expandedSections, setExpandedSections] = useState<ReviewInboxSectionKey[]>(["pinned", "authored"]);
+  const [inboxPreferences, setInboxPreferences] = useState(readReviewInboxPreferences);
   const [tab, setTab] = useState<ReviewDetailTab>("summary");
-  const [pinnedReviewIds, setPinnedReviewIds] = useState<string[]>(() => readPinnedReviews(props.workspaceId));
-  useEffect(() => setPinnedReviewIds(readPinnedReviews(props.workspaceId)), [props.workspaceId]);
-  const togglePinnedReview = (reviewId: string) => setPinnedReviewIds((current) => {
-    const next = current.includes(reviewId) ? current.filter((id) => id !== reviewId) : [reviewId, ...current.filter((id) => id !== reviewId)];
+  const [pinnedReviewState, setPinnedReviewState] = useState<PinnedReviewState>(() => readPinnedReviews(props.workspaceId));
+  useEffect(() => setPinnedReviewState(readPinnedReviews(props.workspaceId)), [props.workspaceId]);
+  const pinnedReviewIds = pinnedReviewState.ids;
+  const togglePinnedReview = (review: ReviewPreview) => setPinnedReviewState((current) => {
+    const removing = current.ids.includes(review.id);
+    const next = removing
+      ? { ids: current.ids.filter((id) => id !== review.id), reviews: current.reviews.filter((item) => item.id !== review.id) }
+      : {
+          ids: [review.id, ...current.ids.filter((id) => id !== review.id)].slice(0, 100),
+          reviews: [pinnedReviewSnapshot(review), ...current.reviews.filter((item) => item.id !== review.id)].slice(0, 100),
+        };
     localStorage.setItem(pinnedStorageKey(props.workspaceId), JSON.stringify(next));
     return next;
   });
   const deferredQuery = useDeferredValue(query);
   const workspace = useReviewWorkspaceEndpoint(props.workspaceId, props.active);
-  useEffect(() => { openUrlGeneration.current++; setUrlDialog(false); setOpeningUrl(false); setExpandedSections(["authored"]); }, [props.workspaceId, workspace.endpoint]);
-  const toggleInboxSection = (relationship: ReviewRelationship) => setExpandedSections((current) => current.includes(relationship) ? current.filter((item) => item !== relationship) : [...current, relationship]);
-  async function openReviewUrl() {
-    if (!workspace.endpoint || openingUrl) return;
-    const endpoint = workspace.endpoint;
-    const generation = openUrlGeneration.current;
-    const settings = readDenSettings();
-    setOpeningUrl(true); setUrlError(null);
-    try {
-      const result = await endpoint.client.resolveReviewUrl(endpoint.workspaceId, url.trim());
-      const current = readDenSettings();
-      if (generation !== openUrlGeneration.current || current.authToken !== settings.authToken || current.activeOrgId !== settings.activeOrgId || current.baseUrl !== settings.baseUrl) return;
-      queryClient.setQueryData(reviewQueryKeys.detail(endpoint, result.item.id), result);
-      setUrlDialog(false);
-      props.onSelectReview(result.item.id);
-    } catch (error) { if (generation === openUrlGeneration.current) setUrlError(error instanceof Error ? error.message : String(error)); }
-    finally { if (generation === openUrlGeneration.current) setOpeningUrl(false); }
-  }
+  useEffect(() => { setExpandedSections(["pinned", "authored"]); }, [props.workspaceId, workspace.endpoint]);
+  const toggleInboxSection = (relationship: ReviewInboxSectionKey) => setExpandedSections((current) => current.includes(relationship) ? current.filter((item) => item !== relationship) : [...current, relationship]);
+  const updateInboxPreferences = (next: { viewMode: ReviewInboxViewMode; visibleSections: ReviewRelationship[] }) => {
+    setInboxPreferences(next);
+    localStorage.setItem(REVIEW_INBOX_PREFERENCES_KEY, JSON.stringify(next));
+  };
+  const toggleInboxSectionVisibility = (relationship: ReviewRelationship) => updateInboxPreferences({
+    ...inboxPreferences,
+    visibleSections: inboxPreferences.visibleSections.includes(relationship)
+      ? inboxPreferences.visibleSections.filter((item) => item !== relationship)
+      : INBOX_SECTIONS.map((section) => section.value).filter((item) => item === relationship || inboxPreferences.visibleSections.includes(item)),
+  });
   const connection = useReviewConnection(workspace.endpoint, props.active);
   const inboxReady = connection.data?.state === "ready";
-  const authoredInbox = useReviewInbox(workspace.endpoint, { active: props.active && expandedSections.includes("authored"), ready: inboxReady, relationship: "authored", query: deferredQuery });
-  const requestedInbox = useReviewInbox(workspace.endpoint, { active: props.active && expandedSections.includes("requested"), ready: inboxReady, relationship: "review_requested", query: deferredQuery });
-  const teamInbox = useReviewInbox(workspace.endpoint, { active: props.active && expandedSections.includes("team"), ready: inboxReady, relationship: "team_review_requested", query: deferredQuery });
-  const mergedInbox = useReviewInbox(workspace.endpoint, { active: props.active && expandedSections.includes("recently_merged"), ready: inboxReady, relationship: "recently_merged", query: deferredQuery });
+  const authoredInbox = useReviewInbox(workspace.endpoint, { active: props.active && inboxPreferences.visibleSections.includes("authored") && expandedSections.includes("authored"), ready: inboxReady, relationship: "authored", query: deferredQuery });
+  const requestedInbox = useReviewInbox(workspace.endpoint, { active: props.active && inboxPreferences.visibleSections.includes("requested") && expandedSections.includes("requested"), ready: inboxReady, relationship: "review_requested", query: deferredQuery });
+  const teamInbox = useReviewInbox(workspace.endpoint, { active: props.active && inboxPreferences.visibleSections.includes("team") && expandedSections.includes("team"), ready: inboxReady, relationship: "team_review_requested", query: deferredQuery });
+  const mergedInbox = useReviewInbox(workspace.endpoint, { active: props.active && inboxPreferences.visibleSections.includes("recently_merged") && expandedSections.includes("recently_merged"), ready: inboxReady, relationship: "recently_merged", query: deferredQuery });
   const detail = useReviewDetail(workspace.endpoint, props.reviewId, props.active);
   const selectedReviewActive = props.active && Boolean(props.reviewId);
   const files = useReviewFiles(workspace.endpoint, props.reviewId, selectedReviewActive && tab === "changes");
@@ -467,14 +909,30 @@ export function ReviewPage(props: ReviewPageProps) {
   const threads = useReviewThreads(workspace.endpoint, props.reviewId, selectedReviewActive);
   const listItems = useMemo(() => [authoredInbox.data, requestedInbox.data, teamInbox.data, mergedInbox.data].flatMap((data) => data?.pages.flatMap((page) => page.items) ?? []), [authoredInbox.data, mergedInbox.data, requestedInbox.data, teamInbox.data]);
   const selectedItem = detail.data?.item ?? listItems.find((item) => item.id === props.reviewId) ?? null;
+  const selectedReviewIsAuthored = Boolean(selectedItem && (
+    connection.data?.accountLogin?.toLocaleLowerCase() === selectedItem.author.login.toLocaleLowerCase()
+    || selectedItem.relationships.includes("authored")
+    || authoredInbox.data?.pages.some((page) => page.items.some((item) => item.id === selectedItem.id))
+  ));
+  const review = useMemo(() => selectedItem ? { ...reviewViewModel({ item: selectedItem, detail: detail.data, files: files.data, checks: checks.data, threads: threads.data }), pinned: pinnedReviewIds.includes(selectedItem.id) } : null, [checks.data, detail.data, files.data, pinnedReviewIds, selectedItem, threads.data]);
   const reviewsFor = (data: typeof authoredInbox.data) => (data?.pages.flatMap((page) => page.items) ?? []).map((item) => ({ ...reviewViewModel({ item }), pinned: pinnedReviewIds.includes(item.id) })).sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)));
+  const pinnedReviews = useMemo(() => {
+    const available = new Map(pinnedReviewState.reviews.map((item) => [item.id, item]));
+    for (const item of listItems) available.set(item.id, reviewViewModel({ item }));
+    if (review) available.set(review.id, review);
+    return pinnedReviewIds
+      .map((id) => available.get(id))
+      .filter((item): item is ReviewPreview => Boolean(item))
+      .map((item) => ({ ...item, pinned: true }))
+      .filter((item) => reviewMatches(item, deferredQuery, "all"));
+  }, [deferredQuery, listItems, pinnedReviewIds, pinnedReviewState.reviews, review]);
   const inboxSections: ReviewInboxSectionState[] = [
+    ...(pinnedReviews.length ? [{ relationship: "pinned" as const, reviews: pinnedReviews }] : []),
     { relationship: "authored", reviews: reviewsFor(authoredInbox.data), loading: authoredInbox.isLoading, refreshing: authoredInbox.isFetching && !authoredInbox.isLoading, error: authoredInbox.error instanceof Error ? authoredInbox.error.message : null, hasNextPage: authoredInbox.hasNextPage, loadingNextPage: authoredInbox.isFetchingNextPage, onLoadMore: () => void authoredInbox.fetchNextPage(), onRetry: () => void authoredInbox.refetch() },
     { relationship: "requested", reviews: reviewsFor(requestedInbox.data), loading: requestedInbox.isLoading, refreshing: requestedInbox.isFetching && !requestedInbox.isLoading, error: requestedInbox.error instanceof Error ? requestedInbox.error.message : null, hasNextPage: requestedInbox.hasNextPage, loadingNextPage: requestedInbox.isFetchingNextPage, onLoadMore: () => void requestedInbox.fetchNextPage(), onRetry: () => void requestedInbox.refetch() },
     { relationship: "team", reviews: reviewsFor(teamInbox.data), loading: teamInbox.isLoading, refreshing: teamInbox.isFetching && !teamInbox.isLoading, error: teamInbox.error instanceof Error ? teamInbox.error.message : null, hasNextPage: teamInbox.hasNextPage, loadingNextPage: teamInbox.isFetchingNextPage, onLoadMore: () => void teamInbox.fetchNextPage(), onRetry: () => void teamInbox.refetch() },
     { relationship: "recently_merged", reviews: reviewsFor(mergedInbox.data), loading: mergedInbox.isLoading, refreshing: mergedInbox.isFetching && !mergedInbox.isLoading, error: mergedInbox.error instanceof Error ? mergedInbox.error.message : null, hasNextPage: mergedInbox.hasNextPage, loadingNextPage: mergedInbox.isFetchingNextPage, onLoadMore: () => void mergedInbox.fetchNextPage(), onRetry: () => void mergedInbox.refetch() },
   ];
-  const review = useMemo(() => selectedItem ? { ...reviewViewModel({ item: selectedItem, detail: detail.data, files: files.data, checks: checks.data, threads: threads.data }), pinned: pinnedReviewIds.includes(selectedItem.id) } : null, [checks.data, detail.data, files.data, pinnedReviewIds, selectedItem, threads.data]);
   const unknown = props.reviewId !== null && detail.isError;
   const tabQuery = tab === "changes" ? files : tab === "checks" ? checks : tab === "threads" ? threads : detail;
   useEffect(() => setTab("summary"), [props.reviewId]);
@@ -510,21 +968,26 @@ export function ReviewPage(props: ReviewPageProps) {
           <ReviewWorkbench
           endpoint={workspace.endpoint}
           operations={connection.data.operations}
+          viewerLogin={connection.data.accountLogin ?? (selectedReviewIsAuthored ? review?.author : undefined)}
+          viewerAvatarUrl={connection.data.accountAvatarUrl ?? (selectedReviewIsAuthored ? review?.authorAvatarUrl : undefined)}
+          isOwnPullRequest={selectedReviewIsAuthored}
           pinned={Boolean(review?.pinned)}
-          onTogglePin={() => { if (review) togglePinnedReview(review.id); }}
+          onTogglePin={() => { if (review) togglePinnedReview(review); }}
           onChanged={async () => {
             if (!workspace.endpoint) return;
             await queryClient.invalidateQueries({ queryKey: ["reviews", workspace.endpoint.baseUrl, workspace.endpoint.workspaceId] });
           }}
           actions={workspace.endpoint && review ? <ReviewWorkflowControls
             key={`${workspace.endpoint.baseUrl}:${workspace.endpoint.workspaceId}:${review.id}`}
-            endpoint={workspace.endpoint} review={review} active={props.active}
+            endpoint={workspace.endpoint} review={review} isOwnPullRequest={selectedReviewIsAuthored} active={props.active}
             operations={connection.data.operations}
             onOpenSession={(id) => props.onOpenReviewSession?.(id)}
           /> : undefined}
-          onOpenUrl={() => { setUrlError(null); setUrlDialog(true); }}
           sections={inboxSections}
           expandedSections={expandedSections}
+          pinnedReviews={pinnedReviews}
+          visibleSections={inboxPreferences.visibleSections}
+          viewMode={inboxPreferences.viewMode}
           reviewId={props.reviewId}
           query={query}
           review={review}
@@ -539,6 +1002,8 @@ export function ReviewPage(props: ReviewPageProps) {
           onRetryTab={() => void tabQuery.refetch()}
           onQueryChange={setQuery}
           onToggleSection={toggleInboxSection}
+          onToggleSectionVisibility={toggleInboxSectionVisibility}
+          onViewModeChange={(viewMode) => updateInboxPreferences({ ...inboxPreferences, viewMode })}
           onSelectReview={props.onSelectReview}
           sidebarOpen={sidebarOpen}
           />
@@ -550,15 +1015,6 @@ export function ReviewPage(props: ReviewPageProps) {
           />
         ) : null}
       </AppInsetSurface>
-      <Dialog open={urlDialog} onOpenChange={(open) => { setUrlDialog(open); if (!open) { openUrlGeneration.current++; setOpeningUrl(false); } }}>
-        <DialogContent className="sm:max-w-[520px]">
-          <DialogTitle>{text("Open a pull request", "打开拉取请求")}</DialogTitle>
-          <DialogDescription>{text("Paste a GitHub pull request URL. Access uses your existing organization connector.", "粘贴 GitHub 拉取请求链接，使用当前组织连接器读取。")}</DialogDescription>
-          <input aria-label={text("Pull request URL", "拉取请求链接")} className="h-10 w-full rounded-xl border border-dls-border bg-background px-3 text-sm" value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://github.com/owner/repository/pull/123" onKeyDown={(event) => { if (event.key === "Enter") void openReviewUrl(); }} />
-          {urlError ? <p role="alert" className="text-sm text-red-11">{urlError}</p> : null}
-          <Button disabled={openingUrl || !url.trim()} onClick={() => { void openReviewUrl(); }}>{openingUrl ? <LoaderCircle className="animate-spin" /> : null}{text("Open pull request", "打开拉取请求")}</Button>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
@@ -567,12 +1023,17 @@ export function ReviewWorkbench(props: {
   actions?: ReactNode;
   endpoint?: ReturnType<typeof useReviewWorkspaceEndpoint>["endpoint"];
   operations?: ReviewConnectionStatus["operations"];
+  viewerLogin?: string;
+  viewerAvatarUrl?: string;
+  isOwnPullRequest?: boolean;
   pinned?: boolean;
   onTogglePin?: () => void;
   onChanged?: () => void | Promise<void>;
-  onOpenUrl?: () => void;
   sections: ReviewInboxSectionState[];
-  expandedSections: ReviewRelationship[];
+  expandedSections: ReviewInboxSectionKey[];
+  pinnedReviews?: ReviewPreview[];
+  visibleSections?: ReviewRelationship[];
+  viewMode?: ReviewInboxViewMode;
   reviewId: string | null;
   query: string;
   review: ReviewPreview | null;
@@ -586,7 +1047,9 @@ export function ReviewWorkbench(props: {
   revisionChanged?: boolean;
   onRetryTab?: () => void;
   onQueryChange: (query: string) => void;
-  onToggleSection: (relationship: ReviewRelationship) => void;
+  onToggleSection: (relationship: ReviewInboxSectionKey) => void;
+  onToggleSectionVisibility?: (relationship: ReviewRelationship) => void;
+  onViewModeChange?: (viewMode: ReviewInboxViewMode) => void;
   onSelectReview: (reviewId: string | null) => void;
   sidebarOpen?: boolean;
 }) {
@@ -600,15 +1063,19 @@ export function ReviewWorkbench(props: {
       {props.sidebarOpen !== false ? <ReviewInbox
         sections={props.sections}
         expandedSections={props.expandedSections}
+        pinnedReviews={props.pinnedReviews ?? []}
+        visibleSections={props.visibleSections ?? INBOX_SECTIONS.map((section) => section.value)}
+        viewMode={props.viewMode ?? "detailed"}
         reviewId={props.reviewId}
         query={props.query}
         onQueryChange={props.onQueryChange}
         onToggleSection={props.onToggleSection}
+        onToggleSectionVisibility={props.onToggleSectionVisibility ?? (() => undefined)}
+        onViewModeChange={props.onViewModeChange ?? (() => undefined)}
         onSelectReview={props.onSelectReview}
-        onOpenUrl={props.onOpenUrl}
       /> : null}
       </div>
-      <ReviewDetail actions={props.actions} endpoint={props.endpoint} operations={props.operations} pinned={props.pinned} onTogglePin={props.onTogglePin} onChanged={props.onChanged} review={props.review} unknown={props.unknown} loading={props.loading} tab={props.tab ?? "summary"} onTabChange={props.onTabChange ?? (() => undefined)} tabLoading={props.tabLoading} tabError={props.tabError} truncated={props.truncated} revisionChanged={props.revisionChanged} onRetryTab={props.onRetryTab} onBack={() => props.onSelectReview(null)} />
+      <ReviewDetail actions={props.actions} endpoint={props.endpoint} operations={props.operations} viewerLogin={props.viewerLogin} viewerAvatarUrl={props.viewerAvatarUrl} isOwnPullRequest={props.isOwnPullRequest} pinned={props.pinned} onTogglePin={props.onTogglePin} onChanged={props.onChanged} review={props.review} unknown={props.unknown} loading={props.loading} tab={props.tab ?? "summary"} onTabChange={props.onTabChange ?? (() => undefined)} tabLoading={props.tabLoading} tabError={props.tabError} truncated={props.truncated} revisionChanged={props.revisionChanged} onRetryTab={props.onRetryTab} onBack={() => props.onSelectReview(null)} />
     </div>
   );
 }

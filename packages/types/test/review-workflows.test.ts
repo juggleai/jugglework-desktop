@@ -19,6 +19,19 @@ test("publishing requires an explicit supported decision and meaningful comment 
   ]) expect(reviewMutationInputSchema.safeParse(changed).success).toBe(false);
 });
 
+test("GitHub reactions require a fixed reaction and a matching target", () => {
+  const common = { requestId: crypto.randomUUID(), expectedHeadRevision: "a".repeat(40), kind: "reaction" as const };
+  expect(reviewMutationInputSchema.safeParse({ ...common, body: "+1", reactionTarget: "pull_request" }).success).toBe(true);
+  expect(reviewMutationInputSchema.safeParse({ ...common, body: "eyes", reactionTarget: "issue_comment", commentId: "123" }).success).toBe(true);
+  expect(reviewMutationInputSchema.safeParse({ ...common, body: "rocket", reactionTarget: "pull_request_review_comment", commentId: "456" }).success).toBe(true);
+  for (const invalid of [
+    { ...common, body: "🔥", reactionTarget: "pull_request" },
+    { ...common, body: "+1", reactionTarget: "issue_comment" },
+    { ...common, body: "+1", reactionTarget: "pull_request", commentId: "123" },
+    { ...common, body: "+1", reactionTarget: "issue_comment", commentId: "not-a-number" },
+  ]) expect(reviewMutationInputSchema.safeParse(invalid).success).toBe(false);
+});
+
 test("fixes accept finding identities, not renderer-supplied prompts", () => {
   const input = { runId: crypto.randomUUID(), findingIds: ["finding-1"], expectedHeadRevision: "b".repeat(40) };
   expect(reviewFixInputSchema.safeParse(input).success).toBe(true);

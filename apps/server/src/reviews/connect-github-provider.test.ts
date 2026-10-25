@@ -91,19 +91,19 @@ describe("Connect GitHub Review provider", () => {
     const head = "a".repeat(40);
     const wrap = (value: unknown) => ({ content: [{ type: "text", text: JSON.stringify(value) }] });
     const instance = provider({ executeByMethod: {
-      get: wrap({ number: 17, title: "Actual title", state: "open", user: { login: "yuwnloyblog" }, head: { sha: head, ref: "test/review" }, base: { ref: "dev" }, body: "Actual description", changed_files: 1 }),
+      get: wrap({ number: 17, title: "Actual title", state: "open", user: { login: "yuwnloyblog" }, requested_reviewers: [{ login: "reviewer", avatar_url: "https://example.test/reviewer.png" }], head: { sha: head, ref: "test/review" }, base: { ref: "dev" }, body: "Actual description", changed_files: 1 }),
       get_files: wrap([{ filename: "docs/test.md", status: "added", additions: 1, deletions: 0, patch: "@@ -0,0 +1 @@\n+Test" }]),
       get_check_runs: wrap({ check_runs: [{ id: 1, name: "Docs", status: "completed", conclusion: "success" }] }),
       get_review_comments: wrap({ nodes: [], pageInfo: { hasNextPage: false } }),
-      get_comments: wrap([{ id: 2, body: "Test comment", user: { login: "reviewer" }, created_at: "2026-10-23T16:00:00Z" }]),
+      get_comments: wrap([{ id: 2, body: "Test comment", user: { login: "reviewer", avatar_url: "https://example.test/commenter.png" }, created_at: "2026-10-23T16:00:00Z" }]),
       get_reviews: wrap([]),
     } });
     const detail = await instance.resolveUrl({ workspace, url: "https://github.com/juggleai/jugglework-desktop/pull/17" });
-    expect(detail.item).toMatchObject({ title: "Actual title", body: "Actual description", author: { login: "yuwnloyblog" }, headRevision: head, baseBranch: "dev", headBranch: "test/review" });
+    expect(detail.item).toMatchObject({ title: "Actual title", body: "Actual description", author: { login: "yuwnloyblog" }, reviewers: [{ login: "reviewer", avatarUrl: "https://example.test/reviewer.png" }], headRevision: head, baseBranch: "dev", headBranch: "test/review" });
     const target = { workspace, reviewId: detail.item.id, limit: 30 };
     expect((await instance.listFiles(target)).items).toHaveLength(1);
     expect((await instance.getChecks(target)).items).toHaveLength(1);
-    expect((await instance.listThreads(target)).items).toHaveLength(1);
+    expect((await instance.listThreads(target)).items).toMatchObject([{ comments: [{ author: { login: "reviewer", avatarUrl: "https://example.test/commenter.png" } }] }]);
   });
 
   test("downstream MCP failures cannot become an empty inbox or a placeholder PR", async () => {
@@ -150,6 +150,26 @@ describe("Connect GitHub Review provider", () => {
     }
   });
 
+  test("adds native GitHub reactions to pull requests and both comment kinds", async () => {
+    const head = "a".repeat(40);
+    const reviewId = encodeReviewId({ version: 1, provider: "github", connectionId: "mcpconn_github", hostname: "github.com", owner: "team", repository: "repo", number: 7 });
+    const capabilities = [
+      "search_pull_requests", "pull_request_read", "add_reaction_to_pr", "add_reaction_to_issue_comment", "add_reaction_to_pr_review_comment",
+    ].map((name) => ({ name: `mcp:mcpconn_github:${name}` }));
+    const cases = [
+      [{ body: "+1", reactionTarget: "pull_request" }, "add_reaction_to_pr", { repo_full_name: "team/repo", pr_number: 7, reaction: "+1" }],
+      [{ body: "eyes", reactionTarget: "issue_comment", commentId: "123" }, "add_reaction_to_issue_comment", { repo_full_name: "team/repo", comment_id: 123, reaction: "eyes" }],
+      [{ body: "rocket", reactionTarget: "pull_request_review_comment", commentId: "456" }, "add_reaction_to_pr_review_comment", { repo_full_name: "team/repo", comment_id: 456, reaction: "rocket" }],
+    ] as const;
+    for (const [reaction, capability, expectedBody] of cases) {
+      const observed: Array<Record<string, unknown>> = [];
+      const instance = provider({ observed, search: { matches: capabilities }, executeByMethod: { get: { state: "open", head: { sha: head } } }, execute: { success: true } });
+      await instance.mutate({ workspace, reviewId, kind: "reaction", expectedHeadRevision: head, requestId: crypto.randomUUID(), ...reaction });
+      const calls = observed.filter((entry) => (entry.params as { name?: string } | undefined)?.name === "execute_capability");
+      expect(calls.at(-1)?.params).toMatchObject({ arguments: { name: `mcp:mcpconn_github:${capability}`, body: expectedBody } });
+    }
+  });
+
   test("changed heads and missing write grants cannot publish", async () => {
     const reviewId = encodeReviewId({ version: 1, provider: "github", connectionId: "mcpconn_github", hostname: "github.com", owner: "team", repository: "repo", number: 7 });
     for (const enabled of [true, false]) {
@@ -168,11 +188,12 @@ describe("Connect GitHub Review provider", () => {
     const reviewId = encodeReviewId({ version: 1, provider: "github", connectionId: "mcpconn_github", hostname: "github.com", owner: "team", repository: "repo", number: 7 });
     const capabilities = [
       "search_pull_requests", "pull_request_read", "convert_pull_request_to_draft",
-      "mark_pull_request_ready_for_review", "update_pull_request", "merge_pull_request", "enable_auto_merge",
+      "mark_pull_request_ready_for_review", "request_pull_request_reviewers", "update_pull_request", "merge_pull_request", "enable_auto_merge",
     ].map((name) => ({ name: `mcp:mcpconn_github:${name}` }));
     const cases = [
       ["mark_draft", "convert_pull_request_to_draft", { repository_full_name: "team/repo", pr_number: 7 }],
       ["mark_ready", "mark_pull_request_ready_for_review", { repository_full_name: "team/repo", pr_number: 7 }],
+      ["request_reviewers", "request_pull_request_reviewers", { repository_full_name: "team/repo", pr_number: 7, reviewers: ["octocat"] }],
       ["close", "update_pull_request", { repository_full_name: "team/repo", pr_number: 7, state: "closed" }],
       ["merge", "merge_pull_request", { repository_full_name: "team/repo", pr_number: 7, expected_head_sha: head, merge_method: "squash" }],
       ["enable_auto_merge", "enable_auto_merge", { repository_full_name: "team/repo", pr_number: 7 }],
@@ -180,10 +201,31 @@ describe("Connect GitHub Review provider", () => {
     for (const [action, capability, expectedBody] of cases) {
       const observed: Array<Record<string, unknown>> = [];
       const instance = provider({ observed, search: { matches: capabilities }, executeByMethod: { get: { state: "open", head: { sha: head } } }, execute: action === "merge" ? { merged: true } : { success: true } });
-      await instance.mutatePullRequest({ workspace, reviewId, action, expectedHeadRevision: head, requestId: crypto.randomUUID(), ...(action === "merge" ? { mergeMethod: "squash" } : {}) });
+      await instance.mutatePullRequest({ workspace, reviewId, action, expectedHeadRevision: head, requestId: crypto.randomUUID(), ...(action === "merge" ? { mergeMethod: "squash" } : {}), ...(action === "request_reviewers" ? { reviewers: ["octocat"] } : {}) });
       const calls = observed.filter((entry) => (entry.params as { name?: string } | undefined)?.name === "execute_capability");
       expect(calls.at(-1)?.params).toMatchObject({ arguments: { name: `mcp:mcpconn_github:${capability}`, body: expectedBody } });
     }
+  });
+
+  test("updates the pull request title and description through the fixed update capability", async () => {
+    const head = "a".repeat(40);
+    const reviewId = encodeReviewId({ version: 1, provider: "github", connectionId: "mcpconn_github", hostname: "github.com", owner: "team", repository: "repo", number: 7 });
+    const observed: Array<Record<string, unknown>> = [];
+    const instance = provider({
+      observed,
+      search: { matches: [
+        { name: "mcp:mcpconn_github:search_pull_requests" },
+        { name: "mcp:mcpconn_github:pull_request_read" },
+        { name: "mcp:mcpconn_github:update_pull_request" },
+      ] },
+      executeByMethod: { get: { state: "open", head: { sha: head } } },
+      execute: { success: true },
+    });
+
+    await instance.mutatePullRequest({ workspace, reviewId, action: "edit", title: "Updated title", body: "Updated description", expectedHeadRevision: head, requestId: crypto.randomUUID() });
+
+    const calls = observed.filter((entry) => (entry.params as { name?: string } | undefined)?.name === "execute_capability");
+    expect(calls.at(-1)?.params).toMatchObject({ arguments: { name: "mcp:mcpconn_github:update_pull_request", body: { repository_full_name: "team/repo", pr_number: 7, title: "Updated title", body: "Updated description" } } });
   });
 
   test("rejects stale revisions before executing a pull request action", async () => {

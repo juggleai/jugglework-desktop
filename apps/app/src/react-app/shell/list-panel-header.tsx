@@ -19,7 +19,7 @@ export type ListPanelHeaderProps = {
   shortcut?: string;
   searchEnd?: React.ReactNode;
   titleEnd?: React.ReactNode;
-  addControl: React.ReactNode;
+  addControl?: React.ReactNode;
   insetDivider?: boolean;
 };
 
@@ -48,7 +48,7 @@ export function ListPanelHeader(props: ListPanelHeaderProps) {
             ) : props.searchEnd ?? (props.shortcut ? <kbd className="jw-list-panel-shortcut">{props.shortcut}</kbd> : null)}
           </span>
         </div>
-        <div className="jw-list-panel-add-slot">{props.addControl}</div>
+        {props.addControl ? <div className="jw-list-panel-add-slot">{props.addControl}</div> : null}
       </div>
     </header>
   );

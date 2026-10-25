@@ -106,8 +106,15 @@ describe("Review workflow routes", () => {
     const valid = { requestId: crypto.randomUUID(), expectedHeadRevision: "a".repeat(40), action: "merge", mergeMethod: "squash" };
     await expect(invokeAction({ ...valid, capability: "delete_repository" })).rejects.toMatchObject({ code: "invalid_payload" });
     await expect(invokeAction({ ...valid, action: "close", mergeMethod: "squash" })).rejects.toMatchObject({ code: "invalid_payload" });
+    await expect(invokeAction({ ...valid, action: "close", mergeMethod: undefined, title: "Unexpected" })).rejects.toMatchObject({ code: "invalid_payload" });
     expect(calls).toHaveLength(0);
     expect((await invokeAction(valid)).status).toBe(200);
     expect(calls[0]).toMatchObject({ action: "merge", mergeMethod: "squash", reviewId: "pr-one" });
+    const edit = { requestId: crypto.randomUUID(), expectedHeadRevision: "a".repeat(40), action: "edit", title: "Updated title", body: "Updated description" };
+    expect((await invokeAction(edit)).status).toBe(200);
+    expect(calls[1]).toMatchObject({ action: "edit", title: "Updated title", body: "Updated description", reviewId: "pr-one" });
+    const requestReviewers = { requestId: crypto.randomUUID(), expectedHeadRevision: "a".repeat(40), action: "request_reviewers", reviewers: ["octocat"] };
+    expect((await invokeAction(requestReviewers)).status).toBe(200);
+    expect(calls[2]).toMatchObject({ action: "request_reviewers", reviewers: ["octocat"], reviewId: "pr-one" });
   });
 });

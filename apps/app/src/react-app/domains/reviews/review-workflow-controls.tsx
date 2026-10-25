@@ -20,6 +20,7 @@ export function findingsReviewBody(run: ReviewRun): string {
 export function ReviewWorkflowControls(props: {
   endpoint: ResolvedWorkspaceEndpoint;
   review: ReviewPreview;
+  isOwnPullRequest?: boolean;
   active: boolean;
   operations?: ReviewConnectionStatus["operations"];
   onOpenSession: (sessionId: string) => void;
@@ -63,6 +64,7 @@ export function ReviewWorkflowControls(props: {
   ].filter((item, index, items) => items.findIndex((candidate) => candidate.id === item.id) === index);
   const stale = Boolean(run && run.headRevision !== review.headRevision);
   const running = run?.status === "running";
+  const isOwnPullRequest = Boolean(props.isOwnPullRequest || review.relationship === "authored");
   const revisionKnown = /^[a-f0-9]{40,64}$/i.test(review.headRevision);
   useEffect(() => { setSelected(run?.analysis?.findings.map((finding) => finding.id) ?? []); }, [run?.id, run?.status]);
   const start = useMutation({
@@ -92,14 +94,14 @@ export function ReviewWorkflowControls(props: {
     mutationFn: (findingIds: string[]) => endpoint.client.createReviewFix(endpoint.workspaceId, review.id, { runId: run!.id, findingIds, expectedHeadRevision: review.headRevision }),
     onSuccess: (data, _variables, context) => { if (currentScope(context?.scope)) { void runs.refetch(); props.onOpenSession(data.sessionId); } },
   });
-  const canPublish = decision === "discussion" ? props.operations?.comment : props.operations?.submitReview;
+  const canPublish = !isOwnPullRequest && (decision === "discussion" ? props.operations?.comment : props.operations?.submitReview);
   const error = dialog === "ai" ? start.error ?? cancel.error ?? fix.error ?? runs.error : publish.error;
   const selectBody = (value: string) => { setBody(value); setRequestId(crypto.randomUUID()); };
   const openPublish = () => { publish.reset(); setNotice(null); if (publishRevision !== review.headRevision) { setBody(""); setRequestId(crypto.randomUUID()); } setPublishRevision(review.headRevision); if (!props.operations?.submitReview && props.operations?.comment) setDecision("discussion"); setDialog("publish"); };
   return <>
     <div className="flex flex-wrap items-center justify-end gap-2" data-testid="review-workflow-controls">
-      <Button variant="outline" className="h-9 rounded-full px-4 shadow-sm" onClick={() => { setDialog("ai"); start.reset(); fix.reset(); }}><Bot />{text("Review with JuggleWork", "使用 JuggleWork 审查")}{running ? <LoaderCircle className="size-3.5 animate-spin" /> : run?.status === "completed" ? ` · ${run.analysis?.findings.length ?? 0}` : ""}</Button>
-      <Button className="h-9 rounded-full px-4" onClick={openPublish} disabled={!props.operations?.comment && !props.operations?.submitReview} title={!props.operations?.submitReview ? text("Check organization GitHub write permissions", "请检查组织 GitHub 连接器的写入权限") : undefined}><MessageSquareText />{text("Submit review", "提交评审")}</Button>
+      <Button variant="outline" className="h-8 rounded-full px-3.5 text-sm shadow-sm" onClick={() => { setDialog("ai"); start.reset(); fix.reset(); }}><Bot />{text("Review with JuggleWork", "使用 JuggleWork 审查")}{running ? <LoaderCircle className="size-3.5 animate-spin" /> : run?.status === "completed" ? ` · ${run.analysis?.findings.length ?? 0}` : ""}</Button>
+      {!isOwnPullRequest ? <Button className="h-8 rounded-full px-3.5 text-sm" onClick={openPublish} disabled={!props.operations?.comment && !props.operations?.submitReview} title={!props.operations?.submitReview ? text("Check organization GitHub write permissions", "请检查组织 GitHub 连接器的写入权限") : undefined}><MessageSquareText />{text("Submit review", "提交评审")}</Button> : null}
     </div>
     {notice ? <span role="status" className="text-xs text-green-11">{notice}</span> : null}
     <Dialog open={dialog !== null} onOpenChange={(open) => { if (!open && !publish.isPending) setDialog(null); }}>
@@ -131,7 +133,7 @@ export function ReviewWorkflowControls(props: {
               </article>)}
               <div className="flex flex-wrap gap-2">
                 <Button variant="outline" disabled={!selected.length || stale || fix.isPending || running} onClick={() => fix.mutate(selected)}>{fix.isPending ? <LoaderCircle className="animate-spin" /> : <Wrench />}{text("Fix selected", "修复所选问题")}</Button>
-                <Button disabled={stale || running || !props.operations?.submitReview} onClick={() => { selectBody(findingsReviewBody(run)); setDecision("COMMENT"); openPublish(); }}>{text("Use in review…", "用于提交评审…")}</Button>
+                {!isOwnPullRequest ? <Button disabled={stale || running || !props.operations?.submitReview} onClick={() => { selectBody(findingsReviewBody(run)); setDecision("COMMENT"); openPublish(); }}>{text("Use in review…", "用于提交评审…")}</Button> : null}
               </div>
             </> : null}
             {relatedSessions.length ? <div className="rounded-xl border border-dls-border p-3" data-testid="review-related-tasks">

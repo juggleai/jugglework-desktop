@@ -27,8 +27,8 @@ let client: QueryClient;
 let view: TestRenderer.ReactTestRenderer;
 const review = { ...REVIEW_PREVIEWS[0]!, headRevision: head };
 const button = (label: string) => view.root.findAllByType("button").find((item) => item.children.includes(label))!;
-async function render(writable = true, revision = head) {
-  await act(async () => { view = TestRenderer.create(<QueryClientProvider client={client}><ReviewWorkflowControls endpoint={endpoint} review={{ ...review, headRevision: revision }} active operations={{ comment: writable, submitReview: writable }} onOpenSession={openSession} /></QueryClientProvider>); });
+async function render(writable = true, revision = head, relationship = review.relationship, isOwnPullRequest?: boolean) {
+  await act(async () => { view = TestRenderer.create(<QueryClientProvider client={client}><ReviewWorkflowControls endpoint={endpoint} review={{ ...review, headRevision: revision, relationship }} isOwnPullRequest={isOwnPullRequest} active operations={{ comment: writable, submitReview: writable }} onOpenSession={openSession} /></QueryClientProvider>); });
   await act(async () => { await Bun.sleep(5); });
 }
 beforeEach(() => { run = null; publish.mockClear(); start.mockClear(); fix.mockClear(); openSession.mockClear(); client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }); });
@@ -54,6 +54,15 @@ test("read-only organization connections can run AI review without enabling exte
   await act(async () => { button("Start review").props.onClick(); await Bun.sleep(5); });
   expect(start).toHaveBeenCalledTimes(1);
   expect(publish).not.toHaveBeenCalled();
+});
+
+test("authored pull requests hide every submit-review entry point", async () => {
+  run = { id: crypto.randomUUID(), reviewId: review.id, headRevision: head, status: "completed", createdAt: new Date().toISOString(), partial: false, analysis: { summary: "One regression", findings: [{ id: "finding-1", priority: 1, title: "Bug", body: "Impact" }] } };
+  await render(true, head, "requested", true);
+  expect(button("Review with JuggleWork")).toBeTruthy();
+  expect(button("Submit review")).toBeUndefined();
+  await act(async () => { button("Review with JuggleWork").props.onClick(); });
+  expect(button("Use in review…")).toBeUndefined();
 });
 
 test("selected findings create a fix task and navigate to the returned session", async () => {

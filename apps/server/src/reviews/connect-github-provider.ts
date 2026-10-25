@@ -379,10 +379,13 @@ export class ConnectGithubReviewProvider implements ReviewReadProvider {
         operations: {
           comment: Boolean(writes.add_issue_comment),
           submitReview: Boolean(writes.pull_request_review_write),
+          react: Boolean(writes.add_reaction_to_pr && writes.add_reaction_to_issue_comment && writes.add_reaction_to_pr_review_comment),
+          requestReviewers: Boolean(writes.request_pull_request_reviewers),
           markDraft: Boolean(writes.convert_pull_request_to_draft),
           markReady: Boolean(writes.mark_pull_request_ready_for_review),
           close: Boolean(writes.update_pull_request),
           reopen: Boolean(writes.update_pull_request),
+          edit: Boolean(writes.update_pull_request),
           merge: Boolean(writes.merge_pull_request),
           enableAutoMerge: Boolean(writes.enable_auto_merge),
         },
@@ -404,16 +407,25 @@ export class ConnectGithubReviewProvider implements ReviewReadProvider {
     const fixed = [
       "pull_request_review_write",
       "add_issue_comment",
+      "add_reaction_to_pr",
+      "add_reaction_to_issue_comment",
+      "add_reaction_to_pr_review_comment",
+      "request_pull_request_reviewers",
       "convert_pull_request_to_draft",
       "mark_pull_request_ready_for_review",
       "update_pull_request",
       "merge_pull_request",
       "enable_auto_merge",
     ] as const;
-    const value = await this.search(session, `GitHub ${fixed.join(" ")}`, signal);
-    const matches = isRecord(value) ? array(value.matches).filter(isRecord) : [];
-    return Object.fromEntries(fixed.flatMap((suffix) => {
+    // Search every write operation independently. A single broad semantic
+    // search can rank a valid capability outside the result window (reviewer
+    // requests were particularly easy to lose once more GitHub tools were
+    // installed), which made the UI incorrectly disable an available action.
+    const values = await Promise.all(fixed.map((suffix) => this.search(session, `GitHub ${suffix.replaceAll("_", " ")}`, signal)));
+    return Object.fromEntries(fixed.flatMap((suffix, index) => {
       const expected = `mcp:${capabilities.connectionId}:${suffix}`;
+      const value = values[index];
+      const matches = isRecord(value) ? array(value.matches).filter(isRecord) : [];
       return matches.some((entry) => entry.name === expected) ? [[suffix, expected]] : [];
     }));
   }
@@ -436,7 +448,15 @@ export class ConnectGithubReviewProvider implements ReviewReadProvider {
   async mutate(input: ReviewTargetInput & ReviewMutationInput): Promise<{ ok: true }> {
     const { identity, session, capabilities } = await this.target(input);
     const names = await this.writeCapabilities(session, capabilities, input.signal);
-    const name = input.kind === "comment" ? names.add_issue_comment : names.pull_request_review_write;
+    const name = input.kind === "comment"
+      ? names.add_issue_comment
+      : input.kind === "review"
+        ? names.pull_request_review_write
+        : input.reactionTarget === "pull_request"
+          ? names.add_reaction_to_pr
+          : input.reactionTarget === "issue_comment"
+            ? names.add_reaction_to_issue_comment
+            : names.add_reaction_to_pr_review_comment;
     if (!name) throw new ApiError(403, "github_review_write_unavailable", "Your organization GitHub connection does not provide this write operation. Ask the organization owner to check GitHub permissions.", { retryable: false });
     const target = { owner: identity.owner, repo: identity.repository, pullNumber: identity.number };
     const fresh = await this.execute(session, capabilities.pullRequestRead, { ...target, method: "get" }, input.signal);
@@ -449,7 +469,13 @@ export class ConnectGithubReviewProvider implements ReviewReadProvider {
         name,
         body: input.kind === "comment"
           ? { owner: identity.owner, repo: identity.repository, issue_number: identity.number, body: input.body }
-          : { ...target, method: "create", event: input.event, body: input.body, commitID: input.expectedHeadRevision },
+          : input.kind === "review"
+            ? { ...target, method: "create", event: input.event, body: input.body, commitID: input.expectedHeadRevision }
+            : {
+                repo_full_name: `${identity.owner}/${identity.repository}`,
+                ...(input.reactionTarget === "pull_request" ? { pr_number: identity.number } : { comment_id: Number(input.commentId) }),
+                reaction: input.body,
+              },
       }, { signal: input.signal, timeoutMs: 25_000, maxBytes: 1_048_576 });
       githubCapabilityValue(result);
     } catch (error) {
@@ -469,11 +495,13 @@ export class ConnectGithubReviewProvider implements ReviewReadProvider {
       ? "convert_pull_request_to_draft"
       : input.action === "mark_ready"
         ? "mark_pull_request_ready_for_review"
-        : input.action === "merge"
-          ? "merge_pull_request"
-          : input.action === "enable_auto_merge"
-            ? "enable_auto_merge"
-            : "update_pull_request";
+        : input.action === "request_reviewers"
+          ? "request_pull_request_reviewers"
+          : input.action === "merge"
+            ? "merge_pull_request"
+            : input.action === "enable_auto_merge"
+              ? "enable_auto_merge"
+              : "update_pull_request";
     const name = names[suffix];
     if (!name) throw new ApiError(403, "github_pull_request_write_unavailable", "Your organization GitHub connection does not provide this pull request operation. Ask the organization owner to check GitHub permissions.", { retryable: false });
 
@@ -484,7 +512,7 @@ export class ConnectGithubReviewProvider implements ReviewReadProvider {
     if (head !== input.expectedHeadRevision) throw new ApiError(409, "review_revision_changed", "The pull request changed. Refresh before changing it.", { retryable: false });
     if (!isRecord(raw)) throw new ApiError(502, "github_invalid_response", "GitHub returned an invalid pull request.", { retryable: true });
     const state = raw.merged === true ? "merged" : raw.state === "closed" ? "closed" : "open";
-    if (["mark_draft", "mark_ready", "close", "merge", "enable_auto_merge"].includes(input.action) && state !== "open") {
+    if (["edit", "request_reviewers", "mark_draft", "mark_ready", "close", "merge", "enable_auto_merge"].includes(input.action) && state !== "open") {
       throw new ApiError(409, "review_pull_request_closed", "This pull request is no longer open.", { retryable: false });
     }
     if (input.action === "reopen" && state !== "closed") {
@@ -492,13 +520,17 @@ export class ConnectGithubReviewProvider implements ReviewReadProvider {
     }
 
     const repository = `${identity.owner}/${identity.repository}`;
-    const body = input.action === "close"
-      ? { repository_full_name: repository, pr_number: identity.number, state: "closed" }
-      : input.action === "reopen"
-        ? { repository_full_name: repository, pr_number: identity.number, state: "open" }
-        : input.action === "merge"
-          ? { repository_full_name: repository, pr_number: identity.number, expected_head_sha: input.expectedHeadRevision, merge_method: input.mergeMethod ?? "merge" }
-          : { repository_full_name: repository, pr_number: identity.number };
+    const body = input.action === "edit"
+      ? { repository_full_name: repository, pr_number: identity.number, ...(input.title !== undefined ? { title: input.title } : {}), ...(input.body !== undefined ? { body: input.body } : {}) }
+      : input.action === "request_reviewers"
+        ? { repository_full_name: repository, pr_number: identity.number, reviewers: input.reviewers }
+        : input.action === "close"
+          ? { repository_full_name: repository, pr_number: identity.number, state: "closed" }
+          : input.action === "reopen"
+            ? { repository_full_name: repository, pr_number: identity.number, state: "open" }
+            : input.action === "merge"
+              ? { repository_full_name: repository, pr_number: identity.number, expected_head_sha: input.expectedHeadRevision, merge_method: input.mergeMethod ?? "merge" }
+              : { repository_full_name: repository, pr_number: identity.number };
     try {
       const result = await callCloudMcpTool(this.fetcher(), session, this.requestId++, "execute_capability", { name, body }, { signal: input.signal, timeoutMs: 25_000, maxBytes: 1_048_576 });
       const value = githubCapabilityValue(result);
@@ -542,7 +574,11 @@ export class ConnectGithubReviewProvider implements ReviewReadProvider {
     if (!list || !isRecord(raw)) throw new ApiError(502, "github_invalid_response", "GitHub pull request response is invalid.", { retryable: true });
     const head = isRecord(raw.head) ? raw.head : {};
     const base = isRecord(raw.base) ? raw.base : {};
-    return reviewDetailSchema.parse({ schemaVersion: 1, item: { ...list, body: string(raw.body, "", 100_000), baseBranch: string(base.ref, "", 512), headBranch: string(head.ref, "", 512), mergeable: raw.mergeable === true ? "mergeable" : raw.mergeable === false ? "conflicting" : "unknown", viewerPermission: "unknown" }, cache: { source: cacheHit ? "memory" : "provider", fetchedAt: this.now().toISOString(), stale: false } });
+    const reviewers = array(raw.requested_reviewers ?? raw.requestedReviewers ?? raw.reviewers)
+      .slice(0, 100)
+      .map(normalizeAuthor)
+      .filter((reviewer) => reviewer.login !== "unknown");
+    return reviewDetailSchema.parse({ schemaVersion: 1, item: { ...list, body: string(raw.body, "", 100_000), baseBranch: string(base.ref, "", 512), headBranch: string(head.ref, "", 512), reviewers, mergeable: raw.mergeable === true ? "mergeable" : raw.mergeable === false ? "conflicting" : "unknown", viewerPermission: "unknown" }, cache: { source: cacheHit ? "memory" : "provider", fetchedAt: this.now().toISOString(), stale: false } });
   }
 
   async listFiles(input: ReviewTargetInput & { cursor?: string; limit: number }) {

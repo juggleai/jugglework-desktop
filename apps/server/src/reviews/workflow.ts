@@ -187,7 +187,7 @@ export class ReviewWorkflow {
 
   async mutate(input: ReviewTargetInput & ReviewMutationInput): Promise<{ ok: true }> {
     const key = `${await this.key(input)}-publish-${input.requestId}`;
-    const fingerprint = hash(JSON.stringify({ kind: input.kind, body: input.body, event: input.event, revision: input.expectedHeadRevision }));
+    const fingerprint = hash(JSON.stringify({ kind: input.kind, body: input.body, event: input.event, commentId: input.commentId, reactionTarget: input.reactionTarget, revision: input.expectedHeadRevision }));
     const active = this.mutations.get(key);
     if (active) { await active; }
     const operation = (async (): Promise<{ ok: true }> => {
@@ -215,7 +215,7 @@ export class ReviewWorkflow {
 
   async mutatePullRequest(input: ReviewTargetInput & ReviewPullRequestActionInput): Promise<{ ok: true }> {
     const key = `${await this.key(input)}-pull-request-${input.requestId}`;
-    const fingerprint = hash(JSON.stringify({ action: input.action, mergeMethod: input.mergeMethod, revision: input.expectedHeadRevision }));
+    const fingerprint = hash(JSON.stringify({ action: input.action, title: input.title, body: input.body, reviewers: input.reviewers, mergeMethod: input.mergeMethod, revision: input.expectedHeadRevision }));
     const active = this.pullRequestActions.get(key);
     if (active) return active;
     const operation = (async (): Promise<{ ok: true }> => {

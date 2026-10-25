@@ -17,6 +17,8 @@ import type { ReviewPreview } from "./review-types";
 const text = (en: string, zh: string) => currentLocale() === "zh" ? zh : en;
 
 const actionCopy: Record<ReviewPullRequestAction, { en: string; zh: string; detailEn: string; detailZh: string }> = {
+  edit: { en: "Edit pull request", zh: "编辑 Pull Request", detailEn: "The pull request title or description will be updated.", detailZh: "将更新此 Pull Request 的标题或描述。" },
+  request_reviewers: { en: "Request reviewers", zh: "请求评审人", detailEn: "The selected GitHub users will be asked to review this pull request.", detailZh: "将请求所选 GitHub 用户评审此 Pull Request。" },
   mark_draft: { en: "Convert to draft", zh: "转为草稿", detailEn: "This pull request will no longer be ready for review.", detailZh: "此 Pull Request 将不再处于可评审状态。" },
   mark_ready: { en: "Mark ready for review", zh: "标记为可评审", detailEn: "Reviewers will see that this pull request is ready.", detailZh: "评审人将看到此 Pull Request 已可评审。" },
   close: { en: "Close pull request", zh: "关闭 Pull Request", detailEn: "The pull request will be closed without merging.", detailZh: "此 Pull Request 将在不合并的情况下关闭。" },
@@ -37,6 +39,9 @@ export function ReviewHeaderActions(props: {
   onTogglePin: () => void;
   onChanged: () => void | Promise<void>;
   workflowActions?: ReactNode;
+  viewSwitcher?: ReactNode;
+  changesTools?: ReactNode;
+  showStatus?: boolean;
 }) {
   const platform = usePlatform();
   const [pending, setPending] = useState<ReviewPullRequestAction | null>(null);
@@ -45,6 +50,8 @@ export function ReviewHeaderActions(props: {
   const writable = Boolean(props.endpoint && /^[a-f0-9]{40,64}$/i.test(props.review.headRevision));
   const operationAvailable = (action: ReviewPullRequestAction) => {
     if (!writable) return false;
+    if (action === "edit") return Boolean(props.operations?.edit);
+    if (action === "request_reviewers") return Boolean(props.operations?.requestReviewers);
     if (action === "mark_draft") return Boolean(props.operations?.markDraft);
     if (action === "mark_ready") return Boolean(props.operations?.markReady || (props.review.state === "closed" && props.operations?.reopen));
     if (action === "close") return Boolean(props.operations?.close);
@@ -80,7 +87,29 @@ export function ReviewHeaderActions(props: {
   const statusDisabled = props.review.state === "merged" || !writable;
 
   return <>
-    <DropdownMenu>
+    <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
+      {props.viewSwitcher}
+      <div className="relative z-20 ml-auto flex shrink-0 flex-wrap items-center justify-end gap-2">
+        {props.changesTools}
+        <div className="flex h-8 items-center rounded-full border border-dls-border bg-background p-0.5 shadow-sm">
+          <IconTip label={props.pinned ? text("Unpin from sidebar", "从侧边栏取消固定") : text("Pin to sidebar", "固定到侧边栏")}><Button variant="ghost" size="icon-sm" className="size-7 rounded-full" onClick={props.onTogglePin} aria-label={props.pinned ? text("Unpin from sidebar", "从侧边栏取消固定") : text("Pin to sidebar", "固定到侧边栏")}>{props.pinned ? <PinOff /> : <Pin />}</Button></IconTip>
+          <IconTip label={text("Copy URL", "复制链接")}><Button variant="ghost" size="icon-sm" className="size-7 rounded-full" onClick={() => void copyUrl()} aria-label={text("Copy URL", "复制链接")}><Copy /></Button></IconTip>
+          <IconTip label={text("Open in GitHub", "在 GitHub 中打开")}><Button variant="ghost" size="icon-sm" className="size-7 rounded-full" onClick={() => platform.openLink(props.review.url)} aria-label={text("Open in GitHub", "在 GitHub 中打开")}><Github /><span className="sr-only"><ExternalLink /></span></Button></IconTip>
+        </div>
+        {props.workflowActions}
+        <DropdownMenu>
+          <DropdownMenuTrigger render={<Button className="h-8 rounded-full bg-dls-text px-3.5 text-sm text-background hover:bg-dls-text/90" disabled={!operationAvailable("merge") && !operationAvailable("enable_auto_merge")} />}>
+            <GitMerge />{text("Merge", "合并")}<ChevronDown className="size-3.5" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="min-w-52">
+            <DropdownMenuItem disabled={!operationAvailable("merge")} onClick={() => request("merge")}>{text("Merge", "合并")}</DropdownMenuItem>
+            <DropdownMenuItem disabled={!operationAvailable("enable_auto_merge")} onClick={() => request("enable_auto_merge")}>{text("Enable auto-merge", "启用自动合并")}</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    </div>
+    {props.showStatus !== false ? <div className="mt-3 flex min-w-0 items-center gap-3">
+      <DropdownMenu>
       <DropdownMenuTrigger render={<Button variant="ghost" disabled={statusDisabled} className={`h-8 rounded-full px-3 text-xs ${statusTone}`} aria-label={text("Change pull request status", "更改 Pull Request 状态")} />}>
         <GitPullRequestArrow className="size-3.5" />{statusLabel}<ChevronDown className="size-3.5" />
       </DropdownMenuTrigger>
@@ -95,25 +124,9 @@ export function ReviewHeaderActions(props: {
           {text("Closed", "已关闭")}{props.review.state === "closed" ? <Check className="ml-auto size-4" /> : null}
         </DropdownMenuItem>
       </DropdownMenuContent>
-    </DropdownMenu>
-    <div className="min-w-0 text-xs text-dls-secondary"><span>{props.review.repository}</span> <span>#{props.review.number}</span></div>
-    <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-2">
-      <div className="flex h-9 items-center rounded-full border border-dls-border bg-background p-0.5 shadow-sm">
-        <IconTip label={props.pinned ? text("Unpin from sidebar", "从侧边栏取消固定") : text("Pin to sidebar", "固定到侧边栏")}><Button variant="ghost" size="icon-sm" className="rounded-full" onClick={props.onTogglePin} aria-label={props.pinned ? text("Unpin from sidebar", "从侧边栏取消固定") : text("Pin to sidebar", "固定到侧边栏")}>{props.pinned ? <PinOff /> : <Pin />}</Button></IconTip>
-        <IconTip label={text("Copy URL", "复制链接")}><Button variant="ghost" size="icon-sm" className="rounded-full" onClick={() => void copyUrl()} aria-label={text("Copy URL", "复制链接")}><Copy /></Button></IconTip>
-        <IconTip label={text("Open in GitHub", "在 GitHub 中打开")}><Button variant="ghost" size="icon-sm" className="rounded-full" onClick={() => platform.openLink(props.review.url)} aria-label={text("Open in GitHub", "在 GitHub 中打开")}><Github /><span className="sr-only"><ExternalLink /></span></Button></IconTip>
-      </div>
-      {props.workflowActions}
-      <DropdownMenu>
-        <DropdownMenuTrigger render={<Button className="h-9 rounded-full bg-dls-text px-4 text-background hover:bg-dls-text/90" disabled={!operationAvailable("merge") && !operationAvailable("enable_auto_merge")} />}>
-          <GitMerge />{text("Merge", "合并")}<ChevronDown className="size-4" />
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="min-w-52">
-          <DropdownMenuItem disabled={!operationAvailable("merge")} onClick={() => request("merge")}>{text("Merge", "合并")}</DropdownMenuItem>
-          <DropdownMenuItem disabled={!operationAvailable("enable_auto_merge")} onClick={() => request("enable_auto_merge")}>{text("Enable auto-merge", "启用自动合并")}</DropdownMenuItem>
-        </DropdownMenuContent>
       </DropdownMenu>
-    </div>
+      <div className="min-w-0 text-xs text-dls-secondary"><span>{props.review.repository}</span> <span>#{props.review.number}</span></div>
+    </div> : null}
     <Dialog open={Boolean(pending)} onOpenChange={(open) => { if (!open && !busy) { setPending(null); setError(null); } }}>
       <DialogContent className="sm:max-w-[440px]">
         <DialogTitle>{pending ? text(actionCopy[pending].en, actionCopy[pending].zh) : ""}</DialogTitle>

@@ -34,13 +34,15 @@ function thread(value: WireThread): ReviewThread {
   return {
     id: value.id,
     author: first?.author.displayName ?? first?.author.login ?? "GitHub",
+    authorLogin: first?.author.login,
+    authorAvatarUrl: first?.author.avatarUrl,
     initials: initials(first?.author.login ?? "GH"),
     body: first?.body ?? "",
     path: value.path,
     line: value.line,
     age: first ? age(first.createdAt) : "",
     resolved: value.resolved,
-    comments: value.comments.map((comment) => ({ id: comment.id, author: comment.author.displayName ?? comment.author.login, body: comment.body, age: age(comment.createdAt) })),
+    comments: value.comments.map((comment) => ({ id: comment.id, author: comment.author.displayName ?? comment.author.login, authorLogin: comment.author.login, avatarUrl: comment.author.avatarUrl, body: comment.body, age: age(comment.createdAt), url: comment.url })),
     reviewDecision: value.reviewDecision,
   };
 }
@@ -67,6 +69,7 @@ export function reviewViewModel(input: {
     author: item.author.displayName ?? item.author.login,
     authorInitials: initials(item.author.login),
     authorAvatarUrl: item.author.avatarUrl,
+    reviewers: input.detail?.item.reviewers ?? [],
     relationship: relationship(item),
     updatedAt: age(item.updatedAt),
     baseBranch: input.detail?.item.baseBranch ?? "",

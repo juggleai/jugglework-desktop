@@ -23,14 +23,22 @@ export type ReviewCheck = {
 export type ReviewThread = {
   id: string;
   author: string;
+  authorLogin?: string;
+  authorAvatarUrl?: string;
   initials: string;
   body: string;
   path?: string;
   line?: number;
   age: string;
   resolved?: boolean;
-  comments?: Array<{ id: string; author: string; body: string; age: string }>;
+  comments?: Array<{ id: string; author: string; authorLogin?: string; avatarUrl?: string; body: string; age: string; url?: string }>;
   reviewDecision?: "approved" | "changes_requested";
+};
+
+export type ReviewReviewer = {
+  login: string;
+  displayName?: string;
+  avatarUrl?: string;
 };
 
 export type ReviewPreview = {
@@ -47,6 +55,7 @@ export type ReviewPreview = {
   author: string;
   authorInitials: string;
   authorAvatarUrl?: string;
+  reviewers: ReviewReviewer[];
   relationship: ReviewRelationship;
   updatedAt: string;
   baseBranch: string;
