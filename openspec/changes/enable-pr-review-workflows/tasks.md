@@ -18,3 +18,12 @@
 - [x] Preserve bounded revision-scoped run history and expose related review/fix tasks in the PR workflow dialog.
 - [x] Add bounded exact-revision local repository context with Git remote verification and applicable `AGENTS.md` guidance while retaining deny-all model tools.
 - [x] Verify title truncation, session reuse, history, repository mismatch degradation, exact-revision context, UI navigation, and existing publish/fix revision guards (37 focused tests passed; app/server/shared-types checks passed).
+
+## Pull request reaction display
+- [x] Normalize non-zero pull request reaction counts from GitHub detail or exact repository search responses and carry them through the shared review contract.
+- [x] Display existing reactions beside the pull request description reaction control and verify provider, view-model, and rendering behavior (59 focused tests and app/server/shared-types checks passed).
+
+## Review comment summary
+- [x] Preserve GitHub discussion kind so ordinary issue comments and submitted review bodies remain distinct from inline review threads.
+- [x] Replace the Summary sidebar Threads navigation with a Codex-style review comment count, compact previews, resolved state, and Activity anchor navigation.
+- [x] Verify root-only counting, ordinary-comment exclusion, expansion, and Activity location behavior.

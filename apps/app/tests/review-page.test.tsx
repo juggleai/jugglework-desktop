@@ -125,7 +125,7 @@ describe("Review workbench preview", () => {
     expect(html).toContain(selected.title);
     expect(html).toContain(selected.body);
     expect(html).toContain("Changes");
-    expect(html).toContain("Threads");
+    expect(html).toContain("1 comment");
     expect(html).toContain("Reviewers");
     expect(html).toContain("Checks");
     expect(html).toContain("Review with JuggleWork");
@@ -142,8 +142,12 @@ describe("Review workbench preview", () => {
     expect(html).toContain("Latest commit on");
     expect(html).toContain("Request a reviewer");
     expect(html).toContain("Add emoji response");
+    expect(html).toContain('aria-label="+1 2"');
+    expect(html).toContain('aria-label="heart 1"');
+    expect(html).toContain('aria-label="eyes 1"');
     expect(html).toContain("Comment actions");
     expect(html).toContain("https://avatars.githubusercontent.com/u/583231?v=4");
+    expect(html).not.toContain("Code review");
   });
 
   test("shows the changes switcher and selectable file list after opening changes", () => {
@@ -167,6 +171,7 @@ describe("Review workbench preview", () => {
 
     expect(html).toContain("Edit");
     expect(html).toContain("Quick reaction");
+    expect(html).toContain("No comments");
   });
 
   test("keeps the reviewer picker reachable when capability discovery is incomplete", () => {

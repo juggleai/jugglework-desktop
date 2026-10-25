@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { reviewMutationInputSchema, reviewPullRequestActionInputSchema, reviewFixInputSchema, reviewRelationshipSchema, reviewRunSchema } from "../src/reviews";
+import { reviewDetailSchema, reviewMutationInputSchema, reviewPullRequestActionInputSchema, reviewFixInputSchema, reviewRelationshipSchema, reviewRunSchema } from "../src/reviews";
 
 test("review inbox relationships include recently merged pull requests", () => {
   expect(reviewRelationshipSchema.safeParse("recently_merged").success).toBe(true);
@@ -51,4 +51,21 @@ test("review runs retain bounded revision-scoped history without nested historie
   const snapshot = { id: crypto.randomUUID(), headRevision: "a".repeat(40), status: "completed", createdAt: new Date().toISOString(), partial: false, sessionId: "review-session", fixTasks: [{ sessionId: "fix", findingIds: ["finding-1"], createdAt: new Date().toISOString() }] };
   expect(reviewRunSchema.safeParse({ ...snapshot, reviewId: "review", history: [snapshot] }).success).toBe(true);
   expect(reviewRunSchema.safeParse({ ...snapshot, reviewId: "review", history: [{ ...snapshot, history: [] }] }).success).toBe(false);
+});
+
+test("pull request details accept only positive counts for known GitHub reactions", () => {
+  const detail = {
+    schemaVersion: 1,
+    item: {
+      id: "review", provider: "github", hostname: "github.com", repository: { id: "team/repo", owner: "team", name: "repo", fullName: "team/repo" },
+      number: 1, title: "Review", url: "https://github.com/team/repo/pull/1", author: { login: "author" }, state: "open", draft: false,
+      relationships: ["review_requested"], reviewDecision: "none", headRevision: "a".repeat(40), updatedAt: new Date().toISOString(), labels: [],
+      body: "", baseBranch: "main", headBranch: "feature", mergeable: "unknown", viewerPermission: "unknown",
+      reactions: [{ content: "+1", count: 2 }, { content: "heart", count: 1 }],
+    },
+    cache: { source: "provider", fetchedAt: new Date().toISOString(), stale: false },
+  };
+  expect(reviewDetailSchema.safeParse(detail).success).toBe(true);
+  expect(reviewDetailSchema.safeParse({ ...detail, item: { ...detail.item, reactions: [{ content: "party", count: 1 }] } }).success).toBe(false);
+  expect(reviewDetailSchema.safeParse({ ...detail, item: { ...detail.item, reactions: [{ content: "+1", count: 0 }] } }).success).toBe(false);
 });

@@ -33,6 +33,7 @@ function thread(value: WireThread): ReviewThread {
   const first = value.comments[0];
   return {
     id: value.id,
+    kind: value.kind,
     author: first?.author.displayName ?? first?.author.login ?? "GitHub",
     authorLogin: first?.author.login,
     authorAvatarUrl: first?.author.avatarUrl,
@@ -70,6 +71,7 @@ export function reviewViewModel(input: {
     authorInitials: initials(item.author.login),
     authorAvatarUrl: item.author.avatarUrl,
     reviewers: input.detail?.item.reviewers ?? [],
+    reactions: input.detail?.item.reactions ?? input.item.reactions ?? [],
     relationship: relationship(item),
     updatedAt: age(item.updatedAt),
     baseBranch: input.detail?.item.baseBranch ?? "",

@@ -22,6 +22,10 @@ The workbench SHALL expose private AI review, explicit comment/review publishing
 - **THEN** the workbench shows its status, repository, author, revision branches, and rendered description in the primary reading area
 - **AND** a summary rail shows changed-file totals, discussion activity, reviewers, and check results without requiring the member to switch sections first
 - **AND** the Changes, Checks, and Threads sections remain available for their complete views
+- **AND** non-zero GitHub reactions on the pull request description are shown with their emoji and count next to the reaction control
+- **AND** the Summary sidebar shows only published review-thread root comments as a compact count and author summary, while ordinary pull request comments remain in Activity
+- **AND** expanding a review comment shows a compact preview and selecting it returns Activity to the complete timeline and locates the corresponding root comment
+- **AND** replies do not increment the sidebar count and resolved review threads remain represented
 
 #### Scenario: Open a PR outside the Inbox
 - **WHEN** a member pastes a GitHub pull request URL

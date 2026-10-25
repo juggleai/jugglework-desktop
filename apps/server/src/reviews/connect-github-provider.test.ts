@@ -12,6 +12,7 @@ type FetchScenario = {
   search?: unknown;
   execute?: unknown;
   executeByMethod?: Record<string, unknown>;
+  executeByCapability?: Record<string, unknown>;
   executeStatus?: number;
   observed?: Array<Record<string, unknown>>;
 };
@@ -42,9 +43,10 @@ function fetcher(scenario: FetchScenario) {
       if (scenario.executeStatus) return new Response("rate limited", { status: scenario.executeStatus });
       const args = params.arguments ?? {};
       const capabilityBody = args.body as Record<string, unknown> | undefined;
+      const capabilityName = typeof args.name === "string" ? args.name : "";
       const selected = capabilityBody && typeof capabilityBody.method === "string"
         ? scenario.executeByMethod?.[capabilityBody.method]
-        : undefined;
+        : Object.entries(scenario.executeByCapability ?? {}).find(([suffix]) => capabilityName.endsWith(`:${suffix}`))?.[1];
       return jsonRpc(body.id, toolResult(selected ?? scenario.execute ?? { items: [] }));
     }
     return new Response("unknown", { status: 500 });
@@ -91,7 +93,7 @@ describe("Connect GitHub Review provider", () => {
     const head = "a".repeat(40);
     const wrap = (value: unknown) => ({ content: [{ type: "text", text: JSON.stringify(value) }] });
     const instance = provider({ executeByMethod: {
-      get: wrap({ number: 17, title: "Actual title", state: "open", user: { login: "yuwnloyblog" }, requested_reviewers: [{ login: "reviewer", avatar_url: "https://example.test/reviewer.png" }], head: { sha: head, ref: "test/review" }, base: { ref: "dev" }, body: "Actual description", changed_files: 1 }),
+      get: wrap({ number: 17, title: "Actual title", state: "open", user: { login: "yuwnloyblog" }, requested_reviewers: [{ login: "reviewer", avatar_url: "https://example.test/reviewer.png" }], head: { sha: head, ref: "test/review" }, base: { ref: "dev" }, body: "Actual description", changed_files: 1, reactions: { total_count: 4, "+1": 2, "-1": 0, laugh: 0, confused: 0, heart: 1, hooray: 0, rocket: 0, eyes: 1 } }),
       get_files: wrap([{ filename: "docs/test.md", status: "added", additions: 1, deletions: 0, patch: "@@ -0,0 +1 @@\n+Test" }]),
       get_check_runs: wrap({ check_runs: [{ id: 1, name: "Docs", status: "completed", conclusion: "success" }] }),
       get_review_comments: wrap({ nodes: [], pageInfo: { hasNextPage: false } }),
@@ -99,11 +101,38 @@ describe("Connect GitHub Review provider", () => {
       get_reviews: wrap([]),
     } });
     const detail = await instance.resolveUrl({ workspace, url: "https://github.com/juggleai/jugglework-desktop/pull/17" });
-    expect(detail.item).toMatchObject({ title: "Actual title", body: "Actual description", author: { login: "yuwnloyblog" }, reviewers: [{ login: "reviewer", avatarUrl: "https://example.test/reviewer.png" }], headRevision: head, baseBranch: "dev", headBranch: "test/review" });
+    expect(detail.item).toMatchObject({ title: "Actual title", body: "Actual description", author: { login: "yuwnloyblog" }, reviewers: [{ login: "reviewer", avatarUrl: "https://example.test/reviewer.png" }], reactions: [{ content: "+1", count: 2 }, { content: "heart", count: 1 }, { content: "eyes", count: 1 }], headRevision: head, baseBranch: "dev", headBranch: "test/review" });
     const target = { workspace, reviewId: detail.item.id, limit: 30 };
     expect((await instance.listFiles(target)).items).toHaveLength(1);
     expect((await instance.getChecks(target)).items).toHaveLength(1);
-    expect((await instance.listThreads(target)).items).toMatchObject([{ comments: [{ author: { login: "reviewer", avatarUrl: "https://example.test/commenter.png" } }] }]);
+    expect((await instance.listThreads(target)).items).toMatchObject([{ kind: "issue_comment", comments: [{ author: { login: "reviewer", avatarUrl: "https://example.test/commenter.png" } }] }]);
+  });
+
+  test("preserves discussion kind for review threads, issue comments, and review bodies", async () => {
+    const wrap = (value: unknown) => ({ content: [{ type: "text", text: JSON.stringify(value) }] });
+    const instance = provider({ executeByMethod: {
+      get: wrap({ number: 17, title: "Kinds", state: "open", head: { sha: "a".repeat(40) }, base: {} }),
+      get_review_comments: wrap({ nodes: [{ id: "thread", path: "src/a.ts", line: 2, comments: { nodes: [{ id: 1, body: "Inline", author: { login: "reviewer" }, createdAt: "2026-10-23T16:00:00Z" }] } }], pageInfo: { hasNextPage: false } }),
+      get_comments: wrap([{ id: 2, body: "Conversation", user: { login: "author" }, created_at: "2026-10-23T16:01:00Z" }]),
+      get_reviews: wrap([{ id: 3, body: "Review body", user: { login: "reviewer" }, submitted_at: "2026-10-23T16:02:00Z" }]),
+    } });
+    const detail = await instance.resolveUrl({ workspace, url: "https://github.com/juggleai/jugglework-desktop/pull/17" });
+    const items = (await instance.listThreads({ workspace, reviewId: detail.item.id, limit: 30 })).items;
+    expect(items.map((item) => item.kind)).toEqual(["review_thread", "issue_comment", "review"]);
+  });
+
+  test("falls back to an exact repository search when pull request detail omits reactions", async () => {
+    const head = "b".repeat(40);
+    const wrap = (value: unknown) => ({ content: [{ type: "text", text: JSON.stringify(value) }] });
+    const instance = provider({
+      executeByMethod: { get: wrap({ number: 17, title: "Reaction fallback", state: "open", user: { login: "author" }, head: { sha: head, ref: "feature" }, base: { ref: "dev" } }) },
+      executeByCapability: { search_pull_requests: wrap({ items: [
+        { number: 17, repository_url: "https://api.github.com/repos/other/repo", reactions: { heart: 9 } },
+        { number: 17, repository_url: "https://api.github.com/repos/juggleai/jugglework-desktop", reactions: { "+1": 3, rocket: 1 } },
+      ] }) },
+    });
+    const detail = await instance.resolveUrl({ workspace, url: "https://github.com/juggleai/jugglework-desktop/pull/17" });
+    expect(detail.item.reactions).toEqual([{ content: "+1", count: 3 }, { content: "rocket", count: 1 }]);
   });
 
   test("downstream MCP failures cannot become an empty inbox or a placeholder PR", async () => {

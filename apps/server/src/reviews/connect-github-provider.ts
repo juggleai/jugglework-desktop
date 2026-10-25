@@ -147,6 +147,28 @@ function normalizeAuthor(value: unknown) {
   };
 }
 
+const GITHUB_REACTION_CONTENTS = ["+1", "-1", "laugh", "hooray", "confused", "heart", "rocket", "eyes"] as const;
+
+function normalizeReactions(value: unknown) {
+  if (!value) return [];
+  if (Array.isArray(value)) {
+    return value.flatMap((entry) => {
+      if (!isRecord(entry)) return [];
+      const raw = string(entry.content ?? entry.reaction ?? entry.name).toLowerCase();
+      const aliases: Record<string, typeof GITHUB_REACTION_CONTENTS[number]> = { thumbs_up: "+1", thumbs_down: "-1", laugh: "laugh", hooray: "hooray", confused: "confused", heart: "heart", rocket: "rocket", eyes: "eyes" };
+      const content = GITHUB_REACTION_CONTENTS.find((item) => item === raw) ?? aliases[raw];
+      const users = isRecord(entry.users) ? entry.users : {};
+      const count = number(entry.count ?? users.totalCount ?? entry.total_count);
+      return content && count > 0 ? [{ content, count }] : [];
+    }).slice(0, 8);
+  }
+  if (!isRecord(value)) return [];
+  return GITHUB_REACTION_CONTENTS.flatMap((content) => {
+    const count = number(value[content]);
+    return count > 0 ? [{ content, count }] : [];
+  });
+}
+
 function normalizeListItem(value: unknown, capability: CapabilitySet, relationship: ReviewRelationship, fallback?: GithubReviewIdentity): ReviewListItem | null {
   if (!isRecord(value)) return null;
   const repository = isRecord(value.repository) ? value.repository : {};
@@ -169,6 +191,7 @@ function normalizeListItem(value: unknown, capability: CapabilitySet, relationsh
     const label = isRecord(entry) ? entry : {};
     return { name: string(label.name ?? entry, "", 128), ...(typeof label.color === "string" ? { color: label.color.slice(0, 6) } : {}) };
   }).filter((label) => label.name);
+  const reactions = normalizeReactions(value.reactions ?? value.reactionGroups ?? value.reaction_groups);
   const identity: GithubReviewIdentity = { version: 1, provider: "github", connectionId: capability.connectionId, hostname, owner, repository: name, number: prNumber };
   return {
     id: encodeReviewId(identity),
@@ -190,6 +213,7 @@ function normalizeListItem(value: unknown, capability: CapabilitySet, relationsh
     deletions: number(value.deletions),
     commentCount: number(value.comments),
     labels,
+    ...(reactions.length ? { reactions } : {}),
     ...(checks ? { checks: { state: "unknown" as const, total: number(checks.total), failed: number(checks.failed), pending: number(checks.pending) } } : {}),
   };
 }
@@ -228,13 +252,13 @@ function normalizeCheck(value: unknown, index: number): ReviewCheck | null {
   return { id: string(value.id ?? value.node_id, String(index), 512), name, ...(value.output && isRecord(value.output) && typeof value.output.summary === "string" ? { detail: string(value.output.summary, "", 4_000) } : {}), state, ...(typeof value.html_url === "string" || typeof value.target_url === "string" ? { url: string(value.html_url ?? value.target_url, "", 2_048) } : {}), ...(typeof value.started_at === "string" ? { startedAt: iso(value.started_at) } : {}), ...(typeof value.completed_at === "string" ? { completedAt: iso(value.completed_at) } : {}) };
 }
 
-function normalizeThread(value: unknown, index: number): ReviewThread | null {
+function normalizeThread(value: unknown, index: number, kind: ReviewThread["kind"] = "review_thread"): ReviewThread | null {
   if (!isRecord(value)) return null;
   const comments = readItems(value.comments).map((entry) => isRecord(entry) ? { id: string(entry.id ?? entry.node_id, String(index), 512), author: normalizeAuthor(entry.user ?? entry.author), body: string(entry.body, "", 50_000), createdAt: iso(entry.created_at ?? entry.createdAt), ...(typeof entry.updated_at === "string" ? { updatedAt: iso(entry.updated_at) } : {}), ...(typeof entry.html_url === "string" ? { url: string(entry.html_url, "", 2_048) } : {}) } : null).filter((entry): entry is NonNullable<typeof entry> => Boolean(entry)).slice(0, 100);
   if (!comments.length && typeof value.body === "string") comments.push({ id: string(value.id, String(index), 512), author: normalizeAuthor(value.user ?? value.author), body: string(value.body, "", 50_000), createdAt: iso(value.created_at ?? value.submitted_at ?? value.createdAt), ...(typeof value.updated_at === "string" ? { updatedAt: iso(value.updated_at) } : {}), ...(typeof value.html_url === "string" ? { url: string(value.html_url, "", 2_048) } : {}) });
   if (!comments.length) return null;
   const side = string(value.side).toLowerCase();
-  return { ...(value.state === "APPROVED" ? { reviewDecision: "approved" as const } : value.state === "CHANGES_REQUESTED" ? { reviewDecision: "changes_requested" as const } : {}), id: string(value.id ?? value.node_id, String(index), 512), ...(typeof value.path === "string" ? { path: string(value.path, "", 4_096) } : {}), ...(number(value.line) ? { line: number(value.line) } : {}), ...(number(value.start_line) ? { startLine: number(value.start_line) } : {}), ...(["left", "right"].includes(side) ? { side: side as "left" | "right" } : {}), outdated: value.isOutdated === true || value.outdated === true, resolved: value.isResolved === true || value.resolved === true, comments };
+  return { kind, ...(value.state === "APPROVED" ? { reviewDecision: "approved" as const } : value.state === "CHANGES_REQUESTED" ? { reviewDecision: "changes_requested" as const } : {}), id: string(value.id ?? value.node_id, String(index), 512), ...(typeof value.path === "string" ? { path: string(value.path, "", 4_096) } : {}), ...(number(value.line) ? { line: number(value.line) } : {}), ...(number(value.start_line) ? { startLine: number(value.start_line) } : {}), ...(["left", "right"].includes(side) ? { side: side as "left" | "right" } : {}), outdated: value.isOutdated === true || value.outdated === true, resolved: value.isResolved === true || value.resolved === true, comments };
 }
 
 function nextPage(value: unknown, page: number, itemCount: number, limit: number): string | null {
@@ -553,7 +577,7 @@ export class ConnectGithubReviewProvider implements ReviewReadProvider {
     const { session, capabilities } = await this.capabilities(input);
     const query = `${relationQuery(input.relationship)}${input.query?.trim() ? ` ${input.query.trim().slice(0, 256)}` : ""}`;
     const key = `inbox:${input.workspace.id}:${capabilities.connectionId}:${capabilities.credentialKey}:${input.relationship}:${query}:${page}:${input.limit}`;
-    const { value, cacheHit } = await this.cache.getOrLoad(key, 30_000, async () => this.execute(session, capabilities.searchPullRequests, { query, sort: "updated", order: "desc", page, perPage: input.limit, fields: ["number", "title", "state", "draft", "html_url", "user", "labels", "comments", "created_at", "updated_at", "repository_url"] }, input.signal));
+    const { value, cacheHit } = await this.cache.getOrLoad(key, 30_000, async () => this.execute(session, capabilities.searchPullRequests, { query, sort: "updated", order: "desc", page, perPage: input.limit, fields: ["number", "title", "state", "draft", "html_url", "user", "labels", "comments", "reactions", "created_at", "updated_at", "repository_url"] }, input.signal));
     if (!isRecord(value) && !Array.isArray(value)) throw new ApiError(502, "github_invalid_response", "GitHub pull request search response is invalid.", { retryable: true });
     const items = readItems(value).slice(0, input.limit).map((entry) => normalizeListItem(entry, capabilities, input.relationship)).filter((entry): entry is ReviewListItem => Boolean(entry));
     return reviewListResponseSchema.parse({ schemaVersion: REVIEW_SCHEMA_VERSION, items, nextCursor: nextPage(value, page, items.length, input.limit), snapshotAt: this.now().toISOString(), source: { provider: "github", connectionId: capabilities.connectionId, connectionName: capabilities.connectionName }, cache: { source: cacheHit ? "memory" : "provider", fetchedAt: this.now().toISOString(), stale: false } });
@@ -578,7 +602,29 @@ export class ConnectGithubReviewProvider implements ReviewReadProvider {
       .slice(0, 100)
       .map(normalizeAuthor)
       .filter((reviewer) => reviewer.login !== "unknown");
-    return reviewDetailSchema.parse({ schemaVersion: 1, item: { ...list, body: string(raw.body, "", 100_000), baseBranch: string(base.ref, "", 512), headBranch: string(head.ref, "", 512), reviewers, mergeable: raw.mergeable === true ? "mergeable" : raw.mergeable === false ? "conflicting" : "unknown", viewerPermission: "unknown" }, cache: { source: cacheHit ? "memory" : "provider", fetchedAt: this.now().toISOString(), stale: false } });
+    let reactions = list.reactions ?? [];
+    if (!reactions.length) {
+      try {
+        const reactionResult = await this.cache.getOrLoad(
+          `detail-reactions:${input.workspace.id}:${capabilities.credentialKey}:${input.reviewId}`,
+          20_000,
+          () => this.execute(session, capabilities.searchPullRequests, {
+            query: `repo:${identity.owner}/${identity.repository} is:pr ${identity.number}`,
+            sort: "updated", order: "desc", page: 1, perPage: 10,
+            fields: ["number", "repository_url", "reactions"],
+          }, input.signal),
+        );
+        const exact = readItems(reactionResult.value).find((entry) => {
+          if (!isRecord(entry) || number(entry.number) !== identity.number) return false;
+          const repository = repoFromUrl(entry.repository_url);
+          return repository?.owner.toLowerCase() === identity.owner.toLowerCase() && repository.name.toLowerCase() === identity.repository.toLowerCase();
+        });
+        reactions = isRecord(exact) ? normalizeReactions(exact.reactions ?? exact.reactionGroups ?? exact.reaction_groups) : [];
+      } catch {
+        // Reactions are optional display metadata; do not hide an otherwise valid PR.
+      }
+    }
+    return reviewDetailSchema.parse({ schemaVersion: 1, item: { ...list, body: string(raw.body, "", 100_000), baseBranch: string(base.ref, "", 512), headBranch: string(head.ref, "", 512), reviewers, reactions, mergeable: raw.mergeable === true ? "mergeable" : raw.mergeable === false ? "conflicting" : "unknown", viewerPermission: "unknown" }, cache: { source: cacheHit ? "memory" : "provider", fetchedAt: this.now().toISOString(), stale: false } });
   }
 
   async listFiles(input: ReviewTargetInput & { cursor?: string; limit: number }) {
@@ -609,9 +655,13 @@ export class ConnectGithubReviewProvider implements ReviewReadProvider {
         this.execute(session, capabilities.pullRequestRead, { ...target, method: "get_comments" }, input.signal),
         this.execute(session, capabilities.pullRequestRead, { ...target, method: "get_reviews" }, input.signal),
       ]);
-      return { items: [...readItems(reviewComments), ...others.flatMap(readItems)].slice(0, input.limit), pageInfo: isRecord(reviewComments) ? reviewComments.pageInfo : undefined, head_sha: isRecord(reviewComments) ? reviewComments.head_sha ?? reviewComments.headRevision : undefined };
+      return { items: [
+        ...readItems(reviewComments).map((item) => ({ item, kind: "review_thread" as const })),
+        ...readItems(others[0]).map((item) => ({ item, kind: "issue_comment" as const })),
+        ...readItems(others[1]).map((item) => ({ item, kind: "review" as const })),
+      ].slice(0, input.limit), pageInfo: isRecord(reviewComments) ? reviewComments.pageInfo : undefined, head_sha: isRecord(reviewComments) ? reviewComments.head_sha ?? reviewComments.headRevision : undefined };
     });
-    const threads = readItems(value).slice(0, input.limit).map(normalizeThread).filter((entry): entry is ReviewThread => Boolean(entry));
+    const threads = readItems(value).slice(0, input.limit).map((entry, index) => isRecord(entry) ? normalizeThread(entry.item, index, entry.kind === "issue_comment" || entry.kind === "review" ? entry.kind : "review_thread") : null).filter((entry): entry is ReviewThread => Boolean(entry));
     const pageInfo = isRecord(value) && isRecord(value.pageInfo) ? value.pageInfo : {};
     return reviewThreadsResponseSchema.parse({ schemaVersion: 1, items: threads, nextCursor: pageInfo.hasNextPage === true && typeof pageInfo.endCursor === "string" ? pageInfo.endCursor : null, snapshotAt: this.now().toISOString(), source: { provider: "github", connectionId: capabilities.connectionId, connectionName: capabilities.connectionName }, cache: { source: cacheHit ? "memory" : "provider", fetchedAt: this.now().toISOString(), stale: false }, headRevision: string(value.head_sha, "unknown", 128), truncated: false });
   }

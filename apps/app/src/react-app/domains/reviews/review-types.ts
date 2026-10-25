@@ -22,6 +22,7 @@ export type ReviewCheck = {
 
 export type ReviewThread = {
   id: string;
+  kind?: "review_thread" | "issue_comment" | "review";
   author: string;
   authorLogin?: string;
   authorAvatarUrl?: string;
@@ -41,6 +42,11 @@ export type ReviewReviewer = {
   avatarUrl?: string;
 };
 
+export type ReviewReaction = {
+  content: "+1" | "-1" | "laugh" | "hooray" | "confused" | "heart" | "rocket" | "eyes";
+  count: number;
+};
+
 export type ReviewPreview = {
   id: string;
   provider: ReviewProvider;
@@ -56,6 +62,7 @@ export type ReviewPreview = {
   authorInitials: string;
   authorAvatarUrl?: string;
   reviewers: ReviewReviewer[];
+  reactions: ReviewReaction[];
   relationship: ReviewRelationship;
   updatedAt: string;
   baseBranch: string;

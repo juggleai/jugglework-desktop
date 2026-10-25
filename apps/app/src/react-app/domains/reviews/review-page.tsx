@@ -6,6 +6,7 @@ import {
   ArrowUpRight,
   AlertCircle,
   Bot,
+  Check,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
@@ -21,7 +22,6 @@ import {
   GitCommitHorizontal,
   GitPullRequestArrow,
   ListFilter,
-  MessageSquareText,
   LoaderCircle,
   Pin,
   Pencil,
@@ -229,6 +229,10 @@ const GITHUB_REACTIONS = [
   { emoji: "🚀", value: "rocket" },
   { emoji: "👀", value: "eyes" },
 ] as const;
+
+function reactionEmoji(content: ReviewPreview["reactions"][number]["content"]) {
+  return GITHUB_REACTIONS.find((reaction) => reaction.value === content)?.emoji ?? content;
+}
 
 function InboxRow({ review, selected, viewMode, onSelect }: { review: ReviewPreview; selected: boolean; viewMode: ReviewInboxViewMode; onSelect: () => void }) {
   const compact = viewMode === "compact";
@@ -455,6 +459,7 @@ function SummaryView(props: {
   const [activityFilter, setActivityFilter] = useState<"all" | "commits" | "comments">("all");
   const [editing, setEditing] = useState(false);
   const [checksExpanded, setChecksExpanded] = useState(false);
+  const [commentsExpanded, setCommentsExpanded] = useState(false);
   const [reviewerOpen, setReviewerOpen] = useState(false);
   const [reviewerQuery, setReviewerQuery] = useState("");
   const [editTitle, setEditTitle] = useState(review.title);
@@ -465,6 +470,7 @@ function SummaryView(props: {
     setEditing(false);
     setComment("");
     setChecksExpanded(false);
+    setCommentsExpanded(false);
     setReviewerOpen(false);
     setReviewerQuery("");
   }, [review.id, review.title, review.body]);
@@ -515,8 +521,17 @@ function SummaryView(props: {
     },
   });
   const activityComments = review.threads.flatMap((thread) => thread.comments?.length
-    ? thread.comments.map((item) => ({ ...item, path: thread.path, line: thread.line, decision: thread.reviewDecision }))
-    : [{ id: thread.id, author: thread.author, authorLogin: thread.authorLogin, avatarUrl: thread.authorAvatarUrl, body: thread.body, age: thread.age, path: thread.path, line: thread.line, decision: thread.reviewDecision }]);
+    ? thread.comments.map((item, index) => ({ ...item, threadId: thread.id, root: index === 0, path: thread.path, line: thread.line, decision: thread.reviewDecision }))
+    : [{ id: thread.id, threadId: thread.id, root: true, author: thread.author, authorLogin: thread.authorLogin, avatarUrl: thread.authorAvatarUrl, body: thread.body, age: thread.age, path: thread.path, line: thread.line, decision: thread.reviewDecision }]);
+  const reviewComments = review.threads.filter((thread) => (thread.kind ?? (thread.path ? "review_thread" : "issue_comment")) === "review_thread" && thread.body.trim());
+  const scrollToReviewComment = (threadId: string) => {
+    setActivityFilter("all");
+    requestAnimationFrame(() => {
+      const target = document.querySelector<HTMLElement>(`[data-review-thread-id="${CSS.escape(threadId)}"]`);
+      target?.scrollIntoView({ behavior: "smooth", block: "center" });
+      target?.focus({ preventScroll: true });
+    });
+  };
   const mutationError = commentMutation.error ?? reactionMutation.error ?? editMutation.error ?? reviewerMutation.error;
   // Keep the reviewer picker reachable even when capability discovery returns a
   // stale/partial operations snapshot. The mutation endpoint remains the source
@@ -533,12 +548,15 @@ function SummaryView(props: {
         <section>
           {review.body ? <div className="[&_.markdown-content>:first-child]:mt-0"><MarkdownBlock text={review.body} copyCodeBlocks /></div> : <p className="text-dls-secondary">{text("No pull request description was provided.", "该 Pull Request 没有填写描述。")}</p>}
           <div className="mt-4 flex items-center justify-between border-b border-dls-border pb-4">
-            <DropdownMenu>
+            <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+              {(review.reactions ?? []).map((reaction) => <span key={reaction.content} className="inline-flex h-8 items-center gap-1 rounded-full border border-dls-border bg-background px-2.5 text-sm text-dls-secondary" aria-label={`${reaction.content} ${reaction.count}`} title={`${reaction.content}: ${reaction.count}`}><span aria-hidden="true">{reactionEmoji(reaction.content)}</span><span className="text-xs font-medium tabular-nums">{reaction.count}</span></span>)}
+              <DropdownMenu>
               <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" disabled={!props.endpoint || reactionMutation.isPending || !revisionKnown} aria-label={text("Quick reaction", "快速回应")} title={text("Publish an emoji response to GitHub", "向 GitHub 发布表情回应")} />}><SmilePlus /></DropdownMenuTrigger>
               <DropdownMenuContent align="start" className="grid w-72 min-w-72 grid-cols-8 gap-1 overflow-hidden p-1.5">
                 {GITHUB_REACTIONS.map(({ emoji, value }) => <DropdownMenuItem key={value} className="size-8 justify-center p-0 text-base" onClick={() => reactionMutation.mutate({ reaction: value, target: "pull_request" })} aria-label={emoji}>{emoji}</DropdownMenuItem>)}
               </DropdownMenuContent>
-            </DropdownMenu>
+              </DropdownMenu>
+            </div>
             {props.isOwnPullRequest ? <Button variant="ghost" size="sm" className="h-8 text-[13px] text-dls-secondary" disabled={!props.operations?.edit || !revisionKnown} onClick={() => setEditing(true)}><Pencil />{text("Edit", "编辑")}</Button> : null}
           </div>
         </section>
@@ -569,7 +587,7 @@ function SummaryView(props: {
                 <span className="shrink-0 text-xs text-dls-secondary">{review.updatedAt}</span>
               </div>
             </> : null}
-            {activityFilter !== "commits" ? activityComments.map((item) => <article key={item.id} className="rounded-xl border border-dls-border bg-background px-3.5 py-3 shadow-sm">
+            {activityFilter !== "commits" ? activityComments.map((item) => <article key={item.id} data-review-thread-id={item.root ? item.threadId : undefined} tabIndex={item.root ? -1 : undefined} className="rounded-xl border border-dls-border bg-background px-3.5 py-3 shadow-sm focus:outline-none focus:ring-2 focus:ring-dls-accent/40">
               <div className="flex min-w-0 items-start gap-2.5">
                 <GitHubUserAvatar name={item.authorLogin ?? item.author} avatarUrl={item.avatarUrl} />
                 <div className="min-w-0 flex-1">
@@ -629,10 +647,20 @@ function SummaryView(props: {
           <span className="text-xs text-dls-secondary">{text("Changes", "变更")}</span>
           <span className="mt-2 flex items-center gap-3 font-medium text-dls-text"><FileCode2 className="size-4" />{review.changedFiles} {text(review.changedFiles === 1 ? "file" : "files", "个文件")} <span className="ml-auto text-green-11">+{review.additions}</span><span className="text-red-11">-{review.deletions}</span><ArrowUpRight className="size-4 text-dls-secondary opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" /></span>
         </button>
-        <button type="button" onClick={() => onTabChange("threads")} className="w-full py-3.5 text-left">
-          <span className="text-xs text-dls-secondary">{text("Threads", "讨论")}</span>
-          <span className="mt-2 flex items-center gap-3 font-medium text-dls-text"><MessageSquareText className="size-4" />{text("Code review", "代码审查")}<span className="ml-auto text-xs text-dls-secondary">{review.threads.length || text("No comments", "无评论")}</span></span>
-        </button>
+        <div className="py-3.5" data-testid="review-comments-summary">
+          {!reviewComments.length ? <p className="text-dls-secondary">{text("No comments", "暂无评论")}</p> : <>
+            <button type="button" className="flex w-full items-center gap-3 text-left font-medium text-dls-text" aria-expanded={commentsExpanded} onClick={() => setCommentsExpanded((expanded) => !expanded)}>
+              <span>{text(reviewComments.length === 1 ? "1 comment" : `${reviewComments.length} comments`, `${reviewComments.length} 条评论`)}</span>
+              <span className="ml-auto flex -space-x-1.5" aria-hidden="true">{reviewComments.slice(0, 2).map((thread) => <GitHubUserAvatar key={thread.id} name={thread.authorLogin ?? thread.author} avatarUrl={thread.authorAvatarUrl} size="xs" />)}{new Set(reviewComments.map((thread) => thread.authorLogin ?? thread.author)).size > 2 ? <span className="flex size-5 items-center justify-center rounded-full border border-background bg-dls-hover text-[9px]">+{new Set(reviewComments.map((thread) => thread.authorLogin ?? thread.author)).size - 2}</span> : null}</span>
+              <ChevronDown className={cn("size-4 text-dls-secondary transition-transform", commentsExpanded && "rotate-180")} />
+            </button>
+            {commentsExpanded ? <div className="mt-2 space-y-1.5" data-testid="review-comments-list">{reviewComments.map((thread) => <button key={thread.id} type="button" className="flex w-full items-start gap-2 rounded-lg px-1.5 py-2 text-left hover:bg-dls-hover" onClick={() => scrollToReviewComment(thread.id)}>
+              <GitHubUserAvatar name={thread.authorLogin ?? thread.author} avatarUrl={thread.authorAvatarUrl} size="xs" />
+              <span className="min-w-0 flex-1"><span className="block truncate text-xs font-medium text-dls-text">{thread.author}</span><span className="mt-0.5 line-clamp-2 block text-xs leading-4 text-dls-secondary">{thread.body || text("View comment", "查看评论")}</span></span>
+              {thread.resolved ? <Check className="mt-0.5 size-3.5 shrink-0 text-green-10" aria-label={text("Resolved", "已解决")} /> : null}
+            </button>)}</div> : null}
+          </>}
+        </div>
         <div className="py-3.5">
           <span className="flex items-center text-xs text-dls-secondary">
             <span>{text("Reviewers", "评审人")}</span>

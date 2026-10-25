@@ -63,6 +63,11 @@ export const reviewLabelSchema = z.object({
 
 export const reviewCheckStateSchema = z.enum(["queued", "running", "success", "failure", "cancelled", "unknown"])
 export const reviewDecisionSchema = z.enum(["approved", "changes_requested", "review_required", "none"])
+export const reviewReactionContentSchema = z.enum(["+1", "-1", "laugh", "hooray", "confused", "heart", "rocket", "eyes"])
+export const reviewReactionSchema = z.object({
+  content: reviewReactionContentSchema,
+  count: z.number().int().positive(),
+})
 
 export const reviewRepositorySchema = z.object({
   id: boundedText(256),
@@ -91,6 +96,7 @@ export const reviewListItemSchema = z.object({
   deletions: z.number().int().nonnegative().optional(),
   commentCount: z.number().int().nonnegative().optional(),
   labels: z.array(reviewLabelSchema).max(100),
+  reactions: z.array(reviewReactionSchema).max(8).optional(),
   checks: z.object({
     state: reviewCheckStateSchema,
     total: z.number().int().nonnegative(),
@@ -193,6 +199,7 @@ export const reviewThreadCommentSchema = z.object({
 
 export const reviewThreadSchema = z.object({
   id: boundedText(512),
+  kind: z.enum(["review_thread", "issue_comment", "review"]).optional(),
   path: boundedText(4_096).optional(),
   line: z.number().int().positive().optional(),
   startLine: z.number().int().positive().optional(),
@@ -241,6 +248,7 @@ export type ReviewConnectionStatus = z.infer<typeof reviewConnectionStatusSchema
 export type ReviewListItem = z.infer<typeof reviewListItemSchema>
 export type ReviewListResponse = z.infer<typeof reviewListResponseSchema>
 export type ReviewDetail = z.infer<typeof reviewDetailSchema>
+export type ReviewReaction = z.infer<typeof reviewReactionSchema>
 export type ReviewFile = z.infer<typeof reviewFileSchema>
 export type ReviewFilesResponse = z.infer<typeof reviewFilesResponseSchema>
 export type ReviewCheck = z.infer<typeof reviewCheckSchema>
