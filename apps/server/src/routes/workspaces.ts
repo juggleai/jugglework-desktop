@@ -8,7 +8,7 @@ import type { ServerConfig, WorkspaceInfo } from "../types.js";
 import { ensureDir, exists, shortId } from "../utils.js";
 import { defaultWorkspaceJuggleWorkConfig, ensureWorkspaceFiles } from "../workspace-init.js";
 import { seedJuggleWorkWorkspaceConfigIfEmpty } from "../jugglework-workspace-config-store.js";
-import { workspaceIdForPath, workspaceIdForRemote } from "../workspaces.js";
+import { visibleWorkspaces, workspaceIdForPath, workspaceIdForRemote } from "../workspaces.js";
 import { addRoute, type Route } from "./registry.js";
 
 type JsonResponse = (data: unknown, status?: number) => Response;
@@ -191,6 +191,7 @@ function serializeWorkspaceConfigEntry(workspace: WorkspaceInfo): Record<string,
     name: workspace.name,
     preset: workspace.preset,
     workspaceType: workspace.workspaceType,
+    ...(workspace.hidden ? { hidden: true } : {}),
     ...(workspace.remoteType ? { remoteType: workspace.remoteType } : {}),
     ...(!isLocalWorkspace && workspace.baseUrl ? { baseUrl: workspace.baseUrl } : {}),
     ...(!isLocalWorkspace && workspace.directory ? { directory: workspace.directory } : {}),
@@ -317,7 +318,7 @@ export function registerWorkspaceRoutes(options: RegisterWorkspaceRoutesOptions)
 
     return jsonResponse({
       activeId: workspace.id,
-      workspaces: config.workspaces.map(serializeWorkspace),
+      workspaces: visibleWorkspaces(config.workspaces).map(serializeWorkspace),
       persisted,
     }, 201);
   });
@@ -409,7 +410,7 @@ export function registerWorkspaceRoutes(options: RegisterWorkspaceRoutesOptions)
 
     return jsonResponse({
       activeId: workspace.id,
-      workspaces: config.workspaces.map(serializeWorkspace),
+      workspaces: visibleWorkspaces(config.workspaces).map(serializeWorkspace),
       persisted,
     }, 201);
   });
@@ -446,8 +447,8 @@ export function registerWorkspaceRoutes(options: RegisterWorkspaceRoutesOptions)
     });
 
     return jsonResponse({
-      activeId: config.workspaces[0]?.id ?? null,
-      workspaces: config.workspaces.map(serializeWorkspace),
+      activeId: visibleWorkspaces(config.workspaces)[0]?.id ?? null,
+      workspaces: visibleWorkspaces(config.workspaces).map(serializeWorkspace),
       persisted,
     });
   });
@@ -505,14 +506,14 @@ export function registerWorkspaceRoutes(options: RegisterWorkspaceRoutesOptions)
       timestamp: Date.now(),
     });
 
-    const active = config.workspaces[0] ?? null;
+    const active = visibleWorkspaces(config.workspaces)[0] ?? null;
     return jsonResponse({
       ok: true,
       deleted,
       persisted,
       activeId: active?.id ?? null,
-      items: config.workspaces.map(serializeWorkspace),
-      workspaces: config.workspaces.map(serializeWorkspace),
+      items: visibleWorkspaces(config.workspaces).map(serializeWorkspace),
+      workspaces: visibleWorkspaces(config.workspaces).map(serializeWorkspace),
     });
   });
 }

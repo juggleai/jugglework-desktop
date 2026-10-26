@@ -32,6 +32,7 @@ import {
   svgResponse,
 } from "../toy-ui.js";
 import type { Capabilities, ServerConfig, WorkspaceInfo } from "../types.js";
+import { visibleWorkspaces } from "../workspaces.js";
 import type { MediaGenerationExtensionRuntime } from "../extensions/media-generation.js";
 import { addRoute, type Route } from "./registry.js";
 
@@ -384,8 +385,9 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
   });
 
   addRoute(routes, "GET", "/workspaces", "client", async () => {
-    const active = config.workspaces[0] ?? null;
-    const items = config.workspaces.map(serializeWorkspace);
+    const visible = visibleWorkspaces(config.workspaces);
+    const active = visible[0] ?? null;
+    const items = visible.map(serializeWorkspace);
     return jsonResponse({ items, workspaces: items, activeId: active?.id ?? null });
   });
 

@@ -54,6 +54,7 @@ export function buildWorkspaceInfos(
       path: resolvedPath,
       preset: workspace.preset?.trim() || (workspaceType === "remote" ? "remote" : "starter"),
       workspaceType,
+      hidden: workspace.hidden,
       remoteType,
       baseUrl: workspace.baseUrl,
       directory: workspace.directory,
@@ -83,5 +84,9 @@ export function buildWorkspaceInfos(
  * need no local engine).
  */
 export function findManagedEngineWorkspace(workspaces: WorkspaceInfo[]): WorkspaceInfo | undefined {
-  return workspaces.find((workspace) => workspace.workspaceType !== "remote" && workspace.path.trim() !== "");
+  return workspaces.find((workspace) => !workspace.hidden && workspace.workspaceType !== "remote" && workspace.path.trim() !== "");
+}
+
+export function visibleWorkspaces(workspaces: WorkspaceInfo[]): WorkspaceInfo[] {
+  return workspaces.filter((workspace) => !workspace.hidden);
 }

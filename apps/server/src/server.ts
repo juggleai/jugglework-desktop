@@ -138,6 +138,7 @@ import { MediaGenerationWorker } from "./media-generation/worker.js";
 import { ReviewReadService } from "./reviews/service.js";
 import { ReviewWorkflow, REVIEW_ANALYSIS_SYSTEM } from "./reviews/workflow.js";
 import { loadReviewRepositoryContext } from "./reviews/repository-context.js";
+import { prepareCodeReviewWorkspace } from "./reviews/review-workspace.js";
 import { ConnectGithubReviewProvider } from "./reviews/connect-github-provider.js";
 import { publicVideoGenerationJob } from "./media-generation/types.js";
 import { openAiCompatibleVideoAdapters } from "./media-generation/provider-registry.js";
@@ -1181,6 +1182,34 @@ export async function startServer(config: ServerConfig, options: {
     provider: reviewProvider,
     directory: join(runtimeStorageDir(config), "review-workflows"),
     repositoryContext: loadReviewRepositoryContext,
+    prepareWorkspace: async ({ review, previous, sourceWorkspace }) => {
+      const workspace = await prepareCodeReviewWorkspace({ config, review, previous });
+      await ensureWorkspaceFiles(workspace.path, workspace.preset);
+      await seedJuggleWorkWorkspaceConfigIfEmpty(
+        config,
+        workspace.id,
+        defaultWorkspaceJuggleWorkConfig(workspace.path, workspace.preset),
+      );
+      if (!config.workspaces.some((item) => item.id === workspace.id)) {
+        config.workspaces.push(workspace);
+      }
+      if (!config.authorizedRoots.some((root) => resolve(root) === resolve(workspace.path))) {
+        config.authorizedRoots.push(workspace.path);
+      }
+      if (sourceWorkspace && sourceWorkspace.id !== workspace.id) {
+        const sourceEffective = await readEffectiveWorkspaceOpencodeConfig(config, sourceWorkspace);
+        const sourceRuntime = await readRuntimeOpencodeConfig(config, sourceWorkspace.id);
+        await writeRuntimeOpencodeConfig(config, workspace.id, (current) => ({
+          ...current,
+          ...(isRecord(sourceEffective.provider) ? { provider: sourceEffective.provider } : {}),
+          ...(Array.isArray(sourceEffective.disabled_providers)
+            ? { disabled_providers: sourceEffective.disabled_providers.filter((item): item is string => typeof item === "string") }
+            : sourceRuntime.disabled_providers ? { disabled_providers: sourceRuntime.disabled_providers } : {}),
+        }));
+      }
+      await persistServerWorkspaceState(config);
+      return workspace;
+    },
     analyze: async ({ workspace, title, sessionId, prompt, model, signal, onSession }) => {
       const client = createWorkspaceOpencodeClient(config, workspace);
       const deadline = AbortSignal.any([signal, AbortSignal.timeout(180_000)]);
@@ -1204,6 +1233,22 @@ export async function startServer(config: ServerConfig, options: {
         if (response.error || response.data?.info.error) throw new Error("AI review failed.");
         return response.data?.parts.flatMap((part) => part.type === "text" ? [part.text] : []).join("\n") ?? "";
       } finally { deadline.removeEventListener("abort", abort); }
+    },
+    createConversation: async ({ workspace, title, sessionId }) => {
+      const client = createWorkspaceOpencodeClient(config, workspace);
+      const deadline = AbortSignal.timeout(30_000);
+      let id = sessionId;
+      if (id) {
+        const existing = await client.session.get({ sessionID: id }, { signal: deadline }).catch(() => null);
+        if (!existing?.data?.id) id = undefined;
+        else if (existing.data.title !== title) await client.session.update({ sessionID: id, title }, { signal: deadline });
+      }
+      if (!id) {
+        const created = await client.session.create({ title, permission: [{ permission: "*", pattern: "*", action: "deny" }] }, { signal: deadline });
+        id = created.data?.id;
+      }
+      if (!id) throw new Error("Could not create the pull request conversation.");
+      return id;
     },
     createFix: async ({ workspace, title, prompt }) => {
       const client = createWorkspaceOpencodeClient(config, workspace);

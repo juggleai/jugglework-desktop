@@ -40,6 +40,7 @@ export type PermissionModeSelectorProps = {
   desktopConfig: DenDesktopConfig | null;
   onSelectRequestApproval: () => void;
   onSelectFullAccess: () => void;
+  compact?: boolean;
 };
 
 function describeMode(effectiveMode: SessionPermissionEffectiveMode | null): {
@@ -109,14 +110,15 @@ export function PermissionModeSelect(props: PermissionModeSelectorProps) {
               title={props.disabledReason ?? t("session.permission_mode_title")}
               disabled={Boolean(props.disabledReason)}
               className={cn(
-                "flex h-9 max-h-9 items-center gap-1 rounded-md px-1.5 text-[12px] font-medium text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-12",
+                props.compact
+                  ? "flex size-9 items-center justify-center rounded-full text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-12"
+                  : "flex h-9 max-h-9 items-center gap-1 rounded-md px-1.5 text-[12px] font-medium text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-12",
                 open && "bg-gray-3 text-gray-12",
                 props.disabledReason && "cursor-not-allowed opacity-50",
               )}
             >
-              <span className={current.iconClass}><current.icon size={13} /></span>
-              <span className="truncate max-w-32">{current.label}</span>
-              <ChevronsUpDown size={12} />
+              <span className={current.iconClass}><current.icon size={props.compact ? 20 : 13} strokeWidth={props.compact ? 1.8 : 2} /></span>
+              {!props.compact ? <><span className="truncate max-w-32">{current.label}</span><ChevronsUpDown size={12} /></> : null}
             </button>
           }
         />

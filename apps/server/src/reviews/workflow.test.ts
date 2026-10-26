@@ -35,6 +35,7 @@ async function setup(overrides: Partial<ConstructorParameters<typeof ReviewWorkf
   const options = {
     provider, directory,
     analyze: async ({ onSession, title, sessionId, prompt }: Parameters<ConstructorParameters<typeof ReviewWorkflow>[0]["analyze"]>[0]) => { analyses.push({ title, sessionId, prompt }); await onSession(sessionId ?? "session-review"); return JSON.stringify({ summary: "One concrete bug", findings: [{ id: "arbitrary-ai-id", priority: 1, title: "Bug", body: "Concrete impact", path: "src/a.ts", line: 2 }] }); },
+    createConversation: async ({ sessionId }: { sessionId?: string }) => sessionId ?? "session-review",
     createFix: async () => { fixes++; return "session-fix"; },
     ...overrides,
   };
@@ -52,6 +53,51 @@ async function completed(instance: ReviewWorkflow): Promise<ReviewRun> {
 }
 
 describe("Review workflow", () => {
+  test("prepares a PR conversation without running analysis and reuses it for a requested review", async () => {
+    const state = await setup();
+    const prepared = await state.instance.start({ ...context, expectedHeadRevision: head, mode: "conversation" });
+    expect(prepared.run).toMatchObject({ status: "completed", workspaceId: workspace.id, sessionId: "session-review" });
+    expect(prepared.run.analysis).toBeUndefined();
+    expect(state.analyses).toHaveLength(0);
+
+    await state.instance.start({ ...context, expectedHeadRevision: head, mode: "review" });
+    const reviewed = await completed(state.instance);
+    expect(state.analyses).toHaveLength(1);
+    expect(state.analyses[0]?.sessionId).toBe("session-review");
+    expect(reviewed.analysis?.findings).toHaveLength(1);
+  });
+
+  test("accepts a review immediately while slow provider preparation continues in the background", async () => {
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const state = await setup();
+    const originalListFiles = state.provider.listFiles.bind(state.provider);
+    state.provider.listFiles = async (input: any) => { await gate; return originalListFiles(input); };
+    const startedAt = Date.now();
+    const accepted = await state.instance.start({ ...context, expectedHeadRevision: head, mode: "review" });
+    expect(Date.now() - startedAt).toBeLessThan(100);
+    expect(accepted.run).toMatchObject({ status: "running", phase: "queued", headRevision: head });
+    release?.();
+    expect((await completed(state.instance)).status).toBe("completed");
+  });
+
+  test("an explicit review queued while conversation setup is pending is not dropped", async () => {
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const state = await setup({ createConversation: async () => { await gate; return "session-review"; } });
+    const conversation = state.instance.start({ ...context, expectedHeadRevision: head, mode: "conversation" });
+    await Bun.sleep(1);
+    const reviewRequest = state.instance.start({ ...context, expectedHeadRevision: head, mode: "review" });
+    const accepted = await Promise.race([reviewRequest, Bun.sleep(50).then(() => null)]);
+    expect(accepted?.run).toMatchObject({ status: "running", phase: "queued" });
+    release?.();
+    await conversation;
+    const reviewed = await completed(state.instance);
+    expect(state.analyses).toHaveLength(1);
+    expect(state.analyses[0]?.sessionId).toBe("session-review");
+    expect(reviewed.analysis?.findings).toHaveLength(1);
+  });
+
   test("uses a bounded PR task title and reuses the same review session across revisions", async () => {
     expect(reviewSessionTitle("team/repo", 12, "A ".repeat(100))).toStartWith("Review repo #12: ");
     expect([...reviewSessionTitle("team/repo", 12, "A ".repeat(100))]).toHaveLength(80);

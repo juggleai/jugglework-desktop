@@ -77,6 +77,7 @@ import {
 import { reviewViewModel } from "./review-view-model";
 import { useReviewWorkspaceEndpoint } from "./use-review-workspace-endpoint";
 import { ReviewWorkflowControls } from "./review-workflow-controls";
+import { ReviewConversationPanel, type ReviewConversationLayout } from "./review-conversation-panel";
 import { ReviewHeaderActions } from "./review-header-actions";
 import { ReviewGitHubConnection } from "./review-github-connection";
 import { MarkdownBlock } from "@/react-app/domains/session/surface/markdown";
@@ -896,6 +897,13 @@ export function ReviewPage(props: ReviewPageProps) {
   const [expandedSections, setExpandedSections] = useState<ReviewInboxSectionKey[]>(["pinned", "authored"]);
   const [inboxPreferences, setInboxPreferences] = useState(readReviewInboxPreferences);
   const [tab, setTab] = useState<ReviewDetailTab>("summary");
+  // Bind the panel to a concrete PR instead of keeping a page-global boolean.
+  // This prevents a late query response from one PR appearing in another PR's
+  // conversation when the selection changes quickly.
+  const [reviewPanelReviewId, setReviewPanelReviewId] = useState<string | null>(null);
+  const [reviewPanelLayout, setReviewPanelLayout] = useState<ReviewConversationLayout>("minimized");
+  const [reviewRequestId, setReviewRequestId] = useState(0);
+  const [dismissedReviewPanels, setDismissedReviewPanels] = useState<Set<string>>(() => new Set());
   const [pinnedReviewState, setPinnedReviewState] = useState<PinnedReviewState>(() => readPinnedReviews(props.workspaceId));
   useEffect(() => setPinnedReviewState(readPinnedReviews(props.workspaceId)), [props.workspaceId]);
   const pinnedReviewIds = pinnedReviewState.ids;
@@ -913,6 +921,7 @@ export function ReviewPage(props: ReviewPageProps) {
   const deferredQuery = useDeferredValue(query);
   const workspace = useReviewWorkspaceEndpoint(props.workspaceId, props.active);
   useEffect(() => { setExpandedSections(["pinned", "authored"]); }, [props.workspaceId, workspace.endpoint]);
+  useEffect(() => { setReviewPanelReviewId(null); setReviewRequestId(0); setDismissedReviewPanels(new Set()); }, [props.workspaceId]);
   const toggleInboxSection = (relationship: ReviewInboxSectionKey) => setExpandedSections((current) => current.includes(relationship) ? current.filter((item) => item !== relationship) : [...current, relationship]);
   const updateInboxPreferences = (next: { viewMode: ReviewInboxViewMode; visibleSections: ReviewRelationship[] }) => {
     setInboxPreferences(next);
@@ -943,6 +952,17 @@ export function ReviewPage(props: ReviewPageProps) {
     || authoredInbox.data?.pages.some((page) => page.items.some((item) => item.id === selectedItem.id))
   ));
   const review = useMemo(() => selectedItem ? { ...reviewViewModel({ item: selectedItem, detail: detail.data, files: files.data, checks: checks.data, threads: threads.data }), pinned: pinnedReviewIds.includes(selectedItem.id) } : null, [checks.data, detail.data, files.data, pinnedReviewIds, selectedItem, threads.data]);
+  useEffect(() => {
+    if (!review) {
+      setReviewPanelReviewId(null);
+      setReviewRequestId(0);
+      return;
+    }
+    if (dismissedReviewPanels.has(review.id) || reviewPanelReviewId === review.id) return;
+    setReviewPanelReviewId(review.id);
+    setReviewPanelLayout("minimized");
+    setReviewRequestId(0);
+  }, [dismissedReviewPanels, review, reviewPanelReviewId]);
   const reviewsFor = (data: typeof authoredInbox.data) => (data?.pages.flatMap((page) => page.items) ?? []).map((item) => ({ ...reviewViewModel({ item }), pinned: pinnedReviewIds.includes(item.id) })).sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)));
   const pinnedReviews = useMemo(() => {
     const available = new Map(pinnedReviewState.reviews.map((item) => [item.id, item]));
@@ -1010,7 +1030,30 @@ export function ReviewPage(props: ReviewPageProps) {
             endpoint={workspace.endpoint} review={review} isOwnPullRequest={selectedReviewIsAuthored} active={props.active}
             operations={connection.data.operations}
             onOpenSession={(id) => props.onOpenReviewSession?.(id)}
+            onOpenReviewPanel={() => {
+              setDismissedReviewPanels((current) => {
+                const next = new Set(current);
+                next.delete(review.id);
+                return next;
+              });
+              setReviewPanelReviewId(review.id);
+              setReviewPanelLayout("right");
+              setReviewRequestId(Date.now());
+            }}
           /> : undefined}
+          reviewPanel={reviewPanelReviewId === review?.id && workspace.endpoint && review ? <ReviewConversationPanel
+            endpoint={workspace.endpoint}
+            review={review}
+            active={props.active}
+            layout={reviewPanelLayout}
+            reviewRequestId={reviewRequestId}
+            onLayoutChange={setReviewPanelLayout}
+            onClose={() => {
+              setDismissedReviewPanels((current) => new Set(current).add(review.id));
+              setReviewPanelReviewId(null);
+            }}
+          /> : undefined}
+          reviewPanelPlacement={reviewPanelLayout}
           sections={inboxSections}
           expandedSections={expandedSections}
           pinnedReviews={pinnedReviews}
@@ -1049,6 +1092,8 @@ export function ReviewPage(props: ReviewPageProps) {
 
 export function ReviewWorkbench(props: {
   actions?: ReactNode;
+  reviewPanel?: ReactNode;
+  reviewPanelPlacement?: ReviewConversationLayout;
   endpoint?: ReturnType<typeof useReviewWorkspaceEndpoint>["endpoint"];
   operations?: ReviewConnectionStatus["operations"];
   viewerLogin?: string;
@@ -1082,7 +1127,7 @@ export function ReviewWorkbench(props: {
   sidebarOpen?: boolean;
 }) {
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden" data-testid="review-workbench">
+    <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden" data-testid="review-workbench">
       <div className={cn(
         "h-full shrink-0 overflow-hidden transition-[width] duration-200 ease-linear",
         props.sidebarOpen !== false ? "w-full md:w-[var(--jugglework-left-sidebar-width)]" : "w-0",
@@ -1103,7 +1148,11 @@ export function ReviewWorkbench(props: {
         onSelectReview={props.onSelectReview}
       /> : null}
       </div>
-      <ReviewDetail actions={props.actions} endpoint={props.endpoint} operations={props.operations} viewerLogin={props.viewerLogin} viewerAvatarUrl={props.viewerAvatarUrl} isOwnPullRequest={props.isOwnPullRequest} pinned={props.pinned} onTogglePin={props.onTogglePin} onChanged={props.onChanged} review={props.review} unknown={props.unknown} loading={props.loading} tab={props.tab ?? "summary"} onTabChange={props.onTabChange ?? (() => undefined)} tabLoading={props.tabLoading} tabError={props.tabError} truncated={props.truncated} revisionChanged={props.revisionChanged} onRetryTab={props.onRetryTab} onBack={() => props.onSelectReview(null)} />
+      <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden" data-testid="review-detail-region">
+        {props.reviewPanelPlacement === "left" ? props.reviewPanel : null}
+        {props.reviewPanelPlacement !== "full" ? <ReviewDetail actions={props.actions} endpoint={props.endpoint} operations={props.operations} viewerLogin={props.viewerLogin} viewerAvatarUrl={props.viewerAvatarUrl} isOwnPullRequest={props.isOwnPullRequest} pinned={props.pinned} onTogglePin={props.onTogglePin} onChanged={props.onChanged} review={props.review} unknown={props.unknown} loading={props.loading} tab={props.tab ?? "summary"} onTabChange={props.onTabChange ?? (() => undefined)} tabLoading={props.tabLoading} tabError={props.tabError} truncated={props.truncated} revisionChanged={props.revisionChanged} onRetryTab={props.onRetryTab} onBack={() => props.onSelectReview(null)} /> : null}
+        {props.reviewPanelPlacement !== "left" ? props.reviewPanel : null}
+      </div>
     </div>
   );
 }

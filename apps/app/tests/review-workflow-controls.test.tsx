@@ -14,6 +14,7 @@ mock.module("../src/components/ui/dialog", () => ({
   DialogDescription: ({ children }: { children: ReactNode }) => <p>{children}</p>,
 }));
 mock.module("../src/react-app/domains/settings/cloud/cloud-session-provider", () => ({ useCloudSession: () => ({ baseUrl: "https://work.test", user: { id: "user" }, activeOrganization: { id: "org" } }) }));
+mock.module("../src/react-app/kernel/model-config", () => ({ readStoredDefaultModel: () => ({ providerID: "openai", modelID: "gpt-6.1-sol" }) }));
 const { ReviewWorkflowControls } = await import("../src/react-app/domains/reviews/review-workflow-controls");
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 const head = "a".repeat(40);
@@ -22,16 +23,17 @@ const publish = mock(async (..._args: unknown[]) => ({ ok: true }));
 const start = mock(async (..._args: unknown[]) => ({ run }));
 const fix = mock(async (..._args: unknown[]) => ({ sessionId: "fix-session" }));
 const openSession = mock((_id: string) => {});
+const openReviewPanel = mock(() => {});
 const endpoint = { baseUrl: "http://127.0.0.1:1234", workspaceId: "ws", client: { getReviewRun: async () => ({ run }), startReviewRun: start, cancelReviewRun: async () => ({ run }), publishReview: publish, createReviewFix: fix, listAutomationDependencies: async () => ({ models: [] }) } } as unknown as ResolvedWorkspaceEndpoint;
 let client: QueryClient;
 let view: TestRenderer.ReactTestRenderer;
 const review = { ...REVIEW_PREVIEWS[0]!, headRevision: head };
 const button = (label: string) => view.root.findAllByType("button").find((item) => item.children.includes(label))!;
-async function render(writable = true, revision = head, relationship = review.relationship, isOwnPullRequest?: boolean) {
-  await act(async () => { view = TestRenderer.create(<QueryClientProvider client={client}><ReviewWorkflowControls endpoint={endpoint} review={{ ...review, headRevision: revision, relationship }} isOwnPullRequest={isOwnPullRequest} active operations={{ comment: writable, submitReview: writable }} onOpenSession={openSession} /></QueryClientProvider>); });
+async function render(writable = true, revision = head, relationship = review.relationship, isOwnPullRequest?: boolean, usePanel = false) {
+  await act(async () => { view = TestRenderer.create(<QueryClientProvider client={client}><ReviewWorkflowControls endpoint={endpoint} review={{ ...review, headRevision: revision, relationship }} isOwnPullRequest={isOwnPullRequest} active operations={{ comment: writable, submitReview: writable }} onOpenSession={openSession} onOpenReviewPanel={usePanel ? openReviewPanel : undefined} /></QueryClientProvider>); });
   await act(async () => { await Bun.sleep(5); });
 }
-beforeEach(() => { run = null; publish.mockClear(); start.mockClear(); fix.mockClear(); openSession.mockClear(); client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }); });
+beforeEach(() => { run = null; publish.mockClear(); start.mockClear(); fix.mockClear(); openSession.mockClear(); openReviewPanel.mockClear(); client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }); });
 afterEach(async () => { await act(async () => { view?.unmount(); client.clear(); }); });
 
 test("opening submit review does not publish; only the final button sends the selected decision", async () => {
@@ -54,6 +56,14 @@ test("read-only organization connections can run AI review without enabling exte
   await act(async () => { button("Start review").props.onClick(); await Bun.sleep(5); });
   expect(start).toHaveBeenCalledTimes(1);
   expect(publish).not.toHaveBeenCalled();
+});
+
+test("the review panel opens and owns starting its PR-bound session", async () => {
+  await render(true, head, review.relationship, undefined, true);
+  await act(async () => { button("Review with JuggleWork").props.onClick(); await Bun.sleep(5); });
+  expect(openReviewPanel).toHaveBeenCalledTimes(1);
+  expect(start).not.toHaveBeenCalled();
+  expect(view.root.findAllByProps({ role: "dialog" })).toHaveLength(0);
 });
 
 test("authored pull requests hide every submit-review entry point", async () => {

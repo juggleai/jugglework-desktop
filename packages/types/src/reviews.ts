@@ -330,8 +330,10 @@ export const reviewRunSnapshotSchema = z.object({
   id: z.string().uuid(),
   headRevision: z.string().max(128),
   status: z.enum(["running", "completed", "failed", "cancelled"]),
+  phase: z.enum(["queued", "preparing", "reviewing"]).optional(),
   createdAt: z.string().datetime(),
   sessionId: z.string().optional(),
+  workspaceId: z.string().optional(),
   analysis: reviewAnalysisSchema.optional(),
   error: z.string().max(1_000).optional(),
   partial: z.boolean(),
@@ -347,6 +349,7 @@ export const reviewRunResponseSchema = z.object({ run: reviewRunSchema.nullable(
 export const reviewTaskInputSchema = z.object({
   expectedHeadRevision: z.string().regex(/^[a-f0-9]{40,64}$/i),
   model: z.object({ providerID: z.string().min(1).max(256), modelID: z.string().min(1).max(256) }).optional(),
+  mode: z.enum(["review", "conversation"]).optional(),
 }).strict();
 export const reviewFixInputSchema = z.object({
   runId: z.string().uuid(),

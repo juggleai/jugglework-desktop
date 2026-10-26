@@ -22,6 +22,8 @@ export type WorkspaceWire = {
   path: string;
   preset: string;
   workspaceType: WorkspaceKind;
+  /** Internal workspaces are addressable by id but omitted from normal workspace lists. */
+  hidden?: boolean | null;
   remoteType?: WorkspaceRemoteKind | null;
   baseUrl?: string | null;
   directory?: string | null;

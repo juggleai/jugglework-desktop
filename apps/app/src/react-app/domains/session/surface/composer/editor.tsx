@@ -78,6 +78,7 @@ type EditorProps = {
   onDrop?: React.DragEventHandler<HTMLDivElement>;
   onDragOver?: React.DragEventHandler<HTMLDivElement>;
   onDragLeave?: React.DragEventHandler<HTMLDivElement>;
+  compact?: boolean;
 };
 
 export type LexicalPromptEditorHandle = {
@@ -1293,7 +1294,9 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
           contentEditable={
             <ContentEditable
               data-session-composer-input={props.officeSessionId ? "" : undefined}
-              className="min-h-[60px] max-h-[280px] w-full resize-none overflow-y-auto bg-transparent text-[15px] leading-6 text-dls-text outline-none placeholder:text-dls-secondary [&_p]:min-h-[1.5rem] [&_p]:m-0"
+              className={props.compact
+                ? "h-10 min-h-10 max-h-[112px] w-full resize-none overflow-y-auto bg-transparent px-2 py-2 text-[17px] leading-6 text-dls-text outline-none [&_p]:m-0 [&_p]:min-h-6 [&_p]:leading-6"
+                : "min-h-[60px] max-h-[280px] w-full resize-none overflow-y-auto bg-transparent text-[15px] leading-6 text-dls-text outline-none placeholder:text-dls-secondary [&_p]:min-h-[1.5rem] [&_p]:m-0"}
               aria-placeholder={props.placeholder}
               placeholder={<span />}
               onPaste={props.onPaste}
@@ -1303,7 +1306,9 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
             />
           }
           placeholder={
-            <div className="pointer-events-none absolute left-0 top-0 text-[15px] leading-6 text-dls-secondary/70">
+            <div className={props.compact
+              ? "pointer-events-none absolute left-2 top-2 text-[17px] leading-6 text-gray-8"
+              : "pointer-events-none absolute left-0 top-0 text-[15px] leading-6 text-dls-secondary/70"}>
               {props.placeholder}
             </div>
           }

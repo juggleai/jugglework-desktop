@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { parseNormalizedModelCapabilities } from "@jugglework/types/media-generation";
-import { Check, ChevronDown, Settings2 } from "lucide-react";
+import { BrainCircuit, Check, ChevronDown, Settings2 } from "lucide-react";
 
 import type { ModelOption, ModelRef } from "@/app/types";
 import { ProviderIcon } from "@/react-app/design-system/provider-icon";
@@ -178,6 +178,7 @@ interface ModelSelectProps {
   onOpenChange: (open: boolean) => void;
   onChange: (model: ModelRef) => void;
   disabled?: boolean;
+  compact?: boolean;
 }
 
 export function ModelSelect({
@@ -186,6 +187,7 @@ export function ModelSelect({
   onOpenChange,
   onChange,
   disabled = false,
+  compact = false,
 }: ModelSelectProps) {
   const [search, setSearch] = React.useState("");
   const searchInputRef = React.useRef<HTMLInputElement>(null);
@@ -246,14 +248,16 @@ export function ModelSelect({
               disabled={disabled}
               aria-label="Change model"
               aria-keyshortcuts="Meta+Alt+/"
-              className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-12 disabled:pointer-events-none disabled:opacity-60"
+              className={compact
+                ? "flex size-9 items-center justify-center rounded-full text-gray-9 transition-colors hover:bg-gray-3 hover:text-gray-12 disabled:pointer-events-none disabled:opacity-60"
+                : "flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-12 disabled:pointer-events-none disabled:opacity-60"}
             />
           }
         >
-          <span className="max-w-48 truncate">
+          {compact ? <BrainCircuit className="size-5" strokeWidth={1.7} /> : <><span className="max-w-48 truncate">
             {selectedOption?.title ?? value.modelID ?? "Select model"}
           </span>
-          <ChevronDown className="h-3 w-3" />
+          <ChevronDown className="h-3 w-3" /></>}
         </TooltipTrigger>
         <TooltipContent>
           Change model

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { findManagedEngineWorkspace } from "./workspaces.js";
+import { findManagedEngineWorkspace, visibleWorkspaces } from "./workspaces.js";
 import type { WorkspaceInfo } from "./types.js";
 
 function ws(fields: {
@@ -20,6 +20,13 @@ function ws(fields: {
 }
 
 describe("findManagedEngineWorkspace", () => {
+  test("hidden review workspaces are not exposed or selected as the managed engine root", () => {
+    const hidden = { ...ws({ id: "review", path: "/hidden/review", workspaceType: "local" }), hidden: true };
+    const local = ws({ id: "local", path: "/home/user/work", workspaceType: "local" });
+    expect(visibleWorkspaces([hidden, local]).map((workspace) => workspace.id)).toEqual(["local"]);
+    expect(findManagedEngineWorkspace([hidden, local])?.id).toBe("local");
+  });
+
   test("selects the local workspace in a typical local + remote config", () => {
     // Mirrors the real desktop config: a local workspace followed by a JuggleWork
     // remote worker that has no local path.

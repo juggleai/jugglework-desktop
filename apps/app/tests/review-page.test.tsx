@@ -150,6 +150,19 @@ describe("Review workbench preview", () => {
     expect(html).not.toContain("Code review");
   });
 
+  test("full review conversation stays inside the detail region beside the inbox", () => {
+    const selected = REVIEW_PREVIEWS[0]!;
+    const html = renderToStaticMarkup(<ReviewWorkbench
+      sections={[]} expandedSections={[]} reviewId={selected.id} query="" review={selected} tab="summary" sidebarOpen
+      reviewPanel={<aside data-testid="full-review-conversation">Conversation</aside>} reviewPanelPlacement="full"
+      onQueryChange={noop} onToggleSection={noop} onSelectReview={noop}
+    />);
+    expect(html).toContain('data-app-secondary-sidebar-frame="true"');
+    expect(html).toContain('data-testid="review-detail-region"');
+    expect(html).toContain('data-testid="full-review-conversation"');
+    expect(html).not.toContain("Summary");
+  });
+
   test("shows the changes switcher and selectable file list after opening changes", () => {
     const selected = REVIEW_PREVIEWS[0];
     const html = renderWorkbench(selected.id, true, { tab: "changes" });

@@ -13,8 +13,14 @@ type WorkflowOptions = {
   provider: ReviewReadProvider;
   directory: string;
   analyze: (input: { workspace: WorkspaceInfo; title: string; sessionId?: string; prompt: string; model?: ReviewTaskInput["model"]; signal: AbortSignal; onSession: (id: string) => Promise<void> }) => Promise<string>;
+  createConversation?: (input: { workspace: WorkspaceInfo; title: string; sessionId?: string }) => Promise<string>;
   createFix: (input: { workspace: WorkspaceInfo; title: string; prompt: string }) => Promise<string>;
   repositoryContext?: (input: { workspace: WorkspaceInfo; review: Awaited<ReturnType<ReviewReadProvider["getDetail"]>>["item"]; changedFiles: ReviewFile[] }) => Promise<ReviewRepositoryContext>;
+  prepareWorkspace?: (input: {
+    sourceWorkspace: WorkspaceInfo;
+    review: Awaited<ReturnType<ReviewReadProvider["getDetail"]>>["item"];
+    previous: ReviewRun | null;
+  }) => Promise<WorkspaceInfo>;
 };
 
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -39,7 +45,7 @@ function snapshot(run: ReviewRun): ReviewRunSnapshot {
 /** Durable private AI results; only explicit mutation endpoints publish to GitHub. */
 export class ReviewWorkflow {
   private readonly running = new Map<string, { controller: AbortController; completion: Promise<void> }>();
-  private readonly starting = new Map<string, Promise<ReviewRun>>();
+  private readonly starting = new Map<string, { mode: "review" | "conversation"; promise: Promise<ReviewRun> }>();
   private readonly mutations = new Map<string, Promise<{ ok: true }>>();
   private readonly pullRequestActions = new Map<string, Promise<{ ok: true }>>();
   private readonly fixing = new Map<string, Promise<{ sessionId: string }>>();
@@ -94,24 +100,111 @@ export class ReviewWorkflow {
 
   async start(input: ReviewTargetInput & ReviewTaskInput): Promise<{ run: ReviewRun }> {
     const key = await this.key(input);
-    const starting = this.starting.get(key);
-    if (starting) return { run: await starting };
+    const requestedMode: "review" | "conversation" = input.mode === "conversation" ? "conversation" : "review";
     const current = this.running.get(key);
     if (current) return { run: reviewRunSchema.parse(await this.read(key)) };
-    const promise = this.prepare(input, key);
-    this.starting.set(key, promise);
-    try { return { run: await promise }; } finally { this.starting.delete(key); }
+    const starting = this.starting.get(key);
+    if (starting) {
+      if (starting.mode === "review" || requestedMode === "conversation") return { run: await starting.promise };
+      return { run: await this.enqueueReview(input, key, starting.promise) };
+    }
+    if (input.mode !== "conversation") return { run: await this.enqueueReview(input, key) };
+    const promise = this.prepareConversation(input, key);
+    const entry = { mode: requestedMode, promise };
+    this.starting.set(key, entry);
+    try { return { run: await promise }; } finally { if (this.starting.get(key) === entry) this.starting.delete(key); }
   }
 
-  private async prepare(input: ReviewTargetInput & ReviewTaskInput, key: string): Promise<ReviewRun> {
+  private async enqueueReview(input: ReviewTargetInput & ReviewTaskInput, key: string, afterConversation?: Promise<ReviewRun>): Promise<ReviewRun> {
+    const savedValue = await this.read(key);
+    const previous = savedValue ? reviewRunSchema.parse(savedValue) : null;
+    const run: ReviewRun = {
+      id: randomUUID(),
+      reviewId: input.reviewId,
+      headRevision: input.expectedHeadRevision,
+      status: "running",
+      phase: "queued",
+      createdAt: new Date().toISOString(),
+      partial: false,
+      ...(previous?.workspaceId ? { workspaceId: previous.workspaceId } : {}),
+      ...(previous?.sessionId ? { sessionId: previous.sessionId } : {}),
+      ...(previous ? { history: [...(previous.history ?? []), snapshot(previous)].slice(-20) } : {}),
+    };
+    await this.save(key, run);
+    const controller = new AbortController();
+    // Yield one turn so the HTTP handler can serialize the queued state before
+    // background preparation mutates this shared run object.
+    const completion = Promise.resolve()
+      .then(async () => {
+        if (afterConversation) {
+          const conversation = await afterConversation;
+          run.workspaceId = conversation.workspaceId;
+          run.sessionId = conversation.sessionId;
+          await this.save(key, run);
+        }
+        return this.prepare({ ...input, signal: undefined }, key, run, controller);
+      });
+    this.running.set(key, { controller, completion });
+    void completion.finally(() => this.running.delete(key));
+    return reviewRunSchema.parse({ ...run });
+  }
+
+  private async prepareConversation(input: ReviewTargetInput & ReviewTaskInput, key: string): Promise<ReviewRun> {
+    if (!this.options.createConversation) throw new ApiError(503, "review_conversation_unavailable", "Pull request conversations are unavailable on this server.");
     const detail = await this.fresh(input, input.expectedHeadRevision);
     const savedValue = await this.read(key);
     const previous = savedValue ? reviewRunSchema.parse(savedValue) : null;
+    const reviewWorkspace = await this.options.prepareWorkspace?.({
+      sourceWorkspace: input.workspace,
+      review: detail,
+      previous,
+    }) ?? input.workspace;
+    const sessionId = await this.options.createConversation({
+      workspace: reviewWorkspace,
+      title: reviewSessionTitle(detail.repository.fullName, detail.number, detail.title),
+      sessionId: previous?.workspaceId === reviewWorkspace.id ? previous.sessionId : undefined,
+    });
+    const run: ReviewRun = previous ? {
+      ...previous,
+      workspaceId: reviewWorkspace.id,
+      sessionId,
+    } : {
+      id: randomUUID(),
+      reviewId: input.reviewId,
+      headRevision: detail.headRevision,
+      status: "completed",
+      createdAt: new Date().toISOString(),
+      partial: false,
+      workspaceId: reviewWorkspace.id,
+      sessionId,
+    };
+    const latestValue = await this.read(key);
+    const latest = latestValue ? reviewRunSchema.parse(latestValue) : null;
+    if (latest?.status === "running" && latest.phase && latest.id !== run.id) {
+      latest.workspaceId = reviewWorkspace.id;
+      latest.sessionId = sessionId;
+      await this.save(key, latest);
+      return latest;
+    }
+    await this.save(key, run);
+    return run;
+  }
+
+  private async prepare(input: ReviewTargetInput & ReviewTaskInput, key: string, run: ReviewRun, controller: AbortController): Promise<void> {
+    try {
+    run.phase = "preparing";
+    await this.save(key, run);
+    controller.signal.throwIfAborted();
+    const detail = await this.fresh(input, input.expectedHeadRevision);
+    const previous = run.sessionId
+      ? run
+      : run.history?.at(-1) ? { ...run.history.at(-1)!, reviewId: input.reviewId } as ReviewRun : null;
     const files: ReviewFile[] = [];
     let cursor: string | undefined;
     let partial = false;
     let size = 0;
     for (let page = 0; page < 10; page++) {
+      controller.signal.throwIfAborted();
       const result = await this.options.provider.listFiles({ ...input, cursor, limit: 100 });
       partial ||= result.truncated;
       let included = 0;
@@ -129,32 +222,37 @@ export class ReviewWorkflow {
     partial ||= (detail.changedFiles ?? 0) > files.length;
     // Ensure the patches still belong to the revision the member selected.
     await this.fresh(input, input.expectedHeadRevision);
+    controller.signal.throwIfAborted();
     const repositoryContext = await this.options.repositoryContext?.({ workspace: input.workspace, review: detail, changedFiles: files });
     partial ||= repositoryContext?.partial ?? false;
-    const run: ReviewRun = {
-      id: randomUUID(),
-      reviewId: input.reviewId,
-      headRevision: detail.headRevision,
-      status: "running",
-      createdAt: new Date().toISOString(),
-      partial,
-      ...(previous?.sessionId ? { sessionId: previous.sessionId } : {}),
-      ...(previous ? { history: [...(previous.history ?? []), snapshot(previous)].slice(-20) } : {}),
-    };
+    const reviewWorkspace = await this.options.prepareWorkspace?.({
+      sourceWorkspace: input.workspace,
+      review: detail,
+      previous,
+    }) ?? input.workspace;
+    run.headRevision = detail.headRevision;
+    run.partial = partial;
+    run.workspaceId = reviewWorkspace.id;
+    run.phase = "reviewing";
+    if (previous?.sessionId && (!this.options.prepareWorkspace || previous.workspaceId === reviewWorkspace.id)) run.sessionId = previous.sessionId;
+    else delete run.sessionId;
     await this.save(key, run);
-    const controller = new AbortController();
-    const completion = this.analyze(
+    controller.signal.throwIfAborted();
+    await this.analyze(
       key,
       run,
       files,
-      { ...input, signal: undefined },
+      { ...input, workspace: reviewWorkspace, signal: undefined },
       controller,
       reviewSessionTitle(detail.repository.fullName, detail.number, detail.title),
       JSON.stringify({ pullRequest: { title: detail.title, body: detail.body.slice(0, 20_000), repository: detail.repository.fullName, number: detail.number, base: detail.baseBranch, head: detail.headBranch, revision: detail.headRevision }, partial, repositoryContext, files }),
     );
-    this.running.set(key, { controller, completion });
-    void completion.finally(() => this.running.delete(key));
-    return run;
+    } catch {
+      run.status = controller.signal.aborted ? "cancelled" : "failed";
+      run.error = controller.signal.aborted ? "Review cancelled." : "AI review preparation failed. Refresh the pull request and retry.";
+      delete run.phase;
+      await this.save(key, run).catch(() => undefined);
+    }
   }
 
   private async analyze(key: string, run: ReviewRun, files: ReviewFile[], input: ReviewTargetInput & ReviewTaskInput, controller: AbortController, title: string, prompt: string) {
@@ -171,9 +269,11 @@ export class ReviewWorkflow {
       });
       run.analysis = analysis;
       run.status = "completed";
+      delete run.phase;
     } catch {
       run.status = controller.signal.aborted ? "cancelled" : "failed";
       run.error = controller.signal.aborted ? "Review cancelled." : "AI review failed or returned an invalid result. Check the review task and model configuration, then retry.";
+      delete run.phase;
     }
     await this.save(key, run).catch(() => undefined);
   }

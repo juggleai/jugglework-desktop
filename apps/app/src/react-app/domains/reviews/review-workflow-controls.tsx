@@ -9,6 +9,7 @@ import type { ResolvedWorkspaceEndpoint } from "@/app/lib/workspace-endpoint";
 import type { ReviewConnectionStatus, ReviewMutationInput, ReviewRun } from "@jugglework/types/reviews";
 import type { ReviewPreview } from "./review-types";
 import { useCloudSession } from "../settings/cloud/cloud-session-provider";
+import { readStoredDefaultModel } from "@/react-app/kernel/model-config";
 
 const text = (en: string, zh: string) => currentLocale() === "zh" ? zh : en;
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
@@ -24,6 +25,7 @@ export function ReviewWorkflowControls(props: {
   active: boolean;
   operations?: ReviewConnectionStatus["operations"];
   onOpenSession: (sessionId: string) => void;
+  onOpenReviewPanel?: () => void;
 }) {
   const { endpoint, review } = props;
   const cloud = useCloudSession();
@@ -72,9 +74,14 @@ export function ReviewWorkflowControls(props: {
     onMutate: () => ({ scope }),
     mutationFn: () => {
       const chosen = dependencies.data?.models.find((item) => `${item.providerId}/${item.modelId}` === model);
-      return endpoint.client.startReviewRun(endpoint.workspaceId, review.id, { expectedHeadRevision: review.headRevision, ...(chosen ? { model: { providerID: chosen.providerId, modelID: chosen.modelId } } : {}) });
+      const selectedModel = chosen ? { providerID: chosen.providerId, modelID: chosen.modelId } : readStoredDefaultModel();
+      return endpoint.client.startReviewRun(endpoint.workspaceId, review.id, { expectedHeadRevision: review.headRevision, ...(selectedModel ? { model: selectedModel } : {}) });
     },
-    onSuccess: (data, _variables, context) => { if (currentScope(context?.scope)) client.setQueryData(key, data); },
+    onSuccess: (data, _variables, context) => {
+      if (!currentScope(context?.scope)) return;
+      client.setQueryData(key, data);
+      void client.invalidateQueries({ queryKey: ["reviews", endpoint.baseUrl, endpoint.workspaceId, "ai-review", review.id] });
+    },
   });
   const cancel = useMutation({ retry: false, onMutate: () => ({ scope }), mutationFn: () => endpoint.client.cancelReviewRun(endpoint.workspaceId, review.id), onSuccess: (data, _variables, context) => { if (currentScope(context?.scope)) client.setQueryData(key, data); } });
   const publish = useMutation({
@@ -100,7 +107,15 @@ export function ReviewWorkflowControls(props: {
   const openPublish = () => { publish.reset(); setNotice(null); if (publishRevision !== review.headRevision) { setBody(""); setRequestId(crypto.randomUUID()); } setPublishRevision(review.headRevision); if (!props.operations?.submitReview && props.operations?.comment) setDecision("discussion"); setDialog("publish"); };
   return <>
     <div className="flex flex-wrap items-center justify-end gap-2" data-testid="review-workflow-controls">
-      <Button variant="outline" className="h-8 rounded-full px-3.5 text-sm shadow-sm" onClick={() => { setDialog("ai"); start.reset(); fix.reset(); }}><Bot />{text("Review with JuggleWork", "使用 JuggleWork 审查")}{running ? <LoaderCircle className="size-3.5 animate-spin" /> : run?.status === "completed" ? ` · ${run.analysis?.findings.length ?? 0}` : ""}</Button>
+      <Button variant="outline" className="h-8 rounded-full px-3.5 text-sm shadow-sm" onClick={() => {
+        start.reset();
+        fix.reset();
+        if (props.onOpenReviewPanel) {
+          props.onOpenReviewPanel();
+        } else {
+          setDialog("ai");
+        }
+      }}><Bot />{text("Review with JuggleWork", "使用 JuggleWork 审查")}{running ? <LoaderCircle className="size-3.5 animate-spin" /> : run?.status === "completed" && run.analysis ? ` · ${run.analysis.findings.length}` : ""}</Button>
       {!isOwnPullRequest ? <Button className="h-8 rounded-full px-3.5 text-sm" onClick={openPublish} disabled={!props.operations?.comment && !props.operations?.submitReview} title={!props.operations?.submitReview ? text("Check organization GitHub write permissions", "请检查组织 GitHub 连接器的写入权限") : undefined}><MessageSquareText />{text("Submit review", "提交评审")}</Button> : null}
     </div>
     {notice ? <span role="status" className="text-xs text-green-11">{notice}</span> : null}

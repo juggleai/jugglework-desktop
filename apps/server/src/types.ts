@@ -20,6 +20,7 @@ export interface WorkspaceConfig {
   name?: string;
   preset?: string;
   workspaceType?: WorkspaceType;
+  hidden?: boolean;
   remoteType?: RemoteType;
   baseUrl?: string;
   directory?: string;
@@ -41,6 +42,7 @@ export interface WorkspaceInfo {
   path: string;
   preset: string;
   workspaceType: WorkspaceType;
+  hidden?: boolean;
   remoteType?: RemoteType;
   baseUrl?: string;
   directory?: string;

@@ -6,6 +6,7 @@ import type { UIMessage } from "ai";
 import { AppWindowMac, ArrowUp, Check, FileCog, FileText, ImagePlus, Lightbulb, LoaderCircle, MessageCirclePlus, Mic, Minimize2, Paperclip, PenLine, Plus, Plug, Presentation, ScanSearch, Square, SquarePlay, Terminal, X, Zap } from "lucide-react";
 import fuzzysort from "fuzzysort";
 import { toast } from "@/components/ui/sonner";
+import { cn } from "@/lib/utils";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { JUGGLEWORK_EXTENSION_CATALOG, type McpDirectoryInfo } from "@/app/constants";
 import type { CloudImportedPlugin, CloudImportedPluginFile } from "@/app/cloud/import-state";
@@ -147,7 +148,7 @@ function isComposerExtensionAvailable(entry: McpDirectoryInfo) {
   return !entry.defaultEnabled || isJuggleWorkExtensionEnabled(entry);
 }
 
-type ComposerProps = {
+export type ComposerProps = {
   sessionId: string;
   officeGroups?: OfficeComposerGroup[];
   createVoiceRealtimeSession: JuggleWorkServerClient["createVoiceRealtimeSession"] | null;
@@ -246,6 +247,12 @@ type ComposerProps = {
   onUploadInboxFiles?: ((files: File[]) => void | Promise<unknown>) | null;
   draftScopeKey?: string;
   topAccessory?: ReactNode;
+  /** Compact single-row presentation used by embedded quick-conversation surfaces. */
+  compact?: boolean;
+  /** Join the compact composer to a control bar rendered immediately above it. */
+  compactJoined?: boolean;
+  onFocusCapture?: () => void;
+  compactPlaceholder?: string;
 };
 
 const FLUSH_PROMPT_EVENT = "jugglework:flushPromptDraft";
@@ -1692,8 +1699,9 @@ export function ReactSessionComposer(props: ComposerProps) {
   return (
     <div
       ref={rootRef}
-      className={`sticky bottom-0 ${plusMenuOpen || slashOpen ? "z-50" : "z-20"} bg-gradient-to-t from-dls-surface via-dls-surface/95 to-transparent px-4 pb-2 md:px-8`}
+      className={`sticky bottom-0 ${plusMenuOpen || slashOpen ? "z-50" : "z-20"} ${props.compact ? "bg-transparent p-0" : "bg-gradient-to-t from-dls-surface via-dls-surface/95 to-transparent px-4 pb-2 md:px-8"}`}
       style={{ contain: "layout style" }}
+      onFocusCapture={props.onFocusCapture}
       onKeyDownCapture={handleKeyDownCapture}
       onCompositionStart={() => {
         imeComposingRef.current = true;
@@ -1705,7 +1713,7 @@ export function ReactSessionComposer(props: ComposerProps) {
       <div className="max-w-[800px] mx-auto">
         {/* Main composer panel */}
         <div
-          className={`relative overflow-visible rounded-[24px] border border-dls-border bg-dls-surface shadow-[0_10px_30px_rgba(15,23,42,0.1)] transition-[border-color,box-shadow] dark:shadow-[0_14px_36px_rgba(0,0,0,0.3)] ${panelRoundedClass}`}
+          className={`relative overflow-visible bg-dls-surface transition-[border-color,box-shadow] ${props.compact ? props.compactJoined ? "rounded-b-[31px] border-0 shadow-none" : "rounded-[31px] border border-dls-border shadow-[0_8px_24px_rgba(15,23,42,0.08)] dark:shadow-[0_10px_28px_rgba(0,0,0,0.26)]" : "rounded-[24px] border border-dls-border shadow-[0_10px_30px_rgba(15,23,42,0.1)] dark:shadow-[0_14px_36px_rgba(0,0,0,0.3)]"} ${panelRoundedClass}`}
         >
           {props.topAccessory ? <div className="relative z-10">{props.topAccessory}</div> : null}
 
@@ -1730,7 +1738,7 @@ export function ReactSessionComposer(props: ComposerProps) {
             </div>
           ) : null}
 
-          <div className="px-4 pt-3 pb-2">
+          <div className={props.compact ? "grid h-[62px] grid-cols-[auto_minmax(120px,1fr)_auto] items-center gap-1 px-3" : "px-4 pt-3 pb-2"}>
             {props.selectedAgent?.trim().toLowerCase() === "plan" ? (
               <div className="mb-2 flex min-w-0 items-center" data-testid="composer-plan-mode-control">
                 <div className="flex h-8 items-center gap-1.5 rounded-xl bg-gray-3 px-2.5 text-xs font-medium text-gray-11">
@@ -1770,7 +1778,7 @@ export function ReactSessionComposer(props: ComposerProps) {
 
             {/* 附件行：文件独占区域，位于输入框上方，可横向滚动。 */}
             {props.attachments.length > 0 ? (
-              <div className="mb-2 flex gap-2 overflow-x-auto pb-1">
+              <div className={cn("mb-2 flex gap-2 overflow-x-auto pb-1", props.compact && "order-4 col-span-3 w-full")}>
                 {props.attachments.map((attachment) => (
                   <div
                     key={attachment.id}
@@ -1831,6 +1839,7 @@ export function ReactSessionComposer(props: ComposerProps) {
               </div>
             ) : null}
             {/* Editor */}
+            <div className={props.compact ? "order-2 min-w-0" : undefined}>
             <LexicalPromptEditor
               key={props.sessionId}
               officeSessionId={props.sessionId}
@@ -1840,7 +1849,7 @@ export function ReactSessionComposer(props: ComposerProps) {
               mentions={props.mentions}
               pastedText={pastedTextTokens}
               disabled={props.disabled}
-              placeholder={props.videoGeneration
+              placeholder={props.compact && props.compactPlaceholder ? props.compactPlaceholder : props.videoGeneration
                 ? t("composer.video_generation_placeholder")
                 : props.imageGeneration
                   ? t("composer.image_generation_placeholder")
@@ -1920,11 +1929,13 @@ export function ReactSessionComposer(props: ComposerProps) {
                 event.preventDefault();
                 void addAttachments(files);
               }}
+              compact={props.compact}
             />
+            </div>
 
             {/* Action row — add menu, model controls, and send */}
-            <div className="mt-2 flex flex-wrap items-end justify-between gap-2">
-              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+            <div className={props.compact ? "contents" : "mt-2 flex flex-wrap items-end justify-between gap-2"}>
+              <div className={cn("flex min-w-0 flex-1 flex-wrap items-center gap-1.5", props.compact && "order-1 flex-none flex-nowrap gap-0.5")}>
                 <input
                   ref={(element) => {
                     fileInput = element ?? undefined;
@@ -1950,7 +1961,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                 >
                   <button
                     type="button"
-                    className={`inline-flex h-9 max-h-9 w-9 items-center justify-center rounded-md transition-colors ${plusMenuOpen ? "bg-gray-3 text-gray-12" : "text-gray-10 hover:bg-gray-3"}`}
+                    className={`inline-flex items-center justify-center transition-colors ${props.compact ? "size-10 rounded-full" : "h-9 max-h-9 w-9 rounded-md"} ${plusMenuOpen ? "bg-gray-3 text-gray-12" : "text-gray-11 hover:bg-gray-3"}`}
                     onClick={() => {
                       setMentionOpen(false);
                       setMentionItems([]);
@@ -1961,7 +1972,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                     aria-haspopup="menu"
                     title={t("composer.plus_label")}
                   >
-                    <Plus size={16} />
+                    <Plus size={props.compact ? 23 : 16} strokeWidth={props.compact ? 1.7 : 2} />
                   </button>
                 </div>
 
@@ -1981,21 +1992,22 @@ export function ReactSessionComposer(props: ComposerProps) {
                       if (!props.steering) props.onModelChange(model);
                     }}
                     disabled={props.steering}
+                    compact={props.compact}
                   />
 
-                  <ContextUsage
+                  {!props.compact ? <ContextUsage
                     messages={props.contextUsageMessages}
                     transcript={props.contextUsageTranscript}
                     model={props.selectedModel}
                     contextLimit={props.contextWindowTokens}
                     streaming={props.busy}
-                  />
+                  /> : null}
                 </div>
                 {props.modelUnavailable ? (
                   <span className="text-xs font-medium text-red-10">Model no longer available</span>
                 ) : null}
 
-                <ModelBehaviorSelect
+                {!props.compact ? <ModelBehaviorSelect
                   value={props.modelVariant}
                   label={props.modelVariantLabel}
                   options={props.modelBehaviorOptions}
@@ -2003,7 +2015,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                     if (!props.steering) props.onModelVariantChange(value);
                   }}
                   disabled={props.steering}
-                />
+                /> : null}
               </div>
 
               {/*
@@ -2014,7 +2026,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                   badge on the stop button. Escape arms a "Hit Escape again
                   to stop the agent" prompt.
               */}
-              <div className="ml-auto flex shrink-0 items-end gap-1.5">
+              <div className={cn("ml-auto flex shrink-0 items-end gap-1.5", props.compact && "order-3 ml-0 gap-0.5")}>
                 <Tooltip>
                   <TooltipTrigger render={<span className={`inline-flex ${voiceServiceDisabled ? "cursor-not-allowed" : ""}`} />}>
                     <button
@@ -2024,7 +2036,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                       disabled={voiceDictation.phase === "transcribing" || voiceServiceDisabled}
                       aria-pressed={voiceDictation.phase === "recording"}
                       aria-label={voiceButtonLabel}
-                      className={`inline-flex h-9 max-h-9 w-9 items-center justify-center rounded-full transition-colors active:scale-[0.98] disabled:pointer-events-none ${
+                      className={`inline-flex items-center justify-center rounded-full transition-colors active:scale-[0.98] disabled:pointer-events-none ${props.compact ? "size-9" : "h-9 max-h-9 w-9"} ${
                         voiceServiceDisabled
                           ? "text-gray-7 opacity-70"
                           : voiceDictation.phase === "recording"
@@ -2037,7 +2049,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                       voiceDictation.phase === "transcribing" ? (
                         <LoaderCircle size={17} className="animate-spin" />
                       ) : (
-                        <Mic size={18} strokeWidth={1.9} />
+                        <Mic size={props.compact ? 21 : 18} strokeWidth={1.8} />
                       )}
                     </button>
                   </TooltipTrigger>
@@ -2069,14 +2081,14 @@ export function ReactSessionComposer(props: ComposerProps) {
                     type="button"
                     onClick={canSend && !props.submissionDisabled && !props.submissionPreparing ? props.onSend : undefined}
                     disabled={props.disabled || props.submissionDisabled || !canSend || props.submissionPreparing}
-                    className={`inline-flex h-9 max-h-9 w-9 items-center justify-center rounded-full transition-colors active:scale-[0.98] ${
+                    className={`inline-flex items-center justify-center rounded-full transition-colors active:scale-[0.98] ${props.compact ? "size-10" : "h-9 max-h-9 w-9"} ${
                       !canSend || props.disabled || props.submissionDisabled || props.submissionPreparing
                         ? "bg-gray-4 text-gray-10"
                         : "bg-[var(--dls-accent)] text-[var(--dls-accent-fg)] hover:bg-[var(--dls-accent-hover)]"
                     }`}
                     title={props.submissionPreparingLabel ?? t("composer.run_task")}
                   >
-                    {props.submissionPreparing ? <LoaderCircle size={15} className="animate-spin" /> : <ArrowUp size={15} />}
+                    {props.submissionPreparing ? <LoaderCircle size={props.compact ? 18 : 15} className="animate-spin" /> : <ArrowUp size={props.compact ? 19 : 15} strokeWidth={props.compact ? 1.8 : 2} />}
                   </button>
                 )}
               </div>

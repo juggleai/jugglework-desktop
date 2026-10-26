@@ -34,7 +34,7 @@ export function registerReviewWorkflowRoutes(options: {
   addRoute(options.routes, "POST", `${base}/ai-review`, "client", async (ctx) => {
     options.authorizeWrite(ctx);
     const body = reviewTaskInputSchema.safeParse(await options.readJsonBody(ctx.request));
-    if (!body.success) throw new ApiError(400, "invalid_payload", "A valid revision and optional model are required.");
+    if (!body.success) throw new ApiError(400, "invalid_payload", "A valid revision, mode, and optional model are required.");
     return options.jsonResponse(await options.workflow.start({ ...await context(ctx), ...body.data }), 202);
   });
   addRoute(options.routes, "POST", `${base}/ai-review/cancel`, "client", async (ctx) => {

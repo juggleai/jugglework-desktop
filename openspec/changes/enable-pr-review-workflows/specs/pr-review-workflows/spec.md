@@ -8,6 +8,9 @@ The application SHALL analyze the selected PR revision with a workspace model, p
 - **THEN** the server reads bounded PR context through the authorized organization connector and executes a tool-denied review session
 - **AND** the result includes validated findings and an explicit partial-coverage indicator when applicable
 - **AND** navigation does not cancel the run, explicit cancellation stops it, and interrupted runs can be restarted after a server restart
+- **AND** starting a review immediately persists and returns a queued run before provider, diff, repository-context, workspace, or model preparation completes
+- **AND** the PR conversation immediately shows the readable review request and starts the normal task timer while background preparation continues
+- **AND** transient snapshot read timeouts during an active review do not replace the running transcript with a request-timeout error
 
 #### Scenario: Create or reuse the PR review task
 - **WHEN** a member starts the first AI review for a pull request
