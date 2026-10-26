@@ -34,6 +34,20 @@ afterAll(() => {
 });
 
 describe("JuggleWorkContextOverflow fetch patch", () => {
+  test.each([409, 429, 503])("makes exhausted points terminal even when the gateway returns %s", async (status) => {
+    fetchCalls = 0;
+    nextResponse = new Response(JSON.stringify({ error: {
+      code: "insufficient_points",
+      message: "The organization does not have enough available points for this managed model request.",
+    } }), { status, headers: { "x-request-id": "points-request", "retry-after": "30" } });
+    const response = await patchedFetch("https://provider.test/v1/chat/completions");
+    expect(response.status).toBe(402);
+    expect(response.headers.get("retry-after")).toBeNull();
+    expect(response.headers.get("x-request-id")).toBe("points-request");
+    expect(await response.json()).toMatchObject({ error: { code: "insufficient_points", type: "insufficient_quota" } });
+    expect(fetchCalls).toBe(1);
+  });
+
   test("retries one transient TLS handshake failure without exposing the destination path", async () => {
     fetchCalls = 0;
     nextResponse = new Response("ok", { status: 200 });

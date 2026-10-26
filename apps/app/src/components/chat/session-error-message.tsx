@@ -1,6 +1,8 @@
-import { AlertTriangle } from "lucide-react"
+import { AlertTriangle, CircleAlert } from "lucide-react"
 
 import { Message } from "@/components/ui/message"
+import { t } from "@/i18n"
+import { isPointsExhaustedMessage } from "@/react-app/domains/session/sync/provider-limit-classify"
 
 /** Display-only filtering: keep the original diagnostic and task state intact. */
 export function isMissingFileSessionError(error: string | null): boolean {
@@ -12,6 +14,18 @@ export function isMissingFileSessionError(error: string | null): boolean {
 
 export function SessionErrorMessage({ error }: { error: string | null }) {
   if (isMissingFileSessionError(error)) return null
+  if (isPointsExhaustedMessage(error)) {
+    return (
+      <div role="status" data-testid="session-points-exhausted" className="not-prose my-6 flex w-full items-center gap-3 text-sm text-dls-secondary">
+        <span aria-hidden className="h-px min-w-4 flex-1 bg-dls-border" />
+        <span className="flex min-w-0 items-center justify-center gap-2 text-center">
+          <CircleAlert className="size-4 shrink-0" />
+          {t("session.usage_limit_recharge")}
+        </span>
+        <span aria-hidden className="h-px min-w-4 flex-1 bg-dls-border" />
+      </div>
+    )
+  }
 
   return (
     <Message className="not-prose mx-auto flex w-full max-w-3xl flex-col items-start gap-2 px-0 md:px-10">

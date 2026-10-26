@@ -4,6 +4,7 @@
  */
 
 export default {
+  "session.usage_limit_recharge": "Has arribat al límit d'ús. Recarrega el saldo per obtenir més crèdits d'ús.",
   "app.compact_command_desc": "Resumeix aquesta sessió per reduir la mida del context.",
   "app.error_audit_load": "No s'ha pogut carregar el registre d'auditoria.",
   "app.error_auth_failed": "L'autenticació ha fallat",

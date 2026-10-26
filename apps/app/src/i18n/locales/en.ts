@@ -4,6 +4,7 @@
  */
 
 export default {
+  "session.usage_limit_recharge": "You've reached your usage limit. Please top up to get more usage credits.",
   "office.in_file_window": "This document is open in a separate window",
   "file_window.files": "Files",
   "file_window.add": "New or open file",
@@ -3088,6 +3089,12 @@ export default {
   "automation.load_more": "Load more",
   "automation.add": "Add automation",
   "automation.batch_manage": "Batch manage",
+  "automation.filter": "Filter tasks",
+  "automation.filter_status": "Status",
+  "automation.filter_enabled": "Enabled",
+  "automation.filter_paused": "Paused",
+  "automation.filter_completed": "Completed",
+  "automation.filter_unread": "Unread",
   "automation.batch_exit": "Exit batch",
   "automation.batch_select_all": "Select all",
   "automation.batch_clear_all": "Clear selection",
@@ -3116,6 +3123,7 @@ export default {
   "automation.empty_runs_hint": "Automatic and manual runs will appear here.",
   "automation.templates": "Automation templates",
   "automation.current": "Current",
+  "automation.paused": "Paused",
   "automation.ended": "Ended",
   "automation.other_devices": "Other devices (read-only)",
   "automation.read_only_device": "Read-only; runs on its assigned device",

@@ -72,6 +72,7 @@ function record(definition: AutomationDefinition, deletedAt?: number): Automatio
     compatibility: "compatible",
     syncState: "synced",
     rawDocument: {},
+    hasUnreadResult: false,
     ...(deletedAt !== undefined ? { deletedAt } : {}),
   };
 }

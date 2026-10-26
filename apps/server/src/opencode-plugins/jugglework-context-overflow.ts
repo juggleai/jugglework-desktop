@@ -523,8 +523,8 @@ function contextOverflowMessage(text: string): string | null {
   return null;
 }
 
-async function normalizedOverflowResponse(response: Response): Promise<Response> {
-  if (response.ok || response.status === 429) return response;
+async function normalizedProviderErrorResponse(response: Response): Promise<Response> {
+  if (response.ok) return response;
   const contentLength = Number(response.headers.get("content-length"));
   if (Number.isFinite(contentLength) && contentLength > MAX_ERROR_BODY_BYTES) return response;
 
@@ -535,6 +535,29 @@ async function normalizedOverflowResponse(response: Response): Promise<Response>
     return response;
   }
   if (new TextEncoder().encode(text).byteLength > MAX_ERROR_BODY_BYTES) return response;
+  // The managed gateway uses HTTP 409 for an exhausted points wallet. SDKs
+  // retry conflicts, although this failure cannot recover through backoff.
+  // Expose it as a non-retryable billing error so OpenCode ends the turn and
+  // persists the error in session history, including for unattended tasks.
+  const lower = text.toLowerCase();
+  if (lower.includes("insufficient_points") || lower.includes("does not have enough available points")) {
+    let message = "The organization does not have enough available points for this managed model request.";
+    try {
+      const parsed = JSON.parse(text) as { error?: { message?: unknown } };
+      if (typeof parsed.error?.message === "string" && parsed.error.message.trim()) message = parsed.error.message;
+    } catch {
+      message = text.trim() || message;
+    }
+    const headers = new Headers(response.headers);
+    headers.set("content-type", "application/json");
+    headers.delete("content-length");
+    headers.delete("retry-after");
+    return new Response(JSON.stringify({
+      type: "error",
+      error: { code: "insufficient_points", type: "insufficient_quota", message },
+    }), { status: 402, statusText: "Payment Required", headers });
+  }
+  if (response.status === 429) return response;
   const message = contextOverflowMessage(text);
   if (!message) return response;
 
@@ -565,7 +588,7 @@ function installContextOverflowFetchPatch(): void {
   installed = true;
   const base = globalThis.fetch;
   const patched = async (input: Parameters<typeof fetch>[0], init?: RequestInit): Promise<Response> => {
-    return normalizedOverflowResponse(await fetchWithEmptyStreamRetry(base, input, init));
+    return normalizedProviderErrorResponse(await fetchWithEmptyStreamRetry(base, input, init));
   };
   globalThis.fetch = Object.assign(patched, base);
 }

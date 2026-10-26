@@ -4,6 +4,7 @@
  */
 
 export default {
+  "session.usage_limit_recharge": "Bạn đã đạt giới hạn sử dụng. Vui lòng nạp thêm để có thêm tín dụng sử dụng.",
   "app.compact_command_desc": "Tóm tắt phiên này để giảm kích thước ngữ cảnh.",
   "app.error_audit_load": "Tải nhật ký kiểm toán thất bại.",
   "app.error_auth_failed": "Xác thực thất bại",

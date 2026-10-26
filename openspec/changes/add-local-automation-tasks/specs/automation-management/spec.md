@@ -167,9 +167,48 @@ When an existing automation is saved with full access, including after a permiss
 ### Requirement: Automation lifecycle actions
 The scheduled-task list SHALL support manual run, edit, pause/resume, and delete actions; duplicate is reachable from the editor entry point rather than the row.
 
+The task sidebar SHALL provide an anchored multi-select status filter with Enabled, Paused, Completed and Unread choices. Enabled, Paused and Completed SHALL be selected by default; Unread SHALL be off by default. Lifecycle choices combine with OR, while Unread narrows the selected lifecycle set with AND. Shadow tasks SHALL be treated as enabled for this filter. The filter SHALL be the only trailing control beside the Upcoming heading; a batch-management control SHALL NOT be shown there. The menu label SHALL be rendered within the menu library's required group context so opening the filter cannot unmount the application.
+
+Unread SHALL mean that the task's latest succeeded or failed run differs from its durable local viewed-result cursor. Opening that exact result session SHALL mark it viewed. Viewing an older result MUST NOT clear a newer unread result, and notification delivery alone MUST NOT mark a result viewed.
+
+The scheduled-task sidebar, including its collapsed-Rail hover preview, SHALL show a spinning activity indicator for a queued or running task. When no run is active, an unread successful result SHALL show a green dot and an unread failed result SHALL show an amber dot. Active state SHALL take precedence over an older unread outcome. After the user leaves the Automation destination, its vertical Rail item SHALL continue showing the spinning indicator while any automation is queued or running; the indicator SHALL be suppressed on the active Automation destination because the task rows already expose the state.
+
+#### Scenario: User filters tasks by status
+- **WHEN** the user toggles Enabled, Paused or Completed in the sidebar filter
+- **THEN** the loaded task list updates immediately to include tasks matching any selected lifecycle without changing task state
+
+#### Scenario: User filters unread task results
+- **WHEN** Unread is selected with one or more lifecycle choices
+- **THEN** only matching tasks whose latest succeeded or failed result has not been viewed remain visible
+
+#### Scenario: User views the latest unread result
+- **WHEN** the latest result conversation opens from a task or run entry
+- **THEN** that run becomes the viewed cursor and the task is removed from an active Unread filter unless a newer result already exists
+
+#### Scenario: Scheduled task is running
+- **WHEN** a scheduled task is queued or running while its sidebar is visible
+- **THEN** its task row shows a spinning activity indicator instead of an older result dot
+
+#### Scenario: Scheduled task completes while unread
+- **WHEN** the latest run succeeds or fails and its conversation has not been opened
+- **THEN** the task row shows a green success dot or amber failure dot respectively
+- **AND** opening that latest conversation clears the dot after the viewed-result cursor is persisted
+
+#### Scenario: User leaves the Automation destination during a run
+- **WHEN** any automation remains queued or running and the user selects another vertical Rail destination
+- **THEN** the Automation Rail item shows the spinning activity indicator until no active automation remains
+
 Clicking a scheduled task SHALL open its latest available session inside the right pane of the Automation page, without navigating to a local-workspace route. Creating a scheduled task SHALL immediately prepare and bind its task-scoped workspace/session with the selected permission, model and agent. The first visible user turn SHALL contain the durable task description and localized schedule summary; the model SHALL generate one concise localized acknowledgement while every tool is disabled and a system instruction forbids executing the task before its due time. This confirmation turn MUST NOT create an automation run or change lifecycle/next-run state. If an older task has no session, opening it SHALL prepare an empty session without dispatching the task prompt. Concurrent preparations SHALL share one preparation. Tasks that create a new chat per run SHALL also expose their distinct run sessions for in-place selection; actual runs MUST still follow that setting. Event tasks SHALL continue to require an existing entity session. Run-history session entries SHALL use the same in-place session surface.
 
 The embedded conversation SHALL offer a return-to-list action. Entering run history SHALL clear the previous task conversation so the history list remains reachable. Returning to the ordinary workspace surface SHALL restore its prior tabs, split and focus rather than inheriting the automation conversation's workbench state.
+
+The embedded automation conversation top bar SHALL retain one primary session title but SHALL NOT repeat the automation run badge or the automation-managed workspace/task name beside it. The full top chrome above the Automation rail, scheduled-task sidebar and embedded conversation SHALL remain an Electron window drag region, including native double-click maximize/restore behavior, while its interactive controls SHALL remain explicit no-drag regions.
+
+#### Scenario: User drags an automation conversation window
+- **WHEN** the user drags an unused area above the Automation rail, scheduled-task sidebar or automation conversation
+- **THEN** the desktop window moves normally
+- **AND** double-clicking the unused area invokes the platform's native maximize or restore behavior
+- **AND** top-bar buttons remain clickable
 
 Create and edit SHALL share the same modal editor over the retained task dashboard. Editing SHALL load the saved definition, show Save rather than Create, preserve dirty-draft discard protection, and refresh the dashboard after success.
 
@@ -191,11 +230,7 @@ Create and edit SHALL share the same modal editor over the retained task dashboa
 - **WHEN** the user chooses Edit from a task's actions
 - **THEN** the same modal layout used for creation opens with the existing definition, and closing or saving returns to the retained task dashboard and conversation
 
-The list SHALL also offer a batch mode that reveals a per-row checkbox, a select-all toggle, a selected count, and a confirmed batch delete. Batch delete SHALL apply each deletion with its own base revision so a conflict stops the batch instead of silently overwriting, and the list SHALL reflect whatever was already removed. Pausing MUST preserve the definition and history while preventing new scheduled runs. Duplicating MUST assign a new identity and start paused; creating the copied scheduled task activates its selected permission profile through the Create action without a second reminder. Deletion MUST be locally recoverable until its tombstone is synchronized or the user confirms permanent local removal.
-
-#### Scenario: User batch deletes several tasks
-- **WHEN** the user enters batch mode, selects several automations and confirms deletion
-- **THEN** each selected automation is deleted with its own base revision and the run history of each is kept
+Pausing MUST preserve the definition and history while preventing new scheduled runs. Duplicating MUST assign a new identity and start paused; creating the copied scheduled task activates its selected permission profile through the Create action without a second reminder. Deletion MUST be locally recoverable until its tombstone is synchronized or the user confirms permanent local removal.
 
 #### Scenario: User pauses an enabled task
 - **WHEN** the user pauses an enabled automation
@@ -260,7 +295,7 @@ Editing schedule, timezone, active range, model, agent, skills, prompt, workspac
 - **THEN** the Desktop asks whether to discard changes and preserves the stored definition unless discard is confirmed
 
 ### Requirement: Scheduled-task list grouping and row details
-The Scheduled tasks tab SHALL group definitions into `Current` for enabled or paused tasks with a possible future occurrence and `Ended` for consumed one-time tasks or expired active ranges. Enabled current tasks SHALL sort by next run ascending, paused tasks SHALL follow, and ended tasks SHALL sort by latest update descending.
+The Scheduled tasks tab SHALL group definitions into `Current` for enabled or shadow tasks with a possible future occurrence, `Paused` for paused tasks, and `Ended` for consumed one-time tasks or expired active ranges. The Paused group SHALL be collapsed by default and allow the user to expand or collapse it. Enabled current tasks SHALL sort by next run ascending, and ended tasks SHALL sort by latest update descending.
 
 Each row MUST show name, workspace, localized schedule summary, and active range when present, with the next run rendered as a relative time (for example `12天后执行`). The schedule timezone MUST NOT appear in the row — the schedule always runs on this host. Paused and completed tasks show their lifecycle state in place of the relative time.
 
@@ -268,7 +303,7 @@ Row actions SHALL stay hidden until the row is hovered or its menu is open, at w
 
 #### Scenario: Enabled and paused tasks coexist
 - **WHEN** the list contains enabled tasks with future runs and paused tasks
-- **THEN** enabled tasks are ordered by next run and paused tasks appear afterward with a visible paused state
+- **THEN** enabled tasks are ordered under Current and paused tasks appear only in the separate Paused group with a visible paused state
 
 #### Scenario: One-time task was consumed
 - **WHEN** a one-time task has accepted its only scheduled occurrence

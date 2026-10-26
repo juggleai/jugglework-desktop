@@ -69,39 +69,59 @@ test("scheduler records missed deadlines without dispatch", async () => {
   }
 });
 
-test("scheduler reconciles persisted running sessions before dispatching queued runs", async () => {
+test("scheduler reconciles running sessions without blocking other recoveries or queued runs", async () => {
   const fixture = await repositoryFixture();
   const now = Date.parse("2026-08-11T01:00:00Z");
+  const recoveryGate = deferred();
+  const queuedGate = deferred();
+  let scheduler: AutomationScheduler | undefined;
   try {
     const runningDefinition = dailyDefinition("task-running", now + 60_000);
+    const otherRunningDefinition = dailyDefinition("task-other-running", now + 60_000);
     const queuedDefinition = dailyDefinition("task-queued", now + 60_000);
-    fixture.repository.createDefinition(runningDefinition, runningDefinition);
-    fixture.repository.createDefinition(queuedDefinition, queuedDefinition);
-    const first = fixture.repository.createManualRun(runningDefinition, "run-running", now - 100);
-    fixture.repository.updateRun(first.id, first.revision, { state: "running", sessionId: "session-running", startedAt: now - 50 }, now - 50);
+    for (const definition of [runningDefinition, otherRunningDefinition, queuedDefinition]) {
+      fixture.repository.createDefinition(definition, definition);
+    }
+    for (const definition of [runningDefinition, otherRunningDefinition]) {
+      const run = fixture.repository.createManualRun(definition, `run-${definition.id}`, now - 100);
+      fixture.repository.updateRun(run.id, run.revision, { state: "running", sessionId: `session-${definition.id}`, startedAt: now - 50 }, now - 50);
+    }
     fixture.repository.createManualRun(queuedDefinition, "run-queued", now - 25);
     const order: string[] = [];
-    const scheduler = new AutomationScheduler({
+    scheduler = new AutomationScheduler({
       repository: fixture.repository,
       executor: {
         reconcile: async (snapshot) => {
           order.push(`reconcile:${snapshot.run.id}`);
+          await recoveryGate.promise;
           const current = fixture.repository.getRun(snapshot.run.id)!;
           fixture.repository.updateRun(current.id, current.revision, { state: "succeeded", endedAt: now }, now);
         },
         execute: async (snapshot) => {
           order.push(`execute:${snapshot.run.id}`);
           let current = fixture.repository.updateRun(snapshot.run.id, snapshot.run.revision, { state: "running", startedAt: now }, now);
+          await queuedGate.promise;
           current = fixture.repository.updateRun(current.id, current.revision, { state: "succeeded", endedAt: now }, now);
         },
       },
       clock: fakeClock(now),
     });
     scheduler.start();
-    await eventually(() => order.length === 2);
-    await scheduler.dispose();
-    assert.deepEqual(order, ["reconcile:run-running", "execute:run-queued"]);
+    await eventually(() => order.length === 3);
+    assert.equal(order.filter((entry) => entry.startsWith("reconcile:")).length, 2);
+    assert.ok(order.includes("execute:run-queued"));
+    let disposed = false;
+    const disposal = scheduler.dispose().then(() => { disposed = true; });
+    queuedGate.resolve();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(disposed, false, "disposal must also wait for recovered sessions");
+    recoveryGate.resolve();
+    await disposal;
+    assert.equal(fixture.repository.listActiveRunSnapshots().length, 0);
   } finally {
+    recoveryGate.resolve();
+    queuedGate.resolve();
+    await scheduler?.dispose();
     await fixture.close();
   }
 });
@@ -159,23 +179,24 @@ test("finite active range and one-time schedules become completed after their fi
   }
 });
 
-test("simultaneous tasks remain durably queued behind one global executor slot", async () => {
+test("simultaneous scheduled tasks in the same workspace execute independently", async () => {
   const fixture = await repositoryFixture();
   const now = Date.parse("2026-08-11T01:00:00Z");
   let releaseFirst: (() => void) | undefined;
   const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+  let scheduler: AutomationScheduler | undefined;
   try {
     for (const id of ["task-a", "task-b"]) {
       const definition = dailyDefinition(id, now);
       fixture.repository.createDefinition(definition, definition);
     }
     const started: string[] = [];
-    const scheduler = new AutomationScheduler({
+    scheduler = new AutomationScheduler({
       repository: fixture.repository,
       executor: {
         execute: async (snapshot) => {
           started.push(snapshot.run.automationId);
-          let current = fixture.repository.updateRun(snapshot.run.id, snapshot.run.revision, { state: "running", startedAt: now }, now);
+          let current = fixture.repository.updateRun(snapshot.run.id, snapshot.run.revision, { state: "running", sessionId: `session-${snapshot.run.automationId}`, startedAt: now }, now);
           if (started.length === 1) await firstGate;
           current = fixture.repository.updateRun(current.id, current.revision, { state: "succeeded", endedAt: now + started.length }, now + started.length);
         },
@@ -183,11 +204,151 @@ test("simultaneous tasks remain durably queued behind one global executor slot",
       clock: fakeClock(now),
     });
     scheduler.start();
-    await eventually(() => started.length === 1 && fixture.repository.listActiveRunSnapshots().length === 2);
-    assert.equal(started.length, 1);
+    await eventually(() => started.length === 2 && fixture.repository.listActiveRunSnapshots().length === 1);
+    assert.equal(fixture.repository.listRuns().items.filter((run) => run.state === "succeeded").length, 1);
     releaseFirst?.();
     await eventually(() => started.length === 2 && fixture.repository.listActiveRunSnapshots().length === 0);
     await scheduler.dispose();
+  } finally {
+    releaseFirst?.();
+    await scheduler?.dispose();
+    await fixture.close();
+  }
+});
+
+test("manual work starts during a scheduled run and repeated wake-ups never redispatch queued work", async () => {
+  const fixture = await repositoryFixture();
+  const now = Date.parse("2026-08-11T01:00:00Z");
+  const preparationGate = deferred();
+  const completionGate = deferred();
+  let scheduler: AutomationScheduler | undefined;
+  try {
+    const scheduled = dailyDefinition("task-scheduled", now);
+    const manual = dailyDefinition("task-manual", now + 60_000);
+    for (const definition of [scheduled, manual]) fixture.repository.createDefinition(definition, definition);
+    const started: string[] = [];
+    const clock = new ControlledClock(now);
+    scheduler = new AutomationScheduler({
+      repository: fixture.repository,
+      executor: {
+        execute: async (snapshot) => {
+          started.push(snapshot.run.automationId);
+          // Session allocation/preflight can leave a dispatched run queued across wake-ups.
+          await preparationGate.promise;
+          const current = fixture.repository.updateRun(snapshot.run.id, snapshot.run.revision, {
+            state: "running", sessionId: `session-${snapshot.run.automationId}`, startedAt: now,
+          }, now);
+          await completionGate.promise;
+          fixture.repository.updateRun(current.id, current.revision, { state: "succeeded", endedAt: now + 1 }, now + 1);
+        },
+      },
+      clock,
+    });
+    scheduler.start();
+    await eventually(() => started.length === 1);
+    fixture.repository.createManualRun(manual, "run-manual", now);
+    scheduler.notifyChanged();
+    scheduler.notifyChanged();
+    clock.advanceTo(now + 30_000);
+    await eventually(() => started.length === 2);
+    assert.deepEqual(started, [scheduled.id, manual.id]);
+    assert.equal(fixture.repository.listActiveRunSnapshots().filter(({ run }) => run.state === "queued").length, 2);
+    preparationGate.resolve();
+    await eventually(() => fixture.repository.listActiveRunSnapshots().every(({ run }) => run.state === "running"));
+    assert.throws(() => fixture.repository.createManualRun(manual, "run-duplicate", now), (error: unknown) => (
+      (error as { code?: string }).code === "overlap_blocked"
+    ));
+    let disposed = false;
+    const disposal = scheduler.dispose().then(() => { disposed = true; });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(disposed, false);
+    completionGate.resolve();
+    await disposal;
+    scheduler.notifyChanged();
+    clock.advanceTo(now + 86_400_000);
+    assert.equal(clock.timerCount, 0);
+    assert.deepEqual(started, [scheduled.id, manual.id]);
+    assert.equal(fixture.repository.listActiveRunSnapshots().length, 0);
+  } finally {
+    preparationGate.resolve();
+    completionGate.resolve();
+    await scheduler?.dispose();
+    await fixture.close();
+  }
+});
+
+test("unexpected dispatch and recovery failures do not block other sessions or leak error details", async () => {
+  const fixture = await repositoryFixture();
+  const now = Date.parse("2026-08-11T01:00:00Z");
+  let scheduler: AutomationScheduler | undefined;
+  try {
+    for (const id of ["task-recovery-error", "task-dispatch-error", "task-success"]) {
+      const definition = dailyDefinition(id, now + 60_000);
+      fixture.repository.createDefinition(definition, definition);
+      const run = fixture.repository.createManualRun(definition, `run-${id}`, now);
+      if (id === "task-recovery-error") {
+        fixture.repository.updateRun(run.id, run.revision, { state: "running", sessionId: "session-recovery", startedAt: now }, now);
+      }
+    }
+    const logs: Array<{ event: string; fields: Record<string, unknown> }> = [];
+    scheduler = new AutomationScheduler({
+      repository: fixture.repository,
+      executor: {
+        reconcile: async () => { throw new Error("private recovery details"); },
+        execute: async (snapshot) => {
+          if (snapshot.run.automationId === "task-dispatch-error") throw new Error("private dispatch details");
+          const current = fixture.repository.updateRun(snapshot.run.id, snapshot.run.revision, { state: "running", startedAt: now }, now);
+          fixture.repository.updateRun(current.id, current.revision, { state: "succeeded", endedAt: now + 1 }, now + 1);
+        },
+      },
+      clock: fakeClock(now),
+      log: (event, fields) => logs.push({ event, fields }),
+    });
+    scheduler.start();
+    await eventually(() => fixture.repository.getRun("run-task-success")?.state === "succeeded");
+    await eventually(() => fixture.repository.getRun("run-task-dispatch-error")?.state === "failed"
+      && fixture.repository.getRun("run-task-recovery-error")?.state === "failed");
+    scheduler.notifyChanged();
+    await scheduler.dispose();
+    assert.equal(fixture.repository.listActiveRunSnapshots().length, 0);
+    assert.equal(fixture.repository.getRun("run-task-dispatch-error")?.errorCode, "execution_failed");
+    assert.equal(fixture.repository.getRun("run-task-recovery-error")?.errorCode, "session_lost");
+    assert.equal(logs.filter(({ event }) => event === "automation_dispatch_started").length, 2);
+    assert.ok(logs.some(({ event }) => event === "automation_dispatch_failed"));
+    assert.ok(logs.some(({ event }) => event === "automation_reconciliation_failed"));
+    assert.doesNotMatch(JSON.stringify(logs), /private .* details/);
+  } finally {
+    await scheduler?.dispose();
+    await fixture.close();
+  }
+});
+
+test("immediate disposal leaves reserved dispatches and recoveries untouched", async () => {
+  const fixture = await repositoryFixture();
+  const now = Date.parse("2026-08-11T01:00:00Z");
+  try {
+    for (const id of ["task-queued", "task-running"]) {
+      const definition = dailyDefinition(id, now + 60_000);
+      fixture.repository.createDefinition(definition, definition);
+      const run = fixture.repository.createManualRun(definition, `run-${id}`, now);
+      if (id === "task-running") {
+        fixture.repository.updateRun(run.id, run.revision, { state: "running", sessionId: "session-running", startedAt: now }, now);
+      }
+    }
+    let invocations = 0;
+    const scheduler = new AutomationScheduler({
+      repository: fixture.repository,
+      executor: {
+        execute: async () => { invocations += 1; },
+        reconcile: async () => { invocations += 1; },
+      },
+      clock: fakeClock(now),
+    });
+    scheduler.start();
+    await scheduler.dispose();
+    assert.equal(invocations, 0);
+    assert.equal(fixture.repository.getRun("run-task-queued")?.state, "queued");
+    assert.equal(fixture.repository.getRun("run-task-running")?.state, "running");
   } finally {
     await fixture.close();
   }
@@ -379,6 +540,12 @@ test("scheduler passes no event execution context for calendar/manual runs", asy
     await fixture.close();
   }
 });
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => { resolve = done; });
+  return { promise, resolve };
+}
 
 function eventDefinition(id: string): AutomationDefinition {
   return {

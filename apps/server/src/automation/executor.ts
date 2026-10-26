@@ -3,14 +3,16 @@ import { access } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
+import type { PermissionRuleset } from "@opencode-ai/sdk/v2/types";
 import { AUTOMATION_PERMISSION_PROFILE, type AutomationErrorCode, type AutomationPromptPart }
   from "@jugglework/types/automation";
 import type { ServerConfig, WorkspaceInfo } from "../types.js";
 import { ApiError } from "../errors.js";
-import { applyMcpWorkspacePolicyToPrompt, readMcpWorkspaceToolPolicy } from "../mcp-workspace-tool-policy.js";
+import { readMcpWorkspaceToolPolicy, sanitizeMcpToolSegment } from "../mcp-workspace-tool-policy.js";
 import { AutomationRepository, type AutomationRunSnapshot } from "./repository.js";
 import type { GithubEventRelayClient, GithubAppWriteBackGrant } from "./github-event-client.js";
 import { automationConversationPrompt } from "./conversation.js";
+import type { ActiveSessionMutation, SessionMutationCoordinator } from "../session-mutation-coordinator.js";
 
 type WorkspaceOpencodeClient = ReturnType<typeof createOpencodeClient>;
 
@@ -20,6 +22,43 @@ const SESSION_GRADUATION_THRESHOLD = 0.8;
 const SESSION_GRADUATION_SUMMARY_MAX_CHARS = 500;
 const INITIAL_CONVERSATION_MODEL_ATTEMPTS = 30;
 const INITIAL_CONVERSATION_MODEL_RETRY_MS = 100;
+const AUTOMATION_TOOL_FAILURE_INSTRUCTION = "只使用与当前任务直接相关且已授权的工具。工具返回不可重试错误（包括 tool_error_retryable=false）时，禁止再次调用同一工具；应改用相关的其他数据源，若没有可行路径则明确说明失败。";
+
+type AutomationToolPolicy = {
+  disabledMcpServerNames: string[];
+};
+
+function automationExecutionPermissions(
+  definition: AutomationRunSnapshot["definition"],
+  defaultPermissions: PermissionRuleset,
+  disabledMcpServerNames: string[],
+): PermissionRuleset {
+  const baseline: PermissionRuleset = definition.permission.profile === AUTOMATION_PERMISSION_PROFILE
+    ? [
+      { permission: "*", pattern: "*", action: "allow" },
+      { permission: "question", pattern: "*", action: "deny" },
+    ]
+    : [
+      // OpenCode's implicit fallback is ask. Materialize it so this suffix also overrides any
+      // stale per-tool deny left by the confirmation turn when the agent has no matching rule.
+      { permission: "*", pattern: "*", action: "ask" },
+      ...defaultPermissions,
+    ];
+  return [
+    ...baseline,
+    ...disabledMcpServerNames.map((serverName) => ({
+      permission: `${sanitizeMcpToolSegment(serverName)}_*`,
+      pattern: "*",
+      action: "deny" as const,
+    })),
+  ];
+}
+
+function automationConnectorBoundaryInstruction(disabledMcpServerNames: string[]): string {
+  if (!disabledMcpServerNames.length) return "";
+  const prefixes = disabledMcpServerNames.map((name) => `${name}_`).join("、");
+  return `本任务未授权以下连接器：${disabledMcpServerNames.join("、")}。严禁调用以 ${prefixes} 开头的任何工具，也不要通过其他同类工具试探这些连接器；若缺少完成任务所需的已授权数据源，请直接明确说明失败。`;
+}
 
 /**
  * 把一次换到的写回 token 真正挂载成 agent 能调用的工具。
@@ -43,6 +82,12 @@ export type AutomationExecutorOptions = {
   /** 把铸造出的写回授权真正接到 agent 能调用的工具上；省略时同样判定 `github-app` preflight 不可用——见 `WriteBackMcpProvisioner` 的 TIPS。 */
   writeBackMcp?: WriteBackMcpProvisioner;
   registerWorkspace?: (workspace: WorkspaceInfo) => Promise<WorkspaceInfo>;
+  /**
+   * Tracks automation execution and acknowledgement turns alongside
+   * interactive prompts, enabling Stop and protecting active turns against
+   * runtime/config reloads.
+   */
+  sessionMutations?: SessionMutationCoordinator;
   workspaceRoot?: string;
   now?: () => number;
   wait?: (milliseconds: number) => Promise<void>;
@@ -119,7 +164,7 @@ export class AutomationExecutor {
           const opencode = this.options.createWorkspaceOpencodeClient(this.options.config, workspace);
           if (!await this.sessionExists(opencode, candidate.sessionId)) continue;
           if (prepareOptions.initializeConversation) {
-            await this.initializeConversation(definition, opencode, candidate.sessionId, prepareOptions.locale);
+            await this.initializeConversation(definition, workspace, opencode, candidate.sessionId, prepareOptions.locale);
           }
           this.assertCurrentDefinition(definition);
           this.options.repository.setExecutionBinding(`task:${automationId}`, { workspace: executionWorkspace(workspace), sessionId: candidate.sessionId });
@@ -130,7 +175,7 @@ export class AutomationExecutor {
         const opencode = this.options.createWorkspaceOpencodeClient(this.options.config, workspace);
         const sessionId = await this.createSession(definition, opencode);
         if (prepareOptions.initializeConversation) {
-          await this.initializeConversation(definition, opencode, sessionId, prepareOptions.locale);
+          await this.initializeConversation(definition, workspace, opencode, sessionId, prepareOptions.locale);
         }
         this.assertCurrentDefinition(definition);
         this.options.repository.setExecutionBinding(`task:${automationId}`, { workspace: executionWorkspace(workspace), sessionId });
@@ -150,6 +195,7 @@ export class AutomationExecutor {
 
   private async initializeConversation(
     definition: AutomationRunSnapshot["definition"],
+    workspace: WorkspaceInfo,
     opencode: WorkspaceOpencodeClient,
     sessionId: string,
     locale: string | undefined,
@@ -162,9 +208,6 @@ export class AutomationExecutor {
     // valid selected model with ProviderModelNotFoundError. Loading providers
     // here gives the new instance the same readiness path used by run preflight.
     await this.waitForInitialConversationModel(definition, opencode);
-    const tools = await opencode.tool.ids();
-    if (!tools.data) throw failure("execution_failed", "无法读取工具清单以初始化自动化会话");
-    const disabledTools = Object.fromEntries(tools.data.map((toolId) => [toolId, false]));
     const prompt = {
       sessionID: sessionId,
       ...(definition.model.mode === "explicit" ? {
@@ -173,18 +216,48 @@ export class AutomationExecutor {
       } : {}),
       ...(definition.agentId ? { agent: definition.agentId } : {}),
       system: initial.systemInstruction,
-      tools: disabledTools,
+      // A wildcard deny covers built-in, plugin and runtime MCP tools. tool.ids() only returns the
+      // registry inventory and omits runtime MCP tools, so enumerating it would not be fail-closed.
+      tools: { "*": false },
       parts: [{ type: "text" as const, text: initial.userMessage }],
     };
     // Only wait until OpenCode accepts the turn. The renderer can enter the
     // conversation immediately and show the user message while the concise
     // acknowledgement streams in, rather than blocking task creation on a
     // complete model response.
-    const response = await opencode.session.promptAsync(
-      prompt as Parameters<typeof opencode.session.promptAsync>[0],
-    );
-    if (response.error !== undefined) {
-      throw failure("execution_failed", "无法生成定时任务确认消息");
+    const tracked = this.options.sessionMutations?.reserveStart({
+      workspaceId: workspace.id,
+      sessionId,
+      origin: "local-renderer",
+      startCommandCorrelationId: null,
+    });
+    try {
+      const response = await opencode.session.promptAsync(
+        prompt as Parameters<typeof opencode.session.promptAsync>[0],
+      );
+      if (response.error !== undefined) {
+        throw failure("execution_failed", "无法生成定时任务确认消息");
+      }
+      // prompt.tools is persisted by OpenCode as the session's complete permission ruleset.
+      // Restore the task's intended profile as soon as the confirmation turn is accepted, so
+      // opening/reusing this conversation does not leave ordinary tools disabled until its run.
+      await this.applyExecutionPermissions(definition, opencode, sessionId, []);
+      if (tracked) {
+        this.options.sessionMutations?.acceptStart({
+          workspaceId: workspace.id,
+          sessionId,
+          runId: tracked.runId,
+        });
+      }
+    } catch (error) {
+      if (tracked) {
+        this.options.sessionMutations?.rollbackStart({
+          workspaceId: workspace.id,
+          sessionId,
+          runId: tracked.runId,
+        });
+      }
+      throw error;
     }
   }
 
@@ -233,6 +306,7 @@ export class AutomationExecutor {
    */
   async execute(snapshot: AutomationRunSnapshot, eventContext?: AutomationEventExecutionContext): Promise<void> {
     let current = snapshot.run;
+    let tracked: ActiveSessionMutation | undefined;
     try {
       const definition = snapshot.definition;
       const { workspace, opencode, resolved } = await this.withSessionLock(definition.id, async () => {
@@ -265,7 +339,7 @@ export class AutomationExecutor {
 
       if (!resolved) return;
 
-      const toolAllowlist = await this.preflight(snapshot, workspace, opencode);
+      const toolPolicy = await this.preflight(snapshot, workspace, opencode);
       current = this.options.repository.updateRun(current.id, current.revision, {
         state: "running",
         startedAt: this.now(),
@@ -281,8 +355,13 @@ export class AutomationExecutor {
       }, this.now());
 
       const policy = await readMcpWorkspaceToolPolicy(this.options.config, workspace.id);
-      const observedToolIds = Object.keys(toolAllowlist);
-      const prompt = applyMcpWorkspacePolicyToPrompt({
+      const disabledMcpServerNames = [...new Set([
+        ...policy.disabledServerNames,
+        ...toolPolicy.disabledMcpServerNames,
+      ])];
+      const connectorBoundaryInstruction = automationConnectorBoundaryInstruction(disabledMcpServerNames);
+      await this.applyExecutionPermissions(definition, opencode, current.sessionId!, disabledMcpServerNames);
+      const prompt = {
         sessionID: current.sessionId!,
         ...(definition.model.mode === "explicit" ? {
           model: { providerID: definition.model.providerId, modelID: definition.model.modelId },
@@ -290,9 +369,8 @@ export class AutomationExecutor {
         } : {}),
         ...(definition.agentId ? { agent: definition.agentId } : {}),
         ...(unattended
-          ? { system: "这是无人值守自动化任务。不得询问用户或等待交互；信息不足时作出合理假设并继续，或明确失败。" }
-          : { system: "这是自动化任务，但运行在默认权限下：敏感操作需要用户确认，请在需要时正常发起确认。" }),
-        tools: toolAllowlist,
+          ? { system: `这是无人值守自动化任务。不得询问用户或等待交互；信息不足时作出合理假设并继续，或明确失败。${AUTOMATION_TOOL_FAILURE_INSTRUCTION}${connectorBoundaryInstruction}` }
+          : { system: `这是自动化任务，但运行在默认权限下：敏感操作需要用户确认，请在需要时正常发起确认。${AUTOMATION_TOOL_FAILURE_INSTRUCTION}${connectorBoundaryInstruction}` }),
         parts: promptParts(
           appendWriteBackToolNote(
             [
@@ -307,9 +385,16 @@ export class AutomationExecutor {
           ),
           workspace.path,
         ),
-      }, observedToolIds, policy.disabledServerNames);
+      };
+      tracked = this.options.sessionMutations?.reserveStart({
+        workspaceId: workspace.id,
+        sessionId: current.sessionId!,
+        origin: "local-renderer",
+        startCommandCorrelationId: null,
+      });
       const dispatched = await opencode.session.promptAsync(prompt as Parameters<typeof opencode.session.promptAsync>[0]);
       if (dispatched.error !== undefined) throw failure("execution_failed", "OpenCode 未接受自动化提示词");
+      if (tracked) this.options.sessionMutations?.acceptStart(tracked);
       // TIPS:这一次 updateRun 只在 prompt 真正被 OpenCode 接受之后才发生——重连重连（reconcile）
       // 就是靠这个标记分辨"崩溃发生在分发之前"还是"分发之后"，见 reconcile() 的注释。
       current = this.options.repository.updateRun(current.id, current.revision, { eventMetadata: { dispatched: true } }, this.now());
@@ -321,12 +406,23 @@ export class AutomationExecutor {
       if (!latest || isTerminal(latest.state)) return;
       const normalized = normalizeFailure(error);
       this.options.repository.updateRun(latest.id, latest.revision, {
-        state: "failed",
+        state: isAbortError(error) ? "cancelled" : "failed",
         endedAt: this.now(),
-        errorCode: normalized.code,
-        errorMessage: normalized.message,
+        ...(!isAbortError(error) ? { errorCode: normalized.code, errorMessage: normalized.message } : {}),
       }, this.now());
+    } finally {
+      this.finishTrackedRun(tracked, current.id);
     }
+  }
+
+  private finishTrackedRun(tracked: ActiveSessionMutation | undefined, automationRunId: string): void {
+    const coordinator = this.options.sessionMutations;
+    if (!tracked || !coordinator || coordinator.getActive(tracked.workspaceId, tracked.sessionId)?.runId !== tracked.runId) return;
+    const run = this.options.repository.getRun(automationRunId);
+    coordinator.observe({
+      ...tracked,
+      status: run?.state === "succeeded" ? "completed" : run?.state === "cancelled" ? "aborted" : "failed",
+    });
   }
 
   /**
@@ -372,6 +468,7 @@ export class AutomationExecutor {
   async reconcile(snapshot: AutomationRunSnapshot): Promise<void> {
     const current = this.options.repository.getRun(snapshot.run.id);
     if (!current || current.state !== "running") return;
+    let tracked: ActiveSessionMutation | undefined;
     try {
       if (!current.sessionId) throw failure("session_lost", "运行缺少可恢复的会话");
       const workspace = await this.resolveLocalWorkspace(snapshot.definition, current);
@@ -381,6 +478,14 @@ export class AutomationExecutor {
       const statuses = await opencode.session.status();
       const status = statuses.data?.[current.sessionId];
       if (status?.type === "busy" || status?.type === "retry") {
+        tracked = this.options.sessionMutations?.getActive(workspace.id, current.sessionId)
+          ?? this.options.sessionMutations?.reserveStart({
+            workspaceId: workspace.id,
+            sessionId: current.sessionId,
+            origin: "local-renderer",
+            startCommandCorrelationId: null,
+          });
+        if (tracked) this.options.sessionMutations?.acceptStart(tracked);
         await this.waitForTerminalEvent(opencode, current.sessionId);
       }
       if (this.disposed) throw failure("session_lost", "客户端退出，自动化会话已停止跟踪");
@@ -396,6 +501,8 @@ export class AutomationExecutor {
       await this.completeFromSession(opencode, latestBeforeComplete);
     } catch (error) {
       this.failRun(current.id, error);
+    } finally {
+      this.finishTrackedRun(tracked, current.id);
     }
   }
 
@@ -516,6 +623,29 @@ export class AutomationExecutor {
     return created.data.id;
   }
 
+  private async applyExecutionPermissions(
+    definition: AutomationRunSnapshot["definition"],
+    opencode: WorkspaceOpencodeClient,
+    sessionId: string,
+    disabledMcpServerNames: string[],
+  ): Promise<void> {
+    let defaultPermissions: PermissionRuleset = [];
+    if (definition.permission.profile !== AUTOMATION_PERMISSION_PROFILE) {
+      const agents = await opencode.app.agents();
+      if (!agents.data) throw failure("execution_failed", "无法读取默认权限以恢复自动化会话");
+      const agentName = definition.agentId ?? "jugglework";
+      const agent = agents.data.find((candidate) => candidate.name === agentName);
+      if (!agent) throw failure("agent_unavailable", `自动化 Agent 当前不可用：${agentName}`);
+      defaultPermissions = agent.permission;
+    }
+    const permissions = automationExecutionPermissions(definition, defaultPermissions, disabledMcpServerNames);
+    // OpenCode's public session.update appends rules. That is intentional here: evaluation uses the
+    // last matching rule, so this complete suffix overrides stale confirmation denials while keeping
+    // the selected agent's default policy (or full-access wildcard), followed by hard MCP denies.
+    const updated = await opencode.session.update({ sessionID: sessionId, permission: permissions });
+    if (updated.error !== undefined) throw failure("execution_failed", "无法应用自动化会话权限");
+  }
+
   /**
    * 判断一个既有会话是否已经该"毕业"到新会话——见桌面 PRD 4.8"长生命周期 PR 持续复用同一
    * 会话，上下文无限膨胀"这条风险的应对，design.md 决策要求复用既有的 session 上下文用量
@@ -601,7 +731,7 @@ export class AutomationExecutor {
     snapshot: AutomationRunSnapshot,
     workspace: WorkspaceInfo,
     opencode: WorkspaceOpencodeClient,
-  ): Promise<Record<string, boolean>> {
+  ): Promise<AutomationToolPolicy> {
     const definition = snapshot.definition;
     for (const part of definition.prompt.parts) {
       if (part.type !== "file") continue;
@@ -682,7 +812,7 @@ export class AutomationExecutor {
   private async resolveConnectorToolAllowlist(
     snapshot: AutomationRunSnapshot,
     opencode: WorkspaceOpencodeClient,
-  ): Promise<Record<string, boolean>> {
+  ): Promise<AutomationToolPolicy> {
     // TIPS: `github-app` 连接器不是 MCP 服务器——它是运行期写回授权的标记，可用性已经在
     // fetchWriteBackGrant()（preflight 更早的一步）单独检查过，这里不该再按 mcp.status() 的
     // "connected" 语义去要求它，否则任何事件触发自动化都会在这一步被误判为连接器不可用。
@@ -692,11 +822,12 @@ export class AutomationExecutor {
       throw failure("connector_scope_unavailable", "云连接器暂时无法取得任务级授权，请重新授权后再试");
     }
 
-    const [statusResult, toolResult] = await Promise.all([opencode.mcp.status(), opencode.tool.ids()]);
-    if (!statusResult.data || !toolResult.data) {
-      throw failure("connector_unavailable", "无法读取当前连接器工具清单");
-    }
+    const statusResult = await opencode.mcp.status();
+    if (!statusResult.data) throw failure("connector_unavailable", "无法读取当前连接器工具清单");
     const selectedIds = new Set(selected.map((connector) => connector.id));
+    if (snapshot.definition.connectors.some((connector) => connector.source === "github-app")) {
+      selectedIds.add(writeBackMcpName(snapshot.definition.id));
+    }
     for (const connector of selected) {
       const status = statusResult.data[connector.id];
       if (!status || status.status !== "connected") {
@@ -707,13 +838,10 @@ export class AutomationExecutor {
       }
     }
 
-    const serverNames = Object.keys(statusResult.data).sort((left, right) => right.length - left.length);
-    const allowlist: Record<string, boolean> = {};
-    for (const toolId of toolResult.data) {
-      const serverName = serverNames.find((name) => toolId.startsWith(`${name}_`));
-      if (serverName) allowlist[toolId] = selectedIds.has(serverName);
-    }
-    return allowlist;
+    const serverNames = Object.keys(statusResult.data);
+    return {
+      disabledMcpServerNames: serverNames.filter((name) => !selectedIds.has(name)),
+    };
   }
 
   private async waitForTerminalEvent(opencode: WorkspaceOpencodeClient, sessionId: string): Promise<void> {
@@ -740,7 +868,10 @@ export class AutomationExecutor {
       if (signal.aborted || this.disposed) return;
       const event = automationEvent(raw);
       if (!event || event.sessionId !== sessionId) continue;
-      if (event.type === "session.error") throw failure("execution_failed", event.message ?? "自动化会话返回终止错误");
+      if (event.type === "session.error") {
+        if (event.aborted) throw Object.assign(new Error("Automation stopped"), { name: "MessageAbortedError" });
+        throw failure("execution_failed", event.message ?? "自动化会话返回终止错误");
+      }
       if (event.type === "session.idle" || event.type === "session.status" && event.status === "idle") return;
     }
   }
@@ -764,13 +895,14 @@ export class AutomationExecutor {
   private async completeFromSession(opencode: WorkspaceOpencodeClient, current: AutomationRunSnapshot["run"]): Promise<void> {
     const messages = await opencode.session.messages({ sessionID: current.sessionId!, limit: 20 });
     const assistant = [...(messages.data ?? [])].reverse().map((message) => message.info).find((message) => message.role === "assistant");
-    if (assistant?.role === "assistant" && assistant.error) {
+    const aborted = assistant?.role === "assistant" && isAbortError(assistant.error);
+    if (assistant?.role === "assistant" && assistant.error && !aborted) {
       throw failure("execution_failed", "自动化会话返回终止错误");
     }
     const latest = this.options.repository.getRun(current.id);
     if (!latest || isTerminal(latest.state)) return;
     this.options.repository.updateRun(latest.id, latest.revision, {
-      state: "succeeded",
+      state: aborted ? "cancelled" : "succeeded",
       endedAt: this.now(),
       ...(assistant?.role === "assistant" ? {
         concreteModel: { providerId: assistant.providerID, modelId: assistant.modelID, ...(assistant.variant ? { variant: assistant.variant } : {}) },
@@ -784,10 +916,9 @@ export class AutomationExecutor {
     if (!latest || isTerminal(latest.state)) return;
     const normalized = normalizeFailure(error);
     this.options.repository.updateRun(latest.id, latest.revision, {
-      state: "failed",
+      state: isAbortError(error) ? "cancelled" : "failed",
       endedAt: this.now(),
-      errorCode: normalized.code,
-      errorMessage: normalized.message,
+      ...(!isAbortError(error) ? { errorCode: normalized.code, errorMessage: normalized.message } : {}),
     }, this.now());
   }
 }
@@ -848,7 +979,7 @@ function sanitizeError(message: string): string {
   return message.replace(/(bearer|token|secret|password|api[_-]?key)\s*[:=]\s*\S+/gi, "$1=[redacted]").slice(0, 500);
 }
 
-function automationEvent(raw: unknown): { type: string; sessionId?: string; status?: string; message?: string } | null {
+function automationEvent(raw: unknown): { type: string; sessionId?: string; status?: string; message?: string; aborted?: boolean } | null {
   const candidate = isRecord(raw) && isRecord(raw.data) ? raw.data : raw;
   if (!isRecord(candidate) || typeof candidate.type !== "string" || !isRecord(candidate.properties)) return null;
   const properties = candidate.properties;
@@ -856,8 +987,12 @@ function automationEvent(raw: unknown): { type: string; sessionId?: string; stat
     type: candidate.type,
     ...(typeof properties.sessionID === "string" ? { sessionId: properties.sessionID } : {}),
     ...(isRecord(properties.status) && typeof properties.status.type === "string" ? { status: properties.status.type } : {}),
-    ...(properties.error !== undefined ? { message: sanitizeError(errorText(properties.error)) } : {}),
+    ...(properties.error !== undefined ? { message: sanitizeError(errorText(properties.error)), aborted: isAbortError(properties.error) } : {}),
   };
+}
+
+function isAbortError(value: unknown): boolean {
+  return isRecord(value) && (value.name === "MessageAbortedError" || value.name === "AbortError");
 }
 
 function errorText(value: unknown): string {

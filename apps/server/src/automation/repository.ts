@@ -4,6 +4,7 @@ import {
   type AutomationDefinition,
   type AutomationDefinitionRecord,
   type AutomationErrorCode,
+  type AutomationLatestResultRun,
   type AutomationRun,
   type AutomationRunListResponse,
   type AutomationSyncMutation,
@@ -25,6 +26,12 @@ type AutomationTaskRow = {
   sync_error_code: AutomationErrorCode | null;
   deleted_at: number | null;
   updated_at: number;
+  latest_result_run_id?: string | null;
+  latest_result_state?: AutomationLatestResultRun["state"] | null;
+  latest_result_ended_at?: number | null;
+  latest_result_workspace_id?: string | null;
+  latest_result_session_id?: string | null;
+  viewed_result_run_id?: string | null;
 };
 
 type AutomationRunRow = {
@@ -70,8 +77,14 @@ export type AutomationDefinitionPage = {
   nextCursor?: string;
 };
 
+export type AutomationViewedResult = {
+  hasUnreadResult: boolean;
+};
+
 export type AutomationRunQuery = {
   automationId?: string;
+  workspaceId?: string;
+  sessionId?: string;
   states?: AutomationRun["state"][];
   triggerSources?: AutomationRun["triggerSource"][];
   scheduledFrom?: number;
@@ -122,9 +135,22 @@ export class AutomationRepository {
   /** 按 ID 读取任务；默认不返回墓碑。 */
   getDefinition(id: string, includeDeleted = false): AutomationDefinitionRecord | null {
     const row = this.database.get<AutomationTaskRow>(
-      `SELECT id, definition_json, raw_document_json, compatibility_state, sync_state, sync_error_code, deleted_at, updated_at
-       FROM automation_tasks WHERE id = ? ${includeDeleted ? "" : "AND deleted_at IS NULL"}`,
-      [id],
+      `WITH latest_result AS (
+         SELECT id, automation_id, state, ended_at, workspace_id, session_id
+         FROM automation_runs
+         WHERE automation_id = ? AND state IN ('succeeded', 'failed')
+         ORDER BY ended_at DESC, id DESC LIMIT 1
+       )
+       SELECT tasks.id, tasks.definition_json, tasks.raw_document_json, tasks.compatibility_state,
+         tasks.sync_state, tasks.sync_error_code, tasks.deleted_at, tasks.updated_at,
+         latest.id AS latest_result_run_id, latest.state AS latest_result_state,
+         latest.ended_at AS latest_result_ended_at, latest.workspace_id AS latest_result_workspace_id,
+         latest.session_id AS latest_result_session_id, views.viewed_run_id AS viewed_result_run_id
+       FROM automation_tasks tasks
+       LEFT JOIN latest_result latest ON latest.automation_id = tasks.id
+       LEFT JOIN automation_result_views views ON views.automation_id = tasks.id
+       WHERE tasks.id = ? ${includeDeleted ? "" : "AND tasks.deleted_at IS NULL"}`,
+      [id, id],
     );
     return row ? definitionRecordFromRow(row) : null;
   }
@@ -141,9 +167,24 @@ export class AutomationRepository {
     }
     values.push(limit + 1);
     const rows = this.database.all<AutomationTaskRow>(
-      `SELECT id, definition_json, raw_document_json, compatibility_state, sync_state, sync_error_code, deleted_at, updated_at
-       FROM automation_tasks WHERE ${conditions.join(" AND ")}
-       ORDER BY updated_at DESC, id DESC LIMIT ?`,
+      `WITH task_page AS (
+         SELECT id, definition_json, raw_document_json, compatibility_state, sync_state, sync_error_code, deleted_at, updated_at
+         FROM automation_tasks WHERE ${conditions.join(" AND ")}
+         ORDER BY updated_at DESC, id DESC LIMIT ?
+       ), ranked_results AS (
+         SELECT runs.id, runs.automation_id, runs.state, runs.ended_at, runs.workspace_id, runs.session_id,
+           ROW_NUMBER() OVER (PARTITION BY runs.automation_id ORDER BY runs.ended_at DESC, runs.id DESC) AS result_rank
+         FROM automation_runs runs
+         INNER JOIN task_page tasks ON tasks.id = runs.automation_id
+         WHERE runs.state IN ('succeeded', 'failed')
+       )
+       SELECT tasks.*, latest.id AS latest_result_run_id, latest.state AS latest_result_state,
+         latest.ended_at AS latest_result_ended_at, latest.workspace_id AS latest_result_workspace_id,
+         latest.session_id AS latest_result_session_id, views.viewed_run_id AS viewed_result_run_id
+       FROM task_page tasks
+       LEFT JOIN ranked_results latest ON latest.automation_id = tasks.id AND latest.result_rank = 1
+       LEFT JOIN automation_result_views views ON views.automation_id = tasks.id
+       ORDER BY tasks.updated_at DESC, tasks.id DESC`,
       values,
     );
     const hasMore = rows.length > limit;
@@ -311,6 +352,14 @@ export class AutomationRepository {
       conditions.push("automation_id = ?");
       values.push(input.automationId);
     }
+    if (input.workspaceId) {
+      conditions.push("workspace_id = ?");
+      values.push(input.workspaceId);
+    }
+    if (input.sessionId) {
+      conditions.push("session_id = ?");
+      values.push(input.sessionId);
+    }
     addInFilter(conditions, values, "state", input.states);
     addInFilter(conditions, values, "trigger_source", input.triggerSources);
     if (Number.isFinite(input.scheduledFrom)) {
@@ -370,6 +419,30 @@ export class AutomationRepository {
       [id],
     );
     return row ? runFromRow(row) : null;
+  }
+
+  /** 标记一条成功或失败结果已查看；只有仍为最新结果的 run 才能推进查看游标。 */
+  markResultViewed(automationId: string, runId: string, now: number): AutomationViewedResult {
+    return this.database.transaction(() => {
+      if (!this.getDefinition(automationId)) notFound();
+      const target = this.database.get<{ automation_id: string; state: AutomationRun["state"] }>(
+        "SELECT automation_id, state FROM automation_runs WHERE id = ?",
+        [runId],
+      );
+      if (!target) throw new ApiError(404, "automation_run_not_found", "Automation run not found");
+      if (target.automation_id !== automationId || target.state !== "succeeded" && target.state !== "failed") {
+        throw new ApiError(400, "invalid_automation_result_run", "Run must be a succeeded or failed result of this automation");
+      }
+      const latest = this.latestResultRow(automationId);
+      if (latest?.id === runId) {
+        this.database.run(
+          `INSERT INTO automation_result_views(automation_id, viewed_run_id, viewed_at) VALUES (?, ?, ?)
+           ON CONFLICT(automation_id) DO UPDATE SET viewed_run_id = excluded.viewed_run_id, viewed_at = excluded.viewed_at`,
+          [automationId, runId, now],
+        );
+      }
+      return { hasUnreadResult: latest !== null && latest.id !== this.viewedResultRunId(automationId) };
+    });
   }
 
   /** 读取运行记录及认领时冻结的完整任务定义。 */
@@ -694,6 +767,21 @@ export class AutomationRepository {
     ));
   }
 
+  private latestResultRow(automationId: string): { id: string } | null {
+    return this.database.get<{ id: string }>(
+      `SELECT id FROM automation_runs WHERE automation_id = ? AND state IN ('succeeded', 'failed')
+       ORDER BY ended_at DESC, id DESC LIMIT 1`,
+      [automationId],
+    ) ?? null;
+  }
+
+  private viewedResultRunId(automationId: string): string | null {
+    return this.database.get<{ viewed_run_id: string }>(
+      "SELECT viewed_run_id FROM automation_result_views WHERE automation_id = ?",
+      [automationId],
+    )?.viewed_run_id ?? null;
+  }
+
   private insertRun(run: AutomationRun, definition: AutomationDefinition): void {
     try {
       this.database.run(
@@ -779,6 +867,7 @@ function parseStoredAutomationDefinition(json: string): AutomationDefinition {
 }
 
 function definitionRecordFromRow(row: AutomationTaskRow): AutomationDefinitionRecord {
+  const latestResultRun = latestResultRunFromRow(row);
   return {
     definition: parseStoredAutomationDefinition(row.definition_json),
     compatibility: row.compatibility_state,
@@ -786,6 +875,21 @@ function definitionRecordFromRow(row: AutomationTaskRow): AutomationDefinitionRe
     ...(row.sync_error_code ? { syncErrorCode: row.sync_error_code } : {}),
     rawDocument: JSON.parse(row.raw_document_json) as Record<string, unknown>,
     ...(row.deleted_at === null ? {} : { deletedAt: row.deleted_at }),
+    hasUnreadResult: latestResultRun !== undefined && latestResultRun.id !== row.viewed_result_run_id,
+    ...(latestResultRun ? { latestResultRun } : {}),
+  };
+}
+
+function latestResultRunFromRow(row: AutomationTaskRow): AutomationLatestResultRun | undefined {
+  if (!row.latest_result_run_id || !row.latest_result_state || row.latest_result_ended_at === null || row.latest_result_ended_at === undefined || row.latest_result_workspace_id === null || row.latest_result_workspace_id === undefined) {
+    return undefined;
+  }
+  return {
+    id: row.latest_result_run_id,
+    state: row.latest_result_state,
+    endedAt: row.latest_result_ended_at,
+    workspaceId: row.latest_result_workspace_id,
+    ...(row.latest_result_session_id ? { sessionId: row.latest_result_session_id } : {}),
   };
 }
 

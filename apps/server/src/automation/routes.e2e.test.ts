@@ -22,14 +22,16 @@ test("automation routes support local-first CRUD, manual run and history", async
   const repository = await AutomationRepository.open(routeConfig);
   const routes: Route[] = [];
   const prepared: Array<{ automationId: string; options?: { initializeConversation?: boolean; locale?: string } }> = [];
+  let writableChecks = 0;
+  const scopeChecks: string[] = [];
   registerAutomationRoutes({
     routes,
     config: routeConfig,
     repository,
     jsonResponse: (data, status = 200) => Response.json(data, { status }),
     readJsonBody: async (request) => await request.json() as Record<string, unknown>,
-    ensureWritable: () => undefined,
-    requireClientScope: () => undefined,
+    ensureWritable: () => { writableChecks += 1; },
+    requireClientScope: (_ctx, scope) => { scopeChecks.push(scope); },
     prepareSession: async (automationId, options) => {
       prepared.push({ automationId, options });
       return { workspaceId: "workspace-1", sessionId: "initial-session" };
@@ -86,7 +88,10 @@ test("automation routes support local-first CRUD, manual run and history", async
 
     const list = await invoke("GET", "/automations");
     assert.equal(list.status, 200);
-    assert.equal(((await list.json()) as { items: unknown[] }).items.length, 1);
+    const initialList = (await list.json()) as { items: Array<{ hasUnreadResult: boolean; latestResultRun?: unknown }> };
+    assert.equal(initialList.items.length, 1);
+    assert.equal(initialList.items[0]?.hasUnreadResult, false);
+    assert.equal(initialList.items[0]?.latestResultRun, undefined);
 
     const pause = await invoke("POST", `/automations/${created.item.definition.id}/pause`, {
       baseRevision: created.item.definition.revision,
@@ -106,6 +111,55 @@ test("automation routes support local-first CRUD, manual run and history", async
     const history = await invoke("GET", "/automation-runs?trigger=manual");
     assert.equal(history.status, 200);
     assert.equal(((await history.json()) as { items: unknown[] }).items.length, 1);
+    const pendingRun = repository.listRuns().items[0]!;
+    repository.updateRun(pendingRun.id, pendingRun.revision, { sessionId: "finished-session", state: "running" }, now + 1);
+    const runningRun = repository.getRun(pendingRun.id)!;
+    repository.updateRun(runningRun.id, runningRun.revision, { state: "succeeded", endedAt: now + 2 }, now + 2);
+    const unreadList = await invoke("GET", "/automations");
+    const unreadItem = ((await unreadList.json()) as {
+      items: Array<{ hasUnreadResult: boolean; latestResultRun?: { id: string; state: string; endedAt: number; workspaceId: string; sessionId?: string } }>;
+    }).items[0];
+    assert.equal(unreadItem?.hasUnreadResult, true);
+    assert.deepEqual(unreadItem?.latestResultRun, {
+      id: pendingRun.id,
+      state: "succeeded",
+      endedAt: now + 2,
+      workspaceId: "workspace-1",
+      sessionId: "finished-session",
+    });
+    const viewedRoute = matchRoute(routes, "POST", `/automations/${created.item.definition.id}/viewed-result`);
+    assert.ok(viewedRoute);
+    assert.equal(viewedRoute.params.automationId, created.item.definition.id);
+    const writableChecksBeforeView = writableChecks;
+    const scopeChecksBeforeView = scopeChecks.length;
+    const viewed = await invoke("POST", `/automations/${created.item.definition.id}/viewed-result`, { runId: pendingRun.id });
+    assert.deepEqual(await viewed.json(), { hasUnreadResult: false });
+    assert.equal(writableChecks, writableChecksBeforeView + 1);
+    assert.equal(scopeChecks.length, scopeChecksBeforeView + 1);
+    assert.equal(scopeChecks.at(-1), "collaborator");
+    const viewedAgain = await invoke("POST", `/automations/${created.item.definition.id}/viewed-result`, { runId: pendingRun.id });
+    assert.deepEqual(await viewedAgain.json(), { hasUnreadResult: false });
+    assert.equal(((await (await invoke("GET", "/automations")).json()) as { items: Array<{ hasUnreadResult: boolean }> }).items[0]?.hasUnreadResult, false);
+    const nextManual = await invoke("POST", `/automations/${created.item.definition.id}/run`, {});
+    const nextRun = ((await nextManual.json()) as { item: { id: string; revision: number } }).item;
+    await assert.rejects(
+      invoke("POST", `/automations/${created.item.definition.id}/viewed-result`, { runId: nextRun.id }),
+      (error: unknown) => (error as { status: number; code: string }).status === 400
+        && (error as { code: string }).code === "invalid_automation_result_run",
+    );
+    repository.updateRun(nextRun.id, nextRun.revision, { state: "failed", endedAt: now + 3 }, now + 3);
+    const viewOldResult = await invoke("POST", `/automations/${created.item.definition.id}/viewed-result`, { runId: pendingRun.id });
+    assert.deepEqual(await viewOldResult.json(), { hasUnreadResult: true });
+    const viewLatestResult = await invoke("POST", `/automations/${created.item.definition.id}/viewed-result`, { runId: nextRun.id });
+    assert.deepEqual(await viewLatestResult.json(), { hasUnreadResult: false });
+    const viewOldAfterLatest = await invoke("POST", `/automations/${created.item.definition.id}/viewed-result`, { runId: pendingRun.id });
+    assert.deepEqual(await viewOldAfterLatest.json(), { hasUnreadResult: false });
+    const sessionHistory = await invoke("GET", "/automation-runs?workspaceId=workspace-1&sessionId=finished-session&limit=1");
+    assert.equal(((await sessionHistory.json()) as { items: Array<{ state: string }> }).items[0]?.state, "succeeded");
+    for (const query of ["workspaceId=other-workspace&sessionId=finished-session", "workspaceId=workspace-1&sessionId=other-session"]) {
+      const unrelated = await invoke("GET", `/automation-runs?${query}`);
+      assert.deepEqual(((await unrelated.json()) as { items: unknown[] }).items, []);
+    }
 
     const remove = await invoke("DELETE", `/automations/${created.item.definition.id}`, {
       baseRevision: paused.item.definition.revision,

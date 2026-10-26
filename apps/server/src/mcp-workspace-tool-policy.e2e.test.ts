@@ -2,7 +2,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { AUTOMATION_PERMISSION_PROFILE, type AutomationDefinition } from "@jugglework/types/automation";
 
+import { AutomationRepository } from "./automation/repository.js";
 import { startServer } from "./server.js";
 import { readRuntimeOpencodeConfig, writeRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
 import type { ServerConfig } from "./types.js";
@@ -65,6 +67,59 @@ describe("MCP workspace soft-policy routes", () => {
     }).then((response) => response.json());
     await expect(check("read")).resolves.toMatchObject({ allowed: true });
     await expect(check("github_search")).resolves.toMatchObject({ allowed: false, serverName: "github" });
+  });
+
+  test("active automations enforce connector selection even when tool.ids omits MCP tools", async () => {
+    const { base, config } = await harness();
+    const repository = await AutomationRepository.open(config);
+    const now = Date.now();
+    const definition: AutomationDefinition = {
+      schema: "automation-definition/v1",
+      id: "task-connector-scope",
+      name: "Connector scope",
+      workspace: { id: "ws_1", name: "Workspace", path: roots[0], workspaceType: "local" },
+      prompt: { version: 1, parts: [{ type: "text", text: "run" }] },
+      trigger: { version: 1, kind: "calendar", frequency: "daily", localTime: "09:00", timezone: "UTC" },
+      model: { mode: "auto" },
+      skillIds: [],
+      connectors: [],
+      permission: { profile: AUTOMATION_PERMISSION_PROFILE, acknowledgedAt: now },
+      lifecycle: "enabled",
+      executorDeviceId: "device",
+      revision: 1,
+      nextRunAt: now + 86_400_000,
+      createdAt: now,
+      updatedAt: now,
+    };
+    repository.createDefinition(definition, definition);
+    const queued = repository.createManualRun(definition, "run-connector-scope", now);
+    let running = repository.updateRun(queued.id, queued.revision, {
+      state: "running",
+      workspaceId: "ws_1",
+      workspaceName: "Workspace",
+      sessionId: "ses_connector_scope",
+      connectorIds: [],
+    }, now);
+    const headers = { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" };
+    const check = () => fetch(`${base}/internal/mcp-tool-policy/check`, {
+      method: "POST",
+      headers,
+      // 共享 OpenCode 引擎的 tool callback 可能只提供 sessionId；服务端必须从运行记录
+      // 解析自动化工作区，不能靠遍历工作区 session.get() 猜归属。
+      body: JSON.stringify({ sessionId: "ses_connector_scope", toolId: "github_search" }),
+    }).then((response) => response.json());
+    try {
+      await expect(check()).resolves.toMatchObject({
+        allowed: false,
+        code: "mcp_disabled_in_automation",
+        serverName: "github",
+      });
+      running = repository.updateRun(running.id, running.revision, { connectorIds: ["github"] }, now + 1);
+      await expect(check()).resolves.toMatchObject({ allowed: true, serverName: "github" });
+    } finally {
+      repository.updateRun(running.id, running.revision, { state: "cancelled", endedAt: now + 2 }, now + 2);
+      repository.close();
+    }
   });
 
   test("internal check prefers the execution directory over a conflicting stale workspace ID", async () => {

@@ -120,9 +120,11 @@ import { registerToonflowRoutes } from "./routes/toonflow.js";
 import { registerProviderAuthRoutes } from "./routes/provider-auth.js";
 import {
   applyMcpWorkspacePolicyToPrompt,
+  automationDisabledMcpServerNames,
   checkMcpWorkspaceToolPolicy,
   compileWorkspaceMcpToolPrefixes,
   findWorkspaceByDirectory,
+  hasNonRetryableToolFailureSince,
   listWorkspaceMcpServerNames,
   migrateLegacyDisabledRuntimeMcps,
   readMcpWorkspaceToolPolicy,
@@ -157,7 +159,7 @@ import {
   createInteractionPermissionCeiling,
   migrateTrustedLegacyLocalHostFullAccess,
 } from "./session-permission-broker.js";
-import { AutomationExecutor } from "./automation/executor.js";
+import { AutomationExecutor, writeBackMcpName } from "./automation/executor.js";
 import { isAutomationManagedWorkspacePath } from "./automation/workspace.js";
 import { AutomationScheduler } from "./automation/scheduler.js";
 import { AutomationEventPipeline } from "./automation/event-pipeline.js";
@@ -1014,6 +1016,18 @@ export async function startServer(config: ServerConfig, options: {
         lastJournalProgressAtByRun.delete(event.run.runId);
       }
       sessionRunJournal.record({ ...event, occurredAt: timestamp });
+      if (event.event === "abort_accepted") {
+        // Persist user cancellation as soon as the engine accepts Stop. Idle
+        // may arrive before the aborted assistant message has been saved.
+        const runs = automationRepository.listRuns({
+          workspaceId: event.run.workspaceId,
+          sessionId: event.run.sessionId,
+          states: ["running"],
+        });
+        for (const run of runs.items) {
+          automationRepository.updateRun(run.id, run.revision, { state: "cancelled", endedAt: timestamp }, timestamp);
+        }
+      }
       if (event.event === "run_terminal" || event.event === "start_rolled_back") {
         void fileDeliveries?.finishRun(event.run.workspaceId, event.run.sessionId, event.run.runId)
           .catch((error) => logger.log("warn", "artifact_finalization_failed", { runId: event.run.runId, error: String(error) }));
@@ -1309,6 +1323,7 @@ export async function startServer(config: ServerConfig, options: {
     },
     resolveWorkspace,
     createWorkspaceOpencodeClient,
+    sessionMutations,
     githubEventRelay: githubEventRelayClient,
     // TIPS: 复用这个产品里已经在用的"工作区 MCP 条目 + 热同步进正在跑的引擎"这套机制
     // （`jugglework-cloud`/插件分发的 MCP 走的就是这条路，见 mcp.ts 的 addMcp 和下面
@@ -4216,13 +4231,21 @@ function createRoutes(
     const sessionId = typeof body.sessionId === "string" ? body.sessionId.trim() : "";
     const toolId = typeof body.toolId === "string" ? body.toolId.trim() : "";
     if (!directory && !workspaceId && !sessionId) throw new ApiError(400, "invalid_payload", "directory, workspaceId, or sessionId is required");
+    // OpenCode 的共享引擎可能让同一个 session 从多个工作区 client 都可见。工具回调只有
+    // sessionID 时，正在运行的自动化记录才是其工作区的权威归属，不能用“第一个能 get 到
+    // session 的工作区”，否则会丢掉本轮 connectorIds 策略。
+    const activeAutomationIdentityRun = !directory && sessionId
+      ? automationRepository.listRuns({ sessionId, states: ["running"], limit: 2 }).items[0]
+      : undefined;
     // TIPS: 执行目录是当前调用的权威身份。显式 ID 可能来自已切换工作区的旧上下文，
     // 因此只有目录缺失时才能使用；目录无法映射且同时携带 ID 时必须直接拒绝。
     let workspace = directory
       ? findWorkspaceByDirectory(config, directory)
       : workspaceId
         ? config.workspaces.find((entry) => entry.id === workspaceId && entry.workspaceType !== "remote") ?? null
-        : null;
+        : activeAutomationIdentityRun
+          ? config.workspaces.find((entry) => entry.id === activeAutomationIdentityRun.workspaceId && entry.workspaceType !== "remote") ?? null
+          : null;
     if (directory && workspaceId && !workspace) {
       throw new ApiError(404, "workspace_not_found", "Workspace not found for directory");
     }
@@ -4246,13 +4269,63 @@ function createRoutes(
       return jsonResponse({ allowed: true, workspaceId: workspace.id, serverNames, revision: policy.revision });
     }
     if (!toolId) throw new ApiError(400, "invalid_payload", "toolId is required");
+    // 自动化连接器选择是一次运行的硬边界，不能依赖 OpenCode 的 tool.ids() 来编译：
+    // 该接口在当前引擎只枚举内置工具，并不包含已连接 MCP。执行前按 session 找到正在
+    // 运行的自动化，再用完整 MCP serverName 清单计算关闭项，保证“未选择”真的不可调用。
+    const activeAutomationRun = activeAutomationIdentityRun?.workspaceId === workspace.id
+      ? activeAutomationIdentityRun
+      : sessionId
+        ? automationRepository.listRuns({
+        workspaceId: workspace.id,
+        sessionId,
+        states: ["running"],
+        limit: 2,
+      }).items[0]
+        : undefined;
+    const automationDisabledServerNames = activeAutomationRun
+      ? automationDisabledMcpServerNames(
+        serverNames,
+        activeAutomationRun.connectorIds,
+        activeAutomationRun.connectorIds.includes("github-app")
+          ? [writeBackMcpName(activeAutomationRun.automationId)]
+          : [],
+      )
+      : [];
+    const disabledServerNames = [...new Set([
+      ...policy.disabledServerNames,
+      ...automationDisabledServerNames,
+    ])];
     const decision = checkMcpWorkspaceToolPolicy({
       toolId,
       args: body.args,
       serverNames,
-      disabledServerNames: policy.disabledServerNames,
+      disabledServerNames,
     });
     if (toolId.startsWith("jugglework-office_")) return jsonResponse({ allowed: false, code: "office_tool_host_owned", serverName: "jugglework-office" });
+    if (decision.allowed === false) {
+      return jsonResponse(
+        decision.serverName && automationDisabledServerNames.includes(decision.serverName)
+          ? { ...decision, code: "mcp_disabled_in_automation" }
+          : decision,
+      );
+    }
+    if (activeAutomationRun?.startedAt && sessionId) {
+      const messages = await createWorkspaceOpencodeClient(config, workspace).session.messages({
+        sessionID: sessionId,
+        limit: 50,
+      }).catch(() => null);
+      if (messages?.data && hasNonRetryableToolFailureSince(
+        messages.data,
+        toolId,
+        activeAutomationRun.startedAt,
+      )) {
+        return jsonResponse({
+          allowed: false,
+          code: "mcp_non_retryable_tool_retry_blocked",
+          serverName: decision.serverName,
+        });
+      }
+    }
     return jsonResponse(decision);
   });
 

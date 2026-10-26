@@ -25,6 +25,17 @@ describe("local workspace rail status", () => {
   });
 });
 
+describe("scheduled-task rail status", () => {
+  test("shows global automation activity only after leaving the automation rail", () => {
+    const automation = railSource.slice(
+      railSource.indexOf('label={t("navigation.automations")}'),
+      railSource.indexOf("</RailButton>", railSource.indexOf('label={t("navigation.automations")}')),
+    );
+    expect(railSource).toContain("const { hasActiveRuns } = useAutomationActivity()");
+    expect(automation).toContain('statusIndicator={!automationsActive && hasActiveRuns ? "running" : null}');
+  });
+});
+
 describe("Code Review navigation", () => {
   test("moves Code Review into the More menu with a persistent pin action", () => {
     const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");

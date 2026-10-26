@@ -8,10 +8,13 @@ import type { JuggleWorkServerClient } from "@/app/lib/jugglework-server";
 import { t } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { useOptionalJuggleWorkServer } from "@/react-app/domains/connections/jugglework-server-provider";
+import { useAutomationActivity } from "./automation-activity-provider";
+import { AutomationTaskStatusIndicator } from "./automation-task-status-indicator";
 
 /** Lightweight task list used by the global collapsed-Rail hover preview. */
 export function AutomationSidebarPreview() {
   const navigate = useNavigate();
+  const { activeRuns } = useAutomationActivity();
   const store = useOptionalJuggleWorkServer();
   const snapshot = store?.getSnapshot() ?? null;
   const client = snapshot?.juggleworkServerReady ? snapshot.juggleworkServerClient : null;
@@ -21,13 +24,13 @@ export function AutomationSidebarPreview() {
   const [query, setQuery] = useState("");
   const [searchVisible, setSearchVisible] = useState(false);
 
-  const load = useCallback(async (activeClient: JuggleWorkServerClient | null) => {
+  const load = useCallback(async (activeClient: JuggleWorkServerClient | null, silent = false) => {
     if (!activeClient) {
       setLoading(false);
       setError("本机服务尚未连接");
       return;
     }
-    setLoading(true);
+    if (!silent) setLoading(true);
     setError(null);
     try {
       const page = await activeClient.listAutomations({ limit: 50 });
@@ -35,16 +38,25 @@ export function AutomationSidebarPreview() {
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : String(loadError));
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, []);
 
-  useEffect(() => { void load(client); }, [client, load]);
+  useEffect(() => {
+    void load(client);
+    if (!client) return;
+    const interval = window.setInterval(() => { void load(client, true); }, 2_000);
+    return () => window.clearInterval(interval);
+  }, [client, load]);
 
   const normalized = query.trim().toLocaleLowerCase();
   const visibleTasks = useMemo(() => tasks.filter(({ definition }) => (
     !normalized || `${definition.name} ${(definition.workspace?.name ?? t("automation.workspace_automatic_short"))}`.toLocaleLowerCase().includes(normalized)
   )), [normalized, tasks]);
+  const activeRunByAutomationId = useMemo(
+    () => new Map(activeRuns.map((run) => [run.automationId, run])),
+    [activeRuns],
+  );
 
   return (
     <aside
@@ -81,17 +93,25 @@ export function AutomationSidebarPreview() {
           {error ? <div className="mx-2 rounded-xl bg-red-3 px-3 py-2 text-xs text-red-11">{error}</div> : null}
           {!loading && !error && visibleTasks.length === 0 ? <p className="px-2 py-2 text-[13px] text-dls-secondary">{query ? t("automation.no_search_results") : t("automation.no_scheduled_tasks")}</p> : null}
           <div className="space-y-1">
-            {visibleTasks.map(({ definition }) => (
+            {visibleTasks.map((record) => {
+              const { definition } = record;
+              return (
               <button
                 key={definition.id}
                 type="button"
                 onClick={() => navigate(`/automations/${encodeURIComponent(definition.id)}`)}
-                className="flex min-h-[58px] w-full flex-col justify-center overflow-hidden rounded-xl px-2 py-2 text-left transition-colors hover:bg-dls-hover/60"
+                className="relative flex min-h-[58px] w-full flex-col justify-center overflow-hidden rounded-xl px-2 py-2 pr-9 text-left transition-colors hover:bg-dls-hover/60"
               >
                 <span className="truncate text-[13px] font-medium">{definition.name}</span>
-                <span className="mt-0.5 truncate text-xs text-dls-secondary">{(definition.workspace?.name ?? t("automation.workspace_automatic_short"))}</span>
+                {definition.workspace?.name ? <span className="mt-0.5 truncate text-xs text-dls-secondary">{definition.workspace.name}</span> : null}
+                <AutomationTaskStatusIndicator
+                  activeRun={activeRunByAutomationId.get(definition.id)}
+                  record={record}
+                  className="absolute right-3 top-1/2 -translate-y-1/2"
+                />
               </button>
-            ))}
+              );
+            })}
           </div>
         </div>
       </div>

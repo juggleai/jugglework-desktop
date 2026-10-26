@@ -38,6 +38,12 @@ describe("classifyProviderLimit", () => {
     expect(classifyProviderLimit({ text: "请求失败：余额不足，请充值后重试" })).toBe("usage_limit");
   });
 
+  test("managed points exhaustion is a hard limit", () => {
+    expect(classifyProviderLimit({ status: 409, code: "insufficient_points" })).toBe("usage_limit");
+    expect(classifyProviderLimit({ text: "The organization does not have enough available points for this managed model request." })).toBe("usage_limit");
+    expect(classifyProviderLimit({ text: "积分耗尽" })).toBe("usage_limit");
+  });
+
   test("plain throttles stay retryable rate limits", () => {
     expect(
       classifyProviderLimit({ status: 429, text: "Rate limit reached for requests. Please try again in 20s" }),

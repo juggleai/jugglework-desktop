@@ -5,12 +5,15 @@ import { tmpdir } from "node:os";
 
 import {
   applyMcpWorkspacePolicyToPrompt,
+  automationDisabledMcpServerNames,
   checkMcpWorkspaceToolPolicy,
   readMcpWorkspaceToolPolicy,
   resetMcpWorkspaceToolPolicyCacheForTests,
   resolveMcpServerNameFromToolId,
   writeMcpWorkspaceToolPolicy,
   findWorkspaceByDirectory,
+  hasNonRetryableToolFailureSince,
+  isExplicitlyNonRetryableToolError,
 } from "./mcp-workspace-tool-policy.js";
 import type { ServerConfig } from "./types.js";
 
@@ -41,6 +44,32 @@ describe("workspace MCP tool policy", () => {
   test("resolves sanitized names with the longest prefix", () => {
     expect(resolveMcpServerNameFromToolId("salesforce_prod_query", ["salesforce", "salesforce.prod"])).toBe("salesforce.prod");
     expect(resolveMcpServerNameFromToolId("github_search_issues", ["github"])).toBe("github");
+  });
+
+  test("computes automation MCP denials from the complete server inventory", () => {
+    expect(automationDisabledMcpServerNames(
+      ["github", "notion", "github-writeback-task-1"],
+      ["github"],
+      ["github-writeback-task-1"],
+    )).toEqual(["notion"]);
+    expect(automationDisabledMcpServerNames(["github", "notion"], [])).toEqual(["github", "notion"]);
+  });
+
+  test("recognizes and scopes explicitly non-retryable tool failures", () => {
+    const error = JSON.stringify({
+      body: JSON.stringify({ additional_data: { tool_error_retryable: "false" } }),
+    });
+    expect(isExplicitlyNonRetryableToolError(error)).toBe(true);
+    expect(isExplicitlyNonRetryableToolError(JSON.stringify({ additional_data: { tool_error_retryable: "true" } }))).toBe(false);
+    const messages = [{
+      parts: [
+        { type: "tool", tool: "notion_calendar", state: { status: "error", error, time: { start: 200 } } },
+        { type: "tool", tool: "notion_search", state: { status: "error", error, time: { start: 200 } } },
+      ],
+    }];
+    expect(hasNonRetryableToolFailureSince(messages, "notion_calendar", 150)).toBe(true);
+    expect(hasNonRetryableToolFailureSince(messages, "notion_calendar", 250)).toBe(false);
+    expect(hasNonRetryableToolFailureSince(messages, "notion_other", 150)).toBe(false);
   });
 
   test("sanitized namespace collisions fail closed", () => {

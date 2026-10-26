@@ -129,6 +129,16 @@ const cloudProviderConnectionSingleflight =
   createKeyedSingleflight<string, DenOrgLlmProviderConnection>();
 const cloudProviderWorkspaceMutationQueue = createKeyedSerialQueue<string>();
 
+/**
+ * A 409 reload fence means an active session owns the engine. Falling back to
+ * `instance.dispose()` would bypass that fence and abort the very run it is
+ * protecting. Only transport/unavailability failures may use the direct
+ * OpenCode fallback.
+ */
+export function shouldFallbackToDirectEngineDispose(error: unknown): boolean {
+  return !(error instanceof JuggleWorkServerError && error.code === "engine_reload_blocked_active_runs");
+}
+
 type ProviderReturnFocusTarget = "none" | "composer";
 type CloudProviderSyncReason =
   | "sign_in"
@@ -1299,6 +1309,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       // changes are picked up instead of silently dropping (toggles "turn
       // off").
       let reloaded = false;
+      let fallbackAllowed = true;
       try {
         const juggleworkSnapshot = options.juggleworkServer.getSnapshot();
         const juggleworkClient = juggleworkSnapshot.juggleworkServerClient;
@@ -1311,6 +1322,8 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
             try {
               await juggleworkClient.reloadEngine(workspaceId);
             } catch (error) {
+              fallbackAllowed = shouldFallbackToDirectEngineDispose(error);
+              if (!fallbackAllowed) throw error;
               const unreachable =
                 error instanceof JuggleWorkServerError && error.code === "opencode_engine_unreachable";
               if (!unreachable || !isDesktopRuntime()) {
@@ -1325,7 +1338,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         // fall back to a direct engine dispose below
       }
 
-      if (!reloaded) {
+      if (!reloaded && fallbackAllowed) {
         try {
           unwrap(await c.instance.dispose());
         } catch {

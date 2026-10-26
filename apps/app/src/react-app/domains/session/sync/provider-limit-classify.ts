@@ -37,6 +37,7 @@ const USAGE_LIMIT_CODE_TOKENS = [
   "quota_exceeded",
   "billing_hard_limit_reached",
   "payment_required",
+  "insufficient_points",
 ];
 
 const USAGE_LIMIT_TEXT_PHRASES = [
@@ -52,6 +53,7 @@ const USAGE_LIMIT_TEXT_PHRASES = [
   "insufficient balance",
   "out of credits",
   "out of credit",
+  "does not have enough available points",
   "account balance",
   "arrears",
   // Relay gateways commonly localize hard-limit failures.
@@ -61,6 +63,8 @@ const USAGE_LIMIT_TEXT_PHRASES = [
   "额度不足",
   "额度已用完",
   "用量已达上限",
+  "积分不足",
+  "积分耗尽",
 ];
 
 const CONTEXT_OVERFLOW_CODE_TOKENS = [
@@ -124,4 +128,12 @@ export function classifyProviderLimit(signals: ProviderLimitSignals): ProviderLi
   if (text.length > 0 && includesAny(text, RATE_LIMIT_TEXT_PHRASES)) return null;
 
   return null;
+}
+
+export function isPointsExhaustedMessage(text: string | null | undefined): boolean {
+  const normalized = normalize(text);
+  return normalized.includes("insufficient_points")
+    || normalized.includes("does not have enough available points")
+    || normalized.includes("积分不足")
+    || normalized.includes("积分耗尽");
 }

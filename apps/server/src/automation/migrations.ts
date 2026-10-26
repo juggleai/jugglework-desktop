@@ -269,6 +269,21 @@ const migrations: AutomationMigration[] = [
     ],
   },
   { version: 6, statements: [`CREATE TABLE IF NOT EXISTS automation_execution_bindings (binding_key TEXT PRIMARY KEY NOT NULL, value_json TEXT NOT NULL)`] },
+  {
+    version: 7,
+    statements: [
+      `CREATE TABLE IF NOT EXISTS automation_result_views (
+        automation_id TEXT PRIMARY KEY NOT NULL,
+        viewed_run_id TEXT NOT NULL,
+        viewed_at INTEGER NOT NULL,
+        FOREIGN KEY (automation_id) REFERENCES automation_tasks(id) ON DELETE RESTRICT,
+        FOREIGN KEY (viewed_run_id) REFERENCES automation_runs(id) ON DELETE RESTRICT
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_automation_runs_latest_result
+        ON automation_runs(automation_id, ended_at DESC, id DESC)
+        WHERE state IN ('succeeded', 'failed')`,
+    ],
+  },
 ];
 
 /** 按版本顺序执行自动化模块的前向 SQLite 迁移。 */

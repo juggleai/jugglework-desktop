@@ -161,8 +161,8 @@ At startup or resume, the scheduler SHALL accept at most the latest missed occur
 - **WHEN** several occurrences were missed and the latest is more than ten minutes old
 - **THEN** no execution is dispatched, a skipped history result records the missed deadline, and the next future occurrence is calculated
 
-### Requirement: Non-overlap and bounded local concurrency
-An automation MUST have at most one queued or running run. A due occurrence that overlaps a nonterminal run SHALL be recorded as skipped with `overlap_blocked`. The first release SHALL execute at most one automation run globally at a time while allowing additional non-overlapping runs to remain queued.
+### Requirement: Non-overlap and independent cross-session execution
+An automation MUST have at most one queued or running run. A due occurrence that overlaps a nonterminal run SHALL be recorded as skipped with `overlap_blocked`. Different sessions MUST execute independently, including sessions in the same workspace. The scheduler SHALL track in-flight runs by run id to prevent repeated wake-ups from dispatching the same queued run during asynchronous preparation; same-session mutation guards SHALL remain enforced.
 
 #### Scenario: Same automation remains running
 - **WHEN** another occurrence becomes due before the previous run reaches a terminal state
@@ -170,10 +170,18 @@ An automation MUST have at most one queued or running run. A due occurrence that
 
 #### Scenario: Two different tasks become due together
 - **WHEN** two eligible automations become due at the same instant
-- **THEN** one runs and the other remains durably queued until the executor slot is free
+- **THEN** both are dispatched independently without waiting for the other session to finish
+
+#### Scenario: Manual run while another task is running
+- **WHEN** a different automation is manually triggered while a scheduled run is active in another session
+- **THEN** the manual run starts independently and does not wait for the scheduled run to finish
 
 ### Requirement: Restart recovery
 The scheduler SHALL persist queued/running state and reconcile it on startup. Queued runs SHALL resume dispatch subject to current validation. Running runs with a session id SHALL be reconciled from OpenCode session status; missing or unrecoverable sessions SHALL fail with a stable error instead of remaining nonterminal indefinitely.
+
+#### Scenario: Recovery waits for a busy session
+- **WHEN** a persisted running session remains busy during startup reconciliation
+- **THEN** other sessions are reconciled or dispatched independently without resending the recovering run's prompt
 
 #### Scenario: Client restarts after session dispatch
 - **WHEN** a persisted run is `running` and its OpenCode session is idle after restart

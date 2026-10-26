@@ -178,8 +178,18 @@ describe("embedded session composition contract", () => {
     expect(page).toContain("data-embedded-session-collapsed-controls");
     expect(page).toContain("data-embedded-session-task-search");
     expect(page).toContain("data-embedded-session-sidebar-toggle");
+    expect(page).toContain("showBadge={false}");
+    expect(page).toContain("{!props.embedded ? (");
     expect(page).toContain("<SessionSurface");
     expect(page).toContain("<SidePanel");
     expect(page).toContain("<FilesPanel");
+  });
+
+  test("keeps the embedded top bar draggable without duplicate automation metadata", () => {
+    expect(page).toMatch(/style=\{\{ WebkitAppRegion: "drag" \} as CSSProperties\}[\s\S]+data-session-shell-topbar/);
+    expect(page).toMatch(/WebkitAppRegion: "no-drag"[\s\S]+data-embedded-session-collapsed-controls/);
+    expect(page).toMatch(/WebkitAppRegion: "no-drag"[\s\S]+data-session-topbar-actions/);
+    expect(page).toMatch(/<AutomationSessionStatus[\s\S]+showBadge=\{false\}/);
+    expect(page).toMatch(/\{!props\.embedded \? \([\s\S]+\{workspaceName\}/);
   });
 });

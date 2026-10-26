@@ -4,6 +4,7 @@
  */
 
 export default {
+  "session.usage_limit_recharge": "Você atingiu seu limite de uso. Recarregue seu saldo para obter mais créditos de uso.",
   "app.compact_command_desc": "Resumir esta sessão para reduzir o tamanho do contexto.",
   "app.error_audit_load": "Falha ao carregar o log de auditoria.",
   "app.error_auth_failed": "Falha na autenticação",

@@ -7,6 +7,7 @@
  */
 
 export default {
+  "session.usage_limit_recharge": "你已达到使用上限。若需更多使用额度，请及时充值。",
   "office.in_file_window": "此文档已在独立窗口中打开",
   "file_window.files": "文件",
   "file_window.add": "新建或打开文件",
@@ -3090,6 +3091,12 @@ export default {
   "automation.load_more": "加载更多",
   "automation.add": "添加自动化",
   "automation.batch_manage": "批量管理",
+  "automation.filter": "筛选任务",
+  "automation.filter_status": "状态",
+  "automation.filter_enabled": "已开启",
+  "automation.filter_paused": "已暂停",
+  "automation.filter_completed": "已完成",
+  "automation.filter_unread": "未读",
   "automation.batch_exit": "退出批量",
   "automation.batch_select_all": "全选",
   "automation.batch_clear_all": "取消全选",
@@ -3118,6 +3125,7 @@ export default {
   "automation.empty_runs_hint": "自动或手动执行后，结果会显示在这里。",
   "automation.templates": "自动化任务模板",
   "automation.current": "当前",
+  "automation.paused": "已暂停",
   "automation.ended": "已结束",
   "automation.other_devices": "其他设备（只读）",
   "automation.read_only_device": "只读，不在此设备执行",

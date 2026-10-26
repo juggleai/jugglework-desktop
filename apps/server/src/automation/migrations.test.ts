@@ -114,7 +114,7 @@ test("migrating a populated v3 database to v4 does not throw a foreign key error
     seedV3DatabaseWithData(database, now);
 
     migrateAutomationDatabase(database, now);
-    assert.equal(automationDatabaseVersion(database), 6);
+    assert.equal(automationDatabaseVersion(database), 7);
 
     const task = database.get<{ id: string; lifecycle: string }>("SELECT id, lifecycle FROM automation_tasks WHERE id = ?", ["task-1"]);
     const run = database.get<{ id: string; automation_id: string }>("SELECT id, automation_id FROM automation_runs WHERE id = ?", ["run-1"]);
@@ -140,7 +140,14 @@ test("migrating a fresh (empty) database applies every version without error", a
     const runtimeDb = await openRuntimeSqliteDatabase(path);
     const database = automationSqliteAdapter(runtimeDb);
     migrateAutomationDatabase(database);
-    assert.equal(automationDatabaseVersion(database), 6);
+    assert.equal(automationDatabaseVersion(database), 7);
+    assert.deepEqual(
+      database.all<{ name: string }>("PRAGMA table_info(automation_result_views)").map((column) => column.name),
+      ["automation_id", "viewed_run_id", "viewed_at"],
+    );
+    assert.ok(database.get<{ name: string }>(
+      "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_automation_runs_latest_result'",
+    ));
     runtimeDb.close();
   });
 });

@@ -14,7 +14,7 @@
 - [x] 2.2 Implement deterministic daylight-saving gap/overlap, leap-year, invalid-calendar-date, and timezone-change rules.
 - [x] 2.3 Implement the fixed ten-minute latest-only catch-up policy and stable `missed_deadline` history outcome.
 - [x] 2.4 Implement one-active-run-per-task overlap handling and stable `overlap_blocked` history outcome.
-- [x] 2.5 Implement the embedded-server nearest-deadline scheduler with transactional due claiming, persisted `next_run_at`, one global executor slot, queue wake-up, and graceful disposal.
+- [x] 2.5 Implement the embedded-server nearest-deadline scheduler with transactional due claiming, persisted `next_run_at`, independent cross-session dispatch/recovery with run-id deduplication, queue wake-up, and graceful disposal.
 - [x] 2.6 Add an injectable clock/timer seam and deterministic unit tests for restart, duplicate wake-up, clock jump, sleep recovery, active-range exit, one-time completion, interval anchoring, and simultaneous tasks.
 - [x] 2.7 Implement both-dates-or-none inclusive active-range validation, occurrence-existence validation, one-time containment, localized schedule summary, and exact next-run preview.
 - [x] 2.8 Implement create/edit future-only recomputation, inactive-mode field stripping, captured-revision isolation, and pause/resume behavior with no catch-up or skipped rows during intentional pause.
@@ -81,6 +81,11 @@
 - [x] 6.23 Prepare and bind a conversation on first scheduled-task open even without run history, without executing or rescheduling the task; cover repeat/concurrent opens and run-time reuse.
 - [x] 6.24 Gate Create on the current workspace dependency snapshot and make the model-generated scheduling acknowledgement best-effort so fresh provider-registry timing cannot roll back task creation.
 - [x] 6.24 Prepare and bind the conversation during scheduled-task creation, add a localized task-and-schedule user turn, open it immediately after asynchronous acceptance, and stream a tool-disabled acknowledgement without creating an automation run or executing the task early.
+- [x] 6.25 Add the sidebar Enabled/Paused/Completed/Unread multi-select filter, persist a latest-result viewed cursor, and clear unread only when the corresponding result is opened.
+- [x] 6.26 Show queued/running spinners and unread success/failure dots in scheduled-task sidebars, and keep global running activity visible on the inactive Automation Rail item.
+- [x] 6.27 Remove duplicate run/title metadata from embedded automation conversation headers and restore native drag/double-click window behavior without disabling header controls.
+- [x] 6.28 Keep the sidebar filter as the sole Upcoming control and place its label inside the required menu group to prevent a render crash on open.
+- [x] 6.29 Split paused tasks into their own collapsed-by-default, expandable sidebar group between Current and Ended.
 
 ## 7. Lifecycle and integration
 

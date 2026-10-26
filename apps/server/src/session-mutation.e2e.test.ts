@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { startServer } from "./server.js";
+import { AutomationRepository } from "./automation/repository.js";
+import { AUTOMATION_PERMISSION_PROFILE, type AutomationDefinition } from "@jugglework/types/automation";
 import { opencodeAdmissionId } from "./opencode-admission.js";
 import { runtimeDbPath } from "./runtime-db.js";
 import type { ArtifactEngineMessage } from "./artifacts/delivery.js";
@@ -1145,6 +1147,20 @@ describe("authoritative session mutation APIs", () => {
   test("delayed abort remains active until accepted and an exact idle observation clears it", async () => {
     const engine = startMockOpencode();
     const harness = await startHarness(engine.server.port);
+    const repository = await AutomationRepository.open(harness.config);
+    stops.push(() => repository.close());
+    const definition: AutomationDefinition = {
+      schema: "automation-definition/v1", id: "abort-task", name: "Stop automation",
+      workspace: { id: "ws_1", name: "Workspace", path: harness.root, workspaceType: "local" },
+      prompt: { version: 1, parts: [{ type: "text", text: "Run" }] },
+      trigger: { version: 1, kind: "calendar", frequency: "daily", localTime: "09:00", timezone: "UTC" },
+      model: { mode: "auto" }, skillIds: [], connectors: [],
+      permission: { profile: AUTOMATION_PERMISSION_PROFILE, acknowledgedAt: 1 },
+      lifecycle: "paused", executorDeviceId: "device", revision: 1, nextRunAt: null, createdAt: 1, updatedAt: 1,
+    };
+    repository.createDefinition(definition, definition);
+    const automationRun = repository.createManualRun(definition, "abort-automation-run", Date.now());
+    repository.updateRun(automationRun.id, automationRun.revision, { state: "running", sessionId: "ses_abort", startedAt: Date.now() }, Date.now());
     const started = await fetch(`${runPath(harness.base, "ses_abort")}/start`, {
       method: "POST",
       headers: harness.collaboratorHeaders,
@@ -1179,9 +1195,11 @@ describe("authoritative session mutation APIs", () => {
       body: JSON.stringify({ status: "idle" }),
     });
     await expect(earlyIdle.json()).resolves.toMatchObject({ cleared: false, run: { status: "aborting" } });
+    expect(repository.getRun(automationRun.id)?.state).toBe("running");
 
     hold.resolve();
     expect((await abortRequest).status).toBe(202);
+    expect(repository.getRun(automationRun.id)?.state).toBe("cancelled");
     const acceptedIdle = await fetch(`${runPath(harness.base, "ses_abort")}/${run.runId}/observations`, {
       method: "POST",
       headers: harness.collaboratorHeaders,

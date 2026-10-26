@@ -3,8 +3,23 @@ import { readFileSync } from "node:fs"
 import { renderToStaticMarkup } from "react-dom/server"
 
 import { isMissingFileSessionError, SessionErrorMessage } from "../src/components/chat/session-error-message"
+import { setLocale } from "../src/i18n"
 
 describe("missing-file session error presentation", () => {
+  test("renders the localized points limit notice without the generic error card", () => {
+    try {
+      setLocale("zh");
+      const html = renderToStaticMarkup(<SessionErrorMessage error="The organization does not have enough available points for this managed model request." />);
+      expect(html).toContain("你已达到使用上限。若需更多使用额度，请及时充值。");
+      expect(html).toContain('data-testid="session-points-exhausted"');
+      expect(html).not.toContain("border-red-300");
+      setLocale("en");
+      const english = renderToStaticMarkup(<SessionErrorMessage error="insufficient_points" />);
+      expect(english).toContain("Please top up");
+    } finally {
+      setLocale("en");
+    }
+  });
   test.each([
     "File not found: /Users/example/Documents/IM\n\nDid you mean one of these?\n/Users/example/Documents/IM相关\n/Users/example/Documents/.qimei",
     "File not found: /apps/alias/set",

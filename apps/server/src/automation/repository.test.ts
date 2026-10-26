@@ -103,7 +103,7 @@ test("automation migrations preserve an existing populated runtime database and 
   const reopenedDatabase = automationSqliteAdapter(reopenedRuntime);
   try {
     migrateAutomationDatabase(reopenedDatabase, NOW + 1);
-    assert.equal(automationDatabaseVersion(reopenedDatabase), 6);
+    assert.equal(automationDatabaseVersion(reopenedDatabase), 7);
     assert.equal(reopenedDatabase.get<{ value: string }>("SELECT value FROM existing_runtime_records WHERE id = ?", ["legacy-1"])?.value, "preserved");
   } finally {
     reopenedDatabase.close();
@@ -118,7 +118,7 @@ test("migration replay, revisions, pagination and local-only persistence are ato
   try {
     migrateAutomationDatabase(database, NOW);
     migrateAutomationDatabase(database, NOW + 1);
-    assert.equal(automationDatabaseVersion(database), 6);
+    assert.equal(automationDatabaseVersion(database), 7);
     const repository = AutomationRepository.fromDatabase(database);
     const first = definition("task-1", "任务一", 1, NOW);
     const second = definition("task-2", "任务二", 1, NOW + 1);
@@ -190,6 +190,71 @@ test("manual runs allow paused and completed tasks without changing lifecycle or
     assert.equal(repository.getDefinition(completed.id)?.definition.nextRunAt, null);
     assert.throws(() => repository.createManualRun(paused, "manual-overlap", NOW + 2), (error) =>
       error instanceof ApiError && error.code === "overlap_blocked");
+  } finally {
+    repository.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("result unread state follows only the latest succeeded or failed run and survives task deletion", async () => {
+  const root = await mkdtemp(join(tmpdir(), "jugglework-automation-result-view-"));
+  const runtime = await openRuntimeSqliteDatabase(join(root, "runtime.sqlite"));
+  const repository = AutomationRepository.fromDatabase(automationSqliteAdapter(runtime));
+  try {
+    const task = definition("task-results", "Results", 1, NOW);
+    const otherTask = definition("task-results-other", "Other", 1, NOW + 1);
+    repository.createDefinition(task, task);
+    repository.createDefinition(otherTask, otherTask);
+
+    const firstQueued = repository.createManualRun(task, "run-first", NOW);
+    const firstRunning = repository.updateRun(firstQueued.id, firstQueued.revision, {
+      state: "running",
+      sessionId: "session-first",
+    }, NOW + 1);
+    repository.updateRun(firstRunning.id, firstRunning.revision, { state: "succeeded", endedAt: NOW + 2 }, NOW + 2);
+
+    const secondQueued = repository.createManualRun(task, "run-second", NOW + 3);
+    repository.updateRun(secondQueued.id, secondQueued.revision, {
+      state: "failed",
+      sessionId: "session-second",
+      endedAt: NOW + 4,
+    }, NOW + 4);
+
+    const listed = repository.listDefinitions().items.find((item) => item.definition.id === task.id);
+    assert.equal(listed?.hasUnreadResult, true);
+    assert.deepEqual(listed?.latestResultRun, {
+      id: "run-second",
+      state: "failed",
+      endedAt: NOW + 4,
+      workspaceId: "workspace-1",
+      sessionId: "session-second",
+    });
+
+    assert.deepEqual(repository.markResultViewed(task.id, "run-first", NOW + 5), { hasUnreadResult: true });
+    assert.equal(repository.getDefinition(task.id)?.hasUnreadResult, true);
+    assert.deepEqual(repository.markResultViewed(task.id, "run-second", NOW + 6), { hasUnreadResult: false });
+    assert.deepEqual(repository.markResultViewed(task.id, "run-second", NOW + 7), { hasUnreadResult: false });
+
+    const thirdQueued = repository.createManualRun(task, "run-third", NOW + 8);
+    const thirdRunning = repository.updateRun(thirdQueued.id, thirdQueued.revision, { state: "running" }, NOW + 9);
+    repository.updateRun(thirdRunning.id, thirdRunning.revision, { state: "succeeded", endedAt: NOW + 10 }, NOW + 10);
+    assert.equal(repository.getDefinition(task.id)?.hasUnreadResult, true);
+
+    const otherRun = repository.createManualRun(otherTask, "run-other", NOW + 11);
+    assert.throws(
+      () => repository.markResultViewed(task.id, otherRun.id, NOW + 12),
+      (error) => error instanceof ApiError && error.code === "invalid_automation_result_run",
+    );
+    assert.throws(
+      () => repository.markResultViewed(otherTask.id, otherRun.id, NOW + 12),
+      (error) => error instanceof ApiError && error.code === "invalid_automation_result_run",
+    );
+
+    repository.tombstoneDefinition(task.id, 1, NOW + 13);
+    assert.equal(repository.listRuns({ automationId: task.id }).items.length, 3);
+    const deleted = repository.getDefinition(task.id, true);
+    assert.equal(deleted?.hasUnreadResult, true);
+    assert.equal(deleted?.latestResultRun?.id, "run-third");
   } finally {
     repository.close();
     await rm(root, { recursive: true, force: true });

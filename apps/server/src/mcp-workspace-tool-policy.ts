@@ -161,6 +161,74 @@ export function resolveMcpServerNameFromToolId(toolId: string, serverNames: stri
   return matches[0]?.serverName ?? null;
 }
 
+/**
+ * 自动化运行只允许它在创建时显式选择的 MCP。GitHub App 写回工具是按任务动态挂载的，
+ * 因而由调用方把它的实际 serverName 作为额外允许项传入。
+ */
+export function automationDisabledMcpServerNames(
+  serverNames: string[],
+  selectedConnectorIds: string[],
+  extraAllowedServerNames: string[] = [],
+): string[] {
+  const allowed = new Set([...selectedConnectorIds, ...extraAllowedServerNames]);
+  return serverNames.filter((serverName) => !allowed.has(serverName));
+}
+
+function parseJsonValue(value: string): unknown {
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return undefined;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return undefined;
+  }
+}
+
+/** 识别 MCP 错误信封中的明确不可重试标记，兼容字符串化的外层/body 信封。 */
+export function isExplicitlyNonRetryableToolError(error: unknown): boolean {
+  const pending: unknown[] = [error];
+  const visited = new Set<object>();
+  for (let index = 0; index < pending.length && index < 24; index += 1) {
+    const current = pending[index];
+    if (typeof current === "string") {
+      const parsed = parseJsonValue(current);
+      if (parsed !== undefined) pending.push(parsed);
+      continue;
+    }
+    if (!current || typeof current !== "object") continue;
+    if (visited.has(current)) continue;
+    visited.add(current);
+    const record = current as Record<string, unknown>;
+    if (record.tool_error_retryable === false || record.tool_error_retryable === "false") return true;
+    for (const key of ["additional_data", "body", "data", "error", "cause"]) {
+      if (record[key] !== undefined) pending.push(record[key]);
+    }
+  }
+  return false;
+}
+
+/** 当前运行中同一工具已经明确不可重试时，后续调用必须在执行前被拦截。 */
+export function hasNonRetryableToolFailureSince(messages: unknown, toolId: string, since: number): boolean {
+  if (!Array.isArray(messages)) return false;
+  return messages.some((message) => {
+    if (!message || typeof message !== "object" || Array.isArray(message)) return false;
+    const record = message as Record<string, unknown>;
+    if (!Array.isArray(record.parts)) return false;
+    return record.parts.some((part) => {
+      if (!part || typeof part !== "object" || Array.isArray(part)) return false;
+      const item = part as Record<string, unknown>;
+      if (item.type !== "tool" || item.tool !== toolId || !item.state || typeof item.state !== "object" || Array.isArray(item.state)) return false;
+      const state = item.state as Record<string, unknown>;
+      if (state.status !== "error") return false;
+      const time = state.time && typeof state.time === "object" && !Array.isArray(state.time)
+        ? state.time as Record<string, unknown>
+        : {};
+      const startedAt = typeof time.start === "number" ? time.start : 0;
+      return startedAt >= since && isExplicitlyNonRetryableToolError(state.error);
+    });
+  });
+}
+
 /** 判断一次已确认属于 MCP 的工具调用是否被工作区软策略拒绝。 */
 export function checkMcpWorkspaceToolPolicy(input: {
   toolId: string;

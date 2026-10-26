@@ -29,6 +29,8 @@ describe("desktop session shell layout", () => {
     expect(appStyles).toContain('--app-list-bg: #f7f7f8');
     expect(appStyles).toContain('[data-theme="dark"]');
     expect(appStyles).toContain('--app-list-bg: var(--slate-2)');
+    expect(sessionPage).toMatch(/style=\{\{ WebkitAppRegion: "drag" \} as CSSProperties\}[\s\S]+data-session-shell-topbar/);
+    expect(sessionPage).toMatch(/data-session-topbar-actions[\s\S]*$/);
   });
 
   test("extends the rounded session surface around the conversation list", () => {

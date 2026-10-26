@@ -265,6 +265,16 @@ export type AutomationDefinitionRecord = {
   syncErrorCode?: AutomationErrorCode;
   rawDocument: Record<string, unknown>;
   deletedAt?: number;
+  hasUnreadResult: boolean;
+  latestResultRun?: AutomationLatestResultRun;
+};
+
+export type AutomationLatestResultRun = {
+  id: string;
+  state: Extract<AutomationRunState, "succeeded" | "failed">;
+  endedAt: number;
+  workspaceId: string;
+  sessionId?: string;
 };
 
 export type AutomationRun = {

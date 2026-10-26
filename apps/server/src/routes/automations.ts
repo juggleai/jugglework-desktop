@@ -258,6 +258,13 @@ export function registerAutomationRoutes(options: RegisterAutomationRoutesOption
     return jsonResponse({ item });
   });
 
+  addRoute(routes, "POST", "/automations/:automationId/viewed-result", "client", async (ctx) => {
+    requireMutation(ctx, options);
+    const body = await readJsonBody(ctx.request);
+    const runId = requiredIdentifier(body.runId, "runId");
+    return jsonResponse(repository.markResultViewed(ctx.params.automationId, runId, Date.now()));
+  });
+
   // TIPS: §4.10 的"打开会话"用它——jw:automation-notification 消息不携带 sessionId/
   // workspaceId 快照，点击时按 (automationId, entityRef) 实时查这张表来解析当前归属
   // 会话，这样同一实体的会话按 4.8 的规则"毕业"到新会话后，旧消息点开仍然指向当前会话。
@@ -381,6 +388,8 @@ export function registerAutomationRoutes(options: RegisterAutomationRoutesOption
     const search = ctx.url.searchParams;
     return jsonResponse(repository.listRuns({
       automationId: search.get("automationId")?.trim() || undefined,
+      workspaceId: search.get("workspaceId")?.trim() || undefined,
+      sessionId: search.get("sessionId")?.trim() || undefined,
       states: parseEnumList<AutomationRun["state"]>(search.get("status"), ["queued", "running", "succeeded", "failed", "skipped", "cancelled"], "status"),
       triggerSources: parseEnumList<AutomationRun["triggerSource"]>(search.get("trigger"), ["scheduled", "catchup", "manual"], "trigger"),
       scheduledFrom: optionalInteger(search.get("scheduledFrom"), "scheduledFrom"),

@@ -62,6 +62,7 @@ import {
   type PinnableAppNavigationItem,
 } from "./app-navigation-pins";
 import { LOCAL_AUTOMATION_ENABLED } from "@/react-app/domains/automations/automation-feature-flags";
+import { useAutomationActivity } from "@/react-app/domains/automations/automation-activity-provider";
 import { isIMNavigationVisible, visibleLocalWorkspaceIndicator } from "./app-navigation-status";
 import { accountDisplayName, membershipTierLabel, membershipUpgradeContext, organizationMenuGroups } from "./account-menu-model";
 import { PluginOrbitIcon } from "@/react-app/design-system/plugin-orbit-icon";
@@ -305,6 +306,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
   } = useDenAuth();
   const taskScope = useTaskScope();
   const automationsActive = location.pathname.startsWith("/automations");
+  const { hasActiveRuns } = useAutomationActivity();
   const localWorkspaceIndicator = useLocalWorkspaceIndicator();
   const chatView = useJuggleChatStore((state) => state.view);
   const totalUnreadCount = useJuggleChatStore((state) => state.totalUnreadCount);
@@ -481,6 +483,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
           active={automationsActive}
           onClick={() => navigate("/automations")}
           testId="app-rail-automations"
+          statusIndicator={!automationsActive && hasActiveRuns ? "running" : null}
           onPreviewMenuChange={props.onPreviewMenuChange}
           appPreviewTarget="automation"
           onAppPreviewChange={appSidebarPreview.onTriggerChange}

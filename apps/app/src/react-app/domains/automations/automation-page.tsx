@@ -53,6 +53,9 @@ import { defaultEventTrigger } from "./event-trigger-editor";
 import { AccountMismatchBadge, useAutomationSubscriptionAccountStatus } from "./automation-account-mismatch";
 import { EventTriggerReadinessBadge, useEventTriggerReadinessBadge } from "./automation-readiness-badge";
 import { automationReadinessUnblockedEvent } from "./automation-readiness-events";
+import { AutomationRunStateBadge } from "./automation-session-status";
+import { AutomationTaskStatusIndicator } from "./automation-task-status-indicator";
+import { useAutomationActivity } from "./automation-activity-provider";
 
 import type { WorkspaceInfo } from "@/app/lib/desktop";
 import { toast } from "@/components/ui/sonner";
@@ -72,12 +75,25 @@ import { useUiStateStore } from "@/react-app/shell/ui-state-store";
 import { appInsetSidebarCssWidth, useWorkspaceShellLayout } from "@/react-app/shell/workspace-shell-layout";
 import { ConfirmModal } from "@/react-app/design-system/modals/confirm-modal";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { currentLocale, t } from "@/i18n";
 import { AUTOMATION_TEMPLATES, type AutomationTemplate } from "./templates";
 import { parseAutomationPrompt, readAutomationSkillIds, serializeAutomationPrompt } from "./automation-prompt-template";
 import { AUTOMATION_CLOUD_CONNECTOR_SCOPE_ENABLED, LOCAL_AUTOMATION_ENABLED } from "./automation-feature-flags";
 import { readAutomationDeviceId } from "./automation-device-identity";
+import {
+  DEFAULT_AUTOMATION_TASK_STATUS_FILTERS,
+  matchesAutomationTaskFilter,
+  type AutomationTaskStatusFilter,
+} from "./automation-task-filter";
 
 type AutomationPageProps = {
   onOpenSession: (workspaceId: string, sessionId: string) => void;
@@ -136,6 +152,7 @@ export function AutomationPage(props: AutomationPageProps) {
   const { leftSidebarResizing, leftSidebarWidth, startLeftSidebarResize } = useWorkspaceShellLayout({ expandedRightWidth: 520 });
   const pageStyle = {
     "--jugglework-left-sidebar-width": appInsetSidebarCssWidth(leftSidebarWidth),
+    WebkitAppRegion: "drag",
   } as CSSProperties;
 
   useEffect(() => {
@@ -303,13 +320,20 @@ function AutomationDashboard(props: {
   const [trigger, setTrigger] = useState<AutomationRun["triggerSource"] | "">("");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
-  const [selecting, setSelecting] = useState(false);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [batchBusy, setBatchBusy] = useState(false);
-  const [batchDeleteOpen, setBatchDeleteOpen] = useState(false);
   const [searchVisible, setSearchVisible] = useState(false);
-  const openSession = (workspaceId: string, sessionId: string) => {
+  const [taskStatusFilters, setTaskStatusFilters] = useState<AutomationTaskStatusFilter[]>(DEFAULT_AUTOMATION_TASK_STATUS_FILTERS);
+  const [unreadOnly, setUnreadOnly] = useState(false);
+  const openSession = async (workspaceId: string, sessionId: string, viewedResult?: { automationId: string; runId: string }) => {
     props.onOpenSession(workspaceId, sessionId);
+    if (!props.client || !viewedResult) return;
+    try {
+      const result = await props.client.markAutomationResultViewed(viewedResult.automationId, viewedResult.runId);
+      setTasks((current) => current.map((item) => item.definition.id === viewedResult.automationId
+        ? { ...item, hasUnreadResult: result.hasUnreadResult }
+        : item));
+    } catch {
+      // 打开会话是主操作；已读回执失败不应阻止查看，下一次刷新仍会保持未读提示。
+    }
   };
   useEffect(() => {
     if (props.history) props.onClearSession();
@@ -355,35 +379,21 @@ function AutomationDashboard(props: {
   }, [fromDate, props.client, props.history, props.localServerPending, status, toDate, trigger]);
   const refresh = useCallback(() => load(undefined, false, true), [load]);
 
-  /**
-   * 批量删除已勾选的任务。
-   * TIPS: 逐个删除而不是并发——每次删除都带 baseRevision 乐观锁，串行才能在中途失败时
-   * 明确停在第一个冲突上，并把已经删掉的部分如实反映到列表里。
-   */
-  const deleteSelected = useCallback(async () => {
-    if (!props.client || !selectedIds.size || batchBusy) return;
-    const targets = tasks.filter((record) => selectedIds.has(record.definition.id));
-    setBatchBusy(true);
-    let removed = 0;
-    try {
-      for (const record of targets) {
-        await props.client.deleteAutomation(record.definition.id, record.definition.revision);
-        removed += 1;
-      }
-      toast.success(t("automation.batch_deleted", { count: removed }));
-      setSelecting(false);
-      setSelectedIds(new Set());
-    } catch (error) {
-      toast.error(describeError(error));
-    } finally {
-      setBatchBusy(false);
-      await refresh();
-    }
-  }, [batchBusy, props.client, refresh, selectedIds, tasks]);
+  // Keep result dots current while this sidebar is visible. Active runs are supplied by the
+  // root activity provider; definitions carry the durable succeeded/failed unread cursor.
+  useEffect(() => {
+    if (props.history || !props.client || props.localServerPending) return;
+    const interval = window.setInterval(() => { void refresh(); }, 2_000);
+    return () => window.clearInterval(interval);
+  }, [props.client, props.history, props.localServerPending, refresh]);
 
   useEffect(() => { setNextCursor(undefined); void load(); }, [load, props.refreshRevision]);
   const normalized = query.trim().toLocaleLowerCase();
-  const visibleTasks = tasks.filter(({ definition }) => !normalized || `${definition.name} ${definition.workspace?.name ?? t("automation.workspace_automatic_short")}`.toLocaleLowerCase().includes(normalized));
+  const visibleTasks = tasks.filter((record) => {
+    const { definition } = record;
+    return matchesAutomationTaskFilter(record, taskStatusFilters, unreadOnly)
+      && (!normalized || `${definition.name} ${definition.workspace?.name ?? t("automation.workspace_automatic_short")}`.toLocaleLowerCase().includes(normalized));
+  });
   const visibleRuns = runs.filter((run) => !normalized || `${run.automationName} ${run.workspaceName} ${run.errorMessage ?? ""}`.toLocaleLowerCase().includes(normalized));
 
   return (
@@ -399,7 +409,11 @@ function AutomationDashboard(props: {
       data-app-secondary-sidebar-frame
       >
       {props.sidebarOpen ? <aside data-testid="automation-sidebar" className="flex h-full w-[var(--jugglework-left-sidebar-width)] shrink-0 flex-col border-r border-dls-border bg-[var(--app-secondary-sidebar-bg)] mac:titlebar-drag">
-        <div className="flex h-[var(--app-topbar-height)] shrink-0 items-center gap-2 px-4 mac:titlebar-no-drag">
+        <div
+          className="flex h-[var(--app-topbar-height)] shrink-0 items-center gap-2 px-4 mac:titlebar-drag"
+          style={{ WebkitAppRegion: "drag" } as CSSProperties}
+          data-automation-sidebar-titlebar
+        >
           <h1 className="min-w-0 flex-1 truncate text-base font-semibold">
             {props.history ? t("automation.tabs.runs") : t("automation.tabs.tasks")}
           </h1>
@@ -412,7 +426,8 @@ function AutomationDashboard(props: {
               if (visible) setQuery("");
               return !visible;
             })}
-            className={cn("rounded-lg p-2 text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text", searchVisible && "bg-dls-hover text-dls-text")}
+            className={cn("rounded-lg p-2 text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text mac:titlebar-no-drag", searchVisible && "bg-dls-hover text-dls-text")}
+            style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
           >
             <Search className="size-4" />
           </button>
@@ -435,30 +450,41 @@ function AutomationDashboard(props: {
             <>
               <div className="flex h-10 shrink-0 items-center gap-2 px-4 text-[13px] text-dls-secondary">
                 <span className="min-w-0 flex-1 truncate">{t("automation.upcoming")}</span>
-                {tasks.length > 0 ? (
-                  <button
-                    type="button"
-                    title={selecting ? t("automation.batch_exit") : t("automation.batch_manage")}
-                    aria-label={selecting ? t("automation.batch_exit") : t("automation.batch_manage")}
-                    onClick={() => { setSelecting((value) => !value); setSelectedIds(new Set()); }}
-                    className={cn("rounded-lg p-1.5 transition-colors hover:bg-dls-hover hover:text-dls-text", selecting && "bg-dls-hover text-dls-text")}
-                  >
-                    {selecting ? <ListChecks className="size-4" /> : <ListFilter className="size-4" />}
-                  </button>
-                ) : null}
+                 {tasks.length > 0 ? (
+                   <DropdownMenu>
+                     <DropdownMenuTrigger
+                       title={t("automation.filter")}
+                       aria-label={t("automation.filter")}
+                       className={cn(
+                         "rounded-lg p-1.5 transition-colors hover:bg-dls-hover hover:text-dls-text",
+                         (unreadOnly || taskStatusFilters.length !== DEFAULT_AUTOMATION_TASK_STATUS_FILTERS.length) && "bg-dls-hover text-dls-text",
+                       )}
+                     >
+                       <ListFilter className="size-4" />
+                     </DropdownMenuTrigger>
+                     <DropdownMenuContent align="end" sideOffset={6} className="w-52 rounded-[24px] p-2">
+                       <DropdownMenuGroup>
+                         <DropdownMenuLabel className="px-3 pb-2 pt-1.5 text-sm">{t("automation.filter_status")}</DropdownMenuLabel>
+                         {(["enabled", "paused", "completed"] as const).map((filter) => (
+                           <DropdownMenuCheckboxItem
+                             key={filter}
+                             checked={taskStatusFilters.includes(filter)}
+                             onCheckedChange={(checked) => setTaskStatusFilters((current) => checked
+                               ? [...current, filter]
+                               : current.filter((value) => value !== filter))}
+                             className="py-2.5 text-[15px] font-normal"
+                           >
+                             {t(`automation.filter_${filter}`)}
+                           </DropdownMenuCheckboxItem>
+                         ))}
+                         <DropdownMenuCheckboxItem checked={unreadOnly} onCheckedChange={setUnreadOnly} className="py-2.5 text-[15px] font-normal">
+                           {t("automation.filter_unread")}
+                         </DropdownMenuCheckboxItem>
+                       </DropdownMenuGroup>
+                     </DropdownMenuContent>
+                   </DropdownMenu>
+                 ) : null}
               </div>
-              {selecting ? (
-                <BatchActionBar
-                  compact
-                  total={visibleTasks.length}
-                  selected={selectedIds}
-                  busy={batchBusy}
-                  onToggleAll={() => setSelectedIds((current) => (
-                    current.size === visibleTasks.length ? new Set() : new Set(visibleTasks.map((task) => task.definition.id))
-                  ))}
-                  onDelete={() => setBatchDeleteOpen(true)}
-                />
-              ) : null}
               <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
                 {error ? <div className="mx-2 rounded-xl bg-red-3 px-3 py-2 text-xs text-red-11">{error}<button type="button" className="ml-2 underline" onClick={() => void (props.client ? load() : props.onReconnect())}>{t("automation.retry")}</button></div> : null}
                 {loading ? <div className="px-2 py-4 text-[13px] text-dls-secondary">{t("automation.loading")}</div> : null}
@@ -466,18 +492,11 @@ function AutomationDashboard(props: {
                 {!loading && tasks.length > 0 && visibleTasks.length === 0 ? <p className="px-2 py-2 text-[13px] text-dls-secondary">{t("automation.no_search_results")}</p> : null}
                 {!loading && visibleTasks.length > 0 ? (
                   <TaskList
-                    onOpenSession={openSession}
+                    onOpenSession={(workspaceId, sessionId, viewedResult) => void openSession(workspaceId, sessionId, viewedResult)}
                     compact
                     tasks={visibleTasks}
                     client={props.client}
                     reload={refresh}
-                    selecting={selecting}
-                    selectedIds={selectedIds}
-                    onToggleSelected={(id) => setSelectedIds((current) => {
-                      const next = new Set(current);
-                      if (!next.delete(id)) next.add(id);
-                      return next;
-                    })}
                   />
                 ) : null}
                 {!loading && nextCursor ? <button type="button" onClick={() => void load(nextCursor, true)} className="mx-2 mt-3 rounded-lg border border-dls-border px-3 py-1.5 text-xs">{t("automation.load_more")}</button> : null}
@@ -516,7 +535,7 @@ function AutomationDashboard(props: {
                 </div>
               ) : null}
               {error ? <Notice tone="error">{error}<button type="button" className="ml-3 underline" onClick={() => void (props.client ? load() : props.onReconnect())}>{t("automation.retry")}</button></Notice> : null}
-              {loading ? <div className="flex min-h-72 items-center justify-center text-dls-secondary">{t("automation.loading")}</div> : <RunHistory runs={visibleRuns} onOpenSession={openSession} />}
+              {loading ? <div className="flex min-h-72 items-center justify-center text-dls-secondary">{t("automation.loading")}</div> : <RunHistory runs={visibleRuns} onOpenSession={(workspaceId, sessionId, viewedResult) => void openSession(workspaceId, sessionId, viewedResult)} />}
               {!loading && nextCursor ? <button type="button" onClick={() => void load(nextCursor, true)} className="mx-auto mt-6 rounded-xl border border-dls-border px-5 py-2 text-sm">{t("automation.load_more")}</button> : null}
             </div>
           </div>
@@ -528,19 +547,6 @@ function AutomationDashboard(props: {
           <AutomationTaskLanding onSelect={(template) => navigate("/automations/new", { state: { templateId: template.id } })} />
         )}
       </main>
-      <ConfirmModal
-        open={batchDeleteOpen}
-        title={t("automation.delete")}
-        message={t("automation.batch_delete_confirm", { count: selectedIds.size })}
-        confirmLabel={t("automation.delete")}
-        cancelLabel={t("automation.cancel")}
-        variant="danger"
-        onCancel={() => setBatchDeleteOpen(false)}
-        onConfirm={() => {
-          setBatchDeleteOpen(false);
-          void deleteSelected();
-        }}
-      />
     </div>
   );
 }
@@ -579,18 +585,17 @@ function AutomationTaskLanding({ onSelect }: { onSelect: (template: AutomationTe
 }
 
 function TaskList(props: {
-  onOpenSession: (workspaceId: string, sessionId: string) => void;
+  onOpenSession: (workspaceId: string, sessionId: string, viewedResult?: { automationId: string; runId: string }) => void;
   compact?: boolean;
   tasks: AutomationDefinitionRecord[];
   client: JuggleWorkServerClient | null;
   reload: () => Promise<void>;
-  selecting: boolean;
-  selectedIds: Set<string>;
-  onToggleSelected: (id: string) => void;
 }) {
+  const { activeRuns, refresh: refreshActivity } = useAutomationActivity();
   const navigate = useNavigate();
   const [busy, setBusy] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<AutomationDefinition | null>(null);
+  const [pausedGroupExpanded, setPausedGroupExpanded] = useState(false);
   // TIPS: 任务 2.3b——"解除阻塞"推送只带仓库全名，这里对着当前整份列表找出目标仓库是
   // 谁的事件触发配置，给一个能直接跳进去的提示，而不是让用户自己翻列表找。只有列表
   // 页挂载着才能收到这个提示；没挂载时不会漏掉——2.3b 本身的就绪态徽标是轮询出来的，
@@ -624,6 +629,7 @@ function TaskList(props: {
       // 刷新只会让整个列表重绘一次，用户看到的就是「点一下闪一下」。
       if (action === "run") {
         await props.client.runAutomation(task.id);
+        await refreshActivity();
         toast.success(t("automation.run_started"));
         return;
       }
@@ -638,28 +644,53 @@ function TaskList(props: {
       setBusy(null);
     }
   };
-  const groups = {
-    [t("automation.current")]: props.tasks.filter((task) => task.definition.lifecycle !== "completed"),
-    [t("automation.ended")]: props.tasks.filter((task) => task.definition.lifecycle === "completed"),
-  };
+  const activeRunByAutomationId = new Map(activeRuns.map((run) => [run.automationId, run]));
+  const groups = [
+    {
+      key: "current",
+      label: t("automation.current"),
+      tasks: props.tasks.filter((task) => task.definition.lifecycle !== "paused" && task.definition.lifecycle !== "completed"),
+    },
+    {
+      key: "paused",
+      label: t("automation.paused"),
+      tasks: props.tasks.filter((task) => task.definition.lifecycle === "paused"),
+      collapsible: true,
+    },
+    {
+      key: "ended",
+      label: t("automation.ended"),
+      tasks: props.tasks.filter((task) => task.definition.lifecycle === "completed"),
+    },
+  ];
   return (
     <>
       <div className={cn(props.compact ? "space-y-5 py-1" : "mt-10 space-y-8")}>
-        {Object.entries(groups).map(([label, tasks]) => tasks.length ? (
-          <section key={label}>
-            <h2 className={cn("mb-2 text-[11px] font-medium uppercase tracking-wide text-dls-secondary", props.compact && "px-2")}>{label}</h2>
-            <div className="space-y-1">
+        {groups.map(({ key, label, tasks, collapsible }) => tasks.length ? (
+          <section key={key} data-automation-task-group={key}>
+            <h2 className={cn("mb-2 text-[11px] font-medium uppercase tracking-wide text-dls-secondary", props.compact && "px-2")}>
+              {collapsible ? (
+                <button
+                  type="button"
+                  aria-expanded={pausedGroupExpanded}
+                  onClick={() => setPausedGroupExpanded((expanded) => !expanded)}
+                  className="flex items-center gap-1.5 rounded-md text-left transition-colors hover:text-dls-text"
+                >
+                  <span>{label}</span>
+                  <ChevronDown className={cn("size-3.5 transition-transform", !pausedGroupExpanded && "-rotate-90")} aria-hidden="true" />
+                </button>
+              ) : label}
+            </h2>
+            {!collapsible || pausedGroupExpanded ? <div className="space-y-1">
               {tasks.map((record) => (
                 <TaskRow
                   onOpenSession={props.onOpenSession}
                   key={record.definition.id}
                   compact={props.compact}
                   record={record}
+                  activeRun={activeRunByAutomationId.get(record.definition.id)}
                   client={props.client}
                   busy={busy === record.definition.id}
-                  selecting={props.selecting}
-                  selected={props.selectedIds.has(record.definition.id)}
-                  onToggleSelected={() => props.onToggleSelected(record.definition.id)}
                   onEdit={() => navigate(`/automations/${encodeURIComponent(record.definition.id)}`)}
                   onAction={(action) => {
                     if (action === "delete") {
@@ -670,7 +701,7 @@ function TaskList(props: {
                   }}
                 />
               ))}
-            </div>
+            </div> : null}
           </section>
         ) : null)}
       </div>
@@ -703,15 +734,13 @@ function TaskList(props: {
  * @param onEdit 打开编辑页
  * @param onAction 触发立即执行 / 暂停 / 恢复 / 删除
  */
-function TaskRow({ compact = false, record, client, busy, selecting, selected, onToggleSelected, onEdit, onAction, onOpenSession }: {
-  onOpenSession: (workspaceId: string, sessionId: string) => void;
+function TaskRow({ compact = false, record, activeRun, client, busy, onEdit, onAction, onOpenSession }: {
+  onOpenSession: (workspaceId: string, sessionId: string, viewedResult?: { automationId: string; runId: string }) => void;
   compact?: boolean;
   record: AutomationDefinitionRecord;
+  activeRun?: AutomationRun;
   client: JuggleWorkServerClient | null;
   busy: boolean;
-  selecting: boolean;
-  selected: boolean;
-  onToggleSelected: () => void;
   onEdit: () => void;
   onAction: (action: "run" | "pause" | "resume" | "delete") => void;
 }) {
@@ -761,9 +790,40 @@ function TaskRow({ compact = false, record, client, busy, selecting, selected, o
     }
   }, [client, sessionsCursor, sessionsLoading, task.id]);
 
+  useEffect(() => {
+    if (!expanded || !client) return;
+    let disposed = false;
+    const interval = window.setInterval(() => {
+      void client.listAutomationRuns({ automationId: task.id, limit: 50 }).then((page) => {
+        if (disposed) return;
+        setSessionRuns((current) => {
+          const refreshed = new Map(page.items.map((run) => [run.id, run]));
+          return [...page.items, ...current.filter((run) => !refreshed.has(run.id))];
+        });
+      }).catch(() => undefined);
+    }, 2_000);
+    return () => { disposed = true; window.clearInterval(interval); };
+  }, [client, expanded, task.id]);
+
   const openPrimaryTarget = async () => {
-    if (selecting) {
-      onToggleSelected();
+    // Prefer the state advertised by the row: a running conversation first, then the exact
+    // unread result. Besides matching the indicator, this guarantees one click clears that
+    // result's durable unread cursor instead of opening an older prepared conversation.
+    if (activeRun?.sessionId) {
+      onOpenSession(activeRun.workspaceId, activeRun.sessionId);
+      if (createsNewChatPerRun) {
+        setExpanded(true);
+        void loadSessions(false);
+      }
+      return;
+    }
+    const unreadResult = record.hasUnreadResult ? record.latestResultRun : undefined;
+    if (unreadResult?.sessionId) {
+      onOpenSession(unreadResult.workspaceId, unreadResult.sessionId, { automationId: task.id, runId: unreadResult.id });
+      if (createsNewChatPerRun) {
+        setExpanded(true);
+        void loadSessions(false);
+      }
       return;
     }
     if (task.trigger.kind !== "event") {
@@ -773,7 +833,10 @@ function TaskRow({ compact = false, record, client, busy, selecting, selected, o
       try {
         // 未运行的任务还没有 run.sessionId；由服务端准备并绑定会话，不能用“立即执行”代替打开。
         const { item } = await client.prepareAutomationSession(task.id);
-        onOpenSession(item.workspaceId, item.sessionId);
+        const latest = record.latestResultRun;
+        onOpenSession(item.workspaceId, item.sessionId, latest?.sessionId === item.sessionId
+          ? { automationId: task.id, runId: latest.id }
+          : undefined);
         if (createsNewChatPerRun) {
           setExpanded(true);
           void loadSessions(false);
@@ -799,7 +862,7 @@ function TaskRow({ compact = false, record, client, busy, selecting, selected, o
       onEdit();
       return;
     }
-    onOpenSession(target.workspaceId, target.sessionId);
+    onOpenSession(target.workspaceId, target.sessionId, isResultRun(target) ? { automationId: task.id, runId: target.id } : undefined);
   };
   // TIPS:任务 6.1——只有事件触发的自动化才需要这个检测，定时任务没有"服务端订阅账号"这个概念。
   const accountStatus = useAutomationSubscriptionAccountStatus(client, task.id, task.trigger.kind === "event");
@@ -816,21 +879,6 @@ function TaskRow({ compact = false, record, client, busy, selecting, selected, o
         "flex items-center gap-2",
         compact ? "min-h-[58px] px-2 py-2" : "h-14 gap-3 px-4",
       )}>
-      {selecting ? (
-        <button
-          type="button"
-          role="checkbox"
-          aria-checked={selected}
-          aria-label={t("automation.select_task", { name: task.name })}
-          onClick={onToggleSelected}
-          className={cn(
-            "flex size-5 shrink-0 items-center justify-center rounded-md border border-[#ebebeb] transition-colors dark:border-dls-border",
-            selected && "border-dls-text bg-dls-text text-background",
-          )}
-        >
-          {selected ? <Check size={13} strokeWidth={3} /> : null}
-        </button>
-      ) : null}
       <span className={cn("flex min-w-0 flex-1", compact ? "items-start" : "items-center truncate")}>
         <button
           type="button"
@@ -842,13 +890,15 @@ function TaskRow({ compact = false, record, client, busy, selecting, selected, o
         >
           <span className="flex min-w-0 items-center gap-1.5">
             <span className="truncate font-medium">{task.name}</span>
-            {createsNewChatPerRun && !selecting ? (
+            {createsNewChatPerRun ? (
               <ChevronRight className={cn("size-3.5 shrink-0 text-dls-secondary transition-transform", expanded && "rotate-90")} />
             ) : null}
           </span>
-          <span className={cn("text-xs text-dls-secondary", compact ? "mt-0.5 truncate" : "ml-3")}>
-            {compact ? `${task.workspace?.name ?? t("automation.workspace_automatic_short")} · ${triggerSummaryLabel(task.trigger)} · ${taskTimingLabel(record, now)}` : (task.workspace?.name ?? t("automation.workspace_automatic_short"))}
-          </span>
+          {compact || task.workspace?.name ? (
+            <span className={cn("text-xs text-dls-secondary", compact ? "mt-0.5 truncate" : "ml-3")}>
+              {compact ? [task.workspace?.name, triggerSummaryLabel(task.trigger), taskTimingLabel(record, now)].filter(Boolean).join(" · ") : task.workspace?.name}
+            </span>
+          ) : null}
           {!compact ? <span className="ml-3 text-xs text-dls-secondary">{triggerSummaryLabel(task.trigger)}</span> : null}
           {task.activeRange ? (
             <span className={cn("text-xs text-dls-secondary", compact ? "mt-0.5 truncate" : "ml-3")}>
@@ -871,6 +921,14 @@ function TaskRow({ compact = false, record, client, busy, selecting, selected, o
       {/* TIPS:时间与操作区叠在同一个固定宽度的槽位里，用透明度切换而不是 display——
           否则悬浮时行内元素宽度突变，整行会跟着抖动。 */}
       <div className={cn("relative h-9 shrink-0", compact ? "w-[58px]" : "w-[168px]")}>
+        <AutomationTaskStatusIndicator
+          activeRun={activeRun}
+          record={record}
+          className={cn(
+            "absolute right-2 top-1/2 -translate-y-1/2 transition-opacity",
+            "group-hover/row:opacity-0 group-has-[:focus-visible]/row:opacity-0",
+          )}
+        />
         <span className={cn(
           "absolute inset-0 flex items-center justify-end truncate text-xs text-dls-secondary transition-opacity",
             compact && "hidden",
@@ -880,7 +938,7 @@ function TaskRow({ compact = false, record, client, busy, selecting, selected, o
         </span>
         <div className={cn(
           "absolute inset-0 flex items-center justify-end gap-1 opacity-0 transition-opacity",
-          selecting ? "hidden" : "group-hover/row:opacity-100",
+          "group-hover/row:opacity-100",
           menuOpen ? "opacity-100" : "pointer-events-none group-hover/row:pointer-events-auto",
         )}>
         <button
@@ -942,7 +1000,7 @@ function TaskRow({ compact = false, record, client, busy, selecting, selected, o
         </div>
       </div>
       </div>
-      {createsNewChatPerRun && expanded && !selecting ? (
+      {createsNewChatPerRun && expanded ? (
         <div className="mx-2 mb-2 space-y-1 border-l border-dls-border pl-3">
           {sessionsLoading && !sessionsLoaded ? (
             <div className="px-2 py-2 text-xs text-dls-secondary">{t("automation.loading")}</div>
@@ -952,11 +1010,12 @@ function TaskRow({ compact = false, record, client, busy, selecting, selected, o
             <button
               key={run.sessionId}
               type="button"
-              onClick={() => onOpenSession(run.workspaceId, run.sessionId!)}
+              onClick={() => onOpenSession(run.workspaceId, run.sessionId!, isResultRun(run) ? { automationId: task.id, runId: run.id } : undefined)}
               className="flex w-full min-w-0 items-center gap-2 rounded-lg px-2 py-2 text-left transition-colors hover:bg-dls-hover"
             >
               <MessageCircle className="size-3.5 shrink-0 text-dls-secondary" />
               <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{task.name}</span>
+              <AutomationRunStateBadge run={run} />
               <span className="shrink-0 text-[11px] text-dls-secondary">{formatDateTime(run.startedAt ?? run.queuedAt)}</span>
             </button>
           ))}
@@ -1027,42 +1086,6 @@ function useNowTick(intervalMs: number): number {
 }
 
 /**
- * 批量操作条
- * @param total 当前可见任务数
- * @param selected 已勾选的任务 ID
- * @param busy 正在批量删除
- * @param onToggleAll 全选 / 取消全选
- * @param onDelete 删除已勾选任务
- */
-function BatchActionBar({ compact = false, total, selected, busy, onToggleAll, onDelete }: {
-  compact?: boolean;
-  total: number;
-  selected: Set<string>;
-  busy: boolean;
-  onToggleAll: () => void;
-  onDelete: () => void;
-}) {
-  const allSelected = total > 0 && selected.size === total;
-  return (
-    <div className={cn("flex items-center gap-3 rounded-xl border border-dls-border bg-background", compact ? "mx-2 mb-2 px-3 py-2" : "mt-6 px-4 py-3")}>
-      <button type="button" onClick={onToggleAll} className={cn("underline-offset-2 hover:underline", compact ? "text-xs" : "text-sm")}>
-        {allSelected ? t("automation.batch_clear_all") : t("automation.batch_select_all")}
-      </button>
-      <span className={cn("text-dls-secondary", compact ? "text-xs" : "text-sm")}>{t("automation.batch_selected", { count: selected.size })}</span>
-      <button
-        type="button"
-        disabled={!selected.size || busy}
-        onClick={onDelete}
-        className={cn("ml-auto inline-flex items-center justify-center rounded-lg bg-red-9 font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-40", compact ? "size-8" : "h-9 gap-2 px-4 text-sm")}
-      >
-        <Trash2 className="size-4" />
-        {!compact ? (busy ? t("automation.batch_deleting") : t("automation.delete")) : null}
-      </button>
-    </div>
-  );
-}
-
-/**
  * 模板画廊页
  * @param onBack 返回任务列表
  * @param onSelect 选择模板并进入新建页
@@ -1112,7 +1135,7 @@ function AutomationBreadcrumb({ onBack, current }: { onBack: () => void; current
  * 运行记录列表
  * @param runs 运行记录
  */
-function RunHistory({ runs, onOpenSession }: { runs: AutomationRun[]; onOpenSession: (workspaceId: string, sessionId: string) => void }) {
+function RunHistory({ runs, onOpenSession }: { runs: AutomationRun[]; onOpenSession: (workspaceId: string, sessionId: string, viewedResult?: { automationId: string; runId: string }) => void }) {
   if (!runs.length) return (
     <section className="flex min-h-[620px] flex-col items-center justify-center text-center text-dls-secondary">
       <Clock3 className="mb-5 size-16 stroke-[1.25]" /><h1 className="text-base font-medium text-dls-text">{t("automation.empty_runs")}</h1><p className="mt-2 text-[13px]">{t("automation.empty_runs_hint")}</p>
@@ -1133,7 +1156,7 @@ function RunHistory({ runs, onOpenSession }: { runs: AutomationRun[]; onOpenSess
           );
         }
         return (
-          <article key={run.id} role={run.sessionId ? "button" : undefined} tabIndex={run.sessionId ? 0 : undefined} onKeyDown={(event) => { if (run.sessionId && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); onOpenSession(run.workspaceId, run.sessionId); } }} onClick={() => run.sessionId && onOpenSession(run.workspaceId, run.sessionId)} className={cn("grid gap-2 px-5 py-4 md:grid-cols-[minmax(180px,1fr)_160px_160px_120px]", run.sessionId && "cursor-pointer hover:bg-dls-hover/50 focus-visible:outline-2 focus-visible:outline-dls-accent")}>
+          <article key={run.id} role={run.sessionId ? "button" : undefined} tabIndex={run.sessionId ? 0 : undefined} onKeyDown={(event) => { if (run.sessionId && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); onOpenSession(run.workspaceId, run.sessionId, isResultRun(run) ? { automationId: run.automationId, runId: run.id } : undefined); } }} onClick={() => run.sessionId && onOpenSession(run.workspaceId, run.sessionId, isResultRun(run) ? { automationId: run.automationId, runId: run.id } : undefined)} className={cn("grid gap-2 px-5 py-4 md:grid-cols-[minmax(180px,1fr)_160px_160px_120px]", run.sessionId && "cursor-pointer hover:bg-dls-hover/50 focus-visible:outline-2 focus-visible:outline-dls-accent")}>
             <div>
               <div className="font-medium">{run.automationName}</div>
               <div className="text-xs text-dls-secondary">
@@ -1167,6 +1190,10 @@ function RunHistory({ runs, onOpenSession }: { runs: AutomationRun[]; onOpenSess
       })}
     </div>
   );
+}
+
+function isResultRun(run: AutomationRun): boolean {
+  return run.state === "succeeded" || run.state === "failed";
 }
 
 function TemplateCatalog({ onSelect }: { onSelect: (template: AutomationTemplate) => void }) {

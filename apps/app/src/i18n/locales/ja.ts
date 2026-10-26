@@ -3,6 +3,7 @@
  */
 
 export default {
+  "session.usage_limit_recharge": "利用上限に達しました。引き続き利用するには、チャージしてください。",
   "app.compact_command_desc": "このセッションを要約してコンテキストサイズを削減します。",
   "app.error_audit_load": "監査ログの読み込みに失敗しました。",
   "app.error_auth_failed": "認証に失敗しました",

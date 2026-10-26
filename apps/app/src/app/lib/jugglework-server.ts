@@ -2406,6 +2406,12 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
         token, hostToken, timeoutMs: timeouts.config,
       });
     },
+    /** 将某个任务的结果型运行标记为已查看；查看旧结果不会清除更新结果的未读状态。 */
+    markAutomationResultViewed: (automationId: string, runId: string) => requestJson<{ hasUnreadResult: boolean }>(
+      baseUrl, `/automations/${encodeURIComponent(automationId)}/viewed-result`, {
+        token, hostToken, method: "POST", body: { runId }, timeoutMs: timeouts.config,
+      },
+    ),
     /** 读取指定本机工作空间当前可用于自动化的模型、Agent 和技能。 */
     /**
      * 读取自动化可选依赖。
@@ -2525,7 +2531,7 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
       },
     ),
     /** 分页读取本机自动化运行记录。 */
-    listAutomationRuns: (options?: { cursor?: string; limit?: number; automationId?: string; status?: string; trigger?: string; scheduledFrom?: number; scheduledTo?: number }) => {
+    listAutomationRuns: (options?: { cursor?: string; limit?: number; automationId?: string; workspaceId?: string; sessionId?: string; status?: string; trigger?: string; scheduledFrom?: number; scheduledTo?: number }) => {
       const query = new URLSearchParams();
       for (const [key, value] of Object.entries(options ?? {})) if (value !== undefined) query.set(key, String(value));
       return requestJson<AutomationRunListResponse>(baseUrl, `/automation-runs${query.size ? `?${query}` : ""}`, {

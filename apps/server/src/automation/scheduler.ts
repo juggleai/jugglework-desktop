@@ -23,13 +23,12 @@ export type AutomationSchedulerOptions = {
   log?: (event: string, fields: Record<string, string | number | boolean | null>) => void;
 };
 
-/** Embedded Server 内的单定时器、单执行槽自动化调度器。 */
+/** Embedded Server 内的单定时器调度器；不同会话的运行独立派发、独立跟踪。 */
 export class AutomationScheduler {
   private timer: unknown = null;
   private started = false;
   private waking = false;
-  private executing = false;
-  private executionPromise: Promise<void> | null = null;
+  private readonly inFlightRuns = new Map<string, Promise<void>>();
   private readonly clock: AutomationSchedulerClock;
 
   constructor(private readonly options: AutomationSchedulerOptions) {
@@ -40,26 +39,28 @@ export class AutomationScheduler {
   start(): void {
     if (this.started) return;
     this.started = true;
-    void this.recoverAndWake();
+    this.recoverAndWake();
   }
 
-  private async recoverAndWake(): Promise<void> {
+  private recoverAndWake(): void {
     const reconcile = this.options.executor.reconcile?.bind(this.options.executor);
     if (reconcile) {
       for (const snapshot of this.options.repository.listActiveRunSnapshots()) {
         if (!this.started) return;
         if (snapshot.run.state !== "running") continue;
-        this.log("automation_reconciliation_started", { automationId: snapshot.run.automationId, runId: snapshot.run.id });
-        await reconcile(snapshot);
-        const result = this.options.repository.getRun(snapshot.run.id);
-        this.log("automation_reconciliation_finished", {
-          automationId: snapshot.run.automationId,
-          runId: snapshot.run.id,
-          state: result?.state ?? "missing",
+        this.trackRun(snapshot, "reconciliation", async () => {
+          this.log("automation_reconciliation_started", { automationId: snapshot.run.automationId, runId: snapshot.run.id });
+          await reconcile(snapshot);
+          const result = this.options.repository.getRun(snapshot.run.id);
+          this.log("automation_reconciliation_finished", {
+            automationId: snapshot.run.automationId,
+            runId: snapshot.run.id,
+            state: result?.state ?? "missing",
+          });
         });
       }
     }
-    if (this.started) await this.wake();
+    if (this.started) void this.wake();
   }
 
   /** 通知调度器任务或运行状态已改变，并立即重新计算最近截止时间。 */
@@ -73,7 +74,7 @@ export class AutomationScheduler {
   async dispose(): Promise<void> {
     this.started = false;
     this.clearTimer();
-    await this.executionPromise?.catch(() => undefined);
+    await Promise.all(this.inFlightRuns.values());
   }
 
   private async wake(): Promise<void> {
@@ -82,7 +83,7 @@ export class AutomationScheduler {
     try {
       const now = this.clock.now();
       for (const record of this.options.repository.listDueDefinitions(now)) this.claimLatest(record, now);
-      void this.pump();
+      this.pump();
     } finally {
       this.waking = false;
       this.scheduleNext();
@@ -133,20 +134,51 @@ export class AutomationScheduler {
     }
   }
 
-  private async pump(): Promise<void> {
-    if (!this.started || this.executing) return;
-    const next = this.options.repository.listActiveRunSnapshots().find((snapshot) => snapshot.run.state === "queued");
-    if (!next) return;
-    this.executing = true;
-    const execution = this.execute(next);
-    this.executionPromise = execution;
-    try {
-      await execution;
-    } finally {
-      this.executing = false;
-      this.executionPromise = null;
-      if (this.started) void this.pump();
+  private pump(): void {
+    if (!this.started) return;
+    for (const snapshot of this.options.repository.listActiveRunSnapshots()) {
+      if (snapshot.run.state !== "queued") continue;
+      this.trackRun(snapshot, "dispatch", () => this.execute(snapshot));
     }
+  }
+
+  private trackRun(snapshot: AutomationRunSnapshot, operation: "dispatch" | "reconciliation", action: () => Promise<void>): void {
+    const runId = snapshot.run.id;
+    if (!this.started || this.inFlightRuns.has(runId)) return;
+    // Reserve synchronously before executor/preflight can yield while the persisted run is still queued.
+    // Defer invocation so even synchronous failures and reentrant wake-ups see the reservation.
+    const execution = Promise.resolve().then(() => {
+      if (this.started) return action();
+    }).catch((error: unknown) => {
+      this.log(`automation_${operation}_failed`, {
+        automationId: snapshot.run.automationId,
+        runId,
+        error: safeErrorCode(error),
+      });
+      // The executor normally persists its own failures. If an unexpected exception escapes,
+      // do not strand a running run or retry a possibly already-dispatched prompt as queued work.
+      try {
+        const current = this.options.repository.getRun(runId);
+        if (current?.state === "queued" || current?.state === "running") {
+          const now = this.clock.now();
+          this.options.repository.updateRun(runId, current.revision, {
+            state: "failed",
+            endedAt: now,
+            errorCode: operation === "reconciliation" ? "session_lost" : "execution_failed",
+            errorMessage: "自动化运行跟踪异常，已停止本次运行以避免重复发送任务",
+          }, now);
+        }
+      } catch (persistenceError) {
+        this.log("automation_run_failure_persist_failed", {
+          automationId: snapshot.run.automationId,
+          runId,
+          error: safeErrorCode(persistenceError),
+        });
+      }
+    }).finally(() => {
+      this.inFlightRuns.delete(runId);
+    });
+    this.inFlightRuns.set(runId, execution);
   }
 
   private async execute(snapshot: AutomationRunSnapshot): Promise<void> {

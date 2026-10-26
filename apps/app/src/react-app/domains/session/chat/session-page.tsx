@@ -45,6 +45,7 @@ import { useAppNavigationSidebarPreview } from "../../../shell/app-navigation-si
 import { useSessionManagementStore } from "../sidebar/session-management-store";
 import type { TaskScope } from "../sidebar/task-scope-store";
 import { SessionSurface, type SessionSurfaceProps } from "../surface/session-surface";
+import { AutomationSessionStatus } from "../../automations/automation-session-status";
 import { useSessionFindStore } from "../surface/find-store";
 import {
   SidebarInset,
@@ -1237,6 +1238,7 @@ export function SessionPage(props: SessionPageProps) {
         "z-10 flex h-[var(--session-shell-top-inset)] min-h-[var(--session-shell-top-inset)] shrink-0 items-center justify-between border-b border-dls-border/70 bg-dls-sidebar px-4 md:px-6 mac:titlebar-drag",
         !props.embedded && shellConfig.sidebar && !sidebarOpen && "mac:pl-[76px]",
       )}
+      style={{ WebkitAppRegion: "drag" } as CSSProperties}
       data-session-shell-topbar
       >
         {!props.embedded && shellConfig.sidebar && !sidebarOpen ? (
@@ -1249,7 +1251,11 @@ export function SessionPage(props: SessionPageProps) {
         ) : null}
         <div className="flex min-w-0 items-center gap-3">
         {props.embedded && !sidebarOpen ? (
-          <div className="flex shrink-0 items-center gap-0 mac:titlebar-no-drag" data-embedded-session-collapsed-controls>
+          <div
+            className="flex shrink-0 items-center gap-0 mac:titlebar-no-drag"
+            style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
+            data-embedded-session-collapsed-controls
+          >
             <Button
               variant="ghost"
               size="icon-sm"
@@ -1311,6 +1317,7 @@ export function SessionPage(props: SessionPageProps) {
                   readinessTone === "pending" && "bg-amber-9",
                   readinessTone === "unavailable" && "bg-red-9",
                 )}
+                style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
               />
             )}
           />
@@ -1330,9 +1337,19 @@ export function SessionPage(props: SessionPageProps) {
             ? t("session.create_or_connect_workspace")
             : selectedSessionTitle || t("session.default_title")}
         </h1>
-        <span className="hidden truncate text-[13px] text-dls-secondary lg:inline">
-          {workspaceName}
-        </span>
+        {props.embedded && props.juggleworkServerClient && props.runtimeWorkspaceId && props.selectedSessionId ? (
+          <AutomationSessionStatus
+            client={props.juggleworkServerClient}
+            workspaceId={props.runtimeWorkspaceId}
+            sessionId={props.selectedSessionId}
+            showBadge={false}
+          />
+        ) : null}
+        {!props.embedded ? (
+          <span className="hidden truncate text-[13px] text-dls-secondary lg:inline">
+            {workspaceName}
+          </span>
+        ) : null}
         {gitBranchLoading ? (
           <span
             aria-hidden
@@ -1354,7 +1371,11 @@ export function SessionPage(props: SessionPageProps) {
         ) : null}
       </div>
 
-      <div className="flex shrink-0 items-center gap-1.5 text-gray-10 mac:titlebar-no-drag" data-session-topbar-actions>
+      <div
+        className="flex shrink-0 items-center gap-1.5 text-gray-10 mac:titlebar-no-drag"
+        style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
+        data-session-topbar-actions
+      >
         {findButtonSessionId ? (
           <Tooltip>
             <TooltipTrigger

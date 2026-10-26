@@ -133,10 +133,10 @@ describe("Desktop automation catalog and routes", () => {
     expect(dashboard).not.toMatch(/automation\.from_template/);
     expect(taskList).not.toMatch(/navigate\("\/automations\/runs"\)/);
     expect(page).toMatch(/AUTOMATION_TEMPLATES\.slice\(0, 6\)/);
-    expect(page).toMatch(/t\("automation\.batch_manage"\)/);
+    expect(dashboard).not.toMatch(/t\("automation\.batch_manage"\)/);
     for (const locale of ["zh", "en"]) {
       const table = readFileSync(new URL(`../src/i18n/locales/${locale}.ts`, import.meta.url), "utf8");
-      for (const key of ["batch_manage", "batch_delete_confirm", "from_template", "breadcrumb_root"]) {
+      for (const key of ["from_template", "breadcrumb_root"]) {
         expect(table).toMatch(new RegExp(`"automation\\.${key}"`));
       }
     }
@@ -148,17 +148,66 @@ describe("Desktop automation catalog and routes", () => {
     expect(row).toMatch(/task\.newChatPerRun !== false/);
     expect(row).toMatch(/listAutomationRuns\(\{[\s\S]+automationId: task\.id/);
     expect(row).toMatch(/createsNewChatPerRun[\s\S]+setExpanded/);
-    expect(row).toContain("onOpenSession(target.workspaceId, target.sessionId)");
+    expect(row).toContain("onOpenSession(target.workspaceId, target.sessionId,");
     expect(row).toContain('if (task.trigger.kind !== "event")');
     expect(row).toContain("await client.prepareAutomationSession(task.id)");
-    expect(row).toContain("onOpenSession(item.workspaceId, item.sessionId)");
+    expect(row).toContain("onOpenSession(item.workspaceId, item.sessionId,");
     expect(row).toContain("if (!client || openingSessionRef.current) return;");
     expect(row).not.toContain("client.runAutomation(");
-    expect(row).toContain("onOpenSession(run.workspaceId, run.sessionId!)");
+    expect(row).toContain("onOpenSession(run.workspaceId, run.sessionId!,");
     expect(row).not.toContain("navigate(");
     expect(row).toMatch(/if \(nextExpanded\) void loadSessions\(false\);\s*return;/);
     expect(row).toMatch(/if \(!target\?\.sessionId\) \{\s*onEdit\(\)/);
     expect(row).toMatch(/automation\.edit_task/);
+  });
+
+  test("filters scheduled tasks by lifecycle and unread result and marks opened results viewed", () => {
+    const page = readFileSync(new URL("../src/react-app/domains/automations/automation-page.tsx", import.meta.url), "utf8");
+    const client = readFileSync(new URL("../src/app/lib/jugglework-server.ts", import.meta.url), "utf8");
+    expect(page).toContain("DEFAULT_AUTOMATION_TASK_STATUS_FILTERS");
+    expect(page).toContain("matchesAutomationTaskFilter(record, taskStatusFilters, unreadOnly)");
+    expect(page).toContain("DropdownMenuCheckboxItem");
+    expect(page).toMatch(/<DropdownMenuGroup>[\s\S]+<DropdownMenuLabel[\s\S]+<\/DropdownMenuGroup>/);
+    expect(page).toContain('(["enabled", "paused", "completed"] as const)');
+    expect(page).toContain('t(`automation.filter_${filter}`)');
+    expect(page).toContain('t("automation.filter_unread")');
+    expect(page).toContain("markAutomationResultViewed(viewedResult.automationId, viewedResult.runId)");
+    const sessionStatus = readFileSync(new URL("../src/react-app/domains/automations/automation-session-status.tsx", import.meta.url), "utf8");
+    expect(sessionStatus).toContain("client.markAutomationResultViewed(run.automationId, run.id)");
+    expect(client).toContain("/viewed-result");
+  });
+
+  test("groups paused scheduled tasks separately from current and ended tasks", () => {
+    const page = readFileSync(new URL("../src/react-app/domains/automations/automation-page.tsx", import.meta.url), "utf8");
+    expect(page).toContain('key: "current"');
+    expect(page).toContain('task.definition.lifecycle !== "paused" && task.definition.lifecycle !== "completed"');
+    expect(page).toContain('key: "paused"');
+    expect(page).toContain('task.definition.lifecycle === "paused"');
+    expect(page).toContain('key: "ended"');
+    expect(page).toContain('task.definition.lifecycle === "completed"');
+    expect(page).toContain('data-automation-task-group={key}');
+    expect(page).toContain('const [pausedGroupExpanded, setPausedGroupExpanded] = useState(false)');
+    expect(page).toContain('aria-expanded={pausedGroupExpanded}');
+    for (const locale of ["zh", "en"]) {
+      const table = readFileSync(new URL(`../src/i18n/locales/${locale}.ts`, import.meta.url), "utf8");
+      expect(table).toMatch(/"automation\.paused":/);
+    }
+  });
+
+  test("shows live and unread outcomes in scheduled-task sidebars", () => {
+    const page = readFileSync(new URL("../src/react-app/domains/automations/automation-page.tsx", import.meta.url), "utf8");
+    const preview = readFileSync(new URL("../src/react-app/domains/automations/automation-sidebar-preview.tsx", import.meta.url), "utf8");
+    const indicator = readFileSync(new URL("../src/react-app/domains/automations/automation-task-status-indicator.tsx", import.meta.url), "utf8");
+    expect(page).toContain("activeRunByAutomationId");
+    expect(page).toContain("<AutomationTaskStatusIndicator");
+    expect(page).toContain("const unreadResult = record.hasUnreadResult ? record.latestResultRun : undefined");
+    expect(page).toContain("onOpenSession(unreadResult.workspaceId, unreadResult.sessionId,");
+    expect(preview).toContain("<AutomationTaskStatusIndicator");
+    expect(indicator).toContain('data-automation-task-status="running"');
+    expect(indicator).toContain('"succeeded-unread"');
+    expect(indicator).toContain('"failed-unread"');
+    expect(indicator).toContain('const AUTOMATION_SUCCESS_DOT = "#2FBE54"');
+    expect(indicator).toContain('const AUTOMATION_FAILURE_DOT = "#E8933A"');
   });
 
   test("starts the shared local-server connection and keeps local automations out of cloud sync", () => {
@@ -252,12 +301,11 @@ describe("Desktop automation catalog and routes", () => {
     expect(page).toMatch(/<AutomationTaskLanding onSelect=/);
   });
 
-  test("uses project confirm dialogs for single and batch automation deletion", () => {
+  test("uses the project confirm dialog for single automation deletion", () => {
     const page = readFileSync(new URL("../src/react-app/domains/automations/automation-page.tsx", import.meta.url), "utf8");
     expect(page).toMatch(/import \{ ConfirmModal \} from "@\/react-app\/design-system\/modals\/confirm-modal"/);
-    expect(page).toMatch(/open=\{batchDeleteOpen\}[\s\S]+automation\.batch_delete_confirm[\s\S]+variant="danger"/);
     expect(page).toMatch(/open=\{Boolean\(pendingDelete\)\}[\s\S]+automation\.delete_confirm[\s\S]+variant="danger"/);
-    expect(page).not.toMatch(/window\.confirm\(t\("automation\.(?:batch_)?delete_confirm/);
+    expect(page).not.toMatch(/window\.confirm\(t\("automation\.delete_confirm/);
   });
 
   test("cancels a new draft directly while retaining discard protection for other navigation", () => {
@@ -397,9 +445,18 @@ describe("Desktop automation catalog and routes", () => {
     expect(dashboard).toMatch(/"relative flex h-full min-h-0 w-full overflow-hidden"/);
     expect(dashboard).toMatch(/props\.sessionSelected \? "bg-dls-sidebar" : "bg-background"/);
     expect(dashboard).toMatch(/<aside[^>]+mac:titlebar-drag/);
-    expect(dashboard).toMatch(/h-\[var\(--app-topbar-height\)\][^\"]+mac:titlebar-no-drag/);
+    expect(dashboard).toMatch(/h-\[var\(--app-topbar-height\)\][^\"]+mac:titlebar-drag/);
     expect(dashboard).toMatch(/min-h-0 flex-1 overflow-y-auto px-2 pb-3/);
     expect(dashboard).toMatch(/<main data-testid="automation-main" className="min-w-0 flex-1 overflow-hidden">/);
+  });
+
+  test("keeps the full automation top-left chrome draggable around its controls", () => {
+    const page = readFileSync(new URL("../src/react-app/domains/automations/automation-page.tsx", import.meta.url), "utf8");
+    expect(page).toContain('WebkitAppRegion: "drag"');
+    expect(page).toContain('data-automation-sidebar-titlebar');
+    expect(page).toMatch(/data-automation-sidebar-titlebar[\s\S]+WebkitAppRegion: "no-drag"/);
+    expect(page).toContain('mac:titlebar-drag');
+    expect(page).toContain('mac:titlebar-no-drag');
   });
 });
 
