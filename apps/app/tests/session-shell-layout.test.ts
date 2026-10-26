@@ -12,6 +12,14 @@ const messageList = readFileSync(new URL("../src/components/chat/message-list.ts
 const quickNavigation = readFileSync(new URL("../src/react-app/domains/session/surface/session-quick-navigation.tsx", import.meta.url), "utf8");
 
 describe("desktop session shell layout", () => {
+  test("uses distinct expand and collapse icons for the todo progress panel", () => {
+    const todoPanel = sessionSurface.slice(sessionSurface.indexOf("function TodoPanel"), sessionSurface.indexOf("function SessionSurface"));
+    expect(sessionSurface).toContain("Maximize2, Minimize2");
+    expect(todoPanel).toContain('const toggleLabel = expanded ? t("sidebar.collapse") : t("sidebar.expand")');
+    expect(todoPanel).toMatch(/expanded[\s\S]+<Minimize2[\s\S]+:[\s\S]+<Maximize2/);
+    expect(todoPanel).not.toContain("rotate-180");
+  });
+
   test("aligns the desktop transcript text width with the composer", () => {
     expect(sessionSurface).toContain('className="mx-auto w-full max-w-[720px] lg:max-w-[864px]"');
     expect(composer).toContain('className="max-w-[800px] mx-auto"');

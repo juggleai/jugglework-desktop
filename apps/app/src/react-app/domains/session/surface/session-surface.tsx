@@ -6,7 +6,7 @@ import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } fro
 import type { UIMessage } from "ai";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { SessionStatus } from "@opencode-ai/sdk/v2/client";
-import { Check, LoaderCircle, Minimize2 } from "lucide-react";
+import { Check, LoaderCircle, Maximize2, Minimize2 } from "lucide-react";
 import { toast } from "@/components/ui/sonner";
 
 import { captureAnalyticsEvent } from "@/app/lib/analytics";
@@ -387,6 +387,7 @@ function TodoPanel(props: { todos: TodoItem[] }) {
   const completedTodos = todos.filter((todo) => todo.status === "completed").length;
   const progressLabel = t("session.todo_progress_label");
   const label = expanded ? progressLabel : `${progressLabel} · ${completedTodos}/${todos.length}`;
+  const toggleLabel = expanded ? t("sidebar.collapse") : t("sidebar.expand");
 
   useEffect(() => {
     const panel = panelRef.current;
@@ -407,13 +408,17 @@ function TodoPanel(props: { todos: TodoItem[] }) {
         <button
           type="button"
           aria-expanded={expanded}
+          aria-label={toggleLabel}
+          title={toggleLabel}
           className="flex w-full items-center justify-between px-4 py-3 text-xs text-gray-9 transition-colors hover:bg-gray-2/50"
           onClick={() => setExpanded((current) => !current)}
         >
           <div className="flex items-center gap-2">
             <span className="font-medium text-gray-11">{label}</span>
           </div>
-          <Minimize2 size={12} className={`text-gray-8 transition-transform ${expanded ? "" : "rotate-180"}`} />
+          {expanded
+            ? <Minimize2 size={12} className="text-gray-8" aria-hidden="true" />
+            : <Maximize2 size={12} className="text-gray-8" aria-hidden="true" />}
         </button>
         {expanded ? (
           <div className="max-h-60 space-y-2.5 overflow-auto border-t border-dls-border px-4 pb-3">
