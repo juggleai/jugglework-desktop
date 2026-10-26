@@ -49,10 +49,9 @@ import {
   type AutomationRun,
   type AutomationSchedule,
 } from "@jugglework/types/automation";
-import { defaultEventTrigger, EventTriggerEditor, type GithubEventTriggerClient } from "./event-trigger-editor";
+import { defaultEventTrigger } from "./event-trigger-editor";
 import { AccountMismatchBadge, useAutomationSubscriptionAccountStatus } from "./automation-account-mismatch";
 import { EventTriggerReadinessBadge, useEventTriggerReadinessBadge } from "./automation-readiness-badge";
-import { EventPromptPreview } from "./automation-event-preview";
 import { automationReadinessUnblockedEvent } from "./automation-readiness-events";
 
 import type { WorkspaceInfo } from "@/app/lib/desktop";
@@ -81,6 +80,10 @@ import { AUTOMATION_CLOUD_CONNECTOR_SCOPE_ENABLED, LOCAL_AUTOMATION_ENABLED } fr
 import { readAutomationDeviceId } from "./automation-device-identity";
 
 type AutomationPageProps = {
+  onOpenSession: (workspaceId: string, sessionId: string) => void;
+  onSessionHostChange: (host: HTMLDivElement | null) => void;
+  onClearSession: () => void;
+  sessionSelected: boolean;
   workspaceId: string;
   sessionPath: string;
   onOpenAccount: () => void;
@@ -125,6 +128,7 @@ export function AutomationPage(props: AutomationPageProps) {
   const editorVisible = creating || Boolean(editingId);
   const templatesVisible = location.pathname === "/automations/templates";
   const [editorDirty, setEditorDirty] = useState(false);
+  const [automationListRevision, setAutomationListRevision] = useState(0);
   const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false);
   const pendingDiscardActionRef = useRef<(() => void) | null>(null);
   const sidebarOpen = useUiStateStore((state) => state.sidebarOpen);
@@ -180,6 +184,15 @@ export function AutomationPage(props: AutomationPageProps) {
     navigateAfterDiscard(() => navigate("/automations"));
   };
 
+  // TIPS:新建任务使用覆盖在 Dashboard 上的弹窗，保存前后 Dashboard 不会重新挂载。
+  // 显式失效列表，避免必须切换 rail 后才能看到刚创建的任务。
+  const handleEditorSaved = useCallback((session?: { workspaceId: string; sessionId: string }) => {
+    setEditorDirty(false);
+    setAutomationListRevision((value) => value + 1);
+    navigate("/automations");
+    if (session) props.onOpenSession(session.workspaceId, session.sessionId);
+  }, [navigate, props.onOpenSession]);
+
   return (
     <div className="relative flex h-full min-h-0 w-full overflow-hidden bg-dls-sidebar mac:titlebar-drag" style={pageStyle}>
       <AppNavigationRail
@@ -193,7 +206,7 @@ export function AutomationPage(props: AutomationPageProps) {
         onOpenTaskSearch={props.onOpenTaskSearch}
         onOpenCreateWorkspace={props.onOpenCreateWorkspace}
       />
-      {!templatesVisible && !editingId ? (
+      {!templatesVisible && !(props.sessionSelected && !sidebarOpen) ? (
         <AppSecondarySidebarTopControls
           sidebarOpen={sidebarOpen}
           onOpenTaskSearch={props.onOpenTaskSearch ?? (() => undefined)}
@@ -202,32 +215,19 @@ export function AutomationPage(props: AutomationPageProps) {
       ) : null}
       <AppInsetSurface className={cn(
         templatesVisible ? "overflow-auto" : "overflow-hidden",
+        props.sessionSelected && "mb-0 mr-0 mt-0 rounded-none border-0 bg-dls-sidebar shadow-none",
       )} testId="automation-inset-surface">
         {templatesVisible ? (
           <TemplateGallery
             onBack={() => navigate("/automations")}
             onSelect={(template) => navigate("/automations/new", { state: { templateId: template.id } })}
           />
-        ) : editingId ? (
-          localServerPending ? (
-            <AutomationServerLoading />
-          ) : client ? (
-            <AutomationEditor
-              client={client}
-              presentation="page"
-              onManageConnectors={props.onOpenSettings}
-              automationId={editingId}
-              duplicateSourceId={null}
-              templateId={readTemplateId(location.state)}
-              onDirtyChange={setEditorDirty}
-              onCancel={cancelEditor}
-              onSaved={() => { setEditorDirty(false); navigate("/automations"); }}
-            />
-          ) : (
-            <AutomationServerUnavailable onRetry={reconnectLocalServer} />
-          )
         ) : (
           <AutomationDashboard
+            onOpenSession={props.onOpenSession}
+            onSessionHostChange={props.onSessionHostChange}
+            onClearSession={props.onClearSession}
+            sessionSelected={props.sessionSelected}
             client={client}
             localServerPending={localServerPending}
             history={location.pathname === "/automations/runs"}
@@ -235,10 +235,11 @@ export function AutomationPage(props: AutomationPageProps) {
             sidebarOpen={sidebarOpen}
             sidebarResizing={leftSidebarResizing}
             onStartSidebarResize={startLeftSidebarResize}
+            refreshRevision={automationListRevision}
           />
         )}
       </AppInsetSurface>
-      <Dialog open={creating} onOpenChange={(open) => { if (!open) cancelEditor(); }}>
+      <Dialog open={editorVisible} onOpenChange={(open) => { if (!open) cancelEditor(); }}>
         <DialogContent
           className="flex max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-[680px] flex-col gap-0 overflow-hidden rounded-[28px] p-0 sm:max-w-[680px]"
           data-testid="automation-create-dialog"
@@ -247,15 +248,16 @@ export function AutomationPage(props: AutomationPageProps) {
             <AutomationServerLoading />
           ) : client ? (
             <AutomationEditor
+              key={editingId ?? "new"}
               client={client}
               presentation="modal"
               onManageConnectors={props.onOpenSettings}
-              automationId={null}
+              automationId={editingId}
               duplicateSourceId={new URLSearchParams(location.search).get("duplicate")}
               templateId={readTemplateId(location.state)}
               onDirtyChange={setEditorDirty}
               onCancel={cancelEditor}
-              onSaved={() => { setEditorDirty(false); navigate("/automations"); }}
+              onSaved={handleEditorSaved}
             />
           ) : (
             <AutomationServerUnavailable onRetry={reconnectLocalServer} />
@@ -277,6 +279,10 @@ export function AutomationPage(props: AutomationPageProps) {
 }
 
 function AutomationDashboard(props: {
+  onOpenSession: (workspaceId: string, sessionId: string) => void;
+  onSessionHostChange: (host: HTMLDivElement | null) => void;
+  onClearSession: () => void;
+  sessionSelected: boolean;
   client: JuggleWorkServerClient | null;
   localServerPending: boolean;
   history: boolean;
@@ -284,6 +290,7 @@ function AutomationDashboard(props: {
   sidebarOpen: boolean;
   sidebarResizing: boolean;
   onStartSidebarResize: PointerEventHandler<HTMLButtonElement>;
+  refreshRevision: number;
 }) {
   const navigate = useNavigate();
   const [tasks, setTasks] = useState<AutomationDefinitionRecord[]>([]);
@@ -301,6 +308,12 @@ function AutomationDashboard(props: {
   const [batchBusy, setBatchBusy] = useState(false);
   const [batchDeleteOpen, setBatchDeleteOpen] = useState(false);
   const [searchVisible, setSearchVisible] = useState(false);
+  const openSession = (workspaceId: string, sessionId: string) => {
+    props.onOpenSession(workspaceId, sessionId);
+  };
+  useEffect(() => {
+    if (props.history) props.onClearSession();
+  }, [props.history, props.onClearSession]);
 
   // TIPS:`silent` 用于操作后的就地刷新。整页 loading 会把列表整个换成占位文案，一次
   // 暂停/删除就闪一下，看起来像是页面被重载了；只有首屏和筛选条件变化才该出现占位。
@@ -368,16 +381,20 @@ function AutomationDashboard(props: {
     }
   }, [batchBusy, props.client, refresh, selectedIds, tasks]);
 
-  useEffect(() => { setNextCursor(undefined); void load(); }, [load]);
+  useEffect(() => { setNextCursor(undefined); void load(); }, [load, props.refreshRevision]);
   const normalized = query.trim().toLocaleLowerCase();
   const visibleTasks = tasks.filter(({ definition }) => !normalized || `${definition.name} ${definition.workspace?.name ?? t("automation.workspace_automatic_short")}`.toLocaleLowerCase().includes(normalized));
   const visibleRuns = runs.filter((run) => !normalized || `${run.automationName} ${run.workspaceName} ${run.errorMessage ?? ""}`.toLocaleLowerCase().includes(normalized));
 
   return (
-    <div className="relative flex h-full min-h-0 w-full overflow-hidden bg-background">
+    <div className={cn(
+      "relative flex h-full min-h-0 w-full overflow-hidden",
+      props.sessionSelected ? "bg-dls-sidebar" : "bg-background",
+    )}>
       <div className={cn(
         "h-full shrink-0 overflow-hidden transition-[width] duration-200 ease-linear",
         props.sidebarOpen ? "w-[var(--jugglework-left-sidebar-width)]" : "w-0",
+        props.sessionSelected && "mb-1.5 mt-11 h-auto self-stretch rounded-l-[18px] border border-r-0 border-dls-border shadow-[0_1px_2px_rgba(0,0,0,0.04)]",
       )}
       data-app-secondary-sidebar-frame
       >
@@ -449,6 +466,7 @@ function AutomationDashboard(props: {
                 {!loading && tasks.length > 0 && visibleTasks.length === 0 ? <p className="px-2 py-2 text-[13px] text-dls-secondary">{t("automation.no_search_results")}</p> : null}
                 {!loading && visibleTasks.length > 0 ? (
                   <TaskList
+                    onOpenSession={openSession}
                     compact
                     tasks={visibleTasks}
                     client={props.client}
@@ -483,7 +501,10 @@ function AutomationDashboard(props: {
       ) : null}
 
       <main data-testid="automation-main" className="min-w-0 flex-1 overflow-hidden">
-        {props.history ? (
+        <div className={props.sessionSelected ? "flex h-full min-h-0 flex-col" : "hidden"}>
+          <div ref={props.onSessionHostChange} className="min-h-0 flex-1" data-testid="automation-session-host" />
+        </div>
+        {props.sessionSelected ? null : props.history ? (
           <div className="h-full overflow-y-auto">
             <div className="mx-auto flex min-h-full w-full max-w-[1500px] flex-col px-6 pb-8 pt-8 lg:px-10">
               {(runs.length > 0 || status || trigger || fromDate || toDate) ? (
@@ -495,7 +516,7 @@ function AutomationDashboard(props: {
                 </div>
               ) : null}
               {error ? <Notice tone="error">{error}<button type="button" className="ml-3 underline" onClick={() => void (props.client ? load() : props.onReconnect())}>{t("automation.retry")}</button></Notice> : null}
-              {loading ? <div className="flex min-h-72 items-center justify-center text-dls-secondary">{t("automation.loading")}</div> : <RunHistory runs={visibleRuns} />}
+              {loading ? <div className="flex min-h-72 items-center justify-center text-dls-secondary">{t("automation.loading")}</div> : <RunHistory runs={visibleRuns} onOpenSession={openSession} />}
               {!loading && nextCursor ? <button type="button" onClick={() => void load(nextCursor, true)} className="mx-auto mt-6 rounded-xl border border-dls-border px-5 py-2 text-sm">{t("automation.load_more")}</button> : null}
             </div>
           </div>
@@ -558,6 +579,7 @@ function AutomationTaskLanding({ onSelect }: { onSelect: (template: AutomationTe
 }
 
 function TaskList(props: {
+  onOpenSession: (workspaceId: string, sessionId: string) => void;
   compact?: boolean;
   tasks: AutomationDefinitionRecord[];
   client: JuggleWorkServerClient | null;
@@ -602,9 +624,7 @@ function TaskList(props: {
       // 刷新只会让整个列表重绘一次，用户看到的就是「点一下闪一下」。
       if (action === "run") {
         await props.client.runAutomation(task.id);
-        toast.success(t("automation.run_started"), {
-          action: { label: t("automation.tabs.runs"), onClick: () => navigate("/automations/runs") },
-        });
+        toast.success(t("automation.run_started"));
         return;
       }
       if (action === "pause" || action === "resume") await props.client.setAutomationPaused(task.id, task.revision, action === "pause");
@@ -631,6 +651,7 @@ function TaskList(props: {
             <div className="space-y-1">
               {tasks.map((record) => (
                 <TaskRow
+                  onOpenSession={props.onOpenSession}
                   key={record.definition.id}
                   compact={props.compact}
                   record={record}
@@ -682,7 +703,8 @@ function TaskList(props: {
  * @param onEdit 打开编辑页
  * @param onAction 触发立即执行 / 暂停 / 恢复 / 删除
  */
-function TaskRow({ compact = false, record, client, busy, selecting, selected, onToggleSelected, onEdit, onAction }: {
+function TaskRow({ compact = false, record, client, busy, selecting, selected, onToggleSelected, onEdit, onAction, onOpenSession }: {
+  onOpenSession: (workspaceId: string, sessionId: string) => void;
   compact?: boolean;
   record: AutomationDefinitionRecord;
   client: JuggleWorkServerClient | null;
@@ -693,12 +715,13 @@ function TaskRow({ compact = false, record, client, busy, selecting, selected, o
   onEdit: () => void;
   onAction: (action: "run" | "pause" | "resume" | "delete") => void;
 }) {
-  const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [sessionRuns, setSessionRuns] = useState<AutomationRun[]>([]);
   const [sessionsLoaded, setSessionsLoaded] = useState(false);
   const [sessionsLoading, setSessionsLoading] = useState(false);
+  const [openingSession, setOpeningSession] = useState(false);
+  const openingSessionRef = useRef(false);
   const [sessionsCursor, setSessionsCursor] = useState<string | undefined>();
   const menuRef = useRef<HTMLDivElement>(null);
   const dismiss = useCallback(() => setMenuOpen(false), []);
@@ -743,6 +766,26 @@ function TaskRow({ compact = false, record, client, busy, selecting, selected, o
       onToggleSelected();
       return;
     }
+    if (task.trigger.kind !== "event") {
+      if (!client || openingSessionRef.current) return;
+      openingSessionRef.current = true;
+      setOpeningSession(true);
+      try {
+        // 未运行的任务还没有 run.sessionId；由服务端准备并绑定会话，不能用“立即执行”代替打开。
+        const { item } = await client.prepareAutomationSession(task.id);
+        onOpenSession(item.workspaceId, item.sessionId);
+        if (createsNewChatPerRun) {
+          setExpanded(true);
+          void loadSessions(false);
+        }
+      } catch (error) {
+        toast.error(describeError(error));
+      } finally {
+        openingSessionRef.current = false;
+        setOpeningSession(false);
+      }
+      return;
+    }
     if (createsNewChatPerRun) {
       const nextExpanded = !expanded;
       setExpanded(nextExpanded);
@@ -756,7 +799,7 @@ function TaskRow({ compact = false, record, client, busy, selecting, selected, o
       onEdit();
       return;
     }
-    navigate(`/workspace/${encodeURIComponent(target.workspaceId)}/session/${encodeURIComponent(target.sessionId)}`);
+    onOpenSession(target.workspaceId, target.sessionId);
   };
   // TIPS:任务 6.1——只有事件触发的自动化才需要这个检测，定时任务没有"服务端订阅账号"这个概念。
   const accountStatus = useAutomationSubscriptionAccountStatus(client, task.id, task.trigger.kind === "event");
@@ -792,6 +835,8 @@ function TaskRow({ compact = false, record, client, busy, selecting, selected, o
         <button
           type="button"
           aria-expanded={createsNewChatPerRun ? expanded : undefined}
+          aria-busy={openingSession}
+          disabled={openingSession}
           onClick={() => void openPrimaryTarget()}
           className={cn("min-w-0 text-left text-[13px]", compact ? "flex flex-1 flex-col overflow-hidden" : "truncate")}
         >
@@ -907,7 +952,7 @@ function TaskRow({ compact = false, record, client, busy, selecting, selected, o
             <button
               key={run.sessionId}
               type="button"
-              onClick={() => navigate(`/workspace/${encodeURIComponent(run.workspaceId)}/session/${encodeURIComponent(run.sessionId!)}`)}
+              onClick={() => onOpenSession(run.workspaceId, run.sessionId!)}
               className="flex w-full min-w-0 items-center gap-2 rounded-lg px-2 py-2 text-left transition-colors hover:bg-dls-hover"
             >
               <MessageCircle className="size-3.5 shrink-0 text-dls-secondary" />
@@ -1067,8 +1112,7 @@ function AutomationBreadcrumb({ onBack, current }: { onBack: () => void; current
  * 运行记录列表
  * @param runs 运行记录
  */
-function RunHistory({ runs }: { runs: AutomationRun[] }) {
-  const navigate = useNavigate();
+function RunHistory({ runs, onOpenSession }: { runs: AutomationRun[]; onOpenSession: (workspaceId: string, sessionId: string) => void }) {
   if (!runs.length) return (
     <section className="flex min-h-[620px] flex-col items-center justify-center text-center text-dls-secondary">
       <Clock3 className="mb-5 size-16 stroke-[1.25]" /><h1 className="text-base font-medium text-dls-text">{t("automation.empty_runs")}</h1><p className="mt-2 text-[13px]">{t("automation.empty_runs_hint")}</p>
@@ -1089,7 +1133,7 @@ function RunHistory({ runs }: { runs: AutomationRun[] }) {
           );
         }
         return (
-          <article key={run.id} role={run.sessionId ? "link" : undefined} tabIndex={run.sessionId ? 0 : undefined} onKeyDown={(event) => { if (run.sessionId && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); navigate(`/workspace/${encodeURIComponent(run.workspaceId)}/session/${encodeURIComponent(run.sessionId)}`); } }} onClick={() => run.sessionId && navigate(`/workspace/${encodeURIComponent(run.workspaceId)}/session/${encodeURIComponent(run.sessionId)}`)} className={cn("grid gap-2 px-5 py-4 md:grid-cols-[minmax(180px,1fr)_160px_160px_120px]", run.sessionId && "cursor-pointer hover:bg-dls-hover/50 focus-visible:outline-2 focus-visible:outline-dls-accent")}>
+          <article key={run.id} role={run.sessionId ? "button" : undefined} tabIndex={run.sessionId ? 0 : undefined} onKeyDown={(event) => { if (run.sessionId && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); onOpenSession(run.workspaceId, run.sessionId); } }} onClick={() => run.sessionId && onOpenSession(run.workspaceId, run.sessionId)} className={cn("grid gap-2 px-5 py-4 md:grid-cols-[minmax(180px,1fr)_160px_160px_120px]", run.sessionId && "cursor-pointer hover:bg-dls-hover/50 focus-visible:outline-2 focus-visible:outline-dls-accent")}>
             <div>
               <div className="font-medium">{run.automationName}</div>
               <div className="text-xs text-dls-secondary">
@@ -1155,7 +1199,7 @@ function AutomationEditor(props: {
   templateId: string | null;
   onDirtyChange: (dirty: boolean) => void;
   onCancel: () => void;
-  onSaved: () => void;
+  onSaved: (session?: { workspaceId: string; sessionId: string }) => void;
 }) {
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   const template = AUTOMATION_TEMPLATES.find((item) => item.id === props.templateId);
@@ -1171,13 +1215,13 @@ function AutomationEditor(props: {
   // 不清空另一侧已填的内容，真正丢弃只发生在用户确认离开时（见下方 requestTriggerKindChange）。
   const [triggerKind, setTriggerKind] = useState<"schedule" | "event">("schedule");
   const [eventTrigger, setEventTrigger] = useState<AutomationEventTrigger>(() => defaultEventTrigger(""));
-  const [pendingTriggerKind, setPendingTriggerKind] = useState<"schedule" | "event" | null>(null);
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [connectors, setConnectors] = useState<AutomationConnectorSelection[]>([]);
   const [dependencies, setDependencies] = useState<AutomationDependencies>(EMPTY_DEPENDENCIES);
   const [dependenciesLoading, setDependenciesLoading] = useState(false);
   const [dependenciesError, setDependenciesError] = useState<string | null>(null);
+  const [dependenciesResolvedFor, setDependenciesResolvedFor] = useState<string | null>(null);
   const [reloadDependenciesToken, setReloadDependenciesToken] = useState(0);
   const [legacyConnectors, setLegacyConnectors] = useState<Array<{ id: string; label: string; ready: boolean }> | null>(null);
   const [model, setModel] = useState<AutomationModelSelection>({ mode: "auto" });
@@ -1195,13 +1239,12 @@ function AutomationEditor(props: {
   const checkDesktopRestriction = useCheckDesktopRestriction();
   const allowedModels = useDesktopAllowedModels();
   const orgConnectors = useOrgMcpConnections();
-  const githubEventClient = useMemo<GithubEventTriggerClient>(() => createGithubEventTriggerClient(props.client), [props.client]);
   const promptEditorRef = useRef<LexicalPromptEditorHandle>(null);
   const local = useLocal();
 
   useEffect(() => {
     if (!props.client) return;
-    void props.client.listWorkspaces().then((list) => setWorkspaces((list.items ?? list.workspaces ?? []).filter((item) => item.workspaceType !== "remote")));
+    void props.client.listWorkspaces().then((list) => setWorkspaces((list.items ?? list.workspaces ?? []).filter((item) => item.workspaceType === "local" && !item.automationManaged)));
     if (!props.automationId) return;
     void props.client.getAutomation(props.automationId).then(({ item }) => {
       const definition = item.definition;
@@ -1259,13 +1302,23 @@ function AutomationEditor(props: {
   useEffect(() => {
     if (!props.client) {
       setDependencies(EMPTY_DEPENDENCIES);
+      setDependenciesLoading(false);
+      setDependenciesError(null);
+      setDependenciesResolvedFor(null);
       return;
     }
     let cancelled = false;
+    const requestedWorkspaceId = dependencyWorkspaceId;
+    // TIPS:工作空间切换后不能继续拿上一工作空间的依赖通过保存校验。先清空旧快照，等本次请求
+    // 明确完成后再开放创建；`cancelled` 同时防止慢的旧请求覆盖新的工作空间结果。
+    setDependencies(EMPTY_DEPENDENCIES);
+    setDependenciesResolvedFor(null);
     setDependenciesLoading(true);
     setDependenciesError(null);
     void props.client.listAutomationDependencies(dependencyWorkspaceId || undefined).then((value) => {
-      if (!cancelled) setDependencies(value);
+      if (cancelled) return;
+      setDependencies(value);
+      setDependenciesResolvedFor(requestedWorkspaceId);
     }).catch((dependencyError) => {
       // 不要把失败悄悄变成空列表——那会让「没有可选模型」和「查询失败」看起来一模一样。
       if (cancelled) return;
@@ -1312,6 +1365,9 @@ function AutomationEditor(props: {
       providerSource: item.providerSource as DesktopProviderSource | undefined,
     });
   }), [allowedModels, checkDesktopRestriction, dependencies.models]);
+  const dependenciesReady = !dependenciesLoading
+    && dependenciesError === null
+    && dependenciesResolvedFor === dependencyWorkspaceId;
 
   // TIPS:内置默认智能体在选择器里已经以「默认智能体」单独呈现，这里再兜一层，防止旧版本
   // embedded server 没做过滤时又重复列出来。
@@ -1331,14 +1387,22 @@ function AutomationEditor(props: {
   // 执行，明确的模型比隐式路由更可预期。用户一旦手动改过就不再覆盖。
   useEffect(() => {
     if (modelTouched || props.automationId || props.duplicateSourceId) return;
-    if (model.mode === "explicit" || !usableModels.length) return;
+    if (!dependenciesReady) return;
+    const currentAvailable = model.mode === "explicit" && usableModels.some(
+      (item) => item.providerId === model.providerId && item.modelId === model.modelId,
+    );
+    if (currentAvailable) return;
+    if (!usableModels.length) {
+      if (model.mode !== "auto") setModel({ mode: "auto" });
+      return;
+    }
     const preferred = local.prefs.defaultModel;
     const match = preferred
       ? usableModels.find((item) => item.providerId === preferred.providerID && item.modelId === preferred.modelID)
       : undefined;
     const fallback = match ?? usableModels[0];
     setModel({ mode: "explicit", providerId: fallback.providerId, modelId: fallback.modelId });
-  }, [usableModels, local.prefs.defaultModel, model.mode, modelTouched, props.automationId, props.duplicateSourceId]);
+  }, [dependenciesReady, usableModels, local.prefs.defaultModel, model, modelTouched, props.automationId, props.duplicateSourceId]);
 
   const applyModel = useCallback((next: AutomationModelSelection) => {
     setModelTouched(true);
@@ -1371,10 +1435,18 @@ function AutomationEditor(props: {
     const validationError = (triggerKind === "event"
         ? validateEventEditor({ name, workspaceId, prompt, eventTrigger })
         : validateEditor({ name, workspaceId, prompt, schedule, startDate, endDate }))
+      ?? (!dependenciesReady ? (dependenciesError ? "自动化依赖加载失败，请重试" : "正在加载可用模型，请稍候") : null)
       ?? dependencyReadinessError(model, agentId, skillIds, dependencies)
       ?? connectorReadinessError(connectors, connectorOptions);
     setError(validationError);
     if (validationError) return;
+    // TIPS:创建定时任务时，点击「创建」本身即授权当前选择的任务权限。默认 profile 是无人值守
+    // 完整访问，因此直接持久化并由执行器写入对应的 session permission rules，不再追加一次确认弹窗。
+    // 事件触发任务仍保留自己的权限升级确认，编辑已有任务也继续沿用原有确认流程。
+    if (!props.automationId && triggerKind === "schedule") {
+      void save(true);
+      return;
+    }
     // TIPS:只有「完全访问权限」需要那份风险确认；默认权限本来就会逐项询问用户，再弹一次纯属噪音。
     if (permission !== AUTOMATION_PERMISSION_PROFILE) {
       setRiskAccepted(true);
@@ -1417,9 +1489,13 @@ function AutomationEditor(props: {
       executorDeviceId: readAutomationDeviceId(),
     };
     try {
-      if (props.automationId && baseRevision) await props.client.updateAutomation(props.automationId, baseRevision, draft);
-      else await props.client.createAutomation(draft);
-      props.onSaved();
+      if (props.automationId && baseRevision) {
+        await props.client.updateAutomation(props.automationId, baseRevision, draft);
+        props.onSaved();
+      } else {
+        const created = await props.client.createAutomation(draft, currentLocale());
+        props.onSaved(created.session);
+      }
     } catch (saveError) {
       setPermissionOpen(false);
       setError(describeError(saveError));
@@ -1435,7 +1511,7 @@ function AutomationEditor(props: {
       {modal ? (
         <header className="shrink-0 px-6 pb-3 pt-6 pr-16">
           <h1 className="text-[18px] font-semibold tracking-[-0.015em] text-dls-text">
-            {t("automation.setup_task")}
+            {t(props.automationId ? "automation.edit_task" : "automation.setup_task")}
           </h1>
         </header>
       ) : <header className="z-30 shrink-0 border-b border-dls-border bg-background mac:titlebar-drag">
@@ -1452,7 +1528,7 @@ function AutomationEditor(props: {
             </button>
             <button
               type="button"
-              disabled={saving || !prompt.trim()}
+              disabled={saving || !prompt.trim() || !dependenciesReady}
               onClick={requestSave}
               className={cn(
                 "inline-flex h-9 max-h-9 items-center rounded-full px-4 text-[13px] font-medium transition-colors",
@@ -1503,20 +1579,18 @@ function AutomationEditor(props: {
             <button type="button" aria-expanded={advanced} onClick={() => setAdvanced(!advanced)} className="flex items-center gap-2 py-1 text-sm text-dls-secondary">
               {t("automation.advanced")} <ChevronDown size={16} className={advanced ? "rotate-180" : ""} />
             </button>
-            {advanced ? <div className="space-y-5" data-testid="automation-advanced">
-            <Field label={t("automation.workspace")} hint={t("automation.workspace_hint")}>
+            {advanced ? <div className="space-y-4" data-testid="automation-advanced">
+              {triggerKind === "schedule" ? <label className="flex items-center justify-between gap-4 rounded-2xl border border-dls-border px-5 py-4 text-sm">
+                {t("automation.new_chat_per_run")}
+                <button type="button" role="switch" aria-label={t("automation.new_chat_per_run")} aria-checked={newChatPerRun} onClick={() => setNewChatPerRun(!newChatPerRun)} className={cn("h-6 w-11 shrink-0 rounded-full p-0.5 transition-colors", newChatPerRun ? "bg-dls-accent" : "bg-dls-active")}>
+                  <span className={cn("block size-5 rounded-full bg-white shadow transition-transform", newChatPerRun && "translate-x-5")} />
+                </button>
+              </label> : null}
               <WorkspaceSingleSelect
                 selectedId={workspaceId}
                 options={workspaces}
                 onSelect={setWorkspaceId}
               />
-            </Field>
-            {triggerKind === "schedule" ? <label className="flex items-center justify-between gap-4 rounded-2xl border border-dls-border px-5 py-4 text-sm">
-              {t("automation.new_chat_per_run")}
-              <button type="button" role="switch" aria-label={t("automation.new_chat_per_run")} aria-checked={newChatPerRun} onClick={() => setNewChatPerRun(!newChatPerRun)} className={cn("h-6 w-11 shrink-0 rounded-full p-0.5 transition-colors", newChatPerRun ? "bg-dls-accent" : "bg-dls-active")}>
-                <span className={cn("block size-5 rounded-full bg-white shadow transition-transform", newChatPerRun && "translate-x-5")} />
-              </button>
-            </label> : null}
               <AutomationPromptComposer controlsOnly
                 value={prompt}
                 onChange={setPrompt}
@@ -1533,92 +1607,6 @@ function AutomationEditor(props: {
                 permission={permission}
                 onPermissionChange={setPermission}
               />
-            <Field label={t("automation.connectors")} hint={t("automation.connectors_hint")}>
-              <ConnectorMultiSelect
-                selected={connectors}
-                options={connectorOptions}
-                connectingId={orgConnectors.connectingId}
-                onToggle={(option) => setConnectors((current) => (
-                  current.some((connector) => connectorKey(connector) === connectorKey(option))
-                    ? current.filter((connector) => connectorKey(connector) !== connectorKey(option))
-                    : [...current, { id: option.id, label: option.label, source: option.source }]
-                ))}
-                onConnect={orgConnectors.connect}
-                onManage={() => props.onManageConnectors?.()}
-              />
-              {orgConnectors.error ? <p className="mt-2 text-xs text-red-9">{t("automation.connectors_load_failed")}{orgConnectors.error}</p> : null}
-              {template?.recommendedConnectorIds.length ? <p className="mt-2 text-xs text-dls-secondary">{t("automation.connectors_recommended")}{template.recommendedConnectorIds.join("、")}</p> : null}
-            </Field>
-            <Field label={t("automation.trigger_kind")}>
-              <TriggerKindSelector
-                value={triggerKind}
-                onRequestChange={(next) => {
-                  // TIPS:切换到有内容的另一侧才需要二次确认；从空白事件草稿切回定时（或反过来）
-                  // 不算真的丢东西，直接切换，避免无意义的确认弹窗。
-                  const hasEventDraft = eventTrigger.repository.owner || eventTrigger.matches.length;
-                  if (next !== triggerKind && hasEventDraft) { setPendingTriggerKind(next); return; }
-                  setTriggerKind(next);
-                }}
-              />
-            </Field>
-            {pendingTriggerKind ? (
-              <DiscardTriggerConfirm
-                onCancel={() => setPendingTriggerKind(null)}
-                onConfirm={() => { setTriggerKind(pendingTriggerKind); setEventTrigger(defaultEventTrigger("")); setPendingTriggerKind(null); }}
-              />
-            ) : null}
-            <Field label={t("automation.name")}><input maxLength={100} aria-label={t("automation.name")} value={name} onChange={(event) => setName(event.target.value)} className={FIELD} placeholder={t("automation.name_generated")} /></Field>
-            {triggerKind === "event" ? (
-              <>
-                <EventTriggerEditor
-                  value={eventTrigger}
-                  onChange={setEventTrigger}
-                  client={githubEventClient}
-                  permission={permission}
-                  onPermissionEscalationConfirmed={() => setPermission(AUTOMATION_PERMISSION_PROFILE)}
-                />
-                {/* TIPS:任务 5.2"模拟测试"——草稿不需要先保存就能预览，promptParts 直接从
-                    当前编辑区的文本现解析；解析失败（比如提示词还是空的）就不渲染这个入口，
-                    不强迫用户先把提示词写完整才能看到这个按钮存在。 */}
-                {props.client ? (() => {
-                  try {
-                    const promptParts = parseAutomationPrompt(prompt).parts;
-                    return (
-                      <EventPromptPreview
-                        client={{ previewPrompt: (input) => props.client!.previewGithubEventPrompt(input) }}
-                        promptParts={promptParts}
-                      />
-                    );
-                  } catch {
-                    return null;
-                  }
-                })() : null}
-                {/* TIPS:影子模式（任务 5.3）只对事件触发有意义——上线前先观察"会不会触发、
-                    触发了会做什么"，不真正创建会话或写回 GitHub，见 executor.ts executeShadow()。 */}
-                <label className="flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={lifecycle === "shadow"}
-                    onChange={(event) => setLifecycle(event.target.checked ? "shadow" : "enabled")}
-                  />
-                  {t("automation.shadow_mode")}
-                  <span className="text-xs text-dls-secondary">{t("automation.shadow_mode_hint")}</span>
-                </label>
-              </>
-            ) : (
-              <>
-                {/* TIPS:单次任务的执行日期本身就是唯一一次触发，再叠加生效区间只会互相矛盾，因此不展示。 */}
-                {schedule.kind !== "once" ? (
-              <Field label={t("automation.active_range")} hint={t("automation.active_range_hint")}>
-                <DateRangeField
-                  startDate={startDate}
-                  endDate={endDate}
-                  onChange={(range) => { setStartDate(range.startDate); setEndDate(range.endDate); }}
-                />
-              </Field>
-                ) : null}
-              </>
-            )}
             </div> : null}
           </div>
         </div>
@@ -1636,11 +1624,11 @@ function AutomationEditor(props: {
           </button>
           <button
             type="button"
-            disabled={saving || !prompt.trim()}
+            disabled={saving || !prompt.trim() || !dependenciesReady}
             onClick={requestSave}
             className="inline-flex h-10 items-center rounded-full bg-dls-text px-5 text-[13px] font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-35"
           >
-            {saving ? t("automation.saving") : t("common.create")}
+            {saving ? t("automation.saving") : t(props.automationId ? "automation.save" : "common.create")}
           </button>
         </footer>
       ) : null}
@@ -1650,75 +1638,13 @@ function AutomationEditor(props: {
   );
 }
 
-/**
- * 定时/事件触发方式选择器。
- * TIPS: 只负责渲染和请求切换，真正的丢弃确认逻辑在调用方（AutomationEditor）里，
- * 这里不直接持有草稿状态，保持这个组件本身无副作用、好测试。
- */
-function TriggerKindSelector(props: { value: "schedule" | "event"; onRequestChange: (next: "schedule" | "event") => void }) {
-  const options: Array<{ value: "schedule" | "event"; labelKey: string }> = [
-    { value: "schedule", labelKey: "automation.trigger_kind_schedule" },
-    { value: "event", labelKey: "automation.trigger_kind_event" },
-  ];
-  return (
-    <div className="flex gap-2">
-      {options.map((option) => (
-        <button
-          key={option.value}
-          type="button"
-          onClick={() => props.onRequestChange(option.value)}
-          aria-pressed={props.value === option.value}
-          className={cn(
-            "rounded-xl border px-4 py-2.5 text-sm font-medium transition-colors",
-            props.value === option.value ? "border-dls-text bg-dls-hover" : "border-dls-border hover:bg-dls-hover",
-          )}
-        >
-          {t(option.labelKey)}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function DiscardTriggerConfirm(props: { onCancel: () => void; onConfirm: () => void }) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" role="dialog" aria-modal="true">
-      <div className="w-full max-w-md rounded-2xl bg-background p-6">
-        <p className="text-sm">{t("automation.trigger_kind_discard_confirm")}</p>
-        <div className="mt-5 flex justify-end gap-2">
-          <button type="button" onClick={props.onCancel} className="rounded-full border border-dls-border px-4 py-2 text-sm">{t("automation.cancel")}</button>
-          <button type="button" onClick={props.onConfirm} className="rounded-full bg-red-9 px-4 py-2 text-sm text-white">{t("automation.trigger_kind_discard_confirm_action")}</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/**
- * 把 `JuggleWorkServerClient` 适配成事件触发面板需要的窄接口。
- * TIPS: 这几个方法对应的本机路由（见 routes/automations.ts 的 registerGithubEventProxyRoutes）
- * 是到 jugglework-server 事件中继端点（add-github-event-trigger-relay）的直通代理——契约已经
- * 对齐服务端真实实现，但 `resolveAuth` 这条云端凭据接线本身还没打通（同一类缺口见
- * github-event-client.ts 顶部注释），调用目前仍会失败并被 UI 优雅降级（空仓库列表/就绪态
- * unknown），不是这几个方法本身的契约问题。
- */
-function createGithubEventTriggerClient(client: JuggleWorkServerClient | null): GithubEventTriggerClient {
-  return {
-    listRepositories: () => client ? client.listGithubEventRepositories() : Promise.resolve([]),
-    checkReadiness: (repo) => client ? client.checkGithubEventReadiness(repo) : Promise.resolve("unknown" as const),
-    requestInstall: (repo) => client ? client.requestGithubAppInstall(repo) : Promise.resolve(),
-    requestBind: (repo) => client ? client.requestGithubRepositoryBind(repo) : Promise.resolve(),
-    estimateFrequency: (trigger) => client ? client.estimateGithubEventFrequency(trigger) : Promise.resolve(null),
-  };
-}
-
 type ConnectorOption = AutomationConnectorSelection & { ready: boolean };
 
 /**
  * 工作空间单选器。
  *
- * TIPS: 视觉结构与连接器选择器保持一致，但这里是严格单选：选择新项会立即替换旧值并关闭浮层，
- * 不使用 aria-multiselectable，也不保留多个勾选项。
+ * TIPS: 收起状态是一整行“标签 / 当前值 / 箭头”，与高级设置中的开关和模型项保持一致；
+ * 展开后仍是严格单选，选择新项会立即替换旧值并关闭浮层。
  *
  * @param selectedId 当前选中的工作空间 id
  * @param options 可选的本地工作空间
@@ -1731,8 +1657,10 @@ function WorkspaceSingleSelect(props: {
 }) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const floatingRef = useRef<HTMLDivElement>(null);
+  const floatingStyle = useAnchoredFloating(open, containerRef, { width: "anchor", maxHeight: 280 });
   const dismiss = useCallback(() => setOpen(false), []);
-  useDismissOnOutside(containerRef, open, dismiss);
+  useDismissOnOutside(containerRef, open, dismiss, floatingRef);
   const selected = props.options.find((workspace) => workspace.id === props.selectedId);
   const selectedLabel = selected ? workspaceOptionLabel(selected) : "";
 
@@ -1744,17 +1672,17 @@ function WorkspaceSingleSelect(props: {
         aria-expanded={open}
         aria-label={t("automation.workspace")}
         onClick={() => setOpen((value) => !value)}
-        className={cn(FIELD, "flex items-center gap-2 pr-4 text-left")}
+        className="flex w-full items-center justify-between gap-4 rounded-2xl border border-dls-border bg-transparent px-5 py-4 text-sm outline-none transition focus:border-dls-accent"
       >
-        <span className={cn("min-w-0 flex-1 truncate", !selectedLabel && "text-dls-secondary")}>
-          {selectedLabel || t("automation.workspace_automatic")}
+        <span className="shrink-0">{t("automation.workspace")}</span>
+        <span className="flex min-w-0 items-center gap-2 text-dls-secondary">
+          <span className="truncate">{selectedLabel || t("automation.workspace_none")}</span>
+          <ChevronDown className={cn("size-4 shrink-0 transition-transform", open && "rotate-180")} />
         </span>
-        <ChevronDown className={cn("size-4 shrink-0 text-dls-secondary transition-transform", open && "rotate-180")} />
       </button>
-      {open ? (
-        <div role="listbox" aria-label={t("automation.workspace")} className="absolute left-0 right-0 top-full z-40 mt-2 overflow-hidden rounded-2xl border border-dls-border bg-background shadow-[var(--dls-shell-shadow)]">
-          <div className="max-h-64 overflow-y-auto p-2">
-            <button type="button" role="option" aria-selected={!props.selectedId} onClick={() => { props.onSelect(""); setOpen(false); }} className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-dls-hover">{t("automation.workspace_automatic")}</button>
+      {open && floatingStyle ? createPortal(
+        <div ref={floatingRef} role="listbox" aria-label={t("automation.workspace")} style={floatingStyle} className="overflow-y-auto overscroll-contain rounded-2xl border border-dls-border bg-background p-2 shadow-[var(--dls-shell-shadow)]">
+          <div>
             {props.options.length ? props.options.map((workspace) => {
               const selectedOption = workspace.id === props.selectedId;
               return (
@@ -1776,9 +1704,10 @@ function WorkspaceSingleSelect(props: {
                   {selectedOption ? <Check className="size-4 shrink-0 text-dls-text" strokeWidth={2.5} aria-hidden="true" /> : null}
                 </button>
               );
-            }) : <p className="px-3 py-2 text-sm text-dls-secondary">{t("automation.workspace_placeholder")}</p>}
+            }) : <p className="px-3 py-2 text-sm text-dls-secondary">{t("automation.workspace_empty")}</p>}
           </div>
-        </div>
+        </div>,
+        document.body,
       ) : null}
     </div>
   );
@@ -1856,16 +1785,6 @@ function AutomationPromptComposer(props: AutomationPromptComposerProps) {
         <option value="">{t("automation.model_variant_default")}</option>{variants.map((variant) => <option key={variant} value={variant}>{variant}</option>)}
       </select>
     </label>
-    <div className="flex flex-wrap items-center gap-3">
-      <ComposerMenu label={t("automation.skills")} title={t("automation.skills")} disabled={props.dependenciesLoading}>
-        {props.dependencies.skills.map((skill) => <ComposerMenuItem key={skill.id} selected={props.skillIds.includes(skill.id)} onSelect={() => props.onInsertSkill(skill.id)}>{skill.name}</ComposerMenuItem>)}
-      </ComposerMenu>
-      <ComposerMenu label={agentLabel} title={t("automation.agent")} disabled={props.dependenciesLoading}>
-        <ComposerMenuItem selected={!props.agentId} onSelect={() => props.onAgentChange("")}>{t("automation.default_agent")}</ComposerMenuItem>
-        {props.dependencies.agents.map((agent) => <ComposerMenuItem key={agent.id} selected={props.agentId === agent.id} onSelect={() => props.onAgentChange(agent.id)}>{agent.name}</ComposerMenuItem>)}
-      </ComposerMenu>
-      <PermissionMenu value={props.permission} onChange={props.onPermissionChange} />
-    </div>
   </div>;
 
   return (
@@ -2382,7 +2301,7 @@ function numberRange(start: number, end: number): number[] {
 
 type FloatingStyle = CSSProperties & { position: "fixed"; zIndex: number; maxHeight: number };
 
-function useAnchoredFloating(open: boolean, anchorRef: React.RefObject<HTMLElement | null>, size: { width: number; maxHeight: number }): FloatingStyle | null {
+function useAnchoredFloating(open: boolean, anchorRef: React.RefObject<HTMLElement | null>, size: { width: number | "anchor"; maxHeight: number }): FloatingStyle | null {
   const [style, setStyle] = useState<FloatingStyle | null>(null);
   useEffect(() => {
     if (!open) {
@@ -2395,7 +2314,8 @@ function useAnchoredFloating(open: boolean, anchorRef: React.RefObject<HTMLEleme
       const rect = anchor.getBoundingClientRect();
       const margin = 12;
       const gap = 8;
-      const width = Math.min(size.width, window.innerWidth - margin * 2);
+      const requestedWidth = size.width === "anchor" ? rect.width : size.width;
+      const width = Math.min(requestedWidth, window.innerWidth - margin * 2);
       const below = window.innerHeight - rect.bottom - gap - margin;
       const above = rect.top - gap - margin;
       const placeBelow = below >= Math.min(size.maxHeight, 180) || below >= above;

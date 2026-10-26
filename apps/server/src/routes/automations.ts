@@ -39,6 +39,10 @@ export interface RegisterAutomationRoutesOptions {
   ensureWritable: (config: ServerConfig) => void;
   requireClientScope: (ctx: RequestContext, required: TokenScope) => void;
   onChanged?: () => void;
+  prepareSession?: (
+    automationId: string,
+    options?: { initializeConversation?: boolean; locale?: string },
+  ) => Promise<{ workspaceId: string; sessionId: string }>;
   log?: (event: string, fields: Record<string, string | number | boolean | null>) => void;
   resolveWorkspace?: (config: ServerConfig, id: string) => Promise<WorkspaceInfo>;
   createWorkspaceOpencodeClient?: (config: ServerConfig, workspace: WorkspaceInfo) => ReturnType<typeof createOpencodeClient>;
@@ -281,8 +285,28 @@ export function registerAutomationRoutes(options: RegisterAutomationRoutesOption
     }
     const rawDocument = mergeAutomationRawDocument(undefined, definition);
     const item = repository.createDefinition(definition, rawDocument);
+    let session: { workspaceId: string; sessionId: string } | undefined;
+    if (definition.trigger.kind !== "event" && options.prepareSession) {
+      try {
+        // 会话/工作空间属于创建结果，仍同步准备；模型生成的“已安排”确认只是装饰性首条消息，
+        // 新工作空间的 provider registry 可能还在启动，不能让这条消息的时序回滚整个任务。
+        session = await options.prepareSession(definition.id);
+      } catch (error) {
+        // The scheduler is notified only after the task conversation exists,
+        // so a failed workspace/session allocation can be hidden safely without ever running.
+        repository.tombstoneDefinition(definition.id, item.definition.revision, Date.now());
+        throw error;
+      }
+      void options.prepareSession(definition.id, {
+        initializeConversation: true,
+        locale: typeof body.locale === "string" ? body.locale : undefined,
+      }).catch((error) => options.log?.("automation.initial_conversation_failed", {
+        automationId: definition.id,
+        error: error instanceof Error ? error.message : String(error),
+      }));
+    }
     options.onChanged?.();
-    return jsonResponse({ item }, 201);
+    return jsonResponse({ item, ...(session ? { session } : {}) }, 201);
   });
 
   addRoute(routes, "PUT", "/automations/:automationId", "client", async (ctx) => {
@@ -332,6 +356,15 @@ export function registerAutomationRoutes(options: RegisterAutomationRoutesOption
     const item = repository.tombstoneDefinition(ctx.params.automationId, baseRevision, Date.now());
     options.onChanged?.();
     return jsonResponse({ item });
+  });
+
+  addRoute(routes, "POST", "/automations/:automationId/session", "client", async (ctx) => {
+    requireMutation(ctx, options);
+    const current = repository.getDefinition(ctx.params.automationId);
+    if (!current) throw new ApiError(404, "automation_not_found", "Automation not found");
+    if (current.definition.trigger.kind === "event") throw new ApiError(400, "automation_event_session_requires_entity", "Event automations require an entity session");
+    if (!options.prepareSession) throw new ApiError(503, "automation_session_unavailable", "Automation session preparation is unavailable");
+    return jsonResponse({ item: await options.prepareSession(ctx.params.automationId) });
   });
 
   addRoute(routes, "POST", "/automations/:automationId/run", "client", async (ctx) => {

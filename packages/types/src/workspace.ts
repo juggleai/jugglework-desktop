@@ -24,6 +24,8 @@ export type WorkspaceWire = {
   workspaceType: WorkspaceKind;
   /** Internal workspaces are addressable by id but omitted from normal workspace lists. */
   hidden?: boolean | null;
+  /** True when this local workspace was allocated internally for an automation run. */
+  automationManaged?: boolean;
   remoteType?: WorkspaceRemoteKind | null;
   baseUrl?: string | null;
   directory?: string | null;

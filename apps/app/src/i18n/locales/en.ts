@@ -3125,6 +3125,8 @@ export default {
   "automation.warning": "Keep the computer and Desktop client running while automations execute.",
   "automation.name": "Name",
   "automation.workspace": "Workspace",
+  "automation.workspace_none": "None",
+  "automation.workspace_empty": "No local workspaces",
   "automation.prompt": "Prompt",
   "automation.connectors": "Connectors",
   "automation.model": "Model",

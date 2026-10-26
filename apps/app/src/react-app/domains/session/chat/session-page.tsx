@@ -2,7 +2,7 @@
 import type { CSSProperties } from "react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { usePanelRef } from "react-resizable-panels";
-import { ArrowLeft, ArrowRight, Cloud, Columns2, Folders, GitBranch, Globe, Mic2, Search, Settings2, TextSearch, X, Zap } from "lucide-react";
+import { ArrowLeft, ArrowRight, Cloud, Columns2, Folders, GitBranch, Globe, Mic2, PanelLeftIcon, Search, Settings2, TextSearch, X, Zap } from "lucide-react";
 
 import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
 import { t } from "../../../../i18n";
@@ -214,6 +214,7 @@ export type SessionPageSurfaceProps = Omit<
 };
 
 export type SessionPageProps = {
+  embedded?: boolean;
   selectedSessionId: string | null;
   selectedWorkspaceId: string;
   selectedWorkspaceDisplay: {
@@ -365,10 +366,10 @@ export function SessionPage(props: SessionPageProps) {
   const workbenchPrimarySessionId = useWorkbenchStore((state) => state.primarySessionId);
   const workbenchTabs = useWorkbenchStore((state) => state.tabs);
   const workbenchSplitSessionId = useWorkbenchStore((state) => state.splitSessionId);
-  const focusedWorkbenchPane = useWorkbenchStore((state) => state.focusedPane);
+  const focusedWorkbenchPane = useWorkbenchStore((state) => props.embedded ? "primary" : state.focusedPane);
   const sessionTabs = workbenchWorkspaceId === props.selectedWorkspaceId ? workbenchTabs : EMPTY_SESSION_TABS;
-  const splitSessionId = workbenchWorkspaceId === props.selectedWorkspaceId ? workbenchSplitSessionId : null;
-  const actionSessionId = resolveWorkbenchActionSessionId({
+  const splitSessionId = !props.embedded && workbenchWorkspaceId === props.selectedWorkspaceId ? workbenchSplitSessionId : null;
+  const actionSessionId = props.embedded ? props.selectedSessionId : resolveWorkbenchActionSessionId({
     workspaceId: props.selectedWorkspaceId,
     selectedSessionId: props.selectedSessionId,
     workbenchWorkspaceId,
@@ -485,6 +486,17 @@ export function SessionPage(props: SessionPageProps) {
   const closeWorkbenchTab = useWorkbenchStore((state) => state.closeTab);
   const setWorkbenchSplit = useWorkbenchStore((state) => state.setSplit);
   const focusWorkbenchPane = useWorkbenchStore((state) => state.focusPane);
+  useLayoutEffect(() => {
+    if (!props.embedded) return;
+    const { revision, workspaceId, workspaceTitle, primarySessionId, tabs, splitSessionId, focusedPane } = useWorkbenchStore.getState();
+    // The embedded runtime owns the global control target temporarily; restore the
+    // ordinary workspace's tabs/split/focus when returning to its retained surface.
+    setWorkbenchSplit(null);
+    return () => useWorkbenchStore.setState((current) => ({
+      revision: Math.max(current.revision, revision) + 1,
+      workspaceId, workspaceTitle, primarySessionId, tabs, splitSessionId, focusedPane,
+    }));
+  }, [props.embedded, setWorkbenchSplit]);
   const [conversationHistory, setConversationHistory] = useState(() => (
     createConversationTabHistory(props.selectedWorkspaceId, props.selectedSessionId)
   ));
@@ -549,7 +561,7 @@ export function SessionPage(props: SessionPageProps) {
     "--sidebar-width": `${leftSidebarWidth + APP_NAVIGATION_RAIL_WIDTH}px`,
     "--session-shell-top-inset": "44px",
   };
-  const sidebarRailPreviewOpen = shellConfig.sidebar && !sidebarOpen && sidebarPreviewScope !== null;
+  const sidebarRailPreviewOpen = !props.embedded && shellConfig.sidebar && !sidebarOpen && sidebarPreviewScope !== null;
   const cancelSidebarPreviewClose = useCallback(() => {
     if (sidebarPreviewCloseTimerRef.current === null) return;
     window.clearTimeout(sidebarPreviewCloseTimerRef.current);
@@ -1223,11 +1235,11 @@ export function SessionPage(props: SessionPageProps) {
     <header
       className={cn(
         "z-10 flex h-[var(--session-shell-top-inset)] min-h-[var(--session-shell-top-inset)] shrink-0 items-center justify-between border-b border-dls-border/70 bg-dls-sidebar px-4 md:px-6 mac:titlebar-drag",
-        shellConfig.sidebar && !sidebarOpen && "mac:pl-[76px]",
+        !props.embedded && shellConfig.sidebar && !sidebarOpen && "mac:pl-[76px]",
       )}
       data-session-shell-topbar
       >
-        {shellConfig.sidebar && !sidebarOpen ? (
+        {!props.embedded && shellConfig.sidebar && !sidebarOpen ? (
           <span
             aria-hidden="true"
             className="absolute left-0 top-0 h-[var(--session-shell-top-inset)] w-[76px] mac:titlebar-drag"
@@ -1236,8 +1248,34 @@ export function SessionPage(props: SessionPageProps) {
           />
         ) : null}
         <div className="flex min-w-0 items-center gap-3">
-        {shellConfig.sidebar ? <SidebarTrigger className="mac:hidden" /> : null}
-        {shellConfig.sidebar && !sidebarOpen ? (
+        {props.embedded && !sidebarOpen ? (
+          <div className="flex shrink-0 items-center gap-0 mac:titlebar-no-drag" data-embedded-session-collapsed-controls>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="pointer-events-auto rounded-xl text-dls-secondary hover:bg-dls-hover hover:text-dls-text mac:titlebar-no-drag"
+              onClick={props.sidebar.onOpenTaskSearch}
+              title={t("workspace_list.search_sessions")}
+              aria-label={t("workspace_list.search_sessions")}
+              data-embedded-session-task-search
+            >
+              <Search size={17} />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="pointer-events-auto border-none mac:titlebar-no-drag"
+              onClick={() => setSidebarOpen(true)}
+              title={t("sidebar.expand")}
+              aria-label={t("sidebar.expand")}
+              data-embedded-session-sidebar-toggle
+            >
+              <PanelLeftIcon className="size-3.5 rtl:rotate-180" />
+            </Button>
+          </div>
+        ) : null}
+        {!props.embedded && shellConfig.sidebar ? <SidebarTrigger className="mac:hidden" /> : null}
+        {!props.embedded && shellConfig.sidebar && !sidebarOpen ? (
           <div
             className="hidden shrink-0 items-center gap-0 mac:flex mac:titlebar-no-drag"
             style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
@@ -1418,8 +1456,8 @@ export function SessionPage(props: SessionPageProps) {
   return (
     <div className="flex h-full min-h-0 flex-col bg-dls-sidebar text-dls-text" data-session-shell-chrome>
       <SidebarProvider
-        open={sidebarOpen}
-        onOpenChange={setSidebarOpen}
+        open={!props.embedded && sidebarOpen}
+        onOpenChange={props.embedded ? undefined : setSidebarOpen}
         className={cn(
           "relative min-h-0 flex-1 bg-dls-sidebar",
           leftSidebarResizing &&
@@ -1428,7 +1466,7 @@ export function SessionPage(props: SessionPageProps) {
         )}
         style={sidebarProviderStyle}
       >
-        <AppSidebar
+        {!props.embedded ? <AppSidebar
           workspaceSessionGroups={props.sidebar.workspaceSessionGroups}
           selectedWorkspaceId={props.sidebar.selectedWorkspaceId}
           developerMode={props.sidebar.developerMode}
@@ -1490,8 +1528,8 @@ export function SessionPage(props: SessionPageProps) {
             scheduleSidebarPreviewClose();
             appSidebarPreview.onPreviewLeave();
           }}
-        />
-        {shellConfig.sidebar && !sidebarOpen ? (
+        /> : null}
+        {!props.embedded && shellConfig.sidebar && !sidebarOpen ? (
           <div
             className="absolute inset-y-0 left-0 z-40 w-12 overflow-hidden mac:titlebar-no-drag"
             data-session-rail-preview-trigger
@@ -1512,7 +1550,7 @@ export function SessionPage(props: SessionPageProps) {
             />
           </div>
         ) : null}
-        {shellConfig.sidebar && sidebarOpen ? (
+        {!props.embedded && shellConfig.sidebar && sidebarOpen ? (
           <>
             <span
               aria-hidden="true"
@@ -1550,13 +1588,16 @@ export function SessionPage(props: SessionPageProps) {
           <div
             className={cn(
               "relative mb-1.5 mr-1.5 flex min-h-0 flex-1 overflow-hidden border border-dls-border bg-background shadow-[0_1px_2px_rgba(0,0,0,0.04)]",
-              shellConfig.sidebar && sidebarOpen
+              props.embedded && (sidebarOpen
+                ? "rounded-l-none rounded-r-[18px] border-l-0"
+                : "rounded-[18px]"),
+              !props.embedded && (shellConfig.sidebar && sidebarOpen
                 ? "ml-1.5 rounded-[18px] md:ml-0 md:rounded-l-none md:rounded-r-[18px] md:border-l-0"
-                : "ml-[52px] rounded-[18px]",
+                : "ml-[52px] rounded-[18px]"),
             )}
             data-session-work-surface
           >
-          {shellConfig.sidebar && sidebarOpen ? (
+          {!props.embedded && shellConfig.sidebar && sidebarOpen ? (
             <span
               aria-hidden="true"
               className="absolute -inset-y-px left-0 z-30 hidden w-px bg-dls-border md:block"
@@ -1618,7 +1659,7 @@ export function SessionPage(props: SessionPageProps) {
 
               {!showDelayedSessionLoadingState && canRenderReactSurface ? (
                 <div className="flex h-full min-h-0 flex-col">
-                  {sessionTabs.length > 0 ? (
+                  {!props.embedded && sessionTabs.length > 0 ? (
                     <div className="hidden h-10 shrink-0 items-center gap-1 border-b border-border bg-background/80 px-2 mac:backdrop-blur-xl">
                       <div className="flex shrink-0 items-center gap-0.5 pr-1" role="group" aria-label="Conversation history controls">
                         <Tooltip>
@@ -2009,7 +2050,7 @@ export function SessionPage(props: SessionPageProps) {
           // 头部里的按钮单独标 titlebar-no-drag，仍可正常点击。
           <div
             className="absolute bottom-1.5 right-1.5 top-11 z-40 flex flex-col overflow-hidden rounded-[18px] border border-dls-border bg-background shadow-[0_1px_2px_rgba(0,0,0,0.04)] mac:titlebar-no-drag"
-            style={{ left: `${APP_NAVIGATION_RAIL_WIDTH + 4}px` }}
+            style={props.embedded ? { left: 0 } : { left: `${APP_NAVIGATION_RAIL_WIDTH + 4}px` }}
             data-files-fullscreen-surface
           >
             <div className="flex min-h-0 flex-1 flex-col">

@@ -3,7 +3,13 @@ import test from "node:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { allocateAutomationWorkspace, automationDirectoryName } from "./workspace.js";
+import { allocateAutomationWorkspace, automationDirectoryName, isAutomationManagedWorkspacePath } from "./workspace.js";
+
+test("distinguishes automation-managed paths from selectable local workspaces", () => {
+  const root = join(tmpdir(), "JuggleWork", "Automations");
+  assert.equal(isAutomationManagedWorkspacePath(join(root, "2026-10-22", "daily_news"), root), true);
+  assert.equal(isAutomationManagedWorkspacePath(join(tmpdir(), "projects", "daily_news"), root), false);
+});
 
 test("allocates atomically under the task timezone and sanitizes Windows names", async () => {
   const root = await mkdtemp(join(tmpdir(), "jw-allocation-"));

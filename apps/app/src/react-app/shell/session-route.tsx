@@ -280,6 +280,10 @@ function nextEvalUnavailableModel(current: ModelRef | null | undefined) {
 export type SessionRouteProps = {
   routeWorkspaceId?: string;
   routeSessionId?: string | null;
+  /** Host-owned frame and selection; suppress automatic browser redirects. */
+  embedded?: boolean;
+  /** The host must feed the new target back through the route props. */
+  onSessionTargetChange?: (workspaceId: string, sessionId: string | null) => void;
   /**
    * 会话面当前是否可见。工作台外壳里会话页与设置/聊天/应用页同时常驻挂载、
    * 靠 display:none 互切；隐藏时它内部的模型选择器不应响应全局打开事件，
@@ -361,6 +365,8 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     developerMode,
     routeWorkspaceId: props.routeWorkspaceId,
     routeSessionId: props.routeSessionId,
+    embedded: props.embedded,
+    onSessionTargetChange: props.onSessionTargetChange,
     onServerSettingsChanged: () => setJuggleWorkServerSettingsVersion((value) => value + 1),
     onHostInfo: setJuggleWorkServerHostInfoState,
   });
@@ -547,10 +553,10 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     [selectedWorkspaceId, sessionsByWorkspaceId],
   );
   const splitRuntimeSessionId = useWorkbenchStore((state) =>
-    state.workspaceId === selectedWorkspaceId ? state.splitSessionId : null,
+    !props.embedded && state.workspaceId === selectedWorkspaceId ? state.splitSessionId : null,
   );
   const paletteSessionId = useWorkbenchStore((state) =>
-    state.workspaceId === selectedWorkspaceId && state.focusedPane === "secondary" && state.splitSessionId
+    !props.embedded && state.workspaceId === selectedWorkspaceId && state.focusedPane === "secondary" && state.splitSessionId
       ? state.splitSessionId
       : selectedSessionId,
   );
@@ -1128,12 +1134,12 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     const sessionId = workspaceId === sidebarActiveWorkspaceId ? selectedSessionId : null;
     const tab = route.replace(/^\/settings\/?/, "").replace(/^\/+|\/+$/g, "") || "general";
     const target = workspaceId ? workspaceSettingsRoute(workspaceId, tab) : route;
-    const returnPath = workspaceId
+    const returnPath = props.embedded ? "/automations" : workspaceId
       ? workspaceSessionRoute(workspaceId, sessionId)
       : legacySessionRoute(sessionId);
-    writeActiveWorkspaceId(workspaceId || null);
+    if (!props.embedded) writeActiveWorkspaceId(workspaceId || null);
     navigate(target, { state: { workspaceId, sessionId, returnPath } });
-  }, [navigate, selectedSessionId, sidebarActiveWorkspaceId]);
+  }, [navigate, props.embedded, selectedSessionId, sidebarActiveWorkspaceId]);
 
   /**
    * 串行激活目标工作区，并只允许最后一次选择继续导航
@@ -1181,6 +1187,11 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     options?: { workspaceReady?: boolean },
   ) => {
     workspaceNavigationGenerationRef.current += 1;
+    if (props.embedded) {
+      navigateToWorkspaceSession(workspaceId, sessionId);
+      requestComposerFocus(sessionId, "session-switch");
+      return;
+    }
     setLegacySelectedWorkspaceId(workspaceId);
     writeActiveWorkspaceId(workspaceId || null);
     writeLastSessionFor(workspaceId, sessionId);
@@ -1195,7 +1206,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     requestComposerFocus(sessionId, "session-switch");
     if (workspaceAlreadyReady) return;
     void activateWorkspaceForNavigation(workspaceId);
-  }, [activateWorkspaceForNavigation, activatingWorkspaceId, navigateToWorkspaceSession, selectedWorkspaceId, setLegacySelectedWorkspaceId, workspaceActivationErrorId]);
+  }, [activateWorkspaceForNavigation, activatingWorkspaceId, navigateToWorkspaceSession, props.embedded, selectedWorkspaceId, setLegacySelectedWorkspaceId, workspaceActivationErrorId]);
 
   const surfaceProps = useMemo(() => {
     if (!client || !selectedWorkspaceId || !selectedSessionId || !opencodeBaseUrl || !token || !opencodeClient) {
@@ -1655,13 +1666,13 @@ export function SessionRoute(props: SessionRouteProps = {}) {
       if (selectedWorkspaceId === workspaceId) {
         setLegacySelectedWorkspaceId("");
         writeActiveWorkspaceId(null);
-        navigate(legacySessionRoute());
+        navigateToWorkspaceSession("");
       }
       forgetWorkspaceMemory(workspaceId);
       sessionManagementStore.getState().forgetWorkspace(workspaceId);
       await refreshRouteState();
     },
-    [client, navigate, refreshRouteState, selectedWorkspaceId],
+    [client, navigateToWorkspaceSession, refreshRouteState, selectedWorkspaceId],
   );
 
 
@@ -2392,6 +2403,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
       />
     ) : null}
     <SessionPage
+      embedded={props.embedded}
       selectedSessionId={selectedSessionId}
       selectedWorkspaceId={selectedWorkspaceId}
       selectedWorkspaceDisplay={selectedWorkspace ? {

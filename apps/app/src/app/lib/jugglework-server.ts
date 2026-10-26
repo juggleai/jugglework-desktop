@@ -2222,6 +2222,7 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
     capabilities: 6_000,
     listWorkspaces: 8_000,
     activateWorkspace: 10_000,
+    automationCreate: 30_000,
     deleteWorkspace: 10_000,
     deleteSession: 12_000,
     sessionRead: 12_000,
@@ -2465,6 +2466,12 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
     getAutomation: (automationId: string) => requestJson<{ item: AutomationDefinitionRecord }>(
       baseUrl, `/automations/${encodeURIComponent(automationId)}`, { token, hostToken, timeoutMs: timeouts.config },
     ),
+    /** 打开或准备任务会话，不触发运行，也不发送提示词。 */
+    prepareAutomationSession: (automationId: string) => requestJson<{ item: { workspaceId: string; sessionId: string } }>(
+      baseUrl, `/automations/${encodeURIComponent(automationId)}/session`, {
+        token, hostToken, method: "POST", body: {}, timeoutMs: timeouts.activateWorkspace,
+      },
+    ),
     /**
      * §4.10 的"打开会话"用它——按 (automationId, entityRef) 实时解析当前归属会话，不用
      * 消息里的快照。`item` 为 null 表示这个实体从没触发过（自动化还在，只是没有归属记录）；
@@ -2476,9 +2483,18 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
         baseUrl, `/automations/${encodeURIComponent(automationId)}/entity-session?entityRef=${encodeURIComponent(entityRef)}`,
         { token, hostToken, timeoutMs: timeouts.config },
       ),
-    /** 原子创建本机自动化任务。 */
-    createAutomation: (draft: AutomationDraft) => requestJson<{ item: AutomationDefinitionRecord }>(
-      baseUrl, "/automations", { token, hostToken, method: "POST", body: draft, timeoutMs: timeouts.config },
+    /** 创建本机自动化任务并准备首个会话。 */
+    createAutomation: (draft: AutomationDraft, locale?: string) => requestJson<{
+      item: AutomationDefinitionRecord;
+      session?: { workspaceId: string; sessionId: string };
+    }>(
+      baseUrl, "/automations", {
+        token,
+        hostToken,
+        method: "POST",
+        body: { draft, ...(locale ? { locale } : {}) },
+        timeoutMs: timeouts.automationCreate,
+      },
     ),
     /** 以乐观锁更新本机自动化任务。 */
     updateAutomation: (automationId: string, baseRevision: number, draft: AutomationDraft) =>

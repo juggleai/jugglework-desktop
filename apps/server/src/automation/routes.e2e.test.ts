@@ -9,6 +9,9 @@ import { AutomationRepository } from "./repository.js";
 import { registerAutomationRoutes } from "../routes/automations.js";
 import { matchRoute, type RequestContext, type Route } from "../routes/registry.js";
 import { GithubEventAuthStore } from "./github-event-auth-store.js";
+import { AutomationExecutor } from "./executor.js";
+import { ApiError } from "../errors.js";
+import type { AutomationDefinition } from "@jugglework/types/automation";
 
 test("automation routes support local-first CRUD, manual run and history", async () => {
   const root = await mkdtemp(join(tmpdir(), "jugglework-automation-routes-"));
@@ -18,6 +21,7 @@ test("automation routes support local-first CRUD, manual run and history", async
   const routeConfig = config(root, workspacePath);
   const repository = await AutomationRepository.open(routeConfig);
   const routes: Route[] = [];
+  const prepared: Array<{ automationId: string; options?: { initializeConversation?: boolean; locale?: string } }> = [];
   registerAutomationRoutes({
     routes,
     config: routeConfig,
@@ -26,6 +30,10 @@ test("automation routes support local-first CRUD, manual run and history", async
     readJsonBody: async (request) => await request.json() as Record<string, unknown>,
     ensureWritable: () => undefined,
     requireClientScope: () => undefined,
+    prepareSession: async (automationId, options) => {
+      prepared.push({ automationId, options });
+      return { workspaceId: "workspace-1", sessionId: "initial-session" };
+    },
   });
   const invoke = async (method: string, path: string, body?: unknown) => {
     const url = new URL(`http://localhost${path}`);
@@ -63,9 +71,18 @@ test("automation routes support local-first CRUD, manual run and history", async
         permission: { profile: AUTOMATION_PERMISSION_PROFILE, acknowledgedAt: now },
         lifecycle: "enabled",
         executorDeviceId: "device-1",
+        locale: "zh",
     });
     assert.equal(create.status, 201);
-    const created = await create.json() as { item: { definition: { id: string; revision: number } } };
+    const created = await create.json() as {
+      item: { definition: { id: string; revision: number } };
+      session: { workspaceId: string; sessionId: string };
+    };
+    assert.deepEqual(created.session, { workspaceId: "workspace-1", sessionId: "initial-session" });
+    assert.deepEqual(prepared, [
+      { automationId: created.item.definition.id, options: undefined },
+      { automationId: created.item.definition.id, options: { initializeConversation: true, locale: "zh" } },
+    ]);
 
     const list = await invoke("GET", "/automations");
     assert.equal(list.status, 200);
@@ -96,6 +113,65 @@ test("automation routes support local-first CRUD, manual run and history", async
     assert.equal(remove.status, 200);
     const afterDelete = await invoke("GET", "/automations");
     assert.deepEqual((await afterDelete.json() as { items: unknown[] }).items, []);
+  } finally {
+    repository.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("creating a scheduled task succeeds when its optional initial conversation fails", async () => {
+  const root = await mkdtemp(join(tmpdir(), "jugglework-automation-create-conversation-"));
+  const workspacePath = join(root, "workspace");
+  await mkdir(workspacePath);
+  const routeConfig = config(root, workspacePath);
+  const repository = await AutomationRepository.open(routeConfig);
+  const routes: Route[] = [];
+  const logged: Array<{ event: string; fields: Record<string, string | number | boolean | null> }> = [];
+  let calls = 0;
+  registerAutomationRoutes({
+    routes,
+    config: routeConfig,
+    repository,
+    jsonResponse: (data, status = 200) => Response.json(data, { status }),
+    readJsonBody: async (request) => await request.json() as Record<string, unknown>,
+    ensureWritable: () => undefined,
+    requireClientScope: () => undefined,
+    prepareSession: async (_automationId, options) => {
+      calls += 1;
+      if (options?.initializeConversation) throw new ApiError(503, "model_unavailable", "指定模型当前不可用");
+      return { workspaceId: "workspace-1", sessionId: "prepared-session" };
+    },
+    log: (event, fields) => logged.push({ event, fields }),
+  });
+  try {
+    const url = new URL("http://localhost/automations");
+    const route = matchRoute(routes, "POST", url.pathname)!;
+    const now = Date.now();
+    const response = await route.handler({
+      request: new Request(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+        draft: {
+          name: "天气提醒",
+          workspace: { id: "workspace-1", name: "工作空间", path: workspacePath, workspaceType: "local" },
+          prompt: { version: 1, parts: [{ type: "text", text: "查询天气" }] },
+          timezone: "UTC",
+          trigger: { version: 1, kind: "calendar", frequency: "daily", every: 1, anchorLocalDate: "2026-01-01", localTime: "09:00", timezone: "UTC" },
+          model: { mode: "explicit", providerId: "provider", modelId: "model" },
+          skillIds: [], connectors: [], permission: { profile: AUTOMATION_PERMISSION_PROFILE, acknowledgedAt: now },
+          lifecycle: "enabled", executorDeviceId: "device-1",
+        },
+        locale: "zh",
+      }) }),
+      url,
+      params: route.params,
+      config: routeConfig,
+    } as RequestContext);
+    assert.equal(response.status, 201);
+    const payload = await response.json() as { item: { definition: { id: string } }; session: { sessionId: string } };
+    assert.equal(payload.session.sessionId, "prepared-session");
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(calls, 2);
+    assert.equal(repository.getDefinition(payload.item.definition.id)?.definition.lifecycle, "enabled");
+    assert.equal(logged[0]?.event, "automation.initial_conversation_failed");
   } finally {
     repository.close();
     await rm(root, { recursive: true, force: true });
@@ -206,6 +282,90 @@ function config(root: string, workspacePath: string): ServerConfig {
     logRequests: false,
   };
 }
+
+test("session route injects executor preparation, preserves task state, and requires writable collaborator access", async () => {
+  const root = await mkdtemp(join(tmpdir(), "jw-session-route-"));
+  const routeConfig = config(root, root);
+  const repository = await AutomationRepository.open(routeConfig);
+  const definition: AutomationDefinition = {
+    schema: "automation-definition/v1", id: "task-session", name: "Task",
+    workspace: { ...routeConfig.workspaces[0], workspaceType: "local" }, newChatPerRun: false,
+    prompt: { version: 1, parts: [{ type: "text", text: "do not dispatch" }] },
+    trigger: { version: 1, kind: "calendar", frequency: "daily", localTime: "09:00", timezone: "UTC" },
+    model: { mode: "auto" }, skillIds: [], connectors: [],
+    permission: { profile: AUTOMATION_DEFAULT_PERMISSION_PROFILE, acknowledgedAt: 1 }, lifecycle: "paused", executorDeviceId: "device",
+    revision: 1, nextRunAt: 1000, createdAt: 1, updatedAt: 1,
+  };
+  let creates = 0;
+  let calls = 0;
+  const executor = new AutomationExecutor({ config: routeConfig, repository,
+    resolveWorkspace: async () => routeConfig.workspaces[0],
+    createWorkspaceOpencodeClient: () => ({ session: {
+      create: async () => { creates++; return { data: { id: "prepared-session" } }; },
+      get: async () => ({ data: { id: "prepared-session" } }),
+      promptAsync: async () => { assert.fail("opening must not dispatch"); },
+    } }) as never,
+  });
+  let collaborator = true;
+  const routes: Route[] = [];
+  const options = {
+    routes, config: routeConfig, repository,
+    jsonResponse: (data: unknown, status = 200) => Response.json(data, { status }),
+    readJsonBody: async () => { throw new Error("session route does not need a body"); },
+    ensureWritable: (config: ServerConfig) => { if (config.readOnly) throw new ApiError(403, "read_only", "Read only"); },
+    requireClientScope: (_ctx: RequestContext, scope: string) => {
+      assert.equal(scope, "collaborator");
+      if (!collaborator) throw new ApiError(403, "forbidden", "Collaborator required");
+    },
+    prepareSession: (id: string) => { calls++; return executor.prepareSession(id); },
+    onChanged: () => { assert.fail("opening must not wake the scheduler"); },
+  };
+  registerAutomationRoutes(options);
+  const invoke = async (id = definition.id, registered = routes) => {
+    const url = new URL(`http://localhost/automations/${id}/session`);
+    const route = matchRoute(registered, "POST", url.pathname);
+    assert.ok(route);
+    assert.equal(route.auth, "client");
+    return route.handler({ request: new Request(url, { method: "POST" }), url, params: route.params, config: routeConfig } as RequestContext);
+  };
+  try {
+    repository.createDefinition(definition, definition);
+    const before = repository.getDefinition(definition.id);
+    const responses = await Promise.all([invoke(), invoke()]);
+    for (const response of responses) {
+      assert.equal(response.status, 200);
+      assert.deepEqual(await response.json(), { item: { workspaceId: "workspace-1", sessionId: "prepared-session" } });
+    }
+    assert.deepEqual(await (await invoke()).json(), { item: { workspaceId: "workspace-1", sessionId: "prepared-session" } });
+    assert.equal(creates, 1);
+    assert.deepEqual(repository.getDefinition(definition.id), before);
+    assert.deepEqual(repository.listRuns().items, []);
+    assert.deepEqual(repository.readOutbox(), []);
+    const callsBeforeDenial = calls;
+    collaborator = false;
+    await assert.rejects(invoke(), (error: unknown) => (error as ApiError).status === 403);
+    collaborator = true;
+    routeConfig.readOnly = true;
+    await assert.rejects(invoke(), (error: unknown) => (error as ApiError).status === 403);
+    routeConfig.readOnly = false;
+    assert.equal(calls, callsBeforeDenial, "denied requests must not reach the executor");
+    await assert.rejects(invoke("missing"), (error: unknown) => (error as ApiError).status === 404);
+    const event: AutomationDefinition = { ...definition, id: "event-task", trigger: {
+      version: 1, kind: "event", provider: "github", connectorId: "github",
+      repository: { owner: "owner", name: "repo" }, matches: [{ event: "pull_request" }],
+      concurrencyKey: "entity", deliveryMode: "auto", permissionTier: "auto",
+    } };
+    repository.createDefinition(event, event);
+    await assert.rejects(invoke(event.id), (error: unknown) => (error as ApiError).status === 400);
+    assert.equal(calls, callsBeforeDenial);
+    const unavailable: Route[] = [];
+    registerAutomationRoutes({ ...options, routes: unavailable, prepareSession: undefined });
+    await assert.rejects(invoke(definition.id, unavailable), (error: unknown) => (error as ApiError).status === 503);
+    repository.tombstoneDefinition(definition.id, 1, 200);
+    await assert.rejects(invoke(), (error: unknown) => (error as ApiError).status === 404);
+    assert.equal(creates, 1);
+  } finally { repository.close(); await rm(root, { recursive: true, force: true }); }
+});
 
 test("dependency lookup falls back to the first local workspace when none is selected", async () => {
   const root = await mkdtemp(join(tmpdir(), "jugglework-automation-deps-"));

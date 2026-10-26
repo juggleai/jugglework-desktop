@@ -83,6 +83,8 @@ export type UseWorkspaceRouteStateInput = {
   developerMode: boolean;
   routeWorkspaceId?: string;
   routeSessionId?: string | null;
+  embedded?: boolean;
+  onSessionTargetChange?: (workspaceId: string, sessionId: string | null) => void;
   /** Invoked when the jugglework-server settings-changed event fires (the route bumps its settings version). */
   onServerSettingsChanged: () => void;
   /** Receives the local jugglework-server host info discovered during refresh. */
@@ -94,7 +96,7 @@ type ModernRouteSessionResolution =
   | { key: string; status: "not-found" | "error"; message: string };
 
 export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
-  const { developerMode, onServerSettingsChanged, onHostInfo } = input;
+  const { developerMode, embedded, onSessionTargetChange, onServerSettingsChanged, onHostInfo } = input;
   const navigate = useNavigate();
   const local = useLocal();
   const denAuth = useDenAuth();
@@ -108,12 +110,17 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
   const workspaceInferenceSessionId = sessionIdForLegacyWorkspaceInference(routeWorkspaceId, selectedSessionId);
   const navigateToWorkspaceSession = useCallback((workspaceId: string, sessionId?: string | null, options?: { replace?: boolean }) => {
     const id = workspaceId.trim();
+    if (onSessionTargetChange) {
+      onSessionTargetChange(id, sessionId?.trim() || null);
+      return;
+    }
+    if (embedded) return;
     if (!id) {
       navigate(legacySessionRoute(sessionId), options);
       return;
     }
     navigate(workspaceSessionRoute(id, sessionId), options);
-  }, [navigate]);
+  }, [embedded, navigate, onSessionTargetChange]);
 
   const { markRouteReady: markBootRouteReady } = useBootState();
   const [loading, setLoading] = useState(true);
@@ -545,11 +552,11 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
       });
       setRetryingWorkspaceIds([]);
       setLegacySelectedWorkspaceId(nextWorkspaceId);
-      writeActiveWorkspaceId(nextWorkspaceId || null);
+      if (!embedded) writeActiveWorkspaceId(nextWorkspaceId || null);
       // Keep the server registry's active workspace aligned with navigation.
       // Activation is intentionally non-destructive; configuration changes use
       // the explicit engine-reload path, which is gated while tasks are active.
-      if (nextWorkspaceId && list.activeId !== nextWorkspaceId && !launchActivatedWorkspaceIdsRef.current.has(nextWorkspaceId)) {
+      if (!embedded && nextWorkspaceId && list.activeId !== nextWorkspaceId && !launchActivatedWorkspaceIdsRef.current.has(nextWorkspaceId)) {
         const nextWorkspace = nextWorkspaces.find((workspace) => workspace.id === nextWorkspaceId) ?? null;
         const nextEndpoint = routeWorkspaceServerClientResolver(nextWorkspace);
         if (nextEndpoint) {
@@ -611,7 +618,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
         markBootRouteReady();
       }
     }
-  }, [loadWorkspaceSessionsInBackground, markBootRouteReady, routeWorkspaceId, stabilizeWorkspaceOrder, updateLocalServer, workspaceInferenceSessionId]);
+  }, [embedded, loadWorkspaceSessionsInBackground, markBootRouteReady, routeWorkspaceId, stabilizeWorkspaceOrder, updateLocalServer, workspaceInferenceSessionId]);
   const refreshRouteStateQueue = useMemo(
     () => createLatestSyncQueue<() => Promise<void>>((refresh) => refresh()),
     [],
@@ -816,7 +823,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
   // Once workspaces + sessions are loaded and the URL has no sessionId, try to
   // restore the last session the user opened in the active workspace.
   useEffect(() => {
-    if (loading) return;
+    if (embedded || loading) return;
     if (routeWorkspaceId && workspaces.length > 0 && !workspaces.some((workspace) => workspace.id === routeWorkspaceId)) {
       const fallbackWorkspaceId = workspaces.some((workspace) => workspace.id === legacySelectedWorkspaceId)
         ? legacySelectedWorkspaceId
@@ -838,6 +845,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
     if (!sessions.some((session) => session?.id === remembered)) return;
     navigateToWorkspaceSession(selectedWorkspaceId, remembered, { replace: true });
   }, [
+    embedded,
     loading,
     legacySelectedWorkspaceId,
     navigateToWorkspaceSession,
@@ -852,7 +860,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
   // completed onboarding. Desktop only does this for the default hosted
   // bootstrap; org-bound desktops should keep their sign-in gate instead.
   useEffect(() => {
-    if (loading) return;
+    if (embedded || loading) return;
     if (workspaces.length > 0) return;
     if (local.prefs.hasCompletedOnboarding) return;
     if (isDesktopRuntime()) {
@@ -861,7 +869,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
       if (readDenBootstrapConfig().source !== "default") return;
     }
     navigate("/welcome", { replace: true });
-  }, [denAuth.isSignedIn, denAuth.status, loading, local.prefs.hasCompletedOnboarding, navigate, workspaces.length]);
+  }, [denAuth.isSignedIn, denAuth.status, embedded, loading, local.prefs.hasCompletedOnboarding, navigate, workspaces.length]);
 
   // NOTE: Blueprint seeding was removed from the route.
   // It was firing `materializeBlueprintSessions` + a session re-fetch on every

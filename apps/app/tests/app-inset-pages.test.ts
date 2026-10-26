@@ -173,7 +173,7 @@ describe("secondary app inset shells", () => {
     expect(wrapper).toContain(': "hidden"');
     expect(wrapper).toContain(': "h-full min-h-0"');
     expect(wrapper).not.toContain("opacity-0");
-    expect(workspaceRoute).toContain("surfaceVisible={!(settingsVisible || chatVisible || appsVisible || automationsVisible || reviewsVisible || toonFactoryVisible)}");
+    expect(workspaceRoute).toContain("surfaceVisible={automationSessionVisible || !(settingsVisible || chatVisible || appsVisible || automationsVisible || reviewsVisible || toonFactoryVisible)}");
     expect(previewHost).toContain("workspaceTarget: TaskScope | null");
     expect(previewHost).toContain("onWorkspaceTriggerChange");
   });

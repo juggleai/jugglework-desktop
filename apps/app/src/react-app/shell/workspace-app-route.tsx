@@ -1,5 +1,6 @@
 /** @jsxImportSource react */
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
 
 import { ToonFactoryPage } from "./toonFactoryPage";
@@ -89,6 +90,25 @@ function WorkspaceAppRouteContent() {
   });
   const [appsMounted, setAppsMounted] = useState(() => appPath?.view === "apps");
   const [reviewsMounted, setReviewsMounted] = useState(() => appPath?.view === "reviews");
+  const [automationSession, setAutomationSession] = useState<RetainedSessionTarget | null>(null);
+  const [automationSessionHost, setAutomationSessionHost] = useState<HTMLDivElement | null>(null);
+  const retainedSessionHost = useRef<HTMLDivElement>(null);
+  // Keep one session runtime and a stable portal container. Moving the container between
+  // hosts preserves its React instance instead of mounting a second set of global controls.
+  const [sessionContainer] = useState(() => typeof document === "undefined" ? null : document.createElement("div"));
+  const automationSessionVisible = appPath?.view === "automations" && automationSession !== null;
+  useLayoutEffect(() => {
+    if (!sessionContainer) return;
+    const host = automationSessionVisible ? automationSessionHost : retainedSessionHost.current;
+    if (!host) return;
+    sessionContainer.className = "h-full min-h-0";
+    host.appendChild(sessionContainer);
+    return () => { sessionContainer.remove(); };
+  }, [automationSessionHost, automationSessionVisible, sessionContainer]);
+  const openAutomationSession = useCallback((workspaceId: string, sessionId: string | null) => {
+    setAutomationSession(workspaceId && sessionId ? { workspaceId, sessionId } : null);
+  }, []);
+  const clearAutomationSession = useCallback(() => setAutomationSession(null), []);
 
   const currentSession = appPath?.view === "session"
     ? { workspaceId: appPath.workspaceId, sessionId: appPath.sessionId }
@@ -151,6 +171,16 @@ function WorkspaceAppRouteContent() {
   const sessionPath = activeSession.workspaceId
     ? workspaceSessionRoute(activeSession.workspaceId, activeSession.sessionId)
     : legacySessionRoute(activeSession.sessionId);
+  const displayedSession = automationSessionVisible ? automationSession! : activeSession;
+  const sessionSurface = (
+    <SessionRoute
+      routeWorkspaceId={displayedSession.workspaceId}
+      routeSessionId={displayedSession.sessionId}
+      embedded={automationSessionVisible}
+      onSessionTargetChange={automationSessionVisible ? openAutomationSession : undefined}
+      surfaceVisible={automationSessionVisible || !(settingsVisible || chatVisible || appsVisible || automationsVisible || reviewsVisible || toonFactoryVisible)}
+    />
+  );
 
   const openSurfaceSettings = (
     tab: "cloud-account" | "preferences" | "connect",
@@ -171,6 +201,7 @@ function WorkspaceAppRouteContent() {
   return (
     <div className="relative h-dvh min-h-screen w-full overflow-hidden">
       <div
+        ref={retainedSessionHost}
         className={settingsVisible || chatVisible || appsVisible || automationsVisible || reviewsVisible || toonFactoryVisible
           ? navigationPreview.workspaceTarget
             ? "invisible absolute inset-0 z-50 h-full min-h-0 pointer-events-none [&_[data-session-list-preview=true]]:visible [&_[data-session-list-preview=true]]:pointer-events-auto [&_[data-session-preview-title-hover-guard]]:visible"
@@ -181,11 +212,7 @@ function WorkspaceAppRouteContent() {
       >
         {/* surfaceVisible gates behavior, not paint. Only the preview list and
             its transparent title hover guard may escape inherited invisibility. */}
-        <SessionRoute
-          routeWorkspaceId={activeSession.workspaceId}
-          routeSessionId={activeSession.sessionId}
-          surfaceVisible={!(settingsVisible || chatVisible || appsVisible || automationsVisible || reviewsVisible || toonFactoryVisible)}
-        />
+        {sessionContainer ? createPortal(sessionSurface, sessionContainer) : sessionSurface}
       </div>
 
       {/*
@@ -291,6 +318,10 @@ function WorkspaceAppRouteContent() {
       {automationsVisible ? (
         <div className="absolute inset-0" data-testid="workspace-automations-surface">
           <AutomationPage
+            onOpenSession={openAutomationSession}
+            onSessionHostChange={setAutomationSessionHost}
+            onClearSession={clearAutomationSession}
+            sessionSelected={automationSessionVisible}
             workspaceId={activeSession.workspaceId}
             sessionPath={sessionPath}
             onOpenAccount={() => openSurfaceSettings("cloud-account", location.pathname)}

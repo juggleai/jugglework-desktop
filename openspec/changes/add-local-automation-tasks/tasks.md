@@ -74,6 +74,13 @@
 - [x] 6.16 Render the inline template catalog below both the first-task state and non-empty task list as a responsive three/two/one-column grid with two-line ellipsis, keyboard activation, and the existing card/focus visual language.
 - [x] 6.17 Implement template application as a side-effect-free prefilled create draft: keep workspace empty, keep recommended connectors unselected, leave missing/time-sensitive fields invalid, reuse normal Save/authorization/full-access flows, and never persist template-catalog coupling into required server projections.
 - [x] 6.18 Add route/component tests for exact rail ordering and active state, preservation of workspace/session state, empty-to-list transitions, template visibility by tab, all twelve catalog entries, responsive/accessible cards, zero writes on template selection, validation of incomplete one-time drafts, and server-independent catalog evolution.
+- [x] 6.19 Remove the second permission reminder when creating a scheduled task, activate its selected permission profile as part of Create, and retain the separate event-trigger escalation and existing-task renewal flows.
+- [x] 6.20 Invalidate and reload the retained Automation dashboard after a successful modal create so the new task appears immediately without switching rails.
+- [x] 6.21 Open task/run conversations in the Automation dashboard's right pane using a single embedded session runtime without workspace-route navigation.
+- [x] 6.22 Reuse the create modal for editing existing tasks while retaining the dashboard and selected conversation underneath.
+- [x] 6.23 Prepare and bind a conversation on first scheduled-task open even without run history, without executing or rescheduling the task; cover repeat/concurrent opens and run-time reuse.
+- [x] 6.24 Gate Create on the current workspace dependency snapshot and make the model-generated scheduling acknowledgement best-effort so fresh provider-registry timing cannot roll back task creation.
+- [x] 6.24 Prepare and bind the conversation during scheduled-task creation, add a localized task-and-schedule user turn, open it immediately after asynchronous acceptance, and stream a tool-disabled acknowledgement without creating an automation run or executing the task early.
 
 ## 7. Lifecycle and integration
 

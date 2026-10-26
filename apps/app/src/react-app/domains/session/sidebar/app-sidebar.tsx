@@ -751,6 +751,13 @@ function isSessionActivityStatus(status: string | undefined): status is SessionA
 export function AppSidebar(props: AppSidebarProps) {
   const storedTaskScope = useTaskScope();
   const taskScope = props.previewTaskScope ?? storedTaskScope;
+  // Automation runs need a registered workspace so their sessions remain addressable,
+  // but those internal directories are not user-created local workspaces and must not
+  // appear in the ordinary workspace/session sidebar.
+  const sidebarWorkspaceSessionGroups = React.useMemo(
+    () => props.workspaceSessionGroups.filter((group) => !group.workspace.automationManaged),
+    [props.workspaceSessionGroups],
+  );
   const lastWorkspaceByScope = useTaskScopeStore((state) => state.lastWorkspaceByScope);
   const rememberWorkspace = useTaskScopeStore((state) => state.rememberWorkspace);
   const [sessionQuery, setSessionQuery] = React.useState("");
@@ -772,10 +779,10 @@ export function AppSidebar(props: AppSidebarProps) {
   React.useEffect(() => {
     const statuses = props.sessionStatusById ?? {};
     const accessibleMainSessionIds = new Set(
-      props.workspaceSessionGroups.flatMap((group) => group.sessions.filter(isMainSession).map((session) => session.id)),
+      sidebarWorkspaceSessionGroups.flatMap((group) => group.sessions.filter(isMainSession).map((session) => session.id)),
     );
     useSessionCompletionStore.getState().reconcile(statuses, accessibleMainSessionIds, visibleSessionIds);
-  }, [props.sessionStatusById, props.workspaceSessionGroups, visibleSessionIds]);
+  }, [props.sessionStatusById, sidebarWorkspaceSessionGroups, visibleSessionIds]);
 
   const expandWorkspace = React.useCallback((workspaceId: string) => {
     const id = workspaceId.trim();
@@ -838,7 +845,7 @@ export function AppSidebar(props: AppSidebarProps) {
   React.useEffect(() => {
     if (props.previewTaskScope) return;
     const workspaceId = props.selectedWorkspaceId.trim();
-    const selected = props.workspaceSessionGroups.find(
+    const selected = sidebarWorkspaceSessionGroups.find(
       (group) => group.workspace.id === workspaceId,
     )?.workspace;
 
@@ -860,7 +867,7 @@ export function AppSidebar(props: AppSidebarProps) {
     // is enough: the route layer follows up by navigating to the remembered
     // session of that workspace. Falls back to the first in-scope workspace
     // when the previous one was deleted or has not been seen this run.
-    const groupsInScope = props.workspaceSessionGroups.filter(
+    const groupsInScope = sidebarWorkspaceSessionGroups.filter(
       (group) => workspaceTaskScope(group.workspace) === taskScope,
     );
     const rememberedId = lastWorkspaceByScope[taskScope];
@@ -871,7 +878,7 @@ export function AppSidebar(props: AppSidebarProps) {
     if (!target) return;
     syncedWorkspaceIdRef.current = target.id;
     void props.onSelectWorkspace(target.id);
-  }, [props.onSelectWorkspace, props.previewTaskScope, props.selectedWorkspaceId, props.workspaceSessionGroups, taskScope, lastWorkspaceByScope, rememberWorkspace]);
+  }, [props.onSelectWorkspace, props.previewTaskScope, props.selectedWorkspaceId, sidebarWorkspaceSessionGroups, taskScope, lastWorkspaceByScope, rememberWorkspace]);
 
   const previewCount = (workspaceId: string) =>
     previewCountByWorkspaceId[workspaceId] ?? MAX_SESSIONS_PREVIEW;
@@ -956,7 +963,7 @@ export function AppSidebar(props: AppSidebarProps) {
   // Sessions of the scope on screen, narrowed to the sidebar filter. Workspaces
   // left without a match drop out so the list only holds results.
   const visibleWorkspaceSessionGroups = React.useMemo(() => {
-    const inScope = props.workspaceSessionGroups.filter(
+    const inScope = sidebarWorkspaceSessionGroups.filter(
       (group) => workspaceTaskScope(group.workspace) === taskScope,
     );
     if (!trimmedSessionQuery) return inScope;
@@ -967,17 +974,17 @@ export function AppSidebar(props: AppSidebarProps) {
       );
       return sessions.length ? [{ ...group, sessions }] : [];
     });
-  }, [props.workspaceSessionGroups, taskScope, trimmedSessionQuery]);
+  }, [sidebarWorkspaceSessionGroups, taskScope, trimmedSessionQuery]);
   const unseenCompletedSessionIds = useUnseenCompletedSessionIds();
   const localWorkspaceIndicator = React.useMemo(
     () => resolveWorkspaceSessionIndicator(
-      props.workspaceSessionGroups
+      sidebarWorkspaceSessionGroups
         .filter((group) => group.workspace.workspaceType === "local")
         .flatMap((group) => group.sessions.filter(isMainSession)),
       props.sessionStatusById,
       unseenCompletedSessionIds,
     ),
-    [props.sessionStatusById, props.workspaceSessionGroups, unseenCompletedSessionIds],
+    [props.sessionStatusById, sidebarWorkspaceSessionGroups, unseenCompletedSessionIds],
   );
   React.useEffect(() => {
     useWorkspaceIndicatorStore.getState().setLocalWorkspaceIndicator(localWorkspaceIndicator);

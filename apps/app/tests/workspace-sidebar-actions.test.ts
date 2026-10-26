@@ -69,11 +69,11 @@ describe("workspace sidebar actions", () => {
     expect(menu).toMatch(/DropdownMenuItem className="text-sm"[\s\S]+workspace_list\.share/);
   });
 
-  test("uses 40px rows, removes workspace session counts, and keeps 2px item gaps", () => {
+  test("uses compact 32px rows, removes workspace session counts, and keeps 2px item gaps", () => {
     const header = source.slice(source.indexOf("type WorkspaceHeaderProps"), source.indexOf("type WorkspaceSidebarGroupProps"));
-    expect(header).toMatch(/relative h-10/);
+    expect(header).toMatch(/relative h-8/);
     expect(header).not.toMatch(/sessionCount/);
-    expect(source).toMatch(/relative h-10 rounded-\[11px\]/);
+    expect(source).toMatch(/relative h-8 rounded-\[11px\]/);
     expect(source).toMatch(/flex flex-col gap-0\.5/);
     expect(source).toMatch(/SidebarMenuSub className="[^"]*gap-0\.5/);
   });
@@ -88,5 +88,11 @@ describe("workspace sidebar actions", () => {
     expect(source).toMatch(/const accessibleMainSessionIds = new Set/);
     expect(source).toMatch(/\.reconcile\([\s\S]+accessibleMainSessionIds/);
     expect(source).toMatch(/flatMap\(\(group\) => group\.sessions\.filter\(isMainSession\)\)/);
+  });
+
+  test("keeps automation-managed workspaces out of the local workspace sidebar", () => {
+    expect(source).toMatch(/sidebarWorkspaceSessionGroups = React\.useMemo\([\s\S]+!group\.workspace\.automationManaged/);
+    expect(source).toMatch(/const inScope = sidebarWorkspaceSessionGroups\.filter/);
+    expect(source).toMatch(/resolveWorkspaceSessionIndicator\([\s\S]+sidebarWorkspaceSessionGroups/);
   });
 });

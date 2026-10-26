@@ -128,8 +128,10 @@ describe("Desktop automation catalog and routes", () => {
     expect(parseWorkspaceAppPath("/automations/templates")).toEqual({ view: "automations", workspaceId: null });
     // 模板页和运行记录的深链接继续兼容，但左侧任务栏不再显示这两个固定入口。
     const dashboard = page.slice(page.indexOf("function AutomationDashboard"), page.indexOf("function AutomationServerLoading"));
+    const taskList = page.slice(page.indexOf("function TaskList"), page.indexOf("function TaskRow"));
     expect(dashboard).not.toMatch(/<nav/);
     expect(dashboard).not.toMatch(/automation\.from_template/);
+    expect(taskList).not.toMatch(/navigate\("\/automations\/runs"\)/);
     expect(page).toMatch(/AUTOMATION_TEMPLATES\.slice\(0, 6\)/);
     expect(page).toMatch(/t\("automation\.batch_manage"\)/);
     for (const locale of ["zh", "en"]) {
@@ -146,7 +148,16 @@ describe("Desktop automation catalog and routes", () => {
     expect(row).toMatch(/task\.newChatPerRun !== false/);
     expect(row).toMatch(/listAutomationRuns\(\{[\s\S]+automationId: task\.id/);
     expect(row).toMatch(/createsNewChatPerRun[\s\S]+setExpanded/);
-    expect(row).toMatch(/\/workspace\/\$\{encodeURIComponent\(target\.workspaceId\)\}\/session\/\$\{encodeURIComponent\(target\.sessionId\)\}/);
+    expect(row).toContain("onOpenSession(target.workspaceId, target.sessionId)");
+    expect(row).toContain('if (task.trigger.kind !== "event")');
+    expect(row).toContain("await client.prepareAutomationSession(task.id)");
+    expect(row).toContain("onOpenSession(item.workspaceId, item.sessionId)");
+    expect(row).toContain("if (!client || openingSessionRef.current) return;");
+    expect(row).not.toContain("client.runAutomation(");
+    expect(row).toContain("onOpenSession(run.workspaceId, run.sessionId!)");
+    expect(row).not.toContain("navigate(");
+    expect(row).toMatch(/if \(nextExpanded\) void loadSessions\(false\);\s*return;/);
+    expect(row).toMatch(/if \(!target\?\.sessionId\) \{\s*onEdit\(\)/);
     expect(row).toMatch(/automation\.edit_task/);
   });
 
@@ -183,19 +194,46 @@ describe("Desktop automation catalog and routes", () => {
     expect(editorActions).not.toMatch(/h-11 rounded-xl/);
   });
 
-  test("uses a connector-styled single-select for local workspaces", () => {
+  test("uses a full-width settings row for local workspaces", () => {
     const page = readFileSync(new URL("../src/react-app/domains/automations/automation-page.tsx", import.meta.url), "utf8");
     const workspaceSelect = page.slice(page.indexOf("function WorkspaceSingleSelect"), page.indexOf("type AutomationPromptComposerProps"));
     expect(page).toMatch(/<WorkspaceSingleSelect[\s\S]+selectedId=\{workspaceId\}[\s\S]+onSelect=\{setWorkspaceId\}/);
     expect(workspaceSelect).toMatch(/role="listbox"/);
     expect(workspaceSelect).not.toMatch(/aria-multiselectable/);
-    expect(workspaceSelect).toMatch(/pr-4 text-left/);
+    expect(workspaceSelect).toMatch(/useAnchoredFloating\(open, containerRef, \{ width: "anchor", maxHeight: 280 \}\)/);
+    expect(workspaceSelect).toMatch(/createPortal\([\s\S]+document\.body/);
+    expect(workspaceSelect).toContain("overflow-y-auto overscroll-contain");
+    expect(workspaceSelect).not.toContain('t("automation.workspace_automatic")');
+    expect(workspaceSelect).toMatch(/w-full items-center justify-between[^\"]+rounded-2xl border border-dls-border[^\"]+px-5 py-4 text-sm/);
+    expect(workspaceSelect).toMatch(/className="flex w-full[^\"]+bg-transparent/);
+    expect(workspaceSelect).toMatch(/t\("automation\.workspace"\)[\s\S]+flex min-w-0 items-center[\s\S]+t\("automation\.workspace_none"\)/);
     expect(workspaceSelect).toMatch(/rounded-2xl border border-dls-border[^\"]+shadow-\[var\(--dls-shell-shadow\)\]/);
     expect(workspaceSelect).toMatch(/role="option"[\s\S]+aria-selected=\{selectedOption\}/);
     expect(workspaceSelect).toMatch(/props\.onSelect\(workspace\.id\);[\s\S]+setOpen\(false\)/);
     expect(workspaceSelect).toMatch(/workspaceOptionLabel\(workspace\)[\s\S]+selectedOption \? <Check className="size-4 shrink-0/);
     expect(workspaceSelect).not.toMatch(/rounded-md border border-\[#ebebeb\]/);
     expect(page).not.toMatch(/<select value=\{workspaceId\}/);
+    expect(page).toMatch(/filter\(\(item\) => item\.workspaceType === "local" && !item\.automationManaged\)/);
+  });
+
+  test("ends the advanced creation settings at effort", () => {
+    const page = readFileSync(new URL("../src/react-app/domains/automations/automation-page.tsx", import.meta.url), "utf8");
+    const advancedStart = page.indexOf('{advanced ? <div className="space-y-4"');
+    const advanced = page.slice(advancedStart, page.indexOf("{modal ? (", advancedStart));
+    const controlsStart = page.indexOf("if (props.controlsOnly)");
+    const controls = page.slice(controlsStart, page.indexOf("  return (", controlsStart));
+
+    expect(advanced).toContain("<WorkspaceSingleSelect");
+    expect(advanced).toContain("<AutomationPromptComposer controlsOnly");
+    expect(advanced.indexOf('t("automation.new_chat_per_run")')).toBeLessThan(advanced.indexOf("<WorkspaceSingleSelect"));
+    expect(advanced).not.toContain("<ConnectorMultiSelect");
+    expect(advanced).not.toContain("<TriggerKindSelector");
+    expect(advanced).not.toContain("<EventTriggerEditor");
+    expect(advanced).not.toContain("<DateRangeField");
+    expect(controls).toContain('t("automation.model")');
+    expect(controls).toContain('t("automation.effort")');
+    expect(controls).not.toContain('t("automation.skills")');
+    expect(controls).not.toContain("<PermissionMenu");
   });
 
   test("shows connector multi-selection with trailing checks instead of checkbox boxes", () => {
@@ -287,6 +325,58 @@ describe("Desktop automation catalog and routes", () => {
     expect(permission).not.toMatch(/type="checkbox"|items-start|mt-0\.5 size-5/);
   });
 
+  test("creates scheduled tasks with their selected permission profile without a second confirmation", () => {
+    const page = readFileSync(new URL("../src/react-app/domains/automations/automation-page.tsx", import.meta.url), "utf8");
+    const editor = page.slice(page.indexOf("function AutomationEditor"), page.indexOf("type ConnectorOption"));
+    expect(editor).toMatch(/useState<AutomationPermissionProfile>\(AUTOMATION_PERMISSION_PROFILE\)/);
+    expect(editor).toMatch(/if \(!props\.automationId && triggerKind === "schedule"\) \{\s*void save\(true\);\s*return;\s*\}/);
+    expect(editor).toMatch(/permission: \{ profile: permission, acknowledgedAt: now \}/);
+    expect(editor).toMatch(/setPermissionOpen\(true\)/);
+  });
+
+  test("waits for dependencies from the current workspace before allowing create", () => {
+    const page = readFileSync(new URL("../src/react-app/domains/automations/automation-page.tsx", import.meta.url), "utf8");
+    const editor = page.slice(page.indexOf("function AutomationEditor"), page.indexOf("type ConnectorOption"));
+    expect(editor).toContain("const [dependenciesResolvedFor, setDependenciesResolvedFor] = useState<string | null>(null)");
+    expect(editor).toContain("setDependencies(EMPTY_DEPENDENCIES)");
+    expect(editor).toContain("setDependenciesResolvedFor(requestedWorkspaceId)");
+    expect(editor).toContain("dependenciesResolvedFor === dependencyWorkspaceId");
+    expect(editor).toContain('"正在加载可用模型，请稍候"');
+    expect(editor.match(/disabled=\{saving \|\| !prompt\.trim\(\) \|\| !dependenciesReady\}/g)).toHaveLength(2);
+  });
+
+  test("refreshes the retained task dashboard after a successful editor save", () => {
+    const page = readFileSync(new URL("../src/react-app/domains/automations/automation-page.tsx", import.meta.url), "utf8");
+    const automationPage = page.slice(page.indexOf("export function AutomationPage"), page.indexOf("function AutomationDashboard"));
+    const dashboard = page.slice(page.indexOf("function AutomationDashboard"), page.indexOf("function AutomationServerLoading"));
+    expect(automationPage).toMatch(/const \[automationListRevision, setAutomationListRevision\] = useState\(0\)/);
+    expect(automationPage).toMatch(/const handleEditorSaved = useCallback\(\(session\?: \{ workspaceId: string; sessionId: string \}\) => \{[\s\S]+setAutomationListRevision\(\(value\) => value \+ 1\);[\s\S]+navigate\("\/automations"\)/);
+    expect(automationPage).toMatch(/if \(session\) props\.onOpenSession\(session\.workspaceId, session\.sessionId\)/);
+    expect(automationPage.match(/onSaved=\{handleEditorSaved\}/g)).toHaveLength(1);
+    expect(automationPage).toMatch(/<AutomationDashboard[\s\S]+refreshRevision=\{automationListRevision\}/);
+    expect(dashboard).toMatch(/refreshRevision: number/);
+    expect(dashboard).toMatch(/useEffect\(\(\) => \{ setNextCursor\(undefined\); void load\(\); \}, \[load, props\.refreshRevision\]\)/);
+  });
+
+  test("uses the same modal for create and edit while retaining the dashboard and session host", () => {
+    const page = readFileSync(new URL("../src/react-app/domains/automations/automation-page.tsx", import.meta.url), "utf8");
+    const automationPage = page.slice(page.indexOf("export function AutomationPage"), page.indexOf("function AutomationDashboard"));
+    expect(automationPage).toContain('<Dialog open={editorVisible}');
+    expect(automationPage).toContain('presentation="modal"');
+    expect(automationPage).not.toContain('presentation="page"');
+    expect(automationPage).toContain('automationId={editingId}');
+    expect(automationPage).toContain('key={editingId ?? "new"}');
+    expect(page).toContain('data-testid="automation-session-host"');
+    expect(page).toContain('if (props.history) props.onClearSession();');
+    expect(page).not.toContain('className="flex h-9 shrink-0 items-center border-b border-dls-border px-4 mac:titlebar-no-drag"');
+    expect(page).toContain('props.sessionSelected && "mb-0 mr-0 mt-0 rounded-none border-0 bg-dls-sidebar shadow-none"');
+    expect(page).toContain('props.sessionSelected && "mb-1.5 mt-11 h-auto self-stretch rounded-l-[18px] border border-r-0 border-dls-border');
+    expect(page).toContain('!templatesVisible && !(props.sessionSelected && !sidebarOpen)');
+    expect(page).toContain('props.sessionSelected ? "bg-dls-sidebar" : "bg-background"');
+    expect(page).toContain('t(props.automationId ? "automation.save" : "common.create")');
+    expect(page).not.toContain('navigate(`/workspace/');
+  });
+
   test("keeps automation editor actions visible in a draggable fixed header", () => {
     const page = readFileSync(new URL("../src/react-app/domains/automations/automation-page.tsx", import.meta.url), "utf8");
     const editor = page.slice(page.indexOf("function AutomationEditor"), page.indexOf("type ConnectorOption"));
@@ -304,7 +394,8 @@ describe("Desktop automation catalog and routes", () => {
     const page = readFileSync(new URL("../src/react-app/domains/automations/automation-page.tsx", import.meta.url), "utf8");
     const dashboard = page.slice(page.indexOf("function AutomationDashboard"), page.indexOf("function AutomationServerLoading"));
     expect(page).toMatch(/templatesVisible \? "overflow-auto" : "overflow-hidden"/);
-    expect(dashboard).toMatch(/relative flex h-full min-h-0 w-full overflow-hidden bg-background/);
+    expect(dashboard).toMatch(/"relative flex h-full min-h-0 w-full overflow-hidden"/);
+    expect(dashboard).toMatch(/props\.sessionSelected \? "bg-dls-sidebar" : "bg-background"/);
     expect(dashboard).toMatch(/<aside[^>]+mac:titlebar-drag/);
     expect(dashboard).toMatch(/h-\[var\(--app-topbar-height\)\][^\"]+mac:titlebar-no-drag/);
     expect(dashboard).toMatch(/min-h-0 flex-1 overflow-y-auto px-2 pb-3/);
@@ -335,17 +426,15 @@ describe("Event-trigger editor (add-event-triggered-automation tasks 2.1-2.6)", 
     expect(trigger.repository).toEqual({ owner: "juggleai", name: "jugglework-desktop" });
   });
 
-  test("editor wires the trigger-kind selector, discard confirmation, and event editor branch", () => {
+  test("compact creation UI hides event-only controls while retaining event data handling", () => {
     const page = readFileSync(new URL("../src/react-app/domains/automations/automation-page.tsx", import.meta.url), "utf8");
-    expect(page).toMatch(/<TriggerKindSelector[\s\S]{0,400}onRequestChange=/);
-    expect(page).toMatch(/hasEventDraft = eventTrigger\.repository\.owner \|\| eventTrigger\.matches\.length/);
-    expect(page).toMatch(/setPendingTriggerKind\(next\)/);
-    expect(page).toMatch(/triggerKind === "event" \? \(\s*<>\s*<EventTriggerEditor/);
-    // TIPS:影子模式（任务 5.3）只在事件触发分支里出现，跟 EventTriggerEditor 包在同一个 fragment 里。
-    expect(page).toMatch(/checked={lifecycle === "shadow"}/);
-    // TIPS:公开仓库权限升级需要一次独立确认，不能一步选中——这里断言升级动作被路由到
-    // EventTriggerEditor 自己的确认弹窗，而不是编辑器顶层已有的「完整访问权限」弹窗。
-    expect(page).toMatch(/onPermissionEscalationConfirmed=\{\(\) => setPermission\(AUTOMATION_PERMISSION_PROFILE\)\}/);
+    const advancedStart = page.indexOf('{advanced ? <div className="space-y-4"');
+    const advanced = page.slice(advancedStart, page.indexOf("{modal ? (", advancedStart));
+    expect(advanced).not.toContain("TriggerKindSelector");
+    expect(advanced).not.toContain("EventTriggerEditor");
+    expect(page).toMatch(/const \[eventTrigger, setEventTrigger\] = useState<AutomationEventTrigger>/);
+    expect(page).toMatch(/setEventTrigger\(definition\.trigger\)/);
+    expect(page).toMatch(/trigger: triggerKind === "event" \? eventTrigger : schedule/);
   });
 
   test("save path assigns an event trigger definition and auto-adds a github-app connector entry", () => {

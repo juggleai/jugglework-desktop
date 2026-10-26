@@ -1,11 +1,17 @@
 import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { workspaceIdForPath } from "../workspaces.js";
 import type { WorkspaceInfo } from "../types.js";
 
 export function automationWorkspaceRoot(): string {
   return process.env.JUGGLEWORK_AUTOMATION_ROOT?.trim() || join(homedir(), "Documents", "JuggleWork", "Automations");
+}
+
+/** Returns true when a workspace path belongs to the automation-managed root. */
+export function isAutomationManagedWorkspacePath(path: string, root = automationWorkspaceRoot()): boolean {
+  const child = relative(resolve(root), resolve(path));
+  return child === "" || (!child.startsWith("..") && !isAbsolute(child));
 }
 
 export function automationDirectoryName(value: string): string {

@@ -6,9 +6,11 @@ import type { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import { AUTOMATION_PERMISSION_PROFILE, type AutomationErrorCode, type AutomationPromptPart }
   from "@jugglework/types/automation";
 import type { ServerConfig, WorkspaceInfo } from "../types.js";
+import { ApiError } from "../errors.js";
 import { applyMcpWorkspacePolicyToPrompt, readMcpWorkspaceToolPolicy } from "../mcp-workspace-tool-policy.js";
 import { AutomationRepository, type AutomationRunSnapshot } from "./repository.js";
 import type { GithubEventRelayClient, GithubAppWriteBackGrant } from "./github-event-client.js";
+import { automationConversationPrompt } from "./conversation.js";
 
 type WorkspaceOpencodeClient = ReturnType<typeof createOpencodeClient>;
 
@@ -16,6 +18,8 @@ type WorkspaceOpencodeClient = ReturnType<typeof createOpencodeClient>;
 const SESSION_GRADUATION_THRESHOLD = 0.8;
 /** 毕业时携带的"上一个会话最后说了什么"小结，截断到这个字符数，保持真正"简短"。 */
 const SESSION_GRADUATION_SUMMARY_MAX_CHARS = 500;
+const INITIAL_CONVERSATION_MODEL_ATTEMPTS = 30;
+const INITIAL_CONVERSATION_MODEL_RETRY_MS = 100;
 
 /**
  * 把一次换到的写回 token 真正挂载成 agent 能调用的工具。
@@ -44,6 +48,11 @@ export type AutomationExecutorOptions = {
   wait?: (milliseconds: number) => Promise<void>;
 };
 
+export type PrepareAutomationSessionOptions = {
+  initializeConversation?: boolean;
+  locale?: string;
+};
+
 /**
  * 事件触发运行的会话延续上下文，由调用方（事件管道）在分发前算好传入。
  * TIPS: `extraPromptParts` 已经是渲染好的、包含不可信数据边界和增量摘要的完整 parts
@@ -60,6 +69,9 @@ export class AutomationExecutor {
   private disposed = false;
   private readonly now: () => number;
   private readonly wait: (milliseconds: number) => Promise<void>;
+  // Opening and execution share the same allocation lock; only in-flight opens are coalesced.
+  private readonly sessionLocks = new Map<string, Promise<unknown>>();
+  private readonly preparingSessions = new Map<string, Promise<{ workspaceId: string; sessionId: string }>>();
 
   constructor(private readonly options: AutomationExecutorOptions) {
     this.now = options.now ?? Date.now;
@@ -71,6 +83,150 @@ export class AutomationExecutor {
     this.disposed = true;
   }
 
+  /** Prepare a task conversation without claiming an automation run. */
+  prepareSession(
+    automationId: string,
+    prepareOptions: PrepareAutomationSessionOptions = {},
+  ): Promise<{ workspaceId: string; sessionId: string }> {
+    const preparationKey = `${automationId}:${prepareOptions.initializeConversation ? "initialize" : "open"}`;
+    const pending = this.preparingSessions.get(preparationKey);
+    if (pending) return pending;
+    const preparing = this.withSessionLock(automationId, async () => {
+      const definition = this.options.repository.getDefinition(automationId)?.definition;
+      if (!definition) throw new ApiError(404, "automation_not_found", "Automation not found");
+      if (definition.trigger.kind === "event") {
+        throw new ApiError(400, "automation_event_session_requires_entity", "Event automations require an entity session");
+      }
+      try {
+        const recent = this.options.repository.getLatestSessionRun(automationId);
+        const taskBinding = this.options.repository.getExecutionBinding(`task:${automationId}`);
+        const runBinding = recent && this.options.repository.getExecutionBinding(`run:${recent.id}`);
+        const candidates = [
+          ...(recent?.sessionId ? [{ workspaceId: recent.workspaceId, sessionId: recent.sessionId, workspace: runBinding?.workspace }] : []),
+          ...(taskBinding?.sessionId ? [{ workspaceId: taskBinding.workspace.id, sessionId: taskBinding.sessionId, workspace: taskBinding.workspace }] : []),
+        ];
+        let reusableWorkspace: WorkspaceInfo | undefined;
+        for (const candidate of candidates) {
+          if (definition.workspace && candidate.workspaceId !== definition.workspace.id) continue;
+          let workspace: WorkspaceInfo;
+          try {
+            workspace = await this.resolveLocalWorkspace(definition, undefined, candidate.workspace ?? candidate.workspaceId);
+          } catch (error) {
+            if ((error as { code?: string }).code === "workspace_unavailable") continue;
+            throw error;
+          }
+          reusableWorkspace = workspace;
+          const opencode = this.options.createWorkspaceOpencodeClient(this.options.config, workspace);
+          if (!await this.sessionExists(opencode, candidate.sessionId)) continue;
+          if (prepareOptions.initializeConversation) {
+            await this.initializeConversation(definition, opencode, candidate.sessionId, prepareOptions.locale);
+          }
+          this.assertCurrentDefinition(definition);
+          this.options.repository.setExecutionBinding(`task:${automationId}`, { workspace: executionWorkspace(workspace), sessionId: candidate.sessionId });
+          return { workspaceId: workspace.id, sessionId: candidate.sessionId };
+        }
+        const workspace = reusableWorkspace ?? await this.resolveLocalWorkspace(definition, undefined, taskBinding?.sessionId ? undefined : taskBinding?.workspace);
+        this.assertCurrentDefinition(definition);
+        const opencode = this.options.createWorkspaceOpencodeClient(this.options.config, workspace);
+        const sessionId = await this.createSession(definition, opencode);
+        if (prepareOptions.initializeConversation) {
+          await this.initializeConversation(definition, opencode, sessionId, prepareOptions.locale);
+        }
+        this.assertCurrentDefinition(definition);
+        this.options.repository.setExecutionBinding(`task:${automationId}`, { workspace: executionWorkspace(workspace), sessionId });
+        return { workspaceId: workspace.id, sessionId };
+      } catch (error) {
+        if (error instanceof ApiError) throw error;
+        const normalized = normalizeFailure(error);
+        throw new ApiError(503, normalized.code, normalized.message);
+      }
+    });
+    this.preparingSessions.set(preparationKey, preparing);
+    void preparing.finally(() => {
+      if (this.preparingSessions.get(preparationKey) === preparing) this.preparingSessions.delete(preparationKey);
+    }).catch(() => undefined);
+    return preparing;
+  }
+
+  private async initializeConversation(
+    definition: AutomationRunSnapshot["definition"],
+    opencode: WorkspaceOpencodeClient,
+    sessionId: string,
+    locale: string | undefined,
+  ): Promise<void> {
+    if (definition.trigger.kind === "event") return;
+    const initial = automationConversationPrompt(definition, locale);
+    // A freshly allocated automation directory creates a new OpenCode instance.
+    // Its provider registry is initialized lazily, so dispatching immediately
+    // after session.create can race that initialization and reject an otherwise
+    // valid selected model with ProviderModelNotFoundError. Loading providers
+    // here gives the new instance the same readiness path used by run preflight.
+    await this.waitForInitialConversationModel(definition, opencode);
+    const tools = await opencode.tool.ids();
+    if (!tools.data) throw failure("execution_failed", "无法读取工具清单以初始化自动化会话");
+    const disabledTools = Object.fromEntries(tools.data.map((toolId) => [toolId, false]));
+    const prompt = {
+      sessionID: sessionId,
+      ...(definition.model.mode === "explicit" ? {
+        model: { providerID: definition.model.providerId, modelID: definition.model.modelId },
+        ...(definition.model.variant ? { variant: definition.model.variant } : {}),
+      } : {}),
+      ...(definition.agentId ? { agent: definition.agentId } : {}),
+      system: initial.systemInstruction,
+      tools: disabledTools,
+      parts: [{ type: "text" as const, text: initial.userMessage }],
+    };
+    // Only wait until OpenCode accepts the turn. The renderer can enter the
+    // conversation immediately and show the user message while the concise
+    // acknowledgement streams in, rather than blocking task creation on a
+    // complete model response.
+    const response = await opencode.session.promptAsync(
+      prompt as Parameters<typeof opencode.session.promptAsync>[0],
+    );
+    if (response.error !== undefined) {
+      throw failure("execution_failed", "无法生成定时任务确认消息");
+    }
+  }
+
+  private async waitForInitialConversationModel(
+    definition: AutomationRunSnapshot["definition"],
+    opencode: WorkspaceOpencodeClient,
+  ): Promise<void> {
+    let readProviders = false;
+    for (let attempt = 0; attempt < INITIAL_CONVERSATION_MODEL_ATTEMPTS; attempt += 1) {
+      const providers = await opencode.provider.list();
+      if (providers.data) {
+        readProviders = true;
+        if (definition.model.mode === "auto") return;
+        const model = definition.model;
+        const provider = providers.data.all.find((item) => item.id === model.providerId);
+        if (provider && Object.prototype.hasOwnProperty.call(provider.models, model.modelId)) return;
+      }
+      if (attempt + 1 < INITIAL_CONVERSATION_MODEL_ATTEMPTS) {
+        await this.wait(INITIAL_CONVERSATION_MODEL_RETRY_MS);
+      }
+    }
+    if (!readProviders) throw failure("execution_failed", "无法读取模型清单以初始化自动化会话");
+    throw failure("model_unavailable", "指定模型当前不可用");
+  }
+
+  private async withSessionLock<T>(automationId: string, action: () => Promise<T>): Promise<T> {
+    const previous = this.sessionLocks.get(automationId);
+    const pending = (previous ?? Promise.resolve()).catch(() => undefined).then(action);
+    this.sessionLocks.set(automationId, pending);
+    try {
+      return await pending;
+    } finally {
+      if (this.sessionLocks.get(automationId) === pending) this.sessionLocks.delete(automationId);
+    }
+  }
+
+  private assertCurrentDefinition(definition: AutomationRunSnapshot["definition"]): void {
+    const latest = this.options.repository.getDefinition(definition.id)?.definition;
+    if (!latest) throw new ApiError(404, "automation_not_found", "Automation not found");
+    if (latest.revision !== definition.revision) throw new ApiError(409, "automation_revision_conflict", "Automation changed; reopen its session");
+  }
+
   /**
    * 执行单个冻结版本的运行，并把所有状态变化持久化。
    * @param eventContext 事件触发的实体会话上下文；定时任务按 newChatPerRun 决定是否复用。
@@ -78,9 +234,24 @@ export class AutomationExecutor {
   async execute(snapshot: AutomationRunSnapshot, eventContext?: AutomationEventExecutionContext): Promise<void> {
     let current = snapshot.run;
     try {
-      const workspace = await this.resolveLocalWorkspace(snapshot);
-      const opencode = this.options.createWorkspaceOpencodeClient(this.options.config, workspace);
       const definition = snapshot.definition;
+      const { workspace, opencode, resolved } = await this.withSessionLock(definition.id, async () => {
+        const workspace = await this.resolveLocalWorkspace(definition, current);
+        const opencode = this.options.createWorkspaceOpencodeClient(this.options.config, workspace);
+        const resolved = definition.lifecycle === "shadow" ? undefined
+          : await this.resolveSessionId(definition, workspace, opencode, current, eventContext);
+        if (resolved) {
+          this.options.repository.setExecutionBinding(`run:${current.id}`, { workspace: executionWorkspace(workspace), sessionId: resolved.sessionId });
+          current = this.options.repository.updateRun(current.id, current.revision, {
+            workspaceId: workspace.id,
+            workspaceName: workspace.name,
+            sessionId: resolved.sessionId,
+            ...(resolved.previousSessionUnavailable ? { eventMetadata: { previousSessionUnavailable: true } } : {}),
+            ...(resolved.graduatedFromSessionId ? { eventMetadata: { graduatedFromSessionId: resolved.graduatedFromSessionId } } : {}),
+          }, this.now());
+        }
+        return { workspace, opencode, resolved };
+      });
       const unattended = definition.permission.profile === AUTOMATION_PERMISSION_PROFILE;
 
       // TIPS:影子模式（任务 5.3）走完 preflight（model/agent/skill/写回授权校验都照常执行，
@@ -92,15 +263,7 @@ export class AutomationExecutor {
         return;
       }
 
-      const resolved = await this.resolveSessionId(definition, workspace, opencode, current, eventContext);
-      this.options.repository.setExecutionBinding(`run:${current.id}`, { workspace: executionWorkspace(workspace), sessionId: resolved.sessionId });
-      current = this.options.repository.updateRun(current.id, current.revision, {
-        workspaceId: workspace.id,
-        workspaceName: workspace.name,
-        sessionId: resolved.sessionId,
-        ...(resolved.previousSessionUnavailable ? { eventMetadata: { previousSessionUnavailable: true } } : {}),
-        ...(resolved.graduatedFromSessionId ? { eventMetadata: { graduatedFromSessionId: resolved.graduatedFromSessionId } } : {}),
-      }, this.now());
+      if (!resolved) return;
 
       const toolAllowlist = await this.preflight(snapshot, workspace, opencode);
       current = this.options.repository.updateRun(current.id, current.revision, {
@@ -211,7 +374,7 @@ export class AutomationExecutor {
     if (!current || current.state !== "running") return;
     try {
       if (!current.sessionId) throw failure("session_lost", "运行缺少可恢复的会话");
-      const workspace = await this.resolveLocalWorkspace(snapshot);
+      const workspace = await this.resolveLocalWorkspace(snapshot.definition, current);
       const opencode = this.options.createWorkspaceOpencodeClient(this.options.config, workspace);
       const session = await opencode.session.get({ sessionID: current.sessionId });
       if (!session.data) throw failure("session_lost", "自动化会话已不存在");
@@ -283,11 +446,7 @@ export class AutomationExecutor {
     if (!eventContext && definition.newChatPerRun === false) {
       const binding = this.options.repository.getExecutionBinding(bindingKey);
       if (binding?.sessionId && binding.workspace.id === workspace.id) {
-        const existing = await opencode.session.get({ sessionID: binding.sessionId });
-        if (existing.error && !JSON.stringify(existing.error).toLowerCase().includes("notfound") && !JSON.stringify(existing.error).includes("404")) {
-          throw failure("execution_failed", "暂时无法读取已有会话，请稍后重试");
-        }
-        if (existing.data) {
+        if (await this.sessionExists(opencode, binding.sessionId)) {
           const statuses = await opencode.session.status();
           if (statuses.error) throw failure("execution_failed", "无法读取已有会话状态");
           const status = statuses.data?.[binding.sessionId];
@@ -296,6 +455,35 @@ export class AutomationExecutor {
         }
       }
     }
+    const sessionId = await this.createSession(definition, opencode, current);
+    const latestDefinition = this.options.repository.getDefinition(definition.id)?.definition;
+    // A frozen run may finish after an edit/delete; it must not replace the current task binding.
+    if (!eventContext && definition.newChatPerRun === false && latestDefinition?.revision === definition.revision) {
+      this.options.repository.setExecutionBinding(bindingKey, { workspace: executionWorkspace(workspace), sessionId });
+    }
+    if (eventContext) {
+      this.options.repository.upsertEntitySessionMapping(definition.id, eventContext.entityRef, workspace.id, sessionId, this.now());
+    }
+    return {
+      sessionId,
+      previousSessionUnavailable: hadActiveMapping && !graduatedFromSessionId,
+      ...(graduatedFromSessionId ? { graduatedFromSessionId, graduationNote } : {}),
+    };
+  }
+
+  private async sessionExists(opencode: WorkspaceOpencodeClient, sessionId: string): Promise<boolean> {
+    const existing = await opencode.session.get({ sessionID: sessionId });
+    if (existing.error && !JSON.stringify(existing.error).toLowerCase().includes("notfound") && !JSON.stringify(existing.error).includes("404")) {
+      throw failure("execution_failed", "暂时无法读取已有会话，请稍后重试");
+    }
+    return !existing.error && Boolean(existing.data);
+  }
+
+  private async createSession(
+    definition: AutomationRunSnapshot["definition"],
+    opencode: WorkspaceOpencodeClient,
+    current?: AutomationRunSnapshot["run"],
+  ): Promise<string> {
     const created = await opencode.session.create({
       title: definition.name,
       ...(definition.agentId ? { agent: definition.agentId } : {}),
@@ -308,9 +496,11 @@ export class AutomationExecutor {
       } : {}),
       metadata: {
         automationId: definition.id,
-        automationRunId: current.id,
-        automationTrigger: current.triggerSource,
-        automationScheduledFor: current.scheduledFor,
+        ...(current ? {
+          automationRunId: current.id,
+          automationTrigger: current.triggerSource,
+          automationScheduledFor: current.scheduledFor,
+        } : {}),
         automationDefinitionRevision: definition.revision,
       },
       // TIPS:只有「完全访问权限」才放开全部权限并屏蔽提问；选了「默认权限」的任务保留工作空间
@@ -322,21 +512,8 @@ export class AutomationExecutor {
         ],
       } : {}),
     });
-    if (!created.data) throw failure("execution_failed", "无法创建自动化会话");
-    const latestDefinition = this.options.repository.getDefinition(definition.id)?.definition;
-    if (!eventContext && definition.newChatPerRun === false && latestDefinition?.newChatPerRun === false && latestDefinition.workspace?.id === definition.workspace?.id) {
-      this.options.repository.setExecutionBinding(bindingKey, { workspace: executionWorkspace(workspace), sessionId: created.data.id });
-    }
-    if (eventContext) {
-      this.options.repository.upsertEntitySessionMapping(definition.id, eventContext.entityRef, workspace.id, created.data.id, this.now());
-    }
-    return {
-      sessionId: created.data.id,
-      // TIPS：毕业不算"会话不可用"——旧会话查得到、查得好好的，只是主动决定不再复用，跟
-      // "查不到了被迫新建"是两种不同的原因，不能让毕业路径也打上 previousSessionUnavailable。
-      previousSessionUnavailable: hadActiveMapping && !graduatedFromSessionId,
-      ...(graduatedFromSessionId ? { graduatedFromSessionId, graduationNote } : {}),
-    };
+    if (created.error || !created.data) throw failure("execution_failed", "无法创建自动化会话");
+    return created.data.id;
   }
 
   /**
@@ -385,33 +562,35 @@ export class AutomationExecutor {
     }
   }
 
-  private async resolveLocalWorkspace(snapshot: AutomationRunSnapshot): Promise<WorkspaceInfo> {
+  private async resolveLocalWorkspace(
+    definition: AutomationRunSnapshot["definition"],
+    run?: AutomationRunSnapshot["run"],
+    workspaceHint?: WorkspaceInfo | string,
+  ): Promise<WorkspaceInfo> {
     try {
-      const definition = snapshot.definition;
-      const runKey = `run:${snapshot.run.id}`;
+      const runKey = run ? `run:${run.id}` : undefined;
       const taskKey = `task:${definition.id}`;
-      const runBinding = this.options.repository.getExecutionBinding(runKey);
+      const runBinding = runKey ? this.options.repository.getExecutionBinding(runKey) : null;
       let workspace: WorkspaceInfo;
       if (definition.workspace) {
         workspace = await this.options.resolveWorkspace(this.options.config, definition.workspace.id);
       } else {
-        const binding = runBinding ?? (definition.newChatPerRun === false ? this.options.repository.getExecutionBinding(taskKey) : null);
+        const binding = typeof workspaceHint === "object" ? { workspace: workspaceHint }
+          : workspaceHint ? null
+          : runBinding ?? (run && definition.newChatPerRun === false ? this.options.repository.getExecutionBinding(taskKey) : null);
         if (binding) {
           await access(binding.workspace.path);
           workspace = binding.workspace;
-          this.options.repository.setExecutionBinding(runKey, binding);
+        } else if (typeof workspaceHint === "string") {
+          workspace = await this.options.resolveWorkspace(this.options.config, workspaceHint);
         } else {
           workspace = await allocateAutomationWorkspace({ name: definition.name, directoryName: definition.directoryName ?? definition.name, timezone: definition.trigger.kind === "event" ? "UTC" : definition.trigger.timezone, now: this.now(), root: this.options.workspaceRoot });
-          this.options.repository.setExecutionBinding(runKey, { workspace });
-          const latestDefinition = this.options.repository.getDefinition(definition.id)?.definition;
-          if (definition.newChatPerRun === false && latestDefinition?.newChatPerRun === false && !latestDefinition.workspace) {
-            this.options.repository.setExecutionBinding(taskKey, { workspace });
-          }
         }
         if (!this.options.registerWorkspace) throw new Error("自动工作区注册不可用");
         workspace = await this.options.registerWorkspace(workspace);
       }
       if (workspace.workspaceType !== "local") throw new Error("remote workspace");
+      if (runKey) this.options.repository.setExecutionBinding(runKey, { workspace: executionWorkspace(workspace), ...(runBinding?.sessionId ? { sessionId: runBinding.sessionId } : {}) });
       return workspace;
     } catch {
       throw failure("workspace_unavailable", "任务工作空间不可用");

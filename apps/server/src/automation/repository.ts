@@ -345,6 +345,15 @@ export class AutomationRepository {
     this.database.run("DELETE FROM automation_execution_bindings WHERE binding_key = ?", [`task:${automationId}`]);
   }
 
+  getLatestSessionRun(automationId: string): AutomationRun | null {
+    const row = this.database.get<AutomationRunRow>(
+      `SELECT ${RUN_COLUMNS} FROM automation_runs WHERE automation_id = ? AND session_id IS NOT NULL
+       ORDER BY scheduled_for DESC, id DESC LIMIT 1`,
+      [automationId],
+    );
+    return row ? runFromRow(row) : null;
+  }
+
   getExecutionBinding(key: string): { workspace: import("../types.js").WorkspaceInfo; sessionId?: string } | null {
     const row = this.database.get<{ value_json: string }>("SELECT value_json FROM automation_execution_bindings WHERE binding_key = ?", [key]);
     return row ? JSON.parse(row.value_json) : null;

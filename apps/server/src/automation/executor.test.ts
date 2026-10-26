@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { AUTOMATION_PERMISSION_PROFILE, type AutomationDefinition } from "@jugglework/types/automation";
+import { AUTOMATION_DEFAULT_PERMISSION_PROFILE, AUTOMATION_PERMISSION_PROFILE, type AutomationDefinition } from "@jugglework/types/automation";
 import { openRuntimeSqliteDatabase } from "../runtime-db.js";
 import type { ServerConfig } from "../types.js";
 import { AutomationExecutor, writeBackMcpName } from "./executor.js";
@@ -962,5 +962,364 @@ for (const scenario of ["missing", "busy", "unavailable"] as const) {
       assert.equal(result.state, scenario === "missing" ? "succeeded" : "failed");
       if (scenario !== "missing") assert.equal(result.errorCode, scenario === "busy" ? "overlap_blocked" : "execution_failed");
     } finally { await fixture.close(); }
+  });
+}
+
+for (const selected of [false, true]) {
+  for (const newChatPerRun of [false, true]) {
+    test(`prepare/reopen is side-effect free and execution respects binding: selected=${selected}, newChatPerRun=${newChatPerRun}`, async () => {
+      const fixture = await repositoryFixture();
+      const root = await mkdtemp(join(tmpdir(), "jw-prepare-workspaces-"));
+      const definition = { ...automationDefinition(), workspace: selected ? automationDefinition().workspace : undefined, newChatPerRun, lifecycle: "paused" as const };
+      const creates: Array<Record<string, unknown>> = [];
+      const prompts: Array<{ sessionID: string }> = [];
+      const registered: string[] = [];
+      const config = serverConfig();
+      let currentWorkspace = "";
+      const client = {
+        session: {
+          create: async (input: Record<string, unknown>) => { creates.push(input); return { data: { id: `session-${creates.length}` } }; },
+          get: async ({ sessionID }: { sessionID: string }) => ({ data: { id: sessionID } }),
+          status: async () => ({ data: {} }),
+          messages: async () => ({ data: [] }),
+          promptAsync: async (input: { sessionID: string }) => { prompts.push(input); return { data: true }; },
+        },
+        mcp: { status: async () => ({ data: {} }) }, tool: { ids: async () => ({ data: [] }) },
+      };
+      const makeExecutor = () => new AutomationExecutor({
+        config, repository: fixture.repository, workspaceRoot: root,
+        resolveWorkspace: async () => config.workspaces[0],
+        registerWorkspace: async (workspace) => { registered.push(workspace.path); return workspace; },
+        createWorkspaceOpencodeClient: (_config, workspace) => { currentWorkspace = workspace.path; return client as never; },
+        now: () => 200, wait: async () => undefined,
+      });
+      try {
+        fixture.repository.createDefinition(definition, definition);
+        const before = fixture.repository.getDefinition(definition.id);
+        const outbox = fixture.repository.readOutbox();
+        let executor = makeExecutor();
+        const opened = await Promise.all(Array.from({ length: 8 }, () => executor.prepareSession(definition.id)));
+        assert.ok(opened.every((item) => item.sessionId === "session-1"));
+        assert.equal(creates.length, 1);
+        assert.equal(prompts.length, 0);
+        assert.deepEqual(creates[0].metadata, { automationId: definition.id, automationDefinitionRevision: 1 });
+        assert.deepEqual(fixture.repository.getDefinition(definition.id), before);
+        assert.deepEqual(fixture.repository.readOutbox(), outbox);
+        assert.deepEqual(fixture.repository.listRuns().items, []);
+        assert.equal(registered.length, selected ? 0 : 1);
+        assert.deepEqual(config.workspaces, serverConfig().workspaces, "preparation must not switch the active workspace");
+        await fixture.reopen();
+        executor = makeExecutor();
+        assert.deepEqual(await executor.prepareSession(definition.id), opened[0]);
+        assert.equal(creates.length, 1);
+        assert.deepEqual(fixture.repository.listRuns().items, []);
+        assert.equal(prompts.length, 0);
+        const preparedPath = currentWorkspace;
+        const run = fixture.repository.createManualRun(definition, "prepared-run", 201);
+        await executor.execute(fixture.repository.getRunSnapshot(run.id)!);
+        assert.equal(fixture.repository.getRun(run.id)?.state, "succeeded");
+        assert.equal(creates.length, newChatPerRun ? 2 : 1);
+        assert.equal(prompts[0].sessionID, newChatPerRun ? "session-2" : "session-1");
+        assert.equal(currentWorkspace === preparedPath, selected || !newChatPerRun);
+        assert.equal((await executor.prepareSession(definition.id)).sessionId, prompts[0].sessionID, "open should prefer the latest real run");
+        assert.equal(creates.length, newChatPerRun ? 2 : 1);
+      } finally { await fixture.close(); await rm(root, { recursive: true, force: true }); }
+    });
+  }
+}
+
+test("initializes a prepared task conversation with a model acknowledgement but no automation run", async () => {
+  const fixture = await repositoryFixture();
+  const definition = {
+    ...automationDefinition(),
+    name: "查询北京天气",
+    prompt: { version: 1 as const, parts: [{ type: "text" as const, text: "查询下北京是否下雨" }] },
+    trigger: { version: 1 as const, kind: "calendar" as const, frequency: "daily" as const, localTime: "09:00", timezone: "Asia/Shanghai" },
+    newChatPerRun: false,
+  };
+  const prompts: Array<Record<string, unknown>> = [];
+  const executor = new AutomationExecutor({
+    config: serverConfig(),
+    repository: fixture.repository,
+    resolveWorkspace: async () => serverConfig().workspaces[0],
+    createWorkspaceOpencodeClient: () => ({
+      session: {
+        create: async () => ({ data: { id: "scheduled-conversation" } }),
+        promptAsync: async (input: Record<string, unknown>) => { prompts.push(input); return { data: true }; },
+      },
+      tool: { ids: async () => ({ data: ["web_search", "bash"] }) },
+      provider: { list: async () => ({ data: { all: [], connected: [], default: {} } }) },
+    }) as never,
+    now: () => 200,
+    wait: async () => undefined,
+  });
+  try {
+    fixture.repository.createDefinition(definition, definition);
+    const prepared = await executor.prepareSession(definition.id, { initializeConversation: true, locale: "zh" });
+    assert.deepEqual(prepared, { workspaceId: "workspace", sessionId: "scheduled-conversation" });
+    assert.equal(prompts.length, 1);
+    assert.deepEqual(prompts[0]?.tools, { web_search: false, bash: false });
+    assert.deepEqual(prompts[0]?.parts, [{ type: "text", text: "查询下北京是否下雨\n\n日程安排：每天 09:00" }]);
+    assert.match(String(prompts[0]?.system), /不要执行用户描述的任务/);
+    assert.deepEqual(fixture.repository.listRuns().items, []);
+    assert.equal(fixture.repository.getExecutionBinding(`task:${definition.id}`)?.sessionId, "scheduled-conversation");
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("waits for a fresh workspace provider registry before dispatching its confirmation", async () => {
+  const fixture = await repositoryFixture();
+  const definition = {
+    ...automationDefinition(),
+    model: { mode: "explicit" as const, providerId: "provider", modelId: "model" },
+  };
+  let providersReady = false;
+  let providerReads = 0;
+  let prompts = 0;
+  const executor = new AutomationExecutor({
+    config: serverConfig(),
+    repository: fixture.repository,
+    resolveWorkspace: async () => serverConfig().workspaces[0],
+    createWorkspaceOpencodeClient: () => ({
+      session: {
+        create: async () => ({ data: { id: "scheduled-conversation" } }),
+        promptAsync: async () => {
+          assert.equal(providersReady, true, "prompt must wait for provider initialization");
+          prompts += 1;
+          return { data: true };
+        },
+      },
+      tool: { ids: async () => {
+        assert.equal(providersReady, true, "tool discovery must not race provider initialization");
+        return { data: [] };
+      } },
+      provider: { list: async () => {
+        providerReads += 1;
+        if (providerReads === 1) return { data: { all: [], connected: [], default: {} } };
+        providersReady = true;
+        return { data: { all: [{ id: "provider", models: { model: { id: "model" } } }], connected: ["provider"], default: {} } };
+      } },
+    }) as never,
+    now: () => 200,
+  });
+  try {
+    fixture.repository.createDefinition(definition, definition);
+    await executor.prepareSession(definition.id, { initializeConversation: true, locale: "zh" });
+    assert.equal(providerReads, 2);
+    assert.equal(prompts, 1);
+  } finally {
+    await fixture.close();
+  }
+});
+
+for (const profile of [AUTOMATION_DEFAULT_PERMISSION_PROFILE, AUTOMATION_PERMISSION_PROFILE]) {
+  test(`prepared sessions use the execution model/agent/permission mapping: ${profile}`, async () => {
+    const fixture = await repositoryFixture();
+    const definition = { ...automationDefinition(), model: { mode: "explicit" as const, providerId: "provider", modelId: "model", variant: "thinking" }, agentId: "build", permission: { profile, acknowledgedAt: 1 } };
+    const inputs: Array<Record<string, unknown>> = [];
+    let failCreate = true;
+    const executor = new AutomationExecutor({
+      config: serverConfig(), repository: fixture.repository,
+      resolveWorkspace: async () => serverConfig().workspaces[0],
+      createWorkspaceOpencodeClient: () => ({ session: {
+        create: async (input: Record<string, unknown>) => {
+          inputs.push(input);
+          return failCreate ? { error: { message: "unavailable" }, data: { id: "must-not-cache" } } : { data: { id: "prepared" } };
+        },
+      } }) as never,
+    });
+    try {
+      fixture.repository.createDefinition(definition, definition);
+      await assert.rejects(executor.prepareSession(definition.id), (error: unknown) => (error as { status: number }).status === 503);
+      assert.equal(fixture.repository.getExecutionBinding(`task:${definition.id}`), null);
+      failCreate = false;
+      assert.equal((await executor.prepareSession(definition.id)).sessionId, "prepared");
+      assert.equal(inputs.length, 2, "failed preparation must not be cached");
+      assert.deepEqual(inputs[1].model, { id: "model", providerID: "provider", variant: "thinking" });
+      assert.equal(inputs[1].agent, "build");
+      assert.deepEqual(inputs[1].permission, profile === AUTOMATION_PERMISSION_PROFILE ? [
+        { permission: "*", pattern: "*", action: "allow" }, { permission: "question", pattern: "*", action: "deny" },
+      ] : undefined);
+      assert.equal(fixture.repository.listRuns().items.length, 0);
+    } finally { await fixture.close(); }
+  });
+}
+
+test("prepare rejects event tasks and missing/deleted tasks before resolving a workspace", async () => {
+  const fixture = await repositoryFixture();
+  const definition = eventAutomationDefinition();
+  const executor = new AutomationExecutor({ config: serverConfig(), repository: fixture.repository,
+    resolveWorkspace: async () => { throw new Error("must not resolve"); },
+    createWorkspaceOpencodeClient: () => { throw new Error("must not create"); },
+  });
+  try {
+    fixture.repository.createDefinition(definition, definition);
+    await assert.rejects(executor.prepareSession(definition.id), (error: unknown) => (error as { status: number }).status === 400);
+    fixture.repository.tombstoneDefinition(definition.id, 1, 200);
+    await assert.rejects(executor.prepareSession(definition.id), (error: unknown) => (error as { status: number }).status === 404);
+    assert.deepEqual(fixture.repository.listRuns().items, []);
+    assert.equal(fixture.repository.getEntitySessionMapping(definition.id, "entity"), null);
+  } finally { await fixture.close(); }
+});
+
+for (const change of ["revision", "delete"] as const) {
+  test(`prepare does not overwrite a binding after concurrent ${change}`, async () => {
+    const fixture = await repositoryFixture();
+    const definition = { ...automationDefinition(), newChatPerRun: false };
+    let started!: () => void;
+    let release!: () => void;
+    const creating = new Promise<void>((resolve) => { started = resolve; });
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const executor = new AutomationExecutor({ config: serverConfig(), repository: fixture.repository,
+      resolveWorkspace: async () => serverConfig().workspaces[0],
+      createWorkspaceOpencodeClient: () => ({ session: { create: async () => { started(); await gate; return { data: { id: "stale" } }; } } }) as never,
+    });
+    try {
+      fixture.repository.createDefinition(definition, definition);
+      const pending = executor.prepareSession(definition.id);
+      await creating;
+      if (change === "delete") fixture.repository.tombstoneDefinition(definition.id, 1, 200);
+      else {
+        const updated = { ...definition, revision: 2, updatedAt: 200, name: "Changed" };
+        fixture.repository.updateDefinition(updated, updated, 1);
+      }
+      const newerBinding = { workspace: serverConfig().workspaces[0], sessionId: "newer-binding" };
+      fixture.repository.setExecutionBinding(`task:${definition.id}`, newerBinding);
+      release();
+      await assert.rejects(pending, (error: unknown) => (error as { status: number }).status === (change === "delete" ? 404 : 409));
+      assert.deepEqual(fixture.repository.getExecutionBinding(`task:${definition.id}`), newerBinding);
+      assert.deepEqual(fixture.repository.listRuns().items, []);
+    } finally { release(); await fixture.close(); }
+  });
+}
+
+for (const lookup of ["missing", "unavailable", "throw", "busy"] as const) {
+  test(`prepare handles an existing ${lookup} session without dispatch or caching errors`, async () => {
+    const fixture = await repositoryFixture();
+    const definition = automationDefinition();
+    let creates = 0;
+    const executor = new AutomationExecutor({ config: serverConfig(), repository: fixture.repository,
+      resolveWorkspace: async () => serverConfig().workspaces[0],
+      createWorkspaceOpencodeClient: () => ({ session: {
+        get: async () => {
+          if (lookup === "throw") throw new Error("offline");
+          return lookup === "missing" ? { error: { name: "NotFoundError" } }
+            : lookup === "unavailable" ? { error: { message: "offline" } } : { data: { id: "existing" } };
+        },
+        create: async () => { creates++; return { data: { id: "replacement" } }; },
+        status: async () => { throw new Error("opening a busy conversation must not check idle or dispatch"); },
+      } }) as never,
+    });
+    try {
+      fixture.repository.createDefinition(definition, definition);
+      const binding = { workspace: serverConfig().workspaces[0], sessionId: "existing" };
+      fixture.repository.setExecutionBinding(`task:${definition.id}`, binding);
+      if (lookup === "unavailable" || lookup === "throw") {
+        await assert.rejects(executor.prepareSession(definition.id));
+        await assert.rejects(executor.prepareSession(definition.id));
+        assert.deepEqual(fixture.repository.getExecutionBinding(`task:${definition.id}`), binding);
+      } else {
+        assert.equal((await executor.prepareSession(definition.id)).sessionId, lookup === "missing" ? "replacement" : "existing");
+      }
+      assert.equal(creates, lookup === "missing" ? 1 : 0);
+      assert.deepEqual(fixture.repository.listRuns().items, []);
+    } finally { await fixture.close(); }
+  });
+}
+
+test("prepare falls back from a missing latest run session to the valid task binding", async () => {
+  const fixture = await repositoryFixture();
+  const definition = automationDefinition();
+  const reads: string[] = [];
+  const executor = new AutomationExecutor({ config: serverConfig(), repository: fixture.repository,
+    resolveWorkspace: async () => serverConfig().workspaces[0],
+    createWorkspaceOpencodeClient: () => ({ session: {
+      get: async ({ sessionID }: { sessionID: string }) => {
+        reads.push(sessionID);
+        return sessionID === "gone" ? { error: { name: "NotFoundError" } } : { data: { id: sessionID } };
+      },
+      create: async () => { assert.fail("valid task binding should be reused"); },
+    } }) as never,
+  });
+  try {
+    fixture.repository.createDefinition(definition, definition);
+    const queued = fixture.repository.createManualRun(definition, "latest-session-run", 100);
+    fixture.repository.updateRun(queued.id, queued.revision, { state: "failed", sessionId: "gone", endedAt: 101 }, 101);
+    fixture.repository.setExecutionBinding(`task:${definition.id}`, { workspace: serverConfig().workspaces[0], sessionId: "valid" });
+    assert.deepEqual(await executor.prepareSession(definition.id), { workspaceId: "workspace", sessionId: "valid" });
+    assert.deepEqual(reads, ["gone", "valid"]);
+    assert.equal(fixture.repository.listRuns().items.length, 1);
+  } finally { await fixture.close(); }
+});
+
+for (const first of ["open", "execute"] as const) {
+  test(`concurrent open and execute share one session when ${first} starts first`, async () => {
+    const fixture = await repositoryFixture();
+    const definition = { ...automationDefinition(), newChatPerRun: false };
+    let creates = 0;
+    let prompts = 0;
+    let started!: () => void;
+    let release!: () => void;
+    const creating = new Promise<void>((resolve) => { started = resolve; });
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const executor = new AutomationExecutor({ config: serverConfig(), repository: fixture.repository,
+      resolveWorkspace: async () => serverConfig().workspaces[0], wait: async () => undefined,
+      createWorkspaceOpencodeClient: () => ({ session: {
+        create: async () => { creates++; started(); await gate; return { data: { id: "shared" } }; },
+        get: async () => ({ data: { id: "shared" } }), status: async () => ({ data: {} }), messages: async () => ({ data: [] }),
+        promptAsync: async ({ sessionID }: { sessionID: string }) => { assert.equal(sessionID, "shared"); prompts++; return { data: true }; },
+      }, mcp: { status: async () => ({ data: {} }) }, tool: { ids: async () => ({ data: [] }) } }) as never,
+    });
+    try {
+      fixture.repository.createDefinition(definition, definition);
+      const run = fixture.repository.createManualRun(definition, "racing-run", 100);
+      const snapshot = fixture.repository.getRunSnapshot(run.id)!;
+      const firstPending = first === "open" ? executor.prepareSession(definition.id) : executor.execute(snapshot);
+      await creating;
+      const secondPending = first === "open" ? executor.execute(snapshot) : executor.prepareSession(definition.id);
+      release();
+      const result = await Promise.all([firstPending, secondPending]);
+      assert.deepEqual(result[first === "open" ? 0 : 1], { workspaceId: "workspace", sessionId: "shared" });
+      assert.equal(creates, 1);
+      assert.equal(prompts, 1);
+      assert.equal(fixture.repository.getRun(run.id)?.state, "succeeded");
+      assert.equal(fixture.repository.listRuns().items.length, 1);
+    } finally { release(); await fixture.close(); }
+  });
+}
+
+for (const change of ["revision", "delete"] as const) {
+  test(`an executing old snapshot cannot overwrite the task binding after ${change}`, async () => {
+    const fixture = await repositoryFixture();
+    const definition = { ...automationDefinition(), newChatPerRun: false };
+    let started!: () => void;
+    let release!: () => void;
+    const creating = new Promise<void>((resolve) => { started = resolve; });
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const executor = new AutomationExecutor({ config: serverConfig(), repository: fixture.repository,
+      resolveWorkspace: async () => serverConfig().workspaces[0], wait: async () => undefined,
+      createWorkspaceOpencodeClient: () => ({ session: {
+        create: async () => { started(); await gate; return { data: { id: "old-snapshot-session" } }; },
+        status: async () => ({ data: {} }), messages: async () => ({ data: [] }), promptAsync: async () => ({ data: true }),
+      }, mcp: { status: async () => ({ data: {} }) }, tool: { ids: async () => ({ data: [] }) } }) as never,
+    });
+    try {
+      fixture.repository.createDefinition(definition, definition);
+      const run = fixture.repository.createManualRun(definition, "old-snapshot", 100);
+      const executing = executor.execute(fixture.repository.getRunSnapshot(run.id)!);
+      await creating;
+      if (change === "delete") fixture.repository.tombstoneDefinition(definition.id, 1, 200);
+      else {
+        const updated = { ...definition, revision: 2, updatedAt: 200 };
+        fixture.repository.updateDefinition(updated, updated, 1);
+      }
+      const binding = { workspace: serverConfig().workspaces[0], sessionId: "current-binding" };
+      fixture.repository.setExecutionBinding(`task:${definition.id}`, binding);
+      release();
+      await executing;
+      assert.deepEqual(fixture.repository.getExecutionBinding(`task:${definition.id}`), binding);
+      assert.equal(fixture.repository.getRun(run.id)?.sessionId, "old-snapshot-session");
+    } finally { release(); await fixture.close(); }
   });
 }

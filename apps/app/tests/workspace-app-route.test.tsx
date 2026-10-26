@@ -1,7 +1,8 @@
 import { expect, mock, test } from "bun:test";
 import React, { useState } from "react";
 import TestRenderer, { act } from "react-test-renderer";
-import { MemoryRouter, useNavigate } from "react-router-dom";
+import { MemoryRouter, useLocation, useNavigate } from "react-router-dom";
+import { readFileSync } from "node:fs";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -9,11 +10,12 @@ let workspaceTarget: "local" | "remote" | null = null;
 let mounts = 0;
 let latestReviewProps: Record<string, any> | null = null;
 mock.module("../src/react-app/shell/session-route", () => ({
-  SessionRoute: (props: { surfaceVisible: boolean }) => {
+  SessionRoute: (props: { surfaceVisible: boolean; embedded?: boolean; routeWorkspaceId: string; routeSessionId: string | null; onSessionTargetChange?: (workspaceId: string, sessionId: string) => void }) => {
     const [instance] = useState(() => ++mounts);
     const [draft, setDraft] = useState("");
     return (
-      <div data-session-instance={instance} data-surface-visible={props.surfaceVisible}>
+      <div data-session-instance={instance} data-surface-visible={props.surfaceVisible} data-embedded={props.embedded} data-workspace-id={props.routeWorkspaceId} data-session-id={props.routeSessionId}>
+        {props.embedded ? <button data-follow-session onClick={() => props.onSessionTargetChange?.("automation-ws", "forked-session")}>Follow session</button> : null}
         <input value={draft} onChange={(event) => setDraft(event.target.value)} />
         <div data-session-list-preview={workspaceTarget ? "true" : undefined}>
           <button>Open session</button>
@@ -28,7 +30,11 @@ mock.module("../src/react-app/shell/chat-page", () => ({ ChatPage: () => null })
 mock.module("../src/react-app/shell/toonFactoryPage", () => ({
   ToonFactoryPage: (props: { workspaceId: string }) => <div data-toon-factory-workspace-id={props.workspaceId} />,
 }));
-mock.module("../src/react-app/domains/automations/automation-page", () => ({ AutomationPage: () => null }));
+mock.module("../src/react-app/domains/automations/automation-page", () => ({
+  AutomationPage: (props: { onOpenSession: (workspaceId: string, sessionId: string) => void }) => (
+    <button data-open-automation-session onClick={() => props.onOpenSession("automation-ws", "automation-session")}>Open automation</button>
+  ),
+}));
 mock.module("../src/react-app/domains/reviews/review-page", () => ({ ReviewPage: (props: Record<string, any>) => { latestReviewProps = props; return null; } }));
 mock.module("../src/react-app/shell/workspace-shell-actions", () => ({
   WorkspaceShellActionsProvider: ({ children }: { children: React.ReactNode }) => children,
@@ -46,6 +52,7 @@ mock.module("../src/react-app/shell/session-memory", () => ({
 const { WorkspaceAppRoute } = await import("../src/react-app/shell/workspace-app-route");
 
 test("retains the session and draft while only the list is revealed over every dedicated app", async () => {
+  mounts = 0;
   let navigate: ReturnType<typeof useNavigate>;
   function Navigation() {
     navigate = useNavigate();
@@ -120,4 +127,42 @@ test("hands GitHub setup to organization Connect settings", async () => {
     await act(async () => { renderer!.unmount(); });
     latestReviewProps = null;
   }
+});
+
+test("opens automation sessions without leaving automations or mounting a second runtime", async () => {
+  mounts = 0;
+  let navigate: ReturnType<typeof useNavigate>;
+  let pathname = "";
+  function Navigation() {
+    navigate = useNavigate();
+    pathname = useLocation().pathname;
+    return <WorkspaceAppRoute />;
+  }
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(<MemoryRouter initialEntries={["/workspace/workspace-1/session/session-1"]}><Navigation /></MemoryRouter>); });
+  try {
+    await act(async () => { navigate!("/automations"); });
+    await act(async () => { renderer!.root.findByProps({ "data-open-automation-session": true }).props.onClick(); });
+    const session = () => renderer!.root.findByProps({ "data-embedded": true });
+    expect(pathname).toBe("/automations");
+    expect(session().props["data-workspace-id"]).toBe("automation-ws");
+    expect(session().props["data-session-id"]).toBe("automation-session");
+    expect(session().props["data-surface-visible"]).toBe(true);
+    await act(async () => { renderer!.root.findByProps({ "data-follow-session": true }).props.onClick(); });
+    expect(pathname).toBe("/automations");
+    expect(session().props["data-session-id"]).toBe("forked-session");
+    await act(async () => { navigate!("/workspace/workspace-1/session/session-1"); });
+    expect(renderer!.root.findByProps({ "data-session-id": "session-1" }).props["data-embedded"]).toBe(false);
+    expect(mounts).toBe(1);
+  } finally {
+    await act(async () => { renderer!.unmount(); });
+  }
+});
+
+test("moves a stable portal container into the automation host instead of duplicating SessionRoute", () => {
+  const source = readFileSync(new URL("../src/react-app/shell/workspace-app-route.tsx", import.meta.url), "utf8");
+  expect(source.match(/<SessionRoute\b/g)).toHaveLength(1);
+  expect(source).toContain("createPortal(sessionSurface, sessionContainer)");
+  expect(source).toContain("host.appendChild(sessionContainer)");
+  expect(source).toContain("onSessionHostChange={setAutomationSessionHost}");
 });

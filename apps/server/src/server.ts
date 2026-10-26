@@ -158,6 +158,7 @@ import {
   migrateTrustedLegacyLocalHostFullAccess,
 } from "./session-permission-broker.js";
 import { AutomationExecutor } from "./automation/executor.js";
+import { isAutomationManagedWorkspacePath } from "./automation/workspace.js";
 import { AutomationScheduler } from "./automation/scheduler.js";
 import { AutomationEventPipeline } from "./automation/event-pipeline.js";
 import { AutomationEventPoller } from "./automation/event-poller.js";
@@ -1534,6 +1535,7 @@ export async function startServer(config: ServerConfig, options: {
     fileDeliveries,
     officeDocuments,
     localOfficeFiles,
+    (automationId, prepareOptions) => automationExecutor.prepareSession(automationId, prepareOptions),
   );
 
   const serverOptions: {
@@ -2510,6 +2512,7 @@ function serializeWorkspace(workspace: ServerConfig["workspaces"][number]) {
       : undefined;
   return {
     ...rest,
+    ...(workspace.workspaceType !== "remote" && workspace.path && isAutomationManagedWorkspacePath(workspace.path) ? { automationManaged: true } : {}),
     opencode,
   };
 }
@@ -2865,6 +2868,10 @@ function createRoutes(
   fileDeliveries: FileDeliveryService,
   officeDocuments: OfficeDocuments,
   localOfficeFiles: LocalOfficeFiles,
+  prepareAutomationSession: (
+    automationId: string,
+    options?: { initializeConversation?: boolean; locale?: string },
+  ) => Promise<{ workspaceId: string; sessionId: string }>,
 ): Route[] {
   const routes: Route[] = [];
   registerHostMarketplacePluginRoutes({
@@ -3106,6 +3113,7 @@ function createRoutes(
     ensureWritable,
     requireClientScope,
     onChanged: () => automationScheduler.notifyChanged(),
+    prepareSession: prepareAutomationSession,
     log: automationLog,
     resolveWorkspace,
     createWorkspaceOpencodeClient,

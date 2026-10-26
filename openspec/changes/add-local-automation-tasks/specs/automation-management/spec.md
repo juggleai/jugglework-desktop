@@ -133,33 +133,65 @@ Connected/authorized connectors SHALL be directly selectable. Selecting a connec
 - **WHEN** the user removes a selected connector chip
 - **THEN** only that stable connector id is removed and the remaining selections keep their order and readiness state
 
-### Requirement: Explicit unattended full-access acknowledgement
-The editor SHALL show by default on every create/edit visit a warning that automations execute locally without attendance and require the computer and client runtime to remain active. The warning MAY be dismissed for the current editor visit but MUST return on the next visit. Before first save, the user MUST confirm a versioned risk acknowledgement explaining file mutation/deletion, Bash/network operations, selected-connector calls, and responsibility for the result.
+### Requirement: Unattended permission activation
+The editor SHALL show by default on every create/edit visit a warning that automations execute locally without attendance and require the computer and client runtime to remain active. The warning MAY be dismissed for the current editor visit but MUST return on the next visit. Creating a scheduled automation SHALL activate the selected versioned permission profile as part of the Create action without opening a second permission reminder. The default profile SHALL be unattended full access.
 
 The workspace selection SHALL NOT be described as an OS security sandbox. A changed permission-profile version MUST require renewed acknowledgement.
 
-The confirmation dialog MUST list file write/modify/delete, Bash and network operations, selected-connector calls without repeated confirmation, and user responsibility. It MUST require a dedicated risk checkbox, keep Confirm disabled until checked, and record acknowledgement timestamp plus permission-profile version. Because V1 unattended execution requires full access, it MUST NOT offer a default-permission execution alternative.
+When an existing automation is saved with full access, including after a permission-profile version change, the confirmation dialog MUST list file write/modify/delete, Bash and network operations, selected-connector calls without repeated confirmation, and user responsibility. It MUST require a dedicated risk checkbox, keep Confirm disabled until checked, and record acknowledgement timestamp plus permission-profile version.
 
-#### Scenario: User has not acknowledged risk
-- **WHEN** a valid automation form is saved before its current full-access profile is acknowledged
-- **THEN** the confirmation dialog opens and the definition is not created until the user explicitly accepts
+#### Scenario: User creates a scheduled automation
+- **WHEN** the user submits a valid new scheduled automation
+- **THEN** the client records the selected permission profile and activation timestamp, creates the definition directly, does not open an additional permission reminder, and refreshes the retained task list so the new definition is immediately visible without navigating away
+
+#### Scenario: Dependency inventory is changing during create
+- **WHEN** the editor is loading dependencies for a newly selected workspace or a prior dependency request is stale
+- **THEN** Create remains disabled until the current workspace inventory resolves, and validation uses only that current inventory
+
+#### Scenario: Optional creation acknowledgement cannot use the model yet
+- **WHEN** the task definition and conversation are created but the fresh workspace model registry cannot produce the decorative scheduling acknowledgement
+- **THEN** task creation still succeeds and opens the prepared conversation, while the failure is logged and the configured model remains subject to normal run preflight
 
 #### Scenario: Permission profile changes after creation
 - **WHEN** a newer client requires a different unattended permission-profile version
 - **THEN** editing or re-enabling the automation requires acknowledgement of the new profile
 
-#### Scenario: User opens confirmation but has not checked risk
+#### Scenario: User opens an existing-task confirmation but has not checked risk
 - **WHEN** the full-access dialog is open and its risk checkbox is unchecked
 - **THEN** Confirm remains disabled and no automation write occurs
 
-#### Scenario: User cancels full-access confirmation
+#### Scenario: User cancels an existing-task full-access confirmation
 - **WHEN** the user cancels the full-access dialog
 - **THEN** the dialog closes, the populated editor remains unchanged, and no local or cloud task is created
 
 ### Requirement: Automation lifecycle actions
 The scheduled-task list SHALL support manual run, edit, pause/resume, and delete actions; duplicate is reachable from the editor entry point rather than the row.
 
-The list SHALL also offer a batch mode that reveals a per-row checkbox, a select-all toggle, a selected count, and a confirmed batch delete. Batch delete SHALL apply each deletion with its own base revision so a conflict stops the batch instead of silently overwriting, and the list SHALL reflect whatever was already removed. Pausing MUST preserve the definition and history while preventing new scheduled runs. Duplicating MUST assign a new identity, start paused, and require a fresh full-access acknowledgement before enablement. Deletion MUST be locally recoverable until its tombstone is synchronized or the user confirms permanent local removal.
+Clicking a scheduled task SHALL open its latest available session inside the right pane of the Automation page, without navigating to a local-workspace route. Creating a scheduled task SHALL immediately prepare and bind its task-scoped workspace/session with the selected permission, model and agent. The first visible user turn SHALL contain the durable task description and localized schedule summary; the model SHALL generate one concise localized acknowledgement while every tool is disabled and a system instruction forbids executing the task before its due time. This confirmation turn MUST NOT create an automation run or change lifecycle/next-run state. If an older task has no session, opening it SHALL prepare an empty session without dispatching the task prompt. Concurrent preparations SHALL share one preparation. Tasks that create a new chat per run SHALL also expose their distinct run sessions for in-place selection; actual runs MUST still follow that setting. Event tasks SHALL continue to require an existing entity session. Run-history session entries SHALL use the same in-place session surface.
+
+The embedded conversation SHALL offer a return-to-list action. Entering run history SHALL clear the previous task conversation so the history list remains reachable. Returning to the ordinary workspace surface SHALL restore its prior tabs, split and focus rather than inheriting the automation conversation's workbench state.
+
+Create and edit SHALL share the same modal editor over the retained task dashboard. Editing SHALL load the saved definition, show Save rather than Create, preserve dirty-draft discard protection, and refresh the dashboard after success.
+
+#### Scenario: User opens a scheduled-task conversation
+- **WHEN** the user clicks a task or one of its run sessions
+- **THEN** its conversation is displayed and remains interactive in the right pane while the Automation rail and task sidebar remain visible and the route stays under `/automations`
+
+#### Scenario: User opens a task before its first scheduled execution
+- **WHEN** the user clicks a scheduled task without any run session
+- **THEN** the server prepares and binds an empty conversation without executing the task, and subsequent opens reuse it
+
+#### Scenario: User creates a scheduled task
+- **WHEN** the user saves a new scheduled task
+- **THEN** the server creates and binds its conversation, sends the task description plus localized schedule as the first user turn, disables all tools, and asks the selected model only for a concise scheduling acknowledgement
+- **AND** creation returns after that turn is accepted, opens the new conversation immediately, and shows the acknowledgement as it is generated
+- **AND** no automation run is created and the task itself remains unexecuted until its due time
+
+#### Scenario: User edits a scheduled task
+- **WHEN** the user chooses Edit from a task's actions
+- **THEN** the same modal layout used for creation opens with the existing definition, and closing or saving returns to the retained task dashboard and conversation
+
+The list SHALL also offer a batch mode that reveals a per-row checkbox, a select-all toggle, a selected count, and a confirmed batch delete. Batch delete SHALL apply each deletion with its own base revision so a conflict stops the batch instead of silently overwriting, and the list SHALL reflect whatever was already removed. Pausing MUST preserve the definition and history while preventing new scheduled runs. Duplicating MUST assign a new identity and start paused; creating the copied scheduled task activates its selected permission profile through the Create action without a second reminder. Deletion MUST be locally recoverable until its tombstone is synchronized or the user confirms permanent local removal.
 
 #### Scenario: User batch deletes several tasks
 - **WHEN** the user enters batch mode, selects several automations and confirms deletion
@@ -171,7 +203,7 @@ The list SHALL also offer a batch mode that reveals a per-row checkbox, a select
 
 #### Scenario: User duplicates a task
 - **WHEN** the user duplicates an automation
-- **THEN** a new paused draft is created with copied durable configuration but a new id and no inherited acknowledgement
+- **THEN** a new paused draft is created with copied durable configuration and a new id, and its selected permission profile is activated when the user creates the copy
 
 #### Scenario: User deletes a task with history
 - **WHEN** the user confirms deletion of an automation that has run records
@@ -194,7 +226,7 @@ Variant controls SHALL appear only when supported by the selected model. Agent/e
 
 The prompt toolbar SHALL expose the permission mode next to the model control, rendering only its warning glyph in a warning color while the label matches the neighbouring toolbar controls. It SHALL offer two versioned profiles: full access (default, recommended) and interactive default permissions. Each option MUST state its consequence — full access runs unattended and may take sensitive actions, while default permissions ask for confirmation and leave an unattended run waiting.
 
-Choosing full access SHALL still require the explicit risk acknowledgement before save. Choosing default permissions SHALL skip that dialog, because that mode asks the user per action at run time instead.
+For a new scheduled automation, choosing full access SHALL be activated by the Create action itself without an additional confirmation dialog. Choosing default permissions SHALL also save directly, because that mode asks the user per action at run time instead. Event-trigger permission escalation and renewed acknowledgement for an existing task remain separate flows.
 
 #### Scenario: Model has no variants
 - **WHEN** the selected explicit model exposes no supported variant
