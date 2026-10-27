@@ -88,10 +88,14 @@ export async function promoteChannel(plan, evidence, {
   preCanaryExceptionReason = "",
   cacheExceptionReason = "",
   metadataExceptionReason = "",
+  expectedPreviousChannelDigest,
   onEvent = () => {},
   onPromotionVerified = async () => {},
 } = {}) {
   assertPromotionEvidence(plan, evidence, { notarizationExceptionReason, preCanaryExceptionReason, cacheExceptionReason, metadataExceptionReason });
+  if (expectedPreviousChannelDigest !== undefined && !/^[a-f0-9]{64}$/.test(expectedPreviousChannelDigest)) {
+    throw new Error("Expected predecessor must be a SHA-256 digest");
+  }
   const notarizationException = notarizationExceptionReason
     ? { scope: `stable-${plan.version}-only`, reason: notarizationExceptionReason.trim() }
     : null;
@@ -127,16 +131,19 @@ export async function promoteChannel(plan, evidence, {
   }
   if (typeof qiniu.readContent !== "function") throw new Error("Qiniu content read-back operation is unavailable");
   const previousChannelContent = await qiniu.readContent(plan.channelManifest.key);
-  const expectedPreviousChannelDigest = previousChannelContent === null
+  const observedPreviousChannelDigest = previousChannelContent === null
     ? null
     : metadataForBuffer(previousChannelContent, plan.channelManifest.key).sha256;
+  if (expectedPreviousChannelDigest !== undefined && observedPreviousChannelDigest !== expectedPreviousChannelDigest) {
+    throw new Error("Channel manifest does not match the approved predecessor digest; refusing promotion");
+  }
   const lockPayload = {
     version: plan.version,
     channel: plan.channel,
     platform: plan.platform,
     actor,
     acquiredAt: now().toISOString(),
-    expectedPreviousChannelDigest,
+    expectedPreviousChannelDigest: observedPreviousChannelDigest,
     candidateDigest: plan.manifest.sha256,
   };
   const lockContent = `${JSON.stringify(lockPayload)}\n`;
@@ -159,7 +166,7 @@ export async function promoteChannel(plan, evidence, {
     const currentChannelDigest = currentChannelContent === null
       ? null
       : metadataForBuffer(currentChannelContent, plan.channelManifest.key).sha256;
-    if (currentChannelDigest !== expectedPreviousChannelDigest) {
+    if (currentChannelDigest !== observedPreviousChannelDigest) {
       throw new Error(`Channel manifest changed after lock acquisition; refusing overwrite: ${plan.channelManifest.key}`);
     }
     onEvent({ type: "channel-upload", key: plan.channelManifest.key });

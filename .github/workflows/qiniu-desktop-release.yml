@@ -3,6 +3,19 @@ name: Qiniu Desktop Release
 on:
   workflow_dispatch:
     inputs:
+      mode:
+        description: "Build a release or continue only the approved existing 1.2.31 candidate"
+        required: true
+        default: build
+        type: choice
+        options:
+          - build
+          - promotion-only
+      candidate_record:
+        description: "Promotion-only: fixed committed non-secret candidate record path"
+        required: false
+        default: apps/desktop/release-records/1.2.31-candidate.json
+        type: string
       version:
         description: "Exact release version (stable X.Y.Z; alpha may be prerelease)"
         required: true
@@ -32,7 +45,7 @@ on:
         default: false
         type: boolean
       canary_json:
-        description: "Non-secret machine canary JSON; required when promote=true"
+        description: "Non-secret machine canary JSON; required for build mode when promote=true"
         required: false
         type: string
 
@@ -49,7 +62,7 @@ concurrency:
 jobs:
   release-macos-arm64:
     name: Build, verify, and publish macOS arm64
-    if: inputs.platform == 'mac'
+    if: inputs.platform == 'mac' && inputs.mode != 'promotion-only'
     runs-on: macos-26
     timeout-minutes: 240
     environment: qiniu-desktop-release
@@ -275,9 +288,107 @@ jobs:
           if-no-files-found: warn
           retention-days: 90
 
+  promote-existing-macos-arm64:
+    name: Verify and promote the committed macOS arm64 candidate without rebuilding
+    if: inputs.mode == 'promotion-only'
+    runs-on: macos-26
+    timeout-minutes: 120
+    # This environment name alone does not imply configured approval/branch protection.
+    environment: qiniu-desktop-release
+    env:
+      RELEASE_MODE: ${{ inputs.mode }}
+      VERSION: ${{ inputs.version }}
+      CHANNEL: ${{ inputs.channel }}
+      RELEASE_PLATFORM: ${{ inputs.platform }}
+      PROMOTE: ${{ inputs.promote }}
+      CANDIDATE_RECORD: ${{ inputs.candidate_record }}
+    steps:
+      - name: Require exact continuation coordinates and dev dispatch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/dev
+          test "$VERSION" = 1.2.31
+          test "$CHANNEL" = stable
+          test "$RELEASE_PLATFORM" = mac
+          test "$PROMOTE" = true
+          test "$CANDIDATE_RECORD" = apps/desktop/release-records/1.2.31-candidate.json
+
+      - name: Checkout continuation tooling and committed candidate from dev
+        uses: actions/checkout@v6
+        with:
+          ref: dev
+          fetch-depth: 0
+
+      - name: Require exact dispatch checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse origin/dev)" = "$GITHUB_SHA"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.4.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Install verification dependencies without lifecycle scripts
+        shell: bash
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Validate committed candidate and exact source ancestry before authentication
+        shell: bash
+        run: node apps/desktop/scripts/qiniu-release/promotion-continuation.mjs --validate-only
+
+      - name: Setup Go for pinned qshell
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.24.x"
+
+      - name: Install pinned qshell and initialize private continuation output
+        shell: bash
+        run: |
+          set -euo pipefail
+          go install github.com/qiniu/qshell/v2@v2.19.10
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          mkdir -m 700 "$RUNNER_TEMP/qiniu-promotion-continuation"
+
+      - name: Authenticate qshell from masked CI secrets
+        shell: bash
+        env:
+          QINIU_ACCESS_KEY: ${{ secrets.QINIU_ACCESS_KEY }}
+          QINIU_SECRET_KEY: ${{ secrets.QINIU_SECRET_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${QINIU_ACCESS_KEY:-}" ] || [ -z "${QINIU_SECRET_KEY:-}" ]; then
+            echo "Missing required Qiniu release secrets" >&2
+            exit 1
+          fi
+          echo "::add-mask::$QINIU_ACCESS_KEY"
+          echo "::add-mask::$QINIU_SECRET_KEY"
+          qshell account "$QINIU_ACCESS_KEY" "$QINIU_SECRET_KEY" "jugglework-ci-$GITHUB_RUN_ID" --overwrite >/dev/null
+
+      - name: Restore exact immutable bytes, reverify trust, and promote under Qiniu lock
+        shell: bash
+        run: node apps/desktop/scripts/qiniu-release/promotion-continuation.mjs
+
+      - name: Retain continuation evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qiniu-promotion-only-${{ inputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/qiniu-promotion-continuation/release-evidence.json
+          if-no-files-found: warn
+          retention-days: 90
+
   resolve-windows-source:
     name: Resolve exact Windows release source
-    if: inputs.platform == 'windows'
+    if: inputs.platform == 'windows' && inputs.mode != 'promotion-only'
     runs-on: ubuntu-24.04
     outputs:
       commit: ${{ steps.source.outputs.commit }}
@@ -302,7 +413,7 @@ jobs:
   build-windows:
     name: Build and sign Windows ${{ matrix.arch }}
     needs: resolve-windows-source
-    if: inputs.platform == 'windows'
+    if: inputs.platform == 'windows' && inputs.mode != 'promotion-only'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 180
     environment: qiniu-desktop-release
@@ -477,7 +588,7 @@ jobs:
     needs:
       - resolve-windows-source
       - build-windows
-    if: inputs.platform == 'windows'
+    if: inputs.platform == 'windows' && inputs.mode != 'promotion-only'
     runs-on: windows-2022
     timeout-minutes: 180
     environment: qiniu-desktop-release

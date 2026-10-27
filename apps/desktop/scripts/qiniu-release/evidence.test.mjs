@@ -452,7 +452,7 @@ test("stable macOS arm64 1.2.22 accepts only the audited pre-canary exception", 
   assert.throws(() => assertPromotionEvidence(x64Plan, x64Evidence, {
     preCanaryExceptionReason: reason,
   }), /restricted to macOS arm64/);
-  assert.throws(() => assertPromotionEvidence(plan("1.2.31"), promotionEvidence(plan("1.2.31")), {
+  assert.throws(() => assertPromotionEvidence(plan("1.2.32"), promotionEvidence(plan("1.2.32")), {
     preCanaryExceptionReason: reason,
   }), /restricted to stable/);
 });
@@ -532,7 +532,7 @@ test("recorded 1.2.26 cache exception requires exact Stable object metadata and 
   }
 });
 
-for (const version of ["1.2.27", "1.2.28", "1.2.29", "1.2.30"]) {
+for (const version of ["1.2.27", "1.2.28", "1.2.29", "1.2.30", "1.2.31"]) {
   test(`stable macOS arm64 ${version} metadata exception requires public read-back and cannot bypass notarization or a failed canary`, () => {
     const releasePlan = plan(version);
     const evidence = promotionEvidence(releasePlan);
@@ -610,34 +610,65 @@ for (const version of ["1.2.27", "1.2.28", "1.2.29", "1.2.30", "1.2.31"]) {
   });
 }
 
-test("1.2.31 metadata-only exception requires a matching canary and every unrelated evidence gate", () => {
+test("1.2.31 independent exceptions preserve explicit canary failures and every unrelated evidence gate", () => {
   const releasePlan = plan("1.2.31");
   const options = { metadataExceptionReason: "Operator authorized stable macOS arm64 1.2.31 to skip only Cache-Control metadata change/verification" };
+  const preCanary = { preCanaryExceptionReason: "Operator authorized stable macOS arm64 1.2.31 to skip only the real-client upgrade canary" };
   assert.equal(assertPromotionEvidence(releasePlan, promotionEvidence(releasePlan), options).schemaVersion, 2);
-  for (const [label, mutate] of [
-    [/canary/i, (value) => { value.canary = null; }],
-    [/passed machine-generated/, (value) => { value.canary.result = "failed"; }],
-    [/release coordinates/, (value) => { value.canary.targetVersion = "1.2.30"; }],
-    [/targeted feed/, (value) => { value.canary.feedUrl = "https://downloads.jugglechat.cn/jugglework/releases/stable/mac/latest-mac.yml"; }],
-    [/architectures/, (value) => { value.canary.architectures = ["x64"]; }],
-    [/manifest digest/, (value) => { value.canary.manifestSha256 = "0".repeat(64); }],
-    [/semantically older/, (value) => { value.canary.sourceVersion = "1.2.31"; }],
-    [/check install/, (value) => { value.canary.checks.install = "failed"; }],
-    [/check restart/, (value) => { value.canary.checks.restart = "failed"; }],
+  for (const absent of [null, undefined]) {
+    const evidence = promotionEvidence(releasePlan);
+    evidence.canary = absent;
+    assert.throws(() => assertPromotionEvidence(releasePlan, evidence), /canary/i);
+    assert.throws(() => assertPromotionEvidence(releasePlan, evidence, options), /canary/i);
+    assert.equal(assertPromotionEvidence(releasePlan, evidence, preCanary).schemaVersion, 2);
+    assert.equal(assertPromotionEvidence(releasePlan, evidence, { ...options, ...preCanary }).schemaVersion, 2);
+    for (const reason of ["short", " ".repeat(30)]) {
+      assert.throws(() => assertPromotionEvidence(releasePlan, evidence, { preCanaryExceptionReason: reason }), /audited reason/);
+    }
+  }
+  for (const [label, mutate, presentCanary = false] of [
+    [/passed machine-generated/, (value) => { value.canary.result = "failed"; }, true],
+    [/release coordinates/, (value) => { value.canary.targetVersion = "1.2.30"; }, true],
+    [/targeted feed/, (value) => { value.canary.feedUrl = "https://downloads.jugglechat.cn/jugglework/releases/stable/mac/latest-mac.yml"; }, true],
+    [/architectures/, (value) => { value.canary.architectures = ["x64"]; }, true],
+    [/manifest digest/, (value) => { value.canary.manifestSha256 = "0".repeat(64); }, true],
+    [/semantically older/, (value) => { value.canary.sourceVersion = "1.2.31"; }, true],
+    [/check install/, (value) => { value.canary.checks.install = "failed"; }, true],
+    [/check restart/, (value) => { value.canary.checks.restart = "failed"; }, true],
+    [/identities/, (value) => { value.localVerification.identity.teamIdentifier = "WRONGTEAM"; }],
     [/codesign/, (value) => { value.localVerification.codesign.status = "failed"; }],
+    [/hardened runtime/, (value) => { value.localVerification.hardenedRuntime.status = "disabled"; }],
+    [/credential state/, (value) => { value.localVerification.credentialState = "missing"; }],
+    [/rejects candidate/, (value) => { value.localVerification.releaseState = "candidate"; }],
     [/accepted notarization/, (value) => { value.localVerification.notarization.status = "unavailable"; }],
+    [/accepted notarization/, (value) => { value.localVerification.notarization.submissionId = ""; }],
+    [/outer DMG signed/, (value) => { value.localVerification.dmg.signature.status = "failed"; }],
     [/DMG notarization/, (value) => { value.localVerification.dmg.notarization.status = "unavailable"; }],
+    [/DMG notarization/, (value) => { value.localVerification.dmg.notarization.submissionId = ""; }],
+    [/DMG notarization/, (value) => { value.localVerification.dmg.staple.status = "unavailable"; }],
+    [/DMG notarization/, (value) => { value.localVerification.dmg.gatekeeper.status = "failed"; }],
+    [/DMG notarization/, (value) => { value.localVerification.dmg.image.status = "failed"; }],
     [/stapled ticket/, (value) => { value.localVerification.staple.status = "unavailable"; }],
     [/Gatekeeper/, (value) => { value.localVerification.gatekeeper.status = "failed"; }],
     [/artifact digest/, (value) => { value.localVerification.artifacts[0].sha256 = "wrong"; }],
+    [/manifest digest/, (value) => { value.localVerification.manifest.sha256 = "wrong"; }],
+    [/manifest does not match/, (value) => { value.manifest.sha256 = "wrong"; }],
     [/immutable verification/, (value) => { value.workflow.immutable.status = "failed"; }],
     [/Immutable Qiniu check/, (value) => { value.workflow.immutable.qiniuChecks[0].etag = "wrong"; }],
+    [/Immutable Qiniu check/, (value) => { value.workflow.immutable.qiniuChecks[0].size += 1; }],
     [/CDN verification/, (value) => { value.workflow.cdn.status = "failed"; }],
+    [/CDN-stage Qiniu check/, (value) => { value.workflow.cdn.qiniuChecks = value.workflow.cdn.qiniuChecks.map((check) => ({ ...check, etag: "wrong" })); }],
     [/CDN evidence/, (value) => { value.workflow.cdn.cdnChecks[0].sha256 = "wrong"; }],
+    [/CDN evidence/, (value) => { value.workflow.cdn.cdnChecks[0].sha512 = "wrong"; }],
+    [/CDN evidence/, (value) => { value.workflow.cdn.cdnChecks[0].contentLength += 1; }],
+    [/CDN evidence/, (value) => { value.workflow.cdn.cdnChecks[0].range = false; }],
   ]) {
-    const invalid = promotionEvidence(releasePlan);
-    mutate(invalid);
-    assert.throws(() => assertPromotionEvidence(releasePlan, invalid, options), label);
+    for (const exceptions of [options, preCanary, { ...options, ...preCanary }]) {
+      const invalid = promotionEvidence(releasePlan);
+      if (exceptions.preCanaryExceptionReason && !presentCanary) invalid.canary = null;
+      mutate(invalid);
+      assert.throws(() => assertPromotionEvidence(releasePlan, invalid, exceptions), label);
+    }
   }
   for (const reason of ["short", " ".repeat(30)]) {
     assert.throws(() => assertPromotionEvidence(releasePlan, promotionEvidence(releasePlan), { metadataExceptionReason: reason }), /audited reason/);
@@ -646,12 +677,12 @@ test("1.2.31 metadata-only exception requires a matching canary and every unrela
     { ...releasePlan, architectures: ["x64"] },
     { ...releasePlan, architectures: ["arm64", "x64"] },
     { ...releasePlan, architectures: ["universal"] },
-    plan("1.2.31", "alpha"), plan("1.2.31", "beta"), plan("1.2.32"), { ...releasePlan, platform: "windows" },
+    plan("1.2.31", "alpha"), plan("1.2.31-alpha.1", "alpha"), plan("1.2.31", "beta"), plan("1.2.32"), { ...releasePlan, platform: "windows" },
   ]) {
     assert.throws(() => assertPromotionEvidence(invalidPlan, promotionEvidence(invalidPlan), options), /metadata exception is restricted/);
+    assert.throws(() => assertPromotionEvidence(invalidPlan, promotionEvidence(invalidPlan), preCanary), /restricted|only for macOS/);
   }
   for (const [field, error] of [
-    ["preCanaryExceptionReason", /pre-canary promotion exception is restricted/],
     ["notarizationExceptionReason", /notarization exception is restricted/],
     ["cacheExceptionReason", /cannot be combined/],
   ]) {

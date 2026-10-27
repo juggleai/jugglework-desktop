@@ -19,8 +19,8 @@ describe("Qiniu release workflow policy", () => {
     assert.doesNotMatch(qiniuSource, /inputs\.ref/);
     assert.match(qiniuSource, /ref: dev/);
     assert.match(qiniuSource, /promote-channel/);
-    assert.equal((qiniuSource.match(/QINIU_ACCESS_KEY: \$\{\{ secrets\.QINIU_ACCESS_KEY \}\}/g) ?? []).length, 4);
-    assert.equal((qiniuSource.match(/QINIU_SECRET_KEY: \$\{\{ secrets\.QINIU_SECRET_KEY \}\}/g) ?? []).length, 4);
+    assert.equal((qiniuSource.match(/QINIU_ACCESS_KEY: \$\{\{ secrets\.QINIU_ACCESS_KEY \}\}/g) ?? []).length, 5);
+    assert.equal((qiniuSource.match(/QINIU_SECRET_KEY: \$\{\{ secrets\.QINIU_SECRET_KEY \}\}/g) ?? []).length, 5);
     assert.match(qiniuSource, /verify:mac-package/);
     assert.match(qiniuSource, /finalize:mac-artifacts/);
     assert.ok(qiniuSource.indexOf("finalize:mac-artifacts") < qiniuSource.indexOf("Generate normalized immutable manifest"));
@@ -39,8 +39,8 @@ describe("Qiniu release workflow policy", () => {
     const signToolRun = aggregate.steps[signToolIndex].run;
     const bundleRun = aggregate.steps.find((step) => step.name === "Stage signed release bundle and non-secret evidence").run;
 
-    assert.equal(workflow.jobs["release-macos-arm64"].if, "inputs.platform == 'mac'");
-    assert.equal(windows.if, "inputs.platform == 'windows'");
+    assert.equal(workflow.jobs["release-macos-arm64"].if, "inputs.platform == 'mac' && inputs.mode != 'promotion-only'");
+    assert.equal(windows.if, "inputs.platform == 'windows' && inputs.mode != 'promotion-only'");
     assert.deepEqual(windows.strategy.matrix.include.map(({ arch, runner }) => ({ arch, runner })), [
       { arch: "arm64", runner: "windows-11-arm" },
       { arch: "x64", runner: "windows-2022" },
@@ -70,6 +70,35 @@ describe("Qiniu release workflow policy", () => {
     assert.doesNotMatch(bundleRun, /\$env:CANARY\b|CANARY_JSON/);
     assert.doesNotMatch(qiniuSource, /unsigned Windows installer fallback/i);
     assert.doesNotMatch(aggregateRuns, /build:electron|electron-builder/);
+  });
+
+  it("continues only the fixed committed candidate inside the same workflow scheduler", () => {
+    const workflow = parse(qiniuSource);
+    const inputs = workflow.on.workflow_dispatch.inputs;
+    assert.deepEqual(inputs.mode.options, ["build", "promotion-only"]);
+    assert.equal(inputs.mode.default, "build");
+    assert.equal(inputs.candidate_record.default, "apps/desktop/release-records/1.2.31-candidate.json");
+    const job = workflow.jobs["promote-existing-macos-arm64"];
+    assert.equal(job.if, "inputs.mode == 'promotion-only'");
+    assert.equal(job.environment, "qiniu-desktop-release");
+    assert.equal(job["runs-on"], "macos-26");
+    const source = job.steps.map((step) => step.run ?? "").join("\n");
+    assert.match(source, /test "\$GITHUB_REF" = refs\/heads\/dev/);
+    assert.match(source, /git rev-parse HEAD.*GITHUB_SHA/);
+    assert.match(source, /git rev-parse origin\/dev.*GITHUB_SHA/);
+    for (const [name, value] of [["VERSION", "1.2.31"], ["CHANNEL", "stable"], ["RELEASE_PLATFORM", "mac"], ["PROMOTE", "true"]]) {
+      assert.ok(source.includes(`test "$${name}" = ${value}`));
+    }
+    assert.match(source, /pnpm install --frozen-lockfile --ignore-scripts/);
+    assert.match(source, /go install github.com\/qiniu\/qshell\/v2@v2.19.10/);
+    assert.ok(source.indexOf("--validate-only") < source.indexOf("qshell account"));
+    assert.doesNotMatch(source, /build:electron|electron-builder|finalize:|upload-version|\bresume\b|notarytool|cli\.mjs/);
+    assert.doesNotMatch(JSON.stringify(job), /secrets\.APPLE|secrets\.SIGNPATH|MACOS_NOTARIZE/);
+    assert.equal(job.steps.at(-1).if, "always()");
+    assert.match(job.steps.at(-1).with.path, /release-evidence\.json$/);
+    for (const id of ["resolve-windows-source", "build-windows", "aggregate-windows"]) {
+      assert.match(workflow.jobs[id].if, /inputs.mode != 'promotion-only'/);
+    }
   });
 
   it("does not publish desktop updater assets through GitHub", () => {

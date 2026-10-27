@@ -497,10 +497,10 @@ function assertStableNotarizationException(plan, reason) {
 }
 
 function assertStablePreCanaryException(plan, reason) {
-  if (plan.channel !== "stable" || !["1.2.16", "1.2.18", "1.2.19", "1.2.20", "1.2.22", "1.2.23", "1.2.24", "1.2.25", "1.2.26", "1.2.27", "1.2.28", "1.2.29", "1.2.30"].includes(plan.version)) {
-    throw new Error("The pre-canary promotion exception is restricted to stable 1.2.16, stable 1.2.18, stable 1.2.19, stable 1.2.20, stable 1.2.22, stable 1.2.23, stable 1.2.24, stable 1.2.25, stable 1.2.26, stable 1.2.27, stable 1.2.28, stable 1.2.29, or stable 1.2.30");
+  if (plan.channel !== "stable" || !["1.2.16", "1.2.18", "1.2.19", "1.2.20", "1.2.22", "1.2.23", "1.2.24", "1.2.25", "1.2.26", "1.2.27", "1.2.28", "1.2.29", "1.2.30", "1.2.31"].includes(plan.version)) {
+    throw new Error("The pre-canary promotion exception is restricted to stable 1.2.16, stable 1.2.18, stable 1.2.19, stable 1.2.20, stable 1.2.22, stable 1.2.23, stable 1.2.24, stable 1.2.25, stable 1.2.26, stable 1.2.27, stable 1.2.28, stable 1.2.29, stable 1.2.30, or stable 1.2.31");
   }
-  if (["1.2.20", "1.2.22", "1.2.23", "1.2.24", "1.2.25", "1.2.26", "1.2.27", "1.2.28", "1.2.29", "1.2.30"].includes(plan.version) && !sameArray(plan.architectures, ["arm64"])) {
+  if (["1.2.20", "1.2.22", "1.2.23", "1.2.24", "1.2.25", "1.2.26", "1.2.27", "1.2.28", "1.2.29", "1.2.30", "1.2.31"].includes(plan.version) && !sameArray(plan.architectures, ["arm64"])) {
     throw new Error(`The stable ${plan.version} pre-canary promotion exception is restricted to macOS arm64`);
   }
   if (typeof reason !== "string" || reason.trim().length < 20) {

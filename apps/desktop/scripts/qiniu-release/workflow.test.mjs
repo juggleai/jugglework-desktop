@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { CANARY_SCHEMA, EXPECTED_BUNDLE_ID, EXPECTED_TEAM_ID, LOCAL_VERIFICATION_SCHEMA, createEvidence, withEvidenceResults } from "./evidence.mjs";
+import { CANARY_SCHEMA, EXPECTED_BUNDLE_ID, EXPECTED_TEAM_ID, LOCAL_VERIFICATION_SCHEMA, assertRecordedPromotion, createEvidence, withEvidenceResults } from "./evidence.mjs";
+import { readBackDigest } from "./cdn.mjs";
 import { CHANNEL_MANIFEST_CACHE_CONTROL, publicUrl } from "./constants.mjs";
 import { metadataForBuffer } from "./metadata.mjs";
 import { preflightImmutable, promoteChannel, recoverPromotionLock, uploadVersion, verifyCdn } from "./workflow.mjs";
@@ -288,6 +289,47 @@ test("promotion revalidates lock ownership immediately before channel overwrite"
   assert.equal(qiniu.state.has("jugglework/releases/locks/stable-mac.lock"), true);
 });
 
+test("approved predecessor digest rejects wrong or absent channels before lock acquisition", async () => {
+  const plan = fixturePlan("1.2.31");
+  for (const predecessor of [null, Buffer.from("version: unexpected\n")]) {
+    const qiniu = createFakeQiniu();
+    qiniu.readContent = async () => predecessor;
+    await assert.rejects(promoteChannel(plan, verifiedEvidence(plan), {
+      qiniu, refresh: async () => {}, expectedPreviousChannelDigest: "a".repeat(64),
+      metadataExceptionReason: "Operator authorized only the Cache-Control metadata exception",
+    }), /approved predecessor digest/);
+    assert.equal(qiniu.calls.some(([method]) => method === "uploadContent"), false);
+  }
+  for (const digest of [null, "", "not-a-digest", "A".repeat(64)]) {
+    const qiniu = createFakeQiniu();
+    await assert.rejects(promoteChannel(plan, verifiedEvidence(plan), {
+      qiniu, expectedPreviousChannelDigest: digest,
+    }), /Expected predecessor/);
+    assert.deepEqual(qiniu.calls, []);
+  }
+});
+
+test("approved predecessor preserves lock race checks and records the approved digest", async () => {
+  const plan = fixturePlan("1.2.31");
+  const previous = Buffer.from("version: 1.2.30\n");
+  const digest = metadataForBuffer(previous, "latest-mac.yml").sha256;
+  for (const race of [false, true]) {
+    const qiniu = createFakeQiniu(new Map([...plan.objects, plan.manifest].map((item) => [item.key, item])));
+    let reads = 0;
+    qiniu.readContent = async () => ++reads === 2 && race ? Buffer.from("version: changed\n") : previous;
+    const options = {
+      qiniu, expectedPreviousChannelDigest: digest,
+      metadataExceptionReason: "Operator authorized only the Cache-Control metadata exception",
+      refresh: async () => {}, readBack: async () => ({ sha256: plan.manifest.sha256, size: plan.manifest.size }),
+    };
+    if (race) await assert.rejects(promoteChannel(plan, verifiedEvidence(plan), options), /changed after lock acquisition/);
+    else await promoteChannel(plan, verifiedEvidence(plan), options);
+    const lock = JSON.parse(qiniu.calls.find(([method, key]) => method === "uploadContent" && key.endsWith(".lock"))[2]);
+    assert.equal(lock.expectedPreviousChannelDigest, digest);
+    assert.equal(qiniu.calls.some(([method, key]) => method === "uploadContent" && key === plan.channelManifest.key), !race);
+  }
+});
+
 test("records the narrowly scoped notarization exception in promotion output", async () => {
   const plan = fixturePlan();
   const evidence = verifiedEvidence(plan);
@@ -522,10 +564,10 @@ for (const version of ["1.2.27", "1.2.28", "1.2.29", "1.2.30", "1.2.31"]) {
     delete qiniu.setCacheControl;
     qiniu.prepareCacheControl = async () => { throw new Error("metadata preflight must not run"); };
     const evidence = verifiedEvidence(plan);
-    if (version !== "1.2.31") evidence.canary = null;
+    evidence.canary = null;
     const calls = [];
     const options = {
-      qiniu, preCanaryExceptionReason: version === "1.2.31" ? "" : `Operator authorized stable macOS arm64 ${version} without a real-client canary`,
+      qiniu, preCanaryExceptionReason: `Operator authorized stable macOS arm64 ${version} without a real-client canary`,
       metadataExceptionReason: `Operator authorized stable macOS arm64 ${version} without Qiniu cache metadata verification`,
       refresh: async (urls) => { calls.push(["refresh", urls]); },
       readBack: async (url, digest, { expectedSize }) => {
@@ -538,7 +580,7 @@ for (const version of ["1.2.27", "1.2.28", "1.2.29", "1.2.30", "1.2.31"]) {
       },
     };
     const result = await promoteChannel(plan, evidence, options);
-    assert.deepEqual(result.preCanaryException, version === "1.2.31" ? null : { scope: `stable-${version}-only`, reason: options.preCanaryExceptionReason });
+    assert.deepEqual(result.preCanaryException, { scope: `stable-${version}-only`, reason: options.preCanaryExceptionReason });
     assert.equal(result.notarizationException, null);
     assert.equal(result.cacheException, undefined);
     assert.equal(result.metadataException.scope, `stable-${version}-only`);
@@ -571,21 +613,29 @@ for (const version of ["1.2.30", "1.2.31"]) {
   test(`${version} scoped exceptions preserve immutable, lock, race, and channel metadata gates`, async () => {
     const plan = fixturePlan(version);
     const evidence = verifiedEvidence(plan);
-    if (version !== "1.2.31") evidence.canary = null;
+    evidence.canary = null;
     const options = {
-      preCanaryExceptionReason: version === "1.2.31" ? "" : `Operator authorized stable macOS arm64 ${version} without a real-client canary`,
+      preCanaryExceptionReason: `Operator authorized stable macOS arm64 ${version} without a real-client canary`,
       metadataExceptionReason: `Operator authorized stable macOS arm64 ${version} without Qiniu cache metadata verification`,
       refresh: async () => { assert.fail("refresh must not run after a failed gate"); },
       readBack: async () => { assert.fail("read-back must not run after a failed gate"); },
     };
     const lockKey = "jugglework/releases/locks/stable-mac.lock";
-    for (const gate of ["immutable", "lock", "race", "channel-size", "channel-etag"]) {
+    for (const gate of ["immutable", "lock", "ownership", "race", "channel-size", "channel-etag"]) {
       const qiniu = createFakeQiniu(new Map([...plan.objects, plan.manifest].map((item) => [item.key, { size: item.size, etag: item.etag }])));
       if (gate === "immutable") qiniu.state.get(plan.objects[0].key).etag = "wrong";
       if (gate === "lock") qiniu.state.set(lockKey, { size: 4, etag: "held", putTime: "123" });
+      if (gate === "ownership") {
+        const originalStat = qiniu.stat;
+        let lockStats = 0;
+        qiniu.stat = async (key) => {
+          const value = await originalStat.call(qiniu, key);
+          return key === lockKey && value && ++lockStats === 2 ? { ...value, etag: "stolen" } : value;
+        };
+      }
       if (gate === "race") {
         let reads = 0;
-        qiniu.readContent = async () => ++reads === 1 ? null : Buffer.from("version: raced\n");
+        qiniu.readContent = async () => Buffer.from(++reads === 1 ? "version: 1.2.29\n" : "version: raced\n");
       }
       if (gate.startsWith("channel-")) {
         const originalStat = qiniu.stat;
@@ -595,23 +645,81 @@ for (const version of ["1.2.30", "1.2.31"]) {
           return gate === "channel-size" ? { ...value, size: value.size + 1 } : { ...value, etag: "wrong" };
         };
       }
-      await assert.rejects(promoteChannel(plan, evidence, { ...options, qiniu }), /mismatch|lock is held|changed after lock acquisition/);
+      await assert.rejects(promoteChannel(plan, evidence, { ...options, qiniu }), /mismatch|lock is held|ownership changed|changed after lock acquisition/);
+      if (gate === "race") {
+        const lock = JSON.parse(qiniu.calls.find(([method, key]) => method === "uploadContent" && key === lockKey)[2]);
+        assert.equal(lock.expectedPreviousChannelDigest, metadataForBuffer("version: 1.2.29\n", plan.channelManifest.key).sha256);
+        assert.equal(lock.candidateDigest, plan.manifest.sha256);
+      }
       assert.equal(qiniu.calls.some(([method, key]) => method === "uploadContent" && key === plan.channelManifest.key), gate.startsWith("channel-"));
-      assert.equal(qiniu.state.has(lockKey), gate === "lock" || gate.startsWith("channel-"));
+      assert.equal(qiniu.state.has(lockKey), gate === "lock" || gate === "ownership" || gate.startsWith("channel-"));
     }
   });
 }
 
-test("1.2.31 metadata exception rejects missing or failed canary before any Qiniu call", async () => {
+for (const mode of ["pre-canary", "metadata-only", "both"]) {
+  test(`1.2.31 ${mode} exception preserves independent gates and records exact scoped evidence before unlock`, async () => {
+    const plan = fixturePlan("1.2.31");
+    const evidence = verifiedEvidence(plan);
+    if (mode !== "metadata-only") evidence.canary = null;
+    const options = {
+      ...(mode !== "metadata-only" ? { preCanaryExceptionReason: "Operator authorized stable macOS arm64 1.2.31 without a real-client canary" } : {}),
+      ...(mode !== "pre-canary" ? { metadataExceptionReason: "Operator authorized stable macOS arm64 1.2.31 to skip only Qiniu Cache-Control metadata" } : {}),
+    };
+    const initial = new Map([...plan.objects, plan.manifest].map((item) => [item.key, { size: item.size, etag: item.etag }]));
+    const lockKey = "jugglework/releases/locks/stable-mac.lock";
+    for (const failure of [null, "public-digest", "public-size", "durable-evidence"]) {
+      const qiniu = createFakeQiniu(initial);
+      let refreshed = false;
+      let persisted = false;
+      const promotion = promoteChannel(plan, evidence, {
+        ...options, qiniu,
+        refresh: async () => { refreshed = true; },
+        readBack: (url, digest, { expectedSize }) => readBackDigest(url, digest, {
+          expectedSize, attempts: 1,
+          fetchImpl: async () => {
+            assert.equal(refreshed, true);
+            const body = failure === "public-digest" ? plan.manifest.content.replace("1.2.31", "1.2.30") : plan.manifest.content;
+            return new Response(body, { headers: { "content-length": String(expectedSize + (failure === "public-size" ? 1 : 0)) } });
+          },
+        }),
+        onPromotionVerified: async (verified) => {
+          assert.equal(qiniu.state.has(lockKey), true);
+          const recorded = withEvidenceResults(evidence, { workflow: { promotion: {
+            ...verified, status: "verified", promotedAt: "2026-10-27T01:00:00.000Z",
+          } } });
+          assertRecordedPromotion(plan, recorded);
+          assert.deepEqual(verified.preCanaryException, options.preCanaryExceptionReason
+            ? { scope: "stable-1.2.31-only", reason: options.preCanaryExceptionReason } : null);
+          assert.deepEqual(verified.metadataException, options.metadataExceptionReason
+            ? { scope: "stable-1.2.31-only", reason: options.metadataExceptionReason } : undefined);
+          assert.equal(verified.notarizationException, null);
+          assert.equal(verified.cacheException, undefined);
+          if (failure === "durable-evidence") throw new Error("evidence persistence failed");
+          persisted = true;
+        },
+      });
+      if (failure) await assert.rejects(promotion, /not converged|evidence persistence failed/);
+      else await promotion;
+      assert.equal(persisted, failure === null);
+      assert.equal(qiniu.state.has(lockKey), failure !== null);
+      assert.equal(qiniu.calls.some(([method]) => method === "setCacheControl"), mode === "pre-canary");
+    }
+  });
+}
+
+test("1.2.31 needs an audited pre-canary reason and never masks an explicit failed or mismatched canary", async () => {
   const plan = fixturePlan("1.2.31");
   for (const canary of [null, { ...verifiedEvidence(plan).canary, result: "failed" }, { ...verifiedEvidence(plan).canary, manifestSha256: "wrong" }]) {
     const evidence = verifiedEvidence(plan);
     evidence.canary = canary;
-    const qiniu = createFakeQiniu();
-    await assert.rejects(promoteChannel(plan, evidence, {
-      qiniu, metadataExceptionReason: "Operator authorized skipping only Qiniu Cache-Control metadata verification",
-    }), /canary/i);
-    assert.deepEqual(qiniu.calls, []);
+    for (const preCanaryExceptionReason of canary === null ? [""] : ["", "Operator authorized skipping only the real-client canary"]) {
+      const qiniu = createFakeQiniu();
+      await assert.rejects(promoteChannel(plan, evidence, {
+        qiniu, preCanaryExceptionReason, metadataExceptionReason: "Operator authorized skipping only Qiniu Cache-Control metadata verification",
+      }), /canary/i);
+      assert.deepEqual(qiniu.calls, []);
+    }
   }
 });
 
@@ -620,7 +728,7 @@ for (const version of ["1.2.31", "1.2.32"]) {
     const plan = fixturePlan(version);
     const evidence = verifiedEvidence(plan);
     for (const options of [
-      { preCanaryExceptionReason: "Operator authorized skipping the real-client canary" },
+      ...(version === "1.2.32" ? [{ preCanaryExceptionReason: "Operator authorized skipping the real-client canary" }] : []),
       { notarizationExceptionReason: "Operator authorized skipping Apple notarization" },
       { cacheExceptionReason: "Operator authorized skipping cache convergence" },
       ...(version === "1.2.32" ? [{ metadataExceptionReason: "Operator authorized skipping only Qiniu cache metadata verification" }] : []),
