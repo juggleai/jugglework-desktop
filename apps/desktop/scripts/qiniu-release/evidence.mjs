@@ -436,7 +436,7 @@ export function assertRecordedPromotion(plan, evidence) {
     && typeof metadataException.reason === "string"
     && metadataException.reason.trim().length >= 20
     && plan.channel === "stable" && plan.platform === "mac"
-    && ["1.2.27", "1.2.28", "1.2.29", "1.2.30"].includes(plan.version) && sameArray(plan.architectures, ["arm64"]);
+    && ["1.2.27", "1.2.28", "1.2.29", "1.2.30", "1.2.31"].includes(plan.version) && sameArray(plan.architectures, ["arm64"]);
   const cacheExceptionAllowed = cacheException?.scope === `stable-${plan.version}-only`
     && typeof cacheException.reason === "string"
     && cacheException.reason.length >= 20
@@ -520,8 +520,8 @@ function assertStableCacheException(plan, reason) {
 }
 
 function assertStableMetadataException(plan, reason) {
-  if (plan.channel !== "stable" || plan.platform !== "mac" || !["1.2.27", "1.2.28", "1.2.29", "1.2.30"].includes(plan.version) || !sameArray(plan.architectures, ["arm64"])) {
-    throw new Error("The metadata exception is restricted to stable macOS arm64 1.2.27, 1.2.28, 1.2.29, or 1.2.30");
+  if (plan.channel !== "stable" || plan.platform !== "mac" || !["1.2.27", "1.2.28", "1.2.29", "1.2.30", "1.2.31"].includes(plan.version) || !sameArray(plan.architectures, ["arm64"])) {
+    throw new Error("The metadata exception is restricted to stable macOS arm64 1.2.27, 1.2.28, 1.2.29, 1.2.30, or 1.2.31");
   }
   if (typeof reason !== "string" || reason.trim().length < 20) {
     throw new Error(`The stable ${plan.version} metadata exception requires an explicit audited reason`);

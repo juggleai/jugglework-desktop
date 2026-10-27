@@ -25,11 +25,20 @@ for (const version of ["1.2.28", "1.2.29", "1.2.30"]) {
     assert.equal(parsed.options.preCanaryExceptionReason, "Operator authorized skipping only the canary");
     assert.equal(parsed.options.metadataExceptionReason, "Operator authorized skipping only Qiniu cache metadata verification");
     assert.match(usage(), /--metadata-exception-reason/);
-    assert.match(usage(), /1\.2\.27, 1\.2\.28, 1\.2\.29, or 1\.2\.30/);
+    assert.match(usage(), /1\.2\.27, 1\.2\.28, 1\.2\.29, 1\.2\.30, or 1\.2\.31/);
     assert.match(usage(), /CDN refresh and public Stable digest\/size read-back remain required/);
-    assert.match(usage(), /Future 1\.2\.31 is not authorized/);
+    assert.match(usage(), /Future 1\.2\.32 is not authorized/);
   });
 }
+
+test("CLI documents 1.2.31 metadata-only authorization with a required real canary", () => {
+  const reason = "Operator authorized stable macOS arm64 1.2.31 to skip only Cache-Control metadata change/verification";
+  const parsed = parseArguments(["promote-channel", ...REQUIRED.with(1, "1.2.31").with(7, "arm64"), "--metadata-exception-reason", reason]);
+  assert.equal(parsed.options.metadataExceptionReason, reason);
+  assert.equal(parsed.options.preCanaryExceptionReason, undefined);
+  assert.match(usage(), /1\.2\.31 requires a real matching local upgrade canary/);
+  assert.match(usage(), /stable-1\.2\.31-only, never pre-canary, notarization, or broader cache exceptions/);
+});
 
 test("SemVer prereleases are alpha-only and targets stay restricted", () => {
   assert.equal(parseArguments(["plan", ...REQUIRED.with(1, "1.2.16-alpha.1").with(3, "alpha")]).options.version, "1.2.16-alpha.1");
