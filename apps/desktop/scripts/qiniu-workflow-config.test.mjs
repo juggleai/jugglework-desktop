@@ -90,7 +90,8 @@ describe("Qiniu release workflow policy", () => {
       assert.ok(source.includes(`test "$${name}" = ${value}`));
     }
     assert.match(source, /pnpm install --frozen-lockfile --ignore-scripts/);
-    assert.match(source, /go install github.com\/qiniu\/qshell\/v2@v2.19.10/);
+    assert.match(source, /go install github.com\/qiniu\/qshell\/v2\/main@v2.19.10/);
+    assert.match(source, /mv .*bin\/main.*bin\/qshell/);
     assert.ok(source.indexOf("--validate-only") < source.indexOf("qshell account"));
     assert.doesNotMatch(source, /build:electron|electron-builder|finalize:|upload-version|\bresume\b|notarytool|cli\.mjs/);
     assert.doesNotMatch(JSON.stringify(job), /secrets\.APPLE|secrets\.SIGNPATH|MACOS_NOTARIZE/);
