@@ -44,8 +44,9 @@ function snapshot(run: ReviewRun): ReviewRunSnapshot {
 
 /** Durable private AI results; only explicit mutation endpoints publish to GitHub. */
 export class ReviewWorkflow {
-  private readonly running = new Map<string, { controller: AbortController; completion: Promise<void> }>();
+  private readonly running = new Map<string, { controller: AbortController; queued: Promise<ReviewRun>; completion: Promise<void> }>();
   private readonly starting = new Map<string, { mode: "review" | "conversation"; promise: Promise<ReviewRun> }>();
+  private readonly stateTransitions = new Map<string, Promise<unknown>>();
   private readonly mutations = new Map<string, Promise<{ ok: true }>>();
   private readonly pullRequestActions = new Map<string, Promise<{ ok: true }>>();
   private readonly fixing = new Map<string, Promise<{ sessionId: string }>>();
@@ -64,7 +65,16 @@ export class ReviewWorkflow {
   }
 
   private path(key: string) { return join(this.options.directory, `${key}.json`); }
+  private async transition<T>(key: string, operation: () => Promise<T>): Promise<T> {
+    const pending = (this.stateTransitions.get(key) ?? Promise.resolve()).catch(() => undefined).then(operation);
+    this.stateTransitions.set(key, pending);
+    try { return await pending; }
+    finally { if (this.stateTransitions.get(key) === pending) this.stateTransitions.delete(key); }
+  }
   private async save(key: string, value: unknown) {
+    await this.transition(key, () => this.write(key, value));
+  }
+  private async write(key: string, value: unknown) {
     await mkdir(this.options.directory, { recursive: true });
     const temporary = `${this.path(key)}.${randomUUID()}.tmp`;
     await writeFile(temporary, JSON.stringify(value), { mode: 0o600 });
@@ -87,22 +97,27 @@ export class ReviewWorkflow {
 
   async latest(input: ReviewTargetInput): Promise<{ run: ReviewRun | null }> {
     const key = await this.key(input);
-    const saved = await this.read(key);
-    if (!saved) return { run: null };
-    const run = reviewRunSchema.parse(saved);
-    if (run.status === "running" && !this.running.has(key) && !this.starting.has(key)) {
-      run.status = "failed";
-      run.error = "The server restarted before this review finished. Run the review again.";
-      await this.save(key, run);
-    }
-    return { run };
+    return this.transition(key, async () => {
+      const saved = await this.read(key);
+      if (!saved) return { run: null };
+      const run = reviewRunSchema.parse(saved);
+      if (run.status === "running" && !this.running.has(key) && !this.starting.has(key)) {
+        run.status = "failed";
+        run.error = "The server restarted before this review finished. Run the review again.";
+        await this.write(key, run);
+      }
+      return { run };
+    });
   }
 
   async start(input: ReviewTargetInput & ReviewTaskInput): Promise<{ run: ReviewRun }> {
     const key = await this.key(input);
     const requestedMode: "review" | "conversation" = input.mode === "conversation" ? "conversation" : "review";
     const current = this.running.get(key);
-    if (current) return { run: reviewRunSchema.parse(await this.read(key)) };
+    if (current) {
+      await current.queued;
+      return { run: reviewRunSchema.parse(await this.read(key)) };
+    }
     const starting = this.starting.get(key);
     if (starting) {
       if (starting.mode === "review" || requestedMode === "conversation") return { run: await starting.promise };
@@ -115,38 +130,40 @@ export class ReviewWorkflow {
     try { return { run: await promise }; } finally { if (this.starting.get(key) === entry) this.starting.delete(key); }
   }
 
-  private async enqueueReview(input: ReviewTargetInput & ReviewTaskInput, key: string, afterConversation?: Promise<ReviewRun>): Promise<ReviewRun> {
-    const savedValue = await this.read(key);
-    const previous = savedValue ? reviewRunSchema.parse(savedValue) : null;
-    const run: ReviewRun = {
-      id: randomUUID(),
-      reviewId: input.reviewId,
-      headRevision: input.expectedHeadRevision,
-      status: "running",
-      phase: "queued",
-      createdAt: new Date().toISOString(),
-      partial: false,
-      ...(previous?.workspaceId ? { workspaceId: previous.workspaceId } : {}),
-      ...(previous?.sessionId ? { sessionId: previous.sessionId } : {}),
-      ...(previous ? { history: [...(previous.history ?? []), snapshot(previous)].slice(-20) } : {}),
-    };
-    await this.save(key, run);
+  private enqueueReview(input: ReviewTargetInput & ReviewTaskInput, key: string, afterConversation?: Promise<ReviewRun>): Promise<ReviewRun> {
     const controller = new AbortController();
-    // Yield one turn so the HTTP handler can serialize the queued state before
-    // background preparation mutates this shared run object.
-    const completion = Promise.resolve()
-      .then(async () => {
-        if (afterConversation) {
-          const conversation = await afterConversation;
-          run.workspaceId = conversation.workspaceId;
-          run.sessionId = conversation.sessionId;
-          await this.save(key, run);
-        }
-        return this.prepare({ ...input, signal: undefined }, key, run, controller);
-      });
-    this.running.set(key, { controller, completion });
-    void completion.finally(() => this.running.delete(key));
-    return reviewRunSchema.parse({ ...run });
+    // Reserve this PR before the first state read/write can yield to another start.
+    const initialized = this.transition(key, async () => {
+      const savedValue = await this.read(key);
+      const previous = savedValue ? reviewRunSchema.parse(savedValue) : null;
+      const run: ReviewRun = {
+        id: randomUUID(),
+        reviewId: input.reviewId,
+        headRevision: input.expectedHeadRevision,
+        status: "running",
+        phase: "queued",
+        createdAt: new Date().toISOString(),
+        partial: false,
+        ...(previous?.workspaceId ? { workspaceId: previous.workspaceId } : {}),
+        ...(previous?.sessionId ? { sessionId: previous.sessionId } : {}),
+        ...(previous ? { history: [...(previous.history ?? []), snapshot(previous)].slice(-20) } : {}),
+      };
+      await this.write(key, run);
+      return run;
+    });
+    const queued = initialized.then((run) => reviewRunSchema.parse({ ...run }), (error: unknown) => {
+      if (this.running.get(key) === entry) this.running.delete(key);
+      throw error;
+    });
+    const completion = queued.then(async () => {
+      const run = await initialized;
+      await this.prepare({ ...input, signal: controller.signal }, key, run, controller, afterConversation);
+    }).catch(() => undefined).finally(() => {
+      if (this.running.get(key) === entry) this.running.delete(key);
+    });
+    const entry = { controller, queued, completion };
+    this.running.set(key, entry);
+    return queued;
   }
 
   private async prepareConversation(input: ReviewTargetInput & ReviewTaskInput, key: string): Promise<ReviewRun> {
@@ -178,20 +195,36 @@ export class ReviewWorkflow {
       workspaceId: reviewWorkspace.id,
       sessionId,
     };
-    const latestValue = await this.read(key);
-    const latest = latestValue ? reviewRunSchema.parse(latestValue) : null;
-    if (latest?.status === "running" && latest.phase && latest.id !== run.id) {
-      latest.workspaceId = reviewWorkspace.id;
-      latest.sessionId = sessionId;
-      await this.save(key, latest);
-      return latest;
-    }
-    await this.save(key, run);
-    return run;
+    // Merge conversation metadata atomically with other state writes, especially
+    // cancellation. A snapshot read before the lock could resurrect a queued run.
+    return this.transition(key, async () => {
+      const latestValue = await this.read(key);
+      const latest = latestValue ? reviewRunSchema.parse(latestValue) : null;
+      if (latest && (latest.id !== run.id || run.status === "running")) {
+        latest.workspaceId = reviewWorkspace.id;
+        latest.sessionId = sessionId;
+        await this.write(key, latest);
+        return latest;
+      }
+      await this.write(key, run);
+      return run;
+    });
   }
 
-  private async prepare(input: ReviewTargetInput & ReviewTaskInput, key: string, run: ReviewRun, controller: AbortController): Promise<void> {
+  private async prepare(input: ReviewTargetInput & ReviewTaskInput, key: string, run: ReviewRun, controller: AbortController, afterConversation?: Promise<ReviewRun>): Promise<void> {
     try {
+    if (afterConversation) {
+      let onAbort: () => void = () => undefined;
+      const cancelled = new Promise<never>((_resolve, reject) => {
+        onAbort = () => reject(controller.signal.reason);
+        controller.signal.addEventListener("abort", onAbort, { once: true });
+        if (controller.signal.aborted) onAbort();
+      });
+      const conversation = await Promise.race([afterConversation, cancelled]).finally(() => controller.signal.removeEventListener("abort", onAbort));
+      run.workspaceId = conversation.workspaceId;
+      run.sessionId = conversation.sessionId;
+    }
+    controller.signal.throwIfAborted();
     run.phase = "preparing";
     await this.save(key, run);
     controller.signal.throwIfAborted();
@@ -224,12 +257,14 @@ export class ReviewWorkflow {
     await this.fresh(input, input.expectedHeadRevision);
     controller.signal.throwIfAborted();
     const repositoryContext = await this.options.repositoryContext?.({ workspace: input.workspace, review: detail, changedFiles: files });
+    controller.signal.throwIfAborted();
     partial ||= repositoryContext?.partial ?? false;
     const reviewWorkspace = await this.options.prepareWorkspace?.({
       sourceWorkspace: input.workspace,
       review: detail,
       previous,
     }) ?? input.workspace;
+    controller.signal.throwIfAborted();
     run.headRevision = detail.headRevision;
     run.partial = partial;
     run.workspaceId = reviewWorkspace.id;
@@ -251,7 +286,16 @@ export class ReviewWorkflow {
       run.status = controller.signal.aborted ? "cancelled" : "failed";
       run.error = controller.signal.aborted ? "Review cancelled." : "AI review preparation failed. Refresh the pull request and retry.";
       delete run.phase;
-      await this.save(key, run).catch(() => undefined);
+      await this.transition(key, async () => {
+        const saved = await this.read(key);
+        const latest = saved ? reviewRunSchema.parse(saved) : null;
+        if (latest?.id === run.id) {
+          // Setup may have saved the session while cancellation was waiting.
+          run.workspaceId ??= latest.workspaceId;
+          run.sessionId ??= latest.sessionId;
+        }
+        await this.write(key, run);
+      }).catch(() => undefined);
     }
   }
 

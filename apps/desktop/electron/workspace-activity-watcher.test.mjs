@@ -59,4 +59,26 @@ describe("workspace activity watcher", () => {
 
     assert.deepEqual(watched, [["first"], ["first", "second"], ["second"]]);
   });
+
+  it("ignores malformed state and entries without subscribing to invalid workspaces", async () => {
+    let state;
+    const watched = [];
+    const watcher = createWorkspaceActivityWatcher({
+      workspaceStore: {
+        async migrateLegacyElectronWorkspaceStateIfNeeded() {},
+        async readWorkspaceState() { return state; },
+      },
+      getBridge: () => ({ watch(workspaces) { watched.push(workspaces); return true; } }),
+    });
+    for (state of [undefined, null, "state", 42, {}, { workspaces: null }, { workspaces: {} }]) {
+      assert.equal(await watcher.refresh(), state);
+    }
+    assert.deepEqual(watched, Array.from({ length: 7 }, () => []));
+    const local = { id: "local", name: "Local", workspaceType: "local" };
+    const legacy = { id: "legacy" };
+    state = { workspaces: [null, undefined, 1, "workspace", {}, { id: "" }, { id: 2 },
+      { id: "bad-name", name: {} }, { id: "remote", workspaceType: "remote" }, local, legacy] };
+    await watcher.refresh();
+    assert.deepEqual(watched.at(-1), [local, legacy]);
+  });
 });

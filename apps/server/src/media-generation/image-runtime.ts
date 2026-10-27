@@ -60,11 +60,14 @@ export class ToonflowImageRuntime {
       }
       const completed = this.options.repository.finish(claimed.job.id, "completed", { artifact: artifact as ImageArtifact });
       return { job: publicImageGenerationJob(completed) };
-    } catch {
-      const unknown = this.options.repository.finish(claimed.job.id, "submission_unknown", {
-        error: { code: "image_submission_outcome_unknown", message: "Image generation outcome is unknown and will not be resubmitted automatically." },
+    } catch (error) {
+      const known = error instanceof ApiError;
+      const failed = this.options.repository.finish(claimed.job.id, known && error.status < 500 ? "failed" : "submission_unknown", {
+        error: known
+          ? { code: error.code, message: error.message }
+          : { code: "image_submission_outcome_unknown", message: "Image generation outcome is unknown and will not be resubmitted automatically." },
       });
-      return { job: publicImageGenerationJob(unknown) };
+      return { job: publicImageGenerationJob(failed) };
     }
   }
 

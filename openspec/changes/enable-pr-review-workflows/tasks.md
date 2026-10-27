@@ -56,3 +56,10 @@
 - [x] Bind panel state and persisted hidden-workspace metadata to the PR identity and reject mismatched workspace reuse.
 - [x] Add Codex-style review conversation placement controls for full view, left/right panes, a bottom-right quick composer, and a minimized pill while retaining one PR-bound session surface.
 - [x] Show the quick composer for every opened PR, prepare its hidden conversation without running analysis, inject bounded untrusted PR context into follow-up prompts, and reserve explicit AI review startup for the right-pane Review action.
+
+## 1.2.31 release-blocker regressions
+- [x] Pause failed queued conversation sends until explicit retry, retain text/files and stable request/message identities, reconcile ambiguous sends, and prevent rapid/StrictMode duplicate dispatch and stale-session completions.
+- [x] Run bounded exact-revision Git reads through Node-compatible argv-only subprocesses and test standalone Node execution, timeout/output limits and child cleanup.
+- [x] Reserve review starts before asynchronous state preparation; coalesce concurrent starts and release failed/cancelled reservations for retry.
+- [x] Serialize per-PR state transitions so late conversation setup cannot overwrite acknowledged cancellation; cover deferred read/write interleavings, independent PRs and write-failure recovery.
+- [x] Verify focused frontend queue and review suites (32 passed), final backend review/provider/route suites (56 passed), standalone Node tests (2 passed), and App/Server/Desktop typechecks. Independent follow-up review found no remaining concrete blockers in the cancellation fix (22 tests passed). Strict validation passed; the pre-existing missing base `pr-review-workbench` spec remains an archive-order informational warning, not a resolved archive prerequisite.

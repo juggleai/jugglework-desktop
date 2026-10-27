@@ -240,8 +240,9 @@ export function useCanvasTools(options: {
         return { fitted, nodeIds: nodeIds ?? flow.getNodes.value.map(node => node.id), viewport: flow.toObject().viewport };
       }
       case "nodeTools": {
-        const args = canvasSchemas.nodeTools.parse(request.args);
-        return getNodeTools().call(args, signal);
+        const { nodeId, name, args } = canvasSchemas.nodeTools.parse(request.args);
+        const { nodeId: _duplicateNodeId, name: _duplicateName, ...nodeArgs } = args;
+        return getNodeTools().call({ nodeId, name, args: nodeArgs }, signal);
       }
       default: throw new Error(`未知画布操作：${request.name}`);
     }

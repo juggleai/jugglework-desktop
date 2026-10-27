@@ -1,4 +1,5 @@
 import path from "node:path";
+import { execFile } from "node:child_process";
 import type { ReviewDetail, ReviewFile } from "@jugglework/types/reviews";
 import type { WorkspaceInfo } from "../types.js";
 
@@ -31,14 +32,17 @@ function remoteIdentity(value: string): string | null {
 }
 
 async function git(root: string, args: string[], timeoutMs = 5_000): Promise<{ ok: boolean; stdout: string }> {
-  const process = Bun.spawn(["git", "-C", root, ...args], { stdout: "pipe", stderr: "ignore" });
-  const timer = setTimeout(() => process.kill(), timeoutMs);
-  try {
-    const [exitCode, stdout] = await Promise.all([process.exited, new Response(process.stdout).text()]);
-    return { ok: exitCode === 0, stdout };
-  } finally {
-    clearTimeout(timer);
-  }
+  return new Promise((resolve) => {
+    const child = execFile("git", ["-C", root, ...args], {
+      encoding: "utf8",
+      timeout: timeoutMs,
+      maxBuffer: 64_000,
+      killSignal: "SIGKILL",
+      windowsHide: true,
+      shell: false,
+    }, (error, stdout) => resolve({ ok: !error, stdout: error ? "" : stdout }));
+    child.stdin?.end();
+  });
 }
 
 async function showBounded(root: string, revision: string, file: string, limit: number): Promise<string | null> {

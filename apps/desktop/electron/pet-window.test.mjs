@@ -9,14 +9,16 @@ import { createDesktopPet, petViewportBounds } from "./pet-window.mjs";
 function fixture(loadPage = async () => {}) {
   const dir = mkdtempSync(join(tmpdir(), "juggle-pet-test-"));
   const instances = [], handlers = new Map();
-  const ipcMain = new EventEmitter(); ipcMain.handle = (name, handler) => handlers.set(name, handler);
-  const screen = new EventEmitter();
+  const ipcMain = Object.assign(new EventEmitter(), { handle: (name, handler) => handlers.set(name, handler) });
   let cursor = { x: 0, y: 0 };
   const display = { workArea: { x: 0, y: 0, width: 1440, height: 900 } };
-  screen.getPrimaryDisplay = screen.getDisplayNearestPoint = () => display;
-  screen.getCursorScreenPoint = () => cursor;
+  const screen = Object.assign(new EventEmitter(), {
+    getPrimaryDisplay: () => display,
+    getDisplayNearestPoint: () => display,
+    getCursorScreenPoint: () => cursor,
+  });
   class Window extends EventEmitter {
-    constructor(options) { super(); this.options = options; this.bounds = options; this.webContents = new EventEmitter(); this.webContents.send = () => {}; this.webContents.focus = () => {}; this.webContents.setZoomFactor = (value) => { this.zoomFactor = value; }; instances.push(this); }
+    constructor(options) { super(); this.options = options; this.bounds = options; this.webContents = Object.assign(new EventEmitter(), { send: () => {}, focus: () => {}, setZoomFactor: (value) => { this.zoomFactor = value; } }); instances.push(this); }
     isDestroyed() { return this.destroyed === true; }
     destroy() { this.destroyed = true; this.emit("closed"); }
     getBounds() { return this.bounds; }
@@ -64,9 +66,9 @@ test("rapid repeated show creates a unique passive transparent window", async ()
     assert.equal(f.instances[0].options.focusable, false); assert.equal(f.instances[0].options.parent, undefined);
     assert.equal(f.instances[0].options.webPreferences.partition, "desktop-pet");
     assert.equal(f.instances[0].zoomFactor, 1);
-    assert.equal(JSON.parse(readFileSync(f.pref)).enabled, true);
+    assert.equal(JSON.parse(readFileSync(f.pref, "utf8")).enabled, true);
     await f.pet.setVisible(false); assert.equal(f.instances[0].destroyed, true);
-    assert.equal(JSON.parse(readFileSync(f.pref)).enabled, false);
+    assert.equal(JSON.parse(readFileSync(f.pref, "utf8")).enabled, false);
     assert.equal(f.screen.listenerCount("display-removed"), 1);
   } finally { f.cleanup(); }
   assert.equal(f.screen.listenerCount("display-removed"), 0);
@@ -84,12 +86,13 @@ test("releasing a drag between pointer ticks applies and persists the final curs
     const after = viewport();
     assert.equal(after.screenX + after.character.x - before.screenX - before.character.x, -100);
     assert.equal(after.character.y - before.character.y, -80);
-    assert.deepEqual(JSON.parse(readFileSync(f.pref)).position, { x: after.screenX + after.character.x, y: after.workArea.y + after.character.y });
+    assert.deepEqual(JSON.parse(readFileSync(f.pref, "utf8")).position, { x: after.screenX + after.character.x, y: after.workArea.y + after.character.y });
   } finally { f.cleanup(); }
 });
 
 test("show then hide during load cannot resurrect an old window; a later show works", async () => {
-  let finish;
+  /** @type {() => void} */
+  let finish = () => { throw new Error("Window load has not started"); };
   const f = fixture(() => new Promise((resolve) => { finish = resolve; }));
   try {
     const first = f.pet.setVisible(true);
@@ -109,7 +112,7 @@ test("layout accepts only current pet sender; host close preserves enabled prefe
     await f.pet.setVisible(true); const win = f.instances[0]; const original = win.getBounds();
     f.ipcMain.emit("jugglework:pet:layout", { sender: {} }, { width: 900, height: 900, regions: [] });
     assert.equal(win.getBounds(), original);
-    f.pet.closeHost(); assert.equal(JSON.parse(readFileSync(f.pref)).enabled, true);
+    f.pet.closeHost(); assert.equal(JSON.parse(readFileSync(f.pref, "utf8")).enabled, true);
     await f.pet.restore(); assert.equal(f.instances.length, 2);
     f.ipcMain.emit("jugglework:pet:keyboard", { sender: f.instances[1].webContents }, true);
     assert.equal(f.instances[1].focusable, true);

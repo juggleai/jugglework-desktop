@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -52,7 +52,229 @@ async function completed(instance: ReviewWorkflow): Promise<ReviewRun> {
   throw new Error("Review did not complete");
 }
 
+function deferred<T = void>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
+
 describe("Review workflow", () => {
+  test("reserves one queued run across concurrent starts and repeated requests during preparation", async () => {
+    const entered = deferred();
+    const gate = deferred();
+    const state = await setup({ repositoryContext: async () => { entered.resolve(); await gate.promise; return { matched: false, partial: true, note: "test", guidance: [], files: [] }; } });
+    try {
+      const runs = await Promise.all(Array.from({ length: 10 }, () => state.instance.start({ ...context, expectedHeadRevision: head })));
+      expect(new Set(runs.map(({ run }) => run.id)).size).toBe(1);
+      await entered.promise;
+      const repeated = await state.instance.start({ ...context, expectedHeadRevision: head });
+      expect(repeated.run.id).toBe(runs[0]!.run.id);
+      expect(repeated.run.status).toBe("running");
+      expect(state.analyses).toHaveLength(0);
+    } finally { gate.resolve(); }
+    expect((await completed(state.instance)).status).toBe("completed");
+    expect(state.analyses).toHaveLength(1);
+  });
+
+  test("releases a failed initial reservation so a concurrent failed start can be retried", async () => {
+    const state = await setup();
+    const directory = state.options.directory;
+    const blocked = join(directory, "blocked");
+    await writeFile(blocked, "not a directory");
+    state.options.directory = blocked;
+    const results = await Promise.allSettled(Array.from({ length: 3 }, () => state.instance.start({ ...context, expectedHeadRevision: head })));
+    expect(results.every((result) => result.status === "rejected")).toBe(true);
+    state.options.directory = directory;
+    await state.instance.start({ ...context, expectedHeadRevision: head });
+    expect((await completed(state.instance)).status).toBe("completed");
+    expect(state.analyses).toHaveLength(1);
+  });
+
+  test("preparation and analysis failures release reservations for a fresh run", async () => {
+    const state = await setup();
+    const listFiles = state.provider.listFiles;
+    state.provider.listFiles = async () => { throw new Error("provider unavailable"); };
+    const first = await state.instance.start({ ...context, expectedHeadRevision: head });
+    expect((await completed(state.instance)).status).toBe("failed");
+    state.provider.listFiles = listFiles;
+    const analyze = state.options.analyze;
+    state.options.analyze = async () => { throw new Error("model unavailable"); };
+    const second = await state.instance.start({ ...context, expectedHeadRevision: head });
+    expect(second.run.id).not.toBe(first.run.id);
+    expect((await completed(state.instance)).status).toBe("failed");
+    state.options.analyze = analyze;
+    await state.instance.start({ ...context, expectedHeadRevision: head });
+    expect((await completed(state.instance)).status).toBe("completed");
+    expect(state.analyses).toHaveLength(1);
+  });
+
+  test("concurrent reviews queued behind a conversation share one run and recover from setup failure", async () => {
+    const entered = deferred();
+    const gate = deferred<string>();
+    const state = await setup({ createConversation: async () => { entered.resolve(); return gate.promise; } });
+    const conversation = state.instance.start({ ...context, expectedHeadRevision: head, mode: "conversation" });
+    const outcome = conversation.catch((error: Error) => error);
+    await entered.promise;
+    const reviews = await Promise.all(Array.from({ length: 4 }, () => state.instance.start({ ...context, expectedHeadRevision: head })));
+    expect(new Set(reviews.map(({ run }) => run.id)).size).toBe(1);
+    gate.reject(new Error("conversation unavailable"));
+    expect(await outcome).toMatchObject({ message: "conversation unavailable" });
+    expect((await completed(state.instance)).status).toBe("failed");
+    state.options.createConversation = async () => "retry-session";
+    const prepared = await state.instance.start({ ...context, expectedHeadRevision: head, mode: "conversation" });
+    expect(prepared.run.sessionId).toBe("retry-session");
+    await state.instance.start({ ...context, expectedHeadRevision: head });
+    expect((await completed(state.instance)).status).toBe("completed");
+    expect(state.analyses).toHaveLength(1);
+  });
+
+  test("cancels an initial reservation before it has finished saving the queued run", async () => {
+    const state = await setup();
+    const [accepted, cancelled] = await Promise.all([
+      state.instance.start({ ...context, expectedHeadRevision: head }),
+      state.instance.cancel(context),
+    ]);
+    expect(cancelled.run).toMatchObject({ id: accepted.run.id, status: "cancelled" });
+    expect(state.analyses).toHaveLength(0);
+    await state.instance.start({ ...context, expectedHeadRevision: head });
+    expect((await completed(state.instance)).status).toBe("completed");
+  });
+
+  test("cancels while waiting for a conversation without letting late setup resurrect the run", async () => {
+    const entered = deferred();
+    const gate = deferred<string>();
+    const state = await setup({ createConversation: async () => { entered.resolve(); return gate.promise; } });
+    const conversation = state.instance.start({ ...context, expectedHeadRevision: head, mode: "conversation" });
+    await entered.promise;
+    await state.instance.start({ ...context, expectedHeadRevision: head });
+    try {
+      expect((await state.instance.cancel(context)).run?.status).toBe("cancelled");
+      expect(state.analyses).toHaveLength(0);
+    } finally { gate.resolve("late-session"); }
+    await conversation;
+    expect((await state.instance.latest(context)).run).toMatchObject({ status: "cancelled", sessionId: "late-session" });
+    await state.instance.start({ ...context, expectedHeadRevision: head });
+    expect((await completed(state.instance)).status).toBe("completed");
+    expect(state.analyses).toHaveLength(1);
+  });
+
+  test.each(["read", "write"] as const)("cancellation wins when conversation setup's final %s is deferred after reading queued state", async (boundary) => {
+    const entered = deferred();
+    const session = deferred<string>();
+    const savingConversation = deferred();
+    const releaseSave = deferred();
+    const cancelling = deferred();
+    const state = await setup({ createConversation: async () => { entered.resolve(); return session.promise; } });
+    // Probe the storage boundary, not setup completion: hold the write after the
+    // conversation's final read has already produced a stale queued snapshot.
+    const storage = state.instance as unknown as {
+      read: (key: string) => Promise<ReviewRun | null>;
+      write: (key: string, value: ReviewRun) => Promise<void>;
+      running: Map<string, { controller: AbortController }>;
+    };
+    const read = storage.read.bind(state.instance);
+    const write = storage.write.bind(state.instance);
+    let held = false;
+    storage.read = async (key) => {
+      const value = await read(key);
+      if (boundary === "read" && !held && value?.status === "running" && value.phase === "queued") {
+        held = true;
+        savingConversation.resolve();
+        await releaseSave.promise;
+      }
+      return value;
+    };
+    storage.write = async (key, value) => {
+      if (boundary === "write" && !held && value.status === "running" && value.phase === "queued" && value.sessionId === "held-session") {
+        held = true;
+        savingConversation.resolve();
+        await releaseSave.promise;
+      }
+      return write(key, value);
+    };
+    const conversation = state.instance.start({ ...context, expectedHeadRevision: head, mode: "conversation" });
+    await entered.promise;
+    const accepted = await state.instance.start({ ...context, expectedHeadRevision: head });
+    session.resolve("held-session");
+    await savingConversation.promise;
+    const active = [...storage.running.values()][0]!;
+    active.controller.signal.addEventListener("abort", () => cancelling.resolve(), { once: true });
+    let cancelReturned = false;
+    const cancellation = state.instance.cancel(context).then((result) => { cancelReturned = true; return result; });
+    try {
+      await cancelling.promise;
+      // Cancellation must not acknowledge persistence while an older write can
+      // still overwrite it. A separate PR must not be blocked by this key.
+      const other = { ...context, reviewId: "review-two" };
+      await state.instance.start({ ...other, expectedHeadRevision: head, mode: "conversation" });
+      expect(cancelReturned).toBe(false);
+    } finally { releaseSave.resolve(); }
+    expect((await cancellation).run).toMatchObject({ id: accepted.run.id, status: "cancelled" });
+    await conversation;
+    expect((await state.instance.latest(context)).run).toMatchObject({ id: accepted.run.id, status: "cancelled" });
+    expect(state.analyses).toHaveLength(0);
+    await state.instance.start({ ...context, expectedHeadRevision: head });
+    const retried = await completed(state.instance);
+    expect(retried.status).toBe("completed");
+    expect(retried.id).not.toBe(accepted.run.id);
+    expect(retried.sessionId).toBe("held-session");
+    expect(state.analyses).toHaveLength(1);
+    expect(retried.history?.at(-1)).toMatchObject({ id: accepted.run.id, status: "cancelled" });
+  });
+
+  test("a failed conversation state transition releases the key for setup and review retries", async () => {
+    const entered = deferred();
+    const session = deferred<string>();
+    const state = await setup({ createConversation: async () => { entered.resolve(); return session.promise; } });
+    const storage = state.instance as unknown as { write: (key: string, value: ReviewRun) => Promise<void> };
+    const write = storage.write.bind(state.instance);
+    let failed = false;
+    storage.write = async (key, value) => {
+      if (!failed && value.sessionId === "failed-session") {
+        failed = true;
+        throw new Error("conversation state write failed");
+      }
+      return write(key, value);
+    };
+    const conversation = state.instance.start({ ...context, expectedHeadRevision: head, mode: "conversation" });
+    const outcome = conversation.catch((error: Error) => error);
+    await entered.promise;
+    await state.instance.start({ ...context, expectedHeadRevision: head });
+    session.resolve("failed-session");
+    expect(await outcome).toMatchObject({ message: "conversation state write failed" });
+    expect((await completed(state.instance)).status).toBe("failed");
+    state.options.createConversation = async () => "retry-session";
+    expect((await state.instance.start({ ...context, expectedHeadRevision: head, mode: "conversation" })).run.sessionId).toBe("retry-session");
+    await state.instance.start({ ...context, expectedHeadRevision: head });
+    expect((await completed(state.instance)).status).toBe("completed");
+    expect(state.analyses).toHaveLength(1);
+    const transitions = state.instance as unknown as { stateTransitions: Map<string, unknown> };
+    expect(transitions.stateTransitions.size).toBe(0);
+  });
+
+  test("cancellation during repository preparation does not create a workspace or analyze and permits retry", async () => {
+    const entered = deferred();
+    const gate = deferred();
+    let workspaces = 0;
+    const state = await setup({
+      repositoryContext: async () => { entered.resolve(); await gate.promise; return { matched: false, partial: true, note: "test", guidance: [], files: [] }; },
+      prepareWorkspace: async () => { workspaces++; return workspace; },
+    });
+    await state.instance.start({ ...context, expectedHeadRevision: head });
+    await entered.promise;
+    const cancelled = state.instance.cancel(context);
+    // Wait for cancellation to reach the active run before unblocking preparation.
+    await Bun.sleep(5);
+    gate.resolve();
+    expect((await cancelled).run?.status).toBe("cancelled");
+    expect(workspaces).toBe(0);
+    expect(state.analyses).toHaveLength(0);
+    await state.instance.start({ ...context, expectedHeadRevision: head });
+    expect((await completed(state.instance)).status).toBe("completed");
+    expect(workspaces).toBe(1);
+  });
+
   test("prepares a PR conversation without running analysis and reuses it for a requested review", async () => {
     const state = await setup();
     const prepared = await state.instance.start({ ...context, expectedHeadRevision: head, mode: "conversation" });
@@ -179,10 +401,28 @@ describe("Review workflow", () => {
   });
 
   test("cancelled AI reviews do not publish findings", async () => {
-    const state = await setup({ analyze: async ({ signal }) => new Promise((_resolve, reject) => { signal.addEventListener("abort", () => reject(new Error("cancelled")), { once: true }); }) });
-    await state.instance.start({ ...context, expectedHeadRevision: head });
-    expect((await state.instance.cancel(context)).run?.status).toBe("cancelled");
+    const entered = deferred();
+    let attempts = 0;
+    const state = await setup({ analyze: async ({ signal }) => {
+      attempts++;
+      if (attempts > 1) return JSON.stringify({ summary: "Retry completed", findings: [] });
+      return new Promise<string>((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(new Error("cancelled")), { once: true });
+        entered.resolve();
+      });
+    } });
+    const accepted = await state.instance.start({ ...context, expectedHeadRevision: head });
+    await entered.promise;
+    const repeated = await state.instance.start({ ...context, expectedHeadRevision: head });
+    expect(repeated.run.id).toBe(accepted.run.id);
+    expect(attempts).toBe(1);
+    const cancelled = await state.instance.cancel(context);
+    expect(cancelled.run?.status).toBe("cancelled");
+    expect(cancelled.run?.analysis).toBeUndefined();
     expect(state.writes()).toBe(0);
+    await state.instance.start({ ...context, expectedHeadRevision: head });
+    expect((await completed(state.instance)).status).toBe("completed");
+    expect(attempts).toBe(2);
   });
 
   test("a confirmed publish is replay-safe, including concurrent clicks and a server restart", async () => {

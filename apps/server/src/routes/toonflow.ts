@@ -70,7 +70,7 @@ const imagePayloadSchema = z.object({
   mode: z.enum(["text-to-image", "image-to-image", "multi-image-to-image"]),
   model: modelRefSchema,
   references: z.array(mediaInputSchema).max(16),
-  size: z.string().regex(/^(?:auto|\d{2,5}x\d{2,5})$/).optional(),
+  size: z.string().trim().min(1).max(64).optional(),
 }).strict().superRefine((value, context) => {
   if (value.mode === "text-to-image" && value.references.length) context.addIssue({ code: "custom", message: "references are not accepted for text-to-image" });
   if (value.mode === "image-to-image" && value.references.length !== 1) context.addIssue({ code: "custom", message: "image-to-image requires one reference" });

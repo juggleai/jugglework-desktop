@@ -23,6 +23,8 @@ const COLUMNS = `id, workspace_id, session_id, client_request_id, request_hash, 
  status, progress, options_json, provider_job_id, next_poll_at, poll_attempts, artifact_json,
   error_code, error_message, error_retryable, adapter_binding_json, revision, created_at, updated_at`;
 
+const VIDEO_SUBMISSION_RECOVERY_DELAY_MS = 5 * 60_000;
+
 const ALLOWED_TRANSITIONS: Record<VideoJobStatus, ReadonlySet<VideoJobStatus>> = {
   queued: new Set(["queued", "submitting", "cancel_requested", "cancelled", "failed"]),
   submitting: new Set(["submitting", "submitted", "cancel_requested", "failed", "submission_unknown"]),
@@ -90,9 +92,9 @@ export class MediaGenerationRepository {
     if (current.adapterBinding && JSON.stringify(current.adapterBinding) !== JSON.stringify(binding)) {
       throw new Error("video_adapter_binding_immutable");
     }
-    const result = this.database.run(`UPDATE video_generation_jobs SET status = 'submitting', adapter_binding_json = ?,
+    const result = this.database.run(`UPDATE video_generation_jobs SET status = 'submitting', adapter_binding_json = ?, next_poll_at = ?,
       revision = revision + 1, updated_at = ? WHERE id = ? AND revision = ? AND status = 'queued'`, [
-      JSON.stringify(binding), now, id, expectedRevision,
+      JSON.stringify(binding), now + VIDEO_SUBMISSION_RECOVERY_DELAY_MS, now, id, expectedRevision,
     ]);
     const job = this.get(id)!;
     return { job, claimed: result.changes === 1 };

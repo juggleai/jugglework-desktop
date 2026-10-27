@@ -2,6 +2,56 @@ import type { MediaModel } from "@toonflow/tools-scaffold/runtime";
 import { isManagedMode } from "@/lib/managed";
 
 export const isJugglework = isManagedMode();
+
+const maxConcurrentHostImageGenerations = 2;
+let activeHostImageGenerations = 0;
+
+type HostImageGenerationWaiter = {
+  signal?: AbortSignal;
+  resolve: (release: () => void) => void;
+  reject: (reason: unknown) => void;
+  onAbort?: () => void;
+};
+
+const hostImageGenerationWaiters: HostImageGenerationWaiter[] = [];
+
+function drainHostImageGenerationQueue() {
+  while (activeHostImageGenerations < maxConcurrentHostImageGenerations && hostImageGenerationWaiters.length > 0) {
+    const waiter = hostImageGenerationWaiters.shift()!;
+    if (waiter.onAbort) waiter.signal?.removeEventListener("abort", waiter.onAbort);
+    if (waiter.signal?.aborted) {
+      waiter.reject(waiter.signal.reason);
+      continue;
+    }
+
+    activeHostImageGenerations += 1;
+    let released = false;
+    waiter.resolve(() => {
+      if (released) return;
+      released = true;
+      activeHostImageGenerations -= 1;
+      drainHostImageGenerationQueue();
+    });
+  }
+}
+
+function acquireHostImageGeneration(signal?: AbortSignal): Promise<() => void> {
+  if (signal?.aborted) return Promise.reject(signal.reason);
+
+  return new Promise((resolve, reject) => {
+    const waiter: HostImageGenerationWaiter = { signal, resolve, reject };
+    waiter.onAbort = () => {
+      const index = hostImageGenerationWaiters.indexOf(waiter);
+      if (index === -1) return;
+      hostImageGenerationWaiters.splice(index, 1);
+      reject(signal?.reason);
+    };
+    signal?.addEventListener("abort", waiter.onAbort, { once: true });
+    hostImageGenerationWaiters.push(waiter);
+    drainHostImageGenerationQueue();
+  });
+}
+
 type HostModel = {
   providerId: string; providerLabel: string; modelId: string; label: string;
   type: "text" | "image" | "video";
@@ -64,23 +114,28 @@ export async function hostMediaProvider(providerId: string, modelId: string, sig
   return {
     config: {}, rules: [],
     async generateImage(request: { prompt: string; images?: MediaInput[]; size?: string; ratio?: string }): Promise<MediaAsset[]> {
-      const references = request.images ?? [];
-      if (references.some(reference => reference.type !== "base64")) throw new Error("JuggleWork 图片参考必须来自当前项目文件");
-      const mode = references.length > 1 ? "multi-image-to-image" : references.length ? "image-to-image" : "text-to-image";
-      const clientRequestId = crypto.randomUUID();
-      const payload = {
-        clientRequestId, prompt: request.prompt, mode,
-        model: { providerID: providerId, modelID: modelId },
-        references,
-        ...(request.size && /^(?:auto|\d{2,5}x\d{2,5})$/.test(request.size) ? { size: request.size } : {}),
-      };
-      const submitted = await (await invoke("image", payload)).json() as {
-        job: { id: string; status: string; artifact?: { mimeType?: string }; error?: { message?: string } };
-      };
-      if (submitted.job.status !== "completed") throw new Error(submitted.job.error?.message || "图片生成结果不可用，JuggleWork 不会自动重试");
-      if (!submitted.job.artifact?.mimeType?.startsWith("image/")) throw new Error("图片任务缺少已验证文件");
-      const response = await invoke("image", {}, submitted.job.id);
-      return [{ type: "binary", data: new Uint8Array(await response.arrayBuffer()), mediaType: "image", mimeType: response.headers.get("content-type") ?? submitted.job.artifact.mimeType }];
+      const release = await acquireHostImageGeneration(signal);
+      try {
+        const references = request.images ?? [];
+        if (references.some(reference => reference.type !== "base64")) throw new Error("JuggleWork 图片参考必须来自当前项目文件");
+        const mode = references.length > 1 ? "multi-image-to-image" : references.length ? "image-to-image" : "text-to-image";
+        const clientRequestId = crypto.randomUUID();
+        const payload = {
+          clientRequestId, prompt: request.prompt, mode,
+          model: { providerID: providerId, modelID: modelId },
+          references,
+          ...(request.size ? { size: request.size } : {}),
+        };
+        const submitted = await (await invoke("image", payload)).json() as {
+          job: { id: string; status: string; artifact?: { mimeType?: string }; error?: { message?: string } };
+        };
+        if (submitted.job.status !== "completed") throw new Error(submitted.job.error?.message || "图片生成结果不可用，JuggleWork 不会自动重试");
+        if (!submitted.job.artifact?.mimeType?.startsWith("image/")) throw new Error("图片任务缺少已验证文件");
+        const response = await invoke("image", {}, submitted.job.id);
+        return [{ type: "binary", data: new Uint8Array(await response.arrayBuffer()), mediaType: "image", mimeType: response.headers.get("content-type") ?? submitted.job.artifact.mimeType }];
+      } finally {
+        release();
+      }
     },
     async generateVideo(request: { prompt: string; images?: MediaInput[]; firstFrame?: MediaInput; lastFrame?: MediaInput; videos?: MediaInput[]; audios?: MediaInput[]; duration?: number; resolution?: string; ratio?: string; generateAudio?: boolean }): Promise<MediaAsset[]> {
       if (request.lastFrame || request.videos?.length || request.audios?.length) throw new Error("当前 JuggleWork 模型接口不支持尾帧、视频或音频参考");

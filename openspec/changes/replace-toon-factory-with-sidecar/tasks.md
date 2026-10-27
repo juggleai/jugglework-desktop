@@ -49,3 +49,9 @@
 - [x] 6.2 Run focused App, Server, Desktop, Toonflow Web/Server typechecks and tests from a clean dependency state.
 - [ ] 6.3 Run production builds and unpacked package verification on each supported target or record explicit CI evidence.
 - [x] 6.4 Validate this OpenSpec change strictly and document completed evidence, rollback behavior, and any deferred migration decision.
+
+## 7. Local media compatibility follow-up
+
+Current commit scope also includes the operator's local media fixes: bounded nonempty provider IDs and provider-supported image size aliases, base64 image response requests, preservation of known image errors, a two-request managed image concurrency queue with abortable waiters, removal of duplicate canvas node-tool routing arguments, and a five-minute provider-submission reconciliation grace period. No live provider request or model generation was made to verify these changes during the commit task.
+
+Verification before commit: 35 existing Server image/repository/worker/service tests and Server typecheck passed. The new repository regression covers the submission recovery deadline. This does not establish full Toonflow UI/build, image concurrency, provider size-alias compatibility, or packaged release verification; task 6.3 remains open.

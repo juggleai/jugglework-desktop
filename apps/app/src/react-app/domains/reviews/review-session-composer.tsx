@@ -1,9 +1,8 @@
 /** @jsxImportSource react */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { JuggleWorkSessionMessage } from "@/app/lib/jugglework-server";
 import type { ComposerAttachment, ModelRef } from "@/app/types";
 import type { ResolvedWorkspaceEndpoint } from "@/app/lib/workspace-endpoint";
-import { buildJuggleWorkWorkspaceBaseUrl } from "@/app/lib/jugglework-server";
 import { createClient } from "@/app/lib/opencode";
 import { ReactSessionComposer } from "@/react-app/domains/session/surface/composer/composer";
 import { PermissionModeSelect } from "@/react-app/domains/session/surface/composer/permission-mode-select";
@@ -17,6 +16,16 @@ import { WorkspaceProvider } from "@/react-app/shell/workspace-provider";
 
 const EMPTY_LIST = async () => [];
 const text = (en: string, zh: string) => currentLocale() === "zh" ? zh : en;
+
+type PendingReviewDraft = {
+  text: string;
+  attachments: ComposerAttachment[];
+  commandId: string;
+  messageID: string;
+  scope: object;
+  request?: Parameters<ResolvedWorkspaceEndpoint["client"]["startSessionRun"]>[2];
+  attempted?: boolean;
+};
 
 function initialChoice(workspaceId: string, sessionId: string) {
   const session = readSessionChoices(workspaceId)[sessionId];
@@ -52,7 +61,10 @@ export function ReviewSessionComposer(props: {
   const [choice, setChoice] = useState(() => initialChoice(workspaceId, sessionId));
   const [submitting, setSubmitting] = useState(false);
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
-  const [queued, setQueued] = useState<Array<{ text: string; attachments: ComposerAttachment[] }>>([]);
+  const [queued, setQueued] = useState<PendingReviewDraft[]>([]);
+  const [queuePaused, setQueuePaused] = useState(false);
+  const scope = useRef({});
+  const sending = useRef(false);
   const [inputHistory, setInputHistory] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const orgRestrictions = useOrgRestrictions();
@@ -66,12 +78,17 @@ export function ReviewSessionComposer(props: {
   const [dependencyModels, setDependencyModels] = useState<Awaited<typeof dependencies>["models"]>([]);
 
   useEffect(() => {
+    scope.current = {};
+    sending.current = false;
+    setSubmitting(false);
     setDraft("");
     setAttachments([]);
     setQueued([]);
+    setQueuePaused(false);
     setInputHistory([]);
     setError(null);
     setChoice(initialChoice(workspaceId, sessionId));
+    return () => { scope.current = {}; };
   }, [sessionId, workspaceId]);
   useEffect(() => {
     let alive = true;
@@ -111,44 +128,72 @@ export function ReviewSessionComposer(props: {
     setDraft((current) => current.replaceAll(`[attachment ${id}]`, ""));
   }, []);
 
-  const sendDraft = useCallback(async (pending: { text: string; attachments: ComposerAttachment[] }, whenBusy: "reject" | "steer") => {
-    if ((!pending.text && pending.attachments.length === 0) || !selectedModel.providerID || !selectedModel.modelID || submitting) return false;
+  const sendDraft = useCallback(async (pending: PendingReviewDraft, whenBusy: "reject" | "steer") => {
+    if (pending.scope !== scope.current || (!pending.text && pending.attachments.length === 0) || !selectedModel.providerID || !selectedModel.modelID || sending.current || props.disabled) return false;
+    const activeScope = scope.current;
+    const isCurrent = () => scope.current === activeScope;
+    sending.current = true;
     setSubmitting(true);
     setError(null);
     try {
-      const fileParts = await Promise.all(pending.attachments.map(composerAttachmentToFilePart));
-      await endpoint.client.startSessionRun(workspaceId, sessionId, {
-        origin: "local-renderer",
-        startCommandCorrelationId: crypto.randomUUID(),
-        whenBusy,
-        prompt: {
-          model: selectedModel,
-          system: props.systemPrompt,
-          ...(effectiveVariant ? { variant: effectiveVariant } : {}),
-          ...(selectedAgent ? { agent: selectedAgent } : {}),
-          parts: [...(pending.text ? [{ type: "text" as const, text: pending.text }] : []), ...fileParts],
-        },
-      });
+      if (!pending.request) {
+        const fileParts = await Promise.all(pending.attachments.map(composerAttachmentToFilePart));
+        pending.request = {
+          origin: "local-renderer",
+          startCommandCorrelationId: pending.commandId,
+          whenBusy,
+          prompt: {
+            messageID: pending.messageID,
+            model: selectedModel,
+            system: props.systemPrompt,
+            ...(effectiveVariant ? { variant: effectiveVariant } : {}),
+            ...(selectedAgent ? { agent: selectedAgent } : {}),
+            parts: [...(pending.text ? [{ type: "text" as const, text: pending.text }] : []), ...fileParts],
+          },
+        };
+      }
+      if (!isCurrent()) return false;
+      // A lost response may already have created the turn. Reconcile before
+      // explicitly retrying, and never allocate a new request/turn identity.
+      const delivered = pending.attempted
+        ? (await endpoint.client.getSessionMessages(workspaceId, sessionId)).items.some((message) => message.info.id === pending.messageID)
+        : false;
+      if (!isCurrent()) return false;
+      if (!delivered) {
+        pending.attempted = true;
+        await endpoint.client.startSessionRun(workspaceId, sessionId, pending.request);
+      }
+      if (!isCurrent()) return false;
       pending.attachments.forEach((item) => { if (item.previewUrl) URL.revokeObjectURL(item.previewUrl); });
       if (pending.text) setInputHistory((current) => [...current.filter((item) => item !== pending.text), pending.text].slice(-100));
-      await props.onSubmitted();
+      // Refresh failure is not send failure: the server already acknowledged it.
+      try { await props.onSubmitted(); } catch (nextError) {
+        if (isCurrent()) setError(nextError instanceof Error ? nextError.message : String(nextError));
+      }
       return true;
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : String(nextError));
+      if (isCurrent()) setError(nextError instanceof Error ? nextError.message : String(nextError));
       return false;
     } finally {
-      setSubmitting(false);
+      if (isCurrent()) {
+        sending.current = false;
+        setSubmitting(false);
+      }
     }
-  }, [effectiveVariant, endpoint.client, props, selectedAgent, selectedModel, sessionId, submitting, workspaceId]);
+  }, [effectiveVariant, endpoint.client, props, selectedAgent, selectedModel, sessionId, workspaceId]);
 
   const currentDraft = useCallback(() => ({
     text: draft.replace(/\[attachment review-att-[^\]]+\]/g, "").trim(),
     attachments,
+    commandId: crypto.randomUUID(),
+    messageID: `msg_review_${crypto.randomUUID()}`,
+    scope: scope.current,
   }), [attachments, draft]);
   const submit = useCallback(async (whenBusy: "reject" | "steer") => {
     const pending = currentDraft();
+    const activeScope = scope.current;
     const sent = await sendDraft(pending, whenBusy);
-    if (!sent) return;
+    if (!sent || scope.current !== activeScope) return;
     setDraft("");
     setAttachments([]);
   }, [currentDraft, sendDraft]);
@@ -159,14 +204,26 @@ export function ReviewSessionComposer(props: {
     setDraft("");
     setAttachments([]);
   }, [currentDraft]);
-  useEffect(() => {
-    if (props.busy || submitting || queued.length === 0) return;
-    const [next, ...rest] = queued;
-    setQueued(rest);
-    void sendDraft(next!, "reject").then((sent) => {
-      if (!sent) setQueued((current) => [next!, ...current]);
+  const sendQueued = useCallback(() => {
+    if (props.busy || props.disabled || sending.current || queued.length === 0) return;
+    const next = queued[0]!;
+    if (next.scope !== scope.current) return;
+    const activeScope = scope.current;
+    setQueuePaused(true);
+    void sendDraft(next, "reject").then((sent) => {
+      if (scope.current !== activeScope) return;
+      if (sent) {
+        setQueued((current) => current.filter((item) => item !== next));
+        setQueuePaused(false);
+      } else {
+        setQueuePaused(true);
+      }
     });
-  }, [props.busy, queued, sendDraft, submitting]);
+  }, [props.busy, props.disabled, queued, sendDraft]);
+  useEffect(() => {
+    if (queuePaused || submitting || !selectedModel.providerID || !selectedModel.modelID) return;
+    sendQueued();
+  }, [queuePaused, sendQueued, submitting, selectedModel.providerID, selectedModel.modelID]);
 
   const stop = useCallback(async () => {
     setError(null);
@@ -277,7 +334,15 @@ export function ReviewSessionComposer(props: {
     isRemoteWorkspace={false}
     isSandboxWorkspace={false}
     draftScopeKey={`review:${workspaceId}:${sessionId}`}
-    topAccessory={error ? <div role="alert" className="border-b border-red-6 bg-red-3 px-4 py-2 text-xs text-red-11">{error}</div> : null}
+    topAccessory={error || (queuePaused && !submitting) ? <div role="alert" className="border-b border-red-6 bg-red-3 px-4 py-2 text-xs text-red-11">
+      {error}
+      {queuePaused && !submitting ? <div>
+        {text("Queue paused. Your message and files are preserved. Check the conversation before retrying an unconfirmed send.", "队列已暂停，消息和文件已保留。发送结果不确定时，请先检查对话再重试。")}
+        <button type="button" className="ml-2 underline" disabled={submitting || props.busy || props.disabled || !selectedModel.providerID || !selectedModel.modelID} onClick={sendQueued}>
+          {text("Retry queued message", "重试排队消息")}
+        </button>
+      </div> : null}
+    </div> : null}
   />
   </WorkspaceProvider>;
 }

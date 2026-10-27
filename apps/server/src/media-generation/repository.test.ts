@@ -49,6 +49,16 @@ describe("MediaGenerationRepository", () => {
     expect(second.options).toEqual({ durationSeconds: 5 });
   });
 
+  test("keeps an active provider submission out of worker reconciliation until its recovery deadline", () => {
+    const repo = repository();
+    const queued = create(repo);
+    const claimed = repo.claimSubmission(queued.id, queued.revision, binding, 1_000).job;
+    expect(claimed.status).toBe("submitting");
+    expect(claimed.nextPollAt).toBeGreaterThan(1_000);
+    expect(repo.listReconcilable(claimed.nextPollAt! - 1)).toEqual([]);
+    expect(repo.listReconcilable(claimed.nextPollAt!).map(job => job.id)).toEqual([claimed.id]);
+  });
+
   test("rejects a reused request identity with a different hash", () => {
     const repo = repository();
     create(repo);

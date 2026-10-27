@@ -18,11 +18,19 @@ The application SHALL analyze the selected PR revision with a workspace model, p
 - **AND** rerunning the same pull request, including after its head revision changes, appends a new review turn to the existing task rather than creating another review task
 - **AND** prior run snapshots remain revision-scoped and related review/fix tasks remain discoverable from the pull request
 
+#### Scenario: Concurrent starts and late cancellation writes
+- **WHEN** multiple requests start review for the same PR execution key before preparation finishes
+- **THEN** they share one reserved run and do not launch duplicate analyses
+- **AND** failed initialization releases its reservation so a later explicit retry can start
+- **AND** cancellation cannot be overwritten by a late conversation preparation write, including when cancellation races with its final state read or write
+- **AND** state serialization for one PR does not block another PR key
+
 #### Scenario: Enrich from a matching local repository
 - **WHEN** the current local workspace Git remote matches the pull request repository and contains the selected head revision
 - **THEN** the server supplies bounded changed-file snapshots and applicable root/nested `AGENTS.md` guidance from that exact revision
 - **AND** the model receives no write, shell, commit, push, or GitHub publication tools
 - **AND** a remote mismatch, missing revision, remote workspace, oversized file, or binary file degrades to connector diff-only review and is reported as partial coverage instead of reading unrelated local code
+- **AND** exact-revision reads work in the Desktop embedded Node runtime with bounded subprocess time and output, without requiring Bun globals or shell interpolation
 
 #### Scenario: Stale or invalid findings
 - **WHEN** the PR head changed or AI locations do not match the supplied changed-file context

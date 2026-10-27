@@ -9,6 +9,10 @@
 7. Name review tasks `Review <repo> #<number>: <PR title>`, preserving the repository and PR number while truncating only the title to 80 Unicode characters overall. Reuse one review session for the same pull request and append subsequent revision reviews as new turns. Persist bounded prior-run snapshots so findings remain revision-scoped; fix tasks remain separate writable sessions.
 8. Repository enrichment is server-owned and read-only. For local workspaces, compare normalized Git remotes with the PR repository, require the exact head commit to exist, then read applicable `AGENTS.md` files and changed-file snapshots with bounded `git show`. A mismatch or unavailable revision degrades to connector diff-only review with an explicit coverage note. The model session still has deny-all permissions and no tools.
 
+9. A failed queued follow-up pauses the queue until explicit retry, retaining attachments and a fixed command/message identity. Reconcile an attempted message against the session before reposting; a refresh failure after acknowledgement is not a send failure. Queue state remains in-memory and this does not promise exactly-once execution across server restarts.
+10. Reserve an active review synchronously before asynchronous state initialization. Serialize state writes and read-modify-write transitions by the existing PR execution key, including conversation metadata merges and restart recovery, so cancellation remains final even when preparation finishes late. Release failed reservations and transition queues for retry; unrelated PR keys proceed independently.
+11. Repository Git reads use Node-compatible `execFile` with literal argv, no shell, a five-second timeout and 64,000-byte per-stream output limit; force-kill timed-out children and close stdin. Test with standalone Node as well as Bun because Desktop embeds the server in Node.
+
 ## Reference
 
 Local Codex desktop assets were inspected for review actions, PR revision presentation, related review chat, and finding/fix navigation. GitHub MCP operation parameters follow the official `pull_request_review_write` and `add_issue_comment` tool schemas.

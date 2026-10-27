@@ -60,7 +60,7 @@ const generateSchema = z.object({
   mode: z.enum(IMAGE_GENERATION_MODES).default("text-to-image"),
   model: z.object({ providerID: z.string().trim().min(1), modelID: z.string().trim().min(1) }).optional(),
   sourceImagePaths: z.array(z.string().trim().min(1)).max(16).default([]),
-  size: z.string().regex(/^(?:auto|\d{2,5}x\d{2,5})$/).optional(),
+  size: z.string().trim().min(1).max(64).optional(),
   filename: z.string().trim().max(100).optional(),
 }).strict();
 
@@ -198,7 +198,11 @@ async function callImageProvider(model: ImageModelDescriptor, apiKey: string, in
       response = await externalFetch(`${model.baseURL}/images/generations`, {
         method: "POST", signal: controller.signal,
         headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ model: model.ref.modelID, prompt: input.prompt, n: 1, output_format: "png", ...(input.size ? { size: input.size } : {}) }),
+        body: JSON.stringify({
+          model: model.ref.modelID, prompt: input.prompt,
+          output_format: "png", response_format: "b64_json",
+          ...(input.size ? { size: input.size } : {}),
+        }),
       });
     } else {
       const form = new FormData();

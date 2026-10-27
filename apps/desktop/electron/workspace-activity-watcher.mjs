@@ -20,8 +20,10 @@ export function createWorkspaceActivityWatcher({ workspaceStore, getBridge, logg
 
   async function refresh() {
     const state = await workspaceStore.readWorkspaceState();
-    const workspaces = Array.isArray(state?.workspaces)
-      ? state.workspaces.filter((entry) => entry?.workspaceType !== "remote")
+    const workspaces = state && typeof state === "object" && "workspaces" in state && Array.isArray(state.workspaces)
+      ? state.workspaces.filter((entry) => entry && typeof entry === "object" &&
+          typeof entry.id === "string" && entry.id.length > 0 &&
+          (entry.name === undefined || typeof entry.name === "string") && entry.workspaceType !== "remote")
       : [];
     getBridge()?.watch(workspaces);
     return state;

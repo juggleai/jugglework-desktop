@@ -18,6 +18,13 @@ The workbench SHALL expose private AI review, explicit comment/review publishing
 - **AND** opening a PR shows the bottom-right quick composer and prepares its private PR-bound conversation without starting AI review, so the member can immediately ask contextual follow-up questions
 - **AND** selecting AI Review moves that same conversation to the right pane and starts the explicit review task
 
+#### Scenario: A queued follow-up send fails
+- **WHEN** sending a queued follow-up fails or its acknowledgement is uncertain
+- **THEN** the queue pauses without automatic resubmission and retains the message text and attachments for explicit retry
+- **AND** retry reuses the prepared command/message identities and checks whether the attempted message already exists before reposting
+- **AND** a refresh failure after a successful acknowledgement does not requeue the message
+- **AND** rapid repeated interactions and late completions from a previous session cannot dispatch duplicate or cross-session queued work
+
 #### Scenario: Private review workspace isolation
 - **WHEN** a member starts AI Review for a pull request
 - **THEN** the server creates a private local workspace below the platform Documents directory at `JuggleWork/codereview/YYYY-MM-DD/<repository>-pr-<number>-<title>`
