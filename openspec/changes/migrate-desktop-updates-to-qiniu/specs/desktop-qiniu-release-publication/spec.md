@@ -200,7 +200,15 @@ Stable macOS channel promotion SHALL require the expected bundle identity, Devel
 - **AND** code/docs preparation SHALL synchronize App, Desktop, and embedded Server to `1.2.30` without changing dependency lockfiles or historical evidence; authorized commit/push dev, merge/push main, build, publication, promotion, and Den tasks SHALL remain pending until actually executed and verified
 - **AND** inherited long-lived cache headers can leave clients stale despite observed read-back; omitted real-client canary leaves installation/relaunch and retained state unproven
 
-#### Scenario: Explicit 1.2.31 macOS ARM64 cache metadata only exception with required real canary
+#### Scenario: Latest explicit 1.2.31 macOS ARM64 pre-canary and metadata-only continuation
+
+- **WHEN** the operator explicitly authorizes completing stable macOS ARM64 `1.2.31` while skipping the real-client upgrade canary and Qiniu mutable Stable Cache-Control metadata mutation/validation
+- **THEN** tooling SHALL require separate audited reasons of at least 20 characters, independently scoped to `stable-1.2.31-only`, and record both exceptions in durable promotion evidence
+- **AND** it SHALL preserve Developer ID/Team/bundle identity, hardened runtime, accepted App and outer-DMG notarization receipts, staples, Gatekeeper, full package verification, immutable non-overwrite Qiniu/CDN integrity, serialized workflow, lock ownership and approved predecessor checks, channel size/ETag, CDN refresh and exact public Stable digest/size read-back
+- **AND** failed/mismatched canaries, notarization or broader cache exceptions, Windows, other architectures/channels and future `1.2.32` SHALL remain rejected; installation/relaunch and retained state SHALL NOT be reported as verified
+- **AND** verified Stable promotion SHALL precede configuration-only China Den then overseas Den changes, preserving existing inventory/policy and verifying each environment independently
+
+#### Scenario: Earlier 1.2.31 macOS ARM64 cache metadata only exception with required real canary
 
 - **WHEN** the operator requires a real local upgrade canary and separately authorizes exact stable macOS ARM64 `1.2.31` without Qiniu mutable Stable Cache-Control metadata mutation/validation
 - **THEN** tooling SHALL require a separate audited metadata reason of at least 20 characters scoped to `stable-1.2.31-only` and skip only Cache-Control metadata preflight, mutation, and validation
