@@ -1,5 +1,16 @@
 import type { Session } from "@opencode-ai/sdk/v2/client";
 import type { PetTask } from "@/app/lib/desktop-pet-types";
+import type { sessionTaskPresentation } from "../session/status/task-presentation";
+
+/** 后代按最近活动排序；真实执行优先于委派工具，等待仍具有最高优先级。 */
+export function selectPetTaskPresentation(own: ReturnType<typeof sessionTaskPresentation>, descendants: ReturnType<typeof sessionTaskPresentation>[]) {
+  const items = [own, ...descendants];
+  return items.find((item) => item.waiting)
+    ?? [...descendants, own].find((item) => item.active && item.currentToolName && item.currentToolName !== "task")
+    ?? descendants.find((item) => item.active)
+    ?? (own.active ? own : descendants.find((item) => item.resumable))
+    ?? own;
+}
 
 /** 失联期间保留未确认任务，既有同轮完成事实不因无关同步失败退回执行态。 */
 export function reconcilePetTaskConnection(task: PetTask, previous: PetTask | undefined, unavailable: boolean, statusText: string): PetTask {
