@@ -4,7 +4,7 @@ export const REMOTE_CONTROL_OPERATION_SCHEMA_VERSION = 1;
 export const REMOTE_CONTROL_OPERATION_PAYLOAD_VERSION = 1;
 export const REMOTE_CONTROL_DESCENDANT_PAYLOAD_VERSION = 2;
 
-/** @typedef {"invalid_request" | "feature_disabled" | "policy_unavailable" | "forbidden" | "operation_unsupported" | "payload_version_unsupported" | "capability_not_advertised" | "workspace_not_found" | "session_not_found" | "session_busy" | "run_mismatch" | "interaction_not_found" | "interaction_expired" | "already_resolved" | "snapshot_required" | "internal_error"} RemoteControlOperationErrorCode */
+/** @typedef {"invalid_request" | "feature_disabled" | "policy_unavailable" | "forbidden" | "operation_unsupported" | "payload_version_unsupported" | "capability_not_advertised" | "workspace_not_found" | "session_not_found" | "session_busy" | "run_mismatch" | "revision_conflict" | "interaction_not_found" | "interaction_expired" | "already_resolved" | "snapshot_required" | "internal_error"} RemoteControlOperationErrorCode */
 /** @typedef {{ operation: string, payloadVersions: number[] }} RemoteControlOperationCapability */
 /** @typedef {{ schemaVersion: number, operations: RemoteControlOperationCapability[], features: string[] }} RemoteControlCapabilityAdvertisement */
 /** @typedef {{ schemaVersion: number, code: RemoteControlOperationErrorCode, message: string, retryable: boolean, correlationId: string | null, currentRunId?: string | null }} RemoteControlOperationError */
@@ -30,6 +30,7 @@ const OPERATION_DEFINITIONS = [
   ["session.snapshot", ["enrollment", "readOnlyControl"]],
   ["session.create", ["enrollment", "readOnlyControl", "sessionMutation"]],
   ["session.prompt", ["enrollment", "readOnlyControl", "sessionMutation"]],
+  ["session.model.set", ["enrollment", "readOnlyControl", "sessionMutation"]],
   ["session.abort", ["enrollment", "readOnlyControl", "sessionMutation"]],
   ["session.pending.cancel", ["enrollment", "readOnlyControl", "sessionMutation"]],
   [
@@ -69,6 +70,7 @@ const ERROR_DETAILS = Object.freeze({
   session_not_found: ["The session was not found.", false],
   session_busy: ["The session is busy with an active run.", false],
   run_mismatch: ["The expected run does not match the active run.", false],
+  revision_conflict: ["The session model preference changed; refresh and retry.", true],
   interaction_not_found: ["The interaction was not found.", false],
   interaction_expired: ["The interaction has expired.", false],
   already_resolved: ["The interaction was already resolved.", false],
@@ -239,6 +241,8 @@ export function createRemoteControlOperationRegistry({
     if (payloadEncryptionReady) features.push("payload.e2ee-v1");
     if (mutationEnabled && isRecord(gates) && gates.busySessionSteer === true && busyPolicy.steer) features.push("session.steer");
     if (mutationEnabled && isRecord(gates) && gates.busySessionEnqueue === true && busyPolicy.enqueue) features.push("session.enqueue");
+    if (mutationEnabled && handlers.has("session.prompt")) features.push("session.prompt-model");
+    if (mutationEnabled && handlers.has("session.model.set")) features.push("session.model-selection");
 
     return {
       schemaVersion: REMOTE_CONTROL_OPERATION_SCHEMA_VERSION,
@@ -314,6 +318,10 @@ export function createRemoteControlOperationRegistry({
     if (signal?.aborted) return rejected("internal_error", correlationId);
 
     if (request.operation === "session.prompt" && isRecord(validatedArguments)) {
+      if (validatedArguments.model !== undefined && (!isRecord(advertisedCapabilities) ||
+        !Array.isArray(advertisedCapabilities.features) || !advertisedCapabilities.features.includes("session.prompt-model"))) {
+        return rejected("feature_disabled", correlationId);
+      }
       const whenBusy = validatedArguments.whenBusy ?? "reject";
       if (whenBusy === "steer" || whenBusy === "enqueue") {
         let busyPolicy = { steer: false, enqueue: false };
@@ -330,6 +338,10 @@ export function createRemoteControlOperationRegistry({
           return rejected("feature_disabled", correlationId);
         }
       }
+    }
+    if (request.operation === "session.model.set" && (!isRecord(advertisedCapabilities) ||
+      !Array.isArray(advertisedCapabilities.features) || !advertisedCapabilities.features.includes("session.model-selection"))) {
+      return rejected("feature_disabled", correlationId);
     }
     if (signal?.aborted) return rejected("internal_error", correlationId);
 

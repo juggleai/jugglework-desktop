@@ -32,7 +32,7 @@ const sessionCreateTitleSchema = z.string().refine(isSessionCreateTitle);
 const ISO_EPOCH = new Date(0).toISOString();
 
 /** @typedef {{ id: string, name?: unknown, displayName?: unknown, path: string, workspaceType?: unknown }} LocalWorkspace */
-/** @typedef {{ getJson(pathname: string, options?: { signal?: AbortSignal }): Promise<unknown>, postJson(pathname: string, body: unknown, options?: { signal?: AbortSignal }): Promise<unknown> }} ManagedRuntimeClient */
+/** @typedef {{ getJson(pathname: string, options?: { signal?: AbortSignal }): Promise<unknown>, postJson(pathname: string, body: unknown, options?: { signal?: AbortSignal }): Promise<unknown>, putJson(pathname: string, body: unknown, options?: { signal?: AbortSignal }): Promise<unknown> }} ManagedRuntimeClient */
 /** @typedef {{ recordServerRun(input: unknown): boolean, activeRuns(): unknown[] }} Coordinator */
 
 /** @param {unknown} value */
@@ -77,7 +77,7 @@ function assertMutationGeneration(signal) {
 /** @param {unknown} error @param {string} notFoundCode */
 function mapClientError(error, notFoundCode) {
   if (error instanceof RemoteControlOperationExecutionError) throw error;
-  if (error instanceof ManagedRuntimeClientError && ["session_busy", "run_mismatch", "pending_operation_not_found", "pending_operation_not_cancellable"].includes(error.serverCode)) {
+  if (error instanceof ManagedRuntimeClientError && ["session_busy", "run_mismatch", "revision_conflict", "pending_operation_not_found", "pending_operation_not_cancellable"].includes(error.serverCode)) {
     if (error.serverCode === "pending_operation_not_found") throw new RemoteControlOperationExecutionError("pending_operation_not_found");
     if (error.serverCode === "pending_operation_not_cancellable") throw new RemoteControlOperationExecutionError("pending_operation_not_cancellable");
     throw new RemoteControlOperationExecutionError(error.serverCode, { currentRunId: error.currentRunId });
@@ -213,7 +213,7 @@ async function readSession(client, workspaceId, sessionId, signal) {
  * }} options
  */
 export function createRemoteControlMutationRegistrations({ workspaceStore, managedRuntimeClient, coordinator, interactions = null, now = Date.now }) {
-  if (!workspaceStore || typeof workspaceStore.readWorkspaceState !== "function" || !managedRuntimeClient || typeof managedRuntimeClient.getJson !== "function" || typeof managedRuntimeClient.postJson !== "function" || !coordinator || typeof coordinator.recordServerRun !== "function") {
+  if (!workspaceStore || typeof workspaceStore.readWorkspaceState !== "function" || !managedRuntimeClient || typeof managedRuntimeClient.getJson !== "function" || typeof managedRuntimeClient.postJson !== "function" || typeof managedRuntimeClient.putJson !== "function" || !coordinator || typeof coordinator.recordServerRun !== "function") {
     throw new TypeError("Remote mutation adapter dependencies are invalid.");
   }
 
@@ -249,28 +249,13 @@ export function createRemoteControlMutationRegistrations({ workspaceStore, manag
       }
     }),
     registration("session.prompt", (value, payloadVersion) => {
-      if (payloadVersion === REMOTE_CONTROL_DESCENDANT_PAYLOAD_VERSION) {
-        const parsed = desktopRemoteOperationRequestSchema.parse({
-          operation: "session.prompt",
-          payloadVersion,
-          arguments: value,
-        });
-        return Object.freeze(parsed.arguments);
-      }
-      if (!value || typeof value !== "object" || Array.isArray(value) || ![3, 4].includes(Object.keys(value).length)) {
+      let parsed;
+      try {
+        parsed = desktopRemoteOperationRequestSchema.parse({ operation: "session.prompt", payloadVersion: payloadVersion ?? REMOTE_CONTROL_OPERATION_PAYLOAD_VERSION, arguments: value });
+      } catch {
         throw new TypeError("Remote mutation arguments are invalid.");
       }
-      for (const key of ["workspaceId", "sessionId"]) {
-        if (!Object.hasOwn(value, key) || !identifierSchema.safeParse(value[key]).success) {
-          throw new TypeError("Remote mutation arguments are invalid.");
-        }
-      }
-      if (typeof value.prompt !== "string" || value.prompt.trim().length < 1 || Buffer.byteLength(value.prompt, "utf8") > 200_000) {
-        throw new TypeError("Remote mutation arguments are invalid.");
-      }
-      const whenBusy = Object.hasOwn(value, "whenBusy") ? value.whenBusy : "reject";
-      if (!["reject", "steer", "enqueue"].includes(whenBusy)) throw new TypeError("Remote mutation arguments are invalid.");
-      return Object.freeze({ workspaceId: String(value.workspaceId), sessionId: String(value.sessionId), prompt: value.prompt, whenBusy });
+      return Object.freeze(parsed.arguments);
     }, async ({ arguments: args, correlationId, signal, payloadVersion }) => {
       try {
         const effectivePayloadVersion = payloadVersion ?? REMOTE_CONTROL_OPERATION_PAYLOAD_VERSION;
@@ -286,7 +271,7 @@ export function createRemoteControlMutationRegistrations({ workspaceStore, manag
             origin: "remote-control",
             startCommandCorrelationId: correlationId,
             whenBusy: args.whenBusy,
-            prompt: { parts: effectivePayloadVersion === REMOTE_CONTROL_DESCENDANT_PAYLOAD_VERSION ? args.parts : [{ type: "text", text: args.prompt }] },
+            prompt: { parts: effectivePayloadVersion === REMOTE_CONTROL_DESCENDANT_PAYLOAD_VERSION ? args.parts : [{ type: "text", text: args.prompt }], ...(args.model === undefined ? {} : { model: args.model }) },
           },
         );
         assertMutationGeneration(signal);
@@ -308,6 +293,34 @@ export function createRemoteControlMutationRegistrations({ workspaceStore, manag
         mapClientError(error, "session_not_found");
       }
     }, [REMOTE_CONTROL_OPERATION_PAYLOAD_VERSION, REMOTE_CONTROL_DESCENDANT_PAYLOAD_VERSION]),
+    registration("session.model.set", (value) => {
+      try {
+        return Object.freeze(desktopRemoteOperationRequestSchema.parse({ operation: "session.model.set", payloadVersion: 1, arguments: value }).arguments);
+      } catch {
+        throw new TypeError("Remote mutation arguments are invalid.");
+      }
+    }, async ({ arguments: args, signal }) => {
+      try {
+        const workspace = await authorizedWorkspace(workspaceStore, managedRuntimeClient, args.workspaceId, signal);
+        const session = await readSession(managedRuntimeClient, workspace.id, args.sessionId, signal);
+        if (canonicalPath(session.directory) !== workspace.path) throw new RemoteControlOperationExecutionError("session_not_found");
+        const response = await managedRuntimeClient.putJson(
+          `/workspace/${encodeURIComponent(workspace.id)}/sessions/${encodeURIComponent(args.sessionId)}/model-preference`,
+          { ...args.preference, expectedRevision: args.expectedRevision },
+          { signal },
+        );
+        const item = response && typeof response === "object" ? response.item : null;
+        const result = item && typeof item === "object" ? {
+          revision: item.revision,
+          mode: item.mode,
+          model: item.model,
+          updatedAt: item.updatedAt,
+        } : null;
+        return desktopRemoteOperationResultSchema.parse({ operation: "session.model.set", payloadVersion: 1, result }).result;
+      } catch (error) {
+        mapClientError(error, "session_not_found");
+      }
+    }),
     registration("session.pending.cancel", (value) => {
       parseArguments(value, ["workspaceId", "sessionId", "pendingOperationId"]);
       return Object.freeze({ workspaceId: String(value.workspaceId), sessionId: String(value.sessionId), pendingOperationId: String(value.pendingOperationId) });

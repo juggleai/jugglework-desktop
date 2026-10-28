@@ -1,5 +1,6 @@
 import type { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import { desktopRemotePromptPartSchema } from "@jugglework/types/desktop-remote-control";
+import { isChatSelectableProviderModel } from "@jugglework/types/media-generation";
 import { z } from "zod";
 import {
   detectResponseLanguageFromText,
@@ -28,6 +29,7 @@ import {
 } from "../session-groups.js";
 import type { ServerConfig, TokenScope, WorkspaceInfo } from "../types.js";
 import { SessionPendingOperationError, type SessionPendingOperationStore } from "../session-pending-operations.js";
+import type { SessionModelPreferenceStore } from "../session-model-preferences.js";
 import {
   SESSION_PENDING_OPERATION_IDLE_CONFIRM_MS,
   type SessionPendingOperationPump,
@@ -68,6 +70,7 @@ interface RegisterSessionRoutesOptions {
   dispatchSessionAbort: (config: ServerConfig, workspace: WorkspaceInfo, sessionId: string) => Promise<boolean>;
   sessionMutations: SessionMutationCoordinator;
   sessionPendingOperations: SessionPendingOperationStore;
+  sessionModelPreferences: SessionModelPreferenceStore;
   sessionPendingOperationPump: SessionPendingOperationPump;
   applySessionResponseLanguage?: (input: {
     workspaceId: string;
@@ -138,6 +141,7 @@ const promptBodySchema = z.object({
 }).extend(officeSelectionSubmissionSchema.shape).strict().refine((value) => JSON.stringify(value).length <= 16 * 1024 * 1024, "prompt payload is too large");
 const remotePromptBodySchema = z.object({
   parts: z.array(desktopRemotePromptPartSchema).min(1).max(1_000),
+  model: z.object({ providerID: runIdentifierSchema, modelID: runIdentifierSchema }).strict().optional(),
 }).strict().superRefine((prompt, context) => {
   const files = prompt.parts.filter((part) => part.type === "file");
   const text = prompt.parts.flatMap((part) => part.type === "text" ? [part.text] : []).join("");
@@ -180,6 +184,10 @@ const legacyAbortRunBodySchema = z.object({ expectedRunId: runIdentifierSchema, 
 const observeRunBodySchema = z.object({
   status: z.enum(["starting", "running", "waiting", "retrying", "aborting", "idle", "completed", "failed", "aborted"]),
 }).strict();
+const sessionModelPreferenceBodySchema = z.discriminatedUnion("mode", [
+  z.object({ mode: z.literal("auto"), model: z.null(), expectedRevision: z.number().int().nonnegative() }).strict(),
+  z.object({ mode: z.literal("explicit"), model: z.object({ providerID: runIdentifierSchema, modelID: runIdentifierSchema }).strict(), expectedRevision: z.number().int().nonnegative() }).strict(),
+]);
 const legacyObserveRunBodySchema = z.object({
   expectedRunId: runIdentifierSchema,
   observation: z.enum(["idle", "error", "completed", "failed", "aborted"]),
@@ -279,12 +287,22 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     dispatchSessionAbort,
     sessionMutations,
     sessionPendingOperations,
+    sessionModelPreferences,
     sessionPendingOperationPump,
     applySessionResponseLanguage,
     resolveSessionResponseLanguage,
     copySessionResponseLanguage,
     onSessionDeleted,
   } = options;
+
+  async function validateExplicitModel(workspace: WorkspaceInfo, model: { providerID: string; modelID: string }) {
+    const catalog = await createWorkspaceOpencodeClient(config, workspace).provider.list();
+    if (catalog.error || !catalog.data || !catalog.response.ok) throw new ApiError(502, "model_catalog_unavailable", "Model catalog unavailable");
+    const { all, connected } = catalog.data;
+    const provider = all.find((item) => item.id === model.providerID && connected.includes(item.id));
+    const selected = provider?.models[model.modelID];
+    if (!selected || !isChatSelectableProviderModel(selected)) throw new ApiError(400, "model_unavailable", "Selected chat model is unavailable");
+  }
   const sessionGroupEvents = new SessionGroupEventStore();
 
   type NormalizedEngineSessionStatus = "idle" | "running" | "waiting" | "retrying";
@@ -756,7 +774,33 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     const item = await readWorkspaceSessionSnapshot(workspace, sessionId, {
       limit: parseOptionalPositiveInteger(ctx.url.searchParams.get("limit"), "limit"),
     });
-    return jsonResponse({ item });
+    return jsonResponse({ item: { ...item, modelPreference: sessionModelPreferences.get(workspace.id, sessionId) } });
+  });
+
+  addRoute(routes, "GET", "/workspace/:id/sessions/:sessionId/model-preference", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const sessionId = parseRunIdentifier(ctx.params.sessionId, "sessionId");
+    await readWorkspaceSession(workspace, sessionId);
+    return jsonResponse({ item: sessionModelPreferences.get(workspace.id, sessionId) });
+  });
+
+  addRoute(routes, "PUT", "/workspace/:id/sessions/:sessionId/model-preference", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const sessionId = parseRunIdentifier(ctx.params.sessionId, "sessionId");
+    await readWorkspaceSession(workspace, sessionId);
+    const body = parseRunBody(sessionModelPreferenceBodySchema, await readJsonBody(ctx.request));
+    if (body.mode === "explicit") await validateExplicitModel(workspace, body.model);
+    const result = sessionModelPreferences.set({ workspaceId: workspace.id, sessionId, ...body });
+    if (!result.updated) throw new ApiError(409, "revision_conflict", "Session model preference revision is stale", { current: result.preference });
+    return jsonResponse({ item: result.preference });
+  });
+
+  addRoute(routes, "GET", "/workspace/:id/session-model-events", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const since = parseOptionalNonNegativeInteger(ctx.url.searchParams.get("since"), "since") ?? 0;
+    return jsonResponse(sessionModelPreferences.events(workspace.id, since));
   });
 
   addRoute(routes, "POST", "/workspace/:id/sessions/:sessionId/fork", "client", async (ctx) => {
@@ -830,6 +874,10 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspace(config, ctx.params.id);
+    if (input.origin === "remote-control" && isRecord(input.prompt.model)) {
+      if (input.whenBusy !== "reject") throw new ApiError(400, "invalid_payload", "Explicit model requires whenBusy reject");
+      await validateExplicitModel(workspace, input.prompt.model as { providerID: string; modelID: string });
+    }
     let run;
     try {
       let engineStatus = await readEngineSessionStatus(workspace, input.sessionId);
@@ -981,6 +1029,16 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
             ...responseLanguage,
           }) ?? responseLanguage.detected ?? responseLanguage.fallback
         : null);
+      const preference = sessionModelPreferences.get(workspace.id, input.sessionId);
+      if (preference.mode === "explicit" && preference.model &&
+        (input.origin === "local-renderer" || input.prompt.model === undefined)) {
+        await validateExplicitModel(workspace, preference.model);
+        input.prompt.model = preference.model;
+      } else if (isRecord(input.prompt.model)) {
+        // Auto mode uses the renderer's displayed workspace default. Validate it
+        // at dispatch time so provider changes cannot send a stale model.
+        await validateExplicitModel(workspace, input.prompt.model as { providerID: string; modelID: string });
+      }
       try {
         await dispatchSessionPromptAsync(
           config,

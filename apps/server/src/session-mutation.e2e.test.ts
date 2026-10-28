@@ -50,6 +50,12 @@ function startMockOpencode() {
   const statusRequests: string[] = [];
   const disposes: Array<{ directory: string | null }> = [];
   const statuses = new Map<string, unknown>();
+  const connected = ["connected"];
+  const models: Record<string, unknown> = {
+    chat: { capabilities: { output: { text: true } } },
+    image: { capabilities: { output: { image: true, text: false } } },
+    normalizedVideo: { modalities: { output: ["video"] } },
+  };
   const messages = new Map<string, Array<ArtifactEngineMessage & { info: ArtifactEngineMessage["info"] & { finish?: string; summary?: boolean; error?: unknown } }>>();
   const sessions = new Map<string, { id: string; title: string; parentID?: string; directory?: string; time: { created: number; updated: number } }>();
   const heldPrompts = new Map<string, ReturnType<typeof deferred<void>>>();
@@ -68,6 +74,9 @@ function startMockOpencode() {
     port: 0,
     async fetch(request) {
       const url = new URL(request.url);
+      if (request.method === "GET" && url.pathname === "/provider") {
+        return Response.json({ all: [{ id: "connected", models }], connected });
+      }
       if (request.method === "GET" && url.pathname === "/session/status") {
         statusRequests.push(request.headers.get("x-opencode-directory") ?? "");
         return Response.json(Object.fromEntries(statuses));
@@ -86,6 +95,10 @@ function startMockOpencode() {
         const sessionId = decodeURIComponent(sessionMatch[1]!);
         const session = sessions.get(sessionId);
         return session ? Response.json(session) : Response.json({ code: "not_found" }, { status: 404 });
+      }
+      if (request.method === "DELETE" && sessionMatch) {
+        const sessionId = decodeURIComponent(sessionMatch[1]!);
+        return Response.json(sessions.delete(sessionId));
       }
       if (request.method === "POST" && url.pathname === "/instance/dispose") {
         disposes.push({ directory: url.searchParams.get("directory") });
@@ -178,6 +191,8 @@ function startMockOpencode() {
     statusRequests,
     disposes,
     statuses,
+    connected,
+    models,
     messages,
     sessions,
     heldPrompts,
@@ -258,6 +273,73 @@ function runPath(base: string, sessionId: string): string {
 }
 
 describe("authoritative session mutation APIs", () => {
+  test("model preferences require an existing session, resolve explicit/auto prompts, and clean up on deletion", async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    const sessionId = "ses_preference";
+    const modelPath = `${harness.base}/workspace/ws_1/sessions/${sessionId}/model-preference`;
+    const startPath = `${runPath(harness.base, sessionId)}/start`;
+    const requestPreference = (method: "GET" | "PUT", body?: unknown) => fetch(modelPath, {
+      method,
+      headers: harness.collaboratorHeaders,
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+
+    expect((await requestPreference("GET")).status).toBe(404);
+    expect((await requestPreference("PUT", { mode: "auto", model: null, expectedRevision: 0 })).status).toBe(404);
+
+    engine.sessions.set(sessionId, { id: sessionId, title: "Preference", directory: harness.config.workspaces[0]!.path, time: { created: 1, updated: 1 } });
+    const explicit = { providerID: "connected", modelID: "chat" };
+    const explicitResponse = await requestPreference("PUT", { mode: "explicit", model: explicit, expectedRevision: 0 });
+    expect(explicitResponse.status).toBe(200);
+    expect((await explicitResponse.json()).item).toMatchObject({ revision: 1, mode: "explicit", model: explicit });
+
+    const localStart = (model: { providerID: string; modelID: string }) => fetch(startPath, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+      body: JSON.stringify({ origin: "local-renderer", startCommandCorrelationId: `cmd_${engine.prompts.length}`, prompt: { parts: [{ type: "text", text: "Hello" }], model } }),
+    });
+    expect((await localStart({ providerID: "connected", modelID: "other-displayed-default" })).status).toBe(202);
+    expect(engine.prompts.at(-1)?.body).toMatchObject({ model: explicit });
+    engine.statuses.set(sessionId, { type: "idle" });
+    engine.messages.set(sessionId, [{ info: { id: "msg_done", sessionID: sessionId, role: "assistant", time: { created: 1 }, finish: "stop" }, parts: [] }]);
+
+    const autoResponse = await requestPreference("PUT", { mode: "auto", model: null, expectedRevision: 1 });
+    expect(autoResponse.status).toBe(200);
+    const displayedDefault = { providerID: "connected", modelID: "chat" };
+    expect((await localStart(displayedDefault)).status).toBe(202);
+    expect(engine.prompts.at(-1)?.body).toMatchObject({ model: displayedDefault });
+
+    const deleted = await fetch(`${harness.base}/workspace/ws_1/sessions/${sessionId}`, { method: "DELETE", headers: harness.collaboratorHeaders });
+    expect(deleted.status).toBe(200);
+    engine.sessions.set(sessionId, { id: sessionId, title: "Recreated", directory: harness.config.workspaces[0]!.path, time: { created: 2, updated: 2 } });
+    expect((await (await requestPreference("GET")).json()).item).toMatchObject({ revision: 0, mode: "auto", model: null });
+  });
+
+  test("remote explicit model is validated and forwarded only for immediate starts", async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    const start = (model: unknown, whenBusy?: "reject" | "steer" | "enqueue") => fetch(`${runPath(harness.base, "ses_model")}/start`, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+      body: JSON.stringify({ origin: "remote-control", startCommandCorrelationId: "cmd_model", whenBusy,
+        prompt: { parts: [{ type: "text", text: "Hello" }], model } }),
+    });
+    const model = { providerID: "connected", modelID: "chat" };
+    for (const invalid of [
+      [{ providerID: "disconnected", modelID: "chat" }, "reject"],
+      [{ providerID: "connected", modelID: "missing" }, "reject"],
+      [{ providerID: "connected", modelID: "image" }, "reject"],
+      [{ providerID: "connected", modelID: "normalizedVideo" }, "reject"],
+      [model, "steer"], [model, "enqueue"],
+    ] as const) {
+      expect((await start(invalid[0], invalid[1])).status).toBe(400);
+    }
+    expect(engine.prompts).toHaveLength(0);
+    // Omitted whenBusy is the normal adapter path and defaults to reject.
+    expect((await start(model)).status).toBe(202);
+    expect(engine.prompts[0]?.body).toMatchObject({ model });
+  });
   for (const mode of ["local-queue", "local-steer", "remote-steer"] as const) {
     test(`${mode} 真实入口绑定文件交付，队列执行前不结束，生成工具可定位原轮次`, async () => {
       const engine = startMockOpencode();

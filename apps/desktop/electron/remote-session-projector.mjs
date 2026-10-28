@@ -423,6 +423,12 @@ export function createRemoteSessionProjector({ randomUUID, now, coalesceMs = 25,
       emitForSession(workspaceId, sessionId, { type: "todos.replace", todos }, occurredAt);
       return;
     }
+    if (event.type === "session.model.updated") {
+      const preference = data.preference ?? data;
+      if (data.sessionId !== sessionId || !isRecord(preference)) return;
+      emitForSession(workspaceId, sessionId, { type: "session.model.updated", preference }, occurredAt);
+      return;
+    }
     if (["permission.asked", "permission.v2.asked", "question.asked", "question.v2.asked"].includes(event.type)) {
       const interaction = event.type.startsWith("permission")
         ? normalizeRemotePermissionInteraction(data, targetSessionId, occurredAtMs, interactionOwnership, 2)

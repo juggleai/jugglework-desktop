@@ -108,6 +108,7 @@ import { registerOperationRoutes } from "./routes/operations.js";
 import { addRoute, matchRoute, type AuthMode, type RequestContext, type Route } from "./routes/registry.js";
 import { registerSessionRoutes } from "./routes/sessions.js";
 import { createSessionPendingOperationStore, type SessionPendingOperationStore } from "./session-pending-operations.js";
+import { createSessionModelPreferenceStore, type SessionModelPreferenceStore } from "./session-model-preferences.js";
 import { createSessionPendingOperationPump, type SessionPendingOperationPump } from "./session-pending-operation-pump.js";
 import { createSessionRunJournal } from "./session-run-journal.js";
 import { registerInteractionRoutes } from "./routes/interactions.js";
@@ -995,11 +996,19 @@ export async function startServer(config: ServerConfig, options: {
   };
   const engineMcpServerState = beginEngineMcpServerState(config);
   const sessionPendingOperations = await createSessionPendingOperationStore({ config });
+  let sessionModelPreferences: SessionModelPreferenceStore;
+  try {
+    sessionModelPreferences = await createSessionModelPreferenceStore({ config });
+  } catch (error) {
+    sessionPendingOperations.close();
+    throw error;
+  }
   let sessionRunJournal: Awaited<ReturnType<typeof createSessionRunJournal>>;
   try {
     sessionRunJournal = await createSessionRunJournal({ config });
   } catch (error) {
     sessionPendingOperations.close();
+    sessionModelPreferences.close();
     throw error;
   }
   const lastJournalProgressAtByRun = new Map<string, number>();
@@ -1172,6 +1181,7 @@ export async function startServer(config: ServerConfig, options: {
     watcherHandle.close();
     internalReloadDispatchers.delete(config);
     sessionPendingOperations.close();
+    sessionModelPreferences.close();
     sessionRunJournal.close();
     clearHostMarketplaceMcpOverlay(config);
     throw error;
@@ -1184,6 +1194,7 @@ export async function startServer(config: ServerConfig, options: {
     if (sessionPendingOperationsClosed) return;
     sessionPendingOperationsClosed = true;
     sessionPendingOperations.close();
+    sessionModelPreferences.close();
   };
   const interactionResolutions = options.interactionResolutions ?? createInteractionResolutionCoordinator();
   const automationRepository = await AutomationRepository.open(config);
@@ -1524,6 +1535,7 @@ export async function startServer(config: ServerConfig, options: {
     engineMcpServerState,
     sessionMutations,
     sessionPendingOperations,
+    sessionModelPreferences,
     () => sessionPendingOperationPump,
     interactionResolutions,
     automationRepository,
@@ -2857,6 +2869,7 @@ function createRoutes(
   engineMcpServerState: EngineMcpServerState,
   sessionMutations: SessionMutationCoordinator,
   sessionPendingOperations: SessionPendingOperationStore,
+  sessionModelPreferences: SessionModelPreferenceStore,
   getSessionPendingOperationPump: () => SessionPendingOperationPump | null,
   interactionResolutions: InteractionResolutionCoordinator,
   automationRepository: AutomationRepository,
@@ -3030,6 +3043,7 @@ function createRoutes(
     },
     sessionMutations,
     sessionPendingOperations,
+    sessionModelPreferences,
     sessionPendingOperationPump: {
       wake: () => getSessionPendingOperationPump()?.wake() ?? Promise.resolve(),
       cancelAll: (commandCorrelationId) => getSessionPendingOperationPump()?.cancelAll(commandCorrelationId)
@@ -3054,6 +3068,7 @@ function createRoutes(
       // Remove server-owned permission-mode state for the deleted root tree.
       sessionPermissionStore.deleteRootSessionRecords(workspaceId, sessionId);
       sessionResponseLanguageStore.delete(workspaceId, sessionId);
+      sessionModelPreferences.delete(workspaceId, sessionId);
     },
   });
 

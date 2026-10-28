@@ -9,8 +9,8 @@ const NOW = Date.parse("2026-08-09T12:00:00.000Z");
 
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
-/** @param {{ publish?: (event: unknown, options: { connectionGeneration: number }) => boolean, publishActivityTaskStatus?: (event: unknown) => boolean | Promise<boolean>, observeRun?: (input: any) => Promise<unknown>, listActiveRuns?: () => Promise<unknown>, resolveOwnership?: (input: any) => Promise<unknown>, timers?: any, logger?: any, subscriptionReadinessTimeoutMs?: number, subscriptionRetryDelaysMs?: number[], autoConnect?: boolean }} [input] */
-function harness({ publish = () => true, publishActivityTaskStatus = null, observeRun, listActiveRuns = async () => ({ items: [] }), resolveOwnership = async ({ targetSessionId }) => ({ rootSessionId: targetSessionId, targetSessionId, parentSessionId: null }), timers = { setTimeout: (callback, delay) => { if (delay < 3_000) callback(); return 1; }, clearTimeout() {} }, logger = {}, subscriptionReadinessTimeoutMs, subscriptionRetryDelaysMs, autoConnect = true } = {}) {
+/** @param {{ publish?: (event: unknown, options: { connectionGeneration: number }) => boolean, publishActivityTaskStatus?: (event: unknown) => boolean | Promise<boolean>, observeRun?: (input: any) => Promise<unknown>, listActiveRuns?: () => Promise<unknown>, listSessionModelEvents?: (input: any) => Promise<unknown>, resolveOwnership?: (input: any) => Promise<unknown>, timers?: any, logger?: any, subscriptionReadinessTimeoutMs?: number, subscriptionRetryDelaysMs?: number[], autoConnect?: boolean }} [input] */
+function harness({ publish = () => true, publishActivityTaskStatus = null, observeRun, listActiveRuns = async () => ({ items: [] }), listSessionModelEvents = null, resolveOwnership = async ({ targetSessionId }) => ({ rootSessionId: targetSessionId, targetSessionId, parentSessionId: null }), timers = { setTimeout: (callback, delay) => { if (delay < 3_000) callback(); return 1; }, clearTimeout() {} }, logger = {}, subscriptionReadinessTimeoutMs, subscriptionRetryDelaysMs, autoConnect = true } = {}) {
   const subscriptions = [];
   const published = [];
   const terminalCalls = [];
@@ -38,6 +38,7 @@ function harness({ publish = () => true, publishActivityTaskStatus = null, obser
     sseClient,
     coordinator,
     listActiveRuns,
+    listSessionModelEvents,
     observeRun: async (input) => {
       observationCalls.push({ input, publishedCount: published.length });
       return observeRun ? observeRun(input) : { cleared: true, run: null, terminalStatus: "completed" };
@@ -125,6 +126,32 @@ describe("remote session event bridge", () => {
     assert.equal(h.subscriptions.length, 1);
     assert.equal(await h.bridge.bind({ ...h.binding, sessionId: "ses_other" }), false);
     assert.equal(await h.bridge.bind({ ...h.binding, connectionGeneration: 8 }), false);
+  });
+
+  it("projects the exact stored model-event shape and aborts polling on clear", async () => {
+    const calls = [];
+    const scheduled = [];
+    const h = harness({
+      listSessionModelEvents: async (input) => {
+        calls.push(input);
+        return { cursor: 9, items: [{
+          workspaceId: "ws_1", sessionId: "ses_1", seq: 9, type: "session.model.updated",
+          revision: 3, mode: "explicit", model: { providerID: "p", modelID: "m" }, updatedAt: 100,
+        }] };
+      },
+      timers: { setTimeout: (callback, delay) => { scheduled.push({ callback, delay }); return callback; }, clearTimeout() {} },
+    });
+    assert.equal(await h.bridge.bind(h.binding), true);
+    scheduled.find(({ delay }) => delay === 1_000)?.callback();
+    await flush();
+    assert.deepEqual(h.published.at(-1).event.data, {
+      type: "session.model.updated",
+      preference: { revision: 3, mode: "explicit", model: { providerID: "p", modelID: "m" }, updatedAt: 100 },
+    });
+    assert.equal(calls[0].since, 0);
+    assert.equal(calls[0].signal.aborted, false);
+    h.bridge.clear();
+    assert.equal(calls[0].signal.aborted, true);
   });
 
   it("blocks binding until SSE is connected and captures output emitted immediately after readiness", async () => {

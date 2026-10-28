@@ -733,13 +733,14 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
       juggleworkDetectedResponseLanguage,
       juggleworkDefaultResponseLanguage,
       juggleworkOfficeSelections,
+      model: selectedModel,
       ...body
     } = parameters;
     if (juggleworkOfficeSelections?.officeSelectionRefs?.length && (!juggleworkMount || !juggleworkSessionClient)) {
       return Promise.reject(new Error("选区编辑需要本机文档会话，请重新打开文档后发送"));
     }
     if (!juggleworkMount && !("reasoning_effort" in parameters)) {
-      return promptAsyncOriginal({ sessionID, directory: requestDirectory, workspace: _requestWorkspace, ...body }, options);
+      return promptAsyncOriginal({ sessionID, directory: requestDirectory, workspace: _requestWorkspace, ...(selectedModel ? { model: selectedModel } : {}), ...body }, options);
     }
     if (juggleworkMount && juggleworkSessionClient) {
       const url = `${juggleworkMount.baseUrl}/workspace/${encodeURIComponent(juggleworkMount.workspaceId)}/sessions/${encodeURIComponent(sessionID)}/runs/start`;
@@ -747,7 +748,7 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
         const result = await juggleworkSessionClient.startSessionRun(juggleworkMount.workspaceId, sessionID, {
           origin: "local-renderer",
           startCommandCorrelationId: juggleworkAdmissionId ?? commandCorrelationId(),
-          prompt: { ...body, ...juggleworkOfficeSelections },
+          prompt: { ...(selectedModel ? { model: selectedModel } : {}), ...body, ...juggleworkOfficeSelections },
           ...(juggleworkDefaultResponseLanguage ? {
             responseLanguage: {
               ...(juggleworkDetectedResponseLanguage ? { detected: juggleworkDetectedResponseLanguage } : {}),
@@ -762,7 +763,7 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
         return {};
       }, options);
     }
-    return postSessionRequest(fetchImpl, baseUrl, `/session/${encodeURIComponent(sessionID)}/prompt_async`, body, {
+    return postSessionRequest(fetchImpl, baseUrl, `/session/${encodeURIComponent(sessionID)}/prompt_async`, { ...(selectedModel ? { model: selectedModel } : {}), ...body }, {
       headers: Object.keys(headers).length ? headers : undefined,
       directory: requestDirectory ?? directory,
       throwOnError: options?.throwOnError,

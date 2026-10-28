@@ -60,6 +60,7 @@ function snapshotBody(directory = WORKSPACE_PATH) {
         },
       ],
       todos: [{ content: "Ship it", status: "completed", priority: "high" }],
+      modelPreference: { revision: 0, mode: "auto", model: null, updatedAt: 0 },
     },
   };
 }
@@ -350,6 +351,7 @@ describe("remote-control read adapters", () => {
         todos: [],
         interactions: [],
         pendingOperations: [],
+        modelPreference: { revision: 0, mode: "auto", model: null, updatedAt: 0 },
         capturedAt: "2026-08-09T00:00:00.000Z",
       },
     });

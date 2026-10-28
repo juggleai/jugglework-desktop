@@ -362,6 +362,15 @@ export type JuggleWorkSessionPrompt = {
   reasoning_effort?: string;
 };
 
+export type JuggleWorkSessionModelPreference = {
+  workspaceId: string;
+  sessionId: string;
+  revision: number;
+  mode: "auto" | "explicit";
+  model: { providerID: string; modelID: string } | null;
+  updatedAt: number;
+};
+
 export type JuggleWorkInteractionOrigin = "local-renderer" | "remote-control";
 export type JuggleWorkPermissionResponse = "allow_once" | "always" | "reject";
 export type JuggleWorkQuestionAnswer = { questionId: string; values: string[] };
@@ -2718,6 +2727,12 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
         `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/fork`,
         { token, hostToken, method: "POST", body: input, timeoutMs: timeouts.sessionRead },
       ),
+    getSessionModelPreference: (workspaceId: string, sessionId: string, requestOptions?: { signal?: AbortSignal }) =>
+      requestJson<{ item: JuggleWorkSessionModelPreference }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/model-preference`, { token, hostToken, signal: requestOptions?.signal }),
+    putSessionModelPreference: (workspaceId: string, sessionId: string, input: { expectedRevision: number } & ({ mode: "auto"; model: null } | { mode: "explicit"; model: { providerID: string; modelID: string } }), requestOptions?: { signal?: AbortSignal }) =>
+      requestJson<{ item: JuggleWorkSessionModelPreference }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/model-preference`, { token, hostToken, method: "PUT", body: input, signal: requestOptions?.signal }),
+    listSessionModelEvents: (workspaceId: string, since = 0, requestOptions?: { signal?: AbortSignal }) =>
+      requestJson<{ items: Array<JuggleWorkSessionModelPreference & { seq: number; type: "session.model.updated" }>; cursor: number }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/session-model-events?since=${encodeURIComponent(String(since))}`, { token, hostToken, signal: requestOptions?.signal }),
     startSessionRun: (
       workspaceId: string,
       sessionId: string,

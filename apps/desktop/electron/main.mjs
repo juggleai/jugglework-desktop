@@ -1583,6 +1583,10 @@ function createMainRemoteSessionEventBridge() {
         { status },
       );
     },
+    listSessionModelEvents: ({ workspaceId, since, signal }) => managedRuntimeClient.getJson(
+      `/workspace/${encodeURIComponent(workspaceId)}/session-model-events?since=${encodeURIComponent(String(since))}`,
+      { signal },
+    ),
     publish: (event, options) => remoteControlAgent?.publishSessionEvent(event, options) ?? false,
     publishActivityTaskStatus: (event) => remoteControlAgent?.publishActivityTaskStatus(event) ?? false,
     randomUUID,

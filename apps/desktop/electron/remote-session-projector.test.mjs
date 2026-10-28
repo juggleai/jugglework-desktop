@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { describe, it, test } from "node:test";
 
 import { desktopRemoteSessionEventSchema } from "../dist/runtime/desktop-remote-control.js";
 
@@ -46,6 +46,12 @@ const info = (id = "msg_1") => ({ id, sessionID: SESSION, role: "assistant", tim
 const part = (overrides = {}) => ({ id: "prt_1", messageID: "msg_1", sessionID: SESSION, type: "text", text: "hello", ...overrides });
 
 describe("remote session projector", () => {
+  test("projects committed session model preference updates", () => {
+    const h = harness();
+    const preference = { revision: 2, mode: "explicit", model: { providerID: "p", modelID: "m" }, updatedAt: 100 };
+    h.projector.accept(WORKSPACE, { type: "session.model.updated", data: { sessionId: SESSION, preference }, durable: 1 });
+    assert.deepEqual(h.emitted[0].data, { type: "session.model.updated", preference });
+  });
   it("maps legacy, global, and V2 message sources while preserving safe parts", () => {
     const h = harness();
     h.projector.accept(WORKSPACE, { type: "message.updated", properties: { info: info() } });

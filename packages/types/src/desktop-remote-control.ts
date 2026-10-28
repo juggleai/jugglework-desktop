@@ -146,6 +146,7 @@ export const desktopRemoteOperationValues = [
   "session.snapshot",
   "session.create",
   "session.prompt",
+  "session.model.set",
   "session.abort",
   "session.pending.cancel",
   "interaction.permission.reply",
@@ -164,6 +165,7 @@ export const desktopRemoteReadOperationValues = [
 export const desktopRemoteMutationOperationValues = [
   "session.create",
   "session.prompt",
+  "session.model.set",
   "session.abort",
   "session.pending.cancel",
   "interaction.permission.reply",
@@ -183,6 +185,8 @@ export const desktopRemoteFeatureCapabilityValues = [
   "background.lifecycle",
   "session.steer",
   "session.enqueue",
+  "session.prompt-model",
+  "session.model-selection",
   "native-mobile",
 ] as const
 
@@ -297,6 +301,7 @@ export const desktopRemoteRequiredFeatureGatesByOperation = {
   "session.snapshot": ["enrollment", "readOnlyControl"],
   "session.create": ["enrollment", "readOnlyControl", "sessionMutation"],
   "session.prompt": ["enrollment", "readOnlyControl", "sessionMutation"],
+  "session.model.set": ["enrollment", "readOnlyControl", "sessionMutation"],
   "session.abort": ["enrollment", "readOnlyControl", "sessionMutation"],
   "session.pending.cancel": ["enrollment", "readOnlyControl", "sessionMutation"],
   "interaction.permission.reply": [
@@ -354,6 +359,8 @@ export function createDesktopRemoteCapabilityAdvertisement(
   if (readEnabled && gates.backgroundLifecycle) features.push("background.lifecycle")
   if (mutationEnabled && gates.busySessionSteer) features.push("session.steer")
   if (mutationEnabled && gates.busySessionEnqueue) features.push("session.enqueue")
+  if (mutationEnabled) features.push("session.prompt-model")
+  if (mutationEnabled) features.push("session.model-selection")
   if (readEnabled && gates.nativeMobile) features.push("native-mobile")
 
   return desktopRemoteCapabilityAdvertisementSchema.parse({
@@ -384,6 +391,7 @@ export const desktopRemoteErrorCodeValues = [
   "session_not_found",
   "session_busy",
   "run_mismatch",
+  "revision_conflict",
   "interaction_not_found",
   "interaction_expired",
   "already_resolved",
@@ -757,6 +765,12 @@ const sessionSnapshotBaseShape = {
     position: z.number().int().positive(),
     status: z.literal("pending"),
   }).strict()).max(1_000),
+  modelPreference: z.object({
+    revision: z.number().int().nonnegative(),
+    mode: z.enum(["auto", "explicit"]),
+    model: z.object({ providerID: identifierSchema, modelID: identifierSchema }).strict().nullable(),
+    updatedAt: z.number().int().nonnegative(),
+  }).strict(),
   capturedAt: dateTimeSchema,
 } as const
 
@@ -833,6 +847,7 @@ const sessionPromptRequestSchema = z
       .object({
         workspaceId: identifierSchema,
         sessionId: identifierSchema,
+        model: z.object({ providerID: identifierSchema, modelID: identifierSchema }).strict().optional(),
         prompt: z.string().min(1)
           .refine((value) => value.trim().length > 0, "prompt must not be blank")
           .refine(
@@ -851,6 +866,7 @@ const sessionPromptV2RequestSchema = z
     arguments: z.object({
       workspaceId: identifierSchema,
       sessionId: identifierSchema,
+      model: z.object({ providerID: identifierSchema, modelID: identifierSchema }).strict().optional(),
       parts: desktopRemotePromptPartsSchema,
       whenBusy: z.enum(["reject", "steer", "enqueue"]).default("reject"),
     }).strict(),
@@ -868,6 +884,19 @@ const sessionCreateRequestSchema = z
       .strict(),
   })
   .strict()
+const sessionModelSetRequestSchema = z.object({
+  operation: z.literal("session.model.set"),
+  payloadVersion: z.literal(DESKTOP_REMOTE_PAYLOAD_VERSION),
+  arguments: z.object({
+    workspaceId: identifierSchema,
+    sessionId: identifierSchema,
+    expectedRevision: z.number().int().nonnegative(),
+    preference: z.discriminatedUnion("mode", [
+      z.object({ mode: z.literal("auto"), model: z.null() }).strict(),
+      z.object({ mode: z.literal("explicit"), model: z.object({ providerID: identifierSchema, modelID: identifierSchema }).strict() }).strict(),
+    ]),
+  }).strict(),
+}).strict()
 const sessionAbortRequestSchema = z
   .object({
     operation: z.literal("session.abort"),
@@ -978,6 +1007,7 @@ export const desktopRemoteOperationRequestSchema = z.union([
     sessionSnapshotRequestSchema,
     sessionCreateRequestSchema,
     sessionPromptRequestSchema,
+    sessionModelSetRequestSchema,
     sessionAbortRequestSchema,
     sessionPendingCancelRequestSchema,
     permissionReplyRequestSchema,
@@ -1009,6 +1039,15 @@ export const desktopRemoteOperationResultSchema = z.union([
         result: z.object({ sessionId: identifierSchema }).strict(),
       })
       .strict(),
+    z.object({
+      operation: z.literal("session.model.set"),
+      payloadVersion: z.literal(DESKTOP_REMOTE_PAYLOAD_VERSION),
+      result: z.object({
+        revision: z.number().int().positive(), mode: z.enum(["auto", "explicit"]),
+        model: z.object({ providerID: identifierSchema, modelID: identifierSchema }).strict().nullable(),
+        updatedAt: z.number().int().nonnegative(),
+      }).strict(),
+    }).strict(),
     z
       .object({
         operation: z.literal("workspace.list"),
@@ -1106,6 +1145,13 @@ export function createDesktopRemoteOperationRequestSchema(
 ) {
   const parsedCapabilities = desktopRemoteCapabilityAdvertisementSchema.parse(capabilities)
   return desktopRemoteOperationRequestSchema.superRefine((request, context) => {
+    if (request.operation === "session.prompt" && request.arguments.model !== undefined &&
+      !parsedCapabilities.features.includes("session.prompt-model")) {
+      context.addIssue({ code: "custom", message: "model selection must be advertised by the target device", path: ["arguments", "model"], params: { errorCode: "capability_not_advertised" satisfies DesktopRemoteErrorCode } })
+    }
+    if (request.operation === "session.model.set" && !parsedCapabilities.features.includes("session.model-selection")) {
+      context.addIssue({ code: "custom", message: "session model selection must be advertised by the target device", path: ["operation"], params: { errorCode: "capability_not_advertised" satisfies DesktopRemoteErrorCode } })
+    }
     if (!isDesktopRemoteOperationAdvertised(request, parsedCapabilities)) {
       context.addIssue({
         code: "custom",
@@ -1258,6 +1304,7 @@ const normalizedSessionEventDataV1Schema = z.discriminatedUnion("type", [
     })
     .strict(),
   z.object({ type: z.literal("todos.replace"), todos: z.array(desktopRemoteTodoSchema).max(10_000) }).strict(),
+  z.object({ type: z.literal("session.model.updated"), preference: sessionSnapshotBaseShape.modelPreference }).strict(),
   z.object({ type: z.literal("interaction.upsert"), interaction: desktopRemoteInteractionV1Schema }).strict(),
   z.object({ type: z.literal("interaction.remove"), interactionId: identifierSchema }).strict(),
   z
@@ -1289,6 +1336,7 @@ const normalizedSessionEventDataV2Schema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("message.remove"), messageId: identifierSchema }).strict(),
   z.object({ type: z.literal("message.part.upsert"), messageId: identifierSchema, part: desktopRemoteMessagePartSchema }).strict(),
   z.object({ type: z.literal("todos.replace"), todos: z.array(desktopRemoteTodoSchema).max(10_000) }).strict(),
+  z.object({ type: z.literal("session.model.updated"), preference: sessionSnapshotBaseShape.modelPreference }).strict(),
   z.object({ type: z.literal("interaction.upsert"), interaction: desktopRemoteInteractionV2Schema }).strict(),
   z.object({
     type: z.literal("interaction.remove"),

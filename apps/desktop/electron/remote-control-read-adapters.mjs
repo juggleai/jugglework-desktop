@@ -65,6 +65,7 @@ const snapshotResponseSchema = z.object({
     messages: z.array(messageSchema).max(SNAPSHOT_MESSAGE_LIMIT),
     todos: z.array(todoSchema).max(10_000),
     status: statusSchema,
+    modelPreference: z.object({ revision: z.number().int().nonnegative(), mode: z.enum(["auto", "explicit"]), model: z.object({ providerID: identifierSchema, modelID: identifierSchema }).strict().nullable(), updatedAt: z.number().int().nonnegative() }).strict(),
   }).strict(),
 }).strict();
 
@@ -561,6 +562,12 @@ export function createRemoteControlReadRegistrations({ workspaceStore, managedRu
         }),
         interactions: pendingInteractions,
         pendingOperations,
+        modelPreference: (() => {
+          const value = response.item.modelPreference;
+          return value && typeof value === "object"
+            ? { revision: value.revision, mode: value.mode, model: value.model, updatedAt: value.updatedAt }
+            : { revision: 0, mode: "auto", model: null, updatedAt: 0 };
+        })(),
         capturedAt: captured.toISOString(),
       };
       const snapshotSchema = payloadVersion === REMOTE_CONTROL_DESCENDANT_PAYLOAD_VERSION

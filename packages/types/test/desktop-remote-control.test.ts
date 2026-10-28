@@ -191,6 +191,25 @@ describe("desktop remote-control contracts", () => {
       interactions: true,
     }
     const advertised = createDesktopRemoteCapabilityAdvertisement(gates)
+    assert.equal(advertised.features.includes("session.prompt-model"), true)
+    assert.equal(advertised.features.includes("session.model-selection"), true)
+    const modelSetRequest = {
+      operation: "session.model.set", payloadVersion: 1,
+      arguments: { workspaceId: "workspace-1", sessionId: "session-1", expectedRevision: 2, preference: { mode: "auto", model: null } },
+    } as const
+    assert.equal(desktopRemoteOperationRequestSchema.safeParse(modelSetRequest).success, true)
+    assert.equal(createDesktopRemoteOperationRequestSchema(advertised).safeParse(modelSetRequest).success, true)
+    assert.equal(createDesktopRemoteOperationRequestSchema({ ...advertised, features: advertised.features.filter((feature) => feature !== "session.model-selection") }).safeParse(modelSetRequest).success, false)
+    for (const payloadVersion of [1, 2] as const) {
+      const request = { operation: "session.prompt", payloadVersion, arguments: {
+        workspaceId: "workspace-1", sessionId: "session-1",
+        ...(payloadVersion === 1 ? { prompt: "hello" } : { parts: [{ type: "text", text: "hello" }] }),
+        model: { providerID: "provider-1", modelID: "model-1" },
+      } }
+      assert.equal(createDesktopRemoteOperationRequestSchema(advertised).safeParse(request).success, true)
+      assert.equal(createDesktopRemoteOperationRequestSchema({ ...advertised, features: [] }).safeParse(request).success, false)
+      assert.equal(desktopRemoteOperationRequestSchema.safeParse({ ...request, arguments: { ...request.arguments, model: { providerID: "provider-1" } } }).success, false)
+    }
     assert.deepEqual(
       advertised.operations.find(({ operation }) => operation === "session.snapshot")?.payloadVersions,
       [1, 2],

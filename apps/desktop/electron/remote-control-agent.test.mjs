@@ -1595,6 +1595,7 @@ describe("remote-control agent command handling", () => {
           calls.push({ pathname, body });
           return { item: { id: "ses_created", directory: "/tmp/ws_1" }, started: false };
         },
+        putJson: async () => ({}),
       },
       coordinator: { recordServerRun: () => true, activeRuns: () => [] },
     });
@@ -1900,6 +1901,48 @@ describe("remote-control agent command handling", () => {
     assert.equal(fixture.agent.status().activeControlSessionCount, 0);
   });
 
+  it("reports a model revision conflict as retryable rejected", async () => {
+    const capabilities = /** @type {typeof readCapabilities} */ ({
+      schemaVersion: 1,
+      operations: [{ operation: "session.model.set", payloadVersions: [1] }],
+      features: ["session.model-selection"],
+    });
+    const fixture = harness({
+      capabilities,
+      dispatch: async () => ({
+        ok: false,
+        error: {
+          schemaVersion: 1,
+          code: "revision_conflict",
+          message: "The session model preference changed; refresh and retry.",
+          retryable: true,
+          correlationId: COMMAND_ID,
+        },
+      }),
+    });
+    const socket = await connect(fixture);
+    socket.receive(welcome(77));
+    await settle();
+    socket.receive(delivery({
+      idempotencyKey: "22222222-2222-4222-8222-222222222222",
+      request: {
+        operation: "session.model.set",
+        payloadVersion: 1,
+        arguments: {
+          workspaceId: "ws_1",
+          sessionId: "ses_1",
+          expectedRevision: 1,
+          preference: { mode: "auto", model: null },
+        },
+      },
+    }));
+    await settle();
+    const terminal = frames(socket, "command.lifecycle").at(-1).payload;
+    assert.equal(terminal.status, "rejected");
+    assert.equal(terminal.error.code, "revision_conflict");
+    assert.equal(terminal.error.retryable, true);
+  });
+
   it("awaits asynchronous session readiness and fails closed without dispatch when it times out", async () => {
     let releaseBinding = () => {};
     const bindingGate = new Promise((resolve) => { releaseBinding = () => resolve(false); });
@@ -2048,6 +2091,7 @@ describe("remote-control agent command handling", () => {
           await gate;
           return { item: { id: "ses_created", directory: "/tmp/ws_1" }, started: false };
         },
+        putJson: async () => ({}),
       },
       coordinator: { recordServerRun: () => true, activeRuns: () => [] },
     });

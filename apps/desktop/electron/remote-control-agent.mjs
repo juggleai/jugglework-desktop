@@ -52,6 +52,7 @@ const OPERATION_NAMES = new Set([
   "session.snapshot",
   "session.create",
   "session.prompt",
+  "session.model.set",
   "session.abort",
   "session.pending.cancel",
   "interaction.permission.reply",
@@ -60,6 +61,7 @@ const OPERATION_NAMES = new Set([
 const MUTATION_OPERATIONS = new Set([
   "session.create",
   "session.prompt",
+  "session.model.set",
   "session.abort",
   "session.pending.cancel",
   "interaction.permission.reply",
@@ -107,6 +109,7 @@ const ERROR_MESSAGES = Object.freeze({
   session_not_found: "The session was not found.",
   session_busy: "The session is busy.",
   run_mismatch: "The active run does not match the requested run.",
+  revision_conflict: "The session model preference changed; refresh and retry.",
   interaction_not_found: "The interaction was not found.",
   interaction_expired: "The interaction expired.",
   already_resolved: "The interaction was already resolved.",
@@ -450,9 +453,8 @@ function validRequest(value) {
     case "session.list": return hasExactKeys(args, ["workspaceId"]) && isIdentifier(args.workspaceId);
     case "session.snapshot": return hasExactKeys(args, ["workspaceId", "sessionId"]) && isIdentifier(args.workspaceId) && isIdentifier(args.sessionId);
     case "session.create": return hasExactKeys(args, ["workspaceId", "title"]) && isIdentifier(args.workspaceId) && isSessionCreateTitle(args.title);
-    case "session.prompt": return (hasExactKeys(args, ["workspaceId", "sessionId", "prompt"]) || hasExactKeys(args, ["workspaceId", "sessionId", "prompt", "whenBusy"])) &&
-      isIdentifier(args.workspaceId) && isIdentifier(args.sessionId) && typeof args.prompt === "string" && args.prompt.trim().length >= 1 && Buffer.byteLength(args.prompt, "utf8") <= 200_000 &&
-      (!Object.hasOwn(args, "whenBusy") || ["reject", "steer", "enqueue"].includes(args.whenBusy));
+    case "session.prompt": return desktopRemoteOperationRequestSchema.safeParse(value).success;
+    case "session.model.set": return desktopRemoteOperationRequestSchema.safeParse(value).success;
     case "session.abort": return hasExactKeys(args, ["workspaceId", "sessionId", "expectedRunId"]) && isIdentifier(args.workspaceId) &&
       isIdentifier(args.sessionId) && isIdentifier(args.expectedRunId);
     case "session.pending.cancel": return hasExactKeys(args, ["workspaceId", "sessionId", "pendingOperationId"]) &&
@@ -1695,7 +1697,7 @@ export function createRemoteControlAgent(options) {
         terminal = { status: "succeeded", occurredAt: timestamp().toISOString(), result: fullResult, error: null };
       } else {
         terminal = {
-          status: "failed",
+          status: dispatched.error?.code === "revision_conflict" ? "rejected" : "failed",
           occurredAt: timestamp().toISOString(),
           result: null,
           error: safeDispatchError(dispatched.error, command.commandId),

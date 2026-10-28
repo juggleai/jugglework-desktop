@@ -54,15 +54,16 @@ function observationStatus(type, data) {
  *   onNotificationEvent?: (event: unknown) => void,
  *   onStop?: () => void,
  *   interactions?: { resolveOwnership(input: { workspaceId: string, targetSessionId: string }): Promise<unknown> } | null,
+ *   listSessionModelEvents?: (input: { workspaceId: string, since: number, signal: AbortSignal }) => Promise<unknown>,
  * }} options
  */
-export function createRemoteSessionEventBridge({ sseClient, coordinator, listActiveRuns, observeRun, publish, publishActivityTaskStatus = null, randomUUID, now, timers, logger = {}, coalesceMs = 25, subscriptionReadinessTimeoutMs = 3_000, subscriptionRetryDelaysMs = [1_000, 2_000, 5_000, 10_000, 30_000], onNotificationEvent = null, onStop = null, interactions = null }) {
+export function createRemoteSessionEventBridge({ sseClient, coordinator, listActiveRuns, observeRun, publish, publishActivityTaskStatus = null, randomUUID, now, timers, logger = {}, coalesceMs = 25, subscriptionReadinessTimeoutMs = 3_000, subscriptionRetryDelaysMs = [1_000, 2_000, 5_000, 10_000, 30_000], onNotificationEvent = null, onStop = null, interactions = null, listSessionModelEvents = null }) {
   if (!sseClient || typeof sseClient.subscribe !== "function" || !coordinator ||
       typeof coordinator.getActiveRunId !== "function" || typeof coordinator.recordServerRun !== "function" ||
       typeof coordinator.clearTerminalRun !== "function" || typeof listActiveRuns !== "function" || typeof observeRun !== "function" ||
        typeof publish !== "function" || !(publishActivityTaskStatus === null || typeof publishActivityTaskStatus === "function") || !(onNotificationEvent === null || typeof onNotificationEvent === "function") ||
        !(onStop === null || typeof onStop === "function") ||
-       !(interactions === null || typeof interactions?.resolveOwnership === "function") ||
+        !(interactions === null || typeof interactions?.resolveOwnership === "function") || !(listSessionModelEvents === null || typeof listSessionModelEvents === "function") ||
        !Number.isSafeInteger(subscriptionReadinessTimeoutMs) || subscriptionReadinessTimeoutMs < 1 || subscriptionReadinessTimeoutMs > 10_000 ||
        !Array.isArray(subscriptionRetryDelaysMs) || subscriptionRetryDelaysMs.length === 0 ||
        subscriptionRetryDelaysMs.some((delay) => !Number.isSafeInteger(delay) || delay < 1 || delay > 60_000)) {
@@ -84,6 +85,7 @@ export function createRemoteSessionEventBridge({ sseClient, coordinator, listAct
   const projectedCounts = new Map();
   const watchedWorkspaces = new Map();
   const sessionTitles = new Map();
+  const modelEventCursors = new Map();
 
   /** @param {number} attempt */
   function retryDelay(attempt) {
@@ -409,6 +411,26 @@ export function createRemoteSessionEventBridge({ sseClient, coordinator, listAct
         subscriptions.delete(workspaceId);
       }
     })();
+    if (listSessionModelEvents) void (async () => {
+      while (current() && workspaceNeeded(workspaceId)) {
+        try {
+          const response = await listSessionModelEvents({ workspaceId, since: modelEventCursors.get(workspaceId) ?? 0, signal: controller.signal });
+          if (current() && isRecord(response) && Array.isArray(response.items)) {
+            const hasEstablishedBinding = [...bindings.values()].some((binding) => binding.workspaceId === workspaceId);
+            const hasPendingBinding = [...pendingBindings.values()].some((pending) => pending.binding.workspaceId === workspaceId);
+            for (const item of response.items) {
+              if (!isRecord(item)) continue;
+              projector.accept(workspaceId, { type: "session.model.updated", data: {
+                sessionId: item.sessionId,
+                preference: { revision: item.revision, mode: item.mode, model: item.model, updatedAt: item.updatedAt },
+              } });
+            }
+            if ((hasEstablishedBinding || !hasPendingBinding) && Number.isSafeInteger(response.cursor)) modelEventCursors.set(workspaceId, response.cursor);
+          }
+        } catch {}
+        await wait(1_000, controller.signal);
+      }
+    })();
     return subscription;
   }
 
@@ -538,6 +560,7 @@ export function createRemoteSessionEventBridge({ sseClient, coordinator, listAct
       subscription.controller.abort();
     }
     subscriptions.clear();
+    modelEventCursors.clear();
     observationChains.clear();
     bindings.clear();
     projectedCounts.clear();
@@ -575,6 +598,7 @@ export function createRemoteSessionEventBridge({ sseClient, coordinator, listAct
         settleWaiters(subscription, false);
         subscription.controller.abort();
         subscriptions.delete(workspaceId);
+        modelEventCursors.delete(workspaceId);
       }
     }
     return true;

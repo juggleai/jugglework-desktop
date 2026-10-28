@@ -4,7 +4,8 @@ import type { Client, ModelRef, ProviderListItem } from "../../app/types";
 import { unwrap } from "../../app/lib/opencode";
 import { dispatchNewProviders } from "../../app/lib/provider-events";
 import type { ProviderListResponse } from "@opencode-ai/sdk/v2/client";
-import { parseNormalizedModelCapabilities } from "@jugglework/types/media-generation";
+import { isChatSelectableProviderModel } from "@jugglework/types/media-generation";
+export { isChatSelectableProviderModel } from "@jugglework/types/media-generation";
 
 export const PROVIDER_LIST_CACHE_MS = 5 * 60 * 1000;
 const PROVIDER_LIST_QUERY_ROOT = ["opencode-provider-list"] as const;
@@ -102,23 +103,6 @@ export function isModelAvailableInConnectedProviders(
       Boolean(provider.models?.[model.modelID]) &&
       isChatSelectableProviderModel(provider.models?.[model.modelID]),
   );
-}
-
-export function isChatSelectableProviderModel(model: unknown): boolean {
-  if (model && typeof model === "object" && "capabilities" in model) {
-    const capabilities = (model as { capabilities?: unknown }).capabilities;
-    if (capabilities && typeof capabilities === "object" && "output" in capabilities) {
-      const output = (capabilities as { output?: unknown }).output;
-      if (output && typeof output === "object" && !Array.isArray(output)) {
-        const normalized = output as Record<string, unknown>;
-        if (normalized.video === true && normalized.text !== true) return false;
-        if (normalized.image === true && normalized.text !== true) return false;
-      }
-    }
-  }
-  const capabilities = parseNormalizedModelCapabilities(model);
-  const output = capabilities?.modalities?.output ?? [];
-  return !((output.includes("video") || output.includes("image")) && !output.includes("text"));
 }
 
 export function getChatSelectableModelEntries<T>(

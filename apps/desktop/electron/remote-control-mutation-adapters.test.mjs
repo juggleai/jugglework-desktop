@@ -60,6 +60,27 @@ function fakeManagedClient({ postResult, getStatus = 404, sessionDirectory = WOR
       }
       return postResult;
     },
+    async putJson(pathname, body, options) {
+      calls.push({ method: "PUT", pathname, body, options });
+      if (getStatus !== 200 && getStatus !== 204) {
+        const error = new Error("http error");
+        error.name = "ManagedRuntimeClientError";
+        /** @type {any} */ (error).code = "http_error";
+        /** @type {any} */ (error).status = getStatus;
+        throw error;
+      }
+      if (pathname.endsWith("/model-preference")) {
+        return postResult ?? { item: {
+          workspaceId: WORKSPACE_ID,
+          sessionId: SESSION_ID,
+          revision: body.expectedRevision + 1,
+          mode: body.mode,
+          model: body.model,
+          updatedAt: 1003,
+        } };
+      }
+      return postResult;
+    },
   };
 }
 
@@ -268,6 +289,34 @@ test("session.prompt v2 preserves ordered safe parts through the managed runtime
     workspaceId: WORKSPACE_ID, sessionId: SESSION_ID,
     parts: [{ type: "file", mime: "image/png", filename: "bad.png", url: "https://example.com/bad.png" }],
   }, 2));
+});
+
+test("session.prompt forwards an explicit model for both payload versions", async () => {
+  for (const payloadVersion of [1, 2]) {
+    const { registrations, client } = harness();
+    const prompt = registrations.find((r) => r.operation === "session.prompt");
+    const model = { providerID: "connected", modelID: "chat" };
+    const args = prompt.validateArguments({ workspaceId: WORKSPACE_ID, sessionId: SESSION_ID, ...(payloadVersion === 1 ? { prompt: "hello" } : { parts: [{ type: "text", text: "hello" }] }), model }, payloadVersion);
+    assert.equal(args.whenBusy, "reject");
+    await prompt.execute({ arguments: args, payloadVersion, correlationId: "cmd-model" });
+    const posted = client.calls.find((call) => call.method === "POST").body;
+    assert.equal(posted.whenBusy, "reject");
+    assert.deepEqual(posted.prompt.model, model);
+    assert.throws(() => prompt.validateArguments({ ...args, model: { providerID: "connected" } }, payloadVersion));
+  }
+});
+
+test("session.model.set uses PUT with cancellation and normalizes the authoritative preference", async () => {
+  const { registrations, client } = harness();
+  const setModel = registrations.find((r) => r.operation === "session.model.set");
+  const model = { providerID: "connected", modelID: "chat" };
+  const args = setModel.validateArguments({ workspaceId: WORKSPACE_ID, sessionId: SESSION_ID, expectedRevision: 3, preference: { mode: "explicit", model } }, 1);
+  const controller = new AbortController();
+  assert.deepEqual(await setModel.execute({ arguments: args, signal: controller.signal }), { revision: 4, mode: "explicit", model, updatedAt: 1003 });
+  const call = client.calls.find((candidate) => candidate.pathname.endsWith("/model-preference"));
+  assert.equal(call.method, "PUT");
+  assert.equal(call.options.signal, controller.signal);
+  assert.deepEqual(call.body, { expectedRevision: 3, mode: "explicit", model });
 });
 
 for (const [name, postResult, expected] of [
