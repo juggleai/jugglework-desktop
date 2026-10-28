@@ -58,6 +58,7 @@ export default {
   "artifact.file_missing": "文件已不存在",
   "artifact.view_all": "查看所有产物（{count}）",
   "artifact.turn_files": "本轮产物",
+  "composer.queued_send_failed": "排队消息未能提交。请点击引导重试，或编辑后重新发送。",
   "artifact.summary_count": "本轮产物 · {count} 个文件",
   "artifact.view_all_short": "查看全部",
   "artifact.show_more": "再显示 {count} 个文件",

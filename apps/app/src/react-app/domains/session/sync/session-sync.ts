@@ -58,6 +58,7 @@ type SyncOptions = {
   onSessionUpdated?: (update: { sessionId: string; info: Record<string, unknown> }) => void;
   onSessionDeleted?: (sessionId: string) => void;
   onSessionStatus?: (update: { sessionId: string; status: SessionStatus }) => void;
+  onReconnect?: () => void;
 };
 
 export async function reconcileWorkspaceInteractionRoots(
@@ -96,6 +97,7 @@ type SyncEntry = {
   sessionUpdatedListeners: Set<NonNullable<SyncOptions["onSessionUpdated"]>>;
   sessionDeletedListeners: Set<NonNullable<SyncOptions["onSessionDeleted"]>>;
   sessionStatusListeners: Set<NonNullable<SyncOptions["onSessionStatus"]>>;
+  reconnectListeners: Set<() => void>;
   pendingDeltas: Map<string, { messageId: string; reasoning: boolean; text: string }>;
   // OpenCode's synthetic automatic-compaction continuation messages are
   // engine control flow, not user turns. Tombstone their ids per session
@@ -226,7 +228,12 @@ const retainedSessionTtlMs = 10 * 60_000;
 const idleRetainedSessionTtlMs = 10_000;
 const continuationSuppressionCapacityPerSession = 256;
 const liveTodoRevision = new Map<string, number>();
+// Session snapshots retain the previous turn's todos until the agent writes
+// a new plan. A reset must reject those snapshots even when requested AFTER
+// the reset; a request revision alone cannot identify the owning turn.
+const resetTodoSessions = new Set<string>();
 const liveSessionRevision = new Map<string, number>();
+const liveSessionTitles = new Map<string, { revision: number; title: string }>();
 // 历史删除或回退前发出的请求不能再补历史，避免补缺时复活已删除消息。
 const sessionHistoryRevision = new Map<string, number>();
 const snapshotSessionRevisions = new WeakMap<JuggleWorkSessionSnapshot, number>();
@@ -318,6 +325,10 @@ export function captureTodoSnapshotRevision(): number {
   return todoRevision;
 }
 
+export function captureSessionTitleRevision(): number {
+  return sessionRevision;
+}
+
 /** 读取单会话快照请求开始时的实时版本；其他会话的事件不会使该请求失效。 */
 export function captureSessionSnapshotRevision(workspaceId: string, sessionId: string): number {
   const key = todoRevisionKey(workspaceId, sessionId);
@@ -328,6 +339,16 @@ export function captureSessionSnapshotRevision(workspaceId: string, sessionId: s
 /** 将请求前版本绑定到快照对象，缓存重放仍遵守同一实时版本边界。 */
 export function recordSessionSnapshotRevision(snapshot: JuggleWorkSessionSnapshot, revision: number) {
   snapshotSessionRevisions.set(snapshot, Math.min(snapshotSessionRevisions.get(snapshot) ?? revision, revision));
+}
+
+/** Rebase only metadata: an in-flight snapshot must not undo a live rename. */
+export function reconcileSessionSnapshotTitle(workspaceId: string, snapshot: JuggleWorkSessionSnapshot, revision: number, titleRevision: number) {
+  const live = liveSessionTitles.get(todoRevisionKey(workspaceId, snapshot.session.id));
+  const next = live && live.revision > titleRevision
+    ? { ...snapshot, session: { ...snapshot.session, title: live.title } }
+    : snapshot;
+  recordSessionSnapshotRevision(next, revision);
+  return next;
 }
 
 /** 判断快照是否仍覆盖当前实时版本；失效快照只补缺失历史，状态需重新读取。 */
@@ -348,6 +369,7 @@ function inheritSessionSnapshotRevision(workspaceId: string, current: JuggleWork
  * snapshot from restoring the cleared progress.
  */
 export function clearSessionTodos(workspaceId: string, sessionId: string) {
+  resetTodoSessions.add(todoRevisionKey(workspaceId, sessionId));
   liveTodoRevision.set(todoRevisionKey(workspaceId, sessionId), ++todoRevision);
   getReactQueryClient().setQueryData(todoKey(workspaceId, sessionId), []);
 }
@@ -523,14 +545,19 @@ function latestActiveSnapshotRetry(snapshot: JuggleWorkSessionSnapshot) {
   const lastUserIndex = snapshot.messages.findLastIndex((message) => message.info.role === "user");
   for (let messageIndex = snapshot.messages.length - 1; messageIndex > lastUserIndex; messageIndex -= 1) {
     const message = snapshot.messages[messageIndex];
-    const retry = message?.parts.findLast((part) => part.type === "retry");
-    if (!retry || retry.type !== "retry") continue;
-    return {
-      attempt: retry.attempt,
-      message: retryMessage(retry.error),
-      next: null,
-      observedAt: retry.time.created,
-    };
+    // Retry parts remain in history after recovery. Only restore a retry when
+    // no subsequent assistant/tool progress supersedes it.
+    if (message?.info.role !== "assistant") continue;
+    for (const part of [...message.parts].reverse()) {
+      if (partMarksMeaningfulProgress(part)) return null;
+      if (part.type !== "retry") continue;
+      return {
+        attempt: part.attempt,
+        message: retryMessage(part.error),
+        next: null,
+        observedAt: part.time.created,
+      };
+    }
   }
   return null;
 }
@@ -547,6 +574,7 @@ function clearTrackedSession(input: SyncOptions, entry: SyncEntry, sessionId: st
   if (!isTrackedByAnotherSync(input, entry, sessionId)) {
     queryClient.removeQueries({ queryKey: todoKey(input.workspaceId, sessionId), exact: true });
     liveTodoRevision.delete(todoRevisionKey(input.workspaceId, sessionId));
+    resetTodoSessions.delete(todoRevisionKey(input.workspaceId, sessionId));
   }
   if (entry.refs <= 0 && entry.retainedSessionTimers.size === 0) {
     disposeWorkspaceSync(syncKey(input), entry);
@@ -1090,9 +1118,17 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
   if (event.type === "session.updated") {
     const update = getSessionUpdatedInfo(event);
     if (!update) return;
+    if (typeof update.info.title === "string") {
+      const revision = ++sessionRevision;
+      liveSessionTitles.set(todoRevisionKey(workspaceId, update.sessionId), { revision, title: update.info.title });
+    }
     const cachedSnapshot = queryClient.getQueryData<JuggleWorkSessionSnapshot>(snapshotKey(workspaceId, update.sessionId));
     const nextRevert = (update.info as { revert?: JuggleWorkSessionSnapshot["session"]["revert"] }).revert;
-    if (cachedSnapshot?.session.revert?.messageID !== nextRevert?.messageID) {
+    // Full Session.Info events omit optional fields after they are cleared;
+    // title-only metadata notifications must leave those fields untouched.
+    const hasRevert = Object.prototype.hasOwnProperty.call(update.info, "revert") ||
+      (typeof update.info.directory === "string" && typeof update.info.time === "object" && update.info.time !== null);
+    if (hasRevert && cachedSnapshot?.session.revert?.messageID !== nextRevert?.messageID) {
       const key = todoRevisionKey(workspaceId, update.sessionId);
       liveSessionRevision.set(key, ++sessionRevision);
       sessionHistoryRevision.set(key, sessionRevision);
@@ -1103,7 +1139,6 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
         parentID: typeof update.info.parentID === "string" ? update.info.parentID : undefined,
       } as Session]);
     }
-    if (!isTrackedSession(entry, update.sessionId)) return;
     // Keep the cached snapshot's revert cursor in sync with the server. The
     // renderer derives the visible transcript from this cursor, so a revert
     // (or its cleanup on the next prompt) must reach the snapshot cache or
@@ -1112,8 +1147,10 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       snapshotKey(workspaceId, update.sessionId),
       (current) => {
         if (!current) return current;
-        const revert = (update.info as { revert?: JuggleWorkSessionSnapshot["session"]["revert"] }).revert;
-        return inheritSessionSnapshotRevision(workspaceId, current, { ...current, session: { ...current.session, revert } });
+        return inheritSessionSnapshotRevision(workspaceId, current, {
+          ...current,
+          session: { ...current.session, ...update.info, ...(hasRevert ? { revert: nextRevert } : {}), id: update.sessionId },
+        });
       },
     );
     for (const listener of entry.sessionUpdatedListeners) listener(update);
@@ -1128,6 +1165,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       // longer be observed by any snapshot and would only suppress a
       // legitimately reused id in a future session lifecycle.
       clearContinuationSuppression(workspaceId, sessionId);
+      liveSessionTitles.delete(todoRevisionKey(workspaceId, sessionId));
       entry.pendingCompactionModes.delete(sessionId);
       removeWorkspaceSessionAncestry(workspaceId, sessionId);
     }
@@ -1291,6 +1329,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     if (!props.sessionID || !props.todos) return;
     if (!isTrackedSession(entry, props.sessionID)) return;
     liveTodoRevision.set(todoRevisionKey(workspaceId, props.sessionID), ++todoRevision);
+    resetTodoSessions.delete(todoRevisionKey(workspaceId, props.sessionID));
     queryClient.setQueryData(todoKey(workspaceId, props.sessionID), props.todos);
     return;
   }
@@ -1766,7 +1805,6 @@ function flushDeltas(entry: SyncEntry, workspaceId: string) {
 }
 
 function startSync(input: SyncOptions) {
-  const client = createClient(input.baseUrl, undefined, { token: input.juggleworkToken, mode: "jugglework" });
   const controller = new AbortController();
   const entry = syncs.get(syncKey(input));
   let disposed = false;
@@ -1876,12 +1914,22 @@ function startSync(input: SyncOptions) {
     const connectionController = new AbortController();
     activeConnectionController = connectionController;
     try {
+      const client = createClient(input.baseUrl, undefined, { token: input.juggleworkToken, mode: "jugglework" }, {
+        // subscribe() is lazy, and the SDK can reconnect internally without
+        // returning from its iterator. Calibrate only after a real HTTP success.
+        onEventConnected: () => {
+          if (!disposed && !connectionController.signal.aborted) {
+            retryDelayMs = 1_000;
+            lastEventAt = Date.now();
+            if (hasConnected) reconcileTrackedSessions();
+            hasConnected = true;
+            // Also close the initial list/subscription establishment gap.
+            for (const listener of entry?.reconnectListeners ?? []) listener();
+            void reconcileTrackedInteractions();
+          }
+        },
+      });
       const sub = await client.event.subscribe(undefined, { signal: connectionController.signal });
-      retryDelayMs = 1_000;
-      lastEventAt = Date.now();
-      if (hasConnected) reconcileTrackedSessions();
-      hasConnected = true;
-      void reconcileTrackedInteractions();
       for await (const raw of sub.stream) {
         if (controller.signal.aborted || connectionController.signal.aborted) return;
         lastEventAt = Date.now();
@@ -1957,6 +2005,7 @@ export function ensureWorkspaceSessionSync(input: SyncOptions) {
     if (input.onSessionUpdated) existing.sessionUpdatedListeners.add(input.onSessionUpdated);
     if (input.onSessionDeleted) existing.sessionDeletedListeners.add(input.onSessionDeleted);
     if (input.onSessionStatus) existing.sessionStatusListeners.add(input.onSessionStatus);
+    if (input.onReconnect) existing.reconnectListeners.add(input.onReconnect);
     if (input.interactionClient) existing.input.interactionClient = input.interactionClient;
     existing.refs += 1;
     return () => releaseWorkspaceSessionSync(input);
@@ -1973,6 +2022,7 @@ export function ensureWorkspaceSessionSync(input: SyncOptions) {
     sessionUpdatedListeners: new Set(input.onSessionUpdated ? [input.onSessionUpdated] : []),
     sessionDeletedListeners: new Set(input.onSessionDeleted ? [input.onSessionDeleted] : []),
     sessionStatusListeners: new Set(input.onSessionStatus ? [input.onSessionStatus] : []),
+    reconnectListeners: new Set(input.onReconnect ? [input.onReconnect] : []),
     pendingDeltas: new Map(),
     suppressedCompactionContinueMessages: new Map(),
     pendingCompactionModes: new Map(),
@@ -1994,6 +2044,7 @@ function releaseWorkspaceSessionSync(input: SyncOptions) {
   if (input.onSessionUpdated) existing.sessionUpdatedListeners.delete(input.onSessionUpdated);
   if (input.onSessionDeleted) existing.sessionDeletedListeners.delete(input.onSessionDeleted);
   if (input.onSessionStatus) existing.sessionStatusListeners.delete(input.onSessionStatus);
+  if (input.onReconnect) existing.reconnectListeners.delete(input.onReconnect);
   existing.refs -= 1;
   if (existing.refs > 0) return;
   if (existing.retainedSessionTimers.size === 0) {
@@ -2057,6 +2108,8 @@ export function seedSessionState(
   const snapshotRetry = latestActiveSnapshotRetry(snapshot);
   if (snapshotRetry && snapshot.status.type !== "retry") {
     activityStore.setProviderRetry(workspaceId, snapshot.session.id, snapshotRetry);
+  } else if (!snapshotRetry && snapshot.status.type !== "retry") {
+    activityStore.clearProviderRetry(workspaceId, snapshot.session.id);
   }
   // The snapshot's revert cursor is authoritative: messages at/after it are
   // reverted server-side, so the cache must not keep them alive (a later
@@ -2073,7 +2126,7 @@ export function seedSessionState(
   queryClient.setQueryData(statusKey(workspaceId, snapshot.session.id), snapshot.status);
   const snapshotTodoRevision = options?.snapshotTodoRevision ?? todoRevision;
   const latestLiveTodoRevision = liveTodoRevision.get(todoRevisionKey(workspaceId, snapshot.session.id)) ?? 0;
-  if (!options?.skipTodos && latestLiveTodoRevision <= snapshotTodoRevision) {
+  if (!options?.skipTodos && !resetTodoSessions.has(todoRevisionKey(workspaceId, snapshot.session.id)) && latestLiveTodoRevision <= snapshotTodoRevision) {
     queryClient.setQueryData(todoKey(workspaceId, snapshot.session.id), snapshot.todos);
   }
 }
@@ -2156,9 +2209,10 @@ export function __createWorkspaceSessionSyncForTest(input: SyncOptions) {
     trackedSessionRefs: new Map(),
     retainedSessionTimers: new Map(),
     sessionCreatedListeners: new Set(input.onSessionCreated ? [input.onSessionCreated] : []),
-    sessionUpdatedListeners: new Set(),
+    sessionUpdatedListeners: new Set(input.onSessionUpdated ? [input.onSessionUpdated] : []),
     sessionDeletedListeners: new Set(input.onSessionDeleted ? [input.onSessionDeleted] : []),
     sessionStatusListeners: new Set(input.onSessionStatus ? [input.onSessionStatus] : []),
+    reconnectListeners: new Set(input.onReconnect ? [input.onReconnect] : []),
     pendingDeltas: new Map(),
     suppressedCompactionContinueMessages: new Map(),
     pendingCompactionModes: new Map(),

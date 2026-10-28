@@ -40,6 +40,8 @@ export type QueuedComposerDraft = {
   id: string;
   draft: ComposerDraft;
   enqueuedAt: number;
+  /** Failed automatic submissions require explicit retry/edit; never spin on an ambiguous send. */
+  blockedReason?: string;
   /** 宠物入口加入的普通文本；仍保存在原会话FIFO中。 */
   petWorkspaceId?: string;
   /** 后台发送失败后保留在原队列，必须由用户编辑后重试，不自动重发。 */
@@ -49,6 +51,9 @@ export type QueuedComposerDraft = {
 export type ComposerStateStore = {
   sessions: Record<string, ComposerSessionState>;
   queuedDrafts: Record<string, QueuedComposerDraft[]>;
+  queueClaims: Record<string, string>;
+  claimQueue: (sessionId: string, id: string) => boolean;
+  releaseQueue: (sessionId: string, id: string) => void;
   /**
    * Sent-prompt history per session, oldest first. Kept outside
    * `sessions` because `clearSession` resets the composer after every
@@ -151,6 +156,18 @@ function composerStateFromDraft(draft: ComposerDraft): ComposerSessionState {
 export const useComposerStateStore = create<ComposerStateStore>((set, get) => ({
   sessions: {},
   queuedDrafts: {},
+  queueClaims: {},
+  claimQueue: (sessionId, id) => {
+    if (get().queueClaims[sessionId]) return false;
+    set((state) => ({ queueClaims: { ...state.queueClaims, [sessionId]: id } }));
+    return true;
+  },
+  releaseQueue: (sessionId, id) => set((state) => {
+    if (state.queueClaims[sessionId] !== id) return state;
+    const queueClaims = { ...state.queueClaims };
+    delete queueClaims[sessionId];
+    return { queueClaims };
+  }),
   history: {},
   officeEpochs: {},
   officePendingSubmissions: {},
@@ -329,10 +346,11 @@ export const useComposerStateStore = create<ComposerStateStore>((set, get) => ({
     return edited;
   },
   clearQueuedDrafts: (sessionId) => set((state) => {
-    if (!state.queuedDrafts[sessionId]) return state;
     const queuedDrafts = { ...state.queuedDrafts };
+    const queueClaims = { ...state.queueClaims };
     delete queuedDrafts[sessionId];
-    return { queuedDrafts };
+    delete queueClaims[sessionId];
+    return { queuedDrafts, queueClaims };
   }),
   clearSession: (sessionId) => set((state) => {
     const sessions = { ...state.sessions };

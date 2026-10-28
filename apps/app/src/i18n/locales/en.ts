@@ -55,6 +55,7 @@ export default {
   "artifact.file_missing": "File no longer exists",
   "artifact.view_all": "View all files ({count})",
   "artifact.turn_files": "Files from this task",
+  "composer.queued_send_failed": "Queued message was not submitted. Retry using Steer, or edit and send again.",
   "artifact.summary_count": "Files from this task · {count}",
   "artifact.view_all_short": "View all",
   "artifact.show_more": "Show more ({count})",

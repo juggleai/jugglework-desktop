@@ -434,7 +434,6 @@ function PetWorkspaceRuntime({ workspace, endpoint, enabled, latest, entries, ch
             draft.imageGeneration ? query.fetchQuery(imageModelsQueryOptions(endpoint.client, mediaScope)) : null,
             draft.videoGeneration ? query.fetchQuery(videoModelsQueryOptions(endpoint.client, mediaScope)) : null,
           ]);
-          clearSessionTodos(endpoint.workspaceId, target.sessionId);
           return { model: choice.model, variant };
           },
         });

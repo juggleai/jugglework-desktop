@@ -106,8 +106,8 @@ import {
   captureSessionSnapshotRevision,
   isSessionSnapshotCurrent,
   captureTodoSnapshotRevision,
-  recordSessionSnapshotRevision,
-  clearSessionTodos,
+  captureSessionTitleRevision,
+  reconcileSessionSnapshotTitle,
   seedSessionState,
   snapshotKey as reactSnapshotKey,
   statusKey as reactStatusKey,
@@ -695,7 +695,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     queryFn: () => props.client.listActiveSessionRuns(props.workspaceId),
     staleTime: 250,
     refetchOnWindowFocus: true,
-    refetchInterval: (query) => query.state.data?.items.length ? 750 : false,
+    refetchInterval: (query) => query.state.data?.items.length || queuedDrafts.length ? 750 : false,
   });
   const mediaQueryScope = mediaModelQueryScope({
     endpoint: props.client.baseUrl,
@@ -817,9 +817,11 @@ export function SessionSurface(props: SessionSurfaceProps) {
     queryKey: snapshotQueryKey,
     queryFn: async () => {
       const revision = captureSessionSnapshotRevision(props.workspaceId, props.sessionId);
+      const titleRevision = captureSessionTitleRevision();
       const todoRevision = captureTodoSnapshotRevision();
-      const snapshot = (await props.client.getSessionSnapshot(props.workspaceId, props.sessionId, { limit: 140 })).item;
-      recordSessionSnapshotRevision(snapshot, revision);
+      const snapshot = reconcileSessionSnapshotTitle(props.workspaceId,
+        (await props.client.getSessionSnapshot(props.workspaceId, props.sessionId, { limit: 140 })).item,
+        revision, titleRevision);
       snapshotTodoRevisionBySnapshotRef.current.set(snapshot, todoRevision);
       return snapshot;
     },
@@ -1300,9 +1302,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
     // Progress belongs to the task that produced it. Hide stale progress as
     // soon as the next task is submitted (including a drained queued task);
     // fresh todo.updated events will populate the panel for the new run.
-    if (submission.delivery !== "steer") {
-      clearSessionTodos(workspaceId, sessionId);
-    }
     try {
       const result = await props.onSendDraft(nextDraft, sessionId, submission);
       if (result.outcome === "blocked" || result.outcome === "cancelled") return result;
@@ -1527,6 +1526,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     const originalIndex = currentQueue.findIndex((item) => item.id === id);
     if (originalIndex < 0) return;
     if (!canSteerQueuedDraft(currentQueue[originalIndex]!.draft)) return;
+    if (!useComposerStateStore.getState().claimQueue(props.sessionId, id)) return;
 
     const previouslyWaitingForIdle = queueWaitsForIdleRef.current;
     drainingQueueRef.current = true;
@@ -1537,6 +1537,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
 
     const claimed = removeQueuedDraftFromStore(props.sessionId, id);
     if (!claimed) {
+      useComposerStateStore.getState().releaseQueue(props.sessionId, id);
       drainingQueueRef.current = false;
       queueWaitsForIdleRef.current = previouslyWaitingForIdle;
       setSteeringQueuedDraftId(null);
@@ -1544,20 +1545,25 @@ export function SessionSurface(props: SessionSurfaceProps) {
     }
 
     let accepted = false;
+    const restoreSteered = () => {
+      if (useComposerStateStore.getState().queueClaims[props.sessionId] !== id) return;
+      restoreQueuedDraft(props.sessionId, { ...claimed, blockedReason: t("composer.queued_send_failed") }, originalIndex);
+    };
     try {
       const result = await sendDraft(claimed.draft, { delivery: "steer", admissionId: claimed.id });
       if (result.outcome === "blocked") {
         cloudQueueBlockedRef.current = true;
-        restoreQueuedDraft(props.sessionId, claimed, originalIndex);
+        restoreSteered();
       } else if (result.outcome === "cancelled") {
-        restoreQueuedDraft(props.sessionId, claimed, originalIndex);
+        restoreSteered();
       } else {
         accepted = true;
         claimed.draft.attachments.forEach(revokeAttachmentPreview);
       }
     } catch {
-      restoreQueuedDraft(props.sessionId, claimed, originalIndex);
+      restoreSteered();
     } finally {
+      useComposerStateStore.getState().releaseQueue(props.sessionId, id);
       drainingQueueRef.current = false;
       queueWaitsForIdleRef.current = accepted
         ? queuedRunObservedBusyRef.current
@@ -1615,8 +1621,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
     useSessionActivityStore.getState().clearError(props.workspaceId, props.sessionId);
   }, [props.sessionId, props.workspaceId]);
 
-  // A queued task starts only after the previous run has been observed busy
-  // and then reaches idle. Each idle transition claims exactly one FIFO item.
+  // Queue eligibility lives with the queued draft, not a component-local
+  // busy-to-idle latch. A remounted surface can resume after the coordinator
+  // confirms idle. Shared claims protect multiple retained surfaces.
   useEffect(() => {
     if (chatStreaming) {
       if (drainingQueueRef.current) queuedRunObservedBusyRef.current = true;
@@ -1627,35 +1634,43 @@ export function SessionSurface(props: SessionSurfaceProps) {
       queuedCount: queuedDrafts.length,
       chatStreaming,
       liveStatus: liveStatus.type,
-      waitingForIdle: queueWaitsForIdleRef.current,
+      waitingForIdle: activeRunsQuery.isSuccess && !activeRunsQuery.isFetching && coordinatorRun === null,
       draining: drainingQueueRef.current,
       blocked: cloudQueueBlockedRef.current,
     })) return;
     if (props.taskSubmissionDisabled) return;
     const target = queuedDrafts[0];
-    if (!target || target.petWorkspaceId || target.petBlockedReason || isSessionSubmissionPreparing(props.workspaceId, props.sessionId)) return;
+    if (!target || target.blockedReason || target.petWorkspaceId || target.petBlockedReason || isSessionSubmissionPreparing(props.workspaceId, props.sessionId)) return;
+    const queueStore = useComposerStateStore.getState();
+    if (!queueStore.claimQueue(props.sessionId, target.id)) return;
     drainingQueueRef.current = true;
     queueWaitsForIdleRef.current = false;
     queuedRunObservedBusyRef.current = false;
     const claimed = removeQueuedDraftFromStore(props.sessionId, target.id);
     if (!claimed) {
+      queueStore.releaseQueue(props.sessionId, target.id);
       drainingQueueRef.current = false;
       return;
     }
+    const restoreClaimed = () => {
+      if (useComposerStateStore.getState().queueClaims[props.sessionId] !== target.id) return;
+      restoreQueuedDraft(props.sessionId, { ...claimed, blockedReason: t("composer.queued_send_failed") });
+    };
     void (async () => {
       try {
         const result = await sendDraft(claimed.draft);
         if (result.outcome === "blocked") {
           cloudQueueBlockedRef.current = true;
-          restoreQueuedDraft(props.sessionId, claimed);
+          restoreClaimed();
         } else if (result.outcome === "cancelled") {
-          restoreQueuedDraft(props.sessionId, claimed);
+          restoreClaimed();
         } else {
           claimed.draft.attachments.forEach(revokeAttachmentPreview);
         }
       } catch {
-        restoreQueuedDraft(props.sessionId, claimed);
+        restoreClaimed();
       } finally {
+        queueStore.releaseQueue(props.sessionId, target.id);
         drainingQueueRef.current = false;
         // If a run was observed, wait for its next idle transition. If status
         // propagation has not arrived yet, the busy branch above will arm it.
@@ -1663,7 +1678,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         setQueueDrainVersion((version) => version + 1);
       }
     })();
-  }, [chatStreaming, cloudQueueRetryVersion, liveStatus.type, props.sessionId, props.taskSubmissionDisabled, queueDrainVersion, queuedDrafts, removeQueuedDraftFromStore, restoreQueuedDraft, sendDraft]);
+  }, [activeRunsQuery.isSuccess, activeRunsQuery.isFetching, coordinatorRun, chatStreaming, cloudQueueRetryVersion, liveStatus.type, props.sessionId, props.workspaceId, props.taskSubmissionDisabled, queueDrainVersion, queuedDrafts, removeQueuedDraftFromStore, restoreQueuedDraft, sendDraft]);
 
   useEffect(() => {
     if (props.cloudMcpSubmissionState.status !== "failed") {

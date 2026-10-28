@@ -357,7 +357,6 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     loadWorkspaceSessionsInBackground,
     rememberPendingCreatedSession,
     handleRuntimeSessionCreated,
-    handleRuntimeSessionUpdated,
     handleRuntimeSessionDeleted,
     handleRemoteWorkspaceConnectionSaved,
     runRemoteWorkspaceConnectionCheck,
@@ -2395,7 +2394,6 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         juggleworkToken={selectedWorkspaceServerToken}
         interactionClient={selectedWorkspaceEndpoint.client}
         onSessionCreated={handleRuntimeSessionCreated}
-        onSessionUpdated={handleRuntimeSessionUpdated}
         onSessionDeleted={(sessionId) => {
           setSessionAgentChoice(selectedWorkspaceId, sessionId, null);
           handleRuntimeSessionDeleted(sessionId);

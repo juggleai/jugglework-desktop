@@ -464,6 +464,29 @@ describe("session transcript sync", () => {
     expect(queryClient.getQueryData(todoKey("workspace-a", "session-a"))).toEqual([]);
   });
 
+  test("rejects previous-turn todos even from a snapshot requested after reset, then accepts the new plan", () => {
+    const input = { workspaceId: "workspace-a", baseUrl: "http://127.0.0.1:1234", juggleworkToken: "token" };
+    const cleanup = __createWorkspaceSessionSyncForTest(input);
+    const release = trackWorkspaceSessionSync(input, "session-a");
+    try {
+      clearSessionTodos("workspace-a", "session-a");
+      const snapshotTodoRevision = captureTodoSnapshotRevision();
+      const stale = snapshotWithMessages([]);
+      stale.todos = [{ id: "old", content: "previous task", status: "completed", priority: "high" }];
+      seedSessionState("workspace-a", stale, { snapshotTodoRevision });
+      expect(getReactQueryClient().getQueryData(todoKey("workspace-a", "session-a"))).toEqual([]);
+      __applySessionSyncEventForTest(input, {
+        type: "todo.updated",
+        properties: { sessionID: "session-a", todos: [{ id: "new", content: "new task", status: "in_progress", priority: "high" }] },
+      } as any);
+      seedSessionState("workspace-a", stale, { snapshotTodoRevision });
+      expect(getReactQueryClient().getQueryData(todoKey("workspace-a", "session-a"))).toMatchObject([{ id: "new" }]);
+    } finally {
+      release();
+      cleanup();
+    }
+  });
+
   test("continues accepting stream deltas for a recently unselected session", async () => {
     const syncInput = { workspaceId: "workspace-a", baseUrl: "http://127.0.0.1:1234", juggleworkToken: "token" };
     const cleanup = __createWorkspaceSessionSyncForTest(syncInput);

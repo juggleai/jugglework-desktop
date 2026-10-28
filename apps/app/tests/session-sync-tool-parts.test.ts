@@ -1526,6 +1526,28 @@ describe("tool part mapper", () => {
     }
   });
 
+  test("recovered snapshot progress supersedes historical retry parts", () => {
+    for (const separateMessage of [false, true]) {
+      const workspaceId = `recovered-${separateMessage}`;
+      const sessionId = "recovered-session";
+      const retry = { id: "retry", sessionID: sessionId, messageID: "assistant", type: "retry", attempt: 1, error: { data: { message: "Connection reset by server" } }, time: { created: 300 } };
+      const text = { id: "text", sessionID: sessionId, messageID: separateMessage ? "resumed" : "assistant", type: "text", text: "Task resumed" };
+      const store = useSessionActivityStore.getState();
+      store.setRunStatus(workspaceId, sessionId, { type: "busy" });
+      store.setProviderRetry(workspaceId, sessionId, { attempt: 1, message: "Connection reset by server" });
+      seedSessionState(workspaceId, {
+        session: { id: sessionId }, status: { type: "busy" }, todos: [],
+        messages: [
+          { info: { id: "assistant", role: "assistant", sessionID: sessionId, time: { created: 200 } }, parts: separateMessage ? [retry] : [retry, text] },
+          ...(separateMessage ? [{ info: { id: "resumed", role: "assistant", sessionID: sessionId, time: { created: 400 } }, parts: [text] }] : []),
+        ],
+      } as any);
+      expect(store.getProviderRetry(workspaceId, sessionId)).toBeNull();
+      expect(store.getStatus(workspaceId, sessionId)).not.toBe("retrying");
+      store.removeSession(workspaceId, sessionId);
+    }
+  });
+
   test("active snapshots restore retry activity without creating transcript text", () => {
     const workspaceId = "workspace-retry-snapshot";
     const sessionId = "session-retry-snapshot";
