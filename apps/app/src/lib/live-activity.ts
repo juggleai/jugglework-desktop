@@ -16,7 +16,7 @@ import {
   isWriteToolPart,
 } from "@/lib/build-in-tools"
 import { t } from "@/i18n"
-import { collectToolParts, isToolPartInFlight } from "@/lib/tool-activity"
+import { collectToolParts, getActiveToolPart } from "@/lib/tool-activity"
 
 type AnyToolPart = ToolUIPart | DynamicToolUIPart
 
@@ -99,11 +99,8 @@ export function getLiveActivityKind(
   messages: UIMessage[],
   context: LiveActivityContext = {},
 ): LiveActivityKind {
-  const toolParts = collectToolParts(messages)
-  for (let index = toolParts.length - 1; index >= 0; index -= 1) {
-    const part = toolParts[index]
-    if (part && isToolPartInFlight(part)) return toolActivityKind(part, context)
-  }
+  const part = getActiveToolPart(collectToolParts(messages))
+  if (part) return toolActivityKind(part, context)
   if (hasStreamingReasoning(messages)) return "thinking"
   return "responding"
 }

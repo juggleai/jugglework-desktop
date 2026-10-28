@@ -21,6 +21,7 @@ import { getSessionCompactionFromMessage } from "../src/app/lib/session-compacti
 import { deriveRenderedSessionMessages } from "../src/react-app/domains/session/surface/session-render-state";
 import { groupMessages, isMessageGroup } from "../src/components/chat/utils";
 import { snapshotToUIMessages } from "../src/react-app/domains/session/sync/usechat-adapter";
+import { getLiveActivityKind } from "../src/lib/live-activity";
 
 afterEach(() => {
   getReactQueryClient().clear();
@@ -100,14 +101,24 @@ describe("tool part mapper", () => {
     expect(parseDynamicToolUIPart(writeToolPart("running", {}))).toBeNull();
   });
 
-  test("maps in-progress tools with partial input as input-streaming", () => {
-    const part = writeToolPart("running", { content: "hello" });
+  for (const status of ["pending", "running"] as const) test(`maps ${status} tools with partial input to their actual phase`, () => {
+    const part = writeToolPart(status, { content: "hello" });
     expect(parseDynamicToolUIPart(part)).toMatchObject({
       type: "dynamic-tool",
       toolName: "write",
-      state: "input-streaming",
+      state: status === "pending" ? "input-streaming" : "input-available",
       input: { content: "hello" },
     });
+  });
+
+  for (const tool of ["task", "bash"]) test(`${tool} pending and running parser states drive distinct observable actions`, () => {
+    for (const status of ["pending", "running"] as const) {
+      const part = parseDynamicToolUIPart(writeToolPart(status, { description: "work" }, { tool }))!;
+      expect(getLiveActivityKind([{ id: "a", role: "assistant", parts: [part] }])).toBe(
+        `${tool === "task" ? "subtask" : "command"}_${status === "pending" ? "preparing" : "running"}`,
+      );
+      if (status === "running") expect(part.callProviderMetadata).toMatchObject({ opencode: { toolStartedAt: 1 } });
+    }
   });
 
   test("terminalizes an in-progress tool when the authoritative snapshot is idle", () => {
@@ -276,6 +287,13 @@ describe("tool part mapper", () => {
 
       __applySessionSyncEventForTest(syncInput, {
         type: "message.part.updated",
+        properties: { part: writeToolPart("pending", { content: "hello" }) },
+      } as any);
+      transcript = getReactQueryClient().getQueryData<UIMessage[]>(transcriptKey("workspace-a", "session-a"));
+      expect(transcript?.[0]?.parts[0]).toMatchObject({ state: "input-streaming" });
+
+      __applySessionSyncEventForTest(syncInput, {
+        type: "message.part.updated",
         properties: {
           part: writeToolPart("running", { content: "hello", filePath: "src/main.ts" }),
         },
@@ -285,7 +303,7 @@ describe("tool part mapper", () => {
       expect(transcript?.[0]?.parts[0]).toMatchObject({
         type: "dynamic-tool",
         toolName: "write",
-        state: "input-streaming",
+        state: "input-available",
         input: { content: "hello", filePath: "src/main.ts" },
       });
     } finally {

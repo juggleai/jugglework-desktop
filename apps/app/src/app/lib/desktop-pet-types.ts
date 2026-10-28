@@ -9,6 +9,18 @@ export type PetTarget = {
   title: string;
 };
 
+/** PET 只传可序列化的展示字段；能力指令由宿主按当前清单生成。 */
+export type PetCapability = {
+  id: string;
+  group: "plugins" | "mcp" | "skills";
+  name: string;
+  description?: string;
+  iconSrc?: string;
+  kind: "skill" | "cloud-skill" | "extension" | "mcp" | "cloud-mcp";
+  prompt?: string;
+  disabled?: boolean;
+};
+
 export type PetTask = PetTarget & {
   turnKey: string;
   state: PetTaskState;
@@ -46,6 +58,8 @@ export type PetSnapshot = {
 /** 仅驻留主进程内存的交互状态，隐藏窗口不丢草稿，注销时清空。 */
 export type PetInteraction = {
   drafts: Record<string, string>;
+  /** 与文字共用草稿键，能力单独构成的草稿也由主进程保留。 */
+  selectedCapabilities?: Record<string, PetCapability[]>;
   targets: Record<string, PetTarget>;
   dismissed: Record<string, string>;
   /** 已打开阅读的完成轮次；新用户轮次不继承已读状态。 */
@@ -58,9 +72,10 @@ export type PetInteraction = {
 export type PetAction =
   | { type: "latest" }
   | { type: "sessions" }
+  | { type: "capabilities"; target: PetTarget; scope: "basic" | "connections" }
   | { type: "open-app" }
   | { type: "activate-app" }
-  | { type: "send"; target: PetTarget; text: string; draftKey: string }
+  | { type: "send"; target: PetTarget; text: string; draftKey: string; capabilities?: PetCapability[] }
   | { type: "confirm-send"; key: string }
   | { type: "open-target"; target: PetTarget }
   | { type: "continue" | "stop" | "open"; key: string; text?: string }
@@ -73,7 +88,10 @@ export type PetActionResult = {
   target?: PetTarget;
   /** 可发送的主会话，按最近更新时间排序，包含没有任务提醒的会话。 */
   targets?: PetTarget[];
+  capabilities?: PetCapability[];
   delivery?: "sent" | "queued";
+  /** 宿主确认发送后的任务投影，用于在下一次状态广播前立即展示。 */
+  task?: PetTask;
   /** 主进程已确认清理本次原草稿；提交后的新编辑不会被清理。 */
   draftCleared?: boolean;
   partial?: boolean;

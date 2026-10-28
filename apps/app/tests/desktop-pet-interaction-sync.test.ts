@@ -13,3 +13,11 @@ test("IME composition keeps its draft private while persisting a card dismissal 
   expect(current.drafts["workspace:task"]).toBe("ni");
   expect(interactionForBridge(current, null)).toBe(current);
 });
+
+test("IME composition still persists capability-only edits with the last committed text", () => {
+  const skill = { id: "skill:guide", group: "skills", kind: "skill", name: "Guide" } as const;
+  const current: PetInteraction = { drafts: { __quick__: "ni" }, selectedCapabilities: { __quick__: [skill] }, targets: {}, dismissed: {}, target: null };
+  const sent = interactionForBridge(current, { key: "__quick__", persistedDraft: "" });
+  expect(sent.drafts.__quick__).toBe("");
+  expect(sent.selectedCapabilities?.__quick__).toEqual([skill]);
+});

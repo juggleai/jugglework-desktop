@@ -72,7 +72,9 @@ Hovering the pet SHALL reveal the input, voice and bell controls below it. The b
 
 #### Scenario: Bell expands
 - **WHEN** the user clicks the bell
-- **THEN** one stacked reminder without an item count appears above the pet and a close-panel chevron remains available below it
+- **THEN** one to three visible reminders open directly as a full list, while four or more appear first as one stacked reminder without an item count
+- **AND** a close-panel chevron remains available below the pet
+- **AND** the chevron points upward when the task panel is above the pet and downward when it is below, updating whenever placement flips
 
 ### Requirement: Quick input targets the latest root task across all projects
 An empty quick-input draft SHALL target the accessible, non-archived root task with the greatest time.updated across all projects, using time.created as fallback and a stable identity tie break. The displayed endpoint, workspace and root session SHALL remain fixed while composing. Partial synchronization SHALL be disclosed and must not be represented as a complete global ordering. Missing or invalid targets SHALL retain text and require explicit target resolution rather than silently creating or switching tasks.
@@ -81,16 +83,22 @@ An empty quick-input draft SHALL target the accessible, non-archived root task w
 - **WHEN** a newer task appears after the user has opened quick input
 - **THEN** the existing draft remains bound to its displayed target until the user explicitly selects another conversation
 
-### Requirement: Quick input plus selects a conversation
-The plus button SHALL display accessible, non-archived root conversations across projects, including historical conversations without active or unread reminders. Choices SHALL be ordered by the same update-time and stable-identity rules as latest-target selection, show conversation title and project, and indicate the current selection. Loading, empty and partial results SHALL be disclosed. The list SHALL be independently anchored eight DIP above or below the input capsule, match its width, choose the available side and scroll within the floating window without moving the input or character. It SHALL use an opaque rounded surface, compact single-line icon/title/project rows, pill highlights and a thin scrollbar. Its native hit region SHALL include the visible menu and connecting gap. Opening or selecting SHALL NOT raise the main window.
+### Requirement: Quick input destination row selects a conversation
+The destination row SHALL open accessible, non-archived root conversations across projects, including historical conversations without active or unread reminders, without navigating to the main window. Choices SHALL retain the same update-time and stable-identity ordering as latest-target selection and be grouped by workspace ID, in order of each workspace's most recent conversation. The newest workspace SHALL expand by default; each workspace heading SHALL independently toggle its own group, allowing multiple groups to remain expanded or all groups to collapse. Workspace headings SHALL show the same open/closed folder icon as the workspace sidebar and the workspace name; expanded conversations SHALL show text titles only, with clear spacing between rows and a pill highlight for the current selection. Loading, empty and partial results SHALL be disclosed. The list SHALL be anchored eight DIP above the destination row or below the input capsule, match the capsule's width, choose the available side and scroll within the floating window without moving the input or character. Both directions SHALL leave the destination row visible and interactive. It SHALL use an opaque rounded surface and a thin scrollbar. Its native hit region SHALL include the visible menu and connecting gap. Opening or selecting SHALL NOT raise the main window.
 
-#### Scenario: Plus menu near a screen edge
-- **WHEN** the plus menu opens or its input is moved near a work-area edge
-- **THEN** it chooses the available vertical side, stays eight DIP from the input capsule and keeps equal width and aligned edges
+#### Scenario: Switching workspace groups
+- **WHEN** the user opens the destination menu and selects a different workspace heading
+- **THEN** that workspace's conversations are expanded without collapsing other open groups or changing the fixed target or current draft
+- **AND** selecting its conversation closes the menu, focuses the input and updates the explicit target
+
+#### Scenario: Destination menu near a screen edge
+- **WHEN** the destination menu opens or its input is moved near a work-area edge
+- **THEN** it chooses the available vertical side, stays eight DIP above the destination row or below the input capsule and keeps equal width and aligned edges
+- **AND** the destination row stays visible and interactive
 - **AND** the input and character retain their positions while only the list scrolls if height is limited
 
 #### Scenario: Select a conversation with an existing draft
-- **WHEN** the user selects a conversation from the plus list
+- **WHEN** the user selects a conversation from the destination list
 - **THEN** the list closes, keyboard focus returns to input and the draft is preserved
 - **AND** the placeholder remains 开始聊天 (Start chatting in English), the visible destination row updates, and subsequent send or Enter submits to that selected conversation
 - **AND** background updates do not silently replace the selected target
@@ -98,6 +106,35 @@ The plus button SHALL display accessible, non-archived root conversations across
 #### Scenario: No conversation can be selected
 - **WHEN** no eligible conversation exists
 - **THEN** the list displays an empty state and offers the existing create-task entry without automatically creating a conversation
+
+### Requirement: Accepted quick input reveals its task
+Opening quick input while the task panel is visible SHALL preserve that panel's visibility and expanded or stacked state. Input placement SHALL remain identical to input-only placement at the same viewport and content size, unaffected by task height or task-side preference. The task panel SHALL be positioned independently without overlapping input and constrain task scrolling to available space. Closing or blurring quick input SHALL preserve the previously open task panel; opening input alone SHALL NOT open a previously closed task panel.
+
+After quick input is accepted as sent or queued and its original draft is cleared, the pet SHALL replace that input with the expanded task list and reveal the destination root task first, without raising the main window. The receipt SHALL carry the host's confirmed task projection so the card can appear before the next broadcast; subsequent host snapshots SHALL take over live progress without creating duplicate or permanent placeholder tasks. A failed send, a changed draft or a different active editor SHALL NOT trigger this navigation.
+
+#### Scenario: Task broadcast follows acceptance
+- **WHEN** the quick send receipt arrives before the next task broadcast
+- **THEN** the input closes and the accepted root task is immediately visible
+- **AND** the next host snapshot updates that same card's progress rather than adding another card
+- **AND** an empty initial turn identity does not hide the revealed task; closing the task panel ends the temporary reveal ordering
+
+### Requirement: Observable execution detail and accurate tool phases
+The shared session and pet projection SHALL distinguish pending tool arguments from running execution. Delegation SHALL display starting or running subtask states rather than remaining in preparation for its entire run. Active task details SHALL use `Agent: description`, with actual agent type as a fallback; shell details SHALL prefer the actual command after existing display redaction. Active tools SHALL take precedence over stale commentary, and a root delegation SHALL NOT hide its current descendant's actual execution. Duplicate call snapshots SHALL use the latest state; completed tool snapshots SHALL NOT revive earlier in-flight states. Waiting, stopping and confirmed terminal states SHALL retain their existing priority and root-task ownership.
+
+### Requirement: Capability draft and menu lifecycle
+Selected capabilities SHALL persist alongside text and destination across pet-window destruction and reopening. Acceptance SHALL clear only an unchanged original target, text and capability identity sequence. Reopened menus SHALL reuse pending reads without discarding all results, and capability caches SHALL revalidate without blocking initial cached display. Disabled skills and unready or workspace-disabled extensions SHALL NOT pass selection or submission revalidation. Retained task lists SHALL remain scrollable to their last card after layout measurement without changing input placement.
+
+### Requirement: Quick input plus offers workspace capabilities
+The plus button SHALL display Plugins, MCP and Skills sections for the target workspace. Section headings SHALL have no leading icons; entries SHALL show an available extension icon or file-icon fallback, a name and a muted single-line truncated description, with a rounded neutral hover or selected surface. Local extensions and skills SHALL be presented before slower connection results arrive; the loading state SHALL refer to capabilities, not conversations. Unavailable entries SHALL NOT be selectable. Selecting an entry SHALL preserve the text and destination, return focus to input and show a blue-text capability item inside the input capsule using the same icon as the menu entry. Selected items SHALL have no removal cross. Backspace at the start of the text area SHALL remove the preceding item; a focused item SHALL be removable as an atomic unit with Backspace or Delete and reachable by clicking or arrow navigation. Ordinary text deletion and IME composition SHALL NOT remove unrelated items. Changing the destination SHALL clear selected capabilities. The host SHALL revalidate selected capability identities against the destination workspace inventory before sending and SHALL build the same structured ComposerDraft capability instruction as the main composer; renderer-provided instruction text SHALL NOT be trusted.
+
+#### Scenario: Capability selected without text
+- **WHEN** the user selects an available capability without typing additional text
+- **THEN** the item appears inside the input capsule and the send control becomes a blue circle with a white upward arrow
+- **AND** sending submits the selected capability as a structured draft without requiring a text part, while target-loading, pending-send, uncertain-send and voice guards remain enforced
+
+#### Scenario: Capability changes before send
+- **WHEN** a selected capability becomes unavailable before submission
+- **THEN** the host rejects the send and preserves the user's text so they can select an available capability
 
 #### Scenario: No tasks exist
 - **WHEN** no eligible root task exists
@@ -193,6 +230,11 @@ The voice icon SHALL start explicit dictation for the same pinned target. The re
 ### Requirement: Bell lists project task reminders independently from system notifications
 The bell SHALL aggregate accessible running and awaiting-continuation root tasks across projects and merge descendant activity under each root. It SHALL show task title, truthful state and project. Current-task interruption, incomplete termination, failure and deliberate stopping SHALL remain available for continuation; successfully finished work observed during the current host lifetime SHALL remain as an unread completion card with a green check and the conversation reply preview. Historical successful sessions SHALL NOT be imported wholesale. The badge SHALL count visible running, awaiting-continuation and unread completed root-task reminders, excluding dismissed or read cards. Historical failed runs SHALL not create extra cards. Unknown or disconnected sources SHALL not be treated as an empty task list. System notification read state SHALL remain unchanged.
 
+#### Scenario: A small reminder set opens directly
+- **WHEN** the user clicks the bell while one to three visible reminders exist
+- **THEN** the full task list opens immediately with its card actions available, without an intermediate stacked card
+- **AND** with four or more reminders the bell still opens the stacked card first
+
 #### Scenario: Task card is selected
 - **WHEN** the user selects an active task card
 - **THEN** the main renderer selects that root task and its existing interaction surface, then shows and focuses the main window after successful navigation
@@ -211,12 +253,12 @@ The expanded task list SHALL replace the bell with an upward collapse chevron. E
 - **THEN** the card uses the current todo or localized status instead of displaying reasoning text
 
 ### Requirement: Dismiss collapse open and stop are separate task actions
-A card's close button SHALL dismiss its current task turn, keyed by endpoint, workspace, root session and current turn identity, without changing execution, queue or pending interactions; the reminder badge SHALL reflect visible cards. Reopening the bell SHALL keep that same turn dismissed; a new user-task turn or explicit restore action in the reminder list or quick-input panel SHALL show it again. Clicking the bell SHALL first show one stacked notification without an item count, never the full list. Clicking anywhere on that stacked card SHALL expand the full list without navigating or marking a task read. The upward chevron SHALL close the entire reminder region and restore the bell from either presentation; it SHALL NOT fold the list back into a stack. Reopening the bell SHALL always start with the stack. Escape SHALL close the panel without stopping tasks. Clicking an expanded card title SHALL navigate to that root conversation. A completed card SHALL be marked read and removed only after successful navigation; opening a running or paused card SHALL leave it visible. Opening failures SHALL NOT mark a card read. Read completion turns SHALL NOT be restored by the dismissed-card restore action. New user turns SHALL not inherit old read state. The bent arrow SHALL toggle the follow-up editor, not navigate or submit an empty draft. A square stop control SHALL reuse existing scoped stop and queue cleanup semantics for the actual active root and descendant runs represented by that card.
+A card's close button SHALL dismiss its current task turn, keyed by endpoint, workspace, root session and current turn identity, without changing execution, queue or pending interactions; the reminder badge SHALL reflect visible cards. Reopening the bell SHALL keep that same turn dismissed; a new user-task turn or explicit restore action in the reminder list or quick-input panel SHALL show it again. With four or more visible reminders, clicking the bell SHALL first show one stacked notification without an item count; clicking anywhere on that stacked card SHALL expand the full list without navigating or marking a task read. With one to three visible reminders, clicking the bell SHALL directly open the full list. The upward chevron SHALL close the entire reminder region and restore the bell from either presentation; it SHALL NOT fold the list back into a stack. Escape SHALL close the panel without stopping tasks. Clicking an expanded card title SHALL navigate to that root conversation. A completed card SHALL be marked read and removed only after successful navigation; opening a running or paused card SHALL leave it visible. Opening failures SHALL NOT mark a card read. Read completion turns SHALL NOT be restored by the dismissed-card restore action. New user turns SHALL not inherit old read state. The bent arrow SHALL toggle the follow-up editor, not navigate or submit an empty draft. A square stop control SHALL reuse existing scoped stop and queue cleanup semantics for the actual active root and descendant runs represented by that card.
 
 #### Scenario: All visible cards are dismissed
 - **WHEN** the user closes every card while tasks are still active
 - **THEN** the reminder badge is hidden at zero and the panel closes automatically, leaving only input and voice controls without stopping those tasks
-- **AND** no empty-state hint is shown; the quick-input panel exposes a restore action that shows dismissed reminders again
+- **AND** no empty-state hint, dismissed-card count or restore action is shown below the task list or quick input, and no space is reserved for them
 
 #### Scenario: User stops one task
 - **WHEN** the user clicks the square stop control for a card

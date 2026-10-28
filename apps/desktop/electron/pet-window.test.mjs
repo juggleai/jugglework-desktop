@@ -173,7 +173,7 @@ test("account changes reject delayed interaction writes from the same pet window
   const f = fixture();
   try {
     await f.pet.setVisible(true);
-    const interaction = { drafts: { __quick__: "旧账号草稿" }, targets: {}, dismissed: {}, target: { key: "old:root" } };
+    const interaction = { drafts: { __quick__: "旧账号草稿" }, selectedCapabilities: { __quick__: [{ id: "skill:old", group: "skills", kind: "skill", name: "Old skill" }] }, targets: {}, dismissed: {}, target: { key: "old:root" } };
     const remember = (contextKey) => f.ipcMain.emit("jugglework:pet:remember", { sender: f.instances[0].webContents }, { contextKey, interaction });
     const publish = (contextKey) => f.ipcMain.emit("jugglework:pet:publish", { sender: f.main.webContents }, { contextKey, ready: true });
     publish("old"); remember("old");
@@ -217,11 +217,11 @@ async function submissionFixture() {
   const target = { key: "workspace:root", workspaceId: "workspace", sessionId: "root", project: "项目", title: "会话" };
   const getState = f.handlers.get("jugglework:pet:state");
   f.ipcMain.emit("jugglework:pet:publish", { sender: f.main.webContents }, { contextKey: "test", ready: true });
-  const remember = (text) => f.ipcMain.emit("jugglework:pet:remember", { sender: f.instances.at(-1).webContents }, { contextKey: "test", interaction: { drafts: { __quick__: text }, targets: {}, dismissed: {}, target } });
+  const remember = (text, capabilities = []) => f.ipcMain.emit("jugglework:pet:remember", { sender: f.instances.at(-1).webContents }, { contextKey: "test", interaction: { drafts: { __quick__: text }, selectedCapabilities: { __quick__: capabilities }, targets: {}, dismissed: {}, target } });
   remember("本次发送");
   let request;
   f.main.webContents.send = (channel, value) => { if (channel === "jugglework:pet:host-action") request = value; };
-  const send = () => f.handlers.get("jugglework:pet:action")({ sender: f.instances.at(-1).webContents }, { type: "send", draftKey: "__quick__", target, text: "本次发送" });
+  const send = (text = "本次发送", capabilities = []) => f.handlers.get("jugglework:pet:action")({ sender: f.instances.at(-1).webContents }, { type: "send", draftKey: "__quick__", target, text, capabilities });
   const reply = (value) => f.ipcMain.emit("jugglework:pet:host-reply", { sender: f.main.webContents }, { requestId: request.requestId, ...value });
   return { ...f, getState, remember, send, reply, target };
 }
@@ -249,6 +249,70 @@ test("accepted submissions preserve newer draft text instead of clearing it", as
     f.reply({ result: { delivery: "queued" } });
     assert.notEqual((await result).draftCleared, true);
     assert.equal(f.getState().interaction.drafts.__quick__, "请求期间继续编辑的文字");
+  } finally { f.cleanup(); }
+});
+
+const selectedSkill = { id: "skill:guide", group: "skills", kind: "skill", name: "Guide" };
+const selectedMcp = { id: "mcp:calendar", group: "mcp", kind: "mcp", name: "Calendar" };
+
+for (const text of ["", "本次发送"]) test(`complete capability drafts survive hide/reopen and clear on hidden acceptance (${text || "capability-only"})`, async () => {
+  const f = await submissionFixture();
+  try {
+    f.remember(text, [selectedSkill]);
+    await f.pet.setVisible(false); await f.pet.setVisible(true);
+    assert.deepEqual(f.getState().interaction.selectedCapabilities.__quick__, [selectedSkill]);
+    assert.equal(f.getState().interaction.drafts.__quick__, text);
+    assert.deepEqual(f.getState().interaction.target, f.target);
+    const result = f.send(text, [selectedSkill]);
+    await f.pet.setVisible(false);
+    f.reply({ result: { delivery: "sent" } });
+    assert.equal((await result).draftCleared, true);
+    await f.pet.setVisible(true);
+    assert.deepEqual(f.getState().interaction.selectedCapabilities.__quick__, []);
+    assert.equal(f.getState().interaction.drafts.__quick__, "");
+  } finally { f.cleanup(); }
+});
+
+for (const selection of [[], [selectedSkill, selectedMcp], [selectedMcp]]) test(`acceptance preserves changed capability selection: ${selection.map(item => item.id).join(",") || "removed"}`, async () => {
+  const f = await submissionFixture();
+  try {
+    f.remember("本次发送", [selectedSkill]);
+    const result = f.send("本次发送", [selectedSkill]);
+    f.remember("本次发送", selection);
+    await f.pet.setVisible(false);
+    f.reply({ result: { delivery: "queued" } });
+    assert.notEqual((await result).draftCleared, true);
+    await f.pet.setVisible(true);
+    assert.deepEqual(f.getState().interaction.selectedCapabilities.__quick__, selection);
+    assert.equal(f.getState().interaction.drafts.__quick__, "本次发送");
+  } finally { f.cleanup(); }
+});
+
+test("text-only acceptance preserves capabilities added during the pending send", async () => {
+  const f = await submissionFixture();
+  try {
+    const result = f.send();
+    f.remember("本次发送", [selectedSkill]);
+    f.reply({ result: { delivery: "sent" } });
+    assert.notEqual((await result).draftCleared, true);
+    assert.deepEqual(f.getState().interaction.selectedCapabilities.__quick__, [selectedSkill]);
+    assert.equal(f.getState().interaction.drafts.__quick__, "本次发送");
+  } finally { f.cleanup(); }
+});
+
+test("acceptance clears only the submitted draft key's capabilities", async () => {
+  const f = await submissionFixture();
+  try {
+    f.remember("本次发送", [selectedSkill]);
+    const current = f.getState().interaction;
+    f.ipcMain.emit("jugglework:pet:remember", { sender: f.instances.at(-1).webContents }, {
+      contextKey: "test", interaction: { ...current, drafts: { ...current.drafts, other: "other draft" }, selectedCapabilities: { ...current.selectedCapabilities, other: [selectedMcp] } },
+    });
+    const result = f.send("本次发送", [selectedSkill]);
+    f.reply({ result: { delivery: "sent" } });
+    assert.equal((await result).draftCleared, true);
+    assert.deepEqual(f.getState().interaction.selectedCapabilities, { __quick__: [], other: [selectedMcp] });
+    assert.equal(f.getState().interaction.drafts.other, "other draft");
   } finally { f.cleanup(); }
 });
 

@@ -19,6 +19,12 @@ try {
   let failNextOpen = false;
   const fixtureTarget = { key: "fixture:root", workspaceId: "fixture", sessionId: "root", project: "隔离展示测试", title: "ios-review" };
   const otherTarget = { key: "other:history", workspaceId: "other", sessionId: "history", project: "另一个项目", title: "历史会话" };
+  const capabilityTargets = [
+    { id: "extension:vision", group: "plugins", kind: "extension", name: "Vision", description: "看图" },
+    { id: "mcp:calendar", group: "mcp", kind: "mcp", name: "Calendar", description: "日历" },
+    { id: "skill:review", group: "skills", kind: "skill", name: "Review", description: "代码检查" },
+  ];
+  let releaseConnections;
   let sessionTargets = [fixtureTarget, otherTarget, ...Array.from({ length: 12 }, (_, index) => ({ ...otherTarget, key: `other:history-${index}`, sessionId: `history-${index}`, title: `历史会话 ${index + 1}` }))];
   // 演示宿主只回执展示动作，避免遗留等待中的测试IPC。
   const originalSend = main.webContents.send.bind(main.webContents);
@@ -30,7 +36,12 @@ try {
         ipcMain.emit("jugglework:pet:host-reply", { sender: main.webContents }, { requestId: payload.requestId, error: "隔离测试：打开失败" });
         return;
       }
+      if (payload.action.type === "capabilities" && payload.action.scope === "connections") {
+        releaseConnections = () => ipcMain.emit("jugglework:pet:host-reply", { sender: main.webContents }, { requestId: payload.requestId, result: { capabilities: capabilityTargets.filter((item) => item.group === "mcp") } });
+        return;
+      }
       const result = payload.action.type === "send" ? { delivery: "sent" }
+        : payload.action.type === "capabilities" ? { capabilities: payload.action.scope === "basic" ? capabilityTargets.filter((item) => item.group !== "mcp") : capabilityTargets.filter((item) => item.group === "mcp") }
         : payload.action.type === "sessions" ? { targets: sessionTargets }
         : payload.action.type === "latest" && ++latestRequests === 1 ? { target: fixtureTarget } : {};
       ipcMain.emit("jugglework:pet:host-reply", { sender: main.webContents }, { requestId: payload.requestId, result });
@@ -125,6 +136,9 @@ try {
       requestAnimationFrame(sample);
     }; sample();
   })()`);
+  const fourthTask = { ...restingState.tasks[0], key: "fixture:extra", sessionId: "extra", title: "额外任务" };
+  ipcMain.emit("jugglework:pet:publish", { sender: main.webContents }, { ...restingState, tasks: [...restingState.tasks, fourthTask] });
+  await waitFor('document.querySelector(".pet-badge")?.textContent === "4"');
   await evaluate('document.querySelectorAll(".pet-tools button")[2].click()');
   await waitFor('document.querySelector(".pet-title strong")?.textContent === "ios-review"');
   report.assertions.bellOpensStackFirst = await evaluate('document.querySelector(".pet-task-panel").dataset.folded === "true" && document.querySelectorAll(".pet-card").length === 1 && !document.querySelector(".pet-stack-count") && !document.querySelector(".pet-badge")');
@@ -132,7 +146,7 @@ try {
   await waitFor('getComputedStyle(document.querySelector(".pet-task-panel")).opacity === "1"');
   let matchingLayers = true, frontIsLargest = true;
   for (const count of [1, 2, 4]) {
-    const tasks = count === 4 ? [...restingState.tasks, { ...restingState.tasks[0], key: "fixture:extra", sessionId: "extra", title: "额外任务" }] : restingState.tasks.slice(0, count);
+    const tasks = count === 4 ? [...restingState.tasks, fourthTask] : restingState.tasks.slice(0, count);
     ipcMain.emit("jugglework:pet:publish", { sender: main.webContents }, { ...restingState, tasks });
     await waitFor(`document.querySelector(".pet-card-shell")?.dataset.stackSize === "${count}"`);
     const geometry = await evaluate('(()=>{const shell=document.querySelector(".pet-card-shell");return {layers:shell.querySelectorAll(".pet-stack-layer").length,widths:[shell.querySelector(".pet-card"),...shell.querySelectorAll(".pet-stack-layer")].map(node=>node.getBoundingClientRect().width)}})()');
@@ -147,10 +161,19 @@ try {
   await waitFor('document.querySelector(".pet-task-panel")?.dataset.visible === "false"');
   report.assertions.stackFadesOutAndImmediatelyDisablesInput = await evaluate('document.querySelector(".pet-task-panel").inert && !document.querySelector(".pet-task-panel").hasAttribute("data-pet-hit") && document.querySelector(".pet-task-panel").dataset.folded === "true" && document.querySelector(".pet-task-panel").getAnimations().some(animation => animation.transitionProperty === "opacity" && animation.effect.getTiming().duration === 180)');
   await waitFor('!document.querySelector(".pet-task-panel")');
-  await evaluate('document.querySelectorAll(".pet-tools button")[2].click()');
-  await waitFor('document.querySelector(".pet-task-panel")?.dataset.visible === "true"');
-  await evaluate('document.querySelector(".pet-card").click()');
-  await waitFor('document.querySelectorAll(".pet-card").length === 3');
+  let smallListsOpenDirectly = true;
+  for (const count of [1, 2, 3]) {
+    ipcMain.emit("jugglework:pet:publish", { sender: main.webContents }, { ...restingState, tasks: restingState.tasks.slice(0, count) });
+    await waitFor(`document.querySelector(".pet-badge")?.textContent === "${count}"`);
+    await evaluate('document.querySelectorAll(".pet-tools button")[2].click()');
+    await waitFor(`document.querySelectorAll(".pet-card").length === ${count} && document.querySelector(".pet-task-panel")?.dataset.folded === "false"`);
+    smallListsOpenDirectly &&= await evaluate('!document.querySelector(".pet-stack-layer") && Boolean(document.querySelector(".pet-close"))');
+    if (count !== 3) {
+      await evaluate('document.querySelectorAll(".pet-tools button")[2].click()');
+      await waitFor('!document.querySelector(".pet-task-panel")');
+    }
+  }
+  report.assertions.oneToThreeBellOpensFullList = smallListsOpenDirectly;
   await waitFor('document.querySelector(".pet-cards").getBoundingClientRect().height > 30');
   await new Promise((resolve) => setTimeout(resolve, 300));
   const after = pet.getBounds();
@@ -174,11 +197,15 @@ try {
   report.assertions.bellDoesNotTriggerHoverAnimation = bellFrames.every((frame) => !frame.image.includes("celebrate.png"));
   writeFileSync(join(output, "bell-frames.json"), JSON.stringify(bellFrames, null, 2));
   report.assertions.badgeReturnsOnlyWithBell = await evaluate('Boolean(document.querySelector(".lucide-bell")) && document.querySelector(".pet-badge").textContent === "3"');
+  ipcMain.emit("jugglework:pet:publish", { sender: main.webContents }, { ...restingState, tasks: [...restingState.tasks, fourthTask] });
+  await waitFor('document.querySelector(".pet-badge")?.textContent === "4"');
   await evaluate('document.querySelectorAll(".pet-tools button")[2].click()');
   await waitFor('document.querySelector(".pet-task-panel").dataset.folded === "true"');
   report.assertions.bellReopensNotificationStack = await evaluate('document.querySelectorAll(".pet-card").length === 1 && !document.querySelector(".pet-stack-count")');
   await captureReference("stack");
   await evaluate('document.querySelector(".pet-title").click()');
+  await waitFor('document.querySelectorAll(".pet-card").length === 4');
+  ipcMain.emit("jugglework:pet:publish", { sender: main.webContents }, restingState);
   await waitFor('document.querySelectorAll(".pet-card").length === 3');
   report.assertions.stackOpensFullList = true;
   // TIPS: 模拟展开点击留下的标题焦点，防止首项因 focus-within 自动露出操作按钮。
@@ -208,6 +235,7 @@ try {
   report.assertions.keyboardRevealsCardActions = await evaluate('getComputedStyle(document.querySelector(".pet-card-actions")).opacity === "1" && document.querySelector(".pet-card-actions").getBoundingClientRect().width > 32');
   await evaluate('document.querySelectorAll(".pet-card-head button")[1].click()');
   await waitFor('Boolean(document.querySelector(".pet-card textarea"))');
+  report.assertions.emptyFollowUpShowsDisabledSend = await evaluate('(()=>{const button=document.querySelector(".pet-follow .pet-send");return button.disabled && getComputedStyle(button).display === "grid" && button.getBoundingClientRect().width === 28 && getComputedStyle(button).backgroundColor === "rgb(177, 204, 251)"})()');
   report.assertions.editingDoesNotPinCardActions = await evaluate('getComputedStyle(document.querySelector(".pet-card-actions")).opacity === "0" && getComputedStyle(document.querySelector(".pet-close")).opacity === "0"');
   await new Promise((resolve) => setTimeout(resolve, 100));
   report.assertions.explicitInputFocusable = pet.isFocusable();
@@ -229,6 +257,7 @@ try {
     field.dispatchEvent(new Event('input', { bubbles: true }));
   })()`);
   await waitFor('document.querySelector(".pet-card .pet-send")?.disabled === false');
+  report.assertions.followUpEnabledSendMatchesComposer = await evaluate('(()=>{const button=document.querySelector(".pet-follow .pet-send"),style=getComputedStyle(button);return style.backgroundColor === "rgb(61, 130, 246)" && style.color === "rgb(255, 255, 255)" && button.querySelector("svg").getAttribute("stroke-width") === "1.6"})()');
   await evaluate('document.querySelector(".pet-card textarea").dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", isComposing: true, bubbles: true }))');
   report.assertions.compositionEnterDoesNotSend = !report.actions.some((action) => action.type === "send");
   await evaluate('document.querySelector(".pet-card textarea").dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }))');
@@ -276,9 +305,7 @@ try {
   await evaluate('document.querySelectorAll(".pet-tools button")[2].click()');
   report.assertions.dismissUpdatesReminderCount = await evaluate('document.querySelector(".pet-badge")?.textContent === "2"');
   await evaluate('document.querySelectorAll(".pet-tools button")[2].click()');
-  await waitFor('document.querySelector(".pet-task-panel")?.dataset.folded === "true"');
-  await evaluate('document.querySelector(".pet-title").click()');
-  await waitFor('document.querySelectorAll(".pet-card").length === 2');
+  await waitFor('document.querySelector(".pet-task-panel")?.dataset.folded === "false" && document.querySelectorAll(".pet-card").length === 2');
   report.assertions.dismissSurvivesReopen = await evaluate('![...document.querySelectorAll(".pet-title strong")].some((node) => node.textContent === "ios-review")');
   const beforeEmpty = await evaluate('window.__JUGGLEWORK_PET__.getState()');
   ipcMain.emit("jugglework:pet:publish", { sender: main.webContents }, { ...beforeEmpty, tasks: [] });
@@ -297,21 +324,17 @@ try {
   await waitFor('document.querySelectorAll(".pet-tools button").length === 3');
   report.assertions.newReminderRestoresBell = await evaluate('document.querySelector(".pet-badge").textContent === "2"');
   await evaluate('document.querySelectorAll(".pet-tools button")[2].click()');
-  await waitFor('document.querySelector(".pet-task-panel")?.dataset.folded === "true"');
-  await evaluate('document.querySelector(".pet-card").click()');
-  await waitFor('document.querySelectorAll(".pet-card").length === 2');
+  await waitFor('document.querySelector(".pet-task-panel")?.dataset.folded === "false" && document.querySelectorAll(".pet-card").length === 2');
   await evaluate('document.querySelector(".pet-close").click()');
   await waitFor('document.querySelectorAll(".pet-card").length === 1');
   report.assertions.dismissOneKeepsReminderList = await evaluate('document.querySelector(".pet-task-panel")?.dataset.visible === "true" && document.querySelectorAll(".pet-tools button").length === 3');
+  report.assertions.dismissDoesNotShowFooterHint = await evaluate('!document.querySelector(".pet-restore") && !document.querySelector(".pet-task-panel").textContent.includes("已关闭")');
   await evaluate('document.querySelector(".pet-close").click()');
   await waitFor('document.querySelectorAll(".pet-tools button").length === 2 && document.querySelector(".pet-task-panel")?.dataset.visible !== "true"');
   report.assertions.dismissLastClosesListAndArrow = await evaluate('!document.querySelector(".lucide-bell") && !document.querySelector(".lucide-chevron-up") && !document.querySelector(".pet-badge") && document.querySelectorAll(".pet-tools i").length === 1');
   await evaluate('document.querySelectorAll(".pet-tools button")[0].click()');
-  await waitFor('Boolean(document.querySelector(".pet-quick .pet-restore"))');
-  report.assertions.dismissedCardsRestoreAccessibleWithoutBell = await evaluate('document.querySelector(".pet-quick .pet-restore")?.textContent.includes("重新显示") && !document.querySelector(".pet-tools")');
-  await evaluate('document.querySelector(".pet-quick .pet-restore").click()');
-  await waitFor('document.querySelector(".pet-quick .pet-restore") === null');
-  report.assertions.dismissedCardsRestoredFromQuickInput = await evaluate('(async () => { const s = await window.__JUGGLEWORK_PET__.getState(); return Object.keys(s.interaction.dismissed).length === 0; })()');
+  await waitFor('Boolean(document.querySelector(".pet-quick textarea"))');
+  report.assertions.quickInputHasNoDismissedCardsHint = await evaluate('!document.querySelector(".pet-restore") && !document.querySelector(".pet-quick").textContent.includes("已关闭") && !document.querySelector(".pet-quick").textContent.includes("重新显示")');
   await evaluate('document.querySelector(".pet-quick textarea").dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }))');
   await waitFor('document.querySelector(".pet-tools") !== null');
   await evaluate(`window.__JUGGLEWORK_PET__.remember({...${JSON.stringify(beforeEmpty.interaction)}, dismissed: ${JSON.stringify(beforeEmpty.interaction.dismissed)}}, ${JSON.stringify(beforeEmpty.contextKey)})`);
@@ -336,8 +359,52 @@ try {
   })()`);
   await waitFor('document.querySelector(".pet-composer textarea").getBoundingClientRect().height > 24');
   await evaluate('document.querySelector(".pet-input-plus").click()');
+  await waitFor('document.querySelectorAll(".pet-capability-option").length === 2 && document.querySelector(".pet-input-options")?.textContent.includes("正在加载能力")');
+  report.assertions.localCapabilitiesAppearBeforeConnections = await evaluate('!document.querySelector(".pet-input-options")?.textContent.includes("正在加载会话") && document.querySelector(".pet-capability-option")?.textContent.includes("Vision")');
+  releaseConnections();
+  await waitFor('document.querySelectorAll(".pet-capability-option").length === 3');
+  report.assertions.plusShowsPluginMcpSkills = await evaluate('(()=>{const headings=[...document.querySelectorAll(".pet-capability-heading")].map(e=>e.textContent);return headings.join(",") === "插件,MCP,技能" && !document.querySelector(".pet-workspace-toggle")})()');
+  report.assertions.plusUsesCapabilityLoadingLabelAndNoIcons = await evaluate('!document.querySelector(".pet-capability-heading svg") && !document.querySelector(".pet-input-options")?.textContent.includes("正在加载会话")');
+  report.assertions.capabilityRowsHaveIconsAndDescription = await evaluate('[...document.querySelectorAll(".pet-capability-option")].every(row => row.querySelector(".pet-capability-icon svg, .pet-capability-icon img") && row.querySelector(".pet-capability-name") && row.querySelector("small"))');
+  await evaluate('document.querySelector(".pet-capability-option").click()');
+  await waitFor('!document.querySelector(".pet-input-options") && document.querySelector(".pet-selected-capabilities")?.textContent.includes("Vision")');
+  report.assertions.capabilityKeepsDraft = await evaluate('document.querySelector(".pet-composer textarea").value === "原目标草稿\\n第二行"');
+  report.assertions.capabilityIsInsideComposer = await evaluate('Boolean(document.querySelector(".pet-composer .pet-selected-capability"))');
+  report.assertions.capabilityUsesFileFallbackWithoutRemoveIcon = await evaluate('Boolean(document.querySelector(".pet-selected-capability .lucide-file-text")) && !document.querySelector(".pet-selected-capability .lucide-x")');
+  report.assertions.enabledSendIsBlue = await evaluate('!document.querySelector(".pet-send").disabled && getComputedStyle(document.querySelector(".pet-send")).backgroundColor === "rgb(52, 127, 245)"');
+  await evaluate('(()=>{const field=document.querySelector(".pet-composer textarea");field.focus();field.setSelectionRange(2,2);field.dispatchEvent(new KeyboardEvent("keydown",{key:"Backspace",bubbles:true}))})()');
+  report.assertions.backspaceInTextKeepsCapability = await evaluate('Boolean(document.querySelector(".pet-selected-capability"))');
+  await evaluate('(()=>{const field=document.querySelector(".pet-composer textarea");field.setSelectionRange(0,0);field.dispatchEvent(new KeyboardEvent("keydown",{key:"Backspace",isComposing:true,bubbles:true}))})()');
+  report.assertions.compositionBackspaceKeepsCapability = await evaluate('Boolean(document.querySelector(".pet-selected-capability"))');
+  await evaluate('(()=>{const field=document.querySelector(".pet-composer textarea");field.setSelectionRange(0,0);field.dispatchEvent(new KeyboardEvent("keydown",{key:"Backspace",bubbles:true}))})()');
+  await waitFor('!document.querySelector(".pet-selected-capabilities")');
+  report.assertions.backspaceAtTextStartDeletesCapabilityOnly = await evaluate('document.querySelector(".pet-composer textarea").value === "原目标草稿\\n第二行"');
+  await evaluate('document.querySelector(".pet-input-plus").click()');
+  await waitFor('document.querySelectorAll(".pet-capability-option").length === 3');
+  const listIcon = await evaluate('document.querySelector(".pet-capability-option .pet-capability-icon").innerHTML');
+  releaseConnections();
+  await evaluate('document.querySelector(".pet-capability-option").click()');
+  report.assertions.selectedIconMatchesListIcon = await evaluate(`document.querySelector(".pet-selected-capability").firstElementChild.outerHTML === ${JSON.stringify(listIcon)}`);
+  await evaluate('document.querySelector(".pet-selected-capability").click()');
+  report.assertions.clickSelectsRatherThanDeletesCapability = await evaluate('document.activeElement === document.querySelector(".pet-selected-capability")');
+  await evaluate('document.querySelector(".pet-selected-capability").dispatchEvent(new KeyboardEvent("keydown",{key:"Delete",bubbles:true}))');
+  await waitFor('!document.querySelector(".pet-selected-capability")');
+  report.assertions.deleteRemovesFocusedCapability = await evaluate('document.activeElement === document.querySelector(".pet-composer textarea")');
+  await evaluate('document.querySelector(".pet-target").click()');
+  await waitFor('document.querySelectorAll(".pet-workspace-toggle").length === 2');
+  report.assertions.plusGroupsByRecentWorkspace = await evaluate('(()=>{const groups=[...document.querySelectorAll(".pet-workspace-toggle")];return groups[0].textContent === "隔离展示测试" && groups[0].querySelector(".lucide-folder-open") && groups[0].getAttribute("aria-expanded") === "true" && groups[1].textContent === "另一个项目" && groups[1].querySelector(".lucide-folder") && groups[1].getAttribute("aria-expanded") === "false" && document.querySelectorAll(".pet-session-option").length === 1})()');
+  report.assertions.plusSessionsAreTextOnly = await evaluate('(()=>{const row=document.querySelector(".pet-session-option");return row.textContent === "ios-review" && !row.querySelector("svg, small") && row.getAttribute("aria-pressed") === "true"})()');
+  await evaluate('document.querySelectorAll(".pet-workspace-toggle")[1].click()');
   await waitFor('document.querySelectorAll(".pet-session-option").length === 14');
-  report.assertions.plusListsHistoricalConversationsAcrossProjects = await evaluate('document.querySelectorAll(".pet-session-option")[1].textContent.includes("历史会话") && document.querySelectorAll(".pet-session-option")[1].textContent.includes("另一个项目") && document.querySelector(".pet-session-option").getAttribute("aria-pressed") === "true"');
+  report.assertions.plusWorkspacesExpandIndependently = await evaluate('document.querySelectorAll(".pet-workspace-toggle[aria-expanded=true]").length === 2 && document.querySelectorAll(".pet-session-option").length === 14 && document.querySelectorAll(".pet-workspace-toggle")[1].getAttribute("aria-expanded") === "true"');
+  await evaluate('document.querySelectorAll(".pet-workspace-toggle")[1].click()');
+  await waitFor('document.querySelectorAll(".pet-session-option").length === 1');
+  await evaluate('document.querySelectorAll(".pet-workspace-toggle")[0].click()');
+  await waitFor('document.querySelectorAll(".pet-session-option").length === 0');
+  report.assertions.plusAllowsAllWorkspacesCollapsed = await evaluate('document.querySelectorAll(".pet-workspace-toggle[aria-expanded=true]").length === 0');
+  await evaluate('document.querySelectorAll(".pet-workspace-toggle")[1].click()');
+  await waitFor('document.querySelectorAll(".pet-session-option").length === 13');
+  report.assertions.plusSessionSpacing = await evaluate('(()=>{const rows=[...document.querySelectorAll(".pet-session-option")];const first=rows[0].getBoundingClientRect(),second=rows[1].getBoundingClientRect();return second.top-first.bottom >= 2 && first.height >= 32})()');
   report.assertions.conversationListScrolls = await evaluate('(()=>{const list=document.querySelector(".pet-session-list");return list.scrollHeight > list.clientHeight && getComputedStyle(list).overflowY === "auto"})()');
   await captureReference("conversation-list");
   report.assertions.optionsKeepTargetAndDraft = await evaluate('(async()=>{const s=await window.__JUGGLEWORK_PET__.getState();return s.interaction.target.sessionId === "root" && document.querySelector(".pet-composer textarea").value === "原目标草稿\\n第二行"})()');
@@ -359,9 +426,11 @@ try {
   await evaluate('document.querySelectorAll(".pet-tools button")[0].click()');
   await waitFor('Boolean(document.querySelector(".pet-composer textarea"))');
   report.assertions.inputBlurPreservesDraftAndTarget = await evaluate('(async()=>{const s=await window.__JUGGLEWORK_PET__.getState();return s.interaction.target.sessionId === "root" && document.querySelector(".pet-composer textarea").value === "原目标草稿\\n第二行"})()');
-  await evaluate('document.querySelector(".pet-input-plus").click()');
+  await evaluate('document.querySelector(".pet-target").click()');
+  await waitFor('document.querySelectorAll(".pet-workspace-toggle").length === 2 && document.querySelectorAll(".pet-session-option").length === 1');
+  await evaluate('document.querySelectorAll(".pet-workspace-toggle")[1].click()');
   await waitFor('document.querySelectorAll(".pet-session-option").length === 14');
-  await evaluate('document.querySelectorAll(".pet-session-option")[1].click()');
+  await evaluate('document.querySelectorAll(".pet-workspace-sessions")[1].querySelector(".pet-session-option").click()');
   await waitFor('!document.querySelector(".pet-input-options") && document.querySelector(".pet-composer textarea").placeholder === "开始聊天"');
   report.assertions.selectConversationPreservesDraftAndFocus = await evaluate('(async()=>{const s=await window.__JUGGLEWORK_PET__.getState(), field=document.querySelector(".pet-composer textarea");return s.interaction.target.key === "other:history" && field.value === "原目标草稿\\n第二行" && document.activeElement === field})()');
   report.assertions.selectConversationDoesNotRaiseMain = !main.isVisible();
@@ -384,10 +453,10 @@ try {
   await waitFor('[...document.querySelectorAll(".pet-retarget")].some((button) => button.textContent === "打开 JuggleWork 创建任务")');
   report.assertions.noTargetOffersCreateEntry = true;
   sessionTargets = [];
-  await evaluate('document.querySelector(".pet-input-plus").click()');
+  await evaluate('document.querySelector(".pet-target").click()');
   await waitFor('document.querySelector(".pet-input-options")?.textContent.includes("暂无可发送的会话")');
   report.assertions.emptyConversationListOffersCreateEntry = await evaluate('Boolean(document.querySelector(".pet-input-options .pet-retarget"))');
-  await evaluate('document.querySelector(".pet-input-plus").click()');
+  await evaluate('document.querySelector(".pet-target").click()');
   await evaluate('[...document.querySelectorAll(".pet-retarget")].find((button) => button.textContent === "打开 JuggleWork 创建任务").click()');
   await new Promise((resolve) => setTimeout(resolve, 100));
   report.assertions.createEntryRaisesMain = main.isVisible() && report.actions.some((action) => action.type === "open-app");
