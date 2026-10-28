@@ -108,7 +108,7 @@ export const getProviderModelIds = (provider: Pick<CloudProvider, "models">) =>
     return id ? [id] : [];
   }).sort();
 
-export const CLOUD_PROVIDER_METADATA_VERSION = 10;
+export const CLOUD_PROVIDER_METADATA_VERSION = 11;
 
 export const buildCloudImportedProvider = (
   provider: CloudProvider,
@@ -213,6 +213,20 @@ export const buildCloudProviderConfig = (
     for (const key of CLOUD_PROVIDER_MODEL_FIELDS) {
       const value = raw[key] !== undefined ? raw[key] : catalogModel?.[key];
       if (value !== undefined) next[key] = value;
+    }
+    // Only managed provider identity from the connection response installs this
+    // requirement. Never backfill affirmative billing support from the catalog
+    // or providerConfig.models (which may contain customer-authored metadata).
+    if (provider.managed === true) {
+      const billing = raw.managedMediaBilling;
+      const server = typeof billing === "object" && billing !== null && !Array.isArray(billing)
+        ? billing as Record<string, unknown> : null;
+      const supported = server?.version === 1 && server.supported === true;
+      next.managedMediaBilling = {
+        required: true, version: 1, supported,
+        ...(!supported ? { reason: typeof server?.reason === "string" && server.reason.trim()
+          ? server.reason : "managed_media_billing_unavailable" } : {}),
+      };
     }
     return [model.id, next];
   }));
