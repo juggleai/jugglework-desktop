@@ -514,7 +514,7 @@ export function unwrap<T>(result: FieldsResult<T>): NonNullable<T> {
   throw new Error(message || "Unknown error");
 }
 
-export function createClient(baseUrl: string, directory?: string, auth?: OpencodeAuth) {
+export function createClient(baseUrl: string, directory?: string, auth?: OpencodeAuth, options?: { onEventConnected?: () => void }) {
   const headers: Record<string, string> = {};
   if (!isDesktopRuntime()) {
     const authHeader = resolveAuthHeader(auth);
@@ -531,7 +531,11 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
     baseUrl,
     directory,
     headers: Object.keys(headers).length ? headers : undefined,
-    fetch: fetchImpl,
+    fetch: options?.onEventConnected ? async (input, init) => {
+      const response = await fetchImpl(input, init);
+      if (/\/event(?:\?|$)/.test(getRequestUrl(input)) && response.ok && response.body) options.onEventConnected?.();
+      return response;
+    } : fetchImpl,
   });
 
   const session = client.session as typeof client.session;

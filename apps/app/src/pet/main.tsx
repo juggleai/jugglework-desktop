@@ -18,6 +18,8 @@ const contour = hitRegions.map((rect) => `M${rect.x},${rect.y}h${rect.width}v${r
 const bridge = window.__JUGGLEWORK_PET__;
 /** 读取宠物动作资源；小跳图集修订号避免已有窗口继续复用旧图片缓存。 */
 const petImageUrl = (action: PetAnimation | "fallback") => `${import.meta.env.BASE_URL}pets/juggle/${action}.png${action === "celebrate" ? "?v=20261024" : ""}`;
+import { ImeTextarea } from "./ime-textarea";
+
 const EMPTY: PetSnapshot = { visible: false, ready: false, syncing: true, partial: false, tasks: [], locale: "zh", theme: "light", editing: false, voicePhase: "idle" };
 const EMPTY_INTERACTION: PetInteraction = { drafts: {}, targets: {}, dismissed: {}, target: null };
 
@@ -120,8 +122,9 @@ function PetApp() {
       // TIPS: 本地编辑即时写入主进程；回执快照只应用到页面，不能再回写而形成IPC循环。
       const incoming = snapshot.interaction ?? EMPTY_INTERACTION;
       const activeComposition = composing.current;
-      interactionRef.current = activeComposition && contextKey.current === snapshot.contextKey
-        ? { ...incoming, drafts: { ...incoming.drafts, [activeComposition.key]: interactionRef.current.drafts[activeComposition.key] ?? "" } }
+      const editingKey = activeComposition?.key ?? (document.activeElement?.tagName === "TEXTAREA" ? editorState.current.key : null);
+      interactionRef.current = editingKey && contextKey.current === snapshot.contextKey
+        ? { ...incoming, drafts: { ...incoming.drafts, [editingKey]: interactionRef.current.drafts[editingKey] ?? "" } }
         : incoming;
       setInteraction(interactionRef.current);
       contextKey.current = snapshot.contextKey; setState(snapshot);
@@ -238,10 +241,10 @@ function PetApp() {
     ...current, drafts: { ...current.drafts, [key]: value },
     targets: draftTarget ? { ...current.targets, [key]: draftTarget } : current.targets,
   }), composing.current?.key === key && (!draftTarget || interactionRef.current.targets[key]?.key === draftTarget.key));
-  const finishComposition = (key: string, field: HTMLTextAreaElement, draftTarget?: PetTarget) => {
+  const finishComposition = (key: string) => {
     if (composing.current?.key !== key) return;
     composing.current = null;
-    updateDraft(key, field.value, draftTarget);
+    // ImeTextarea commits the native final value after this callback.
   };
   const restorePassive = () => {
     requestAnimationFrame(() => {
@@ -485,11 +488,10 @@ function PetApp() {
             </div> : null}
           </div>
           {tasksExpanded && editor === task.key ? <div className="pet-follow">
-            <textarea aria-label={`${t("pet.follow_up")} · ${task.title}`} placeholder={t("pet.follow_up")} value={interaction.drafts[task.key] ?? ""}
-              onCompositionStart={() => { composing.current = { key: task.key, persistedDraft: interactionRef.current.drafts[task.key] ?? "" }; }} onCompositionEnd={(event) => finishComposition(task.key, event.currentTarget, task)}
-              onBlur={(event) => finishComposition(task.key, event.currentTarget, task)}
-              onChange={(event) => updateDraft(task.key, event.target.value, task)} onKeyDown={(event) => keySubmit(event, () => submitCard(task))} />
-            <button className="pet-send" aria-label={t("pet.send")} disabled={!interaction.drafts[task.key]?.trim() || busy(task.key) || uncertain(task.key) || task.state === "reconciling"} onClick={() => submitCard(task)}><ArrowUp size={18} strokeWidth={1.6} /></button>
+            <ImeTextarea key={`${state.contextKey}:${task.key}`} aria-label={`${t("pet.follow_up")} · ${task.title}`} placeholder={t("pet.follow_up")} value={interaction.drafts[task.key] ?? ""}
+              onCompositionStart={() => { composing.current = { key: task.key, persistedDraft: interactionRef.current.drafts[task.key] ?? "" }; }} onCompositionEnd={() => finishComposition(task.key)}
+              onCommit={(value) => updateDraft(task.key, value, task)} onKeyDown={(event) => keySubmit(event, () => submitCard(task))} />
+            <button className="pet-send" aria-label={t("pet.send")} disabled={!interaction.drafts[task.key]?.trim() || busy(task.key) || uncertain(task.key) || task.state === "reconciling"} onClick={() => { if (!composing.current) submitCard(task); }}><ArrowUp size={18} strokeWidth={1.6} /></button>
           </div> : null}
           </article>
         </div>)}
@@ -539,12 +541,11 @@ function PetApp() {
         <button className="pet-input-plus" aria-label={t("composer.plus_label")} title={t("composer.plus_label")} aria-expanded={inputOptions === "capabilities"} aria-controls="pet-input-options" disabled={quickKey !== "__quick__" || !target || voiceActive || busy(quickKey) || busy("__target__")} onClick={() => void toggleCapabilities()}><Plus size={18} strokeWidth={1.6} /></button>
         <div className="pet-composer-content">
         {quickKey === "__quick__" && selectedCapabilities.length ? <div className="pet-selected-capabilities">{selectedCapabilities.map((item, index) => <span className="pet-selected-capability" key={item.id} tabIndex={0} role="group" title={item.name} aria-label={`${item.name} · ${t("pet.capability_delete_hint")}`} onClick={(event) => event.currentTarget.focus()} onKeyDown={(event) => capabilityKeyDown(event, index)}><CapabilityIcon item={item} /><span>{item.name}</span></span>)}</div> : null}
-        <textarea aria-label={t("pet.input")} placeholder={quickKey === "__quick__" && selectedCapabilities.length ? "" : t("pet.placeholder")} value={quickDraft}
-          onCompositionStart={() => { composing.current = { key: quickKey, persistedDraft: interactionRef.current.drafts[quickKey] ?? "" }; }} onCompositionEnd={(event) => finishComposition(quickKey, event.currentTarget, target ?? undefined)}
-          onBlur={(event) => finishComposition(quickKey, event.currentTarget, target ?? undefined)}
-          onChange={(event) => updateDraft(quickKey, event.target.value, target ?? undefined)} onKeyDown={quickKeyDown} />
+        <ImeTextarea key={`${state.contextKey}:${quickKey}`} aria-label={t("pet.input")} placeholder={quickKey === "__quick__" && selectedCapabilities.length ? "" : t("pet.placeholder")} value={quickDraft}
+          onCompositionStart={() => { composing.current = { key: quickKey, persistedDraft: interactionRef.current.drafts[quickKey] ?? "" }; }} onCompositionEnd={() => finishComposition(quickKey)}
+          onCommit={(value) => updateDraft(quickKey, value, target ?? undefined)} onKeyDown={quickKeyDown} />
         </div>
-        <button className="pet-send" aria-label={t("pet.send")} disabled={!target || !hasQuickContent || busy("__target__") || busy(quickKey) || uncertain(quickKey) || voiceActive} onClick={submitQuick}><ArrowUp size={18} strokeWidth={1.6} /></button>
+        <button className="pet-send" aria-label={t("pet.send")} disabled={!target || !hasQuickContent || busy("__target__") || busy(quickKey) || uncertain(quickKey) || voiceActive} onClick={() => { if (!composing.current) submitQuick(); }}><ArrowUp size={18} strokeWidth={1.6} /></button>
       </div>
       {voiceActive ? <div className="pet-voice"><span>{state.voicePhase === "transcribing" ? t("pet.voice_transcribing") : t("pet.voice")}</span><button onClick={() => void run("__voice_stop__", { type: "voice-stop" })}>{t("pet.voice_stop")}</button><button onClick={() => void cancelVoice()}>{t("pet.voice_cancel")}</button></div> : null}
       {draftEntries}

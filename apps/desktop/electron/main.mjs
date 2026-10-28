@@ -1,3 +1,4 @@
+import "./socket-tos-compat.mjs";
 import { createToonFactoryRuntime } from "./toonFactoryRuntime.mjs";
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";

@@ -18,6 +18,7 @@ import { currentLocale } from "@/i18n";
 import { captureAnalyticsEvent, markTaskRunStart } from "@/app/lib/analytics";
 import { trackSessionActive, trackTaskStarted } from "@/app/lib/den-telemetry";
 import { readWorkspaceProjectDimension } from "@/react-app/shell/session-memory";
+import { clearSessionTodos } from "./session-sync";
 
 type Input = {
   draft: ComposerDraft; sessionId: string; workspaceId: string; workspaceRoot: string;
@@ -75,6 +76,11 @@ export async function submitSessionDraft(input: Input) {
         }
         // TIPS: 文件上传或环境准备期间供应商可能变化，紧邻POST再次检查，避免发送已失效的生成模型。
         if (!input.isCurrent() || !input.validateGeneration()) return false;
+        // Only reset after all gates pass, immediately before submission.
+        // Steer/compact continue the existing task and retain its plan.
+        if (submission.delivery !== "steer" && !compact) {
+          clearSessionTodos(input.endpoint?.workspaceId ?? workspaceId, sessionId);
+        }
         captureAnalyticsEvent("task_message_sent", { mode: draft.mode ?? "prompt", delivery: submission.delivery ?? "start", is_command: Boolean(draft.command), attachment_count: draft.attachments.length, text_length: text.length, workspace_type: input.workspaceType ?? "unknown", provider_id: model?.providerID ?? null, model_id: model?.modelID ?? null });
         const dimension = readWorkspaceProjectDimension(workspaceId);
         const dimensions = dimension ? [{ type: "project", label: dimension.label }] : undefined;

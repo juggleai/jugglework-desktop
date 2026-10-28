@@ -11,7 +11,10 @@ const listen = (channel, callback) => {
 contextBridge.exposeInMainWorld("__JUGGLEWORK_ELECTRON__", {
   platform: process.platform,
   invokeDesktop(command, ...args) {
-    if (command === "__setNativeTheme") return Promise.resolve();
+    // Shared UI modules synchronize main-window preferences during import.
+    // File windows own neither the application menu nor global theme; these
+    // notifications must be harmless without granting broader desktop IPC.
+    if (command === "__setNativeTheme" || command === "__setApplicationMenuVisible") return Promise.resolve();
     if (command !== "__fetch") throw new Error("文件窗口不支持此操作");
     return ipcRenderer.invoke("jugglework:desktop", command, ...args);
   },

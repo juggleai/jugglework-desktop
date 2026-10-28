@@ -34,6 +34,7 @@ import {
 } from "@/react-app/infra/workspace-server-client";
 import { serializeWorkspaceActivation } from "./workspace-activation-coordinator";
 import { createLatestSyncQueue } from "@/react-app/kernel/latest-sync-queue";
+import { ensureWorkspaceSessionSync } from "@/react-app/domains/session/sync/session-sync";
 import {
   diagnoseRemoteWorkspaceTaskLoadFailure,
   getRemoteWorkspaceConnectionKey,
@@ -65,6 +66,7 @@ import {
 import {
   legacySessionRoute,
   mergeWorkspaceRouteSession,
+  reconcileWorkspaceSessionTitles,
   preserveWorkspaceRouteSession,
   removeWorkspaceRouteSession,
   sessionIdForLegacyWorkspaceInference,
@@ -297,9 +299,11 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
         }
 
         const inFlight = backgroundSessionLoadInFlight.current.get(workspace.id);
-        if (inFlight && inFlight.endpointKey === endpointKey && Date.now() - inFlight.startedAt < 5_000) return;
+        if (!options.force && inFlight && inFlight.endpointKey === endpointKey && Date.now() - inFlight.startedAt < 5_000) return;
         const requestStartedAt = Date.now();
-        backgroundSessionLoadInFlight.current.set(workspace.id, { startedAt: requestStartedAt, endpointKey });
+        const request = { startedAt: requestStartedAt, endpointKey };
+        const startedSessions = sessionsByWorkspaceIdRef.current[workspace.id] ?? [];
+        backgroundSessionLoadInFlight.current.set(workspace.id, request);
         updateWorkspaceSessionLoadState(
           workspace.id,
           beginWorkspaceSessionLoad(workspaceSessionLoadStateByIdRef.current[workspace.id], endpointKey),
@@ -325,10 +329,15 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
               )
             : fetchedItems;
           const currentEndpointKey = createWorkspaceSessionEndpointKey(workspace, endpointForWorkspace(workspace));
-          if (currentEndpointKey !== endpointKey) return;
+          if (currentEndpointKey !== endpointKey || backgroundSessionLoadInFlight.current.get(workspace.id) !== request) return;
 
           setSessionsByWorkspaceId((current) => {
-            const nextItems = mergeFetchedSessionsWithPending(workspace.id, items, current[workspace.id] ?? []);
+            const currentItems = current[workspace.id] ?? [];
+            const nextItems = mergeFetchedSessionsWithPending(
+              workspace.id,
+              reconcileWorkspaceSessionTitles<RouteSession>(items, startedSessions, currentItems),
+              currentItems,
+            );
             const next = { ...current, [workspace.id]: nextItems };
             sessionsByWorkspaceIdRef.current = next;
             return next;
@@ -364,10 +373,11 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
             }, 3_000);
           }
         } catch (error) {
+          if (backgroundSessionLoadInFlight.current.get(workspace.id) !== request) return;
           const message = error instanceof Error ? error.message : t("app.unknown_error");
           if (attempt + 1 < MAX_ATTEMPTS && isTransientStartupError(message)) {
             const activeRequest = backgroundSessionLoadInFlight.current.get(workspace.id);
-            if (activeRequest?.startedAt === requestStartedAt && activeRequest.endpointKey === endpointKey) {
+            if (activeRequest === request) {
               backgroundSessionLoadInFlight.current.delete(workspace.id);
             }
             await new Promise((resolve) => window.setTimeout(resolve, backoffMs(attempt)));
@@ -407,7 +417,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
           setRetryingWorkspaceIds((current) => current.filter((id) => id !== workspace.id));
         } finally {
           const activeRequest = backgroundSessionLoadInFlight.current.get(workspace.id);
-          if (activeRequest?.startedAt === requestStartedAt && activeRequest.endpointKey === endpointKey) {
+          if (activeRequest === request) {
             backgroundSessionLoadInFlight.current.delete(workspace.id);
           }
         }
@@ -627,21 +637,43 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
     () => refreshRouteStateQueue.run(performRefreshRouteState),
     [performRefreshRouteState, refreshRouteStateQueue],
   );
-  const handleRuntimeSessionUpdated = useCallback((update: { sessionId: string; info: Record<string, unknown> }) => {
-    if (!selectedWorkspaceId) return;
+  const handleRuntimeSessionUpdated = useCallback((workspaceId: string, update: { sessionId: string; info: Record<string, unknown> }) => {
+    if (!workspaceId) return;
     setSessionsByWorkspaceId((current) => {
-      const list = current[selectedWorkspaceId] ?? [];
+      const list = current[workspaceId] ?? [];
       const index = list.findIndex((session) => session?.id === update.sessionId);
-      if (index < 0) return current;
+      // Full engine metadata can arrive before the initial list/created event.
+      if (index < 0 && (typeof update.info.title !== "string" || !update.info.time)) return current;
       const nextSession = { ...list[index], ...update.info, id: update.sessionId };
       if (JSON.stringify(nextSession) === JSON.stringify(list[index])) return current;
-      const nextList = [...list];
-      nextList[index] = nextSession;
-      const next = { ...current, [selectedWorkspaceId]: nextList };
+      const nextList = mergeWorkspaceRouteSession(list, nextSession as RouteSession);
+      const next = { ...current, [workspaceId]: nextList };
       sessionsByWorkspaceIdRef.current = next;
       return next;
     });
-  }, [selectedWorkspaceId]);
+  }, []);
+
+  useEffect(() => {
+    const releases = workspaces.flatMap((workspace) => {
+      const endpoint = endpointForWorkspace(workspace);
+      if (!endpoint || workspace.remoteType === "opencode") return [];
+      return [ensureWorkspaceSessionSync({
+        workspaceId: endpoint.workspaceId,
+        baseUrl: endpoint.opencodeBaseUrl,
+        juggleworkToken: endpoint.token,
+        onSessionUpdated: (update) => {
+          const directory = update.info.directory;
+          if (!endpoint.isRemote && typeof directory === "string" && workspace.path &&
+            normalizeDirectoryPath(directory) !== normalizeDirectoryPath(workspace.path)) return;
+          handleRuntimeSessionUpdated(workspace.id, update);
+        },
+        onReconnect: () => {
+          void loadWorkspaceSessionsInBackground([workspace], { force: true });
+        },
+      })];
+    });
+    return () => { for (const release of releases) release(); };
+  }, [workspaces, baseUrl, token, hostToken, endpointForWorkspace, handleRuntimeSessionUpdated, loadWorkspaceSessionsInBackground]);
   const handleRuntimeSessionCreated = useCallback((session: Session) => {
     if (!selectedWorkspaceId) return;
     rememberPendingCreatedSession(selectedWorkspaceId, session.id);
@@ -1158,7 +1190,6 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
     loadWorkspaceSessionsInBackground,
     rememberPendingCreatedSession,
     handleRuntimeSessionCreated,
-    handleRuntimeSessionUpdated,
     handleRuntimeSessionDeleted,
     handleRemoteWorkspaceConnectionSaved,
     runRemoteWorkspaceConnectionCheck,
