@@ -26,7 +26,7 @@ function fixture(loadPage = async () => {}) {
     setPosition(x, y) { this.bounds = { ...this.bounds, x, y }; }
     setAlwaysOnTop() {} showInactive() { this.shown = true; }
     setFocusable(value) { this.focusable = value; }
-    focus() {} setIgnoreMouseEvents(value) { this.passthrough = value; }
+    focus() { this.focuses = (this.focuses ?? 0) + 1; this.focused = true; } isFocused() { return this.focused === true; } setIgnoreMouseEvents(value) { this.passthrough = value; }
   }
   const main = { shows: 0, focuses: 0, show() { this.shows += 1; }, focus() { this.focuses += 1; }, isDestroyed: () => false, webContents: { send() {} } };
   const pref = join(dir, "pet.json");
@@ -120,6 +120,20 @@ test("layout accepts only current pet sender; host close preserves enabled prefe
     f.ipcMain.emit("jugglework:pet:keyboard", { sender: f.instances[1].webContents }, false);
     assert.equal(f.instances[1].focusable, false);
     assert.equal(f.pet.isKeyboardActive(), false);
+  } finally { f.cleanup(); }
+});
+
+test("editor focus handoff activates the native window once before accepting text", async () => {
+  const f = fixture();
+  try {
+    await f.pet.setVisible(true);
+    const win = f.instances[0], handoff = f.handlers.get("jugglework:pet:focus-editor");
+    await handoff({ sender: {} });
+    assert.equal(win.focusable, undefined);
+    await handoff({ sender: win.webContents });
+    await handoff({ sender: win.webContents });
+    assert.equal(win.focusable, true);
+    assert.equal(win.focuses, 1);
   } finally { f.cleanup(); }
 });
 

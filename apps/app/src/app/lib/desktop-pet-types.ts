@@ -114,6 +114,8 @@ export type PetWindowBridge = {
   action(action: PetAction): Promise<PetActionResult>;
   layout(layout: PetLayout): void;
   keyboard(active: boolean): void;
+  /** 原生窗口可接收键盘输入后再聚焦新挂载的编辑框。 */
+  focusEditor(): Promise<void>;
   drag(active: boolean): void;
   /** 保存当前账号上下文的交互状态，拒绝账号切换前的延迟写入。 */
   remember(value: PetInteraction, contextKey: string | undefined): void;

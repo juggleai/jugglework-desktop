@@ -6,6 +6,7 @@ import { setLocale, t } from "@/i18n";
 import { createPetAnimator, selectPetBaseAction, PET_FRAME_DURATIONS, type PetAnimation } from "./animation";
 import { PET_WIDTH, PET_HEIGHT, PET_HIT_SCALE } from "./geometry";
 import { PetComposeIcon, PetVoiceIcon } from "./icons";
+import { interactionForBridge } from "./interaction-sync";
 import { usePetPlacement } from "./use-pet-placement";
 import originalHitRegions from "./hit-regions.json";
 import "./pet.css";
@@ -24,10 +25,12 @@ function PetApp() {
   const [state, setState] = useState(EMPTY);
   const [interaction, setInteraction] = useState(EMPTY_INTERACTION);
   const interactionRef = useRef(EMPTY_INTERACTION);
-  const remember = (update: PetInteraction | ((current: PetInteraction) => PetInteraction)) => {
+  const composing = useRef<{ key: string; persistedDraft: string } | null>(null);
+  const remember = (update: PetInteraction | ((current: PetInteraction) => PetInteraction), draftOnly = false) => {
     if (state.contextKey !== contextKey.current) return;
     const value = typeof update === "function" ? update(interactionRef.current) : update;
-    interactionRef.current = value; setInteraction(value); bridge?.remember(value, state.contextKey);
+    interactionRef.current = value; setInteraction(value);
+    if (!draftOnly) bridge?.remember(interactionForBridge(value, composing.current), state.contextKey);
   };
   const [panel, setPanel] = useState<"tasks" | "input" | null>(null);
   const [taskPanelPresent, setTaskPanelPresent] = useState(false);
@@ -46,6 +49,13 @@ function PetApp() {
   const taskOrder = useRef<string[]>([]);
   const [cardHover, setCardHover] = useState(false);
   const [message, setMessage] = useState("");
+  const messageTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const updateMessage = (text: string, transient = false) => {
+    clearTimeout(messageTimer.current);
+    messageTimer.current = undefined;
+    setMessage(text);
+    if (transient && text) messageTimer.current = setTimeout(() => { setMessage(""); messageTimer.current = undefined; }, 3000);
+  };
   const [frame, setFrame] = useState<{ action: PetAnimation; index: number }>({ action: "typing", index: 0 });
   const root = useRef<HTMLDivElement>(null);
   const character = useRef<HTMLButtonElement>(null);
@@ -58,6 +68,8 @@ function PetApp() {
   const contextKey = useRef<string | undefined>(undefined);
   const initialized = useRef(false);
   const inputRequest = useRef(0);
+  const editorFocusRequest = useRef(0);
+  const editorFocusPending = useRef(false);
   const targetRequest = useRef<Promise<PetActionResult | undefined> | null>(null);
   const unreadTasks = state.tasks.filter((task) => task.state !== "completed" || interaction.read?.[task.key] !== task.turnKey);
   const visibleTasks = unreadTasks.filter((task) => interaction.dismissed[task.key] !== task.turnKey);
@@ -81,11 +93,16 @@ function PetApp() {
       if (!active) return;
       setLocale(snapshot.locale); document.documentElement.dataset.theme = snapshot.theme;
       if (initialized.current && contextKey.current !== snapshot.contextKey) {
+        composing.current = null;
         inputRequest.current++; targetRequest.current = null;
-        setPanel(null); setTaskPanelPresent(false); setEditor(null); setInputOptions(false); setSessions([]); setSessionsPartial(false); setQuickKey("__quick__"); setMessage(""); setPending({}); lastTranscript.current = 0;
+        setPanel(null); setTaskPanelPresent(false); setEditor(null); setInputOptions(false); setSessions([]); setSessionsPartial(false); setQuickKey("__quick__"); updateMessage(""); setPending({}); lastTranscript.current = 0;
       }
       // TIPS: 本地编辑即时写入主进程；回执快照只应用到页面，不能再回写而形成IPC循环。
-      interactionRef.current = snapshot.interaction ?? EMPTY_INTERACTION;
+      const incoming = snapshot.interaction ?? EMPTY_INTERACTION;
+      const activeComposition = composing.current;
+      interactionRef.current = activeComposition && contextKey.current === snapshot.contextKey
+        ? { ...incoming, drafts: { ...incoming.drafts, [activeComposition.key]: interactionRef.current.drafts[activeComposition.key] ?? "" } }
+        : incoming;
       setInteraction(interactionRef.current);
       contextKey.current = snapshot.contextKey; setState(snapshot);
     };
@@ -128,7 +145,7 @@ function PetApp() {
     const change = () => player.setReduced(query.matches);
     const sleep = () => player.setPaused(document.hidden);
     query.addEventListener("change", change); document.addEventListener("visibilitychange", sleep);
-    return () => { player.dispose(); query.removeEventListener("change", change); document.removeEventListener("visibilitychange", sleep); clearTimeout(leaveTimer.current); clearTimeout(hoverTimer.current); };
+    return () => { player.dispose(); query.removeEventListener("change", change); document.removeEventListener("visibilitychange", sleep); clearTimeout(leaveTimer.current); clearTimeout(hoverTimer.current); clearTimeout(messageTimer.current); };
   }, []);
   useEffect(() => {
     animator.current?.setBase(baseAction);
@@ -173,9 +190,16 @@ function PetApp() {
   useLayoutEffect(() => {
     // TIPS: 关闭或切换编辑入口即失效待启动的听写，延迟目标回执不能重新请求麦克风。
     if (panel !== "input" || quickKey !== "__quick__") inputRequest.current++;
-    // 输入区挂载后立即可编辑，解析发送目标的网络请求不阻塞键盘焦点。
-    if (panel === "input") root.current?.querySelector<HTMLTextAreaElement>(".pet-composer textarea")?.focus();
-    else if (editor) root.current?.querySelector<HTMLTextAreaElement>(".pet-card textarea")?.focus();
+    const request = ++editorFocusRequest.current;
+    const field = panel === "input" ? root.current?.querySelector<HTMLTextAreaElement>(".pet-composer textarea")
+      : editor ? root.current?.querySelector<HTMLTextAreaElement>(".pet-card textarea") : null;
+    editorFocusPending.current = Boolean(field && bridge);
+    if (field && bridge) {
+      // TIPS: 被动悬浮窗最初不可聚焦；先让原生窗口接收键盘，再聚焦textarea，避免IME首键落成字母。
+      void bridge.focusEditor().then(() => {
+        if (request === editorFocusRequest.current && field.isConnected && document.activeElement !== field) field.focus();
+      }).catch(() => {}).finally(() => { if (request === editorFocusRequest.current) editorFocusPending.current = false; });
+    }
   }, [panel, editor, quickKey]);
 
   useEffect(() => {
@@ -187,10 +211,15 @@ function PetApp() {
   const updateDraft = (key: string, value: string, draftTarget?: PetTarget) => remember((current) => ({
     ...current, drafts: { ...current.drafts, [key]: value },
     targets: draftTarget ? { ...current.targets, [key]: draftTarget } : current.targets,
-  }));
-  const activateEditor = () => bridge?.keyboard(true);
+  }), composing.current?.key === key && (!draftTarget || interactionRef.current.targets[key]?.key === draftTarget.key));
+  const finishComposition = (key: string, field: HTMLTextAreaElement, draftTarget?: PetTarget) => {
+    if (composing.current?.key !== key) return;
+    composing.current = null;
+    updateDraft(key, field.value, draftTarget);
+  };
   const restorePassive = () => {
     requestAnimationFrame(() => {
+      if (editorFocusPending.current) return;
       const editing = document.hasFocus() && root.current?.contains(document.activeElement);
       if (!editing) bridge?.keyboard(false);
     });
@@ -199,12 +228,12 @@ function PetApp() {
     if (!bridge || busy(key)) return;
     const requestContext = contextKey.current;
     const requestEditor = editorState.current;
-    setPending((value) => ({ ...value, [key]: true })); setMessage("");
+    setPending((value) => ({ ...value, [key]: true })); updateMessage("");
     try {
       const result = await bridge.action(action);
       if (contextKey.current !== requestContext) return;
       if (result.delivery) {
-        setMessage(result.delivery === "queued" ? t("pet.queued") : "");
+        updateMessage(result.delivery === "queued" ? t("pet.queued") : "", true);
         // TIPS: 回执只关闭原提交编辑区，不能打断用户已切换到的另一张卡片或快捷输入。
         if (result.draftCleared && editorState.current.panel === requestEditor.panel && editorState.current.key === key) {
           if (requestEditor.panel === "input") setPanel(null); else setEditor(null);
@@ -215,13 +244,13 @@ function PetApp() {
     } catch (error) {
       if (contextKey.current !== requestContext) return;
       const text = error instanceof Error ? error.message : t("pet.unavailable");
-      setMessage(text);
+      updateMessage(text, action.type === "send");
     }
     finally { if (contextKey.current === requestContext) setPending((value) => ({ ...value, [key]: false })); }
   };
   const cancelVoice = () => {
     inputRequest.current++;
-    if (targetRequest.current) setMessage("");
+    if (targetRequest.current) updateMessage("");
     // 启动请求可能仍在等待权限或连接，取消使用独立入口，不被启动中的busy保护拦截。
     if (voiceActive || busy("__voice__")) return run("__voice_cancel__", { type: "voice-cancel" });
   };
@@ -229,12 +258,12 @@ function PetApp() {
     const request = ++inputRequest.current;
     if (voiceActive || busy("__voice__")) await run("__voice_cancel__", { type: "voice-cancel" });
     if (request !== inputRequest.current) return;
-    setQuickKey("__quick__"); setPanel("input"); setEditor(null); setInputOptions(false); setTools(true); activateEditor();
+    setQuickKey("__quick__"); setPanel("input"); setEditor(null); setInputOptions(false); setTools(true);
     let destination = interaction.target;
     if (!interaction.drafts.__quick__ || !destination) {
       // TIPS: 清除上次目标后才解析新目标，允许输入但不能向旧会话提前发送。
       remember((value) => ({ ...value, target: null }));
-      setMessage(t("pet.target_loading"));
+      updateMessage(t("pet.target_loading"));
       // 取消后立即重新打开可共用尚未结束的目标读取，只有当前输入请求能消费回执。
       const loading = targetRequest.current ?? run("__target__", { type: "latest" });
       targetRequest.current = loading;
@@ -243,7 +272,7 @@ function PetApp() {
       if (!result || request !== inputRequest.current) return;
       destination = result?.target ?? null;
       remember((value) => ({ ...value, target: destination }));
-      setMessage(result.partial ? t("pet.partial") : destination ? "" : t("pet.no_target"));
+      updateMessage(result.partial ? t("pet.partial") : destination ? "" : t("pet.no_target"));
     }
     // TIPS: 恢复已有草稿时React尚未提交输入区；请求编号已覆盖关闭/切换取消，不能用上一帧的编辑状态拦截启动。
     if (destination && voice && request === inputRequest.current) await run("__voice__", { type: "voice-start", target: destination });
@@ -259,12 +288,16 @@ function PetApp() {
     void cancelVoice();
     // TIPS: 只在用户明确选择时改发，保留当前草稿；后续会话排序更新不会覆盖此目标。
     remember((value) => ({ ...value, target: quickKey === "__quick__" ? destination : value.target, targets: { ...value.targets, [quickKey]: destination } }));
-    setInputOptions(false); setMessage("");
+    setInputOptions(false); updateMessage("");
     root.current?.querySelector<HTMLTextAreaElement>(".pet-composer textarea")?.focus();
   };
   const dismiss = (task: PetTask) => {
     remember((value) => ({ ...value, dismissed: { ...value.dismissed, [task.key]: task.turnKey } }));
     if (editor === task.key) { setEditor(null); restorePassive(); }
+    if (panel === "tasks" && visibleTasks.length === 1) {
+      setPanel(null);
+      setTasksExpanded(false);
+    }
   };
   const openTask = async (task: PetTask) => {
     const requestContext = contextKey.current;
@@ -280,7 +313,7 @@ function PetApp() {
     void run(task.key, { type: "send", target: task, text, draftKey: task.key });
   };
   const keySubmit = (event: React.KeyboardEvent<HTMLTextAreaElement>, submit: () => void) => {
-    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); submit(); }
+    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && !composing.current && event.nativeEvent.keyCode !== 229) { event.preventDefault(); submit(); }
   };
   if (!editor && !cardHover) taskOrder.current = state.tasks.map((task) => task.key);
   const orderedTasks = [...visibleTasks].sort((a,b) => {
@@ -292,11 +325,12 @@ function PetApp() {
   const showTaskControl = taskCount > 0 || panel === "tasks";
   const hasUnreadCompletion = visibleTasks.some((task) => task.state === "completed");
   const hiddenCount = unreadTasks.length - visibleTasks.length;
+  const restoreDismissed = () => remember((value) => ({ ...value, dismissed: {} }));
   const drafts = Object.entries(interaction.drafts).filter(([key, text]) => key !== "__quick__" && text.trim() && !visibleTasks.some((task) => task.key === key));
   // TIPS: 草稿恢复独立于提醒数量；最后一张卡片消失后，仍可从编辑入口找回原任务的文字。
   const draftEntries = drafts.length ? <div className="pet-drafts"><span>{t("pet.drafts")}</span>{drafts.map(([key]) => <button key={key} disabled={voiceActive} title={interaction.targets[key] ? `${interaction.targets[key].project} · ${interaction.targets[key].title}` : key} onClick={() => {
     if (!interaction.targets[key]) return;
-    setQuickKey(key); setPanel("input"); setEditor(null); setInputOptions(false); setTools(true); setMessage(""); activateEditor();
+    setQuickKey(key); setPanel("input"); setEditor(null); setInputOptions(false); setTools(true); updateMessage("");
   }}>{interaction.targets[key]?.title ?? key}</button>)}</div> : null;
 
   // TIPS: 在实际按下的按钮上捕获指针，短按仍是原按钮点击，超过阈值才开始拖动并吞掉随后click。
@@ -333,20 +367,22 @@ function PetApp() {
             {tasksExpanded ? <div className="pet-card-actions">
             <button className="pet-icon" aria-label={t("pet.follow_up")} aria-pressed={editor === task.key} disabled={!state.ready} onClick={() => {
               void cancelVoice();
-              setPanel("tasks"); setEditor(editor === task.key ? null : task.key); if (editor === task.key) { (document.activeElement as HTMLElement)?.blur(); restorePassive(); } else activateEditor();
+              setPanel("tasks"); setEditor(editor === task.key ? null : task.key); if (editor === task.key) { (document.activeElement as HTMLElement)?.blur(); restorePassive(); }
             }}><CornerDownLeft size={20} /></button>
             {task.canStop ? <button className="pet-icon pet-stop" aria-label={t("pet.stop")} disabled={busy(task.key) || task.stopping} onClick={() => void run(task.key, { type: "stop", key: task.key })}><Square size={14} fill="currentColor" strokeWidth={0} /></button> : null}
             </div> : null}
           </div>
           {tasksExpanded && editor === task.key ? <div className="pet-follow">
             <textarea aria-label={`${t("pet.follow_up")} · ${task.title}`} placeholder={t("pet.follow_up")} value={interaction.drafts[task.key] ?? ""}
-              onFocus={activateEditor} onChange={(event) => updateDraft(task.key, event.target.value, task)} onKeyDown={(event) => keySubmit(event, () => submitCard(task))} />
+              onCompositionStart={() => { composing.current = { key: task.key, persistedDraft: interactionRef.current.drafts[task.key] ?? "" }; }} onCompositionEnd={(event) => finishComposition(task.key, event.currentTarget, task)}
+              onBlur={(event) => finishComposition(task.key, event.currentTarget, task)}
+              onChange={(event) => updateDraft(task.key, event.target.value, task)} onKeyDown={(event) => keySubmit(event, () => submitCard(task))} />
             <button className="pet-send" aria-label={t("pet.send")} disabled={!interaction.drafts[task.key]?.trim() || busy(task.key) || uncertain(task.key) || task.state === "reconciling"} onClick={() => submitCard(task)}><ArrowUp size={18} /></button>
           </div> : null}
           </article>
         </div>)}
       </div>
-      {hiddenCount ? <button className="pet-restore" onClick={() => remember((value) => ({ ...value, dismissed: {} }))}>{t("pet.dismissed", { count: hiddenCount })} · {t("pet.restore")}</button> : null}
+      {hiddenCount ? <button className="pet-restore" onClick={restoreDismissed}>{t("pet.dismissed", { count: hiddenCount })} · {t("pet.restore")}</button> : null}
       {draftEntries}
     </section> : null}
     {panel === "input" && inputOptions ? <section className="pet-input-options" id="pet-input-options" data-pet-hit aria-label={t("pet.input_options")} aria-busy={busy("__sessions__")}>
@@ -372,11 +408,14 @@ function PetApp() {
       {!target && !busy("__target__") && !inputOptions ? <button className="pet-retarget" onClick={() => void run("__open__", { type: "open-app" })}>{t("pet.open_app")}</button> : null}
       <div className="pet-composer">
         <button className="pet-input-plus" aria-label={t("pet.input_options")} title={t("pet.input_options")} aria-expanded={inputOptions} aria-controls="pet-input-options" disabled={quickKey !== "__quick__" || voiceActive || busy(quickKey) || busy("__target__")} onClick={() => void toggleSessions()}><Plus size={18} strokeWidth={1.6} /></button>
-        <textarea aria-label={t("pet.input")} placeholder={t("pet.placeholder")} value={quickDraft} onFocus={activateEditor}
-        onChange={(event) => updateDraft(quickKey, event.target.value, target ?? undefined)} onKeyDown={(event) => keySubmit(event, submitQuick)} />
+        <textarea aria-label={t("pet.input")} placeholder={t("pet.placeholder")} value={quickDraft}
+          onCompositionStart={() => { composing.current = { key: quickKey, persistedDraft: interactionRef.current.drafts[quickKey] ?? "" }; }} onCompositionEnd={(event) => finishComposition(quickKey, event.currentTarget, target ?? undefined)}
+          onBlur={(event) => finishComposition(quickKey, event.currentTarget, target ?? undefined)}
+          onChange={(event) => updateDraft(quickKey, event.target.value, target ?? undefined)} onKeyDown={(event) => keySubmit(event, submitQuick)} />
         <button className="pet-send" aria-label={t("pet.send")} disabled={!target || !quickDraft.trim() || busy("__target__") || busy(quickKey) || uncertain(quickKey) || voiceActive} onClick={submitQuick}><ArrowUp size={18} strokeWidth={1.6} /></button>
       </div>
       {voiceActive ? <div className="pet-voice"><span>{state.voicePhase === "transcribing" ? t("pet.voice_transcribing") : t("pet.voice")}</span><button onClick={() => void run("__voice_stop__", { type: "voice-stop" })}>{t("pet.voice_stop")}</button><button onClick={() => void cancelVoice()}>{t("pet.voice_cancel")}</button></div> : null}
+      {hiddenCount ? <button className="pet-restore" onClick={restoreDismissed}>{t("pet.dismissed", { count: hiddenCount })} · {t("pet.restore")}</button> : null}
       {draftEntries}
     </section> : null}
     {Object.entries(interaction.uncertain ?? {}).some(([,value]) => value) ? <div className="pet-message" data-pet-hit>{t("pet.uncertain")}

@@ -121,11 +121,16 @@ Pet text SHALL be submitted by the retained main task host through the existing 
 #### Scenario: Direct submission is accepted
 - **WHEN** the task host confirms a direct submission
 - **THEN** the unchanged originating editor closes without displaying an 已发送 confirmation
-- **AND** queued, failed and unconfirmed submissions retain their respective feedback
+- **AND** queued and failed submissions show feedback for three seconds without clearing the draft on failure; an unconfirmed result retains its separate reconciliation action
 
 #### Scenario: Latest target is busy
 - **WHEN** a user submits text to the fixed target while it is running
 - **THEN** the message follows the existing busy queue and the pet shows 已加入队列 only after queue acceptance
+
+#### Scenario: Submission feedback expires
+- **WHEN** queue acceptance or a submission error is shown in the pet
+- **THEN** that feedback disappears after three seconds without changing the draft, task or queue state
+- **AND** newer feedback restarts its own three-second timer rather than being removed by an earlier timeout
 
 #### Scenario: An idle task still has queued follow-ups
 - **WHEN** a new pet message targets an idle task whose original FIFO is nonempty
@@ -206,12 +211,12 @@ The expanded task list SHALL replace the bell with an upward collapse chevron. E
 - **THEN** the card uses the current todo or localized status instead of displaying reasoning text
 
 ### Requirement: Dismiss collapse open and stop are separate task actions
-A card's close button SHALL dismiss its current task turn, keyed by endpoint, workspace, root session and current turn identity, without changing execution, queue or pending interactions; the reminder badge SHALL reflect visible cards. Reopening the bell SHALL keep that same turn dismissed; a new user-task turn or explicit restore action SHALL show it again. Clicking the bell SHALL first show one stacked notification without an item count, never the full list. Clicking anywhere on that stacked card SHALL expand the full list without navigating or marking a task read. The upward chevron SHALL close the entire reminder region and restore the bell from either presentation; it SHALL NOT fold the list back into a stack. Reopening the bell SHALL always start with the stack. Escape SHALL close the panel without stopping tasks. Clicking an expanded card title SHALL navigate to that root conversation. A completed card SHALL be marked read and removed only after successful navigation; opening a running or paused card SHALL leave it visible. Opening failures SHALL NOT mark a card read. Read completion turns SHALL NOT be restored by the dismissed-card restore action. New user turns SHALL not inherit old read state. The bent arrow SHALL toggle the follow-up editor, not navigate or submit an empty draft. A square stop control SHALL reuse existing scoped stop and queue cleanup semantics for the actual active root and descendant runs represented by that card.
+A card's close button SHALL dismiss its current task turn, keyed by endpoint, workspace, root session and current turn identity, without changing execution, queue or pending interactions; the reminder badge SHALL reflect visible cards. Reopening the bell SHALL keep that same turn dismissed; a new user-task turn or explicit restore action in the reminder list or quick-input panel SHALL show it again. Clicking the bell SHALL first show one stacked notification without an item count, never the full list. Clicking anywhere on that stacked card SHALL expand the full list without navigating or marking a task read. The upward chevron SHALL close the entire reminder region and restore the bell from either presentation; it SHALL NOT fold the list back into a stack. Reopening the bell SHALL always start with the stack. Escape SHALL close the panel without stopping tasks. Clicking an expanded card title SHALL navigate to that root conversation. A completed card SHALL be marked read and removed only after successful navigation; opening a running or paused card SHALL leave it visible. Opening failures SHALL NOT mark a card read. Read completion turns SHALL NOT be restored by the dismissed-card restore action. New user turns SHALL not inherit old read state. The bent arrow SHALL toggle the follow-up editor, not navigate or submit an empty draft. A square stop control SHALL reuse existing scoped stop and queue cleanup semantics for the actual active root and descendant runs represented by that card.
 
 #### Scenario: All visible cards are dismissed
 - **WHEN** the user closes every card while tasks are still active
-- **THEN** the reminder badge is hidden at zero and the panel offers restoring dismissed cards without stopping those tasks
-- **AND** the panel does not claim that no tasks exist
+- **THEN** the reminder badge is hidden at zero and the panel closes automatically, leaving only input and voice controls without stopping those tasks
+- **AND** no empty-state hint is shown; the quick-input panel exposes a restore action that shows dismissed reminders again
 
 #### Scenario: User stops one task
 - **WHEN** the user clicks the square stop control for a card
@@ -432,7 +437,7 @@ Collapsed controls SHALL retain a centered 24 by 6 DIP capsule below the pet, wi
 - **AND** the character stays at its original screen anchor
 
 ### Requirement: No visible reminder hides the bell
-The bell and its separator SHALL render only when at least one unread, undismissed reminder exists. With no reminders, the controls SHALL retain only input and voice in a centered 80 by 40 DIP capsule. A new visible reminder SHALL restore the 120 by 40 DIP three-button capsule. If the last reminder disappears while its panel is open, a close arrow SHALL remain until the panel is closed, without a bell or badge.
+The bell and its separator SHALL render only when at least one unread, undismissed reminder exists. With no reminders, the controls SHALL retain only input and voice in a centered 80 by 40 DIP capsule. A new visible reminder SHALL restore the 120 by 40 DIP three-button capsule. Dismissing the last visible reminder with its close button SHALL close the panel and remove the arrow immediately. If the last reminder disappears for another reason while its panel is open, a close arrow SHALL remain until the panel is closed, without a bell or badge.
 
 #### Scenario: All reminders are read or dismissed
 - **WHEN** no visible reminder remains and the reminder panel is closed
