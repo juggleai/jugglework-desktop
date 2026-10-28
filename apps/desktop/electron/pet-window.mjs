@@ -171,6 +171,12 @@ export function createDesktopPet({ BrowserWindow, screen, ipcMain, Menu, prefere
     return setVisible(visible === true);
   });
   ipcMain.handle("jugglework:pet:focus", (event) => { if (mainSender(event)) focus(); });
+  ipcMain.handle("jugglework:pet:focus-editor", (event) => {
+    if (!petSender(event) || !window || window.isDestroyed()) return;
+    if (!keyboard) { keyboard = true; window.setFocusable(true); }
+    if (!window.isFocused()) { window.focus(); window.webContents.focus(); }
+    updatePointer();
+  });
   ipcMain.on("jugglework:pet:publish", (event, value) => {
     if (!mainSender(event)) return;
     if (host.contextKey !== value.contextKey) {
@@ -196,8 +202,9 @@ export function createDesktopPet({ BrowserWindow, screen, ipcMain, Menu, prefere
   });
   ipcMain.on("jugglework:pet:keyboard", (event, active) => {
     if (!petSender(event) || !window) return;
-    keyboard = active === true; window.setFocusable(keyboard);
-    if (keyboard) { window.focus(); window.webContents.focus(); }
+    const next = active === true;
+    if (keyboard !== next) { keyboard = next; window.setFocusable(keyboard); }
+    if (keyboard && !window.isFocused()) { window.focus(); window.webContents.focus(); }
     updatePointer();
   });
   ipcMain.on("jugglework:pet:drag", (event, active) => {

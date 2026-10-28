@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld("__JUGGLEWORK_PET__", {
   action: (action) => ipcRenderer.invoke("jugglework:pet:action", action),
   layout: (layout) => ipcRenderer.send("jugglework:pet:layout", layout),
   keyboard: (active) => ipcRenderer.send("jugglework:pet:keyboard", active),
+  focusEditor: () => ipcRenderer.invoke("jugglework:pet:focus-editor"),
   drag: (active) => ipcRenderer.send("jugglework:pet:drag", active),
   remember: (value, contextKey) => ipcRenderer.send("jugglework:pet:remember", { interaction: value, contextKey }),
   hide: () => ipcRenderer.invoke("jugglework:pet:visible", false),
