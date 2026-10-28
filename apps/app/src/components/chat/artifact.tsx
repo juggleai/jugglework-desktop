@@ -4,9 +4,11 @@ import type { UIMessage } from "ai";
 import type { TurnDelivery } from "@jugglework/types/file-artifacts";
 import { getOfficeDocumentKind } from "@jugglework/types/office";
 import {
+  ChevronDown,
   CloudUpload,
   Copy,
   ExternalLink,
+  Files,
   FolderOpen,
   MessageSquarePlus,
   MoreHorizontal,
@@ -45,7 +47,7 @@ import {
   type ArtifactAction,
 } from "@/react-app/domains/session/artifacts/artifact-actions-provider";
 
-/** 文件交付卡片：显示真实元信息，快捷操作与默认打开相互独立。 */
+/** 紧凑文件行：显示真实元信息，快捷操作与默认打开相互独立。 */
 export function ArtifactCard({ artifact }: { artifact: ArtifactItem }) {
   const previewArtifact = usePreviewArtifact();
   const actions = useArtifactActions();
@@ -79,23 +81,23 @@ export function ArtifactCard({ artifact }: { artifact: ArtifactItem }) {
   return (
     <div
       data-testid="artifact-card"
-      className="flex min-w-0 items-center gap-2 rounded-2xl bg-muted/70 p-3"
+      className="flex min-w-0 items-center gap-1 rounded-lg px-2 py-1.5 transition-colors hover:bg-muted/40 sm:gap-2"
     >
       <button
         type="button"
-        className="flex min-w-0 flex-1 items-center gap-3 rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
+        className="flex min-w-0 flex-1 items-center gap-2.5 rounded-md py-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
         disabled={!canOpen}
         onClick={() => previewArtifact(artifact)}
         title={artifact.name}
       >
-        <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-background/80">
-          <ArtifactIcon className="size-7" type={artifact.type} />
+        <span className="flex size-5 shrink-0 items-center justify-center">
+          <ArtifactIcon className="size-5" type={artifact.type} />
         </span>
-        <span className="min-w-0 flex-1">
-          <span className="block truncate text-sm font-semibold">
+        <span className="flex min-w-0 flex-1 flex-col gap-0.5 sm:flex-row sm:items-center sm:gap-3">
+          <span className="block min-w-0 flex-1 truncate text-sm font-medium">
             {artifact.name}
           </span>
-          <span className="mt-0.5 block text-xs text-muted-foreground">
+          <span className="block shrink-0 text-xs tabular-nums text-muted-foreground">
             {artifact.legacy_target.exists === false
               ? t("artifact.file_missing")
               : size}
@@ -210,32 +212,60 @@ export function ArtifactCard({ artifact }: { artifact: ArtifactItem }) {
   );
 }
 
-/** 当前轮次文件卡片列表；超过三项时通过同一数据源查看全部。 */
+/** 当前轮次统一产物卡片：前三项预览，其余可原地展开或在弹窗查看。 */
 export function ArtifactCards({ artifacts }: { artifacts: ArtifactItem[] }) {
   const [showAll, setShowAll] = React.useState(false);
+  const [expanded, setExpanded] = React.useState(false);
+  const listId = React.useId();
   if (!artifacts.length) return null;
   return (
     <div
       className="mx-auto mt-1 mb-1 w-full max-w-5xl px-3 md:px-8"
       data-testid="turn-artifacts"
     >
-      <div className="flex min-w-0 flex-col gap-2">
-        {artifacts.slice(0, 3).map((artifact) => (
-          <ArtifactCard key={artifact.id} artifact={artifact} />
-        ))}
-      </div>
-      <Button
-        variant="ghost"
-        size="sm"
-        className="mt-0.5 h-7 px-0.5 py-0 text-muted-foreground"
-        onClick={() => setShowAll(true)}
-      >
-        {t("artifact.view_all", { count: artifacts.length })} ›
-      </Button>
+      <section className="overflow-hidden rounded-2xl border border-border bg-background" aria-label={t("artifact.turn_files")} data-testid="artifact-summary">
+        <header className="flex items-center gap-3 border-b border-border px-3 py-3 sm:px-4">
+          <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted/60 text-muted-foreground" aria-hidden="true">
+            <Files className="size-5" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <h3 className="text-sm font-semibold">{t("artifact.summary_count", { count: artifacts.length })}</h3>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            className="shrink-0 rounded-xl"
+            aria-label={t("artifact.view_all", { count: artifacts.length })}
+            onClick={() => setShowAll(true)}
+          >
+            {t("artifact.view_all_short")}
+          </Button>
+        </header>
+        <div className="p-1 sm:p-2">
+          <div id={listId} className="flex min-w-0 flex-col">
+            {(expanded ? artifacts : artifacts.slice(0, 3)).map((artifact) => (
+              <ArtifactCard key={artifact.id} artifact={artifact} />
+            ))}
+          </div>
+          {artifacts.length > 3 ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="mt-1 gap-2 px-2 font-medium"
+              aria-expanded={expanded}
+              aria-controls={listId}
+              onClick={() => setExpanded((value) => !value)}
+            >
+              {expanded ? t("artifact.show_less") : t("artifact.show_more", { count: artifacts.length - 3 })}
+              <ChevronDown className={expanded ? "size-4 rotate-180" : "size-4"} />
+            </Button>
+          ) : null}
+        </div>
+      </section>
       <Dialog open={showAll} onOpenChange={setShowAll}>
         <DialogContent className="max-w-xl">
           <DialogTitle>{t("artifact.turn_files")}</DialogTitle>
-          <div className="subtle-scrollbar flex max-h-[70vh] flex-col gap-2 overflow-y-auto">
+          <div className="subtle-scrollbar flex max-h-[70vh] flex-col overflow-y-auto">
             {artifacts.map((artifact) => (
               <ArtifactCard key={artifact.id} artifact={artifact} />
             ))}
