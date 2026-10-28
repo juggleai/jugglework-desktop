@@ -90,6 +90,15 @@ describe("workspace sidebar actions", () => {
     expect(source).toMatch(/flatMap\(\(group\) => group\.sessions\.filter\(isMainSession\)\)/);
   });
 
+  test("clears an orange attention marker when the session is opened", () => {
+    const menuItem = source.slice(source.indexOf("function SessionMenuItem"), source.indexOf("if (!reorderable) return item"));
+    expect(menuItem).toContain("useAcknowledgedAttentionSessionIds()");
+    expect(menuItem).toContain("&& !acknowledgedAttentionSessionIds.has(session.id)");
+    expect(menuItem).toContain("if (isNeedsAttentionSessionStatus(sessionActivityStatus))");
+    expect(menuItem).toContain("acknowledgeAttention(session.id)");
+    expect(menuItem).toContain("status={needsAttention ? sessionActivityStatus : undefined}");
+  });
+
   test("keeps automation-managed workspaces out of the local workspace sidebar", () => {
     expect(source).toMatch(/sidebarWorkspaceSessionGroups = React\.useMemo\([\s\S]+!group\.workspace\.automationManaged/);
     expect(source).toMatch(/const inScope = sidebarWorkspaceSessionGroups\.filter/);
