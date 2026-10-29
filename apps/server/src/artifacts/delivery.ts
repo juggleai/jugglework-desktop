@@ -191,7 +191,7 @@ export class FileDeliveryService {
       for (const target of turn.targets) {
         if (
           target.source !== "media" ||
-          target.status !== "pending" ||
+          !["pending", "failed"].includes(target.status) ||
           !this.options.readMediaJob
         )
           continue;
@@ -209,7 +209,7 @@ export class FileDeliveryService {
           if (observed?.exists) registry.confirm(origin, target.key, observed);
           else registry.fail(origin, target.key, "生成结果文件已不存在", false);
         } else if (
-          job &&
+          target.status === "pending" && job &&
           ["failed", "cancelled", "submission_unknown"].includes(job.status)
         ) {
           registry.fail(

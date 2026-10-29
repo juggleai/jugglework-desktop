@@ -29,6 +29,21 @@ The Desktop runtime SHALL bind each sidecar process, data directory, browser par
 - **WHEN** a request presents a token issued for a previous workspace or runtime instance
 - **THEN** JuggleWork rejects the request without accessing models, files, or native capabilities
 
+### Requirement: Existing projects support explicit directory reauthorization
+When an existing project's directory grant is missing, Desktop SHALL show its known path and an explicit authorization action. Confirmation SHALL validate that the path belongs to the project list and is an existing directory, persist the grant, and open the project without another directory picker. Cancellation SHALL leave the project unopened.
+
+#### Scenario: User confirms an expired directory grant
+- **WHEN** a member clicks the authorization action for an existing project
+- **THEN** Desktop restores the confirmed directory through the managed grant flow and opens the project
+- **AND** an unlisted, relative, or missing path cannot be authorized through this action
+
+### Requirement: Model selection uses an available display name
+The factory SHALL default to the first available text model when the selection is empty or invalid, preserve a still-available selection, and show a model label rather than its serialized provider/model identifier.
+
+#### Scenario: An old model selection is unavailable
+- **WHEN** the loaded model list no longer includes the saved selection
+- **THEN** the picker selects the first available model, or clears the selection if no model is available
+
 ### Requirement: The embedded page is sandboxed
 Desktop MUST load Toonflow in a dedicated sandboxed `WebContentsView` with context isolation, Node integration disabled, permissions denied by default, restricted navigation, and no access to the main-window preload API.
 

@@ -2324,6 +2324,10 @@ const desktopCommandHandlers = {
     if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error("仅主窗口可打开漫剧项目");
     return toonFactoryRuntime.openProject(args[0]);
   },
+  "toonFactoryAuthorizeProject": async (event, ...args) => {
+    if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error("仅主窗口可授权漫剧项目");
+    return toonFactoryRuntime.authorizeProject(args[0]);
+  },
   "toonFactoryRenameProject": async (event, ...args) => {
     if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error("仅主窗口可重命名漫剧项目");
     return toonFactoryRuntime.renameProject(args[0], args[1]);

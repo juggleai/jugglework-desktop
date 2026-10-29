@@ -34,6 +34,11 @@ The system SHALL return a durable job identifier after accepting a generation re
 - **WHEN** JuggleWork restarts while a submitted provider job is incomplete
 - **THEN** the system resumes status reconciliation from the persisted provider job identifier without charging for a replacement submission
 
+#### Scenario: Temporary status polling failure
+- **WHEN** a submitted video job temporarily returns an unrecognized status or a status query fails
+- **THEN** the worker retries status queries with backoff up to five consecutive failures and resets the failure count after a successful query
+- **AND** the worker never repeats the paid submission
+
 ### Requirement: Prevent duplicate paid submissions
 The system SHALL use an idempotent request identity to prevent retries of the same accepted generation request from creating duplicate provider jobs.
 
@@ -96,6 +101,11 @@ The system SHALL render queued, running, failed, cancelled, and completed genera
 - **THEN** the conversation displays a playable inline video card and identifies the artifact path and model used
 - **AND** the member can open an enlarged player and download the workspace artifact
 - **AND** the application surfaces completion through in-app notification state and a preference-respecting desktop notification
+
+#### Scenario: A previously failed video job is recovered
+- **WHEN** the conversation opens a historical terminal video card whose durable job has since recovered
+- **THEN** the card refreshes the job by its existing identifier and displays the latest revision
+- **AND** a completed artifact replaces the failed media delivery in its original turn without rewriting historical tool output or submitting another job
 
 #### Scenario: Direct video tool waits for terminal completion
 - **WHEN** the agent submits a video through the direct configured video tool

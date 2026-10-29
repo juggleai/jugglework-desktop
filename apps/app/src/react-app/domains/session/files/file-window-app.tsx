@@ -72,6 +72,7 @@ export function FileWindowApp() {
     };
   }, [bridge]);
   const active = state?.tabs.find((tab) => tab.path === state.activePath);
+  const mediaReadOnly = active ? ["image", "video"].includes(getArtifactType(active.path)) : false;
   const document = useQuery({
     queryKey: [
       "office-document",
@@ -265,7 +266,7 @@ export function FileWindowApp() {
           officeDocumentId={active.documentId}
           name={active.name}
           status={
-            active.readOnly
+            active.readOnly || mediaReadOnly
               ? "readonly"
               : active.documentId
                 ? getOfficeEditorStatus(document, busy)
@@ -276,7 +277,7 @@ export function FileWindowApp() {
                     : "saved"
           }
           saveDisabled={
-            active.readOnly ||
+            active.readOnly || mediaReadOnly ||
             busy ||
             (active.documentId ? document?.state !== "ready" : !draft)
           }

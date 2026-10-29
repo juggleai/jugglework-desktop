@@ -11,6 +11,7 @@ import { t } from "../../../../i18n";
 import {
   HTMLPreview,
   ImagePreview,
+  VideoPreview,
   MarkdownPreview,
   PdfPreview,
   PlainText,
@@ -148,7 +149,7 @@ function StandardFileViewer({
   React.useEffect(() => {
     if (
       !data ||
-      (data.presentation !== "image" && data.presentation !== "pdf")
+      !["image", "video", "pdf"].includes(data.presentation)
     ) {
       setObjectUrl(null);
 
@@ -386,6 +387,9 @@ function StandardFileViewer({
         ) : null}
         {data?.presentation === "image" && objectUrl ? (
           <ImagePreview src={objectUrl} alt={name} />
+        ) : null}
+        {data?.presentation === "video" && objectUrl ? (
+          <VideoPreview src={objectUrl} title={name} />
         ) : null}
         {data?.presentation === "pdf" && objectUrl ? (
           <PdfPreview url={objectUrl} title={name} />

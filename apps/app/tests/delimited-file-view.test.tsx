@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { DelimitedFileView } from "../src/react-app/domains/session/files/delimited-file-view";
 import { OfficeEditor } from "../src/react-app/domains/session/office/office-editor";
 import { FileViewer } from "../src/react-app/domains/session/files/file-viewer";
-import { resolvePresentation } from "../src/react-app/domains/session/files/file-content";
+import { loadWorkspaceFile, resolvePresentation } from "../src/react-app/domains/session/files/file-content";
 import { useFilesPanelStore } from "../src/react-app/domains/session/files/files-panel-store";
 import {
   parseDelimitedSpreadsheet,
@@ -23,6 +23,20 @@ test("CSV/TSV 按表格分流，原始文本与 Office 二进制仍保持各自�
   expect(resolvePresentation("broken.csv", new Uint8Array([0, 1]).buffer)).toBe(
     "binary",
   );
+});
+
+test("图片和视频按媒体分流，加载时不解码为编辑器文本", async () => {
+  const bytes = new Uint8Array([0, 0, 0, 24, 102, 116, 121, 112]).buffer;
+  for (const path of ["clip.mp4", "CLIP.MP4", "clip.mov", "clip.webm", "clip.m4v", "clip.ogv"])
+    expect(resolvePresentation(path, bytes)).toBe("video");
+  for (const path of ["frame.png", "FRAME.JPG", "frame.webp", "frame.avif"])
+    expect(resolvePresentation(path, bytes)).toBe("image");
+  const file = await loadWorkspaceFile({
+    downloadWorkspaceFile: async () => ({ data: bytes, contentType: "video/mp4" }),
+    statWorkspaceFile: async () => ({ size: bytes.byteLength, updatedAt: 1 }),
+  } as never, "ws", "clip.mp4");
+  expect(file.presentation).toBe("video");
+  expect(file.text).toBeNull();
 });
 
 test("表格预览保留中文、带分隔符和换行的单元格，默认预览不提供输入框", () => {

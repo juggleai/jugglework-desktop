@@ -92,6 +92,11 @@ HTML 文件预览 MUST 使用不透明来源的 sandbox iframe，MUST NOT 授予
 - **WHEN** 用户从文件目录打开 Markdown 文件
 - **THEN** 默认显示格式化预览；点击编辑入口后显示源码编辑器，保存成功后返回最新预览
 
+#### Scenario: 在独立窗口查看图片和视频
+- **WHEN** 用户在独立文件窗口打开支持的图片或视频文件
+- **THEN** 图片使用图片浏览器，视频使用带播放和进度控制的播放器
+- **AND** 文件以只读方式预览，不作为文本解码或提供文本保存
+
 #### Scenario: 展示表格与 Mermaid 图形
 - **WHEN** Markdown 包含 GFM 表格和合法的 `mermaid` 围栏代码块
 - **THEN** 表格按单元格和对齐规则展示，过宽时可横向滚动；Mermaid 代码渲染为 SVG 图形
