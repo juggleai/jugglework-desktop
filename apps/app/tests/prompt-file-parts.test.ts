@@ -38,7 +38,7 @@ describe("composer prompt file parts", () => {
       { type: "text", text: "check @docs/report.md" },
       {
         type: "file",
-        mime: "text/markdown",
+        mime: "application/x-jugglework-file-reference",
         url: "file:///Users/omar/code/jugglework/docs/report.md",
         filename: "report.md",
       },
