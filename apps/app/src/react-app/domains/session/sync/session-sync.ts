@@ -1399,7 +1399,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
 
   if (event.type === "message.updated") {
     const props = (event.properties ?? {}) as {
-      info?: { id?: string; role?: UIMessage["role"] | string; sessionID?: string; finish?: string; summary?: boolean; error?: unknown; time?: { created?: number; completed?: number } };
+      info?: { id?: string; role?: UIMessage["role"] | string; sessionID?: string; finish?: string; summary?: boolean | { diffs?: unknown[] }; error?: unknown; time?: { created?: number; completed?: number } };
     };
     const info = props.info;
     if (!info?.id || !info.sessionID || (info.role !== "user" && info.role !== "assistant" && info.role !== "system")) {
@@ -1425,6 +1425,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     const created = info.time?.created;
     const completed = info.time?.completed ?? (stopped ? Date.now() : undefined);
     const timingMetadata = {
+      ...(info.role === "user" && typeof info.summary === "object" && info.summary?.diffs ? { fileDiffs: info.summary.diffs } : {}),
       ...(typeof created === "number" ? { created } : {}),
       ...(typeof completed === "number" ? { completed } : {}),
       ...(info.role === "assistant" && typeof info.finish === "string" ? { finish: info.finish } : {}),

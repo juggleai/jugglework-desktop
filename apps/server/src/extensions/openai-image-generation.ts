@@ -19,6 +19,7 @@ import { createWorkspaceProviderCredentialResolver } from "../provider-credentia
 import { redactProviderMessage } from "../media-generation/redaction.js";
 import { protectedMediaFetch, type ProtectedMediaRequest, type ProtectedMediaResolver } from "../protected-media-fetch.js";
 import { readWorkspaceArtifact } from "../media-generation/artifact-file.js";
+import { managedMediaBillingReady, MANAGED_MEDIA_BILLING_DIAGNOSTIC } from "../media-generation/managed-media-billing.js";
 
 export const OPENAI_IMAGE_GENERATION_EXTENSION_ID = "openai-image-generation";
 const IMAGE_API_TIMEOUT_MS = 120_000;
@@ -42,7 +43,7 @@ type ImageModelDescriptor = {
   baseURL: string;
   envKeys: string[];
   providerConfig: Record<string, unknown>;
-  availability: "ready" | "missing_credentials" | "unsupported_adapter";
+  availability: "ready" | "missing_credentials" | "unsupported_adapter" | "managed_billing_unavailable";
 };
 
 function publicImageModelDescriptor(model: ImageModelDescriptor) {
@@ -52,6 +53,7 @@ function publicImageModelDescriptor(model: ImageModelDescriptor) {
     modelName: model.modelName,
     capabilities: model.capabilities,
     availability: model.availability,
+    ...(model.availability === "managed_billing_unavailable" ? { diagnostic: MANAGED_MEDIA_BILLING_DIAGNOSTIC } : {}),
   };
 }
 
@@ -156,7 +158,7 @@ async function configuredImageModels(config: ServerConfig, env: EnvService, work
         ref: { providerID, modelID }, providerName,
         modelName: typeof rawModel.name === "string" && rawModel.name.trim() ? rawModel.name.trim() : modelID,
         capabilities, baseURL, envKeys, providerConfig: rawProvider,
-        availability: !adapterSupported ? "unsupported_adapter" : !credentialReady || (envKeys.some((key) => /^JUGGLEWORK_GATEWAY_KEY_V2_/.test(key)) && !organizationImported) ? "missing_credentials" : "ready",
+        availability: !managedMediaBillingReady(rawModel) ? "managed_billing_unavailable" : !adapterSupported ? "unsupported_adapter" : !credentialReady || (envKeys.some((key) => /^JUGGLEWORK_GATEWAY_KEY_V2_/.test(key)) && !organizationImported) ? "missing_credentials" : "ready",
       });
     }
   }

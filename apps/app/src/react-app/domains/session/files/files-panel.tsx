@@ -16,6 +16,7 @@ import {
 import { cn } from "@/lib/utils";
 import { t } from "../../../../i18n";
 import { ChangesView } from "./changes-view";
+import { TurnChangesView } from "./turn-changes-view";
 import { FileTabs } from "./file-tabs";
 import { FileTree } from "./file-tree";
 import { FileViewer } from "./file-viewer";
@@ -72,6 +73,7 @@ export function FilesPanel({
   const toggleFullscreen = useFilesPanelStore((state) => state.toggleFullscreen);
   const toggleTreeCollapsed = useFilesPanelStore((state) => state.toggleTreeCollapsed);
   const selectChange = useFilesPanelStore((state) => state.selectChange);
+  const clearTurnChanges = useFilesPanelStore((state) => state.clearTurnChanges);
 
   const opencodeClient = React.useMemo(
     () => (opencodeBaseUrl ? createClient(opencodeBaseUrl, workspaceRoot || undefined, { token: opencodeToken, mode: "jugglework" }) : null),
@@ -81,7 +83,8 @@ export function FilesPanel({
   const changesQuery = useWorkspaceChanges(opencodeClient, workspaceId, workspaceRoot, busy);
   const refreshChanges = useRefreshWorkspaceChanges(workspaceRoot);
   const changes = changesQuery.data?.changes ?? [];
-  const hasChanges = changes.length > 0;
+  const turnChanges = session.turnChanges;
+  const hasChanges = Boolean(turnChanges) || changes.length > 0;
   const vcsAvailable = changesQuery.data?.vcsAvailable !== false;
 
   const expandedDirs = React.useMemo(() => new Set(session.expandedDirs), [session.expandedDirs]);
@@ -222,9 +225,10 @@ export function FilesPanel({
             dirtyPaths={dirtyPaths}
             changesTab={hasChanges ? {
               label: t("session_files.tab_changes"),
-              count: changes.length,
+              count: turnChanges?.artifacts.length ?? changes.length,
               active: showingChanges,
               onSelect: () => setActiveKey(sessionId, "changes"),
+              onClose: turnChanges ? () => clearTurnChanges(sessionId) : undefined,
             } : null}
             onSelect={(path) => selectFile(sessionId, path)}
             onClose={closeFile}
@@ -258,7 +262,20 @@ export function FilesPanel({
         ) : null}
         {session.fullscreen || !treeColumnVisible ? (
           <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-            {showingChanges ? (
+            {showingChanges && turnChanges && client && workspaceId ? (
+              <ArtifactActionsProvider client={client} workspaceId={workspaceId} workspaceRoot={workspaceRoot} sessionId={sessionId} remote={isRemoteWorkspace} running={busy}>
+                <TurnChangesView
+                  artifacts={turnChanges.artifacts}
+                  selectedPath={session.selectedChangePath}
+                  onSelect={(path) => selectChange(sessionId, path)}
+                  onOpenFile={(artifact) => openFile(sessionId, {
+                    path: artifact.legacy_target.value,
+                    name: artifact.name,
+                  })}
+                  onWorkspaceChanges={() => clearTurnChanges(sessionId, true)}
+                />
+              </ArtifactActionsProvider>
+            ) : showingChanges ? (
               <ChangesView
                 changes={changes}
                 loading={changesQuery.isLoading}

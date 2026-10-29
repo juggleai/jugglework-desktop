@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { commitOfficeFileSwitch } from "./office-file-switch";
+import type { ArtifactItem } from "@/lib/artifacts";
 
 export const PERSISTED_FILES_PANEL_STORE_KEY = "jugglework:files-panel:v1";
 
@@ -35,6 +36,7 @@ export type FilesPanelDraft = {
 };
 
 type FilesPanelSessionState = {
+  turnChanges?: { turnId: string; artifacts: ArtifactItem[] };
   activeKey: FilesPanelTabKey;
   tabs: FilesPanelFileTab[];
   activePath: string | null;
@@ -44,6 +46,7 @@ type FilesPanelSessionState = {
   selectedChangePath: string | null;
   drafts: Record<string, FilesPanelDraft>;
   externalPaths: string[];
+  tabHistory: Array<{ key: FilesPanelTabKey; path?: string }>;
 };
 
 const EMPTY_SESSION: FilesPanelSessionState = {
@@ -56,9 +59,12 @@ const EMPTY_SESSION: FilesPanelSessionState = {
   selectedChangePath: null,
   drafts: {},
   externalPaths: [],
+  tabHistory: [],
 };
 
 export type FilesPanelStore = {
+  openTurnChanges: (sessionId: string, turnId: string, artifacts: ArtifactItem[], path?: string, onOpened?: () => void) => void;
+  clearTurnChanges: (sessionId: string, showWorkspaceChanges?: boolean) => void;
   sessions: Record<string, FilesPanelSessionState>;
   setActiveKey: (sessionId: string, key: FilesPanelTabKey) => void;
   openFile: (sessionId: string, tab: FilesPanelFileTab) => void;
@@ -87,6 +93,17 @@ function writeSession(
   return { sessions: { ...state.sessions, [sessionId]: session } };
 }
 
+function activeHistoryEntry(session: FilesPanelSessionState) {
+  if (session.activeKey === "changes") return { key: "changes" as const };
+  return session.activePath ? { key: "files" as const, path: session.activePath } : null;
+}
+
+function pushActiveTabHistory(session: FilesPanelSessionState, next: { key: FilesPanelTabKey; path?: string }) {
+  const current = activeHistoryEntry(session);
+  if (!current || (current.key === next.key && current.path === next.path)) return session.tabHistory ?? [];
+  return [...(session.tabHistory ?? []), current];
+}
+
 /**
  * 文件面板状态
  *
@@ -98,9 +115,30 @@ export const useFilesPanelStore = create<FilesPanelStore>()(
   persist(
     (set) => ({
       sessions: {},
+      openTurnChanges: (sessionId, turnId, artifacts, path, onOpened) =>
+        commitOfficeFileSwitch(sessionId, path ?? "", () => {
+          set((state) => writeSession(state, sessionId, {
+          ...readSession(state, sessionId), activeKey: "changes", fullscreen: false,
+          tabHistory: pushActiveTabHistory(readSession(state, sessionId), { key: "changes" }),
+          turnChanges: { turnId, artifacts }, selectedChangePath: path ?? null,
+          }));
+          onOpened?.();
+        }),
+      clearTurnChanges: (sessionId, showWorkspaceChanges = false) => set((state) => writeSession(state, sessionId, {
+        ...readSession(state, sessionId), turnChanges: undefined, selectedChangePath: null,
+        activeKey: showWorkspaceChanges ? "changes" : "files",
+        tabHistory: (readSession(state, sessionId).tabHistory ?? []).filter((entry) => entry.key !== "changes"),
+      })),
 
       setActiveKey: (sessionId, key) =>
-        set((state) => writeSession(state, sessionId, { ...readSession(state, sessionId), activeKey: key })),
+        set((state) => {
+          const session = readSession(state, sessionId);
+          return writeSession(state, sessionId, {
+            ...session,
+            activeKey: key,
+            tabHistory: pushActiveTabHistory(session, { key, ...(key === "files" && session.activePath ? { path: session.activePath } : {}) }),
+          });
+        }),
 
       openFile: (sessionId, tab) =>
         commitOfficeFileSwitch(sessionId, tab.path, () => set((state) => {
@@ -110,6 +148,7 @@ export const useFilesPanelStore = create<FilesPanelStore>()(
           return writeSession(state, sessionId, {
             ...session,
             activeKey: "files",
+            tabHistory: pushActiveTabHistory(session, { key: "files", path: tab.path }),
             tabs: exists ? session.tabs : [...session.tabs, tab],
             activePath: tab.path,
           });
@@ -127,19 +166,42 @@ export const useFilesPanelStore = create<FilesPanelStore>()(
 
           delete drafts[path];
 
-          const activePath = session.activePath === path
-            ? tabs[Math.min(index, tabs.length - 1)]?.path ?? null
-            : session.activePath;
+          const history = (session.tabHistory ?? []).filter((entry) => !(entry.key === "files" && entry.path === path));
+          if (session.activeKey !== "files" || session.activePath !== path) {
+            return writeSession(state, sessionId, { ...session, tabs, drafts, tabHistory: history });
+          }
 
-          return writeSession(state, sessionId, { ...session, tabs, activePath, drafts });
+          let destination: { key: FilesPanelTabKey; path?: string } | undefined;
+          while (history.length) {
+            const candidate = history.pop()!;
+            if (candidate.key === "changes" || (candidate.path && tabs.some((tab) => tab.path === candidate.path))) {
+              destination = candidate;
+              break;
+            }
+          }
+          const fallbackPath = tabs[Math.min(index, tabs.length - 1)]?.path ?? null;
+          return writeSession(state, sessionId, {
+            ...session,
+            tabs,
+            drafts,
+            tabHistory: history,
+            activeKey: destination?.key ?? "files",
+            activePath: destination
+              ? destination.key === "files" ? destination.path ?? fallbackPath : null
+              : fallbackPath,
+          });
         }),
 
       selectFile: (sessionId, path) =>
-        commitOfficeFileSwitch(sessionId, path, () => set((state) => writeSession(state, sessionId, {
-          ...readSession(state, sessionId),
-          activeKey: "files",
-          activePath: path,
-        }))),
+        commitOfficeFileSwitch(sessionId, path, () => set((state) => {
+          const session = readSession(state, sessionId);
+          return writeSession(state, sessionId, {
+            ...session,
+            activeKey: "files",
+            activePath: path,
+            tabHistory: pushActiveTabHistory(session, { key: "files", path }),
+          });
+        })),
 
       toggleDir: (sessionId, path) =>
         set((state) => {
@@ -211,7 +273,7 @@ export const useFilesPanelStore = create<FilesPanelStore>()(
         sessions: Object.fromEntries(
           Object.entries(state.sessions).map(([sessionId, session]) => [
             sessionId,
-            { ...session, drafts: {} },
+            { ...session, drafts: {}, turnChanges: undefined, tabHistory: [] },
           ]),
         ),
       }),

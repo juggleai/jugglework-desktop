@@ -286,6 +286,8 @@ export function snapshotToUIMessages(snapshot: JuggleWorkSessionSnapshot): UIMes
     const error = message.info.role === "assistant" && "error" in message.info ? message.info.error : undefined;
     const stopped = isMessageAbortedError(error);
     const timingMetadata = {
+      ...(message.info.role === "user" && message.info.summary?.diffs
+        ? { fileDiffs: message.info.summary.diffs } : {}),
       ...(typeof created === "number" ? { created } : {}),
       ...(typeof completed === "number" ? { completed } : {}),
       ...(message.info.role === "assistant" && typeof message.info.finish === "string"

@@ -16,6 +16,7 @@ import { toast } from "@/components/ui/sonner";
 import { t } from "@/i18n";
 import { saveWorkspaceTextFile } from "../files/file-content";
 import { useFilesPanelStore } from "../files/files-panel-store";
+import { useUiStateStore } from "@/react-app/shell/ui-state-store";
 import {
   getComposerDraft,
   getComposerMentions,
@@ -28,6 +29,8 @@ import { requestComposerFocus } from "../surface/composer/focus-request";
 export type ArtifactAction =
   "reveal" | "external" | "attach" | "copy-path" | "save-copy" | "window";
 type ArtifactActions = {
+  workspaceRoot: string;
+  openChanges: (turnId: string, artifacts: ArtifactItem[], path?: string) => void;
   desktop: boolean;
   running: boolean;
   fileWindowAvailable: boolean;
@@ -263,6 +266,12 @@ export function ArtifactActionsProvider(props: {
   );
   const value = React.useMemo(
     () => ({
+      workspaceRoot,
+      openChanges: (turnId: string, artifacts: ArtifactItem[], path?: string) => {
+        useFilesPanelStore.getState().openTurnChanges(sessionId, turnId, artifacts, path, () => {
+          useUiStateStore.getState().setSidePanelState(sessionId, "files");
+        });
+      },
       desktop,
       running,
       fileWindowAvailable,
@@ -270,7 +279,7 @@ export function ArtifactActionsProvider(props: {
       run: (action: ArtifactAction, artifact: ArtifactItem) =>
         runPath(action, artifact.legacy_target.value),
     }),
-    [desktop, running, fileWindowAvailable, runPath],
+    [desktop, running, fileWindowAvailable, runPath, workspaceRoot, sessionId],
   );
   return (
     <ArtifactActionsContext.Provider value={value}>

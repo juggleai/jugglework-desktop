@@ -30,6 +30,24 @@ export function openAiVideoSize(value: unknown): string | undefined {
   return OPENAI_VIDEO_SIZE_BY_PRESET[normalized] ?? (/^\d{2,5}x\d{2,5}$/.test(normalized) ? normalized : undefined);
 }
 
+// Freeze a billing tier only for the exact presets/sizes we know. Preserve
+// standard OpenAI pixel size separately; arbitrary dimensions have no tier.
+function openAiVideoResolution(size: string | undefined): string | undefined {
+  if (!size) return undefined;
+  for (const [resolution, landscape] of Object.entries(OPENAI_VIDEO_SIZE_BY_PRESET)) {
+    const portrait = landscape.split("x").reverse().join("x");
+    if (size === landscape || size === portrait) return resolution;
+  }
+  return undefined;
+}
+
+function sourceImageMimeType(bytes: Uint8Array): string {
+  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
+  if (bytes.length >= 8 && [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a].every((byte, index) => bytes[index] === byte)) return "image/png";
+  if (bytes.length >= 12 && String.fromCharCode(...bytes.subarray(0, 4)) === "RIFF" && String.fromCharCode(...bytes.subarray(8, 12)) === "WEBP") return "image/webp";
+  throw new Error("video_source_image_invalid_signature");
+}
+
 function providerMessage(payload: unknown, fallback: string, credential?: string): string {
   const error = isRecord(payload) && isRecord(payload.error) ? payload.error : null;
   const message = typeof error?.message === "string" && error.message.trim() ? error.message.trim().slice(0, 500) : fallback;
@@ -80,6 +98,7 @@ export class OpenAiCompatibleVideoAdapter implements VideoGenerationAdapter {
     let headers: HeadersInit | undefined = { "Content-Type": "application/json", "Idempotency-Key": input.clientRequestId };
     const seconds = input.options.durationSeconds;
     const size = openAiVideoSize(input.options.resolution);
+    const resolution = openAiVideoResolution(size);
     if (input.mode === "image-to-video") {
       if (!input.sourceImagePath) throw new Error("video_source_image_required");
       const form = new FormData();
@@ -87,8 +106,9 @@ export class OpenAiCompatibleVideoAdapter implements VideoGenerationAdapter {
       form.set("model", input.model.modelID);
       if (typeof seconds === "number") form.set("seconds", String(seconds));
       if (typeof size === "string") form.set("size", size);
+      if (resolution) form.set("metadata", JSON.stringify({ resolution }));
       const bytes = await readFile(input.sourceImagePath);
-      form.set("input_reference", new Blob([bytes]), basename(input.sourceImagePath));
+      form.set("input_reference", new Blob([bytes], { type: sourceImageMimeType(bytes) }), basename(input.sourceImagePath));
       body = form;
       headers = { "Idempotency-Key": input.clientRequestId };
     } else {
@@ -97,6 +117,7 @@ export class OpenAiCompatibleVideoAdapter implements VideoGenerationAdapter {
         model: input.model.modelID,
         ...(typeof seconds === "number" ? { seconds: String(seconds) } : {}),
         ...(typeof size === "string" ? { size } : {}),
+        ...(resolution ? { metadata: { resolution } } : {}),
       });
     }
     const { response, credential } = await this.request("videos", { method: "POST", headers, body, signal });

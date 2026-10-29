@@ -5,11 +5,13 @@ import {
   type VideoGenerationMode,
   type VideoModelRef,
 } from "@jugglework/types/media-generation";
+import { managedMediaBillingReady, MANAGED_MEDIA_BILLING_DIAGNOSTIC } from "./managed-media-billing.js";
 
 export type VideoModelAvailability =
   | "ready"
   | "missing_credentials"
-  | "unsupported_adapter";
+  | "unsupported_adapter"
+  | "managed_billing_unavailable";
 
 export type VideoModelDescriptor = {
   ref: VideoModelRef;
@@ -56,7 +58,9 @@ export async function discoverVideoModels(options: VideoModelDiscoveryOptions): 
       const ref = { providerID: provider.id, modelID };
       const adapterSupported = options.supportsAdapter(ref, capabilities);
       const credentialsReady = await options.credentialReady(ref);
-      const availability: VideoModelAvailability = !adapterSupported
+      const availability: VideoModelAvailability = !managedMediaBillingReady(rawModel)
+        ? "managed_billing_unavailable"
+        : !adapterSupported
         ? "unsupported_adapter"
         : !credentialsReady
           ? "missing_credentials"
@@ -68,7 +72,9 @@ export async function discoverVideoModels(options: VideoModelDiscoveryOptions): 
         modelName: typeof rawModel.name === "string" && rawModel.name.trim() ? rawModel.name.trim() : modelID,
         capabilities,
         availability,
-        ...(availability === "unsupported_adapter"
+        ...(availability === "managed_billing_unavailable"
+          ? { diagnostic: MANAGED_MEDIA_BILLING_DIAGNOSTIC }
+          : availability === "unsupported_adapter"
           ? { diagnostic: "JuggleWork has no adapter for this configured video model." }
           : availability === "missing_credentials"
             ? { diagnostic: "The provider credential is not available to video generation." }

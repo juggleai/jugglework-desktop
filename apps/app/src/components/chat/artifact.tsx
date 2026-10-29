@@ -8,13 +8,14 @@ import {
   CloudUpload,
   Copy,
   ExternalLink,
-  Files,
+  FileDiff,
   FolderOpen,
   MessageSquarePlus,
   MoreHorizontal,
   Save,
   Share2,
   SquareArrowOutUpRight,
+  Undo2,
 } from "lucide-react";
 
 import { ArtifactIcon } from "@/components/chat/artifact-icon";
@@ -48,7 +49,7 @@ import {
 } from "@/react-app/domains/session/artifacts/artifact-actions-provider";
 
 /** 紧凑文件行：显示真实元信息，快捷操作与默认打开相互独立。 */
-export function ArtifactCard({ artifact }: { artifact: ArtifactItem }) {
+export function ArtifactCard({ artifact, compact = false, onViewChange, onOpenInTab }: { artifact: ArtifactItem; compact?: boolean; onViewChange?: () => void; onOpenInTab?: () => void }) {
   const previewArtifact = usePreviewArtifact();
   const actions = useArtifactActions();
   const [busy, setBusy] = React.useState(false);
@@ -78,6 +79,11 @@ export function ArtifactCard({ artifact }: { artifact: ArtifactItem }) {
         artifact.sizeBytes !== artifact.legacy_target.size) ||
       artifact.name !== artifact.legacy_target.name);
 
+  const path = artifact.path.replace(/\\/g, "/").replace(/^\.\//, "");
+  const separator = path.lastIndexOf("/");
+  const directory = separator >= 0 ? path.slice(0, separator) : "";
+  const filename = separator >= 0 ? path.slice(separator + 1) : path;
+
   return (
     <div
       data-testid="artifact-card"
@@ -86,23 +92,28 @@ export function ArtifactCard({ artifact }: { artifact: ArtifactItem }) {
       <button
         type="button"
         className="flex min-w-0 flex-1 items-center gap-2.5 rounded-md py-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
-        disabled={!canOpen}
-        onClick={() => previewArtifact(artifact)}
-        title={artifact.name}
+        disabled={!canOpen && !onViewChange}
+        onClick={() => onViewChange ? onViewChange() : previewArtifact(artifact)}
+        title={path}
       >
-        <span className="flex size-5 shrink-0 items-center justify-center">
+        {!compact ? <span className="flex size-5 shrink-0 items-center justify-center">
           <ArtifactIcon className="size-5" type={artifact.type} />
-        </span>
+        </span> : null}
         <span className="flex min-w-0 flex-1 flex-col gap-0.5 sm:flex-row sm:items-center sm:gap-3">
-          <span className="block min-w-0 flex-1 truncate text-sm font-medium">
-            {artifact.name}
+          <span className="flex min-w-0 flex-1 items-center text-sm font-normal text-muted-foreground" data-testid="artifact-path">
+            {directory ? <span
+              className="min-w-0 shrink overflow-hidden text-ellipsis whitespace-nowrap [direction:rtl]"
+              data-testid="artifact-path-directory"
+            ><span className="[direction:ltr]">{directory}</span></span> : null}
+            {directory ? <span className="shrink-0" data-testid="artifact-path-separator">/</span> : null}
+            <span className="max-w-full shrink-0 truncate" data-testid="artifact-path-filename">{filename}</span>
           </span>
-          <span className="block shrink-0 text-xs tabular-nums text-muted-foreground">
+          {artifact.change ? <ChangeCounts change={artifact.change} /> : !compact ? <span className="block shrink-0 text-xs tabular-nums text-muted-foreground">
             {artifact.legacy_target.exists === false
               ? t("artifact.file_missing")
               : size}
             {hasUpdate ? ` · ${t("artifact.file_updated")}` : null}
-          </span>
+          </span> : null}
         </span>
       </button>
       <div className="flex shrink-0 items-center gap-0.5">
@@ -113,18 +124,22 @@ export function ArtifactCard({ artifact }: { artifact: ArtifactItem }) {
                 variant="ghost"
                 size="icon-sm"
                 disabled={
-                  !actions?.desktop ||
-                  !actions.fileWindowAvailable ||
-                  busy ||
-                  (actions.running && !getOfficeDocumentKind(artifact.path)) ||
-                  typeof window === "undefined" ||
-                  !window.__JUGGLEWORK_ELECTRON__?.fileWindow ||
-                  artifact.legacy_target.exists === false
+                  artifact.legacy_target.exists === false ||
+                  (!onOpenInTab && (
+                    !actions?.desktop ||
+                    !actions.fileWindowAvailable ||
+                    busy ||
+                    (actions.running && !getOfficeDocumentKind(artifact.path)) ||
+                    typeof window === "undefined" ||
+                    !window.__JUGGLEWORK_ELECTRON__?.fileWindow
+                  ))
                 }
-                onClick={() => void run("window")}
-                aria-label={t("artifact.open_window")}
+                onClick={() => onOpenInTab ? onOpenInTab() : void run("window")}
+                aria-label={t(onOpenInTab ? "artifact.open_tab" : "artifact.open_window")}
                 title={
-                  actions?.desktop && !actions.fileWindowAvailable
+                  onOpenInTab
+                    ? t("artifact.open_tab")
+                    : actions?.desktop && !actions.fileWindowAvailable
                     ? t("artifact.restart_desktop")
                     : t("artifact.open_window")
                 }
@@ -134,12 +149,14 @@ export function ArtifactCard({ artifact }: { artifact: ArtifactItem }) {
             <SquareArrowOutUpRight className="size-4" />
           </TooltipTrigger>
           <TooltipContent>
-            {actions?.desktop && !actions.fileWindowAvailable
+            {onOpenInTab
+              ? t("artifact.open_tab")
+              : actions?.desktop && !actions.fileWindowAvailable
               ? t("artifact.restart_desktop")
               : t("artifact.open_window")}
           </TooltipContent>
         </Tooltip>
-        <span title={t("artifact.share_unavailable")}>
+        {!compact ? <span title={t("artifact.share_unavailable")}>
           <Button
             variant="ghost"
             size="icon-sm"
@@ -148,7 +165,7 @@ export function ArtifactCard({ artifact }: { artifact: ArtifactItem }) {
           >
             <Share2 className="size-4" />
           </Button>
-        </span>
+        </span> : null}
         <DropdownMenu>
           <DropdownMenuTrigger
             render={
@@ -212,11 +229,24 @@ export function ArtifactCard({ artifact }: { artifact: ArtifactItem }) {
   );
 }
 
-/** 当前轮次统一产物卡片：前三项预览，其余可原地展开或在弹窗查看。 */
-export function ArtifactCards({ artifacts }: { artifacts: ArtifactItem[] }) {
-  const [showAll, setShowAll] = React.useState(false);
+/** 当前轮次统一产物卡片：前三项预览，其余原地展开，差异在右侧查看。 */
+export function ChangeCounts({ change }: { change: { additions: number; deletions: number; source?: "snapshot" | "edits" } }) {
+  return <span className="inline-flex shrink-0 gap-1 text-sm tabular-nums" data-testid="artifact-change-counts" title={t(change.source === "edits" ? "artifact.edit_counts" : "artifact.text_changes_only")}>
+    <span className="text-green-11">+{change.additions}</span>
+    <span className="text-red-11">-{change.deletions}</span>
+  </span>;
+}
+
+export function ArtifactCards({ artifacts, turnId, onUndo }: { artifacts: ArtifactItem[]; turnId?: string; onUndo?: () => void }) {
+  const actions = useArtifactActions();
+  const [confirmUndo, setConfirmUndo] = React.useState(false);
   const [expanded, setExpanded] = React.useState(false);
   const listId = React.useId();
+  const openChanges = (artifact?: ArtifactItem) => {
+    actions?.openChanges(turnId ?? artifacts[0]?.messageId ?? "", artifacts, artifact?.path);
+  };
+  const changes = artifacts.flatMap((artifact) => artifact.change ? [artifact.change] : []);
+  const totals = changes.reduce((sum, change) => ({ additions: sum.additions + change.additions, deletions: sum.deletions + change.deletions }), { additions: 0, deletions: 0 });
   if (!artifacts.length) return null;
   return (
     <div
@@ -226,32 +256,35 @@ export function ArtifactCards({ artifacts }: { artifacts: ArtifactItem[] }) {
       <section className="overflow-hidden rounded-2xl border border-border bg-background" aria-label={t("artifact.turn_files")} data-testid="artifact-summary">
         <header className="flex items-center gap-3 border-b border-border px-3 py-3 sm:px-4">
           <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted/60 text-muted-foreground" aria-hidden="true">
-            <Files className="size-5" />
+            <FileDiff className="size-5" />
           </span>
           <div className="min-w-0 flex-1">
             <h3 className="text-sm font-semibold">{t("artifact.summary_count", { count: artifacts.length })}</h3>
+            {changes.length ? <div className="mt-0.5"><ChangeCounts change={{ ...totals, source: changes.some((change) => change.source === "edits") ? "edits" : "snapshot" }} /></div> : null}
           </div>
+          {onUndo ? <Button variant="ghost" size="sm" className="shrink-0 gap-1.5" onClick={() => setConfirmUndo(true)}>{t("artifact.undo")}<Undo2 className="size-4" /></Button> : null}
           <Button
             variant="outline"
             size="sm"
             className="shrink-0 rounded-xl"
             aria-label={t("artifact.view_all", { count: artifacts.length })}
-            onClick={() => setShowAll(true)}
+            disabled={!actions}
+            onClick={() => openChanges()}
           >
-            {t("artifact.view_all_short")}
+            {t("artifact.view_changes")}
           </Button>
         </header>
-        <div className="p-1 sm:p-2">
+        <div>
           <div id={listId} className="flex min-w-0 flex-col">
             {(expanded ? artifacts : artifacts.slice(0, 3)).map((artifact) => (
-              <ArtifactCard key={artifact.id} artifact={artifact} />
+              <ArtifactCard key={artifact.id} artifact={artifact} compact onViewChange={actions ? () => openChanges(artifact) : undefined} />
             ))}
           </div>
           {artifacts.length > 3 ? (
             <Button
               variant="ghost"
               size="sm"
-              className="mt-1 gap-2 px-2 font-medium"
+              className="h-9 w-full justify-start gap-2 rounded-none px-3 text-sm font-medium"
               aria-expanded={expanded}
               aria-controls={listId}
               onClick={() => setExpanded((value) => !value)}
@@ -262,13 +295,13 @@ export function ArtifactCards({ artifacts }: { artifacts: ArtifactItem[] }) {
           ) : null}
         </div>
       </section>
-      <Dialog open={showAll} onOpenChange={setShowAll}>
-        <DialogContent className="max-w-xl">
-          <DialogTitle>{t("artifact.turn_files")}</DialogTitle>
-          <div className="subtle-scrollbar flex max-h-[70vh] flex-col overflow-y-auto">
-            {artifacts.map((artifact) => (
-              <ArtifactCard key={artifact.id} artifact={artifact} />
-            ))}
+      <Dialog open={confirmUndo} onOpenChange={setConfirmUndo}>
+        <DialogContent className="max-w-md">
+          <DialogTitle>{t("artifact.undo")}</DialogTitle>
+          <p className="text-sm text-muted-foreground">{t("artifact.undo_warning")}</p>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setConfirmUndo(false)}>{t("common.cancel")}</Button>
+            <Button onClick={() => { setConfirmUndo(false); onUndo?.(); }}>{t("artifact.undo")}</Button>
           </div>
         </DialogContent>
       </Dialog>
