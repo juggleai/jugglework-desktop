@@ -153,6 +153,8 @@ export default {
   "app.error_gateway_credential_hint": "Reconnect or sign in to JuggleWork again, then retry. Your task and workspace files are preserved.",
   "app.error_ip_authorization": "The model provider has not authorized this worker's network address yet",
   "app.error_ip_authorization_hint": "This can be a temporary provider routing or IP allowlist delay. Retry once after a moment or switch models. If it continues, ask your organization admin to check the provider connection; you usually do not need to replace your API key.",
+  "app.error_provider_timeout": "Model service did not start responding",
+  "app.error_provider_timeout_hint": "The request was stopped after bounded retries. Retry once or switch models. If it continues, ask your organization administrator to check the managed model connection.",
   "app.error_managed_model_preparing": "This organization-managed model is still being prepared. Wait a moment, then retry.",
   "app.error_not_connected": "Not connected to a server",
   "app.error_rate_limit": "Rate limit exceeded",

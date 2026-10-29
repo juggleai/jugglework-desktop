@@ -19,6 +19,7 @@ const MAX_EMPTY_STREAM_PROBE_BYTES = 128 * 1024;
 const TLS_RETRY_DELAY_MS = 150;
 const EMPTY_STREAM_RETRY_DELAYS_MS = [1_000, 3_000] as const;
 const EMPTY_STREAM_RETRY_HEADER = "x-jugglework-empty-stream-retry";
+const MANAGED_GATEWAY_PATH = /\/jwork\/api\/gateway\/v1\/lpr_[a-z0-9._-]+(?:\/|$)/i;
 const PROVIDER_RESPONSE_TIMEOUT_MS = 60_000;
 const PROVIDER_FIRST_BYTE_TIMEOUT_MS = 60_000;
 const PROVIDER_NO_PROGRESS_TIMEOUT_MS = 120_000;
@@ -432,7 +433,11 @@ async function markedStreamingRequest(
   } catch {
     return null;
   }
-  if (request.headers.get(EMPTY_STREAM_RETRY_HEADER) !== "1") return null;
+  const marked = request.headers.get(EMPTY_STREAM_RETRY_HEADER) === "1";
+  // OpenCode provider SDKs can capture `fetch` before chat headers are applied.
+  // The URL fallback keeps the managed gateway on the guarded transport even
+  // when a provider integration drops the private marker header.
+  if (!marked && !MANAGED_GATEWAY_PATH.test(request.url)) return null;
   const headers = new Headers(request.headers);
   headers.delete(EMPTY_STREAM_RETRY_HEADER);
   const sanitized = new Request(request.clone(), { headers });
@@ -475,7 +480,10 @@ async function fetchWithEmptyStreamRetry(
     if (attempt === EMPTY_STREAM_RETRY_DELAYS_MS.length) {
       const message = lastReason === "empty"
         ? `Provider returned an empty response after ${attempt + 1} attempts.`
-        : `Provider stream timed out before producing output after ${attempt + 1} attempts (${lastReason}).`;
+        // Do not use OpenCode's generic timeout phrases here. They are treated
+        // as retryable by the outer session loop and would replay another full
+        // retry cycle after this transport has already exhausted its budget.
+        : `Managed model produced no output after ${attempt + 1} attempts (${lastReason}).`;
       throw new Error(message);
     }
     console.warn("JuggleWork provider stream produced no output; retrying", {
@@ -582,21 +590,46 @@ async function normalizedProviderErrorResponse(response: Response): Promise<Resp
 }
 
 let installed = false;
+let managedProviderFetch: typeof fetch | null = null;
 
-function installContextOverflowFetchPatch(): void {
-  if (installed) return;
+function installContextOverflowFetchPatch(): typeof fetch {
+  if (installed && managedProviderFetch) return managedProviderFetch;
   installed = true;
   const base = globalThis.fetch;
   const patched = async (input: Parameters<typeof fetch>[0], init?: RequestInit): Promise<Response> => {
     return normalizedProviderErrorResponse(await fetchWithEmptyStreamRetry(base, input, init));
   };
-  globalThis.fetch = Object.assign(patched, base);
+  managedProviderFetch = Object.assign(patched, base);
+  globalThis.fetch = managedProviderFetch;
+  return managedProviderFetch;
 }
 
 // Single export: the OpenCode plugin loader treats every export as a factory.
 export const JuggleWorkContextOverflow = async () => {
-  installContextOverflowFetchPatch();
+  const providerFetch = installContextOverflowFetchPatch();
   return {
+    config: async (config: {
+      provider?: Record<string, { options?: Record<string, unknown> }>;
+    }) => {
+      for (const [providerID, provider] of Object.entries(config.provider ?? {})) {
+        if (!/^lpr_/i.test(providerID) || !provider || typeof provider !== "object") continue;
+        const options = provider.options && typeof provider.options === "object" ? provider.options : {};
+        provider.options = {
+          ...options,
+          // Bind the guard directly to the provider. Patching global fetch is
+          // insufficient when an SDK captured the old function during import.
+          fetch: providerFetch,
+          // The custom fetch owns the per-attempt response-header deadline and
+          // its bounded retries. Keep OpenCode's outer header timer from
+          // aborting that retry cycle, while retaining a bounded SSE idle wait.
+          headerTimeout: false,
+          chunkTimeout: providerTimeoutMs(
+            "JUGGLEWORK_PROVIDER_NO_PROGRESS_TIMEOUT_MS",
+            PROVIDER_NO_PROGRESS_TIMEOUT_MS,
+          ),
+        };
+      }
+    },
     "chat.headers": async (
       input: { model?: { providerID?: string } },
       output: { headers: Record<string, string> },

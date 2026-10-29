@@ -85,6 +85,8 @@ function providerErrorHeadingAndHint(kind: NonNullable<ReturnType<typeof classif
       return [t("app.error_request_too_large"), t("app.error_request_too_large_hint")];
     case "tls_verification_failed":
       return [t("app.error_tls_verification"), t("app.error_tls_verification_hint")];
+    case "provider_timeout":
+      return [t("app.error_provider_timeout"), t("app.error_provider_timeout_hint")];
   }
 }
 

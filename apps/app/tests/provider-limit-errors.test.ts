@@ -240,4 +240,24 @@ describe("gateway transport provider errors", () => {
   test("does not reclassify a generic unauthorized provider response as a gateway credential", () => {
     expect(classifyProviderError({ statusCode: 401, message: "Unauthorized" })).toBe(null);
   });
+
+  test("renders response-header timeout guidance without suggesting compaction", () => {
+    const error = {
+      name: "ProviderHeaderTimeoutError",
+      message: "Provider response headers timed out after 60000ms",
+      providerID: "lpr_managed",
+    };
+    expect(classifyProviderError(error)).toBe("provider_timeout");
+    const text = describeOpencodeSessionError(error);
+    expect(text).toContain("Model service did not start responding");
+    expect(text.toLowerCase()).toContain("retry once or switch models");
+    expect(text).toContain("Provider: lpr_managed");
+    expect(text).not.toContain("/compact");
+  });
+
+  test("localizes the generic operation timeout emitted after provider exhaustion", () => {
+    setLocale("zh");
+    expect(classifyProviderError("The operation timed out.")).toBe("provider_timeout");
+    expect(describeOpencodeSessionError("The operation timed out.")).toContain("模型服务未能及时开始响应");
+  });
 });

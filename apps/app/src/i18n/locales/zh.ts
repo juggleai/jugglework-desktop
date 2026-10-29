@@ -156,6 +156,8 @@ export default {
   "app.error_gateway_credential_hint": "请重新连接或登录 JuggleWork 后重试。当前任务内容和工作区文件不会丢失。",
   "app.error_ip_authorization": "模型提供商尚未授权当前工作节点的网络地址",
   "app.error_ip_authorization_hint": "这可能是临时的路由或 IP 白名单生效延迟。请稍等片刻后重试一次，或更换模型。如果持续失败，请让组织管理员检查提供商连接；通常无需更换你的 API Key。",
+  "app.error_provider_timeout": "模型服务未能及时开始响应",
+  "app.error_provider_timeout_hint": "已在有限次数重试后停止请求。请重试一次或更换模型；如果持续失败，请让组织管理员检查托管模型连接。",
   "app.error_managed_model_preparing": "组织托管模型仍在准备中，请稍等片刻后重试。",
   "app.error_not_connected": "未连接到服务器",
   "app.error_rate_limit": "请求频率超限",
