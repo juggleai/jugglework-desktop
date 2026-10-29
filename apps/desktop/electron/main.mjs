@@ -1452,7 +1452,14 @@ const toonFactoryRuntime = createToonFactoryRuntime({
   moduleRoot: app.isPackaged ? path.join(process.resourcesPath, "toonFactoryV2") : path.resolve(__dirname, "../resources/toonFactoryV2"),
 });
 const runtimeIpcHandlers = createRuntimeIpcHandlers(runtimeManager);
-const fileHostClient = createManagedRuntimeClient({ getAccess: () => runtimeManager.managedServerAccess(), fetcher: nodeFetch, timeoutMs: 60_000 });
+const fileHostClient = createManagedRuntimeClient({
+  getAccess: () => runtimeManager.managedServerAccess(),
+  getHostAccess: async () => {
+    const info = await runtimeManager.juggleworkServerInfo();
+    return info?.running ? { baseUrl: info.baseUrl, hostToken: info.hostToken } : null;
+  },
+  fetcher: nodeFetch, timeoutMs: 60_000,
+});
 const fileEditor = createFileEditor({
   client: fileHostClient,
   getWindows: () => [mainWindow, ...fileWindows.windows()].filter(Boolean),

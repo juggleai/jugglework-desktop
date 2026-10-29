@@ -11,6 +11,36 @@ function access() {
 }
 
 describe("managed runtime client", () => {
+  it("keeps native Office review on host headers only and ordinary requests on collaborator headers", async () => {
+    const requests = [];
+    let hostReads = 0;
+    const client = createManagedRuntimeClient({
+      getAccess: access,
+      getHostAccess: () => { hostReads++; return { baseUrl: access().baseUrl, hostToken: "fixture-native-host" }; },
+      fetcher: async (_url, init) => { requests.push(init); return Response.json({ reference: {} }); },
+    });
+    await client.postJson("/workspace/ws/office/doc/selection-references", {});
+    assert.equal(hostReads, 0);
+    await client.postHostJson("/workspace/ws/office/doc/selection-references/review-confirmed", {});
+    assert.equal(hostReads, 1);
+    assert.equal(requests[0].headers.Authorization, "Bearer collaborator-secret");
+    assert.equal(Object.hasOwn(requests[0].headers, "X-JuggleWork-Host-Token"), false);
+    assert.equal(requests[1].headers["X-JuggleWork-Host-Token"], "fixture-native-host");
+    assert.equal(Object.hasOwn(requests[1].headers, "Authorization"), false);
+    for (const path of ["/env", "/workspace/ws/office/doc/selection-references", "https://evil.test/review-confirmed"])
+      await assert.rejects(client.postHostJson(path, {}), /Office review endpoint/);
+    assert.equal(hostReads, 1);
+    assert.equal(requests.length, 2);
+  });
+
+  it("never falls back to collaborator auth when native host access is missing", async () => {
+    let fetched = false;
+    for (const getHostAccess of [undefined, () => null, () => access()]) {
+      const client = createManagedRuntimeClient({ getAccess: access, getHostAccess, fetcher: async () => { fetched = true; return Response.json({}); } });
+      await assert.rejects(client.postHostJson("/workspace/ws/office/doc/selection-references/review-confirmed", {}), (error) => error instanceof ManagedRuntimeClientError && error.code === "unavailable");
+    }
+    assert.equal(fetched, false);
+  });
   it("uses only the collaborator token with bounded no-store non-redirecting requests", async () => {
     const requests = [];
     const client = createManagedRuntimeClient({

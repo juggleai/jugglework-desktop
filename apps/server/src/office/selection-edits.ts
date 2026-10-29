@@ -5,7 +5,8 @@ import { getOfficeDocumentKind } from "@jugglework/types/office";
 import { ApiError } from "../errors.js";
 import { parseOfficeSelection } from "./selection.js";
 import { officeSelectionToolNames, planOfficeSelectionTool } from "./selection-tools.js";
-import { officeDocRangeParts, officeProofJson, readOfficeSelectionProof, verifyOfficeSelectionEdit, type OfficeSelectionProof } from "./selection-proof.js";
+import { OFFICE_DOC_MAX_SPAN, officeDocRangeParts, officeProofJson, readOfficeSelectionProof, verifyOfficeSelectionEdit, type OfficeSelectionProof } from "./selection-proof.js";
+import { slidePageDescriptor, slidePageGetter, slidePageIndex, slidePageScope, validateSlidePageBudget } from "./slide-page-proof.js";
 
 const id = z.string().min(1).max(256);
 const instruction = z.object({
@@ -32,7 +33,7 @@ interface ReferenceRecord {
 interface Execution {
   references: ReferenceRecord[];
   baselines: Map<string, OfficeSelectionProof>;
-  state: "ready" | "running" | "coordinates-changed" | "needs-verification";
+  state: "ready" | "running" | "coordinates-changed" | "needs-verification" | "superseded";
 }
 interface Turn {
   fingerprint: string;
@@ -52,11 +53,12 @@ interface Options {
 function stale(message = "选区已变化，请重新选择"): never {
   throw new ApiError(409, "office_selection_stale", message);
 }
-function generation(document: OfficeDocumentSession): string {
+function generation(document: Pick<OfficeDocumentSession, "pageId" | "engineFileId">): string {
   // 页面代次由 Server 生成，原生模型变化也必须换代；窗口迁移保留这两个身份。
   return `${document.pageId}:${document.engineFileId}`;
 }
 function domain(locator: OfficeSelectionLocator): string {
+  if (locator.kind === "slide-pages") return `slide:${slidePageIndex(locator)}`;
   return "sheetId" in locator ? `sheet:${locator.sheetId}`
     : "pageIndex" in locator ? `slide:${locator.pageIndex}` : locator.kind.startsWith("doc-") ? "doc" : "unsupported";
 }
@@ -72,6 +74,18 @@ export class OfficeSelectionEdits {
 
   constructor(private readonly options: Options) {}
 
+  /** admission 与基线推进共用总预算；被替换项不重复序列化，写前可传入最坏字节上界。 */
+  private assertRetainedBudget(additions: Iterable<OfficeSelectionProof | number>, replacing?: { execution: Execution; scope?: string }): void {
+    let bytes = 0;
+    for (const turn of this.turns.values()) for (const execution of turn.executions.values()) for (const [scope, proof] of execution.baselines) {
+      if (execution === replacing?.execution && (replacing.scope === undefined || replacing.scope === scope)) continue;
+      bytes += Buffer.byteLength(officeProofJson(proof.state));
+    }
+    for (const proof of additions) bytes += typeof proof === "number" ? proof : Buffer.byteLength(officeProofJson(proof.state));
+    if (bytes > 64 * 1024 * 1024)
+      throw new ApiError(409, "office_selection_capacity", "选区内容记录超过 64 MiB 预算，请缩小本次修改或关闭不再使用的文档后重试");
+  }
+
   private async live(record: ReferenceRecord): Promise<OfficeDocumentSession> {
     const ref = record.value;
     const document = await this.options.document(ref.workspaceId, ref.ownerSessionId, ref.documentId);
@@ -85,18 +99,40 @@ export class OfficeSelectionEdits {
     return proof;
   }
 
+  private modelExecutions(document: OfficeDocumentSession): Execution[] {
+    return [...this.turns.values()].flatMap((turn) => {
+      const execution = turn.executions.get(document.documentId), ref = execution?.references[0]?.value;
+      return execution && ref?.workspaceId === document.workspaceId && ref.modelGeneration === generation(document) ? [execution] : [];
+    });
+  }
+
+  /** 仅宿主确认可以恢复未知结果；运行中的写入不能被确认或新引用接管。 */
+  private captureReview(document: OfficeDocumentSession, reviewed: boolean): Execution[] {
+    const executions = this.modelExecutions(document);
+    if (executions.some((execution) => execution.state === "running"))
+      throw new ApiError(409, "office_selection_save_blocked", "文档选区操作仍在运行，请结束后重新选择", { documentId: document.documentId });
+    const unknown = executions.filter((execution) => execution.state === "needs-verification");
+    if (unknown.length && !reviewed)
+      throw new ApiError(409, "office_selection_review_required", "当前文档有尚未确认的修改，请检查文档并确认保留当前内容后重新采集", { documentId: document.documentId, modelGeneration: generation(document) });
+    return unknown;
+  }
+
   /**
    * 在输入浮层聚焦前完成原生输入提交、固定原选择及同状态证明；重复 captureId 不重采光标。
    * @param document 已由宿主及页面身份校验的所属文档
    * @param captureId 当前明确打开浮层动作的唯一身份
    * @param expectedSelection 已绑定原生页面在入口动作中同步冻结的选区；省略时由宿主实时读取
+   * @param reviewedUnconfirmed 仅可信宿主在用户明确核对当前代次后传 true；不能来自页面选区或 Agent 参数
    */
-  async capture(document: OfficeDocumentSession, captureId: string, expectedSelection?: unknown): Promise<OfficeSelectionReference> {
+  async capture(document: OfficeDocumentSession, captureId: string, expectedSelection?: unknown, reviewedUnconfirmed = false): Promise<OfficeSelectionReference> {
     id.parse(captureId);
+    document = structuredClone(document);
     if (document.state !== "ready" || !document.engineFileId) stale("请等待文档就绪后重新选择");
+    const reviewed = this.captureReview(document, reviewedUnconfirmed === true);
     const key = JSON.stringify([document.workspaceId, document.documentId, document.pageId, captureId]);
     const previous = this.captures.get(key);
     if (previous) {
+      if (reviewed.length) stale("请发起一次新的选区采集以核对当前内容");
       const existing = this.references.get(previous);
       if (!existing) stale();
       await this.live(existing);
@@ -105,12 +141,23 @@ export class OfficeSelectionEdits {
     const kind = getOfficeDocumentKind(document.relativePath)!;
     // TIPS: 原生按钮在 pointerdown 同步读取并通过已绑定页面提交冻结值。
     // IPC 往返后 SDK 可能已收回光标；此时重读当前选择会改投目标，必须用冻结内容与真实模型核对。
-    const original = parseOfficeSelection(kind, expectedSelection === undefined ? await this.options.selection(document) : expectedSelection);
+    const snapshot = expectedSelection === undefined ? await this.options.selection(document) : expectedSelection;
+    const original = parseOfficeSelection(kind, snapshot);
     if (!original?.locator) stale("请选择支持的文字或单元格范围");
+    // 页选择必须同时携带真实 SDK page_id；不能把滞后的序号映射到新页。
+    let nativeSlideIds: unknown;
+    if (original.locator.kind === "slide-pages") {
+      slidePageIndex(original.locator);
+      nativeSlideIds = (snapshot as Record<string, unknown>).nativeSlideIds;
+      if (!Array.isArray(nativeSlideIds) || nativeSlideIds.length !== 1 || typeof nativeSlideIds[0] !== "string" || !nativeSlideIds[0])
+        stale("整页选择缺少原生页身份 nativeSlideIds，请重新选择；不能仅凭页序号采集");
+    }
     await this.options.prepare(document);
     if (expectedSelection === undefined) {
-      const afterCommit = parseOfficeSelection(kind, await this.options.selection(document));
+      const committed = await this.options.selection(document);
+      const afterCommit = parseOfficeSelection(kind, committed);
       if (!afterCommit?.locator || officeProofJson({ locator: original.locator, data: original.data }) !== officeProofJson({ locator: afterCommit.locator, data: afterCommit.data })) stale("输入提交后选区已变化，请重新选择");
+      if (nativeSlideIds && officeProofJson((committed as Record<string, unknown>)?.nativeSlideIds) !== officeProofJson(nativeSlideIds)) stale("输入提交后原生页身份已变化");
     }
     const reference: ReferenceRecord = {
       fileId: document.engineFileId,
@@ -124,9 +171,12 @@ export class OfficeSelectionEdits {
       },
     };
     const first = await this.read(reference);
+    if (nativeSlideIds && (nativeSlideIds as string[])[0] !== first.state.pageId) stale("页面选择与原生页身份不一致，请重新选择");
     if (expectedSelection === undefined) {
-      const selected = parseOfficeSelection(kind, await this.options.selection(document));
+      const latest = await this.options.selection(document);
+      const selected = parseOfficeSelection(kind, latest);
       if (!selected?.locator || officeProofJson({ locator: selected.locator, data: selected.data }) !== officeProofJson({ locator: original.locator, data: original.data })) stale();
+      if (nativeSlideIds && officeProofJson((latest as Record<string, unknown>)?.nativeSlideIds) !== officeProofJson(nativeSlideIds)) stale("原生页身份已变化");
     }
     const second = await this.read(reference);
     if (first.stamp !== second.stamp) stale();
@@ -152,18 +202,31 @@ export class OfficeSelectionEdits {
     reference.proof = { stamp: second.stamp, state: {} };
     reference.value.contentStamp = second.stamp;
     reference.value.preview.range = this.rangeLabel(reference.value.locator, second);
+    if (reference.value.locator.kind === "slide-pages") {
+      const scope = slidePageDescriptor(slidePageScope(second.state, reference.value.locator));
+      reference.value.preview.text = `${scope.editable.length} 个可编辑文本框 · ${scope.preserved.length} 个保留对象`;
+    }
     if (!reference.value.preview.text && reference.value.locator.kind === "slide-text") {
       const text = (second.state.texts as Array<{ shapeId: string; text: string }>).find((item) => item.shapeId === (original.locator as { shapeId: string }).shapeId)?.text ?? "";
       reference.value.preview.text = text.slice(reference.value.locator.start, reference.value.locator.start + reference.value.locator.count).slice(0, 160);
     }
     const owned = [...this.references.values()].filter((item) => item.value.workspaceId === document.workspaceId && item.value.ownerSessionId === document.ownerSessionId);
     if (owned.length >= 64) throw new ApiError(409, "office_selection_capacity", "选区过多，请先移除不再使用的选区");
+    await this.live(reference);
+    const remaining = this.captureReview(document, reviewedUnconfirmed === true);
+    if (remaining.some((execution) => !reviewed.includes(execution))) this.captureReview(document, false);
+    // 两次同状态证明和最终 live 检查全部成功后才解除阻塞；旧任务永不恢复执行权限。
+    for (const execution of remaining) {
+      execution.state = "superseded";
+      execution.baselines.clear();
+    }
     this.references.set(reference.value.referenceId, reference);
     this.captures.set(key, reference.value.referenceId);
     return structuredClone(reference.value);
   }
 
   private rangeLabel(locator: OfficeSelectionLocator, proof: OfficeSelectionProof): string {
+    if (locator.kind === "slide-pages") return `第 ${slidePageIndex(locator) + 1} 页整页`;
     if (locator.kind === "doc-caret") return `光标 ${locator.idx}`;
     if (locator.kind === "doc-text") return locator.ranges.map((range) => `${range.begin}–${range.end}`).join("、");
     if ("sheetId" in locator) {
@@ -192,12 +255,13 @@ export class OfficeSelectionEdits {
   }
 
   /** 模型关闭、恢复或失效时释放其内容证明；轮次标记保留，旧任务不能降级成当前文件编辑。 */
-  retireDocument(workspaceId: string, documentId: string): void {
-    for (const [id, record] of this.references) if (record.value.workspaceId === workspaceId && record.value.documentId === documentId) this.references.delete(id);
+  retireDocument(workspaceId: string, documentId: string, model: Pick<OfficeDocumentSession, "pageId" | "engineFileId">): void {
+    const modelGeneration = generation(model);
+    for (const [id, record] of this.references) if (record.value.workspaceId === workspaceId && record.value.documentId === documentId && record.value.modelGeneration === modelGeneration) this.references.delete(id);
     for (const turn of this.turns.values()) {
       const execution = turn.executions.get(documentId);
-      if (!execution || execution.references[0]?.value.workspaceId !== workspaceId) continue;
-      execution.state = "needs-verification";
+      if (!execution || execution.references[0]?.value.workspaceId !== workspaceId || execution.references[0].value.modelGeneration !== modelGeneration) continue;
+      execution.state = "superseded";
       execution.baselines.clear();
     }
   }
@@ -237,11 +301,14 @@ export class OfficeSelectionEdits {
     for (const id of refs) {
       const record = this.references.get(id);
       if (!record || record.value.workspaceId !== workspaceId || record.value.ownerSessionId !== sessionId) stale();
+      this.assertDocumentSaveAllowed(workspaceId, record.value.documentId, await this.live(record));
       const current = await this.read(record);
       if (current.stamp !== record.proof.stamp) stale();
       turn.references.set(id, structuredClone(record));
     }
     if (new Set([...turn.references.values()].map((record) => record.value.documentId)).size > 1) stale("一次选区请求只支持一个文件，请分别发送");
+    if ([...turn.references.values()].some((record) => record.value.locator.kind === "slide-pages") && turn.references.size !== 1)
+      stale("整页引用不能在同轮与其他 PPT 引用混用（含文字、对象或另一页引用），请只发送一个整页引用");
     for (const record of turn.references.values()) {
       let execution = turn.executions.get(record.value.documentId);
       if (!execution) { execution = { references: [], baselines: new Map(), state: "ready" }; turn.executions.set(record.value.documentId, execution); }
@@ -261,9 +328,7 @@ export class OfficeSelectionEdits {
       }
     }
     if (this.turns.size >= 4096) throw new ApiError(409, "office_selection_capacity", "选区任务记录已满，请重启应用后重新选择");
-    let retained = 0;
-    for (const item of [...this.turns.values(), turn]) for (const execution of item.executions.values()) for (const proof of execution.baselines.values()) retained += Buffer.byteLength(officeProofJson(proof.state));
-    if (retained > 64 * 1024 * 1024) throw new ApiError(409, "office_selection_capacity", "选区内容记录过多，请关闭不再使用的文档后重试");
+    this.assertRetainedBudget([...turn.executions.values()].flatMap((execution) => [...execution.baselines.values()]));
     this.turns.set(key, turn);
   }
 
@@ -276,7 +341,13 @@ export class OfficeSelectionEdits {
       contents: turn ? [...turn.references.values()].flatMap((record) => record.docContents ? [{
         referenceId: record.value.referenceId,
         ranges: structuredClone(record.docContents),
-      }] : []) : [] };
+      }] : []) : [],
+      pages: turn ? [...turn.references.values()].flatMap((record) => {
+        if (record.value.locator.kind !== "slide-pages") return [];
+        const baseline = turn.executions.get(record.value.documentId)?.baselines.get(domain(record.value.locator));
+        if (!baseline) return [];
+        return [{ referenceId: record.value.referenceId, ...structuredClone(slidePageDescriptor(slidePageScope(baseline.state, record.value.locator))) }];
+      }) : [] };
   }
   private target(workspaceId: string, sessionId: string, turnId: string, referenceId?: string) {
     const turn = this.turns.get(turnKey(workspaceId, sessionId, turnId));
@@ -299,7 +370,7 @@ export class OfficeSelectionEdits {
   }
 
   /** 选择工具的属性必须有完整读回适配；尚未验证的样式字段不能借原生 schema 绕过。 */
-  private validatePayload(name: string, args: Record<string, unknown>): void {
+  private validatePayload(name: string, args: Record<string, unknown>, page = false): void {
     if (name === "doc_update_text_property" || name === "slide_set_text_property") {
       const keys = new Set(["file_id", "ranges", "page_index", "shape_id", "index", "count", "bold", "italic", "color", "font_size"]);
       if (Object.keys(args).some((key) => !keys.has(key))) stale("该文字样式尚不支持选区回读，请使用加粗、斜体、颜色或字号");
@@ -308,7 +379,7 @@ export class OfficeSelectionEdits {
       if (name === "doc_replace_text") {
         args.text = args.text.replace(/\r\n|\n/g, "\r");
         if ((args.text as string).length > 4096 || (args.text as string).split("\r").some((text) => text.length > 200 || /[\u0000\ufffc]/.test(text))) stale("每段替换文字不能超过 200 字，请保留原有段落边界");
-      } else if (args.text.length > 200 || /[\r\n\u0000\ufffc]/.test(args.text)) stale("请使用不超过 200 字的单段文字，结构修改请单独处理");
+      } else if (!page && (args.text.length > 200 || /[\r\n\u0000\ufffc]/.test(args.text))) stale("请使用不超过 200 字的单段文字，结构修改请单独处理");
     }
     if (name === "sheet_set_cell_style" && args.is_clear === true) stale("选区暂不支持清除样式，请明确设置目标属性");
   }
@@ -318,10 +389,11 @@ export class OfficeSelectionEdits {
     const target = this.target(workspaceId, sessionId, turnId, referenceId);
     if (!target) return null;
     const { record, execution } = target;
-    if (execution.state !== "ready") stale(execution.state === "coordinates-changed" ? "上次修改改变了坐标，请重新选择后发送新要求" : "该任务的修改尚待核对，请检查文档后重新选择");
+    if (execution.state !== "ready") stale(execution.state === "superseded" ? "该任务已被重新核对或模型已退役，请使用新的选区" : execution.state === "coordinates-changed" ? "上次修改改变了坐标，请重新选择后发送新要求" : "该任务的修改尚待核对，请检查文档后重新选择");
     const document = await this.live(record);
-    const plan = planOfficeSelectionTool(record.value.locator, record.fileId, name, input);
-    this.validatePayload(name, plan.args);
+    this.assertDocumentSaveAllowed(workspaceId, document.documentId, document);
+    const plan = planOfficeSelectionTool(record.value.locator, record.fileId, name, input, execution.baselines.get(domain(record.value.locator))?.state);
+    this.validatePayload(name, plan.args, record.value.locator.kind === "slide-pages");
     if (plan.effect === "coordinates" && execution.references.length > 1) stale("改变坐标的多个选区修改请拆分发送");
     const readDomains = async () => {
       const proofs = new Map<string, OfficeSelectionProof>();
@@ -370,15 +442,31 @@ export class OfficeSelectionEdits {
         if ((plan.args.count as number) >= (sheet[plan.args.dimension_type === "row" ? "row_count" : "col_count"] as number)) stale("不能删除整个工作表的全部行列");
       }
       if (plan.effect === "read") {
-        const output = await this.options.tool(name, plan.args);
+        const output = record.value.locator.kind === "slide-pages"
+          ? slidePageGetter(slidePageScope(before.get(domain(record.value.locator))!.state, record.value.locator), name, plan.args)
+          : await this.options.tool(name, plan.args);
         execution.state = "ready";
         return { output };
+      }
+      if (record.value.locator.kind === "slide-pages") {
+        const scope = domain(record.value.locator);
+        const maxBytes = validateSlidePageBudget(slidePageScope(before.get(scope)!.state, record.value.locator), name, plan.args);
+        this.assertRetainedBudget([maxBytes], { execution, scope });
       }
       if (name === "doc_replace_text" || name === "doc_insert_text") {
         const state = before.get("doc")!.state;
         const range = name === "doc_insert_text" ? { begin: plan.args.idx as number, end: plan.args.idx as number } : (plan.args.ranges as Array<{ begin: number; end: number }>)[0];
         const parts = officeDocRangeParts(state, range), texts = (plan.args.text as string).split("\r");
         if (parts.length !== texts.length) stale(`当前选择跨 ${parts.length} 个段落，请提供相同段数的改写内容；空段也需保留，暂不支持合并或拆分段落`);
+        const deltas = parts.map((part, i) => texts[i].length - (part.end - part.begin));
+        const resultingLast = (state.last as number) + deltas.reduce((sum, delta) => sum + delta, 0);
+        if (resultingLast > OFFICE_DOC_MAX_SPAN) stale(`修改后的正文跨度超过 ${OFFICE_DOC_MAX_SPAN} UTF-16 核对预算，请缩小本次修改`);
+        // 跨段从后向前写入；中间态也不能先超过全文预算再由前段缩短。
+        let pendingLast = state.last as number;
+        for (const delta of [...deltas].reverse()) {
+          pendingLast += delta;
+          if (pendingLast > OFFICE_DOC_MAX_SPAN) stale(`逐段修改的正文跨度超过 ${OFFICE_DOC_MAX_SPAN} UTF-16 核对预算，请拆分处理`);
+        }
         const nodes = state.nodes as Array<{ start_index: number; end_index: number }>;
         const resultingSize = (state.properties as unknown[]).length + texts.join("").length - parts.reduce((sum, part) => sum + part.end - part.begin, 0);
         if (resultingSize > 256 || parts.some((part, i) => nodes[part.nodeIndex].end_index - nodes[part.nodeIndex].start_index + texts[i].length - (part.end - part.begin) > 200)) stale("修改后的段落过长，请缩小本次修改");
@@ -398,7 +486,7 @@ export class OfficeSelectionEdits {
         if (!ranges.length) stale("请选择需要修改的正文文字");
         plan.args.ranges = ranges;
       }
-    } catch (error) { execution.state = "ready"; throw error; }
+    } catch (error) { if ((execution.state as Execution["state"]) !== "superseded") execution.state = "ready"; throw error; }
     try {
       const results = [];
       for (const call of nativeCalls ?? [{ name, args: plan.args }]) results.push(await this.options.tool(call.name, call.args));
@@ -418,6 +506,8 @@ export class OfficeSelectionEdits {
       let after: Map<string, OfficeSelectionProof>;
       after = await readDomains();
       for (const [scope, previous] of before) verifyOfficeSelectionEdit(previous, after!.get(scope)!, oldLocator, name, plan.args, nativeCalls?.length ?? 1);
+      // 异常增长仍属于未知写入；检查通过前保留原基线，不能把超限 proof 放入长期记录。
+      this.assertRetainedBudget(after.values(), { execution });
       execution.baselines = after!;
       execution.state = plan.effect === "coordinates" ? "coordinates-changed" : "ready";
       await this.options.modified(document, messageId, name, plan.args, output);
@@ -432,7 +522,7 @@ export class OfficeSelectionEdits {
       if (name === "slide_set_text") location = { kind: "slide-shapes", pageIndex: plan.args.page_index as number, shapeIds: [plan.args.shape_id as string] };
       return { output, receipt: { documentId: document.documentId, name: document.name, status: "modified", readback: "confirmed", location, saved: false, selectionRef: referenceId, requiresReselection: plan.effect === "coordinates" } };
     } catch (error) {
-      execution.state = "needs-verification";
+      if ((execution.state as Execution["state"]) !== "superseded") execution.state = "needs-verification";
       throw new ApiError(409, "office_selection_edit_unconfirmed", "修改结果尚未确认，请检查文档后重新选择，不要重复执行", { documentId: document.documentId, cause: error instanceof Error ? error.message : String(error) });
     }
   }
@@ -441,14 +531,47 @@ export class OfficeSelectionEdits {
   async save(workspaceId: string, sessionId: string, turnId: string, referenceId?: string) {
     const target = this.target(workspaceId, sessionId, turnId, referenceId);
     if (!target) return null;
-    if (["running", "needs-verification"].includes(target.execution.state)) stale("修改尚未确认，暂不能确认保存");
-    const document = await this.live(target.record);
+    const requireConfirmed = () => {
+      if (target.execution.state === "superseded") stale("该任务已被重新核对或模型已退役，请使用新的选区");
+      if (!["ready", "coordinates-changed"].includes(target.execution.state) || !target.execution.baselines.size)
+        stale("修改尚未确认，暂不能确认保存");
+    };
+    if (target.execution.state === "superseded") stale("该任务已被重新核对或模型已退役，请使用新的选区");
+    const document = structuredClone(await this.live(target.record));
+    this.assertDocumentSaveAllowed(workspaceId, document.documentId, document);
+    requireConfirmed();
     await this.options.prepare(document);
+    await this.live(target.record);
+    requireConfirmed();
     for (const [scope, baseline] of target.execution.baselines) {
       const members = target.execution.references.filter((item) => domain(item.value.locator) === scope);
       const current = await this.read(members[0], members.map((item) => item.readLocator ?? item.value.locator));
       if (current.stamp !== baseline.stamp) stale("修改后文档内容已变化，请核对后手动保存或重新选择");
     }
-    return { document: await this.options.save(document), receipt: { documentId: document.documentId, status: "saved", saved: true, selectionRef: referenceId } };
+    await this.live(target.record);
+    requireConfirmed();
+    this.assertDocumentSaveAllowed(workspaceId, document.documentId, document);
+    const saved = await this.options.save(document);
+    requireConfirmed();
+    if (generation(saved) !== target.record.value.modelGeneration) stale("文档模型已变化，不能确认保存");
+    return { document: saved, receipt: { documentId: document.documentId, status: "saved", saved: true, selectionRef: referenceId } };
+  }
+
+  /** 自动、Agent 及手动保存共用此检查；已回读的 ready 中间态可保存，未知写入不可保存。 */
+  assertDocumentSaveAllowed(workspaceId: string, documentId: string, model: Pick<OfficeDocumentSession, "pageId" | "engineFileId">): void {
+    this.assertDocumentSettled(workspaceId, documentId, model, "保存");
+  }
+
+  /** 普通内容修改复用选区 blocker；仅阻断同代次运行中或待核对的写入。 */
+  assertDocumentMutationAllowed(workspaceId: string, documentId: string, model: Pick<OfficeDocumentSession, "pageId" | "engineFileId">): void {
+    this.assertDocumentSettled(workspaceId, documentId, model, "修改");
+  }
+
+  private assertDocumentSettled(workspaceId: string, documentId: string, model: Pick<OfficeDocumentSession, "pageId" | "engineFileId">, action: "保存" | "修改"): void {
+    for (const turn of this.turns.values()) {
+      const execution = turn.executions.get(documentId);
+      if (execution?.references[0]?.value.workspaceId === workspaceId && execution.references[0].value.modelGeneration === generation(model) && ["running", "needs-verification"].includes(execution.state))
+        throw new ApiError(409, "office_selection_save_blocked", `修改尚未确认，暂不能${action}；请先检查文档并重新选择`, { documentId });
+    }
   }
 }

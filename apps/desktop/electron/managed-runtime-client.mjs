@@ -95,6 +95,7 @@ function runtimeAccess(value) {
  *
  * @param {{
  *   getAccess(): unknown | Promise<unknown>,
+ *   getHostAccess?: () => unknown | Promise<unknown>,
  *   fetcher?: typeof fetch,
  *   timeoutMs?: number,
  *   maxResponseBytes?: number,
@@ -102,6 +103,7 @@ function runtimeAccess(value) {
  */
 export function createManagedRuntimeClient({
   getAccess,
+  getHostAccess,
   fetcher = fetch,
   timeoutMs = DEFAULT_TIMEOUT_MS,
   maxResponseBytes = DEFAULT_MAX_RESPONSE_BYTES,
@@ -125,15 +127,33 @@ export function createManagedRuntimeClient({
     return requestJson("POST", pathname, body, options);
   }
 
+  /** Main 私有核对通道；不接受页面指定的任意 host API 路径，也不回退到 client 权限。
+   * @param {string} pathname
+   * @param {unknown} body
+   * @param {{ signal?: AbortSignal }} [options]
+   */
+  async function postHostJson(pathname, body, options = {}) {
+    if (!/^\/workspace\/[^/]+\/office\/[^/]+\/selection-references\/review-confirmed$/.test(pathname))
+      throw new TypeError("Managed host path is not an Office review endpoint.");
+    return requestJson("POST", pathname, body, options, true);
+  }
+
   /**
    * @param {"GET" | "POST"} method
    * @param {string} pathname
    * @param {unknown} body
    * @param {{ signal?: AbortSignal }} [options]
+   * @param {boolean} [host]
    * @returns {Promise<unknown>}
    */
-  async function requestJson(method, pathname, body, { signal } = {}) {
-    const access = runtimeAccess(await getAccess());
+  async function requestJson(method, pathname, body, { signal } = {}, host = false) {
+    let access;
+    if (host) {
+      const raw = await getHostAccess?.();
+      if (!isRecord(raw) || !hasExactKeys(raw, ["baseUrl", "hostToken"]) || typeof raw.hostToken !== "string" || !raw.hostToken.trim())
+        throw new ManagedRuntimeClientError("unavailable");
+      access = runtimeAccess({ baseUrl: raw.baseUrl, clientToken: raw.hostToken });
+    } else access = runtimeAccess(await getAccess());
     const path = String(pathname ?? "");
     if (!path.startsWith("/") || path.startsWith("//") || path.includes("#")) {
       throw new TypeError("Managed runtime paths must be absolute pathnames.");
@@ -155,7 +175,7 @@ export function createManagedRuntimeClient({
           method,
           headers: {
             Accept: "application/json",
-            Authorization: `Bearer ${access.clientToken}`,
+            ...(host ? { "X-JuggleWork-Host-Token": access.clientToken } : { Authorization: `Bearer ${access.clientToken}` }),
           },
           credentials: "omit",
           cache: "no-store",
@@ -223,5 +243,5 @@ export function createManagedRuntimeClient({
     }
   }
 
-  return Object.freeze({ getJson, postJson });
+  return Object.freeze({ getJson, postJson, postHostJson });
 }

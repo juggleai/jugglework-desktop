@@ -6,7 +6,12 @@ import { ManagedRuntimeClientError } from "./managed-runtime-client.mjs";
 
 test("选区采集失败显示本地原因，未知服务端内容不会进入编辑页", () => {
   assert.match(officeSelectionFailure(new ManagedRuntimeClientError("http_error", { serverCode: "office_selection_proof_unavailable" })).error.message, /普通正文/);
+  assert.equal(officeSelectionFailure(new ManagedRuntimeClientError("http_error", { serverCode: "office_selection_slide_pages_unsupported" })).error.message, "整页编辑目前一次支持一页，请只选择一张幻灯片");
+  assert.match(officeSelectionFailure(new ManagedRuntimeClientError("http_error", { serverCode: "office_selection_slide_objects_unsupported" })).error.message, /对象或合并表格/);
+  assert.equal(officeSelectionFailure(new ManagedRuntimeClientError("http_error", { serverCode: "office_selection_slide_picture_selected" })).error.message, "当前选区包含图片，不是整页选择；请点击左侧幻灯片缩略图选择整页。图片内文字暂不支持直接改写");
+  assert.match(officeSelectionFailure(new ManagedRuntimeClientError("http_error", { serverCode: "office_selection_proof_unavailable" })).error.message, /复杂页面或对象/);
   assert.match(officeSelectionFailure(new ManagedRuntimeClientError("http_error", { serverCode: "office_selection_stale" })).error.message, /重新选择/);
+  assert.match(officeSelectionFailure(new ManagedRuntimeClientError("http_error", { serverCode: "office_selection_save_blocked" })).error.message, /仍在运行或尚未核对/);
   assert.match(officeSelectionFailure(new ManagedRuntimeClientError("timeout")).error.message, /超时/);
   const untrusted = new ManagedRuntimeClientError("http_error", { serverCode: "arbitrary-server-content" });
   assert.equal(officeSelectionFailure(untrusted).error.message, "暂时无法读取文档选区，请稍后重试");

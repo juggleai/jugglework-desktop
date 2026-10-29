@@ -158,15 +158,24 @@ export function registerOfficeRoutes(options: OfficeRouteOptions): void {
     await documents.selections.validate(target.id, text(body.sessionId, "sessionId"), body.referenceIds);
     return jsonResponse({ ok: true });
   });
-  addRoute(routes, "POST", `${base}/:documentId/selection-references`, "client", async (ctx) => {
+  const captureSelection = async (ctx: RequestContext, reviewed: boolean) => {
     const target = await workspace(ctx, true);
     if (options.localFiles?.owns(target.id)) throw new ApiError(409, "office_chat_required", "请先将文档添加到目标聊天，再使用 AI 编辑");
     const body = await options.readJsonBody(ctx.request);
+    // 核对权限只来自 host-token 路由，普通 client 不能用公开 generation 自报确认。
+    if (Object.hasOwn(body, "reviewedUnconfirmed") || (!reviewed && Object.hasOwn(body, "expectedGeneration")))
+      throw new ApiError(400, "invalid_payload", "采集不接受人工核对标记");
+    if (reviewed && (typeof body.expectedGeneration !== "string" || !body.expectedGeneration.trim()))
+      throw new ApiError(400, "invalid_payload", "人工核对需要 expectedGeneration");
     const document = await documents.get(target.id, ctx.params.documentId);
     if (document.ownerSessionId !== text(body.sessionId, "sessionId")) throw new ApiError(409, "office_wrong_document", "选区不属于当前聊天");
+    if (reviewed && (document.state !== "ready" || !document.engineFileId || body.expectedGeneration !== `${document.pageId}:${document.engineFileId}`))
+      throw new ApiError(409, "office_selection_stale", "核对期间文档模型已变化，请重新选择");
     documents.updateContext(target.id, document.documentId, text(body.pageId, "pageId"));
-    return jsonResponse({ reference: await documents.selections.capture(document, text(body.captureId, "captureId"), body.expectedSelection) });
-  });
+    return jsonResponse({ reference: await documents.selections.capture(document, text(body.captureId, "captureId"), body.expectedSelection, reviewed) });
+  };
+  addRoute(routes, "POST", `${base}/:documentId/selection-references`, "client", (ctx) => captureSelection(ctx, false));
+  addRoute(routes, "POST", `${base}/:documentId/selection-references/review-confirmed`, "host-token", (ctx) => captureSelection(ctx, true));
   addRoute(routes, "POST", `${base}/open`, "client", async (ctx) => {
     const target = await workspace(ctx, true);
     const body = await options.readJsonBody(ctx.request);

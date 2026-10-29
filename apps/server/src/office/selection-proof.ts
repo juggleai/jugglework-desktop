@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { OfficeSelectionLocator, OfficeTextRange } from "@jugglework/types/office";
 import { ApiError } from "../errors.js";
+import { readSlidePageState, verifySlidePageEdit } from "./slide-page-proof.js";
 
 type Tool = (name: string, args: Record<string, unknown>) => Promise<Record<string, unknown>>;
 type ObjectValue = Record<string, unknown>;
@@ -45,6 +46,122 @@ function proof(state: ObjectValue): OfficeSelectionProof {
 function withoutVersion(value: ObjectValue): ObjectValue {
   const { version: _version, ...content } = value;
   return content;
+}
+
+/** 结构预览按字节截断；查找上下文只用于提出候选，完整文字必须再由原生范围及版本确认。 */
+async function completeDocParagraph(query: Tool, node: ObjectValue, revision: number): Promise<ObjectValue> {
+  const start = integer(node.start_index), end = integer(node.end_index), length = end - start;
+  if (!length && node.type === "Paragraph" && node.text_preview === undefined) return { ...node, text_preview: "" };
+  if (length < 0 || typeof node.text_preview !== "string" || node.text_preview.length > length) unavailable();
+  if (node.text_preview.length === length) return node;
+  if (!node.text_preview) unavailable();
+  let text = node.text_preview;
+  // 全文补全与选区属性预算独立；每段最多128次，全文另有限额。最后一次必须查找完整文字。
+  for (let attempt = 0; attempt < 128; attempt++) {
+    const found = await query("doc_find", { text });
+    if (found.version !== revision) unavailable("文档正在变化，请重新选择");
+    const locations = objects(found.locations);
+    if (locations.length > 4096 || found.total !== locations.length) unavailable();
+    const matches = locations.filter((item) => item.begin === start && item.end === start + text.length &&
+      (node.paragraph_id === undefined || item.paragraph_id === node.paragraph_id) && item.table_id === undefined);
+    if (matches.length !== 1) unavailable();
+    if (text.length === length) return { ...node, text_preview: text };
+    const context = matches[0].related_text, marker = `[${text}]`;
+    if (typeof context !== "string") unavailable();
+    const at = context.indexOf(marker);
+    if (at < 0 || at !== context.lastIndexOf(marker)) unavailable();
+    const suffix = context.slice(at + marker.length, at + marker.length + length - text.length);
+    if (!suffix) unavailable();
+    text += suffix;
+  }
+  unavailable();
+}
+
+export const OFFICE_DOC_MAX_SPAN = 16_384;
+
+/** 分页不含正文；旧 SDK 的无预览 Paragraph 还须由最多10个 GCP 的末尾原文证明分页占位符。 */
+async function completeDocPageBreak(query: Tool, node: ObjectValue, revision: number, tail: ObjectValue): Promise<ObjectValue> {
+  const start = integer(node.start_index), end = integer(node.end_index);
+  const plain = (value: ObjectValue) => ["PageBreak", "Paragraph"].includes(String(value.type)) && end === start + 1 &&
+    (value.text_preview === undefined || value.text_preview === "") &&
+    Object.keys(value).every((key) => ["type", "start_index", "end_index", "paragraph_index", "paragraph_id", "text_preview"].includes(key));
+  if (!plain(node)) unavailable();
+  const detail = await query("doc_resolve_document_structure", { idx: start });
+  const blocks = objects(detail.nodes);
+  if (detail.version !== revision || blocks.length !== 1 || !plain(blocks[0]) ||
+      officeProofJson(blocks[0]) !== officeProofJson(node)) unavailable();
+  if (node.type === "Paragraph") {
+    if (typeof tail.preceding_text !== "string") unavailable();
+    const text = tail.preceding_text.replace(/\[line_break\]/g, "\r").replace(/\[page_break\]/g, "\f");
+    // 其他占位符、无法定位的摘要及可能与占位符展示混淆的字面括号均不采信。
+    if (/[\[\]]/.test(text) || text.length !== Math.min(10, integer(tail.position)) ||
+        text[start - (integer(tail.position) - text.length)] !== "\f")
+      unavailable("当前 SDK 无法完整证明此处分页结构，请单独处理该文档");
+  }
+  return { ...node, content: { type: "PageBreak" } };
+}
+
+/** 只适配可由完整 cells 文字及原生范围相互证明的平面表格；所有内部坐标相对表首保存。 */
+async function completeDocTable(query: Tool, node: ObjectValue, revision: number,
+  reserveProperties: (characters: number, paragraphs: number) => void): Promise<ObjectValue> {
+  const start = integer(node.start_index), end = integer(node.end_index);
+  // 先核对轻量网格预算，避免对已知超预算表格请求完整 cells。
+  const rows = integer(node.row_count), cols = integer(node.col_count);
+  if (!rows || !cols || rows * cols > 256) unavailable();
+  const detail = await query("doc_resolve_document_structure", { idx: start });
+  const blocks = objects(detail.nodes);
+  if (detail.version !== revision || blocks.length !== 1) unavailable();
+  const full = blocks[0];
+  if (full.type !== "Table" || full.start_index !== start || full.end_index !== end ||
+      full.table_start !== start || full.table_end !== end || full.table_id !== node.table_id) unavailable();
+  const info = await query("doc_get_table_info", { idx: start });
+  const block = object(info.block), table = object(block.table);
+  // SDK 的结构 table_end 为闭区间，table-info 的 end_idx 为开区间。
+  if (info.version !== revision || block.type !== "table" || block.idx !== start || block.end_idx !== end + 1 ||
+      info.table_start_index !== start || info.table_end_index !== end + 1 || info.resolved_idx !== start ||
+      (node.table_id !== undefined && block.id !== node.table_id)) unavailable();
+  const cells = objects(table.cells), rowNodes = objects(full.table_rows);
+  if (cells.length !== rows * cols || rowNodes.length !== rows || table.row_count !== rows || table.col_count !== cols ||
+      full.row_count !== rows || full.col_count !== cols) unavailable();
+  const relativeRows: ObjectValue[] = [];
+  let position = start + 1;
+  for (let row = 1; row <= rows; row++) {
+    const rowNode = rowNodes[row - 1], children = objects(rowNode.cells);
+    if (rowNode.row !== row || children.length !== cols) unavailable();
+    const relativeCells: ObjectValue[] = [];
+    for (let col = 1; col <= cols; col++) {
+      const cell = cells[(row - 1) * cols + col - 1], child = children[col - 1];
+      // 合并、嵌套、图片或多段结构不能仅靠文字证明，长度/平面网格不吻合即拒绝。
+      if (cell.row !== row || cell.col !== col || typeof cell.text !== "string" || cell.is_merge_continue === true ||
+          /[\r\n\uFFFC]/.test(cell.text) ||
+          Object.keys(child).some((key) => !["row", "col", "start_index", "end_index", "text_preview"].includes(key)) ||
+          typeof child.text_preview !== "string" || !cell.text.startsWith(child.text_preview) ||
+          child.row !== row || child.col !== col || child.start_index !== position || child.end_index !== position + cell.text.length)
+        unavailable();
+      relativeCells.push({ ...child, start_index: position - start, end_index: position + cell.text.length - start });
+      position += cell.text.length + 2;
+    }
+    relativeRows.push({ ...rowNode, cells: relativeCells });
+    position++;
+  }
+  if (position !== end) unavailable();
+  // 所有未选表格共用独立预算；空格也读取段首的继承文字属性，不能靠空文字绕过属性预算。
+  reserveProperties(cells.reduce((sum, cell) => sum + Math.max(1, (cell.text as string).length), 0), cells.length);
+  const properties: ObjectValue[] = [], paragraphs: ObjectValue[] = [];
+  const readProperty = async (name: string, idx: number) => {
+    const value = await query(name, { idx });
+    if (value.version !== revision || value.idx !== idx) unavailable("文档正在变化，请重新选择");
+    return { ...withoutVersion(value), idx: idx - start };
+  };
+  for (const row of relativeRows) for (const child of objects(row.cells)) {
+    const begin = start + integer(child.start_index), finish = start + integer(child.end_index);
+    paragraphs.push(await readProperty("doc_get_paragraph_property", begin));
+    for (let idx = begin; idx < Math.max(begin + 1, finish); idx++)
+      properties.push(await readProperty("doc_get_text_property", idx));
+  }
+  return { ...node, content: { block: { ...block, idx: 0, end_idx: end + 1 - start },
+    structure: { ...full, start_index: 0, end_index: end - start, table_start: 0, table_end: end - start, table_rows: relativeRows },
+    properties, paragraphs } };
 }
 
 /** 比较公式的表示差异；只忽略输入等号及函数名大小写，保留字符串、工作表名和结构化列名。 */
@@ -92,7 +209,15 @@ export async function readOfficeSelectionProof(
     const start = await query("doc_get_last_operable_pos");
     const revision = integer(start.version);
     const last = integer(start.position);
-    const structure = await query("doc_resolve_document_structure", { mode: "full", limit: 257, text_preview_length: 200 });
+    // 每次证明：正文跨度≤16384 UTF-16、顶层≤256、全文查找≤512、每表≤256格。
+    // 所选段属性≤256字符；所有表格独立≤1024字符(空格计1)、≤256个单格段属性；总证明≤4 MiB。
+    if (last > OFFICE_DOC_MAX_SPAN) unavailable();
+    let finds = 0;
+    const docQuery: Tool = (name, args) => {
+      if (name === "doc_find" && ++finds > 512) unavailable();
+      return query(name, args);
+    };
+    const structure = await query("doc_resolve_document_structure", { mode: "compact", limit: 257, text_preview_length: 200, include_table_cells: false, include_textbox_children: false });
     const pagination = object(structure.pagination);
     if (pagination.has_more !== false || integer(pagination.total_nodes) > 256 || structure.version !== revision) unavailable();
     const nodes = objects(structure.nodes).map((node) => {
@@ -101,20 +226,45 @@ export async function readOfficeSelectionProof(
           integer(node.start_index) === integer(node.end_index)) return { ...node, text_preview: "" };
       return node;
     });
-    // TIPS: 首批只接受可完整读取的纯正文段落；200 字预览不足以覆盖实际段落时明确拒绝。
-    if (nodes.some((node) => !["Paragraph", "Heading", "Title", "Subtitle"].includes(String(node.type)) ||
-      typeof node.text_preview !== "string" || integer(node.end_index) - integer(node.start_index) !== node.text_preview.length))
-      unavailable("当前选区需要完整的普通正文，暂不支持含复杂结构或超长段落的文档");
+    if (!nodes.length || nodes.length !== pagination.total_nodes) unavailable();
+    let position = 0;
+    for (const node of nodes) {
+      const begin = integer(node.start_index), finish = integer(node.end_index);
+      if (begin !== position || finish < begin || finish > last || !["Paragraph", "Heading", "Title", "Subtitle", "Table", "PageBreak"].includes(String(node.type))) unavailable();
+      position = finish + 1;
+    }
+    if (position !== last + 1) unavailable();
+    const isPageBreak = (node: ObjectValue) => node.type === "PageBreak" ||
+      (node.type === "Paragraph" && node.text_preview === undefined && integer(node.end_index) > integer(node.start_index));
     const ranges = coverage.flatMap((item) => item.kind === "doc-caret" ? [{ begin: item.idx, end: item.idx }]
       : item.kind === "doc-text" ? item.ranges : []);
     if (!ranges.length || ranges.some((range) => range.end > last)) unavailable();
-    const selectedIndices = new Set(ranges.flatMap((range) => officeDocRangeParts({ nodes }, range).map((part) => part.nodeIndex)));
+    const selectedIndices = new Set<number>();
+    for (const range of ranges) {
+      const first = nodes.findIndex((node) => range.begin >= integer(node.start_index) && range.begin <= integer(node.end_index));
+      const final = nodes.findIndex((node) => range.end >= integer(node.start_index) && range.end <= integer(node.end_index));
+      if (first < 0 || final < first || range.end < range.begin) unavailable();
+      for (let index = first; index <= final; index++) selectedIndices.add(index);
+    }
     const selectedNodes = nodes.filter((_node, index) => selectedIndices.has(index));
+    if (selectedNodes.some((node) => isPageBreak(node) || !["Paragraph", "Heading", "Title", "Subtitle"].includes(String(node.type))))
+      unavailable("请选择普通正文，暂不支持表格或分页等结构内容");
     const positions = new Set<number>();
     for (const node of selectedNodes) {
       for (let idx = node.start_index as number; idx < (node.end_index as number); idx++) positions.add(idx);
     }
     if (positions.size > 256) unavailable();
+    let tableCharacters = 0, tableParagraphs = 0;
+    const reserveTableProperties = (characters: number, paragraphs: number) => {
+      tableCharacters += characters; tableParagraphs += paragraphs;
+      if (tableCharacters > 1024 || tableParagraphs > 256) unavailable("未选表格属性超过完整核对预算，请单独处理该文档");
+    };
+    for (let index = 0; index < nodes.length; index++) nodes[index] = nodes[index].type === "Table"
+      ? await completeDocTable(docQuery, nodes[index], revision, reserveTableProperties)
+      : isPageBreak(nodes[index]) ? await completeDocPageBreak(docQuery, nodes[index], revision, start)
+      : await completeDocParagraph(docQuery, nodes[index], revision);
+    // 补全后仍须验证连续段落边界，不能把表格或分页节点拼成普通文字。
+    for (const range of ranges) officeDocRangeParts({ nodes }, range);
     const properties: ObjectValue[] = [];
     const paragraphs: ObjectValue[] = [];
     for (const node of selectedNodes) {
@@ -200,24 +350,42 @@ export async function readOfficeSelectionProof(
       unavailable("选区删除行列目前支持不含公式和合并单元格的单工作表，请单独处理复杂工作簿");
     return proof({ kind: "sheet", sheets, sheetId: locator.sheetId, region, ...first });
   }
-  if (locator.kind === "slide-pages") unavailable("请先选择普通文本框或框内文字");
+  if (locator.kind === "slide-pages") {
+    if (coverage.length !== 1 || officeProofJson(coverage[0]) !== officeProofJson(locator))
+      throw new ApiError(409, "office_selection_slide_pages_unsupported", "整页引用不能与其他 PPT 引用混用，请只发送一个整页引用");
+    return proof(await readSlidePageState(query, locator));
+  }
   if (locator.kind !== "slide-shapes" && locator.kind !== "slide-text") unavailable();
   const info = await query("slide_get_info");
   const revision = integer(info.version);
   if (!Array.isArray(info.slide_ids) || info.slide_ids.length !== integer(info.slide_count) ||
-      !info.slide_ids.every((id) => typeof id === "string") || !info.slide_ids[locator.pageIndex]) unavailable();
+      !info.slide_ids.every((id) => typeof id === "string" && id.length > 0) || new Set(info.slide_ids).size !== info.slide_ids.length || !info.slide_ids[locator.pageIndex]) unavailable();
   const page = await query("slide_get_page_info", { page_index: locator.pageIndex });
   const shapes = objects(page.shapes);
-  if (page.version !== revision || shapes.length > 128 || page.page_id !== info.slide_ids[locator.pageIndex]) unavailable();
+  if (page.version !== revision || shapes.length > 128 || integer(page.shape_count) !== shapes.length ||
+      page.page_id !== info.slide_ids[locator.pageIndex] ||
+      shapes.some((shape) => typeof shape.id !== "string" || !shape.id || typeof shape.type !== "string") ||
+      new Set(shapes.map((shape) => shape.id)).size !== shapes.length) unavailable();
   const ids = [...new Set(coverage.flatMap((item) => item.kind === "slide-text" && item.pageIndex === locator.pageIndex ? [item.shapeId]
     : item.kind === "slide-shapes" && item.pageIndex === locator.pageIndex ? item.shapeIds : []))];
-  if (!ids.length || ids.some((id) => !shapes.some((shape) => shape.id === id && shape.type === "shape" && typeof shape.text === "string")))
+  if (!ids.length || ids.some((id) => !shapes.some((shape) => shape.id === id))) unavailable("所选对象已变化，请重新选择");
+  if (ids.some((id) => shapes.some((shape) => shape.id === id && shape.type === "picture")))
+    throw new ApiError(409, "office_selection_slide_picture_selected", "当前选区包含图片，不是整页选择；整页选择请点击左侧幻灯片缩略图。图片内文字暂不支持直接改写");
+  if (ids.some((id) => !shapes.some((shape) => shape.id === id && shape.type === "shape" && typeof shape.text === "string")))
     unavailable("仅支持普通文本框，请重新选择");
   const texts: ObjectValue[] = [];
   for (const id of ids) {
     const text = await query("slide_get_text", { page_index: locator.pageIndex, shape_id: id });
-    if (text.version !== revision || typeof text.text !== "string" || text.text.length !== integer(text.length) || text.text.length > 4096) unavailable();
+    if (text.version !== revision || typeof text.text !== "string" || text.text.length !== integer(text.length) ||
+        text.text.length > 4096 + (text.text.endsWith("\r") ? 1 : 0)) unavailable();
     const runs = objects(text.runs);
+    let runEnd = 0;
+    for (const run of runs) {
+      const begin = integer(run.start), end = integer(run.end);
+      if (begin !== runEnd || end < begin || end > text.text.length) unavailable();
+      runEnd = end;
+    }
+    if (runEnd !== text.text.length) unavailable();
     if (locator.kind === "slide-text" && locator.start + locator.count > text.text.length) unavailable();
     // 原生继承样式可能在编辑后显式展开；按每字符生效样式比较，避免把等价 run 分裂当作误改。
     const font = shapes.find((shape) => shape.id === id)?.font_size;
@@ -255,6 +423,7 @@ export function verifyOfficeSelectionEdit(
   const fail = () => { throw new ApiError(409, "office_selection_edit_unconfirmed", "修改结果尚未确认，请检查文档后重新选择，不要重复执行"); };
   const old = structuredClone(before.state), actual = after.state;
   if (old.kind !== actual.kind) fail();
+  if (old.kind === "slide-page") { verifySlidePageEdit(old, actual, tool, args); return; }
   if (old.kind === "doc") {
     if (actual.revision !== (old.revision as number) + nativeWrites) fail();
     const nodes = objects(old.nodes), next = objects(actual.nodes);
@@ -268,17 +437,23 @@ export function verifyOfficeSelectionEdit(
       const nodeShifts: number[] = [];
       for (let i = 0; i < nodes.length; i++) {
         nodeShifts.push(shift);
-        let expected = nodes[i].text_preview as string;
+        let expected = nodes[i].text_preview;
         const partIndex = parts.findIndex((part) => part.nodeIndex === i);
         let delta = 0;
         if (partIndex >= 0) {
+          if (typeof expected !== "string") fail();
           const part = parts[partIndex], offset = part.begin - (nodes[i].start_index as number);
-          expected = expected.slice(0, offset) + texts[partIndex] + expected.slice(offset + part.end - part.begin);
+          expected = (expected as string).slice(0, offset) + texts[partIndex] + (expected as string).slice(offset + part.end - part.begin);
           delta = texts[partIndex].length - (part.end - part.begin);
         }
-        if (next[i].type !== nodes[i].type || next[i].text_preview !== expected ||
-            next[i].start_index !== (nodes[i].start_index as number) + shift ||
-            next[i].end_index !== (nodes[i].end_index as number) + shift + delta) fail();
+        const expectedNode: ObjectValue = { ...nodes[i], start_index: (nodes[i].start_index as number) + shift,
+          end_index: (nodes[i].end_index as number) + shift + delta };
+        if (expected !== undefined) expectedNode.text_preview = expected;
+        for (const key of ["table_start", "table_end"]) if (typeof expectedNode[key] === "number") expectedNode[key] = (expectedNode[key] as number) + shift;
+        const actualNode = { ...next[i] };
+        // 删除所选文字可能清除其派生高亮摘要；段落身份和未选节点摘要仍必须严格一致。
+        if (partIndex >= 0) { delete expectedNode.has_highlights; delete actualNode.has_highlights; }
+        if (officeProofJson(actualNode) !== officeProofJson(expectedNode)) fail();
         shift += delta;
       }
       if (actual.last !== (old.last as number) + shift) fail();

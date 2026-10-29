@@ -1,11 +1,12 @@
 import { getOfficeDocumentKind } from "@jugglework/types/office";
-import { WebContentsView, dialog, session } from "electron";
+import { app, WebContentsView, dialog, session } from "electron";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { waitForOfficeTransfer } from "./office-transfer.mjs";
 import { readOfficePageSelection } from "./office-page-selection.mjs";
 import { revealOfficePageSelection } from "./office-page-reveal.mjs";
 import { officeSelectionFailure } from "./office-selection-bridge.mjs";
+import { ManagedRuntimeClientError } from "./managed-runtime-client.mjs";
 import {
   waitForSheetPageCommit,
   waitForSlidePageCommit,
@@ -16,7 +17,7 @@ import {
 
 /**
  * 承载唯一存活的 Office 页面；隐藏或切换标签时保留模型和撤销记录。
- * @param {{ getWindow: () => Electron.BrowserWindow | null, getWindows?: () => Electron.BrowserWindow[], resolveWindow?: (sender: Electron.WebContents) => Electron.BrowserWindow | null, onDocumentClosed?: (id: string) => void, onOpenFile?: (window: Electron.BrowserWindow, input: { workspaceId: string, sessionId: string }) => Promise<void>, composer?: { request: (input: any) => Promise<any> }, client: { getJson: (path: string, options?: { signal?: AbortSignal }) => Promise<any>, postJson: (path: string, body: unknown) => Promise<any> }, resources: ReturnType<import('./office-resources.mjs').createOfficeResources> | (() => ReturnType<import('./office-resources.mjs').createOfficeResources>), platform?: NodeJS.Platform, arch?: string }} options 宿主窗口、资源服务、已有 Server 客户端及平台能力
+ * @param {{ getWindow: () => Electron.BrowserWindow | null, getWindows?: () => Electron.BrowserWindow[], resolveWindow?: (sender: Electron.WebContents) => Electron.BrowserWindow | null, onDocumentClosed?: (id: string) => void, onOpenFile?: (window: Electron.BrowserWindow, input: { workspaceId: string, sessionId: string }) => Promise<void>, composer?: { request: (input: any) => Promise<any> }, client: { getJson: (path: string, options?: { signal?: AbortSignal }) => Promise<any>, postJson: (path: string, body: unknown) => Promise<any>, postHostJson?: (path: string, body: unknown, options?: { signal?: AbortSignal }) => Promise<any> }, resources: ReturnType<import('./office-resources.mjs').createOfficeResources> | (() => ReturnType<import('./office-resources.mjs').createOfficeResources>), platform?: NodeJS.Platform, arch?: string }} options 宿主窗口、资源服务、已有 Server 客户端及平台能力
  */
 export function createOfficePanel({
   getWindow,
@@ -63,6 +64,12 @@ export function createOfficePanel({
   const save = async (workspaceId, documentId) =>
     (await client.postJson(`${base(workspaceId, documentId)}/save`, {}))
       .document;
+  const cancelCapture = (entry) => {
+    const task = entry?.captureRequest;
+    if (!task) return;
+    entry.captureRequest = null;
+    task.controller.abort();
+  };
   const hide = (documentId, window) => {
     const entry = views.get(documentId);
     if (
@@ -76,6 +83,7 @@ export function createOfficePanel({
       if (visible === documentId && (!window || window.id === id))
         visibleDocuments.delete(id);
     if (entry) {
+      cancelCapture(entry);
       const host = hosts.get(entry.window.id);
       if (
         host?.focusedDocument === documentId &&
@@ -203,6 +211,7 @@ export function createOfficePanel({
     const entry = views.get(documentId);
     if (entry && entry.window.id !== window.id) {
       requireTransferSupport();
+      cancelCapture(entry);
       const previous = entry.window;
       const attached = entry.attached;
       const visible = entry.view.getVisible();
@@ -428,6 +437,9 @@ export function createOfficePanel({
       view.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
       view.webContents.on("will-navigate", (event, target) => {
         if (target !== document.previewUrl) event.preventDefault();
+      });
+      view.webContents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => {
+        if (isMainFrame && !isInPlace) cancelCapture(entry);
       });
       view.webContents.on("before-input-event", async (event, input) => {
         if (!(input.control || input.meta) || input.type !== "keyDown") return;
@@ -658,20 +670,77 @@ export function createOfficePanel({
         const { documentId, entry } = pageSource(event);
         if (entry.ownerSessionId === "file-browser") return { error: { message: "请先将文件添加到目标聊天，再从聊天中打开并使用 AI 编辑" } };
         if (typeof input?.captureId !== "string" || input.captureId.length > 256) throw new Error("选区采集身份无效");
-        entry.captureRequest = input.captureId;
-        const owner = await composer.request({ action: "prepare", workspaceId: entry.workspaceId, sessionId: entry.ownerSessionId });
-        const result = await client.postJson(`${base(entry.workspaceId, documentId)}/selection-references`, {
+        if (entry.captureRequest || entry.pendingSelection) throw new Error("选区正在采集，请先取消后重新选择");
+        const window = entry.window;
+        const task = { captureId: input.captureId, controller: new AbortController() };
+        entry.captureRequest = task;
+        const current = () => views.get(documentId) === entry && entry.captureRequest === task &&
+          !task.controller.signal.aborted && !event.sender.isDestroyed() && event.senderFrame === event.sender.mainFrame &&
+          entry.window === window && !window.isDestroyed() && window.isVisible() && !window.isMinimized() &&
+          entry.attached && entry.view.getVisible() && visibleDocuments.get(window.id) === documentId &&
+          assignedWindows.get(documentId) === window.id;
+        const requireCurrent = () => {
+          if (!current() || !window.isFocused()) throw new Error("文件窗口已变化，请重新选择");
+        };
+        const body = {
           sessionId: entry.ownerSessionId, pageId: entry.pageId, captureId: input.captureId,
           expectedSelection: input.expectedSelection,
-        }).catch(officeSelectionFailure);
-        if (result.error) return result;
-        if (views.get(documentId) !== entry || event.sender.isDestroyed() || entry.captureRequest !== input.captureId ||
-            visibleDocuments.get(entry.window.id) !== documentId || !entry.window.isFocused()) {
-          await client.postJson(`/workspace/${encodeURIComponent(entry.workspaceId)}/office/selection-references/release`, { sessionId: entry.ownerSessionId, referenceIds: [result.reference.referenceId] });
-          throw new Error("文件窗口已变化，请重新选择");
+        };
+        const capture = async () => client.postJson(`${base(entry.workspaceId, documentId)}/selection-references`, body).catch(async (error) => {
+          if (!(error instanceof ManagedRuntimeClientError) || error.status !== 409 || error.serverCode !== "office_selection_review_required") throw error;
+          requireCurrent();
+          // 客户端错误没有 details；从已绑定文档重新读取代次，绝不采用页面提供的 reviewed 字段。
+          const { document } = await client.getJson(base(entry.workspaceId, documentId));
+          requireCurrent();
+          if (document?.documentId !== documentId || document.workspaceId !== entry.workspaceId || document.pageId !== entry.pageId || document.ownerSessionId !== entry.ownerSessionId ||
+              document.state !== "ready" || typeof document.engineFileId !== "string" || !document.engineFileId)
+            throw new Error("文档模型已变化，请重新选择");
+          const expectedGeneration = `${document.pageId}:${document.engineFileId}`;
+          const stop = () => { if (entry.captureRequest === task) cancelCapture(entry); };
+          const otherWindow = (_event, focused) => { if (focused !== window) stop(); };
+          app.on("did-resign-active", stop);
+          app.on("browser-window-focus", otherWindow);
+          event.sender.send("jugglework:office:selection-review-pending", { captureId: input.captureId, pending: true });
+          let choice;
+          try {
+            choice = await dialog.showMessageBox(window, {
+              type: "warning", title: "核对文档修改",
+              message: "存在尚未核对的修改，请检查文档；确认保留当前内容后可重新选择继续编辑。",
+              buttons: ["取消", "我已核对，保留并继续"], defaultId: 0, cancelId: 0, noLink: true,
+              signal: task.controller.signal,
+            });
+          } finally {
+            app.removeListener("did-resign-active", stop);
+            app.removeListener("browser-window-focus", otherWindow);
+            if (!event.sender.isDestroyed()) event.sender.send("jugglework:office:selection-review-pending", { captureId: input.captureId, pending: false });
+          }
+          requireCurrent();
+          if (choice.response !== 1) throw new Error("已取消核对，请重新选择");
+          const { document: latest } = await client.getJson(base(entry.workspaceId, documentId));
+          requireCurrent();
+          if (latest?.documentId !== documentId || latest.workspaceId !== entry.workspaceId || latest.ownerSessionId !== entry.ownerSessionId ||
+              latest.state !== "ready" || `${latest.pageId}:${latest.engineFileId}` !== expectedGeneration)
+            throw new Error("核对期间文档模型已变化，请重新选择");
+          if (!client.postHostJson) throw new Error("本机核对服务不可用，请重试");
+          return client.postHostJson(`${base(entry.workspaceId, documentId)}/selection-references/review-confirmed`, {
+            ...body, expectedGeneration,
+          }, { signal: task.controller.signal });
+        });
+        try {
+          requireCurrent();
+          const owner = await composer.request({ action: "prepare", workspaceId: entry.workspaceId, sessionId: entry.ownerSessionId });
+          requireCurrent();
+          const result = await capture().catch(officeSelectionFailure);
+          if (result.error) return result;
+          if (!current() || !window.isFocused()) {
+            await client.postJson(`/workspace/${encodeURIComponent(entry.workspaceId)}/office/selection-references/release`, { sessionId: entry.ownerSessionId, referenceIds: [result.reference.referenceId] });
+            throw new Error("文件窗口已变化，请重新选择");
+          }
+          entry.pendingSelection = { captureId: input.captureId, reference: result.reference, ownerEpoch: owner.epoch, bridgeGeneration: owner.bridgeGeneration, instructionId: `osi_${randomUUID()}` };
+          return { reference: result.reference };
+        } finally {
+          if (entry.captureRequest === task && !entry.pendingSelection) entry.captureRequest = null;
         }
-        entry.pendingSelection = { captureId: input.captureId, reference: result.reference, ownerEpoch: owner.epoch, bridgeGeneration: owner.bridgeGeneration, instructionId: `osi_${randomUUID()}` };
-        return { reference: result.reference };
       });
       ipcMain.handle("jugglework:office:selection-submit", async (event, input) => {
         const { entry } = pageSource(event);
@@ -688,13 +757,14 @@ export function createOfficePanel({
           const result = await composer.request({ action: "append", workspaceId: entry.workspaceId, sessionId: entry.ownerSessionId,
             reference: pending.reference, instructionId: pending.instructionId, epoch: pending.ownerEpoch, bridgeGeneration: pending.bridgeGeneration, text: input.text, mode: input.mode });
           entry.pendingSelection = null;
+          cancelCapture(entry);
           entry.completedSelection = input.captureId;
           return result;
         } finally { entry.submittingSelection = false; }
       });
       ipcMain.handle("jugglework:office:selection-cancel", async (event, input) => {
         const { entry } = pageSource(event);
-        if (entry.captureRequest === input?.captureId) entry.captureRequest = null;
+        if (entry.captureRequest?.captureId === input?.captureId) cancelCapture(entry);
         if (entry.pendingSelection?.captureId === input?.captureId) {
           const pending = entry.pendingSelection; entry.pendingSelection = null;
           await client.postJson(`/workspace/${encodeURIComponent(entry.workspaceId)}/office/selection-references/release`, {

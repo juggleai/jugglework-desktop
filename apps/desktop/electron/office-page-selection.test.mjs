@@ -108,11 +108,12 @@ test("表格仅以已验证的维度哨兵建立行列意图，有限全宽矩�
 });
 
 test("PPT 采集页面及形状身份，多页选择保留所有页且不沿用形状，备注和组内选区返回空", () => {
-  const pages = [{ listIndex: 1 }];
+  const pages = [{ listIndex: 1, key: "render-one", id: "page-one", uniqueID: "page-one" }];
   const observable = (items) => ({ slice: () => items.slice() });
   let nestedKind = "";
   const selection = {
     currentSlideIndex: 1,
+    slides: [null, { key: "render-one", id: "page-one", uniqueID: "page-one" }, null, { key: "render-three", id: "page-three", uniqueID: "page-three" }],
     lastMouseDownRegion: "editor",
     selectedBlank: { enabled: false },
     selectedSlides: { selectedArray: observable(pages) },
@@ -132,7 +133,12 @@ test("PPT 采集页面及形状身份，多页选择保留所有页且不沿用�
     pageIndex: 1,
     shapeIds: ["shape_actual"],
   });
-  pages.push({ listIndex: 3 });
+  selection.lastMouseDownRegion = "slidelist";
+  assert.deepEqual(readOfficePageSelection("slide", scope), { pageIndex: [1], shapeIds: [], nativeSlideIds: ["page-one"] });
+  selection.lastMouseDownRegion = "player";
+  assert.equal(readOfficePageSelection("slide", scope), null);
+  selection.lastMouseDownRegion = "editor";
+  pages.push({ listIndex: 3, key: "render-three", id: "page-three", uniqueID: "page-three" });
   assert.deepEqual(readOfficePageSelection("slide", scope), {
     pageIndex: [1, 3],
     shapeIds: [],
@@ -165,6 +171,7 @@ test("PPT 内部文字选区保留跨段落 UTF-16 位置，反向选择和无�
   };
   const selection = {
     currentSlideIndex: 0,
+    slides: [{ key: "render-zero", id: "page-zero", uniqueID: "page-zero" }],
     lastMouseDownRegion: "editor",
     selectedBlank: { enabled: false },
     selectedSlides: { selectedArray: [] },
@@ -174,6 +181,11 @@ test("PPT 内部文字选区保留跨段落 UTF-16 位置，反向选择和无�
     },
   };
   const scope = { pray: () => ({ getSelectionService: () => selection }) };
+  selection.lastMouseDownRegion = "slidelist";
+  selection.selectedSlides.selectedArray = [{ listIndex: 0, key: "render-zero", id: "page-zero", uniqueID: "page-zero" }];
+  assert.deepEqual(readOfficePageSelection("slide", scope), { pageIndex: [0], shapeIds: [], nativeSlideIds: ["page-zero"] });
+  selection.lastMouseDownRegion = "editor";
+  selection.selectedSlides.selectedArray = [];
   assert.deepEqual(readOfficePageSelection("slide", scope), {
     pageIndex: 0,
     shapeIds: ["shape_A"],
@@ -203,4 +215,52 @@ test("PPT 内部文字选区保留跨段落 UTF-16 位置，反向选择和无�
     pageIndex: 0,
     shapeIds: ["shape_A"],
   });
+});
+
+test("PPT 页选择严格配对原生 id/uniqueID 和索引，DOM key 不能替代授权身份", () => {
+  const pages = [{ listIndex: 2, key: "render-two", id: "native-two", uniqueID: "native-two" }, { listIndex: 0, key: "render-zero", id: "native-zero", uniqueID: "native-zero" }];
+  const selection = { lastMouseDownRegion: "slidelist", selectedSlides: { selectedArray: /** @type {any[]} */ (pages) },
+    slides: [{ key: "render-zero", id: "native-zero", uniqueID: "native-zero" }, { key: "render-one", id: "native-one", uniqueID: "native-one" }, { key: "render-two", id: "native-two", uniqueID: "native-two" }] };
+  const scope = { pray: () => ({ getSelectionService: () => selection }) };
+  assert.deepEqual(readOfficePageSelection("slide", scope), { pageIndex: [2, 0], shapeIds: [], nativeSlideIds: ["native-two", "native-zero"] });
+  for (const invalid of [[], [{ listIndex: 0 }], [{ ...pages[1], listIndex: -1 }],
+    [{ listIndex: 0, key: "render-zero" }], [{ ...pages[1], id: "render-zero", uniqueID: "render-zero" }],
+    [{ ...pages[1], uniqueID: "native-two" }], [{ ...pages[1], id: "" }], [{ ...pages[0], listIndex: 0 }],
+    [pages[1], pages[1]]]) {
+    selection.selectedSlides.selectedArray = invalid;
+    assert.equal(readOfficePageSelection("slide", scope), null);
+  }
+  selection.selectedSlides.selectedArray = pages;
+  selection.slides[2].uniqueID = "wrong-native-id";
+  assert.equal(readOfficePageSelection("slide", scope), null);
+  selection.slides[2].uniqueID = "native-two";
+  // 渲染 key 改变不能改变原生页授权，也不能把它发送成 nativeSlideIds。
+  selection.slides[2].key = "new-render-key";
+  assert.deepEqual(readOfficePageSelection("slide", scope).nativeSlideIds, ["native-two", "native-zero"]);
+  for (const region of [undefined, "", "unknown", "player", "note", "toolbar"]) {
+    selection.lastMouseDownRegion = region;
+    assert.equal(readOfficePageSelection("slide", scope), null);
+  }
+});
+
+test("图片 AI 当前页入口显式绑定直接图片所属真实单页，普通选区查询仍保留对象", () => {
+  const page = { type: "Slide", listIndex: 0, id: "native", uniqueID: "native", children: [] };
+  const image = { type: "Image", id: "picture", uniqueID: "picture", isImage: () => true, parent: page };
+  page.children.push(image);
+  const selection = { currentSlideIndex: 0, currentSlide: page, slides: [page], lastMouseDownRegion: "editor",
+    selectedSlides: { selectedArray: [] }, selectedElements: { selectedArrayForType: (type) => type === "SelectedEleMgrType_SLIDE" ? [image] : [] } };
+  const scope = { pray: () => ({ getSelectionService: () => selection }) };
+  assert.deepEqual(readOfficePageSelection("slide", scope), { pageIndex: 0, shapeIds: ["picture"] });
+  const read = () => readOfficePageSelection("slide", scope, { picturePage: true });
+  assert.deepEqual(read(), { pageIndex: [0], shapeIds: [], nativeSlideIds: ["native"] });
+  selection.selectedSlides.selectedArray = [page];
+  assert.deepEqual(read().nativeSlideIds, ["native"]);
+  for (const mutate of [() => { image.parent = {}; }, () => { page.uniqueID = "other"; },
+    () => { selection.currentSlideIndex = 1; }, () => { page.children = []; },
+    () => { page.children = [image, image]; }, () => { image.isImage = () => false; },
+    () => { selection.selectedSlides.selectedArray = [page, page]; }]) {
+    image.parent = page; image.isImage = () => true; page.uniqueID = "native"; selection.currentSlideIndex = 0;
+    page.children = [image]; selection.selectedSlides.selectedArray = [];
+    mutate(); assert.equal(read(), null);
+  }
 });
