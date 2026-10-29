@@ -2065,13 +2065,18 @@ export function SessionPage(props: SessionPageProps) {
           </div>
         </SidebarInset>
         {filesPanelExpanded && actionSessionId ? (
-          // TIPS: 全屏是圆角工作区内的覆盖层而不是真窗口全屏 —— 左侧应用导航栏
-          // 与四周外围 chrome 保持可见，Files 只覆盖中间的 18px 圆角区域。
+          // TIPS: 全屏是圆角工作区内的覆盖层而不是真窗口全屏。侧栏展开时，
+          // 覆盖层从完整的本地工作区侧栏右边开始；侧栏收起时才从应用导航栏
+          // 右边开始，避免展开文件时遮住用户当前可见的工作区和会话列表。
           // macOS 顶部是 hiddenInset 系统标题栏：面板头部本身就是拖拽区，
           // 头部里的按钮单独标 titlebar-no-drag，仍可正常点击。
           <div
             className="absolute bottom-1.5 right-1.5 top-11 z-40 flex flex-col overflow-hidden rounded-[18px] border border-dls-border bg-background shadow-[0_1px_2px_rgba(0,0,0,0.04)] mac:titlebar-no-drag"
-            style={props.embedded ? { left: 0 } : { left: `${APP_NAVIGATION_RAIL_WIDTH + 4}px` }}
+            style={props.embedded
+              ? { left: 0 }
+              : shellConfig.sidebar && sidebarOpen
+                ? { left: "var(--sidebar-width)" }
+                : { left: `${APP_NAVIGATION_RAIL_WIDTH + 4}px` }}
             data-files-fullscreen-surface
           >
             <div className="flex min-h-0 flex-1 flex-col">

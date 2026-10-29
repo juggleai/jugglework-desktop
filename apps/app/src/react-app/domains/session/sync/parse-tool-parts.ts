@@ -5,6 +5,22 @@ import { safeStringify } from "@/app/utils";
 
 export const STRUCTURED_OUTPUT_TOOL = "StructuredOutput";
 
+// Keep only the JSON fields needed for historical file changes. Diagnostics and
+// other arbitrary tool metadata should not be copied into the transcript.
+function fileChangeMetadata(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  const result: Record<string, string | number> = {};
+  for (const key of ["file", "filePath", "relativePath", "movePath", "patch", "type", "status"]) {
+    if (typeof record[key] === "string") result[key] = record[key];
+  }
+  for (const key of ["additions", "deletions"]) {
+    const count = record[key];
+    if (typeof count === "number" && Number.isSafeInteger(count) && count >= 0) result[key] = count;
+  }
+  return result;
+}
+
 function shouldDeferInProgressTool(part: ToolPart) {
   if (part.state.status === "completed" || part.state.status === "error") {
     return false;
@@ -45,6 +61,14 @@ export function parseDynamicToolUIPart(part: ToolPart): DynamicToolUIPart | null
         sessionId: typeof rawMetadata.sessionId === "string" ? rawMetadata.sessionId : undefined,
         background: typeof rawMetadata.background === "boolean" ? rawMetadata.background : undefined,
         jobId: typeof rawMetadata.jobId === "string" ? rawMetadata.jobId : undefined,
+        ...(part.state.status === "completed" && ["edit", "write", "apply_patch"].includes(part.tool) ? {
+          filediff: fileChangeMetadata(rawMetadata.filediff),
+          files: Array.isArray(rawMetadata.files) ? rawMetadata.files.flatMap((file) => {
+            const metadata = fileChangeMetadata(file);
+            return metadata ? [metadata] : [];
+          }) : undefined,
+          diff: typeof rawMetadata.diff === "string" ? rawMetadata.diff : undefined,
+        } : {}),
       }
     : undefined;
   const providerMetadata = {

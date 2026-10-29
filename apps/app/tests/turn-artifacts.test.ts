@@ -1,8 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import type { UIMessage } from "ai";
+import type { ToolPart } from "@opencode-ai/sdk/v2/client";
+import { parseDynamicToolUIPart } from "../src/react-app/domains/session/sync/parse-tool-parts";
 import { deriveOpenTargets, type OpenTarget } from "../src/react-app/domains/session/artifacts/open-target";
 import {
   canDisplayArtifact,
+  artifactsWithTurnDiffs,
   getArtifactFileReferences,
   getArtifactsFromMessages,
 } from "../src/lib/artifacts";
@@ -51,6 +54,60 @@ const options = {
 };
 
 describe("turn artifact delivery", () => {
+  test("recovers relative paths and counts from successful edits when the turn summary is empty", () => {
+    const edit = (callID: string, patch: string, type = "update"): UIMessage => {
+      const part: ToolPart = { id: callID, sessionID: "s", messageID: "a", type: "tool", tool: "apply_patch", callID,
+        state: { status: "completed", input: {}, output: "Success", title: "Patched", time: { start: 1, end: 2 }, metadata: {
+          files: [{ filePath: "/repo/src/main.ts", relativePath: "repo/src/main.ts", type, patch }], diagnostics: { ignored: true },
+        } } };
+      return { id: callID, role: "assistant", parts: [parseDynamicToolUIPart(part)!] };
+    };
+    const first = edit("call-1", "--- a/src/main.ts\n+++ b/src/main.ts\n@@ -1 +1,2 @@\n-old\n+new\n+extra");
+    const second = edit("call-2", "--- a/src/main.ts\n+++ b/src/main.ts\n@@ -1 +1 @@\n-new\n+updated");
+    const turn: UIMessage = { id: "user", role: "user", parts: [], metadata: { opencode: { fileDiffs: [] } } };
+    const result = artifactsWithTurnDiffs([], turn, [first, first, second], "/repo");
+    expect(result).toHaveLength(1);
+    expect(result[0]?.path).toBe("src/main.ts");
+    expect(result[0]?.change).toMatchObject({ additions: 3, deletions: 2, source: "edits" });
+    expect(result[0]?.change?.patch).not.toContain("+++ b/");
+    const authoritative = { ...turn, metadata: { opencode: { fileDiffs: [{ file: "src/main.ts", additions: 2, deletions: 1, patch: "@@ -1 +1,2 @@\n-old\n+updated\n+extra" }] } } };
+    expect(artifactsWithTurnDiffs([], authoritative, [first, second], "/repo")[0]?.change).toMatchObject({ additions: 2, deletions: 1, source: "snapshot" });
+    const zero = { ...turn, metadata: { opencode: { fileDiffs: [{ file: "src/main.ts", additions: 0, deletions: 0 }] } } };
+    expect(artifactsWithTurnDiffs([], zero, [first, second], "/repo")[0]?.change).toBeUndefined();
+    expect(artifactsWithTurnDiffs([], turn, [edit("delete", "@@ -1 +0,0 @@\n-old", "delete")], "/repo")[0]?.legacy_target.exists).toBe(false);
+  });
+
+  test("retains validated edit metadata but never promotes failed or running tools to changes", () => {
+    const part: ToolPart = { id: "edit", sessionID: "s", messageID: "a", type: "tool", tool: "edit", callID: "edit", state: {
+      status: "completed", input: { filePath: "/repo/a.ts" }, output: "ok", title: "Edit", time: { start: 1, end: 2 },
+      metadata: { filediff: { file: "/repo/a.ts", additions: 5, deletions: 2, unknown: { huge: true } }, diagnostics: { huge: true } },
+    } };
+    const completed = parseDynamicToolUIPart(part)!;
+    expect(completed.callProviderMetadata?.opencode?.toolMetadata).toMatchObject({ filediff: { file: "/repo/a.ts", additions: 5, deletions: 2 } });
+    expect(JSON.stringify(completed)).not.toContain("huge");
+    const message: UIMessage = { id: "assistant", role: "assistant", parts: [completed] };
+    expect(artifactsWithTurnDiffs([], undefined, [message], "/repo")[0]?.change).toMatchObject({ additions: 5, deletions: 2, patch: "" });
+    for (const state of ["output-error", "input-streaming"] as const) {
+      expect(artifactsWithTurnDiffs([], undefined, [{ ...message, parts: [{ ...completed, state } as UIMessage["parts"][number]] }], "/repo")).toEqual([]);
+    }
+  });
+  test("merges only this turn's text diffs and retains binary files without fabricated counts", () => {
+    const existing = getArtifactsFromMessages([output("docs/report.md")], [target("docs/report.md")], options);
+    const message: UIMessage = { id: "turn-1", role: "user", parts: [], metadata: { opencode: { fileDiffs: [
+      { file: "docs/report.md", additions: 2, deletions: 1, patch: "@@ -1 +1,2 @@\n-old\n+new\n+line" },
+      { file: "src/main.ts", additions: 1, deletions: 0, patch: "@@ -0,0 +1 @@\n+export {}" },
+      { file: "docs/report.docx", additions: 0, deletions: 0, patch: "Binary files a and b differ" },
+      { file: "removed.txt", additions: 0, deletions: 1, patch: "@@ -1 +0,0 @@\n-old", status: "deleted" },
+    ] } } };
+    const result = artifactsWithTurnDiffs(existing, message);
+    expect(result).toHaveLength(4);
+    expect(result[0]!.id).toBe(existing[0]!.id);
+    expect(result[0]!.change?.additions).toBe(2);
+    expect(result[1]!.path).toBe("src/main.ts");
+    expect(result[2]!.change).toBeUndefined();
+    expect(result[3]!.legacy_target.exists).toBe(false);
+    expect(artifactsWithTurnDiffs(existing, { id: "other-turn", role: "user", parts: [] })).toEqual(existing);
+  });
   test("retains missing historical successful writes without promoting unconfirmed file claims", () => {
     const missing = { ...target("removed.docx"), exists: false };
     const [written] = getArtifactsFromMessages(
