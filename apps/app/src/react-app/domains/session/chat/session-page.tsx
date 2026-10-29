@@ -153,6 +153,7 @@ export type SessionPageSidebarProps = {
   connectingWorkspaceId: string | null;
   workspaceConnectionStateById: Record<string, WorkspaceConnectionState>;
   newTaskDisabled: boolean;
+  isTaskCreationPending?: (workspaceId: string) => boolean;
   sidebarHydratedFromCache: boolean;
   startupPhase: BootPhase;
   onSelectWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
@@ -1499,6 +1500,7 @@ export function SessionPage(props: SessionPageProps) {
           connectingWorkspaceId={props.sidebar.connectingWorkspaceId}
           workspaceConnectionStateById={props.sidebar.workspaceConnectionStateById}
           newTaskDisabled={props.sidebar.newTaskDisabled}
+          isTaskCreationPending={props.sidebar.isTaskCreationPending}
           onSelectWorkspace={props.sidebar.onSelectWorkspace}
           onExpandWorkspace={props.sidebar.onExpandWorkspace}
           onOpenSession={openSessionTab}

@@ -10,6 +10,7 @@ export type SidebarContextValue = {
   showSessionActions?: boolean;
   sessionStatusById?: Record<string, string>;
   newTaskDisabled: boolean;
+  isTaskCreationPending?: (workspaceId: string) => boolean;
   connectingWorkspaceId: string | null;
   workspaceConnectionStateById: Record<string, WorkspaceConnectionState>;
   onSelectWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;

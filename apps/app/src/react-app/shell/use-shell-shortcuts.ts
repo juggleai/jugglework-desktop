@@ -71,7 +71,7 @@ export function useShellShortcuts(input: UseShellShortcutsInput) {
     const key = event.key?.toLowerCase();
     if (key === "n" && !inEditable) {
       event.preventDefault();
-      if (canCreateTask && workspaceId) {
+      if (!event.repeat && canCreateTask && workspaceId) {
         void onCreateTask(workspaceId);
       }
       return;
