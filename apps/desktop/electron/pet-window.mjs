@@ -228,7 +228,7 @@ export function createDesktopPet({ BrowserWindow, screen, ipcMain, Menu, prefere
       publish(); return {};
     }
     if (!host.ready) throw new Error("任务宿主正在准备，请稍后重试");
-    const submission = action.type === "send" ? { key: action.draftKey ?? action.target.key, text: action.text, target: action.target } : null;
+    const submission = action.type === "send" ? { key: action.draftKey ?? action.target.key, text: action.text, target: action.target, capabilities: action.capabilities ?? [] } : null;
     if (submission && ([...pending.values()].some((item) => item.submission?.target.key === submission.target.key) || interaction.uncertain?.[submission.target.key])) throw new Error("发送结果尚未确认，请先核对原任务");
     const requestId = randomUUID();
     return new Promise((resolve, reject) => {
@@ -249,13 +249,19 @@ export function createDesktopPet({ BrowserWindow, screen, ipcMain, Menu, prefere
     pending.delete(reply.requestId); clearTimeout(item.timer);
     const result = { ...reply.result };
     if (item.submission) {
-      const { key, text, target } = item.submission;
+      const { key, text, target, capabilities } = item.submission;
+      if (!reply.error && result.delivery && result.task?.key === target.key) {
+        // 宿主回执携带已确认的任务；与草稿清理同时广播，避免输入收起后等待下一轮状态推送。
+        host = { ...host, tasks: [result.task, ...host.tasks.filter((task) => task.key !== target.key)] };
+      }
       if (reply.error?.includes("结果待确认")) markUncertain(target);
       // TIPS: 确认和草稿清理由常驻主进程完成，不能依赖可能已销毁的宠物页面。
-      // 仅清理同目标、同文字的原草稿，用户在请求期间继续编辑的内容必须保留。
+      // 仅清理同目标、同文字、同能力选择的完整草稿，请求期间的新编辑必须保留。
       const currentTarget = key === "__quick__" ? interaction.target : interaction.targets[key];
-      if (!reply.error && result.delivery && interaction.drafts[key] === text && currentTarget?.key === target.key) {
-        interaction = { ...interaction, drafts: { ...interaction.drafts, [key]: "" } };
+      const selected = interaction.selectedCapabilities?.[key] ?? [];
+      const sameCapabilities = selected.length === capabilities.length && selected.every((item, index) => item.id === capabilities[index].id);
+      if (!reply.error && result.delivery && (interaction.drafts[key] ?? "") === text && currentTarget?.key === target.key && sameCapabilities) {
+        interaction = { ...interaction, drafts: { ...interaction.drafts, [key]: "" }, selectedCapabilities: { ...interaction.selectedCapabilities, [key]: [] } };
         result.draftCleared = true;
       }
       publish();

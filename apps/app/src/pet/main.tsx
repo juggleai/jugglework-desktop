@@ -1,12 +1,13 @@
 import { createRoot } from "react-dom/client";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ArrowUp, Bell, Check, ChevronUp, CornerDownLeft, MessageSquare, Plus, Square, X } from "lucide-react";
-import type { PetAction, PetActionResult, PetInteraction, PetSnapshot, PetTarget, PetTask, PetWindowBridge } from "@/app/lib/desktop-pet-types";
+import { ArrowUp, Bell, Check, ChevronDown, ChevronUp, CornerDownLeft, FileText, Folder, FolderOpen, Plus, Square, X } from "lucide-react";
+import type { PetAction, PetActionResult, PetCapability, PetInteraction, PetSnapshot, PetTarget, PetTask, PetWindowBridge } from "@/app/lib/desktop-pet-types";
 import { setLocale, t } from "@/i18n";
 import { createPetAnimator, selectPetBaseAction, PET_FRAME_DURATIONS, type PetAnimation } from "./animation";
 import { PET_WIDTH, PET_HEIGHT, PET_HIT_SCALE } from "./geometry";
 import { PetComposeIcon, PetVoiceIcon } from "./icons";
 import { interactionForBridge } from "./interaction-sync";
+import { groupPetSessions } from "./session-groups";
 import { usePetPlacement } from "./use-pet-placement";
 import originalHitRegions from "./hit-regions.json";
 import "./pet.css";
@@ -22,6 +23,13 @@ import { ImeTextarea } from "./ime-textarea";
 const EMPTY: PetSnapshot = { visible: false, ready: false, syncing: true, partial: false, tasks: [], locale: "zh", theme: "light", editing: false, voicePhase: "idle" };
 const EMPTY_INTERACTION: PetInteraction = { drafts: {}, targets: {}, dismissed: {}, target: null };
 
+function CapabilityIcon({ item }: { item: PetCapability }) {
+  const [failed, setFailed] = useState(false);
+  return item.iconSrc && !failed
+    ? <img src={item.iconSrc} alt="" width={16} height={16} onError={() => setFailed(true)} />
+    : <FileText size={16} strokeWidth={1.7} aria-hidden="true" />;
+}
+
 /** 原生宠物页面；不创建业务客户端、SSE、任务队列或独立麦克风。 */
 function PetApp() {
   const [state, setState] = useState(EMPTY);
@@ -35,13 +43,21 @@ function PetApp() {
     if (!draftOnly) bridge?.remember(interactionForBridge(value, composing.current), state.contextKey);
   };
   const [panel, setPanel] = useState<"tasks" | "input" | null>(null);
+  const [retainedTaskPanel, setRetainedTaskPanel] = useState(false);
+  const tasksVisible = panel === "tasks" || retainedTaskPanel;
   const [taskPanelPresent, setTaskPanelPresent] = useState(false);
+  const [revealedTaskKey, setRevealedTaskKey] = useState<string | null>(null);
   // TIPS: 铃铛先打开堆叠提醒，只有点击提醒才展开列表；工具条箭头始终关闭整个提醒区域。
   const [tasksExpanded, setTasksExpanded] = useState(false);
   const [editor, setEditor] = useState<string | null>(null);
   const [tools, setTools] = useState(false);
-  const [inputOptions, setInputOptions] = useState(false);
+  const [inputOptions, setInputOptions] = useState<"sessions" | "capabilities" | null>(null);
+  const [capabilities, setCapabilities] = useState<PetCapability[]>([]);
+  const capabilitiesTarget = useRef<string | null>(null);
+  const optionsLoading = useRef(new Map<string, Promise<PetActionResult | undefined>>());
+  const optionsRequest = useRef(0);
   const [sessions, setSessions] = useState<PetTarget[]>([]);
+  const [expandedWorkspaces, setExpandedWorkspaces] = useState<string[]>([]);
   const [sessionsPartial, setSessionsPartial] = useState(false);
   const [focusRequest, setFocusRequest] = useState(0);
   const [pending, setPending] = useState<Record<string, boolean>>({});
@@ -77,6 +93,7 @@ function PetApp() {
   const visibleTasks = unreadTasks.filter((task) => interaction.dismissed[task.key] !== task.turnKey);
   const target = quickKey === "__quick__" ? interaction.target : interaction.targets[quickKey] ?? null;
   const quickDraft = interaction.drafts[quickKey] ?? "";
+  const selectedCapabilities = interaction.selectedCapabilities?.[quickKey] ?? [];
   const editorState = useRef({ panel, key: panel === "input" ? quickKey : editor });
   editorState.current = { panel, key: panel === "input" ? quickKey : editor };
   const voiceActive = !["idle", "error"].includes(state.voicePhase);
@@ -97,7 +114,10 @@ function PetApp() {
       if (initialized.current && contextKey.current !== snapshot.contextKey) {
         composing.current = null;
         inputRequest.current++; targetRequest.current = null;
-        setPanel(null); setTaskPanelPresent(false); setEditor(null); setInputOptions(false); setSessions([]); setSessionsPartial(false); setQuickKey("__quick__"); updateMessage(""); setPending({}); lastTranscript.current = 0;
+        optionsRequest.current++;
+        capabilitiesTarget.current = null; optionsLoading.current.clear();
+        setRevealedTaskKey(null); setRetainedTaskPanel(false);
+        setPanel(null); setTaskPanelPresent(false); setEditor(null); setInputOptions(null); setSessions([]); setCapabilities([]); setExpandedWorkspaces([]); setSessionsPartial(false); setQuickKey("__quick__"); updateMessage(""); setPending({}); lastTranscript.current = 0;
       }
       // TIPS: 本地编辑即时写入主进程；回执快照只应用到页面，不能再回写而形成IPC循环。
       const incoming = snapshot.interaction ?? EMPTY_INTERACTION;
@@ -116,14 +136,20 @@ function PetApp() {
     });
     return () => { active = false; release(); };
   }, []);
+  useLayoutEffect(() => {
+    if (panel === "tasks" && revealedTaskKey) root.current?.querySelector(`[data-task-key="${CSS.escape(revealedTaskKey)}"]`)?.scrollIntoView({ block: "nearest" });
+  }, [panel, revealedTaskKey]);
   useEffect(() => {
-    if (panel === "tasks") { setTaskPanelPresent(true); return; }
+    if (!tasksVisible) setRevealedTaskKey(null);
+  }, [tasksVisible]);
+  useEffect(() => {
+    if (tasksVisible) { setTaskPanelPresent(true); return; }
     setCardHover(false);
     if (panel === "input" || matchMedia("(prefers-reduced-motion: reduce)").matches) { setTaskPanelPresent(false); return; }
     // TIPS: 淡出完成后再卸载，避免原生窗口先缩小而裁掉动画；重新打开会取消旧清理。
     const timer = setTimeout(() => setTaskPanelPresent(false), 200);
     return () => clearTimeout(timer);
-  }, [panel]);
+  }, [panel, tasksVisible]);
   useEffect(() => {
     if (!state.voiceText) return;
     try {
@@ -171,15 +197,15 @@ function PetApp() {
       if (!voiceActive && panel === "input") {
         void cancelVoice();
         clearTimeout(hoverTimer.current); clearTimeout(leaveTimer.current);
-        setTools(false); setPanel(null);
+        setTools(retainedTaskPanel); setPanel(retainedTaskPanel ? "tasks" : null); setRetainedTaskPanel(false);
       }
       setEditor(null);
-      setInputOptions(false);
+      optionsRequest.current++; setInputOptions(null);
     };
     window.addEventListener("blur", blur);
     return () => window.removeEventListener("blur", blur);
-  }, [voiceActive, panel, pending.__voice__]);
-  usePetPlacement(root, bridge, hitRegions, panel, controlsVisible);
+  }, [voiceActive, panel, pending.__voice__, retainedTaskPanel]);
+  usePetPlacement(root, bridge, hitRegions, panel, controlsVisible, tasksVisible);
 
   useLayoutEffect(() => {
     // TIPS: 单行时保持参考图的胶囊高度；多行只增长输入区，避免原生textarea拖拽柄和蓝色矩形边框。
@@ -239,7 +265,16 @@ function PetApp() {
         updateMessage(result.delivery === "queued" ? t("pet.queued") : "", true);
         // TIPS: 回执只关闭原提交编辑区，不能打断用户已切换到的另一张卡片或快捷输入。
         if (result.draftCleared && editorState.current.panel === requestEditor.panel && editorState.current.key === key) {
-          if (requestEditor.panel === "input") setPanel(null); else setEditor(null);
+          if (requestEditor.panel === "input" && action.type === "send" && result.task) {
+            const task = result.task;
+            setRevealedTaskKey(task.key);
+            remember((current) => {
+              const dismissed = { ...current.dismissed }, read = { ...current.read };
+              delete dismissed[task.key]; delete read[task.key];
+              return { ...current, dismissed, read };
+            });
+            optionsRequest.current++; setInputOptions(null); setEditor(null); setTools(true); setTasksExpanded(true); setPanel("tasks"); setRetainedTaskPanel(false);
+          } else if (requestEditor.panel === "input") { setPanel(retainedTaskPanel ? "tasks" : null); setRetainedTaskPanel(false); } else setEditor(null);
           restorePassive();
         }
       }
@@ -261,9 +296,10 @@ function PetApp() {
     const request = ++inputRequest.current;
     if (voiceActive || busy("__voice__")) await run("__voice_cancel__", { type: "voice-cancel" });
     if (request !== inputRequest.current) return;
-    setQuickKey("__quick__"); setPanel("input"); setEditor(null); setInputOptions(false); setTools(true);
+    setRetainedTaskPanel(tasksVisible);
+    optionsRequest.current++; setQuickKey("__quick__"); setPanel("input"); setEditor(null); setInputOptions(null); setTools(true);
     let destination = interaction.target;
-    if (!interaction.drafts.__quick__ || !destination) {
+    if ((!interaction.drafts.__quick__ && !interaction.selectedCapabilities?.__quick__?.length) || !destination) {
       // TIPS: 清除上次目标后才解析新目标，允许输入但不能向旧会话提前发送。
       remember((value) => ({ ...value, target: null }));
       updateMessage(t("pet.target_loading"));
@@ -280,25 +316,99 @@ function PetApp() {
     // TIPS: 恢复已有草稿时React尚未提交输入区；请求编号已覆盖关闭/切换取消，不能用上一帧的编辑状态拦截启动。
     if (destination && voice && request === inputRequest.current) await run("__voice__", { type: "voice-start", target: destination });
   };
-  const submitQuick = () => { if (target && quickDraft.trim() && !busy("__target__") && !voiceActive && !uncertain(quickKey)) void run(quickKey, { type: "send", target, text: quickDraft, draftKey: quickKey }); };
+  const hasQuickContent = Boolean(quickDraft.trim() || (quickKey === "__quick__" && selectedCapabilities.length));
+  const submitQuick = () => { if (target && hasQuickContent && !busy("__target__") && !voiceActive && !uncertain(quickKey)) void run(quickKey, { type: "send", target, text: quickDraft, draftKey: quickKey, capabilities: quickKey === "__quick__" ? selectedCapabilities : [] }); };
+  // TIPS: 菜单关闭只使旧消费者失效；重新打开共用请求，不能被busy保护吞掉新消费者。
+  const loadOptions = (key: string, action: Extract<PetAction, { type: "sessions" | "capabilities" }>) => {
+    const existing = optionsLoading.current.get(key);
+    if (existing) return existing;
+    const loading = run(key, action).finally(() => {
+      if (optionsLoading.current.get(key) === loading) optionsLoading.current.delete(key);
+    });
+    optionsLoading.current.set(key, loading);
+    return loading;
+  };
   const toggleSessions = async () => {
-    if (inputOptions) { setInputOptions(false); return; }
-    setInputOptions(true); setSessions([]); setSessionsPartial(false);
-    const result = await run("__sessions__", { type: "sessions" });
-    if (result) { setSessions(result.targets ?? []); setSessionsPartial(result.partial === true); }
+    const request = ++optionsRequest.current;
+    if (inputOptions === "sessions") { setInputOptions(null); return; }
+    setInputOptions("sessions"); setSessions([]); setExpandedWorkspaces([]); setSessionsPartial(false);
+    const result = await loadOptions("__sessions__", { type: "sessions" });
+    if (result && request === optionsRequest.current && editorState.current.panel === "input") {
+      const targets = result.targets ?? [];
+      setSessions(targets);
+      setExpandedWorkspaces(targets[0] ? [targets[0].workspaceId] : []);
+      setSessionsPartial(result.partial === true);
+    }
+  };
+  const toggleCapabilities = async () => {
+    const request = ++optionsRequest.current;
+    if (inputOptions === "capabilities") { setInputOptions(null); return; }
+    setInputOptions("capabilities");
+    if (!target) return;
+    if (capabilitiesTarget.current !== target.key) {
+      capabilitiesTarget.current = target.key;
+      setCapabilities([]);
+    }
+    // TIPS: 同目标缓存立即展示，每次重开仍刷新；两个范围独立返回，不等待较慢的连接清单。
+    const requestedTarget = target.key, requestedKey = quickKey;
+    const load = async (scope: "basic" | "connections") => {
+      const result = await loadOptions(`__capabilities_${scope}__:${target.key}`, { type: "capabilities", target, scope });
+      const activeTarget = requestedKey === "__quick__" ? interactionRef.current.target : interactionRef.current.targets[requestedKey];
+      if (result && request === optionsRequest.current && editorState.current.panel === "input" && editorState.current.key === requestedKey && activeTarget?.key === requestedTarget) {
+        setCapabilities((current) => [...current.filter((item) => scope === "basic" ? item.group === "mcp" || item.kind === "cloud-skill" : item.group === "plugins" || item.kind === "skill"), ...(result.capabilities ?? [])]);
+      }
+    };
+    void load("basic"); void load("connections");
+  };
+  const chooseCapability = (item: PetCapability) => {
+    if (item.disabled) return;
+    remember((current) => {
+      const selected = current.selectedCapabilities?.[quickKey] ?? [];
+      return { ...current, drafts: { ...current.drafts, [quickKey]: current.drafts[quickKey] ?? "" },
+        targets: target ? { ...current.targets, [quickKey]: target } : current.targets,
+        selectedCapabilities: { ...current.selectedCapabilities, [quickKey]: selected.some((value) => value.id === item.id) ? selected : [...selected, item] } };
+    });
+    setInputOptions(null);
+    root.current?.querySelector<HTMLTextAreaElement>(".pet-composer textarea")?.focus();
+  };
+  const focusCapability = (index: number) => {
+    const items = root.current?.querySelectorAll<HTMLElement>(".pet-selected-capability");
+    if (items && index >= 0 && index < items.length) items[index].focus();
+    else root.current?.querySelector<HTMLTextAreaElement>(".pet-composer textarea")?.focus();
+  };
+  const removeCapability = (index: number) => {
+    remember((current) => ({ ...current, selectedCapabilities: { ...current.selectedCapabilities, [quickKey]: (current.selectedCapabilities?.[quickKey] ?? []).filter((_, position) => position !== index) } }));
+    // TIPS: 删除一个原子项后，把光标放回相邻项或文字区，不触发输入栏失焦收起。
+    const items = root.current?.querySelectorAll<HTMLElement>(".pet-selected-capability");
+    if (items?.[index + 1]) items[index + 1].focus();
+    else root.current?.querySelector<HTMLTextAreaElement>(".pet-composer textarea")?.focus();
+  };
+  const capabilityKeyDown = (event: React.KeyboardEvent<HTMLElement>, index: number) => {
+    if (event.nativeEvent.isComposing || composing.current || event.nativeEvent.keyCode === 229) return;
+    if (event.key === "Backspace" || event.key === "Delete") { event.preventDefault(); removeCapability(index); }
+    else if (event.key === "ArrowLeft" || event.key === "ArrowRight") { event.preventDefault(); focusCapability(index + (event.key === "ArrowLeft" ? -1 : 1)); }
+  };
+  const quickKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    const field = event.currentTarget;
+    if (quickKey === "__quick__" && selectedCapabilities.length && !event.nativeEvent.isComposing && !composing.current && event.nativeEvent.keyCode !== 229 && field.selectionStart === 0 && field.selectionEnd === 0) {
+      if (event.key === "Backspace") { event.preventDefault(); removeCapability(selectedCapabilities.length - 1); return; }
+      if (event.key === "ArrowLeft") { event.preventDefault(); focusCapability(selectedCapabilities.length - 1); return; }
+    }
+    keySubmit(event, submitQuick);
   };
   const selectSession = (destination: PetTarget) => {
     void cancelVoice();
     // TIPS: 只在用户明确选择时改发，保留当前草稿；后续会话排序更新不会覆盖此目标。
-    remember((value) => ({ ...value, target: quickKey === "__quick__" ? destination : value.target, targets: { ...value.targets, [quickKey]: destination } }));
-    setInputOptions(false); updateMessage("");
+    remember((value) => ({ ...value, target: quickKey === "__quick__" ? destination : value.target, targets: { ...value.targets, [quickKey]: destination }, selectedCapabilities: { ...value.selectedCapabilities, [quickKey]: [] } }));
+    optionsRequest.current++; capabilitiesTarget.current = null; setInputOptions(null); setCapabilities([]); updateMessage("");
     root.current?.querySelector<HTMLTextAreaElement>(".pet-composer textarea")?.focus();
   };
   const dismiss = (task: PetTask) => {
     remember((value) => ({ ...value, dismissed: { ...value.dismissed, [task.key]: task.turnKey } }));
     if (editor === task.key) { setEditor(null); restorePassive(); }
-    if (panel === "tasks" && visibleTasks.length === 1) {
-      setPanel(null);
+    if (tasksVisible && visibleTasks.length === 1) {
+      if (panel === "tasks") setPanel(null);
+      setRetainedTaskPanel(false);
       setTasksExpanded(false);
     }
   };
@@ -320,6 +430,8 @@ function PetApp() {
   };
   if (!editor && !cardHover) taskOrder.current = state.tasks.map((task) => task.key);
   const orderedTasks = [...visibleTasks].sort((a,b) => {
+    if (a.key === revealedTaskKey) return -1;
+    if (b.key === revealedTaskKey) return 1;
     const aIndex = taskOrder.current.indexOf(a.key), bIndex = taskOrder.current.indexOf(b.key);
     return (aIndex < 0 ? 1e6 : aIndex) - (bIndex < 0 ? 1e6 : bIndex);
   });
@@ -327,13 +439,13 @@ function PetApp() {
   // TIPS: 最后一条提醒移除后仍保留当前面板的关闭箭头；收起后没有提醒就不占用铃铛位置。
   const showTaskControl = taskCount > 0 || panel === "tasks";
   const hasUnreadCompletion = visibleTasks.some((task) => task.state === "completed");
-  const hiddenCount = unreadTasks.length - visibleTasks.length;
-  const restoreDismissed = () => remember((value) => ({ ...value, dismissed: {} }));
+  const sessionGroups = groupPetSessions(sessions);
   const drafts = Object.entries(interaction.drafts).filter(([key, text]) => key !== "__quick__" && text.trim() && !visibleTasks.some((task) => task.key === key));
   // TIPS: 草稿恢复独立于提醒数量；最后一张卡片消失后，仍可从编辑入口找回原任务的文字。
   const draftEntries = drafts.length ? <div className="pet-drafts"><span>{t("pet.drafts")}</span>{drafts.map(([key]) => <button key={key} disabled={voiceActive} title={interaction.targets[key] ? `${interaction.targets[key].project} · ${interaction.targets[key].title}` : key} onClick={() => {
     if (!interaction.targets[key]) return;
-    setQuickKey(key); setPanel("input"); setEditor(null); setInputOptions(false); setTools(true); updateMessage("");
+    setRetainedTaskPanel(tasksVisible);
+    optionsRequest.current++; setQuickKey(key); setPanel("input"); setEditor(null); setInputOptions(null); setTools(true); updateMessage("");
   }}>{interaction.targets[key]?.title ?? key}</button>)}</div> : null;
 
   // TIPS: 在实际按下的按钮上捕获指针，短按仍是原按钮点击，超过阈值才开始拖动并吞掉随后click。
@@ -348,20 +460,20 @@ function PetApp() {
     leaveTimer.current = setTimeout(() => { if (!panel && !(document.hasFocus() && root.current?.contains(document.activeElement))) setTools(false); }, 500);
   }} onFocusCapture={() => setTools(true)} onBlurCapture={restorePassive} onKeyDown={(event) => {
     if (event.key !== "Escape" || event.nativeEvent.isComposing) return;
-    if (inputOptions) { setInputOptions(false); root.current?.querySelector<HTMLTextAreaElement>(".pet-composer textarea")?.focus(); return; }
+    if (inputOptions) { optionsRequest.current++; setInputOptions(null); root.current?.querySelector<HTMLTextAreaElement>(".pet-composer textarea")?.focus(); return; }
     void cancelVoice();
-    if (editor) setEditor(null); else setPanel(null);
+    if (editor) setEditor(null); else { setPanel(panel === "input" && retainedTaskPanel ? "tasks" : null); setRetainedTaskPanel(false); }
     (document.activeElement as HTMLElement)?.blur(); bridge?.keyboard(false);
   }}>
     <div className="pet-panels">
-    {panel === "tasks" || (taskPanelPresent && panel === null) ? <section className="pet-task-panel" data-visible={panel === "tasks"} data-pet-hit={panel === "tasks" ? true : undefined} inert={panel !== "tasks"} aria-hidden={panel !== "tasks"} data-folded={!tasksExpanded} onPointerEnter={() => setCardHover(true)} onPointerLeave={() => setCardHover(false)} onTransitionEnd={(event) => { if (event.target === event.currentTarget && event.propertyName === "opacity" && panel !== "tasks") setTaskPanelPresent(false); }} aria-label={t("pet.tasks")}>
+    {tasksVisible || (taskPanelPresent && panel === null) ? <section className="pet-task-panel" data-visible={tasksVisible} data-pet-hit={tasksVisible ? true : undefined} inert={!tasksVisible} aria-hidden={!tasksVisible} data-folded={!tasksExpanded} onPointerEnter={() => setCardHover(true)} onPointerLeave={() => setCardHover(false)} onTransitionEnd={(event) => { if (event.target === event.currentTarget && event.propertyName === "opacity" && !tasksVisible) setTaskPanelPresent(false); }} aria-label={t("pet.tasks")}>
       {state.syncing ? <p className="pet-note">{t("pet.syncing")}</p> : null}
       {state.partial ? <p className="pet-note">{t("pet.partial")}</p> : null}
       <div className="pet-cards">
         {(tasksExpanded ? orderedTasks : orderedTasks.slice(0, 1)).map((task) => <div key={task.key} className="pet-card-shell" data-stack-size={!tasksExpanded ? visibleTasks.length : undefined} style={{ "--pet-stack-depth": tasksExpanded ? 0 : visibleTasks.length - 1 } as React.CSSProperties} onClick={!tasksExpanded ? () => setTasksExpanded(true) : undefined}>
           {!tasksExpanded ? orderedTasks.slice(1).map((behind, index) => <span key={behind.key} className="pet-stack-layer" aria-hidden="true" style={{ "--pet-stack-level": index + 1, "--pet-stack-inset": `${Math.min((index + 1) * 8, 56)}px` } as React.CSSProperties} />) : null}
-          <article className="pet-card" data-editing={editor === task.key} data-state={task.state}>
-          {tasksExpanded ? <button className="pet-close pet-icon" data-pet-hit={panel === "tasks" ? true : undefined} aria-label={t("pet.close_card")} onClick={() => dismiss(task)}><X size={14} strokeWidth={2.2} /></button> : null}
+          <article className="pet-card" data-task-key={task.key} data-editing={editor === task.key} data-state={task.state}>
+          {tasksExpanded ? <button className="pet-close pet-icon" data-pet-hit={tasksVisible ? true : undefined} aria-label={t("pet.close_card")} onClick={() => dismiss(task)}><X size={14} strokeWidth={2.2} /></button> : null}
           <div className="pet-card-head">
             <button className="pet-title" aria-label={!tasksExpanded ? t("pet.expand") : undefined} title={`${task.project} · ${task.title}\n${task.statusText}${task.progressText ? `\n${task.progressText}` : ""}`} onClick={() => tasksExpanded ? void openTask(task) : setTasksExpanded(true)}>
               <strong>{task.state === "completed" ? <i className="pet-completed" aria-label={t("pet.completed")}><Check size={10} strokeWidth={3} /></i> : task.state === "resumable" && task.stopped ? <i className="pet-stopped" aria-label={t("pet.stopped")} /> : null}{task.title}</strong>
@@ -370,7 +482,7 @@ function PetApp() {
             {tasksExpanded ? <div className="pet-card-actions">
             <button className="pet-icon" aria-label={t("pet.follow_up")} aria-pressed={editor === task.key} disabled={!state.ready} onClick={() => {
               void cancelVoice();
-              setPanel("tasks"); setEditor(editor === task.key ? null : task.key); if (editor === task.key) { (document.activeElement as HTMLElement)?.blur(); restorePassive(); }
+              setRetainedTaskPanel(false); setPanel("tasks"); setEditor(editor === task.key ? null : task.key); if (editor === task.key) { (document.activeElement as HTMLElement)?.blur(); restorePassive(); }
             }}><CornerDownLeft size={20} /></button>
             {task.canStop ? <button className="pet-icon pet-stop" aria-label={t("pet.stop")} disabled={busy(task.key) || task.stopping} onClick={() => void run(task.key, { type: "stop", key: task.key })}><Square size={14} fill="currentColor" strokeWidth={0} /></button> : null}
             </div> : null}
@@ -379,44 +491,63 @@ function PetApp() {
             <ImeTextarea key={`${state.contextKey}:${task.key}`} aria-label={`${t("pet.follow_up")} · ${task.title}`} placeholder={t("pet.follow_up")} value={interaction.drafts[task.key] ?? ""}
               onCompositionStart={() => { composing.current = { key: task.key, persistedDraft: interactionRef.current.drafts[task.key] ?? "" }; }} onCompositionEnd={() => finishComposition(task.key)}
               onCommit={(value) => updateDraft(task.key, value, task)} onKeyDown={(event) => keySubmit(event, () => submitCard(task))} />
-            <button className="pet-send" aria-label={t("pet.send")} disabled={!interaction.drafts[task.key]?.trim() || busy(task.key) || uncertain(task.key) || task.state === "reconciling"} onClick={() => { if (!composing.current) submitCard(task); }}><ArrowUp size={18} /></button>
+            <button className="pet-send" aria-label={t("pet.send")} disabled={!interaction.drafts[task.key]?.trim() || busy(task.key) || uncertain(task.key) || task.state === "reconciling"} onClick={() => { if (!composing.current) submitCard(task); }}><ArrowUp size={18} strokeWidth={1.6} /></button>
           </div> : null}
           </article>
         </div>)}
       </div>
-      {hiddenCount ? <button className="pet-restore" onClick={restoreDismissed}>{t("pet.dismissed", { count: hiddenCount })} · {t("pet.restore")}</button> : null}
       {draftEntries}
     </section> : null}
-    {panel === "input" && inputOptions ? <section className="pet-input-options" id="pet-input-options" data-pet-hit aria-label={t("pet.input_options")} aria-busy={busy("__sessions__")}>
+    {panel === "input" && inputOptions === "sessions" ? <section className="pet-input-options" id="pet-input-options" data-pet-hit aria-label={t("pet.input_options")} aria-busy={busy("__sessions__")}>
       <p className="pet-note">{t("pet.input_options")}</p>
       {busy("__sessions__") ? <p className="pet-note" role="status">{t("pet.sessions_loading")}</p> : <>
         {sessionsPartial ? <p className="pet-note">{t("pet.partial")}</p> : null}
-        {sessions.length ? <ul className="pet-session-list">{sessions.map((session) => <li key={session.key}>
-          <button className="pet-session-option" disabled={voiceActive || busy(quickKey)} aria-pressed={target?.key === session.key} title={`${session.project} · ${session.title}`} onClick={() => selectSession(session)}>
-            <MessageSquare className="pet-session-icon" size={16} strokeWidth={1.7} aria-hidden="true" />
-            <span><strong>{session.title}</strong><small>{session.project}</small></span>
-            {target?.key === session.key ? <Check size={16} aria-hidden="true" /> : null}
+        {sessionGroups.length ? <ul className="pet-session-list">{sessionGroups.map((group) => <li className="pet-workspace-group" key={group.workspaceId}>
+          <button className="pet-workspace-toggle" aria-expanded={expandedWorkspaces.includes(group.workspaceId)} onClick={() => setExpandedWorkspaces((current) => current.includes(group.workspaceId) ? current.filter((id) => id !== group.workspaceId) : [...current, group.workspaceId])} title={group.project}>
+            {expandedWorkspaces.includes(group.workspaceId) ? <FolderOpen size={18} strokeWidth={1.8} aria-hidden="true" /> : <Folder size={18} strokeWidth={1.8} aria-hidden="true" />}
+            <span>{group.project}</span>
+            <ChevronDown size={15} aria-hidden="true" />
           </button>
+          {expandedWorkspaces.includes(group.workspaceId) ? <ul className="pet-workspace-sessions">{group.sessions.map((session) => <li key={session.key}>
+            <button className="pet-session-option" disabled={voiceActive || busy(quickKey)} aria-pressed={target?.key === session.key} title={`${session.project} · ${session.title}`} onClick={() => selectSession(session)}>
+              <span>{session.title}</span>
+            </button>
+          </li>)}</ul> : null}
         </li>)}</ul> : <>
           <p className="pet-note">{t("pet.sessions_empty")}</p>
           <button className="pet-retarget" onClick={() => void run("__open__", { type: "open-app" })}>{t("pet.open_app")}</button>
         </>}
       </>}
     </section> : null}
+    {panel === "input" && inputOptions === "capabilities" ? <section className="pet-input-options" id="pet-input-options" data-pet-hit aria-label={t("composer.plus_label")} aria-busy={busy(`__capabilities_basic__:${target?.key}`) || busy(`__capabilities_connections__:${target?.key}`)}>
+      <div className="pet-session-list pet-capability-list">
+        {([ ["plugins", "composer.plus_menu_section_plugins"], ["mcp", "composer.plus_menu_section_mcp"], ["skills", "composer.slash_section_skills"] ] as const).map(([group, label]) => <div className="pet-capability-group" key={group}>
+          <p className="pet-capability-heading">{t(label)}</p>
+          {capabilities.filter((item) => item.group === group).map((item) => <button key={item.id} className="pet-capability-option" disabled={item.disabled} aria-pressed={selectedCapabilities.some((selected) => selected.id === item.id)} title={item.description} onClick={() => chooseCapability(item)}>
+            <span className="pet-capability-icon"><CapabilityIcon item={item} /></span>
+            <span className="pet-capability-name">{item.name}</span>{item.description ? <small>{item.description}</small> : null}
+            {selectedCapabilities.some((selected) => selected.id === item.id) ? <Check size={14} aria-hidden="true" /> : null}
+          </button>)}
+        </div>)}
+        {busy(`__capabilities_basic__:${target?.key}`) || busy(`__capabilities_connections__:${target?.key}`) ? <p className="pet-note" role="status">{t("pet.capabilities_loading")}</p> : null}
+      </div>
+    </section> : null}
     {panel === "input" ? <section className="pet-quick" data-pet-hit>
       <div className="pet-target-row">
-      <button className="pet-target" disabled={!target} title={target ? `${target.project} · ${target.title}` : undefined} onClick={() => target && void run("__open__", { type: "open-target", target })}>{target ? t("pet.target", { project: target.project, title: target.title }) : t(busy("__target__") ? "pet.target_loading" : "pet.no_target")}</button>
+      <button className="pet-target" disabled={quickKey !== "__quick__" || voiceActive || busy(quickKey) || busy("__target__")} title={target ? `${target.project} · ${target.title}` : undefined} aria-expanded={inputOptions === "sessions"} aria-controls="pet-input-options" onClick={() => void toggleSessions()}>{target ? t("pet.target", { project: target.project, title: target.title }) : t(busy("__target__") ? "pet.target_loading" : "pet.no_target")}</button>
       </div>
       {!target && !busy("__target__") && !inputOptions ? <button className="pet-retarget" onClick={() => void run("__open__", { type: "open-app" })}>{t("pet.open_app")}</button> : null}
       <div className="pet-composer">
-        <button className="pet-input-plus" aria-label={t("pet.input_options")} title={t("pet.input_options")} aria-expanded={inputOptions} aria-controls="pet-input-options" disabled={quickKey !== "__quick__" || voiceActive || busy(quickKey) || busy("__target__")} onClick={() => void toggleSessions()}><Plus size={18} strokeWidth={1.6} /></button>
-        <ImeTextarea key={`${state.contextKey}:${quickKey}`} aria-label={t("pet.input")} placeholder={t("pet.placeholder")} value={quickDraft}
+        <button className="pet-input-plus" aria-label={t("composer.plus_label")} title={t("composer.plus_label")} aria-expanded={inputOptions === "capabilities"} aria-controls="pet-input-options" disabled={quickKey !== "__quick__" || !target || voiceActive || busy(quickKey) || busy("__target__")} onClick={() => void toggleCapabilities()}><Plus size={18} strokeWidth={1.6} /></button>
+        <div className="pet-composer-content">
+        {quickKey === "__quick__" && selectedCapabilities.length ? <div className="pet-selected-capabilities">{selectedCapabilities.map((item, index) => <span className="pet-selected-capability" key={item.id} tabIndex={0} role="group" title={item.name} aria-label={`${item.name} · ${t("pet.capability_delete_hint")}`} onClick={(event) => event.currentTarget.focus()} onKeyDown={(event) => capabilityKeyDown(event, index)}><CapabilityIcon item={item} /><span>{item.name}</span></span>)}</div> : null}
+        <ImeTextarea key={`${state.contextKey}:${quickKey}`} aria-label={t("pet.input")} placeholder={quickKey === "__quick__" && selectedCapabilities.length ? "" : t("pet.placeholder")} value={quickDraft}
           onCompositionStart={() => { composing.current = { key: quickKey, persistedDraft: interactionRef.current.drafts[quickKey] ?? "" }; }} onCompositionEnd={() => finishComposition(quickKey)}
-          onCommit={(value) => updateDraft(quickKey, value, target ?? undefined)} onKeyDown={(event) => keySubmit(event, submitQuick)} />
-        <button className="pet-send" aria-label={t("pet.send")} disabled={!target || !quickDraft.trim() || busy("__target__") || busy(quickKey) || uncertain(quickKey) || voiceActive} onClick={() => { if (!composing.current) submitQuick(); }}><ArrowUp size={18} strokeWidth={1.6} /></button>
+          onCommit={(value) => updateDraft(quickKey, value, target ?? undefined)} onKeyDown={quickKeyDown} />
+        </div>
+        <button className="pet-send" aria-label={t("pet.send")} disabled={!target || !hasQuickContent || busy("__target__") || busy(quickKey) || uncertain(quickKey) || voiceActive} onClick={() => { if (!composing.current) submitQuick(); }}><ArrowUp size={18} strokeWidth={1.6} /></button>
       </div>
       {voiceActive ? <div className="pet-voice"><span>{state.voicePhase === "transcribing" ? t("pet.voice_transcribing") : t("pet.voice")}</span><button onClick={() => void run("__voice_stop__", { type: "voice-stop" })}>{t("pet.voice_stop")}</button><button onClick={() => void cancelVoice()}>{t("pet.voice_cancel")}</button></div> : null}
-      {hiddenCount ? <button className="pet-restore" onClick={restoreDismissed}>{t("pet.dismissed", { count: hiddenCount })} · {t("pet.restore")}</button> : null}
       {draftEntries}
     </section> : null}
     {Object.entries(interaction.uncertain ?? {}).some(([,value]) => value) ? <div className="pet-message" data-pet-hit>{t("pet.uncertain")}
@@ -437,8 +568,8 @@ function PetApp() {
     <nav className="pet-tools" data-visible={controlsVisible} data-pet-hit={controlsVisible ? true : undefined} inert={!controlsVisible} aria-hidden={!controlsVisible}>
       <button aria-label={t("pet.input")} disabled={!state.ready} onClick={() => void openInput()}><PetComposeIcon /></button>
       <i /><button aria-label={t("pet.voice")} disabled={!state.ready || !state.voiceAvailable || busy("__voice__")} title={voiceLabel} onClick={() => voiceActive ? void run("__voice__", { type: "voice-stop" }) : void openInput(true)}><PetVoiceIcon /></button>
-      {showTaskControl ? <><i /><button aria-label={t(panel === "tasks" ? "pet.collapse" : "pet.tasks")} aria-expanded={panel === "tasks"} onClick={() => { void cancelVoice(); if (panel === "tasks") setPanel(null); else { setTasksExpanded(false); setPanel("tasks"); } setEditor(null); (document.activeElement as HTMLElement)?.blur(); restorePassive(); }}>
-        {panel === "tasks" ? <ChevronUp size={20} strokeWidth={1.8} /> : <Bell size={20} strokeWidth={1.8} />}{panel !== "tasks" && taskCount ? <b className="pet-badge">{taskCount > 99 ? "99+" : taskCount}</b> : null}
+      {showTaskControl ? <><i /><button aria-label={t(panel === "tasks" ? "pet.collapse" : "pet.tasks")} aria-expanded={panel === "tasks"} onClick={() => { void cancelVoice(); if (panel === "tasks") setPanel(null); else { setTasksExpanded(taskCount <= 3); setPanel("tasks"); } setEditor(null); (document.activeElement as HTMLElement)?.blur(); restorePassive(); }}>
+        {panel === "tasks" ? <ChevronUp className="pet-task-chevron" size={20} strokeWidth={1.8} /> : <Bell size={20} strokeWidth={1.8} />}{panel !== "tasks" && taskCount ? <b className="pet-badge">{taskCount > 99 ? "99+" : taskCount}</b> : null}
       </button></> : null}
     </nav>
     </div> : null}

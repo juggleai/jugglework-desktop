@@ -3,6 +3,16 @@ import type { PetViewport } from "@/app/lib/desktop-pet-types";
 export type PetPanelSide = "above" | "below";
 
 /**
+ * 从当前滚动视口还原面板自然高度；不临时放宽限高，避免浏览器夹断底部scrollTop。
+ * @param panelHeight 当前面板高度
+ * @param list 当前滚动区可见高度与完整内容高度
+ * @param limit 滚动区的自然限高
+ */
+export function petPanelNaturalHeight(panelHeight: number, list?: { height: number; scrollHeight: number }, limit = 360) {
+  return list ? panelHeight - list.height + Math.min(limit, list.scrollHeight) : panelHeight;
+}
+
+/**
  * 根据人物屏幕位置选择面板方向、宽度和对齐；24像素缓冲避免拖动到临界点反复翻转。
  * @param viewport 固定透明画布和工作区
  * @param toolWidth 当前气泡宽度
@@ -31,9 +41,9 @@ export function placePetPanel(viewport: PetViewport, toolWidth: number, desiredH
 }
 
 /**
- * 将加号菜单贴在输入胶囊上下方；独立计算空间，不移动输入栏或人物。
+ * 将菜单向上贴在发送目标行上方，向下贴在输入胶囊下方；不移动输入栏或人物。
  * @param viewportHeight 当前画布高度
- * @param anchor 输入胶囊相对画布的上下边界
+ * @param anchor 发送目标行上沿和输入胶囊下沿
  * @param desiredHeight 菜单未压缩高度
  * @param previous 上次展开方向，首次优先向下
  */

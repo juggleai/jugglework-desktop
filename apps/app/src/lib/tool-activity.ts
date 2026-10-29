@@ -18,6 +18,7 @@ import {
   isWriteToolPart,
 } from "@/lib/build-in-tools"
 import { parseFilename, truncateText } from "@/components/tools/path"
+import { redactSensitiveCommand } from "@/components/chat/reasoning-redaction"
 
 type AnyToolPart = ToolUIPart | DynamicToolUIPart
 
@@ -37,6 +38,20 @@ export function collectToolParts(messages: UIMessage[]): DynamicToolUIPart[] {
   )
 }
 
+/** Latest snapshot wins, ordered by its latest appearance in the transcript. */
+function dedupeToolParts(parts: DynamicToolUIPart[]): DynamicToolUIPart[] {
+  const byCallId = new Map<string, DynamicToolUIPart>()
+  for (const part of parts) {
+    byCallId.delete(part.toolCallId)
+    byCallId.set(part.toolCallId, part)
+  }
+  return [...byCallId.values()]
+}
+
+export function getActiveToolPart(parts: DynamicToolUIPart[]): DynamicToolUIPart | null {
+  return dedupeToolParts(parts).findLast(isToolPartInFlight) ?? null
+}
+
 export type ToolActivitySummary = {
   total: number
   completed: number
@@ -49,11 +64,7 @@ export type ToolActivitySummary = {
  * by toolCallId and the latest state wins.
  */
 export function getToolActivitySummary(messages: UIMessage[]): ToolActivitySummary | null {
-  const byCallId = new Map<string, DynamicToolUIPart>()
-  for (const part of collectToolParts(messages)) {
-    byCallId.set(part.toolCallId, part)
-  }
-  const parts = [...byCallId.values()]
+  const parts = dedupeToolParts(collectToolParts(messages))
   if (parts.length === 0) return null
   const running = parts.filter(isToolPartInFlight).length
   return {
@@ -80,6 +91,8 @@ function hostnameOf(url: string | undefined): string | undefined {
  */
 export function getToolActivityLabel(part: AnyToolPart): string {
   if (isBashToolPart(part)) {
+    const command = redactSensitiveCommand(part.input?.command).trim()
+    if (command) return truncateText(command, 64)
     const description = trimmedString(part.input?.description)
     return description ? truncateText(description, 64) : "Running a command"
   }
@@ -129,7 +142,7 @@ export function getToolActivityLabel(part: AnyToolPart): string {
     return key ? `Requesting ${key}` : "Requesting an environment variable"
   }
   if (isTaskToolPart(part)) {
-    const description = trimmedString(part.input?.description)
+    const description = trimmedString(part.input?.description) || trimmedString(part.input?.subagent_type)
     return description
       ? `Agent: ${truncateText(description, 56)}`
       : "Running an agent"
@@ -142,13 +155,8 @@ export function getToolActivityLabel(part: AnyToolPart): string {
 
 /** Label for the most recent tool still in flight, if any. */
 export function getActiveToolLabel(parts: DynamicToolUIPart[]): string | null {
-  for (let index = parts.length - 1; index >= 0; index -= 1) {
-    const part = parts[index]
-    if (part && isToolPartInFlight(part)) {
-      return getToolActivityLabel(part)
-    }
-  }
-  return null
+  const part = getActiveToolPart(parts)
+  return part ? getToolActivityLabel(part) : null
 }
 
 /** 会话和桌面宠物共用的可观察工具步骤文案，不推算任务完成百分比。 */

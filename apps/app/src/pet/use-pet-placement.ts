@@ -1,12 +1,12 @@
 import { useLayoutEffect, useRef, type RefObject } from "react";
 import type { PetViewport, PetWindowBridge } from "@/app/lib/desktop-pet-types";
 import { PET_HEIGHT } from "./geometry";
-import { placePetPanel, placePetInputOptions, type PetPanelSide } from "./placement";
+import { petPanelNaturalHeight, placePetPanel, placePetInputOptions, type PetPanelSide } from "./placement";
 
 /** 固定画布中的布局与命中更新；拖动通过CSS坐标更新，不重挂人物或重启动画。 */
 export function usePetPlacement(root: RefObject<HTMLDivElement | null>, bridge: PetWindowBridge | undefined,
-  hitRegions: Array<{ x: number; y: number; width: number; height: number }>, mode: "tasks" | "input" | null, controlsVisible: boolean) {
-  const config = useRef({ mode, controlsVisible }); config.current = { mode, controlsVisible };
+  hitRegions: Array<{ x: number; y: number; width: number; height: number }>, mode: "tasks" | "input" | null, controlsVisible: boolean, tasksVisible = false) {
+  const config = useRef({ mode, controlsVisible, tasksVisible }); config.current = { mode, controlsVisible, tasksVisible };
   const measure = useRef<() => void>(() => {});
   useLayoutEffect(() => {
     const node = root.current;
@@ -14,42 +14,69 @@ export function usePetPlacement(root: RefObject<HTMLDivElement | null>, bridge: 
     if (!node || !panels) return;
     let value: PetViewport | undefined, side: PetPanelSide = "above", previousMode = config.current.mode;
     let optionsSide: PetPanelSide = "below", hadOptions = false;
+    let taskSide: PetPanelSide = "above";
     let lastLayout = "", raf = 0, active = true, flip: Animation | undefined;
     const place = () => {
       if (!value || !active) return;
       const { character, width, height } = value;
-      const { mode, controlsVisible } = config.current;
-      if (mode !== previousMode) { if (mode) side = mode === "input" ? "below" : "above"; previousMode = mode; }
+      const { mode, controlsVisible, tasksVisible } = config.current;
+      if (mode !== previousMode) { if (mode) side = mode === "input" ? "below" : taskSide; previousMode = mode; }
       node.style.setProperty("--pet-window-width", `${width}px`);
       node.style.setProperty("--pet-window-height", `${height}px`);
       node.style.setProperty("--pet-x", `${character.x}px`);
       node.style.setProperty("--pet-y", `${character.y}px`);
       const tools = node.querySelector<HTMLElement>(".pet-tools");
+      const taskPanel = panels.querySelector<HTMLElement>(".pet-task-panel");
+      const separateTasks = mode === "input" && tasksVisible && taskPanel;
+      panels.dataset.separateTasks = separateTasks ? "true" : "false";
+      if (taskPanel && !separateTasks) taskPanel.style.top = "";
       const toolWidth = tools?.offsetWidth ?? 120;
       const belowTop = character.y + PET_HEIGHT + (mode === "input" ? 2 : 54);
       const horizontal = placePetPanel(value, toolWidth, 0, belowTop, side);
       panels.style.width = `${horizontal.width}px`;
       panels.style.left = `${horizontal.x}px`;
-      node.style.setProperty("--pet-list-limit", "360px");
-      const desiredHeight = panels.getBoundingClientRect().height;
-      const placement = placePetPanel(value, toolWidth, desiredHeight, belowTop, side);
-      const scrollable = panels.querySelector<HTMLElement>(".pet-cards, .pet-session-list");
+      // 输入只测文档流中的自身内容；绝对定位的任务和菜单不能影响输入坐标。
+      const scrollable = mode === "input" ? null : taskPanel?.querySelector<HTMLElement>(".pet-cards");
+      const currentHeight = panels.getBoundingClientRect().height;
       const scrollHeight = scrollable?.getBoundingClientRect().height ?? 0;
-      node.style.setProperty("--pet-list-limit", `${Math.max(0, Math.min(360, placement.maxHeight - (desiredHeight - scrollHeight)))}px`);
+      const desiredHeight = petPanelNaturalHeight(currentHeight, scrollable ? { height: scrollHeight, scrollHeight: scrollable.scrollHeight } : undefined);
+      const placement = placePetPanel(value, toolWidth, desiredHeight, belowTop, side);
+      if (scrollable) node.style.setProperty("--pet-list-limit", `${Math.max(0, Math.min(360, placement.maxHeight - (currentHeight - scrollHeight)))}px`);
       const panelHeight = panels.getBoundingClientRect().height;
       panels.style.top = `${placement.side === "above" ? character.y - 12 - panelHeight : belowTop}px`;
       if (side !== placement.side && panelHeight > 0 && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
         flip?.cancel(); flip = panels.animate([{ opacity: .35 }, { opacity: 1 }], { duration: 140, easing: "ease-out" });
       }
       side = placement.side; panels.dataset.side = side; panels.dataset.align = placement.align;
+      node.dataset.panelSide = side;
+      if (separateTasks) {
+        // 输入只按自身高度定位；任务脱离文档流，不能推挤或翻转输入胶囊。
+        const inputBounds = panels.getBoundingClientRect();
+        const aboveBottom = Math.min(character.y - 12, inputBounds.top - 8);
+        const taskBelowTop = Math.max(character.y + PET_HEIGHT + 54, inputBounds.bottom + 8);
+        const available = { above: Math.max(0, aboveBottom - 32), below: Math.max(0, height - taskBelowTop - 32) };
+        const other = taskSide === "above" ? "below" : "above";
+        const currentTaskHeight = taskPanel.getBoundingClientRect().height;
+        const cards = taskPanel.querySelector<HTMLElement>(".pet-cards");
+        const cardsHeight = cards?.getBoundingClientRect().height ?? 0;
+        const desiredTaskHeight = petPanelNaturalHeight(currentTaskHeight, cards ? { height: cardsHeight, scrollHeight: cards.scrollHeight } : undefined);
+        if (available[taskSide] < desiredTaskHeight && available[other] >= available[taskSide] + 24) taskSide = other;
+        const overhead = currentTaskHeight - cardsHeight;
+        node.style.setProperty("--pet-list-limit", `${Math.max(0, Math.min(360, available[taskSide] - overhead))}px`);
+        const taskHeight = taskPanel.getBoundingClientRect().height;
+        taskPanel.style.top = `${(taskSide === "above" ? aboveBottom - taskHeight : taskBelowTop) - inputBounds.top}px`;
+        node.dataset.panelSide = taskSide;
+      } else if (mode === "tasks") taskSide = side;
       const options = panels.querySelector<HTMLElement>(".pet-input-options");
       const composer = panels.querySelector<HTMLElement>(".pet-composer");
       if (options && composer) {
         if (!hadOptions) optionsSide = "below";
-        // TIPS: 菜单脱离输入栏文档流；先按自然高度选边，再限高内部滚动，打开时不会挤走输入栏。
-        options.style.maxHeight = "none";
+        // TIPS: 向上以目标行、向下以胶囊为边界；菜单不占文档流且不遮挡发送目标。
         const anchor = composer.getBoundingClientRect();
-        const menu = placePetInputOptions(height, anchor, options.getBoundingClientRect().height, optionsSide);
+        const targetRow = panels.querySelector<HTMLElement>(".pet-target-row")?.getBoundingClientRect();
+        const list = options.querySelector<HTMLElement>(".pet-session-list");
+        const desiredMenuHeight = petPanelNaturalHeight(options.getBoundingClientRect().height, list ? { height: list.getBoundingClientRect().height, scrollHeight: list.scrollHeight } : undefined, 280);
+        const menu = placePetInputOptions(height, { top: targetRow?.top ?? anchor.top, bottom: anchor.bottom }, desiredMenuHeight, optionsSide);
         options.style.maxHeight = `${menu.maxHeight}px`;
         options.style.top = `${menu.top - panels.getBoundingClientRect().top}px`;
         optionsSide = menu.side; panels.dataset.optionsSide = menu.side;

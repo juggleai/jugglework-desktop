@@ -3,8 +3,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { QueryObserver } from "@tanstack/react-query";
 import type { UIMessage } from "ai";
 import type { Session } from "@opencode-ai/sdk/v2/client";
-import type { Client, ComposerDraft, ModelRef, TodoItem } from "@/app/types";
-import type { PetAction, PetActionResult, PetTarget, PetTask } from "@/app/lib/desktop-pet-types";
+import type { Client, ComposerDraft, McpServerEntry, McpStatusMap, ModelRef, TodoItem } from "@/app/types";
+import type { PetAction, PetActionResult, PetCapability, PetTarget, PetTask } from "@/app/lib/desktop-pet-types";
 import type { ResolvedWorkspaceEndpoint } from "@/app/lib/workspace-endpoint";
 import type { JuggleWorkSessionListItem } from "@/app/lib/jugglework-server";
 import { createClient, unwrap } from "@/app/lib/opencode";
@@ -14,7 +14,7 @@ import { readSessionChoices, resolveSessionModelChoice } from "@/react-app/kerne
 import { getReactQueryClient } from "@/react-app/infra/query-client";
 import { getProviderSource, isModelAvailableInConnectedProviders } from "@/react-app/infra/provider-list-query";
 import { isDesktopModelBlocked } from "@/app/cloud/desktop-app-restrictions";
-import { useCheckDesktopRestriction, useDesktopAllowedModels } from "../cloud/desktop-config-provider";
+import { useCheckDesktopRestriction, useDesktopAllowedModels, useDesktopRestriction } from "../cloud/desktop-config-provider";
 import { useHostMarketplacePlugins } from "../settings/state/host-marketplace-plugins-provider";
 import { useSessionMcpMaintenance } from "../connections/use-session-mcp-maintenance";
 import type { CloudMcpSubmissionResult } from "../connections/cloud-mcp-submit-readiness";
@@ -22,7 +22,7 @@ import { isManagedModelSubmissionReady } from "../connections/provider-auth/clou
 import { isCloudManagedProviderKey } from "../connections/provider-auth/cloud-provider-config";
 import { getModelBehaviorSummary } from "@/app/lib/model-behavior";
 import { type RouteWorkspace, workspaceLabel } from "@/react-app/shell/route-workspaces";
-import { latestRoot, sortedRoots, sessionTreeIds, reconcilePetTaskConnection } from "./pet-model";
+import { latestRoot, sortedRoots, sessionTreeIds, reconcilePetTaskConnection, selectPetTaskPresentation } from "./pet-model";
 import { useDesktopPet } from "./use-desktop-pet";
 import { useSessionActivityStore } from "../session/status/session-activity-store";
 import { sessionTaskPresentation } from "../session/status/task-presentation";
@@ -41,6 +41,16 @@ import { shouldSynthesizeBusyAfterAcceptance } from "../session/surface/task-pro
 import { checkVoiceServiceAvailability, useVoiceService } from "../session/surface/composer/use-voice-service";
 import { VoiceDictationController, type VoiceDictationSnapshot } from "../session/surface/composer/voice-dictation";
 import { subscribeComposerEditing } from "../session/surface/composer/editing";
+import { petCapabilityDraft, petExtensionReady, petLocalSkillCapabilities } from "./pet-capabilities";
+import { buildCapabilityInstruction, resolveMcpCapabilitySelection } from "../session/surface/composer/capability-tags";
+import { JUGGLEWORK_EXTENSION_CATALOG } from "@/app/constants";
+import { resolveExtensionIconUrl } from "@/react-app/design-system/extension-icon-src";
+import { getExtensionId, isJuggleWorkExtensionEnabled, isJuggleWorkExtensionHidden } from "../settings/extension-state";
+import { createDenClient, readDenSettings } from "@/app/lib/den";
+import { readWorkspaceCloudImports } from "@/app/cloud/import-state";
+import { listAssignedConnectCapabilities, mergeConnectLocalMcpServers, EMPTY_CONNECT_CAPABILITY_INVENTORY } from "../session/surface/connect-capability-inventory";
+import { applyWorkspaceMcpInventoryPolicy, selectComposerInstalledMcpEntries, composerMcpStatus } from "../connections/workspace-mcp-inventory";
+import { resolveWorkspaceMcpKey } from "../connections/workspace-mcp-key";
 
 type Send = (draft: ComposerDraft, id: string) => Promise<CloudMcpSubmissionResult>;
 type Props = {
@@ -55,14 +65,14 @@ type Entry = {
   workspace: RouteWorkspace; endpoint: ResolvedWorkspaceEndpoint; client: Client;
   sessions: Map<string, JuggleWorkSessionListItem>; tasks: PetTask[]; syncing: boolean; partial: boolean;
   reconcileActive: (ids: string[]) => void;
-  refresh: () => Promise<void>; send: (target: PetTarget, text: string, continuation?: boolean) => Promise<PetActionResult>;
+  refresh: () => Promise<void>; capabilities: (target: PetTarget, scope: "basic" | "connections") => Promise<PetCapability[]>;
+  send: (target: PetTarget, text: string, continuation?: boolean, capabilities?: PetCapability[]) => Promise<PetActionResult>;
   stop: (target: PetTarget) => Promise<PetActionResult>;
 };
 const EMPTY_MESSAGES: UIMessage[] = [];
 const EMPTY_TODOS: TodoItem[] = [];
 const keyFor = (workspaceId: string, sessionId: string) => `${workspaceId}:${sessionId}`;
 const targetFor = (workspace: RouteWorkspace, session: Session): PetTarget => ({ key: keyFor(workspace.id, session.id), workspaceId: workspace.id, sessionId: session.id, project: workspaceLabel(workspace), title: session.title });
-const textDraft = (text: string): ComposerDraft => ({ text, parts: [{ type: "text", text }], attachments: [], mode: "prompt" });
 
 /** 常驻主渲染器的唯一宠物业务宿主；隐藏主窗口不释放会话订阅或麦克风控制器。 */
 export function DesktopPetHost(props: Props) {
@@ -134,9 +144,13 @@ export function DesktopPetHost(props: Props) {
     if (!target) throw new Error("任务已变化，请重新打开原聊天");
     const entry = entries.current.get(target.workspaceId);
     if (!entry) throw new Error("目标项目不可用");
+    if (action.type === "capabilities") return { capabilities: await entry.capabilities(target, action.scope) };
     if (action.type === "open" || action.type === "open-target") { latest.current.onOpen(target.workspaceId, target.sessionId); return; }
     if (action.type === "stop") return entry.stop(target);
-    if (action.type === "send") return entry.send(target, action.text);
+    if (action.type === "send") {
+      const result = await entry.send(target, action.text, false, action.capabilities);
+      return { ...result, task: entry.tasks.find((task) => task.key === target.key) };
+    }
     if (action.type === "continue") return entry.send(target, action.text?.trim() || t("pet.continue_prompt"), true);
     if (action.type === "voice-start") {
       const request = ++voiceRequest.current;
@@ -175,9 +189,10 @@ function PetWorkspaceRuntime({ workspace, endpoint, enabled, latest, entries, ch
   const marketplace = useHostMarketplacePlugins();
   const checkRestriction = useCheckDesktopRestriction();
   const allowedModels = useDesktopAllowedModels();
+  const builtInExtensionsDisabled = useDesktopRestriction("allowBuiltInExtensions");
   const maintenance = useSessionMcpMaintenance({ cloudSignedIn: background && latest.current.cloudSignedIn, client: background ? endpoint?.client ?? null : null, workspaceId: endpoint?.workspaceId ?? null, opencodeClient: background ? client : null, directory: workspace.path, engineReloadBusy: latest.current.reloadBusy });
   const cloudReadiness = useCloudMcpSubmitReadiness({ cloudAuthStatus: latest.current.cloudAuthStatus, client: endpoint?.client ?? null, workspaceId: endpoint?.workspaceId ?? null });
-  const options = useRef({ maintenance, marketplace, checkRestriction, allowedModels, cloudReadiness }); options.current = { maintenance, marketplace, checkRestriction, allowedModels, cloudReadiness };
+  const options = useRef({ maintenance, marketplace, checkRestriction, allowedModels, cloudReadiness, builtInExtensionsDisabled }); options.current = { maintenance, marketplace, checkRestriction, allowedModels, cloudReadiness, builtInExtensionsDisabled };
   const coordinatorKey = (latest.current.coordinatorIds[workspace.id] ?? []).join("\0");
   useEffect(() => { entries.current.get(workspace.id)?.reconcileActive(latest.current.coordinatorIds[workspace.id] ?? []); }, [coordinatorKey]);
   useEffect(() => {
@@ -251,7 +266,7 @@ function PetWorkspaceRuntime({ workspace, endpoint, enabled, latest, entries, ch
       sessions.set(item.id, item); return item;
     };
     const entry: Entry = { workspace, endpoint, client, sessions, tasks: [], syncing: true, partial: false,
-      reconcileActive: () => {}, refresh: async () => {}, send: async () => ({}), stop: async () => ({}) };
+      reconcileActive: () => {}, refresh: async () => {}, capabilities: async () => [], send: async () => ({}), stop: async () => ({}) };
     const observe = (id: string) => {
       if (observers.has(id)) return;
       // TIPS: transcript默认15秒回收；只有SSE跟踪和snapshot观察者仍会丢正文，须持有实际展示缓存。
@@ -295,7 +310,8 @@ function PetWorkspaceRuntime({ workspace, endpoint, enabled, latest, entries, ch
         const resumableChild = resumableChildren[0];
         const active = members.some((id) => activeIds.has(id) || presentation(id).active);
         const waiting = members.some((id) => presentation(id).waiting);
-        const display = members.map(presentation).find((item) => item.waiting) ?? (own.active ? own : members.map(presentation).find((item) => item.active)) ?? resumableChild ?? own;
+        const display = selectPetTaskPresentation(own, currentMembers.filter((id) => id !== session.id)
+          .sort((a, b) => (sessions.get(b)?.time.updated ?? 0) - (sessions.get(a)?.time.updated ?? 0) || a.localeCompare(b)).map(presentation));
         const queue = useComposerStateStore.getState().queuedDrafts[session.id] ?? [];
         const pendingFollowUp = queue.some((item) => item.petWorkspaceId === workspace.id);
         const blocked = pendingFollowUp ? queue.find((item) => item.petBlockedReason) : undefined;
@@ -402,6 +418,66 @@ function PetWorkspaceRuntime({ workspace, endpoint, enabled, latest, entries, ch
       }
       projectSoon();
     };
+    entry.capabilities = async (target, scope) => {
+      if (scope === "basic") {
+        const [skills, mcp, statuses, disabledServerNames] = await Promise.all([
+          endpoint.client.listSkills(endpoint.workspaceId, { includeGlobal: true }),
+          endpoint.client.listMcp(endpoint.workspaceId),
+          client.mcp.status({ directory: workspace.path }).then((result) => unwrap(result) as McpStatusMap).catch(() => ({} as McpStatusMap)),
+          endpoint.client.getMcpToolPolicy(endpoint.workspaceId).then((result) => result.disabledServerNames),
+          targetValid(target),
+        ]);
+        if (disposed) throw new Error("目标上下文已变化，请重新选择");
+        const localSkills = petLocalSkillCapabilities(skills.items ?? []);
+        const localServers: McpServerEntry[] = (mcp.items ?? []).map((item) => ({ name: item.name, config: item.config as McpServerEntry["config"], source: item.source, origin: "local" }));
+        const projected = applyWorkspaceMcpInventoryPolicy({ servers: selectComposerInstalledMcpEntries(localServers), statuses, disabledServerNames, cloudPolicy: [] });
+        const extensions = options.current.builtInExtensionsDisabled ? [] : JUGGLEWORK_EXTENSION_CATALOG
+          .filter((item) => !isJuggleWorkExtensionHidden(item) && (isJuggleWorkExtensionEnabled(item) || (!item.defaultEnabled && !item.extensionManifest?.contributions?.some((contribution) => contribution.type === "session-side-panel" || contribution.type === "session-rail-item"))))
+          .map((item): PetCapability => ({ id: `extension:${getExtensionId(item)}`, group: "plugins", kind: "extension", name: item.name, description: item.description, iconSrc: resolveExtensionIconUrl({ iconSrc: item.iconSrc, iconSlug: item.iconSlug }), prompt: buildCapabilityInstruction("extension", item.name), disabled: !petExtensionReady(item, projected.servers, projected.statuses) }));
+        return [...extensions, ...localSkills];
+      }
+      const settings = readDenSettings();
+      const token = settings.authToken?.trim();
+      const organizationId = settings.activeOrgId?.trim();
+      const connectPromise = token && organizationId
+        ? listAssignedConnectCapabilities({ client: createDenClient({ baseUrl: settings.baseUrl, token }), organizationId }).catch(() => EMPTY_CONNECT_CAPABILITY_INVENTORY)
+        : Promise.resolve(EMPTY_CONNECT_CAPABILITY_INVENTORY);
+      const [skills, mcp, connect, config] = await Promise.all([
+        endpoint.client.listSkills(endpoint.workspaceId, { includeGlobal: true }),
+        endpoint.client.listMcp(endpoint.workspaceId),
+        connectPromise,
+        endpoint.client.getConfig(endpoint.workspaceId),
+        targetValid(target),
+      ]);
+      if (disposed) throw new Error("目标上下文已变化，请重新选择");
+      const imported = new Set(Object.keys(readWorkspaceCloudImports(config.jugglework).plugins));
+      const localSkillNames = new Set((skills.items ?? []).map((skill) => skill.name.trim().toLowerCase()));
+      const cloudSkills = connect.skills.filter((skill) => !imported.has(skill.connectPluginId) && !localSkillNames.has(skill.name.trim().toLowerCase())).map((skill): PetCapability => ({
+        id: `cloud-skill:${skill.connectCapabilityName}`, group: "skills", kind: "cloud-skill", name: skill.name, description: skill.description,
+        prompt: buildCapabilityInstruction("cloud-skill", skill.name, `find it with jugglework-cloud_search_capabilities in the ${skill.marketplaceName ?? "assigned"} marketplace, then call jugglework-cloud_execute_capability with the exact capability name ${skill.connectCapabilityName ?? skill.name}`),
+      }));
+      const localServers: McpServerEntry[] = (mcp.items ?? []).filter((item) => item.name !== "jugglework-cloud").map((item) => ({ name: item.name, config: item.config as McpServerEntry["config"], source: item.source, origin: "local" }));
+      const [statusResult, policyResult, workspaceKey] = await Promise.all([
+        client.mcp.status({ directory: workspace.path }).then((result) => unwrap(result) as McpStatusMap).catch(() => ({} as McpStatusMap)),
+        endpoint.client.getMcpToolPolicy(endpoint.workspaceId).then((result) => result.disabledServerNames).catch(() => [] as string[]),
+        token && organizationId ? resolveWorkspaceMcpKey(endpoint.client, endpoint.workspaceId).catch(() => null) : Promise.resolve(null),
+      ]);
+      const localStatuses = statusResult;
+      const merged = mergeConnectLocalMcpServers({ localServers, connectServers: connect.mcpServers, localStatuses });
+      const disabledServerNames = policyResult;
+      let cloudPolicy: import("@/app/lib/den").DenMcpWorkspaceConnectionPolicy[] = [];
+      try {
+        if (token && organizationId && workspaceKey) cloudPolicy = (await createDenClient({ baseUrl: settings.baseUrl, token }).getMcpWorkspacePolicy(organizationId, workspaceKey)).items;
+      } catch { /* Submission still enforces cloud policy. */ }
+      const projected = applyWorkspaceMcpInventoryPolicy({ servers: selectComposerInstalledMcpEntries(merged.servers), statuses: { ...connect.mcpStatuses, ...merged.statuses, ...localStatuses }, disabledServerNames, cloudPolicy });
+      const servers = projected.servers.map((server): PetCapability => {
+        const selection = resolveMcpCapabilitySelection(server);
+        return { id: `mcp:${server.id ?? server.name}`, group: "mcp", kind: selection.kind, name: server.name,
+          description: [server.pluginName, server.marketplaceName].filter(Boolean).join(" · ") || undefined,
+          prompt: selection.prompt, disabled: composerMcpStatus(server, projected.statuses) !== "connected" };
+      });
+      return [...servers, ...cloudSkills];
+    };
     const sendNow = async (target: PetTarget, draft: ComposerDraft) => {
       if (latest.current.reloadBusy) throw new Error("引擎正在恢复，请稍后发送");
       if (disposed) throw new Error("任务上下文已变化，请重新发送");
@@ -444,13 +520,18 @@ function PetWorkspaceRuntime({ workspace, endpoint, enabled, latest, entries, ch
       if (shouldSynthesizeBusyAfterAcceptance({ runGenerationBeforeSend: before, activityAfterSend: activity.recordsByWorkspaceId[endpoint.workspaceId]?.[target.sessionId] })) activity.setRunStatus(endpoint.workspaceId, target.sessionId, { type: "busy" });
       useComposerStateStore.getState().appendHistory(target.sessionId, draft.parts.some((part) => part.type === "office-selection") ? draft.resolvedText ?? draft.text : draft.text); observe(target.sessionId); projectSoon();
     };
-    entry.send = async (target, text, continuation = false) => {
-      if (!text.trim()) throw new Error("请输入内容");
+    entry.send = async (target, text, continuation = false, capabilities = []) => {
+      if (!text.trim() && !capabilities.length) throw new Error("请输入内容");
       if (preparing.has(target.sessionId) || stopping.has(target.sessionId) || [...descendants(target.sessionId)].some((id) => abortingIds.has(id))) throw new Error("任务操作尚未完成");
       preparing.add(target.sessionId); projectSoon();
       try {
         await targetValid(target);
         if (disposed) throw new Error("任务上下文已变化，请重新发送");
+        const inventory = capabilities.length ? (await Promise.all([
+          capabilities.some((item) => item.group === "plugins" || item.kind === "skill") ? entry.capabilities(target, "basic") : Promise.resolve([]),
+          capabilities.some((item) => item.group === "mcp" || item.kind === "cloud-skill") ? entry.capabilities(target, "connections") : Promise.resolve([]),
+        ])).flat() : [];
+        const draft = petCapabilityDraft(text, capabilities, inventory);
         const runs = await endpoint.client.listActiveSessionRuns(endpoint.workspaceId);
         const members = descendants(target.sessionId);
         const active = runs.items.some((run) => members.has(run.sessionId)) || isSessionSubmissionPreparing(endpoint.workspaceId, target.sessionId);
@@ -461,9 +542,9 @@ function PetWorkspaceRuntime({ workspace, endpoint, enabled, latest, entries, ch
           if (!presentation(target.sessionId).resumable) throw new Error("该任务已完成或状态已变化，请查看原聊天");
         }
         return await submitPetFollowUp({ workspaceId: workspace.id, sessionId: target.sessionId,
-          draft: textDraft(text.trim()), active, queueOnBusy: !continuation,
-          send: () => sendNow(target, textDraft(text.trim())) });
-      } finally { preparing.delete(target.sessionId); projectSoon(); }
+          draft, active, queueOnBusy: !continuation,
+          send: () => sendNow(target, draft) });
+      } finally { preparing.delete(target.sessionId); clearTimeout(projectTimer); project(); }
     };
     entry.stop = async (target) => {
       stopping.add(target.sessionId); projectSoon();

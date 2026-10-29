@@ -90,7 +90,7 @@ export function parseDynamicToolUIPart(part: ToolPart): DynamicToolUIPart | null
     type: "dynamic-tool",
     toolName: part.tool,
     toolCallId: part.callID,
-    state: "input-streaming",
+    state: part.state.status === "pending" ? "input-streaming" : "input-available",
     input: part.state.input,
     callProviderMetadata: providerMetadata,
   };
