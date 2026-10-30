@@ -19,7 +19,7 @@ import { ManagedRuntimeClientError } from "./managed-runtime-client.mjs";
 
 const MAX_SESSION_LIST_ITEMS = 10_000;
 const SNAPSHOT_MESSAGE_LIMIT = 200;
-const SNAPSHOT_TRANSCRIPT_BUDGET_BYTES = 512 * 1024;
+const SNAPSHOT_TRANSCRIPT_BUDGET_BYTES = 28 * 1024 * 1024;
 const SNAPSHOT_PART_TEXT_LIMIT = 128 * 1024;
 const ISO_EPOCH = new Date(0).toISOString();
 const identifierSchema = z.string().trim().min(1).max(256).refine((value) => !/[\u0000-\u001f\u007f]/.test(value));

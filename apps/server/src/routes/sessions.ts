@@ -148,7 +148,7 @@ const remotePromptBodySchema = z.object({
   if (files.length > 3) context.addIssue({ code: "custom", message: "too many files" });
   if (Buffer.byteLength(text, "utf8") > 200_000) context.addIssue({ code: "custom", message: "prompt text is too large" });
   if (!text.trim() && files.length === 0) context.addIssue({ code: "custom", message: "prompt is empty" });
-  if (Buffer.byteLength(JSON.stringify(prompt.parts), "utf8") > 1_300_000) context.addIssue({ code: "custom", message: "prompt is too large" });
+  if (Buffer.byteLength(JSON.stringify(prompt.parts), "utf8") > 28 * 1024 * 1024) context.addIssue({ code: "custom", message: "prompt is too large" });
 });
 const startRunBodySchema = z.discriminatedUnion("origin", [
   z.object({

@@ -35,7 +35,7 @@ export const REMOTE_CONTROL_COMMAND_JOURNAL_VERSION = 1;
 export const REMOTE_CONTROL_COMMAND_JOURNAL_DEFAULT_LIMITS = Object.freeze({
   maxEntries: 1_000,
   maxFileBytes: 4 * 1024 * 1024,
-  maxResultBytes: 512 * 1024,
+  maxResultBytes: 28 * 1024 * 1024,
 });
 
 const TERMINAL_STATUSES = new Set(["succeeded", "failed", "rejected", "expired", "cancelled"]);

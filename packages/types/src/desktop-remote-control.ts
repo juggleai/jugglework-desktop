@@ -5,9 +5,10 @@ export const DESKTOP_REMOTE_PROTOCOL_VERSION = 1 as const
 export const DESKTOP_REMOTE_PAYLOAD_VERSION = 1 as const
 export const DESKTOP_REMOTE_DESCENDANT_PAYLOAD_VERSION = 2 as const
 export const DESKTOP_REMOTE_ATTACHMENT_MAX_FILES = 3
-export const DESKTOP_REMOTE_ATTACHMENT_MAX_DECODED_BYTES = 256 * 1024
-// Leaves room for encryption/base64 and envelope metadata under the 2 MiB WSS cap.
-export const DESKTOP_REMOTE_PROMPT_MAX_ENCODED_BYTES = 1_300_000
+export const DESKTOP_REMOTE_ATTACHMENT_MAX_DECODED_BYTES = 10 * 1024 * 1024
+export const DESKTOP_REMOTE_ATTACHMENTS_TOTAL_MAX_DECODED_BYTES = 20 * 1024 * 1024
+// Three bounded attachments plus text and envelope metadata fit under 32 MiB.
+export const DESKTOP_REMOTE_PROMPT_MAX_ENCODED_BYTES = 28 * 1024 * 1024
 
 export const desktopRemoteAttachmentMimeValues = [
   "image/png",
@@ -50,8 +51,22 @@ const attachmentFilenameSchema = z.string().trim().min(1).max(255)
   .refine((value) => !/[\u0000-\u001f\u007f/\\]/.test(value), "filename is invalid")
 
 function decodedBase64ByteLength(value: string): number | null {
-  if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) return null
-  return (value.length / 4) * 3 - (value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0)
+  if (value.length % 4 !== 0) return null
+  let padding = 0
+  if (value.endsWith("==")) padding = 2
+  else if (value.endsWith("=")) padding = 1
+  const contentEnd = value.length - padding
+  for (let index = 0; index < contentEnd; index += 1) {
+    const code = value.charCodeAt(index)
+    const valid = (code >= 48 && code <= 57) || (code >= 65 && code <= 90) ||
+      (code >= 97 && code <= 122) || code === 43 || code === 47
+    if (!valid) return null
+  }
+  for (let index = contentEnd; index < value.length; index += 1) {
+    if (value.charCodeAt(index) !== 61) return null
+  }
+  if (padding > 0 && contentEnd === 0) return null
+  return (value.length / 4) * 3 - padding
 }
 
 export function isSafeDesktopRemoteAttachmentDataUrl(url: unknown, mime: unknown): url is string {
@@ -66,7 +81,7 @@ const desktopRemotePromptFileShape = {
   type: z.literal("file"),
   mime: desktopRemoteAttachmentMimeSchema,
   filename: attachmentFilenameSchema,
-  url: z.string().max(400_000),
+  url: z.string().max(14 * 1024 * 1024),
 } as const
 
 export const desktopRemotePromptPartSchema = z.discriminatedUnion("type", [
@@ -86,6 +101,14 @@ const desktopRemotePromptPartsSchema = z.array(desktopRemotePromptPartSchema).mi
   const text = parts.flatMap((part) => part.type === "text" ? [part.text] : []).join("")
   if (new TextEncoder().encode(text).byteLength > 200_000) {
     context.addIssue({ code: "custom", message: "prompt text must be at most 200000 UTF-8 bytes" })
+  }
+  const totalAttachmentBytes = parts.reduce((total, part) => {
+    if (part.type !== "file") return total
+    const prefix = `data:${part.mime};base64,`
+    return total + (decodedBase64ByteLength(part.url.slice(prefix.length)) ?? 0)
+  }, 0)
+  if (totalAttachmentBytes > DESKTOP_REMOTE_ATTACHMENTS_TOTAL_MAX_DECODED_BYTES) {
+    context.addIssue({ code: "custom", message: "prompt attachments are too large" })
   }
   if (!text.trim() && !parts.some((part) => part.type === "file")) {
     context.addIssue({ code: "custom", message: "prompt must contain non-blank text or a file" })

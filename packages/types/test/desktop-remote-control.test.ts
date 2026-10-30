@@ -455,7 +455,7 @@ describe("desktop remote-control contracts", () => {
       { type: "file", mime: "image/png", filename: "image.png", url: "data:image/jpeg;base64,AA==" },
       { type: "file", mime: "application/octet-stream", filename: "data.bin", url: "data:application/octet-stream;base64,AA==" },
       { type: "file", mime: "image/png", filename: "../image.png", url: png },
-      { type: "file", mime: "image/png", filename: "large.png", url: `data:image/png;base64,${Buffer.alloc(256 * 1024 + 1).toString("base64")}` },
+      { type: "file", mime: "image/png", filename: "large.png", url: `data:image/png;base64,${Buffer.alloc(10 * 1024 * 1024 + 1).toString("base64")}` },
     ]) {
       assert.equal(desktopRemoteOperationRequestSchema.safeParse({
         ...request, arguments: { ...request.arguments, parts: [file] },
@@ -465,6 +465,13 @@ describe("desktop remote-control contracts", () => {
       ...request,
       arguments: { ...request.arguments, parts: Array.from({ length: 4 }, (_, index) => ({
         type: "file", mime: "image/png", filename: `${index}.png`, url: png,
+      })) },
+    }).success, false)
+    const aggregateFile = `data:image/png;base64,${Buffer.alloc(6_912 * 1024).toString("base64")}`
+    assert.equal(desktopRemoteOperationRequestSchema.safeParse({
+      ...request,
+      arguments: { ...request.arguments, parts: Array.from({ length: 3 }, (_, index) => ({
+        type: "file", mime: "image/png", filename: `${index}.png`, url: aggregateFile,
       })) },
     }).success, false)
   })
