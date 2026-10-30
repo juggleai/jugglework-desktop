@@ -1,4 +1,5 @@
 /** @jsxImportSource react */
+import { sessionModelReadIsCurrent, sessionModelSeed } from "../kernel/session-model-authority";
 import {
   useCallback,
   useEffect,
@@ -475,16 +476,14 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     });
     sessionModelMutationChainsRef.current.set(mutation.key, current);
   }, [applyAuthoritativeModelPreference, beginSessionModelMutation, reconcileSessionModelMutation, selectedWorkspaceEndpoint]);
-  // TIPS: 模型选择的落点 —— 有会话时写该会话（会话之间互不影响），并同步把全局默认
-  // 模型刷新成这次选的模型。全局默认只是「没单独选过模型的会话」的兜底值：若只写会话
-  // 级，它会一直停在最早设置的那个模型上，一旦该模型下线（provider 重新导入换了 id、
-  // 模型被移除），此后每个新建会话都会回落到不可用模型并被强制弹出模型选择器，且在弹窗
-  // 里重选也只修好当前会话，下一个新会话继续弹。同步更新让默认值能自愈。
+  // Existing sessions write only their revisioned preference. The global
+  // default is a fallback for creating sessions, not a synchronization channel.
   const applyModelSelection = useCallback((next: ModelRef, sessionId: string | null) => {
     if (sessionId && selectedWorkspaceId) {
       setSessionModelChoice(selectedWorkspaceId, sessionId, next);
       const endpoint = selectedWorkspaceEndpoint;
       if (endpoint) persistSessionModelPreference(endpoint, selectedWorkspaceId, sessionId, { mode: "explicit", model: next });
+      return;
     }
     local.setPrefs((previous) => ({
       ...previous,
@@ -496,12 +495,6 @@ export function SessionRoute(props: SessionRouteProps = {}) {
           : null,
     }));
   }, [local.setPrefs, persistSessionModelPreference, selectedWorkspaceEndpoint, selectedWorkspaceId]);
-  const applyAutoModelSelection = useCallback((sessionId: string | null) => {
-    const endpoint = selectedWorkspaceEndpoint;
-    if (!sessionId || !selectedWorkspaceId || !endpoint) return;
-    clearSessionModelChoice(selectedWorkspaceId, sessionId);
-    persistSessionModelPreference(endpoint, selectedWorkspaceId, sessionId, { mode: "auto", model: null });
-  }, [persistSessionModelPreference, selectedWorkspaceEndpoint, selectedWorkspaceId]);
 
   useEffect(() => {
     const endpoint = selectedWorkspaceEndpoint;
@@ -513,11 +506,14 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     const generation = sessionModelMutationGenerationRef.current[key] ?? 0;
     void endpoint.client.getSessionModelPreference(endpoint.workspaceId, sessionId, { signal: controller.signal }).then(async ({ item }) => {
       if (cancelled) return;
-      if (item.revision === 0) {
-        const legacy = readSessionChoices(selectedWorkspaceId)[sessionId]?.model;
+      if (item.mode === "auto" && !pendingSessionModelMutationsRef.current.has(key) &&
+        sessionModelReadIsCurrent(sessionModelMutationGenerationRef.current[key], generation)) {
+        // Publish the actual Desktop choice once, so snapshots and mobile use
+        // the same session authority even before the first explicit selection.
+        const legacy = sessionModelSeed(item, readSessionChoices(selectedWorkspaceId)[sessionId]?.model, local.prefs.defaultModel);
         if (legacy) {
           try {
-            const migrated = await endpoint.client.putSessionModelPreference(endpoint.workspaceId, sessionId, { mode: "explicit", model: legacy, expectedRevision: 0 }, { signal: controller.signal });
+            const migrated = await endpoint.client.putSessionModelPreference(endpoint.workspaceId, sessionId, { mode: "explicit", model: legacy, expectedRevision: item.revision }, { signal: controller.signal });
             if (!cancelled) item = migrated.item;
           } catch {
             const current = await endpoint.client.getSessionModelPreference(endpoint.workspaceId, sessionId, { signal: controller.signal });
@@ -525,11 +521,11 @@ export function SessionRoute(props: SessionRouteProps = {}) {
           }
         }
       }
-      if (cancelled || pendingSessionModelMutationsRef.current.has(key) || sessionModelMutationGenerationRef.current[key] !== generation) return;
+      if (cancelled || pendingSessionModelMutationsRef.current.has(key) || !sessionModelReadIsCurrent(sessionModelMutationGenerationRef.current[key], generation)) return;
       applyAuthoritativeModelPreference(selectedWorkspaceId, item);
     }).catch(() => {});
     return () => { cancelled = true; controller.abort(); };
-  }, [applyAuthoritativeModelPreference, selectedSessionId, selectedWorkspaceEndpoint, selectedWorkspaceId, sessionModelKey]);
+  }, [applyAuthoritativeModelPreference, local.prefs.defaultModel, selectedSessionId, selectedWorkspaceEndpoint, selectedWorkspaceId, sessionModelKey]);
 
   useEffect(() => {
     const endpoint = selectedWorkspaceEndpoint;
@@ -2919,13 +2915,6 @@ export function SessionRoute(props: SessionRouteProps = {}) {
       onSelect={(next: ModelRef) => {
         const focusSessionId = modelPickerTargetSessionId ?? selectedSessionId;
         applyModelSelection(next, modelPickerTargetSessionId);
-        setModelPickerSessionId(null);
-        modelPicker.setOpen(false);
-        if (focusSessionId) requestComposerFocus(focusSessionId, "model-picker");
-      }}
-      onSelectAuto={() => {
-        const focusSessionId = modelPickerTargetSessionId ?? selectedSessionId;
-        applyAutoModelSelection(modelPickerTargetSessionId);
         setModelPickerSessionId(null);
         modelPicker.setOpen(false);
         if (focusSessionId) requestComposerFocus(focusSessionId, "model-picker");

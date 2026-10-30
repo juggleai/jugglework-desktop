@@ -65,7 +65,10 @@ const snapshotResponseSchema = z.object({
     messages: z.array(messageSchema).max(SNAPSHOT_MESSAGE_LIMIT),
     todos: z.array(todoSchema).max(10_000),
     status: statusSchema,
-    modelPreference: z.object({ revision: z.number().int().nonnegative(), mode: z.enum(["auto", "explicit"]), model: z.object({ providerID: identifierSchema, modelID: identifierSchema }).strict().nullable(), updatedAt: z.number().int().nonnegative() }).strict(),
+    // The managed server returns the persisted preference envelope, which also
+    // carries workspace/session identity. Accept those transport fields while
+    // projecting only the revisioned preference into the remote snapshot.
+    modelPreference: z.object({ revision: z.number().int().nonnegative(), mode: z.enum(["auto", "explicit"]), model: z.object({ providerID: identifierSchema, modelID: identifierSchema }).strict().nullable(), updatedAt: z.number().int().nonnegative() }).passthrough(),
   }).strict(),
 }).strict();
 

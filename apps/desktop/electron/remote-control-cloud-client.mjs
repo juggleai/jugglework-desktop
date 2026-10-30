@@ -6,6 +6,7 @@ export const DESKTOP_AGENT_AUDIENCE = "jugglework-desktop-agent";
 export const DESKTOP_AGENT_SCOPE = "desktop-agent:connect";
 
 const JSON_RESPONSE_LIMIT = 64 * 1024;
+const ENROLLMENT_GRANT_LIMIT = 16_384;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const DEVICE_STATUS_ERROR_CODES = new Set(["device_revoked", "device_disabled"]);
 
@@ -220,7 +221,10 @@ function validateEnrollmentInput(input) {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     fail("invalid_enrollment_input", "Enrollment input is required.");
   }
-  if (typeof input.grant !== "string" || input.grant.length > 128 || !input.grant.startsWith("jwenroll_")) {
+  // Grants are opaque, server-issued values. Keep this bound aligned with the
+  // renderer/Main lifecycle contract instead of assuming the original short
+  // random-token length: signed grants can legitimately exceed 128 bytes.
+  if (typeof input.grant !== "string" || input.grant.length > ENROLLMENT_GRANT_LIMIT || !input.grant.startsWith("jwenroll_")) {
     fail("invalid_enrollment_input", "The one-time enrollment grant is invalid.");
   }
   const encodedGrant = input.grant.slice("jwenroll_".length);

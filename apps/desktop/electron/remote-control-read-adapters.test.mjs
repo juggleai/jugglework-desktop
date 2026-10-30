@@ -309,6 +309,32 @@ describe("remote-control read adapters", () => {
     desktopRemoteOperationResultSchema.parse({ operation: "session.snapshot", payloadVersion: 1, result: firstResult.value });
   });
 
+  it("accepts persisted model preference identity fields without leaking them", async () => {
+    const testHarness = harness({
+      responses: {
+        "/workspace/ws_local/sessions/ses_1/snapshot?limit=200": {
+          ...snapshotBody(),
+          item: {
+            ...snapshotBody().item,
+            modelPreference: {
+              workspaceId: "ws_local",
+              sessionId: "ses_1",
+              revision: 0,
+              mode: "auto",
+              model: null,
+              updatedAt: 0,
+            },
+          },
+        },
+      },
+    });
+
+    const result = await dispatch(testHarness.registry, "session.snapshot", { workspaceId: "ws_local", sessionId: "ses_1" });
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.value.modelPreference, { revision: 0, mode: "auto", model: null, updatedAt: 0 });
+  });
+
   it("keeps sanitized tool titles within the protocol limit when redaction expands", () => {
     const normalized = normalizeRemoteMessagePart({
       id: "prt_expanding_title",
