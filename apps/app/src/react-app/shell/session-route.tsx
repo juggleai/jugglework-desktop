@@ -1028,7 +1028,6 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     // still refuses to run while sessions are active, and the send path
     // re-checks its own preconditions at execution time.
     !reloadCoordinator.reloadBusy &&
-    !reloadCoordinator.reloadError &&
     hostMarketplace.readiness !== "activating",
   );
 
@@ -2366,7 +2365,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
       contextKey={`${denAuth.status}:${readDenSettings().activeOrgId ?? ""}:${denAuth.user?.id ?? ""}`}
       defaultModel={local.prefs.defaultModel} defaultVariant={local.prefs.modelVariant ?? null}
       selectedWorkspaceId={selectedWorkspaceId} selectedSend={surfaceProps?.onSendDraft ?? null}
-      reloadBusy={reloadCoordinator.reloadBusy || Boolean(reloadCoordinator.reloadError)} cloudSignedIn={denAuth.isSignedIn} cloudAuthStatus={denAuth.status}
+      reloadBusy={reloadCoordinator.reloadBusy} cloudSignedIn={denAuth.isSignedIn} cloudAuthStatus={denAuth.status}
       onOpen={(workspaceId, sessionId) => { navigateToWorkspaceSession(workspaceId, sessionId); }}
       onOpenApp={() => { navigateToWorkspaceSession(selectedWorkspaceId); }}
     />

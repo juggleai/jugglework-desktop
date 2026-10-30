@@ -436,7 +436,9 @@ export function SessionPage(props: SessionPageProps) {
       || (denAuth.status === "checking" && Boolean(readDenSettings().authToken?.trim())),
     props.statusBar?.juggleWorkConnectState,
   );
-  const taskReady = props.clientConnected && !props.statusBar?.loading && !props.statusBar?.reloadBusy && !props.statusBar?.reloadError;
+  // A failed/deferred config reload does not invalidate the running engine.
+  // Only the short in-flight reload window blocks task submission.
+  const taskReady = props.clientConnected && !props.statusBar?.loading && !props.statusBar?.reloadBusy;
   const connectReady = connectStatus?.state === "ready";
   const readinessTone = resolveReadinessTone(taskReady, connectReady);
   const taskTone: ReadinessTone = taskReady
