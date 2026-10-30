@@ -88,3 +88,5 @@ evals/results/
 .devcontainer
 
 /apps/desktop/resources/toonFactoryV2/
+/apps/desktop/resources/mediaTools/
+/apps/desktop/.media-tools-cache/

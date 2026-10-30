@@ -404,6 +404,9 @@ async function runAfterPack(context, dependencies = {}) {
 }
 
 async function afterPack(context) {
+  const { verifyMediaTools, verifyMediaExecutables } = await import("../electron/mediaTools.mjs");
+  const tools = verifyMediaTools(path.join(resolvePackagedResourcesPath(context), "mediaTools"), { platform: context.electronPlatformName, arch: normalizeArch(context.arch) }, { phase: "built" });
+  verifyMediaExecutables(tools);
   await runAfterPack(context);
 }
 

@@ -162,6 +162,7 @@ jobs:
         run: |
           set -euo pipefail
           pnpm --filter @jugglework/desktop build:electron
+          MEDIA_TOOLS_SMOKE=1 node --test apps/desktop/scripts/buildToonFactory.test.mjs
           pnpm --dir apps/desktop exec electron-builder \
             --config electron-builder.yml --mac dmg zip --arm64 --publish never
 

@@ -22,6 +22,8 @@ files:
 extraResources:
   - from: resources/toonFactoryV2
     to: toonFactoryV2
+  - from: resources/mediaTools
+    to: mediaTools
   - from: ../app/dist
     to: app-dist
   - from: resources/skills
@@ -75,6 +77,8 @@ mac:
     - "/Contents/Resources/office-engine/"
     # Preserve the pinned upstream Developer ID signature and byte inventory.
     - "/Contents/Resources/toonFactoryV2/bun$"
+    # Explicitly signed by our hook before recording post-sign hashes and sealing the app.
+    - "/Contents/Resources/mediaTools/(ffmpeg|ffprobe)$"
   icon: resources/icons/icon.icns
   category: public.app-category.developer-tools
   minimumSystemVersion: "14.0"

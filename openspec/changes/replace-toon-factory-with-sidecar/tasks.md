@@ -72,3 +72,12 @@ Verification before commit: 35 existing Server image/repository/worker/service t
 - [x] 9.5 Verify focused typechecks, three node builds, existing targeted tests and isolated real-media/HTTP flows. See video-edit-migration.md for evidence and limitations.
 - [x] 9.6 Build the complete sidecar bundle with pinned Bun 1.3.14 and independently verify inventory plus frameAnalysisNode.umd.js (darwin/arm64, 1035 files).
 - [ ] 9.7 Verify live Desktop node-menu, buttons, automatic connection, canvas reload, undo and cancellation after an operator-authorized restart.
+
+## 10. Bundled media tools (native macOS implementation; release gates pending)
+
+- [x] 10.1 Investigate existing FFmpeg sources and public release digests; download/hash/inspect the Darwin ARM64 pair and validate temporary libx264 trim/probe/decode with empty PATH. See media-tools-supply-chain.md: this candidate is explicitly nonredistributable and rejected.
+- [x] 10.2 Pin official FFmpeg 7.1.5 and x264 b35605a source inputs, implement GPL/nonfree-disabled native macOS recipes with corresponding-source/build/license delivery, and explicitly gate Windows/Linux. FFmpeg upstream signature verified at intake; x264 lacks an independently verified publisher signature. Engineering acceptance is not legal approval.
+- [x] 10.3 Implement hash-enforced online/offline staging, independent mediaTools resources, bundled-only runtime resolution and rebuild diagnostics.
+- [x] 10.4 Integrate build/extraResources, native target CI, after-pack, macOS signing and final macOS/Windows/Linux verification without changing trusted Bun bytes or inventory.
+- [x] 10.5 Extend existing Desktop tests and perform native ARM64 source compilation plus empty-PATH temporary probe/trim/concat/audio/analysis/full-decode flows. Validate ad-hoc signature byte/inventory sequencing separately from release trust.
+- [ ] 10.6 Execute native macOS x64 compilation/media tests and real Developer ID signing, notarization, final ZIP/DMG/installed-app validation for both Mac targets; complete distribution/licensing review before publication. Windows/Linux remain blocked.

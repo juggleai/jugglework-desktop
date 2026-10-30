@@ -20,6 +20,7 @@ import { parse as parseYaml } from "yaml";
 import { assertWindowsReleaseVersion } from "./qiniu-release/constants.mjs";
 import { inspectArtifact } from "./qiniu-release/metadata.mjs";
 import { verifyToonFactoryBundle } from "../electron/toonFactoryBundle.mjs";
+import { verifyMediaTools } from "../electron/mediaTools.mjs";
 
 const ARCHITECTURES = ["arm64", "x64"];
 const PE_MACHINE = { x64: 0x8664, arm64: 0xaa64 };
@@ -477,6 +478,8 @@ export async function verifyPackagedWindows(options, dependencies = {}) {
 
     const pe = verifyPeArchitecture(executablePath, arch, inspectMachine);
     const toonFactory = verifyBundle(toonFactoryRoot, { platform: "win32", arch }, dependencies.trustedBunRelease);
+    // No approved Windows native recipe yet: fail closed, never accept a macOS/x64 fallback.
+    const mediaTools = (dependencies.verifyMediaTools ?? verifyMediaTools)(path.join(path.dirname(toonFactoryRoot), "mediaTools"), { platform: "win32", arch });
     const signature = verifyAuthenticodeSignature(
       executablePath,
       publisherNames,
@@ -498,6 +501,7 @@ export async function verifyPackagedWindows(options, dependencies = {}) {
       latest,
       latestPath,
       toonFactory,
+      mediaTools,
       executable: { path: executablePath, name: executableName, metadata },
       blockmap: { path: blockmapPath, name: path.basename(blockmapPath), metadata: blockmapMetadata },
     });

@@ -152,6 +152,10 @@ test("macOS uses the selected app identity/keychain, records signed bytes before
   const executablePath = path.join(resourcesDirectory, "toonFactoryV2/bun");
   const steps = [];
   const toonDependencies = {
+    signMediaTools() {
+      steps.push("media-sign");
+      return () => steps.push("media-verify");
+    },
     verifyToonBundle(directory, target) {
       assert.equal(directory, path.dirname(executablePath));
       assert.deepEqual(target, { platform: "darwin", arch: "arm64" });
@@ -185,7 +189,7 @@ test("macOS uses the selected app identity/keychain, records signed bytes before
     },
   });
   assert.equal(sealed, true);
-  assert.deepEqual(steps, ["inventory", "upstream-signature", "office-sign", "app-sign", "inventory"]);
+  assert.deepEqual(steps, ["inventory", "upstream-signature", "media-sign", "office-sign", "app-sign", "inventory", "media-verify"]);
   await assert.rejects(
     signMacApplication(options, {
       ...toonDependencies,

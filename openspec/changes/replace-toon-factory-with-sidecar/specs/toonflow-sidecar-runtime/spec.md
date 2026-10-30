@@ -98,3 +98,22 @@ A clean checkout SHALL build the pinned Toonflow module without pre-existing nes
 - **WHEN** the pinned Bun is unsigned, ad-hoc signed, fails Apple Developer ID trust, lacks hardened runtime or a secure timestamp, or changes during signing
 - **THEN** signing fails closed without re-signing Bun, refreshing its trusted hash or inventory, or waiving any notarization gate
 - **AND** release remains blocked until a separately reviewed compatible upstream runtime is pinned
+
+### Requirement: Restricted media operations use independently bundled source-built tools
+Development and packaged restricted media operations MUST resolve FFmpeg and FFprobe only from host-owned `resources/mediaTools`, separate from the trusted Bun inventory. Missing or invalid resources SHALL fail with rebuild/reinstall guidance and SHALL NOT fall back to PATH, Homebrew, project executables or model-selected commands.
+
+#### Scenario: Native macOS tools are built
+- **WHEN** a native macOS ARM64 or x64 build stages the media tools
+- **THEN** it verifies fixed official FFmpeg/x264 source hashes before execution, enables GPL and disables nonfree/network/autodetection, links x264 statically and rejects non-Apple dynamic dependencies
+- **AND** it packages exact source archives, source provenance, build/configuration scripts, license notices and compiler/SDK records with a separate inventory
+- **AND** a foreign build architecture or an unsupported Windows/Linux target fails closed without emulation or system-tool fallback
+
+#### Scenario: Media tools are signed for release
+- **WHEN** the macOS signing hook processes the media resources
+- **THEN** it verifies the pre-sign source/build inventory, explicitly signs the two tools with the application's resolved identity, verifies Developer ID trust, hardened runtime and timestamp, and records post-sign hashes before the app seals resources
+- **AND** only those two exact media paths are excluded from subsequent default signing; the original Bun hashes and inventory remain unchanged
+- **AND** packaged verification and runtime require the sealed application and signed media inventory rather than treating a self-updated manifest as upstream trust
+
+#### Scenario: Source or media bytes are corrupt
+- **WHEN** downloaded/cached source bytes or staged media resources differ from their expected hashes
+- **THEN** the build or runtime rejects them without executing an alternate binary or rebaselining trust from the corrupt bytes

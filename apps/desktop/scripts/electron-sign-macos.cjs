@@ -25,6 +25,8 @@ async function signMacApplication(options, dependencies = {}) {
   if (!options.ignore?.(toonBundle.executablePath)) {
     throw new Error("The macOS signer must ignore exactly Contents/Resources/toonFactoryV2/bun to preserve the trusted upstream bytes");
   }
+  const { signMediaTools } = await import("./signMediaTools.mjs");
+  const verifySignedMedia = (dependencies.signMediaTools ?? signMediaTools)(options, toonTarget);
   const manifest = readOfficeEngineManifest(root, platform);
   const binary = path.join(root, manifest.binary);
   if (!options.identity)
@@ -64,6 +66,7 @@ async function signMacApplication(options, dependencies = {}) {
   const signed = await signApp(options);
   // Never refresh the Toon manifest to legitimize bytes changed by signing.
   verifyBundle(toonRoot, toonTarget);
+  verifySignedMedia();
   return signed;
 }
 

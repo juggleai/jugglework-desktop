@@ -207,10 +207,11 @@ export async function terminateSidecarProcess(child, {
  * @param {() => ({ contentView: { addChildView(view: any): void, removeChildView(view: any): void }, getContentSize(): number[], webContents: { getZoomFactor(): number } } | null)} options.getWindow
  * @param {() => ({ baseUrl: string, clientToken: string } | null | Promise<{ baseUrl: string, clientToken: string } | null>)} options.getAccess
  * @param {string} options.moduleRoot
+ * @param {boolean} [options.packaged]
  * @param {Record<string, any>} [options.dependencies]
  * @param {number} [options.idleTimeoutMs]
  */
-export function createToonFactoryRuntime({ app, getWindow, getAccess, moduleRoot, dependencies = {}, idleTimeoutMs = TOON_FACTORY_IDLE_TIMEOUT_MS }) {
+export function createToonFactoryRuntime({ app, getWindow, getAccess, moduleRoot, packaged = false, dependencies = {}, idleTimeoutMs = TOON_FACTORY_IDLE_TIMEOUT_MS }) {
   const View = dependencies.View ?? electron.View;
   const WebContentsView = dependencies.WebContentsView ?? electron.WebContentsView;
   const session = dependencies.session ?? electron.session;
@@ -239,7 +240,13 @@ export function createToonFactoryRuntime({ app, getWindow, getAccess, moduleRoot
   let idleTimer = null;
   const saveTargets = new Map();
   let directoryGrants = new Map();
-  const videoEditor = createToonFactoryVideoEditor({ isDirectoryGranted: directory => directoryGrants.has(directoryGrantKey(directory, platform)) });
+  const videoEditor = createToonFactoryVideoEditor({
+    isDirectoryGranted: directory => directoryGrants.has(directoryGrantKey(directory, platform)),
+    // moduleRoot is chosen by the host (packaged Resources or dev staging), never by a project.
+    mediaToolsRoot: path.join(path.dirname(moduleRoot), "mediaTools"),
+    mediaTarget: { platform, arch },
+    packaged,
+  });
   let approvedProjectDirectory = null;
   const enteredWorkspaceIds = new Set();
   const state = () => ({ running: Boolean(ready && child && child.exitCode === null && origin && !failure), workspaceId, error: failure });

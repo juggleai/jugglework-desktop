@@ -3,6 +3,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { normalizeToonFactoryArch, verifyToonFactoryBundle } from "../electron/toonFactoryBundle.mjs";
+import { verifyMediaTools } from "../electron/mediaTools.mjs";
 
 function fail(message) {
   throw new Error(`[verify-packaged-linux] ${message}`);
@@ -40,12 +41,13 @@ export function findPackagedToonFactoryBundle(directory) {
   return candidates[0];
 }
 
-export function verifyPackagedLinux(directory, arch, trustedRelease) {
+export function verifyPackagedLinux(directory, arch, trustedRelease, verifyMedia = verifyMediaTools) {
   const expectedArch = normalizeToonFactoryArch(arch);
   const packageRoot = path.resolve(directory);
   const toonFactoryRoot = findPackagedToonFactoryBundle(packageRoot);
   const bundle = verifyToonFactoryBundle(toonFactoryRoot, { platform: "linux", arch: expectedArch }, trustedRelease);
-  return { ok: true, packageRoot, arch: expectedArch, toonFactoryRoot, bundle };
+  const mediaTools = verifyMedia(path.join(path.dirname(toonFactoryRoot), "mediaTools"), { platform: "linux", arch: expectedArch });
+  return { ok: true, packageRoot, arch: expectedArch, toonFactoryRoot, bundle, mediaTools };
 }
 
 export function main(args = process.argv.slice(2)) {

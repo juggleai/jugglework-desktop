@@ -63,6 +63,12 @@ Package verification checks the server/Web/resource inventory, Bun format/archit
 
 The navigation destination switches to the sidecar immediately, but removal of native storage/schema code happens only after migration and rollback tests exist. During rollout, a build-time emergency flag may restore the old destination without running both runtimes concurrently. Rollback stops the sidecar and restores the previous application version; portable Toonflow project files remain outside credentials and runtime metadata.
 
+### 7. Independent bundled media supply chain
+
+Use fixed official FFmpeg 7.1.5 and VideoLAN x264 b35605a sources on native macOS ARM64/x64. FFmpeg's archive hash was authenticated by the upstream detached release signature at intake. x264 pins official Git commit/tree and locally generated tar hash, with independent downstream commit corroboration; no publisher signature is claimed. Build with GPL enabled, nonfree/network/autodetection disabled, static x264/FFmpeg and Apple system dylibs only. Disable assembly to avoid an unpinned nasm dependency; this trades performance for a smaller source/toolchain surface. Record the actual Xcode compiler/SDK, without claiming bit-reproducible builds across toolchain versions.
+
+`resources/mediaTools` includes sources, license texts, recipes, config records and its own inventory. Build hashes are local receipts, not upstream binary approvals. Before outer app sealing, explicitly sign the media executables, preserve all non-executable source bytes and record post-sign inventory. Final verification checks app trust and the signed media pair; preserve Bun's original independently trusted hash/signature unchanged. Both dev and release editors use the host-owned bundle only with empty child PATH. Windows and Linux fail build/package verification until native recipes are accepted; macOS x64 implementation still needs native execution evidence. See media-tools-supply-chain.md for measured results and remaining release gates.
+
 ## Risks / Trade-offs
 
 - **Two frontend/runtime stacks increase package size and maintenance** → Pin Toonflow/Bun revisions, isolate the module boundary, and automate clean-build/package verification.

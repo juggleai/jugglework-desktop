@@ -4,6 +4,7 @@ import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, r
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { BUN_TRUSTED_RELEASE, inspectToonFactoryExecutable, inventoryToonFactoryBundle, resolveToonFactoryBuildTarget, sha256File, trustedBunForTarget } from "../electron/toonFactoryBundle.mjs";
+import { buildMediaTools } from "./buildMediaTools.mjs";
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 const source = path.join(root, "modules/toonflowV2");
@@ -105,8 +106,9 @@ export function sourceRevision(sourceDirectory) {
   return `sha256:${hash.digest("hex")}`;
 }
 
-export function main() {
+export async function main() {
   const target = resolveToonFactoryBuildTarget();
+  await buildMediaTools({ target });
   const trustedBun = resolveTrustedBunBinary(process.env.BUN_BINARY || "bun", target);
   bun = trustedBun.path;
   const packageFile = path.join(source, "package.json");
@@ -154,4 +156,4 @@ export function main() {
   console.log(`Toonflow v2 module built: ${output} (${files.length} files, inventorySha256=${inventorySha256})`);
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await main();

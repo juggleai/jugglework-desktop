@@ -19,6 +19,7 @@ import { extractFile } from "@electron/asar";
 import { verifyJuggleWorkUiMcp } from "./verify-jugglework-ui-mcp.mjs";
 import { inspectArtifact } from "./qiniu-release/metadata.mjs";
 import { verifyToonFactoryBundle } from "../electron/toonFactoryBundle.mjs";
+import { verifyMediaTools, verifyMediaExecutables } from "../electron/mediaTools.mjs";
 
 const require = createRequire(import.meta.url);
 const { hasNotaryCredentials } = require("./macos-notary.cjs");
@@ -208,7 +209,9 @@ export function verifyCodeSignature(appPath) {
 export function verifyMacToonFactoryBundle(appPath, requestedArch) {
   const root = path.join(appPath, "Contents", "Resources", "toonFactoryV2");
   const bundle = verifyToonFactoryBundle(root, { platform: "darwin", arch: requestedArch });
-  return { ...bundle, ...verifyMacBunSignature(bundle.executablePath) };
+  const mediaTools = verifyMediaTools(path.join(appPath, "Contents/Resources/mediaTools"), { platform: "darwin", arch: requestedArch }, { phase: "signed", team: EXPECTED_TEAM_ID });
+  verifyMediaExecutables(mediaTools);
+  return { ...bundle, ...verifyMacBunSignature(bundle.executablePath), mediaTools };
 }
 
 function commandAssessment(command, args) {

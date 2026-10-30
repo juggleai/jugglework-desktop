@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, it } from "node:test";
@@ -8,6 +8,11 @@ import { afterEach, describe, it } from "node:test";
 import { parse } from "yaml";
 
 import { ensureDependencies, resolveTrustedBunBinary, sourceRevision } from "./buildToonFactory.mjs";
+import { buildMediaTools } from "./buildMediaTools.mjs";
+import { MEDIA_SOURCES, mediaInventory, mediaRun, verifyMediaTools, verifyMediaExecutables } from "../electron/mediaTools.mjs";
+import { createToonFactoryVideoEditor } from "../electron/toonFactoryVideoEdit.mjs";
+import { signMediaTools } from "./signMediaTools.mjs";
+import { spawnSync } from "node:child_process";
 import {
   inspectToonFactoryExecutable,
   inventoryToonFactoryBundle,
@@ -21,6 +26,90 @@ const temporaryDirectories = [];
 // Windows cannot represent POSIX execute bits for temporary Mach-O fixtures.
 const requiresPosixExecuteBits = { skip: process.platform === "win32" };
 const electronBuildSource = readFileSync(new URL("./electron-build.mjs", import.meta.url), "utf8");
+
+it("rejects unsupported native media targets and missing bundles without system fallback", async () => {
+  for (const arch of ["x64", "arm64"]) await assert.rejects(buildMediaTools({ target: { platform: "win32", arch } }), /Unsupported native target/);
+  assert.throws(() => verifyMediaTools("/missing/mediaTools", { platform: "darwin", arch: "arm64" }), /重新构建/);
+});
+
+it("rejects corrupt offline source cache before executing a build", { skip: process.platform !== "darwin" }, async () => {
+  const root = fixture();
+  const cache = path.join(root, "cache");
+  mkdirSync(cache);
+  writeFileSync(path.join(cache, MEDIA_SOURCES.sources.ffmpeg.archive), "corrupt");
+  await assert.rejects(buildMediaTools({ target: process, output: path.join(root, "out"), cache, offline: true }), /Cached source SHA-256 mismatch/);
+});
+
+it("rejects cross-architecture media builds before running cached binaries", { skip: process.platform !== "darwin" }, async () => {
+  await assert.rejects(buildMediaTools({ target: { platform: "darwin", arch: process.arch === "arm64" ? "x64" : "arm64" } }), /Native .* host required/);
+});
+
+it("real bundled media: empty PATH, authorized editor operations and tamper rejection", { skip: process.env.MEDIA_TOOLS_SMOKE !== "1" }, async () => {
+  const root = realpathSync(fixture());
+  const resources = path.join(root, "mediaTools");
+  cpSync(process.env.MEDIA_TOOLS_SMOKE_ROOT || new URL("../resources/mediaTools", import.meta.url), resources, { recursive: true });
+  const tools = verifyMediaTools(resources);
+  verifyMediaExecutables(tools);
+  const source = path.join(root, "input.mp4");
+  mediaRun(tools.ffmpeg, ["-v", "error", "-nostdin", "-n", "-f", "lavfi", "-i", "testsrc2=size=160x90:rate=24:duration=2", "-f", "lavfi", "-i", "sine=frequency=440:duration=2", "-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p", source]);
+  mediaRun(tools.ffmpeg, ["-v", "error", "-nostdin", "-n", "-i", source, "-an", "-c:v", "copy", path.join(root, "silent.mp4")]);
+  const editor = createToonFactoryVideoEditor({ isDirectoryGranted: directory => directory === root, mediaToolsRoot: resources });
+  const probe = await editor.execute({ operation: "probe", directory: root, path: "input.mp4" });
+  assert.equal(probe.hasAudio, true);
+  for (const operation of ["trim", "extractAudio", "separate", "analyze"]) {
+    mkdirSync(path.join(root, operation));
+    const result = await editor.execute({ operation, directory: root, path: "input.mp4", outputDirectory: operation, ...(operation === "trim" ? { start: 0.5, end: 1.25 } : {}) });
+    if (result.video) mediaRun(tools.ffmpeg, ["-v", "error", "-i", path.join(root, result.video), "-f", "null", "-"]);
+    if (operation === "trim") assert.ok(Math.abs(result.duration - 0.75) < 0.05);
+    if (operation === "analyze") assert.ok(result.scenes.length >= 1 && result.scenes[0].image.endsWith(".jpg"));
+  }
+  const exported = await editor.execute({ operation: "export", directory: root, clips: [{ path: "input.mp4", start: 0, end: 0.5 }, { path: "silent.mp4", start: 0.5, end: 1 }], output: "export.mp4", width: 160, height: 128, fps: 24 });
+  assert.equal(exported.hasAudio, true);
+  assert.equal(exported.clips, 2);
+  assert.ok(Math.abs(exported.duration - 1) < 0.15);
+  mediaRun(tools.ffmpeg, ["-v", "error", "-i", path.join(root, "export.mp4"), "-f", "null", "-"]);
+  const originalHash = sha256File(source);
+  await assert.rejects(editor.execute({ operation: "export", directory: root, clips: [{ path: "input.mp4" }], output: "input.mp4" }), /输出已存在/);
+  assert.equal(sha256File(source), originalHash);
+  mkdirSync(path.join(root, "no-audio"));
+  await assert.rejects(editor.execute({ operation: "extractAudio", directory: root, path: "silent.mp4", outputDirectory: "no-audio" }), /没有音轨/);
+  const aborted = AbortSignal.abort(new Error("fixture cancellation"));
+  await assert.rejects(editor.execute({ operation: "probe", directory: root, path: "input.mp4" }, aborted), /fixture cancellation/);
+  const denied = createToonFactoryVideoEditor({ isDirectoryGranted: () => false, mediaToolsRoot: resources });
+  await assert.rejects(denied.execute({ operation: "probe", directory: root, path: "input.mp4" }), /未经 JuggleWork 授权/);
+  symlinkSync(source, path.join(root, "link.mp4"));
+  await assert.rejects(editor.execute({ operation: "probe", directory: root, path: "link.mp4" }), /符号链接/);
+  await assert.rejects(editor.execute({ operation: "probe", directory: root, path: "../outside.mp4" }), /路径穿越/);
+  await assert.rejects(editor.execute({ operation: "probe", directory: root, path: "input.mp4", args: ["-version"] }), /无效/);
+  assert.throws(() => verifyMediaTools(resources, { platform: "darwin", arch: process.arch === "arm64" ? "x64" : "arm64" }), /target mismatch/);
+  const app = path.join(root, "Signing Fixture.app");
+  const signedRoot = path.join(app, "Contents/Resources/mediaTools");
+  mkdirSync(path.dirname(signedRoot), { recursive: true });
+  cpSync(resources, signedRoot, { recursive: true });
+  assert.throws(() => signMediaTools({ app, identity: "-", ignore: () => true }, process), /Developer ID/);
+  // Real local ad-hoc byte mutation tests manifest sequencing only; it does NOT
+  // stand in for the mandatory Developer ID release signature/timestamp gate.
+  const verifyAfterSign = signMediaTools({ app, identity: "fixture-only", ignore: () => true }, process, {
+    run(_command, args) { return spawnSync("/usr/bin/codesign", ["--force", "--sign", "-", args.at(-1)], { encoding: "utf8" }); },
+    signature(file) { mediaRun("/usr/bin/codesign", ["--verify", "--strict", file]); },
+    verify(directory, target, options) { return verifyMediaTools(directory, target, { phase: options.phase === "built" ? "built" : "any" }); },
+  });
+  const signed = verifyAfterSign();
+  assert.equal(signed.manifest.phase, "signed");
+  assert.deepEqual(signed.manifest.buildHashes, tools.manifest.buildHashes);
+  assert.notEqual(sha256File(signed.ffmpeg), signed.manifest.buildHashes.ffmpeg);
+  assert.throws(() => verifyMediaTools(signedRoot, process, { phase: "signed", team: "H7PDHSK3C7" }), /codesign/);
+  writeFileSync(path.join(signedRoot, "NOTICE.txt"), "post-seal mutation");
+  assert.throws(verifyAfterSign, /inventory\/hash mismatch/);
+  writeFileSync(path.join(resources, "NOTICE.txt"), "tampered");
+  assert.throws(() => verifyMediaTools(resources), /inventory\/hash mismatch/);
+  // Even rebaselining a local inventory cannot replace pinned source bytes.
+  writeFileSync(path.join(resources, "sources", MEDIA_SOURCES.sources.ffmpeg.archive), "forged source");
+  const forged = { ...tools.manifest, files: mediaInventory(resources) };
+  writeFileSync(path.join(resources, "manifest.json"), JSON.stringify(forged));
+  assert.throws(() => verifyMediaTools(resources), /Source hash mismatch/);
+  await editor.stop();
+});
 
 it("keeps smoke timeout failures nonzero through window destruction and async cleanup", () => {
   const source = readFileSync(new URL("./toonFactorySmoke.mjs", import.meta.url), "utf8");

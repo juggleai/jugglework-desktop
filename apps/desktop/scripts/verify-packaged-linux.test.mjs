@@ -71,7 +71,7 @@ describe("Linux packaged Toon Factory verifier", () => {
   it("verifies an x64 electron-builder unpacked directory", requiresPosixExecuteBits, (t) => {
     const fixture = createFixture(t, "x64");
     const unpacked = path.join(fixture.staging, "linux-unpacked");
-    const result = verifyPackagedLinux(unpacked, "x86_64", fixture.trustedRelease);
+    const result = verifyPackagedLinux(unpacked, "x86_64", fixture.trustedRelease, () => ({ fixture: true }));
 
     assert.equal(result.toonFactoryRoot, fixture.root);
     assert.deepEqual(result.bundle.executable, { platform: "linux", arch: "x64", format: "elf" });
@@ -79,7 +79,7 @@ describe("Linux packaged Toon Factory verifier", () => {
 
   it("verifies arm64 in an AppImage or tar extraction staging tree", requiresPosixExecuteBits, (t) => {
     const fixture = createFixture(t, "arm64", "squashfs-root/usr/lib/jugglework/resources/toonFactoryV2");
-    const result = verifyPackagedLinux(fixture.staging, "aarch64", fixture.trustedRelease);
+    const result = verifyPackagedLinux(fixture.staging, "aarch64", fixture.trustedRelease, () => ({ fixture: true }));
 
     assert.equal(result.toonFactoryRoot, fixture.root);
     assert.deepEqual(result.bundle.executable, { platform: "linux", arch: "arm64", format: "elf" });
@@ -89,6 +89,11 @@ describe("Linux packaged Toon Factory verifier", () => {
     const fixture = createFixture(t, "x64");
     writeElf(fixture.executablePath, "arm64");
     assert.throws(() => verifyPackagedLinux(fixture.staging, "x64", fixture.trustedRelease), /Bundled Bun is linux\/arm64\/elf, expected linux\/x64\/elf/);
+  });
+
+  it("blocks release verification without an accepted native Linux media recipe", requiresPosixExecuteBits, (t) => {
+    const fixture = createFixture(t, "x64");
+    assert.throws(() => verifyPackagedLinux(fixture.staging, "x64", fixture.trustedRelease), /Unsupported native target linux/);
   });
 
   it("rejects a missing required bundle file", (t) => {

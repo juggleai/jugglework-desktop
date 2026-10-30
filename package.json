@@ -47,6 +47,7 @@
     "release:prepare:dry": "node scripts/release/prepare.mjs --dry-run",
     "release:ship": "node scripts/release/ship.mjs",
     "release:ship:watch": "node scripts/release/ship.mjs --watch",
+    "build:media-tools": "node apps/desktop/scripts/buildMediaTools.mjs",
     "build:toon-factory": "node apps/desktop/scripts/buildToonFactory.mjs",
     "test:toon-factory-build": "node --test apps/desktop/scripts/buildToonFactory.test.mjs"
   },

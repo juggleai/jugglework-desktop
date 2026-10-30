@@ -1425,6 +1425,7 @@ const runtimeManager = createRuntimeManager({
 const toonFactoryRuntime = createToonFactoryRuntime({
   app, getWindow: () => mainWindow, getAccess: () => runtimeManager.managedServerAccess(),
   moduleRoot: app.isPackaged ? path.join(process.resourcesPath, "toonFactoryV2") : path.resolve(__dirname, "../resources/toonFactoryV2"),
+  packaged: app.isPackaged,
 });
 const runtimeIpcHandlers = createRuntimeIpcHandlers(runtimeManager);
 const fileHostClient = createManagedRuntimeClient({

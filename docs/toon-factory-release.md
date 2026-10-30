@@ -27,7 +27,7 @@ BUN_BINARY="/absolute/path/to/verified/bun" pnpm build:toon-factory
 
 这一步构建所有节点 UMD、工具、Web、Server 和 managed Server 入口，再写入
 `apps/desktop/resources/toonFactoryV2/build-manifest.json`。
-通常无需单独手动编译 frameAnalysisNode，也不需要重新编译 FFmpeg。
+通常无需单独手动编译 frameAnalysisNode。构建会先校验/构建独立媒体工具；首次或源码/recipe 变化时从源码编译 FFmpeg/x264，完整有效的 staging 可复用。
 
 ## 2. 必须打包的文件
 
@@ -48,23 +48,51 @@ Dev 测试需重启；发布测试必须使用新安装包，而不是已启动�
 在最终 app、macOS ZIP/DMG、Windows 最终包中重复检查，不能只检查 staging。
 不要在生成 manifest 后手工替换资源，不要跨架构复用 bundle。
 
-## 3. FFmpeg 是运行依赖，不是当前安装包内容
+## 3. FFmpeg/FFprobe：独立随包资源，bundled-only
 
-当前不会 bundled FFmpeg/FFprobe，构建模块本身不需要它们。
-**构建机安装了 FFmpeg，不等于用户安装后就能剪辑。**
+`build:electron → buildToonFactory.mjs → buildMediaTools.mjs` 在 native Mac 上编译或
+校验 `resources/mediaTools`，electron-builder 通过独立 extraResources 复制。
+开发和安装包 runtime 均只接受此目录；子进程 PATH 为空。缺失/校验失败提示重建或重装，
+没有系统 FFmpeg、Homebrew、项目内程序或模型指定命令回退。
 
-- 当前只从 `/opt/homebrew/bin`、`/usr/local/bin`、`/usr/bin` 查找两个程序。
-- macOS 可由用户明确同意后安装 `brew install ffmpeg`；发布工具不能静默安装。
-- Windows 可执行文件发现尚未实现，不能声称 Windows 剪辑已支持。
-- 不提供任意 PATH、项目内可执行程序或模型自定义命令的回退。
+| 目标 | 当前状态 |
+| --- | --- |
+| macOS ARM64，14+ | 本机源码重编译及真实临时媒体操作通过；真实发行签名/安装包验收待执行 |
+| macOS x64，14+ | native recipe、Intel CI 和校验接线已实现；尚无本次 native x64 运行证据 |
+| Windows x64/ARM64 | build、after-pack、最终 verifier 明确失败；无接受的 native recipe，不提供仿真替代 |
+| Linux x64/ARM64 | 同样 gate；本变更不能发布为 Linux 已支持 |
 
-发版前必须明确是系统前置依赖还是随包交付，并对目标环境验收。
-如未来 bundled：需另行实现路径解析、逐平台/架构校验、可信来源与哈希、
-代码签名、动态库可迁移性，以及 FFmpeg/libx264 等许可证和再分发义务审核。
-不能直接将 Homebrew 二进制复制进 app 就视为可移植产物。
+源码锁：`apps/desktop/electron/mediaToolsSources.json`。FFmpeg 7.1.5 官方 HTTPS
+archive 的 SHA-256 已用官方发布公钥的 detached signature 验证；x264 固定官方 Git
+commit/tree 和生成 tar 的 SHA-256，尚无独立验证的上游签名。MacPorts/Homebrew
+只用作源码摘要/commit 佐证，绝不分发它们的二进制。详细来源及限制见
+[`media-tools-supply-chain.md`](../openspec/changes/replace-toon-factory-with-sidecar/media-tools-supply-chain.md)。
 
-功能依赖缺失或平台未支持时，须明确延期/隐藏不支持入口并取得发布范围确认；
-不得宣传开箱即用、全平台可用。
+构建启用 GPL、禁用 nonfree/network/autodetect，静态 x264/FFmpeg，只允许 Apple
+系统 dylib；仅 file/pipe 协议。`eugeneware/ffmpeg-static/b6.1.1` 的 nonfree
+ARM64 二进制仍明确禁止使用。此工程实现不是法律审核或发行许可批准。
+
+随包必须包含 `ffmpeg`、`ffprobe`、`manifest.json`、`NOTICE.txt`、`licenses/`、
+`sources/`（两个精确源码 archive、FFmpeg 公钥/签名、source lock、两个 shell recipe）
+及 `build-info/`（实际 compiler/SDK/config/version）。发布者仍须完成 GPL 对应源码交付、
+notice 和整个分发方式审核。构建记录工具链版本，但未声称跨工具链逐字节可重现。
+
+```bash
+pnpm build:media-tools
+MEDIA_TOOLS_OFFLINE=1 node apps/desktop/scripts/buildMediaTools.mjs --force
+MEDIA_TOOLS_SMOKE=1 node --test apps/desktop/scripts/buildToonFactory.test.mjs
+```
+
+离线重编译要求 `.media-tools-cache` 中所有锁定源码及签名证据完整且 hash 一致。
+`--force` 真实重编译；普通构建可复用通过完整校验的 staging。首次编译需要 Xcode
+Command Line Tools，无需 Homebrew FFmpeg、x264 或 nasm。
+
+签名顺序：after-pack 校验 built inventory → 应用身份显式签署两个媒体程序 → 验证
+Developer ID/Team/secure timestamp/hardened runtime → 写入媒体 signed inventory →
+主 app 封存 → 再校验。默认 signer 仅额外排除这两个精确媒体路径；Bun 的原始官方
+SHA-256、上游 Team `7FRXF46ZSN` 和 Toonflow inventory 不改写。
+macOS 最终 app/ZIP/DMG verifier 及 packaged runtime 同时验证主 app 和媒体资源信任。
+ad-hoc fixture 仅验证签名字节变化/清单时序，不能替代真实发行签名、公证和安装验收。
 
 ## 4. 发布验收，不以编译成功替代
 
@@ -76,7 +104,7 @@ Dev 测试需重启；发布测试必须使用新安装包，而不是已启动�
 - 无音轨输入行为、失败/取消无半成品发布、进程退出无孤儿、禁止覆盖原素材；
 - 工作区切换、授权拒绝、越界/符号链接/URL/任意参数拒绝；
 - 画布保存重载、撤销、结果节点重建；
-- 有/无 FFmpeg 两种环境；支持的编解码器与实际系统架构；
+- PATH 为空且无系统 FFmpeg；bundle 缺失/篡改拒绝；支持的编解码器与实际系统架构；
 - 项目文件系统支持当前硬链接发布；exFAT/网络盘未验收前不得宣称兼容。
 
 当前拉片是本地场景差异检测，并非上游完整自适应/AI 检测算法；截取使用预览和

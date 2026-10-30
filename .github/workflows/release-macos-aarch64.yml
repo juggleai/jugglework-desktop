@@ -385,10 +385,15 @@ jobs:
       - name: Build Electron app
         shell: bash
         env:
-          # TARGET tells prepare-sidecar.mjs which architecture's sidecars
-          # to download (critical for cross-arch builds like x64 on arm64 mac).
+          # Bun and source-built media tools require a matching native runner.
           TARGET: ${{ matrix.target_triple }}
         run: pnpm --filter @jugglework/desktop build:electron
+
+      - name: Verify source-built media tools with no system FFmpeg
+        if: matrix.os_type == 'macos'
+        env:
+          MEDIA_TOOLS_SMOKE: "1"
+        run: node --test apps/desktop/scripts/buildToonFactory.test.mjs
 
       - name: Package Electron (macOS, signed + notarized)
         if: matrix.os_type == 'macos' && env.MACOS_NOTARIZE == 'true'

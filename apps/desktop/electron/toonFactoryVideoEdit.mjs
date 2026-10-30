@@ -1,8 +1,9 @@
 // Restricted adaptation of Toonflow v2.0.8 videoProcessing.ts (MIT, Copyright (c) 2026 HBAI-Ltd).
 // Unlike the upstream fluent API, model input cannot supply executable arguments or filter expressions.
 import { spawn } from "node:child_process";
-import { access, lstat, realpath, mkdtemp, rm, link, stat, writeFile } from "node:fs/promises";
+import { lstat, realpath, mkdtemp, rm, link, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { verifyMediaTools, mediaRun } from "./mediaTools.mjs";
 
 function object(value, keys) {
   if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).some(key => !keys.includes(key))) throw new Error("无效的剪辑参数");
@@ -28,15 +29,8 @@ async function projectPath(root, value, output = false) {
   if (!output && !(await stat(current)).isFile()) throw new Error("媒体输入必须是普通文件");
   return current;
 }
-async function binaries() {
-  for (const directory of ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"]) {
-    const ffmpeg = path.join(directory, "ffmpeg"), ffprobe = path.join(directory, "ffprobe");
-    try { await access(ffmpeg, 1); await access(ffprobe, 1); return { ffmpeg, ffprobe }; } catch {}
-  }
-  throw new Error("剪辑需要系统 FFmpeg 和 FFprobe；macOS 请先安装 brew install ffmpeg。不会自动下载或执行项目内程序。");
-}
-
-export function createToonFactoryVideoEditor({ isDirectoryGranted }) {
+/** @param {{isDirectoryGranted: (directory: string) => boolean, mediaToolsRoot: string, mediaTarget?: {platform: string, arch: string}, packaged?: boolean}} options */
+export function createToonFactoryVideoEditor({ isDirectoryGranted, mediaToolsRoot, mediaTarget = process, packaged = false }) {
   let active;
   async function execute(input, signal) {
     if (active) throw new Error("已有剪辑或探测任务运行中，请等待完成");
@@ -48,7 +42,7 @@ export function createToonFactoryVideoEditor({ isDirectoryGranted }) {
     let temporary;
     const run = (executable, args) => new Promise((resolve, reject) => {
       combined.throwIfAborted();
-      const child = spawn(executable, args, { shell: false, windowsHide: true, stdio: ["ignore", "pipe", "pipe"], env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" } });
+      const child = spawn(executable, args, { shell: false, windowsHide: true, stdio: ["ignore", "pipe", "pipe"], env: { PATH: "", LANG: "C", LC_ALL: "C" } });
       let stdout = "", stderr = "", failure;
       const abort = () => { failure = combined.reason; child.kill("SIGKILL"); };
       combined.addEventListener("abort", abort, { once: true });
@@ -76,7 +70,10 @@ export function createToonFactoryVideoEditor({ isDirectoryGranted }) {
       if (!Object.hasOwn(operations, input.operation) || typeof input.directory !== "string" || !path.isAbsolute(input.directory)) throw new Error("无效的媒体操作或目录");
       const root = await realpath(input.directory);
       if (!isDirectoryGranted(root)) throw new Error("项目目录未经 JuggleWork 授权");
-      const tools = await binaries();
+      // The outer signed app seals the manifest; its mutable local build hashes
+      // alone are not an upstream trust anchor. Development uses verified staging.
+      if (packaged && mediaTarget.platform === "darwin") mediaRun("/usr/bin/codesign", ["--verify", "--strict", "-R", 'anchor apple generic and certificate leaf[subject.OU] = "H7PDHSK3C7" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists', path.resolve(mediaToolsRoot, "../../..")]);
+      const tools = verifyMediaTools(mediaToolsRoot, mediaTarget, packaged ? { phase: "signed", team: "H7PDHSK3C7" } : { phase: "built" });
       const probe = async file => {
         const data = JSON.parse(await run(tools.ffprobe, ["-v", "error", "-protocol_whitelist", "file,pipe", "-format_whitelist", "mov,matroska,webm", "-show_entries", "format=duration:stream=codec_type,width,height,codec_name", "-of", "json", file]));
         const video = data.streams?.find(stream => stream.codec_type === "video");
@@ -127,6 +124,7 @@ export function createToonFactoryVideoEditor({ isDirectoryGranted }) {
           return outputPath(name);
         };
         const videoArgs = ["-map", "0:v:0", "-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2", "-c:v", "libx264", "-threads", "2", "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p", "-movflags", "+faststart"];
+        /** @type {Record<string, any>} */
         const result = { ...info, source: input.path, operation, manifest: outputPath("manifest.json"), scenes: [] };
         if (operation === "analyze") {
           // ACT: Fixed local scene-difference detector, not upstream adaptive/AI analysis.
