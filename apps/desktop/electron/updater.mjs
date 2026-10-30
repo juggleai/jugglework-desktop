@@ -359,6 +359,9 @@ export function selectWindowsUpdateArtifact(updateInfo, arch = process.arch) {
   };
 }
 
+// Dependencies are supplied only by trusted main-process wiring (or tests),
+// never by environment flags or renderer IPC payloads. Production defaults
+// retain the real ShipIt preparation at each existing lifecycle boundary.
 export function registerUpdaterIpc({
   app,
   ipcMain,
@@ -366,7 +369,10 @@ export function registerUpdaterIpc({
   onInstallAndRestart = undefined,
   onInstallAndRestartFailed = undefined,
   loadAutoUpdater = () => import("electron-updater"),
-}) {
+}, {
+  enableSquirrelDirectContentsWrite: enableDirectContentsWrite = enableSquirrelDirectContentsWrite,
+  cleanStaleUpdaterState: cleanStaleState = cleanStaleUpdaterState,
+} = {}) {
   let autoUpdaterPromise = null;
   let updaterOperation = Promise.resolve();
   let checkedCandidate = null;
@@ -418,7 +424,7 @@ export function registerUpdaterIpc({
           autoUpdaterInstance.disableDifferentialDownload = true;
           // Make Squirrel.Mac write contents in place rather than moving whole
           // bundles (see enableSquirrelDirectContentsWrite for why).
-          await enableSquirrelDirectContentsWrite();
+          await enableDirectContentsWrite();
           autoUpdaterInstance.on("error", (err) => {
             invalidateCandidates();
             failInstallIntent();
@@ -612,7 +618,7 @@ export function registerUpdaterIpc({
       }
       // Clear any stuck ShipIt state from a prior aborted install so this
       // download applies cleanly on quit.
-      await cleanStaleUpdaterState(app);
+      await cleanStaleState(app);
       activeDownloadUpdateId = candidate.updateId;
       await updater.downloadUpdate();
       if (candidateGeneration !== operationGeneration || checkedCandidate !== candidate) {
@@ -649,7 +655,7 @@ export function registerUpdaterIpc({
     try {
       // Re-assert the in-place-write default right before the swap; the ShipIt
       // defaults domain may have been wiped when stale state was cleaned.
-      await enableSquirrelDirectContentsWrite();
+      await enableDirectContentsWrite();
       // On macOS the native updater closes the window before Electron emits
       // `before-quit`. Preparation marks intent immediately before the native
       // call so close-to-tray cannot intercept the updater-owned window close.

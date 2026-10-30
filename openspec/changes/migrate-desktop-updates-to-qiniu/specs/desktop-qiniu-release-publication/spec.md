@@ -200,6 +200,18 @@ Stable macOS channel promotion SHALL require the expected bundle identity, Devel
 - **AND** code/docs preparation SHALL synchronize App, Desktop, and embedded Server to `1.2.30` without changing dependency lockfiles or historical evidence; authorized commit/push dev, merge/push main, build, publication, promotion, and Den tasks SHALL remain pending until actually executed and verified
 - **AND** inherited long-lived cache headers can leave clients stale despite observed read-back; omitted real-client canary leaves installation/relaunch and retained state unproven
 
+#### Scenario: Exact 1.2.32 macOS ARM64 pre-canary and metadata-only tooling authorization
+
+- **WHEN** the operator authorizes implementing and locally verifying exact stable macOS ARM64 `1.2.32` without a real-client upgrade canary or Qiniu mutable Stable Cache-Control metadata change/verification
+- **THEN** tooling SHALL require independent audited `--pre-canary-exception-reason` and `--metadata-exception-reason` values of at least 20 trimmed characters each, recording each used exception with exact scope `stable-1.2.32-only` in durable promotion evidence
+- **AND** without each explicit reason its corresponding normal gate SHALL remain required; a present failed or mismatched canary SHALL always be rejected
+- **AND** only the real-client canary and Cache-Control metadata preflight, mutation, and validation MAY be omitted; notarization and older broader cache-convergence exceptions SHALL be rejected
+- **AND** Developer ID/Team/bundle identity, hardened runtime, accepted app and outer-DMG notarization receipts, staples, Gatekeeper, complete package verification, immutable non-overwrite Qiniu/CDN integrity, scheduler serialization by channel/platform with `cancel-in-progress: false`, lock ownership, prior-digest/race checks, channel size/ETag, CDN refresh and exact public SHA-256/Content-Length/byte-length read-back SHALL remain required
+- **AND** post-mutation refresh, public read-back, or durable-evidence failures SHALL retain the lock for audited recovery
+- **AND** Windows, x64/mixed/universal architectures, Alpha, other channels and future `1.2.33` SHALL reject these exceptions; prior `1.2.31` and earlier exact-version rules SHALL remain unchanged, and their historical exclusions of `1.2.32` SHALL NOT override this separate grant
+- **AND** this tooling-only work SHALL NOT change tasks or version files, commit/push, package, publish, promote, change Den, or perform production operations; real canary generation or fabricated operational evidence SHALL NOT occur
+- **AND** installation/relaunch, retained state and fleet-wide cache convergence SHALL NOT be reported as verified
+
 #### Scenario: Latest explicit 1.2.31 macOS ARM64 pre-canary and metadata-only continuation
 
 - **WHEN** the operator explicitly authorizes completing stable macOS ARM64 `1.2.31` while skipping the real-client upgrade canary and Qiniu mutable Stable Cache-Control metadata mutation/validation

@@ -1,9 +1,11 @@
 // Restricted adaptation of Toonflow v2.0.8 videoProcessing.ts (MIT, Copyright (c) 2026 HBAI-Ltd).
 // Unlike the upstream fluent API, model input cannot supply executable arguments or filter expressions.
 import { spawn } from "node:child_process";
-import { lstat, realpath, mkdtemp, rm, link, stat, writeFile } from "node:fs/promises";
+import { lstat, realpath, mkdtemp, rm, unlink, link, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { verifyMediaTools, mediaRun } from "./mediaTools.mjs";
+
+const publicationFs = { lstat, realpath, link, stat, rm, unlink };
 
 function object(value, keys) {
   if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).some(key => !keys.includes(key))) throw new Error("无效的剪辑参数");
@@ -12,7 +14,7 @@ function inside(root, target) {
   const relative = path.relative(root, target);
   return relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
 }
-async function projectPath(root, value, output = false) {
+async function projectPath(root, value, output = false, fs = publicationFs) {
   if (typeof value !== "string" || !value || value.length > 4096 || path.isAbsolute(value) || /[\\:\x00-\x1f]/.test(value)) throw new Error("必须使用项目内相对文件路径");
   const parts = value.split("/");
   if (parts.some(part => !part || part === "." || part === "..")) throw new Error("不允许路径穿越");
@@ -20,14 +22,118 @@ async function projectPath(root, value, output = false) {
   for (const [index, part] of parts.entries()) {
     current = path.join(current, part);
     if (output && index === parts.length - 1) break;
-    const info = await lstat(current);
+    const info = await fs.lstat(current);
     if (info.isSymbolicLink()) throw new Error("不允许符号链接媒体路径");
     if (index < parts.length - 1 && !info.isDirectory()) throw new Error("媒体父路径不是目录");
   }
-  const parent = await realpath(path.dirname(current));
+  const parent = await fs.realpath(path.dirname(current));
   if (!inside(root, parent)) throw new Error("媒体路径超出授权项目");
-  if (!output && !(await stat(current)).isFile()) throw new Error("媒体输入必须是普通文件");
+  if (!output && !(await fs.stat(current)).isFile()) throw new Error("媒体输入必须是普通文件");
   return current;
+}
+
+function publicationConflict(target, reason, cause = undefined) {
+  return Object.assign(new Error(`媒体发布身份冲突，保留文件供检查：${target} (${reason})`, { cause }), {
+    code: "MEDIA_PUBLICATION_IDENTITY_CONFLICT", path: target,
+  });
+}
+function sameIdentity(actual, expected) {
+  return actual.dev === expected.dev && actual.ino === expected.ino && actual.birthtimeNs === expected.birthtimeNs;
+}
+async function publicationParents(target, fs) {
+  const parents = [];
+  let directory = path.dirname(target);
+  while (true) {
+    parents.unshift(directory);
+    const parent = path.dirname(directory);
+    if (parent === directory) break;
+    directory = parent;
+  }
+  const identities = [];
+  for (const directory of parents) {
+    const identity = await fs.lstat(directory, { bigint: true });
+    if (!identity.isDirectory() || identity.isSymbolicLink()) throw publicationConflict(target, `父目录不是普通目录：${directory}`);
+    identities.push({ directory, identity });
+  }
+  return identities;
+}
+async function assertPublicationIdentity({ target, sourceIdentity, parents }, fs) {
+  const checkParents = async () => {
+    for (const { directory, identity } of parents) {
+      const current = await fs.lstat(directory, { bigint: true });
+      if (!current.isDirectory() || current.isSymbolicLink() || !sameIdentity(current, identity)) {
+        throw publicationConflict(target, `父目录已替换：${directory}`);
+      }
+    }
+  };
+  const checkTarget = async () => {
+    const current = await fs.lstat(target, { bigint: true });
+    if (!current.isFile() || current.isSymbolicLink() || !sameIdentity(current, sourceIdentity)
+      || current.size !== sourceIdentity.size || current.mtimeNs !== sourceIdentity.mtimeNs) {
+      throw publicationConflict(target, "目标已替换或修改");
+    }
+  };
+  // Recheck the directory chain after inspecting the leaf, then inspect the
+  // leaf once more. Unknown/replaced paths are deliberately not unlinked.
+  await checkParents();
+  await checkTarget();
+  await checkParents();
+  await checkTarget();
+}
+async function rollbackPublication(record, fs) {
+  try {
+    await assertPublicationIdentity(record, fs);
+    // Node has no conditional unlink/unlinkat bound to a verified directory fd.
+    // This is conservative best-effort cleanup, NOT protection against a hostile
+    // writer swapping paths between the final lstat and unlink. Never search for
+    // moved files or recursively delete an output when identity is uncertain.
+    await fs.unlink(record.target);
+  } catch (error) {
+    if (error.code === "MEDIA_PUBLICATION_IDENTITY_CONFLICT") throw error;
+    throw publicationConflict(record.target, `回滚未完成：${error.code ?? error.message}`, error);
+  }
+}
+
+// Both export and multi-file operations commit only after validation and staging
+// cleanup. Rollback removes only links whose recorded source and directory
+// identities still match; conflicts are retained and reported, not guessed at.
+// Only filesystem dependencies are injectable; execution/signature checks stay
+// in the editor and cannot be replaced by callers.
+export async function publishVideoEditFiles({ root, temporary, files, signal, isDirectoryGranted }, fs = publicationFs) {
+  const published = [], sizes = [];
+  const check = () => {
+    signal.throwIfAborted();
+    if (!isDirectoryGranted(root)) throw new Error("项目授权已变化");
+  };
+  try {
+    for (const { source, output } of files) {
+      check();
+      const target = await projectPath(root, output, true, fs);
+      check();
+      const sourcePath = path.join(temporary, source);
+      const sourceIdentity = await fs.lstat(sourcePath, { bigint: true });
+      if (!sourceIdentity.isFile() || sourceIdentity.isSymbolicLink()) throw publicationConflict(target, "发布源不是普通文件");
+      const parents = await publicationParents(target, fs);
+      check();
+      await fs.link(sourcePath, target);
+      // Record ownership before checking cancellation or awaiting anything else.
+      const record = { target, sourceIdentity, parents };
+      published.push(record);
+      check();
+      await assertPublicationIdentity(record, fs);
+      check();
+      sizes.push((await fs.stat(target)).size);
+      check();
+    }
+    await fs.rm(temporary, { recursive: true, force: true });
+    check(); // Commit: no further asynchronous work may fail the publication.
+    return sizes;
+  } catch (error) {
+    const rollback = await Promise.allSettled(published.map(record => rollbackPublication(record, fs)));
+    const failures = rollback.flatMap(result => result.status === "rejected" ? [result.reason] : []);
+    if (failures.length) throw new AggregateError([error, ...failures], `媒体发布失败且回滚未完成：${failures.map(failure => failure.message).join("；")}`, { cause: error });
+    throw error;
+  }
 }
 /** @param {{isDirectoryGranted: (directory: string) => boolean, mediaToolsRoot: string, mediaTarget?: {platform: string, arch: string}, packaged?: boolean}} options */
 export function createToonFactoryVideoEditor({ isDirectoryGranted, mediaToolsRoot, mediaTarget = process, packaged = false }) {
@@ -152,21 +258,9 @@ export function createToonFactoryVideoEditor({ isDirectoryGranted, mediaToolsRoo
         if (info.hasAudio && operation !== "trim") result.audio = await render("audio.m4a", ["-map", "0:a:0", "-vn", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart"]);
         await writeFile(path.join(temporary, "manifest.json"), JSON.stringify(result, null, 2), { flag: "wx" });
         pending.push("manifest.json");
-        const published = [];
-        try {
-          for (const name of pending) {
-            combined.throwIfAborted();
-            if (!isDirectoryGranted(root)) throw new Error("项目授权已变化");
-            const target = await projectPath(root, outputPath(name), true);
-            await link(path.join(temporary, name), target);
-            published.push(target);
-          }
-          combined.throwIfAborted();
-          return result;
-        } catch (error) {
-          await Promise.all(published.map(target => rm(target, { force: true })));
-          throw error;
-        }
+        await publishVideoEditFiles({ root, temporary, files: pending.map(name => ({ source: name, output: outputPath(name) })), signal: combined, isDirectoryGranted });
+        temporary = undefined;
+        return result;
       }
       if (!Array.isArray(input.clips) || input.clips.length < 1 || input.clips.length > 32) throw new Error("每次需要1至32个有序视频片段");
       const width = input.width ?? 1280, height = input.height ?? 720, fps = input.fps ?? 30;
@@ -201,10 +295,9 @@ export function createToonFactoryVideoEditor({ isDirectoryGranted, mediaToolsRoo
       await run(tools.ffmpeg, [...common, "-protocol_whitelist", "file,pipe", "-f", "concat", "-safe", "1", "-i", manifest, "-c", "copy", "-movflags", "+faststart", resultFile]);
       const info = await probe(resultFile);
       if (Math.abs(info.duration - total) > Math.max(0.5, clips.length * 0.1)) throw new Error("导出时长校验失败，未发布成片");
-      combined.throwIfAborted();
-      if (!isDirectoryGranted(root) || await projectPath(root, input.output, true) !== output) throw new Error("导出授权或路径已变化");
-      await link(resultFile, output);
-      return { path: input.output, ...info, clips: clips.length, bytes: (await stat(output)).size };
+      const [bytes] = await publishVideoEditFiles({ root, temporary, files: [{ source: "result.mp4", output: input.output }], signal: combined, isDirectoryGranted });
+      temporary = undefined;
+      return { path: input.output, ...info, clips: clips.length, bytes };
     } finally {
       try { if (temporary) await rm(temporary, { recursive: true, force: true }); }
       finally { active = undefined; finish(); }

@@ -245,6 +245,7 @@ test("PPT 页选择严格配对原生 id/uniqueID 和索引，DOM key 不能替�
 
 test("图片 AI 当前页入口显式绑定直接图片所属真实单页，普通选区查询仍保留对象", () => {
   const page = { type: "Slide", listIndex: 0, id: "native", uniqueID: "native", children: [] };
+  /** @type {{ type: string, id: string, uniqueID: string, isImage(): boolean, parent: unknown }} */
   const image = { type: "Image", id: "picture", uniqueID: "picture", isImage: () => true, parent: page };
   page.children.push(image);
   const selection = { currentSlideIndex: 0, currentSlide: page, slides: [page], lastMouseDownRegion: "editor",

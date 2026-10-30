@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { describe, it } from "node:test";
 
 import { parse } from "yaml";
@@ -72,7 +73,7 @@ describe("Qiniu release workflow policy", () => {
     assert.doesNotMatch(aggregateRuns, /build:electron|electron-builder/);
   });
 
-  it("continues only the fixed committed candidate inside the same workflow scheduler", () => {
+  it("continues only version-matched fixed committed candidates inside the same workflow scheduler", () => {
     const workflow = parse(qiniuSource);
     const inputs = workflow.on.workflow_dispatch.inputs;
     assert.deepEqual(inputs.mode.options, ["build", "promotion-only"]);
@@ -86,8 +87,18 @@ describe("Qiniu release workflow policy", () => {
     assert.match(source, /test "\$GITHUB_REF" = refs\/heads\/dev/);
     assert.match(source, /git rev-parse HEAD.*GITHUB_SHA/);
     assert.match(source, /git rev-parse origin\/dev.*GITHUB_SHA/);
-    for (const [name, value] of [["VERSION", "1.2.31"], ["CHANNEL", "stable"], ["RELEASE_PLATFORM", "mac"], ["PROMOTE", "true"]]) {
+    for (const [name, value] of [["CHANNEL", "stable"], ["RELEASE_PLATFORM", "mac"], ["PROMOTE", "true"]]) {
       assert.ok(source.includes(`test "$${name}" = ${value}`));
+    }
+    const gate = job.steps[0].run;
+    for (const version of ["1.2.31", "1.2.32", "1.2.33"]) {
+      for (const recordVersion of ["1.2.31", "1.2.32", "1.2.33"]) {
+        const result = spawnSync("bash", ["-c", gate], { env: {
+          GITHUB_REF: "refs/heads/dev", VERSION: version, CHANNEL: "stable", RELEASE_PLATFORM: "mac", PROMOTE: "true",
+          CANDIDATE_RECORD: `apps/desktop/release-records/${recordVersion}-candidate.json`,
+        } });
+        assert.equal(result.status === 0, version !== "1.2.33" && version === recordVersion);
+      }
     }
     assert.match(source, /pnpm install --frozen-lockfile --ignore-scripts/);
     assert.match(source, /go install github.com\/qiniu\/qshell\/v2\/main@v2.19.10/);

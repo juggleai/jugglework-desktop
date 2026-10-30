@@ -546,7 +546,20 @@ describe("managed JuggleRouter import", () => {
     expect(persisted.includes(gatewayToken)).toBe(false);
     expect(persisted.includes(upstreamUrlSentinel)).toBe(false);
     expect(persisted.includes(upstreamKeySentinel)).toBe(false);
-    expect(imported).toEqual({
+    const { providerConfigFingerprint, ...importedMetadata } = imported;
+    expect(typeof providerConfigFingerprint).toBe("string");
+    if (typeof providerConfigFingerprint !== "string") {
+      throw new Error("Imported provider must include a config fingerprint");
+    }
+    expect(JSON.parse(providerConfigFingerprint)).toEqual({
+      id: "JuggleRouter",
+      name: "JuggleRouter",
+      env: ["JUGGLEWORK_GATEWAY_KEY_V2_6C70725F726F75746572"],
+      npm: "@ai-sdk/openai-compatible",
+      api: gatewayUrl,
+      options: { baseURL: gatewayUrl },
+    });
+    expect(importedMetadata).toEqual({
       cloudProviderId: "lpr_router",
       providerId: "lpr_router",
       sourceProviderId: "JuggleRouter",
@@ -558,7 +571,6 @@ describe("managed JuggleRouter import", () => {
       metadataVersion: CLOUD_PROVIDER_METADATA_VERSION,
       organizationId: null,
       gatewayMirror: null,
-      providerConfigFingerprint: expect.any(String),
     });
   });
 

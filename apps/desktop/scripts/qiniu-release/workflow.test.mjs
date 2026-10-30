@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { CANARY_SCHEMA, EXPECTED_BUNDLE_ID, EXPECTED_TEAM_ID, LOCAL_VERIFICATION_SCHEMA, assertRecordedPromotion, createEvidence, withEvidenceResults } from "./evidence.mjs";
@@ -289,8 +290,9 @@ test("promotion revalidates lock ownership immediately before channel overwrite"
   assert.equal(qiniu.state.has("jugglework/releases/locks/stable-mac.lock"), true);
 });
 
-test("approved predecessor digest rejects wrong or absent channels before lock acquisition", async () => {
-  const plan = fixturePlan("1.2.31");
+for (const version of ["1.2.31", "1.2.32"]) {
+test(`${version} approved predecessor digest rejects wrong or absent channels before lock acquisition`, async () => {
+  const plan = fixturePlan(version);
   for (const predecessor of [null, Buffer.from("version: unexpected\n")]) {
     const qiniu = createFakeQiniu();
     qiniu.readContent = async () => predecessor;
@@ -309,8 +311,8 @@ test("approved predecessor digest rejects wrong or absent channels before lock a
   }
 });
 
-test("approved predecessor preserves lock race checks and records the approved digest", async () => {
-  const plan = fixturePlan("1.2.31");
+test(`${version} approved predecessor preserves lock race checks and records the approved digest`, async () => {
+  const plan = fixturePlan(version);
   const previous = Buffer.from("version: 1.2.30\n");
   const digest = metadataForBuffer(previous, "latest-mac.yml").sha256;
   for (const race of [false, true]) {
@@ -328,6 +330,12 @@ test("approved predecessor preserves lock race checks and records the approved d
     assert.equal(lock.expectedPreviousChannelDigest, digest);
     assert.equal(qiniu.calls.some(([method, key]) => method === "uploadContent" && key === plan.channelManifest.key), !race);
   }
+});
+}
+
+test("production scheduler serializes channel/platform publishers without cancellation", async () => {
+  const workflow = await readFile(new URL("../../../../.github/workflows/qiniu-desktop-release.yml", import.meta.url), "utf8");
+  assert.match(workflow, /^concurrency:\s*\n  group: qiniu-desktop-release-\$\{\{ inputs\.channel \}\}-\$\{\{ inputs\.platform \}\}\s*\n  cancel-in-progress: false\s*$/m);
 });
 
 test("records the narrowly scoped notarization exception in promotion output", async () => {
@@ -557,7 +565,7 @@ test("promotion fails before Qiniu calls when cache metadata management is unava
   assert.deepEqual(qiniu.calls, []);
 });
 
-for (const version of ["1.2.27", "1.2.28", "1.2.29", "1.2.30", "1.2.31"]) {
+for (const version of ["1.2.27", "1.2.28", "1.2.29", "1.2.30", "1.2.31", "1.2.32"]) {
   test(`${version} metadata-only exception refreshes and reads back under lock without metadata calls`, async () => {
     const plan = fixturePlan(version);
     const qiniu = createFakeQiniu(new Map([...plan.objects, plan.manifest].map((item) => [item.key, { size: item.size, etag: item.etag }])));
@@ -609,7 +617,7 @@ for (const version of ["1.2.27", "1.2.28", "1.2.29", "1.2.30", "1.2.31"]) {
   });
 }
 
-for (const version of ["1.2.30", "1.2.31"]) {
+for (const version of ["1.2.30", "1.2.31", "1.2.32"]) {
   test(`${version} scoped exceptions preserve immutable, lock, race, and channel metadata gates`, async () => {
     const plan = fixturePlan(version);
     const evidence = verifiedEvidence(plan);
@@ -657,14 +665,15 @@ for (const version of ["1.2.30", "1.2.31"]) {
   });
 }
 
+for (const version of ["1.2.31", "1.2.32"]) {
 for (const mode of ["pre-canary", "metadata-only", "both"]) {
-  test(`1.2.31 ${mode} exception preserves independent gates and records exact scoped evidence before unlock`, async () => {
-    const plan = fixturePlan("1.2.31");
+  test(`${version} ${mode} exception preserves independent gates and records exact scoped evidence before unlock`, async () => {
+    const plan = fixturePlan(version);
     const evidence = verifiedEvidence(plan);
     if (mode !== "metadata-only") evidence.canary = null;
     const options = {
-      ...(mode !== "metadata-only" ? { preCanaryExceptionReason: "Operator authorized stable macOS arm64 1.2.31 without a real-client canary" } : {}),
-      ...(mode !== "pre-canary" ? { metadataExceptionReason: "Operator authorized stable macOS arm64 1.2.31 to skip only Qiniu Cache-Control metadata" } : {}),
+      ...(mode !== "metadata-only" ? { preCanaryExceptionReason: `Operator authorized stable macOS arm64 ${version} without a real-client canary` } : {}),
+      ...(mode !== "pre-canary" ? { metadataExceptionReason: `Operator authorized stable macOS arm64 ${version} to skip only Qiniu Cache-Control metadata` } : {}),
     };
     const initial = new Map([...plan.objects, plan.manifest].map((item) => [item.key, { size: item.size, etag: item.etag }]));
     const lockKey = "jugglework/releases/locks/stable-mac.lock";
@@ -679,7 +688,7 @@ for (const mode of ["pre-canary", "metadata-only", "both"]) {
           expectedSize, attempts: 1,
           fetchImpl: async () => {
             assert.equal(refreshed, true);
-            const body = failure === "public-digest" ? plan.manifest.content.replace("1.2.31", "1.2.30") : plan.manifest.content;
+            const body = failure === "public-digest" ? plan.manifest.content.replace(version, "1.2.30") : plan.manifest.content;
             return new Response(body, { headers: { "content-length": String(expectedSize + (failure === "public-size" ? 1 : 0)) } });
           },
         }),
@@ -690,9 +699,9 @@ for (const mode of ["pre-canary", "metadata-only", "both"]) {
           } } });
           assertRecordedPromotion(plan, recorded);
           assert.deepEqual(verified.preCanaryException, options.preCanaryExceptionReason
-            ? { scope: "stable-1.2.31-only", reason: options.preCanaryExceptionReason } : null);
+            ? { scope: `stable-${version}-only`, reason: options.preCanaryExceptionReason } : null);
           assert.deepEqual(verified.metadataException, options.metadataExceptionReason
-            ? { scope: "stable-1.2.31-only", reason: options.metadataExceptionReason } : undefined);
+            ? { scope: `stable-${version}-only`, reason: options.metadataExceptionReason } : undefined);
           assert.equal(verified.notarizationException, null);
           assert.equal(verified.cacheException, undefined);
           if (failure === "durable-evidence") throw new Error("evidence persistence failed");
@@ -708,8 +717,8 @@ for (const mode of ["pre-canary", "metadata-only", "both"]) {
   });
 }
 
-test("1.2.31 needs an audited pre-canary reason and never masks an explicit failed or mismatched canary", async () => {
-  const plan = fixturePlan("1.2.31");
+test(`${version} needs an audited pre-canary reason and never masks an explicit failed or mismatched canary`, async () => {
+  const plan = fixturePlan(version);
   for (const canary of [null, { ...verifiedEvidence(plan).canary, result: "failed" }, { ...verifiedEvidence(plan).canary, manifestSha256: "wrong" }]) {
     const evidence = verifiedEvidence(plan);
     evidence.canary = canary;
@@ -722,16 +731,17 @@ test("1.2.31 needs an audited pre-canary reason and never masks an explicit fail
     }
   }
 });
+}
 
-for (const version of ["1.2.31", "1.2.32"]) {
+for (const version of ["1.2.31", "1.2.32", "1.2.33"]) {
   test(`${version} unauthorized exceptions fail before any Qiniu call`, async () => {
     const plan = fixturePlan(version);
     const evidence = verifiedEvidence(plan);
     for (const options of [
-      ...(version === "1.2.32" ? [{ preCanaryExceptionReason: "Operator authorized skipping the real-client canary" }] : []),
+      ...(version === "1.2.33" ? [{ preCanaryExceptionReason: "Operator authorized skipping the real-client canary" }] : []),
       { notarizationExceptionReason: "Operator authorized skipping Apple notarization" },
       { cacheExceptionReason: "Operator authorized skipping cache convergence" },
-      ...(version === "1.2.32" ? [{ metadataExceptionReason: "Operator authorized skipping only Qiniu cache metadata verification" }] : []),
+      ...(version === "1.2.33" ? [{ metadataExceptionReason: "Operator authorized skipping only Qiniu cache metadata verification" }] : []),
     ]) {
       const qiniu = createFakeQiniu();
       await assert.rejects(promoteChannel(plan, evidence, { ...options, qiniu }), /exception is restricted/);
