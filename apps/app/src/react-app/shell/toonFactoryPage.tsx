@@ -7,6 +7,7 @@ import {
   toonFactoryLayout,
   toonFactoryOpen,
   toonFactoryOpenProject,
+  toonFactoryAuthorizeProject,
   toonFactoryProjectState,
   toonFactoryRemoveProject,
   toonFactoryRenameProject,
@@ -46,6 +47,7 @@ export function ToonFactoryPage(props: {
   const [currentDirectory, setCurrentDirectory] = useState<string | null>(null);
   const [projectBusy, setProjectBusy] = useState(false);
   const [projectDialogOpen, setProjectDialogOpen] = useState(false);
+  const [reauthorizeDirectory, setReauthorizeDirectory] = useState<string | null>(null);
   const [hostOverlaySnapshot, setHostOverlaySnapshot] = useState("");
   const [blockingOverlayOpen, setBlockingOverlayOpen] = useState(false);
   const snapshotRequest = useRef(0);
@@ -75,7 +77,23 @@ export function ToonFactoryPage(props: {
       if (!active) return;
       applyProjectState(state);
       setReady(true);
-    }).catch((error) => { if (active) setError(errorMessage(error)); });
+    }).catch(async (error) => {
+      if (!active) return;
+      if (errorMessage(error).includes("[DIRECTORY_GRANT_REQUIRED]")) {
+        try {
+          const state = await toonFactoryProjectState();
+          if (!active) return;
+          if (state.currentDirectory) {
+            applyProjectState(state);
+            setReauthorizeDirectory(state.currentDirectory);
+            setProjectDialogOpen(true);
+            setReady(true);
+            return;
+          }
+        } catch {}
+      }
+      if (active) setError(errorMessage(error));
+    });
     const timer = window.setInterval(() => {
       void toonFactoryStatus().then((status) => { if (active && status.error) { setReady(false); setError(status.error); } }).catch(() => {});
     }, 2000);
@@ -97,6 +115,11 @@ export function ToonFactoryPage(props: {
       applyProjectState(result);
       return true;
     } catch (projectError) {
+      if (errorMessage(projectError).includes("[DIRECTORY_GRANT_REQUIRED]")) {
+        setReauthorizeDirectory(directory);
+        setProjectDialogOpen(true);
+        return false;
+      }
       toast.error(errorMessage(projectError));
       return false;
     } finally {
@@ -107,17 +130,22 @@ export function ToonFactoryPage(props: {
     if (projectBusy) return;
     setProjectBusy(true);
     try {
-      const result = await toonFactoryChooseProject();
+      const result = reauthorizeDirectory
+        ? await toonFactoryAuthorizeProject(reauthorizeDirectory)
+        : await toonFactoryChooseProject();
       if (!result) return;
       applyProjectState(result);
-      toast.success(result.mode === "imported" ? "已导入漫剧项目" : "已新建漫剧项目");
+      toast.success(reauthorizeDirectory
+        ? "已重新授权并打开项目"
+        : result.mode === "imported" ? "已导入漫剧项目" : "已新建漫剧项目");
       setProjectDialogOpen(false);
+      setReauthorizeDirectory(null);
     } catch (projectError) {
       toast.error(errorMessage(projectError));
     } finally {
       setProjectBusy(false);
     }
-  }, [applyProjectState, projectBusy]);
+  }, [applyProjectState, projectBusy, reauthorizeDirectory]);
   const renameProject = useCallback(async (directory: string, name: string) => {
     if (projectBusy) return false;
     setProjectBusy(true);
@@ -159,7 +187,7 @@ export function ToonFactoryPage(props: {
     onRenameProject: renameProject,
     onRevealProject: revealProject,
     onRemoveProject: removeProject,
-    onRequestCreate: () => setProjectDialogOpen(true),
+    onRequestCreate: () => { setReauthorizeDirectory(null); setProjectDialogOpen(true); },
   }), [currentDirectory, openProject, projectBusy, projects, removeProject, renameProject, revealProject]);
   usePublishToonFactorySidebar(sidebarRegistration);
   useEffect(() => {
@@ -289,7 +317,10 @@ export function ToonFactoryPage(props: {
           </main>
         </div>
       </AppInsetSurface>
-      <ToonFactoryProjectDialog open={projectDialogOpen} busy={projectBusy} onOpenChange={setProjectDialogOpen} onChooseFolder={() => { void chooseProjectFolder(); }} />
+      <ToonFactoryProjectDialog open={projectDialogOpen} busy={projectBusy} reauthorizeDirectory={reauthorizeDirectory} onOpenChange={open => {
+        setProjectDialogOpen(open);
+        if (!open) setReauthorizeDirectory(null);
+      }} onChooseFolder={() => { void chooseProjectFolder(); }} />
     </div>
   );
 }

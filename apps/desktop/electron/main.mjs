@@ -1,3 +1,4 @@
+import "./socket-tos-compat.mjs";
 import { createToonFactoryRuntime } from "./toonFactoryRuntime.mjs";
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -1451,7 +1452,14 @@ const toonFactoryRuntime = createToonFactoryRuntime({
   moduleRoot: app.isPackaged ? path.join(process.resourcesPath, "toonFactoryV2") : path.resolve(__dirname, "../resources/toonFactoryV2"),
 });
 const runtimeIpcHandlers = createRuntimeIpcHandlers(runtimeManager);
-const fileHostClient = createManagedRuntimeClient({ getAccess: () => runtimeManager.managedServerAccess(), fetcher: nodeFetch, timeoutMs: 60_000 });
+const fileHostClient = createManagedRuntimeClient({
+  getAccess: () => runtimeManager.managedServerAccess(),
+  getHostAccess: async () => {
+    const info = await runtimeManager.juggleworkServerInfo();
+    return info?.running ? { baseUrl: info.baseUrl, hostToken: info.hostToken } : null;
+  },
+  fetcher: nodeFetch, timeoutMs: 60_000,
+});
 const fileEditor = createFileEditor({
   client: fileHostClient,
   getWindows: () => [mainWindow, ...fileWindows.windows()].filter(Boolean),
@@ -2319,6 +2327,10 @@ const desktopCommandHandlers = {
   "toonFactoryOpenProject": async (event, ...args) => {
     if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error("仅主窗口可打开漫剧项目");
     return toonFactoryRuntime.openProject(args[0]);
+  },
+  "toonFactoryAuthorizeProject": async (event, ...args) => {
+    if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error("仅主窗口可授权漫剧项目");
+    return toonFactoryRuntime.authorizeProject(args[0]);
   },
   "toonFactoryRenameProject": async (event, ...args) => {
     if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error("仅主窗口可重命名漫剧项目");

@@ -3,6 +3,7 @@ import type { FilePartInput, TextPartInput } from "@opencode-ai/sdk/v2/client";
 import type { ComposerAttachment } from "../../../../app/types";
 import { joinWorkspaceRelativePath, toFileUrl } from "./prompt-file-parts";
 import {
+  attachmentModelMime,
   DOCX_MIME,
   extensionFromFilename,
   isOfficeMime,
@@ -197,7 +198,7 @@ async function uploadedAttachmentFilePart(item: UploadedChatAttachment): Promise
     type: "file",
     url: item.url,
     filename: item.filename,
-    mime: item.mime,
+    mime: attachmentModelMime(item.mime),
   };
 }
 
@@ -288,10 +289,11 @@ export async function materializeGenerationSourceImage(input: {
 
 export async function composerAttachmentToFilePart(attachment: ComposerAttachment): Promise<FilePartInput> {
   const metadata = resolveAttachmentFileMetadata(attachment.file);
+  const mime = attachmentModelMime(metadata.mime);
   return {
     type: "file",
-    url: await fileToDataUrl(attachment.file, metadata.mime),
+    url: await fileToDataUrl(attachment.file, mime),
     filename: metadata.filename,
-    mime: metadata.mime,
+    mime,
   };
 }

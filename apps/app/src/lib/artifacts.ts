@@ -12,6 +12,7 @@ import { generatedVideoJobFromToolPart } from "@/components/chat/generated-video
 import { useOpenTargets } from "@/lib/target-provider";
 import { deriveOpenTargets, extractFilePathsFromText, isCollectibleArtifactTarget, isOpenableFileTarget, type OpenTarget, type OpenTargetPreview } from "@/react-app/domains/session/artifacts/open-target";
 import { resolveFileReference } from "@/lib/file-references";
+import { parseUnifiedDiff } from "@/react-app/domains/session/files/parse-unified-diff";
 
 export type ArtifactType = "website" | "markdown" | "sheet" | "slides" | "document" | "image" | "video" | "audio" | "pdf" | "html" | "text" | "unknown";
 
@@ -25,7 +26,97 @@ export type ArtifactItem = {
   updatedAt?: number
   sizeBytes?: number
   hasSuccessfulWrite?: boolean
+  change?: { additions: number; deletions: number; patch: string; source?: "snapshot" | "edits" }
   legacy_target: OpenTarget
+}
+
+function changeRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+}
+
+function changeCount(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+}
+
+/** Use turn snapshots, falling back to this turn's successful edit records only. */
+export function artifactsWithTurnDiffs(artifacts: ArtifactItem[], message?: UIMessage, toolMessages: UIMessage[] = [], workspaceRoot = ""): ArtifactItem[] {
+  const metadata = message?.metadata as { opencode?: { fileDiffs?: unknown } } | undefined;
+  const summaryDiffs = metadata?.opencode?.fileDiffs;
+  const root = normalizeArtifactPath(workspaceRoot).replace(/\/$/, "");
+  const relativePath = (path: string) => {
+    const normalized = normalizeArtifactPath(path);
+    return root && normalized.startsWith(`${root}/`) ? normalized.slice(root.length + 1) : normalized;
+  };
+  type RecordedChange = { file: string; patch: string; additions: number; deletions: number; status?: string; source: "snapshot" | "edits" };
+  const fallback = new Map<string, RecordedChange>();
+  const seen = new Set<string>();
+  for (const message of toolMessages) for (const part of message.parts) {
+    if (part.type !== "dynamic-tool" || part.state !== "output-available" || !["edit", "write", "apply_patch"].includes(part.toolName) || seen.has(part.toolCallId)) continue;
+    seen.add(part.toolCallId);
+    const tool = changeRecord(part.callProviderMetadata?.opencode?.toolMetadata);
+    if (!tool) continue;
+    const input = changeRecord(part.input);
+    const files = Array.isArray(tool.files) ? tool.files : tool.filediff ? [tool.filediff] :
+      typeof tool.diff === "string" && typeof input?.filePath === "string" ? [{ file: input.filePath, patch: tool.diff }] : [];
+    for (const value of files) {
+      const file = changeRecord(value);
+      if (!file) continue;
+      const rawPath = file.movePath || file.filePath || file.file || file.relativePath;
+      if (typeof rawPath !== "string") continue;
+      const path = relativePath(rawPath);
+      // Remove each record's file headers before concatenating hunks. Otherwise
+      // later ---/+++ headers would be rendered and counted as edited lines.
+      const rawPatch = typeof file.patch === "string" ? file.patch : "";
+      const hunkStart = rawPatch.search(/^@@ /m);
+      const patch = hunkStart >= 0 ? rawPatch.slice(hunkStart) : rawPatch;
+      const lines = parseUnifiedDiff(patch).flatMap((hunk) => hunk.lines);
+      const additions = changeCount(file.additions) ?? lines.filter((line) => line.kind === "add").length;
+      const deletions = changeCount(file.deletions) ?? lines.filter((line) => line.kind === "del").length;
+      const previous = fallback.get(path);
+      fallback.set(path, { file: path, patch: [previous?.patch, patch].filter(Boolean).join("\n"), additions: (previous?.additions ?? 0) + additions, deletions: (previous?.deletions ?? 0) + deletions, status: file.type === "delete" || file.status === "deleted" ? "deleted" : "modified", source: "edits" });
+    }
+  }
+  // Authoritative turn snapshots override per-edit totals, including explicit zero changes.
+  const diffs = new Map<string, RecordedChange>(fallback);
+  if (Array.isArray(summaryDiffs)) for (const value of summaryDiffs) {
+    const diff = changeRecord(value);
+    if (typeof diff?.file !== "string") continue;
+    const additions = changeCount(diff.additions), deletions = changeCount(diff.deletions);
+    if (additions === undefined || deletions === undefined) continue;
+    const path = relativePath(diff.file);
+    diffs.set(path, { file: path, patch: typeof diff.patch === "string" ? diff.patch : "", additions, deletions, status: typeof diff.status === "string" ? diff.status : undefined, source: "snapshot" });
+  }
+  const result = new Map(artifacts.map((item) => {
+    const path = relativePath(item.path);
+    return [path, path === item.path ? item : { ...item, path }];
+  }));
+  for (const diff of diffs.values()) {
+    if (!diff || typeof diff.file !== "string" || !diff.file.trim()) continue;
+    const path = normalizeArtifactPath(diff.file);
+    const previous = result.get(path);
+    const type = getArtifactType(path);
+    const name = getArtifactName(path);
+    const patch = typeof diff.patch === "string" ? diff.patch : "";
+    // A binary/unknown diff is not a zero-line text change.
+    const change = (patch || diff.additions > 0 || diff.deletions > 0) && !/Binary files .* differ|GIT binary patch/.test(patch)
+      && Number.isSafeInteger(diff.additions) && diff.additions >= 0
+      && Number.isSafeInteger(diff.deletions) && diff.deletions >= 0
+      ? { additions: diff.additions, deletions: diff.deletions, patch, source: diff.source } : undefined;
+    result.set(path, {
+      ...(previous ?? {
+        id: `turn-diff:${message?.id}:${path}`, name, path, type,
+        messageId: message?.id ?? "", messageIndex: -1, hasSuccessfulWrite: true,
+        legacy_target: {
+          id: `file:${path}`, kind: "file", value: path, name,
+          preview: artifactTypeToPreview(type), confidence: 100, reason: "turn-diff",
+          exists: diff.status !== "deleted",
+        },
+      }),
+      ...(previous && diff.status === "deleted" ? { legacy_target: { ...previous.legacy_target, exists: false } } : {}),
+      change,
+    });
+  }
+  return [...result.values()];
 }
 
 /** 使用轮次快照显示名称和大小，使用文件当前身份打开，后续修改不覆写旧卡片。 */

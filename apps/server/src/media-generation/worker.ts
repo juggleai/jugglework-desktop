@@ -7,6 +7,7 @@ export class MediaGenerationWorker {
   private active: Promise<void> | null = null;
   private stopped = true;
   private readonly controllers = new Set<AbortController>();
+  private readonly pollFailures = new Map<string, number>();
   constructor(private readonly options: {
     repository: MediaGenerationRepository;
     resolveAdapters: (workspaceId: string) => Promise<VideoGenerationAdapter[]>;
@@ -15,6 +16,8 @@ export class MediaGenerationWorker {
     maxOutputBytes?: number;
     maxMissingAdapterAttempts?: number;
     missingAdapterBackoff?: (attempts: number) => number;
+    maxPollFailures?: number;
+    pollFailureBackoff?: (attempts: number) => number;
   }) {}
   start() { if (!this.stopped) return; this.stopped = false; this.schedule(0); }
   wake() { if (!this.stopped) this.schedule(0); }
@@ -76,6 +79,7 @@ export class MediaGenerationWorker {
     const controller = new AbortController();
     this.controllers.add(controller);
     const timeout = setTimeout(() => controller.abort(), 30_000);
+    let inspecting = false;
     try {
       if (job.status === "cancel_requested") {
         if (adapter.cancel) await adapter.cancel(job.providerJobId, controller.signal);
@@ -89,7 +93,10 @@ export class MediaGenerationWorker {
       }
       const latest = this.options.repository.get(job.id);
       if (!latest || !latest.providerJobId) return;
+      inspecting = true;
       const state = await adapter.inspect(latest.providerJobId, controller.signal);
+      inspecting = false;
+      this.pollFailures.delete(job.id);
       if (state.status === "submitted" || state.status === "running") {
         this.options.repository.transition(latest.id, latest.revision, state.status, { progress: state.progress, incrementPollAttempts: true, nextPollAt: Date.now() + backoff(latest.pollAttempts) });
       } else if (state.status === "cancelled") {
@@ -107,6 +114,19 @@ export class MediaGenerationWorker {
     } catch (error) {
       const latest = this.options.repository.get(job.id);
       if (latest && !["completed", "failed", "cancelled", "submission_unknown"].includes(latest.status)) {
+        if (inspecting) {
+          const failures = (this.pollFailures.get(job.id) ?? 0) + 1;
+          if (failures < (this.options.maxPollFailures ?? 5)) {
+            this.pollFailures.set(job.id, failures);
+            this.options.repository.transition(latest.id, latest.revision, latest.status, {
+              incrementPollAttempts: true,
+              nextPollAt: Date.now() + (this.options.pollFailureBackoff ?? backoff)(failures - 1),
+              error: { code: "video_status_retrying", message: "视频状态暂时无法确认，正在继续查询，请勿重新生成。", retryable: true },
+            });
+            return;
+          }
+        }
+        this.pollFailures.delete(job.id);
         this.options.repository.transition(latest.id, latest.revision, "failed", { error: { code: "video_reconciliation_failed", message: error instanceof Error ? error.message.slice(0, 500) : "Video reconciliation failed.", retryable: true } });
       }
     } finally { clearTimeout(timeout); this.controllers.delete(controller); }

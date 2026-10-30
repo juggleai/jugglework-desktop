@@ -11,6 +11,7 @@ import {
 import type { ResponseLanguage } from "@jugglework/types/response-language";
 
 import { desktopFetch } from "./desktop";
+import { sessionIntentTransport } from "./session-create-intent";
 import {
   createJuggleWorkServerClient,
   JuggleWorkServerError,
@@ -514,7 +515,7 @@ export function unwrap<T>(result: FieldsResult<T>): NonNullable<T> {
   throw new Error(message || "Unknown error");
 }
 
-export function createClient(baseUrl: string, directory?: string, auth?: OpencodeAuth) {
+export function createClient(baseUrl: string, directory?: string, auth?: OpencodeAuth, options?: { onEventConnected?: () => void }) {
   const headers: Record<string, string> = {};
   if (!isDesktopRuntime()) {
     const authHeader = resolveAuthHeader(auth);
@@ -523,15 +524,27 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
     }
   }
 
-  const fetchImpl = isDesktopRuntime()
+  const transportFetch = isDesktopRuntime()
     ? createDesktopFetch(auth)
     : (input: RequestInfo | URL, init?: RequestInit) =>
         fetchWithTimeout(globalThis.fetch, input, init, DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS);
+  const fetchImpl: typeof transportFetch = auth?.mode === "jugglework"
+    ? (input, init) => {
+        const request = new Request(input, init);
+        const authorization = resolveAuthHeader(auth);
+        if (authorization && !request.headers.has("Authorization")) request.headers.set("Authorization", authorization);
+        return sessionIntentTransport(request, (next) => transportFetch(next));
+      }
+    : transportFetch;
   const client = createOpencodeClient({
     baseUrl,
     directory,
     headers: Object.keys(headers).length ? headers : undefined,
-    fetch: fetchImpl,
+    fetch: options?.onEventConnected ? async (input, init) => {
+      const response = await fetchImpl(input, init);
+      if (/\/event(?:\?|$)/.test(getRequestUrl(input)) && response.ok && response.body) options.onEventConnected?.();
+      return response;
+    } : fetchImpl,
   });
 
   const session = client.session as typeof client.session;

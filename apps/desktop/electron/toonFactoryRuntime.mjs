@@ -238,6 +238,7 @@ export function createToonFactoryRuntime({ app, getWindow, getAccess, moduleRoot
   let idleTimer = null;
   const saveTargets = new Map();
   let directoryGrants = new Map();
+  let approvedProjectDirectory = null;
   const enteredWorkspaceIds = new Set();
   const state = () => ({ running: Boolean(ready && child && child.exitCode === null && origin && !failure), workspaceId, error: failure });
   function cancelIdleClose() {
@@ -272,7 +273,10 @@ export function createToonFactoryRuntime({ app, getWindow, getAccess, moduleRoot
   async function native(command, args) {
     const window = getWindow();
     if (command === "selectDirectory") {
-      const selected = (await dialog.showOpenDialog(window, { properties: ["openDirectory", "createDirectory"] })).filePaths[0];
+      // A host-confirmed project authorization reuses the sidecar's normal grant flow once.
+      const approved = approvedProjectDirectory;
+      approvedProjectDirectory = null;
+      const selected = approved ?? (await dialog.showOpenDialog(window, { properties: ["openDirectory", "createDirectory"] })).filePaths[0];
       if (!selected) return null;
       const canonical = await realpath(selected);
       if (!(await stat(canonical)).isDirectory()) throw new Error("工作目录授权必须是文件夹");
@@ -339,7 +343,15 @@ export function createToonFactoryRuntime({ app, getWindow, getAccess, moduleRoot
     const source = `(async () => {
       const bridge = globalThis.__TOONFLOW_JUGGLEWORK_HOST__;
       if (!bridge || typeof bridge[${JSON.stringify(method)}] !== "function") throw new Error("漫剧项目桥接尚未就绪");
-      return bridge[${JSON.stringify(method)}](...${JSON.stringify(args)});
+      try {
+        return await bridge[${JSON.stringify(method)}](...${JSON.stringify(args)});
+      } catch (error) {
+        // Electron only preserves the message when a page error crosses IPC.
+        if (error?.response?.status === 403 && error.response.data?.data?.code === "DIRECTORY_GRANT_REQUIRED") {
+          throw new Error("[DIRECTORY_GRANT_REQUIRED] 项目文件夹需要重新授权，请点击授权并打开。");
+        }
+        throw error;
+      }
     })()`;
     return view.webContents.executeJavaScript(source, true);
   }
@@ -528,6 +540,19 @@ export function createToonFactoryRuntime({ app, getWindow, getAccess, moduleRoot
       const target = typeof directory === "string" ? directory.trim() : "";
       if (!target || target.length > 4096) return Promise.reject(new Error("漫剧项目目录无效"));
       return enqueue(() => callPage("openProject", [target]));
+    },
+    authorizeProject(directory) {
+      const target = typeof directory === "string" ? directory.trim() : "";
+      if (!target || target.length > 4096 || !path.isAbsolute(target)) return Promise.reject(new Error("漫剧项目目录无效"));
+      return enqueue(async () => {
+        const projectState = await callPage("getProjectState");
+        if (!projectState.projects.some(project => project.directory === target)) throw new Error("请从漫剧项目列表中选择需要授权的项目");
+        const canonical = await realpath(target).catch(() => { throw new Error("项目文件夹不存在，请确认文件夹未被移动或删除"); });
+        if (!(await stat(canonical)).isDirectory()) throw new Error("漫剧项目路径必须是文件夹");
+        approvedProjectDirectory = canonical;
+        try { return await callPage("chooseProject"); }
+        finally { approvedProjectDirectory = null; }
+      });
     },
     renameProject(directory, name) {
       const target = typeof directory === "string" ? directory.trim() : "";

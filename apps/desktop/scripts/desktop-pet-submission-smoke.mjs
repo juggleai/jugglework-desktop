@@ -14,7 +14,7 @@ let pet;
 const assertions = {};
 const A = { key: "p:a", workspaceId: "p", sessionId: "a", project: "project", title: "Old A" };
 const B = { ...A, key: "p:b", sessionId: "b", title: "Latest B" };
-let latestCount = 0, replyLatest, replySend, replySendError, sent = [];
+let latestCount = 0, replyLatest, replySend, replySendQueued, replySendError, replyOrdinaryError, sent = [];
 const originalSend = main.webContents.send.bind(main.webContents);
 main.webContents.send = (channel, payload) => {
   if (channel !== "jugglework:pet:host-action") return originalSend(channel, payload);
@@ -22,14 +22,23 @@ main.webContents.send = (channel, payload) => {
   const action = payload.action;
   if (action.type === "latest") { latestCount++; if (latestCount === 2) replyLatest = () => reply({ target: B }); else reply({ target: latestCount === 1 ? A : B }); }
   else if (action.type === "send") {
-    sent.push(action); replySend = () => reply({ delivery: "sent" });
+    sent.push(action); replySend = (extra = {}) => reply({ delivery: "sent", ...extra });
+    replySendQueued = () => reply({ delivery: "queued" });
+    replyOrdinaryError = () => ipcMain.emit("jugglework:pet:host-reply", { sender:main.webContents }, { requestId:payload.requestId, error:"隔离测试：提交失败" });
     replySendError = () => ipcMain.emit("jugglework:pet:host-reply", { sender:main.webContents }, { requestId:payload.requestId, error:"发送结果待确认，请核对原任务" });
   }
   else if (action.type === "sessions") reply({ targets:[A,B] });
+  else if (action.type === "capabilities") reply({ capabilities: (action.scope === "basic" ? [
+    { id:"extension:test", group:"plugins", kind:"extension", name:"Test plugin" },
+    { id:"skill:test", group:"skills", kind:"skill", name:"Test skill" },
+  ] : [{ id:"mcp:test", group:"mcp", kind:"mcp", name:"Test MCP" }]) });
   else reply({});
 };
 const pause = () => new Promise(resolve => setTimeout(resolve, 30));
-const evaluate = (code) => pet.webContents.executeJavaScript(code);
+const evaluate = async (code) => {
+  try { return await pet.webContents.executeJavaScript(code); }
+  catch (error) { throw new Error(`${error.message}\nUI expression: ${code}`); }
+};
 const wait = async (predicate) => { const until = Date.now() + 6000; while(Date.now() < until) { if (await predicate()) return; await pause(); } throw new Error("timeout"); };
 const uiWait = (code) => wait(() => evaluate(code));
 const field = '.pet-composer textarea';
@@ -41,7 +50,23 @@ try {
   ipcMain.emit("jugglework:pet:publish", { sender:main.webContents }, { contextKey:"review", ready:true, syncing:false, partial:false, tasks:[], locale:"en", theme:"light", editing:false, voicePhase:"idle" });
   await uiWait('Boolean(document.querySelector(".pet-character"))');
   await open(); await uiWait('document.querySelector(".pet-target").textContent.includes("Old A")');
-  await draft("initial"); await send(); replySend(); await uiWait('Boolean(document.querySelector(".pet-tools"))');
+  await draft("initial"); await send();
+  const acceptedTask = { ...A, turnKey: "", state: "running", statusText: "Starting your chat", canStop: true };
+  replySend({ task: acceptedTask });
+  await uiWait('!document.querySelector(".pet-composer") && document.querySelector(".pet-task-panel")?.dataset.visible === "true" && document.querySelector(".pet-card")?.textContent.includes("Starting your chat")');
+  assertions.quickSendImmediatelyRevealsAcceptedTask = await evaluate('document.querySelector(".pet-task-panel").dataset.folded === "false" && document.querySelector(".pet-card").dataset.taskKey === "p:a"');
+  ipcMain.emit("jugglework:pet:publish", { sender:main.webContents }, { contextKey:"review",ready:true,syncing:false,partial:false,tasks:[{...acceptedTask,statusText:"Executing command"}],locale:"en",theme:"light",voicePhase:"idle" });
+  await uiWait('document.querySelector(".pet-card")?.textContent.includes("Executing command")');
+  assertions.revealedTaskUsesLiveProgress = await evaluate('document.querySelectorAll(".pet-card").length === 1');
+  await evaluate('document.querySelectorAll(".pet-tools button")[2].click()');
+  ipcMain.emit("jugglework:pet:publish", { sender:main.webContents }, { contextKey:"review",ready:true,syncing:false,partial:false,tasks:[{...B,turnKey:"newer",state:"running",statusText:"Working",canStop:true},acceptedTask],locale:"en",theme:"light",voicePhase:"idle" });
+  await evaluate('document.querySelectorAll(".pet-tools button")[2].click()');
+  await uiWait('document.querySelectorAll(".pet-card").length === 2');
+  assertions.reopeningRestoresHostTaskOrder = await evaluate('document.querySelector(".pet-card").dataset.taskKey === "p:b"');
+  await evaluate('document.querySelectorAll(".pet-tools button")[2].click()');
+  ipcMain.emit("jugglework:pet:publish", { sender:main.webContents }, { contextKey:"review",ready:true,syncing:false,partial:false,tasks:[],locale:"en",theme:"light",voicePhase:"idle" });
+  await uiWait('!document.querySelector(".pet-card")');
+  assertions.revealedTaskDoesNotOutliveHostRemoval = true;
   assertions.successDoesNotLeaveConfirmationMessage = await evaluate('!document.querySelector(".pet-message")');
   await open(); await wait(()=>Boolean(replyLatest)); await draft("while latest is loading");
   const beforeLoadingSend = sent.length;
@@ -54,7 +79,49 @@ try {
   replySend(); await uiWait('Boolean(document.querySelector(".pet-tools"))');
 
   await open(); await uiWait('document.querySelector(".pet-target").textContent.includes("Latest B")');
-  await draft("submitted text"); await send(); await draft("new unsent text typed during request"); replySend();
+  await draft('capability draft');
+  await evaluate('document.querySelector(".pet-input-plus").click()');
+  await uiWait('document.querySelectorAll(".pet-capability-option").length===3');
+  await evaluate('[...document.querySelectorAll(".pet-capability-option")].find(button => button.textContent.includes("Test skill")).click()');
+  await uiWait('document.querySelector(".pet-selected-capabilities")?.textContent.includes("Test skill")');
+  await send();
+  assertions.capabilitySentToSelectedTarget = sent.at(-1).target.key===B.key && sent.at(-1).capabilities?.[0]?.id==="skill:test" && sent.at(-1).text==="capability draft";
+  replySend(); await uiWait('Boolean(document.querySelector(".pet-tools"))');
+
+  await open(); await uiWait('document.querySelector(".pet-target").textContent.includes("Latest B")');
+  await evaluate('document.querySelector(".pet-input-plus").click()');
+  await uiWait('document.querySelectorAll(".pet-capability-option").length===3');
+  await evaluate('[...document.querySelectorAll(".pet-capability-option")].find(button => button.textContent.includes("Test skill")).click()');
+  assertions.capabilityOnlyEnablesBlueSend = await evaluate('document.querySelector(".pet-composer textarea").value === "" && !document.querySelector(".pet-send").disabled && getComputedStyle(document.querySelector(".pet-send")).backgroundColor === "rgb(52, 127, 245)"');
+  await send();
+  assertions.capabilityOnlySubmitted = sent.at(-1).text === "" && sent.at(-1).capabilities?.[0]?.id === "skill:test";
+  replySend(); await uiWait('Boolean(document.querySelector(".pet-tools"))');
+
+  await open(); await uiWait('document.querySelector(".pet-target").textContent.includes("Latest B")');
+  await draft("queued draft"); await send(); replySendQueued();
+  await uiWait('document.querySelector(".pet-message")?.textContent.includes("Added to queue")');
+  assertions.queuedHintAppears = true;
+  const queuedAt = Date.now();
+  await uiWait('!document.querySelector(".pet-message")');
+  assertions.queuedHintExpires = Date.now() - queuedAt >= 2500;
+
+  await open(); await uiWait('document.querySelector(".pet-target").textContent.includes("Latest B")');
+  await draft("failed draft"); await send(); replyOrdinaryError();
+  await uiWait('document.querySelector(".pet-message")?.textContent.includes("提交失败")');
+  assertions.submitErrorKeepsDraft = await evaluate('document.querySelector(".pet-composer textarea").value === "failed draft"');
+  const errorAt = Date.now();
+  await new Promise(resolve => setTimeout(resolve, 1000));
+  await draft("queued after error"); await send(); replySendQueued();
+  await uiWait('document.querySelector(".pet-message")?.textContent.includes("Added to queue")');
+  const newerAt = Date.now();
+  await new Promise(resolve => setTimeout(resolve, 2200));
+  assertions.newFeedbackSurvivesPreviousTimeout = await evaluate('document.querySelector(".pet-message")?.textContent.includes("Added to queue")');
+  await uiWait('!document.querySelector(".pet-message")');
+  assertions.submitErrorHintExpires = newerAt - errorAt < 3000 && Date.now() - newerAt >= 2500;
+  if (await evaluate('Boolean(document.querySelector(".pet-composer textarea"))')) await evaluate('document.querySelector(".pet-composer textarea").dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }))');
+
+  await open(); await uiWait('document.querySelector(".pet-target").textContent.includes("Latest B")');
+   await draft("submitted text"); await send(); await draft("new unsent text typed during request"); replySend({ task: acceptedTask });
   await uiWait('!document.querySelector(".pet-send").disabled');
   const afterEditingDuringSend = await evaluate('window.__JUGGLEWORK_PET__.getState().then(s=>s.interaction)');
   assertions.acceptancePreservesNewDraft = afterEditingDuringSend.drafts.__quick__ === "new unsent text typed during request";
@@ -86,9 +153,7 @@ try {
   const showCards = async () => {
     controller.focus(); await uiWait('document.querySelector(".pet-tools")?.dataset.visible === "true"');
     await evaluate('document.querySelectorAll(".pet-tools button")[2].click()');
-    await uiWait('document.querySelector(".pet-card")');
-    await evaluate('document.querySelector(".pet-card").click()');
-    await uiWait('document.querySelectorAll(".pet-card").length===2');
+    await uiWait('document.querySelectorAll(".pet-card").length===2 && document.querySelector(".pet-task-panel")?.dataset.folded === "false"');
   };
   const cardDraft = (text) => evaluate(`(()=>{const e=document.querySelector('.pet-follow textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(e,${JSON.stringify(text)});e.dispatchEvent(new Event('input',{bubbles:true}));})()`);
   await showCards();
@@ -108,18 +173,19 @@ try {
   await evaluate('document.querySelector(".pet-composer textarea").dispatchEvent(new KeyboardEvent("keydown",{key:"Escape",bubbles:true}))');
   await showCards();
   await evaluate('document.querySelectorAll(".pet-card")[0].querySelector(".pet-card-actions button").click()');
-  await uiWait('document.querySelector(".pet-follow textarea")');await cardDraft('new card editor');quickReceipt();await pause();
+   await uiWait('document.querySelector(".pet-follow textarea")');await cardDraft('new card editor');quickReceipt({ task: acceptedTask });await pause();
   assertions.lateQuickReceiptKeepsTaskListAndCardEditor = await evaluate('document.querySelector(".pet-task-panel")?.dataset.visible === "true" && document.querySelector(".pet-follow textarea")?.value === "new card editor"');
   await cardDraft('unknown A');const previousUnknown=replySendError;
   await evaluate('document.querySelector(".pet-follow .pet-send").click()');await wait(()=>replySendError!==previousUnknown);replySendError();
   await uiWait('document.querySelector(".pet-follow .pet-send")?.disabled');
   await evaluate('document.querySelectorAll(".pet-tools button")[2].click()');await open();
-  await evaluate('document.querySelector(".pet-input-plus").click()');await uiWait('document.querySelectorAll(".pet-session-option").length===2');
+  await evaluate('document.querySelector(".pet-target").click()');await uiWait('document.querySelectorAll(".pet-workspace-toggle").length===1 && document.querySelectorAll(".pet-session-option").length===2');
   await evaluate('document.querySelector(".pet-session-option").click()');await draft('retry A');
   const beforeUnknownRetry=sent.length;
   assertions.unconfirmedCardAlsoDisablesQuickInput = await evaluate('document.querySelector(".pet-send").disabled');
   await evaluate('document.querySelector(".pet-composer textarea").dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",bubbles:true}))');await pause();
   assertions.unconfirmedTaskBlocksOtherEntryEnter = sent.length===beforeUnknownRetry;
+  await uiWait('Boolean(document.querySelector(".pet-message button"))');
   await evaluate('document.querySelector(".pet-message button").click()');
   await uiWait('!document.querySelector(".pet-send").disabled');
   await send();await wait(()=>sent.length===beforeUnknownRetry+1);replySend();
@@ -134,9 +200,7 @@ try {
     controller.focus();
     await uiWait('document.querySelector(".pet-tools")?.dataset.visible === "true" && document.querySelectorAll(".pet-tools button").length === 3');
     await evaluate('document.querySelectorAll(".pet-tools button")[2].click()');
-    await uiWait('document.querySelector(".pet-card")');
-    await evaluate('document.querySelector(".pet-card").click()');
-    await uiWait('document.querySelector(".pet-card-actions")');
+    await uiWait('document.querySelector(".pet-card-actions") && document.querySelector(".pet-task-panel")?.dataset.folded === "false"');
     await evaluate('document.querySelector(".pet-card-actions button").click()');
     await uiWait('document.querySelector(".pet-follow textarea")');
     await cardDraft(`unsent ${removal}`);
@@ -144,8 +208,10 @@ try {
     await uiWait('!document.querySelector(".pet-card") && !document.querySelector("textarea")');
     await uiWait('document.querySelector(".pet-sprite").style.backgroundImage.includes("typing.png")');
     assertions[`${removal}ClearsHiddenEditorAndReturnsIdle`] = true;
-    assertions[`${removal}ExposesSavedDraftInTaskPanel`] = await evaluate('Boolean(document.querySelector(".pet-drafts button"))');
-    await evaluate('document.querySelectorAll(".pet-tools button")[2].click()');
+    assertions[`${removal}ExposesSavedDraftInTaskPanel`] = removal === "read"
+      ? await evaluate('Boolean(document.querySelector(".pet-drafts button"))')
+      : await evaluate('document.querySelectorAll(".pet-tools button").length === 2');
+    if (removal === "read") await evaluate('document.querySelectorAll(".pet-tools button")[2].click()');
     await uiWait('document.querySelectorAll(".pet-tools button").length === 2');
     assertions[`${removal}DraftDoesNotCreateBell`] = true;
 

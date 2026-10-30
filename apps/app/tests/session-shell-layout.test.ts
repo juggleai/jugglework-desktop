@@ -182,6 +182,7 @@ describe("desktop session shell layout", () => {
     expect(sessionPage).not.toContain('flex w-11 shrink-0 flex-col items-center');
     expect(sessionPage).not.toContain('right-11');
     expect(sessionPage).toContain('data-files-fullscreen-surface');
+    expect(sessionPage).toContain('{ left: "var(--sidebar-width)" }');
     expect(sessionPage).toContain('absolute bottom-1.5 right-1.5 top-11');
     expect(sessionPage).toContain('rounded-[18px] border border-dls-border');
     expect(sessionPage).toContain('left: `${APP_NAVIGATION_RAIL_WIDTH + 4}px`');

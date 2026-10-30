@@ -164,6 +164,7 @@ export function QueuedMessagesPanel(props: QueuedMessagesPanelProps) {
               title={queuedDraftTitle(item.draft)}
             >
               <QueuedDraftContent draft={item.draft} />
+              {item.blockedReason ? <span className="block truncate text-xs font-normal text-amber-11" title={item.blockedReason}>{item.blockedReason}</span> : null}
               {item.petBlockedReason ? <span className="block truncate text-xs font-normal text-amber-11" title={item.petBlockedReason}>{item.petBlockedReason}</span> : null}
             </div>
             <div className="flex shrink-0 items-center gap-1 opacity-70 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">

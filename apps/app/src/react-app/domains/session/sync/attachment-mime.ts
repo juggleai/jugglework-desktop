@@ -67,3 +67,11 @@ export function resolveAttachmentMime(file: Pick<File, "name" | "type">) {
   if (!isGenericMime(mime)) return mime;
   return resolveAttachmentMimeFromFilename(file.name) ?? GENERIC_BINARY_MIME;
 }
+
+/** Preserve the file badge while deferring model projection to the workspace
+ * attachment plugin. text/plain would eagerly expand the whole file. */
+export function attachmentModelMime(mimeType: string) {
+  const mime = normalizedMime(mimeType);
+  return mime.startsWith("text/") || ["application/javascript", "application/ecmascript", "application/json", "application/xml"].includes(mime) || mime.endsWith("+json") || mime.endsWith("+xml")
+    ? "application/x-jugglework-file-reference" : mimeType;
+}

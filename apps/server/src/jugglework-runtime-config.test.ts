@@ -200,6 +200,31 @@ describe("jugglework runtime config file", () => {
     expect(parsed.compaction).toEqual({ auto: false, prune: false, reserved: 30_000 });
   });
 
+  test("adds bounded transport timeouts only to managed providers", async () => {
+    const { config } = await setup();
+    await writeRuntimeOpencodeConfig(config, "ws_1", () => ({
+      provider: {
+        lpr_managed: {
+          npm: "@ai-sdk/openai-compatible",
+          options: { baseURL: "https://work.juggle.im/jwork/api/gateway/v1/lpr_managed" },
+        },
+        ollama: {
+          npm: "@ai-sdk/openai-compatible",
+          options: { baseURL: "http://127.0.0.1:11434/v1" },
+        },
+      },
+    }));
+
+    const parsed = JSON.parse(await buildJuggleWorkRuntimeConfig(config, "ws_1")) as {
+      provider: Record<string, { options: Record<string, unknown> }>;
+    };
+    expect(parsed.provider.lpr_managed?.options).toMatchObject({
+      headerTimeout: 60_000,
+      chunkTimeout: 120_000,
+    });
+    expect(parsed.provider.ollama?.options).toEqual({ baseURL: "http://127.0.0.1:11434/v1" });
+  });
+
   test("merges the host Marketplace MCP overlay without mutating workspace runtime config", async () => {
     const { config } = await setup();
     await writeRuntimeOpencodeConfig(config, "ws_1", () => ({

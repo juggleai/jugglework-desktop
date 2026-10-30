@@ -13,7 +13,9 @@ const answers = {
   save: { canceled: true, filePath: "" },
   wait: undefined as ((options: any) => Promise<any>) | undefined,
   openError: null as string | null,
+  review: undefined as ((options: any) => Promise<any>) | undefined,
 };
+const nativeApp = new EventEmitter();
 const partitions = new Map<string, any>();
 const rendererIpc = new EventEmitter();
 const rendererBridges: any[] = [];
@@ -106,6 +108,7 @@ class FakeView {
   }
 }
 mock.module("electron", () => ({
+  app: nativeApp,
   contextBridge: {
     exposeInMainWorld: (_name: string, value: any) =>
       rendererBridges.push(value),
@@ -119,6 +122,7 @@ mock.module("electron", () => ({
     showSaveDialog: async () => answers.save,
     showMessageBox: async (...args: any[]) => {
       const options = args.at(-1);
+      if (options.title === "核对文档修改" && answers.review) return answers.review(options);
       return options.signal && answers.wait
         ? answers.wait(options)
         : { response: answers.close };
@@ -165,6 +169,9 @@ await import("../../../desktop/electron/file-window-preload.mjs");
 const { createOfficePanel } =
   // @ts-expect-error Electron 的真实 JS 模块由桌面 checkJs 独立检查，跨包测试不使用重复声明。
   await import("../../../desktop/electron/office-panel.mjs");
+const { ManagedRuntimeClientError } =
+  // @ts-expect-error Electron 的真实 JS 模块由桌面 checkJs 独立检查，跨包测试不使用重复声明。
+  await import("../../../desktop/electron/managed-runtime-client.mjs");
 const { createOfficeResources } =
   // @ts-expect-error Electron 的真实 JS 模块由桌面 checkJs 独立检查，跨包测试不使用重复声明。
   await import("../../../desktop/electron/office-resources.mjs");
@@ -178,6 +185,7 @@ const roots: string[] = [];
 afterEach(async () => {
   for (const root of roots.splice(0))
     await rm(root, { recursive: true, force: true });
+  answers.review = undefined;
 });
 
 async function fixture(
@@ -188,6 +196,7 @@ async function fixture(
     arch: "arm64",
   },
   resources?: any,
+  composer?: any,
 ) {
   partitions.clear();
   answers.open = { canceled: true, filePaths: [] };
@@ -224,6 +233,7 @@ async function fixture(
     checks: 0,
   };
   const client = {
+    postHostJson: undefined as ((path: string, body: unknown, options?: { signal?: AbortSignal }) => Promise<any>) | undefined,
     async getJson(path: string) {
       if (path === "/office/documents")
         return { items: document.state === "closed" ? [] : [{ ...document }] };
@@ -310,6 +320,7 @@ async function fixture(
       return operation;
     },
     client,
+    composer,
     resources:
       resources ??
       createOfficeResources({
@@ -371,8 +382,143 @@ async function fixture(
     opens,
     root,
     client,
+    handlers,
   };
 }
+
+async function reviewFixture(failureCode = "office_selection_review_required") {
+  const f = await fixture("报告.docx", undefined, undefined, undefined, { request: async () => ({ epoch: 1, bridgeGeneration: 0 }) });
+  f.main.focus();
+  await f.show(f.main);
+  const view = [...f.main.children][0] as FakeView;
+  const sender = view.webContents;
+  const event = { sender, senderFrame: (sender as any).mainFrame };
+  const requests: any[] = [], released: any[] = [], channels: string[] = [];
+  const originalPost = f.client.postJson;
+  f.client.postJson = async (path, body) => {
+    if (path.endsWith("/selection-references")) {
+      requests.push(body);
+      channels.push("client");
+      if (requests.length === 1) {
+        const error = new ManagedRuntimeClientError("http_error", { serverCode: failureCode });
+        error.status = 409;
+        throw error;
+      }
+      return { reference: { referenceId: "ref", captureId: (body as any).captureId } } as any;
+    }
+    if (path.endsWith("/release")) { released.push(body); return { ok: true } as any; }
+    return originalPost(path, body);
+  };
+  f.client.postHostJson = async (path, body, options) => {
+    expect(path).toBe("/workspace/ws/office/od_A/selection-references/review-confirmed");
+    expect(options?.signal?.aborted).toBe(false);
+    requests.push(body); channels.push("host");
+    return { reference: { referenceId: "ref", captureId: (body as any).captureId } };
+  };
+  const input = { captureId: "capture", expectedSelection: { ranges: [{ begin: 0, end: 2, length: 2 }], selectedText: "正文" }, reviewedUnconfirmed: true, expectedGeneration: "forged" };
+  const capture = () => f.handlers.get("jugglework:office:selection-capture")!(event, input);
+  const cancel = () => f.handlers.get("jugglework:office:selection-cancel")!(event, { captureId: input.captureId });
+  return { ...f, view, sender, requests, released, channels, input, capture, cancel };
+}
+
+test("人工核对只认原生确认；忽略页面 reviewed 字段，同 capture 仅重试采集且不保存", async () => {
+  const f = await reviewFixture();
+  answers.review = async (options) => {
+    await expect(f.capture()).rejects.toThrow("选区正在采集");
+    expect(options).toMatchObject({
+      message: "存在尚未核对的修改，请检查文档；确认保留当前内容后可重新选择继续编辑。",
+      buttons: ["取消", "我已核对，保留并继续"], defaultId: 0, cancelId: 0,
+    });
+    expect(f.sender.messages.at(-1)).toEqual({ name: "jugglework:office:selection-review-pending", value: { captureId: "capture", pending: true } });
+    return { response: 1 };
+  };
+  expect(await f.capture()).toMatchObject({ reference: { referenceId: "ref" } });
+  expect(f.requests).toEqual([
+    { sessionId: "ses", pageId: "page_A", captureId: "capture", expectedSelection: f.input.expectedSelection },
+    { sessionId: "ses", pageId: "page_A", captureId: "capture", expectedSelection: f.input.expectedSelection, expectedGeneration: "page_A:actual_A" },
+  ]);
+  expect(f.channels).toEqual(["client", "host"]);
+  expect(f.sender.messages.at(-1)?.value).toEqual({ captureId: "capture", pending: false });
+  expect(f.saves).toEqual([]);
+  await f.cancel();
+  f.panel.destroy();
+});
+
+test("running 失败不弹人工核对，也不能被页面确认参数授权", async () => {
+  const f = await reviewFixture("office_selection_save_blocked");
+  let dialogs = 0;
+  answers.review = async () => { dialogs++; return { response: 1 }; };
+  expect(await f.capture()).toMatchObject({ error: { message: "文档选区操作仍在运行或尚未核对，请结束后重新选择" } });
+  expect(dialogs).toBe(0);
+  expect(f.requests).toHaveLength(1);
+  expect(f.requests[0]).not.toHaveProperty("reviewedUnconfirmed");
+  f.panel.destroy();
+});
+
+test("native host 客户端缺失时确认不能回退到普通 client capture", async () => {
+  const f = await reviewFixture();
+  f.client.postHostJson = undefined;
+  answers.review = async () => ({ response: 1 });
+  await expect(f.capture()).rejects.toThrow("本机核对服务不可用");
+  expect(f.channels).toEqual(["client"]);
+  expect(f.saves).toEqual([]);
+  f.panel.destroy();
+});
+
+test("确认后的 capture 证明失败只返回本地错误，不循环弹框或再次重试", async () => {
+  const f = await reviewFixture();
+  let dialogs = 0;
+  answers.review = async () => { dialogs++; return { response: 1 }; };
+  const original = f.client.postHostJson!;
+  f.client.postHostJson = async (path, body, options) => {
+    await original(path, body, options);
+    const error = new ManagedRuntimeClientError("http_error", { serverCode: "office_selection_stale" });
+    error.status = 409;
+    throw error;
+  };
+  expect(await f.capture()).toMatchObject({ error: { message: "选区已变化，请重新选择内容" } });
+  expect(f.requests).toHaveLength(2);
+  expect(dialogs).toBe(1);
+  expect(f.saves).toEqual([]);
+  f.panel.destroy();
+});
+
+for (const interruption of ["dialog-cancel", "cancel", "hide", "navigate", "host-navigate", "external-app", "other-window", "unfocused", "model-before-dialog", "model-in-dialog", "page-in-dialog", "late-result"] as const)
+  test(`核对 ${interruption} 不复活原 capture`, async () => {
+    const f = await reviewFixture();
+    let dialogs = 0;
+    if (interruption === "model-before-dialog") f.document.pageId = "replacement";
+    answers.review = async (options) => {
+      dialogs++;
+      if (interruption === "cancel") await f.cancel();
+      if (interruption === "hide") await f.call("jugglework:office:hide", f.main, "od_A");
+      if (interruption === "navigate") f.sender.emit("did-start-navigation", {}, "http://other", false, true);
+      if (interruption === "host-navigate") f.main.webContents.emit("did-start-navigation", {}, "http://other", false, true);
+      if (interruption === "model-in-dialog") f.document.engineFileId = "replacement";
+      if (interruption === "page-in-dialog") f.document.pageId = "replacement";
+      if (interruption === "external-app") nativeApp.emit("did-resign-active");
+      if (interruption === "other-window") nativeApp.emit("browser-window-focus", {}, new FakeWindow());
+      if (interruption === "unfocused") f.main.focused = false;
+      if (["cancel", "hide", "navigate", "host-navigate", "external-app", "other-window"].includes(interruption)) expect(options.signal.aborted).toBe(true);
+      return { response: interruption === "dialog-cancel" ? 0 : 1 };
+    };
+    if (interruption === "late-result") {
+      const original = f.client.postHostJson!;
+      f.client.postHostJson = async (path, body, options) => {
+        const result = await original(path, body, options);
+        await f.cancel();
+        return result;
+      };
+    }
+    await expect(f.capture()).rejects.toThrow();
+    expect(f.requests).toHaveLength(interruption === "late-result" ? 2 : 1);
+    expect(f.channels).toEqual(interruption === "late-result" ? ["client", "host"] : ["client"]);
+    expect(dialogs).toBe(interruption === "model-before-dialog" ? 0 : 1);
+    expect(f.released).toHaveLength(interruption === "late-result" ? 1 : 0);
+    expect(f.saves).toEqual([]);
+    expect(nativeApp.listenerCount("did-resign-active")).toBe(0);
+    f.panel.destroy();
+  });
 
 test("主窗口和独立窗口的实际 preload 均向编辑容器传递布局失效，并能释放订阅", () => {
   expect(rendererBridges).toHaveLength(2);

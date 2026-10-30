@@ -39,6 +39,40 @@ import {
 type HostMarketplaceMcpOverlay = Record<string, Record<string, unknown>>;
 
 const hostMarketplaceMcpOverlayByConfig = new WeakMap<ServerConfig, HostMarketplaceMcpOverlay>();
+const MANAGED_PROVIDER_HEADER_TIMEOUT_MS = 60_000;
+const MANAGED_PROVIDER_CHUNK_TIMEOUT_MS = 120_000;
+
+function boundedProviderTimeout(name: string, fallback: number): number {
+  const configured = Number(process.env[name]);
+  return Number.isFinite(configured) && configured >= 10 && configured <= 10 * 60_000
+    ? Math.floor(configured)
+    : fallback;
+}
+
+function providersWithManagedTimeoutDefaults(value: unknown): Record<string, unknown> | undefined {
+  if (!isRecord(value)) return undefined;
+  return Object.fromEntries(Object.entries(value).map(([providerID, provider]) => {
+    if (!/^lpr_/i.test(providerID) || !isRecord(provider)) return [providerID, provider];
+    const options = isRecord(provider.options) ? provider.options : {};
+    return [providerID, {
+      ...provider,
+      options: {
+        ...options,
+        // This JSON-level fallback applies even if the plugin fails to load.
+        // The plugin config hook replaces headerTimeout with its own bounded,
+        // abortable retry transport when it is active.
+        headerTimeout: boundedProviderTimeout(
+          "JUGGLEWORK_PROVIDER_RESPONSE_TIMEOUT_MS",
+          MANAGED_PROVIDER_HEADER_TIMEOUT_MS,
+        ),
+        chunkTimeout: boundedProviderTimeout(
+          "JUGGLEWORK_PROVIDER_NO_PROGRESS_TIMEOUT_MS",
+          MANAGED_PROVIDER_CHUNK_TIMEOUT_MS,
+        ),
+      },
+    }];
+  }));
+}
 export function readHostMarketplaceMcpOverlay(config: ServerConfig): HostMarketplaceMcpOverlay {
   return structuredClone(hostMarketplaceMcpOverlayByConfig.get(config) ?? {});
 }
@@ -122,8 +156,10 @@ export function buildJuggleWorkRuntimeConfigObjectFromSnapshot(
   hostMarketplaceMcpOverlay: HostMarketplaceMcpOverlay = {},
 ): Record<string, unknown> {
   const disabledProviders = runtimeDisabledProviderList(runtimeConfig);
+  const providers = providersWithManagedTimeoutDefaults(runtimeConfig.provider);
   return {
     ...runtimeConfig,
+    ...(providers ? { provider: providers } : {}),
     compaction: {
       prune: true,
       reserved: 20_000,

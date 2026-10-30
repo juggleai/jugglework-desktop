@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { placePetPanel, placePetInputOptions } from "../src/pet/placement";
+import { petPanelNaturalHeight, placePetPanel, placePetInputOptions } from "../src/pet/placement";
 import type { PetViewport } from "../src/app/lib/desktop-pet-types";
 
 const viewport = (x: number, y: number, screenX = 0): PetViewport => ({ width: 400, height: 900, screenX, character: { x, y }, workArea: { x: 0, y: 0, width: 1440, height: 900 } });
@@ -30,7 +30,7 @@ test("narrow and negative-origin displays keep alignment within the canvas", () 
   expect(result.side).toBe("below"); expect(result.maxHeight).toBe(413);
 });
 
-test("plus menu stays eight pixels from the composer and chooses the side with space", () => {
+test("plus menu stays below the composer or above the destination row", () => {
   const below = placePetInputOptions(900, { top: 190, bottom: 230 }, 320, "below");
   expect(below).toMatchObject({ side: "below", top: 238 });
   const above = placePetInputOptions(900, { top: 780, bottom: 820 }, 320, "below");
@@ -41,4 +41,25 @@ test("constrained plus menus scroll on the roomier side without moving the input
   const menu = placePetInputOptions(420, { top: 240, bottom: 280 }, 320, "below");
   expect(menu).toEqual({ side: "above", top: 16, maxHeight: 216 });
   expect(placePetInputOptions(420, { top: 195, bottom: 235 }, 320, "above").side).toBe("above");
+});
+
+test("short-screen task measurements keep natural height after the list is constrained", () => {
+  // 八张任务卡的完整内容高552；短屏可见区变化时仍按360自然限高和20像素提示定位。
+  const natural = petPanelNaturalHeight(203, { height: 183, scrollHeight: 552 });
+  expect(natural).toBe(380);
+  expect(petPanelNaturalHeight(120, { height: 100, scrollHeight: 552 })).toBe(natural);
+  const short = { ...viewport(148, 190, 500), height: 420 };
+  expect(placePetPanel(short, 120, natural, 356, "below").side).toBe("above");
+  // 列表变短也必须取实际内容，不能沿用旧限高或把滚动视口当成自然高度。
+  expect(petPanelNaturalHeight(100, { height: 80, scrollHeight: 80 })).toBe(100);
+});
+
+test("constrained session menus recover content height without expanding their scroll viewport", () => {
+  const natural = petPanelNaturalHeight(184, { height: 140, scrollHeight: 512 }, 280);
+  expect(natural).toBe(324);
+  expect(petPanelNaturalHeight(94, { height: 50, scrollHeight: 512 }, 280)).toBe(natural);
+  const anchor = { top: 240, bottom: 280 };
+  const menu = placePetInputOptions(420, anchor, natural, "below");
+  expect(menu.side).toBe("above");
+  expect(menu.top + Math.min(natural, menu.maxHeight)).toBe(anchor.top - 8);
 });

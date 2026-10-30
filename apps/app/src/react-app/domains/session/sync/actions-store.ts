@@ -232,6 +232,7 @@ export function createSessionActionsStore(options: {
       if (providerError === "gateway_credential_invalid") return t("app.error_gateway_credential");
       if (providerError === "request_too_large") return t("app.error_request_too_large");
       if (providerError === "tls_verification_failed") return t("app.error_tls_verification");
+      if (providerError === "provider_timeout") return t("app.error_provider_timeout");
       if (status === 401 || status === 403) return t("app.error_auth_failed");
       // Hard account limits (quota/plan/spending) are terminal even when the
       // provider reports them as 429 (for example Anthropic
@@ -251,6 +252,7 @@ export function createSessionActionsStore(options: {
         gateway_credential_invalid: "app.error_gateway_credential_hint",
         request_too_large: "app.error_request_too_large_hint",
         tls_verification_failed: "app.error_tls_verification_hint",
+        provider_timeout: "app.error_provider_timeout_hint",
       }[providerError] as Parameters<typeof t>[0];
       lines.push(t(hintKey));
     }

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { latestRoot, sortedRoots, sessionTreeIds, reconcilePetTaskConnection } from "../src/react-app/domains/pet/pet-model";
+import { latestRoot, sortedRoots, sessionTreeIds, reconcilePetTaskConnection, selectPetTaskPresentation } from "../src/react-app/domains/pet/pet-model";
 import type { PetTask } from "../src/app/lib/desktop-pet-types";
 import { sessionTaskPresentation } from "../src/react-app/domains/session/status/task-presentation";
 import type { UIMessage } from "ai";
@@ -118,4 +118,63 @@ test("task previews omit reasoning and fall back to observable progress", () => 
     messages[1]!.parts.unshift({ type: "text", text: "正在读取配置\n更多说明" });
     expect(sessionTaskPresentation(messages, [], record).progressText).toBe("正在读取配置");
   } finally { activity.removeSession("preview-workspace", "preview-root"); }
+});
+
+test("current tools replace old commentary while waiting, idle and terminal replies retain their authority", () => {
+  const store = useSessionActivityStore.getState(), workspace = "pet-tool-detail", session = "root";
+  const messages: UIMessage[] = [
+    { id: "u", role: "user", parts: [{ type: "text", text: "work" }] },
+    { id: "a", role: "assistant", parts: [
+      { type: "text", text: "Old commentary" },
+      { type: "dynamic-tool", toolName: "task", toolCallId: "task", state: "input-available", input: { description: "Inspect implementation" } },
+      { type: "dynamic-tool", toolName: "bash", toolCallId: "bash", state: "input-available", input: { command: "bun test --isolate", description: "Checks" } },
+    ] },
+  ];
+  const present = () => sessionTaskPresentation(messages, [], useSessionActivityStore.getState().recordsByWorkspaceId[workspace]?.[session]);
+  try {
+    store.setRunStatus(workspace, session, { type: "busy" });
+    expect(present()).toMatchObject({ active: true, currentToolName: "bash" });
+    expect(present().progressText).toStartWith("bun test --isolate · ");
+    messages[1]!.parts.push({ type: "dynamic-tool", toolName: "bash", toolCallId: "bash", state: "output-available", input: { command: "bun test --isolate" }, output: "done" });
+    expect(present()).toMatchObject({ currentToolName: "task" });
+    expect(present().progressText).toStartWith("Agent: Inspect implementation · ");
+    store.setWaitingRequest(workspace, session, "permission", "approval", true);
+    expect(present()).toMatchObject({ waiting: true, currentToolName: undefined });
+    expect(present().progressText).toBe("Old commentary");
+    store.setWaitingRequest(workspace, session, "permission", "approval", false);
+    store.setRunStatus(workspace, session, { type: "idle" });
+    expect(present()).toMatchObject({ active: false, currentToolName: undefined });
+    messages[1]!.parts = [{ type: "text", text: "Final user-facing reply" }];
+    messages[1]!.metadata = { opencode: { finish: "stop", completed: 3 } };
+    expect(present()).toMatchObject({ completed: true, responseText: "Final user-facing reply", currentToolName: undefined });
+  } finally { store.removeSession(workspace, session); }
+});
+
+test("a new root turn cannot surface tools still marked in flight in older history", () => {
+  const store = useSessionActivityStore.getState(), workspace = "pet-current-turn", session = "root";
+  const messages: UIMessage[] = [
+    { id: "old-user", role: "user", parts: [{ type: "text", text: "old work" }] },
+    { id: "old-tool", role: "assistant", parts: [{ type: "dynamic-tool", toolName: "bash", toolCallId: "old-command", state: "input-available", input: { command: "old command" } }] },
+    { id: "new-user", role: "user", parts: [{ type: "text", text: "new work" }] },
+    { id: "new-reply", role: "assistant", parts: [{ type: "text", text: "Current commentary" }] },
+  ];
+  try {
+    store.setRunStatus(workspace, session, { type: "busy" });
+    expect(sessionTaskPresentation(messages, [], useSessionActivityStore.getState().recordsByWorkspaceId[workspace]?.[session])).toMatchObject({
+      turnKey: "new-user", currentToolName: undefined, progressText: "Current commentary",
+    });
+  } finally { store.removeSession(workspace, session); }
+});
+
+test("pet display prefers current descendant execution over root delegation, with waiting first", () => {
+  const base = sessionTaskPresentation([], []);
+  const root = { ...base, active: true, currentToolName: "task", progressText: "Agent: Delegate" };
+  const latest = { ...base, active: true, currentToolName: "bash", progressText: "bun test --isolate" };
+  const older = { ...latest, progressText: "old command" };
+  expect(selectPetTaskPresentation(root, [latest, older])).toBe(latest);
+  const waiting = { ...base, waiting: true };
+  expect(selectPetTaskPresentation(root, [latest, waiting])).toBe(waiting);
+  expect(selectPetTaskPresentation({ ...root, waiting: true }, [latest]).waiting).toBe(true);
+  expect(selectPetTaskPresentation(root, [{ ...latest, active: false }])).toBe(root);
+  expect(selectPetTaskPresentation(base, [{ ...latest, active: false }])).toBe(base);
 });

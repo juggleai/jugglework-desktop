@@ -172,6 +172,20 @@ export function mergeWorkspaceRouteSession<T extends { id: string }>(sessions: T
   return next;
 }
 
+/** Preserve renames received while a list request was in flight. */
+export function reconcileWorkspaceSessionTitles<T extends { id: string; title: string }>(
+  fetched: T[], started: T[], current: T[],
+): T[] {
+  const before = new Map(started.map((session) => [session.id, session.title]));
+  const live = new Map(current.map((session) => [session.id, session]));
+  return fetched.map((session) => {
+    const latest = live.get(session.id);
+    return latest && latest.title !== before.get(session.id)
+      ? { ...session, title: latest.title }
+      : session;
+  });
+}
+
 export function preserveWorkspaceRouteSession<T extends { id: string }>(
   fetched: T[],
   current: T[],

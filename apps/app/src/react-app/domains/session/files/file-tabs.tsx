@@ -4,6 +4,7 @@ import { GitCompare, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { t } from "@/i18n";
 import type { FilesPanelFileTab } from "./files-panel-store";
 
 /**
@@ -19,6 +20,7 @@ export type ChangesTabDescriptor = {
   count: number;
   active: boolean;
   onSelect: () => void;
+  onClose?: () => void;
 };
 
 type FileTabsProps = {
@@ -46,21 +48,25 @@ export function FileTabs({ tabs, activePath, dirtyPaths, changesTab, onSelect, o
   return (
     <div className="no-scrollbar flex h-9 items-center gap-1 overflow-x-auto">
       {changesTab ? (
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          title={changesTab.label}
-          onClick={changesTab.onSelect}
-          className={cn(
-            "shrink-0 gap-1.5 px-2 text-[13px] font-normal text-muted-foreground hover:bg-muted hover:text-foreground mac:titlebar-no-drag",
-            changesTab.active && "bg-muted/80 text-foreground",
-          )}
-        >
-          <GitCompare className="size-3.5" />
-          {changesTab.label}
-          <span className="rounded-full bg-primary/15 px-1.5 text-[10px] leading-4 text-primary">{changesTab.count}</span>
-        </Button>
+        <div className="relative shrink-0">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            title={changesTab.label}
+            onClick={changesTab.onSelect}
+            className={cn(
+              "shrink-0 gap-1.5 px-2 text-[13px] font-normal text-muted-foreground hover:bg-muted hover:text-foreground mac:titlebar-no-drag",
+              changesTab.active && "bg-muted/80 text-foreground",
+              changesTab.onClose && "pr-7",
+            )}
+          >
+            <GitCompare className="size-3.5" />
+            {changesTab.label}
+            <span className="rounded-full bg-primary/15 px-1.5 text-[10px] leading-4 text-primary">{changesTab.count}</span>
+          </Button>
+          {changesTab.onClose ? <Button type="button" variant="ghost" size="icon-xs" aria-label={t("artifact.close_changes")} className="absolute end-1 top-1/2 -translate-y-1/2 mac:titlebar-no-drag" onClick={changesTab.onClose}><X className="size-3" /></Button> : null}
+        </div>
       ) : null}
       {tabs.map((tab) => {
         const active = tab.path === activePath;
@@ -77,7 +83,12 @@ export function FileTabs({ tabs, activePath, dirtyPaths, changesTab, onSelect, o
               title={tab.path}
               onClick={() => onSelect(tab.path)}
               className={cn(
-                "w-full min-w-0 justify-start gap-1.5 px-2 pr-7 text-left text-[13px] font-normal text-muted-foreground hover:bg-muted hover:text-foreground mac:titlebar-no-drag",
+                "w-full min-w-0 justify-start gap-1.5 px-2 text-left text-[13px] font-normal text-muted-foreground transition-[padding] hover:bg-muted hover:text-foreground mac:titlebar-no-drag",
+                // 未选中时不为空的关闭按钮预留空间，让短标题保持紧凑；悬停或
+                // 键盘进入标签后再压缩标题，以同一标签宽度显示关闭按钮。
+                active
+                  ? "pr-7"
+                  : "pr-2 group-hover:pr-7 group-focus-within:pr-7",
                 active && "bg-muted/80 text-foreground",
               )}
             >
@@ -89,7 +100,13 @@ export function FileTabs({ tabs, activePath, dirtyPaths, changesTab, onSelect, o
               variant="ghost"
               size="icon-xs"
               aria-label={`Close ${tab.name}`}
-              className="absolute end-1 top-1/2 -translate-y-1/2 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 mac:titlebar-no-drag"
+              data-active={active ? "true" : "false"}
+              className={cn(
+                "absolute end-1 top-1/2 z-10 -translate-y-1/2 bg-muted transition-opacity mac:titlebar-no-drag",
+                active
+                  ? "opacity-100"
+                  : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100",
+              )}
               onClick={(event: React.MouseEvent<HTMLButtonElement>) => {
                 event.stopPropagation();
                 onClose(tab.path);

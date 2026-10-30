@@ -20,3 +20,17 @@ Default response-header and first-byte waits SHALL be 60 seconds and the initial
 #### Scenario: Heartbeats never produce output
 - **WHEN** an upstream emits only metadata or heartbeats beyond the output deadline
 - **THEN** the plugin releases the attempt and applies bounded retry policy
+
+### Requirement: Managed providers cannot bypass guarded transport
+The desktop runtime SHALL bind the guarded fetch directly to organization-managed provider options and SHALL also provide bounded response-header and SSE-idle defaults in serialized runtime configuration. Exhausting the inner retry budget SHALL be terminal and SHALL NOT trigger another outer retry cycle.
+
+#### Scenario: Provider SDK captures fetch before plugin installation
+- **WHEN** a managed provider integration resolves its transport independently of the global fetch function
+- **THEN** its configured provider fetch still applies the response-header deadline, cancellation, and bounded retry policy
+
+### Requirement: Provider timeouts are actionable
+The client SHALL identify response-header and initial-output timeout failures and present retry-or-switch-model guidance without suggesting context compaction.
+
+#### Scenario: Managed model never returns response headers
+- **WHEN** the bounded provider retry budget is exhausted
+- **THEN** the session ends with a provider-timeout explanation instead of a generic operation-timeout message

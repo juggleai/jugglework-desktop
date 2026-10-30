@@ -5,6 +5,7 @@ import type {
 } from "@jugglework/types/office";
 import { ApiError } from "../errors.js";
 import type { OfficeToolDefinition } from "./content-tools.js";
+import { slidePageScope, validateSlidePageBudget } from "./slide-page-proof.js";
 
 const DOC_STYLE_KEYS = [
   "bold", "italic", "underline", "strikethrough", "double_strike", "small_caps",
@@ -19,7 +20,34 @@ const GRID_KEYS = ["start_row", "end_row", "start_col", "end_col"] as const;
 const SHEET_STYLE_TYPES = { background_color: "string", font_color: "string", font_family: "string", font_size: "number", bold: "boolean", italic: "boolean", horizontal_align: "string", vertical_align: "string", number_format_pattern: "string", strike_through: "boolean", underline: "string", wrap_text: "boolean" } as const;
 
 /** 选区通道对原生工具的宿主适配契约；跨段文本由宿主分解，不能冒称原生接口直接支持。 */
-export function describeOfficeSelectionTool(tool: OfficeToolDefinition): OfficeToolDefinition {
+export function describeOfficeSelectionTool(tool: OfficeToolDefinition, locator?: OfficeSelectionLocator | number): OfficeToolDefinition {
+  if (typeof locator === "object" && locator.kind === "slide-pages" && officeSelectionToolNames(locator).includes(tool.name)) {
+    const adapted = structuredClone(tool);
+    const keys = ["file_id", "page_index", ...(tool.name === "slide_get_page_info" ? [] : ["shape_id"]),
+      ...(tool.name === "slide_set_text" ? ["text"] : tool.name === "slide_set_text_property" ? ["index", "count", "bold", "italic", "color", "font_size"]
+        : tool.name === "slide_set_shape_properties" ? ["x", "y", "w", "h"] : [])];
+    const props = adapted.inputSchema.properties as Record<string, unknown>;
+    adapted.inputSchema.properties = Object.fromEntries(keys.filter((key) => Object.hasOwn(props, key)).map((key) => [key, props[key]]));
+    const selected = adapted.inputSchema.properties as Record<string, unknown>;
+    if (selected.shape_id) selected.shape_id = { type: "string", minLength: 1, description: "当前整页 baseline 目录中的单个真实 shape_id；写入仅支持 editable=true 的普通顶层文本框。" };
+    if (selected.text) selected.text = { type: "string", minLength: 1, maxLength: 4096, description: "最多4096 UTF-16（宿主精确校验）；LF/CRLF 转 CR，SDK 额外追加一个尾 CR；整框重写重置字符样式；当前 SDK 无法清空。" };
+    if (selected.index) selected.index = { type: "integer", minimum: 0, description: "最新已核对文字的 UTF-16 起点；省略为0。改写后必须按新文字确定范围。" };
+    if (selected.count) selected.count = { type: "integer", minimum: 1, description: "最新文字的 UTF-16 长度；省略为整框长度（含尾 CR），不支持 -1。index/count 须完整落在当前文字中。" };
+    if (selected.color) selected.color = { type: "string", pattern: "^#?[0-9A-Fa-f]{6}$", description: "六位 RGB，允许 # 前缀。" };
+    if (selected.font_size) selected.font_size = { type: "number", exclusiveMinimum: 0, maximum: 400, multipleOf: 0.01, description: "字号 pt，(0,400]，最多两位小数。" };
+    for (const key of ["x", "y", "w", "h"]) if (selected[key]) selected[key] = { type: "integer", minimum: key === "x" || key === "y" ? 0 : 1, description: "仅接受整数 pt；原生对象 getter 仅返回整数 pt，无法证明亚 pt 保真或检测同取整值内的跨对象亚 pt 误改。目标框须完整位于按 EMU 派生的页边界内。" };
+    adapted.inputSchema.additionalProperties = false;
+    adapted.inputSchema.required = [...(tool.name === "slide_get_page_info" ? [] : ["shape_id"]), ...(tool.name === "slide_set_text" ? ["text"] : [])];
+    adapted.description = "单页固定引用。file_id/page_index 可省略由宿主绑定；只接受当前已核对对象目录中的单个 shape_id，不支持批量。" + ({
+      slide_get_page_info: "返回整页公开布局、对象身份及可编辑/保留目录；详情和完整 runs 分别用 get_shape_info/get_text 读取。",
+      slide_get_shape_info: "返回公开完整对象详情；简单表格附完整网格，组合附子项。复杂对象只保留。",
+      slide_get_text: "返回普通框完整 UTF-16 text/length/runs/paragraphs/hyperlinks；表格返回全部 cells。无 index/count/row/col 参数。",
+      slide_set_text: "整框改写普通顶层非旋转文本框，最多4096 UTF-16，LF/CRLF 转 CR，原生追加尾 CR（输入尾 CR 保留为空段）。重置该框字符样式，随后读取新坐标再设样式。当前 SDK 不接受空字符串，清空暂不支持。页引用可连续使用。",
+      slide_set_text_property: "只支持 bold/italic/color/font_size；省略 index/count 则按最新 baseline 绑定整框（含尾 CR），显式范围须处于当前文字。字号 (0,400] 且百分之一磅精度，颜色六位 RGB。",
+      slide_set_shape_properties: "只允许普通顶层非旋转文本框的整数 pt x/y/w/h；x/y>=0、w/h>0且整个框必须在页内。公开几何证明仅覆盖整数 pt，无法检测同一取整值内的跨对象亚 pt 误改或保证亚 pt 保真。不含视觉、旋转、批量属性。对齐分布需先读位置计算目标再逐框设置。",
+    }[tool.name] ?? "");
+    return adapted;
+  }
   if (tool.name !== "doc_replace_text") return tool;
   const adapted = structuredClone(tool);
   adapted.description = "替换本轮固定 Word 选区中的正文。可省略 ranges，由宿主绑定；跨段改写必须保留原有段数（含空段），text 按原段落顺序用换行分隔，每段最多 200 个 UTF-16 码元。office.selection 的 contents 提供完整所选段落。宿主按段精确替换并保留段落及未选正文；暂不支持合并或拆分段落。修改后须重新选择。";
@@ -119,8 +147,8 @@ export function officeSelectionToolNames(locator: OfficeSelectionLocator): reado
     case "slide-text":
       return ["slide_set_text_property", "slide_get_text"];
     case "slide-pages":
-      // 整页尚无已验证的形状范围解析，不自动开放页面内所有内容工具。
-      return [];
+      if (locator.pageIndices.length !== 1) return [];
+      return ["slide_get_page_info", "slide_get_shape_info", "slide_get_text", "slide_set_text", "slide_set_text_property", "slide_set_shape_properties"];
   }
 }
 
@@ -137,6 +165,7 @@ export function planOfficeSelectionTool(
   fileId: string,
   tool: string,
   input: Record<string, unknown>,
+  proofState?: Record<string, unknown>,
 ): OfficeSelectionToolPlan {
   if (!fileId || !record(input)) invalid("选区所属模型不可用");
   if (!officeSelectionToolNames(locator).includes(tool))
@@ -249,8 +278,45 @@ export function planOfficeSelectionTool(
       }
       break;
     }
-    case "slide-pages":
-      invalid("请先选择要修改的普通文字形状");
+    case "slide-pages": {
+      const state = slidePageScope(proofState, locator);
+      bind(args, "page_index", state.pageIndex);
+      if (tool === "slide_get_page_info") { fields(args, ["page_index"]); effect = "read"; break; }
+      const shape = state.shapes.find((item) => item.id === args.shape_id);
+      if (!shape) invalid("shape_id 不属于当前已核对整页对象目录");
+      if (tool === "slide_get_shape_info" || tool === "slide_get_text") {
+        fields(args, ["page_index", "shape_id"]); effect = "read"; break;
+      }
+      if (!shape.editable) invalid("该对象只保留；仅可修改普通顶层非组合非旋转文本框");
+      if (tool === "slide_set_text") {
+        fields(args, ["page_index", "shape_id", "text"]);
+        if (typeof args.text !== "string") invalid("请输入替换文字");
+        args.text = args.text.replace(/\r\n|\n/g, "\r");
+        if (!(args.text as string).length) invalid("当前 SDK 不接受空字符串，暂不支持清空文本框；请在原生编辑器中清空");
+        if ((args.text as string).length > 4096 || /[\u0000\ufffc]/.test(args.text as string)) invalid("整框文字不能超过 4096 UTF-16，不能包含嵌入对象或 NUL");
+      } else if (tool === "slide_set_text_property") {
+        fields(args, ["page_index", "shape_id", "index", "count", "bold", "italic", "color", "font_size"]);
+        const text = state.texts.find((item) => item.shapeId === shape.id);
+        if (!text || typeof text.length !== "number") invalid();
+        textStyleRange(args, 0, text.length);
+        if (!["bold", "italic", "color", "font_size"].some((key) => Object.hasOwn(args, key))) invalid("请选择文字样式");
+        for (const key of ["bold", "italic"]) if (Object.hasOwn(args, key) && typeof args[key] !== "boolean") invalid();
+        if (Object.hasOwn(args, "color") && !/^[\dA-F]{6}$/.test(String(args.color))) invalid("PPT 颜色须为六位 RGB");
+        if (Object.hasOwn(args, "font_size") && (typeof args.font_size !== "number" || !Number.isFinite(args.font_size) || args.font_size <= 0 || args.font_size > 400 || Math.abs(args.font_size * 100 - Math.round(args.font_size * 100)) > 1e-8)) invalid("字号须为 (0,400] 的正有限磅值，最多两位小数");
+      } else {
+        fields(args, ["page_index", "shape_id", "x", "y", "w", "h"]);
+        if (!["x", "y", "w", "h"].some((key) => Object.hasOwn(args, key))) invalid("请提供位置或尺寸");
+        const bounds = { ...(shape.detail.bounds as Record<string, unknown>) };
+        for (const key of ["x", "y", "w", "h"]) if (Object.hasOwn(args, key)) {
+          const value = args[key];
+          if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0 || (["w", "h"].includes(key) && !value)) invalid("geometry 仅接受整数 pt，宽高须为正，x/y 可为零；原生 getter 无法证明亚 pt 几何");
+          bounds[key] = value;
+        }
+        if ((bounds.x as number) < 0 || (bounds.y as number) < 0 || (bounds.x as number) + (bounds.w as number) > state.size.w || (bounds.y as number) + (bounds.h as number) > state.size.h) invalid("文本框须完整位于幻灯片边界内");
+      }
+      validateSlidePageBudget(state, tool, args);
+      break;
+    }
   }
   return { args, effect };
 }

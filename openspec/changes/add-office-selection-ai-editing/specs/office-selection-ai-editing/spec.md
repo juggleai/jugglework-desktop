@@ -7,6 +7,14 @@
 - **WHEN** 用户在原生编辑器选中文字并点击 AI 编辑
 - **THEN** 在浮层取得输入焦点前完成原生输入提交、范围冻结及同一模型状态证明；添加/发送只消费该快照，不能重读已变化的光标或把文本子选区扩大为整框
 
+#### Scenario: 跨格式入口名称与样式一致
+- **WHEN** Word、表格或 PPT 画布显示支持的文字或对象选区编辑入口
+- **THEN** 入口统一使用「✦ AI 编辑」文案和「AI 编辑选区」无障碍名称，并采用 DOCX 的白底、深色普通字重、浅灰边框、圆角和阴影样式；PPT 不使用独立幻灯片图标、浅黄色配色或「Request edits / 请求修改」名称
+
+#### Scenario: PPT 缩略图区紧凑入口
+- **WHEN** 用户在缩略图区选页且存在已适配的可见留白
+- **THEN** 在所选缩略图旁显示 24 × 28 px 的「✦」，无障碍名称及 title 为「AI 编辑所选幻灯片」，不遮挡预览、页码或其他原生点击目标；无可用留白时隐藏，使用与其他格式相同的稳定动作选择器
+
 #### Scenario: 准备提交后无法确认原范围
 - **WHEN** 准备采集时输入提交改变了选择，或范围与内容不能证明属于同一状态
 - **THEN** 取消本次采集并要求重新选择，不拼接旧范围与新内容生成引用
@@ -23,6 +31,11 @@
 - **WHEN** 用户在添加或发送前点击浮层外部，包括采集尚未返回时
 - **THEN** 收起浮层并释放该次候选，不改变聊天草稿，外部点击继续交给原编辑页；迟到采集结果不得重新打开浮层
 
+#### Scenario: 编辑页窗口失焦
+- **WHEN** 采集或未提交浮层期间编辑页窗口失焦，包括点击聊天输入栏或宿主工具栏
+- **THEN** 普通失焦收起浮层并取消候选；同一次 pending capture 的宿主人工核对 dialog 仅暂缓其 modal blur，切到其他应用或窗口仍取消；已经添加的聊天草稿及已接收任务不因此清理
+- **AND** 现有失焦问题仍未解决，不能将该例外作为桌面失焦链路验收通过的依据
+
 #### Scenario: 平台提交键与中文组合
 - **WHEN** 用户按 macOS Cmd+Enter 或 Windows Ctrl+Enter，且输入法没有进行文字组合
 - **THEN** 经同一消息提交入口发送草稿；组合期间不发送，Shift+Enter 只换行
@@ -34,6 +47,14 @@
 #### Scenario: 原生文字选区异步更新
 - **WHEN** 鼠标或键盘操作后，PPT 原生文字选择继续发生变化
 - **THEN** 在绘制帧采样最终范围并更新入口；非空文字选择可编辑，折叠光标不扩大为整框
+
+#### Scenario: 表格选区入口定位
+- **WHEN** 用户切换工作表、改变选区、滚动或缩放表格
+- **THEN** 入口按当前已渲染工作表选区左上角单元格的真实可见位置定位，左侧对齐并显示在其下方，下方空间不足时在网格内向上翻转，不遮挡工作表标签；不使用工作表标签或工具栏的鼠标点击坐标；切表期间、选区左上角不可见或几何尚未适配时隐藏入口，不沿用旧锚点
+
+#### Scenario: 表格仅显示宿主选区入口
+- **WHEN** 表格 SDK 初始化或用户切换工作表
+- **THEN** SDK 原生在线 AI 编辑入口在初始化前关闭，切表后不重新出现魔棒图标入口，只保留宿主固定选区的「✦ AI 编辑」入口
 
 #### Scenario: 采集失败的展示
 - **WHEN** Server 拒绝选区采集或读取超时
@@ -125,7 +146,7 @@ Server SHALL 持有 referenceId、聊天归属、模型代次和格式选区，�
 
 #### Scenario: PPT 全选末段文字格式
 - **WHEN** 原生样式操作对完整末段文字设置格式，并将本次属性同步到段尾回车
-- **THEN** 确认本次确定性继承效果；局部选字不得改变段尾或其他未选文字的属性
+- **THEN** 确认本次确定性继承效果；局部选字不得改变其他未选文字的属性，整页 proof 对尾 CR 仅额外接受 mixed runs 场景中严格限定的原缺省字体字段展开
 
 #### Scenario: 表格局部范围
 - **WHEN** 用户修改第二子表 A1:B2
@@ -203,6 +224,106 @@ Server SHALL 在 admission 前构造本轮 Office 上下文并确定 selection �
 ### Requirement: 强类型定位与完整内容证明
 系统 SHALL 区分 doc-text、doc-caret、sheet-cells、sheet-rows、sheet-columns、slide-pages、slide-shapes 和 slide-text，宿主 SHALL 派生并校验各类型的实际工具坐标。截断预览、相同文案、文件名和当前光标 MUST NOT 替代定位证明；未适配范围 SHALL 明确不可执行。
 
+#### Scenario: 普通正文所在文档含未选表格或截断段落
+- **WHEN** 用户选择预算内的连续普通正文，而文档其他位置含已适配平面表格或截断段落预览
+- **THEN** 宿主补全全部正文文字并核对表格完整内容及受支持的属性，未选长段不占用所选段落的字符属性预算，不以截断摘要证明范围外内容不变
+- **AND** 补全候选必须经过完整范围和相同版本的原生精确查找确认；段落身份存在时必须匹配，缺失时仍须固定坐标唯一命中，不能直接信任上下文
+- **AND** 修改回读核对完整文字、已覆盖属性及预期坐标偏移；未知复杂结构、无法证明的中间分页以及超预算内容明确拒绝
+
+#### Scenario: Word 全文写后预算可提前计算
+- **WHEN** 文字改写会使最终或倒序跨段执行的中间全文跨度超过证明预算
+- **THEN** 在首次原生写入前拒绝，不在内容已经修改后才因预算不足失去回读能力
+
+#### Scenario: PPT 缩略图单页身份与旧文字选择隔离
+- **WHEN** 用户从画布文字选择转为缩略图区单页选择并采集整页引用
+- **THEN** 页面返回仅含一个序号的 pageIndex 数组、空 shapeIds 和 nativeSlideIds，不沿用旧形状或 textSelection；nativeSlideIds 使用 SDK slide.id，须与 uniqueID、对应原生页及引擎 slide_ids/page_id 一致，key 仅用于 DOM 定位
+- **AND** 缺少真实页 ID、ID 冲突或只提供页序号时拒绝采集，不用当前页或渲染 key 补全授权
+
+#### Scenario: PPT 多页本地拒绝
+- **WHEN** 用户在缩略图区选择多页后点击整页 AI 入口
+- **THEN** 本地提示「整页编辑目前一次支持一页，请只选择一张幻灯片」，不调用 capture、不建立引用、不打开输入浮层；后端同样以 office_selection_slide_pages_unsupported 拒绝多页，不自动取第一页
+
+#### Scenario: PPT 单页目录与公开事实证明
+- **WHEN** 宿主采集或核对单页整页引用
+- **THEN** 核对完整页顺序、真实页 ID、尺寸、公开页面及对象详情、完整文字 runs/paragraphs/hyperlinks、图片资源身份、简单表格完整网格与文字、group 递归子项，并提供 editable/preserved 目录
+- **AND** runs 和 paragraphs 连续无重叠地覆盖完整 UTF-16 文字，paragraphs 仅视为 SDK 格式分组；所有基线事实限公开可读属性，不证明未公开包内属性、图片字节或文件级无损
+
+#### Scenario: PPT 页面尺寸以 EMU 为真值
+- **WHEN** 页面尺寸换算为非整数 pt
+- **THEN** 以正整数 w_emu/h_emu 除以 12700 得到实际页边界，允许非整数 pt；w_pt/h_pt 仅核对为该真值的四舍五入摘要，前后读取仍须保持 EMU 尺寸一致
+
+#### Scenario: PPT 对象亚 pt 几何证明边界
+- **WHEN** 建立或比较对象几何事实
+- **THEN** 仅接受 SDK getter 返回的安全整数 pt，并核对摘要与详情一致；无法检测仍落在同一取整值内的跨对象亚 pt 偏移，不宣称亚 pt 保真，页面 EMU 真值不能补全对象未公开精度
+
+#### Scenario: PPT 单页可编辑框与只读保留对象
+- **WHEN** 整页包含普通文本框、图片、简单未合并表格或 group
+- **THEN** 只有普通可编辑顶层、非旋转、非 placeholder、非 spAutoFit，且无翻转、竖排、文字旋转、艺术字或预设文字变形的文本框进入 editable；图片、每表最多 256 格的简单未合并表格、group 及其子项，以及其他已适配但不满足 editable 条件的对象只读保留
+- **AND** 遇到 chart、SmartArt 等无完整读取适配的未知类型或无法完整核对的对象时拒绝整页引用，不用摘要宣称保留
+
+#### Scenario: PPT 无 text body 装饰形状只读保留
+- **WHEN** 页内 shape 没有 text body，detail.text 缺省或为空
+- **THEN** get_text 必须成功返回空 text、length=0 和空 runs/paragraphs/hyperlinks，保持只读保留，不伪造尾 CR，不允许改写或移动；缺少完整空读取时拒绝证明
+
+#### Scenario: PPT 水平和垂直线条保留
+- **WHEN** 整页或 group 中包含真实 shape/connector 且 geometry=line 的线条
+- **THEN** 宽高允许为非负安全整数且至少一轴为正，支持水平零高度和垂直零宽度；线条即使含文字也只读，不能进入 editable，全部公开事实继续参与前后核对
+- **AND** 非线条零面积、双零、负尺寸及摘要与详情不一致仍拒绝
+
+#### Scenario: 表格多块入口保留所有范围
+- **WHEN** 用户选择同一工作表的多个不相邻区域
+- **THEN** 校验全部范围身份和坐标边界，按范围顺序使用首个真实可见的左上角作为 AI 入口锚点，采集仍保留全部范围；无有效可见锚点时隐藏，不构造覆盖未选格的包围矩形
+
+#### Scenario: PPT 单页对象与多页拒绝分码
+- **WHEN** 单页包含未适配对象、合并表格或请求没有文字读取适配的对象的文字，而非多页选择
+- **THEN** 使用 office_selection_slide_objects_unsupported，不使用多页的 office_selection_slide_pages_unsupported；字段缺漏或预算不足仍使用 office_selection_proof_unavailable，不误导为重新选择一页
+
+#### Scenario: PPT 单页工具与范围白名单
+- **WHEN** Agent 使用单页整页引用发现工具或发起调用
+- **THEN** 只开放 slide_get_page_info、slide_get_shape_info、slide_get_text、slide_set_text、slide_set_text_property 和 slide_set_shape_properties；查询返回已重新核对的 baseline，写入须指定目录内单个 editable shape_id
+- **AND** file_id/page_index 可省略由宿主绑定，显式冲突、跨页、任意对象 ID、批量参数及未知字段均拒绝；背景、主题、增删对象或页面、旋转、段落对齐和清空文本框不开放
+
+#### Scenario: PPT 单页非空多段整框改写
+- **WHEN** Agent 使用整页引用改写普通 editable 框
+- **THEN** 接受非空整框文字，LF/CRLF 规范化为 CR 后最多 4096 个 UTF-16 码元，SDK 另追加一个尾 CR，输入尾 CR 保留为空段；拒绝 NUL、嵌入对象和空字符串
+- **AND** 整框重写允许目标字符样式重置，其他公开对象、body 与 shape 属性仍须核对；不能将该动作作为局部保真文字替换
+
+#### Scenario: PPT 单页四种样式使用最新文字范围
+- **WHEN** Agent 在整页引用中对 editable 框设置文字样式
+- **THEN** 仅接受 bold、italic、六位 RGB color 和 (0,400] pt 且最多两位小数的 font_size；省略 index/count 时绑定最新文字整框范围（含尾 CR），显式范围须处于最新文字内，不接受 count=-1
+- **AND** 整框改写后使用新文字范围，逐字符核对本次生效属性与其余公开属性；完整末段选中时仅接受已验证的尾 CR 属性继承
+
+#### Scenario: PPT mixed runs 严格区分缺省与显式
+- **WHEN** 整页文字样式回读包含 mixed runs
+- **THEN** 逐字符比较全部公开 run 字段，缺省与显式值不同，不用首字符或 shape/detail 摘要补默认值，未授权位置的缺省转显式也拒绝；等价 run 切分和 SDK paragraphs 格式分组变化可接受
+- **AND** 尾 CR 仅允许完整末段选择的本次属性继承，以及原缺省 font_name/font_size 严格等于修改前相邻字符显式值的展开，不扩大为任意继承等价
+
+#### Scenario: PPT 单页 x/y/w/h 布局
+- **WHEN** Agent 对整页目录内 editable 框调整位置或尺寸
+- **THEN** 只接受安全整数 pt 的 x/y/w/h，x/y ≥ 0、w/h > 0 且整个框位于按 EMU 真值派生的实际页边界内；非整数 pt 即使可换算为整数 EMU 也拒绝；对齐分布通过读位置后逐框设置，不开放段落对齐、旋转或视觉属性
+
+#### Scenario: PPT 单页资源预算
+- **WHEN** 整页采集或修改需要建立完整证明
+- **THEN** 包括 group 子项在内最多 128 个 shapes，单框正文最多 4096 UTF-16，框与表格单元格文字累计最多 16384 UTF-16（含 SDK 尾 CR），证明最多 4 MiB
+- **AND** 新文字总量与最坏 run 分裂的证明预算在原生写入前检查，超限拒绝而不产生写入
+
+#### Scenario: 常驻 64 MiB 基线增长预算
+- **WHEN** admission 保留基线，或整页写入将推进常驻执行基线
+- **THEN** 共用 64 MiB 总预算；整页写入前计入新证明的最坏字节上界并排除被替换旧基线，超限在原生写入前拒绝，不能只在 admission 检查
+- **AND** 写后实际证明在推进前再次核对总预算，异常超限标记未知写入且不纳入常驻基线
+
+#### Scenario: PPT 整页引用独占本轮
+- **WHEN** 同一消息同时提交整页引用与文字、形状或另一整页引用
+- **THEN** admission 拒绝混用，一轮只能有一个整页引用，不因其他引用也属于同页而放行
+
+#### Scenario: PPT 页重排使旧引用失效
+- **WHEN** 整页引用采集后页顺序、真实页身份或其他基线事实变化
+- **THEN** 发送或执行前拒绝旧引用为 stale，不按旧 pageIndex 改投另一页，也不自动重定位
+
+#### Scenario: PPT 清单及文字格式覆盖完整
+- **WHEN** 宿主建立文本框或文字子范围证明
+- **THEN** 页形状数量及唯一身份与返回清单一致，文字 runs 连续覆盖完整文字且不重叠，不用首个重叠 run 掩盖其他属性变化
+
 #### Scenario: Word 两处文字相同
 - **WHEN** 用户选中第二处相同正文并要求替换
 - **THEN** 按固定原生 begin/end 核对并执行，保留第一处；结构查询摘要或全文搜索第一个匹配不能决定修改位置
@@ -226,9 +347,54 @@ Server SHALL 在 admission 前构造本轮 Office 上下文并确定 selection �
 - **WHEN** 第一处文字替换或行列删除影响其他引用的坐标
 - **THEN** 后续仅使用已验证新范围或宿主完整计划，否则拒绝旧定位；不能只更新内容基线就沿用旧坐标
 
+#### Scenario: PPT 同一整页引用连续编辑
+- **WHEN** 单页引用独占本轮并依次改写多个框、设置最新文字样式或调整 x/y/w/h
+- **THEN** 每次回读核对 revision 恰好增加 1、目标效果及所有其余基线公开事实，确认后更新共同基线并回到 ready，requiresReselection 为 false，同一 selectionRef 可继续调用与保存
+- **AND** 其他未发送或排队轮次的引用不随本轮基线自动刷新，框/文字引用原有的坐标失效规则保持不变
+
 #### Scenario: 原生调用超时但已经发生修改
 - **WHEN** 原生工具响应超时或写后回读失败，实际效果未知
 - **THEN** 暂停该文档本轮后续写入并核对，不自动重试、不推进成功基线；保留实际模型及明确的待核对状态
+
+#### Scenario: 图片对象不冒充整页授权
+- **WHEN** 普通选区查询或直接对象请求选择 PPT 图片，即使该图片铺满页面
+- **THEN** 保持图片对象选择语义，直接对象编辑返回 office_selection_slide_picture_selected，不在 Server 静默扩大为页引用
+- **AND** 图片内文字不可直接改写；纯图片页通过整页采集时，其可编辑文本框目录为空
+
+#### Scenario: 图片 AI 入口显式编辑当前页
+- **WHEN** 用户在画布中选中一个属于当前 Slide 的直接静态图片并点击“✦ AI 编辑当前页”
+- **THEN** 该入口专用读取核对 Image/isImage()、真实当前页索引及 id/uniqueID、父子关系与唯一成员，排除媒体、组内对象、多页与身份不一致；再次核对候选后返回空 shapeIds、单页 pageIndex 数组和真实 nativeSlideIds
+- **AND** 与缩略图 ✦ 使用相同的单页 capture、要求输入、添加/发送及取消流程，不显示图片对象无法操作提示；普通选区查询不改变，Server 继续核对真实页身份和完整页证明
+
+#### Scenario: 文档级通用保存阻断
+- **WHEN** 同一 workspaceId、documentId 和 pageId:engineFileId 模型代次的任一已接收选区执行处于 running 或 needs-verification
+- **THEN** 自动、Agent、手动及选区保存共用文档级检查并返回 office_selection_save_blocked，不保存未知写入；已确认的 ready 中间态可保存，选区保存仍核对当前内容与共同基线一致
+
+#### Scenario: 普通工具不能绕过待核对修改
+- **WHEN** 同模型代次存在 running 或 needs-verification，Agent 通过不带引用的普通内容工具调用
+- **THEN** 允许只读查询，阻止普通修改且零原生写入；查找替换仍属修改，只有 ready、成功宿主核对或新模型代次才可继续普通修改
+
+#### Scenario: 保存等待不改绑模型
+- **WHEN** 保存等待页面提交、已有保存或内容查询期间，原模型被退役或替换
+- **THEN** 保存保持入口固定的 pageId 和 engineFileId，并在等待后及实际派发前重新核对执行状态与模型身份；释放旧基线不构成确认，旧引用不得保存新模型或收到保存成功回执
+
+#### Scenario: 普通采集不能解除未知结果
+- **WHEN** 同模型代次存在 needs-verification，用户发起普通 capture 或提交其他选区请求
+- **THEN** 普通 capture 返回 office_selection_review_required，宿主要求原生人工核对；admission 和后续调用也不能绕过同代次 blocker，不能以普通重选或新引用自动清除 unknown
+- **AND** running 时拒绝采集接管，即使人工确认也不能 supersede 运行中的写入
+
+#### Scenario: host-token 核对确认后 double proof 才接管
+- **WHEN** 用户在宿主原生 dialog 明确确认保留当前内容，宿主发起新的采集
+- **THEN** 仅 host-token 的 selection-references/review-confirmed 路由有确认权限，必须核对 expectedGeneration 与当前 pageId:engineFileId 一致；普通 client 路由拒绝 reviewedUnconfirmed/expectedGeneration 自报，确认路由也拒绝 reviewedUnconfirmed
+- **AND** 输入提交、两次同状态 proof、内容与容量校验及最终 live 检查全部成功后，才将同代次旧 unknown 设为 superseded 并释放旧基线；旧任务永不恢复写入或保存权限，后续使用新引用
+
+#### Scenario: 核对取消失败或模型换代
+- **WHEN** 用户取消 dialog、核对期间模型变化、double proof 或最终采集检查失败，或旧模型已经退役
+- **THEN** 取消或失败不能解除原代次 blocker；模型退役按代次 supersede 旧执行，新模型不受旧代次 blocker 影响，旧引用不可改投新模型
+
+#### Scenario: 整页旁侧事实变化或写入响应丢失
+- **WHEN** 整页写后发生其他框文字、表格尾部样式、图片几何等非授权公开事实变化，或原生已写入但响应丢失
+- **THEN** 标记 needs-verification，阻止后续写入重试及所有保存入口，不凭相同版本或首字符摘要确认成功
 
 #### Scenario: 可见定位与保存结果
 - **WHEN** 用户点击选区或编辑回执定位，或 Agent 完成修改并保存
@@ -236,6 +402,11 @@ Server SHALL 在 admission 前构造本轮 Office 上下文并确定 selection �
 
 ### Requirement: 本地与跨平台一致性
 新增交互 SHALL 复用随包 SDK、既有网络允许规则、统一页面提交与保存。系统 SHALL 按平台和格式验收能力，不由静态资源齐全推断实机通过。
+
+#### Scenario: 单页整页验证范围
+- **WHEN** 记录 macOS ARM64、SDK 0.0.0.499 的整页编辑验证状态
+- **THEN** 已通过范围包括真实 SDK 的采集、admission、连续整框多段改写、四种样式、布局、图片/简单表格公开事实保留、保存重开及未知结果阻断，以及原生页面缩略图入口、真实 SDK 页身份、中文要求提交、同引用连续多框编辑和保存的端到端验证
+- **AND** 多页本地零 capture 已验证；真实原生核对 dialog 手工点击与恢复、Word/PPT 两宿主完整桌面 Agent 对话、物理中文输入法和其他平台仍待验收；失焦问题未解决，无法证明的中间 DOCX 分页仍拒绝，不将路由、自动回归或 modal blur 豁免当作实机验收
 
 #### Scenario: SDK 在线 AI
 - **WHEN** 用户从原生页面提交选区要求

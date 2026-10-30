@@ -125,7 +125,18 @@ test("PPT 配置在 SDK 缓存建立前关闭内置 AI 编辑，保留普通编�
   assert.match(html, /演示内容/);
 });
 
-test("界面配置只作用于当前来源的成功 PPT HTML，不改变其他格式、资源和错误响应", async () => {
+test("表格在 SDK 初始化前关闭原生 AI 入口，保留其他开关与宿主选区入口", async () => {
+  const input = new Response(`<html><head><script>window.__WB_DOCS_FEATURE_LIST__={aiEdit:true,other:true};</script></head><body><script>window.cachedAi=window.__WB_DOCS_FEATURE_LIST__.aiEdit;</script></body></html>`, { headers: { "Content-Type": "text/html" } });
+  const response = await configureOfficePageResponse(new Request(origin + "/static/sheet/pc.html"), input, { origin, kind: "sheet", selectionUi: true });
+  const scope = {}, events = [];
+  for (const script of (await response.text()).matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g))
+    runInNewContext(script[1], { window: scope, document: { addEventListener: (name) => events.push(name) } });
+  assert.equal(scope.cachedAi, false);
+  assert.equal(scope.__WB_DOCS_FEATURE_LIST__.other, true);
+  assert.deepEqual(events, ["DOMContentLoaded"]);
+});
+
+test("界面配置只作用于当前来源的已绑定 HTML，不改变其他格式、资源和错误响应", async () => {
   /** @type {Array<[string, string, ResponseInit]>} */
   const cases = [
     ["doc", origin + "/static/doc/pc.html", { headers: { "Content-Type": "text/html" } }],

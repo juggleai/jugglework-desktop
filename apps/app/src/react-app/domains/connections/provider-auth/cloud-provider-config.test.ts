@@ -520,7 +520,7 @@ describe("managed JuggleRouter import", () => {
     expect(patch.lpr_router).toEqual({
       id: "JuggleRouter",
       name: "JuggleRouter",
-      env: ["JUGGLEWORK_GATEWAY_KEY_LPR_ROUTER"],
+      env: ["JUGGLEWORK_GATEWAY_KEY_V2_6C70725F726F75746572"],
       npm: "@ai-sdk/openai-compatible",
       api: gatewayUrl,
       options: { baseURL: gatewayUrl },
@@ -534,6 +534,7 @@ describe("managed JuggleRouter import", () => {
           limit: { context: 1000000, output: 384000 },
           cost: { input: 0.14, output: 0.28, cache_read: 0.0028 },
           modalities: { input: ["text"], output: ["text"] },
+          managedMediaBilling: { required: true, supported: false, version: 1, reason: "managed_media_billing_unavailable" },
         },
       },
     });
@@ -555,6 +556,9 @@ describe("managed JuggleRouter import", () => {
       modelIds: ["deepseek-v4-flash"],
       importedAt: 123,
       metadataVersion: CLOUD_PROVIDER_METADATA_VERSION,
+      organizationId: null,
+      gatewayMirror: null,
+      providerConfigFingerprint: expect.any(String),
     });
   });
 

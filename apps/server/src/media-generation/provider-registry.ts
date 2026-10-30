@@ -3,6 +3,7 @@ import { OpenAiCompatibleVideoAdapter } from "./openai-compatible-adapter.js";
 import { VolcengineArkV3VideoAdapter } from "./volcengine-ark-v3-adapter.js";
 import type { VideoGenerationAdapter } from "./types.js";
 import { cloudProviderConfigFingerprint } from "@jugglework/types/provider-credentials";
+import { managedMediaBillingReady } from "./managed-media-billing.js";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -45,6 +46,7 @@ export async function openAiCompatibleVideoAdapters(
     const openAiModelIDs: string[] = [];
     for (const [modelID, modelRaw] of Object.entries(models)) {
       if (!isRecord(modelRaw) || !isRecord(modelRaw.mediaGeneration)) continue;
+      if (!managedMediaBillingReady(modelRaw)) continue;
       if (modelRaw.mediaGeneration.protocol === "volcengine-ark-v3") arkModelIDs.push(modelID);
       else openAiModelIDs.push(modelID);
     }

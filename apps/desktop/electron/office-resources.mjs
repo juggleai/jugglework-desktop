@@ -3,6 +3,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import assets from "./office-assets.cjs";
 import { createOfficeFonts } from "./office-fonts.mjs";
+import { configureOfficeFontResponse } from "./office-font-compat.mjs";
 import { createOfficeNetworkPolicy } from "./office-network.mjs";
 import { configureOfficePageResponse } from "./office-page-config.mjs";
 import {
@@ -169,6 +170,7 @@ export function createOfficeResources({
             return new Response(result.bytes, {
               headers: {
                 "Content-Type": entry.mime,
+                "Content-Length": String(result.bytes.length),
                 "Access-Control-Allow-Origin": "*",
                 "Cache-Control": "no-store",
               },
@@ -217,7 +219,7 @@ export function createOfficeResources({
           }
           if (resource.kind === "unknown" && !response.ok)
             diagnostics.unknownFailures++;
-          return await configureOfficePageResponse(request, response, host);
+          return await configureOfficePageResponse(request, await configureOfficeFontResponse(request, response, host), host);
         } catch (error) {
           if (resource.kind === "unknown") diagnostics.unknownFailures++;
           if (resource.kind === "core" && !controller.signal.aborted) {

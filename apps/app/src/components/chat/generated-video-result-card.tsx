@@ -75,7 +75,8 @@ export function GeneratedVideoResultCard({ job: initialJob }: { job: GeneratedVi
   }, [initialJob])
 
   React.useEffect(() => {
-    if (!client || TERMINAL.has(job.status)) return
+    // Tool output is a historical snapshot; even terminal jobs may have been recovered.
+    if (!client) return
     let active = true
     let timer: number | null = null
     const poll = async () => {
@@ -88,7 +89,7 @@ export function GeneratedVideoResultCard({ job: initialJob }: { job: GeneratedVi
         })
         if (!active) return
         const next = generatedVideoJobFromOutput(response, job.toolCallId)
-        if (next) setJob(next)
+        if (next) setJob(current => (next.revision ?? 0) >= (current.revision ?? 0) ? next : current)
         if (!next || !TERMINAL.has(next.status)) timer = window.setTimeout(poll, 3_000)
       } catch {
         if (active) timer = window.setTimeout(poll, 5_000)
@@ -99,7 +100,7 @@ export function GeneratedVideoResultCard({ job: initialJob }: { job: GeneratedVi
       active = false
       if (timer !== null) window.clearTimeout(timer)
     }
-  }, [client, job.id, job.status, job.toolCallId, workspaceId])
+  }, [client, job.id, job.toolCallId, workspaceId])
 
   React.useEffect(() => {
     if (!TERMINAL.has(job.status)) {

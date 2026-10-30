@@ -69,6 +69,20 @@ describe("实时动作推导", () => {
     expect(getLiveActivityKind(messages)).toBe("writing_file");
   });
 
+  test("最新终态快照覆盖同一次调用的旧在途状态", () => {
+    expect(getLiveActivityKind([
+      assistant(toolPart("bash", "input-available")),
+      assistant(toolPart("bash", "output-available")),
+    ])).toBe("responding");
+  });
+
+  test("同一次调用的新快照按最新位置参与当前动作选择", () => {
+    expect(getLiveActivityKind([
+      assistant(toolPart("task", "input-streaming"), toolPart("bash", "input-available")),
+      assistant(toolPart("task", "input-available")),
+    ])).toBe("subtask_running");
+  });
+
   test("推理流式输出时显示「正在思考」", () => {
     expect(getLiveActivityKind([assistant({ type: "reasoning", text: "…", state: "streaming" })]))
       .toBe("thinking");

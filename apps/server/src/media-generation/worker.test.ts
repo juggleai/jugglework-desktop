@@ -22,6 +22,47 @@ const mp4 = new Uint8Array([0, 0, 0, 24, 102, 116, 121, 112, 105, 115, 111, 109]
 const binding = { adapterId: "fake", protocol: "openai", origin: "https://api.example.test", configFingerprint: "config", cloudProviderId: null, organizationId: null };
 
 describe("MediaGenerationWorker", () => {
+  test("retries unknown polling status without resubmitting and eventually downloads", async () => {
+    const repo = repository();
+    const root = await mkdtemp(join(tmpdir(), "jugglework-worker-retry-")); cleanup.push(() => rm(root, { recursive: true, force: true }));
+    let job = repo.createOrGet({ workspaceId: "ws", clientRequestId: "retry", requestHash: "retry-hash", model: { providerID: "provider", modelID: "video" }, mode: "text-to-video" });
+    job = repo.transition(job.id, job.revision, "submitting", { adapterBinding: binding });
+    job = repo.transition(job.id, job.revision, "submitted", { providerJobId: "external", nextPollAt: 0 });
+    let polls = 0;
+    const adapter: VideoGenerationAdapter = {
+      id: "fake", binding, matches: () => true,
+      submit: async () => { throw new Error("Must not resubmit"); },
+      inspect: async () => {
+        if (++polls < 3) throw new Error("video_provider_unknown_status");
+        return { status: "completed", resultReference: "external" };
+      },
+      acquireResult: async () => new Response(mp4, { headers: { "content-type": "video/mp4" } }),
+    };
+    const worker = new MediaGenerationWorker({ repository: repo, resolveAdapters: async () => [adapter], workspaceRoot: () => root, pollIntervalMs: 1, pollFailureBackoff: () => 1 });
+    worker.start(); cleanup.push(() => worker.dispose());
+    for (let attempt = 0; attempt < 80 && repo.get(job.id)?.status !== "completed"; attempt += 1) await Bun.sleep(5);
+    expect(repo.get(job.id)?.status).toBe("completed");
+    expect(repo.get(job.id)?.error).toBeUndefined();
+    expect(polls).toBe(3);
+  });
+
+  test("bounds consecutive polling failures", async () => {
+    const repo = repository();
+    let job = repo.createOrGet({ workspaceId: "ws", clientRequestId: "bounded", requestHash: "bounded-hash", model: { providerID: "provider", modelID: "video" }, mode: "text-to-video" });
+    job = repo.transition(job.id, job.revision, "submitting", { adapterBinding: binding });
+    job = repo.transition(job.id, job.revision, "submitted", { providerJobId: "external", nextPollAt: 0 });
+    let polls = 0;
+    const adapter: VideoGenerationAdapter = {
+      id: "fake", binding, matches: () => true, submit: async () => { throw new Error("Must not resubmit"); },
+      inspect: async () => { polls++; throw new Error("video_provider_unknown_status"); }, acquireResult: async () => new Response(),
+    };
+    const worker = new MediaGenerationWorker({ repository: repo, resolveAdapters: async () => [adapter], workspaceRoot: () => null, pollIntervalMs: 1, maxPollFailures: 3, pollFailureBackoff: () => 1 });
+    worker.start(); cleanup.push(() => worker.dispose());
+    for (let attempt = 0; attempt < 80 && repo.get(job.id)?.status !== "failed"; attempt += 1) await Bun.sleep(5);
+    expect(repo.get(job.id)?.status).toBe("failed");
+    expect(polls).toBe(3);
+  });
+
   test("recovers a submitted job and publishes its completed result", async () => {
     const repo = repository();
     const root = await mkdtemp(join(tmpdir(), "jugglework-worker-")); cleanup.push(() => rm(root, { recursive: true, force: true }));

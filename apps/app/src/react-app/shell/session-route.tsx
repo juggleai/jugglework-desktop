@@ -31,7 +31,6 @@ import {
   reconcileCoordinatorProbeSessionIds,
 } from "@/react-app/domains/session/sidebar/utils";
 import {
-  buildJuggleWorkWorkspaceBaseUrl,
   readJuggleWorkServerSettings,
   type JuggleWorkSessionModelPreference,
 } from "@/app/lib/jugglework-server";
@@ -184,7 +183,8 @@ import { useWorkbenchStore } from "@/react-app/domains/session/chat/workbench-st
 
 import { filterProviderList } from "@/app/utils/providers";
 import { ensureDesktopLocalJuggleWorkConnection } from "./desktop-local-jugglework";
-import { resolveJuggleWorkConnection } from "./jugglework-connection";
+import { manualSessionCreation, manualSessionCreationKey } from "./manual-session-creation";
+import { useManualSessionPending } from "./use-manual-session-pending";
 import { useReloadCoordinator } from "./reload-coordinator";
 import { useShellConfig } from "./shell-config";
 import { useShellShortcuts } from "./use-shell-shortcuts";
@@ -359,7 +359,6 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     loadWorkspaceSessionsInBackground,
     rememberPendingCreatedSession,
     handleRuntimeSessionCreated,
-    handleRuntimeSessionUpdated,
     handleRuntimeSessionDeleted,
     handleRemoteWorkspaceConnectionSaved,
     runRemoteWorkspaceConnectionCheck,
@@ -1814,9 +1813,17 @@ export function SessionRoute(props: SessionRouteProps = {}) {
   );
 
 
-  const handleCreateTaskInWorkspace = useCallback(async (workspaceId: string): Promise<string | null> => {
-    const navigationGeneration = ++workspaceNavigationGenerationRef.current;
+  const selectedCreationKey = manualSessionCreationKey(
+    endpointForWorkspace(selectedWorkspace)?.opencodeBaseUrl ?? baseUrl,
+    selectedWorkspaceId,
+    endpointForWorkspace(selectedWorkspace)?.token,
+  );
+  useManualSessionPending(selectedCreationKey);
+
+  const handleCreateTaskInWorkspace = useCallback((workspaceId: string, intent?: { groupId?: string; prompt?: string }): Promise<string | null> => {
     const workspace = workspaces.find((item) => item.id === workspaceId);
+    const key = manualSessionCreationKey(endpointForWorkspace(workspace ?? null)?.opencodeBaseUrl ?? baseUrl, workspaceId, endpointForWorkspace(workspace ?? null)?.token);
+    return manualSessionCreation.run(key, async () => {
     if (
       !workspace ||
       loading ||
@@ -1824,13 +1831,16 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     ) {
       return null;
     }
+    const navigationGeneration = ++workspaceNavigationGenerationRef.current;
+    const pendingToast = toast.info("Creating task…", { id: `manual-session:${key}`, duration: Infinity });
+    let createdSessionId: string | null = null;
+    try {
     const workspaceAlreadyReady = workspaceId === selectedWorkspaceId &&
       !activatingWorkspaceId &&
       workspaceActivationErrorId !== workspaceId;
     if (!workspaceAlreadyReady && !await activateWorkspaceForNavigation(workspaceId)) {
       return null;
     }
-    if (workspaceNavigationGenerationRef.current !== navigationGeneration) return null;
     const endpoint = endpointForWorkspace(workspace);
     if (!endpoint || !endpoint.token) {
       return null;
@@ -1840,13 +1850,14 @@ export function SessionRoute(props: SessionRouteProps = {}) {
       workspace.path?.trim() || undefined,
       { token: endpoint.token, mode: "jugglework" },
     );
-    try {
       setErrorsByWorkspaceId((current) => ({ ...current, [workspaceId]: null }));
       setRouteError(null);
       const session = unwrap(
         await workspaceClient.session.create({ directory: workspace.path?.trim() || undefined }),
       );
-      if (workspaceNavigationGenerationRef.current !== navigationGeneration) return session.id;
+      createdSessionId = session.id;
+      if (intent?.prompt !== undefined) saveSessionDraft(workspaceId, session.id, { text: intent.prompt, mode: "prompt" });
+      if (intent?.groupId) sessionManagementStore.getState().assignGroup(workspaceId, session.id, intent.groupId);
       if (workspaceId === selectedWorkspaceId) {
         void sessionProviderAuthStore.runCloudProviderSync("new_chat");
       }
@@ -1855,9 +1866,6 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         workspace_type: workspace.workspaceType ?? "unknown",
       });
       toast.dismiss(taskCreateUnavailableToastId(workspaceId));
-      toast.dismiss();
-      setLegacySelectedWorkspaceId(workspaceId);
-      writeActiveWorkspaceId(workspaceId || null);
       writeLastSessionFor(workspaceId, session.id);
       rememberPendingCreatedSession(workspaceId, session.id);
       setSessionsByWorkspaceId((current) => {
@@ -1868,10 +1876,20 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         sessionsByWorkspaceIdRef.current = next;
         return next;
       });
-      openSessionForNavigation(workspaceId, session.id, { workspaceReady: true });
+      if (workspaceNavigationGenerationRef.current === navigationGeneration) {
+        setLegacySelectedWorkspaceId(workspaceId);
+        writeActiveWorkspaceId(workspaceId || null);
+        openSessionForNavigation(workspaceId, session.id, { workspaceReady: true });
+      }
       void refreshRouteState();
       return session.id;
     } catch (error) {
+      if (createdSessionId) {
+        // Creation succeeded: never offer a second POST for a local effect error.
+        toast.error("Task created, but setup failed", { description: describeRouteError(error) });
+        void refreshRouteState();
+        return createdSessionId;
+      }
       const message = describeTaskCreateError(error);
       setRouteError(message);
       setErrorsByWorkspaceId((current) => ({ ...current, [workspaceId]: message }));
@@ -1880,7 +1898,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         description: message,
         action: {
           label: "Retry",
-          onClick: () => void handleCreateTaskInWorkspace(workspaceId),
+          onClick: () => void handleCreateTaskInWorkspace(workspaceId, intent),
         },
         duration: Infinity,
       });
@@ -1894,8 +1912,11 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         }
       }
       return null;
+    } finally {
+      toast.dismiss(pendingToast);
     }
-  }, [activateWorkspaceForNavigation, activatingWorkspaceId, endpointForWorkspace, loading, openSessionForNavigation, refreshRouteState, rememberPendingCreatedSession, retryingWorkspaceIds, selectedWorkspaceId, sessionProviderAuthStore, workspaceActivationErrorId, workspaces]);
+    });
+  }, [baseUrl, activateWorkspaceForNavigation, activatingWorkspaceId, endpointForWorkspace, loading, openSessionForNavigation, refreshRouteState, rememberPendingCreatedSession, retryingWorkspaceIds, selectedWorkspaceId, sessionProviderAuthStore, workspaceActivationErrorId, workspaces]);
 
   // Latest session-list state for prev/next session tab navigation. The
   // `options` field is updated by `onSessionTabsChange` from SessionPage so we
@@ -2353,6 +2374,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     options?: CreateWorkspaceOptions,
   ) => {
     if (!folder) return;
+    const navigationGeneration = ++workspaceNavigationGenerationRef.current;
     const projectLabel = options?.projectLabel?.trim() ?? "";
     setCreateWorkspaceBusy(true);
     setCreateWorkspaceError(null);
@@ -2373,69 +2395,36 @@ export function SessionRoute(props: SessionRouteProps = {}) {
       // engine-less (it only spawns OpenCode at boot when a workspace already
       // exists), so sessions would hang forever. This boots the engine when
       // it isn't running, same as the old /welcome flow did.
-      let sessionBaseUrl = baseUrl;
-      let sessionToken = token;
       if (targetWorkspace && isDesktopRuntime()) {
         await ensureDesktopLocalJuggleWorkConnection({
           route: "session",
           workspace: targetWorkspace,
           allWorkspaces: list.workspaces,
         }).catch(() => undefined);
-        // The engine boot can restart the server with fresh tokens; re-resolve
-        // so the first-session creation below doesn't use stale credentials.
-        const fresh = await resolveJuggleWorkConnection().catch(() => null);
-        if (fresh?.normalizedBaseUrl && fresh.resolvedToken) {
-          sessionBaseUrl = fresh.normalizedBaseUrl;
-          sessionToken = fresh.resolvedToken;
-        }
       }
       setCreateWorkspaceOpen(false);
       // Mark onboarding complete so the /welcome redirect never fires again.
       local.setPrefs((prev) => ({ ...prev, hasCompletedOnboarding: true }));
       await refreshRouteState();
       if (targetWorkspaceId) {
-        const workspacePath = targetWorkspace?.path?.trim() || folder;
-        // Best-effort first task creation (mirrors the old welcome flow) — a
-        // failure here must not surface as a failed workspace creation.
-        const session = sessionBaseUrl && sessionToken
-          ? await createClient(
-              `${(buildJuggleWorkWorkspaceBaseUrl(sessionBaseUrl, targetWorkspaceId) ?? sessionBaseUrl).replace(/\/+$/, "")}/opencode`,
-              workspacePath || undefined,
-              { token: sessionToken, mode: "jugglework" },
-            ).session.create({ directory: workspacePath || undefined })
-              .then((result) => unwrap(result))
-              .catch(() => null)
-          : null;
-        setLegacySelectedWorkspaceId(targetWorkspaceId);
-        writeActiveWorkspaceId(targetWorkspaceId);
         if (projectLabel) {
           writeWorkspaceProjectDimension(targetWorkspaceId, {
             label: projectLabel,
           });
         }
         captureAnalyticsEvent("workspace_created", { workspace_type: "local" });
-        if (session?.id) {
-          captureAnalyticsEvent("task_created", { source: "workspace_created", workspace_type: "local" });
-          writeLastSessionFor(targetWorkspaceId, session.id);
-          rememberPendingCreatedSession(targetWorkspaceId, session.id);
-          setSessionsByWorkspaceId((current) => {
-            const next = {
-              ...current,
-              [targetWorkspaceId]: mergeWorkspaceRouteSession(current[targetWorkspaceId] ?? [], session),
-            };
-            sessionsByWorkspaceIdRef.current = next;
-            return next;
-          });
+        if (workspaceNavigationGenerationRef.current === navigationGeneration) {
+          setLegacySelectedWorkspaceId(targetWorkspaceId);
+          writeActiveWorkspaceId(targetWorkspaceId);
+          navigateToWorkspaceSession(targetWorkspaceId, null, { replace: true });
         }
-        navigateToWorkspaceSession(targetWorkspaceId, session?.id ?? null, { replace: true });
-        if (session?.id) requestComposerFocus(session.id, "session-created");
       }
     } catch (error) {
       setCreateWorkspaceError(describeWorkspaceCreateError(error));
     } finally {
       setCreateWorkspaceBusy(false);
     }
-  }, [baseUrl, client, local, navigateToWorkspaceSession, refreshRouteState, rememberPendingCreatedSession, token]);
+  }, [client, local, navigateToWorkspaceSession, refreshRouteState]);
 
   const createWorkspaceControlAction = useMemo<JuggleWorkControlAction>(() => ({
     id: "workspace.create",
@@ -2533,7 +2522,6 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         juggleworkToken={selectedWorkspaceServerToken}
         interactionClient={selectedWorkspaceEndpoint.client}
         onSessionCreated={handleRuntimeSessionCreated}
-        onSessionUpdated={handleRuntimeSessionUpdated}
         onSessionDeleted={(sessionId) => {
           setSessionAgentChoice(selectedWorkspaceId, sessionId, null);
           handleRuntimeSessionDeleted(sessionId);
@@ -2641,6 +2629,11 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         connectingWorkspaceId: null,
         workspaceConnectionStateById,
         newTaskDisabled: !canAcceptTask,
+        isTaskCreationPending: (workspaceId) => manualSessionCreation.pending(manualSessionCreationKey(
+          endpointForWorkspace(workspaces.find((item) => item.id === workspaceId) ?? null)?.opencodeBaseUrl ?? baseUrl,
+          workspaceId,
+          endpointForWorkspace(workspaces.find((item) => item.id === workspaceId) ?? null)?.token,
+        )),
         sidebarHydratedFromCache: Object.values(sessionsByWorkspaceId).some((list) => list.length > 0),
         startupPhase: effectiveLoading ? "nativeInit" : "ready",
         onSelectWorkspace: async (workspaceId) => {
@@ -2720,53 +2713,10 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         },
         onPrefetchSession: () => {},
         onCreateTaskInWorkspace: (workspaceId, groupId) => {
-          void handleCreateTaskInWorkspace(workspaceId).then((sessionId) => {
-            if (sessionId && groupId) {
-              sessionManagementStore.getState().assignGroup(workspaceId, sessionId, groupId);
-            }
-          });
+          void handleCreateTaskInWorkspace(workspaceId, { groupId });
         },
         onCreateTaskWithPrompt: (workspaceId, prompt) => {
-          void (async () => {
-            const navigationGeneration = ++workspaceNavigationGenerationRef.current;
-            const workspace = workspaces.find((item) => item.id === workspaceId);
-            if (!workspace) return;
-            const workspaceAlreadyReady = workspaceId === selectedWorkspaceId &&
-              !activatingWorkspaceId &&
-              workspaceActivationErrorId !== workspaceId &&
-              !startupWorkspaceActivationFailed;
-            if (!workspaceAlreadyReady && !await activateWorkspaceForNavigation(workspaceId)) return;
-            if (workspaceNavigationGenerationRef.current !== navigationGeneration) return;
-            const endpoint = endpointForWorkspace(workspace);
-            if (!endpoint?.token) return;
-            const workspaceClient = createClient(
-              endpoint.opencodeBaseUrl,
-              workspace.path?.trim() || undefined,
-              { token: endpoint.token, mode: "jugglework" },
-            );
-            try {
-              const session = unwrap(
-                await workspaceClient.session.create({ directory: workspace.path?.trim() || undefined }),
-              );
-              if (workspaceNavigationGenerationRef.current !== navigationGeneration) return;
-              if (workspaceId === selectedWorkspaceId) {
-                void sessionProviderAuthStore.runCloudProviderSync("new_chat");
-              }
-              saveSessionDraft(workspaceId, session.id, { text: prompt, mode: "prompt" });
-              writeActiveWorkspaceId(workspaceId || null);
-              writeLastSessionFor(workspaceId, session.id);
-              rememberPendingCreatedSession(workspaceId, session.id);
-              setSessionsByWorkspaceId((current) => ({
-                ...current,
-                [workspaceId]: mergeWorkspaceRouteSession(current[workspaceId] ?? [], session),
-              }));
-              openSessionForNavigation(workspaceId, session.id);
-            } catch {
-              if (workspaceNavigationGenerationRef.current !== navigationGeneration) return;
-              // Fall back to normal task creation without prompt
-              void handleCreateTaskInWorkspace(workspaceId);
-            }
-          })();
+          void handleCreateTaskInWorkspace(workspaceId, { prompt });
         },
         onOpenRenameWorkspace: handleOpenRenameWorkspace,
         onShareWorkspace: handleShareWorkspace,

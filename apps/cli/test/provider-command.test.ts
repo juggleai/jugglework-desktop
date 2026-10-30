@@ -92,7 +92,7 @@ test("retries idempotently and writes a Desktop-compatible baseline", async () =
   assert.equal(baseline.providerId, provider.id);
   assert.equal(baseline.sourceProviderId, provider.providerId);
   assert.deepEqual(baseline.modelIds, ["model-a"]);
-  assert.equal(baseline.metadataVersion, 10);
+  assert.equal(baseline.metadataVersion, 11);
   assert.equal(baseline.organizationId, "org");
   assert.equal(calls.filter((call) => call === "verification").length, 2);
 });

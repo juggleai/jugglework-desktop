@@ -29,9 +29,9 @@ export function OrganizationConnectorAction(props: OrganizationConnectorActionPr
 
 export function OrganizationConnectorCard(props: OrganizationConnectorActionProps & { onOpenDetail: () => void }) {
   const icon = resolveExtensionIconUrl({ serviceUrl: props.connection.url });
-  return <div className="rounded-xl border border-dls-border bg-dls-surface">
+  return <div className="flex items-start gap-3 rounded-xl border border-dls-border bg-dls-surface p-4 transition-colors hover:bg-dls-hover">
     <button type="button" data-testid={`org-connector-open:${props.connection.id}`} onClick={props.onOpenDetail}
-      className="flex w-full items-start gap-3 rounded-xl p-4 text-left transition-colors hover:bg-dls-hover">
+      className="flex min-w-0 flex-1 items-start gap-3 rounded-lg text-left">
       <span className="flex size-10 shrink-0 items-center justify-center rounded-lg border border-dls-border bg-dls-hover">
         {icon ? <img src={icon} alt="" width={24} height={24} /> : <ExtensionMeshAvatar name={props.connection.name} category="mcp" className="size-7 rounded-md" />}
       </span>
@@ -40,6 +40,6 @@ export function OrganizationConnectorCard(props: OrganizationConnectorActionProp
         <span className="mt-2 block text-xs text-dls-secondary">{isOrgMcpConnectionReady(props.connection) ? t("mcp.status_connected") : t("project_extensions.unconnected_group")}</span>
       </span>
     </button>
-    <div className="flex justify-end px-4 pb-4"><OrganizationConnectorAction {...props} /></div>
+    <div className="shrink-0"><OrganizationConnectorAction {...props} /></div>
   </div>;
 }

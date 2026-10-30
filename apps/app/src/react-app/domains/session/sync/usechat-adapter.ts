@@ -85,6 +85,8 @@ function providerErrorHeadingAndHint(kind: NonNullable<ReturnType<typeof classif
       return [t("app.error_request_too_large"), t("app.error_request_too_large_hint")];
     case "tls_verification_failed":
       return [t("app.error_tls_verification"), t("app.error_tls_verification_hint")];
+    case "provider_timeout":
+      return [t("app.error_provider_timeout"), t("app.error_provider_timeout_hint")];
   }
 }
 
@@ -286,6 +288,8 @@ export function snapshotToUIMessages(snapshot: JuggleWorkSessionSnapshot): UIMes
     const error = message.info.role === "assistant" && "error" in message.info ? message.info.error : undefined;
     const stopped = isMessageAbortedError(error);
     const timingMetadata = {
+      ...(message.info.role === "user" && message.info.summary?.diffs
+        ? { fileDiffs: message.info.summary.diffs } : {}),
       ...(typeof created === "number" ? { created } : {}),
       ...(typeof completed === "number" ? { completed } : {}),
       ...(message.info.role === "assistant" && typeof message.info.finish === "string"

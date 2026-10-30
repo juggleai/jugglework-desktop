@@ -444,7 +444,7 @@ describe("JuggleWorkContextOverflow fetch patch", () => {
         method: "POST",
         headers: { "x-jugglework-empty-stream-retry": "1" },
         body: JSON.stringify({ stream: true }),
-      })).rejects.toThrow("Provider stream timed out before producing output after 3 attempts (response_timeout).");
+      })).rejects.toThrow("Managed model produced no output after 3 attempts (response_timeout).");
       expect(fetchCalls).toBe(3);
     } finally {
       fetchHandler = null;
@@ -454,6 +454,7 @@ describe("JuggleWorkContextOverflow fetch patch", () => {
 
   test("marks only lpr providers for empty-stream retry", async () => {
     const hooks = await JuggleWorkContextOverflow() as {
+      config: (config: { provider?: Record<string, { options?: Record<string, unknown> }> }) => Promise<void>;
       "chat.headers": (
         input: { model: { providerID: string } },
         output: { headers: Record<string, string> },
@@ -466,6 +467,42 @@ describe("JuggleWorkContextOverflow fetch patch", () => {
     expect(managed.headers["x-jugglework-empty-stream-retry"]).toBe("1");
     expect(local.headers["x-jugglework-empty-stream-retry"]).toBeUndefined();
   });
+
+  test("binds the guarded fetch and bounded stream wait directly to managed providers", async () => {
+    const hooks = await JuggleWorkContextOverflow() as {
+      config: (config: { provider?: Record<string, { options?: Record<string, unknown> }> }) => Promise<void>;
+    };
+    const config = {
+      provider: {
+        lpr_managed: { options: { baseURL: "https://work.juggle.im/jwork/api/gateway/v1/lpr_managed" } },
+        local: { options: { baseURL: "http://127.0.0.1:11434/v1" } },
+      },
+    };
+    await hooks.config(config);
+    const managedOptions = config.provider.lpr_managed.options as Record<string, unknown>;
+    expect(typeof managedOptions.fetch).toBe("function");
+    expect(managedOptions.headerTimeout).toBe(false);
+    expect(managedOptions.chunkTimeout).toBe(120_000);
+    expect(config.provider.local.options).toEqual({ baseURL: "http://127.0.0.1:11434/v1" });
+  });
+
+  test("guards a managed gateway stream even when the SDK drops the marker header", async () => {
+    fetchCalls = 0;
+    process.env.JUGGLEWORK_PROVIDER_RESPONSE_TIMEOUT_MS = "10";
+    fetchHandler = async (request) => await new Promise<Response>((_resolve, reject) => {
+      request.signal.addEventListener("abort", () => reject(request.signal.reason), { once: true });
+    });
+    try {
+      await expect(patchedFetch(
+        "https://work.juggle.im/jwork/api/gateway/v1/lpr_managed/chat/completions",
+        { method: "POST", body: JSON.stringify({ stream: true }) },
+      )).rejects.toThrow("Managed model produced no output after 3 attempts (response_timeout).");
+      expect(fetchCalls).toBe(3);
+    } finally {
+      fetchHandler = null;
+      delete process.env.JUGGLEWORK_PROVIDER_RESPONSE_TIMEOUT_MS;
+    }
+  }, 10_000);
 
   test("does not continue retrying after the request is aborted", async () => {
     fetchCalls = 0;

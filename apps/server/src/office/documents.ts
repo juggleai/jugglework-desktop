@@ -34,6 +34,17 @@ interface DocumentRecord {
   identity: FileIdentity;
   loadingStartedAt: number | null;
 }
+type ModelIdentity = Pick<OfficeDocumentSession, "pageId" | "engineFileId">;
+
+/** 与原生目录一致的内容查询分类；find 仅精确匹配，查找替换仍属于修改。 */
+function isOfficeContentQuery(tool: string): boolean {
+  return /^(?:doc|sheet|slide)_(?:get_|list_|find$|resolve_|calculate_|audit_)/.test(tool);
+}
+
+function requireModel(session: OfficeDocumentSession, expected: ModelIdentity): void {
+  if (session.pageId !== expected.pageId || session.engineFileId !== expected.engineFileId)
+    throw new ApiError(409, "office_model_invalidated", "文档模型已失效，不能确认保存");
+}
 
 const CONTENT_QUERY = {
   doc: "doc_get_last_operable_pos",
@@ -169,7 +180,7 @@ export class OfficeDocuments {
       prepare: async (document) => { await options.prepareSave?.(document); },
       selection: async (document) => options.readSelection?.(document) ?? null,
       tool: (name, args) => options.engine.tool(name, args),
-      save: (document) => this.save(document.workspaceId, document.documentId, true),
+      save: (document) => this.save(document.workspaceId, document.documentId, true, document),
       modified: (document, messageId, name, args, output) => this.afterTool(document.workspaceId, document.ownerSessionId, messageId, randomUUID(), name, args, output),
     });
   }
@@ -708,15 +719,22 @@ export class OfficeDocuments {
     workspaceId: string,
     documentId: string,
     final = false,
+    expectedModel?: ModelIdentity,
   ): Promise<OfficeDocumentSession> {
+    const current = this.require(workspaceId, documentId).session;
+    const expected = { pageId: (expectedModel ?? current).pageId, engineFileId: (expectedModel ?? current).engineFileId };
+    requireModel(current, expected);
+    this.selections.assertDocumentSaveAllowed(workspaceId, documentId, expected);
     const pending = this.saves.get(documentId);
     if (pending) {
       await pending;
-      return final
-        ? this.save(workspaceId, documentId, true)
-        : this.get(workspaceId, documentId);
+      requireModel(this.require(workspaceId, documentId).session, expected);
+      if (final) return this.save(workspaceId, documentId, true, expected);
+      const saved = await this.get(workspaceId, documentId);
+      requireModel(this.require(workspaceId, documentId).session, expected);
+      return saved;
     }
-    const operation = this.saveDocument(workspaceId, documentId, final).finally(
+    const operation = this.saveDocument(workspaceId, documentId, final, expected).finally(
       () => this.saves.delete(documentId),
     );
     this.saves.set(documentId, operation);
@@ -726,25 +744,26 @@ export class OfficeDocuments {
     workspaceId: string,
     documentId: string,
     final: boolean,
+    expected: ModelIdentity,
   ): Promise<OfficeDocumentSession> {
     const record = this.require(workspaceId, documentId);
+    const model = record.session;
+    const requireLiveModel = () => {
+      requireModel(record.session, expected);
+      if (record.session !== model)
+        throw new ApiError(409, "office_model_invalidated", "文档模型已失效，不能确认保存");
+    };
+    requireLiveModel();
     let session = await this.get(workspaceId, documentId);
+    requireLiveModel();
     if (session.state !== "ready" || !session.engineFileId)
       throw new ApiError(409, "office_not_ready", "文档尚未就绪，不能确认保存");
-    const model = record.session;
     const fileId = session.engineFileId;
-    const requireLiveModel = () => {
-      if (record.session !== model || record.session.engineFileId !== fileId)
-        throw new ApiError(
-          409,
-          "office_model_invalidated",
-          "文档模型已失效，不能确认保存",
-        );
-    };
     try {
       await this.options.checkFile?.(record.absolutePath);
       await this.options.prepareSave?.(structuredClone(model));
       requireLiveModel();
+      this.selections.assertDocumentSaveAllowed(workspaceId, documentId, model);
       if (/\.csv$/i.test(session.relativePath)) {
         const info = await this.options.engine.tool("sheet_get_sheet_info", {
           file_id: session.engineFileId,
@@ -759,6 +778,7 @@ export class OfficeDocuments {
       }
       for (let attempt = 0; attempt < (final ? 3 : 1); attempt++) {
         requireLiveModel();
+        this.selections.assertDocumentSaveAllowed(workspaceId, documentId, model);
         record.session.state = "saving";
         await this.options.engine.save(fileId);
         // TIPS: 引擎退出会替换会话状态；旧请求即使晚到成功，也不能发布交付或恢复旧模型。
@@ -821,7 +841,7 @@ export class OfficeDocuments {
       dirty: false,
       error: undefined,
     };
-    this.selections.retireDocument(workspaceId, documentId);
+    this.selections.retireDocument(workspaceId, documentId, record.session);
     record.session = next;
     record.loadingStartedAt = null;
     return this.loadRecord(record);
@@ -876,7 +896,7 @@ export class OfficeDocuments {
     if (editor)
       await this.options.engine.close(editor.file_id, decision === "discard");
     record.session.state = "closed";
-    this.selections.retireDocument(workspaceId, documentId);
+    this.selections.retireDocument(workspaceId, documentId, record.session);
     record.session.engineFileId = null;
     record.session.previewUrl = null;
     return structuredClone(record.session);
@@ -973,6 +993,8 @@ export class OfficeDocuments {
         "office_wrong_document",
         "目标模型不属于当前聊天文档",
       );
+    if (!isOfficeContentQuery(tool))
+      this.selections.assertDocumentMutationAllowed(workspaceId, session.documentId, session);
     return { ...args, file_id: session.engineFileId };
   }
 
@@ -983,7 +1005,8 @@ export class OfficeDocuments {
       if (turnId) {
         const names = await this.selections.tools(workspaceId, sessionId, turnId, selectionRef);
         if (names) {
-          const tools = (await this.options.engine.listTools()).filter((tool) => names.includes(tool.name)).map(describeOfficeSelectionTool);
+          const locator = this.selections.context(workspaceId, sessionId, turnId).references.find((ref) => ref.referenceId === selectionRef)?.locator;
+          const tools = (await this.options.engine.listTools()).filter((tool) => names.includes(tool.name)).map((tool) => describeOfficeSelectionTool(tool, locator));
           if (name) {
             const tool = tools.find((tool) => tool.name === name);
             if (!tool) throw new ApiError(409, "office_selection_tool_unavailable", "该选区尚不支持此操作");
@@ -1057,12 +1080,7 @@ export class OfficeDocuments {
     args: Record<string, unknown>,
     output: unknown,
   ): Promise<void> {
-    if (
-      /^(?:doc|sheet|slide)_(?:get_|list_|find$|resolve_|calculate_|audit_)/.test(
-        tool,
-      )
-    )
-      return;
+    if (isOfficeContentQuery(tool)) return;
     let result = output;
     if (typeof result === "string") {
       try {
@@ -1122,7 +1140,7 @@ export class OfficeDocuments {
   invalidate(): void {
     for (const record of this.documents.values())
       if (!["closed", "external"].includes(record.session.state)) {
-        this.selections.retireDocument(record.session.workspaceId, record.session.documentId);
+        this.selections.retireDocument(record.session.workspaceId, record.session.documentId, record.session);
         record.session = {
           ...record.session,
           state: "error",
@@ -1136,7 +1154,7 @@ export class OfficeDocuments {
   /** 原生页面崩溃或加载失败时停止该文档写入；残留模型只在用户确认恢复后释放。 */
   failPage(workspaceId: string, documentId: string): OfficeDocumentSession {
     const record = this.require(workspaceId, documentId);
-    this.selections.retireDocument(workspaceId, documentId);
+    this.selections.retireDocument(workspaceId, documentId, record.session);
     if (!["closed", "external", "error"].includes(record.session.state))
       record.session = {
         ...record.session,

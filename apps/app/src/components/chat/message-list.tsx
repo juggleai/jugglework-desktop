@@ -45,7 +45,8 @@ import { WebsearchTool } from "@/components/tools/websearch"
 import { useMessageList, useSessionErrorMessage } from "@/components/chat/message-list-provider"
 import { SessionErrorMessage } from "@/components/chat/session-error-message"
 import { ArtifactCards, ArtifactDeliveryStatus } from "@/components/chat/artifact"
-import { artifactsFromDelivery, canDisplayArtifact, useArtifacts } from "@/lib/artifacts"
+import { artifactsFromDelivery, artifactsWithTurnDiffs, canDisplayArtifact, useArtifacts } from "@/lib/artifacts"
+import { useArtifactActions } from "@/react-app/domains/session/artifacts/artifact-actions-provider"
 import { useFileDeliveries } from "@/react-app/domains/session/artifacts/file-deliveries-provider"
 import { FileReferenceProvider, useOpenTargets } from "@/lib/target-provider"
 import { TaskSuggestions } from "@/components/chat/task-suggestions"
@@ -1140,6 +1141,7 @@ function MessageGroup({
   isStreaming,
 }: AssistantMessageGroupProps) {
   const { onRevertToUserMessage, onForkAtMessage } = useMessageList()
+  const artifactActions = useArtifactActions()
   const lastItem = items[items.length - 1]
   // Branch/revert must target a real server-side message id. Synthetic
   // client-side messages (e.g. session errors) don't exist on the server and
@@ -1165,8 +1167,8 @@ function MessageGroup({
       ...generatedImageResultsFromMessages(turnMessages).map((result) => result.path),
       ...generatedVideoJobsForMessageScope(turnMessages, messages).flatMap((job) => job.artifact ? [job.artifact.path] : []),
     ].map((path) => path.replace(/\\/g, "/"))
-    return artifacts.filter((artifact) => !mediaPaths.some((path) => path === artifact.path || path.endsWith(`/${artifact.path}`)))
-  }, [artifacts, turnMessages, messages])
+    return artifactsWithTurnDiffs(artifacts, messages[userMessageIndex], turnMessages, artifactActions?.workspaceRoot).filter((artifact) => !mediaPaths.some((path) => path === artifact.path || path.endsWith(`/${artifact.path}`)))
+  }, [artifacts, turnMessages, messages, userMessageIndex, artifactActions?.workspaceRoot])
 
   React.useEffect(() => {
     setProcessOpen(isLiveGroup)
@@ -1283,7 +1285,7 @@ function MessageGroup({
       )}>
         {summaryItems.map((item, groupIndex) => renderItem(item, processItems.length + groupIndex, "summary"))}
       </div>
-      {!isLiveGroup ? <ArtifactCards artifacts={cardArtifacts} /> : null}
+      {!isLiveGroup ? <ArtifactCards artifacts={cardArtifacts} turnId={turnId} onUndo={!isStreaming && turnId ? () => onRevertToUserMessage(turnId) : undefined} /> : null}
       {!isLiveGroup && delivery ? <ArtifactDeliveryStatus delivery={delivery} onRetry={() => deliveries!.retry(delivery.turnId)} /> : null}
       <GeneratedImageResultList messages={items.map((item) => item.message)} />
       <GeneratedVideoResultList

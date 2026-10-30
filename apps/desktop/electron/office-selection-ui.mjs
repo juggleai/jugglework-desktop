@@ -3,8 +3,9 @@
  * @param {string} kind 当前文档类型
  * @param {Function} readSelection 已适配的原生选择读取函数
  * @param {any} scope 配套页面对象及有限 preload 桥；供隔离页面回归使用
+ * @param {Function} readSheetAnchor 读取表格选区的可见位置
  */
-export function installOfficeSelectionUi(kind, readSelection, scope = window) {
+export function installOfficeSelectionUi(kind, readSelection, scope = window, readSheetAnchor) {
   const bridge = scope.juggleworkOfficeSelection;
   if (!bridge || scope.document.getElementById("juggle-office-selection-ui")) return;
   const doc = scope.document;
@@ -29,48 +30,103 @@ export function installOfficeSelectionUi(kind, readSelection, scope = window) {
   const entry = doc.createElement("button");
   entry.type = "button";
   entry.setAttribute("data-jugglework-office-action", "request-edits");
-  if (kind === "slide") {
-    const icon = doc.createElementNS("http://www.w3.org/2000/svg", "svg");
-    icon.setAttribute("data-jugglework-office-icon", "presentation");
-    icon.setAttribute("viewBox", "0 0 24 24"); icon.setAttribute("width", "16"); icon.setAttribute("height", "16");
-    icon.setAttribute("fill", "none"); icon.setAttribute("stroke", "currentColor"); icon.setAttribute("stroke-width", "2");
-    icon.setAttribute("stroke-linecap", "round"); icon.setAttribute("stroke-linejoin", "round"); icon.setAttribute("aria-hidden", "true");
-    for (const pathData of ["M2 3h20", "M21 3v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V3", "m7 21 5-5 5 5"]) {
-      const path = doc.createElementNS("http://www.w3.org/2000/svg", "path"); path.setAttribute("d", pathData); icon.append(path);
-    }
-    const label = doc.createElement("span"); label.textContent = "Slides · Request edits / 请求修改";
-    entry.append(icon, label); entry.setAttribute("aria-label", label.textContent);
-    entry.style.cssText = "display:none;align-items:center;gap:7px;padding:8px 13px;border:1px solid #f5d08a;border-radius:12px;background:#fffbeb;box-shadow:0 3px 12px #92400e24;color:#92400e;font-weight:600;white-space:nowrap";
-  } else {
-    entry.textContent = "✦ AI 编辑"; entry.setAttribute("aria-label", "AI 编辑选区");
-    entry.style.cssText = "display:none;padding:8px 13px;border:1px solid #e1e1e1;border-radius:12px;background:#fff;box-shadow:0 3px 12px #0002;color:#181818;white-space:nowrap";
-  }
+  entry.textContent = "✦ AI 编辑"; entry.setAttribute("aria-label", "AI 编辑选区");
+  entry.style.cssText = "display:none;padding:8px 13px;border:1px solid #e1e1e1;border-radius:12px;background:#fff;box-shadow:0 3px 12px #0002;color:#181818;white-space:nowrap";
   root.append(entry); doc.body.append(root);
   let composing = false, pending = false, submitting = false, frozen = null, panel = null, candidateSelection = null, captureRequest = null;
   let handleInputKey = null;
+  let reviewingCapture = null;
   let point = { x: 24, y: 120 };
+  let slidePageAnchor = null;
+  let sheetSwitching = false, sheetView = null;
+  const sheetDisposables = [];
+  // 只有标为“当前页”的图片 AI 入口启用页语义；普通 office.selection 读取仍保留图片对象选择。
+  const readCandidateSelection = () => readSelection(kind, scope, { picturePage: true });
   const place = (width = 150, height = 40) => {
+    if (slidePageAnchor && !panel) {
+      root.style.left = `${slidePageAnchor.x}px`;
+      root.style.top = `${slidePageAnchor.y}px`;
+      return;
+    }
     root.style.left = `${Math.max(8, Math.min(point.x, scope.innerWidth - width - 12))}px`;
-    root.style.top = `${Math.max(12, Math.min(point.y + 8, scope.innerHeight - height - 12))}px`;
+    const below = point.y + 8;
+    const top = kind === "sheet" && Number.isFinite(point.maxY)
+      ? Math.max(point.minY, Math.min(below + height <= point.maxY ? below : point.top - height - 8, point.maxY - height))
+      : Math.max(12, Math.min(below, scope.innerHeight - height - 12));
+    root.style.top = `${top}px`;
+  };
+  const readSlidePageAnchor = (selection) => {
+    if (!selection?.pageIndex?.length || selection.nativeSlideIds?.length !== selection.pageIndex.length || selection.shapeIds?.length !== 0) return null;
+    const service = scope.pray?.()?.getSelectionService?.();
+    const slide = service?.slides?.[selection.pageIndex[0]];
+    if (service?.lastMouseDownRegion !== "slidelist" || slide?.id !== selection.nativeSlideIds[0] ||
+        slide.uniqueID !== slide.id || typeof slide.key !== "string" || !slide.key) return null;
+    const bar = doc.getElementById("left_bar"), outer = doc.getElementById(slide.key);
+    if (!bar?.contains(outer)) return null;
+    const preview = outer.querySelector("canvas")?.getBoundingClientRect();
+    const bounds = bar.getBoundingClientRect();
+    // 优先右侧留白，窄栏使用左侧页码下方空隙；不覆盖预览、页码或正文。
+    const rightSpace = Math.min(bounds.right, scope.innerWidth) - preview?.right;
+    const left = rightSpace >= 32 ? preview.right + 4 : Math.max(bounds.left + 4, preview?.left - 30);
+    const right = rightSpace >= 32 ? Math.min(bounds.right, scope.innerWidth) - 28 : preview?.left - 28;
+    const top = Math.max(preview?.top, bounds.top, 12), bottom = Math.min(preview?.bottom, bounds.bottom, scope.innerHeight - 12) - 28;
+    if (!(preview?.width > 0 && preview.height > 0 && left <= right && top <= bottom)) return null;
+    const x = Math.max(left, Math.min(point.x, right));
+    let y = Math.max(top, Math.min(point.y, bottom));
+    for (const index of outer.querySelectorAll("span")) {
+      const rect = index.getBoundingClientRect();
+      if (x < rect.right + 2 && x + 24 > rect.left - 2 && y < rect.bottom + 2 && y + 28 > rect.top - 2)
+        y = rect.bottom + 4 <= bottom ? rect.bottom + 4 : rect.top - 32;
+    }
+    if (y < top || y > bottom) return null;
+    // 不能遮住 SDK 已有按钮等点击目标；留白本身只允许缩略图容器。
+    for (const [px, py] of [[x + 1, y + 1], [x + 23, y + 27], [x + 12, y + 14]]) {
+      const hit = doc.elementFromPoint(px, py);
+      if (root.contains(hit)) continue;
+      if (!bar.contains(hit) || hit?.closest('button,a,input,[role="button"],[role="tab"]')) return null;
+    }
+    return { x, y };
   };
   const candidate = () => {
+    bindSheetEvents();
     if (composing || pending || submitting || panel) return;
-    let selection;
-    try { selection = readSelection(kind, scope); } catch { selection = null; }
+    let selection, anchor, pageAnchor;
+    try {
+      selection = sheetSwitching ? null : readCandidateSelection();
+      if (kind === "sheet" && selection) anchor = readSheetAnchor?.(selection, scope);
+      if (kind === "slide" && selection) pageAnchor = readSlidePageAnchor(selection);
+    } catch { selection = null; }
+    const picturePage = kind === "slide" && !pageAnchor && selection?.nativeSlideIds?.length === 1 &&
+      selection?.pageIndex?.length === 1 && selection?.shapeIds?.length === 0 &&
+      scope.pray?.()?.getSelectionService?.()?.lastMouseDownRegion === "editor";
     const usable = kind === "doc" ? selection?.ranges?.some((range) => range.length > 0)
-      : kind === "sheet" ? selection?.ranges?.length
-        : selection?.shapeIds?.length && (!selection.textSelection || selection.textSelection.count > 0);
+      : kind === "sheet" ? selection?.ranges?.length && anchor
+        : pageAnchor || picturePage || selection?.shapeIds?.length && (!selection.textSelection || selection.textSelection.count > 0);
+    slidePageAnchor = pageAnchor || null;
+    entry.textContent = pageAnchor ? "✦" : picturePage ? "✦ AI 编辑当前页" : "✦ AI 编辑";
+    entry.setAttribute("aria-label", pageAnchor ? "AI 编辑所选幻灯片" : picturePage ? "AI 编辑当前页" : "AI 编辑选区");
+    entry.title = pageAnchor ? "AI 编辑所选幻灯片" : picturePage ? "编辑图片所在的当前单页" : "";
+    entry.style.padding = pageAnchor ? "2px" : "8px 13px";
+    entry.style.width = pageAnchor ? "24px" : "";
+    entry.style.height = pageAnchor ? "28px" : "";
     candidateSelection = usable ? JSON.stringify(selection) : null;
-    entry.style.display = usable ? (kind === "slide" ? "flex" : "block") : "none";
-    place(kind === "slide" ? Math.min(280, scope.innerWidth - 24) : 150);
+    if (usable && kind === "sheet") point = anchor;
+    entry.style.display = usable ? "block" : "none";
+    place();
   };
   const cancel = () => {
     const previous = captureRequest; captureRequest = null; frozen = null;
+    reviewingCapture = null;
     panel?.remove(); panel = null;
     handleInputKey = null; entry.style.display = "none";
     // TIPS: 已提交的添加/发送由宿主完成；关闭外观不能在接收途中释放其引用。
     if (previous && !submitting) void bridge.cancel(previous).catch(() => {});
   };
+  const stopReview = bridge.onReview?.(({ captureId, pending: reviewing }) => {
+    // 只暂缓同一次尚未完成采集的原生 modal blur，迟到通知不能复活取消的采集。
+    if (!pending || captureRequest !== captureId) return;
+    reviewingCapture = reviewing ? captureId : null;
+  });
   const showError = (message) => {
     panel?.remove(); panel = null;
     const error = doc.createElement("div");
@@ -86,8 +142,9 @@ export function installOfficeSelectionUi(kind, readSelection, scope = window) {
     const captureId = scope.crypto.randomUUID();
     captureRequest = captureId;
     try {
-      const expectedSelection = readSelection(kind, scope);
+      const expectedSelection = readCandidateSelection();
       if (!candidateSelection || JSON.stringify(expectedSelection) !== candidateSelection) throw new Error("选区已变化，请重新选择内容");
+      if (kind === "slide" && expectedSelection.nativeSlideIds?.length > 1) throw new Error("整页编辑目前一次支持一页，请只选择一张幻灯片");
       const captured = await bridge.capture(captureId, expectedSelection);
       // TIPS: 点击外部可以取消尚未返回的采集，迟到回复只清理引用，不能重新弹出浮窗。
       if (captureRequest !== captureId) { void bridge.cancel(captureId).catch(() => {}); return; }
@@ -140,12 +197,13 @@ export function installOfficeSelectionUi(kind, readSelection, scope = window) {
       // 宿主已经冻结范围及同状态证明，此时才允许新输入框改变文档焦点。
       input.focus();
     } catch (error) { if (captureRequest === captureId) { captureRequest = null; showError(error.message); } }
-    finally { pending = false; entry.disabled = false; }
+    finally { reviewingCapture = null; pending = false; entry.disabled = false; }
   };
   // TIPS: SDK 在 document 捕获阶段处理画布点击；宿主浮层先在 window 截止，避免采集前被收回选区。
   scope.addEventListener("pointerdown", (event) => {
     if (!root.contains(event.target)) {
       if (captureRequest) cancel();
+      if (kind === "slide") { candidateSelection = null; entry.style.display = "none"; }
       return;
     }
     event.stopPropagation();
@@ -169,10 +227,35 @@ export function installOfficeSelectionUi(kind, readSelection, scope = window) {
     if (candidateFrame !== null) return;
     candidateFrame = scope.requestAnimationFrame(() => { candidateFrame = null; candidate(); });
   };
+  const clearSheetEvents = () => {
+    for (const dispose of sheetDisposables.splice(0)) dispose();
+    sheetView = null;
+  };
+  const bindSheetEvents = () => {
+    if (kind !== "sheet") return;
+    const app = scope.SpreadsheetApp, view = app?.view;
+    if (!view || view === sheetView || !view.canvas?.areaData) return;
+    clearSheetEvents(); sheetView = view;
+    for (const [owner, name] of [[view, "onSelectionChange"], [view, "onAfterRenderSheet"],
+      [view.canvas.areaData, "onUpdateOffset"], [view.canvas.scale, "onScale"]]) {
+      const disposable = owner?.[name]?.(scheduleCandidate);
+      if (disposable) sheetDisposables.push(() => disposable.dispose());
+    }
+    const bar = app.event?.sheetsBar;
+    if (bar?.listen && bar.remove) {
+      const start = () => { sheetSwitching = true; candidateSelection = null; entry.style.display = "none"; };
+      const end = () => { sheetSwitching = false; scheduleCandidate(); };
+      bar.listen("switchSheetStart", start); bar.listen("switchSheetEnd", end);
+      sheetDisposables.push(() => { bar.remove("switchSheetStart", start); bar.remove("switchSheetEnd", end); });
+    }
+  };
+  scope.addEventListener("pointerdown", bindSheetEvents, true);
+  scope.addEventListener("resize", scheduleCandidate);
+  if (kind === "slide") scope.addEventListener("scroll", scheduleCandidate, true);
   // TIPS: PPT 画布会消费 document 上的事件；在 window 捕获输入，并在原生文字选区变化后重新采样。
   scope.addEventListener("pointerup", (event) => {
     if (root.contains(event.target)) return;
-    point = { x: event.clientX, y: event.clientY };
+    if (kind !== "sheet") point = { x: event.clientX, y: event.clientY };
     scheduleCandidate();
   }, true);
   scope.addEventListener("keyup", (event) => { if (!root.contains(event.target)) scheduleCandidate(); }, true);
@@ -180,6 +263,11 @@ export function installOfficeSelectionUi(kind, readSelection, scope = window) {
     if (!root.contains(doc.activeElement)) scheduleCandidate();
   });
   // 点击聊天输入栏或宿主工具栏时，事件不经过编辑页 DOM，通过页面失焦统一收起。
-  scope.addEventListener("blur", (event) => { if (event.target === scope && captureRequest) cancel(); });
-  scope.addEventListener("pagehide", cancel);
+  scope.addEventListener("blur", (event) => {
+    if (event.target === scope && captureRequest && !(pending && reviewingCapture === captureRequest)) cancel();
+  });
+  scope.addEventListener("pagehide", () => {
+    cancel(); stopReview?.(); clearSheetEvents();
+    if (candidateFrame !== null) scope.cancelAnimationFrame(candidateFrame);
+  });
 }

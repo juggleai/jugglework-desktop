@@ -30,6 +30,20 @@ test("rejects a non-image generation source", async () => {
 });
 
 const JPEG_BYTES = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01]);
+
+test("source attachments defer to path projection instead of eager text expansion", async () => {
+  const file = new File(["export const lines = 1;\n"], "fs-engine.mjs", { type: "application/javascript" });
+  const attachment = attachmentFor(file);
+  expect(resolveAttachmentFileMetadata(file).mime).toMatch(/^(application|text)\/javascript$/);
+  const inline = await composerAttachmentToFilePart(attachment);
+  expect(inline.mime).toBe("application/x-jugglework-file-reference");
+  expect(inline.filename).toBe("fs-engine.mjs");
+  expect(inline.url).toStartWith("data:application/x-jugglework-file-reference;base64,");
+  expect(decodedDataUrlBytes(inline.url)).toEqual(new Uint8Array(await file.arrayBuffer()));
+  const { endpoint } = uploadRecorder("workspace-1");
+  const parts = await composerAttachmentsToWorkspaceFileParts({ attachments: [attachment], endpoint, sessionId: "session-1", workspaceRoot: "/workspace", createId: () => "source" });
+  expect(parts[1]).toMatchObject({ type: "file", mime: "application/x-jugglework-file-reference", filename: "fs-engine.mjs" });
+});
 const DOCX_BYTES = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x77, 0x6f, 0x72, 0x64]);
 const PPTX_BYTES = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x70, 0x70, 0x74, 0x78]);
 const XLSX_BYTES = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x78, 0x6c, 0x73, 0x78]);

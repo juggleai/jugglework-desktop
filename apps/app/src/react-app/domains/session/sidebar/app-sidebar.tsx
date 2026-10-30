@@ -123,7 +123,11 @@ import {
   useWorkspaceGroups,
   type SessionGroupDefinition,
 } from "./session-management-store";
-import { useSessionCompletionStore, useUnseenCompletedSessionIds } from "./session-completion-store";
+import {
+  useAcknowledgedAttentionSessionIds,
+  useSessionCompletionStore,
+  useUnseenCompletedSessionIds,
+} from "./session-completion-store";
 import { useWorkspaceIndicatorStore } from "./workspace-indicator-store";
 import { setTaskScope, useTaskScope, useTaskScopeStore, workspaceTaskScope, type TaskScope } from "./task-scope-store";
 import { cn } from "@/lib/utils";
@@ -699,6 +703,7 @@ export type AppSidebarProps = {
   connectingWorkspaceId: string | null;
   workspaceConnectionStateById: Record<string, WorkspaceConnectionState>;
   newTaskDisabled: boolean;
+  isTaskCreationPending?: (workspaceId: string) => boolean;
   onSelectWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
   onExpandWorkspace?: (workspaceId: string) => void;
   onOpenSession: (workspaceId: string, sessionId: string) => void;
@@ -935,6 +940,7 @@ export function AppSidebar(props: AppSidebarProps) {
     showSessionActions: props.showSessionActions,
     sessionStatusById: props.sessionStatusById,
     newTaskDisabled: props.newTaskDisabled,
+    isTaskCreationPending: props.isTaskCreationPending,
     connectingWorkspaceId: props.connectingWorkspaceId,
     workspaceConnectionStateById: props.workspaceConnectionStateById,
     onSelectWorkspace: props.onSelectWorkspace,
@@ -1529,7 +1535,7 @@ function WorkspaceSidebarGroup({
                     variant="ghost"
                     size="icon"
                     className="size-6 rounded-lg text-muted-foreground hover:bg-background/60 hover:text-foreground"
-                    disabled={ctx.newTaskDisabled}
+                    disabled={ctx.newTaskDisabled || ctx.isTaskCreationPending?.(workspace.id)}
                     onClick={(event) => {
                       event.stopPropagation();
                       ctx.onCreateTaskInWorkspace(workspace.id);
@@ -1662,7 +1668,7 @@ function WorkspaceSidebarGroup({
                     <SidebarMenuSubButton
                       className="text-muted-foreground text-xs"
                       onClick={() => ctx.onCreateTaskInWorkspace(workspace.id)}
-                      aria-disabled={ctx.newTaskDisabled}
+                      aria-disabled={ctx.newTaskDisabled || ctx.isTaskCreationPending?.(workspace.id)}
                     >
                       <span className="truncate">
                         {isRemoteWorkspace && connectionState.status === "connected"
@@ -2245,17 +2251,23 @@ function SessionMenuItem({
 }: SessionMenuItemProps) {
   const ctx = useSidebarContext();
   const unseenCompletedSessionIds = useUnseenCompletedSessionIds();
+  const acknowledgedAttentionSessionIds = useAcknowledgedAttentionSessionIds();
   const isSelected = ctx.selectedSessionId === session.id;
   const displayTitle = getDisplaySessionTitle(session.title);
   const itemTitle = workspaceName ? `${displayTitle} — ${workspaceName}` : displayTitle;
   const sessionActivityStatus = ctx.sessionStatusById?.[session.id];
   const resolvedActiveWork = isActiveWorkSessionStatus(sessionActivityStatus);
+  const needsAttention = isNeedsAttentionSessionStatus(sessionActivityStatus)
+    && !acknowledgedAttentionSessionIds.has(session.id);
   const isCompleted = unseenCompletedSessionIds.has(session.id) && !ctx.visibleSessionIds.has(session.id);
   const isArchived = isSessionArchived(session);
   const relativeTime = formatSessionRelativeTime(session.time?.updated ?? session.time?.created);
 
   const openSession = () => {
     useSessionCompletionStore.getState().clear(session.id);
+    if (isNeedsAttentionSessionStatus(sessionActivityStatus)) {
+      useSessionCompletionStore.getState().acknowledgeAttention(session.id);
+    }
     ctx.onOpenSession(workspaceId, session.id);
   };
 
@@ -2281,7 +2293,7 @@ function SessionMenuItem({
 
   const accessibleState = resolvedActiveWork && isSessionActivityStatus(sessionActivityStatus)
     ? `${displayTitle}, ${getSessionActivityStatusLabel(sessionActivityStatus)}`
-    : isNeedsAttentionSessionStatus(sessionActivityStatus)
+    : needsAttention
       ? `${displayTitle}, ${t("workspace_list.session_needs_attention")}`
       : isCompleted
         ? `${displayTitle}, ${t("workspace_list.session_completed_unseen")}`
@@ -2311,7 +2323,7 @@ function SessionMenuItem({
       <SessionLoadingIndicator status={sessionActivityStatus} isActiveWork={resolvedActiveWork} />
       <SessionOutcomeIndicator
         className="absolute right-3 top-1/2 -translate-y-1/2 opacity-100 transition-opacity duration-150 group-hover/menu-sub-item:opacity-0 group-has-data-popup-open/menu-sub-item:opacity-0 group-has-[:focus-visible]/menu-sub-item:opacity-0 pointer-events-none select-none"
-        status={sessionActivityStatus}
+        status={needsAttention ? sessionActivityStatus : undefined}
         isActiveWork={resolvedActiveWork}
         isCompleted={isCompleted}
       />

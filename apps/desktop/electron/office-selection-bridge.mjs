@@ -8,7 +8,12 @@ import { ManagedRuntimeClientError } from "./managed-runtime-client.mjs";
 export function officeSelectionFailure(error) {
   if (!(error instanceof ManagedRuntimeClientError)) throw error;
   const messages = {
-    office_selection_proof_unavailable: "暂时无法完整核对所选内容，请选择较短的普通正文或文本框后重试",
+    office_selection_slide_picture_selected: "当前选区包含图片，不是整页选择；请点击左侧幻灯片缩略图选择整页。图片内文字暂不支持直接改写",
+    office_selection_slide_objects_unsupported: "所选页包含暂不支持完整核对的对象或合并表格，请选择普通文本框编辑；这些对象尚未修改",
+    office_selection_review_required: "存在尚未核对的修改，请检查文档并重新选择内容",
+    office_selection_save_blocked: "文档选区操作仍在运行或尚未核对，请结束后重新选择",
+    office_selection_slide_pages_unsupported: "整页编辑目前一次支持一页，请只选择一张幻灯片",
+    office_selection_proof_unavailable: "暂时无法完整核对所选内容；复杂页面或对象可能暂不支持，请选择普通正文、文本框或较简单的单页后重试",
     office_selection_stale: "选区已变化，请重新选择内容",
     office_selection_capacity: "选区记录过多，请先移除不再使用的选区后重试",
     office_wrong_document: "选区不属于当前聊天，请在所属聊天中重新打开文件",

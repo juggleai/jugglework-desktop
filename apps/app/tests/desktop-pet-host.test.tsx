@@ -3,8 +3,10 @@ import React from "react";
 import TestRenderer, { act } from "react-test-renderer";
 import type { PetAction, PetActionResult, PetSnapshot } from "../src/app/lib/desktop-pet-types";
 import type { JuggleWorkSessionSnapshot } from "../src/app/lib/jugglework-server";
+import type { ComposerDraft, McpStatusMap } from "../src/app/types";
 import { getReactQueryClient } from "../src/react-app/infra/query-client";
 import { useSessionActivityStore } from "../src/react-app/domains/session/status/session-activity-store";
+import { liveActivityLabel } from "../src/lib/live-activity";
 
 // TIPS: 保留真实QueryObserver、任务投影和同步写入；仅替换网络入口及不参与本次回归的服务准备。
 const sync = { ...await import("../src/react-app/domains/session/sync/session-sync") };
@@ -21,10 +23,21 @@ mock.module("../src/react-app/domains/session/sync/session-sync", () => ({
     return sync.trackWorkspaceSessionsSync(input, ids);
   },
 }));
-mock.module("../src/react-app/domains/cloud/desktop-config-provider", () => ({ useCheckDesktopRestriction: () => () => false, useDesktopAllowedModels: () => [] }));
+mock.module("../src/react-app/domains/cloud/desktop-config-provider", () => ({ useCheckDesktopRestriction: () => () => false, useDesktopAllowedModels: () => [], useDesktopRestriction: () => false }));
 mock.module("../src/react-app/domains/settings/state/host-marketplace-plugins-provider", () => ({ useHostMarketplacePlugins: () => ({}) }));
 mock.module("../src/react-app/domains/connections/use-session-mcp-maintenance", () => ({ useSessionMcpMaintenance: () => ({}) }));
 mock.module("../src/react-app/domains/connections/use-cloud-mcp-submit-readiness", () => ({ useCloudMcpSubmitReadiness: () => ({}) }));
+
+const opencode = { ...await import("../src/app/lib/opencode") };
+let mcpStatuses: McpStatusMap = {};
+mock.module("../src/app/lib/opencode", () => ({
+  ...opencode,
+  createClient: (...args: Parameters<typeof opencode.createClient>) => {
+    const client = opencode.createClient(...args);
+    client.mcp.status = async () => ({ data: mcpStatuses }) as Awaited<ReturnType<typeof client.mcp.status>>;
+    return client;
+  },
+}));
 
 const { DesktopPetHost } = await import("../src/react-app/domains/pet/desktop-pet-host");
 const query = getReactQueryClient();
@@ -143,12 +156,46 @@ test("completed task navigation selects its original workspace and session", asy
   expect(opened).toEqual([[workspaceId, "root"]]);
 });
 
+test("pet publishes current descendant command instead of root delegation and preserves waiting, stopping and terminal summary", async () => {
+  let ended = false, aborting = false;
+  const item = (id: string) => {
+    const result = snapshot(id, ended, ended ? 3 : 2);
+    if (!ended) result.messages[1]!.parts.push({
+      id: `${id}-tool`, sessionID: id, messageID: `${id}-answer-2`, type: "tool", callID: `${id}-call`,
+      tool: id === "root" ? "task" : "bash",
+      state: { status: "running", input: id === "root" ? { description: "Delegate checks" } : { command: "bun test --isolate", description: "Run checks" }, time: { start: 21 }, title: "Work", metadata: {} },
+    });
+    return result;
+  };
+  const host = await mountHost({
+    listSessions: async () => ({ items: [item("root").session, item("child").session] }),
+    listActiveSessionRuns: async () => ({ items: ended ? [] : ["root", "child"].map((sessionId) => ({ sessionId, status: aborting ? "aborting" : "running" })) }),
+    getSessionSnapshot: async (_workspace: string, id: string) => ({ item: item(id) }),
+  });
+  await waitFor(() => host.state()?.tasks[0]?.progressText?.startsWith("bun test --isolate") === true);
+  expect(host.state()?.tasks).toHaveLength(1);
+  expect(host.state()?.tasks[0]).toMatchObject({ sessionId: "root", turnKey: "root-user-2", state: "running", canStop: true, statusText: liveActivityLabel("command_running") });
+  await act(async () => { useSessionActivityStore.getState().setWaitingRequest(workspaceId, "child", "permission", "approval", true); });
+  await waitFor(() => host.state()?.tasks[0]?.state === "waiting");
+  expect(host.state()?.tasks[0]?.statusText).not.toBe(liveActivityLabel("command_running"));
+  await act(async () => {
+    useSessionActivityStore.getState().setWaitingRequest(workspaceId, "child", "permission", "approval", false);
+    aborting = true; await host.refresh();
+  });
+  await waitFor(() => host.state()?.tasks[0]?.stopping === true);
+  expect(host.state()?.tasks[0]).toMatchObject({ state: "reconciling", turnKey: "root-user-2", stopping: true });
+  await act(async () => { ended = true; await host.refresh(); });
+  await waitFor(() => host.state()?.tasks[0]?.state === "completed");
+  expect(host.state()?.tasks[0]).toMatchObject({ sessionId: "root", turnKey: "root-user-2", progressText: "finished result", canStop: false, stopping: false });
+});
+
 afterEach(async () => {
   await act(async () => { renderer?.unmount(); renderer = undefined; });
   query.clear();
   for (const id of ["root", "child"]) useSessionActivityStore.getState().removeSession(workspaceId, id);
   Object.assign(globalThis, savedGlobals);
   tracked = [];
+  mcpStatuses = {};
 });
 
 const pause = (ms = 25) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -178,7 +225,7 @@ async function mountHost(client: object, propsOverride: Partial<React.ComponentP
   const initial: PetSnapshot = { interaction: initialInteraction, visible: true, ready: true, syncing: false, partial: false, tasks: [], locale: "zh", theme: "light", editing: false, voicePhase: "idle" };
   const bridge = { getState: async () => initial, onState: () => () => {}, publish: (value: typeof published) => { published = value; }, onAction: (callback: typeof action) => { action = callback; return () => {}; } };
   Object.assign(globalThis, {
-    window: Object.assign(new EventTarget(), { __JUGGLEWORK_ELECTRON__: { pet: bridge } }),
+    window: Object.assign(new EventTarget(), { __JUGGLEWORK_ELECTRON__: { pet: bridge }, localStorage: { getItem: () => null } }),
     document: Object.assign(new EventTarget(), { documentElement: { classList: { contains: () => false }, dataset: {} }, hasFocus: () => false, querySelector: () => null }),
     MutationObserver: class { observe() {} disconnect() {} },
   });
@@ -492,4 +539,66 @@ test("cancelling while the actual voice target is checked prevents a delayed mic
   await act(async () => { await host.dispatch({ type: "voice-cancel" }); resolveProbe({ configured: true }); await starting; });
   expect(sessions).toBe(0);
   expect(host.state()?.voicePhase).toBe("idle");
+});
+
+test("host excludes disabled local skills and revalidates a skill disabled after selection", async () => {
+  let enabled = true;
+  const selectedSend = mock(async () => ({ outcome: "sent" as const }));
+  const item = snapshot("root", true);
+  const host = await mountHost({
+    listSessions: async () => ({ items: [item.session] }), listActiveSessionRuns: async () => ({ items: [] }),
+    getSession: async () => ({ item: item.session }), getSessionSnapshot: async () => ({ item }),
+    listSkills: async () => ({ items: [
+      { name: "review", enabled }, { name: "disabled", enabled: false }, { name: "legacy" },
+    ] }),
+    listMcp: async () => ({ items: [] }), getMcpToolPolicy: async () => ({ disabledServerNames: [] }),
+  }, { selectedSend });
+  await waitFor(() => host.state()?.syncing === false);
+  const target = { key: `${workspaceId}:root`, workspaceId, sessionId: "root", title: "root", project: "test" };
+  const inventory = (await host.dispatch({ type: "capabilities", target, scope: "basic" }))!.capabilities!;
+  expect(inventory.filter((entry) => entry.kind === "skill").map((entry) => entry.name)).toEqual(["review", "legacy"]);
+  const selected = inventory.find((entry) => entry.id === "skill:review")!;
+  enabled = false;
+  await act(async () => {
+    await expect(host.dispatch({ type: "send", target, text: "Check", draftKey: "__quick__", capabilities: [selected] })).rejects.toThrow("所选能力已变化");
+  });
+  expect(selectedSend).not.toHaveBeenCalled();
+});
+
+test("host Computer Use selection follows live MCP status, config and workspace policy at submission", async () => {
+  let installed = true, configEnabled = true, workspaceEnabled = true;
+  const selectedSend = mock(async (_draft: ComposerDraft) => ({ outcome: "sent" as const }));
+  const item = snapshot("root", true);
+  mcpStatuses = { "computer-use": { status: "connected" } };
+  const host = await mountHost({
+    listSessions: async () => ({ items: [item.session] }), listActiveSessionRuns: async () => ({ items: [] }),
+    getSession: async () => ({ item: item.session }), getSessionSnapshot: async () => ({ item }),
+    listSkills: async () => ({ items: [] }),
+    listMcp: async () => ({ items: installed ? [{ name: "computer-use", source: "config.project", config: { type: "local", command: ["computer-use"], enabled: configEnabled } }] : [] }),
+    getMcpToolPolicy: async () => ({ disabledServerNames: workspaceEnabled ? [] : ["computer-use"] }),
+  }, { selectedSend });
+  await waitFor(() => host.state()?.syncing === false);
+  const target = { key: `${workspaceId}:root`, workspaceId, sessionId: "root", title: "root", project: "test" };
+  const current = async () => (await host.dispatch({ type: "capabilities", target, scope: "basic" }))!.capabilities!.find((entry) => entry.id === "extension:computer-use")!;
+  const selected = await current();
+  expect(selected.disabled).toBe(false);
+  window.localStorage.getItem = (key: string) => key === "jugglework.extension.enabled.computer-use" ? "1" : null;
+  for (const state of ["failed", "pending", "removed", "config-disabled", "workspace-disabled"] as const) {
+    installed = state !== "removed";
+    configEnabled = state !== "config-disabled";
+    workspaceEnabled = state !== "workspace-disabled";
+    mcpStatuses = state === "pending" ? {} : { "computer-use": { status: state === "failed" ? "failed" : "connected" } };
+    expect((await current()).disabled).toBe(true);
+    await act(async () => {
+      await expect(host.dispatch({ type: "send", target, text: "Use this app", draftKey: "__quick__", capabilities: [selected] })).rejects.toThrow("所选能力已变化");
+    });
+  }
+  expect(selectedSend).not.toHaveBeenCalled();
+  installed = configEnabled = workspaceEnabled = true;
+  mcpStatuses = { "computer-use": { status: "connected" } };
+  await act(async () => {
+    await host.dispatch({ type: "send", target, text: "Use this app", draftKey: "__quick__", capabilities: [selected] });
+  });
+  expect(selectedSend).toHaveBeenCalledTimes(1);
+  expect(selectedSend.mock.calls[0]![0].parts).toContainEqual({ type: "capability", kind: "extension", name: "Computer Use", prompt: "Use [extension Computer Use] for this request." });
 });

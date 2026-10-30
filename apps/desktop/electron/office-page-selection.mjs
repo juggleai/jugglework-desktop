@@ -2,9 +2,10 @@
  * 按已绑定格式读取配套 SDK 当前选区，不触发内部 AI 浮层或改变编辑焦点。
  * @param {string} kind 宿主确定的模型类型
  * @param {any} scope 配套编辑页面全局对象；参数供契约回归使用
+ * @param {{picturePage?: boolean}} options 仅显式图片 AI 页入口使用当前图片所属单页；普通选区查询不扩大范围
  * @returns {object | null} 只返回已确认的坐标，未知或暂不支持的选区返回空
  */
-export function readOfficePageSelection(kind, scope = window) {
+export function readOfficePageSelection(kind, scope = window, options = {}) {
   if (kind === "doc") {
     const app = scope.pad?.editor;
     const selection = app?.service?.getSelection?.();
@@ -89,14 +90,25 @@ export function readOfficePageSelection(kind, scope = window) {
     const selection = scope.pray?.()?.getSelectionService?.();
     if (
       !selection ||
-      selection.lastMouseDownRegion === "note" ||
+      !["editor", "slidelist"].includes(selection.lastMouseDownRegion) ||
       selection.selectedBlank?.enabled ||
-      typeof selection.selectedSlides?.selectedArray?.slice !== "function" ||
-      typeof selection.selectedElements?.selectedArrayForType !== "function"
+      typeof selection.selectedSlides?.selectedArray?.slice !== "function"
     )
       return null;
     // SDK 的 MobX 数组可能不满足 Array.isArray；使用其 slice 获取普通值数组再校验。
     const pages = selection.selectedSlides.selectedArray.slice();
+    if (selection.lastMouseDownRegion === "slidelist") {
+      // 原生验收确认 id/uniqueID 对应引擎 page_id；key 只用于 DOM 渲染，不能用于授权。
+      if (!Array.isArray(pages) || !pages.length || pages.some((page) =>
+        !Number.isSafeInteger(page?.listIndex) || page.listIndex < 0 ||
+        typeof page.id !== "string" || !page.id.length || page.id.trim() !== page.id ||
+        page.uniqueID !== page.id || selection.slides?.[page.listIndex]?.id !== page.id ||
+        selection.slides[page.listIndex].uniqueID !== page.id) ||
+        new Set(pages.map((page) => page.listIndex)).size !== pages.length ||
+        new Set(pages.map((page) => page.id)).size !== pages.length) return null;
+      return { pageIndex: pages.map((page) => page.listIndex), shapeIds: [], nativeSlideIds: pages.map((page) => page.id) };
+    }
+    if (typeof selection.selectedElements?.selectedArrayForType !== "function") return null;
     // TIPS: 只采集普通页面和形状身份；组内对象、框选区域和备注不冒充整页选区。
     const groups = selection.selectedElements
       .selectedArrayForType("SelectedEleMgrType_GROUP")
@@ -116,6 +128,19 @@ export function readOfficePageSelection(kind, scope = window) {
       !Array.isArray(shapes)
     )
       return null;
+    // 图片上的 AI 入口明确标记为“当前页”；只允许已验证的当前页直接图片，不能从组、媒体或旧页推测。
+    if (options.picturePage && shapes.length === 1 && shapes[0].type === "Image") {
+      const image = shapes[0], page = selection.currentSlide, index = selection.currentSlideIndex;
+      if (typeof image.isImage !== "function" || image.isImage() !== true ||
+          !Number.isSafeInteger(index) || index < 0 || selection.slides?.[index] !== page || page?.type !== "Slide" ||
+          page.listIndex !== index || typeof page.id !== "string" || !page.id || page.id.trim() !== page.id || page.uniqueID !== page.id ||
+          typeof image.id !== "string" || !image.id || image.uniqueID !== image.id || image.parent !== page ||
+          typeof page.children?.slice !== "function") return null;
+      const children = page.children.slice();
+      if (!Array.isArray(children) || children.filter((child) => child.id === image.id).length !== 1 ||
+          !children.includes(image) || pages.length > 1 || (pages.length === 1 && pages[0] !== page)) return null;
+      return { pageIndex: [index], shapeIds: [], nativeSlideIds: [page.id] };
+    }
     let textSelection;
     if (
       pages.length <= 1 &&

@@ -48,6 +48,32 @@ async function writeRuntime(config: never) {
 }
 
 describe("configured OpenAI image generation", () => {
+  test("managed old-server/unsupported imports fail closed while supported imports and BYOK are ready", async () => {
+    const fx = await fixture();
+    const imageGeneration = { protocol: "openai", textToImage: true };
+    for (const [billing, ready] of [
+      [{ required: true, version: 1, supported: false, reason: "managed_media_billing_unavailable" }, false],
+      [{ required: true }, false],
+      [{ required: true, version: 1, supported: false, reason: "managed_media_backend_unavailable" }, false],
+      [{ required: true, version: 2, supported: true }, false],
+      [{ required: true, version: 1, supported: true }, true],
+      [undefined, true],
+    ] as const) {
+      const imported = {
+        npm: "@ai-sdk/openai-compatible", env: ["CUSTOM_IMAGES_API_KEY"], options: { baseURL: "https://images.example.test/v1" },
+        models: { painter: { imageGeneration, managedMediaBilling: billing } },
+      };
+      await writeRuntimeOpencodeConfig(fx.config, "ws", () => ({ provider: { images: imported } }));
+      const status = await callOpenAiImageGenerationExtensionAction(fx.config, fx.env, "status", {}, fx.context);
+      expect(status?.result).toMatchObject({ connected: ready, models: [{ availability: ready ? "ready" : "managed_billing_unavailable" }] });
+      const list = await callOpenAiImageGenerationExtensionAction(fx.config, fx.env, "image_models_list", {}, fx.context) as { result: { models: unknown[] } };
+      expect(list.result.models).toHaveLength(ready ? 1 : 0);
+      if (!ready) {
+        expect(await callOpenAiImageGenerationExtensionAction(fx.config, fx.env, "image_generate", { prompt: "cat", model: { providerID: "images", modelID: "painter" } }, fx.context)).toMatchObject({ ok: false, error: "no_image_model_available" });
+      }
+    }
+  });
+
   test("generates a validated workspace PNG with the configured model", async () => {
     const fx = await fixture();
     await writeRuntime(fx.config);

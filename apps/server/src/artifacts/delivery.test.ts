@@ -351,6 +351,25 @@ test("后台媒体任务晚于新轮次并跨服务重启完成时仍归原轮�
   });
 });
 
+test("恢复完成的媒体任务可替换原轮次的失败交付", async () => {
+  const path = await root();
+  let complete = false;
+  const service = new FileDeliveryService({
+    workspace: () => ({ id: "ws_1", path }), readMessages: async () => [assistant()],
+    inspect: async () => observed(50),
+    readMediaJob: () => ({ id: "job_1", status: complete ? "completed" : "failed", ...(complete ? { artifact: { path: "movie.mp4" } } : { error: { message: "video_provider_unknown_status" } }) }),
+  });
+  service.preparePrompt("ws_1", origin.sessionId, origin.runId, { messageID: origin.turnId });
+  await service.bindMediaSubmission("ws_1", origin.sessionId, "msg_assistant_1", "request_1");
+  service.registry("ws_1").finishRun(origin.runId);
+  expect((await service.list("ws_1", origin.sessionId)).turns[0]?.status).toBe("failed");
+  complete = true;
+  const restored = (await service.list("ws_1", origin.sessionId)).turns[0];
+  expect(restored?.status).toBe("ready");
+  expect(restored?.targets[0]?.error).toBeUndefined();
+  expect(restored?.items).toHaveLength(1);
+});
+
 test("工具输出过滤保留中文和大小写，不扫描任意 Shell 输出", () => {
   expect(artifactPathsFromTool(writePart("报告 A.docx"))).toEqual([
     "报告 A.docx",

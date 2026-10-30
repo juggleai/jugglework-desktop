@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { describe, it } from "node:test";
+import { runInNewContext } from "node:vm";
 
 import { createToonFactoryRuntime, terminateSidecarProcess, TOON_FACTORY_IDLE_TIMEOUT_MS, toonFactoryWorkspaceScopeKey } from "./toonFactoryRuntime.mjs";
 
@@ -210,7 +211,7 @@ async function createHarness(onReady, pageFailed = false, platform = process.pla
     moduleRoot,
     dependencies,
   });
-  return { children, clipViews, contentView, idleTimers, integrity, partitions, processKills, root, runtime, selectedDirectory, sessions, spawns, userData, views, window };
+  return { children, clipViews, contentView, dialog: dependencies.dialog, idleTimers, integrity, partitions, processKills, root, runtime, selectedDirectory, sessions, spawns, userData, views, window };
 }
 
 async function callDesktopBridge(spawn, command, headers = {}) {
@@ -222,6 +223,66 @@ async function callDesktopBridge(spawn, command, headers = {}) {
 }
 
 describe("toon factory workspace isolation", () => {
+  it("authorizes a confirmed existing project without a directory picker and persists the grant", async () => {
+    const harness = await createHarness();
+    try {
+      await harness.runtime.open("workspace-a");
+      harness.dialog.showOpenDialog = async () => { throw new Error("Must not show a folder picker"); };
+      const directory = await realpath(harness.selectedDirectory);
+      const state = { projects: [{ directory, name: "story" }], currentDirectory: null };
+      const env = harness.spawns[0].options.env;
+      const bridge = {
+        getProjectState: () => state,
+        chooseProject: async () => {
+          const response = await fetch(`${env.TOONFLOW_BRIDGE_URL}/desktop/selectDirectory`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${env.TOONFLOW_BRIDGE_TOKEN}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ args: [] }),
+          });
+          const payload = await response.json();
+          if (!response.ok) throw new Error(payload.error.message);
+          const { result } = payload;
+          assert.equal(result, directory);
+          return { ...state, currentDirectory: result, mode: "imported" };
+        },
+      };
+      harness.views[0].webContents.executeJavaScript = source => runInNewContext(source, { __TOONFLOW_JUGGLEWORK_HOST__: bridge });
+      await assert.rejects(harness.runtime.authorizeProject("relative"), /目录无效/);
+      await assert.rejects(harness.runtime.authorizeProject("/unlisted"), /项目列表/);
+      const opened = await harness.runtime.authorizeProject(directory);
+      assert.equal(opened.currentDirectory, directory);
+      const grants = JSON.parse(await readFile(path.join(env.TOONFLOW_DATA_DIR, "directory-grants.json"), "utf8"));
+      assert.deepEqual(grants.directories, [directory]);
+      // The approved path is consumed once; later selection still requires its normal picker.
+      await assert.rejects(harness.runtime.chooseProject(), /Must not show a folder picker|Unexpected end of JSON/);
+    } finally {
+      await harness.runtime.dispose();
+      await rm(harness.root, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves directory authorization failures across the page bridge without misclassifying other 403s", async () => {
+    const harness = await createHarness();
+    try {
+      await harness.runtime.open("workspace-a");
+      const webContents = harness.views[0].webContents;
+      const denied = Object.assign(new Error("Request failed with status code 403"), {
+        response: { status: 403, data: { data: { code: "DIRECTORY_GRANT_REQUIRED" } } },
+      });
+      /** @type {Error} */
+      let failure = denied;
+      webContents.executeJavaScript = source => runInNewContext(source, {
+        __TOONFLOW_JUGGLEWORK_HOST__: { openProject: async () => { throw failure; } },
+      });
+      await assert.rejects(harness.runtime.openProject("/tmp/story"), /\[DIRECTORY_GRANT_REQUIRED\].*授权并打开/);
+      failure = Object.assign(new Error("Other forbidden request"), { response: { status: 403, data: {} } });
+      await assert.rejects(harness.runtime.openProject("/tmp/story"), /Other forbidden request/);
+    } finally {
+      await harness.runtime.dispose();
+      await rm(harness.root, { recursive: true, force: true });
+    }
+  });
+
   it("reads and opens projects through the managed page bridge", async () => {
     const harness = await createHarness();
     try {
@@ -720,10 +781,11 @@ describe("toon factory permission cleanup handlers", () => {
     const readHandler = commandHandlerSource("toonFactoryProjectState", "toonFactoryEnter");
     const enterHandler = commandHandlerSource("toonFactoryEnter", "toonFactoryChooseProject");
     const chooseHandler = commandHandlerSource("toonFactoryChooseProject", "toonFactoryOpenProject");
-    const openHandler = commandHandlerSource("toonFactoryOpenProject", "toonFactoryRenameProject");
+    const openHandler = commandHandlerSource("toonFactoryOpenProject", "toonFactoryAuthorizeProject");
+    const authorizeHandler = commandHandlerSource("toonFactoryAuthorizeProject", "toonFactoryRenameProject");
     const renameHandler = commandHandlerSource("toonFactoryRenameProject", "toonFactoryRemoveProject");
     const removeHandler = commandHandlerSource("toonFactoryRemoveProject", "desktopRemoteControlSettingsRead");
-    for (const handler of [readHandler, enterHandler, chooseHandler, openHandler, renameHandler, removeHandler]) {
+    for (const handler of [readHandler, enterHandler, chooseHandler, openHandler, authorizeHandler, renameHandler, removeHandler]) {
       assert.match(handler, /event\.sender !== mainWindow\?\.webContents/);
       assert.match(handler, /event\.senderFrame !== mainWindow\.webContents\.mainFrame/);
     }
@@ -731,6 +793,7 @@ describe("toon factory permission cleanup handlers", () => {
     assert.match(enterHandler, /toonFactoryRuntime\.enter\(\)/);
     assert.match(chooseHandler, /toonFactoryRuntime\.chooseProject\(\)/);
     assert.match(openHandler, /toonFactoryRuntime\.openProject\(args\[0\]\)/);
+    assert.match(authorizeHandler, /toonFactoryRuntime\.authorizeProject\(args\[0\]\)/);
     assert.match(renameHandler, /toonFactoryRuntime\.renameProject\(args\[0\], args\[1\]\)/);
     assert.match(removeHandler, /toonFactoryRuntime\.removeProject\(args\[0\]\)/);
   });

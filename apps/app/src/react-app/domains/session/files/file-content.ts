@@ -8,10 +8,10 @@ import {
  *
  * - `markdown` / `text`：可编辑的文本
  * - `sheet`：CSV/TSV 表格预览，编辑时仍使用统一文本草稿
- * - `image` / `pdf` / `html`：只读预览
+ * - `image` / `video` / `pdf` / `html`：只读预览
  * - `binary`：不可预览，只提供下载与在系统中打开
  */
-export type FilePresentation = "markdown" | "text" | "sheet" | "image" | "pdf" | "html" | "binary";
+export type FilePresentation = "markdown" | "text" | "sheet" | "image" | "video" | "pdf" | "html" | "binary";
 
 /**
  * 已加载的文件内容
@@ -36,11 +36,12 @@ export type LoadedFile = {
 export const MAX_READABLE_FILE_BYTES = 5_000_000;
 
 const IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".ico", ".avif"];
+const VIDEO_EXTENSIONS = [".mp4", ".m4v", ".mov", ".webm", ".ogv", ".avi", ".mkv"];
 const MARKDOWN_EXTENSIONS = [".md", ".markdown", ".mdx"];
 const HTML_EXTENSIONS = [".html", ".htm"];
 const BINARY_EXTENSIONS = [
   ".zip", ".gz", ".tar", ".tgz", ".bz2", ".xz", ".7z", ".rar",
-  ".mp3", ".wav", ".flac", ".ogg", ".mp4", ".mov", ".avi", ".mkv", ".webm",
+  ".mp3", ".wav", ".flac", ".ogg",
   ".woff", ".woff2", ".ttf", ".otf", ".eot",
   ".xlsx", ".xls", ".ods", ".docx", ".doc", ".pptx", ".ppt", ".key", ".odp",
   ".class", ".jar", ".so", ".dylib", ".dll", ".exe", ".bin", ".wasm", ".node",
@@ -91,6 +92,7 @@ export function resolvePresentation(path: string, bytes: ArrayBuffer): FilePrese
   const ext = extensionOf(path);
 
   if (IMAGE_EXTENSIONS.includes(ext)) return "image";
+  if (VIDEO_EXTENSIONS.includes(ext)) return "video";
   if (ext === ".pdf") return "pdf";
   if (BINARY_EXTENSIONS.includes(ext)) return "binary";
   if (!looksLikeText(bytes)) return "binary";
@@ -159,7 +161,7 @@ export async function loadWorkspaceFile(
 
     return {
       presentation,
-      text: presentation === "binary" || presentation === "image" || presentation === "pdf"
+      text: presentation === "binary" || presentation === "image" || presentation === "video" || presentation === "pdf"
         ? null
         : new TextDecoder("utf-8").decode(raw.data),
       bytes: raw.data,

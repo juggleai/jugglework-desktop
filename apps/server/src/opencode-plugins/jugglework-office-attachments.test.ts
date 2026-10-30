@@ -165,6 +165,53 @@ async function transform(root: string, messages: unknown[]) {
 }
 
 describe("JuggleWorkOfficeAttachments", () => {
+  test("large workspace files and historical text MIME project only paths", async () => {
+    await withWorkspace(async (root) => {
+      const file = join(root, "large.mjs");
+      await writeFile(file, "SOURCE_MUST_NOT_ENTER_PROMPT\n".repeat(50000));
+      for (const mime of ["application/x-jugglework-file-reference", "application/javascript", "text/plain", "text/markdown"]) {
+        const result = await transform(root, [{ parts: [{ id: "source", type: "file", mime, filename: "large.mjs", url: pathToFileURL(file).href }] }]);
+        const text = textOf(messageParts(result[0])[0]);
+        expect(text).toContain('"large.mjs"');
+        expect(text).not.toContain("SOURCE_MUST_NOT_ENTER_PROMPT");
+        expect(text.length).toBeLessThan(500);
+      }
+    });
+  });
+
+  test("source references reject workspace escapes and do not read remote URLs", async () => {
+    await withWorkspace(async (root) => {
+      await symlink(tmpdir(), join(root, "escape"));
+      const result = await transform(root, [{ parts: [{ type: "file", mime: "application/javascript", url: pathToFileURL(join(root, "escape")).href }] }]);
+      expect(textOf(messageParts(result[0])[0])).toContain("outside the workspace");
+    });
+  });
+
+  test("projects historical JavaScript as a workspace path without injecting source", async () => {
+    await withWorkspace(async (root) => {
+      const source = "export const sentinel = 1;\nconsole.log(sentinel);";
+      const result = await transform(root, [{ role: "user", parts: [{ id: "source", type: "file", mime: "application/javascript", filename: "fs-engine.mjs", url: dataUrl("application/javascript", Buffer.from(source)) }] }]);
+      expect(messageParts(result[0])[0]).toMatchObject({ id: "source", type: "text" });
+      const text = textOf(messageParts(result[0])[0]);
+      expect(text).not.toContain(source);
+      expect(text).toContain("contents not included");
+      const path = JSON.parse(text.split("\n")[0].split("(contents not included): ")[1]);
+      expect(await readFile(join(root, path), "utf8")).toBe(source);
+      expect(JSON.stringify(result)).not.toContain('"type":"file"');
+      expect(await transform(root, result)).toEqual(result);
+    });
+  });
+
+  test("rejects binary and remote text attachments without leaking unsupported file parts", async () => {
+    await withWorkspace(async (root) => {
+      for (const url of [dataUrl("application/javascript", Buffer.from([0, 1, 2])), dataUrl("application/javascript", Buffer.from([255])), "https://example.invalid/code.js"]) {
+        const result = await transform(root, [{ parts: [{ type: "file", mime: "application/javascript", url }] }]);
+        expect(textOf(messageParts(result[0])[0])).toContain("could not be safely referenced");
+        expect(JSON.stringify(result)).not.toContain('"type":"file"');
+      }
+    });
+  });
+
   test("extracts DOCX/PPTX text, materializes exact bytes, strips binary parts, and preserves ids", async () => {
     await withWorkspace(async (root) => {
       const docx = docxFixture();

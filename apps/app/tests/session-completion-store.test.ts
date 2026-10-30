@@ -14,7 +14,11 @@ describe("session completion store", () => {
     }
   });
   beforeEach(() => {
-    useSessionCompletionStore.setState({ unseenSessionIds: [], previousStatusBySessionId: {} });
+    useSessionCompletionStore.setState({
+      unseenSessionIds: [],
+      acknowledgedAttentionSessionIds: [],
+      previousStatusBySessionId: {},
+    });
   });
 
   it("marks only an unseen running-to-terminal transition", () => {
@@ -42,5 +46,33 @@ describe("session completion store", () => {
     expect(useSessionCompletionStore.getState().unseenSessionIds).toEqual([]);
     store.reconcile({ "session-a": "retrying" }, accessible, new Set());
     expect(useSessionCompletionStore.getState().unseenSessionIds).toEqual([]);
+  });
+
+  it("acknowledges an attention marker when its session is opened", () => {
+    const store = useSessionCompletionStore.getState();
+    store.reconcile({ "session-a": "error" }, accessible, new Set());
+    store.acknowledgeAttention("session-a");
+    expect(useSessionCompletionStore.getState().acknowledgedAttentionSessionIds).toEqual(["session-a"]);
+  });
+
+  it("rearms attention after a new run begins", () => {
+    const store = useSessionCompletionStore.getState();
+    store.reconcile({ "session-a": "incomplete" }, accessible, new Set());
+    store.acknowledgeAttention("session-a");
+    store.reconcile({ "session-a": "running" }, accessible, new Set());
+    expect(useSessionCompletionStore.getState().acknowledgedAttentionSessionIds).toEqual([]);
+
+    store.reconcile({ "session-a": "error" }, accessible, new Set());
+    expect(useSessionCompletionStore.getState().acknowledgedAttentionSessionIds).toEqual([]);
+  });
+
+  it("drops acknowledgements for removed sessions and healthy terminal state", () => {
+    const store = useSessionCompletionStore.getState();
+    store.reconcile({ "session-a": "error", "session-b": "waiting" }, accessible, new Set());
+    store.acknowledgeAttention("session-a");
+    store.acknowledgeAttention("session-b");
+
+    store.reconcile({ "session-a": "idle" }, new Set(["session-a"]), new Set());
+    expect(useSessionCompletionStore.getState().acknowledgedAttentionSessionIds).toEqual([]);
   });
 });

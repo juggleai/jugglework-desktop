@@ -187,6 +187,7 @@ export function ToonFactoryProjectSidebar(props: ToonFactorySidebarRegistration 
 export function ToonFactoryProjectDialog(props: {
   open: boolean;
   busy: boolean;
+  reauthorizeDirectory?: string | null;
   onOpenChange: (open: boolean) => void;
   onChooseFolder: () => void;
 }) {
@@ -194,15 +195,18 @@ export function ToonFactoryProjectDialog(props: {
     <Dialog open={props.open} onOpenChange={open => { if (!props.busy) props.onOpenChange(open); }}>
       <DialogContent data-toon-factory-project-dialog>
         <DialogHeader>
-          <DialogTitle>新建或导入漫剧项目</DialogTitle>
-          <DialogDescription>选择一个文件夹。如果其中已有漫剧项目文件，将直接导入；如果没有，将在该文件夹中新建项目。</DialogDescription>
+          <DialogTitle>{props.reauthorizeDirectory ? "重新授权项目文件夹" : "新建或导入漫剧项目"}</DialogTitle>
+          <DialogDescription>{props.reauthorizeDirectory
+            ? "此项目文件夹的访问授权已失效。点击“授权并打开”，允许漫剧工厂访问下面的文件夹，完成后将自动打开项目。"
+            : "选择一个文件夹。如果其中已有漫剧项目文件，将直接导入；如果没有，将在该文件夹中新建项目。"}</DialogDescription>
         </DialogHeader>
         <div className="rounded-2xl border border-dashed border-dls-border bg-dls-sidebar/50 px-4 py-5 text-sm text-dls-secondary">
-          项目画布和素材会保存在你选择的文件夹中。
+          {props.reauthorizeDirectory ? <><div className="mb-2 text-foreground">原项目文件夹</div><div className="break-all select-text">{props.reauthorizeDirectory}</div></> : "项目画布和素材会保存在你选择的文件夹中。"}
         </div>
         <DialogFooter>
+          {props.reauthorizeDirectory ? <Button variant="ghost" disabled={props.busy} onClick={() => props.onOpenChange(false)}>取消</Button> : null}
           <Button disabled={props.busy} onClick={props.onChooseFolder}>
-            <Folder className="size-4" />{props.busy ? "正在打开…" : "选择文件夹"}
+            <Folder className="size-4" />{props.busy ? "正在打开…" : props.reauthorizeDirectory ? "授权并打开" : "选择文件夹"}
           </Button>
         </DialogFooter>
       </DialogContent>

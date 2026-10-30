@@ -681,6 +681,7 @@ const {
   toonFactoryEnter,
   toonFactoryChooseProject,
   toonFactoryOpenProject,
+  toonFactoryAuthorizeProject,
   toonFactoryRenameProject,
   toonFactoryRemoveProject,
 } = desktopBridge;
@@ -698,6 +699,7 @@ export {
   toonFactoryEnter,
   toonFactoryChooseProject,
   toonFactoryOpenProject,
+  toonFactoryAuthorizeProject,
   toonFactoryRenameProject,
   toonFactoryRemoveProject,
   engineStart,

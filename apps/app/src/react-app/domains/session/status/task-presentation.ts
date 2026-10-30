@@ -1,5 +1,5 @@
 import { getLiveActivityKind, liveActivityLabel } from "@/lib/live-activity";
-import { formatToolProgressSummary, getToolActivitySummary } from "@/lib/tool-activity";
+import { collectToolParts, formatToolProgressSummary, getActiveToolPart, getToolActivityLabel, getToolActivitySummary } from "@/lib/tool-activity";
 import { splitAssistantTaskMessages } from "@/components/chat/utils";
 import { redactSensitiveReasoning } from "@/components/chat/reasoning-redaction";
 import type { UIMessage } from "ai";
@@ -20,12 +20,14 @@ export function sessionTaskPresentation(messages: UIMessage[], todos: TodoItem[]
   const status = waiting ? "waiting" : activity?.status ?? "idle";
   const { processItems, summaryItems } = splitAssistantTaskMessages(turn.map((message, index) => ({ message, index })), active);
   const process = processItems.map((item) => item.message);
+  const currentTool = active && !waiting && !activity?.compacting ? getActiveToolPart(collectToolParts(turn)) : null;
   const authored = process.some((message) => message.parts.some((part) => part.type === "text" && part.text.trim()));
-  const summary = authored ? null : getToolActivitySummary(process);
+  const summary = currentTool || !authored ? getToolActivitySummary(process) : null;
   // TIPS: 卡片只展示面向用户的正文和可观察进度；reasoning不能作为任务摘要兜底。
   const lastText = process.flatMap((message) => message.parts).findLast((part) => part.type === "text" && part.text.trim());
-  const actualProgress = summary ? formatToolProgressSummary(liveActivityLabel(getLiveActivityKind(process)), summary)
-    : lastText?.type === "text" ? redactSensitiveReasoning(lastText.text).trim().split("\n")[0] : undefined;
+  const toolLabel = currentTool ? getToolActivityLabel(currentTool) : undefined;
+  const actualProgress = summary ? formatToolProgressSummary(toolLabel ?? liveActivityLabel(getLiveActivityKind(process)), summary)
+    : toolLabel ?? (lastText?.type === "text" ? redactSensitiveReasoning(lastText.text).trim().split("\n")[0] : undefined);
   const openTodo = todos.find((todo) => todo.status === "in_progress") ?? todos.find((todo) => todo.status === "pending");
   const resumable = !active && !waiting && (incomplete || failed || (userIndex >= 0 && !turn.some((message) => message.role === "assistant")) || Boolean(activity?.errorActive || activity?.completionBlocked));
   const terminal = turn.findLast((message) => message.role === "assistant");
@@ -38,6 +40,7 @@ export function sessionTaskPresentation(messages: UIMessage[], todos: TodoItem[]
   return {
     turnKey: messages[userIndex]?.id ?? "",
     turnCreatedAt,
+    currentToolName: currentTool?.toolName,
     active, waiting, resumable, completed, stopped,
     responseText: completed ? responseText : undefined,
     statusText: active && (status === "thinking" || status === "responding") && turn.length ? liveActivityLabel(getLiveActivityKind(turn)) : getSessionActivityStatusLabel(status),

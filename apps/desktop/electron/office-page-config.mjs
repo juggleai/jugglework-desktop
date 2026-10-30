@@ -1,5 +1,6 @@
 import { installOfficeSelectionUi } from "./office-selection-ui.mjs";
 import { readOfficePageSelection } from "./office-page-selection.mjs";
+import { readOfficeSheetSelectionAnchor } from "./office-sheet-selection-anchor.mjs";
 
 /**
  * 在 SDK 读取配置前关闭 PPT 内置 AI 编辑入口，普通编辑和宿主内容工具保持原有配置。
@@ -13,6 +14,15 @@ function configureSlidePage(scope = window) {
     config.custom.toolbarFileMenu ??= {};
     config.custom.toolbarFileMenu.aiEdit = false;
   }
+}
+
+/**
+ * 在表格 SDK 初始化选区浮层前关闭其在线 AI 入口，保留其他功能开关。
+ * @param {any} scope 配套页面配置对象
+ */
+function configureSheetPage(scope = window) {
+  scope.__WB_DOCS_FEATURE_LIST__ ??= {};
+  scope.__WB_DOCS_FEATURE_LIST__.aiEdit = false;
 }
 
 /**
@@ -37,8 +47,9 @@ export async function configureOfficePageResponse(request, response, host) {
   const head = /<\/head\s*>/i.exec(html);
   if (!head) throw new Error("PPT 页面配置尚未适配");
   // TIPS: 配套页面先在 head 建立 AppConfig，再在 body 初始化 SDK 配置缓存；dom-ready 时再改已太晚。
-  const configure = host.kind === "slide" ? `(${configureSlidePage.toString()})();` : "";
-  const selection = host.selectionUi ? `document.addEventListener('DOMContentLoaded',()=>(${installOfficeSelectionUi.toString()})(${JSON.stringify(host.kind)},${readOfficePageSelection.toString()}),{once:true});` : "";
+  const configure = host.kind === "slide" ? `(${configureSlidePage.toString()})();`
+    : host.kind === "sheet" ? `(${configureSheetPage.toString()})();` : "";
+  const selection = host.selectionUi ? `document.addEventListener('DOMContentLoaded',()=>(${installOfficeSelectionUi.toString()})(${JSON.stringify(host.kind)},${readOfficePageSelection.toString()},window,${readOfficeSheetSelectionAnchor.toString()}),{once:true});` : "";
   const script = `<script data-jugglework-office-config>${configure}${selection}</script>`;
   const headers = new Headers(response.headers);
   for (const name of [

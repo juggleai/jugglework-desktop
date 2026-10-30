@@ -612,6 +612,7 @@ export type DesktopCommandMap = {
   toonFactoryEnter: { args: []; result: ToonFactoryProjectState };
   toonFactoryChooseProject: { args: []; result: ToonFactoryProjectOpenResult | null };
   toonFactoryOpenProject: { args: [directory: string]; result: ToonFactoryProjectOpenResult };
+  toonFactoryAuthorizeProject: { args: [directory: string]; result: ToonFactoryProjectOpenResult };
   toonFactoryRenameProject: { args: [directory: string, name: string]; result: ToonFactoryProjectState };
   toonFactoryRemoveProject: { args: [directory: string]; result: ToonFactoryProjectState };
   // Workspace state

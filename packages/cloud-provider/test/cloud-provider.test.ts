@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
   buildCloudImportedProvider,
+  buildCloudProviderConfig,
+  CLOUD_PROVIDER_METADATA_VERSION,
   buildRuntimeProviderPatch,
   filterImportableCloudOrgProviders,
   gatewayMirrorEnvName,
@@ -26,6 +28,24 @@ const provider: CloudProviderConnection = {
 };
 
 describe("shared cloud provider transformations", () => {
+  test("requires serving-model billing support for managed imports, including old servers", () => {
+    const model = (managed: boolean, billing?: unknown, catalogBilling?: unknown) =>
+      buildCloudProviderConfig({ ...provider, managed, models: [{ id: "media", name: "Media", config: {
+        imageGeneration: { textToImage: true }, ...(billing === undefined ? {} : { managedMediaBilling: billing }),
+      } }] }, { JuggleRouter: { media: { managedMediaBilling: catalogBilling } } }).models?.media;
+    const affirmative = { version: 1, supported: true, required: false };
+    expect(model(true, affirmative)?.managedMediaBilling).toEqual({ version: 1, supported: true, required: true });
+    expect(model(true, undefined, affirmative)?.managedMediaBilling).toEqual({ version: 1, supported: false, required: true, reason: "managed_media_billing_unavailable" });
+    expect(model(true, { version: 1, supported: false, reason: "managed_media_backend_unavailable" })?.managedMediaBilling).toMatchObject({ supported: false, reason: "managed_media_backend_unavailable" });
+    for (const billing of [{ version: 2, supported: true }, { version: 1, supported: "true" }, null]) {
+      expect(model(true, billing)?.managedMediaBilling).toMatchObject({ required: true, supported: false });
+    }
+    expect(model(false, affirmative)?.managedMediaBilling).toBeUndefined();
+    expect(model(false, { required: true, version: 1, supported: false })?.managedMediaBilling).toBeUndefined();
+    const rawProvider = { ...provider, managed: true, providerConfig: { models: { media: { managedMediaBilling: affirmative } } }, models: [{ id: "media", name: "Media" }] };
+    expect(buildCloudProviderConfig(rawProvider).models?.media.managedMediaBilling).toMatchObject({ required: true, supported: false });
+  });
+
   test("distinguishes managed JWorkRouter from ordinary JuggleRouter", () => {
     expect(isManagedJWorkRouter({ source: "juggle_router", managedKind: "juggle_router" })).toBe(true);
     expect(isManagedJWorkRouter({ source: "juggle_router", managedIdentity: "jwork_router" })).toBe(true);
@@ -62,10 +82,10 @@ describe("shared cloud provider transformations", () => {
       },
     });
     expect(isCloudProviderOutOfSync(provider, baseline)).toBe(false);
-    expect(baseline).toMatchObject({ metadataVersion: 10, organizationId: "org_current", gatewayMirror: mirror });
+    expect(baseline).toMatchObject({ metadataVersion: CLOUD_PROVIDER_METADATA_VERSION, organizationId: "org_current", gatewayMirror: mirror });
     expect(isCloudProviderOutOfSync(provider, baseline, "org_current")).toBe(false);
     expect(isCloudProviderOutOfSync(provider, baseline, "org_other")).toBe(true);
-    expect(isCloudProviderOutOfSync(provider, { ...baseline, metadataVersion: 9 }, "org_current")).toBe(true);
+    expect(isCloudProviderOutOfSync(provider, { ...baseline, metadataVersion: 10 }, "org_current")).toBe(true);
   });
 
   test("filters disabled and built-in hosted providers", () => {
