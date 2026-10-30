@@ -1,5 +1,12 @@
 import { nativeDeepLinkEvent } from "./deep-link-bridge";
 import type { DesktopPetBridge } from "./desktop-pet-types";
+export type TerminalMetadata = {
+  terminalId: string;
+  binding: { workspaceId: string; sessionId: string; initialCwd: string; bindingRevision: string; executionKind: "local"; environmentId: string };
+  state: "running" | "terminating" | "exited";
+  exitCode: number | null;
+  stale: boolean;
+};
 
 export type * from "./desktop-types";
 export type {
@@ -233,12 +240,12 @@ declare global {
         onPanelClosed?: (callback: () => void) => () => void;
       };
       terminal?: {
-        create?: (options: { cwd: string; cols: number; rows: number }) => Promise<{ terminalId: string }>;
+        open: (target: { workspaceId: string; sessionId: string }) => Promise<TerminalMetadata>;
+        read: (terminalId: string, cursor: number) => Promise<TerminalMetadata & { data: string; cursor: number; gap: boolean }>;
         write?: (terminalId: string, data: string) => Promise<void>;
         resize?: (terminalId: string, cols: number, rows: number) => Promise<void>;
-        kill?: (terminalId: string) => Promise<void>;
-        onData?: (callback: (payload: { terminalId: string; data: string }) => void) => () => void;
-        onExit?: (callback: (payload: { terminalId: string; exitCode: number | null; signal?: number }) => void) => () => void;
+        terminate: (terminalId: string) => Promise<TerminalMetadata>;
+        restart: (terminalId: string) => Promise<TerminalMetadata>;
       };
       juggleChat?: {
         setSkillEvent?: (callback: (payload: {

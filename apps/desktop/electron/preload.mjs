@@ -361,20 +361,12 @@ contextBridge.exposeInMainWorld("__JUGGLEWORK_ELECTRON__", {
     },
   },
   terminal: {
-    create(options) { return ipcRenderer.invoke("jugglework:terminal:create", options); },
+    open(target) { return ipcRenderer.invoke("jugglework:terminal:open", target); },
+    read(terminalId, cursor) { return ipcRenderer.invoke("jugglework:terminal:read", terminalId, cursor); },
     write(terminalId, data) { return ipcRenderer.invoke("jugglework:terminal:write", terminalId, data); },
     resize(terminalId, cols, rows) { return ipcRenderer.invoke("jugglework:terminal:resize", terminalId, cols, rows); },
-    kill(terminalId) { return ipcRenderer.invoke("jugglework:terminal:kill", terminalId); },
-    onData(callback) {
-      const handler = (_event, payload) => callback(payload);
-      ipcRenderer.on("jugglework:terminal:data", handler);
-      return () => ipcRenderer.removeListener("jugglework:terminal:data", handler);
-    },
-    onExit(callback) {
-      const handler = (_event, payload) => callback(payload);
-      ipcRenderer.on("jugglework:terminal:exit", handler);
-      return () => ipcRenderer.removeListener("jugglework:terminal:exit", handler);
-    },
+    terminate(terminalId) { return ipcRenderer.invoke("jugglework:terminal:terminate", terminalId); },
+    restart(terminalId) { return ipcRenderer.invoke("jugglework:terminal:restart", terminalId); },
   },
   juggleChat: {
     setSkillEvent(callback) {

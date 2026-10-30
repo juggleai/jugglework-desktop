@@ -2,7 +2,7 @@
 import type { CSSProperties } from "react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { usePanelRef } from "react-resizable-panels";
-import { ArrowLeft, ArrowRight, Cloud, Columns2, Folders, GitBranch, Globe, Mic2, PanelLeftIcon, Search, Settings2, TextSearch, X, Zap } from "lucide-react";
+import { ArrowLeft, ArrowRight, Cloud, Columns2, Folders, GitBranch, Globe, Mic2, PanelLeftIcon, Search, Settings2, Terminal, TextSearch, X, Zap } from "lucide-react";
 
 import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
 import { t } from "../../../../i18n";
@@ -1415,6 +1415,22 @@ export function SessionPage(props: SessionPageProps) {
             size="icon-sm"
             className={cn(
               "rounded-xl transition-colors hover:bg-muted hover:text-foreground mac:titlebar-no-drag",
+              props.terminalOpen && "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary",
+            )}
+            aria-label="Terminal"
+            aria-pressed={Boolean(props.terminalOpen)}
+            title="Terminal (Cmd/Ctrl+J)"
+            onClick={() => props.onTerminalOpenChange?.(!props.terminalOpen)}
+          >
+            <Terminal size={17} aria-hidden="true" />
+          </Button>
+        ) : null}
+        {isElectronRuntime() && actionSessionId ? (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className={cn(
+              "rounded-xl transition-colors hover:bg-muted hover:text-foreground mac:titlebar-no-drag",
               panelRailActive && "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary",
             )}
             onClick={openBrowserRailPane}
@@ -2007,7 +2023,8 @@ export function SessionPage(props: SessionPageProps) {
                 <ResizableHandle withHandle />
                 <ResizablePanel defaultSize="280px" minSize="160px" maxSize="55%" className="min-h-0">
                   <TerminalDock
-                    workspaceRoot={props.selectedWorkspaceRoot}
+                    workspaceId={props.runtimeWorkspaceId ?? ""}
+                    sessionId={actionSessionId ?? ""}
                     isRemoteWorkspace={props.selectedWorkspaceDisplay.workspaceType === "remote"}
                     onClose={() => props.onTerminalOpenChange?.(false)}
                   />
