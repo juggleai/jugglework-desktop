@@ -1159,7 +1159,9 @@ function createMainRemoteControlAgent() {
     })),
     createWebSocket: ({ url, accessToken }) => new WebSocketClient(url, {
       headers: { Authorization: `Bearer ${accessToken}` },
-      maxPayload: 2 * 1024 * 1024,
+      // The 28 MiB plaintext prompt budget is encrypted and base64url encoded
+      // on the wire, so reserve enough room for that expansion and metadata.
+      maxPayload: 48 * 1024 * 1024,
       perMessageDeflate: false,
     }),
     appVersion: app.getVersion(),
@@ -1546,6 +1548,9 @@ remoteControlReadRegistrations = createRemoteControlReadRegistrations({
   managedRuntimeClient: createManagedRuntimeClient({
     getAccess: () => runtimeManager.managedServerAccess(),
     fetcher: mainProcessFetch,
+    // Snapshot normalization allows a 28 MiB transcript. The HTTP reader must
+    // not reject it before file parts reach the remote adapter.
+    maxResponseBytes: 32 * 1024 * 1024,
   }),
   interactions: remoteControlInteractionStore,
   logger: {
@@ -1579,6 +1584,8 @@ function createMainRemoteSessionEventBridge() {
     sseClient: createManagedRuntimeSseClient({
       getAccess: () => runtimeManager.managedServerAccess(),
       fetcher: mainProcessFetch,
+      // OpenCode emits inline image data URLs in a single SSE record.
+      maxBufferBytes: 32 * 1024 * 1024,
       logger: remoteEventDiagnostics,
     }),
     coordinator: sessionMutationCoordinator,

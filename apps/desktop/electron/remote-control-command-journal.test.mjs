@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 
 import {
+  REMOTE_CONTROL_COMMAND_JOURNAL_DEFAULT_LIMITS,
   RemoteControlCommandJournalError,
   createRemoteControlCommandJournal,
 } from "./remote-control-command-journal.mjs";
@@ -95,6 +96,70 @@ describe("remote-control command journal", () => {
       commandId: "command-1",
       lifecycle,
     });
+  });
+
+  it("completes and replays a snapshot larger than 4 MiB with default limits", async (t) => {
+    const { filePath, journal } = await isolatedJournal();
+    t.after(() => rm(path.dirname(filePath), { recursive: true, force: true }));
+    const snapshot = command({ operation: "session.snapshot", idempotencyKey: null });
+    const lifecycle = successLifecycle({
+      result: { operation: "session.snapshot", payloadVersion: 1, result: { image: "x".repeat(5 * 1024 * 1024) } },
+    });
+    assert.equal((await journal.prepare(snapshot)).action, "execute");
+    assert.deepEqual(await journal.complete(snapshot.commandId, lifecycle), {
+      action: "recorded", commandId: snapshot.commandId, lifecycle,
+    });
+    assert.ok((await stat(filePath)).size > 4 * 1024 * 1024);
+    const expected = { action: "replay", commandId: snapshot.commandId, lifecycle };
+    assert.deepEqual(await journal.prepare(snapshot), expected);
+    const restarted = createRemoteControlCommandJournal({ filePath, now: () => NOW });
+    assert.deepEqual(await restarted.prepare(snapshot), expected);
+  });
+
+  it("bounds cumulative maximum-size snapshots without evicting live mutation protection", async (t) => {
+    const { filePath, journal } = await isolatedJournal();
+    t.after(() => rm(path.dirname(filePath), { recursive: true, force: true }));
+    const { maxResultBytes, maxFileBytes } = REMOTE_CONTROL_COMMAND_JOURNAL_DEFAULT_LIMITS;
+    const result = { operation: "session.snapshot", payloadVersion: 1, result: { image: "" } };
+    result.result.image = "x".repeat(maxResultBytes - Buffer.byteLength(JSON.stringify(result)));
+    assert.equal(Buffer.byteLength(JSON.stringify(result)), maxResultBytes);
+    const lifecycle = successLifecycle({ result });
+    const snapshots = [1, 2, 3].map((index) => command({
+      commandId: `snapshot-${index}`, operation: "session.snapshot", idempotencyKey: null,
+    }));
+    const pendingMutation = command();
+    const completedMutation = command({ commandId: "completed-mutation", idempotencyKey: "completed-key" });
+    await journal.prepare(pendingMutation);
+    await journal.prepare(completedMutation);
+    const mutationLifecycle = successLifecycle();
+    await journal.complete(completedMutation.commandId, mutationLifecycle);
+    for (const snapshot of snapshots.slice(0, 2)) {
+      assert.equal((await journal.prepare(snapshot)).action, "execute");
+      assert.equal((await journal.complete(snapshot.commandId, lifecycle)).action, "recorded");
+    }
+    assert.ok((await stat(filePath)).size > 2 * maxResultBytes);
+    await journal.prepare(snapshots[2]);
+    const sizeBeforeFailure = (await stat(filePath)).size;
+    await assert.rejects(journal.complete(snapshots[2].commandId, lifecycle),
+      (error) => error instanceof RemoteControlCommandJournalError && error.code === "journal_full");
+    assert.equal((await stat(filePath)).size, sizeBeforeFailure);
+    assert.ok(sizeBeforeFailure <= maxFileBytes);
+
+    const restarted = createRemoteControlCommandJournal({ filePath, now: () => NOW });
+    for (const snapshot of snapshots.slice(0, 2)) {
+      assert.deepEqual(await restarted.prepare(snapshot), {
+        action: "replay", commandId: snapshot.commandId, lifecycle,
+      });
+    }
+    const pending = await restarted.prepare({ ...pendingMutation, commandId: "mutation-redelivery" });
+    assert.equal(pending.action, "reject");
+    assert.equal(pending.action === "reject" ? pending.error.code : null, "delivery_failed");
+    assert.deepEqual(await restarted.prepare({ ...completedMutation, commandId: "completed-redelivery" }), {
+      action: "replay", commandId: completedMutation.commandId, lifecycle: mutationLifecycle,
+    });
+    const conflict = await restarted.prepare({ ...completedMutation, payloadHash: "b".repeat(64) });
+    assert.equal(conflict.action === "reject" ? conflict.error.code : null, "idempotency_conflict");
+    assert.equal((await restarted.prepare(snapshots[2])).action, "reject");
   });
 
   it("replays the exact original error lifecycle", async () => {

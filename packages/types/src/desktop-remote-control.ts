@@ -9,6 +9,7 @@ export const DESKTOP_REMOTE_ATTACHMENT_MAX_DECODED_BYTES = 10 * 1024 * 1024
 export const DESKTOP_REMOTE_ATTACHMENTS_TOTAL_MAX_DECODED_BYTES = 20 * 1024 * 1024
 // Three bounded attachments plus text and envelope metadata fit under 32 MiB.
 export const DESKTOP_REMOTE_PROMPT_MAX_ENCODED_BYTES = 28 * 1024 * 1024
+export const DESKTOP_REMOTE_ENCRYPTED_PAYLOAD_MAX_BYTES = 48 * 1024 * 1024
 
 export const desktopRemoteAttachmentMimeValues = [
   "image/png",
@@ -1600,7 +1601,7 @@ const encryptedPayloadEnvelopeSchema = z
     payload: z
       .object({
         nonce: z.string().base64url().length(16),
-        ciphertext: z.string().base64url().min(23).max(16_000_000),
+        ciphertext: z.string().base64url().min(23).max(DESKTOP_REMOTE_ENCRYPTED_PAYLOAD_MAX_BYTES),
       })
       .strict(),
   })

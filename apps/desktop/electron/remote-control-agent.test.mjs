@@ -1875,6 +1875,45 @@ describe("remote-control agent command handling", () => {
     assert.equal(bindings.length, 1);
   });
 
+  it("derives the root binding from sessionId for a payload-v2 prompt", async () => {
+    const bindings = [];
+    const verifyCalls = [];
+    const capabilities = /** @type {typeof readCapabilities} */ ({
+      schemaVersion: 1,
+      operations: [{ operation: "session.prompt", payloadVersions: [1, 2] }],
+      features: [],
+    });
+    const fixture = harness({
+      capabilities,
+      verifySessionBinding: async (binding) => { verifyCalls.push(binding); return true; },
+      onSessionBinding: (binding) => { bindings.push(binding); },
+    });
+    const socket = await connect(fixture);
+    socket.receive(welcome(77));
+    await settle();
+    socket.receive(delivery({
+      idempotencyKey: "prompt-v2-image",
+      request: {
+        operation: "session.prompt",
+        payloadVersion: 2,
+        arguments: {
+          workspaceId: "ws_1",
+          sessionId: "ses_1",
+          parts: [{ type: "file", mime: "image/png", filename: "image.png", url: "data:image/png;base64,cG5n" }],
+          whenBusy: "reject",
+        },
+      },
+    }));
+    await settle();
+    assert.equal(verifyCalls.length, 1);
+    assert.deepEqual(bindings.map(({ rootSessionId, sessionId, rootVerified }) => ({ rootSessionId, sessionId, rootVerified })), [{
+      rootSessionId: "ses_1",
+      sessionId: "ses_1",
+      rootVerified: true,
+    }]);
+    assert.equal(fixture.dispatchCalls.length, 1);
+  });
+
   it("does not dispatch or read another root when immutable session binding fails", async () => {
     const capabilities = /** @type {typeof readCapabilities} */ ({
       schemaVersion: 1,

@@ -12,7 +12,10 @@ import {
   normalizeRemoteQuestionInteraction,
 } from "./remote-control-interaction-store.mjs";
 
-const MAX_EVENT_BYTES = 512 * 1024;
+// One 10 MiB image becomes roughly 13.4 MiB as a data URL. Keep a complete
+// file part below the event limit so text and image reach remote clients
+// together instead of degrading to a text-only snapshot requirement.
+const MAX_EVENT_BYTES = 32 * 1024 * 1024;
 const MAX_BINDINGS = 100;
 const MAX_MESSAGES = 1_000;
 const MAX_PARTS_PER_MESSAGE = 1_000;

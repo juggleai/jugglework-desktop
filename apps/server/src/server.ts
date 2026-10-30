@@ -1988,6 +1988,7 @@ async function dispatchSessionPromptAsync(
   workspace: WorkspaceInfo,
   sessionId: string,
   prompt: Record<string, unknown>,
+  requirePersistence = false,
 ): Promise<void> {
   const path = `/session/${encodeURIComponent(sessionId)}/prompt_async`;
   let effectivePrompt = prompt;
@@ -2010,6 +2011,109 @@ async function dispatchSessionPromptAsync(
       path,
     });
   }
+  if (requirePersistence) {
+    await waitForPersistedSessionPrompt(config, workspace, sessionId, effectivePrompt);
+  }
+}
+
+type PersistedPromptPart =
+  | { type: "text"; text: string }
+  | { type: "file"; mime: string; filename: string; url: string };
+
+function promptPersistenceParts(value: unknown): PersistedPromptPart[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((part): PersistedPromptPart[] => {
+    if (!part || typeof part !== "object") return [];
+    const candidate = part as Record<string, unknown>;
+    if (candidate.type === "text" && typeof candidate.text === "string") {
+      return [{ type: "text", text: candidate.text }];
+    }
+    if (candidate.type === "file"
+      && typeof candidate.mime === "string"
+      && typeof candidate.filename === "string"
+      && typeof candidate.url === "string") {
+      return [{
+        type: "file",
+        mime: candidate.mime,
+        filename: candidate.filename,
+        url: candidate.url,
+      }];
+    }
+    return [];
+  });
+}
+
+function persistedPromptPartMatches(expected: PersistedPromptPart, actual: unknown): boolean {
+  if (!actual || typeof actual !== "object") return false;
+  const candidate = actual as Record<string, unknown>;
+  if (expected.type === "text") {
+    return candidate.type === "text" && candidate.text === expected.text;
+  }
+  return candidate.type === "file"
+    && (candidate.mime ?? candidate.mediaType) === expected.mime
+    && candidate.filename === expected.filename
+    && candidate.url === expected.url;
+}
+
+function hasPersistedPromptParts(expected: PersistedPromptPart[], actual: unknown): boolean {
+  if (!Array.isArray(actual)) return false;
+  let expectedIndex = 0;
+  for (const part of actual) {
+    if (expectedIndex < expected.length && persistedPromptPartMatches(expected[expectedIndex]!, part)) {
+      expectedIndex += 1;
+    }
+  }
+  return expectedIndex === expected.length;
+}
+
+async function waitForPersistedSessionPrompt(
+  config: ServerConfig,
+  workspace: WorkspaceInfo,
+  sessionId: string,
+  prompt: Record<string, unknown>,
+): Promise<void> {
+  const messageID = typeof prompt.messageID === "string" ? prompt.messageID : "";
+  const expectedParts = promptPersistenceParts(prompt.parts);
+  // Keep legacy text-only 204 semantics unchanged. Remote attachment starts
+  // get the stronger guarantee that OpenCode persisted the complete user turn
+  // before the command is reported as successful.
+  if (!messageID || !expectedParts.some((part) => part.type === "file")) return;
+
+  const delays = [0, 25, 50, 100, 200, 400, 800, 1_000];
+  for (const delay of delays) {
+    if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+    const messagePath = `/session/${encodeURIComponent(sessionId)}/message/${encodeURIComponent(messageID)}`;
+    const response = await loopbackFetch(workspaceOpencodeUrl(config, workspace, messagePath), {
+      method: "GET",
+      headers: workspaceOpencodeHeaders(config, workspace),
+    });
+    if (response.status === 404) continue;
+    if (!response.ok) {
+      throw new ApiError(502, "opencode_request_failed", "OpenCode request failed", {
+        status: response.status,
+        path: messagePath,
+      });
+    }
+    let message: unknown;
+    try {
+      message = await response.json();
+    } catch {
+      continue;
+    }
+    if (message && typeof message === "object") {
+      const record = message as { info?: Record<string, unknown>; parts?: unknown };
+      if (record.info?.id === messageID
+        && record.info.role === "user"
+        && hasPersistedPromptParts(expectedParts, record.parts)) return;
+    }
+  }
+
+  throw new ApiError(
+    502,
+    "opencode_prompt_not_persisted",
+    "OpenCode accepted the prompt but did not persist the complete user message",
+    { path: `/session/${encodeURIComponent(sessionId)}/message`, sessionId, messageID },
+  );
 }
 
 async function dispatchSessionAbort(
@@ -3044,7 +3148,13 @@ function createRoutes(
           if (part) part.metadata = { ...part.metadata, officeSelections: previews.map(({ referenceId, preview }) => ({ referenceId, preview })), officeInstructions };
         }
       }
-      await dispatchSessionPromptAsync(routeConfig, workspace, sessionId, enginePrompt);
+      await dispatchSessionPromptAsync(
+        routeConfig,
+        workspace,
+        sessionId,
+        enginePrompt,
+        run?.origin === "remote-control",
+      );
     },
     dispatchSessionAbort,
     preparePromptAdmission: async (identity, selection = {}) => {

@@ -71,7 +71,8 @@ const TERMINAL_STATUSES = new Set(["succeeded", "failed", "rejected", "expired",
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const SEMVER_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 const HASH_PATTERN = /^[a-f0-9]{64}$/;
-const MAX_MESSAGE_BYTES = 32 * 1024 * 1024;
+// Encrypted command frames base64url-encode the bounded plaintext request.
+const MAX_MESSAGE_BYTES = 48 * 1024 * 1024;
 const MAX_TIMER_DELAY = 24 * 60 * 60 * 1_000;
 const TOKEN_REFRESH_MARGIN = 60_000;
 // A cached agent token is reused for transport reconnects only while it stays
@@ -1588,7 +1589,9 @@ export function createRemoteControlAgent(options) {
       return;
     }
     const args = command.request.arguments;
-    const rootSessionId = command.request.payloadVersion === 2 ? args.rootSessionId : args.sessionId;
+    // Descendant operations use `rootSessionId`; root mutations, including
+    // session.prompt v2, keep using `sessionId`.
+    const rootSessionId = args.rootSessionId ?? args.sessionId;
     let bindingFailed = false;
     if (isIdentifier(args.workspaceId) && isIdentifier(rootSessionId)) {
       try {

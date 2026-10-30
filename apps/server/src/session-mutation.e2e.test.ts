@@ -56,7 +56,14 @@ function startMockOpencode() {
     image: { capabilities: { output: { image: true, text: false } } },
     normalizedVideo: { modalities: { output: ["video"] } },
   };
-  const messages = new Map<string, Array<ArtifactEngineMessage & { info: ArtifactEngineMessage["info"] & { finish?: string; summary?: boolean; error?: unknown } }>>();
+  const messages = new Map<string, Array<Omit<ArtifactEngineMessage, "info"> & {
+    info: ArtifactEngineMessage["info"] & {
+      sessionID?: string;
+      finish?: string;
+      summary?: boolean;
+      error?: unknown;
+    };
+  }>>();
   const sessions = new Map<string, { id: string; title: string; parentID?: string; directory?: string; time: { created: number; updated: number } }>();
   const heldPrompts = new Map<string, ReturnType<typeof deferred<void>>>();
   const heldMessageIds = new Map<string, ReturnType<typeof deferred<void>>>();
@@ -69,6 +76,7 @@ function startMockOpencode() {
   const v2Admissions = new Map<string, { fingerprint: string; receipt: unknown }>();
   const v2Statuses = new Map<string, number>();
   const failedShells = new Set<string>();
+  const autoPersistPrompts = { value: false };
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
@@ -83,6 +91,13 @@ function startMockOpencode() {
       }
       const messageMatch = url.pathname.match(/^\/session\/([^/]+)\/message$/);
       if (request.method === "GET" && messageMatch) return Response.json(messages.get(decodeURIComponent(messageMatch[1]!)) ?? []);
+      const directMessageMatch = url.pathname.match(/^\/session\/([^/]+)\/message\/([^/]+)$/);
+      if (request.method === "GET" && directMessageMatch) {
+        const sessionId = decodeURIComponent(directMessageMatch[1]!);
+        const messageId = decodeURIComponent(directMessageMatch[2]!);
+        const message = messages.get(sessionId)?.find((candidate) => candidate.info.id === messageId);
+        return message ? Response.json(message) : Response.json({ code: "not_found" }, { status: 404 });
+      }
       const sessionMatch = url.pathname.match(/^\/session\/([^/]+)$/);
       const messagesMatch = url.pathname.match(/^\/session\/([^/]+)\/message$/);
       if (request.method === "GET" && messagesMatch) {
@@ -147,6 +162,23 @@ function startMockOpencode() {
         if (failedPrompts.delete(sessionId) || (body.messageID !== undefined && failedMessageIds.delete(body.messageID))) {
           return Response.json({ name: "PromptFailure" }, { status: 500 });
         }
+        if (autoPersistPrompts.value && body.messageID) {
+          const parts = Array.isArray((body as { parts?: unknown }).parts)
+            ? (body as { parts: Array<Record<string, unknown>> }).parts
+            : [];
+          messages.set(sessionId, [
+            ...(messages.get(sessionId) ?? []),
+            {
+              info: { id: body.messageID, role: "user" },
+              parts: parts.map((part, index) => ({
+                ...part,
+                id: `prt_${index}`,
+                messageID: body.messageID!,
+                sessionID: sessionId,
+              })),
+            },
+          ]);
+        }
         return new Response(null, { status: 204 });
       }
 
@@ -206,6 +238,7 @@ function startMockOpencode() {
     v2Admissions,
     v2Statuses,
     failedShells,
+    autoPersistPrompts,
   };
 }
 
@@ -596,6 +629,7 @@ describe("authoritative session mutation APIs", () => {
 
   test("preserves safe attachment parts for idle starts and rejects them while busy", async () => {
     const engine = startMockOpencode();
+    engine.autoPersistPrompts.value = true;
     const harness = await startHarness(engine.server.port);
     const parts = [
       { type: "text", text: "Inspect " },
@@ -617,6 +651,45 @@ describe("authoritative session mutation APIs", () => {
     });
     expect(busy.status).toBe(409);
     expect(await busy.json()).toMatchObject({ code: "session_busy" });
+  });
+
+  test("waits for the complete persisted image prompt before accepting a remote start", async () => {
+    const engine = startMockOpencode();
+    engine.autoPersistPrompts.value = false;
+    const harness = await startHarness(engine.server.port);
+    const parts = [
+      { type: "text", text: "Inspect" },
+      { type: "file", mime: "image/png", filename: "screen.png", url: "data:image/png;base64,iVBORw0KGgo=" },
+    ];
+    engine.statuses.set("ses_image_fence", { type: "idle" });
+
+    let settled = false;
+    const startedPromise = fetch(`${runPath(harness.base, "ses_image_fence")}/start`, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+      body: JSON.stringify({ origin: "remote-control", startCommandCorrelationId: "cmd_image_fence", prompt: { parts } }),
+    }).then((response) => {
+      settled = true;
+      return response;
+    });
+    await waitUntil(() => engine.prompts.length === 1);
+    const messageID = (engine.prompts[0]!.body as { messageID: string }).messageID;
+    engine.messages.set("ses_image_fence", [{
+      info: { id: messageID, role: "user" },
+      parts: [{ id: "prt_text", messageID, sessionID: "ses_image_fence", ...parts[0] }],
+    }]);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(settled).toBe(false);
+
+    engine.messages.set("ses_image_fence", [{
+      info: { id: messageID, role: "user" },
+      parts: [
+        { id: "prt_text", messageID, sessionID: "ses_image_fence", ...parts[0] },
+        { id: "prt_file", messageID, sessionID: "ses_image_fence", ...parts[1] },
+      ],
+    }]);
+    const started = await startedPromise;
+    expect(started.status).toBe(202);
   });
 
   test("failed queue promotion rolls back its local reservation", async () => {

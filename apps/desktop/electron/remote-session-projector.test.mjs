@@ -287,25 +287,37 @@ describe("remote session projector", () => {
     assert.deepEqual(h.emitted.slice(-2).map((e) => [e.controlSessionId, e.data.reason]), [[CONTROL_1, "cursor_expired"], [CONTROL_2, "cursor_expired"]]);
   });
 
-  it("never emits JSON above 512 KiB and trims streamed content", () => {
+  it("never emits JSON above 32 MiB and trims streamed content", () => {
     const h = harness();
     h.projector.accept(WORKSPACE, { type: "message.part.updated", properties: { part: part({ text: "x".repeat(700 * 1024) }) } });
     h.flush();
     assert.ok(h.emitted.length > 0);
-    for (const event of h.emitted) assert.ok(Buffer.byteLength(JSON.stringify(event), "utf8") <= 512 * 1024);
+    for (const event of h.emitted) assert.ok(Buffer.byteLength(JSON.stringify(event), "utf8") <= 32 * 1024 * 1024);
     assert.equal(h.emitted.at(-1).data.part.text.length, 128 * 1024);
   });
 
   it("turns an oversize meaningful projection into a bounded snapshot requirement", () => {
     const h = harness();
     const todos = Array.from({ length: 10_000 }, (_, index) => ({
-      content: `${index}-${"x".repeat(100)}`,
+      content: `${index}-${"x".repeat(4_000)}`,
       status: "pending",
       priority: "high",
     }));
     h.projector.accept(WORKSPACE, { type: "todo.updated", properties: { sessionID: SESSION, todos } });
     assert.deepEqual(h.emitted.at(-1).data, { type: "snapshot_required", reason: "sequence_gap" });
-    assert.ok(Buffer.byteLength(JSON.stringify(h.emitted.at(-1)), "utf8") <= 512 * 1024);
+    assert.ok(Buffer.byteLength(JSON.stringify(h.emitted.at(-1)), "utf8") <= 32 * 1024 * 1024);
+  });
+
+  it("projects an inline image that exceeds the former 512 KiB limit", () => {
+    const h = harness();
+    h.projector.accept(WORKSPACE, { type: "message.updated", properties: { info: info() } });
+    const url = `data:image/png;base64,${Buffer.alloc(600 * 1024).toString("base64")}`;
+    h.projector.accept(WORKSPACE, { type: "message.part.updated", properties: { part: part({
+      type: "file", mime: "image/png", filename: "image.png", url,
+    }) } });
+    h.flush();
+    assert.equal(h.emitted.some((event) => event.data.type === "snapshot_required"), false);
+    assert.equal(h.emitted.at(-1).data.part.url, url);
   });
 
   it("cancels pending output on unbind and stop and rejects later use", () => {
