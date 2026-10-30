@@ -129,6 +129,9 @@ export function main() {
   rmSync(output, { recursive: true, force: true });
   mkdirSync(output, { recursive: true });
   for (const name of ["server", "web", "nodes", "tools", "skills", "mcp"]) cpSync(path.join(source, "build", name), path.join(output, name), { recursive: true });
+  for (const name of ["videoNode", "videoGenerationNode", "frameAnalysisNode"]) {
+    if (!existsSync(path.join(output, "nodes", `${name}.umd.js`))) throw new Error(`Required local-media node was not built: ${name}`);
+  }
   copyFileSync(path.join(source, "LICENSE"), path.join(output, "LICENSE"));
   const runtime = path.join(output, target.executableName);
   copyFileSync(trustedBun.path, runtime);

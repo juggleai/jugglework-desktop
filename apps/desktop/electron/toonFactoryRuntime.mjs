@@ -9,6 +9,7 @@ import { pipeline } from "node:stream/promises";
 import { once } from "node:events";
 import path from "node:path";
 import { verifyToonFactoryBundle } from "./toonFactoryBundle.mjs";
+import { createToonFactoryVideoEditor } from "./toonFactoryVideoEdit.mjs";
 
 export const TOON_FACTORY_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
 const verifiedBundles = new Map();
@@ -238,6 +239,7 @@ export function createToonFactoryRuntime({ app, getWindow, getAccess, moduleRoot
   let idleTimer = null;
   const saveTargets = new Map();
   let directoryGrants = new Map();
+  const videoEditor = createToonFactoryVideoEditor({ isDirectoryGranted: directory => directoryGrants.has(directoryGrantKey(directory, platform)) });
   let approvedProjectDirectory = null;
   const enteredWorkspaceIds = new Set();
   const state = () => ({ running: Boolean(ready && child && child.exitCode === null && origin && !failure), workspaceId, error: failure });
@@ -314,6 +316,12 @@ export function createToonFactoryRuntime({ app, getWindow, getAccess, moduleRoot
         const result = await native(url.pathname.slice(9), (await readJson(req)).args ?? []);
         res.setHeader("Content-Type", "application/json"); res.end(JSON.stringify({ result })); return;
       }
+      if (req.method === "POST" && url.pathname === "/videoEdit") {
+        const input = await readJson(req);
+        if (bridgeToken !== requestBridgeToken || workspaceId !== requestWorkspaceId) throw new Error("剪辑工作区授权已失效");
+        const result = await videoEditor.execute(input, controller.signal);
+        res.setHeader("Content-Type", "application/json"); res.end(JSON.stringify(result)); return;
+      }
       const access = await getAccess(); if (!access) throw new Error("JuggleWork 模型服务尚未就绪");
       const prefix = `${access.baseUrl}/workspace/${encodeURIComponent(requestWorkspaceId)}/toonflow`;
       let endpoint, body;
@@ -387,6 +395,8 @@ export function createToonFactoryRuntime({ app, getWindow, getAccess, moduleRoot
     clipView.setVisible(w - clipLeft > 0 && h > 0 && !failure);
   }
   async function stop() {
+    bridgeToken = null;
+    await videoEditor.stop();
     startup?.controller.abort(new Error("漫剧工厂启动已取消"));
     cancelIdleClose();
     ready = false; origin = null; requestedBounds = null;

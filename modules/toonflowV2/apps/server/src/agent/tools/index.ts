@@ -11,6 +11,7 @@ import { isWithin, resolveWorkspacePath, writeWorkspaceFile, lockWorkspaceFiles 
 import { listTools, loadTool, validateToolConfig } from "@/utils/plugins/tools";
 import { createSkillContext } from "@/agent/skills";
 import { isManagedMode, managedResourceDirectory } from "@/lib/managed";
+import { createVideoEditTools } from "./videoEdit";
 
 export function createAgentToolContext(cwd: string, config: Record<string, unknown> = {}, canvas?: CanvasContext, question?: QuestionContext): ToolContext {
   const skillsDirectory = managedResourceDirectory("skills", join(dirname(conf.path), "skills"));
@@ -39,8 +40,8 @@ export function createAgentToolContext(cwd: string, config: Record<string, unkno
 }
 
 export async function createAgentTools(cwd: string, canvas?: CanvasContext, question?: QuestionContext): Promise<ToolDefinition[]> {
-  const tools: ToolDefinition[] = [];
-  const names = new Set<string>();
+  const tools: ToolDefinition[] = isManagedMode() ? createVideoEditTools(cwd) : [];
+  const names = new Set<string>(tools.map(tool => tool.name));
   const context = createAgentToolContext(cwd, {}, canvas, question);
   for (const item of await listTools()) {
     if (!item.enabled) continue;

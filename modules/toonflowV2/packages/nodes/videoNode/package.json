@@ -3,6 +3,10 @@
   "version": "2.0.0",
   "private": true,
   "type": "module",
+  "exports": {
+    "./videoActions": "./src/components/videoActions.vue",
+    "./videoProcessing": "./src/videoProcessing.ts"
+  },
   "scripts": {
     "build": "vite build",
     "dev": "vite build --watch",

@@ -8,6 +8,8 @@
     :style="{ width: previewUrl && videoWidth ? `${videoWidth + 18}px` : undefined }"
     @fullscreen="player?.enterFullscreen()">
     <template #topActions>
+      <el-button v-for="(label, action) in { extractAudio: '提取音轨', separate: '分离音视频', trim: '截取片段' }" :key="action" text :disabled="!outputFile || uploading || exporting || actions?.busy" @click.stop="actions?.open(action)">{{ label }}</el-button>
+      <el-button text :disabled="!outputFile || uploading || exporting || actions?.busy" @click.stop="actions?.createAnalysis()">逐帧拉片</el-button>
       <el-button
         :icon="IconTransfer"
         :loading="uploading"
@@ -41,6 +43,7 @@
       </el-button>
     </div>
   </nodeSkeleton>
+  <videoActions ref="actions" :file="outputFile" :src="previewUrl" :disabled="uploading || exporting" />
 </template>
 
 <script setup lang="ts">
@@ -49,6 +52,7 @@ import { IconVideo, IconUpload, IconTransfer } from "@tabler/icons-vue";
 import { ElButton, ElMessage, ElProgress } from "element-plus";
 import { nodeSkeleton, nodeTools, useNode, z, type NodeHandle } from "@toonflow/nodes-scaffold/runtime";
 import videoPlayer from "@toonflow/nodes-scaffold/videoPlayer";
+import videoActions from "./components/videoActions.vue";
 
 defineOptions({
   inheritAttrs: false,
@@ -61,6 +65,7 @@ const { node, nodeProps, outputs, nodeEvent, files, updateNodeInternals } = useN
 const fileInput = ref<HTMLInputElement>();
 const uploading = ref(false);
 const player = ref<InstanceType<typeof videoPlayer>>();
+const actions = ref<InstanceType<typeof videoActions>>();
 const exportProgress = computed(() => (node.data as typeof node.data & { exportProgress?: number }).exportProgress);
 const exporting = computed(() => typeof exportProgress.value === "number");
 const videoWidth = ref(0);

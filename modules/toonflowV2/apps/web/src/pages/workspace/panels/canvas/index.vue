@@ -815,6 +815,15 @@ provide("workspaceDirectory", () => {
   if (!directory) throw new Error("请先选择工作目录");
   return directory;
 });
+provide("processMedia", async (request: import("@toonflow/node-video/videoProcessing").MediaRequest, signal: AbortSignal) => {
+  try {
+    const { data } = await axios.post("/api/media/process", request, { signal, headers: { "x-toonflow-workspace": "1" } });
+    return data.data;
+  } catch (error) {
+    if (axios.isAxiosError(error) && error.response?.data?.message) throw new Error(error.response.data.message);
+    throw error;
+  }
+});
 provide("reloadRemoteNode", (type: string) => {
   const name = type.replace(/^remote-/, "");
   if (!type.startsWith("remote-") || !/^[a-z][a-zA-Z0-9]*$/.test(name)) throw new Error("节点类型无效");

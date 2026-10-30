@@ -5,11 +5,13 @@ import { z } from "zod";
 import u from "@/utils";
 import { validateFields } from "@/lib/middleware";
 import { error } from "@/lib/responseFormat";
+import { managedBuiltInNodeAllowed } from "@/lib/managed";
 
 const router = Router();
 
 export default router.get("/", validateFields({ name: z.string().regex(/^[a-z][a-zA-Z0-9]*$/) }, "query"), async (req, res) => {
   const name = req.query.name as string;
+  if (!managedBuiltInNodeAllowed(name)) return res.status(403).json(error("managed 模式不支持此节点", null, 403));
   const nodesDirectory = u.nodePlugins.nodesDirectory;
   const filePath = resolve(nodesDirectory, `${name}.umd.js`);
   const file = await lstat(filePath).catch((err: NodeJS.ErrnoException) => {

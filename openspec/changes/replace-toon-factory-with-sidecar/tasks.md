@@ -55,3 +55,20 @@
 Current commit scope also includes the operator's local media fixes: bounded nonempty provider IDs and provider-supported image size aliases, base64 image response requests, preservation of known image errors, a two-request managed image concurrency queue with abortable waiters, removal of duplicate canvas node-tool routing arguments, and a five-minute provider-submission reconciliation grace period. No live provider request or model generation was made to verify these changes during the commit task.
 
 Verification before commit: 35 existing Server image/repository/worker/service tests and Server typecheck passed. The new repository regression covers the submission recovery deadline. This does not establish full Toonflow UI/build, image concurrency, provider size-alias compatibility, or packaged release verification; task 6.3 remains open.
+
+## 8. Restricted video editing follow-up
+
+- [x] 8.1 Review upstream v2.0.8 editing/export capabilities and record adaptation boundaries in video-edit-migration.md.
+- [x] 8.2 Add managed probeVideo/exportVideo tools and a workspace-authorized Desktop broker without opening generic FFmpeg execution.
+- [x] 8.3 Install operator-approved FFmpeg/FFprobe and verify trim/concat, missing audio, no-overwrite, cancellation and output decoding on temporary/project media.
+- [ ] 8.4 Validate the rebuilt module in the running Desktop after restart; do not modify existing cat1 videos during verification.
+
+## 9. v2.0.8 video actions and frame analysis adaptation
+
+- [x] 9.1 Extend restricted host operations with audio extraction, silent separation, precise trimming and bounded local scene analysis; preserve generic FFmpeg denial.
+- [x] 9.2 Add the authenticated sidecar media route and canvas capability; propagate cancellation to the broker and child process.
+- [x] 9.3 Add four actions to video/video-generation nodes and register frameAnalysisNode with build dependencies, managed allowlist and node metadata.
+- [x] 9.4 Persist analysis manifests and create/rebuild shot video, keyframe and original-audio result nodes without overwriting historical artifacts.
+- [x] 9.5 Verify focused typechecks, three node builds, existing targeted tests and isolated real-media/HTTP flows. See video-edit-migration.md for evidence and limitations.
+- [x] 9.6 Build the complete sidecar bundle with pinned Bun 1.3.14 and independently verify inventory plus frameAnalysisNode.umd.js (darwin/arm64, 1035 files).
+- [ ] 9.7 Verify live Desktop node-menu, buttons, automatic connection, canvas reload, undo and cancellation after an operator-authorized restart.

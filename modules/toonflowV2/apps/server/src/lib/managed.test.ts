@@ -8,7 +8,7 @@ import mediaGenerationPlugin from "../../../../packages/tools/mediaGeneration/sr
 import { resolveWorkspace } from "../utils/workspace";
 import {
   authorizeManagedDirectory, clearManagedDirectoryGrants, configureManagedResources, isManagedMode,
-  isManagedRouteDenied, managedBuiltInToolAllowed, managedGuard, managedResourceDirectory, managedToolConfig,
+  isManagedRouteDenied, managedBuiltInToolAllowed, managedBuiltInNodeAllowed, managedGuard, managedResourceDirectory, managedToolConfig,
 } from "./managed";
 
 let server: Server;
@@ -28,6 +28,12 @@ beforeAll(async () => {
 afterAll(() => server.close());
 
 describe("managed HTTP guard", () => {
+  test("allows restricted frame analysis while keeping arbitrary nodes unavailable", () => {
+    expect(managedBuiltInNodeAllowed("frameAnalysisNode", true)).toBe(true);
+    expect(managedBuiltInNodeAllowed("videoNode", true)).toBe(true);
+    expect(managedBuiltInNodeAllowed("arbitraryFfmpegNode", true)).toBe(false);
+    expect(managedBuiltInNodeAllowed("arbitraryFfmpegNode", false)).toBe(true);
+  });
   test("requires the explicit managed environment value", () => {
     expect(isManagedMode({ JUGGLEWORK_MANAGED: "1" })).toBe(true);
     expect(isManagedMode({ JUGGLEWORK_MANAGED: "true" })).toBe(false);
@@ -95,6 +101,7 @@ describe("managed HTTP guard", () => {
     ["PUT", "/api/workspaces/files/write"],
     ["POST", "/api/agent/create"],
     ["POST", "/api/ai/media/generate"],
+    ["POST", "/api/media/process"],
   ])("allows %s %s to reach its route", async (method, path) => {
     expect((await fetch(`${origin}${path}`, { method })).status).toBe(200);
   });
@@ -177,7 +184,7 @@ describe("managed staged resources", () => {
         expect((await listTools()).map(tool => tool.name)).toEqual(["workspace"]);
         expect((await loadTool("workspace")).plugin.validateConfig({})).toEqual({ source: "staged" });
         await expect(loadTool("webFetch")).rejects.toThrow("managed 模式不允许加载此工具");
-        expect((await agentTools.createAgentTools(dataDirectory)).map(tool => tool.name)).toEqual(["stagedWorkspace"]);
+        expect((await agentTools.createAgentTools(dataDirectory)).map(tool => tool.name)).toEqual(["probeVideo", "exportVideo", "stagedWorkspace"]);
         expect(agentTools.createAgentToolContext(dataDirectory).ffmpeg).toBeUndefined();
         expect((await nodes.readNode("managedProbe")).displayName).toBe("Staged node");
         expect(skills.directory()).toBe(join(actualResourcesRoot, "skills"));
