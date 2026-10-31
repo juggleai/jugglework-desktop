@@ -31,7 +31,7 @@ export function mediaRun(executable, args) {
 }
 export function verifyMediaSignature(executable, team) {
   if (!/^[A-Z0-9]{10}$/.test(team ?? "")) throw new Error("[media-tools] Expected Developer ID Team is required");
-  mediaRun("/usr/bin/codesign", ["--verify", "--strict", "-R", `anchor apple generic and certificate leaf[subject.OU] = "${team}" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists`, executable]);
+  mediaRun("/usr/bin/codesign", ["--verify", "--strict", "-R", `=anchor apple generic and certificate leaf[subject.OU] = "${team}" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists`, executable]);
   const details = spawnSync("/usr/bin/codesign", ["-d", "--verbose=4", executable], { encoding: "utf8", timeout: 30000 });
   if (details.error || details.status !== 0 || !/flags=.*\bruntime\b/.test(details.stderr) || !/^Timestamp=/m.test(details.stderr)) throw new Error("[media-tools] Hardened runtime and secure timestamp required");
 }

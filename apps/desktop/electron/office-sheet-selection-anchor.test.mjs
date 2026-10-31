@@ -121,7 +121,6 @@ test("任一范围身份或完整坐标无效时拒绝，即使其他范围可�
   }
   for (const ranges of [[], null, {}, [undefined], new Array(2)]) {
     const { selection, scope } = fixture();
-    selection.ranges = ranges;
-    assert.equal(readOfficeSheetSelectionAnchor(selection, scope), null);
+    assert.equal(readOfficeSheetSelectionAnchor({ ...selection, ranges }, scope), null);
   }
 });

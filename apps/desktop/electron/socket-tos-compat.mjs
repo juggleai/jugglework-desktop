@@ -2,8 +2,12 @@ import { Socket } from "node:net";
 
 const installed = Symbol.for("jugglework.socketTosCompat");
 
-/** QoS is optional; a rejected IP_TOS hint must not crash Undici's write path. */
+/**
+ * QoS is optional; a rejected IP_TOS hint must not crash Undici's write path.
+ * @param {object} [prototype] Socket prototype; the optional native method is detected at runtime.
+ */
 export function installSocketTosCompat(prototype = Socket.prototype) {
+  if (!("setTypeOfService" in prototype)) return false;
   const original = prototype.setTypeOfService;
   if (typeof original !== "function" || prototype[installed]) return false;
   Object.defineProperty(prototype, installed, { value: true });

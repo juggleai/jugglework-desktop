@@ -27,6 +27,14 @@ const temporaryDirectories = [];
 const requiresPosixExecuteBits = { skip: process.platform === "win32" };
 const electronBuildSource = readFileSync(new URL("./electron-build.mjs", import.meta.url), "utf8");
 
+it("passes media codesign requirements as inline expressions rather than filenames", () => {
+  for (const file of ["../electron/mediaTools.mjs", "../electron/toonFactoryVideoEdit.mjs", "./verify-toon-media-packaged.mjs"]) {
+    const source = readFileSync(new URL(file, import.meta.url), "utf8");
+    assert.match(source, /"-R", [\x27\x60]=anchor apple generic/);
+    assert.doesNotMatch(source, /"-R", [\x27\x60]anchor apple generic/);
+  }
+});
+
 it("rejects unsupported native media targets and missing bundles without system fallback", async () => {
   for (const arch of ["x64", "arm64"]) await assert.rejects(buildMediaTools({ target: { platform: "linux", arch } }), /Unsupported native target/);
   assert.throws(() => verifyMediaTools("/missing/mediaTools", { platform: "darwin", arch: "arm64" }), /重新构建/);

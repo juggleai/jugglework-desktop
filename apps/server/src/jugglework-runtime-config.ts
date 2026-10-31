@@ -39,8 +39,11 @@ import {
 type HostMarketplaceMcpOverlay = Record<string, Record<string, unknown>>;
 
 const hostMarketplaceMcpOverlayByConfig = new WeakMap<ServerConfig, HostMarketplaceMcpOverlay>();
-const MANAGED_PROVIDER_HEADER_TIMEOUT_MS = 60_000;
-const MANAGED_PROVIDER_CHUNK_TIMEOUT_MS = 120_000;
+// The cloud gateway owns a 300-second request/stream-idle deadline. Client
+// timers stay slightly behind it so a gateway timeout wins the race and is not
+// misreported by the gateway as a downstream client disconnect.
+const MANAGED_PROVIDER_HEADER_TIMEOUT_MS = 330_000;
+const MANAGED_PROVIDER_CHUNK_TIMEOUT_MS = 330_000;
 
 function boundedProviderTimeout(name: string, fallback: number): number {
   const configured = Number(process.env[name]);

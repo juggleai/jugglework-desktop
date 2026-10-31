@@ -452,7 +452,7 @@ test("stable macOS arm64 1.2.22 accepts only the audited pre-canary exception", 
   assert.throws(() => assertPromotionEvidence(x64Plan, x64Evidence, {
     preCanaryExceptionReason: reason,
   }), /restricted to macOS arm64/);
-  assert.throws(() => assertPromotionEvidence(plan("1.2.32"), promotionEvidence(plan("1.2.32")), {
+  assert.throws(() => assertPromotionEvidence(plan("1.2.33"), promotionEvidence(plan("1.2.33")), {
     preCanaryExceptionReason: reason,
   }), /restricted to stable/);
 });
@@ -532,7 +532,7 @@ test("recorded 1.2.26 cache exception requires exact Stable object metadata and 
   }
 });
 
-for (const version of ["1.2.27", "1.2.28", "1.2.29", "1.2.30", "1.2.31"]) {
+for (const version of ["1.2.27", "1.2.28", "1.2.29", "1.2.30", "1.2.31", "1.2.32"]) {
   test(`stable macOS arm64 ${version} metadata exception requires public read-back and cannot bypass notarization or a failed canary`, () => {
     const releasePlan = plan(version);
     const evidence = promotionEvidence(releasePlan);
@@ -564,7 +564,7 @@ for (const version of ["1.2.27", "1.2.28", "1.2.29", "1.2.30", "1.2.31"]) {
       { ...releasePlan, architectures: ["x64"] },
       { ...releasePlan, architectures: ["arm64", "x64"] },
       { ...releasePlan, architectures: ["universal"] },
-      plan(version, "alpha"), plan(version, "beta"), plan("1.2.32"), { ...releasePlan, platform: "windows" },
+      plan(version, "alpha"), plan(version, "beta"), plan("1.2.33"), { ...releasePlan, platform: "windows" },
     ]) {
       const invalidEvidence = promotionEvidence(invalidPlan);
       invalidEvidence.canary = null;
@@ -578,7 +578,7 @@ for (const version of ["1.2.27", "1.2.28", "1.2.29", "1.2.30", "1.2.31"]) {
   });
 }
 
-for (const version of ["1.2.27", "1.2.28", "1.2.29", "1.2.30", "1.2.31"]) {
+for (const version of ["1.2.27", "1.2.28", "1.2.29", "1.2.30", "1.2.31", "1.2.32"]) {
   test(`recorded ${version} metadata exception requires exact Stable object and public digest/size read-back`, () => {
     const releasePlan = { ...plan(version), channelManifest: { key: "jugglework/releases/stable/mac/latest-mac.yml" } };
     const promotion = {
@@ -610,10 +610,11 @@ for (const version of ["1.2.27", "1.2.28", "1.2.29", "1.2.30", "1.2.31"]) {
   });
 }
 
-test("1.2.31 independent exceptions preserve explicit canary failures and every unrelated evidence gate", () => {
-  const releasePlan = plan("1.2.31");
-  const options = { metadataExceptionReason: "Operator authorized stable macOS arm64 1.2.31 to skip only Cache-Control metadata change/verification" };
-  const preCanary = { preCanaryExceptionReason: "Operator authorized stable macOS arm64 1.2.31 to skip only the real-client upgrade canary" };
+for (const version of ["1.2.31", "1.2.32"]) {
+test(`${version} independent exceptions preserve explicit canary failures and every unrelated evidence gate`, () => {
+  const releasePlan = plan(version);
+  const options = { metadataExceptionReason: `Operator authorized stable macOS arm64 ${version} to skip only Cache-Control metadata change/verification` };
+  const preCanary = { preCanaryExceptionReason: `Operator authorized stable macOS arm64 ${version} to skip only the real-client upgrade canary` };
   assert.equal(assertPromotionEvidence(releasePlan, promotionEvidence(releasePlan), options).schemaVersion, 2);
   for (const absent of [null, undefined]) {
     const evidence = promotionEvidence(releasePlan);
@@ -632,7 +633,7 @@ test("1.2.31 independent exceptions preserve explicit canary failures and every 
     [/targeted feed/, (value) => { value.canary.feedUrl = "https://downloads.jugglechat.cn/jugglework/releases/stable/mac/latest-mac.yml"; }, true],
     [/architectures/, (value) => { value.canary.architectures = ["x64"]; }, true],
     [/manifest digest/, (value) => { value.canary.manifestSha256 = "0".repeat(64); }, true],
-    [/semantically older/, (value) => { value.canary.sourceVersion = "1.2.31"; }, true],
+    [/semantically older/, (value) => { value.canary.sourceVersion = version; }, true],
     [/check install/, (value) => { value.canary.checks.install = "failed"; }, true],
     [/check restart/, (value) => { value.canary.checks.restart = "failed"; }, true],
     [/identities/, (value) => { value.localVerification.identity.teamIdentifier = "WRONGTEAM"; }],
@@ -677,7 +678,7 @@ test("1.2.31 independent exceptions preserve explicit canary failures and every 
     { ...releasePlan, architectures: ["x64"] },
     { ...releasePlan, architectures: ["arm64", "x64"] },
     { ...releasePlan, architectures: ["universal"] },
-    plan("1.2.31", "alpha"), plan("1.2.31-alpha.1", "alpha"), plan("1.2.31", "beta"), plan("1.2.32"), { ...releasePlan, platform: "windows" },
+    plan(version, "alpha"), plan(`${version}-alpha.1`, "alpha"), plan(version, "beta"), plan("1.2.33"), { ...releasePlan, platform: "windows" },
   ]) {
     assert.throws(() => assertPromotionEvidence(invalidPlan, promotionEvidence(invalidPlan), options), /metadata exception is restricted/);
     assert.throws(() => assertPromotionEvidence(invalidPlan, promotionEvidence(invalidPlan), preCanary), /restricted|only for macOS/);
@@ -692,9 +693,26 @@ test("1.2.31 independent exceptions preserve explicit canary failures and every 
     cacheExceptionReason: "Operator authorized bypassing cache convergence",
   }), /cache exception is restricted/);
 });
+}
 
-test("future 1.2.32 rejects pre-canary and metadata-only exceptions including recorded evidence", () => {
-  const releasePlan = { ...plan("1.2.32"), channelManifest: { key: "jugglework/releases/stable/mac/latest-mac.yml" } };
+test("1.2.32 independently enforces the trimmed 20-character reason boundary", () => {
+  const releasePlan = plan("1.2.32");
+  const evidence = promotionEvidence(releasePlan);
+  evidence.canary = null;
+  const options = {
+    preCanaryExceptionReason: "  " + "p".repeat(20) + "  ",
+    metadataExceptionReason: "  " + "m".repeat(20) + "  ",
+  };
+  assert.equal(assertPromotionEvidence(releasePlan, evidence, options).schemaVersion, 2);
+  for (const field of Object.keys(options)) {
+    for (const reason of ["  " + "r".repeat(19) + "  ", " ".repeat(30)]) {
+      assert.throws(() => assertPromotionEvidence(releasePlan, evidence, { ...options, [field]: reason }), /audited reason/);
+    }
+  }
+});
+
+test("future 1.2.33 rejects pre-canary and metadata-only exceptions including recorded evidence", () => {
+  const releasePlan = { ...plan("1.2.33"), channelManifest: { key: "jugglework/releases/stable/mac/latest-mac.yml" } };
   const evidence = promotionEvidence(releasePlan);
   assert.throws(() => assertPromotionEvidence(releasePlan, evidence, {
     preCanaryExceptionReason: "Operator authorized skipping the real-client canary",
@@ -705,7 +723,7 @@ test("future 1.2.32 rejects pre-canary and metadata-only exceptions including re
   evidence.workflow.promotion = {
     status: "verified", channelKey: releasePlan.channelManifest.key,
     channelObject: { size: releasePlan.manifest.size, etag: releasePlan.manifest.etag, verified: true },
-    metadataException: { scope: "stable-1.2.32-only", reason: "Operator authorized skipping Qiniu cache metadata verification only" },
+    metadataException: { scope: "stable-1.2.33-only", reason: "Operator authorized skipping Qiniu cache metadata verification only" },
     readBack: { sha256: releasePlan.manifest.sha256, size: releasePlan.manifest.size, checkedAt: "2026-10-16T01:00:00.000Z" },
     promotedAt: "2026-10-16T01:01:00.000Z",
   };

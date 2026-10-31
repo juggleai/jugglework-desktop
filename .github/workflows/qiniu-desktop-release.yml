@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "Build a release or continue only the approved existing 1.2.31 candidate"
+        description: "Build a release or continue only an approved exact 1.2.31/1.2.32 candidate"
         required: true
         default: build
         type: choice
@@ -12,7 +12,7 @@ on:
           - build
           - promotion-only
       candidate_record:
-        description: "Promotion-only: fixed committed non-secret candidate record path"
+        description: "Promotion-only: version-matched fixed committed 1.2.31/1.2.32 candidate record path"
         required: false
         default: apps/desktop/release-records/1.2.31-candidate.json
         type: string
@@ -310,11 +310,13 @@ jobs:
         run: |
           set -euo pipefail
           test "$GITHUB_REF" = refs/heads/dev
-          test "$VERSION" = 1.2.31
           test "$CHANNEL" = stable
           test "$RELEASE_PLATFORM" = mac
           test "$PROMOTE" = true
-          test "$CANDIDATE_RECORD" = apps/desktop/release-records/1.2.31-candidate.json
+          case "$VERSION:$CANDIDATE_RECORD" in
+            1.2.31:apps/desktop/release-records/1.2.31-candidate.json|1.2.32:apps/desktop/release-records/1.2.32-candidate.json) ;;
+            *) exit 1 ;;
+          esac
 
       - name: Checkout continuation tooling and committed candidate from dev
         uses: actions/checkout@v6

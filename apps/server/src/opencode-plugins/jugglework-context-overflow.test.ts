@@ -96,7 +96,7 @@ describe("JuggleWorkContextOverflow fetch patch", () => {
     });
   });
 
-  test("retries an empty unknown SSE response inside one logical model call", async () => {
+  test("hands off an established empty-looking SSE stream without replaying it", async () => {
     fetchCalls = 0;
     receivedHeaders = [];
     responseQueue = [
@@ -120,11 +120,11 @@ describe("JuggleWorkContextOverflow fetch patch", () => {
       body: JSON.stringify({ model: "gpt-5.6-sol", stream: true, messages: [] }),
     });
 
-    expect(fetchCalls).toBe(2);
+    expect(fetchCalls).toBe(1);
     expect(receivedHeaders.every((headers) => !headers.has("x-jugglework-empty-stream-retry"))).toBe(true);
-    expect(response.headers.get("x-request-id")).toBe("req_retry");
-    expect(await response.text()).toContain("continued");
-    expect(await Promise.resolve(responseQueue.length)).toBe(0);
+    expect(response.headers.get("x-request-id")).toBeNull();
+    expect(await response.text()).toContain('"role":"assistant"');
+    expect(responseQueue.length).toBe(1);
   }, 10_000);
 
   test("does not retry after any text or tool-call output", async () => {
@@ -165,25 +165,123 @@ describe("JuggleWorkContextOverflow fetch patch", () => {
     }
   });
 
-  test("stops after two retries when every provider attempt is empty", async () => {
+  test("stops after one retry when every provider attempt is truly empty", async () => {
     fetchCalls = 0;
-    const empty = () => new Response([
-      'data: {"choices":[{"index":0,"delta":{},"finish_reason":"other"}],"usage":{"completion_tokens":0}}',
-      "data: [DONE]",
-      "",
-    ].join("\n\n"), { headers: { "content-type": "text/event-stream" } });
-    responseQueue = [empty(), empty(), empty()];
+    const empty = () => new Response(new Uint8Array(), { headers: { "content-type": "text/event-stream" } });
+    responseQueue = [empty(), empty()];
 
     await expect(patchedFetch("https://provider.test/v1/chat/completions", {
       method: "POST",
       headers: { "x-jugglework-empty-stream-retry": "1" },
       body: JSON.stringify({ stream: true }),
-    })).rejects.toThrow("Provider returned an empty response after 3 attempts.");
+    })).rejects.toThrow("Provider returned an empty response after 2 attempts.");
 
-    expect(fetchCalls).toBe(3);
+    expect(fetchCalls).toBe(2);
   }, 10_000);
 
-  test("recognizes meaningful output when an SSE frame spans chunks", async () => {
+  test.each(["success", "empty"] as const)("bounds composed TLS and empty-body recovery at four fetches: %s", async (outcome) => {
+    fetchCalls = 0;
+    const steps = ["tls", "empty", "tls", outcome];
+    const completedSteps: string[] = [];
+    const requestBody = JSON.stringify({ stream: true, messages: [{ role: "user", content: "hello" }] });
+    const body = 'data: {"choices":[{"delta":{"content":"recovered"}}]}\n\ndata: [DONE]\n\n';
+    fetchHandler = async (request) => {
+      expect(await request.text()).toBe(requestBody);
+      expect(request.headers.has("x-jugglework-empty-stream-retry")).toBe(false);
+      const step = steps.shift();
+      if (!step) throw new Error("Composed retry budget exceeded four fetch calls.");
+      completedSteps.push(step);
+      if (step === "tls") {
+        throw Object.assign(new Error("synthetic TLS handshake failure"), { code: "CERT_HAS_EXPIRED" });
+      }
+      return new Response(step === "empty" ? new Uint8Array() : body, {
+        headers: { "content-type": "text/event-stream" },
+      });
+    };
+    try {
+      const result = patchedFetch("https://provider.test/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-jugglework-empty-stream-retry": "1" },
+        body: requestBody,
+      });
+      if (outcome === "success") {
+        expect(await (await result).text()).toBe(body);
+      } else {
+        await expect(result).rejects.toThrow("Provider returned an empty response after 2 attempts.");
+      }
+      expect(completedSteps).toEqual(["tls", "empty", "tls", outcome]);
+      expect(steps).toEqual([]);
+      expect(fetchCalls).toBe(4);
+    } finally {
+      fetchHandler = null;
+    }
+  }, 5_000);
+
+  test("does not start another recovery round after two TLS handshake failures in one round", async () => {
+    fetchCalls = 0;
+    const errors = [
+      Object.assign(new Error("first synthetic TLS handshake failure"), { code: "CERT_HAS_EXPIRED" }),
+      Object.assign(new Error("second synthetic TLS handshake failure"), { code: "CERT_HAS_EXPIRED" }),
+    ];
+    fetchHandler = async () => {
+      const error = errors[fetchCalls - 1];
+      if (!error) throw new Error("TLS handshake retry budget exceeded two fetch calls.");
+      throw error;
+    };
+    try {
+      await expect(patchedFetch("https://provider.test/v1/chat/completions", {
+        method: "POST",
+        headers: { "x-jugglework-empty-stream-retry": "1" },
+        body: JSON.stringify({ stream: true }),
+      })).rejects.toBe(errors[1]);
+      expect(fetchCalls).toBe(2);
+    } finally {
+      fetchHandler = null;
+    }
+  });
+
+  test.each(["eof", "tls-error"] as const)("never replays after TLS recovery establishes a metadata-only stream: %s", async (ending) => {
+    fetchCalls = 0;
+    const initial = 'data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n';
+    const readError = Object.assign(new Error("synthetic TLS-shaped stream read failure"), { code: "CERT_HAS_EXPIRED" });
+    let upstream!: ReadableStreamDefaultController<Uint8Array>;
+    fetchHandler = async () => {
+      if (fetchCalls === 1) {
+        throw Object.assign(new Error("synthetic TLS handshake failure"), { code: "CERT_HAS_EXPIRED" });
+      }
+      if (fetchCalls !== 2) throw new Error("Established stream was replayed.");
+      return new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          upstream = controller;
+          controller.enqueue(new TextEncoder().encode(initial));
+        },
+      }), { headers: { "content-type": "text/event-stream" } });
+    };
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    try {
+      const response = await patchedFetch("https://provider.test/v1/chat/completions", {
+        method: "POST",
+        headers: { "x-jugglework-empty-stream-retry": "1" },
+        body: JSON.stringify({ stream: true }),
+      });
+      reader = response.body!.getReader();
+      expect(new TextDecoder().decode((await reader.read()).value)).toBe(initial);
+      expect(fetchCalls).toBe(2);
+      if (ending === "eof") {
+        upstream.close();
+        expect((await reader.read()).done).toBe(true);
+      } else {
+        upstream.error(readError);
+        await expect(reader.read()).rejects.toBe(readError);
+      }
+      expect(fetchCalls).toBe(2);
+    } finally {
+      await reader?.cancel().catch(() => undefined);
+      fetchHandler = null;
+    }
+  });
+
+  test("preserves an SSE frame that spans chunks", async () => {
     fetchCalls = 0;
     responseQueue = [];
     const encoder = new TextEncoder();
@@ -219,7 +317,7 @@ describe("JuggleWorkContextOverflow fetch patch", () => {
           'data: {"choices":[{"index":0,"delta":{"content":"streaming"},"finish_reason":null}]}\n\n',
         ));
         // Deliberately leave the provider connection open. A streaming fetch
-        // must return as soon as meaningful output exists, not at stream EOF.
+        // must return as soon as the stream is established, not at stream EOF.
       },
       cancel() {
         upstreamCancelled = true;
@@ -298,7 +396,6 @@ describe("JuggleWorkContextOverflow fetch patch", () => {
 
   test("hands off delayed reasoning without replaying or waiting for stream EOF", async () => {
     fetchCalls = 0;
-    process.env.JUGGLEWORK_PROVIDER_NO_PROGRESS_TIMEOUT_MS = "200";
     const encoder = new TextEncoder();
     const initial = 'data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n';
     const reasoning = 'data: {"choices":[{"delta":{"reasoning_content":"thinking"}}]}\n\n';
@@ -324,14 +421,12 @@ describe("JuggleWorkContextOverflow fetch patch", () => {
       expect(cancelled).toBe(true);
       expect(fetchCalls).toBe(1);
     } finally {
-      delete process.env.JUGGLEWORK_PROVIDER_NO_PROGRESS_TIMEOUT_MS;
       clearTimeout(timer!);
     }
   }, 2_000);
 
-  test("closes the real upstream connection before a timeout retry", async () => {
+  test("hands off a real keepalive stream without replaying it", async () => {
     fetchCalls = 0;
-    process.env.JUGGLEWORK_PROVIDER_NO_PROGRESS_TIMEOUT_MS = "40";
     let started = 0;
     let active = 0;
     let peak = 0;
@@ -340,13 +435,6 @@ describe("JuggleWorkContextOverflow fetch patch", () => {
       hostname: "127.0.0.1", port: 0,
       fetch() {
         started++;
-        if (started > 1) {
-          expect(closed).toBe(true);
-          expect(active).toBe(0);
-          return new Response('data: {"choices":[{"delta":{"content":"ok"}}]}\n\n', {
-            headers: { "content-type": "text/event-stream" },
-          });
-        }
         active++;
         peak = Math.max(peak, active);
         return new Response(new ReadableStream({
@@ -363,22 +451,25 @@ describe("JuggleWorkContextOverflow fetch patch", () => {
         method: "POST", headers: { "x-jugglework-empty-stream-retry": "1" },
         body: JSON.stringify({ stream: true }),
       });
-      expect(await response.text()).toContain('"ok"');
-      expect(started).toBe(2);
+      const reader = response.body!.getReader();
+      expect(new TextDecoder().decode((await reader.read()).value)).toBe(": connected\n\n");
+      await reader.cancel();
+      for (let index = 0; index < 20 && active !== 0; index += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(started).toBe(1);
       expect(peak).toBe(1);
       expect(active).toBe(0);
+      expect(closed).toBe(true);
     } finally {
       fetchHandler = null;
-      delete process.env.JUGGLEWORK_PROVIDER_NO_PROGRESS_TIMEOUT_MS;
       await server.stop(true);
     }
   }, 5_000);
 
-  test("retries when metadata heartbeats never produce model output", async () => {
+  test("hands off metadata heartbeats without replaying the request", async () => {
     fetchCalls = 0;
     fetchHandler = null;
-    process.env.JUGGLEWORK_PROVIDER_FIRST_BYTE_TIMEOUT_MS = "20";
-    process.env.JUGGLEWORK_PROVIDER_NO_PROGRESS_TIMEOUT_MS = "30";
     const encoder = new TextEncoder();
     let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
     const heartbeat = new Response(new ReadableStream<Uint8Array>({
@@ -390,20 +481,19 @@ describe("JuggleWorkContextOverflow fetch patch", () => {
         if (heartbeatTimer) clearInterval(heartbeatTimer);
       },
     }), { headers: { "content-type": "text/event-stream" } });
-    const recoveredBody = 'data: {"choices":[{"index":0,"delta":{"content":"after heartbeat"},"finish_reason":null}]}\n\ndata: [DONE]\n\n';
-    responseQueue = [heartbeat, new Response(recoveredBody, { headers: { "content-type": "text/event-stream" } })];
+    responseQueue = [heartbeat];
     try {
       const response = await patchedFetch("https://provider.test/v1/chat/completions", {
         method: "POST",
         headers: { "x-jugglework-empty-stream-retry": "1" },
         body: JSON.stringify({ stream: true }),
       });
-      expect(fetchCalls).toBe(2);
-      expect(await response.text()).toBe(recoveredBody);
+      const reader = response.body!.getReader();
+      expect(new TextDecoder().decode((await reader.read()).value)).toBe(": connected\n\n");
+      await reader.cancel();
+      expect(fetchCalls).toBe(1);
     } finally {
       if (heartbeatTimer) clearInterval(heartbeatTimer);
-      delete process.env.JUGGLEWORK_PROVIDER_FIRST_BYTE_TIMEOUT_MS;
-      delete process.env.JUGGLEWORK_PROVIDER_NO_PROGRESS_TIMEOUT_MS;
     }
   }, 10_000);
 
@@ -444,8 +534,8 @@ describe("JuggleWorkContextOverflow fetch patch", () => {
         method: "POST",
         headers: { "x-jugglework-empty-stream-retry": "1" },
         body: JSON.stringify({ stream: true }),
-      })).rejects.toThrow("Managed model produced no output after 3 attempts (response_timeout).");
-      expect(fetchCalls).toBe(3);
+      })).rejects.toThrow("Managed model produced no output after 2 attempts (response_timeout).");
+      expect(fetchCalls).toBe(2);
     } finally {
       fetchHandler = null;
       delete process.env.JUGGLEWORK_PROVIDER_RESPONSE_TIMEOUT_MS;
@@ -482,7 +572,7 @@ describe("JuggleWorkContextOverflow fetch patch", () => {
     const managedOptions = config.provider.lpr_managed.options as Record<string, unknown>;
     expect(typeof managedOptions.fetch).toBe("function");
     expect(managedOptions.headerTimeout).toBe(false);
-    expect(managedOptions.chunkTimeout).toBe(120_000);
+    expect(managedOptions.chunkTimeout).toBe(330_000);
     expect(config.provider.local.options).toEqual({ baseURL: "http://127.0.0.1:11434/v1" });
   });
 
@@ -496,8 +586,8 @@ describe("JuggleWorkContextOverflow fetch patch", () => {
       await expect(patchedFetch(
         "https://work.juggle.im/jwork/api/gateway/v1/lpr_managed/chat/completions",
         { method: "POST", body: JSON.stringify({ stream: true }) },
-      )).rejects.toThrow("Managed model produced no output after 3 attempts (response_timeout).");
-      expect(fetchCalls).toBe(3);
+      )).rejects.toThrow("Managed model produced no output after 2 attempts (response_timeout).");
+      expect(fetchCalls).toBe(2);
     } finally {
       fetchHandler = null;
       delete process.env.JUGGLEWORK_PROVIDER_RESPONSE_TIMEOUT_MS;
@@ -506,11 +596,9 @@ describe("JuggleWorkContextOverflow fetch patch", () => {
 
   test("does not continue retrying after the request is aborted", async () => {
     fetchCalls = 0;
-    responseQueue = [new Response([
-      'data: {"choices":[{"index":0,"delta":{},"finish_reason":"unknown"}],"usage":{"completion_tokens":0}}',
-      "data: [DONE]",
-      "",
-    ].join("\n\n"), { headers: { "content-type": "text/event-stream" } })];
+    responseQueue = [new Response(new ReadableStream<Uint8Array>({}), {
+      headers: { "content-type": "text/event-stream" },
+    })];
     const controller = new AbortController();
     const promise = patchedFetch("https://provider.test/v1/chat/completions", {
       method: "POST",
