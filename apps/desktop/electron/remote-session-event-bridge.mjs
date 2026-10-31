@@ -43,7 +43,7 @@ function observationStatus(type, data) {
  *   listActiveRuns(input: { workspaceId: string }): Promise<unknown>,
  *   observeRun(input: { workspaceId: string, sessionId: string, runId: string, status: "starting" | "running" | "waiting" | "retrying" | "aborting" | "idle" | "completed" | "failed" | "aborted" }): Promise<unknown>,
  *   publish(event: unknown, options: { connectionGeneration: number }): boolean,
- *   publishActivityTaskStatus?: (event: unknown) => boolean | Promise<boolean>,
+ *   publishActivityTaskStatus?: (event: unknown, options: { isCurrent: () => boolean }) => boolean | Promise<boolean>,
  *   randomUUID: () => string,
  *   now: () => number | Date,
  *   timers: { setTimeout(callback: () => void, delay: number): unknown, clearTimeout(handle: unknown): void },
@@ -85,6 +85,7 @@ export function createRemoteSessionEventBridge({ sseClient, coordinator, listAct
   const projectedCounts = new Map();
   const watchedWorkspaces = new Map();
   const sessionTitles = new Map();
+  const activityPublications = new Map();
   const modelEventCursors = new Map();
 
   /** @param {number} attempt */
@@ -231,24 +232,44 @@ export function createRemoteSessionEventBridge({ sseClient, coordinator, listAct
 
   async function publishActivityLifecycle(workspaceId, sessionId, status, subscriptionCurrent) {
     if (!publishActivityTaskStatus) return;
+    const key = observationKey(workspaceId, sessionId);
+    const terminal = ["idle", "completed", "failed", "aborted"].includes(status);
     let runId = coordinator.getActiveRunId({ workspaceId, sessionId });
-    if (!runId) {
-      try { await hydrateWorkspaceRuns(workspaceId, sessionId, subscriptionCurrent); } catch { return; }
-      if (!subscriptionCurrent()) return;
-      runId = coordinator.getActiveRunId({ workspaceId, sessionId });
-    }
-    const title = sessionTitles.get(observationKey(workspaceId, sessionId));
-    if (!runId || !title) return;
-    const lifecycleStatus = status === "running" || status === "starting" || status === "waiting" || status === "retrying" || status === "aborting" ? "running"
-      : status === "failed" ? "failed" : status === "aborted" ? "aborted" : "completed";
+    if (terminal && !runId) return;
+    const identity = {};
+    activityPublications.set(key, identity);
+    const latest = () => subscriptionCurrent() && activityPublications.get(key) === identity;
     try {
-      await publishActivityTaskStatus({
+      // An idle event has no run identity. Never attach it to a later admission.
+      if (!runId && !terminal) {
+        try { await hydrateWorkspaceRuns(workspaceId, sessionId, latest); } catch { return; }
+        if (!latest()) return;
+        runId = coordinator.getActiveRunId({ workspaceId, sessionId });
+      }
+      if (!runId) return;
+      const title = sessionTitles.get(key) ?? "JuggleWork task";
+      const lifecycleStatus = status === "running" || status === "starting" || status === "waiting" || status === "retrying" || status === "aborting" ? "running"
+        : status === "failed" ? "failed" : status === "aborted" ? "aborted" : "completed";
+      const event = {
         eventId: randomUUID(), workspaceId, sessionId, runId, status: lifecycleStatus,
         title: Buffer.from(title).subarray(0, 80).toString("utf8").replace(/\uFFFD$/u, ""),
         workspaceName: watchedWorkspaces.get(workspaceId) ?? "",
         occurredAt: new Date(now()).toISOString(),
-      });
-    } catch {}
+      };
+      const isCurrent = () => {
+        const active = coordinator.getActiveRunId({ workspaceId, sessionId });
+        return latest() && (active === runId || (terminal && active === null));
+      };
+      for (let attempt = 0; attempt < 4 && isCurrent(); attempt++) {
+        let accepted = false;
+        try { accepted = await publishActivityTaskStatus(event, { isCurrent }); } catch {}
+        try { logger.debug?.("remote_activity_publish", { status: lifecycleStatus, accepted, attempt: attempt + 1 }); } catch {}
+        if (accepted) return;
+        if (attempt < 3 && isCurrent()) await wait(retryDelay(attempt));
+      }
+    } finally {
+      if (activityPublications.get(key) === identity) activityPublications.delete(key);
+    }
   }
 
   function createProjector() {
@@ -340,8 +361,8 @@ export function createRemoteSessionEventBridge({ sseClient, coordinator, listAct
           const info = isRecord(data.info) ? data.info : data;
           if (typeof info.title === "string" && identifier(info.title.trim())) sessionTitles.set(observationKey(workspaceId, sessionId), info.title.trim());
         }
-        if (sessionId && (status || type === "session.updated")) {
-          void publishActivityLifecycle(workspaceId, sessionId, status ?? "running", current);
+        if (sessionId && status) {
+          void publishActivityLifecycle(workspaceId, sessionId, status, current);
         }
         let interactionOwnership = null;
         if (sessionId && (type?.startsWith("permission.") || type?.startsWith("question.")) && interactions) {
@@ -562,6 +583,7 @@ export function createRemoteSessionEventBridge({ sseClient, coordinator, listAct
     subscriptions.clear();
     modelEventCursors.clear();
     observationChains.clear();
+    activityPublications.clear();
     bindings.clear();
     projectedCounts.clear();
     sessionTitles.clear();

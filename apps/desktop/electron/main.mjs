@@ -1603,7 +1603,7 @@ function createMainRemoteSessionEventBridge() {
       { signal },
     ),
     publish: (event, options) => remoteControlAgent?.publishSessionEvent(event, options) ?? false,
-    publishActivityTaskStatus: (event) => remoteControlAgent?.publishActivityTaskStatus(event) ?? false,
+    publishActivityTaskStatus: (event, options) => remoteControlAgent?.publishActivityTaskStatus(event, options) ?? false,
     randomUUID,
     now: Date.now,
     timers: {

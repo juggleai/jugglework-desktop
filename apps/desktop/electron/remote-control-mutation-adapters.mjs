@@ -13,6 +13,7 @@ import {
   RemoteControlOperationExecutionError,
 } from "./remote-control-operations.mjs";
 import { ManagedRuntimeClientError } from "./managed-runtime-client.mjs";
+import { serverRun } from "./session-mutation-coordinator.mjs";
 
 const identifierSchema = z.string().trim().min(1).max(256).refine((value) => !/[\u0000-\u001f\u007f]/.test(value));
 
@@ -279,8 +280,14 @@ export function createRemoteControlMutationRegistrations({ workspaceStore, manag
         const responseRecord = /** @type {Record<string, any>} */ (response);
         let result;
         if ("run" in responseRecord) {
-          const run = responseRecord.run;
-          if (!coordinator.recordServerRun(run)) throw new TypeError("Stale start response.");
+          const run = serverRun(responseRecord.run);
+          if (run.workspaceId !== workspace.id || run.sessionId !== args.sessionId ||
+              run.startCommandCorrelationId !== correlationId || run.origin !== "remote-control") {
+            throw new TypeError("Mismatched start response.");
+          }
+          // A newer SSE observation may already have updated or cleared the
+          // mirror. Rejecting that stale mirror write must not reject the ACK.
+          coordinator.recordServerRun(run);
           const recordedRun = /** @type {{ runId: string, generation: number }} */ (run);
           result = { disposition: "started", runId: recordedRun.runId, generation: recordedRun.generation };
         } else if (responseRecord.disposition === "enqueued" && identifierSchema.safeParse(responseRecord.pendingOperationId).success && Number.isSafeInteger(responseRecord.position) && responseRecord.position > 0) {
@@ -353,8 +360,13 @@ export function createRemoteControlMutationRegistrations({ workspaceStore, manag
           { abortCommandCorrelationId: correlationId },
         );
         assertMutationGeneration(signal);
-        if (!response || typeof response !== "object" || !("run" in response) || !("abortRequested" in response) || response.abortRequested !== true ||
-            !coordinator.recordServerRun(response.run)) throw new TypeError("Invalid abort response.");
+        if (!response || typeof response !== "object" || !("run" in response) || !("abortRequested" in response) || response.abortRequested !== true) throw new TypeError("Invalid abort response.");
+        const run = serverRun(response.run);
+        if (run.workspaceId !== workspace.id || run.sessionId !== args.sessionId ||
+            run.runId !== args.expectedRunId || run.abortCommandCorrelationId !== correlationId) {
+          throw new TypeError("Mismatched abort response.");
+        }
+        coordinator.recordServerRun(run);
         const recordedRun = /** @type {{ runId: string }} */ (response.run);
         const result = { runId: recordedRun.runId, abortRequested: true };
         return desktopRemoteOperationResultSchema.parse({ operation: "session.abort", payloadVersion: 1, result }).result;

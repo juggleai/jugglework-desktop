@@ -32,7 +32,7 @@ function nullableTimestamp(value) {
  * @param {unknown} value
  * @returns {{ workspaceId: string, sessionId: string, runId: string, generation: number, origin: "local-renderer" | "remote-control", startCommandCorrelationId: string | null, abortCommandCorrelationId: string | null, status: "starting" | "running" | "waiting" | "retrying" | "aborting", observedActive: boolean, startedAt: number, updatedAt: number, activeObservedAt: number | null, abortRequestedAt: number | null }}
  */
-function serverRun(value) {
+export function serverRun(value) {
   if (!isRecord(value) || !identifier(value.workspaceId) || !identifier(value.sessionId) || !identifier(value.runId) ||
       !Number.isSafeInteger(value.generation) || Number(value.generation) <= 0 || !ORIGINS.has(/** @type {string} */ (value.origin)) ||
       !nullableIdentifier(value.startCommandCorrelationId) || !nullableIdentifier(value.abortCommandCorrelationId) ||

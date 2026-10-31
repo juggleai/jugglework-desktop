@@ -70,6 +70,87 @@ function harness({ publish = () => true, publishActivityTaskStatus = null, obser
 }
 
 describe("remote session event bridge", () => {
+  it("publishes an untitled terminal after transport clear without a phone binding", async () => {
+    const lifecycle = [];
+    const h = harness({ publishActivityTaskStatus: (event) => { lifecycle.push(event); return true; } });
+    h.bridge.watch([{ id: "ws_1", name: "Workspace" }]);
+    await flush();
+    h.bridge.clear();
+    await flush();
+    await h.subscriptions.at(-1).onEvent({ payload: { type: "session.status", properties: { sessionID: "ses_1", status: { type: "idle" } } } });
+    await flush();
+    assert.equal(lifecycle.length, 1);
+    assert.equal(lifecycle[0].status, "completed");
+    assert.equal(lifecycle[0].runId, "run_1");
+    assert.ok(lifecycle[0].title.length > 0);
+    assert.equal(h.published.length, 0);
+    h.bridge.stop();
+  });
+
+  it("retries a rejected terminal with the same event after mirror clearing", async () => {
+    const lifecycle = [];
+    const h = harness({ publishActivityTaskStatus: (event) => { lifecycle.push(event); return lifecycle.length > 1; } });
+    await h.bridge.bind(h.binding);
+    h.setRunId("run_1");
+    await h.subscriptions[0].onEvent({ type: "session.idle", properties: { sessionID: "ses_1" } });
+    await flush();
+    assert.equal(h.getRunId(), null);
+    assert.equal(lifecycle.length, 2);
+    assert.deepEqual(lifecycle[1], lifecycle[0]);
+    h.bridge.stop();
+  });
+
+  it("never attributes an uncorrelated terminal to a run discovered later", async () => {
+    const lifecycle = [];
+    let reads = 0;
+    const h = harness({ listActiveRuns: async () => { reads++; return { items: [] }; }, publishActivityTaskStatus: (event) => { lifecycle.push(event); return true; } });
+    h.bridge.watch([{ id: "ws_1" }]);
+    await flush();
+    h.setRunId(null);
+    const before = reads;
+    await h.subscriptions[0].onEvent({ type: "session.idle", properties: { sessionID: "ses_1" } });
+    await flush();
+    assert.equal(reads, before);
+    assert.deepEqual(lifecycle, []);
+    h.bridge.stop();
+  });
+
+  it("cancels an old terminal retry when a newer run replaces it", async () => {
+    const lifecycle = [];
+    const scheduled = [];
+    const h = harness({ timers: { setTimeout: (callback, delay) => { scheduled.push({ callback, delay }); return callback; }, clearTimeout() {} },
+      publishActivityTaskStatus: (event) => { lifecycle.push(event); return false; } });
+    h.bridge.watch([{ id: "ws_1" }]);
+    await flush();
+    await h.subscriptions[0].onEvent({ type: "session.idle", properties: { sessionID: "ses_1" } });
+    await flush();
+    assert.equal(lifecycle.length, 1);
+    h.setRunId("run_2");
+    scheduled.find(({ delay }) => delay === 100)?.callback();
+    await flush();
+    assert.equal(lifecycle.length, 1);
+    h.bridge.stop();
+  });
+
+  it("does not revive a completed run on title updates or cancel retry on duplicate idle", async () => {
+    const lifecycle = [];
+    const scheduled = [];
+    const h = harness({ timers: { setTimeout: (callback, delay) => { scheduled.push({ callback, delay }); return callback; }, clearTimeout() {} },
+      publishActivityTaskStatus: (event) => { lifecycle.push(event); return lifecycle.length > 1; } });
+    await h.bridge.bind(h.binding);
+    h.setRunId("run_1");
+    await h.subscriptions[0].onEvent({ type: "session.status", properties: { sessionID: "ses_1", status: { type: "idle" } } });
+    await flush();
+    await h.subscriptions[0].onEvent({ type: "session.updated", properties: { info: { id: "ses_1", title: "Final title" } } });
+    await h.subscriptions[0].onEvent({ type: "session.idle", properties: { sessionID: "ses_1" } });
+    scheduled.find(({ delay }) => delay === 100)?.callback();
+    await flush();
+    assert.equal(lifecycle.length, 2);
+    assert.deepEqual(lifecycle[1], lifecycle[0]);
+    assert.equal(lifecycle[1].status, "completed");
+    h.bridge.stop();
+  });
+
   it("reuses one global workspace subscription for device activity lifecycle", async () => {
     const lifecycle = [];
     const h = harness({ publishActivityTaskStatus: (event) => { lifecycle.push(event); return true; } });

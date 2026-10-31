@@ -2281,6 +2281,25 @@ describe("remote-control agent command handling", () => {
     assert.equal(JSON.stringify(frame).includes("tool"), false);
   });
 
+  it("fences a superseded activity while signing credentials are awaited", async () => {
+    const signing = generateKeyPairSync("ed25519");
+    let release;
+    const credential = new Promise((resolve) => { release = resolve; });
+    const fixture = harness({ signingCredential: credential });
+    const socket = await connect(fixture);
+    socket.receive(welcome(77));
+    await settle();
+    let current = true;
+    const pending = fixture.agent.publishActivityTaskStatus({
+      eventId: "55555555-5555-4555-8555-555555555555", workspaceId: "ws_1", sessionId: "ses_1", runId: "run_1",
+      status: "completed", title: "Task", workspaceName: "", occurredAt: new Date(NOW).toISOString(),
+    }, { isCurrent: () => current });
+    current = false;
+    release({ deviceId: DEVICE_ID, privateKey: signing.privateKey });
+    assert.equal(await pending, false);
+    assert.equal(frames(socket, "activity.task_status").length, 0);
+  });
+
   it("handles strict session rejection without closing or reconnecting the device transport", async () => {
     const unbound = [];
     const fixture = harness({ onSessionUnbound: (input) => unbound.push(input) });

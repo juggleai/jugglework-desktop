@@ -2343,7 +2343,7 @@ export function createRemoteControlAgent(options) {
   }
 
   /** Publishes only device-scoped Live Activity lifecycle metadata. */
-  async function publishActivityTaskStatus(input) {
+  async function publishActivityTaskStatus(input, { isCurrent = () => true } = {}) {
     const reject = (reason) => {
       log("warn", "activity_task_status_rejected", { reason });
       return false;
@@ -2355,13 +2355,20 @@ export function createRemoteControlAgent(options) {
         typeof input.workspaceName !== "string" || Buffer.byteLength(input.workspaceName) > 40 ||
         typeof input.occurredAt !== "string" || Number.isNaN(Date.parse(input.occurredAt))) return reject("invalid_schema");
     if (!socket || state !== REMOTE_CONTROL_AGENT_STATUS.CONNECTED || !enrollment || !context) return reject("transport_unavailable");
+    const target = socket;
+    const generation = lifecycleGeneration;
+    const activeConnection = connectionGeneration;
+    const activeContext = context;
     let credential;
     try {
       credential = await credentialStore.getSigningCredential(credentialContext(context));
     } catch {
       return reject("credential_unavailable");
     }
-    if (credential.deviceId !== enrollment.deviceId || socket === null || state !== REMOTE_CONTROL_AGENT_STATUS.CONNECTED) return reject("identity_changed");
+    if (!enrollment || credential.deviceId !== enrollment.deviceId || socket !== target ||
+        generation !== lifecycleGeneration || activeConnection !== connectionGeneration || context !== activeContext ||
+        state !== REMOTE_CONTROL_AGENT_STATUS.CONNECTED) return reject("identity_changed");
+    if (!isCurrent()) return reject("superseded");
     const occurredAt = new Date(input.occurredAt).toISOString();
     const aad = Buffer.from(`jugglework.activity-task-status.v1\ndeviceId=${enrollment.deviceId}\neventId=${input.eventId}\nworkspaceId=${input.workspaceId}\nsessionId=${input.sessionId}\nrunId=${input.runId}\nstatus=${input.status}\ntitle=${input.title}\nworkspaceName=${input.workspaceName}\noccurredAt=${occurredAt}\n`, "utf8");
     const payload = {

@@ -259,6 +259,31 @@ for (const response of [
   });
 }
 
+for (const cleared of [false, true]) {
+  test(`start ACK succeeds after a newer SSE observation cleared=${cleared}`, async () => {
+    const { registrations, coordinator } = harness();
+    coordinator.recordServerRun(serverRun({ startCommandCorrelationId: "cmd-prompt", updatedAt: 2000 }));
+    if (cleared) coordinator.clearTerminalRun({ workspaceId: WORKSPACE_ID, sessionId: SESSION_ID, runId: "run_test" });
+    const result = await registrations.find(r => r.operation === "session.prompt").execute({
+      arguments: { workspaceId: WORKSPACE_ID, sessionId: SESSION_ID, prompt: "hello", whenBusy: "reject" },
+      correlationId: "cmd-prompt",
+    });
+    assert.equal(result.runId, "run_test");
+    assert.equal(coordinator.getActiveRunId({ workspaceId: WORKSPACE_ID, sessionId: SESSION_ID }), cleared ? null : "run_test");
+  });
+  test(`abort ACK succeeds after a newer SSE observation cleared=${cleared}`, async () => {
+    const { registrations, coordinator } = harness();
+    coordinator.recordServerRun(serverRun({ status: "aborting", abortCommandCorrelationId: "cmd-abort", abortRequestedAt: 1002, updatedAt: 2000 }));
+    if (cleared) coordinator.clearTerminalRun({ workspaceId: WORKSPACE_ID, sessionId: SESSION_ID, runId: "run_test" });
+    const result = await registrations.find(r => r.operation === "session.abort").execute({
+      arguments: { workspaceId: WORKSPACE_ID, sessionId: SESSION_ID, expectedRunId: "run_test" },
+      correlationId: "cmd-abort",
+    });
+    assert.equal(result.abortRequested, true);
+    assert.equal(coordinator.getActiveRunId({ workspaceId: WORKSPACE_ID, sessionId: SESSION_ID }), cleared ? null : "run_test");
+  });
+}
+
 test("session.prompt uses the semantic start API and forwards command correlation", async () => {
   const { registrations, client } = harness();
   const prompt = registrations.find((r) => r.operation === "session.prompt");
