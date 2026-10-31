@@ -66,6 +66,8 @@ vendor/opencode/
 .opencode/bun.lock
 
 # JuggleWork workspace-local artifacts
+# Generated deliverables and local Office validation outputs (not source fixtures).
+/artifacts/generated/
 .opencode/jugglework/
 .opencode/agents/jugglework.md
 .opencode/jugglework.json

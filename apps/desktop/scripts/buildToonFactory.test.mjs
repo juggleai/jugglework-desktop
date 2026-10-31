@@ -28,7 +28,7 @@ const requiresPosixExecuteBits = { skip: process.platform === "win32" };
 const electronBuildSource = readFileSync(new URL("./electron-build.mjs", import.meta.url), "utf8");
 
 it("rejects unsupported native media targets and missing bundles without system fallback", async () => {
-  for (const arch of ["x64", "arm64"]) await assert.rejects(buildMediaTools({ target: { platform: "win32", arch } }), /Unsupported native target/);
+  for (const arch of ["x64", "arm64"]) await assert.rejects(buildMediaTools({ target: { platform: "linux", arch } }), /Unsupported native target/);
   assert.throws(() => verifyMediaTools("/missing/mediaTools", { platform: "darwin", arch: "arm64" }), /重新构建/);
 });
 
@@ -77,11 +77,14 @@ it("real bundled media: empty PATH, authorized editor operations and tamper reje
   await assert.rejects(editor.execute({ operation: "probe", directory: root, path: "input.mp4" }, aborted), /fixture cancellation/);
   const denied = createToonFactoryVideoEditor({ isDirectoryGranted: () => false, mediaToolsRoot: resources });
   await assert.rejects(denied.execute({ operation: "probe", directory: root, path: "input.mp4" }), /未经 JuggleWork 授权/);
-  symlinkSync(source, path.join(root, "link.mp4"));
-  await assert.rejects(editor.execute({ operation: "probe", directory: root, path: "link.mp4" }), /符号链接/);
+  if (process.platform !== "win32") {
+    symlinkSync(source, path.join(root, "link.mp4"));
+    await assert.rejects(editor.execute({ operation: "probe", directory: root, path: "link.mp4" }), /符号链接/);
+  }
   await assert.rejects(editor.execute({ operation: "probe", directory: root, path: "../outside.mp4" }), /路径穿越/);
   await assert.rejects(editor.execute({ operation: "probe", directory: root, path: "input.mp4", args: ["-version"] }), /无效/);
-  assert.throws(() => verifyMediaTools(resources, { platform: "darwin", arch: process.arch === "arm64" ? "x64" : "arm64" }), /target mismatch/);
+  assert.throws(() => verifyMediaTools(resources, { platform: process.platform, arch: process.arch === "arm64" ? "x64" : "arm64" }), /target mismatch/);
+  if (process.platform === "darwin") {
   const app = path.join(root, "Signing Fixture.app");
   const signedRoot = path.join(app, "Contents/Resources/mediaTools");
   mkdirSync(path.dirname(signedRoot), { recursive: true });
@@ -101,6 +104,7 @@ it("real bundled media: empty PATH, authorized editor operations and tamper reje
   assert.throws(() => verifyMediaTools(signedRoot, process, { phase: "signed", team: "H7PDHSK3C7" }), /codesign/);
   writeFileSync(path.join(signedRoot, "NOTICE.txt"), "post-seal mutation");
   assert.throws(verifyAfterSign, /inventory\/hash mismatch/);
+  }
   writeFileSync(path.join(resources, "NOTICE.txt"), "tampered");
   assert.throws(() => verifyMediaTools(resources), /inventory\/hash mismatch/);
   // Even rebaselining a local inventory cannot replace pinned source bytes.

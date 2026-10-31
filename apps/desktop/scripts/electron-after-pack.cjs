@@ -405,7 +405,27 @@ async function runAfterPack(context, dependencies = {}) {
 
 async function afterPack(context) {
   const { verifyMediaTools, verifyMediaExecutables } = await import("../electron/mediaTools.mjs");
-  const tools = verifyMediaTools(path.join(resolvePackagedResourcesPath(context), "mediaTools"), { platform: context.electronPlatformName, arch: normalizeArch(context.arch) }, { phase: "built" });
+  const mediaRoot = path.join(resolvePackagedResourcesPath(context), "mediaTools");
+  const target = { platform: context.electronPlatformName, arch: normalizeArch(context.arch) };
+  if (target.platform === "win32") {
+    // electron-builder signs extraResources before afterPack. Validate the original
+    // build, then allow only the two authenticated executable byte changes.
+    const original = verifyMediaTools(path.join(context.packager.projectDir, "resources/mediaTools"), target, { phase: "built" });
+    const { mediaInventory } = await import("../electron/mediaTools.mjs");
+    const { windowsMediaSignature } = await import("../electron/windowsMediaTrust.mjs");
+    const files = mediaInventory(mediaRoot);
+    const immutable = entries => entries.filter(entry => !["ffmpeg.exe", "ffprobe.exe"].includes(entry.path));
+    if (JSON.stringify(immutable(files)) !== JSON.stringify(immutable(original.manifest.files))) throw new Error("Media non-executable resource changed during signing");
+    const manifest = JSON.parse(fs.readFileSync(path.join(mediaRoot, "manifest.json"), "utf8"));
+    if (JSON.stringify(manifest) !== JSON.stringify(original.manifest)) throw new Error("Media manifest changed before signing seal");
+    const signer = windowsMediaSignature(path.join(mediaRoot, "ffmpeg.exe"));
+    if (windowsMediaSignature(path.join(mediaRoot, "ffprobe.exe")) !== signer) throw new Error("Media signer mismatch");
+    manifest.phase = "signed";
+    manifest.signerThumbprint = signer;
+    manifest.files = files;
+    fs.writeFileSync(path.join(mediaRoot, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+  }
+  const tools = verifyMediaTools(mediaRoot, target, { phase: target.platform === "win32" ? "any" : "built" });
   verifyMediaExecutables(tools);
   await runAfterPack(context);
 }

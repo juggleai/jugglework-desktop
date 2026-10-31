@@ -2,12 +2,13 @@ import { readFileSync, lstatSync, readdirSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { inspectToonFactoryExecutable, sha256File } from "./toonFactoryBundle.mjs";
+import { windowsMediaImports, windowsMediaSignature } from "./windowsMediaTrust.mjs";
 
 export const MEDIA_SOURCES = JSON.parse(readFileSync(new URL("./mediaToolsSources.json", import.meta.url), "utf8"));
 export const mediaSourceInputs = () => [...Object.values(MEDIA_SOURCES.sources), ...MEDIA_SOURCES.evidence];
 export function requireMediaTarget({ platform, arch }) {
-  if (platform !== "darwin" || !["arm64", "x64"].includes(arch)) {
-    throw new Error(`[media-tools] Unsupported native target ${platform}/${arch}; Windows/Linux source build and release verification are not implemented. No architecture fallback.`);
+  if (!["darwin", "win32"].includes(platform) || !["arm64", "x64"].includes(arch)) {
+    throw new Error(`[media-tools] Unsupported native target ${platform}/${arch}; No architecture fallback.`);
   }
 }
 export function mediaInventory(root) {
@@ -24,7 +25,7 @@ export function mediaInventory(root) {
   return visit(root).sort((a, b) => a.path.localeCompare(b.path, "en"));
 }
 export function mediaRun(executable, args) {
-  const result = spawnSync(executable, args, { encoding: "utf8", env: { PATH: "", LANG: "C", LC_ALL: "C" }, timeout: 60000, maxBuffer: 4 * 1024 * 1024 });
+  const result = spawnSync(executable, args, { encoding: "utf8", cwd: path.dirname(executable), env: { PATH: "", LANG: "C", LC_ALL: "C", ...(process.platform === "win32" ? { SystemRoot: process.env.SystemRoot, WINDIR: process.env.SystemRoot } : {}) }, timeout: 60000, maxBuffer: 4 * 1024 * 1024 });
   if (result.error || result.status !== 0) throw new Error(`[media-tools] ${executable}: ${result.error?.message || result.stderr || result.status}`);
   return result.stdout;
 }
@@ -47,8 +48,13 @@ export function verifyMediaTools(root, target = process, { phase = "any", team }
     const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
     if (manifest.schemaVersion !== 1 || manifest.platform !== target.platform || manifest.arch !== target.arch || JSON.stringify(manifest.sources) !== JSON.stringify(MEDIA_SOURCES)) throw new Error("Source lock or target mismatch");
     if (!["built", "signed"].includes(manifest.phase) || (phase !== "any" && manifest.phase !== phase)) throw new Error(`Expected ${phase} manifest`);
-    if (phase === "signed" && manifest.signingTeam !== team) throw new Error("Signing team mismatch");
+    if (phase === "signed" && target.platform === "darwin" && manifest.signingTeam !== team) throw new Error("Signing team mismatch");
     if (JSON.stringify(manifest.files) !== JSON.stringify(mediaInventory(root))) throw new Error("Resource inventory/hash mismatch");
+    if (target.platform === "win32") {
+      for (const file of ["sources/build-media-tools-windows.sh", "sources/mediaToolsWindowsToolchain.json", "licenses/llvm-LICENSE.TXT", "licenses/mingw32/COPYING.MinGW-w64-runtime.txt", "build-info/toolchain.json"]) {
+        if (!manifest.files.some(entry => entry.path === file && entry.bytes > 0)) throw new Error(`Required Windows source/license/build record missing: ${file}`);
+      }
+    }
     for (const source of mediaSourceInputs()) {
       if (sha256File(path.join(root, "sources", source.archive)) !== source.sha256) throw new Error(`Source hash mismatch: ${source.archive}`);
     }
@@ -56,14 +62,19 @@ export function verifyMediaTools(root, target = process, { phase = "any", team }
     for (const file of ["sources/build-media-tools.sh", "sources/media-tools-pkg-config.sh", "sources/mediaToolsSources.json", "NOTICE.txt", "licenses/x264-COPYING", "licenses/COPYING.GPLv2", "licenses/COPYING.LGPLv2.1", "licenses/LICENSE.md", "build-info/compiler.txt", "build-info/sdk.txt", "build-info/ffmpeg-config.mak", "build-info/x264-config.mak"]) {
       if (!manifest.files.some(entry => entry.path === file && entry.bytes > 0)) throw new Error(`Required source/license/build record missing: ${file}`);
     }
-    const tools = { ffmpeg: path.join(root, "ffmpeg"), ffprobe: path.join(root, "ffprobe") };
+    const tools = {};
     for (const name of ["ffmpeg", "ffprobe"]) {
-      const executable = path.join(root, name);
+      const executable = path.join(root, name + (target.platform === "win32" ? ".exe" : ""));
       const header = inspectToonFactoryExecutable(executable);
-      if (header.platform !== target.platform || header.arch !== target.arch || !(lstatSync(executable).mode & 0o111)) throw new Error(`Wrong architecture or mode: ${name}`);
+      if (header.platform !== target.platform || header.arch !== target.arch || (target.platform !== "win32" && !(lstatSync(executable).mode & 0o111))) throw new Error(`Wrong architecture or mode: ${name}`);
+      if (target.platform === "win32") windowsMediaImports(executable);
       if (!/^[a-f0-9]{64}$/.test(manifest.buildHashes?.[name] ?? "")) throw new Error("Missing local build receipt");
       if (manifest.phase === "built" && sha256File(executable) !== manifest.buildHashes[name]) throw new Error("Build receipt mismatch");
-      if (phase === "signed") verifyMediaSignature(executable, team);
+      if (phase === "signed") {
+        if (target.platform === "win32") {
+          if (windowsMediaSignature(executable) !== windowsMediaSignature(process.execPath)) throw new Error("Media signer does not match application signer");
+        } else verifyMediaSignature(executable, team);
+      }
       tools[name] = executable;
     }
     return { ...tools, root, manifest, manifestPath };
@@ -72,13 +83,19 @@ export function verifyMediaTools(root, target = process, { phase = "any", team }
   }
 }
 export function verifyMediaExecutables(tools) {
+  if (tools.manifest?.platform === "win32") {
+    for (const name of ["ffmpeg", "ffprobe"]) windowsMediaImports(tools[name]);
+    if (process.platform !== "win32" || tools.manifest.arch !== process.arch) return { executed: false, reason: "Cross-target static verification only" };
+  }
   for (const name of ["ffmpeg", "ffprobe"]) {
     const version = mediaRun(tools[name], ["-version"]);
     if (!version.startsWith(`${name} version ${MEDIA_SOURCES.sources.ffmpeg.version} `) || version.includes("--enable-nonfree") || !["--disable-network", "--enable-gpl", "--disable-nonfree", "--enable-libx264", "--disable-shared"].every(flag => version.includes(flag))) throw new Error(`[media-tools] Unexpected version/license/configuration: ${name}`);
     const license = mediaRun(tools[name], ["-L"]);
     if (!license.includes("GNU General Public License") || /nonfree|not legally redistributable/i.test(license)) throw new Error("[media-tools] Expected redistributable GPL build configuration");
-    const libraries = mediaRun("/usr/bin/otool", ["-L", tools[name]]).split("\n").slice(1).map(line => line.trim()).filter(Boolean);
-    if (!libraries.length || libraries.some(line => !line.startsWith("/usr/lib/") && !line.startsWith("/System/Library/"))) throw new Error(`[media-tools] Non-system dynamic dependency: ${libraries.join("\n")}`);
+    if (tools.manifest?.platform !== "win32") {
+      const libraries = mediaRun("/usr/bin/otool", ["-L", tools[name]]).split("\n").slice(1).map(line => line.trim()).filter(Boolean);
+      if (!libraries.length || libraries.some(line => !line.startsWith("/usr/lib/") && !line.startsWith("/System/Library/"))) throw new Error(`[media-tools] Non-system dynamic dependency: ${libraries.join("\n")}`);
+    }
   }
   if (!/\blibx264\b/.test(mediaRun(tools.ffmpeg, ["-hide_banner", "-encoders"]))) throw new Error("[media-tools] libx264 is required");
   const protocols = mediaRun(tools.ffmpeg, ["-hide_banner", "-protocols"]).split("\n").map(line => line.trim()).filter(line => line && !["Supported file protocols:", "Input:", "Output:"].includes(line));

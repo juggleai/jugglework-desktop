@@ -75,6 +75,9 @@ Verification before commit: 35 existing Server image/repository/worker/service t
 
 ## 10. Bundled media tools (native macOS implementation; release gates pending)
 
+Windows follow-up: see windows-media-tools.md for the pinned portable cross-build,
+PE/import/trust gates, signing sequence and measured x64/ARM64 validation limits.
+
 - [x] 10.1 Investigate existing FFmpeg sources and public release digests; download/hash/inspect the Darwin ARM64 pair and validate temporary libx264 trim/probe/decode with empty PATH. See media-tools-supply-chain.md: this candidate is explicitly nonredistributable and rejected.
 - [x] 10.2 Pin official FFmpeg 7.1.5 and x264 b35605a source inputs, implement GPL/nonfree-disabled native macOS recipes with corresponding-source/build/license delivery, and explicitly gate Windows/Linux. FFmpeg upstream signature verified at intake; x264 lacks an independently verified publisher signature. Engineering acceptance is not legal approval.
 - [x] 10.3 Implement hash-enforced online/offline staging, independent mediaTools resources, bundled-only runtime resolution and rebuild diagnostics.

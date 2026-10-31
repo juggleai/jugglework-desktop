@@ -42,7 +42,7 @@ export function createToonFactoryVideoEditor({ isDirectoryGranted, mediaToolsRoo
     let temporary;
     const run = (executable, args) => new Promise((resolve, reject) => {
       combined.throwIfAborted();
-      const child = spawn(executable, args, { shell: false, windowsHide: true, stdio: ["ignore", "pipe", "pipe"], env: { PATH: "", LANG: "C", LC_ALL: "C" } });
+      const child = spawn(executable, args, { shell: false, windowsHide: true, cwd: path.dirname(executable), stdio: ["ignore", "pipe", "pipe"], env: { PATH: "", LANG: "C", LC_ALL: "C", ...(process.platform === "win32" ? { SystemRoot: process.env.SystemRoot, WINDIR: process.env.SystemRoot } : {}) } });
       let stdout = "", stderr = "", failure;
       const abort = () => { failure = combined.reason; child.kill("SIGKILL"); };
       combined.addEventListener("abort", abort, { once: true });

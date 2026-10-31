@@ -170,7 +170,7 @@ function dependencies(overrides = {}) {
       writeFileSync(outputPath, `blockmap-${arch}`);
     },
     trustedBunRelease: FIXTURE_BUN_RELEASE,
-    // These fixtures exercise installer trust independently of the unsupported media target gate.
+    // These fixtures exercise installer trust independently of media source fixtures.
     verifyMediaTools: () => ({ fixture: true }),
     ...overrides,
   };
@@ -286,9 +286,9 @@ describe("Windows packaged release verifier", () => {
     assert.doesNotMatch(evidenceText, /password|token|private.?key/i);
   });
 
-  it("blocks real Windows media verification until a native recipe exists", async (t) => {
+  it("blocks Windows packages without a verified media source bundle", async (t) => {
     const fixture = createFixture(t);
-    await assert.rejects(verifyPackagedWindows(options(fixture), dependencies({ verifyMediaTools: undefined })), /Unsupported native target win32/);
+    await assert.rejects(verifyPackagedWindows(options(fixture), dependencies({ verifyMediaTools: undefined })), /media-tools.*重新构建/);
   });
 
   it("rejects a wrong PE machine", async (t) => {

@@ -10,13 +10,18 @@ const scripts = path.dirname(fileURLToPath(import.meta.url));
 const desktop = path.resolve(scripts, "..");
 export async function buildMediaTools({ target = resolveToonFactoryBuildTarget(), output = path.join(desktop, "resources/mediaTools"), cache = path.join(desktop, ".media-tools-cache"), offline = process.env.MEDIA_TOOLS_OFFLINE === "1", force = false } = {}) {
   requireMediaTarget(target);
-  if (target.platform !== process.platform || target.arch !== process.arch) throw new Error(`[media-tools] Native ${target.platform}/${target.arch} host required; running ${process.platform}/${process.arch}`);
+  if (target.platform !== process.platform || (target.platform !== "win32" && target.arch !== process.arch)) throw new Error(`[media-tools] Native ${target.platform}/${target.arch} host required; running ${process.platform}/${process.arch}`);
+  const windows = target.platform === "win32";
+  const recipes = ["build-media-tools.sh", "media-tools-pkg-config.sh", ...(windows ? ["build-media-tools-windows.sh", "mediaToolsWindowsToolchain.json"] : [])];
+  const bash = process.env.MEDIA_TOOLS_BASH || "C:/Program Files/Git/usr/bin/bash.exe";
+  const toolchain = process.env.MEDIA_TOOLS_TOOLCHAIN;
+  const unix = value => path.resolve(value).replaceAll("\\", "/").replace(/^([A-Za-z]):/, (_, drive) => `/${drive.toLowerCase()}`);
   // A cached binary is a local build receipt, never an upstream trusted binary hash.
   // Changes to the actual distributed recipe invalidate staging.
   if (!force && existsSync(output)) {
     try {
       const tools = verifyMediaTools(output, target, { phase: "built" });
-      for (const name of ["build-media-tools.sh", "media-tools-pkg-config.sh"]) {
+      for (const name of recipes) {
         if (sha256File(path.join(scripts, name)) !== sha256File(path.join(output, "sources", name))) throw new Error("Recipe changed");
       }
       verifyMediaExecutables(tools);
@@ -34,7 +39,7 @@ export async function buildMediaTools({ target = resolveToonFactoryBuildTarget()
         if (source.commit) {
           const gitRoot = mkdtempSync(path.join(cache, "git-"));
           const git = args => {
-            const result = spawnSync("/usr/bin/git", args, { encoding: "utf8", timeout: 180000, env: { PATH: "/usr/bin:/bin", HOME: gitRoot, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_TERMINAL_PROMPT: "0" } });
+            const result = spawnSync(windows ? "C:/Program Files/Git/cmd/git.exe" : "/usr/bin/git", ["-c", "core.autocrlf=false", "-c", "tar.umask=0002", ...args], { encoding: "utf8", timeout: 180000, env: { ...(windows ? { SystemRoot: process.env.SystemRoot } : {}), PATH: windows ? "C:/Windows/System32" : "/usr/bin:/bin", HOME: gitRoot, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: windows ? "NUL" : "/dev/null", GIT_TERMINAL_PROMPT: "0" } });
             if (result.error || result.status !== 0) throw new Error(`[media-tools] Official source Git failed: ${result.error?.message || result.stderr}`);
             return result.stdout.trim();
           };
@@ -47,7 +52,7 @@ export async function buildMediaTools({ target = resolveToonFactoryBuildTarget()
           } finally { rmSync(gitRoot, { recursive: true, force: true }); }
         } else {
           // Ignore user curl configuration; only fixed HTTPS URLs from the source lock.
-          const response = spawnSync("/usr/bin/curl", ["-q", "--fail", "--silent", "--show-error", "--proto", "=https", "--max-time", "180", source.url], { timeout: 190000, maxBuffer: 32 * 1024 * 1024, env: { PATH: "/usr/bin:/bin" } });
+          const response = spawnSync(windows ? "C:/Windows/System32/curl.exe" : "/usr/bin/curl", ["-q", "--fail", "--silent", "--show-error", "--proto", "=https", "--max-time", "180", source.url], { timeout: 190000, maxBuffer: 32 * 1024 * 1024, env: windows ? { SystemRoot: process.env.SystemRoot } : { PATH: "/usr/bin:/bin" } });
           if (response.error || response.status !== 0) throw new Error(`[media-tools] Download failed: ${source.url}: ${response.error?.message || response.stderr}`);
           writeFileSync(temporary, response.stdout, { flag: "wx" });
         }
@@ -64,17 +69,30 @@ export async function buildMediaTools({ target = resolveToonFactoryBuildTarget()
   mkdirSync(sources, { recursive: true });
   try {
     for (const source of mediaSourceInputs()) copyFileSync(path.join(cache, source.archive), path.join(sources, source.archive));
-    for (const name of ["build-media-tools.sh", "media-tools-pkg-config.sh"]) {
+    for (const name of recipes) {
       copyFileSync(path.join(scripts, name), path.join(sources, name));
       chmodSync(path.join(sources, name), 0o755);
     }
     writeFileSync(path.join(sources, "mediaToolsSources.json"), `${JSON.stringify(MEDIA_SOURCES, null, 2)}\n`);
     const log = path.join(work, "build.log");
-    const result = spawnSync("/bin/sh", [path.join(sources, "build-media-tools.sh"), sources, path.join(work, "work"), stage, target.arch], { encoding: "utf8", env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", HOME: work, TMPDIR: work }, timeout: 20 * 60 * 1000, maxBuffer: 32 * 1024 * 1024 });
+    if (windows && !toolchain) throw new Error("[media-tools] Set MEDIA_TOOLS_TOOLCHAIN to the verified portable llvm-mingw root; see mediaToolsWindowsToolchain.json");
+    if (windows) {
+      const { readFileSync } = await import("node:fs");
+      const lock = JSON.parse(readFileSync(path.join(scripts, "mediaToolsWindowsToolchain.json"), "utf8"));
+      if (sha256File(`${toolchain}.zip`) !== lock.sha256) throw new Error("Windows toolchain archive hash mismatch");
+    }
+    const result = spawnSync(windows ? bash : "/bin/sh", windows ? [unix(path.join(sources, "build-media-tools-windows.sh")), unix(sources), unix(path.join(work, "work")), unix(stage), target.arch, unix(toolchain)] : [path.join(sources, "build-media-tools.sh"), sources, path.join(work, "work"), stage, target.arch], { encoding: "utf8", env: windows ? { SystemRoot: process.env.SystemRoot, WINDIR: process.env.SystemRoot, HOME: work, TMP: work, TEMP: work } : { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", HOME: work, TMPDIR: work }, timeout: 30 * 60 * 1000, maxBuffer: 64 * 1024 * 1024 });
     writeFileSync(log, `${result.stdout ?? ""}\n${result.stderr ?? ""}`);
     if (result.error || result.status !== 0) throw new Error(`[media-tools] Source build failed (${result.error?.message || result.status}); log: ${log}`);
     writeFileSync(path.join(stage, "NOTICE.txt"), `JuggleWork media tools: FFmpeg ${MEDIA_SOURCES.sources.ffmpeg.version} + x264 ${MEDIA_SOURCES.sources.x264.version}. GPL-2.0-or-later.\nCopyright the FFmpeg developers and x264 authors; see bundled source headers and licenses.\nCorresponding unmodified sources, configuration and build/install script are included in sources/ and build-info/.\nRebuild on native macOS 14+ with Xcode Command Line Tools: /bin/sh sources/build-media-tools.sh ABSOLUTE_SOURCES EMPTY_WORK ABSOLUTE_OUTPUT arm64|x64\nNo source patches; static x264 and FFmpeg libraries, Apple system libraries only. No nonfree components or network protocols.\nThis software is based in part on the work of the Independent JPEG Group.\nSource intake provenance limitations are recorded in sources/mediaToolsSources.json. Binary hashes are local build receipts, not upstream signatures.\nDistribution/source delivery and licensing review remains a release-owner responsibility; this build does not constitute legal approval.\n`);
-    const manifest = { schemaVersion: 1, platform: target.platform, arch: target.arch, phase: "built", sources: MEDIA_SOURCES, buildHashes: Object.fromEntries(["ffmpeg", "ffprobe"].map(name => [name, sha256File(path.join(stage, name))])), files: mediaInventory(stage) };
+    if (windows) {
+      writeFileSync(path.join(stage, "NOTICE.txt"), `JuggleWork Windows media tools: FFmpeg ${MEDIA_SOURCES.sources.ffmpeg.version} + x264 ${MEDIA_SOURCES.sources.x264.version}. GPL-2.0-or-later.\nCopyright FFmpeg developers and x264 authors. Sources, licenses and unmodified-source build recipes included. No nonfree/network components; static x264/FFmpeg and compiler runtime, Windows system DLLs/UCRT only.\nRebuild using Git MSYS bash sources/build-media-tools-windows.sh SOURCES EMPTY_WORK OUTPUT x64|arm64 LLVM_MINGW_ROOT. Toolchain release URL/digest in sources/mediaToolsWindowsToolchain.json. Cross-built ARM64 is statically inspected, not executed on x64.\nThis software is based in part on the work of the Independent JPEG Group. Binary hashes are local receipts, not upstream signatures. Source intake limitations in sources/mediaToolsSources.json.\n`);
+      copyFileSync(path.join(scripts, "mediaToolsWindowsToolchain.json"), path.join(stage, "build-info/toolchain.json"));
+      const { cpSync } = await import("node:fs");
+      copyFileSync(path.join(toolchain, "LICENSE.TXT"), path.join(stage, "licenses/llvm-LICENSE.TXT"));
+      cpSync(path.join(toolchain, target.arch === "arm64" ? "aarch64-w64-mingw32/share/mingw32" : "x86_64-w64-mingw32/share/mingw32"), path.join(stage, "licenses/mingw32"), { recursive: true });
+    }
+    const manifest = { schemaVersion: 1, platform: target.platform, arch: target.arch, phase: "built", sources: MEDIA_SOURCES, buildHashes: Object.fromEntries(["ffmpeg", "ffprobe"].map(name => [name, sha256File(path.join(stage, name + (windows ? ".exe" : "")))])), files: mediaInventory(stage) };
     writeFileSync(path.join(stage, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
     verifyMediaExecutables(verifyMediaTools(stage, target, { phase: "built" }));
     // Only replace staging after a complete verified build; never package partial output.
