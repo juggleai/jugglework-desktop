@@ -305,7 +305,7 @@ async function worker(root) {
   try {
     const ready = await check("candidate modules and signed resources", async () => {
       const media = await import(moduleUrl("mediaTools.mjs"));
-      media.mediaRun("/usr/bin/codesign", ["--verify", "--strict", "-R", 'anchor apple generic and certificate leaf[subject.OU] = "H7PDHSK3C7" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists', config.appPath]);
+      media.mediaRun("/usr/bin/codesign", ["--verify", "--strict", "-R", '=anchor apple generic and certificate leaf[subject.OU] = "H7PDHSK3C7" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists', config.appPath]);
       tools = media.verifyMediaTools(mediaToolsRoot, process, { phase: "signed", team: "H7PDHSK3C7" });
       media.verifyMediaExecutables(tools);
       for (const directory of [project, secondProject, denied]) await mkdir(directory, { recursive: true });
