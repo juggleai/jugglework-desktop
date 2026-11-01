@@ -114,6 +114,14 @@ describe("desktop notifications", () => {
     });
   });
 
+  test("product task reminders are important and open the task deep link", async () => {
+    setPreference("important");
+    notifyDesktopEvent({ type: "product-task.reminder", taskTitle: "Follow up", href: "/tasks/task%2Fone" });
+    await Promise.resolve();
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ command: "desktopNotificationShow", args: [{ title: "Task reminder", body: "Follow up", href: "/tasks/task%2Fone" }] });
+  });
+
   test("focused app suppresses native popups", () => {
     setPreference("all");
     installRuntime({ focused: true });

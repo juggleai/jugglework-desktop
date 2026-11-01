@@ -57,6 +57,62 @@ export const CLOUD_MCP_SYNC_MARKER_STORAGE_KEY = "jugglework.den.mcp.sync";
 const ORG_PROXY_HEADER = "x-jugglework-legacy-org-id";
 const DEFAULT_DEN_TIMEOUT_MS = 12_000;
 
+export type DenProductTaskStatus = "todo" | "completed" | "canceled";
+export type DenProductTaskPriority = "none" | "low" | "medium" | "high";
+export type DenProductTaskVisibility = "private" | "members" | "organization";
+export type DenProductTaskView = "today" | "inbox" | "assigned" | "created" | "following" | "all" | "completed" | "trash";
+export type DenProductTaskMemberRole = "assignee" | "follower" | "viewer";
+export type DenProductTaskMember = { memberId: string; role: DenProductTaskMemberRole; createdByMemberId?: string; createdAt?: string };
+export type DenProductTask = {
+  id: string;
+  creatorMemberId: string;
+  listId: string | null;
+  title: string;
+  description: string;
+  priority: DenProductTaskPriority;
+  visibility: DenProductTaskVisibility;
+  status: DenProductTaskStatus;
+  version: number;
+  startAt: string | null;
+  dueAt: string | null;
+  completedAt: string | null;
+  completedByMemberId: string | null;
+  canceledAt: string | null;
+  canceledByMemberId: string | null;
+  deletedAt: string | null;
+  restoreUntil: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+export type DenProductTaskPermissions = {
+  canView: boolean; canEditContent: boolean; canEditTime: boolean; canManageMembers: boolean;
+  canManageVisibility: boolean; canComplete: boolean; canReopen: boolean; canCancel: boolean;
+  canComment: boolean; canDelete: boolean; canRestore: boolean;
+};
+export type DenProductTaskResult = { task: DenProductTask; members: DenProductTaskMember[]; permissions: DenProductTaskPermissions; tombstone: boolean; replayed: boolean };
+export type DenProductTaskPage = { items: DenProductTask[]; nextCursor: string };
+export type DenProductTaskListOptions = {
+  view?: DenProductTaskView; search?: string; status?: DenProductTaskStatus[]; priority?: DenProductTaskPriority[];
+  listId?: string[]; sort?: "due_at" | "created_at" | "updated_at" | "priority"; direction?: "asc" | "desc";
+  timezone?: string; cursor?: string; limit?: number;
+};
+export type DenProductTaskCreateInput = {
+  idempotencyKey: string; title: string; description?: string; priority?: DenProductTaskPriority;
+  visibility?: DenProductTaskVisibility; listId?: string; startAt?: string | null; dueAt?: string | null;
+  members?: Array<{ memberId: string; role: DenProductTaskMemberRole }>;
+};
+export type DenProductTaskUpdateInput = Partial<Omit<DenProductTaskCreateInput, "idempotencyKey">> & { expectedVersion: number; idempotencyKey: string };
+export type DenProductTaskList = { id: string; creatorMemberId: string; name: string; description: string; marker: string; visibility: DenProductTaskVisibility; version: number; archivedAt: string | null; createdAt: string; updatedAt: string };
+export type DenProductTaskListPage = { items: DenProductTaskList[]; nextCursor: string };
+export type DenProductTaskListResult = { list: DenProductTaskList; members: Array<{ memberId: string; role: "administrator" | "member" }>; permissions: { canView: boolean; canEdit: boolean; canManageMembers: boolean; canAddTasks: boolean; canArchive: boolean; canRestore: boolean }; replayed: boolean };
+export type DenProductTaskActivity = {
+  comments: Array<{ id: string; authorMemberId: string; body: string; createdAt: string; updatedAt: string }>;
+  events: Array<{ id: string; eventType: string; actorMemberId: string; affectedMemberId: string | null; taskVersion: number; createdAt: string }>;
+};
+export type DenProductTaskReminder = { id: string; recipientMemberId: string; scheduledAt: string; timezone: string; mode: "absolute" | "due_relative"; dueOffsetSeconds: number; state: "scheduled" | "delivered" | "canceled"; deliveredEventId: string | null };
+export type DenProductTaskNotificationEvent = { sequence: number; id: string; type: "reminder_due"; occurredAt: string; task: { id: string; title: string }; reminder: { scheduledAt: string } };
+export type DenProductTaskNotificationPage = { items: DenProductTaskNotificationEvent[]; nextSequence: number; hasMore: boolean };
+
 export const DEFAULT_DEN_AUTH_NAME = "JuggleWork User";
 const BUILD_DEN_BASE_URL =
   (typeof import.meta !== "undefined" && typeof import.meta.env?.VITE_DEN_BASE_URL === "string"
@@ -581,6 +637,97 @@ export function isDenSessionRevokedError(error: unknown): boolean {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function normalizeProductTask(value: unknown): DenProductTask | null {
+  if (!isRecord(value) || typeof value.id !== "string" || typeof value.creatorMemberId !== "string" ||
+    typeof value.title !== "string" || typeof value.description !== "string" || typeof value.version !== "number" ||
+    !["none", "low", "medium", "high"].includes(String(value.priority)) ||
+    !["private", "members", "organization"].includes(String(value.visibility)) ||
+    !["todo", "completed", "canceled"].includes(String(value.status)) ||
+    typeof value.createdAt !== "string" || typeof value.updatedAt !== "string") return null;
+  const nullableString = (input: unknown) => typeof input === "string" ? input : null;
+  return {
+    id: value.id,
+    creatorMemberId: value.creatorMemberId,
+    listId: nullableString(value.listId),
+    title: value.title,
+    description: value.description,
+    priority: value.priority as DenProductTaskPriority,
+    visibility: value.visibility as DenProductTaskVisibility,
+    status: value.status as DenProductTaskStatus,
+    version: value.version,
+    startAt: nullableString(value.startAt),
+    dueAt: nullableString(value.dueAt),
+    completedAt: nullableString(value.completedAt),
+    completedByMemberId: nullableString(value.completedByMemberId),
+    canceledAt: nullableString(value.canceledAt),
+    canceledByMemberId: nullableString(value.canceledByMemberId),
+    deletedAt: nullableString(value.deletedAt),
+    restoreUntil: nullableString(value.restoreUntil),
+    createdAt: value.createdAt,
+    updatedAt: value.updatedAt,
+  };
+}
+
+function normalizeProductTaskResult(value: unknown): DenProductTaskResult {
+  if (!isRecord(value)) throw new DenApiError(500, "invalid_task_payload", "Task response was invalid.");
+  const task = normalizeProductTask(value.task);
+  if (!task || !Array.isArray(value.members) || !isRecord(value.permissions)) {
+    throw new DenApiError(500, "invalid_task_payload", "Task response was invalid.");
+  }
+  const members = value.members.flatMap((member) => isRecord(member) && typeof member.memberId === "string" &&
+    ["assignee", "follower", "viewer"].includes(String(member.role))
+    ? [{ memberId: member.memberId, role: member.role as DenProductTaskMemberRole, createdByMemberId: typeof member.createdByMemberId === "string" ? member.createdByMemberId : undefined, createdAt: typeof member.createdAt === "string" ? member.createdAt : undefined }]
+    : []);
+  if (members.length !== value.members.length) throw new DenApiError(500, "invalid_task_payload", "Task response was invalid.");
+  const permissions = value.permissions;
+  const permissionNames = ["canView", "canEditContent", "canEditTime", "canManageMembers", "canManageVisibility", "canComplete", "canReopen", "canCancel", "canComment", "canDelete", "canRestore"] as const;
+  if (permissionNames.some((name) => typeof permissions[name] !== "boolean")) throw new DenApiError(500, "invalid_task_payload", "Task response was invalid.");
+  return { task, members, permissions: permissions as DenProductTaskPermissions, tombstone: value.tombstone === true, replayed: value.replayed === true };
+}
+
+function normalizeProductTaskList(value: unknown): DenProductTaskList | null {
+  if (!isRecord(value) || typeof value.id !== "string" || typeof value.creatorMemberId !== "string" ||
+    typeof value.name !== "string" || typeof value.description !== "string" || typeof value.marker !== "string" ||
+    !["private", "members", "organization"].includes(String(value.visibility)) || typeof value.version !== "number" ||
+    typeof value.createdAt !== "string" || typeof value.updatedAt !== "string") return null;
+  return { id: value.id, creatorMemberId: value.creatorMemberId, name: value.name, description: value.description, marker: value.marker,
+    visibility: value.visibility as DenProductTaskVisibility, version: value.version, archivedAt: typeof value.archivedAt === "string" ? value.archivedAt : null,
+    createdAt: value.createdAt, updatedAt: value.updatedAt };
+}
+
+function normalizeProductTaskListResult(value: unknown): DenProductTaskListResult {
+  if (!isRecord(value) || !Array.isArray(value.members) || !isRecord(value.permissions)) throw new DenApiError(500, "invalid_task_list_payload", "Task list response was invalid.");
+  const list = normalizeProductTaskList(value.list);
+  const members = value.members.flatMap((member) => isRecord(member) && typeof member.memberId === "string" && ["administrator", "member"].includes(String(member.role)) ? [{ memberId: member.memberId, role: member.role as "administrator" | "member" }] : []);
+  if (!list || members.length !== value.members.length) throw new DenApiError(500, "invalid_task_list_payload", "Task list response was invalid.");
+  return { list, members, permissions: value.permissions as DenProductTaskListResult["permissions"], replayed: value.replayed === true };
+}
+
+function normalizeProductTaskNotificationPage(value: unknown): DenProductTaskNotificationPage {
+  if (!isRecord(value) || !Array.isArray(value.items) || !Number.isSafeInteger(value.nextSequence) || Number(value.nextSequence) < 0 || typeof value.hasMore !== "boolean") {
+    throw new DenApiError(500, "invalid_task_events", "Task event response was invalid.");
+  }
+  const items = value.items.flatMap((item) => isRecord(item) && Number.isSafeInteger(item.sequence) && Number(item.sequence) > 0 && typeof item.id === "string" && item.type === "reminder_due" && typeof item.occurredAt === "string" && isRecord(item.task) && typeof item.task.id === "string" && typeof item.task.title === "string" && isRecord(item.reminder) && typeof item.reminder.scheduledAt === "string" ? [{ sequence: Number(item.sequence), id: item.id, type: "reminder_due" as const, occurredAt: item.occurredAt, task: { id: item.task.id, title: item.task.title }, reminder: { scheduledAt: item.reminder.scheduledAt } }] : []);
+  if (items.length !== value.items.length) throw new DenApiError(500, "invalid_task_events", "Task event response was invalid.");
+  return { items, nextSequence: Number(value.nextSequence), hasMore: value.hasMore };
+}
+
+function productTaskQuery(options: DenProductTaskListOptions): string {
+  const params = new URLSearchParams();
+  if (options.view) params.set("view", options.view);
+  if (options.search?.trim()) params.set("search", options.search.trim());
+  options.status?.forEach((value) => params.append("status", value));
+  options.priority?.forEach((value) => params.append("priority", value));
+  options.listId?.forEach((value) => params.append("listId", value));
+  if (options.sort) params.set("sort", options.sort);
+  if (options.direction) params.set("direction", options.direction);
+  if (options.timezone) params.set("timezone", options.timezone);
+  if (options.cursor) params.set("cursor", options.cursor);
+  if (options.limit) params.set("limit", String(options.limit));
+  const query = params.toString();
+  return query ? `?${query}` : "";
 }
 
 function readStringArray(value: unknown): string[] {
@@ -2831,6 +2978,7 @@ type DenRequestOptions = {
   timeoutMs?: number;
   organizationId?: string | null;
   idempotencyKey?: string | null;
+	  signal?: AbortSignal;
 };
 
 async function fetchWithTimeout(fetchImpl: FetchLike, url: string, init: RequestInit, timeoutMs: number) {
@@ -2892,7 +3040,8 @@ async function requestJsonRaw<T>(
       method: options.method ?? "GET",
       headers,
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
-      credentials: "include",
+	  credentials: "include",
+	  signal: options.signal,
     },
     options.timeoutMs ?? DEFAULT_DEN_TIMEOUT_MS,
   );
@@ -3235,6 +3384,105 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
         organizationId: orgId,
       });
       return getWorkers(payload);
+    },
+
+    async listProductTasks(orgId: string, options: DenProductTaskListOptions = {}, requestOptions: { signal?: AbortSignal } = {}): Promise<DenProductTaskPage> {
+      const payload = await requestJson<unknown>(baseUrls, `/v1/tasks${productTaskQuery(options)}`, {
+        method: "GET", token, organizationId: orgId, signal: requestOptions.signal,
+      });
+      if (!isRecord(payload) || !Array.isArray(payload.items) || typeof payload.nextCursor !== "string") {
+        throw new DenApiError(500, "invalid_task_page", "Task page response was invalid.");
+      }
+      const items = payload.items.map(normalizeProductTask);
+      if (items.some((item) => !item)) throw new DenApiError(500, "invalid_task_page", "Task page response was invalid.");
+      return { items: items as DenProductTask[], nextCursor: payload.nextCursor };
+    },
+
+    async listProductTaskLists(orgId: string, options: { archived?: boolean; cursor?: string; limit?: number } = {}, requestOptions: { signal?: AbortSignal } = {}): Promise<DenProductTaskListPage> {
+      const params = new URLSearchParams();
+      if (options.archived !== undefined) params.set("archived", String(options.archived));
+      if (options.cursor) params.set("cursor", options.cursor);
+      if (options.limit) params.set("limit", String(options.limit));
+      const payload = await requestJson<unknown>(baseUrls, `/v1/task-lists${params.size ? `?${params}` : ""}`, { method: "GET", token, organizationId: orgId, signal: requestOptions.signal });
+      if (!isRecord(payload) || !Array.isArray(payload.items) || typeof payload.nextCursor !== "string") throw new DenApiError(500, "invalid_task_list_page", "Task list page response was invalid.");
+      const items = payload.items.map(normalizeProductTaskList);
+      if (items.some((item) => !item)) throw new DenApiError(500, "invalid_task_list_page", "Task list page response was invalid.");
+      return { items: items as DenProductTaskList[], nextCursor: payload.nextCursor };
+    },
+
+    async getProductTaskList(orgId: string, listId: string): Promise<DenProductTaskListResult> {
+      return normalizeProductTaskListResult(await requestJson<unknown>(baseUrls, `/v1/task-lists/${encodeURIComponent(listId)}`, { method: "GET", token, organizationId: orgId }));
+    },
+
+    async createProductTaskList(orgId: string, input: { idempotencyKey: string; name: string; description?: string; marker?: string; visibility?: DenProductTaskVisibility; members?: Array<{ memberId: string; role: "administrator" | "member" }> }): Promise<DenProductTaskListResult> {
+      return normalizeProductTaskListResult(await requestJson<unknown>(baseUrls, "/v1/task-lists", { method: "POST", token, organizationId: orgId, body: input }));
+    },
+
+    async updateProductTaskList(orgId: string, listId: string, input: { expectedVersion: number; idempotencyKey: string; name?: string; description?: string; marker?: string; visibility?: DenProductTaskVisibility; members?: Array<{ memberId: string; role: "administrator" | "member" }> }): Promise<DenProductTaskListResult> {
+      return normalizeProductTaskListResult(await requestJson<unknown>(baseUrls, `/v1/task-lists/${encodeURIComponent(listId)}`, { method: "PATCH", token, organizationId: orgId, body: input }));
+    },
+
+    async transitionProductTaskList(orgId: string, listId: string, operation: "archive" | "restore", input: { expectedVersion: number; idempotencyKey: string }): Promise<DenProductTaskListResult> {
+      return normalizeProductTaskListResult(await requestJson<unknown>(baseUrls, `/v1/task-lists/${encodeURIComponent(listId)}/${operation}`, { method: "POST", token, organizationId: orgId, body: input }));
+    },
+
+    async getProductTask(orgId: string, taskId: string, requestOptions: { signal?: AbortSignal } = {}): Promise<DenProductTaskResult> {
+      const payload = await requestJson<unknown>(baseUrls, `/v1/tasks/${encodeURIComponent(taskId)}`, {
+        method: "GET", token, organizationId: orgId, signal: requestOptions.signal,
+      });
+      return normalizeProductTaskResult(payload);
+    },
+
+    async getProductTaskActivity(orgId: string, taskId: string, requestOptions: { signal?: AbortSignal } = {}): Promise<DenProductTaskActivity> {
+      const payload = await requestJson<unknown>(baseUrls, `/v1/tasks/${encodeURIComponent(taskId)}/activity`, { method: "GET", token, organizationId: orgId, signal: requestOptions.signal });
+      if (!isRecord(payload) || !Array.isArray(payload.comments) || !Array.isArray(payload.events)) throw new DenApiError(500, "invalid_task_activity", "Task activity response was invalid.");
+      return payload as DenProductTaskActivity;
+    },
+
+    async addProductTaskComment(orgId: string, taskId: string, input: { idempotencyKey: string; body: string }): Promise<void> {
+      await requestJson<unknown>(baseUrls, `/v1/tasks/${encodeURIComponent(taskId)}/comments`, { method: "POST", token, organizationId: orgId, body: input });
+    },
+
+    async listProductTaskReminders(orgId: string, taskId: string): Promise<DenProductTaskReminder[]> {
+      const payload = await requestJson<unknown>(baseUrls, `/v1/tasks/${encodeURIComponent(taskId)}/reminders`, { method: "GET", token, organizationId: orgId });
+      if (!isRecord(payload) || !Array.isArray(payload.items)) throw new DenApiError(500, "invalid_task_reminders", "Task reminder response was invalid.");
+      return payload.items as DenProductTaskReminder[];
+    },
+
+    async listProductTaskNotificationEvents(orgId: string, options: { afterSequence?: number; limit?: number } = {}): Promise<DenProductTaskNotificationPage> {
+      const params = new URLSearchParams();
+      if (options.afterSequence !== undefined) params.set("afterSequence", String(options.afterSequence));
+      if (options.limit !== undefined) params.set("limit", String(options.limit));
+      const payload = await requestJson<unknown>(baseUrls, `/v1/task-events${params.size ? `?${params}` : ""}`, { method: "GET", token, organizationId: orgId });
+      return normalizeProductTaskNotificationPage(payload);
+    },
+
+    async setProductTaskReminder(orgId: string, taskId: string, input: { idempotencyKey: string; mode: "absolute" | "due_relative"; scheduledAt?: string; dueOffsetSeconds?: number; timezone: string }): Promise<void> {
+      await requestJson<unknown>(baseUrls, `/v1/tasks/${encodeURIComponent(taskId)}/reminders`, { method: "PUT", token, organizationId: orgId, body: input });
+    },
+
+    async cancelProductTaskReminders(orgId: string, taskId: string, idempotencyKey: string): Promise<void> {
+      await requestJson<unknown>(baseUrls, `/v1/tasks/${encodeURIComponent(taskId)}/reminders`, { method: "DELETE", token, organizationId: orgId, body: { expectedVersion: 1, idempotencyKey } });
+    },
+
+    async createProductTask(orgId: string, input: DenProductTaskCreateInput): Promise<DenProductTaskResult> {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/tasks", { method: "POST", token, organizationId: orgId, body: input });
+      return normalizeProductTaskResult(payload);
+    },
+
+    async updateProductTask(orgId: string, taskId: string, input: DenProductTaskUpdateInput): Promise<DenProductTaskResult> {
+      const payload = await requestJson<unknown>(baseUrls, `/v1/tasks/${encodeURIComponent(taskId)}`, { method: "PATCH", token, organizationId: orgId, body: input });
+      return normalizeProductTaskResult(payload);
+    },
+
+    async transitionProductTask(orgId: string, taskId: string, operation: "complete" | "cancel" | "reopen" | "restore", input: { expectedVersion: number; idempotencyKey: string }): Promise<DenProductTaskResult> {
+      const payload = await requestJson<unknown>(baseUrls, `/v1/tasks/${encodeURIComponent(taskId)}/${operation}`, { method: "POST", token, organizationId: orgId, body: input });
+      return normalizeProductTaskResult(payload);
+    },
+
+    async deleteProductTask(orgId: string, taskId: string, input: { expectedVersion: number; idempotencyKey: string }): Promise<DenProductTaskResult> {
+      const payload = await requestJson<unknown>(baseUrls, `/v1/tasks/${encodeURIComponent(taskId)}`, { method: "DELETE", token, organizationId: orgId, body: input });
+      return normalizeProductTaskResult(payload);
     },
 
     /** 读取自动化稳定 envelope、投影和资源限制能力。 */

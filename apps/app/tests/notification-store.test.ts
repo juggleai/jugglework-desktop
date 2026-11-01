@@ -21,7 +21,7 @@ Object.defineProperty(globalThis, "localStorage", {
   configurable: true,
 });
 
-const { PERSISTED_NOTIFICATION_STORE_KEY, useNotificationStore } = await import("../src/react-app/kernel/notification-store");
+const { PERSISTED_NOTIFICATION_STORE_KEY, isNotificationVisible, productTaskNotificationScopeKey, useNotificationStore } = await import("../src/react-app/kernel/notification-store");
 const { notifyPendingCloudPluginChanges } = await import("../src/react-app/domains/settings/state/extensions-store");
 
 function reset() {
@@ -134,6 +134,25 @@ describe("notification store", () => {
     add({ kind: "cloud", title: "Later removal", source: { ...source, version: 4 } });
     expect(useNotificationStore.getState().notifications).toHaveLength(1);
     expect(useNotificationStore.getState().sourceVersions[source.key]?.version).toBe(4);
+  });
+
+  test("task baseline cursor advances without creating a visible notification", () => {
+    useNotificationStore.getState().advanceSource("product-task-events:scope", 12);
+    expect(useNotificationStore.getState().notifications).toHaveLength(0);
+    expect(useNotificationStore.getState().sourceVersions["product-task-events:scope"]?.version).toBe(12);
+    useNotificationStore.getState().add({ kind: "tasks", title: "Reminder", source: { key: "product-task-events:scope", version: 12 }, action: { type: "open-product-task", taskId: "task/one" } });
+    expect(useNotificationStore.getState().notifications).toHaveLength(0);
+  });
+
+  test("task notifications are visible only in their cloud identity scope", () => {
+    const scopeA = productTaskNotificationScopeKey("https://work.example/", "user_a", "org_a");
+    const scopeB = productTaskNotificationScopeKey("https://work.example", "user_a", "org_b");
+    useNotificationStore.getState().add({ kind: "tasks", title: "Private task title", scopeKey: scopeA });
+    const notification = useNotificationStore.getState().notifications[0]!;
+    expect(isNotificationVisible(notification, scopeA)).toBe(true);
+    expect(isNotificationVisible(notification, scopeB)).toBe(false);
+    useNotificationStore.getState().markAllRead(scopeB);
+    expect(useNotificationStore.getState().notifications[0]?.readAt).toBeNull();
   });
 
   test("source cursors survive persisted rehydration independently of visible rows", async () => {

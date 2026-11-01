@@ -48,7 +48,8 @@ import {
 import { useFeatureFlagsPreferences } from "../state/feature-flags-preferences";
 import { AppNavigationRail } from "../../../shell/app-navigation-rail";
 import type { OpenCreateWorkspace } from "../../workspace/types";
-import { useNotificationStore } from "../../../kernel/notification-store";
+import { isNotificationVisible, productTaskNotificationScopeKey, useNotificationStore } from "../../../kernel/notification-store";
+import { useCloudSession } from "../cloud/cloud-session-provider";
 
 export function getSettingsTabIcon(tab: SettingsTab) {
   switch (tab) {
@@ -236,9 +237,11 @@ export function SettingsBetaBadge({ className }: { className?: string }) {
 }
 
 export function SettingsSidebarTabLabel({ tab }: { tab: SettingsTab }) {
+  const cloud = useCloudSession();
+  const taskScopeKey = cloud.user?.id && cloud.activeOrganization?.id ? productTaskNotificationScopeKey(cloud.baseUrl, cloud.user.id, cloud.activeOrganization.id) : null;
   const unreadCount = useNotificationStore((state) => (
     tab === "notifications"
-      ? state.notifications.filter((notification) => notification.readAt === null).length
+      ? state.notifications.filter((notification) => notification.readAt === null && isNotificationVisible(notification, taskScopeKey)).length
       : 0
   ));
   return (

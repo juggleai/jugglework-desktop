@@ -46,6 +46,7 @@ import { RootJuggleWorkServerProvider } from "../domains/connections/root-juggle
 import { AutomationRunNotificationCoordinator } from "../domains/automations/automation-run-notification-coordinator";
 import { AutomationActivityProvider } from "../domains/automations/automation-activity-provider";
 import { HostMarketplacePluginsProvider } from "../domains/settings/state/host-marketplace-plugins-provider";
+import { ProductTaskNotificationCoordinator } from "../domains/tasks/product-task-notification-coordinator";
 
 type DenSigninGateProps = {
   children: ReactNode;
@@ -336,6 +337,7 @@ export function AppRoot() {
                 <AutomationActivityProvider>
                 <HostMarketplacePluginsProvider>
                 <AutomationRunNotificationCoordinator />
+                <ProductTaskNotificationCoordinator />
                 <Routes>
               <Route
                 path="/signin"

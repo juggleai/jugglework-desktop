@@ -5,6 +5,7 @@ import {
   Clapperboard,
   ArrowUpRight,
   Check,
+  CheckSquare,
   Cloud,
   Coins,
   ContactRound,
@@ -46,7 +47,8 @@ import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider";
 import { useJuggleChatStore } from "@/react-app/domains/jugglechat/store";
 import { useUpdateCheckRequestStore } from "@/react-app/domains/settings/state/update-check-request";
 import { useDesktopUpdateIndicatorStore } from "@/react-app/domains/settings/state/desktop-update-indicator-store";
-import { useNotificationStore } from "@/react-app/kernel/notification-store";
+import { isNotificationVisible, productTaskNotificationScopeKey, useNotificationStore } from "@/react-app/kernel/notification-store";
+import { useCloudSession } from "@/react-app/domains/settings/cloud/cloud-session-provider";
 import { usePlatform } from "@/react-app/kernel/platform";
 import { setTaskScope, useTaskScope, type TaskScope } from "@/react-app/domains/session/sidebar/task-scope-store";
 import { useLocalWorkspaceIndicator } from "@/react-app/domains/session/sidebar/workspace-indicator-store";
@@ -304,15 +306,18 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
     switchOrganization,
     signOut,
   } = useDenAuth();
+  const cloud = useCloudSession();
+  const taskNotificationScopeKey = user?.id && activeOrganization?.id ? productTaskNotificationScopeKey(cloud.baseUrl, user.id, activeOrganization.id) : null;
   const taskScope = useTaskScope();
   const automationsActive = location.pathname.startsWith("/automations");
+  const tasksActive = location.pathname.startsWith("/tasks");
   const { hasActiveRuns } = useAutomationActivity();
   const localWorkspaceIndicator = useLocalWorkspaceIndicator();
   const chatView = useJuggleChatStore((state) => state.view);
   const totalUnreadCount = useJuggleChatStore((state) => state.totalUnreadCount);
   const notificationUnreadCount = useNotificationStore((state) => (
     state.notifications.reduce(
-      (count, notification) => count + (notification.readAt === null ? 1 : 0),
+      (count, notification) => count + (notification.readAt === null && (notification.kind !== "tasks" || isNotificationVisible(notification, taskNotificationScopeKey)) ? 1 : 0),
       0,
     )
   ));
@@ -491,6 +496,15 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
         >
           <AutomationRailIcon active={automationsActive} />
         </RailButton> : null}
+        <RailButton
+          label={t("navigation.tasks")}
+          active={tasksActive}
+          onClick={() => navigate("/tasks")}
+          testId="app-rail-tasks"
+          onPreviewMenuChange={props.onPreviewMenuChange}
+        >
+          <CheckSquare />
+        </RailButton>
         <RailButton
           label={t("project_extensions.group_plugin")}
           active={props.appsActive}

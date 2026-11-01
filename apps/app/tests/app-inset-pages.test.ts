@@ -14,16 +14,18 @@ describe("secondary app inset shells", () => {
     expect(source).toContain("data-app-inset-surface");
   });
 
-  test("places Automation, Review, Chat, Contacts, and Toon Factory inside the shared surface", () => {
+  test("places Tasks, Automation, Review, Chat, Contacts, and Toon Factory inside the shared surface", () => {
+    const tasks = read("react-app/domains/tasks/task-page.tsx");
     const automation = read("react-app/domains/automations/automation-page.tsx");
     const reviews = read("react-app/domains/reviews/review-page.tsx");
     const chat = read("react-app/shell/chat-page.tsx");
     const toonFactory = read("react-app/shell/toonFactoryPage.tsx");
-    for (const source of [automation, reviews, chat]) {
+    for (const source of [tasks, automation, reviews, chat]) {
       expect(source).toContain("bg-dls-sidebar mac:titlebar-drag");
       expect(source).toContain("<AppInsetSurface");
     }
     expect(automation).toContain('testId="automation-inset-surface"');
+    expect(tasks).toContain('testId="tasks-inset-surface"');
     expect(reviews).toContain('testId="review-inset-surface"');
     expect(chat).toContain('testId="chat-inset-surface"');
     expect(chat).toContain("<JuggleChatApp");
@@ -165,7 +167,7 @@ describe("secondary app inset shells", () => {
     const previewHost = read("react-app/shell/app-navigation-sidebar-preview.tsx");
     const wrapper = workspaceRoute.slice(workspaceRoute.indexOf("className={settingsVisible ||"), workspaceRoute.indexOf('data-testid="retained-session-surface"'));
     expect(workspaceRoute).toContain("navigationPreview.workspaceTarget");
-    expect(wrapper).toContain("settingsVisible || chatVisible || appsVisible || automationsVisible || reviewsVisible || toonFactoryVisible");
+    expect(wrapper).toContain("settingsVisible || chatVisible || appsVisible || automationsVisible || tasksVisible || reviewsVisible || toonFactoryVisible");
     expect(wrapper).toContain('"invisible absolute inset-0 z-50');
     expect(wrapper).toContain("[&_[data-session-list-preview=true]]:visible");
     expect(wrapper).toContain("[&_[data-session-list-preview=true]]:pointer-events-auto");
@@ -173,7 +175,7 @@ describe("secondary app inset shells", () => {
     expect(wrapper).toContain(': "hidden"');
     expect(wrapper).toContain(': "h-full min-h-0"');
     expect(wrapper).not.toContain("opacity-0");
-    expect(workspaceRoute).toContain("surfaceVisible={automationSessionVisible || !(settingsVisible || chatVisible || appsVisible || automationsVisible || reviewsVisible || toonFactoryVisible)}");
+    expect(workspaceRoute).toContain("surfaceVisible={automationSessionVisible || !(settingsVisible || chatVisible || appsVisible || automationsVisible || tasksVisible || reviewsVisible || toonFactoryVisible)}");
     expect(previewHost).toContain("workspaceTarget: TaskScope | null");
     expect(previewHost).toContain("onWorkspaceTriggerChange");
   });

@@ -35,6 +35,9 @@ mock.module("../src/react-app/domains/automations/automation-page", () => ({
     <button data-open-automation-session onClick={() => props.onOpenSession("automation-ws", "automation-session")}>Open automation</button>
   ),
 }));
+mock.module("../src/react-app/domains/tasks/task-page", () => ({
+  TaskPage: () => <div data-testid="mock-task-page" />,
+}));
 mock.module("../src/react-app/domains/reviews/review-page", () => ({ ReviewPage: (props: Record<string, any>) => { latestReviewProps = props; return null; } }));
 mock.module("../src/react-app/shell/workspace-shell-actions", () => ({
   WorkspaceShellActionsProvider: ({ children }: { children: React.ReactNode }) => children,
@@ -73,6 +76,7 @@ test("retains the session and draft while only the list is revealed over every d
       "/workspace/workspace-1/apps",
       "/workspace/workspace-1/chat",
       "/automations",
+      "/tasks",
       "/workspace/workspace-1/reviews",
       "/workspace/workspace%201/toon-factory",
     ]) {
