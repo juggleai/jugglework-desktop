@@ -43,9 +43,11 @@ export function artifactsWithTurnDiffs(artifacts: ArtifactItem[], message?: UIMe
   const metadata = message?.metadata as { opencode?: { fileDiffs?: unknown } } | undefined;
   const summaryDiffs = metadata?.opencode?.fileDiffs;
   const root = normalizeArtifactPath(workspaceRoot).replace(/\/$/, "");
-  const relativePath = (path: string) => {
+  const relativePath = (path: string): string | null => {
     const normalized = normalizeArtifactPath(path);
-    return root && normalized.startsWith(`${root}/`) ? normalized.slice(root.length + 1) : normalized;
+    if (root && normalized.startsWith(`${root}/`)) return normalized.slice(root.length + 1);
+    const absolute = normalized.startsWith("/") || /^[A-Za-z]:\//.test(normalized);
+    return root && absolute ? null : normalized;
   };
   type RecordedChange = { file: string; patch: string; additions: number; deletions: number; status?: string; source: "snapshot" | "edits" };
   const fallback = new Map<string, RecordedChange>();
@@ -64,6 +66,7 @@ export function artifactsWithTurnDiffs(artifacts: ArtifactItem[], message?: UIMe
       const rawPath = file.movePath || file.filePath || file.file || file.relativePath;
       if (typeof rawPath !== "string") continue;
       const path = relativePath(rawPath);
+      if (!path) continue;
       // Remove each record's file headers before concatenating hunks. Otherwise
       // later ---/+++ headers would be rendered and counted as edited lines.
       const rawPatch = typeof file.patch === "string" ? file.patch : "";
@@ -84,11 +87,12 @@ export function artifactsWithTurnDiffs(artifacts: ArtifactItem[], message?: UIMe
     const additions = changeCount(diff.additions), deletions = changeCount(diff.deletions);
     if (additions === undefined || deletions === undefined) continue;
     const path = relativePath(diff.file);
+    if (!path) continue;
     diffs.set(path, { file: path, patch: typeof diff.patch === "string" ? diff.patch : "", additions, deletions, status: typeof diff.status === "string" ? diff.status : undefined, source: "snapshot" });
   }
   const result = new Map(artifacts.map((item) => {
     const path = relativePath(item.path);
-    return [path, path === item.path ? item : { ...item, path }];
+    return [path ?? item.path, !path || path === item.path ? item : { ...item, path }];
   }));
   for (const diff of diffs.values()) {
     if (!diff || typeof diff.file !== "string" || !diff.file.trim()) continue;

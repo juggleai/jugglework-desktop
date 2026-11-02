@@ -124,6 +124,16 @@ test("long paths elide the leading directory while preserving the filename and a
   expect(html).toContain("More actions");
 });
 
+test("legacy absolute paths do not render a duplicated directory separator", () => {
+  const item = {
+    ...artifact("review_overlay.json"),
+    path: "/var/folders/tmp/opencode//review_overlay.json",
+  };
+  const html = renderToStaticMarkup(<ArtifactCard artifact={item} compact />);
+  expect(html).toContain('title="var/folders/tmp/opencode/review_overlay.json"');
+  expect(html).not.toContain("opencode//review_overlay.json");
+});
+
 test("active file tab always shows close while inactive tabs reveal it on hover", () => {
   const html = renderToStaticMarkup(<FileTabs
     tabs={[
@@ -148,20 +158,25 @@ test("active file tab always shows close while inactive tabs reveal it on hover"
   expect(html).toContain("Close 截图中都有什么字.docx");
 });
 
-test("expands and collapses remaining artifacts inline", async () => {
+test("reveals artifacts three at a time and collapses after all are visible", async () => {
   const previous = Reflect.get(globalThis, "IS_REACT_ACT_ENVIRONMENT");
   Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
   let view: ReactTestRenderer | undefined;
   try {
     await act(async () => {
-      view = create(<ArtifactCards artifacts={[1, 2, 3, 4, 5].map((i) => artifact(`report-${i}.md`, i))} />);
+      view = create(<ArtifactCards artifacts={[1, 2, 3, 4, 5, 6, 7, 8].map((i) => artifact(`report-${i}.md`, i))} />);
     });
     const rows = () => view!.root.findAllByProps({ "data-testid": "artifact-card" });
     const toggle = () => view!.root.findAll((node) => node.type === "button" && typeof node.props["aria-expanded"] === "boolean" && Boolean(node.props["aria-controls"]))[0]!;
     expect(rows()).toHaveLength(3);
+    expect(toggle().props.children).toContain("Show more (3)");
     await act(async () => toggle().props.onClick());
-    expect(rows()).toHaveLength(5);
+    expect(rows()).toHaveLength(6);
     expect(toggle().props["aria-expanded"]).toBe(true);
+    expect(toggle().props.children).toContain("Show more (2)");
+    await act(async () => toggle().props.onClick());
+    expect(rows()).toHaveLength(8);
+    expect(toggle().props.children).toContain("Collapse files");
     await act(async () => toggle().props.onClick());
     expect(rows()).toHaveLength(3);
     expect(toggle().props["aria-expanded"]).toBe(false);

@@ -91,6 +91,22 @@ describe("turn artifact delivery", () => {
       expect(artifactsWithTurnDiffs([], undefined, [{ ...message, parts: [{ ...completed, state } as UIMessage["parts"][number]] }], "/repo")).toEqual([]);
     }
   });
+  test("excludes absolute diffs outside the active workspace while retaining in-workspace files", () => {
+    const message: UIMessage = {
+      id: "turn",
+      role: "user",
+      parts: [],
+      metadata: {
+        opencode: {
+          fileDiffs: [
+            { file: "/repo/src/main.ts", additions: 2, deletions: 1 },
+            { file: "/var/folders/tmp/opencode/review_overlay.json", additions: 1, deletions: 0 },
+          ],
+        },
+      },
+    };
+    expect(artifactsWithTurnDiffs([], message, [], "/repo").map((item) => item.path)).toEqual(["src/main.ts"]);
+  });
   test("merges only this turn's text diffs and retains binary files without fabricated counts", () => {
     const existing = getArtifactsFromMessages([output("docs/report.md")], [target("docs/report.md")], options);
     const message: UIMessage = { id: "turn-1", role: "user", parts: [], metadata: { opencode: { fileDiffs: [

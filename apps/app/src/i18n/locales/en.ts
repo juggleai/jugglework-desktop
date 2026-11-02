@@ -76,7 +76,7 @@ export default {
   "artifact.undo_warning": "Revert this task and subsequent tasks, including their chat history and supported file changes? This is not a single-file undo; files without snapshot support may remain.",
   "artifact.view_all_short": "View all",
   "artifact.show_more": "Show more ({count})",
-  "artifact.show_less": "Show fewer files",
+  "artifact.show_less": "Collapse files",
   "artifact.save_before_action": "Save unsaved changes before continuing?",
   "artifact.draft_changed": "New unsaved changes remain. Save them and try again.",
   "artifact.added_to_chat": "Added to conversation",

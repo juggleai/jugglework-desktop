@@ -79,7 +79,7 @@ export default {
   "artifact.undo_warning": "将使用会话回退撤销本轮及后续任务的改动，并回退聊天记录。此操作并非仅撤销某个文件；不支持快照回退的文件可能保留。是否继续？",
   "artifact.view_all_short": "查看全部",
   "artifact.show_more": "再显示 {count} 个文件",
-  "artifact.show_less": "收起文件列表",
+  "artifact.show_less": "收起文件",
   "artifact.save_before_action": "文件有未保存内容，保存后继续？",
   "artifact.draft_changed": "文件有新的未保存修改，请保存后重试",
   "artifact.added_to_chat": "已添加到对话框",
