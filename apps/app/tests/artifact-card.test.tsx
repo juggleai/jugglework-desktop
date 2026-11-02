@@ -158,7 +158,7 @@ test("active file tab always shows close while inactive tabs reveal it on hover"
   expect(html).toContain("Close 截图中都有什么字.docx");
 });
 
-test("reveals artifacts three at a time and collapses after all are visible", async () => {
+test("reveals all remaining artifacts at once and then collapses", async () => {
   const previous = Reflect.get(globalThis, "IS_REACT_ACT_ENVIRONMENT");
   Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
   let view: ReactTestRenderer | undefined;
@@ -169,13 +169,10 @@ test("reveals artifacts three at a time and collapses after all are visible", as
     const rows = () => view!.root.findAllByProps({ "data-testid": "artifact-card" });
     const toggle = () => view!.root.findAll((node) => node.type === "button" && typeof node.props["aria-expanded"] === "boolean" && Boolean(node.props["aria-controls"]))[0]!;
     expect(rows()).toHaveLength(3);
-    expect(toggle().props.children).toContain("Show more (3)");
-    await act(async () => toggle().props.onClick());
-    expect(rows()).toHaveLength(6);
-    expect(toggle().props["aria-expanded"]).toBe(true);
-    expect(toggle().props.children).toContain("Show more (2)");
+    expect(toggle().props.children).toContain("Show more (5)");
     await act(async () => toggle().props.onClick());
     expect(rows()).toHaveLength(8);
+    expect(toggle().props["aria-expanded"]).toBe(true);
     expect(toggle().props.children).toContain("Collapse files");
     await act(async () => toggle().props.onClick());
     expect(rows()).toHaveLength(3);

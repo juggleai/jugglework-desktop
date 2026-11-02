@@ -236,7 +236,7 @@ export function ArtifactCard({ artifact, compact = false, onViewChange, onOpenIn
   );
 }
 
-/** 当前轮次统一产物卡片：前三项预览，其余每次展开三项，差异在右侧查看。 */
+/** 当前轮次统一产物卡片：前三项预览，其余一次展开，差异在右侧查看。 */
 export function ChangeCounts({ change }: { change: { additions: number; deletions: number; source?: "snapshot" | "edits" } }) {
   return <span className="inline-flex shrink-0 gap-1 text-sm tabular-nums" data-testid="artifact-change-counts" title={t(change.source === "edits" ? "artifact.edit_counts" : "artifact.text_changes_only")}>
     <span className="text-green-11">+{change.additions}</span>
@@ -256,7 +256,7 @@ export function ArtifactCards({ artifacts, turnId, onUndo }: { artifacts: Artifa
   const totals = changes.reduce((sum, change) => ({ additions: sum.additions + change.additions, deletions: sum.deletions + change.deletions }), { additions: 0, deletions: 0 });
   if (!artifacts.length) return null;
   const allVisible = visibleCount >= artifacts.length;
-  const nextCount = Math.min(3, Math.max(0, artifacts.length - visibleCount));
+  const remainingCount = Math.max(0, artifacts.length - visibleCount);
   return (
     <div
       className="mx-auto mt-1 mb-1 w-full max-w-5xl px-3 md:px-8"
@@ -296,9 +296,9 @@ export function ArtifactCards({ artifacts, turnId, onUndo }: { artifacts: Artifa
               className="h-9 w-full justify-start gap-2 rounded-none px-3 text-sm font-medium"
               aria-expanded={visibleCount > 3}
               aria-controls={listId}
-              onClick={() => setVisibleCount((count) => allVisible ? 3 : Math.min(count + 3, artifacts.length))}
+              onClick={() => setVisibleCount(allVisible ? 3 : artifacts.length)}
             >
-              {allVisible ? t("artifact.show_less") : t("artifact.show_more", { count: nextCount })}
+              {allVisible ? t("artifact.show_less") : t("artifact.show_more", { count: remainingCount })}
               <ChevronDown className={allVisible ? "size-4 rotate-180" : "size-4"} />
             </Button>
           ) : null}
