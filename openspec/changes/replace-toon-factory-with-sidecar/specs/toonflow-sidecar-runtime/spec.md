@@ -102,18 +102,11 @@ A clean checkout SHALL build the pinned Toonflow module without pre-existing nes
 ### Requirement: Restricted media operations use independently bundled source-built tools
 Development and packaged restricted media operations MUST resolve FFmpeg and FFprobe only from host-owned `resources/mediaTools`, separate from the trusted Bun inventory. Missing or invalid resources SHALL fail with rebuild/reinstall guidance and SHALL NOT fall back to PATH, Homebrew, project executables or model-selected commands.
 
-Windows x64/ARM64 SHALL build the same pinned FFmpeg/x264 sources into target-specific
-`.exe` files with static dependencies and Windows system-only PE imports. Packaging
-SHALL validate unchanged source/license/configuration bytes and seal inventory after
-media signing. Packaged execution SHALL require valid Authenticode matching the
-application signer. Cross-built ARM64 static checks SHALL NOT be reported as native
-execution. Bun upstream bytes and trust hashes SHALL remain unchanged.
-
 #### Scenario: Native macOS tools are built
 - **WHEN** a native macOS ARM64 or x64 build stages the media tools
 - **THEN** it verifies fixed official FFmpeg/x264 source hashes before execution, enables GPL and disables nonfree/network/autodetection, links x264 statically and rejects non-Apple dynamic dependencies
 - **AND** it packages exact source archives, source provenance, build/configuration scripts, license notices and compiler/SDK records with a separate inventory
-- **AND** a foreign build architecture or an unsupported Windows/Linux target fails closed without emulation or system-tool fallback
+- **AND** a foreign macOS build architecture or unsupported Linux target fails closed without emulation or system-tool fallback
 
 #### Scenario: Media tools are signed for release
 - **WHEN** the macOS signing hook processes the media resources
@@ -124,3 +117,11 @@ execution. Bun upstream bytes and trust hashes SHALL remain unchanged.
 #### Scenario: Source or media bytes are corrupt
 - **WHEN** downloaded/cached source bytes or staged media resources differ from their expected hashes
 - **THEN** the build or runtime rejects them without executing an alternate binary or rebaselining trust from the corrupt bytes
+
+### Requirement: Windows media tools retain target and application trust
+Windows x64/ARM64 SHALL build pinned FFmpeg/x264 into target-specific executables with static dependencies and system-only PE imports. Packaged execution SHALL require valid Authenticode matching the application signer. Bun upstream bytes and trust hashes SHALL remain unchanged.
+
+#### Scenario: Windows tools are packaged
+- **WHEN** a Windows target stages and signs its media executables
+- **THEN** packaging validates unchanged source/license/configuration bytes and seals inventory after media signing
+- **AND** cross-built ARM64 static checks are not reported as native execution

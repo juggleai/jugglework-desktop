@@ -62,7 +62,8 @@ export function verifyMediaTools(root, target = process, { phase = "any", team }
     for (const file of ["sources/build-media-tools.sh", "sources/media-tools-pkg-config.sh", "sources/mediaToolsSources.json", "NOTICE.txt", "licenses/x264-COPYING", "licenses/COPYING.GPLv2", "licenses/COPYING.LGPLv2.1", "licenses/LICENSE.md", "build-info/compiler.txt", "build-info/sdk.txt", "build-info/ffmpeg-config.mak", "build-info/x264-config.mak"]) {
       if (!manifest.files.some(entry => entry.path === file && entry.bytes > 0)) throw new Error(`Required source/license/build record missing: ${file}`);
     }
-    const tools = {};
+    const suffix = target.platform === "win32" ? ".exe" : "";
+    const tools = { ffmpeg: path.join(root, `ffmpeg${suffix}`), ffprobe: path.join(root, `ffprobe${suffix}`) };
     for (const name of ["ffmpeg", "ffprobe"]) {
       const executable = path.join(root, name + (target.platform === "win32" ? ".exe" : ""));
       const header = inspectToonFactoryExecutable(executable);

@@ -73,7 +73,7 @@ async function launch() {
   const require = createRequire(import.meta.url);
   const { extractFile } = require("@electron/asar");
   // Explicit closure only. No product main, updater, ShipIt, profile or defaults modules.
-  const modules = ["toonFactoryRuntime.mjs", "toonFactoryBundle.mjs", "toonFactoryVideoEdit.mjs", "mediaTools.mjs", "mediaToolsSources.json"];
+  const modules = ["toonFactoryRuntime.mjs", "toonFactoryBundle.mjs", "toonFactoryVideoEdit.mjs", "mediaTools.mjs", "mediaToolsSources.json", "windowsMediaTrust.mjs"];
   await mkdir(path.join(root, "modules"));
   const hashes = {};
   for (const name of modules) {

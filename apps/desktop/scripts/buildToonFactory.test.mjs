@@ -35,6 +35,11 @@ it("passes media codesign requirements as inline expressions rather than filenam
   }
 });
 
+it("extracts the shared Windows trust dependency into the independent packaged host", () => {
+  const source = readFileSync(new URL("./verify-toon-media-packaged.mjs", import.meta.url), "utf8");
+  assert.match(source, /const modules = \[[^\n]+"windowsMediaTrust\.mjs"/);
+});
+
 it("rejects unsupported native media targets and missing bundles without system fallback", async () => {
   for (const arch of ["x64", "arm64"]) await assert.rejects(buildMediaTools({ target: { platform: "linux", arch } }), /Unsupported native target/);
   assert.throws(() => verifyMediaTools("/missing/mediaTools", { platform: "darwin", arch: "arm64" }), /重新构建/);
