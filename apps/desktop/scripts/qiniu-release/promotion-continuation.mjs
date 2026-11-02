@@ -34,21 +34,78 @@ function continuationPolicy(version) {
 }
 const PACKAGES = ["apps/app/package.json", "apps/desktop/package.json", "apps/server/package.json"];
 const TYPES = ["zip", "dmg", "zip.blockmap", "dmg.blockmap"];
+const failureDetails = new WeakMap();
+const ERROR_NAMES = ["Error", "TypeError", "SyntaxError", "RangeError", "AbortError", "TimeoutError", "AggregateError"];
+const ERROR_CODES = ["ENOENT", "EEXIST", "EACCES", "EPERM", "ENOSPC", "EIO", "ETIMEDOUT", "ECONNRESET", "ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "ENOBUFS", "ABORT_ERR", "ERR_BUFFER_OUT_OF_BOUNDS"];
+const PACKAGE_STAGES = ["prepare", "extract", "mount", "inventory", "metadata", "signature", "architecture", "toon", "updater", "apple-trust", "runtime-version", "detach", "cleanup"];
+const STAGES = new Set(["candidate", "manifest.validate", "packages.prepare", "packages.verify", "dmg.outer-trust", "cdn.fresh", "promotion", "evidence.persist",
+  ...[...TYPES, "manifest"].map((type) => `download.${type}`),
+  ...["zip", "dmg"].flatMap((type) => PACKAGE_STAGES.map((stage) => `${type}.${stage}`))]);
 
-function command(binary, args, cwd) {
-  const result = spawnSync(binary, args, { cwd, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
+// Closed vocabulary only: never copy message, stack, cause, stdout/stderr, argv or paths.
+export function safeFailure(error, stage) {
+  const known = error && typeof error === "object" ? failureDetails.get(error) : undefined;
+  const failure = { stage: STAGES.has(stage) ? stage : "candidate", category: {
+    download: "download", manifest: "manifest", packages: "package", zip: "package", dmg: "package",
+    cdn: "cdn", promotion: "promotion", evidence: "persistence", candidate: "validation",
+  }[(STAGES.has(stage) ? stage : "candidate").split(".")[0]] };
+  if (ERROR_NAMES.includes(error?.name)) failure.errorName = error.name;
+  if (ERROR_CODES.includes(error?.code)) failure.errorCode = error.code;
+  if (Number.isInteger(error?.status) && error.status >= 100 && error.status <= 599) failure.status = error.status;
+  if (known) Object.assign(failure, known);
+  return failure;
+}
+
+function safeError(failure) {
+  const error = new Error(`Continuation gate failed: ${failure.stage}`);
+  failureDetails.set(error, failure);
+  return error;
+}
+
+async function packageGate(stage, operation) {
+  try { return await operation(); }
+  catch (error) {
+    // Keep existing helper callers compatible; the continuation boundary only emits safeFailure.
+    if (error && typeof error === "object" && !failureDetails.has(error)) failureDetails.set(error, safeFailure(error, stage));
+    throw error;
+  }
+}
+
+export function command(binary, args, cwd, execute = spawnSync) {
+  const result = execute(binary, args, { cwd, encoding: "utf8", maxBuffer: 16 * 1024 * 1024, timeout: 600_000, killSignal: "SIGKILL" });
   // Never surface subprocess output: a repository or runner error may contain private data.
-  if (result.error || result.status !== 0) throw new Error(`${binary} ${args[0]} failed`);
+  if (result.error || result.status !== 0) {
+    const error = new Error("Subprocess failed");
+    const details = {};
+    if (Number.isInteger(result.status) && result.status >= 0 && result.status <= 255) details.exitCode = result.status;
+    if (ERROR_NAMES.includes(result.error?.name)) details.errorName = result.error.name;
+    if (ERROR_CODES.includes(result.error?.code)) details.errorCode = result.error.code;
+    const safeArgs = {
+      git: { show: ["show"], "rev-parse": ["rev-parse"], "merge-base": ["merge-base", "--is-ancestor"] },
+      ditto: { "-x": ["-x", "-k"] },
+      hdiutil: { attach: ["attach", "-readonly", "-nobrowse", "-mountpoint"], detach: ["detach"] },
+    };
+    if (Object.hasOwn(safeArgs, binary) && Object.hasOwn(safeArgs[binary], args[0])) {
+      details.binary = binary;
+      details.args = safeArgs[binary][args[0]];
+    }
+    failureDetails.set(error, details);
+    throw error;
+  }
   return result.stdout;
 }
 
 export function assertContinuationInputs(environment) {
   const policy = continuationPolicy(environment.VERSION);
+  const verificationOnly = environment.VERIFICATION_ONLY ?? "false";
+  if (!["true", "false"].includes(verificationOnly) || environment.PROMOTE !== (verificationOnly === "true" ? "false" : "true")) {
+    throw new Error("verification_only and promote must be exact opposite booleans");
+  }
   if (environment.GITHUB_ACTIONS !== "true" || environment.GITHUB_EVENT_NAME !== "workflow_dispatch"
     || environment.GITHUB_REF !== "refs/heads/dev" || !/^[a-f0-9]{40}$/.test(environment.GITHUB_SHA ?? "")
     || environment.RELEASE_MODE !== "promotion-only"
-    || environment.CHANNEL !== "stable" || environment.RELEASE_PLATFORM !== "mac" || environment.PROMOTE !== "true") {
-    throw new Error("Continuation requires workflow_dispatch on dev for promotion-only stable/mac/arm64 with promote=true");
+    || environment.CHANNEL !== "stable" || environment.RELEASE_PLATFORM !== "mac") {
+    throw new Error("Continuation requires workflow_dispatch on dev for promotion-only stable/mac/arm64");
   }
   if (environment.CANDIDATE_RECORD !== policy.candidateRecord) throw new Error("Candidate record path is fixed for the exact version");
 }
@@ -140,7 +197,9 @@ export async function downloadCandidateObject(object, { fetchImpl = globalThis.f
   const response = await fetchImpl(object.url, { redirect: "error", signal: AbortSignal.timeout(600_000) });
   if (response.status !== 200 || response.headers.get("content-length") !== String(object.size)
     || response.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase() !== object.mime || !response.body) {
-    throw new Error(`Candidate download metadata mismatch: ${object.key}`);
+    const error = new Error("Candidate download metadata mismatch");
+    if (Number.isInteger(response.status) && response.status >= 100 && response.status <= 599) failureDetails.set(error, { status: response.status });
+    throw error;
   }
   const file = await open(object.path, "wx", 0o600);
   try {
@@ -160,7 +219,7 @@ export async function downloadCandidateObject(object, { fetchImpl = globalThis.f
   }
 }
 
-export async function verifyRestoredPackages(plan, { parent, platform = process.platform, run = command, verifier, extractAsar } = {}) {
+export async function verifyRestoredPackages(plan, { parent, platform = process.platform, run = command, verifier, extractAsar, gate = packageGate } = {}) {
   continuationPolicy(plan.version);
   if (platform !== "darwin") throw new Error("Continuation package verification requires macOS");
   const checks = verifier ?? await import("../verify-packaged-macos.mjs");
@@ -188,71 +247,116 @@ export async function verifyRestoredPackages(plan, { parent, platform = process.
   const results = {};
   for (const type of ["zip", "dmg"]) {
     const object = plan.objects.find((item) => item.type === type);
-    const directory = await mkdtemp(path.join(parent, `${type}-`));
+    const directory = await gate(`${type}.prepare`, () => mkdtemp(path.join(parent, `${type}-`)));
     let mounted = false;
     try {
-      if (type === "zip") run("ditto", ["-x", "-k", object.path, directory]);
+      if (type === "zip") await gate("zip.extract", () => run("ditto", ["-x", "-k", object.path, directory]));
       else {
-        run("hdiutil", ["attach", "-readonly", "-nobrowse", "-mountpoint", directory, object.path]);
-        mounted = true;
+        await gate("dmg.mount", () => {
+          run("hdiutil", ["attach", "-readonly", "-nobrowse", "-mountpoint", directory, object.path]);
+          mounted = true;
+        });
       }
-      const apps = (await readdir(directory, { withFileTypes: true })).filter((item) => item.isDirectory() && item.name.endsWith(".app"));
-      if (apps.length !== 1) throw new Error("Container must contain exactly one top-level App");
-      const app = path.join(directory, apps[0].name);
-      const metadata = checks.verifyBundleMetadata(app, expected.expectedVersion);
-      const signature = checks.verifyCodeSignature(app);
-      const architecture = checks.verifyMachOArchitectures(app, expected.expectedArch);
-      const toonFactory = verifyToonFactory(app, "arm64");
-      if (plan.version === "1.2.32" && (toonFactory?.mediaTools?.manifest?.phase !== "signed"
-        || toonFactory.mediaTools.manifest.signingTeam !== "H7PDHSK3C7")) throw new Error("Current candidate requires verified signed media tools");
-      const updater = checks.verifyPackagedUpdaterConfiguration(app);
-      const trust = checks.verifyAppleTrust(app);
-      if (trust.notarization.status !== "accepted" || trust.staple.status !== "validated" || trust.gatekeeper.status !== "accepted") {
-        throw new Error("Restored App notarization, staple, or Gatekeeper verification failed");
-      }
-      const asar = path.join(app, "Contents", "Resources", "app.asar");
-      for (const file of ["package.json", "server/package.json"]) {
-        if (JSON.parse(extractFile(asar, file).toString("utf8")).version !== plan.version) throw new Error("Restored runtime package version mismatch");
-      }
+      const app = await gate(`${type}.inventory`, async () => {
+        const apps = (await readdir(directory, { withFileTypes: true })).filter((item) => item.isDirectory() && item.name.endsWith(".app"));
+        if (apps.length !== 1) throw new Error("Container must contain exactly one top-level App");
+        return path.join(directory, apps[0].name);
+      });
+      const metadata = await gate(`${type}.metadata`, () => checks.verifyBundleMetadata(app, expected.expectedVersion));
+      const signature = await gate(`${type}.signature`, () => checks.verifyCodeSignature(app));
+      const architecture = await gate(`${type}.architecture`, () => checks.verifyMachOArchitectures(app, expected.expectedArch));
+      const toonFactory = await gate(`${type}.toon`, () => {
+        const bundle = verifyToonFactory(app, "arm64");
+        if (plan.version === "1.2.32" && (bundle?.mediaTools?.manifest?.phase !== "signed"
+          || bundle.mediaTools.manifest.signingTeam !== "H7PDHSK3C7")) throw new Error("Current candidate requires verified signed media tools");
+        return bundle;
+      });
+      const updater = await gate(`${type}.updater`, () => checks.verifyPackagedUpdaterConfiguration(app));
+      const trust = await gate(`${type}.apple-trust`, () => {
+        const result = checks.verifyAppleTrust(app);
+        if (result.notarization.status !== "accepted" || result.staple.status !== "validated" || result.gatekeeper.status !== "accepted") {
+          throw new Error("Restored App notarization, staple, or Gatekeeper verification failed");
+        }
+        return result;
+      });
+      await gate(`${type}.runtime-version`, () => {
+        const asar = path.join(app, "Contents", "Resources", "app.asar");
+        for (const file of ["package.json", "server/package.json"]) {
+          if (JSON.parse(extractFile(asar, file).toString("utf8")).version !== plan.version) throw new Error("Restored runtime package version mismatch");
+        }
+      });
       results[type] = { metadata, signature, architecture, toonFactory, updater, trust };
     } finally {
       // A failed detach must fail closed; never recursively delete a mounted volume.
-      if (mounted) run("hdiutil", ["detach", directory]);
-      await rm(directory, { recursive: true, force: true });
+      if (mounted) await gate("dmg.detach", () => run("hdiutil", ["detach", directory]));
+      await gate(`${type}.cleanup`, () => rm(directory, { recursive: true, force: true }));
     }
   }
-  const dmg = checks.verifyDmgTrust(plan.objects.find((item) => item.type === "dmg").path);
-  if (dmg.signature.status !== "accepted" || dmg.signature.teamIdentifier !== "H7PDHSK3C7"
-    || dmg.notarization.status !== "accepted" || dmg.staple.status !== "validated"
-    || dmg.gatekeeper.status !== "accepted" || dmg.image.status !== "verified") throw new Error("Restored outer DMG trust verification failed");
+  const dmg = await gate("dmg.outer-trust", () => {
+    const result = checks.verifyDmgTrust(plan.objects.find((item) => item.type === "dmg").path);
+    if (result.signature.status !== "accepted" || result.signature.teamIdentifier !== "H7PDHSK3C7"
+      || result.notarization.status !== "accepted" || result.staple.status !== "validated"
+      || result.gatekeeper.status !== "accepted" || result.image.status !== "verified") throw new Error("Restored outer DMG trust verification failed");
+    return result;
+  });
   return { producer: "qiniu-promotion-continuation", status: "verified", ...results, dmgTrust: dmg };
 }
 
 export async function continuePromotion({ record, recordSha256, toolingCommit, directory, actor, qiniu,
-  fetchImpl, verifyPackages = verifyRestoredPackages, now = () => new Date(), persist = replaceEvidence }) {
+  fetchImpl, verifyPackages = verifyRestoredPackages, verificationOnly = false, now = () => new Date(), persist = replaceEvidence }) {
+  if (typeof verificationOnly !== "boolean") throw new Error("verificationOnly must be boolean");
   const plan = candidatePlan(record, directory);
   const { candidateRecord, exceptions } = continuationPolicy(plan.version);
   const evidencePath = path.join(directory, "release-evidence.json");
   let evidence = structuredClone(record.evidence);
   evidence = withEvidenceResults(evidence, { continuation: {
     candidateRecord, recordSha256, sourceCommit: record.sourceCommit, toolingCommit, receipts: record.receipts,
-    expectedPreviousChannelDigest: record.expectedPreviousChannelDigest, actor, status: "started",
+    expectedPreviousChannelDigest: record.expectedPreviousChannelDigest, actor, verificationOnly, status: "started", checkpoints: [],
   } }, now().toISOString());
   await writeEvidence(evidencePath, evidence);
+  let firstFailure;
+  const gate = async (stage, operation) => {
+    if (!STAGES.has(stage)) throw safeError(safeFailure(null, "packages.verify"));
+    const checkpoint = async (phase) => {
+      evidence = withEvidenceResults(evidence, { continuation: { ...evidence.continuation,
+        checkpoints: [...evidence.continuation.checkpoints, { stage, phase, at: now().toISOString() }].slice(-128),
+      } }, now().toISOString());
+      try { await persist(evidencePath, evidence); }
+      catch (error) { throw safeError(safeFailure(error, "evidence.persist")); }
+    };
+    try {
+      await checkpoint("before");
+      const result = await operation();
+      await checkpoint("after");
+      return result;
+    } catch (error) {
+      firstFailure ??= safeFailure(error, stage);
+      throw safeError(firstFailure);
+    }
+  };
   try {
-    for (const object of [...plan.objects, plan.manifest]) await downloadCandidateObject(object, { fetchImpl });
-    const bytes = await readFile(plan.manifest.path);
-    validateMacManifest({ ...plan, artifacts: plan.objects, manifest: parseYaml(bytes.toString("utf8")) });
-    plan.manifest.content = bytes;
-    const verification = await verifyPackages(plan, { parent: directory });
-    if (verification?.status !== "verified") throw new Error("Continuation package verification did not pass");
-    const cdn = await verifyCdn(plan, { qiniu, fetchImpl });
+    for (const object of [...plan.objects, plan.manifest]) {
+      await gate(`download.${object.type}`, () => downloadCandidateObject(object, { fetchImpl }));
+    }
+    await gate("manifest.validate", async () => {
+      const bytes = await readFile(plan.manifest.path);
+      validateMacManifest({ ...plan, artifacts: plan.objects, manifest: parseYaml(bytes.toString("utf8")) });
+      plan.manifest.content = bytes;
+    });
+    const verification = await gate("packages.verify", async () => {
+      const result = await verifyPackages(plan, { parent: directory, gate });
+      if (result?.status !== "verified") throw new Error("Continuation package verification did not pass");
+      return result;
+    });
+    const cdn = await gate("cdn.fresh", () => verifyCdn(plan, { qiniu, fetchImpl }));
     evidence = withEvidenceResults(evidence, {
       continuation: { ...evidence.continuation, verification, status: "verified" },
       workflow: { cdn: { status: "verified", ...cdn, verifiedAt: now().toISOString() } },
     }, now().toISOString());
-    await persist(evidencePath, evidence);
-    return await promoteChannel(plan, evidence, {
+    await gate("evidence.persist", () => persist(evidencePath, evidence));
+    // Read-only diagnostics ends here, before even resolving refresh or touching a lock.
+    if (verificationOnly) return { status: "verified", verificationOnly: true };
+    return await gate("promotion", () => promoteChannel(plan, evidence, {
       qiniu, refresh: qiniu.refresh.bind(qiniu), fetchImpl, actor, now, ...exceptions,
       expectedPreviousChannelDigest: record.expectedPreviousChannelDigest,
       onPromotionVerified: async (result) => {
@@ -264,33 +368,41 @@ export async function continuePromotion({ record, recordSha256, toolingCommit, d
         await persist(evidencePath, evidence);
         assertRecordedPromotion(plan, JSON.parse(await readFile(evidencePath, "utf8")));
       },
-    });
+    }));
   } catch (error) {
+    const failure = firstFailure ?? safeFailure(error, "evidence.persist");
     evidence = withEvidenceResults(evidence, {
-      continuation: { ...evidence.continuation, status: "failed" },
+      continuation: { ...evidence.continuation, status: "failed", failure },
       ...(evidence.workflow.promotion ? { workflow: { promotion: { ...evidence.workflow.promotion, status: "failed" } } } : {}),
     }, now().toISOString());
-    await persist(evidencePath, evidence);
-    throw error;
+    try { await persist(evidencePath, evidence); }
+    catch (persistError) { throw safeError(safeFailure(persistError, "evidence.persist")); }
+    throw safeError(failure);
   }
 }
 
-async function main() {
-  if (process.argv.slice(2).some((arg) => arg !== "--validate-only") || process.argv.length > 3) throw new Error("Only --validate-only is supported");
-  const candidate = await loadCommittedCandidate({ root: process.cwd() });
-  if (process.argv[2] === "--validate-only") return;
-  if (!process.env.RUNNER_TEMP) throw new Error("RUNNER_TEMP is required");
+export async function main({ argv = process.argv.slice(2), environment = process.env, root = process.cwd(),
+  loadCandidate = loadCommittedCandidate, adapter = createQshellAdapter, continueRelease = continuePromotion } = {}) {
+  if (argv.some((arg) => !["--validate-only", "--verify-only"].includes(arg)) || argv.length > 1) throw new Error("Only --validate-only or --verify-only is supported");
+  const verificationOnly = argv[0] === "--verify-only";
+  // Standalone --verify-only is safe by construction; explicit workflow flags must agree.
+  const context = { ...environment, VERIFICATION_ONLY: environment.VERIFICATION_ONLY ?? (verificationOnly ? "true" : "false") };
+  if (argv[0] !== "--validate-only" && (context.VERIFICATION_ONLY === "true") !== verificationOnly) throw new Error("CLI and verification_only input disagree");
+  assertContinuationInputs(context);
+  const candidate = await loadCandidate({ root, environment: context });
+  if (argv[0] === "--validate-only") return;
+  if (!environment.RUNNER_TEMP) throw new Error("RUNNER_TEMP is required");
   // The workflow creates this private directory before invoking the continuation.
-  const directory = path.join(process.env.RUNNER_TEMP, "qiniu-promotion-continuation");
-  await continuePromotion({ ...candidate, directory,
-    actor: `github-${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT}`,
-    qiniu: createQshellAdapter({ bucket: DEFAULT_BUCKET }),
+  const directory = path.join(environment.RUNNER_TEMP, "qiniu-promotion-continuation");
+  await continueRelease({ ...candidate, directory, verificationOnly,
+    actor: `github-${environment.GITHUB_RUN_ID}-${environment.GITHUB_RUN_ATTEMPT}`,
+    qiniu: adapter({ bucket: DEFAULT_BUCKET }),
   });
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main().catch(() => {
-    process.stderr.write("Promotion continuation failed; inspect retained non-secret evidence and lock state before retrying.\n");
+  main().catch((error) => {
+    process.stderr.write(`${JSON.stringify({ continuation: "failed", failure: safeFailure(error, "candidate") })}\n`);
     process.exitCode = 1;
   });
 }

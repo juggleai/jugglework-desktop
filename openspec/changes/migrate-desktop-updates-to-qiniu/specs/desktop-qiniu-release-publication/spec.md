@@ -299,6 +299,22 @@ A rollout-eligible Windows version SHALL publish Authenticode-signed x64 and arm
 - **THEN** the shared Windows manifest is not published
 - **AND** the stable Windows channel is not promoted
 
+### Requirement: Promotion continuation provides read-only staged diagnostics
+The committed macOS continuation SHALL support an independent `--verify-only` CLI path and a default-false `verification_only` boolean in the existing `promotion-only` workflow. Verification-only SHALL require `promote=false`, retain exact candidate/version/source ancestry/committed-content checks and all package trust and immutable/CDN gates, and return before calling promotion. It MUST NOT inspect, acquire, recover or delete a promotion lock, write remote objects or metadata, or refresh CDN. Normal continuation SHALL retain its existing exact-version exceptions and promotion gates.
+
+#### Scenario: Hosted verification-only dispatch
+- **WHEN** a trusted dev dispatch supplies promotion-only, verification_only=true and promote=false for an approved exact candidate
+- **THEN** all five immutable objects are downloaded and verified, the manifest is validated, ZIP and DMG package gates run, and fresh Qiniu metadata/public CDN checks pass before verification succeeds
+- **AND** a held promotion lock or changed mutable predecessor is neither accessed nor changed
+- **AND** build jobs cannot run with verification_only=true, and mismatched CLI/input boolean pairs fail closed
+
+#### Scenario: A continuation verification gate fails
+- **WHEN** a download, manifest, package helper or fresh CDN gate fails
+- **THEN** local evidence retains bounded before/after checkpoints identifying each download and each container's metadata, signature, architecture, Toon/media, updater, Apple trust and runtime-version checks plus outer DMG trust
+- **AND** it persists failed status and the first exact safe stage/category even if subsequent container cleanup runs
+- **AND** failure diagnostics contain only fixed allowlisted stages/categories, error names/codes, bounded numeric HTTP status or subprocess exit code and fixed binary/flag descriptors when available
+- **AND** no raw exception message, cause, stack, output, path, credentials or dynamic argv is emitted or stored as failure diagnostics; subprocess capture and execution are bounded
+
 ### Requirement: Windows blockmaps and manifests describe post-signing bytes
 The publication workflow MUST Authenticode-sign each Windows EXE before generating the publishable blockmap and SHALL generate the shared manifest only after both signatures and post-signing blockmaps pass verification. Pre-signing blockmaps, checksums, sizes, and manifests MUST NOT be published.
 

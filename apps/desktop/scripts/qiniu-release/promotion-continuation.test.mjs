@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { CANDIDATE_RECORDS, EXCEPTIONS, assertContinuationInputs, candidatePlan, continuePromotion, downloadCandidateObject, loadCommittedCandidate, verifyRestoredPackages } from "./promotion-continuation.mjs";
+import { CANDIDATE_RECORDS, EXCEPTIONS, assertContinuationInputs, candidatePlan, command, continuePromotion, downloadCandidateObject, loadCommittedCandidate, main, safeFailure, verifyRestoredPackages } from "./promotion-continuation.mjs";
 import { promotionLockKey } from "./constants.mjs";
 import { assertPromotionEvidence } from "./evidence.mjs";
 import { normalizeMacManifest } from "./manifest.mjs";
@@ -315,5 +315,147 @@ for (const failure of ["badCdn", "priorMismatch", "heldLock", "packages"]) {
     assert.equal(harness.calls.some(([name]) => name === "upload"), false);
     const evidence = JSON.parse(await readFile(path.join(directory, "release-evidence.json"), "utf8"));
     assert.equal(evidence.continuation.status, "failed");
+    assert.equal(evidence.continuation.failure.stage, { badCdn: "cdn.fresh", packages: "packages.verify", priorMismatch: "promotion", heldLock: "promotion" }[failure]);
+  });
+}
+
+test("verify-only requires exact boolean pairing and CLI agreement, retaining legacy defaults", async () => {
+  const env = { ...environment(), VERIFICATION_ONLY: "true", PROMOTE: "false", RUNNER_TEMP: "/private/unused" };
+  assert.doesNotThrow(() => assertContinuationInputs(env));
+  for (const value of ["TRUE", "", "1", true]) assert.throws(() => assertContinuationInputs({ ...env, VERIFICATION_ONLY: value }));
+  for (const patch of [{ PROMOTE: "true" }, { VERIFICATION_ONLY: "false" }, { RELEASE_MODE: "build" }]) {
+    assert.throws(() => assertContinuationInputs({ ...env, ...patch }));
+  }
+  const calls = [];
+  const dependencies = { loadCandidate: async ({ environment: context }) => { calls.push(["load", context]); return {}; },
+    adapter: () => { calls.push(["adapter"]); return {}; }, continueRelease: async (args) => { calls.push(["continue", args.verificationOnly]); } };
+  await main({ argv: ["--verify-only"], environment: env, ...dependencies });
+  assert.deepEqual(calls.at(-1), ["continue", true]);
+  await main({ argv: ["--verify-only"], environment: { ...environment(), PROMOTE: "false", RUNNER_TEMP: "/private/unused" }, ...dependencies });
+  assert.deepEqual(calls.at(-1), ["continue", true]);
+  calls.length = 0;
+  await main({ argv: ["--validate-only"], environment: env, ...dependencies });
+  assert.deepEqual(calls.map(([name]) => name), ["load"]);
+  calls.length = 0;
+  for (const argv of [[], ["--validate-only", "--verify-only"], ["--verify-only", "--verify-only"], ["--unknown"]]) {
+    await assert.rejects(main({ argv, environment: env, ...dependencies }));
+  }
+  await assert.rejects(main({ argv: ["--verify-only"], environment: environment(), ...dependencies }));
+  assert.deepEqual(calls, []);
+  await main({ argv: [], environment: { ...environment(), RUNNER_TEMP: "/private/unused" }, ...dependencies });
+  assert.deepEqual(calls.at(-1), ["continue", false]);
+});
+
+test("bounded subprocess diagnostics include only fixed binary/flags, exit and allowlisted codes", () => {
+  const secret = "/private/runner/secret-token?credential=do-not-record";
+  const execute = (binary, args, options) => {
+    assert.equal(options.timeout, 600_000);
+    assert.equal(options.maxBuffer, 16 * 1024 * 1024);
+    return { status: 69, error: Object.assign(new Error(secret), { code: "EACCES", path: secret }), stdout: secret, stderr: secret };
+  };
+  let failure;
+  try { command("hdiutil", ["attach", "-readonly", "-nobrowse", "-mountpoint", secret, secret], secret, execute); }
+  catch (error) { failure = safeFailure(error, "dmg.mount"); assert.ok(!error.message.includes(secret)); }
+  assert.deepEqual(failure, { stage: "dmg.mount", category: "package", errorName: "Error", errorCode: "EACCES", exitCode: 69,
+    binary: "hdiutil", args: ["attach", "-readonly", "-nobrowse", "-mountpoint"] });
+  const hostile = Object.assign(new Error(secret), { name: secret, code: secret, status: secret, cause: secret });
+  assert.deepEqual(safeFailure(hostile, secret), { stage: "candidate", category: "validation" });
+  assert.equal(safeFailure({ status: 503 }, "download.zip").status, 503);
+  assert.equal(safeFailure({ status: 999 }, "download.zip").status, undefined);
+  try { command(secret, [secret], secret, execute); }
+  catch (error) { assert.ok(!JSON.stringify(safeFailure(error, "zip.extract")).includes(secret)); }
+});
+
+test("verify-only completes all five downloads, manifest, both package gates and fresh CDN without lock/write/refresh", async (t) => {
+  const directory = await temporary(t);
+  const fixture = downloadableCandidate();
+  const harness = promotionHarness(fixture, { heldLock: true, priorMismatch: true });
+  const allowed = new Set([...harness.plan.objects, harness.plan.manifest].map((object) => object.key));
+  const qiniu = { async stat(key) { assert.ok(allowed.has(key)); return harness.qiniu.stat(key); } };
+  // No refresh/read/write/delete/recover functions exist; a lock is deliberately held.
+  const result = await continuePromotion({ record: fixture.record, recordSha256: "f".repeat(64), toolingCommit: sha,
+    directory, actor: "test-only", verificationOnly: true, qiniu, fetchImpl: harness.fetchImpl,
+    verifyPackages: (plan, options) => verifyRestoredPackages(plan, { ...options, ...packageChecks() }) });
+  assert.deepEqual(result, { status: "verified", verificationOnly: true });
+  assert.equal(harness.state.has(harness.lock), true);
+  assert.deepEqual(harness.state.get(harness.plan.channelManifest.key).content, Buffer.from("different predecessor"));
+  assert.ok(harness.calls.every(([name, key]) => name === "fetch" || (name === "stat" && allowed.has(key))));
+  const evidence = JSON.parse(await readFile(path.join(directory, "release-evidence.json"), "utf8"));
+  assert.equal(evidence.continuation.status, "verified");
+  assert.equal(evidence.workflow.promotion, null);
+  const checkpoints = evidence.continuation.checkpoints;
+  for (const stage of ["download.zip", "download.dmg", "download.zip.blockmap", "download.dmg.blockmap", "download.manifest", "manifest.validate", "cdn.fresh", "dmg.outer-trust",
+    ...["zip", "dmg"].flatMap((type) => ["metadata", "signature", "architecture", "toon", "updater", "apple-trust", "runtime-version"].map((gate) => `${type}.${gate}`))]) {
+    assert.deepEqual(checkpoints.filter((item) => item.stage === stage).map((item) => item.phase), ["before", "after"], stage);
+  }
+  assert.ok(!checkpoints.some(({ stage }) => stage === "promotion"));
+});
+
+const packageFailures = {
+  metadata: "verifyBundleMetadata", signature: "verifyCodeSignature", architecture: "verifyMachOArchitectures",
+  toon: "verifyMacToonFactoryBundle", updater: "verifyPackagedUpdaterConfiguration", "apple-trust": "verifyAppleTrust",
+};
+for (const stage of ["download.zip", "download.dmg", "download.zip.blockmap", "download.dmg.blockmap", "download.manifest", "manifest.validate", "cdn.fresh", "zip.extract", "dmg.mount", "dmg.detach",
+  ...["zip", "dmg"].flatMap((type) => [...Object.keys(packageFailures), "runtime-version"].map((gate) => `${type}.${gate}`)), "dmg.outer-trust"]) {
+  test(`verify-only persists exact failed gate ${stage} without raw exception data or remote mutations`, async (t) => {
+    const directory = await temporary(t);
+    const fixture = downloadableCandidate();
+    const harness = promotionHarness(fixture);
+    const secret = "SENTINEL_SECRET /private/path credential=never-record";
+    const hostile = () => { throw Object.assign(new Error(secret), { code: "EIO", stderr: secret, stack: secret, cause: secret }); };
+    if (stage === "manifest.validate") {
+      const manifest = harness.state.get(harness.plan.manifest.key);
+      const content = Buffer.from("not: [valid YAML");
+      const metadata = metadataForBuffer(content, "latest-mac.yml");
+      Object.assign(manifest, metadata, { content });
+      Object.assign(fixture.record.evidence.manifest, metadata);
+      Object.assign(fixture.record.evidence.localVerification.manifest, metadata);
+      for (const entry of [fixture.record.evidence.workflow.immutable, fixture.record.evidence.workflow.cdn]) {
+        Object.assign(entry.qiniuChecks.find(({ key }) => key === manifest.key), { size: metadata.size, etag: metadata.etag });
+      }
+      Object.assign(fixture.record.evidence.workflow.cdn.cdnChecks.find(({ key }) => key === manifest.key), metadata, { contentLength: metadata.size });
+    }
+    const checks = packageChecks();
+    let container = "zip";
+    const run = checks.run;
+    checks.run = (binary, args) => {
+      if (binary === "hdiutil" && args[0] === "attach") container = "dmg";
+      if ((stage === "zip.extract" && binary === "ditto") || (stage === "dmg.mount" && args[0] === "attach") || (stage === "dmg.detach" && args[0] === "detach")) {
+        return command(binary, args, directory, () => ({ status: 69, stderr: secret, stdout: secret }));
+      }
+      // A second cleanup failure must never hide the original package failure.
+      if (stage === "dmg.signature" && args[0] === "detach") hostile();
+      return run(binary, args);
+    };
+    for (const [gate, name] of Object.entries(packageFailures)) {
+      const verify = checks.verifier[name];
+      checks.verifier[name] = (...args) => { if (stage === `${container}.${gate}`) hostile(); return verify(...args); };
+    }
+    if (stage === "dmg.outer-trust") checks.verifier.verifyDmgTrust = hostile;
+    const extract = checks.extractAsar;
+    checks.extractAsar = (...args) => { if (stage === `${container}.runtime-version`) hostile(); return extract(...args); };
+    const fetchImpl = (url, options) => {
+      if (stage.startsWith("download.") && url === [...harness.plan.objects, harness.plan.manifest].find(({ type }) => stage === `download.${type}`).url) hostile();
+      return harness.fetchImpl(url, options);
+    };
+    if (stage === "cdn.fresh") harness.qiniu.stat = hostile;
+    const snapshots = [];
+    let rejected;
+    try {
+      await continuePromotion({ record: fixture.record, recordSha256: "f".repeat(64), toolingCommit: sha, directory, actor: "test-only",
+        verificationOnly: true, qiniu: harness.qiniu, fetchImpl,
+        persist: async (file, evidence) => { snapshots.push(structuredClone(evidence)); await writeFile(file, JSON.stringify(evidence)); },
+        verifyPackages: (plan, options) => verifyRestoredPackages(plan, { ...options, ...checks }) });
+    } catch (error) { rejected = error; }
+    assert.ok(rejected);
+    const evidence = JSON.parse(await readFile(path.join(directory, "release-evidence.json"), "utf8"));
+    assert.equal(evidence.continuation.status, "failed");
+    assert.equal(evidence.continuation.failure.stage, stage);
+    if (["zip.extract", "dmg.mount", "dmg.detach"].includes(stage)) assert.equal(evidence.continuation.failure.exitCode, 69);
+    assert.equal(evidence.workflow.promotion, null);
+    assert.ok(!JSON.stringify([snapshots, safeFailure(rejected, "candidate"), rejected.message, rejected.stack]).includes(secret));
+    assert.ok(!harness.calls.some(([name, key]) => ["upload", "delete", "refresh", "read"].includes(name) || key === harness.lock));
+    const checkpoints = evidence.continuation.checkpoints.filter((item) => item.stage === stage);
+    assert.deepEqual(checkpoints.map(({ phase }) => phase), ["before"]);
   });
 }
