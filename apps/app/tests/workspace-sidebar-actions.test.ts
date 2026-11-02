@@ -5,6 +5,12 @@ const source = readFileSync(new URL("../src/react-app/domains/session/sidebar/ap
 const progressSource = readFileSync(new URL("../src/react-app/domains/session/sidebar/session-circular-progress.tsx", import.meta.url), "utf8");
 
 describe("workspace sidebar actions", () => {
+  test("hides the workspace color dot on pinned sessions while retaining workspace context", () => {
+    const pinned = source.slice(source.indexOf("function GlobalPinnedSessionTree("), source.indexOf("type WorkspaceHeaderProps"));
+    expect(pinned).toContain("showWorkspaceIcon={false}");
+    expect(pinned).toContain("workspaceName={row.depth === 0 ? workspaceLabel(group.workspace) : undefined}");
+    expect(pinned).toContain("isPinned={pinnedIds.has(row.session.id)}");
+  });
   test("keeps workspace actions hidden until hover and creates sessions from the plus button", () => {
     expect(source).toMatch(/data-workspace-actions[\s\S]+<Plus className="size-4"/);
     expect(source).toMatch(/opacity-0[\s\S]+group-hover\/workspace-header:opacity-100/);
