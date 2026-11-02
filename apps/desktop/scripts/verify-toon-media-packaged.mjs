@@ -53,7 +53,7 @@ async function waitFor(check, label, milliseconds = 20_000) {
 
 async function launch() {
   if (process.argv.includes("--help")) {
-    console.log("Usage: node verify-toon-media-packaged.mjs --app candidate.app [--expected-version 1.2.32] [--timeout-seconds 420] [--keep-temp]\nOutputs: JSON report + failure screenshots under a unique temporary directory. Exit 1 for any missing/failed check. macOS native architecture only.");
+    console.log("Usage: node verify-toon-media-packaged.mjs --app candidate.app [--expected-version 1.2.32] [--timeout-seconds 420] [--host-background-throttling false|true] [--keep-temp]\nOutputs: JSON report + failure screenshots under a unique temporary directory. Exit 1 for any missing/failed check. macOS native architecture only. Host background throttling defaults to false; no product window is activated.");
     return;
   }
   assert.equal(process.platform, "darwin", "This acceptance host requires macOS");
@@ -65,6 +65,9 @@ async function launch() {
   assert.ok((await stat(asar)).isFile(), "candidate app.asar is missing");
   const seconds = Number(argument("--timeout-seconds", "420"));
   assert.ok(Number.isInteger(seconds) && seconds >= 60 && seconds <= 900, "timeout must be 60–900 seconds");
+  const throttling = argument("--host-background-throttling", "false");
+  assert.ok(["true", "false"].includes(throttling), "host-background-throttling must be true or false");
+  const backgroundThrottling = throttling === "true";
   const root = await realpath(await mkdtemp(path.join(tmpdir(), "toon-media-packaged-")));
   console.log(`Acceptance evidence: ${root}`);
   // A crash, failed extraction or forced termination must leave an explicit FAIL,
@@ -86,7 +89,7 @@ async function launch() {
   await mkdir(path.join(root, "node_modules"));
   await symlink(path.dirname(require.resolve("electron/package.json")), path.join(root, "node_modules", "electron"), "dir");
   for (const name of ["home", "tmp", "userData", "sessionData", "logs", "cache"]) await mkdir(path.join(root, name));
-  await writeFile(path.join(root, "config.json"), JSON.stringify({ root, appPath, resources, hashes, version: metadata.version, seconds }, null, 2));
+  await writeFile(path.join(root, "config.json"), JSON.stringify({ root, appPath, resources, hashes, version: metadata.version, seconds, backgroundThrottling }, null, 2));
   // Only a small public environment allowlist; no provider credentials inherited.
   const environment = Object.fromEntries(["PATH", "LANG", "LC_ALL", "DISPLAY", "__CF_USER_TEXT_ENCODING"].filter(key => process.env[key]).map(key => [key, process.env[key]]));
   Object.assign(environment, { HOME: path.join(root, "home"), TMPDIR: `${path.join(root, "tmp")}/`, XDG_CONFIG_HOME: path.join(root, "home"), XDG_CACHE_HOME: path.join(root, "cache") });
@@ -120,13 +123,20 @@ async function launch() {
 
 async function worker(root) {
   const { default: electron } = await import("electron");
-  const { app, BrowserWindow } = electron;
+  const { app, BrowserWindow, powerMonitor, screen } = electron;
+  const config = JSON.parse(await readFile(path.join(root, "config.json"), "utf8"));
   app.setName("Toon Media Acceptance Host");
   for (const name of ["userData", "sessionData", "logs"]) app.setPath(name, path.join(root, name));
   app.commandLine.appendSwitch("disk-cache-dir", path.join(root, "cache"));
   app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
+  // These switches affect only this independent Electron process, never product main.
+  if (!config.backgroundThrottling) {
+    app.commandLine.appendSwitch("disable-renderer-backgrounding");
+    app.commandLine.appendSwitch("disable-backgrounding-occluded-windows");
+  }
+  // Apply before the candidate view loads, as well as explicitly to the actual view.
+  app.on("web-contents-created", (_event, contents) => contents.setBackgroundThrottling(config.backgroundThrottling));
   app.on("window-all-closed", () => {});
-  const config = JSON.parse(await readFile(path.join(root, "config.json"), "utf8"));
   const results = new Map();
   const diagnostics = [];
   const children = [];
@@ -135,6 +145,10 @@ async function worker(root) {
   let closing = false, fatal = false;
   const externalRequests = [];
   const mediaResponses = [];
+  const hostDiagnostics = { backgroundThrottling: config.backgroundThrottling, events: [], snapshots: [], occlusion: "Electron has no public isOccluded API; document visibility and native window events are proxies, not proof of lock/occlusion." };
+  const hostEvent = (event, detail = {}) => {
+    if (hostDiagnostics.events.length < 100) hostDiagnostics.events.push({ at: new Date().toISOString(), event, ...detail });
+  };
   const moduleUrl = name => pathToFileURL(path.join(root, "modules", name)).href;
   const project = path.join(root, "projects", "project-a");
   const secondProject = path.join(root, "projects", "project-b");
@@ -186,6 +200,58 @@ async function worker(root) {
     assert.ok(view && !view.webContents.isDestroyed(), "candidate view is unavailable");
     return bounded(view.webContents.executeJavaScript(expression, true), "renderer evaluation");
   };
+  async function diagnoseHost(label) {
+    const snapshot = { label, at: new Date().toISOString() };
+    try {
+      snapshot.window = window && !window.isDestroyed() ? {
+        visible: window.isVisible(), minimized: window.isMinimized(), focused: window.isFocused(),
+        bounds: window.getBounds(), contentBounds: window.getContentBounds(),
+        backgroundThrottling: window.webContents.getBackgroundThrottling(),
+      } : null;
+      snapshot.view = view && !view.webContents.isDestroyed() ? {
+        bounds: view.getBounds(), parentBounds: window.contentView.children[0]?.getBounds(),
+        backgroundThrottling: view.webContents.getBackgroundThrottling(), loading: view.webContents.isLoading(),
+        crashed: view.webContents.isCrashed(), rendererPid: view.webContents.getOSProcessId(),
+      } : null;
+      snapshot.displays = screen.getAllDisplays().map(display => ({ id: display.id, bounds: display.bounds, workArea: display.workArea, scaleFactor: display.scaleFactor }));
+      snapshot.idle = { state: powerMonitor.getSystemIdleState(60), seconds: powerMonitor.getSystemIdleTime() };
+      if (snapshot.view) snapshot.renderer = await bounded(view.webContents.executeJavaScript(`(async () => {
+        const rect = value => value ? { x: value.x, y: value.y, width: value.width, height: value.height, top: value.top, right: value.right, bottom: value.bottom, left: value.left } : null;
+        const node = document.querySelector(${source});
+        const target = node?.querySelector('.nodeSkeleton') || node;
+        const ancestors = [];
+        for (let e = target; e && ancestors.length < 10; e = e.parentElement) {
+          const style = getComputedStyle(e);
+          ancestors.push({ tag: e.tagName, class: String(e.className).slice(0, 300), bounds: rect(e.getBoundingClientRect()), display: style.display, visibility: style.visibility, overflow: style.overflow, contentVisibility: style.contentVisibility });
+        }
+        const state = { visibility: document.visibilityState, hidden: document.hidden, focused: document.hasFocus(), readyState: document.readyState, viewport: { width: innerWidth, height: innerHeight, devicePixelRatio }, ancestors, videoCount: node?.querySelectorAll('video').length ?? 0 };
+        // Fresh native observer: read geometry only; never replace or invoke the product observer.
+        state.probe = await new Promise(resolve => {
+          let observer, frame, timer, frames = 0;
+          const started = performance.now();
+          const finish = result => { clearTimeout(timer); observer?.disconnect(); cancelAnimationFrame(frame); resolve({ ...result, frames, elapsed: performance.now() - started }); };
+          const tick = () => { frames++; frame = requestAnimationFrame(tick); };
+          frame = requestAnimationFrame(tick);
+          timer = setTimeout(() => finish({ callback: false, reason: target ? 'observer deadline' : 'target missing' }), 1200);
+          if (target) {
+            observer = new IntersectionObserver(entries => finish({ callback: true, entries: entries.map(entry => ({ isIntersecting: entry.isIntersecting, ratio: entry.intersectionRatio, bounds: rect(entry.boundingClientRect), rootBounds: rect(entry.rootBounds), intersection: rect(entry.intersectionRect) })) }));
+            observer.observe(target);
+          }
+        });
+        return state;
+      })()`, false), "read-only host visibility probe", 2500);
+    } catch (error) { snapshot.error = error.stack || String(error); }
+    hostDiagnostics.snapshots.push(snapshot);
+    await writeFile(path.join(root, "host-diagnostics.json"), JSON.stringify(hostDiagnostics, null, 2));
+    console.log(`Host diagnostics: ${label}: ${JSON.stringify(snapshot)}`);
+  }
+  async function captureFailure(name) {
+    await diagnoseHost(`failure: ${name}`);
+    if (view && !view.webContents.isDestroyed()) {
+      try { await writeFile(path.join(root, `${name.replace(/[^a-z0-9]+/gi, "-")}.png`), (await bounded(view.webContents.capturePage(), "failure screenshot", 2000)).toPNG()); }
+      catch (error) { diagnostics.push(`${name} screenshot: ${error.message}`); }
+    }
+  }
   const count = () => page(`document.querySelectorAll(${nodes}).length`);
   const saved = () => readFile(canvasPath, "utf8").then(JSON.parse);
   const clickText = async (label, scope = "document") => {
@@ -219,9 +285,7 @@ async function worker(root) {
       pauseNextMedia = false;
       results.set(name, { status: "FAIL", milliseconds: Date.now() - started, error: error.stack || String(error) });
       console.error(`FAIL: ${name}: ${error.message}`);
-      if (view && !view.webContents.isDestroyed()) {
-        try { await writeFile(path.join(root, `${name.replace(/[^a-z0-9]+/gi, "-")}.png`), (await bounded(view.webContents.capturePage(), "failure screenshot", 2000)).toPNG()); } catch {}
-      }
+      await captureFailure(name);
       // Even an assertion failure can leave live work or a changed project/UI.
       // Fail fast; shutdown owns recovery, never a later acceptance check.
       throw error;
@@ -251,7 +315,7 @@ async function worker(root) {
     const report = { schemaVersion: 1, ok: !fatal && [...results.values()].every(result => result.status === "PASS"), candidate: config.appPath, version: config.version,
       electron: process.versions.electron, arch: process.arch, packaged: true, extractedModuleHashes: config.hashes,
       limitations: ["Independent current Electron host, not the candidate executable/main, updater, notarization or release gate.", "UI automation uses candidate DOM events and Electron executeJavaScript; fixture canvas is seeded on disk, not imported through a file picker.", "Scene detector is exercised on a short synthetic testsrc2 fixture; many-shot/10-minute limits and publication-await races require separate tests.", "Cancellation tests SIGSTOP the next owned real ffmpeg child to make the UI round-trip deterministic, then require candidate cancellation to kill it and wait for close. This verifies lifecycle, not natural processing timing; publication-await races are covered separately."],
-      checks: Object.fromEntries(results), diagnostics, externalRequests, mediaResponses, evidence: root };
+      checks: Object.fromEntries(results), diagnostics, hostDiagnostics, externalRequests, mediaResponses, evidence: root };
     await writeFile(path.join(root, "report.json"), JSON.stringify(report, null, 2));
     console.log(`${report.ok ? "PASS" : "FAIL"}: ${[...results.values()].filter(value => value.status === "PASS").length}/${requiredChecks.length} acceptance checks`);
     ChildProcess.prototype.spawn = originalSpawn;
@@ -349,6 +413,7 @@ async function worker(root) {
     if (!ready) throw new Error("Candidate/signature/fixture prerequisite failed");
     const runtimeReady = await check("isolated packaged runtime", async () => {
       await bounded(app.whenReady(), "Electron ready");
+      for (const event of ["lock-screen", "unlock-screen", "suspend", "resume"]) powerMonitor.on(event, () => hostEvent(event));
       const token = "acceptance-local-catalog-only";
       host = createServer((request, response) => {
         response.setHeader("Content-Type", "application/json");
@@ -360,7 +425,8 @@ async function worker(root) {
       host.listen(0, "127.0.0.1"); await once(host, "listening");
       // Visible independent window is required for the candidate's real
       // IntersectionObserver-based lazy previews; do not override that API.
-      window = new BrowserWindow({ show: true, width: 1440, height: 1000, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } });
+      window = new BrowserWindow({ show: true, width: 1440, height: 1000, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: config.backgroundThrottling } });
+      for (const event of ["show", "hide", "minimize", "restore", "focus", "blur", "resize", "move"]) window.on(event, () => hostEvent(`window:${event}`));
       const { createToonFactoryRuntime } = await import(moduleUrl("toonFactoryRuntime.mjs"));
       const selections = [project, secondProject];
       runtime = createToonFactoryRuntime({ app, moduleRoot, packaged: true, getWindow: () => window,
@@ -369,6 +435,8 @@ async function worker(root) {
       assert.equal((await runtime.open("packaged-media-acceptance")).running, true);
       view = window.contentView.children[0]?.children[0];
       assert.ok(view);
+      view.webContents.setBackgroundThrottling(config.backgroundThrottling);
+      for (const event of ["unresponsive", "responsive", "render-process-gone"]) view.webContents.on(event, (_event, detail) => hostEvent(`view:${event}`, { detail }));
       view.webContents.on("console-message", (_event, _level, message) => { if (/error|fail/i.test(String(message))) diagnostics.push(String(message).slice(0, 2000)); });
       runtime.layout({ x: 48, y: 0, width: 1392, height: 1000 });
       assert.equal((await runtime.enter()).currentDirectory, null);
@@ -381,11 +449,14 @@ async function worker(root) {
         if (!allowed) externalRequests.push({ blocked: details.url });
         callback({ cancel: !allowed });
       });
-      const recordMediaResponse = details => {
-        if (/^\/api\/media\/(process|cancel|project)$/.test(new URL(details.url).pathname)) mediaResponses.push({ id: details.id, endpoint: new URL(details.url).pathname, status: details.statusCode, error: details.error });
+      const recordMediaResponse = (event, details) => {
+        const endpoint = new URL(details.url).pathname;
+        if (/^\/api\/media\/(process|cancel|project)$/.test(endpoint)) mediaResponses.push({ id: details.id, endpoint, event, status: details.statusCode,
+          error: event === "error" ? details.error || "onErrorOccurred" : details.error && details.error !== "net::OK" ? details.error : undefined });
       };
-      view.webContents.session.webRequest.onCompleted(recordMediaResponse);
-      view.webContents.session.webRequest.onErrorOccurred(recordMediaResponse);
+      view.webContents.session.webRequest.onCompleted(details => recordMediaResponse("completed", details));
+      view.webContents.session.webRequest.onErrorOccurred(details => recordMediaResponse("error", details));
+      await diagnoseHost("runtime entered");
     });
     if (!runtimeReady) throw new Error("Candidate runtime prerequisite failed");
     await check("catalog and renderer boundary", async () => {
@@ -403,8 +474,10 @@ async function worker(root) {
       assert.equal(result.body.data.code, "DIRECTORY_GRANT_REQUIRED");
     });
     assert.equal((await runtime.chooseProject()).currentDirectory, project);
-    await waitFor(() => page(`!!document.querySelector(${source} + ' video') || !!document.querySelector(${source})?.querySelector('video')`), "candidate video plugin render");
     await check("video actions UI", async () => {
+      await diagnoseHost("project opened before preview");
+      await waitFor(() => page(`!!document.querySelector(${source} + ' video') || !!document.querySelector(${source})?.querySelector('video')`), "candidate video plugin render");
+      await diagnoseHost("video preview rendered");
       await selectSource();
       for (const label of ["提取音轨", "分离音视频", "截取片段", "逐帧拉片"]) assert.equal(await page(`[...document.querySelector(${source}).querySelectorAll('button')].some(b => b.textContent.trim() === ${JSON.stringify(label)} && !b.disabled && b.getClientRects().length > 0)`), true, label);
     });
@@ -664,10 +737,10 @@ async function worker(root) {
   } catch (error) {
     pauseNextMedia = false;
     fatal = true; diagnostics.push(error.stack || String(error)); console.error(error);
+    await captureFailure("fatal");
     if (view && !view.webContents.isDestroyed()) {
       try {
         diagnostics.push(await page("JSON.stringify({hash:location.hash,text:document.body.innerText,nodes:[...document.querySelectorAll('.vue-flow__node')].map(e=>({id:e.dataset.id,html:e.innerHTML.slice(0,1500)}))})"));
-        await writeFile(path.join(root, "fatal.png"), (await bounded(view.webContents.capturePage(), "fatal screenshot", 2000)).toPNG());
       } catch {}
     }
   } finally {
