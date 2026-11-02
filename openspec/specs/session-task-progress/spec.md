@@ -3,7 +3,9 @@
 ## Purpose
 
 Provide dependable task-progress presentation for each conversation so users can trust whether planned work is active, incomplete, or finished across workspace and connection transitions.
+
 ## Requirements
+
 ### Requirement: Active task progress remains available
 The system SHALL keep a session's non-empty task progress visible while that session has an active run, unless a higher-priority interaction temporarily occupies the same presentation area.
 
@@ -218,3 +220,16 @@ The system SHALL submit an ordinary draft that does not explicitly select a Clou
 
 - **WHEN** no successful evidence exists, the evidence expired, the scope changed, or background revalidation invalidated it
 - **THEN** the next task uses the existing blocking readiness and repair flow
+
+### Requirement: Restored task outcomes retain interruption semantics
+Conversation and pet presentation SHALL share a current-user-turn outcome classification for both live events and restored snapshots. Persisted stopped/error metadata, finish information, todo state and authoritative run results SHALL distinguish cancelled, failed, incomplete, completed and unknown outcomes. In-memory activity state or a default provider finish value of stop SHALL not alone prove successful completion. Older failed turns SHALL not override a newer successful turn.
+
+#### Scenario: An interrupted turn has no todos
+- **WHEN** a snapshot restores the current turn with MessageAbortedError-derived stopped metadata and no todo items
+- **THEN** it retains the interruption or cancellation outcome rather than being classified as successful idle
+- **AND** conversation and pet presentation agree without marking the run active
+
+#### Scenario: Outcome evidence is unavailable
+- **WHEN** a restored current turn lacks sufficient evidence to determine whether its run ended
+- **THEN** it is presented as awaiting status reconciliation
+- **AND** pet continuation remains disabled until the existing run reconciliation resolves it
