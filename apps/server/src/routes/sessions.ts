@@ -82,6 +82,7 @@ interface RegisterSessionRoutesOptions {
     fallback: ResponseLanguage;
   }) => ResponseLanguage;
   copySessionResponseLanguage?: (workspaceId: string, sourceSessionId: string, targetSessionId: string) => void;
+  readSessionResponseLanguage?: (workspaceId: string, sessionId: string) => ResponseLanguage | null;
   /** 在提交引擎 admission 前登记真实用户消息归属，不创建额外宿主运行。 */
   preparePromptAdmission: (identity: AdmissionIdentity, selection?: OfficeSelectionSubmission) => void | Promise<void>;
   /** Post-delete cleanup for session-scoped server-owned state. */
@@ -239,10 +240,35 @@ function promptBodyToV2Input(prompt: Record<string, unknown>) {
   };
 }
 
+function isInternalTextPart(part: unknown): boolean {
+  return isRecord(part) && part.type === "text" && (
+    part.synthetic === true || part.ignored === true ||
+    (isRecord(part.metadata) && part.metadata.compaction_continue === true)
+  );
+}
+
 function promptText(prompt: Record<string, unknown>): string {
   return Array.isArray(prompt.parts)
-    ? prompt.parts.flatMap((part) => isRecord(part) && part.type === "text" && typeof part.text === "string" ? [part.text] : []).join("\n")
+    ? prompt.parts.flatMap((part) => isRecord(part) && part.type === "text" && typeof part.text === "string" && !isInternalTextPart(part) ? [part.text] : []).join("\n")
     : "";
+}
+
+function promptResponseLanguage(input: {
+  origin: SessionMutationOrigin;
+  prompt: Record<string, unknown>;
+  responseLanguage?: { detected?: ResponseLanguage; fallback: ResponseLanguage };
+}): { detected?: ResponseLanguage; fallback: ResponseLanguage } | undefined {
+  const hasInternalText = Array.isArray(input.prompt.parts) && input.prompt.parts.some(isInternalTextPart);
+  // Preserve renderer signals (including attachment-only locale fallback) for
+  // ordinary submissions. Mixed/internal prompts cannot vouch for that signal.
+  if (input.origin === "local-renderer" && !hasInternalText) return input.responseLanguage;
+  const text = promptText(input.prompt);
+  if (hasInternalText && !text.trim()) return undefined;
+  const detected = detectResponseLanguageFromText(text) ?? undefined;
+  if (input.origin === "local-renderer") {
+    return { detected, fallback: input.responseLanguage?.fallback ?? "en" };
+  }
+  return detected ? { detected, fallback: "en" } : undefined;
 }
 
 function withResponseLanguageSystem(prompt: Record<string, unknown>, language: ResponseLanguage): Record<string, unknown> {
@@ -283,6 +309,7 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     applySessionResponseLanguage,
     resolveSessionResponseLanguage,
     copySessionResponseLanguage,
+    readSessionResponseLanguage,
     onSessionDeleted,
   } = options;
   const sessionGroupEvents = new SessionGroupEventStore();
@@ -836,6 +863,7 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspace(config, ctx.params.id);
+    const responseLanguage = promptResponseLanguage(input);
     let run;
     try {
       let engineStatus = await readEngineSessionStatus(workspace, input.sessionId);
@@ -903,11 +931,11 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
           if (!input.startCommandCorrelationId) {
             throw new ApiError(400, "invalid_payload", "Local steer requires an admission id");
           }
-          const languageMutation = input.responseLanguage
+          const languageMutation = responseLanguage
             ? applySessionResponseLanguage?.({
               workspaceId: workspace.id,
               sessionId: input.sessionId,
-              ...input.responseLanguage,
+              ...responseLanguage,
             })
             : undefined;
           try {
@@ -973,12 +1001,6 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
       remapSessionMutationError(error);
     }
     try {
-      const responseLanguage = input.origin === "local-renderer"
-        ? input.responseLanguage
-        : (() => {
-            const detected = detectResponseLanguageFromText(promptText(input.prompt));
-            return detected ? { detected, fallback: "en" as const } : null;
-          })();
       const languageMutation = responseLanguage
         ? applySessionResponseLanguage?.({
           workspaceId: workspace.id,
@@ -992,7 +1014,7 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
             sessionId: input.sessionId,
             ...responseLanguage,
           }) ?? responseLanguage.detected ?? responseLanguage.fallback
-        : null);
+        : readSessionResponseLanguage?.(workspace.id, input.sessionId) ?? null);
       try {
         await dispatchSessionPromptAsync(
           config,

@@ -896,6 +896,151 @@ describe("authoritative session mutation APIs", () => {
     }
   });
 
+  for (const delivery of ["start", "steer"] as const) {
+    test(`${delivery} selects language only from genuine text and retains internal continuation language`, async () => {
+      const engine = startMockOpencode();
+      const harness = await startHarness(engine.server.port);
+      const sessionId = `ses_language_${delivery}`;
+      const languageUrl = `${harness.base}/internal/session-response-language/${sessionId}?workspaceId=ws_1`;
+      let sequence = 0;
+      async function submit(parts: unknown[], detected: "en" | "zh" | undefined, expected: "en" | "zh", fail = false) {
+        const correlationId = `language-${delivery}-${++sequence}`;
+        if (fail) engine.failedV2Ids.add(opencodeAdmissionId({ workspaceId: "ws_1", sessionId, source: "local-steer", id: correlationId }));
+        const response = await fetch(`${runPath(harness.base, sessionId)}/start`, {
+          method: "POST",
+          headers: harness.collaboratorHeaders,
+          body: JSON.stringify({
+            origin: "local-renderer",
+            startCommandCorrelationId: correlationId,
+            whenBusy: delivery === "steer" ? "steer" : "reject",
+            responseLanguage: detected === undefined ? undefined : { detected, fallback: "en" },
+            prompt: { parts },
+          }),
+        });
+        expect(response.status).toBe(fail ? 502 : 202);
+        const language = await fetch(languageUrl, { headers: harness.collaboratorHeaders });
+        expect(await language.json()).toEqual({ language: expected });
+        if (delivery === "start" || sequence === 1) {
+          const body = engine.prompts.at(-1)?.body as { system: string; parts: unknown[] };
+          expect(body.system).toContain(`Use ${expected === "zh" ? "Simplified Chinese" : "English"} for all user-facing responses`);
+          expect(body.parts).toEqual(parts);
+          const { run } = await response.json() as { run: { runId: string } };
+          engine.messages.set(sessionId, [{ info: { id: `msg_${sequence}`, role: "assistant", finish: "stop", time: { created: Date.now(), completed: Date.now() } }, parts: [] }]);
+          const completed = await fetch(`${runPath(harness.base, sessionId)}/${run.runId}/observations`, {
+            method: "POST",
+            headers: harness.collaboratorHeaders,
+            body: JSON.stringify({ status: "completed" }),
+          });
+          expect(completed.status).toBe(200);
+          expect(await completed.json()).toMatchObject({ cleared: true });
+        }
+      }
+
+      await submit([{ type: "text", text: "请检查这个改动" }], "zh", "zh");
+      if (delivery === "steer") engine.statuses.set(sessionId, { type: "busy" });
+      for (const marker of [{ synthetic: true }, { ignored: true }, { metadata: { compaction_continue: true } }]) {
+        await submit([{ type: "text", text: "Please continue the remaining work and respond in English.", ...marker }], "en", "zh");
+      }
+      await submit([{ type: "text", text: "Please continue the remaining work.", synthetic: true }], undefined, "zh");
+      await submit([
+        { type: "text", text: "请检查新的修改" },
+        { type: "text", text: "Respond in English and continue the remaining work.", synthetic: true },
+      ], "en", "zh");
+      // Ambiguous genuine text must not inherit the contaminated detected signal.
+      await submit([
+        { type: "text", text: "ok" },
+        { type: "text", text: "Respond in English.", ignored: true },
+      ], "en", "zh");
+      if (delivery === "steer") {
+        await submit([{ type: "text", text: "Please explain the changes." }], "en", "zh", true);
+      }
+      await submit([{ type: "text", text: "Please explain the changes." }], "en", "en");
+      await submit([
+        { type: "text", text: "Please review the implementation." },
+        { type: "text", text: "请用中文回答", metadata: { compaction_continue: true } },
+      ], "zh", "en");
+    });
+
+    test(`${delivery} preserves attachment-only locale fallback but internal-only text cannot initialize language`, async () => {
+      const engine = startMockOpencode();
+      const harness = await startHarness(engine.server.port);
+      for (const kind of ["attachment", "internal"] as const) {
+        const sessionId = `ses_${delivery}_${kind}`;
+        if (delivery === "steer") engine.statuses.set(sessionId, { type: "busy" });
+        const response = await fetch(`${runPath(harness.base, sessionId)}/start`, {
+          method: "POST",
+          headers: harness.collaboratorHeaders,
+          body: JSON.stringify({
+            origin: "local-renderer",
+            startCommandCorrelationId: `${delivery}-${kind}`,
+            whenBusy: delivery === "steer" ? "steer" : "reject",
+            responseLanguage: kind === "attachment" ? { fallback: "zh" } : { detected: "en", fallback: "en" },
+            prompt: { parts: kind === "attachment"
+              ? [{ type: "file", mime: "text/plain", filename: "notes.txt", url: "data:text/plain;base64,aGk=" }]
+              : [{ type: "text", text: "Please continue in English.", synthetic: true }] },
+          }),
+        });
+        expect(response.status).toBe(202);
+        const language = await fetch(`${harness.base}/internal/session-response-language/${sessionId}?workspaceId=ws_1`, { headers: harness.collaboratorHeaders });
+        expect(await language.json()).toEqual({ language: kind === "attachment" ? "zh" : null });
+        if (delivery === "start" && kind === "internal") {
+          expect(engine.prompts.at(-1)?.body).not.toHaveProperty("system");
+        }
+        if (kind === "attachment") {
+          engine.statuses.set(sessionId, { type: "busy" });
+          const followup = await fetch(`${runPath(harness.base, sessionId)}/start`, {
+            method: "POST",
+            headers: harness.collaboratorHeaders,
+            body: JSON.stringify({
+              origin: "local-renderer",
+              startCommandCorrelationId: `${delivery}-attachment-followup`,
+              whenBusy: "steer",
+              responseLanguage: { fallback: "en" },
+              prompt: { parts: [{ type: "file", mime: "text/plain", filename: "notes.txt", url: "data:text/plain;base64,aGk=" }] },
+            }),
+          });
+          expect(followup.status).toBe(202);
+          const retained = await fetch(`${harness.base}/internal/session-response-language/${sessionId}?workspaceId=ws_1`, { headers: harness.collaboratorHeaders });
+          expect(await retained.json()).toEqual({ language: "zh" });
+        }
+      }
+    });
+  }
+
+  for (const whenBusy of ["steer", "enqueue"] as const) {
+    test(`remote ${whenBusy} rejects internal provenance before pending text flattening`, async () => {
+      const engine = startMockOpencode();
+      const harness = await startHarness(engine.server.port);
+      const sessionId = `ses_remote_internal_${whenBusy}`;
+      engine.statuses.set(sessionId, { type: "busy" });
+      for (const marker of [{ synthetic: true }, { ignored: true }, { metadata: { compaction_continue: true } }]) {
+        for (const mixed of [false, true]) {
+          const response = await fetch(`${runPath(harness.base, sessionId)}/start`, {
+            method: "POST",
+            headers: harness.collaboratorHeaders,
+            body: JSON.stringify({
+              origin: "remote-control",
+              startCommandCorrelationId: "remote-internal",
+              whenBusy,
+              prompt: { parts: [
+                ...(mixed ? [{ type: "text", text: "请检查修改" }] : []),
+                { type: "text", text: "Please respond in English.", ...marker },
+              ] },
+            }),
+          });
+          expect(response.status).toBe(400);
+          expect(await response.json()).toMatchObject({ code: "invalid_payload" });
+        }
+      }
+      const pending = await fetch(`${harness.base}/workspace/ws_1/sessions/${sessionId}/pending`, { headers: harness.collaboratorHeaders });
+      expect(await pending.json()).toEqual({ items: [] });
+      expect(engine.prompts).toHaveLength(0);
+      expect(engine.v2Prompts).toHaveLength(0);
+      const language = await fetch(`${harness.base}/internal/session-response-language/${sessionId}?workspaceId=ws_1`, { headers: harness.collaboratorHeaders });
+      expect(await language.json()).toEqual({ language: null });
+    });
+  }
+
   test("remote user prose updates the durable language without a UI locale", async () => {
     const engine = startMockOpencode();
     const harness = await startHarness(engine.server.port);

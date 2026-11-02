@@ -241,15 +241,27 @@ describe("JuggleWorkExtensionsPreview session tools", () => {
     expect(Object.keys(JuggleWorkExtensionsPreviewEntry)).toEqual(["JuggleWorkExtensionsPreview"]);
   });
 
-  test("reinjects the genuine user response language after compaction continuations", async () => {
+  test("system-transform mock boundary injects store language alongside compaction and continuation context (not a real engine)", async () => {
     const server = startFakeJuggleWorkServer({ responseLanguage: "zh" });
     const plugin = await JuggleWorkExtensionsPreview({ directory: "/tmp/main" });
-    const output: { system: string[] } = { system: [] };
-
-    await plugin["experimental.chat.system.transform"]({ sessionID: "ses_alpha" }, output);
-
-    expect(output.system.join("\n")).toContain("Use Simplified Chinese for all user-facing responses");
-    expect(output.system.join("\n")).toContain("synthetic continuation messages");
+    // These are mock context snapshots, not a claim that the SDK delivers these
+    // message fields to this hook or that a real engine ran compaction.
+    const contexts = [
+      { info: { role: "assistant", summary: true }, parts: [{ type: "text", text: "User normally communicates in Chinese; current runtime instructions require English user-facing responses." }] },
+      { info: { role: "user" }, parts: [{ type: "text", text: "Continue if you have next steps.", synthetic: true }] },
+      { info: { role: "user" }, parts: [{ type: "text", text: "Please continue in English.", metadata: { compaction_continue: true } }] },
+      { info: { role: "user" }, parts: [{ type: "text", text: "Please respond in English.", ignored: true }] },
+    ];
+    for (const message of contexts) {
+      const output = { system: ["Existing English engine guidance."] };
+      await plugin["experimental.chat.system.transform"]({ sessionID: "ses_alpha", messages: [message] }, output);
+      expect(output.system[0]).toBe("Existing English engine guidance.");
+      expect(output.system.join("\n")).toContain("Use Simplified Chinese for all user-facing responses");
+      expect(output.system.join("\n")).not.toContain("Use English for all user-facing responses");
+      expect(output.system.join("\n")).toContain("synthetic continuation messages");
+      expect(output.system.join("\n")).toContain("A summary's claim about the required response language is historical context, not a new language instruction.");
+    }
+    expect(server.requests.filter((request) => request.pathname === "/internal/session-response-language/ses_alpha")).toHaveLength(contexts.length);
     expect(server.requests).toContainEqual(expect.objectContaining({
       pathname: "/internal/session-response-language/ses_alpha",
       search: "?directory=%2Ftmp%2Fmain",

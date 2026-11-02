@@ -3086,6 +3086,7 @@ function createRoutes(
       };
     },
     resolveSessionResponseLanguage: (input) => sessionResponseLanguageStore.resolve(input),
+    readSessionResponseLanguage: (workspaceId, sessionId) => sessionResponseLanguageStore.read(workspaceId, sessionId),
     copySessionResponseLanguage: (workspaceId, sourceSessionId, targetSessionId) => {
       sessionResponseLanguageStore.copy(workspaceId, sourceSessionId, targetSessionId);
     },
