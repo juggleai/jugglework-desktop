@@ -389,6 +389,16 @@ async function sendMessage(source?: AgentMessage) {
   if (!model) return ElMessage.warning("请先选择模型");
 
   const requestController = new AbortController();
+  const runId = crypto.randomUUID();
+  let requestStarted = false;
+  let cancellation: Promise<unknown> | undefined;
+  const cancel = () => {
+    cancellation ??= axios.post("/api/agent/stop", { runId, directory }, {
+      headers: { "x-toonflow-workspace": "1" }, signal: AbortSignal.timeout(30_000),
+    });
+    void cancellation.catch(() => undefined);
+  };
+  requestController.signal.addEventListener("abort", cancel, { once: true });
   const canvasContext = createCanvasContext?.();
   controller = requestController;
   busy.value = true;
@@ -413,13 +423,14 @@ async function sendMessage(source?: AgentMessage) {
     if (!source) await instance.reset();
     requestController.signal.throwIfAborted();
     await uploadAttachments(attachments, directory, requestController.signal);
+    requestController.signal.throwIfAborted();
+    requestStarted = true;
     const response = await fetch("/api/agent", {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-toonflow-workspace": "1" },
-      body: JSON.stringify({ prompt, attachments: attachments.map(({ name, path, mimeType }) => ({ name, path, mimeType })), directory, providerId: model.providerId, modelId: model.modelId, thinkingLevel: reasoningEffort.value || undefined, sessionFile: props.sessionFile, resendFrom, canvas: canvasContext ? { id: canvasContext.id, tools: canvasContext.tools } : undefined }),
-      signal: requestController.signal,
+      body: JSON.stringify({ runId, prompt, attachments: attachments.map(({ name, path, mimeType }) => ({ name, path, mimeType })), directory, providerId: model.providerId, modelId: model.modelId, thinkingLevel: reasoningEffort.value || undefined, sessionFile: props.sessionFile, resendFrom, canvas: canvasContext ? { id: canvasContext.id, tools: canvasContext.tools } : undefined }),
     });
-    for await (const event of readAgentEvents(response, requestController.signal)) {
+    for await (const event of readAgentEvents(response, new AbortController().signal)) {
       // 子任务复用发起委派时的画布与取消通道，界面切换不改变工具执行目标。
       let toolEvent: AgentEvent = event;
       let scope = "";
@@ -471,9 +482,13 @@ async function sendMessage(source?: AgentMessage) {
       }
     }
     if (source && !accepted) throw new Error("服务端未确认重发，请重新打开对话后重试");
+    requestController.signal.throwIfAborted();
     finishStats("success");
     emit("sent", prompt || attachments[0]?.name || "新对话");
   } catch (error) {
+    // A broken stream is not proof of server cleanup on Bun. Drain this exact
+    // run through the independent stop transport before releasing page busy.
+    if (requestStarted) cancel();
     finishStats(requestController.signal.aborted ? "cancelled" : "failed");
     const responseMessage = (error as { response?: { data?: { message?: string } } })?.response?.data?.message;
     const message = requestController.signal.aborted ? "已停止生成" : responseMessage || (error instanceof Error ? error.message : "发送失败，请重试");
@@ -483,6 +498,13 @@ async function sendMessage(source?: AgentMessage) {
       emit("event", { type: "subAgentEvent", file: props.sessionFile, event: { type: "error", message } });
     }
   } finally {
+    requestController.signal.removeEventListener("abort", cancel);
+    try { await cancellation; }
+    catch (error) {
+      const message = axios.isAxiosError<{ message?: string }>(error) ? error.response?.data?.message || error.message : error instanceof Error ? error.message : "Agent 停止清理未确认";
+      reply.error = message;
+      ElMessage.error(message);
+    }
     for (const file of activeChildFiles) emit("event", { type: "subAgentEvent", file, event: { type: "error", message: "委派连接已结束，请重新打开子会话查看结果" } });
     // ACT: Bun 的流断开事件可能不触发；主动结束仍在等待的提问，不依赖断开通知。
     for (const callId of pendingQuestions.values()) {

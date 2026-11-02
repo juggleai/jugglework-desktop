@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { hostFetch } from "@/utils/jugglework";
+import { hostVideoEdit } from "@/utils/jugglework";
 
 const path = z.string().min(1).max(4096).describe("已授权项目内的相对路径，不接受 URL 或绝对路径");
 const probe = z.strictObject({ path });
@@ -22,7 +22,7 @@ export function createVideoEditTools(directory: string): ToolDefinition[] {
     executionMode: "sequential",
     async execute(_id, params, signal) {
       const input = schema.parse(params);
-      const result = await (await hostFetch("/videoEdit", { ...input, directory, operation }, signal)).json();
+      const result = await hostVideoEdit({ ...input, directory, operation }, signal);
       return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
     },
   }));

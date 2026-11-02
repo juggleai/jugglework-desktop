@@ -1,5 +1,70 @@
 # Restricted local video editing follow-up
 
+## Explicit cancellation correction — 2026-11-02
+
+The previous disconnect-only UI cancellation claim did not hold on trusted Bun
+1.3.14: after POST body consumption, browser abort could leave the host FFmpeg
+running. The restricted protocol now requires a fresh UUID `requestId` and an
+independent `/api/media/cancel` request. The process request remains pending until
+host completion; UI busy therefore includes child close and staging cleanup.
+Agent probe/export uses the same explicit cancellation helper. Existing browser
+session authentication, same-origin/workspace-header checks, bridge token and
+Origin rejection remain enforced. Generic `/api/ffmpeg/*` stays denied.
+
+Each runtime generation has a bounded 4096-ID history, no reuse, and 30-second
+cancel-before-start tombstones. Exhaustion fails closed until factory restart;
+expired tombstones do not make IDs reusable. Starts register before realpath and
+are restricted to the active canonical project. Project open/close and current
+workspace grant revocation block new starts and await owned task cleanup. Other
+workspace grant removal does not cancel this runtime. No state is persisted to
+projects, and no credentials are added to logs or documents.
+
+Verification: routes generated with the operator-specified trusted Bun 1.3.14;
+nested Server/Web and Electron typechecks, Server build, focused existing Electron
+tests (98 pass, zero failures/skips) and strict affected OpenSpec validation pass. Existing tests were extended
+in place (no new test files): early cancellation, ID/ownership/generation/capacity,
+cleanup failure, HTTP bridge authentication, and real SIGSTOP FFmpeg interrupted
+via explicit HTTP cancel, project close and grant revocation. Each real HTTP case
+asserts SIGKILL/ESRCH, empty outputs and no staging before acknowledgement. A
+separate actual-route in-memory Bun/Express check rejects unmanaged, missing or
+foreign Origin/workspace headers and invalid UUID/schema inputs.
+
+This is source/staging verification, not rebuilt signed-candidate UI acceptance.
+Product main/updater and the operator-owned packaged acceptance script were not
+run or modified; no commit, push, signing or publication was performed. Failed
+cleanup is reported and may retain identity-conflicting output for inspection.
+Successful publication that wins the cancellation race remains recoverable;
+cancellation does not delete already-committed user artifacts.
+
+### Cancellation review corrections — 2026-11-02
+
+Drained media registries retain cleanup errors for repeated cancel-all and close,
+including when cancellation came from an external signal. The existing cleanup
+regression exercises both signal sources and repeated error reporting.
+
+Agent requests carry fresh UUID `runId` values and use the independently
+authenticated `/api/agent/stop` endpoint. The generation-local bounded registry
+reserves before asynchronous lookups, remembers early stops, rejects ID reuse,
+and stops only the matching project/run. Async-local context tracks hostVideoEdit
+and SDK abort promises; stop waits for their cleanup and retains failures even
+when the SDK consumes a rejected tool. The UI keeps its NDJSON transport alive
+and remains busy through the independent stop acknowledgement.
+Stream/network failures also request and await explicit stop for the same run;
+they do not treat a lost processing connection as cleanup confirmation. Project
+open/close/remove share a host-to-Pinia transaction queue; removal closes directly
+inside its queued transaction to avoid recursive-queue deadlock.
+
+Actual Bun/Express Agent routes passed in-memory checks for session, Origin,
+workspace header and schema rejection, early stop, stale/duplicate IDs, cleanup
+waiting, repeated successful stop and repeated cleanup errors. A separate actual
+hostVideoEdit bridge check verified run-signal propagation without a tool-supplied
+signal, cleanup waiting and errors retained despite a swallowed tool rejection.
+The actual Pinia project store passed delayed close/open ordering, removal,
+queue recovery after host failure and host-success/Pinia consistency after caller
+abort. These isolated checks used synthetic transports, not a live model or
+running Desktop UI. Router numbering changes follow the existing sorted-index
+generator; no generated imports or registrations were manually maintained.
+
 Latest release-note update: the complete darwin/arm64 bundle and independent inventory
 verification have passed with 1035 files including frameAnalysisNode.umd.js (tasks 9.6).
 Any older "full build pending" statement below is a historical phase handoff, not the

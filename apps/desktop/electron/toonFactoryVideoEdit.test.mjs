@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { ChildProcess } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -7,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 import { mediaRun, verifyMediaTools } from "./mediaTools.mjs";
 import { createToonFactoryVideoEditor, publishVideoEditFiles } from "./toonFactoryVideoEdit.mjs";
+import { createToonFactoryMediaRequests } from "./toonFactoryRuntime.mjs";
 
 async function publicationFixture(t, multi) {
   const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "video-edit-publication-")));
@@ -391,6 +393,24 @@ function observeRender(t) {
 }
 
 describe("video editor with verified staging tools and real temporary media", { skip: nativeMedia ? false : "native macOS mediaTools staging required", concurrency: false, timeout: 60000 }, () => {
+  it("explicit cancellation alone kills a suspended owned ffmpeg and acknowledges staging cleanup", async t => {
+    const h = await editorFixture(t);
+    const observation = observeRender(t);
+    const requests = createToonFactoryMediaRequests((input, signal) => h.editor.execute(input, signal), directory => directory === h.root);
+    const input = { ...h.input("separate"), requestId: randomUUID() };
+    const outcome = requests.execute(input).catch(error => error);
+    const child = await observation.rendering;
+    process.kill(child.pid, "SIGSTOP");
+    await requests.cancel({ requestId: input.requestId, directory: h.root });
+    assert.match((await outcome).message, /已取消/);
+    assert.equal(child.signalCode, "SIGKILL");
+    assert.throws(() => process.kill(child.pid, 0), { code: "ESRCH" });
+    assert.deepEqual(await fs.readdir(path.join(h.root, "outputs")), []);
+    assert.deepEqual((await fs.readdir(h.root)).sort(), ["input.mp4", "outputs"]);
+    assert.ok((await requests.execute({ operation: "probe", directory: h.root, path: "input.mp4", requestId: randomUUID() })).duration > 0);
+    await requests.close();
+  });
+
   for (const operation of ["export", "separate"]) {
     it(`${operation}: publishes validated media and removes all staging`, async t => {
       const h = await editorFixture(t);

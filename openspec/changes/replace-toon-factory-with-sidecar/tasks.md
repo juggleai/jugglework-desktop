@@ -88,3 +88,40 @@ PE/import/trust gates, signing sequence and measured x64/ARM64 validation limits
 1.2.32 release continuation: the operator explicitly approved formal distribution of bundled FFmpeg/x264 with corresponding source, license and notice delivery. This resolves the human approval prerequisite for this release only, not the outstanding native Intel or final signed package/UI verification above. Release-blocker follow-up adds shared export/multi-file publication rollback for cancellation and post-link failures; 39 focused cases passed including active FFmpeg cancellation/stop, no orphan process, no overwrite and no staging residue on generated temporary media. No existing user media or active product main was started or changed.
 
 Rollback identity follow-up (2026-10-30): shared export/multi-file publication now captures the staging source's bigint device/inode/birthtime identity plus size/mtime and the complete destination parent-directory identity chain before linking. Publication and rollback use non-following lstat checks; rollback rechecks parents and the target and uses non-recursive unlink only for matching regular files. Replaced/modified targets, symlinks, replaced directories/ancestors and unverifiable paths are conservatively retained; path-specific MEDIA_PUBLICATION_IDENTITY_CONFLICT diagnostics and the original failure are reported together, while unaffected outputs still receive rollback attempts. All 61 focused cases passed with zero skips, including 9 real native staging FFmpeg/FFprobe cases for export/separate, active signal/stop cancellation, process exit and existing-output preservation. Replacement regressions cover both single-file and multi-file paths, including replacement during link completion and changed parents with unchanged leaf inodes. Electron no-emit typecheck and git diff checks passed. Node filesystem APIs do not provide atomic compare-and-unlink: a hostile writer can still race the final lstat/unlink, and inode/metadata checks are not a security proof against adversarial concurrent mutation. Conflicts may leave this operation's files for manual inspection; moved files are not searched for or deleted. Product main/updater were not started; no commit or publication was performed.
+
+## 11. Explicit restricted media cancellation
+
+- [x] 11.1 Bind UUID requests and explicit cancellation to a runtime generation, workspace and canonical project; bound history/tombstones and reject ID reuse.
+- [x] 11.2 Keep Web/Agent processing pending through host cleanup; cancel using an independent transport and preserve existing authentication and generic FFmpeg denial.
+- [x] 11.3 Block old-project starts and await task cleanup on project switches, grant revocation and shutdown.
+- [x] 11.4 Regenerate routes with trusted Bun, run focused existing tests/typechecks and strict affected OpenSpec validation; record limits without claiming packaged acceptance.
+
+2026-11-02 source verification: 98 existing-file focused Electron cases passed,
+zero failures/skips, including real suspended FFmpeg cancellation through HTTP,
+project close and grant revocation; another workspace's grant removal leaves the
+owned child alive. Trusted Bun routes, Server/Web typechecks, Server build,
+Electron typecheck, in-memory route authorization/schema checks, strict change
+validation and diff whitespace checks passed. Packaged candidate rebuild/UI
+acceptance remains with the operator; no product main/updater, commit or push.
+
+## 12. Cancellation review corrections
+
+- [x] 12.1 Preserve media cleanup failures across drained cancel-all and repeated close; extend the existing retry regression.
+- [x] 12.2 Add authenticated UUID Agent run registration/stop, early-stop history, same-run idempotence and tracked host-tool cleanup; keep page busy pending through confirmation.
+- [x] 12.3 Serialize project open/close/remove host-to-Pinia transactions using one queue and a non-enqueuing internal close.
+- [x] 12.4 Regenerate routes with trusted Bun; verify typechecks, focused real-media tests, actual Agent routes and project store in memory, and strict affected specs.
+
+2026-11-02 review correction verification: trusted Bun routes and Server/Web
+typechecks passed; Server build and Electron typecheck passed. The two existing
+focused Electron suites passed 98/98 with zero failures/skips, including repeated
+cleanup-error reporting after internal and external abort. Actual Agent routes
+passed in-memory session/Origin/workspace/schema gates, early stop, stale/duplicate
+IDs, cleanup waiting and repeated stop/error checks. The actual hostVideoEdit
+helper propagated run cancellation without a tool-provided signal, waited for
+cleanup and retained failures even when the tool rejection was consumed. The
+actual Pinia store passed queued close/open ordering, removal without deadlock,
+queue recovery and caller-abort commit consistency. Generated-router review found
+only three added interfaces plus sorted numbering shifts. Strict affected change
+validation and diff whitespace checks passed. See video-edit-migration.md for
+scope: these are source/isolated-runtime checks, not rebuilt signed-package or
+live Desktop UI acceptance.

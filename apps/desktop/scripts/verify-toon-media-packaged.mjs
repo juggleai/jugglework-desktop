@@ -2,7 +2,7 @@
 // node apps/desktop/scripts/verify-toon-media-packaged.mjs --app /path/Candidate.app
 import assert from "node:assert/strict";
 import { ChildProcess, execFile, spawn } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
@@ -92,14 +92,20 @@ async function launch() {
   Object.assign(environment, { HOME: path.join(root, "home"), TMPDIR: `${path.join(root, "tmp")}/`, XDG_CONFIG_HOME: path.join(root, "home"), XDG_CACHE_HOME: path.join(root, "cache") });
   const child = spawn(require("electron"), [script, "--toon-media-worker", root], { env: environment, stdio: "inherit", detached: true });
   let timedOut = false;
+  let killTimer;
   const timer = setTimeout(() => {
     timedOut = true;
     console.error("FAIL: independent host exceeded outer deadline");
     child.kill("SIGTERM");
-    setTimeout(() => { try { process.kill(-child.pid, "SIGKILL"); } catch {} }, 10_000).unref();
+    killTimer = setTimeout(() => {
+      if (child.exitCode === null && child.signalCode === null && child.pid > 1) {
+        try { process.kill(-child.pid, "SIGKILL"); } catch {}
+      }
+    }, 10_000).unref();
   }, (seconds + 20) * 1000);
   const [code, signal] = await once(child, "exit");
   clearTimeout(timer);
+  clearTimeout(killTimer);
   let report;
   try { report = JSON.parse(await readFile(path.join(root, "report.json"), "utf8")); } catch {}
   const success = code === 0 && !signal && !timedOut && report?.ok === true;
@@ -124,9 +130,11 @@ async function worker(root) {
   const results = new Map();
   const diagnostics = [];
   const children = [];
+  let pauseNextMedia = false;
   let runtime, window, host, editor, tools, view;
   let closing = false, fatal = false;
   const externalRequests = [];
+  const mediaResponses = [];
   const moduleUrl = name => pathToFileURL(path.join(root, "modules", name)).href;
   const project = path.join(root, "projects", "project-a");
   const secondProject = path.join(root, "projects", "project-b");
@@ -149,10 +157,19 @@ async function worker(root) {
     const record = { child: this, file: options.file, args: options.args, pid: this.pid, detached: options.detached, closed: false };
     children.push(record);
     this.once("close", () => { record.closed = true; });
+    // Deterministic lifecycle cancellation, not throughput/timing evidence: a
+    // short fixture can finish before the renderer's cancel click round-trip.
+    // Suspend only the next owned ffmpeg process; real candidate cancellation
+    // must SIGKILL it and wait for close. Never touch any existing app process.
+    if (pauseNextMedia && options.file === tools?.ffmpeg && this.pid) {
+      pauseNextMedia = false;
+      process.kill(this.pid, "SIGSTOP");
+      record.suspendedForCancellation = true;
+    }
     return result;
   };
   const alive = record => {
-    if (!record.pid) return false;
+    if (!record.pid || record.closed || record.child.exitCode !== null || record.child.signalCode !== null) return false;
     try { process.kill(record.pid, 0); return true; } catch (error) { if (error.code === "ESRCH") return false; throw error; }
   };
   const mediaChildren = () => children.filter(record => [tools?.ffmpeg, tools?.ffprobe].includes(record.file));
@@ -194,24 +211,26 @@ async function worker(root) {
     const started = Date.now();
     try {
       const detail = await bounded(Promise.resolve().then(action), name, 60_000);
+      if (closing) throw new Error("host shut down before check completed");
       results.set(name, { status: "PASS", milliseconds: Date.now() - started, ...(detail === undefined ? {} : { detail }) });
       console.log(`PASS: ${name}`);
       return true;
     } catch (error) {
+      pauseNextMedia = false;
       results.set(name, { status: "FAIL", milliseconds: Date.now() - started, error: error.stack || String(error) });
       console.error(`FAIL: ${name}: ${error.message}`);
       if (view && !view.webContents.isDestroyed()) {
         try { await writeFile(path.join(root, `${name.replace(/[^a-z0-9]+/gi, "-")}.png`), (await bounded(view.webContents.capturePage(), "failure screenshot", 2000)).toPNG()); } catch {}
       }
-      // Promise.race cannot cancel arbitrary work. Do not continue the suite with
-      // a timed-out action still mutating the project in the background.
-      if (error.message === `${name}: timeout (60000ms)`) throw error;
-      return false;
-    }
+      // Even an assertion failure can leave live work or a changed project/UI.
+      // Fail fast; shutdown owns recovery, never a later acceptance check.
+      throw error;
+    } finally { pauseNextMedia = false; }
   }
   async function finish(reason) {
     if (closing) return;
     closing = true;
+    pauseNextMedia = false;
     if (reason) { fatal = true; diagnostics.push(String(reason.stack || reason)); }
     const cleanupErrors = [];
     for (const task of [() => editor?.stop(), () => runtime?.dispose()]) {
@@ -220,7 +239,7 @@ async function worker(root) {
     if (window && !window.isDestroyed()) window.destroy();
     host?.closeAllConnections();
     if (host) await bounded(new Promise(resolve => host.close(resolve)), "catalog close", 2000).catch(error => cleanupErrors.push(error.message));
-    try { await waitFor(() => children.every(record => !alive(record)), "all owned processes exit", 5000); } catch (error) { cleanupErrors.push(error.message); }
+    try { await waitFor(() => children.every(record => record.closed && !alive(record)), "all owned processes close", 5000); } catch (error) { cleanupErrors.push(error.message); }
     const orphans = children.filter(alive).map(record => ({ pid: record.pid, file: record.file }));
     let sidecarGroupOrphans = [];
     try { sidecarGroupOrphans = await remainingSidecarGroupProcesses(); } catch (error) { cleanupErrors.push(error.message); }
@@ -231,8 +250,8 @@ async function worker(root) {
     for (const name of requiredChecks) if (!results.has(name)) results.set(name, { status: "FAIL", error: "Not executed/completed; acceptance coverage missing" });
     const report = { schemaVersion: 1, ok: !fatal && [...results.values()].every(result => result.status === "PASS"), candidate: config.appPath, version: config.version,
       electron: process.versions.electron, arch: process.arch, packaged: true, extractedModuleHashes: config.hashes,
-      limitations: ["Independent current Electron host, not the candidate executable/main, updater, notarization or release gate.", "UI automation uses candidate DOM events and Electron executeJavaScript; fixture canvas is seeded on disk, not imported through a file picker.", "Scene detector is exercised on a short synthetic testsrc2 fixture; many-shot/10-minute limits and publication-await races require separate tests.", "Cancellation timing requires observing a real active ffmpeg child; missing observation is a failure, never a skip."],
-      checks: Object.fromEntries(results), diagnostics, externalRequests, evidence: root };
+      limitations: ["Independent current Electron host, not the candidate executable/main, updater, notarization or release gate.", "UI automation uses candidate DOM events and Electron executeJavaScript; fixture canvas is seeded on disk, not imported through a file picker.", "Scene detector is exercised on a short synthetic testsrc2 fixture; many-shot/10-minute limits and publication-await races require separate tests.", "Cancellation tests SIGSTOP the next owned real ffmpeg child to make the UI round-trip deterministic, then require candidate cancellation to kill it and wait for close. This verifies lifecycle, not natural processing timing; publication-await races are covered separately."],
+      checks: Object.fromEntries(results), diagnostics, externalRequests, mediaResponses, evidence: root };
     await writeFile(path.join(root, "report.json"), JSON.stringify(report, null, 2));
     console.log(`${report.ok ? "PASS" : "FAIL"}: ${[...results.values()].filter(value => value.status === "PASS").length}/${requiredChecks.length} acceptance checks`);
     ChildProcess.prototype.spawn = originalSpawn;
@@ -251,7 +270,18 @@ async function worker(root) {
   const decodeFile = file => runTool(tools.ffmpeg, ["-v", "error", "-nostdin", "-i", file, "-f", "null", "-"]);
   const editorInput = (operation, outputDirectory) => ({ operation, directory: project, path: "input.mp4", outputDirectory });
   const exportInput = output => ({ operation: "export", directory: project, clips: [{ path: "input.mp4", start: 0.2, end: 1.2 }, { path: "input.mp4", start: 1.5, end: 2.5 }], output, width: 160, height: 128, fps: 24 });
-  const api = input => page(`(async () => { const r = await fetch('/api/media/process', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-toonflow-workspace': '1' }, body: JSON.stringify(${JSON.stringify(input)}) }); return { status: r.status, body: await r.json() }; })()`);
+  const mediaRequest = (endpoint, input, authenticated = true) => page(`(async () => { const r = await fetch(${JSON.stringify(`/api/media/${endpoint}`)}, { method: 'POST', headers: ${JSON.stringify({ "Content-Type": "application/json", ...(authenticated ? { "x-toonflow-workspace": "1" } : {}) })}, body: JSON.stringify(${JSON.stringify(input)}) }); return { status: r.status, body: await r.json() }; })()`);
+  const api = input => mediaRequest("process", { requestId: randomUUID(), ...input });
+  const cancelMedia = (requestId, directory = project) => mediaRequest("cancel", { requestId, directory });
+  const assertSettled = result => {
+    assert.equal(result.status, 200, JSON.stringify(result));
+    assert.equal(result.body.data?.settled, true, JSON.stringify(result));
+  };
+  const assertMediaRejected = (result, message) => {
+    assert.ok(result.status >= 400, JSON.stringify(result));
+    assert.match(result.body.message, message);
+  };
+  const assertChildrenClosed = start => assert.ok(children.slice(start).every(record => record.closed && !alive(record)), "acknowledgment/outcome preceded owned child close");
   async function activeRender(startIndex) {
     return waitFor(() => children.slice(startIndex).find(record => record.file === tools.ffmpeg && !record.closed && alive(record)), "real active ffmpeg observed", 15_000);
   }
@@ -328,7 +358,9 @@ async function worker(root) {
         } else { externalRequests.push({ method: request.method, url: request.url }); response.writeHead(503).end(JSON.stringify({ error: "No model execution allowed in acceptance" })); }
       });
       host.listen(0, "127.0.0.1"); await once(host, "listening");
-      window = new BrowserWindow({ show: false, width: 1440, height: 1000, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } });
+      // Visible independent window is required for the candidate's real
+      // IntersectionObserver-based lazy previews; do not override that API.
+      window = new BrowserWindow({ show: true, width: 1440, height: 1000, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } });
       const { createToonFactoryRuntime } = await import(moduleUrl("toonFactoryRuntime.mjs"));
       const selections = [project, secondProject];
       runtime = createToonFactoryRuntime({ app, moduleRoot, packaged: true, getWindow: () => window,
@@ -349,6 +381,11 @@ async function worker(root) {
         if (!allowed) externalRequests.push({ blocked: details.url });
         callback({ cancel: !allowed });
       });
+      const recordMediaResponse = details => {
+        if (/^\/api\/media\/(process|cancel|project)$/.test(new URL(details.url).pathname)) mediaResponses.push({ id: details.id, endpoint: new URL(details.url).pathname, status: details.statusCode, error: details.error });
+      };
+      view.webContents.session.webRequest.onCompleted(recordMediaResponse);
+      view.webContents.session.webRequest.onErrorOccurred(recordMediaResponse);
     });
     if (!runtimeReady) throw new Error("Candidate runtime prerequisite failed");
     await check("catalog and renderer boundary", async () => {
@@ -371,7 +408,15 @@ async function worker(root) {
       await selectSource();
       for (const label of ["提取音轨", "分离音视频", "截取片段", "逐帧拉片"]) assert.equal(await page(`[...document.querySelector(${source}).querySelectorAll('button')].some(b => b.textContent.trim() === ${JSON.stringify(label)} && !b.disabled && b.getClientRects().length > 0)`), true, label);
     });
-    await check("source decode and playback", async () => { await decodeFile(path.join(project, "input.mp4")); return playback("input.mp4"); });
+    await check("source decode and playback", async () => {
+      const input = { operation: "probe", directory: project, path: "input.mp4", requestId: randomUUID() };
+      const result = await api(input);
+      assert.equal(result.status, 200, JSON.stringify(result));
+      assert.ok(result.body.data.duration > 0);
+      assertMediaRejected(await api(input), /不可复用/);
+      await decodeFile(path.join(project, "input.mp4"));
+      return playback("input.mp4");
+    });
     await check("UI trim", () => uiOperation("trim", "截取片段", 1));
     await check("UI extractAudio", () => uiOperation("extractAudio", "提取音轨", 1));
     await check("UI separate", () => uiOperation("separate", "分离音视频", 2));
@@ -438,6 +483,14 @@ async function worker(root) {
       await waitFor(async () => await count() === before.nodes.length, "project A restored");
       assert.equal((await saved()).nodes.find(node => node.id === "acceptance-source").data.outputs.video.value.url, "input.mp4");
       assert.equal(JSON.parse(await readFile(path.join(secondProject, "空画布.json"), "utf8")).nodes.length, 0);
+      assertSettled(await mediaRequest("project", { directory: null }));
+      const start = children.length;
+      assertMediaRejected(await api({ operation: "probe", directory: project, path: "input.mp4" }), /项目已切换/);
+      assert.equal(children.length, start, "closed media project started a child");
+      assertSettled(await mediaRequest("project", { directory: project }));
+      const reopened = await api({ operation: "probe", directory: project, path: "input.mp4" });
+      assert.equal(reopened.status, 200, JSON.stringify(reopened));
+      assert.ok(reopened.body.data.duration > 0);
     });
     await mkdir(path.join(project, "exports"));
     await check("real export", async () => {
@@ -483,6 +536,15 @@ async function worker(root) {
       ]) await assert.rejects(editor.execute(input), /路径|符号链接|参数/);
       const result = await api({ operation: "probe", directory: project, path: "input.mp4", executable: "/bin/sh" });
       assert.equal(result.status, 400);
+      const probe = { operation: "probe", directory: project, path: "input.mp4" };
+      for (const requestId of [undefined, "old-request"]) assert.equal((await api({ ...probe, requestId })).status, 400, "process requires a UUID");
+      for (const input of [{ directory: project }, { requestId: "old-request", directory: project }, { requestId: randomUUID() }, { requestId: randomUUID(), directory: project, pid: 1 }]) {
+        assert.equal((await mediaRequest("cancel", input)).status, 400, "cancel requires only UUID + directory");
+      }
+      for (const [endpoint, input] of [["process", { ...probe, requestId: randomUUID() }], ["cancel", { requestId: randomUUID(), directory: project }], ["project", { directory: null }]]) {
+        assert.equal((await mediaRequest(endpoint, input, false)).status, 403, `${endpoint} requires an authenticated app request`);
+        assert.equal((await fetch(`${new URL(view.webContents.getURL()).origin}/api/media/${endpoint}`, { method: "POST", headers: { "Content-Type": "application/json", "x-toonflow-workspace": "1" }, body: JSON.stringify(input), signal: AbortSignal.timeout(5000) })).status, 403, `${endpoint} requires the candidate session`);
+      }
       assert.deepEqual(await readdir(denied), []);
       await assertNoStaging();
     });
@@ -491,21 +553,58 @@ async function worker(root) {
       const start = children.length;
       const input = operation === "export" ? exportInput(`${directory}/cancelled.mp4`) : { ...editorInput(operation, directory), ...(operation === "analyze" ? { threshold: 0.3, minSceneSeconds: 0.5 } : {}) };
       const controller = new AbortController();
-      const outcome = editor.execute(input, controller.signal).then(value => ({ value }), error => ({ error }));
+      let outcome, verified = false;
       try {
+        pauseNextMedia = true;
+        outcome = editor.execute(input, controller.signal).then(value => ({ value }), error => ({ error }));
         const child = await activeRender(start);
         assert.equal(child.closed, false);
         controller.abort(new Error("acceptance active render cancellation"));
-        await editor.stop();
-        assert.ok((await outcome).error, "cancelled operation unexpectedly succeeded");
-      } finally { await editor.stop(); await outcome; }
-      await waitFor(() => children.slice(start).every(record => !alive(record)), "cancelled children exited");
-      assert.deepEqual(await readdir(path.join(project, directory)), []);
-      await assertNoStaging();
+        const result = await bounded(outcome, `${operation} signal-only outcome`, 15_000);
+        assert.equal(result.error, controller.signal.reason, "operation must reject with the cancellation reason");
+        assertChildrenClosed(start);
+        assert.deepEqual(await readdir(path.join(project, directory)), []);
+        await assertNoStaging();
+        verified = true;
+      } finally {
+        pauseNextMedia = false;
+        // Never let stop() turn broken signal cancellation into passing evidence.
+        if (!verified) {
+          for (const task of [() => editor.stop(), () => outcome]) {
+            try { await bounded(Promise.resolve().then(task), `${operation} failure cleanup`, 5000); }
+            catch (error) { diagnostics.push(error.stack || String(error)); }
+          }
+        }
+      }
       assert.ok((await editor.execute({ operation: "probe", directory: project, path: "input.mp4" })).duration > 0);
     });
     await check("UI cancellation", async () => {
+      const earlyId = randomUUID(), requestId = randomUUID();
+      for (const directory of ["cancel-api-early", "cancel-api-active"]) await mkdir(path.join(project, directory));
+      assertSettled(await cancelMedia(earlyId));
+      const earlyStart = children.length;
+      assertMediaRejected(await api({ ...editorInput("separate", "cancel-api-early"), requestId: earlyId }), /已取消/);
+      assert.equal(children.length, earlyStart, "cancel-before-start spawned a child");
+      assert.deepEqual(await readdir(path.join(project, "cancel-api-early")), []);
+      const apiStart = children.length;
+      pauseNextMedia = true;
+      const outcome = api({ ...editorInput("separate", "cancel-api-active"), requestId }).then(value => ({ value }), error => ({ error }));
+      const child = await activeRender(apiStart);
+      assertMediaRejected(await cancelMedia(requestId, secondProject), /不属于此项目/);
+      assertSettled(await cancelMedia(earlyId));
+      assert.equal(child.closed, false, "old ID/wrong directory cancelled the active request");
+      assert.ok(alive(child));
+      assertSettled(await cancelMedia(requestId));
+      assertChildrenClosed(apiStart);
+      const cancelled = await bounded(outcome, "API process cancellation response", 10_000);
+      assert.ok(!cancelled.error, `process transport failed: ${cancelled.error}`);
+      assertMediaRejected(cancelled.value, /已取消/);
+      assert.deepEqual(await readdir(path.join(project, "cancel-api-active")), []);
+      await assertNoStaging();
+      assertMediaRejected(await api({ operation: "probe", directory: project, path: "input.mp4", requestId }), /不可复用/);
       await selectSource(); const before = await count(), start = children.length, filesBefore = await assetFiles();
+      const responseStart = mediaResponses.length;
+      pauseNextMedia = true;
       await clickText("分离音视频", `document.querySelector(${source})`);
       await waitFor(() => page("!![...document.querySelectorAll('.videoActionPanel')].find(e => e.getClientRects().length)"), "separate dialog");
       await clickText("分离音视频", "[...document.querySelectorAll('.videoActionPanel')].find(e => e.getClientRects().length)");
@@ -513,6 +612,13 @@ async function worker(root) {
       await clickText("取消处理", "[...document.querySelectorAll('.videoActionPanel')].find(e => e.getClientRects().length)");
       await waitFor(() => children.slice(start).every(record => !alive(record)), "UI cancellation children exit");
       await waitFor(() => page("![...document.querySelectorAll('.videoActionPanel [role=status]')].some(e => e.getClientRects().length)"), "UI cancellation settled");
+      await waitFor(() => {
+        const responses = mediaResponses.slice(responseStart);
+        return responses.some(response => response.endpoint === "/api/media/cancel" && response.status === 200 && !response.error)
+          && responses.some(response => response.endpoint === "/api/media/process" && response.status >= 400 && !response.error);
+      }, "UI independent cancel acknowledgment and live process response");
+      assert.ok(!mediaResponses.slice(responseStart).some(response => response.error), "UI aborted the process/cancel transport");
+      assertChildrenClosed(start);
       assert.equal(await count(), before);
       assert.deepEqual(await assetFiles(), filesBefore, "UI cancellation published files");
       await clickText("关闭", "[...document.querySelectorAll('.videoActionPanel')].find(e => e.getClientRects().length)");
@@ -520,15 +626,18 @@ async function worker(root) {
     });
     await check("project switch during processing", async () => {
       await selectSource(); const before = await saved(), start = children.length, filesBefore = await assetFiles();
+      pauseNextMedia = true;
       await clickText("分离音视频", `document.querySelector(${source})`);
       await waitFor(() => page("!![...document.querySelectorAll('.videoActionPanel')].find(e => e.getClientRects().length)"), "switch cancellation dialog");
       await clickText("分离音视频", "[...document.querySelectorAll('.videoActionPanel')].find(e => e.getClientRects().length)");
       await activeRender(start);
-      await runtime.openProject(secondProject);
-      await waitFor(() => children.slice(start).every(record => !alive(record)), "switch cancelled media children");
+      assert.equal((await bounded(runtime.openProject(secondProject), "switch abort and cleanup", 15_000)).currentDirectory, secondProject);
+      assertChildrenClosed(start);
+      await assertNoStaging();
+      assert.deepEqual(await assetFiles(), filesBefore, "switch acknowledgment preceded publication cleanup");
       await waitFor(async () => await count() === 0, "B isolated from A job");
       assert.equal(JSON.parse(await readFile(path.join(secondProject, "空画布.json"), "utf8")).nodes.length, 0);
-      await runtime.openProject(project);
+      assert.equal((await runtime.openProject(project)).currentDirectory, project);
       await waitFor(async () => await count() === before.nodes.length, "A no stale result nodes");
       assert.deepEqual(await assetFiles(), filesBefore, "project switch left published cancelled media");
       await assertNoStaging();
@@ -536,14 +645,16 @@ async function worker(root) {
     await check("grant revocation during processing", async () => {
       await mkdir(path.join(project, "revoked"));
       const start = children.length;
+      pauseNextMedia = true;
       const outcome = api(editorInput("separate", "revoked")).then(value => ({ value }), error => ({ error }));
       await activeRender(start);
-      await runtime.clearProjectGrants();
-      const result = await outcome;
-      assert.ok(result.error || result.value.status >= 400, JSON.stringify(result));
-      await waitFor(() => children.slice(start).every(record => !alive(record)), "revoked media children exit");
+      await bounded(runtime.clearProjectGrants(), "revoke abort and cleanup", 15_000);
+      assertChildrenClosed(start);
       assert.deepEqual(await readdir(path.join(project, "revoked")), []);
       await assertNoStaging();
+      const result = await bounded(outcome, "revoked process response", 10_000);
+      assert.ok(!result.error, `process transport failed: ${result.error}`);
+      assertMediaRejected(result.value, /授权已撤销|项目已关闭/);
     });
     await check("no external model requests", async () => { assert.deepEqual(externalRequests, []); });
     // Include successful lifecycle shutdown (not just cancellation) in orphan check.
@@ -551,7 +662,14 @@ async function worker(root) {
     assert.equal(runtime.state().running, false);
     await waitFor(() => mediaChildren().every(record => !alive(record)), "all media children exit");
   } catch (error) {
+    pauseNextMedia = false;
     fatal = true; diagnostics.push(error.stack || String(error)); console.error(error);
+    if (view && !view.webContents.isDestroyed()) {
+      try {
+        diagnostics.push(await page("JSON.stringify({hash:location.hash,text:document.body.innerText,nodes:[...document.querySelectorAll('.vue-flow__node')].map(e=>({id:e.dataset.id,html:e.innerHTML.slice(0,1500)}))})"));
+        await writeFile(path.join(root, "fatal.png"), (await bounded(view.webContents.capturePage(), "fatal screenshot", 2000)).toPNG());
+      } catch {}
+    }
   } finally {
     clearTimeout(hardTimer);
     await finish();

@@ -5,7 +5,7 @@ import { isManagedMode } from "@/lib/managed";
 import { hostFetch } from "@/utils/jugglework";
 import u from "@/utils";
 
-const base = { directory: z.string().min(1).max(4096), path: z.string().min(1).max(4096) };
+const base = { requestId: z.uuid(), directory: z.string().min(1).max(4096), path: z.string().min(1).max(4096) };
 const output = { ...base, outputDirectory: z.string().min(1).max(4000) };
 const schema = z.discriminatedUnion("operation", [
   z.strictObject({ ...base, operation: z.literal("probe") }),
@@ -17,6 +17,7 @@ const schema = z.discriminatedUnion("operation", [
 
 export default Router().post("/", async (req, res) => {
   if (!isManagedMode()) { res.status(403).json(error("此操作需要 JuggleWork 宿主", null, 403)); return; }
+  u.mcpControl.assertAppRequest(req);
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) { res.status(400).json(error("媒体参数无效", parsed.error.issues, 400)); return; }
   const directory = await u.workspace.resolveWorkspace(req, parsed.data.directory);

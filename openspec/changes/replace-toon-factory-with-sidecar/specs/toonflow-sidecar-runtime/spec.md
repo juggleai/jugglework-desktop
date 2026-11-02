@@ -125,3 +125,46 @@ Windows x64/ARM64 SHALL build pinned FFmpeg/x264 into target-specific executable
 - **WHEN** a Windows target stages and signs its media executables
 - **THEN** packaging validates unchanged source/license/configuration bytes and seals inventory after media signing
 - **AND** cross-built ARM64 static checks are not reported as native execution
+
+### Requirement: Restricted media cancellation is explicit and task-owned
+Restricted media requests MUST use fresh UUIDs bound to a runtime generation, workspace and canonical project. The host MUST register before asynchronous work, bound history and reject ID reuse. Cancellation acknowledgement and UI completion MUST wait for child close and staging cleanup. Session, bridge and Origin authentication and generic FFmpeg denial MUST remain enforced.
+
+#### Scenario: Cancellation precedes the processing request
+- **WHEN** an authenticated cancellation arrives before its matching start
+- **THEN** the host records a bounded short-lived cancellation tombstone and rejects the late start
+- **AND** ID history prevents reuse after tombstone expiry within the runtime generation
+
+#### Scenario: A stale cancellation arrives during another operation
+- **WHEN** an unknown, finished or previous-generation ID is cancelled
+- **THEN** no different active request is stopped
+
+#### Scenario: A project is switched or its grant is revoked
+- **WHEN** a restricted media task is running in the original project
+- **THEN** the host blocks old-project starts, stops the owned task and waits for process close and cleanup before acknowledging the transition
+- **AND** another runtime instance is unaffected
+
+#### Scenario: Cleanup is retried after failure
+- **WHEN** a media task has failed cleanup and a caller repeats cancel-all or close after the active task drained
+- **THEN** the registry reports the retained cleanup error again rather than acknowledging success
+
+### Requirement: Project transitions serialize host and page state
+Project open, close and removal SHALL share a per-store serial queue covering host mutation through the corresponding Pinia commit. Nested removal cleanup MUST NOT enqueue a recursive close that deadlocks the transaction.
+
+#### Scenario: A close response is delayed while another project opens
+- **WHEN** a close transaction is waiting for host cleanup and a new open is requested
+- **THEN** the open waits until close commits and the final page project matches the final host project
+
+### Requirement: Agent stop is run-owned and cleanup-confirmed
+Agent requests MUST use fresh UUID run IDs registered before asynchronous work in the authenticated sidecar generation. Explicit stop SHALL preserve session, Origin, workspace and directory checks, cancel only the matching run and await tools and cleanup. Repeated stop MUST retain cleanup errors; page busy MUST NOT finish solely because its processing transport was aborted.
+
+#### Scenario: Stop arrives before the Agent starts
+- **WHEN** a valid stop request precedes the same run ID
+- **THEN** the late start is rejected without executing the Agent and the ID cannot be reused
+
+#### Scenario: A tool continues cleanup after the Agent SDK returns
+- **WHEN** stop aborts a run with a host video edit pending and the SDK consumes the tool error
+- **THEN** the run drain still waits for the tracked host edit and reports any retained cleanup failure on every subsequent stop
+
+#### Scenario: A stale run ID is stopped during a newer run
+- **WHEN** stop targets an old completed run ID
+- **THEN** the newer run is unaffected and duplicate start never launches a second run

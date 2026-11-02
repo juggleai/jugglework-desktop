@@ -40,7 +40,7 @@ async function exitProject() {
   leaving.value = true;
   try {
     const failure = await router.push("/home");
-    if (!failure) workspaceStore.closeProject();
+    if (!failure) await workspaceStore.closeProject();
   } finally {
     leaving.value = false;
   }

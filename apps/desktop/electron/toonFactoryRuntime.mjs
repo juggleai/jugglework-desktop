@@ -14,6 +14,85 @@ import { createToonFactoryVideoEditor } from "./toonFactoryVideoEdit.mjs";
 export const TOON_FACTORY_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
 const verifiedBundles = new Map();
 
+// One registry per runtime generation. IDs are never reused in that generation;
+// fail closed at the bound rather than evicting history and accepting stale starts.
+export function createToonFactoryMediaRequests(execute, isDirectoryGranted, platform = process.platform) {
+  const used = new Map(), cancelled = new Map(), active = new Map();
+  let closed = false;
+  const identity = input => {
+    if (!input || typeof input !== "object" || Array.isArray(input) || typeof input.requestId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(input.requestId)
+      || typeof input.directory !== "string" || input.directory.length > 4096 || !path.isAbsolute(input.directory) || path.normalize(input.directory) !== input.directory || input.directory.includes("\0")) throw new Error("无效的媒体任务标识或目录");
+    return { id: input.requestId.toLowerCase(), directory: directoryGrantKey(input.directory, platform) };
+  };
+  const remember = (id, directory) => {
+    for (const [key, expires] of cancelled) if (expires <= Date.now()) cancelled.delete(key);
+    if (used.size >= 4096) throw new Error("媒体任务标识已达上限，请重新打开漫剧工厂");
+    used.set(id, { directory, error: undefined });
+  };
+  const cancelAll = async () => {
+    const tasks = [...active.values()];
+    for (const task of tasks) task.controller.abort(new Error("媒体项目已关闭或授权已撤销"));
+    for (const result of await Promise.all(tasks.map(task => task.done))) if (result?.error) throw result.error;
+    for (const record of used.values()) if (record.error) throw record.error;
+  };
+  return {
+    async execute(input, signal) {
+      const { id, directory } = identity(input);
+      if (closed) throw new Error("媒体工作区已关闭");
+      if (used.has(id)) throw new Error(cancelled.has(id) ? "媒体任务已取消" : "媒体任务标识不可复用");
+      remember(id, directory);
+      if (active.size) throw new Error("已有剪辑或探测任务运行中，请等待完成");
+      const controller = new AbortController();
+      let finish = _result => {};
+      const done = new Promise(resolve => { finish = result => resolve(result); });
+      const task = { directory, controller, done };
+      active.set(id, task); // Before the first await, including canonicalization.
+      const combined = AbortSignal.any([controller.signal, ...(signal ? [signal] : [])]);
+      let failure;
+      try {
+        const canonical = await realpath(input.directory);
+        if (directoryGrantKey(canonical, platform) !== directory) throw new Error("媒体目录必须是规范项目目录");
+        if (!isDirectoryGranted(canonical)) throw new Error("项目目录未经 JuggleWork 授权");
+        combined.throwIfAborted();
+        const { requestId: _requestId, ...request } = input;
+        return await execute({ ...request, directory: canonical }, combined);
+      } catch (error) {
+        if (error !== combined.reason) failure = error;
+        if (combined.aborted && failure) used.get(id).error = failure;
+        throw error;
+      } finally {
+        if (active.get(id) === task) active.delete(id);
+        finish({ error: failure });
+      }
+    },
+    async cancel(input) {
+      const { id, directory } = identity(input);
+      if (Object.keys(input).some(key => !["requestId", "directory"].includes(key))) throw new Error("无效的媒体取消参数");
+      if (closed) throw new Error("媒体工作区已关闭");
+      const task = active.get(id);
+      if (used.has(id) && used.get(id).directory !== directory) throw new Error("媒体任务不属于此项目");
+      if (used.get(id)?.error) throw used.get(id).error;
+      if (!task && !used.has(id)) {
+        if (!isDirectoryGranted(input.directory)) throw new Error("项目目录未经 JuggleWork 授权");
+        remember(id, directory);
+        cancelled.set(id, Date.now() + 30_000); // Bounded cancel-before-start tombstone.
+      }
+      if (task) {
+        task.controller.abort(new Error("媒体任务已取消"));
+        const result = await task.done; // Includes child close and staging/publication cleanup.
+        if (result?.error) throw result.error;
+      }
+      return { settled: true };
+    },
+    cancelAll,
+    async close() {
+      closed = true;
+      await cancelAll();
+      used.clear(); cancelled.clear();
+    },
+  };
+}
+
 export function verifyToonFactoryRuntimeBundle(moduleRoot, expected, verifyBundle = verifyToonFactoryBundle) {
   const manifestPath = path.join(moduleRoot, "build-manifest.json");
   const stat = statSync(manifestPath);
@@ -247,6 +326,9 @@ export function createToonFactoryRuntime({ app, getWindow, getAccess, moduleRoot
     mediaTarget: { platform, arch },
     packaged,
   });
+  let mediaRequests = createToonFactoryMediaRequests((input, signal) => videoEditor.execute(input, signal), directory => directoryGrants.has(directoryGrantKey(directory, platform)), platform);
+  let mediaProjectDirectory = null;
+  let mediaProjectRevision = 0;
   let approvedProjectDirectory = null;
   const enteredWorkspaceIds = new Set();
   const state = () => ({ running: Boolean(ready && child && child.exitCode === null && origin && !failure), workspaceId, error: failure });
@@ -314,6 +396,8 @@ export function createToonFactoryRuntime({ app, getWindow, getAccess, moduleRoot
   async function bridge(req, res) {
     const requestBridgeToken = bridgeToken;
     const requestWorkspaceId = workspaceId;
+    const requestMediaRequests = mediaRequests;
+    const requestProjectRevision = mediaProjectRevision;
     if (!requestBridgeToken || !requestWorkspaceId || (req.headers.authorization !== `Bearer ${requestBridgeToken}` && req.headers["x-api-key"] !== requestBridgeToken) || req.headers.origin) { res.writeHead(403).end(); return; }
     const controller = new AbortController();
     res.on("close", () => { if (!res.writableEnded) controller.abort(); });
@@ -323,10 +407,27 @@ export function createToonFactoryRuntime({ app, getWindow, getAccess, moduleRoot
         const result = await native(url.pathname.slice(9), (await readJson(req)).args ?? []);
         res.setHeader("Content-Type", "application/json"); res.end(JSON.stringify({ result })); return;
       }
-      if (req.method === "POST" && url.pathname === "/videoEdit") {
+      if (req.method === "POST" && ["/videoEdit", "/videoEditCancel", "/videoEditProject"].includes(url.pathname)) {
         const input = await readJson(req);
         if (bridgeToken !== requestBridgeToken || workspaceId !== requestWorkspaceId) throw new Error("剪辑工作区授权已失效");
-        const result = await videoEditor.execute(input, controller.signal);
+        let result;
+        if (url.pathname === "/videoEditProject") {
+          if (!input || Object.keys(input).some(key => key !== "directory") || !(input.directory === null || typeof input.directory === "string" && input.directory.length <= 4096 && path.isAbsolute(input.directory))) throw new Error("无效的媒体项目目录");
+          const directory = input.directory === null ? null : await realpath(input.directory);
+          if (bridgeToken !== requestBridgeToken || workspaceId !== requestWorkspaceId || requestProjectRevision !== mediaProjectRevision) throw new Error("剪辑工作区授权已失效");
+          if (directory && !directoryGrants.has(directoryGrantKey(directory, platform))) throw new Error("项目目录未经 JuggleWork 授权");
+          mediaProjectDirectory = null; // Block starts before waiting for the old project's cleanup.
+          const revision = ++mediaProjectRevision;
+          await requestMediaRequests.cancelAll();
+          if (bridgeToken !== requestBridgeToken || revision !== mediaProjectRevision) throw new Error("剪辑工作区授权已失效");
+          mediaProjectDirectory = directory;
+          result = { settled: true };
+        } else if (url.pathname === "/videoEditCancel") {
+          result = await requestMediaRequests.cancel(input);
+        } else {
+          if (requestProjectRevision !== mediaProjectRevision || mediaProjectDirectory === null || mediaProjectDirectory && directoryGrantKey(input?.directory ?? "", platform) !== directoryGrantKey(mediaProjectDirectory, platform)) throw new Error("媒体项目已切换");
+          result = await requestMediaRequests.execute(input, controller.signal);
+        }
         res.setHeader("Content-Type", "application/json"); res.end(JSON.stringify(result)); return;
       }
       const access = await getAccess(); if (!access) throw new Error("JuggleWork 模型服务尚未就绪");
@@ -403,6 +504,10 @@ export function createToonFactoryRuntime({ app, getWindow, getAccess, moduleRoot
   }
   async function stop() {
     bridgeToken = null;
+    mediaProjectDirectory = null;
+    mediaProjectRevision += 1;
+    let mediaFailure;
+    try { await mediaRequests.close(); } catch (error) { mediaFailure = error; }
     await videoEditor.stop();
     startup?.controller.abort(new Error("漫剧工厂启动已取消"));
     cancelIdleClose();
@@ -452,6 +557,7 @@ export function createToonFactoryRuntime({ app, getWindow, getAccess, moduleRoot
       previousLog.end();
       await Promise.race([once(previousLog, "close").catch(() => {}), new Promise((resolve) => setTimeout(resolve, 1000))]);
     }
+    if (mediaFailure) throw mediaFailure;
   }
   async function start(id) {
     if (disposed) throw new Error("应用正在退出");
@@ -463,6 +569,8 @@ export function createToonFactoryRuntime({ app, getWindow, getAccess, moduleRoot
     const signal = controller.signal;
     try {
     failure = null; workspaceId = id; workspaceScopeKey = toonFactoryWorkspaceScopeKey(id);
+    mediaRequests = createToonFactoryMediaRequests((input, signal) => videoEditor.execute(input, signal), directory => directoryGrants.has(directoryGrantKey(directory, platform)), platform);
+    mediaProjectDirectory = null;
     bridgeToken = randomBytes(32).toString("hex"); pageToken = randomBytes(32).toString("hex");
     const verifiedBundle = verifyToonFactoryRuntimeBundle(moduleRoot, { platform, arch }, verifyBundle);
     const entry = path.join(moduleRoot, "server", "jugglework.js");
@@ -586,16 +694,27 @@ export function createToonFactoryRuntime({ app, getWindow, getAccess, moduleRoot
     async clearProjectGrants(id) {
       const scopeKey = typeof id === "string" && id.trim() ? toonFactoryWorkspaceScopeKey(id.trim()) : workspaceScopeKey;
       if (!scopeKey) return;
-      await rm(path.join(app.getPath("userData"), "toonFactoryV2", "workspaces", scopeKey, directoryGrantsFileName), { force: true });
+      let cleanup = Promise.resolve();
+      if (scopeKey === workspaceScopeKey) {
+        directoryGrants = new Map();
+        mediaProjectDirectory = null;
+        mediaProjectRevision += 1;
+        cleanup = mediaRequests.cancelAll();
+      }
+      // Persist revocation even when media cleanup reports a retained conflict.
+      for (const result of await Promise.allSettled([cleanup, rm(path.join(app.getPath("userData"), "toonFactoryV2", "workspaces", scopeKey, directoryGrantsFileName), { force: true })])) if (result.status === "rejected") throw result.reason;
       if (typeof id === "string" && id.trim()) enteredWorkspaceIds.delete(id.trim());
       else if (workspaceId) enteredWorkspaceIds.delete(workspaceId);
-      if (scopeKey === workspaceScopeKey) directoryGrants = new Map();
     },
     async clearAllProjectGrants() {
+      directoryGrants = new Map();
+      mediaProjectDirectory = null;
+      mediaProjectRevision += 1;
+      const cleanup = mediaRequests.cancelAll();
+      void cleanup.catch(() => {});
       const workspacesRoot = path.join(app.getPath("userData"), "toonFactoryV2", "workspaces");
       const entries = await readdir(workspacesRoot, { withFileTypes: true }).catch(() => []);
-      await Promise.all(entries.filter(entry => entry.isDirectory()).map(entry => rm(path.join(workspacesRoot, entry.name, directoryGrantsFileName), { force: true })));
-      directoryGrants = new Map();
+      for (const result of await Promise.allSettled([cleanup, ...entries.filter(entry => entry.isDirectory()).map(entry => rm(path.join(workspacesRoot, entry.name, directoryGrantsFileName), { force: true }))])) if (result.status === "rejected") throw result.reason;
       enteredWorkspaceIds.clear();
     },
     async open(id) {

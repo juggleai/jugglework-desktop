@@ -1,16 +1,105 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { ChildProcess, spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { EventEmitter, once } from "node:events";
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { describe, it } from "node:test";
 import { runInNewContext } from "node:vm";
 
-import { createToonFactoryRuntime, terminateSidecarProcess, TOON_FACTORY_IDLE_TIMEOUT_MS, toonFactoryWorkspaceScopeKey } from "./toonFactoryRuntime.mjs";
+import { createToonFactoryMediaRequests, createToonFactoryRuntime, terminateSidecarProcess, TOON_FACTORY_IDLE_TIMEOUT_MS, toonFactoryWorkspaceScopeKey } from "./toonFactoryRuntime.mjs";
+import { mediaRun, verifyMediaTools } from "./mediaTools.mjs";
 
 const mainSource = await readFile(new URL("./main.mjs", import.meta.url), "utf8");
+
+describe("restricted media request ownership", () => {
+  it("records cancellation before start, rejects reuse and never cancels a different ID or directory", async () => {
+    const directory = await realpath(os.tmpdir());
+    let started = 0, aborted = false, release = () => {};
+    const requests = createToonFactoryMediaRequests(async (_input, signal) => {
+      started++;
+      await new Promise(resolve => { release = () => resolve(undefined); signal.addEventListener("abort", () => { aborted = true; }, { once: true }); });
+      signal.throwIfAborted();
+    }, value => value === directory);
+    const early = { requestId: randomUUID(), directory };
+    assert.deepEqual(await requests.cancel(early), { settled: true });
+    await assert.rejects(requests.execute({ ...early, operation: "probe" }), /已取消/);
+    assert.equal(started, 0);
+    const input = { requestId: randomUUID(), directory, operation: "probe" };
+    const outcome = requests.execute(input).catch(error => error);
+    while (!started) await new Promise(resolve => setImmediate(resolve));
+    await requests.cancel(early);
+    assert.equal(aborted, false);
+    await assert.rejects(requests.cancel({ requestId: input.requestId, directory: path.join(directory, "other") }), /不属于/);
+    assert.equal(aborted, false);
+    let settled = false;
+    const cancelling = requests.cancel({ requestId: input.requestId, directory }).then(() => { settled = true; });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(aborted, true);
+    assert.equal(settled, false, "acknowledgement waits for execute cleanup");
+    release();
+    await cancelling;
+    assert.match((await outcome).message, /已取消/);
+    await assert.rejects(requests.execute(input), /不可复用/);
+    await requests.close();
+    await assert.rejects(requests.execute({ ...input, requestId: randomUUID() }), /已关闭/);
+  });
+
+  it("registers before canonicalization and isolates runtime generations", async () => {
+    const directory = await realpath(os.tmpdir());
+    let started = 0;
+    const execute = async () => { started++; return true; };
+    const old = createToonFactoryMediaRequests(execute, () => true);
+    const current = createToonFactoryMediaRequests(execute, () => true);
+    const input = { requestId: randomUUID(), directory };
+    const outcome = old.execute(input).catch(error => error);
+    await old.cancel(input);
+    assert.match((await outcome).message, /已取消/);
+    assert.equal(started, 0);
+    assert.equal(await current.execute(input), true);
+    await old.close();
+    await assert.rejects(old.cancel(input), /已关闭/);
+    await current.close();
+  });
+
+  it("does not acknowledge cancellation or project cleanup when staging cleanup fails", async () => {
+    const directory = await realpath(os.tmpdir());
+    for (const externalAbort of [false, true]) {
+      let started = false;
+      const failure = new Error("staging cleanup failed");
+      const controller = new AbortController();
+      const requests = createToonFactoryMediaRequests(async (_input, signal) => {
+        started = true;
+        await new Promise(resolve => signal.addEventListener("abort", resolve, { once: true }));
+        throw failure;
+      }, () => true);
+      const input = { requestId: randomUUID(), directory };
+      const outcome = requests.execute(input, controller.signal).catch(error => error);
+      while (!started) await new Promise(resolve => setImmediate(resolve));
+      if (externalAbort) controller.abort();
+      else await assert.rejects(requests.cancelAll(), error => error === failure);
+      assert.equal(await outcome, failure);
+      await assert.rejects(requests.cancel(input), error => error === failure);
+      await assert.rejects(requests.cancelAll(), error => error === failure);
+      await assert.rejects(requests.close(), error => error === failure);
+      await assert.rejects(requests.close(), error => error === failure);
+    }
+  });
+
+  it("bounds non-reusable IDs and rejects malformed or noncanonical identities", async () => {
+    const directory = await realpath(os.tmpdir());
+    const requests = createToonFactoryMediaRequests(async () => true, () => true);
+    await assert.rejects(requests.cancel({ requestId: "stale", directory }), /无效/);
+    await assert.rejects(requests.cancel({ requestId: randomUUID(), directory, pid: 1 }), /无效/);
+    await assert.rejects(requests.execute({ requestId: randomUUID(), directory: `${directory}/../${path.basename(directory)}` }), /无效/);
+    for (let i = 0; i < 4096; i++) await requests.cancel({ requestId: randomUUID(), directory });
+    await assert.rejects(requests.cancel({ requestId: randomUUID(), directory }), /上限/);
+    await requests.close();
+  });
+});
 
 function commandHandlerSource(name, nextName) {
   const start = mainSource.indexOf(`  "${name}":`);
@@ -213,6 +302,84 @@ async function createHarness(onReady, pageFailed = false, platform = process.pla
   });
   return { children, clipViews, contentView, dialog: dependencies.dialog, idleTimers, integrity, partitions, processKills, root, runtime, selectedDirectory, sessions, spawns, userData, views, window };
 }
+
+it("authenticates restricted media HTTP cancellation and rejects stale generations/project starts", async () => {
+  const h = await createHarness();
+  try {
+    await h.runtime.open("media-http");
+    const first = h.spawns.at(-1).options.env;
+    const post = (route, input, headers = {}, env = first) => fetch(`${env.TOONFLOW_BRIDGE_URL}${route}`, {
+      method: "POST", headers: { Authorization: `Bearer ${env.TOONFLOW_BRIDGE_TOKEN}`, "Content-Type": "application/json", ...headers }, body: JSON.stringify(input),
+    });
+    await callDesktopBridge(h.spawns.at(-1), "selectDirectory");
+    const directory = await realpath(h.selectedDirectory), requestId = randomUUID();
+    assert.equal((await post("/videoEditCancel", { directory, requestId }, { Origin: "http://hostile.invalid" })).status, 403);
+    assert.equal((await post("/videoEditCancel", { directory, requestId }, { Authorization: "Bearer invalid" })).status, 403);
+    assert.deepEqual(await (await post("/videoEditCancel", { directory, requestId })).json(), { settled: true });
+    assert.equal((await post("/videoEditProject", { directory })).status, 200);
+    const late = await post("/videoEdit", { directory, requestId, operation: "probe", path: "input.mp4" });
+    assert.equal(late.status, 502);
+    assert.match(JSON.stringify(await late.json()), /已取消/);
+    assert.equal((await post("/videoEditProject", { directory })).status, 200);
+    assert.equal((await post("/videoEditProject", { directory: null })).status, 200);
+    const closed = await post("/videoEdit", { directory, requestId: randomUUID(), operation: "probe", path: "input.mp4" });
+    assert.match(JSON.stringify(await closed.json()), /已切换/);
+    await h.runtime.restart("media-http");
+    const current = h.spawns.at(-1).options.env;
+    assert.equal((await post("/videoEditCancel", { directory, requestId }, { Authorization: `Bearer ${first.TOONFLOW_BRIDGE_TOKEN}` }, current)).status, 403);
+    await h.runtime.clearProjectGrants();
+    assert.equal((await post("/videoEditCancel", { directory, requestId: randomUUID() }, {}, current)).status, 502);
+  } finally { await h.runtime.dispose(); await rm(h.root, { recursive: true, force: true }); }
+});
+
+for (const transition of ["cancel", "project", "revoke"]) it(`restricted HTTP ${transition} reaps only its owned suspended media process before acknowledgement`, { skip: process.platform !== "darwin", timeout: 30_000 }, async t => {
+  const h = await createHarness();
+  let suspended = /** @type {import("node:child_process").ChildProcess | undefined} */ (undefined);
+  try {
+    const mediaRoot = fileURLToPath(new URL("../resources/mediaTools", import.meta.url));
+    const tools = verifyMediaTools(mediaRoot, process, { phase: "built" });
+    await cp(mediaRoot, path.join(h.root, "mediaTools"), { recursive: true });
+    const directory = await realpath(h.selectedDirectory);
+    await mkdir(path.join(directory, "outputs"));
+    mediaRun(tools.ffmpeg, ["-v", "error", "-nostdin", "-n", "-f", "lavfi", "-i", "testsrc2=size=160x128:rate=24", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000", "-t", "1", "-c:v", "libx264", "-threads", "2", "-pix_fmt", "yuv420p", "-c:a", "aac", path.join(directory, "input.mp4")]);
+    await h.runtime.open("media-real-http");
+    await callDesktopBridge(h.spawns.at(-1), "selectDirectory");
+    const env = h.spawns.at(-1).options.env;
+    const post = (route, input) => fetch(`${env.TOONFLOW_BRIDGE_URL}${route}`, { method: "POST", headers: { Authorization: `Bearer ${env.TOONFLOW_BRIDGE_TOKEN}`, "Content-Type": "application/json" }, body: JSON.stringify(input) });
+    assert.equal((await post("/videoEditProject", { directory })).status, 200);
+    let observed = _child => {};
+    const rendering = new Promise(resolve => { observed = child => resolve(child); });
+    const prototype = /** @type {ChildProcess & { spawn(options: { file: string }): number }} */ (ChildProcess.prototype);
+    const original = prototype.spawn;
+    t.mock.method(prototype, "spawn", function(options) {
+      const result = original.call(this, options);
+      if (options.file === path.join(h.root, "mediaTools", path.relative(mediaRoot, tools.ffmpeg)) && !suspended) {
+        suspended = this;
+        process.kill(this.pid, "SIGSTOP");
+        observed(this);
+      }
+      return result;
+    });
+    const requestId = randomUUID();
+    const outcome = post("/videoEdit", { requestId, directory, operation: "separate", path: "input.mp4", outputDirectory: "outputs" });
+    await Promise.race([rendering, outcome.then(async response => { throw new Error(`render did not start: ${response.status} ${await response.text()}`); })]);
+    assert.ok(suspended);
+    await h.runtime.clearProjectGrants("another-workspace");
+    assert.equal(suspended.signalCode, null);
+    process.kill(suspended.pid, 0);
+    if (transition === "revoke") await h.runtime.clearProjectGrants();
+    else assert.equal((await post(transition === "cancel" ? "/videoEditCancel" : "/videoEditProject", transition === "cancel" ? { requestId, directory } : { directory: null })).status, 200);
+    assert.equal((await outcome).status, 502);
+    assert.equal(suspended.signalCode, "SIGKILL");
+    assert.throws(() => process.kill(suspended.pid, 0), { code: "ESRCH" });
+    assert.deepEqual(await readdir(path.join(directory, "outputs")), []);
+    assert.deepEqual((await readdir(directory)).sort(), ["input.mp4", "outputs"]);
+  } finally {
+    try { if (suspended) suspended.kill("SIGKILL"); } catch {}
+    await h.runtime.dispose();
+    await rm(h.root, { recursive: true, force: true });
+  }
+});
 
 async function callDesktopBridge(spawn, command, headers = {}) {
   return fetch(`${spawn.options.env.TOONFLOW_BRIDGE_URL}/desktop/${command}`, {

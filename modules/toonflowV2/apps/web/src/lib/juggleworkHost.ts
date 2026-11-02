@@ -85,7 +85,7 @@ export function registerJuggleWorkHostBridge(router: Router) {
     getProjectState: snapshot,
     async showHome() {
       await flushWorkspaceSave();
-      useWorkspaceStore().closeProject();
+      await useWorkspaceStore().closeProject();
       await router.replace("/home");
       await nextTick();
       return snapshot();
@@ -105,7 +105,7 @@ export function registerJuggleWorkHostBridge(router: Router) {
         const failure = await router.push("/home");
         if (failure) throw new Error("当前项目尚未退出，无法移除");
       }
-      workspace.removeProject(directory);
+      await workspace.removeProject(directory);
       await nextTick();
       return snapshot();
     },
