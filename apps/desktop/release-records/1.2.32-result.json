@@ -1,0 +1,111 @@
+{
+  "schema": "com.juggleai.jugglework.desktop-release-result",
+  "schemaVersion": 1,
+  "version": "1.2.32",
+  "channel": "stable",
+  "platform": "mac",
+  "architecture": "arm64",
+  "recordedAt": "2026-11-02T06:11:32.334566+00:00",
+  "sourceCommit": "7a5998a294cdcea899e5f6dbe19275a65347ec49",
+  "candidateRecordCommit": "e09309c8116745abb730236563744d8cd4b0fc2b",
+  "promotionToolingCommit": "aaa23c17a0a88162a5493680ceef15aad3e46fc0",
+  "promotionWorkflow": "https://github.com/juggleai/jugglework-desktop/actions/runs/41396540724",
+  "promotionVerifiedAt": "2026-11-02T05:58:58.496Z",
+  "immutableManifest": {
+    "url": "https://downloads.jugglechat.cn/jugglework/releases/v1.2.32/mac/latest-mac.yml",
+    "sha256": "de4a2cc7a76454da75a116d3566421618559e97c2bccefecabc8bf3cfdbfc1ab",
+    "size": 706,
+    "etag": "FsyYEN-2arew_tsa9zNgdW5q0eYF"
+  },
+  "stableManifest": {
+    "url": "https://downloads.jugglechat.cn/jugglework/releases/stable/mac/latest-mac.yml",
+    "sha256": "de4a2cc7a76454da75a116d3566421618559e97c2bccefecabc8bf3cfdbfc1ab",
+    "size": 706,
+    "verifiedAt": "2026-11-02T05:58:58.496Z",
+    "freshReadBacks": "den-china-promotion-readback.json and den-overseas-promotion-readback.json"
+  },
+  "artifacts": [
+    {
+      "name": "jugglework-mac-arm64-1.2.32.zip",
+      "size": 422186902,
+      "sha256": "e0c06f00f292a8820bcac54bbdf44e505bd4ba4633be2721021adfb71c49690f"
+    },
+    {
+      "name": "jugglework-mac-arm64-1.2.32.dmg",
+      "size": 424784400,
+      "sha256": "73a43dcae9e5caa8afcc52e3fc104bb9d91ec7d53b925ff338235ff7504c565e"
+    }
+  ],
+  "appNotarizationId": "19bb4758-ce9f-4a05-b414-1407303489f1",
+  "dmgNotarizationId": "c6ec227d-77e2-4e56-b437-8173b4a2a4e2",
+  "preCanaryException": {
+    "scope": "stable-1.2.32-only",
+    "reason": "Operator explicitly authorized stable macOS arm64 1.2.32 to skip only the real-client upgrade canary"
+  },
+  "metadataException": {
+    "scope": "stable-1.2.32-only",
+    "reason": "Operator explicitly authorized stable macOS arm64 1.2.32 to skip only Qiniu Cache-Control metadata mutation and validation"
+  },
+  "den": {
+    "china": {
+      "origin": "https://work.jugglechat.cn",
+      "latest": "1.2.32",
+      "minAppVersion": "0.1.0",
+      "publishedCount": 18,
+      "missingHistorical1.2.28Preserved": true,
+      "allowedIncludesTarget": true,
+      "oldPid": 1097096,
+      "newPid": 1258724,
+      "binarySha256": "bf6f33901522ea52cdd87e8711c3c5d45d8b5571708ea51b9eeb0c7d744480a9",
+      "backup": "/root/jugglework-server/backups/desktop-version-1.2.32-20261102T060652567003Z",
+      "configBackupSha256": "793eaa93dced1a89949d122d3bac7e79254e92438e49c98c9fc8f4442837108f",
+      "updatedConfigSha256": "476950c6e7d8fe5f45e2b658cc240f061bffd6068320d80214c4eb5276519d54",
+      "verification": "passed"
+    },
+    "overseas": {
+      "origin": "https://work.juggle.im",
+      "latest": "1.2.32",
+      "minAppVersion": "0.1.0",
+      "publishedCount": 19,
+      "allowedIncludesTarget": true,
+      "oldPid": 674994,
+      "newPid": 752944,
+      "binarySha256": "a21e2e4734af3d955dfd1741d7e1f8b12a047eb5bc9786bfcd2590af261e3ae4",
+      "backup": "/root/jugglework-server/backups/desktop-version-1.2.32-20261102T060922949574Z",
+      "configBackupSha256": "921c29f3c73eb9e1dda2379a1c75256e0dced90c0353572cea0fec0930cbc1c8",
+      "updatedConfigSha256": "883354a198498e103cd67ab5fb4ab0880b4dde90e834f6ce81b9fd8296b1270b",
+      "verification": "passed"
+    }
+  },
+  "denVerification": {
+    "order": "China verified before overseas preflight/update",
+    "scope": "Only existing latestAppVersion/publishedDesktopVersions/allowedDesktopVersions; each inventory appended only 1.2.32",
+    "nonVersionBytesUnchanged": true,
+    "binaryAndRunningExecutableSha256Unchanged": true,
+    "localPublicHTTP": "health/ready/runtime-config/console/app-version all 200",
+    "loopback8021": true,
+    "criticalLogSignatures": 0,
+    "http5xxSignatures": 0,
+    "effectiveAllowlistEvidence": "Config read-back + absent process version environment overrides + restarted process; authenticated desktop-config API not exercised",
+    "migrationVerification": "No migration command or binary change; readiness passed and migration-error log signatures absent; schema version not independently queried"
+  },
+  "rollback": {
+    "pointers": "Each den.<environment>.backup contains root-owned config.yml, config.yml.sha256 and verification-baseline.json; directory 0700, files 0600, backup bytes/checksums verified",
+    "procedure": "Assess downloaded clients before policy rollback. One environment at a time; require current config/binary checksums still match this record and stop on drift. Verify backup checksum, stage root:root 0600 config on the same filesystem, recheck current bytes, atomically replace conf/config.yml, supervisorctl restart jugglework, then repeat all PID/executable/checksum/local-public health/ready/runtime/console/inventory/8021/log checks. No automatic rollback executed."
+  },
+  "securityWarnings": [
+    "Control 8020 binds all addresses in both environments; reported, unchanged",
+    "Overseas Supervisor environment file mode 0644; reported, unchanged",
+    "China Supervisor environment file mode also observed 0644; no values exposed or permissions changed"
+  ],
+  "installationCanary": "Not performed; installation, relaunch and retained state remain unverified",
+  "cacheControlMetadata": "Exact-version exception retained; inherited long-lived caching may leave clients stale despite exact public read-back",
+  "legalApproval": "No new legal approval obtained or inferred; prior recorded human distribution authorization is not an independent legal opinion",
+  "outOfScope": ["Windows", "Intel macOS", "website", "GitHub Release", "server binary deployment"],
+  "evidenceRoot": "release-evidence/jugglework-desktop/1.2.32/",
+  "fullEvidence": "final-release-evidence.json",
+  "promotionEvidence": "run-41396540724-promotion/release-evidence.json",
+  "finalAuditEvidence": "den-final-audit.json",
+  "finalAuditAt": "2026-11-02T06:12:33.445818+00:00",
+  "gitCompletion": "Release records finalized for dev and release-only main synchronization; Git history and remote refs are authoritative for push completion. File assistant integration remains on dev and is excluded from main and the published 1.2.32 bytes."
+}
