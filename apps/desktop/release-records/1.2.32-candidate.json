@@ -1,0 +1,385 @@
+{
+  "schema": "com.juggleai.jugglework.promotion-candidate",
+  "schemaVersion": 1,
+  "sourceCommit": "7a5998a294cdcea899e5f6dbe19275a65347ec49",
+  "expectedPreviousChannelDigest": "52f5df10f17b5094d088ecca2b00afa24bc892f2ce06c5b0e3e811d6173a65f6",
+  "receipts": {
+    "app": {
+      "schema": "com.juggleai.jugglework.macos-notarization-receipt",
+      "schemaVersion": 1,
+      "producer": "electron-after-sign",
+      "version": "1.2.32",
+      "bundleIdentifier": "com.juggleai.jugglework",
+      "submissionId": "19bb4758-ce9f-4a05-b414-1407303489f1",
+      "status": "accepted",
+      "staple": "validated",
+      "createdAt": "2026-11-02T04:52:04.897Z"
+    },
+    "dmg": {
+      "schema": "com.juggleai.jugglework.macos-dmg-notarization-receipt",
+      "schemaVersion": 1,
+      "producer": "finalize-macos-artifacts",
+      "version": "1.2.32",
+      "architecture": "arm64",
+      "artifactName": "jugglework-mac-arm64-1.2.32.dmg",
+      "teamIdentifier": "H7PDHSK3C7",
+      "submissionId": "c6ec227d-77e2-4e56-b437-8173b4a2a4e2",
+      "status": "accepted",
+      "staple": "validated",
+      "gatekeeper": "accepted",
+      "createdAt": "2026-11-02T04:56:52.625Z"
+    }
+  },
+  "evidence": {
+    "schema": "com.juggleai.jugglework.qiniu-release-evidence",
+    "schemaVersion": 2,
+    "version": "1.2.32",
+    "commit": "7a5998a294cdcea899e5f6dbe19275a65347ec49",
+    "platform": "mac",
+    "architectures": [
+      "arm64"
+    ],
+    "channel": "stable",
+    "artifacts": [
+      {
+        "name": "jugglework-mac-arm64-1.2.32.zip",
+        "key": "jugglework/releases/v1.2.32/mac/arm64/jugglework-mac-arm64-1.2.32.zip",
+        "size": 422186902,
+        "sha256": "e0c06f00f292a8820bcac54bbdf44e505bd4ba4633be2721021adfb71c49690f",
+        "sha512": "HushEojzem9vMc7FsZef1gWEMNb99Fpf9byxL192dBQJDlQhJfns4x7XvogmMW6/FZntJm0wnlY8ODx7PsvmkA==",
+        "etag": "lqksJtw8WCbKgVAknFpgA3nXggMY",
+        "mime": "application/zip"
+      },
+      {
+        "name": "jugglework-mac-arm64-1.2.32.dmg",
+        "key": "jugglework/releases/v1.2.32/mac/arm64/jugglework-mac-arm64-1.2.32.dmg",
+        "size": 424784400,
+        "sha256": "73a43dcae9e5caa8afcc52e3fc104bb9d91ec7d53b925ff338235ff7504c565e",
+        "sha512": "VeGIqQsX9h6iuF0qYglCSOAM0SfIbQnkMR1YFWt5crCclTIaDmFlNJp+78Lx7/cnSIoQH4PX+znFiecQL0IBFg==",
+        "etag": "lgECmjMXf7RO_UvVs8oYKsyyxQCT",
+        "mime": "application/x-apple-diskimage"
+      },
+      {
+        "name": "jugglework-mac-arm64-1.2.32.zip.blockmap",
+        "key": "jugglework/releases/v1.2.32/mac/arm64/jugglework-mac-arm64-1.2.32.zip.blockmap",
+        "size": 445901,
+        "sha256": "2c83cacffc1bb974ec76d45eaacbd69feea7137469586a7f715477e86a312d26",
+        "sha512": "ildUoJdeCZQT9VsMzYK/DLQTofh8d1wDm3rObP/5P7Pj6WkaVJ1+XFwQpdoL5Ewzr8KRvv6q6+HWl3vD0lOnyQ==",
+        "etag": "FuYMDWKRaAGj2hrxcoHsY430ylhe",
+        "mime": "application/octet-stream"
+      },
+      {
+        "name": "jugglework-mac-arm64-1.2.32.dmg.blockmap",
+        "key": "jugglework/releases/v1.2.32/mac/arm64/jugglework-mac-arm64-1.2.32.dmg.blockmap",
+        "size": 443205,
+        "sha256": "cfe9768c8ef5d1ee96da10035dd337c90edd7c263fa68b3b3bbcf5e41d03589d",
+        "sha512": "H58YXDde6LIfJwkpzdkDa1FJeFUUwPO57KHh7Z7Uegg1YYkQdmnVkZscPopaQdY0vdSAjkewCeeq7+rqCmr7Hw==",
+        "etag": "FjfJ_0sxXgHgUp5Mw6v4GtBJNVuW",
+        "mime": "application/octet-stream"
+      }
+    ],
+    "manifest": {
+      "key": "jugglework/releases/v1.2.32/mac/latest-mac.yml",
+      "url": "https://downloads.jugglechat.cn/jugglework/releases/v1.2.32/mac/latest-mac.yml",
+      "sha256": "de4a2cc7a76454da75a116d3566421618559e97c2bccefecabc8bf3cfdbfc1ab",
+      "sha512": "wOvCF88Mxuo6BTb4gusRDmPwXHWUinuM9UrpC0gUZ3sR91jq7w8A7BcdRQQhwSvK2aXjQu834tT/037qIFa3Bg==",
+      "size": 706,
+      "etag": "FsyYEN-2arew_tsa9zNgdW5q0eYF",
+      "mime": "text/yaml"
+    },
+    "localVerification": {
+      "schema": "com.juggleai.jugglework.macos-local-verification",
+      "schemaVersion": 1,
+      "producer": "verify-packaged-macos",
+      "version": "1.2.32",
+      "platform": "mac",
+      "architectures": [
+        "arm64"
+      ],
+      "verifiedAt": "2026-11-02T05:09:22.050Z",
+      "releaseState": "release",
+      "credentialState": "available",
+      "identity": {
+        "bundleIdentifier": "com.juggleai.jugglework",
+        "teamIdentifier": "H7PDHSK3C7"
+      },
+      "codesign": {
+        "status": "accepted",
+        "deep": true,
+        "strict": true
+      },
+      "hardenedRuntime": {
+        "status": "enabled"
+      },
+      "notarization": {
+        "status": "accepted",
+        "submissionId": "19bb4758-ce9f-4a05-b414-1407303489f1"
+      },
+      "staple": {
+        "status": "validated"
+      },
+      "gatekeeper": {
+        "status": "accepted"
+      },
+      "dmg": {
+        "signature": {
+          "status": "accepted",
+          "teamIdentifier": "H7PDHSK3C7"
+        },
+        "notarization": {
+          "status": "accepted",
+          "submissionId": "c6ec227d-77e2-4e56-b437-8173b4a2a4e2"
+        },
+        "staple": {
+          "status": "validated"
+        },
+        "gatekeeper": {
+          "status": "accepted"
+        },
+        "image": {
+          "status": "verified"
+        }
+      },
+      "artifacts": [
+        {
+          "name": "jugglework-mac-arm64-1.2.32.zip",
+          "size": 422186902,
+          "sha256": "e0c06f00f292a8820bcac54bbdf44e505bd4ba4633be2721021adfb71c49690f",
+          "sha512": "HushEojzem9vMc7FsZef1gWEMNb99Fpf9byxL192dBQJDlQhJfns4x7XvogmMW6/FZntJm0wnlY8ODx7PsvmkA==",
+          "etag": "lqksJtw8WCbKgVAknFpgA3nXggMY",
+          "mime": "application/zip"
+        },
+        {
+          "name": "jugglework-mac-arm64-1.2.32.dmg",
+          "size": 424784400,
+          "sha256": "73a43dcae9e5caa8afcc52e3fc104bb9d91ec7d53b925ff338235ff7504c565e",
+          "sha512": "VeGIqQsX9h6iuF0qYglCSOAM0SfIbQnkMR1YFWt5crCclTIaDmFlNJp+78Lx7/cnSIoQH4PX+znFiecQL0IBFg==",
+          "etag": "lgECmjMXf7RO_UvVs8oYKsyyxQCT",
+          "mime": "application/x-apple-diskimage"
+        },
+        {
+          "name": "jugglework-mac-arm64-1.2.32.zip.blockmap",
+          "size": 445901,
+          "sha256": "2c83cacffc1bb974ec76d45eaacbd69feea7137469586a7f715477e86a312d26",
+          "sha512": "ildUoJdeCZQT9VsMzYK/DLQTofh8d1wDm3rObP/5P7Pj6WkaVJ1+XFwQpdoL5Ewzr8KRvv6q6+HWl3vD0lOnyQ==",
+          "etag": "FuYMDWKRaAGj2hrxcoHsY430ylhe",
+          "mime": "application/octet-stream"
+        },
+        {
+          "name": "jugglework-mac-arm64-1.2.32.dmg.blockmap",
+          "size": 443205,
+          "sha256": "cfe9768c8ef5d1ee96da10035dd337c90edd7c263fa68b3b3bbcf5e41d03589d",
+          "sha512": "H58YXDde6LIfJwkpzdkDa1FJeFUUwPO57KHh7Z7Uegg1YYkQdmnVkZscPopaQdY0vdSAjkewCeeq7+rqCmr7Hw==",
+          "etag": "FjfJ_0sxXgHgUp5Mw6v4GtBJNVuW",
+          "mime": "application/octet-stream"
+        }
+      ],
+      "manifest": {
+        "name": "qiniu-v1.2.32-latest-mac.yml",
+        "size": 706,
+        "sha256": "de4a2cc7a76454da75a116d3566421618559e97c2bccefecabc8bf3cfdbfc1ab",
+        "sha512": "wOvCF88Mxuo6BTb4gusRDmPwXHWUinuM9UrpC0gUZ3sR91jq7w8A7BcdRQQhwSvK2aXjQu834tT/037qIFa3Bg==",
+        "etag": "FsyYEN-2arew_tsa9zNgdW5q0eYF",
+        "mime": "text/yaml"
+      }
+    },
+    "canary": null,
+    "workflow": {
+      "local": {
+        "status": "verified",
+        "verifiedAt": "2026-11-02T05:09:22.050Z"
+      },
+      "immutable": {
+        "status": "verified",
+        "qiniuChecks": [
+          {
+            "key": "jugglework/releases/v1.2.32/mac/arm64/jugglework-mac-arm64-1.2.32.zip",
+            "size": 422186902,
+            "etag": "lqksJtw8WCbKgVAknFpgA3nXggMY",
+            "verified": true
+          },
+          {
+            "key": "jugglework/releases/v1.2.32/mac/arm64/jugglework-mac-arm64-1.2.32.dmg",
+            "size": 424784400,
+            "etag": "lgECmjMXf7RO_UvVs8oYKsyyxQCT",
+            "verified": true
+          },
+          {
+            "key": "jugglework/releases/v1.2.32/mac/arm64/jugglework-mac-arm64-1.2.32.zip.blockmap",
+            "size": 445901,
+            "etag": "FuYMDWKRaAGj2hrxcoHsY430ylhe",
+            "verified": true
+          },
+          {
+            "key": "jugglework/releases/v1.2.32/mac/arm64/jugglework-mac-arm64-1.2.32.dmg.blockmap",
+            "size": 443205,
+            "etag": "FjfJ_0sxXgHgUp5Mw6v4GtBJNVuW",
+            "verified": true
+          },
+          {
+            "key": "jugglework/releases/v1.2.32/mac/latest-mac.yml",
+            "size": 706,
+            "etag": "FsyYEN-2arew_tsa9zNgdW5q0eYF",
+            "verified": true
+          }
+        ],
+        "verifiedAt": "2026-11-02T05:12:07.386Z"
+      },
+      "cdn": {
+        "status": "verified",
+        "qiniuChecks": [
+          {
+            "key": "jugglework/releases/v1.2.32/mac/arm64/jugglework-mac-arm64-1.2.32.zip",
+            "size": 422186902,
+            "etag": "lqksJtw8WCbKgVAknFpgA3nXggMY",
+            "verified": true
+          },
+          {
+            "key": "jugglework/releases/v1.2.32/mac/arm64/jugglework-mac-arm64-1.2.32.dmg",
+            "size": 424784400,
+            "etag": "lgECmjMXf7RO_UvVs8oYKsyyxQCT",
+            "verified": true
+          },
+          {
+            "key": "jugglework/releases/v1.2.32/mac/arm64/jugglework-mac-arm64-1.2.32.zip.blockmap",
+            "size": 445901,
+            "etag": "FuYMDWKRaAGj2hrxcoHsY430ylhe",
+            "verified": true
+          },
+          {
+            "key": "jugglework/releases/v1.2.32/mac/arm64/jugglework-mac-arm64-1.2.32.dmg.blockmap",
+            "size": 443205,
+            "etag": "FjfJ_0sxXgHgUp5Mw6v4GtBJNVuW",
+            "verified": true
+          },
+          {
+            "key": "jugglework/releases/v1.2.32/mac/latest-mac.yml",
+            "size": 706,
+            "etag": "FsyYEN-2arew_tsa9zNgdW5q0eYF",
+            "verified": true
+          }
+        ],
+        "cdnChecks": [
+          {
+            "key": "jugglework/releases/v1.2.32/mac/arm64/jugglework-mac-arm64-1.2.32.zip",
+            "url": "https://downloads.jugglechat.cn/jugglework/releases/v1.2.32/mac/arm64/jugglework-mac-arm64-1.2.32.zip",
+            "https": true,
+            "mime": "application/zip",
+            "contentLength": 422186902,
+            "range": true,
+            "size": 422186902,
+            "sha256": "e0c06f00f292a8820bcac54bbdf44e505bd4ba4633be2721021adfb71c49690f",
+            "sha512": "HushEojzem9vMc7FsZef1gWEMNb99Fpf9byxL192dBQJDlQhJfns4x7XvogmMW6/FZntJm0wnlY8ODx7PsvmkA==",
+            "checkedAt": "2026-11-02T05:13:01.668Z"
+          },
+          {
+            "key": "jugglework/releases/v1.2.32/mac/arm64/jugglework-mac-arm64-1.2.32.dmg",
+            "url": "https://downloads.jugglechat.cn/jugglework/releases/v1.2.32/mac/arm64/jugglework-mac-arm64-1.2.32.dmg",
+            "https": true,
+            "mime": "application/x-apple-diskimage",
+            "contentLength": 424784400,
+            "range": true,
+            "size": 424784400,
+            "sha256": "73a43dcae9e5caa8afcc52e3fc104bb9d91ec7d53b925ff338235ff7504c565e",
+            "sha512": "VeGIqQsX9h6iuF0qYglCSOAM0SfIbQnkMR1YFWt5crCclTIaDmFlNJp+78Lx7/cnSIoQH4PX+znFiecQL0IBFg==",
+            "checkedAt": "2026-11-02T05:13:45.228Z"
+          },
+          {
+            "key": "jugglework/releases/v1.2.32/mac/arm64/jugglework-mac-arm64-1.2.32.zip.blockmap",
+            "url": "https://downloads.jugglechat.cn/jugglework/releases/v1.2.32/mac/arm64/jugglework-mac-arm64-1.2.32.zip.blockmap",
+            "https": true,
+            "mime": "application/octet-stream",
+            "contentLength": 445901,
+            "range": true,
+            "size": 445901,
+            "sha256": "2c83cacffc1bb974ec76d45eaacbd69feea7137469586a7f715477e86a312d26",
+            "sha512": "ildUoJdeCZQT9VsMzYK/DLQTofh8d1wDm3rObP/5P7Pj6WkaVJ1+XFwQpdoL5Ewzr8KRvv6q6+HWl3vD0lOnyQ==",
+            "checkedAt": "2026-11-02T05:13:46.246Z"
+          },
+          {
+            "key": "jugglework/releases/v1.2.32/mac/arm64/jugglework-mac-arm64-1.2.32.dmg.blockmap",
+            "url": "https://downloads.jugglechat.cn/jugglework/releases/v1.2.32/mac/arm64/jugglework-mac-arm64-1.2.32.dmg.blockmap",
+            "https": true,
+            "mime": "application/octet-stream",
+            "contentLength": 443205,
+            "range": true,
+            "size": 443205,
+            "sha256": "cfe9768c8ef5d1ee96da10035dd337c90edd7c263fa68b3b3bbcf5e41d03589d",
+            "sha512": "H58YXDde6LIfJwkpzdkDa1FJeFUUwPO57KHh7Z7Uegg1YYkQdmnVkZscPopaQdY0vdSAjkewCeeq7+rqCmr7Hw==",
+            "checkedAt": "2026-11-02T05:13:47.130Z"
+          },
+          {
+            "key": "jugglework/releases/v1.2.32/mac/latest-mac.yml",
+            "url": "https://downloads.jugglechat.cn/jugglework/releases/v1.2.32/mac/latest-mac.yml",
+            "https": true,
+            "mime": "text/yaml",
+            "contentLength": 706,
+            "range": true,
+            "size": 706,
+            "sha256": "de4a2cc7a76454da75a116d3566421618559e97c2bccefecabc8bf3cfdbfc1ab",
+            "sha512": "wOvCF88Mxuo6BTb4gusRDmPwXHWUinuM9UrpC0gUZ3sR91jq7w8A7BcdRQQhwSvK2aXjQu834tT/037qIFa3Bg==",
+            "checkedAt": "2026-11-02T05:13:47.744Z"
+          }
+        ],
+        "verifiedAt": "2026-11-02T05:13:47.748Z"
+      },
+      "promotion": null
+    },
+    "den": {
+      "publishedVersionReadBack": "",
+      "latestVersionReadBack": ""
+    },
+    "timestamps": {
+      "createdAt": "2026-11-02T05:09:24.454Z",
+      "updatedAt": "2026-11-02T05:14:11.188Z"
+    },
+    "toonFactory": {
+      "toonflow": {
+        "revision": "sha256:17beb4d287e1bcb13fa5f6917f2b680b6fef966db05cbe033ac3d2670e5bfa09",
+        "version": "unversioned",
+        "lockfileSha256": "eb490e0976076fee21ea6f84dad2cb8b7bc0cc33868deb9953a6210214f8a119"
+      },
+      "target": {
+        "platform": "darwin",
+        "arch": "arm64",
+        "executableName": "bun",
+        "format": "mach-o"
+      },
+      "bun": {
+        "version": "1.3.14",
+        "platform": "darwin",
+        "arch": "arm64",
+        "executableName": "bun",
+        "format": "mach-o",
+        "bytes": 63096576,
+        "sha256": "e0c90ec15d33363e6b70713d56bc3b2c7585c17f40a0fe0f8fd9305901d4e233",
+        "provenance": {
+          "source": "official-github-release",
+          "version": "1.3.14",
+          "repositoryUrl": "https://github.com/oven-sh/bun",
+          "releaseUrl": "https://github.com/oven-sh/bun/releases/tag/bun-v1.3.14",
+          "shasumsUrl": "https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/SHASUMS256.txt",
+          "archive": {
+            "name": "bun-darwin-aarch64.zip",
+            "url": "https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/bun-darwin-aarch64.zip",
+            "sha256": "d8b96221828ad6f97ac7ac0ab7e95872341af763001e8803e8267652c2652620"
+          },
+          "binary": {
+            "sha256": "e0c90ec15d33363e6b70713d56bc3b2c7585c17f40a0fe0f8fd9305901d4e233"
+          }
+        }
+      },
+      "inventorySha256": "0f02ab6b0bb115da64a208fda49e7e314b5a13680f9369353808fc688cf38789",
+      "fileCount": 1034,
+      "buildManifestSha256": "afa944bb981851bd763e8035d57abc0160a95e4366061f5dae3a97253d5c4811",
+      "packagedContainers": [
+        "app",
+        "zip",
+        "dmg"
+      ],
+      "packageVerification": "normalized-package-verification.stdout.log",
+      "independentMediaAcceptance": "media-acceptance-pass-report.json",
+      "independentMediaAcceptanceScope": "Independent Electron acceptance host, not candidate executable/main, updater or install/relaunch canary."
+    }
+  }
+}

@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "Build a release or continue only the approved existing 1.2.31 candidate"
+        description: "Build a release or continue only an approved exact 1.2.31/1.2.32 candidate"
         required: true
         default: build
         type: choice
@@ -12,7 +12,7 @@ on:
           - build
           - promotion-only
       candidate_record:
-        description: "Promotion-only: fixed committed non-secret candidate record path"
+        description: "Promotion-only: version-matched fixed committed 1.2.31/1.2.32 candidate record path"
         required: false
         default: apps/desktop/release-records/1.2.31-candidate.json
         type: string
@@ -44,6 +44,11 @@ on:
         required: true
         default: false
         type: boolean
+      verification_only:
+        description: "Promotion-only diagnostics: verify immutable bytes/trust/CDN, never lock/write/refresh; requires promote=false"
+        required: false
+        default: false
+        type: boolean
       canary_json:
         description: "Non-secret machine canary JSON; required for build mode when promote=true"
         required: false
@@ -62,7 +67,7 @@ concurrency:
 jobs:
   release-macos-arm64:
     name: Build, verify, and publish macOS arm64
-    if: inputs.platform == 'mac' && inputs.mode != 'promotion-only'
+    if: inputs.platform == 'mac' && inputs.mode != 'promotion-only' && !inputs.verification_only
     runs-on: macos-26
     timeout-minutes: 240
     environment: qiniu-desktop-release
@@ -162,6 +167,7 @@ jobs:
         run: |
           set -euo pipefail
           pnpm --filter @jugglework/desktop build:electron
+          MEDIA_TOOLS_SMOKE=1 node --test apps/desktop/scripts/buildToonFactory.test.mjs
           pnpm --dir apps/desktop exec electron-builder \
             --config electron-builder.yml --mac dmg zip --arm64 --publish never
 
@@ -302,6 +308,7 @@ jobs:
       CHANNEL: ${{ inputs.channel }}
       RELEASE_PLATFORM: ${{ inputs.platform }}
       PROMOTE: ${{ inputs.promote }}
+      VERIFICATION_ONLY: ${{ inputs.verification_only }}
       CANDIDATE_RECORD: ${{ inputs.candidate_record }}
     steps:
       - name: Require exact continuation coordinates and dev dispatch
@@ -309,11 +316,17 @@ jobs:
         run: |
           set -euo pipefail
           test "$GITHUB_REF" = refs/heads/dev
-          test "$VERSION" = 1.2.31
           test "$CHANNEL" = stable
           test "$RELEASE_PLATFORM" = mac
-          test "$PROMOTE" = true
-          test "$CANDIDATE_RECORD" = apps/desktop/release-records/1.2.31-candidate.json
+          case "${VERIFICATION_ONLY-false}:$PROMOTE" in
+            false:true) test "$PROMOTE" = true ;;
+            true:false) test "$PROMOTE" = false ;;
+            *) exit 1 ;;
+          esac
+          case "$VERSION:$CANDIDATE_RECORD" in
+            1.2.31:apps/desktop/release-records/1.2.31-candidate.json|1.2.32:apps/desktop/release-records/1.2.32-candidate.json) ;;
+            *) exit 1 ;;
+          esac
 
       - name: Checkout continuation tooling and committed candidate from dev
         uses: actions/checkout@v6
@@ -375,9 +388,16 @@ jobs:
           echo "::add-mask::$QINIU_SECRET_KEY"
           qshell account "$QINIU_ACCESS_KEY" "$QINIU_SECRET_KEY" "jugglework-ci-$GITHUB_RUN_ID" --overwrite >/dev/null
 
-      - name: Restore exact immutable bytes, reverify trust, and promote under Qiniu lock
+      - name: Restore exact immutable bytes and run the selected continuation mode
         shell: bash
-        run: node apps/desktop/scripts/qiniu-release/promotion-continuation.mjs
+        run: |
+          set -euo pipefail
+          if [ "$VERIFICATION_ONLY" = true ]; then
+            node apps/desktop/scripts/qiniu-release/promotion-continuation.mjs --verify-only
+          else
+            test "$VERIFICATION_ONLY" = false
+            node apps/desktop/scripts/qiniu-release/promotion-continuation.mjs
+          fi
 
       - name: Retain continuation evidence even on failure
         if: always()
@@ -390,7 +410,7 @@ jobs:
 
   resolve-windows-source:
     name: Resolve exact Windows release source
-    if: inputs.platform == 'windows' && inputs.mode != 'promotion-only'
+    if: inputs.platform == 'windows' && inputs.mode != 'promotion-only' && !inputs.verification_only
     runs-on: ubuntu-24.04
     outputs:
       commit: ${{ steps.source.outputs.commit }}
@@ -415,7 +435,7 @@ jobs:
   build-windows:
     name: Build and sign Windows ${{ matrix.arch }}
     needs: resolve-windows-source
-    if: inputs.platform == 'windows' && inputs.mode != 'promotion-only'
+    if: inputs.platform == 'windows' && inputs.mode != 'promotion-only' && !inputs.verification_only
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 180
     environment: qiniu-desktop-release
@@ -590,7 +610,7 @@ jobs:
     needs:
       - resolve-windows-source
       - build-windows
-    if: inputs.platform == 'windows' && inputs.mode != 'promotion-only'
+    if: inputs.platform == 'windows' && inputs.mode != 'promotion-only' && !inputs.verification_only
     runs-on: windows-2022
     timeout-minutes: 180
     environment: qiniu-desktop-release

@@ -2,7 +2,8 @@ export type ProviderErrorKind =
   | "ip_not_authorized"
   | "gateway_credential_invalid"
   | "request_too_large"
-  | "tls_verification_failed";
+  | "tls_verification_failed"
+  | "provider_timeout";
 
 export type ProviderErrorSignals = {
   status: number | null;
@@ -152,6 +153,17 @@ export function classifyProviderError(error: unknown): ProviderErrorKind | null 
     || text.includes("self signed certificate")
   ) {
     return "tls_verification_failed";
+  }
+
+  if (
+    normalize(signals.type) === "providerheadertimeouterror"
+    || text.includes("provider response headers timed out")
+    || text.includes("provider stream timed out before producing output")
+    || text.includes("managed model produced no output after")
+    || text === "the operation timed out."
+    || text === "the operation timed out"
+  ) {
+    return "provider_timeout";
   }
 
   return null;

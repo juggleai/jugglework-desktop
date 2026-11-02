@@ -55,3 +55,73 @@
 Current commit scope also includes the operator's local media fixes: bounded nonempty provider IDs and provider-supported image size aliases, base64 image response requests, preservation of known image errors, a two-request managed image concurrency queue with abortable waiters, removal of duplicate canvas node-tool routing arguments, and a five-minute provider-submission reconciliation grace period. No live provider request or model generation was made to verify these changes during the commit task.
 
 Verification before commit: 35 existing Server image/repository/worker/service tests and Server typecheck passed. The new repository regression covers the submission recovery deadline. This does not establish full Toonflow UI/build, image concurrency, provider size-alias compatibility, or packaged release verification; task 6.3 remains open.
+
+## 8. Restricted video editing follow-up
+
+- [x] 8.1 Review upstream v2.0.8 editing/export capabilities and record adaptation boundaries in video-edit-migration.md.
+- [x] 8.2 Add managed probeVideo/exportVideo tools and a workspace-authorized Desktop broker without opening generic FFmpeg execution.
+- [x] 8.3 Install operator-approved FFmpeg/FFprobe and verify trim/concat, missing audio, no-overwrite, cancellation and output decoding on temporary/project media.
+- [ ] 8.4 Validate the rebuilt module in the running Desktop after restart; do not modify existing cat1 videos during verification.
+
+## 9. v2.0.8 video actions and frame analysis adaptation
+
+- [x] 9.1 Extend restricted host operations with audio extraction, silent separation, precise trimming and bounded local scene analysis; preserve generic FFmpeg denial.
+- [x] 9.2 Add the authenticated sidecar media route and canvas capability; propagate cancellation to the broker and child process.
+- [x] 9.3 Add four actions to video/video-generation nodes and register frameAnalysisNode with build dependencies, managed allowlist and node metadata.
+- [x] 9.4 Persist analysis manifests and create/rebuild shot video, keyframe and original-audio result nodes without overwriting historical artifacts.
+- [x] 9.5 Verify focused typechecks, three node builds, existing targeted tests and isolated real-media/HTTP flows. See video-edit-migration.md for evidence and limitations.
+- [x] 9.6 Build the complete sidecar bundle with pinned Bun 1.3.14 and independently verify inventory plus frameAnalysisNode.umd.js (darwin/arm64, 1035 files).
+- [ ] 9.7 Verify live Desktop node-menu, buttons, automatic connection, canvas reload, undo and cancellation after an operator-authorized restart.
+
+## 10. Bundled media tools (native macOS implementation; release gates pending)
+
+Windows follow-up: see windows-media-tools.md for the pinned portable cross-build,
+PE/import/trust gates, signing sequence and measured x64/ARM64 validation limits.
+
+- [x] 10.1 Investigate existing FFmpeg sources and public release digests; download/hash/inspect the Darwin ARM64 pair and validate temporary libx264 trim/probe/decode with empty PATH. See media-tools-supply-chain.md: this candidate is explicitly nonredistributable and rejected.
+- [x] 10.2 Pin official FFmpeg 7.1.5 and x264 b35605a source inputs, implement GPL/nonfree-disabled native macOS recipes with corresponding-source/build/license delivery, and explicitly gate Windows/Linux. FFmpeg upstream signature verified at intake; x264 lacks an independently verified publisher signature. Engineering acceptance is not legal approval.
+- [x] 10.3 Implement hash-enforced online/offline staging, independent mediaTools resources, bundled-only runtime resolution and rebuild diagnostics.
+- [x] 10.4 Integrate build/extraResources, native target CI, after-pack, macOS signing and final macOS/Windows/Linux verification without changing trusted Bun bytes or inventory.
+- [x] 10.5 Extend existing Desktop tests and perform native ARM64 source compilation plus empty-PATH temporary probe/trim/concat/audio/analysis/full-decode flows. Validate ad-hoc signature byte/inventory sequencing separately from release trust.
+- [ ] 10.6 Execute native macOS x64 compilation/media tests and real Developer ID signing, notarization, final ZIP/DMG/installed-app validation for both Mac targets; complete distribution/licensing review before publication. Windows/Linux remain blocked.
+
+1.2.32 release continuation: the operator explicitly approved formal distribution of bundled FFmpeg/x264 with corresponding source, license and notice delivery. This resolves the human approval prerequisite for this release only, not the outstanding native Intel or final signed package/UI verification above. Release-blocker follow-up adds shared export/multi-file publication rollback for cancellation and post-link failures; 39 focused cases passed including active FFmpeg cancellation/stop, no orphan process, no overwrite and no staging residue on generated temporary media. No existing user media or active product main was started or changed.
+
+Rollback identity follow-up (2026-10-30): shared export/multi-file publication now captures the staging source's bigint device/inode/birthtime identity plus size/mtime and the complete destination parent-directory identity chain before linking. Publication and rollback use non-following lstat checks; rollback rechecks parents and the target and uses non-recursive unlink only for matching regular files. Replaced/modified targets, symlinks, replaced directories/ancestors and unverifiable paths are conservatively retained; path-specific MEDIA_PUBLICATION_IDENTITY_CONFLICT diagnostics and the original failure are reported together, while unaffected outputs still receive rollback attempts. All 61 focused cases passed with zero skips, including 9 real native staging FFmpeg/FFprobe cases for export/separate, active signal/stop cancellation, process exit and existing-output preservation. Replacement regressions cover both single-file and multi-file paths, including replacement during link completion and changed parents with unchanged leaf inodes. Electron no-emit typecheck and git diff checks passed. Node filesystem APIs do not provide atomic compare-and-unlink: a hostile writer can still race the final lstat/unlink, and inode/metadata checks are not a security proof against adversarial concurrent mutation. Conflicts may leave this operation's files for manual inspection; moved files are not searched for or deleted. Product main/updater were not started; no commit or publication was performed.
+
+## 11. Explicit restricted media cancellation
+
+- [x] 11.1 Bind UUID requests and explicit cancellation to a runtime generation, workspace and canonical project; bound history/tombstones and reject ID reuse.
+- [x] 11.2 Keep Web/Agent processing pending through host cleanup; cancel using an independent transport and preserve existing authentication and generic FFmpeg denial.
+- [x] 11.3 Block old-project starts and await task cleanup on project switches, grant revocation and shutdown.
+- [x] 11.4 Regenerate routes with trusted Bun, run focused existing tests/typechecks and strict affected OpenSpec validation; record limits without claiming packaged acceptance.
+
+2026-11-02 source verification: 98 existing-file focused Electron cases passed,
+zero failures/skips, including real suspended FFmpeg cancellation through HTTP,
+project close and grant revocation; another workspace's grant removal leaves the
+owned child alive. Trusted Bun routes, Server/Web typechecks, Server build,
+Electron typecheck, in-memory route authorization/schema checks, strict change
+validation and diff whitespace checks passed. Packaged candidate rebuild/UI
+acceptance remains with the operator; no product main/updater, commit or push.
+
+## 12. Cancellation review corrections
+
+- [x] 12.1 Preserve media cleanup failures across drained cancel-all and repeated close; extend the existing retry regression.
+- [x] 12.2 Add authenticated UUID Agent run registration/stop, early-stop history, same-run idempotence and tracked host-tool cleanup; keep page busy pending through confirmation.
+- [x] 12.3 Serialize project open/close/remove host-to-Pinia transactions using one queue and a non-enqueuing internal close.
+- [x] 12.4 Regenerate routes with trusted Bun; verify typechecks, focused real-media tests, actual Agent routes and project store in memory, and strict affected specs.
+
+2026-11-02 review correction verification: trusted Bun routes and Server/Web
+typechecks passed; Server build and Electron typecheck passed. The two existing
+focused Electron suites passed 98/98 with zero failures/skips, including repeated
+cleanup-error reporting after internal and external abort. Actual Agent routes
+passed in-memory session/Origin/workspace/schema gates, early stop, stale/duplicate
+IDs, cleanup waiting and repeated stop/error checks. The actual hostVideoEdit
+helper propagated run cancellation without a tool-provided signal, waited for
+cleanup and retained failures even when the tool rejection was consumed. The
+actual Pinia store passed queued close/open ordering, removal without deadlock,
+queue recovery and caller-abort commit consistency. Generated-router review found
+only three added interfaces plus sorted numbering shifts. Strict affected change
+validation and diff whitespace checks passed. See video-edit-migration.md for
+scope: these are source/isolated-runtime checks, not rebuilt signed-package or
+live Desktop UI acceptance.

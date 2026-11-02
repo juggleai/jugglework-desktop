@@ -195,6 +195,6 @@ describe("cloud provider runtime patch (re-import diff #2346)", () => {
     expect(removeSource).toContain("delete nextImportedProviders[cloudProviderId];");
     expect(source).toContain("if (!liveProvider) {");
     expect(source).toContain("await removeCloudProviderInternal(importedProvider.cloudProviderId, { silent: true });");
-    expect(source).toContain("await connectCloudProviderInternal(liveProvider.id, { silent: true });");
+    expect(source).toContain("await connectCloudProviderInternal(liveProvider.id, { silent: true, authorityKey });");
   });
 });

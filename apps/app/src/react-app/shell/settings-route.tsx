@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Navigate, useLocation, useNavigate, useParams } from "react-router-dom";
 import { toast } from "@/components/ui/sonner";
+import { manualSessionCreation, manualSessionCreationKey } from "./manual-session-creation";
 
 import { getMcpServerName, SUGGESTED_PLUGINS, type McpDirectoryInfo } from "@/app/constants";
 import type { EnablementContext } from "@/app/enablement";
@@ -1214,20 +1215,34 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     () => buildCommandPaletteSessions(workspaces, sessionsByWorkspaceId, selectedWorkspaceId),
     [sessionsByWorkspaceId, selectedWorkspaceId, workspaces],
   );
-  const handleCreatePaletteSession = useCallback(async () => {
+  const paletteCreationContext = `${props.active}:${selectedWorkspaceId}:${route.tab}`;
+  const paletteCreationContextRef = useRef(paletteCreationContext);
+  paletteCreationContextRef.current = paletteCreationContext;
+  const handleCreatePaletteSession = useCallback(() => {
     if (!opencodeClient || !selectedWorkspaceId) {
       navigate(selectedWorkspaceId ? workspaceSessionRoute(selectedWorkspaceId) : "/session");
       return;
     }
+    return manualSessionCreation.run(manualSessionCreationKey(opencodeBaseUrl, selectedWorkspaceId, selectedWorkspaceEndpoint?.token), async () => {
+    const pendingToast = toast.info("Creating task…", { duration: Infinity });
+    let createdSessionId: string | null = null;
     try {
       const session = unwrap(
         await opencodeClient.session.create({ directory: selectedWorkspaceRoot || undefined }),
       );
-      navigate(workspaceSessionRoute(selectedWorkspaceId, session.id));
+      createdSessionId = session.id;
+      if (paletteCreationContextRef.current === paletteCreationContext) {
+        navigate(workspaceSessionRoute(selectedWorkspaceId, session.id));
+      }
+      return session.id;
     } catch (error) {
       toast.error(describeRouteError(error));
+      return createdSessionId;
+    } finally {
+      toast.dismiss(pendingToast);
     }
-  }, [navigate, opencodeClient, selectedWorkspaceId, selectedWorkspaceRoot]);
+    });
+  }, [navigate, opencodeClient, opencodeBaseUrl, paletteCreationContext, selectedWorkspaceId, selectedWorkspaceRoot, selectedWorkspaceEndpoint?.token]);
   // Settings refreshes provider auth whenever the picker opens (the session
   // route does not need this; its provider state is kept fresh elsewhere).
   useEffect(() => {

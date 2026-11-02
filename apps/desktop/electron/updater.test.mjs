@@ -1,4 +1,4 @@
-import { describe, it } from "node:test";
+import { describe, it, mock } from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -44,7 +44,23 @@ function updateInfo(version = "9.0.0") {
 }
 
 async function updaterHarness(overrides = {}) {
-  const userData = await mkdtemp(path.join(os.tmpdir(), "jugglework-updater-test-"));
+  const home = await mkdtemp(path.join(os.tmpdir(), "jugglework-updater-test-"));
+  const userData = path.join(home, "userData");
+  const app = {
+    isPackaged: true,
+    getVersion: () => "1.0.0",
+    getPath: (key) => {
+      if (key === "home") return home;
+      if (key === "userData") return userData;
+      throw new Error(`Unexpected updater app path: ${key}`);
+    },
+  };
+  // A fake home alone cannot isolate /usr/bin/defaults, which uses the current
+  // user's preferences service. Always replace both host-side effects.
+  const shipIt = {
+    enableSquirrelDirectContentsWrite: mock.fn(async () => undefined),
+    cleanStaleUpdaterState: mock.fn(async (_app) => undefined),
+  };
   const handlers = new Map();
   const sent = [];
   const updater = Object.assign(new EventEmitter(), {
@@ -54,11 +70,7 @@ async function updaterHarness(overrides = {}) {
     setFeedURL: () => undefined,
   }, overrides.updater);
   const registration = registerUpdaterIpc({
-    app: {
-      isPackaged: true,
-      getVersion: () => "1.0.0",
-      getPath: (key) => key === "userData" ? userData : os.homedir(),
-    },
+    app,
     ipcMain: { handle: (name, handler) => handlers.set(name, handler) },
     getMainWindow: () => ({
       isDestroyed: () => false,
@@ -67,13 +79,16 @@ async function updaterHarness(overrides = {}) {
     loadAutoUpdater: overrides.loadAutoUpdater ?? (async () => ({ autoUpdater: updater })),
     onInstallAndRestart: overrides.onInstallAndRestart,
     onInstallAndRestartFailed: overrides.onInstallAndRestartFailed,
-  });
+  }, shipIt);
   return {
+    app,
+    home,
     handlers,
     registration,
     sent,
+    shipIt,
     updater,
-    cleanup: () => rm(userData, { recursive: true, force: true }),
+    cleanup: () => rm(home, { recursive: true, force: true }),
   };
 }
 
@@ -248,19 +263,19 @@ describe("installAndRestart", () => {
   });
 
   it("refuses to invoke the installer before an update is downloaded", async () => {
-    const handlers = new Map();
-    registerUpdaterIpc({
-      app: { isPackaged: false },
-      ipcMain: { handle: (name, handler) => handlers.set(name, handler) },
-      getMainWindow: () => null,
-    });
-
-    const install = handlers.get("jugglework:updater:installAndRestart");
-    assert.equal(typeof install, "function");
-    assert.deepEqual(await install(null, "update-id"), {
-      ok: false,
-      reason: "update-not-downloaded",
-    });
+    const harness = await updaterHarness();
+    try {
+      const install = harness.handlers.get("jugglework:updater:installAndRestart");
+      assert.equal(typeof install, "function");
+      assert.deepEqual(await install(null, "update-id"), {
+        ok: false,
+        reason: "update-not-downloaded",
+      });
+      assert.equal(harness.shipIt.enableSquirrelDirectContentsWrite.mock.callCount(), 0);
+      assert.equal(harness.shipIt.cleanStaleUpdaterState.mock.callCount(), 0);
+    } finally {
+      await harness.cleanup();
+    }
   });
 });
 
@@ -307,6 +322,62 @@ describe("isUnpublishedUpdaterChannelError", () => {
 });
 
 describe("updater IPC hardening", () => {
+  it("isolates ShipIt effects and home while preserving preparation call boundaries", async () => {
+    const harness = await updaterHarness({
+      updater: {
+        downloadUpdate: async () => {
+          assert.equal(harness.shipIt.cleanStaleUpdaterState.mock.callCount(), 1);
+          assert.equal(harness.shipIt.enableSquirrelDirectContentsWrite.mock.callCount(), 1);
+        },
+        quitAndInstall: (...args) => {
+          assert.equal(harness.shipIt.enableSquirrelDirectContentsWrite.mock.callCount(), 2);
+          assert.deepEqual(args, [false, true]);
+        },
+      },
+    });
+    const { app, home, shipIt } = harness;
+    try {
+      assert.notEqual(home, os.homedir());
+      assert.equal(app.getPath("home"), home);
+      assert.equal(app.getPath("userData"), path.join(home, "userData"));
+      assert.deepEqual(staleUpdaterStatePaths(app), process.platform === "darwin"
+        ? [path.join(home, "Library", "Caches", "com.juggleai.jugglework.ShipIt")]
+        : []);
+      assert.throws(() => app.getPath("unexpected"), /Unexpected updater app path/);
+      assert.equal(shipIt.enableSquirrelDirectContentsWrite.mock.callCount(), 0);
+      assert.equal(shipIt.cleanStaleUpdaterState.mock.callCount(), 0);
+
+      await harness.registration.ensureAutoUpdater();
+      await harness.registration.ensureAutoUpdater();
+      const checked = await harness.handlers.get("jugglework:updater:check")();
+      assert.ok(checked.updateId);
+      assert.equal(shipIt.enableSquirrelDirectContentsWrite.mock.callCount(), 1);
+      assert.deepEqual(shipIt.enableSquirrelDirectContentsWrite.mock.calls[0].arguments, []);
+      assert.equal(shipIt.cleanStaleUpdaterState.mock.callCount(), 0);
+
+      const stale = await harness.handlers.get("jugglework:updater:download")(null, "stale-id");
+      assert.equal(stale.code, "stale-update-candidate");
+      assert.equal(shipIt.cleanStaleUpdaterState.mock.callCount(), 0);
+
+      const downloaded = await harness.handlers.get("jugglework:updater:download")(null, checked.updateId);
+      assert.equal(downloaded.ok, true);
+      assert.equal(shipIt.cleanStaleUpdaterState.mock.callCount(), 1);
+      assert.deepEqual(shipIt.cleanStaleUpdaterState.mock.calls[0].arguments, [app]);
+      assert.equal(shipIt.cleanStaleUpdaterState.mock.calls[0].arguments[0].getPath("home"), home);
+
+      const installed = await harness.handlers.get("jugglework:updater:installAndRestart")(null, checked.updateId);
+      assert.equal(installed.ok, true);
+      assert.equal(shipIt.enableSquirrelDirectContentsWrite.mock.callCount(), 2);
+      assert.deepEqual(shipIt.enableSquirrelDirectContentsWrite.mock.calls[1].arguments, []);
+      const replay = await harness.handlers.get("jugglework:updater:installAndRestart")(null, checked.updateId);
+      assert.equal(replay.code, "stale-update-candidate");
+      assert.equal(shipIt.enableSquirrelDirectContentsWrite.mock.callCount(), 2);
+      assert.equal(shipIt.cleanStaleUpdaterState.mock.callCount(), 1);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
   it("shares initialization and always disables install-on-quit", async () => {
     let loads = 0;
     /** @type {(value: unknown) => void} */

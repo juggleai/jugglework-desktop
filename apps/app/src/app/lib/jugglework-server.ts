@@ -1511,6 +1511,16 @@ export class JuggleWorkServerError extends Error {
   }
 }
 
+/**
+ * The shared engine is still owned by an active task. This is a temporary
+ * reload fence, not a failed engine: callers should keep the reload pending
+ * and retry after task activity settles.
+ */
+export function isEngineReloadDeferredError(error: unknown): error is JuggleWorkServerError {
+  return error instanceof JuggleWorkServerError
+    && error.code === "engine_reload_blocked_active_runs";
+}
+
 function isJsonRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }

@@ -195,40 +195,15 @@ const uiControlServer = createUiControlServer({
   readOfficeText: (document) => officePanel.readText(document),
 });
 
-const terminalProcesses = new Map();
-let nextTerminalId = 1;
+// Terminal state is owned by the host, never by a mounted renderer view.
 
 function defaultTerminalShell() {
-  if (process.platform === "win32") return process.env.COMSPEC || "powershell.exe";
+  if (process.platform === "win32") return process.env.COMSPEC || "cmd.exe";
   return process.env.SHELL || (process.platform === "darwin" ? "/bin/zsh" : "/bin/bash");
 }
 
-async function resolveTerminalCwd(cwd) {
-  const fallback = os.homedir();
-  if (typeof cwd !== "string" || !cwd.trim()) return fallback;
-  const candidate = path.resolve(cwd);
-  const info = await stat(candidate).catch(() => null);
-  return info?.isDirectory() ? candidate : fallback;
-}
-
-function terminalForSender(event, terminalId) {
-  const terminal = terminalProcesses.get(String(terminalId ?? ""));
-  if (!terminal || terminal.webContentsId !== event.sender.id) return null;
-  return terminal;
-}
-
-function killTerminal(terminalId) {
-  const terminal = terminalProcesses.get(terminalId);
-  if (!terminal) return;
-  terminalProcesses.delete(terminalId);
-  try { terminal.process.kill(); } catch { /* already gone */ }
-}
-
-function killTerminalsForWebContents(webContentsId) {
-  for (const [terminalId, terminal] of terminalProcesses.entries()) {
-    if (terminal.webContentsId === webContentsId) killTerminal(terminalId);
-  }
-}
+import { TerminalManager, assertTerminalSender } from "./terminal-manager.mjs";
+import { createTerminalTargetResolver } from "./terminal-target-resolver.mjs";
 
 // Production and development builds use separate JuggleWork identifiers so
 // they can run alongside each other without sharing local state.
@@ -1454,6 +1429,7 @@ const runtimeManager = createRuntimeManager({
 const toonFactoryRuntime = createToonFactoryRuntime({
   app, getWindow: () => mainWindow, getAccess: () => runtimeManager.managedServerAccess(),
   moduleRoot: app.isPackaged ? path.join(process.resourcesPath, "toonFactoryV2") : path.resolve(__dirname, "../resources/toonFactoryV2"),
+  packaged: app.isPackaged,
 });
 const runtimeIpcHandlers = createRuntimeIpcHandlers(runtimeManager);
 const fileHostClient = createManagedRuntimeClient({
@@ -1661,7 +1637,16 @@ let quitCleanupComplete = false;
 let quitCleanupInProgress = false;
 let updaterInstallQuitRequested = false;
 let runtimeBootstrapPromise = null;
-const disposeRuntimeBeforeQuit = createJoinableCleanup(() => runtimeManager.dispose());
+const terminalManager = new TerminalManager({
+  resolveTarget: createTerminalTargetResolver({ workspaceStore, client: createManagedRuntimeClient({
+    getAccess: () => runtimeManager.managedServerAccess(), fetcher: mainProcessFetch,
+  }) }),
+  spawn: (...args) => pty.spawn(...args), shell: defaultTerminalShell(), env: process.env,
+});
+const disposeRuntimeBeforeQuit = createJoinableCleanup(() => {
+  terminalManager.dispose();
+  return runtimeManager.dispose();
+});
 
 function showShutdownScreen() {
   const win = mainWindow;
@@ -2374,6 +2359,10 @@ const desktopCommandHandlers = {
   "toonFactoryOpenProject": async (event, ...args) => {
     if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error("仅主窗口可打开漫剧项目");
     return toonFactoryRuntime.openProject(args[0]);
+  },
+  "toonFactoryAuthorizeProject": async (event, ...args) => {
+    if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error("仅主窗口可授权漫剧项目");
+    return toonFactoryRuntime.authorizeProject(args[0]);
   },
   "toonFactoryRenameProject": async (event, ...args) => {
     if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error("仅主窗口可重命名漫剧项目");
@@ -3392,54 +3381,19 @@ ipcMain.handle("jugglework:system:askMicrophoneAccess", async () => {
 });
 
 // ── Terminal IPC ────────────────────────────────────────────────────────
-ipcMain.handle("jugglework:terminal:create", async (event, options = {}) => {
-  const cwd = await resolveTerminalCwd(options?.cwd);
-  const cols = Number.isFinite(options?.cols) ? Math.max(20, Math.floor(options.cols)) : 80;
-  const rows = Number.isFinite(options?.rows) ? Math.max(5, Math.floor(options.rows)) : 24;
-  const terminalId = `term_${nextTerminalId++}`;
-  const shellPath = defaultTerminalShell();
-  const child = pty.spawn(shellPath, [], {
-    name: "xterm-256color",
-    cols,
-    rows,
-    cwd,
-    env: {
-      ...process.env,
-      TERM: "xterm-256color",
-      COLORTERM: "truecolor",
-      JUGGLEWORK_TERMINAL: "1",
-    },
+const terminalOwners = new WeakSet();
+for (const operation of ["open", "read", "write", "resize", "terminate", "restart"]) {
+  ipcMain.handle(`jugglework:terminal:${operation}`, (event, ...args) => {
+    assertTerminalSender(event, mainWindow);
+    if (!terminalOwners.has(event.sender)) {
+      terminalOwners.add(event.sender);
+      const owner = event.sender.id;
+      event.sender.once("destroyed", () => terminalManager.disposeOwner(owner));
+      event.sender.on("render-process-gone", () => terminalManager.disposeOwner(owner));
+    }
+    return terminalManager[operation](event.sender.id, ...args);
   });
-
-  terminalProcesses.set(terminalId, { process: child, webContentsId: event.sender.id });
-  event.sender.once("destroyed", () => killTerminalsForWebContents(event.sender.id));
-  child.onData((data) => {
-    if (event.sender.isDestroyed()) return;
-    event.sender.send("jugglework:terminal:data", { terminalId, data });
-  });
-  child.onExit(({ exitCode, signal }) => {
-    terminalProcesses.delete(terminalId);
-    if (event.sender.isDestroyed()) return;
-    event.sender.send("jugglework:terminal:exit", { terminalId, exitCode, signal });
-  });
-
-  return { terminalId };
-});
-ipcMain.handle("jugglework:terminal:write", (event, terminalId, data) => {
-  const terminal = terminalForSender(event, terminalId);
-  if (!terminal || typeof data !== "string") return;
-  terminal.process.write(data);
-});
-ipcMain.handle("jugglework:terminal:resize", (event, terminalId, cols, rows) => {
-  const terminal = terminalForSender(event, terminalId);
-  if (!terminal || !Number.isFinite(cols) || !Number.isFinite(rows)) return;
-  terminal.process.resize(Math.max(20, Math.floor(cols)), Math.max(5, Math.floor(rows)));
-});
-ipcMain.handle("jugglework:terminal:kill", (event, terminalId) => {
-  const terminal = terminalForSender(event, terminalId);
-  if (!terminal) return;
-  killTerminal(String(terminalId));
-});
+}
 
 browserPanel.registerIpc(ipcMain);
 officePanel.registerIpc(ipcMain);

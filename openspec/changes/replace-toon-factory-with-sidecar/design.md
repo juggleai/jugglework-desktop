@@ -63,6 +63,46 @@ Package verification checks the server/Web/resource inventory, Bun format/archit
 
 The navigation destination switches to the sidecar immediately, but removal of native storage/schema code happens only after migration and rollback tests exist. During rollout, a build-time emergency flag may restore the old destination without running both runtimes concurrently. Rollback stops the sidecar and restores the previous application version; portable Toonflow project files remain outside credentials and runtime metadata.
 
+### 7. Independent bundled media supply chain
+
+Use fixed official FFmpeg 7.1.5 and VideoLAN x264 b35605a sources on native macOS ARM64/x64 and Windows x64/ARM64. FFmpeg's archive hash was authenticated by the upstream detached release signature at intake. x264 pins official Git commit/tree and locally generated tar hash, with independent downstream commit corroboration; no publisher signature is claimed. Build with GPL enabled, nonfree/network/autodetection disabled, static x264/FFmpeg and platform system libraries only. Disable assembly to avoid an unpinned nasm dependency; this trades performance for a smaller source/toolchain surface. Record the actual Xcode compiler/SDK or pinned LLVM-MinGW compiler/archive, without claiming bit-reproducible builds across toolchain versions. Windows ARM64 is cross-built without executing target binaries on x64.
+
+`resources/mediaTools` includes sources, license texts, recipes, config records and its own inventory. Build hashes are local receipts, not upstream binary approvals. Before outer app sealing, explicitly sign the media executables, preserve all non-executable source bytes and record post-sign inventory. On Windows, electron-builder signs extraResources before afterPack; the hook verifies signatures and unchanged non-executable bytes before sealing that inventory. Final verification checks app trust and the signed media pair; preserve Bun's original independently trusted hash/signature unchanged. Both dev and release editors use the host-owned bundle only with empty child PATH. Windows additionally enforces PE architecture/system imports, matching app/media Authenticode identity and host-owned cwd. Linux remains unsupported; macOS x64 and Windows ARM64 still need native execution evidence. Local Windows self-signing is not production trust or a trusted timestamp. See media-tools-supply-chain.md and windows-media-tools.md for measured results and remaining release gates.
+
+### 8. Explicit restricted-media cancellation
+
+Bun 1.3.14 can lose disconnect notification after consuming a POST body while the
+response remains silent. Restricted media therefore uses UUID `requestId` values
+and separate authenticated cancel requests, never Axios abort as completion.
+Electron registers ownership before canonicalization or execution, scopes the
+registry to its workspace/token generation and exact canonical project, and waits
+for editor completion (child close plus staging/publication cleanup) before ack.
+Unknown early cancellations create 30-second tombstones; all used IDs remain
+non-reusable in a bounded 4096-entry generation history. Capacity exhaustion fails
+closed and requires restarting the factory, rather than evicting stale authority.
+
+Project open/close notifies the host before committing frontend project state.
+The host blocks starts during the transition, cancels owned work and waits for
+cleanup; grant revocation blocks immediately and performs the same drain. Runtime
+shutdown closes its registry before token/process teardown. Cleanup errors are
+reported rather than acknowledged as successful cancellation. Generic FFmpeg,
+arbitrary argv/PID execution and credential exposure remain prohibited.
+
+The media drain also inspects retained errors after active work finishes; repeated
+cancel-all and close cannot turn a failed cleanup into a successful acknowledgement.
+The project store serializes open/close/remove across host mutation and Pinia
+commit. Removal calls its internal close directly inside that transaction. Once a
+host transition succeeds, caller abort does not skip the matching Pinia commit.
+
+Agent UI requests now carry UUID `runId` and use `/api/agent/stop` with an independent
+signal, preserving the existing NDJSON streaming format. A bounded 4096-entry
+sidecar-generation registry registers before workspace/model awaits, rejects reuse,
+remembers early stops, and drains the run before stop acknowledgement. Async-local
+run context combines tool cancellation signals with the run signal and tracks
+hostVideoEdit and SDK abort promises. This keeps cleanup visible even when the
+SDK converts a rejected tool into a tool-result error. Stop and repeat stop report
+retained cleanup failures. Generic FFmpeg and arbitrary process controls remain denied.
+
 ## Risks / Trade-offs
 
 - **Two frontend/runtime stacks increase package size and maintenance** → Pin Toonflow/Bun revisions, isolate the module boundary, and automate clean-build/package verification.

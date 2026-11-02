@@ -703,6 +703,7 @@ export type AppSidebarProps = {
   connectingWorkspaceId: string | null;
   workspaceConnectionStateById: Record<string, WorkspaceConnectionState>;
   newTaskDisabled: boolean;
+  isTaskCreationPending?: (workspaceId: string) => boolean;
   onSelectWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
   onExpandWorkspace?: (workspaceId: string) => void;
   onOpenSession: (workspaceId: string, sessionId: string) => void;
@@ -939,6 +940,7 @@ export function AppSidebar(props: AppSidebarProps) {
     showSessionActions: props.showSessionActions,
     sessionStatusById: props.sessionStatusById,
     newTaskDisabled: props.newTaskDisabled,
+    isTaskCreationPending: props.isTaskCreationPending,
     connectingWorkspaceId: props.connectingWorkspaceId,
     workspaceConnectionStateById: props.workspaceConnectionStateById,
     onSelectWorkspace: props.onSelectWorkspace,
@@ -1533,7 +1535,7 @@ function WorkspaceSidebarGroup({
                     variant="ghost"
                     size="icon"
                     className="size-6 rounded-lg text-muted-foreground hover:bg-background/60 hover:text-foreground"
-                    disabled={ctx.newTaskDisabled}
+                    disabled={ctx.newTaskDisabled || ctx.isTaskCreationPending?.(workspace.id)}
                     onClick={(event) => {
                       event.stopPropagation();
                       ctx.onCreateTaskInWorkspace(workspace.id);
@@ -1666,7 +1668,7 @@ function WorkspaceSidebarGroup({
                     <SidebarMenuSubButton
                       className="text-muted-foreground text-xs"
                       onClick={() => ctx.onCreateTaskInWorkspace(workspace.id)}
-                      aria-disabled={ctx.newTaskDisabled}
+                      aria-disabled={ctx.newTaskDisabled || ctx.isTaskCreationPending?.(workspace.id)}
                     >
                       <span className="truncate">
                         {isRemoteWorkspace && connectionState.status === "connected"

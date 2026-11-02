@@ -6,6 +6,7 @@ import type {
   ResetJuggleWorkMode,
 } from "../../app/types";
 import { relaunchDesktopApp, resetJuggleWorkState } from "../../app/lib/desktop";
+import { isEngineReloadDeferredError } from "../../app/lib/jugglework-server";
 import {
   addOpencodeCacheHint,
   isDesktopRuntime,
@@ -164,6 +165,17 @@ export function useSystemState(
       await options.onReloadComplete?.();
       clearReloadRequired();
     } catch (error) {
+      if (isEngineReloadDeferredError(error)) {
+        // The server is the authoritative activity gate. A renderer can see
+        // an idle snapshot just before the server observes the run terminal,
+        // so keep this as pending work instead of poisoning task readiness
+        // with a permanent reload error. The reload coordinator will retry
+        // after activity settles (or after its bounded cooldown in a race).
+        setReloadPending(true);
+        setReloadLastTriggeredAt(Date.now());
+        setReloadError(null);
+        return;
+      }
       const message = error instanceof Error ? error.message : safeStringify(error);
       setReloadError(message || t("system.reload_failed"));
     } finally {

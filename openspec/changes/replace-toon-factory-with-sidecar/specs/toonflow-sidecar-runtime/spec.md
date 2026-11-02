@@ -29,6 +29,21 @@ The Desktop runtime SHALL bind each sidecar process, data directory, browser par
 - **WHEN** a request presents a token issued for a previous workspace or runtime instance
 - **THEN** JuggleWork rejects the request without accessing models, files, or native capabilities
 
+### Requirement: Existing projects support explicit directory reauthorization
+When an existing project's directory grant is missing, Desktop SHALL show its known path and an explicit authorization action. Confirmation SHALL validate that the path belongs to the project list and is an existing directory, persist the grant, and open the project without another directory picker. Cancellation SHALL leave the project unopened.
+
+#### Scenario: User confirms an expired directory grant
+- **WHEN** a member clicks the authorization action for an existing project
+- **THEN** Desktop restores the confirmed directory through the managed grant flow and opens the project
+- **AND** an unlisted, relative, or missing path cannot be authorized through this action
+
+### Requirement: Model selection uses an available display name
+The factory SHALL default to the first available text model when the selection is empty or invalid, preserve a still-available selection, and show a model label rather than its serialized provider/model identifier.
+
+#### Scenario: An old model selection is unavailable
+- **WHEN** the loaded model list no longer includes the saved selection
+- **THEN** the picker selects the first available model, or clears the selection if no model is available
+
 ### Requirement: The embedded page is sandboxed
 Desktop MUST load Toonflow in a dedicated sandboxed `WebContentsView` with context isolation, Node integration disabled, permissions denied by default, restricted navigation, and no access to the main-window preload API.
 
@@ -83,3 +98,73 @@ A clean checkout SHALL build the pinned Toonflow module without pre-existing nes
 - **WHEN** the pinned Bun is unsigned, ad-hoc signed, fails Apple Developer ID trust, lacks hardened runtime or a secure timestamp, or changes during signing
 - **THEN** signing fails closed without re-signing Bun, refreshing its trusted hash or inventory, or waiving any notarization gate
 - **AND** release remains blocked until a separately reviewed compatible upstream runtime is pinned
+
+### Requirement: Restricted media operations use independently bundled source-built tools
+Development and packaged restricted media operations MUST resolve FFmpeg and FFprobe only from host-owned `resources/mediaTools`, separate from the trusted Bun inventory. Missing or invalid resources SHALL fail with rebuild/reinstall guidance and SHALL NOT fall back to PATH, Homebrew, project executables or model-selected commands.
+
+#### Scenario: Native macOS tools are built
+- **WHEN** a native macOS ARM64 or x64 build stages the media tools
+- **THEN** it verifies fixed official FFmpeg/x264 source hashes before execution, enables GPL and disables nonfree/network/autodetection, links x264 statically and rejects non-Apple dynamic dependencies
+- **AND** it packages exact source archives, source provenance, build/configuration scripts, license notices and compiler/SDK records with a separate inventory
+- **AND** a foreign macOS build architecture or unsupported Linux target fails closed without emulation or system-tool fallback
+
+#### Scenario: Media tools are signed for release
+- **WHEN** the macOS signing hook processes the media resources
+- **THEN** it verifies the pre-sign source/build inventory, explicitly signs the two tools with the application's resolved identity, verifies Developer ID trust, hardened runtime and timestamp, and records post-sign hashes before the app seals resources
+- **AND** only those two exact media paths are excluded from subsequent default signing; the original Bun hashes and inventory remain unchanged
+- **AND** packaged verification and runtime require the sealed application and signed media inventory rather than treating a self-updated manifest as upstream trust
+
+#### Scenario: Source or media bytes are corrupt
+- **WHEN** downloaded/cached source bytes or staged media resources differ from their expected hashes
+- **THEN** the build or runtime rejects them without executing an alternate binary or rebaselining trust from the corrupt bytes
+
+### Requirement: Windows media tools retain target and application trust
+Windows x64/ARM64 SHALL build pinned FFmpeg/x264 into target-specific executables with static dependencies and system-only PE imports. Packaged execution SHALL require valid Authenticode matching the application signer. Bun upstream bytes and trust hashes SHALL remain unchanged.
+
+#### Scenario: Windows tools are packaged
+- **WHEN** a Windows target stages and signs its media executables
+- **THEN** packaging validates unchanged source/license/configuration bytes and seals inventory after media signing
+- **AND** cross-built ARM64 static checks are not reported as native execution
+
+### Requirement: Restricted media cancellation is explicit and task-owned
+Restricted media requests MUST use fresh UUIDs bound to a runtime generation, workspace and canonical project. The host MUST register before asynchronous work, bound history and reject ID reuse. Cancellation acknowledgement and UI completion MUST wait for child close and staging cleanup. Session, bridge and Origin authentication and generic FFmpeg denial MUST remain enforced.
+
+#### Scenario: Cancellation precedes the processing request
+- **WHEN** an authenticated cancellation arrives before its matching start
+- **THEN** the host records a bounded short-lived cancellation tombstone and rejects the late start
+- **AND** ID history prevents reuse after tombstone expiry within the runtime generation
+
+#### Scenario: A stale cancellation arrives during another operation
+- **WHEN** an unknown, finished or previous-generation ID is cancelled
+- **THEN** no different active request is stopped
+
+#### Scenario: A project is switched or its grant is revoked
+- **WHEN** a restricted media task is running in the original project
+- **THEN** the host blocks old-project starts, stops the owned task and waits for process close and cleanup before acknowledging the transition
+- **AND** another runtime instance is unaffected
+
+#### Scenario: Cleanup is retried after failure
+- **WHEN** a media task has failed cleanup and a caller repeats cancel-all or close after the active task drained
+- **THEN** the registry reports the retained cleanup error again rather than acknowledging success
+
+### Requirement: Project transitions serialize host and page state
+Project open, close and removal SHALL share a per-store serial queue covering host mutation through the corresponding Pinia commit. Nested removal cleanup MUST NOT enqueue a recursive close that deadlocks the transaction.
+
+#### Scenario: A close response is delayed while another project opens
+- **WHEN** a close transaction is waiting for host cleanup and a new open is requested
+- **THEN** the open waits until close commits and the final page project matches the final host project
+
+### Requirement: Agent stop is run-owned and cleanup-confirmed
+Agent requests MUST use fresh UUID run IDs registered before asynchronous work in the authenticated sidecar generation. Explicit stop SHALL preserve session, Origin, workspace and directory checks, cancel only the matching run and await tools and cleanup. Repeated stop MUST retain cleanup errors; page busy MUST NOT finish solely because its processing transport was aborted.
+
+#### Scenario: Stop arrives before the Agent starts
+- **WHEN** a valid stop request precedes the same run ID
+- **THEN** the late start is rejected without executing the Agent and the ID cannot be reused
+
+#### Scenario: A tool continues cleanup after the Agent SDK returns
+- **WHEN** stop aborts a run with a host video edit pending and the SDK consumes the tool error
+- **THEN** the run drain still waits for the tracked host edit and reports any retained cleanup failure on every subsequent stop
+
+#### Scenario: A stale run ID is stopped during a newer run
+- **WHEN** stop targets an old completed run ID
+- **THEN** the newer run is unaffected and duplicate start never launches a second run

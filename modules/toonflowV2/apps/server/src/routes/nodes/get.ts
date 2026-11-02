@@ -2,7 +2,7 @@ import u from "@/utils";
 import { readdir } from "node:fs/promises";
 import { Router } from "express";
 import { success } from "@/lib/responseFormat";
-import { isManagedMode } from "@/lib/managed";
+import { isManagedMode, managedBuiltInNodeAllowed } from "@/lib/managed";
 
 const router = Router();
 
@@ -15,6 +15,7 @@ export default router.get("/", async (req, res) => {
   });
   const nodes = await Promise.all(files
     .filter((file) => file.isFile() && /^[a-z][a-zA-Z0-9]*\.umd\.js$/.test(file.name))
+    .filter(file => managedBuiltInNodeAllowed(file.name.slice(0, -7)))
     .sort((left, right) => left.name.localeCompare(right.name))
     .map(async (file) => {
       const name = file.name.slice(0, -7);

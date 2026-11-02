@@ -10,6 +10,8 @@
     :bottomWidth="660"
     :style="{ width: previewUrl && videoWidth ? `${videoWidth + 18}px` : undefined }">
     <template #topActions>
+      <el-button v-for="(label, action) in { extractAudio: '提取音轨', separate: '分离音视频', trim: '截取片段' }" :key="action" text :disabled="!outputFile || generating || deleting || uploading || actions?.busy" @click.stop="actions?.open(action)">{{ label }}</el-button>
+      <el-button text :disabled="!outputFile || generating || deleting || uploading || actions?.busy" @click.stop="actions?.createAnalysis()">逐帧拉片</el-button>
       <el-button :icon="IconTransfer" :loading="uploading" :disabled="generating || deleting" text title="替换视频" aria-label="替换视频" @click.stop="fileInput?.click()" />
       <input ref="fileInput" type="file" accept="video/*" hidden aria-label="选择替换视频" :disabled="generating || deleting || uploading" @change="replaceOutput" />
     </template>
@@ -77,6 +79,7 @@
       </el-card>
     </template>
   </nodeSkeleton>
+  <videoActions ref="actions" :file="outputFile" :src="previewUrl" :disabled="generating || deleting || uploading" />
 </template>
 
 <script setup lang="ts">
@@ -86,6 +89,7 @@ import { IconCameraAi, IconSparkles, IconArrowUp, IconPlayerStop, IconTransfer }
 import { groupNodeModels, modelDisplayName, modelEmptyText, nodeSkeleton, nodeTools, resolveNodeModel, useNode, useNodeGeneration, useNodeReferences, z, type NodeMediaModel, type NodeVideoRequest, type NodeHandle } from "@toonflow/nodes-scaffold/runtime";
 import promptInput from "@toonflow/nodes-scaffold/promptInput";
 import videoPlayer from "@toonflow/nodes-scaffold/videoPlayer";
+import videoActions from "@toonflow/node-video/videoActions";
 import referenceItem from "@toonflow/nodes-scaffold/referenceItem";
 import generationSettings from "./components/generationSettings.vue";
 
@@ -118,6 +122,7 @@ const fileInput = ref<HTMLInputElement>();
 let disposed = false;
 const deleting = ref(false);
 const player = ref<InstanceType<typeof videoPlayer>>();
+const actions = ref<InstanceType<typeof videoActions>>();
 const videoWidth = ref(0);
 let generationController: AbortController | undefined;
 const generationState = useNodeGeneration(outputs, () => generationController?.abort());

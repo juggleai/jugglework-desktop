@@ -129,6 +129,7 @@ export function FileWindowApp({ onAppearanceChange }: { onAppearanceChange?: (ap
     const rect = contentRef.current?.getBoundingClientRect();
     if (rect?.width) setConversationWidth(Math.min(65, Math.max(28, (rect.right - clientX) / rect.width * 100)));
   };
+  const mediaReadOnly = active ? ["image", "video"].includes(getArtifactType(active.path)) : false;
   const document = useQuery({
     queryKey: [
       "office-document",
@@ -324,7 +325,7 @@ export function FileWindowApp({ onAppearanceChange }: { onAppearanceChange?: (ap
           officeDocumentId={active.documentId}
           name={active.name}
           status={
-            active.readOnly
+            active.readOnly || mediaReadOnly
               ? "readonly"
               : active.documentId
                 ? getOfficeEditorStatus(document, busy)
@@ -335,7 +336,7 @@ export function FileWindowApp({ onAppearanceChange }: { onAppearanceChange?: (ap
                     : "saved"
           }
           saveDisabled={
-            active.readOnly ||
+            active.readOnly || mediaReadOnly ||
             busy ||
             (active.documentId ? document?.state !== "ready" : !draft)
           }

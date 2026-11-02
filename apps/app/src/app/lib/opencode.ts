@@ -11,6 +11,7 @@ import {
 import type { ResponseLanguage } from "@jugglework/types/response-language";
 
 import { desktopFetch } from "./desktop";
+import { sessionIntentTransport } from "./session-create-intent";
 import {
   createJuggleWorkServerClient,
   JuggleWorkServerError,
@@ -535,10 +536,18 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
     }
   }
 
-  const fetchImpl = isDesktopRuntime()
+  const transportFetch = isDesktopRuntime()
     ? createDesktopFetch(auth, options?.onEventConnected)
     : (input: RequestInfo | URL, init?: RequestInit) =>
         fetchWithTimeout(globalThis.fetch, input, init, DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS);
+  const fetchImpl: typeof transportFetch = auth?.mode === "jugglework"
+    ? (input, init) => {
+        const request = new Request(input, init);
+        const authorization = resolveAuthHeader(auth);
+        if (authorization && !request.headers.has("Authorization")) request.headers.set("Authorization", authorization);
+        return sessionIntentTransport(request, (next) => transportFetch(next));
+      }
+    : transportFetch;
   const client = createOpencodeClient({
     baseUrl,
     directory,

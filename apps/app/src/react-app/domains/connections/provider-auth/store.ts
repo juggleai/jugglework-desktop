@@ -22,7 +22,10 @@ import {
   workspaceJuggleWorkRead,
   workspaceJuggleWorkWrite,
 } from "../../../../app/lib/desktop";
-import { JuggleWorkServerError } from "../../../../app/lib/jugglework-server";
+import {
+  isEngineReloadDeferredError,
+  JuggleWorkServerError,
+} from "../../../../app/lib/jugglework-server";
 import type { JuggleWorkServerClient } from "../../../../app/lib/jugglework-server";
 import type {
   Client,
@@ -136,7 +139,7 @@ const cloudProviderWorkspaceMutationQueue = createKeyedSerialQueue<string>();
  * OpenCode fallback.
  */
 export function shouldFallbackToDirectEngineDispose(error: unknown): boolean {
-  return !(error instanceof JuggleWorkServerError && error.code === "engine_reload_blocked_active_runs");
+  return !isEngineReloadDeferredError(error);
 }
 
 type ProviderReturnFocusTarget = "none" | "composer";

@@ -1,5 +1,6 @@
 import type { MediaModel } from "@toonflow/tools-scaffold/runtime";
 import { isManagedMode } from "@/lib/managed";
+import { agentRunSignal, trackAgentCleanup } from "@/utils/agentRuns";
 
 export const isJugglework = isManagedMode();
 
@@ -78,6 +79,38 @@ export async function hostFetch(path: string, body?: unknown, signal?: AbortSign
 export async function hostModels(): Promise<HostModel[]> {
   const result = await (await hostFetch("/catalog")).json() as { models: HostModel[] };
   return result.models;
+}
+
+export function hostVideoEdit(input: Record<string, unknown>, signal?: AbortSignal) {
+  return trackAgentCleanup(() => executeHostVideoEdit(input, agentRunSignal(signal)));
+}
+
+async function executeHostVideoEdit(input: Record<string, unknown>, signal?: AbortSignal) {
+  signal?.throwIfAborted();
+  const request = { ...input, requestId: crypto.randomUUID() };
+  let cancellation: Promise<unknown> | undefined;
+  const cancel = () => {
+    cancellation ??= hostFetch("/videoEditCancel", { requestId: request.requestId, directory: input.directory }, AbortSignal.timeout(30_000));
+    void cancellation.catch(() => undefined);
+  };
+  signal?.addEventListener("abort", cancel, { once: true });
+  try {
+    if (signal?.aborted) cancel();
+    // Do not abort the transport: its terminal response confirms host cleanup,
+    // even if the independent cancellation acknowledgement is lost.
+    let result;
+    try { result = await (await hostFetch("/videoEdit", request)).json(); }
+    catch (error) {
+      if (!signal?.aborted || !cancellation) throw error;
+      await cancellation; // Only a successful host cleanup acknowledgement
+      throw signal.reason; // makes the processing error an expected abort.
+    }
+    signal?.throwIfAborted();
+    return result;
+  } finally {
+    signal?.removeEventListener("abort", cancel);
+    await cancellation;
+  }
 }
 
 export async function hostTextProviders(providerId?: string, modelId?: string) {

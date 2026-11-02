@@ -4,6 +4,7 @@ import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, r
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { BUN_TRUSTED_RELEASE, inspectToonFactoryExecutable, inventoryToonFactoryBundle, resolveToonFactoryBuildTarget, sha256File, trustedBunForTarget } from "../electron/toonFactoryBundle.mjs";
+import { buildMediaTools } from "./buildMediaTools.mjs";
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 const source = path.join(root, "modules/toonflowV2");
@@ -105,8 +106,9 @@ export function sourceRevision(sourceDirectory) {
   return `sha256:${hash.digest("hex")}`;
 }
 
-export function main() {
+export async function main() {
   const target = resolveToonFactoryBuildTarget();
+  await buildMediaTools({ target });
   const trustedBun = resolveTrustedBunBinary(process.env.BUN_BINARY || "bun", target);
   bun = trustedBun.path;
   const packageFile = path.join(source, "package.json");
@@ -129,6 +131,9 @@ export function main() {
   rmSync(output, { recursive: true, force: true });
   mkdirSync(output, { recursive: true });
   for (const name of ["server", "web", "nodes", "tools", "skills", "mcp"]) cpSync(path.join(source, "build", name), path.join(output, name), { recursive: true });
+  for (const name of ["videoNode", "videoGenerationNode", "frameAnalysisNode"]) {
+    if (!existsSync(path.join(output, "nodes", `${name}.umd.js`))) throw new Error(`Required local-media node was not built: ${name}`);
+  }
   copyFileSync(path.join(source, "LICENSE"), path.join(output, "LICENSE"));
   const runtime = path.join(output, target.executableName);
   copyFileSync(trustedBun.path, runtime);
@@ -151,4 +156,4 @@ export function main() {
   console.log(`Toonflow v2 module built: ${output} (${files.length} files, inventorySha256=${inventorySha256})`);
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await main();

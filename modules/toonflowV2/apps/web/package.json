@@ -33,6 +33,7 @@
     "@toonflow/assets": "workspace:*",
     "@toonflow/model-icons": "workspace:*",
     "@toonflow/nodes-scaffold": "workspace:*",
+    "@toonflow/node-video": "workspace:*",
     "@toonflow/providers": "workspace:*",
     "@toonflow/server": "workspace:*",
     "@toonflow/tool-canvas": "workspace:*",

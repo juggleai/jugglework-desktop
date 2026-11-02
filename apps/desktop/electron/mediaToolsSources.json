@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "recipeVersion": 1,
+  "sources": {
+    "ffmpeg": {
+      "version": "7.1.5",
+      "archive": "ffmpeg-7.1.5.tar.xz",
+      "url": "https://ffmpeg.org/releases/ffmpeg-7.1.5.tar.xz",
+      "sha256": "de668509caf9e35e3cd162473441fdb29538c6d96ed080292b3cf9e6fc5d558f",
+      "digestEvidence": "https://github.com/macports/macports-ports/blob/a7206b2edba87a797c781810ce489b36330a7d93/multimedia/ffmpeg7/Portfile",
+      "trust": "Official HTTPS source. Detached RSA release signature verified at intake using openpgp@6.3.0 against the official fingerprint FCF986EA15E6E293A5644F10B4322F04D67658D8 (https://ffmpeg.org/download.html), 2026-10-30. Builds enforce this authenticated archive SHA-256; signature and public key are bundled for independent verification. MacPorts independently corroborates the archive digest."
+    },
+    "x264": {
+      "version": "r3222-b35605a",
+      "archive": "x264-b35605a.tar",
+      "url": "https://code.videolan.org/videolan/x264.git",
+      "commit": "b35605ace3ddf7c1a5d67a2eb553f034aef41d55",
+      "tree": "0700538866963f968154ea768289bf100350e84e",
+      "sha256": "97011e241beb7322b21643d3c029b15d7d81018ae0332a44d1578ee11df00475",
+      "digestEvidence": "https://github.com/Homebrew/homebrew-core/blob/0244e0cd56a4944e1ada0e15855f21d4a7e809f3/Formula/x/x264.rb",
+      "trust": "Official VideoLAN HTTPS Git, fixed stable commit independently corroborated by Homebrew source recipe. SHA-256 pins git archive --format=tar --prefix=x264/ of that commit; it is a locally calculated source archive digest, not an upstream signed digest."
+    }
+  },
+  "evidence": [
+    {
+      "archive": "ffmpeg-7.1.5.tar.xz.asc",
+      "url": "https://ffmpeg.org/releases/ffmpeg-7.1.5.tar.xz.asc",
+      "sha256": "7ce4b9d56e3ef0cd4c3a9c0b2c8a034ac91e6c4c011c1f10b05a8aa7292fca35"
+    },
+    {
+      "archive": "ffmpeg-devel.asc",
+      "url": "https://ffmpeg.org/ffmpeg-devel.asc",
+      "sha256": "397b3becedcd5a98769967ff1ff8501ddc89f8368b8f766e4701377d7dbaabe5"
+    }
+  ]
+}

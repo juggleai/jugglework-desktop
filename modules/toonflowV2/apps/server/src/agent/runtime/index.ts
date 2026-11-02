@@ -22,6 +22,7 @@ import {
 } from "@/agent/runtime/sessions";
 import { isMemoryEnabled } from "@/utils/personalization";
 import { lockWorkspaceFiles, resolveWorkspacePath } from "@/utils/workspace/files";
+import { trackAgentCleanup } from "@/utils/agentRuns";
 
 type AgentOptions = {
   prompt: string;
@@ -309,9 +310,7 @@ export async function run(
         limited = event.message.stopReason === "length";
       }
     });
-    const abort = () => {
-      void session.abort();
-    };
+    const abort = () => { void trackAgentCleanup(() => session.abort()).catch(() => undefined); };
     signal?.addEventListener("abort", abort, { once: true });
     let failure: unknown;
     try {

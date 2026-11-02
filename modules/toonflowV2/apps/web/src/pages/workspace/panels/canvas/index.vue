@@ -815,6 +815,32 @@ provide("workspaceDirectory", () => {
   if (!directory) throw new Error("请先选择工作目录");
   return directory;
 });
+provide("processMedia", async (request: import("@toonflow/node-video/videoProcessing").MediaRequest, signal: AbortSignal) => {
+  signal.throwIfAborted();
+  const requestId = crypto.randomUUID();
+  const headers = { "x-toonflow-workspace": "1" };
+  let cancellation: Promise<unknown> | undefined;
+  const cancel = () => {
+    cancellation ??= axios.post("/api/media/cancel", { requestId, directory: request.directory }, { headers, signal: AbortSignal.timeout(30_000) });
+    void cancellation.catch(() => undefined);
+  };
+  signal.addEventListener("abort", cancel, { once: true });
+  try {
+    if (signal.aborted) cancel();
+    // Keep the processing transport alive until the host has reaped its child
+    // and cleaned staging. Axios abort alone is not a completion acknowledgement.
+    const { data } = await axios.post("/api/media/process", { ...request, requestId }, { headers });
+    signal.throwIfAborted();
+    return data.data;
+  } catch (error) {
+    if (axios.isAxiosError(error) && error.response?.data?.message) throw new Error(error.response.data.message);
+    throw error;
+  } finally {
+    signal.removeEventListener("abort", cancel);
+    try { await cancellation; }
+    catch (error) { ElMessage.error("媒体取消清理未确认，请检查任务状态后再处理"); throw error; }
+  }
+});
 provide("reloadRemoteNode", (type: string) => {
   const name = type.replace(/^remote-/, "");
   if (!type.startsWith("remote-") || !/^[a-z][a-zA-Z0-9]*$/.test(name)) throw new Error("节点类型无效");

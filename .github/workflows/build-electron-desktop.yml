@@ -37,6 +37,8 @@ jobs:
         include:
           - os: macos-latest
             artifact: macos
+          - os: macos-15-intel
+            artifact: macos-x64
           - os: ubuntu-latest
             artifact: linux
             expected_arch: x64
@@ -73,6 +75,13 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Build native source media tools and verify restricted editing
+        env:
+          MEDIA_TOOLS_SMOKE: "1"
+        run: |
+          node apps/desktop/scripts/buildMediaTools.mjs
+          node --test apps/desktop/scripts/buildToonFactory.test.mjs
 
       - name: Package Electron desktop (unpacked)
         run: pnpm --filter @jugglework/desktop package:electron:dir

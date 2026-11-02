@@ -10,6 +10,7 @@ let managedResourceRoots: ManagedResourceRoots | undefined;
 
 const managedBuiltInToolAllowlist = new Set(["askUser", "canvas", "mediaGeneration", "skillOperator", "webSearch", "workspace"]);
 const managedBuiltInToolDenylist = new Set(["webFetch"]);
+const managedBuiltInNodes = new Set(["textNode", "imageNode", "videoNode", "audioNode", "imageGenerationNode", "videoGenerationNode", "director3dNode", "frameAnalysisNode"]);
 const managedDirectoryGrants = new Set<string>();
 
 const deniedExactPaths = new Set([
@@ -150,6 +151,10 @@ export function managedToolConfig(name: string, config: Record<string, unknown>,
 
 export function managedBuiltInToolAllowed(name: string, managed = isManagedMode()) {
   return !managed || (managedBuiltInToolAllowlist.has(name) && !managedBuiltInToolDenylist.has(name));
+}
+
+export function managedBuiltInNodeAllowed(name: string, managed = isManagedMode()) {
+  return !managed || managedBuiltInNodes.has(name);
 }
 
 function matchesPrefix(path: string, prefix: string) {

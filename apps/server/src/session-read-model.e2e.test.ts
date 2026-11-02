@@ -38,6 +38,8 @@ function auth(token: string) {
 function startMockOpencode(input?: {
   invalidList?: boolean;
   holdCommand?: Promise<void>;
+  holdCreate?: Promise<void>;
+  createStarted?: () => void;
   config?: Record<string, unknown>;
   statuses?: unknown;
 }) {
@@ -66,6 +68,8 @@ function startMockOpencode(input?: {
 
       if (url.pathname === "/session") {
         if (request.method === "POST") {
+          input?.createStarted?.();
+          await input?.holdCreate;
           const title = typeof record.body === "object" && record.body !== null
             ? Reflect.get(record.body, "title")
             : undefined;
@@ -204,6 +208,28 @@ async function startJuggleWorkServer(input: { workspaceRoot: string; opencodeBas
   stops.push(() => server.stop(true));
   return { server, token: config.token };
 }
+
+test("creation proxy continues after client abort and authenticates every replay", async () => {
+  const gate = deferred();
+  const started = deferred();
+  const mock = startMockOpencode({ holdCreate: gate.promise, createStarted: started.resolve });
+  const root = await createWorkspaceRoot();
+  const { server, token } = await startJuggleWorkServer({ workspaceRoot: root, opencodeBaseUrl: `http://127.0.0.1:${mock.server.port}`, readOnly: false });
+  const url = `http://127.0.0.1:${server.port}/w/ws_1/opencode/session`;
+  const headers = { ...auth(token), "Content-Type": "application/json", "X-JuggleWork-Create-Intent": `${Date.now()}.${crypto.randomUUID()}` };
+  const controller = new AbortController();
+  const first = fetch(url, { method: "POST", headers, body: "{}", signal: controller.signal }).catch(() => null);
+  await started.promise;
+  controller.abort();
+  await first;
+  const retry = fetch(url, { method: "POST", headers, body: "{}" });
+  gate.resolve();
+  expect((await (await retry).json()).id).toBe("ses_created");
+  expect((await fetch(url, { method: "POST", headers, body: "{}" })).status).toBe(200);
+  expect((await fetch(url, { method: "POST", headers: { ...headers, ...auth("invalid") }, body: "{}" })).status).toBe(401);
+  expect((await fetch(url, { method: "POST", headers, body: '{"title":"different"}' })).status).toBe(409);
+  expect(mock.requests.filter((r) => r.pathname === "/session" && r.method === "POST")).toHaveLength(1);
+});
 
 function deferred() {
   let resolve!: () => void;

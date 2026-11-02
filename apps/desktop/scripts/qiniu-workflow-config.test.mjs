@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { describe, it } from "node:test";
 
 import { parse } from "yaml";
@@ -39,8 +40,8 @@ describe("Qiniu release workflow policy", () => {
     const signToolRun = aggregate.steps[signToolIndex].run;
     const bundleRun = aggregate.steps.find((step) => step.name === "Stage signed release bundle and non-secret evidence").run;
 
-    assert.equal(workflow.jobs["release-macos-arm64"].if, "inputs.platform == 'mac' && inputs.mode != 'promotion-only'");
-    assert.equal(windows.if, "inputs.platform == 'windows' && inputs.mode != 'promotion-only'");
+    assert.equal(workflow.jobs["release-macos-arm64"].if, "inputs.platform == 'mac' && inputs.mode != 'promotion-only' && !inputs.verification_only");
+    assert.equal(windows.if, "inputs.platform == 'windows' && inputs.mode != 'promotion-only' && !inputs.verification_only");
     assert.deepEqual(windows.strategy.matrix.include.map(({ arch, runner }) => ({ arch, runner })), [
       { arch: "arm64", runner: "windows-11-arm" },
       { arch: "x64", runner: "windows-2022" },
@@ -72,22 +73,47 @@ describe("Qiniu release workflow policy", () => {
     assert.doesNotMatch(aggregateRuns, /build:electron|electron-builder/);
   });
 
-  it("continues only the fixed committed candidate inside the same workflow scheduler", () => {
+  it("continues only version-matched fixed committed candidates inside the same workflow scheduler", () => {
     const workflow = parse(qiniuSource);
     const inputs = workflow.on.workflow_dispatch.inputs;
     assert.deepEqual(inputs.mode.options, ["build", "promotion-only"]);
     assert.equal(inputs.mode.default, "build");
+    assert.equal(inputs.verification_only.type, "boolean");
+    assert.equal(inputs.verification_only.default, false);
     assert.equal(inputs.candidate_record.default, "apps/desktop/release-records/1.2.31-candidate.json");
     const job = workflow.jobs["promote-existing-macos-arm64"];
     assert.equal(job.if, "inputs.mode == 'promotion-only'");
     assert.equal(job.environment, "qiniu-desktop-release");
     assert.equal(job["runs-on"], "macos-26");
+    assert.equal(job.env.VERIFICATION_ONLY, "${{ inputs.verification_only }}");
     const source = job.steps.map((step) => step.run ?? "").join("\n");
     assert.match(source, /test "\$GITHUB_REF" = refs\/heads\/dev/);
     assert.match(source, /git rev-parse HEAD.*GITHUB_SHA/);
     assert.match(source, /git rev-parse origin\/dev.*GITHUB_SHA/);
-    for (const [name, value] of [["VERSION", "1.2.31"], ["CHANNEL", "stable"], ["RELEASE_PLATFORM", "mac"], ["PROMOTE", "true"]]) {
+    for (const [name, value] of [["CHANNEL", "stable"], ["RELEASE_PLATFORM", "mac"], ["PROMOTE", "true"]]) {
       assert.ok(source.includes(`test "$${name}" = ${value}`));
+    }
+    const gate = job.steps[0].run;
+    for (const verification of [undefined, "false", "true", "TRUE", "", "1", "false:extra"]) {
+      for (const promote of ["true", "false", "", "TRUE"]) {
+        const result = spawnSync("bash", ["-c", gate], { env: {
+          GITHUB_REF: "refs/heads/dev", VERSION: "1.2.32", CHANNEL: "stable", RELEASE_PLATFORM: "mac", PROMOTE: promote,
+          ...(verification === undefined ? {} : { VERIFICATION_ONLY: verification }),
+          CANDIDATE_RECORD: "apps/desktop/release-records/1.2.32-candidate.json",
+        } });
+        assert.equal(result.status === 0, ((verification ?? "false") === "false" && promote === "true") || (verification === "true" && promote === "false"));
+      }
+    }
+    assert.match(source, /if \[ "\$VERIFICATION_ONLY" = true \]; then\s+node .*promotion-continuation\.mjs --verify-only/);
+    assert.match(source, /test "\$VERIFICATION_ONLY" = false/);
+    for (const version of ["1.2.31", "1.2.32", "1.2.33"]) {
+      for (const recordVersion of ["1.2.31", "1.2.32", "1.2.33"]) {
+        const result = spawnSync("bash", ["-c", gate], { env: {
+          GITHUB_REF: "refs/heads/dev", VERSION: version, CHANNEL: "stable", RELEASE_PLATFORM: "mac", PROMOTE: "true",
+          CANDIDATE_RECORD: `apps/desktop/release-records/${recordVersion}-candidate.json`,
+        } });
+        assert.equal(result.status === 0, version !== "1.2.33" && version === recordVersion);
+      }
     }
     assert.match(source, /pnpm install --frozen-lockfile --ignore-scripts/);
     assert.match(source, /go install github.com\/qiniu\/qshell\/v2\/main@v2.19.10/);
@@ -99,6 +125,7 @@ describe("Qiniu release workflow policy", () => {
     assert.match(job.steps.at(-1).with.path, /release-evidence\.json$/);
     for (const id of ["resolve-windows-source", "build-windows", "aggregate-windows"]) {
       assert.match(workflow.jobs[id].if, /inputs.mode != 'promotion-only'/);
+      assert.match(workflow.jobs[id].if, /!inputs.verification_only/);
     }
   });
 

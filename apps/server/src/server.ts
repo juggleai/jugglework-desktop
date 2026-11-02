@@ -1,5 +1,6 @@
 import { readFile, writeFile, rm, stat } from "node:fs/promises";
 import { createHash } from "node:crypto";
+import { createSessionCreationLedger } from "./session-create-idempotency.js";
 import { hasCurrentRunFinalResponse } from "./session-completion-evidence.js";
 import { persistServerWorkspaceState } from "./routes/workspaces.js";
 import { homedir, hostname } from "node:os";
@@ -1571,6 +1572,7 @@ export async function startServer(config: ServerConfig, options: {
     (automationId, prepareOptions) => automationExecutor.prepareSession(automationId, prepareOptions),
   );
 
+  const sessionCreationLedger = createSessionCreationLedger();
   const serverOptions: {
     hostname: string;
     port: number;
@@ -1617,6 +1619,8 @@ export async function startServer(config: ServerConfig, options: {
             url,
             workspace,
             proxyPath: mount.restPath,
+            creationActor: actor,
+            sessionCreationLedger,
             sessionMutations,
           });
           return finalize(response);
@@ -1672,6 +1676,8 @@ export async function startServer(config: ServerConfig, options: {
             request,
             url,
             workspace: config.workspaces[0],
+            creationActor: actor,
+            sessionCreationLedger,
             sessionMutations,
           });
           return finalize(response);
@@ -2054,6 +2060,8 @@ async function proxyOpencodeRequest(input: {
   url: URL;
   workspace?: WorkspaceInfo;
   proxyPath?: string;
+  creationActor: Actor;
+  sessionCreationLedger: ReturnType<typeof createSessionCreationLedger>;
   sessionMutations: SessionMutationCoordinator;
 }) {
   const workspace = input.workspace;
@@ -2088,6 +2096,19 @@ async function proxyOpencodeRequest(input: {
   let body = method === "GET" || method === "HEAD"
     ? undefined
     : await input.request.arrayBuffer().then((buf) => (buf.byteLength > 0 ? buf : undefined));
+  const creationKey = headers.get("x-jugglework-create-intent");
+  headers.delete("x-jugglework-create-intent");
+  if (creationKey && method === "POST" && normalizeOpencodeProxyPath(proxyPath) === "/session") {
+    return input.sessionCreationLedger({
+      key: creationKey,
+      scope: JSON.stringify([workspace?.id, baseUrl, input.creationActor.type,
+        input.creationActor.tokenHash, input.creationActor.scope, auth ? hashToken(auth) : null]),
+      payload: JSON.stringify([targetUrl, headers.get("x-opencode-directory"),
+        body ? new TextDecoder().decode(body) : ""]),
+      // Do not propagate client AbortSignal after admitting creation.
+      execute: async () => sanitizeProxyResponse(await loopbackFetch(targetUrl, { method, headers, body })),
+    });
+  }
   if (workspace && body && method === "POST" && /\/session\/[^/]+\/(?:prompt_async|message)$/.test(proxyPath)) {
     try {
       const parsed = JSON.parse(new TextDecoder().decode(body)) as unknown;
@@ -2223,7 +2244,7 @@ function withCors(response: Response, request: Request, config: ServerConfig) {
   headers.set("Access-Control-Allow-Origin", allowOrigin);
   headers.set(
     "Access-Control-Allow-Headers",
-    "Authorization, Content-Type, X-JuggleWork-Host-Token, X-JuggleWork-Client-Id, X-OpenCode-Directory, X-Opencode-Directory, x-opencode-directory",
+    "Authorization, Content-Type, X-JuggleWork-Host-Token, X-JuggleWork-Client-Id, X-OpenCode-Directory, X-Opencode-Directory, x-opencode-directory, X-JuggleWork-Create-Intent",
   );
   headers.set("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
   headers.set("Vary", "Origin");
