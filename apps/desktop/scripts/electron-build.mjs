@@ -42,6 +42,7 @@ run(nodeCmd, [resolve(__dirname, "verify-jugglework-ui-mcp.mjs"), "--entry", res
 // Build shared runtime contracts first, then verify Electron resolves their JS output.
 run(pnpmCmd, ["--filter", "@jugglework/types", "build"], repoRoot);
 run(pnpmCmd, ["--filter", "@jugglework/types", "build:electron-runtime"], repoRoot);
+run(nodeCmd, [resolve(__dirname, "build-file-window-preload.mjs")], desktopRoot);
 // Build the server TS → JS so Electron can import it in-process
 run(pnpmCmd, ["--filter", "jugglework-server", "build"], repoRoot);
 // JUGGLEWORK_ELECTRON_BUILD tells Vite to emit relative asset paths so
@@ -83,6 +84,7 @@ process.stdout.write(
       renderer: "apps/app/dist",
       electronMain: "apps/desktop/electron/main.mjs",
       electronPreload: "apps/desktop/electron/preload.mjs",
+      fileWindowPreload: "apps/desktop/dist/preload/file-window-preload.cjs",
       uiControlMcp: "apps/desktop/resources/jugglework-ui-mcp/index.mjs",
     },
     null,

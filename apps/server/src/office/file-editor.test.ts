@@ -38,8 +38,14 @@ async function fixture() {
   let time = 1;
   const editor = createFileEditor({
     getWindows: () => windows,
-    resolveWindow: (sender: any) =>
-      windows.find((window) => window.webContents.id === sender.id),
+    authorizeFileEditor: (event: any, input: any) => {
+      const window = windows.find((window) => window.webContents === event.sender);
+      if (!window || input.workspaceId !== target.workspaceId || input.path !== target.path)
+        throw new Error("文件编辑目标未授权");
+      return window;
+    },
+    canReceiveFileEditor: (window: any, input: any) => windows.includes(window) &&
+      input.workspaceId === target.workspaceId && input.path === target.path,
     client: {
       async postJson(_path: string, body: any) {
         if (failure) throw new Error("保存失败");

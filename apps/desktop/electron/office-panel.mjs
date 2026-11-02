@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { waitForOfficeTransfer } from "./office-transfer.mjs";
 import { readOfficePageSelection } from "./office-page-selection.mjs";
+import { readOfficePageText } from "./office-page-text.mjs";
 import { revealOfficePageSelection } from "./office-page-reveal.mjs";
 import { officeSelectionFailure } from "./office-selection-bridge.mjs";
 import { ManagedRuntimeClientError } from "./managed-runtime-client.mjs";
@@ -17,12 +18,13 @@ import {
 
 /**
  * 承载唯一存活的 Office 页面；隐藏或切换标签时保留模型和撤销记录。
- * @param {{ getWindow: () => Electron.BrowserWindow | null, getWindows?: () => Electron.BrowserWindow[], resolveWindow?: (sender: Electron.WebContents) => Electron.BrowserWindow | null, onDocumentClosed?: (id: string) => void, onOpenFile?: (window: Electron.BrowserWindow, input: { workspaceId: string, sessionId: string }) => Promise<void>, composer?: { request: (input: any) => Promise<any> }, client: { getJson: (path: string, options?: { signal?: AbortSignal }) => Promise<any>, postJson: (path: string, body: unknown) => Promise<any>, postHostJson?: (path: string, body: unknown, options?: { signal?: AbortSignal }) => Promise<any> }, resources: ReturnType<import('./office-resources.mjs').createOfficeResources> | (() => ReturnType<import('./office-resources.mjs').createOfficeResources>), platform?: NodeJS.Platform, arch?: string }} options 宿主窗口、资源服务、已有 Server 客户端及平台能力
+ * @param {{ getWindow: () => Electron.BrowserWindow | null, getWindows?: () => Electron.BrowserWindow[], resolveWindow?: (sender: Electron.WebContents) => Electron.BrowserWindow | null, authorizeReferences?: (event: Electron.IpcMainInvokeEvent, input: any) => void, onDocumentClosed?: (id: string) => void, onOpenFile?: (window: Electron.BrowserWindow, input: { workspaceId: string, sessionId: string }) => Promise<void>, composer?: { request: (input: any) => Promise<any> }, client: { getJson: (path: string, options?: { signal?: AbortSignal }) => Promise<any>, postJson: (path: string, body: unknown) => Promise<any>, postHostJson?: (path: string, body: unknown, options?: { signal?: AbortSignal }) => Promise<any> }, resources: ReturnType<import('./office-resources.mjs').createOfficeResources> | (() => ReturnType<import('./office-resources.mjs').createOfficeResources>), platform?: NodeJS.Platform, arch?: string }} options 宿主窗口、资源服务、已有 Server 客户端及平台能力
  */
 export function createOfficePanel({
   getWindow,
   getWindows = () => [],
   resolveWindow,
+  authorizeReferences,
   onDocumentClosed,
   onOpenFile,
   composer,
@@ -380,7 +382,8 @@ export function createOfficePanel({
         origin: preview.origin,
         filePath: preview.searchParams.get("localFilePath"),
         kind,
-        selectionUi: Boolean(composer),
+        // TIPS: 本机文件集合没有聊天能力，不能展示点击后必然被拒绝的 AI 编辑入口。
+        selectionUi: Boolean(composer) && document.ownerSessionId !== "file-browser",
         commit,
         save: () => save(workspaceId, documentId),
         onCoreFailure: () => failPage(),
@@ -519,7 +522,7 @@ export function createOfficePanel({
   /** 系统模态框位于原生编辑视图上方，两宿主共用，不靠网页 z-index 遮盖 WebContentsView。 */
   const askSwitch = async (window, input) => {
     if (!composer || input.sessionId === "file-browser") return null;
-    const guard = await composer.request({ action: "guard", ...input });
+    const guard = await composer.request({ action: "guard", ...input, windowId: window?.id });
     if (!guard.needsConfirmation) return null;
     const closing = Boolean(input.closingDocumentId);
     const choice = await dialog.showMessageBox(window?.isVisible() ? window : getWindow(), {
@@ -532,7 +535,7 @@ export function createOfficePanel({
   };
   const finishSwitch = async (input, guard) => {
     if (!guard) return true;
-    const result = await composer.request({ action: "clear", ...input, epoch: guard.epoch, scope: guard.scope, referenceIds: guard.referenceIds });
+    const result = await composer.request({ action: "clear", ...input, windowId: guard.windowId ?? input.windowId, epoch: guard.epoch, scope: guard.scope, referenceIds: guard.referenceIds, guards: guard.guards });
     if (!result.ok) return false;
     if (result.releaseIds?.length) {
       try { await client.postJson(`/workspace/${encodeURIComponent(input.workspaceId)}/office/selection-references/release`, { sessionId: input.sessionId, referenceIds: result.releaseIds }); }
@@ -543,6 +546,7 @@ export function createOfficePanel({
   /** 先确认和准备目标，成功后才清理草稿引用；文件读取、引擎或页面失败都保留原选择。 */
   const confirmFileTarget = async (window, input) => {
     if (!composer || input.sessionId === "file-browser") return true;
+    input = { ...input, windowId: window?.id };
     const initial = await composer.request({ action: "guard", ...input });
     if (!initial.needsConfirmation) return true;
     const target = await client.postJson(`/workspace/${encodeURIComponent(input.workspaceId)}/office/check-open-target`, { sessionId: input.sessionId, path: input.path });
@@ -582,9 +586,43 @@ export function createOfficePanel({
       }
     }
   };
+  /** 保存前等待调用文档的真实页面提交完成，旧页面不能确认恢复后的新模型。 */
+  const prepareSave = async ({ workspaceId, documentId, pageId }) => {
+    const entry = views.get(documentId);
+    if (
+      !entry ||
+      entry.workspaceId !== workspaceId ||
+      entry.pageId !== pageId ||
+      entry.view.webContents.isDestroyed()
+    )
+      throw new Error("文档编辑页面已失效，不能确认保存");
+    const prepare =
+      entry.kind === "doc"
+        ? waitForWordPageCommit
+        : entry.kind === "sheet"
+          ? waitForSheetPageCommit
+          : entry.kind === "slide"
+            ? waitForSlidePageCommit
+            : null;
+    if (!prepare) throw new Error("此文档格式没有页面提交适配");
+    await entry.view.webContents.executeJavaScript(
+      `(${prepare.toString()})()`,
+    );
+    if (
+      views.get(documentId) !== entry ||
+      entry.view.webContents.isDestroyed()
+    )
+      throw new Error("文档编辑页面已失效，不能确认保存");
+    if (entry.commit.error) throw entry.commit.error;
+  };
   const close = async (workspaceId, documentId) => {
-    const document = (await client.getJson(base(workspaceId, documentId)))
+    let document = (await client.getJson(base(workspaceId, documentId)))
       .document;
+    if (!document.dirty && document.state === "ready" && views.has(documentId)) {
+      // TIPS: 输入或撤销/重做可能仍在页面缓冲中；先确认提交，再读取 dirty，避免静默保存关闭。
+      await prepareSave({ workspaceId, documentId, pageId: document.pageId });
+      document = (await client.getJson(base(workspaceId, documentId))).document;
+    }
     const sourceWindow = views.get(documentId)?.window ?? getWindow();
     const guardInput = { workspaceId, sessionId: document.ownerSessionId, closingDocumentId: documentId };
     const selectionGuard = await askSwitch(sourceWindow, guardInput);
@@ -645,6 +683,7 @@ export function createOfficePanel({
     registerIpc(ipcMain) {
       ipcMain.handle("jugglework:office:reveal-selection", async (event, input) => {
         owner(event);
+        authorizeReferences?.(event, input);
         const { reference } = await client.postJson(`/workspace/${encodeURIComponent(input.workspaceId)}/office/selection-references/reveal`, { sessionId: input.sessionId, referenceId: input.referenceId });
         const entry = views.get(reference.documentId);
         if (!entry || entry.pageId !== reference.sourcePageId || entry.workspaceId !== input.workspaceId ||
@@ -657,6 +696,7 @@ export function createOfficePanel({
       ipcMain.handle("jugglework:office:confirm-file-switch", (event, input) => confirmFileTarget(owner(event), input));
       ipcMain.handle("jugglework:office:release-selections", (event, input) => {
         owner(event);
+        authorizeReferences?.(event, input);
         return client.postJson(`/workspace/${encodeURIComponent(input.workspaceId)}/office/selection-references/release`, { sessionId: input.sessionId, referenceIds: input.referenceIds });
       });
       const pageSource = (event) => {
@@ -728,7 +768,7 @@ export function createOfficePanel({
         });
         try {
           requireCurrent();
-          const owner = await composer.request({ action: "prepare", workspaceId: entry.workspaceId, sessionId: entry.ownerSessionId });
+          const owner = await composer.request({ action: "prepare", windowId: window.id, workspaceId: entry.workspaceId, sessionId: entry.ownerSessionId });
           requireCurrent();
           const result = await capture().catch(officeSelectionFailure);
           if (result.error) return result;
@@ -736,7 +776,7 @@ export function createOfficePanel({
             await client.postJson(`/workspace/${encodeURIComponent(entry.workspaceId)}/office/selection-references/release`, { sessionId: entry.ownerSessionId, referenceIds: [result.reference.referenceId] });
             throw new Error("文件窗口已变化，请重新选择");
           }
-          entry.pendingSelection = { captureId: input.captureId, reference: result.reference, ownerEpoch: owner.epoch, bridgeGeneration: owner.bridgeGeneration, instructionId: `osi_${randomUUID()}` };
+          entry.pendingSelection = { captureId: input.captureId, reference: result.reference, ownerEpoch: owner.epoch, bridgeGeneration: owner.bridgeGeneration, windowId: window.id, instructionId: `osi_${randomUUID()}` };
           return { reference: result.reference };
         } finally {
           if (entry.captureRequest === task && !entry.pendingSelection) entry.captureRequest = null;
@@ -754,7 +794,8 @@ export function createOfficePanel({
           await client.postJson(`/workspace/${encodeURIComponent(entry.workspaceId)}/office/selection-references/validate`, {
             sessionId: entry.ownerSessionId, referenceIds: [pending.reference.referenceId],
           });
-          const result = await composer.request({ action: "append", workspaceId: entry.workspaceId, sessionId: entry.ownerSessionId,
+          if (entry.window.id !== pending.windowId) throw new Error("文件宿主已变化，请重新选择");
+          const result = await composer.request({ action: "append", windowId: pending.windowId, workspaceId: entry.workspaceId, sessionId: entry.ownerSessionId,
             reference: pending.reference, instructionId: pending.instructionId, epoch: pending.ownerEpoch, bridgeGeneration: pending.bridgeGeneration, text: input.text, mode: input.mode });
           entry.pendingSelection = null;
           cancelCapture(entry);
@@ -779,7 +820,7 @@ export function createOfficePanel({
           (event.sender.id === getWindow()?.webContents.id
             ? getWindow()
             : null);
-        if (!window) throw new Error("Office view requires its host window");
+        if (!window || event.senderFrame !== event.sender.mainFrame) throw new Error("Office view requires its host window");
         return window;
       };
       ipcMain.handle("jugglework:office:show", async (event, input) => {
@@ -891,35 +932,19 @@ export function createOfficePanel({
       );
       return current() ? selection : null;
     },
-    /** 保存前等待调用文档的真实页面提交完成，旧页面不能确认恢复后的新模型。 */
-    async prepareSave({ workspaceId, documentId, pageId }) {
+    /** 读取同一存活 Word 模型的有界原文；后台页面同样可核对，页面换代即拒绝。 */
+    async readText({ workspaceId, documentId, pageId, ranges, version }) {
       const entry = views.get(documentId);
-      if (
-        !entry ||
-        entry.workspaceId !== workspaceId ||
-        entry.pageId !== pageId ||
-        entry.view.webContents.isDestroyed()
-      )
-        throw new Error("文档编辑页面已失效，不能确认保存");
-      const prepare =
-        entry.kind === "doc"
-          ? waitForWordPageCommit
-          : entry.kind === "sheet"
-            ? waitForSheetPageCommit
-            : entry.kind === "slide"
-              ? waitForSlidePageCommit
-              : null;
-      if (!prepare) throw new Error("此文档格式没有页面提交适配");
-      await entry.view.webContents.executeJavaScript(
-        `(${prepare.toString()})()`,
+      const current = () => entry && views.get(documentId) === entry && entry.workspaceId === workspaceId &&
+        entry.pageId === pageId && entry.kind === "doc" && !entry.view.webContents.isDestroyed();
+      if (!current()) return null;
+      const texts = await entry.view.webContents.executeJavaScript(
+        `(${readOfficePageText.toString()})(${JSON.stringify({ ranges, version })})`,
       );
-      if (
-        views.get(documentId) !== entry ||
-        entry.view.webContents.isDestroyed()
-      )
-        throw new Error("文档编辑页面已失效，不能确认保存");
-      if (entry.commit.error) throw entry.commit.error;
+      return current() ? texts : null;
     },
+    /** 保存或关闭前确认当前文档页面的输入已提交。 */
+    prepareSave,
     /** 将同一个存活页面重挂到新宿主，不保存关闭、不重新导入模型。 */
     assign,
     /** 等待所属运行、交付与保存结束再交接；取消时保持原页面和模型。 */

@@ -5,8 +5,9 @@ import { loopbackFetch } from "../server-fetch.js";
 /** 向所属桌面原生页面发送固定契约请求，不激活窗口或解释页面模型。 */
 async function requestOfficePage(
   document: OfficeDocumentSession,
-  route: "prepare-save" | "selection",
-): Promise<{ selection?: unknown } | null> {
+  route: "prepare-save" | "selection" | "text",
+  input: Record<string, unknown> = {},
+): Promise<{ selection?: unknown; texts?: unknown } | null> {
   const discovery = process.env.JUGGLEWORK_UI_CONTROL_DISCOVERY?.trim();
   if (!discovery) return null;
   const bridge = JSON.parse(await readFile(discovery, "utf8"));
@@ -22,6 +23,7 @@ async function requestOfficePage(
       workspaceId: document.workspaceId,
       documentId: document.documentId,
       pageId: document.pageId,
+      ...input,
     }),
     signal: AbortSignal.timeout(route === "prepare-save" ? 12_000 : 2_000),
   });
@@ -29,6 +31,7 @@ async function requestOfficePage(
     ok?: boolean;
     error?: string;
     selection?: unknown;
+    texts?: unknown;
   };
   if (!response.ok || result.ok !== true)
     throw new Error(result.error ?? "桌面文档页面确认失败");
@@ -49,4 +52,11 @@ export async function readOfficePageSelection(
 ): Promise<unknown> {
   const result = await requestOfficePage(document, "selection");
   return result?.selection ?? null;
+}
+
+/** 从所属原生模型读取有界正文，保留结构预览省略的段内换行；无页面时保持拒绝。 */
+export async function readOfficePageText(document: OfficeDocumentSession, ranges: { begin: number; end: number }[], version: number): Promise<string[] | null> {
+  const result = await requestOfficePage(document, "text", { ranges, version });
+  if (!Array.isArray(result?.texts) || result.texts.length !== ranges.length || result.texts.some((text) => typeof text !== "string")) return null;
+  return result.texts as string[];
 }

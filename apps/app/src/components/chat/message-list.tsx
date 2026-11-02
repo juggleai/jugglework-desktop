@@ -814,7 +814,7 @@ function renderUserTextWithSkillChips(text: string, highlightQuery: string | und
 
 const UserMessage = React.memo(
   ({ message, isStreaming }: UserMessageProps) => {
-    const { onRevertToUserMessage, onForkAtMessage, onEditUserMessage, highlightQuery } = useMessageList()
+    const { historyActionsEnabled, onRevertToUserMessage, onForkAtMessage, onEditUserMessage, highlightQuery } = useMessageList()
     const deliveries = useFileDeliveries()
     const officeHistory = deliveries?.data?.turns.find((turn) => turn.turnId === message.id)?.officeSelection
     const messageText = React.useMemo(() => getMessagesText([message]), [message])
@@ -896,6 +896,7 @@ const UserMessage = React.memo(
                           variant="ghost"
                           size="icon-xs"
                           aria-label={t("session.edit_message_label")}
+                          disabled={!historyActionsEnabled}
                           onClick={() => onEditUserMessage(message.id, messageText)}
                         >
                           <Pencil />
@@ -907,6 +908,7 @@ const UserMessage = React.memo(
                         variant="ghost"
                         size="icon-xs"
                         aria-label={t("session.branch_new_chat")}
+                        disabled={!historyActionsEnabled}
                         onClick={() => onForkAtMessage(message.id)}
                       >
                         <Split className="rotate-90" />
@@ -917,6 +919,7 @@ const UserMessage = React.memo(
                         variant="ghost"
                         size="icon-xs"
                         aria-label={t("session.revert_label")}
+                        disabled={!historyActionsEnabled}
                         onClick={() => onRevertToUserMessage(message.id)}
                       >
                         <Undo2 />
@@ -929,7 +932,7 @@ const UserMessage = React.memo(
           />
           <ContextMenuContent className="w-56">
             {messageText ? (
-              <ContextMenuItem onClick={() => onEditUserMessage(message.id, messageText)}>
+              <ContextMenuItem disabled={!historyActionsEnabled} onClick={() => onEditUserMessage(message.id, messageText)}>
                 <Pencil className="size-4" />
                 {t("session.edit_message_label")}
               </ContextMenuItem>
@@ -940,11 +943,11 @@ const UserMessage = React.memo(
                 {t("session.message_copy")}
               </ContextMenuItem>
             ) : null}
-            <ContextMenuItem onClick={() => onForkAtMessage(message.id)}>
+            <ContextMenuItem disabled={!historyActionsEnabled} onClick={() => onForkAtMessage(message.id)}>
               <Split className="size-4 rotate-90" />
               {t("session.branch_new_chat")}
             </ContextMenuItem>
-            <ContextMenuItem onClick={() => onRevertToUserMessage(message.id)}>
+            <ContextMenuItem disabled={!historyActionsEnabled} onClick={() => onRevertToUserMessage(message.id)}>
               <Undo2 className="size-4" />
               {t("session.revert_label")}
             </ContextMenuItem>
@@ -1140,7 +1143,7 @@ function MessageGroup({
   messages,
   isStreaming,
 }: AssistantMessageGroupProps) {
-  const { onRevertToUserMessage, onForkAtMessage } = useMessageList()
+  const { historyActionsEnabled, onRevertToUserMessage, onForkAtMessage } = useMessageList()
   const artifactActions = useArtifactActions()
   const lastItem = items[items.length - 1]
   // Branch/revert must target a real server-side message id. Synthetic
@@ -1285,7 +1288,7 @@ function MessageGroup({
       )}>
         {summaryItems.map((item, groupIndex) => renderItem(item, processItems.length + groupIndex, "summary"))}
       </div>
-      {!isLiveGroup ? <ArtifactCards artifacts={cardArtifacts} turnId={turnId} onUndo={!isStreaming && turnId ? () => onRevertToUserMessage(turnId) : undefined} /> : null}
+      {!isLiveGroup ? <ArtifactCards artifacts={cardArtifacts} turnId={turnId} onUndo={historyActionsEnabled && !isStreaming && turnId ? () => onRevertToUserMessage(turnId) : undefined} /> : null}
       {!isLiveGroup && delivery ? <ArtifactDeliveryStatus delivery={delivery} onRetry={() => deliveries!.retry(delivery.turnId)} /> : null}
       <GeneratedImageResultList messages={items.map((item) => item.message)} />
       <GeneratedVideoResultList

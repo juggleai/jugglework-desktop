@@ -17,10 +17,9 @@ import { createLocalWorkspaceForRuntime } from "@/app/lib/local-workspace-create
 import { buildDiagnosticsBundleJson } from "@/app/lib/diagnostics-bundle";
 import { downloadTextAsFile } from "@/app/lib/download";
 import { createClient, unwrap } from "@/app/lib/opencode";
-import { submitSessionDraft } from "@/react-app/domains/session/sync/draft-submission";
+import { createSessionDraftSender } from "@/react-app/domains/session/sync/session-draft-sender";
 import { useDesktopPet } from "@/react-app/domains/pet/use-desktop-pet";
 import { DesktopPetHost } from "@/react-app/domains/pet/desktop-pet-host";
-import { installOfficeComposerBridge } from "@/react-app/domains/session/surface/composer/office-composer-bridge";
 import { abortSessionSafe, forkSession, listCommands, revertSession, setSessionArchived } from "@/app/lib/opencode-session";
 import { resolveModelContextLimit } from "@/react-app/domains/session/surface/composer/context-usage-data";
 import { requestComposerFocus } from "@/react-app/domains/session/surface/composer/focus-request";
@@ -54,7 +53,6 @@ import {
 } from "@/app/lib/desktop";
 import type {
   ComposerDraft,
-  ComposerSubmissionOptions,
   ModelOption,
   ModelRef,
   SlashCommandOption,
@@ -142,7 +140,6 @@ import {
 } from "@/react-app/domains/connections/managed-engine-config";
 import { useSessionMcpMaintenance } from "@/react-app/domains/connections/use-session-mcp-maintenance";
 import { useCloudMcpSubmitReadiness } from "@/react-app/domains/connections/use-cloud-mcp-submit-readiness";
-import type { CloudMcpSubmissionResult } from "@/react-app/domains/connections/cloud-mcp-submit-readiness";
 import { useRemoteAccessRestart } from "@/react-app/domains/workspace/remote-access-restart";
 import { RenameWorkspaceModal } from "@/react-app/domains/workspace/rename-workspace-modal";
 import { useRemoteWorkspaceConnectionEditor } from "@/react-app/domains/workspace/use-remote-workspace-connection-editor";
@@ -380,7 +377,6 @@ export function SessionRoute(props: SessionRouteProps = {}) {
   }) : null, [selectedWorkspace, selectedWorkspaceEndpoint]);
   useHostMarketplaceExecutionTarget(hostMarketplaceExecutionTarget);
   activeRouteContextRef.current = `${selectedWorkspaceId ?? ""}:${selectedSessionId ?? ""}`;
-  useEffect(() => installOfficeComposerBridge({ navigate, scope: () => activeRouteContextRef.current }), [navigate]);
   // 会话级模型：每个会话可以固定自己的模型/推理档位，没有单独选过的会话才回落到
   // 全局默认模型。这样在一个会话里换模型不会波及其他会话。
   const sessionModelChoices = useSessionModelChoices(selectedWorkspaceId);
@@ -1320,90 +1316,88 @@ export function SessionRoute(props: SessionRouteProps = {}) {
       onOpenSettingsSection: (section: "commands" | "skills" | "mcps" | "plugins" | "providers") => {
         handleOpenSettings(section === "skills" ? "/settings/extensions/skills" : section === "mcps" ? "/settings/extensions/mcp" : section === "plugins" ? "/settings/extensions/plugins" : section === "providers" ? "/settings/ai" : "/settings/preferences");
       },
-      onSendDraft: async (
-        draft: ComposerDraft,
-        sessionId: string,
-        submission: ComposerSubmissionOptions = { delivery: "start" },
-      ): Promise<CloudMcpSubmissionResult> => {
-        const targetSessionId = sessionId.trim() || selectedSessionId;
-        if (!targetSessionId) return { outcome: "cancelled", reason: "context_changed" };
-        if (!canAcceptTask) return { outcome: "cancelled", reason: "context_changed" };
-        const routeContext = activeRouteContextRef.current;
-        const validateGenerationDraftBeforeSend = () => {
-          if (!draft.imageGeneration && !draft.videoGeneration) return true;
-          if (activeRouteContextRef.current !== routeContext) return false;
-          const mediaScope = mediaModelQueryScope({
-            endpoint: selectedWorkspaceEndpoint?.client.baseUrl ?? "",
-            workspaceId: selectedWorkspaceEndpoint?.workspaceId ?? "",
-            workspaceRoot: selectedWorkspaceRoot,
-          });
-          return generationDraftAvailableInCache(getReactQueryClient(), mediaScope, draft);
-        };
-        return submitSessionDraft({
-          draft, sessionId: targetSessionId, workspaceId: selectedWorkspaceId, workspaceRoot: selectedWorkspaceRoot,
-          client: opencodeClient, host: client, endpoint: selectedWorkspaceEndpoint,
-          runtimeKey: environmentRuntimeKey, workspaceType: selectedWorkspace?.workspaceType, submission,
-          isCurrent: () => canAcceptTask && activeRouteContextRef.current === routeContext,
-          cloudSubmit: submitWithCloudMcpReadiness, validateGeneration: validateGenerationDraftBeforeSend,
-          prepare: async () => {
-            const targetChoice = resolveModelForSession(targetSessionId);
-            const targetModel = targetChoice.model;
-            const targetVariant = describeModel(targetModel, targetChoice.variant).modelVariantValue;
-            if (
-              targetModel &&
-              isCloudManagedProviderKey(targetModel.providerID) &&
-              !isManagedModelReady(targetModel)
-            ) {
-              throw new Error(t("app.error_managed_model_preparing"));
-            }
-            if (isModelUnavailable(targetModel)) throw new Error("Selected model is unavailable. Choose another model before sending.");
+      onSendDraft: createSessionDraftSender({
+        sessionId: selectedSessionId, workspaceId: selectedWorkspaceId, workspaceRoot: selectedWorkspaceRoot,
+        client: opencodeClient, host: client, endpoint: selectedWorkspaceEndpoint,
+        runtimeKey: environmentRuntimeKey, workspaceType: selectedWorkspace?.workspaceType,
+        canSubmit: () => canAcceptTask,
+        cloudSubmit: submitWithCloudMcpReadiness,
+        prepare: async () => ({ model: activeModel, variant: modelVariantValue ?? null }),
+        captureContext: (targetSessionId) => {
+          const routeContext = activeRouteContextRef.current;
+          const validateGenerationDraftBeforeSend = (draft: ComposerDraft) => {
+            if (!draft.imageGeneration && !draft.videoGeneration) return true;
+            if (activeRouteContextRef.current !== routeContext) return false;
+            const mediaScope = mediaModelQueryScope({
+              endpoint: selectedWorkspaceEndpoint?.client.baseUrl ?? "",
+              workspaceId: selectedWorkspaceEndpoint?.workspaceId ?? "",
+              workspaceRoot: selectedWorkspaceRoot,
+            });
+            return generationDraftAvailableInCache(getReactQueryClient(), mediaScope, draft);
+          };
+          return {
+            isCurrent: () => activeRouteContextRef.current === routeContext,
+            validateGeneration: validateGenerationDraftBeforeSend,
+            prepare: async () => {
+              const targetChoice = resolveModelForSession(targetSessionId);
+              const targetModel = targetChoice.model;
+              const targetVariant = describeModel(targetModel, targetChoice.variant).modelVariantValue;
+              if (
+                targetModel &&
+                isCloudManagedProviderKey(targetModel.providerID) &&
+                !isManagedModelReady(targetModel)
+              ) {
+                throw new Error(t("app.error_managed_model_preparing"));
+              }
+              if (isModelUnavailable(targetModel)) throw new Error("Selected model is unavailable. Choose another model before sending.");
 
-            // TIPS: 页面从后台或休眠恢复时，Connect maintenance 会重建可能失效的
-            // first-party transport。这里只等待已经在运行的恢复任务，不为普通消息额外探活。
-            const resumeMaintenance = await waitForSessionMcpResumeMaintenance();
-            if (activeRouteContextRef.current !== routeContext) {
-              return { outcome: "cancelled", reason: "context_changed" };
-            }
-            if (resumeMaintenance.outcome === "timed_out") {
-              return reportCloudMcpSubmissionFailure({
+              // TIPS: 页面从后台或休眠恢复时，Connect maintenance 会重建可能失效的
+              // first-party transport。这里只等待已经在运行的恢复任务，不为普通消息额外探活。
+              const resumeMaintenance = await waitForSessionMcpResumeMaintenance();
+              if (activeRouteContextRef.current !== routeContext) {
+                return { outcome: "cancelled", reason: "context_changed" };
+              }
+              if (resumeMaintenance.outcome === "timed_out") {
+                return reportCloudMcpSubmissionFailure({
                   code: "cloud_mcp_resume_maintenance_timeout",
                   stage: "engine_delivery",
                   retryable: true,
                   message: "JuggleWork Connect is still restoring after the app resumed.",
                   recommendedAction: "Wait a moment, then retry the message.",
-              });
-            }
-            if (resumeMaintenance.outcome === "failed") {
-              return reportCloudMcpSubmissionFailure({
+                });
+              }
+              if (resumeMaintenance.outcome === "failed") {
+                return reportCloudMcpSubmissionFailure({
                   code: "cloud_mcp_resume_maintenance_failed",
                   stage: "engine_delivery",
                   retryable: true,
                   message: "JuggleWork Connect could not finish restoring after the app resumed.",
                   recommendedAction: "Retry the message, then open Settings → Connect if the problem continues.",
-              });
-            }
-
-            if (hostMarketplace.snapshot.registry?.installations.length) {
-              try {
-                const hostSnapshot = await hostMarketplace.ensureReady();
-                if (!hostSnapshot.registry?.active) {
-                  throw hostSnapshot.error ?? new Error("Host Marketplace plugins are not active.");
-                }
-              } catch (error) {
-                return reportCloudMcpSubmissionFailure({
-                  code: "host_marketplace_scope_unavailable",
-                  stage: "engine_delivery",
-                  retryable: true,
-                  message: error instanceof Error ? error.message : "Host Marketplace plugins could not be prepared.",
-                  recommendedAction: "Wait a moment, then retry the message.",
                 });
               }
-            }
 
-            return { model: targetModel, variant: targetVariant ?? null };
-          },
-        });
-      },
+              if (hostMarketplace.snapshot.registry?.installations.length) {
+                try {
+                  const hostSnapshot = await hostMarketplace.ensureReady();
+                  if (!hostSnapshot.registry?.active) {
+                    throw hostSnapshot.error ?? new Error("Host Marketplace plugins are not active.");
+                  }
+                } catch (error) {
+                  return reportCloudMcpSubmissionFailure({
+                    code: "host_marketplace_scope_unavailable",
+                    stage: "engine_delivery",
+                    retryable: true,
+                    message: error instanceof Error ? error.message : "Host Marketplace plugins could not be prepared.",
+                    recommendedAction: "Wait a moment, then retry the message.",
+                  });
+                }
+              }
+
+              return { model: targetModel, variant: targetVariant ?? null };
+            },
+          };
+        },
+      }),
       cloudMcpSubmissionState,
       onOpenConnect: () => navigate("/settings/connect"),
       onDraftChange: () => {

@@ -117,9 +117,10 @@ function writePersisted(key: string, value: unknown) {
 
 type LocalProviderProps = {
   children: ReactNode;
+  persist?: boolean;
 };
 
-export function LocalProvider({ children }: LocalProviderProps) {
+export function LocalProvider({ children, persist = true }: LocalProviderProps) {
   const [ui, setUiRaw] = useState<LocalUIState>(() =>
     readPersisted(UI_STORAGE_KEY, INITIAL_UI),
   );
@@ -140,14 +141,17 @@ export function LocalProvider({ children }: LocalProviderProps) {
   const migratedThinkingRef = useRef(false);
 
   useEffect(() => {
+    if (!persist) return;
     writePersisted(UI_STORAGE_KEY, ui);
-  }, [ui]);
+  }, [persist, ui]);
 
   useEffect(() => {
+    if (!persist) return;
     writePersisted(LOCAL_PREFERENCES_KEY, prefs);
-  }, [prefs]);
+  }, [persist, prefs]);
 
   useEffect(() => {
+    if (!persist) return;
     if (typeof window === "undefined") return;
     if (migratedThinkingRef.current) return;
     migratedThinkingRef.current = true;
@@ -169,7 +173,7 @@ export function LocalProvider({ children }: LocalProviderProps) {
     } catch {
       // ignore
     }
-  }, []);
+  }, [persist]);
 
   const setUi = useCallback(
     (updater: (previous: LocalUIState) => LocalUIState) => {

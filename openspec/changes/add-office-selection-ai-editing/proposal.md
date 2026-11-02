@@ -26,4 +26,4 @@
 
 ## Impact
 
-Electron Office 页面配置与共享宿主、Server Office 文档和消息提交、React/Lexical 输入栏、Agent 内容动作与历史消息展示。详细设计见 `docs/office-selection-ai-editing-design.md`。核心引用、页面浮层、输入栏、切换确认、轮次执行和保存链路已实现，完整桌面会话及其他平台实机验收待完成；不改写 SDK 二进制、不扩大网络访问范围。三平台需分别验收。
+Electron Office 页面配置与共享宿主、Server Office 文档和消息提交、React/Lexical 输入栏、Agent 内容动作与历史消息展示。详细设计见 `docs/office-selection-ai-editing-design.md`。核心引用、页面浮层、输入栏、切换确认、轮次执行和保存链路已实现，macOS ARM64 两宿主真实桌面会话、中文输入与保存回读已验证；其他平台实机保持外部待办。不改写 SDK 二进制，不扩大网络访问范围。三平台需分别验收，具体范围见文件工作台 implementation-status.md。

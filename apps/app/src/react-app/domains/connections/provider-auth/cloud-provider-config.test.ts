@@ -1,9 +1,9 @@
 declare const describe: (name: string, fn: () => void) => void;
 declare const test: (name: string, fn: () => void) => void;
-declare const expect: (value: unknown) => {
+declare const expect: ((value: unknown) => {
   toBe: (expected: unknown) => void;
   toEqual: (expected: unknown) => void;
-};
+}) & { any: (type: StringConstructor) => unknown };
 
 import { parse } from "jsonc-parser";
 

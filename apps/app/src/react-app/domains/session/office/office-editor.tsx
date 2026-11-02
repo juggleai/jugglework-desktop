@@ -83,7 +83,13 @@ export function OfficeEditor({
   const [saving, setSaving] = React.useState(false);
   const [recovering, setRecovering] = React.useState(false);
   const [detached, setDetached] = React.useState(false);
-  const [snapshot, setSnapshot] = React.useState<string | null>(null);
+  const [snapshot, setSnapshot] = React.useState<{ image: string; ready?: () => void } | null>(null);
+  const snapshotImage = React.useRef<HTMLImageElement>(null);
+  React.useLayoutEffect(() => {
+    // TIPS: 缓存图片可能不再触发 load；只有替代画面已解码并挂载才交接原生视图。
+    if (snapshotImage.current?.complete && snapshotImage.current.naturalWidth > 0)
+      snapshot?.ready?.();
+  }, [snapshot]);
   const claimed = React.useRef<string | null>(null);
   const external = useFilesPanelStore(
     (state) =>
@@ -117,7 +123,6 @@ export function OfficeEditor({
       if (next.documentId !== documentId || next.workspaceId !== workspaceId)
         return;
       setOpenError(null);
-      setSnapshot(null);
       claimed.current = null;
       queryClient.setQueryData(queryKey, { document: next });
     },
@@ -163,7 +168,7 @@ export function OfficeEditor({
     const refresh = () =>
       void native.snapshot!(documentId)
         .then((image) => {
-          if (!stopped && image) setSnapshot(image);
+          if (!stopped && image) setSnapshot({ image });
         })
         .catch(() => {});
     refresh();
@@ -196,6 +201,7 @@ export function OfficeEditor({
     if (!capabilities.data?.available || !native || external) return;
     let cancelled = false;
     setDocumentId(null);
+    setSnapshot(null);
     setDetached(false);
     setOpenError(null);
     setReadOnlyReason(null);
@@ -255,6 +261,7 @@ export function OfficeEditor({
     let cancelled = false;
     let frame = 0;
     let shown = false;
+    let pendingCover: object | null = null;
     let last: ReturnType<typeof computeBounds> | null = null;
     const watch = () => {
       if (cancelled) return;
@@ -263,16 +270,37 @@ export function OfficeEditor({
         globalThis.document.visibilityState !== "hidden" && element.isConnected;
       const hasArea = bounds.width > 0 && bounds.height > 0;
       const visible = pageVisible && hasArea && !hasNativeBrowserOccluder();
-      if (!visible && shown) {
-        // 后台隐藏无需菜单快照，也不能把输入焦点交回已隐藏的宿主。
-        void native.hide(documentId, pageVisible && hasArea).then((image) => {
-          if (!cancelled && !shown && typeof image === "string")
-            setSnapshot(image);
-        });
+      if (!visible && (shown || (pendingCover && (!pageVisible || !hasArea)))) {
         shown = false;
         last = null;
+        if (pageVisible && hasArea) {
+          const cover = {};
+          pendingCover = cover;
+          const hideCoveredView = (covered = false) => {
+            if (cancelled || shown || pendingCover !== cover) return;
+            pendingCover = null;
+            void native.hide(documentId, true).then((image) => {
+              if (!covered && !cancelled && !shown && typeof image === "string")
+                setSnapshot({ image });
+            });
+          };
+          // TIPS: 菜单不能先卸下原生页再等 IPC 截图，否则宿主会露出一帧空白。
+          if (native.snapshot) void native.snapshot(documentId).then((image) => {
+            if (cancelled || shown || pendingCover !== cover) return;
+            if (typeof image === "string") setSnapshot({ image, ready: () => {
+              // TIPS: load 早于浏览器绘制；保留一帧画面提交时间，再移除位于 DOM 上方的原生页。
+              window.requestAnimationFrame(() => window.requestAnimationFrame(() => hideCoveredView(true)));
+            } });
+            else hideCoveredView();
+          }).catch(() => hideCoveredView());
+          else hideCoveredView();
+        } else {
+          // 后台隐藏无需菜单快照，也不能把输入焦点交回已隐藏的宿主。
+          pendingCover = null;
+          void native.hide(documentId, false);
+        }
       } else if (visible && (!shown || !sameBounds(last, bounds))) {
-        setSnapshot(null);
+        pendingCover = null;
         shown = true;
         last = bounds;
         void native
@@ -285,6 +313,7 @@ export function OfficeEditor({
           })
           .then((result) => {
             if (!cancelled && result && !result.here) setDetached(true);
+            if (!cancelled && shown && result?.here) setSnapshot(null);
           })
           .catch((error) => {
             if (!cancelled)
@@ -310,6 +339,7 @@ export function OfficeEditor({
     watch();
     return () => {
       cancelled = true;
+      pendingCover = null;
       unsubscribeLayout?.();
       globalThis.document.removeEventListener("visibilitychange", refreshLayout);
       window.removeEventListener("pageshow", refreshLayout);
@@ -447,7 +477,9 @@ export function OfficeEditor({
       <div ref={content} className="relative min-h-0 flex-1">
         {snapshot && !detached && (
           <img
-            src={snapshot}
+            ref={snapshotImage}
+            src={snapshot.image}
+            onLoad={() => snapshot.ready?.()}
             alt=""
             className="pointer-events-none absolute inset-0 size-full"
           />
@@ -501,7 +533,7 @@ export function OfficeEditor({
             {snapshot ? (
               <img
                 className="size-full object-contain object-top"
-                src={snapshot}
+                src={snapshot.image}
                 alt=""
               />
             ) : (

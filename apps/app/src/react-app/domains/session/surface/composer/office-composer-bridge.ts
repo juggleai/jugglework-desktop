@@ -1,12 +1,26 @@
 import { useComposerStateStore, getComposerOfficeGroups, releasableOfficeReferences } from "../composer-state-store";
+import { useEffect, useRef } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
+
+/** 主窗口所有路由响应共享文件草稿检查，登录页和设置页同样可以安全关闭文件。 */
+export function MainOfficeComposerBridge() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const scope = useRef(location.pathname);
+  scope.current = location.pathname;
+  // TIPS: 共享模型可先于聊天页面打开；检查仍读取真实局部草稿，路由变化使旧确认失效。
+  useEffect(() => installOfficeComposerBridge({ navigate, scope: () => scope.current }), [navigate]);
+  return null;
+}
 
 /**
  * 在应用级处理原生选区，所属聊天不在前台时仍更新它自己的草稿。
  * @param options 路由只用于显式添加/发送后展示所属聊天，不能替代引用归属
  */
-export function installOfficeComposerBridge(options: { navigate: (path: string) => void; scope: () => string }) {
+export function installOfficeComposerBridge(options: { navigate: (path: string) => void; scope: () => string; accept?: (input: { workspaceId: string; sessionId: string }) => boolean }) {
   const office = window.__JUGGLEWORK_ELECTRON__?.office;
   const stopRequests = office?.onComposerRequest?.(async (input) => {
+    if (options.accept && !options.accept(input)) throw new Error("选区不属于当前文件窗口");
     const state = useComposerStateStore.getState();
     const epoch = state.officeEpochs[input.sessionId] ?? 0;
     if (input.action === "prepare") return { epoch };

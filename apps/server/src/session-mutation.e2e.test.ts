@@ -1208,6 +1208,48 @@ describe("authoritative session mutation APIs", () => {
     await expect(acceptedIdle.json()).resolves.toEqual({ cleared: true, run: null, terminalStatus: "aborted" });
   });
 
+  test("aborted observations preserve accepted aborts while failed observations remain failures", async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    for (const [status, requestAbort] of [
+      ["aborted", true],
+      ["failed", true],
+      ["failed", false],
+    ] as const) {
+      const sessionId = `ses_error_${status}_${requestAbort}`;
+      const started = await fetch(`${runPath(harness.base, sessionId)}/start`, {
+        method: "POST", headers: harness.collaboratorHeaders,
+        body: JSON.stringify({ origin: "local-renderer", startCommandCorrelationId: sessionId,
+          prompt: { parts: [{ type: "text", text: "Synthetic regression request" }] } }),
+      });
+      expect(started.status).toBe(202);
+      const { run } = await started.json() as { run: { runId: string } };
+      const observe = (status: string) => fetch(`${runPath(harness.base, sessionId)}/${run.runId}/observations`, {
+        method: "POST", headers: harness.collaboratorHeaders, body: JSON.stringify({ status }),
+      });
+      await observe("running");
+      if (requestAbort) {
+        const aborted = await fetch(`${runPath(harness.base, sessionId)}/${run.runId}/abort`, {
+          method: "POST", headers: harness.collaboratorHeaders,
+          body: JSON.stringify({ abortCommandCorrelationId: `stop_${sessionId}` }),
+        });
+        expect(aborted.status).toBe(202);
+      }
+      const response = await observe(status);
+      expect(response.status).toBe(200);
+      const result = await response.json();
+      const db = new Database(runtimeDbPath(harness.config), { readonly: true });
+      let rows: { event: string; terminal_reason: string | null }[];
+      try { rows = db.query<{ event: string; terminal_reason: string | null }, [string]>("SELECT event, terminal_reason FROM session_run_journal WHERE run_id = ? ORDER BY id").all(run.runId); }
+      finally { db.close(); }
+      expect(result).toEqual({ cleared: true, run: null, terminalStatus: status });
+      expect(rows.filter(row => row.event === "run_terminal")).toEqual([{ event: "run_terminal", terminal_reason: status }]);
+      if (requestAbort) expect(rows.map(row => row.event)).toEqual([
+        "run_reserved", "run_started", "progress", "abort_requested", "abort_accepted", "run_terminal",
+      ]);
+    }
+  });
+
   test("idle and stale observations are fenced, while exact terminals clear", async () => {
     const engine = startMockOpencode();
     const harness = await startHarness(engine.server.port);
@@ -1307,6 +1349,43 @@ describe("authoritative session mutation APIs", () => {
     await new Promise((resolve) => setTimeout(resolve, 510));
     const second = await fetch(`${harness.base}/workspace/ws_1/session-runs`, { headers: harness.collaboratorHeaders });
     await expect(second.json()).resolves.toMatchObject({ items: [{ sessionId: "ses_list_reconcile" }] });
+  });
+
+  for (const terminal of ["failed", "aborted"] as const) for (const recovery of ["poll", "retry", "idle-observation"] as const) test(`无主窗口上报时通过 ${recovery} 释放 ${terminal} 的本轮运行并保留终态`, async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    const sessionId = `ses_error_${terminal}_${recovery}`;
+    const start = (id: string) => fetch(`${runPath(harness.base, sessionId)}/start`, {
+      method: "POST", headers: harness.collaboratorHeaders,
+      body: JSON.stringify({ origin: "local-renderer", startCommandCorrelationId: id,
+        prompt: { parts: [{ type: "text", text: "Provider failure recovery" }] } }),
+    });
+    const response = await start("first_error_run");
+    expect(response.status).toBe(202);
+    const { run } = await response.json() as { run: { runId: string } };
+    await waitUntil(() => engine.prompts.some((prompt) => prompt.sessionId === sessionId));
+    engine.messages.set(sessionId, terminal === "failed"
+      ? [{ info: { id: "msg_error", role: "assistant", time: { created: Date.now() }, error: { name: "APIError", data: { message: "Subscription unavailable" } } }, parts: [] }]
+      : [{ info: { id: "msg_permission_rejected", role: "assistant", finish: "tool-calls", time: { created: Date.now(), completed: Date.now() } },
+        parts: [{ type: "tool", state: { status: "error", error: "The user rejected permission to use this specific tool call.", time: { end: Date.now() } } }] }]);
+    const poll = () => fetch(`${harness.base}/workspace/ws_1/session-runs`, { headers: harness.collaboratorHeaders });
+    engine.statuses.set(sessionId, { type: "busy" });
+    expect((await (await poll()).json() as any).items).toHaveLength(1);
+    engine.statuses.set(sessionId, { type: "idle" });
+    if (recovery === "poll") {
+      expect((await (await poll()).json() as any).items).toEqual([]);
+    } else if (recovery === "retry") {
+      expect((await start("second_error_run")).status).toBe(202);
+    } else {
+      const observed = await fetch(`${runPath(harness.base, sessionId)}/${run.runId}/observations`, {
+        method: "POST", headers: harness.collaboratorHeaders, body: JSON.stringify({ status: "completed" }),
+      });
+      expect(await observed.json()).toMatchObject({ cleared: true, terminalStatus: terminal });
+    }
+    const db = new Database(runtimeDbPath(harness.config), { readonly: true });
+    try {
+      expect(db.query<{ terminal_reason: string }, [string]>("SELECT terminal_reason FROM session_run_journal WHERE run_id = ? AND event = 'run_terminal'").all(run.runId)).toEqual([{ terminal_reason: terminal }]);
+    } finally { db.close(); }
   });
 
   test("startup idle and an old stop cannot complete a new run before its final assistant", async () => {

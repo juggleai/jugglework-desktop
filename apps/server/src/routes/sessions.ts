@@ -8,7 +8,7 @@ import {
 } from "@jugglework/types/response-language";
 import { ApiError } from "../errors.js";
 import { admitOpencodePrompt, type AdmissionIdentity } from "../opencode-admission.js";
-import { hasCurrentRunFinalResponse } from "../session-completion-evidence.js";
+import { currentRunTerminalStatus } from "../session-completion-evidence.js";
 import { officeSelectionSubmissionSchema, type OfficeSelectionSubmission } from "../office/selection-edits.js";
 import {
   SessionMutationError,
@@ -389,7 +389,13 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
       }
       try {
         if (engineStatus === "idle") {
-          if (active.status !== "aborting" && !await hasCurrentRunTerminalMessage(workspace, active)) continue;
+          const terminal = active.status === "aborting" ? null : await readCurrentRunTerminalStatus(workspace, active);
+          if (terminal === "failed" || terminal === "aborted") {
+            sessionMutations.observe({ workspaceId: workspace.id, sessionId: active.sessionId, runId: active.runId, status: terminal });
+            finalizeClearedRun(workspace.id, active.sessionId, active.runId);
+            continue;
+          }
+          if (active.status !== "aborting" && !terminal) continue;
           const reconciliation = sessionMutations.reconcileAuthoritativeIdle({
             workspaceId: workspace.id,
             sessionId: active.sessionId,
@@ -411,19 +417,19 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     }
   }
 
-  async function hasCurrentRunTerminalMessage(
+  async function readCurrentRunTerminalStatus(
     workspace: WorkspaceInfo,
     run: { sessionId: string; startedAt: number },
-  ): Promise<boolean> {
+  ): Promise<"completed" | "failed" | "aborted" | null> {
     const opencode = createWorkspaceOpencodeClient(config, workspace);
     try {
       const messages = unwrapOpencodeResult(
         await opencode.session.messages({ sessionID: run.sessionId, limit: 10 }),
         "/session/message",
       );
-      return hasCurrentRunFinalResponse(messages, run.startedAt);
+      return currentRunTerminalStatus(messages, run.startedAt);
     } catch {
-      return false;
+      return null;
     }
   }
 
@@ -835,7 +841,13 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
       let engineStatus = await readEngineSessionStatus(workspace, input.sessionId);
       let active = sessionMutations.getActive(workspace.id, input.sessionId);
 
-      if (engineStatus === "idle" && active && (active.status === "aborting" || await hasCurrentRunTerminalMessage(workspace, active))) {
+      const terminal = engineStatus === "idle" && active && active.status !== "aborting" ? await readCurrentRunTerminalStatus(workspace, active) : null;
+      if (active && (terminal === "failed" || terminal === "aborted")) {
+        sessionMutations.observe({ workspaceId: workspace.id, sessionId: input.sessionId, runId: active.runId, status: terminal });
+        finalizeClearedRun(workspace.id, input.sessionId, active.runId);
+        active = null;
+      }
+      if (engineStatus === "idle" && active && (active.status === "aborting" || terminal === "completed")) {
         const staleRunId = active.runId;
         let reconciliation = sessionMutations.reconcileAuthoritativeIdle({
           workspaceId: workspace.id,
@@ -1108,8 +1120,14 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
         if (engineStatus !== "idle") {
           return jsonResponse(sessionMutations.observe({ workspaceId: workspace.id, ...input, status: engineStatus }));
         }
-        if (!await hasCurrentRunTerminalMessage(workspace, active)) {
+        const terminal = await readCurrentRunTerminalStatus(workspace, active);
+        if (!terminal) {
           return jsonResponse({ cleared: false, run: active, terminalStatus: null });
+        }
+        if (terminal === "failed" || terminal === "aborted") {
+          const observation = sessionMutations.observe({ workspaceId: workspace.id, ...input, status: terminal });
+          if (observation.cleared) finalizeClearedRun(workspace.id, input.sessionId, input.runId);
+          return jsonResponse(observation);
         }
         if (input.status === "completed") {
           const observation = sessionMutations.observe({ workspaceId: workspace.id, ...input });

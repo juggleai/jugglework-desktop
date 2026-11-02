@@ -96,6 +96,13 @@ export const getInitialThemeMode = () => getCurrentMode();
 
 export const getResolvedThemeMode = () => resolveMode(getCurrentMode());
 
+/** 应用隔离宿主提供的已解析主题，不持久化或调用主窗口 native theme。 */
+export const applyHostTheme = (mode: ResolvedThemeMode) => {
+  currentMode = mode;
+  applyTheme(mode);
+  emitThemeChange();
+};
+
 const persistThemeMode = (mode: ThemeMode) => {
   if (typeof window === "undefined") return;
   try {

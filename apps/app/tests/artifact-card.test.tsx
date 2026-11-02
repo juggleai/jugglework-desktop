@@ -10,6 +10,7 @@ import type { JuggleWorkServerClient } from "../src/app/lib/jugglework-server";
 import { FileViewer } from "../src/react-app/domains/session/files/file-viewer";
 import { useFilesPanelStore } from "../src/react-app/domains/session/files/files-panel-store";
 import { ArtifactActionsProvider } from "../src/react-app/domains/session/artifacts/artifact-actions-provider";
+import { LocalProvider } from "../src/react-app/kernel/local-provider";
 import { useUiStateStore } from "../src/react-app/shell/ui-state-store";
 
 // Exercise list state without mounting DOM-dependent floating overlays.
@@ -226,9 +227,9 @@ test("file and summary actions open turn changes in the session side panel; undo
   let view: ReactTestRenderer | undefined;
   try {
     const changed = { ...artifact("report.md"), path: "docs/report.md", change: { additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-old\n+new" } };
-    await act(async () => { view = create(<QueryClientProvider client={client}><ArtifactActionsProvider client={{} as JuggleWorkServerClient} sessionId={sessionId} workspaceId="workspace" workspaceRoot="/repo" remote>
+    await act(async () => { view = create(<QueryClientProvider client={client}><LocalProvider persist={false}><ArtifactActionsProvider client={{} as JuggleWorkServerClient} sessionId={sessionId} workspaceId="workspace" workspaceRoot="/repo" remote>
       <ArtifactCards artifacts={[changed]} turnId="user-turn" onUndo={undo} />
-    </ArtifactActionsProvider></QueryClientProvider>); });
+    </ArtifactActionsProvider></LocalProvider></QueryClientProvider>); });
     await act(async () => view!.root.findByProps({ "data-testid": "artifact-card" }).findAllByType("button")[0]!.props.onClick());
     expect(useUiStateStore.getState().sidePanelState[sessionId]).toBe("files");
     expect(useFilesPanelStore.getState().sessions[sessionId]).toMatchObject({ activeKey: "changes", selectedChangePath: "docs/report.md", turnChanges: { turnId: "user-turn", artifacts: [changed] } });

@@ -5,6 +5,7 @@ import { readOfficeSheetSelectionAnchor } from "./office-sheet-selection-anchor.
 import { readOfficePageSelection } from "./office-page-selection.mjs";
 
 // 只替代 DOM/IPC 边界，执行实际 UI 的采集、失焦和取消监听器。
+/** @param {{kind?: string, readSelection?: (...args: any[]) => any, setup?: (scope: any) => void, autoCapture?: boolean}} [options] */
 function fixture({ kind = "doc", readSelection = () => ({ ranges: [{ begin: 0, end: 2, length: 2 }], selectedText: "正文" }), setup = () => {}, autoCapture = true } = {}) {
   const listeners = new Map();
   class Element {

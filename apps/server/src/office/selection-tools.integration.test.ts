@@ -11,6 +11,118 @@ import { OfficeSelectionEdits } from "./selection-edits.js";
 
 const nativeTest = process.env.JUGGLEWORK_TEST_OFFICE_NATIVE === "1" ? test : test.skip;
 
+nativeTest("兼容性 Word 长中文段落含emoji可局部改写并保存，未选文字保留", async () => {
+  await withModel("doc", async (engine, fileId, path) => {
+    const original = "开头" + "中文😀".repeat(140) + "末尾";
+    await engine.tool("doc_insert_text", { file_id: fileId, idx: 0, text: original });
+    const begin = 2, end = 4;
+    const document = { documentId: "compat-doc", pageId: "page", workspaceId: "ws", ownerSessionId: "chat", relativePath: "compat.docx", name: "compat.docx", state: "ready", engineFileId: fileId } as OfficeDocumentSession;
+    const edits = new OfficeSelectionEdits({ document: async () => document, prepare: async () => {},
+      selection: async () => ({ ranges: [{ begin, end, length: end - begin }], selectedText: original.slice(begin, end) }),
+      tool: engine.tool.bind(engine), modified: async () => {}, save: async () => { await engine.save(fileId); return document; } });
+    const ref = await edits.capture(document, "long-word");
+    await edits.prepareTurn("ws", "chat", "turn", { officeSelectionRefs: [ref.referenceId], officeInstructions: [{ instructionId: "i", text: "改写正文", bindingState: "bound", referenceIds: [ref.referenceId] }] });
+    const replacement = "改写".repeat(120);
+    expect((await edits.call("ws", "chat", "turn", "assistant", "doc_replace_text", { text: replacement }, ref.referenceId))?.receipt?.readback).toBe("confirmed");
+    await edits.save("ws", "chat", "turn", ref.referenceId);
+    await engine.close(fileId);
+    await engine.tool("open_file", { file_path: path, wait: true });
+    const reopened = (await engine.editor(path))!.file_id;
+    const expected = original.slice(0, begin) + replacement + original.slice(end);
+    const found = await engine.tool("doc_find", { file_id: reopened, text: expected });
+    expect(found.total).toBe(1);
+  });
+}, 60_000);
+
+nativeTest("兼容性 Word 正文含未选独立图片，改写前段保留图片身份及偏移", async () => {
+  await withModel("doc", async (engine, fileId, path) => {
+    await engine.tool("doc_insert_text", { file_id: fileId, idx: 0, text: "普通正文" });
+    let tail = await engine.tool("doc_get_last_operable_pos", { file_id: fileId });
+    await engine.tool("doc_insert_paragraph_with_text", { file_id: fileId, idx: tail.position, text: "" });
+    tail = await engine.tool("doc_get_last_operable_pos", { file_id: fileId });
+    await engine.tool("doc_insert_image", { file_id: fileId, idx: tail.position, w: 20, h: 20,
+      content: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a0V0AAAAASUVORK5CYII=" });
+    const image = ((await engine.tool("doc_get_images", { file_id: fileId })).images as Array<{ image_url: string; index: number }>)[0];
+    const document = { documentId: "image-doc", pageId: "page", workspaceId: "ws", ownerSessionId: "chat", relativePath: "image.docx", name: "image.docx", state: "ready", engineFileId: fileId } as OfficeDocumentSession;
+    const edits = new OfficeSelectionEdits({ document: async () => document, prepare: async () => {},
+      selection: async () => ({ ranges: [{ begin: 0, end: 2, length: 2 }], selectedText: "普通" }), tool: engine.tool.bind(engine), modified: async () => {}, save: async () => { await engine.save(fileId); return document; } });
+    const ref = await edits.capture(document, "image-doc");
+    await edits.prepareTurn("ws", "chat", "turn", { officeSelectionRefs: [ref.referenceId], officeInstructions: [{ instructionId: "i", text: "改写所选正文", bindingState: "bound", referenceIds: [ref.referenceId] }] });
+    expect((await edits.call("ws", "chat", "turn", "assistant", "doc_replace_text", { text: "改写后的" }, ref.referenceId))?.receipt?.readback).toBe("confirmed");
+    expect((await engine.tool("doc_get_images", { file_id: fileId })).images).toEqual([{ ...image, index: image.index + 2 }]);
+    await edits.save("ws", "chat", "turn", ref.referenceId);
+    await engine.close(fileId);
+    await engine.tool("open_file", { file_path: path, wait: true });
+    const reopened = (await engine.editor(path))!.file_id;
+    const images = (await engine.tool("doc_get_images", { file_id: reopened })).images as Array<{ image_url: string; index: number; source: number }>;
+    expect(images).toHaveLength(1);
+    expect(images[0]).toMatchObject({ source: 1, index: image.index + 2 });
+    // 保存重开会重新登记资源，只核对新模型的公开图片位置、类型和非空资源，不沿用旧 URL。
+    expect(images[0].image_url.length).toBeGreaterThan(0);
+    expect((await engine.tool("doc_find", { file_id: reopened, text: "改写后的正文" })).total).toBe(1);
+  });
+}, 30_000);
+
+for (const format of ["xlsx", "csv"] as const) nativeTest(`兼容性 ${format.toUpperCase()} 靠后单元格可改写保存重开，邻格和远处数据保留`, async () => {
+  await withModel("sheet", async (engine, fileId, path) => {
+    const sheet = ((await engine.tool("sheet_get_sheet_info", { file_id: fileId })).sheets as Array<{ sheet_id: string; row_count: number; col_count: number }>)[0];
+    let sheetId = sheet.sheet_id;
+    if (sheet.row_count < 1000) await engine.tool("sheet_insert_dimension", { file_id: fileId, sheet_id: sheetId, dimension_type: "row", index: 0, count: 1000 - sheet.row_count });
+    if (sheet.col_count < 26) await engine.tool("sheet_insert_dimension", { file_id: fileId, sheet_id: sheetId, dimension_type: "col", index: 0, count: 26 - sheet.col_count });
+    for (const [row, col, text] of [[0, 0, "远处保留"], [900, 19, "相邻保留"], [900, 20, "目标"]] as const)
+      await engine.tool("sheet_set_cell_value", { file_id: fileId, sheet_id: sheetId, cell: { row, col, value_type: "STRING", string_value: text } });
+    const targetPath = format === "xlsx" ? path : path.replace(/\.xlsx$/i, ".csv");
+    try {
+      if (format === "csv") {
+        // TIPS: 导出后重新打开真实 CSV 模型再执行选区编辑，不能用 XLSX 写入冒充 CSV 兼容性。
+        await engine.tool("save_file", { file_id: fileId, file_path: targetPath });
+        await engine.close(fileId);
+        await engine.tool("open_file", { file_path: targetPath, wait: true });
+        fileId = (await engine.editor(targetPath))!.file_id;
+        sheetId = ((await engine.tool("sheet_get_sheet_info", { file_id: fileId })).sheets as Array<{ sheet_id: string }>)[0].sheet_id;
+      }
+      const document = { documentId: "compat-sheet", pageId: "page", workspaceId: "ws", ownerSessionId: "chat", relativePath: `compat.${format}`, name: `compat.${format}`, state: "ready", engineFileId: fileId } as OfficeDocumentSession;
+      const edits = new OfficeSelectionEdits({ document: async () => document, prepare: async () => {},
+        selection: async () => ({ sheetId, ranges: [{ sheetId, startRowIndex: 900, endRowIndex: 900, startColIndex: 20, endColIndex: 20 }] }),
+        tool: engine.tool.bind(engine), modified: async () => {}, save: async () => { await engine.save(fileId); return document; } });
+      const ref = await edits.capture(document, "far-cell");
+      await edits.prepareTurn("ws", "chat", "turn", { officeSelectionRefs: [ref.referenceId], officeInstructions: [{ instructionId: "i", text: "修改当前单元格", bindingState: "bound", referenceIds: [ref.referenceId] }] });
+      expect((await edits.call("ws", "chat", "turn", "assistant", "sheet_set_cell_value", { cell: { row: 900, col: 20, value_type: "STRING", string_value: "已修改😀" } }, ref.referenceId))?.receipt?.readback).toBe("confirmed");
+      await edits.save("ws", "chat", "turn", ref.referenceId);
+      await engine.close(fileId);
+      await engine.tool("open_file", { file_path: targetPath, wait: true });
+      const reopened = (await engine.editor(targetPath))!.file_id;
+      const actualId = ((await engine.tool("sheet_get_sheet_info", { file_id: reopened })).sheets as Array<{ sheet_id: string }>)[0].sheet_id;
+      for (const [row, col, expected] of [[0, 0, "远处保留"], [900, 19, "相邻保留"], [900, 20, "已修改😀"]] as const) {
+        const value = await engine.tool("sheet_get_cell_data", { file_id: reopened, sheet_id: actualId, start_row: row, end_row: row, start_col: col, end_col: col, return_csv: true });
+        expect(value.csv_data).toBe(expected);
+      }
+    } finally { if (format === "csv") await rm(targetPath, { force: true }); }
+  });
+}, 60_000);
+
+nativeTest("兼容性 PPT 普通框超过200字及多行改写可确认并保存", async () => {
+  await withModel("slide", async (engine, fileId, path) => {
+    const shapeId = (await engine.tool("slide_add_text", { file_id: fileId, page_index: 0, x: 20, y: 20, w: 500, h: 300, text: "原文本框" })).shape_id as string;
+    const other = (await engine.tool("slide_add_text", { file_id: fileId, page_index: 0, x: 600, y: 20, w: 200, h: 100, text: "其他框保留" })).shape_id as string;
+    const document = { documentId: "compat-slide", pageId: "page", workspaceId: "ws", ownerSessionId: "chat", relativePath: "compat.pptx", name: "compat.pptx", state: "ready", engineFileId: fileId } as OfficeDocumentSession;
+    const edits = new OfficeSelectionEdits({ document: async () => document, prepare: async () => {}, selection: async () => ({ pageIndex: 0, shapeIds: [shapeId] }),
+      tool: engine.tool.bind(engine), modified: async () => {}, save: async () => { await engine.save(fileId); return document; } });
+    const ref = await edits.capture(document, "long-slide");
+    await edits.prepareTurn("ws", "chat", "turn", { officeSelectionRefs: [ref.referenceId], officeInstructions: [{ instructionId: "i", text: "改写文本框", bindingState: "bound", referenceIds: [ref.referenceId] }] });
+    const text = "第一段" + "中文😀".repeat(100) + "\r\n第二段\n末段";
+    expect((await edits.call("ws", "chat", "turn", "assistant", "slide_set_text", { text }, ref.referenceId))?.receipt?.readback).toBe("confirmed");
+    await edits.save("ws", "chat", "turn", ref.referenceId);
+    await engine.close(fileId);
+    await engine.tool("open_file", { file_path: path, wait: true });
+    const reopened = (await engine.editor(path))!.file_id;
+    const shapes = ((await engine.tool("slide_get_page_info", { file_id: reopened, page_index: 0 })).shapes as Array<{ id: string; text?: string }>);
+    expect(shapes.some((shape) => shape.text === text.replace(/\r\n|\n/g, "\r") + "\r")).toBe(true);
+    expect(shapes.some((shape) => shape.text === "其他框保留\r")).toBe(true);
+    expect(other).not.toBe(shapeId);
+  });
+}, 60_000);
+
 nativeTest("真实整页图片的对象选择拒绝并引导缩略图，页引用只保留图片且无可编辑文本框", async () => {
   await withModel("slide", async (engine, fileId) => {
     await engine.tool("slide_add_image", { file_id: fileId, page_index: 0, x: 0, y: 0, w: 960, h: 540,
@@ -660,7 +772,7 @@ nativeTest("真实 Word 未选分页可保留和移位核对，所选及跨越�
     for (const selection of [{ kind: "doc-caret" as const, idx: 5 },
       { kind: "doc-text" as const, ranges: [{ begin: 1, end: 8 }] }])
       await expect(readOfficeSelectionProof(engine.tool.bind(engine), fileId, selection))
-        .rejects.toMatchObject({ code: "office_selection_proof_unavailable" });
+        .rejects.toMatchObject({ code: "office_selection_doc_structure_unsupported" });
     await call(engine, fileId, locator, "doc_replace_text", { text: "新正文" });
     const after = await readOfficeSelectionProof(engine.tool.bind(engine), fileId, locator);
     expect((after.state.nodes as typeof nodes)[1]).toEqual({ ...nodes[1], start_index: 6, end_index: 7 });

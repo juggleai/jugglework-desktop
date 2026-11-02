@@ -348,6 +348,22 @@ describe("mounted JuggleWork session mutations", () => {
     expect(observations.map((call) => call.body)).toEqual([{ status: "completed" }, { status: "completed" }]);
   });
 
+  test("sends MessageAbortedError as aborted through the mounted SSE observation queue", async () => {
+    const run = { ...activeRun("run-engine-abort"), generation: 19, status: "aborting", abortRequestedAt: 3 };
+    const calls = mockFetch((call) => {
+      if (call.url.endsWith("/workspace/workspace-1/session-runs")) return jsonResponse({ items: [run] });
+      if (call.url.includes("/opencode/event")) return eventResponse([{
+        type: "session.error", properties: { sessionID: "session-1", error: { name: "MessageAbortedError", data: { message: "Aborted" } } },
+      }]);
+      if (call.url.endsWith("/sessions/session-1/runs/run-engine-abort/observations")) {
+        return jsonResponse({ cleared: true, run: null, terminalStatus: "aborted" });
+      }
+      throw new Error(`Unexpected request: ${call.method} ${call.url}`);
+    });
+    await drainEvents(mountedClient());
+    expect(calls.filter(call => call.url.endsWith("/observations")).map(call => call.body)).toEqual([{ status: "aborted" }]);
+  });
+
   test("does not let an older empty active-run snapshot erase a newly accepted generation", async () => {
     const listResponse = deferred<Response>();
     let started = false;

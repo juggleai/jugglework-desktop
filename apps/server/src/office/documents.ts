@@ -129,6 +129,7 @@ export class OfficeDocuments {
   private readonly documents = new Map<string, DocumentRecord>();
   private readonly saves = new Map<string, Promise<OfficeDocumentSession>>();
   private readonly activeDocuments = new Map<string, string>();
+  private readonly turnDocuments = new Map<string, (ModelIdentity & { documentId: string }) | null>();
   private timer: ReturnType<typeof setInterval> | null = null;
   readonly selections: OfficeSelectionEdits;
 
@@ -147,6 +148,8 @@ export class OfficeDocuments {
       onSaved: (workspaceId: string, path: string) => Promise<void>;
       prepareSave?: (document: OfficeDocumentSession) => Promise<void>;
       readSelection?: (document: OfficeDocumentSession) => Promise<unknown>;
+      /** 读取同一页面模型的原文，用于补全结构摘要省略的软换行。 */
+      readText?: (document: OfficeDocumentSession, ranges: { begin: number; end: number }[], version: number) => Promise<string[] | null>;
       /** 由既有消息归属所有者解析 assistant 的真实用户轮次；未知身份不能猜测最近请求。 */
       resolveTurn?: (workspaceId: string, sessionId: string, messageId: string) => Promise<string | null>;
       checkFile?: (path: string) => Promise<void>;
@@ -179,6 +182,7 @@ export class OfficeDocuments {
       },
       prepare: async (document) => { await options.prepareSave?.(document); },
       selection: async (document) => options.readSelection?.(document) ?? null,
+      text: options.readText,
       tool: (name, args) => options.engine.tool(name, args),
       save: (document) => this.save(document.workspaceId, document.documentId, true, document),
       modified: (document, messageId, name, args, output) => this.afterTool(document.workspaceId, document.ownerSessionId, messageId, randomUUID(), name, args, output),
@@ -187,7 +191,25 @@ export class OfficeDocuments {
 
   /** 在既有 admission 入口固定本轮模式，消息内的普通文本不能自行赋予执行引用。 */
   async prepareSelectionTurn(workspaceId: string, sessionId: string, turnId: string, input: OfficeSelectionSubmission): Promise<void> {
+    const key = JSON.stringify([workspaceId, sessionId, turnId]);
+    if (this.turnDocuments.has(key) && input.officeSelectionRefs?.length)
+      throw new ApiError(409, "office_selection_stale", "相同消息不能改换文件或选区");
     await this.selections.prepareTurn(workspaceId, sessionId, turnId, input);
+    if (this.selections.context(workspaceId, sessionId, turnId).mode !== "current-document" || this.turnDocuments.has(key)) return;
+    // TIPS: admission 固定当前文件与模型，之后切换标签或重复 admission 都不能改写已接收目标。
+    const document = await this.current(workspaceId, sessionId);
+    this.turnDocuments.set(key, document ? { documentId: document.documentId, pageId: document.pageId, engineFileId: document.engineFileId } : null);
+  }
+
+  private async documentForTurn(workspaceId: string, sessionId: string, turnId?: string | null) {
+    const target = turnId ? this.turnDocuments.get(JSON.stringify([workspaceId, sessionId, turnId])) : null;
+    // 普通主窗口聊天没有打开文件时，仍允许本轮先创建再操作文档。
+    if (!target) return this.current(workspaceId, sessionId);
+    const document = await this.get(workspaceId, target.documentId);
+    if (document.ownerSessionId !== sessionId) throw new ApiError(409, "office_wrong_document", "文档不属于当前聊天");
+    requireModel(document, target);
+    if (document.state !== "ready") throw new ApiError(409, "office_not_ready", "本轮文档尚未就绪，请重新打开后重试");
+    return document;
   }
 
   /** 交付器使用已确认的真实轮次保存，选区任务同样经过写后内容核对。 */
@@ -199,7 +221,10 @@ export class OfficeDocuments {
       await this.selections.save(workspaceId, sessionId, turnId, reference.referenceId);
       return;
     }
-    await this.save(workspaceId, documentId, true);
+    const document = await this.documentForTurn(workspaceId, sessionId, turnId);
+    if (this.turnDocuments.get(JSON.stringify([workspaceId, sessionId, turnId])) && document?.documentId !== documentId)
+      throw new ApiError(409, "office_wrong_document", "交付文件不属于本轮文档");
+    await this.save(workspaceId, documentId, true, document?.documentId === documentId ? document : undefined);
   }
 
   private async actorTurn(workspaceId: string, sessionId: string, messageId: string): Promise<string | null> {
@@ -222,9 +247,9 @@ export class OfficeDocuments {
       const result = await this.selections.save(workspaceId, sessionId, turnId, selectionRef);
       if (result) return result;
     } else if (selectionRef) throw new ApiError(409, "office_turn_unavailable", "尚未确认本轮消息归属");
-    const document = await this.current(workspaceId, sessionId);
+    const document = await this.documentForTurn(workspaceId, sessionId, turnId);
     if (!document) throw new ApiError(409, "office_not_ready", "请先打开要保存的文档");
-    return { document: await this.save(workspaceId, document.documentId, true) };
+    return { document: await this.save(workspaceId, document.documentId, true, document) };
   }
 
   /** 查询资源可用性，不因缺少 SDK 阻塞普通文件功能。 */
@@ -274,6 +299,16 @@ export class OfficeDocuments {
     return sameFileIdentity(current, target);
   }
 
+  /** 复用已登记的真实文件；两个窗口仍须属于相同工作区和聊天。 */
+  private reuseRecord(record: DocumentRecord, workspaceId: string, sessionId: string, activate: boolean): OfficeDocumentSession {
+    if (record.session.ownerSessionId !== sessionId || record.session.workspaceId !== workspaceId)
+      throw new ApiError(409, "office_document_in_use", "此文档已在另一聊天中打开，请先在原聊天保存并关闭");
+    if (record.session.state === "external")
+      throw new ApiError(409, "office_document_external", "请先在外部应用保存并关闭文档，再重新载入");
+    if (activate) this.activateRecord(record);
+    return structuredClone(record.session);
+  }
+
   /** 打开已支持格式的 Office 文件，先返回 opening 页面地址，真实模型由后续状态查询确认。 */
   async open(
     workspaceId: string,
@@ -293,26 +328,7 @@ export class OfficeDocuments {
       throw new ApiError(404, "file_not_found", "文档已不存在");
     const identity = await fileIdentity(resolved.absolutePath);
     const existing = await this.findRecordByIdentity(identity);
-    if (
-      existing &&
-      (existing.session.ownerSessionId !== sessionId ||
-        existing.session.workspaceId !== workspaceId)
-    )
-      throw new ApiError(
-        409,
-        "office_document_in_use",
-        "此文档已在另一聊天中打开，请先在原聊天保存并关闭",
-      );
-    if (existing && existing.session.state !== "closed") {
-      if (existing.session.state === "external")
-        throw new ApiError(
-          409,
-          "office_document_external",
-          "请先在外部应用保存并关闭文档，再重新载入",
-        );
-      if (activate) this.activateRecord(existing);
-      return structuredClone(existing.session);
-    }
+    if (existing) return this.reuseRecord(existing, workspaceId, sessionId, activate);
     if (resolved.file.editingOwner === "external" && !reopening)
       throw new ApiError(
         409,
@@ -330,6 +346,11 @@ export class OfficeDocuments {
         this.activeDocuments.delete(JSON.stringify([workspaceId, sessionId]));
       throw error;
     }
+    // TIPS: 两个 renderer 可在异步检查期间同时首次打开同一文件。
+    // 发布前同步复查已有身份，复查与登记间不再 await，无需引入锁或第二套模型所有者。
+    const admitted = [...this.documents.values()].reverse().find((record) =>
+      record.session.state !== "closed" && sameFileIdentity(record.identity, identity));
+    if (admitted) return this.reuseRecord(admitted, workspaceId, sessionId, activate);
     const session: OfficeDocumentSession = {
       documentId: `od_${randomUUID()}`,
       pageId: randomUUID(),
@@ -637,8 +658,9 @@ export class OfficeDocuments {
   }
 
   /** 读取本轮聊天文档及其存活模型的选区；故障、关闭及重新导入后不返回旧坐标。 */
-  async context(workspaceId: string, sessionId: string) {
-    const document = await this.current(workspaceId, sessionId);
+  async context(workspaceId: string, sessionId: string, messageId?: string) {
+    const turnId = messageId ? await this.actorTurn(workspaceId, sessionId, messageId) : null;
+    const document = await this.documentForTurn(workspaceId, sessionId, turnId);
     const record = document
       ? this.require(workspaceId, document.documentId)
       : undefined;
@@ -654,7 +676,7 @@ export class OfficeDocuments {
       } catch {
         // TIPS: 实时读取失败不能回退到通知缓存，否则 AI 会使用切换或修改前的坐标。
       }
-      const current = await this.current(workspaceId, sessionId);
+      const current = await this.documentForTurn(workspaceId, sessionId, turnId);
       return {
         document: current,
         selection:
@@ -967,6 +989,7 @@ export class OfficeDocuments {
     sessionId: string,
     tool: string,
     args: Record<string, unknown>,
+    turnId?: string | null,
   ): Promise<Record<string, unknown>> {
     if (!isOfficeContentTool(tool))
       throw new ApiError(
@@ -974,7 +997,7 @@ export class OfficeDocuments {
         "office_tool_host_owned",
         "请通过 JuggleWork Office 动作管理文档生命周期和导出",
       );
-    const session = await this.current(workspaceId, sessionId);
+    const session = await this.documentForTurn(workspaceId, sessionId, turnId);
     if (!session || session.state !== "ready" || !session.engineFileId)
       throw new ApiError(
         409,
@@ -1000,8 +1023,9 @@ export class OfficeDocuments {
 
   /** 按当前聊天格式返回精简工具目录，指定名称时只返回该项真实 schema。 */
   async tools(workspaceId: string, sessionId: string, name?: string, messageId?: string, selectionRef?: string) {
+    let turnId: string | null = null;
     if (messageId) {
-      const turnId = await this.actorTurn(workspaceId, sessionId, messageId);
+      turnId = await this.actorTurn(workspaceId, sessionId, messageId);
       if (turnId) {
         const names = await this.selections.tools(workspaceId, sessionId, turnId, selectionRef);
         if (names) {
@@ -1016,7 +1040,7 @@ export class OfficeDocuments {
         }
       }
     }
-    const document = await this.current(workspaceId, sessionId);
+    const document = await this.documentForTurn(workspaceId, sessionId, turnId);
     if (!document || document.state !== "ready")
       throw new ApiError(
         409,
@@ -1055,7 +1079,7 @@ export class OfficeDocuments {
       const result = await this.selections.call(workspaceId, sessionId, turnId, messageId, tool, input, selectionRef);
       if (result) return result;
     } else if (selectionRef) throw new ApiError(409, "office_turn_unavailable", "尚未确认本轮消息归属");
-    const args = await this.beforeTool(workspaceId, sessionId, tool, input);
+    const args = await this.beforeTool(workspaceId, sessionId, tool, input, turnId);
     // TIPS: 保存调用前绑定的 ID；模型返回时即使切换标签，也不能把修改记到新文档。
     const output = await this.options.engine.tool(tool, args);
     await this.afterTool(

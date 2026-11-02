@@ -18,12 +18,15 @@ import {
 } from "./server.js";
 import { ensureLocalWorkspaceFiles } from "./workspace-init.js";
 import { findManagedEngineWorkspace } from "./workspaces.js";
+import { ensureFileAssistantWorkspace } from "./office/file-assistant-workspace.js";
 import { keepJuggleWorkRuntimeConfigFileFresh, writeJuggleWorkRuntimeConfigFile } from "./jugglework-runtime-config.js";
 import { sweepLegacyOpenCodeConfig } from "./legacy-config-sweep.js";
 import type { ServeResult } from "./serve-node.js";
 import type { ServerConfig } from "./types.js";
 
 export type EmbeddedServerOptions = CliArgs & {
+  /** 文件助手默认目录，验收可使用隔离目录。 */
+  fileAssistantRoot?: string;
   /** 桌面宿主显式传入随安装包交付的 SDK 目录，不从外部 App 查找。 */
   officeResourceDirectory?: string;
   /** Historical local-host token hashes used for a bounded upgrade migration. */
@@ -155,6 +158,8 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
   };
 
   if (!config.readOnly) {
+    // TIPS: 文件模式没有用户工作区也需要真实会话引擎，先登记默认目录再选择引擎启动目录。
+    if (options.manageOpencode && !config.opencodeBaseUrl && !findManagedEngineWorkspace(config.workspaces)) await ensureFileAssistantWorkspace(config, options.fileAssistantRoot);
     await ensureLocalWorkspaceFiles(config.workspaces);
   }
 
@@ -162,7 +167,7 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
   // legitimately replace port 0 (or an address-in-use preferred port) with an
   // OS-assigned port, and the engine plugin must receive that authoritative
   // callback URL rather than the requested port.
-  server = await duringStartup(() => startServer(config, { logger: options.logger, officeResourceDirectory: options.officeResourceDirectory }));
+  server = await duringStartup(() => startServer(config, { logger: options.logger, officeResourceDirectory: options.officeResourceDirectory, fileAssistantRoot: options.fileAssistantRoot }));
   config.port = server.port;
   const serverUrl = `http://${config.host === "0.0.0.0" ? "127.0.0.1" : config.host}:${server.port}`;
 

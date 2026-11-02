@@ -273,37 +273,42 @@ export const detectSystemLanguage = (): Language => {
 };
 
 /**
- * Initialize locale from localStorage
+ * Initialize locale from a host preference or localStorage
  * Call this during app initialization
  *
- * 优先级：用户显式选择（localStorage） → 系统语言 → 英文。
+ * 优先级：宿主传入的语言 → 用户显式选择（localStorage） → 系统语言 → 英文。
  * 系统语言的结果不写回 localStorage，这样在用户主动选择之前会一直跟随系统。
  */
-export const initLocale = (): Language => {
+export const initLocale = (hostLocale?: Language): Language => {
   if (typeof window === "undefined") {
     return "en";
   }
 
-  let resolved: Language | null = null;
+  let resolved: Language | null = isLanguage(hostLocale) ? hostLocale : null;
 
-  try {
-    const stored = window.localStorage.getItem(LANGUAGE_PREF_KEY);
-    if (isLanguage(stored)) {
-      resolved = stored;
+  if (!resolved) {
+    try {
+      const stored = window.localStorage.getItem(LANGUAGE_PREF_KEY);
+      if (isLanguage(stored)) {
+        resolved = stored;
+      }
+    } catch (e) {
+      console.warn("Failed to read language preference:", e);
     }
-  } catch (e) {
-    console.warn("Failed to read language preference:", e);
   }
 
   if (!resolved) {
     resolved = detectSystemLanguage();
   }
 
+  const changed = localeValue !== resolved;
   localeValue = resolved;
 
   if (typeof document !== "undefined") {
     document.documentElement.setAttribute("lang", resolved);
   }
+
+  if (changed) for (const listener of localeListeners) listener();
 
   return resolved;
 };

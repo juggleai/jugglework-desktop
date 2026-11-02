@@ -2,11 +2,9 @@ import * as React from "react";
 import {
   CircleCheck,
   Clock3,
-  CloudUpload,
   ExternalLink,
   Eye,
   FolderOpen,
-  Forward,
   LoaderCircle,
   MoreHorizontal,
   Save,
@@ -64,7 +62,7 @@ const statusIcons = {
 
 /**
  * 文件编辑顶栏：两种宿主共用文件名、保存状态和操作布局，具体操作仍由原宿主管理。
- * @param props 文件状态、保存及文件操作；未接入的云端能力保持禁用
+ * @param props 文件状态、保存及文件操作；trailingActions 为更多菜单右侧的宿主操作
  */
 export function FileEditorToolbar({
   name,
@@ -79,6 +77,7 @@ export function FileEditorToolbar({
   openWindowDisabled = fileActionsDisabled,
   officeDocumentId,
   children,
+  trailingActions,
 }: {
   name: string;
   status: FileEditorStatus;
@@ -93,6 +92,7 @@ export function FileEditorToolbar({
   openWindowDisabled?: boolean;
   officeDocumentId?: string;
   children?: React.ReactNode;
+  trailingActions?: React.ReactNode;
 }) {
   // TIPS：失败原因由内容区统一展示，顶栏保留内部状态用于禁用保存，不重复显示通用失败文案。
   const StatusIcon = status === "error" ? null : statusIcons[status];
@@ -151,26 +151,6 @@ export function FileEditorToolbar({
         >
           <Save className="size-4" />
         </Button>
-        <span title={t("artifact.upload_unavailable")}>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label={t("artifact.upload")}
-            disabled
-          >
-            <CloudUpload className="size-4" />
-          </Button>
-        </span>
-        <span title={t("artifact.share_unavailable")}>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label={t("artifact.share")}
-            disabled
-          >
-            <Forward className="size-4" />
-          </Button>
-        </span>
         <DropdownMenu>
           <DropdownMenuTrigger
             render={
@@ -212,6 +192,7 @@ export function FileEditorToolbar({
             )}
           </DropdownMenuContent>
         </DropdownMenu>
+        {trailingActions}
       </div>
     </div>
   );

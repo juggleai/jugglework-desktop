@@ -5,6 +5,7 @@ import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createServer } from "node:http";
 
 let sequence = 0;
 const answers = {
@@ -14,6 +15,7 @@ const answers = {
   wait: undefined as ((options: any) => Promise<any>) | undefined,
   openError: null as string | null,
   review: undefined as ((options: any) => Promise<any>) | undefined,
+  dialogs: [] as string[],
 };
 const nativeApp = new EventEmitter();
 const partitions = new Map<string, any>();
@@ -21,6 +23,7 @@ const rendererIpc = new EventEmitter();
 const rendererBridges: any[] = [];
 class FakeContents extends EventEmitter {
   id = ++sequence;
+  mainFrame = { parent: null };
   destroyed = false;
   messages: Array<{ name: string; value: any }> = [];
   loads: string[] = [];
@@ -74,6 +77,7 @@ class FakeWindow extends EventEmitter {
   }
   destroy() {
     this.destroyed = true;
+    this.webContents.close();
     this.emit("closed");
   }
   setTitle(title: string) {
@@ -118,8 +122,14 @@ mock.module("electron", () => ({
   BrowserWindow: FakeWindow,
   WebContentsView: FakeView,
   dialog: {
-    showOpenDialog: async () => answers.open,
-    showSaveDialog: async () => answers.save,
+    showOpenDialog: async () => {
+      answers.dialogs.push("open");
+      return answers.open;
+    },
+    showSaveDialog: async () => {
+      answers.dialogs.push("save");
+      return answers.save;
+    },
     showMessageBox: async (...args: any[]) => {
       const options = args.at(-1);
       if (options.title === "核对文档修改" && answers.review) return answers.review(options);
@@ -188,6 +198,112 @@ afterEach(async () => {
   answers.review = undefined;
 });
 
+test("actual file-window state and changed payloads contain no access token; reads authenticate only in Main", async () => {
+  const f = await fixture("notes.md");
+  const secret = "state-regression-main-only-token";
+  f.getAccess.mockImplementation(() => ({ baseUrl: "http://127.0.0.1:1234", clientToken: secret }));
+  await f.files.open({ workspaceId: "ws", sessionId: "ses", path: "notes.md" });
+  const window = f.files.windows()[0];
+  const state = structuredClone(await f.state(window));
+  expect(state).toMatchObject({ baseUrl: "http://127.0.0.1:1234", activePath: "notes.md" });
+  const scan = (value: unknown) => {
+    expect(JSON.stringify(value)).not.toContain(secret);
+    if (!value || typeof value !== "object") return;
+    for (const [key, child] of Object.entries(value)) {
+      expect(key).not.toMatch(/token/i);
+      scan(child);
+    }
+  };
+  scan(state);
+  const changes = window.webContents.messages.filter((message: any) => message.name === "jugglework:file-window:changed");
+  expect(changes.length).toBeGreaterThan(0);
+  for (const message of changes) scan(structuredClone(message.value));
+  const result = await f.files.fetch(
+    { sender: window.webContents, senderFrame: window.webContents.mainFrame },
+    `${state.baseUrl}/workspace/ws/files/raw?path=notes.md`, {},
+    async (_url: string, init: RequestInit) => {
+      expect(init.headers).toMatchObject({ Authorization: `Bearer ${secret}` });
+      return new Response(new Uint8Array([0, 255, 42]));
+    },
+  );
+  expect([...new Uint8Array(result.body)]).toEqual([0, 255, 42]);
+  window.destroy();
+  f.panel.destroy();
+});
+
+test("file-window state rejects a window closed while awaiting access", async () => {
+  const f = await fixture("notes.md");
+  await f.files.open({ workspaceId: "ws", sessionId: "ses", path: "notes.md" });
+  const window = f.files.windows()[0];
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  f.getAccess.mockImplementation(async () => {
+    await gate;
+    return { baseUrl: "http://127.0.0.1:1234", clientToken: "fixture" };
+  });
+  const pending = f.state(window).then(() => null, (error: unknown) => error);
+  window.destroy();
+  release();
+  expect(await pending).toBeInstanceOf(Error);
+  f.panel.destroy();
+});
+
+test("file-window fetch binds registered top-level sender and revokes closed tabs/windows", async () => {
+  const f = await fixture("notes.md");
+  await f.files.open({ workspaceId: "ws", sessionId: "ses", path: "notes.md" });
+  const window = f.files.windows()[0];
+  const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
+  const url = "http://127.0.0.1:1234/workspace/ws/files/raw?path=notes.md";
+  let calls = 0;
+  const transport = async () => { calls++; return new Response("hello"); };
+  const result = await f.files.fetch(event, url, {}, transport);
+  expect(new TextDecoder().decode(result.body)).toBe("hello");
+  await expect(f.files.fetch({ ...event, senderFrame: {} }, url, {}, transport)).rejects.toThrow();
+  await expect(f.files.fetch({ sender: f.main.webContents, senderFrame: f.main.webContents.mainFrame }, url, {}, transport)).rejects.toThrow();
+  await expect(f.files.fetch(event, url.replace("/ws/", "/other/"), {}, transport)).rejects.toThrow();
+  await f.action(window, "close", "notes.md");
+  await expect(f.files.fetch(event, url, {}, transport)).rejects.toThrow();
+  window.destroy();
+  await expect(f.files.fetch(event, url, {}, transport)).rejects.toThrow();
+  expect(calls).toBe(1);
+  f.panel.destroy();
+});
+
+test.each(["access", "response"])(
+  "file-window fetch rejects a window closed while waiting for %s",
+  async (phase) => {
+    const f = await fixture("notes.md");
+    await f.files.open({ workspaceId: "ws", sessionId: "ses", path: "notes.md" });
+    const window = f.files.windows()[0];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let started!: () => void;
+    const waiting = new Promise<void>((resolve) => { started = resolve; });
+    const access = { baseUrl: "http://127.0.0.1:1234", clientToken: "fixture" };
+    if (phase === "access") f.getAccess.mockImplementation(async () => {
+      started();
+      await gate;
+      return access;
+    });
+    const transport = mock(async () => {
+      started();
+      await gate;
+      return new Response("private file");
+    });
+    const pending = f.files.fetch(
+      { sender: window.webContents, senderFrame: window.webContents.mainFrame },
+      `${access.baseUrl}/workspace/ws/files/raw?path=notes.md`, {}, transport,
+    );
+    const settled = pending.then(() => null, (error: unknown) => error);
+    await waiting;
+    window.destroy();
+    release();
+    expect(await settled).toBeInstanceOf(Error);
+    expect(transport).toHaveBeenCalledTimes(phase === "access" ? 0 : 1);
+    f.panel.destroy();
+  },
+);
+
 async function fixture(
   name = "报告.docx",
   loadWindow = async (_window: FakeWindow) => {},
@@ -197,11 +313,13 @@ async function fixture(
   },
   resources?: any,
   composer?: any,
+  conversationOptions: any = {},
 ) {
   partitions.clear();
   answers.open = { canceled: true, filePaths: [] };
   answers.openError = null;
   answers.save = { canceled: true, filePath: "" };
+  answers.dialogs = [];
   const root = await mkdtemp(join(tmpdir(), "file-window-"));
   roots.push(root);
   const main = new FakeWindow();
@@ -218,6 +336,7 @@ async function fixture(
     engineFileId: "actual_A" as string | null,
   };
   const saves: Array<string | null> = [];
+  const closes: unknown[] = [];
   const creations: Array<{ path: string; body: unknown }> = [];
   const contexts: unknown[] = [];
   const preparation = {
@@ -234,7 +353,7 @@ async function fixture(
   };
   const client = {
     postHostJson: undefined as ((path: string, body: unknown, options?: { signal?: AbortSignal }) => Promise<any>) | undefined,
-    async getJson(path: string) {
+    async getJson(path: string, _options?: { signal?: AbortSignal }) {
       if (path === "/office/documents")
         return { items: document.state === "closed" ? [] : [{ ...document }] };
       if (path === "/workspaces") return { items: [{ id: "ws", path: root }] };
@@ -284,6 +403,7 @@ async function fixture(
             });
           throw new Error(preparation.closeError);
         }
+        closes.push(_body);
         document.state = "closed";
       }
       if (path.endsWith("/page-failed")) {
@@ -313,7 +433,7 @@ async function fixture(
     getWindows: () => files.windows(),
     onDocumentClosed: (id: string) => files.documentClosed(id),
     resolveWindow: (sender: any) =>
-      sender.id === main.webContents.id ? main : files.windowFor(sender),
+      sender === main.webContents ? main : files.windowFor(sender),
     onOpenFile: (window: any, input: any) => {
       const operation = files.openDialog(window, input);
       opens.push(operation);
@@ -330,19 +450,21 @@ async function fixture(
         cacheDirectory: join(root, "fonts"),
       }),
   });
+  const getAccess = mock((): { baseUrl: string; clientToken: string } | Promise<{ baseUrl: string; clientToken: string }> => ({
+    baseUrl: "http://127.0.0.1:1234",
+    clientToken: "fixture",
+  }));
   files = createFileWindows({
     dock,
     client,
-    getAccess: () => ({
-      baseUrl: "http://127.0.0.1:1234",
-      clientToken: "fixture",
-    }),
+    getAccess,
     office: panel,
     getMainWindow: () => main,
     loadWindow,
     preloadPath: "fixture",
     iconPath: "fixture",
     recentPath: join(root, "recent.json"),
+    ...conversationOptions,
   });
   const handlers = new Map<string, (...args: any[]) => any>();
   const ipc = {
@@ -353,7 +475,7 @@ async function fixture(
   panel.registerIpc(ipc as any);
   files.registerIpc(ipc as any);
   const call = (name: string, window: FakeWindow, ...args: any[]) =>
-    handlers.get(name)!({ sender: window.webContents }, ...args);
+    handlers.get(name)!({ sender: window.webContents, senderFrame: window.webContents.mainFrame }, ...args);
   const show = (window: FakeWindow) =>
     call("jugglework:office:show", window, {
       workspaceId: "ws",
@@ -370,6 +492,7 @@ async function fixture(
     files,
     document,
     saves,
+    closes,
     creations,
     preparation,
     contexts,
@@ -383,8 +506,386 @@ async function fixture(
     root,
     client,
     handlers,
+    getAccess,
   };
 }
+
+test.each(["外部.docx", "外部.xlsx", "外部.csv", "外部.pptx"])("无聊天的 %s 保留文件页面，不显示不可用的原生 AI 编辑入口", async (name) => {
+  const attached: Array<{ selectionUi: boolean }> = [];
+  const resources = { attach: (_partition: unknown, host: { selectionUi: boolean }) => {
+    attached.push(host);
+    return { dispose() {} };
+  } };
+  const f = await fixture(name, undefined, undefined, resources, { request: mock(async () => ({})) });
+  f.document.ownerSessionId = "file-browser";
+  await f.show(f.main);
+  expect(attached).toHaveLength(1);
+  expect(attached[0].selectionUi).toBe(false);
+  expect(f.main.children.size).toBe(1);
+  const view = [...f.main.children][0];
+  expect(view.webContents.loads).toEqual([f.document.previewUrl]);
+  const result = await f.handlers.get("jugglework:office:selection-capture")!({ sender: view.webContents, senderFrame: view.webContents.mainFrame }, { captureId: "external" });
+  expect(result.error.message).toContain("添加到目标聊天");
+});
+
+test("conversation requires a real existing local session and trusted policy; navigation uses only the Main binding", async () => {
+  let policy: unknown = { allowCustomProviders: false, allowedModels: ["provider/model"], clientToken: "forbidden" };
+  const navigations: unknown[] = [];
+  const f = await fixture("notes.md", undefined, undefined, undefined, undefined, {
+    getDesktopConfig: async () => policy,
+    openSession: async (target: unknown) => { navigations.push(target); },
+  });
+  const original = f.client.getJson;
+  f.client.getJson = async (path) => path.endsWith("/sessions/ses") ? { item: { id: "ses" } } as any : original(path);
+  await f.files.open({ workspaceId: "ws", sessionId: "ses", path: "notes.md" });
+  const window = f.files.windows()[0];
+  expect((await f.state(window)).conversation).toEqual({ desktopConfig: { allowCustomProviders: false, allowedModels: ["provider/model"] } });
+  expect(JSON.stringify(window.webContents.messages)).not.toContain("forbidden");
+  await f.action(window, "open-session");
+  expect(navigations).toEqual([{ workspaceId: "ws", sessionId: "ses" }]);
+  await expect(f.action(window, "open-session", "other-session")).rejects.toThrow();
+  policy = null;
+  expect(await f.state(window)).not.toHaveProperty("conversation");
+  await expect(f.action(window, "open-session")).rejects.toThrow();
+  policy = {};
+  expect((await f.state(window)).conversation).toEqual({ desktopConfig: {} });
+  f.client.getJson = async (path) => path.endsWith("/sessions/ses") ? { item: { id: "other" } } as any : original(path);
+  expect(await f.state(window)).not.toHaveProperty("conversation");
+  f.files.dispose(); f.panel.destroy();
+});
+
+test.each([false, true])("文件选区绑定真实会话（外部文件=%s），Main 投递后才可校验/发送；关闭标签撤销能力", async (local) => {
+  const f = await fixture(undefined, undefined, undefined, undefined, undefined, { getDesktopConfig: async () => ({}) });
+  const original = f.client.getJson;
+  f.client.getJson = async (path) => path.endsWith("/sessions/ses") ? { item: { id: "ses" } } as any : original(path);
+  await f.files.open({ workspaceId: "ws", sessionId: "ses", path: "报告.docx", local, absolutePath: join(f.root, "报告.docx") });
+  const window = f.files.windows()[0];
+  const input = { action: "append", windowId: window.id, workspaceId: "ws", sessionId: "ses",
+    reference: { referenceId: "real-ref", workspaceId: "ws", ownerSessionId: "ses", documentId: "od_A" } };
+  const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
+  const target = { workspaceId: "ws", sessionId: "ses", referenceIds: ["real-ref"] };
+  expect(() => f.files.authorizeOfficeReferences(event, target)).toThrow();
+  expect(f.files.officeComposerWindow({ ...input, sessionId: "foreign" })).toBeNull();
+  expect(f.files.officeComposerWindow({ ...input, reference: { ...input.reference, documentId: "foreign" } })).toBeNull();
+  expect(f.files.officeComposerWindow(input)).toBe(window);
+  expect(() => f.files.authorizeOfficeReferences(event, target)).not.toThrow();
+  expect(() => f.files.authorizeOfficeReferences({ ...event, senderFrame: {} }, target)).toThrow();
+  expect(() => f.files.authorizeOfficeReferences(event, { ...target, referenceIds: ["forged"] })).toThrow();
+  expect(f.files.officeComposerWindows("ws", "ses")).toEqual([window]);
+  await f.action(window, "close", "报告.docx");
+  expect(() => f.files.authorizeOfficeReferences(event, target)).toThrow();
+  f.files.dispose(); f.panel.destroy();
+});
+
+test("原文补全绑定同一后台页面，页面换代或等待中销毁拒绝旧原文", async () => {
+  const f = await fixture();
+  await f.show(f.main);
+  const view = [...f.main.children][0];
+  view.webContents.evaluationResult = ["标题\u000b副标题"];
+  const input = { workspaceId: "ws", documentId: "od_A", pageId: "page_A", ranges: [{ begin: 0, end: 6 }], version: 0 };
+  await f.call("jugglework:office:hide", f.main, "od_A");
+  expect(await f.panel.readText(input)).toEqual(["标题\u000b副标题"]);
+  expect(await f.panel.readText({ ...input, pageId: "old" })).toBeNull();
+  let release!: () => void;
+  view.webContents.evaluationGate = () => new Promise<void>((resolve) => { release = resolve; });
+  const pending = f.panel.readText(input);
+  f.panel.destroy("od_A"); release();
+  expect(await pending).toBeNull();
+});
+
+test("外部文件没有主窗口也可读取会话并停止真实运行", async () => {
+  const f = await fixture("外部.csv", undefined, undefined, undefined, undefined, {
+    getDesktopConfig: async () => ({}), getMainWindow: () => null,
+  });
+  const original = f.client.getJson;
+  f.client.getJson = async (path) => path.endsWith("/sessions/ses") ? { item: { id: "ses" } } as any : original(path);
+  const run = { workspaceId: "ws", sessionId: "ses", runId: "run" };
+  let aborts = 0;
+  try {
+    await f.files.open({ workspaceId: "ws", sessionId: "ses", path: "外部.csv", local: true, absolutePath: join(f.root, "外部.csv") });
+    const window = f.files.windows()[0];
+    expect(await f.state(window)).toMatchObject({ local: true, workspaceRoot: f.root, conversation: { desktopConfig: {} } });
+    const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
+    await f.files.fetch(event, "http://127.0.0.1:1234/workspace/ws/sessions/ses/runs/run/abort",
+      { method: "POST", body: JSON.stringify({ abortCommandCorrelationId: null }) },
+      async (_url: string, init: RequestInit) => {
+        if (init.method === "GET") return Response.json({ items: [run] });
+        aborts++;
+        return Response.json({ run, abortRequested: true });
+      });
+    expect(aborts).toBe(1);
+    expect(f.main.webContents.messages.some((message) => message.name === "jugglework:file-window:session-stop-request")).toBe(false);
+  } finally { f.files.dispose(); f.panel.destroy(); }
+});
+
+test("file Stop waits for the real Main top-frame queue acknowledgement for its fixed session before abort", async () => {
+  const f = await fixture("notes.md", undefined, undefined, undefined, undefined, { getDesktopConfig: async () => ({}) });
+  const original = f.client.getJson;
+  f.client.getJson = async (path) => path.endsWith("/sessions/ses") ? { item: { id: "ses" } } as any : original(path);
+  const run = { workspaceId: "ws", sessionId: "ses", runId: "run" };
+  let posts = 0;
+  const transport = async (_url: string, init: RequestInit) => {
+    if (init.method === "GET") return Response.json({ items: [run] });
+    posts++;
+    return Response.json({ run, abortRequested: true });
+  };
+  const target = "http://127.0.0.1:1234/workspace/ws/sessions/ses/runs/run/abort";
+  const body = { method: "POST", body: JSON.stringify({ abortCommandCorrelationId: null }) };
+  try {
+    await f.files.open({ workspaceId: "ws", sessionId: "ses", path: "notes.md" });
+    const window = f.files.windows()[0];
+    const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
+    let notified!: (value: any) => void;
+    let request = new Promise<any>((resolve) => { notified = resolve; });
+    const send = f.main.webContents.send.bind(f.main.webContents);
+    f.main.webContents.send = (name, value) => { send(name, value); if (name === "jugglework:file-window:session-stop-request") notified(value); };
+    const stop = f.files.fetch(event, target, body, transport);
+    const input = await request;
+    expect(input).toEqual({ requestId: expect.any(String), workspaceId: "ws", sessionId: "ses" });
+    expect(posts).toBe(0);
+    const reply = { requestId: input.requestId, ok: true, sessionId: "foreign" };
+    await expect(f.call("jugglework:file-window:session-stop-reply", window, reply)).rejects.toThrow();
+    await expect(f.handlers.get("jugglework:file-window:session-stop-reply")!({ sender: f.main.webContents, senderFrame: {} }, reply)).rejects.toThrow();
+    expect(posts).toBe(0);
+    await f.call("jugglework:file-window:session-stop-reply", f.main, reply);
+    await stop;
+    expect(posts).toBe(1);
+    await expect(f.call("jugglework:file-window:session-stop-reply", f.main, reply)).rejects.toThrow();
+    await expect(f.files.fetch(event, target.replace("/ses/", "/foreign/"), body, transport)).rejects.toThrow();
+    expect(posts).toBe(1);
+    request = new Promise<any>((resolve) => { notified = resolve; });
+    const failed = f.files.fetch(event, target, body, transport);
+    const failure = failed.then(() => { throw new Error("failed preparation unexpectedly aborted"); }, () => {});
+    const failedInput = await request;
+    await f.call("jugglework:file-window:session-stop-reply", f.main, { requestId: failedInput.requestId, ok: false });
+    await failure;
+    expect(posts).toBe(1);
+    request = new Promise<any>((resolve) => { notified = resolve; });
+    const expiring = f.files.fetch(event, target, { ...body, timeoutMs: 20 }, transport);
+    const expired = expiring.then(() => { throw new Error("unacknowledged Stop unexpectedly succeeded"); }, () => {});
+    const timedInput = await request;
+    await expired;
+    await expect(f.call("jugglework:file-window:session-stop-reply", f.main, { requestId: timedInput.requestId, ok: true })).rejects.toThrow();
+    expect(posts).toBe(1);
+    // Closing while awaiting Main cancels the request; a late ack cannot send abort.
+    request = new Promise<any>((resolve) => { notified = resolve; });
+    const closing = f.files.fetch(event, target, body, transport);
+    const rejected = closing.then(() => { throw new Error("closed Stop unexpectedly succeeded"); }, () => {});
+    const pending = await request;
+    window.destroy();
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    try { await Promise.race([rejected, new Promise((_, reject) => { deadline = setTimeout(() => reject(new Error("closed Stop did not cancel")), 500); })]); }
+    finally { clearTimeout(deadline); }
+    await expect(f.call("jugglework:file-window:session-stop-reply", f.main, { requestId: pending.requestId, ok: true })).rejects.toThrow();
+    expect(posts).toBe(1);
+  } finally { f.files.dispose(); f.panel.destroy(); }
+});
+
+test("conversation seed is Main-only, first-open-only and survives live policy refresh", async () => {
+  let policy = {};
+  let initial: any;
+  const f = await fixture("notes.md", async (window) => { initial = await f.state(window); }, undefined, undefined, undefined, { getDesktopConfig: async () => policy });
+  const original = f.client.getJson;
+  f.client.getJson = async (path) => path.endsWith("/sessions/ses") ? { item: { id: "ses" } } as any : original(path);
+  const target = { workspaceId: "ws", sessionId: "ses", path: "notes.md" };
+  const seed = { model: { providerID: "provider", modelID: "model" }, agent: "plan", variant: "high" };
+  try {
+    await expect(f.call("jugglework:file-window:open", f.main, { ...target, conversationOptions: { token: "forbidden" } })).rejects.toThrow();
+    expect(f.files.windows()).toHaveLength(0);
+    const subframe = { sender: f.main.webContents, senderFrame: { parent: f.main.webContents.mainFrame } };
+    await expect(f.handlers.get("jugglework:file-window:open")!(subframe, { ...target, conversationOptions: seed })).rejects.toThrow();
+    await f.call("jugglework:file-window:open", f.main, { ...target, conversationOptions: seed });
+    const window = f.files.windows()[0];
+    expect(initial.conversation).toEqual({ ...seed, desktopConfig: {} });
+    // A file renderer cannot replace the seed, even with forged extra fields.
+    await f.call("jugglework:file-window:open", window, { ...target, conversationOptions: { model: null, agent: "build", token: "forbidden" } });
+    // Re-opening from Main also preserves the live file window's own choices.
+    await f.call("jugglework:file-window:open", f.main, { ...target, conversationOptions: { model: null, agent: null, variant: null } });
+    policy = { allowedModels: ["other/model"] };
+    expect((await f.state(window)).conversation).toEqual({ ...seed, desktopConfig: policy });
+    expect(JSON.stringify(window.webContents.messages)).not.toContain("forbidden");
+    await expect(f.call("jugglework:file-window:open", window, { ...target, sessionId: "foreign", conversationOptions: seed })).rejects.toThrow();
+    f.files.dispose();
+    await f.call("jugglework:file-window:open", f.main, { ...target, conversationOptions: { model: null, agent: null, variant: null } });
+    expect((await f.state(f.files.windows()[0])).conversation).toEqual({ model: null, agent: null, variant: null, desktopConfig: policy });
+  } finally { f.files.dispose(); f.panel.destroy(); }
+});
+
+test("conversation refresh publishes policy transitions only, enforces latest policy on start and revokes invalid sessions", async () => {
+  let config: unknown = { allowedModels: ["provider/model"], allowCustomProviders: false };
+  const f = await fixture("notes.md", undefined, undefined, undefined, undefined, { getDesktopConfig: async () => config });
+  const original = f.client.getJson;
+  let valid = true;
+  f.client.getJson = async (path) => path.endsWith("/sessions/ses") ? { item: { id: valid ? "ses" : "foreign" } } as any : original(path);
+  await f.files.open({ workspaceId: "ws", sessionId: "ses", path: "notes.md" });
+  const window = f.files.windows()[0];
+  const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
+  const changes = () => window.webContents.messages.filter((message: any) => message.name === "jugglework:file-window:changed");
+  const before = changes().length;
+  await f.state(window); await f.state(window);
+  expect(changes().length).toBe(before);
+  let posts = 0;
+  const transport = async (url: string, init: RequestInit) => {
+    if (init.method === "GET") {
+      expect(url).toEndWith("/opencode/provider");
+      return Response.json({ all: [{ id: "provider", source: "api", models: { model: { id: "model" } } }], connected: ["provider"] });
+    }
+    posts++;
+    return Response.json({ run: { workspaceId: "ws", sessionId: "ses", runId: "run" } });
+  };
+  const body = { method: "POST", body: JSON.stringify({ origin: "local-renderer", startCommandCorrelationId: null,
+    prompt: { model: { providerID: "provider", modelID: "model" }, parts: [{ type: "text", text: "hello" }] } }) };
+  const url = "http://127.0.0.1:1234/workspace/ws/sessions/ses/runs/start";
+  await f.files.fetch(event, url, body, transport);
+  config = { allowedModels: ["other/model"], allowCustomProviders: false };
+  await expect(f.files.fetch(event, url, body, transport)).rejects.toThrow();
+  expect(posts).toBe(1);
+  expect(changes().length).toBe(before + 1);
+  expect(changes().at(-1)?.value.conversation.desktopConfig).toEqual(config);
+  await f.state(window);
+  expect(changes().length).toBe(before + 1);
+  valid = false;
+  expect(await f.state(window)).not.toHaveProperty("conversation");
+  expect(changes().length).toBe(before + 2);
+  expect(changes().at(-1)?.value).not.toHaveProperty("conversation");
+  await f.state(window);
+  expect(changes().length).toBe(before + 2);
+  await expect(f.files.fetch(event, url, body, transport)).rejects.toThrow();
+  expect(posts).toBe(1);
+  f.files.dispose(); f.panel.destroy();
+});
+
+test.each(["config", "session"])("reopening the same file window recovers a temporary %s failure and still fails closed", async (source) => {
+  let failing = false;
+  const policy = { allowCustomProviders: false, allowedModels: ["provider/model"] };
+  const f = await fixture("notes.md", undefined, undefined, undefined, undefined, {
+    getDesktopConfig: async () => {
+      if (failing && source === "config") throw new Error("temporary policy read failure");
+      return policy;
+    },
+  });
+  const original = f.client.getJson;
+  f.client.getJson = async (path) => {
+    if (!path.endsWith("/sessions/ses")) return original(path);
+    if (failing && source === "session") throw new Error("temporary session read failure");
+    return { item: { id: "ses" } } as any;
+  };
+  const target = { workspaceId: "ws", sessionId: "ses", path: "notes.md" };
+  const seed = { agent: "plan", model: { providerID: "provider", modelID: "model" }, variant: "high" };
+  try {
+    await f.call("jugglework:file-window:open", f.main, { ...target, conversationOptions: seed });
+    const window = f.files.windows()[0];
+    failing = true;
+    await f.call("jugglework:file-window:open", f.main, target);
+    expect(window.webContents.messages.filter((message: any) => message.name.endsWith(":changed")).at(-1)?.value).not.toHaveProperty("conversation");
+    await expect(f.action(window, "open-session")).rejects.toThrow();
+    const transport = mock(async () => Response.json({}));
+    await expect(f.files.fetch({ sender: window.webContents, senderFrame: window.webContents.mainFrame },
+      "http://127.0.0.1:1234/workspace/ws/sessions/ses/snapshot", {}, transport)).rejects.toThrow();
+    expect(transport).not.toHaveBeenCalled();
+    failing = false;
+    // Do not call state(): the ordinary Main reopen must refresh the existing entry.
+    await f.call("jugglework:file-window:open", f.main, target);
+    expect(f.files.windows()).toEqual([window]);
+    expect(window.webContents.messages.filter((message: any) => message.name.endsWith(":changed")).at(-1)?.value.conversation).toEqual({ ...seed, desktopConfig: policy });
+  } finally { f.files.dispose(); f.panel.destroy(); }
+});
+
+test("未绑定真实会话的外部文件保持文件模式", async () => {
+  const policy = mock(async () => ({}));
+  const f = await fixture("notes.md", undefined, undefined, undefined, undefined, { getDesktopConfig: policy });
+  await f.files.open({ workspaceId: "ws", sessionId: "", path: "notes.md" });
+  expect(await f.state(f.files.windows()[0])).not.toHaveProperty("conversation");
+  await f.files.open({ workspaceId: "ws", sessionId: "external-file", local: true, absolutePath: join(f.root, "notes.md"), path: "notes.md" });
+  const local = f.files.windows()[1];
+  expect((await f.state(local)).local).toBe(true);
+  expect(await f.state(local)).not.toHaveProperty("conversation");
+  await expect(f.call("jugglework:file-window:session-subscribe", local)).rejects.toThrow();
+  const original = f.client.getJson;
+  const before = policy.mock.calls.length;
+  f.client.getJson = async (path) => path === "/workspaces" ? { items: [{ id: "remote", workspaceType: "remote", path: f.root }] } as any : original(path);
+  await expect(f.files.open({ workspaceId: "remote", sessionId: "ses", path: "notes.md" })).rejects.toThrow("工作区不可用");
+  expect(policy.mock.calls.length).toBe(before);
+  f.files.dispose(); f.panel.destroy();
+});
+
+test.each(["closed", "dispose", "unsubscribe", "render-process-gone"])(
+  "real HTTP SSE is filtered at Main and cancelled on %s",
+  async (ending) => {
+    let closeConnection!: () => void;
+    const closed = new Promise<void>((resolve) => { closeConnection = resolve; });
+    let received!: () => void;
+    const eventReceived = new Promise<void>((resolve) => { received = resolve; });
+    const server = createServer((request, response) => {
+      expect(request.url).toBe("/workspace/ws/opencode/event");
+      expect(request.headers.authorization).toBe("Bearer main-private");
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      for (const payload of [
+        { type: "server.connected", properties: {} },
+        { type: "message.part.delta", properties: { sessionID: "other", delta: "foreign" } },
+        { type: "provider.updated", properties: { apiKey: "secret" } },
+        { type: "message.part.delta", properties: { sessionID: "ses", delta: "bound" } },
+      ]) response.write(`data: ${JSON.stringify({ payload })}\n\n`);
+      request.socket.on("close", closeConnection);
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("missing server address");
+    const f = await fixture("notes.md", undefined, undefined, undefined, undefined, { getDesktopConfig: async () => ({}) });
+    const original = f.client.getJson;
+    f.client.getJson = async (path) => path.endsWith("/sessions/ses") ? { item: { id: "ses" } } as any : original(path);
+    f.getAccess.mockImplementation(() => ({ baseUrl: `http://127.0.0.1:${address.port}`, clientToken: "main-private" }));
+    try {
+      await f.files.open({ workspaceId: "ws", sessionId: "ses", path: "notes.md" });
+      const window = f.files.windows()[0];
+      const send = window.webContents.send.bind(window.webContents);
+      window.webContents.send = (name: string, value: any) => {
+        send(name, value);
+        if (name === "jugglework:file-window:session-event" && value.event.type === "message.part.delta") received();
+      };
+      await expect(f.handlers.get("jugglework:file-window:session-subscribe")!({ sender: window.webContents, senderFrame: {} })).rejects.toThrow();
+      const id = await f.call("jugglework:file-window:session-subscribe", window);
+      const bounded = async (promise: Promise<void>, stage: string) => {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try { await Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`SSE ${stage}: ${JSON.stringify(window.webContents.messages)}`)), 1000); })]); }
+        finally { clearTimeout(timer); }
+      };
+      await bounded(eventReceived, "event");
+      const events = window.webContents.messages.filter((message: any) => message.name.endsWith("session-event"));
+      expect(events.map((message: any) => message.value.event.type)).toEqual(["server.connected", "message.part.delta"]);
+      expect(JSON.stringify(events)).not.toMatch(/foreign|secret|main-private/);
+      if (ending === "closed") window.destroy();
+      else if (ending === "dispose") f.files.dispose();
+      else if (ending === "unsubscribe") await f.call("jugglework:file-window:session-unsubscribe", window, id);
+      else window.webContents.emit("render-process-gone");
+      await bounded(closed, "close");
+    } finally {
+      f.files.dispose(); f.panel.destroy();
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  },
+);
+
+test("window close aborts an in-flight buffered reader immediately", async () => {
+  const f = await fixture("notes.md");
+  await f.files.open({ workspaceId: "ws", sessionId: "ses", path: "notes.md" });
+  const window = f.files.windows()[0];
+  let started!: () => void;
+  const reading = new Promise<void>((resolve) => { started = resolve; });
+  let cancelled = false;
+  const task = f.files.fetch({ sender: window.webContents, senderFrame: window.webContents.mainFrame },
+    "http://127.0.0.1:1234/workspace/ws/files/raw?path=notes.md", {}, async () => new Response(new ReadableStream({
+      start() { started(); }, cancel() { cancelled = true; },
+    })));
+  const settled = task.then(() => null, (error: unknown) => error);
+  await reading;
+  await Promise.resolve();
+  window.destroy();
+  expect(await settled).toBeInstanceOf(Error);
+  expect(cancelled).toBe(true);
+  f.panel.destroy();
+});
 
 async function reviewFixture(failureCode = "office_selection_review_required") {
   const f = await fixture("报告.docx", undefined, undefined, undefined, { request: async () => ({ epoch: 1, bridgeGeneration: 0 }) });
@@ -538,6 +1039,122 @@ test("主窗口和独立窗口的实际 preload 均向编辑容器传递布局�
   ).toBe(0);
 });
 
+test.each(["available", "open", "state", "create", "action"])(
+  "file-window:%s 仅接受登记宿主的真实顶层 frame，拒绝子 frame、伪造 sender 和失效窗口",
+  async (name) => {
+    const f = await fixture("说明.md");
+    await f.files.open({ workspaceId: "ws", sessionId: "ses", path: "说明.md" });
+    const window = f.files.windows()[0] as FakeWindow;
+    const unknown = new FakeWindow();
+    const events: Array<{ sender: FakeContents; senderFrame?: unknown }> = [];
+    for (const host of [f.main, window]) {
+      const sender = host.webContents;
+      const forged = new FakeContents();
+      forged.id = sender.id;
+      const copiedFrame = new FakeContents();
+      copiedFrame.id = sender.id;
+      copiedFrame.mainFrame = sender.mainFrame;
+      events.push(
+        { sender, senderFrame: { parent: sender.mainFrame } },
+        { sender, senderFrame: { ...sender.mainFrame } },
+        { sender, senderFrame: unknown.webContents.mainFrame },
+        { sender },
+        { sender, senderFrame: null },
+        { sender: forged, senderFrame: forged.mainFrame },
+        { sender: copiedFrame, senderFrame: sender.mainFrame },
+      );
+      expect(f.files.windowFor(forged)).toBeNull();
+      expect(f.files.windowFor(copiedFrame)).toBeNull();
+    }
+    events.push({ sender: unknown.webContents, senderFrame: unknown.webContents.mainFrame });
+    if (name === "state" || name === "action")
+      events.push({ sender: f.main.webContents, senderFrame: f.main.webContents.mainFrame });
+    const args = name === "action"
+      ? ["open"]
+      : [{ workspaceId: "ws", sessionId: "ses", path: "新文件.md", kind: "docx" }];
+    const getJson = mock(f.client.getJson);
+    const postJson = mock(f.client.postJson);
+    f.client.getJson = getJson;
+    f.client.postJson = postJson;
+    answers.open = { canceled: false, filePaths: [join(f.root, "新文件.md")] };
+    answers.save = { canceled: false, filePath: join(f.root, "新文件.docx") };
+    const messages = window.webContents.messages.length;
+    const dockUpdates = f.dockStates.length;
+    const handler = f.handlers.get(`jugglework:file-window:${name}`)!;
+    for (const event of events)
+      await expect(Promise.resolve().then(() => handler(event, ...args))).rejects.toThrow();
+    // 缺少 mainFrame 时也不能因 undefined === undefined 被当作顶层页面。
+    const mainFrame = f.main.webContents.mainFrame;
+    Object.assign(f.main.webContents, { mainFrame: undefined });
+    await expect(Promise.resolve().then(() => handler({ sender: f.main.webContents }, ...args))).rejects.toThrow();
+    f.main.webContents.mainFrame = mainFrame;
+    // 已销毁的 webContents 即使所属 BrowserWindow 仍登记也不可使用。
+    window.webContents.close();
+    expect(f.files.windowFor(window.webContents)).toBeNull();
+    await expect(Promise.resolve().then(() => handler({ sender: window.webContents, senderFrame: window.webContents.mainFrame }, ...args))).rejects.toThrow();
+    window.destroy();
+    f.main.destroy();
+    for (const host of [f.main, window])
+      await expect(Promise.resolve().then(() => handler({ sender: host.webContents, senderFrame: host.webContents.mainFrame }, ...args))).rejects.toThrow();
+    expect(getJson).not.toHaveBeenCalled();
+    expect(postJson).not.toHaveBeenCalled();
+    expect(f.getAccess).not.toHaveBeenCalled();
+    expect(answers.dialogs).toEqual([]);
+    expect(window.webContents.messages).toHaveLength(messages);
+    expect(f.dockStates).toHaveLength(dockUpdates + 1);
+    expect(f.creations).toEqual([]);
+    f.panel.destroy();
+  },
+);
+
+test.each(["open", "create"])(
+  "文件窗口 %s 绑定 entry 的 workspace/session，越界参数在服务请求和对话框之前拒绝",
+  async (name) => {
+    const f = await fixture("说明.md");
+    await f.call("jugglework:file-window:open", f.main, {
+      workspaceId: "ws", sessionId: "ses", path: "说明.md",
+    });
+    const window = f.files.windows()[0];
+    expect(await f.call("jugglework:file-window:available", window)).toBe(true);
+    const getJson = mock(f.client.getJson);
+    const postJson = mock(f.client.postJson);
+    f.client.getJson = getJson;
+    f.client.postJson = postJson;
+    answers.save = { canceled: false, filePath: join(f.root, "新文件.docx") };
+    for (const context of [
+      { workspaceId: "other", sessionId: "ses" },
+      { workspaceId: "ws", sessionId: "other" },
+      { workspaceId: "other", sessionId: "other" },
+      { workspaceId: "ws" },
+      { sessionId: "ses" },
+      {},
+    ])
+      await expect(f.call(`jugglework:file-window:${name}`, window, {
+        ...context, path: "新文件.md", kind: "docx",
+      })).rejects.toThrow("文件窗口工作区或聊天不匹配");
+    expect(getJson).not.toHaveBeenCalled();
+    expect(postJson).not.toHaveBeenCalled();
+    expect(answers.dialogs).toEqual([]);
+    expect(f.creations).toEqual([]);
+    expect(f.files.windows()).toEqual([window]);
+    expect((await f.state(window)).tabs.map((tab: any) => tab.path)).toEqual(["说明.md"]);
+    await f.call(`jugglework:file-window:${name}`, window, {
+      workspaceId: "ws", sessionId: "ses", path: "新文件.md", kind: "docx",
+    });
+    if (name === "open") {
+      expect(f.files.windows()).toEqual([window]);
+      expect((await f.state(window)).activePath).toBe("新文件.md");
+    } else {
+      expect(f.creations).toEqual([{
+        path: "/workspace/ws/office/create",
+        body: { sessionId: "ses", path: "新文件.docx" },
+      }]);
+    }
+    f.files.dispose();
+    f.panel.destroy();
+  },
+);
+
 test("Word/PPTX 创建桥由宿主解析路径，取消不请求服务，越界目标被拒绝", async () => {
   const f = await fixture();
   expect(rendererBridges.every((bridge) => typeof bridge.fileWindow.create === "function")).toBe(true);
@@ -594,8 +1211,8 @@ test("文件窗口创建 PPTX 后可通过现有打开动作成为 Office 标签
     filePath: join(f.root, "新汇报.pptx"),
   };
   const created = await f.call("jugglework:file-window:create", window, {
-    workspaceId: "ignored",
-    sessionId: "ignored",
+    workspaceId: "ws",
+    sessionId: "ses",
     kind: "pptx",
   });
   await f.action(window, "open", created.path);
@@ -719,7 +1336,7 @@ test("两种宿主刷新或宿主渲染崩溃时卸下旧页面，重新展示�
       expect(f.saves).toHaveLength(0);
       expect(partitions.get("office-od_A").webRequest.listener).toBe(guard);
       f.panel.destroy();
-      expect(host.webContents.listenerCount("did-start-navigation")).toBe(0);
+      expect(host.webContents.listenerCount("did-start-navigation")).toBe(standalone ? 1 : 0);
       expect(host.listenerCount("focus")).toBe(0);
       f.files.dispose();
     }
@@ -1495,6 +2112,69 @@ test("dirty 文档取消关闭保留标签与页面，保存并关闭后才移�
   answers.close = 2;
 });
 
+for (const name of ["报告.docx", "数据.csv", "预算.xlsx", "汇报.pptx"]) {
+  test(`${name} 关闭前提交页面缓冲，最新修改必须由用户确认`, async () => {
+    const f = await fixture(name);
+    await f.files.open({ workspaceId: "ws", sessionId: "ses", path: name });
+    const window = f.files.windows()[0]!;
+    await f.show(window);
+    const page = [...window.children][0];
+    // 模拟 native 尚未收到输入/重做，读取模型暂时为 clean。
+    page.webContents.evaluationGate = async () => { f.document.dirty = true; };
+    answers.close = 2;
+    await f.action(window, "close", name);
+    expect(f.document).toMatchObject({ state: "ready", dirty: true });
+    expect((await f.state(window)).tabs).toHaveLength(1);
+    expect(page.webContents.isDestroyed()).toBe(false);
+    expect(f.saves).toEqual([]);
+    expect(f.closes).toEqual([]);
+    answers.close = 1;
+    await f.action(window, "close", name);
+    expect((await f.state(window)).tabs).toHaveLength(0);
+    expect(page.webContents.isDestroyed()).toBe(true);
+    expect(f.closes).toEqual([{ decision: "discard" }]);
+    answers.close = 2;
+  });
+}
+
+test("关闭前页面提交失败保留文档、标签和修改，不执行默认保存", async () => {
+  const f = await fixture();
+  await f.files.open({ workspaceId: "ws", sessionId: "ses", path: "报告.docx" });
+  const window = f.files.windows()[0]!;
+  await f.show(window);
+  const page = [...window.children][0];
+  page.webContents.evaluationGate = async () => { throw new Error("文字尚未提交完成"); };
+  await expect(f.action(window, "close", "报告.docx")).rejects.toThrow("文字尚未提交完成");
+  expect(f.document.state).toBe("ready");
+  expect((await f.state(window)).tabs).toHaveLength(1);
+  expect(page.webContents.isDestroyed()).toBe(false);
+  expect(f.saves).toEqual([]);
+  expect(f.closes).toEqual([]);
+});
+
+test("已知 dirty 文档的页面提交失败不阻止用户明确放弃修改", async () => {
+  const f = await fixture();
+  await f.files.open({ workspaceId: "ws", sessionId: "ses", path: "报告.docx" });
+  const window = f.files.windows()[0]!;
+  await f.show(window);
+  const page = [...window.children][0];
+  f.document.dirty = true;
+  page.webContents.evaluationGate = async () => { throw new Error("页面无法提交"); };
+  try {
+    answers.close = 2;
+    await f.action(window, "close", "报告.docx");
+    expect(f.document.state).toBe("ready");
+    answers.close = 1;
+    await f.action(window, "close", "报告.docx");
+    expect(f.document.state).toBe("closed");
+    expect(page.webContents.isDestroyed()).toBe(true);
+    expect(f.saves).toEqual([]);
+    expect(f.closes).toEqual([{ decision: "discard" }]);
+  } finally {
+    answers.close = 2;
+  }
+});
+
 test("Dock 显示真实标题、激活原窗口，取消退出保留入口，清理窗口不重复调用已停止的服务", async () => {
   const f = await fixture();
   await f.files.open({
@@ -1811,6 +2491,7 @@ test("系统外部文件复用一个多标签窗口，最近路径重新登记�
     client: {
       async getJson(url: string) {
         requests.push(url);
+        if (url === "/workspaces") return { items: [] };
         if (url.includes("/files/stat")) return { exists: true, kind: "file" };
         if (url.endsWith("/capabilities")) return { available: true };
         throw new Error(`不应读取工作区: ${url}`);
@@ -1849,7 +2530,7 @@ test("系统外部文件复用一个多标签窗口，最近路径重新登记�
   await windows.openLocal(source);
   const window = windows.windows()[0];
   const call = (name: string, ...args: any[]) =>
-    handlers.get(name)!({ sender: window.webContents }, ...args);
+    handlers.get(name)!({ sender: window.webContents, senderFrame: window.webContents.mainFrame }, ...args);
   expect(windows.windows()).toHaveLength(1);
   let state = await call("jugglework:file-window:state");
   expect(state.local).toBe(true);
@@ -1857,6 +2538,8 @@ test("系统外部文件复用一个多标签窗口，最近路径重新登记�
   expect(state.tabs).toHaveLength(1);
   expect(state.recent[0].path).toBe(source);
   await call("jugglework:file-window:action", "open", source);
+  expect(registrations).toHaveLength(3);
+  await expect(call("jugglework:file-window:action", "open", join(root, "未选择.csv"))).rejects.toThrow("文件选择框");
   expect(registrations).toHaveLength(3);
   const copy = join(root, "副本.csv");
   answers.save = { canceled: false, filePath: copy };
@@ -1869,5 +2552,5 @@ test("系统外部文件复用一个多标签窗口，最近路径重新登记�
   expect(window.isDestroyed()).toBe(false);
   canClose = true;
   expect(await windows.closeAll()).toBe(true);
-  expect(requests).not.toContain("/workspaces");
+  expect(requests).toContain("/workspaces");
 });

@@ -13,7 +13,7 @@ test("font response is reusable and validated", async () => {
 
 test("deadline covers stalled fetch and stalled body consumption", async () => {
   await assert.rejects(fetchOfficeFont("x", () => new Promise(() => {}), 10), /timed out/);
-  await assert.rejects(fetchOfficeFont("x", async () => ({ ok: true, blob: () => new Promise(() => {}) }), 10), /timed out/);
+  await assert.rejects(fetchOfficeFont("x", async () => new Response(new ReadableStream({ start() {} })), 10), /timed out/);
 });
 
 test("unknown SDK bytes are not patched", async () => {

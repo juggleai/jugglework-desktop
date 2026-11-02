@@ -97,8 +97,9 @@ import { registerFileRoutes, resolveWorkspaceArtifactTargets, normalizeWorkspace
 import { OfficeEngine } from "./office/engine.js";
 import { OfficeDocuments } from "./office/documents.js";
 import { assertOfficeFileEditable } from "./office/file-compatibility.js";
-import { prepareOfficePageSave, readOfficePageSelection } from "./office/page-bridge.js";
+import { prepareOfficePageSave, readOfficePageSelection, readOfficePageText } from "./office/page-bridge.js";
 import { LocalOfficeFiles } from "./office/local-files.js";
+import { ensureFileAssistantWorkspace } from "./office/file-assistant-workspace.js";
 import { registerLocalOfficeRoutes } from "./routes/office-local-files.js";
 import { registerOfficeRoutes } from "./routes/office.js";
 import { runtimeStorageDir } from "./runtime-db.js";
@@ -967,6 +968,8 @@ async function readSessionActivity(config: ServerConfig, workspace: WorkspaceInf
 }
 
 export async function startServer(config: ServerConfig, options: {
+  /** 隔离验收使用的文件助手目录；桌面默认使用 Documents/JuggleWork/FileAssistant。 */
+  fileAssistantRoot?: string;
   /** 显式 Office SDK 本地资源目录；桌面安装包优先使用自身资源。 */
   officeResourceDirectory?: string;
   interactionResolutions?: InteractionResolutionCoordinator;
@@ -1034,6 +1037,7 @@ export async function startServer(config: ServerConfig, options: {
       }
     },
   });
+  const localOfficeFiles = new LocalOfficeFiles({ root: options.fileAssistantRoot, statePath: join(runtimeStorageDir(config), "file-assistant.json") });
   fileDeliveries = new FileDeliveryService({
     workspace(workspaceId) {
       const workspace = config.workspaces.find((item) => item.id === workspaceId && item.workspaceType !== "remote");
@@ -1045,6 +1049,11 @@ export async function startServer(config: ServerConfig, options: {
       return unwrapOpencodeResult(await createWorkspaceOpencodeClient(config, workspace).session.messages({ sessionID: sessionId }), "/session/messages");
     },
     async inspect(workspaceId, path) {
+      if (localOfficeFiles.isExternal(workspaceId, path)) {
+        const { file } = await localOfficeFiles.resolve(path);
+        return { value: path, name: file.name, preview: "document", exists: true, contentType: file.mimeType,
+          size: file.sizeBytes ?? undefined, updatedAt: file.updatedAt ?? undefined };
+      }
       const workspace = await resolveWorkspaceWithoutBootstrap(config, workspaceId);
       const targets = await resolveWorkspaceArtifactTargets(workspace.path, [{ kind: "file", value: path }]);
       const target = targets[0];
@@ -1071,12 +1080,12 @@ export async function startServer(config: ServerConfig, options: {
       officeDocuments?.invalidate();
     },
   });
-  const localOfficeFiles = new LocalOfficeFiles();
   officeDocuments = new OfficeDocuments({
     checkFile: assertOfficeFileEditable,
     engine: officeEngine,
     prepareSave: prepareOfficePageSave,
     readSelection: readOfficePageSelection,
+    readText: readOfficePageText,
     resolveTurn: async (workspaceId, sessionId, messageId) => {
       const origin = await fileDeliveries!.messageOrigin(workspaceId, sessionId, messageId);
       if (origin && fileDeliveries!.registry(workspaceId).list(sessionId).turns.find((turn) => turn.turnId === origin.turnId)?.officeSelection &&
@@ -1085,7 +1094,12 @@ export async function startServer(config: ServerConfig, options: {
       return origin?.turnId ?? null;
     },
     async resolveFile(workspaceId, path, allowMissing) {
-      if (localOfficeFiles.owns(workspaceId)) return localOfficeFiles.resolve(path);
+      if (localOfficeFiles.isExternal(workspaceId, path)) {
+        const resolved = await localOfficeFiles.resolve(path);
+        const file = fileDeliveries!.registry(workspaceId).resolve({ value: path, name: resolved.file.name, preview: "document", exists: true,
+          size: resolved.file.sizeBytes ?? undefined, updatedAt: resolved.file.updatedAt ?? undefined, contentType: resolved.file.mimeType });
+        return { absolutePath: resolved.absolutePath, file: { ...file, editingOwner: resolved.file.editingOwner } };
+      }
       const workspace = await resolveWorkspaceWithoutBootstrap(config, workspaceId);
       if (workspace.workspaceType === "remote") throw new ApiError(400, "local_workspace_required", "Office 仅支持本机工作区");
       const relativePath = normalizeWorkspaceRelativePath(path, { allowSubdirs: true });
@@ -1099,7 +1113,12 @@ export async function startServer(config: ServerConfig, options: {
       return { absolutePath: join(workspace.path, file.relativePath), file, workspaceRoot: workspace.path };
     },
     async onSaved(workspaceId, path) {
-      if (localOfficeFiles.owns(workspaceId)) return;
+      if (localOfficeFiles.isExternal(workspaceId, path)) {
+        const { file } = await localOfficeFiles.resolve(path);
+        fileDeliveries!.registry(workspaceId).resolve({ value: path, name: file.name, preview: "document", exists: true,
+          size: file.sizeBytes ?? undefined, updatedAt: file.updatedAt ?? undefined, contentType: file.mimeType });
+        return;
+      }
       const workspace = await resolveWorkspaceWithoutBootstrap(config, workspaceId);
       const targets = await resolveWorkspaceArtifactTargets(workspace.path, [{ kind: "file", value: path }]);
       const target = targets[0];
@@ -1109,7 +1128,7 @@ export async function startServer(config: ServerConfig, options: {
     },
     onModified: (...args) => fileDeliveries!.bindOfficeModification(...args),
     onOwnership: async (workspaceId, path, owner) => {
-      if (localOfficeFiles.owns(workspaceId)) {
+      if (localOfficeFiles.isExternal(workspaceId, path)) {
         localOfficeFiles.setOwner(path, owner);
         return;
       }
@@ -1117,7 +1136,6 @@ export async function startServer(config: ServerConfig, options: {
     },
     isBusy: (workspaceId, sessionId) => Boolean(sessionMutations.getActive(workspaceId, sessionId)),
     async activityBlocker(workspaceId, sessionId, documentId) {
-      if (localOfficeFiles.owns(workspaceId)) return null;
       const workspace = await resolveWorkspaceWithoutBootstrap(config, workspaceId);
       if (await readSessionActivity(config, workspace, sessionId, AbortSignal.timeout(5_000)) !== "idle") return "running";
       // TIPS: 已结束的运行仍可能在保存 Office 产物；只等待当前文档的交付，不等待无关媒体任务。
@@ -3918,7 +3936,25 @@ function createRoutes(
       reloadOpencodeEngine(routeConfig, workspace, engineMcpServerState),
   });
 
-  registerLocalOfficeRoutes({ routes, files: localOfficeFiles, documents: officeDocuments, jsonResponse, readJsonBody, ensureWritable: () => ensureWritable(config) });
+  registerLocalOfficeRoutes({ routes, files: localOfficeFiles, documents: officeDocuments, jsonResponse, readJsonBody, ensureWritable: () => ensureWritable(config),
+    async ensureConversation(previousSessionId) {
+      const registered = config.workspaces.some((workspace) => workspace.id === localOfficeFiles.id);
+      const workspace = await ensureFileAssistantWorkspace(config, localOfficeFiles.root);
+      if (!registered) onWorkspacesChanged();
+      const client = createWorkspaceOpencodeClient(config, workspace);
+      if (previousSessionId) {
+        const previous = await client.session.get({ sessionID: previousSessionId });
+        if (previous.response.status !== 404) {
+          const restored = unwrapOpencodeResult(previous, "/session/get");
+          if (restored?.id !== previousSessionId) throw new ApiError(503, "file_assistant_session_unavailable", "文件会话暂不可用，请稍后重试");
+          return previousSessionId;
+        }
+      }
+      const created = unwrapOpencodeResult(await client.session.create({ title: "文件对话" }), "/session/create");
+      if (!created.id) throw new ApiError(503, "file_assistant_session_unavailable", "文件会话未能创建，请稍后重试");
+      return created.id;
+    },
+  });
 
   registerFileRoutes({
     routes,
@@ -3933,7 +3969,11 @@ function createRoutes(
     resolveOutboxEnabled,
     resolveInboxMaxBytes,
     scopeRank,
-    beforeFileMutation: (workspaceId, paths) => officeDocuments.assertFileMutationAllowed(workspaceId, paths),
+    resolveExternalFile: async (workspaceId, path) => localOfficeFiles.isExternal(workspaceId, path) ? localOfficeFiles.resolve(path) : null,
+    beforeFileMutation: (workspaceId, paths) => {
+      if (paths.some((path) => localOfficeFiles.isExternal(workspaceId, path))) throw new ApiError(409, "office_native_edit_required", "请通过已打开的 Office 文档编辑和保存原文件");
+      officeDocuments.assertFileMutationAllowed(workspaceId, paths);
+    },
     onFileRenamed: (workspaceId, from, to) => {
       if (config.workspaces.find((workspace) => workspace.id === workspaceId)?.workspaceType !== "remote") {
         fileDeliveries.registry(workspaceId).rename(from, to);
@@ -3949,7 +3989,7 @@ function createRoutes(
       return await readSessionActivity(config, workspace, sessionId) === "idle";
     },
   });
-  registerOfficeRoutes({ routes, config, documents: officeDocuments, localFiles: localOfficeFiles, jsonResponse, readJsonBody, ensureWritable, requireClientScope, resolveWorkspace });
+  registerOfficeRoutes({ routes, config, documents: officeDocuments, jsonResponse, readJsonBody, ensureWritable, requireClientScope, resolveWorkspace });
 
   addRoute(routes, "GET", "/workspace/:id/plugins", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);

@@ -119,7 +119,7 @@ test("只有真实就绪且无修改的模型显示已保存，导入、故障�
   );
 });
 
-test("两种宿主顶栏同步显示保存状态，独立窗口菜单只在侧栏提供，云端操作保持禁用", async () => {
+test("两种宿主顶栏同步显示保存状态，不展示上传和分享，AI 入口位于更多菜单之后", async () => {
   const previousAct = Reflect.get(globalThis, "IS_REACT_ACT_ENVIRONMENT");
   Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
   const calls: string[] = [];
@@ -139,6 +139,7 @@ test("两种宿主顶栏同步显示保存状态，独立窗口菜单只在侧�
             host === "panel" ? () => calls.push("panel:window") : undefined
           }
           showFolderShortcut={host === "panel"}
+          trailingActions={host === "window" ? <button data-ai-entry>AI</button> : undefined}
         />
       ))}
     </>
@@ -159,18 +160,12 @@ test("两种宿主顶栏同步显示保存状态，独立窗口菜单只在侧�
     expect(
       buttons(t("session_files.save")).every((button) => button.props.disabled),
     ).toBe(true);
-    expect(
-      buttons(t("artifact.upload")).every((button) => button.props.disabled),
-    ).toBe(true);
-    expect(
-      buttons(t("artifact.share")).every((button) => button.props.disabled),
-    ).toBe(true);
-    expect(buttons(t("artifact.share"))).toHaveLength(2);
-    expect(
-      buttons(t("artifact.share")).every(
-        (button) => button.findAllByType("span").length === 0,
-      ),
-    ).toBe(true);
+    expect(buttons(t("artifact.upload"))).toHaveLength(0);
+    expect(buttons(t("artifact.share"))).toHaveLength(0);
+    const windowToolbar = view!.root.findAllByProps({ "data-file-editor-toolbar": true })[1]!;
+    const toolbarButtons = windowToolbar.findAllByType("button");
+    expect(toolbarButtons.at(-1)?.props["data-ai-entry"]).toBe(true);
+    expect(toolbarButtons.findIndex((button) => button.props["aria-label"] === t("file_window.more"))).toBeLessThan(toolbarButtons.length - 1);
     expect(t("artifact.share")).not.toContain("TODO");
     expect(t("artifact.share_unavailable")).not.toContain("TODO");
     const windowItems = view!.root

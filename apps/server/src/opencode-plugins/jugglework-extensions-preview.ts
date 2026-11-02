@@ -338,7 +338,8 @@ async function currentOfficeDocument(context: OpenCodeContext) {
   if (!context.sessionID) throw new Error("Office requires the calling session");
   const signal = AbortSignal.timeout(5_000);
   const workspace = await resolveContextWorkspace(context.workspaceId ?? context.workspaceID, context, signal);
-  const response = await serverGet(`/workspace/${encodeURIComponent(workspace.id)}/office/current?sessionId=${encodeURIComponent(context.sessionID)}`, signal);
+  const query = new URLSearchParams({ sessionId: context.sessionID, ...(context.messageID ? { messageId: context.messageID } : {}) });
+  const response = await serverGet(`/workspace/${encodeURIComponent(workspace.id)}/office/current?${query}`, signal);
   if (!isRecord(response) || !(response.document === null || isRecord(response.document))) throw new Error("Invalid Office document context");
   return { workspaceId: workspace.id, document: response.document, selection: response.selection ?? null };
 }

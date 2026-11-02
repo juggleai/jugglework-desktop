@@ -102,6 +102,7 @@ export function GeneratedVideoResultCard({ job: initialJob }: { job: GeneratedVi
   }, [client, job.id, job.status, job.toolCallId, workspaceId])
 
   React.useEffect(() => {
+    if (!client) return
     if (!TERMINAL.has(job.status)) {
       observedActiveJob.current = true
       return
@@ -130,10 +131,11 @@ export function GeneratedVideoResultCard({ job: initialJob }: { job: GeneratedVi
         detail: body,
       })
     }
-  }, [job, sessionId])
+  }, [client, job, sessionId])
 
   React.useEffect(() => {
-    if (!client || !job.artifact || job.status !== "completed") return
+    if (!job.artifact || job.status !== "completed") return
+    if (!client) { setLoadError(copy.unavailable); return }
     let active = true
     let url: string | null = null
     setLoadError(null)

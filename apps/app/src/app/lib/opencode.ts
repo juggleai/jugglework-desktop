@@ -17,7 +17,8 @@ import {
   type JuggleWorkSessionRun,
   type JuggleWorkSessionRunObservation,
 } from "./jugglework-server";
-import { isDesktopRuntime } from "./runtime-env";
+import { isDesktopRuntime, isFileWindowRuntime } from "./runtime-env";
+import { fileWindowEventResponse } from "./file-window-conversation-bridge";
 
 type FieldsResult<T> =
   | ({ data: T; error?: undefined } & { request: Request; response: Response })
@@ -337,7 +338,11 @@ export function sessionRunObservation(raw: unknown): { sessionId: string; status
   if (!sessionId) return null;
   if (event.type === "message.updated" && nestedInfo?.role !== "assistant") return null;
   if (event.type === "session.idle") return { sessionId, status: "idle" };
-  if (event.type === "session.error") return { sessionId, status: "failed" };
+  if (event.type === "session.error") return {
+    sessionId,
+    status: properties.error && typeof properties.error === "object" && "name" in properties.error &&
+      properties.error.name === "MessageAbortedError" ? "aborted" : "failed",
+  };
   if (
     event.type === "message.updated" ||
     event.type === "message.part.updated" ||
@@ -462,7 +467,7 @@ function nativeFetchRef(): typeof globalThis.fetch {
   return globalThis.fetch as typeof globalThis.fetch;
 }
 
-const createDesktopFetch = (auth?: OpencodeAuth) => {
+const createDesktopFetch = (auth?: OpencodeAuth, onEventConnected?: () => void) => {
   const authHeader = resolveAuthHeader(auth);
   const addAuth = (headers: Headers) => {
     if (!authHeader || headers.has("Authorization")) return;
@@ -473,6 +478,13 @@ const createDesktopFetch = (auth?: OpencodeAuth) => {
     // Streams must go through the webview's native fetch to avoid the
     // Tauri HTTP plugin's `fetch_read_body` hang on never-closing bodies.
     const shouldStream = requestIsStreaming(input, init);
+    if (shouldStream && isFileWindowRuntime()) {
+      const bridge = window.__JUGGLEWORK_ELECTRON__?.fileWindow;
+      if (!bridge || !/\/event(?:\?|$)/.test(getRequestUrl(input))) {
+        throw new Error("Unsupported file-window stream.");
+      }
+      return Promise.resolve(fileWindowEventResponse(bridge, init?.signal ?? (input instanceof Request ? input.signal : undefined), onEventConnected));
+    }
     const underlyingFetch = shouldStream
       ? nativeFetchRef()
       : desktopFetch;
@@ -524,7 +536,7 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
   }
 
   const fetchImpl = isDesktopRuntime()
-    ? createDesktopFetch(auth)
+    ? createDesktopFetch(auth, options?.onEventConnected)
     : (input: RequestInfo | URL, init?: RequestInit) =>
         fetchWithTimeout(globalThis.fetch, input, init, DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS);
   const client = createOpencodeClient({
@@ -807,7 +819,7 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
     });
   };
 
-  if (juggleworkMount && juggleworkSessionClient) {
+  if (juggleworkMount && juggleworkSessionClient && !isFileWindowRuntime()) {
     const hydrateMountedSessionRuns = async () => {
       const prefix = mountedSessionRunPrefix(juggleworkMount);
       const revisionsAtStart = new Map<string, number>();

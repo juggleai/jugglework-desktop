@@ -6,6 +6,7 @@ import { getReactQueryClient } from "../../../infra/query-client";
 import { captureAnalyticsEvent, takeTaskRunStart } from "@/app/lib/analytics";
 import { trackTaskCompleted, trackTaskFailed } from "@/app/lib/den-telemetry";
 import { createClient } from "@/app/lib/opencode";
+import { isFileWindowRuntime } from "@/app/lib/runtime-env";
 import { normalizeEvent } from "@/app/utils";
 import { SYNTHETIC_RUN_DIAGNOSTIC_MESSAGE_PREFIX, SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX, type OpencodeEvent, type PendingPermission, type PendingQuestion } from "@/app/types";
 import {
@@ -28,7 +29,7 @@ import {
   useSessionActivityStore,
   type SessionActivityRecord,
 } from "../status/session-activity-store";
-import { notifyDesktopEvent } from "../../../shell/desktop-notifications";
+import { notifyDesktopEvent as notifyMainDesktopEvent, type DesktopNotificationEvent } from "../../../shell/desktop-notifications";
 import { reconcileRunCompletionDiagnostic } from "./run-completion-diagnostics";
 import {
   completeRunningSessionCompactions,
@@ -48,6 +49,11 @@ import {
   upsertLivePermission,
   upsertLiveQuestion,
 } from "./workspace-interactions";
+
+/** 全局通知仍由主窗口消费，文件窗口只维护自己的会话投影。 */
+function notifyDesktopEvent(event: DesktopNotificationEvent) {
+  if (!isFileWindowRuntime()) notifyMainDesktopEvent(event);
+}
 
 type SyncOptions = {
   workspaceId: string;
@@ -1853,6 +1859,7 @@ function startSync(input: SyncOptions) {
   };
 
   const recoverConfirmedDelegatedTaskStalls = async () => {
+    if (isFileWindowRuntime()) return;
     if (!entry || !input.interactionClient) return;
     const activityStore = useSessionActivityStore.getState();
     const records = activityStore.recordsByWorkspaceId[input.workspaceId] ?? {};
@@ -2180,7 +2187,7 @@ export function trackWorkspaceSessionSync(input: SyncOptions, sessionId: string 
     const current = entry.trackedSessionRefs.get(normalizedSessionId) ?? 0;
     if (current <= 1) {
       entry.trackedSessionRefs.delete(normalizedSessionId);
-      retainSession(input, entry, normalizedSessionId);
+      if (!isFileWindowRuntime()) retainSession(input, entry, normalizedSessionId);
       return;
     }
     entry.trackedSessionRefs.set(normalizedSessionId, current - 1);

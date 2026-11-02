@@ -254,11 +254,11 @@ export function ArtifactCards({ artifacts, turnId, onUndo }: { artifacts: Artifa
       data-testid="turn-artifacts"
     >
       <section className="overflow-hidden rounded-2xl border border-border bg-background" aria-label={t("artifact.turn_files")} data-testid="artifact-summary">
-        <header className="flex items-center gap-3 border-b border-border px-3 py-3 sm:px-4">
+        <header className="flex flex-wrap items-center gap-3 border-b border-border px-3 py-3 sm:px-4">
           <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted/60 text-muted-foreground" aria-hidden="true">
             <FileDiff className="size-5" />
           </span>
-          <div className="min-w-0 flex-1">
+          <div className="min-w-32 flex-1">
             <h3 className="text-sm font-semibold">{t("artifact.summary_count", { count: artifacts.length })}</h3>
             {changes.length ? <div className="mt-0.5"><ChangeCounts change={{ ...totals, source: changes.some((change) => change.source === "edits") ? "edits" : "snapshot" }} /></div> : null}
           </div>

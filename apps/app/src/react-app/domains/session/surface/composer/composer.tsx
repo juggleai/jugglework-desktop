@@ -149,6 +149,7 @@ function isComposerExtensionAvailable(entry: McpDirectoryInfo) {
 }
 
 export type ComposerProps = {
+  restrictedHost?: boolean;
   sessionId: string;
   officeGroups?: OfficeComposerGroup[];
   createVoiceRealtimeSession: JuggleWorkServerClient["createVoiceRealtimeSession"] | null;
@@ -629,12 +630,12 @@ export function ReactSessionComposer(props: ComposerProps) {
     const hasContent = props.draft.trim().length > 0 || props.attachments.length > 0;
     if (!hasContent) return;
     if (props.submissionPreparing || props.submissionDisabled) return;
-    if (resolveComposerSubmitAction(props.busy) === "queue") {
+    if (!props.restrictedHost && resolveComposerSubmitAction(props.busy) === "queue") {
       void props.onQueue();
       return;
     }
     void props.onSend();
-  }, [props.busy, props.draft, props.attachments, props.onSend, props.onQueue, props.submissionDisabled, props.submissionPreparing]);
+  }, [props.restrictedHost, props.busy, props.draft, props.attachments, props.onSend, props.onQueue, props.submissionDisabled, props.submissionPreparing]);
 
   // 编辑器只显示草稿的文本部分（剥离附件 token），每次变更再把当前附件 token
   // 追加回去，保证草稿这一附件生命周期真源不被破坏。
@@ -648,7 +649,7 @@ export function ReactSessionComposer(props: ComposerProps) {
   const slashCommandQuery = getSlashCommandQuery(props.draft);
   const slashOpenNext = slashCommandQuery !== null;
   const slashQuery = slashCommandQuery ?? "";
-  const mentionMatch = props.draft.match(/@([^\s@]*)$/);
+  const mentionMatch = props.restrictedHost ? null : props.draft.match(/@([^\s@]*)$/);
   const mentionOpenNext = Boolean(mentionMatch);
   const mentionQuery = mentionMatch?.[1] ?? "";
   const plusMenuAgents = useMemo(
@@ -673,7 +674,7 @@ export function ReactSessionComposer(props: ComposerProps) {
     }), [plusMenuAgents]);
 
   const composerExtensions = JUGGLEWORK_EXTENSION_CATALOG.filter((entry) =>
-    !builtInExtensionsDisabled &&
+    !props.restrictedHost && !builtInExtensionsDisabled &&
     !isJuggleWorkExtensionHidden(entry) && isComposerExtensionAvailable(entry)
   );
   const activeMcpItems = mcpServers.map((entry) => ({
@@ -682,9 +683,9 @@ export function ReactSessionComposer(props: ComposerProps) {
   }));
 
   const plusMenuAddEntries = useMemo<PlusMenuEntry[]>(() => [
-    { kind: "file", id: "file", label: t("composer.plus_menu_file"), description: t("composer.plus_menu_file_description") },
+    ...(!props.restrictedHost ? [{ kind: "file" as const, id: "file" as const, label: t("composer.plus_menu_file"), description: t("composer.plus_menu_file_description") }] : []),
     ...(props.onCreatePresentation ? [{ kind: "presentation" as const, id: "presentation" as const, label: "Create presentation", description: "Build an editable PowerPoint from this session" }] : []),
-    { kind: "sketch", id: "sketch", label: t("composer.plus_menu_draw"), description: t("composer.plus_menu_draw_description") },
+    ...(!props.restrictedHost ? [{ kind: "sketch" as const, id: "sketch" as const, label: t("composer.plus_menu_draw"), description: t("composer.plus_menu_draw_description") }] : []),
     ...(props.imageGenerationModels.length > 0
       ? [{ kind: "image-generation" as const, id: "image-generation" as const, label: t("composer.image_generation"), description: t("composer.plus_menu_image_description") }]
       : []),
@@ -698,7 +699,7 @@ export function ReactSessionComposer(props: ComposerProps) {
       description: entry.description,
       name: entry.name,
     })),
-  ], [plusMenuAgentEntries, props.imageGenerationModels.length, props.onCreatePresentation, props.videoGenerationModels.length]);
+  ], [plusMenuAgentEntries, props.restrictedHost, props.imageGenerationModels.length, props.onCreatePresentation, props.videoGenerationModels.length]);
   const plusMenuPluginEntries: PlusMenuEntry[] = [
     ...composerExtensions.map((extension) => ({
       kind: "extension" as const,
@@ -750,10 +751,11 @@ export function ReactSessionComposer(props: ComposerProps) {
 
   useEffect(() => {
     if (!plusMenuOpen) return;
+    if (props.restrictedHost) return;
     void props.onRefreshImageGenerationModels();
     void props.onRefreshVideoGenerationModels();
     void props.listAgents().then(setAgents).catch(() => setAgents([]));
-  }, [plusMenuOpen, props.listAgents, props.onRefreshImageGenerationModels, props.onRefreshVideoGenerationModels]);
+  }, [plusMenuOpen, props.restrictedHost, props.listAgents, props.onRefreshImageGenerationModels, props.onRefreshVideoGenerationModels]);
 
   useEffect(() => {
     let cancelled = false;
@@ -890,7 +892,7 @@ export function ReactSessionComposer(props: ComposerProps) {
   }, [slashOpen, loadCommands]);
 
   useEffect(() => {
-    if (!mentionOpen) return;
+    if (props.restrictedHost || !mentionOpen) return;
     let cancelled = false;
     void Promise.all([props.listAgents(), props.searchFiles(mentionQuery), listRunningAppsForMention()]).then(([agentList, files, apps]) => {
       if (cancelled) return;
@@ -911,7 +913,7 @@ export function ReactSessionComposer(props: ComposerProps) {
     return () => {
       cancelled = true;
     };
-  }, [mentionOpen, mentionQuery, props.listAgents, props.recentFiles, props.searchFiles]);
+  }, [mentionOpen, mentionQuery, props.restrictedHost, props.listAgents, props.recentFiles, props.searchFiles]);
 
   useEffect(() => {
     if (!plusMenuOpen) return;
@@ -1042,10 +1044,10 @@ export function ReactSessionComposer(props: ComposerProps) {
     [slashCommandFiltered, slashSkillFiltered],
   );
   const mentionFiltered = useMemo(() => {
-    if (!mentionOpen) return [];
+    if (props.restrictedHost || !mentionOpen) return [];
     if (!mentionQuery) return mentionItems.slice(0, 8);
     return fuzzysort.go(mentionQuery, mentionItems, { keys: ["label"], limit: 8 }).map((entry) => entry.obj);
-  }, [mentionItems, mentionOpen, mentionQuery]);
+  }, [props.restrictedHost, mentionItems, mentionOpen, mentionQuery]);
   const pastedTextTokens = useMemo(
     () => props.pastedText.map((item) => ({ label: item.label, lines: item.lines, text: item.text })),
     [props.pastedText],
@@ -1310,14 +1312,13 @@ export function ReactSessionComposer(props: ComposerProps) {
   }, [props.onDraftChange]);
 
   const handleKeyDownCapture: React.KeyboardEventHandler<HTMLDivElement> = (event) => {
-    // IME composition guard — block Enter while IME is mid-character.
+    // Leave candidate confirmation, navigation and cancellation to the IME.
     const imeActive =
       imeComposingRef.current ||
       (event.nativeEvent as KeyboardEvent).isComposing === true ||
       event.keyCode === 229;
-    if (event.key === "Enter" && imeActive) {
-      return;
-    }
+    // Candidate navigation and Escape belong to the IME too.
+    if (imeActive) return;
     // macOS Option+Enter / Windows Alt+Enter inserts a newline. Let the
     // editor handle it before any open command or mention menu consumes it.
     if (event.key === "Enter" && event.altKey) {
@@ -1699,7 +1700,7 @@ export function ReactSessionComposer(props: ComposerProps) {
   return (
     <div
       ref={rootRef}
-      className={`sticky bottom-0 ${plusMenuOpen || slashOpen ? "z-50" : "z-20"} ${props.compact ? "bg-transparent p-0" : "bg-gradient-to-t from-dls-surface via-dls-surface/95 to-transparent px-4 pb-2 md:px-8"}`}
+      className={`sticky bottom-0 ${plusMenuOpen || slashOpen ? "z-50" : "z-20"} ${props.compact ? "bg-transparent p-0" : props.restrictedHost ? "bg-gradient-to-t from-dls-surface via-dls-surface/95 to-transparent px-6 pb-4" : "bg-gradient-to-t from-dls-surface via-dls-surface/95 to-transparent px-4 pb-2 md:px-8"}`}
       style={{ contain: "layout style" }}
       onFocusCapture={props.onFocusCapture}
       onKeyDownCapture={handleKeyDownCapture}
@@ -1713,7 +1714,7 @@ export function ReactSessionComposer(props: ComposerProps) {
       <div className="max-w-[800px] mx-auto">
         {/* Main composer panel */}
         <div
-          className={`relative overflow-visible bg-dls-surface transition-[border-color,box-shadow] ${props.compact ? props.compactJoined ? "rounded-b-[31px] border-0 shadow-none" : "rounded-[31px] border border-dls-border shadow-[0_8px_24px_rgba(15,23,42,0.08)] dark:shadow-[0_10px_28px_rgba(0,0,0,0.26)]" : "rounded-[24px] border border-dls-border shadow-[0_10px_30px_rgba(15,23,42,0.1)] dark:shadow-[0_14px_36px_rgba(0,0,0,0.3)]"} ${panelRoundedClass}`}
+          className={`relative overflow-visible bg-dls-surface transition-[border-color,box-shadow] ${props.compact ? props.compactJoined ? "rounded-b-[31px] border-0 shadow-none" : "rounded-[31px] border border-dls-border shadow-[0_8px_24px_rgba(15,23,42,0.08)] dark:shadow-[0_10px_28px_rgba(0,0,0,0.26)]" : props.restrictedHost ? "rounded-[24px] border border-dls-border shadow-none" : "rounded-[24px] border border-dls-border shadow-[0_10px_30px_rgba(15,23,42,0.1)] dark:shadow-[0_14px_36px_rgba(0,0,0,0.3)]"} ${panelRoundedClass}`}
         >
           {props.topAccessory ? <div className="relative z-10">{props.topAccessory}</div> : null}
 
@@ -1856,6 +1857,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                   : t("composer.placeholder")}
               onChange={handleEditorDraftChange}
               onSubmit={handleEditorSubmit}
+              isComposing={() => imeComposingRef.current}
               onExpandPastedText={handleExpandPastedText}
               onRemoveAttachment={props.onRemoveAttachment}
               onPasteText={props.onPasteText}
@@ -1985,6 +1987,7 @@ export function ReactSessionComposer(props: ComposerProps) {
 
                 <div className="flex items-center gap-0">
                   <ModelSelect
+                    restrictedHost={props.restrictedHost}
                     open={props.modelPickerOpen}
                     value={props.selectedModel}
                     onOpenChange={props.onModelPickerOpenChange}
@@ -2004,7 +2007,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                   /> : null}
                 </div>
                 {props.modelUnavailable ? (
-                  <span className="text-xs font-medium text-red-10">Model no longer available</span>
+                  <span className="text-xs font-medium text-red-10">{t("composer.model_unavailable")}</span>
                 ) : null}
 
                 {!props.compact ? <ModelBehaviorSelect

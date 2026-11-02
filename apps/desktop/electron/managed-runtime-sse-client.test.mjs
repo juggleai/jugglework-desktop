@@ -5,7 +5,7 @@ import { createManagedRuntimeSseClient } from "./managed-runtime-sse-client.mjs"
 
 const access = { baseUrl: "http://127.0.0.1:4096", clientToken: "runtime-token" };
 const immediateTimers = {
-  setTimeout(callback) { queueMicrotask(callback); return callback; },
+  setTimeout(callback, delay) { if (delay <= 1000) queueMicrotask(callback); return callback; },
   clearTimeout() {},
 };
 
@@ -13,10 +13,33 @@ function streamResponse(chunks) {
   const encoder = new TextEncoder();
   return new Response(new ReadableStream({
     start(controller) {
-      for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+      for (const chunk of chunks) controller.enqueue(typeof chunk === "string" ? encoder.encode(chunk) : chunk);
       controller.close();
     },
   }), { headers: { "content-type": "text/event-stream; charset=utf-8" } });
+}
+
+async function collectEvents(chunks, options = {}) {
+  const controller = new AbortController();
+  const events = [];
+  let requests = 0;
+  const client = createManagedRuntimeSseClient({
+    ...options,
+    getAccess: () => access,
+    fetcher: async () => {
+      if (++requests === 1) return streamResponse(chunks);
+      controller.abort();
+      throw new Error("stop after EOF");
+    },
+    timers: immediateTimers,
+  });
+  await client.subscribe({
+    workspaceId: "ws_1",
+    signal: controller.signal,
+    onReconnectGap: () => {},
+    onEvent: (event) => { events.push(event); },
+  });
+  return events;
 }
 
 describe("managed runtime SSE client", () => {
@@ -126,6 +149,54 @@ describe("managed runtime SSE client", () => {
       onEvent: (event) => { events.push(event); controller.abort(); },
     });
     assert.deepEqual(events, [{ value: 1 }]);
+  });
+
+  it("parses the same multiline UTF-8 records at every byte split for LF, CR, and CRLF", async () => {
+    const expected = [{ type: "todo.updated", text: "中文待办" }, { value: "完成" }];
+    for (const newline of ["\n", "\r", "\r\n"]) {
+      const bytes = new TextEncoder().encode([
+        ": ping", "id: 4", 'data: {"type":"todo.updated",',
+        'data: "text":"中文待办"}', "", 'data: {"value":"完成"}', "", "",
+      ].join(newline));
+      for (let split = 0; split <= bytes.length; split += 1) {
+        assert.deepEqual(
+          await collectEvents([bytes.slice(0, split), bytes.slice(split)]),
+          expected,
+          `newline=${JSON.stringify(newline)}, byte split=${split}`,
+        );
+      }
+      assert.deepEqual(await collectEvents(Array.from(bytes, (byte) => Uint8Array.of(byte))), expected);
+    }
+  });
+
+  it("distinguishes single CR from CRLF across chunks and accepts a final CR at EOF", async () => {
+    assert.deepEqual(await collectEvents([
+      'data: {"value":\r', "", 'data: "中文"}\r', "\r",
+    ]), [{ value: "中文" }]);
+    assert.deepEqual(await collectEvents([
+      'data: {"value":\r', "", '\ndata: "中文"}\r', "\n\r", "\n",
+    ]), [{ value: "中文" }]);
+    assert.deepEqual(await collectEvents([
+      'data: {"value":\r', '\ndata: "中文"}\r\n\r',
+    ]), [{ value: "中文" }]);
+    assert.deepEqual(await collectEvents(['data: {"value":1}\r']), []);
+  });
+
+  it("enforces the frame byte limit across split CRLF and single CR lines", async () => {
+    const lines = ['data: {"value":', 'data: "中文"}'];
+    const frameBytes = lines.reduce((total, line) => total + Buffer.byteLength(line, "utf8") + 1, 0);
+    for (const newline of ["\n", "\r", "\r\n"]) {
+      const bytes = new TextEncoder().encode([...lines, "", ""].join(newline));
+      const chunks = Array.from(bytes, (byte) => Uint8Array.of(byte));
+      assert.deepEqual(await collectEvents(chunks, { maxBufferBytes: frameBytes }), [{ value: "中文" }]);
+      await assert.rejects(collectEvents(chunks, { maxBufferBytes: frameBytes - 1 }), { code: "buffer_overflow" });
+      // An unfinished final line still belongs to the accumulated frame.
+      const unfinished = new TextEncoder().encode(lines.join(newline));
+      await assert.rejects(collectEvents(
+        Array.from(unfinished, (byte) => Uint8Array.of(byte)),
+        { maxBufferBytes: frameBytes - 3 },
+      ), { code: "buffer_overflow" });
+    }
   });
 
   it("sends the committed cursor on reconnect and reports a gap", async () => {
