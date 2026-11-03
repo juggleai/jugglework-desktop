@@ -1,8 +1,9 @@
 /** @jsxImportSource react */
-import { createContext, use, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, use, useCallback, useEffect, useMemo, useRef, useState, type FocusEvent, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
 import { AutomationSidebarPreview } from "@/react-app/domains/automations/automation-sidebar-preview";
+import { TasksSidebar, type TasksSidebarRegistration } from "@/react-app/domains/tasks/tasks-sidebar";
 import {
   CustomizationCatalogSidebar,
   type CustomizationCatalogSection,
@@ -14,7 +15,7 @@ import { workspaceAppsRoute } from "./workspace-routes";
 import type { TaskScope } from "@/react-app/domains/session/sidebar/task-scope-store";
 import { ToonFactoryProjectSidebar, type ToonFactorySidebarRegistration } from "./toon-factory-sidebar";
 
-export type AppNavigationSidebarPreviewTarget = "automation" | "plugins" | "toon-factory";
+export type AppNavigationSidebarPreviewTarget = "automation" | "plugins" | "tasks" | "toon-factory";
 const CLOSE_DELAY = 120;
 
 type PreviewContextValue = {
@@ -27,6 +28,7 @@ type PreviewContextValue = {
   onPreviewLeave: () => void;
   closePreview: () => void;
   publishPluginItems: (items: CustomizationInstalledItem[]) => void;
+  publishTasksSidebar: (registration: TasksSidebarRegistration | null) => void;
   publishToonFactorySidebar: (registration: ToonFactorySidebarRegistration | null) => void;
 };
 
@@ -40,6 +42,7 @@ const PreviewContext = createContext<PreviewContextValue>({
   onPreviewLeave: () => undefined,
   closePreview: () => undefined,
   publishPluginItems: () => undefined,
+  publishTasksSidebar: () => undefined,
   publishToonFactorySidebar: () => undefined,
 });
 
@@ -49,9 +52,11 @@ export function AppNavigationSidebarPreviewProvider(props: { children: ReactNode
   const [target, setTarget] = useState<AppNavigationSidebarPreviewTarget | null>(null);
   const [workspaceTarget, setWorkspaceTarget] = useState<TaskScope | null>(null);
   const [pluginItems, setPluginItems] = useState<CustomizationInstalledItem[]>([]);
+  const [tasksSidebar, setTasksSidebar] = useState<TasksSidebarRegistration | null>(null);
   const [toonFactorySidebar, setToonFactorySidebar] = useState<ToonFactorySidebarRegistration | null>(null);
   const closeTimerRef = useRef<number | null>(null);
   const pointerInsideRef = useRef(false);
+  const focusInsideRef = useRef(false);
 
   const cancelClose = useCallback(() => {
     if (closeTimerRef.current === null) return;
@@ -61,7 +66,7 @@ export function AppNavigationSidebarPreviewProvider(props: { children: ReactNode
   const scheduleClose = useCallback(() => {
     cancelClose();
     closeTimerRef.current = window.setTimeout(() => {
-      if (!pointerInsideRef.current) {
+      if (!pointerInsideRef.current && !focusInsideRef.current) {
         setTarget(null);
         setWorkspaceTarget(null);
       }
@@ -96,19 +101,31 @@ export function AppNavigationSidebarPreviewProvider(props: { children: ReactNode
     pointerInsideRef.current = false;
     scheduleClose();
   }, [scheduleClose]);
+  const onPreviewFocus = useCallback(() => {
+    focusInsideRef.current = true;
+    cancelClose();
+  }, [cancelClose]);
+  const onPreviewBlur = useCallback((event: FocusEvent<HTMLDivElement>) => {
+    if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+    focusInsideRef.current = false;
+    scheduleClose();
+  }, [scheduleClose]);
   const closePreview = useCallback(() => {
     cancelClose();
     pointerInsideRef.current = false;
+    focusInsideRef.current = false;
     setTarget(null);
     setWorkspaceTarget(null);
   }, [cancelClose]);
   const publishPluginItems = useCallback((items: CustomizationInstalledItem[]) => setPluginItems(items), []);
+  const publishTasksSidebar = useCallback((registration: TasksSidebarRegistration | null) => setTasksSidebar(registration), []);
   const publishToonFactorySidebar = useCallback((registration: ToonFactorySidebarRegistration | null) => setToonFactorySidebar(registration), []);
 
   useEffect(() => () => cancelClose(), [cancelClose]);
   useEffect(() => {
     cancelClose();
     pointerInsideRef.current = false;
+    focusInsideRef.current = false;
     setTarget(null);
     setWorkspaceTarget(null);
   }, [cancelClose, location.pathname, sidebarOpen]);
@@ -123,8 +140,9 @@ export function AppNavigationSidebarPreviewProvider(props: { children: ReactNode
     onPreviewLeave,
     closePreview,
     publishPluginItems,
+    publishTasksSidebar,
     publishToonFactorySidebar,
-  }), [closePreview, onPreviewEnter, onPreviewLeave, onTriggerChange, onWorkspaceTriggerChange, publishPluginItems, publishToonFactorySidebar, sidebarOpen, target, workspaceTarget]);
+  }), [closePreview, onPreviewEnter, onPreviewLeave, onTriggerChange, onWorkspaceTriggerChange, publishPluginItems, publishTasksSidebar, publishToonFactorySidebar, sidebarOpen, target, workspaceTarget]);
 
   return (
     <PreviewContext.Provider value={value}>
@@ -133,9 +151,12 @@ export function AppNavigationSidebarPreviewProvider(props: { children: ReactNode
         <AppNavigationSidebarPreviewHost
           target={target}
           pluginItems={pluginItems}
+          tasksSidebar={tasksSidebar}
           toonFactorySidebar={toonFactorySidebar}
           onMouseEnter={onPreviewEnter}
           onMouseLeave={onPreviewLeave}
+          onFocus={onPreviewFocus}
+          onBlur={onPreviewBlur}
         />
       ) : null}
     </PreviewContext.Provider>
@@ -161,12 +182,23 @@ export function usePublishToonFactorySidebar(registration: ToonFactorySidebarReg
   }, [publishToonFactorySidebar, registration]);
 }
 
+export function usePublishTasksSidebar(registration: TasksSidebarRegistration | null) {
+  const { publishTasksSidebar } = use(PreviewContext);
+  useEffect(() => {
+    publishTasksSidebar(registration);
+    return () => publishTasksSidebar(null);
+  }, [publishTasksSidebar, registration]);
+}
+
 function AppNavigationSidebarPreviewHost(props: {
   target: AppNavigationSidebarPreviewTarget;
   pluginItems: CustomizationInstalledItem[];
+  tasksSidebar: TasksSidebarRegistration | null;
   toonFactorySidebar: ToonFactorySidebarRegistration | null;
   onMouseEnter: () => void;
   onMouseLeave: () => void;
+  onFocus: () => void;
+  onBlur: (event: FocusEvent<HTMLDivElement>) => void;
 }) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -186,9 +218,13 @@ function AppNavigationSidebarPreviewHost(props: {
       style={{ width: appInsetSidebarCssWidth(width) }}
       onMouseEnter={props.onMouseEnter}
       onMouseLeave={props.onMouseLeave}
+      onFocus={props.onFocus}
+      onBlur={props.onBlur}
       data-app-navigation-sidebar-preview={props.target}
     >
-      {props.target === "automation" ? <AutomationSidebarPreview /> : props.target === "toon-factory" ? (
+      {props.target === "automation" ? <AutomationSidebarPreview /> : props.target === "tasks" ? (
+        props.tasksSidebar ? <TasksSidebar preview {...props.tasksSidebar} /> : null
+      ) : props.target === "toon-factory" ? (
         props.toonFactorySidebar ? <ToonFactoryProjectSidebar preview {...props.toonFactorySidebar} /> : null
       ) : (
         <CustomizationCatalogSidebar

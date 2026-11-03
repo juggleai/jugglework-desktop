@@ -1,7 +1,7 @@
 import type { DenProductTask, DenProductTaskUpdateInput, DenProductTaskView } from "@/app/lib/den";
 import { productTaskScopeKey, type ProductTaskScope } from "./task-queries";
 
-export type TaskSection = DenProductTaskView | "activity" | "archived";
+export type TaskSection = Exclude<DenProductTaskView, "inbox" | "trash"> | "activity";
 export type ProductTaskEditDraft = {
   taskId: string;
   title: string;
@@ -9,7 +9,7 @@ export type ProductTaskEditDraft = {
   expectedVersion: number;
 };
 
-const TASK_SECTIONS: TaskSection[] = ["today", "inbox", "assigned", "created", "following", "activity", "all", "completed", "trash", "archived"];
+const TASK_SECTIONS: TaskSection[] = ["today", "assigned", "following", "activity", "all", "created", "delegated", "completed"];
 
 export function taskSectionStorageKey(scope: ProductTaskScope | null): string {
   if (!scope) return "jugglework:tasks:section:anonymous";
@@ -18,8 +18,11 @@ export function taskSectionStorageKey(scope: ProductTaskScope | null): string {
 
 export function readTaskSection(scope: ProductTaskScope | null): TaskSection {
   if (typeof sessionStorage === "undefined") return "today";
-  const value = sessionStorage.getItem(taskSectionStorageKey(scope));
-  return TASK_SECTIONS.some((section) => section === value) ? value as TaskSection : "today";
+  const key = taskSectionStorageKey(scope);
+  const value = sessionStorage.getItem(key);
+  if (TASK_SECTIONS.some((section) => section === value)) return value as TaskSection;
+  if (value !== null) sessionStorage.setItem(key, "today");
+  return "today";
 }
 
 export function writeTaskSection(scope: ProductTaskScope | null, section: TaskSection): void {

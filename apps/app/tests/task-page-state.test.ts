@@ -49,6 +49,19 @@ test("task section persistence is isolated by user and organization", () => {
   expect(readTaskSection(scopeB)).toBe("completed");
 });
 
+test("hidden and invalid persisted sections migrate to Today", () => {
+  for (const section of ["inbox", "trash", "archived", "unknown"]) {
+    storage.set(taskSectionStorageKey(scopeA), section);
+    expect(readTaskSection(scopeA)).toBe("today");
+    expect(storage.get(taskSectionStorageKey(scopeA))).toBe("today");
+  }
+});
+
+test("delegated section persists as a visible section", () => {
+  writeTaskSection(scopeA, "delegated");
+  expect(readTaskSection(scopeA)).toBe("delegated");
+});
+
 test("conflict draft survives latest task data and adopts its version for retry", () => {
   const draft = productTaskEditDraft("task_one", {
     expectedVersion: 3,

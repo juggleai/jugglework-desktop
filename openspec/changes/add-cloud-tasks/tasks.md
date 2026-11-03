@@ -18,15 +18,15 @@
 ## 3. Desktop Task Center Foundation
 
 - [x] 3.1 Map the existing Desktop navigation, routing, API client, query-state, localization, and component conventions
-- [x] 3.2 Add a dedicated Tasks navigation item, `/tasks` route, localization, and Agent-independent loading/empty/error shell
+- [x] 3.2 Add Tasks to More with optional navigation-rail pinning, the `/tasks` route, localization, and an Agent-independent loading/empty/error shell
 - [x] 3.3 Add typed task API client, dedicated move contract, query keys, pagination, mutations, and draft-preserving optimistic-conflict handling
-- [x] 3.4 Implement Today, Inbox, Assigned to me, Created by me, Following, Activity, All, Completed, Trash, and archived-list navigation
-- [x] 3.5 Implement paginated task rows, title-only create, search, priority filter, basic sorting, and title/due/priority display
-- [ ] 3.6 Add member, status, start/due time, visibility, list, and field-display controls plus permission-aware inline actions
-- [ ] 3.7 Complete collaborative full create/edit, member management, list-scoped creation/move, and all lifecycle actions including delete/restore
+- [x] 3.4 Implement the Tasks sidebar information architecture: Today, Assigned to me, Following, and Activity as primary navigation; All tasks, Created by me, Assigned by me (`view=delegated`), and Completed in collapsible Quick access; task lists below; and safe migration of removed persisted destinations
+- [x] 3.5 Implement paginated task rows, full create, priority filter, basic sorting, and title/due/priority display without quick-create or task search
+- [x] 3.6 Add member, status, start/due time, visibility, list, and field-display controls plus permission-aware inline actions
+- [ ] 3.7 Complete collaborative edit, member management, list-scoped move, and all lifecycle actions including delete/restore; full create and contextual list defaults are complete
 - [ ] 3.8 Implement the aggregate Activity view, pagination, unread state, and event navigation
 - [x] 3.9 Add the dedicated route, loading/empty/error shell, section persistence, and no-Agent smoke tests
-- [ ] 3.10 Add connected Desktop tests for create/edit, members/time/visibility/list controls, lifecycle actions, Activity, mutation errors, and permission changes
+- [ ] 3.10 Add connected Desktop tests for edit, member management, lifecycle actions, Activity, and permission changes; full-create fields/defaults/validation, mutation errors, and scope fencing are covered
 
 ## 4. Explicitly Excluded IM Interoperability
 
@@ -51,6 +51,6 @@ IM message creation, Task source references, chat cards, access requests, and Ta
 
 - [x] 7.1 Add analytics events without Task content and operational metrics for failures, duplicates, reminders, and authorization denials
 - [ ] 7.2 Run server migration, unit, API, Desktop, and i18n test suites and fix regressions
-  - Verification completed against the configured local MySQL database on 2026-11-01: migration `20261101`, server unit/vet suites, authenticated Task API CRUD/comments/activity/reminders, Desktop typecheck/focused tests, Electron startup smoke, and visible Task deep-link/list/detail/comment/reminder/quick-create flows passed. Connected collaborative Desktop coverage remains incomplete, so this item stays open.
+  - Verification completed against the configured local MySQL database on 2026-11-01: migration `20261101`, server unit/vet suites, authenticated Task API CRUD/comments/activity/reminders, Desktop typecheck/focused tests, Electron startup smoke, and visible Task deep-link/list/detail/comment/reminder/full-create flows passed. Connected collaborative Desktop coverage remains incomplete, so this item stays open.
 - [ ] 7.3 Perform security review for private tasks, attachments, search, cache, organization-scoped notifications, and deep links
 - [x] 7.4 Document feature-flag rollout, rollback, data retention, support diagnostics, and MVP-A/MVP-B release gates

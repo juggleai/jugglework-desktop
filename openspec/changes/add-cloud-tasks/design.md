@@ -50,11 +50,23 @@ Task 带单调递增 version，修改要求 expectedVersion；冲突返回明确
 
 ### 7. Desktop 采用独立路由和领域模块
 
-Desktop 左侧导航新增 `/tasks`，任务领域拥有独立 API、query keys、页面和状态组件，不复用现有 session “task”命名。首批实现路由、导航和可加载骨架，再逐步接入真实云端数据。
+Desktop 通过 More 菜单打开 `/tasks`，并允许用户将 Tasks 置顶到左侧竖向导航。任务领域拥有独立 API、query keys、页面和状态组件，不复用现有 session “task”命名。首批实现路由、导航和可加载骨架，再逐步接入真实云端数据。
 
 ### 8. 分阶段实施
 
 MVP-A 先完成领域基础、CRUD/授权、Desktop 入口和关键通知；MVP-B 增加附件、子任务和完整清单管理。数据库和 API 从 MVP-A 起预留稳定扩展边界。IM 互操作不属于 MVP-A 或 MVP-B，将单独立项。
+
+### 9. Desktop 任务侧栏信息架构
+
+Desktop 任务侧栏将 Today、Assigned to me、Following、Activity 作为主导航；将 All tasks、Created by me、Assigned by me、Completed 放入默认展开且可折叠的 Quick access，并在其后保留任务清单及创建/归档操作。侧栏不展示 Inbox、Trash 或 Archived lists；旧会话中持久化的这些目标恢复为 Today。Assigned by me 使用 API view token `delegated`；当前 Desktop 实现时 Server checkout 尚无对应常量，因此按约定采用该 token，待 Server 实现保持一致。
+
+### 10. Assigned-to-me List/Board 工作台
+
+仅 Assigned to me 使用富工作台，其他系统视图维持简单列表。工作台按 deployment/user/organization/assigned scope 持久化 List/Board、状态、优先级、清单、逾期、排序、分组和字段设置。默认字段为任务标题、负责人、开始时间、截止时间、创建人、创建时间、任务 ID 和任务清单；标题不可关闭。List 使用可横向滚动的语义表格和粘性表头，Board 固定按 todo/completed/canceled 分列且不伪造拖拽排序。Start 排序仅排序当前已加载页，不向服务端发送不支持的 `start_at` sort。
+
+列表页直接消费 `membersByTaskId: Record<string, DenProductTaskMember[]>`，避免逐任务详情请求；旧版页面响应省略该字段或缺少单个任务键时按空成员数组兼容，字段存在但类型错误时仍拒绝。成员显示通过组织成员 ID 连接分页读取的 `/api/v1/members?limit=200&offset=...` 目录；个人工作区目录拒绝时用 `/v1/me/orgs` 保留的 `orgMemberId`/`membershipId` 和当前用户摘要降级。任务清单分页读完后用于名称连接和筛选，清单连接失败时任务仍渲染并显示可重试的降级提示。
+
+工具区新建菜单仅包含 New task 和 New task list，并使用项目 Dialog/DropdownMenu/Tabs 基础组件。New task 提供标题、描述、负责人、开始时间、截止时间、优先级、可见范围和任务清单；Assigned to me 可识别当前成员时默认选择自己，侧栏所选清单作为默认清单。private 任务只能分配给自己，选择其他负责人时默认切换为 members。New task list 包含名称、描述、标记和 private 默认可见性。两种创建都按 deployment/user/organization scope 隔离迟到结果。
 
 ## Risks / Trade-offs
 

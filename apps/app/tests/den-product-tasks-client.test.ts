@@ -18,11 +18,12 @@ test("product task client sends scoped pagination and strict mutations", async (
     requests.push({ url: String(input), init });
     if (String(input).includes("/tasks/task%2Fone")) return Response.json(result);
     if (init?.method === "POST") return Response.json(result, { status: 201 });
-    return Response.json({ items: [task], nextCursor: "cursor_two" });
+    return Response.json({ items: [task], membersByTaskId: { "task/one": [{ memberId: "member_two", role: "assignee" }] }, nextCursor: "cursor_two" });
   };
   const client = createDenClient({ baseUrl: "https://work.example", token: "token_one" });
   const page = await client.listProductTasks("org_one", { view: "today", cursor: "cursor one", limit: 30 });
   expect(page.nextCursor).toBe("cursor_two");
+  expect(page.membersByTaskId["task/one"]?.[0]).toEqual({ memberId: "member_two", role: "assignee", createdByMemberId: undefined, createdAt: undefined });
   expect(requests[0]!.url).toContain("view=today");
   expect(requests[0]!.url).toContain("cursor=cursor+one");
   expect(new Headers(requests[0]!.init?.headers).get("Authorization")).toBe("Bearer token_one");
@@ -31,6 +32,17 @@ test("product task client sends scoped pagination and strict mutations", async (
   expect(requests[1]!.url).toContain("/tasks/task%2Fone");
   await client.createProductTask("org_one", { idempotencyKey: "create-one", title: "Follow up", visibility: "private" });
   expect(JSON.parse(String(requests[2]!.init?.body))).toEqual({ idempotencyKey: "create-one", title: "Follow up", visibility: "private" });
+});
+
+test("product task client sends the delegated view token", async () => {
+  let requestUrl = "";
+  globalThis.fetch = async (input) => {
+    requestUrl = String(input);
+    return Response.json({ items: [], membersByTaskId: {}, nextCursor: "" });
+  };
+  const client = createDenClient({ baseUrl: "https://work.example", token: "token_one" });
+  await client.listProductTasks("org_one", { view: "delegated" });
+  expect(requestUrl).toContain("view=delegated");
 });
 
 test("product task client preserves version conflict details", async () => {
@@ -74,9 +86,70 @@ test("product task client moves tasks through the dedicated move contract", asyn
 });
 
 test("product task client rejects malformed pages", async () => {
-  globalThis.fetch = async () => Response.json({ items: [{ id: "bad" }], nextCursor: "" });
+  globalThis.fetch = async () => Response.json({ items: [{ id: "bad" }], membersByTaskId: {}, nextCursor: "" });
   const client = createDenClient({ baseUrl: "https://work.example", token: "token_one" });
   await expect(client.listProductTasks("org_one")).rejects.toMatchObject({ code: "invalid_task_page" });
+});
+
+test("product task client accepts older pages without joined members", async () => {
+  const client = createDenClient({ baseUrl: "https://work.example", token: "token_one" });
+  globalThis.fetch = async () => Response.json({ items: [task], nextCursor: "" });
+  const omitted = await client.listProductTasks("org_one");
+  expect(omitted.membersByTaskId).toEqual({ "task/one": [] });
+  expect(omitted.memberProjectionKnownByTaskId).toEqual({ "task/one": false });
+
+  globalThis.fetch = async () => Response.json({ items: [task], membersByTaskId: {}, nextCursor: "" });
+  const missingKey = await client.listProductTasks("org_one");
+  expect(missingKey.membersByTaskId).toEqual({ "task/one": [] });
+  expect(missingKey.memberProjectionKnownByTaskId).toEqual({ "task/one": false });
+});
+
+test("product task client rejects malformed present joined members", async () => {
+  const client = createDenClient({ baseUrl: "https://work.example", token: "token_one" });
+  globalThis.fetch = async () => Response.json({ items: [task], membersByTaskId: { "task/one": "bad" }, nextCursor: "" });
+  await expect(client.listProductTasks("org_one")).rejects.toMatchObject({ code: "invalid_task_page" });
+});
+
+test("product task client serializes supported rich filters", async () => {
+  let requestUrl = "";
+  globalThis.fetch = async (input) => {
+    requestUrl = String(input);
+    return Response.json({ items: [], membersByTaskId: {}, nextCursor: "" });
+  };
+  const client = createDenClient({ baseUrl: "https://work.example", token: "token_one" });
+  await client.listProductTasks("org_one", {
+    creatorMemberId: ["creator one"], assigneeMemberId: ["assignee"], followerMemberId: ["follower"],
+    startAtFrom: "2026-11-01T00:00:00Z", startAtBefore: "2026-12-01T00:00:00Z",
+    dueAtFrom: "2026-11-02T00:00:00Z", dueAtBefore: "2026-12-02T00:00:00Z", overdue: true,
+  });
+  const query = new URL(requestUrl).searchParams;
+  expect(query.getAll("creatorMemberId")).toEqual(["creator one"]);
+  expect(query.getAll("assigneeMemberId")).toEqual(["assignee"]);
+  expect(query.getAll("followerMemberId")).toEqual(["follower"]);
+  expect(query.get("startAtFrom")).toBe("2026-11-01T00:00:00Z");
+  expect(query.get("startAtBefore")).toBe("2026-12-01T00:00:00Z");
+  expect(query.get("dueAtFrom")).toBe("2026-11-02T00:00:00Z");
+  expect(query.get("dueAtBefore")).toBe("2026-12-02T00:00:00Z");
+  expect(query.get("overdue")).toBe("true");
+});
+
+test("product task client pages typed organization members", async () => {
+  let requestUrl = "";
+  globalThis.fetch = async (input) => {
+    requestUrl = String(input);
+    return Response.json({ members: [{ id: "member_one", userId: "user_one", role: "member", user: { id: "user_one", name: "Alice", account: "alice", email: "alice@example.com", avatar: "https://example.com/a.png" } }], total: 1, limit: 200, offset: 0 });
+  };
+  const client = createDenClient({ baseUrl: "https://work.example", token: "token_one" });
+  const page = await client.listOrganizationMembers("org_one", { limit: 200, offset: 0 });
+  expect(requestUrl).toContain("/v1/members?limit=200&offset=0");
+  expect(page.members[0]?.user.name).toBe("Alice");
+});
+
+test("organization summaries retain current member identity fields", async () => {
+  globalThis.fetch = async () => Response.json({ orgs: [{ id: "org_one", name: "One", slug: "one", role: "member", kind: "organization", orgMemberId: "member_one", membershipId: "member_one" }], activeOrgId: "org_one", activeOrgSlug: "one" });
+  const client = createDenClient({ baseUrl: "https://work.example", token: "token_one" });
+  const response = await client.listOrgs();
+  expect(response.orgs[0]).toMatchObject({ orgMemberId: "member_one", membershipId: "member_one" });
 });
 
 test("product task client reads strictly validated notification events", async () => {

@@ -60,9 +60,16 @@ const DEFAULT_DEN_TIMEOUT_MS = 12_000;
 export type DenProductTaskStatus = "todo" | "completed" | "canceled";
 export type DenProductTaskPriority = "none" | "low" | "medium" | "high";
 export type DenProductTaskVisibility = "private" | "members" | "organization";
-export type DenProductTaskView = "today" | "inbox" | "assigned" | "created" | "following" | "all" | "completed" | "trash";
+export type DenProductTaskView = "today" | "inbox" | "assigned" | "created" | "delegated" | "following" | "all" | "completed" | "trash";
 export type DenProductTaskMemberRole = "assignee" | "follower" | "viewer";
 export type DenProductTaskMember = { memberId: string; role: DenProductTaskMemberRole; createdByMemberId?: string; createdAt?: string };
+export type DenOrganizationMember = {
+  id: string;
+  userId: string;
+  role: string;
+  user: { id: string; name: string | null; account: string | null; email: string | null; avatar: string | null };
+};
+export type DenOrganizationMemberPage = { members: DenOrganizationMember[]; total: number; limit: number; offset: number };
 export type DenProductTask = {
   id: string;
   creatorMemberId: string;
@@ -90,10 +97,18 @@ export type DenProductTaskPermissions = {
   canComment: boolean; canDelete: boolean; canRestore: boolean;
 };
 export type DenProductTaskResult = { task: DenProductTask; members: DenProductTaskMember[]; permissions: DenProductTaskPermissions; tombstone: boolean; replayed: boolean };
-export type DenProductTaskPage = { items: DenProductTask[]; nextCursor: string };
+export type DenProductTaskPage = {
+  items: DenProductTask[];
+  /** Optional for callers and older servers; the Den client normalizes it when present. */
+  membersByTaskId?: Record<string, DenProductTaskMember[]>;
+  memberProjectionKnownByTaskId?: Record<string, boolean>;
+  nextCursor: string;
+};
 export type DenProductTaskListOptions = {
   view?: DenProductTaskView; search?: string; status?: DenProductTaskStatus[]; priority?: DenProductTaskPriority[];
-  listId?: string[]; sort?: "due_at" | "created_at" | "updated_at" | "priority"; direction?: "asc" | "desc";
+  listId?: string[]; creatorMemberId?: string[]; assigneeMemberId?: string[]; followerMemberId?: string[];
+  startAtFrom?: string; startAtBefore?: string; dueAtFrom?: string; dueAtBefore?: string; overdue?: boolean;
+  sort?: "due_at" | "created_at" | "updated_at" | "priority"; direction?: "asc" | "desc";
   timezone?: string; cursor?: string; limit?: number;
 };
 export type DenProductTaskCreateInput = {
@@ -261,6 +276,8 @@ export type DenOrgSummary = {
   kind?: "personal" | "organization";
   tier?: DenTenantTier | null;
   accountStatus?: string | null;
+  orgMemberId?: string;
+  membershipId?: string;
 };
 
 export function isPersonalDenOrganization(
@@ -700,6 +717,33 @@ function normalizeProductTaskResult(value: unknown): DenProductTaskResult {
   return { task, members, permissions: permissions as DenProductTaskPermissions, tombstone: value.tombstone === true, replayed: value.replayed === true };
 }
 
+function normalizeProductTaskMember(value: unknown): DenProductTaskMember | null {
+  if (!isRecord(value) || typeof value.memberId !== "string" || !["assignee", "follower", "viewer"].includes(String(value.role))) return null;
+  return {
+    memberId: value.memberId,
+    role: value.role as DenProductTaskMemberRole,
+    createdByMemberId: typeof value.createdByMemberId === "string" ? value.createdByMemberId : undefined,
+    createdAt: typeof value.createdAt === "string" ? value.createdAt : undefined,
+  };
+}
+
+function normalizeOrganizationMember(value: unknown): DenOrganizationMember | null {
+  if (!isRecord(value) || typeof value.id !== "string" || typeof value.userId !== "string" || typeof value.role !== "string" || !isRecord(value.user) || typeof value.user.id !== "string") return null;
+  const optionalString = (input: unknown) => typeof input === "string" ? input : null;
+  return {
+    id: value.id,
+    userId: value.userId,
+    role: value.role,
+    user: {
+      id: value.user.id,
+      name: optionalString(value.user.name),
+      account: optionalString(value.user.account),
+      email: optionalString(value.user.email),
+      avatar: optionalString(value.user.avatar),
+    },
+  };
+}
+
 function normalizeProductTaskMoveResult(value: unknown): DenProductTaskMoveResult {
   if (!isRecord(value) || typeof value.taskId !== "string" || !Number.isSafeInteger(value.version) || Number(value.version) < 1 ||
     value.listId !== null && typeof value.listId !== "string" ||
@@ -749,6 +793,14 @@ function productTaskQuery(options: DenProductTaskListOptions): string {
   options.status?.forEach((value) => params.append("status", value));
   options.priority?.forEach((value) => params.append("priority", value));
   options.listId?.forEach((value) => params.append("listId", value));
+  options.creatorMemberId?.forEach((value) => params.append("creatorMemberId", value));
+  options.assigneeMemberId?.forEach((value) => params.append("assigneeMemberId", value));
+  options.followerMemberId?.forEach((value) => params.append("followerMemberId", value));
+  if (options.startAtFrom) params.set("startAtFrom", options.startAtFrom);
+  if (options.startAtBefore) params.set("startAtBefore", options.startAtBefore);
+  if (options.dueAtFrom) params.set("dueAtFrom", options.dueAtFrom);
+  if (options.dueAtBefore) params.set("dueAtBefore", options.dueAtBefore);
+  if (options.overdue !== undefined) params.set("overdue", String(options.overdue));
   if (options.sort) params.set("sort", options.sort);
   if (options.direction) params.set("direction", options.direction);
   if (options.timezone) params.set("timezone", options.timezone);
@@ -1722,6 +1774,8 @@ function getOrgList(payload: unknown): DenOrgSummary[] {
         kind: entry.kind === "personal" || entry.kind === "organization" ? entry.kind : undefined,
         tier: isDenTenantTier(entry.tier) ? entry.tier : null,
         accountStatus: typeof entry.accountStatus === "string" ? entry.accountStatus : null,
+        orgMemberId: typeof entry.orgMemberId === "string" ? entry.orgMemberId : undefined,
+        membershipId: typeof entry.membershipId === "string" ? entry.membershipId : undefined,
       } satisfies DenOrgSummary,
     ];
   });
@@ -3414,6 +3468,20 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
       return getWorkers(payload);
     },
 
+    async listOrganizationMembers(orgId: string, options: { limit?: number; offset?: number } = {}, requestOptions: { signal?: AbortSignal } = {}): Promise<DenOrganizationMemberPage> {
+      const limit = Math.max(1, Math.min(200, Math.floor(options.limit ?? 200)));
+      const offset = Math.max(0, Math.floor(options.offset ?? 0));
+      const payload = await requestJson<unknown>(baseUrls, `/v1/members?limit=${limit}&offset=${offset}`, {
+        method: "GET", token, organizationId: orgId, signal: requestOptions.signal,
+      });
+      if (!isRecord(payload) || !Array.isArray(payload.members) || !Number.isSafeInteger(payload.total) || Number(payload.total) < 0 || !Number.isSafeInteger(payload.limit) || Number(payload.limit) < 1 || !Number.isSafeInteger(payload.offset) || Number(payload.offset) < 0) {
+        throw new DenApiError(500, "invalid_members_page", "Organization member response was invalid.");
+      }
+      const members = payload.members.map(normalizeOrganizationMember);
+      if (members.some((member) => !member)) throw new DenApiError(500, "invalid_members_page", "Organization member response was invalid.");
+      return { members: members as DenOrganizationMember[], total: Number(payload.total), limit: Number(payload.limit), offset: Number(payload.offset) };
+    },
+
     async listProductTasks(orgId: string, options: DenProductTaskListOptions = {}, requestOptions: { signal?: AbortSignal } = {}): Promise<DenProductTaskPage> {
       const payload = await requestJson<unknown>(baseUrls, `/v1/tasks${productTaskQuery(options)}`, {
         method: "GET", token, organizationId: orgId, signal: requestOptions.signal,
@@ -3421,9 +3489,24 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
       if (!isRecord(payload) || !Array.isArray(payload.items) || typeof payload.nextCursor !== "string") {
         throw new DenApiError(500, "invalid_task_page", "Task page response was invalid.");
       }
+      const memberProjectionSupplied = payload.membersByTaskId !== undefined;
+      const rawMembersByTaskId = memberProjectionSupplied ? payload.membersByTaskId : {};
+      if (!isRecord(rawMembersByTaskId) || Array.isArray(rawMembersByTaskId)) {
+        throw new DenApiError(500, "invalid_task_page", "Task page response was invalid.");
+      }
       const items = payload.items.map(normalizeProductTask);
       if (items.some((item) => !item)) throw new DenApiError(500, "invalid_task_page", "Task page response was invalid.");
-      return { items: items as DenProductTask[], nextCursor: payload.nextCursor };
+      const membersByTaskId: Record<string, DenProductTaskMember[]> = {};
+      const memberProjectionKnownByTaskId: Record<string, boolean> = {};
+      for (const task of items as DenProductTask[]) {
+        memberProjectionKnownByTaskId[task.id] = memberProjectionSupplied && Object.prototype.hasOwnProperty.call(rawMembersByTaskId, task.id);
+        const rawMembers = rawMembersByTaskId[task.id] ?? [];
+        if (!Array.isArray(rawMembers)) throw new DenApiError(500, "invalid_task_page", "Task page response was invalid.");
+        const members = rawMembers.map(normalizeProductTaskMember);
+        if (members.some((member) => !member)) throw new DenApiError(500, "invalid_task_page", "Task page response was invalid.");
+        membersByTaskId[task.id] = members as DenProductTaskMember[];
+      }
+      return { items: items as DenProductTask[], membersByTaskId, memberProjectionKnownByTaskId, nextCursor: payload.nextCursor };
     },
 
     async listProductTaskLists(orgId: string, options: { archived?: boolean; cursor?: string; limit?: number } = {}, requestOptions: { signal?: AbortSignal } = {}): Promise<DenProductTaskListPage> {
