@@ -76,6 +76,7 @@ import { createRemoteControlAgent, normalizeRemoteControlAgentContext } from "./
 import { createRemoteControlE2EEKeyStore } from "./remote-control-e2ee.mjs";
 import { createManagedRuntimeSseClient } from "./managed-runtime-sse-client.mjs";
 import { createRemoteSessionEventBridge } from "./remote-session-event-bridge.mjs";
+import { createRuntimeLifecycleFeedPump } from "./runtime-lifecycle-feed-pump.mjs";
 import { createRemoteEventDiagnostics } from "./remote-event-diagnostics.mjs";
 import { createRemoteControlNotificationController } from "./remote-control-notifications.mjs";
 import { createRemoteControlSleepController, createRemoteControlPowerMonitorController } from "./remote-control-power.mjs";
@@ -1001,6 +1002,9 @@ const remoteControlNotificationController = createRemoteControlNotificationContr
 });
 let remoteControlAgent = null;
 let remoteSessionEventBridge = null;
+let runtimeLifecycleFeedController = null;
+const useLifecycleV3 = process.env.JUGGLEWORK_LIFECYCLE_V3 !== "0";
+const useLegacyLifecycleFallback = process.env.JUGGLEWORK_LIFECYCLE_LEGACY_FALLBACK === "1";
 const workspaceActivityWatcher = createWorkspaceActivityWatcher({
   workspaceStore,
   getBridge: () => remoteSessionEventBridge,
@@ -1101,6 +1105,14 @@ function createMainRemoteControlAgent() {
   // Keep safeStorage lazy and post-ready. Importing it at module evaluation
   // can trigger native keychain UI for isolated development profiles.
   const { safeStorage } = require("electron");
+  if (process.env.JUGGLEWORK_REMOTE_EVENT_DIAGNOSTICS === "1") {
+    let secureStorageAvailable = false;
+    try { secureStorageAvailable = safeStorage.isEncryptionAvailable() === true; } catch {}
+    remoteEventDiagnostics.info("remote_control_secure_storage", {
+      status: secureStorageAvailable ? "available" : "unavailable",
+      reason: app.commandLine.hasSwitch("use-mock-keychain") ? "mock_keychain" : app.isPackaged ? "packaged" : "development",
+    });
+  }
   const credentialStore = createRemoteControlCredentialStore({
     app,
     safeStorage,
@@ -1124,6 +1136,7 @@ function createMainRemoteControlAgent() {
       const settings = await remoteControlSettingsStore.read();
       return { steer: settings.allowBusySessionSteer, enqueue: settings.allowBusySessionEnqueue };
     },
+    staticFeatures: useLifecycleV3 ? ["live-activity-v3"] : [],
   });
   return createRemoteControlAgent({
     settingsStore: remoteControlSettingsStore,
@@ -1138,7 +1151,9 @@ function createMainRemoteControlAgent() {
     })),
     createWebSocket: ({ url, accessToken }) => new WebSocketClient(url, {
       headers: { Authorization: `Bearer ${accessToken}` },
-      maxPayload: 2 * 1024 * 1024,
+      // The 28 MiB plaintext prompt budget is encrypted and base64url encoded
+      // on the wire, so reserve enough room for that expansion and metadata.
+      maxPayload: 48 * 1024 * 1024,
       perMessageDeflate: false,
     }),
     appVersion: app.getVersion(),
@@ -1573,6 +1588,9 @@ remoteControlReadRegistrations = createRemoteControlReadRegistrations({
   managedRuntimeClient: createManagedRuntimeClient({
     getAccess: () => runtimeManager.managedServerAccess(),
     fetcher: mainProcessFetch,
+    // Snapshot normalization allows a 28 MiB transcript. The HTTP reader must
+    // not reject it before file parts reach the remote adapter.
+    maxResponseBytes: 32 * 1024 * 1024,
   }),
   interactions: remoteControlInteractionStore,
   logger: {
@@ -1603,29 +1621,36 @@ function createMainRemoteSessionEventBridge() {
     fetcher: mainProcessFetch,
   });
   return createRemoteSessionEventBridge({
+    timers: {
+      setTimeout: globalThis.setTimeout.bind(globalThis),
+      clearTimeout: globalThis.clearTimeout.bind(globalThis),
+    },
     sseClient: createManagedRuntimeSseClient({
       getAccess: () => runtimeManager.managedServerAccess(),
       fetcher: mainProcessFetch,
+      // OpenCode emits inline image data URLs in a single SSE record.
+      maxBufferBytes: 32 * 1024 * 1024,
       logger: remoteEventDiagnostics,
     }),
     coordinator: sessionMutationCoordinator,
     listActiveRuns: ({ workspaceId }) => managedRuntimeClient.getJson(
       `/workspace/${encodeURIComponent(workspaceId)}/session-runs`,
     ),
+    ...(useLegacyLifecycleFallback ? createMainActivityTerminalOptions(managedRuntimeClient) : {}),
     observeRun: async ({ workspaceId, sessionId, runId, status }) => {
       return managedRuntimeClient.postJson(
         `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/runs/${encodeURIComponent(runId)}/observations`,
         { status },
       );
     },
+    listSessionModelEvents: ({ workspaceId, since, signal }) => managedRuntimeClient.getJson(
+      `/workspace/${encodeURIComponent(workspaceId)}/session-model-events?since=${encodeURIComponent(String(since))}`,
+      { signal },
+    ),
     publish: (event, options) => remoteControlAgent?.publishSessionEvent(event, options) ?? false,
-    publishActivityTaskStatus: (event) => remoteControlAgent?.publishActivityTaskStatus(event) ?? false,
+    publishActivityTaskStatus: useLifecycleV3 ? null : (event, options) => remoteControlAgent?.publishActivityTaskStatus(event, options) ?? false,
     randomUUID,
     now: Date.now,
-    timers: {
-      setTimeout: globalThis.setTimeout.bind(globalThis),
-      clearTimeout: globalThis.clearTimeout.bind(globalThis),
-    },
     logger: remoteEventDiagnostics,
     onNotificationEvent: (event) => remoteControlNotificationController.accept(event),
     onStop: () => remoteControlSleepController.setAuthorized(false),
@@ -3443,6 +3468,7 @@ if (!app.requestSingleInstanceLock()) {
       remoteControlPowerMonitorController.stop();
       appTrayIndicator.stop();
       remoteControlSleepController.stop();
+      runtimeLifecycleFeedController?.abort("app_quit");
       showShutdownScreen();
       void waitForQuitCleanup([
         remoteSessionEventBridge?.stop(),
@@ -3517,6 +3543,16 @@ if (!app.requestSingleInstanceLock()) {
     await remoteControlAgent.start().catch((error) => {
       console.warn("[desktop-remote] failed to initialize", error instanceof Error ? error.name : "unknown_error");
     });
+    if (useLifecycleV3) {
+      runtimeLifecycleFeedController = new AbortController();
+      createRuntimeLifecycleFeedPump({
+        runtimeClient: createManagedRuntimeClient({ getAccess: () => runtimeManager.managedServerAccess(), fetcher: mainProcessFetch, timeoutMs: 12_000 }),
+        publish: (event, options) => remoteControlAgent?.publishActivityTaskStatus(event, options) ?? false,
+        getConsumerId: () => remoteControlAgent?.deviceId() ?? null,
+        signal: runtimeLifecycleFeedController.signal,
+        logger: remoteEventDiagnostics,
+      });
+    }
     if (process.platform === "win32") {
       await registerWindowsDisplayShortcut();
     }
@@ -3638,3 +3674,4 @@ function applyRemoteControlLocalEffects(settings) {
     updateBackgroundIndicator: updateRemoteControlBackgroundIndicator,
   });
 }
+import { createMainActivityTerminalOptions } from "./main-activity-terminal-options.mjs";

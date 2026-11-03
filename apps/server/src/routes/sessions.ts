@@ -1,5 +1,6 @@
 import type { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import { desktopRemotePromptPartSchema } from "@jugglework/types/desktop-remote-control";
+import { isChatSelectableProviderModel } from "@jugglework/types/media-generation";
 import { z } from "zod";
 import {
   detectResponseLanguageFromText,
@@ -28,6 +29,7 @@ import {
 } from "../session-groups.js";
 import type { ServerConfig, TokenScope, WorkspaceInfo } from "../types.js";
 import { SessionPendingOperationError, type SessionPendingOperationStore } from "../session-pending-operations.js";
+import type { SessionModelPreferenceStore } from "../session-model-preferences.js";
 import {
   SESSION_PENDING_OPERATION_IDLE_CONFIRM_MS,
   type SessionPendingOperationPump,
@@ -67,7 +69,12 @@ interface RegisterSessionRoutesOptions {
   ) => Promise<void>;
   dispatchSessionAbort: (config: ServerConfig, workspace: WorkspaceInfo, sessionId: string) => Promise<boolean>;
   sessionMutations: SessionMutationCoordinator;
+  readRunTerminalStatus?: (workspaceId: string, sessionId: string, runId: string) => "completed" | "failed" | "aborted" | null;
+  listRunTerminals?: import("../session-run-journal.js").SessionRunJournal["listTerminals"];
+  listLifecycleFeed?: import("../session-run-journal.js").SessionRunJournal["listFeed"];
+  ackLifecycleFeed?: import("../session-run-journal.js").SessionRunJournal["ackFeed"];
   sessionPendingOperations: SessionPendingOperationStore;
+  sessionModelPreferences: SessionModelPreferenceStore;
   sessionPendingOperationPump: SessionPendingOperationPump;
   applySessionResponseLanguage?: (input: {
     workspaceId: string;
@@ -139,13 +146,14 @@ const promptBodySchema = z.object({
 }).extend(officeSelectionSubmissionSchema.shape).strict().refine((value) => JSON.stringify(value).length <= 16 * 1024 * 1024, "prompt payload is too large");
 const remotePromptBodySchema = z.object({
   parts: z.array(desktopRemotePromptPartSchema).min(1).max(1_000),
+  model: z.object({ providerID: runIdentifierSchema, modelID: runIdentifierSchema }).strict().optional(),
 }).strict().superRefine((prompt, context) => {
   const files = prompt.parts.filter((part) => part.type === "file");
   const text = prompt.parts.flatMap((part) => part.type === "text" ? [part.text] : []).join("");
   if (files.length > 3) context.addIssue({ code: "custom", message: "too many files" });
   if (Buffer.byteLength(text, "utf8") > 200_000) context.addIssue({ code: "custom", message: "prompt text is too large" });
   if (!text.trim() && files.length === 0) context.addIssue({ code: "custom", message: "prompt is empty" });
-  if (Buffer.byteLength(JSON.stringify(prompt.parts), "utf8") > 1_300_000) context.addIssue({ code: "custom", message: "prompt is too large" });
+  if (Buffer.byteLength(JSON.stringify(prompt.parts), "utf8") > 28 * 1024 * 1024) context.addIssue({ code: "custom", message: "prompt is too large" });
 });
 const startRunBodySchema = z.discriminatedUnion("origin", [
   z.object({
@@ -181,6 +189,16 @@ const legacyAbortRunBodySchema = z.object({ expectedRunId: runIdentifierSchema, 
 const observeRunBodySchema = z.object({
   status: z.enum(["starting", "running", "waiting", "retrying", "aborting", "idle", "completed", "failed", "aborted"]),
 }).strict();
+const lifecycleAckBodySchema = z.object({
+  consumerId: runIdentifierSchema,
+  deviceEpoch: z.string().uuid(),
+  sequence: z.number().int().positive(),
+  eventId: z.string().uuid(),
+}).strict();
+const sessionModelPreferenceBodySchema = z.discriminatedUnion("mode", [
+  z.object({ mode: z.literal("auto"), model: z.null(), expectedRevision: z.number().int().nonnegative() }).strict(),
+  z.object({ mode: z.literal("explicit"), model: z.object({ providerID: runIdentifierSchema, modelID: runIdentifierSchema }).strict(), expectedRevision: z.number().int().nonnegative() }).strict(),
+]);
 const legacyObserveRunBodySchema = z.object({
   expectedRunId: runIdentifierSchema,
   observation: z.enum(["idle", "error", "completed", "failed", "aborted"]),
@@ -305,6 +323,7 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     dispatchSessionAbort,
     sessionMutations,
     sessionPendingOperations,
+    sessionModelPreferences,
     sessionPendingOperationPump,
     applySessionResponseLanguage,
     resolveSessionResponseLanguage,
@@ -312,6 +331,15 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     readSessionResponseLanguage,
     onSessionDeleted,
   } = options;
+
+  async function validateExplicitModel(workspace: WorkspaceInfo, model: { providerID: string; modelID: string }) {
+    const catalog = await createWorkspaceOpencodeClient(config, workspace).provider.list();
+    if (catalog.error || !catalog.data || !catalog.response.ok) throw new ApiError(502, "model_catalog_unavailable", "Model catalog unavailable");
+    const { all, connected } = catalog.data;
+    const provider = all.find((item) => item.id === model.providerID && connected.includes(item.id));
+    const selected = provider?.models[model.modelID];
+    if (!selected || !isChatSelectableProviderModel(selected)) throw new ApiError(400, "model_unavailable", "Selected chat model is unavailable");
+  }
   const sessionGroupEvents = new SessionGroupEventStore();
 
   type NormalizedEngineSessionStatus = "idle" | "running" | "waiting" | "retrying";
@@ -789,7 +817,33 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     const item = await readWorkspaceSessionSnapshot(workspace, sessionId, {
       limit: parseOptionalPositiveInteger(ctx.url.searchParams.get("limit"), "limit"),
     });
-    return jsonResponse({ item });
+    return jsonResponse({ item: { ...item, modelPreference: sessionModelPreferences.get(workspace.id, sessionId) } });
+  });
+
+  addRoute(routes, "GET", "/workspace/:id/sessions/:sessionId/model-preference", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const sessionId = parseRunIdentifier(ctx.params.sessionId, "sessionId");
+    await readWorkspaceSession(workspace, sessionId);
+    return jsonResponse({ item: sessionModelPreferences.get(workspace.id, sessionId) });
+  });
+
+  addRoute(routes, "PUT", "/workspace/:id/sessions/:sessionId/model-preference", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const sessionId = parseRunIdentifier(ctx.params.sessionId, "sessionId");
+    await readWorkspaceSession(workspace, sessionId);
+    const body = parseRunBody(sessionModelPreferenceBodySchema, await readJsonBody(ctx.request));
+    if (body.mode === "explicit") await validateExplicitModel(workspace, body.model);
+    const result = sessionModelPreferences.set({ workspaceId: workspace.id, sessionId, ...body });
+    if (!result.updated) throw new ApiError(409, "revision_conflict", "Session model preference revision is stale", { current: result.preference });
+    return jsonResponse({ item: result.preference });
+  });
+
+  addRoute(routes, "GET", "/workspace/:id/session-model-events", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const since = parseOptionalNonNegativeInteger(ctx.url.searchParams.get("since"), "since") ?? 0;
+    return jsonResponse(sessionModelPreferences.events(workspace.id, since));
   });
 
   addRoute(routes, "POST", "/workspace/:id/sessions/:sessionId/fork", "client", async (ctx) => {
@@ -823,6 +877,13 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
       }),
       `/session/${encodeURIComponent(sessionId)}`,
     ));
+    if (title !== undefined) sessionMutations.updateTitle({
+      workspaceId: workspace.id,
+      sessionId,
+      // The upstream response permits a nullish title, but a successful title
+      // update still has the validated request value as its local authority.
+      title: item.title ?? title,
+    });
     return jsonResponse({ item });
   });
 
@@ -864,8 +925,17 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const responseLanguage = promptResponseLanguage(input);
+    if (input.origin === "remote-control" && isRecord(input.prompt.model)) {
+      if (input.whenBusy !== "reject") throw new ApiError(400, "invalid_payload", "Explicit model requires whenBusy reject");
+      await validateExplicitModel(workspace, input.prompt.model as { providerID: string; modelID: string });
+    }
     let run;
     try {
+      let title = "";
+      try { title = (await readWorkspaceSession(workspace, input.sessionId)).title ?? ""; } catch {
+        // Title is presentation metadata. Admission authority must not depend on
+        // a second engine read when status already proved the session runnable.
+      }
       let engineStatus = await readEngineSessionStatus(workspace, input.sessionId);
       let active = sessionMutations.getActive(workspace.id, input.sessionId);
 
@@ -996,6 +1066,7 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
         sessionId: input.sessionId,
         origin: input.origin,
         startCommandCorrelationId: input.startCommandCorrelationId,
+        title,
       });
     } catch (error) {
       remapSessionMutationError(error);
@@ -1015,6 +1086,16 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
             ...responseLanguage,
           }) ?? responseLanguage.detected ?? responseLanguage.fallback
         : readSessionResponseLanguage?.(workspace.id, input.sessionId) ?? null);
+      const preference = sessionModelPreferences.get(workspace.id, input.sessionId);
+      if (preference.mode === "explicit" && preference.model &&
+        (input.origin === "local-renderer" || input.prompt.model === undefined)) {
+        await validateExplicitModel(workspace, preference.model);
+        input.prompt.model = preference.model;
+      } else if (isRecord(input.prompt.model)) {
+        // Auto mode uses the renderer's displayed workspace default. Validate it
+        // at dispatch time so provider changes cannot send a stale model.
+        await validateExplicitModel(workspace, input.prompt.model as { providerID: string; modelID: string });
+      }
       try {
         await dispatchSessionPromptAsync(
           config,
@@ -1128,6 +1209,14 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
     try {
+      const current = sessionMutations.getActive(workspace.id, input.sessionId);
+      if (current && current.runId !== input.runId) {
+        throw new SessionMutationError("run_mismatch", current.runId);
+      }
+      // Another observer/pump may already have cleared this exact run. Return
+      // persisted authority, never infer completion from an empty active list.
+      const terminalStatus = options.readRunTerminalStatus?.(workspace.id, input.sessionId, input.runId);
+      if (terminalStatus) return jsonResponse({ cleared: true, run: null, terminalStatus });
       if (input.status === "idle" || input.status === "completed") {
         const active = sessionMutations.getActive(workspace.id, input.sessionId);
         if (!active || active.runId !== input.runId) {
@@ -1264,11 +1353,44 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     return observeSessionRun(ctx, { sessionId, runId: body.expectedRunId, status });
   });
 
+  addRoute(routes, "GET", "/workspace/:id/session-run-terminals", "client", async (ctx) => {
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
+    const after = parseOptionalNonNegativeInteger(ctx.url.searchParams.get("after"), "after") ?? 0;
+    const limit = parseOptionalPositiveInteger(ctx.url.searchParams.get("limit"), "limit") ?? 100;
+    if (!Number.isSafeInteger(after) || limit > 100) throw new ApiError(400, "invalid_payload", "Invalid journal page");
+    if (!options.listRunTerminals) throw new ApiError(503, "journal_unavailable", "Run journal unavailable");
+    return jsonResponse(options.listRunTerminals(workspace.id, after, limit));
+  });
+
   addRoute(routes, "GET", "/workspace/:id/session-runs", "client", async (ctx) => {
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
-    await reconcileWorkspaceActiveRuns(workspace);
     return jsonResponse({ items: sessionMutations.listActive(workspace.id) });
+  });
+
+  addRoute(routes, "GET", "/session-lifecycle/feed", "client", async (ctx) => {
+    requireClientScope(ctx, "collaborator");
+    const consumerId = parseRunIdentifier(ctx.url.searchParams.get("consumerId"), "consumerId");
+    const after = parseOptionalNonNegativeInteger(ctx.url.searchParams.get("after"), "after");
+    const limit = parseOptionalPositiveInteger(ctx.url.searchParams.get("limit"), "limit") ?? 100;
+    const wait = parseOptionalNonNegativeInteger(ctx.url.searchParams.get("wait"), "wait") ?? 0;
+    if (limit > 100 || !options.listLifecycleFeed) throw new ApiError(400, "invalid_payload", "Invalid lifecycle feed request");
+    if (wait > 30_000) throw new ApiError(400, "invalid_payload", "Lifecycle feed wait exceeds 30000ms");
+    let page = options.listLifecycleFeed(consumerId, after, limit);
+    if (page.items.length === 0 && wait > 0) {
+      await new Promise((resolve) => setTimeout(resolve, wait));
+      page = options.listLifecycleFeed(consumerId, after, limit);
+    }
+    return jsonResponse(page);
+  });
+
+  addRoute(routes, "POST", "/session-lifecycle/feed/ack", "client", async (ctx) => {
+    requireClientScope(ctx, "collaborator");
+    if (!options.ackLifecycleFeed) throw new ApiError(503, "lifecycle_feed_unavailable", "Lifecycle feed unavailable");
+    const body = parseRunBody(lifecycleAckBodySchema, await readJsonBody(ctx.request));
+    try { return jsonResponse(options.ackLifecycleFeed(body.consumerId, body.deviceEpoch, body.sequence, body.eventId)); }
+    catch (error) { throw new ApiError(409, error instanceof Error ? error.message : "lifecycle_ack_conflict", "Lifecycle ACK rejected"); }
   });
 
   addRoute(routes, "POST", "/remote-control/pending/cancel-all", "client", async (ctx) => {

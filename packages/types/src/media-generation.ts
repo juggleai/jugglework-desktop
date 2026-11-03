@@ -137,6 +137,15 @@ export function parseNormalizedModelCapabilities(value: unknown): NormalizedMode
   }
 }
 
+export function isChatSelectableProviderModel(model: unknown): boolean {
+  if (isRecord(model) && isRecord(model.capabilities) && isRecord(model.capabilities.output)) {
+    const output = model.capabilities.output;
+    if ((output.video === true || output.image === true) && output.text !== true) return false;
+  }
+  const output = parseNormalizedModelCapabilities(model)?.modalities?.output ?? [];
+  return !((output.includes("video") || output.includes("image")) && !output.includes("text"));
+}
+
 export function supportsVideoGenerationMode(capabilities: MediaGenerationCapabilities | undefined, mode: VideoGenerationMode): boolean {
   return mode === "image-to-video" ? capabilities?.imageToVideo === true : capabilities?.textToVideo === true
 }

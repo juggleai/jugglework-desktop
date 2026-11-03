@@ -50,7 +50,20 @@ function startMockOpencode() {
   const statusRequests: string[] = [];
   const disposes: Array<{ directory: string | null }> = [];
   const statuses = new Map<string, unknown>();
-  const messages = new Map<string, Array<ArtifactEngineMessage & { info: ArtifactEngineMessage["info"] & { finish?: string; summary?: boolean; error?: unknown } }>>();
+  const connected = ["connected"];
+  const models: Record<string, unknown> = {
+    chat: { capabilities: { output: { text: true } } },
+    image: { capabilities: { output: { image: true, text: false } } },
+    normalizedVideo: { modalities: { output: ["video"] } },
+  };
+  const messages = new Map<string, Array<Omit<ArtifactEngineMessage, "info"> & {
+    info: ArtifactEngineMessage["info"] & {
+      sessionID?: string;
+      finish?: string;
+      summary?: boolean;
+      error?: unknown;
+    };
+  }>>();
   const sessions = new Map<string, { id: string; title: string; parentID?: string; directory?: string; time: { created: number; updated: number } }>();
   const heldPrompts = new Map<string, ReturnType<typeof deferred<void>>>();
   const heldMessageIds = new Map<string, ReturnType<typeof deferred<void>>>();
@@ -63,17 +76,28 @@ function startMockOpencode() {
   const v2Admissions = new Map<string, { fingerprint: string; receipt: unknown }>();
   const v2Statuses = new Map<string, number>();
   const failedShells = new Set<string>();
+  const autoPersistPrompts = { value: false };
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
     async fetch(request) {
       const url = new URL(request.url);
+      if (request.method === "GET" && url.pathname === "/provider") {
+        return Response.json({ all: [{ id: "connected", models }], connected });
+      }
       if (request.method === "GET" && url.pathname === "/session/status") {
         statusRequests.push(request.headers.get("x-opencode-directory") ?? "");
         return Response.json(Object.fromEntries(statuses));
       }
       const messageMatch = url.pathname.match(/^\/session\/([^/]+)\/message$/);
       if (request.method === "GET" && messageMatch) return Response.json(messages.get(decodeURIComponent(messageMatch[1]!)) ?? []);
+      const directMessageMatch = url.pathname.match(/^\/session\/([^/]+)\/message\/([^/]+)$/);
+      if (request.method === "GET" && directMessageMatch) {
+        const sessionId = decodeURIComponent(directMessageMatch[1]!);
+        const messageId = decodeURIComponent(directMessageMatch[2]!);
+        const message = messages.get(sessionId)?.find((candidate) => candidate.info.id === messageId);
+        return message ? Response.json(message) : Response.json({ code: "not_found" }, { status: 404 });
+      }
       const sessionMatch = url.pathname.match(/^\/session\/([^/]+)$/);
       const messagesMatch = url.pathname.match(/^\/session\/([^/]+)\/message$/);
       if (request.method === "GET" && messagesMatch) {
@@ -86,6 +110,10 @@ function startMockOpencode() {
         const sessionId = decodeURIComponent(sessionMatch[1]!);
         const session = sessions.get(sessionId);
         return session ? Response.json(session) : Response.json({ code: "not_found" }, { status: 404 });
+      }
+      if (request.method === "DELETE" && sessionMatch) {
+        const sessionId = decodeURIComponent(sessionMatch[1]!);
+        return Response.json(sessions.delete(sessionId));
       }
       if (request.method === "POST" && url.pathname === "/instance/dispose") {
         disposes.push({ directory: url.searchParams.get("directory") });
@@ -134,6 +162,23 @@ function startMockOpencode() {
         if (failedPrompts.delete(sessionId) || (body.messageID !== undefined && failedMessageIds.delete(body.messageID))) {
           return Response.json({ name: "PromptFailure" }, { status: 500 });
         }
+        if (autoPersistPrompts.value && body.messageID) {
+          const parts = Array.isArray((body as { parts?: unknown }).parts)
+            ? (body as { parts: Array<Record<string, unknown>> }).parts
+            : [];
+          messages.set(sessionId, [
+            ...(messages.get(sessionId) ?? []),
+            {
+              info: { id: body.messageID, role: "user" },
+              parts: parts.map((part, index) => ({
+                ...part,
+                id: `prt_${index}`,
+                messageID: body.messageID!,
+                sessionID: sessionId,
+              })),
+            },
+          ]);
+        }
         return new Response(null, { status: 204 });
       }
 
@@ -178,6 +223,8 @@ function startMockOpencode() {
     statusRequests,
     disposes,
     statuses,
+    connected,
+    models,
     messages,
     sessions,
     heldPrompts,
@@ -191,6 +238,7 @@ function startMockOpencode() {
     v2Admissions,
     v2Statuses,
     failedShells,
+    autoPersistPrompts,
   };
 }
 
@@ -258,6 +306,73 @@ function runPath(base: string, sessionId: string): string {
 }
 
 describe("authoritative session mutation APIs", () => {
+  test("model preferences require an existing session, resolve explicit/auto prompts, and clean up on deletion", async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    const sessionId = "ses_preference";
+    const modelPath = `${harness.base}/workspace/ws_1/sessions/${sessionId}/model-preference`;
+    const startPath = `${runPath(harness.base, sessionId)}/start`;
+    const requestPreference = (method: "GET" | "PUT", body?: unknown) => fetch(modelPath, {
+      method,
+      headers: harness.collaboratorHeaders,
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+
+    expect((await requestPreference("GET")).status).toBe(404);
+    expect((await requestPreference("PUT", { mode: "auto", model: null, expectedRevision: 0 })).status).toBe(404);
+
+    engine.sessions.set(sessionId, { id: sessionId, title: "Preference", directory: harness.config.workspaces[0]!.path, time: { created: 1, updated: 1 } });
+    const explicit = { providerID: "connected", modelID: "chat" };
+    const explicitResponse = await requestPreference("PUT", { mode: "explicit", model: explicit, expectedRevision: 0 });
+    expect(explicitResponse.status).toBe(200);
+    expect((await explicitResponse.json()).item).toMatchObject({ revision: 1, mode: "explicit", model: explicit });
+
+    const localStart = (model: { providerID: string; modelID: string }) => fetch(startPath, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+      body: JSON.stringify({ origin: "local-renderer", startCommandCorrelationId: `cmd_${engine.prompts.length}`, prompt: { parts: [{ type: "text", text: "Hello" }], model } }),
+    });
+    expect((await localStart({ providerID: "connected", modelID: "other-displayed-default" })).status).toBe(202);
+    expect(engine.prompts.at(-1)?.body).toMatchObject({ model: explicit });
+    engine.statuses.set(sessionId, { type: "idle" });
+    engine.messages.set(sessionId, [{ info: { id: "msg_done", sessionID: sessionId, role: "assistant", time: { created: Date.now(), completed: Date.now() }, finish: "stop" }, parts: [] }]);
+
+    const autoResponse = await requestPreference("PUT", { mode: "auto", model: null, expectedRevision: 1 });
+    expect(autoResponse.status).toBe(200);
+    const displayedDefault = { providerID: "connected", modelID: "chat" };
+    expect((await localStart(displayedDefault)).status).toBe(202);
+    expect(engine.prompts.at(-1)?.body).toMatchObject({ model: displayedDefault });
+
+    const deleted = await fetch(`${harness.base}/workspace/ws_1/sessions/${sessionId}`, { method: "DELETE", headers: harness.collaboratorHeaders });
+    expect(deleted.status).toBe(200);
+    engine.sessions.set(sessionId, { id: sessionId, title: "Recreated", directory: harness.config.workspaces[0]!.path, time: { created: 2, updated: 2 } });
+    expect((await (await requestPreference("GET")).json()).item).toMatchObject({ revision: 0, mode: "auto", model: null });
+  });
+
+  test("remote explicit model is validated and forwarded only for immediate starts", async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    const start = (model: unknown, whenBusy?: "reject" | "steer" | "enqueue") => fetch(`${runPath(harness.base, "ses_model")}/start`, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+      body: JSON.stringify({ origin: "remote-control", startCommandCorrelationId: "cmd_model", whenBusy,
+        prompt: { parts: [{ type: "text", text: "Hello" }], model } }),
+    });
+    const model = { providerID: "connected", modelID: "chat" };
+    for (const invalid of [
+      [{ providerID: "disconnected", modelID: "chat" }, "reject"],
+      [{ providerID: "connected", modelID: "missing" }, "reject"],
+      [{ providerID: "connected", modelID: "image" }, "reject"],
+      [{ providerID: "connected", modelID: "normalizedVideo" }, "reject"],
+      [model, "steer"], [model, "enqueue"],
+    ] as const) {
+      expect((await start(invalid[0], invalid[1])).status).toBe(400);
+    }
+    expect(engine.prompts).toHaveLength(0);
+    // Omitted whenBusy is the normal adapter path and defaults to reject.
+    expect((await start(model)).status).toBe(202);
+    expect(engine.prompts[0]?.body).toMatchObject({ model });
+  });
   for (const mode of ["local-queue", "local-steer", "remote-steer"] as const) {
     test(`${mode} 真实入口绑定文件交付，队列执行前不结束，生成工具可定位原轮次`, async () => {
       const engine = startMockOpencode();
@@ -514,6 +629,7 @@ describe("authoritative session mutation APIs", () => {
 
   test("preserves safe attachment parts for idle starts and rejects them while busy", async () => {
     const engine = startMockOpencode();
+    engine.autoPersistPrompts.value = true;
     const harness = await startHarness(engine.server.port);
     const parts = [
       { type: "text", text: "Inspect " },
@@ -535,6 +651,45 @@ describe("authoritative session mutation APIs", () => {
     });
     expect(busy.status).toBe(409);
     expect(await busy.json()).toMatchObject({ code: "session_busy" });
+  });
+
+  test("waits for the complete persisted image prompt before accepting a remote start", async () => {
+    const engine = startMockOpencode();
+    engine.autoPersistPrompts.value = false;
+    const harness = await startHarness(engine.server.port);
+    const parts = [
+      { type: "text", text: "Inspect" },
+      { type: "file", mime: "image/png", filename: "screen.png", url: "data:image/png;base64,iVBORw0KGgo=" },
+    ];
+    engine.statuses.set("ses_image_fence", { type: "idle" });
+
+    let settled = false;
+    const startedPromise = fetch(`${runPath(harness.base, "ses_image_fence")}/start`, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+      body: JSON.stringify({ origin: "remote-control", startCommandCorrelationId: "cmd_image_fence", prompt: { parts } }),
+    }).then((response) => {
+      settled = true;
+      return response;
+    });
+    await waitUntil(() => engine.prompts.length === 1);
+    const messageID = (engine.prompts[0]!.body as { messageID: string }).messageID;
+    engine.messages.set("ses_image_fence", [{
+      info: { id: messageID, role: "user" },
+      parts: [{ id: "prt_text", messageID, sessionID: "ses_image_fence", ...parts[0] }],
+    }]);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(settled).toBe(false);
+
+    engine.messages.set("ses_image_fence", [{
+      info: { id: messageID, role: "user" },
+      parts: [
+        { id: "prt_text", messageID, sessionID: "ses_image_fence", ...parts[0] },
+        { id: "prt_file", messageID, sessionID: "ses_image_fence", ...parts[1] },
+      ],
+    }]);
+    const started = await startedPromise;
+    expect(started.status).toBe(202);
   });
 
   test("failed queue promotion rolls back its local reservation", async () => {
@@ -752,7 +907,7 @@ describe("authoritative session mutation APIs", () => {
     engine.heldPrompts.set("ses_race", hold);
     const prompt = {
       messageID: "msg_local",
-      model: { providerID: "provider", modelID: "model" },
+      model: { providerID: "connected", modelID: "chat" },
       agent: "jugglework",
       noReply: false,
       tools: { bash: false, read: true },
@@ -1566,6 +1721,94 @@ describe("authoritative session mutation APIs", () => {
     await expect((await observe("idle")).json()).resolves.toMatchObject({ cleared: true, terminalStatus: "completed" });
   });
 
+  for (const terminalStatus of ["completed", "failed", "aborted"] as const) {
+    test(`observe recovers journal ${terminalStatus} after clear with exact scope and authorization`, async () => {
+      const engine = startMockOpencode();
+      const harness = await startHarness(engine.server.port);
+      const sessionId = `ses_journal_${terminalStatus}`;
+      const started = await fetch(`${runPath(harness.base, sessionId)}/start`, {
+        method: "POST", headers: harness.collaboratorHeaders,
+        body: JSON.stringify({ origin: "local-renderer", startCommandCorrelationId: "cmd_journal",
+          prompt: { parts: [{ type: "text", text: "Journal recovery" }] } }),
+      });
+      expect(started.status).toBe(202);
+      const { run } = await started.json() as { run: { runId: string } };
+      const observe = (status: string, workspaceId = "ws_1", session = sessionId, runId = run.runId,
+        headers: Record<string, string> = harness.collaboratorHeaders) => fetch(
+        `${harness.base}/workspace/${workspaceId}/sessions/${session}/runs/${runId}/observations`, {
+          method: "POST", headers, body: JSON.stringify({ status }),
+        });
+
+      if (terminalStatus === "completed") {
+        engine.messages.set(sessionId, [{ info: { id: "msg_journal_final", role: "assistant", finish: "stop",
+          time: { created: Date.now(), completed: Date.now() } }, parts: [] }]);
+      } else if (terminalStatus === "aborted") {
+        const aborted = await fetch(`${runPath(harness.base, sessionId)}/${run.runId}/abort`, {
+          method: "POST", headers: harness.collaboratorHeaders,
+          body: JSON.stringify({ abortCommandCorrelationId: "cmd_journal_abort" }),
+        });
+        expect(aborted.status).toBe(202);
+      }
+      const cleared = await observe(terminalStatus === "aborted" ? "idle" : terminalStatus);
+      expect(cleared.status).toBe(200);
+      expect(await cleared.json()).toEqual({ cleared: true, run: null, terminalStatus });
+      const active = await fetch(`${harness.base}/workspace/ws_1/session-runs`, { headers: harness.collaboratorHeaders });
+      expect(await active.json()).toEqual({ items: [] });
+
+      // Subsequent observers have no in-memory run; persisted authority wins even over completed/idle.
+      const terminalUrl = `${harness.base}/workspace/ws_1/session-run-terminals`;
+      const pageResponse = await fetch(`${terminalUrl}?limit=1`, { headers: harness.collaboratorHeaders });
+      expect(pageResponse.status).toBe(200);
+      const page = await pageResponse.json();
+      expect(page.items).toHaveLength(1);
+      expect(page.items[0]).toMatchObject({ workspaceId: "ws_1", sessionId, runId: run.runId, terminalReason: terminalStatus });
+      expect(page.items[0].generation).toBeGreaterThan(0);
+      expect(page.items[0].occurredAt).toBeGreaterThan(0);
+      expect(Object.keys(page.items[0]).sort()).toEqual(["id", "workspaceId", "sessionId", "runId", "generation", "terminalReason", "occurredAt"].sort());
+      expect(await (await fetch(`${terminalUrl}?after=${page.cursor}`, { headers: harness.collaboratorHeaders })).json())
+        .toEqual({ items: [], cursor: page.cursor });
+      expect(await (await fetch(`${harness.base}/workspace/ws_2/session-run-terminals`, { headers: harness.collaboratorHeaders })).json())
+        .toEqual({ items: [], cursor: 0 });
+      for (const query of ["after=-1", "after=abc", "limit=0", "limit=101"]) {
+        expect((await fetch(`${terminalUrl}?${query}`, { headers: harness.collaboratorHeaders })).status).toBe(400);
+      }
+      for (const status of ["idle", "completed"]) {
+        const recovered = await observe(status);
+        expect(recovered.status).toBe(200);
+        expect(await recovered.json()).toEqual({ cleared: true, run: null, terminalStatus });
+      }
+      for (const [workspaceId, session, runId] of [
+        ["ws_2", sessionId, run.runId],
+        ["ws_1", "ses_wrong", run.runId],
+        ["ws_1", sessionId, "run_wrong"],
+      ]) {
+        const mismatch = await observe("idle", workspaceId, session, runId);
+        expect(mismatch.status).toBe(409);
+        const body = await mismatch.json();
+        expect(body.code).toBe("run_mismatch");
+        expect(body.terminalStatus).toBeUndefined();
+        expect(JSON.stringify(body)).not.toContain(run.runId);
+      }
+      const issued = await fetch(`${harness.base}/tokens`, {
+        method: "POST", headers: harness.hostHeaders,
+        body: JSON.stringify({ scope: "viewer", label: "journal viewer" }),
+      });
+      expect(issued.status).toBe(201);
+      const viewer = await issued.json() as { token: string };
+      for (const [headers, expectedStatus] of [
+        [{ Authorization: `Bearer ${viewer.token}`, "Content-Type": "application/json" }, 403],
+        [{ "Content-Type": "application/json" }, 401],
+      ] as const) {
+        const denied = await observe("idle", "ws_1", sessionId, run.runId, headers);
+        expect((await fetch(terminalUrl, { headers })).status).toBe(expectedStatus);
+        expect(denied.status).toBe(expectedStatus);
+        const body = await denied.json();
+        expect(body.terminalStatus).toBeUndefined();
+        expect(JSON.stringify(body)).not.toContain(run.runId);
+      }
+    });
+  }
+
   test("active-run reads retain an idle parent while a delegated descendant is busy", async () => {
     const engine = startMockOpencode();
     const harness = await startHarness(engine.server.port);
@@ -1607,8 +1850,9 @@ describe("authoritative session mutation APIs", () => {
 
     engine.statuses.set("ses_grandchild", { type: "idle" });
     engine.messages.set("ses_parent", [{ info: { id: "msg_parent", role: "assistant", finish: "stop", time: { created: Date.now(), completed: Date.now() } }, parts: [] }]);
-    await fetch(`${harness.base}/workspace/ws_1/session-runs`, { headers: harness.collaboratorHeaders });
-    await new Promise((resolve) => setTimeout(resolve, 510));
+    // Active-run reads are pure in lifecycle v3. The runtime-owned observer,
+    // not this GET, confirms terminal state using two separated samples.
+    await new Promise((resolve) => setTimeout(resolve, 2_100));
     const terminal = await fetch(`${harness.base}/workspace/ws_1/session-runs`, { headers: harness.collaboratorHeaders });
     await expect(terminal.json()).resolves.toEqual({ items: [] });
   });

@@ -34,8 +34,10 @@ export const REMOTE_CONTROL_COMMAND_JOURNAL_VERSION = 1;
 /** @type {Readonly<RemoteControlCommandJournalLimits>} */
 export const REMOTE_CONTROL_COMMAND_JOURNAL_DEFAULT_LIMITS = Object.freeze({
   maxEntries: 1_000,
-  maxFileBytes: 4 * 1024 * 1024,
-  maxResultBytes: 512 * 1024,
+  // Room for two maximum-size results plus entry/document metadata. Keep a
+  // finite aggregate cap: the journal is loaded and serialized in memory.
+  maxFileBytes: 64 * 1024 * 1024,
+  maxResultBytes: 28 * 1024 * 1024,
 });
 
 const TERMINAL_STATUSES = new Set(["succeeded", "failed", "rejected", "expired", "cancelled"]);
@@ -267,7 +269,9 @@ export function createRemoteControlCommandJournal({
       schemaVersion: REMOTE_CONTROL_COMMAND_JOURNAL_VERSION,
       entries: nextEntries,
     };
-    const serializedDocument = `${JSON.stringify(document, null, 2)}\n`;
+    // Match the compact JSON used to measure results; indentation can greatly
+    // inflate structured snapshots beyond their validated result size.
+    const serializedDocument = `${JSON.stringify(document)}\n`;
     if (Buffer.byteLength(serializedDocument, "utf8") > limits.maxFileBytes) {
       throw journalError("journal_full");
     }

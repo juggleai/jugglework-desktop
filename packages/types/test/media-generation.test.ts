@@ -2,11 +2,26 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import {
+  isChatSelectableProviderModel,
   parseImageGenerationCapabilities,
   parseMediaGenerationCapabilities,
   parseNormalizedModelCapabilities,
   supportsVideoGenerationMode,
 } from "../src/media-generation.ts"
+
+test("chat selection excludes output-only media in both provider model shapes", () => {
+  for (const model of [
+    { capabilities: { output: { image: true, text: false } } },
+    { capabilities: { output: { video: true } } },
+    { modalities: { output: ["video"] } },
+    { modalities: { output: ["image"] } },
+  ]) assert.equal(isChatSelectableProviderModel(model), false)
+  for (const model of [
+    { capabilities: { output: { video: true, text: true } } },
+    { modalities: { output: ["video", "text"] } },
+    { name: "ordinary chat" },
+  ]) assert.equal(isChatSelectableProviderModel(model), true)
+})
 
 test("normalizes explicit image generation modes", () => {
   assert.deepEqual(parseImageGenerationCapabilities({

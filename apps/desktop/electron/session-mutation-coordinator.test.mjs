@@ -34,6 +34,14 @@ test("records server-owned run metadata but exposes only the safe activeRuns pro
   }]);
   assert.doesNotMatch(JSON.stringify(coordinator.activeRuns()), /command_start|origin|generation/);
 });
+test("a restarted mirror accepts the unchanged authoritative generation", () => {
+  const original = createSessionMutationCoordinator();
+  assert.equal(original.recordServerRun(run({ generation: 123 })), true);
+  const restarted = createSessionMutationCoordinator();
+  assert.equal(restarted.recordServerRun(run({ generation: 123 })), true);
+  assert.equal(restarted.getRunGeneration({ workspaceId: "ws_1", sessionId: "ses_1", runId: "run_1" }), 123);
+  assert.equal(restarted.recordServerRun(run({ generation: 122 })), false);
+});
 
 test("validates server run fields before recording them", () => {
   const coordinator = createSessionMutationCoordinator();

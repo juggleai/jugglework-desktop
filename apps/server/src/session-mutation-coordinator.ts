@@ -10,6 +10,8 @@ export interface ActiveSessionMutation {
   sessionId: string;
   runId: string;
   generation: number;
+  revision: number;
+  title: string;
   origin: SessionMutationOrigin;
   startCommandCorrelationId: string | null;
   abortCommandCorrelationId: string | null;
@@ -37,6 +39,7 @@ export type SessionMutationLifecycleEvent = {
   event:
     | "run_reserved"
     | "run_started"
+    | "title_updated"
     | "progress"
     | "idle_suspected"
     | "abort_requested"
@@ -77,35 +80,48 @@ function publicRun(run: StoredSessionMutation): ActiveSessionMutation {
 export function createSessionMutationCoordinator(options: {
   randomUUID?: () => string;
   now?: () => number;
+  allocateGeneration?: () => number;
   onLifecycleEvent?: (event: SessionMutationLifecycleEvent) => void;
+  initialRuns?: ActiveSessionMutation[];
 } = {}) {
   const randomUUID = options.randomUUID ?? cryptoRandomUUID;
   const now = options.now ?? Date.now;
   const runs = new Map<string, StoredSessionMutation>();
   const generations = new Map<string, number>();
-  const emit = (event: SessionMutationLifecycleEvent) => {
-    try { options.onLifecycleEvent?.(event); } catch {
-      // Diagnostics must never change command execution semantics.
-    }
-  };
+  const emit = (event: SessionMutationLifecycleEvent) => options.onLifecycleEvent?.(event);
+  for (const restored of options.initialRuns ?? []) {
+    const run: StoredSessionMutation = {
+      ...restored,
+      abortAccepted: restored.status === "aborting",
+      authoritativeIdleObservedAt: null,
+    };
+    runs.set(sessionKey(run.workspaceId, run.sessionId), run);
+    generations.set(sessionKey(run.workspaceId, run.sessionId), run.generation);
+  }
 
   function reserveStart(input: {
     workspaceId: string;
     sessionId: string;
     origin: SessionMutationOrigin;
     startCommandCorrelationId: string | null;
+    title?: string;
   }): ActiveSessionMutation {
     const key = sessionKey(input.workspaceId, input.sessionId);
     const existing = runs.get(key);
     if (existing) throw new SessionMutationError("session_busy", existing.runId);
 
-    const generation = (generations.get(key) ?? 0) + 1;
+    // Allocate before exposing a run. Storage failures must not silently fall
+    // back to a counter that can reuse an already published generation.
+    const generation = options.allocateGeneration?.() ?? (generations.get(key) ?? 0) + 1;
+    if (!Number.isSafeInteger(generation) || generation <= 0) throw new Error("invalid_run_generation");
     generations.set(key, generation);
     const timestamp = now();
     const run: StoredSessionMutation = {
       ...input,
       runId: randomUUID(),
       generation,
+      revision: 1,
+      title: input.title?.slice(0, 120) ?? "",
       abortCommandCorrelationId: null,
       status: "starting",
       observedActive: false,
@@ -116,8 +132,8 @@ export function createSessionMutationCoordinator(options: {
       abortAccepted: false,
       authoritativeIdleObservedAt: null,
     };
-    runs.set(key, run);
     emit({ event: "run_reserved", run: publicRun(run) });
+    runs.set(key, run);
     return publicRun(run);
   }
 
@@ -129,9 +145,10 @@ export function createSessionMutationCoordinator(options: {
     const run = runs.get(sessionKey(input.workspaceId, input.sessionId));
     if (!run || run.runId !== input.runId) return null;
     if (run.status === "starting") {
-      run.status = "running";
-      run.updatedAt = now();
-      emit({ event: "run_started", run: publicRun(run) });
+      const next = { ...run, status: "running" as const, revision: run.revision + 1, updatedAt: now() };
+      emit({ event: "run_started", run: publicRun(next) });
+      runs.set(sessionKey(input.workspaceId, input.sessionId), next);
+      return publicRun(next);
     }
     // Idle evidence observed before upstream accepted the start may belong to
     // the previous engine state. Require fresh authoritative samples.
@@ -143,9 +160,8 @@ export function createSessionMutationCoordinator(options: {
     const key = sessionKey(input.workspaceId, input.sessionId);
     const run = runs.get(key);
     if (!run || run.runId !== input.runId) return false;
-    const deleted = runs.delete(key);
-    if (deleted) emit({ event: "start_rolled_back", run: publicRun(run), terminalReason: "dispatch_failed" });
-    return deleted;
+    emit({ event: "start_rolled_back", run: publicRun(run), terminalReason: "dispatch_failed" });
+    return runs.delete(key);
   }
 
   function reserveAbort(input: {
@@ -161,14 +177,19 @@ export function createSessionMutationCoordinator(options: {
     if (run.status === "aborting") throw new SessionMutationError("session_busy", run.runId);
 
     const previousStatus = run.status;
+    const previous = { ...run };
     const timestamp = now();
+    run.revision += 1;
     run.status = "aborting";
     run.abortCommandCorrelationId = input.abortCommandCorrelationId;
     run.abortRequestedAt = timestamp;
     run.updatedAt = timestamp;
     run.abortAccepted = false;
     run.authoritativeIdleObservedAt = null;
-    emit({ event: "abort_requested", run: publicRun(run) });
+    try { emit({ event: "abort_requested", run: publicRun(run) }); } catch (error) {
+      Object.assign(run, previous);
+      throw error;
+    }
     return { run: publicRun(run), previousStatus };
   }
 
@@ -181,9 +202,14 @@ export function createSessionMutationCoordinator(options: {
     const run = runs.get(sessionKey(input.workspaceId, input.sessionId));
     if (!run || run.runId !== input.runId || run.status !== "aborting" ||
       run.abortCommandCorrelationId !== input.abortCommandCorrelationId) return null;
+    const previous = { ...run };
     run.abortAccepted = true;
+    run.revision += 1;
     run.updatedAt = now();
-    emit({ event: "abort_accepted", run: publicRun(run) });
+    try { emit({ event: "abort_accepted", run: publicRun(run) }); } catch (error) {
+      Object.assign(run, previous);
+      throw error;
+    }
     return publicRun(run);
   }
 
@@ -197,12 +223,17 @@ export function createSessionMutationCoordinator(options: {
     const run = runs.get(sessionKey(input.workspaceId, input.sessionId));
     if (!run || run.runId !== input.runId || run.status !== "aborting" || run.abortAccepted ||
       run.abortCommandCorrelationId !== input.abortCommandCorrelationId) return false;
+    const previous = { ...run };
     run.status = input.previousStatus;
+    run.revision += 1;
     run.abortCommandCorrelationId = null;
     run.abortRequestedAt = null;
     run.updatedAt = now();
     run.authoritativeIdleObservedAt = null;
-    emit({ event: "abort_rolled_back", run: publicRun(run) });
+    try { emit({ event: "abort_rolled_back", run: publicRun(run) }); } catch (error) {
+      Object.assign(run, previous);
+      throw error;
+    }
     return true;
   }
 
@@ -221,9 +252,9 @@ export function createSessionMutationCoordinator(options: {
     if (input.status === "idle") {
       const canClear = run.status === "aborting" ? run.abortAccepted : run.observedActive;
       if (!canClear) return { cleared: false, run: publicRun(run), terminalStatus: null };
-      runs.delete(key);
       const terminalReason = run.status === "aborting" ? "aborted" : "completed";
       emit({ event: "run_terminal", run: publicRun(run), terminalReason });
+      runs.delete(key);
       return {
         cleared: true,
         run: null,
@@ -232,12 +263,14 @@ export function createSessionMutationCoordinator(options: {
     }
 
     if (input.status === "completed" || input.status === "failed" || input.status === "aborted") {
-      runs.delete(key);
       emit({ event: "run_terminal", run: publicRun(run), terminalReason: input.status });
+      runs.delete(key);
       return { cleared: true, run: null, terminalStatus: input.status };
     }
 
+    const previous = { ...run };
     const timestamp = now();
+    run.revision += 1;
     run.authoritativeIdleObservedAt = null;
     if (input.status !== "starting" && !run.observedActive) {
       run.observedActive = true;
@@ -246,7 +279,10 @@ export function createSessionMutationCoordinator(options: {
     // Once abort is reserved, ordinary engine activity cannot downgrade it.
     if (run.status !== "aborting" || input.status === "aborting") run.status = input.status;
     run.updatedAt = timestamp;
-    emit({ event: "progress", run: publicRun(run) });
+    try { emit({ event: "progress", run: publicRun(run) }); } catch (error) {
+      Object.assign(run, previous);
+      throw error;
+    }
     return { cleared: false, run: publicRun(run), terminalStatus: null };
   }
 
@@ -293,16 +329,21 @@ export function createSessionMutationCoordinator(options: {
           retryAfterMs: null,
         };
       }
-      runs.delete(key);
       emit({ event: "run_terminal", run: publicRun(run), terminalReason: "aborted" });
+      runs.delete(key);
       return { cleared: true, run: null, terminalStatus: "aborted", retryAfterMs: null };
     }
 
     const timestamp = now();
     if (run.authoritativeIdleObservedAt === null) {
+      const previous = { ...run };
       run.authoritativeIdleObservedAt = timestamp;
+      run.revision += 1;
       run.updatedAt = timestamp;
-      emit({ event: "idle_suspected", run: publicRun(run) });
+      try { emit({ event: "idle_suspected", run: publicRun(run) }); } catch (error) {
+        Object.assign(run, previous);
+        throw error;
+      }
       return {
         cleared: false,
         run: publicRun(run),
@@ -321,8 +362,8 @@ export function createSessionMutationCoordinator(options: {
       };
     }
 
-    runs.delete(key);
     emit({ event: "run_terminal", run: publicRun(run), terminalReason: "completed" });
+    runs.delete(key);
     return { cleared: true, run: null, terminalStatus: "completed", retryAfterMs: null };
   }
 
@@ -337,6 +378,23 @@ export function createSessionMutationCoordinator(options: {
     return run ? publicRun(run) : null;
   }
 
+  function updateTitle(input: { workspaceId: string; sessionId: string; title: string }): ActiveSessionMutation | null {
+    const key = sessionKey(input.workspaceId, input.sessionId);
+    const run = runs.get(key);
+    if (!run) return null;
+    const title = input.title.slice(0, 120);
+    if (!title || title === run.title) return publicRun(run);
+    const previous = { ...run };
+    run.title = title;
+    run.revision += 1;
+    run.updatedAt = now();
+    try { emit({ event: "title_updated", run: publicRun(run) }); } catch (error) {
+      Object.assign(run, previous);
+      throw error;
+    }
+    return publicRun(run);
+  }
+
   return Object.freeze({
     reserveStart,
     acceptStart,
@@ -348,6 +406,7 @@ export function createSessionMutationCoordinator(options: {
     reconcileAuthoritativeIdle,
     listActive,
     getActive,
+    updateTitle,
   });
 }
 

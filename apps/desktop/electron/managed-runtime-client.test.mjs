@@ -61,6 +61,10 @@ describe("managed runtime client", () => {
     assert.equal(request.init.redirect, "manual");
     assert.equal(request.init.method, "GET");
     assert.doesNotMatch(JSON.stringify(await client.getJson("/safe")), /secret|127\.0\.0\.1|48123/);
+
+    await client.putJson("/workspace/ws_1/model", { mode: "auto" });
+    assert.equal(requests[2].init.method, "PUT");
+    assert.equal(requests[2].init.body, JSON.stringify({ mode: "auto" }));
   });
 
   it("rejects redirects, malformed JSON, declared and streamed oversized responses", async () => {

@@ -158,7 +158,7 @@ describe("mounted JuggleWork session mutations", () => {
     }
   });
 
-  test("routes promptAsync through run start and preserves the complete prompt body", async () => {
+  test("routes promptAsync through run start with the displayed model for authoritative auto resolution", async () => {
     const calls = mockFetch((call) => {
       if (call.url.endsWith("/workspace/workspace-1/sessions/session-1/runs/start")) {
         return jsonResponse({ run: activeRun("run-local") }, 202);

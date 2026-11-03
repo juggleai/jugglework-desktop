@@ -12,7 +12,10 @@ import {
   normalizeRemoteQuestionInteraction,
 } from "./remote-control-interaction-store.mjs";
 
-const MAX_EVENT_BYTES = 512 * 1024;
+// One 10 MiB image becomes roughly 13.4 MiB as a data URL. Keep a complete
+// file part below the event limit so text and image reach remote clients
+// together instead of degrading to a text-only snapshot requirement.
+const MAX_EVENT_BYTES = 32 * 1024 * 1024;
 const MAX_BINDINGS = 100;
 const MAX_MESSAGES = 1_000;
 const MAX_PARTS_PER_MESSAGE = 1_000;
@@ -421,6 +424,12 @@ export function createRemoteSessionProjector({ randomUUID, now, coalesceMs = 25,
       });
       state.todos = todos;
       emitForSession(workspaceId, sessionId, { type: "todos.replace", todos }, occurredAt);
+      return;
+    }
+    if (event.type === "session.model.updated") {
+      const preference = data.preference ?? data;
+      if (data.sessionId !== sessionId || !isRecord(preference)) return;
+      emitForSession(workspaceId, sessionId, { type: "session.model.updated", preference }, occurredAt);
       return;
     }
     if (["permission.asked", "permission.v2.asked", "question.asked", "question.v2.asked"].includes(event.type)) {

@@ -19,7 +19,7 @@ import { ManagedRuntimeClientError } from "./managed-runtime-client.mjs";
 
 const MAX_SESSION_LIST_ITEMS = 10_000;
 const SNAPSHOT_MESSAGE_LIMIT = 200;
-const SNAPSHOT_TRANSCRIPT_BUDGET_BYTES = 512 * 1024;
+const SNAPSHOT_TRANSCRIPT_BUDGET_BYTES = 28 * 1024 * 1024;
 const SNAPSHOT_PART_TEXT_LIMIT = 128 * 1024;
 const ISO_EPOCH = new Date(0).toISOString();
 const identifierSchema = z.string().trim().min(1).max(256).refine((value) => !/[\u0000-\u001f\u007f]/.test(value));
@@ -59,12 +59,39 @@ const statusSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("retry") }).passthrough(),
 ]);
 const statusesResponseSchema = z.record(z.string(), statusSchema);
+const activeRunsResponseSchema = z.object({ items: z.array(z.object({
+  workspaceId: identifierSchema,
+  sessionId: identifierSchema,
+  runId: identifierSchema,
+  status: z.enum(["starting", "running", "waiting", "retrying", "aborting"]),
+}).passthrough()) }).strict();
+
+// Read the managed runtime authority, not the asynchronously hydrated SSE mirror.
+async function readActiveRuns(client, workspaceId) {
+  const response = activeRunsResponseSchema.parse(await client.getJson(`/workspace/${encodeURIComponent(workspaceId)}/session-runs`));
+  const runs = new Map();
+  for (const run of response.items) {
+    if (run.workspaceId !== workspaceId || runs.has(run.sessionId)) {
+      throw new RemoteControlOperationExecutionError("snapshot_required");
+    }
+    runs.set(run.sessionId, run);
+  }
+  return runs;
+}
+
+function withActiveRun(summary, run) {
+  return run ? { ...summary, activeRunId: run.runId, status: run.status === "starting" ? "running" : run.status } : summary;
+}
 const snapshotResponseSchema = z.object({
   item: z.object({
     session: sessionSchema,
     messages: z.array(messageSchema).max(SNAPSHOT_MESSAGE_LIMIT),
     todos: z.array(todoSchema).max(10_000),
     status: statusSchema,
+    // The managed server returns the persisted preference envelope, which also
+    // carries workspace/session identity. Accept those transport fields while
+    // projecting only the revisioned preference into the remote snapshot.
+    modelPreference: z.object({ revision: z.number().int().nonnegative(), mode: z.enum(["auto", "explicit"]), model: z.object({ providerID: identifierSchema, modelID: identifierSchema }).strict().nullable(), updatedAt: z.number().int().nonnegative() }).passthrough(),
   }).strict(),
 }).strict();
 
@@ -490,6 +517,8 @@ export function createRemoteControlReadRegistrations({ workspaceStore, managedRu
           .filter((session) => !session.parentID && !isRemoteSessionArchived(session))
           .map((session) => sessionSummary(session, workspace, statuses[session.id])),
       };
+      const runs = await readActiveRuns(managedRuntimeClient, workspace.id);
+      result.sessions = result.sessions.map((summary) => withActiveRun(summary, runs.get(summary.id)));
       return desktopRemoteOperationResultSchema.parse({ operation: "session.list", payloadVersion: 1, result }).result;
     }),
     registration("session.snapshot", (value, payloadVersion) => {
@@ -545,12 +574,13 @@ export function createRemoteControlReadRegistrations({ workspaceStore, managedRu
       const pendingRecord = /** @type {Record<string, unknown>} */ (pending);
       if (!pending || typeof pending !== "object" || !Array.isArray(pendingRecord.items)) throw new RemoteControlOperationExecutionError("internal_error");
       pendingOperations = pendingRecord.items;
+      const runs = await readActiveRuns(managedRuntimeClient, workspace.id);
       const captured = new Date(now());
       if (!Number.isFinite(captured.getTime())) throw new RemoteControlOperationExecutionError("internal_error");
       const result = {
         schemaVersion: 1,
         workspace: workspaceSummary(workspace),
-        session: { ...summary, status: sessionStatus(response.item.status) },
+        session: withActiveRun({ ...summary, status: sessionStatus(response.item.status) }, runs.get(args.sessionId)),
         messages: boundedTranscript(response.item.messages.flatMap((message) => {
           const normalized = normalizeRemoteMessage(message, args.sessionId);
           return normalized ? [normalized] : [];
@@ -561,6 +591,12 @@ export function createRemoteControlReadRegistrations({ workspaceStore, managedRu
         }),
         interactions: pendingInteractions,
         pendingOperations,
+        modelPreference: (() => {
+          const value = response.item.modelPreference;
+          return value && typeof value === "object"
+            ? { revision: value.revision, mode: value.mode, model: value.model, updatedAt: value.updatedAt }
+            : { revision: 0, mode: "auto", model: null, updatedAt: 0 };
+        })(),
         capturedAt: captured.toISOString(),
       };
       const snapshotSchema = payloadVersion === REMOTE_CONTROL_DESCENDANT_PAYLOAD_VERSION

@@ -52,6 +52,7 @@ const OPERATION_NAMES = new Set([
   "session.snapshot",
   "session.create",
   "session.prompt",
+  "session.model.set",
   "session.abort",
   "session.pending.cancel",
   "interaction.permission.reply",
@@ -60,6 +61,7 @@ const OPERATION_NAMES = new Set([
 const MUTATION_OPERATIONS = new Set([
   "session.create",
   "session.prompt",
+  "session.model.set",
   "session.abort",
   "session.pending.cancel",
   "interaction.permission.reply",
@@ -69,7 +71,8 @@ const TERMINAL_STATUSES = new Set(["succeeded", "failed", "rejected", "expired",
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const SEMVER_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 const HASH_PATTERN = /^[a-f0-9]{64}$/;
-const MAX_MESSAGE_BYTES = 2 * 1024 * 1024;
+// Encrypted command frames base64url-encode the bounded plaintext request.
+const MAX_MESSAGE_BYTES = 48 * 1024 * 1024;
 const MAX_TIMER_DELAY = 24 * 60 * 60 * 1_000;
 const TOKEN_REFRESH_MARGIN = 60_000;
 // A cached agent token is reused for transport reconnects only while it stays
@@ -107,6 +110,7 @@ const ERROR_MESSAGES = Object.freeze({
   session_not_found: "The session was not found.",
   session_busy: "The session is busy.",
   run_mismatch: "The active run does not match the requested run.",
+  revision_conflict: "The session model preference changed; refresh and retry.",
   interaction_not_found: "The interaction was not found.",
   interaction_expired: "The interaction expired.",
   already_resolved: "The interaction was already resolved.",
@@ -232,6 +236,12 @@ function isTimestamp(value) {
   return month >= 1 && month <= 12 && day >= 1 && day <= daysInMonth[month - 1] &&
     Number(hourText) <= 23 && Number(minuteText) <= 59 && Number(secondText) <= 59 &&
     (offsetHourText === undefined || (Number(offsetHourText) <= 23 && Number(offsetMinuteText) <= 59));
+}
+
+function canonicalActivityTimestamp(value) {
+  const date = new Date(value);
+  const milliseconds = date.getUTCMilliseconds();
+  return date.toISOString().replace(milliseconds === 0 ? ".000Z" : /0+Z$/, milliseconds === 0 ? "Z" : "Z");
 }
 
 /** @param {unknown} value */
@@ -450,9 +460,8 @@ function validRequest(value) {
     case "session.list": return hasExactKeys(args, ["workspaceId"]) && isIdentifier(args.workspaceId);
     case "session.snapshot": return hasExactKeys(args, ["workspaceId", "sessionId"]) && isIdentifier(args.workspaceId) && isIdentifier(args.sessionId);
     case "session.create": return hasExactKeys(args, ["workspaceId", "title"]) && isIdentifier(args.workspaceId) && isSessionCreateTitle(args.title);
-    case "session.prompt": return (hasExactKeys(args, ["workspaceId", "sessionId", "prompt"]) || hasExactKeys(args, ["workspaceId", "sessionId", "prompt", "whenBusy"])) &&
-      isIdentifier(args.workspaceId) && isIdentifier(args.sessionId) && typeof args.prompt === "string" && args.prompt.trim().length >= 1 && Buffer.byteLength(args.prompt, "utf8") <= 200_000 &&
-      (!Object.hasOwn(args, "whenBusy") || ["reject", "steer", "enqueue"].includes(args.whenBusy));
+    case "session.prompt": return desktopRemoteOperationRequestSchema.safeParse(value).success;
+    case "session.model.set": return desktopRemoteOperationRequestSchema.safeParse(value).success;
     case "session.abort": return hasExactKeys(args, ["workspaceId", "sessionId", "expectedRunId"]) && isIdentifier(args.workspaceId) &&
       isIdentifier(args.sessionId) && isIdentifier(args.expectedRunId);
     case "session.pending.cancel": return hasExactKeys(args, ["workspaceId", "sessionId", "pendingOperationId"]) &&
@@ -643,6 +652,15 @@ export function createRemoteControlAgent(options) {
   let enrollment = null;
   /** @type {RemoteControlSocket | null} */
   let socket = null;
+  const activityAcks = new Map();
+  // ACKs carry eventId, not the run identity. Never rebind an event on the
+  // same transport, even after timeout: its old ACK may still be in flight.
+  const activityEventBindings = new Map();
+
+  function clearActivityAcks() {
+    activityEventBindings.clear();
+    for (const pending of activityAcks.values()) pending.finish(false);
+  }
   /** @type {{ token: AgentToken, deviceId: string } | null} */
   let cachedAgentToken = null;
   /** @type {RemoteControlCapabilities} */
@@ -860,6 +878,7 @@ export function createRemoteControlAgent(options) {
 
   /** Synchronously fences async completions, cancels timers, and closes transport. */
   function invalidateTransport() {
+    clearActivityAcks();
     rejectWelcomeWaiters("welcome_connection_changed");
     notifyTransportReset();
     lifecycleGeneration += 1;
@@ -1246,6 +1265,7 @@ export function createRemoteControlAgent(options) {
   /** @param {RemoteControlSocket} target @param {string} code */
   function transportFailed(target, code) {
     if (target !== socket || intentionalSockets.has(target) || failedSockets.has(target)) return;
+    clearActivityAcks();
     failedSockets.add(target);
     // A socket that never reached welcome may have rejected the bearer token.
     // Do not retry that token indefinitely; connected transport failures keep
@@ -1381,6 +1401,18 @@ export function createRemoteControlAgent(options) {
       return;
     }
     if (generation !== lifecycleGeneration) return;
+    if (envelope.type === "activity.task_status_ack" || envelope.type === "activity.run_event_ack") {
+      const ack = envelope.payload;
+      const pending = activityAcks.get(ack?.eventId);
+      if (pending && pending.target === target && pending.generation === generation &&
+          ack.connectionGeneration === connectionGeneration &&
+          typeof ack.accepted === "boolean" &&
+          ["persisted", "accepted", "duplicate", "stale", "conflict", "forbidden", "invalid", "unavailable"].includes(ack.reason)) {
+        pending.onAck?.(ack.reason);
+        pending.finish(ack.accepted === true && ["persisted", "accepted", "duplicate"].includes(ack.reason));
+      }
+      return;
+    }
     if (context?.featureGates.payloadEncryption && envelope.type === "connection.welcome" && !advertisedE2EEKey) {
       protocolBlocked = true;
       lastErrorCode = "encryption_negotiation_failed";
@@ -1586,7 +1618,9 @@ export function createRemoteControlAgent(options) {
       return;
     }
     const args = command.request.arguments;
-    const rootSessionId = command.request.payloadVersion === 2 ? args.rootSessionId : args.sessionId;
+    // Descendant operations use `rootSessionId`; root mutations, including
+    // session.prompt v2, keep using `sessionId`.
+    const rootSessionId = args.rootSessionId ?? args.sessionId;
     let bindingFailed = false;
     if (isIdentifier(args.workspaceId) && isIdentifier(rootSessionId)) {
       try {
@@ -1695,7 +1729,7 @@ export function createRemoteControlAgent(options) {
         terminal = { status: "succeeded", occurredAt: timestamp().toISOString(), result: fullResult, error: null };
       } else {
         terminal = {
-          status: "failed",
+          status: isRecord(dispatched.error) && dispatched.error.code === "revision_conflict" ? "rejected" : "failed",
           occurredAt: timestamp().toISOString(),
           result: null,
           error: safeDispatchError(dispatched.error, command.commandId),
@@ -2063,6 +2097,7 @@ export function createRemoteControlAgent(options) {
     protocolBlocked = false;
     const generation = lifecycleGeneration;
     let destructiveBoundaryCrossed = false;
+    let replacementStage = "drain_operations";
     try {
       await drainOldOperations(oldOperationDrainTimeoutMs);
       if (signal?.aborted) throw Object.assign(new Error("Remote-control identity replacement was cancelled."), { code: "replacement_cancelled" });
@@ -2073,10 +2108,12 @@ export function createRemoteControlAgent(options) {
         } catch {}
       }
       destructiveBoundaryCrossed = true;
+      replacementStage = "delete_material";
       await deleteDeviceMaterial();
       if (signal?.aborted || generation !== lifecycleGeneration || activeContext !== context || !contextAllowsEnrollment() || settings.enabled) {
         throw new TypeError("Remote-control authorization changed during identity replacement.");
       }
+      replacementStage = "display_name";
       const displayName = await getDisplayName();
       if (signal?.aborted || generation !== lifecycleGeneration || activeContext !== context || !contextAllowsEnrollment() || settings.enabled) {
         throw new TypeError("Remote-control authorization changed during identity replacement.");
@@ -2088,11 +2125,13 @@ export function createRemoteControlAgent(options) {
         displayName,
         platform,
         signal,
+        onStage: (stage) => { replacementStage = stage; },
       });
       if (signal?.aborted || generation !== lifecycleGeneration || activeContext !== context || !contextAllowsEnrollment() || settings.enabled ||
           !validEnrollment(credential, activeContext) || credential.deviceId === replacedDeviceId) {
         throw new TypeError("Enrollment returned an invalid device binding.");
       }
+      replacementStage = "e2ee_key";
       await e2eeKeyStore?.active();
       if (signal?.aborted || generation !== lifecycleGeneration || activeContext !== context || !contextAllowsEnrollment() || settings.enabled) {
         throw new TypeError("Remote-control authorization changed during identity replacement.");
@@ -2105,11 +2144,21 @@ export function createRemoteControlAgent(options) {
     } catch (error) {
       enrollment = null;
       lastErrorCode = "identity_replacement_failed";
+      log("error", "identity_replacement_failed", {
+        stage: replacementStage,
+        reason: typeof error?.code === "string" ? error.code : "unknown",
+      });
       if (destructiveBoundaryCrossed) {
         try { await deleteDeviceMaterial(); } catch {}
       }
       state = started ? REMOTE_CONTROL_AGENT_STATUS.DISABLED : REMOTE_CONTROL_AGENT_STATUS.STOPPED;
-      throw error;
+      // Preserve a content-free substage even when the original error has no
+      // code (for example TypeError from a context race). Never pass its message.
+      const stages = new Set(["drain_operations", "delete_material", "display_name", "prepare_credential", "exchange", "complete_credential", "e2ee_key"]);
+      const failure = new Error("Remote-control identity replacement failed.");
+      failure.code = typeof error?.code === "string" ? error.code : "identity_replacement_failed";
+      failure.replacementStage = stages.has(replacementStage) ? replacementStage : "unknown";
+      throw failure;
     }
   }
 
@@ -2337,34 +2386,91 @@ export function createRemoteControlAgent(options) {
     return accepted;
   }
 
-  /** Publishes only device-scoped Live Activity lifecycle metadata. */
-  async function publishActivityTaskStatus(input) {
+  /**
+   * Publishes only device-scoped Live Activity lifecycle metadata.
+   * @param {{ eventId: string, deviceEpoch?: string, sequence?: number, workspaceId: string, sessionId: string, runId: string, generation?: number, revision?: number, status: string, title: string, workspaceName: string, occurredAt: string }} input
+   * @param {{ isCurrent?: () => boolean, onAck?: (reason: string) => void }} options
+   */
+  async function publishActivityTaskStatus(input, { isCurrent = () => true, onAck = null } = {}) {
     const reject = (reason) => {
       log("warn", "activity_task_status_rejected", { reason });
       return false;
     };
+    const isV3 = input?.deviceEpoch !== undefined;
+    const textWithin = (value, maximum) => typeof value === "string" && value.length > 0 && value.trim() === value &&
+      !/[\u0000\r\n]/.test(value) && Buffer.byteLength(value) <= maximum;
     if (!isRecord(input) || !UUID_PATTERN.test(input.eventId) || !isIdentifier(input.workspaceId) ||
+        (isV3 && (!textWithin(input.workspaceId, 256) || !textWithin(input.sessionId, 128) || !textWithin(input.runId, 128))) ||
+        (input.generation !== undefined && (!Number.isSafeInteger(input.generation) || input.generation <= 0)) ||
+        (input.sequence !== undefined && (!Number.isSafeInteger(input.sequence) || input.sequence <= 0)) ||
+        (input.revision !== undefined && (!Number.isSafeInteger(input.revision) || input.revision <= 0)) ||
+        (input.deviceEpoch !== undefined && !UUID_PATTERN.test(input.deviceEpoch)) ||
         !isIdentifier(input.sessionId) || !isIdentifier(input.runId) ||
         !["running", "completed", "failed", "aborted"].includes(input.status) ||
-        typeof input.title !== "string" || Buffer.byteLength(input.title) < 1 || Buffer.byteLength(input.title) > 80 ||
+        typeof input.title !== "string" || Buffer.byteLength(input.title) > (isV3 ? 256 : 80) ||
+        (Buffer.byteLength(input.title) < 1 && (input.generation === undefined || input.status === "running")) ||
         typeof input.workspaceName !== "string" || Buffer.byteLength(input.workspaceName) > 40 ||
         typeof input.occurredAt !== "string" || Number.isNaN(Date.parse(input.occurredAt))) return reject("invalid_schema");
     if (!socket || state !== REMOTE_CONTROL_AGENT_STATUS.CONNECTED || !enrollment || !context) return reject("transport_unavailable");
+    const target = socket;
+    const generation = lifecycleGeneration;
+    const activeConnection = connectionGeneration;
+    const activeContext = context;
     let credential;
     try {
       credential = await credentialStore.getSigningCredential(credentialContext(context));
     } catch {
       return reject("credential_unavailable");
     }
-    if (credential.deviceId !== enrollment.deviceId || socket === null || state !== REMOTE_CONTROL_AGENT_STATUS.CONNECTED) return reject("identity_changed");
-    const occurredAt = new Date(input.occurredAt).toISOString();
-    const aad = Buffer.from(`jugglework.activity-task-status.v1\ndeviceId=${enrollment.deviceId}\neventId=${input.eventId}\nworkspaceId=${input.workspaceId}\nsessionId=${input.sessionId}\nrunId=${input.runId}\nstatus=${input.status}\ntitle=${input.title}\nworkspaceName=${input.workspaceName}\noccurredAt=${occurredAt}\n`, "utf8");
+    if (!enrollment || credential.deviceId !== enrollment.deviceId || socket !== target ||
+        generation !== lifecycleGeneration || activeConnection !== connectionGeneration || context !== activeContext ||
+        state !== REMOTE_CONTROL_AGENT_STATUS.CONNECTED) return reject("identity_changed");
+    if (!isCurrent()) return reject("superseded");
+    const schemaVersion = input.deviceEpoch === undefined ? (input.generation === undefined ? 1 : 2) : 3;
+    const occurredAt = schemaVersion === 3
+      ? canonicalActivityTimestamp(input.occurredAt)
+      : new Date(input.occurredAt).toISOString();
+    if (schemaVersion === 3 && (input.sequence === undefined || input.revision === undefined || input.generation === undefined)) return reject("invalid_schema");
+    const generationLine = schemaVersion >= 2 ? `generation=${input.generation}\n` : "";
+    const canonical = schemaVersion === 3
+      ? `schemaVersion=3\ndeviceEpoch=${input.deviceEpoch}\nsequence=${input.sequence}\neventId=${input.eventId}\nworkspaceId=${input.workspaceId}\nsessionId=${input.sessionId}\nrunId=${input.runId}\ngeneration=${input.generation}\nrevision=${input.revision}\nstatus=${input.status}\ntitle=${input.title}\noccurredAt=${occurredAt}\n`
+      : null;
+    const payloadDigest = canonical === null ? null : createHash("sha256").update(canonical).digest("hex");
+    const aad = Buffer.from(schemaVersion === 3
+      ? `jugglework.activity-run-event.v3\ndeviceId=${enrollment.deviceId}\n${canonical}payloadDigest=${payloadDigest}\n`
+      : `jugglework.activity-task-status.v${schemaVersion}\ndeviceId=${enrollment.deviceId}\neventId=${input.eventId}\nworkspaceId=${input.workspaceId}\nsessionId=${input.sessionId}\nrunId=${input.runId}\n${generationLine}status=${input.status}\ntitle=${input.title}\nworkspaceName=${input.workspaceName}\noccurredAt=${occurredAt}\n`, "utf8");
     const payload = {
-      schemaVersion: 1, eventId: input.eventId, workspaceId: input.workspaceId, sessionId: input.sessionId,
-      runId: input.runId, status: input.status, title: input.title, workspaceName: input.workspaceName,
+      schemaVersion, ...(schemaVersion >= 2 ? { generation: input.generation } : {}),
+      ...(schemaVersion === 3 ? { deviceEpoch: input.deviceEpoch, sequence: input.sequence, revision: input.revision } : {}),
+      eventId: input.eventId, workspaceId: input.workspaceId, sessionId: input.sessionId,
+      runId: input.runId, status: input.status, title: input.title,
+      ...(schemaVersion === 3 ? { payloadDigest } : { workspaceName: input.workspaceName }),
       occurredAt, signature: sign(null, aad, credential.privateKey).toString("base64url"),
     };
-    return send(socket, "activity.task_status", payload);
+    if (activityAcks.has(input.eventId)) return false;
+    const binding = aad.toString("utf8");
+    const previousBinding = activityEventBindings.get(input.eventId);
+    if (previousBinding !== undefined && previousBinding !== binding) return reject("event_identity_conflict");
+    // Rotate the entire transport, never evict an identity on a live socket.
+    // Old-socket ACKs are fenced by handleMessage's target check; unconfirmed
+    // journal entries retry after bounded reconnect rather than wedging forever.
+    if (previousBinding === undefined && activityEventBindings.size >= 20_000) {
+      transportFailed(target, "activity_event_binding_rotation");
+      return reject("event_binding_capacity");
+    }
+    activityEventBindings.set(input.eventId, binding);
+    return new Promise((resolve) => {
+      let timer = null;
+      const pending = { target, generation, onAck, finish: (accepted) => {
+        if (activityAcks.get(input.eventId) !== pending) return;
+        activityAcks.delete(input.eventId);
+        if (timer !== null) timers.clearTimeout(timer);
+        resolve(accepted && isCurrent() && target === socket && generation === lifecycleGeneration && activeConnection === connectionGeneration);
+      } };
+      activityAcks.set(input.eventId, pending);
+      timer = timers.setTimeout(() => pending.finish(false), 5_000);
+      if (!send(target, schemaVersion === 3 ? "activity.run_event" : "activity.task_status", payload)) pending.finish(false);
+    });
   }
 
   /** Returns content- and credential-free diagnostic state. */
@@ -2389,5 +2495,9 @@ export function createRemoteControlAgent(options) {
     });
   }
 
-  return Object.freeze({ start, syncContext, enroll, replaceIdentity, refreshLocalSettings, waitForWelcome, stopAll, drainOldOperations, deleteCredential, publishSessionEvent, publishActivityTaskStatus, suspend, resume, stop, status });
+  function deviceId() {
+    return enrollment?.state === "enrolled" ? enrollment.deviceId : null;
+  }
+
+  return Object.freeze({ start, syncContext, enroll, replaceIdentity, refreshLocalSettings, waitForWelcome, stopAll, drainOldOperations, deleteCredential, publishSessionEvent, publishActivityTaskStatus, suspend, resume, stop, status, deviceId });
 }

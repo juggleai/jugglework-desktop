@@ -110,7 +110,8 @@ import { registerOperationRoutes } from "./routes/operations.js";
 import { addRoute, matchRoute, type AuthMode, type RequestContext, type Route } from "./routes/registry.js";
 import { registerSessionRoutes } from "./routes/sessions.js";
 import { createSessionPendingOperationStore, type SessionPendingOperationStore } from "./session-pending-operations.js";
-import { createSessionPendingOperationPump, type SessionPendingOperationPump } from "./session-pending-operation-pump.js";
+import { createSessionModelPreferenceStore, type SessionModelPreferenceStore } from "./session-model-preferences.js";
+import { SESSION_PENDING_OPERATION_IDLE_CONFIRM_MS, createSessionPendingOperationPump, type SessionPendingOperationPump } from "./session-pending-operation-pump.js";
 import { createSessionRunJournal } from "./session-run-journal.js";
 import { registerInteractionRoutes } from "./routes/interactions.js";
 import { registerSessionPermissionRoutes } from "./routes/session-permissions.js";
@@ -999,22 +1000,30 @@ export async function startServer(config: ServerConfig, options: {
   };
   const engineMcpServerState = beginEngineMcpServerState(config);
   const sessionPendingOperations = await createSessionPendingOperationStore({ config });
+  let sessionModelPreferences: SessionModelPreferenceStore;
+  try {
+    sessionModelPreferences = await createSessionModelPreferenceStore({ config });
+  } catch (error) {
+    sessionPendingOperations.close();
+    throw error;
+  }
   let sessionRunJournal: Awaited<ReturnType<typeof createSessionRunJournal>>;
   try {
     sessionRunJournal = await createSessionRunJournal({ config });
   } catch (error) {
     sessionPendingOperations.close();
+    sessionModelPreferences.close();
     throw error;
   }
   const lastJournalProgressAtByRun = new Map<string, number>();
   let fileDeliveries: FileDeliveryService | undefined;
   let officeDocuments: OfficeDocuments | undefined;
   const sessionMutations = createSessionMutationCoordinator({
+    allocateGeneration: sessionRunJournal.allocateGeneration,
+    initialRuns: sessionRunJournal.listActive(),
     onLifecycleEvent: (event) => {
       const timestamp = Date.now();
       if (event.event === "progress") {
-        const previous = lastJournalProgressAtByRun.get(event.run.runId) ?? 0;
-        if (timestamp - previous < 5_000) return;
         lastJournalProgressAtByRun.set(event.run.runId, timestamp);
       } else if (event.event === "run_terminal" || event.event === "start_rolled_back") {
         lastJournalProgressAtByRun.delete(event.run.runId);
@@ -1191,6 +1200,7 @@ export async function startServer(config: ServerConfig, options: {
     watcherHandle.close();
     internalReloadDispatchers.delete(config);
     sessionPendingOperations.close();
+    sessionModelPreferences.close();
     sessionRunJournal.close();
     clearHostMarketplaceMcpOverlay(config);
     throw error;
@@ -1203,6 +1213,7 @@ export async function startServer(config: ServerConfig, options: {
     if (sessionPendingOperationsClosed) return;
     sessionPendingOperationsClosed = true;
     sessionPendingOperations.close();
+    sessionModelPreferences.close();
   };
   const interactionResolutions = options.interactionResolutions ?? createInteractionResolutionCoordinator();
   const automationRepository = await AutomationRepository.open(config);
@@ -1542,7 +1553,9 @@ export async function startServer(config: ServerConfig, options: {
     restartReloadWatchers,
     engineMcpServerState,
     sessionMutations,
+    sessionRunJournal,
     sessionPendingOperations,
+    sessionModelPreferences,
     () => sessionPendingOperationPump,
     interactionResolutions,
     automationRepository,
@@ -1823,10 +1836,42 @@ export async function startServer(config: ServerConfig, options: {
     sessionPermissionBroker.start();
   }
   mediaGenerationWorker.start();
+  // Runtime-owned observer closes runs even when no Electron/phone/SSE consumer
+  // exists. It only writes through the durable coordinator authority.
+  const lifecycleObserver = setInterval(() => void (async () => {
+    for (const active of sessionMutations.listActive()) {
+      try {
+        const workspace = await resolveWorkspaceWithoutBootstrap(config, active.workspaceId);
+        const activity = await readSessionActivity(config, workspace, active.sessionId, AbortSignal.timeout(5_000));
+        if (activity === "busy") {
+          sessionMutations.observe({ ...active, status: "running" });
+          continue;
+        }
+        if (active.status !== "aborting") {
+          const messages = unwrapOpencodeResult(await createWorkspaceOpencodeClient(config, workspace)
+            .session.messages({ sessionID: active.sessionId, limit: 10 }), "/session/message");
+          if (!hasCurrentRunFinalResponse(messages, active.startedAt)) continue;
+        }
+        const result = sessionMutations.reconcileAuthoritativeIdle({
+          ...active, minimumIntervalMs: SESSION_PENDING_OPERATION_IDLE_CONFIRM_MS,
+        });
+        if (result.cleared) {
+          for (const pending of sessionPendingOperations.list(active.workspaceId, active.sessionId)) {
+            if (pending.state === "admitted" && pending.admittedId === active.runId) sessionPendingOperations.markCompleted(pending.id);
+          }
+          void sessionPendingOperationPump?.wake();
+        }
+      } catch {
+        // Engine or storage uncertainty is fail closed; retry the exact run.
+      }
+    }
+  })(), 1_000);
+  lifecycleObserver.unref?.();
 
   return {
     ...server,
     stop: async () => {
+      clearInterval(lifecycleObserver);
       invalidateEngineMcpServerState(config, engineMcpServerState);
       watcherHandle.close();
       internalReloadDispatchers.delete(config);
@@ -1994,6 +2039,7 @@ async function dispatchSessionPromptAsync(
   workspace: WorkspaceInfo,
   sessionId: string,
   prompt: Record<string, unknown>,
+  requirePersistence = false,
 ): Promise<void> {
   const path = `/session/${encodeURIComponent(sessionId)}/prompt_async`;
   let effectivePrompt = prompt;
@@ -2016,6 +2062,109 @@ async function dispatchSessionPromptAsync(
       path,
     });
   }
+  if (requirePersistence) {
+    await waitForPersistedSessionPrompt(config, workspace, sessionId, effectivePrompt);
+  }
+}
+
+type PersistedPromptPart =
+  | { type: "text"; text: string }
+  | { type: "file"; mime: string; filename: string; url: string };
+
+function promptPersistenceParts(value: unknown): PersistedPromptPart[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((part): PersistedPromptPart[] => {
+    if (!part || typeof part !== "object") return [];
+    const candidate = part as Record<string, unknown>;
+    if (candidate.type === "text" && typeof candidate.text === "string") {
+      return [{ type: "text", text: candidate.text }];
+    }
+    if (candidate.type === "file"
+      && typeof candidate.mime === "string"
+      && typeof candidate.filename === "string"
+      && typeof candidate.url === "string") {
+      return [{
+        type: "file",
+        mime: candidate.mime,
+        filename: candidate.filename,
+        url: candidate.url,
+      }];
+    }
+    return [];
+  });
+}
+
+function persistedPromptPartMatches(expected: PersistedPromptPart, actual: unknown): boolean {
+  if (!actual || typeof actual !== "object") return false;
+  const candidate = actual as Record<string, unknown>;
+  if (expected.type === "text") {
+    return candidate.type === "text" && candidate.text === expected.text;
+  }
+  return candidate.type === "file"
+    && (candidate.mime ?? candidate.mediaType) === expected.mime
+    && candidate.filename === expected.filename
+    && candidate.url === expected.url;
+}
+
+function hasPersistedPromptParts(expected: PersistedPromptPart[], actual: unknown): boolean {
+  if (!Array.isArray(actual)) return false;
+  let expectedIndex = 0;
+  for (const part of actual) {
+    if (expectedIndex < expected.length && persistedPromptPartMatches(expected[expectedIndex]!, part)) {
+      expectedIndex += 1;
+    }
+  }
+  return expectedIndex === expected.length;
+}
+
+async function waitForPersistedSessionPrompt(
+  config: ServerConfig,
+  workspace: WorkspaceInfo,
+  sessionId: string,
+  prompt: Record<string, unknown>,
+): Promise<void> {
+  const messageID = typeof prompt.messageID === "string" ? prompt.messageID : "";
+  const expectedParts = promptPersistenceParts(prompt.parts);
+  // Keep legacy text-only 204 semantics unchanged. Remote attachment starts
+  // get the stronger guarantee that OpenCode persisted the complete user turn
+  // before the command is reported as successful.
+  if (!messageID || !expectedParts.some((part) => part.type === "file")) return;
+
+  const delays = [0, 25, 50, 100, 200, 400, 800, 1_000];
+  for (const delay of delays) {
+    if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+    const messagePath = `/session/${encodeURIComponent(sessionId)}/message/${encodeURIComponent(messageID)}`;
+    const response = await loopbackFetch(workspaceOpencodeUrl(config, workspace, messagePath), {
+      method: "GET",
+      headers: workspaceOpencodeHeaders(config, workspace),
+    });
+    if (response.status === 404) continue;
+    if (!response.ok) {
+      throw new ApiError(502, "opencode_request_failed", "OpenCode request failed", {
+        status: response.status,
+        path: messagePath,
+      });
+    }
+    let message: unknown;
+    try {
+      message = await response.json();
+    } catch {
+      continue;
+    }
+    if (message && typeof message === "object") {
+      const record = message as { info?: Record<string, unknown>; parts?: unknown };
+      if (record.info?.id === messageID
+        && record.info.role === "user"
+        && hasPersistedPromptParts(expectedParts, record.parts)) return;
+    }
+  }
+
+  throw new ApiError(
+    502,
+    "opencode_prompt_not_persisted",
+    "OpenCode accepted the prompt but did not persist the complete user message",
+    { path: `/session/${encodeURIComponent(sessionId)}/message`, sessionId, messageID },
+  );
 }
 
 async function dispatchSessionAbort(
@@ -2895,7 +3044,9 @@ function createRoutes(
   onWorkspacesChanged: () => void,
   engineMcpServerState: EngineMcpServerState,
   sessionMutations: SessionMutationCoordinator,
+  sessionRunJournal: Awaited<ReturnType<typeof createSessionRunJournal>>,
   sessionPendingOperations: SessionPendingOperationStore,
+  sessionModelPreferences: SessionModelPreferenceStore,
   getSessionPendingOperationPump: () => SessionPendingOperationPump | null,
   interactionResolutions: InteractionResolutionCoordinator,
   automationRepository: AutomationRepository,
@@ -3049,7 +3200,13 @@ function createRoutes(
           if (part) part.metadata = { ...part.metadata, officeSelections: previews.map(({ referenceId, preview }) => ({ referenceId, preview })), officeInstructions };
         }
       }
-      await dispatchSessionPromptAsync(routeConfig, workspace, sessionId, enginePrompt);
+      await dispatchSessionPromptAsync(
+        routeConfig,
+        workspace,
+        sessionId,
+        enginePrompt,
+        run?.origin === "remote-control",
+      );
     },
     dispatchSessionAbort,
     preparePromptAdmission: async (identity, selection = {}) => {
@@ -3069,6 +3226,11 @@ function createRoutes(
     },
     sessionMutations,
     sessionPendingOperations,
+    sessionModelPreferences,
+    readRunTerminalStatus: sessionRunJournal.terminalStatus,
+    listRunTerminals: sessionRunJournal.listTerminals,
+    listLifecycleFeed: sessionRunJournal.listFeed,
+    ackLifecycleFeed: sessionRunJournal.ackFeed,
     sessionPendingOperationPump: {
       wake: () => getSessionPendingOperationPump()?.wake() ?? Promise.resolve(),
       cancelAll: (commandCorrelationId) => getSessionPendingOperationPump()?.cancelAll(commandCorrelationId)
@@ -3094,6 +3256,7 @@ function createRoutes(
       // Remove server-owned permission-mode state for the deleted root tree.
       sessionPermissionStore.deleteRootSessionRecords(workspaceId, sessionId);
       sessionResponseLanguageStore.delete(workspaceId, sessionId);
+      sessionModelPreferences.delete(workspaceId, sessionId);
     },
   });
 

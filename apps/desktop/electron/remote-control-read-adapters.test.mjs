@@ -60,6 +60,7 @@ function snapshotBody(directory = WORKSPACE_PATH) {
         },
       ],
       todos: [{ content: "Ship it", status: "completed", priority: "high" }],
+      modelPreference: { revision: 0, mode: "auto", model: null, updatedAt: 0 },
     },
   };
 }
@@ -73,6 +74,7 @@ function harness(overrides = {}) {
     "/workspace/ws_local/sessions/ses_1": { item: session() },
     "/workspace/ws_local/sessions/ses_1/snapshot?limit=200": snapshotBody(),
     "/workspace/ws_local/sessions/ses_1/pending": { items: [] },
+    "/workspace/ws_local/session-runs": { items: [] },
     ...(overrides.responses ?? {}),
   };
   const registrations = createRemoteControlReadRegistrations({
@@ -118,6 +120,17 @@ async function dispatch(registry, operation, argumentsValue, correlationId = "co
 }
 
 describe("remote-control read adapters", () => {
+  it("reads authoritative run identity for lists and snapshots without an SSE binding", async () => {
+    const { registry } = harness({ responses: {
+      "/workspace/ws_local/session-runs": { items: [{ workspaceId: "ws_local", sessionId: "ses_1", runId: "run_A", status: "running" }] },
+    } });
+    const listed = await dispatch(registry, "session.list", { workspaceId: "ws_local" });
+    assert.equal(listed.value.sessions[0].activeRunId, "run_A");
+    const snapshot = await dispatch(registry, "session.snapshot", { workspaceId: "ws_local", sessionId: "ses_1" });
+    assert.equal(snapshot.value.session.activeRunId, "run_A");
+    assert.equal(snapshot.value.session.status, "running");
+  });
+
   it("rejects a hidden child as a remote root binding", async () => {
     const responses = {
       "/workspaces": { items: [{ id: "ws_local", name: "Local", path: WORKSPACE_PATH, workspaceType: "local" }] },
@@ -254,6 +267,7 @@ describe("remote-control read adapters", () => {
       "/workspaces",
       "/workspace/ws_local/sessions?limit=10000",
       "/workspace/ws_local/opencode/session/status",
+      "/workspace/ws_local/session-runs",
     ]);
     assert.doesNotMatch(JSON.stringify(dispatched), /private|authorized|http|token/);
     desktopRemoteOperationResultSchema.parse({ operation: "session.list", payloadVersion: 1, result: dispatched.value });
@@ -308,6 +322,32 @@ describe("remote-control read adapters", () => {
     desktopRemoteOperationResultSchema.parse({ operation: "session.snapshot", payloadVersion: 1, result: firstResult.value });
   });
 
+  it("accepts persisted model preference identity fields without leaking them", async () => {
+    const testHarness = harness({
+      responses: {
+        "/workspace/ws_local/sessions/ses_1/snapshot?limit=200": {
+          ...snapshotBody(),
+          item: {
+            ...snapshotBody().item,
+            modelPreference: {
+              workspaceId: "ws_local",
+              sessionId: "ses_1",
+              revision: 0,
+              mode: "auto",
+              model: null,
+              updatedAt: 0,
+            },
+          },
+        },
+      },
+    });
+
+    const result = await dispatch(testHarness.registry, "session.snapshot", { workspaceId: "ws_local", sessionId: "ses_1" });
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.value.modelPreference, { revision: 0, mode: "auto", model: null, updatedAt: 0 });
+  });
+
   it("keeps sanitized tool titles within the protocol limit when redaction expands", () => {
     const normalized = normalizeRemoteMessagePart({
       id: "prt_expanding_title",
@@ -350,6 +390,7 @@ describe("remote-control read adapters", () => {
         todos: [],
         interactions: [],
         pendingOperations: [],
+        modelPreference: { revision: 0, mode: "auto", model: null, updatedAt: 0 },
         capturedAt: "2026-08-09T00:00:00.000Z",
       },
     });
