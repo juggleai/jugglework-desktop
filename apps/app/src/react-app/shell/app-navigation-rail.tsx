@@ -321,6 +321,12 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
       0,
     )
   ));
+  const taskUnreadCount = useNotificationStore((state) => (
+    state.notifications.reduce(
+      (count, notification) => count + (notification.kind === "tasks" && notification.readAt === null && isNotificationVisible(notification, taskNotificationScopeKey) ? 1 : 0),
+      0,
+    )
+  ));
   const desktopUpdateController = useDesktopUpdateIndicatorStore((state) => state.controller);
   const bootstrapChat = useJuggleChatStore((state) => state.bootstrap);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
@@ -501,6 +507,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
           active={tasksActive}
           onClick={() => navigate("/tasks")}
           testId="app-rail-tasks"
+          badge={taskUnreadCount}
           onPreviewMenuChange={props.onPreviewMenuChange}
         >
           <CheckSquare />

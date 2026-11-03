@@ -146,7 +146,7 @@ export function NotificationCenterView() {
             variant="ghost"
             size="sm"
             className="text-xs text-muted-foreground"
-            onClick={clearAll}
+            onClick={() => clearAll(taskScopeKey)}
           >
             {t("notifications.clear_all")}
           </Button>

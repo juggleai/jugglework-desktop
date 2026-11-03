@@ -59,7 +59,7 @@ The system SHALL soft-delete tasks for 30 days and SHALL allow only the original
 
 #### Scenario: Restore task
 - **WHEN** an authorized restorer restores a task within 30 days
-- **THEN** the task retains its original ID, members, comments, links, and activity history
+- **THEN** the task retains its original ID, members, comments, list relationship, and activity history
 
 ### Requirement: Task activity
 The system SHALL append immutable task events for creation, assignment, visibility, time, state, list, comment, reminder, deletion, and restoration changes.

@@ -75,7 +75,7 @@ type NotificationStore = {
   sourceVersions: Record<string, NotificationSourceVersion>;
   add: (input: NotificationInput) => void;
   markAllRead: (scopeKey?: string | null) => void;
-  clearAll: () => void;
+  clearAll: (scopeKey?: string | null) => void;
   advanceSource: (key: string, version: number) => void;
 };
 
@@ -274,7 +274,11 @@ export const useNotificationStore = create<NotificationStore>()(
             ),
           };
         }),
-      clearAll: () => set({ notifications: [] }),
+      clearAll: (scopeKey) => set((state) => ({
+        notifications: scopeKey === undefined
+          ? []
+          : state.notifications.filter((notification) => !isNotificationVisible(notification, scopeKey)),
+      })),
       advanceSource: (key, version) => set((state) => {
         const sourceKey = key.trim();
         if (!sourceKey || !Number.isSafeInteger(version) || version < 0 || state.sourceVersions[sourceKey]?.version !== undefined && state.sourceVersions[sourceKey]!.version >= version) return state;

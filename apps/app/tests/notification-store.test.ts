@@ -155,6 +155,19 @@ describe("notification store", () => {
     expect(useNotificationStore.getState().notifications[0]?.readAt).toBeNull();
   });
 
+  test("clearAll removes only notifications visible in the active task scope", () => {
+    const scopeA = productTaskNotificationScopeKey("https://work.example", "user_a", "org_a");
+    const scopeB = productTaskNotificationScopeKey("https://work.example", "user_a", "org_b");
+    const { add } = useNotificationStore.getState();
+    add({ kind: "tasks", title: "Organization A", scopeKey: scopeA });
+    add({ kind: "tasks", title: "Organization B", scopeKey: scopeB });
+    add({ kind: "system", title: "Visible globally" });
+
+    useNotificationStore.getState().clearAll(scopeA);
+
+    expect(useNotificationStore.getState().notifications.map((item) => item.title)).toEqual(["Organization B"]);
+  });
+
   test("source cursors survive persisted rehydration independently of visible rows", async () => {
     const source = { key: "workspace:org:member:marketplace:plugin", version: 7 };
     useNotificationStore.getState().add({ kind: "cloud", title: "Removed", source });

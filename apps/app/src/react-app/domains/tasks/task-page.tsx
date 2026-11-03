@@ -1,10 +1,11 @@
 /** @jsxImportSource react */
 import * as React from "react";
 import type { CSSProperties } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Archive, Check, CheckSquare, CircleAlert, Inbox, ListChecks, LoaderCircle, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
-import type { DenProductTask, DenProductTaskView } from "@/app/lib/den";
+import { DenApiError, type DenProductTask, type DenProductTaskUpdateInput } from "@/app/lib/den";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -14,7 +15,8 @@ import { AppInsetSurface } from "@/react-app/shell/app-inset-surface";
 import { AppNavigationRail } from "@/react-app/shell/app-navigation-rail";
 import { appInsetSidebarCssWidth, useWorkspaceShellLayout } from "@/react-app/shell/workspace-shell-layout";
 import { useAddProductTaskComment, useCreateProductTask, useProductTaskListMutations, useProductTaskReminderMutations, useTransitionProductTask, useUpdateProductTask, type ProductTaskConflict } from "./task-mutations";
-import { flattenProductTaskPages, useProductTask, useProductTaskActivity, useProductTaskLists, useProductTaskReminders, useProductTasks, type ProductTaskScope } from "./task-queries";
+import { flattenProductTaskPages, productTaskKeys, productTaskScopeKey, useProductTask, useProductTaskActivity, useProductTaskLists, useProductTaskReminders, useProductTasks, type ProductTaskScope } from "./task-queries";
+import { productTaskEditDraft, readTaskSection, reapplyProductTaskDraft, taskSectionStorageKey, writeTaskSection, type ProductTaskEditDraft, type TaskSection } from "./task-page-state";
 
 export type TaskShellState =
   | { kind: "loading" }
@@ -35,7 +37,7 @@ type TaskPageProps = {
   onOpenCreateWorkspace?: () => void;
 };
 
-type TaskSection = DenProductTaskView | "activity" | "archived";
+type TaskPageAlert = { kind: "error" | "conflict"; message: string };
 
 const taskNavigation: Array<[TaskSection, string, typeof CheckSquare]> = [
   ["today", "tasks.today", ListChecks], ["inbox", "tasks.inbox", Inbox], ["assigned", "tasks.assigned_to_me", CheckSquare],
@@ -53,8 +55,21 @@ export function TaskPage(props: TaskPageProps) {
 
 function ConnectedTaskPage(props: TaskPageProps) {
   const cloud = useCloudSession();
+  const scope = React.useMemo<ProductTaskScope | null>(() => cloud.isSignedIn && cloud.user?.id && cloud.activeOrganization?.id
+    ? { baseUrl: cloud.baseUrl, userId: cloud.user.id, organizationId: cloud.activeOrganization.id }
+    : null, [cloud.activeOrganization?.id, cloud.baseUrl, cloud.isSignedIn, cloud.user?.id]);
+  return <ScopedConnectedTaskPage key={productTaskScopeKey(scope)} {...props} />;
+}
+
+function ScopedConnectedTaskPage(props: TaskPageProps) {
+  const cloud = useCloudSession();
   const navigate = useNavigate();
-  const [section, setSection] = React.useState<TaskSection>("today");
+  const queryClient = useQueryClient();
+  const scope = React.useMemo<ProductTaskScope | null>(() => cloud.isSignedIn && cloud.user?.id && cloud.activeOrganization?.id
+    ? { baseUrl: cloud.baseUrl, userId: cloud.user.id, organizationId: cloud.activeOrganization.id }
+    : null, [cloud.activeOrganization?.id, cloud.baseUrl, cloud.isSignedIn, cloud.user?.id]);
+  const scopeKey = productTaskScopeKey(scope);
+  const [section, setSection] = React.useState<TaskSection>(() => readTaskSection(scope));
   const [search, setSearch] = React.useState("");
   const [priority, setPriority] = React.useState<"" | "low" | "medium" | "high">("");
   const [sort, setSort] = React.useState<"updated_at" | "due_at" | "created_at" | "priority">("updated_at");
@@ -63,9 +78,20 @@ function ConnectedTaskPage(props: TaskPageProps) {
   const [createTitle, setCreateTitle] = React.useState("");
   const [showFullCreate, setShowFullCreate] = React.useState(false);
   const [conflict, setConflict] = React.useState<ProductTaskConflict | null>(null);
-  const scope = React.useMemo<ProductTaskScope | null>(() => cloud.isSignedIn && cloud.user?.id && cloud.activeOrganization?.id
-    ? { baseUrl: cloud.baseUrl, userId: cloud.user.id, organizationId: cloud.activeOrganization.id }
-    : null, [cloud.activeOrganization?.id, cloud.baseUrl, cloud.isSignedIn, cloud.user?.id]);
+  const [editDrafts, setEditDrafts] = React.useState<Record<string, ProductTaskEditDraft>>({});
+  const [alert, setAlert] = React.useState<TaskPageAlert | null>(null);
+  const liveScopeKey = React.useRef(scopeKey);
+  const liveConflict = React.useRef<ProductTaskConflict | null>(conflict);
+  const liveSelectedTaskId = React.useRef(selectedTaskId);
+  const discardedDraftTaskIds = React.useRef(new Set<string>());
+  const saveAttemptCounter = React.useRef(0);
+  const latestSaveAttempts = React.useRef(new Map<string, number>());
+  const conflictLoadAttempt = React.useRef(0);
+  const commentAttemptCounter = React.useRef(0);
+  const latestCommentAttempts = React.useRef(new Map<string, number>());
+  liveScopeKey.current = scopeKey;
+  liveConflict.current = conflict;
+  liveSelectedTaskId.current = selectedTaskId;
   const listOptions = React.useMemo(() => {
     if (section === "activity" || section === "archived") return { view: "all" as const, search };
     const common = {
@@ -88,24 +114,186 @@ function ConnectedTaskPage(props: TaskPageProps) {
   const activityQuery = useProductTaskActivity({ client: cloud.client, scope, taskId: selectedTaskId });
   const remindersQuery = useProductTaskReminders({ client: cloud.client, scope, taskId: selectedTaskId });
   const createMutation = useCreateProductTask(cloud.client, scope);
-  const updateMutation = useUpdateProductTask(cloud.client, scope, setConflict);
+  const handleConflict = (next: ProductTaskConflict) => {
+    if (next.scopeKey !== liveScopeKey.current || latestSaveAttempts.current.get(next.taskId) !== next.attempt || discardedDraftTaskIds.current.has(next.taskId)) return;
+    setEditDrafts((current) => ({ ...current, [next.taskId]: productTaskEditDraft(next.taskId, next.draft) }));
+    if (liveSelectedTaskId.current === next.taskId) {
+      conflictLoadAttempt.current += 1;
+      liveConflict.current = next;
+      setConflict(next);
+    }
+  };
+  const updateMutation = useUpdateProductTask(cloud.client, scope, handleConflict);
   const transitionMutation = useTransitionProductTask(cloud.client, scope);
-  const commentMutation = useAddProductTaskComment(cloud.client, scope, selectedTaskId);
+  const commentMutation = useAddProductTaskComment(cloud.client, scope);
   const listMutations = useProductTaskListMutations(cloud.client, scope);
   const reminderMutations = useProductTaskReminderMutations(cloud.client, scope, selectedTaskId);
   const tasks = flattenProductTaskPages(tasksQuery.data);
-  React.useEffect(() => setSelectedTaskId(props.routeTaskId ?? null), [props.routeTaskId]);
+  React.useEffect(() => {
+    const nextTaskId = props.routeTaskId ?? null;
+    conflictLoadAttempt.current += 1;
+    liveSelectedTaskId.current = nextTaskId;
+    if (liveConflict.current?.taskId !== nextTaskId) liveConflict.current = null;
+    setConflict((current) => current && current.taskId !== nextTaskId ? null : current);
+    setSelectedTaskId(nextTaskId);
+  }, [props.routeTaskId]);
+  React.useEffect(() => {
+    conflictLoadAttempt.current += 1;
+    liveConflict.current = null;
+    setSection(readTaskSection(scope));
+    setSelectedListId(null);
+    setConflict(null);
+    setEditDrafts({});
+    discardedDraftTaskIds.current.clear();
+    latestSaveAttempts.current.clear();
+    latestCommentAttempts.current.clear();
+    setCreateTitle("");
+    setShowFullCreate(false);
+    setAlert(null);
+  }, [scopeKey]);
   const selectTask = (taskId: string | null) => {
+    conflictLoadAttempt.current += 1;
+    liveSelectedTaskId.current = taskId;
+    if (liveConflict.current?.taskId !== taskId) liveConflict.current = null;
+    setConflict((current) => current && current.taskId !== taskId ? null : current);
     setSelectedTaskId(taskId);
     navigate(taskId ? `/tasks/${encodeURIComponent(taskId)}` : "/tasks");
+  };
+
+  const closeTask = () => {
+    if (selectedTaskId) {
+      discardedDraftTaskIds.current.add(selectedTaskId);
+      latestSaveAttempts.current.delete(selectedTaskId);
+      latestCommentAttempts.current.delete(selectedTaskId);
+      setEditDrafts((current) => {
+        const next = { ...current };
+        delete next[selectedTaskId];
+        return next;
+      });
+    }
+    conflictLoadAttempt.current += 1;
+    liveConflict.current = null;
+    setConflict(null);
+    selectTask(null);
+  };
+
+  const selectSection = (next: TaskSection) => {
+    writeTaskSection(scope, next);
+    setSection(next);
+  };
+
+  const mutationError = (error: unknown, capturedScopeKey = scopeKey) => {
+    if (capturedScopeKey !== liveScopeKey.current) return;
+    if (error instanceof DenApiError && error.status === 409) {
+      setAlert({ kind: "conflict", message: t("tasks.conflict") });
+      return;
+    }
+    setAlert({ kind: "error", message: error instanceof Error && error.message ? error.message : t("tasks.error_description") });
+  };
+
+  const runMutation = async <T,>(action: () => Promise<T>, options?: { suppressConflictAlert?: boolean; isCurrent?: () => boolean }): Promise<T | undefined> => {
+    const capturedScopeKey = scopeKey;
+    const isCurrent = () => capturedScopeKey === liveScopeKey.current && (options?.isCurrent?.() ?? true);
+    if (isCurrent()) setAlert(null);
+    try {
+      const result = await action();
+      return isCurrent() ? result : undefined;
+    } catch (error) {
+      if (isCurrent() && !(options?.suppressConflictAlert && error instanceof DenApiError && error.status === 409)) mutationError(error, capturedScopeKey);
+      return undefined;
+    }
   };
 
   const quickCreate = async () => {
     const title = createTitle.trim();
     if (!title || !scope) return;
-    const result = await createMutation.mutateAsync({ idempotencyKey: mutationKey("desktop-create-task"), title, visibility: "private" });
+    const result = await runMutation(() => createMutation.mutateAsync({ idempotencyKey: mutationKey("desktop-create-task"), title, visibility: "private" }));
+    if (!result) return;
     setCreateTitle("");
     selectTask(result.task.id);
+  };
+
+  const saveTask = async (taskId: string, patch: DenProductTaskUpdateInput) => {
+    const capturedScopeKey = scopeKey;
+    const attempt = ++saveAttemptCounter.current;
+    latestSaveAttempts.current.set(taskId, attempt);
+    discardedDraftTaskIds.current.delete(taskId);
+    setEditDrafts((current) => ({ ...current, [taskId]: productTaskEditDraft(taskId, patch) }));
+    const isCurrent = () => latestSaveAttempts.current.get(taskId) === attempt && !discardedDraftTaskIds.current.has(taskId);
+    const result = await runMutation(() => updateMutation.mutateAsync({ taskId, attempt, patch }), { suppressConflictAlert: true, isCurrent });
+    if (!result || capturedScopeKey !== liveScopeKey.current || !isCurrent()) return;
+    setEditDrafts((current) => {
+      const next = { ...current };
+      delete next[taskId];
+      return next;
+    });
+    setConflict((current) => {
+      if (current?.taskId !== taskId || current.attempt > attempt) return current;
+      liveConflict.current = null;
+      conflictLoadAttempt.current += 1;
+      return null;
+    });
+  };
+
+  const updateBufferedDraft = (draft: ProductTaskEditDraft) => {
+    if (!editDrafts[draft.taskId]) return;
+    setEditDrafts((current) => ({ ...current, [draft.taskId]: draft }));
+  };
+
+  const loadLatestForConflict = async () => {
+    if (!conflict || !scope) return;
+    const capturedConflict = conflict;
+    const capturedScope = scope;
+    const capturedLoadAttempt = ++conflictLoadAttempt.current;
+    const isCurrent = () => {
+      const activeConflict = liveConflict.current;
+      return capturedLoadAttempt === conflictLoadAttempt.current
+        && capturedConflict.scopeKey === liveScopeKey.current
+        && liveSelectedTaskId.current === capturedConflict.taskId
+        && activeConflict?.scopeKey === capturedConflict.scopeKey
+        && activeConflict.taskId === capturedConflict.taskId
+        && activeConflict.attempt === capturedConflict.attempt;
+    };
+    try {
+      const result = await cloud.client.getProductTask(capturedScope.organizationId, capturedConflict.taskId);
+      if (!isCurrent()) return;
+      queryClient.setQueryData(productTaskKeys.detail(capturedScope, capturedConflict.taskId), result);
+      const nextConflict = { ...capturedConflict, currentVersion: result.task.version, latestLoaded: true };
+      liveConflict.current = nextConflict;
+      setConflict(nextConflict);
+    } catch (error) {
+      if (isCurrent()) mutationError(error, capturedConflict.scopeKey);
+    }
+  };
+
+  const dismissConflict = () => {
+    conflictLoadAttempt.current += 1;
+    liveConflict.current = null;
+    setConflict(null);
+  };
+
+  const addComment = async (taskId: string, body: string) => {
+    const attempt = ++commentAttemptCounter.current;
+    latestCommentAttempts.current.set(taskId, attempt);
+    return Boolean(await runMutation(async () => {
+      await commentMutation.mutateAsync({ taskId, body, idempotencyKey: mutationKey("desktop-comment-task") });
+      return true;
+    }, { isCurrent: () => liveSelectedTaskId.current === taskId && latestCommentAttempts.current.get(taskId) === attempt }));
+  };
+
+  const retryConflictDraft = async () => {
+    if (!conflict?.latestLoaded || !conflict.currentVersion || conflict.scopeKey !== scopeKey) return;
+    const bufferedDraft = editDrafts[conflict.taskId];
+    if (!bufferedDraft) {
+      setConflict(null);
+      return;
+    }
+    await saveTask(conflict.taskId, {
+      title: bufferedDraft.title,
+      description: bufferedDraft.description,
+      expectedVersion: conflict.currentVersion,
+      idempotencyKey: mutationKey("desktop-retry-update-task"),
+    });
   };
 
   let content: React.ReactNode;
@@ -113,18 +301,19 @@ function ConnectedTaskPage(props: TaskPageProps) {
   else if (section === "activity") content = <TaskShellContent state={{ kind: "empty" }} />;
   else if (section === "archived") content = listsQuery.isLoading ? <TaskShellContent state={{ kind: "loading" }} /> : listsQuery.isError
     ? <TaskShellContent state={{ kind: "error", onRetry: () => void listsQuery.refetch() }} />
-    : <div className="w-full self-start space-y-2">{listsQuery.data?.items.map((list) => <div key={list.id} className="flex items-center rounded-lg border border-dls-border p-3"><div className="flex-1"><div className="font-medium text-dls-text">{list.marker} {list.name}</div><div className="text-sm text-dls-secondary">{list.description}</div></div><Button size="sm" variant="outline" onClick={() => listMutations.transition.mutate({ listId: list.id, operation: "restore", expectedVersion: list.version, idempotencyKey: mutationKey("desktop-restore-list") })}>{t("tasks.restore_list")}</Button></div>)}</div>;
+    : <div className="w-full self-start space-y-2">{listsQuery.data?.items.map((list) => <div key={list.id} className="flex items-center rounded-lg border border-dls-border p-3"><div className="flex-1"><div className="font-medium text-dls-text">{list.marker} {list.name}</div><div className="text-sm text-dls-secondary">{list.description}</div></div><Button size="sm" variant="outline" onClick={() => void runMutation(() => listMutations.transition.mutateAsync({ listId: list.id, operation: "restore", expectedVersion: list.version, idempotencyKey: mutationKey("desktop-restore-list") }))}>{t("tasks.restore_list")}</Button></div>)}</div>;
   else if (tasksQuery.isLoading) content = <TaskShellContent state={{ kind: "loading" }} />;
   else if (tasksQuery.isError) content = <TaskShellContent state={{ kind: "error", message: tasksQuery.error instanceof Error ? tasksQuery.error.message : undefined, onRetry: () => void tasksQuery.refetch() }} />;
   else content = <TaskList tasks={tasks} selectedTaskId={selectedTaskId} onSelect={selectTask} canLoadMore={Boolean(tasksQuery.hasNextPage)} loadingMore={tasksQuery.isFetchingNextPage} onLoadMore={() => void tasksQuery.fetchNextPage()} />;
 
   return (
-    <TaskPageFrame {...props} section={section} onSectionChange={(next) => { setSection(next); setSelectedListId(null); selectTask(null); }} search={search} onSearchChange={setSearch} filters={{ priority, setPriority, sort, setSort }} lists={activeListsQuery.data?.items ?? []} selectedListId={selectedListId} onSelectList={(listId) => { setSection("all"); setSelectedListId(listId); setSearch(""); selectTask(null); }} onCreateList={() => { const name = globalThis.prompt(t("tasks.list_name"))?.trim(); if (name) listMutations.create.mutate({ idempotencyKey: mutationKey("desktop-create-list"), name, visibility: "private" }); }} onArchiveList={(listId, version) => listMutations.transition.mutate({ listId, operation: "archive", expectedVersion: version, idempotencyKey: mutationKey("desktop-archive-list") })}
+    <TaskPageFrame {...props} section={section} onSectionChange={(next) => { selectSection(next); setSelectedListId(null); selectTask(null); }} search={search} onSearchChange={setSearch} filters={{ priority, setPriority, sort, setSort }} lists={activeListsQuery.data?.items ?? []} selectedListId={selectedListId} onSelectList={(listId) => { selectSection("all"); setSelectedListId(listId); setSearch(""); selectTask(null); }} onCreateList={() => { const name = globalThis.prompt(t("tasks.list_name"))?.trim(); if (name) void runMutation(() => listMutations.create.mutateAsync({ idempotencyKey: mutationKey("desktop-create-list"), name, visibility: "private" })); }} onArchiveList={(listId, version) => void runMutation(() => listMutations.transition.mutateAsync({ listId, operation: "archive", expectedVersion: version, idempotencyKey: mutationKey("desktop-archive-list") }))}
       quickCreate={{ title: createTitle, setTitle: setCreateTitle, submit: quickCreate, pending: createMutation.isPending, openFull: () => setShowFullCreate(true) }}>
-      {conflict ? <ConflictBanner conflict={conflict} onDismiss={() => setConflict(null)} onReload={() => { setConflict(null); void detailQuery.refetch(); }} /> : null}
+      {conflict ? <ConflictBanner conflict={conflict} pending={updateMutation.isPending} onDismiss={dismissConflict} onReload={() => void loadLatestForConflict()} onRetry={() => void retryConflictDraft()} /> : null}
+      {alert ? <MutationAlert alert={alert} onDismiss={() => setAlert(null)} /> : null}
       {content}
-      {selectedTaskId ? <TaskDetail result={detailQuery.data} activity={activityQuery.data} reminders={remindersQuery.data ?? []} loading={detailQuery.isLoading} error={detailQuery.isError} onClose={() => selectTask(null)} onSave={(taskId, patch) => updateMutation.mutate({ taskId, patch })} onComment={(body) => commentMutation.mutate({ body, idempotencyKey: mutationKey("desktop-comment-task") })} onSetReminder={(scheduledAt) => reminderMutations.set.mutate({ idempotencyKey: mutationKey("desktop-set-reminder"), mode: "absolute", scheduledAt, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone })} onCancelReminder={() => reminderMutations.cancel.mutate(mutationKey("desktop-cancel-reminder"))} onTransition={(task, operation) => transitionMutation.mutate({ taskId: task.id, operation, expectedVersion: task.version, idempotencyKey: mutationKey(`desktop-${operation}-task`) })} /> : null}
-      {showFullCreate ? <TaskCreateDialog initialTitle={createTitle} pending={createMutation.isPending} onClose={() => setShowFullCreate(false)} onCreate={async (input) => { const result = await createMutation.mutateAsync({ ...input, idempotencyKey: mutationKey("desktop-create-task") }); setShowFullCreate(false); setCreateTitle(""); selectTask(result.task.id); }} /> : null}
+      {selectedTaskId ? <TaskDetail key={`${scopeKey}:${selectedTaskId}`} result={detailQuery.data} activity={activityQuery.data} reminders={remindersQuery.data ?? []} loading={detailQuery.isLoading} error={detailQuery.isError} savePending={updateMutation.isPending} preservedDraft={editDrafts[selectedTaskId] ?? null} onDraftChange={updateBufferedDraft} onClose={closeTask} onSave={saveTask} onComment={addComment} onSetReminder={(scheduledAt) => void runMutation(() => reminderMutations.set.mutateAsync({ idempotencyKey: mutationKey("desktop-set-reminder"), mode: "absolute", scheduledAt, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }))} onCancelReminder={() => void runMutation(() => reminderMutations.cancel.mutateAsync(mutationKey("desktop-cancel-reminder")))} onTransition={(task, operation) => void runMutation(() => transitionMutation.mutateAsync({ taskId: task.id, operation, expectedVersion: task.version, idempotencyKey: mutationKey(`desktop-${operation}-task`) }))} /> : null}
+      {showFullCreate ? <TaskCreateDialog initialTitle={createTitle} pending={createMutation.isPending} onClose={() => setShowFullCreate(false)} onCreate={async (input) => { const result = await runMutation(() => createMutation.mutateAsync({ ...input, idempotencyKey: mutationKey("desktop-create-task") })); if (!result) return; setShowFullCreate(false); setCreateTitle(""); selectTask(result.task.id); }} /> : null}
     </TaskPageFrame>
   );
 }
@@ -161,20 +350,27 @@ function TaskList(props: { tasks: DenProductTask[]; selectedTaskId: string | nul
   </div>)}{props.canLoadMore ? <Button variant="outline" disabled={props.loadingMore} onClick={props.onLoadMore}>{props.loadingMore ? t("tasks.loading") : t("tasks.load_more")}</Button> : null}</div>;
 }
 
-function TaskDetail(props: { result: ReturnType<typeof useProductTask>["data"]; activity: ReturnType<typeof useProductTaskActivity>["data"]; reminders: Array<{ scheduledAt: string; state: string }>; loading: boolean; error: boolean; onClose: () => void; onSave: (id: string, patch: { expectedVersion: number; idempotencyKey: string; title: string; description: string }) => void; onComment: (body: string) => void; onSetReminder: (scheduledAt: string) => void; onCancelReminder: () => void; onTransition: (task: DenProductTask, operation: "complete" | "cancel" | "reopen" | "restore") => void }) {
+function TaskDetail(props: { result: ReturnType<typeof useProductTask>["data"]; activity: ReturnType<typeof useProductTaskActivity>["data"]; reminders: Array<{ scheduledAt: string; state: string }>; loading: boolean; error: boolean; savePending: boolean; preservedDraft: ProductTaskEditDraft | null; onDraftChange: (draft: ProductTaskEditDraft) => void; onClose: () => void; onSave: (id: string, patch: { expectedVersion: number; idempotencyKey: string; title: string; description: string }) => Promise<void>; onComment: (taskId: string, body: string) => Promise<boolean>; onSetReminder: (scheduledAt: string) => void; onCancelReminder: () => void; onTransition: (task: DenProductTask, operation: "complete" | "cancel" | "reopen" | "restore") => void }) {
   const task = props.result?.task;
   const [title, setTitle] = React.useState("");
   const [description, setDescription] = React.useState("");
   const [comment, setComment] = React.useState("");
-  React.useEffect(() => { if (task) { setTitle(task.title); setDescription(task.description); } }, [task]);
+  const [commentPending, setCommentPending] = React.useState(false);
+  const commentAttempt = React.useRef(0);
+  React.useEffect(() => {
+    if (!task) return;
+    const draft = reapplyProductTaskDraft(task, props.preservedDraft);
+    setTitle(draft.title);
+    setDescription(draft.description);
+  }, [props.preservedDraft?.description, props.preservedDraft?.taskId, props.preservedDraft?.title, task?.description, task?.id, task?.title, task?.version]);
   return <aside className="absolute inset-y-0 right-0 z-10 w-[min(480px,90%)] border-l border-dls-border bg-dls-surface p-5 shadow-xl" aria-label={t("tasks.detail")}>
     <div className="mb-5 flex items-center justify-between"><h3 className="font-semibold text-dls-text">{t("tasks.detail")}</h3><Button variant="ghost" size="icon" onClick={props.onClose}><X className="size-4" /></Button></div>
-    {props.loading ? <TaskShellContent state={{ kind: "loading" }} /> : props.error || !task ? <TaskShellContent state={{ kind: "error", onRetry: () => undefined }} /> : <div className="space-y-4"><Input value={title} readOnly={!props.result?.permissions.canEditContent} onChange={(event) => setTitle(event.target.value)} /><Textarea value={description} readOnly={!props.result?.permissions.canEditContent} onChange={(event) => setDescription(event.target.value)} />
+    {props.loading ? <TaskShellContent state={{ kind: "loading" }} /> : props.error || !task ? <TaskShellContent state={{ kind: "error", onRetry: () => undefined }} /> : <div className="space-y-4"><Input value={title} readOnly={!props.result?.permissions.canEditContent} onChange={(event) => { const value = event.target.value; setTitle(value); if (props.preservedDraft) props.onDraftChange({ ...props.preservedDraft, title: value, description }); }} /><Textarea value={description} readOnly={!props.result?.permissions.canEditContent} onChange={(event) => { const value = event.target.value; setDescription(value); if (props.preservedDraft) props.onDraftChange({ ...props.preservedDraft, title, description: value }); }} />
       <div className="text-sm text-dls-secondary">{t("tasks.assignees")}: {props.result?.members.filter((member) => member.role === "assignee").map((member) => member.memberId).join(", ") || t("tasks.unassigned")}</div>
       <div className="space-y-1 text-sm text-dls-secondary"><div className="font-medium text-dls-text">{t("tasks.activity")}</div>{props.activity?.events.length ? props.activity.events.map((event) => <div key={event.id}>{event.eventType} · {new Date(event.createdAt).toLocaleString()}</div>) : t("tasks.activity_empty")}</div>
-      <div className="space-y-2 text-sm text-dls-secondary"><div className="font-medium text-dls-text">{t("tasks.comments")}</div>{props.activity?.comments.length ? props.activity.comments.map((item) => <div key={item.id} className="rounded border border-dls-border p-2">{item.body}</div>) : t("tasks.comments_empty")}{props.result?.permissions.canComment ? <form className="flex gap-2" onSubmit={(event) => { event.preventDefault(); if (comment.trim()) { props.onComment(comment.trim()); setComment(""); } }}><Input value={comment} onChange={(event) => setComment(event.target.value)} placeholder={t("tasks.add_comment")} /><Button type="submit" disabled={!comment.trim()}>{t("tasks.add")}</Button></form> : null}</div>
+      <div className="space-y-2 text-sm text-dls-secondary"><div className="font-medium text-dls-text">{t("tasks.comments")}</div>{props.activity?.comments.length ? props.activity.comments.map((item) => <div key={item.id} className="rounded border border-dls-border p-2">{item.body}</div>) : t("tasks.comments_empty")}{props.result?.permissions.canComment ? <form className="flex gap-2" onSubmit={(event) => { event.preventDefault(); const body = comment.trim(); if (!body || commentPending) return; const attempt = ++commentAttempt.current; setCommentPending(true); void props.onComment(task.id, body).then((saved) => { if (commentAttempt.current !== attempt) return; setCommentPending(false); if (saved) setComment((current) => current.trim() === body ? "" : current); }); }}><Input value={comment} onChange={(event) => setComment(event.target.value)} placeholder={t("tasks.add_comment")} /><Button type="submit" disabled={!comment.trim() || commentPending}>{t("tasks.add")}</Button></form> : null}</div>
       <div className="space-y-2 text-sm text-dls-secondary"><div className="font-medium text-dls-text">{t("tasks.reminder")}</div>{props.reminders.find((item) => item.state === "scheduled") ? <div className="flex items-center justify-between"><span>{new Date(props.reminders.find((item) => item.state === "scheduled")!.scheduledAt).toLocaleString()}</span><Button size="sm" variant="outline" onClick={props.onCancelReminder}>{t("tasks.remove_reminder")}</Button></div> : props.result?.permissions.canEditTime ? <input type="datetime-local" aria-label={t("tasks.reminder")} className="rounded border border-dls-border bg-dls-surface p-2" onChange={(event) => { if (event.target.value) props.onSetReminder(new Date(event.target.value).toISOString()); }} /> : t("tasks.no_reminder")}</div>
-      <div className="flex flex-wrap gap-2">{props.result?.permissions.canEditContent ? <Button disabled={!title.trim()} onClick={() => props.onSave(task.id, { expectedVersion: task.version, idempotencyKey: mutationKey("desktop-update-task"), title: title.trim(), description })}>{t("tasks.save")}</Button> : null}
+      <div className="flex flex-wrap gap-2">{props.result?.permissions.canEditContent ? <Button disabled={!title.trim() || props.savePending} onClick={() => void props.onSave(task.id, { expectedVersion: task.version, idempotencyKey: mutationKey("desktop-update-task"), title: title.trim(), description })}>{t("tasks.save")}</Button> : null}
       {task.status === "todo" && props.result?.permissions.canComplete ? <Button onClick={() => { const assignees = props.result?.members.filter((member) => member.role === "assignee").length ?? 0; if (assignees <= 1 || globalThis.confirm(t("tasks.complete_multi_confirm"))) props.onTransition(task, "complete"); }}>{t("tasks.complete")}</Button> : null}
       {task.status !== "todo" && props.result?.permissions.canReopen ? <Button variant="outline" onClick={() => props.onTransition(task, "reopen")}>{t("tasks.reopen")}</Button> : null}
       {task.status === "todo" && props.result?.permissions.canCancel ? <Button variant="outline" onClick={() => props.onTransition(task, "cancel")}>{t("tasks.cancel_task")}</Button> : null}</div>
@@ -188,8 +384,13 @@ function TaskCreateDialog(props: { initialTitle: string; pending: boolean; onClo
   return <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/30 p-5" role="dialog" aria-modal="true" aria-label={t("tasks.create")}><form className="w-full max-w-lg space-y-4 rounded-xl bg-dls-surface p-5 shadow-xl" onSubmit={(event) => { event.preventDefault(); void props.onCreate({ title: title.trim(), description, visibility: "private", priority: "none" }); }}><div className="flex items-center justify-between"><h3 className="font-semibold">{t("tasks.create")}</h3><Button type="button" variant="ghost" size="icon" onClick={props.onClose}><X className="size-4" /></Button></div><Input autoFocus value={title} onChange={(event) => setTitle(event.target.value)} placeholder={t("tasks.title_field")} /><Textarea value={description} onChange={(event) => setDescription(event.target.value)} placeholder={t("tasks.description_field")} /><div className="flex justify-end gap-2"><Button type="button" variant="outline" onClick={props.onClose}>{t("tasks.cancel")}</Button><Button type="submit" disabled={!title.trim() || props.pending}>{t("tasks.create")}</Button></div></form></div>;
 }
 
-function ConflictBanner(props: { conflict: ProductTaskConflict; onDismiss: () => void; onReload: () => void }) {
-  return <div className="absolute left-4 right-4 top-16 z-20 flex items-center gap-3 rounded-lg border border-amber-7 bg-amber-2 p-3 text-sm" role="alert"><CircleAlert className="size-4" /><span className="flex-1">{t("tasks.conflict")}</span><Button size="sm" variant="outline" onClick={props.onReload}>{t("tasks.load_latest")}</Button><Button size="sm" variant="ghost" onClick={props.onDismiss}>{t("tasks.dismiss")}</Button></div>;
+function ConflictBanner(props: { conflict: ProductTaskConflict; pending: boolean; onDismiss: () => void; onReload: () => void; onRetry: () => void }) {
+  return <div className="absolute left-4 right-4 top-16 z-30 flex items-center gap-3 rounded-lg border border-amber-7 bg-amber-2 p-3 text-sm" role="alert"><CircleAlert className="size-4" /><span className="flex-1">{t("tasks.conflict")}</span>{props.conflict.latestLoaded ? <Button size="sm" variant="outline" disabled={props.pending} onClick={props.onRetry}>{t("tasks.retry")}</Button> : <Button size="sm" variant="outline" onClick={props.onReload}>{t("tasks.load_latest")}</Button>}<Button size="sm" variant="ghost" onClick={props.onDismiss}>{t("tasks.dismiss")}</Button></div>;
+}
+
+function MutationAlert(props: { alert: TaskPageAlert; onDismiss: () => void }) {
+  const color = props.alert.kind === "conflict" ? "border-amber-7 bg-amber-2" : "border-red-7 bg-red-2";
+  return <div className={`absolute left-4 right-4 top-16 z-20 flex items-center gap-3 rounded-lg border p-3 text-sm ${color}`} role="alert"><CircleAlert className="size-4" /><span className="flex-1">{props.alert.message}</span><Button size="sm" variant="ghost" onClick={props.onDismiss}>{t("tasks.dismiss")}</Button></div>;
 }
 
 export function TaskShellContent({ state }: { state: TaskShellState }) {

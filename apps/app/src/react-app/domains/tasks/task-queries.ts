@@ -4,6 +4,11 @@ import type { DenClient, DenProductTaskListOptions, DenProductTaskPage } from "@
 
 export type ProductTaskScope = { baseUrl: string; userId: string; organizationId: string };
 
+export function productTaskScopeKey(scope: ProductTaskScope | null): string {
+  if (!scope) return "unavailable";
+  return JSON.stringify([scope.baseUrl.replace(/\/+$/, ""), scope.userId, scope.organizationId]);
+}
+
 export const productTaskKeys = {
   all: (scope: ProductTaskScope) => ["product-tasks", scope.baseUrl.replace(/\/+$/, ""), scope.userId, scope.organizationId] as const,
   lists: (scope: ProductTaskScope) => [...productTaskKeys.all(scope), "lists"] as const,

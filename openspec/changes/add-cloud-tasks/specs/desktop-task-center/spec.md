@@ -15,7 +15,7 @@ The Desktop SHALL provide task secondary navigation for Today, Inbox, Assigned t
 - **THEN** the Desktop shows accessible todo tasks created by the user that do not belong to a list
 
 ### Requirement: Task list and detail surfaces
-The Desktop SHALL provide a paginated task list, inline permitted actions, and a detail drawer or direct route for task fields, source, comments, activity, and lifecycle actions.
+The Desktop SHALL provide a paginated task list, inline permitted actions, and a detail drawer or direct route for task fields, comments, activity, and lifecycle actions.
 
 #### Scenario: Open task detail
 - **WHEN** a user clicks an accessible task title
@@ -29,7 +29,7 @@ The Desktop SHALL explicitly warn that completing a task with multiple assignees
 - **THEN** the Desktop requires confirmation before sending the completion mutation
 
 ### Requirement: Task creation surfaces
-The Desktop SHALL support title-only quick creation, full creation, list-scoped creation, and IM-message creation, with no assignee required.
+The Desktop SHALL support title-only quick creation, full creation, and list-scoped creation, with no assignee required.
 
 #### Scenario: Title-only creation
 - **WHEN** a user submits a non-empty title from quick create
@@ -40,4 +40,16 @@ The Desktop SHALL expose loading, empty, error, forbidden, offline, and optimist
 
 #### Scenario: Concurrent edit conflict
 - **WHEN** an update is rejected because the task version is stale
-- **THEN** the Desktop preserves the user's draft and offers to load the latest task before reapplying changes
+- **THEN** the Desktop preserves the user's draft for that Task and offers to load the latest version before retrying with a new idempotency key
+
+#### Scenario: Dismiss conflict feedback
+- **WHEN** the user dismisses a conflict banner without closing the Task
+- **THEN** the Desktop hides the banner but keeps the edit buffer applied until a successful save or explicit Task close
+
+#### Scenario: Switch Task during conflict recovery
+- **WHEN** the user selects another Task while a conflict draft is buffered
+- **THEN** the Desktop hides recovery actions for the previous Task, does not apply its draft or version to the new Task, and reapplies the buffered draft if the previous Task is selected again
+
+#### Scenario: Organization changes during mutation
+- **WHEN** a Task mutation settles after the active deployment, user, or organization scope changed
+- **THEN** the prior scope result does not navigate, show an alert, or restore a conflict in the new scope

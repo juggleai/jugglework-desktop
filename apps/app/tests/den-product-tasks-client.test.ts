@@ -46,6 +46,33 @@ test("product task client preserves version conflict details", async () => {
   }
 });
 
+test("product task client moves tasks through the dedicated move contract", async () => {
+  const requests: Array<{ url: string; init?: RequestInit }> = [];
+  globalThis.fetch = async (input, init) => {
+    requests.push({ url: String(input), init });
+    return Response.json({ taskId: "task/one", version: 4, listId: "list_two", visibility: "members", replayed: false });
+  };
+  const client = createDenClient({ baseUrl: "https://work.example", token: "token_one" });
+  const moved = await client.moveProductTask("org_one", "task/one", {
+    expectedVersion: 3,
+    idempotencyKey: "move-one",
+    destinationListId: "list_two",
+    confirmedVisibility: "members",
+  });
+  expect(requests[0]?.url).toContain("/v1/tasks/task%2Fone/move");
+  expect(requests[0]?.init?.method).toBe("POST");
+  expect(JSON.parse(String(requests[0]?.init?.body))).toEqual({
+    expectedVersion: 3,
+    idempotencyKey: "move-one",
+    destinationListId: "list_two",
+    confirmedVisibility: "members",
+  });
+  expect(moved).toEqual({ taskId: "task/one", version: 4, listId: "list_two", visibility: "members", replayed: false });
+
+  globalThis.fetch = async () => Response.json({ taskId: "task/one", version: "bad", listId: null, visibility: "private", replayed: false });
+  await expect(client.moveProductTask("org_one", "task/one", { expectedVersion: 4, idempotencyKey: "move-two", destinationListId: "" })).rejects.toMatchObject({ code: "invalid_task_move_payload" });
+});
+
 test("product task client rejects malformed pages", async () => {
   globalThis.fetch = async () => Response.json({ items: [{ id: "bad" }], nextCursor: "" });
   const client = createDenClient({ baseUrl: "https://work.example", token: "token_one" });
