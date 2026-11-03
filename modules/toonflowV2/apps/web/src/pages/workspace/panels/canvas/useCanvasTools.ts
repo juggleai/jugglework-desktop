@@ -3,9 +3,11 @@ import { useVueFlow, type XYPosition } from "@vue-flow/core";
 import { useNodeEvent, useNodeToolsContext, validateConnection } from "@toonflow/nodes-scaffold/runtime";
 import { canvasSchemas, type CanvasContext, type CanvasToolCall } from "@toonflow/tool-canvas/runtime";
 import { arrangeCanvas } from "./arrangeCanvas";
+import useWorkspaceFiles from "@/lib/workspaceFiles";
 
 export function useCanvasTools(options: {
   availableNodes: Ref<{ type: string; label: string }[]>;
+  directory(): string;
   flushSave(): Promise<void>;
   menu(): {
     getCanvases(): { id: string; name: string }[];
@@ -132,6 +134,32 @@ export function useCanvasTools(options: {
         await nextTick();
         signal.throwIfAborted();
         return nodeInfo(id);
+      }
+      case "addVideoResult": {
+        const { path } = canvasSchemas.addVideoResult.parse(request.args);
+        const videoPath = path.replaceAll("\\", "/").split("/").filter(part => part && part !== ".").join("/");
+        const name = videoPath.split("/").at(-1)!;
+        const { entries } = await useWorkspaceFiles(options.directory()).list(videoPath.slice(0, -name.length).replace(/\/$/, ""));
+        signal.throwIfAborted();
+        if (!entries.some(entry => entry.type === "file" && entry.name === name)) throw new Error("成片文件不存在，请确认导出路径");
+        if (!options.availableNodes.value.some(node => node.type === "remote-videoNode")) throw new Error("请先启用视频节点插件，再添加成片");
+        const existing = flow.getNodes.value.find(node => node.type === "remote-videoNode"
+          && node.data.outputs?.video?.dataType === "VIDEO" && node.data.outputs.video.value.url === videoPath);
+        const id = existing?.id ?? crypto.randomUUID();
+        if (!existing) {
+          const nodes = flow.getNodes.value;
+          const x = nodes.length ? Math.max(...nodes.map(node => node.computedPosition.x + (node.dimensions.width || 320))) + 80 : 0;
+          const y = nodes.length ? Math.min(...nodes.map(node => node.computedPosition.y)) : 0;
+          flow.addNodes({
+            id, type: "remote-videoNode", position: nodePosition({ x, y }),
+            data: { label: name.replace(/\.mp4$/i, "").slice(0, 200), outputs: { video: { dataType: "VIDEO", value: { url: videoPath, mimeType: "video/mp4" } } } },
+          });
+        }
+        await nextTick();
+        signal.throwIfAborted();
+        flow.updateNodeInternals([id]);
+        await flow.fitView({ nodes: [id], padding: 0.2, maxZoom: 1, duration: 0 });
+        return { canvasId, nodeId: id, path: videoPath };
       }
       case "deleteNodes": {
         const { nodeIds } = canvasSchemas.deleteNodes.parse(request.args);

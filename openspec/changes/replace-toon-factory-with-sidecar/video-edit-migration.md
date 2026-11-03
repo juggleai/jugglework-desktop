@@ -1,5 +1,32 @@
 # Restricted local video editing follow-up
 
+## Automatic exported-video result nodes — 2026-11-03
+
+Managed `exportVideo` now checks that the video-node plugin is available before
+rendering in a canvas conversation. After successful publication it calls
+`addVideoResult`, which validates the existing workspace-relative MP4, creates a
+`remote-videoNode` with `outputs.video`, positions it to the right of existing nodes,
+focuses it and saves through the normal canvas bridge. No source edges are added.
+The node uses the existing video player, download and fullscreen controls. Repeated
+publication of the same normalized path reuses its result node.
+
+A failed node publication retains the successful export path and returns
+`canvasError` with instructions to add the existing result, rather than rerender it.
+The Agent is instructed to direct users to the node instead of producing a blocked
+local-file Markdown link. Export outside a canvas retains the previous file-only
+behavior.
+
+Verification: Server and Web typechecks and the complete trusted-Bun sidecar build
+passed (1034 inventory files). In an isolated temporary project, the actual built
+Web canvas created and saved a playable 320x240 MP4 node; playback completed, reload
+preserved it, repeated addition reused the node, and a missing file was rejected.
+The actual export tool, hostFetch and restricted host editor were exercised through
+a temporary authenticated broker transport and the real browser canvas: one render
+created one result node with no edges. A simulated canvas failure retained the
+successfully rendered file and returned recovery guidance. This is a direct tool
+verification, not a live-model or signed-installed-app acceptance run. No existing
+user project or installed application resources were changed.
+
 ## Explicit cancellation correction — 2026-11-02
 
 The previous disconnect-only UI cancellation claim did not hold on trusted Bun
@@ -101,7 +128,8 @@ broker. Existing `/api/ffmpeg/*` restrictions remain in place.
   and demuxers, bounded diagnostics, one active task and a 20min deadline. Stop/abort
   kills and reaps the active child before cleanup. No provider generation is involved.
 - No editing timeline, subtitles, transitions, BGM mixing or external-directory export
-  is claimed. The generated MP4 can be imported into an existing video node.
+  is claimed. In canvas conversations, the generated MP4 is automatically attached
+  to a saved video result node without source connections.
 
 ## Operational limitations and verification
 

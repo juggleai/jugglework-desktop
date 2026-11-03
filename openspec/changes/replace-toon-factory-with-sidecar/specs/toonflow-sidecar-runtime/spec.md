@@ -168,3 +168,20 @@ Agent requests MUST use fresh UUID run IDs registered before asynchronous work i
 #### Scenario: A stale run ID is stopped during a newer run
 - **WHEN** stop targets an old completed run ID
 - **THEN** the newer run is unaffected and duplicate start never launches a second run
+
+### Requirement: Video exports publish playable canvas results
+Managed video export in a canvas conversation SHALL create and save a video result node containing the exported project-relative MP4, focus that node, and use the existing video player and download controls. It SHALL NOT add source connections. Repeating result publication for the same normalized path SHALL reuse the existing video result node.
+
+#### Scenario: Editing finishes successfully
+- **WHEN** the restricted export tool successfully publishes a new MP4 in a canvas conversation
+- **THEN** the canvas contains a saved video node referencing that file and no new source edges
+- **AND** the Agent directs the user to that node for playback or download
+
+#### Scenario: Node publication fails after rendering
+- **WHEN** the MP4 has been published but its result node cannot be saved
+- **THEN** the tool preserves the successful export path and reports the node publication error separately
+- **AND** recovery adds the existing file to the canvas without rendering another video
+
+#### Scenario: Video node plugin is unavailable
+- **WHEN** video export begins in a canvas conversation without an available video-node plugin
+- **THEN** it reports guidance to enable the plugin before starting the render
