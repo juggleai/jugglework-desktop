@@ -844,6 +844,13 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
       }),
       `/session/${encodeURIComponent(sessionId)}`,
     ));
+    if (title !== undefined) sessionMutations.updateTitle({
+      workspaceId: workspace.id,
+      sessionId,
+      // The upstream response permits a nullish title, but a successful title
+      // update still has the validated request value as its local authority.
+      title: item.title ?? title,
+    });
     return jsonResponse({ item });
   });
 

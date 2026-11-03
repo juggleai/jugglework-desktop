@@ -39,6 +39,7 @@ export type SessionMutationLifecycleEvent = {
   event:
     | "run_reserved"
     | "run_started"
+    | "title_updated"
     | "progress"
     | "idle_suspected"
     | "abort_requested"
@@ -377,6 +378,23 @@ export function createSessionMutationCoordinator(options: {
     return run ? publicRun(run) : null;
   }
 
+  function updateTitle(input: { workspaceId: string; sessionId: string; title: string }): ActiveSessionMutation | null {
+    const key = sessionKey(input.workspaceId, input.sessionId);
+    const run = runs.get(key);
+    if (!run) return null;
+    const title = input.title.slice(0, 120);
+    if (!title || title === run.title) return publicRun(run);
+    const previous = { ...run };
+    run.title = title;
+    run.revision += 1;
+    run.updatedAt = now();
+    try { emit({ event: "title_updated", run: publicRun(run) }); } catch (error) {
+      Object.assign(run, previous);
+      throw error;
+    }
+    return publicRun(run);
+  }
+
   return Object.freeze({
     reserveStart,
     acceptStart,
@@ -388,6 +406,7 @@ export function createSessionMutationCoordinator(options: {
     reconcileAuthoritativeIdle,
     listActive,
     getActive,
+    updateTitle,
   });
 }
 
