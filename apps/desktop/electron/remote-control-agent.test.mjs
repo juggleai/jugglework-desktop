@@ -2375,7 +2375,7 @@ describe("remote-control agent command handling", () => {
     fixture.agent.stop(); assert.equal(await pending, false);
   });
 
-  it("publishes v3 lifecycle identity and accepts duplicate or stale cloud ACKs", async () => {
+  it("publishes v3 lifecycle identity, accepts exact duplicates, and retries stale events", async () => {
     const signing = generateKeyPairSync("ed25519");
     const fixture = harness({ signingCredential: { deviceId: DEVICE_ID, privateKey: signing.privateKey } });
     const socket = await connect(fixture); socket.receive(welcome(77)); await settle();
@@ -2395,7 +2395,7 @@ describe("remote-control agent command handling", () => {
     const stale = fixture.agent.publishActivityTaskStatus(staleInput); await settle();
     socket.receive(envelope("activity.run_event_ack", { eventId: staleInput.eventId,
       connectionGeneration: 77, accepted: true, reason: "stale" }));
-    assert.equal(await stale, true);
+    assert.equal(await stale, false);
   });
 
   it("generates the shared v3 fixture bytes, digest and signature", async () => {

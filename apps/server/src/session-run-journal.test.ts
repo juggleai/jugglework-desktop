@@ -42,21 +42,24 @@ describe("session run journal", () => {
     });
     const run = coordinator.reserveStart({ workspaceId: "w", sessionId: "a", origin: "local-renderer", startCommandCorrelationId: null, title: "A" });
     coordinator.acceptStart(run);
+    coordinator.updateTitle({ workspaceId: "w", sessionId: "a", title: "Updated A" });
     const first = journal.listFeed("electron");
-    expect(first.items).toHaveLength(1);
-    expect(first.items[0]).toMatchObject({ sequence: 1, runId: "run-a", generation: run.generation, revision: 2, status: "running", title: "A" });
+    expect(first.items).toHaveLength(2);
+    expect(first.items[0]).toMatchObject({ sequence: 1, runId: "run-a", generation: run.generation, revision: 1, status: "running", title: "A" });
+    expect(first.items[1]).toMatchObject({ sequence: 2, revision: 2, status: "running", title: "Updated A" });
     expect(() => journal.ackFeed("electron", first.deviceEpoch, 2, first.items[0]!.eventId)).toThrow("out_of_order");
     journal.close();
 
     journal = await createSessionRunJournal({ path, now: () => 3_000 });
-    expect(journal.listActive()).toMatchObject([{ runId: "run-a", status: "running", revision: 2 }]);
+    expect(journal.listActive()).toMatchObject([{ runId: "run-a", status: "running", revision: 3, title: "Updated A" }]);
     expect(journal.listFeed("electron").items[0]?.eventId).toBe(first.items[0]?.eventId);
     journal.ackFeed("electron", first.deviceEpoch, 1, first.items[0]!.eventId);
+    journal.ackFeed("electron", first.deviceEpoch, 2, first.items[1]!.eventId);
     coordinator = createSessionMutationCoordinator({ initialRuns: journal.listActive(), onLifecycleEvent: journal.record });
     coordinator.observe({ ...run, status: "completed" });
     const terminal = journal.listFeed("electron");
-    expect(terminal.nextSequence).toBe(2);
-    expect(terminal.items).toMatchObject([{ sequence: 2, runId: "run-a", status: "completed" }]);
+    expect(terminal.nextSequence).toBe(3);
+    expect(terminal.items).toMatchObject([{ sequence: 3, runId: "run-a", revision: 3, status: "completed", title: "Updated A" }]);
     journal.close();
   });
 
@@ -65,6 +68,7 @@ describe("session run journal", () => {
     const run = coordinator.reserveStart({ workspaceId: "w", sessionId: "s", origin: "local-renderer", startCommandCorrelationId: null });
     coordinator.acceptStart(run);
     const page = journal.listFeed("electron");
+    expect(page.items[0]?.title).toBe("未命名会话");
     expect(() => journal.ackFeed("electron", page.deviceEpoch, 1, "99999999-9999-4999-8999-999999999999")).toThrow("event_conflict");
     journal.purge(Number.MAX_SAFE_INTEGER);
     expect(journal.listFeed("electron").items[0]?.eventId).toBe(page.items[0]?.eventId);

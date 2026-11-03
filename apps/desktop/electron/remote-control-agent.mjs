@@ -1409,7 +1409,7 @@ export function createRemoteControlAgent(options) {
           typeof ack.accepted === "boolean" &&
           ["persisted", "accepted", "duplicate", "stale", "conflict", "forbidden", "invalid", "unavailable"].includes(ack.reason)) {
         pending.onAck?.(ack.reason);
-        pending.finish(ack.accepted === true && ["persisted", "accepted", "duplicate", "stale"].includes(ack.reason));
+        pending.finish(ack.accepted === true && ["persisted", "accepted", "duplicate"].includes(ack.reason));
       }
       return;
     }

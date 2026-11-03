@@ -9,6 +9,7 @@ export const SESSION_RUN_JOURNAL_MAX_EVENTS = 20_000;
 export type SessionRunLifecycleEvent =
   | "run_reserved"
   | "run_started"
+  | "title_updated"
   | "progress"
   | "idle_suspected"
   | "abort_requested"
@@ -64,6 +65,16 @@ function statement(sqlite: Sqlite, sql: string): SqlStatement {
   return "query" in sqlite
     ? (sqlite as { query(value: string): SqlStatement }).query(sql)
     : (sqlite as { prepare(value: string): SqlStatement }).prepare(sql);
+}
+
+function lifecycleTitle(value: string) {
+  const source = value.trim() || "未命名会话";
+  let result = "";
+  for (const character of source) {
+    if (Buffer.byteLength(result + character, "utf8") > 256) break;
+    result += character;
+  }
+  return result || "未命名会话";
 }
 
 function initialize(sqlite: Sqlite) {
@@ -205,10 +216,15 @@ export async function createSessionRunJournal(options: {
       WHERE singleton = 1 RETURNING device_epoch AS deviceEpoch, next_sequence - 1 AS sequence`).all() as { deviceEpoch: string; sequence: number }[];
     const row = device[0];
     if (!row || !Number.isSafeInteger(row.sequence)) throw new Error("session_lifecycle_sequence_unavailable");
+    const revisions = statement(sqlite, "SELECT COALESCE(MAX(revision),0)+1 AS revision FROM session_lifecycle_feed WHERE run_id=?").all(run.runId) as { revision: number }[];
+    const lifecycleRevision = revisions[0]?.revision;
+    if (!Number.isSafeInteger(lifecycleRevision) || lifecycleRevision < 1) throw new Error("session_lifecycle_revision_unavailable");
     statement(sqlite, `INSERT INTO session_lifecycle_feed(device_epoch,sequence,event_id,workspace_id,session_id,run_id,
       generation,revision,origin,status,title,occurred_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(
       row.deviceEpoch, row.sequence, randomUUID(), run.workspaceId, run.sessionId, run.runId,
-      run.generation, run.revision, run.origin, status, run.title, timestamp,
+      // Feed revision is cloud-visible and independent from internal mutation
+      // bookkeeping. It also advances for title updates during an active run.
+      run.generation, lifecycleRevision, run.origin, status, lifecycleTitle(run.title), timestamp,
     );
   };
 
@@ -229,17 +245,18 @@ export async function createSessionRunJournal(options: {
         WHERE workspace_id=? AND session_id=? AND run_id=? AND terminal_reason IS NULL`).run(
         run.revision + 1, terminal, timestamp, timestamp, run.workspaceId, run.sessionId, run.runId) as { changes?: number };
       if (Number(result.changes ?? 0) !== 1) throw new Error("session_run_terminal_conflict");
-      if (["completed", "failed", "aborted"].includes(terminal)) appendFeed({ ...run, revision: run.revision + 1 }, terminal as SessionMutationTerminalStatus, timestamp);
+      if (["completed", "failed", "aborted"].includes(terminal)) appendFeed(run, terminal as SessionMutationTerminalStatus, timestamp);
     } else {
       const result = statement(sqlite, `UPDATE session_runs SET revision=?,status=?,observed_active=?,abort_command_correlation_id=?,
-        updated_at=?,active_observed_at=?,abort_requested_at=? WHERE workspace_id=? AND session_id=? AND run_id=? AND terminal_reason IS NULL`).run(
-        run.revision, run.status, run.observedActive ? 1 : 0, run.abortCommandCorrelationId, run.updatedAt,
-        run.activeObservedAt, run.abortRequestedAt, run.workspaceId, run.sessionId, run.runId) as { changes?: number };
+        title=?,updated_at=?,active_observed_at=?,abort_requested_at=? WHERE workspace_id=? AND session_id=? AND run_id=? AND terminal_reason IS NULL`).run(
+        run.revision, run.status, run.observedActive ? 1 : 0, run.abortCommandCorrelationId, run.title,
+        run.updatedAt, run.activeObservedAt, run.abortRequestedAt, run.workspaceId, run.sessionId, run.runId) as { changes?: number };
       if (Number(result.changes ?? 0) !== 1) {
         const known = statement(sqlite, "SELECT 1 FROM session_runs WHERE run_id=?").all(run.runId);
         if (input.event !== "progress" || !Array.isArray(known) || known.length === 0) throw new Error("session_run_update_conflict");
       }
       if (input.event === "run_started") appendFeed(run, "running", timestamp);
+      if (input.event === "title_updated" && run.status !== "starting") appendFeed(run, "running", timestamp);
     }
     if (input.event === "run_terminal" && ["completed", "failed", "aborted"].includes(input.terminalReason ?? "")) {
       statement(sqlite, `INSERT OR IGNORE INTO session_run_terminals
