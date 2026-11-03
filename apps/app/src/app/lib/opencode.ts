@@ -829,17 +829,21 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
   };
 
   if (juggleworkMount && juggleworkSessionClient && !isFileWindowRuntime()) {
-    const hydrateMountedSessionRuns = async () => {
+    const hydrateMountedSessionRuns = async (signal?: AbortSignal) => {
       const prefix = mountedSessionRunPrefix(juggleworkMount);
       const revisionsAtStart = new Map<string, number>();
-      for (const key of mountedSessionRuns.keys()) {
+      // Include tombstones: a terminal observation during this read must not
+      // be resurrected by an older nonempty list response.
+      for (const key of mountedSessionRunRevisions.keys()) {
         if (key.startsWith(prefix)) revisionsAtStart.set(key, mountedSessionRunRevisions.get(key) ?? 0);
       }
       const items = (await juggleworkSessionClient.listActiveSessionRuns(juggleworkMount.workspaceId)).items;
+      if (signal?.aborted) return [];
       const activeKeys = new Set<string>();
       for (const run of items) {
         const key = sessionRunKey(juggleworkMount, run.sessionId);
         activeKeys.add(key);
+        if ((revisionsAtStart.get(key) ?? 0) !== (mountedSessionRunRevisions.get(key) ?? 0)) continue;
         rememberMountedSessionRun(key, run);
       }
       for (const key of mountedSessionRuns.keys()) {
@@ -855,11 +859,13 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
     const observeMountedSessionRun = async (input: {
       observation: { sessionId: string; status: JuggleWorkSessionRunObservation };
       fence: MountedSessionRunFence;
+      signal?: AbortSignal;
     }) => {
       const { observation, fence } = input;
       const key = sessionRunKey(juggleworkMount, observation.sessionId);
 
       for (let attempt = 0; attempt < 4; attempt++) {
+        if (input.signal?.aborted) return;
         const current = mountedSessionRuns.get(key);
         if (!current || current.runId !== fence.runId || current.generation !== fence.generation) return;
         try {
@@ -869,18 +875,20 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
             fence.runId,
             { status: observation.status },
           );
+          if (input.signal?.aborted) return;
           if (result.cleared) forgetMountedSessionRun(key, fence.runId);
           return;
         } catch (error) {
+          if (input.signal?.aborted) return;
           if (error instanceof JuggleWorkServerError) {
             const currentRunId = sessionRunMismatchCurrentId(error);
             if (currentRunId !== undefined) {
               forgetMountedSessionRun(key, fence.runId);
               if (currentRunId) {
                 try {
-                  const replacement = (await hydrateMountedSessionRuns())
-                    .find((run) => run.sessionId === observation.sessionId && run.runId === currentRunId);
-                  if (replacement) rememberMountedSessionRun(key, replacement);
+                  // Hydration owns revision-checked writes; do not reapply its
+                  // raw response after concurrent terminal/new-generation events.
+                  await hydrateMountedSessionRuns(input.signal);
                 } catch {
                   // A later event or explicit reconciliation will hydrate it.
                 }
@@ -896,7 +904,8 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
       }
     };
 
-    const enqueueMountedSessionObservation = (observation: { sessionId: string; status: JuggleWorkSessionRunObservation }) => {
+    const enqueueMountedSessionObservation = (observation: { sessionId: string; status: JuggleWorkSessionRunObservation }, signal?: AbortSignal) => {
+      if (signal?.aborted) return;
       const key = sessionRunKey(juggleworkMount, observation.sessionId);
       if (observation.status === "running") {
         const timestamp = Date.now();
@@ -917,12 +926,19 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
         // a later generation. Server-side authoritative idle reconciliation
         // safely recovers this missed pre-registration terminal.
         if (observation.status === "idle" || observation.status === "completed" ||
-          observation.status === "failed" || observation.status === "aborted") return null;
+           observation.status === "failed" || observation.status === "aborted") {
+          // Fence the concurrent initial hydration even when no run was known.
+          bumpMountedSessionRunRevision(key);
+          return null;
+        }
         try {
-          const active = (await hydrateMountedSessionRuns())
+          const active = (await hydrateMountedSessionRuns(signal))
             .find((run) => run.sessionId === observation.sessionId);
-          if (!active) return null;
-          return { ...rememberMountedSessionRun(key, active) };
+          if (!active || signal?.aborted) return null;
+          // Hydration already performed revision-checked writes. Do not apply
+          // its raw response again after a concurrent terminal/new generation.
+          const hydrated = mountedSessionRuns.get(key);
+          return hydrated ? { ...hydrated } : null;
         } catch {
           return null;
         }
@@ -931,10 +947,10 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
       const previous = mountedSessionObservationQueues.get(key) ?? Promise.resolve();
       const queued = previous.catch(() => undefined).then(async () => {
         const fence = await bound;
-        if (fence) await observeMountedSessionRun({ observation, fence });
+        if (fence && !signal?.aborted) await observeMountedSessionRun({ observation, fence, signal });
       });
       mountedSessionObservationQueues.set(key, queued);
-      void queued.finally(() => {
+      void queued.catch(() => undefined).finally(() => {
         if (mountedSessionObservationQueues.get(key) === queued) mountedSessionObservationQueues.delete(key);
       });
     };
@@ -943,18 +959,19 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
     const subscribeOriginal = eventClient.subscribe.bind(eventClient);
     eventClient.subscribe = async (...args: unknown[]) => {
       const subscription = await subscribeOriginal(...args);
-      try {
-        await hydrateMountedSessionRuns();
-      } catch {
-        // Events can still hydrate individual sessions after a reconnect.
-      }
+      const signal = (args[1] as { signal?: AbortSignal } | undefined)?.signal;
+      // The SDK stream is lazy. Waiting here delays the actual SSE request and
+      // loses messages emitted while /session-runs is slow or unavailable.
+      // Catch immediately; aborted subscriptions must not seed late responses.
+      if (!signal?.aborted) void hydrateMountedSessionRuns(signal).catch(() => undefined);
       const stream = subscription.stream as AsyncIterable<unknown>;
       return {
         ...subscription,
         stream: (async function* () {
           for await (const event of stream) {
+            if (signal?.aborted) return;
             const observation = sessionRunObservation(event);
-            if (observation) enqueueMountedSessionObservation(observation);
+            if (observation) enqueueMountedSessionObservation(observation, signal);
             yield event;
           }
         })(),

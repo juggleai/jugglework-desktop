@@ -123,8 +123,10 @@ diagnostics without modifying the stored OpenCode transcript.
 
 ### Requirement: Reconnect performs authoritative reconciliation
 
-After an event stream reconnects, the client SHALL fetch a fresh session
-snapshot and active-run state before relying on further incremental events.
+On the first successful event-stream connection as well as reconnection, the
+client SHALL reconcile tracked session snapshots and active-run state. Reading
+active runs SHALL NOT block opening or consuming the event stream. Late active-run
+reads SHALL NOT resurrect terminal runs or overwrite newer generations.
 
 #### Scenario: Idle event was lost during disconnect
 
@@ -133,6 +135,34 @@ snapshot and active-run state before relying on further incremental events.
 - **WHEN** the event stream reconnects
 - **THEN** the client refreshes the authoritative snapshot and active-run state
 - **AND** stale running projections are terminalized
+
+#### Scenario: Messages precede the first stream connection
+- **GIVEN** a task was accepted before the event stream connected
+- **WHEN** the first stream connection succeeds
+- **THEN** tracked session snapshots are refreshed without requiring navigation
+
+### Requirement: Incomplete live messages permit bounded snapshot recovery
+
+A snapshot made stale by live events MAY fill missing stable-ID parts of existing
+messages, but SHALL NOT overwrite newer live content or terminal metadata or bypass
+history deletion and continuation-suppression fences. Missing part declarations
+SHALL trigger bounded, coalesced snapshot recovery rather than unbounded delta
+buffering or one request per token. Disposal SHALL clear recovery timers and buffers.
+
+#### Scenario: Live metadata shell hides available history
+- **WHEN** live metadata creates empty user and assistant message shells during a snapshot read
+- **AND** the returned snapshot contains their identified text parts
+- **THEN** the missing parts become visible without switching sessions
+
+#### Scenario: Declaration and delta arrive within one animation frame
+- **WHEN** a text delta is buffered before its empty typed declaration
+- **THEN** the delta is retained exactly once
+- **AND** a later terminal cumulative declaration corrects duplicate text and retains its done state
+
+#### Scenario: Snapshot predates pending tokens
+- **WHEN** a stale snapshot contains a prefix of pending cumulative text
+- **THEN** the longer compatible content is retained
+- **AND** incompatible or overflowed pending content remains unresolved for bounded recovery rather than being silently discarded as repaired
 
 ### Requirement: Lifecycle journal excludes user content
 

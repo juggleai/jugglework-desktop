@@ -9,10 +9,33 @@ import {
   ensureWorkspaceSessionSync,
   reconcileSessionSnapshotTitle,
   snapshotKey,
+  trackWorkspaceSessionSync,
+  __disposeWorkspaceSessionSyncForTest,
 } from "../src/react-app/domains/session/sync/session-sync";
 import { reconcileWorkspaceSessionTitles } from "../src/react-app/shell/workspace-routes";
 
 afterEach(() => getReactQueryClient().clear());
+
+test("the first successful SSE connection invalidates already tracked snapshots", async () => {
+  const originalFetch = globalThis.fetch;
+  const input = { workspaceId: "first-connection", baseUrl: "http://fixture.invalid", juggleworkToken: "fixture" };
+  const key = snapshotKey(input.workspaceId, "session-first");
+  getReactQueryClient().setQueryData(key, { session: { id: "session-first" }, messages: [] });
+  let connected!: () => void;
+  const ready = new Promise<void>((resolve) => { connected = resolve; });
+  globalThis.fetch = (async () => new Response(new ReadableStream({
+    start(controller) { controller.enqueue(new TextEncoder().encode('data: {"type":"server.connected"}\n\n')); },
+  }), { headers: { "Content-Type": "text/event-stream" } })) as typeof fetch;
+  const releaseWorkspace = ensureWorkspaceSessionSync({ ...input, onReconnect: connected });
+  const releaseSession = trackWorkspaceSessionSync(input, "session-first");
+  try {
+    await ready;
+    expect(getReactQueryClient().getQueryState(key)?.isInvalidated).toBe(true);
+  } finally {
+    releaseSession(); releaseWorkspace(); __disposeWorkspaceSessionSyncForTest(input);
+    globalThis.fetch = originalFetch;
+  }
+});
 
 test("untracked background metadata reaches its workspace and cached snapshot without clearing revert", () => {
   const updates: unknown[] = [];
