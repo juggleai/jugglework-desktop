@@ -10,6 +10,15 @@ const ERROR_MESSAGES = Object.freeze({
   cancelled: "Device identity replacement was cancelled because remote control was disabled.",
 });
 const STARTUP_WELCOME_TIMEOUT_MS = 15_000;
+// Only fixed, content-free codes may cross the renderer boundary. Never expose
+// exception messages, native keychain details, URLs, grants or filesystem paths.
+const ENROLLMENT_FAILURE_CODES = new Set([
+  "secure_storage_unavailable", "secure_storage_degraded", "key_generation_failed",
+  "credentials_read_failed", "credentials_write_failed", "credentials_delete_failed",
+  "credentials_corrupt", "credentials_context_mismatch", "credentials_binding_mismatch",
+  "pending_credentials_missing", "already_enrolled", "invalid_enrollment_input",
+  "invalid_context", "network_unavailable", "invalid_response", "operation_drain_failed",
+]);
 const REPLACEMENT_FAILURE_STAGES = new Set([
   "eligibility",
   "stop",
@@ -89,6 +98,10 @@ function stableAgentErrorCode(value) {
 
 function stableFailureCode(stage, cause) {
   if (cause?.code === "replacement_cancelled") return "replacement_cancelled";
+  if (stage === "enrollment" && ENROLLMENT_FAILURE_CODES.has(cause?.code)) return cause.code;
+  if (stage === "enrollment" && ["drain_operations", "delete_material", "display_name", "prepare_credential", "exchange", "complete_credential", "e2ee_key"].includes(cause?.replacementStage)) {
+    return `enrollment_${cause.replacementStage}_failed`;
+  }
   if (stage === "pending_policy" && cause instanceof ManagedRuntimeClientError) {
     return `pending_policy_${cause.code}`;
   }

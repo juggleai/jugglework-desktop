@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { createHash, generateKeyPairSync } from "node:crypto";
+import { createHash, createPrivateKey, generateKeyPairSync } from "node:crypto";
 import { EventEmitter } from "node:events";
+import { readFile } from "node:fs/promises";
 import { describe, it } from "node:test";
 
 import {
@@ -312,14 +313,14 @@ function harness({
     },
   };
   const createCloudClient = () => ({
-    enrollDevice: async ({ context, grant, displayName, platform }) => {
+    enrollDevice: async ({ context, grant, displayName, platform, onStage }) => {
       enrollmentCalls += 1;
       assert.deepEqual(context, { controlPlaneBaseUrl: URL, userId: "user-1", organizationId: "org-1" });
       assert.equal(grant, "renderer-one-time-grant");
       assert.equal(displayName, "Test Mac");
       assert.equal(platform, "darwin");
       if (enrollDeviceOverride) {
-        credential = await enrollDeviceOverride({ context, grant, displayName, platform });
+        credential = await enrollDeviceOverride({ context, grant, displayName, platform, onStage });
         return credential;
       }
       credential = enrolledCredential();
@@ -665,6 +666,26 @@ describe("remote-control agent context and lifecycle", () => {
     }
   });
 
+  it("logs only a stable identity replacement substage and controlled error code", async () => {
+    const fixture = harness({
+      enabled: false,
+      enrollDevice: async ({ onStage }) => {
+        onStage("prepare_credential");
+        throw Object.assign(new Error("secret local path"), { code: "secure_storage_unavailable" });
+      },
+    });
+    await fixture.agent.start();
+    await fixture.agent.syncContext(signedInContext());
+    await assert.rejects(fixture.agent.replaceIdentity(REPLACEMENT_INPUT));
+    const diagnostic = fixture.logs.find(({ metadata }) => metadata?.code === "identity_replacement_failed");
+    assert.deepEqual(diagnostic?.metadata, {
+      code: "identity_replacement_failed",
+      stage: "prepare_credential",
+      reason: "secure_storage_unavailable",
+    });
+    assert.doesNotMatch(JSON.stringify(diagnostic), /secret local path/);
+  });
+
   it("sends a strict hello and advertises only registry-provided registered operations", async () => {
     const fixture = harness();
     const socket = await connect(fixture);
@@ -687,6 +708,17 @@ describe("remote-control agent context and lifecycle", () => {
       localControlEnabled: true,
     });
     assert.equal(JSON.stringify(socket.sent).includes("short-lived-token"), false);
+  });
+
+  it("sends device hello when the registry advertises authoritative Live Activity", async () => {
+    const fixture = harness({
+      capabilities: { ...readCapabilities, features: [...readCapabilities.features, "live-activity-v3"] },
+    });
+    const socket = await connect(fixture);
+    const hello = frames(socket, "device.hello")[0];
+    assert.ok(hello, "device.hello was not sent");
+    assert.deepEqual(hello.payload.capabilities.features, ["live-activity-v3"]);
+    assert.notEqual(fixture.agent.status().lastErrorCode, "invalid_capability_advertisement");
   });
 
   it("adopts the welcome generation for heartbeats and answers strict cloud ping with pong", async () => {
@@ -2262,7 +2294,7 @@ describe("remote-control agent command handling", () => {
     socket.receive(welcome(77));
     await settle();
 
-    assert.equal(await fixture.agent.publishActivityTaskStatus({
+    const publication = fixture.agent.publishActivityTaskStatus({
       eventId: "55555555-5555-4555-8555-555555555555",
       workspaceId: "ws_1",
       sessionId: "ses_1",
@@ -2271,7 +2303,17 @@ describe("remote-control agent command handling", () => {
       title: "Build release",
       workspaceName: "Desktop",
       occurredAt: new Date(NOW).toISOString(),
-    }), true);
+    });
+    await settle();
+    let resolved = false;
+    void publication.then(() => { resolved = true; });
+    await settle();
+    assert.equal(resolved, false);
+    socket.receive(envelope("activity.task_status_ack", {
+      eventId: "55555555-5555-4555-8555-555555555555", connectionGeneration: 77,
+      accepted: true, reason: "persisted",
+    }));
+    assert.equal(await publication, true);
     const frame = frames(socket, "activity.task_status").at(-1);
     assert.deepEqual(Object.keys(frame.payload).sort(), [
       "eventId", "occurredAt", "runId", "schemaVersion", "sessionId", "signature", "status", "title", "workspaceId", "workspaceName",
@@ -2279,11 +2321,172 @@ describe("remote-control agent command handling", () => {
     assert.equal(JSON.stringify(frame).includes("prompt"), false);
     assert.equal(JSON.stringify(frame).includes("path"), false);
     assert.equal(JSON.stringify(frame).includes("tool"), false);
+    // Every lifecycle status requires an exact run identity, including cold mirrors.
+    const terminal = { ...frame.payload, runId: "", status: "completed" };
+    const frameCount = frames(socket, "activity.task_status").length;
+    for (const status of ["running", "completed", "failed", "aborted"]) {
+      assert.equal(await fixture.agent.publishActivityTaskStatus({ ...terminal, status }), false);
+    }
+    assert.equal(frames(socket, "activity.task_status").length, frameCount);
+    assert.equal(await fixture.agent.publishActivityTaskStatus({ ...frame.payload, generation: 2 }), false);
+    const nextEventId = "66666666-6666-4666-8666-666666666666";
+    const second = fixture.agent.publishActivityTaskStatus({ ...frame.payload, eventId: nextEventId, generation: 2 });
+    await settle();
+    socket.receive(envelope("activity.task_status_ack", {
+      eventId: nextEventId, connectionGeneration: 77, accepted: true, reason: "persisted",
+    }));
+    assert.equal(await second, true);
+    const v2 = frames(socket, "activity.task_status").at(-1).payload;
+    assert.equal(v2.schemaVersion, 2);
+    assert.equal(v2.generation, 2);
+
+    const terminalWithoutTitle = fixture.agent.publishActivityTaskStatus({
+      ...frame.payload,
+      eventId: "77777777-7777-4777-8777-777777777777",
+      generation: 3,
+      status: "completed",
+      title: "",
+    });
+    await settle();
+    const terminalFrame = frames(socket, "activity.task_status").at(-1).payload;
+    assert.equal(terminalFrame.title, "");
+    socket.receive(envelope("activity.task_status_ack", {
+      eventId: terminalFrame.eventId, connectionGeneration: 77,
+      accepted: true, reason: "persisted",
+    }));
+    assert.equal(await terminalWithoutTitle, true);
+    assert.equal(await fixture.agent.publishActivityTaskStatus({
+      ...terminalFrame,
+      eventId: "88888888-8888-4888-8888-888888888888",
+      status: "running",
+    }), false);
   });
+
+  it("signs original 29-day replay timestamp matching the Go contract fixture", async () => {
+    // Public deterministic test key only; matching fixture lives in Server testdata.
+    const privateKey = createPrivateKey({ key: Buffer.from("302e020100300506032b657004220420" + "01".repeat(32), "hex"), format: "der", type: "pkcs8" });
+    const fixture = harness({ signingCredential: { deviceId: DEVICE_ID, privateKey } });
+    const socket = await connect(fixture); socket.receive(welcome(77)); await settle();
+    const event = { eventId: "55555555-5555-4555-8555-555555555555", workspaceId: "ws_1", sessionId: "ses_1", runId: "run_A", generation: 1, status: "completed", title: "Task", workspaceName: "", occurredAt: "2026-10-03T12:00:00.000Z" };
+    const pending = fixture.agent.publishActivityTaskStatus(event); await settle();
+    const payload = frames(socket, "activity.task_status").at(-1).payload;
+    assert.equal(payload.occurredAt, event.occurredAt);
+    assert.equal(payload.signature, "7oeBZfPV3yD6s9Tjh0oK3h6Zq24yJq2k-rTqbUtNpehhNMG8Rs4jv23iZqEQE0LqFxZuGKrQuQc96j4-YKllAw");
+    fixture.agent.stop(); assert.equal(await pending, false);
+  });
+
+  it("publishes v3 lifecycle identity and accepts duplicate or stale cloud ACKs", async () => {
+    const signing = generateKeyPairSync("ed25519");
+    const fixture = harness({ signingCredential: { deviceId: DEVICE_ID, privateKey: signing.privateKey } });
+    const socket = await connect(fixture); socket.receive(welcome(77)); await settle();
+    const input = { eventId: "55555555-5555-4555-8555-555555555555",
+      deviceEpoch: "66666666-6666-4666-8666-666666666666", sequence: 7,
+      workspaceId: "ws_1", sessionId: "ses_1", runId: "run_1", generation: 3, revision: 9,
+      status: "completed", title: "Task", workspaceName: "", occurredAt: new Date(NOW).toISOString() };
+    const duplicate = fixture.agent.publishActivityTaskStatus(input); await settle();
+    const payload = frames(socket, "activity.run_event").at(-1).payload;
+    assert.deepEqual({ schemaVersion: payload.schemaVersion, deviceEpoch: payload.deviceEpoch,
+      sequence: payload.sequence, generation: payload.generation, revision: payload.revision },
+    { schemaVersion: 3, deviceEpoch: input.deviceEpoch, sequence: 7, generation: 3, revision: 9 });
+    socket.receive(envelope("activity.run_event_ack", { eventId: input.eventId,
+      connectionGeneration: 77, accepted: true, reason: "duplicate" }));
+    assert.equal(await duplicate, true);
+    const staleInput = { ...input, eventId: "77777777-7777-4777-8777-777777777777", sequence: 8 };
+    const stale = fixture.agent.publishActivityTaskStatus(staleInput); await settle();
+    socket.receive(envelope("activity.run_event_ack", { eventId: staleInput.eventId,
+      connectionGeneration: 77, accepted: true, reason: "stale" }));
+    assert.equal(await stale, true);
+  });
+
+  it("generates the shared v3 fixture bytes, digest and signature", async () => {
+    const contract = JSON.parse(await readFile(new globalThis.URL("../../../testdata/live_activity_v3_contract.json", import.meta.url), "utf8"));
+    const privateKey = createPrivateKey({ key: Buffer.from("302e020100300506032b657004220420" + "01".repeat(32), "hex"), format: "der", type: "pkcs8" });
+    const fixture = harness({ signingCredential: { deviceId: contract.activityRunEvent.deviceId, privateKey } });
+    const socket = await connect(fixture); socket.receive(welcome(77)); await settle();
+    const pending = fixture.agent.publishActivityTaskStatus({ ...contract.activityRunEvent.payload, workspaceName: "must-not-be-signed" });
+    await settle();
+    const payload = frames(socket, "activity.run_event").at(-1).payload;
+    assert.deepEqual(payload, contract.activityRunEvent.payload);
+    socket.receive(envelope("activity.run_event_ack", { eventId: payload.eventId, connectionGeneration: 77, accepted: true, reason: "accepted" }));
+    assert.equal(await pending, true);
+  });
+
+  it("rotates at 20k bindings, resumes delivery and fences old-socket late ACKs", async () => {
+    const signing = generateKeyPairSync("ed25519");
+    const fixture = harness({ signingCredential: { deviceId: DEVICE_ID, privateKey: signing.privateKey } });
+    const socket = await connect(fixture); socket.receive(welcome(77)); await settle();
+    const input = { workspaceId: "ws_1", sessionId: "ses_1", runId: "run_1", generation: 1, status: "completed", title: "Task", workspaceName: "", occurredAt: new Date(NOW).toISOString() };
+    for (let i = 0; i < 20_000; i++) {
+      const eventId = `55555555-5555-4555-8555-${String(i).padStart(12, "0")}`;
+      const pending = fixture.agent.publishActivityTaskStatus({ ...input, eventId }); await settle();
+      socket.receive(envelope("activity.task_status_ack", { eventId, connectionGeneration: 77, accepted: true, reason: "persisted" }));
+      assert.equal(await pending, true);
+    }
+    const eventId = "66666666-6666-4666-8666-666666666666";
+    assert.equal(await fixture.agent.publishActivityTaskStatus({ ...input, eventId }), false);
+    assert.equal(fixture.agent.status().state, REMOTE_CONTROL_AGENT_STATUS.BACKOFF);
+    await fixture.clock.advance(5000); await settle();
+    const replacement = fixture.sockets.at(-1); assert.notEqual(replacement, socket);
+    replacement.open(); await settle(); replacement.receive(welcome(78)); await settle();
+    const reused = "55555555-5555-4555-8555-000000000000";
+    const pending = fixture.agent.publishActivityTaskStatus({ ...input, eventId: reused, generation: 2 }); await settle();
+    let resolved = false; void pending.then(() => { resolved = true; });
+    socket.receive(envelope("activity.task_status_ack", { eventId: reused, connectionGeneration: 78, accepted: true, reason: "persisted" }));
+    await settle(); assert.equal(resolved, false);
+    replacement.receive(envelope("activity.task_status_ack", { eventId: reused, connectionGeneration: 78, accepted: true, reason: "persisted" }));
+    assert.equal(await pending, true); fixture.agent.stop();
+  });
+
+  it("late ACK cannot rebind a timed-out event to another session or generation", async () => {
+    const signing = generateKeyPairSync("ed25519");
+    const fixture = harness({ signingCredential: { deviceId: DEVICE_ID, privateKey: signing.privateKey } });
+    const socket = await connect(fixture);
+    socket.receive(welcome(77)); await settle();
+    const input = { eventId: "55555555-5555-4555-8555-555555555555", workspaceId: "ws_1",
+      sessionId: "ses_1", runId: "run_1", generation: 1, status: "completed", title: "Task",
+      workspaceName: "", occurredAt: new Date(NOW).toISOString() };
+    const first = fixture.agent.publishActivityTaskStatus(input);
+    await settle(); await fixture.clock.advance(5_000); assert.equal(await first, false);
+    assert.equal(await fixture.agent.publishActivityTaskStatus({ ...input, sessionId: "ses_2" }), false);
+    assert.equal(await fixture.agent.publishActivityTaskStatus({ ...input, generation: 2 }), false);
+    const retry = fixture.agent.publishActivityTaskStatus(input); await settle();
+    socket.receive(envelope("activity.task_status_ack", {
+      eventId: input.eventId, connectionGeneration: 77, accepted: true, reason: "persisted",
+    }));
+    assert.equal(await retry, true);
+    assert.equal(frames(socket, "activity.task_status").length, 2);
+    fixture.agent.stop();
+  });
+
+  for (const outcome of ["timeout", "rejected", "close", "wrong-generation"]) {
+    it(`does not accept activity socket delivery without persistence: ${outcome}`, async () => {
+      const signing = generateKeyPairSync("ed25519");
+      const fixture = harness({ signingCredential: { deviceId: DEVICE_ID, privateKey: signing.privateKey } });
+      const socket = await connect(fixture);
+      socket.receive(welcome(77));
+      await settle();
+      const eventId = "55555555-5555-4555-8555-555555555555";
+      const pending = fixture.agent.publishActivityTaskStatus({
+        eventId, workspaceId: "ws_1", sessionId: "ses_1", runId: "run_1",
+        status: "completed", title: "Task", workspaceName: "", occurredAt: new Date(NOW).toISOString(),
+      });
+      await settle();
+      if (outcome === "rejected" || outcome === "wrong-generation") {
+        socket.receive(envelope("activity.task_status_ack", {
+          eventId, connectionGeneration: outcome === "wrong-generation" ? 76 : 77,
+          accepted: outcome === "wrong-generation", reason: "unavailable",
+        }));
+      }
+      if (outcome === "close") fixture.agent.stop();
+      else await fixture.clock.advance(5_000);
+      assert.equal(await pending, false);
+      fixture.agent.stop();
+    });
+  }
 
   it("fences a superseded activity while signing credentials are awaited", async () => {
     const signing = generateKeyPairSync("ed25519");
-    let release;
+    let release = (_value) => {};
     const credential = new Promise((resolve) => { release = resolve; });
     const fixture = harness({ signingCredential: credential });
     const socket = await connect(fixture);

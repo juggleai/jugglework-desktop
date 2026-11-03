@@ -119,6 +119,12 @@ export function createSessionMutationCoordinator({ onActiveRemoteRunCountChanged
     return runs.get(sessionKey(workspaceId, sessionId))?.runId ?? null;
   }
 
+  // Retained fence survives terminal clearing; only server records populate it.
+  function getRunGeneration({ workspaceId, sessionId, runId }) {
+    const fence = fences.get(sessionKey(workspaceId, sessionId));
+    return fence?.runId === runId ? fence.generation : null;
+  }
+
   function activeRuns() {
     return [...runs.values()].slice(0, MAX_ACTIVE_RUNS).map((run) => ({
       workspaceId: run.workspaceId,
@@ -139,5 +145,5 @@ export function createSessionMutationCoordinator({ onActiveRemoteRunCountChanged
     return changed;
   }
 
-  return Object.freeze({ recordServerRun, clearTerminalRun, getActiveRunId, activeRuns, clearRemoteRuns });
+  return Object.freeze({ recordServerRun, clearTerminalRun, getActiveRunId, getRunGeneration, activeRuns, clearRemoteRuns });
 }

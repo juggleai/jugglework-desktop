@@ -198,11 +198,13 @@ export function createRemoteControlOperationRegistry({
   isOperationAllowed = () => false,
   isPayloadEncryptionReady = () => false,
   getBusySessionPolicy = () => ({ steer: false, enqueue: false }),
+  staticFeatures = [],
 } = {}) {
   if (!Array.isArray(registrations)) {
     throw new TypeError("Remote operation registrations must be an array.");
   }
-  if (typeof getFeatureGates !== "function" || typeof isOperationAllowed !== "function" || typeof isPayloadEncryptionReady !== "function" || typeof getBusySessionPolicy !== "function") {
+  if (typeof getFeatureGates !== "function" || typeof isOperationAllowed !== "function" || typeof isPayloadEncryptionReady !== "function" || typeof getBusySessionPolicy !== "function" ||
+      !Array.isArray(staticFeatures) || staticFeatures.some((feature) => typeof feature !== "string" || !feature)) {
     throw new TypeError("Remote operation policy dependencies must be functions.");
   }
 
@@ -237,7 +239,7 @@ export function createRemoteControlOperationRegistry({
       if (isRecord(value)) busyPolicy = { steer: value.steer === true, enqueue: value.enqueue === true };
     } catch {}
     const mutationEnabled = isRecord(gates) && gates.enrollment === true && gates.readOnlyControl === true && gates.sessionMutation === true;
-    const features = [];
+    const features = [...staticFeatures];
     if (payloadEncryptionReady) features.push("payload.e2ee-v1");
     if (mutationEnabled && isRecord(gates) && gates.busySessionSteer === true && busyPolicy.steer) features.push("session.steer");
     if (mutationEnabled && isRecord(gates) && gates.busySessionEnqueue === true && busyPolicy.enqueue) features.push("session.enqueue");

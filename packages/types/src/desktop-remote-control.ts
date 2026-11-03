@@ -205,6 +205,7 @@ export const desktopRemoteDescendantOperationValues = [
 
 export const desktopRemoteFeatureCapabilityValues = [
   "controller.event-resume",
+  "live-activity-v3",
   "payload.e2ee-v1",
   "background.lifecycle",
   "session.steer",

@@ -59,6 +59,29 @@ const statusSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("retry") }).passthrough(),
 ]);
 const statusesResponseSchema = z.record(z.string(), statusSchema);
+const activeRunsResponseSchema = z.object({ items: z.array(z.object({
+  workspaceId: identifierSchema,
+  sessionId: identifierSchema,
+  runId: identifierSchema,
+  status: z.enum(["starting", "running", "waiting", "retrying", "aborting"]),
+}).passthrough()) }).strict();
+
+// Read the managed runtime authority, not the asynchronously hydrated SSE mirror.
+async function readActiveRuns(client, workspaceId) {
+  const response = activeRunsResponseSchema.parse(await client.getJson(`/workspace/${encodeURIComponent(workspaceId)}/session-runs`));
+  const runs = new Map();
+  for (const run of response.items) {
+    if (run.workspaceId !== workspaceId || runs.has(run.sessionId)) {
+      throw new RemoteControlOperationExecutionError("snapshot_required");
+    }
+    runs.set(run.sessionId, run);
+  }
+  return runs;
+}
+
+function withActiveRun(summary, run) {
+  return run ? { ...summary, activeRunId: run.runId, status: run.status === "starting" ? "running" : run.status } : summary;
+}
 const snapshotResponseSchema = z.object({
   item: z.object({
     session: sessionSchema,
@@ -494,6 +517,8 @@ export function createRemoteControlReadRegistrations({ workspaceStore, managedRu
           .filter((session) => !session.parentID && !isRemoteSessionArchived(session))
           .map((session) => sessionSummary(session, workspace, statuses[session.id])),
       };
+      const runs = await readActiveRuns(managedRuntimeClient, workspace.id);
+      result.sessions = result.sessions.map((summary) => withActiveRun(summary, runs.get(summary.id)));
       return desktopRemoteOperationResultSchema.parse({ operation: "session.list", payloadVersion: 1, result }).result;
     }),
     registration("session.snapshot", (value, payloadVersion) => {
@@ -549,12 +574,13 @@ export function createRemoteControlReadRegistrations({ workspaceStore, managedRu
       const pendingRecord = /** @type {Record<string, unknown>} */ (pending);
       if (!pending || typeof pending !== "object" || !Array.isArray(pendingRecord.items)) throw new RemoteControlOperationExecutionError("internal_error");
       pendingOperations = pendingRecord.items;
+      const runs = await readActiveRuns(managedRuntimeClient, workspace.id);
       const captured = new Date(now());
       if (!Number.isFinite(captured.getTime())) throw new RemoteControlOperationExecutionError("internal_error");
       const result = {
         schemaVersion: 1,
         workspace: workspaceSummary(workspace),
-        session: { ...summary, status: sessionStatus(response.item.status) },
+        session: withActiveRun({ ...summary, status: sessionStatus(response.item.status) }, runs.get(args.sessionId)),
         messages: boundedTranscript(response.item.messages.flatMap((message) => {
           const normalized = normalizeRemoteMessage(message, args.sessionId);
           return normalized ? [normalized] : [];

@@ -69,6 +69,10 @@ interface RegisterSessionRoutesOptions {
   ) => Promise<void>;
   dispatchSessionAbort: (config: ServerConfig, workspace: WorkspaceInfo, sessionId: string) => Promise<boolean>;
   sessionMutations: SessionMutationCoordinator;
+  readRunTerminalStatus?: (workspaceId: string, sessionId: string, runId: string) => "completed" | "failed" | "aborted" | null;
+  listRunTerminals?: import("../session-run-journal.js").SessionRunJournal["listTerminals"];
+  listLifecycleFeed?: import("../session-run-journal.js").SessionRunJournal["listFeed"];
+  ackLifecycleFeed?: import("../session-run-journal.js").SessionRunJournal["ackFeed"];
   sessionPendingOperations: SessionPendingOperationStore;
   sessionModelPreferences: SessionModelPreferenceStore;
   sessionPendingOperationPump: SessionPendingOperationPump;
@@ -183,6 +187,12 @@ const queueSessionBodySchema = z.object({
 const legacyAbortRunBodySchema = z.object({ expectedRunId: runIdentifierSchema, commandId: runIdentifierSchema }).strict();
 const observeRunBodySchema = z.object({
   status: z.enum(["starting", "running", "waiting", "retrying", "aborting", "idle", "completed", "failed", "aborted"]),
+}).strict();
+const lifecycleAckBodySchema = z.object({
+  consumerId: runIdentifierSchema,
+  deviceEpoch: z.string().uuid(),
+  sequence: z.number().int().positive(),
+  eventId: z.string().uuid(),
 }).strict();
 const sessionModelPreferenceBodySchema = z.discriminatedUnion("mode", [
   z.object({ mode: z.literal("auto"), model: z.null(), expectedRevision: z.number().int().nonnegative() }).strict(),
@@ -880,6 +890,11 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     }
     let run;
     try {
+      let title = "";
+      try { title = (await readWorkspaceSession(workspace, input.sessionId)).title ?? ""; } catch {
+        // Title is presentation metadata. Admission authority must not depend on
+        // a second engine read when status already proved the session runnable.
+      }
       let engineStatus = await readEngineSessionStatus(workspace, input.sessionId);
       let active = sessionMutations.getActive(workspace.id, input.sessionId);
 
@@ -1004,6 +1019,7 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
         sessionId: input.sessionId,
         origin: input.origin,
         startCommandCorrelationId: input.startCommandCorrelationId,
+        title,
       });
     } catch (error) {
       remapSessionMutationError(error);
@@ -1152,6 +1168,14 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
     try {
+      const current = sessionMutations.getActive(workspace.id, input.sessionId);
+      if (current && current.runId !== input.runId) {
+        throw new SessionMutationError("run_mismatch", current.runId);
+      }
+      // Another observer/pump may already have cleared this exact run. Return
+      // persisted authority, never infer completion from an empty active list.
+      const terminalStatus = options.readRunTerminalStatus?.(workspace.id, input.sessionId, input.runId);
+      if (terminalStatus) return jsonResponse({ cleared: true, run: null, terminalStatus });
       if (input.status === "idle" || input.status === "completed") {
         const active = sessionMutations.getActive(workspace.id, input.sessionId);
         if (!active || active.runId !== input.runId) {
@@ -1282,11 +1306,44 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     return observeSessionRun(ctx, { sessionId, runId: body.expectedRunId, status });
   });
 
+  addRoute(routes, "GET", "/workspace/:id/session-run-terminals", "client", async (ctx) => {
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
+    const after = parseOptionalNonNegativeInteger(ctx.url.searchParams.get("after"), "after") ?? 0;
+    const limit = parseOptionalPositiveInteger(ctx.url.searchParams.get("limit"), "limit") ?? 100;
+    if (!Number.isSafeInteger(after) || limit > 100) throw new ApiError(400, "invalid_payload", "Invalid journal page");
+    if (!options.listRunTerminals) throw new ApiError(503, "journal_unavailable", "Run journal unavailable");
+    return jsonResponse(options.listRunTerminals(workspace.id, after, limit));
+  });
+
   addRoute(routes, "GET", "/workspace/:id/session-runs", "client", async (ctx) => {
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
-    await reconcileWorkspaceActiveRuns(workspace);
     return jsonResponse({ items: sessionMutations.listActive(workspace.id) });
+  });
+
+  addRoute(routes, "GET", "/session-lifecycle/feed", "client", async (ctx) => {
+    requireClientScope(ctx, "collaborator");
+    const consumerId = parseRunIdentifier(ctx.url.searchParams.get("consumerId"), "consumerId");
+    const after = parseOptionalNonNegativeInteger(ctx.url.searchParams.get("after"), "after");
+    const limit = parseOptionalPositiveInteger(ctx.url.searchParams.get("limit"), "limit") ?? 100;
+    const wait = parseOptionalNonNegativeInteger(ctx.url.searchParams.get("wait"), "wait") ?? 0;
+    if (limit > 100 || !options.listLifecycleFeed) throw new ApiError(400, "invalid_payload", "Invalid lifecycle feed request");
+    if (wait > 30_000) throw new ApiError(400, "invalid_payload", "Lifecycle feed wait exceeds 30000ms");
+    let page = options.listLifecycleFeed(consumerId, after, limit);
+    if (page.items.length === 0 && wait > 0) {
+      await new Promise((resolve) => setTimeout(resolve, wait));
+      page = options.listLifecycleFeed(consumerId, after, limit);
+    }
+    return jsonResponse(page);
+  });
+
+  addRoute(routes, "POST", "/session-lifecycle/feed/ack", "client", async (ctx) => {
+    requireClientScope(ctx, "collaborator");
+    if (!options.ackLifecycleFeed) throw new ApiError(503, "lifecycle_feed_unavailable", "Lifecycle feed unavailable");
+    const body = parseRunBody(lifecycleAckBodySchema, await readJsonBody(ctx.request));
+    try { return jsonResponse(options.ackLifecycleFeed(body.consumerId, body.deviceEpoch, body.sequence, body.eventId)); }
+    catch (error) { throw new ApiError(409, error instanceof Error ? error.message : "lifecycle_ack_conflict", "Lifecycle ACK rejected"); }
   });
 
   addRoute(routes, "POST", "/remote-control/pending/cancel-all", "client", async (ctx) => {

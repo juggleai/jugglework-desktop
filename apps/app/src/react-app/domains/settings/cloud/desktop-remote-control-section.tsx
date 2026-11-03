@@ -77,9 +77,16 @@ export function shouldShowRemoteControlReregister(input: {
   settings: DesktopRemoteControlSettings;
   status: DesktopRemoteControlAgentStatus;
 }) {
-  return input.signedIn && input.policyAllowsRemote && !input.settings.enabled && input.status.locallyDisabled &&
+  if (!input.signedIn || !input.policyAllowsRemote || input.settings.enabled || input.status.replacementPending) return false;
+  // A failed replacement may leave the in-memory authorization/local-disable
+  // projection stale. The recovery action refreshes the Cloud policy first and
+  // Main still enforces exact eligibility before consuming a one-time grant, so
+  // do not hide the only recovery path behind state that the path itself repairs.
+  if (input.status.replacementFailure &&
+      (!input.status.enrolled || input.status.lastErrorCode === "device_reregistration_required")) return true;
+  return input.status.locallyDisabled &&
     (!input.status.enrolled || input.status.lastErrorCode === "device_reregistration_required") &&
-    input.status.enrollmentAuthorized && !input.status.replacementPending;
+    input.status.enrollmentAuthorized;
 }
 
 export function shouldShowRemoteControlReconnect(input: {

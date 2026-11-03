@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { describe, it } from "node:test";
 
 import { createRemoteSessionEventBridge } from "./remote-session-event-bridge.mjs";
+import { createSessionMutationCoordinator } from "./session-mutation-coordinator.mjs";
 
 const CONTROL = "11111111-1111-4111-8111-111111111111";
 const DEVICE = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -70,6 +72,147 @@ function harness({ publish = () => true, publishActivityTaskStatus = null, obser
 }
 
 describe("remote session event bridge", () => {
+  it("unidentified late idle cannot complete current B while authority says running", async () => {
+    const sent = [];
+    const h = harness({ publishActivityTaskStatus: (event) => { sent.push(event); return true; },
+      observeRun: async () => ({ cleared: false, run: { runId: "run_B", status: "running" } }) });
+    h.bridge.watch([{ id: "ws_1" }]);
+    await flush();
+    h.setRunId("run_B");
+    await h.subscriptions[0].onEvent({ type: "session.idle", properties: { sessionID: "ses_1" } });
+    await flush();
+    h.bridge.stop();
+    assert.equal(h.observationCalls.length, 1);
+    assert.equal(h.getRunId(), "run_B");
+    assert.deepEqual(sent, []);
+  });
+  for (const secondSession of ["ses_1", "ses_2"]) it(`recovers exact terminal after consecutive runs and a missed idle (${secondSession})`, async () => {
+    const coordinator = createSessionMutationCoordinator();
+    const sent = [];
+    const observed = [];
+    /** @type {any} */
+    let subscription;
+    let active = [];
+    const terminals = new Map();
+    const bridge = createRemoteSessionEventBridge({
+      coordinator,
+      randomUUID,
+      now: Date.now,
+      timers: globalThis,
+      sseClient: { subscribe: async (input) => { subscription = input; await input.onConnected(); return new Promise(() => {}); } },
+      listActiveRuns: async () => ({ items: active }),
+      observeRun: async ({ runId }) => {
+        observed.push(runId);
+        return terminals.has(runId)
+          ? { cleared: true, run: null, terminalStatus: terminals.get(runId) }
+          : { cleared: false, run: active.find((run) => run.runId === runId) ?? null };
+      },
+      publish: () => true,
+      publishActivityTaskStatus: async (event, { isCurrent }) => {
+        await Promise.resolve();
+        if (!isCurrent()) return false;
+        sent.push(event);
+        return true;
+      },
+    });
+    const run = (sessionId, runId, generation) => ({ workspaceId: "ws_1", sessionId, runId, generation,
+      origin: "local-renderer", status: "running", observedActive: true, startedAt: generation,
+      updatedAt: generation, activeObservedAt: generation, abortRequestedAt: null,
+      startCommandCorrelationId: null, abortCommandCorrelationId: null });
+    bridge.watch([{ id: "ws_1" }]);
+    await flush();
+    active = [run("ses_1", "run_A", 1)];
+    await subscription.onEvent({ type: "session.status", properties: { sessionID: "ses_1", status: "busy" } });
+    await flush();
+    terminals.set("run_A", "completed");
+    active = [];
+    await subscription.onEvent({ type: "session.idle", properties: { sessionID: "ses_1" } });
+    await flush();
+    active = [run(secondSession, "run_B", 2)];
+    await subscription.onEvent({ type: "session.status", properties: { sessionID: secondSession, status: "busy" } });
+    await flush();
+    await subscription.onReconnectGap("sequence_gap");
+    terminals.set("run_B", "completed");
+    active = [];
+    await subscription.onConnected();
+    await flush();
+    try {
+      assert.deepEqual(sent.map(({ runId, generation, status }) => [runId, generation, status]), [
+        ["run_A", 1, "running"], ["run_A", 1, "completed"],
+        ["run_B", 2, "running"], ["run_B", 2, "completed"],
+      ]);
+      assert.ok(observed.includes("run_B"), "recovery must consult exact-run authority, not infer from absence");
+    } finally { bridge.stop(); }
+  });
+
+  for (const outcome of ["aborted", "failed"]) for (const clearMirror of [false, true]) it(`uses authoritative ${outcome} outcome over deferred SSE idle (mirror cleared: ${clearMirror})`, async () => {
+    const pending = [];
+    const sent = [];
+    let resolveObservation = (_) => {};
+    const h = harness({ observeRun: async () => new Promise((resolve) => { resolveObservation = resolve; }),
+      publishActivityTaskStatus: async (event, { isCurrent }) => {
+        await new Promise((resolve) => pending.push(resolve));
+        if (!isCurrent()) return false;
+        sent.push(event);
+        return true;
+      } });
+    await h.bridge.bind(h.binding);
+    h.setRunId("run_1");
+    await h.subscriptions[0].onEvent({ type: "session.idle", properties: { sessionID: "ses_1" } });
+    if (clearMirror) h.setRunId(null);
+    assert.ok(resolveObservation);
+    resolveObservation({ cleared: true, run: null, terminalStatus: outcome });
+    await flush();
+    await h.subscriptions[0].onEvent({ type: "session.idle", properties: { sessionID: "ses_1" } });
+    for (const resolve of pending) resolve();
+    await flush();
+    assert.deepEqual(sent.map((event) => event.status), [outcome]);
+    h.bridge.stop();
+  });
+
+  for (const clearMirror of [false, true]) it(`supersedes deferred running signing and joins duplicate terminal (mirror cleared: ${clearMirror})`, async () => {
+    const pending = [];
+    const sent = [];
+    const h = harness({ publishActivityTaskStatus: async (event, { isCurrent }) => {
+      await new Promise((resolve) => pending.push({ event, resolve }));
+      if (!isCurrent()) return false;
+      sent.push(event);
+      return true;
+    } });
+    h.bridge.watch([{ id: "ws_1" }]);
+    await flush();
+    await h.subscriptions[0].onEvent({ type: "session.status", properties: { sessionID: "ses_1", status: "busy" } });
+    if (clearMirror) h.setRunId(null);
+    await h.subscriptions[0].onEvent({ type: "session.idle", properties: { sessionID: "ses_1" } });
+    await h.subscriptions[0].onEvent({ type: "session.status", properties: { sessionID: "ses_1", status: "idle" } });
+    for (const publication of pending) publication.resolve();
+    await flush();
+    assert.deepEqual(sent.map(({ runId, status }) => ({ runId, status })), [{ runId: "run_1", status: "completed" }]);
+    assert.equal(pending.length, 2, "duplicate terminal must join the in-flight terminal");
+    h.bridge.stop();
+  });
+
+  it("retains a known run while running hydration waits and terminal supersedes it", async () => {
+    let resolveHydration = (_) => {};
+    let waiting = false;
+    const sent = [];
+    const h = harness({ listActiveRuns: async () => waiting ? new Promise((resolve) => { resolveHydration = resolve; }) : { items: [] },
+      publishActivityTaskStatus: (event) => { sent.push(event); return true; } });
+    h.bridge.watch([{ id: "ws_1" }]);
+    await flush();
+    await h.subscriptions[0].onEvent({ type: "session.status", properties: { sessionID: "ses_1", status: "busy" } });
+    h.setRunId(null);
+    waiting = true;
+    await h.subscriptions[0].onEvent({ type: "session.status", properties: { sessionID: "ses_1", status: "busy" } });
+    await h.subscriptions[0].onEvent({ type: "session.idle", properties: { sessionID: "ses_1" } });
+    assert.ok(resolveHydration);
+    resolveHydration({ items: [] });
+    await flush();
+    assert.deepEqual(sent.map((event) => event.status), ["running", "completed"]);
+    assert.equal(sent[1].runId, "run_1");
+    h.bridge.stop();
+  });
+
   it("publishes an untitled terminal after transport clear without a phone binding", async () => {
     const lifecycle = [];
     const h = harness({ publishActivityTaskStatus: (event) => { lifecycle.push(event); return true; } });
@@ -82,7 +225,7 @@ describe("remote session event bridge", () => {
     assert.equal(lifecycle.length, 1);
     assert.equal(lifecycle[0].status, "completed");
     assert.equal(lifecycle[0].runId, "run_1");
-    assert.ok(lifecycle[0].title.length > 0);
+    assert.equal(lifecycle[0].title, "");
     assert.equal(h.published.length, 0);
     h.bridge.stop();
   });
@@ -112,6 +255,59 @@ describe("remote session event bridge", () => {
     await flush();
     assert.equal(reads, before);
     assert.deepEqual(lifecycle, []);
+    h.bridge.stop();
+  });
+
+  it("retains the published run across mirror and transport clearing without a phone", async () => {
+    const lifecycle = [];
+    const h = harness({ publishActivityTaskStatus: (event) => { lifecycle.push(event); return true; } });
+    h.bridge.watch([{ id: "ws_1" }]);
+    await flush();
+    await h.subscriptions.at(-1).onEvent({ type: "session.status", properties: { sessionID: "ses_1", status: "busy" } });
+    h.setRunId(null);
+    h.bridge.clear();
+    await flush();
+    await h.subscriptions.at(-1).onEvent({ type: "session.idle", properties: { sessionID: "ses_1" } });
+    await flush();
+    assert.equal(lifecycle.length, 2);
+    assert.equal(lifecycle[1].status, "completed");
+    assert.equal(lifecycle[1].runId, "run_1");
+    h.bridge.stop();
+  });
+
+  it("drops retained run A when clear sees a different run B", async () => {
+    const lifecycle = [];
+    const h = harness({ publishActivityTaskStatus: (event) => { lifecycle.push(event); return true; } });
+    h.bridge.watch([{ id: "ws_1" }]);
+    await flush();
+    await h.subscriptions.at(-1).onEvent({ type: "session.status", properties: { sessionID: "ses_1", status: "busy" } });
+    const oldSubscription = h.subscriptions.at(-1);
+    h.setRunId("run_2");
+    h.bridge.clear();
+    await flush();
+    h.setRunId(null);
+    await oldSubscription.onEvent({ type: "session.idle", properties: { sessionID: "ses_1" } });
+    await h.subscriptions.at(-1).onEvent({ type: "session.idle", properties: { sessionID: "ses_1" } });
+    await flush();
+    assert.deepEqual(lifecycle.map(({ runId, status }) => ({ runId, status })), [{ runId: "run_1", status: "running" }]);
+    h.bridge.stop();
+  });
+
+  it("does not reuse retained run A after an unbound run B starts and transport clears", async () => {
+    const lifecycle = [];
+    const h = harness({ publishActivityTaskStatus: (event) => { lifecycle.push(event); return true; } });
+    h.bridge.watch([{ id: "ws_1" }]);
+    await flush();
+    await h.subscriptions.at(-1).onEvent({ type: "session.status", properties: { sessionID: "ses_1", status: "busy" } });
+    h.setRunId(null);
+    await h.subscriptions.at(-1).onEvent({ type: "session.status", properties: { sessionID: "ses_1", status: "busy" } });
+    h.bridge.clear();
+    await flush();
+    await h.subscriptions.at(-1).onEvent({ type: "session.idle", properties: { sessionID: "ses_1" } });
+    await flush();
+    assert.equal(lifecycle.length, 1);
+    assert.equal(lifecycle[0].runId, "run_1");
+    assert.equal(lifecycle[0].status, "running");
     h.bridge.stop();
   });
 

@@ -148,6 +148,17 @@ describe("desktop remote-control contracts", () => {
     assert.equal(createDesktopRemoteWssEnvelopeSchema(capabilities).safeParse(commandEnvelope).success, true)
   })
 
+  test("accepts the authoritative Live Activity lifecycle feature", () => {
+    assert.equal(
+      desktopRemoteCapabilityAdvertisementSchema.safeParse({
+        schemaVersion: 1,
+        operations: [],
+        features: ["live-activity-v3"],
+      }).success,
+      true,
+    )
+  })
+
   test("rejects unknown operations before dispatch", () => {
     const result = desktopRemoteOperationRequestSchema.safeParse({
       operation: "desktop.http.proxy",

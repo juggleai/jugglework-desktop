@@ -110,7 +110,7 @@ import { addRoute, matchRoute, type AuthMode, type RequestContext, type Route } 
 import { registerSessionRoutes } from "./routes/sessions.js";
 import { createSessionPendingOperationStore, type SessionPendingOperationStore } from "./session-pending-operations.js";
 import { createSessionModelPreferenceStore, type SessionModelPreferenceStore } from "./session-model-preferences.js";
-import { createSessionPendingOperationPump, type SessionPendingOperationPump } from "./session-pending-operation-pump.js";
+import { SESSION_PENDING_OPERATION_IDLE_CONFIRM_MS, createSessionPendingOperationPump, type SessionPendingOperationPump } from "./session-pending-operation-pump.js";
 import { createSessionRunJournal } from "./session-run-journal.js";
 import { registerInteractionRoutes } from "./routes/interactions.js";
 import { registerSessionPermissionRoutes } from "./routes/session-permissions.js";
@@ -1016,11 +1016,11 @@ export async function startServer(config: ServerConfig, options: {
   let fileDeliveries: FileDeliveryService | undefined;
   let officeDocuments: OfficeDocuments | undefined;
   const sessionMutations = createSessionMutationCoordinator({
+    allocateGeneration: sessionRunJournal.allocateGeneration,
+    initialRuns: sessionRunJournal.listActive(),
     onLifecycleEvent: (event) => {
       const timestamp = Date.now();
       if (event.event === "progress") {
-        const previous = lastJournalProgressAtByRun.get(event.run.runId) ?? 0;
-        if (timestamp - previous < 5_000) return;
         lastJournalProgressAtByRun.set(event.run.runId, timestamp);
       } else if (event.event === "run_terminal" || event.event === "start_rolled_back") {
         lastJournalProgressAtByRun.delete(event.run.runId);
@@ -1535,6 +1535,7 @@ export async function startServer(config: ServerConfig, options: {
     restartReloadWatchers,
     engineMcpServerState,
     sessionMutations,
+    sessionRunJournal,
     sessionPendingOperations,
     sessionModelPreferences,
     () => sessionPendingOperationPump,
@@ -1817,10 +1818,42 @@ export async function startServer(config: ServerConfig, options: {
     sessionPermissionBroker.start();
   }
   mediaGenerationWorker.start();
+  // Runtime-owned observer closes runs even when no Electron/phone/SSE consumer
+  // exists. It only writes through the durable coordinator authority.
+  const lifecycleObserver = setInterval(() => void (async () => {
+    for (const active of sessionMutations.listActive()) {
+      try {
+        const workspace = await resolveWorkspaceWithoutBootstrap(config, active.workspaceId);
+        const activity = await readSessionActivity(config, workspace, active.sessionId, AbortSignal.timeout(5_000));
+        if (activity === "busy") {
+          sessionMutations.observe({ ...active, status: "running" });
+          continue;
+        }
+        if (active.status !== "aborting") {
+          const messages = unwrapOpencodeResult(await createWorkspaceOpencodeClient(config, workspace)
+            .session.messages({ sessionID: active.sessionId, limit: 10 }), "/session/message");
+          if (!hasCurrentRunFinalResponse(messages, active.startedAt)) continue;
+        }
+        const result = sessionMutations.reconcileAuthoritativeIdle({
+          ...active, minimumIntervalMs: SESSION_PENDING_OPERATION_IDLE_CONFIRM_MS,
+        });
+        if (result.cleared) {
+          for (const pending of sessionPendingOperations.list(active.workspaceId, active.sessionId)) {
+            if (pending.state === "admitted" && pending.admittedId === active.runId) sessionPendingOperations.markCompleted(pending.id);
+          }
+          void sessionPendingOperationPump?.wake();
+        }
+      } catch {
+        // Engine or storage uncertainty is fail closed; retry the exact run.
+      }
+    }
+  })(), 1_000);
+  lifecycleObserver.unref?.();
 
   return {
     ...server,
     stop: async () => {
+      clearInterval(lifecycleObserver);
       invalidateEngineMcpServerState(config, engineMcpServerState);
       watcherHandle.close();
       internalReloadDispatchers.delete(config);
@@ -2993,6 +3026,7 @@ function createRoutes(
   onWorkspacesChanged: () => void,
   engineMcpServerState: EngineMcpServerState,
   sessionMutations: SessionMutationCoordinator,
+  sessionRunJournal: Awaited<ReturnType<typeof createSessionRunJournal>>,
   sessionPendingOperations: SessionPendingOperationStore,
   sessionModelPreferences: SessionModelPreferenceStore,
   getSessionPendingOperationPump: () => SessionPendingOperationPump | null,
@@ -3175,6 +3209,10 @@ function createRoutes(
     sessionMutations,
     sessionPendingOperations,
     sessionModelPreferences,
+    readRunTerminalStatus: sessionRunJournal.terminalStatus,
+    listRunTerminals: sessionRunJournal.listTerminals,
+    listLifecycleFeed: sessionRunJournal.listFeed,
+    ackLifecycleFeed: sessionRunJournal.ackFeed,
     sessionPendingOperationPump: {
       wake: () => getSessionPendingOperationPump()?.wake() ?? Promise.resolve(),
       cancelAll: (commandCorrelationId) => getSessionPendingOperationPump()?.cancelAll(commandCorrelationId)

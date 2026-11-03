@@ -335,7 +335,7 @@ describe("authoritative session mutation APIs", () => {
     expect((await localStart({ providerID: "connected", modelID: "other-displayed-default" })).status).toBe(202);
     expect(engine.prompts.at(-1)?.body).toMatchObject({ model: explicit });
     engine.statuses.set(sessionId, { type: "idle" });
-    engine.messages.set(sessionId, [{ info: { id: "msg_done", sessionID: sessionId, role: "assistant", time: { created: 1 }, finish: "stop" }, parts: [] }]);
+    engine.messages.set(sessionId, [{ info: { id: "msg_done", sessionID: sessionId, role: "assistant", time: { created: Date.now(), completed: Date.now() }, finish: "stop" }, parts: [] }]);
 
     const autoResponse = await requestPreference("PUT", { mode: "auto", model: null, expectedRevision: 1 });
     expect(autoResponse.status).toBe(200);
@@ -907,7 +907,7 @@ describe("authoritative session mutation APIs", () => {
     engine.heldPrompts.set("ses_race", hold);
     const prompt = {
       messageID: "msg_local",
-      model: { providerID: "provider", modelID: "model" },
+      model: { providerID: "connected", modelID: "chat" },
       agent: "jugglework",
       noReply: false,
       tools: { bash: false, read: true },
@@ -1497,6 +1497,94 @@ describe("authoritative session mutation APIs", () => {
     await expect((await observe("idle")).json()).resolves.toMatchObject({ cleared: true, terminalStatus: "completed" });
   });
 
+  for (const terminalStatus of ["completed", "failed", "aborted"] as const) {
+    test(`observe recovers journal ${terminalStatus} after clear with exact scope and authorization`, async () => {
+      const engine = startMockOpencode();
+      const harness = await startHarness(engine.server.port);
+      const sessionId = `ses_journal_${terminalStatus}`;
+      const started = await fetch(`${runPath(harness.base, sessionId)}/start`, {
+        method: "POST", headers: harness.collaboratorHeaders,
+        body: JSON.stringify({ origin: "local-renderer", startCommandCorrelationId: "cmd_journal",
+          prompt: { parts: [{ type: "text", text: "Journal recovery" }] } }),
+      });
+      expect(started.status).toBe(202);
+      const { run } = await started.json() as { run: { runId: string } };
+      const observe = (status: string, workspaceId = "ws_1", session = sessionId, runId = run.runId,
+        headers: Record<string, string> = harness.collaboratorHeaders) => fetch(
+        `${harness.base}/workspace/${workspaceId}/sessions/${session}/runs/${runId}/observations`, {
+          method: "POST", headers, body: JSON.stringify({ status }),
+        });
+
+      if (terminalStatus === "completed") {
+        engine.messages.set(sessionId, [{ info: { id: "msg_journal_final", role: "assistant", finish: "stop",
+          time: { created: Date.now(), completed: Date.now() } }, parts: [] }]);
+      } else if (terminalStatus === "aborted") {
+        const aborted = await fetch(`${runPath(harness.base, sessionId)}/${run.runId}/abort`, {
+          method: "POST", headers: harness.collaboratorHeaders,
+          body: JSON.stringify({ abortCommandCorrelationId: "cmd_journal_abort" }),
+        });
+        expect(aborted.status).toBe(202);
+      }
+      const cleared = await observe(terminalStatus === "aborted" ? "idle" : terminalStatus);
+      expect(cleared.status).toBe(200);
+      expect(await cleared.json()).toEqual({ cleared: true, run: null, terminalStatus });
+      const active = await fetch(`${harness.base}/workspace/ws_1/session-runs`, { headers: harness.collaboratorHeaders });
+      expect(await active.json()).toEqual({ items: [] });
+
+      // Subsequent observers have no in-memory run; persisted authority wins even over completed/idle.
+      const terminalUrl = `${harness.base}/workspace/ws_1/session-run-terminals`;
+      const pageResponse = await fetch(`${terminalUrl}?limit=1`, { headers: harness.collaboratorHeaders });
+      expect(pageResponse.status).toBe(200);
+      const page = await pageResponse.json();
+      expect(page.items).toHaveLength(1);
+      expect(page.items[0]).toMatchObject({ workspaceId: "ws_1", sessionId, runId: run.runId, terminalReason: terminalStatus });
+      expect(page.items[0].generation).toBeGreaterThan(0);
+      expect(page.items[0].occurredAt).toBeGreaterThan(0);
+      expect(Object.keys(page.items[0]).sort()).toEqual(["id", "workspaceId", "sessionId", "runId", "generation", "terminalReason", "occurredAt"].sort());
+      expect(await (await fetch(`${terminalUrl}?after=${page.cursor}`, { headers: harness.collaboratorHeaders })).json())
+        .toEqual({ items: [], cursor: page.cursor });
+      expect(await (await fetch(`${harness.base}/workspace/ws_2/session-run-terminals`, { headers: harness.collaboratorHeaders })).json())
+        .toEqual({ items: [], cursor: 0 });
+      for (const query of ["after=-1", "after=abc", "limit=0", "limit=101"]) {
+        expect((await fetch(`${terminalUrl}?${query}`, { headers: harness.collaboratorHeaders })).status).toBe(400);
+      }
+      for (const status of ["idle", "completed"]) {
+        const recovered = await observe(status);
+        expect(recovered.status).toBe(200);
+        expect(await recovered.json()).toEqual({ cleared: true, run: null, terminalStatus });
+      }
+      for (const [workspaceId, session, runId] of [
+        ["ws_2", sessionId, run.runId],
+        ["ws_1", "ses_wrong", run.runId],
+        ["ws_1", sessionId, "run_wrong"],
+      ]) {
+        const mismatch = await observe("idle", workspaceId, session, runId);
+        expect(mismatch.status).toBe(409);
+        const body = await mismatch.json();
+        expect(body.code).toBe("run_mismatch");
+        expect(body.terminalStatus).toBeUndefined();
+        expect(JSON.stringify(body)).not.toContain(run.runId);
+      }
+      const issued = await fetch(`${harness.base}/tokens`, {
+        method: "POST", headers: harness.hostHeaders,
+        body: JSON.stringify({ scope: "viewer", label: "journal viewer" }),
+      });
+      expect(issued.status).toBe(201);
+      const viewer = await issued.json() as { token: string };
+      for (const [headers, expectedStatus] of [
+        [{ Authorization: `Bearer ${viewer.token}`, "Content-Type": "application/json" }, 403],
+        [{ "Content-Type": "application/json" }, 401],
+      ] as const) {
+        const denied = await observe("idle", "ws_1", sessionId, run.runId, headers);
+        expect((await fetch(terminalUrl, { headers })).status).toBe(expectedStatus);
+        expect(denied.status).toBe(expectedStatus);
+        const body = await denied.json();
+        expect(body.terminalStatus).toBeUndefined();
+        expect(JSON.stringify(body)).not.toContain(run.runId);
+      }
+    });
+  }
+
   test("active-run reads retain an idle parent while a delegated descendant is busy", async () => {
     const engine = startMockOpencode();
     const harness = await startHarness(engine.server.port);
@@ -1538,8 +1626,9 @@ describe("authoritative session mutation APIs", () => {
 
     engine.statuses.set("ses_grandchild", { type: "idle" });
     engine.messages.set("ses_parent", [{ info: { id: "msg_parent", role: "assistant", finish: "stop", time: { created: Date.now(), completed: Date.now() } }, parts: [] }]);
-    await fetch(`${harness.base}/workspace/ws_1/session-runs`, { headers: harness.collaboratorHeaders });
-    await new Promise((resolve) => setTimeout(resolve, 510));
+    // Active-run reads are pure in lifecycle v3. The runtime-owned observer,
+    // not this GET, confirms terminal state using two separated samples.
+    await new Promise((resolve) => setTimeout(resolve, 2_100));
     const terminal = await fetch(`${harness.base}/workspace/ws_1/session-runs`, { headers: harness.collaboratorHeaders });
     await expect(terminal.json()).resolves.toEqual({ items: [] });
   });

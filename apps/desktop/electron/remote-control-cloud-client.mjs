@@ -382,7 +382,7 @@ export function createRemoteControlCloudClient({
   }
 
   /** @template T @param {RemoteControlEnrollDeviceOptions<T>} input @returns {Promise<T>} */
-  async function enrollDevice({ credentials, context, grant, displayName, platform, signal }) {
+  async function enrollDevice({ credentials, context, grant, displayName, platform, signal, onStage = null }) {
     if (
       !credentials ||
       typeof credentials.prepareEnrollment !== "function" ||
@@ -398,7 +398,9 @@ export function createRemoteControlCloudClient({
     canonicalIdentifier(context?.organizationId, "context.organizationId");
 
     // This durable pending write intentionally precedes the one-time network exchange.
+    onStage?.("prepare_credential");
     const pending = await credentials.prepareEnrollment(context);
+    onStage?.("exchange");
     const binding = await exchangeEnrollmentGrant({
       grant,
       displayName,
@@ -408,6 +410,7 @@ export function createRemoteControlCloudClient({
       expectedOrganizationId: context.organizationId,
       signal,
     });
+    onStage?.("complete_credential");
     return credentials.completeEnrollment(context, binding);
   }
 
