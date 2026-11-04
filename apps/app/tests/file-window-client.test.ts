@@ -38,3 +38,29 @@ test("tokenless file-window client reads preview bytes and Office JSON through M
     globalThis.fetch = previousFetch;
   }
 });
+
+test("desktop session reads reject promptly when navigation aborts them", async () => {
+  const previousWindow = globalThis.window;
+  const previousFetch = globalThis.fetch;
+  let resolveRequest!: (value: unknown) => void;
+  (globalThis as typeof globalThis & { window: Window }).window = {
+    __JUGGLEWORK_ELECTRON__: {
+      invokeDesktop: async (command: string) => {
+        expect(command).toBe("__fetch");
+        return await new Promise((resolve) => { resolveRequest = resolve; });
+      },
+    },
+  } as unknown as Window;
+  globalThis.fetch = (() => { throw new Error("session reads must use Main IPC"); }) as typeof fetch;
+  const controller = new AbortController();
+  try {
+    const client = createJuggleWorkServerClient({ baseUrl: "http://127.0.0.1:1234" });
+    const read = client.getSession("ws", "ses", { signal: controller.signal });
+    controller.abort();
+    await expect(read).rejects.toMatchObject({ name: "AbortError" });
+  } finally {
+    resolveRequest?.({ status: 200, statusText: "OK", headers: [["content-type", "application/json"]], body: '{"item":{"id":"ses"}}' });
+    (globalThis as typeof globalThis & { window: Window | undefined }).window = previousWindow;
+    globalThis.fetch = previousFetch;
+  }
+});

@@ -11,7 +11,7 @@ type Subscription = {
   onReconnect: () => void;
 };
 const subscriptions = new Map<string, Subscription>();
-let listSessions: (workspaceId: string) => Promise<{ items: RouteSession[] }>;
+let listSessions: (workspaceId: string, options?: { signal?: AbortSignal }) => Promise<{ items: RouteSession[] }>;
 mock.module("../src/react-app/kernel/local-provider", () => ({ useLocal: () => ({ prefs: { hasCompletedOnboarding: true } }) }));
 mock.module("../src/react-app/domains/cloud/den-auth-provider", () => ({ useDenAuth: () => ({ status: "signed-out", isSignedIn: false }) }));
 mock.module("../src/react-app/shell/boot-state", () => ({ useBootState: () => ({ markRouteReady: noop }) }));
@@ -28,7 +28,7 @@ mock.module("../src/react-app/infra/workspace-server-client", () => ({
   createWorkspaceServerClientResolver: () => (workspace: RouteWorkspace | null) => workspace ? {
     workspaceId: workspace.id.replace(/^rem_/, ""),
     opencodeBaseUrl: `http://test/${workspace.id}`, baseUrl: "http://test", token: "test",
-    isRemote: true, client: { listSessions: (id: string) => listSessions(id) },
+    isRemote: true, client: { listSessions: (id: string, options?: { signal?: AbortSignal }) => listSessions(id, options) },
   } : null,
   useWorkspaceServerClient: () => null,
 }));
@@ -107,4 +107,24 @@ test("a forced reconnect supersedes an older list response even when both start 
   await act(async () => pending[1]!({ items: [session("Newest title")] }));
   await act(async () => pending[0]!({ items: [session("Stale title")] }));
   expect(state.sessionsByWorkspaceId.rem_b![0]!.title).toBe("Newest title");
+});
+
+test("a forced reconnect aborts the superseded workspace list request", async () => {
+  let calls = 0;
+  let firstAborted = false;
+  listSessions = (_id, options) => {
+    calls += 1;
+    if (calls > 1) return Promise.resolve({ items: [session("Newest title")] });
+    return new Promise((_resolve, reject) => {
+      options?.signal?.addEventListener("abort", () => {
+        firstAborted = true;
+        reject(new DOMException("Aborted", "AbortError"));
+      }, { once: true });
+    });
+  };
+  await act(async () => subscriptions.get("b")!.onReconnect());
+  await act(async () => subscriptions.get("b")!.onReconnect());
+  expect(firstAborted).toBe(true);
+  expect(state.sessionsByWorkspaceId.rem_b![0]!.title).toBe("Newest title");
+  expect(state.errorsByWorkspaceId.rem_b).toBeNull();
 });

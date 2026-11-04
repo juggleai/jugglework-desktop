@@ -418,7 +418,9 @@ async function desktopFetchThroughMain(
   }
 
   const diagnosticsDeadlineAtMs = options.agentContextDiagnosticsDeadlineAtMs;
-  const result = await invokeElectronHelper("__fetch", url, {
+  const signal = init?.signal ?? (typeof Request !== "undefined" && input instanceof Request ? input.signal : undefined);
+  if (signal?.aborted) throw new DOMException("The operation was aborted.", "AbortError");
+  const request = invokeElectronHelper("__fetch", url, {
     method,
     headers,
     body,
@@ -428,6 +430,13 @@ async function desktopFetchThroughMain(
       ? undefined
       : { deadlineAtMs: diagnosticsDeadlineAtMs },
   });
+  const result = signal
+    ? await new Promise<Awaited<typeof request>>((resolve, reject) => {
+        const onAbort = () => reject(new DOMException("The operation was aborted.", "AbortError"));
+        signal.addEventListener("abort", onAbort, { once: true });
+        request.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
+      })
+    : await request;
 
   // Response constructor rejects bodies for null-body status codes, so we
   // must pass null instead of an empty string for those.

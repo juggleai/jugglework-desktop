@@ -823,12 +823,12 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const snapshotTodoRevisionBySnapshotRef = useRef(new WeakMap<JuggleWorkSessionSnapshot, number>());
   const snapshotQuery = useQuery<JuggleWorkSessionSnapshot>({
     queryKey: snapshotQueryKey,
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       const revision = captureSessionSnapshotRevision(props.workspaceId, props.sessionId);
       const titleRevision = captureSessionTitleRevision();
       const todoRevision = captureTodoSnapshotRevision();
       const snapshot = reconcileSessionSnapshotTitle(props.workspaceId,
-        (await props.client.getSessionSnapshot(props.workspaceId, props.sessionId, { limit: 140 })).item,
+        (await props.client.getSessionSnapshot(props.workspaceId, props.sessionId, { limit: 140, signal })).item,
         revision, titleRevision);
       snapshotTodoRevisionBySnapshotRef.current.set(snapshot, todoRevision);
       return snapshot;

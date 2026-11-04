@@ -97,6 +97,27 @@ type ModernRouteSessionResolution =
   | { key: string; status: "loading" }
   | { key: string; status: "not-found" | "error"; message: string };
 
+type WorkspaceSessionLoadRequest = {
+  startedAt: number;
+  endpointKey: string;
+  controller: AbortController;
+};
+
+function waitForSessionRetry(ms: number, signal: AbortSignal): Promise<boolean> {
+  if (signal.aborted) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const timer = window.setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve(true);
+    }, ms);
+    const onAbort = () => {
+      window.clearTimeout(timer);
+      resolve(false);
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
   const { developerMode, embedded, onSessionTargetChange, onServerSettingsChanged, onHostInfo } = input;
   const navigate = useNavigate();
@@ -205,7 +226,11 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
   }, []);
   const launchActivatedWorkspaceIdsRef = useRef(new Set<string>());
   const reconnectAttemptedWorkspaceIdRef = useRef("");
-  const backgroundSessionLoadInFlight = useRef<Map<string, { startedAt: number; endpointKey: string }>>(new Map());
+  const backgroundSessionLoadInFlight = useRef<Map<string, WorkspaceSessionLoadRequest>>(new Map());
+  useEffect(() => () => {
+    for (const request of backgroundSessionLoadInFlight.current.values()) request.controller.abort();
+    backgroundSessionLoadInFlight.current.clear();
+  }, []);
   const updateWorkspaceSessionLoadState = useCallback((workspaceId: string, state: WorkspaceSessionLoadState) => {
     const next = { ...workspaceSessionLoadStateByIdRef.current, [workspaceId]: state };
     workspaceSessionLoadStateByIdRef.current = next;
@@ -300,8 +325,9 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
 
         const inFlight = backgroundSessionLoadInFlight.current.get(workspace.id);
         if (!options.force && inFlight && inFlight.endpointKey === endpointKey && Date.now() - inFlight.startedAt < 5_000) return;
+        inFlight?.controller.abort();
         const requestStartedAt = Date.now();
-        const request = { startedAt: requestStartedAt, endpointKey };
+        const request = { startedAt: requestStartedAt, endpointKey, controller: new AbortController() };
         const startedSessions = sessionsByWorkspaceIdRef.current[workspace.id] ?? [];
         backgroundSessionLoadInFlight.current.set(workspace.id, request);
         updateWorkspaceSessionLoadState(
@@ -320,7 +346,10 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
         }
 
         try {
-          const response = await endpoint.client.listSessions(endpoint.workspaceId, { limit: 200 });
+          const response = await endpoint.client.listSessions(endpoint.workspaceId, {
+            limit: 200,
+            signal: request.controller.signal,
+          });
           const fetchedItems = response.items ?? [];
           const workspaceRoot = normalizeDirectoryPath(workspace.path ?? "");
           const items = workspaceRoot && !isRemoteJuggleWorkWorkspace
@@ -373,14 +402,13 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
             }, 3_000);
           }
         } catch (error) {
+          if (request.controller.signal.aborted) return;
           if (backgroundSessionLoadInFlight.current.get(workspace.id) !== request) return;
           const message = error instanceof Error ? error.message : t("app.unknown_error");
           if (attempt + 1 < MAX_ATTEMPTS && isTransientStartupError(message)) {
-            const activeRequest = backgroundSessionLoadInFlight.current.get(workspace.id);
-            if (activeRequest === request) {
-              backgroundSessionLoadInFlight.current.delete(workspace.id);
-            }
-            await new Promise((resolve) => window.setTimeout(resolve, backoffMs(attempt)));
+            const retry = await waitForSessionRetry(backoffMs(attempt), request.controller.signal);
+            if (!retry || backgroundSessionLoadInFlight.current.get(workspace.id) !== request) return;
+            backgroundSessionLoadInFlight.current.delete(workspace.id);
             await fetchOnce(workspace, attempt + 1);
             return;
           }
@@ -996,7 +1024,14 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
       return;
     }
     let cancelled = false;
+    let settled = false;
+    const controller = new AbortController();
+    const startedAt = Date.now();
     setModernRouteSessionResolution({ key: modernRouteSessionLoadKey, status: "loading" });
+    recordInspectorEvent("route.session_hydration.start", {
+      workspaceId: selectedWorkspaceId,
+      sessionId: selectedSessionId,
+    });
 
     const hydrateSelectedSession = async () => {
       const maxAttempts = 6;
@@ -1006,13 +1041,22 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
           const response = await selectedWorkspaceEndpoint.client.getSession(
             selectedWorkspaceEndpoint.workspaceId,
             selectedSessionId,
+            { signal: controller.signal },
           );
           if (cancelled) return;
           if (response.item.id !== selectedSessionId) {
+            const message = "The server returned a different session.";
+            settled = true;
             setModernRouteSessionResolution({
               key: modernRouteSessionLoadKey,
               status: "error",
-              message: "The server returned a different session.",
+              message,
+            });
+            recordInspectorEvent("route.session_hydration.error", {
+              workspaceId: selectedWorkspaceId,
+              sessionId: selectedSessionId,
+              durationMs: Date.now() - startedAt,
+              message,
             });
             return;
           }
@@ -1030,21 +1074,37 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
           });
           setErrorsByWorkspaceId((current) => ({ ...current, [selectedWorkspaceId]: null }));
           setModernRouteSessionResolution(null);
+          settled = true;
+          recordInspectorEvent("route.session_hydration.complete", {
+            workspaceId: selectedWorkspaceId,
+            sessionId: selectedSessionId,
+            durationMs: Date.now() - startedAt,
+          });
           return;
         } catch (error) {
-          if (cancelled) return;
+          if (cancelled || controller.signal.aborted) return;
           const message = error instanceof Error ? error.message : describeRouteError(error);
           const kind = classifyRouteSessionReadError(error);
           if (kind !== "retryable" || attempt + 1 >= maxAttempts) {
+            settled = true;
             setModernRouteSessionResolution({
               key: modernRouteSessionLoadKey,
               status: kind === "not-found" ? "not-found" : "error",
               message,
             });
+            recordInspectorEvent("route.session_hydration.error", {
+              workspaceId: selectedWorkspaceId,
+              sessionId: selectedSessionId,
+              durationMs: Date.now() - startedAt,
+              message,
+            });
             return;
           }
-          await new Promise((resolve) => window.setTimeout(resolve, Math.min(500 * Math.pow(2, attempt), 4_000)));
-          if (cancelled) return;
+          const retry = await waitForSessionRetry(
+            Math.min(500 * Math.pow(2, attempt), 4_000),
+            controller.signal,
+          );
+          if (!retry || cancelled) return;
         }
       }
     };
@@ -1053,6 +1113,14 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
 
     return () => {
       cancelled = true;
+      controller.abort();
+      if (!settled) {
+        recordInspectorEvent("route.session_hydration.cancelled", {
+          workspaceId: selectedWorkspaceId,
+          sessionId: selectedSessionId,
+          durationMs: Date.now() - startedAt,
+        });
+      }
     };
   }, [modernRouteSessionLoadKey, selectedSessionId, selectedSessionKnown, selectedWorkspaceId]);
   const routeNotFoundMessage = (() => {

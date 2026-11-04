@@ -21,7 +21,7 @@ import {
   AGENT_CONTEXT_DIAGNOSTICS_REQUEST_TIMEOUT_MS,
   requestAgentContextDiagnosticsPayload,
 } from "./agent-context-diagnostics-transport";
-import { desktopFetch, desktopFetchAgentContextDiagnostics } from "./desktop";
+import { desktopFetch, desktopFetchAgentContextDiagnostics, desktopFetchViaMain } from "./desktop";
 import { isDesktopRuntime } from "./runtime-env";
 import type { ExecResult, OpencodeConfigFile, WorkspaceInfo, WorkspaceList } from "./desktop";
 import type { DenOrgMarketplace, DenOrgPluginResolved, DenResourceSnapshot } from "./den-types";
@@ -2071,7 +2071,10 @@ async function fetchWithTimeout(
   });
 
   try {
-    return await Promise.race([fetchImpl(url, initWithSignal), timeoutPromise]);
+    const fetchPromise = fetchImpl === desktopFetch
+      ? desktopFetchViaMain(url, initWithSignal, timeoutMs)
+      : fetchImpl(url, initWithSignal);
+    return await Promise.race([fetchPromise, timeoutPromise]);
   } catch (error) {
     const name = (error && typeof error === "object" && "name" in error ? (error as any).name : "") as string;
     if (name === "AbortError" && !init.signal?.aborted) {
@@ -2641,7 +2644,7 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
       ),
     listSessions: (
       workspaceId: string,
-      options?: { roots?: boolean; start?: number; search?: string; limit?: number },
+      options?: { roots?: boolean; start?: number; search?: string; limit?: number; signal?: AbortSignal },
     ) => {
       const query = new URLSearchParams();
       if (typeof options?.roots === "boolean") query.set("roots", String(options.roots));
@@ -2652,7 +2655,7 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
       return requestJson<{ items: JuggleWorkSessionListItem[] }>(
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/sessions${suffix}`,
-        { token, hostToken, timeoutMs: timeouts.sessionRead },
+        { token, hostToken, timeoutMs: timeouts.sessionRead, signal: options?.signal },
       );
     },
     getSessionGroups: (workspaceId: string) =>
@@ -2705,30 +2708,30 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
         { token, hostToken },
       );
     },
-    getSession: (workspaceId: string, sessionId: string) =>
+    getSession: (workspaceId: string, sessionId: string, requestOptions?: { signal?: AbortSignal }) =>
       requestJson<{ item: Session }>(
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}`,
-        { token, hostToken, timeoutMs: timeouts.sessionRead },
+        { token, hostToken, timeoutMs: timeouts.sessionRead, signal: requestOptions?.signal },
       ),
-    getSessionMessages: (workspaceId: string, sessionId: string, options?: { limit?: number }) => {
+    getSessionMessages: (workspaceId: string, sessionId: string, options?: { limit?: number; signal?: AbortSignal }) => {
       const query = new URLSearchParams();
       if (typeof options?.limit === "number") query.set("limit", String(options.limit));
       const suffix = query.size ? `?${query.toString()}` : "";
       return requestJson<{ items: JuggleWorkSessionMessage[] }>(
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/messages${suffix}`,
-        { token, hostToken, timeoutMs: timeouts.sessionRead },
+        { token, hostToken, timeoutMs: timeouts.sessionRead, signal: options?.signal },
       );
     },
-    getSessionSnapshot: (workspaceId: string, sessionId: string, options?: { limit?: number }) => {
+    getSessionSnapshot: (workspaceId: string, sessionId: string, options?: { limit?: number; signal?: AbortSignal }) => {
       const query = new URLSearchParams();
       if (typeof options?.limit === "number") query.set("limit", String(options.limit));
       const suffix = query.size ? `?${query.toString()}` : "";
       return requestJson<{ item: JuggleWorkSessionSnapshot }>(
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/snapshot${suffix}`,
-        { token, hostToken, timeoutMs: timeouts.sessionRead },
+        { token, hostToken, timeoutMs: timeouts.sessionRead, signal: options?.signal },
       );
     },
     forkSession: (workspaceId: string, sessionId: string, input: { messageId?: string }) =>

@@ -8,6 +8,7 @@ import {
   captureSessionTitleRevision,
   ensureWorkspaceSessionSync,
   reconcileSessionSnapshotTitle,
+  sessionSyncRetryDelayMs,
   snapshotKey,
   trackWorkspaceSessionSync,
   __disposeWorkspaceSessionSyncForTest,
@@ -15,6 +16,45 @@ import {
 import { reconcileWorkspaceSessionTitles } from "../src/react-app/shell/workspace-routes";
 
 afterEach(() => getReactQueryClient().clear());
+
+test("event retry backoff applies bounded jitter", () => {
+  expect(sessionSyncRetryDelayMs(1_000, () => 0)).toBe(800);
+  expect(sessionSyncRetryDelayMs(1_000, () => 0.5)).toBe(1_000);
+  expect(sessionSyncRetryDelayMs(1_000, () => 1)).toBe(1_200);
+  expect(sessionSyncRetryDelayMs(60_000, () => 1)).toBe(30_000);
+});
+
+test("workspace consumers share one event transport while it remains quiet", async () => {
+  const originalFetch = globalThis.fetch;
+  let connections = 0;
+  let transportAborted = false;
+  let connected!: () => void;
+  const ready = new Promise<void>((resolve) => { connected = resolve; });
+  globalThis.fetch = (async (_input, init) => {
+    connections += 1;
+    init?.signal?.addEventListener("abort", () => { transportAborted = true; }, { once: true });
+    return new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('data: {"type":"server.connected"}\n\n'));
+      },
+    }), { headers: { "Content-Type": "text/event-stream" } });
+  }) as typeof fetch;
+  const input = { workspaceId: "shared-quiet", baseUrl: "http://fixture.invalid", juggleworkToken: "fixture" };
+  const releaseSidebar = ensureWorkspaceSessionSync({ ...input, onReconnect: connected });
+  const releaseSurface = ensureWorkspaceSessionSync(input);
+  try {
+    await ready;
+    expect(connections).toBe(1);
+    releaseSurface();
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(connections).toBe(1);
+    expect(transportAborted).toBe(false);
+  } finally {
+    releaseSidebar();
+    __disposeWorkspaceSessionSyncForTest(input);
+    globalThis.fetch = originalFetch;
+  }
+});
 
 test("the first successful SSE connection invalidates already tracked snapshots", async () => {
   const originalFetch = globalThis.fetch;

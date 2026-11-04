@@ -502,6 +502,12 @@ function shouldRetrySyncSubscribe(error: unknown) {
   return status !== 401 && status !== 403 && status !== 404;
 }
 
+export function sessionSyncRetryDelayMs(baseDelayMs: number, random = Math.random): number {
+  const base = Math.min(30_000, Math.max(250, baseDelayMs));
+  const sample = Math.min(1, Math.max(0, random()));
+  return Math.min(30_000, Math.round(base * (0.8 + sample * 0.4)));
+}
+
 function isTrackedSession(entry: SyncEntry, sessionId: string) {
   return (entry.trackedSessionRefs.get(sessionId) ?? 0) > 0 || entry.retainedSessionTimers.has(sessionId);
 }
@@ -1962,11 +1968,9 @@ function startSync(input: SyncOptions) {
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
   let watchdogTimer: ReturnType<typeof setInterval> | null = null;
   let activeConnectionController: AbortController | null = null;
-  let lastEventAt = Date.now();
   const reconciledStalls = new Map<string, number>();
   const recoveringStalls = new Map<string, number>();
   let retryDelayMs = 1_000;
-  const staleStreamMs = 30_000;
 
   const reconcileTrackedInteractions = async () => {
     if (!entry || !input.interactionClient) return;
@@ -2054,14 +2058,17 @@ function startSync(input: SyncOptions) {
   const scheduleRetry = () => {
     if (disposed || controller.signal.aborted || retryTimer) return;
     activeConnectionController = null;
+    const delayMs = sessionSyncRetryDelayMs(retryDelayMs);
     retryTimer = setTimeout(() => {
       retryTimer = null;
       void connect();
-    }, retryDelayMs);
-    retryDelayMs = Math.min(retryDelayMs * 2, 10_000);
+    }, delayMs);
+    retryDelayMs = Math.min(retryDelayMs * 2, 30_000);
   };
 
   const connect = async () => {
+    if (disposed || controller.signal.aborted) return;
+    if (activeConnectionController && !activeConnectionController.signal.aborted) return;
     const connectionController = new AbortController();
     activeConnectionController = connectionController;
     try {
@@ -2071,7 +2078,6 @@ function startSync(input: SyncOptions) {
         onEventConnected: () => {
           if (!disposed && !connectionController.signal.aborted) {
             retryDelayMs = 1_000;
-            lastEventAt = Date.now();
             reconcileTrackedSessions();
             // Also close the initial list/subscription establishment gap.
             for (const listener of entry?.reconnectListeners ?? []) listener();
@@ -2082,7 +2088,6 @@ function startSync(input: SyncOptions) {
       const sub = await client.event.subscribe(undefined, { signal: connectionController.signal });
       for await (const raw of sub.stream) {
         if (controller.signal.aborted || connectionController.signal.aborted) return;
-        lastEventAt = Date.now();
         const event = normalizeEvent(raw);
         if (!event) continue;
         if (!entry) continue;
@@ -2126,12 +2131,6 @@ function startSync(input: SyncOptions) {
     useSessionActivityStore.getState().refreshStalledStatuses();
     reconcileNewStalls();
     void recoverConfirmedDelegatedTaskStalls();
-    if (disposed || controller.signal.aborted || retryTimer) return;
-    const active = activeConnectionController;
-    if (!active || active.signal.aborted) return;
-    if (Date.now() - lastEventAt < staleStreamMs) return;
-    active.abort();
-    scheduleRetry();
   }, 10_000);
 
   return () => {
