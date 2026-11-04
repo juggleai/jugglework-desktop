@@ -1,0 +1,218 @@
+{
+  "schema": "com.juggleai.jugglework.desktop-release-result",
+  "schemaVersion": 1,
+  "version": "1.2.33",
+  "channel": "stable",
+  "platform": "mac",
+  "architecture": "arm64",
+  "completedAt": "2026-11-04T05:08:54.630149+00:00",
+  "sourceCommit": "2dba4d2ecc410bccdbab6cfb53a147d01afccf0a",
+  "candidateRecordCommit": "9c96768bd278d88c0fbfa75a8021b2f831a146ba",
+  "promotionToolingCommit": "9c96768bd278d88c0fbfa75a8021b2f831a146ba",
+  "promotionWorkflow": "https://github.com/juggleai/jugglework-desktop/actions/runs/41776100808",
+  "promotionVerifiedAt": "2026-11-04T05:01:59.961Z",
+  "stableManifest": {
+    "url": "https://downloads.jugglechat.cn/jugglework/releases/stable/mac/latest-mac.yml",
+    "sha256": "4870eac860afc4dc365f80ef42e9504d1305ec80e463fa77bdeec43dd2d7d17a",
+    "size": 706,
+    "attempts": 2,
+    "checkedAt": "2026-11-04T05:01:59.961Z"
+  },
+  "immutableManifest": {
+    "key": "jugglework/releases/v1.2.33/mac/latest-mac.yml",
+    "url": "https://downloads.jugglechat.cn/jugglework/releases/v1.2.33/mac/latest-mac.yml",
+    "sha256": "4870eac860afc4dc365f80ef42e9504d1305ec80e463fa77bdeec43dd2d7d17a",
+    "sha512": "FP8rSwZTr+FZRolgrJ0UT5iR42LtXlnPAfYHdfiR49RQy3e3LrGA6pwQTqLZH34qmfZMv+bpFBP32qwKSLUWMg==",
+    "size": 706,
+    "etag": "FiqCxr1l8IS-CLQ0RoV08dEQg2Ul",
+    "mime": "text/yaml"
+  },
+  "preCanaryException": {
+    "scope": "stable-1.2.33-only",
+    "reason": "Operator explicitly authorized stable macOS arm64 1.2.33 to skip only the real-client upgrade canary"
+  },
+  "metadataException": {
+    "scope": "stable-1.2.33-only",
+    "reason": "Operator explicitly authorized stable macOS arm64 1.2.33 to skip only Qiniu Cache-Control metadata mutation and validation"
+  },
+  "installationCanary": "Not performed under exact stable-1.2.33-only authorization; installation, relaunch and retained state remain unverified.",
+  "cacheControlMetadata": "Only metadata mutation/validation skipped; CDN refresh and exact public size/digest read-back passed. Inherited long-lived caching can still leave clients stale.",
+  "legalApproval": "Existing human distribution authorization retained; no new independent legal approval obtained or inferred.",
+  "outOfScope": [
+    "Windows",
+    "Intel macOS",
+    "website",
+    "GitHub Release",
+    "Den/server binary deployment",
+    "new local cloud model-group feature"
+  ],
+  "tests": {
+    "desktop": {
+      "pass": 1058,
+      "skip": 1,
+      "fail": 0
+    },
+    "releaseFocused": {
+      "pass": 255,
+      "fail": 0
+    },
+    "continuationCloseout": {
+      "pass": 110,
+      "fail": 0
+    },
+    "independentPackagedMedia": {
+      "pass": 26,
+      "fail": 0
+    }
+  },
+  "toonFactory": {
+    "toonflow": {
+      "revision": "sha256:4668de11fde5a98644631999bfd044066c65bcef34f1d197eee0f6c2232b3e16",
+      "version": "unversioned",
+      "lockfileSha256": "eb490e0976076fee21ea6f84dad2cb8b7bc0cc33868deb9953a6210214f8a119"
+    },
+    "target": {
+      "platform": "darwin",
+      "arch": "arm64",
+      "executableName": "bun",
+      "format": "mach-o"
+    },
+    "bun": {
+      "version": "1.3.14",
+      "platform": "darwin",
+      "arch": "arm64",
+      "executableName": "bun",
+      "format": "mach-o",
+      "bytes": 63096576,
+      "sha256": "e0c90ec15d33363e6b70713d56bc3b2c7585c17f40a0fe0f8fd9305901d4e233",
+      "provenance": {
+        "source": "official-github-release",
+        "version": "1.3.14",
+        "repositoryUrl": "https://github.com/oven-sh/bun",
+        "releaseUrl": "https://github.com/oven-sh/bun/releases/tag/bun-v1.3.14",
+        "shasumsUrl": "https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/SHASUMS256.txt",
+        "archive": {
+          "name": "bun-darwin-aarch64.zip",
+          "url": "https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/bun-darwin-aarch64.zip",
+          "sha256": "d8b96221828ad6f97ac7ac0ab7e95872341af763001e8803e8267652c2652620"
+        },
+        "binary": {
+          "sha256": "e0c90ec15d33363e6b70713d56bc3b2c7585c17f40a0fe0f8fd9305901d4e233"
+        }
+      }
+    },
+    "inventorySha256": "417ceeaaca60fcadfba217ef0e8e60cfd17ac544f156933eb219cf0c85a37156",
+    "fileCount": 1034,
+    "buildManifestSha256": "8ee924dd1b285b72f75ca33aed28b0bdc96b6093fb91d00a3b83b4ae9636bab5",
+    "packagedContainers": [
+      "app",
+      "zip",
+      "dmg"
+    ],
+    "packageVerification": "normalized-package-verification.stdout.log",
+    "independentMediaAcceptance": "media-acceptance-pass-report.json",
+    "independentMediaAcceptanceScope": [
+      "Independent current Electron host, not the candidate executable/main, updater, notarization or release gate.",
+      "UI automation uses candidate DOM events and Electron executeJavaScript; fixture canvas is seeded on disk, not imported through a file picker.",
+      "Scene detector is exercised on a short synthetic testsrc2 fixture; many-shot/10-minute limits and publication-await races require separate tests.",
+      "Cancellation tests SIGSTOP the next owned real ffmpeg child to make the UI round-trip deterministic, then require candidate cancellation to kill it and wait for close. This verifies lifecycle, not natural processing timing; publication-await races are covered separately."
+    ]
+  },
+  "notarization": {
+    "app": {
+      "status": "accepted",
+      "submissionId": "87de8566-e326-4a53-b8f6-13aef87f276b"
+    },
+    "dmg": {
+      "status": "accepted",
+      "submissionId": "f9569d66-7c52-41f8-8a80-c068f080fdcb"
+    }
+  },
+  "den": {
+    "china": {
+      "origin": "https://work.jugglechat.cn",
+      "latest": "1.2.33",
+      "minAppVersion": "0.1.0",
+      "publishedCount": 19,
+      "inventoryPreserved": true,
+      "allowedIncludesTarget": true,
+      "allowlistVerification": "loaded configuration + no process environment override + restarted process (not authenticated desktop-config API)",
+      "oldPid": 1258724,
+      "newPid": 1326290,
+      "binarySha256": "bf6f33901522ea52cdd87e8711c3c5d45d8b5571708ea51b9eeb0c7d744480a9",
+      "backup": "/root/jugglework-server/backups/desktop-version-1.2.33-20261104T050341116455Z",
+      "configBackupSha256": "476950c6e7d8fe5f45e2b658cc240f061bffd6068320d80214c4eb5276519d54",
+      "updatedConfigSha256": "735298ec52a6e77a935b679e379dfae577c605179534b0bb5cace32d7c70debf",
+      "nonVersionBytesUnchanged": true,
+      "backupRootOnlyVerified": true,
+      "verification": "passed",
+      "verifiedAt": "2026-11-04T05:07:36.454065+00:00",
+      "localPublicHTTP": "health/ready/runtime-config/console/app-version all 200",
+      "loopback8021": true,
+      "criticalLogSignatures": 0,
+      "http5xxSignatures": 0,
+      "migrationVerification": "No new binary or explicit migration command; readiness and startup log checks passed; no independent schema query."
+    },
+    "overseas": {
+      "origin": "https://work.juggle.im",
+      "latest": "1.2.33",
+      "minAppVersion": "0.1.0",
+      "publishedCount": 20,
+      "inventoryPreserved": true,
+      "allowedIncludesTarget": true,
+      "allowlistVerification": "loaded configuration + no process environment override + restarted process (not authenticated desktop-config API)",
+      "oldPid": 769885,
+      "newPid": 786548,
+      "binarySha256": "aa19d9a54d6ad9d33603c72662fc89adfc5adb35cff99e70f83a49e3817ef6a9",
+      "backup": "/root/jugglework-server/backups/desktop-version-1.2.33-20261104T050614260023Z",
+      "configBackupSha256": "3a8b66bdf7601eff75423cf0e7a851818827ce0556d0bf77b2b9d9eb1b123465",
+      "updatedConfigSha256": "6259992555f65e97ba6d9c0d7f54efeefb122c7ffd885697b8655dd712f7801d",
+      "nonVersionBytesUnchanged": true,
+      "backupRootOnlyVerified": true,
+      "verification": "passed",
+      "verifiedAt": "2026-11-04T05:07:40.366886+00:00",
+      "localPublicHTTP": "health/ready/runtime-config/console/app-version all 200",
+      "loopback8021": true,
+      "criticalLogSignatures": 0,
+      "http5xxSignatures": 0,
+      "migrationVerification": "No new binary or explicit migration command; readiness and startup log checks passed; no independent schema query."
+    }
+  },
+  "rollback": {
+    "china": {
+      "config": "/root/jugglework-server/backups/desktop-version-1.2.33-20261104T050341116455Z/config.yml",
+      "checksum": "/root/jugglework-server/backups/desktop-version-1.2.33-20261104T050341116455Z/config.yml.sha256",
+      "baseline": "/root/jugglework-server/backups/desktop-version-1.2.33-20261104T050341116455Z/verification-baseline.json",
+      "expectedCurrentConfigSha256": "735298ec52a6e77a935b679e379dfae577c605179534b0bb5cace32d7c70debf",
+      "restoreSha256": "476950c6e7d8fe5f45e2b658cc240f061bffd6068320d80214c4eb5276519d54",
+      "procedure": "Assess already-downloaded clients first; one environment at a time. Stop on current config/binary checksum drift. Verify root-only backup and checksum; stage root:root 0600 on the same filesystem, atomically replace only conf/config.yml, restart Supervisor jugglework, repeat health/readiness/runtime/console/app-version, PID/executable/checksum/8021/log verification. No automatic rollback or database restore was run."
+    },
+    "overseas": {
+      "config": "/root/jugglework-server/backups/desktop-version-1.2.33-20261104T050614260023Z/config.yml",
+      "checksum": "/root/jugglework-server/backups/desktop-version-1.2.33-20261104T050614260023Z/config.yml.sha256",
+      "baseline": "/root/jugglework-server/backups/desktop-version-1.2.33-20261104T050614260023Z/verification-baseline.json",
+      "expectedCurrentConfigSha256": "6259992555f65e97ba6d9c0d7f54efeefb122c7ffd885697b8655dd712f7801d",
+      "restoreSha256": "3a8b66bdf7601eff75423cf0e7a851818827ce0556d0bf77b2b9d9eb1b123465",
+      "procedure": "Assess already-downloaded clients first; one environment at a time. Stop on current config/binary checksum drift. Verify root-only backup and checksum; stage root:root 0600 on the same filesystem, atomically replace only conf/config.yml, restart Supervisor jugglework, repeat health/readiness/runtime/console/app-version, PID/executable/checksum/8021/log verification. No automatic rollback or database restore was run."
+    }
+  },
+  "securityWarnings": {
+    "china": {
+      "control8020AllAddresses": true,
+      "supervisorEnvironmentFileModes": [
+        "0o644"
+      ],
+      "action": "Reported only; no network, proxy, permissions, Supervisor environment or key changes."
+    },
+    "overseas": {
+      "control8020AllAddresses": true,
+      "supervisorEnvironmentFileModes": [
+        "0o644"
+      ],
+      "action": "Reported only; no network, proxy, permissions, Supervisor environment or key changes."
+    }
+  },
+  "gitCompletion": "Records-only commits will be pushed separately to main and dev; dev-only new features are explicitly excluded from the artifact source and main release closeout.",
+  "evidenceRoot": "release-evidence/jugglework-desktop/1.2.33/",
+  "promotionEvidence": "run-41776100808-promotion/release-evidence.json"
+}
