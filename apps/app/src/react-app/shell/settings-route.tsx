@@ -71,13 +71,13 @@ import { useWorkspaceSkillPolicy } from "@/react-app/domains/connections/use-wor
 import { useWorkspacePluginPolicy } from "@/react-app/domains/connections/use-workspace-plugin-policy";
 import { createJuggleWorkServerStore, useJuggleWorkServerStoreSnapshot } from "@/react-app/domains/connections/jugglework-server-store";
 import { createProviderAuthStore, useProviderAuthStoreSnapshot } from "@/react-app/domains/connections/provider-auth/store";
-import { getCurrentCloudManagedProviderIds } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
 import ProviderAuthModal from "@/react-app/domains/connections/provider-auth/provider-auth-modal";
 import {
   type CustomProviderInput,
 } from "@/react-app/domains/connections/provider-auth/custom-provider-config";
 import ConnectionsModals from "@/react-app/domains/connections/modals";
 import { AiSettingsView } from "@/react-app/domains/settings/pages/ai-view";
+import { buildModelGroupRows } from "@/react-app/domains/settings/model-group-rows";
 // Side-effect imports: register extension config components into the registry.
 import "@/react-app/domains/settings/ollama-config";
 import "@/react-app/domains/settings/computer-use-config";
@@ -2206,7 +2206,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   useCloudProviderAutoSync(() => connectionsStore.syncCloudControlMcp());
 
   useEffect(() => {
-    if (route.tab !== "cloud-providers") return;
+    if (route.tab !== "ai") return;
     void providerAuthStore.runCloudProviderSync("settings_cloud_opened");
   }, [providerAuthStore, route.tab]);
 
@@ -2325,6 +2325,13 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const connectedProviders = Array.from(providerRows.entries())
     .toSorted(([leftId], [rightId]) => leftId.localeCompare(rightId))
     .map(([, row]) => row);
+  const modelGroupRows = buildModelGroupRows({
+    runtimeProviders: connectedProviders,
+    connectedProviderIds: providerConnectedIds,
+    cloudOrgProviders: providerAuthSnapshot.cloudOrgProviders,
+    importedCloudProviders: providerAuthSnapshot.importedCloudProviders,
+    providerAuthError: providerAuthSnapshot.cloudOrgProvidersError,
+  });
   const mcpConnectedAppsCount = connectionsSnapshot.mcpServers.length;
   const juggleworkCloudMcpUrl = connectionsSnapshot.mcpServers.find(
     (server) => server.name === "jugglework-cloud",
@@ -2845,7 +2852,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
           <AiSettingsView
             busy={busy}
             providerAuthBusy={providerAuthSnapshot.providerAuthBusy}
-            connectedProviders={connectedProviders}
+            connectedProviders={modelGroupRows.localProviders}
             disconnectingProviderId={disconnectingProviderId}
             deletingProviderId={deletingProviderId}
             providerConnectError={providerAuthSnapshot.providerAuthError}
@@ -2948,10 +2955,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 setReconnectingProviderId(null);
               }
             }}
-            cloudProviderIds={new Set(getCurrentCloudManagedProviderIds({
-              imported: providerAuthSnapshot.importedCloudProviders ?? {},
-              liveProviders: providerAuthSnapshot.cloudOrgProviders,
-            }))}
+            orgManagedProviders={modelGroupRows.orgManagedProviders}
+            orgProviderSyncError={providerAuthSnapshot.cloudOrgProvidersError}
           />
         );
       case "preferences":

@@ -76,11 +76,17 @@ export type AiSettingsViewProps = {
    */
   reconnectingProviderId?: string | null;
   onReconnectProvider?: (providerId: string) => void | Promise<void>;
-  /**
-   * 组织托管模型组的 provider ID 集合。命中的条目归入组织托管分区，且为只读：
-   * 它们由组织统一下发，本地无法断开或删除。
-   */
-  cloudProviderIds?: Set<string>;
+  orgManagedProviders: OrgManagedProvider[];
+  orgProviderSyncError: string | null;
+};
+
+export type OrgManagedProvider = {
+  id: string;
+  sourceProviderId: string;
+  name: string;
+  connected: boolean;
+  syncState: "ready" | "pending" | "failed";
+  modelCount?: number;
 };
 
 function providerSourceLabel(source?: ConnectedProvider["source"]) {
@@ -152,18 +158,54 @@ function ProviderRowIdentity(props: {
   );
 }
 
+function OrgProviderRowIdentity({ provider }: { provider: OrgManagedProvider }) {
+  const ready = provider.syncState === "ready";
+  const statusClass = ready
+    ? "border-green-6 bg-green-2 text-green-11"
+    : provider.syncState === "failed"
+      ? "border-red-6 bg-red-2 text-red-11"
+      : "border-amber-6 bg-amber-2 text-amber-11";
+  const statusKey = provider.syncState === "ready"
+    ? "settings.provider_status_available"
+    : provider.syncState === "failed"
+      ? "settings.provider_status_sync_failed"
+      : "settings.provider_status_syncing";
+
+  return (
+    <div className="flex min-w-0 items-center gap-3">
+      <ProviderIcon
+        providerId={provider.sourceProviderId}
+        size={20}
+        className={ready ? "text-dls-text" : "text-muted-foreground"}
+      />
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="truncate text-sm font-medium text-dls-text">{provider.name}</span>
+          <span className="shrink-0 rounded-full border border-blue-6 bg-blue-2 px-2 py-0.5 text-[10px] font-medium text-blue-11">
+            {t("settings.provider_org_managed_hint")}
+          </span>
+          <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium ${statusClass}`}>
+            {t(statusKey)}
+          </span>
+        </div>
+        <div className="flex flex-wrap gap-x-3 text-xs text-muted-foreground">
+          <span className="truncate font-mono">{provider.id}</span>
+          {provider.modelCount !== undefined ? (
+            <span>{t("settings.provider_model_count", { count: provider.modelCount })}</span>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function AiSettingsView(props: AiSettingsViewProps) {
   const [deleteCandidate, setDeleteCandidate] = useState<ConnectedProvider | null>(null);
 
   // TIPS: 两类模型组的所有权不同——本地模型组由用户在本机声明，组织托管模型组由
   // 组织下发。可操作范围也随之不同，混排会让「这一行能做什么」无法预测，因此按来源
   // 分区渲染。
-  const orgProviders = props.connectedProviders.filter(
-    (provider) => props.cloudProviderIds?.has(provider.id) === true,
-  );
-  const localProviders = props.connectedProviders.filter(
-    (provider) => props.cloudProviderIds?.has(provider.id) !== true,
-  );
+  const localProviders = props.connectedProviders;
 
   const renderLocalProvider = (provider: ConnectedProvider) => {
     const isLocalProvider = provider.source === "config";
@@ -235,19 +277,14 @@ export function AiSettingsView(props: AiSettingsViewProps) {
     );
   };
 
-  const renderOrgProvider = (provider: ConnectedProvider) => (
+  const renderOrgProvider = (provider: OrgManagedProvider) => (
     // 组织托管模型组只读：本地「断开」既不影响组织侧配置，又会造成本地与组织状态
     // 不一致，因此不提供断开与删除入口。
     <LayoutSectionItem
       key={provider.id}
       className="flex-row flex-wrap items-center justify-between gap-3 rounded-2xl border border-dls-border px-4 py-3"
     >
-      <ProviderRowIdentity
-        provider={provider}
-        isOrgManaged
-        isLocalProvider={false}
-        isConnected={provider.connected !== false}
-      />
+      <OrgProviderRowIdentity provider={provider} />
     </LayoutSectionItem>
   );
 
@@ -288,7 +325,7 @@ export function AiSettingsView(props: AiSettingsViewProps) {
       </LayoutSection>
 
       {/* ---- Organization-managed model groups ---- */}
-      {orgProviders.length > 0 ? (
+      {props.orgManagedProviders.length > 0 || props.orgProviderSyncError ? (
         <LayoutSection>
           <LayoutSectionHeader>
             <div className="min-w-0">
@@ -298,7 +335,12 @@ export function AiSettingsView(props: AiSettingsViewProps) {
               </LayoutSectionTitle>
             </div>
           </LayoutSectionHeader>
-          <div className="space-y-2">{orgProviders.map(renderOrgProvider)}</div>
+          {props.orgManagedProviders.length > 0 ? (
+            <div className="space-y-2">{props.orgManagedProviders.map(renderOrgProvider)}</div>
+          ) : null}
+          {props.orgProviderSyncError ? (
+            <SettingsNotice tone="error">{props.orgProviderSyncError}</SettingsNotice>
+          ) : null}
         </LayoutSection>
       ) : null}
 

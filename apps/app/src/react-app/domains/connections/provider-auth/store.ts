@@ -212,6 +212,7 @@ export type ProviderAuthStoreSnapshot = {
   providerAuthWorkerType: "local" | "remote";
   providerAuthProviders: ProviderAuthProvider[];
   cloudOrgProviders: DenOrgLlmProvider[];
+  cloudOrgProvidersError: string | null;
   importedCloudProviders: Record<string, CloudImportedProvider>;
 };
 
@@ -252,6 +253,7 @@ type MutableState = {
   providerAuthPreferredProviderId: string | null;
   providerAuthReturnFocusTarget: ProviderReturnFocusTarget;
   cloudOrgProviders: DenOrgLlmProvider[];
+  cloudOrgProvidersError: string | null;
   importedCloudProviders: Record<string, CloudImportedProvider>;
 };
 
@@ -264,6 +266,11 @@ export type ProviderAuthStore = ReturnType<typeof createProviderAuthStore>;
  * own store, and re-marking the same recovery from both would be noise.
  */
 let lastMissingCloudProviderReloadKey = "";
+
+export const shouldClearCloudOrgProvidersAfterFailure = (
+  lastGoodContextKey: string,
+  requestContextKey: string,
+) => !lastGoodContextKey || lastGoodContextKey !== requestContextKey;
 
 export function createProviderAuthStore(options: CreateProviderAuthStoreOptions) {
   const listeners = new Set<() => void>();
@@ -283,10 +290,12 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     providerAuthPreferredProviderId: null,
     providerAuthReturnFocusTarget: "none",
     cloudOrgProviders: [],
+    cloudOrgProvidersError: null,
     importedCloudProviders: {},
   };
 
   let cloudOrgProvidersLoadKey = "";
+  let cloudOrgProvidersContextKey = "";
   let cloudOrgProvidersInFlightKey = "";
   let cloudOrgProvidersInFlight: Promise<DenOrgLlmProvider[]> | null = null;
   let cloudProviderSyncContextKey = "";
@@ -388,6 +397,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       providerAuthWorkerType: getProviderAuthWorkerType(),
       providerAuthProviders: getProviderAuthProviders(),
       cloudOrgProviders: state.cloudOrgProviders,
+      cloudOrgProvidersError: state.cloudOrgProvidersError,
       importedCloudProviders: state.importedCloudProviders,
     };
   };
@@ -889,9 +899,15 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     ].join("::");
   };
 
+  const getCloudOrgProvidersContextKey = () => {
+    const settings = readDenSettings();
+    return [settings.baseUrl, settings.activeOrgId?.trim() ?? ""].join("::");
+  };
+
   const refreshCloudOrgProviders = async (optionsArg?: { force?: boolean }) => {
     const settings = readDenSettings();
     const loadKey = getCloudOrgProvidersKey();
+    const contextKey = getCloudOrgProvidersContextKey();
     const token = settings.authToken?.trim() ?? "";
     const orgId = settings.activeOrgId?.trim() ?? "";
 
@@ -904,9 +920,22 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
 
     if (!token || !orgId) {
-      setStateField("cloudOrgProviders", []);
+      mutateState((current) => ({
+        ...current,
+        cloudOrgProviders: [],
+        cloudOrgProvidersError: null,
+      }));
+      cloudOrgProvidersContextKey = contextKey;
       cloudOrgProvidersLoadKey = loadKey;
       return [];
+    }
+
+    if (cloudOrgProvidersContextKey && cloudOrgProvidersContextKey !== contextKey) {
+      mutateState((current) => ({
+        ...current,
+        cloudOrgProviders: [],
+        cloudOrgProvidersError: null,
+      }));
     }
 
     const client = createDenClient({
@@ -923,13 +952,24 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         if (getCloudOrgProvidersKey() !== loadKey) {
           return supportedProviders;
         }
-        setStateField("cloudOrgProviders", supportedProviders);
+        mutateState((current) => ({
+          ...current,
+          cloudOrgProviders: supportedProviders,
+          cloudOrgProvidersError: null,
+        }));
+        cloudOrgProvidersContextKey = contextKey;
         cloudOrgProvidersLoadKey = loadKey;
         return supportedProviders;
       })
       .catch((error) => {
         if (getCloudOrgProvidersKey() === loadKey) {
-          setStateField("cloudOrgProviders", []);
+          if (shouldClearCloudOrgProvidersAfterFailure(cloudOrgProvidersContextKey, contextKey)) {
+            setStateField("cloudOrgProviders", []);
+            cloudOrgProvidersContextKey = contextKey;
+          }
+          setStateField("cloudOrgProvidersError", error instanceof Error && error.message.trim()
+            ? error.message
+            : t("settings.provider_org_sync_failed"));
           cloudOrgProvidersLoadKey = "";
         }
         throw error;
@@ -2041,6 +2081,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     mutateState((current) => ({
       ...current,
       cloudOrgProviders: [],
+      cloudOrgProvidersError: null,
       providerAuthMethods: {},
       importedCloudProviders: {},
     }));
@@ -2303,13 +2344,16 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         if (error instanceof StaleCloudProviderAuthorityError) return;
         const message = logCloudProviderSyncError(reason, error);
         if (reason === "settings_cloud_opened") {
-          setStateField("providerAuthError", message);
+          setStateField("cloudOrgProvidersError", message);
         }
       });
     },
   );
 
   function runCloudProviderSync(reason: CloudProviderSyncReason) {
+    if (reason === "settings_cloud_opened") {
+      setStateField("providerAuthError", null);
+    }
     return cloudProviderSyncQueue.run(reason);
   }
 
@@ -2463,15 +2507,17 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     refreshSnapshot();
     emitChange();
 
-    const nextDenContextKey = getCloudOrgProvidersKey();
+    const nextDenContextKey = getCloudOrgProvidersContextKey();
     if (nextDenContextKey !== cloudProviderDenContextKey) {
       cloudProviderDenContextKey = nextDenContextKey;
       cloudOrgProvidersLoadKey = "";
+      cloudOrgProvidersContextKey = getCloudOrgProvidersContextKey();
       cloudOrgProvidersInFlightKey = "";
       cloudOrgProvidersInFlight = null;
       mutateState((current) => ({
         ...current,
         cloudOrgProviders: [],
+        cloudOrgProvidersError: null,
         providerAuthMethods: Object.fromEntries(
           Object.entries(current.providerAuthMethods)
             .map(([providerId, methods]) => [
@@ -2519,6 +2565,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
           mutateState((current) => ({
             ...current,
             cloudOrgProviders: [],
+            cloudOrgProvidersError: null,
             providerAuthMethods: {},
           }));
           void runCloudProviderSync("sign_in");
