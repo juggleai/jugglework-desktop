@@ -27,6 +27,32 @@ test("session response language uses UI locale only as the initial fallback", as
       assert.equal(store.read("ws", "ses"), "en");
       store.copy("ws", "ses", "ses_fork");
       assert.equal(store.read("ws", "ses_fork"), "en");
+
+      store.resolveAndWrite({ workspaceId: "ws", sessionId: "ses_root", detected: "zh", fallback: "zh" });
+      const parents = new Map([
+        ["ses_grandchild", "ses_child"],
+        ["ses_child", "ses_root"],
+      ]);
+      assert.equal(await store.readInherited({
+        workspaceId: "ws",
+        sessionId: "ses_grandchild",
+        readParent: async (sessionId) => parents.get(sessionId) ?? null,
+      }), "zh");
+      assert.equal(store.read("ws", "ses_grandchild"), "zh");
+
+      store.resolveAndWrite({ workspaceId: "ws", sessionId: "ses_child_explicit", detected: "en", fallback: "en" });
+      assert.equal(await store.readInherited({
+        workspaceId: "ws",
+        sessionId: "ses_child_explicit",
+        readParent: async () => "ses_root",
+      }), "en");
+
+      const cycle = new Map([["ses_cycle_a", "ses_cycle_b"], ["ses_cycle_b", "ses_cycle_a"]]);
+      assert.equal(await store.readInherited({
+        workspaceId: "ws",
+        sessionId: "ses_cycle_a",
+        readParent: async (sessionId) => cycle.get(sessionId) ?? null,
+      }), null);
     } finally {
       store.close();
     }

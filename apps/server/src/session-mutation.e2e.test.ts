@@ -1063,6 +1063,49 @@ describe("authoritative session mutation APIs", () => {
     }
   });
 
+  test("internal language lookup inherits and persists the nearest parent language", async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    const now = Date.now();
+    engine.sessions.set("ses_language_root", {
+      id: "ses_language_root", title: "Root", directory: harness.root, time: { created: now, updated: now },
+    });
+    engine.sessions.set("ses_language_child", {
+      id: "ses_language_child", title: "Child", parentID: "ses_language_root", directory: harness.root, time: { created: now, updated: now },
+    });
+    engine.sessions.set("ses_language_grandchild", {
+      id: "ses_language_grandchild", title: "Grandchild", parentID: "ses_language_child", directory: harness.root, time: { created: now, updated: now },
+    });
+
+    const started = await fetch(`${runPath(harness.base, "ses_language_root")}/start`, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+      body: JSON.stringify({
+        origin: "local-renderer",
+        startCommandCorrelationId: "language-parent-zh",
+        responseLanguage: { detected: "zh", fallback: "en" },
+        prompt: { parts: [{ type: "text", text: "请检查这个改动" }] },
+      }),
+    });
+    expect(started.status).toBe(202);
+
+    const language = await fetch(
+      `${harness.base}/internal/session-response-language/ses_language_grandchild?workspaceId=ws_1`,
+      { headers: harness.collaboratorHeaders },
+    );
+    expect(language.status).toBe(200);
+    expect(await language.json()).toEqual({ language: "zh" });
+
+    const db = new Database(runtimeDbPath(harness.config), { readonly: true });
+    try {
+      expect(db.query(
+        "SELECT response_language FROM session_response_languages WHERE workspace_id = ? AND session_id = ?",
+      ).get("ws_1", "ses_language_grandchild")).toEqual({ response_language: "zh" });
+    } finally {
+      db.close();
+    }
+  });
+
   for (const delivery of ["start", "steer"] as const) {
     test(`${delivery} selects language only from genuine text and retains internal continuation language`, async () => {
       const engine = startMockOpencode();

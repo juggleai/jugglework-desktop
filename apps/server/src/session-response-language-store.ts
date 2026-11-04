@@ -55,6 +55,41 @@ export class SessionResponseLanguageStore {
     )?.response_language ?? null;
   }
 
+  /**
+   * Internal task sessions are created by OpenCode and do not pass through the
+   * JuggleWork fork route. Resolve their language lazily from the nearest
+   * recorded ancestor, then persist it on the child so subsequent model steps
+   * do not depend on another ancestry read.
+   */
+  async readInherited(input: {
+    workspaceId: string;
+    sessionId: string;
+    readParent: (sessionId: string) => Promise<string | null>;
+    maxDepth?: number;
+  }): Promise<ResponseLanguage | null> {
+    const direct = this.read(input.workspaceId, input.sessionId);
+    if (direct) return direct;
+
+    const visited = new Set<string>([input.sessionId]);
+    let cursor = input.sessionId;
+    for (let depth = 0; depth < (input.maxDepth ?? 64); depth += 1) {
+      const parent = (await input.readParent(cursor))?.trim() ?? "";
+      if (!parent || visited.has(parent)) return null;
+      visited.add(parent);
+      const inherited = this.read(input.workspaceId, parent);
+      if (inherited) {
+        return this.resolveAndWrite({
+          workspaceId: input.workspaceId,
+          sessionId: input.sessionId,
+          detected: inherited,
+          fallback: inherited,
+        });
+      }
+      cursor = parent;
+    }
+    return null;
+  }
+
   resolve(input: {
     workspaceId: string;
     sessionId: string;

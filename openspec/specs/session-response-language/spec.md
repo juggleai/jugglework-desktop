@@ -27,7 +27,16 @@ Submission language selection SHALL exclude text marked `synthetic: true`, `igno
 - **AND** failed admission rolls back the attempted language mutation
 
 ### Requirement: Compaction does not authorize a language change
-The runtime system transform SHALL reassert the stored language when available. Language claims inside summaries and internal user-role continuation prompts SHALL NOT be treated as new user instructions. Remote pending requests SHALL reject unsupported provenance metadata before flattening text rather than silently discard it.
+The runtime system transform SHALL reassert the stored language when available for every user-visible stage, including progress updates, tool-call commentary, delegated-result summaries, and final answers. Tool and delegated-session output SHALL NOT cause the parent response to mirror a different language. Language claims inside summaries and internal user-role continuation prompts SHALL NOT be treated as new user instructions. Remote pending requests SHALL reject unsupported provenance metadata before flattening text rather than silently discard it.
+
+### Requirement: Delegated sessions inherit response language
+An internally created child session with no direct language preference SHALL inherit and persist the nearest recorded ancestor session language. Inheritance SHALL traverse nested delegation, terminate safely on missing or cyclic ancestry, and SHALL NOT override a language already selected directly for the child.
+
+#### Scenario: Chinese task delegates English implementation instructions
+- **WHEN** a Chinese parent session creates a child or nested descendant through an internal task tool
+- **AND** the delegated prompt or result contains English prose
+- **THEN** the child receives the parent's Simplified Chinese response instruction
+- **AND** the parent continues to present progress and delegated-result summaries in Simplified Chinese
 
 ## Verification boundaries
 Route tests use a mock engine and plugin tests exercise the system-transform boundary. They do not establish that a real engine ran compaction or that every model will comply. Unmarked internal text cannot reliably be distinguished from genuine prose by content alone; producers must preserve provenance. No fixed continuation-text blacklist is used. Language lookup remains best effort, and no historical session state is migrated automatically.

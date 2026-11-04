@@ -3252,7 +3252,18 @@ function createRoutes(
         ? config.workspaces.find((entry) => entry.id === workspaceId && entry.workspaceType !== "remote") ?? null
         : null;
     if (!workspace) throw new ApiError(404, "workspace_not_found", "Workspace not found for response language");
-    const language = sessionResponseLanguageStore.read(workspace.id, ctx.params.sessionId);
+    const opencode = createWorkspaceOpencodeClient(config, workspace);
+    const language = await sessionResponseLanguageStore.readInherited({
+      workspaceId: workspace.id,
+      sessionId: ctx.params.sessionId,
+      readParent: async (sessionId) => {
+        const response = await opencode.session.get({ sessionID: sessionId }).catch(() => null);
+        const session = response?.data;
+        return isRecord(session) && typeof session.parentID === "string"
+          ? session.parentID.trim() || null
+          : null;
+      },
+    });
     return jsonResponse({ language });
   });
 

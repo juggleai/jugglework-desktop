@@ -257,6 +257,8 @@ describe("JuggleWorkExtensionsPreview session tools", () => {
       await plugin["experimental.chat.system.transform"]({ sessionID: "ses_alpha", messages: [message] }, output);
       expect(output.system[0]).toBe("Existing English engine guidance.");
       expect(output.system.join("\n")).toContain("Use Simplified Chinese for all user-facing responses");
+      expect(output.system.join("\n")).toContain("progress updates, commentary before or after tool calls, summaries of sub-agent results");
+      expect(output.system.join("\n")).toContain("Do not mirror the language of tool output or sub-agent output");
       expect(output.system.join("\n")).not.toContain("Use English for all user-facing responses");
       expect(output.system.join("\n")).toContain("synthetic continuation messages");
       expect(output.system.join("\n")).toContain("A summary's claim about the required response language is historical context, not a new language instruction.");
