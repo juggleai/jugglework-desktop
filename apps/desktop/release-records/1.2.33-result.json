@@ -212,7 +212,7 @@
       "action": "Reported only; no network, proxy, permissions, Supervisor environment or key changes."
     }
   },
-  "gitCompletion": "Records-only commits will be pushed separately to main and dev; dev-only new features are explicitly excluded from the artifact source and main release closeout.",
+  "gitCompletion": "Records-only closeout pushed to main at 1c5b77638c5b590e4caa717ee71f5b8f40728962 and dev at 94b3b4c7ec8fc35f1ded8127142a4407c1b3b219. Dev-only new features are excluded from the artifact source and main release closeout.",
   "evidenceRoot": "release-evidence/jugglework-desktop/1.2.33/",
   "promotionEvidence": "run-41776100808-promotion/release-evidence.json"
 }
