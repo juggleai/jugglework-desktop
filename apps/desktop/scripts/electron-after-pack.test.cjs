@@ -14,6 +14,7 @@ const {
   windowsPublisherNames,
   writePackagedUpdateConfiguration,
   packageBundledOfficeResources,
+  verifyRendererResources,
 } = require("./electron-after-pack.cjs");
 
 test("Windows ARM64 保留桌面打包，不要求不存在的 Office SDK 或复制 x64 内核", (t) => {
@@ -156,7 +157,7 @@ test("selects only the requested sidecar and processes the macOS helper", async 
   await runAfterPack(context, {
     packageOfficeResources() {},
     verifyContracts() {},
-    verifyUiControlMcpRuntime() {},
+    verifyUiControlMcpRuntime() {}, verifyRenderer() {},
     signHelper(receivedContext) {
       helperContext = receivedContext;
     },
@@ -192,7 +193,7 @@ test("Windows sidecar metadata remains JSON without an executable suffix during 
   await runAfterPack({ appOutDir: root, arch: "x64", electronPlatformName: "win32" }, {
     verifyContracts() {},
     verifyUiControlMcp() {},
-    verifyUiControlMcpRuntime() {},
+    verifyUiControlMcpRuntime() {}, verifyRenderer() {},
     writeUpdateConfiguration() {},
     packageOfficeResources() {},
     signHelper() {},
@@ -214,7 +215,7 @@ test("skips architecture processing for unsupported targets", async () => {
     {
       verifyContracts() {},
       verifyUiControlMcp() {},
-      verifyUiControlMcpRuntime() {},
+      verifyUiControlMcpRuntime() {}, verifyRenderer() {},
       verifyMacTrayResources() {},
       writeUpdateConfiguration() {},
       signHelper() {
@@ -239,7 +240,7 @@ test("rejects packages missing the bundled UI control MCP", async (t) => {
         electronPlatformName: "darwin",
         packager: { appInfo: { productFilename: "JuggleWork" } },
       },
-      { verifyContracts() {}, verifyUiControlMcpRuntime() {}, signHelper() {} },
+      { verifyContracts() {}, verifyUiControlMcpRuntime() {}, verifyRenderer() {}, signHelper() {} },
     ),
     /Missing packaged JuggleWork UI control MCP/,
   );
@@ -337,4 +338,26 @@ test("omits Windows publisherName for ordinary packaging and rejects an invalid 
     () => writePackagedUpdateConfiguration(context, { JUGGLEWORK_WINDOWS_PUBLISHER_NAMES: "[]" }),
     /must contain one or more non-empty publisher names/,
   );
+});
+
+
+test("安装包拒绝网页绝对资源路径与缺失文件，四个桌面入口均要求有效相对资源", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "renderer-package-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const context = { electronPlatformName: "win32", appOutDir: root };
+  const renderer = path.join(root, "resources", "app-dist");
+  fs.mkdirSync(path.join(renderer, "assets"), { recursive: true });
+  fs.writeFileSync(path.join(renderer, "assets", "main.js"), "export {};");
+  fs.writeFileSync(path.join(renderer, "assets", "main.css"), "body{}");
+  const html = '<script type="module" src="./assets/main.js"></script><link href="./assets/main.css" rel="stylesheet">';
+  for (const name of ["index.html", "file-window.html", "overlay.html", "pet.html"]) fs.writeFileSync(path.join(renderer, name), html);
+  assert.doesNotThrow(() => verifyRendererResources(context));
+  fs.writeFileSync(path.join(renderer, "index.html"), html.replace('./assets/main.js', '/assets/main.js'));
+  assert.throws(() => verifyRendererResources(context), /桌面完整构建/);
+  fs.writeFileSync(path.join(renderer, "index.html"), html);
+  fs.writeFileSync(path.join(renderer, "file-window.html"), html.replace('main.js', 'missing.js'));
+  assert.throws(() => verifyRendererResources(context), /file-window.html 缺少包内资源/);
+  fs.writeFileSync(path.join(renderer, "file-window.html"), html);
+  fs.unlinkSync(path.join(renderer, "pet.html"));
+  assert.throws(() => verifyRendererResources(context), /缺少桌面页面入口：pet.html/);
 });

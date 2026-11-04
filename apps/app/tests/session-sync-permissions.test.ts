@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import type { UIMessage } from "ai";
 import type { PermissionRequest, PermissionV2Request, QuestionRequest } from "@opencode-ai/sdk/v2/client";
 
@@ -12,6 +12,8 @@ import {
   coalescePendingDeltas,
   captureLegacyInteractionSnapshotRevision,
   captureTodoSnapshotRevision,
+  captureSessionSnapshotRevision,
+  recordSessionSnapshotRevision,
   clearSessionTodos,
   ensureWorkspaceSessionSync,
   permissionKey,
@@ -326,6 +328,269 @@ describe("session question sync", () => {
 });
 
 describe("session transcript sync", () => {
+  test("stale snapshot preserves a longer prefix-compatible pending stream", async () => {
+    const input = { workspaceId: "pending-newer-than-snapshot", baseUrl: "http://unused", juggleworkToken: "fixture" };
+    const cleanup = __createWorkspaceSessionSyncForTest(input);
+    trackWorkspaceSessionSync(input, "s");
+    try {
+      const revision = captureSessionSnapshotRevision(input.workspaceId, "s");
+      __applySessionSyncEventForTest(input, { type: "message.part.delta", properties: { sessionID: "s", messageID: "m", partID: "part_m", delta: "hello world" } } as any);
+      // Exercise seed's flush as well as reconciliation: the delta has not flushed yet.
+      const snapshot = snapshotWithMessages([{ id: "m", role: "user", text: "hello" }], "s");
+      recordSessionSnapshotRevision(snapshot, revision);
+      seedSessionState(input.workspaceId, snapshot);
+      expect(getReactQueryClient().getQueryData<UIMessage[]>(transcriptKey(input.workspaceId, "s"))?.[0]?.parts[0]).toMatchObject({ text: "hello world", state: "streaming" });
+      __applySessionSyncEventForTest(input, { type: "message.part.delta", properties: { sessionID: "s", messageID: "m", partID: "part_m", delta: "!" } } as any);
+      await Promise.resolve();
+      expect(getReactQueryClient().getQueryData<UIMessage[]>(transcriptKey(input.workspaceId, "s"))?.[0]?.parts[0]).toMatchObject({ text: "hello world!" });
+    } finally { cleanup(); }
+  });
+
+  for (const type of ["text", "reasoning"] as const) {
+    test(`final ${type} declaration corrects snapshot/delta overlap and stays done`, async () => {
+      const input = { workspaceId: `final-overlap-${type}`, baseUrl: "http://unused", juggleworkToken: "fixture" };
+      const cleanup = __createWorkspaceSessionSyncForTest(input);
+      trackWorkspaceSessionSync(input, "s");
+      try {
+        const snapshot = snapshotWithMessages([{ id: "m", role: "user", text: "hello world" }], "s");
+        snapshot.messages[0]!.parts[0]!.type = type;
+        seedSessionState(input.workspaceId, snapshot);
+        __applySessionSyncEventForTest(input, { type: "message.part.delta", properties: { sessionID: "s", messageID: "m", partID: "part_m", delta: " world" } } as any);
+        await Promise.resolve();
+        // Include uncommitted bytes too: a terminal cumulative update supersedes both.
+        __applySessionSyncEventForTest(input, { type: "message.part.delta", properties: { sessionID: "s", messageID: "m", partID: "part_m", delta: " world" } } as any);
+        __applySessionSyncEventForTest(input, { type: "message.part.updated", properties: { part: { sessionID: "s", messageID: "m", id: "part_m", type, text: "hello world", time: { start: 1, end: 2 } } } } as any);
+        await Promise.resolve();
+        expect(getReactQueryClient().getQueryData<UIMessage[]>(transcriptKey(input.workspaceId, "s"))?.[0]?.parts[0]).toMatchObject({ type, text: "hello world", state: "done" });
+      } finally { cleanup(); }
+    });
+
+    test(`cumulative ${type} declaration without pending bytes replaces live text and preserves done`, async () => {
+      const input = { workspaceId: `final-live-${type}`, baseUrl: "http://unused", juggleworkToken: "fixture" };
+      const cleanup = __createWorkspaceSessionSyncForTest(input);
+      trackWorkspaceSessionSync(input, "s");
+      try {
+        const updatePart = (text: string) => __applySessionSyncEventForTest(input, { type: "message.part.updated", properties: { part: { sessionID: "s", messageID: "m", id: "p", type, text } } } as any);
+        updatePart("");
+        __applySessionSyncEventForTest(input, { type: "message.part.delta", properties: { sessionID: "s", messageID: "m", partID: "p", delta: "hello hello" } } as any);
+        await Promise.resolve();
+        updatePart("hello");
+        expect(getReactQueryClient().getQueryData<UIMessage[]>(transcriptKey(input.workspaceId, "s"))?.[0]?.parts[0]).toMatchObject({ text: "hello", state: "done" });
+        updatePart("hello");
+        expect(getReactQueryClient().getQueryData<UIMessage[]>(transcriptKey(input.workspaceId, "s"))?.[0]?.parts[0]).toMatchObject({ state: "done" });
+      } finally { cleanup(); }
+    });
+  }
+
+  for (const overflow of [false, true]) for (const resolution of ["declaration", "snapshot"]) test(`unresolved ${overflow ? "overflow" : "incompatible"} pending survives flush with bounded recovery until ${resolution}`, async () => {
+    const input = { workspaceId: `unresolved-pending-${overflow}-${resolution}`, baseUrl: "http://unused", juggleworkToken: "fixture" };
+    const cleanup = __createWorkspaceSessionSyncForTest(input);
+    trackWorkspaceSessionSync(input, "s");
+    const scheduled = new Map<number, { callback: () => void; delay: number }>();
+    let next = 0;
+    const timeout = spyOn(globalThis, "setTimeout").mockImplementation(((callback: () => void, delay: number) => {
+      scheduled.set(++next, { callback, delay }); return next;
+    }) as any);
+    const clear = spyOn(globalThis, "clearTimeout").mockImplementation(((id: number) => { scheduled.delete(id); }) as any);
+    const invalidate = spyOn(getReactQueryClient(), "invalidateQueries").mockResolvedValue(undefined);
+    const settle = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
+    const emit = (delta: string) => __applySessionSyncEventForTest(input, { type: "message.part.delta", properties: { sessionID: "s", messageID: "m", partID: "part_m", delta } } as any);
+    const tick = async (delay: number) => {
+      const timer = [...scheduled].find(([, value]) => value.delay === delay);
+      expect(timer).toBeDefined();
+      scheduled.delete(timer![0]); timer![1].callback();
+      await settle();
+    };
+    try {
+      const revision = captureSessionSnapshotRevision(input.workspaceId, "s");
+      emit(overflow ? "x".repeat(64 * 1024 + 1) : " world");
+      await settle();
+      const snapshot = snapshotWithMessages([{ id: "m", role: "user", text: "hello" }], "s");
+      recordSessionSnapshotRevision(snapshot, revision);
+      seedSessionState(input.workspaceId, snapshot);
+      emit("!"); await settle();
+      expect(getReactQueryClient().getQueryData<UIMessage[]>(transcriptKey(input.workspaceId, "s"))?.[0]?.parts[0]).toMatchObject({ text: "hello!" });
+      // Replaying the old snapshot must not resolve against the live projection either.
+      seedSessionState(input.workspaceId, snapshot);
+      await tick(1_000);
+      await tick(5_000);
+      await tick(5_000);
+      emit("?"); await settle();
+      expect(invalidate).toHaveBeenCalledTimes(3);
+      expect([...scheduled.values()].some((timer) => timer.delay === 1_000 || timer.delay === 5_000)).toBe(false);
+      if (resolution === "declaration") {
+        __applySessionSyncEventForTest(input, { type: "message.part.updated", properties: { part: { sessionID: "s", messageID: "m", id: "part_m", type: "text", text: "hello world!?", time: { start: 1, end: 2 } } } } as any);
+      } else {
+        const fresh = snapshotWithMessages([{ id: "m", role: "user", text: "hello world!?" }], "s");
+        recordSessionSnapshotRevision(fresh, captureSessionSnapshotRevision(input.workspaceId, "s"));
+        seedSessionState(input.workspaceId, fresh);
+      }
+      expect(getReactQueryClient().getQueryData<UIMessage[]>(transcriptKey(input.workspaceId, "s"))?.[0]?.parts[0]).toMatchObject({ text: "hello world!?", state: "done" });
+      // Resolving this episode permits recovery for a genuinely new missing part.
+      __applySessionSyncEventForTest(input, { type: "message.part.delta", properties: { sessionID: "s", messageID: "m", partID: "new-part", delta: "new" } } as any);
+      await settle();
+      await tick(1_000);
+      expect(invalidate).toHaveBeenCalledTimes(4);
+    } finally { cleanup(); timeout.mockRestore(); clear.mockRestore(); invalidate.mockRestore(); }
+  });
+
+  test("retained-session expiry clears recovery while retracking cancels the expiry", async () => {
+    const input = { workspaceId: "retained-recovery", baseUrl: "http://unused", juggleworkToken: "fixture" };
+    const cleanup = __createWorkspaceSessionSyncForTest(input);
+    const scheduled = new Map<number, { callback: () => void; delay: number }>();
+    let next = 0;
+    const timeout = spyOn(globalThis, "setTimeout").mockImplementation(((callback: () => void, delay: number) => {
+      scheduled.set(++next, { callback, delay }); return next;
+    }) as any);
+    const clear = spyOn(globalThis, "clearTimeout").mockImplementation(((id: number) => { scheduled.delete(id); }) as any);
+    const invalidate = spyOn(getReactQueryClient(), "invalidateQueries").mockResolvedValue(undefined);
+    try {
+      const release = trackWorkspaceSessionSync(input, "s");
+      __applySessionSyncEventForTest(input, { type: "message.part.delta", properties: { sessionID: "s", messageID: "m", partID: "p", delta: "old" } } as any);
+      await Promise.resolve();
+      release();
+      const releaseAgain = trackWorkspaceSessionSync(input, "s");
+      expect([...scheduled.values()].some((timer) => timer.delay === 600_000)).toBe(false);
+      releaseAgain();
+      const expiry = [...scheduled].find(([, timer]) => timer.delay === 600_000)!;
+      scheduled.delete(expiry[0]); expiry[1].callback();
+      expect([...scheduled.values()].some((timer) => timer.delay === 1_000)).toBe(false);
+      const lastRelease = trackWorkspaceSessionSync(input, "s");
+      __applySessionSyncEventForTest(input, { type: "message.part.updated", properties: { part: { sessionID: "s", messageID: "m", id: "p", type: "text", text: "new" } } } as any);
+      expect(getReactQueryClient().getQueryData<UIMessage[]>(transcriptKey(input.workspaceId, "s"))?.[0]?.parts[0]).toMatchObject({ text: "new" });
+      expect(invalidate).not.toHaveBeenCalled();
+      lastRelease();
+    } finally { cleanup(); timeout.mockRestore(); clear.mockRestore(); invalidate.mockRestore(); }
+  });
+
+  test("snapshot arriving before rAF consumes undeclared bytes once and later deltas append", () => {
+    const input = { workspaceId: "snapshot-before-frame", baseUrl: "http://unused", juggleworkToken: "fixture" };
+    const cleanup = __createWorkspaceSessionSyncForTest(input);
+    const release = trackWorkspaceSessionSync(input, "s");
+    const previousWindow = globalThis.window;
+    const frames: FrameRequestCallback[] = [];
+    globalThis.window = { requestAnimationFrame: (callback: FrameRequestCallback) => { frames.push(callback); return frames.length; } } as Window & typeof globalThis;
+    try {
+      const revision = captureSessionSnapshotRevision(input.workspaceId, "s");
+      __applySessionSyncEventForTest(input, { type: "message.updated", properties: { info: { sessionID: "s", id: "m", role: "user" } } } as any);
+      __applySessionSyncEventForTest(input, { type: "message.part.delta", properties: { sessionID: "s", messageID: "m", partID: "part_m", delta: "hello" } } as any);
+      const snapshot = snapshotWithMessages([{ id: "m", role: "user", text: "hello" }], "s");
+      recordSessionSnapshotRevision(snapshot, revision);
+      seedSessionState(input.workspaceId, snapshot);
+      frames.splice(0).forEach((frame) => frame(0));
+      expect(getReactQueryClient().getQueryData<UIMessage[]>(transcriptKey(input.workspaceId, "s"))?.[0]?.parts[0]).toMatchObject({ text: "hello" });
+      __applySessionSyncEventForTest(input, { type: "message.part.delta", properties: { sessionID: "s", messageID: "m", partID: "part_m", delta: "!" } } as any);
+      frames.splice(0).forEach((frame) => frame(0));
+      expect(getReactQueryClient().getQueryData<UIMessage[]>(transcriptKey(input.workspaceId, "s"))?.[0]?.parts[0]).toMatchObject({ text: "hello!" });
+    } finally {
+      if (previousWindow === undefined) Reflect.deleteProperty(globalThis, "window"); else globalThis.window = previousWindow;
+      release(); cleanup();
+    }
+  });
+
+  test("missing-part recovery is bounded, waits for in-flight reads, and disposal cancels retry", async () => {
+    const input = { workspaceId: "bounded-recovery", baseUrl: "http://unused", juggleworkToken: "fixture" };
+    const cleanup = __createWorkspaceSessionSyncForTest(input);
+    trackWorkspaceSessionSync(input, "s");
+    const scheduled = new Map<number, { callback: () => void; delay: number }>();
+    let next = 0;
+    const timeout = spyOn(globalThis, "setTimeout").mockImplementation(((callback: () => void, delay: number) => {
+      scheduled.set(++next, { callback, delay }); return next;
+    }) as any);
+    const clear = spyOn(globalThis, "clearTimeout").mockImplementation(((id: number) => { scheduled.delete(id); }) as any);
+    let finish!: () => void;
+    const invalidate = spyOn(getReactQueryClient(), "invalidateQueries").mockImplementation(() => new Promise<void>((resolve) => { finish = resolve; }));
+    const emit = () => __applySessionSyncEventForTest(input, { type: "message.part.delta", properties: { sessionID: "s", messageID: "m", partID: "p", delta: "token" } } as any);
+    const tick = (delay: number) => {
+      const timer = [...scheduled].find(([, timer]) => timer.delay === delay);
+      expect(timer).toBeDefined();
+      scheduled.delete(timer![0]); timer![1].callback();
+    };
+    const settle = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
+    try {
+      emit(); await settle(); tick(1_000);
+      for (let i = 0; i < 20; i++) emit();
+      await settle();
+      expect(invalidate).toHaveBeenCalledTimes(1);
+      expect([...scheduled.values()].some((timer) => timer.delay === 5_000)).toBe(false);
+      finish(); await settle(); tick(5_000); finish(); await settle(); tick(5_000); finish(); await settle();
+      emit(); await settle();
+      expect(invalidate).toHaveBeenCalledTimes(3);
+      expect([...scheduled.values()].some((timer) => timer.delay === 1_000 || timer.delay === 5_000)).toBe(false);
+      // A new episode is cancelled even if a saved callback fires after disposal.
+      __applySessionSyncEventForTest(input, { type: "message.removed", properties: { sessionID: "s", messageID: "m" } } as any);
+      emit(); await settle();
+      const late = [...scheduled.values()].find((timer) => timer.delay === 1_000)!.callback;
+      cleanup(); late(); await settle();
+      expect(invalidate).toHaveBeenCalledTimes(3);
+    } finally { cleanup(); timeout.mockRestore(); clear.mockRestore(); invalidate.mockRestore(); }
+  });
+
+  test("typed declaration cancels missing-part recovery and removed messages cannot be flushed back", async () => {
+    const input = { workspaceId: "resolved-recovery", baseUrl: "http://unused", juggleworkToken: "fixture" };
+    const cleanup = __createWorkspaceSessionSyncForTest(input);
+    const release = trackWorkspaceSessionSync(input, "s");
+    const invalidate = spyOn(getReactQueryClient(), "invalidateQueries").mockResolvedValue(undefined);
+    try {
+      __applySessionSyncEventForTest(input, { type: "message.part.delta", properties: { sessionID: "s", messageID: "m", partID: "p", delta: "hello" } } as any);
+      await Promise.resolve();
+      __applySessionSyncEventForTest(input, { type: "message.part.updated", properties: { part: { sessionID: "s", messageID: "m", id: "p", type: "text", text: "hello" } } } as any);
+      __applySessionSyncEventForTest(input, { type: "message.part.delta", properties: { sessionID: "s", messageID: "m", partID: "p", delta: "!" } } as any);
+      __applySessionSyncEventForTest(input, { type: "message.removed", properties: { sessionID: "s", messageID: "m" } } as any);
+      await new Promise((resolve) => setTimeout(resolve, 1_100));
+      expect(invalidate).not.toHaveBeenCalled();
+      expect(getReactQueryClient().getQueryData(transcriptKey(input.workspaceId, "s"))).toEqual([]);
+    } finally { invalidate.mockRestore(); release(); cleanup(); }
+  });
+
+  for (const cumulative of ["", "hello"]) test(`keeps same-frame deltas with ${cumulative ? "cumulative" : "empty"} typed declaration`, () => {
+    const input = { workspaceId: `frame-${cumulative}`, baseUrl: "http://unused", juggleworkToken: "fixture" };
+    const cleanup = __createWorkspaceSessionSyncForTest(input);
+    const release = trackWorkspaceSessionSync(input, "s");
+    const previousWindow = globalThis.window;
+    const frames: FrameRequestCallback[] = [];
+    globalThis.window = { requestAnimationFrame: (callback: FrameRequestCallback) => { frames.push(callback); return frames.length; } } as Window & typeof globalThis;
+    try {
+      __applySessionSyncEventForTest(input, { type: "message.part.delta", properties: { sessionID: "s", messageID: "m", partID: "p", delta: "hello" } } as any);
+      __applySessionSyncEventForTest(input, { type: "message.part.updated", properties: { part: { sessionID: "s", messageID: "m", id: "p", type: "reasoning", text: cumulative } } } as any);
+      frames.splice(0).forEach((frame) => frame(0));
+      expect(getReactQueryClient().getQueryData<UIMessage[]>(transcriptKey(input.workspaceId, "s"))?.[0]?.parts)
+        .toMatchObject([{ type: "reasoning", text: "hello" }]);
+      __applySessionSyncEventForTest(input, { type: "message.part.delta", properties: { sessionID: "s", messageID: "m", partID: "p", delta: " world" } } as any);
+      __applySessionSyncEventForTest(input, { type: "message.part.updated", properties: { part: { sessionID: "s", messageID: "m", id: "p", type: "reasoning", text: "hello world" } } } as any);
+      frames.splice(0).forEach((frame) => frame(0));
+      expect(getReactQueryClient().getQueryData<UIMessage[]>(transcriptKey(input.workspaceId, "s"))?.[0]?.parts[0]).toMatchObject({ text: "hello world", state: "done" });
+    } finally {
+      if (previousWindow === undefined) Reflect.deleteProperty(globalThis, "window"); else globalThis.window = previousWindow;
+      release(); cleanup();
+    }
+  });
+
+  test("recovers undeclared deltas once per session and resumes deltas after stale snapshot fills the part", async () => {
+    const input = { workspaceId: "missing-part-recovery", baseUrl: "http://unused", juggleworkToken: "fixture" };
+    const cleanup = __createWorkspaceSessionSyncForTest(input);
+    const release = trackWorkspaceSessionSync(input, "s");
+    const invalidate = spyOn(getReactQueryClient(), "invalidateQueries").mockResolvedValue(undefined);
+    try {
+      __applySessionSyncEventForTest(input, { type: "message.updated", properties: { info: { sessionID: "s", id: "m", role: "user" } } } as any);
+      const revision = captureSessionSnapshotRevision(input.workspaceId, "s");
+      for (const delta of ["he", "ll", "o"]) __applySessionSyncEventForTest(input, {
+        type: "message.part.delta", properties: { sessionID: "s", messageID: "m", partID: "part_m", delta },
+      } as any);
+      await new Promise((resolve) => setTimeout(resolve, 1_100));
+      expect(invalidate).toHaveBeenCalledTimes(1);
+      const snapshot = snapshotWithMessages([{ id: "m", role: "user", text: "hello" }], "s");
+      recordSessionSnapshotRevision(snapshot, revision);
+      seedSessionState(input.workspaceId, snapshot);
+      __applySessionSyncEventForTest(input, { type: "message.part.delta", properties: { sessionID: "s", messageID: "m", partID: "part_m", delta: "!" } } as any);
+      await Promise.resolve();
+      expect(getReactQueryClient().getQueryData<UIMessage[]>(transcriptKey(input.workspaceId, "s"))?.[0]?.parts[0]).toMatchObject({ text: "hello!" });
+      // A late declaration must not resurrect the old undeclared buffer.
+      __applySessionSyncEventForTest(input, { type: "message.part.updated", properties: { part: { sessionID: "s", messageID: "m", id: "part_m", type: "text", text: "hello!" } } } as any);
+      expect(getReactQueryClient().getQueryData<UIMessage[]>(transcriptKey(input.workspaceId, "s"))?.[0]?.parts[0]).toMatchObject({ text: "hello!" });
+    } finally { invalidate.mockRestore(); release(); cleanup(); }
+  });
+
   test("coalesces token-sized deltas by transcript part", () => {
     const deltas = coalescePendingDeltas([
       { sessionId: "session-a", messageId: "msg-a", partId: "part-a", reasoning: false, delta: "hel" },

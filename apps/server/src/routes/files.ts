@@ -46,6 +46,8 @@ interface RegisterFileRoutesOptions {
   onFileRenamed?: (workspaceId: string, from: string, to: string) => void;
   /** 在修改磁盘路径前校验编辑模型，覆盖文件和父目录操作。 */
   beforeFileMutation?: (workspaceId: string, paths: string[]) => void;
+  /** 文件助手登记的外部文件仍读取原路径，普通工作区路径保持既有解析。 */
+  resolveExternalFile?: (workspaceId: string, path: string) => Promise<{ absolutePath: string } | null>;
 }
 
 function resolveInboxDir(workspaceRoot: string): string {
@@ -1056,7 +1058,8 @@ export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
       throw new ApiError(400, "invalid_path", "Only supported text artifact files can be read inline");
     }
 
-    const absPath = resolveSafeChildPath(workspace.path, relativePath);
+    const external = await options.resolveExternalFile?.(workspace.id, relativePath);
+    const absPath = external?.absolutePath ?? resolveSafeChildPath(workspace.path, relativePath);
     if (!(await exists(absPath))) {
       throw new ApiError(404, "file_not_found", "File not found");
     }
@@ -1078,7 +1081,8 @@ export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const requested = (ctx.url.searchParams.get("path") ?? "").trim();
     const relativePath = normalizeWorkspaceRelativePath(requested, { allowSubdirs: true });
-    const absPath = resolveSafeChildPath(workspace.path, relativePath);
+    const external = await options.resolveExternalFile?.(workspace.id, relativePath);
+    const absPath = external?.absolutePath ?? resolveSafeChildPath(workspace.path, relativePath);
     if (!(await exists(absPath))) {
       return jsonResponse({ ok: true, path: relativePath, exists: false });
     }
@@ -1097,7 +1101,8 @@ export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const requested = (ctx.url.searchParams.get("path") ?? "").trim();
     const relativePath = normalizeWorkspaceRelativePath(requested, { allowSubdirs: true });
-    const absPath = resolveSafeChildPath(workspace.path, relativePath);
+    const external = await options.resolveExternalFile?.(workspace.id, relativePath);
+    const absPath = external?.absolutePath ?? resolveSafeChildPath(workspace.path, relativePath);
     if (!(await exists(absPath))) {
       throw new ApiError(404, "file_not_found", "File not found");
     }

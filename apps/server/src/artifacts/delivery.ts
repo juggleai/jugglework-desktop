@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readdir } from "node:fs/promises";
-import { join } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type {
   ArtifactOrigin,
   FileDeliveryTarget,
@@ -39,7 +39,31 @@ const record = (value: unknown): Record<string, unknown> =>
     : {};
 
 /** 从成功写入的结构化参数提取交付目标，不扫描消息正文或工作区修改时间。 */
-export function artifactPathsFromTool(part: Record<string, unknown>): string[] {
+function workspaceRelativeToolPath(
+  path: string,
+  workspaceRoot = "",
+): string | null {
+  const value = path.trim();
+  if (!value) return null;
+  if (!workspaceRoot || !isAbsolute(value))
+    return value.replace(/\\/g, "/").replace(/^\.\//, "");
+  const workspace = resolve(workspaceRoot);
+  const candidate = resolve(value);
+  const result = relative(workspace, candidate);
+  if (
+    !result ||
+    result === ".." ||
+    result.startsWith(`..${sep}`) ||
+    isAbsolute(result)
+  )
+    return null;
+  return result.replace(/\\/g, "/");
+}
+
+export function artifactPathsFromTool(
+  part: Record<string, unknown>,
+  workspaceRoot = "",
+): string[] {
   const state = record(part.state);
   if (part.type !== "tool" || state.status !== "completed") return [];
   if (part.tool === "jugglework_image_generate") {
@@ -53,11 +77,12 @@ export function artifactPathsFromTool(part: Record<string, unknown>): string[] {
     }
     const result = record(output);
     const artifact = record(record(result.result).artifact);
-    return result.ok === true &&
+    const path = result.ok === true &&
       typeof artifact.path === "string" &&
       String(artifact.mimeType).startsWith("image/")
-      ? [artifact.path]
-      : [];
+      ? workspaceRelativeToolPath(artifact.path, workspaceRoot)
+      : null;
+    return path ? [path] : [];
   }
   if (!WRITE_TOOLS.has(String(part.tool).toLowerCase())) return [];
   const input = record(state.input);
@@ -88,6 +113,8 @@ export function artifactPathsFromTool(part: Record<string, unknown>): string[] {
       ),
     ),
   ]
+    .map((path) => workspaceRelativeToolPath(path, workspaceRoot))
+    .filter((path): path is string => Boolean(path))
     .filter(
       (path) =>
         !/(?:^|[\\/])(?:node_modules|\.git|\.opencode|\.cache|__pycache__)(?:[\\/]|$)/.test(
@@ -187,6 +214,7 @@ export class FileDeliveryService {
     sessionId: string,
   ): Promise<SessionFileArtifacts> {
     const registry = this.registry(workspaceId);
+    this.discardExternalToolTargets(workspaceId, sessionId);
     for (const turn of registry.list(sessionId).turns) {
       for (const target of turn.targets) {
         if (
@@ -465,6 +493,7 @@ export class FileDeliveryService {
     sessionId: string,
   ): Promise<ArtifactEngineMessage[]> {
     const registry = this.registry(workspaceId);
+    this.discardExternalToolTargets(workspaceId, sessionId);
     const turns = registry.list(sessionId).turns;
     if (!turns.length) return [];
     const messages = await this.options.readMessages(workspaceId, sessionId);
@@ -481,7 +510,10 @@ export class FileDeliveryService {
       };
       for (const raw of message.parts) {
         const part = record(raw);
-        for (const path of artifactPathsFromTool(part)) {
+        for (const path of artifactPathsFromTool(
+          part,
+          this.options.workspace(workspaceId).path,
+        )) {
           registry.track(origin, {
             key: `${String(part.callID ?? part.id)}:${path}`,
             path,
@@ -636,5 +668,22 @@ export class FileDeliveryService {
         );
       }
     }
+  }
+
+  /** 清理旧版本误登记的工作区外临时文件，避免永久残留为“部分交付失败”。 */
+  private discardExternalToolTargets(
+    workspaceId: string,
+    sessionId: string,
+  ): void {
+    const workspaceRoot = this.options.workspace(workspaceId).path;
+    this.registry(workspaceId).discardTargets(
+      sessionId,
+      (target) =>
+        target.source === "tool" &&
+        target.status !== "ready" &&
+        typeof target.path === "string" &&
+        isAbsolute(target.path) &&
+        workspaceRelativeToolPath(target.path, workspaceRoot) === null,
+    );
   }
 }

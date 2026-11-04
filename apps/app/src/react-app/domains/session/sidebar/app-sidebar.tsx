@@ -1309,6 +1309,7 @@ function GlobalPinnedSessionTree({ group, sessionId }: GlobalPinnedSessionEntry)
       forcedExpandedSessionIds={forcedExpandedSessionIds}
       isPinned={pinnedIds.has(row.session.id)}
       workspaceName={row.depth === 0 ? workspaceLabel(group.workspace) : undefined}
+      showWorkspaceIcon={false}
     />
   ));
 }

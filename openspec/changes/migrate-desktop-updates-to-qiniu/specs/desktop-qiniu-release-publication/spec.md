@@ -302,6 +302,12 @@ A rollout-eligible Windows version SHALL publish Authenticode-signed x64 and arm
 ### Requirement: Promotion continuation provides read-only staged diagnostics
 The committed macOS continuation SHALL support an independent `--verify-only` CLI path and a default-false `verification_only` boolean in the existing `promotion-only` workflow. Verification-only SHALL require `promote=false`, retain exact candidate/version/source ancestry/committed-content checks and all package trust and immutable/CDN gates, and return before calling promotion. It MUST NOT inspect, acquire, recover or delete a promotion lock, write remote objects or metadata, or refresh CDN. Normal continuation SHALL retain its existing exact-version exceptions and promotion gates.
 
+#### Scenario: Exact macOS ARM64 1.2.33 continuation
+- **WHEN** a trusted dev promotion-only dispatch selects version 1.2.33
+- **THEN** only the committed apps/desktop/release-records/1.2.33-candidate.json is accepted, bound to its exact source ancestry, receipts, runtime versions and immutable bytes
+- **AND** independent audited stable-1.2.33-only reasons may omit the real-client upgrade canary and mutable Cache-Control metadata change/verification, without omitting signatures, notarization, immutable full-byte verification, lock ownership, predecessor digest, CDN refresh or exact public read-back
+- **AND** a supplied failed/mismatched canary, alpha, Intel and future 1.2.34 do not inherit these exceptions
+
 #### Scenario: Hosted verification-only dispatch
 - **WHEN** a trusted dev dispatch supplies promotion-only, verification_only=true and promote=false for an approved exact candidate
 - **THEN** all five immutable objects are downloaded and verified, the manifest is validated, ZIP and DMG package gates run, and fresh Qiniu metadata/public CDN checks pass before verification succeeds

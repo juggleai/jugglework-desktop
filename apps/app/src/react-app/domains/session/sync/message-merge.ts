@@ -68,6 +68,52 @@ function mergeSnapshotMessageWithCached(snapshotMessage: UIMessage, cachedMessag
   };
 }
 
+function recoveryPartKeys(part: UIMessage["parts"][number]): string[] {
+  const metadata = "callProviderMetadata" in part ? part.callProviderMetadata
+    : "providerMetadata" in part ? part.providerMetadata : undefined;
+  const partId = metadata?.opencode?.partId;
+  const keys = typeof partId === "string" && partId ? [`part:${partId}`] : [];
+  // Tool calls and sources also have stable SDK identities. Retain these aliases
+  // when an older live projection has not carried over OpenCode's part metadata.
+  if ("toolCallId" in part && part.toolCallId) keys.push(`tool:${part.toolCallId}`);
+  if ("sourceId" in part && part.sourceId) keys.push(`source:${part.sourceId}`);
+  return keys;
+}
+
+/** Only fill missing identified parts; live content, role and terminal metadata win. */
+function recoverMissingSnapshotParts(snapshotMessage: UIMessage, liveMessage: UIMessage): UIMessage {
+  const liveByKey = new Map<string, UIMessage["parts"][number]>();
+  for (const part of liveMessage.parts) {
+    for (const key of recoveryPartKeys(part)) liveByKey.set(key, part);
+  }
+  const seen = new Set<string>();
+  const snapshotParts = snapshotMessage.parts.flatMap((part) => {
+    const keys = recoveryPartKeys(part);
+    // Anonymous parts cannot be safely matched by index or text. In particular,
+    // equal text may belong to two distinct parts, while stale text may differ.
+    if (!keys.length || keys.some((key) => seen.has(key))) return [];
+    for (const key of keys) seen.add(key);
+    return [{ part, live: keys.map((key) => liveByKey.get(key)).find(Boolean) }];
+  });
+  if (snapshotParts.every(({ live }) => live)) return liveMessage;
+
+  const parts = liveMessage.parts.slice();
+  let nextAnchor: UIMessage["parts"][number] | undefined;
+  // Insert before the next shared snapshot anchor, preserving both the order of
+  // recovered parts and the relative order of every existing live-only part.
+  for (let index = snapshotParts.length - 1; index >= 0; index -= 1) {
+    const { part, live } = snapshotParts[index]!;
+    if (live) {
+      nextAnchor = live;
+      continue;
+    }
+    const insertionIndex = nextAnchor ? parts.indexOf(nextAnchor) : parts.length;
+    parts.splice(insertionIndex, 0, part);
+    nextAnchor = part;
+  }
+  return { ...liveMessage, parts };
+}
+
 function messageCreated(message: UIMessage) {
   const metadata = message.metadata;
   if (!metadata || typeof metadata !== "object" || !("opencode" in metadata)) return null;
@@ -129,7 +175,7 @@ export function messageListContainsAll(container: UIMessage[], required: UIMessa
   return required.every((message) => ids.has(message.id));
 }
 
-/** 合并历史快照和实时消息；失效快照只能补缺，不能改写已有实时消息。 */
+/** 合并历史快照和实时消息；失效快照只补缺失消息及part，历史删除/回退须由调用方先过滤。 */
 export function mergeSnapshotAndLiveMessages(
   snapshotMessages: UIMessage[],
   liveMessages: UIMessage[],
@@ -142,7 +188,7 @@ export function mergeSnapshotAndLiveMessages(
   const snapshotIds = new Set(snapshotMessages.map((message) => message.id));
   const merged = snapshotMessages.map((snapshotMessage) => {
     const liveMessage = liveById.get(snapshotMessage.id);
-    return liveMessage ? (options.preserveLiveMessages ? liveMessage : mergeSnapshotMessageWithCached(snapshotMessage, liveMessage)) : snapshotMessage;
+    return liveMessage ? (options.preserveLiveMessages ? recoverMissingSnapshotParts(snapshotMessage, liveMessage) : mergeSnapshotMessageWithCached(snapshotMessage, liveMessage)) : snapshotMessage;
   });
 
   if (options.appendLiveOnlyMessages) {

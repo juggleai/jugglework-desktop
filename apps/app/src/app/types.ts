@@ -174,14 +174,14 @@ export type ComposerVideoGenerationOptions = {
   durationSeconds: number;
 };
 
-export type ComposerSubmissionOptions =
+export type ComposerSubmissionOptions = { claimId?: string } & (
   | {
       delivery?: "start";
       /** Stable user-message identity for workflows that observe exact-turn delivery. */
       messageID?: string;
       intent?: "presentation-creation";
     }
-  | { delivery: "steer"; admissionId: string };
+  | { delivery: "steer"; admissionId: string });
 
 export type ArtifactItem = {
   id: string;

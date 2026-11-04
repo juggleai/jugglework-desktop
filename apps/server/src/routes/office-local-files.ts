@@ -1,8 +1,7 @@
-import { createReadStream } from "node:fs";
-import { Readable } from "node:stream";
 import type { LocalOfficeFiles } from "../office/local-files.js";
 import type { OfficeDocuments } from "../office/documents.js";
 import { ApiError } from "../errors.js";
+import { resolve } from "node:path";
 import { addRoute, type Route } from "./registry.js";
 
 /** 登记入口仅接受宿主令牌；读取入口只匹配本次生成的明确文件上下文。 */
@@ -13,8 +12,19 @@ export function registerLocalOfficeRoutes(options: {
   jsonResponse: (value: unknown) => Response;
   readJsonBody: (request: Request) => Promise<Record<string, unknown>>;
   ensureWritable: () => void;
+  /** 将外部文件绑定到默认工作区中的真实会话。 */
+  ensureConversation: (previousSessionId?: string) => Promise<string>;
 }): void {
   const { routes, files, documents, jsonResponse } = options;
+  addRoute(routes, "POST", "/office/local-files/resolve", "client", async (ctx) => {
+    const body = await options.readJsonBody(ctx.request);
+    if (typeof body.workspaceRoot !== "string" || !body.workspaceRoot.trim() || typeof body.path !== "string")
+      throw new ApiError(400, "invalid_path", "文件来源不可用");
+    // TIPS: 其他工作区仍使用普通磁盘路径；默认文件助手的保留标识只能解析已登记原件，不能回退到虚拟目录。
+    if (resolve(body.workspaceRoot) !== files.root) return jsonResponse({ absolutePath: null });
+    const original = await files.resolve(body.path);
+    return jsonResponse({ absolutePath: original.absolutePath });
+  });
   addRoute(
     routes,
     "POST",
@@ -31,6 +41,8 @@ export function registerLocalOfficeRoutes(options: {
       const existing = await documents.findByAbsolutePath(
         resolved.absolutePath,
       );
+      const sessionId = existing?.ownerSessionId ?? await options.ensureConversation(await files.sessionFor(path));
+      if (!existing) await files.bindSession(path, sessionId);
       return jsonResponse(
         existing
           ? {
@@ -42,7 +54,7 @@ export function registerLocalOfficeRoutes(options: {
             }
           : {
               workspaceId: files.id,
-              sessionId: files.sessionId,
+              sessionId,
               path,
               local: true,
               absolutePath: resolved.absolutePath,
@@ -50,33 +62,4 @@ export function registerLocalOfficeRoutes(options: {
       );
     },
   );
-  // TIPS: 在通用工作区路由之前注册精确上下文路径，不扩展工作区解析或目录权限。
-  const base = `/workspace/${files.id}/files`;
-  addRoute(routes, "GET", `${base}/stat`, "client", async (ctx) => {
-    const { file } = await files.resolve(
-      ctx.url.searchParams.get("path") ?? "",
-    );
-    return jsonResponse({
-      ok: true,
-      path: file.relativePath,
-      exists: true,
-      kind: "file",
-      size: file.sizeBytes,
-      updatedAt: file.updatedAt,
-    });
-  });
-  addRoute(routes, "GET", `${base}/raw`, "client", async (ctx) => {
-    const { absolutePath, file } = await files.resolve(
-      ctx.url.searchParams.get("path") ?? "",
-    );
-    const body = Readable.toWeb(
-      createReadStream(absolutePath),
-    ) as unknown as ReadableStream;
-    return new Response(body, {
-      headers: {
-        "Content-Type": file.mimeType,
-        "Content-Length": String(file.sizeBytes),
-      },
-    });
-  });
 }

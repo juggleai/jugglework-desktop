@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { describe, it } from "node:test";
 
 import { createRemoteSessionEventBridge } from "./remote-session-event-bridge.mjs";
+import { createSessionMutationCoordinator } from "./session-mutation-coordinator.mjs";
 
 const CONTROL = "11111111-1111-4111-8111-111111111111";
 const DEVICE = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -9,8 +11,8 @@ const NOW = Date.parse("2026-08-09T12:00:00.000Z");
 
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
-/** @param {{ publish?: (event: unknown, options: { connectionGeneration: number }) => boolean, publishActivityTaskStatus?: (event: unknown) => boolean | Promise<boolean>, observeRun?: (input: any) => Promise<unknown>, listActiveRuns?: () => Promise<unknown>, resolveOwnership?: (input: any) => Promise<unknown>, timers?: any, logger?: any, subscriptionReadinessTimeoutMs?: number, subscriptionRetryDelaysMs?: number[], autoConnect?: boolean }} [input] */
-function harness({ publish = () => true, publishActivityTaskStatus = null, observeRun, listActiveRuns = async () => ({ items: [] }), resolveOwnership = async ({ targetSessionId }) => ({ rootSessionId: targetSessionId, targetSessionId, parentSessionId: null }), timers = { setTimeout: (callback, delay) => { if (delay < 3_000) callback(); return 1; }, clearTimeout() {} }, logger = {}, subscriptionReadinessTimeoutMs, subscriptionRetryDelaysMs, autoConnect = true } = {}) {
+/** @param {{ publish?: (event: unknown, options: { connectionGeneration: number }) => boolean, publishActivityTaskStatus?: (event: unknown) => boolean | Promise<boolean>, observeRun?: (input: any) => Promise<unknown>, listActiveRuns?: () => Promise<unknown>, listSessionModelEvents?: (input: any) => Promise<unknown>, resolveOwnership?: (input: any) => Promise<unknown>, timers?: any, logger?: any, subscriptionReadinessTimeoutMs?: number, subscriptionRetryDelaysMs?: number[], autoConnect?: boolean }} [input] */
+function harness({ publish = () => true, publishActivityTaskStatus = null, observeRun, listActiveRuns = async () => ({ items: [] }), listSessionModelEvents = null, resolveOwnership = async ({ targetSessionId }) => ({ rootSessionId: targetSessionId, targetSessionId, parentSessionId: null }), timers = { setTimeout: (callback, delay) => { if (delay < 3_000) callback(); return 1; }, clearTimeout() {} }, logger = {}, subscriptionReadinessTimeoutMs, subscriptionRetryDelaysMs, autoConnect = true } = {}) {
   const subscriptions = [];
   const published = [];
   const terminalCalls = [];
@@ -38,6 +40,7 @@ function harness({ publish = () => true, publishActivityTaskStatus = null, obser
     sseClient,
     coordinator,
     listActiveRuns,
+    listSessionModelEvents,
     observeRun: async (input) => {
       observationCalls.push({ input, publishedCount: published.length });
       return observeRun ? observeRun(input) : { cleared: true, run: null, terminalStatus: "completed" };
@@ -69,6 +72,281 @@ function harness({ publish = () => true, publishActivityTaskStatus = null, obser
 }
 
 describe("remote session event bridge", () => {
+  it("unidentified late idle cannot complete current B while authority says running", async () => {
+    const sent = [];
+    const h = harness({ publishActivityTaskStatus: (event) => { sent.push(event); return true; },
+      observeRun: async () => ({ cleared: false, run: { runId: "run_B", status: "running" } }) });
+    h.bridge.watch([{ id: "ws_1" }]);
+    await flush();
+    h.setRunId("run_B");
+    await h.subscriptions[0].onEvent({ type: "session.idle", properties: { sessionID: "ses_1" } });
+    await flush();
+    h.bridge.stop();
+    assert.equal(h.observationCalls.length, 1);
+    assert.equal(h.getRunId(), "run_B");
+    assert.deepEqual(sent, []);
+  });
+  for (const secondSession of ["ses_1", "ses_2"]) it(`recovers exact terminal after consecutive runs and a missed idle (${secondSession})`, async () => {
+    const coordinator = createSessionMutationCoordinator();
+    const sent = [];
+    const observed = [];
+    /** @type {any} */
+    let subscription;
+    let active = [];
+    const terminals = new Map();
+    const bridge = createRemoteSessionEventBridge({
+      coordinator,
+      randomUUID,
+      now: Date.now,
+      timers: globalThis,
+      sseClient: { subscribe: async (input) => { subscription = input; await input.onConnected(); return new Promise(() => {}); } },
+      listActiveRuns: async () => ({ items: active }),
+      observeRun: async ({ runId }) => {
+        observed.push(runId);
+        return terminals.has(runId)
+          ? { cleared: true, run: null, terminalStatus: terminals.get(runId) }
+          : { cleared: false, run: active.find((run) => run.runId === runId) ?? null };
+      },
+      publish: () => true,
+      publishActivityTaskStatus: async (event, { isCurrent }) => {
+        await Promise.resolve();
+        if (!isCurrent()) return false;
+        sent.push(event);
+        return true;
+      },
+    });
+    const run = (sessionId, runId, generation) => ({ workspaceId: "ws_1", sessionId, runId, generation,
+      origin: "local-renderer", status: "running", observedActive: true, startedAt: generation,
+      updatedAt: generation, activeObservedAt: generation, abortRequestedAt: null,
+      startCommandCorrelationId: null, abortCommandCorrelationId: null });
+    bridge.watch([{ id: "ws_1" }]);
+    await flush();
+    active = [run("ses_1", "run_A", 1)];
+    await subscription.onEvent({ type: "session.status", properties: { sessionID: "ses_1", status: "busy" } });
+    await flush();
+    terminals.set("run_A", "completed");
+    active = [];
+    await subscription.onEvent({ type: "session.idle", properties: { sessionID: "ses_1" } });
+    await flush();
+    active = [run(secondSession, "run_B", 2)];
+    await subscription.onEvent({ type: "session.status", properties: { sessionID: secondSession, status: "busy" } });
+    await flush();
+    await subscription.onReconnectGap("sequence_gap");
+    terminals.set("run_B", "completed");
+    active = [];
+    await subscription.onConnected();
+    await flush();
+    try {
+      assert.deepEqual(sent.map(({ runId, generation, status }) => [runId, generation, status]), [
+        ["run_A", 1, "running"], ["run_A", 1, "completed"],
+        ["run_B", 2, "running"], ["run_B", 2, "completed"],
+      ]);
+      assert.ok(observed.includes("run_B"), "recovery must consult exact-run authority, not infer from absence");
+    } finally { bridge.stop(); }
+  });
+
+  for (const outcome of ["aborted", "failed"]) for (const clearMirror of [false, true]) it(`uses authoritative ${outcome} outcome over deferred SSE idle (mirror cleared: ${clearMirror})`, async () => {
+    const pending = [];
+    const sent = [];
+    let resolveObservation = (_) => {};
+    const h = harness({ observeRun: async () => new Promise((resolve) => { resolveObservation = resolve; }),
+      publishActivityTaskStatus: async (event, { isCurrent }) => {
+        await new Promise((resolve) => pending.push(resolve));
+        if (!isCurrent()) return false;
+        sent.push(event);
+        return true;
+      } });
+    await h.bridge.bind(h.binding);
+    h.setRunId("run_1");
+    await h.subscriptions[0].onEvent({ type: "session.idle", properties: { sessionID: "ses_1" } });
+    if (clearMirror) h.setRunId(null);
+    assert.ok(resolveObservation);
+    resolveObservation({ cleared: true, run: null, terminalStatus: outcome });
+    await flush();
+    await h.subscriptions[0].onEvent({ type: "session.idle", properties: { sessionID: "ses_1" } });
+    for (const resolve of pending) resolve();
+    await flush();
+    assert.deepEqual(sent.map((event) => event.status), [outcome]);
+    h.bridge.stop();
+  });
+
+  for (const clearMirror of [false, true]) it(`supersedes deferred running signing and joins duplicate terminal (mirror cleared: ${clearMirror})`, async () => {
+    const pending = [];
+    const sent = [];
+    const h = harness({ publishActivityTaskStatus: async (event, { isCurrent }) => {
+      await new Promise((resolve) => pending.push({ event, resolve }));
+      if (!isCurrent()) return false;
+      sent.push(event);
+      return true;
+    } });
+    h.bridge.watch([{ id: "ws_1" }]);
+    await flush();
+    await h.subscriptions[0].onEvent({ type: "session.status", properties: { sessionID: "ses_1", status: "busy" } });
+    if (clearMirror) h.setRunId(null);
+    await h.subscriptions[0].onEvent({ type: "session.idle", properties: { sessionID: "ses_1" } });
+    await h.subscriptions[0].onEvent({ type: "session.status", properties: { sessionID: "ses_1", status: "idle" } });
+    for (const publication of pending) publication.resolve();
+    await flush();
+    assert.deepEqual(sent.map(({ runId, status }) => ({ runId, status })), [{ runId: "run_1", status: "completed" }]);
+    assert.equal(pending.length, 2, "duplicate terminal must join the in-flight terminal");
+    h.bridge.stop();
+  });
+
+  it("retains a known run while running hydration waits and terminal supersedes it", async () => {
+    let resolveHydration = (_) => {};
+    let waiting = false;
+    const sent = [];
+    const h = harness({ listActiveRuns: async () => waiting ? new Promise((resolve) => { resolveHydration = resolve; }) : { items: [] },
+      publishActivityTaskStatus: (event) => { sent.push(event); return true; } });
+    h.bridge.watch([{ id: "ws_1" }]);
+    await flush();
+    await h.subscriptions[0].onEvent({ type: "session.status", properties: { sessionID: "ses_1", status: "busy" } });
+    h.setRunId(null);
+    waiting = true;
+    await h.subscriptions[0].onEvent({ type: "session.status", properties: { sessionID: "ses_1", status: "busy" } });
+    await h.subscriptions[0].onEvent({ type: "session.idle", properties: { sessionID: "ses_1" } });
+    assert.ok(resolveHydration);
+    resolveHydration({ items: [] });
+    await flush();
+    assert.deepEqual(sent.map((event) => event.status), ["running", "completed"]);
+    assert.equal(sent[1].runId, "run_1");
+    h.bridge.stop();
+  });
+
+  it("publishes an untitled terminal after transport clear without a phone binding", async () => {
+    const lifecycle = [];
+    const h = harness({ publishActivityTaskStatus: (event) => { lifecycle.push(event); return true; } });
+    h.bridge.watch([{ id: "ws_1", name: "Workspace" }]);
+    await flush();
+    h.bridge.clear();
+    await flush();
+    await h.subscriptions.at(-1).onEvent({ payload: { type: "session.status", properties: { sessionID: "ses_1", status: { type: "idle" } } } });
+    await flush();
+    assert.equal(lifecycle.length, 1);
+    assert.equal(lifecycle[0].status, "completed");
+    assert.equal(lifecycle[0].runId, "run_1");
+    assert.equal(lifecycle[0].title, "");
+    assert.equal(h.published.length, 0);
+    h.bridge.stop();
+  });
+
+  it("retries a rejected terminal with the same event after mirror clearing", async () => {
+    const lifecycle = [];
+    const h = harness({ publishActivityTaskStatus: (event) => { lifecycle.push(event); return lifecycle.length > 1; } });
+    await h.bridge.bind(h.binding);
+    h.setRunId("run_1");
+    await h.subscriptions[0].onEvent({ type: "session.idle", properties: { sessionID: "ses_1" } });
+    await flush();
+    assert.equal(h.getRunId(), null);
+    assert.equal(lifecycle.length, 2);
+    assert.deepEqual(lifecycle[1], lifecycle[0]);
+    h.bridge.stop();
+  });
+
+  it("never attributes an uncorrelated terminal to a run discovered later", async () => {
+    const lifecycle = [];
+    let reads = 0;
+    const h = harness({ listActiveRuns: async () => { reads++; return { items: [] }; }, publishActivityTaskStatus: (event) => { lifecycle.push(event); return true; } });
+    h.bridge.watch([{ id: "ws_1" }]);
+    await flush();
+    h.setRunId(null);
+    const before = reads;
+    await h.subscriptions[0].onEvent({ type: "session.idle", properties: { sessionID: "ses_1" } });
+    await flush();
+    assert.equal(reads, before);
+    assert.deepEqual(lifecycle, []);
+    h.bridge.stop();
+  });
+
+  it("retains the published run across mirror and transport clearing without a phone", async () => {
+    const lifecycle = [];
+    const h = harness({ publishActivityTaskStatus: (event) => { lifecycle.push(event); return true; } });
+    h.bridge.watch([{ id: "ws_1" }]);
+    await flush();
+    await h.subscriptions.at(-1).onEvent({ type: "session.status", properties: { sessionID: "ses_1", status: "busy" } });
+    h.setRunId(null);
+    h.bridge.clear();
+    await flush();
+    await h.subscriptions.at(-1).onEvent({ type: "session.idle", properties: { sessionID: "ses_1" } });
+    await flush();
+    assert.equal(lifecycle.length, 2);
+    assert.equal(lifecycle[1].status, "completed");
+    assert.equal(lifecycle[1].runId, "run_1");
+    h.bridge.stop();
+  });
+
+  it("drops retained run A when clear sees a different run B", async () => {
+    const lifecycle = [];
+    const h = harness({ publishActivityTaskStatus: (event) => { lifecycle.push(event); return true; } });
+    h.bridge.watch([{ id: "ws_1" }]);
+    await flush();
+    await h.subscriptions.at(-1).onEvent({ type: "session.status", properties: { sessionID: "ses_1", status: "busy" } });
+    const oldSubscription = h.subscriptions.at(-1);
+    h.setRunId("run_2");
+    h.bridge.clear();
+    await flush();
+    h.setRunId(null);
+    await oldSubscription.onEvent({ type: "session.idle", properties: { sessionID: "ses_1" } });
+    await h.subscriptions.at(-1).onEvent({ type: "session.idle", properties: { sessionID: "ses_1" } });
+    await flush();
+    assert.deepEqual(lifecycle.map(({ runId, status }) => ({ runId, status })), [{ runId: "run_1", status: "running" }]);
+    h.bridge.stop();
+  });
+
+  it("does not reuse retained run A after an unbound run B starts and transport clears", async () => {
+    const lifecycle = [];
+    const h = harness({ publishActivityTaskStatus: (event) => { lifecycle.push(event); return true; } });
+    h.bridge.watch([{ id: "ws_1" }]);
+    await flush();
+    await h.subscriptions.at(-1).onEvent({ type: "session.status", properties: { sessionID: "ses_1", status: "busy" } });
+    h.setRunId(null);
+    await h.subscriptions.at(-1).onEvent({ type: "session.status", properties: { sessionID: "ses_1", status: "busy" } });
+    h.bridge.clear();
+    await flush();
+    await h.subscriptions.at(-1).onEvent({ type: "session.idle", properties: { sessionID: "ses_1" } });
+    await flush();
+    assert.equal(lifecycle.length, 1);
+    assert.equal(lifecycle[0].runId, "run_1");
+    assert.equal(lifecycle[0].status, "running");
+    h.bridge.stop();
+  });
+
+  it("cancels an old terminal retry when a newer run replaces it", async () => {
+    const lifecycle = [];
+    const scheduled = [];
+    const h = harness({ timers: { setTimeout: (callback, delay) => { scheduled.push({ callback, delay }); return callback; }, clearTimeout() {} },
+      publishActivityTaskStatus: (event) => { lifecycle.push(event); return false; } });
+    h.bridge.watch([{ id: "ws_1" }]);
+    await flush();
+    await h.subscriptions[0].onEvent({ type: "session.idle", properties: { sessionID: "ses_1" } });
+    await flush();
+    assert.equal(lifecycle.length, 1);
+    h.setRunId("run_2");
+    scheduled.find(({ delay }) => delay === 100)?.callback();
+    await flush();
+    assert.equal(lifecycle.length, 1);
+    h.bridge.stop();
+  });
+
+  it("does not revive a completed run on title updates or cancel retry on duplicate idle", async () => {
+    const lifecycle = [];
+    const scheduled = [];
+    const h = harness({ timers: { setTimeout: (callback, delay) => { scheduled.push({ callback, delay }); return callback; }, clearTimeout() {} },
+      publishActivityTaskStatus: (event) => { lifecycle.push(event); return lifecycle.length > 1; } });
+    await h.bridge.bind(h.binding);
+    h.setRunId("run_1");
+    await h.subscriptions[0].onEvent({ type: "session.status", properties: { sessionID: "ses_1", status: { type: "idle" } } });
+    await flush();
+    await h.subscriptions[0].onEvent({ type: "session.updated", properties: { info: { id: "ses_1", title: "Final title" } } });
+    await h.subscriptions[0].onEvent({ type: "session.idle", properties: { sessionID: "ses_1" } });
+    scheduled.find(({ delay }) => delay === 100)?.callback();
+    await flush();
+    assert.equal(lifecycle.length, 2);
+    assert.deepEqual(lifecycle[1], lifecycle[0]);
+    assert.equal(lifecycle[1].status, "completed");
+    h.bridge.stop();
+  });
+
   it("reuses one global workspace subscription for device activity lifecycle", async () => {
     const lifecycle = [];
     const h = harness({ publishActivityTaskStatus: (event) => { lifecycle.push(event); return true; } });
@@ -125,6 +403,32 @@ describe("remote session event bridge", () => {
     assert.equal(h.subscriptions.length, 1);
     assert.equal(await h.bridge.bind({ ...h.binding, sessionId: "ses_other" }), false);
     assert.equal(await h.bridge.bind({ ...h.binding, connectionGeneration: 8 }), false);
+  });
+
+  it("projects the exact stored model-event shape and aborts polling on clear", async () => {
+    const calls = [];
+    const scheduled = [];
+    const h = harness({
+      listSessionModelEvents: async (input) => {
+        calls.push(input);
+        return { cursor: 9, items: [{
+          workspaceId: "ws_1", sessionId: "ses_1", seq: 9, type: "session.model.updated",
+          revision: 3, mode: "explicit", model: { providerID: "p", modelID: "m" }, updatedAt: 100,
+        }] };
+      },
+      timers: { setTimeout: (callback, delay) => { scheduled.push({ callback, delay }); return callback; }, clearTimeout() {} },
+    });
+    assert.equal(await h.bridge.bind(h.binding), true);
+    scheduled.find(({ delay }) => delay === 1_000)?.callback();
+    await flush();
+    assert.deepEqual(h.published.at(-1).event.data, {
+      type: "session.model.updated",
+      preference: { revision: 3, mode: "explicit", model: { providerID: "p", modelID: "m" }, updatedAt: 100 },
+    });
+    assert.equal(calls[0].since, 0);
+    assert.equal(calls[0].signal.aborted, false);
+    h.bridge.clear();
+    assert.equal(calls[0].signal.aborted, true);
   });
 
   it("blocks binding until SSE is connected and captures output emitted immediately after readiness", async () => {

@@ -7,6 +7,9 @@ import { OpenTargetProvider } from "../src/lib/target-provider";
 import { ArtifactActionsProvider } from "../src/react-app/domains/session/artifacts/artifact-actions-provider";
 import { useFilesPanelStore } from "../src/react-app/domains/session/files/files-panel-store";
 import { t } from "../src/i18n";
+import { LocalProvider } from "../src/react-app/kernel/local-provider";
+import { setSessionModelChoice, setSessionVariantChoice } from "../src/react-app/kernel/session-model-store";
+import { setSessionAgentChoice } from "../src/react-app/kernel/session-agent-store";
 
 // 此回归只验证文件入口分发；浮层布局由实际 Electron 页面验收。
 const Container = ({ children }: any) => <>{children}</>;
@@ -81,6 +84,7 @@ test.each([
       await act(async () => {
         view = create(
           <QueryClientProvider client={query}>
+            <LocalProvider persist={false}>
             <OpenTargetProvider
               onOpenTarget={(target) =>
                 store.openFile(sessionId, {
@@ -107,6 +111,7 @@ test.each([
                 <ArtifactCard artifact={item} />
               </ArtifactActionsProvider>
             </OpenTargetProvider>
+            </LocalProvider>
           </QueryClientProvider>,
         );
       });
@@ -136,6 +141,11 @@ test.each([
         return;
       }
       store.clearSession(sessionId);
+      // Read the target session at open time, including choices changed after mount.
+      const model = { providerID: "selected-provider", modelID: "selected-model" };
+      setSessionModelChoice("ws", sessionId, model);
+      setSessionVariantChoice("ws", sessionId, "high");
+      setSessionAgentChoice("ws", sessionId, "plan");
       await act(async () => {
         view!.root
           .findAllByType("button")
@@ -146,7 +156,7 @@ test.each([
           .props.onClick();
       });
       expect(opened).toEqual([
-        { workspaceId: "ws", sessionId, path: item.path },
+        { workspaceId: "ws", sessionId, path: item.path, conversationOptions: { model, agent: "plan", variant: "high" } },
       ]);
       expect(
         useFilesPanelStore.getState().sessions[sessionId]?.tabs ?? [],

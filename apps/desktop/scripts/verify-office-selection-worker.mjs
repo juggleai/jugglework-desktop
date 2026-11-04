@@ -8,12 +8,14 @@ import { OfficeSelectionEdits } from "../../server/dist/office/selection-edits.j
 import { describeOfficeSelectionTool } from "../../server/dist/office/selection-tools.js";
 import { createOfficeResources } from "../electron/office-resources.mjs";
 import { readOfficePageSelection } from "../electron/office-page-selection.mjs";
+import { readOfficePageText } from "../electron/office-page-text.mjs";
 import { revealOfficePageSelection } from "../electron/office-page-reveal.mjs";
 import { waitForWordPageCommit, waitForSheetPageCommit, waitForSlidePageCommit } from "../electron/office-page-commit.mjs";
 
 const root = process.argv[2];
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const picturePageTest = process.argv.includes("--slide-picture-page");
+const wordInput = process.argv.find((arg) => arg.startsWith("--word-soft-break-input="))?.slice("--word-soft-break-input=".length);
 app.setPath("userData", join(root, "profile"));
 app.commandLine.appendSwitch("use-mock-keychain");
 app.commandLine.appendSwitch("disable-background-networking");
@@ -200,11 +202,12 @@ try {
   for (const kind of ["doc", "sheet", "slide"]) {
      const filter = process.argv.find((arg) => arg.startsWith("--kind="))?.slice(7);
      if (filter && filter !== kind) continue;
+     if (wordInput && kind !== "doc") continue;
      if (["--slide-page", "--slide-page-ui", "--slide-identity", "--slide-picture-page"].some((flag) => process.argv.includes(flag)) && kind !== "slide") continue;
     console.log(`验证 ${kind} 页面`);
      const picturePageInput = picturePageTest && process.argv.find((arg) => arg.startsWith("--slide-picture-page-input="))?.split("=").slice(1).join("=");
-     const created = picturePageInput ? { file_path: picturePageInput } : await engine.tool(`create_${kind}`, {});
-     if (!picturePageInput) {
+     const created = picturePageInput || wordInput ? { file_path: picturePageInput || wordInput } : await engine.tool(`create_${kind}`, {});
+     if (!picturePageInput && !wordInput) {
      templates.push(created.file_path);
     const query = { doc: "doc_get_last_operable_pos", sheet: "sheet_get_sheet_info", slide: "slide_get_info" }[kind];
     await eventually(async () => { const info = await engine.tool(query, { file_id: created.file_id }); return kind !== "slide" || info.is_open; });
@@ -275,8 +278,44 @@ try {
     await eventually(async () => { await current.webContents.executeJavaScript(`(${prepare.toString()})(window,1000)`); return true; });
     // 页面函数首参是 scope，单独序列化注入 window，避免把窗口当作 JSON 传递。
     edits = new OfficeSelectionEdits({ document: async () => document, prepare: async () => current.webContents.executeJavaScript(`(${prepare.toString()})(window,1000)`), selection: async () => {const selected=await read();if(process.argv.includes("--inspect"))console.log(JSON.stringify({captureSelection:selected}));return selected;},
+      text: async (_document, ranges, version) => {
+        const texts = await evaluate(readOfficePageText, { ranges, version });
+        if (wordInput) console.log(JSON.stringify({ wordPageRead: { version, ranges, complete: texts !== null,
+          page: await evaluate(() => { const s = window.getLocalEditManager().getLocalEditService(); return { version: s.docVersion, submitted: s.editSubmitCount, received: s.editResultCount }; }) } }));
+        return texts;
+      },
       tool: (name, args) => { if (picturePageTest) assert.ok(name.startsWith("slide_get_"), "图片页采集只允许读取"); return engine.tool(name, args); },
       modified: async () => { assert.equal(picturePageTest, false); }, save: async () => { assert.equal(picturePageTest, false); await engine.save(document.engineFileId); return document; } });
+    if (wordInput) {
+      const structure = await engine.tool("doc_resolve_document_structure", { file_id: editor.file_id, mode: "compact", limit: 257, text_preview_length: 200 });
+      const first = structure.nodes[0];
+      const raw = await evaluate(readOfficePageText, { ranges: [{ begin: first.start_index, end: first.end_index }], version: structure.version });
+      console.log(JSON.stringify({ wordSoftBreakRaw: raw, pageVersion: await evaluate(() => {
+        const service = window.getLocalEditManager?.()?.getLocalEditService?.();
+        return { version: service?.docVersion, submitted: service?.editSubmitCount, received: service?.editResultCount, loaded: window.App?.GlobalConfig?.isLocalEditChunkFinish };
+      }) }));
+      assert.ok(raw?.[0].includes("\u000b"));
+      assert.equal(raw[0].replace(/\u000b/g, ""), first.text_preview);
+      const selected = structure.nodes.find((node) => node.type === "Paragraph" && node.start_index > first.end_index && node.end_index - node.start_index > 4);
+      const locator = { kind: "doc-text", ranges: [{ begin: selected.start_index, end: selected.start_index + 2 }] };
+      await evaluate(revealOfficePageSelection, locator);
+      const ref = await edits.capture(document, "word-soft-break", await read());
+      await edits.validate("ws", "chat", [ref.referenceId]);
+      await edits.prepareTurn("ws", "chat", "soft-break-turn", { officeSelectionRefs: [ref.referenceId],
+        officeInstructions: [{ instructionId: "word-instruction", text: "修改所选正文", bindingState: "bound", referenceIds: [ref.referenceId] }] });
+      const result = await edits.call("ws", "chat", "soft-break-turn", "assistant", "doc_replace_text", { text: "验证" }, ref.referenceId);
+      assert.equal(result.receipt.status, "modified");
+      assert.equal(result.receipt.readback, "confirmed");
+      const saved = await edits.save("ws", "chat", "soft-break-turn", ref.referenceId);
+      assert.equal(saved.receipt.saved, true);
+      assert.equal((await engine.editor(created.file_path)).is_dirty, false);
+      const latest = await engine.tool("doc_get_last_operable_pos", { file_id: editor.file_id });
+      assert.deepEqual(await evaluate(readOfficePageText, { ranges: [{ begin: first.start_index, end: first.end_index }], version: latest.version }), raw);
+      console.log(JSON.stringify({ wordSoftBreak: "passed", reference: ref.referenceId, locator: ref.locator, readback: result.receipt.readback, saved: saved.receipt.saved }));
+      current.destroy(); current = null; attached.dispose(); attached = null;
+      await engine.close(editor.file_id, true);
+      continue;
+    }
     if (picturePageTest) {
       const before = await engine.tool("slide_get_info", { file_id: editor.file_id });
       const pages = [];

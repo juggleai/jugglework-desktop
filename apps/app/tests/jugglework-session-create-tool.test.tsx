@@ -37,6 +37,22 @@ function sessionCreatePart(): DynamicToolUIPart {
 }
 
 describe("JuggleWorkSessionCreateTool", () => {
+  test("file-host history renders without router navigation or new-chat actions", () => {
+    const html = renderToStaticMarkup(
+      <MessageListProvider
+        historyActionsEnabled={false}
+        workspaceId="workspace-a" sessionId="session-origin" showThinking={false}
+        developerMode={false} displaySuggestions={false} providerConnectedCount={1}
+        dispatchAction={noop} setPrompt={noop} onRevertToUserMessage={noop}
+        onForkAtMessage={noop} onEditUserMessage={noop}
+        onMcpReconnect={async () => "connected"} onMcpReopenAuthorization={async () => {}} onMcpRetry={noop}
+      >
+        <JuggleWorkSessionCreateTool part={sessionCreatePart()} />
+      </MessageListProvider>,
+    );
+    expect(html).not.toContain("data-open-created-session");
+  });
+
   test("renders named created-chat rows with an Open chat action for each session", () => {
     const html = renderToStaticMarkup(
       <MemoryRouter>

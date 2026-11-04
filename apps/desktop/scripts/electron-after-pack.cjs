@@ -102,6 +102,29 @@ function resolvePackagedResourcesPath(context) {
   return path.join(context.appOutDir, "resources");
 }
 
+/** 校验桌面页面入口使用包内相对资源，避免网页构建被误装入 file:// 安装包。
+ * @param {object} context electron-builder 打包上下文
+ */
+function verifyRendererResources(context) {
+  const resources = resolvePackagedResourcesPath(context);
+  if (!resources) throw new Error("无法确定安装包页面资源目录");
+  const root = path.join(resources, "app-dist");
+  for (const entry of ["index.html", "file-window.html", "overlay.html", "pet.html"]) {
+    const file = path.join(root, entry);
+    if (!fs.existsSync(file)) throw new Error(`缺少桌面页面入口：${entry}`);
+    const html = fs.readFileSync(file, "utf8");
+    for (const match of html.matchAll(/<(?:script|link|img)\b[^>]*?\b(?:src|href)=["']([^"']+)["']/gi)) {
+      const reference = match[1];
+      if (/^(?:https?:|data:|#)/i.test(reference)) continue;
+      // TIPS: Vite 网页构建的 /assets 在 file:// 下指向磁盘根目录，文件存在也不能当作桌面资源。
+      if (!reference.startsWith("./")) throw new Error(`${entry} 资源必须使用相对路径，请运行桌面完整构建：${reference}`);
+      const asset = path.resolve(root, decodeURIComponent(reference.split(/[?#]/)[0]));
+      if (!asset.startsWith(`${root}${path.sep}`) || !fs.existsSync(asset) || !fs.statSync(asset).isFile())
+        throw new Error(`${entry} 缺少包内资源：${reference}`);
+    }
+  }
+}
+
 /** 将已提供的本地 Office SDK 复制到安装包；不联网下载或读取外部 App。 */
 function packageBundledOfficeResources(context) {
   if (!["darwin", "win32"].includes(context.electronPlatformName)) return;
@@ -355,12 +378,14 @@ async function runAfterPack(context, dependencies = {}) {
   const verifyUiControlMcp = dependencies.verifyUiControlMcp ?? verifyBundledUiControlMcp;
   const verifyUiControlMcpRuntime = dependencies.verifyUiControlMcpRuntime ?? verifyBundledUiControlMcpRuntime;
   const verifyMacTrayResources = dependencies.verifyMacTrayResources ?? verifyPackagedMacTrayResources;
+  const verifyRenderer = dependencies.verifyRenderer ?? verifyRendererResources;
   const signHelper = dependencies.signHelper ?? signBundledHelpers;
   const writeUpdateConfiguration = dependencies.writeUpdateConfiguration ?? writePackagedUpdateConfiguration;
   verifyContracts(context);
   verifyUiControlMcp(context);
   await verifyUiControlMcpRuntime(context);
   verifyMacTrayResources(context);
+  verifyRenderer(context);
   writeUpdateConfiguration(context);
   packageOfficeResources(context);
 
@@ -445,3 +470,4 @@ module.exports.verifyBundledUiControlMcpRuntime = verifyBundledUiControlMcpRunti
 module.exports.writePackagedUpdateConfiguration = writePackagedUpdateConfiguration;
 module.exports.windowsPublisherNames = windowsPublisherNames;
 module.exports.packageBundledOfficeResources = packageBundledOfficeResources;
+module.exports.verifyRendererResources = verifyRendererResources;

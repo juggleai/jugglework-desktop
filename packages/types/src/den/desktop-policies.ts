@@ -261,6 +261,66 @@ export const desktopConfigSchema = desktopPolicyValueSchema
 
 export type DesktopConfig = z.infer<typeof desktopConfigSchema>;
 
+// Shared App/Main model policy. Keep engine-reported provider source separate from renderer model choices.
+export type DesktopAppRestrictionKey = DesktopPolicyKey;
+export type DesktopAppRestrictionChecker = (input: { restriction: DesktopAppRestrictionKey }) => boolean;
+export type DesktopProviderSource = "env" | "api" | "config" | "custom";
+export const DESKTOP_RESTRICTION_OPENCODE_PROVIDER_ID = "opencode";
+
+export function isProviderHiddenFromConnectUi(providerId: string): boolean {
+  return ["jugglework", DESKTOP_RESTRICTION_OPENCODE_PROVIDER_ID].includes(providerId.trim().toLowerCase());
+}
+
+/** Empty catalog is unrestricted; source=config is governed by the custom-provider policy. */
+export function readDesktopAllowedModels(config: DesktopConfig | null | undefined): readonly string[] {
+  return config?.allowedModels ?? [];
+}
+
+function isCloudManagedProviderId(providerId: string) {
+  return /^lpr_/i.test(providerId) || providerId === "jugglework";
+}
+
+type ModelPolicyInput = {
+  checkRestriction: DesktopAppRestrictionChecker;
+  allowedModels?: readonly string[];
+  providerSource?: DesktopProviderSource;
+};
+
+function isAllowedByModelCatalog(input: {
+  allowedModels?: readonly string[];
+  providerId: string;
+  modelId?: string;
+  providerSource?: DesktopProviderSource;
+}) {
+  if (!input.allowedModels?.length) return true;
+  const providerId = input.providerId.trim();
+  if (!providerId || isCloudManagedProviderId(providerId) || input.providerSource === "config") return true;
+  const modelId = input.modelId?.trim();
+  return modelId ? input.allowedModels.includes(`${providerId}/${modelId}`)
+    : input.allowedModels.some((entry) => entry.startsWith(`${providerId}/`));
+}
+
+export function checkDesktopAppRestriction(input: { config: DesktopConfig | null | undefined; restriction: DesktopAppRestrictionKey }) {
+  return input.config?.[input.restriction] === false;
+}
+
+export function isDesktopProviderBlocked(input: ModelPolicyInput & { providerId: string }) {
+  const providerId = input.providerId.trim().toLowerCase();
+  if (!providerId) return false;
+  if (providerId === DESKTOP_RESTRICTION_OPENCODE_PROVIDER_ID && input.checkRestriction({ restriction: "allowZenModel" })) return true;
+  // Org-managed providers remain exempt even when their engine source is config.
+  if (input.providerSource === "config" && !isCloudManagedProviderId(input.providerId.trim())) {
+    return input.checkRestriction({ restriction: "allowCustomProviders" });
+  }
+  return !isAllowedByModelCatalog(input);
+}
+
+export function isDesktopModelBlocked(input: ModelPolicyInput & { model: { providerID: string; modelID: string } }) {
+  return isDesktopProviderBlocked({ ...input, providerId: input.model.providerID }) || !isAllowedByModelCatalog({
+    allowedModels: input.allowedModels, providerId: input.model.providerID, modelId: input.model.modelID, providerSource: input.providerSource,
+  });
+}
+
 function normalizeDesktopVersionString(value: unknown) {
   if (typeof value !== "string") {
     return null;

@@ -36,6 +36,7 @@ import {
 import { isDesktopModelBlocked } from "@/app/cloud/desktop-app-restrictions";
 import { openModelPickerEvent } from "@/react-app/shell/new-providers-listener";
 import { newProvidersEvent } from "@/app/lib/provider-events";
+import { t } from "@/i18n";
 
 function getProviderDisplayName(providerId: string) {
   return providerId
@@ -173,6 +174,7 @@ function isSameModel(a: ModelRef, b: ModelRef) {
 }
 
 interface ModelSelectProps {
+  restrictedHost?: boolean;
   open: boolean;
   value: ModelRef;
   onOpenChange: (open: boolean) => void;
@@ -182,6 +184,7 @@ interface ModelSelectProps {
 }
 
 export function ModelSelect({
+  restrictedHost = false,
   open,
   value,
   onOpenChange,
@@ -246,7 +249,7 @@ export function ModelSelect({
             <PopoverTrigger
               type="button"
               disabled={disabled}
-              aria-label="Change model"
+              aria-label={t("composer.change_model")}
               aria-keyshortcuts="Meta+Alt+/"
               className={compact
                 ? "flex size-9 items-center justify-center rounded-full text-gray-9 transition-colors hover:bg-gray-3 hover:text-gray-12 disabled:pointer-events-none disabled:opacity-60"
@@ -255,12 +258,12 @@ export function ModelSelect({
           }
         >
           {compact ? <BrainCircuit className="size-5" strokeWidth={1.7} /> : <><span className="max-w-48 truncate">
-            {selectedOption?.title ?? value.modelID ?? "Select model"}
+            {selectedOption?.title ?? (value.modelID || t("notifications.select_model"))}
           </span>
           <ChevronDown className="h-3 w-3" /></>}
         </TooltipTrigger>
         <TooltipContent>
-          Change model
+          {t("composer.change_model")}
         </TooltipContent>
       </Tooltip>
       <PopoverContent
@@ -272,10 +275,10 @@ export function ModelSelect({
           <CommandHeader>
             <CommandInput
               ref={searchInputRef}
-              placeholder="Search models..."
+              placeholder={t("model_picker.search_placeholder")}
             />
           </CommandHeader>
-          <CommandEmpty>No models found.</CommandEmpty>
+          <CommandEmpty>{t("model_picker.no_results")}</CommandEmpty>
           <CommandList>
             {(group: ModelSelectGroup) => (
               <CommandGroup
@@ -322,7 +325,7 @@ export function ModelSelect({
             )}
           </CommandList>
           {/* Link to full model picker */}
-          <div className="border-t border-border px-2 py-1.5">
+          {!restrictedHost && <div className="border-t border-border px-2 py-1.5">
             <div className="flex items-center gap-1">
               <button
                 type="button"
@@ -334,10 +337,10 @@ export function ModelSelect({
                 }}
               >
                 <Settings2 className="size-3.5" />
-                All models
+                {t("model_picker.all_models")}
               </button>
             </div>
-          </div>
+          </div>}
         </Command>
       </PopoverContent>
     </Popover>

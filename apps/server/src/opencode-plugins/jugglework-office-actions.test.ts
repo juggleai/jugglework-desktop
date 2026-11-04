@@ -17,6 +17,7 @@ test("Office 语义查询和保存使用调用聊天身份，不使用窗口焦�
       if (url.pathname === "/workspaces")
         return Response.json({ items: [{ id: "ws_A", path: "/workspace/A" }, { id: "ws_B", path: "/workspace/B" }] });
       if (url.pathname === "/workspace/ws_B/office/current") {
+        expect(url.searchParams.get("messageId")).toBe("msg_B");
         sessions.push(url.searchParams.get("sessionId")!);
         return Response.json({
           document: {

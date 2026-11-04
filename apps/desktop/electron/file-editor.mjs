@@ -2,9 +2,9 @@ import { dialog } from "electron";
 
 /**
  * 两种文件宿主共用文本草稿与保存入口；按工作区和实际相对路径识别同一文件。
- * @param {object} options 托管服务客户端、可信窗口列表及发送方解析
+ * @param {object} options 托管服务客户端、候选窗口及文件宿主授权
  */
-export function createFileEditor({ client, getWindows, resolveWindow }) {
+export function createFileEditor({ client, getWindows, authorizeFileEditor, canReceiveFileEditor }) {
   const records = new Map();
   const key = (input) => JSON.stringify([input.workspaceId, input.path]);
   const record = (input) => {
@@ -23,7 +23,7 @@ export function createFileEditor({ client, getWindows, resolveWindow }) {
   };
   const publish = (item) => {
     for (const window of getWindows())
-      if (!window.isDestroyed())
+      if (canReceiveFileEditor(window, item))
         window.webContents.send("jugglework:file-editor:changed", { ...item });
   };
   const save = async (input) => {
@@ -51,7 +51,7 @@ export function createFileEditor({ client, getWindows, resolveWindow }) {
     publish(item);
     return item;
   };
-  const prepare = async (input, window, closing = false) => {
+  const prepare = async (input, window, closing = false, authorize = () => {}) => {
     const item = record(input);
     if (!item.draft) return true;
     const options = {
@@ -68,6 +68,7 @@ export function createFileEditor({ client, getWindows, resolveWindow }) {
     const { response } = await (window
       ? dialog.showMessageBox(window, options)
       : dialog.showMessageBox(options));
+    authorize();
     if (response === options.cancelId) return false;
     if (closing && response === 1) {
       item.draft = null;
@@ -96,37 +97,36 @@ export function createFileEditor({ client, getWindows, resolveWindow }) {
     },
     /** 注册共用编辑会话，文档内容仅在当前桌面的可信窗口间传递。 */
     registerIpc(ipcMain) {
-      const host = (event) => {
-        const window = resolveWindow(event.sender);
-        if (!window) throw new Error("文件编辑窗口已关闭");
-        return window;
-      };
+      const host = (event, input) => authorizeFileEditor(event, input);
       ipcMain.handle("jugglework:file-editor:state", (event, input) => {
-        host(event);
+        host(event, input);
         return record(input);
       });
       ipcMain.handle("jugglework:file-editor:update", (event, input, draft) => {
-        host(event);
+        host(event, input);
         const item = record(input);
         if (item.external && draft) throw new Error("文件已由外部应用接管");
         item.draft = draft;
         publish(item);
         return item;
       });
-      ipcMain.handle("jugglework:file-editor:save", (event, input) => {
-        host(event);
-        return save(input);
+      ipcMain.handle("jugglework:file-editor:save", async (event, input) => {
+        host(event, input);
+        const result = await save(input);
+        host(event, input);
+        return result;
       });
-      ipcMain.handle("jugglework:file-editor:prepare", (event, input) =>
-        prepare(input, host(event)),
-      );
-      ipcMain.handle("jugglework:file-editor:close", (event, input) =>
-        prepare(input, host(event), true),
-      );
+      for (const action of ["prepare", "close"])
+        ipcMain.handle(`jugglework:file-editor:${action}`, async (event, input) => {
+          const window = host(event, input);
+          const result = await prepare(input, window, action === "close", () => { host(event, input); });
+          host(event, input);
+          return result;
+        });
       ipcMain.handle(
         "jugglework:file-editor:external",
         (event, input, external) => {
-          host(event);
+          host(event, input);
           const item = record(input);
           item.external = external;
           item.saved = null;

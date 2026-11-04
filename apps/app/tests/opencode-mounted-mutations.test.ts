@@ -100,7 +100,65 @@ afterEach(() => {
 });
 
 describe("mounted JuggleWork session mutations", () => {
-  test("routes promptAsync through run start and preserves the complete prompt body", async () => {
+  for (const abort of [false, true]) test(`late initial hydration cannot resurrect a run after ${abort ? "abort" : "terminal observation"}`, async () => {
+    const list = deferred<Response>();
+    const nextList = deferred<Response>();
+    const controller = new AbortController();
+    let lists = 0;
+    const calls = mockFetch((call) => {
+      if (call.url.endsWith("/session-runs")) return ++lists === 1 ? list.promise : nextList.promise;
+      if (call.url.endsWith("/event")) return eventResponse([abort && lists === 1
+        ? { type: "server.connected", properties: {} }
+        : { type: "session.idle", properties: { sessionID: "session-race" } }]);
+      if (call.url.endsWith("/observations")) return jsonResponse({ cleared: true });
+      throw new Error(`Unexpected request ${call.url}`);
+    });
+    const client = createClient(`https://${abort ? "abort" : "terminal"}-race.example.test/workspace/w/opencode`, undefined, { mode: "jugglework", token: "fixture" });
+    try {
+      const subscription = await client.event.subscribe(undefined, { signal: controller.signal });
+      for await (const _event of subscription.stream) { if (abort) controller.abort(); }
+      list.resolve(jsonResponse({ items: [{ ...activeRun("stale-run"), sessionId: "session-race" }] }));
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      // A later terminal event must not find a stale run from the old read.
+      const next = await client.event.subscribe();
+      for await (const _event of next.stream) {}
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      expect(calls.some((call) => call.url.endsWith("/observations"))).toBe(false);
+    } finally { controller.abort(); list.resolve(jsonResponse({ items: [] })); nextList.resolve(jsonResponse({ items: [] })); }
+  });
+
+  test("an aborted subscription handles rejected background hydration", async () => {
+    const list = deferred<Response>();
+    mockFetch((call) => call.url.endsWith("/session-runs") ? list.promise : eventResponse([{ type: "server.connected" }]));
+    const controller = new AbortController();
+    const subscription = await createClient("https://reject.example.test/workspace/w/opencode", undefined, { mode: "jugglework", token: "fixture" }).event.subscribe(undefined, { signal: controller.signal });
+    for await (const _event of subscription.stream) {}
+    controller.abort();
+    list.resolve(jsonResponse({ code: "unavailable", message: "fixture" }, 503));
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  });
+
+  test("consumes SSE while initial active-run hydration is still pending", async () => {
+    const list = deferred<Response>();
+    const calls = mockFetch((call) => call.url.endsWith("/session-runs")
+      ? list.promise : eventResponse([{ type: "server.connected", properties: {} }]));
+    const controller = new AbortController();
+    const received: unknown[] = [];
+    const consuming = (async () => {
+      const subscription = await mountedClient().event.subscribe(undefined, { signal: controller.signal });
+      for await (const event of subscription.stream) received.push(event);
+    })();
+    try {
+      await waitUntil(() => received.length > 0);
+      expect(calls.some((call) => call.url.endsWith("/opencode/event"))).toBe(true);
+    } finally {
+      controller.abort();
+      list.resolve(jsonResponse({ items: [] }));
+      await consuming;
+    }
+  });
+
+  test("routes promptAsync through run start with the displayed model for authoritative auto resolution", async () => {
     const calls = mockFetch((call) => {
       if (call.url.endsWith("/workspace/workspace-1/sessions/session-1/runs/start")) {
         return jsonResponse({ run: activeRun("run-local") }, 202);
@@ -346,6 +404,22 @@ describe("mounted JuggleWork session mutations", () => {
     expect(observationAttempts).toBe(2);
     const observations = calls.filter((call) => call.url.endsWith("/sessions/session-1/runs/run-terminal/observations"));
     expect(observations.map((call) => call.body)).toEqual([{ status: "completed" }, { status: "completed" }]);
+  });
+
+  test("sends MessageAbortedError as aborted through the mounted SSE observation queue", async () => {
+    const run = { ...activeRun("run-engine-abort"), generation: 19, status: "aborting", abortRequestedAt: 3 };
+    const calls = mockFetch((call) => {
+      if (call.url.endsWith("/workspace/workspace-1/session-runs")) return jsonResponse({ items: [run] });
+      if (call.url.includes("/opencode/event")) return eventResponse([{
+        type: "session.error", properties: { sessionID: "session-1", error: { name: "MessageAbortedError", data: { message: "Aborted" } } },
+      }]);
+      if (call.url.endsWith("/sessions/session-1/runs/run-engine-abort/observations")) {
+        return jsonResponse({ cleared: true, run: null, terminalStatus: "aborted" });
+      }
+      throw new Error(`Unexpected request: ${call.method} ${call.url}`);
+    });
+    await drainEvents(mountedClient());
+    expect(calls.filter(call => call.url.endsWith("/observations")).map(call => call.body)).toEqual([{ status: "aborted" }]);
   });
 
   test("does not let an older empty active-run snapshot erase a newly accepted generation", async () => {

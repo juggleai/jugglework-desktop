@@ -216,6 +216,24 @@ export class ArtifactRegistry {
       }));
   }
 
+  /** 删除不应进入交付记录的未确认目标，并重新计算轮次状态。 */
+  discardTargets(
+    sessionId: string,
+    predicate: (target: FileDeliveryTarget) => boolean,
+  ): number {
+    let discarded = 0;
+    for (const turn of this.turns.values()) {
+      if (turn.sessionId !== sessionId) continue;
+      const targets = turn.targets.filter((target) => !predicate(target));
+      if (targets.length === turn.targets.length) continue;
+      discarded += turn.targets.length - targets.length;
+      turn.targets = targets;
+      this.updateStatus(turn);
+    }
+    if (discarded) this.persist();
+    return discarded;
+  }
+
   /** 查询已登记的轮次及元信息；返回副本避免界面修改内部记录。 */
   list(sessionId: string): SessionFileArtifacts {
     const turns = [...this.turns.values()].filter(

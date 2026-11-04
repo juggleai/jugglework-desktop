@@ -88,10 +88,61 @@ body,
   object-fit: contain;
 }
 .file-window-content {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   flex: 1;
   min-height: 0;
   overflow: hidden;
   background: color-mix(in srgb, var(--muted) 35%, var(--background));
+}
+.file-window-content.has-conversation {
+  grid-template-columns: minmax(0, 1fr) 1px minmax(0, var(--conversation-width));
+}
+.file-window-document, .file-window-conversation {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.file-window-conversation[hidden] { display: none; }
+.file-window-viewer, .file-window-conversation-body { flex: 1; min-height: 0; min-width: 0; overflow: hidden; }
+.file-window-conversation { background: var(--background); }
+.file-window-conversation-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 48px;
+  min-height: 48px;
+  padding: 0 16px 0 20px;
+}
+.file-window-assistant-icon { width: 24px; height: 24px; object-fit: contain; }
+.file-window-conversation-title { font-size: 16px; font-weight: 600; letter-spacing: -0.02em; }
+.file-window-open-session { color: var(--muted-foreground); }
+.file-window-close-conversation { margin-left: auto; color: var(--muted-foreground); }
+.file-window-ai-entry {
+  height: 28px;
+  padding: 0 9px;
+  gap: 5px;
+  margin-left: 6px;
+  border-radius: 6px;
+  background: var(--foreground);
+  color: var(--background);
+  font-size: 13px;
+  font-weight: 500;
+  box-shadow: none;
+}
+.file-window-ai-entry:hover { background: color-mix(in srgb, var(--foreground) 85%, var(--background)); }
+.file-window-ai-entry img { width: 22px; height: 22px; object-fit: contain; }
+.file-window-separator { position: relative; z-index: 1; cursor: col-resize; touch-action: none; background: transparent; }
+/* TIPS: 分栏拖拽不绘制线条，热区向两侧扩展，不占据文件与对话的留白。 */
+.file-window-separator::after { content: ""; position: absolute; inset: 0 -3px; }
+.file-window-separator:hover, .file-window-separator:focus-visible { background: transparent; outline: none; }
+.file-window-conversation [data-slot="scroll-area-scrollbar"] { width: 7px; padding: 1px; border: 0; }
+.file-window-conversation [data-slot="scroll-area-thumb"] { background: color-mix(in srgb, var(--muted-foreground) 35%, transparent); }
+@media (max-width: 760px) {
+  .file-window-content.has-conversation { grid-template-columns: minmax(0, 1fr); }
+  .file-window-content.has-conversation .file-window-document, .file-window-separator { display: none; }
 }
 .file-window-empty {
   display: flex;

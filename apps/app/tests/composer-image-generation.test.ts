@@ -123,7 +123,7 @@ describe("composer image generation", () => {
   test("discovers models in the active workspace and attaches options to the draft", () => {
     const surface = readFileSync(sessionSurfacePath, "utf8");
     const route = readFileSync(sessionRoutePath, "utf8");
-    expect(route).toContain("return submitSessionDraft({");
+    expect(route).toContain("onSendDraft: createSessionDraftSender({");
     const discovery = readFileSync(new URL("../src/react-app/domains/connections/media-model-queries.ts", import.meta.url), "utf8");
     const sender = readFileSync(new URL("../src/react-app/domains/session/sync/draft-submission.ts", import.meta.url), "utf8");
     expect(discovery).toContain('action: "image_models_list"');

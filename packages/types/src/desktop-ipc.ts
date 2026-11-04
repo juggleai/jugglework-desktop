@@ -720,6 +720,11 @@ export type DesktopCommandMap = {
 
   // Bootstrap config
   getDesktopBootstrapConfig: { args: []; result: DesktopBootstrapConfig };
+  /** 主窗口同步文件模式所需的非凭据策略，外部文件窗口不可调用。 */
+  syncFileWindowDesktopConfig: {
+    args: [input: { baseUrl: string; signedIn: boolean; userId: string | null; organizationId: string | null; config: unknown }];
+    result: void;
+  };
   debugDesktopBootstrapConfig: { args: []; result: unknown };
   clearDesktopBootstrapConfig: { args: []; result: unknown };
   setDesktopBootstrapConfig: {

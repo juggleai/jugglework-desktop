@@ -3,12 +3,24 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { saveArtifactFileCopy } from "./artifact-file-operations.mjs";
+import { saveArtifactFileCopy, resolveArtifactExternalSource } from "./artifact-file-operations.mjs";
 
 const roots = [];
 afterEach(async () => {
   for (const root of roots.splice(0))
     await rm(root, { recursive: true, force: true });
+});
+
+test("外部文件标识解析原件，普通路径不请求服务且无登记的来源不能回退", async () => {
+  const requests = [];
+  const client = { postJson: async (route, body) => { requests.push({ route, body }); return { absolutePath: path.join(tmpdir(), "原始 报告.docx") }; } };
+  assert.equal(await resolveArtifactExternalSource(client, "/workspace", "report.docx"), null);
+  assert.equal(requests.length, 0);
+  assert.equal(await resolveArtifactExternalSource(client, "/workspace", "external-files/key/report.docx"), path.join(tmpdir(), "原始 报告.docx"));
+  assert.deepEqual(requests, [{ route: "/office/local-files/resolve", body: { workspaceRoot: "/workspace", path: "external-files/key/report.docx" } }]);
+  assert.equal(await resolveArtifactExternalSource({ postJson: async () => ({ absolutePath: null }) }, "/other", "external-files/key/report.docx"), null);
+  await assert.rejects(resolveArtifactExternalSource({ postJson: async () => ({ absolutePath: "relative.docx" }) }, "/workspace", "external-files/key/report.docx"), /来源/);
+  await assert.rejects(resolveArtifactExternalSource({ postJson: async () => { throw new Error("未登记"); } }, "/workspace", "external-files/unknown/report.docx"), /未登记/);
 });
 
 test("copies zero-byte and large files with Unicode names without changing the source", async () => {

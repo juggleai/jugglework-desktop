@@ -139,7 +139,17 @@ export function createManagedRuntimeClient({
   }
 
   /**
-   * @param {"GET" | "POST"} method
+   * @param {string} pathname
+   * @param {unknown} body
+   * @param {{ signal?: AbortSignal }} [options]
+   * @returns {Promise<unknown>}
+   */
+  async function putJson(pathname, body, options = {}) {
+    return requestJson("PUT", pathname, body, options);
+  }
+
+  /**
+   * @param {"GET" | "POST" | "PUT"} method
    * @param {string} pathname
    * @param {unknown} body
    * @param {{ signal?: AbortSignal }} [options]
@@ -243,5 +253,5 @@ export function createManagedRuntimeClient({
     }
   }
 
-  return Object.freeze({ getJson, postJson, postHostJson });
+  return Object.freeze({ getJson, postJson, putJson, postHostJson });
 }

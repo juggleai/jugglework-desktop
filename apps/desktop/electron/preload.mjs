@@ -301,6 +301,17 @@ contextBridge.exposeInMainWorld("__JUGGLEWORK_ELECTRON__", {
     },
   },
   fileWindow: {
+    /** 仅主窗口处理 Main 固定目标的停止准备；确认前不会中止运行。 */
+    onSessionStopRequest(callback) {
+      const handler = async (_event, input) => {
+        let ok = false;
+        try { ok = (await callback({ workspaceId: input.workspaceId, sessionId: input.sessionId }))?.ok === true; }
+        catch { /* Main 收到失败确认后保持原运行，不转发 renderer 错误正文。 */ }
+        await ipcRenderer.invoke("jugglework:file-window:session-stop-reply", { requestId: input.requestId, ok }).catch(() => {});
+      };
+      ipcRenderer.on("jugglework:file-window:session-stop-request", handler);
+      return () => ipcRenderer.removeListener("jugglework:file-window:session-stop-request", handler);
+    },
     /** 旧主进程缺少入口时返回不可用，不把底层 IPC 错误暴露给用户。 */
     available: () => ipcRenderer.invoke("jugglework:file-window:available").catch(() => false),
     /** 打开或激活所属聊天的文件窗口。 */

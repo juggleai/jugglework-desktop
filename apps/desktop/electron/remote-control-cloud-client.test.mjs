@@ -210,6 +210,51 @@ test("a failed or mismatched enrollment response keeps the reusable local record
   assert.equal(completed, false);
 });
 
+test("accepts a long opaque enrollment grant issued by the control plane", async () => {
+  const publicKey = Buffer.alloc(32, 9);
+  const publicKeyFingerprint = createHash("sha256").update(publicKey).digest("hex");
+  const longGrant = `jwenroll_${Buffer.alloc(512, 7).toString("base64url")}`;
+  let sentGrant = null;
+  const credentials = {
+    prepareEnrollment: async () => ({ publicKey: publicKey.toString("base64url") }),
+    completeEnrollment: async (_context, binding) => binding,
+  };
+  const client = createRemoteControlCloudClient({
+    controlPlaneBaseUrl: CONTEXT.controlPlaneBaseUrl,
+    fetcher: async (_url, init) => {
+      sentGrant = JSON.parse(init.body).grant;
+      return jsonResponse({
+        schemaVersion: 1,
+        device: {
+          id: DEVICE_ID,
+          ownerUserId: CONTEXT.userId,
+          organizationId: CONTEXT.organizationId,
+          displayName: "Device",
+          platform: "darwin",
+          enrollmentStatus: "enrolled",
+          enrolledAt: NOW,
+        },
+        credential: {
+          keyId: KEY_ID,
+          algorithm: "Ed25519",
+          publicKeyFingerprint,
+          createdAt: NOW,
+        },
+      }, 201);
+    },
+  });
+
+  const enrolled = await client.enrollDevice({
+    credentials,
+    context: CONTEXT,
+    grant: longGrant,
+    displayName: "Device",
+    platform: "darwin",
+  });
+  assert.equal(enrolled.deviceId, DEVICE_ID);
+  assert.equal(sentGrant, longGrant);
+});
+
 test("accepts Go RFC 3339 timestamps without fractional seconds", async () => {
   const publicKey = Buffer.alloc(32, 6);
   const publicKeyFingerprint = createHash("sha256").update(publicKey).digest("hex");

@@ -133,6 +133,26 @@ test("mode updates are compare-and-set and persist arming exclusions", async () 
   });
 });
 
+test("新会话首次保存请求审批会创建记录，保持收紧权限并拒绝旧版本覆盖", async () => {
+  await withStore((store) => {
+    const input = { workspaceId: "ws", rootSessionId: "fresh-root", requestedMode: "request-approval" as const,
+      expectedRevision: 0, acknowledgementProfileVersion: null, authorizingPrincipal: null,
+      activationExclusionRequestIds: [], now: NOW };
+    assert.equal(store.readModeState("ws", "fresh-root"), null);
+    const first = store.updateMode(input);
+    assert.ok(first.ok);
+    assert.equal(first.state.requestedMode, "request-approval");
+    assert.equal(first.state.effectiveMode, "request-approval");
+    assert.equal(store.readAuthorityRevision("ws", "fresh-root"), 1);
+    assert.deepEqual(store.readModeState("ws", "fresh-root"), first.state);
+    assert.deepEqual(store.listGrants("ws", "fresh-root"), []);
+    assert.deepEqual(store.updateMode(input), { ok: false, error: "stale-revision" });
+    const second = store.updateMode({ ...input, expectedRevision: 1, now: NOW + 1 });
+    assert.ok(second.ok);
+    assert.equal(store.readAuthorityRevision("ws", "fresh-root"), 2);
+  });
+});
+
 test("downgrade unconditionally clears grants and exclusions in one revision", async () => {
   await withStore((store) => {
     enableFullAccess(store, "ws", "root-1");

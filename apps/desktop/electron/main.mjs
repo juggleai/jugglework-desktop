@@ -50,9 +50,12 @@ import { createOfficePanel } from "./office-panel.mjs";
 import { createOfficeSelectionBridge } from "./office-selection-bridge.mjs";
 import { createSystemFileOpening, systemOfficeFilePaths } from "./system-file-opening.mjs";
 import { createFileWindows } from "./file-windows.mjs";
+import { createFileWindowDesktopContext } from "./file-window-desktop-context.mjs";
+import { createFileContextBootstrap } from "./file-context-bootstrap.mjs";
 import { createFileEditor } from "./file-editor.mjs";
+import { readFileWindowAppearance } from "./file-window-appearance.mjs";
 import { createFileWindowDock } from "./file-window-dock.mjs";
-import { saveArtifactFileCopy } from "./artifact-file-operations.mjs";
+import { saveArtifactFileCopy, resolveArtifactExternalSource } from "./artifact-file-operations.mjs";
 import { createMainProcessFetch, mainProcessFetchBody, mainProcessFetchResponse, selectMainProcessFetch } from "./main-fetch.mjs";
 import { createWorkspaceStore } from "./workspace-store.mjs";
 import { createWorkspaceActivityWatcher } from "./workspace-activity-watcher.mjs";
@@ -73,6 +76,7 @@ import { createRemoteControlAgent, normalizeRemoteControlAgentContext } from "./
 import { createRemoteControlE2EEKeyStore } from "./remote-control-e2ee.mjs";
 import { createManagedRuntimeSseClient } from "./managed-runtime-sse-client.mjs";
 import { createRemoteSessionEventBridge } from "./remote-session-event-bridge.mjs";
+import { createRuntimeLifecycleFeedPump } from "./runtime-lifecycle-feed-pump.mjs";
 import { createRemoteEventDiagnostics } from "./remote-event-diagnostics.mjs";
 import { createRemoteControlNotificationController } from "./remote-control-notifications.mjs";
 import { createRemoteControlSleepController, createRemoteControlPowerMonitorController } from "./remote-control-power.mjs";
@@ -189,6 +193,7 @@ const uiControlServer = createUiControlServer({
   getWindow: () => createMainWindow(),
   prepareOfficeSave: (document) => officePanel.prepareSave(document),
   readOfficeSelection: (document) => officePanel.readSelection(document),
+  readOfficeText: (document) => officePanel.readText(document),
 });
 
 // Terminal state is owned by the host, never by a mounted renderer view.
@@ -997,6 +1002,9 @@ const remoteControlNotificationController = createRemoteControlNotificationContr
 });
 let remoteControlAgent = null;
 let remoteSessionEventBridge = null;
+let runtimeLifecycleFeedController = null;
+const useLifecycleV3 = process.env.JUGGLEWORK_LIFECYCLE_V3 !== "0";
+const useLegacyLifecycleFallback = process.env.JUGGLEWORK_LIFECYCLE_LEGACY_FALLBACK === "1";
 const workspaceActivityWatcher = createWorkspaceActivityWatcher({
   workspaceStore,
   getBridge: () => remoteSessionEventBridge,
@@ -1097,6 +1105,14 @@ function createMainRemoteControlAgent() {
   // Keep safeStorage lazy and post-ready. Importing it at module evaluation
   // can trigger native keychain UI for isolated development profiles.
   const { safeStorage } = require("electron");
+  if (process.env.JUGGLEWORK_REMOTE_EVENT_DIAGNOSTICS === "1") {
+    let secureStorageAvailable = false;
+    try { secureStorageAvailable = safeStorage.isEncryptionAvailable() === true; } catch {}
+    remoteEventDiagnostics.info("remote_control_secure_storage", {
+      status: secureStorageAvailable ? "available" : "unavailable",
+      reason: app.commandLine.hasSwitch("use-mock-keychain") ? "mock_keychain" : app.isPackaged ? "packaged" : "development",
+    });
+  }
   const credentialStore = createRemoteControlCredentialStore({
     app,
     safeStorage,
@@ -1120,6 +1136,7 @@ function createMainRemoteControlAgent() {
       const settings = await remoteControlSettingsStore.read();
       return { steer: settings.allowBusySessionSteer, enqueue: settings.allowBusySessionEnqueue };
     },
+    staticFeatures: useLifecycleV3 ? ["live-activity-v3"] : [],
   });
   return createRemoteControlAgent({
     settingsStore: remoteControlSettingsStore,
@@ -1134,7 +1151,9 @@ function createMainRemoteControlAgent() {
     })),
     createWebSocket: ({ url, accessToken }) => new WebSocketClient(url, {
       headers: { Authorization: `Bearer ${accessToken}` },
-      maxPayload: 2 * 1024 * 1024,
+      // The 28 MiB plaintext prompt budget is encrypted and base64url encoded
+      // on the wire, so reserve enough room for that expansion and metadata.
+      maxPayload: 48 * 1024 * 1024,
       perMessageDeflate: false,
     }),
     appVersion: app.getVersion(),
@@ -1439,7 +1458,8 @@ const fileHostClient = createManagedRuntimeClient({
 const fileEditor = createFileEditor({
   client: fileHostClient,
   getWindows: () => [mainWindow, ...fileWindows.windows()].filter(Boolean),
-  resolveWindow: (sender) => sender.id === mainWindow?.webContents.id ? mainWindow : fileWindows.windowFor(sender),
+  authorizeFileEditor: (event, input) => fileWindows.authorizeFileEditor(event, input),
+  canReceiveFileEditor: (window, input) => fileWindows.canReceiveFileEditor(window, input),
 });
 let officeResources;
 /** 延迟初始化配套资源，让未供应 Office 的平台仍可启动普通文件浏览器。 */
@@ -1456,19 +1476,38 @@ function getOfficeResources() {
   }
   return officeResources;
 }
-const officeSelectionBridge = createOfficeSelectionBridge({ ipcMain, getWindow: () => mainWindow });
+const officeComposerWindow = (input) => input.windowId === undefined || input.windowId === mainWindow?.id
+  ? mainWindow : fileWindows.officeComposerWindow(input);
+const officeSelectionBridge = createOfficeSelectionBridge({ ipcMain, getWindow: officeComposerWindow });
 const officePanel = createOfficePanel({
   getWindow: () => mainWindow,
   getWindows: () => fileWindows.windows(),
   resolveWindow: (sender) => sender.id === mainWindow?.webContents.id ? mainWindow : fileWindows.windowFor(sender),
+  authorizeReferences: (event, input) => { if (event.sender !== mainWindow?.webContents) fileWindows.authorizeOfficeReferences(event, input); },
   onDocumentClosed: (id) => fileWindows.documentClosed(id),
   onOpenFile: (window, input) => fileWindows.openDialog(window, input),
   client: fileHostClient,
   resources: getOfficeResources,
   composer: {
     async request(input) {
+      if (input.action === "guard" && !input.closingDocumentId && !officeComposerWindow(input))
+        return { epoch: 0, scope: "unavailable", referenceIds: [], needsConfirmation: false };
+      // TIPS: 关闭的是共享模型，两边未发送的选区都必须确认；普通切换仅检查当前宿主草稿。
+      if (input.action === "guard" && input.closingDocumentId) {
+        const hosts = [mainWindow, ...fileWindows.officeComposerWindows(input.workspaceId, input.sessionId)].filter((window) => window && !window.isDestroyed());
+        const guards = [];
+        for (const window of hosts) guards.push({ windowId: window.id, ...await officeSelectionBridge.request({ ...input, windowId: window.id }) });
+        return { epoch: 0, scope: JSON.stringify(guards.map(({ windowId, epoch, scope }) => ({ windowId, epoch, scope }))),
+          referenceIds: guards.flatMap((guard) => guard.referenceIds), needsConfirmation: guards.some((guard) => guard.needsConfirmation), guards };
+      }
+      if (input.action === "clear" && input.guards) {
+        const results = [];
+        for (const guard of input.guards) results.push(await officeSelectionBridge.request({ ...input, ...guard, action: "clear", guards: undefined }));
+        return { ok: results.every((result) => result.ok), releaseIds: [...new Set(results.flatMap((result) => result.releaseIds ?? []))] };
+      }
       const result = await officeSelectionBridge.request(input);
-      if (input.action === "append" && mainWindow && !mainWindow.isDestroyed()) { mainWindow.show(); mainWindow.focus(); }
+      const window = officeComposerWindow(input);
+      if (input.action === "append" && window && !window.isDestroyed()) { window.show(); window.focus(); }
       return result;
     },
   },
@@ -1481,7 +1520,34 @@ const fileWindowDock = createFileWindowDock({
   activate: (id) => fileWindows.activate(id),
   closeAll: () => fileWindows.closeAll(),
 });
+const fileWindowDesktopContext = createFileWindowDesktopContext({
+  path: path.join(app.getPath("userData"), "file-window-desktop-context.json"),
+  bootstrap: () => workspaceStore.getDesktopBootstrapConfig(),
+  initialize: () => fileContextBootstrap.initialize(),
+});
+const fileContextFallback = () => ({ lang: app.getLocale().toLowerCase().startsWith("zh") ? "zh" : "en", theme: nativeTheme.shouldUseDarkColors ? "dark" : "light" });
+const fileContextBootstrap = createFileContextBootstrap({
+  BrowserWindow, ipcMain, preload: path.join(__dirname, "file-context-preload.cjs"),
+  bootstrap: () => workspaceStore.getDesktopBootstrapConfig(), fetcher: mainProcessFetch,
+  apply: (context) => fileWindowDesktopContext.sync(context), fallback: fileContextFallback,
+  async load(window) {
+    const startUrl = process.env.JUGGLEWORK_ELECTRON_START_URL?.trim() || process.env.ELECTRON_START_URL?.trim();
+    if (startUrl) {
+      const url = new URL(startUrl); url.searchParams.set("file-context", "1");
+      await window.loadURL(url.href);
+    } else await window.loadFile(app.isPackaged ? path.join(process.resourcesPath, "app-dist/index.html") : path.resolve(__dirname, "../../app/dist/index.html"), { query: { "file-context": "1" } });
+  },
+});
 const fileWindows = createFileWindows({
+  getAppearance: () => mainWindow && !mainWindow.isDestroyed()
+    ? readFileWindowAppearance(mainWindow, fileContextFallback())
+    : fileContextBootstrap.initialize().catch(() => fileContextFallback()),
+  getDesktopConfig: () => fileWindowDesktopContext.read(mainWindow),
+  fetcher: nodeFetch,
+  openSession: async ({ workspaceId, sessionId }) => {
+    await createMainWindow();
+    await focusMainWindowFromNotification(`/workspace/${encodeURIComponent(workspaceId)}/session/${encodeURIComponent(sessionId)}`);
+  },
   registerLocalFile: async (file) => {
     const access = await runtimeManager.juggleworkServerInfo();
     if (!access?.baseUrl || !access.hostToken) throw new Error("本机文件服务不可用");
@@ -1502,7 +1568,7 @@ const fileWindows = createFileWindows({
   getAccess: () => runtimeManager.managedServerAccess(),
   office: officePanel,
   getMainWindow: () => mainWindow,
-  preloadPath: path.join(__dirname, "file-window-preload.mjs"),
+  preloadPath: path.join(__dirname, "../dist/preload/file-window-preload.cjs"),
   iconPath: fileWindowIconPath,
   recentPath: path.join(app.getPath("userData"), "file-window-recent.json"),
   async loadWindow(window) {
@@ -1522,6 +1588,9 @@ remoteControlReadRegistrations = createRemoteControlReadRegistrations({
   managedRuntimeClient: createManagedRuntimeClient({
     getAccess: () => runtimeManager.managedServerAccess(),
     fetcher: mainProcessFetch,
+    // Snapshot normalization allows a 28 MiB transcript. The HTTP reader must
+    // not reject it before file parts reach the remote adapter.
+    maxResponseBytes: 32 * 1024 * 1024,
   }),
   interactions: remoteControlInteractionStore,
   logger: {
@@ -1552,29 +1621,36 @@ function createMainRemoteSessionEventBridge() {
     fetcher: mainProcessFetch,
   });
   return createRemoteSessionEventBridge({
+    timers: {
+      setTimeout: globalThis.setTimeout.bind(globalThis),
+      clearTimeout: globalThis.clearTimeout.bind(globalThis),
+    },
     sseClient: createManagedRuntimeSseClient({
       getAccess: () => runtimeManager.managedServerAccess(),
       fetcher: mainProcessFetch,
+      // OpenCode emits inline image data URLs in a single SSE record.
+      maxBufferBytes: 32 * 1024 * 1024,
       logger: remoteEventDiagnostics,
     }),
     coordinator: sessionMutationCoordinator,
     listActiveRuns: ({ workspaceId }) => managedRuntimeClient.getJson(
       `/workspace/${encodeURIComponent(workspaceId)}/session-runs`,
     ),
+    ...(useLegacyLifecycleFallback ? createMainActivityTerminalOptions(managedRuntimeClient) : {}),
     observeRun: async ({ workspaceId, sessionId, runId, status }) => {
       return managedRuntimeClient.postJson(
         `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/runs/${encodeURIComponent(runId)}/observations`,
         { status },
       );
     },
+    listSessionModelEvents: ({ workspaceId, since, signal }) => managedRuntimeClient.getJson(
+      `/workspace/${encodeURIComponent(workspaceId)}/session-model-events?since=${encodeURIComponent(String(since))}`,
+      { signal },
+    ),
     publish: (event, options) => remoteControlAgent?.publishSessionEvent(event, options) ?? false,
-    publishActivityTaskStatus: (event) => remoteControlAgent?.publishActivityTaskStatus(event) ?? false,
+    publishActivityTaskStatus: useLifecycleV3 ? null : (event, options) => remoteControlAgent?.publishActivityTaskStatus(event, options) ?? false,
     randomUUID,
     now: Date.now,
-    timers: {
-      setTimeout: globalThis.setTimeout.bind(globalThis),
-      clearTimeout: globalThis.clearTimeout.bind(globalThis),
-    },
     logger: remoteEventDiagnostics,
     onNotificationEvent: (event) => remoteControlNotificationController.accept(event),
     onStop: () => remoteControlSleepController.setAuthorized(false),
@@ -2347,6 +2423,12 @@ const desktopCommandHandlers = {
       const status = await remoteControlPendingPolicy.syncContext(args[0], (input) => remoteControlAgent.syncContext(input));
       return remoteControlLifecycleManager.project(status);
   },
+  "syncFileWindowDesktopConfig": async (event, input) => {
+      if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents || event.senderFrame !== event.sender.mainFrame)
+        throw new Error("仅主窗口可同步文件模式配置");
+      fileContextBootstrap.invalidate();
+      await fileWindowDesktopContext.sync(input);
+  },
   "desktopRemoteControlEnroll": async (event, ...args) => {
       if (!remoteControlAgent) return stoppedRemoteControlAgentStatus();
       remoteControlLifecycleManager.assertMutationAvailable();
@@ -2647,9 +2729,11 @@ const desktopCommandHandlers = {
       });
       return result.canceled ? null : (result.filePath ?? null);
   },
-  "saveArtifactCopy": async (event, options) => saveArtifactFileCopy({
-      workspaceRoot: options.workspaceRoot,
-      relativePath: options.relativePath,
+  "saveArtifactCopy": async (event, options) => {
+    const original = await resolveArtifactExternalSource(fileHostClient, options.workspaceRoot, options.relativePath);
+    return saveArtifactFileCopy({
+      workspaceRoot: original ? path.dirname(original) : options.workspaceRoot,
+      relativePath: original ? path.basename(original) : options.relativePath,
       assertDestination: async (destination) => { await fileHostClient.postJson("/office/check-copy-target", { path: destination }); },
       choosePath: async (name) => {
         const result = await dialog.showSaveDialog(activeWindowFromEvent(event), {
@@ -2658,7 +2742,8 @@ const desktopCommandHandlers = {
         });
         return result.canceled ? null : result.filePath ?? null;
       },
-  }),
+    });
+  },
   "saveFileContent": async (event, ...args) => {
       const options = args[0] ?? {};
       const dataBase64 = typeof options.dataBase64 === "string" ? options.dataBase64.trim() : "";
@@ -2961,6 +3046,11 @@ const desktopCommandHandlers = {
       }
   },
   "__fetch": async (event, ...args) => {
+      // 只有主窗口顶层保留通用网络能力；其他来源必须通过登记文件窗口的白名单。
+      if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents ||
+          !event.senderFrame || event.senderFrame !== event.sender.mainFrame || event.sender.isDestroyed()) {
+        return fileWindows.fetch(event, args[0], args[1], nodeFetch);
+      }
       const url = String(args[0] ?? "").trim();
       const init = args[1] ?? {};
       if (!url) throw new Error("URL is required.");
@@ -2995,6 +3085,10 @@ const desktopCommandHandlers = {
       return os.homedir();
   },
   "__joinPath": async (event, ...args) => {
+      if (args.length === 2) {
+        const original = await resolveArtifactExternalSource(fileHostClient, String(args[0] ?? ""), String(args[1] ?? ""));
+        if (original) return original;
+      }
       return path.join(...args.map((value) => String(value ?? "")));
   },
   "__setZoomFactor": async (event, ...args) => {
@@ -3215,9 +3309,10 @@ async function createMainWindow() {
       .finally(() => { closingOfficeWindow = false; });
   });
 
+  const officeComposerContents = mainWindow.webContents;
   mainWindow.on("closed", () => {
     desktopPet?.closeHost();
-    officeSelectionBridge.cancel();
+    officeSelectionBridge.cancel(officeComposerContents);
     browserPanel.destroy();
     void toonFactoryRuntime.close().catch(() => {});
     mainWindow = null;
@@ -3258,7 +3353,7 @@ async function createMainWindow() {
   // reroute the URL into a built-in browser tab instead.
   mainWindow.webContents.on("did-start-navigation", (_event, url, isInPlace, isMainFrame) => {
     if (!isMainFrame || isInPlace) return;
-    officeSelectionBridge.cancel();
+    officeSelectionBridge.cancel(officeComposerContents);
     if (browserPanel.isMainWindowAllowedNavigation(url)) return;
     try {
       mainWindow?.webContents.stop();
@@ -3373,6 +3468,7 @@ if (!app.requestSingleInstanceLock()) {
       remoteControlPowerMonitorController.stop();
       appTrayIndicator.stop();
       remoteControlSleepController.stop();
+      runtimeLifecycleFeedController?.abort("app_quit");
       showShutdownScreen();
       void waitForQuitCleanup([
         remoteSessionEventBridge?.stop(),
@@ -3447,6 +3543,16 @@ if (!app.requestSingleInstanceLock()) {
     await remoteControlAgent.start().catch((error) => {
       console.warn("[desktop-remote] failed to initialize", error instanceof Error ? error.name : "unknown_error");
     });
+    if (useLifecycleV3) {
+      runtimeLifecycleFeedController = new AbortController();
+      createRuntimeLifecycleFeedPump({
+        runtimeClient: createManagedRuntimeClient({ getAccess: () => runtimeManager.managedServerAccess(), fetcher: mainProcessFetch, timeoutMs: 12_000 }),
+        publish: (event, options) => remoteControlAgent?.publishActivityTaskStatus(event, options) ?? false,
+        getConsumerId: () => remoteControlAgent?.deviceId() ?? null,
+        signal: runtimeLifecycleFeedController.signal,
+        logger: remoteEventDiagnostics,
+      });
+    }
     if (process.platform === "win32") {
       await registerWindowsDisplayShortcut();
     }
@@ -3568,3 +3674,4 @@ function applyRemoteControlLocalEffects(settings) {
     updateBackgroundIndicator: updateRemoteControlBackgroundIndicator,
   });
 }
+import { createMainActivityTerminalOptions } from "./main-activity-terminal-options.mjs";

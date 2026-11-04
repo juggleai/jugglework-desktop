@@ -20,6 +20,33 @@ describe("response language detection", () => {
     expect(detectResponseLanguage(draft([{ type: "text", text: "请不要用英文回答" }]))).toBe("zh");
   });
 
+  test("does not let borrowed English task verbs override Chinese prose", () => {
+    for (const text of [
+      "review下imserver-console的这些本地改动，上线是否会有兼容问题",
+      "review 下 imserver-console 的这些本地改动，上线是否会有兼容问题",
+      "fix下这个登录问题",
+      "check 这个配置有没有问题",
+      "please review 下这些本地改动，上线是否会有兼容问题",
+      "review下the-long-english-repository-name的本地改动",
+    ]) {
+      expect(detectResponseLanguage(draft([{ type: "text", text }]))).toBe("zh");
+    }
+  });
+
+  test("keeps English prose with Chinese data and explicit language overrides", () => {
+    for (const text of [
+      'Please review "这些本地改动是否兼容"',
+      "Please check `中文变量` in this file",
+      "Please review 中文 label",
+      "What does 中文 mean in this label?",
+      "review下这些本地改动，请用英文回答",
+      "review下这些本地改动，please answer in English",
+    ]) {
+      expect(detectResponseLanguage(draft([{ type: "text", text }]))).toBe("en");
+    }
+    expect(detectResponseLanguage(draft([{ type: "text", text: "review的结论，用中文展示" }]))).toBe("zh");
+  });
+
   test("ignores code, logs, quotes, and pasted payloads", () => {
     expect(detectResponseLanguage(draft([
       { type: "text", text: "帮我修复这个错误\n```ts\nthrow new Error('Everything failed in English');\n```" },

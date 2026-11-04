@@ -41,7 +41,7 @@ describe("task submission startup feedback", () => {
 
   test("keeps ordinary tasks on the fast path and gates explicit Cloud capabilities", () => {
     const sender = readFileSync(new URL("../src/react-app/domains/session/sync/draft-submission.ts", import.meta.url), "utf8");
-    expect(sessionRoute).toContain("return submitSessionDraft({");
+    expect(sessionRoute).toContain("onSendDraft: createSessionDraftSender({");
     expect(sender).toContain('skipGate: !draft.parts.some');
     expect(sender).toContain('["cloud-skill", "cloud-mcp", "extension"].includes(part.kind)');
   });

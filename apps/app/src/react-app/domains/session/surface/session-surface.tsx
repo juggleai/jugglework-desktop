@@ -8,6 +8,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { SessionStatus } from "@opencode-ai/sdk/v2/client";
 import { Check, LoaderCircle, Maximize2, Minimize2 } from "lucide-react";
 import { toast } from "@/components/ui/sonner";
+import { ScrollArea, ScrollAreaContent, ScrollAreaViewport } from "@/components/ui/scroll-area";
 
 import { captureAnalyticsEvent } from "@/app/lib/analytics";
 import { createClient, unwrap } from "@/app/lib/opencode";
@@ -214,6 +215,8 @@ function createMarkdownPrimitiveEvalMessages(sessionId: string) {
 }
 
 export type SessionSurfaceProps = {
+  hostKind?: "main" | "file";
+  visible?: boolean;
   client: JuggleWorkServerClient;
   environmentClient?: JuggleWorkServerClient | null;
   workspaceId: string;
@@ -547,6 +550,11 @@ function sameAttachments(left: ComposerAttachment[], right: ComposerAttachment[]
 }
 
 export function SessionSurface(props: SessionSurfaceProps) {
+  const fileHost = props.hostKind === "file";
+  // TIPS: 文件面板复用现有滚动组件的自动隐藏滑块，滚动 ref 仍指向同一消息 viewport。
+  const TranscriptRoot = fileHost ? ScrollArea : "div";
+  const TranscriptViewport = fileHost ? ScrollAreaViewport : "div";
+  const TranscriptContent = fileHost ? ScrollAreaContent : "div";
   const queryClient = useQueryClient();
   const interactions = useSessionInteractions({
     client: props.client,
@@ -702,7 +710,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     workspaceId: props.workspaceId,
     workspaceRoot: props.workspaceRoot,
   });
-  const imageGenerationModelsQuery = useQuery({ ...imageModelsQueryOptions(props.client, mediaQueryScope), refetchOnWindowFocus: true });
+  const imageGenerationModelsQuery = useQuery({ ...imageModelsQueryOptions(props.client, mediaQueryScope), enabled: !fileHost, refetchOnWindowFocus: true });
   const imageGenerationUnavailable = imageGenerationModelsQuery.isPending
     || imageGenerationModelsQuery.isFetching
     || imageGenerationModelsQuery.isError;
@@ -757,7 +765,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     }
     setImageGeneration(null);
   }, [imageGeneration, imageGenerationModels, imageGenerationUnavailable, setImageGeneration]);
-  const videoGenerationModelsQuery = useQuery({ ...videoModelsQueryOptions(props.client, mediaQueryScope), refetchOnWindowFocus: true });
+  const videoGenerationModelsQuery = useQuery({ ...videoModelsQueryOptions(props.client, mediaQueryScope), enabled: !fileHost, refetchOnWindowFocus: true });
   const videoGenerationUnavailable = videoGenerationModelsQuery.isPending
     || videoGenerationModelsQuery.isFetching
     || videoGenerationModelsQuery.isError;
@@ -828,6 +836,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     // TIPS: 请求版本绑定在快照对象上，保留其身份，缓存重放不能把旧响应当成新读取。
     structuralSharing: false,
     staleTime: 500,
+    refetchInterval: fileHost ? 5000 : false,
   });
 
   const currentSnapshot = snapshotQuery.data?.session.id === props.sessionId ? snapshotQuery.data : null;
@@ -1098,6 +1107,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     let cancelled = false;
 
     async function verifyTargets() {
+      if (fileHost) { setVerifiedOpenTargets(openTargets.map((target) => ({ ...target, exists: target.kind === "url" }))); return; }
       if (!openTargets.length) {
         setVerifiedOpenTargets([]);
         return;
@@ -1121,7 +1131,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     }
     void verifyTargets();
     return () => { cancelled = true; };
-  }, [chatStreaming, openTargetsFingerprint, props.client, props.sessionId, props.workspaceId]);
+  }, [fileHost, chatStreaming, openTargetsFingerprint, props.client, props.sessionId, props.workspaceId]);
 
   useEffect(() => {
     usePanelTabStore.getState().syncTranscriptArtifacts(props.sessionId, verifiedOpenTargets);
@@ -1331,7 +1341,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
           if (isCurrentSurface()) {
             setError(null);
             setAwaitingAssistantBaseline(null);
-            toast.info("This session is already running. You can stop it or queue this message.");
+            toast.info(fileHost ? t("file_window.session_busy") : "This session is already running. You can stop it or queue this message.");
           }
           return { outcome: "cancelled", reason: "context_changed" } as const;
         }
@@ -1349,7 +1359,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     } finally {
       inFlightSendIdentitiesRef.current.delete(surfaceIdentity);
     }
-  }, [activeRunsQuery.refetch, appendComposerHistory, imageGenerationModels, imageGenerationUnavailable, props.onSendDraft, props.sessionId, props.taskSubmissionDisabled, props.workspaceId, props.client, renderedMessages.length, videoGenerationModels, videoGenerationUnavailable]);
+  }, [fileHost, activeRunsQuery.refetch, appendComposerHistory, imageGenerationModels, imageGenerationUnavailable, props.onSendDraft, props.sessionId, props.taskSubmissionDisabled, props.workspaceId, props.client, renderedMessages.length, videoGenerationModels, videoGenerationUnavailable]);
 
   const clearComposer = useCallback((release = false) => {
     const ids = getComposerOfficeGroups(useComposerStateStore.getState(), props.sessionId).flatMap((group) => group.references.map((ref) => ref.referenceId));
@@ -1376,6 +1386,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     const sentAttachments = attachments;
     try {
       officeSubmissionFromDraft(nextDraft);
+      if (fileHost && (nextDraft.command || nextDraft.mode === "shell" || submission.delivery !== "start")) throw new Error(t("file_window.operation_unavailable"));
       if (nextDraft.command && nextDraft.parts.some((part) => part.type === "office-selection")) throw new Error("选区修改要求请单独发送，不与快捷指令混用");
       if (isNewSessionCommand(nextDraft.command)) {
         const sessionId = await props.onCreateNewSession();
@@ -1439,7 +1450,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         phase: "finished",
       });
     }
-  }, [attachments, buildDraft, clearComposer, draft, effectiveImageGeneration.selection, effectiveVideoGeneration.selection, imageGeneration, props.onCreateNewSession, props.sessionId, props.taskSubmissionDisabled, props.workspaceId, sendDraft, videoGeneration]);
+  }, [fileHost, attachments, buildDraft, clearComposer, draft, effectiveImageGeneration.selection, effectiveVideoGeneration.selection, imageGeneration, props.onCreateNewSession, props.sessionId, props.taskSubmissionDisabled, props.workspaceId, sendDraft, videoGeneration]);
 
   const handleSend = useCallback(async () => {
     await submitComposerDraft();
@@ -1451,9 +1462,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }, [addPendingPresentation, props.sessionId, props.workspaceId, sendDraft]);
 
   const handleSteer = useCallback(async () => {
+    if (fileHost) return;
     setSteering(true);
     await submitComposerDraft({ delivery: "steer", admissionId: `local-steer-${crypto.randomUUID()}` });
-  }, [submitComposerDraft]);
+  }, [fileHost, submitComposerDraft]);
 
   const handleRetryCloudSubmission = useCallback(() => {
     if (draft.trim() || attachments.length > 0) {
@@ -1467,6 +1479,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   // Queue: hold the draft locally and clear the composer. The drain effect
   // sends it once the session reports idle.
   const handleQueue = useCallback(async () => {
+    if (fileHost) { toast.info(t("file_window.session_busy")); return; }
     if (props.taskSubmissionDisabled) return;
     if ((imageGeneration && !effectiveImageGeneration.selection) || (videoGeneration && !effectiveVideoGeneration.selection)) return;
     const text = draft.trim();
@@ -1488,7 +1501,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       const referenceIds = finishOfficeSubmission();
       if (referenceIds.length) void props.client.releaseOfficeSelections(props.workspaceId, props.sessionId, referenceIds).catch(() => {});
     }
-  }, [appendQueuedDraft, attachments, buildDraft, clearComposer, draft, effectiveImageGeneration.selection, effectiveVideoGeneration.selection, imageGeneration, props.sessionId, props.workspaceId, props.client, props.taskSubmissionDisabled, videoGeneration]);
+  }, [fileHost, appendQueuedDraft, attachments, buildDraft, clearComposer, draft, effectiveImageGeneration.selection, effectiveVideoGeneration.selection, imageGeneration, props.sessionId, props.workspaceId, props.client, props.taskSubmissionDisabled, videoGeneration]);
 
   useEffect(() => {
     if (!officeSend || props.taskSubmissionDisabled || sending) return;
@@ -1521,6 +1534,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   // drain lock makes the claim exclusive with the automatic FIFO drain during
   // busy-to-idle transitions, while stable IDs keep row reordering harmless.
   const steerQueuedDraft = useCallback(async (id: string) => {
+    if (fileHost) return;
     if (props.taskSubmissionDisabled || drainingQueueRef.current) return;
     const currentQueue = getComposerQueuedDrafts(useComposerStateStore.getState(), props.sessionId);
     const originalIndex = currentQueue.findIndex((item) => item.id === id);
@@ -1550,7 +1564,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       restoreQueuedDraft(props.sessionId, { ...claimed, blockedReason: t("composer.queued_send_failed") }, originalIndex);
     };
     try {
-      const result = await sendDraft(claimed.draft, { delivery: "steer", admissionId: claimed.id });
+      const result = await sendDraft(claimed.draft, { delivery: "steer", admissionId: claimed.id, claimId: claimed.id });
       if (result.outcome === "blocked") {
         cloudQueueBlockedRef.current = true;
         restoreSteered();
@@ -1572,7 +1586,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       setSteeringQueuedDraftId(null);
       setQueueDrainVersion((version) => version + 1);
     }
-  }, [chatStreaming, props.sessionId, props.taskSubmissionDisabled, removeQueuedDraftFromStore, restoreQueuedDraft, sendDraft]);
+  }, [fileHost, chatStreaming, props.sessionId, props.taskSubmissionDisabled, removeQueuedDraftFromStore, restoreQueuedDraft, sendDraft]);
 
   const handleAbort = useCallback(async () => {
     if (!chatStreaming) return;
@@ -1625,6 +1639,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   // busy-to-idle latch. A remounted surface can resume after the coordinator
   // confirms idle. Shared claims protect multiple retained surfaces.
   useEffect(() => {
+    if (fileHost) return;
     if (chatStreaming) {
       if (drainingQueueRef.current) queuedRunObservedBusyRef.current = true;
       queueWaitsForIdleRef.current = queuedDrafts.length > 0;
@@ -1658,7 +1673,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     };
     void (async () => {
       try {
-        const result = await sendDraft(claimed.draft);
+        const result = await sendDraft(claimed.draft, { delivery: "start", claimId: claimed.id });
         if (result.outcome === "blocked") {
           cloudQueueBlockedRef.current = true;
           restoreClaimed();
@@ -1678,7 +1693,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         setQueueDrainVersion((version) => version + 1);
       }
     })();
-  }, [activeRunsQuery.isSuccess, activeRunsQuery.isFetching, coordinatorRun, chatStreaming, cloudQueueRetryVersion, liveStatus.type, props.sessionId, props.workspaceId, props.taskSubmissionDisabled, queueDrainVersion, queuedDrafts, removeQueuedDraftFromStore, restoreQueuedDraft, sendDraft]);
+  }, [fileHost, activeRunsQuery.isSuccess, activeRunsQuery.isFetching, coordinatorRun, chatStreaming, cloudQueueRetryVersion, liveStatus.type, props.sessionId, props.workspaceId, props.taskSubmissionDisabled, queueDrainVersion, queuedDrafts, removeQueuedDraftFromStore, restoreQueuedDraft, sendDraft]);
 
   useEffect(() => {
     if (props.cloudMcpSubmissionState.status !== "failed") {
@@ -1798,6 +1813,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   };
 
   const handleInsertMention = (kind: ComposerMentionKind, value: string) => {
+    if (fileHost) return;
     // @agent mentions switch the session agent instead of inserting an agent
     // part. Agent parts are treated as *subagent* (task tool) calls by the
     // engine, which silently fails for primary agents and left every reply
@@ -1960,6 +1976,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }, []);
 
   const listCommands = useCallback(async (): Promise<SlashCommandOption[]> => {
+    if (fileHost) return [];
     const localCommands = withBuiltinSlashCommands(
       await props.listCommands(),
       [
@@ -1992,9 +2009,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
       // Cloud inventory is optional: losing access to Connect must not hide local commands.
       return localCommands;
     }
-  }, [loadConnectCapabilityInventory, props.client, props.listCommands, props.workspaceId]);
+  }, [fileHost, loadConnectCapabilityInventory, props.client, props.listCommands, props.workspaceId]);
 
   const listSkills = async (): Promise<SkillCard[]> => {
+    if (fileHost) return [];
     await props.ensureHostMarketplaceReady?.();
     const [response, connect, config] = await Promise.all([
       props.client.listSkills(props.workspaceId, { includeGlobal: true }),
@@ -2020,6 +2038,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   };
 
   const listMcp = async (): Promise<{ servers: McpServerEntry[]; statuses: McpStatusMap; status: string | null }> => {
+    if (fileHost) return { servers: [], statuses: {}, status: null };
     // fix(L3): OAuth 可能在会话保持挂载时完成，按账号范围缓存会继续返回授权前清单。
     // before: MCP 菜单复用旧 Promise；after: 每次展开菜单都刷新云端投影。
     // TIPS：命令和技能仍复用缓存，只有对授权时效敏感的 MCP 菜单强制刷新。
@@ -2108,6 +2127,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   };
 
   const listImportedPlugins = async (): Promise<CloudImportedPlugin[]> => {
+    if (fileHost) return [];
     const response = await props.client.getConfig(props.workspaceId);
     const plugins = Object.values(readWorkspaceCloudImports(response.jugglework).plugins)
       .sort((left, right) => left.name.localeCompare(right.name));
@@ -2207,6 +2227,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     action: ChatToolReconnectAction,
     onProgress: (progress: ChatToolReconnectProgress) => void,
   ): Promise<ChatToolReconnectResult> => {
+    if (fileHost) { props.onOpenConnect(); throw new Error(t("file_window.operation_unavailable")); }
     const settings = readDenSettings();
     const token = settings.authToken?.trim() ?? "";
     const organizationId = settings.activeOrgId?.trim() ?? "";
@@ -2279,19 +2300,20 @@ export function SessionSurface(props: SessionSurfaceProps) {
       });
       throw error;
     }
-  }, [props.onOpenConnect, props.sessionId, props.workspaceId]);
+  }, [fileHost, props.onOpenConnect, props.sessionId, props.workspaceId]);
 
   const handleMcpReopenAuthorization = useCallback(async (
     action: ChatToolReconnectAction,
     authorizeUrl: string,
   ) => {
+    if (fileHost) { props.onOpenConnect(); return; }
     await openDesktopUrl(authorizeUrl);
     recordInspectorEvent("mcp.chat_reconnect.authorization_reopened", {
       workspaceId: props.workspaceId,
       sessionId: props.sessionId,
       connectionId: action.connectionId,
     });
-  }, [props.sessionId, props.workspaceId]);
+  }, [fileHost, props.onOpenConnect, props.sessionId, props.workspaceId]);
 
   const handleMcpRetry = useCallback(async (action: ChatToolReconnectAction) => {
     const prompt = `The ${action.connectionName} connection is restored. Search for the capability again and retry the previous request. Before repeating any write action, confirm it did not already complete.`;
@@ -2315,6 +2337,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }, [props.onForkAtMessage, props.sessionId, renderedMessages]);
 
   const handleEditUserMessage = useCallback((messageId: string, text: string) => {
+    if (fileHost) return;
     void (async () => {
       // Rewind the session to just before this prompt, then restore the
       // prompt text into the composer so the user can rewrite and resend it.
@@ -2322,7 +2345,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       if (reverted === false) return;
       await typeComposerText(text);
     })();
-  }, [props.onRevertToMessage, props.sessionId, typeComposerText]);
+  }, [fileHost, props.onRevertToMessage, props.sessionId, typeComposerText]);
 
   const sessionScrollTopControlAction = useMemo<JuggleWorkControlAction>(() => ({
     id: "session.scroll_top",
@@ -2419,8 +2442,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
         </div>
       ) : null}
 
-      <div className="relative min-h-0 flex-1">
-        <div
+      <TranscriptRoot className="relative min-h-0 flex-1">
+        <TranscriptViewport
           ref={scrollRef}
           onWheel={(event) => {
             sessionScroll.markScrollGesture(event.target);
@@ -2438,18 +2461,18 @@ export function SessionSurface(props: SessionSurfaceProps) {
           onScroll={sessionScroll.handleScroll}
           // Extra top padding while the find bar is open so it never covers
           // the first message (short transcripts cannot scroll it clear).
-          className={`subtle-scrollbar absolute inset-0 overflow-x-hidden overflow-y-auto overscroll-y-contain px-3 pb-4 sm:px-5 ${findOwned ? "pt-16" : "pt-4"}`}
+          className={`${fileHost ? "px-2" : "subtle-scrollbar px-3 sm:px-5"} absolute inset-0 overflow-x-hidden overflow-y-auto overscroll-y-contain pb-4 ${findOwned ? "pt-16" : "pt-4"}`}
         >
           {/* Assistant rows add 32px horizontal padding on each side at the
                desktop breakpoint, so an 864px column aligns their 800px text
                area with the composer while preserving the narrower cap below lg. */}
-          <div ref={contentRef} className="mx-auto w-full max-w-[720px] lg:max-w-[864px]">
-            <FileDeliveriesProvider client={props.client} workspaceId={props.workspaceId} sessionId={props.sessionId} enabled={!props.isRemoteWorkspace} running={chatStreaming} messageKey={`${renderedMessages.length}:${renderedMessages.at(-1)?.id ?? ""}`}>
-            <PresentationDeliveryCoordinator
+          <TranscriptContent ref={contentRef} className="mx-auto w-full max-w-[720px] lg:max-w-[864px]">
+            <FileDeliveriesProvider client={props.client} workspaceId={props.workspaceId} sessionId={props.sessionId} enabled={!fileHost && !props.isRemoteWorkspace} running={chatStreaming} messageKey={`${renderedMessages.length}:${renderedMessages.at(-1)?.id ?? ""}`}>
+            {!fileHost && <PresentationDeliveryCoordinator
               workspaceId={props.workspaceId}
               sessionId={props.sessionId}
               onOpenTarget={props.onOpenTarget}
-            />
+            />}
             {showDelayedLoading && pendingSessionLoad ? (
               <div className="px-6 py-16">
                 <div className="mx-auto max-w-sm rounded-3xl border border-dls-border bg-dls-hover/60 px-8 py-10 text-center">
@@ -2471,7 +2494,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                   </div>
                 )}
               </div>
-            ) : renderedMessages.length === 0 && effectiveActivityStatus !== "idle" ? (
+            ) : !error && renderedMessages.length === 0 && effectiveActivityStatus !== "idle" ? (
               <div className="px-6 py-12">
                 <AssistantWaitingCard label={sharedTaskPresentation.active || sharedTaskPresentation.waiting ? sharedTaskPresentation.statusText : getSessionActivityStatusLabel(effectiveActivityStatus)} />
               </div>
@@ -2488,14 +2511,15 @@ export function SessionSurface(props: SessionSurfaceProps) {
                   openTargets={verifiedOpenTargets}
                   onOpenTarget={openArtifactTarget}
                 >
-                  <ArtifactActionsProvider client={props.client} workspaceId={props.workspaceId} workspaceRoot={props.workspaceRoot} sessionId={props.sessionId} remote={Boolean(props.isRemoteWorkspace)} running={chatStreaming}>
+                  <ArtifactActionsProvider enabled={!fileHost} client={props.client} workspaceId={props.workspaceId} workspaceRoot={props.workspaceRoot} sessionId={props.sessionId} remote={Boolean(props.isRemoteWorkspace)} running={chatStreaming}>
                   <EnvironmentVariableProvider
-                    client={props.isRemoteWorkspace ? null : props.environmentClient ?? props.client}
+                    client={fileHost || props.isRemoteWorkspace ? null : props.environmentClient ?? props.client}
                     runtimeKey={props.environmentRuntimeKey}
                     onApplyChanges={props.onApplyEnvironmentChanges}
                   >
                     <MessageListProvider
-                      client={props.client}
+                      historyActionsEnabled={!fileHost}
+                      client={fileHost ? null : props.client}
                       workspaceId={props.workspaceId}
                       sessionId={props.sessionId}
                       showThinking={showThinking}
@@ -2526,8 +2550,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
               </DevProfiler>
             )}
             </FileDeliveriesProvider>
-          </div>
-        </div>
+          </TranscriptContent>
+        </TranscriptViewport>
         <SessionScrollOverlay
           sessionId={props.sessionId}
           isStreaming={chatStreaming}
@@ -2546,9 +2570,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
           scrollRef={scrollRef}
           onBeforeJump={handleFindBeforeJump}
         />
-      </div>
+      </TranscriptRoot>
 
-      <div ref={composerShellRef} className="shrink-0 px-0 pb-2">
+      <div ref={composerShellRef} className={`shrink-0 px-0 ${fileHost ? "pb-0" : "pb-2"}`}>
         {(props.providerConnectedCount ?? 0) === 0 ? (
           <button
             type="button"
@@ -2598,15 +2622,16 @@ export function SessionSurface(props: SessionSurfaceProps) {
           />
         ) : null}
         <ReactSessionComposer
+          restrictedHost={fileHost}
           officeGroups={officeGroups}
           sessionId={props.sessionId}
-          createVoiceRealtimeSession={props.client.createVoiceRealtimeSession}
-          getVoiceRealtimeStatus={props.client.getVoiceRealtimeStatus}
+          createVoiceRealtimeSession={fileHost ? null : props.client.createVoiceRealtimeSession}
+          getVoiceRealtimeStatus={fileHost ? null : props.client.getVoiceRealtimeStatus}
           onOpenVoiceSettings={props.onOpenSettingsSection ? () => props.onOpenSettingsSection?.("providers") : undefined}
           onOpenSettings={props.onOpenSettingsSection ? () => props.onOpenSettingsSection?.("mcps") : undefined}
           currentFile={currentFile}
-          onCreatePresentation={props.isRemoteWorkspace ? undefined : handleCreatePresentation}
-          focusEligible={props.isControlTarget && !props.modelPickerOpen}
+          onCreatePresentation={fileHost || props.isRemoteWorkspace ? undefined : handleCreatePresentation}
+          focusEligible={props.visible !== false && props.isControlTarget && !props.modelPickerOpen}
           draft={draft}
           mentions={mentions}
           onDraftChange={handleComposerDraftChange}
@@ -2619,7 +2644,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         submissionPreparing={submissionPreparing}
         submissionPreparingLabel={submissionPreparationLabel}
         submissionDisabled={Boolean(props.taskSubmissionDisabled)}
-        queuedCount={queuedDrafts.length}
+        queuedCount={fileHost ? 0 : queuedDrafts.length}
         disabled={model.transitionState !== "idle" || Boolean(props.modelUnavailable)}
         modelUnavailable={Boolean(props.modelUnavailable)}
         statusLabel={statusLabel(snapshot ?? undefined, chatStreaming)}
@@ -2654,8 +2679,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
          modelVariant={props.modelVariant}
          modelBehaviorOptions={props.modelBehaviorOptions}
          onModelVariantChange={props.onModelVariantChange}
-         permissionModeSelector={
-           <PermissionModeSelect
+          permissionModeSelector={
+            !fileHost && <PermissionModeSelect
              requestedMode={sessionPermissionMode.state?.requestedMode ?? null}
              effectiveMode={sessionPermissionMode.state?.effectiveMode ?? null}
              grants={sessionPermissionMode.grants}
@@ -2704,7 +2729,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
           topAccessory={
             activeQuestion || showTaskProgress || gatedActivePermission || queuedDrafts.length > 0 ? (
               <div>
-                {queuedDrafts.length > 0 ? (
+                {!fileHost && queuedDrafts.length > 0 ? (
                   <QueuedMessagesPanel
                     drafts={queuedDrafts}
                     onRemove={removeQueuedDraft}
@@ -2738,7 +2763,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                       permission={gatedActivePermission}
                      busy={permissionReplyBusy}
                      respondPermission={respondPermission}
-                     respondPermissionGrant={interactions.respondPermissionGrant}
+                      respondPermissionGrant={fileHost ? undefined : interactions.respondPermissionGrant}
                      safeStringify={props.safeStringify}
                    />
                  ) : null}

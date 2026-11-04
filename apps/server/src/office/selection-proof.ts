@@ -58,7 +58,18 @@ async function completeDocParagraph(query: Tool, node: ObjectValue, revision: nu
   let text = node.text_preview;
   // 全文补全与选区属性预算独立；每段最多128次，全文另有限额。最后一次必须查找完整文字。
   for (let attempt = 0; attempt < 128; attempt++) {
-    const found = await query("doc_find", { text });
+    let found: ObjectValue | undefined;
+    // TIPS: 旧 SDK 的30码元查找上下文可能截断 emoji 代理对并报 to_bytes。
+    // 只对这一已知只读转换错误缩短候选，最终仍须同版本、固定范围精确命中完整正文。
+    for (let retry = 0; retry < 4; retry++) {
+      try { found = await query("doc_find", { text }); break; }
+      catch (error) {
+        if (!(error instanceof Error) || !error.message.includes("wstring_convert") || retry === 3 || !text.length) throw error;
+        text = Array.from(text).slice(0, -1).join("");
+        if (!text) unavailable();
+      }
+    }
+    if (!found) unavailable();
     if (found.version !== revision) unavailable("文档正在变化，请重新选择");
     const locations = objects(found.locations);
     if (locations.length > 4096 || found.total !== locations.length) unavailable();
@@ -78,6 +89,8 @@ async function completeDocParagraph(query: Tool, node: ObjectValue, revision: nu
 }
 
 export const OFFICE_DOC_MAX_SPAN = 16_384;
+/** 普通段落完整字符属性的总预算；采集与写前预检使用同一上限。 */
+export const OFFICE_DOC_MAX_PROPERTIES = 1024;
 
 /** 分页不含正文；旧 SDK 的无预览 Paragraph 还须由最多10个 GCP 的末尾原文证明分页占位符。 */
 async function completeDocPageBreak(query: Tool, node: ObjectValue, revision: number, tail: ObjectValue): Promise<ObjectValue> {
@@ -197,12 +210,15 @@ export function officeDocRangeParts(state: ObjectValue, range: OfficeTextRange) 
  * @param call 已绑定引擎的只读工具通道
  * @param fileId Server 持有的模型身份
  * @param locator 规范化的固定范围
+ * @param coverage 同轮需要保留完整属性的范围
+ * @param readText 同一页面、同一原生版本的有界正文读取通道
  */
 export async function readOfficeSelectionProof(
   call: Tool,
   fileId: string,
   locator: OfficeSelectionLocator,
   coverage: OfficeSelectionLocator[] = [locator],
+  readText?: (ranges: OfficeTextRange[], version: number) => Promise<string[] | null>,
 ): Promise<OfficeSelectionProof> {
   const query = (name: string, args: ObjectValue = {}) => call(name, { ...args, file_id: fileId });
   if (locator.kind === "doc-text" || locator.kind === "doc-caret") {
@@ -210,8 +226,8 @@ export async function readOfficeSelectionProof(
     const revision = integer(start.version);
     const last = integer(start.position);
     // 每次证明：正文跨度≤16384 UTF-16、顶层≤256、全文查找≤512、每表≤256格。
-    // 所选段属性≤256字符；所有表格独立≤1024字符(空格计1)、≤256个单格段属性；总证明≤4 MiB。
-    if (last > OFFICE_DOC_MAX_SPAN) unavailable();
+    // 所选段属性≤1024字符；所有表格独立≤1024字符(空格计1)、≤256个单格段属性；总证明≤4 MiB。
+    if (last > OFFICE_DOC_MAX_SPAN) throw new ApiError(409, "office_selection_content_limit", "文档正文超过完整核对预算，请拆分文档后使用选区编辑");
     let finds = 0;
     const docQuery: Tool = (name, args) => {
       if (name === "doc_find" && ++finds > 512) unavailable();
@@ -236,6 +252,8 @@ export async function readOfficeSelectionProof(
     if (position !== last + 1) unavailable();
     const isPageBreak = (node: ObjectValue) => node.type === "PageBreak" ||
       (node.type === "Paragraph" && node.text_preview === undefined && integer(node.end_index) > integer(node.start_index));
+    const isImage = (node: ObjectValue) => node.type === "Paragraph" && node.text_preview === "[Image]" &&
+      integer(node.end_index) === integer(node.start_index) + 1;
     const ranges = coverage.flatMap((item) => item.kind === "doc-caret" ? [{ begin: item.idx, end: item.idx }]
       : item.kind === "doc-text" ? item.ranges : []);
     if (!ranges.length || ranges.some((range) => range.end > last)) unavailable();
@@ -247,20 +265,48 @@ export async function readOfficeSelectionProof(
       for (let index = first; index <= final; index++) selectedIndices.add(index);
     }
     const selectedNodes = nodes.filter((_node, index) => selectedIndices.has(index));
-    if (selectedNodes.some((node) => isPageBreak(node) || !["Paragraph", "Heading", "Title", "Subtitle"].includes(String(node.type))))
-      unavailable("请选择普通正文，暂不支持表格或分页等结构内容");
+    if (selectedNodes.some((node) => isPageBreak(node) || isImage(node) || !["Paragraph", "Heading", "Title", "Subtitle"].includes(String(node.type))))
+      throw new ApiError(409, "office_selection_doc_structure_unsupported", "请选择普通正文，暂不支持表格或分页等结构内容");
     const positions = new Set<number>();
     for (const node of selectedNodes) {
       for (let idx = node.start_index as number; idx < (node.end_index as number); idx++) positions.add(idx);
     }
-    if (positions.size > 256) unavailable();
+    if (positions.size > OFFICE_DOC_MAX_PROPERTIES) throw new ApiError(409, "office_selection_content_limit", "所选正文段落超过完整属性核对预算，请分段选择");
+    // TIPS: MCP 摘要/查找均省略 Word 软换行。只从同一页面读取完整范围，版本仍由前后原生查询核对。
+    const incomplete = nodes.filter((node) => !isPageBreak(node) && !isImage(node) && node.type !== "Table" &&
+      typeof node.text_preview === "string" && node.text_preview.length !== integer(node.end_index) - integer(node.start_index));
+    if (incomplete.length && readText) {
+      const texts = await readText(incomplete.map((node) => ({ begin: integer(node.start_index), end: integer(node.end_index) })), revision);
+      if (texts !== null) {
+        if (texts.length !== incomplete.length) unavailable();
+        for (let index = 0; index < incomplete.length; index++) {
+          const node = incomplete[index], text = texts[index];
+          if (typeof text !== "string" || text.length !== integer(node.end_index) - integer(node.start_index) ||
+              /[\r\uFFFC]/.test(text) || !text.replace(/[\n\u000b]/g, "").startsWith(node.text_preview as string)) unavailable();
+          node.text_preview = text;
+        }
+      }
+    }
     let tableCharacters = 0, tableParagraphs = 0;
     const reserveTableProperties = (characters: number, paragraphs: number) => {
       tableCharacters += characters; tableParagraphs += paragraphs;
       if (tableCharacters > 1024 || tableParagraphs > 256) unavailable("未选表格属性超过完整核对预算，请单独处理该文档");
     };
+    let images: ObjectValue[] = [];
+    if (nodes.some(isImage)) {
+      const result = await query("doc_get_images");
+      if (result.version !== revision) throw new ApiError(409, "office_selection_stale", "文档正在变化，请重新选择");
+      images = objects(result.images);
+    }
+    const completeImage = (node: ObjectValue) => {
+      const matches = images.filter((image) => image.index === node.start_index);
+      if (matches.length !== 1 || matches[0].source !== 1 || typeof matches[0].image_url !== "string" || !matches[0].image_url) unavailable();
+      // TIPS: 未选独立图片段落只保留公开资源身份；索引由段落位置表达，不能把 [Image] 文案当正文或写入授权。
+      return { ...node, content: { type: "Image", source: matches[0].source, image_url: matches[0].image_url } };
+    };
     for (let index = 0; index < nodes.length; index++) nodes[index] = nodes[index].type === "Table"
       ? await completeDocTable(docQuery, nodes[index], revision, reserveTableProperties)
+      : isImage(nodes[index]) ? completeImage(nodes[index])
       : isPageBreak(nodes[index]) ? await completeDocPageBreak(docQuery, nodes[index], revision, start)
       : await completeDocParagraph(docQuery, nodes[index], revision);
     // 补全后仍须验证连续段落边界，不能把表格或分页节点拼成普通文字。
@@ -278,7 +324,7 @@ export async function readOfficeSelectionProof(
       properties.push(withoutVersion(property));
     }
     const end = await query("doc_get_last_operable_pos");
-    if (end.version !== revision || end.position !== last) unavailable("文档正在变化，请重新选择");
+    if (end.version !== revision || end.position !== last) throw new ApiError(409, "office_selection_stale", "文档正在变化，请重新选择");
     return proof({ kind: "doc", revision, last, nodes, properties, paragraphs });
   }
   if (locator.kind.startsWith("sheet-")) {
@@ -288,13 +334,14 @@ export async function readOfficeSelectionProof(
     const sheet = sheets.find((item) => item.sheet_id === locator.sheetId);
     if (!sheet) unavailable("选区工作表已不存在，请重新选择");
     const rows = integer(sheet.row_count), cols = integer(sheet.col_count);
-    const dimension = locator.kind === "sheet-rows" || locator.kind === "sheet-columns";
-    let endRow = Math.max(0, integer(sheet.used_row_count) - 1);
-    let endCol = Math.max(0, integer(sheet.used_col_count) - 1);
+    const dimension = coverage.some((item) => item.kind === "sheet-rows" || item.kind === "sheet-columns");
+    let startRow = rows - 1, startCol = cols - 1, endRow = 0, endCol = 0;
     for (const item of coverage) {
       if (!("sheetId" in item) || item.sheetId !== locator.sheetId) unavailable();
       if (item.kind === "sheet-cells") for (const range of item.ranges) {
         if (range.endRow >= rows || range.endCol >= cols) unavailable();
+        startRow = Math.min(startRow, Math.max(0, range.startRow - 1));
+        startCol = Math.min(startCol, Math.max(0, range.startCol - 1));
         endRow = Math.max(endRow, range.endRow + 1);
         endCol = Math.max(endCol, range.endCol + 1);
       }
@@ -308,25 +355,29 @@ export async function readOfficeSelectionProof(
       }
     }
     endRow = Math.min(endRow, rows - 1); endCol = Math.min(endCol, cols - 1);
-    if (dimension) { endRow = rows - 1; endCol = cols - 1; }
-    if (rows <= 0 || cols <= 0 || (endRow + 1) * (endCol + 1) > (dimension ? 8192 : 4096)) unavailable();
-    const region = { sheet_id: locator.sheetId, start_row: 0, start_col: 0, end_row: endRow, end_col: endCol };
+    if (dimension) { startRow = 0; startCol = 0; endRow = rows - 1; endCol = cols - 1; }
+    // TIPS: 单元格工具只能写固定选区；完整读取选区及四周邻格，不因其他行列很多或位置靠后而拒绝。
+    // 行列删除会移动整张表，仍须读取全网格，不能借局部读取扩大维度操作能力。
+    const cellCount = (endRow - startRow + 1) * (endCol - startCol + 1);
+    if (rows <= 0 || cols <= 0 || cellCount <= 0 || cellCount > (dimension ? 8192 : 4096))
+      throw new ApiError(409, "office_selection_content_limit", "所选表格范围超过核对预算，请缩小选择；整行列删除需要核对完整工作表");
+    const region = { sheet_id: locator.sheetId, start_row: startRow, start_col: startCol, end_row: endRow, end_col: endCol };
     const read = async () => {
       const values = await query("sheet_get_cell_data", { ...region, return_csv: false, include_formula: true });
       const styles = await query("sheet_get_cell_style", region);
       const merged = await query("sheet_get_merged_cells", region);
       const cells = objects(values.cells), formats = objects(styles.cells), merges = objects(merged.merged_cells);
-      if (formats.length !== (endRow + 1) * (endCol + 1)) unavailable();
+      if (formats.length !== cellCount) unavailable();
       const keys = new Set<string>();
       for (const cell of formats) {
         const row = integer(cell.row), col = integer(cell.col);
-        if (row > endRow || col > endCol || keys.has(`${row}:${col}`)) unavailable();
+        if (row < startRow || col < startCol || row > endRow || col > endCol || keys.has(`${row}:${col}`)) unavailable();
         keys.add(`${row}:${col}`);
       }
       const valueKeys = new Set<string>();
       for (const cell of cells) {
         const row = integer(cell.row), col = integer(cell.col), key = `${row}:${col}`;
-        if (row > endRow || col > endCol || valueKeys.has(key)) unavailable();
+        if (row < startRow || col < startCol || row > endRow || col > endCol || valueKeys.has(key)) unavailable();
         valueKeys.add(key);
       }
       const order = (a: ObjectValue, b: ObjectValue) => (a.row as number) - (b.row as number) || (a.col as number) - (b.col as number);
@@ -336,18 +387,18 @@ export async function readOfficeSelectionProof(
     const afterInfo = await query("sheet_get_sheet_info");
     const second = await read();
     if (officeProofJson(info) !== officeProofJson(afterInfo) || officeProofJson(first) !== officeProofJson(second))
-      unavailable("表格正在变化，请重新选择");
-    if (dimension && first.merges.length) unavailable("选区删除行列暂不支持包含合并单元格的工作表");
+      throw new ApiError(409, "office_selection_stale", "表格正在变化，请重新选择");
+    if (dimension && first.merges.length) throw new ApiError(409, "office_selection_sheet_dimension_unsupported", "选区删除行列暂不支持包含合并单元格的工作表");
     if (!dimension) for (const merge of first.merges) {
       if (merge.sheet_id !== locator.sheetId || integer(merge.end_row) < integer(merge.start_row) || integer(merge.end_col) < integer(merge.start_col)) unavailable();
       for (const item of coverage) if (item.kind === "sheet-cells") for (const range of item.ranges) {
         const intersects = range.startRow <= (merge.end_row as number) && range.endRow >= (merge.start_row as number) && range.startCol <= (merge.end_col as number) && range.endCol >= (merge.start_col as number);
         if (intersects && !(range.startRow <= (merge.start_row as number) && range.endRow >= (merge.end_row as number) && range.startCol <= (merge.start_col as number) && range.endCol >= (merge.end_col as number)))
-          unavailable("请选择完整合并单元格，不能只修改合并区域的一部分");
+          throw new ApiError(409, "office_selection_sheet_partial_merge", "请选择完整合并单元格，不能只修改合并区域的一部分");
       }
     }
     if (dimension && (sheets.length !== 1 || first.cells.some((cell) => typeof cell.formula === "string")))
-      unavailable("选区删除行列目前支持不含公式和合并单元格的单工作表，请单独处理复杂工作簿");
+      throw new ApiError(409, "office_selection_sheet_dimension_unsupported", "选区删除行列目前支持不含公式和合并单元格的单工作表，请单独处理复杂工作簿");
     return proof({ kind: "sheet", sheets, sheetId: locator.sheetId, region, ...first });
   }
   if (locator.kind === "slide-pages") {
@@ -399,7 +450,7 @@ export async function readOfficeSelectionProof(
     texts.push({ shapeId: id, text: text.text, characters });
   }
   const end = await query("slide_get_info");
-  if (end.version !== revision || officeProofJson(end.slide_ids) !== officeProofJson(info.slide_ids)) unavailable("幻灯片正在变化，请重新选择");
+  if (end.version !== revision || officeProofJson(end.slide_ids) !== officeProofJson(info.slide_ids)) throw new ApiError(409, "office_selection_stale", "幻灯片正在变化，请重新选择");
   return proof({ kind: "slide", revision, pageIds: info.slide_ids, page, texts });
 }
 

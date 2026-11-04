@@ -9,7 +9,8 @@ import { selectComposerInstalledMcpEntries } from "../src/react-app/domains/conn
 // Keep the actual composer handlers while isolating editor, policy and model services.
 const desktopConfig = await import("../src/react-app/domains/cloud/desktop-config-provider");
 const extensionState = await import("../src/react-app/domains/settings/extension-state");
-mock.module("../src/react-app/domains/session/surface/composer/editor", () => ({ LexicalPromptEditor: () => null }));
+let editorProps: any;
+mock.module("../src/react-app/domains/session/surface/composer/editor", () => ({ LexicalPromptEditor: (props: unknown) => { editorProps = props; return null; } }));
 mock.module("../src/react-app/domains/cloud/desktop-config-provider", () => ({ ...desktopConfig, useDesktopRestriction: () => false }));
 mock.module("../src/react-app/domains/settings/extension-state", () => ({
   ...extensionState,
@@ -68,6 +69,66 @@ async function render(overrides: Partial<Props> = {}) {
 }
 
 const rows = () => renderer.root.findAllByProps({ role: "menuitem" });
+
+test("IME candidate keys do not activate add tools or arm Escape-to-stop", async () => {
+  const onStop = mock();
+  await render({ restrictedHost: true, busy: true, onStop, onOpenSettings: mock() });
+  const root = () => renderer.root.findAllByType("div").find((node) => node.props.onKeyDownCapture)!;
+  const composingKey = async (key: string, flags: object = {}) => {
+    const preventDefault = mock();
+    await act(async () => root().props.onKeyDownCapture({ key, nativeEvent: {}, preventDefault, ...flags }));
+    expect(preventDefault).not.toHaveBeenCalled();
+  };
+  await act(async () => root().props.onCompositionStart());
+  for (const key of ["ArrowUp", "ArrowDown", "Enter", "Tab", "Escape"]) await composingKey(key);
+  expect(props.onOpenSettings).not.toHaveBeenCalled();
+  expect(renderer.root.findAllByProps({ role: "menu" })).toHaveLength(1);
+  await act(async () => root().props.onCompositionEnd());
+  await key("Escape"); // Close the tools menu first.
+  await composingKey("Escape", { nativeEvent: { isComposing: true } });
+  await composingKey("Escape", { keyCode: 229 });
+  await key("Escape"); // First non-IME Escape only arms stop.
+  expect(onStop).not.toHaveBeenCalled();
+  await key("Escape");
+  expect(onStop).toHaveBeenCalledTimes(1);
+});
+
+test("file host busy Enter uses immediate admission and never enqueues or exposes unbridged add tools", async () => {
+  const onSend = mock(), onQueue = mock(), onSteer = mock();
+  await render({ restrictedHost: true, busy: true, draft: "keep local draft", attachmentsEnabled: false, onSend, onQueue, onSteer });
+  await act(async () => editorProps.onSubmit({ queue: false }));
+  expect(onSend).toHaveBeenCalledTimes(1);
+  expect(onQueue).not.toHaveBeenCalled();
+  expect(onSteer).not.toHaveBeenCalled();
+  expect(row(t("composer.plus_menu_file"))).toBeUndefined();
+  expect(row(t("composer.plus_menu_draw"))).toBeUndefined();
+});
+
+test("restricted host keeps @ text without querying or accepting file and agent suggestions", async () => {
+  const listAgents = mock(async () => [{ name: "review-agent" }]), searchFiles = mock(async () => ["review-file.txt"]);
+  await render({ restrictedHost: true, draft: "@", listAgents: listAgents as Props["listAgents"], searchFiles, recentFiles: ["review-file.txt"] });
+  // The model bar loads agents once; opening tools/@ must not load suggestions.
+  expect(listAgents).toHaveBeenCalledTimes(1);
+  expect(searchFiles).not.toHaveBeenCalled();
+  expect(renderer.root.findAll((node) => node.children.includes("review-file.txt") || node.children.includes("review-agent"))).toHaveLength(0);
+  // Close the tools menu so keyboard activation would target mentions if offered.
+  await act(async () => { renderer.root.findByProps({ "aria-haspopup": "menu" }).props.onClick(); });
+  await key("Tab");
+  await key("Enter");
+  expect(props.onInsertMention).not.toHaveBeenCalled();
+  expect(props.onDraftChange).not.toHaveBeenCalled();
+  // Main host retains its existing @ picker behavior.
+  props = { ...props, restrictedHost: false };
+  await act(async () => { renderer.update(<ReactSessionComposer {...props} />); });
+  expect(listAgents).toHaveBeenCalledTimes(2);
+  expect(searchFiles).toHaveBeenCalledWith("");
+  expect(renderer.root.findAll((node) => node.children.includes("review-file.txt"))).toHaveLength(1);
+  props = { ...props, restrictedHost: true };
+  await act(async () => { renderer.update(<ReactSessionComposer {...props} />); });
+  expect(renderer.root.findAll((node) => node.children.includes("review-file.txt") || node.children.includes("review-agent"))).toHaveLength(0);
+  await key("Tab");
+  expect(props.onInsertMention).not.toHaveBeenCalled();
+});
 const row = (name: string) => rows().find((item) => item.findAllByType("span").some((span) => span.children.includes(name)))!;
 async function key(key: string) {
   await act(async () => {

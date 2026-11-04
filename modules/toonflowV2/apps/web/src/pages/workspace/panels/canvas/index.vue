@@ -254,6 +254,7 @@ let canvasController = new AbortController();
 let workspaceController = new AbortController();
 const createCanvasContext = useCanvasTools({
   availableNodes,
+  directory: () => project.value?.directory ?? "",
   flushSave: flushCanvasSave,
   menu() {
     if (!canvasMenuRef.value) throw new Error("画布菜单尚未就绪");

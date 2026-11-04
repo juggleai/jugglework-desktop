@@ -11,8 +11,9 @@ describe("session-scoped agent selection wiring", () => {
   test("sends the agent selected for the target session, not the routed session", () => {
     const route = readSource("../src/react-app/shell/session-route.tsx");
     const sender = readSource("../src/react-app/domains/session/sync/draft-submission.ts");
-    expect(route).toContain("return submitSessionDraft({");
-    expect(sender).toContain("agent: readSessionAgentChoice(workspaceId, sessionId) ?? undefined");
+    expect(route).toContain("onSendDraft: createSessionDraftSender({");
+    expect(route).toContain("captureContext: (targetSessionId)");
+    expect(sender).toContain("input.agent !== undefined ? input.agent : readSessionAgentChoice(workspaceId, sessionId)");
     expect(route).not.toContain("agent: selectedAgent ?? undefined");
     expect(route).toContain("migrateLegacyAgentChoice(selectedWorkspaceId, selectedSessionId, legacySelectedAgent)");
     expect(route).toContain("selectedAgent: null");

@@ -117,6 +117,7 @@ export function createManagedRuntimeSseClient({
 
     while (!signal.aborted) {
       const access = runtimeAccess(await getAccess());
+      if (signal.aborted) break;
       const path = `/workspace/${encodeURIComponent(workspaceId)}/opencode/event`;
       const url = new URL(path, `${access.baseUrl}/`);
       if (url.origin !== new URL(access.baseUrl).origin) throw new ManagedRuntimeSseClientError("unavailable");
@@ -158,13 +159,17 @@ export function createManagedRuntimeSseClient({
         continue;
       }
       timers.clearTimeout(headerTimer);
-      if (response.status >= 300 && response.status < 400) {
+      if (response.redirected || (response.status >= 300 && response.status < 400)) {
+        controller.abort();
+        await response.body?.cancel().catch(() => undefined);
         signal.removeEventListener("abort", abort);
         await disconnect();
         try { logger.warn?.("managed_runtime_sse_failed", { code: "redirect", status: response.status }); } catch {}
         throw new ManagedRuntimeSseClientError("redirect");
       }
       if ([401, 403, 404].includes(response.status)) {
+        controller.abort();
+        await response.body?.cancel().catch(() => undefined);
         signal.removeEventListener("abort", abort);
         await disconnect();
         const error = new ManagedRuntimeSseClientError("unauthorized");
@@ -173,12 +178,16 @@ export function createManagedRuntimeSseClient({
         throw error;
       }
       if (!response.ok) {
+        controller.abort();
+        await response.body?.cancel().catch(() => undefined);
         signal.removeEventListener("abort", abort);
         await disconnect();
         await sleep(Math.min(serverRetryMs * (2 ** Math.min(reconnects++, 5)), maxBackoffMs), signal);
         continue;
       }
       if (!response.headers.get("content-type")?.toLowerCase().includes("text/event-stream")) {
+        controller.abort();
+        await response.body?.cancel().catch(() => undefined);
         signal.removeEventListener("abort", abort);
         await disconnect();
         try { logger.warn?.("managed_runtime_sse_failed", { code: "invalid_response", status: response.status, contentType: "other" }); } catch {}
@@ -190,8 +199,13 @@ export function createManagedRuntimeSseClient({
         await disconnect();
         throw new ManagedRuntimeSseClientError("invalid_response");
       }
+      // Cancel the reader as well as fetch: custom transports may not propagate abort to read().
+      const cancelReader = () => { void reader.cancel().catch(() => undefined); };
+      controller.signal.addEventListener("abort", cancelReader, { once: true });
+      if (controller.signal.aborted) cancelReader();
       const decoder = new TextDecoder("utf-8", { fatal: true });
       let lineBuffer = "";
+      let pendingCR = false;
       let dataLines = [];
       let recordBytes = 0;
       let recordId = null;
@@ -199,6 +213,11 @@ export function createManagedRuntimeSseClient({
       let attemptConnected = false;
       /** @type {unknown} */
       let inactivityTimer = null;
+      /** @type {unknown} */
+      let frameTimer = null;
+      const startFrameDeadline = () => {
+        if (frameTimer === null) frameTimer = timers.setTimeout(() => controller.abort(), inactivityMs);
+      };
       const resetWatchdog = () => {
         if (inactivityTimer !== null) timers.clearTimeout(inactivityTimer);
         inactivityTimer = timers.setTimeout(() => controller.abort(), inactivityMs);
@@ -231,8 +250,11 @@ export function createManagedRuntimeSseClient({
           dataLines = [];
           recordBytes = 0;
           recordId = null;
+          if (frameTimer !== null) timers.clearTimeout(frameTimer);
+          frameTimer = null;
           return;
         }
+        startFrameDeadline();
         recordBytes += Buffer.byteLength(line, "utf8") + 1;
         if (recordBytes > maxBufferBytes) throw new ManagedRuntimeSseClientError("buffer_overflow");
         if (line.startsWith(":")) {
@@ -261,15 +283,26 @@ export function createManagedRuntimeSseClient({
           const { done, value } = await reader.read();
           if (done) break;
           resetWatchdog();
-          lineBuffer += decoder.decode(value, { stream: true });
+          let text = decoder.decode(value, { stream: true });
+          if (pendingCR && text) {
+            // The CR already ended the line; a following LF is part of that same terminator.
+            if (text.startsWith("\n")) text = text.slice(1);
+            pendingCR = false;
+          }
+          lineBuffer += text;
           if (Buffer.byteLength(lineBuffer, "utf8") > maxBufferBytes) throw new ManagedRuntimeSseClientError("buffer_overflow");
           while (true) {
             const match = /\r\n|\r|\n/.exec(lineBuffer);
             if (!match || match.index === undefined) break;
             const line = lineBuffer.slice(0, match.index);
             lineBuffer = lineBuffer.slice(match.index + match[0].length);
+            if (match[0] === "\r" && !lineBuffer) pendingCR = true;
             await consumeLine(line);
           }
+          if (recordBytes + Buffer.byteLength(lineBuffer, "utf8") > maxBufferBytes) {
+            throw new ManagedRuntimeSseClientError("buffer_overflow");
+          }
+          if (lineBuffer) startFrameDeadline();
         }
       } catch (error) {
         if (!signal.aborted) {
@@ -280,7 +313,10 @@ export function createManagedRuntimeSseClient({
         streamFailed = !signal.aborted;
       } finally {
         if (inactivityTimer !== null) timers.clearTimeout(inactivityTimer);
+        if (frameTimer !== null) timers.clearTimeout(frameTimer);
         signal.removeEventListener("abort", abort);
+        controller.signal.removeEventListener("abort", cancelReader);
+        controller.abort();
         await reader.cancel().catch(() => undefined);
       }
       if (signal.aborted) break;

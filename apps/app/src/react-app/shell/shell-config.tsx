@@ -118,6 +118,12 @@ export function ShellConfigProvider({ children }: { children: ReactNode }) {
   );
 }
 
+/** 受限入口使用显式只读外观配置，不读取或写入主窗口配置。 */
+export function SessionShellConfigProvider({ children }: { children: ReactNode }) {
+  const value = useMemo(() => ({ config: { ...DEFAULT_SHELL_CONFIG, starterCards: false }, update: () => {}, reset: () => {} }), []);
+  return <ShellConfigContext.Provider value={value}>{children}</ShellConfigContext.Provider>;
+}
+
 export function useShellConfig(): ShellConfigContextValue {
   const ctx = use(ShellConfigContext);
   if (!ctx) {

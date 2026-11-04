@@ -7,6 +7,51 @@ const listen = (channel, callback) => {
   return () => ipcRenderer.removeListener(channel, handler);
 };
 
+let composerHandler;
+const earlyComposerRequests = [];
+/** 初始化期间保留只读准备/检查请求；追加或清理不能在超时后迟到执行。 */
+async function dispatchComposerRequest(input) {
+  if (!composerHandler) {
+    if (["prepare", "guard"].includes(input?.action) && earlyComposerRequests.length < 16) earlyComposerRequests.push(input);
+    else ipcRenderer.send("jugglework:office:composer-reply", { requestId: input?.requestId, error: "文件草稿尚未就绪，请稍后重试" });
+    return;
+  }
+  try {
+    const result = await composerHandler(input);
+    ipcRenderer.send("jugglework:office:composer-reply", { requestId: input.requestId, result });
+  } catch (error) {
+    ipcRenderer.send("jugglework:office:composer-reply", { requestId: input.requestId, error: error instanceof Error ? error.message : String(error) });
+  }
+}
+ipcRenderer.on("jugglework:office:composer-request", (_event, input) => { void dispatchComposerRequest(input); });
+
+/** 订阅 ID 不进入页面 API；处理 invoke 返回之前的事件及提前卸载。 */
+function subscribeSessionEvents(listener) {
+  let id;
+  let stopped = false;
+  const early = [];
+  const channel = "jugglework:file-window:session-event";
+  const handler = (_event, payload) => {
+    if (stopped) return;
+    if (!id) { if (early.length < 32) early.push(payload); return; }
+    if (payload?.id === id) listener(payload.event);
+  };
+  ipcRenderer.on(channel, handler);
+  const stop = () => {
+    if (stopped) return;
+    stopped = true;
+    early.length = 0;
+    ipcRenderer.removeListener(channel, handler);
+    if (id) void ipcRenderer.invoke("jugglework:file-window:session-unsubscribe", id).catch(() => {});
+  };
+  void ipcRenderer.invoke("jugglework:file-window:session-subscribe").then((value) => {
+    id = value;
+    if (stopped) { void ipcRenderer.invoke("jugglework:file-window:session-unsubscribe", id).catch(() => {}); return; }
+    for (const payload of early.splice(0)) if (payload?.id === id) listener(payload.event);
+  }).catch(stop);
+  return stop;
+}
+
 // TIPS: 文件窗口只获得文件、Office 与本地请求能力，不启动主应用状态和第二份 Runtime。
 contextBridge.exposeInMainWorld("__JUGGLEWORK_ELECTRON__", {
   platform: process.platform,
@@ -19,6 +64,18 @@ contextBridge.exposeInMainWorld("__JUGGLEWORK_ELECTRON__", {
     return ipcRenderer.invoke("jugglework:desktop", command, ...args);
   },
   office: {
+    /** 文件目标切换与主窗口共用草稿选区确认。 */
+    confirmFileSwitch: (input) => ipcRenderer.invoke("jugglework:office:confirm-file-switch", input),
+    /** 只释放当前窗口收到的真实选区引用。 */
+    releaseReferences: (input) => ipcRenderer.invoke("jugglework:office:release-selections", input),
+    /** 在同一原生模型中定位选区。 */
+    revealSelection: (input) => ipcRenderer.invoke("jugglework:office:reveal-selection", input),
+    /** 处理所属文件窗口草稿动作，不通过主窗口中转本地草稿。 */
+    onComposerRequest(callback) {
+      composerHandler = callback;
+      for (const input of earlyComposerRequests.splice(0)) void dispatchComposerRequest(input);
+      return () => { if (composerHandler === callback) composerHandler = undefined; };
+    },
     /** 读取两种宿主共用的文档资源状态。 */
     resources: (documentId) => ipcRenderer.invoke("jugglework:office:resources", { documentId }),
     /** 主动获取当前页面缺失字体，下次打开生效。 */
@@ -72,6 +129,7 @@ contextBridge.exposeInMainWorld("__JUGGLEWORK_ELECTRON__", {
     },
   },
   fileWindow: {
+    subscribeSessionEvents,
     /** 确认本机文件窗口能力已经注册。 */
     available: () =>
       ipcRenderer.invoke("jugglework:file-window:available").catch(() => false),

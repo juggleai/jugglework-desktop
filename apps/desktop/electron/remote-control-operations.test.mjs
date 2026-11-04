@@ -91,6 +91,19 @@ describe("remote-control operation registry", () => {
     assert.deepEqual(await registry.advertise(), advertised());
   });
 
+  it("advertises explicit prompt models only with a mutation handler and rejects unadvertised selection", async () => {
+    const registry = createRemoteControlOperationRegistry({
+      registrations: [promptRegistration()],
+      getFeatureGates: () => ({ ...enabledReadGates, sessionMutation: true }),
+      isOperationAllowed: () => true,
+    });
+    const capabilities = await registry.advertise();
+    assert.equal(capabilities.features.includes("session.prompt-model"), true);
+    const request = { operation: "session.prompt", payloadVersion: 1, arguments: { workspaceId: "ws", sessionId: "ses", prompt: "hello", model: { providerID: "p", modelID: "m" } } };
+    assert.equal((await registry.dispatch(request, { advertisedCapabilities: { ...capabilities, features: [] } })).error.code, "feature_disabled");
+    assert.equal((await registry.dispatch(request, { advertisedCapabilities: capabilities })).error, undefined);
+  });
+
   it("advertises E2EE only when its gate and secure local key storage are ready", async () => {
     let ready = true;
     let checks = 0;

@@ -79,7 +79,14 @@ export function ArtifactCard({ artifact, compact = false, onViewChange, onOpenIn
         artifact.sizeBytes !== artifact.legacy_target.size) ||
       artifact.name !== artifact.legacy_target.name);
 
-  const path = artifact.path.replace(/\\/g, "/").replace(/^\.\//, "");
+  // Cards display workspace-relative paths. Removing a legacy absolute-path
+  // prefix also keeps its leading slash from moving to the directory tail in
+  // the RTL elision wrapper and visually combining with the real separator.
+  const path = artifact.path
+    .replace(/\\/g, "/")
+    .replace(/^\.\//, "")
+    .replace(/^\/+/, "")
+    .replace(/\/{2,}/g, "/");
   const separator = path.lastIndexOf("/");
   const directory = separator >= 0 ? path.slice(0, separator) : "";
   const filename = separator >= 0 ? path.slice(separator + 1) : path;
@@ -229,7 +236,7 @@ export function ArtifactCard({ artifact, compact = false, onViewChange, onOpenIn
   );
 }
 
-/** 当前轮次统一产物卡片：前三项预览，其余原地展开，差异在右侧查看。 */
+/** 当前轮次统一产物卡片：前三项预览，其余一次展开，差异在右侧查看。 */
 export function ChangeCounts({ change }: { change: { additions: number; deletions: number; source?: "snapshot" | "edits" } }) {
   return <span className="inline-flex shrink-0 gap-1 text-sm tabular-nums" data-testid="artifact-change-counts" title={t(change.source === "edits" ? "artifact.edit_counts" : "artifact.text_changes_only")}>
     <span className="text-green-11">+{change.additions}</span>
@@ -240,7 +247,7 @@ export function ChangeCounts({ change }: { change: { additions: number; deletion
 export function ArtifactCards({ artifacts, turnId, onUndo }: { artifacts: ArtifactItem[]; turnId?: string; onUndo?: () => void }) {
   const actions = useArtifactActions();
   const [confirmUndo, setConfirmUndo] = React.useState(false);
-  const [expanded, setExpanded] = React.useState(false);
+  const [visibleCount, setVisibleCount] = React.useState(3);
   const listId = React.useId();
   const openChanges = (artifact?: ArtifactItem) => {
     actions?.openChanges(turnId ?? artifacts[0]?.messageId ?? "", artifacts, artifact?.path);
@@ -248,17 +255,19 @@ export function ArtifactCards({ artifacts, turnId, onUndo }: { artifacts: Artifa
   const changes = artifacts.flatMap((artifact) => artifact.change ? [artifact.change] : []);
   const totals = changes.reduce((sum, change) => ({ additions: sum.additions + change.additions, deletions: sum.deletions + change.deletions }), { additions: 0, deletions: 0 });
   if (!artifacts.length) return null;
+  const allVisible = visibleCount >= artifacts.length;
+  const remainingCount = Math.max(0, artifacts.length - visibleCount);
   return (
     <div
       className="mx-auto mt-1 mb-1 w-full max-w-5xl px-3 md:px-8"
       data-testid="turn-artifacts"
     >
       <section className="overflow-hidden rounded-2xl border border-border bg-background" aria-label={t("artifact.turn_files")} data-testid="artifact-summary">
-        <header className="flex items-center gap-3 border-b border-border px-3 py-3 sm:px-4">
+        <header className="flex flex-wrap items-center gap-3 border-b border-border px-3 py-3 sm:px-4">
           <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted/60 text-muted-foreground" aria-hidden="true">
             <FileDiff className="size-5" />
           </span>
-          <div className="min-w-0 flex-1">
+          <div className="min-w-32 flex-1">
             <h3 className="text-sm font-semibold">{t("artifact.summary_count", { count: artifacts.length })}</h3>
             {changes.length ? <div className="mt-0.5"><ChangeCounts change={{ ...totals, source: changes.some((change) => change.source === "edits") ? "edits" : "snapshot" }} /></div> : null}
           </div>
@@ -276,7 +285,7 @@ export function ArtifactCards({ artifacts, turnId, onUndo }: { artifacts: Artifa
         </header>
         <div>
           <div id={listId} className="flex min-w-0 flex-col">
-            {(expanded ? artifacts : artifacts.slice(0, 3)).map((artifact) => (
+            {artifacts.slice(0, visibleCount).map((artifact) => (
               <ArtifactCard key={artifact.id} artifact={artifact} compact onViewChange={actions ? () => openChanges(artifact) : undefined} />
             ))}
           </div>
@@ -285,12 +294,12 @@ export function ArtifactCards({ artifacts, turnId, onUndo }: { artifacts: Artifa
               variant="ghost"
               size="sm"
               className="h-9 w-full justify-start gap-2 rounded-none px-3 text-sm font-medium"
-              aria-expanded={expanded}
+              aria-expanded={visibleCount > 3}
               aria-controls={listId}
-              onClick={() => setExpanded((value) => !value)}
+              onClick={() => setVisibleCount(allVisible ? 3 : artifacts.length)}
             >
-              {expanded ? t("artifact.show_less") : t("artifact.show_more", { count: artifacts.length - 3 })}
-              <ChevronDown className={expanded ? "size-4 rotate-180" : "size-4"} />
+              {allVisible ? t("artifact.show_less") : t("artifact.show_more", { count: remainingCount })}
+              <ChevronDown className={allVisible ? "size-4 rotate-180" : "size-4"} />
             </Button>
           ) : null}
         </div>

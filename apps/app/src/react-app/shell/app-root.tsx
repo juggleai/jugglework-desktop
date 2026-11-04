@@ -43,9 +43,11 @@ import { resolveSigninGateDecision } from "./signin-gate";
 import { WelcomeRoute } from "./welcome-route";
 import { NotificationCenterController } from "./notification-center";
 import { RootJuggleWorkServerProvider } from "../domains/connections/root-jugglework-server-provider";
+import { FileWindowSessionStopCoordinator } from "./file-window-session-stop-coordinator";
 import { AutomationRunNotificationCoordinator } from "../domains/automations/automation-run-notification-coordinator";
 import { AutomationActivityProvider } from "../domains/automations/automation-activity-provider";
 import { HostMarketplacePluginsProvider } from "../domains/settings/state/host-marketplace-plugins-provider";
+import { MainOfficeComposerBridge } from "../domains/session/surface/composer/office-composer-bridge";
 
 type DenSigninGateProps = {
   children: ReactNode;
@@ -323,6 +325,7 @@ export function AppRoot() {
   return (
     <>
       <DevProfiler id="AppRoot">
+        <MainOfficeComposerBridge />
         <ShellConfigProvider>
         <AppMenuProvider>
         <JuggleWorkControlProvider>
@@ -331,8 +334,9 @@ export function AppRoot() {
           <JuggleWorkContextPublisher />
           <DenAuthControlActions />
           <BrandThemeControlActions />
+          <RootJuggleWorkServerProvider>
+          <FileWindowSessionStopCoordinator />
           <DenSigninGate>
-              <RootJuggleWorkServerProvider>
                 <AutomationActivityProvider>
                 <HostMarketplacePluginsProvider>
                 <AutomationRunNotificationCoordinator />
@@ -376,8 +380,8 @@ export function AppRoot() {
                 </Routes>
                 </HostMarketplacePluginsProvider>
                 </AutomationActivityProvider>
-             </RootJuggleWorkServerProvider>
           </DenSigninGate>
+          </RootJuggleWorkServerProvider>
         </JuggleWorkControlProvider>
         </AppMenuProvider>
         </ShellConfigProvider>

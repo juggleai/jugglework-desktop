@@ -4,6 +4,12 @@ import path from "node:path";
 const MAX_LOG_BYTES = 1024 * 1024;
 const ALLOWED_METADATA_KEYS = new Set([
   "accepted",
+  "runHash",
+  "workspaceHash",
+  "pollerHash",
+  "cursor",
+  "count",
+  "generation",
   "agentErrorCode",
   "attempt",
   "bindingCount",
@@ -36,7 +42,7 @@ function safeMetadata(value) {
 /**
  * Opt-in, content-free remote event diagnostics. The allowlist intentionally
  * excludes URLs, headers, tokens, and all workspace/session/control identifiers.
- * @param {{ enabled: boolean, logsDirectory: string, now?: () => Date, console?: Pick<Console, "debug" | "info" | "warn" | "error"> }} options
+ * @param {{ enabled: boolean, logsDirectory: string, now?: () => Date, console?: Partial<Pick<Console, "debug" | "info" | "warn" | "error">> }} options
  */
 export function createRemoteEventDiagnostics({ enabled, logsDirectory, now = () => new Date(), console: consoleTarget = console }) {
   const filePath = path.join(logsDirectory, "remote-session-events.log");
@@ -55,12 +61,18 @@ export function createRemoteEventDiagnostics({ enabled, logsDirectory, now = () 
 
   /** @param {"debug" | "info" | "warn" | "error"} level @param {string} message @param {unknown} metadata */
   function write(level, message, metadata) {
-    if (!enabled) return;
-    const safe = safeMetadata(metadata);
-    const record = { timestamp: now().toISOString(), level, message: String(message).slice(0, 160), ...safe };
+    if (!enabled && !String(message).startsWith("remote_activity_journal_")) return;
+    let record;
+    try {
+      const safe = safeMetadata(metadata);
+      record = { timestamp: now().toISOString(), level, message: String(message).slice(0, 160), ...safe };
+    } catch { return; }
     try { consoleTarget[level]?.("[desktop-remote-events]", record); } catch {}
     writes = writes.then(async () => {
       await initialize();
+      if (await stat(filePath).then((entry) => entry.size >= MAX_LOG_BYTES, () => false)) {
+        await rename(filePath, `${filePath}.previous`).catch(() => undefined);
+      }
       await appendFile(filePath, `${JSON.stringify(record)}\n`, { encoding: "utf8", mode: 0o600 });
     }).catch(() => undefined);
   }

@@ -24,6 +24,8 @@ import {
 } from "../surface/composer-state-store";
 import { encodeComposerMentionValue } from "../surface/composer/mention-encoding";
 import { requestComposerFocus } from "../surface/composer/focus-request";
+import { useLocal } from "@/react-app/kernel/local-provider";
+import { readFileWindowConversationOptions } from "@/react-app/kernel/file-window-options";
 
 /** 文件卡片与正文入口共用的已实现操作。 */
 export type ArtifactAction =
@@ -119,9 +121,11 @@ export function ArtifactActionsProvider(props: {
   sessionId: string;
   remote: boolean;
   running?: boolean;
+  enabled?: boolean;
 }) {
   const queryClient = useQueryClient();
-  const desktop = !props.remote && isElectronRuntime();
+  const local = useLocal();
+  const desktop = props.enabled !== false && !props.remote && isElectronRuntime();
   const [fileWindowAvailable, setFileWindowAvailable] = React.useState(false);
   React.useEffect(() => {
     let active = true;
@@ -201,6 +205,7 @@ export function ArtifactActionsProvider(props: {
             workspaceId,
             sessionId,
             path,
+            conversationOptions: readFileWindowConversationOptions(workspaceId, sessionId, local.prefs),
           });
           return;
         }
@@ -257,6 +262,7 @@ export function ArtifactActionsProvider(props: {
       client,
       desktop,
       fileWindowAvailable,
+      local.prefs,
       queryClient,
       running,
       sessionId,
@@ -282,7 +288,7 @@ export function ArtifactActionsProvider(props: {
     [desktop, running, fileWindowAvailable, runPath, workspaceRoot, sessionId],
   );
   return (
-    <ArtifactActionsContext.Provider value={value}>
+    <ArtifactActionsContext.Provider value={props.enabled === false ? null : value}>
       {props.children}
     </ArtifactActionsContext.Provider>
   );

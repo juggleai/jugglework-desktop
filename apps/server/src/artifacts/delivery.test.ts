@@ -115,6 +115,32 @@ test("只归集真实父消息的成功写入，失败工具和其他轮次不�
   expect(inspections).toBe(2);
 });
 
+test("工具写入只归集工作区内路径，并自动清理旧版误登记的外部临时文件", async () => {
+  const path = await root();
+  const outside = join(tmpdir(), "opencode", "review_overlay.json");
+  expect(artifactPathsFromTool(writePart(join(path, "reports", "data.json")), path)).toEqual(["reports/data.json"]);
+  expect(artifactPathsFromTool(writePart("reports/data.json"), path)).toEqual(["reports/data.json"]);
+  expect(artifactPathsFromTool(writePart(outside), path)).toEqual([]);
+
+  const service = new FileDeliveryService({
+    workspace: () => ({ id: "ws_1", path }),
+    readMessages: async () => [],
+    inspect: async () => null,
+  });
+  const registry = service.registry("ws_1");
+  registry.track(origin, {
+    key: `call:${outside}`,
+    path: outside,
+    source: "tool",
+  });
+  registry.finishRun(origin.runId);
+  registry.fail(origin, `call:${outside}`, "文件不存在，尚未确认交付", true);
+  expect((await service.list("ws_1", origin.sessionId)).turns[0]).toMatchObject({
+    status: "ready",
+    targets: [],
+  });
+});
+
 test("自动生成的真实用户消息 ID 在同一 run 重试时保持一致", async () => {
   const path = await root();
   const service = new FileDeliveryService({

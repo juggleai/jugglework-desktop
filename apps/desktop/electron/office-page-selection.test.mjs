@@ -256,7 +256,7 @@ test("图片 AI 当前页入口显式绑定直接图片所属真实单页，普�
   assert.deepEqual(read(), { pageIndex: [0], shapeIds: [], nativeSlideIds: ["native"] });
   selection.selectedSlides.selectedArray = [page];
   assert.deepEqual(read().nativeSlideIds, ["native"]);
-  for (const mutate of [() => { image.parent = {}; }, () => { page.uniqueID = "other"; },
+  for (const mutate of [() => { image.parent = /** @type {any} */ ({}); }, () => { page.uniqueID = "other"; },
     () => { selection.currentSlideIndex = 1; }, () => { page.children = []; },
     () => { page.children = [image, image]; }, () => { image.isImage = () => false; },
     () => { selection.selectedSlides.selectedArray = [page, page]; }]) {

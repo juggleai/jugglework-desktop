@@ -477,6 +477,9 @@ export class SessionPermissionModeStore {
   // Mode mutation (compare-and-set with arming data)
   // -------------------------------------------------------------------------
 
+  /** 保存根会话的权限选择并递增权限版本；首次选择请求审批也需持久化。
+   * @param input 会话、期望版本及明确权限选择
+   */
   updateMode(input: UpdateModeInput):
     | { ok: true; state: SessionPermissionModeState; clearedGrantIds: string[] }
     | { ok: false; error: "stale-revision" } {
@@ -550,6 +553,15 @@ export class SessionPermissionModeStore {
                updated_at = ?
              WHERE workspace_id = ? AND root_session_id = ?`,
             [currentRevision + 1, input.now, input.workspaceId, input.rootSessionId],
+          );
+        } else {
+          // TIPS: 新会话默认为请求审批，但尚无持久记录；不能只执行降级 UPDATE 后再读取不存在的状态。
+          this.database.run(
+            `INSERT INTO session_permission_modes
+               (workspace_id, root_session_id, requested_mode, profile_version, acknowledged_version,
+                author_principal_id, author_principal_scope, authority_revision, suspended, activated_at, created_at, updated_at)
+             VALUES (?, ?, 'request-approval', ?, NULL, NULL, NULL, ?, 0, NULL, ?, ?)`,
+            [input.workspaceId, input.rootSessionId, SESSION_PERMISSION_PROFILE_VERSION, currentRevision + 1, input.now, input.now],
           );
         }
       }

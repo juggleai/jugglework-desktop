@@ -5,9 +5,11 @@ export const DESKTOP_REMOTE_PROTOCOL_VERSION = 1 as const
 export const DESKTOP_REMOTE_PAYLOAD_VERSION = 1 as const
 export const DESKTOP_REMOTE_DESCENDANT_PAYLOAD_VERSION = 2 as const
 export const DESKTOP_REMOTE_ATTACHMENT_MAX_FILES = 3
-export const DESKTOP_REMOTE_ATTACHMENT_MAX_DECODED_BYTES = 256 * 1024
-// Leaves room for encryption/base64 and envelope metadata under the 2 MiB WSS cap.
-export const DESKTOP_REMOTE_PROMPT_MAX_ENCODED_BYTES = 1_300_000
+export const DESKTOP_REMOTE_ATTACHMENT_MAX_DECODED_BYTES = 10 * 1024 * 1024
+export const DESKTOP_REMOTE_ATTACHMENTS_TOTAL_MAX_DECODED_BYTES = 20 * 1024 * 1024
+// Three bounded attachments plus text and envelope metadata fit under 32 MiB.
+export const DESKTOP_REMOTE_PROMPT_MAX_ENCODED_BYTES = 28 * 1024 * 1024
+export const DESKTOP_REMOTE_ENCRYPTED_PAYLOAD_MAX_BYTES = 48 * 1024 * 1024
 
 export const desktopRemoteAttachmentMimeValues = [
   "image/png",
@@ -50,8 +52,22 @@ const attachmentFilenameSchema = z.string().trim().min(1).max(255)
   .refine((value) => !/[\u0000-\u001f\u007f/\\]/.test(value), "filename is invalid")
 
 function decodedBase64ByteLength(value: string): number | null {
-  if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) return null
-  return (value.length / 4) * 3 - (value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0)
+  if (value.length % 4 !== 0) return null
+  let padding = 0
+  if (value.endsWith("==")) padding = 2
+  else if (value.endsWith("=")) padding = 1
+  const contentEnd = value.length - padding
+  for (let index = 0; index < contentEnd; index += 1) {
+    const code = value.charCodeAt(index)
+    const valid = (code >= 48 && code <= 57) || (code >= 65 && code <= 90) ||
+      (code >= 97 && code <= 122) || code === 43 || code === 47
+    if (!valid) return null
+  }
+  for (let index = contentEnd; index < value.length; index += 1) {
+    if (value.charCodeAt(index) !== 61) return null
+  }
+  if (padding > 0 && contentEnd === 0) return null
+  return (value.length / 4) * 3 - padding
 }
 
 export function isSafeDesktopRemoteAttachmentDataUrl(url: unknown, mime: unknown): url is string {
@@ -66,7 +82,7 @@ const desktopRemotePromptFileShape = {
   type: z.literal("file"),
   mime: desktopRemoteAttachmentMimeSchema,
   filename: attachmentFilenameSchema,
-  url: z.string().max(400_000),
+  url: z.string().max(14 * 1024 * 1024),
 } as const
 
 export const desktopRemotePromptPartSchema = z.discriminatedUnion("type", [
@@ -86,6 +102,14 @@ const desktopRemotePromptPartsSchema = z.array(desktopRemotePromptPartSchema).mi
   const text = parts.flatMap((part) => part.type === "text" ? [part.text] : []).join("")
   if (new TextEncoder().encode(text).byteLength > 200_000) {
     context.addIssue({ code: "custom", message: "prompt text must be at most 200000 UTF-8 bytes" })
+  }
+  const totalAttachmentBytes = parts.reduce((total, part) => {
+    if (part.type !== "file") return total
+    const prefix = `data:${part.mime};base64,`
+    return total + (decodedBase64ByteLength(part.url.slice(prefix.length)) ?? 0)
+  }, 0)
+  if (totalAttachmentBytes > DESKTOP_REMOTE_ATTACHMENTS_TOTAL_MAX_DECODED_BYTES) {
+    context.addIssue({ code: "custom", message: "prompt attachments are too large" })
   }
   if (!text.trim() && !parts.some((part) => part.type === "file")) {
     context.addIssue({ code: "custom", message: "prompt must contain non-blank text or a file" })
@@ -146,6 +170,7 @@ export const desktopRemoteOperationValues = [
   "session.snapshot",
   "session.create",
   "session.prompt",
+  "session.model.set",
   "session.abort",
   "session.pending.cancel",
   "interaction.permission.reply",
@@ -164,6 +189,7 @@ export const desktopRemoteReadOperationValues = [
 export const desktopRemoteMutationOperationValues = [
   "session.create",
   "session.prompt",
+  "session.model.set",
   "session.abort",
   "session.pending.cancel",
   "interaction.permission.reply",
@@ -179,10 +205,13 @@ export const desktopRemoteDescendantOperationValues = [
 
 export const desktopRemoteFeatureCapabilityValues = [
   "controller.event-resume",
+  "live-activity-v3",
   "payload.e2ee-v1",
   "background.lifecycle",
   "session.steer",
   "session.enqueue",
+  "session.prompt-model",
+  "session.model-selection",
   "native-mobile",
 ] as const
 
@@ -297,6 +326,7 @@ export const desktopRemoteRequiredFeatureGatesByOperation = {
   "session.snapshot": ["enrollment", "readOnlyControl"],
   "session.create": ["enrollment", "readOnlyControl", "sessionMutation"],
   "session.prompt": ["enrollment", "readOnlyControl", "sessionMutation"],
+  "session.model.set": ["enrollment", "readOnlyControl", "sessionMutation"],
   "session.abort": ["enrollment", "readOnlyControl", "sessionMutation"],
   "session.pending.cancel": ["enrollment", "readOnlyControl", "sessionMutation"],
   "interaction.permission.reply": [
@@ -354,6 +384,8 @@ export function createDesktopRemoteCapabilityAdvertisement(
   if (readEnabled && gates.backgroundLifecycle) features.push("background.lifecycle")
   if (mutationEnabled && gates.busySessionSteer) features.push("session.steer")
   if (mutationEnabled && gates.busySessionEnqueue) features.push("session.enqueue")
+  if (mutationEnabled) features.push("session.prompt-model")
+  if (mutationEnabled) features.push("session.model-selection")
   if (readEnabled && gates.nativeMobile) features.push("native-mobile")
 
   return desktopRemoteCapabilityAdvertisementSchema.parse({
@@ -384,6 +416,7 @@ export const desktopRemoteErrorCodeValues = [
   "session_not_found",
   "session_busy",
   "run_mismatch",
+  "revision_conflict",
   "interaction_not_found",
   "interaction_expired",
   "already_resolved",
@@ -757,6 +790,12 @@ const sessionSnapshotBaseShape = {
     position: z.number().int().positive(),
     status: z.literal("pending"),
   }).strict()).max(1_000),
+  modelPreference: z.object({
+    revision: z.number().int().nonnegative(),
+    mode: z.enum(["auto", "explicit"]),
+    model: z.object({ providerID: identifierSchema, modelID: identifierSchema }).strict().nullable(),
+    updatedAt: z.number().int().nonnegative(),
+  }).strict(),
   capturedAt: dateTimeSchema,
 } as const
 
@@ -833,6 +872,7 @@ const sessionPromptRequestSchema = z
       .object({
         workspaceId: identifierSchema,
         sessionId: identifierSchema,
+        model: z.object({ providerID: identifierSchema, modelID: identifierSchema }).strict().optional(),
         prompt: z.string().min(1)
           .refine((value) => value.trim().length > 0, "prompt must not be blank")
           .refine(
@@ -851,6 +891,7 @@ const sessionPromptV2RequestSchema = z
     arguments: z.object({
       workspaceId: identifierSchema,
       sessionId: identifierSchema,
+      model: z.object({ providerID: identifierSchema, modelID: identifierSchema }).strict().optional(),
       parts: desktopRemotePromptPartsSchema,
       whenBusy: z.enum(["reject", "steer", "enqueue"]).default("reject"),
     }).strict(),
@@ -868,6 +909,19 @@ const sessionCreateRequestSchema = z
       .strict(),
   })
   .strict()
+const sessionModelSetRequestSchema = z.object({
+  operation: z.literal("session.model.set"),
+  payloadVersion: z.literal(DESKTOP_REMOTE_PAYLOAD_VERSION),
+  arguments: z.object({
+    workspaceId: identifierSchema,
+    sessionId: identifierSchema,
+    expectedRevision: z.number().int().nonnegative(),
+    preference: z.discriminatedUnion("mode", [
+      z.object({ mode: z.literal("auto"), model: z.null() }).strict(),
+      z.object({ mode: z.literal("explicit"), model: z.object({ providerID: identifierSchema, modelID: identifierSchema }).strict() }).strict(),
+    ]),
+  }).strict(),
+}).strict()
 const sessionAbortRequestSchema = z
   .object({
     operation: z.literal("session.abort"),
@@ -978,6 +1032,7 @@ export const desktopRemoteOperationRequestSchema = z.union([
     sessionSnapshotRequestSchema,
     sessionCreateRequestSchema,
     sessionPromptRequestSchema,
+    sessionModelSetRequestSchema,
     sessionAbortRequestSchema,
     sessionPendingCancelRequestSchema,
     permissionReplyRequestSchema,
@@ -1009,6 +1064,15 @@ export const desktopRemoteOperationResultSchema = z.union([
         result: z.object({ sessionId: identifierSchema }).strict(),
       })
       .strict(),
+    z.object({
+      operation: z.literal("session.model.set"),
+      payloadVersion: z.literal(DESKTOP_REMOTE_PAYLOAD_VERSION),
+      result: z.object({
+        revision: z.number().int().positive(), mode: z.enum(["auto", "explicit"]),
+        model: z.object({ providerID: identifierSchema, modelID: identifierSchema }).strict().nullable(),
+        updatedAt: z.number().int().nonnegative(),
+      }).strict(),
+    }).strict(),
     z
       .object({
         operation: z.literal("workspace.list"),
@@ -1106,6 +1170,13 @@ export function createDesktopRemoteOperationRequestSchema(
 ) {
   const parsedCapabilities = desktopRemoteCapabilityAdvertisementSchema.parse(capabilities)
   return desktopRemoteOperationRequestSchema.superRefine((request, context) => {
+    if (request.operation === "session.prompt" && request.arguments.model !== undefined &&
+      !parsedCapabilities.features.includes("session.prompt-model")) {
+      context.addIssue({ code: "custom", message: "model selection must be advertised by the target device", path: ["arguments", "model"], params: { errorCode: "capability_not_advertised" satisfies DesktopRemoteErrorCode } })
+    }
+    if (request.operation === "session.model.set" && !parsedCapabilities.features.includes("session.model-selection")) {
+      context.addIssue({ code: "custom", message: "session model selection must be advertised by the target device", path: ["operation"], params: { errorCode: "capability_not_advertised" satisfies DesktopRemoteErrorCode } })
+    }
     if (!isDesktopRemoteOperationAdvertised(request, parsedCapabilities)) {
       context.addIssue({
         code: "custom",
@@ -1258,6 +1329,7 @@ const normalizedSessionEventDataV1Schema = z.discriminatedUnion("type", [
     })
     .strict(),
   z.object({ type: z.literal("todos.replace"), todos: z.array(desktopRemoteTodoSchema).max(10_000) }).strict(),
+  z.object({ type: z.literal("session.model.updated"), preference: sessionSnapshotBaseShape.modelPreference }).strict(),
   z.object({ type: z.literal("interaction.upsert"), interaction: desktopRemoteInteractionV1Schema }).strict(),
   z.object({ type: z.literal("interaction.remove"), interactionId: identifierSchema }).strict(),
   z
@@ -1289,6 +1361,7 @@ const normalizedSessionEventDataV2Schema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("message.remove"), messageId: identifierSchema }).strict(),
   z.object({ type: z.literal("message.part.upsert"), messageId: identifierSchema, part: desktopRemoteMessagePartSchema }).strict(),
   z.object({ type: z.literal("todos.replace"), todos: z.array(desktopRemoteTodoSchema).max(10_000) }).strict(),
+  z.object({ type: z.literal("session.model.updated"), preference: sessionSnapshotBaseShape.modelPreference }).strict(),
   z.object({ type: z.literal("interaction.upsert"), interaction: desktopRemoteInteractionV2Schema }).strict(),
   z.object({
     type: z.literal("interaction.remove"),
@@ -1529,7 +1602,7 @@ const encryptedPayloadEnvelopeSchema = z
     payload: z
       .object({
         nonce: z.string().base64url().length(16),
-        ciphertext: z.string().base64url().min(23).max(16_000_000),
+        ciphertext: z.string().base64url().min(23).max(DESKTOP_REMOTE_ENCRYPTED_PAYLOAD_MAX_BYTES),
       })
       .strict(),
   })

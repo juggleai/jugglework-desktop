@@ -139,6 +139,20 @@ async function logLines(path: string): Promise<string[]> {
 }
 
 describe("embedded server lifecycle", () => {
+  test.serial("零用户工作区使用文件助手默认目录启动受管引擎", async () => {
+    const fixture = await createFixture();
+    try {
+      const root = join(fixture.root, "FileAssistant");
+      const options = { ...managedOptions(fixture, "file-only"), workspaces: [], opencodeCwd: undefined, fileAssistantRoot: root };
+      const handle = await startEmbeddedServer(options);
+      fixture.handles.push(handle);
+      expect(handle.config.workspaces).toHaveLength(1);
+      expect(handle.config.workspaces[0]).toMatchObject({ name: "文件助手", path: root, workspaceType: "local" });
+      expect(handle.config.authorizedRoots).toContain(root);
+      expect(handle.managedOpencode?.isAlive()).toBe(true);
+    } finally { await fixture.restore(); }
+  }, 30_000);
+
   test.serial("passes an embedded logger without changing process-global logging", async () => {
     const fixture = await createFixture();
     const previousSilent = process.env.JUGGLEWORK_LOG_SILENT;

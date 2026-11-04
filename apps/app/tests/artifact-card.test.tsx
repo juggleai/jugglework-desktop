@@ -10,6 +10,7 @@ import type { JuggleWorkServerClient } from "../src/app/lib/jugglework-server";
 import { FileViewer } from "../src/react-app/domains/session/files/file-viewer";
 import { useFilesPanelStore } from "../src/react-app/domains/session/files/files-panel-store";
 import { ArtifactActionsProvider } from "../src/react-app/domains/session/artifacts/artifact-actions-provider";
+import { LocalProvider } from "../src/react-app/kernel/local-provider";
 import { useUiStateStore } from "../src/react-app/shell/ui-state-store";
 
 // Exercise list state without mounting DOM-dependent floating overlays.
@@ -123,6 +124,16 @@ test("long paths elide the leading directory while preserving the filename and a
   expect(html).toContain("More actions");
 });
 
+test("legacy absolute paths do not render a duplicated directory separator", () => {
+  const item = {
+    ...artifact("review_overlay.json"),
+    path: "/var/folders/tmp/opencode//review_overlay.json",
+  };
+  const html = renderToStaticMarkup(<ArtifactCard artifact={item} compact />);
+  expect(html).toContain('title="var/folders/tmp/opencode/review_overlay.json"');
+  expect(html).not.toContain("opencode//review_overlay.json");
+});
+
 test("active file tab always shows close while inactive tabs reveal it on hover", () => {
   const html = renderToStaticMarkup(<FileTabs
     tabs={[
@@ -147,20 +158,22 @@ test("active file tab always shows close while inactive tabs reveal it on hover"
   expect(html).toContain("Close 截图中都有什么字.docx");
 });
 
-test("expands and collapses remaining artifacts inline", async () => {
+test("reveals all remaining artifacts at once and then collapses", async () => {
   const previous = Reflect.get(globalThis, "IS_REACT_ACT_ENVIRONMENT");
   Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
   let view: ReactTestRenderer | undefined;
   try {
     await act(async () => {
-      view = create(<ArtifactCards artifacts={[1, 2, 3, 4, 5].map((i) => artifact(`report-${i}.md`, i))} />);
+      view = create(<ArtifactCards artifacts={[1, 2, 3, 4, 5, 6, 7, 8].map((i) => artifact(`report-${i}.md`, i))} />);
     });
     const rows = () => view!.root.findAllByProps({ "data-testid": "artifact-card" });
     const toggle = () => view!.root.findAll((node) => node.type === "button" && typeof node.props["aria-expanded"] === "boolean" && Boolean(node.props["aria-controls"]))[0]!;
     expect(rows()).toHaveLength(3);
+    expect(toggle().props.children).toContain("Show more (5)");
     await act(async () => toggle().props.onClick());
-    expect(rows()).toHaveLength(5);
+    expect(rows()).toHaveLength(8);
     expect(toggle().props["aria-expanded"]).toBe(true);
+    expect(toggle().props.children).toContain("Collapse files");
     await act(async () => toggle().props.onClick());
     expect(rows()).toHaveLength(3);
     expect(toggle().props["aria-expanded"]).toBe(false);
@@ -226,9 +239,9 @@ test("file and summary actions open turn changes in the session side panel; undo
   let view: ReactTestRenderer | undefined;
   try {
     const changed = { ...artifact("report.md"), path: "docs/report.md", change: { additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-old\n+new" } };
-    await act(async () => { view = create(<QueryClientProvider client={client}><ArtifactActionsProvider client={{} as JuggleWorkServerClient} sessionId={sessionId} workspaceId="workspace" workspaceRoot="/repo" remote>
+    await act(async () => { view = create(<QueryClientProvider client={client}><LocalProvider persist={false}><ArtifactActionsProvider client={{} as JuggleWorkServerClient} sessionId={sessionId} workspaceId="workspace" workspaceRoot="/repo" remote>
       <ArtifactCards artifacts={[changed]} turnId="user-turn" onUndo={undo} />
-    </ArtifactActionsProvider></QueryClientProvider>); });
+    </ArtifactActionsProvider></LocalProvider></QueryClientProvider>); });
     await act(async () => view!.root.findByProps({ "data-testid": "artifact-card" }).findAllByType("button")[0]!.props.onClick());
     expect(useUiStateStore.getState().sidePanelState[sessionId]).toBe("files");
     expect(useFilesPanelStore.getState().sessions[sessionId]).toMatchObject({ activeKey: "changes", selectedChangePath: "docs/report.md", turnChanges: { turnId: "user-turn", artifacts: [changed] } });

@@ -34,6 +34,7 @@ import {
   applyBrandAppName,
   applyBrandIcon,
   desktopRemoteControlContextSync,
+  desktopBridge,
 } from "../../../app/lib/desktop";
 import { createJuggleWorkServerClient } from "../../../app/lib/jugglework-server";
 import {
@@ -219,6 +220,13 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
   const isSignedIn = denAuth.isSignedIn;
   const currentAuthRef = useRef({ status: denAuth.status, userId: denAuth.user?.id?.trim() ?? "" });
   currentAuthRef.current = { status: denAuth.status, userId: denAuth.user?.id?.trim() ?? "" };
+  const syncFileWindowPolicy = useCallback((value: DenDesktopConfig | null) => {
+    if (!isDesktopRuntime()) return;
+    const settings = readDenSettings();
+    void desktopBridge.syncFileWindowDesktopConfig({ baseUrl: settings.baseUrl,
+      signedIn: value !== null && currentAuthRef.current.status === "signed_in",
+      userId: currentAuthRef.current.userId || null, organizationId: settings.activeOrgId ?? null, config: value ?? {} }).catch(() => {});
+  }, []);
 
   const currentPolicyScope = useCallback((): DesktopRemoteControlPolicyScope | null => {
     const settings = readDenSettings();
@@ -304,6 +312,7 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
     const requestedScope = currentPolicyScope();
 
     if (!isSignedIn || !token || !activeOrgId) {
+      if (currentAuthRef.current.status === "signed_out") syncFileWindowPolicy(null);
       applyDesktopConfigActions(DEFAULT_DESKTOP_CONFIG);
       setDesktopConfigState((current) => ({ ...current, loading: false }));
       return DEFAULT_DESKTOP_CONFIG;
@@ -312,9 +321,11 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
     const cached = readCachedDesktopConfig(cacheKey);
     if (cached) {
       applyDesktopConfigActions(cached);
+      syncFileWindowPolicy(cached);
     }
 
     if (!cached) {
+      syncFileWindowPolicy(null);
       setDesktopConfigState((current) => ({ ...current, loading: true }));
     }
 
@@ -333,6 +344,7 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
       }
 
       writeCachedDesktopConfig(cacheKey, nextConfig);
+      syncFileWindowPolicy(nextConfig);
       applyDesktopConfigActions(nextConfig);
       if (policyContextKey) {
         setRemotePolicyValidation({
@@ -369,7 +381,7 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
         setDesktopConfigState((current) => ({ ...current, loading: false }));
       }
     }
-  }, [applyDesktopConfigActions, currentPolicyScope, denAuth.user?.id, isSignedIn]);
+  }, [applyDesktopConfigActions, currentPolicyScope, denAuth.user?.id, isSignedIn, syncFileWindowPolicy]);
 
   const refresh = useCallback(
     async () => {
@@ -645,6 +657,17 @@ export function useDesktopConfig(): DesktopConfigStore {
     throw new Error("useDesktopConfig must be used within a DesktopConfigProvider");
   }
   return context;
+}
+
+/** Main 提供的只读策略投影；文件入口不启动组织配置或全局连接恢复。 */
+export function SessionDesktopConfigProvider({ config, children }: { config: DenDesktopConfig; children: ReactNode }) {
+  const value = useMemo<DesktopConfigStore>(() => ({
+    config, loading: false,
+    refresh: async () => {},
+    refreshFresh: async () => { throw new Error("Open desktop settings in the main window."); },
+    checkRestriction: (input) => checkDesktopAppRestriction({ config, ...input }),
+  }), [config]);
+  return <DesktopConfigContext.Provider value={value}>{children}</DesktopConfigContext.Provider>;
 }
 
 /**

@@ -209,6 +209,7 @@ if (process.env.JUGGLEWORK_ELECTRON_SKIP_SHARED_PREPARE !== "1") {
 console.log("[electron-dev] Building @jugglework/types (tsup)...");
 runSync(pnpmCmd, ["--filter", "@jugglework/types", "build"], { cwd: repoRoot });
 runSync(pnpmCmd, ["--filter", "@jugglework/types", "build:electron-runtime"], { cwd: repoRoot });
+runSync(nodeCmd, [resolve(__dirname, "build-file-window-preload.mjs")], { cwd: desktopRoot });
 
 // Build the server TS to JS before checking its development import graph.
 console.log("[electron-dev] Building jugglework-server (tsc)...");

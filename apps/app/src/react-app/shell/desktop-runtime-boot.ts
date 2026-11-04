@@ -54,16 +54,8 @@ function isJuggleWorkServerReady(info?: BootJuggleWorkServerInfo) {
 }
 
 /**
- * On desktop (Tauri) startup:
- *   1) bootstrap the workspace list
- *   2) if a local workspace is selected, restart the embedded JuggleWork server
- *   3) start the OpenCode engine pointed at the workspace
- *   4) activate the workspace on the running JuggleWork server
- *   5) notify React routes that fresh desktop runtime info is available. Electron
- *      routes read live runtime info directly instead of persisting ephemeral
- *      localhost ports/tokens into JuggleWork settings.
- *
- * Safe to call multiple times — gated by a `didBoot` ref so it runs once per mount.
+ * 启动桌面工作区并发布运行时信息；无已选工作区时优先复用文件模式的现有服务。
+ * Electron 沿用主进程运行时，其他宿主按既有工作区启动引擎；模块级标记避免 StrictMode 重复启动。
  */
 export function useDesktopRuntimeBoot() {
   const { setPhase, setError, markReady } = useBootState();
@@ -116,10 +108,15 @@ export function useDesktopRuntimeBoot() {
 
         const startServerWithoutDesktopWorkspace = async () => {
           setPhase("starting-engine", "Starting JuggleWork server");
-          const serverInfo = await juggleworkServerRestart({ remoteAccessEnabled: preferredRemoteAccess }).catch((error) => {
-            console.warn("[desktop-boot] juggleworkServerRestart failed:", error);
-            return null;
-          });
+          // TIPS: 文件模式已启动同一运行时；首次打开零工作区主窗口时必须复用，避免重启原生文件的模型所有者。
+          const existing = await juggleworkServerInfo().catch(() => null);
+          const reuseExisting = isJuggleWorkServerReady(existing ?? undefined) &&
+            existing?.remoteAccessEnabled === preferredRemoteAccess;
+          const serverInfo = reuseExisting ? existing :
+            await juggleworkServerRestart({ remoteAccessEnabled: preferredRemoteAccess }).catch((error) => {
+              console.warn("[desktop-boot] juggleworkServerRestart failed:", error);
+              return null;
+            });
           if (!isJuggleWorkServerInfoLike(serverInfo) || !isJuggleWorkServerReady(serverInfo)) {
             setError("JuggleWork server did not finish starting. Please restart JuggleWork.");
             return;

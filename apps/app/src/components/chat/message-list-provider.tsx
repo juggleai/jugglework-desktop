@@ -10,6 +10,7 @@ import type {
 import * as React from "react"
 
 interface MessageListContextValue {
+  historyActionsEnabled: boolean
   client: JuggleWorkServerClient | null
   workspaceId: string
   sessionId: string
@@ -34,6 +35,7 @@ interface MessageListContextValue {
 const MessageListContext = React.createContext<MessageListContextValue | null>(null)
 
 interface MessageListProviderProps {
+  historyActionsEnabled?: boolean
   children: React.ReactNode
   client?: JuggleWorkServerClient | null
   workspaceId: string
@@ -63,6 +65,7 @@ export interface DispatchAction {
 }
 
 export function MessageListProvider({
+  historyActionsEnabled = true,
   children,
   client = null,
   workspaceId,
@@ -83,6 +86,7 @@ export function MessageListProvider({
 }: MessageListProviderProps) {
   const value = React.useMemo(
     () => ({
+      historyActionsEnabled,
       client,
       workspaceId,
       sessionId,
@@ -101,6 +105,7 @@ export function MessageListProvider({
       onMcpRetry,
     }),
     [
+      historyActionsEnabled,
       client,
       workspaceId,
       sessionId,

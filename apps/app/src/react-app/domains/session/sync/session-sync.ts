@@ -6,6 +6,7 @@ import { getReactQueryClient } from "../../../infra/query-client";
 import { captureAnalyticsEvent, takeTaskRunStart } from "@/app/lib/analytics";
 import { trackTaskCompleted, trackTaskFailed } from "@/app/lib/den-telemetry";
 import { createClient } from "@/app/lib/opencode";
+import { isFileWindowRuntime } from "@/app/lib/runtime-env";
 import { normalizeEvent } from "@/app/utils";
 import { SYNTHETIC_RUN_DIAGNOSTIC_MESSAGE_PREFIX, SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX, type OpencodeEvent, type PendingPermission, type PendingQuestion } from "@/app/types";
 import {
@@ -28,7 +29,7 @@ import {
   useSessionActivityStore,
   type SessionActivityRecord,
 } from "../status/session-activity-store";
-import { notifyDesktopEvent } from "../../../shell/desktop-notifications";
+import { notifyDesktopEvent as notifyMainDesktopEvent, type DesktopNotificationEvent } from "../../../shell/desktop-notifications";
 import { reconcileRunCompletionDiagnostic } from "./run-completion-diagnostics";
 import {
   completeRunningSessionCompactions,
@@ -48,6 +49,11 @@ import {
   upsertLivePermission,
   upsertLiveQuestion,
 } from "./workspace-interactions";
+
+/** 全局通知仍由主窗口消费，文件窗口只维护自己的会话投影。 */
+function notifyDesktopEvent(event: DesktopNotificationEvent) {
+  if (!isFileWindowRuntime()) notifyMainDesktopEvent(event);
+}
 
 type SyncOptions = {
   workspaceId: string;
@@ -98,7 +104,10 @@ type SyncEntry = {
   sessionDeletedListeners: Set<NonNullable<SyncOptions["onSessionDeleted"]>>;
   sessionStatusListeners: Set<NonNullable<SyncOptions["onSessionStatus"]>>;
   reconnectListeners: Set<() => void>;
-  pendingDeltas: Map<string, { messageId: string; reasoning: boolean; text: string }>;
+  pendingDeltas: Map<string, { sessionId: string; messageId: string; partId: string; text: string; overflow: boolean; recoveryOnly?: boolean }>;
+  missingPartRecoveries: Map<string, { timer: ReturnType<typeof setTimeout> | null; attempts: number; inFlight: boolean }>;
+  cancelDeltaFlush: (() => void) | null;
+  disposed: boolean;
   // OpenCode's synthetic automatic-compaction continuation messages are
   // engine control flow, not user turns. Tombstone their ids per session
   // (message ids are only guaranteed unique within one session) so neither
@@ -226,6 +235,13 @@ const idleStatus: SessionStatus = { type: "idle" };
 const syncs = new Map<string, SyncEntry>();
 const retainedSessionTtlMs = 10 * 60_000;
 const idleRetainedSessionTtlMs = 10_000;
+const missingPartRecoveryDelayMs = 1_000;
+const missingPartRecoveryRetryMs = 5_000;
+const missingPartRecoveryMaxAttempts = 3;
+const pendingDeltaTextLimit = 64 * 1024;
+const pendingDeltaPartsPerSession = 128;
+const pendingDeltaKey = (sessionId: string, messageId: string, partId: string) =>
+  `${sessionId}\0${messageId}\0${partId}`;
 const continuationSuppressionCapacityPerSession = 256;
 const liveTodoRevision = new Map<string, number>();
 // Session snapshots retain the previous turn's todos until the agent writes
@@ -302,10 +318,102 @@ function dropContinuationRuntimeState(entry: SyncEntry, sessionId: string, messa
     );
   }
   if (entry.pendingDeltas.size > 0) {
-    for (const [partId, pending] of entry.pendingDeltas) {
-      if (pending.messageId === messageId) entry.pendingDeltas.delete(partId);
+    for (const [key, pending] of entry.pendingDeltas) {
+      if (pending.sessionId === sessionId && pending.messageId === messageId) entry.pendingDeltas.delete(key);
     }
   }
+  clearResolvedPartRecovery(entry, sessionId);
+}
+
+function clearResolvedPartRecovery(entry: SyncEntry, sessionId: string) {
+  if ([...entry.pendingDeltas.values()].some((pending) => pending.sessionId === sessionId)) return;
+  const recovery = entry.missingPartRecoveries.get(sessionId);
+  if (recovery?.timer) clearTimeout(recovery.timer);
+  entry.missingPartRecoveries.delete(sessionId);
+}
+
+function scheduleMissingPartRecovery(entry: SyncEntry, sessionId: string) {
+  if (entry.disposed || !isTrackedSession(entry, sessionId)) return;
+  let recovery = entry.missingPartRecoveries.get(sessionId);
+  if (!recovery) {
+    recovery = { timer: null, attempts: 0, inFlight: false };
+    entry.missingPartRecoveries.set(sessionId, recovery);
+  }
+  if (recovery.timer || recovery.inFlight || recovery.attempts >= missingPartRecoveryMaxAttempts) return;
+  const state = recovery;
+  state.timer = setTimeout(() => {
+    state.timer = null;
+    if (entry.disposed || entry.missingPartRecoveries.get(sessionId) !== state) return;
+    state.attempts += 1;
+    state.inFlight = true;
+    // Keep the same recovery episode during the request; incoming tokens must
+    // neither cancel the refetch nor start one request per token.
+    void getReactQueryClient().invalidateQueries(
+      { queryKey: snapshotKey(entry.input.workspaceId, sessionId), exact: true },
+      { cancelRefetch: false },
+    ).catch(() => undefined).finally(() => {
+      state.inFlight = false;
+      if (entry.disposed || entry.missingPartRecoveries.get(sessionId) !== state) return;
+      clearResolvedPartRecovery(entry, sessionId);
+      if (entry.missingPartRecoveries.get(sessionId) === state) scheduleMissingPartRecovery(entry, sessionId);
+    });
+  }, state.attempts === 0 ? missingPartRecoveryDelayMs : missingPartRecoveryRetryMs);
+}
+
+// A stale snapshot can establish kind without covering the latest buffered bytes.
+// Compare against the admitted snapshot itself, not a live projection that may
+// already contain later deltas. Ambiguous overlap stays a bounded recovery episode.
+function reconcilePendingSnapshotParts(workspaceId: string, sessionId: string, snapshotMessages: UIMessage[], current: boolean) {
+  const queryClient = getReactQueryClient();
+  const transcript = transcriptKey(workspaceId, sessionId);
+  for (const entry of syncs.values()) {
+    if (entry.input.workspaceId !== workspaceId) continue;
+    for (const [key, pending] of entry.pendingDeltas) {
+      if (pending.sessionId !== sessionId) continue;
+      const part = snapshotMessages.find((message) => message.id === pending.messageId)?.parts.find((item) => getPartMetadataId(item) === pending.partId);
+      if (part?.type !== "text" && part?.type !== "reasoning") continue;
+      const compatible = !pending.overflow && !pending.recoveryOnly &&
+        (part.text.startsWith(pending.text) || pending.text.startsWith(part.text));
+      if (!compatible && !current) {
+        // Subsequent deltas may render on the recovered part, but must neither
+        // replay these ambiguous bytes nor silently clear the recovery marker.
+        pending.recoveryOnly = true;
+        scheduleMissingPartRecovery(entry, sessionId);
+        continue;
+      }
+      // A read with no intervening session event can also repair ambiguous
+      // overlap/overflow; unlike a stale read, its cumulative body is authoritative.
+      const recovered = compatible && pending.text.length > part.text.length
+        ? { ...part, text: pending.text, state: "streaming" as const }
+        : part;
+      queryClient.setQueryData<UIMessage[]>(transcript, (messages = []) => messages.map((message) => {
+        if (message.id !== pending.messageId) return message;
+        return { ...message, parts: message.parts.map((live) => {
+          if (getPartMetadataId(live) !== pending.partId) return live;
+          if (current) return recovered;
+          // Stale recovery only extends a compatible live prefix, never rewrites it.
+          if ((live.type === "text" || live.type === "reasoning") &&
+            recovered.text.length > live.text.length && recovered.text.startsWith(live.text)) {
+            return { ...live, text: recovered.text, state: "streaming" as const };
+          }
+          return live;
+        }) };
+      }));
+      entry.pendingDeltas.delete(key);
+    }
+    clearResolvedPartRecovery(entry, sessionId);
+  }
+}
+
+function clearSyncBuffers(entry: SyncEntry) {
+  entry.disposed = true;
+  entry.cancelDeltaFlush?.();
+  entry.cancelDeltaFlush = null;
+  entry.deltaFlushScheduled = false;
+  entry.deltaFlushBuffer = [];
+  entry.pendingDeltas.clear();
+  for (const recovery of entry.missingPartRecoveries.values()) if (recovery.timer) clearTimeout(recovery.timer);
+  entry.missingPartRecoveries.clear();
 }
 
 export const snapshotKey = (workspaceId: string, sessionId: string) =>
@@ -562,14 +670,22 @@ function latestActiveSnapshotRetry(snapshot: JuggleWorkSessionSnapshot) {
   return null;
 }
 
+function clearSessionBuffers(entry: SyncEntry, sessionId: string) {
+  entry.deltaFlushBuffer = entry.deltaFlushBuffer.filter(
+    (item) => item.sessionId !== sessionId,
+  );
+  for (const [key, pending] of entry.pendingDeltas) {
+    if (pending.sessionId === sessionId) entry.pendingDeltas.delete(key);
+  }
+  clearResolvedPartRecovery(entry, sessionId);
+}
+
 function clearTrackedSession(input: SyncOptions, entry: SyncEntry, sessionId: string) {
   entry.trackedSessionRefs.delete(sessionId);
   const retainedTimer = entry.retainedSessionTimers.get(sessionId);
   if (retainedTimer) clearTimeout(retainedTimer);
   entry.retainedSessionTimers.delete(sessionId);
-  entry.deltaFlushBuffer = entry.deltaFlushBuffer.filter(
-    (item) => item.sessionId !== sessionId,
-  );
+  clearSessionBuffers(entry, sessionId);
   const queryClient = getReactQueryClient();
   if (!isTrackedByAnotherSync(input, entry, sessionId)) {
     queryClient.removeQueries({ queryKey: todoKey(input.workspaceId, sessionId), exact: true });
@@ -597,6 +713,7 @@ function disposeWorkspaceSync(key: string, entry: SyncEntry) {
   }
   for (const timer of entry.retainedSessionTimers.values()) clearTimeout(timer);
   entry.retainedSessionTimers.clear();
+  clearSyncBuffers(entry);
   entry.dispose();
   if (syncs.get(key) === entry) syncs.delete(key);
 }
@@ -1161,6 +1278,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     const props = (event.properties ?? {}) as { sessionID?: string; info?: { id?: string } };
     const sessionId = props.sessionID ?? props.info?.id ?? "";
     if (sessionId) {
+      clearSessionBuffers(entry, sessionId);
       // The session is gone server-side; its continuation tombstones can no
       // longer be observed by any snapshot and would only suppress a
       // legitimately reused id in a future session lifecycle.
@@ -1470,6 +1588,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     // empty shell. Tombstones clear with session.deleted instead.
     const props = (event.properties ?? {}) as { sessionID?: string; messageID?: string };
     if (!props.sessionID || !props.messageID) return;
+    dropContinuationRuntimeState(entry, props.sessionID, props.messageID);
     if (!isTrackedSession(entry, props.sessionID)) return;
     queryClient.setQueryData<UIMessage[]>(transcriptKey(workspaceId, props.sessionID), (current = []) =>
       current.filter((message) => message.id !== props.messageID),
@@ -1589,33 +1708,42 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     }
     const [mapped, ...attachments] = toUIParts(part);
     if (!mapped) return;
-    const pending = entry.pendingDeltas.get(part.id);
-    // Seed the new part with any deltas that arrived before this
-    // declaration. We deliberately ignore `pending.reasoning` — it
-    // can't be trusted because opencode emits `field: "text"` for
+    const pendingKey = pendingDeltaKey(part.sessionID, part.messageID, part.id);
+    const pending = entry.pendingDeltas.get(pendingKey);
+    const queuedText = entry.deltaFlushBuffer.filter((item) =>
+      item.sessionId === part.sessionID && item.messageId === part.messageID && item.partId === part.id,
+    ).map((item) => item.delta).join("");
+    const livePart = queryClient.getQueryData<UIMessage[]>(transcriptKey(workspaceId, part.sessionID))
+      ?.find((message) => message.id === part.messageID)?.parts.find((item) => getPartMetadataId(item) === part.id);
+    const liveText = livePart?.type === "text" || livePart?.type === "reasoning" ? livePart.text : "";
+    const terminal = (part.type === "text" || part.type === "reasoning") && typeof part.time?.end === "number";
+    // Already committed live text cannot outvote a cumulative declaration: it
+    // may contain a delta also included in an earlier snapshot. Only use it as
+    // the base for actual, still-uncommitted rAF bytes.
+    const bufferedText = pending?.overflow || pending?.recoveryOnly ? ""
+      : pending ? pending.text + queuedText : queuedText ? liveText + queuedText : "";
+    // Seed the new part with deltas from both the deferred and rAF buffers.
+    // We cannot trust the delta field because opencode emits `field: "text"` for
     // both text and reasoning streams. The part's actual kind
     // (`mapped.type`) is the source of truth.
     //
-    // Both `pending.text` and `mapped.text` are cumulative views of the
-    // same stream, so we keep whichever is longer instead of
-    // concatenating (concatenation double-counts the bytes that landed
-    // in both). Without this, reasoning text shows up duplicated in the
-    // streaming UI.
+    // Do not concatenate two cumulative views. Only extend an unfinished
+    // declaration when actual buffered bytes are ahead of it. A terminal
+    // declaration supersedes all buffers; if mapped wins, keep its done state.
     const seededPart =
-      pending && (mapped.type === "text" || mapped.type === "reasoning")
+      !terminal && (mapped.type === "text" || mapped.type === "reasoning") && bufferedText.length > mapped.text.length
         ? {
             ...mapped,
-            text: pending.text.length > mapped.text.length ? pending.text : mapped.text,
+            text: bufferedText,
             state: "streaming" as const,
           }
         : mapped;
-    // Drop any deltas for this partID still queued in the rAF flush
-    // buffer — they've already been incorporated into `mapped.text`.
+    // The queued bytes are now reconciled with the cumulative declaration.
     // Without this, the rAF flush would re-append them on top of the
     // cumulative text we just wrote, duplicating bytes mid-stream.
     if (entry.deltaFlushBuffer.length > 0) {
       entry.deltaFlushBuffer = entry.deltaFlushBuffer.filter(
-        (item) => item.partId !== part.id,
+        (item) => item.sessionId !== part.sessionID || item.messageId !== part.messageID || item.partId !== part.id,
       );
     }
     queryClient.setQueryData<UIMessage[]>(transcriptKey(workspaceId, part.sessionID), (current = []) => {
@@ -1646,7 +1774,8 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       }
       return next;
     });
-    if (pending) entry.pendingDeltas.delete(part.id);
+    entry.pendingDeltas.delete(pendingKey);
+    clearResolvedPartRecovery(entry, part.sessionID);
     return;
   }
 
@@ -1719,10 +1848,12 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
 }
 
 function scheduleDeltaFlush(entry: SyncEntry, workspaceId: string) {
-  if (entry.deltaFlushScheduled) return;
+  if (entry.disposed || entry.deltaFlushScheduled) return;
   entry.deltaFlushScheduled = true;
   const run = () => {
     entry.deltaFlushScheduled = false;
+    entry.cancelDeltaFlush = null;
+    if (entry.disposed) return;
     if (entry.deltaFlushBuffer.length === 0) return;
     flushDeltas(entry, workspaceId);
   };
@@ -1731,9 +1862,11 @@ function scheduleDeltaFlush(entry: SyncEntry, workspaceId: string) {
     typeof window.requestAnimationFrame === "function" &&
     (typeof document === "undefined" || document.visibilityState === "visible")
   ) {
-    window.requestAnimationFrame(run);
+    const handle = window.requestAnimationFrame(run);
+    entry.cancelDeltaFlush = () => window.cancelAnimationFrame?.(handle);
   } else if (typeof window !== "undefined") {
-    window.setTimeout(run, 50);
+    const handle = window.setTimeout(run, 50);
+    entry.cancelDeltaFlush = () => window.clearTimeout(handle);
   } else {
     queueMicrotask(run);
   }
@@ -1754,6 +1887,7 @@ function flushDeltas(entry: SyncEntry, workspaceId: string) {
   }
 
   for (const [sessionId, items] of bySession) {
+    if (entry.disposed || !isTrackedSession(entry, sessionId)) continue;
     queryClient.setQueryData<UIMessage[]>(
       transcriptKey(workspaceId, sessionId),
       (current = []) => {
@@ -1786,22 +1920,38 @@ function flushDeltas(entry: SyncEntry, workspaceId: string) {
             // Suppressed continuation messages stay dead: never buffer
             // streaming state that could resurrect them.
             if (isSuppressedContinuationMessage(workspaceId, sessionId, item.messageId)) continue;
-            const existing = entry.pendingDeltas.get(item.partId) ?? {
+            const key = pendingDeltaKey(sessionId, item.messageId, item.partId);
+            const existing = entry.pendingDeltas.get(key) ?? {
+              sessionId,
               messageId: item.messageId,
-              reasoning: item.reasoning,
+              partId: item.partId,
               text: "",
+              overflow: false,
             };
-            existing.text += item.delta;
-            entry.pendingDeltas.set(item.partId, existing);
+            if (!existing.overflow) {
+              if (existing.text.length + item.delta.length > pendingDeltaTextLimit) {
+                existing.text = "";
+                existing.overflow = true;
+              } else existing.text += item.delta;
+            }
+            if (!entry.pendingDeltas.has(key)) {
+              const sessionKeys = [...entry.pendingDeltas].filter(([, value]) => value.sessionId === sessionId);
+              if (sessionKeys.length >= pendingDeltaPartsPerSession) entry.pendingDeltas.delete(sessionKeys[0]![0]);
+            }
+            entry.pendingDeltas.set(key, existing);
+            scheduleMissingPartRecovery(entry, sessionId);
             continue;
           }
 
+          // A snapshot may have supplied the kind without resolving overlap or
+          // overflow. Keep that marker until a declaration or fresh read resolves it.
           const reasoning = ownerPart.type === "reasoning";
           next = appendDelta(next, item.messageId, item.partId, item.delta, reasoning);
         }
         return next;
       },
     );
+    clearResolvedPartRecovery(entry, sessionId);
   }
 }
 
@@ -1813,7 +1963,6 @@ function startSync(input: SyncOptions) {
   let watchdogTimer: ReturnType<typeof setInterval> | null = null;
   let activeConnectionController: AbortController | null = null;
   let lastEventAt = Date.now();
-  let hasConnected = false;
   const reconciledStalls = new Map<string, number>();
   const recoveringStalls = new Map<string, number>();
   let retryDelayMs = 1_000;
@@ -1853,6 +2002,7 @@ function startSync(input: SyncOptions) {
   };
 
   const recoverConfirmedDelegatedTaskStalls = async () => {
+    if (isFileWindowRuntime()) return;
     if (!entry || !input.interactionClient) return;
     const activityStore = useSessionActivityStore.getState();
     const records = activityStore.recordsByWorkspaceId[input.workspaceId] ?? {};
@@ -1922,8 +2072,7 @@ function startSync(input: SyncOptions) {
           if (!disposed && !connectionController.signal.aborted) {
             retryDelayMs = 1_000;
             lastEventAt = Date.now();
-            if (hasConnected) reconcileTrackedSessions();
-            hasConnected = true;
+            reconcileTrackedSessions();
             // Also close the initial list/subscription establishment gap.
             for (const listener of entry?.reconnectListeners ?? []) listener();
             void reconcileTrackedInteractions();
@@ -2025,6 +2174,9 @@ export function ensureWorkspaceSessionSync(input: SyncOptions) {
     sessionStatusListeners: new Set(input.onSessionStatus ? [input.onSessionStatus] : []),
     reconnectListeners: new Set(input.onReconnect ? [input.onReconnect] : []),
     pendingDeltas: new Map(),
+    missingPartRecoveries: new Map(),
+    cancelDeltaFlush: null,
+    disposed: false,
     suppressedCompactionContinueMessages: new Map(),
     pendingCompactionModes: new Map(),
     deltaFlushBuffer: [],
@@ -2064,6 +2216,11 @@ export function seedSessionState(
   snapshot: JuggleWorkSessionSnapshot,
   options?: { snapshotTodoRevision?: number; skipTodos?: boolean },
 ) {
+  // Commit queued deltas before snapshot reconciliation; otherwise a pending
+  // rAF could append bytes already included in the cumulative snapshot.
+  for (const entry of syncs.values()) {
+    if (entry.input.workspaceId === workspaceId && entry.deltaFlushBuffer.length) flushDeltas(entry, workspaceId);
+  }
   // TIPS: 延迟快照不能推翻请求期间到达的实时终态；同一对象从共享缓存重放时也不重新取得权限。
   const liveRevision = captureSessionSnapshotRevision(workspaceId, snapshot.session.id);
   const snapshotRevision = snapshotSessionRevisions.get(snapshot) ?? liveRevision;
@@ -2078,6 +2235,7 @@ export function seedSessionState(
       queryClient.setQueryData<UIMessage[]>(key, (current = []) => mergeSnapshotAndLiveMessages(
         history, current, { appendLiveOnlyMessages: true, preserveLiveMessages: true },
       ));
+      reconcilePendingSnapshotParts(workspaceId, snapshot.session.id, history, false);
     }
     return;
   }
@@ -2123,6 +2281,7 @@ export function seedSessionState(
     }),
     snapshot.session.revert?.messageID ?? null,
   ));
+  reconcilePendingSnapshotParts(workspaceId, snapshot.session.id, applyRevertCursor(incomingVisible, snapshot.session.revert?.messageID), true);
 
   queryClient.setQueryData(statusKey(workspaceId, snapshot.session.id), snapshot.status);
   const snapshotTodoRevision = options?.snapshotTodoRevision ?? todoRevision;
@@ -2180,7 +2339,7 @@ export function trackWorkspaceSessionSync(input: SyncOptions, sessionId: string 
     const current = entry.trackedSessionRefs.get(normalizedSessionId) ?? 0;
     if (current <= 1) {
       entry.trackedSessionRefs.delete(normalizedSessionId);
-      retainSession(input, entry, normalizedSessionId);
+      if (!isFileWindowRuntime()) retainSession(input, entry, normalizedSessionId);
       return;
     }
     entry.trackedSessionRefs.set(normalizedSessionId, current - 1);
@@ -2215,6 +2374,9 @@ export function __createWorkspaceSessionSyncForTest(input: SyncOptions) {
     sessionStatusListeners: new Set(input.onSessionStatus ? [input.onSessionStatus] : []),
     reconnectListeners: new Set(input.onReconnect ? [input.onReconnect] : []),
     pendingDeltas: new Map(),
+    missingPartRecoveries: new Map(),
+    cancelDeltaFlush: null,
+    disposed: false,
     suppressedCompactionContinueMessages: new Map(),
     pendingCompactionModes: new Map(),
     deltaFlushBuffer: [],
@@ -2223,6 +2385,7 @@ export function __createWorkspaceSessionSyncForTest(input: SyncOptions) {
   return () => {
     const entry = syncs.get(key);
     if (entry) {
+      clearSyncBuffers(entry);
       for (const timer of entry.retainedSessionTimers.values()) clearTimeout(timer);
     }
     syncs.delete(key);

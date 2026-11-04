@@ -32,7 +32,7 @@ function nullableTimestamp(value) {
  * @param {unknown} value
  * @returns {{ workspaceId: string, sessionId: string, runId: string, generation: number, origin: "local-renderer" | "remote-control", startCommandCorrelationId: string | null, abortCommandCorrelationId: string | null, status: "starting" | "running" | "waiting" | "retrying" | "aborting", observedActive: boolean, startedAt: number, updatedAt: number, activeObservedAt: number | null, abortRequestedAt: number | null }}
  */
-function serverRun(value) {
+export function serverRun(value) {
   if (!isRecord(value) || !identifier(value.workspaceId) || !identifier(value.sessionId) || !identifier(value.runId) ||
       !Number.isSafeInteger(value.generation) || Number(value.generation) <= 0 || !ORIGINS.has(/** @type {string} */ (value.origin)) ||
       !nullableIdentifier(value.startCommandCorrelationId) || !nullableIdentifier(value.abortCommandCorrelationId) ||
@@ -119,6 +119,12 @@ export function createSessionMutationCoordinator({ onActiveRemoteRunCountChanged
     return runs.get(sessionKey(workspaceId, sessionId))?.runId ?? null;
   }
 
+  // Retained fence survives terminal clearing; only server records populate it.
+  function getRunGeneration({ workspaceId, sessionId, runId }) {
+    const fence = fences.get(sessionKey(workspaceId, sessionId));
+    return fence?.runId === runId ? fence.generation : null;
+  }
+
   function activeRuns() {
     return [...runs.values()].slice(0, MAX_ACTIVE_RUNS).map((run) => ({
       workspaceId: run.workspaceId,
@@ -139,5 +145,5 @@ export function createSessionMutationCoordinator({ onActiveRemoteRunCountChanged
     return changed;
   }
 
-  return Object.freeze({ recordServerRun, clearTerminalRun, getActiveRunId, activeRuns, clearRemoteRuns });
+  return Object.freeze({ recordServerRun, clearTerminalRun, getActiveRunId, getRunGeneration, activeRuns, clearRemoteRuns });
 }

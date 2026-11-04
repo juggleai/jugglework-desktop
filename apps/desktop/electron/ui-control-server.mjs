@@ -11,7 +11,7 @@ import path from "node:path";
 import { app } from "electron";
 
 /** 创建本机控制服务；保存确认发送到文档所属原生页面，不激活窗口。 */
-export function createUiControlServer({ appName, appIdentifier, getWindow, prepareOfficeSave, readOfficeSelection }) {
+export function createUiControlServer({ appName, appIdentifier, getWindow, prepareOfficeSave, readOfficeSelection, readOfficeText }) {
   let uiControlServer = null;
   let uiControlDiscoveryPath = null;
   const uiControlToken = randomBytes(32).toString("hex");
@@ -141,6 +141,12 @@ export function createUiControlServer({ appName, appIdentifier, getWindow, prepa
           if (!readOfficeSelection) throw new Error("文档选区通道不可用");
           const selection = await readOfficeSelection(await readJsonRequestBody(request));
           sendJsonResponse(response, 200, { ok: true, selection });
+          return;
+        }
+        if (request.method === "POST" && url.pathname === "/office/text") {
+          if (!readOfficeText) throw new Error("文档正文通道不可用");
+          const texts = await readOfficeText(await readJsonRequestBody(request));
+          sendJsonResponse(response, 200, { ok: true, texts });
           return;
         }
         if (request.method === "GET" && url.pathname === "/snapshot") {

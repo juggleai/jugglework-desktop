@@ -8,6 +8,7 @@ import { readOfficePageSelection } from "./office-page-selection.mjs";
 /** @type {typeof readOfficePageSelection} */
 const readDefaultSelection = () => ({ ranges: [{ begin: 0, end: 2, length: 2 }], selectedText: "正文" });
 
+/** @param {{kind?: string, readSelection?: (...args: any[]) => any, setup?: (scope: any) => void, autoCapture?: boolean}} [options] */
 function fixture({ kind = "doc", readSelection = readDefaultSelection, setup = (_scope) => {}, autoCapture = true } = {}) {
   const listeners = new Map();
   class Element {

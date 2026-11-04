@@ -691,7 +691,7 @@ test("已确认的页引用可经 Agent 保存原文件，当前标签切换不�
   expect(await readFile(join(f.root, "报告 B.docx"), "utf8")).toBe("saved");
 });
 
-test("documents.tools 按真实页引用返回单对象 schema、4096 多行正文，非页调用保留原生契约", async () => {
+test("documents.tools 页引用和普通框均声明4096多行正文，普通文档工具保留原生契约", async () => {
   const f = await pageSelectionFixture();
   const nativeSchemas = structuredClone(f.state.toolSchemas);
   const tools = (name?: string) => f.documents.tools("ws", "ses_A", name, "assistant", f.ref.referenceId);
@@ -731,7 +731,7 @@ test("documents.tools 按真实页引用返回单对象 schema、4096 多行正�
     officeInstructions: [{ instructionId: "shape-i", text: "改文本框", bindingState: "bound", referenceIds: [shapeRef.referenceId] }],
   });
   expect(await f.documents.tools("ws", "ses_A", "slide_set_text", "shape-assistant", shapeRef.referenceId))
-    .toMatchObject({ tool: { inputSchema: nativeSchemas.get("slide_set_text") } });
+    .toMatchObject({ tool: { inputSchema: { properties: { text: { type: "string", minLength: 1, maxLength: 4096 } } } } });
   expect(f.state.toolSchemas).toEqual(nativeSchemas);
   const multiline = "首段\n" + "甲".repeat(4091) + "😀";
   expect(multiline.length).toBe(4096);
@@ -883,6 +883,40 @@ test("系统打开按真实路径和硬链接复用模型，其他工作区及�
   await expect(
     f.documents.open("ws", "other-session", alias),
   ).rejects.toMatchObject({ code: "office_document_in_use" });
+});
+
+for (const alias of [false, true]) test(`两个窗口同时首次打开${alias ? "硬链接" : "同一路径"}只登记一个文档和页面`, async () => {
+  const f = await fixture();
+  const target = "报告 A.docx", other = alias ? "同时打开别名.docx" : target;
+  if (alias) {
+    await link(join(f.root, target), join(f.root, other));
+    f.files.set(other, { ...f.files.get(target)!, relativePath: other });
+  }
+  let release = () => {}, checks = 0, previews = 0;
+  const checked = new Promise<void>((resolve) => { release = resolve; });
+  f.state.checkFile = async () => { if (++checks === 2) release(); await checked; };
+  f.state.previewGate = async () => { previews++; };
+  const [main, file] = await Promise.all([
+    f.documents.open("ws", "ses_A", target), f.documents.open("ws", "ses_A", other),
+  ]);
+  expect(file.documentId).toBe(main.documentId);
+  expect(file.pageId).toBe(main.pageId);
+  expect(previews).toBe(1);
+  expect(await f.documents.list()).toHaveLength(1);
+});
+
+test("两个聊天同时首次打开同一文件时仍拒绝第二个所有者", async () => {
+  const f = await fixture();
+  let release = () => {}, checks = 0;
+  const checked = new Promise<void>((resolve) => { release = resolve; });
+  f.state.checkFile = async () => { if (++checks === 2) release(); await checked; };
+  const results = await Promise.allSettled([
+    f.documents.open("ws", "ses_A", "报告 A.docx"), f.documents.open("ws", "ses_B", "报告 A.docx"),
+  ]);
+  expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+  const rejected = results.find((result) => result.status === "rejected");
+  expect(rejected?.status === "rejected" && rejected.reason).toMatchObject({ code: "office_document_in_use" });
+  expect(await f.documents.list()).toHaveLength(1);
 });
 
 test("旧文件目录失效不阻断无关文件打开及副本检查，旧身份的硬链接仍禁止另建模型或覆盖", async () => {
@@ -1245,6 +1279,45 @@ test("工具执行期间切换标签，修改仍登记原模型；查询与失�
     },
   );
   expect(f.state.modified).toHaveLength(1);
+});
+
+test("普通文件请求在 admission 固定原模型，切换标签不改变查询、工具、保存与交付目标", async () => {
+  const f = await fixture(undefined, async () => "turn_A");
+  f.state.availableTools.push("doc_insert_text");
+  const a = await f.openReady();
+  await f.documents.prepareSelectionTurn("ws", "ses_A", "turn_A", {});
+  const b = await f.openReady("预算.xlsx", "model_B");
+  await f.documents.prepareSelectionTurn("ws", "ses_A", "turn_A", {});
+  expect((await f.documents.current("ws", "ses_A"))?.documentId).toBe(b.documentId);
+  expect((await f.documents.context("ws", "ses_A", "assistant")).document?.documentId).toBe(a.documentId);
+  expect((await f.documents.tools("ws", "ses_A", undefined, "assistant")).tools?.map((tool) => tool.name)).toContain("doc_insert_text");
+  await expect(f.documents.call("ws", "ses_A", "assistant", "doc_insert_text", { file_id: "model_B" })).rejects.toThrow("不属于");
+  let target: unknown;
+  f.state.tool = async (_name, args) => { target = args.file_id; return { code: 0 }; };
+  await f.documents.call("ws", "ses_A", "assistant", "doc_insert_text", {});
+  expect(target).toBe("model_A");
+  expect(f.state.modified.at(-1)?.slice(-2)).toEqual([a.documentId, "报告 A.docx"]);
+  await f.documents.saveForActor("ws", "ses_A", "assistant");
+  expect(f.state.saveCalls.at(-1)).toBe("model_A");
+  await expect(f.documents.saveDeliveryTarget("ws", "ses_A", "turn_A", b.documentId)).rejects.toThrow("不属于");
+  await f.documents.saveDeliveryTarget("ws", "ses_A", "turn_A", a.documentId);
+  expect(f.state.saveCalls.at(-1)).toBe("model_A");
+});
+
+test("本轮文件恢复模型后失效，不能退回新标签或重新导入的模型", async () => {
+  const f = await fixture(undefined, async () => "turn_A");
+  f.state.availableTools.push("doc_insert_text");
+  const a = await f.openReady();
+  await f.documents.prepareSelectionTurn("ws", "ses_A", "turn_A", {});
+  f.documents.invalidate();
+  await f.documents.recover("ws", a.documentId);
+  f.mount("报告 A.docx", "model_A_new");
+  await f.documents.get("ws", a.documentId);
+  await f.openReady("报告 B.docx", "model_B");
+  await expect(f.documents.context("ws", "ses_A", "assistant")).rejects.toThrow("失效");
+  await expect(f.documents.tools("ws", "ses_A", undefined, "assistant")).rejects.toThrow("失效");
+  await expect(f.documents.call("ws", "ses_A", "assistant", "doc_insert_text", {})).rejects.toThrow("失效");
+  await expect(f.documents.saveForActor("ws", "ses_A", "assistant")).rejects.toThrow("失效");
 });
 
 test("保存失败保留模型和 dirty，重试保存同一实际文件且不释放模型", async () => {

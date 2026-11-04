@@ -71,6 +71,7 @@ type EditorProps = {
   placeholder: string;
   onChange: (value: string) => void;
   onSubmit?: (options: { queue: boolean }) => void | Promise<void>;
+  isComposing?: () => boolean;
   onExpandPastedText?: (label: string) => void;
   onRemoveAttachment?: (id: string) => void;
   onPaste?: React.ClipboardEventHandler<HTMLDivElement>;
@@ -910,24 +911,24 @@ function SyncPlugin(props: {
   return null;
 }
 
-function SubmitPlugin(props: { onSubmit: (options: { queue: boolean }) => void | Promise<void>; disabled: boolean }) {
+function SubmitPlugin(props: { onSubmit: (options: { queue: boolean }) => void | Promise<void>; disabled: boolean; isComposing?: () => boolean }) {
   const [editor] = useLexicalComposerContext();
   const onSubmitRef = useRef(props.onSubmit);
+  const isComposingRef = useRef(props.isComposing);
 
   useEffect(() => {
     onSubmitRef.current = props.onSubmit;
-  }, [props.onSubmit]);
+    isComposingRef.current = props.isComposing;
+  }, [props.onSubmit, props.isComposing]);
 
   useEffect(() => {
     return editor.registerCommand(
       KEY_ENTER_COMMAND,
       (event: KeyboardEvent | null) => {
         if (props.disabled) return false;
-        // IME composition guard: three signals keep this reliable across
-        // Chrome, Safari, and WebKit. While IME is mid-character, Enter
-        // must always fall through to the editor so the composition can
-        // commit.
-        if (event?.isComposing === true || event?.keyCode === 229) return false;
+        // Capture returning early does not stop Lexical's command chain.
+        // Include both composition states even when the key event lacks IME flags.
+        if (editor.isComposing() || isComposingRef.current?.() || event?.isComposing === true || event?.keyCode === 229) return false;
         // Shift+Enter and macOS Option+Enter / Windows Alt+Enter insert a
         // newline — let the editor handle them.
         if (event?.shiftKey || event?.altKey) return false;
@@ -1325,7 +1326,7 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
           attachments={props.attachments}
           disabled={props.disabled}
         />
-        {props.onSubmit ? <SubmitPlugin onSubmit={props.onSubmit} disabled={props.disabled} /> : null}
+        {props.onSubmit ? <SubmitPlugin onSubmit={props.onSubmit} disabled={props.disabled} isComposing={props.isComposing} /> : null}
         <PasteChipPlugin onPasteText={props.onPasteText} />
         <PastedTextExpandPlugin pastedText={props.pastedText} onExpandPastedText={props.onExpandPastedText} />
         <AttachmentRemovePlugin onRemoveAttachment={props.onRemoveAttachment} />

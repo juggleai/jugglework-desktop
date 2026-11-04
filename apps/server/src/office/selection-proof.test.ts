@@ -113,7 +113,8 @@ test("Word 所选空段落可省略预览，所选非空或未知内容不能被
   for (const invalid of [
     { ...empty, end_index: 5 }, { ...empty, text_preview: null },
     { ...empty, type: "Table" }, { ...empty, end_index: 5, text_preview: "短" },
-  ]) await expect(read(invalid)).rejects.toMatchObject({ code: "office_selection_proof_unavailable" });
+  ]) await expect(read(invalid)).rejects.toMatchObject({ code: invalid.type === "Table" || !("text_preview" in invalid)
+    ? "office_selection_doc_structure_unsupported" : "office_selection_proof_unavailable" });
 });
 
 type DocNode = Record<string, unknown> & { type: string; start_index: number; end_index: number };
@@ -156,7 +157,7 @@ test("Word 未选分页完整证明后可保留和移位，选中或未知分页
     expect(verify).not.toThrow();
     nodes[1].content = { type: "ChangedBreak" };
     expect(verify).toThrow("尚未确认");
-    await expect(read(5)).rejects.toMatchObject({ code: "office_selection_proof_unavailable" });
+    await expect(read(5)).rejects.toMatchObject({ code: "office_selection_doc_structure_unsupported" });
     for (const change of [...(type === "PageBreak" ? [{ text_preview: "隐" }] : []), { children: [] }, { end_index: 5 }])
       await expect(read(1, change)).rejects.toMatchObject({ code: "office_selection_proof_unavailable" });
     await expect(read(1, {}, { paragraph_id: "changed" })).rejects.toMatchObject({ code: "office_selection_proof_unavailable" });
@@ -191,6 +192,24 @@ function docProofFixture(nodes: DocNode[], selected: DocNode, text: string,
   };
   return { calls, call };
 }
+
+test("Word 结构预览省略软换行时使用同模型完整原文，未选段也保留；截断、错误正文与版本变化拒绝", async () => {
+  const text = "演示 Word 文档\u000b由 JuggleWork 生成";
+  const selected = { type: "Paragraph", paragraph_id: "title", start_index: 0, end_index: text.length, text_preview: text.replace(/\u000b/g, "") };
+  const nodes = [selected, { type: "Paragraph", start_index: text.length + 1, end_index: text.length + 3, text_preview: "正文" }];
+  const locator = { kind: "doc-text" as const, ranges: [{ begin: text.length + 1, end: text.length + 3 }] };
+  const { call } = docProofFixture(nodes, selected, text);
+  const read = async (ranges: { begin: number; end: number }[]) => { expect(ranges).toEqual([{ begin: 0, end: text.length }]); return [text]; };
+  const proof = await readOfficeSelectionProof(call, "model", locator, [locator], read);
+  expect((proof.state.nodes as DocNode[])[0].text_preview).toBe(text);
+  for (const value of [[text.slice(1)], [text.replace("演示", "错误")], [text.replace("\u000b", "\r")], []])
+    await expect(readOfficeSelectionProof(call, "model", locator, [locator], async () => value)).rejects.toMatchObject({ code: "office_selection_proof_unavailable" });
+  let changed = false;
+  await expect(readOfficeSelectionProof(async (name, args) => {
+    const result = await call(name, args);
+    return changed ? { ...result, version: 8 } : result;
+  }, "model", locator, [locator], async () => { changed = true; return [text]; })).rejects.toMatchObject({ code: "office_selection_proof_unavailable" });
+});
 
 test("Word 普通正文补全未选长段内容，属性只读取所选段，未适配结构拒绝", async () => {
   const selected = { type: "Paragraph", paragraph_id: "body", start_index: 0, end_index: 4, text_preview: "前选中后" };
@@ -388,7 +407,7 @@ test("Word 正文跨度及补全调用有界，拒绝截断查找结果，不扩
   const large = { type: "Paragraph", start_index: 3, end_index: 16385, text_preview: "长段" };
   const over = docProofFixture([selected, large], selected, "选中");
   await expect(readOfficeSelectionProof(over.call, "model", { kind: "doc-caret", idx: 1 }))
-    .rejects.toMatchObject({ code: "office_selection_proof_unavailable" });
+    .rejects.toMatchObject({ code: "office_selection_content_limit" });
   expect(over.calls).toHaveLength(1);
   const text = "甲".repeat(5000);
   const node = { type: "Paragraph", start_index: 0, end_index: text.length, text_preview: text.slice(0, 66) };
@@ -397,7 +416,8 @@ test("Word 正文跨度及补全调用有界，拒绝截断查找结果，不扩
     .rejects.toMatchObject({ code: "office_selection_proof_unavailable" });
   expect(fixture.calls.filter(({ name }) => name === "doc_find")).toHaveLength(128);
   expect(fixture.calls.some(({ name }) => name === "doc_get_text_property")).toBe(false);
-  const truncated = docProofFixture([node], node, text);
+  const truncatedNode = { ...node, end_index: 800 };
+  const truncated = docProofFixture([truncatedNode], truncatedNode, text.slice(0, 800));
   await expect(readOfficeSelectionProof(async (name, args) => {
     const result = await truncated.call(name, args);
     return name === "doc_find" ? { ...result, total: 2 } : result;
@@ -424,15 +444,92 @@ for (const type of ["Table", "PageBreak"]) test(`Word 所选 ${type} 即使预�
   const selected = { type, start_index: 0, end_index: 2, text_preview: "选中" };
   const { call } = docProofFixture([selected], selected, "选中");
   await expect(readOfficeSelectionProof(call, "model", { kind: "doc-text", ranges: [{ begin: 0, end: 1 }] }))
-    .rejects.toMatchObject({ code: "office_selection_proof_unavailable" });
+    .rejects.toMatchObject({ code: "office_selection_doc_structure_unsupported" });
 });
 
-test("Word 仅选少数字符仍不能绕过所选段落 256 字符属性预算", async () => {
-  const text = "a".repeat(257);
+test("Word 仅选少数字符仍不能绕过所选段落 1024 字符属性预算", async () => {
+  const text = "a".repeat(1025);
   const selected = { type: "Paragraph", paragraph_id: "over-budget", start_index: 0, end_index: text.length, text_preview: text.slice(0, 200) };
   const { call } = docProofFixture([selected], selected, text);
   await expect(readOfficeSelectionProof(call, "model", { kind: "doc-text", ranges: [{ begin: 1, end: 3 }] }))
-    .rejects.toMatchObject({ code: "office_selection_proof_unavailable" });
+    .rejects.toMatchObject({ code: "office_selection_content_limit" });
+});
+
+test("Word 普通长段保留全部字符属性，不能因超过200字误拒绝", async () => {
+  const text = "中文😀".repeat(160);
+  const selected = { type: "Paragraph", paragraph_id: "long", start_index: 0, end_index: text.length, text_preview: text.slice(0, 66) };
+  const fixture = docProofFixture([selected], selected, text);
+  const result = await readOfficeSelectionProof(fixture.call, "model", { kind: "doc-text", ranges: [{ begin: 2, end: 4 }] });
+  expect((result.state.nodes as DocNode[])[0].text_preview).toBe(text);
+  expect(result.state.properties).toHaveLength(text.length);
+});
+
+test("Word emoji查找上下文转换失败仅重试只读候选，完整范围最终仍须精确匹配", async () => {
+  const text = "中文😀".repeat(120);
+  const selected = { type: "Paragraph", paragraph_id: "emoji", start_index: 0, end_index: text.length, text_preview: text.slice(0, 66) };
+  const fixture = docProofFixture([selected], selected, text);
+  let failed = false;
+  const call = async (name: string, args: Record<string, unknown>) => {
+    if (name === "doc_find" && !failed) { failed = true; throw new Error("Tool error: wstring_convert: to_bytes error"); }
+    return fixture.call(name, args);
+  };
+  const result = await readOfficeSelectionProof(call, "model", { kind: "doc-text", ranges: [{ begin: 0, end: 2 }] });
+  expect((result.state.nodes as DocNode[])[0].text_preview).toBe(text);
+  expect(fixture.calls.some(({ name, args }) => name === "doc_find" && args.text === text)).toBe(true);
+});
+
+test("Word 未选图片不能只凭占位文案通过，真实图片身份、位置和版本必须匹配", async () => {
+  const selected = { type: "Paragraph", paragraph_id: "body", start_index: 0, end_index: 4, text_preview: "普通正文" };
+  const image = { type: "Paragraph", start_index: 5, end_index: 6, text_preview: "[Image]" };
+  const fixture = docProofFixture([selected, image], selected, "普通正文");
+  let resource: Record<string, unknown> = { source: 1, index: 5, image_url: "http://127.0.0.1/resource.png" }, version = 7;
+  const call = (name: string, args: Record<string, unknown>) => name === "doc_get_images" ? Promise.resolve({ images: [resource], version }) : fixture.call(name, args);
+  const locator = { kind: "doc-text" as const, ranges: [{ begin: 0, end: 2 }] };
+  const result = await readOfficeSelectionProof(call, "model", locator);
+  expect((result.state.nodes as any[])[1].content).toEqual({ type: "Image", source: 1, image_url: resource.image_url });
+  await expect(readOfficeSelectionProof(call, "model", { kind: "doc-text", ranges: [{ begin: 5, end: 6 }] })).rejects.toMatchObject({ code: "office_selection_doc_structure_unsupported" });
+  for (const invalid of [{ ...resource, index: 6 }, { ...resource, source: 2 }, { ...resource, image_url: "" }]) {
+    const actual = resource; resource = invalid;
+    await expect(readOfficeSelectionProof(call, "model", locator)).rejects.toMatchObject({ code: "office_selection_proof_unavailable" });
+    resource = actual;
+  }
+  version = 8;
+  await expect(readOfficeSelectionProof(call, "model", locator)).rejects.toMatchObject({ code: "office_selection_stale" });
+});
+
+test("大型表格靠后单元格只读取固定选区及邻格，仍核对邻格变化、合并和完整样式覆盖", async () => {
+  const locator = { kind: "sheet-cells" as const, sheetId: "s", ranges: [{ startRow: 9000, endRow: 9000, startCol: 100, endCol: 100 }] };
+  const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const values = new Map([["9000:100", "目标"], ["8999:100", "保留"]]);
+  let badStyle = false, partialMerge = false;
+  const tool = async (name: string, args: Record<string, unknown>): Promise<Record<string, unknown>> => {
+    calls.push({ name, args });
+    if (name === "sheet_get_sheet_info") return { sheets: [{ sheet_id: "s", row_count: 10000, col_count: 200, used_row_count: 10000, used_col_count: 200 }] };
+    if (name === "sheet_get_merged_cells") return { merged_cells: partialMerge ? [{ sheet_id: "s", start_row: 9000, end_row: 9000, start_col: 100, end_col: 102 }] : [] };
+    const cells: Record<string, unknown>[] = [];
+    for (let row = Number(args.start_row); row <= Number(args.end_row); row++) for (let col = Number(args.start_col); col <= Number(args.end_col); col++) {
+      if (name === "sheet_get_cell_style") cells.push({ row, col, bold: false });
+      else if (values.has(`${row}:${col}`)) cells.push({ row, col, value_type: "STRING", string_value: values.get(`${row}:${col}`) });
+    }
+    if (badStyle && name === "sheet_get_cell_style") cells.pop();
+    return { cells };
+  };
+  const before = await readOfficeSelectionProof(tool, "model", locator);
+  expect(before.state.region).toEqual({ sheet_id: "s", start_row: 8999, start_col: 99, end_row: 9001, end_col: 101 });
+  expect(before.state.formats).toHaveLength(9);
+  expect(calls.filter((item) => item.name !== "sheet_get_sheet_info").every(({ args }) => args.start_row === 8999 && args.end_row === 9001)).toBe(true);
+  values.set("9000:100", "修改");
+  const args = { sheet_id: "s", cell: { row: 9000, col: 100, value_type: "STRING", string_value: "修改" } };
+  const after = await readOfficeSelectionProof(tool, "model", locator);
+  expect(() => verifyOfficeSelectionEdit(before, after, locator, "sheet_set_cell_value", args)).not.toThrow();
+  values.set("8999:100", "误改邻格");
+  const changed = await readOfficeSelectionProof(tool, "model", locator);
+  expect(() => verifyOfficeSelectionEdit(before, changed, locator, "sheet_set_cell_value", args)).toThrow("尚未确认");
+  badStyle = true;
+  await expect(readOfficeSelectionProof(tool, "model", locator)).rejects.toMatchObject({ code: "office_selection_proof_unavailable" });
+  badStyle = false; partialMerge = true;
+  await expect(readOfficeSelectionProof(tool, "model", locator)).rejects.toMatchObject({ code: "office_selection_sheet_partial_merge" });
+  await expect(readOfficeSelectionProof(tool, "model", { kind: "sheet-rows", sheetId: "s", ranges: [{ start: 9000, end: 9000 }] })).rejects.toMatchObject({ code: "office_selection_content_limit" });
 });
 
 test("Word 普通正文改写回读保留未选表格完整内容和长段，前段移位不误判", () => {

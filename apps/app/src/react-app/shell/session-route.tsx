@@ -1,4 +1,5 @@
 /** @jsxImportSource react */
+import { sessionModelReadIsCurrent, sessionModelSeed } from "../kernel/session-model-authority";
 import {
   useCallback,
   useEffect,
@@ -17,10 +18,9 @@ import { createLocalWorkspaceForRuntime } from "@/app/lib/local-workspace-create
 import { buildDiagnosticsBundleJson } from "@/app/lib/diagnostics-bundle";
 import { downloadTextAsFile } from "@/app/lib/download";
 import { createClient, unwrap } from "@/app/lib/opencode";
-import { submitSessionDraft } from "@/react-app/domains/session/sync/draft-submission";
+import { createSessionDraftSender } from "@/react-app/domains/session/sync/session-draft-sender";
 import { useDesktopPet } from "@/react-app/domains/pet/use-desktop-pet";
 import { DesktopPetHost } from "@/react-app/domains/pet/desktop-pet-host";
-import { installOfficeComposerBridge } from "@/react-app/domains/session/surface/composer/office-composer-bridge";
 import { abortSessionSafe, forkSession, listCommands, revertSession, setSessionArchived } from "@/app/lib/opencode-session";
 import { resolveModelContextLimit } from "@/react-app/domains/session/surface/composer/context-usage-data";
 import { requestComposerFocus } from "@/react-app/domains/session/surface/composer/focus-request";
@@ -32,6 +32,7 @@ import {
 } from "@/react-app/domains/session/sidebar/utils";
 import {
   readJuggleWorkServerSettings,
+  type JuggleWorkSessionModelPreference,
 } from "@/app/lib/jugglework-server";
 import {
   workspaceServerId,
@@ -53,7 +54,6 @@ import {
 } from "@/app/lib/desktop";
 import type {
   ComposerDraft,
-  ComposerSubmissionOptions,
   ModelOption,
   ModelRef,
   SlashCommandOption,
@@ -101,6 +101,7 @@ import {
 import { rememberModelVariant } from "@/react-app/kernel/model-config";
 import {
   clearSessionModelChoice,
+  readSessionChoices,
   resolveSessionModelChoice,
   setSessionModelChoice,
   setSessionVariantChoice,
@@ -141,7 +142,6 @@ import {
 } from "@/react-app/domains/connections/managed-engine-config";
 import { useSessionMcpMaintenance } from "@/react-app/domains/connections/use-session-mcp-maintenance";
 import { useCloudMcpSubmitReadiness } from "@/react-app/domains/connections/use-cloud-mcp-submit-readiness";
-import type { CloudMcpSubmissionResult } from "@/react-app/domains/connections/cloud-mcp-submit-readiness";
 import { useRemoteAccessRestart } from "@/react-app/domains/workspace/remote-access-restart";
 import { RenameWorkspaceModal } from "@/react-app/domains/workspace/rename-workspace-modal";
 import { useRemoteWorkspaceConnectionEditor } from "@/react-app/domains/workspace/use-remote-workspace-connection-editor";
@@ -380,10 +380,14 @@ export function SessionRoute(props: SessionRouteProps = {}) {
   }) : null, [selectedWorkspace, selectedWorkspaceEndpoint]);
   useHostMarketplaceExecutionTarget(hostMarketplaceExecutionTarget);
   activeRouteContextRef.current = `${selectedWorkspaceId ?? ""}:${selectedSessionId ?? ""}`;
-  useEffect(() => installOfficeComposerBridge({ navigate, scope: () => activeRouteContextRef.current }), [navigate]);
   // 会话级模型：每个会话可以固定自己的模型/推理档位，没有单独选过的会话才回落到
   // 全局默认模型。这样在一个会话里换模型不会波及其他会话。
   const sessionModelChoices = useSessionModelChoices(selectedWorkspaceId);
+  const sessionModelRevisionRef = useRef<Record<string, number>>({});
+  const sessionModelEventCursorRef = useRef<Record<string, number>>({});
+  const sessionModelMutationGenerationRef = useRef<Record<string, number>>({});
+  const pendingSessionModelMutationsRef = useRef(new Set<string>());
+  const sessionModelMutationChainsRef = useRef(new Map<string, Promise<void>>());
   const sessionAgentChoices = useSessionAgentChoices(selectedWorkspaceId);
   /**
    * 解析某个会话实际生效的模型与推理档位
@@ -403,14 +407,79 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     () => resolveModelForSession(selectedSessionId),
     [resolveModelForSession, selectedSessionId],
   );
-  // TIPS: 模型选择的落点 —— 有会话时写该会话（会话之间互不影响），并同步把全局默认
-  // 模型刷新成这次选的模型。全局默认只是「没单独选过模型的会话」的兜底值：若只写会话
-  // 级，它会一直停在最早设置的那个模型上，一旦该模型下线（provider 重新导入换了 id、
-  // 模型被移除），此后每个新建会话都会回落到不可用模型并被强制弹出模型选择器，且在弹窗
-  // 里重选也只修好当前会话，下一个新会话继续弹。同步更新让默认值能自愈。
+  const sessionModelKey = useCallback((workspaceId: string, sessionId: string) => `${workspaceId}\u0000${sessionId}`, []);
+  const applyAuthoritativeModelPreference = useCallback((workspaceId: string, item: JuggleWorkSessionModelPreference, allowEqual = false) => {
+    const key = sessionModelKey(workspaceId, item.sessionId);
+    const currentRevision = sessionModelRevisionRef.current[key] ?? -1;
+    if (currentRevision > item.revision || (!allowEqual && currentRevision === item.revision)) return false;
+    sessionModelRevisionRef.current[key] = item.revision;
+    if (item.mode === "explicit" && item.model) setSessionModelChoice(workspaceId, item.sessionId, item.model);
+    else clearSessionModelChoice(workspaceId, item.sessionId);
+    return true;
+  }, [sessionModelKey]);
+  const beginSessionModelMutation = useCallback((workspaceId: string, sessionId: string) => {
+    const key = sessionModelKey(workspaceId, sessionId);
+    const generation = (sessionModelMutationGenerationRef.current[key] ?? 0) + 1;
+    sessionModelMutationGenerationRef.current[key] = generation;
+    pendingSessionModelMutationsRef.current.add(key);
+    return { key, generation };
+  }, [sessionModelKey]);
+  const reconcileSessionModelMutation = useCallback(async (
+    endpoint: NonNullable<typeof selectedWorkspaceEndpoint>,
+    workspaceId: string,
+    sessionId: string,
+    key: string,
+    generation: number,
+  ) => {
+    try {
+      const { item } = await endpoint.client.getSessionModelPreference(endpoint.workspaceId, sessionId);
+      if (sessionModelMutationGenerationRef.current[key] === generation) {
+        applyAuthoritativeModelPreference(workspaceId, item, true);
+      }
+    } catch {
+      // The next successful poll or session read will reconcile the optimistic choice.
+    } finally {
+      if (sessionModelMutationGenerationRef.current[key] === generation) pendingSessionModelMutationsRef.current.delete(key);
+    }
+  }, [applyAuthoritativeModelPreference, selectedWorkspaceEndpoint]);
+  const persistSessionModelPreference = useCallback((
+    endpoint: NonNullable<typeof selectedWorkspaceEndpoint>,
+    workspaceId: string,
+    sessionId: string,
+    preference: { mode: "auto"; model: null } | { mode: "explicit"; model: ModelRef },
+  ) => {
+    const mutation = beginSessionModelMutation(workspaceId, sessionId);
+    const previous = sessionModelMutationChainsRef.current.get(mutation.key) ?? Promise.resolve();
+    let current: Promise<void>;
+    current = previous.catch(() => {}).then(async () => {
+      try {
+        const { item } = await endpoint.client.putSessionModelPreference(endpoint.workspaceId, sessionId, {
+          ...preference,
+          expectedRevision: sessionModelRevisionRef.current[mutation.key] ?? 0,
+        });
+        sessionModelRevisionRef.current[mutation.key] = Math.max(sessionModelRevisionRef.current[mutation.key] ?? -1, item.revision);
+        if (sessionModelMutationGenerationRef.current[mutation.key] === mutation.generation) {
+          applyAuthoritativeModelPreference(workspaceId, item, true);
+          pendingSessionModelMutationsRef.current.delete(mutation.key);
+        }
+      } catch {
+        await reconcileSessionModelMutation(endpoint, workspaceId, sessionId, mutation.key, mutation.generation);
+      }
+    }).finally(() => {
+      if (sessionModelMutationChainsRef.current.get(mutation.key) === current) {
+        sessionModelMutationChainsRef.current.delete(mutation.key);
+      }
+    });
+    sessionModelMutationChainsRef.current.set(mutation.key, current);
+  }, [applyAuthoritativeModelPreference, beginSessionModelMutation, reconcileSessionModelMutation, selectedWorkspaceEndpoint]);
+  // Existing sessions write only their revisioned preference. The global
+  // default is a fallback for creating sessions, not a synchronization channel.
   const applyModelSelection = useCallback((next: ModelRef, sessionId: string | null) => {
     if (sessionId && selectedWorkspaceId) {
       setSessionModelChoice(selectedWorkspaceId, sessionId, next);
+      const endpoint = selectedWorkspaceEndpoint;
+      if (endpoint) persistSessionModelPreference(endpoint, selectedWorkspaceId, sessionId, { mode: "explicit", model: next });
+      return;
     }
     local.setPrefs((previous) => ({
       ...previous,
@@ -421,7 +490,68 @@ export function SessionRoute(props: SessionRouteProps = {}) {
           ? previous.modelVariant
           : null,
     }));
-  }, [local.setPrefs, selectedWorkspaceId]);
+  }, [local.setPrefs, persistSessionModelPreference, selectedWorkspaceEndpoint, selectedWorkspaceId]);
+
+  useEffect(() => {
+    const endpoint = selectedWorkspaceEndpoint;
+    if (!endpoint || !selectedWorkspaceId || !selectedSessionId) return;
+    let cancelled = false;
+    const controller = new AbortController();
+    const sessionId = selectedSessionId;
+    const key = sessionModelKey(selectedWorkspaceId, sessionId);
+    const generation = sessionModelMutationGenerationRef.current[key] ?? 0;
+    void endpoint.client.getSessionModelPreference(endpoint.workspaceId, sessionId, { signal: controller.signal }).then(async ({ item }) => {
+      if (cancelled) return;
+      if (item.mode === "auto" && !pendingSessionModelMutationsRef.current.has(key) &&
+        sessionModelReadIsCurrent(sessionModelMutationGenerationRef.current[key], generation)) {
+        // Publish the actual Desktop choice once, so snapshots and mobile use
+        // the same session authority even before the first explicit selection.
+        const legacy = sessionModelSeed(item, readSessionChoices(selectedWorkspaceId)[sessionId]?.model, local.prefs.defaultModel);
+        if (legacy) {
+          try {
+            const migrated = await endpoint.client.putSessionModelPreference(endpoint.workspaceId, sessionId, { mode: "explicit", model: legacy, expectedRevision: item.revision }, { signal: controller.signal });
+            if (!cancelled) item = migrated.item;
+          } catch {
+            const current = await endpoint.client.getSessionModelPreference(endpoint.workspaceId, sessionId, { signal: controller.signal });
+            if (!cancelled) item = current.item;
+          }
+        }
+      }
+      if (cancelled || pendingSessionModelMutationsRef.current.has(key) || !sessionModelReadIsCurrent(sessionModelMutationGenerationRef.current[key], generation)) return;
+      applyAuthoritativeModelPreference(selectedWorkspaceId, item);
+    }).catch(() => {});
+    return () => { cancelled = true; controller.abort(); };
+  }, [applyAuthoritativeModelPreference, local.prefs.defaultModel, selectedSessionId, selectedWorkspaceEndpoint, selectedWorkspaceId, sessionModelKey]);
+
+  useEffect(() => {
+    const endpoint = selectedWorkspaceEndpoint;
+    if (!endpoint || !selectedWorkspaceId) return;
+    let cancelled = false;
+    const controller = new AbortController();
+    let timer: number | null = null;
+    const poll = async () => {
+      try {
+        const response = await endpoint.client.listSessionModelEvents(endpoint.workspaceId, sessionModelEventCursorRef.current[selectedWorkspaceId] ?? 0, { signal: controller.signal });
+        if (cancelled) return;
+        sessionModelEventCursorRef.current[selectedWorkspaceId] = response.cursor;
+        for (const item of response.items) {
+          if (pendingSessionModelMutationsRef.current.has(sessionModelKey(selectedWorkspaceId, item.sessionId))) continue;
+          applyAuthoritativeModelPreference(selectedWorkspaceId, item);
+        }
+      } catch {
+        // Keep the cursor unchanged so the next poll retries the same range.
+      } finally {
+        if (!cancelled) timer = window.setTimeout(() => void poll(), 1_000);
+      }
+    };
+    void poll();
+    return () => {
+      cancelled = true;
+      controller.abort();
+      if (timer !== null) window.clearTimeout(timer);
+      delete sessionModelEventCursorRef.current[selectedWorkspaceId];
+    };
+  }, [applyAuthoritativeModelPreference, selectedWorkspaceEndpoint, selectedWorkspaceId, sessionModelKey]);
   const applyModelVariantSelection = useCallback((value: string | null, sessionId: string | null) => {
     const targetModel = resolveModelForSession(sessionId).model;
     if (sessionId && selectedWorkspaceId) {
@@ -1319,90 +1449,88 @@ export function SessionRoute(props: SessionRouteProps = {}) {
       onOpenSettingsSection: (section: "commands" | "skills" | "mcps" | "plugins" | "providers") => {
         handleOpenSettings(section === "skills" ? "/settings/extensions/skills" : section === "mcps" ? "/settings/extensions/mcp" : section === "plugins" ? "/settings/extensions/plugins" : section === "providers" ? "/settings/ai" : "/settings/preferences");
       },
-      onSendDraft: async (
-        draft: ComposerDraft,
-        sessionId: string,
-        submission: ComposerSubmissionOptions = { delivery: "start" },
-      ): Promise<CloudMcpSubmissionResult> => {
-        const targetSessionId = sessionId.trim() || selectedSessionId;
-        if (!targetSessionId) return { outcome: "cancelled", reason: "context_changed" };
-        if (!canAcceptTask) return { outcome: "cancelled", reason: "context_changed" };
-        const routeContext = activeRouteContextRef.current;
-        const validateGenerationDraftBeforeSend = () => {
-          if (!draft.imageGeneration && !draft.videoGeneration) return true;
-          if (activeRouteContextRef.current !== routeContext) return false;
-          const mediaScope = mediaModelQueryScope({
-            endpoint: selectedWorkspaceEndpoint?.client.baseUrl ?? "",
-            workspaceId: selectedWorkspaceEndpoint?.workspaceId ?? "",
-            workspaceRoot: selectedWorkspaceRoot,
-          });
-          return generationDraftAvailableInCache(getReactQueryClient(), mediaScope, draft);
-        };
-        return submitSessionDraft({
-          draft, sessionId: targetSessionId, workspaceId: selectedWorkspaceId, workspaceRoot: selectedWorkspaceRoot,
-          client: opencodeClient, host: client, endpoint: selectedWorkspaceEndpoint,
-          runtimeKey: environmentRuntimeKey, workspaceType: selectedWorkspace?.workspaceType, submission,
-          isCurrent: () => canAcceptTask && activeRouteContextRef.current === routeContext,
-          cloudSubmit: submitWithCloudMcpReadiness, validateGeneration: validateGenerationDraftBeforeSend,
-          prepare: async () => {
-            const targetChoice = resolveModelForSession(targetSessionId);
-            const targetModel = targetChoice.model;
-            const targetVariant = describeModel(targetModel, targetChoice.variant).modelVariantValue;
-            if (
-              targetModel &&
-              isCloudManagedProviderKey(targetModel.providerID) &&
-              !isManagedModelReady(targetModel)
-            ) {
-              throw new Error(t("app.error_managed_model_preparing"));
-            }
-            if (isModelUnavailable(targetModel)) throw new Error("Selected model is unavailable. Choose another model before sending.");
+      onSendDraft: createSessionDraftSender({
+        sessionId: selectedSessionId, workspaceId: selectedWorkspaceId, workspaceRoot: selectedWorkspaceRoot,
+        client: opencodeClient, host: client, endpoint: selectedWorkspaceEndpoint,
+        runtimeKey: environmentRuntimeKey, workspaceType: selectedWorkspace?.workspaceType,
+        canSubmit: () => canAcceptTask,
+        cloudSubmit: submitWithCloudMcpReadiness,
+        prepare: async () => ({ model: activeModel, variant: modelVariantValue ?? null }),
+        captureContext: (targetSessionId) => {
+          const routeContext = activeRouteContextRef.current;
+          const validateGenerationDraftBeforeSend = (draft: ComposerDraft) => {
+            if (!draft.imageGeneration && !draft.videoGeneration) return true;
+            if (activeRouteContextRef.current !== routeContext) return false;
+            const mediaScope = mediaModelQueryScope({
+              endpoint: selectedWorkspaceEndpoint?.client.baseUrl ?? "",
+              workspaceId: selectedWorkspaceEndpoint?.workspaceId ?? "",
+              workspaceRoot: selectedWorkspaceRoot,
+            });
+            return generationDraftAvailableInCache(getReactQueryClient(), mediaScope, draft);
+          };
+          return {
+            isCurrent: () => activeRouteContextRef.current === routeContext,
+            validateGeneration: validateGenerationDraftBeforeSend,
+            prepare: async () => {
+              const targetChoice = resolveModelForSession(targetSessionId);
+              const targetModel = targetChoice.model;
+              const targetVariant = describeModel(targetModel, targetChoice.variant).modelVariantValue;
+              if (
+                targetModel &&
+                isCloudManagedProviderKey(targetModel.providerID) &&
+                !isManagedModelReady(targetModel)
+              ) {
+                throw new Error(t("app.error_managed_model_preparing"));
+              }
+              if (isModelUnavailable(targetModel)) throw new Error("Selected model is unavailable. Choose another model before sending.");
 
-            // TIPS: 页面从后台或休眠恢复时，Connect maintenance 会重建可能失效的
-            // first-party transport。这里只等待已经在运行的恢复任务，不为普通消息额外探活。
-            const resumeMaintenance = await waitForSessionMcpResumeMaintenance();
-            if (activeRouteContextRef.current !== routeContext) {
-              return { outcome: "cancelled", reason: "context_changed" };
-            }
-            if (resumeMaintenance.outcome === "timed_out") {
-              return reportCloudMcpSubmissionFailure({
+              // TIPS: 页面从后台或休眠恢复时，Connect maintenance 会重建可能失效的
+              // first-party transport。这里只等待已经在运行的恢复任务，不为普通消息额外探活。
+              const resumeMaintenance = await waitForSessionMcpResumeMaintenance();
+              if (activeRouteContextRef.current !== routeContext) {
+                return { outcome: "cancelled", reason: "context_changed" };
+              }
+              if (resumeMaintenance.outcome === "timed_out") {
+                return reportCloudMcpSubmissionFailure({
                   code: "cloud_mcp_resume_maintenance_timeout",
                   stage: "engine_delivery",
                   retryable: true,
                   message: "JuggleWork Connect is still restoring after the app resumed.",
                   recommendedAction: "Wait a moment, then retry the message.",
-              });
-            }
-            if (resumeMaintenance.outcome === "failed") {
-              return reportCloudMcpSubmissionFailure({
+                });
+              }
+              if (resumeMaintenance.outcome === "failed") {
+                return reportCloudMcpSubmissionFailure({
                   code: "cloud_mcp_resume_maintenance_failed",
                   stage: "engine_delivery",
                   retryable: true,
                   message: "JuggleWork Connect could not finish restoring after the app resumed.",
                   recommendedAction: "Retry the message, then open Settings → Connect if the problem continues.",
-              });
-            }
-
-            if (hostMarketplace.snapshot.registry?.installations.length) {
-              try {
-                const hostSnapshot = await hostMarketplace.ensureReady();
-                if (!hostSnapshot.registry?.active) {
-                  throw hostSnapshot.error ?? new Error("Host Marketplace plugins are not active.");
-                }
-              } catch (error) {
-                return reportCloudMcpSubmissionFailure({
-                  code: "host_marketplace_scope_unavailable",
-                  stage: "engine_delivery",
-                  retryable: true,
-                  message: error instanceof Error ? error.message : "Host Marketplace plugins could not be prepared.",
-                  recommendedAction: "Wait a moment, then retry the message.",
                 });
               }
-            }
 
-            return { model: targetModel, variant: targetVariant ?? null };
-          },
-        });
-      },
+              if (hostMarketplace.snapshot.registry?.installations.length) {
+                try {
+                  const hostSnapshot = await hostMarketplace.ensureReady();
+                  if (!hostSnapshot.registry?.active) {
+                    throw hostSnapshot.error ?? new Error("Host Marketplace plugins are not active.");
+                  }
+                } catch (error) {
+                  return reportCloudMcpSubmissionFailure({
+                    code: "host_marketplace_scope_unavailable",
+                    stage: "engine_delivery",
+                    retryable: true,
+                    message: error instanceof Error ? error.message : "Host Marketplace plugins could not be prepared.",
+                    recommendedAction: "Wait a moment, then retry the message.",
+                  });
+                }
+              }
+
+              return { model: targetModel, variant: targetVariant ?? null };
+            },
+          };
+        },
+      }),
       cloudMcpSubmissionState,
       onOpenConnect: () => navigate("/settings/connect"),
       onDraftChange: () => {

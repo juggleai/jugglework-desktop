@@ -101,6 +101,35 @@ describe("Desktop remote-control status presentation", () => {
     })).toBe(true);
   });
 
+  test("always exposes recovery after a failed identity replacement", () => {
+    const input = {
+      signedIn: true,
+      policyAllowsRemote: true,
+      settings: { schemaVersion: 1 as const, enabled: false, preventSleepWhileWaiting: false, backgroundMode: false, launchAtLogin: false, allowBusySessionSteer: false, allowBusySessionEnqueue: false },
+      status: status({
+        connected: false,
+        state: "disabled",
+        enrolled: false,
+        locallyDisabled: false,
+        enrollmentAuthorized: false,
+        lastErrorCode: "identity_replacement_failed",
+        replacementFailure: {
+          stage: "enrollment",
+          code: "enrollment_failed",
+          agentErrorCode: "identity_replacement_failed",
+          closeCode: null,
+          lifecycleGeneration: 24,
+          connectionGeneration: null,
+        },
+      }),
+    };
+    expect(shouldShowRemoteControlReregister(input)).toBe(true);
+    expect(shouldShowRemoteControlReregister({ ...input, signedIn: false })).toBe(false);
+    expect(shouldShowRemoteControlReregister({ ...input, policyAllowsRemote: false })).toBe(false);
+    expect(shouldShowRemoteControlReregister({ ...input, settings: { ...input.settings, enabled: true } })).toBe(false);
+    expect(shouldShowRemoteControlReregister({ ...input, status: { ...input.status, replacementPending: true } })).toBe(false);
+  });
+
   test("offers reconnect rather than re-registration for a preserved authenticated identity", () => {
     const preserved = status({
       connected: false,

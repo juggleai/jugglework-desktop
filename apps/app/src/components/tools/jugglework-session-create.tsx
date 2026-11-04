@@ -91,6 +91,12 @@ function resultHeading(createdCount: number, failureCount: number) {
 }
 
 export function JuggleWorkSessionCreateTool({ part }: { part: DynamicToolUIPart }) {
+  const { historyActionsEnabled } = useMessageList()
+  if (!historyActionsEnabled) return <Tool toolPart={part} title="Created new chats" />
+  return <NavigableSessionCreateTool part={part} />
+}
+
+function NavigableSessionCreateTool({ part }: { part: DynamicToolUIPart }) {
   const navigate = useNavigate()
   const { workspaceId: currentWorkspaceId } = useMessageList()
 

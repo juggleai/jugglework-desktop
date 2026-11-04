@@ -40,7 +40,7 @@ export function createAgentToolContext(cwd: string, config: Record<string, unkno
 }
 
 export async function createAgentTools(cwd: string, canvas?: CanvasContext, question?: QuestionContext): Promise<ToolDefinition[]> {
-  const tools: ToolDefinition[] = isManagedMode() ? createVideoEditTools(cwd) : [];
+  const tools: ToolDefinition[] = isManagedMode() ? createVideoEditTools(cwd, canvas) : [];
   const names = new Set<string>(tools.map(tool => tool.name));
   const context = createAgentToolContext(cwd, {}, canvas, question);
   for (const item of await listTools()) {

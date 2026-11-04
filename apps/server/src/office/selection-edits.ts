@@ -5,7 +5,7 @@ import { getOfficeDocumentKind } from "@jugglework/types/office";
 import { ApiError } from "../errors.js";
 import { parseOfficeSelection } from "./selection.js";
 import { officeSelectionToolNames, planOfficeSelectionTool } from "./selection-tools.js";
-import { OFFICE_DOC_MAX_SPAN, officeDocRangeParts, officeProofJson, readOfficeSelectionProof, verifyOfficeSelectionEdit, type OfficeSelectionProof } from "./selection-proof.js";
+import { OFFICE_DOC_MAX_SPAN, OFFICE_DOC_MAX_PROPERTIES, officeDocRangeParts, officeProofJson, readOfficeSelectionProof, verifyOfficeSelectionEdit, type OfficeSelectionProof } from "./selection-proof.js";
 import { slidePageDescriptor, slidePageGetter, slidePageIndex, slidePageScope, validateSlidePageBudget } from "./slide-page-proof.js";
 
 const id = z.string().min(1).max(256);
@@ -45,6 +45,7 @@ interface Options {
   document: (workspaceId: string, sessionId: string, documentId: string) => Promise<OfficeDocumentSession>;
   prepare: (document: OfficeDocumentSession) => Promise<void>;
   selection: (document: OfficeDocumentSession) => Promise<unknown>;
+  text?: (document: OfficeDocumentSession, ranges: { begin: number; end: number }[], version: number) => Promise<string[] | null>;
   tool: (name: string, args: Record<string, unknown>) => Promise<Record<string, unknown>>;
   modified: (document: OfficeDocumentSession, messageId: string, name: string, args: Record<string, unknown>, result: unknown) => Promise<void>;
   save: (document: OfficeDocumentSession) => Promise<OfficeDocumentSession>;
@@ -93,8 +94,10 @@ export class OfficeSelectionEdits {
     return document;
   }
   private async read(record: ReferenceRecord, coverage = [record.value.locator]): Promise<OfficeSelectionProof> {
-    await this.live(record);
-    const proof = await readOfficeSelectionProof(this.options.tool, record.fileId, record.readLocator ?? record.value.locator, coverage);
+    const document = await this.live(record);
+    const readText = this.options.text;
+    const proof = await readOfficeSelectionProof(this.options.tool, record.fileId, record.readLocator ?? record.value.locator, coverage,
+      readText ? (ranges, version) => readText(document, ranges, version) : undefined);
     await this.live(record);
     return proof;
   }
@@ -378,8 +381,12 @@ export class OfficeSelectionEdits {
     if (typeof args.text === "string") {
       if (name === "doc_replace_text") {
         args.text = args.text.replace(/\r\n|\n/g, "\r");
-        if ((args.text as string).length > 4096 || (args.text as string).split("\r").some((text) => text.length > 200 || /[\u0000\ufffc]/.test(text))) stale("每段替换文字不能超过 200 字，请保留原有段落边界");
-      } else if (!page && (args.text.length > 200 || /[\r\n\u0000\ufffc]/.test(args.text))) stale("请使用不超过 200 字的单段文字，结构修改请单独处理");
+        if ((args.text as string).length > OFFICE_DOC_MAX_PROPERTIES || /[\u0000\ufffc]/.test(args.text as string)) stale(`替换正文最多支持 ${OFFICE_DOC_MAX_PROPERTIES} 个 UTF-16 码元，请保留原有段落边界`);
+      } else if (name === "slide_set_text") {
+        const text = args.text.replace(/\r\n|\n/g, "\r");
+        args.text = text;
+        if (!text.length || text.length > 4096 || /[\u0000\ufffc]/.test(text)) stale("文本框最多支持 4096 个 UTF-16 码元，暂不支持清空或嵌入对象");
+      } else if (!page && (args.text.length > OFFICE_DOC_MAX_PROPERTIES || /[\r\n\u0000\ufffc]/.test(args.text))) stale(`请使用不超过 ${OFFICE_DOC_MAX_PROPERTIES} 个 UTF-16 码元的单段文字`);
     }
     if (name === "sheet_set_cell_style" && args.is_clear === true) stale("选区暂不支持清除样式，请明确设置目标属性");
   }
@@ -467,9 +474,8 @@ export class OfficeSelectionEdits {
           pendingLast += delta;
           if (pendingLast > OFFICE_DOC_MAX_SPAN) stale(`逐段修改的正文跨度超过 ${OFFICE_DOC_MAX_SPAN} UTF-16 核对预算，请拆分处理`);
         }
-        const nodes = state.nodes as Array<{ start_index: number; end_index: number }>;
         const resultingSize = (state.properties as unknown[]).length + texts.join("").length - parts.reduce((sum, part) => sum + part.end - part.begin, 0);
-        if (resultingSize > 256 || parts.some((part, i) => nodes[part.nodeIndex].end_index - nodes[part.nodeIndex].start_index + texts[i].length - (part.end - part.begin) > 200)) stale("修改后的段落过长，请缩小本次修改");
+        if (resultingSize > OFFICE_DOC_MAX_PROPERTIES) stale("修改后的段落过长，请缩小本次修改");
         // TIPS: 原生替换拒绝跨段分隔符。先完整校验所有段，再从后向前改写，使未执行段仍使用原坐标。
         // 空段允许原位插入；不删除/重建段落，因此首尾未选文字及原有段落属性得以保留。
         nativeCalls = parts.flatMap((part, i) => part.begin === part.end && !texts[i].length ? [] : [{

@@ -9,7 +9,7 @@ const INPUT = Object.freeze({
   scope: { controlPlaneBaseUrl: "https://cloud.example.test/jwork/api", userId: "user-1", organizationId: "org-1" },
 });
 
-function harness({ failAt = null, pauseAt = null, status: statusOverrides = {} } = {}) {
+function harness({ failAt = null, pauseAt = null, enrollmentCode = undefined, replacementStage = undefined, status: statusOverrides = {} } = {}) {
   const calls = [];
   const diagnostics = [];
   /** @type {() => void} */
@@ -74,7 +74,7 @@ function harness({ failAt = null, pauseAt = null, status: statusOverrides = {} }
       markReplacementStarted();
       await pause("replacement");
       if (failAt === "pending") await replacementGate;
-      if (failAt === "enrollment") throw new Error("grant=secret privateKey=secret");
+      if (failAt === "enrollment") throw Object.assign(new Error("grant=secret privateKey=secret"), { code: enrollmentCode, replacementStage });
       status = { ...status, enrolled: true };
     },
     deleteCredential: async () => { calls.push("delete"); status = { ...status, enrolled: false }; },
@@ -110,6 +110,24 @@ function harness({ failAt = null, pauseAt = null, status: statusOverrides = {} }
 }
 
 describe("remote-control lifecycle manager", () => {
+  it("retains a safe substage for exceptions without a recognized code", async () => {
+    for (const stage of ["delete_material", "prepare_credential", "exchange", "secret-stage"]) {
+      const fixture = harness({ failAt: "enrollment", replacementStage: stage });
+      const result = await fixture.manager.reregisterAndEnable(INPUT);
+      assert.equal(result.status.replacementFailure.code, stage === "secret-stage" ? "enrollment_failed" : `enrollment_${stage}_failed`);
+      assert.doesNotMatch(JSON.stringify(result), /secret/);
+    }
+  });
+  it("projects allowlisted enrollment causes without exposing exception content", async () => {
+    for (const code of ["secure_storage_unavailable", "credentials_write_failed", "invalid_enrollment_input", "secret-untrusted-code"]) {
+      const fixture = harness({ failAt: "enrollment", enrollmentCode: code });
+      const result = await fixture.manager.reregisterAndEnable(INPUT);
+      assert.equal(result.ok, false);
+      assert.equal(result.status.replacementFailure.stage, "enrollment");
+      assert.equal(result.status.replacementFailure.code, code === "secret-untrusted-code" ? "enrollment_failed" : code);
+      assert.doesNotMatch(JSON.stringify(result), /grant=secret|privateKey=secret|secret-untrusted-code/);
+    }
+  });
   it("orders disable, fencing, identity replacement, persistence enable, and startup", async () => {
     const fixture = harness();
     const result = await fixture.manager.reregisterAndEnable(INPUT);

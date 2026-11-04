@@ -148,6 +148,17 @@ describe("desktop remote-control contracts", () => {
     assert.equal(createDesktopRemoteWssEnvelopeSchema(capabilities).safeParse(commandEnvelope).success, true)
   })
 
+  test("accepts the authoritative Live Activity lifecycle feature", () => {
+    assert.equal(
+      desktopRemoteCapabilityAdvertisementSchema.safeParse({
+        schemaVersion: 1,
+        operations: [],
+        features: ["live-activity-v3"],
+      }).success,
+      true,
+    )
+  })
+
   test("rejects unknown operations before dispatch", () => {
     const result = desktopRemoteOperationRequestSchema.safeParse({
       operation: "desktop.http.proxy",
@@ -191,6 +202,25 @@ describe("desktop remote-control contracts", () => {
       interactions: true,
     }
     const advertised = createDesktopRemoteCapabilityAdvertisement(gates)
+    assert.equal(advertised.features.includes("session.prompt-model"), true)
+    assert.equal(advertised.features.includes("session.model-selection"), true)
+    const modelSetRequest = {
+      operation: "session.model.set", payloadVersion: 1,
+      arguments: { workspaceId: "workspace-1", sessionId: "session-1", expectedRevision: 2, preference: { mode: "auto", model: null } },
+    } as const
+    assert.equal(desktopRemoteOperationRequestSchema.safeParse(modelSetRequest).success, true)
+    assert.equal(createDesktopRemoteOperationRequestSchema(advertised).safeParse(modelSetRequest).success, true)
+    assert.equal(createDesktopRemoteOperationRequestSchema({ ...advertised, features: advertised.features.filter((feature) => feature !== "session.model-selection") }).safeParse(modelSetRequest).success, false)
+    for (const payloadVersion of [1, 2] as const) {
+      const request = { operation: "session.prompt", payloadVersion, arguments: {
+        workspaceId: "workspace-1", sessionId: "session-1",
+        ...(payloadVersion === 1 ? { prompt: "hello" } : { parts: [{ type: "text", text: "hello" }] }),
+        model: { providerID: "provider-1", modelID: "model-1" },
+      } }
+      assert.equal(createDesktopRemoteOperationRequestSchema(advertised).safeParse(request).success, true)
+      assert.equal(createDesktopRemoteOperationRequestSchema({ ...advertised, features: [] }).safeParse(request).success, false)
+      assert.equal(desktopRemoteOperationRequestSchema.safeParse({ ...request, arguments: { ...request.arguments, model: { providerID: "provider-1" } } }).success, false)
+    }
     assert.deepEqual(
       advertised.operations.find(({ operation }) => operation === "session.snapshot")?.payloadVersions,
       [1, 2],
@@ -436,7 +466,7 @@ describe("desktop remote-control contracts", () => {
       { type: "file", mime: "image/png", filename: "image.png", url: "data:image/jpeg;base64,AA==" },
       { type: "file", mime: "application/octet-stream", filename: "data.bin", url: "data:application/octet-stream;base64,AA==" },
       { type: "file", mime: "image/png", filename: "../image.png", url: png },
-      { type: "file", mime: "image/png", filename: "large.png", url: `data:image/png;base64,${Buffer.alloc(256 * 1024 + 1).toString("base64")}` },
+      { type: "file", mime: "image/png", filename: "large.png", url: `data:image/png;base64,${Buffer.alloc(10 * 1024 * 1024 + 1).toString("base64")}` },
     ]) {
       assert.equal(desktopRemoteOperationRequestSchema.safeParse({
         ...request, arguments: { ...request.arguments, parts: [file] },
@@ -446,6 +476,13 @@ describe("desktop remote-control contracts", () => {
       ...request,
       arguments: { ...request.arguments, parts: Array.from({ length: 4 }, (_, index) => ({
         type: "file", mime: "image/png", filename: `${index}.png`, url: png,
+      })) },
+    }).success, false)
+    const aggregateFile = `data:image/png;base64,${Buffer.alloc(6_912 * 1024).toString("base64")}`
+    assert.equal(desktopRemoteOperationRequestSchema.safeParse({
+      ...request,
+      arguments: { ...request.arguments, parts: Array.from({ length: 3 }, (_, index) => ({
+        type: "file", mime: "image/png", filename: `${index}.png`, url: aggregateFile,
       })) },
     }).success, false)
   })

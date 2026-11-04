@@ -6,6 +6,7 @@ import type {
 import { ApiError } from "../errors.js";
 import type { OfficeToolDefinition } from "./content-tools.js";
 import { slidePageScope, validateSlidePageBudget } from "./slide-page-proof.js";
+import { OFFICE_DOC_MAX_PROPERTIES } from "./selection-proof.js";
 
 const DOC_STYLE_KEYS = [
   "bold", "italic", "underline", "strikethrough", "double_strike", "small_caps",
@@ -48,11 +49,17 @@ export function describeOfficeSelectionTool(tool: OfficeToolDefinition, locator?
     }[tool.name] ?? "");
     return adapted;
   }
+  if (tool.name === "slide_set_text") {
+    const adapted = structuredClone(tool);
+    (adapted.inputSchema.properties as Record<string, unknown>).text = { type: "string", minLength: 1, maxLength: 4096,
+      description: "整框替换文字，最多4096个UTF-16码元；支持换行，宿主统一为CR。原生重写会重置字符样式，段落默认对齐保留。" };
+    return adapted;
+  }
   if (tool.name !== "doc_replace_text") return tool;
   const adapted = structuredClone(tool);
-  adapted.description = "替换本轮固定 Word 选区中的正文。可省略 ranges，由宿主绑定；跨段改写必须保留原有段数（含空段），text 按原段落顺序用换行分隔，每段最多 200 个 UTF-16 码元。office.selection 的 contents 提供完整所选段落。宿主按段精确替换并保留段落及未选正文；暂不支持合并或拆分段落。修改后须重新选择。";
+  adapted.description = `替换本轮固定 Word 选区中的正文。可省略 ranges，由宿主绑定；跨段改写必须保留原有段数（含空段），text 按原段落顺序用换行分隔，总计最多 ${OFFICE_DOC_MAX_PROPERTIES} 个 UTF-16 码元。office.selection 的 contents 提供完整所选段落。宿主按段精确替换并保留段落及未选正文；暂不支持合并或拆分段落。修改后须重新选择。`;
   const properties = adapted.inputSchema.properties as Record<string, unknown>;
-  properties.text = { ...(properties.text as object), description: "替换文字；跨段时按 contents.ranges[].paragraphs 的段数提供换行分隔内容，包含空段；支持 LF、CRLF、CR。" };
+  properties.text = { type: "string", maxLength: OFFICE_DOC_MAX_PROPERTIES, description: "替换文字；跨段时按 contents.ranges[].paragraphs 的段数提供换行分隔内容，包含空段；支持 LF、CRLF、CR。" };
   adapted.inputSchema.required = (adapted.inputSchema.required as string[]).filter((key) => key !== "ranges" && key !== "file_id");
   return adapted;
 }

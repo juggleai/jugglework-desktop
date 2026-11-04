@@ -33,8 +33,8 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-async function waitUntil(predicate: () => boolean | Promise<boolean>): Promise<void> {
-  for (let attempt = 0; attempt < 100; attempt++) {
+async function waitUntil(predicate: () => boolean | Promise<boolean>, timeoutMs = 500): Promise<void> {
+  for (let attempt = 0; attempt < Math.ceil(timeoutMs / 5); attempt++) {
     if (await predicate()) return;
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
@@ -50,9 +50,24 @@ function startMockOpencode() {
   const statusRequests: string[] = [];
   const disposes: Array<{ directory: string | null }> = [];
   const statuses = new Map<string, unknown>();
-  const messages = new Map<string, Array<ArtifactEngineMessage & { info: ArtifactEngineMessage["info"] & { finish?: string; summary?: boolean; error?: unknown } }>>();
+  const connected = ["connected"];
+  const models: Record<string, unknown> = {
+    chat: { capabilities: { output: { text: true } } },
+    image: { capabilities: { output: { image: true, text: false } } },
+    normalizedVideo: { modalities: { output: ["video"] } },
+  };
+  const messages = new Map<string, Array<Omit<ArtifactEngineMessage, "info"> & {
+    info: ArtifactEngineMessage["info"] & {
+      sessionID?: string;
+      finish?: string;
+      summary?: boolean;
+      error?: unknown;
+    };
+  }>>();
   const sessions = new Map<string, { id: string; title: string; parentID?: string; directory?: string; time: { created: number; updated: number } }>();
   const heldPrompts = new Map<string, ReturnType<typeof deferred<void>>>();
+  const heldMessageReads = new Map<string, ReturnType<typeof deferred<void>>>();
+  const messageReads: string[] = [];
   const heldMessageIds = new Map<string, ReturnType<typeof deferred<void>>>();
   const heldAborts = new Map<string, ReturnType<typeof deferred<void>>>();
   const heldCommands = new Map<string, ReturnType<typeof deferred<void>>>();
@@ -63,17 +78,36 @@ function startMockOpencode() {
   const v2Admissions = new Map<string, { fingerprint: string; receipt: unknown }>();
   const v2Statuses = new Map<string, number>();
   const failedShells = new Set<string>();
+  const autoPersistPrompts = { value: false };
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
     async fetch(request) {
       const url = new URL(request.url);
+      if (request.method === "GET" && url.pathname === "/provider") {
+        return Response.json({ all: [{ id: "connected", models }], connected });
+      }
       if (request.method === "GET" && url.pathname === "/session/status") {
         statusRequests.push(request.headers.get("x-opencode-directory") ?? "");
         return Response.json(Object.fromEntries(statuses));
       }
       const messageMatch = url.pathname.match(/^\/session\/([^/]+)\/message$/);
-      if (request.method === "GET" && messageMatch) return Response.json(messages.get(decodeURIComponent(messageMatch[1]!)) ?? []);
+      if (request.method === "GET" && messageMatch) {
+        const sessionId = decodeURIComponent(messageMatch[1]!);
+        const snapshot = messages.get(sessionId) ?? [];
+        const held = heldMessageReads.get(sessionId);
+        heldMessageReads.delete(sessionId);
+        messageReads.push(sessionId);
+        await held?.promise;
+        return Response.json(snapshot);
+      }
+      const directMessageMatch = url.pathname.match(/^\/session\/([^/]+)\/message\/([^/]+)$/);
+      if (request.method === "GET" && directMessageMatch) {
+        const sessionId = decodeURIComponent(directMessageMatch[1]!);
+        const messageId = decodeURIComponent(directMessageMatch[2]!);
+        const message = messages.get(sessionId)?.find((candidate) => candidate.info.id === messageId);
+        return message ? Response.json(message) : Response.json({ code: "not_found" }, { status: 404 });
+      }
       const sessionMatch = url.pathname.match(/^\/session\/([^/]+)$/);
       const messagesMatch = url.pathname.match(/^\/session\/([^/]+)\/message$/);
       if (request.method === "GET" && messagesMatch) {
@@ -86,6 +120,10 @@ function startMockOpencode() {
         const sessionId = decodeURIComponent(sessionMatch[1]!);
         const session = sessions.get(sessionId);
         return session ? Response.json(session) : Response.json({ code: "not_found" }, { status: 404 });
+      }
+      if (request.method === "DELETE" && sessionMatch) {
+        const sessionId = decodeURIComponent(sessionMatch[1]!);
+        return Response.json(sessions.delete(sessionId));
       }
       if (request.method === "POST" && url.pathname === "/instance/dispose") {
         disposes.push({ directory: url.searchParams.get("directory") });
@@ -134,6 +172,23 @@ function startMockOpencode() {
         if (failedPrompts.delete(sessionId) || (body.messageID !== undefined && failedMessageIds.delete(body.messageID))) {
           return Response.json({ name: "PromptFailure" }, { status: 500 });
         }
+        if (autoPersistPrompts.value && body.messageID) {
+          const parts = Array.isArray((body as { parts?: unknown }).parts)
+            ? (body as { parts: Array<Record<string, unknown>> }).parts
+            : [];
+          messages.set(sessionId, [
+            ...(messages.get(sessionId) ?? []),
+            {
+              info: { id: body.messageID, role: "user" },
+              parts: parts.map((part, index) => ({
+                ...part,
+                id: `prt_${index}`,
+                messageID: body.messageID!,
+                sessionID: sessionId,
+              })),
+            },
+          ]);
+        }
         return new Response(null, { status: 204 });
       }
 
@@ -178,9 +233,13 @@ function startMockOpencode() {
     statusRequests,
     disposes,
     statuses,
+    connected,
+    models,
     messages,
     sessions,
     heldPrompts,
+    heldMessageReads,
+    messageReads,
     heldMessageIds,
     heldAborts,
     heldCommands,
@@ -191,6 +250,7 @@ function startMockOpencode() {
     v2Admissions,
     v2Statuses,
     failedShells,
+    autoPersistPrompts,
   };
 }
 
@@ -258,6 +318,73 @@ function runPath(base: string, sessionId: string): string {
 }
 
 describe("authoritative session mutation APIs", () => {
+  test("model preferences require an existing session, resolve explicit/auto prompts, and clean up on deletion", async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    const sessionId = "ses_preference";
+    const modelPath = `${harness.base}/workspace/ws_1/sessions/${sessionId}/model-preference`;
+    const startPath = `${runPath(harness.base, sessionId)}/start`;
+    const requestPreference = (method: "GET" | "PUT", body?: unknown) => fetch(modelPath, {
+      method,
+      headers: harness.collaboratorHeaders,
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+
+    expect((await requestPreference("GET")).status).toBe(404);
+    expect((await requestPreference("PUT", { mode: "auto", model: null, expectedRevision: 0 })).status).toBe(404);
+
+    engine.sessions.set(sessionId, { id: sessionId, title: "Preference", directory: harness.config.workspaces[0]!.path, time: { created: 1, updated: 1 } });
+    const explicit = { providerID: "connected", modelID: "chat" };
+    const explicitResponse = await requestPreference("PUT", { mode: "explicit", model: explicit, expectedRevision: 0 });
+    expect(explicitResponse.status).toBe(200);
+    expect((await explicitResponse.json()).item).toMatchObject({ revision: 1, mode: "explicit", model: explicit });
+
+    const localStart = (model: { providerID: string; modelID: string }) => fetch(startPath, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+      body: JSON.stringify({ origin: "local-renderer", startCommandCorrelationId: `cmd_${engine.prompts.length}`, prompt: { parts: [{ type: "text", text: "Hello" }], model } }),
+    });
+    expect((await localStart({ providerID: "connected", modelID: "other-displayed-default" })).status).toBe(202);
+    expect(engine.prompts.at(-1)?.body).toMatchObject({ model: explicit });
+    engine.statuses.set(sessionId, { type: "idle" });
+    engine.messages.set(sessionId, [{ info: { id: "msg_done", sessionID: sessionId, role: "assistant", time: { created: Date.now(), completed: Date.now() }, finish: "stop" }, parts: [] }]);
+
+    const autoResponse = await requestPreference("PUT", { mode: "auto", model: null, expectedRevision: 1 });
+    expect(autoResponse.status).toBe(200);
+    const displayedDefault = { providerID: "connected", modelID: "chat" };
+    expect((await localStart(displayedDefault)).status).toBe(202);
+    expect(engine.prompts.at(-1)?.body).toMatchObject({ model: displayedDefault });
+
+    const deleted = await fetch(`${harness.base}/workspace/ws_1/sessions/${sessionId}`, { method: "DELETE", headers: harness.collaboratorHeaders });
+    expect(deleted.status).toBe(200);
+    engine.sessions.set(sessionId, { id: sessionId, title: "Recreated", directory: harness.config.workspaces[0]!.path, time: { created: 2, updated: 2 } });
+    expect((await (await requestPreference("GET")).json()).item).toMatchObject({ revision: 0, mode: "auto", model: null });
+  });
+
+  test("remote explicit model is validated and forwarded only for immediate starts", async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    const start = (model: unknown, whenBusy?: "reject" | "steer" | "enqueue") => fetch(`${runPath(harness.base, "ses_model")}/start`, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+      body: JSON.stringify({ origin: "remote-control", startCommandCorrelationId: "cmd_model", whenBusy,
+        prompt: { parts: [{ type: "text", text: "Hello" }], model } }),
+    });
+    const model = { providerID: "connected", modelID: "chat" };
+    for (const invalid of [
+      [{ providerID: "disconnected", modelID: "chat" }, "reject"],
+      [{ providerID: "connected", modelID: "missing" }, "reject"],
+      [{ providerID: "connected", modelID: "image" }, "reject"],
+      [{ providerID: "connected", modelID: "normalizedVideo" }, "reject"],
+      [model, "steer"], [model, "enqueue"],
+    ] as const) {
+      expect((await start(invalid[0], invalid[1])).status).toBe(400);
+    }
+    expect(engine.prompts).toHaveLength(0);
+    // Omitted whenBusy is the normal adapter path and defaults to reject.
+    expect((await start(model)).status).toBe(202);
+    expect(engine.prompts[0]?.body).toMatchObject({ model });
+  });
   for (const mode of ["local-queue", "local-steer", "remote-steer"] as const) {
     test(`${mode} 真实入口绑定文件交付，队列执行前不结束，生成工具可定位原轮次`, async () => {
       const engine = startMockOpencode();
@@ -514,6 +641,7 @@ describe("authoritative session mutation APIs", () => {
 
   test("preserves safe attachment parts for idle starts and rejects them while busy", async () => {
     const engine = startMockOpencode();
+    engine.autoPersistPrompts.value = true;
     const harness = await startHarness(engine.server.port);
     const parts = [
       { type: "text", text: "Inspect " },
@@ -535,6 +663,45 @@ describe("authoritative session mutation APIs", () => {
     });
     expect(busy.status).toBe(409);
     expect(await busy.json()).toMatchObject({ code: "session_busy" });
+  });
+
+  test("waits for the complete persisted image prompt before accepting a remote start", async () => {
+    const engine = startMockOpencode();
+    engine.autoPersistPrompts.value = false;
+    const harness = await startHarness(engine.server.port);
+    const parts = [
+      { type: "text", text: "Inspect" },
+      { type: "file", mime: "image/png", filename: "screen.png", url: "data:image/png;base64,iVBORw0KGgo=" },
+    ];
+    engine.statuses.set("ses_image_fence", { type: "idle" });
+
+    let settled = false;
+    const startedPromise = fetch(`${runPath(harness.base, "ses_image_fence")}/start`, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+      body: JSON.stringify({ origin: "remote-control", startCommandCorrelationId: "cmd_image_fence", prompt: { parts } }),
+    }).then((response) => {
+      settled = true;
+      return response;
+    });
+    await waitUntil(() => engine.prompts.length === 1);
+    const messageID = (engine.prompts[0]!.body as { messageID: string }).messageID;
+    engine.messages.set("ses_image_fence", [{
+      info: { id: messageID, role: "user" },
+      parts: [{ id: "prt_text", messageID, sessionID: "ses_image_fence", ...parts[0] }],
+    }]);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(settled).toBe(false);
+
+    engine.messages.set("ses_image_fence", [{
+      info: { id: messageID, role: "user" },
+      parts: [
+        { id: "prt_text", messageID, sessionID: "ses_image_fence", ...parts[0] },
+        { id: "prt_file", messageID, sessionID: "ses_image_fence", ...parts[1] },
+      ],
+    }]);
+    const started = await startedPromise;
+    expect(started.status).toBe(202);
   });
 
   test("failed queue promotion rolls back its local reservation", async () => {
@@ -752,7 +919,7 @@ describe("authoritative session mutation APIs", () => {
     engine.heldPrompts.set("ses_race", hold);
     const prompt = {
       messageID: "msg_local",
-      model: { providerID: "provider", modelID: "model" },
+      model: { providerID: "connected", modelID: "chat" },
       agent: "jugglework",
       noReply: false,
       tools: { bash: false, read: true },
@@ -895,6 +1062,151 @@ describe("authoritative session mutation APIs", () => {
       db.close();
     }
   });
+
+  for (const delivery of ["start", "steer"] as const) {
+    test(`${delivery} selects language only from genuine text and retains internal continuation language`, async () => {
+      const engine = startMockOpencode();
+      const harness = await startHarness(engine.server.port);
+      const sessionId = `ses_language_${delivery}`;
+      const languageUrl = `${harness.base}/internal/session-response-language/${sessionId}?workspaceId=ws_1`;
+      let sequence = 0;
+      async function submit(parts: unknown[], detected: "en" | "zh" | undefined, expected: "en" | "zh", fail = false) {
+        const correlationId = `language-${delivery}-${++sequence}`;
+        if (fail) engine.failedV2Ids.add(opencodeAdmissionId({ workspaceId: "ws_1", sessionId, source: "local-steer", id: correlationId }));
+        const response = await fetch(`${runPath(harness.base, sessionId)}/start`, {
+          method: "POST",
+          headers: harness.collaboratorHeaders,
+          body: JSON.stringify({
+            origin: "local-renderer",
+            startCommandCorrelationId: correlationId,
+            whenBusy: delivery === "steer" ? "steer" : "reject",
+            responseLanguage: detected === undefined ? undefined : { detected, fallback: "en" },
+            prompt: { parts },
+          }),
+        });
+        expect(response.status).toBe(fail ? 502 : 202);
+        const language = await fetch(languageUrl, { headers: harness.collaboratorHeaders });
+        expect(await language.json()).toEqual({ language: expected });
+        if (delivery === "start" || sequence === 1) {
+          const body = engine.prompts.at(-1)?.body as { system: string; parts: unknown[] };
+          expect(body.system).toContain(`Use ${expected === "zh" ? "Simplified Chinese" : "English"} for all user-facing responses`);
+          expect(body.parts).toEqual(parts);
+          const { run } = await response.json() as { run: { runId: string } };
+          engine.messages.set(sessionId, [{ info: { id: `msg_${sequence}`, role: "assistant", finish: "stop", time: { created: Date.now(), completed: Date.now() } }, parts: [] }]);
+          const completed = await fetch(`${runPath(harness.base, sessionId)}/${run.runId}/observations`, {
+            method: "POST",
+            headers: harness.collaboratorHeaders,
+            body: JSON.stringify({ status: "completed" }),
+          });
+          expect(completed.status).toBe(200);
+          expect(await completed.json()).toMatchObject({ cleared: true });
+        }
+      }
+
+      await submit([{ type: "text", text: "请检查这个改动" }], "zh", "zh");
+      if (delivery === "steer") engine.statuses.set(sessionId, { type: "busy" });
+      for (const marker of [{ synthetic: true }, { ignored: true }, { metadata: { compaction_continue: true } }]) {
+        await submit([{ type: "text", text: "Please continue the remaining work and respond in English.", ...marker }], "en", "zh");
+      }
+      await submit([{ type: "text", text: "Please continue the remaining work.", synthetic: true }], undefined, "zh");
+      await submit([
+        { type: "text", text: "请检查新的修改" },
+        { type: "text", text: "Respond in English and continue the remaining work.", synthetic: true },
+      ], "en", "zh");
+      // Ambiguous genuine text must not inherit the contaminated detected signal.
+      await submit([
+        { type: "text", text: "ok" },
+        { type: "text", text: "Respond in English.", ignored: true },
+      ], "en", "zh");
+      if (delivery === "steer") {
+        await submit([{ type: "text", text: "Please explain the changes." }], "en", "zh", true);
+      }
+      await submit([{ type: "text", text: "Please explain the changes." }], "en", "en");
+      await submit([
+        { type: "text", text: "Please review the implementation." },
+        { type: "text", text: "请用中文回答", metadata: { compaction_continue: true } },
+      ], "zh", "en");
+    });
+
+    test(`${delivery} preserves attachment-only locale fallback but internal-only text cannot initialize language`, async () => {
+      const engine = startMockOpencode();
+      const harness = await startHarness(engine.server.port);
+      for (const kind of ["attachment", "internal"] as const) {
+        const sessionId = `ses_${delivery}_${kind}`;
+        if (delivery === "steer") engine.statuses.set(sessionId, { type: "busy" });
+        const response = await fetch(`${runPath(harness.base, sessionId)}/start`, {
+          method: "POST",
+          headers: harness.collaboratorHeaders,
+          body: JSON.stringify({
+            origin: "local-renderer",
+            startCommandCorrelationId: `${delivery}-${kind}`,
+            whenBusy: delivery === "steer" ? "steer" : "reject",
+            responseLanguage: kind === "attachment" ? { fallback: "zh" } : { detected: "en", fallback: "en" },
+            prompt: { parts: kind === "attachment"
+              ? [{ type: "file", mime: "text/plain", filename: "notes.txt", url: "data:text/plain;base64,aGk=" }]
+              : [{ type: "text", text: "Please continue in English.", synthetic: true }] },
+          }),
+        });
+        expect(response.status).toBe(202);
+        const language = await fetch(`${harness.base}/internal/session-response-language/${sessionId}?workspaceId=ws_1`, { headers: harness.collaboratorHeaders });
+        expect(await language.json()).toEqual({ language: kind === "attachment" ? "zh" : null });
+        if (delivery === "start" && kind === "internal") {
+          expect(engine.prompts.at(-1)?.body).not.toHaveProperty("system");
+        }
+        if (kind === "attachment") {
+          engine.statuses.set(sessionId, { type: "busy" });
+          const followup = await fetch(`${runPath(harness.base, sessionId)}/start`, {
+            method: "POST",
+            headers: harness.collaboratorHeaders,
+            body: JSON.stringify({
+              origin: "local-renderer",
+              startCommandCorrelationId: `${delivery}-attachment-followup`,
+              whenBusy: "steer",
+              responseLanguage: { fallback: "en" },
+              prompt: { parts: [{ type: "file", mime: "text/plain", filename: "notes.txt", url: "data:text/plain;base64,aGk=" }] },
+            }),
+          });
+          expect(followup.status).toBe(202);
+          const retained = await fetch(`${harness.base}/internal/session-response-language/${sessionId}?workspaceId=ws_1`, { headers: harness.collaboratorHeaders });
+          expect(await retained.json()).toEqual({ language: "zh" });
+        }
+      }
+    });
+  }
+
+  for (const whenBusy of ["steer", "enqueue"] as const) {
+    test(`remote ${whenBusy} rejects internal provenance before pending text flattening`, async () => {
+      const engine = startMockOpencode();
+      const harness = await startHarness(engine.server.port);
+      const sessionId = `ses_remote_internal_${whenBusy}`;
+      engine.statuses.set(sessionId, { type: "busy" });
+      for (const marker of [{ synthetic: true }, { ignored: true }, { metadata: { compaction_continue: true } }]) {
+        for (const mixed of [false, true]) {
+          const response = await fetch(`${runPath(harness.base, sessionId)}/start`, {
+            method: "POST",
+            headers: harness.collaboratorHeaders,
+            body: JSON.stringify({
+              origin: "remote-control",
+              startCommandCorrelationId: "remote-internal",
+              whenBusy,
+              prompt: { parts: [
+                ...(mixed ? [{ type: "text", text: "请检查修改" }] : []),
+                { type: "text", text: "Please respond in English.", ...marker },
+              ] },
+            }),
+          });
+          expect(response.status).toBe(400);
+          expect(await response.json()).toMatchObject({ code: "invalid_payload" });
+        }
+      }
+      const pending = await fetch(`${harness.base}/workspace/ws_1/sessions/${sessionId}/pending`, { headers: harness.collaboratorHeaders });
+      expect(await pending.json()).toEqual({ items: [] });
+      expect(engine.prompts).toHaveLength(0);
+      expect(engine.v2Prompts).toHaveLength(0);
+      const language = await fetch(`${harness.base}/internal/session-response-language/${sessionId}?workspaceId=ws_1`, { headers: harness.collaboratorHeaders });
+      expect(await language.json()).toEqual({ language: null });
+    });
+  }
 
   test("remote user prose updates the durable language without a UI locale", async () => {
     const engine = startMockOpencode();
@@ -1208,6 +1520,48 @@ describe("authoritative session mutation APIs", () => {
     await expect(acceptedIdle.json()).resolves.toEqual({ cleared: true, run: null, terminalStatus: "aborted" });
   });
 
+  test("aborted observations preserve accepted aborts while failed observations remain failures", async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    for (const [status, requestAbort] of [
+      ["aborted", true],
+      ["failed", true],
+      ["failed", false],
+    ] as const) {
+      const sessionId = `ses_error_${status}_${requestAbort}`;
+      const started = await fetch(`${runPath(harness.base, sessionId)}/start`, {
+        method: "POST", headers: harness.collaboratorHeaders,
+        body: JSON.stringify({ origin: "local-renderer", startCommandCorrelationId: sessionId,
+          prompt: { parts: [{ type: "text", text: "Synthetic regression request" }] } }),
+      });
+      expect(started.status).toBe(202);
+      const { run } = await started.json() as { run: { runId: string } };
+      const observe = (status: string) => fetch(`${runPath(harness.base, sessionId)}/${run.runId}/observations`, {
+        method: "POST", headers: harness.collaboratorHeaders, body: JSON.stringify({ status }),
+      });
+      await observe("running");
+      if (requestAbort) {
+        const aborted = await fetch(`${runPath(harness.base, sessionId)}/${run.runId}/abort`, {
+          method: "POST", headers: harness.collaboratorHeaders,
+          body: JSON.stringify({ abortCommandCorrelationId: `stop_${sessionId}` }),
+        });
+        expect(aborted.status).toBe(202);
+      }
+      const response = await observe(status);
+      expect(response.status).toBe(200);
+      const result = await response.json();
+      const db = new Database(runtimeDbPath(harness.config), { readonly: true });
+      let rows: { event: string; terminal_reason: string | null }[];
+      try { rows = db.query<{ event: string; terminal_reason: string | null }, [string]>("SELECT event, terminal_reason FROM session_run_journal WHERE run_id = ? ORDER BY id").all(run.runId); }
+      finally { db.close(); }
+      expect(result).toEqual({ cleared: true, run: null, terminalStatus: status });
+      expect(rows.filter(row => row.event === "run_terminal")).toEqual([{ event: "run_terminal", terminal_reason: status }]);
+      if (requestAbort) expect(rows.map(row => row.event)).toEqual([
+        "run_reserved", "run_started", "progress", "abort_requested", "abort_accepted", "run_terminal",
+      ]);
+    }
+  });
+
   test("idle and stale observations are fenced, while exact terminals clear", async () => {
     const engine = startMockOpencode();
     const harness = await startHarness(engine.server.port);
@@ -1309,6 +1663,158 @@ describe("authoritative session mutation APIs", () => {
     await expect(second.json()).resolves.toMatchObject({ items: [{ sessionId: "ses_list_reconcile" }] });
   });
 
+  for (const terminal of ["failed", "aborted"] as const) for (const recovery of ["poll", "background", "retry", "idle-observation"] as const) test(`无主窗口上报时通过 ${recovery} 释放 ${terminal} 的本轮运行并保留终态`, async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    const sessionId = `ses_error_${terminal}_${recovery}`;
+    const start = (id: string) => fetch(`${runPath(harness.base, sessionId)}/start`, {
+      method: "POST", headers: harness.collaboratorHeaders,
+      body: JSON.stringify({ origin: "local-renderer", startCommandCorrelationId: id,
+        prompt: { parts: [{ type: "text", text: "Provider failure recovery" }] } }),
+    });
+    const response = await start("first_error_run");
+    expect(response.status).toBe(202);
+    const { run } = await response.json() as { run: { runId: string } };
+    await waitUntil(() => engine.prompts.some((prompt) => prompt.sessionId === sessionId));
+    engine.messages.set(sessionId, terminal === "failed"
+      ? [{ info: { id: "msg_error", role: "assistant", time: { created: Date.now() }, error: { name: "APIError", data: { message: "Subscription unavailable" } } }, parts: [] }]
+      : [{ info: { id: "msg_permission_rejected", role: "assistant", finish: "tool-calls", time: { created: Date.now(), completed: Date.now() } },
+        parts: [{ type: "tool", state: { status: "error", error: "The user rejected permission to use this specific tool call.", time: { end: Date.now() } } }] }]);
+    const poll = () => fetch(`${harness.base}/workspace/ws_1/session-runs`, { headers: harness.collaboratorHeaders });
+    engine.statuses.set(sessionId, { type: "busy" });
+    expect((await (await poll()).json() as any).items).toHaveLength(1);
+    engine.statuses.set(sessionId, { type: "idle" });
+    if (recovery === "poll") {
+      // Lifecycle v3 GETs are pure; only the runtime observer can settle this run.
+      await waitUntil(async () => (await (await poll()).json() as any).items.length === 0, 2_500);
+    } else if (recovery === "background") {
+      const db = new Database(runtimeDbPath(harness.config), { readonly: true });
+      try {
+        // No GET/observation/retry is needed to trigger terminalization.
+        await waitUntil(() => db.query("SELECT 1 FROM session_run_terminals WHERE run_id = ?").get(run.runId) !== null, 2_500);
+      } finally { db.close(); }
+    } else if (recovery === "retry") {
+      expect((await start("second_error_run")).status).toBe(202);
+    } else {
+      const observed = await fetch(`${runPath(harness.base, sessionId)}/${run.runId}/observations`, {
+        method: "POST", headers: harness.collaboratorHeaders, body: JSON.stringify({ status: "completed" }),
+      });
+      expect(await observed.json()).toMatchObject({ cleared: true, terminalStatus: terminal });
+    }
+    const db = new Database(runtimeDbPath(harness.config), { readonly: true });
+    try {
+      expect(db.query<{ terminal_reason: string }, [string]>("SELECT terminal_reason FROM session_run_journal WHERE run_id = ? AND event = 'run_terminal'").all(run.runId)).toEqual([{ terminal_reason: terminal }]);
+      expect(db.query("SELECT status, revision FROM session_lifecycle_feed WHERE run_id = ? ORDER BY sequence").all(run.runId))
+        .toEqual([{ status: "running", revision: 1 }, { status: terminal, revision: 2 }]);
+    } finally { db.close(); }
+  });
+
+  for (const terminal of ["failed", "aborted"] as const) test(`后台 ${terminal} 恢复保留旧消息、最新工具步骤和活动子任务的运行`, async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    const sessionId = `ses_background_guard_${terminal}`;
+    const started = await fetch(`${runPath(harness.base, sessionId)}/start`, {
+      method: "POST", headers: harness.collaboratorHeaders,
+      body: JSON.stringify({ origin: "local-renderer", startCommandCorrelationId: "guard_start",
+        prompt: { parts: [{ type: "text", text: "Keep latest run" }] } }),
+    });
+    expect(started.status).toBe(202);
+    const { run } = await started.json() as { run: { runId: string; startedAt: number } };
+    const terminalMessage = (created: number) => terminal === "failed"
+      ? { info: { id: "msg_error", role: "assistant", time: { created }, error: { name: "APIError" } }, parts: [] }
+      : { info: { id: "msg_rejected", role: "assistant", finish: "tool-calls", time: { created, completed: created + 1 } },
+        parts: [{ type: "tool", state: { status: "error", error: "The user rejected permission to use this specific tool call.", time: { end: created + 1 } } }] };
+    const remainsActiveAfterBackgroundRead = async () => {
+      const reads = engine.messageReads.length;
+      await waitUntil(() => engine.messageReads.length > reads, 2_500);
+      const active = await fetch(`${harness.base}/workspace/ws_1/session-runs`, { headers: harness.collaboratorHeaders });
+      expect(await active.json()).toMatchObject({ items: [{ runId: run.runId }] });
+    };
+    engine.messages.set(sessionId, [terminalMessage(run.startedAt - 10)]);
+    await remainsActiveAfterBackgroundRead();
+    engine.messages.set(sessionId, [terminalMessage(run.startedAt), {
+      info: { id: "msg_latest", role: "assistant", finish: "tool-calls", time: { created: run.startedAt + 1, completed: run.startedAt + 2 } }, parts: [],
+    }]);
+    await remainsActiveAfterBackgroundRead();
+    // An idle root cannot settle while a delegated grandchild is active.
+    engine.sessions.set("ses_child_guard", { id: "ses_child_guard", title: "Child", parentID: sessionId, time: { created: 1, updated: 1 } });
+    engine.sessions.set("ses_grandchild_guard", { id: "ses_grandchild_guard", title: "Grandchild", parentID: "ses_child_guard", time: { created: 1, updated: 1 } });
+    engine.statuses.set("ses_grandchild_guard", { type: "busy" });
+    engine.messages.set(sessionId, [terminalMessage(run.startedAt)]);
+    const reads = engine.statusRequests.length;
+    await waitUntil(() => engine.statusRequests.length > reads, 2_500);
+    expect(await (await fetch(`${harness.base}/workspace/ws_1/session-runs`, { headers: harness.collaboratorHeaders })).json())
+      .toMatchObject({ items: [{ runId: run.runId }] });
+    engine.statuses.set("ses_grandchild_guard", { type: "idle" });
+    await waitUntil(async () => (await (await fetch(`${harness.base}/workspace/ws_1/session-runs`, { headers: harness.collaboratorHeaders })).json() as any).items.length === 0, 2_500);
+    const db = new Database(runtimeDbPath(harness.config), { readonly: true });
+    try {
+      expect(db.query("SELECT terminal_reason FROM session_run_terminals WHERE run_id = ?").all(run.runId)).toEqual([{ terminal_reason: terminal }]);
+    } finally { db.close(); }
+  }, 7_000);
+
+  test("后台不得在 prompt admission 完成前收尾 starting run", async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    const sessionId = "ses_background_starting";
+    const held = deferred<void>();
+    engine.heldPrompts.set(sessionId, held);
+    const pending = fetch(`${runPath(harness.base, sessionId)}/start`, {
+      method: "POST", headers: harness.collaboratorHeaders,
+      body: JSON.stringify({ origin: "local-renderer", startCommandCorrelationId: "starting",
+        prompt: { parts: [{ type: "text", text: "Pending admission" }] } }),
+    });
+    try {
+      await waitUntil(() => engine.prompts.length === 1);
+      engine.messages.set(sessionId, [{ info: { id: "msg_error", role: "assistant", time: { created: Date.now() }, error: { name: "APIError" } }, parts: [] }]);
+      await new Promise((resolve) => setTimeout(resolve, 1_100));
+      expect(await (await fetch(`${harness.base}/workspace/ws_1/session-runs`, { headers: harness.collaboratorHeaders })).json())
+        .toMatchObject({ items: [{ status: "starting" }] });
+      const db = new Database(runtimeDbPath(harness.config), { readonly: true });
+      try { expect(db.query("SELECT status FROM session_lifecycle_feed").all()).toEqual([]); }
+      finally { db.close(); }
+    } finally { held.resolve(); }
+    expect((await pending).status).toBe(202);
+  });
+
+  test("后台旧 run 的迟到错误证据不能收尾替代 run 或打乱 activity 顺序", async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    const sessionId = "ses_background_replacement";
+    const start = (id: string) => fetch(`${runPath(harness.base, sessionId)}/start`, {
+      method: "POST", headers: harness.collaboratorHeaders,
+      body: JSON.stringify({ origin: "local-renderer", startCommandCorrelationId: id,
+        prompt: { parts: [{ type: "text", text: id }] } }),
+    });
+    const first = await (await start("first")).json() as { run: { runId: string } };
+    engine.messages.set(sessionId, [{ info: { id: "msg_old_error", role: "assistant", time: { created: Date.now() }, error: { name: "APIError" } }, parts: [] }]);
+    const held = deferred<void>();
+    engine.heldMessageReads.set(sessionId, held);
+    try {
+      await waitUntil(() => !engine.heldMessageReads.has(sessionId), 2_500);
+      const cleared = await fetch(`${runPath(harness.base, sessionId)}/${first.run.runId}/observations`, {
+        method: "POST", headers: harness.collaboratorHeaders, body: JSON.stringify({ status: "failed" }),
+      });
+      expect(await cleared.json()).toMatchObject({ cleared: true, terminalStatus: "failed" });
+      const response = await start("replacement");
+      expect(response.status).toBe(202);
+      const second = await response.json() as { run: { runId: string } };
+      const reads = engine.messageReads.length;
+      held.resolve();
+      await waitUntil(() => engine.messageReads.length > reads, 2_500);
+      expect(await (await fetch(`${harness.base}/workspace/ws_1/session-runs`, { headers: harness.collaboratorHeaders })).json())
+        .toMatchObject({ items: [{ runId: second.run.runId }] });
+      const db = new Database(runtimeDbPath(harness.config), { readonly: true });
+      try {
+        expect(db.query("SELECT run_id, status, revision FROM session_lifecycle_feed ORDER BY sequence").all()).toEqual([
+          { run_id: first.run.runId, status: "running", revision: 1 },
+          { run_id: first.run.runId, status: "failed", revision: 2 },
+          { run_id: second.run.runId, status: "running", revision: 1 },
+        ]);
+      } finally { db.close(); }
+    } finally { held.resolve(); }
+  });
+
   test("startup idle and an old stop cannot complete a new run before its final assistant", async () => {
     const engine = startMockOpencode();
     const harness = await startHarness(engine.server.port);
@@ -1341,6 +1847,94 @@ describe("authoritative session mutation APIs", () => {
     await new Promise((resolve) => setTimeout(resolve, 510));
     await expect((await observe("idle")).json()).resolves.toMatchObject({ cleared: true, terminalStatus: "completed" });
   });
+
+  for (const terminalStatus of ["completed", "failed", "aborted"] as const) {
+    test(`observe recovers journal ${terminalStatus} after clear with exact scope and authorization`, async () => {
+      const engine = startMockOpencode();
+      const harness = await startHarness(engine.server.port);
+      const sessionId = `ses_journal_${terminalStatus}`;
+      const started = await fetch(`${runPath(harness.base, sessionId)}/start`, {
+        method: "POST", headers: harness.collaboratorHeaders,
+        body: JSON.stringify({ origin: "local-renderer", startCommandCorrelationId: "cmd_journal",
+          prompt: { parts: [{ type: "text", text: "Journal recovery" }] } }),
+      });
+      expect(started.status).toBe(202);
+      const { run } = await started.json() as { run: { runId: string } };
+      const observe = (status: string, workspaceId = "ws_1", session = sessionId, runId = run.runId,
+        headers: Record<string, string> = harness.collaboratorHeaders) => fetch(
+        `${harness.base}/workspace/${workspaceId}/sessions/${session}/runs/${runId}/observations`, {
+          method: "POST", headers, body: JSON.stringify({ status }),
+        });
+
+      if (terminalStatus === "completed") {
+        engine.messages.set(sessionId, [{ info: { id: "msg_journal_final", role: "assistant", finish: "stop",
+          time: { created: Date.now(), completed: Date.now() } }, parts: [] }]);
+      } else if (terminalStatus === "aborted") {
+        const aborted = await fetch(`${runPath(harness.base, sessionId)}/${run.runId}/abort`, {
+          method: "POST", headers: harness.collaboratorHeaders,
+          body: JSON.stringify({ abortCommandCorrelationId: "cmd_journal_abort" }),
+        });
+        expect(aborted.status).toBe(202);
+      }
+      const cleared = await observe(terminalStatus === "aborted" ? "idle" : terminalStatus);
+      expect(cleared.status).toBe(200);
+      expect(await cleared.json()).toEqual({ cleared: true, run: null, terminalStatus });
+      const active = await fetch(`${harness.base}/workspace/ws_1/session-runs`, { headers: harness.collaboratorHeaders });
+      expect(await active.json()).toEqual({ items: [] });
+
+      // Subsequent observers have no in-memory run; persisted authority wins even over completed/idle.
+      const terminalUrl = `${harness.base}/workspace/ws_1/session-run-terminals`;
+      const pageResponse = await fetch(`${terminalUrl}?limit=1`, { headers: harness.collaboratorHeaders });
+      expect(pageResponse.status).toBe(200);
+      const page = await pageResponse.json();
+      expect(page.items).toHaveLength(1);
+      expect(page.items[0]).toMatchObject({ workspaceId: "ws_1", sessionId, runId: run.runId, terminalReason: terminalStatus });
+      expect(page.items[0].generation).toBeGreaterThan(0);
+      expect(page.items[0].occurredAt).toBeGreaterThan(0);
+      expect(Object.keys(page.items[0]).sort()).toEqual(["id", "workspaceId", "sessionId", "runId", "generation", "terminalReason", "occurredAt"].sort());
+      expect(await (await fetch(`${terminalUrl}?after=${page.cursor}`, { headers: harness.collaboratorHeaders })).json())
+        .toEqual({ items: [], cursor: page.cursor });
+      expect(await (await fetch(`${harness.base}/workspace/ws_2/session-run-terminals`, { headers: harness.collaboratorHeaders })).json())
+        .toEqual({ items: [], cursor: 0 });
+      for (const query of ["after=-1", "after=abc", "limit=0", "limit=101"]) {
+        expect((await fetch(`${terminalUrl}?${query}`, { headers: harness.collaboratorHeaders })).status).toBe(400);
+      }
+      for (const status of ["idle", "completed"]) {
+        const recovered = await observe(status);
+        expect(recovered.status).toBe(200);
+        expect(await recovered.json()).toEqual({ cleared: true, run: null, terminalStatus });
+      }
+      for (const [workspaceId, session, runId] of [
+        ["ws_2", sessionId, run.runId],
+        ["ws_1", "ses_wrong", run.runId],
+        ["ws_1", sessionId, "run_wrong"],
+      ]) {
+        const mismatch = await observe("idle", workspaceId, session, runId);
+        expect(mismatch.status).toBe(409);
+        const body = await mismatch.json();
+        expect(body.code).toBe("run_mismatch");
+        expect(body.terminalStatus).toBeUndefined();
+        expect(JSON.stringify(body)).not.toContain(run.runId);
+      }
+      const issued = await fetch(`${harness.base}/tokens`, {
+        method: "POST", headers: harness.hostHeaders,
+        body: JSON.stringify({ scope: "viewer", label: "journal viewer" }),
+      });
+      expect(issued.status).toBe(201);
+      const viewer = await issued.json() as { token: string };
+      for (const [headers, expectedStatus] of [
+        [{ Authorization: `Bearer ${viewer.token}`, "Content-Type": "application/json" }, 403],
+        [{ "Content-Type": "application/json" }, 401],
+      ] as const) {
+        const denied = await observe("idle", "ws_1", sessionId, run.runId, headers);
+        expect((await fetch(terminalUrl, { headers })).status).toBe(expectedStatus);
+        expect(denied.status).toBe(expectedStatus);
+        const body = await denied.json();
+        expect(body.terminalStatus).toBeUndefined();
+        expect(JSON.stringify(body)).not.toContain(run.runId);
+      }
+    });
+  }
 
   test("active-run reads retain an idle parent while a delegated descendant is busy", async () => {
     const engine = startMockOpencode();
@@ -1383,8 +1977,9 @@ describe("authoritative session mutation APIs", () => {
 
     engine.statuses.set("ses_grandchild", { type: "idle" });
     engine.messages.set("ses_parent", [{ info: { id: "msg_parent", role: "assistant", finish: "stop", time: { created: Date.now(), completed: Date.now() } }, parts: [] }]);
-    await fetch(`${harness.base}/workspace/ws_1/session-runs`, { headers: harness.collaboratorHeaders });
-    await new Promise((resolve) => setTimeout(resolve, 510));
+    // Active-run reads are pure in lifecycle v3. The runtime-owned observer,
+    // not this GET, confirms terminal state using two separated samples.
+    await new Promise((resolve) => setTimeout(resolve, 2_100));
     const terminal = await fetch(`${harness.base}/workspace/ws_1/session-runs`, { headers: harness.collaboratorHeaders });
     await expect(terminal.json()).resolves.toEqual({ items: [] });
   });
