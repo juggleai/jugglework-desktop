@@ -772,13 +772,18 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         setProviderDefaults,
         setProviderConnectedIds,
         setDisabledProviders,
-        markOpencodeConfigReloadRequired: () => {
+        markOpencodeConfigReloadRequired: (scope) => {
           setConfigActionStatus(t("settings.config_updated"));
+          // This store addresses remote workspaces by their local `rem_` id,
+          // while reload controls register the server-side id. A scoped mark
+          // would never match, so remote workspaces keep the global mark.
+          const scopedToLocalWorkspace =
+            routeStateRef.current.selectedWorkspaceType === "remote" ? undefined : scope;
           reloadCoordinator.markReloadRequired("config", {
             type: "config",
             name: "opencode.json",
             action: "updated",
-          });
+          }, scopedToLocalWorkspace);
         },
         onProviderAvailabilityChanged: (scope) => invalidateMediaModelQueries(getReactQueryClient(), scope),
       });
@@ -1677,6 +1682,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
 
   useEffect(() => {
     return reloadCoordinator.registerWorkspaceReloadControls({
+      workspaceId: selectedWorkspaceEndpoint?.workspaceId ?? selectedWorkspace?.id ?? (selectedWorkspaceId || null),
       canReloadWorkspaceEngine: () => Boolean(juggleworkClient && (selectedWorkspace?.id || selectedWorkspaceId)),
       reloadWorkspaceEngine: reloadWorkspaceEngineFromUi,
       activeSessions: () => activeReloadBlockingSessions,
@@ -1692,6 +1698,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     reloadCoordinator,
     reloadWorkspaceEngineFromUi,
     selectedWorkspace?.id,
+    selectedWorkspaceEndpoint?.workspaceId,
     selectedWorkspaceId,
   ]);
 

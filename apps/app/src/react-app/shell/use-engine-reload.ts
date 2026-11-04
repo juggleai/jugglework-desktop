@@ -118,11 +118,12 @@ export function useEngineReload(input: UseEngineReloadInput) {
 
   useEffect(() => {
     return reloadCoordinator.registerWorkspaceReloadControls({
+      workspaceId: endpointForWorkspace(workspace)?.workspaceId ?? (workspaceId || null),
       canReloadWorkspaceEngine: () => Boolean(client && workspaceId),
       reloadWorkspaceEngine: reloadWorkspaceEngineFromUi,
       activeSessions: () => activeReloadBlockingSessions,
     });
-  }, [activeReloadBlockingSessions, client, reloadCoordinator, reloadWorkspaceEngineFromUi, workspaceId]);
+  }, [activeReloadBlockingSessions, client, endpointForWorkspace, reloadCoordinator, reloadWorkspaceEngineFromUi, workspace, workspaceId]);
 
   useEffect(() => {
     if (!reloadCoordinator.canReloadWorkspaceEngine) return;

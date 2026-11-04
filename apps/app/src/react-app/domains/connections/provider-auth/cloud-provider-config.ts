@@ -14,6 +14,8 @@ export {
   isCloudProviderOutOfSync,
   legacyGatewayMirrorEnvName,
   missingCloudProviderReloadKey,
+  cloudProviderEngineState,
+  unappliedCloudProviderReloadKey,
   resolveCloudProviderCredentials,
 } from "@jugglework/cloud-provider";
 

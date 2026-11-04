@@ -4,11 +4,14 @@ import {
   buildCloudProviderConfig,
   CLOUD_PROVIDER_METADATA_VERSION,
   buildRuntimeProviderPatch,
+  cloudProviderEngineState,
   filterImportableCloudOrgProviders,
   gatewayMirrorEnvName,
   isCloudProviderOutOfSync,
   isManagedJWorkRouter,
   resolveCloudProviderCredentials,
+  unappliedCloudProviderReloadKey,
+  type CloudImportedProvider,
   type CloudProviderConnection,
 } from "../src/index";
 
@@ -102,5 +105,52 @@ describe("shared cloud provider transformations", () => {
     expect(isCloudProviderOutOfSync(gateway, withoutMirror, "org")).toBe(true);
     const mirror = { workspaceId: "ws", organizationId: "org", cloudProviderId: gateway.id, key: gatewayMirrorEnvName({ workspaceId: "ws", organizationId: "org", cloudProviderId: gateway.id }) };
     expect(isCloudProviderOutOfSync(gateway, buildCloudImportedProvider(gateway, 1, "org", mirror), "org")).toBe(false);
+  });
+});
+
+describe("model-level engine applied check", () => {
+  const imported = (providerId: string, modelIds: string[]): CloudImportedProvider => ({
+    ...buildCloudImportedProvider({ ...provider, id: providerId }, 1, "org"),
+    modelIds,
+  });
+  const engine = (id: string, models: string[]) => ({
+    id,
+    models: Object.fromEntries(models.map((model) => [model, { id: model }])),
+  });
+
+  test("classifies provider and model gaps", () => {
+    expect(cloudProviderEngineState(imported("lpr_a", ["m1"]), undefined).state).toBe("provider_missing");
+    expect(cloudProviderEngineState(imported("lpr_a", ["m1", "m2"]), engine("lpr_a", ["m1"])))
+      .toEqual({ state: "models_missing", missingModelIds: ["m2"] });
+    expect(cloudProviderEngineState(imported("lpr_a", ["m1"]), engine("lpr_a", ["m1"])).state).toBe("applied");
+  });
+
+  test("extra engine-side models never count as unapplied", () => {
+    expect(cloudProviderEngineState(imported("lpr_a", ["m1"]), engine("lpr_a", ["m1", "extra"])).state)
+      .toBe("applied");
+    expect(unappliedCloudProviderReloadKey({
+      workspaceId: "ws",
+      imported: { lpr_a: imported("lpr_a", ["m1"]) },
+      engineProviders: [engine("lpr_a", ["m1", "extra"])],
+    })).toBeNull();
+  });
+
+  test("keys on workspace plus a stable difference signature", () => {
+    const input = {
+      workspaceId: "ws_1",
+      imported: { lpr_b: imported("lpr_b", ["m2", "m1"]), lpr_a: imported("lpr_a", ["m1"]) },
+      engineProviders: [engine("lpr_b", ["m1"]), engine("anthropic", [])],
+    };
+    expect(unappliedCloudProviderReloadKey(input)).toBe("ws_1::lpr_a,lpr_b[m2]");
+    expect(unappliedCloudProviderReloadKey({ ...input, workspaceId: "ws_2" })).toBe("ws_2::lpr_a,lpr_b[m2]");
+    // A different gap (model edit published another model) yields another key.
+    expect(unappliedCloudProviderReloadKey({
+      ...input,
+      imported: { ...input.imported, lpr_b: imported("lpr_b", ["m1", "m3"]) },
+    })).toBe("ws_1::lpr_a,lpr_b[m3]");
+  });
+
+  test("returns null without imports", () => {
+    expect(unappliedCloudProviderReloadKey({ workspaceId: "ws", imported: {}, engineProviders: [] })).toBeNull();
   });
 });

@@ -84,7 +84,7 @@ import {
   getCloudProviderEnv,
   isCloudManagedProviderKey,
   isCloudProviderOutOfSync,
-  missingCloudProviderReloadKey,
+  unappliedCloudProviderReloadKey,
   legacyGatewayMirrorEnvName,
   resolveCloudProviderCredentials,
 } from "./cloud-provider-config";
@@ -235,7 +235,9 @@ type CreateProviderAuthStoreOptions = {
   setProviderDefaults: (value: Record<string, string>) => void;
   setProviderConnectedIds: (value: string[]) => void;
   setDisabledProviders: (value: string[]) => void;
-  markOpencodeConfigReloadRequired: () => void;
+  /** Without a scope the mark is global (any successful reload clears it).
+   *  With `workspaceId` it stays pending until that workspace itself reloads. */
+  markOpencodeConfigReloadRequired: (scope?: { workspaceId?: string | null }) => void;
   focusPromptSoon?: () => void;
   /** Best-effort notification after lifecycle cleanup changes provider availability. */
   onProviderAvailabilityChanged?: (scope: {
@@ -260,12 +262,64 @@ type MutableState = {
 export type ProviderAuthStore = ReturnType<typeof createProviderAuthStore>;
 
 /**
- * `<workspaceId>::<missing provider ids>` that already asked the reload
- * coordinator to apply cloud providers the engine does not know about. Module
- * scope on purpose: the session route and the settings route each build their
- * own store, and re-marking the same recovery from both would be noise.
+ * Per workspace, the `<workspaceId>::<difference signature>` that already
+ * asked the reload coordinator to apply cloud providers (or imported models)
+ * the engine has not loaded. Module scope on purpose: the session route and
+ * the settings route each build their own store, and re-marking the same
+ * recovery from both would be noise. Keyed by workspace so one workspace
+ * becoming applied does not re-arm another workspace's unchanged difference.
  */
-let lastMissingCloudProviderReloadKey = "";
+const lastUnappliedCloudProviderReloadKeys = new Map<string, string>();
+
+/**
+ * Per-provider decision of the sync pass. Re-import only when the baseline is
+ * stale against Den or the engine lacks the provider entirely (its runtime
+ * block may be gone). When the baseline matches Den and the engine merely
+ * lacks imported models, the runtime config is already written and only a
+ * reload is missing: keep it, and let the model-level engine check after the
+ * loop request that reload instead of rewriting the config again.
+ * `engineProviderIds === null` means the engine list was unreadable.
+ */
+export function cloudProviderReconcileAction(input: {
+  liveProvider: Parameters<typeof isCloudProviderOutOfSync>[0];
+  importedProvider: CloudImportedProvider;
+  organizationId?: string | null;
+  engineProviderIds: ReadonlySet<string> | null;
+}): "keep" | "reimport" {
+  const missingFromEngine = input.engineProviderIds !== null &&
+    !input.engineProviderIds.has(input.importedProvider.providerId);
+  if (missingFromEngine) return "reimport";
+  return isCloudProviderOutOfSync(input.liveProvider, input.importedProvider, input.organizationId)
+    ? "reimport"
+    : "keep";
+}
+
+/** Test hook: forget every recorded difference. */
+export const resetUnappliedCloudProviderReloadKeysForTest = () => {
+  lastUnappliedCloudProviderReloadKeys.clear();
+};
+
+/**
+ * Decide whether an engine/baseline comparison should ask for a reload.
+ * Returns true once per distinct difference per workspace; a difference that
+ * disappears re-arms the workspace so a later failure can ask again.
+ */
+export function shouldMarkUnappliedCloudProviderReload(input: {
+  workspaceId: string;
+  imported: Record<string, CloudImportedProvider>;
+  engineProviders: ReadonlyArray<{ id: string; models?: Record<string, unknown> | null }>;
+}): boolean {
+  const reloadKey = unappliedCloudProviderReloadKey(input);
+  if (!reloadKey) {
+    lastUnappliedCloudProviderReloadKeys.delete(input.workspaceId);
+    return false;
+  }
+  // A reload that does not fix the gap leaves the key unchanged, so repeated
+  // triggers (focus, resume, opening settings) cannot become a reload loop.
+  if (lastUnappliedCloudProviderReloadKeys.get(input.workspaceId) === reloadKey) return false;
+  lastUnappliedCloudProviderReloadKeys.set(input.workspaceId, reloadKey);
+  return true;
+}
 
 export const shouldClearCloudOrgProvidersAfterFailure = (
   lastGoodContextKey: string,
@@ -2153,23 +2207,16 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     // sync trigger retries rather than reloading on a guess.
     if (!providerList) return;
 
-    const reloadKey = missingCloudProviderReloadKey({
+    // Model-level: an in-place model edit keeps the provider id, so an
+    // id-only check would call a deferred (409) or dropped reload "applied".
+    if (!shouldMarkUnappliedCloudProviderReload({
       workspaceId,
       imported: state.importedCloudProviders,
-      engineProviderIds: (providerList.all ?? []).map((provider) => provider.id),
-    });
-    if (!reloadKey) {
-      // Applied. Re-arm so a later failure can ask again.
-      lastMissingCloudProviderReloadKey = "";
-      return;
-    }
-
-    // One request per workspace + missing set. A reload that does not fix it
-    // leaves the key unchanged, so repeated triggers (focus, resume, opening
-    // settings) cannot turn this into a reload loop.
-    if (reloadKey === lastMissingCloudProviderReloadKey) return;
-    lastMissingCloudProviderReloadKey = reloadKey;
-    options.markOpencodeConfigReloadRequired();
+      engineProviders: providerList.all ?? [],
+    })) return;
+    // Scoped to this workspace: a reload of another workspace does not apply
+    // this one's runtime config, so it must not clear the request.
+    options.markOpencodeConfigReloadRequired({ workspaceId });
   };
 
   async function performCloudProviderSync(reason: CloudProviderSyncReason) {
@@ -2256,9 +2303,12 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
 
       processedLiveProviderIds.add(liveProvider.id);
 
-      const missingFromEngine = engineProviderIds !== null &&
-        !engineProviderIds.has(importedProvider.providerId);
-      if (!isCloudProviderOutOfSync(liveProvider, importedProvider, settings.activeOrgId) && !missingFromEngine) {
+      if (cloudProviderReconcileAction({
+        liveProvider,
+        importedProvider,
+        organizationId: settings.activeOrgId,
+        engineProviderIds,
+      }) === "keep") {
         continue;
       }
 
@@ -2315,7 +2365,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     // applying may be one an earlier pass wrote while the engine was down.
     await markReloadWhenEngineMissesCloudProviders(
       target.juggleworkWorkspaceId,
-      reloadedProviderList,
+      reloadedProviderList ?? (configChanged ? null : engineProviderList),
     );
 
     // Notify the UI about newly imported providers so the global toast

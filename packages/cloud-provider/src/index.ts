@@ -191,6 +191,66 @@ export function missingCloudProviderReloadKey(input: {
   return missing.length > 0 ? `${input.workspaceId}::${missing.join(",")}` : null;
 }
 
+/** The slice of an engine `/provider` entry the applied-check needs. */
+export type CloudProviderEngineEntry = {
+  id: string;
+  models?: Record<string, unknown> | null;
+};
+
+/**
+ * Whether the engine has loaded what the import baseline says was written.
+ * - `applied`: the provider is listed and serves every imported model.
+ * - `provider_missing`: the engine does not list the provider at all.
+ * - `models_missing`: the provider is listed but lacks imported models, which
+ *   is what a deferred or dropped reload after an in-place model edit leaves.
+ *
+ * Only models in `imported.modelIds` are required. Extra engine-side models
+ * never count as a difference, so an engine that adds models cannot keep a
+ * workspace permanently "unapplied".
+ */
+export function cloudProviderEngineState(
+  imported: Pick<CloudImportedProvider, "providerId" | "modelIds">,
+  engineProvider: CloudProviderEngineEntry | null | undefined,
+): { state: "applied" | "provider_missing" | "models_missing"; missingModelIds: string[] } {
+  if (!engineProvider) return { state: "provider_missing", missingModelIds: [] };
+  const known = new Set(Object.keys(engineProvider.models ?? {}).map((id) => id.trim()));
+  const missingModelIds = [...new Set(imported.modelIds.map((id) => id.trim()).filter(Boolean))]
+    .filter((id) => !known.has(id))
+    .sort();
+  return missingModelIds.length > 0
+    ? { state: "models_missing", missingModelIds }
+    : { state: "applied", missingModelIds };
+}
+
+/**
+ * Model-level counterpart of `missingCloudProviderReloadKey`:
+ * `<workspaceId>::<signature>` when the engine misses an imported provider or
+ * any of its imported models, otherwise null. The signature lists each
+ * unapplied provider (`lpr_a`) or provider with its missing models
+ * (`lpr_b[m1|m2]`), sorted, so the same difference always yields the same key
+ * and callers can request one reload per difference.
+ */
+export function unappliedCloudProviderReloadKey(input: {
+  workspaceId: string;
+  imported: Record<string, CloudImportedProvider>;
+  engineProviders: readonly CloudProviderEngineEntry[];
+}): string | null {
+  const engineById = new Map(input.engineProviders.map((entry) => [entry.id.trim(), entry]));
+  const parts = new Map<string, string>();
+  for (const entry of Object.values(input.imported)) {
+    const providerId = entry.providerId.trim();
+    if (!providerId || parts.has(providerId)) continue;
+    const result = cloudProviderEngineState({ providerId, modelIds: entry.modelIds }, engineById.get(providerId));
+    if (result.state === "provider_missing") parts.set(providerId, providerId);
+    else if (result.state === "models_missing") {
+      parts.set(providerId, `${providerId}[${result.missingModelIds.join("|")}]`);
+    }
+  }
+  if (parts.size === 0) return null;
+  const signature = [...parts.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([, part]) => part);
+  return `${input.workspaceId}::${signature.join(",")}`;
+}
+
 const CLOUD_PROVIDER_MODEL_FIELDS = [
   "family", "release_date", "attachment", "reasoning", "temperature", "tool_call",
   "interleaved", "structured_output", "open_weights", "cost", "limit", "modalities",

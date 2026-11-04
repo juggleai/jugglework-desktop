@@ -136,12 +136,12 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
         setProviderDefaults,
         setProviderConnectedIds,
         setDisabledProviders: setDisabledProviderIds,
-        markOpencodeConfigReloadRequired: () => {
+        markOpencodeConfigReloadRequired: (scope) => {
           markReloadRequired("config", {
             type: "config",
             name: "opencode.json",
             action: "updated",
-          });
+          }, scope);
         },
         onProviderAvailabilityChanged: (scope) => invalidateMediaModelQueries(getReactQueryClient(), scope),
       });

@@ -16,7 +16,7 @@ import {
   useSessionActivityStore,
   type SessionActivityStatus,
 } from "@/react-app/domains/session/status/session-activity-store";
-import { useSystemState } from "@/react-app/kernel/system-state";
+import { useSystemState, type ReloadScope } from "@/react-app/kernel/system-state";
 import { notifyAlert, notifyEvent } from "./notifications";
 
 /** Debounce before an auto-reload, so bursts (an agent writing several
@@ -130,6 +130,9 @@ function hasLiveSessionActivity(
 type ReloadSession = { id: string; title: string };
 
 export type WorkspaceReloadControls = {
+  /** Server workspace id this reload targets. Scoped pending reloads for
+   *  this workspace become current (and auto-apply) while it is registered. */
+  workspaceId?: string | null;
   canReloadWorkspaceEngine: () => boolean;
   reloadWorkspaceEngine: () => Promise<boolean>;
   activeSessions?: () => ReloadSession[];
@@ -137,8 +140,8 @@ export type WorkspaceReloadControls = {
 };
 
 type ReloadCoordinatorContextValue = {
-  markReloadRequired: (reason: ReloadReason, trigger?: ReloadTrigger) => void;
-  clearReloadRequired: () => void;
+  markReloadRequired: (reason: ReloadReason, trigger?: ReloadTrigger, scope?: ReloadScope) => void;
+  clearReloadRequired: (workspaceId?: string | null) => void;
   reloadWorkspaceEngine: () => Promise<void>;
   canReloadWorkspaceEngine: boolean;
   reloadPending: boolean;
@@ -154,6 +157,7 @@ const ReloadCoordinatorContext = createContext<ReloadCoordinatorContextValue | n
 export function ReloadCoordinatorProvider({ children }: { children: ReactNode }) {
   const controlsRef = useRef<WorkspaceReloadControls | null>(null);
   const [activeSessions, setActiveSessions] = useState<ReloadSession[]>([]);
+  const [controlsWorkspaceId, setControlsWorkspaceId] = useState<string | null>(null);
   const [orgOnboardingVisible, setOrgOnboardingVisible] = useState(false);
   const pendingReloadTriggerRef = useRef<ReloadTrigger | null>(null);
   const hadPendingReloadRef = useRef(false);
@@ -163,10 +167,12 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
   const registerWorkspaceReloadControls = useCallback((controls: WorkspaceReloadControls | null) => {
     controlsRef.current = controls;
     setActiveSessions(controls?.activeSessions?.() ?? []);
+    setControlsWorkspaceId(controls?.workspaceId?.trim() || null);
     return () => {
       if (controlsRef.current === controls) {
         controlsRef.current = null;
         setActiveSessions([]);
+        setControlsWorkspaceId(null);
       }
     };
   }, []);
@@ -207,8 +213,9 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
       reloadWorkspaceEngine,
       onReloadComplete: handleReloadComplete,
       setError: ignoreError,
+      currentWorkspaceId: controlsWorkspaceId,
     }),
-    [canReloadWorkspaceEngine, handleReloadComplete, hasActiveRuns, ignoreError, reloadWorkspaceEngine],
+    [canReloadWorkspaceEngine, controlsWorkspaceId, handleReloadComplete, hasActiveRuns, ignoreError, reloadWorkspaceEngine],
   );
 
   const systemState = useSystemState(systemStateOptions);
