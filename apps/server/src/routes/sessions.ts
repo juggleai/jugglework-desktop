@@ -304,7 +304,7 @@ function remapSessionMutationError(error: unknown): never {
   throw error;
 }
 
-export function registerSessionRoutes(options: RegisterSessionRoutesOptions): void {
+export function registerSessionRoutes(options: RegisterSessionRoutesOptions) {
   const {
     routes,
     config,
@@ -355,13 +355,14 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     opencode: WorkspaceOpencodeClient,
     statuses: Record<string, unknown>,
     parentSessionId: string,
+    signal?: AbortSignal,
   ): Promise<boolean> {
     const parentCache = new Map<string, string | null>();
     const readParent = async (sessionId: string): Promise<string | null> => {
       if (parentCache.has(sessionId)) return parentCache.get(sessionId) ?? null;
       try {
         const session = unwrapOpencodeResult(
-          await opencode.session.get({ sessionID: sessionId }),
+          await opencode.session.get({ sessionID: sessionId }, { signal }),
           `/session/${encodeURIComponent(sessionId)}`,
         );
         const parentID = isRecord(session) && typeof session.parentID === "string"
@@ -370,6 +371,7 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
         parentCache.set(sessionId, parentID);
         return parentID;
       } catch {
+        signal?.throwIfAborted();
         parentCache.set(sessionId, null);
         return null;
       }
@@ -397,9 +399,10 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
   async function readEngineSessionStatus(
     workspace: WorkspaceInfo,
     sessionId: string,
+    signal?: AbortSignal,
   ): Promise<NormalizedEngineSessionStatus> {
     const opencode = createWorkspaceOpencodeClient(config, workspace);
-    const statuses = unwrapOpencodeResult(await opencode.session.status(), "/session/status");
+    const statuses = unwrapOpencodeResult(await opencode.session.status(undefined, { signal }), "/session/status");
     if (!isRecord(statuses)) {
       throw new ApiError(502, "opencode_invalid_response", "OpenCode returned invalid session status");
     }
@@ -419,7 +422,7 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     // child (or nested grandchild) is still executing. The root task remains
     // active in that state: settling it here makes the sidebar claim success
     // and admits overlapping work into a still-running objective.
-    return await hasActiveDelegatedDescendant(opencode, statuses, sessionId)
+    return await hasActiveDelegatedDescendant(opencode, statuses, sessionId, signal)
       ? "running"
       : "idle";
   }
@@ -433,18 +436,21 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     void sessionPendingOperationPump.wake();
   }
 
-  async function reconcileWorkspaceActiveRuns(workspace: WorkspaceInfo): Promise<void> {
+  async function reconcileWorkspaceActiveRuns(workspace: WorkspaceInfo, signal?: AbortSignal): Promise<void> {
     for (const active of sessionMutations.listActive(workspace.id)) {
+      // Dispatch has not been accepted yet; no engine sample can settle it.
+      if (active.status === "starting") continue;
       let engineStatus: NormalizedEngineSessionStatus;
       try {
-        engineStatus = await readEngineSessionStatus(workspace, active.sessionId);
+        engineStatus = await readEngineSessionStatus(workspace, active.sessionId, signal);
       } catch {
         // Fail closed when authoritative engine state is unavailable.
         continue;
       }
       try {
         if (engineStatus === "idle") {
-          const terminal = active.status === "aborting" ? null : await readCurrentRunTerminalStatus(workspace, active);
+          const terminal = active.status === "aborting" ? null : await readCurrentRunTerminalStatus(workspace, active, signal);
+          signal?.throwIfAborted();
           if (terminal === "failed" || terminal === "aborted") {
             sessionMutations.observe({ workspaceId: workspace.id, sessionId: active.sessionId, runId: active.runId, status: terminal });
             finalizeClearedRun(workspace.id, active.sessionId, active.runId);
@@ -475,11 +481,12 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
   async function readCurrentRunTerminalStatus(
     workspace: WorkspaceInfo,
     run: { sessionId: string; startedAt: number },
+    signal?: AbortSignal,
   ): Promise<"completed" | "failed" | "aborted" | null> {
     const opencode = createWorkspaceOpencodeClient(config, workspace);
     try {
       const messages = unwrapOpencodeResult(
-        await opencode.session.messages({ sessionID: run.sessionId, limit: 10 }),
+        await opencode.session.messages({ sessionID: run.sessionId, limit: 10 }, { signal }),
         "/session/message",
       );
       return currentRunTerminalStatus(messages, run.startedAt);
@@ -1438,4 +1445,6 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
 
     return jsonResponse({ ok: true });
   });
+
+  return { reconcileWorkspaceActiveRuns };
 }

@@ -290,7 +290,7 @@ test("promotion revalidates lock ownership immediately before channel overwrite"
   assert.equal(qiniu.state.has("jugglework/releases/locks/stable-mac.lock"), true);
 });
 
-for (const version of ["1.2.31", "1.2.32"]) {
+for (const version of ["1.2.31", "1.2.32", "1.2.33"]) {
 test(`${version} approved predecessor digest rejects wrong or absent channels before lock acquisition`, async () => {
   const plan = fixturePlan(version);
   for (const predecessor of [null, Buffer.from("version: unexpected\n")]) {
@@ -565,7 +565,7 @@ test("promotion fails before Qiniu calls when cache metadata management is unava
   assert.deepEqual(qiniu.calls, []);
 });
 
-for (const version of ["1.2.27", "1.2.28", "1.2.29", "1.2.30", "1.2.31", "1.2.32"]) {
+for (const version of ["1.2.27", "1.2.28", "1.2.29", "1.2.30", "1.2.31", "1.2.32", "1.2.33"]) {
   test(`${version} metadata-only exception refreshes and reads back under lock without metadata calls`, async () => {
     const plan = fixturePlan(version);
     const qiniu = createFakeQiniu(new Map([...plan.objects, plan.manifest].map((item) => [item.key, { size: item.size, etag: item.etag }])));
@@ -617,7 +617,7 @@ for (const version of ["1.2.27", "1.2.28", "1.2.29", "1.2.30", "1.2.31", "1.2.32
   });
 }
 
-for (const version of ["1.2.30", "1.2.31", "1.2.32"]) {
+for (const version of ["1.2.30", "1.2.31", "1.2.32", "1.2.33"]) {
   test(`${version} scoped exceptions preserve immutable, lock, race, and channel metadata gates`, async () => {
     const plan = fixturePlan(version);
     const evidence = verifiedEvidence(plan);
@@ -665,7 +665,7 @@ for (const version of ["1.2.30", "1.2.31", "1.2.32"]) {
   });
 }
 
-for (const version of ["1.2.31", "1.2.32"]) {
+for (const version of ["1.2.31", "1.2.32", "1.2.33"]) {
 for (const mode of ["pre-canary", "metadata-only", "both"]) {
   test(`${version} ${mode} exception preserves independent gates and records exact scoped evidence before unlock`, async () => {
     const plan = fixturePlan(version);
@@ -733,15 +733,15 @@ test(`${version} needs an audited pre-canary reason and never masks an explicit 
 });
 }
 
-for (const version of ["1.2.31", "1.2.32", "1.2.33"]) {
+for (const version of ["1.2.31", "1.2.32", "1.2.33", "1.2.34"]) {
   test(`${version} unauthorized exceptions fail before any Qiniu call`, async () => {
     const plan = fixturePlan(version);
     const evidence = verifiedEvidence(plan);
     for (const options of [
-      ...(version === "1.2.33" ? [{ preCanaryExceptionReason: "Operator authorized skipping the real-client canary" }] : []),
+      ...(version === "1.2.34" ? [{ preCanaryExceptionReason: "Operator authorized skipping the real-client canary" }] : []),
       { notarizationExceptionReason: "Operator authorized skipping Apple notarization" },
       { cacheExceptionReason: "Operator authorized skipping cache convergence" },
-      ...(version === "1.2.33" ? [{ metadataExceptionReason: "Operator authorized skipping only Qiniu cache metadata verification" }] : []),
+      ...(version === "1.2.34" ? [{ metadataExceptionReason: "Operator authorized skipping only Qiniu cache metadata verification" }] : []),
     ]) {
       const qiniu = createFakeQiniu();
       await assert.rejects(promoteChannel(plan, evidence, { ...options, qiniu }), /exception is restricted/);

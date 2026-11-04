@@ -313,7 +313,7 @@ function harness({
     },
   };
   const createCloudClient = () => ({
-    enrollDevice: async ({ context, grant, displayName, platform, onStage }) => {
+    enrollDevice: async ({ context, grant, displayName, platform, onStage = null }) => {
       enrollmentCalls += 1;
       assert.deepEqual(context, { controlPlaneBaseUrl: URL, userId: "user-1", organizationId: "org-1" });
       assert.equal(grant, "renderer-one-time-grant");

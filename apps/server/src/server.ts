@@ -111,7 +111,7 @@ import { addRoute, matchRoute, type AuthMode, type RequestContext, type Route } 
 import { registerSessionRoutes } from "./routes/sessions.js";
 import { createSessionPendingOperationStore, type SessionPendingOperationStore } from "./session-pending-operations.js";
 import { createSessionModelPreferenceStore, type SessionModelPreferenceStore } from "./session-model-preferences.js";
-import { SESSION_PENDING_OPERATION_IDLE_CONFIRM_MS, createSessionPendingOperationPump, type SessionPendingOperationPump } from "./session-pending-operation-pump.js";
+import { createSessionPendingOperationPump, type SessionPendingOperationPump } from "./session-pending-operation-pump.js";
 import { createSessionRunJournal } from "./session-run-journal.js";
 import { registerInteractionRoutes } from "./routes/interactions.js";
 import { registerSessionPermissionRoutes } from "./routes/session-permissions.js";
@@ -1545,7 +1545,7 @@ export async function startServer(config: ServerConfig, options: {
     },
   };
   const imageGenerationRuntime = new ToonflowImageRuntime({ config, env, repository: imageGenerationRepository });
-  const routes = createRoutes(
+  const { routes, reconcileWorkspaceActiveRuns } = createRoutes(
     config,
     approvals,
     tokens,
@@ -1839,28 +1839,11 @@ export async function startServer(config: ServerConfig, options: {
   // Runtime-owned observer closes runs even when no Electron/phone/SSE consumer
   // exists. It only writes through the durable coordinator authority.
   const lifecycleObserver = setInterval(() => void (async () => {
-    for (const active of sessionMutations.listActive()) {
+    const workspaceIds = new Set(sessionMutations.listActive().map((active) => active.workspaceId));
+    for (const workspaceId of workspaceIds) {
       try {
-        const workspace = await resolveWorkspaceWithoutBootstrap(config, active.workspaceId);
-        const activity = await readSessionActivity(config, workspace, active.sessionId, AbortSignal.timeout(5_000));
-        if (activity === "busy") {
-          sessionMutations.observe({ ...active, status: "running" });
-          continue;
-        }
-        if (active.status !== "aborting") {
-          const messages = unwrapOpencodeResult(await createWorkspaceOpencodeClient(config, workspace)
-            .session.messages({ sessionID: active.sessionId, limit: 10 }), "/session/message");
-          if (!hasCurrentRunFinalResponse(messages, active.startedAt)) continue;
-        }
-        const result = sessionMutations.reconcileAuthoritativeIdle({
-          ...active, minimumIntervalMs: SESSION_PENDING_OPERATION_IDLE_CONFIRM_MS,
-        });
-        if (result.cleared) {
-          for (const pending of sessionPendingOperations.list(active.workspaceId, active.sessionId)) {
-            if (pending.state === "admitted" && pending.admittedId === active.runId) sessionPendingOperations.markCompleted(pending.id);
-          }
-          void sessionPendingOperationPump?.wake();
-        }
+        const workspace = await resolveWorkspaceWithoutBootstrap(config, workspaceId);
+        await reconcileWorkspaceActiveRuns(workspace, AbortSignal.timeout(5_000));
       } catch {
         // Engine or storage uncertainty is fail closed; retry the exact run.
       }
@@ -3077,7 +3060,7 @@ function createRoutes(
     automationId: string,
     options?: { initializeConversation?: boolean; locale?: string },
   ) => Promise<{ workspaceId: string; sessionId: string }>,
-): Route[] {
+): { routes: Route[]; reconcileWorkspaceActiveRuns: (workspace: WorkspaceInfo, signal?: AbortSignal) => Promise<void> } {
   const routes: Route[] = [];
   registerHostMarketplacePluginRoutes({
     routes,
@@ -3161,7 +3144,7 @@ function createRoutes(
     env,
   });
 
-  registerSessionRoutes({
+  const { reconcileWorkspaceActiveRuns } = registerSessionRoutes({
     routes,
     config,
     jsonResponse,
@@ -4976,7 +4959,7 @@ function createRoutes(
     return jsonResponse(result);
   });
 
-  return routes;
+  return { routes, reconcileWorkspaceActiveRuns };
 }
 
 async function resolveWorkspaceForInspection(config: ServerConfig, id: string): Promise<WorkspaceInfo> {

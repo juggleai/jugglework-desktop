@@ -16,6 +16,7 @@ export const CANDIDATE_RECORD = "apps/desktop/release-records/1.2.31-candidate.j
 export const CANDIDATE_RECORDS = Object.freeze({
   "1.2.31": CANDIDATE_RECORD,
   "1.2.32": "apps/desktop/release-records/1.2.32-candidate.json",
+  "1.2.33": "apps/desktop/release-records/1.2.33-candidate.json",
 });
 export const CANDIDATE_SCHEMA = "com.juggleai.jugglework.promotion-candidate";
 export const EXCEPTIONS = Object.freeze({
@@ -23,12 +24,12 @@ export const EXCEPTIONS = Object.freeze({
   metadataExceptionReason: "Operator explicitly authorized stable macOS arm64 1.2.31 to skip only Qiniu Cache-Control metadata mutation and validation",
 });
 function continuationPolicy(version) {
-  if (!Object.hasOwn(CANDIDATE_RECORDS, version)) throw new Error("Continuation supports only exact 1.2.31 or 1.2.32 candidates");
+  if (!Object.hasOwn(CANDIDATE_RECORDS, version)) throw new Error("Continuation supports only exact 1.2.31, 1.2.32 or 1.2.33 candidates");
   return {
     candidateRecord: CANDIDATE_RECORDS[version],
     exceptions: version === "1.2.31" ? EXCEPTIONS : {
-      preCanaryExceptionReason: "Operator explicitly authorized stable macOS arm64 1.2.32 to skip only the real-client upgrade canary",
-      metadataExceptionReason: "Operator explicitly authorized stable macOS arm64 1.2.32 to skip only Qiniu Cache-Control metadata mutation and validation",
+      preCanaryExceptionReason: `Operator explicitly authorized stable macOS arm64 ${version} to skip only the real-client upgrade canary`,
+      metadataExceptionReason: `Operator explicitly authorized stable macOS arm64 ${version} to skip only Qiniu Cache-Control metadata mutation and validation`,
     },
   };
 }
@@ -267,7 +268,7 @@ export async function verifyRestoredPackages(plan, { parent, platform = process.
       const architecture = await gate(`${type}.architecture`, () => checks.verifyMachOArchitectures(app, expected.expectedArch));
       const toonFactory = await gate(`${type}.toon`, () => {
         const bundle = verifyToonFactory(app, "arm64");
-        if (plan.version === "1.2.32" && (bundle?.mediaTools?.manifest?.phase !== "signed"
+        if (plan.version !== "1.2.31" && (bundle?.mediaTools?.manifest?.phase !== "signed"
           || bundle.mediaTools.manifest.signingTeam !== "H7PDHSK3C7")) throw new Error("Current candidate requires verified signed media tools");
         return bundle;
       });

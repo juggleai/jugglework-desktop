@@ -133,7 +133,7 @@ const ERROR_MESSAGES = Object.freeze({
 /** @typedef {{ status: string, occurredAt: string, result: unknown, error: unknown }} JournalLifecycle */
 /** @typedef {{ action: "execute", commandId: string } | { action: "replay", commandId: string, lifecycle: JournalLifecycle } | { action: "reject", commandId: string | null, error: { code: string, message: string, retryable: false } }} JournalPrepareResult */
 /** @typedef {{ accessToken: string, expiresAt: string, webSocketUrl: string }} AgentToken */
-/** @typedef {{ enrollDevice(input: { credentials: RemoteControlCredentialStore, context: { controlPlaneBaseUrl: string, userId: string, organizationId: string }, grant: string, displayName: string, platform: string, signal?: AbortSignal }): Promise<RemoteControlCredentialView>, issueAgentToken(input: { credentials: RemoteControlCredentialStore, context: { controlPlaneBaseUrl: string, userId: string, organizationId: string } }): Promise<AgentToken> }} RemoteControlCloudClient */
+/** @typedef {{ enrollDevice(input: { credentials: RemoteControlCredentialStore, context: { controlPlaneBaseUrl: string, userId: string, organizationId: string }, grant: string, displayName: string, platform: string, signal?: AbortSignal, onStage?: ((stage: "prepare_credential" | "exchange" | "complete_credential") => void) | null }): Promise<RemoteControlCredentialView>, issueAgentToken(input: { credentials: RemoteControlCredentialStore, context: { controlPlaneBaseUrl: string, userId: string, organizationId: string } }): Promise<AgentToken> }} RemoteControlCloudClient */
 /** @typedef {{ inspect(): Promise<{ state: "absent" | "pending" | "enrolled" | "corrupt" }>, read(context: object): Promise<RemoteControlCredentialView | null>, prepareEnrollment(context: object): Promise<unknown>, completeEnrollment(context: object, binding: object): Promise<unknown>, getSigningCredential(context: object): Promise<import("./remote-control-credentials.mjs").RemoteControlSigningCredential>, delete(): Promise<void> }} RemoteControlCredentialStore */
 /** @typedef {{ read(): Promise<RemoteControlSettings>, disable(): Promise<RemoteControlSettings> }} RemoteControlSettingsStore */
 /** @typedef {{ advertise(context?: unknown): Promise<RemoteControlCapabilities>, dispatch(request: unknown, options: { advertisedCapabilities: RemoteControlCapabilities, context: RemoteControlAgentContext, correlationId: string, signal?: AbortSignal }): Promise<{ ok: boolean, value?: unknown, error?: unknown }> }} RemoteControlOperationRegistry */
@@ -2155,9 +2155,10 @@ export function createRemoteControlAgent(options) {
       // Preserve a content-free substage even when the original error has no
       // code (for example TypeError from a context race). Never pass its message.
       const stages = new Set(["drain_operations", "delete_material", "display_name", "prepare_credential", "exchange", "complete_credential", "e2ee_key"]);
-      const failure = new Error("Remote-control identity replacement failed.");
-      failure.code = typeof error?.code === "string" ? error.code : "identity_replacement_failed";
-      failure.replacementStage = stages.has(replacementStage) ? replacementStage : "unknown";
+      const failure = Object.assign(new Error("Remote-control identity replacement failed."), {
+        code: typeof error?.code === "string" ? error.code : "identity_replacement_failed",
+        replacementStage: stages.has(replacementStage) ? replacementStage : "unknown",
+      });
       throw failure;
     }
   }

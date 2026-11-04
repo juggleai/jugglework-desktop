@@ -21,18 +21,19 @@ async function temporary(t) {
   return directory;
 }
 
-function environment(version = "1.2.32") {
+function environment(version = "1.2.33") {
   return { GITHUB_ACTIONS: "true", GITHUB_EVENT_NAME: "workflow_dispatch", GITHUB_REF: "refs/heads/dev", GITHUB_SHA: sha,
     RELEASE_MODE: "promotion-only", VERSION: version, CHANNEL: "stable", RELEASE_PLATFORM: "mac", PROMOTE: "true",
     CANDIDATE_RECORD: CANDIDATE_RECORDS[version] };
 }
 
-function candidate(version = "1.2.32") {
+// Synthetic records are confined to temporary test fixtures, never release-records.
+function candidate(version = "1.2.33") {
   return JSON.parse(JSON.stringify(original).replaceAll("1.2.31", version));
 }
 
-function downloadableCandidate() {
-  const record = candidate();
+function downloadableCandidate(version = "1.2.33") {
+  const record = candidate(version);
   const plan = candidatePlan(record, "/unused");
   const bodies = new Map();
   const objects = plan.objects.map((item) => {
@@ -59,7 +60,7 @@ function downloadableCandidate() {
 }
 
 test("dispatch accepts only exact version/path pairs and trusted dev workflow_dispatch context", () => {
-  for (const version of ["1.2.31", "1.2.32"]) {
+  for (const version of ["1.2.31", "1.2.32", "1.2.33"]) {
     assert.doesNotThrow(() => assertContinuationInputs(environment(version)));
     for (const patch of [
       { GITHUB_ACTIONS: "false" }, { GITHUB_EVENT_NAME: "push" }, { GITHUB_REF: "refs/heads/main" },
@@ -69,7 +70,7 @@ test("dispatch accepts only exact version/path pairs and trusted dev workflow_di
       { CANDIDATE_RECORD: `./${CANDIDATE_RECORDS[version]}` },
     ]) assert.throws(() => assertContinuationInputs({ ...environment(version), ...patch }));
   }
-  for (const version of ["1.2.33", "1.2.32-alpha.1", "v1.2.32", "1.2.320", "toString"]) {
+  for (const version of ["1.2.34", "1.2.33-alpha.1", "v1.2.33", "1.2.330", "toString"]) {
     assert.throws(() => assertContinuationInputs(environment(version)), /only exact/);
     assert.throws(() => candidatePlan(candidate(version), "/tmp"), /only exact/);
   }
@@ -82,8 +83,9 @@ test("original 1.2.31 candidate semantics and exception text remain valid", () =
   assert.ok(Object.values(EXCEPTIONS).every((reason) => reason.includes("1.2.31") && reason.trim().length >= 20));
 });
 
-test("candidate gates retain exact source, signed/notarized receipts, evidence digests, inventory and predecessor", () => {
-  assert.equal(candidatePlan(candidate(), "/tmp").version, "1.2.32");
+for (const version of ["1.2.32", "1.2.33"]) {
+test(`${version} candidate gates retain exact source, signed/notarized receipts, evidence digests, inventory and predecessor`, () => {
+  assert.equal(candidatePlan(candidate(version), "/tmp").version, version);
   const mutations = [
     (r) => { r.sourceCommit = "abc"; },
     (r) => { r.evidence.commit = sha; },
@@ -108,13 +110,14 @@ test("candidate gates retain exact source, signed/notarized receipts, evidence d
     (r) => { r.evidence.workflow.promotion = { status: "verified" }; },
   ];
   for (const mutate of mutations) {
-    const record = candidate();
+    const record = candidate(version);
     mutate(record);
     assert.throws(() => candidatePlan(record, "/tmp"), undefined, mutate.toString());
   }
 });
+}
 
-for (const version of ["1.2.31", "1.2.32"]) {
+for (const version of ["1.2.31", "1.2.32", "1.2.33"]) {
   test(`${version} loads only committed dispatch record with exact HEAD/origin, source ancestry and three package versions`, async (t) => {
     const root = await temporary(t);
     const record = candidate(version);
@@ -139,7 +142,13 @@ for (const version of ["1.2.31", "1.2.32"]) {
     const loaded = await loadCommittedCandidate({ root, environment: environment(version), git });
     assert.equal(loaded.recordSha256, metadataForBuffer(committed, "candidate.json").sha256);
     assert.equal(loaded.toolingCommit, sha);
+    assert.equal(loaded.record.evidence.commit, record.sourceCommit);
+    assert.notEqual(loaded.record.sourceCommit, loaded.toolingCommit);
     assert.ok(calls.some((args) => JSON.stringify(args) === JSON.stringify(["merge-base", "--is-ancestor", record.sourceCommit, sha])));
+    await assert.rejects(loadCommittedCandidate({ root, environment: environment(version), git: (args) => {
+      if (args[1] === `${sha}:${CANDIDATE_RECORDS[version]}`) throw new Error("Candidate not committed");
+      return git(args);
+    } }), /Candidate not committed/);
     for (const target of ["HEAD", "origin/dev"]) {
       await assert.rejects(loadCommittedCandidate({ root, environment: environment(version), git: (args) => args[0] === "rev-parse" && args[1] === target ? "b".repeat(40) : git(args) }), /exactly match/);
     }
@@ -149,9 +158,9 @@ for (const version of ["1.2.31", "1.2.32"]) {
     } }), /Not an ancestor/);
     for (const file of packages) {
       for (const commit of [sha, record.sourceCommit]) {
-        await assert.rejects(loadCommittedCandidate({ root, environment: environment(version), git: (args) => args[1] === `${commit}:${file}` ? '{"version":"1.2.33"}' : git(args) }), /Runtime package version/);
+        await assert.rejects(loadCommittedCandidate({ root, environment: environment(version), git: (args) => args[1] === `${commit}:${file}` ? '{"version":"1.2.34"}' : git(args) }), /Runtime package version/);
       }
-      await writeFile(path.join(root, file), '{"version":"1.2.33"}');
+      await writeFile(path.join(root, file), '{"version":"1.2.34"}');
       await assert.rejects(loadCommittedCandidate({ root, environment: environment(version), git }), /Runtime package version/);
       await writeFile(path.join(root, file), JSON.stringify({ version }));
     }
@@ -162,7 +171,17 @@ for (const version of ["1.2.31", "1.2.32"]) {
   });
 }
 
-function packageChecks({ media = true, fail = "" } = {}) {
+test("missing 1.2.33 committed candidate stops before authentication or continuation", async () => {
+  const calls = [];
+  await assert.rejects(main({ argv: [], environment: environment("1.2.33"),
+    loadCandidate: async () => { calls.push("load"); throw new Error("Candidate not committed"); },
+    adapter: () => { calls.push("authenticate"); },
+    continueRelease: async () => { calls.push("continue"); },
+  }), /Candidate not committed/);
+  assert.deepEqual(calls, ["load"]);
+});
+
+function packageChecks({ media = true, fail = "", version = "1.2.33" } = {}) {
   const calls = [];
   const trust = { notarization: { status: "accepted" }, staple: { status: "validated" }, gatekeeper: { status: "accepted" } };
   const verifier = Object.fromEntries([
@@ -179,35 +198,37 @@ function packageChecks({ media = true, fail = "" } = {}) {
     if (binary === "ditto") mkdirSync(path.join(args.at(-1), "JuggleWork.app"));
     if (binary === "hdiutil" && args[0] === "attach") mkdirSync(path.join(args[4], "JuggleWork.app"));
   };
-  return { calls, verifier, run, platform: "darwin", extractAsar: () => Buffer.from('{"version":"1.2.32"}') };
+  return { calls, verifier, run, platform: "darwin", extractAsar: () => Buffer.from(JSON.stringify({ version })) };
 }
 
-test("1.2.32 freshly verifies both containers with current signed media and Apple trust verifiers", async (t) => {
+for (const version of ["1.2.32", "1.2.33"]) {
+test(`${version} freshly verifies both containers with current signed media and Apple trust verifiers`, async (t) => {
   const parent = await temporary(t);
-  const plan = candidatePlan(candidate(), parent);
-  const checks = packageChecks();
+  const plan = candidatePlan(candidate(version), parent);
+  const checks = packageChecks({ version });
   const result = await verifyRestoredPackages(plan, { parent, ...checks });
   assert.equal(result.status, "verified");
   assert.equal(checks.calls.filter(([name]) => name === "verifyMacToonFactoryBundle").length, 2);
   assert.equal(checks.calls.filter(([name]) => name === "verifyAppleTrust").length, 2);
   assert.equal(checks.calls.filter(([name]) => name === "verifyDmgTrust").length, 1);
   for (const name of ["verifyCodeSignature", "verifyMachOArchitectures", "verifyMacToonFactoryBundle", "verifyAppleTrust", "verifyDmgTrust"]) {
-    await assert.rejects(verifyRestoredPackages(plan, { parent, ...packageChecks({ fail: name }) }), /failed/);
+    await assert.rejects(verifyRestoredPackages(plan, { parent, ...packageChecks({ version, fail: name }) }), /failed/);
   }
-  await assert.rejects(verifyRestoredPackages(plan, { parent, ...packageChecks({ media: false }) }), /signed media tools/);
+  await assert.rejects(verifyRestoredPackages(plan, { parent, ...packageChecks({ version, media: false }) }), /signed media tools/);
   for (const manifest of [{ phase: "built", signingTeam: "H7PDHSK3C7" }, { phase: "signed", signingTeam: "OTHERTEAM1" }]) {
-    const unsigned = packageChecks();
+    const unsigned = packageChecks({ version });
     unsigned.verifier.verifyMacToonFactoryBundle = () => ({ mediaTools: { manifest } });
     await assert.rejects(verifyRestoredPackages(plan, { parent, ...unsigned }), /signed media tools/);
   }
-  const untrusted = packageChecks();
+  const untrusted = packageChecks({ version });
   untrusted.verifier.verifyAppleTrust = () => ({ notarization: { status: "unavailable" } });
   await assert.rejects(verifyRestoredPackages(plan, { parent, ...untrusted }), /notarization/);
-  const wrongVersion = packageChecks();
+  const wrongVersion = packageChecks({ version });
   wrongVersion.extractAsar = () => Buffer.from('{"version":"1.2.31"}');
   await assert.rejects(verifyRestoredPackages(plan, { parent, ...wrongVersion }), /runtime package version/);
   await assert.rejects(verifyRestoredPackages(plan, { parent, platform: "linux" }), /requires macOS/);
 });
+}
 
 test("restored immutable downloads require exact bytes and never overwrite local output", async (t) => {
   const parent = await temporary(t);
@@ -271,17 +292,21 @@ function promotionHarness(fixture, { badCdn = false, priorMismatch = false, held
   return { qiniu, fetchImpl, calls, plan, state, lock };
 }
 
-test("1.2.32 continuation retains fresh CDN, predecessor/lock, exact manifest promotion and refresh/read-back", async (t) => {
+for (const version of ["1.2.32", "1.2.33"]) {
+test(`${version} continuation retains fresh CDN, predecessor/lock, exact manifest promotion and refresh/read-back`, async (t) => {
   const directory = await temporary(t);
-  const fixture = downloadableCandidate();
+  const fixture = downloadableCandidate(version);
   const harness = promotionHarness(fixture);
   const { record } = fixture;
   const recordSha256 = metadataForBuffer(JSON.stringify(record), "candidate.json").sha256;
   const result = await continuePromotion({ record, recordSha256, toolingCommit: sha, directory, actor: "test-only", ...harness,
     verifyPackages: async () => { harness.calls.push(["packages"]); return { status: "verified" }; } });
-  assert.equal(result.preCanaryException.scope, "stable-1.2.32-only");
-  assert.equal(result.metadataException.scope, "stable-1.2.32-only");
-  for (const exception of [result.preCanaryException, result.metadataException]) assert.ok(exception.reason.trim().length >= 20);
+  assert.equal(result.preCanaryException.scope, `stable-${version}-only`);
+  assert.equal(result.metadataException.scope, `stable-${version}-only`);
+  for (const exception of [result.preCanaryException, result.metadataException]) {
+    assert.ok(exception.reason.trim().length >= 20);
+    assert.ok(exception.reason.includes(version));
+  }
   assert.equal(result.notarizationException, null);
   assert.equal(result.cacheException, undefined);
   assert.equal(result.readBack.sha256, harness.plan.manifest.sha256);
@@ -296,11 +321,16 @@ test("1.2.32 continuation retains fresh CDN, predecessor/lock, exact manifest pr
   }
   assert.ok(harness.calls.some(([name]) => name === "refresh"));
   const evidence = JSON.parse(await readFile(path.join(directory, "release-evidence.json"), "utf8"));
-  assert.equal(evidence.continuation.candidateRecord, CANDIDATE_RECORDS["1.2.32"]);
+  assert.equal(evidence.continuation.candidateRecord, CANDIDATE_RECORDS[version]);
   assert.equal(evidence.continuation.recordSha256, recordSha256);
+  assert.equal(evidence.continuation.sourceCommit, record.sourceCommit);
+  assert.equal(evidence.commit, record.sourceCommit);
+  assert.equal(evidence.continuation.toolingCommit, sha);
+  assert.notEqual(evidence.continuation.sourceCommit, evidence.continuation.toolingCommit);
   assert.equal(evidence.continuation.status, "promoted");
   assert.equal(evidence.workflow.promotion.status, "verified");
 });
+}
 
 for (const failure of ["badCdn", "priorMismatch", "heldLock", "packages"]) {
   test(`continuation fails closed before channel writes on ${failure}`, async (t) => {

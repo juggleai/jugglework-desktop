@@ -29,6 +29,7 @@ const DEVICE_STATUS_ERROR_CODES = new Set(["device_revoked", "device_disabled"])
  *   displayName: string,
  *   platform: string,
  *   signal?: AbortSignal,
+ *   onStage?: ((stage: "prepare_credential" | "exchange" | "complete_credential") => void) | null,
  * }} RemoteControlEnrollDeviceOptions
  */
 /** @typedef {{ credentials: { getSigningCredential(context: RemoteControlCloudContext): Promise<RemoteControlSigningCredential> }, context: RemoteControlCloudContext }} RemoteControlIssueTokenOptions */

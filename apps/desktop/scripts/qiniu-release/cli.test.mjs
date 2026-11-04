@@ -19,19 +19,19 @@ test("CLI strictly parses release coordinates and dry-run", () => {
   assert.equal(parsed.options.preCanaryExceptionReason, "Operator authorized the live upgrade validation");
 });
 
-for (const version of ["1.2.28", "1.2.29", "1.2.30", "1.2.31", "1.2.32"]) {
+for (const version of ["1.2.28", "1.2.29", "1.2.30", "1.2.31", "1.2.32", "1.2.33"]) {
   test(`CLI parses separate ${version} exception reasons and documents retained gates`, () => {
     const parsed = parseArguments(["promote-channel", ...REQUIRED.with(1, version).with(7, "arm64"), "--pre-canary-exception-reason", "Operator authorized skipping only the canary", "--metadata-exception-reason", "Operator authorized skipping only Qiniu cache metadata verification"]);
     assert.equal(parsed.options.preCanaryExceptionReason, "Operator authorized skipping only the canary");
     assert.equal(parsed.options.metadataExceptionReason, "Operator authorized skipping only Qiniu cache metadata verification");
     assert.match(usage(), /--metadata-exception-reason/);
-    assert.match(usage(), /1\.2\.27, 1\.2\.28, 1\.2\.29, 1\.2\.30, 1\.2\.31, or 1\.2\.32/);
+    assert.match(usage(), /1\.2\.27, 1\.2\.28, 1\.2\.29, 1\.2\.30, 1\.2\.31, 1\.2\.32, or 1\.2\.33/);
     assert.match(usage(), /CDN refresh and public Stable digest\/size read-back remain required/);
-    assert.match(usage(), /Future 1\.2\.33 is not authorized/);
+    assert.match(usage(), /Future 1\.2\.34 is not authorized/);
   });
 }
 
-for (const version of ["1.2.31", "1.2.32"]) {
+for (const version of ["1.2.31", "1.2.32", "1.2.33"]) {
 test(`CLI documents independent ${version} exceptions with a real canary required by default`, () => {
   const reason = `Operator authorized stable macOS arm64 ${version} to skip only Cache-Control metadata change/verification`;
   const parsed = parseArguments(["promote-channel", ...REQUIRED.with(1, version).with(7, "arm64"), "--metadata-exception-reason", reason]);
@@ -40,7 +40,7 @@ test(`CLI documents independent ${version} exceptions with a real canary require
   const preCanary = parseArguments(["promote-channel", ...REQUIRED.with(1, version).with(7, "arm64"), "--pre-canary-exception-reason", "Operator authorized skipping only the real-client canary"]);
   assert.equal(preCanary.options.preCanaryExceptionReason, "Operator authorized skipping only the real-client canary");
   assert.equal(preCanary.options.metadataExceptionReason, undefined);
-  assert.match(usage(), /1\.2\.22 through 1\.2\.32 via --pre-canary-exception-reason TEXT/);
+  assert.match(usage(), /1\.2\.22 through 1\.2\.33 via --pre-canary-exception-reason TEXT/);
   assert.ok(usage().includes(`Exact stable macOS arm64 ${version} allows independent pre-canary and metadata-only exceptions scoped to stable-${version}-only, never notarization or broader cache exceptions`));
   assert.match(usage(), /separate audited reasons of at least 20 trimmed characters each/);
   assert.match(usage(), /Without --pre-canary-exception-reason TEXT a real matching local upgrade canary is required/);

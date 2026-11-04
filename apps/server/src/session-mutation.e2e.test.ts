@@ -33,8 +33,8 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-async function waitUntil(predicate: () => boolean | Promise<boolean>): Promise<void> {
-  for (let attempt = 0; attempt < 100; attempt++) {
+async function waitUntil(predicate: () => boolean | Promise<boolean>, timeoutMs = 500): Promise<void> {
+  for (let attempt = 0; attempt < Math.ceil(timeoutMs / 5); attempt++) {
     if (await predicate()) return;
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
@@ -66,6 +66,8 @@ function startMockOpencode() {
   }>>();
   const sessions = new Map<string, { id: string; title: string; parentID?: string; directory?: string; time: { created: number; updated: number } }>();
   const heldPrompts = new Map<string, ReturnType<typeof deferred<void>>>();
+  const heldMessageReads = new Map<string, ReturnType<typeof deferred<void>>>();
+  const messageReads: string[] = [];
   const heldMessageIds = new Map<string, ReturnType<typeof deferred<void>>>();
   const heldAborts = new Map<string, ReturnType<typeof deferred<void>>>();
   const heldCommands = new Map<string, ReturnType<typeof deferred<void>>>();
@@ -90,7 +92,15 @@ function startMockOpencode() {
         return Response.json(Object.fromEntries(statuses));
       }
       const messageMatch = url.pathname.match(/^\/session\/([^/]+)\/message$/);
-      if (request.method === "GET" && messageMatch) return Response.json(messages.get(decodeURIComponent(messageMatch[1]!)) ?? []);
+      if (request.method === "GET" && messageMatch) {
+        const sessionId = decodeURIComponent(messageMatch[1]!);
+        const snapshot = messages.get(sessionId) ?? [];
+        const held = heldMessageReads.get(sessionId);
+        heldMessageReads.delete(sessionId);
+        messageReads.push(sessionId);
+        await held?.promise;
+        return Response.json(snapshot);
+      }
       const directMessageMatch = url.pathname.match(/^\/session\/([^/]+)\/message\/([^/]+)$/);
       if (request.method === "GET" && directMessageMatch) {
         const sessionId = decodeURIComponent(directMessageMatch[1]!);
@@ -228,6 +238,8 @@ function startMockOpencode() {
     messages,
     sessions,
     heldPrompts,
+    heldMessageReads,
+    messageReads,
     heldMessageIds,
     heldAborts,
     heldCommands,
@@ -1651,7 +1663,7 @@ describe("authoritative session mutation APIs", () => {
     await expect(second.json()).resolves.toMatchObject({ items: [{ sessionId: "ses_list_reconcile" }] });
   });
 
-  for (const terminal of ["failed", "aborted"] as const) for (const recovery of ["poll", "retry", "idle-observation"] as const) test(`无主窗口上报时通过 ${recovery} 释放 ${terminal} 的本轮运行并保留终态`, async () => {
+  for (const terminal of ["failed", "aborted"] as const) for (const recovery of ["poll", "background", "retry", "idle-observation"] as const) test(`无主窗口上报时通过 ${recovery} 释放 ${terminal} 的本轮运行并保留终态`, async () => {
     const engine = startMockOpencode();
     const harness = await startHarness(engine.server.port);
     const sessionId = `ses_error_${terminal}_${recovery}`;
@@ -1673,7 +1685,14 @@ describe("authoritative session mutation APIs", () => {
     expect((await (await poll()).json() as any).items).toHaveLength(1);
     engine.statuses.set(sessionId, { type: "idle" });
     if (recovery === "poll") {
-      expect((await (await poll()).json() as any).items).toEqual([]);
+      // Lifecycle v3 GETs are pure; only the runtime observer can settle this run.
+      await waitUntil(async () => (await (await poll()).json() as any).items.length === 0, 2_500);
+    } else if (recovery === "background") {
+      const db = new Database(runtimeDbPath(harness.config), { readonly: true });
+      try {
+        // No GET/observation/retry is needed to trigger terminalization.
+        await waitUntil(() => db.query("SELECT 1 FROM session_run_terminals WHERE run_id = ?").get(run.runId) !== null, 2_500);
+      } finally { db.close(); }
     } else if (recovery === "retry") {
       expect((await start("second_error_run")).status).toBe(202);
     } else {
@@ -1685,7 +1704,115 @@ describe("authoritative session mutation APIs", () => {
     const db = new Database(runtimeDbPath(harness.config), { readonly: true });
     try {
       expect(db.query<{ terminal_reason: string }, [string]>("SELECT terminal_reason FROM session_run_journal WHERE run_id = ? AND event = 'run_terminal'").all(run.runId)).toEqual([{ terminal_reason: terminal }]);
+      expect(db.query("SELECT status, revision FROM session_lifecycle_feed WHERE run_id = ? ORDER BY sequence").all(run.runId))
+        .toEqual([{ status: "running", revision: 1 }, { status: terminal, revision: 2 }]);
     } finally { db.close(); }
+  });
+
+  for (const terminal of ["failed", "aborted"] as const) test(`后台 ${terminal} 恢复保留旧消息、最新工具步骤和活动子任务的运行`, async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    const sessionId = `ses_background_guard_${terminal}`;
+    const started = await fetch(`${runPath(harness.base, sessionId)}/start`, {
+      method: "POST", headers: harness.collaboratorHeaders,
+      body: JSON.stringify({ origin: "local-renderer", startCommandCorrelationId: "guard_start",
+        prompt: { parts: [{ type: "text", text: "Keep latest run" }] } }),
+    });
+    expect(started.status).toBe(202);
+    const { run } = await started.json() as { run: { runId: string; startedAt: number } };
+    const terminalMessage = (created: number) => terminal === "failed"
+      ? { info: { id: "msg_error", role: "assistant", time: { created }, error: { name: "APIError" } }, parts: [] }
+      : { info: { id: "msg_rejected", role: "assistant", finish: "tool-calls", time: { created, completed: created + 1 } },
+        parts: [{ type: "tool", state: { status: "error", error: "The user rejected permission to use this specific tool call.", time: { end: created + 1 } } }] };
+    const remainsActiveAfterBackgroundRead = async () => {
+      const reads = engine.messageReads.length;
+      await waitUntil(() => engine.messageReads.length > reads, 2_500);
+      const active = await fetch(`${harness.base}/workspace/ws_1/session-runs`, { headers: harness.collaboratorHeaders });
+      expect(await active.json()).toMatchObject({ items: [{ runId: run.runId }] });
+    };
+    engine.messages.set(sessionId, [terminalMessage(run.startedAt - 10)]);
+    await remainsActiveAfterBackgroundRead();
+    engine.messages.set(sessionId, [terminalMessage(run.startedAt), {
+      info: { id: "msg_latest", role: "assistant", finish: "tool-calls", time: { created: run.startedAt + 1, completed: run.startedAt + 2 } }, parts: [],
+    }]);
+    await remainsActiveAfterBackgroundRead();
+    // An idle root cannot settle while a delegated grandchild is active.
+    engine.sessions.set("ses_child_guard", { id: "ses_child_guard", title: "Child", parentID: sessionId, time: { created: 1, updated: 1 } });
+    engine.sessions.set("ses_grandchild_guard", { id: "ses_grandchild_guard", title: "Grandchild", parentID: "ses_child_guard", time: { created: 1, updated: 1 } });
+    engine.statuses.set("ses_grandchild_guard", { type: "busy" });
+    engine.messages.set(sessionId, [terminalMessage(run.startedAt)]);
+    const reads = engine.statusRequests.length;
+    await waitUntil(() => engine.statusRequests.length > reads, 2_500);
+    expect(await (await fetch(`${harness.base}/workspace/ws_1/session-runs`, { headers: harness.collaboratorHeaders })).json())
+      .toMatchObject({ items: [{ runId: run.runId }] });
+    engine.statuses.set("ses_grandchild_guard", { type: "idle" });
+    await waitUntil(async () => (await (await fetch(`${harness.base}/workspace/ws_1/session-runs`, { headers: harness.collaboratorHeaders })).json() as any).items.length === 0, 2_500);
+    const db = new Database(runtimeDbPath(harness.config), { readonly: true });
+    try {
+      expect(db.query("SELECT terminal_reason FROM session_run_terminals WHERE run_id = ?").all(run.runId)).toEqual([{ terminal_reason: terminal }]);
+    } finally { db.close(); }
+  }, 7_000);
+
+  test("后台不得在 prompt admission 完成前收尾 starting run", async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    const sessionId = "ses_background_starting";
+    const held = deferred<void>();
+    engine.heldPrompts.set(sessionId, held);
+    const pending = fetch(`${runPath(harness.base, sessionId)}/start`, {
+      method: "POST", headers: harness.collaboratorHeaders,
+      body: JSON.stringify({ origin: "local-renderer", startCommandCorrelationId: "starting",
+        prompt: { parts: [{ type: "text", text: "Pending admission" }] } }),
+    });
+    try {
+      await waitUntil(() => engine.prompts.length === 1);
+      engine.messages.set(sessionId, [{ info: { id: "msg_error", role: "assistant", time: { created: Date.now() }, error: { name: "APIError" } }, parts: [] }]);
+      await new Promise((resolve) => setTimeout(resolve, 1_100));
+      expect(await (await fetch(`${harness.base}/workspace/ws_1/session-runs`, { headers: harness.collaboratorHeaders })).json())
+        .toMatchObject({ items: [{ status: "starting" }] });
+      const db = new Database(runtimeDbPath(harness.config), { readonly: true });
+      try { expect(db.query("SELECT status FROM session_lifecycle_feed").all()).toEqual([]); }
+      finally { db.close(); }
+    } finally { held.resolve(); }
+    expect((await pending).status).toBe(202);
+  });
+
+  test("后台旧 run 的迟到错误证据不能收尾替代 run 或打乱 activity 顺序", async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    const sessionId = "ses_background_replacement";
+    const start = (id: string) => fetch(`${runPath(harness.base, sessionId)}/start`, {
+      method: "POST", headers: harness.collaboratorHeaders,
+      body: JSON.stringify({ origin: "local-renderer", startCommandCorrelationId: id,
+        prompt: { parts: [{ type: "text", text: id }] } }),
+    });
+    const first = await (await start("first")).json() as { run: { runId: string } };
+    engine.messages.set(sessionId, [{ info: { id: "msg_old_error", role: "assistant", time: { created: Date.now() }, error: { name: "APIError" } }, parts: [] }]);
+    const held = deferred<void>();
+    engine.heldMessageReads.set(sessionId, held);
+    try {
+      await waitUntil(() => !engine.heldMessageReads.has(sessionId), 2_500);
+      const cleared = await fetch(`${runPath(harness.base, sessionId)}/${first.run.runId}/observations`, {
+        method: "POST", headers: harness.collaboratorHeaders, body: JSON.stringify({ status: "failed" }),
+      });
+      expect(await cleared.json()).toMatchObject({ cleared: true, terminalStatus: "failed" });
+      const response = await start("replacement");
+      expect(response.status).toBe(202);
+      const second = await response.json() as { run: { runId: string } };
+      const reads = engine.messageReads.length;
+      held.resolve();
+      await waitUntil(() => engine.messageReads.length > reads, 2_500);
+      expect(await (await fetch(`${harness.base}/workspace/ws_1/session-runs`, { headers: harness.collaboratorHeaders })).json())
+        .toMatchObject({ items: [{ runId: second.run.runId }] });
+      const db = new Database(runtimeDbPath(harness.config), { readonly: true });
+      try {
+        expect(db.query("SELECT run_id, status, revision FROM session_lifecycle_feed ORDER BY sequence").all()).toEqual([
+          { run_id: first.run.runId, status: "running", revision: 1 },
+          { run_id: first.run.runId, status: "failed", revision: 2 },
+          { run_id: second.run.runId, status: "running", revision: 1 },
+        ]);
+      } finally { db.close(); }
+    } finally { held.resolve(); }
   });
 
   test("startup idle and an old stop cannot complete a new run before its final assistant", async () => {

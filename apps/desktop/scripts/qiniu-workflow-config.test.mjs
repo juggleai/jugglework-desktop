@@ -106,13 +106,13 @@ describe("Qiniu release workflow policy", () => {
     }
     assert.match(source, /if \[ "\$VERIFICATION_ONLY" = true \]; then\s+node .*promotion-continuation\.mjs --verify-only/);
     assert.match(source, /test "\$VERIFICATION_ONLY" = false/);
-    for (const version of ["1.2.31", "1.2.32", "1.2.33"]) {
-      for (const recordVersion of ["1.2.31", "1.2.32", "1.2.33"]) {
+    for (const version of ["1.2.31", "1.2.32", "1.2.33", "1.2.34", "1.2.33-alpha.1", "v1.2.33", "1.2.330"]) {
+      for (const recordVersion of ["1.2.31", "1.2.32", "1.2.33", "1.2.34"]) {
         const result = spawnSync("bash", ["-c", gate], { env: {
           GITHUB_REF: "refs/heads/dev", VERSION: version, CHANNEL: "stable", RELEASE_PLATFORM: "mac", PROMOTE: "true",
           CANDIDATE_RECORD: `apps/desktop/release-records/${recordVersion}-candidate.json`,
         } });
-        assert.equal(result.status === 0, version !== "1.2.33" && version === recordVersion);
+        assert.equal(result.status === 0, ["1.2.31", "1.2.32", "1.2.33"].includes(version) && version === recordVersion);
       }
     }
     assert.match(source, /pnpm install --frozen-lockfile --ignore-scripts/);
