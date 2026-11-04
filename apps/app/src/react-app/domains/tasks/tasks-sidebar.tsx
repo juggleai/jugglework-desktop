@@ -58,11 +58,11 @@ export function TasksSidebar(props: TasksSidebarRegistration & { preview?: boole
       onClick={() => props.onSectionChange?.(section)}
       aria-current={props.section === section ? "page" : undefined}
       className={cn(
-        "flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-sm transition-colors",
-        props.section === section ? "bg-dls-active text-dls-text" : "text-dls-secondary hover:bg-dls-hover hover:text-dls-text",
+        "flex h-10 w-full items-center gap-3 rounded-lg px-3 text-left text-[15px] font-normal transition-colors",
+        props.section === section ? "bg-blue-3 font-medium text-blue-11 dark:bg-blue-4/45 dark:text-blue-10" : "text-dls-text/80 hover:bg-dls-hover hover:text-dls-text",
       )}
     >
-      <Icon aria-hidden="true" className="size-4 shrink-0" strokeWidth={1.8} />
+      <Icon aria-hidden="true" className="size-[17px] shrink-0" strokeWidth={1.75} />
       {t(key)}
     </button>
   );
@@ -71,39 +71,39 @@ export function TasksSidebar(props: TasksSidebarRegistration & { preview?: boole
     <aside
       aria-label={t("tasks.navigation")}
       className={cn(
-        "flex h-full w-full flex-col overflow-hidden bg-[var(--app-secondary-sidebar-bg)]",
+        "flex h-full w-full flex-col overflow-hidden bg-[var(--app-secondary-sidebar-bg)] text-[15px]",
         props.preview ? "rounded-[18px] border border-dls-border" : "border-r border-dls-border",
       )}
       data-testid={props.preview ? "tasks-sidebar-preview" : "tasks-sidebar"}
     >
-      <div className="min-h-0 flex-1 overflow-y-auto px-3 py-5 mac:titlebar-no-drag">
-        <div className="mb-4 flex items-center gap-2 px-2">
-          <ListTodo aria-hidden="true" className="size-5 text-dls-accent" strokeWidth={1.8} />
-          <h1 className="text-base font-semibold text-dls-text">{t("tasks.title")}</h1>
+      <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-5 pt-4 mac:titlebar-no-drag">
+        <div className="mb-5 flex h-10 items-center gap-3 px-3">
+          <ListTodo aria-hidden="true" className="size-[19px] text-dls-secondary" strokeWidth={1.8} />
+          <h1 className="text-lg font-semibold tracking-[-0.01em] text-dls-text">{t("tasks.title")}</h1>
         </div>
-        <nav aria-label={t("tasks.navigation")} className="space-y-1">
+        <nav aria-label={t("tasks.navigation")} className="space-y-1.5">
           {primaryNavigation.map(navigationButton)}
         </nav>
-        <div className="my-3 border-t border-dls-border" />
+        <div className="mx-2 my-4 border-t border-dls-border" />
         <section>
           <button
             type="button"
             aria-expanded={quickAccessExpanded}
             onClick={() => setQuickAccessExpanded((expanded) => !expanded)}
-            className="flex h-8 w-full items-center justify-between rounded-lg px-2 text-left text-xs font-medium text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
+            className="flex h-9 w-full items-center justify-between rounded-lg px-3 text-left text-sm font-medium text-dls-text/75 transition-colors hover:bg-dls-hover hover:text-dls-text"
           >
             <span>{t("tasks.quick_access")}</span>
             <ChevronDown aria-hidden="true" className={cn("size-3.5 transition-transform", !quickAccessExpanded && "-rotate-90")} strokeWidth={1.8} />
           </button>
-          {quickAccessExpanded ? <nav aria-label={t("tasks.quick_access")} className="mt-1 space-y-1">{quickAccessNavigation.map(navigationButton)}</nav> : null}
+          {quickAccessExpanded ? <nav aria-label={t("tasks.quick_access")} className="mt-1.5 space-y-1">{quickAccessNavigation.map(navigationButton)}</nav> : null}
         </section>
-        <div className="my-4 border-t border-dls-border" />
+        <div className="mx-2 my-4 border-t border-dls-border" />
         <section>
-          <div className="flex items-center justify-between px-2 text-xs font-medium uppercase tracking-wide text-dls-secondary">
+          <div className="flex h-9 items-center justify-between px-3 text-sm font-medium text-dls-text/75">
             <span>{t("tasks.lists")}</span>
             {props.onCreateList ? <button type="button" onClick={props.onCreateList} aria-label={t("tasks.create_list")} className="rounded p-1 hover:bg-dls-hover hover:text-dls-text"><Plus className="size-3.5" /></button> : null}
           </div>
-          <div className="mt-2 space-y-1">{props.lists?.map((list) => <div key={list.id} className="group flex items-center"><button type="button" className={`min-w-0 flex-1 truncate rounded px-2 py-1.5 text-left text-sm ${props.selectedListId === list.id ? "bg-dls-active text-dls-text" : "text-dls-secondary hover:bg-dls-hover"}`} onClick={() => props.onSelectList?.(list.id)}>{list.marker} {list.name}</button><button type="button" className="invisible rounded p-1 text-dls-secondary hover:bg-dls-hover hover:text-dls-text group-hover:visible group-has-[:focus-visible]:visible focus:visible" aria-label={t("tasks.archive_list")} onClick={() => props.onArchiveList?.(list.id, list.version)}><Archive className="size-3.5" /></button></div>)}</div>
+          <div className="mt-1.5 space-y-1">{props.lists?.map((list) => <div key={list.id} className="group flex items-center"><button type="button" className={`min-w-0 flex-1 truncate rounded-lg px-3 py-2 text-left text-sm ${props.selectedListId === list.id ? "bg-dls-active text-dls-text" : "text-dls-secondary hover:bg-dls-hover"}`} onClick={() => props.onSelectList?.(list.id)}>{list.marker} {list.name}</button><button type="button" className="invisible rounded p-1 text-dls-secondary hover:bg-dls-hover hover:text-dls-text group-hover:visible group-has-[:focus-visible]:visible focus:visible" aria-label={t("tasks.archive_list")} onClick={() => props.onArchiveList?.(list.id, list.version)}><Archive className="size-3.5" /></button></div>)}</div>
         </section>
       </div>
     </aside>

@@ -28,7 +28,7 @@ export const defaultTaskWorkbenchSettings: TaskWorkbenchSettings = {
   sort: "updated_at",
   direction: "desc",
   group: "none",
-  fields: taskWorkbenchFields,
+  fields: ["creator", "created", "id", "list"],
 };
 
 export function taskWorkbenchStorageKey(scope: ProductTaskScope | null): string {

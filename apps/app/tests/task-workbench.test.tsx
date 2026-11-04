@@ -52,8 +52,8 @@ test("assigned workbench renders exactly List and Board tabs plus requested join
     expect(tabs).toHaveLength(2);
     expect(tabs.map((node) => React.Children.toArray(node.props.children).filter((child) => typeof child === "string").join(""))).toEqual(["List", "Board"]);
     expect(tabs.every((node) => node.findAll((child) => child.type === "svg").length > 0)).toBe(true);
-    expect(renderer!.root.findByProps({ "data-testid": "task-view-active-indicator" }).parent?.props.value).toBe("list");
-    for (const label of ["Task title", "Assignee", "Start time", "Due time", "Creator", "Created time", "Task ID", "Task list", "Alex Assignee", "Casey Creator", "Launch"]) {
+    expect(renderer!.root.findByProps({ "data-testid": "task-view-active-indicator" }).parent?.props["data-testid"]).toBe("task-view-tab-list");
+    for (const label of ["Task title", "Creator", "Created time", "Task ID", "Task list", "Casey Creator", "Launch"]) {
       expect(renderer!.root.findAll((node) => node.props.children === label).length).toBeGreaterThan(0);
     }
   } finally { await act(async () => renderer!.unmount()); }
@@ -64,14 +64,16 @@ test("both list and board render the same active underline contract", async () =
   await act(async () => { renderer = TestRenderer.create(workbench()); });
   try {
     let indicator = renderer!.root.findByProps({ "data-testid": "task-view-active-indicator" });
-    expect(indicator.parent?.props.value).toBe("list");
-    expect(indicator.props.className).toContain("-bottom-px");
+    expect(indicator.parent?.props["data-testid"]).toBe("task-view-tab-list");
+    expect(indicator.props.className).toContain("bottom-[3px]");
+    // The list table header is sticky z-10 and would otherwise cover the indicator that overlaps the bar border.
+    expect(renderer!.root.findByProps({ "data-testid": "task-view-tab-bar" }).props.className).toContain("z-20");
     await act(async () => { renderer!.update(workbench({ ...defaultTaskWorkbenchSettings, view: "board" })); });
     indicator = renderer!.root.findByProps({ "data-testid": "task-view-active-indicator" });
-    expect(indicator.parent?.props.value).toBe("board");
-    expect(indicator.props.className).toContain("-bottom-px");
-    expect(renderer!.root.findByProps({ "data-testid": "task-view-tab-list" }).props.className).toContain("text-xs");
-    expect(renderer!.root.findByProps({ "data-testid": "task-view-tab-board" }).props.className).toContain("text-xs");
+    expect(indicator.parent?.props["data-testid"]).toBe("task-view-tab-board");
+    expect(indicator.props.className).toContain("bottom-[3px]");
+    expect(renderer!.root.findByProps({ "data-testid": "task-view-tab-list" }).props.className).toContain("text-[14px]");
+    expect(renderer!.root.findByProps({ "data-testid": "task-view-tab-board" }).props.className).toContain("text-[14px]");
   } finally { await act(async () => renderer!.unmount()); }
 });
 
@@ -84,7 +86,7 @@ test("field control emits settings without the unchecked optional field", async 
     const assignee = fields.find((node) => node.type === "button" && node.props.children === "Assignee" && typeof node.props.onCheckedChange === "function");
     await act(async () => { assignee.props.onCheckedChange(false); });
     expect(changes.at(-1)?.fields).not.toContain("assignee");
-    expect(changes.at(-1)?.fields).toContain("due");
+    expect(changes.at(-1)?.fields).toContain("created");
   } finally { await act(async () => renderer!.unmount()); }
 });
 
