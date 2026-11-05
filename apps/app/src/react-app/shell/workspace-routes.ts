@@ -7,6 +7,7 @@ export type WorkspaceAppPath =
   | { view: "apps"; workspaceId: string | null }
   | { view: "chat"; workspaceId: string | null }
   | { view: "reviews"; workspaceId: string; reviewId: string | null }
+  | { view: "tasks"; workspaceId: null; taskId: string | null }
   | { view: "automations"; workspaceId: null }
   | null;
 
@@ -90,6 +91,11 @@ export function parseWorkspaceAppPath(pathname: string): WorkspaceAppPath {
 
   if (/^\/automations(?:\/.*)?$/.test(pathname)) {
     return { view: "automations", workspaceId: null };
+  }
+
+  const tasks = pathname.match(/^\/tasks(?:\/([^/]+))?\/?$/);
+  if (tasks) {
+    return { view: "tasks", workspaceId: null, taskId: decodeRoutePart(tasks[1]) || null };
   }
 
   return null;

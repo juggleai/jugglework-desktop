@@ -19,6 +19,7 @@ export type NotificationKind =
   | "providers"
   | "reload"
   | "cloud"
+  | "tasks"
   | "update"
   | "system";
 
@@ -26,7 +27,8 @@ export type NotificationAction =
   | { type: "open-model-picker"; providerIds: string[] }
   | { type: "reload-engine" }
   | { type: "open-extensions-marketplace"; pluginName?: string }
-  | { type: "install-marketplace-plugin"; pluginName: string };
+  | { type: "install-marketplace-plugin"; pluginName: string }
+  | { type: "open-product-task"; taskId: string };
 
 export type AppNotification = {
   id: string;
@@ -43,6 +45,7 @@ export type AppNotification = {
   dedupeKey?: string;
   action?: NotificationAction;
   actionLabel?: string;
+  scopeKey?: string;
 };
 
 export type NotificationInput = {
@@ -53,6 +56,7 @@ export type NotificationInput = {
   dedupeKey?: string;
   action?: NotificationAction;
   actionLabel?: string;
+  scopeKey?: string;
   source?: {
     key: string;
     version: number;
@@ -70,8 +74,9 @@ type NotificationStore = {
   notifications: AppNotification[];
   sourceVersions: Record<string, NotificationSourceVersion>;
   add: (input: NotificationInput) => void;
-  markAllRead: () => void;
-  clearAll: () => void;
+  markAllRead: (scopeKey?: string | null) => void;
+  clearAll: (scopeKey?: string | null) => void;
+  advanceSource: (key: string, version: number) => void;
 };
 
 function prune(notifications: AppNotification[]): AppNotification[] {
@@ -100,7 +105,7 @@ function pruneSourceVersions(
 }
 
 const SEVERITIES: NotificationSeverity[] = ["info", "success", "warning", "error"];
-const KINDS: NotificationKind[] = ["providers", "reload", "cloud", "update", "system"];
+const KINDS: NotificationKind[] = ["providers", "reload", "cloud", "tasks", "update", "system"];
 
 function isSeverity(value: unknown): value is NotificationSeverity {
   return typeof value === "string" && SEVERITIES.some((entry) => entry === value);
@@ -116,6 +121,7 @@ function isAction(value: unknown): value is NotificationAction {
   if (type === "reload-engine") return true;
   if (type === "open-extensions-marketplace") return true;
   if (type === "install-marketplace-plugin") return true;
+  if (type === "open-product-task") return typeof Reflect.get(value, "taskId") === "string";
   if (type === "open-model-picker") {
     const providerIds = Reflect.get(value, "providerIds");
     return Array.isArray(providerIds) && providerIds.every((id) => typeof id === "string");
@@ -141,6 +147,7 @@ function sanitizeNotifications(value: unknown): AppNotification[] {
     const dedupeKey = Reflect.get(entry, "dedupeKey");
     const action = Reflect.get(entry, "action");
     const actionLabel = Reflect.get(entry, "actionLabel");
+    const scopeKey = Reflect.get(entry, "scopeKey");
     if (typeof id !== "string" || typeof title !== "string") continue;
     if (!isKind(kind) || !isSeverity(severity)) continue;
     if (typeof createdAt !== "number" || typeof updatedAt !== "number") continue;
@@ -157,6 +164,7 @@ function sanitizeNotifications(value: unknown): AppNotification[] {
       dedupeKey: typeof dedupeKey === "string" ? dedupeKey : undefined,
       action: isAction(action) ? action : undefined,
       actionLabel: typeof actionLabel === "string" ? actionLabel : undefined,
+      scopeKey: typeof scopeKey === "string" ? scopeKey : undefined,
     });
   }
   return notifications;
@@ -169,7 +177,7 @@ function sanitizeSourceVersions(value: unknown): Record<string, NotificationSour
     if (!key.trim() || typeof entry !== "object" || entry === null) continue;
     const version = Reflect.get(entry, "version");
     const updatedAt = Reflect.get(entry, "updatedAt");
-    if (!Number.isSafeInteger(version) || version <= 0 || typeof updatedAt !== "number" || !Number.isFinite(updatedAt)) {
+    if (!Number.isSafeInteger(version) || version < 0 || typeof updatedAt !== "number" || !Number.isFinite(updatedAt)) {
       continue;
     }
     sourceVersions[key] = { version, updatedAt };
@@ -224,6 +232,7 @@ export const useNotificationStore = create<NotificationStore>()(
                 body: input.body ?? existing.body,
                 action: input.action ?? existing.action,
                 actionLabel: input.actionLabel ?? existing.actionLabel,
+                scopeKey: input.scopeKey ?? existing.scopeKey,
                 count: existing.count + 1,
                 updatedAt: now,
               };
@@ -249,22 +258,32 @@ export const useNotificationStore = create<NotificationStore>()(
             dedupeKey: input.dedupeKey,
             action: input.action,
             actionLabel: input.actionLabel,
+            scopeKey: input.scopeKey,
           };
           return { sourceVersions, notifications: prune([notification, ...state.notifications]) };
         }),
-      markAllRead: () =>
+      markAllRead: (scopeKey) =>
         set((state) => {
-          if (!state.notifications.some((notification) => notification.readAt === null)) {
+          if (!state.notifications.some((notification) => notification.readAt === null && (notification.kind !== "tasks" || notification.scopeKey === scopeKey))) {
             return state;
           }
           const now = Date.now();
           return {
             notifications: state.notifications.map((notification) =>
-              notification.readAt === null ? { ...notification, readAt: now } : notification,
+              notification.readAt === null && (notification.kind !== "tasks" || notification.scopeKey === scopeKey) ? { ...notification, readAt: now } : notification,
             ),
           };
         }),
-      clearAll: () => set({ notifications: [] }),
+      clearAll: (scopeKey) => set((state) => ({
+        notifications: scopeKey === undefined
+          ? []
+          : state.notifications.filter((notification) => !isNotificationVisible(notification, scopeKey)),
+      })),
+      advanceSource: (key, version) => set((state) => {
+        const sourceKey = key.trim();
+        if (!sourceKey || !Number.isSafeInteger(version) || version < 0 || state.sourceVersions[sourceKey]?.version !== undefined && state.sourceVersions[sourceKey]!.version >= version) return state;
+        return { sourceVersions: pruneSourceVersions({ ...state.sourceVersions, [sourceKey]: { version, updatedAt: Date.now() } }) };
+      }),
     }),
     {
       name: PERSISTED_NOTIFICATION_STORE_KEY,
@@ -292,10 +311,18 @@ export const useNotificationStore = create<NotificationStore>()(
   ),
 );
 
-export function useUnreadNotificationCount(): number {
+export function productTaskNotificationScopeKey(baseUrl: string, userId: string, organizationId: string): string {
+  return JSON.stringify(["product-task-events", baseUrl.trim().replace(/\/+$/, ""), userId.trim(), organizationId.trim()]);
+}
+
+export function isNotificationVisible(notification: AppNotification, taskScopeKey: string | null): boolean {
+  return notification.kind !== "tasks" || Boolean(taskScopeKey && notification.scopeKey === taskScopeKey);
+}
+
+export function useUnreadNotificationCount(taskScopeKey: string | null = null): number {
   return useNotificationStore((state) =>
     state.notifications.reduce(
-      (total, notification) => total + (notification.readAt === null ? 1 : 0),
+      (total, notification) => total + (notification.readAt === null && isNotificationVisible(notification, taskScopeKey) ? 1 : 0),
       0,
     ),
   );

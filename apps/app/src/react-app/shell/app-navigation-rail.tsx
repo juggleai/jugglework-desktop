@@ -46,7 +46,8 @@ import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider";
 import { useJuggleChatStore } from "@/react-app/domains/jugglechat/store";
 import { useUpdateCheckRequestStore } from "@/react-app/domains/settings/state/update-check-request";
 import { useDesktopUpdateIndicatorStore } from "@/react-app/domains/settings/state/desktop-update-indicator-store";
-import { useNotificationStore } from "@/react-app/kernel/notification-store";
+import { isNotificationVisible, productTaskNotificationScopeKey, useNotificationStore } from "@/react-app/kernel/notification-store";
+import { useCloudSession } from "@/react-app/domains/settings/cloud/cloud-session-provider";
 import { usePlatform } from "@/react-app/kernel/platform";
 import { setTaskScope, useTaskScope, type TaskScope } from "@/react-app/domains/session/sidebar/task-scope-store";
 import { useLocalWorkspaceIndicator } from "@/react-app/domains/session/sidebar/workspace-indicator-store";
@@ -164,6 +165,37 @@ function AutomationRailIcon({ active }: { active: boolean }) {
   );
 }
 
+function TaskRailIcon({ active }: { active: boolean }) {
+  const detailColor = active ? "var(--dls-active)" : "currentColor";
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      fill="none"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      data-task-rail-icon
+    >
+      <rect
+        x="3"
+        y="3"
+        width="18"
+        height="18"
+        rx="3"
+        fill={active ? "currentColor" : "none"}
+        stroke={active ? "none" : "currentColor"}
+      />
+      <path
+        d="m7.5 12 3 3 6.5-7"
+        fill="none"
+        stroke={detailColor}
+        strokeWidth="2.15"
+        data-task-rail-check
+      />
+    </svg>
+  );
+}
+
 function ToonFactoryRailIcon({ active }: { active: boolean }) {
   const detailColor = active ? "var(--dls-active)" : "currentColor";
   const bodyFill = active ? "currentColor" : "none";
@@ -225,6 +257,12 @@ function RailButton({
       onMouseLeave={() => {
         onPreviewMenuChange?.(null);
         if (previewScope) onWorkspacePreviewChange?.(previewScope, false);
+        if (appPreviewTarget) onAppPreviewChange?.(appPreviewTarget, false);
+      }}
+      onFocus={() => {
+        if (appPreviewTarget) onAppPreviewChange?.(appPreviewTarget, true);
+      }}
+      onBlur={() => {
         if (appPreviewTarget) onAppPreviewChange?.(appPreviewTarget, false);
       }}
       data-testid={testId}
@@ -304,15 +342,24 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
     switchOrganization,
     signOut,
   } = useDenAuth();
+  const cloud = useCloudSession();
+  const taskNotificationScopeKey = user?.id && activeOrganization?.id ? productTaskNotificationScopeKey(cloud.baseUrl, user.id, activeOrganization.id) : null;
   const taskScope = useTaskScope();
   const automationsActive = location.pathname.startsWith("/automations");
+  const tasksActive = location.pathname.startsWith("/tasks");
   const { hasActiveRuns } = useAutomationActivity();
   const localWorkspaceIndicator = useLocalWorkspaceIndicator();
   const chatView = useJuggleChatStore((state) => state.view);
   const totalUnreadCount = useJuggleChatStore((state) => state.totalUnreadCount);
   const notificationUnreadCount = useNotificationStore((state) => (
     state.notifications.reduce(
-      (count, notification) => count + (notification.readAt === null ? 1 : 0),
+      (count, notification) => count + (notification.readAt === null && (notification.kind !== "tasks" || isNotificationVisible(notification, taskNotificationScopeKey)) ? 1 : 0),
+      0,
+    )
+  ));
+  const taskUnreadCount = useNotificationStore((state) => (
+    state.notifications.reduce(
+      (count, notification) => count + (notification.kind === "tasks" && notification.readAt === null && isNotificationVisible(notification, taskNotificationScopeKey) ? 1 : 0),
       0,
     )
   ));
@@ -369,6 +416,12 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
     navigate(workspaceToonFactoryRoute(workspaceId));
   };
   const toggleToonFactoryPinned = () => setPinnedNavigationItems(setAppNavigationItemPinned("toon-factory", !toonFactoryPinned));
+  const tasksPinned = pinnedNavigationItems.includes("tasks");
+  const openTasks = () => {
+    setNavigationMenuOpen(false);
+    navigate("/tasks");
+  };
+  const toggleTasksPinned = () => setPinnedNavigationItems(setAppNavigationItemPinned("tasks", !tasksPinned));
   const reviewsPinned = pinnedNavigationItems.includes("reviews");
   const openReviews = () => {
     setNavigationMenuOpen(false);
@@ -536,16 +589,23 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
                 title={t("navigation.more")}
                 data-testid="app-rail-more"
                 data-app-rail-button
-                data-active={(navigationMenuOpen || (props.reviewsActive && !reviewsPinned) || (toonFactoryActive && !toonFactoryPinned)) ? "true" : undefined}
+                data-active={(navigationMenuOpen || (tasksActive && !tasksPinned) || (props.reviewsActive && !reviewsPinned) || (toonFactoryActive && !toonFactoryPinned)) ? "true" : undefined}
                 className={cn(
                   "relative flex size-9 items-center justify-center rounded-xl text-dls-secondary/80 transition-[background-color,color,transform] duration-150 mac:titlebar-no-drag",
                   "hover:bg-dls-hover hover:text-dls-text active:scale-[0.96]",
                   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/35 focus-visible:ring-offset-1 focus-visible:ring-offset-dls-sidebar",
                   "data-popup-open:bg-dls-active data-popup-open:text-dls-text",
-                  (navigationMenuOpen || (props.reviewsActive && !reviewsPinned) || (toonFactoryActive && !toonFactoryPinned)) && "bg-dls-active text-dls-text",
+                  (navigationMenuOpen || (tasksActive && !tasksPinned) || (props.reviewsActive && !reviewsPinned) || (toonFactoryActive && !toonFactoryPinned)) && "bg-dls-active text-dls-text",
                 )}
               >
                 <Ellipsis className="size-5" strokeWidth={2} />
+                {!tasksPinned && taskUnreadCount > 0 ? (
+                  <span
+                    className="absolute right-0 top-0 size-2.5 rounded-full border-2 border-dls-sidebar bg-red-9"
+                    aria-hidden="true"
+                    data-task-menu-unread-dot
+                  />
+                ) : null}
               </button>
             )}
           />
@@ -556,6 +616,48 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
             className="w-[180px] rounded-2xl bg-popover/95 p-0.5 shadow-[0_18px_48px_rgba(0,0,0,0.20)] ring-1 ring-foreground/10 backdrop-blur-2xl"
             data-testid="app-navigation-more-menu"
           >
+            <div
+              className="group flex items-center gap-1 rounded-2xl transition-colors hover:bg-accent focus-within:bg-accent"
+              data-testid="app-navigation-more-tasks-row"
+            >
+              <DropdownMenuItem
+                onClick={openTasks}
+                className="min-w-0 flex-1 bg-transparent py-[5px] focus:bg-transparent! data-highlighted:bg-transparent! [&>svg]:size-5"
+                data-testid="app-navigation-more-tasks"
+              >
+                <TaskRailIcon active={tasksActive} />
+                <span className="min-w-0 flex-1 truncate">{t("navigation.tasks")}</span>
+                {taskUnreadCount > 0 ? (
+                  <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-red-9 px-1 text-[10px] font-semibold leading-none text-white" aria-hidden="true">
+                    {taskUnreadCount > 99 ? "99+" : taskUnreadCount}
+                  </span>
+                ) : null}
+              </DropdownMenuItem>
+              <button
+                type="button"
+                aria-label={tasksPinned ? t("navigation.unpin_item") : t("navigation.pin_item")}
+                title={tasksPinned ? t("navigation.unpin_item") : t("navigation.pin_item")}
+                tabIndex={0}
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  toggleTasksPinned();
+                }}
+                className={cn(
+                  "flex size-8 shrink-0 items-center justify-center rounded-xl text-muted-foreground transition-[background-color,color,opacity,transform] duration-150",
+                  "hover:text-popover-foreground active:scale-[0.94]",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/35",
+                  tasksPinned
+                    ? "text-popover-foreground opacity-100"
+                    : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 focus:pointer-events-auto focus:opacity-100",
+                )}
+                data-testid="app-navigation-pin-tasks"
+                data-pinned={tasksPinned ? "true" : undefined}
+              >
+                <Pin className={cn("size-4", tasksPinned && "fill-current")} />
+              </button>
+            </div>
             <div
               className="group flex items-center gap-1 rounded-2xl transition-colors hover:bg-accent focus-within:bg-accent"
               data-testid="app-navigation-more-reviews-row"
@@ -633,13 +735,28 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
             </div>
           </DropdownMenuContent>
         </DropdownMenu>
-        {reviewsPinned || toonFactoryPinned ? (
+        {tasksPinned || reviewsPinned || toonFactoryPinned ? (
           <div className="mt-0.5 flex flex-col items-center gap-2" data-app-navigation-pinned-items>
             <div
               className="h-px w-6 rounded-full bg-dls-secondary/20"
               aria-hidden="true"
               data-testid="app-navigation-pinned-separator"
             />
+            {tasksPinned ? (
+            <RailButton
+              label={t("navigation.tasks")}
+              active={tasksActive}
+              onClick={openTasks}
+              testId="app-rail-pinned-tasks"
+              badge={taskUnreadCount}
+              onPreviewMenuChange={props.onPreviewMenuChange}
+              appPreviewTarget={tasksActive ? "tasks" : undefined}
+              onAppPreviewChange={appSidebarPreview.onTriggerChange}
+              showTooltip={!tasksActive || !appSidebarPreview.enabled}
+            >
+              <TaskRailIcon active={tasksActive} />
+            </RailButton>
+            ) : null}
             {reviewsPinned ? (
             <RailButton
               label={t("navigation.reviews")}

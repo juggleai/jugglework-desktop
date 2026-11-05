@@ -14,6 +14,8 @@ import { cn } from "@/lib/utils";
 import { t } from "@/i18n";
 import { LayoutStack } from "@/react-app/domains/settings/settings-layout";
 import {
+  isNotificationVisible,
+  productTaskNotificationScopeKey,
   useNotificationStore,
   type AppNotification,
   type NotificationSeverity,
@@ -23,6 +25,7 @@ import { requestOpenModelPicker } from "./new-providers-listener";
 import { useControlAction, type JuggleWorkControlAction } from "./control/control-provider";
 import { openNotificationCenterEvent } from "./notifications";
 import { useReloadCoordinator } from "./reload-coordinator";
+import { useCloudSession } from "@/react-app/domains/settings/cloud/cloud-session-provider";
 
 const SEVERITY_ICONS: Record<NotificationSeverity, LucideIcon> = {
   info: Info,
@@ -55,7 +58,13 @@ function formatTimeAgo(timestamp: number): string {
  * event available even though the notification UI now lives in Settings.
  */
 export function NotificationCenterController() {
-  const notifications = useNotificationStore((state) => state.notifications);
+  const cloud = useCloudSession();
+  const taskScopeKey = cloud.user?.id && cloud.activeOrganization?.id ? productTaskNotificationScopeKey(cloud.baseUrl, cloud.user.id, cloud.activeOrganization.id) : null;
+  const allNotifications = useNotificationStore((state) => state.notifications);
+  const notifications = useMemo(
+    () => allNotifications.filter((notification) => isNotificationVisible(notification, taskScopeKey)),
+    [allNotifications, taskScopeKey],
+  );
   const navigate = useNavigate();
   const notificationsListAction = useMemo<JuggleWorkControlAction>(() => ({
     id: "notifications.list",
@@ -89,7 +98,13 @@ export function NotificationCenterController() {
 
 /** 在全局设置中渲染完整的通知中心。 */
 export function NotificationCenterView() {
-  const notifications = useNotificationStore((state) => state.notifications);
+  const cloud = useCloudSession();
+  const taskScopeKey = cloud.user?.id && cloud.activeOrganization?.id ? productTaskNotificationScopeKey(cloud.baseUrl, cloud.user.id, cloud.activeOrganization.id) : null;
+  const allNotifications = useNotificationStore((state) => state.notifications);
+  const notifications = useMemo(
+    () => allNotifications.filter((notification) => isNotificationVisible(notification, taskScopeKey)),
+    [allNotifications, taskScopeKey],
+  );
   const markAllRead = useNotificationStore((state) => state.markAllRead);
   const clearAll = useNotificationStore((state) => state.clearAll);
   const reloadCoordinator = useReloadCoordinator();
@@ -99,15 +114,15 @@ export function NotificationCenterView() {
   useEffect(() => {
     const isVisible = /\/settings\/notifications\/?$/.test(location.pathname);
     if (isVisible && notifications.some((notification) => notification.readAt === null)) {
-      markAllRead();
+      markAllRead(taskScopeKey);
     }
-  }, [location.pathname, markAllRead, notifications]);
+  }, [location.pathname, markAllRead, notifications, taskScopeKey]);
 
   const runAction = useCallback(
     (notification: AppNotification) => {
       const action = notification.action;
       if (!action) return;
-      markAllRead();
+      markAllRead(taskScopeKey);
       if (action.type === "open-model-picker") {
         requestOpenModelPicker(action.providerIds);
       } else if (action.type === "reload-engine") {
@@ -116,9 +131,11 @@ export function NotificationCenterView() {
         navigate("/settings/extensions");
       } else if (action.type === "install-marketplace-plugin") {
         navigate("/settings/extensions");
+      } else if (action.type === "open-product-task") {
+        navigate(`/tasks/${encodeURIComponent(action.taskId)}`);
       }
     },
-    [markAllRead, navigate, reloadCoordinator],
+    [markAllRead, navigate, reloadCoordinator, taskScopeKey],
   );
 
   return (
@@ -129,7 +146,7 @@ export function NotificationCenterView() {
             variant="ghost"
             size="sm"
             className="text-xs text-muted-foreground"
-            onClick={clearAll}
+            onClick={() => clearAll(taskScopeKey)}
           >
             {t("notifications.clear_all")}
           </Button>

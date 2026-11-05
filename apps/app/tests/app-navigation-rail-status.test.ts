@@ -50,7 +50,7 @@ describe("Code Review navigation", () => {
   test("shares the pinned separator while keeping the Review entry conditional", () => {
     const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
     const pinnedSection = source.slice(
-      source.indexOf("{reviewsPinned || toonFactoryPinned ? ("),
+      source.indexOf("{tasksPinned || reviewsPinned || toonFactoryPinned ? ("),
       source.indexOf("</nav>"),
     );
     const pinnedBlock = source.slice(source.indexOf("{reviewsPinned ? ("), source.indexOf(") : null}", source.indexOf("{reviewsPinned ? (")));
@@ -170,6 +170,51 @@ describe("navigation rail visual proportions", () => {
     expect(source.indexOf('data-testid="app-rail-more"')).toBeLessThan(source.indexOf('testId="app-rail-pinned-reviews"'));
   });
 
+  test("moves Tasks into More while preserving active and unread feedback", () => {
+    const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
+    expect(source).not.toContain('testId="app-rail-tasks"');
+    expect(source).toContain('data-testid="app-navigation-more-tasks"');
+    expect(source).toContain('data-testid="app-navigation-pin-tasks"');
+    expect(source).toContain('setAppNavigationItemPinned("tasks", !tasksPinned)');
+    expect(source).toContain('testId="app-rail-pinned-tasks"');
+    expect(source).toContain('onClick={openTasks}');
+    expect(source).toContain('navigationMenuOpen || (tasksActive && !tasksPinned)');
+    expect(source).toContain('data-task-menu-unread-dot');
+    expect(source).toContain('taskUnreadCount > 99 ? "99+" : taskUnreadCount');
+  });
+
+  test("keeps only the pinned Tasks destination selected and supports keyboard preview", () => {
+    const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
+    expect(source).toContain('(tasksActive && !tasksPinned)');
+    expect(source).toContain('onFocus={() => {');
+    expect(source).toContain('onBlur={() => {');
+    expect(source).toContain('onAppPreviewChange?.(appPreviewTarget, true)');
+  });
+
+  test("opens the active pinned Tasks sidebar preview without changing the More row", () => {
+    const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
+    const pinnedTasks = source.slice(source.indexOf("{tasksPinned ? ("), source.indexOf(") : null}", source.indexOf("{tasksPinned ? (")));
+    const moreTasks = source.slice(source.indexOf('data-testid="app-navigation-more-tasks-row"'), source.indexOf('data-testid="app-navigation-pin-tasks"'));
+    expect(pinnedTasks).toContain('appPreviewTarget={tasksActive ? "tasks" : undefined}');
+    expect(pinnedTasks).toContain('onAppPreviewChange={appSidebarPreview.onTriggerChange}');
+    expect(pinnedTasks).toContain('showTooltip={!tasksActive || !appSidebarPreview.enabled}');
+    expect(moreTasks).not.toContain("appPreviewTarget");
+  });
+
+  test("matches the Tasks menu icon and pin affordance to sibling menu rows", () => {
+    const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
+    const rowStart = source.lastIndexOf("<div", source.indexOf('data-testid="app-navigation-more-tasks-row"'));
+    const rowEnd = source.indexOf("</div>", source.indexOf('data-testid="app-navigation-more-tasks-row"'));
+    const row = source.slice(rowStart, rowEnd);
+    expect(row).toContain('[&>svg]:size-5');
+    expect(row).toContain('hover:bg-accent focus-within:bg-accent');
+    expect(row).not.toContain('tasksActive && "bg-accent');
+    expect(row).toContain('group-hover:pointer-events-auto group-hover:opacity-100');
+    expect(row).toContain('tabIndex={0}');
+    expect(row).toContain('focus:pointer-events-auto focus:opacity-100');
+    expect(row).toContain('<Pin className={cn("size-4", tasksPinned && "fill-current")} />');
+  });
+
   test("places Plugins immediately after scheduled tasks and opens the Apps surface", () => {
     const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
     expect(source).toContain('testId="app-rail-plugins"');
@@ -206,11 +251,15 @@ describe("navigation rail visual proportions", () => {
     expect(automation).toContain('tooltipLabel={t("automation.tabs.tasks")}');
   });
 
-  test("keeps selected Automation and Toon Factory icon details visible", () => {
+  test("keeps selected Automation, Tasks, and Toon Factory icon details visible", () => {
     const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
-    const automationIcon = source.slice(source.indexOf("function AutomationRailIcon"), source.indexOf("function ToonFactoryRailIcon"));
+    const automationIcon = source.slice(source.indexOf("function AutomationRailIcon"), source.indexOf("function TaskRailIcon"));
+    const taskIcon = source.slice(source.indexOf("function TaskRailIcon"), source.indexOf("function ToonFactoryRailIcon"));
     const toonFactoryIcon = source.slice(source.indexOf("function ToonFactoryRailIcon"), source.indexOf("function RailButton"));
     expect(automationIcon).toContain('stroke={detailColor} data-automation-clock-hands');
+    expect(taskIcon).toContain('active ? "var(--dls-active)" : "currentColor"');
+    expect(taskIcon).toContain('stroke={detailColor}');
+    expect(taskIcon).toContain('data-task-rail-check');
     expect(toonFactoryIcon.match(/data-toon-factory-clapper-detail/g)).toHaveLength(2);
     expect(toonFactoryIcon).toContain('active ? "var(--dls-active)" : "currentColor"');
     expect(toonFactoryIcon).toContain('const bodyStroke = active ? "none" : "currentColor"');

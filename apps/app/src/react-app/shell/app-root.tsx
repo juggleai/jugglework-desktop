@@ -48,6 +48,7 @@ import { AutomationRunNotificationCoordinator } from "../domains/automations/aut
 import { AutomationActivityProvider } from "../domains/automations/automation-activity-provider";
 import { HostMarketplacePluginsProvider } from "../domains/settings/state/host-marketplace-plugins-provider";
 import { MainOfficeComposerBridge } from "../domains/session/surface/composer/office-composer-bridge";
+import { ProductTaskNotificationCoordinator } from "../domains/tasks/product-task-notification-coordinator";
 
 type DenSigninGateProps = {
   children: ReactNode;
@@ -327,63 +328,64 @@ export function AppRoot() {
       <DevProfiler id="AppRoot">
         <MainOfficeComposerBridge />
         <ShellConfigProvider>
-        <AppMenuProvider>
-        <JuggleWorkControlProvider>
-          <JuggleWorkRouteControlActions />
-          <NotificationCenterController />
-          <JuggleWorkContextPublisher />
-          <DenAuthControlActions />
-          <BrandThemeControlActions />
-          <RootJuggleWorkServerProvider>
-          <FileWindowSessionStopCoordinator />
-          <DenSigninGate>
-                <AutomationActivityProvider>
-                <HostMarketplacePluginsProvider>
-                <AutomationRunNotificationCoordinator />
-                <Routes>
-              <Route
-                path="/signin"
-                element={
-                  <DevProfiler id="SigninRoute">
-                    <ForcedSigninPage developerMode={false} />
-                  </DevProfiler>
-                }
-              />
-              <Route
-                path="/onboarding"
-                element={
-                  <DevProfiler id="OrgOnboarding">
-                    <OrgOnboardingPage />
-                  </DevProfiler>
-                }
-              />
-              <Route
-                path="/welcome"
-                element={
-                  <DevProfiler id="WelcomeRoute">
-                    <WelcomeRoute />
-                  </DevProfiler>
-                }
-              />
+          <AppMenuProvider>
+            <JuggleWorkControlProvider>
+              <JuggleWorkRouteControlActions />
+              <NotificationCenterController />
+              <JuggleWorkContextPublisher />
+              <DenAuthControlActions />
+              <BrandThemeControlActions />
+              <RootJuggleWorkServerProvider>
+                <FileWindowSessionStopCoordinator />
+                <DenSigninGate>
+                  <AutomationActivityProvider>
+                    <HostMarketplacePluginsProvider>
+                      <AutomationRunNotificationCoordinator />
+                      <ProductTaskNotificationCoordinator />
+                      <Routes>
+                        <Route
+                          path="/signin"
+                          element={
+                            <DevProfiler id="SigninRoute">
+                              <ForcedSigninPage developerMode={false} />
+                            </DevProfiler>
+                          }
+                        />
+                        <Route
+                          path="/onboarding"
+                          element={
+                            <DevProfiler id="OrgOnboarding">
+                              <OrgOnboardingPage />
+                            </DevProfiler>
+                          }
+                        />
+                        <Route
+                          path="/welcome"
+                          element={
+                            <DevProfiler id="WelcomeRoute">
+                              <WelcomeRoute />
+                            </DevProfiler>
+                          }
+                        />
 
-              {/* Default + fallback: land on the session view. Users open
-                  settings deliberately via the sidebar or command palette. */}
-              <Route path="/" element={<Navigate to="/session" replace />} />
-              <Route
-                path="*"
-                element={
-                  <DevProfiler id="WorkspaceAppRoute">
-                    <WorkspaceAppRoute />
-                  </DevProfiler>
-                }
-              />
-                </Routes>
-                </HostMarketplacePluginsProvider>
-                </AutomationActivityProvider>
-          </DenSigninGate>
-          </RootJuggleWorkServerProvider>
-        </JuggleWorkControlProvider>
-        </AppMenuProvider>
+                        {/* Default + fallback: land on the session view. Users open
+                            settings deliberately via the sidebar or command palette. */}
+                        <Route path="/" element={<Navigate to="/session" replace />} />
+                        <Route
+                          path="*"
+                          element={
+                            <DevProfiler id="WorkspaceAppRoute">
+                              <WorkspaceAppRoute />
+                            </DevProfiler>
+                          }
+                        />
+                      </Routes>
+                    </HostMarketplacePluginsProvider>
+                  </AutomationActivityProvider>
+                </DenSigninGate>
+              </RootJuggleWorkServerProvider>
+            </JuggleWorkControlProvider>
+          </AppMenuProvider>
         </ShellConfigProvider>
         <LoadingOverlay />
       </DevProfiler>

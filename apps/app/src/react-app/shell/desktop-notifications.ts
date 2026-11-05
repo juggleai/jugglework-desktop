@@ -18,7 +18,8 @@ export type DesktopNotificationEvent =
   | { type: "video.completed"; sessionId: string; detail?: string }
   | { type: "video.failed"; sessionId: string; detail?: string }
   | { type: "automation.succeeded"; automationName: string; href: string }
-  | { type: "automation.failed"; automationName: string; errorText?: string; href: string };
+  | { type: "automation.failed"; automationName: string; errorText?: string; href: string }
+  | { type: "product-task.reminder"; taskTitle: string; href: string };
 
 type NotificationCopy = {
   title: string;
@@ -105,6 +106,12 @@ function copyForEvent(event: DesktopNotificationEvent): NotificationCopy {
       return {
         title: t("automation.notification_failed", { name: event.automationName }),
         body: event.errorText?.trim() || t("automation.notification_failed_body"),
+        importance: "important",
+      };
+    case "product-task.reminder":
+      return {
+        title: t("notifications.task_reminder_title"),
+        body: event.taskTitle,
         importance: "important",
       };
   }

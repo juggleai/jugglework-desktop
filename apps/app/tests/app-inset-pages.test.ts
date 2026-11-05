@@ -14,16 +14,18 @@ describe("secondary app inset shells", () => {
     expect(source).toContain("data-app-inset-surface");
   });
 
-  test("places Automation, Review, Chat, Contacts, and Toon Factory inside the shared surface", () => {
+  test("places Tasks, Automation, Review, Chat, Contacts, and Toon Factory inside the shared surface", () => {
+    const tasks = read("react-app/domains/tasks/task-page.tsx");
     const automation = read("react-app/domains/automations/automation-page.tsx");
     const reviews = read("react-app/domains/reviews/review-page.tsx");
     const chat = read("react-app/shell/chat-page.tsx");
     const toonFactory = read("react-app/shell/toonFactoryPage.tsx");
-    for (const source of [automation, reviews, chat]) {
+    for (const source of [tasks, automation, reviews, chat]) {
       expect(source).toContain("bg-dls-sidebar mac:titlebar-drag");
       expect(source).toContain("<AppInsetSurface");
     }
     expect(automation).toContain('testId="automation-inset-surface"');
+    expect(tasks).toContain('testId="tasks-inset-surface"');
     expect(reviews).toContain('testId="review-inset-surface"');
     expect(chat).toContain('testId="chat-inset-surface"');
     expect(chat).toContain("<JuggleChatApp");
@@ -75,7 +77,8 @@ describe("secondary app inset shells", () => {
     const apps = read("react-app/shell/apps-page.tsx");
     const pluginSidebar = read("react-app/domains/settings/shell/customization-catalog-sidebar.tsx");
 
-    for (const source of [automation, reviews, apps]) {
+    const tasks = read("react-app/domains/tasks/task-page.tsx");
+    for (const source of [automation, reviews, apps, tasks]) {
       expect(source).toContain("useWorkspaceShellLayout({ expandedRightWidth: 520 })");
       expect(source).toContain('"--jugglework-left-sidebar-width": appInsetSidebarCssWidth(leftSidebarWidth)');
       expect(source).toContain("<AppSecondarySidebarResizeHandle");
@@ -109,7 +112,7 @@ describe("secondary app inset shells", () => {
     expect(topControls).toContain("rtl:rotate-180");
 
     const settingsRoute = read("react-app/shell/settings-route.tsx");
-    for (const source of [automation, reviews, settingsRoute]) {
+    for (const source of [automation, reviews, settingsRoute, tasks]) {
       expect(source).toContain("transition-[width] duration-200 ease-linear");
       expect(source).toContain("data-app-secondary-sidebar-frame");
     }
@@ -130,16 +133,18 @@ describe("secondary app inset shells", () => {
     expect(workspaceSidebar).toContain("data-session-list-surface");
   });
 
-  test("reveals collapsed Automation, Plugins, and Toon Factory sidebars as Rail hover flyouts", () => {
+  test("reveals collapsed Automation, Plugins, Tasks, and Toon Factory sidebars as Rail hover flyouts", () => {
     const automation = read("react-app/domains/automations/automation-page.tsx");
     const apps = read("react-app/shell/apps-page.tsx");
+    const tasks = read("react-app/domains/tasks/task-page.tsx");
+    const tasksSidebar = read("react-app/domains/tasks/tasks-sidebar.tsx");
     const settingsRoute = read("react-app/shell/settings-route.tsx");
     const previewHost = read("react-app/shell/app-navigation-sidebar-preview.tsx");
     const workspaceRoute = read("react-app/shell/workspace-app-route.tsx");
     const automationPreview = read("react-app/domains/automations/automation-sidebar-preview.tsx");
 
     expect(workspaceRoute).toContain("<AppNavigationSidebarPreviewProvider>");
-    expect(previewHost).toContain('AppNavigationSidebarPreviewTarget = "automation" | "plugins" | "toon-factory"');
+    expect(previewHost).toContain('AppNavigationSidebarPreviewTarget = "automation" | "plugins" | "tasks" | "toon-factory"');
     expect(previewHost).toContain("data-app-navigation-sidebar-preview={props.target}");
     expect(previewHost).toContain("left-[52px] top-11");
     expect(previewHost).toContain("rounded-[18px]");
@@ -147,14 +152,23 @@ describe("secondary app inset shells", () => {
     expect(previewHost).toContain("const CLOSE_DELAY = 120");
     expect(previewHost).toContain("pointerInsideRef.current");
     expect(previewHost).toContain("<AutomationSidebarPreview />");
+    expect(previewHost).toContain("<TasksSidebar preview");
     expect(previewHost).toContain("<ToonFactoryProjectSidebar preview");
     expect(previewHost).toContain("<CustomizationCatalogSidebar");
     expect(previewHost).toContain("usePublishToonFactorySidebar");
+    expect(previewHost).toContain("usePublishTasksSidebar");
+    expect(previewHost).toContain("publishTasksSidebar(registration)");
+    expect(previewHost).toContain("return () => publishTasksSidebar(null)");
     expect(automationPreview).toContain('data-testid="automation-sidebar-preview"');
     expect(automationPreview).toContain("rounded-[18px] border border-dls-border");
     expect(settingsRoute).toContain("usePublishAppNavigationPluginItems");
     const pluginSidebar = read("react-app/domains/settings/shell/customization-catalog-sidebar.tsx");
     expect(pluginSidebar).toContain('props.preview ? "rounded-[18px] border border-dls-border" : "border-r border-dls-border"');
+    expect(tasks).toContain("usePublishTasksSidebar(sidebarRegistration)");
+    expect(tasks).toContain("React.useMemo<TasksSidebarRegistration>");
+    expect(tasks).toContain("<TasksSidebar {...sidebarRegistration} />");
+    expect(tasksSidebar).toContain('data-testid={props.preview ? "tasks-sidebar-preview" : "tasks-sidebar"}');
+    expect(tasksSidebar).toContain('props.preview ? "rounded-[18px] border border-dls-border" : "border-r border-dls-border"');
     expect(previewHost).toContain("preview");
     expect(automation).not.toContain("useAppSecondarySidebarHoverPreview");
     expect(apps).not.toContain("useAppSecondarySidebarHoverPreview");
@@ -165,7 +179,7 @@ describe("secondary app inset shells", () => {
     const previewHost = read("react-app/shell/app-navigation-sidebar-preview.tsx");
     const wrapper = workspaceRoute.slice(workspaceRoute.indexOf("className={settingsVisible ||"), workspaceRoute.indexOf('data-testid="retained-session-surface"'));
     expect(workspaceRoute).toContain("navigationPreview.workspaceTarget");
-    expect(wrapper).toContain("settingsVisible || chatVisible || appsVisible || automationsVisible || reviewsVisible || toonFactoryVisible");
+    expect(wrapper).toContain("settingsVisible || chatVisible || appsVisible || automationsVisible || tasksVisible || reviewsVisible || toonFactoryVisible");
     expect(wrapper).toContain('"invisible absolute inset-0 z-50');
     expect(wrapper).toContain("[&_[data-session-list-preview=true]]:visible");
     expect(wrapper).toContain("[&_[data-session-list-preview=true]]:pointer-events-auto");
@@ -173,7 +187,7 @@ describe("secondary app inset shells", () => {
     expect(wrapper).toContain(': "hidden"');
     expect(wrapper).toContain(': "h-full min-h-0"');
     expect(wrapper).not.toContain("opacity-0");
-    expect(workspaceRoute).toContain("surfaceVisible={automationSessionVisible || !(settingsVisible || chatVisible || appsVisible || automationsVisible || reviewsVisible || toonFactoryVisible)}");
+    expect(workspaceRoute).toContain("surfaceVisible={automationSessionVisible || !(settingsVisible || chatVisible || appsVisible || automationsVisible || tasksVisible || reviewsVisible || toonFactoryVisible)}");
     expect(previewHost).toContain("workspaceTarget: TaskScope | null");
     expect(previewHost).toContain("onWorkspaceTriggerChange");
   });

@@ -9,6 +9,7 @@ import { ChatPage } from "./chat-page";
 import { SessionRoute } from "./session-route";
 import { SettingsRoute } from "./settings-route";
 import { AutomationPage } from "../domains/automations/automation-page";
+import { TaskPage } from "../domains/tasks/task-page";
 import { ReviewPage } from "../domains/reviews/review-page";
 import { AppNavigationSidebarPreviewProvider } from "./app-navigation-sidebar-preview";
 import { useAppNavigationSidebarPreview } from "./app-navigation-sidebar-preview";
@@ -166,6 +167,7 @@ function WorkspaceAppRouteContent() {
   const chatVisible = appPath.view === "chat";
   const appsVisible = appPath.view === "apps";
   const automationsVisible = appPath.view === "automations";
+  const tasksVisible = appPath.view === "tasks";
   const reviewsVisible = appPath.view === "reviews";
   const toonFactoryVisible = appPath.view === "toon-factory";
   const sessionPath = activeSession.workspaceId
@@ -178,7 +180,7 @@ function WorkspaceAppRouteContent() {
       routeSessionId={displayedSession.sessionId}
       embedded={automationSessionVisible}
       onSessionTargetChange={automationSessionVisible ? openAutomationSession : undefined}
-      surfaceVisible={automationSessionVisible || !(settingsVisible || chatVisible || appsVisible || automationsVisible || reviewsVisible || toonFactoryVisible)}
+      surfaceVisible={automationSessionVisible || !(settingsVisible || chatVisible || appsVisible || automationsVisible || tasksVisible || reviewsVisible || toonFactoryVisible)}
     />
   );
 
@@ -202,12 +204,12 @@ function WorkspaceAppRouteContent() {
     <div className="relative h-dvh min-h-screen w-full overflow-hidden">
       <div
         ref={retainedSessionHost}
-        className={settingsVisible || chatVisible || appsVisible || automationsVisible || reviewsVisible || toonFactoryVisible
+        className={settingsVisible || chatVisible || appsVisible || automationsVisible || tasksVisible || reviewsVisible || toonFactoryVisible
           ? navigationPreview.workspaceTarget
             ? "invisible absolute inset-0 z-50 h-full min-h-0 pointer-events-none [&_[data-session-list-preview=true]]:visible [&_[data-session-list-preview=true]]:pointer-events-auto [&_[data-session-preview-title-hover-guard]]:visible"
             : "hidden"
           : "h-full min-h-0"}
-        aria-hidden={(settingsVisible || chatVisible || appsVisible || automationsVisible || reviewsVisible || toonFactoryVisible) && !navigationPreview.workspaceTarget || undefined}
+        aria-hidden={(settingsVisible || chatVisible || appsVisible || automationsVisible || tasksVisible || reviewsVisible || toonFactoryVisible) && !navigationPreview.workspaceTarget || undefined}
         data-testid="retained-session-surface"
       >
         {/* surfaceVisible gates behavior, not paint. Only the preview list and
@@ -322,6 +324,23 @@ function WorkspaceAppRouteContent() {
             onSessionHostChange={setAutomationSessionHost}
             onClearSession={clearAutomationSession}
             sessionSelected={automationSessionVisible}
+            workspaceId={activeSession.workspaceId}
+            sessionPath={sessionPath}
+            onOpenAccount={() => openSurfaceSettings("cloud-account", location.pathname)}
+            onOpenApps={() => navigate(workspaceAppsRoute(activeSession.workspaceId))}
+            onOpenChat={() => navigate(workspaceChatRoute(activeSession.workspaceId))}
+            onOpenReviews={() => navigate(workspaceReviewsRoute(activeSession.workspaceId))}
+            onOpenSettings={() => openSurfaceSettings("preferences", location.pathname)}
+            onOpenTaskSearch={workspaceShellActions.openTaskSearch}
+            onOpenCreateWorkspace={workspaceShellActions.openCreateWorkspace}
+          />
+        </div>
+      ) : null}
+
+      {tasksVisible ? (
+        <div className="absolute inset-0" data-testid="workspace-tasks-surface">
+          <TaskPage
+            routeTaskId={appPath.view === "tasks" ? appPath.taskId : null}
             workspaceId={activeSession.workspaceId}
             sessionPath={sessionPath}
             onOpenAccount={() => openSurfaceSettings("cloud-account", location.pathname)}

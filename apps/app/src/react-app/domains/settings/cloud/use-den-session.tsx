@@ -410,7 +410,7 @@ export function useDenSession({
         });
         // Push to context immediately so consumers see the new org
         if (nextOrg) {
-          setActiveOrganization({ id: nextOrg.id, name: nextOrg.name, role: nextOrg.role, slug: nextOrg.slug, kind: nextOrg.kind });
+          setActiveOrganization({ id: nextOrg.id, name: nextOrg.name, role: nextOrg.role, slug: nextOrg.slug, kind: nextOrg.kind, orgMemberId: nextOrg.orgMemberId, membershipId: nextOrg.membershipId });
         } else if (!next) {
           setActiveOrganization(null);
         }
@@ -589,6 +589,8 @@ export function useDenSession({
           role: nextOrg.role,
           slug: nextOrg.slug,
           kind: nextOrg.kind,
+          orgMemberId: nextOrg.orgMemberId,
+          membershipId: nextOrg.membershipId,
         });
         await ensureDenActiveOrganization({ forceServerSync: true }).catch(() => null);
         dispatchDenSessionUpdated({

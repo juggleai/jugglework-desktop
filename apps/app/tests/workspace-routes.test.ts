@@ -85,6 +85,11 @@ describe("workspace app path parsing", () => {
     expect(parseWorkspaceAppPath("/workspace/%20/toon-factory")).toBeNull();
     expect(() => workspaceToonFactoryRoute("   ")).toThrow("workspaceId is required");
   });
+
+  test("parses global task routes", () => {
+    expect(parseWorkspaceAppPath("/tasks")).toEqual({ view: "tasks", workspaceId: null, taskId: null });
+    expect(parseWorkspaceAppPath("/tasks/task%2F42")).toEqual({ view: "tasks", workspaceId: null, taskId: "task/42" });
+  });
 });
 
 describe("settings return route", () => {
