@@ -62,7 +62,10 @@ export function useTransitionProductTask(client: DenClient, scope: ProductTaskSc
   return useMutation({
     retry: false,
     onMutate: () => captureScope(scope),
-    mutationFn: (input: { taskId: string; operation: "complete" | "cancel" | "reopen" | "restore"; expectedVersion: number; idempotencyKey: string }) => client.transitionProductTask(scope!.organizationId, input.taskId, input.operation, input),
+    mutationFn: (input: { taskId: string; operation: "complete" | "cancel" | "reopen" | "restore"; expectedVersion: number; idempotencyKey: string }) => client.transitionProductTask(scope!.organizationId, input.taskId, input.operation, {
+      expectedVersion: input.expectedVersion,
+      idempotencyKey: input.idempotencyKey,
+    }),
     onSuccess: async (result, _input, captured) => {
       if (!captured) return;
       queryClient.setQueryData(productTaskKeys.detail(captured.scope, result.task.id), result);

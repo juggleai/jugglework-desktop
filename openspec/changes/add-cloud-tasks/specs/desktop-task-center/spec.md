@@ -56,9 +56,13 @@ The Desktop SHALL render a rich workbench only for Assigned to me with exactly L
 - **WHEN** task-list loading fails after Assigned to me tasks load
 - **THEN** the Desktop keeps tasks rendered and shows a visible degraded-state banner with Retry
 
-#### Scenario: Inspect a task identifier
-- **WHEN** the Task ID field is visible
-- **THEN** the Desktop displays the full exact identifier in selectable monospaced text and provides an exact copy action
+#### Scenario: Inspect a task number
+- **WHEN** the Task number field is visible and the Server provides `displayNumber=100134`
+- **THEN** the Desktop displays selectable monospaced text `t100134`, exposes the full immutable internal ID as context, and provides an exact copy action for that internal ID
+
+#### Scenario: Read an older task without a display number
+- **WHEN** an otherwise valid older Server response omits `displayNumber`
+- **THEN** the Desktop keeps the task usable, displays a shortened internal ID as a temporary fallback, and still copies the complete immutable internal ID
 
 #### Scenario: Sort loaded tasks by start time
 - **WHEN** the user chooses Start sorting
@@ -76,6 +80,32 @@ The Desktop SHALL explicitly warn that completing a task with multiple assignees
 
 ### Requirement: Task creation surfaces
 The Desktop SHALL support full creation with title, description, assignees, start time, due time, priority, visibility, and task list. Assignees remain optional outside contextual defaults.
+
+Assigned to me List SHALL also support title-only inline creation. Activating New task in the list toolbar SHALL insert and focus an input row before the first task row, while activating New task in the final list row SHALL insert and focus an input row immediately below that trigger row.
+
+When an inline title input loses focus, the Desktop SHALL cancel the draft if its trimmed title is empty, or submit it as if Enter had been pressed when the trimmed title is non-empty. Enter and blur handling SHALL not create the same draft more than once.
+
+Changing the Assigned to me status filter SHALL preserve the mounted workbench and currently rendered task rows while the replacement query is pending. The Desktop SHALL use a local, non-blocking loading indicator instead of replacing the page with a loading state.
+
+The Assigned to me sort menu SHALL present each supported sort field as its own row with ascending and descending controls on that row. Choosing a field without an explicit direction SHALL default that field to descending order, while the active field and direction remain visually identifiable.
+
+The sort menu SHALL expose start time, due time, created time, updated time, and completed time. Priority remains a task property and filter but SHALL NOT appear as a sort-menu field. Start-time and completed-time sorting SHALL remain compatible with servers that do not accept those sort tokens by requesting the supported updated-time order and sorting the currently loaded tasks locally with null values last.
+
+The active sort field label and only its currently applied direction control SHALL use the accent color without a checkmark or persistent row background. The active field's opposite direction control SHALL remain hidden until that row is pointer-hovered. Inactive fields SHALL hide both direction controls until their row is pointer-hovered, including when the menu automatically focuses its first item, and row backgrounds SHALL appear only on hover.
+
+The List grouping menu SHALL support Start time and Due time in addition to no grouping, task list, and creator. Start-time grouping SHALL present Started, Today, Tomorrow, Next 7 days, Later, and Unscheduled in that order. Due-time grouping SHALL present Overdue, Today, Tomorrow, Next 7 days, Later, and Unscheduled in that order. Today and future buckets SHALL use the user's local calendar-day boundaries; Next 7 days includes local dates from the day after Tomorrow through seven days after Today.
+
+Every visible group SHALL render a header with its task count and an independent disclosure control. Groups with tasks start expanded, empty time groups start collapsed, and the user MAY expand or collapse any group without changing filters or task data. Expanding an empty group SHALL reveal its body rather than immediately collapsing it again.
+
+Every expanded group SHALL end with an inline New task action. A task created from a task-list group SHALL inherit that list; a task created from a start-time or due-time group SHALL inherit a representative local timestamp that remains in that bucket, while Unscheduled SHALL leave the corresponding timestamp empty. Creator grouping SHALL preserve the authoritative current creator rather than impersonating the displayed creator group.
+
+Each group header SHALL reveal a plus action on pointer hover or keyboard focus. Activating it SHALL expand the group if needed and open that group's inline task draft as the first row before existing tasks. The trailing New task action SHALL continue to open the draft after existing tasks. When Start time or Due time grouping is active, the workbench toolbar's New task action SHALL open a draft in the Today group with a corresponding Today start or due time.
+
+When Task list grouping is active, the workbench toolbar's New task action SHALL open its draft in the No task list group without a list assignment.
+
+The Assigned to me filter control SHALL open a wide condition-builder panel with a header, clear action, ordered When/And condition rows, removable rows, and an Add condition action. Its field selector SHALL list assignee, start time, due time, completed time, assigner, follower, creator, created time, and updated time in that order. Assignee, assigner, follower, and creator conditions SHALL support contains, does not contain, is empty, and is not empty operators. Contains and does-not-contain SHALL select one or more people from the current organization's member directory and display member avatars and names; empty operators SHALL not display a value selector. Active conditions SHALL contribute to the filter badge and SHALL map to the corresponding server list-query parameters.
+
+Creator group headers SHALL display the creator avatar and display name with the task count. Creator groups SHALL NOT expose header plus actions or per-group trailing New task rows because creator identity is authoritative. The toolbar New task action SHALL instead open its draft in the signed-in member's creator group, creating that group header when the loaded page has no current task from that member.
 
 #### Scenario: Create from Assigned to me
 - **WHEN** the current organization member can be identified and the user opens New task from Assigned to me

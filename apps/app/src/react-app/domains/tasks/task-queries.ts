@@ -1,4 +1,4 @@
-import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useInfiniteQuery, useQuery } from "@tanstack/react-query";
 
 import { DenApiError, type DenClient, type DenOrganizationMember, type DenProductTaskList, type DenProductTaskListOptions, type DenProductTaskMember, type DenProductTaskPage } from "@/app/lib/den";
 
@@ -91,7 +91,7 @@ export function useOrganizationMembers(input: { client: DenClient; scope: Produc
         }
       } catch (error) {
         const expectedUnavailable = error instanceof DenApiError && (error.status === 403 || error.status === 404);
-        if (!input.allowUnavailableFallback || !input.fallback || !expectedUnavailable) throw error;
+        if (!input.allowUnavailableFallback || !expectedUnavailable) throw error;
       }
       if (input.fallback && !members.some((member) => member.id === input.fallback!.id)) members.push(input.fallback);
       return members;
@@ -108,6 +108,7 @@ export function useProductTasks(input: { client: DenClient; scope: ProductTaskSc
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam, signal }) => input.client.listProductTasks(input.scope!.organizationId, { ...input.options, cursor: pageParam, limit: input.options.limit ?? 30 }, { signal }),
     getNextPageParam: (page) => page.nextCursor || undefined,
+    placeholderData: keepPreviousData,
     staleTime: 30_000,
     retry: (count, error) => !(typeof error === "object" && error && "status" in error && Number((error as { status: number }).status) < 500) && count < 2,
   });

@@ -72,6 +72,8 @@ export type DenOrganizationMember = {
 export type DenOrganizationMemberPage = { members: DenOrganizationMember[]; total: number; limit: number; offset: number };
 export type DenProductTask = {
   id: string;
+  /** Organization-scoped human-readable number. Null when reading an older server. */
+  displayNumber: number | null;
   creatorMemberId: string;
   listId: string | null;
   title: string;
@@ -106,11 +108,13 @@ export type DenProductTaskPage = {
 };
 export type DenProductTaskListOptions = {
   view?: DenProductTaskView; search?: string; status?: DenProductTaskStatus[]; priority?: DenProductTaskPriority[];
-  listId?: string[]; creatorMemberId?: string[]; assigneeMemberId?: string[]; followerMemberId?: string[];
+  listId?: string[]; creatorMemberId?: string[]; creatorMemberOperator?: DenProductTaskPersonFilterOperator; assigneeMemberId?: string[]; assigneeMemberOperator?: DenProductTaskPersonFilterOperator;
+  assignerMemberId?: string[]; assignerMemberOperator?: DenProductTaskPersonFilterOperator; followerMemberId?: string[]; followerMemberOperator?: DenProductTaskPersonFilterOperator;
   startAtFrom?: string; startAtBefore?: string; dueAtFrom?: string; dueAtBefore?: string; overdue?: boolean;
-  sort?: "due_at" | "created_at" | "updated_at" | "priority"; direction?: "asc" | "desc";
+  sort?: "due_at" | "created_at" | "updated_at" | "completed_at" | "priority"; direction?: "asc" | "desc";
   timezone?: string; cursor?: string; limit?: number;
 };
+export type DenProductTaskPersonFilterOperator = "contains" | "not_contains" | "empty" | "not_empty";
 export type DenProductTaskCreateInput = {
   idempotencyKey: string; title: string; description?: string; priority?: DenProductTaskPriority;
   visibility?: DenProductTaskVisibility; listId?: string; startAt?: string | null; dueAt?: string | null;
@@ -281,10 +285,11 @@ export type DenOrgSummary = {
 };
 
 export function isPersonalDenOrganization(
-  organization: Pick<DenOrgSummary, "kind" | "slug"> | null | undefined,
+  organization: Pick<DenOrgSummary, "id" | "kind" | "slug"> | null | undefined,
 ): boolean {
   return organization?.kind === "personal"
-    || organization?.slug.trim().toLowerCase() === "personal";
+    || organization?.id?.trim().toLowerCase().startsWith("personal_") === true
+    || organization?.slug?.trim().toLowerCase() === "personal";
 }
 
 export type DenTenantTier = "normal" | "pro" | "power" | "lite_team" | "team" | "business";
@@ -679,6 +684,7 @@ function normalizeProductTask(value: unknown): DenProductTask | null {
   const nullableString = (input: unknown) => typeof input === "string" ? input : null;
   return {
     id: value.id,
+    displayNumber: Number.isSafeInteger(value.displayNumber) && Number(value.displayNumber) > 0 ? Number(value.displayNumber) : null,
     creatorMemberId: value.creatorMemberId,
     listId: nullableString(value.listId),
     title: value.title,
@@ -794,8 +800,13 @@ function productTaskQuery(options: DenProductTaskListOptions): string {
   options.priority?.forEach((value) => params.append("priority", value));
   options.listId?.forEach((value) => params.append("listId", value));
   options.creatorMemberId?.forEach((value) => params.append("creatorMemberId", value));
+  if (options.creatorMemberOperator) params.set("creatorMemberOperator", options.creatorMemberOperator);
   options.assigneeMemberId?.forEach((value) => params.append("assigneeMemberId", value));
+  if (options.assigneeMemberOperator) params.set("assigneeMemberOperator", options.assigneeMemberOperator);
+  options.assignerMemberId?.forEach((value) => params.append("assignerMemberId", value));
+  if (options.assignerMemberOperator) params.set("assignerMemberOperator", options.assignerMemberOperator);
   options.followerMemberId?.forEach((value) => params.append("followerMemberId", value));
+  if (options.followerMemberOperator) params.set("followerMemberOperator", options.followerMemberOperator);
   if (options.startAtFrom) params.set("startAtFrom", options.startAtFrom);
   if (options.startAtBefore) params.set("startAtBefore", options.startAtBefore);
   if (options.dueAtFrom) params.set("dueAtFrom", options.dueAtFrom);

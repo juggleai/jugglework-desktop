@@ -5,7 +5,7 @@ The system SHALL store private and collaborative tasks in JuggleWork Server as t
 
 #### Scenario: Create a task without an Agent
 - **WHEN** an authenticated organization member creates a task while no Agent is available
-- **THEN** the server creates the task and returns its stable ID and version
+- **THEN** the server creates the task and returns its stable internal ID, organization-scoped display number, and version
 
 ### Requirement: Task fields and lifecycle
 The system SHALL support a required title, optional description, priority, start time, due time, assignees, followers, visibility, list membership, reminder, and `todo`, `completed`, and `canceled` states.

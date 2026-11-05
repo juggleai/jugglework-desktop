@@ -6,7 +6,7 @@ const originalFetch = globalThis.fetch;
 afterEach(() => { globalThis.fetch = originalFetch; });
 
 const task = {
-  id: "task/one", creatorMemberId: "member_one", listId: null, title: "Follow up", description: "", priority: "none", visibility: "private", status: "todo", version: 1,
+  id: "task/one", displayNumber: 100134, creatorMemberId: "member_one", listId: null, title: "Follow up", description: "", priority: "none", visibility: "private", status: "todo", version: 1,
   startAt: null, dueAt: null, completedAt: null, completedByMemberId: null, canceledAt: null, canceledByMemberId: null, deletedAt: null, deletedByMemberId: null,
   restoreUntil: null, createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z",
 };
@@ -23,6 +23,7 @@ test("product task client sends scoped pagination and strict mutations", async (
   const client = createDenClient({ baseUrl: "https://work.example", token: "token_one" });
   const page = await client.listProductTasks("org_one", { view: "today", cursor: "cursor one", limit: 30 });
   expect(page.nextCursor).toBe("cursor_two");
+  expect(page.items[0]?.displayNumber).toBe(100134);
   expect(page.membersByTaskId["task/one"]?.[0]).toEqual({ memberId: "member_two", role: "assignee", createdByMemberId: undefined, createdAt: undefined });
   expect(requests[0]!.url).toContain("view=today");
   expect(requests[0]!.url).toContain("cursor=cursor+one");
@@ -104,6 +105,14 @@ test("product task client accepts older pages without joined members", async () 
   expect(missingKey.memberProjectionKnownByTaskId).toEqual({ "task/one": false });
 });
 
+test("product task client accepts older tasks without display numbers", async () => {
+  const { displayNumber: _displayNumber, ...olderTask } = task;
+  globalThis.fetch = async () => Response.json({ items: [olderTask], membersByTaskId: {}, nextCursor: "" });
+  const client = createDenClient({ baseUrl: "https://work.example", token: "token_one" });
+  const page = await client.listProductTasks("org_one");
+  expect(page.items[0]?.displayNumber).toBeNull();
+});
+
 test("product task client rejects malformed present joined members", async () => {
   const client = createDenClient({ baseUrl: "https://work.example", token: "token_one" });
   globalThis.fetch = async () => Response.json({ items: [task], membersByTaskId: { "task/one": "bad" }, nextCursor: "" });
@@ -118,14 +127,19 @@ test("product task client serializes supported rich filters", async () => {
   };
   const client = createDenClient({ baseUrl: "https://work.example", token: "token_one" });
   await client.listProductTasks("org_one", {
-    creatorMemberId: ["creator one"], assigneeMemberId: ["assignee"], followerMemberId: ["follower"],
+    creatorMemberId: ["creator one"], creatorMemberOperator: "not_contains", assigneeMemberId: ["assignee"], assigneeMemberOperator: "contains", assignerMemberId: ["assigner"], assignerMemberOperator: "contains", followerMemberId: ["follower"], followerMemberOperator: "not_empty",
     startAtFrom: "2026-11-01T00:00:00Z", startAtBefore: "2026-12-01T00:00:00Z",
     dueAtFrom: "2026-11-02T00:00:00Z", dueAtBefore: "2026-12-02T00:00:00Z", overdue: true,
   });
   const query = new URL(requestUrl).searchParams;
   expect(query.getAll("creatorMemberId")).toEqual(["creator one"]);
+  expect(query.get("creatorMemberOperator")).toBe("not_contains");
   expect(query.getAll("assigneeMemberId")).toEqual(["assignee"]);
+  expect(query.get("assigneeMemberOperator")).toBe("contains");
+  expect(query.getAll("assignerMemberId")).toEqual(["assigner"]);
+  expect(query.get("assignerMemberOperator")).toBe("contains");
   expect(query.getAll("followerMemberId")).toEqual(["follower"]);
+  expect(query.get("followerMemberOperator")).toBe("not_empty");
   expect(query.get("startAtFrom")).toBe("2026-11-01T00:00:00Z");
   expect(query.get("startAtBefore")).toBe("2026-12-01T00:00:00Z");
   expect(query.get("dueAtFrom")).toBe("2026-11-02T00:00:00Z");

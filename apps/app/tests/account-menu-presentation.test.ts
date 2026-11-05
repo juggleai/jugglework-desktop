@@ -40,8 +40,9 @@ describe("account menu presentation", () => {
   });
 
   test("detects personal organizations by kind with a legacy slug fallback, never by owner role", () => {
-    expect(isPersonalDenOrganization({ kind: "personal", slug: "user-workspace" })).toBe(true);
-    expect(isPersonalDenOrganization({ kind: undefined, slug: " Personal " })).toBe(true);
-    expect(isPersonalDenOrganization({ kind: "organization", slug: "studio" })).toBe(false);
+    expect(isPersonalDenOrganization({ id: "personal_one", kind: "personal", slug: "user-workspace" })).toBe(true);
+    expect(isPersonalDenOrganization({ id: "legacy", kind: undefined, slug: " Personal " })).toBe(true);
+    expect(isPersonalDenOrganization({ id: "personal_legacy", kind: undefined, slug: "personal_legacy" })).toBe(true);
+    expect(isPersonalDenOrganization({ id: "org_studio", kind: "organization", slug: "studio" })).toBe(false);
   });
 });

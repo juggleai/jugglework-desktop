@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 import type { DenProductTaskPage } from "../src/app/lib/den";
 import { flattenProductTaskMembers, flattenProductTaskPages, loadAllProductTaskLists, productTaskKeys } from "../src/react-app/domains/tasks/task-queries";
 
-const task = (id: string) => ({ id, creatorMemberId: "creator", listId: null, title: id, description: "", priority: "none" as const, visibility: "private" as const, status: "todo" as const, version: 1, startAt: null, dueAt: null, completedAt: null, completedByMemberId: null, canceledAt: null, canceledByMemberId: null, deletedAt: null, restoreUntil: null, createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z" });
+const task = (id: string) => ({ id, displayNumber: null, creatorMemberId: "creator", listId: null, title: id, description: "", priority: "none" as const, visibility: "private" as const, status: "todo" as const, version: 1, startAt: null, dueAt: null, completedAt: null, completedByMemberId: null, canceledAt: null, canceledByMemberId: null, deletedAt: null, restoreUntil: null, createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z" });
 
 test("product task query keys isolate deployment user organization and filters", () => {
   const one = productTaskKeys.list({ baseUrl: "https://one.example/", userId: "user_one", organizationId: "org_one" }, { view: "today", search: "one" });

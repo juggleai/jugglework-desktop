@@ -5,13 +5,14 @@ import { useQueryClient } from "@tanstack/react-query";
 import { AlignLeft, CalendarDays, Check, ChevronDown, CircleAlert, ListChecks, ListTodo, LoaderCircle, Plus, RefreshCw, UserRound, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
-import { DenApiError, type DenOrganizationMember, type DenProductTask, type DenProductTaskCreateInput, type DenProductTaskList, type DenProductTaskUpdateInput, type DenProductTaskVisibility } from "@/app/lib/den";
+import { DenApiError, isPersonalDenOrganization, type DenOrganizationMember, type DenProductTask, type DenProductTaskCreateInput, type DenProductTaskList, type DenProductTaskUpdateInput, type DenProductTaskVisibility } from "@/app/lib/den";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { toast } from "@/components/ui/sonner";
 import { Textarea } from "@/components/ui/textarea";
 import { t } from "@/i18n";
 import { useCloudSession } from "@/react-app/domains/settings/cloud/cloud-session-provider";
@@ -48,8 +49,6 @@ type TaskPageProps = {
   onOpenCreateWorkspace?: () => void;
 };
 
-type TaskPageAlert = { kind: "error" | "conflict"; message: string };
-
 function mutationKey(prefix: string) {
   return `${prefix}-${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`}`;
 }
@@ -84,7 +83,6 @@ function ScopedConnectedTaskPage(props: TaskPageProps) {
   const [workbenchSettings, setWorkbenchSettings] = React.useState<TaskWorkbenchSettings>(() => readTaskWorkbenchSettings(scope));
   const [conflict, setConflict] = React.useState<ProductTaskConflict | null>(null);
   const [editDrafts, setEditDrafts] = React.useState<Record<string, ProductTaskEditDraft>>({});
-  const [alert, setAlert] = React.useState<TaskPageAlert | null>(null);
   const liveScopeKey = React.useRef(scopeKey);
   const liveConflict = React.useRef<ProductTaskConflict | null>(conflict);
   const liveSelectedTaskId = React.useRef(selectedTaskId);
@@ -105,6 +103,14 @@ function ScopedConnectedTaskPage(props: TaskPageProps) {
         status: taskWorkbenchStatuses(workbenchSettings),
         priority: workbenchSettings.priorities.length ? workbenchSettings.priorities : undefined,
         listId: workbenchSettings.listIds.length ? workbenchSettings.listIds : undefined,
+        assigneeMemberId: workbenchSettings.assigneeMemberIds.length ? workbenchSettings.assigneeMemberIds : undefined,
+        assigneeMemberOperator: workbenchSettings.assigneeMemberIds.length || workbenchSettings.assigneeMemberOperator === "empty" || workbenchSettings.assigneeMemberOperator === "not_empty" ? workbenchSettings.assigneeMemberOperator : undefined,
+        assignerMemberId: workbenchSettings.assignerMemberIds.length ? workbenchSettings.assignerMemberIds : undefined,
+        assignerMemberOperator: workbenchSettings.assignerMemberIds.length || workbenchSettings.assignerMemberOperator === "empty" || workbenchSettings.assignerMemberOperator === "not_empty" ? workbenchSettings.assignerMemberOperator : undefined,
+        creatorMemberId: workbenchSettings.creatorMemberIds.length ? workbenchSettings.creatorMemberIds : undefined,
+        creatorMemberOperator: workbenchSettings.creatorMemberIds.length || workbenchSettings.creatorMemberOperator === "empty" || workbenchSettings.creatorMemberOperator === "not_empty" ? workbenchSettings.creatorMemberOperator : undefined,
+        followerMemberId: workbenchSettings.followerMemberIds.length ? workbenchSettings.followerMemberIds : undefined,
+        followerMemberOperator: workbenchSettings.followerMemberIds.length || workbenchSettings.followerMemberOperator === "empty" || workbenchSettings.followerMemberOperator === "not_empty" ? workbenchSettings.followerMemberOperator : undefined,
         overdue: workbenchSettings.overdue || undefined,
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         ...taskWorkbenchServerSort(workbenchSettings),
@@ -126,7 +132,7 @@ function ScopedConnectedTaskPage(props: TaskPageProps) {
     const memberId = cloud.activeOrganization?.orgMemberId || cloud.activeOrganization?.membershipId;
     return memberId && cloud.user ? { id: memberId, userId: cloud.user.id, role: cloud.activeOrganization?.role ?? "member", user: { id: cloud.user.id, name: cloud.user.name, account: cloud.user.account ?? null, email: cloud.user.email ?? null, avatar: cloud.user.avatar ?? null } } : null;
   }, [cloud.activeOrganization?.membershipId, cloud.activeOrganization?.orgMemberId, cloud.activeOrganization?.role, cloud.user]);
-  const membersQuery = useOrganizationMembers({ client: cloud.client, scope, fallback: fallbackMember, allowUnavailableFallback: cloud.activeOrganization?.kind === "personal", active: section === "assigned" || showFullCreate });
+  const membersQuery = useOrganizationMembers({ client: cloud.client, scope, fallback: fallbackMember, allowUnavailableFallback: isPersonalDenOrganization(cloud.activeOrganization), active: section === "assigned" || showFullCreate });
   const availableMembers = membersQuery.data ?? (fallbackMember ? [fallbackMember] : []);
   const currentMemberId = fallbackMember?.id ?? availableMembers.find((member) => member.userId === cloud.user?.id)?.id ?? null;
   const detailQuery = useProductTask({ client: cloud.client, scope, taskId: selectedTaskId });
@@ -170,7 +176,6 @@ function ScopedConnectedTaskPage(props: TaskPageProps) {
     setShowFullCreate(false);
     setShowCreateList(false);
     setWorkbenchSettings(readTaskWorkbenchSettings(scope));
-    setAlert(null);
   }, [scopeKey]);
   const selectTask = (taskId: string | null) => {
     conflictLoadAttempt.current += 1;
@@ -223,7 +228,7 @@ function ScopedConnectedTaskPage(props: TaskPageProps) {
         ? detail.permissions.canCancel
         : detail.permissions.canReopen;
     if (!allowed) {
-      if (liveScopeKey.current === productTaskScopeKey(capturedScope)) setAlert({ kind: "error", message: t("tasks.transition_not_allowed") });
+      if (liveScopeKey.current === productTaskScopeKey(capturedScope)) toast.error(t("tasks.transition_not_allowed"));
       return;
     }
     const assigneeCount = detail.members.filter((member) => member.role === "assignee").length;
@@ -234,16 +239,15 @@ function ScopedConnectedTaskPage(props: TaskPageProps) {
   const mutationError = (error: unknown, capturedScopeKey = scopeKey) => {
     if (capturedScopeKey !== liveScopeKey.current) return;
     if (error instanceof DenApiError && error.status === 409) {
-      setAlert({ kind: "conflict", message: t("tasks.conflict") });
+      toast.warning(t("tasks.conflict"));
       return;
     }
-    setAlert({ kind: "error", message: error instanceof Error && error.message ? error.message : t("tasks.error_description") });
+    toast.error(error instanceof Error && error.message ? error.message : t("tasks.error_description"));
   };
 
   const runMutation = async <T,>(action: () => Promise<T>, options?: { suppressConflictAlert?: boolean; isCurrent?: () => boolean }): Promise<T | undefined> => {
     const capturedScopeKey = scopeKey;
     const isCurrent = () => capturedScopeKey === liveScopeKey.current && (options?.isCurrent?.() ?? true);
-    if (isCurrent()) setAlert(null);
     try {
       const result = await action();
       return isCurrent() ? result : undefined;
@@ -341,14 +345,13 @@ function ScopedConnectedTaskPage(props: TaskPageProps) {
   else if (section === "activity") content = <TaskShellContent state={{ kind: "empty" }} />;
   else if (tasksQuery.isLoading) content = <TaskShellContent state={{ kind: "loading" }} />;
   else if (tasksQuery.isError) content = <TaskShellContent state={{ kind: "error", message: tasksQuery.error instanceof Error ? tasksQuery.error.message : undefined, onRetry: () => void tasksQuery.refetch() }} />;
-  else if (section === "assigned") content = <TaskWorkbench tasks={tasks} membersByTaskId={membersByTaskId} members={availableMembers} lists={activeListsQuery.data?.items ?? []} listJoinError={activeListsQuery.isError ? (activeListsQuery.error instanceof Error ? activeListsQuery.error.message : t("tasks.list_join_error")) : null} memberDirectoryError={membersQuery.isError ? (membersQuery.error instanceof Error ? membersQuery.error.message : t("tasks.member_directory_error")) : null} settings={workbenchSettings} selectedTaskId={selectedTaskId} canLoadMore={Boolean(tasksQuery.hasNextPage)} loadingMore={tasksQuery.isFetchingNextPage} onLoadMore={() => void tasksQuery.fetchNextPage()} onRetryListJoin={() => void activeListsQuery.refetch()} onRetryMemberDirectory={() => void membersQuery.refetch()} onSettingsChange={updateWorkbenchSettings} onSelect={selectTask} onTransition={(task, operation) => void transitionWorkbenchTask(task, operation)} onCreateTask={() => setShowFullCreate(true)} />;
+  else if (section === "assigned") content = <TaskWorkbench tasks={tasks} membersByTaskId={membersByTaskId} members={availableMembers} lists={activeListsQuery.data?.items ?? []} listJoinError={activeListsQuery.isError ? (activeListsQuery.error instanceof Error ? activeListsQuery.error.message : t("tasks.list_join_error")) : null} memberDirectoryError={membersQuery.isError ? (membersQuery.error instanceof Error ? membersQuery.error.message : t("tasks.member_directory_error")) : null} settings={workbenchSettings} selectedTaskId={selectedTaskId} canLoadMore={Boolean(tasksQuery.hasNextPage)} loadingMore={tasksQuery.isFetchingNextPage} refreshing={tasksQuery.isFetching && !tasksQuery.isFetchingNextPage} quickCreatePending={createMutation.isPending} quickCreateMemberId={currentMemberId} onLoadMore={() => void tasksQuery.fetchNextPage()} onRetryListJoin={() => void activeListsQuery.refetch()} onRetryMemberDirectory={() => void membersQuery.refetch()} onSettingsChange={updateWorkbenchSettings} onSelect={selectTask} onTransition={(task, operation) => void transitionWorkbenchTask(task, operation)} onQuickCreate={async (title, defaults) => Boolean(await runMutation(() => createMutation.mutateAsync({ title, ...defaults, visibility: "private", priority: "none", members: currentMemberId ? [{ memberId: currentMemberId, role: "assignee" }] : [], idempotencyKey: mutationKey("desktop-quick-create-task") })))} />;
   else content = <TaskList tasks={tasks} selectedTaskId={selectedTaskId} onSelect={selectTask} canLoadMore={Boolean(tasksQuery.hasNextPage)} loadingMore={tasksQuery.isFetchingNextPage} onLoadMore={() => void tasksQuery.fetchNextPage()} />;
 
   return (
     <TaskPageFrame {...props} section={section} onSectionChange={(next) => { selectSection(next); setSelectedListId(null); selectTask(null); }} filters={{ priority, setPriority, sort, setSort }} lists={activeListsQuery.data?.items ?? []} selectedListId={selectedListId} onSelectList={(listId) => { selectSection("all"); setSelectedListId(listId); selectTask(null); }} onCreateList={() => setShowCreateList(true)} onArchiveList={(listId, version) => void runMutation(() => listMutations.transition.mutateAsync({ listId, operation: "archive", expectedVersion: version, idempotencyKey: mutationKey("desktop-archive-list") }))}
       onCreateTask={() => setShowFullCreate(true)} onCreateTaskList={() => setShowCreateList(true)}>
       {conflict ? <ConflictBanner conflict={conflict} pending={updateMutation.isPending} onDismiss={dismissConflict} onReload={() => void loadLatestForConflict()} onRetry={() => void retryConflictDraft()} /> : null}
-      {alert ? <MutationAlert alert={alert} onDismiss={() => setAlert(null)} /> : null}
       {content}
       {selectedTaskId ? <TaskDetail key={`${scopeKey}:${selectedTaskId}`} result={detailQuery.data} activity={activityQuery.data} reminders={remindersQuery.data ?? []} loading={detailQuery.isLoading} error={detailQuery.isError} savePending={updateMutation.isPending} preservedDraft={editDrafts[selectedTaskId] ?? null} onDraftChange={updateBufferedDraft} onClose={closeTask} onSave={saveTask} onComment={addComment} onSetReminder={(scheduledAt) => void runMutation(() => reminderMutations.set.mutateAsync({ idempotencyKey: mutationKey("desktop-set-reminder"), mode: "absolute", scheduledAt, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }))} onCancelReminder={() => void runMutation(() => reminderMutations.cancel.mutateAsync(mutationKey("desktop-cancel-reminder")))} onTransition={(task, operation) => void runMutation(() => transitionMutation.mutateAsync({ taskId: task.id, operation, expectedVersion: task.version, idempotencyKey: mutationKey(`desktop-${operation}-task`) }))} /> : null}
       {showFullCreate ? <TaskCreateDialog pending={createMutation.isPending} members={availableMembers} memberDirectoryLoading={membersQuery.isLoading && !fallbackMember} memberDirectoryError={membersQuery.isError ? (membersQuery.error instanceof Error ? membersQuery.error.message : t("tasks.member_directory_error")) : null} onRetryMemberDirectory={() => void membersQuery.refetch()} lists={activeListsQuery.data?.items ?? []} currentMemberId={currentMemberId} defaultAssigneeRequired={section === "assigned"} defaultAssigneeMemberId={section === "assigned" ? currentMemberId : null} defaultListId={selectedListId} onClose={() => setShowFullCreate(false)} onCreate={async (input) => { const result = await runMutation(() => createMutation.mutateAsync({ ...input, idempotencyKey: mutationKey("desktop-create-task") })); if (!result) return; setShowFullCreate(false); selectTask(result.task.id); }} /> : null}
@@ -496,11 +499,6 @@ function TaskListCreateDialog(props: { pending: boolean; onClose: () => void; on
 
 function ConflictBanner(props: { conflict: ProductTaskConflict; pending: boolean; onDismiss: () => void; onReload: () => void; onRetry: () => void }) {
   return <div className="absolute left-4 right-4 top-16 z-30 flex items-center gap-3 rounded-lg border border-amber-7 bg-amber-2 p-3 text-sm" role="alert"><CircleAlert className="size-4" /><span className="flex-1">{t("tasks.conflict")}</span>{props.conflict.latestLoaded ? <Button size="sm" variant="outline" disabled={props.pending} onClick={props.onRetry}>{t("tasks.retry")}</Button> : <Button size="sm" variant="outline" onClick={props.onReload}>{t("tasks.load_latest")}</Button>}<Button size="sm" variant="ghost" onClick={props.onDismiss}>{t("tasks.dismiss")}</Button></div>;
-}
-
-function MutationAlert(props: { alert: TaskPageAlert; onDismiss: () => void }) {
-  const color = props.alert.kind === "conflict" ? "border-amber-7 bg-amber-2" : "border-red-7 bg-red-2";
-  return <div className={`absolute left-4 right-4 top-16 z-20 flex items-center gap-3 rounded-lg border p-3 text-sm ${color}`} role="alert"><CircleAlert className="size-4" /><span className="flex-1">{props.alert.message}</span><Button size="sm" variant="ghost" onClick={props.onDismiss}>{t("tasks.dismiss")}</Button></div>;
 }
 
 export function TaskShellContent({ state }: { state: TaskShellState }) {

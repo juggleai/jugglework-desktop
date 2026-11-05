@@ -18,6 +18,7 @@ const scopeA = { baseUrl: "https://work.example/", userId: "user_one", organizat
 const scopeB = { baseUrl: "https://work.example", userId: "user_one", organizationId: "org_b" };
 const latestTask: DenProductTask = {
   id: "task_one",
+  displayNumber: 100001,
   creatorMemberId: "member_one",
   listId: null,
   title: "Server title",

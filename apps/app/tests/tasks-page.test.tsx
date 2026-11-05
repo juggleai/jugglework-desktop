@@ -5,6 +5,8 @@ import TestRenderer, { act } from "react-test-renderer";
 import { MemoryRouter } from "react-router-dom";
 
 import { DenApiError, type DenClient, type DenProductTask, type DenProductTaskResult } from "../src/app/lib/den";
+import { taskSectionStorageKey } from "../src/react-app/domains/tasks/task-page-state";
+import { taskWorkbenchStorageKey } from "../src/react-app/domains/tasks/task-view-state";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -14,6 +16,21 @@ const consoleError = spyOn(console, "error").mockImplementation((message?: unkno
   originalConsoleError(message, ...args);
 });
 afterAll(() => { consoleError.mockRestore(); });
+
+const localValues = new Map<string, string>();
+const sessionValues = new Map<string, string>();
+const memoryStorage = (values: Map<string, string>) => ({ getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, value); }, removeItem: (key: string) => { values.delete(key); }, clear: () => values.clear(), key: (index: number) => [...values.keys()][index] ?? null, get length() { return values.size; } });
+Object.defineProperty(globalThis, "localStorage", { configurable: true, value: memoryStorage(localValues) });
+Object.defineProperty(globalThis, "sessionStorage", { configurable: true, value: memoryStorage(sessionValues) });
+
+const toastErrors: unknown[] = [];
+const toastWarnings: unknown[] = [];
+mock.module("../src/components/ui/sonner", () => ({
+  toast: {
+    error: (message: unknown) => { toastErrors.push(message); },
+    warning: (message: unknown) => { toastWarnings.push(message); },
+  },
+}));
 
 mock.module("../src/react-app/shell/app-navigation-rail", () => ({
   APP_NAVIGATION_RAIL_WIDTH: 48,
@@ -44,6 +61,11 @@ mock.module("../src/components/ui/dropdown-menu", () => ({
   DropdownMenuCheckboxItem: ({ children, ...props }: React.PropsWithChildren<Record<string, unknown>>) => <button {...props}>{children}</button>,
   DropdownMenuRadioItem: ({ children, ...props }: React.PropsWithChildren<Record<string, unknown>>) => <button {...props}>{children}</button>,
   DropdownMenuTrigger: ({ children }: React.PropsWithChildren) => <>{children}</>,
+}));
+mock.module("../src/components/ui/popover", () => ({
+  Popover: PrimitiveContainer,
+  PopoverContent: PrimitiveContainer,
+  PopoverTrigger: ({ children, render }: React.PropsWithChildren<{ render?: React.ReactElement }>) => render ? React.cloneElement(render, {}, children) : <>{children}</>,
 }));
 mock.module("../src/components/ui/dialog", () => ({
   Dialog: PrimitiveContainer,
@@ -81,6 +103,10 @@ afterEach(() => {
   for (const queryClient of queryClients) queryClient.clear();
   queryClients.clear();
   useUiStateStore.setState({ sidebarOpen: true });
+  toastErrors.length = 0;
+  toastWarnings.length = 0;
+  localValues.clear();
+  sessionValues.clear();
 });
 
 function deferred<T>() {
@@ -92,6 +118,7 @@ function deferred<T>() {
 
 const task = (version: number, title = "Server title", description = "Server description", id = "task_one"): DenProductTask => ({
   id,
+  displayNumber: 100001,
   creatorMemberId: "member_one",
   listId: null,
   title,
@@ -254,6 +281,51 @@ test("selecting Assigned by me queries the delegated view", async () => {
   }
 });
 
+test("assigned workbench member and property filters map to list query options", async () => {
+  const scope = { baseUrl: "https://work.example", userId: "user_one", organizationId: "org_one" };
+  sessionValues.set(taskSectionStorageKey(scope), "assigned");
+  localValues.set(taskWorkbenchStorageKey(scope), JSON.stringify({
+    status: "incomplete",
+    assigneeMemberIds: ["assignee_one", "assignee_two"],
+    assigneeMemberOperator: "not_contains",
+    assignerMemberIds: ["assigner_one"],
+    assignerMemberOperator: "contains",
+    creatorMemberIds: ["creator_one"],
+    creatorMemberOperator: "not_empty",
+    followerMemberIds: ["follower_one"],
+    followerMemberOperator: "contains",
+    priorities: ["high", "low"],
+    listIds: ["list_one", "list_two"],
+    overdue: true,
+  }));
+  const options: Array<Record<string, unknown>> = [];
+  const client = connectedClient({
+    listProductTasks: async (_orgId, input) => {
+      options.push(input ?? {});
+      return { items: [], membersByTaskId: {}, nextCursor: "" };
+    },
+  });
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client)); });
+  await settle();
+  try {
+    expect(options.some((input) => input.view === "assigned"
+      && JSON.stringify(input.assigneeMemberId) === JSON.stringify(["assignee_one", "assignee_two"])
+      && input.assigneeMemberOperator === "not_contains"
+      && JSON.stringify(input.assignerMemberId) === JSON.stringify(["assigner_one"])
+      && input.assignerMemberOperator === "contains"
+      && JSON.stringify(input.creatorMemberId) === JSON.stringify(["creator_one"])
+      && input.creatorMemberOperator === "not_empty"
+      && JSON.stringify(input.followerMemberId) === JSON.stringify(["follower_one"])
+      && input.followerMemberOperator === "contains"
+      && JSON.stringify(input.priority) === JSON.stringify(["high", "low"])
+      && JSON.stringify(input.listId) === JSON.stringify(["list_one", "list_two"])
+      && input.overdue === true)).toBe(true);
+  } finally {
+    await act(async () => { renderer!.unmount(); });
+  }
+});
+
 test("Assigned to me shows only List and Board tabs and the two creation options", async () => {
   const client = connectedClient();
   let renderer: TestRenderer.ReactTestRenderer;
@@ -317,11 +389,67 @@ test("new task list uses the private list mutation and exposes failures", async 
     await act(async () => { dialog.findByType("form").props.onSubmit({ preventDefault: () => undefined }); });
     await settle();
     expect(creates[0]).toMatchObject({ name: "Launch list", description: "Launch tasks", marker: "L", visibility: "private" });
-    expect(renderer!.root.findAll((node) => node.props.children === "List create failed")).toHaveLength(1);
+    expect(toastErrors).toContain("List create failed");
+    expect(renderer!.root.findAll((node) => node.props.children === "List create failed")).toHaveLength(0);
     expect(renderer!.root.findByProps({ role: "dialog" })).toBeDefined();
   } finally {
     await act(async () => { renderer!.unmount(); });
   }
+});
+
+test("Assigned toolbar inline creation submits a title-only private task assigned to the current member", async () => {
+  const creates: Array<Record<string, unknown>> = [];
+  const self = { id: "member_self", userId: "user_one", role: "member", user: { id: "user_one", name: "Self", account: null, email: null, avatar: null } };
+  const client = connectedClient({
+    listOrganizationMembers: async () => ({ members: [self], total: 1, limit: 200, offset: 0 }),
+    createProductTask: async (_orgId, input) => { creates.push(input); return result(task(1, input.title, "", "inline_task")); },
+  });
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client)); });
+  await settle();
+  try {
+    const sidebar = renderer!.root.findByProps({ "data-testid": "tasks-sidebar" });
+    const assigned = sidebar.findAllByType("button").find((button) => Array.isArray(button.props.children) && button.props.children.includes("Assigned to me"))!;
+    await act(async () => { assigned.props.onClick(); });
+    await settle();
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-inline-create-top-trigger" }).props.onClick(); });
+    const row = renderer!.root.findByProps({ "data-testid": "task-inline-create-row-top" });
+    await act(async () => { row.findByType("input").props.onChange({ target: { value: "Inline task" } }); });
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-inline-create-row-top" }).findByType("form").props.onSubmit({ preventDefault: () => undefined }); });
+    await settle();
+    expect(creates[0]).toMatchObject({ title: "Inline task", priority: "none", visibility: "private", members: [{ memberId: "member_self", role: "assignee" }] });
+    expect(creates[0]?.idempotencyKey).toEqual(expect.any(String));
+  } finally { await act(async () => { renderer!.unmount(); }); }
+});
+
+test("Assigned status changes keep the workbench mounted while the replacement query is pending", async () => {
+  const listed = task(1, "Previous task", "", "previous_task");
+  const pending = deferred<Awaited<ReturnType<DenClient["listProductTasks"]>>>();
+  let requests = 0;
+  const client = connectedClient({
+    listProductTasks: async () => {
+      requests += 1;
+      return requests < 3 ? { items: [listed], membersByTaskId: { [listed.id]: [] }, nextCursor: "" } : pending.promise;
+    },
+  });
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client)); });
+  await settle();
+  try {
+    const sidebar = renderer!.root.findByProps({ "data-testid": "tasks-sidebar" });
+    const assigned = sidebar.findAllByType("button").find((button) => Array.isArray(button.props.children) && button.props.children.includes("Assigned to me"))!;
+    await act(async () => { assigned.props.onClick(); });
+    await settle();
+    const statusMenu = renderer!.root.findByProps({ "data-testid": "task-status-menu" });
+    const statusGroup = statusMenu.find((node) => node.props.value === "incomplete" && typeof node.props.onValueChange === "function");
+    await act(async () => { statusGroup.props.onValueChange("completed"); });
+    expect(renderer!.root.findByProps({ "data-testid": "task-workbench-toolbar" })).toBeDefined();
+    expect(renderer!.root.findByProps({ "data-testid": "assigned-task-table" })).toBeDefined();
+    expect(renderer!.root.findByProps({ "data-testid": "task-title-cell-previous_task" })).toBeDefined();
+    expect(renderer!.root.findByProps({ "data-testid": "task-filter-refreshing" })).toBeDefined();
+    await act(async () => { pending.resolve({ items: [], membersByTaskId: {}, nextCursor: "" }); });
+    await settle();
+  } finally { await act(async () => { renderer!.unmount(); }); }
 });
 
 test("pending task-list creation cannot close or alert in a new organization scope", async () => {
@@ -382,7 +510,8 @@ test("shows full-create mutation failures without an unhandled rejection", async
     const form = renderer!.root.findByProps({ role: "dialog" }).findByType("form");
     await act(async () => { form.props.onSubmit({ preventDefault: () => undefined }); });
     await settle();
-    expect(renderer!.root.findAll((node) => node.props.children === "Create failed")).toHaveLength(1);
+    expect(toastErrors).toContain("Create failed");
+    expect(renderer!.root.findAll((node) => node.props.children === "Create failed")).toHaveLength(0);
   } finally {
     await act(async () => { renderer!.unmount(); });
   }
@@ -492,7 +621,8 @@ test("workbench transitions stop when authoritative detail denies permission", a
     await act(async () => { renderer!.root.findByProps({ "aria-label": "Complete task" }).props.onClick(); });
     await settle();
     expect(transitions).toBe(0);
-    expect(renderer!.root.findAll((node) => node.props.children === "You do not have permission to perform this task action.")).toHaveLength(1);
+    expect(toastErrors).toContain("You do not have permission to perform this task action.");
+    expect(renderer!.root.findAll((node) => node.props.children === "You do not have permission to perform this task action.")).toHaveLength(0);
   } finally { await act(async () => { renderer!.unmount(); }); }
 });
 
@@ -515,7 +645,37 @@ test("workbench completion does not proceed when authoritative detail loading fa
     await act(async () => { renderer!.root.findByProps({ "aria-label": "Complete task" }).props.onClick(); });
     await settle();
     expect(transitions).toBe(0);
-    expect(renderer!.root.findAll((node) => node.props.children === "Detail unavailable")).toHaveLength(1);
+    expect(toastErrors).toContain("Detail unavailable");
+    expect(renderer!.root.findAll((node) => node.props.children === "Detail unavailable")).toHaveLength(0);
+  } finally { await act(async () => { renderer!.unmount(); }); }
+});
+
+test("workbench completion sends only lifecycle contract fields and refreshes the list", async () => {
+  const listed = task(1, "Complete me", "", "complete_me");
+  const authoritative = result(listed);
+  authoritative.members = [{ memberId: "member_one", role: "assignee" }];
+  const transitionInputs: Array<Record<string, unknown>> = [];
+  const client = connectedClient({
+    listProductTasks: async () => ({ items: [listed], membersByTaskId: { [listed.id]: authoritative.members }, nextCursor: "" }),
+    getProductTask: async () => authoritative,
+    transitionProductTask: async (_orgId, _taskId, operation, input) => {
+      transitionInputs.push({ operation, ...input });
+      return result({ ...listed, status: "completed", version: 2, completedAt: "2026-11-05T00:00:00Z", completedByMemberId: "member_one" });
+    },
+  });
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client)); });
+  await settle();
+  try {
+    const sidebar = renderer!.root.findByProps({ "data-testid": "tasks-sidebar" });
+    const assigned = sidebar.findAllByType("button").find((button) => Array.isArray(button.props.children) && button.props.children.includes("Assigned to me"))!;
+    await act(async () => { assigned.props.onClick(); });
+    await settle();
+    await act(async () => { renderer!.root.findByProps({ "aria-label": "Complete task" }).props.onClick(); });
+    await settle();
+    expect(transitionInputs).toHaveLength(1);
+    expect(transitionInputs[0]).toEqual({ operation: "complete", expectedVersion: 1, idempotencyKey: expect.any(String) });
+    expect(transitionInputs[0]).not.toHaveProperty("taskId");
   } finally { await act(async () => { renderer!.unmount(); }); }
 });
 
@@ -577,6 +737,55 @@ test("organization member failures keep tasks visible and expose retry in workbe
     await act(async () => { renderer!.root.findByProps({ "data-testid": "task-create-menu" }).findAllByType("button")[0]!.props.onClick(); });
     expect(renderer!.root.findByProps({ role: "dialog" }).findAll((node) => node.props.children === "Organization members are temporarily unavailable. Tasks are still shown.")).toHaveLength(1);
     expect(renderer!.root.findAll((node) => node.props.children === "No organization members are available.")).toHaveLength(0);
+  } finally { await act(async () => { renderer!.unmount(); }); }
+});
+
+test("Personal workspace identified by its legacy ID uses the current-member fallback", async () => {
+  let memberRequests = 0;
+  const client = connectedClient({
+    listOrganizationMembers: async () => {
+      memberRequests += 1;
+      throw new DenApiError(403, "feature_unavailable_for_scope", "Unavailable in Personal Workspace");
+    },
+  });
+  setCloudSession(client);
+  cloudSession.activeOrganization = {
+    id: "personal_legacy",
+    name: "Personal",
+    slug: "personal_legacy",
+    role: "owner",
+  };
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(taskPage(createQueryClient())); });
+  await settle();
+  try {
+    const sidebar = renderer!.root.findByProps({ "data-testid": "tasks-sidebar" });
+    const assigned = sidebar.findAllByType("button").find((button) => Array.isArray(button.props.children) && button.props.children.includes("Assigned to me"))!;
+    await act(async () => { assigned.props.onClick(); });
+    await settle();
+    expect(memberRequests).toBe(1);
+    expect(renderer!.root.findAll((node) => node.props.children === "Organization members are temporarily unavailable. Tasks are still shown.")).toHaveLength(0);
+  } finally { await act(async () => { renderer!.unmount(); }); }
+});
+
+test("Personal workspace member directory populates the assignee filter", async () => {
+  const personalMember = { id: "member_personal", userId: "user_one", role: "owner", user: { id: "user_one", name: "Personal User", account: null, email: null, avatar: null } };
+  const client = connectedClient({
+    listOrganizationMembers: async () => ({ members: [personalMember], total: 1, limit: 200, offset: 0 }),
+  });
+  setCloudSession(client);
+  cloudSession.activeOrganization = { id: "personal_one", name: "Personal", slug: "personal_one", kind: "personal", role: "owner" };
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(taskPage(createQueryClient())); });
+  await settle();
+  try {
+    const sidebar = renderer!.root.findByProps({ "data-testid": "tasks-sidebar" });
+    const assigned = sidebar.findAllByType("button").find((button) => Array.isArray(button.props.children) && button.props.children.includes("Assigned to me"))!;
+    await act(async () => { assigned.props.onClick(); });
+    await settle();
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-filter-add" }).props.onClick(); });
+    expect(renderer!.root.findByProps({ "data-testid": "task-filter-member-assignee-member_personal" })).toBeDefined();
+    expect(renderer!.root.findAll((node) => node.props.children === "Personal User").length).toBeGreaterThan(0);
   } finally { await act(async () => { renderer!.unmount(); }); }
 });
 

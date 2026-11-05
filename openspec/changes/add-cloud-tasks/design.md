@@ -66,7 +66,11 @@ Desktop 任务侧栏将 Today、Assigned to me、Following、Activity 作为主�
 
 列表页直接消费 `membersByTaskId: Record<string, DenProductTaskMember[]>`，避免逐任务详情请求；旧版页面响应省略该字段或缺少单个任务键时按空成员数组兼容，字段存在但类型错误时仍拒绝。成员显示通过组织成员 ID 连接分页读取的 `/api/v1/members?limit=200&offset=...` 目录；个人工作区目录拒绝时用 `/v1/me/orgs` 保留的 `orgMemberId`/`membershipId` 和当前用户摘要降级。任务清单分页读完后用于名称连接和筛选，清单连接失败时任务仍渲染并显示可重试的降级提示。
 
-工具区新建菜单仅包含 New task 和 New task list，并使用项目 Dialog/DropdownMenu/Tabs 基础组件。New task 提供标题、描述、负责人、开始时间、截止时间、优先级、可见范围和任务清单；Assigned to me 可识别当前成员时默认选择自己，侧栏所选清单作为默认清单。private 任务只能分配给自己，选择其他负责人时默认切换为 members。New task list 包含名称、描述、标记和 private 默认可见性。两种创建都按 deployment/user/organization scope 隔离迟到结果。
+任务列表优先显示服务端分配的组织内递增编号，格式为小写 `t` 加十进制数字（例如 `t100134`）。稳定的内部任务 ID 不改变，继续用于路由、缓存和所有写操作；编号单元格保留精确复制内部 ID 的操作及完整 ID 提示。读取尚未提供 `displayNumber` 的旧 Server 时，Desktop 使用截断内部 ID 作为临时降级显示，不伪造可持久引用的短编号。
+
+工具区新建菜单仅包含 New task 和 New task list，并使用项目 Dialog/DropdownMenu/Tabs 基础组件。全局 New task 提供标题、描述、负责人、开始时间、截止时间、优先级、可见范围和任务清单；Assigned to me 列表工具栏及末行还提供仅输入标题的行内创建，工具栏入口把输入行放在首行，末行入口把输入行放在其下方。Assigned to me 可识别当前成员时默认选择自己，侧栏所选清单作为默认清单。private 任务只能分配给自己，选择其他负责人时默认切换为 members。New task list 包含名称、描述、标记和 private 默认可见性。两种创建都按 deployment/user/organization scope 隔离迟到结果。
+
+任务模型继续支持 none/low/medium/high 优先级，并可按优先级筛选；Assigned to me 排序菜单聚焦开始时间、截止时间、创建时间、更新时间和完成时间，不提供优先级排序入口。
 
 ## Risks / Trade-offs
 
