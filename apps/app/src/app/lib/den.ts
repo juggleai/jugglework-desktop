@@ -145,6 +145,89 @@ export type DenProductTaskReminder = { id: string; recipientMemberId: string; sc
 export type DenProductTaskNotificationEvent = { sequence: number; id: string; type: "reminder_due"; occurredAt: string; task: { id: string; title: string }; reminder: { scheduledAt: string } };
 export type DenProductTaskNotificationPage = { items: DenProductTaskNotificationEvent[]; nextSequence: number; hasMore: boolean };
 
+export type DenCalendar = {
+  id: string;
+  organizationId: string;
+  ownerMemberId: string;
+  name: string;
+  color: string | null;
+  isDefault: boolean;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+};
+export type DenCalendarEventTime =
+  | { kind: "allDay"; startDate: string; endDateExclusive: string }
+  | { kind: "timed"; startInstant: string; endInstantExclusive: string; timeZone: string };
+export type DenCalendarEvent = {
+  id: string;
+  organizationId: string;
+  ownerMemberId: string;
+  calendarId: string;
+  title: string;
+  description: string;
+  time: DenCalendarEventTime;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+};
+export type DenCalendarTombstone = {
+  entityType: "calendar" | "event";
+  entityId: string;
+  version: number;
+  deletedAt: string;
+};
+export type DenCalendarResult = { calendar: DenCalendar; replayed: boolean };
+export type DenCalendarEventResult = { event: DenCalendarEvent; replayed: boolean };
+export type DenCalendarDeleteResult = { tombstone: DenCalendarTombstone; replayed: boolean };
+export type DenCalendarEventPage = {
+  items: DenCalendarEvent[];
+  nextCursor: string | null;
+  hasMore: boolean;
+};
+export type DenCalendarBootstrap = {
+  calendars: DenCalendar[];
+  events: DenCalendarEvent[];
+  coverage: { startDate: string; endDateExclusive: string; calendarIds: string[] };
+  cursor: string;
+};
+export type DenCalendarChange =
+  | { sequence: number; kind: "upsert"; entityType: "calendar"; entity: DenCalendar }
+  | { sequence: number; kind: "upsert"; entityType: "event"; entity: DenCalendarEvent }
+  | { sequence: number; kind: "delete"; entityType: "calendar" | "event"; entityId: string; version: number; deletedAt: string };
+export type DenCalendarChangePage = { items: DenCalendarChange[]; nextCursor: string; hasMore: boolean };
+export type DenCalendarRangeOptions = {
+  startDate: string;
+  endDateExclusive: string;
+  calendarIds?: string[];
+  cursor?: string;
+  limit?: number;
+};
+export type DenCalendarSearchOptions = {
+  query: string;
+  calendarIds?: string[];
+  cursor?: string;
+  limit?: number;
+};
+export type DenCalendarCreateInput = { idempotencyKey: string; name: string; color?: string | null };
+export type DenCalendarUpdateInput = { idempotencyKey: string; expectedVersion: number; name?: string; color?: string | null };
+export type DenCalendarEventCreateInput = {
+  idempotencyKey: string;
+  calendarId: string;
+  title: string;
+  description?: string;
+  time: DenCalendarEventTime;
+};
+export type DenCalendarEventUpdateInput = {
+  idempotencyKey: string;
+  expectedVersion: number;
+  calendarId?: string;
+  title?: string;
+  description?: string;
+  time?: DenCalendarEventTime;
+};
+export type DenCalendarDeleteInput = { idempotencyKey: string; expectedVersion: number };
+
 export const DEFAULT_DEN_AUTH_NAME = "JuggleWork User";
 const BUILD_DEN_BASE_URL =
   (typeof import.meta !== "undefined" && typeof import.meta.env?.VITE_DEN_BASE_URL === "string"
@@ -270,7 +353,10 @@ export type DenBootstrapConfig = DenBaseUrls & {
   prepared?: DenBootstrapPrepared | null;
 };
 
-export type DenDesktopConfig = SharedDesktopConfig;
+export type DenDesktopConfig = SharedDesktopConfig & {
+  calendarEnabled?: boolean;
+  calendarWriteEnabled?: boolean;
+};
 
 export type DenOrgSummary = {
   id: string;
@@ -792,6 +878,229 @@ function normalizeProductTaskNotificationPage(value: unknown): DenProductTaskNot
   return { items, nextSequence: Number(value.nextSequence), hasMore: value.hasMore };
 }
 
+function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  const actual = Object.keys(value).sort();
+  const expected = [...keys].sort();
+  return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
+}
+
+function isPositiveSafeInteger(value: unknown): value is number {
+  return Number.isSafeInteger(value) && Number(value) > 0;
+}
+
+function isCalendarDate(value: unknown): value is string {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(`${value}T00:00:00Z`);
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+
+function isUtcTimestamp(value: unknown): value is string {
+  return typeof value === "string"
+    && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.test(value)
+    && Number.isFinite(Date.parse(value));
+}
+
+function normalizeCalendarTime(value: unknown): DenCalendarEventTime | null {
+  if (!isRecord(value)) return null;
+  if (value.kind === "allDay") {
+    if (!hasExactKeys(value, ["kind", "startDate", "endDateExclusive"]) || !isCalendarDate(value.startDate) || !isCalendarDate(value.endDateExclusive) || value.endDateExclusive <= value.startDate) return null;
+    return { kind: "allDay", startDate: value.startDate, endDateExclusive: value.endDateExclusive };
+  }
+  if (value.kind === "timed") {
+    if (!hasExactKeys(value, ["kind", "startInstant", "endInstantExclusive", "timeZone"]) || !isUtcTimestamp(value.startInstant) || !isUtcTimestamp(value.endInstantExclusive) || Date.parse(value.endInstantExclusive) <= Date.parse(value.startInstant) || typeof value.timeZone !== "string" || !value.timeZone || value.timeZone.length > 128) return null;
+    try {
+      new Intl.DateTimeFormat("en", { timeZone: value.timeZone });
+    } catch {
+      return null;
+    }
+    return { kind: "timed", startInstant: value.startInstant, endInstantExclusive: value.endInstantExclusive, timeZone: value.timeZone };
+  }
+  return null;
+}
+
+export function normalizeDenCalendar(value: unknown): DenCalendar | null {
+  if (!isRecord(value) || !hasExactKeys(value, ["id", "organizationId", "ownerMemberId", "name", "color", "isDefault", "version", "createdAt", "updatedAt"]) ||
+    typeof value.id !== "string" || !value.id || typeof value.organizationId !== "string" || !value.organizationId || typeof value.ownerMemberId !== "string" || !value.ownerMemberId ||
+    typeof value.name !== "string" || !value.name || value.name.length > 100 || value.color !== null && (typeof value.color !== "string" || !/^#[0-9A-Fa-f]{6}$/.test(value.color)) ||
+    typeof value.isDefault !== "boolean" || !isPositiveSafeInteger(value.version) || !isUtcTimestamp(value.createdAt) || !isUtcTimestamp(value.updatedAt)) return null;
+  return {
+    id: value.id,
+    organizationId: value.organizationId,
+    ownerMemberId: value.ownerMemberId,
+    name: value.name,
+    color: value.color,
+    isDefault: value.isDefault,
+    version: value.version,
+    createdAt: value.createdAt,
+    updatedAt: value.updatedAt,
+  };
+}
+
+export function normalizeDenCalendarEvent(value: unknown): DenCalendarEvent | null {
+  if (!isRecord(value) || !hasExactKeys(value, ["id", "organizationId", "ownerMemberId", "calendarId", "title", "description", "time", "version", "createdAt", "updatedAt"]) ||
+    typeof value.id !== "string" || !value.id || typeof value.organizationId !== "string" || !value.organizationId || typeof value.ownerMemberId !== "string" || !value.ownerMemberId ||
+    typeof value.calendarId !== "string" || !value.calendarId || typeof value.title !== "string" || !value.title || value.title.length > 500 || typeof value.description !== "string" || value.description.length > 20_000 ||
+    !isPositiveSafeInteger(value.version) || !isUtcTimestamp(value.createdAt) || !isUtcTimestamp(value.updatedAt)) return null;
+  const time = normalizeCalendarTime(value.time);
+  if (!time) return null;
+  return {
+    id: value.id,
+    organizationId: value.organizationId,
+    ownerMemberId: value.ownerMemberId,
+    calendarId: value.calendarId,
+    title: value.title,
+    description: value.description,
+    time,
+    version: value.version,
+    createdAt: value.createdAt,
+    updatedAt: value.updatedAt,
+  };
+}
+
+function invalidCalendarPayload(message: string): never {
+  throw new DenApiError(500, "invalid_calendar_payload", message);
+}
+
+const CALENDAR_ERROR_STATUS = {
+  invalid_calendar_request: 400,
+  calendar_not_found: 404,
+  calendar_disabled: 404,
+  calendar_write_disabled: 403,
+  calendar_version_conflict: 409,
+  calendar_idempotency_conflict: 409,
+  calendar_cursor_resync_required: 409,
+  calendar_result_too_large: 422,
+} as const;
+
+type CalendarErrorCode = keyof typeof CALENDAR_ERROR_STATUS;
+
+function normalizeCalendarApiError(status: number, value: unknown): DenApiError | null {
+  if (!isRecord(value) || Array.isArray(value) || typeof value.error !== "string" || !Object.prototype.hasOwnProperty.call(CALENDAR_ERROR_STATUS, value.error)) return null;
+  const code = value.error as CalendarErrorCode;
+  const invalid = () => new DenApiError(500, "invalid_calendar_payload", "Calendar error response was invalid.");
+  if (status !== CALENDAR_ERROR_STATUS[code] || typeof value.message !== "string" || !value.message ||
+    !hasExactKeys(value, value.details === undefined ? ["error", "message"] : ["error", "message", "details"])) return invalid();
+
+  if (code === "invalid_calendar_request") {
+    if (value.details === undefined) return new DenApiError(status, code, value.message);
+    if (!isRecord(value.details) || Array.isArray(value.details) || Object.entries(value.details).some(([field, reason]) => !field || typeof reason !== "string" || !reason)) return invalid();
+    return new DenApiError(status, code, value.message, { ...value.details });
+  }
+
+  if (["calendar_not_found", "calendar_disabled", "calendar_write_disabled", "calendar_idempotency_conflict"].includes(code)) {
+    return value.details === undefined ? new DenApiError(status, code, value.message) : invalid();
+  }
+
+  if (!isRecord(value.details) || Array.isArray(value.details)) return invalid();
+  if (code === "calendar_version_conflict") {
+    if (!hasExactKeys(value.details, ["current"])) return invalid();
+    const current = normalizeDenCalendar(value.details.current) ?? normalizeDenCalendarEvent(value.details.current);
+    return current ? new DenApiError(status, code, value.message, { current }) : invalid();
+  }
+  if (code === "calendar_cursor_resync_required") {
+    if (!hasExactKeys(value.details, ["reason"]) || !["invalid", "scope_mismatch", "expired", "version_unsupported"].includes(String(value.details.reason))) return invalid();
+    return new DenApiError(status, code, value.message, { reason: value.details.reason });
+  }
+  if (!hasExactKeys(value.details, ["limit"]) || value.details.limit !== 5000) return invalid();
+  return new DenApiError(status, code, value.message, { limit: 5000 });
+}
+
+function normalizeCalendarList(value: unknown): DenCalendar[] {
+  if (!Array.isArray(value)) invalidCalendarPayload("Calendar list response was invalid.");
+  const items = value.map(normalizeDenCalendar);
+  if (items.some((item) => !item)) invalidCalendarPayload("Calendar list response was invalid.");
+  return items as DenCalendar[];
+}
+
+function normalizeCalendarEventList(value: unknown): DenCalendarEvent[] {
+  if (!Array.isArray(value)) invalidCalendarPayload("Calendar event list response was invalid.");
+  const items = value.map(normalizeDenCalendarEvent);
+  if (items.some((item) => !item)) invalidCalendarPayload("Calendar event list response was invalid.");
+  return items as DenCalendarEvent[];
+}
+
+function normalizeCalendarResult(value: unknown): DenCalendarResult {
+  if (!isRecord(value) || !hasExactKeys(value, ["calendar", "replayed"]) || typeof value.replayed !== "boolean") invalidCalendarPayload("Calendar mutation response was invalid.");
+  const calendar = normalizeDenCalendar(value.calendar);
+  if (!calendar) invalidCalendarPayload("Calendar mutation response was invalid.");
+  return { calendar, replayed: value.replayed };
+}
+
+function normalizeCalendarEventResult(value: unknown): DenCalendarEventResult {
+  if (!isRecord(value) || !hasExactKeys(value, ["event", "replayed"]) || typeof value.replayed !== "boolean") invalidCalendarPayload("Calendar event mutation response was invalid.");
+  const event = normalizeDenCalendarEvent(value.event);
+  if (!event) invalidCalendarPayload("Calendar event mutation response was invalid.");
+  return { event, replayed: value.replayed };
+}
+
+function normalizeCalendarDeleteResult(value: unknown, expectedEntityType: "calendar" | "event"): DenCalendarDeleteResult {
+  if (!isRecord(value) || !hasExactKeys(value, ["tombstone", "replayed"]) || typeof value.replayed !== "boolean" || !isRecord(value.tombstone) ||
+    !hasExactKeys(value.tombstone, ["entityType", "entityId", "version", "deletedAt"]) || value.tombstone.entityType !== expectedEntityType ||
+    typeof value.tombstone.entityId !== "string" || !value.tombstone.entityId || !isPositiveSafeInteger(value.tombstone.version) || !isUtcTimestamp(value.tombstone.deletedAt)) {
+    invalidCalendarPayload("Calendar delete response was invalid.");
+  }
+  return { tombstone: value.tombstone as DenCalendarTombstone, replayed: value.replayed };
+}
+
+function normalizeCalendarEventPage(value: unknown): DenCalendarEventPage {
+  if (!isRecord(value) || !hasExactKeys(value, ["items", "nextCursor", "hasMore"]) || typeof value.hasMore !== "boolean" ||
+    value.nextCursor !== null && (typeof value.nextCursor !== "string" || !value.nextCursor) || value.hasMore && (typeof value.nextCursor !== "string" || !value.nextCursor)) {
+    invalidCalendarPayload("Calendar event page response was invalid.");
+  }
+  return { items: normalizeCalendarEventList(value.items), nextCursor: value.nextCursor as string | null, hasMore: value.hasMore };
+}
+
+function normalizeCalendarBootstrap(value: unknown): DenCalendarBootstrap {
+  if (!isRecord(value) || !hasExactKeys(value, ["calendars", "events", "coverage", "cursor"]) || typeof value.cursor !== "string" || !value.cursor || !isRecord(value.coverage) ||
+    !hasExactKeys(value.coverage, ["startDate", "endDateExclusive", "calendarIds"]) || !isCalendarDate(value.coverage.startDate) || !isCalendarDate(value.coverage.endDateExclusive) || value.coverage.endDateExclusive <= value.coverage.startDate ||
+    !Array.isArray(value.coverage.calendarIds) || value.coverage.calendarIds.some((id) => typeof id !== "string" || !id)) invalidCalendarPayload("Calendar bootstrap response was invalid.");
+  return {
+    calendars: normalizeCalendarList(value.calendars),
+    events: normalizeCalendarEventList(value.events),
+    coverage: { startDate: value.coverage.startDate, endDateExclusive: value.coverage.endDateExclusive, calendarIds: value.coverage.calendarIds as string[] },
+    cursor: value.cursor,
+  };
+}
+
+function normalizeCalendarChange(value: unknown): DenCalendarChange | null {
+  if (!isRecord(value) || !isPositiveSafeInteger(value.sequence)) return null;
+  if (value.kind === "upsert" && value.entityType === "calendar" && hasExactKeys(value, ["sequence", "kind", "entityType", "entity"])) {
+    const entity = normalizeDenCalendar(value.entity);
+    return entity ? { sequence: value.sequence, kind: "upsert", entityType: "calendar", entity } : null;
+  }
+  if (value.kind === "upsert" && value.entityType === "event" && hasExactKeys(value, ["sequence", "kind", "entityType", "entity"])) {
+    const entity = normalizeDenCalendarEvent(value.entity);
+    return entity ? { sequence: value.sequence, kind: "upsert", entityType: "event", entity } : null;
+  }
+  if (value.kind === "delete" && (value.entityType === "calendar" || value.entityType === "event") && hasExactKeys(value, ["sequence", "kind", "entityType", "entityId", "version", "deletedAt"]) &&
+    typeof value.entityId === "string" && value.entityId && isPositiveSafeInteger(value.version) && isUtcTimestamp(value.deletedAt)) {
+    return { sequence: value.sequence, kind: "delete", entityType: value.entityType, entityId: value.entityId, version: value.version, deletedAt: value.deletedAt };
+  }
+  return null;
+}
+
+function normalizeCalendarChangePage(value: unknown): DenCalendarChangePage {
+  if (!isRecord(value) || !hasExactKeys(value, ["items", "nextCursor", "hasMore"]) || !Array.isArray(value.items) || typeof value.nextCursor !== "string" || !value.nextCursor || typeof value.hasMore !== "boolean") invalidCalendarPayload("Calendar changes response was invalid.");
+  const items = value.items.map(normalizeCalendarChange);
+  if (items.some((item) => !item)) invalidCalendarPayload("Calendar changes response was invalid.");
+  for (let index = 1; index < items.length; index += 1) {
+    if (items[index]!.sequence <= items[index - 1]!.sequence) invalidCalendarPayload("Calendar changes response was not ordered.");
+  }
+  return { items: items as DenCalendarChange[], nextCursor: value.nextCursor, hasMore: value.hasMore };
+}
+
+function calendarQuery(input: { calendarIds?: string[]; cursor?: string; limit?: number } & Record<string, unknown>): string {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(input)) {
+    if (key === "calendarIds" || key === "cursor" || key === "limit" || value === undefined) continue;
+    params.set(key, String(value));
+  }
+  [...new Set(input.calendarIds ?? [])].sort().forEach((id) => params.append("calendarId", id));
+  if (input.cursor !== undefined) params.set("cursor", input.cursor);
+  if (input.limit !== undefined) params.set("limit", String(input.limit));
+  return `?${params.toString()}`;
+}
+
 function productTaskQuery(options: DenProductTaskListOptions): string {
   const params = new URLSearchParams();
   if (options.view) params.set("view", options.view);
@@ -845,7 +1154,14 @@ function getDenAppVersionMetadata(payload: unknown): DenAppVersionMetadata | nul
 }
 
 export function normalizeDenDesktopConfig(payload: unknown): DenDesktopConfig {
-  return normalizeDesktopConfig(payload);
+  const config = normalizeDesktopConfig(payload);
+  const raw = isRecord(payload) ? payload : null;
+  const calendarEnabled = raw?.calendarEnabled === true;
+  return {
+    ...config,
+    calendarEnabled,
+    calendarWriteEnabled: calendarEnabled && raw?.calendarWriteEnabled === true,
+  };
 }
 
 function readTimestampRecord(value: unknown): Record<string, string> {
@@ -3157,6 +3473,8 @@ async function requestJson<T>(
   const raw = await requestJsonRaw<T>(input, path, options);
   if (!raw.ok) {
     const payload = raw.json;
+    const calendarError = normalizeCalendarApiError(raw.status, payload);
+    if (calendarError) throw calendarError;
     const code = isRecord(payload) && typeof payload.error === "string" ? payload.error : "request_failed";
     const message = getErrorMessage(payload, `Request failed with ${raw.status}.`);
     const token = options.token?.trim() ?? "";
@@ -3610,6 +3928,72 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
     async deleteProductTask(orgId: string, taskId: string, input: { expectedVersion: number; idempotencyKey: string }): Promise<DenProductTaskResult> {
       const payload = await requestJson<unknown>(baseUrls, `/v1/tasks/${encodeURIComponent(taskId)}`, { method: "DELETE", token, organizationId: orgId, body: input });
       return normalizeProductTaskResult(payload);
+    },
+
+    async listCalendars(orgId: string, requestOptions: { signal?: AbortSignal } = {}): Promise<DenCalendar[]> {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/calendars", { method: "GET", token, organizationId: orgId, signal: requestOptions.signal });
+      if (!isRecord(payload) || !hasExactKeys(payload, ["items"])) invalidCalendarPayload("Calendar list response was invalid.");
+      return normalizeCalendarList(payload.items);
+    },
+
+    async getCalendar(orgId: string, calendarId: string, requestOptions: { signal?: AbortSignal } = {}): Promise<DenCalendar> {
+      const payload = await requestJson<unknown>(baseUrls, `/v1/calendars/${encodeURIComponent(calendarId)}`, { method: "GET", token, organizationId: orgId, signal: requestOptions.signal });
+      if (!isRecord(payload) || !hasExactKeys(payload, ["calendar"])) invalidCalendarPayload("Calendar response was invalid.");
+      const calendar = normalizeDenCalendar(payload.calendar);
+      if (!calendar) invalidCalendarPayload("Calendar response was invalid.");
+      return calendar;
+    },
+
+    async createCalendar(orgId: string, input: DenCalendarCreateInput): Promise<DenCalendarResult> {
+      return normalizeCalendarResult(await requestJson<unknown>(baseUrls, "/v1/calendars", { method: "POST", token, organizationId: orgId, body: input }));
+    },
+
+    async updateCalendar(orgId: string, calendarId: string, input: DenCalendarUpdateInput): Promise<DenCalendarResult> {
+      return normalizeCalendarResult(await requestJson<unknown>(baseUrls, `/v1/calendars/${encodeURIComponent(calendarId)}`, { method: "PATCH", token, organizationId: orgId, body: input }));
+    },
+
+    async deleteCalendar(orgId: string, calendarId: string, input: DenCalendarDeleteInput): Promise<DenCalendarDeleteResult> {
+      return normalizeCalendarDeleteResult(await requestJson<unknown>(baseUrls, `/v1/calendars/${encodeURIComponent(calendarId)}`, { method: "DELETE", token, organizationId: orgId, body: input }), "calendar");
+    },
+
+    async listCalendarEvents(orgId: string, options: DenCalendarRangeOptions, requestOptions: { signal?: AbortSignal } = {}): Promise<DenCalendarEventPage> {
+      const query = calendarQuery({ startDate: options.startDate, endDateExclusive: options.endDateExclusive, calendarIds: options.calendarIds, cursor: options.cursor, limit: options.limit });
+      return normalizeCalendarEventPage(await requestJson<unknown>(baseUrls, `/v1/calendar-events${query}`, { method: "GET", token, organizationId: orgId, signal: requestOptions.signal }));
+    },
+
+    async searchCalendarEvents(orgId: string, options: DenCalendarSearchOptions, requestOptions: { signal?: AbortSignal } = {}): Promise<DenCalendarEventPage> {
+      const query = calendarQuery({ q: options.query, calendarIds: options.calendarIds, cursor: options.cursor, limit: options.limit });
+      return normalizeCalendarEventPage(await requestJson<unknown>(baseUrls, `/v1/calendar-events/search${query}`, { method: "GET", token, organizationId: orgId, signal: requestOptions.signal }));
+    },
+
+    async getCalendarEvent(orgId: string, eventId: string, requestOptions: { signal?: AbortSignal } = {}): Promise<DenCalendarEvent> {
+      const payload = await requestJson<unknown>(baseUrls, `/v1/calendar-events/${encodeURIComponent(eventId)}`, { method: "GET", token, organizationId: orgId, signal: requestOptions.signal });
+      if (!isRecord(payload) || !hasExactKeys(payload, ["event"])) invalidCalendarPayload("Calendar event response was invalid.");
+      const event = normalizeDenCalendarEvent(payload.event);
+      if (!event) invalidCalendarPayload("Calendar event response was invalid.");
+      return event;
+    },
+
+    async createCalendarEvent(orgId: string, input: DenCalendarEventCreateInput): Promise<DenCalendarEventResult> {
+      return normalizeCalendarEventResult(await requestJson<unknown>(baseUrls, "/v1/calendar-events", { method: "POST", token, organizationId: orgId, body: input }));
+    },
+
+    async updateCalendarEvent(orgId: string, eventId: string, input: DenCalendarEventUpdateInput): Promise<DenCalendarEventResult> {
+      return normalizeCalendarEventResult(await requestJson<unknown>(baseUrls, `/v1/calendar-events/${encodeURIComponent(eventId)}`, { method: "PATCH", token, organizationId: orgId, body: input }));
+    },
+
+    async deleteCalendarEvent(orgId: string, eventId: string, input: DenCalendarDeleteInput): Promise<DenCalendarDeleteResult> {
+      return normalizeCalendarDeleteResult(await requestJson<unknown>(baseUrls, `/v1/calendar-events/${encodeURIComponent(eventId)}`, { method: "DELETE", token, organizationId: orgId, body: input }), "event");
+    },
+
+    async getCalendarBootstrap(orgId: string, options: Omit<DenCalendarRangeOptions, "cursor" | "limit">, requestOptions: { signal?: AbortSignal } = {}): Promise<DenCalendarBootstrap> {
+      const query = calendarQuery({ startDate: options.startDate, endDateExclusive: options.endDateExclusive, calendarIds: options.calendarIds });
+      return normalizeCalendarBootstrap(await requestJson<unknown>(baseUrls, `/v1/calendar/bootstrap${query}`, { method: "GET", token, organizationId: orgId, signal: requestOptions.signal }));
+    },
+
+    async getCalendarChanges(orgId: string, cursor: string, options: { limit?: number; signal?: AbortSignal } = {}): Promise<DenCalendarChangePage> {
+      const query = calendarQuery({ cursor, limit: options.limit });
+      return normalizeCalendarChangePage(await requestJson<unknown>(baseUrls, `/v1/calendar/changes${query}`, { method: "GET", token, organizationId: orgId, signal: options.signal }));
     },
 
     /** 读取自动化稳定 envelope、投影和资源限制能力。 */

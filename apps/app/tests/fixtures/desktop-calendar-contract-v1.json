@@ -1,0 +1,263 @@
+{
+  "version": "calendar-v1",
+  "routes": [
+    "GET /v1/calendars",
+    "POST /v1/calendars",
+    "GET /v1/calendars/:calendarId",
+    "PATCH /v1/calendars/:calendarId",
+    "DELETE /v1/calendars/:calendarId",
+    "GET /v1/calendar-events",
+    "GET /v1/calendar-events/search",
+    "POST /v1/calendar-events",
+    "GET /v1/calendar-events/:eventId",
+    "PATCH /v1/calendar-events/:eventId",
+    "DELETE /v1/calendar-events/:eventId",
+    "GET /v1/calendar/bootstrap",
+    "GET /v1/calendar/changes"
+  ],
+  "cursorResyncReasons": ["invalid", "scope_mismatch", "expired", "version_unsupported"],
+  "limits": {
+    "mutationBodyBytes": 1048576,
+    "idempotencyKeyMax": 128,
+    "pageDefault": 50,
+    "pageMax": 100,
+    "rangeMaxDays": 366,
+    "calendarFilterMax": 20,
+    "bootstrapEventMax": 5000,
+    "calendarNameMax": 100,
+    "eventTitleMax": 500,
+    "eventDescriptionMax": 20000,
+    "searchTextMax": 200,
+    "timeZoneMax": 128
+  },
+  "calendar": {
+    "id": "calendar_primary",
+    "organizationId": "organization_fixture",
+    "ownerMemberId": "member_fixture",
+    "name": "My calendar",
+    "color": "#3366CC",
+    "isDefault": true,
+    "version": 1,
+    "createdAt": "2026-11-05T01:00:00Z",
+    "updatedAt": "2026-11-05T01:00:00Z"
+  },
+  "allDayEvent": {
+    "id": "event_all_day",
+    "organizationId": "organization_fixture",
+    "ownerMemberId": "member_fixture",
+    "calendarId": "calendar_primary",
+    "title": "Planning day",
+    "description": "",
+    "time": {
+      "kind": "allDay",
+      "startDate": "2026-11-05",
+      "endDateExclusive": "2026-11-06"
+    },
+    "version": 1,
+    "createdAt": "2026-11-05T01:01:00Z",
+    "updatedAt": "2026-11-05T01:01:00Z"
+  },
+  "timedEvent": {
+    "id": "event_timed",
+    "organizationId": "organization_fixture",
+    "ownerMemberId": "member_fixture",
+    "calendarId": "calendar_primary",
+    "title": "Design review",
+    "description": "Calendar core",
+    "time": {
+      "kind": "timed",
+      "startInstant": "2026-11-05T02:00:00Z",
+      "endInstantExclusive": "2026-11-05T03:00:00Z",
+      "timeZone": "Asia/Shanghai"
+    },
+    "version": 2,
+    "createdAt": "2026-11-05T01:02:00Z",
+    "updatedAt": "2026-11-05T01:03:00Z"
+  },
+  "bootstrap": {
+    "calendars": [
+      {
+        "id": "calendar_primary",
+        "organizationId": "organization_fixture",
+        "ownerMemberId": "member_fixture",
+        "name": "My calendar",
+        "color": "#3366CC",
+        "isDefault": true,
+        "version": 1,
+        "createdAt": "2026-11-05T01:00:00Z",
+        "updatedAt": "2026-11-05T01:00:00Z"
+      }
+    ],
+    "events": [
+      {
+        "id": "event_all_day",
+        "organizationId": "organization_fixture",
+        "ownerMemberId": "member_fixture",
+        "calendarId": "calendar_primary",
+        "title": "Planning day",
+        "description": "",
+        "time": {
+          "kind": "allDay",
+          "startDate": "2026-11-05",
+          "endDateExclusive": "2026-11-06"
+        },
+        "version": 1,
+        "createdAt": "2026-11-05T01:01:00Z",
+        "updatedAt": "2026-11-05T01:01:00Z"
+      },
+      {
+        "id": "event_timed",
+        "organizationId": "organization_fixture",
+        "ownerMemberId": "member_fixture",
+        "calendarId": "calendar_primary",
+        "title": "Design review",
+        "description": "Calendar core",
+        "time": {
+          "kind": "timed",
+          "startInstant": "2026-11-05T02:00:00Z",
+          "endInstantExclusive": "2026-11-05T03:00:00Z",
+          "timeZone": "Asia/Shanghai"
+        },
+        "version": 2,
+        "createdAt": "2026-11-05T01:02:00Z",
+        "updatedAt": "2026-11-05T01:03:00Z"
+      }
+    ],
+    "coverage": {
+      "startDate": "2026-11-01",
+      "endDateExclusive": "2026-12-01",
+      "calendarIds": ["calendar_primary"]
+    },
+    "cursor": "calendar_cursor_bootstrap"
+  },
+  "changes": {
+    "items": [
+      {
+        "sequence": 41,
+        "kind": "upsert",
+        "entityType": "calendar",
+        "entity": {
+          "id": "calendar_primary",
+          "organizationId": "organization_fixture",
+          "ownerMemberId": "member_fixture",
+          "name": "My calendar",
+          "color": "#3366CC",
+          "isDefault": true,
+          "version": 1,
+          "createdAt": "2026-11-05T01:00:00Z",
+          "updatedAt": "2026-11-05T01:00:00Z"
+        }
+      },
+      {
+        "sequence": 42,
+        "kind": "upsert",
+        "entityType": "event",
+        "entity": {
+          "id": "event_timed",
+          "organizationId": "organization_fixture",
+          "ownerMemberId": "member_fixture",
+          "calendarId": "calendar_primary",
+          "title": "Design review",
+          "description": "Calendar core",
+          "time": {
+            "kind": "timed",
+            "startInstant": "2026-11-05T02:00:00Z",
+            "endInstantExclusive": "2026-11-05T03:00:00Z",
+            "timeZone": "Asia/Shanghai"
+          },
+          "version": 2,
+          "createdAt": "2026-11-05T01:02:00Z",
+          "updatedAt": "2026-11-05T01:03:00Z"
+        }
+      },
+      {
+        "sequence": 43,
+        "kind": "delete",
+        "entityType": "event",
+        "entityId": "event_deleted",
+        "version": 3,
+        "deletedAt": "2026-11-05T01:04:00Z"
+      }
+    ],
+    "nextCursor": "calendar_cursor_43",
+    "hasMore": true
+  },
+  "errors": [
+    {
+      "status": 400,
+      "response": {
+        "error": "invalid_calendar_request",
+        "message": "Calendar request is invalid.",
+        "details": {"time": "mixed_time_fields"}
+      }
+    },
+    {
+      "status": 404,
+      "response": {
+        "error": "calendar_not_found",
+        "message": "Calendar resource not found."
+      }
+    },
+    {
+      "status": 404,
+      "response": {
+        "error": "calendar_disabled",
+        "message": "Calendar is not available."
+      }
+    },
+    {
+      "status": 403,
+      "response": {
+        "error": "calendar_write_disabled",
+        "message": "Calendar writes are not available."
+      }
+    },
+    {
+      "status": 409,
+      "response": {
+        "error": "calendar_version_conflict",
+        "message": "Calendar resource version changed.",
+        "details": {
+          "current": {
+            "id": "calendar_primary",
+            "organizationId": "organization_fixture",
+            "ownerMemberId": "member_fixture",
+            "name": "My calendar",
+            "color": "#3366CC",
+            "isDefault": true,
+            "version": 2,
+            "createdAt": "2026-11-05T01:00:00Z",
+            "updatedAt": "2026-11-05T01:05:00Z"
+          }
+        }
+      }
+    },
+    {
+      "status": 409,
+      "response": {
+        "error": "calendar_idempotency_conflict",
+        "message": "Idempotency key was used with another payload."
+      }
+    },
+    {
+      "status": 409,
+      "response": {
+        "error": "calendar_cursor_resync_required",
+        "message": "Calendar sync must be restarted.",
+        "details": {"reason": "scope_mismatch"}
+      }
+    },
+    {
+      "status": 422,
+      "response": {
+        "error": "calendar_result_too_large",
+        "message": "Calendar result is too large.",
+        "details": {"limit": 5000}
+      }
+    }
+  ],
+  "featureCapability": {
+    "calendarEnabled": true,
+    "calendarWriteEnabled": true
+  }
+}
