@@ -60,9 +60,10 @@ const DEFAULT_DEN_TIMEOUT_MS = 12_000;
 export type DenProductTaskStatus = "todo" | "completed" | "canceled";
 export type DenProductTaskPriority = "none" | "low" | "medium" | "high";
 export type DenProductTaskVisibility = "private" | "members" | "organization";
+export type DenProductTaskCompletionPolicy = "any_assignee" | "all_assignees";
 export type DenProductTaskView = "today" | "inbox" | "assigned" | "created" | "delegated" | "following" | "all" | "completed" | "trash";
 export type DenProductTaskMemberRole = "assignee" | "follower" | "viewer";
-export type DenProductTaskMember = { memberId: string; role: DenProductTaskMemberRole; createdByMemberId?: string; createdAt?: string };
+export type DenProductTaskMember = { memberId: string; role: DenProductTaskMemberRole; createdByMemberId?: string; createdAt?: string; completedAt?: string | null };
 export type DenOrganizationMember = {
   id: string;
   userId: string;
@@ -80,6 +81,7 @@ export type DenProductTask = {
   description: string;
   priority: DenProductTaskPriority;
   visibility: DenProductTaskVisibility;
+  completionPolicy: DenProductTaskCompletionPolicy;
   status: DenProductTaskStatus;
   version: number;
   startAt: string | null;
@@ -118,6 +120,7 @@ export type DenProductTaskPersonFilterOperator = "contains" | "not_contains" | "
 export type DenProductTaskCreateInput = {
   idempotencyKey: string; title: string; description?: string; priority?: DenProductTaskPriority;
   visibility?: DenProductTaskVisibility; listId?: string; startAt?: string | null; dueAt?: string | null;
+  completionPolicy?: DenProductTaskCompletionPolicy;
   members?: Array<{ memberId: string; role: DenProductTaskMemberRole }>;
 };
 export type DenProductTaskUpdateInput = Partial<Omit<DenProductTaskCreateInput, "idempotencyKey" | "listId">> & { expectedVersion: number; idempotencyKey: string };
@@ -679,6 +682,7 @@ function normalizeProductTask(value: unknown): DenProductTask | null {
     typeof value.title !== "string" || typeof value.description !== "string" || typeof value.version !== "number" ||
     !["none", "low", "medium", "high"].includes(String(value.priority)) ||
     !["private", "members", "organization"].includes(String(value.visibility)) ||
+    ("completionPolicy" in value && !["any_assignee", "all_assignees"].includes(String(value.completionPolicy))) ||
     !["todo", "completed", "canceled"].includes(String(value.status)) ||
     typeof value.createdAt !== "string" || typeof value.updatedAt !== "string") return null;
   const nullableString = (input: unknown) => typeof input === "string" ? input : null;
@@ -691,6 +695,7 @@ function normalizeProductTask(value: unknown): DenProductTask | null {
     description: value.description,
     priority: value.priority as DenProductTaskPriority,
     visibility: value.visibility as DenProductTaskVisibility,
+    completionPolicy: (value.completionPolicy ?? "any_assignee") as DenProductTaskCompletionPolicy,
     status: value.status as DenProductTaskStatus,
     version: value.version,
     startAt: nullableString(value.startAt),
@@ -713,8 +718,8 @@ function normalizeProductTaskResult(value: unknown): DenProductTaskResult {
     throw new DenApiError(500, "invalid_task_payload", "Task response was invalid.");
   }
   const members = value.members.flatMap((member) => isRecord(member) && typeof member.memberId === "string" &&
-    ["assignee", "follower", "viewer"].includes(String(member.role))
-    ? [{ memberId: member.memberId, role: member.role as DenProductTaskMemberRole, createdByMemberId: typeof member.createdByMemberId === "string" ? member.createdByMemberId : undefined, createdAt: typeof member.createdAt === "string" ? member.createdAt : undefined }]
+    ["assignee", "follower", "viewer"].includes(String(member.role)) && validOptionalNullableString(member, "completedAt")
+    ? [{ memberId: member.memberId, role: member.role as DenProductTaskMemberRole, createdByMemberId: typeof member.createdByMemberId === "string" ? member.createdByMemberId : undefined, createdAt: typeof member.createdAt === "string" ? member.createdAt : undefined, completedAt: typeof member.completedAt === "string" ? member.completedAt : null }]
     : []);
   if (members.length !== value.members.length) throw new DenApiError(500, "invalid_task_payload", "Task response was invalid.");
   const permissions = value.permissions;
@@ -724,13 +729,18 @@ function normalizeProductTaskResult(value: unknown): DenProductTaskResult {
 }
 
 function normalizeProductTaskMember(value: unknown): DenProductTaskMember | null {
-  if (!isRecord(value) || typeof value.memberId !== "string" || !["assignee", "follower", "viewer"].includes(String(value.role))) return null;
+  if (!isRecord(value) || typeof value.memberId !== "string" || !["assignee", "follower", "viewer"].includes(String(value.role)) || !validOptionalNullableString(value, "completedAt")) return null;
   return {
     memberId: value.memberId,
     role: value.role as DenProductTaskMemberRole,
     createdByMemberId: typeof value.createdByMemberId === "string" ? value.createdByMemberId : undefined,
     createdAt: typeof value.createdAt === "string" ? value.createdAt : undefined,
+    completedAt: typeof value.completedAt === "string" ? value.completedAt : null,
   };
+}
+
+function validOptionalNullableString(value: Record<string, unknown>, key: string) {
+  return !(key in value) || value[key] === null || typeof value[key] === "string";
 }
 
 function normalizeOrganizationMember(value: unknown): DenOrganizationMember | null {

@@ -6,7 +6,7 @@ const originalFetch = globalThis.fetch;
 afterEach(() => { globalThis.fetch = originalFetch; });
 
 const task = {
-  id: "task/one", displayNumber: 100134, creatorMemberId: "member_one", listId: null, title: "Follow up", description: "", priority: "none", visibility: "private", status: "todo", version: 1,
+  id: "task/one", displayNumber: 100134, creatorMemberId: "member_one", listId: null, title: "Follow up", description: "", priority: "none", visibility: "private", completionPolicy: "all_assignees", status: "todo", version: 1,
   startAt: null, dueAt: null, completedAt: null, completedByMemberId: null, canceledAt: null, canceledByMemberId: null, deletedAt: null, deletedByMemberId: null,
   restoreUntil: null, createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z",
 };
@@ -24,7 +24,8 @@ test("product task client sends scoped pagination and strict mutations", async (
   const page = await client.listProductTasks("org_one", { view: "today", cursor: "cursor one", limit: 30 });
   expect(page.nextCursor).toBe("cursor_two");
   expect(page.items[0]?.displayNumber).toBe(100134);
-  expect(page.membersByTaskId["task/one"]?.[0]).toEqual({ memberId: "member_two", role: "assignee", createdByMemberId: undefined, createdAt: undefined });
+  expect(page.items[0]?.completionPolicy).toBe("all_assignees");
+  expect(page.membersByTaskId["task/one"]?.[0]).toEqual({ memberId: "member_two", role: "assignee", createdByMemberId: undefined, createdAt: undefined, completedAt: null });
   expect(requests[0]!.url).toContain("view=today");
   expect(requests[0]!.url).toContain("cursor=cursor+one");
   expect(new Headers(requests[0]!.init?.headers).get("Authorization")).toBe("Bearer token_one");
@@ -111,6 +112,22 @@ test("product task client accepts older tasks without display numbers", async ()
   const client = createDenClient({ baseUrl: "https://work.example", token: "token_one" });
   const page = await client.listProductTasks("org_one");
   expect(page.items[0]?.displayNumber).toBeNull();
+});
+
+test("product task client defaults older tasks to any-assignee completion", async () => {
+  const { completionPolicy: _completionPolicy, ...olderTask } = task;
+  globalThis.fetch = async () => Response.json({ items: [olderTask], membersByTaskId: {}, nextCursor: "" });
+  const client = createDenClient({ baseUrl: "https://work.example", token: "token_one" });
+  const page = await client.listProductTasks("org_one");
+  expect(page.items[0]?.completionPolicy).toBe("any_assignee");
+});
+
+test("product task client rejects malformed completion state fields", async () => {
+  const client = createDenClient({ baseUrl: "https://work.example", token: "token_one" });
+  globalThis.fetch = async () => Response.json({ items: [{ ...task, completionPolicy: "all_assignee" }], membersByTaskId: {}, nextCursor: "" });
+  await expect(client.listProductTasks("org_one")).rejects.toMatchObject({ code: "invalid_task_page" });
+  globalThis.fetch = async () => Response.json({ items: [task], membersByTaskId: { "task/one": [{ memberId: "member_two", role: "assignee", completedAt: 1 }] }, nextCursor: "" });
+  await expect(client.listProductTasks("org_one")).rejects.toMatchObject({ code: "invalid_task_page" });
 });
 
 test("product task client rejects malformed present joined members", async () => {
