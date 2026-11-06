@@ -1,6 +1,8 @@
 import type { DenProductTaskPriority } from "@/app/lib/den";
 import { productTaskScopeKey, type ProductTaskScope } from "./task-queries";
 
+export type TaskWorkbenchSection = "assigned" | "following" | "all" | "created" | "delegated" | "completed";
+
 export type TaskWorkbenchView = "list" | "board";
 export type TaskWorkbenchStatus = "incomplete" | "completed" | "all";
 export type TaskWorkbenchSort = "updated_at" | "created_at" | "start_at" | "due_at" | "completed_at";
@@ -70,6 +72,52 @@ export const defaultTaskWorkbenchSettings: TaskWorkbenchSettings = {
   fields: defaultVisibleTaskWorkbenchFields,
 };
 
+export const taskWorkbenchSections: TaskWorkbenchSection[] = ["assigned", "following", "all", "created", "delegated", "completed"];
+
+export function isTaskWorkbenchSection(section: string): section is TaskWorkbenchSection {
+  return taskWorkbenchSections.includes(section as TaskWorkbenchSection);
+}
+
+export function defaultTaskWorkbenchSettingsForSection(section: TaskWorkbenchSection): TaskWorkbenchSettings {
+  if (section === "completed") return { ...defaultTaskWorkbenchSettings, status: "completed" };
+  if (section === "all") return { ...defaultTaskWorkbenchSettings, status: "all" };
+  return defaultTaskWorkbenchSettings;
+}
+
+export function taskSectionDefaultSettings(section: TaskWorkbenchSection, currentMemberId: string | null, settings = defaultTaskWorkbenchSettingsForSection(section)): TaskWorkbenchSettings {
+  const memberIds = currentMemberId ? [currentMemberId] : [];
+  const next: TaskWorkbenchSettings = {
+    ...settings,
+    status: section === "all" ? "all" : section === "completed" ? "completed" : "incomplete",
+    overdue: false,
+    assigneeMemberIds: [],
+    assigneeMemberOperator: "contains",
+    assignerMemberIds: [],
+    assignerMemberOperator: "contains",
+    creatorMemberIds: [],
+    creatorMemberOperator: "contains",
+    followerMemberIds: [],
+    followerMemberOperator: "contains",
+  };
+  if (section === "assigned") return { ...next, assigneeMemberIds: memberIds };
+  if (section === "following") return {
+    ...next,
+    followerMemberIds: memberIds,
+    creatorMemberIds: memberIds,
+    creatorMemberOperator: "not_contains",
+    assigneeMemberIds: memberIds,
+    assigneeMemberOperator: "not_contains",
+  };
+  if (section === "created") return { ...next, creatorMemberIds: memberIds };
+  if (section === "delegated") return {
+    ...next,
+    assigneeMemberIds: memberIds,
+    assigneeMemberOperator: "not_contains",
+    assignerMemberIds: memberIds,
+  };
+  return next;
+}
+
 function normalizeTaskWorkbenchFieldOrder(value: unknown): TaskWorkbenchField[] {
   if (!Array.isArray(value)) return taskWorkbenchFields;
   const persisted = [...new Set(value.filter((item): item is TaskWorkbenchField => taskWorkbenchFields.includes(item as TaskWorkbenchField)))];
@@ -118,15 +166,16 @@ function normalizeTaskCustomGroupAssignments(value: unknown, groups: TaskCustomG
   return assignments;
 }
 
-export function taskWorkbenchStorageKey(scope: ProductTaskScope | null): string {
-  return `jugglework:tasks:workbench:${productTaskScopeKey(scope)}:assigned`;
+export function taskWorkbenchStorageKey(scope: ProductTaskScope | null, section: TaskWorkbenchSection = "assigned", listId?: string | null): string {
+	return `jugglework:tasks:workbench:${productTaskScopeKey(scope)}:${listId ? `list:${listId}` : section}`;
 }
 
-export function readTaskWorkbenchSettings(scope: ProductTaskScope | null): TaskWorkbenchSettings {
-  if (typeof localStorage === "undefined") return defaultTaskWorkbenchSettings;
-  try {
-    const value = JSON.parse(localStorage.getItem(taskWorkbenchStorageKey(scope)) ?? "null") as Partial<TaskWorkbenchSettings> | null;
-    if (!value || typeof value !== "object") return defaultTaskWorkbenchSettings;
+export function readTaskWorkbenchSettings(scope: ProductTaskScope | null, section: TaskWorkbenchSection = "assigned", listId?: string | null): TaskWorkbenchSettings {
+	const defaults = listId ? { ...defaultTaskWorkbenchSettings, group: "custom" as const } : defaultTaskWorkbenchSettingsForSection(section);
+	if (typeof localStorage === "undefined") return defaults;
+	try {
+		const value = JSON.parse(localStorage.getItem(taskWorkbenchStorageKey(scope, section, listId)) ?? "null") as Partial<TaskWorkbenchSettings> | null;
+		if (!value || typeof value !== "object") return defaults;
     const priorities = Array.isArray(value.priorities) ? [...new Set(value.priorities.filter((item): item is DenProductTaskPriority => ["none", "low", "medium", "high"].includes(String(item))))] : [];
     const listIds = Array.isArray(value.listIds) ? [...new Set(value.listIds.filter((item): item is string => typeof item === "string"))] : [];
     const memberIds = (input: unknown) => Array.isArray(input) ? [...new Set(input.filter((item): item is string => typeof item === "string" && item.length > 0))] : [];
@@ -158,15 +207,15 @@ export function readTaskWorkbenchSettings(scope: ProductTaskScope | null): TaskW
       fieldOrder,
       fields,
     };
-  } catch {
-    return defaultTaskWorkbenchSettings;
-  }
+	} catch {
+		return defaults;
+	}
 }
 
-export function writeTaskWorkbenchSettings(scope: ProductTaskScope | null, settings: TaskWorkbenchSettings): void {
-  if (typeof localStorage === "undefined") return;
-  try {
-    localStorage.setItem(taskWorkbenchStorageKey(scope), JSON.stringify(settings));
+export function writeTaskWorkbenchSettings(scope: ProductTaskScope | null, settings: TaskWorkbenchSettings, section: TaskWorkbenchSection = "assigned", listId?: string | null): void {
+	if (typeof localStorage === "undefined") return;
+	try {
+		localStorage.setItem(taskWorkbenchStorageKey(scope, section, listId), JSON.stringify(settings));
   } catch {
     // Storage can be unavailable in hardened renderer contexts; settings remain usable in memory.
   }

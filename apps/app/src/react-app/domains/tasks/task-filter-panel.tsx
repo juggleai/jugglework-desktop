@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Check, ChevronDown, Filter, Plus, X } from "lucide-react";
 
 import type { DenOrganizationMember, DenProductTaskList } from "@/app/lib/den";
@@ -55,6 +55,10 @@ export function TaskFilterPanel(props: { settings: TaskWorkbenchSettings; lists:
     const operator = memberOperator(field);
     return operator === "empty" || operator === "not_empty" || memberIds(field).length > 0;
   };
+  useEffect(() => {
+    const activeFields = (["assignee", "assigner", "follower", "creator"] as PersonFilterField[]).filter(personActive);
+    setConditions((current) => activeFields.reduce<FilterField[]>((next, field) => next.includes(field) ? next : [...next, field], current));
+  }, [props.settings.assigneeMemberIds, props.settings.assigneeMemberOperator, props.settings.assignerMemberIds, props.settings.assignerMemberOperator, props.settings.creatorMemberIds, props.settings.creatorMemberOperator, props.settings.followerMemberIds, props.settings.followerMemberOperator]);
   const activeCount = (["assignee", "assigner", "follower", "creator"] as PersonFilterField[]).filter(personActive).length;
   const clearField = (field: FilterField) => {
     if (!isPersonField(field)) return;

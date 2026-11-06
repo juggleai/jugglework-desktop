@@ -1331,6 +1331,33 @@ export function SessionSurface(props: SessionSurfaceProps) {
       if (isCurrentSurface() && (synthesizeBusy || activityAfterSend?.runActive)) {
         setAwaitingAssistantBaseline(renderedMessages.length);
       }
+      // promptAsync acknowledges only after OpenCode has accepted the turn,
+      // but the visible transcript used to rely exclusively on the matching
+      // SSE message events. If the subscription reconnects across that small
+      // window, the task starts while the current page keeps rendering its
+      // pre-submit snapshot until the user switches away and back. Re-read the
+      // authoritative snapshot after every accepted submission; transcript
+      // reconciliation is idempotent by message id, so an SSE event that did
+      // arrive cannot create a duplicate turn. Run state is established above
+      // first, so a slower snapshot cannot delay the Stop control.
+      try {
+        await queryClient.invalidateQueries({
+          queryKey: reactSnapshotKey(workspaceId, sessionId),
+          exact: true,
+        });
+        recordInspectorEvent("task_submission.reconciled", {
+          workspaceId,
+          sessionId,
+          outcome: result.outcome,
+        });
+      } catch {
+        // Submission already succeeded. Keep the run active and let the next
+        // reconnect, focus refresh, or route read reconcile the transcript.
+        recordInspectorEvent("task_submission.reconcile_failed", {
+          workspaceId,
+          sessionId,
+        });
+      }
       return result;
     } catch (nextError) {
       if (isSessionBusyError(nextError)) {
@@ -1359,7 +1386,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     } finally {
       inFlightSendIdentitiesRef.current.delete(surfaceIdentity);
     }
-  }, [fileHost, activeRunsQuery.refetch, appendComposerHistory, imageGenerationModels, imageGenerationUnavailable, props.onSendDraft, props.sessionId, props.taskSubmissionDisabled, props.workspaceId, props.client, renderedMessages.length, videoGenerationModels, videoGenerationUnavailable]);
+  }, [fileHost, activeRunsQuery.refetch, appendComposerHistory, imageGenerationModels, imageGenerationUnavailable, props.onSendDraft, props.sessionId, props.taskSubmissionDisabled, props.workspaceId, props.client, queryClient, renderedMessages.length, videoGenerationModels, videoGenerationUnavailable]);
 
   const clearComposer = useCallback((release = false) => {
     const ids = getComposerOfficeGroups(useComposerStateStore.getState(), props.sessionId).flatMap((group) => group.references.map((ref) => ref.referenceId));

@@ -25,6 +25,7 @@ mock.module("../src/components/ui/popover", () => ({
 import { defaultTaskWorkbenchSettings } from "../src/react-app/domains/tasks/task-view-state";
 import { TaskWorkbench, sortLoadedProductTasks, taskWorkbenchServerSort } from "../src/react-app/domains/tasks/task-workbench";
 import { defaultCustomTaskGroupKey, taskGroupCreateDefaults, taskTimeGroup } from "../src/react-app/domains/tasks/task-list-table";
+import { TaskDateTimeCell, type TaskReminderDraft } from "../src/react-app/domains/tasks/task-date-time-cell";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const originalConsoleError = console.error;
@@ -46,8 +47,8 @@ const members: DenOrganizationMember[] = [
 const lists: DenProductTaskList[] = [{ id: "list_one", creatorMemberId: "member_creator", name: "Launch", description: "", marker: "#", visibility: "private", version: 1, archivedAt: null, createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z" }];
 const membersByTaskId = { task_todo_with_full_identifier: [{ memberId: "member_assignee", role: "assignee" as const, createdByMemberId: "member_creator" }, { memberId: "member_creator", role: "follower" as const }], task_done: [], task_canceled: [] };
 
-function workbench(settings = defaultTaskWorkbenchSettings, onSettingsChange = () => undefined, onTransition = () => undefined, onQuickCreate = async () => true, onAssigneesChange?: (task: DenProductTask, memberIds: string[]) => Promise<boolean>, onCompletionPolicyChange?: (task: DenProductTask, policy: DenProductTaskCompletionPolicy) => Promise<boolean>) {
-  return <TaskWorkbench tasks={tasks} membersByTaskId={membersByTaskId} members={members} lists={lists} settings={settings} selectedTaskId={null} canLoadMore={false} loadingMore={false} quickCreateMemberId="member_assignee" onLoadMore={() => undefined} onSettingsChange={onSettingsChange} onSelect={() => undefined} onTransition={onTransition} onQuickCreate={onQuickCreate} onAssigneesChange={onAssigneesChange} onCompletionPolicyChange={onCompletionPolicyChange} />;
+function workbench(settings = defaultTaskWorkbenchSettings, onSettingsChange = () => undefined, onTransition = () => undefined, onQuickCreate = async () => true, onAssigneesChange?: (task: DenProductTask, memberIds: string[]) => Promise<boolean>, onCompletionPolicyChange?: (task: DenProductTask, policy: DenProductTaskCompletionPolicy) => Promise<boolean>, onListChange?: (task: DenProductTask, listId: string) => Promise<boolean>, onListCreate?: (task: DenProductTask, name: string) => Promise<string | null>) {
+  return <TaskWorkbench tasks={tasks} membersByTaskId={membersByTaskId} members={members} lists={lists} settings={settings} selectedTaskId={null} canLoadMore={false} loadingMore={false} quickCreateMemberId="member_assignee" onLoadMore={() => undefined} onSettingsChange={onSettingsChange} onSelect={() => undefined} onTransition={onTransition} onQuickCreate={onQuickCreate} onAssigneesChange={onAssigneesChange} onCompletionPolicyChange={onCompletionPolicyChange} onListChange={onListChange} onListCreate={onListCreate} />;
 }
 
 function refreshingWorkbench() {
@@ -80,6 +81,8 @@ test("list title icons and labels keep a fixed gap as the table grows", async ()
   try {
     expect(renderer!.root.findByProps({ "data-testid": "task-title-header" }).props.className).toContain("gap-2");
     expect(renderer!.root.findByProps({ "data-testid": "task-title-cell-task_todo_with_full_identifier" }).props.className).toContain("gap-2");
+    expect(renderer!.root.findByProps({ "data-testid": "assigned-task-table" }).findByType("table").props.className).toContain("after:left-[38px]");
+    expect(renderer!.root.findByProps({ "data-testid": "assigned-task-table" }).findByType("table").props.className).toContain("after:right-6");
   } finally { await act(async () => renderer!.unmount()); }
 });
 
@@ -132,14 +135,84 @@ test("assignee picker persists the completion rule and rolls back failed changes
   await act(async () => { renderer = TestRenderer.create(workbench(defaultTaskWorkbenchSettings, () => undefined, () => undefined, async () => true, undefined, async (_task, policy) => { changes.push(policy); return shouldSave; })); });
   try {
     let all = renderer!.root.findByProps({ "data-testid": "task-completion-policy-task_todo_with_full_identifier-all_assignees" });
-    expect(all.findByType("input").props.checked).toBe(false);
-    await act(async () => { all.findByType("input").props.onChange(); });
+    expect(all.findAll((node) => node.props.children === "All assignees must complete")).toHaveLength(1);
+    await act(async () => { all.props.onClick(); });
     expect(changes).toEqual(["all_assignees"]);
-    expect(renderer!.root.findByProps({ "data-testid": "task-completion-policy-task_todo_with_full_identifier-any_assignee" }).findByType("input").props.checked).toBe(true);
+    expect(renderer!.root.findByProps({ "data-testid": "task-completion-policy-task_todo_with_full_identifier-any_assignee" }).findAll((node) => node.type === "svg")).toHaveLength(1);
     shouldSave = true;
     all = renderer!.root.findByProps({ "data-testid": "task-completion-policy-task_todo_with_full_identifier-all_assignees" });
-    await act(async () => { all.findByType("input").props.onChange(); });
-    expect(renderer!.root.findByProps({ "data-testid": "task-completion-policy-task_todo_with_full_identifier-all_assignees" }).findByType("input").props.checked).toBe(true);
+    await act(async () => { all.props.onClick(); });
+    expect(renderer!.root.findByProps({ "data-testid": "task-completion-policy-task_todo_with_full_identifier-all_assignees" }).findAll((node) => node.type === "svg")).toHaveLength(1);
+  } finally { await act(async () => renderer!.unmount()); }
+});
+
+test("task time picker supports optional dates, active fields, and half-hour specific times", async () => {
+  const changes: Array<string | null> = [];
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(<TaskDateTimeCell task={tasks[0]!} field="startAt" onChange={async (_task, _field, value) => { changes.push(value); return true; }} />); });
+  try {
+    const picker = renderer!.root.findByProps({ "data-testid": "task-time-picker-task_todo_with_full_identifier-startAt" });
+    expect(picker.findByProps({ "data-testid": "task-time-date-input-task_todo_with_full_identifier-startAt" })).toBeDefined();
+    expect(picker.findByProps({ "data-testid": "task-time-date-input-task_todo_with_full_identifier-dueAt" })).toBeDefined();
+    expect([...new Set(picker.findAll((node) => typeof node.props["data-testid"] === "string" && node.props["data-testid"].startsWith("task-time-option-task_todo_with_full_identifier-startAt-")).map((node) => node.props["data-testid"]))]).toHaveLength(48);
+    expect(picker.findByProps({ "data-testid": "task-time-option-task_todo_with_full_identifier-startAt-09-30" })).toBeDefined();
+    const specific = picker.findByProps({ "data-testid": "task-time-specific-task_todo_with_full_identifier-startAt" });
+    expect(specific.props.checked).toBe(true);
+    await act(async () => { specific.props.onChange({ target: { checked: false } }); });
+    expect(changes.at(-1)).toEqual(expect.any(String));
+    const saved = new Date(changes.at(-1)!);
+    expect(saved.getHours()).toBe(0);
+    expect(saved.getMinutes()).toBe(0);
+    expect(picker.findAll((node) => typeof node.props["data-testid"] === "string" && node.props["data-testid"].startsWith("task-time-option-task_todo_with_full_identifier-startAt-"))).toHaveLength(0);
+    await act(async () => { picker.findByProps({ "data-testid": "task-time-date-input-task_todo_with_full_identifier-startAt" }).props.onClick(); });
+    const day = picker.findAll((node) => typeof node.props["data-testid"] === "string" && node.props["data-testid"].startsWith("task-time-day-task_todo_with_full_identifier-startAt-") && node.props.disabled === false)[0]!;
+    await act(async () => { day.props.onClick(); });
+    expect(changes.at(-1)).toEqual(expect.any(String));
+    await act(async () => { picker.findByProps({ "data-testid": "task-time-clear-task_todo_with_full_identifier-startAt" }).props.onClick(); });
+    expect(changes.at(-1)).toBeNull();
+  } finally { await act(async () => renderer!.unmount()); }
+});
+
+test("due reminder options follow date precision", async () => {
+  const reminders: TaskReminderDraft[] = [];
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(<TaskDateTimeCell task={tasks[0]!} field="dueAt" onChange={async () => true} onLoadReminders={async () => []} onReminderChange={async (_task, reminder) => { reminders.push(reminder); return true; }} />); });
+  try {
+    expect([...new Set(renderer!.root.findAll((node) => typeof node.props["data-testid"] === "string" && node.props["data-testid"].includes("task-reminder-option-")).map((node) => node.props["data-testid"]))]).toEqual([
+      "task-reminder-option-task_todo_with_full_identifier-before_5m",
+      "task-reminder-option-task_todo_with_full_identifier-before_15m",
+      "task-reminder-option-task_todo_with_full_identifier-before_30m",
+      "task-reminder-option-task_todo_with_full_identifier-before_1h",
+      "task-reminder-option-task_todo_with_full_identifier-before_2h",
+      "task-reminder-option-task_todo_with_full_identifier-before_1d",
+    ]);
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-reminder-option-task_todo_with_full_identifier-before_30m" }).props.onClick(); });
+    expect(reminders.at(-1)).toEqual({ mode: "due_relative", dueOffsetSeconds: -1800 });
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-time-specific-task_todo_with_full_identifier-dueAt" }).props.onChange({ target: { checked: false } }); });
+    expect([...new Set(renderer!.root.findAll((node) => typeof node.props["data-testid"] === "string" && node.props["data-testid"].includes("task-reminder-option-")).map((node) => node.props["data-testid"]))]).toEqual([
+      "task-reminder-option-task_todo_with_full_identifier-same_day_18",
+      "task-reminder-option-task_todo_with_full_identifier-before_1d_9",
+      "task-reminder-option-task_todo_with_full_identifier-before_2d_9",
+    ]);
+  } finally { await act(async () => renderer!.unmount()); }
+});
+
+test("task-list cell searches existing lists and creates a missing list", async () => {
+  const moves: string[] = [];
+  const creates: string[] = [];
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(workbench(defaultTaskWorkbenchSettings, undefined, undefined, undefined, undefined, undefined, async (_task, listId) => { moves.push(listId); return true; }, async (_task, name) => { creates.push(name); return "list_created"; })); });
+  try {
+    const picker = renderer!.root.findByProps({ "data-testid": "task-list-picker-task_todo_with_full_identifier" });
+    expect(picker.findByProps({ "data-testid": "task-list-option-task_todo_with_full_identifier-list_one" })).toBeDefined();
+    const search = picker.findByProps({ "data-testid": "task-list-search-task_todo_with_full_identifier" });
+    await act(async () => { search.props.onChange({ currentTarget: { value: "Testing list" } }); });
+    const create = renderer!.root.findByProps({ "data-testid": "task-list-create-task_todo_with_full_identifier" });
+    expect(create.findAll((node) => node.props.children === "Testing list")).toHaveLength(1);
+    await act(async () => { create.props.onClick(); });
+    expect(creates).toEqual(["Testing list"]);
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-list-option-task_todo_with_full_identifier-list_one" }).props.onClick(); });
+    expect(moves).toEqual(["list_one"]);
   } finally { await act(async () => renderer!.unmount()); }
 });
 
@@ -189,9 +262,24 @@ test("toolbar and final-row creation insert a focused title input at their reque
     expect(input.props.autoFocus).toBe(true);
     expect(row.props.className).toContain("bg-dls-active");
     expect(row.findAllByType("td")).toHaveLength(defaultTaskWorkbenchSettings.fields.length + 1);
+    expect(row.findByProps({ "aria-label": "Unassigned" }).props.className).toContain("text-dls-secondary/45");
+    expect(row.findByProps({ "aria-label": "Start time" }).props.className).toContain("text-dls-secondary/45");
+    expect(row.findByProps({ "aria-label": "Due time" }).props.className).toContain("text-dls-secondary/45");
     const updatedRows = renderer!.root.findByType("tbody").findAllByType("tr");
     expect(updatedRows.at(-2)?.props["data-testid"]).toBe("task-inline-create-row-bottom");
     expect(updatedRows.at(-1)?.findByProps({ "data-testid": "task-inline-create-bottom-trigger" })).toBeDefined();
+  } finally { await act(async () => renderer!.unmount()); }
+});
+
+test("empty task assignee and times use muted add-person and calendar affordances", async () => {
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(workbench(defaultTaskWorkbenchSettings, () => undefined, () => undefined, async () => true, async () => true)); });
+  try {
+    const emptyTask = renderer!.root.findByProps({ "data-testid": "task-title-cell-task_canceled" }).parent?.parent?.parent!;
+    const assigneeTrigger = emptyTask.findAllByProps({ "aria-label": "Edit assignees" }).find((node) => node.props["data-testid"] === "task-assignee-trigger-task_canceled")!;
+    expect(assigneeTrigger.findByProps({ "aria-label": "Unassigned" }).props.className).toContain("text-dls-secondary/45");
+    expect(emptyTask.findAllByProps({ "aria-label": "Start time" }).some((node) => node.props.className?.includes("text-dls-secondary/45"))).toBe(true);
+    expect(emptyTask.findAllByProps({ "aria-label": "Due time" }).some((node) => node.props.className?.includes("text-dls-secondary/45"))).toBe(true);
   } finally { await act(async () => renderer!.unmount()); }
 });
 
@@ -203,19 +291,34 @@ test("inline creation cancels an empty blur and submits a non-empty blur only on
   try {
     await act(async () => { renderer!.root.findByProps({ "data-testid": "task-inline-create-bottom-trigger" }).props.onClick(); });
     let input = renderer!.root.findByProps({ "data-testid": "task-inline-create-row-bottom" }).findByType("input");
-    await act(async () => { input.props.onBlur(); });
+    await act(async () => { input.props.onBlur({ currentTarget: { value: "" } }); });
     expect(renderer!.root.findAllByProps({ "data-testid": "task-inline-create-row-bottom" })).toHaveLength(0);
     expect(titles).toEqual([]);
 
     await act(async () => { renderer!.root.findByProps({ "data-testid": "task-inline-create-bottom-trigger" }).props.onClick(); });
     input = renderer!.root.findByProps({ "data-testid": "task-inline-create-row-bottom" }).findByType("input");
-    await act(async () => { input.props.onChange({ target: { value: "  Blur task  " } }); });
+    await act(async () => { input.props.onChange({ currentTarget: { value: "  Blur task  " } }); });
     input = renderer!.root.findByProps({ "data-testid": "task-inline-create-row-bottom" }).findByType("input");
-    await act(async () => { input.props.onBlur(); input.props.onBlur(); });
+    await act(async () => { input.props.onBlur({ currentTarget: { value: "  Blur task  " } }); input.props.onBlur({ currentTarget: { value: "  Blur task  " } }); });
     expect(titles).toEqual(["Blur task"]);
     expect(renderer!.root.findByProps({ "data-testid": "task-inline-create-row-bottom" }).findByType("input").props.disabled).toBe(true);
     await act(async () => { resolveCreate?.(true); });
     expect(renderer!.root.findAllByProps({ "data-testid": "task-inline-create-row-bottom" })).toHaveLength(0);
+  } finally { await act(async () => renderer!.unmount()); }
+});
+
+test("inline creation submits the live input value when change and blur happen before rerender", async () => {
+  const titles: string[] = [];
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(workbench(defaultTaskWorkbenchSettings, () => undefined, () => undefined, async (title) => { titles.push(title); return true; })); });
+  try {
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-inline-create-bottom-trigger" }).props.onClick(); });
+    const input = renderer!.root.findByProps({ "data-testid": "task-inline-create-row-bottom" }).findByType("input");
+    await act(async () => {
+      input.props.onChange({ currentTarget: { value: "  Immediate blur task  " } });
+      input.props.onBlur({ currentTarget: { value: "  Immediate blur task  " } });
+    });
+    expect(titles).toEqual(["Immediate blur task"]);
   } finally { await act(async () => renderer!.unmount()); }
 });
 
@@ -400,16 +503,103 @@ test("sort menu exposes per-field directions and defaults field selection to des
   } finally { await act(async () => renderer!.unmount()); }
 });
 
-test("board renders status columns and accessible lifecycle actions", async () => {
+test("board renders workbench groups and accessible lifecycle actions", async () => {
   const actions: Array<[string, string]> = [];
   let renderer: TestRenderer.ReactTestRenderer;
-  await act(async () => { renderer = TestRenderer.create(workbench({ ...defaultTaskWorkbenchSettings, view: "board", status: "all" }, () => undefined, (task, operation) => actions.push([task.id, operation]))); });
+  await act(async () => { renderer = TestRenderer.create(workbench({ ...defaultTaskWorkbenchSettings, view: "board", status: "all", group: "custom" }, () => undefined, (task, operation) => actions.push([task.id, operation]))); });
   try {
-    for (const label of ["To do", "Completed", "Canceled"]) expect(renderer!.root.findByProps({ "aria-label": label })).toBeDefined();
+    expect(renderer!.root.findByProps({ "data-testid": "task-board-group-custom-default" })).toBeDefined();
+    expect(renderer!.root.findByProps({ "data-testid": "task-group-menu" }).props.title).toBeUndefined();
+    const groupMenu = renderer!.root.findByProps({ "data-testid": "task-group-menu" });
+    expect(groupMenu.findAll((node) => node.props.value === "none")).toHaveLength(0);
+    expect(groupMenu.findAll((node) => node.props.value === "list")).toHaveLength(0);
+    expect(renderer!.root.findAllByProps({ "aria-label": "Cancel task" })).toHaveLength(0);
     await act(async () => { renderer!.root.findAllByProps({ "aria-label": "Complete task" })[0]!.props.onClick(); });
-    await act(async () => { renderer!.root.findAllByProps({ "aria-label": "Cancel task" })[0]!.props.onClick(); });
     await act(async () => { renderer!.root.findAllByProps({ "aria-label": "Reopen task" })[0]!.props.onClick(); });
-    expect(actions).toEqual([["task_todo_with_full_identifier", "complete"], ["task_todo_with_full_identifier", "cancel"], ["task_done", "reopen"]]);
+    expect(actions).toEqual([["task_todo_with_full_identifier", "complete"], ["task_done", "reopen"]]);
+  } finally { await act(async () => renderer!.unmount()); }
+});
+
+test("entering board defaults an ungrouped workbench to custom grouping", async () => {
+  const settings: typeof defaultTaskWorkbenchSettings[] = [];
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(workbench({ ...defaultTaskWorkbenchSettings, group: "none" }, (next) => settings.push(next))); });
+  try {
+    const tabs = renderer!.root.findAll((node) => typeof node.props.onValueChange === "function")[0]!;
+    await act(async () => { tabs.props.onValueChange("board"); });
+    expect(settings.at(-1)).toMatchObject({ view: "board", group: "custom" });
+  } finally { await act(async () => renderer!.unmount()); }
+});
+
+test("entering board replaces the unsupported task-list grouping with custom grouping", async () => {
+  const settings: typeof defaultTaskWorkbenchSettings[] = [];
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(workbench({ ...defaultTaskWorkbenchSettings, group: "list" }, (next) => settings.push(next))); });
+  try {
+    const tabs = renderer!.root.findAll((node) => typeof node.props.onValueChange === "function")[0]!;
+    await act(async () => { tabs.props.onValueChange("board"); });
+    expect(settings.at(-1)).toMatchObject({ view: "board", group: "custom" });
+  } finally { await act(async () => renderer!.unmount()); }
+});
+
+test("board groups cards by creator without changing active filters", async () => {
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(workbench({ ...defaultTaskWorkbenchSettings, view: "board", status: "all", group: "creator", priorities: ["high"] })); });
+  try {
+    expect(renderer!.root.findByProps({ "data-testid": "task-board-group-member_creator" })).toBeDefined();
+    expect(renderer!.root.findAllByProps({ "data-testid": "task-filter-menu" }).length).toBeGreaterThan(0);
+    expect(renderer!.root.findAllByProps({ "data-testid": "task-board-new-group-trigger" })).toHaveLength(0);
+  } finally { await act(async () => renderer!.unmount()); }
+});
+
+test("custom board creates a group inline while other board grouping hides the action", async () => {
+  const settings: typeof defaultTaskWorkbenchSettings[] = [];
+  let renderer: TestRenderer.ReactTestRenderer;
+  const custom = { ...defaultTaskWorkbenchSettings, view: "board" as const, group: "custom" as const };
+  await act(async () => { renderer = TestRenderer.create(workbench(custom, (next) => settings.push(next))); });
+  try {
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-board-new-group-trigger" }).props.onClick(); });
+    const input = renderer!.root.findByProps({ "data-testid": "task-board-new-group-input" });
+    await act(async () => { input.props.onChange({ currentTarget: { value: "Review" } }); input.props.onBlur({ currentTarget: { value: "Review" } }); });
+    expect(settings.at(-1)?.customGroups.at(-1)?.name).toBe("Review");
+  } finally { await act(async () => renderer!.unmount()); }
+});
+
+test("board group quick-create accepts a title and due date draft", async () => {
+  const creates: Array<{ title: string; defaults: Record<string, unknown> }> = [];
+  let renderer: TestRenderer.ReactTestRenderer;
+  const custom = { ...defaultTaskWorkbenchSettings, view: "board" as const, group: "custom" as const };
+  await act(async () => { renderer = TestRenderer.create(workbench(custom, undefined, undefined, async (title, defaults) => { creates.push({ title, defaults }); return "task_created"; })); });
+  try {
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-board-create-trigger-custom-default" }).props.onClick(); });
+    const card = renderer!.root.findByProps({ "data-testid": "task-board-create-card-custom-default" });
+    expect(card.findByProps({ "data-testid": "task-time-trigger-board-draft-custom-default-dueAt" })).toBeDefined();
+    const title = card.findByProps({ "data-testid": "task-board-create-title-custom-default" });
+    await act(async () => { title.props.onChange({ currentTarget: { value: "Board task" } }); title.props.onKeyDown({ key: "Enter", currentTarget: { value: "Board task" }, preventDefault: () => undefined }); });
+    expect(creates).toEqual([{ title: "Board task", defaults: {} }]);
+  } finally { await act(async () => renderer!.unmount()); }
+});
+
+test("board drag moves tasks between custom groups and time groups", async () => {
+  const changes: typeof defaultTaskWorkbenchSettings[] = [];
+  const timeChanges: Array<{ field: string; value: string | null }> = [];
+  const data = new Map<string, string>();
+  const dataTransfer = { effectAllowed: "move", dropEffect: "move", setData: (type: string, value: string) => data.set(type, value), getData: (type: string) => data.get(type) ?? "" };
+  const custom = { ...defaultTaskWorkbenchSettings, view: "board" as const, group: "custom" as const, customGroups: [{ id: "custom-review", name: "Review" }] };
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(workbench(custom, (next) => changes.push(next))); });
+  try {
+    renderer!.root.findByProps({ "data-testid": "task-board-card-task_todo_with_full_identifier" }).props.onDragStart({ dataTransfer });
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-board-group-custom-review" }).props.onDrop({ preventDefault: () => undefined, dataTransfer }); });
+    expect(changes.at(-1)?.customGroupAssignments.task_todo_with_full_identifier).toBe("custom-review");
+  } finally { await act(async () => renderer!.unmount()); }
+
+  const due = { ...defaultTaskWorkbenchSettings, view: "board" as const, group: "due" as const };
+  await act(async () => { renderer = TestRenderer.create(<TaskWorkbench tasks={tasks} membersByTaskId={membersByTaskId} members={members} lists={lists} settings={due} selectedTaskId={null} canLoadMore={false} loadingMore={false} onLoadMore={() => undefined} onSettingsChange={() => undefined} onSelect={() => undefined} onTransition={() => undefined} onTimeChange={async (_task, field, value) => { timeChanges.push({ field, value }); return true; }} />); });
+  try {
+    renderer!.root.findByProps({ "data-testid": "task-board-card-task_todo_with_full_identifier" }).props.onDragStart({ dataTransfer });
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-board-group-tomorrow" }).props.onDrop({ preventDefault: () => undefined, dataTransfer }); });
+    expect(timeChanges.at(-1)).toMatchObject({ field: "dueAt", value: expect.any(String) });
   } finally { await act(async () => renderer!.unmount()); }
 });
 

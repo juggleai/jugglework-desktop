@@ -2,7 +2,7 @@
 import * as React from "react";
 import type { CSSProperties } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { AlignLeft, CalendarDays, Check, ChevronDown, CircleAlert, ListChecks, ListTodo, LoaderCircle, Plus, RefreshCw, UserRound, X } from "lucide-react";
+import { AlignLeft, ArrowUp, AtSign, Bold, Bookmark, BookmarkCheck, BookmarkPlus, CalendarDays, Check, ChevronDown, CircleAlert, ImageIcon, Italic, Link, List as ListIcon, ListChecks, ListOrdered, ListTodo, LoaderCircle, MoreHorizontal, Plus, Quote, RefreshCw, Smile, Strikethrough, Underline, UserRound, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 import { DenApiError, isPersonalDenOrganization, type DenOrganizationMember, type DenProductTask, type DenProductTaskCompletionPolicy, type DenProductTaskCreateInput, type DenProductTaskList, type DenProductTaskUpdateInput, type DenProductTaskVisibility } from "@/app/lib/den";
@@ -12,6 +12,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { toast } from "@/components/ui/sonner";
 import { Textarea } from "@/components/ui/textarea";
 import { t } from "@/i18n";
@@ -27,7 +28,9 @@ import { useAddProductTaskComment, useCreateProductTask, useProductTaskListMutat
 import { flattenProductTaskMembers, flattenProductTaskPages, productTaskKeys, productTaskScopeKey, useOrganizationMembers, useProductTask, useProductTaskActivity, useProductTaskLists, useProductTaskReminders, useProductTasks, type ProductTaskScope } from "./task-queries";
 import { productTaskEditDraft, readTaskSection, reapplyProductTaskDraft, taskSectionStorageKey, writeTaskSection, type ProductTaskEditDraft, type TaskSection } from "./task-page-state";
 import { TaskWorkbench, taskWorkbenchServerSort, taskWorkbenchStatuses } from "./task-workbench";
-import { readTaskWorkbenchSettings, writeTaskWorkbenchSettings, type TaskWorkbenchSettings } from "./task-view-state";
+import { TaskDateTimeCell, type TaskReminderDraft, type TaskTimeField } from "./task-date-time-cell";
+import { TaskListCell } from "./task-list-table";
+import { isTaskWorkbenchSection, readTaskWorkbenchSettings, taskSectionDefaultSettings, writeTaskWorkbenchSettings, type TaskWorkbenchSection, type TaskWorkbenchSettings } from "./task-view-state";
 import { TasksSidebar, taskSectionHeading, type TasksSidebarRegistration } from "./tasks-sidebar";
 
 export type TaskShellState =
@@ -73,14 +76,15 @@ function ScopedConnectedTaskPage(props: TaskPageProps) {
     ? { baseUrl: cloud.baseUrl, userId: cloud.user.id, organizationId: cloud.activeOrganization.id }
     : null, [cloud.activeOrganization?.id, cloud.baseUrl, cloud.isSignedIn, cloud.user?.id]);
   const scopeKey = productTaskScopeKey(scope);
-  const [section, setSection] = React.useState<TaskSection>(() => readTaskSection(scope));
+  const initialSection = React.useMemo(() => readTaskSection(scope), [scopeKey]);
+  const [section, setSection] = React.useState<TaskSection>(initialSection);
   const [priority, setPriority] = React.useState<"" | "low" | "medium" | "high">("");
   const [sort, setSort] = React.useState<"updated_at" | "due_at" | "created_at" | "priority">("updated_at");
   const [selectedTaskId, setSelectedTaskId] = React.useState<string | null>(props.routeTaskId ?? null);
   const [selectedListId, setSelectedListId] = React.useState<string | null>(null);
   const [showFullCreate, setShowFullCreate] = React.useState(false);
   const [showCreateList, setShowCreateList] = React.useState(false);
-  const [workbenchSettings, setWorkbenchSettings] = React.useState<TaskWorkbenchSettings>(() => readTaskWorkbenchSettings(scope));
+  const [workbenchSettings, setWorkbenchSettings] = React.useState<TaskWorkbenchSettings>(() => readTaskWorkbenchSettings(scope, isTaskWorkbenchSection(initialSection) ? initialSection : "assigned"));
   const [conflict, setConflict] = React.useState<ProductTaskConflict | null>(null);
   const [editDrafts, setEditDrafts] = React.useState<Record<string, ProductTaskEditDraft>>({});
   const liveScopeKey = React.useRef(scopeKey);
@@ -95,14 +99,26 @@ function ScopedConnectedTaskPage(props: TaskPageProps) {
   liveScopeKey.current = scopeKey;
   liveConflict.current = conflict;
   liveSelectedTaskId.current = selectedTaskId;
+  const fallbackMember = React.useMemo(() => {
+    const memberId = cloud.activeOrganization?.orgMemberId || cloud.activeOrganization?.membershipId;
+    return memberId && cloud.user ? { id: memberId, userId: cloud.user.id, role: cloud.activeOrganization?.role ?? "member", user: { id: cloud.user.id, name: cloud.user.name, account: cloud.user.account ?? null, email: cloud.user.email ?? null, avatar: cloud.user.avatar ?? null } } : null;
+  }, [cloud.activeOrganization?.membershipId, cloud.activeOrganization?.orgMemberId, cloud.activeOrganization?.role, cloud.user]);
+  const membersQuery = useOrganizationMembers({ client: cloud.client, scope, fallback: fallbackMember, allowUnavailableFallback: isPersonalDenOrganization(cloud.activeOrganization), active: isTaskWorkbenchSection(section) || showFullCreate || Boolean(selectedTaskId) });
+  const availableMembers = membersQuery.data ?? (fallbackMember ? [fallbackMember] : []);
+  const currentMemberId = fallbackMember?.id ?? availableMembers.find((member) => member.userId === cloud.user?.id)?.id ?? null;
+  const workbenchSection = isTaskWorkbenchSection(section) ? section : null;
+  const memberFilteredSection = workbenchSection !== null && workbenchSection !== "all" && workbenchSection !== "completed";
+  const sectionSettings = (nextSection: TaskWorkbenchSection, listId?: string | null) => listId
+    ? readTaskWorkbenchSettings(scope, "all", listId)
+    : taskSectionDefaultSettings(nextSection, currentMemberId, readTaskWorkbenchSettings(scope, nextSection));
   const listOptions = React.useMemo(() => {
     if (section === "activity") return { view: "all" as const };
-    if (section === "assigned") {
+    if (workbenchSection) {
       return {
-        view: "assigned" as const,
+        view: "all" as const,
         status: taskWorkbenchStatuses(workbenchSettings),
         priority: workbenchSettings.priorities.length ? workbenchSettings.priorities : undefined,
-        listId: workbenchSettings.listIds.length ? workbenchSettings.listIds : undefined,
+        listId: selectedListId ? [selectedListId] : workbenchSettings.listIds.length ? workbenchSettings.listIds : undefined,
         assigneeMemberId: workbenchSettings.assigneeMemberIds.length ? workbenchSettings.assigneeMemberIds : undefined,
         assigneeMemberOperator: workbenchSettings.assigneeMemberIds.length || workbenchSettings.assigneeMemberOperator === "empty" || workbenchSettings.assigneeMemberOperator === "not_empty" ? workbenchSettings.assigneeMemberOperator : undefined,
         assignerMemberId: workbenchSettings.assignerMemberIds.length ? workbenchSettings.assignerMemberIds : undefined,
@@ -125,16 +141,10 @@ function ScopedConnectedTaskPage(props: TaskPageProps) {
     // Today has dedicated server-defined ordering, so omit the generic sort.
     if (section === "today") return common;
     return { ...common, sort, direction: sort === "due_at" ? "asc" as const : "desc" as const };
-  }, [priority, section, selectedListId, sort, workbenchSettings]);
-  const tasksQuery = useProductTasks({ client: cloud.client, scope, options: listOptions, active: section !== "activity" });
+  }, [priority, section, selectedListId, sort, workbenchSection, workbenchSettings]);
+  const tasksQuery = useProductTasks({ client: cloud.client, scope, options: listOptions, active: section !== "activity" && (!memberFilteredSection || Boolean(currentMemberId)) });
   const activeListsQuery = useProductTaskLists({ client: cloud.client, scope, archived: false });
-  const fallbackMember = React.useMemo(() => {
-    const memberId = cloud.activeOrganization?.orgMemberId || cloud.activeOrganization?.membershipId;
-    return memberId && cloud.user ? { id: memberId, userId: cloud.user.id, role: cloud.activeOrganization?.role ?? "member", user: { id: cloud.user.id, name: cloud.user.name, account: cloud.user.account ?? null, email: cloud.user.email ?? null, avatar: cloud.user.avatar ?? null } } : null;
-  }, [cloud.activeOrganization?.membershipId, cloud.activeOrganization?.orgMemberId, cloud.activeOrganization?.role, cloud.user]);
-  const membersQuery = useOrganizationMembers({ client: cloud.client, scope, fallback: fallbackMember, allowUnavailableFallback: isPersonalDenOrganization(cloud.activeOrganization), active: section === "assigned" || showFullCreate });
-  const availableMembers = membersQuery.data ?? (fallbackMember ? [fallbackMember] : []);
-  const currentMemberId = fallbackMember?.id ?? availableMembers.find((member) => member.userId === cloud.user?.id)?.id ?? null;
+  const selectedTaskList = selectedListId ? (activeListsQuery.data?.items ?? []).find((list) => list.id === selectedListId) ?? null : null;
   const detailQuery = useProductTask({ client: cloud.client, scope, taskId: selectedTaskId });
   const activityQuery = useProductTaskActivity({ client: cloud.client, scope, taskId: selectedTaskId });
   const remindersQuery = useProductTaskReminders({ client: cloud.client, scope, taskId: selectedTaskId });
@@ -175,8 +185,13 @@ function ScopedConnectedTaskPage(props: TaskPageProps) {
     latestCommentAttempts.current.clear();
     setShowFullCreate(false);
     setShowCreateList(false);
-    setWorkbenchSettings(readTaskWorkbenchSettings(scope));
+    const nextSection = readTaskSection(scope);
+    if (isTaskWorkbenchSection(nextSection)) setWorkbenchSettings(sectionSettings(nextSection));
   }, [scopeKey]);
+  React.useEffect(() => {
+    if (!workbenchSection || !currentMemberId) return;
+    setWorkbenchSettings((current) => taskSectionDefaultSettings(workbenchSection, currentMemberId, current));
+  }, [currentMemberId, workbenchSection]);
   const selectTask = (taskId: string | null) => {
     conflictLoadAttempt.current += 1;
     liveSelectedTaskId.current = taskId;
@@ -205,11 +220,13 @@ function ScopedConnectedTaskPage(props: TaskPageProps) {
 
   const selectSection = (next: TaskSection) => {
     writeTaskSection(scope, next);
+    if (isTaskWorkbenchSection(next)) setWorkbenchSettings(sectionSettings(next));
     setSection(next);
   };
 
   const updateWorkbenchSettings = (next: TaskWorkbenchSettings) => {
-    writeTaskWorkbenchSettings(scope, next);
+    if (!workbenchSection) return;
+    writeTaskWorkbenchSettings(scope, next, workbenchSection, selectedListId);
     setWorkbenchSettings(next);
   };
 
@@ -295,6 +312,93 @@ function ScopedConnectedTaskPage(props: TaskPageProps) {
     queryClient.setQueryData(productTaskKeys.detail(capturedScope, task.id), result);
     await queryClient.invalidateQueries({ queryKey: productTaskKeys.lists(capturedScope) });
     return true;
+  };
+
+  const updateWorkbenchTime = async (task: DenProductTask, field: TaskTimeField, value: string | null) => {
+    if (!scope) return false;
+    const capturedScope = scope;
+    const detail = await runMutation(() => cloud.client.getProductTask(capturedScope.organizationId, task.id), { isCurrent: () => liveScopeKey.current === productTaskScopeKey(capturedScope) });
+    if (!detail) return false;
+    if (!detail.permissions.canEditTime) { toast.error(t("tasks.time_edit_not_allowed")); return false; }
+    const result = await runMutation(() => cloud.client.updateProductTask(capturedScope.organizationId, task.id, {
+      expectedVersion: detail.task.version,
+      idempotencyKey: mutationKey(`desktop-update-task-${field === "startAt" ? "start" : "due"}`),
+      [field]: value,
+    }), { isCurrent: () => liveScopeKey.current === productTaskScopeKey(capturedScope) });
+    if (!result) return false;
+    queryClient.setQueryData(productTaskKeys.detail(capturedScope, task.id), result);
+    await queryClient.invalidateQueries({ queryKey: productTaskKeys.lists(capturedScope) });
+    return true;
+  };
+
+  const loadWorkbenchReminders = async (task: DenProductTask) => {
+    if (!scope) return [];
+    return await runMutation(() => cloud.client.listProductTaskReminders(scope.organizationId, task.id)) ?? [];
+  };
+
+  const updateWorkbenchReminder = async (task: DenProductTask, reminder: TaskReminderDraft) => {
+    if (!scope) return false;
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const result = reminder
+      ? await runMutation(async () => { await cloud.client.setProductTaskReminder(scope.organizationId, task.id, { idempotencyKey: mutationKey("desktop-set-workbench-reminder"), timezone, ...reminder }); return true; })
+      : await runMutation(async () => { await cloud.client.cancelProductTaskReminders(scope.organizationId, task.id, mutationKey("desktop-cancel-workbench-reminder")); return true; });
+    return result === true;
+  };
+
+  const moveWorkbenchTaskToList = async (task: DenProductTask, destinationListId: string) => {
+    if (!scope) return false;
+    const capturedScope = scope;
+    const detail = await runMutation(() => cloud.client.getProductTask(capturedScope.organizationId, task.id), { isCurrent: () => liveScopeKey.current === productTaskScopeKey(capturedScope) });
+    if (!detail) return false;
+    if (!detail.permissions.canManageMembers) { toast.error(t("tasks.list_edit_not_allowed")); return false; }
+    const destination = destinationListId ? (activeListsQuery.data?.items ?? []).find((list) => list.id === destinationListId) : null;
+    const confirmedVisibility = detail.task.visibility === "private" && destination && destination.visibility !== "private" ? "members" as const : undefined;
+    const result = await runMutation(() => cloud.client.moveProductTask(capturedScope.organizationId, task.id, {
+      expectedVersion: detail.task.version,
+      idempotencyKey: mutationKey("desktop-move-task-list"),
+      destinationListId,
+      ...(confirmedVisibility ? { confirmedVisibility } : {}),
+    }), { isCurrent: () => liveScopeKey.current === productTaskScopeKey(capturedScope) });
+    if (!result) return false;
+    await queryClient.invalidateQueries({ queryKey: productTaskKeys.lists(capturedScope) });
+    return true;
+  };
+
+  const createWorkbenchListAndMove = async (task: DenProductTask, name: string) => {
+    if (!scope) return null;
+    const visibility = task.visibility === "private" ? "private" as const : "members" as const;
+    const created = await runMutation(() => listMutations.create.mutateAsync({ idempotencyKey: mutationKey("desktop-create-inline-task-list"), name, description: "", marker: name.slice(0, 1).toUpperCase() || "#", visibility }));
+    if (!created) return null;
+    const moved = await moveWorkbenchTaskToList(task, created.list.id);
+    return moved ? created.list.id : null;
+  };
+
+  const updateTaskFollowers = async (task: DenProductTask, followerMemberIds: string[]) => {
+    if (!scope) return false;
+    const capturedScope = scope;
+    const detail = await runMutation(() => cloud.client.getProductTask(capturedScope.organizationId, task.id), { isCurrent: () => liveScopeKey.current === productTaskScopeKey(capturedScope) });
+    if (!detail) return false;
+    if (!detail.permissions.canManageMembers) { toast.error(t("tasks.follower_edit_not_allowed")); return false; }
+    const retainedMembers = detail.members.filter((member) => member.role !== "follower").map((member) => ({ memberId: member.memberId, role: member.role }));
+    const addsOtherMemberToPrivateTask = detail.task.visibility === "private" && followerMemberIds.some((memberId) => memberId !== detail.task.creatorMemberId);
+    if (addsOtherMemberToPrivateTask && !detail.permissions.canManageVisibility) { toast.error(t("tasks.follower_edit_not_allowed")); return false; }
+    const result = await runMutation(() => cloud.client.updateProductTask(capturedScope.organizationId, task.id, {
+      expectedVersion: detail.task.version,
+      idempotencyKey: mutationKey("desktop-update-task-followers"),
+      ...(addsOtherMemberToPrivateTask ? { visibility: "members" as const } : {}),
+      members: [...retainedMembers, ...followerMemberIds.map((memberId) => ({ memberId, role: "follower" as const }))],
+    }), { isCurrent: () => liveScopeKey.current === productTaskScopeKey(capturedScope) });
+    if (!result) return false;
+    queryClient.setQueryData(productTaskKeys.detail(capturedScope, task.id), result);
+    await queryClient.invalidateQueries({ queryKey: productTaskKeys.lists(capturedScope) });
+    return true;
+  };
+
+  const setTaskGroup = (taskId: string, groupId: string) => {
+    const customGroupAssignments = { ...workbenchSettings.customGroupAssignments };
+    if (groupId === "custom-default") delete customGroupAssignments[taskId];
+    else customGroupAssignments[taskId] = groupId;
+    updateWorkbenchSettings({ ...workbenchSettings, customGroupAssignments });
   };
 
   const mutationError = (error: unknown, capturedScopeKey = scopeKey) => {
@@ -406,22 +510,22 @@ function ScopedConnectedTaskPage(props: TaskPageProps) {
   else if (section === "activity") content = <TaskShellContent state={{ kind: "empty" }} />;
   else if (tasksQuery.isLoading) content = <TaskShellContent state={{ kind: "loading" }} />;
   else if (tasksQuery.isError) content = <TaskShellContent state={{ kind: "error", message: tasksQuery.error instanceof Error ? tasksQuery.error.message : undefined, onRetry: () => void tasksQuery.refetch() }} />;
-  else if (section === "assigned") content = <TaskWorkbench tasks={tasks} membersByTaskId={membersByTaskId} members={availableMembers} lists={activeListsQuery.data?.items ?? []} listJoinError={activeListsQuery.isError ? (activeListsQuery.error instanceof Error ? activeListsQuery.error.message : t("tasks.list_join_error")) : null} memberDirectoryError={membersQuery.isError ? (membersQuery.error instanceof Error ? membersQuery.error.message : t("tasks.member_directory_error")) : null} settings={workbenchSettings} selectedTaskId={selectedTaskId} canLoadMore={Boolean(tasksQuery.hasNextPage)} loadingMore={tasksQuery.isFetchingNextPage} refreshing={tasksQuery.isFetching && !tasksQuery.isFetchingNextPage} quickCreatePending={createMutation.isPending} quickCreateMemberId={currentMemberId} onLoadMore={() => void tasksQuery.fetchNextPage()} onRetryListJoin={() => void activeListsQuery.refetch()} onRetryMemberDirectory={() => void membersQuery.refetch()} onSettingsChange={updateWorkbenchSettings} onSelect={selectTask} onTransition={(task, operation) => void transitionWorkbenchTask(task, operation)} onAssigneesChange={updateWorkbenchAssignees} onCompletionPolicyChange={updateWorkbenchCompletionPolicy} onQuickCreate={async (title, defaults) => { const result = await runMutation(() => createMutation.mutateAsync({ title, ...defaults, visibility: "private", priority: "none", members: currentMemberId ? [{ memberId: currentMemberId, role: "assignee" }] : [], idempotencyKey: mutationKey("desktop-quick-create-task") })); return result?.task.id ?? false; }} />;
+  else if (workbenchSection) content = <TaskWorkbench key={workbenchSection} tasks={tasks} membersByTaskId={membersByTaskId} members={availableMembers} lists={activeListsQuery.data?.items ?? []} listJoinError={activeListsQuery.isError ? (activeListsQuery.error instanceof Error ? activeListsQuery.error.message : t("tasks.list_join_error")) : null} memberDirectoryError={membersQuery.isError ? (membersQuery.error instanceof Error ? membersQuery.error.message : t("tasks.member_directory_error")) : null} settings={workbenchSettings} selectedTaskId={selectedTaskId} canLoadMore={Boolean(tasksQuery.hasNextPage)} loadingMore={tasksQuery.isFetchingNextPage} refreshing={tasksQuery.isFetching && !tasksQuery.isFetchingNextPage} quickCreatePending={createMutation.isPending} quickCreateMemberId={currentMemberId} onLoadMore={() => void tasksQuery.fetchNextPage()} onRetryListJoin={() => void activeListsQuery.refetch()} onRetryMemberDirectory={() => void membersQuery.refetch()} onSettingsChange={updateWorkbenchSettings} onSelect={selectTask} onTransition={(task, operation) => void transitionWorkbenchTask(task, operation)} onAssigneesChange={updateWorkbenchAssignees} onCompletionPolicyChange={updateWorkbenchCompletionPolicy} onTimeChange={updateWorkbenchTime} onLoadReminders={loadWorkbenchReminders} onReminderChange={updateWorkbenchReminder} onListChange={moveWorkbenchTaskToList} onListCreate={createWorkbenchListAndMove} onQuickCreate={async (title, defaults) => { const result = await runMutation(() => createMutation.mutateAsync({ title, ...defaults, visibility: "private", priority: "none", members: [], idempotencyKey: mutationKey("desktop-quick-create-task") })); return result?.task.id ?? false; }} />;
   else content = <TaskList tasks={tasks} selectedTaskId={selectedTaskId} onSelect={selectTask} canLoadMore={Boolean(tasksQuery.hasNextPage)} loadingMore={tasksQuery.isFetchingNextPage} onLoadMore={() => void tasksQuery.fetchNextPage()} />;
 
   return (
-    <TaskPageFrame {...props} section={section} onSectionChange={(next) => { selectSection(next); setSelectedListId(null); selectTask(null); }} filters={{ priority, setPriority, sort, setSort }} lists={activeListsQuery.data?.items ?? []} selectedListId={selectedListId} onSelectList={(listId) => { selectSection("all"); setSelectedListId(listId); selectTask(null); }} onCreateList={() => setShowCreateList(true)} onArchiveList={(listId, version) => void runMutation(() => listMutations.transition.mutateAsync({ listId, operation: "archive", expectedVersion: version, idempotencyKey: mutationKey("desktop-archive-list") }))}
+    <TaskPageFrame {...props} section={section} pageTitle={selectedTaskList?.name ?? null} onSectionChange={(next) => { selectSection(next); setSelectedListId(null); selectTask(null); }} filters={{ priority, setPriority, sort, setSort }} lists={activeListsQuery.data?.items ?? []} selectedListId={selectedListId} onSelectList={(listId) => { setSection("all"); writeTaskSection(scope, "all"); setSelectedListId(listId); setWorkbenchSettings(sectionSettings("all", listId)); selectTask(null); }} onCreateList={() => setShowCreateList(true)} onArchiveList={(listId, version) => void runMutation(() => listMutations.transition.mutateAsync({ listId, operation: "archive", expectedVersion: version, idempotencyKey: mutationKey("desktop-archive-list") }))}
       onCreateTask={() => setShowFullCreate(true)} onCreateTaskList={() => setShowCreateList(true)}>
       {conflict ? <ConflictBanner conflict={conflict} pending={updateMutation.isPending} onDismiss={dismissConflict} onReload={() => void loadLatestForConflict()} onRetry={() => void retryConflictDraft()} /> : null}
       {content}
-      {selectedTaskId ? <TaskDetail key={`${scopeKey}:${selectedTaskId}`} result={detailQuery.data} activity={activityQuery.data} reminders={remindersQuery.data ?? []} loading={detailQuery.isLoading} error={detailQuery.isError} savePending={updateMutation.isPending} currentMemberId={currentMemberId} preservedDraft={editDrafts[selectedTaskId] ?? null} onDraftChange={updateBufferedDraft} onClose={closeTask} onSave={saveTask} onComment={addComment} onSetReminder={(scheduledAt) => void runMutation(() => reminderMutations.set.mutateAsync({ idempotencyKey: mutationKey("desktop-set-reminder"), mode: "absolute", scheduledAt, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }))} onCancelReminder={() => void runMutation(() => reminderMutations.cancel.mutateAsync(mutationKey("desktop-cancel-reminder")))} onTransition={(task, operation) => void runMutation(() => transitionMutation.mutateAsync({ taskId: task.id, operation, expectedVersion: task.version, idempotencyKey: mutationKey(`desktop-${operation}-task`) }))} /> : null}
-      {showFullCreate ? <TaskCreateDialog pending={createMutation.isPending} members={availableMembers} memberDirectoryLoading={membersQuery.isLoading && !fallbackMember} memberDirectoryError={membersQuery.isError ? (membersQuery.error instanceof Error ? membersQuery.error.message : t("tasks.member_directory_error")) : null} onRetryMemberDirectory={() => void membersQuery.refetch()} lists={activeListsQuery.data?.items ?? []} currentMemberId={currentMemberId} defaultAssigneeRequired={section === "assigned"} defaultAssigneeMemberId={section === "assigned" ? currentMemberId : null} defaultListId={selectedListId} onClose={() => setShowFullCreate(false)} onCreate={async (input) => { const result = await runMutation(() => createMutation.mutateAsync({ ...input, idempotencyKey: mutationKey("desktop-create-task") })); if (!result) return; setShowFullCreate(false); selectTask(result.task.id); }} /> : null}
+      {selectedTaskId ? <TaskDetail key={`${scopeKey}:${selectedTaskId}`} result={detailQuery.data} activity={activityQuery.data} reminders={remindersQuery.data ?? []} members={availableMembers} lists={activeListsQuery.data?.items ?? []} groups={workbenchSettings.customGroups} defaultGroupName={workbenchSettings.customGroupName} groupId={workbenchSettings.customGroupAssignments[selectedTaskId] ?? "custom-default"} loading={detailQuery.isLoading} error={detailQuery.isError} currentMemberId={currentMemberId} preservedDraft={editDrafts[selectedTaskId] ?? null} onDraftChange={updateBufferedDraft} onClose={closeTask} onSave={saveTask} onComment={addComment} onFollowersChange={updateTaskFollowers} onListChange={moveWorkbenchTaskToList} onListCreate={createWorkbenchListAndMove} onTimeChange={updateWorkbenchTime} onGroupChange={setTaskGroup} onGroupsChange={(customGroups) => updateWorkbenchSettings({ ...workbenchSettings, customGroups })} onSetReminder={(scheduledAt) => void runMutation(() => reminderMutations.set.mutateAsync({ idempotencyKey: mutationKey("desktop-set-reminder"), mode: "absolute", scheduledAt, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }))} onCancelReminder={() => void runMutation(() => reminderMutations.cancel.mutateAsync(mutationKey("desktop-cancel-reminder")))} onTransition={(task, operation) => void runMutation(() => transitionMutation.mutateAsync({ taskId: task.id, operation, expectedVersion: task.version, idempotencyKey: mutationKey(`desktop-${operation}-task`) }))} /> : null}
+      {showFullCreate ? <TaskCreateDialog pending={createMutation.isPending} members={availableMembers} memberDirectoryLoading={membersQuery.isLoading && !fallbackMember} memberDirectoryError={membersQuery.isError ? (membersQuery.error instanceof Error ? membersQuery.error.message : t("tasks.member_directory_error")) : null} onRetryMemberDirectory={() => void membersQuery.refetch()} lists={activeListsQuery.data?.items ?? []} currentMemberId={currentMemberId} defaultListId={selectedListId} groups={workbenchSettings.customGroups} defaultGroupName={workbenchSettings.customGroupName} onGroupsChange={(customGroups) => updateWorkbenchSettings({ ...workbenchSettings, customGroups })} onCreateList={async (name) => { const result = await runMutation(() => listMutations.create.mutateAsync({ idempotencyKey: mutationKey("desktop-create-dialog-list"), name, description: "", marker: name.slice(0, 1).toUpperCase() || "#", visibility: "private" })); return result?.list.id ?? null; }} onClose={() => setShowFullCreate(false)} onCreate={async (input, groupId) => { const result = await runMutation(() => createMutation.mutateAsync({ ...input, idempotencyKey: mutationKey("desktop-create-task") })); if (!result) return; if (groupId && groupId !== "custom-default") updateWorkbenchSettings({ ...workbenchSettings, customGroupAssignments: { ...workbenchSettings.customGroupAssignments, [result.task.id]: groupId } }); setShowFullCreate(false); selectTask(result.task.id); }} /> : null}
       {showCreateList ? <TaskListCreateDialog pending={listMutations.create.isPending} onClose={() => setShowCreateList(false)} onCreate={async (input) => { const result = await runMutation(() => listMutations.create.mutateAsync({ ...input, idempotencyKey: mutationKey("desktop-create-list"), visibility: "private" })); if (result) setShowCreateList(false); }} /> : null}
     </TaskPageFrame>
   );
 }
 
-function TaskPageFrame(props: TaskPageProps & { children: React.ReactNode; section?: TaskSection; onSectionChange?: (section: TaskSection) => void; filters?: { priority: string; setPriority: (value: "" | "low" | "medium" | "high") => void; sort: string; setSort: (value: "updated_at" | "due_at" | "created_at" | "priority") => void }; lists?: Array<{ id: string; name: string; marker: string; version: number }>; selectedListId?: string | null; onSelectList?: (id: string) => void; onCreateList?: () => void; onArchiveList?: (id: string, version: number) => void; onCreateTask?: () => void; onCreateTaskList?: () => void }) {
+function TaskPageFrame(props: TaskPageProps & { children: React.ReactNode; section?: TaskSection; pageTitle?: string | null; onSectionChange?: (section: TaskSection) => void; filters?: { priority: string; setPriority: (value: "" | "low" | "medium" | "high") => void; sort: string; setSort: (value: "updated_at" | "due_at" | "created_at" | "priority") => void }; lists?: Array<{ id: string; name: string; marker: string; version: number }>; selectedListId?: string | null; onSelectList?: (id: string) => void; onCreateList?: () => void; onArchiveList?: (id: string, version: number) => void; onCreateTask?: () => void; onCreateTaskList?: () => void }) {
   const navigate = useNavigate();
   const sidebarOpen = useUiStateStore((state) => state.sidebarOpen);
   const toggleSidebar = useUiStateStore((state) => state.toggleSidebar);
@@ -448,8 +552,8 @@ function TaskPageFrame(props: TaskPageProps & { children: React.ReactNode; secti
       </div>
       {sidebarOpen ? <AppSecondarySidebarResizeHandle resizing={leftSidebarResizing} onPointerDown={startLeftSidebarResize} /> : null}
       <main className="relative flex min-h-0 min-w-0 flex-1 flex-col" data-testid="tasks-main">
-        <div className={`flex h-[54px] shrink-0 items-center justify-between px-7 ${activeSection === "assigned" ? "" : "border-b border-dls-border"}`}><h2 className="text-[17px] font-semibold tracking-[-0.01em] text-dls-text">{t(heading)}</h2><div className="flex items-center gap-2">{props.filters && activeSection !== "activity" && activeSection !== "assigned" ? <><select aria-label={t("tasks.priority_filter")} value={props.filters.priority} onChange={(event) => props.filters?.setPriority(event.target.value as "" | "low" | "medium" | "high")} className="h-8 rounded-md border border-dls-border bg-dls-surface px-2 text-sm"><option value="">{t("tasks.all_priorities")}</option><option value="low">{t("tasks.priority_low")}</option><option value="medium">{t("tasks.priority_medium")}</option><option value="high">{t("tasks.priority_high")}</option></select><select aria-label={t("tasks.sort")} value={props.filters.sort} onChange={(event) => props.filters?.setSort(event.target.value as "updated_at" | "due_at" | "created_at" | "priority")} className="h-8 rounded-md border border-dls-border bg-dls-surface px-2 text-sm"><option value="updated_at">{t("tasks.sort_updated")}</option><option value="due_at">{t("tasks.sort_due")}</option><option value="created_at">{t("tasks.sort_created")}</option><option value="priority">{t("tasks.sort_priority")}</option></select></> : null}{activeSection === "assigned" ? <TaskCreateMenu onCreateTask={props.onCreateTask} onCreateList={props.onCreateTaskList} /> : props.onCreateTask ? <Button size="sm" onClick={props.onCreateTask}><Plus className="size-4" />{t("tasks.create")}</Button> : null}</div></div>
-        <div className={`flex min-h-0 flex-1 items-center justify-center overflow-auto ${activeSection === "assigned" ? "p-0" : "p-6"}`}>{props.children}</div>
+        <div className={`flex h-[54px] shrink-0 items-center justify-between px-7 ${isTaskWorkbenchSection(activeSection) ? "" : "border-b border-dls-border"}`}><h2 className="text-[17px] font-semibold tracking-[-0.01em] text-dls-text" data-testid="tasks-page-title">{props.pageTitle ?? t(heading)}</h2><div className="flex items-center gap-2">{props.filters && activeSection !== "activity" && !isTaskWorkbenchSection(activeSection) ? <><select aria-label={t("tasks.priority_filter")} value={props.filters.priority} onChange={(event) => props.filters?.setPriority(event.target.value as "" | "low" | "medium" | "high")} className="h-8 rounded-md border border-dls-border bg-dls-surface px-2 text-sm"><option value="">{t("tasks.all_priorities")}</option><option value="low">{t("tasks.priority_low")}</option><option value="medium">{t("tasks.priority_medium")}</option><option value="high">{t("tasks.priority_high")}</option></select><select aria-label={t("tasks.sort")} value={props.filters.sort} onChange={(event) => props.filters?.setSort(event.target.value as "updated_at" | "due_at" | "created_at" | "priority")} className="h-8 rounded-md border border-dls-border bg-dls-surface px-2 text-sm"><option value="updated_at">{t("tasks.sort_updated")}</option><option value="due_at">{t("tasks.sort_due")}</option><option value="created_at">{t("tasks.sort_created")}</option><option value="priority">{t("tasks.sort_priority")}</option></select></> : null}{isTaskWorkbenchSection(activeSection) ? <TaskCreateMenu onCreateTask={props.onCreateTask} onCreateList={props.onCreateTaskList} /> : props.onCreateTask ? <Button size="sm" onClick={props.onCreateTask}><Plus className="size-4" />{t("tasks.create")}</Button> : null}</div></div>
+        <div className={`flex min-h-0 flex-1 items-center justify-center overflow-auto ${isTaskWorkbenchSection(activeSection) ? "p-0" : "p-6"}`}>{props.children}</div>
       </main>
     </div></AppInsetSurface>
   </div>;
@@ -467,90 +571,129 @@ function TaskList(props: { tasks: DenProductTask[]; selectedTaskId: string | nul
   </div>)}{props.canLoadMore ? <Button variant="outline" disabled={props.loadingMore} onClick={props.onLoadMore}>{props.loadingMore ? t("tasks.loading") : t("tasks.load_more")}</Button> : null}</div>;
 }
 
-function TaskDetail(props: { result: ReturnType<typeof useProductTask>["data"]; activity: ReturnType<typeof useProductTaskActivity>["data"]; reminders: Array<{ scheduledAt: string; state: string }>; loading: boolean; error: boolean; savePending: boolean; currentMemberId: string | null; preservedDraft: ProductTaskEditDraft | null; onDraftChange: (draft: ProductTaskEditDraft) => void; onClose: () => void; onSave: (id: string, patch: { expectedVersion: number; idempotencyKey: string; title: string; description: string }) => Promise<void>; onComment: (taskId: string, body: string) => Promise<boolean>; onSetReminder: (scheduledAt: string) => void; onCancelReminder: () => void; onTransition: (task: DenProductTask, operation: "complete" | "cancel" | "reopen" | "restore") => void }) {
+function TaskDetail(props: { result: ReturnType<typeof useProductTask>["data"]; activity: ReturnType<typeof useProductTaskActivity>["data"]; reminders: Array<{ scheduledAt: string; state: string }>; members: DenOrganizationMember[]; lists: DenProductTaskList[]; groups: Array<{ id: string; name: string }>; defaultGroupName: string; groupId: string; loading: boolean; error: boolean; currentMemberId: string | null; preservedDraft: ProductTaskEditDraft | null; onDraftChange: (draft: ProductTaskEditDraft) => void; onClose: () => void; onSave: (id: string, patch: { expectedVersion: number; idempotencyKey: string; title: string; description: string }) => Promise<void>; onComment: (taskId: string, body: string) => Promise<boolean>; onFollowersChange: (task: DenProductTask, memberIds: string[]) => Promise<boolean>; onListChange: (task: DenProductTask, listId: string) => Promise<boolean>; onListCreate: (task: DenProductTask, name: string) => Promise<string | null>; onTimeChange: (task: DenProductTask, field: TaskTimeField, value: string | null) => Promise<boolean>; onGroupChange: (taskId: string, groupId: string) => void; onGroupsChange: (groups: Array<{ id: string; name: string }>) => void; onSetReminder: (scheduledAt: string) => void; onCancelReminder: () => void; onTransition: (task: DenProductTask, operation: "complete" | "cancel" | "reopen" | "restore") => void }) {
   const task = props.result?.task;
   const [title, setTitle] = React.useState("");
   const [description, setDescription] = React.useState("");
   const [comment, setComment] = React.useState("");
   const [commentPending, setCommentPending] = React.useState(false);
+  const [followerIds, setFollowerIds] = React.useState<string[]>([]);
+  const [groupSearch, setGroupSearch] = React.useState("");
   const commentAttempt = React.useRef(0);
   const currentAssignee = props.result?.members.find((member) => member.role === "assignee" && member.memberId === props.currentMemberId);
   const currentAssigneeCompleted = task?.status === "todo" && task.completionPolicy === "all_assignees" && Boolean(currentAssignee?.completedAt);
   const canComplete = props.result?.permissions.canComplete && (task?.completionPolicy !== "all_assignees" || Boolean(currentAssignee));
+  const currentMemberId = props.currentMemberId;
+  const isFollowing = Boolean(currentMemberId && followerIds.includes(currentMemberId));
+  const memberById = new Map(props.members.map((member) => [member.id, member]));
+  const groupName = props.groupId === "custom-default" ? props.defaultGroupName : props.groups.find((group) => group.id === props.groupId)?.name ?? props.defaultGroupName;
   React.useEffect(() => {
     if (!task) return;
     const draft = reapplyProductTaskDraft(task, props.preservedDraft);
     setTitle(draft.title);
     setDescription(draft.description);
-  }, [props.preservedDraft?.description, props.preservedDraft?.taskId, props.preservedDraft?.title, task?.description, task?.id, task?.title, task?.version]);
-  return <aside className="absolute inset-y-0 right-0 z-10 w-[min(480px,90%)] border-l border-dls-border bg-dls-surface p-5 shadow-xl" aria-label={t("tasks.detail")}>
-    <div className="mb-5 flex items-center justify-between"><h3 className="font-semibold text-dls-text">{t("tasks.detail")}</h3><Button variant="ghost" size="icon" onClick={props.onClose}><X className="size-4" /></Button></div>
-    {props.loading ? <TaskShellContent state={{ kind: "loading" }} /> : props.error || !task ? <TaskShellContent state={{ kind: "error", onRetry: () => undefined }} /> : <div className="space-y-4"><Input value={title} readOnly={!props.result?.permissions.canEditContent} onChange={(event) => { const value = event.target.value; setTitle(value); if (props.preservedDraft) props.onDraftChange({ ...props.preservedDraft, title: value, description }); }} /><Textarea value={description} readOnly={!props.result?.permissions.canEditContent} onChange={(event) => { const value = event.target.value; setDescription(value); if (props.preservedDraft) props.onDraftChange({ ...props.preservedDraft, title, description: value }); }} />
-      <div className="text-sm text-dls-secondary">{t("tasks.assignees")}: {props.result?.members.filter((member) => member.role === "assignee").map((member) => member.memberId).join(", ") || t("tasks.unassigned")}</div>
-      <div className="space-y-1 text-sm text-dls-secondary"><div className="font-medium text-dls-text">{t("tasks.activity")}</div>{props.activity?.events.length ? props.activity.events.map((event) => <div key={event.id}>{event.eventType} · {new Date(event.createdAt).toLocaleString()}</div>) : t("tasks.activity_empty")}</div>
-      <div className="space-y-2 text-sm text-dls-secondary"><div className="font-medium text-dls-text">{t("tasks.comments")}</div>{props.activity?.comments.length ? props.activity.comments.map((item) => <div key={item.id} className="rounded border border-dls-border p-2">{item.body}</div>) : t("tasks.comments_empty")}{props.result?.permissions.canComment ? <form className="flex gap-2" onSubmit={(event) => { event.preventDefault(); const body = comment.trim(); if (!body || commentPending) return; const attempt = ++commentAttempt.current; setCommentPending(true); void props.onComment(task.id, body).then((saved) => { if (commentAttempt.current !== attempt) return; setCommentPending(false); if (saved) setComment((current) => current.trim() === body ? "" : current); }); }}><Input value={comment} onChange={(event) => setComment(event.target.value)} placeholder={t("tasks.add_comment")} /><Button type="submit" disabled={!comment.trim() || commentPending}>{t("tasks.add")}</Button></form> : null}</div>
-      <div className="space-y-2 text-sm text-dls-secondary"><div className="font-medium text-dls-text">{t("tasks.reminder")}</div>{props.reminders.find((item) => item.state === "scheduled") ? <div className="flex items-center justify-between"><span>{new Date(props.reminders.find((item) => item.state === "scheduled")!.scheduledAt).toLocaleString()}</span><Button size="sm" variant="outline" onClick={props.onCancelReminder}>{t("tasks.remove_reminder")}</Button></div> : props.result?.permissions.canEditTime ? <input type="datetime-local" aria-label={t("tasks.reminder")} className="rounded border border-dls-border bg-dls-surface p-2" onChange={(event) => { if (event.target.value) props.onSetReminder(new Date(event.target.value).toISOString()); }} /> : t("tasks.no_reminder")}</div>
-      <div className="flex flex-wrap gap-2">{props.result?.permissions.canEditContent ? <Button disabled={!title.trim() || props.savePending} onClick={() => void props.onSave(task.id, { expectedVersion: task.version, idempotencyKey: mutationKey("desktop-update-task"), title: title.trim(), description })}>{t("tasks.save")}</Button> : null}
-      {task.status === "todo" && canComplete ? <Button disabled={currentAssigneeCompleted} title={currentAssigneeCompleted ? t("tasks.waiting_for_assignees") : undefined} onClick={() => { const assignees = props.result?.members.filter((member) => member.role === "assignee").length ?? 0; if (task.completionPolicy === "all_assignees" || assignees <= 1 || globalThis.confirm(t("tasks.complete_multi_confirm"))) props.onTransition(task, "complete"); }}>{currentAssigneeCompleted ? t("tasks.assignee_completed") : t("tasks.complete")}</Button> : null}
-      {task.status !== "todo" && props.result?.permissions.canReopen ? <Button variant="outline" onClick={() => props.onTransition(task, "reopen")}>{t("tasks.reopen")}</Button> : null}
-      {task.status === "todo" && props.result?.permissions.canCancel ? <Button variant="outline" onClick={() => props.onTransition(task, "cancel")}>{t("tasks.cancel_task")}</Button> : null}</div>
-    </div>}
-  </aside>;
+    setFollowerIds(props.result?.members.filter((member) => member.role === "follower").map((member) => member.memberId) ?? []);
+  }, [props.preservedDraft?.description, props.preservedDraft?.taskId, props.preservedDraft?.title, props.result?.members, task?.description, task?.id, task?.title, task?.version]);
+  const saveContent = () => {
+    if (!task || !props.result?.permissions.canEditContent) return;
+    const nextTitle = title.trim();
+    if (!nextTitle || (nextTitle === task.title && description === task.description)) return;
+    void props.onSave(task.id, { expectedVersion: task.version, idempotencyKey: mutationKey("desktop-auto-save-task"), title: nextTitle, description });
+  };
+  const changeFollowers = async (next: string[]) => { if (!task) return; const previous = followerIds; setFollowerIds(next); if (!await props.onFollowersChange(task, next)) setFollowerIds(previous); };
+  const sendComment = () => { if (!task) return; const body = comment.trim(); if (!body || commentPending) return; const attempt = ++commentAttempt.current; setCommentPending(true); void props.onComment(task.id, body).then((saved) => { if (commentAttempt.current !== attempt) return; setCommentPending(false); if (saved) setComment((current) => current.trim() === body ? "" : current); }); };
+  const submitComment = (event: React.FormEvent) => { event.preventDefault(); sendComment(); };
+  const insertCommentMarkup = (before: string, after = "") => setComment((current) => `${current}${before}${after}`);
+  return <><button type="button" data-testid="task-detail-backdrop" aria-label={t("tasks.close_detail")} className="absolute inset-0 z-40 cursor-default bg-transparent" onClick={props.onClose} /><aside data-testid="task-detail-panel" className="absolute inset-y-0 right-0 z-50 isolate flex w-[min(560px,94%)] flex-col overflow-hidden border-l border-dls-border bg-background shadow-2xl" aria-label={t("tasks.detail")}>
+    <header className="flex h-16 shrink-0 items-center justify-between border-b border-dls-border px-6"><div>{task ? task.status === "todo" && canComplete ? <Button type="button" variant="outline" size="sm" className="border-blue-9 text-blue-10" disabled={currentAssigneeCompleted} onClick={() => { const assignees = props.result?.members.filter((member) => member.role === "assignee").length ?? 0; if (task.completionPolicy === "all_assignees" || assignees <= 1 || globalThis.confirm(t("tasks.complete_multi_confirm"))) props.onTransition(task, "complete"); }}><Check className="size-4" />{t("tasks.complete")}</Button> : task.status === "completed" && props.result?.permissions.canReopen ? <Button type="button" variant="outline" size="sm" className="border-green-8 text-green-10" onClick={() => props.onTransition(task, "reopen")}><Check className="size-4" />{t("tasks.completed")}</Button> : null : null}</div><div className="flex items-center gap-1">{task && currentMemberId ? <Button type="button" data-testid="task-detail-follow" variant="ghost" size="sm" className={isFollowing ? "text-blue-10" : "text-dls-secondary"} onClick={() => void changeFollowers(isFollowing ? followerIds.filter((id) => id !== currentMemberId) : [...followerIds, currentMemberId])}>{isFollowing ? <BookmarkCheck className="size-4" /> : <Bookmark className="size-4" />}{isFollowing ? t("tasks.following_task") : t("tasks.follow_task")}</Button> : null}<Button type="button" variant="ghost" size="icon"><MoreHorizontal className="size-4" /></Button><Button type="button" variant="ghost" size="icon" onClick={props.onClose}><X className="size-4" /></Button></div></header>
+    {props.loading ? <div className="flex flex-1 items-center justify-center"><TaskShellContent state={{ kind: "loading" }} /></div> : props.error || !task ? <div className="flex flex-1 items-center justify-center"><TaskShellContent state={{ kind: "error", onRetry: () => undefined }} /></div> : <>
+      <div className="min-h-0 flex-1 overflow-y-auto"><section className="space-y-4 px-7 py-6"><Input value={title} readOnly={!props.result?.permissions.canEditContent} onBlur={saveContent} onChange={(event) => { const value = event.target.value; setTitle(value); if (props.preservedDraft) props.onDraftChange({ ...props.preservedDraft, title: value, description }); }} className="h-auto border-0 px-0 py-1 !text-xl font-semibold shadow-none focus-visible:ring-0" />
+        <div className="flex items-center gap-3 text-sm"><TaskFieldIcon label={t("tasks.assignees")}><UserRound className="size-4 text-dls-secondary" /></TaskFieldIcon><span className="flex -space-x-1">{props.result?.members.filter((member) => member.role === "assignee").map((item) => { const member = memberById.get(item.memberId); return <Avatar key={item.memberId} size="sm"><AvatarImage src={member?.user.avatar ?? undefined} /><AvatarFallback>{member ? memberLabel(member).slice(0, 1) : "?"}</AvatarFallback></Avatar>; })}</span><span className="text-dls-secondary">{props.result?.members.some((member) => member.role === "assignee") ? t("tasks.people_selected", { count: props.result.members.filter((member) => member.role === "assignee").length }) : t("tasks.unassigned")}</span><span className="h-5 w-px bg-dls-border" /><span>{groupName}</span></div>
+        <div className="flex items-center gap-3"><TaskFieldIcon label={t("tasks.field_due")}><CalendarDays className="size-4 text-dls-secondary" /></TaskFieldIcon><TaskDateTimeCell task={task} field="dueAt" onChange={props.onTimeChange} /></div>
+        <div className="flex items-center gap-3"><TaskFieldIcon label={t("tasks.field_list")}><ListTodo className="size-4 text-dls-secondary" /></TaskFieldIcon><TaskListCell task={task} lists={new Map(props.lists.map((list) => [list.id, list]))} onChange={props.onListChange} onCreate={props.onListCreate} /><span className="h-5 w-px bg-dls-border" /><Popover><PopoverTrigger render={<button type="button" data-testid="task-detail-group-trigger" className="flex h-8 items-center gap-1 rounded-md px-2 text-sm hover:bg-dls-hover" />}><span>{groupName}</span><ChevronDown className="size-3.5" /></PopoverTrigger><PopoverContent align="start" className="w-64 gap-0 rounded-xl p-2"><Input value={groupSearch} onChange={(event) => setGroupSearch(event.target.value)} placeholder={t("tasks.search_or_create_group")} className="mb-2 h-9" />{[{ id: "custom-default", name: props.defaultGroupName }, ...props.groups].filter((group) => group.name.toLocaleLowerCase().includes(groupSearch.trim().toLocaleLowerCase())).map((group) => <button type="button" key={group.id} data-testid={`task-detail-group-${group.id}`} onClick={() => props.onGroupChange(task.id, group.id)} className={`flex h-9 w-full items-center rounded-lg px-2 text-left text-sm hover:bg-dls-hover ${props.groupId === group.id ? "text-blue-10" : ""}`}><span className="flex-1 truncate">{group.name}</span>{props.groupId === group.id ? <Check className="size-4" /> : null}</button>)}{groupSearch.trim() && ![{ id: "custom-default", name: props.defaultGroupName }, ...props.groups].some((group) => group.name.toLocaleLowerCase() === groupSearch.trim().toLocaleLowerCase()) ? <button type="button" data-testid="task-detail-group-create" onClick={() => { const name = groupSearch.trim(); const id = `custom-${crypto.randomUUID()}`; props.onGroupsChange([...props.groups, { id, name }]); props.onGroupChange(task.id, id); setGroupSearch(""); }} className="mt-1 flex h-10 w-full items-center gap-2 rounded-lg bg-dls-hover px-2 text-sm"><Plus className="size-4" />{t("tasks.create_group")} <strong>{groupSearch.trim()}</strong></button> : null}</PopoverContent></Popover></div>
+        <div className="flex h-[168px] items-start gap-3"><TaskFieldIcon label={t("tasks.description_field")}><AlignLeft className="mt-2 size-4 text-dls-secondary" /></TaskFieldIcon><TaskDescriptionEditor testId="task-detail-description-editor" value={description} readOnly={!props.result?.permissions.canEditContent} onChange={(value) => { setDescription(value); if (props.preservedDraft) props.onDraftChange({ ...props.preservedDraft, title, description: value }); }} onBlur={saveContent} /></div>
+      </section><section className="border-t border-dls-border px-7 py-5"><h3 className="mb-4 text-sm font-semibold text-dls-text">{t("tasks.comments")}</h3><div className="space-y-4">{props.activity?.comments.length ? props.activity.comments.map((item) => { const author = memberById.get(item.authorMemberId); return <div key={item.id} className="flex items-start gap-3"><Avatar size="sm"><AvatarImage src={author?.user.avatar ?? undefined} /><AvatarFallback>{author ? memberLabel(author).slice(0, 1) : "?"}</AvatarFallback></Avatar><div className="min-w-0 flex-1"><div className="flex items-baseline gap-2"><span className="text-sm font-medium">{author ? memberLabel(author) : item.authorMemberId}</span><span className="text-xs text-dls-secondary">{new Date(item.createdAt).toLocaleString()}</span></div><p className="mt-1 whitespace-pre-wrap text-sm text-dls-text">{item.body}</p></div></div>; }) : <p className="text-sm text-dls-secondary">{t("tasks.comments_empty")}</p>}</div></section></div>
+      <div className="shrink-0 bg-background px-6 pb-4 pt-3">{props.result?.permissions.canComment ? <form data-testid="task-comment-editor" className="rounded-xl border border-dls-border bg-background focus-within:border-blue-8" onSubmit={submitComment}><Textarea value={comment} onChange={(event) => setComment(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); sendComment(); } }} placeholder={t("tasks.add_comment")} className="min-h-16 resize-none border-0 bg-transparent px-3 py-2 shadow-none focus-visible:ring-0" /><div className="flex items-center justify-between px-2 pb-2"><div className="flex items-center"><button type="button" aria-label={t("tasks.rich_text_bold")} onClick={() => insertCommentMarkup("**", "**")} className="flex size-8 items-center justify-center rounded hover:bg-dls-hover"><Bold className="size-4" /></button><button type="button" aria-label={t("tasks.rich_text_emoji")} onClick={() => insertCommentMarkup("🙂")} className="flex size-8 items-center justify-center rounded hover:bg-dls-hover"><Smile className="size-4" /></button><button type="button" aria-label={t("tasks.rich_text_mention")} onClick={() => insertCommentMarkup("@") } className="flex size-8 items-center justify-center rounded hover:bg-dls-hover"><AtSign className="size-4" /></button><button type="button" aria-label={t("tasks.rich_text_image")} onClick={() => insertCommentMarkup("![", "](https://)")} className="flex size-8 items-center justify-center rounded hover:bg-dls-hover"><ImageIcon className="size-4" /></button></div><Button type="submit" variant="ghost" size="icon" aria-label={t("tasks.add_comment")} disabled={!comment.trim() || commentPending}><ArrowUp className="size-4" /></Button></div></form> : null}<div className="mt-3 flex items-center gap-2"><span className="flex -space-x-1">{followerIds.slice(0, 4).map((id) => { const member = memberById.get(id); return <Avatar key={id} size="sm"><AvatarImage src={member?.user.avatar ?? undefined} /><AvatarFallback>{member ? memberLabel(member).slice(0, 1) : "?"}</AvatarFallback></Avatar>; })}</span><span className="text-sm text-dls-text">{t("tasks.followers_count", { count: followerIds.length })}</span>{props.result?.permissions.canManageMembers ? <CreatePeoplePicker testId="task-detail-followers" label={t("tasks.add_follower")} members={props.members} selected={followerIds} onChange={(ids) => void changeFollowers(ids)} triggerContent={<Plus className="size-4" />} triggerClassName="flex size-8 items-center justify-center rounded-md text-dls-secondary hover:bg-dls-hover" /> : null}</div></div>
+    </>}
+  </aside></>;
 }
 
 function memberLabel(member: DenOrganizationMember) {
   return member.user.name?.trim() || member.user.account?.trim() || member.user.email?.trim() || member.id;
 }
 
-function dateTimeInputToIso(value: string) {
-  if (!value) return null;
-  const date = new Date(value);
-  return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+function CreatePeoplePicker(props: { testId: string; label: string; members: DenOrganizationMember[]; selected: string[]; onChange: (ids: string[]) => void; multiple?: boolean; triggerContent?: React.ReactNode; triggerClassName?: string }) {
+  const [search, setSearch] = React.useState("");
+  const filtered = props.members.filter((member) => memberLabel(member).toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()));
+  const toggle = (id: string) => props.onChange(props.multiple === false ? [id] : props.selected.includes(id) ? props.selected.filter((item) => item !== id) : [...props.selected, id]);
+  const selectedMember = props.members.find((member) => member.id === props.selected[0]);
+  return <Popover onOpenChange={(open) => { if (!open) setSearch(""); }}><PopoverTrigger render={<button type="button" data-testid={`${props.testId}-trigger`} className={props.triggerClassName ?? "flex h-9 items-center gap-1.5 rounded-lg px-2 text-sm text-dls-text hover:bg-dls-hover"} />}>{props.triggerContent ?? <><span className="flex -space-x-1.5">{props.selected.slice(0, 2).map((id) => { const member = props.members.find((item) => item.id === id); return <Avatar key={id} size="sm"><AvatarImage src={member?.user.avatar ?? undefined} /><AvatarFallback>{member ? memberLabel(member).slice(0, 1).toUpperCase() : "?"}</AvatarFallback></Avatar>; })}</span><span>{props.selected.length ? props.multiple === false && selectedMember ? memberLabel(selectedMember) : t("tasks.people_selected", { count: props.selected.length }) : props.label}</span><ChevronDown className="size-3.5 text-dls-secondary" /></>}</PopoverTrigger><PopoverContent align="start" side="bottom" sideOffset={4} data-testid={`${props.testId}-picker`} className="w-80 gap-0 rounded-xl p-0 shadow-xl"><div className="border-b border-dls-border p-3"><Input autoFocus value={search} onChange={(event) => setSearch(event.target.value)} placeholder={props.label} className="h-10" /></div><div className="max-h-72 overflow-y-auto p-2">{filtered.map((member) => { const selected = props.selected.includes(member.id); return <button type="button" key={member.id} data-testid={`${props.testId}-option-${member.id}`} onClick={() => toggle(member.id)} className={`flex h-12 w-full items-center gap-3 rounded-lg px-2 text-left text-sm ${selected ? "bg-dls-hover text-blue-10" : "text-dls-text hover:bg-dls-hover"}`}><Avatar><AvatarImage src={member.user.avatar ?? undefined} /><AvatarFallback>{memberLabel(member).slice(0, 1).toUpperCase()}</AvatarFallback></Avatar><span className="min-w-0 flex-1 truncate">{memberLabel(member)}</span>{selected ? <Check className="size-4 text-blue-10" /> : null}</button>; })}</div></PopoverContent></Popover>;
 }
 
-function TaskCreateDialog(props: { pending: boolean; members: DenOrganizationMember[]; memberDirectoryLoading: boolean; memberDirectoryError: string | null; onRetryMemberDirectory: () => void; lists: DenProductTaskList[]; currentMemberId: string | null; defaultAssigneeRequired: boolean; defaultAssigneeMemberId: string | null; defaultListId: string | null; onClose: () => void; onCreate: (input: Omit<DenProductTaskCreateInput, "idempotencyKey">) => Promise<void> }) {
+function TaskFieldIcon(props: { label: string; children: React.ReactNode }) {
+  return <span tabIndex={0} aria-label={props.label} className="group/task-create-icon relative inline-flex shrink-0 items-center justify-center rounded-md outline-none focus-visible:ring-2 focus-visible:ring-blue-8">{props.children}<span role="tooltip" className="pointer-events-none absolute bottom-[calc(100%+9px)] left-1/2 z-[70] w-max max-w-40 -translate-x-1/2 rounded-lg bg-foreground px-3 py-2 text-xs text-background opacity-0 shadow-lg transition-opacity after:absolute after:left-1/2 after:top-full after:size-2 after:-translate-x-1/2 after:-translate-y-1/2 after:rotate-45 after:bg-foreground after:content-[''] group-hover/task-create-icon:opacity-100 group-focus/task-create-icon:opacity-100">{props.label}</span></span>;
+}
+
+type DescriptionFormat = "bold" | "strike" | "italic" | "underline" | "ordered" | "bullet" | "quote" | "link" | "emoji" | "mention" | "image";
+
+function TaskDescriptionEditor(props: { value: string; onChange: (value: string) => void; onBlur?: () => void; readOnly?: boolean; testId?: string }) {
+  const textareaRef = React.useRef<HTMLTextAreaElement | null>(null);
+  const replaceSelection = (format: DescriptionFormat) => {
+    if (props.readOnly) return;
+    const textarea = textareaRef.current;
+    const start = textarea?.selectionStart ?? props.value.length;
+    const end = textarea?.selectionEnd ?? props.value.length;
+    const selected = props.value.slice(start, end);
+    const lineStart = props.value.lastIndexOf("\n", Math.max(0, start - 1)) + 1;
+    const prefixes: Partial<Record<DescriptionFormat, string>> = { ordered: "1. ", bullet: "- ", quote: "> " };
+    let replacement = selected;
+    let selectionStart = start;
+    let selectionEnd = end;
+    const prefix = prefixes[format];
+    if (prefix) {
+      const block = props.value.slice(lineStart, end).split("\n").map((line) => `${prefix}${line}`).join("\n");
+      replacement = block;
+      selectionStart = lineStart;
+      selectionEnd = end;
+    } else {
+      const formats: Record<Exclude<DescriptionFormat, "ordered" | "bullet" | "quote">, [string, string, string]> = {
+        bold: ["**", "**", t("tasks.rich_text_text")], strike: ["~~", "~~", t("tasks.rich_text_text")], italic: ["_", "_", t("tasks.rich_text_text")], underline: ["<u>", "</u>", t("tasks.rich_text_text")], link: ["[", "](https://)", t("tasks.rich_text_link")], emoji: ["", "", "🙂"], mention: ["@", "", t("tasks.rich_text_mention")], image: ["![", "](https://)", t("tasks.rich_text_image")],
+      };
+      const inlineFormat = format as Exclude<DescriptionFormat, "ordered" | "bullet" | "quote">;
+      const [before, after, fallback] = formats[inlineFormat];
+      replacement = `${before}${selected || fallback}${after}`;
+    }
+    const next = `${props.value.slice(0, selectionStart)}${replacement}${props.value.slice(selectionEnd)}`;
+    props.onChange(next);
+    globalThis.requestAnimationFrame?.(() => { textarea?.focus(); textarea?.setSelectionRange(selectionStart + replacement.length, selectionStart + replacement.length); });
+  };
+  const tools: Array<{ format: DescriptionFormat; label: string; icon: React.ComponentType<{ className?: string }> }> = [
+    { format: "bold", label: t("tasks.rich_text_bold"), icon: Bold }, { format: "strike", label: t("tasks.rich_text_strike"), icon: Strikethrough }, { format: "italic", label: t("tasks.rich_text_italic"), icon: Italic }, { format: "underline", label: t("tasks.rich_text_underline"), icon: Underline }, { format: "ordered", label: t("tasks.rich_text_ordered"), icon: ListOrdered }, { format: "bullet", label: t("tasks.rich_text_bullet"), icon: ListIcon }, { format: "quote", label: t("tasks.rich_text_quote"), icon: Quote }, { format: "link", label: t("tasks.rich_text_link"), icon: Link }, { format: "emoji", label: t("tasks.rich_text_emoji"), icon: Smile }, { format: "mention", label: t("tasks.rich_text_mention"), icon: AtSign }, { format: "image", label: t("tasks.rich_text_image"), icon: ImageIcon },
+  ];
+  return <div data-testid={props.testId ?? "task-create-description-editor"} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) props.onBlur?.(); }} className="flex h-[168px] min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-dls-border bg-dls-surface focus-within:border-blue-8 focus-within:ring-2 focus-within:ring-blue-8/15"><Textarea ref={textareaRef} value={props.value} readOnly={props.readOnly} onChange={(event) => props.onChange(event.target.value)} placeholder={t("tasks.add_description")} className="min-h-0 w-full flex-1 resize-none rounded-none border-0 bg-transparent px-4 py-3 text-sm shadow-none focus-visible:ring-0" /><div data-testid="task-create-description-toolbar" className="flex min-h-12 items-center justify-between border-t border-dls-border px-3"><div className="flex items-center gap-0.5">{tools.slice(0, 8).map(({ format, label, icon: Icon }) => <button key={format} type="button" disabled={props.readOnly} data-testid={`task-description-format-${format}`} aria-label={label} title={label} onClick={() => replaceSelection(format)} className="flex size-8 items-center justify-center rounded-md text-dls-secondary hover:bg-dls-hover hover:text-dls-text disabled:pointer-events-none disabled:opacity-45"><Icon className="size-[18px]" /></button>)}</div><div className="flex items-center gap-0.5">{tools.slice(8).map(({ format, label, icon: Icon }) => <button key={format} type="button" disabled={props.readOnly} data-testid={`task-description-format-${format}`} aria-label={label} title={label} onClick={() => replaceSelection(format)} className="flex size-8 items-center justify-center rounded-md text-dls-secondary hover:bg-dls-hover hover:text-dls-text disabled:pointer-events-none disabled:opacity-45"><Icon className="size-[18px]" /></button>)}</div></div></div>;
+}
+
+function TaskCreateDialog(props: { pending: boolean; members: DenOrganizationMember[]; memberDirectoryLoading: boolean; memberDirectoryError: string | null; onRetryMemberDirectory: () => void; lists: DenProductTaskList[]; currentMemberId: string | null; defaultListId: string | null; groups: Array<{ id: string; name: string }>; defaultGroupName: string; onGroupsChange: (groups: Array<{ id: string; name: string }>) => void; onCreateList: (name: string) => Promise<string | null>; onClose: () => void; onCreate: (input: Omit<DenProductTaskCreateInput, "idempotencyKey">, groupId: string) => Promise<void> }) {
   const [title, setTitle] = React.useState("");
   const [description, setDescription] = React.useState("");
-  const [assigneeIds, setAssigneeIds] = React.useState<string[]>(() => props.defaultAssigneeMemberId ? [props.defaultAssigneeMemberId] : []);
-  const [startAt, setStartAt] = React.useState("");
-  const [dueAt, setDueAt] = React.useState("");
-  const [priority, setPriority] = React.useState<"none" | "low" | "medium" | "high">("none");
-  const [visibility, setVisibility] = React.useState<DenProductTaskVisibility>("private");
+  const [assigneeIds, setAssigneeIds] = React.useState<string[]>([]);
+  const [followerIds, setFollowerIds] = React.useState<string[]>([]);
+  const [dueAt, setDueAt] = React.useState<string | null>(null);
   const [listId, setListId] = React.useState(props.defaultListId ?? "");
-  const assigneesTouched = React.useRef(false);
-  const defaultAssigneeApplied = React.useRef(Boolean(props.defaultAssigneeMemberId));
-  React.useEffect(() => {
-    if (!props.defaultAssigneeMemberId || assigneesTouched.current || defaultAssigneeApplied.current) return;
-    defaultAssigneeApplied.current = true;
-    setAssigneeIds([props.defaultAssigneeMemberId]);
-  }, [props.defaultAssigneeMemberId]);
-  const privateAssignmentInvalid = visibility === "private" && assigneeIds.some((id) => id !== props.currentMemberId);
-  const defaultAssigneePending = props.defaultAssigneeRequired && props.memberDirectoryLoading && !props.currentMemberId;
-  const toggleAssignee = (memberId: string, checked: boolean) => {
-    assigneesTouched.current = true;
-    setAssigneeIds((current) => checked ? [...new Set([...current, memberId])] : current.filter((id) => id !== memberId));
-    if (checked && memberId !== props.currentMemberId && visibility === "private") setVisibility("members");
-  };
-  const setQuickDueDate = (dayOffset: number) => {
-    const date = new Date();
-    date.setDate(date.getDate() + dayOffset);
-    date.setHours(18, 0, 0, 0);
-    const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
-    setDueAt(local);
-  };
-  return <Dialog open onOpenChange={(open) => { if (!open && !props.pending) props.onClose(); }}><DialogContent data-testid="task-create-dialog" className="h-[min(760px,calc(100vh-2rem))] w-[min(900px,calc(100%-2rem))] max-w-none gap-0 overflow-hidden rounded-2xl bg-dls-surface p-0 sm:max-w-[900px]" aria-label={t("tasks.create")} showCloseButton={!props.pending}><DialogHeader className="sr-only"><DialogTitle>{t("tasks.create")}</DialogTitle><DialogDescription>{t("tasks.create_description")}</DialogDescription></DialogHeader><form className="flex min-h-0 flex-1 flex-col px-10 pb-6 pt-16" onSubmit={(event) => { event.preventDefault(); if (!title.trim() || privateAssignmentInvalid || defaultAssigneePending) return; void props.onCreate({ title: title.trim(), description, visibility, priority, startAt: dateTimeInputToIso(startAt), dueAt: dateTimeInputToIso(dueAt), listId: listId || undefined, members: assigneeIds.map((memberId) => ({ memberId, role: "assignee" })) }); }}>
-    <Input autoFocus value={title} onChange={(event) => setTitle(event.target.value)} placeholder={t("tasks.title_placeholder")} className="h-auto border-0 bg-transparent px-0 py-2 !text-2xl font-semibold shadow-none placeholder:text-dls-secondary/65 focus-visible:ring-0" />
-
-    <div className="mt-6 flex min-h-11 items-start gap-5"><UserRound className="mt-2 size-5 shrink-0 text-dls-secondary" /><fieldset className="min-w-0 flex-1"><legend className="sr-only">{t("tasks.assignees")}</legend>{props.memberDirectoryError ? <div className="flex items-center gap-3 rounded-lg border border-amber-7 bg-amber-2 px-3 py-2 text-sm" role="alert"><span className="flex-1">{t("tasks.member_directory_error")}</span><Button type="button" variant="outline" size="sm" onClick={props.onRetryMemberDirectory}>{t("tasks.retry")}</Button></div> : props.memberDirectoryLoading ? <p className="py-2 text-sm text-dls-secondary" role="status">{t("tasks.loading")}</p> : props.members.length ? <div className="flex max-h-28 flex-wrap gap-2 overflow-y-auto">{props.members.map((member) => { const selected = assigneeIds.includes(member.id); return <label key={member.id} className={`flex cursor-pointer items-center gap-2 rounded-full px-2 py-1.5 text-sm transition-colors ${selected ? "bg-dls-active text-dls-text" : "text-dls-secondary hover:bg-dls-hover"}`}><Checkbox className="sr-only" checked={selected} onCheckedChange={(checked) => toggleAssignee(member.id, checked === true)} /><Avatar size="sm"><AvatarImage src={member.user.avatar ?? undefined} alt="" /><AvatarFallback>{memberLabel(member).slice(0, 1).toUpperCase()}</AvatarFallback></Avatar><span className="max-w-36 truncate">{memberLabel(member)}</span></label>; })}</div> : <p className="py-2 text-sm text-dls-secondary">{t("tasks.no_members")}</p>}</fieldset></div>
-
-    <div className="mt-5 flex items-start gap-5"><CalendarDays className="mt-2 size-5 shrink-0 text-dls-secondary" /><div className="min-w-0 flex-1 space-y-3"><div className="flex flex-wrap gap-2"><Button type="button" variant="secondary" size="sm" onClick={() => setQuickDueDate(0)}>{t("tasks.today")}</Button><Button type="button" variant="secondary" size="sm" onClick={() => setQuickDueDate(1)}>{t("tasks.tomorrow")}</Button></div><div className="grid gap-3 sm:grid-cols-2"><label className="grid gap-1 text-xs text-dls-secondary"><span>{t("tasks.field_start")}</span><Input aria-label={t("tasks.field_start")} type="datetime-local" value={startAt} onChange={(event) => setStartAt(event.target.value)} className="h-9" /></label><label className="grid gap-1 text-xs text-dls-secondary"><span>{t("tasks.field_due")}</span><Input aria-label={t("tasks.field_due")} type="datetime-local" value={dueAt} onChange={(event) => setDueAt(event.target.value)} className="h-9" /></label></div></div></div>
-
-    <label className="mt-5 flex items-center gap-5"><ListTodo className="size-5 shrink-0 text-dls-secondary" /><select aria-label={t("tasks.field_list")} className="h-10 min-w-0 flex-1 rounded-lg border-0 bg-transparent px-0 text-sm text-dls-secondary outline-none hover:text-dls-text" value={listId} onChange={(event) => setListId(event.target.value)}><option value="">{t("tasks.add_to_list")}</option>{props.lists.map((list) => <option key={list.id} value={list.id}>{list.marker} {list.name}</option>)}</select></label>
-
-    <label className="mt-4 flex min-h-0 flex-1 items-start gap-5"><AlignLeft className="mt-2 size-5 shrink-0 text-dls-secondary" /><Textarea value={description} onChange={(event) => setDescription(event.target.value)} placeholder={t("tasks.add_description")} className="min-h-24 flex-1 resize-none border-0 bg-transparent px-0 py-2 text-base shadow-none focus-visible:ring-0" /></label>
-
-    {privateAssignmentInvalid ? <p className="mb-3 text-sm text-red-9" role="alert">{t("tasks.private_assignee_error")}</p> : null}
-    <DialogFooter className="mx-0 mb-0 mt-auto flex-row items-center justify-between rounded-none border-0 bg-transparent p-0 pt-4"><div className="flex min-w-0 flex-wrap gap-2"><select aria-label={t("tasks.priority")} className="h-9 rounded-lg border border-dls-border bg-dls-surface px-3 text-sm" value={priority} onChange={(event) => setPriority(event.target.value as typeof priority)}>{(["none", "low", "medium", "high"] as const).map((value) => <option key={value} value={value}>{t(`tasks.priority_${value}`)}</option>)}</select><select aria-label={t("tasks.visibility")} className="h-9 rounded-lg border border-dls-border bg-dls-surface px-3 text-sm" value={visibility} onChange={(event) => setVisibility(event.target.value as DenProductTaskVisibility)}><option value="private">{t("tasks.visibility_private")}</option><option value="members">{t("tasks.visibility_members")}</option><option value="organization">{t("tasks.visibility_organization")}</option></select></div><div className="flex gap-2"><Button type="button" variant="outline" disabled={props.pending} onClick={props.onClose}>{t("tasks.cancel")}</Button><Button type="submit" disabled={!title.trim() || privateAssignmentInvalid || defaultAssigneePending || props.pending}>{t("tasks.create")}</Button></div></DialogFooter>
+  const [groupId, setGroupId] = React.useState("custom-default");
+  const [groupSearch, setGroupSearch] = React.useState("");
+  const visibility: DenProductTaskVisibility = [...assigneeIds, ...followerIds].some((id) => id !== props.currentMemberId) ? "members" : "private";
+  const quickDue = (offset: number) => { const now = new Date(); setDueAt(new Date(now.getFullYear(), now.getMonth(), now.getDate() + offset).toISOString()); };
+  const groupName = groupId === "custom-default" ? props.defaultGroupName || t("tasks.group_default") : props.groups.find((group) => group.id === groupId)?.name ?? t("tasks.group_default");
+  const draftTask: DenProductTask = { id: "create-dialog-draft", displayNumber: null, creatorMemberId: props.currentMemberId ?? "", listId: listId || null, title, description, priority: "none", visibility, completionPolicy: "any_assignee", status: "todo", version: 1, startAt: null, dueAt, completedAt: null, completedByMemberId: null, canceledAt: null, canceledByMemberId: null, deletedAt: null, restoreUntil: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+  return <Dialog open onOpenChange={(open) => { if (!open && !props.pending) props.onClose(); }}><DialogContent data-testid="task-create-dialog" className="h-[min(460px,calc(100vh-2rem))] w-[min(680px,calc(100%-3rem))] max-w-none gap-0 overflow-visible rounded-xl bg-dls-surface p-0 sm:max-w-[680px]" aria-label={t("tasks.create")} showCloseButton={!props.pending}><DialogHeader className="sr-only"><DialogTitle>{t("tasks.create")}</DialogTitle><DialogDescription>{t("tasks.create_description")}</DialogDescription></DialogHeader><form className="flex h-full min-h-0 flex-col px-8 pb-3 pt-7" onSubmit={(event) => { event.preventDefault(); if (!title.trim()) return; void props.onCreate({ title: title.trim(), description, visibility, priority: "none", startAt: null, dueAt, listId: listId || undefined, members: [...assigneeIds.map((memberId) => ({ memberId, role: "assignee" as const })), ...followerIds.map((memberId) => ({ memberId, role: "follower" as const }))] }, groupId); }}>
+    <input autoFocus value={title} onChange={(event) => setTitle(event.target.value)} placeholder={t("tasks.title_placeholder")} className="h-12 w-full bg-transparent text-[20px] font-medium text-dls-text outline-none placeholder:text-dls-secondary/70" />
+    <div className="mt-3 flex items-center gap-3"><TaskFieldIcon label={t("tasks.assignees")}><UserRound className="size-5 text-dls-secondary" /></TaskFieldIcon><CreatePeoplePicker testId="task-create-assignees" label={t("tasks.add_assignee")} members={props.members} selected={assigneeIds} onChange={setAssigneeIds} /><span className="h-6 w-px bg-dls-border" /><Popover><PopoverTrigger render={<button type="button" data-testid="task-create-group-trigger" className="flex h-9 items-center gap-2 rounded-lg px-2 text-sm text-dls-text hover:bg-dls-hover" />}><span>{groupName}</span><ChevronDown className="size-3.5 text-dls-secondary" /></PopoverTrigger><PopoverContent align="start" className="w-72 gap-0 rounded-xl p-2"><Input autoFocus value={groupSearch} onChange={(event) => setGroupSearch(event.target.value)} placeholder={t("tasks.search_or_create_group")} className="mb-2 h-10" /><p className="px-2 py-1 text-xs font-medium text-dls-secondary">{t("tasks.assigned_to_me")}</p>{[{ id: "custom-default", name: props.defaultGroupName || t("tasks.group_default") }, ...props.groups].filter((group) => group.name.toLocaleLowerCase().includes(groupSearch.trim().toLocaleLowerCase())).map((group) => <button type="button" key={group.id} onClick={() => setGroupId(group.id)} className={`flex h-10 w-full items-center rounded-lg px-2 text-left text-sm ${groupId === group.id ? "bg-dls-hover text-blue-10" : "hover:bg-dls-hover"}`}><span className="flex-1 truncate">{group.name}</span>{groupId === group.id ? <Check className="size-4" /> : null}</button>)}{groupSearch.trim() && ![{ id: "custom-default", name: props.defaultGroupName || t("tasks.group_default") }, ...props.groups].some((group) => group.name.toLocaleLowerCase() === groupSearch.trim().toLocaleLowerCase()) ? <button type="button" data-testid="task-create-group-create" onClick={() => { const name = groupSearch.trim(); const id = `custom-${crypto.randomUUID()}`; props.onGroupsChange([...props.groups, { id, name }]); setGroupId(id); setGroupSearch(""); }} className="mt-1 flex h-11 w-full items-center gap-2 rounded-lg bg-dls-hover px-2 text-sm text-dls-secondary"><Plus className="size-4" />{t("tasks.create_group")} <strong className="text-dls-text">{groupSearch.trim()}</strong></button> : null}</PopoverContent></Popover></div>
+    <div className="mt-4 flex items-center gap-3"><TaskFieldIcon label={t("tasks.field_due")}><CalendarDays className="size-5 text-dls-secondary" /></TaskFieldIcon><Button type="button" variant="secondary" size="sm" className="h-8" onClick={() => quickDue(0)}>{t("tasks.today")}</Button><Button type="button" variant="secondary" size="sm" className="h-8" onClick={() => quickDue(1)}>{t("tasks.tomorrow")}</Button><TaskDateTimeCell task={draftTask} field="dueAt" triggerContent={<><CalendarDays className="size-4" />{t("tasks.other_time")}</>} triggerClassName="flex h-8 items-center gap-1.5 rounded-lg bg-dls-hover px-2 text-sm text-dls-text hover:bg-dls-active" onChange={async (_task, _field, value) => { setDueAt(value); return true; }} /></div>
+    <div className="mt-3 flex items-center gap-3"><TaskFieldIcon label={t("tasks.field_list")}><ListTodo className="size-5 text-dls-secondary" /></TaskFieldIcon><TaskListCell task={draftTask} lists={new Map(props.lists.map((list) => [list.id, list]))} onChange={async (_task, nextListId) => { setListId(nextListId); return true; }} onCreate={async (_task, name) => { const id = await props.onCreateList(name); if (id) setListId(id); return id; }} /></div>
+    <div className="mt-2 flex h-[168px] shrink-0 items-start gap-3"><TaskFieldIcon label={t("tasks.description_field")}><AlignLeft className="mt-2 size-5 text-dls-secondary" /></TaskFieldIcon><TaskDescriptionEditor value={description} onChange={setDescription} /></div>
+    {props.memberDirectoryError ? <div className="mt-3 flex items-center gap-2 text-sm text-red-9" role="alert"><span>{t("tasks.member_directory_error")}</span><Button type="button" size="sm" variant="ghost" onClick={props.onRetryMemberDirectory}>{t("tasks.retry")}</Button></div> : props.memberDirectoryLoading ? <p className="mt-3 text-sm text-dls-secondary">{t("tasks.loading")}</p> : null}
+    <DialogFooter data-testid="task-create-footer" className="mx-0 mb-0 mt-3 w-full flex-row items-center justify-between rounded-none border-0 bg-transparent p-0 sm:justify-between"><CreatePeoplePicker testId="task-create-followers" label={t("tasks.add_follower")} members={props.members} selected={followerIds} onChange={setFollowerIds} triggerClassName="flex h-9 min-w-0 items-center gap-2 rounded-lg px-1.5 text-sm text-dls-text hover:bg-dls-hover" triggerContent={<><BookmarkPlus className="size-5 shrink-0 text-dls-secondary" aria-hidden="true" />{followerIds.length ? <><span className="flex -space-x-1.5">{followerIds.slice(0, 2).map((id) => { const member = props.members.find((item) => item.id === id); return <Avatar key={id} size="sm"><AvatarImage src={member?.user.avatar ?? undefined} /><AvatarFallback>{member ? memberLabel(member).slice(0, 1).toUpperCase() : "?"}</AvatarFallback></Avatar>; })}</span><span>{t("tasks.people_selected", { count: followerIds.length })}</span></> : <span>{t("tasks.add_follower")}</span>}</>} /><div className="flex gap-2"><Button type="button" variant="outline" disabled={props.pending} onClick={props.onClose}>{t("tasks.cancel")}</Button><Button type="submit" disabled={!title.trim() || props.pending}>{t("tasks.create_action")}</Button></div></DialogFooter>
   </form></DialogContent></Dialog>;
 }
 

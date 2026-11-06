@@ -1,6 +1,6 @@
 import { beforeEach, expect, test } from "bun:test";
 
-import { defaultTaskWorkbenchSettings, readTaskWorkbenchSettings, reorderTaskWorkbenchFields, taskWorkbenchFields, taskWorkbenchStorageKey, writeTaskWorkbenchSettings } from "../src/react-app/domains/tasks/task-view-state";
+import { defaultTaskWorkbenchSettings, readTaskWorkbenchSettings, reorderTaskWorkbenchFields, taskSectionDefaultSettings, taskWorkbenchFields, taskWorkbenchStorageKey, writeTaskWorkbenchSettings } from "../src/react-app/domains/tasks/task-view-state";
 
 const storage = new Map<string, string>();
 Object.defineProperty(globalThis, "localStorage", {
@@ -23,6 +23,37 @@ test("assigned workbench persistence is isolated by ProductTask scope", () => {
   expect(readTaskWorkbenchSettings(scopeA)).toMatchObject({ view: "board", status: "all", fields: ["due", "list"] });
   expect(readTaskWorkbenchSettings(scopeB)).toEqual(defaultTaskWorkbenchSettings);
   expect(taskWorkbenchStorageKey(scopeA)).not.toBe(taskWorkbenchStorageKey(scopeB));
+});
+
+test("workbench persistence is also isolated by task section", () => {
+  writeTaskWorkbenchSettings(scopeA, { ...defaultTaskWorkbenchSettings, view: "board" }, "following");
+  expect(readTaskWorkbenchSettings(scopeA, "following").view).toBe("board");
+  expect(readTaskWorkbenchSettings(scopeA, "assigned").view).toBe("list");
+  expect(taskWorkbenchStorageKey(scopeA, "following")).not.toBe(taskWorkbenchStorageKey(scopeA, "assigned"));
+});
+
+test("each task-list workbench has an isolated custom-group default", () => {
+  expect(readTaskWorkbenchSettings(scopeA, "all", "list_one").group).toBe("custom");
+  writeTaskWorkbenchSettings(scopeA, { ...defaultTaskWorkbenchSettings, group: "due" }, "all", "list_one");
+  expect(readTaskWorkbenchSettings(scopeA, "all", "list_one").group).toBe("due");
+  expect(readTaskWorkbenchSettings(scopeA, "all", "list_two").group).toBe("custom");
+  expect(taskWorkbenchStorageKey(scopeA, "all", "list_one")).not.toBe(taskWorkbenchStorageKey(scopeA, "all", "list_two"));
+});
+
+test("task sections populate editable current-member default settings", () => {
+  expect(taskSectionDefaultSettings("assigned", "member_self")).toMatchObject({ assigneeMemberIds: ["member_self"], assigneeMemberOperator: "contains" });
+  expect(taskSectionDefaultSettings("following", "member_self")).toMatchObject({ followerMemberIds: ["member_self"], followerMemberOperator: "contains", creatorMemberIds: ["member_self"], creatorMemberOperator: "not_contains", assigneeMemberIds: ["member_self"], assigneeMemberOperator: "not_contains" });
+  expect(taskSectionDefaultSettings("created", "member_self")).toMatchObject({ creatorMemberIds: ["member_self"], creatorMemberOperator: "contains" });
+  expect(taskSectionDefaultSettings("delegated", "member_self")).toMatchObject({ assigneeMemberIds: ["member_self"], assigneeMemberOperator: "not_contains", assignerMemberIds: ["member_self"], assignerMemberOperator: "contains" });
+  expect(taskSectionDefaultSettings("all", "member_self")).toMatchObject({ status: "all", assigneeMemberIds: [], creatorMemberIds: [] });
+  expect(taskSectionDefaultSettings("completed", "member_self")).toMatchObject({ status: "completed", assigneeMemberIds: [], creatorMemberIds: [] });
+});
+
+test("all and completed populate their initial statuses while later status settings remain editable", () => {
+  expect(readTaskWorkbenchSettings(scopeA, "all").status).toBe("all");
+  expect(readTaskWorkbenchSettings(scopeA, "completed").status).toBe("completed");
+  writeTaskWorkbenchSettings(scopeA, { ...defaultTaskWorkbenchSettings, status: "all", overdue: true }, "completed");
+  expect(readTaskWorkbenchSettings(scopeA, "completed")).toMatchObject({ status: "all", overdue: true });
 });
 
 test("assigned workbench persists custom grouping", () => {
