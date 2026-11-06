@@ -20,7 +20,7 @@ const sorts: TaskWorkbenchSort[] = ["start_at", "due_at", "created_at", "updated
 const fieldLabels: Record<TaskWorkbenchField, string> = {
   assignee: "tasks.field_assignee", start: "tasks.field_start", due: "tasks.field_due", creator: "tasks.field_creator",
   assigner: "tasks.field_assigner", followers: "tasks.field_followers", created: "tasks.field_created", completed: "tasks.field_completed",
-  updated: "tasks.field_updated", id: "tasks.field_id", list: "tasks.field_list",
+  updated: "tasks.field_updated", id: "tasks.field_id", priority: "tasks.field_priority", list: "tasks.field_list",
 };
 
 function Menu(props: { label: string; icon: ReactNode; badge?: number; disabled?: boolean; children: ReactNode; testId: string; contentClassName?: string; hideChevron?: boolean }) {
@@ -109,7 +109,7 @@ export function TaskToolbar(props: { settings: TaskWorkbenchSettings; lists: Den
   const overdueEnabled = props.settings.status !== "completed";
   const update = <K extends keyof TaskWorkbenchSettings>(key: K, value: TaskWorkbenchSettings[K]) => props.onChange({ ...props.settings, [key]: value });
   const statusLabels: Array<[TaskWorkbenchStatus, string]> = [["incomplete", "tasks.status_incomplete"], ["completed", "tasks.completed"], ["all", "tasks.status_all"]];
-  const groupLabels: Array<[TaskWorkbenchGroup, string]> = [["none", "tasks.group_none"], ["list", "tasks.group_list"], ["creator", "tasks.group_creator"], ["start", "tasks.group_start"], ["due", "tasks.group_due"]];
+  const groupLabels: Array<[TaskWorkbenchGroup, string]> = [["none", "tasks.group_none"], ["custom", "tasks.group_custom"], ["list", "tasks.group_list"], ["creator", "tasks.group_creator"], ["start", "tasks.group_start"], ["due", "tasks.group_due"]];
   return <div className="flex flex-wrap items-center gap-0.5" aria-label={t("tasks.quick_settings")}>
     <Menu label={t(statusLabels.find(([value]) => value === props.settings.status)?.[1] ?? "tasks.status")} icon={<ListFilter className="size-3.5" />} testId="task-status-menu">
       <DropdownMenuRadioGroup value={props.settings.status} onValueChange={(value) => props.onChange({ ...props.settings, status: value as TaskWorkbenchStatus, overdue: value === "completed" ? false : props.settings.overdue })}>
@@ -120,7 +120,7 @@ export function TaskToolbar(props: { settings: TaskWorkbenchSettings; lists: Den
     <SortMenu settings={props.settings} onChange={props.onChange} />
     <Menu label={`${t("tasks.group")}: ${t(groupLabels.find(([value]) => value === props.settings.group)?.[1] ?? "tasks.group_none")}`} icon={<Group className="size-3.5" />} disabled={props.settings.view === "board"} testId="task-group-menu">
       <DropdownMenuRadioGroup value={props.settings.group} onValueChange={(value) => update("group", value as TaskWorkbenchGroup)}>
-        {groupLabels.map(([value, label]) => <DropdownMenuRadioItem key={value} value={value} className="rounded-lg px-2 py-1.5 text-sm font-normal">{t(label)}</DropdownMenuRadioItem>)}
+        {groupLabels.map(([value, label]) => <DropdownMenuRadioItem key={value} value={value} className={`rounded-lg px-2 py-1.5 text-sm font-normal ${props.settings.group === value ? "text-blue-10 [&_svg]:text-blue-10 focus:text-blue-10 focus:**:text-blue-10" : ""}`}>{t(label)}</DropdownMenuRadioItem>)}
       </DropdownMenuRadioGroup>
     </Menu>
     <FieldSettingsMenu settings={props.settings} onChange={props.onChange} />

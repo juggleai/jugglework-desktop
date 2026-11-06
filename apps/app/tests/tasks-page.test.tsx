@@ -125,6 +125,7 @@ const task = (version: number, title = "Server title", description = "Server des
   description,
   priority: "none",
   visibility: "private",
+  completionPolicy: "any_assignee",
   status: "todo",
   version,
   startAt: null,
@@ -676,6 +677,67 @@ test("workbench completion sends only lifecycle contract fields and refreshes th
     expect(transitionInputs).toHaveLength(1);
     expect(transitionInputs[0]).toEqual({ operation: "complete", expectedVersion: 1, idempotencyKey: expect.any(String) });
     expect(transitionInputs[0]).not.toHaveProperty("taskId");
+  } finally { await act(async () => { renderer!.unmount(); }); }
+});
+
+test("workbench completion rule loads the latest task and sends a CAS update", async () => {
+  const listed = task(1, "Rule task", "", "rule_task");
+  const authoritative = result({ ...listed, version: 7 });
+  authoritative.members = [{ memberId: "member_one", role: "assignee" }];
+  const gets: string[] = [];
+  const updates: Array<Parameters<DenClient["updateProductTask"]>[2]> = [];
+  const client = connectedClient({
+    listProductTasks: async () => ({ items: [listed], membersByTaskId: { [listed.id]: authoritative.members }, nextCursor: "" }),
+    listOrganizationMembers: async () => ({ members: [{ id: "member_one", userId: "user_one", role: "member", user: { id: "user_one", name: "Self", account: null, email: null, avatar: null } }], total: 1, limit: 200, offset: 0 }),
+    getProductTask: async (_orgId, taskId) => { gets.push(taskId); return authoritative; },
+    updateProductTask: async (_orgId, _taskId, patch) => { updates.push(patch); return result({ ...authoritative.task, completionPolicy: patch.completionPolicy ?? authoritative.task.completionPolicy, version: 8 }); },
+  });
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client)); });
+  await settle();
+  try {
+    const sidebar = renderer!.root.findByProps({ "data-testid": "tasks-sidebar" });
+    const assigned = sidebar.findAllByType("button").find((button) => Array.isArray(button.props.children) && button.props.children.includes("Assigned to me"))!;
+    await act(async () => { assigned.props.onClick(); });
+    await settle();
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-completion-policy-rule_task-all_assignees" }).findByType("input").props.onChange(); });
+    await settle();
+    expect(gets).toEqual(["rule_task"]);
+    expect(updates).toHaveLength(1);
+    expect(updates[0]).toEqual({ expectedVersion: 7, idempotencyKey: expect.any(String), completionPolicy: "all_assignees" });
+  } finally { await act(async () => { renderer!.unmount(); }); }
+});
+
+test("workbench assignee update shares a private task in the same latest-version patch", async () => {
+  const listed = task(1, "Private task", "", "private_task");
+  const authoritative = result({ ...listed, version: 9 });
+  authoritative.members = [{ memberId: "member_one", role: "assignee" }, { memberId: "member_follower", role: "follower" }];
+  const updates: Array<Parameters<DenClient["updateProductTask"]>[2]> = [];
+  const directory = [
+    { id: "member_one", userId: "user_one", role: "member", user: { id: "user_one", name: "Self", account: null, email: null, avatar: null } },
+    { id: "member_two", userId: "user_two", role: "member", user: { id: "user_two", name: "Other", account: null, email: null, avatar: null } },
+  ];
+  const client = connectedClient({
+    listProductTasks: async () => ({ items: [listed], membersByTaskId: { [listed.id]: authoritative.members }, nextCursor: "" }),
+    listOrganizationMembers: async () => ({ members: directory, total: directory.length, limit: 200, offset: 0 }),
+    getProductTask: async () => authoritative,
+    updateProductTask: async (_orgId, _taskId, patch) => { updates.push(patch); return result({ ...authoritative.task, visibility: "members", version: 10 }); },
+  });
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client)); });
+  await settle();
+  try {
+    const sidebar = renderer!.root.findByProps({ "data-testid": "tasks-sidebar" });
+    const assigned = sidebar.findAllByType("button").find((button) => Array.isArray(button.props.children) && button.props.children.includes("Assigned to me"))!;
+    await act(async () => { assigned.props.onClick(); });
+    await settle();
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-assignee-option-private_task-member_two" }).props.onClick(); });
+    await settle();
+    expect(updates[0]).toMatchObject({
+      expectedVersion: 9,
+      visibility: "members",
+      members: [{ memberId: "member_follower", role: "follower" }, { memberId: "member_one", role: "assignee" }, { memberId: "member_two", role: "assignee" }],
+    });
   } finally { await act(async () => { renderer!.unmount(); }); }
 });
 

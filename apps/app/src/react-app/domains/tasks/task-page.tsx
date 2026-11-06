@@ -5,7 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { AlignLeft, CalendarDays, Check, ChevronDown, CircleAlert, ListChecks, ListTodo, LoaderCircle, Plus, RefreshCw, UserRound, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
-import { DenApiError, isPersonalDenOrganization, type DenOrganizationMember, type DenProductTask, type DenProductTaskCreateInput, type DenProductTaskList, type DenProductTaskUpdateInput, type DenProductTaskVisibility } from "@/app/lib/den";
+import { DenApiError, isPersonalDenOrganization, type DenOrganizationMember, type DenProductTask, type DenProductTaskCompletionPolicy, type DenProductTaskCreateInput, type DenProductTaskList, type DenProductTaskUpdateInput, type DenProductTaskVisibility } from "@/app/lib/den";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -232,8 +232,69 @@ function ScopedConnectedTaskPage(props: TaskPageProps) {
       return;
     }
     const assigneeCount = detail.members.filter((member) => member.role === "assignee").length;
-    if (operation === "complete" && assigneeCount > 1 && !globalThis.confirm(t("tasks.complete_multi_confirm"))) return;
+    const currentAssigneeCompleted = detail.task.completionPolicy === "all_assignees" && detail.members.some((member) => member.role === "assignee" && member.memberId === currentMemberId && Boolean(member.completedAt));
+    if (operation === "complete" && currentAssigneeCompleted) return;
+    if (operation === "complete" && detail.task.completionPolicy === "any_assignee" && assigneeCount > 1 && !globalThis.confirm(t("tasks.complete_multi_confirm"))) return;
     await runMutation(() => transitionMutation.mutateAsync({ taskId: task.id, operation, expectedVersion: detail.task.version, idempotencyKey: mutationKey(`desktop-${operation}-task`) }));
+  };
+
+  const updateWorkbenchAssignees = async (task: DenProductTask, assigneeMemberIds: string[]) => {
+    if (!scope) return false;
+    const capturedScope = scope;
+    const detail = await runMutation(
+      () => cloud.client.getProductTask(capturedScope.organizationId, task.id),
+      { isCurrent: () => liveScopeKey.current === productTaskScopeKey(capturedScope) },
+    );
+    if (!detail) return false;
+    if (!detail.permissions.canManageMembers) {
+      toast.error(t("tasks.assignee_edit_not_allowed"));
+      return false;
+    }
+    const addsOtherMemberToPrivateTask = detail.task.visibility === "private" && assigneeMemberIds.some((memberId) => memberId !== detail.task.creatorMemberId);
+    if (addsOtherMemberToPrivateTask && (!detail.permissions.canManageVisibility || detail.task.listId)) {
+      toast.error(t("tasks.private_assignee_error"));
+      return false;
+    }
+    const retainedMembers = detail.members.filter((member) => member.role !== "assignee").map((member) => ({ memberId: member.memberId, role: member.role }));
+    const result = await runMutation(
+      () => cloud.client.updateProductTask(capturedScope.organizationId, task.id, {
+        expectedVersion: detail.task.version,
+        idempotencyKey: mutationKey("desktop-update-task-assignees"),
+        ...(addsOtherMemberToPrivateTask ? { visibility: "members" as const } : {}),
+        members: [...retainedMembers, ...assigneeMemberIds.map((memberId) => ({ memberId, role: "assignee" as const }))],
+      }),
+      { isCurrent: () => liveScopeKey.current === productTaskScopeKey(capturedScope) },
+    );
+    if (!result) return false;
+    queryClient.setQueryData(productTaskKeys.detail(capturedScope, task.id), result);
+    await queryClient.invalidateQueries({ queryKey: productTaskKeys.lists(capturedScope) });
+    return true;
+  };
+
+  const updateWorkbenchCompletionPolicy = async (task: DenProductTask, completionPolicy: DenProductTaskCompletionPolicy) => {
+    if (!scope) return false;
+    const capturedScope = scope;
+    const detail = await runMutation(
+      () => cloud.client.getProductTask(capturedScope.organizationId, task.id),
+      { isCurrent: () => liveScopeKey.current === productTaskScopeKey(capturedScope) },
+    );
+    if (!detail) return false;
+    if (!detail.permissions.canManageMembers) {
+      toast.error(t("tasks.assignee_edit_not_allowed"));
+      return false;
+    }
+    const result = await runMutation(
+      () => cloud.client.updateProductTask(capturedScope.organizationId, task.id, {
+        expectedVersion: detail.task.version,
+        idempotencyKey: mutationKey("desktop-update-task-completion-policy"),
+        completionPolicy,
+      }),
+      { isCurrent: () => liveScopeKey.current === productTaskScopeKey(capturedScope) },
+    );
+    if (!result) return false;
+    queryClient.setQueryData(productTaskKeys.detail(capturedScope, task.id), result);
+    await queryClient.invalidateQueries({ queryKey: productTaskKeys.lists(capturedScope) });
+    return true;
   };
 
   const mutationError = (error: unknown, capturedScopeKey = scopeKey) => {
@@ -345,7 +406,7 @@ function ScopedConnectedTaskPage(props: TaskPageProps) {
   else if (section === "activity") content = <TaskShellContent state={{ kind: "empty" }} />;
   else if (tasksQuery.isLoading) content = <TaskShellContent state={{ kind: "loading" }} />;
   else if (tasksQuery.isError) content = <TaskShellContent state={{ kind: "error", message: tasksQuery.error instanceof Error ? tasksQuery.error.message : undefined, onRetry: () => void tasksQuery.refetch() }} />;
-  else if (section === "assigned") content = <TaskWorkbench tasks={tasks} membersByTaskId={membersByTaskId} members={availableMembers} lists={activeListsQuery.data?.items ?? []} listJoinError={activeListsQuery.isError ? (activeListsQuery.error instanceof Error ? activeListsQuery.error.message : t("tasks.list_join_error")) : null} memberDirectoryError={membersQuery.isError ? (membersQuery.error instanceof Error ? membersQuery.error.message : t("tasks.member_directory_error")) : null} settings={workbenchSettings} selectedTaskId={selectedTaskId} canLoadMore={Boolean(tasksQuery.hasNextPage)} loadingMore={tasksQuery.isFetchingNextPage} refreshing={tasksQuery.isFetching && !tasksQuery.isFetchingNextPage} quickCreatePending={createMutation.isPending} quickCreateMemberId={currentMemberId} onLoadMore={() => void tasksQuery.fetchNextPage()} onRetryListJoin={() => void activeListsQuery.refetch()} onRetryMemberDirectory={() => void membersQuery.refetch()} onSettingsChange={updateWorkbenchSettings} onSelect={selectTask} onTransition={(task, operation) => void transitionWorkbenchTask(task, operation)} onQuickCreate={async (title, defaults) => Boolean(await runMutation(() => createMutation.mutateAsync({ title, ...defaults, visibility: "private", priority: "none", members: currentMemberId ? [{ memberId: currentMemberId, role: "assignee" }] : [], idempotencyKey: mutationKey("desktop-quick-create-task") })))} />;
+  else if (section === "assigned") content = <TaskWorkbench tasks={tasks} membersByTaskId={membersByTaskId} members={availableMembers} lists={activeListsQuery.data?.items ?? []} listJoinError={activeListsQuery.isError ? (activeListsQuery.error instanceof Error ? activeListsQuery.error.message : t("tasks.list_join_error")) : null} memberDirectoryError={membersQuery.isError ? (membersQuery.error instanceof Error ? membersQuery.error.message : t("tasks.member_directory_error")) : null} settings={workbenchSettings} selectedTaskId={selectedTaskId} canLoadMore={Boolean(tasksQuery.hasNextPage)} loadingMore={tasksQuery.isFetchingNextPage} refreshing={tasksQuery.isFetching && !tasksQuery.isFetchingNextPage} quickCreatePending={createMutation.isPending} quickCreateMemberId={currentMemberId} onLoadMore={() => void tasksQuery.fetchNextPage()} onRetryListJoin={() => void activeListsQuery.refetch()} onRetryMemberDirectory={() => void membersQuery.refetch()} onSettingsChange={updateWorkbenchSettings} onSelect={selectTask} onTransition={(task, operation) => void transitionWorkbenchTask(task, operation)} onAssigneesChange={updateWorkbenchAssignees} onCompletionPolicyChange={updateWorkbenchCompletionPolicy} onQuickCreate={async (title, defaults) => { const result = await runMutation(() => createMutation.mutateAsync({ title, ...defaults, visibility: "private", priority: "none", members: currentMemberId ? [{ memberId: currentMemberId, role: "assignee" }] : [], idempotencyKey: mutationKey("desktop-quick-create-task") })); return result?.task.id ?? false; }} />;
   else content = <TaskList tasks={tasks} selectedTaskId={selectedTaskId} onSelect={selectTask} canLoadMore={Boolean(tasksQuery.hasNextPage)} loadingMore={tasksQuery.isFetchingNextPage} onLoadMore={() => void tasksQuery.fetchNextPage()} />;
 
   return (
@@ -353,7 +414,7 @@ function ScopedConnectedTaskPage(props: TaskPageProps) {
       onCreateTask={() => setShowFullCreate(true)} onCreateTaskList={() => setShowCreateList(true)}>
       {conflict ? <ConflictBanner conflict={conflict} pending={updateMutation.isPending} onDismiss={dismissConflict} onReload={() => void loadLatestForConflict()} onRetry={() => void retryConflictDraft()} /> : null}
       {content}
-      {selectedTaskId ? <TaskDetail key={`${scopeKey}:${selectedTaskId}`} result={detailQuery.data} activity={activityQuery.data} reminders={remindersQuery.data ?? []} loading={detailQuery.isLoading} error={detailQuery.isError} savePending={updateMutation.isPending} preservedDraft={editDrafts[selectedTaskId] ?? null} onDraftChange={updateBufferedDraft} onClose={closeTask} onSave={saveTask} onComment={addComment} onSetReminder={(scheduledAt) => void runMutation(() => reminderMutations.set.mutateAsync({ idempotencyKey: mutationKey("desktop-set-reminder"), mode: "absolute", scheduledAt, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }))} onCancelReminder={() => void runMutation(() => reminderMutations.cancel.mutateAsync(mutationKey("desktop-cancel-reminder")))} onTransition={(task, operation) => void runMutation(() => transitionMutation.mutateAsync({ taskId: task.id, operation, expectedVersion: task.version, idempotencyKey: mutationKey(`desktop-${operation}-task`) }))} /> : null}
+      {selectedTaskId ? <TaskDetail key={`${scopeKey}:${selectedTaskId}`} result={detailQuery.data} activity={activityQuery.data} reminders={remindersQuery.data ?? []} loading={detailQuery.isLoading} error={detailQuery.isError} savePending={updateMutation.isPending} currentMemberId={currentMemberId} preservedDraft={editDrafts[selectedTaskId] ?? null} onDraftChange={updateBufferedDraft} onClose={closeTask} onSave={saveTask} onComment={addComment} onSetReminder={(scheduledAt) => void runMutation(() => reminderMutations.set.mutateAsync({ idempotencyKey: mutationKey("desktop-set-reminder"), mode: "absolute", scheduledAt, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }))} onCancelReminder={() => void runMutation(() => reminderMutations.cancel.mutateAsync(mutationKey("desktop-cancel-reminder")))} onTransition={(task, operation) => void runMutation(() => transitionMutation.mutateAsync({ taskId: task.id, operation, expectedVersion: task.version, idempotencyKey: mutationKey(`desktop-${operation}-task`) }))} /> : null}
       {showFullCreate ? <TaskCreateDialog pending={createMutation.isPending} members={availableMembers} memberDirectoryLoading={membersQuery.isLoading && !fallbackMember} memberDirectoryError={membersQuery.isError ? (membersQuery.error instanceof Error ? membersQuery.error.message : t("tasks.member_directory_error")) : null} onRetryMemberDirectory={() => void membersQuery.refetch()} lists={activeListsQuery.data?.items ?? []} currentMemberId={currentMemberId} defaultAssigneeRequired={section === "assigned"} defaultAssigneeMemberId={section === "assigned" ? currentMemberId : null} defaultListId={selectedListId} onClose={() => setShowFullCreate(false)} onCreate={async (input) => { const result = await runMutation(() => createMutation.mutateAsync({ ...input, idempotencyKey: mutationKey("desktop-create-task") })); if (!result) return; setShowFullCreate(false); selectTask(result.task.id); }} /> : null}
       {showCreateList ? <TaskListCreateDialog pending={listMutations.create.isPending} onClose={() => setShowCreateList(false)} onCreate={async (input) => { const result = await runMutation(() => listMutations.create.mutateAsync({ ...input, idempotencyKey: mutationKey("desktop-create-list"), visibility: "private" })); if (result) setShowCreateList(false); }} /> : null}
     </TaskPageFrame>
@@ -406,13 +467,16 @@ function TaskList(props: { tasks: DenProductTask[]; selectedTaskId: string | nul
   </div>)}{props.canLoadMore ? <Button variant="outline" disabled={props.loadingMore} onClick={props.onLoadMore}>{props.loadingMore ? t("tasks.loading") : t("tasks.load_more")}</Button> : null}</div>;
 }
 
-function TaskDetail(props: { result: ReturnType<typeof useProductTask>["data"]; activity: ReturnType<typeof useProductTaskActivity>["data"]; reminders: Array<{ scheduledAt: string; state: string }>; loading: boolean; error: boolean; savePending: boolean; preservedDraft: ProductTaskEditDraft | null; onDraftChange: (draft: ProductTaskEditDraft) => void; onClose: () => void; onSave: (id: string, patch: { expectedVersion: number; idempotencyKey: string; title: string; description: string }) => Promise<void>; onComment: (taskId: string, body: string) => Promise<boolean>; onSetReminder: (scheduledAt: string) => void; onCancelReminder: () => void; onTransition: (task: DenProductTask, operation: "complete" | "cancel" | "reopen" | "restore") => void }) {
+function TaskDetail(props: { result: ReturnType<typeof useProductTask>["data"]; activity: ReturnType<typeof useProductTaskActivity>["data"]; reminders: Array<{ scheduledAt: string; state: string }>; loading: boolean; error: boolean; savePending: boolean; currentMemberId: string | null; preservedDraft: ProductTaskEditDraft | null; onDraftChange: (draft: ProductTaskEditDraft) => void; onClose: () => void; onSave: (id: string, patch: { expectedVersion: number; idempotencyKey: string; title: string; description: string }) => Promise<void>; onComment: (taskId: string, body: string) => Promise<boolean>; onSetReminder: (scheduledAt: string) => void; onCancelReminder: () => void; onTransition: (task: DenProductTask, operation: "complete" | "cancel" | "reopen" | "restore") => void }) {
   const task = props.result?.task;
   const [title, setTitle] = React.useState("");
   const [description, setDescription] = React.useState("");
   const [comment, setComment] = React.useState("");
   const [commentPending, setCommentPending] = React.useState(false);
   const commentAttempt = React.useRef(0);
+  const currentAssignee = props.result?.members.find((member) => member.role === "assignee" && member.memberId === props.currentMemberId);
+  const currentAssigneeCompleted = task?.status === "todo" && task.completionPolicy === "all_assignees" && Boolean(currentAssignee?.completedAt);
+  const canComplete = props.result?.permissions.canComplete && (task?.completionPolicy !== "all_assignees" || Boolean(currentAssignee));
   React.useEffect(() => {
     if (!task) return;
     const draft = reapplyProductTaskDraft(task, props.preservedDraft);
@@ -427,7 +491,7 @@ function TaskDetail(props: { result: ReturnType<typeof useProductTask>["data"]; 
       <div className="space-y-2 text-sm text-dls-secondary"><div className="font-medium text-dls-text">{t("tasks.comments")}</div>{props.activity?.comments.length ? props.activity.comments.map((item) => <div key={item.id} className="rounded border border-dls-border p-2">{item.body}</div>) : t("tasks.comments_empty")}{props.result?.permissions.canComment ? <form className="flex gap-2" onSubmit={(event) => { event.preventDefault(); const body = comment.trim(); if (!body || commentPending) return; const attempt = ++commentAttempt.current; setCommentPending(true); void props.onComment(task.id, body).then((saved) => { if (commentAttempt.current !== attempt) return; setCommentPending(false); if (saved) setComment((current) => current.trim() === body ? "" : current); }); }}><Input value={comment} onChange={(event) => setComment(event.target.value)} placeholder={t("tasks.add_comment")} /><Button type="submit" disabled={!comment.trim() || commentPending}>{t("tasks.add")}</Button></form> : null}</div>
       <div className="space-y-2 text-sm text-dls-secondary"><div className="font-medium text-dls-text">{t("tasks.reminder")}</div>{props.reminders.find((item) => item.state === "scheduled") ? <div className="flex items-center justify-between"><span>{new Date(props.reminders.find((item) => item.state === "scheduled")!.scheduledAt).toLocaleString()}</span><Button size="sm" variant="outline" onClick={props.onCancelReminder}>{t("tasks.remove_reminder")}</Button></div> : props.result?.permissions.canEditTime ? <input type="datetime-local" aria-label={t("tasks.reminder")} className="rounded border border-dls-border bg-dls-surface p-2" onChange={(event) => { if (event.target.value) props.onSetReminder(new Date(event.target.value).toISOString()); }} /> : t("tasks.no_reminder")}</div>
       <div className="flex flex-wrap gap-2">{props.result?.permissions.canEditContent ? <Button disabled={!title.trim() || props.savePending} onClick={() => void props.onSave(task.id, { expectedVersion: task.version, idempotencyKey: mutationKey("desktop-update-task"), title: title.trim(), description })}>{t("tasks.save")}</Button> : null}
-      {task.status === "todo" && props.result?.permissions.canComplete ? <Button onClick={() => { const assignees = props.result?.members.filter((member) => member.role === "assignee").length ?? 0; if (assignees <= 1 || globalThis.confirm(t("tasks.complete_multi_confirm"))) props.onTransition(task, "complete"); }}>{t("tasks.complete")}</Button> : null}
+      {task.status === "todo" && canComplete ? <Button disabled={currentAssigneeCompleted} title={currentAssigneeCompleted ? t("tasks.waiting_for_assignees") : undefined} onClick={() => { const assignees = props.result?.members.filter((member) => member.role === "assignee").length ?? 0; if (task.completionPolicy === "all_assignees" || assignees <= 1 || globalThis.confirm(t("tasks.complete_multi_confirm"))) props.onTransition(task, "complete"); }}>{currentAssigneeCompleted ? t("tasks.assignee_completed") : t("tasks.complete")}</Button> : null}
       {task.status !== "todo" && props.result?.permissions.canReopen ? <Button variant="outline" onClick={() => props.onTransition(task, "reopen")}>{t("tasks.reopen")}</Button> : null}
       {task.status === "todo" && props.result?.permissions.canCancel ? <Button variant="outline" onClick={() => props.onTransition(task, "cancel")}>{t("tasks.cancel_task")}</Button> : null}</div>
     </div>}

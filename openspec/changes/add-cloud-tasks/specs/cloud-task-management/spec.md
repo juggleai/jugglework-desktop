@@ -8,15 +8,20 @@ The system SHALL store private and collaborative tasks in JuggleWork Server as t
 - **THEN** the server creates the task and returns its stable internal ID, organization-scoped display number, and version
 
 ### Requirement: Task fields and lifecycle
-The system SHALL support a required title, optional description, priority, start time, due time, assignees, followers, visibility, list membership, reminder, and `todo`, `completed`, and `canceled` states.
+The system SHALL support a required title, optional description, priority, start time, due time, assignees, followers, visibility, list membership, reminder, a multi-assignee completion policy, and `todo`, `completed`, and `canceled` states. The completion policy SHALL default to `any_assignee` for backward compatibility. `all_assignees` SHALL persist each assignee's completion for the current round and SHALL clear that progress when the task is reopened or its assignees/completion policy change.
 
 #### Scenario: Create an unassigned task
 - **WHEN** a member creates a task without assignees
 - **THEN** the task remains valid, appears in the creator's inbox, and does not appear in any assigned-to-me view
 
-#### Scenario: Complete a multi-assignee task
-- **WHEN** any assignee completes a task with multiple assignees
+#### Scenario: Any assignee completes a multi-assignee task
+- **WHEN** a task uses `any_assignee` and any assignee completes it
 - **THEN** the single task state becomes completed for every assignee and the system records the actor and completion time
+
+#### Scenario: All assignees complete their portions
+- **WHEN** a task uses `all_assignees` and an assignee completes their portion
+- **THEN** the system records that assignee's completion while keeping the task in `todo` until every current assignee has completed their portion
+- **AND THEN** the final assignee completion changes the single task state to `completed`
 
 ### Requirement: Task visibility and authorization
 The system SHALL support `private`, `members`, and `organization` visibility and SHALL authorize every read and mutation using the current organization member identity and task/list roles.

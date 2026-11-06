@@ -4,9 +4,10 @@ import { productTaskScopeKey, type ProductTaskScope } from "./task-queries";
 export type TaskWorkbenchView = "list" | "board";
 export type TaskWorkbenchStatus = "incomplete" | "completed" | "all";
 export type TaskWorkbenchSort = "updated_at" | "created_at" | "start_at" | "due_at" | "completed_at";
-export type TaskWorkbenchGroup = "none" | "list" | "creator" | "start" | "due";
-export type TaskWorkbenchField = "assignee" | "start" | "due" | "creator" | "assigner" | "followers" | "created" | "completed" | "updated" | "id" | "list";
+export type TaskWorkbenchGroup = "none" | "custom" | "list" | "creator" | "start" | "due";
+export type TaskWorkbenchField = "assignee" | "start" | "due" | "creator" | "assigner" | "followers" | "created" | "completed" | "updated" | "id" | "priority" | "list";
 export type TaskPersonFilterOperator = "contains" | "not_contains" | "empty" | "not_empty";
+export type TaskCustomGroup = { id: string; name: string };
 export type TaskWorkbenchSettings = {
   view: TaskWorkbenchView;
   status: TaskWorkbenchStatus;
@@ -24,12 +25,15 @@ export type TaskWorkbenchSettings = {
   sort: TaskWorkbenchSort;
   direction: "asc" | "desc";
   group: TaskWorkbenchGroup;
+  customGroupName: string;
+  customGroups: TaskCustomGroup[];
+  customGroupAssignments: Record<string, string>;
   fieldOrder: TaskWorkbenchField[];
   fields: TaskWorkbenchField[];
 };
 
-export const taskWorkbenchFields: TaskWorkbenchField[] = ["assignee", "start", "due", "creator", "assigner", "followers", "created", "completed", "updated", "id", "list"];
-export const defaultVisibleTaskWorkbenchFields: TaskWorkbenchField[] = ["assignee", "start", "due", "creator", "created", "id", "list"];
+export const taskWorkbenchFields: TaskWorkbenchField[] = ["assignee", "start", "due", "creator", "assigner", "followers", "created", "completed", "updated", "id", "priority", "list"];
+export const defaultVisibleTaskWorkbenchFields: TaskWorkbenchField[] = ["assignee", "start", "due", "creator", "created", "id", "priority", "list"];
 const legacyDefaultTaskWorkbenchFields: TaskWorkbenchField[] = ["creator", "created", "id", "list"];
 
 export function reorderTaskWorkbenchFields(order: TaskWorkbenchField[], source: TaskWorkbenchField, target: TaskWorkbenchField): TaskWorkbenchField[] {
@@ -59,6 +63,9 @@ export const defaultTaskWorkbenchSettings: TaskWorkbenchSettings = {
   sort: "updated_at",
   direction: "desc",
   group: "none",
+  customGroupName: "",
+  customGroups: [],
+  customGroupAssignments: {},
   fieldOrder: taskWorkbenchFields,
   fields: defaultVisibleTaskWorkbenchFields,
 };
@@ -66,16 +73,49 @@ export const defaultTaskWorkbenchSettings: TaskWorkbenchSettings = {
 function normalizeTaskWorkbenchFieldOrder(value: unknown): TaskWorkbenchField[] {
   if (!Array.isArray(value)) return taskWorkbenchFields;
   const persisted = [...new Set(value.filter((item): item is TaskWorkbenchField => taskWorkbenchFields.includes(item as TaskWorkbenchField)))];
-  return [...persisted, ...taskWorkbenchFields.filter((field) => !persisted.includes(field))];
+  const next = [...persisted];
+  for (const field of taskWorkbenchFields) {
+    if (next.includes(field)) continue;
+    if (field === "priority" && next.includes("list")) next.splice(next.indexOf("list"), 0, field);
+    else next.push(field);
+  }
+  return next;
 }
 
-function normalizeTaskWorkbenchFields(value: unknown, fieldOrder: TaskWorkbenchField[], migrateLegacyDefault: boolean): TaskWorkbenchField[] {
+function normalizeTaskWorkbenchFields(value: unknown, fieldOrder: TaskWorkbenchField[], migrateLegacyDefault: boolean, migratePriority: boolean): TaskWorkbenchField[] {
   if (!Array.isArray(value)) return defaultVisibleTaskWorkbenchFields;
   const selected = new Set(value.filter((item): item is TaskWorkbenchField => taskWorkbenchFields.includes(item as TaskWorkbenchField)));
+  const legacyFields = fieldOrder.filter((field) => selected.has(field));
+  if (migrateLegacyDefault && legacyFields.length === legacyDefaultTaskWorkbenchFields.length && legacyDefaultTaskWorkbenchFields.every((field, index) => legacyFields[index] === field)) return defaultVisibleTaskWorkbenchFields;
+  if (migratePriority && selected.has("list")) selected.add("priority");
   const fields = fieldOrder.filter((field) => selected.has(field));
-  return migrateLegacyDefault && fields.length === legacyDefaultTaskWorkbenchFields.length && legacyDefaultTaskWorkbenchFields.every((field, index) => fields[index] === field)
-    ? defaultVisibleTaskWorkbenchFields
-    : fields;
+  return fields;
+}
+
+function normalizeTaskCustomGroups(value: unknown): TaskCustomGroup[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const groups: TaskCustomGroup[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object") continue;
+    const candidate = item as Partial<TaskCustomGroup>;
+    const id = typeof candidate.id === "string" ? candidate.id.trim().slice(0, 100) : "";
+    const name = typeof candidate.name === "string" ? candidate.name.trim().slice(0, 80) : "";
+    if (!id || !name || id === "custom-default" || seen.has(id)) continue;
+    seen.add(id);
+    groups.push({ id, name });
+  }
+  return groups.slice(0, 100);
+}
+
+function normalizeTaskCustomGroupAssignments(value: unknown, groups: TaskCustomGroup[]): Record<string, string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const groupIds = new Set(groups.map((group) => group.id));
+  const assignments: Record<string, string> = {};
+  for (const [taskId, groupId] of Object.entries(value)) {
+    if (taskId && typeof groupId === "string" && groupIds.has(groupId)) assignments[taskId] = groupId;
+  }
+  return assignments;
 }
 
 export function taskWorkbenchStorageKey(scope: ProductTaskScope | null): string {
@@ -92,8 +132,9 @@ export function readTaskWorkbenchSettings(scope: ProductTaskScope | null): TaskW
     const memberIds = (input: unknown) => Array.isArray(input) ? [...new Set(input.filter((item): item is string => typeof item === "string" && item.length > 0))] : [];
     const memberOperator = (input: unknown): TaskPersonFilterOperator => input === "not_contains" || input === "empty" || input === "not_empty" ? input : "contains";
     const fieldOrder = normalizeTaskWorkbenchFieldOrder(value.fieldOrder);
-    const fields = normalizeTaskWorkbenchFields(value.fields, fieldOrder, !Array.isArray(value.fieldOrder));
+    const fields = normalizeTaskWorkbenchFields(value.fields, fieldOrder, !Array.isArray(value.fieldOrder), !Array.isArray(value.fieldOrder) || !value.fieldOrder.includes("priority"));
     const status = value.status === "completed" || value.status === "all" ? value.status : "incomplete";
+    const customGroups = normalizeTaskCustomGroups(value.customGroups);
     return {
       view: value.view === "board" ? "board" : "list",
       status,
@@ -110,7 +151,10 @@ export function readTaskWorkbenchSettings(scope: ProductTaskScope | null): TaskW
       overdue: status !== "completed" && value.overdue === true,
       sort: ["updated_at", "created_at", "start_at", "due_at", "completed_at"].includes(String(value.sort)) ? value.sort as TaskWorkbenchSort : "updated_at",
       direction: value.direction === "asc" ? "asc" : "desc",
-      group: value.group === "list" || value.group === "creator" || value.group === "start" || value.group === "due" ? value.group : "none",
+      group: value.group === "custom" || value.group === "list" || value.group === "creator" || value.group === "start" || value.group === "due" ? value.group : "none",
+      customGroupName: typeof value.customGroupName === "string" ? value.customGroupName.trim().slice(0, 80) : "",
+      customGroups,
+      customGroupAssignments: normalizeTaskCustomGroupAssignments(value.customGroupAssignments, customGroups),
       fieldOrder,
       fields,
     };

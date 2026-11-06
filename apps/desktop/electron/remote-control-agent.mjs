@@ -68,6 +68,10 @@ const MUTATION_OPERATIONS = new Set([
   "interaction.question.reply",
 ]);
 const TERMINAL_STATUSES = new Set(["succeeded", "failed", "rejected", "expired", "cancelled"]);
+// Older control planes may report a delayed or duplicate command lifecycle as
+// a non-retryable protocol error. That is a command-scoped consistency signal,
+// not evidence that this device can never speak the protocol again.
+const RECOVERABLE_PROTOCOL_ERROR_CODES = new Set(["invalid_request", "command_expired"]);
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const SEMVER_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 const HASH_PATTERN = /^[a-f0-9]{64}$/;
@@ -1508,7 +1512,8 @@ export function createRemoteControlAgent(options) {
           await confirmAndApplyRevocation("protocol.error.device_revoked");
           return;
         }
-        protocolBlocked = envelope.payload.retryable !== true;
+        const recoverableCommandRejection = connectionGeneration !== null && RECOVERABLE_PROTOCOL_ERROR_CODES.has(envelope.payload.code);
+        protocolBlocked = envelope.payload.retryable !== true && !recoverableCommandRejection;
       }
       const shouldRetry = !protocolBlocked;
       // A retryable pre-welcome protocol rejection may be bearer-specific.

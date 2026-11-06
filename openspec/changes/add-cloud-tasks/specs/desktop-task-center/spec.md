@@ -30,7 +30,9 @@ The Desktop SHALL provide a paginated task list, inline permitted actions, and a
 - **THEN** the Desktop opens the task detail and renders each field as editable or read-only according to server authorization
 
 ### Requirement: Assigned-to-me workbench
-The Desktop SHALL render a rich workbench only for Assigned to me with exactly List and Board tabs persisted per ProductTask scope. List SHALL default to Task title, Assignee, Start time, Due time, Creator, Created time, Task ID, and Task list, with title mandatory and the remaining fields configurable. Board SHALL group loaded tasks into To do, Completed, and Canceled lanes with accessible complete, reopen, and cancel actions.
+The Desktop SHALL render a rich workbench only for Assigned to me with exactly List and Board tabs persisted per ProductTask scope. List SHALL default to Task title, Assignee, Start time, Due time, Creator, Created time, Task ID, Priority, and Task list, with Priority immediately before Task list, title mandatory, and the remaining fields configurable. Board SHALL group loaded tasks into To do, Completed, and Canceled lanes with accessible complete, reopen, and cancel actions.
+
+When the user activates an editable Assignee cell, the List SHALL open a people picker with organization-member search, current-assignee indicators, multi-select add/remove operations, and completion-rule choices for any-assignee or all-assignees completion. Each member or completion-rule change SHALL load the current task version and permissions, use optimistic concurrency, preserve unrelated task fields and member roles, and remain visually unchanged when persistence fails.
 
 #### Scenario: Enrich loaded task pages
 - **WHEN** Assigned to me pages are loaded
@@ -71,12 +73,21 @@ The Desktop SHALL render a rich workbench only for Assigned to me with exactly L
 ### Requirement: Assigned workbench creation menu
 The Assigned to me tool area SHALL expose exactly New task and New task list. New task SHALL open full creation. New task list SHALL open a dialog with name, description, marker, and private visibility default and SHALL expose mutation errors without leaking late results across scope changes.
 
-### Requirement: Multi-assignee completion confirmation
-The Desktop SHALL explicitly warn that completing a task with multiple assignees completes it for everyone.
+#### Scenario: Open the task creation menu
+- **WHEN** the user opens the Assigned to me creation menu
+- **THEN** the Desktop offers exactly New task and New task list
+
+### Requirement: Multi-assignee completion behavior
+The Desktop SHALL explicitly warn that completing a multi-assignee `any_assignee` task completes it for everyone. For `all_assignees`, completion SHALL submit only the current assignee's portion, keep the task visibly incomplete while other assignees remain, and prevent duplicate completion by an assignee whose portion is already complete.
 
 #### Scenario: Complete multi-assignee task
 - **WHEN** an authorized user chooses to complete a task with more than one assignee
+- **AND** the task uses `any_assignee`
 - **THEN** the Desktop requires confirmation before sending the completion mutation
+
+#### Scenario: Complete one portion of an all-assignees task
+- **WHEN** the current assignee completes an `all_assignees` task while another assignee remains incomplete
+- **THEN** the Desktop displays that the current assignee's portion is complete, leaves the task in the todo presentation, and does not send the same completion again
 
 ### Requirement: Task creation surfaces
 The Desktop SHALL support full creation with title, description, assignees, start time, due time, priority, visibility, and task list. Assignees remain optional outside contextual defaults.
@@ -93,7 +104,7 @@ The sort menu SHALL expose start time, due time, created time, updated time, and
 
 The active sort field label and only its currently applied direction control SHALL use the accent color without a checkmark or persistent row background. The active field's opposite direction control SHALL remain hidden until that row is pointer-hovered. Inactive fields SHALL hide both direction controls until their row is pointer-hovered, including when the menu automatically focuses its first item, and row backgrounds SHALL appear only on hover.
 
-The List grouping menu SHALL support Start time and Due time in addition to no grouping, task list, and creator. Start-time grouping SHALL present Started, Today, Tomorrow, Next 7 days, Later, and Unscheduled in that order. Due-time grouping SHALL present Overdue, Today, Tomorrow, Next 7 days, Later, and Unscheduled in that order. Today and future buckets SHALL use the user's local calendar-day boundaries; Next 7 days includes local dates from the day after Tomorrow through seven days after Today.
+The List grouping menu SHALL support Custom group, Start time, and Due time in addition to no grouping, task list, and creator. Custom grouping SHALL place every loaded task in a stable Default group, including an empty Default group when no tasks are loaded. The Default group SHALL expose hover/focus actions for renaming and a visible but disabled delete action; its renamed display label SHALL persist in the current ProductTask scope. Custom grouping SHALL also expose a trailing New group action that creates persisted empty display groups through an inline title input. Additional custom groups SHALL support rename and delete actions. A task created from an additional custom group's header or trailing action SHALL remain assigned to that display group after creation and refresh; deleting the group SHALL clear its display assignments so those tasks return to Default group. Start-time grouping SHALL present Started, Today, Tomorrow, Next 7 days, Later, and Unscheduled in that order. Due-time grouping SHALL present Overdue, Today, Tomorrow, Next 7 days, Later, and Unscheduled in that order. Today and future buckets SHALL use the user's local calendar-day boundaries; Next 7 days includes local dates from the day after Tomorrow through seven days after Today.
 
 Every visible group SHALL render a header with its task count and an independent disclosure control. Groups with tasks start expanded, empty time groups start collapsed, and the user MAY expand or collapse any group without changing filters or task data. Expanding an empty group SHALL reveal its body rather than immediately collapsing it again.
 
