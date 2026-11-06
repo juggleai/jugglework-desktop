@@ -92,6 +92,13 @@ After `connection.welcome`, the agent SHALL use the negotiated liveness threshol
 - **WHEN** a timer from an older socket generation fires after a newer socket is active
 - **THEN** generation and socket identity checks prevent the old timer from affecting the current connection
 
+### Requirement: Command-scoped protocol rejections remain recoverable
+The Desktop agent SHALL NOT permanently block the device transport when a control plane reports `invalid_request` or `command_expired` for a delayed, duplicate, or stale command lifecycle. It SHALL fence the affected transport, preserve enrollment and local settings, and enter the normal bounded authenticated reconnect path. Identity revocation, unsupported protocol versions, invalid encrypted payloads, and other explicitly terminal protocol failures retain their fail-closed behavior.
+
+#### Scenario: An older control plane rejects a replayed terminal result
+- **WHEN** the connected control plane returns a non-retryable `invalid_request` after Desktop replays a terminal command lifecycle
+- **THEN** Desktop preserves device identity and enabled settings, reconnects with bounded backoff, and does not latch the device permanently offline
+
 ### Requirement: Cloud suspension is retryable
 Receiving `device.disabled` SHALL close the current transport, clear in-flight control sessions and sleep authorizations, and schedule an authenticated reconnect with bounded exponential backoff. It SHALL NOT delete device credentials, disable local settings, or mark the device revoked, and a subsequent successful handshake SHALL restore the connected state without re-enrollment.
 
