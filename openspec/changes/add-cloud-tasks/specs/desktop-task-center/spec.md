@@ -22,6 +22,11 @@ The Desktop SHALL provide primary task secondary navigation for Today, Assigned 
 - **WHEN** persisted Desktop state contains Inbox, Trash, Archived lists, or an unknown section
 - **THEN** the Desktop safely restores Today rather than rendering a hidden destination
 
+#### Scenario: Keep Today and Activity headers focused
+- **WHEN** the user opens Today or Activity
+- **THEN** the Desktop does not show task creation actions in the page header
+- **AND** Today does not show the priority or sort controls in that header
+
 ### Requirement: Task list and detail surfaces
 The Desktop SHALL provide a paginated task list, inline permitted actions, and a detail drawer or direct route for task fields, comments, activity, and lifecycle actions.
 

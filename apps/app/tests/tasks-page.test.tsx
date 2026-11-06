@@ -259,6 +259,28 @@ test("runs Tasks top search and collapses the sidebar into a zero-width frame", 
   }
 });
 
+test("Today and Activity keep their page headers free of filters and create actions", async () => {
+  const client = connectedClient();
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client)); });
+  await settle();
+  const expectCleanHeader = () => {
+    expect(renderer!.root.findAllByProps({ "aria-label": "Filter by priority" })).toHaveLength(0);
+    expect(renderer!.root.findAllByProps({ "aria-label": "Sort" })).toHaveLength(0);
+    expect(renderer!.root.findAllByProps({ "data-testid": "task-create-menu" })).toHaveLength(0);
+    expect(renderer!.root.findAllByType("button").filter((node) => React.Children.toArray(node.props.children).includes("Create task"))).toHaveLength(0);
+  };
+  try {
+    expect(renderer!.root.findByProps({ "data-testid": "tasks-page-title" }).props.children).toBe("Today");
+    expectCleanHeader();
+    const activity = renderer!.root.findByProps({ "data-testid": "tasks-sidebar" }).findAllByType("button").find((button) => Array.isArray(button.props.children) && button.props.children.includes("Activity"))!;
+    await act(async () => { activity.props.onClick(); });
+    await settle();
+    expect(renderer!.root.findByProps({ "data-testid": "tasks-page-title" }).props.children).toBe("Activity");
+    expectCleanHeader();
+  } finally { await act(async () => { renderer!.unmount(); }); }
+});
+
 test("selecting Assigned by me queries explicit assignee exclusion and assigner inclusion filters", async () => {
   const options: Array<Record<string, unknown>> = [];
   const client = connectedClient({
@@ -586,7 +608,10 @@ test("shows full-create mutation failures without an unhandled rejection", async
   await act(async () => { renderer = TestRenderer.create(connectedPage(client)); });
   await settle();
   try {
-    await act(async () => { renderer!.root.findAllByType("button").find((node) => node.props.children?.some?.((child: unknown) => child === "Create task"))!.props.onClick(); });
+    const allTasks = renderer!.root.findByProps({ "data-testid": "tasks-sidebar" }).findAllByType("button").find((button) => Array.isArray(button.props.children) && button.props.children.includes("All tasks"))!;
+    await act(async () => { allTasks.props.onClick(); });
+    await settle();
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-create-menu" }).findAllByType("button")[0]!.props.onClick(); });
     const input = renderer!.root.findByProps({ placeholder: "Enter a title and press Enter" });
     await act(async () => { input.props.onChange({ target: { value: "New task" } }); });
     const form = renderer!.root.findByProps({ role: "dialog" }).findByType("form");
@@ -1127,7 +1152,10 @@ test("pending full create cannot navigate or leak after organization switch", as
   await act(async () => { renderer = TestRenderer.create(taskPage(queryClient)); });
   await settle();
   try {
-    await act(async () => { renderer!.root.findAllByType("button").find((node) => node.props.children?.some?.((child: unknown) => child === "Create task"))!.props.onClick(); });
+    const allTasks = renderer!.root.findByProps({ "data-testid": "tasks-sidebar" }).findAllByType("button").find((button) => Array.isArray(button.props.children) && button.props.children.includes("All tasks"))!;
+    await act(async () => { allTasks.props.onClick(); });
+    await settle();
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-create-menu" }).findAllByType("button")[0]!.props.onClick(); });
     await act(async () => { renderer!.root.findByProps({ placeholder: "Enter a title and press Enter" }).props.onChange({ target: { value: "Old organization draft" } }); });
     await act(async () => { renderer!.root.findByProps({ role: "dialog" }).findByType("form").props.onSubmit({ preventDefault: () => undefined }); });
 

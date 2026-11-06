@@ -235,7 +235,7 @@ function InlineCreateRow(props: { testId: string; fields: TaskWorkbenchField[]; 
 function TaskGroupHeader(props: { groupKey: string; group: TaskWorkbenchGroup; label: string; count: number; expanded: boolean; columnCount: number; members: Map<string, DenOrganizationMember>; renaming: boolean; renameDraft: string; onRenameDraftChange: (value: string) => void; onRenameStart: () => void; onRenameFinish: () => void; onRenameCancel: () => void; onDelete: () => void; onToggle: () => void; onAdd: () => void }) {
   const custom = props.group === "custom";
   const protectedGroup = props.groupKey === defaultCustomTaskGroupKey;
-  return <tr data-testid={`task-group-row-${props.groupKey}`} className="group/task-group"><th colSpan={props.columnCount} className="border-b border-dls-border px-6 py-2.5 text-left text-sm font-semibold text-dls-text"><div className="flex items-center gap-1">
+  return <tr data-testid={`task-group-row-${props.groupKey}`} className="group/task-group"><th colSpan={props.columnCount} className="px-6 py-2.5 text-left text-sm font-semibold text-dls-text"><div className="flex items-center gap-1">
     <button type="button" data-testid={`task-group-toggle-${props.groupKey}`} aria-expanded={props.expanded} aria-label={props.renaming ? props.label : undefined} onClick={props.onToggle} className="inline-flex items-center gap-2 rounded-md px-1 py-1 hover:bg-dls-hover">
       {props.expanded ? <ChevronDown className="size-4 text-dls-secondary" /> : <ChevronRight className="size-4 text-dls-secondary" />}
       {props.renaming ? null : props.group === "creator" ? <CreatorGroupLabel memberId={props.groupKey} members={props.members} /> : <span>{props.label}</span>}

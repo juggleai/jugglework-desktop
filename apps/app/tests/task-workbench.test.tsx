@@ -630,6 +630,8 @@ test("custom grouping collects every task in one collapsible Default group", asy
   await act(async () => { renderer = TestRenderer.create(workbench({ ...defaultTaskWorkbenchSettings, group: "custom", status: "all" })); });
   try {
     const toggle = renderer!.root.findByProps({ "data-testid": `task-group-toggle-${defaultCustomTaskGroupKey}` });
+    const groupHeader = renderer!.root.findByProps({ "data-testid": `task-group-row-${defaultCustomTaskGroupKey}` }).findByType("th");
+    expect(groupHeader.props.className).not.toContain("border-b");
     expect(toggle.findAll((node) => node.props.children === "Default group")).toHaveLength(1);
     expect(toggle.findAll((node) => node.props.children === tasks.length)).toHaveLength(1);
     expect(renderer!.root.findAll((node) => typeof node.props["data-testid"] === "string" && node.props["data-testid"].startsWith("task-group-row-"))).toHaveLength(1);
