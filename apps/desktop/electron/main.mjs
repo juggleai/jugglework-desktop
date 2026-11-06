@@ -1583,6 +1583,23 @@ const remoteControlInteractionStore = createRemoteControlInteractionStore({
     fetcher: mainProcessFetch,
   }),
 });
+// 远程快照里的大图换成最长边 1024 的 JPEG 缩略图（手机气泡显示足够）。
+// 解码失败或没变小时返回 null，由调用方保留原图。
+const REMOTE_SNAPSHOT_THUMBNAIL_MAX_SIDE = 1024;
+function remoteSnapshotImageThumbnail({ url }) {
+  const comma = url.indexOf(",");
+  if (comma < 0) return null;
+  const image = nativeImage.createFromBuffer(Buffer.from(url.slice(comma + 1), "base64"));
+  if (image.isEmpty()) return null;
+  const { width, height } = image.getSize();
+  const scale = Math.min(1, REMOTE_SNAPSHOT_THUMBNAIL_MAX_SIDE / Math.max(width, height));
+  const resized = scale < 1
+    ? image.resize({ width: Math.max(1, Math.round(width * scale)), height: Math.max(1, Math.round(height * scale)), quality: "good" })
+    : image;
+  const jpeg = resized.toJPEG(80);
+  if (!jpeg.length) return null;
+  return { mime: "image/jpeg", url: `data:image/jpeg;base64,${jpeg.toString("base64")}` };
+}
 remoteControlReadRegistrations = createRemoteControlReadRegistrations({
   workspaceStore,
   managedRuntimeClient: createManagedRuntimeClient({
@@ -1597,6 +1614,7 @@ remoteControlReadRegistrations = createRemoteControlReadRegistrations({
     warn: (_message, metadata) =>
       console.warn("[desktop-remote] operation validation warning", metadata),
   },
+  imageThumbnailer: remoteSnapshotImageThumbnail,
 });
 remoteControlSessionRootVerifier = createRemoteSessionRootVerifier({
   workspaceStore,

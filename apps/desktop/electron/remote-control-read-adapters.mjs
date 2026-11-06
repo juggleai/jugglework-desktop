@@ -254,6 +254,38 @@ export function normalizeRemoteMessage(message, sessionId) {
   };
 }
 
+// Snapshot images larger than this are replaced by a thumbnail. A full-size
+// photo is 0.5–1.5 MB as a data URL; several of them made one snapshot
+// result several MB, which the relay could not store, so the phone waited for
+// a result that never arrived. Live message events still carry the original.
+export const SNAPSHOT_IMAGE_THUMBNAIL_THRESHOLD_BYTES = 200 * 1024;
+
+/**
+ * @typedef {(input: { mime: string, url: string }) => ({ mime: string, url: string } | null)} SnapshotImageThumbnailer
+ */
+
+/**
+ * Replace large inline images in one normalized message with thumbnails.
+ * Filenames are kept so the phone can still match its own optimistic echo.
+ * A failed or non-shrinking thumbnail keeps the original part.
+ * @param {any} message @param {SnapshotImageThumbnailer | null} thumbnailer
+ */
+export function thumbnailSnapshotImages(message, thumbnailer) {
+  if (!thumbnailer) return message;
+  let changed = false;
+  const parts = message.parts.map((part) => {
+    if (part.type !== "file" || !part.mime.startsWith("image/") || part.mime === "image/gif" ||
+        part.url.length <= SNAPSHOT_IMAGE_THUMBNAIL_THRESHOLD_BYTES) return part;
+    let thumbnail = null;
+    try { thumbnail = thumbnailer({ mime: part.mime, url: part.url }); } catch { thumbnail = null; }
+    if (!thumbnail || typeof thumbnail.url !== "string" || thumbnail.url.length >= part.url.length ||
+        !isSafeDesktopRemoteAttachmentDataUrl(thumbnail.url, thumbnail.mime)) return part;
+    changed = true;
+    return { ...part, mime: thumbnail.mime, url: thumbnail.url };
+  });
+  return changed ? { ...message, parts } : message;
+}
+
 /**
  * Keep the newest complete normalized messages that fit the transport budget.
  * One huge local transcript can therefore never tear down the 1 MiB WSS
@@ -454,10 +486,12 @@ export function createRemoteSessionRootVerifier({ workspaceStore, managedRuntime
  *   now?: () => number,
  *   interactions?: { listPending(input: { workspaceId: string, sessionId: string, payloadVersion: 1 | 2 }): unknown | Promise<unknown> } | null,
  *   logger?: { warn?: (message: string, metadata: Record<string, unknown>) => void },
+ *   imageThumbnailer?: SnapshotImageThumbnailer | null,
  * }} options
  */
-export function createRemoteControlReadRegistrations({ workspaceStore, managedRuntimeClient, now = Date.now, interactions = null, logger = {} }) {
-  if (!workspaceStore || typeof workspaceStore.readWorkspaceState !== "function" || !managedRuntimeClient || typeof managedRuntimeClient.getJson !== "function" || typeof now !== "function") {
+export function createRemoteControlReadRegistrations({ workspaceStore, managedRuntimeClient, now = Date.now, interactions = null, logger = {}, imageThumbnailer = null }) {
+  if (!workspaceStore || typeof workspaceStore.readWorkspaceState !== "function" || !managedRuntimeClient || typeof managedRuntimeClient.getJson !== "function" || typeof now !== "function" ||
+      (imageThumbnailer !== null && typeof imageThumbnailer !== "function")) {
     throw new TypeError("Remote read adapter dependencies are invalid.");
   }
 
@@ -583,7 +617,7 @@ export function createRemoteControlReadRegistrations({ workspaceStore, managedRu
         session: withActiveRun({ ...summary, status: sessionStatus(response.item.status) }, runs.get(args.sessionId)),
         messages: boundedTranscript(response.item.messages.flatMap((message) => {
           const normalized = normalizeRemoteMessage(message, args.sessionId);
-          return normalized ? [normalized] : [];
+          return normalized ? [thumbnailSnapshotImages(normalized, imageThumbnailer)] : [];
         })),
         todos: response.item.todos.flatMap((todo, index) => {
           const normalized = normalizeRemoteTodo(todo, args.sessionId, index);

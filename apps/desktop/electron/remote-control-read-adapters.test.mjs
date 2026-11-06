@@ -7,6 +7,8 @@ import {
   createRemoteControlReadRegistrations,
   createRemoteSessionRootVerifier,
   normalizeRemoteMessagePart,
+  SNAPSHOT_IMAGE_THUMBNAIL_THRESHOLD_BYTES,
+  thumbnailSnapshotImages,
 } from "./remote-control-read-adapters.mjs";
 import {
   createRemoteControlOperationRegistry,
@@ -91,6 +93,7 @@ function harness(overrides = {}) {
     now: () => NOW,
     interactions: overrides.interactions,
     logger: overrides.logger,
+    imageThumbnailer: overrides.imageThumbnailer ?? null,
   });
   const registry = createRemoteControlOperationRegistry({
     registrations,
@@ -322,6 +325,26 @@ describe("remote-control read adapters", () => {
     desktopRemoteOperationResultSchema.parse({ operation: "session.snapshot", payloadVersion: 1, result: firstResult.value });
   });
 
+  it("sends thumbnails instead of full-size images in a snapshot", async () => {
+    const original = `data:image/png;base64,${"A".repeat(SNAPSHOT_IMAGE_THUMBNAIL_THRESHOLD_BYTES + 4)}`;
+    const body = snapshotBody();
+    body.item.messages[0].info.role = "user";
+    body.item.messages[0].parts = /** @type {any[]} */ ([
+      { id: "prt_text", messageID: "msg_1", sessionID: "ses_1", type: "text", text: "look" },
+      { id: "prt_img", messageID: "msg_1", sessionID: "ses_1", type: "file", mime: "image/png", filename: "photo.png", url: original },
+    ]);
+    const testHarness = harness({
+      responses: { "/workspace/ws_local/sessions/ses_1/snapshot?limit=200": body },
+      imageThumbnailer: () => ({ mime: "image/jpeg", url: "data:image/jpeg;base64,/9j/4AAQ" }),
+    });
+    const result = await dispatch(testHarness.registry, "session.snapshot", { workspaceId: "ws_local", sessionId: "ses_1" });
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.value.messages[0].parts[1], {
+      type: "file", id: "prt_img", mime: "image/jpeg", filename: "photo.png", url: "data:image/jpeg;base64,/9j/4AAQ",
+    });
+    desktopRemoteOperationResultSchema.parse({ operation: "session.snapshot", payloadVersion: 1, result: result.value });
+  });
+
   it("accepts persisted model preference identity fields without leaking them", async () => {
     const testHarness = harness({
       responses: {
@@ -410,6 +433,46 @@ describe("remote-control read adapters", () => {
         mediaType: "image/webp", filename: "photo.webp", url,
       }), null);
     }
+  });
+
+  it("replaces only large non-GIF snapshot images with smaller thumbnails", () => {
+    const big = (mime) => `data:${mime};base64,${"A".repeat(SNAPSHOT_IMAGE_THUMBNAIL_THRESHOLD_BYTES + 4)}`;
+    const thumbnail = "data:image/jpeg;base64,/9j/4AAQ";
+    const calls = [];
+    const thumbnailer = (input) => { calls.push(input.mime); return { mime: "image/jpeg", url: thumbnail }; };
+    const message = {
+      id: "msg_1", role: "user", createdAt: "2026-08-09T00:00:00.000Z", completedAt: null,
+      parts: [
+        { type: "text", id: "prt_text", text: "look" },
+        { type: "file", id: "prt_big", mime: "image/png", filename: "photo.png", url: big("image/png") },
+        { type: "file", id: "prt_small", mime: "image/png", filename: "small.png", url: "data:image/png;base64,iVBORw0K" },
+        { type: "file", id: "prt_gif", mime: "image/gif", filename: "anim.gif", url: big("image/gif") },
+      ],
+    };
+    const result = thumbnailSnapshotImages(message, thumbnailer);
+    assert.deepEqual(calls, ["image/png"]);
+    // 文件名不变，手机端按文件名把回显和本地消息对上。
+    assert.deepEqual(result.parts[1], { type: "file", id: "prt_big", mime: "image/jpeg", filename: "photo.png", url: thumbnail });
+    assert.equal(result.parts[2], message.parts[2]);
+    assert.equal(result.parts[3], message.parts[3]);
+    assert.equal(result.parts[0], message.parts[0]);
+  });
+
+  it("keeps the original image when the thumbnail fails, grows, or is unsafe", () => {
+    const original = `data:image/png;base64,${"A".repeat(SNAPSHOT_IMAGE_THUMBNAIL_THRESHOLD_BYTES + 4)}`;
+    const message = {
+      id: "msg_1", role: "user", createdAt: null, completedAt: null,
+      parts: [{ type: "file", id: "prt_big", mime: "image/png", filename: "photo.png", url: original }],
+    };
+    for (const thumbnailer of [
+      () => { throw new Error("decode failed"); },
+      () => null,
+      () => ({ mime: "image/jpeg", url: `data:image/jpeg;base64,${"A".repeat(original.length)}` }),
+      () => ({ mime: "image/jpeg", url: "https://example.com/x.jpg" }),
+    ]) {
+      assert.equal(thumbnailSnapshotImages(message, thumbnailer), message);
+    }
+    assert.equal(thumbnailSnapshotImages(message, null), message);
   });
 
   it("redacts a complete quoted credential before truncating its tool title", () => {
