@@ -3944,16 +3944,16 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
       return calendar;
     },
 
-    async createCalendar(orgId: string, input: DenCalendarCreateInput): Promise<DenCalendarResult> {
-      return normalizeCalendarResult(await requestJson<unknown>(baseUrls, "/v1/calendars", { method: "POST", token, organizationId: orgId, body: input }));
+    async createCalendar(orgId: string, input: DenCalendarCreateInput, requestOptions: { signal?: AbortSignal } = {}): Promise<DenCalendarResult> {
+      return normalizeCalendarResult(await requestJson<unknown>(baseUrls, "/v1/calendars", { method: "POST", token, organizationId: orgId, body: input, signal: requestOptions.signal }));
     },
 
-    async updateCalendar(orgId: string, calendarId: string, input: DenCalendarUpdateInput): Promise<DenCalendarResult> {
-      return normalizeCalendarResult(await requestJson<unknown>(baseUrls, `/v1/calendars/${encodeURIComponent(calendarId)}`, { method: "PATCH", token, organizationId: orgId, body: input }));
+    async updateCalendar(orgId: string, calendarId: string, input: DenCalendarUpdateInput, requestOptions: { signal?: AbortSignal } = {}): Promise<DenCalendarResult> {
+      return normalizeCalendarResult(await requestJson<unknown>(baseUrls, `/v1/calendars/${encodeURIComponent(calendarId)}`, { method: "PATCH", token, organizationId: orgId, body: input, signal: requestOptions.signal }));
     },
 
-    async deleteCalendar(orgId: string, calendarId: string, input: DenCalendarDeleteInput): Promise<DenCalendarDeleteResult> {
-      return normalizeCalendarDeleteResult(await requestJson<unknown>(baseUrls, `/v1/calendars/${encodeURIComponent(calendarId)}`, { method: "DELETE", token, organizationId: orgId, body: input }), "calendar");
+    async deleteCalendar(orgId: string, calendarId: string, input: DenCalendarDeleteInput, requestOptions: { signal?: AbortSignal } = {}): Promise<DenCalendarDeleteResult> {
+      return normalizeCalendarDeleteResult(await requestJson<unknown>(baseUrls, `/v1/calendars/${encodeURIComponent(calendarId)}`, { method: "DELETE", token, organizationId: orgId, body: input, signal: requestOptions.signal }), "calendar");
     },
 
     async listCalendarEvents(orgId: string, options: DenCalendarRangeOptions, requestOptions: { signal?: AbortSignal } = {}): Promise<DenCalendarEventPage> {
@@ -3974,16 +3974,16 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
       return event;
     },
 
-    async createCalendarEvent(orgId: string, input: DenCalendarEventCreateInput): Promise<DenCalendarEventResult> {
-      return normalizeCalendarEventResult(await requestJson<unknown>(baseUrls, "/v1/calendar-events", { method: "POST", token, organizationId: orgId, body: input }));
+    async createCalendarEvent(orgId: string, input: DenCalendarEventCreateInput, requestOptions: { signal?: AbortSignal } = {}): Promise<DenCalendarEventResult> {
+      return normalizeCalendarEventResult(await requestJson<unknown>(baseUrls, "/v1/calendar-events", { method: "POST", token, organizationId: orgId, body: input, signal: requestOptions.signal }));
     },
 
-    async updateCalendarEvent(orgId: string, eventId: string, input: DenCalendarEventUpdateInput): Promise<DenCalendarEventResult> {
-      return normalizeCalendarEventResult(await requestJson<unknown>(baseUrls, `/v1/calendar-events/${encodeURIComponent(eventId)}`, { method: "PATCH", token, organizationId: orgId, body: input }));
+    async updateCalendarEvent(orgId: string, eventId: string, input: DenCalendarEventUpdateInput, requestOptions: { signal?: AbortSignal } = {}): Promise<DenCalendarEventResult> {
+      return normalizeCalendarEventResult(await requestJson<unknown>(baseUrls, `/v1/calendar-events/${encodeURIComponent(eventId)}`, { method: "PATCH", token, organizationId: orgId, body: input, signal: requestOptions.signal }));
     },
 
-    async deleteCalendarEvent(orgId: string, eventId: string, input: DenCalendarDeleteInput): Promise<DenCalendarDeleteResult> {
-      return normalizeCalendarDeleteResult(await requestJson<unknown>(baseUrls, `/v1/calendar-events/${encodeURIComponent(eventId)}`, { method: "DELETE", token, organizationId: orgId, body: input }), "event");
+    async deleteCalendarEvent(orgId: string, eventId: string, input: DenCalendarDeleteInput, requestOptions: { signal?: AbortSignal } = {}): Promise<DenCalendarDeleteResult> {
+      return normalizeCalendarDeleteResult(await requestJson<unknown>(baseUrls, `/v1/calendar-events/${encodeURIComponent(eventId)}`, { method: "DELETE", token, organizationId: orgId, body: input, signal: requestOptions.signal }), "event");
     },
 
     async getCalendarBootstrap(orgId: string, options: Omit<DenCalendarRangeOptions, "cursor" | "limit">, requestOptions: { signal?: AbortSignal } = {}): Promise<DenCalendarBootstrap> {

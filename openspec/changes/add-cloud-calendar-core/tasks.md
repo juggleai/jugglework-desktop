@@ -9,8 +9,8 @@
 ## 2. Server 数据模型与迁移
 
 - [x] 2.1 在 `jugglework-server` 增加 Calendar、CalendarEvent、CalendarChange、CalendarMutationReceipt 领域类型和枚举，包含独立稳定 ID、owner、version、软删除及判别式时间字段，并以 model/service validation unit tests 验证非法混合时间状态不可进入持久化
-- [ ] 2.2 添加只增不减的顺序 SQL migration，创建 calendars、calendar_events、calendar_changes、calendar_mutations 及 tenant/range/change/idempotency 索引，不添加 foreign key 或 CHECK constraint，并以 migration discovery/readiness tests 验证全新库和已升级库
-- [ ] 2.3 为支持的数据库方言补充 migration 测试，验证唯一默认槽位、tenant 索引、事件范围索引、change sequence 和 mutation receipt 唯一键，并运行 `go test ./commons/dbcommons/...`
+- [x] 2.2 添加只增不减的顺序 SQL migration，创建 calendars、calendar_events、calendar_changes、calendar_mutations 及 tenant/range/change/idempotency 索引，不添加 foreign key 或 CHECK constraint，并以 migration discovery/readiness tests 验证全新库和已升级库
+- [x] 2.3 为支持的数据库方言补充 migration 测试，验证唯一默认槽位、tenant 索引、事件范围索引、change sequence 和 mutation receipt 唯一键，并运行 `go test ./commons/dbcommons/...`
 - [x] 2.4 实现严格 organization+owner scoped 的 Calendar repository CRUD、惰性默认 Calendar 创建和当前版本条件更新，并以 repository tests 验证并发首次访问仅有一个默认 Calendar、默认 Calendar 不可删除和裸 ID 不可跨成员读取
 - [x] 2.5 实现 CalendarEvent repository CRUD、Calendar 归属校验、活动资源读取、范围相交查询、稳定分页和受限文本搜索，并以 repository tests 覆盖全天/定时/跨日/排他结束、筛选、搜索和软删除过滤
 - [x] 2.6 实现 mutation、资源 version、软删除和 change append 的单事务 repository 操作，并以 fault-injection repository tests 验证任一步失败均不产生部分资源、receipt、游标或 change 状态
@@ -40,17 +40,17 @@
 - [x] 5.1 在 Desktop Den client 增加 Calendar、CalendarEvent、bootstrap、changes、range/search 和 mutation 类型及严格 normalization，保留 server 权威字段并拒绝畸形 payload，以 client fixture tests 覆盖成功、冲突、resync 和未知时间联合
 - [x] 5.2 实现规范化 deployment base URL + organizationId + memberId 的 Calendar scope 和完整 query key 工厂，缺少任一维度时返回不可用 scope，并以 unit tests 验证 URL 尾斜杠、跨 deployment、跨组织和跨成员键绝不碰撞
 - [x] 5.3 实现 Desktop calendar time adapter，以 PlainDate、Instant、IANA ZonedDateTime 和排他区间驱动月格/表单转换，并以 unit tests 覆盖 DST、午夜、跨日、全天不经 UTC、locale 显示和类型转换
-- [ ] 5.4 实现 Calendar API query/mutation hooks，mutation 使用稳定 idempotency key 和最后读取 expectedVersion，且仅用成功响应更新权威实体，并以 hook tests 验证重试不换 key、失败不伪保存和 conflict 保留输入
+- [x] 5.4 实现 Calendar API query/mutation hooks，mutation 使用稳定 idempotency key 和最后读取 expectedVersion，且仅用成功响应更新权威实体，并以 hook tests 验证重试不换 key、失败不伪保存和 conflict 保留输入
 
 ## 6. Desktop 分区缓存与同步
 
-- [ ] 6.1 实现带 schema version 的 IndexedDB calendar adapter，分别存储实体、墓碑、范围覆盖、cursor/刷新时间和草稿，所有 key 以完整 scope 开头，并以 fake IndexedDB tests 验证重启恢复和跨 scope 不可见
-- [ ] 6.2 实现 bootstrap 持久化和范围覆盖账本，仅在完整分页成功后记录 `[startDate,endDateExclusive)` 与 Calendar filter 覆盖，并以 cache tests 验证失败/部分页不标完整、未缓存月份不被表示为空
-- [ ] 6.3 实现 change page 原子应用，按 version 接受较新 upsert/delete、维护活动索引和墓碑，并在同一 IndexedDB transaction 推进 cursor，以事务中断 tests 验证 cursor 不越过未应用变更
-- [ ] 6.4 实现 sync coordinator，在页面前台、网络恢复、成功 mutation 和低频刷新时拉取 changes，cursor resync 时失效覆盖并重新 bootstrap，并以 deterministic coordinator tests 验证跨设备收敛、重复页去重和删除不复活
-- [ ] 6.5 实现 scope generation fence 和请求取消，organization/member/deployment 切换或登出时先隐藏旧数据并丢弃迟到 UI 结果，同时只写回原 scope，并以 race tests 验证旧请求不能污染新身份视图
-- [ ] 6.6 实现按 scope 的离线只读状态、覆盖/过期提示和本地草稿生命周期，不创建离线 mutation queue；恢复在线先刷新再显式提交，并以 cache/UI state tests 覆盖缓存月、未缓存月、离线删除、草稿恢复和远端更新/删除冲突
-- [ ] 6.7 实现目标 scope 的缓存/游标/草稿清除与不兼容 schema 失效策略，不合并或误删其他 scope，并以 IndexedDB migration/clear tests 验证升级、回滚后重建和身份隔离
+- [x] 6.1 实现带 schema version 的 IndexedDB calendar adapter，分别存储实体、墓碑、范围覆盖、cursor/刷新时间和草稿，所有 key 以完整 scope 开头，并以 fake IndexedDB tests 验证重启恢复和跨 scope 不可见
+- [x] 6.2 实现 bootstrap 持久化和范围覆盖账本，仅在完整分页成功后记录 `[startDate,endDateExclusive)` 与 Calendar filter 覆盖，并以 cache tests 验证失败/部分页不标完整、未缓存月份不被表示为空
+- [x] 6.3 实现 change page 原子应用，按 version 接受较新 upsert/delete、维护活动索引和墓碑，并在同一 IndexedDB transaction 推进 cursor，以事务中断 tests 验证 cursor 不越过未应用变更
+- [x] 6.4 实现 sync coordinator，在页面前台、网络恢复、成功 mutation 和低频刷新时拉取 changes，cursor resync 时失效覆盖并重新 bootstrap，并以 deterministic coordinator tests 验证跨设备收敛、重复页去重和删除不复活
+- [x] 6.5 实现 scope generation fence 和请求取消，organization/member/deployment 切换或登出时先隐藏旧数据并丢弃迟到 UI 结果，同时只写回原 scope，并以 race tests 验证旧请求不能污染新身份视图
+- [x] 6.6 实现按 scope 的离线只读状态、覆盖/过期提示和本地草稿生命周期，不创建离线 mutation queue；恢复在线先刷新再显式提交，并以 cache/UI state tests 覆盖缓存月、未缓存月、离线删除、草稿恢复和远端更新/删除冲突
+- [x] 6.7 实现目标 scope 的缓存/游标/草稿清除与不兼容 schema 失效策略，不合并或误删其他 scope，并以 IndexedDB migration/clear tests 验证升级、回滚后重建和身份隔离
 
 ## 7. Desktop 路由、导航与月视图
 

@@ -34,3 +34,11 @@ export function createCalendarScope(input: {
 export function calendarScopeKey(scope: CalendarScope): readonly [string, string, string] {
   return [scope.deployment, scope.organizationId, scope.memberId];
 }
+
+export function calendarScopeIdentity(scope: CalendarScope | null): string | null {
+  return scope ? JSON.stringify(calendarScopeKey(scope)) : null;
+}
+
+export function calendarScopesEqual(left: CalendarScope | null, right: CalendarScope | null): boolean {
+  return calendarScopeIdentity(left) === calendarScopeIdentity(right);
+}
