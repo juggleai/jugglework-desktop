@@ -343,6 +343,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
     signOut,
   } = useDenAuth();
   const cloud = useCloudSession();
+  const profileUser = user && cloud.user?.id === user.id ? cloud.user : user;
   const taskNotificationScopeKey = user?.id && activeOrganization?.id ? productTaskNotificationScopeKey(cloud.baseUrl, user.id, activeOrganization.id) : null;
   const taskScope = useTaskScope();
   const automationsActive = location.pathname.startsWith("/automations");
@@ -430,7 +431,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
   const toggleReviewsPinned = () => {
     setPinnedNavigationItems(setAppNavigationItemPinned("reviews", !reviewsPinned));
   };
-  const identity = accountDisplayName(user);
+  const identity = accountDisplayName(profileUser);
   const initial = identity.slice(0, 1).toLocaleUpperCase();
   const tier = tenantAccount?.tier ?? activeOrganization?.tier ?? null;
   const tierLabel = membershipTierLabel(tier);
@@ -832,7 +833,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
                 )}
               >
                 <Avatar size="lg" className="size-7 bg-background ring-1 ring-dls-border/70">
-                  {user?.avatar ? <AvatarImage src={user.avatar} alt={identity} /> : null}
+                  {profileUser?.avatar ? <AvatarImage src={profileUser.avatar} alt={identity} /> : null}
                   <AvatarFallback className="bg-dls-hover font-semibold text-dls-text">{initial}</AvatarFallback>
                   {notificationUnreadCount > 0 ? (
                     <span className="absolute -right-0.5 -top-0.5 size-2.5 rounded-full border-2 border-dls-sidebar bg-red-9" aria-hidden="true" data-rail-unread-dot />

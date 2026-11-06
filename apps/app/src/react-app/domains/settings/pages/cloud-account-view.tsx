@@ -13,7 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { t } from "@/i18n";
 import { SignInFallbackNotice } from "@/react-app/domains/cloud/signin-fallback-notice";
-import { CloudAccountSection } from "../cloud/cloud-account-section";
+import { CloudAccountSection, type AccountUsageSession } from "../cloud/cloud-account-section";
 import { DesktopRemoteControlSection } from "../cloud/desktop-remote-control-section";
 import { useCloudSession } from "../cloud/cloud-session-provider";
 import { CloudDevMode } from "../cloud/dev-mode";
@@ -52,6 +52,7 @@ type CloudAccountSession = Pick<
 export type CloudAccountViewProps = {
   developerMode: boolean;
   session: CloudAccountSession;
+  sessions: AccountUsageSession[];
 };
 
 type DenSignedOutPanelProps = Pick<
@@ -163,7 +164,7 @@ function DenSignedOutPanel({
   );
 }
 
-export function CloudAccountView({ developerMode, session }: CloudAccountViewProps) {
+export function CloudAccountView({ developerMode, session, sessions }: CloudAccountViewProps) {
   const { isSignedIn } = useCloudSession();
   const developerSettings = developerMode ? (
     <>
@@ -197,6 +198,7 @@ export function CloudAccountView({ developerMode, session }: CloudAccountViewPro
           <CloudAccountSection
             orgsBusy={session.orgsBusy}
             orgsError={session.orgsError}
+            sessions={sessions}
           />
           </SettingsSection>
 

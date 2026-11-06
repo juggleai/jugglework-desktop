@@ -11,6 +11,7 @@ import {
   type DenUser,
 } from "../../../../app/lib/den";
 import { denSettingsChangedEvent } from "../../../../app/lib/den-session-events";
+import { applyStoredAccountProfile } from "./local-account-profile";
 
 type CloudActiveOrganization = Pick<DenOrgSummary, "id" | "name" | "role" | "slug" | "kind" | "orgMemberId" | "membershipId">;
 
@@ -45,7 +46,13 @@ export function CloudSessionProvider({ children }: CloudSessionProviderProps) {
   const [baseUrl, setBaseUrl] = React.useState(() => initial.baseUrl || DEFAULT_DEN_BASE_URL);
   const [authToken, setAuthToken] = React.useState(initial.authToken?.trim() || "");
   const [isSignedIn, setIsSignedIn] = React.useState(false);
-  const [user, setUser] = React.useState<DenUser | null>(null);
+  const [user, setUserState] = React.useState<DenUser | null>(null);
+  const setUser = React.useCallback<React.Dispatch<React.SetStateAction<DenUser | null>>>((next) => {
+    setUserState((current) => {
+      const resolved = typeof next === "function" ? next(current) : next;
+      return resolved ? applyStoredAccountProfile(resolved) : null;
+    });
+  }, []);
   const [statusMessage, setStatusMessage] = React.useState<string | null>(null);
   const [activeOrganization, setActiveOrganization] =
     React.useState<CloudActiveOrganization | null>(() => {
