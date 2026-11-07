@@ -15,6 +15,8 @@ import {
 } from "../src/react-app/domains/session/sync/session-sync";
 import { reconcileWorkspaceSessionTitles } from "../src/react-app/shell/workspace-routes";
 
+// Run with Bun 1.3.14+ and --isolate: sibling UI tests mock createClient and
+// session-sync itself. Bun 1.3.10 accepts the flag without isolating those mocks.
 afterEach(() => getReactQueryClient().clear());
 
 test("event retry backoff applies bounded jitter", () => {
@@ -30,11 +32,16 @@ test("workspace consumers share one event transport while it remains quiet", asy
   let transportAborted = false;
   let connected!: () => void;
   const ready = new Promise<void>((resolve) => { connected = resolve; });
-  globalThis.fetch = (async (_input, init) => {
+  globalThis.fetch = (async (request, init) => {
     connections += 1;
-    init?.signal?.addEventListener("abort", () => { transportAborted = true; }, { once: true });
+    // The SDK passes a Request rather than a separate RequestInit.
+    const signal = init?.signal ?? (request instanceof Request ? request.signal : undefined);
     return new Response(new ReadableStream({
       start(controller) {
+        signal?.addEventListener("abort", () => {
+          transportAborted = true;
+          controller.close();
+        }, { once: true });
         controller.enqueue(new TextEncoder().encode('data: {"type":"server.connected"}\n\n'));
       },
     }), { headers: { "Content-Type": "text/event-stream" } });
@@ -49,8 +56,9 @@ test("workspace consumers share one event transport while it remains quiet", asy
     await new Promise((resolve) => setTimeout(resolve, 25));
     expect(connections).toBe(1);
     expect(transportAborted).toBe(false);
-  } finally {
     releaseSidebar();
+    expect(transportAborted).toBe(true);
+  } finally {
     __disposeWorkspaceSessionSyncForTest(input);
     globalThis.fetch = originalFetch;
   }
@@ -146,6 +154,8 @@ test("workspace metadata subscribers survive selection changes and receive recon
   let calibrations = 0;
   let reconnected!: () => void;
   const ready = new Promise<void>((resolve) => { reconnected = resolve; });
+  let disconnected!: () => void;
+  const closed = new Promise<void>((resolve) => { disconnected = resolve; });
   const updates: string[] = [];
   const server = Bun.serve({
     port: 0,
@@ -157,6 +167,7 @@ test("workspace metadata subscribers survive selection changes and receive recon
           controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ type: "session.updated", properties: { info: { id: "background", title: `Title ${attempt}` } } })}\n\n`));
           if (attempt === 1) controller.close();
         },
+        cancel() { if (attempt > 1) disconnected(); },
       }), { headers: { "Content-Type": "text/event-stream" } });
     },
   });
@@ -175,9 +186,14 @@ test("workspace metadata subscribers survive selection changes and receive recon
     expect(connections).toBeGreaterThanOrEqual(2);
     expect(calibrations).toBe(2);
     expect(updates).toContain("Title 1");
-  } finally {
     clearTimeout(timeout);
     releaseSidebar();
+    await Promise.race([closed, new Promise((_, reject) => {
+      timeout = setTimeout(() => reject(new Error("SSE transport was not aborted")), 1_000);
+    })]);
+  } finally {
+    clearTimeout(timeout);
+    __disposeWorkspaceSessionSyncForTest(input);
     server.stop(true);
   }
 }, 5_000);

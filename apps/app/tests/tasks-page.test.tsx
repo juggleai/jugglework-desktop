@@ -4,7 +4,7 @@ import React from "react";
 import TestRenderer, { act } from "react-test-renderer";
 import { MemoryRouter } from "react-router-dom";
 
-import { DenApiError, type DenClient, type DenProductTask, type DenProductTaskResult } from "../src/app/lib/den";
+import { DenApiError, type DenClient, type DenProductTask, type DenProductTaskList, type DenProductTaskResult } from "../src/app/lib/den";
 import { taskSectionStorageKey } from "../src/react-app/domains/tasks/task-page-state";
 import { taskWorkbenchStorageKey } from "../src/react-app/domains/tasks/task-view-state";
 
@@ -874,6 +874,7 @@ test("workbench creates a missing list then moves the task using the latest vers
     listProductTasks: async () => ({ items: [listed], membersByTaskId: { [listed.id]: [] }, nextCursor: "" }),
     getProductTask: async () => { order.push("get"); return authoritative; },
     createProductTaskList: async () => { order.push("create"); return { list: createdList, members: [], permissions: { canView: true, canEdit: true, canManageMembers: true, canAddTasks: true, canArchive: true, canRestore: false }, replayed: false }; },
+    getProductTaskList: async () => ({ list: createdList, members: [], permissions: { canView: true, canEdit: true, canManageMembers: true, canAddTasks: true, canArchive: true, canRestore: false }, replayed: false }),
     moveProductTask: async (_orgId, _taskId, input) => { order.push("move"); moves.push(input); return { taskId: listed.id, version: 12, listId: createdList.id, visibility: "private", replayed: false }; },
   });
   let renderer: TestRenderer.ReactTestRenderer;
@@ -891,6 +892,125 @@ test("workbench creates a missing list then moves the task using the latest vers
     expect(moves[0]).toMatchObject({ expectedVersion: 11, destinationListId: "list_created", idempotencyKey: expect.any(String) });
   } finally { await act(async () => renderer!.unmount()); }
 });
+
+const moveDestination: DenProductTaskList = { id: "list_destination", creatorMemberId: "member_self", name: "Shared destination", description: "", marker: "S", visibility: "members", version: 1, archivedAt: null, createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z" };
+const moveDestinationResult = () => ({ list: { ...moveDestination }, members: [], permissions: { canView: true, canEdit: true, canManageMembers: true, canAddTasks: true, canArchive: true, canRestore: false }, replayed: false });
+
+for (const scenario of [
+  { name: "cancel private sharing", confirm: false, moves: 0, prompts: 1 },
+  { name: "confirm private sharing", confirm: true, moves: 1, prompts: 1 },
+  { name: "organization-visible destination still requires confirmation", destinationVisibility: "organization", moves: 1, prompts: 1 },
+  { name: "deny task member management", canManageMembers: false, moves: 0, prompts: 0, denied: true },
+  { name: "deny visibility management", canManageVisibility: false, moves: 0, prompts: 0, denied: true },
+  { name: "deny destination add permission", canAddTasks: false, moves: 0, prompts: 0, denied: true },
+  { name: "deny archived destination", archived: true, moves: 0, prompts: 0, denied: true },
+  { name: "failed task read does not move", failure: "task", moves: 0, prompts: 0 },
+  { name: "failed destination read does not move", failure: "destination", moves: 0, prompts: 0 },
+  { name: "move conflict leaves displayed list unchanged", failure: "move", moves: 1, prompts: 1 },
+  { name: "private destination needs no visibility permission", destinationVisibility: "private", canManageVisibility: false, moves: 1, prompts: 0 },
+  { name: "already-shared task needs no sharing confirmation", taskVisibility: "members", canManageVisibility: false, moves: 1, prompts: 0 },
+  { name: "removing list needs no sharing confirmation", remove: true, canManageVisibility: false, moves: 1, prompts: 0 },
+] as const) {
+  test(`task list move: ${scenario.name}`, async () => {
+    const options = scenario as { confirm?: boolean; destinationVisibility?: DenProductTaskList["visibility"]; taskVisibility?: DenProductTask["visibility"]; canManageMembers?: boolean; canManageVisibility?: boolean; canAddTasks?: boolean; archived?: boolean; remove?: boolean; denied?: boolean; failure?: "task" | "destination" | "move" };
+    // Both picker and row data deliberately disagree with authoritative visibility.
+    const listed = { ...task(1, "Move task", "", "move_task"), listId: "list_old", visibility: "organization" as const };
+    const detail = result({ ...listed, version: 17, visibility: options.taskVisibility ?? "private" });
+    detail.permissions.canManageMembers = options.canManageMembers ?? true;
+    detail.permissions.canManageVisibility = options.canManageVisibility ?? true;
+    const destination = moveDestinationResult();
+    destination.list.visibility = options.destinationVisibility ?? "members";
+    destination.permissions.canAddTasks = options.canAddTasks ?? true;
+    destination.list.archivedAt = options.archived ? "2026-11-07T00:00:00Z" : null;
+    const moves: Array<{ orgId: string; taskId: string; input: Parameters<DenClient["moveProductTask"]>[2] }> = [];
+    const order: string[] = [];
+    const client = connectedClient({
+      listProductTasks: async () => ({ items: [listed], nextCursor: "" }),
+      listProductTaskLists: async () => ({ items: [{ ...moveDestination, visibility: "private" }], nextCursor: "" }),
+      getProductTask: async () => { order.push("task"); if (options.failure === "task") throw new Error("Task read failed"); return detail; },
+      getProductTaskList: async (orgId, listId) => { expect(orgId).toBe("org_one"); expect(listId).toBe(moveDestination.id); order.push("destination"); if (options.failure === "destination") throw new Error("Destination read failed"); return destination; },
+      moveProductTask: async (orgId, taskId, input) => { order.push("move"); moves.push({ orgId, taskId, input }); if (options.failure === "move") throw new DenApiError(409, "task_version_conflict", "Changed elsewhere"); return { taskId, version: 18, listId: input.destinationListId, visibility: "members", replayed: false }; },
+    });
+    const originalConfirm = globalThis.confirm;
+    const messages: string[] = [];
+    globalThis.confirm = (message) => { order.push("confirm"); messages.push(message ?? ""); expect(moves).toHaveLength(0); return options.confirm ?? true; };
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => { renderer = TestRenderer.create(connectedPage(client)); });
+    await settle();
+    try {
+      await act(async () => { renderer!.root.findByProps({ "data-testid": "tasks-sidebar" }).findAllByType("button").find((button) => Array.isArray(button.props.children) && button.props.children.includes("All tasks"))!.props.onClick(); });
+      await settle();
+      await act(async () => { renderer!.root.findByProps({ "data-testid": `task-list-option-move_task-${options.remove ? "none" : moveDestination.id}` }).props.onClick(); });
+      await settle();
+      expect(messages).toHaveLength(scenario.prompts);
+      if (scenario.prompts) {
+        expect(messages[0]).toContain("Shared destination");
+        expect(messages[0]).toContain("Members");
+        expect(messages[0]).toContain("Choose Cancel to keep the task private");
+        expect(order.slice(0, 3)).toEqual(["task", "destination", "confirm"]);
+      }
+      expect(moves).toHaveLength(scenario.moves);
+      if (scenario.moves) expect(moves[0]).toEqual({ orgId: "org_one", taskId: listed.id, input: { expectedVersion: 17, idempotencyKey: expect.any(String), destinationListId: options.remove ? "" : moveDestination.id, ...(scenario.prompts ? { confirmedVisibility: "members" } : {}) } });
+      if (options.denied) expect(toastErrors).toContain("You do not have permission to change this task list.");
+      if (options.failure === "task") expect(toastErrors).toContain("Task read failed");
+      if (options.failure === "destination") expect(toastErrors).toContain("Destination read failed");
+      if (options.failure === "move") expect(toastWarnings).toHaveLength(1);
+      if (!scenario.moves || options.failure) expect(renderer!.root.findByProps({ "data-testid": "task-list-trigger-move_task" }).findAll((node) => node.props.children === "Shared destination")).toHaveLength(0);
+    } finally {
+      globalThis.confirm = originalConfirm;
+      await act(async () => { renderer!.unmount(); });
+    }
+  });
+}
+
+for (const phase of ["task", "destination", "confirmation", "confirmation-user", "confirmation-deployment", "confirmation-unmount"] as const) {
+  test(`task list move stops after scope switch during ${phase}`, async () => {
+    const pendingTask = deferred<DenProductTaskResult>();
+    const pendingDestination = deferred<ReturnType<typeof moveDestinationResult>>();
+    const listed = task(1, "Move task", "", "move_task");
+    let moves = 0;
+    let prompts = 0;
+    let destinationReads = 0;
+    const client = connectedClient({
+      listProductTasks: async () => ({ items: [listed], nextCursor: "" }),
+      listProductTaskLists: async () => ({ items: [moveDestination], nextCursor: "" }),
+      getProductTask: async () => phase === "task" ? pendingTask.promise : result(listed),
+      getProductTaskList: async () => { destinationReads += 1; return phase === "destination" ? pendingDestination.promise : moveDestinationResult(); },
+      moveProductTask: async () => { moves += 1; throw new Error("Must not write after scope switch"); },
+    });
+    const queryClient = createQueryClient();
+    setCloudSession(client);
+    let renderer: TestRenderer.ReactTestRenderer;
+    const switchScope = () => {
+      if (phase === "confirmation-unmount") { act(() => renderer!.unmount()); return; }
+      setCloudSession(client, "org_two");
+      if (phase === "confirmation-user") { setCloudSession(client); cloudSession.user = { id: "user_two", name: "Other" }; }
+      if (phase === "confirmation-deployment") { setCloudSession(client); cloudSession.baseUrl = "https://other.example"; }
+      act(() => { renderer!.update(taskPage(queryClient)); });
+    };
+    const originalConfirm = globalThis.confirm;
+    globalThis.confirm = () => { prompts += 1; if (phase.startsWith("confirmation")) switchScope(); return true; };
+    await act(async () => { renderer = TestRenderer.create(taskPage(queryClient)); });
+    await settle();
+    try {
+      await act(async () => { renderer!.root.findByProps({ "data-testid": "tasks-sidebar" }).findAllByType("button").find((button) => Array.isArray(button.props.children) && button.props.children.includes("All tasks"))!.props.onClick(); });
+      await settle();
+      await act(async () => { renderer!.root.findByProps({ "data-testid": "task-list-option-move_task-list_destination" }).props.onClick(); });
+      if (!phase.startsWith("confirmation")) {
+        switchScope();
+        await act(async () => { pendingTask.resolve(result(listed)); pendingDestination.resolve(moveDestinationResult()); });
+      }
+      await settle();
+      expect(moves).toBe(0);
+      expect(prompts).toBe(phase.startsWith("confirmation") ? 1 : 0);
+      expect(destinationReads).toBe(phase === "task" ? 0 : 1);
+      expect(toastErrors).toHaveLength(0);
+    } finally {
+      globalThis.confirm = originalConfirm;
+      await act(async () => { renderer!.unmount(); });
+    }
+  });
+}
 
 test("workbench assignee update shares a private task in the same latest-version patch", async () => {
   const listed = task(1, "Private task", "", "private_task");

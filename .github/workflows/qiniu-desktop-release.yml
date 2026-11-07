@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "Build a release or continue only an approved exact 1.2.31/1.2.32/1.2.33 candidate"
+        description: "Build a release or continue only an approved exact 1.2.31/1.2.32/1.2.33/1.2.34 candidate"
         required: true
         default: build
         type: choice
@@ -12,7 +12,7 @@ on:
           - build
           - promotion-only
       candidate_record:
-        description: "Promotion-only: version-matched fixed committed 1.2.31/1.2.32/1.2.33 candidate record path"
+        description: "Promotion-only: version-matched fixed committed 1.2.31/1.2.32/1.2.33/1.2.34 candidate record path"
         required: false
         default: apps/desktop/release-records/1.2.31-candidate.json
         type: string
@@ -324,7 +324,7 @@ jobs:
             *) exit 1 ;;
           esac
           case "$VERSION:$CANDIDATE_RECORD" in
-            1.2.31:apps/desktop/release-records/1.2.31-candidate.json|1.2.32:apps/desktop/release-records/1.2.32-candidate.json|1.2.33:apps/desktop/release-records/1.2.33-candidate.json) ;;
+            1.2.31:apps/desktop/release-records/1.2.31-candidate.json|1.2.32:apps/desktop/release-records/1.2.32-candidate.json|1.2.33:apps/desktop/release-records/1.2.33-candidate.json|1.2.34:apps/desktop/release-records/1.2.34-candidate.json) ;;
             *) exit 1 ;;
           esac
 

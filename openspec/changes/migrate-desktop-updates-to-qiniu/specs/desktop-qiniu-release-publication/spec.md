@@ -7,6 +7,13 @@ Define a reproducible and auditable release process that publishes immutable des
 ### Requirement: Versioned desktop release objects are immutable
 Every published desktop version SHALL have an immutable version directory under `jugglework/releases/v<version>/`, and the release process MUST refuse to overwrite an existing versioned object.
 
+#### Scenario: Exact 1.2.34 committed-candidate continuation
+- **WHEN** the operator independently authorizes stable macOS arm64 `1.2.34` to skip only the real-client upgrade canary and mutable Cache-Control metadata mutation/validation
+- **THEN** trusted dev dispatch SHALL require the exact committed `apps/desktop/release-records/1.2.34-candidate.json`, source ancestry and three runtime versions, accepted App/DMG receipts and exact immutable bytes
+- **AND** both reasons SHALL be independently recorded with scope `stable-1.2.34-only`; failed or mismatched canary, wrong path, Alpha, Intel, 1.2.35 and notarization exemptions SHALL remain rejected
+- **AND** fresh package/media/Apple trust, full CDN verification, ownership lock, predecessor/race checks, channel size/ETag, CDN refresh and exact public digest/size read-back SHALL remain mandatory
+- **AND** install/relaunch/retained-state and fleet cache convergence SHALL remain explicitly unverified
+
 #### Scenario: New version publication
 - **WHEN** no object exists at the requested version/platform/architecture keys
 - **THEN** the process may upload the verified release objects without overwrite

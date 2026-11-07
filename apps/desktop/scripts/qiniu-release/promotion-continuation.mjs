@@ -17,6 +17,7 @@ export const CANDIDATE_RECORDS = Object.freeze({
   "1.2.31": CANDIDATE_RECORD,
   "1.2.32": "apps/desktop/release-records/1.2.32-candidate.json",
   "1.2.33": "apps/desktop/release-records/1.2.33-candidate.json",
+  "1.2.34": "apps/desktop/release-records/1.2.34-candidate.json",
 });
 export const CANDIDATE_SCHEMA = "com.juggleai.jugglework.promotion-candidate";
 export const EXCEPTIONS = Object.freeze({
@@ -24,7 +25,7 @@ export const EXCEPTIONS = Object.freeze({
   metadataExceptionReason: "Operator explicitly authorized stable macOS arm64 1.2.31 to skip only Qiniu Cache-Control metadata mutation and validation",
 });
 function continuationPolicy(version) {
-  if (!Object.hasOwn(CANDIDATE_RECORDS, version)) throw new Error("Continuation supports only exact 1.2.31, 1.2.32 or 1.2.33 candidates");
+  if (!Object.hasOwn(CANDIDATE_RECORDS, version)) throw new Error("Continuation supports only exact 1.2.31, 1.2.32, 1.2.33 or 1.2.34 candidates");
   return {
     candidateRecord: CANDIDATE_RECORDS[version],
     exceptions: version === "1.2.31" ? EXCEPTIONS : {

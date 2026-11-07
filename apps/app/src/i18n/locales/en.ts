@@ -1314,6 +1314,7 @@ export default {
   "tasks.search_or_create_list": "Search or create a list",
   "tasks.create_list_inline": "Create list",
   "tasks.list_edit_not_allowed": "You do not have permission to change this task list.",
+  "tasks.move_private_to_shared_confirm": "Move this private task to “{name}” and change its visibility to Members? The task will become accessible to its task members and authorized members of that list. Choose Cancel to keep the task private and leave its list unchanged.",
   "tasks.board_todo": "To do",
   "tasks.board_canceled": "Canceled",
   "tasks.empty_column": "No tasks in this column",

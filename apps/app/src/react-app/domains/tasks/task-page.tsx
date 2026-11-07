@@ -99,6 +99,10 @@ function ScopedConnectedTaskPage(props: TaskPageProps) {
   liveScopeKey.current = scopeKey;
   liveConflict.current = conflict;
   liveSelectedTaskId.current = selectedTaskId;
+  React.useEffect(() => {
+    liveScopeKey.current = scopeKey;
+    return () => { liveScopeKey.current = ""; };
+  }, [scopeKey]);
   const fallbackMember = React.useMemo(() => {
     const memberId = cloud.activeOrganization?.orgMemberId || cloud.activeOrganization?.membershipId;
     return memberId && cloud.user ? { id: memberId, userId: cloud.user.id, role: cloud.activeOrganization?.role ?? "member", user: { id: cloud.user.id, name: cloud.user.name, account: cloud.user.account ?? null, email: cloud.user.email ?? null, avatar: cloud.user.avatar ?? null } } : null;
@@ -348,17 +352,29 @@ function ScopedConnectedTaskPage(props: TaskPageProps) {
   const moveWorkbenchTaskToList = async (task: DenProductTask, destinationListId: string) => {
     if (!scope) return false;
     const capturedScope = scope;
-    const detail = await runMutation(() => cloud.client.getProductTask(capturedScope.organizationId, task.id), { isCurrent: () => liveScopeKey.current === productTaskScopeKey(capturedScope) });
+    const isCurrent = () => liveScopeKey.current === productTaskScopeKey(capturedScope);
+    const detail = await runMutation(() => cloud.client.getProductTask(capturedScope.organizationId, task.id), { isCurrent });
     if (!detail) return false;
     if (!detail.permissions.canManageMembers) { toast.error(t("tasks.list_edit_not_allowed")); return false; }
-    const destination = destinationListId ? (activeListsQuery.data?.items ?? []).find((list) => list.id === destinationListId) : null;
-    const confirmedVisibility = detail.task.visibility === "private" && destination && destination.visibility !== "private" ? "members" as const : undefined;
+    // The picker cache may be stale (or not yet contain an inline-created list).
+    const destination = destinationListId
+      ? await runMutation(() => cloud.client.getProductTaskList(capturedScope.organizationId, destinationListId), { isCurrent })
+      : null;
+    if (!isCurrent() || (destinationListId && !destination)) return false;
+    if (destination && (!destination.permissions.canAddTasks || destination.list.archivedAt)) { toast.error(t("tasks.list_edit_not_allowed")); return false; }
+    const requiresSharing = detail.task.visibility === "private" && destination && destination.list.visibility !== "private";
+    if (requiresSharing) {
+      if (!detail.permissions.canManageVisibility) { toast.error(t("tasks.list_edit_not_allowed")); return false; }
+      if (!globalThis.confirm(t("tasks.move_private_to_shared_confirm", { name: destination.list.name }))) return false;
+    }
+    // Confirmation must never authorize a write from an expired page/scope.
+    if (!isCurrent()) return false;
     const result = await runMutation(() => cloud.client.moveProductTask(capturedScope.organizationId, task.id, {
       expectedVersion: detail.task.version,
       idempotencyKey: mutationKey("desktop-move-task-list"),
       destinationListId,
-      ...(confirmedVisibility ? { confirmedVisibility } : {}),
-    }), { isCurrent: () => liveScopeKey.current === productTaskScopeKey(capturedScope) });
+      ...(requiresSharing ? { confirmedVisibility: "members" as const } : {}),
+    }), { isCurrent });
     if (!result) return false;
     await queryClient.invalidateQueries({ queryKey: productTaskKeys.lists(capturedScope) });
     return true;

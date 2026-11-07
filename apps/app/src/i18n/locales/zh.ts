@@ -1317,6 +1317,7 @@ export default {
   "tasks.search_or_create_list": "搜索或新建清单",
   "tasks.create_list_inline": "创建清单",
   "tasks.list_edit_not_allowed": "你没有修改任务所属清单的权限。",
+  "tasks.move_private_to_shared_confirm": "是否将此私密任务移至“{name}”，并将可见范围改为“任务成员可见”？任务成员及该清单中有权限的成员将能够访问此任务。选择取消将保持任务私密且不改变所属清单。",
   "tasks.board_todo": "待办",
   "tasks.board_canceled": "已取消",
   "tasks.empty_column": "此列暂无任务",

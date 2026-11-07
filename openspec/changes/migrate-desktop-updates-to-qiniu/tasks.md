@@ -479,3 +479,23 @@ Final audit at 2026-11-04T05:07:35Z verified unchanged new PIDs, exact configs/b
 The operator explicitly excluded concurrent local model-group changes from this release. Artifact source remains 2dba4d2ecc410bccdbab6cfb53a147d01afccf0a; the later dev-only feature commit 653c75795366661f4cf9f2e4eef93bc52c5db8a7 is not included in the binaries or main release closeout. Records-only closeout is prepared in a separate clean worktree and will be pushed separately to main and dev without importing that feature into main.
 
 Git closeout completed: records commit 1c5b77638c5b590e4caa717ee71f5b8f40728962 was pushed to main, and its records-only cherry-pick 94b3b4c7ec8fc35f1ded8127142a4407c1b3b219 was pushed to dev. The dev-only new feature was neither included in the release binaries nor merged to main. Strict OpenSpec validation and diff checks passed; this completion marker does not rebuild, overwrite immutable objects, change the channel or restart production.
+
+## 40. macOS ARM64 1.2.34 release
+
+The operator authorized release from dev baseline 820ea08db4b61e8829d613dffc34b6fed98cb55c, version synchronization, commit/push and merge to main, Qiniu publication and China-then-overseas Den opening. Explicit choice 2 supersedes the original DMG-only wording: publish signed/notarized DMG plus updater ZIP, final blockmaps and immutable manifest, promote macOS Stable and announce latest 1.2.34. Windows/Intel, website, GitHub Release and Den binary deployment are excluded.
+
+Two independently audited exact stable/mac/arm64 1.2.34 exceptions skip only the real-client upgrade canary and mutable Qiniu Cache-Control metadata mutation/validation, scope stable-1.2.34-only. Retain signatures, separate App/DMG accepted notarization, staples, Gatekeeper, package/media integrity, non-overwrite immutable upload, complete public bytes, serialized workflow, lock/predecessor/race/size/ETag, CDN refresh and exact read-back. Failed/mismatched canary and 1.2.35/alpha/x64/notarization exceptions remain rejected. Installation/relaunch/retained state and fleet cache convergence remain unverified.
+
+- [x] 40.1 Confirm source/scope and two-region predecessor 1.2.33; operator chooses full updater artifacts
+- [x] 40.2 Adapt exact candidate/version and two independent exceptions; synchronize runtime versions without lockfile changes
+- [x] 40.3 Repair private-to-shared task move confirmation, permission and scope fencing; 134 focused tests and App typecheck/zh i18n passed
+- [ ] 40.4 Complete frozen install, typechecks, focused/full Desktop tests, strict OpenSpec; commit/push and merge main with exact source recorded
+- [ ] 40.5 Fresh isolated native ARM64 build, signed/notarized App/ZIP/DMG verification and packaged media acceptance
+- [ ] 40.6 Non-overwrite upload, Qiniu/public full-byte verification and real committed candidate
+- [ ] 40.7 Serialized Stable promotion, exact read-back and released lock
+- [ ] 40.8 China then overseas config-only announcement and post-change audit
+- [ ] 40.9 Persist accurate result, limitations and rollback pointers; final records commit/push
+
+Preparation release-tool tests passed 313 with zero failures and one conditional real-media skip. No 1.2.34 candidate or production mutation exists at this checkpoint. Tasks incomplete collaborative/lifecycle/aggregate Activity/security/connected acceptance remains open, not a full MVP completion claim. Existing installed-app/live-provider/Intel and other cross-platform limits remain recorded separately; source tests do not satisfy those acceptance items.
+
+Preparation validation: frozen root install and App/Server/Electron typechecks passed; Desktop main suite passed 1083, one platform skip, zero failures (pretest stages also passed). App focused 16-file suite passed 223 with trusted Bun 1.3.14 and strict zh i18n passed. Initial system Bun 1.3.10 multi-file runs had three SSE timeouts caused by cross-file mocks; single-file passes and real isolation on 1.3.14 confirmed the environment issue. Investigation independently reproduced a real fetchWithTimeout Request.signal cancellation loss: caller and timeout signals are now combined, proactive cancellation is not labeled timeout, and real SSE tests require server-observed disconnect. Server response-language/mutation/plugin suites passed 88. All three affected OpenSpec changes and diff checks passed. No product main, real updater or production write ran during source validation.
