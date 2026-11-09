@@ -123,7 +123,7 @@ import {
   type ComposerCapabilityKind,
 } from "@/react-app/domains/session/surface/composer/capability-tags"
 import { currentLocale, t } from "@/i18n"
-import { groupMessages, isMessageGroup, getLastTextPart, getAssistantRenderGroups, getFileTitle, getMediaBadge, getMessageCreated, formatMessageTimestamp, formatTaskDuration, getTaskTiming, splitAssistantTaskMessages, mergeAssistantProcessItems, type UIMessageWithIndex, getMessagesText, getSafeFileDownloadUrl, isTaskStoppedMessage, wasTaskStopped } from "./utils"
+import { groupMessages, isMessageGroup, getLastTextPart, getAssistantRenderGroups, getFileTitle, getMediaBadge, getMessageCreated, formatMessageTimestamp, formatTaskDuration, getTaskTiming, splitAssistantTaskMessages, mergeAssistantProcessItems, type UIMessageWithIndex, getMessagesText, getSafeFileDownloadUrl, isTaskStoppedMessage, wasTaskStopped, loadingTaskUserMessageIndex } from "./utils"
 import {
   getSessionCompactionFromMessage,
   type SessionCompactionPresentation,
@@ -1003,9 +1003,16 @@ MessageComponent.displayName = "MessageComponent"
 
 // TIPS: 容器与消息正文/「耗时」行保持同一套 max-w-5xl + px-3/md:px-8，
 // 左边缘才能和上下文对齐；此前用的是 max-w-3xl + px-2/md:px-10，会偏右十几像素。
-const LoadingMessage = React.memo(({ label }: { label?: string }) => (
+const LoadingMessage = React.memo(({ label, messages }: { label?: string; messages: UIMessage[] }) => {
+  const userMessageIndex = loadingTaskUserMessageIndex(messages)
+  return (
   <Message className="mx-auto -mt-1 flex w-full max-w-5xl flex-col items-start gap-0 px-3 md:px-8">
     <div className="group flex w-full flex-col gap-0">
+      {userMessageIndex >= 0 ? (
+        <div className="mb-2 border-b border-border/65 pb-3">
+          <TaskDuration messages={messages} userMessageIndex={userMessageIndex} isStreaming />
+        </div>
+      ) : null}
       <div className="flex items-center py-0 text-sm" role="status" aria-live="polite">
         <span className="live-activity-text font-medium tracking-[-0.01em]">
           {`${label ?? liveActivityLabel("responding")}...`}
@@ -1013,7 +1020,8 @@ const LoadingMessage = React.memo(({ label }: { label?: string }) => (
       </div>
     </div>
   </Message>
-))
+  )
+})
 
 LoadingMessage.displayName = "LoadingMessage"
 
@@ -1405,7 +1413,7 @@ export function MessageList({ messages, status, activityStatus = "idle", retryAc
       })}
 
       {status === "streaming" && !compactionRunning && (!retryActivity || activityStatus === "stalled") ? (
-        <LoadingMessage label={activityLabel ?? undefined} />
+        <LoadingMessage label={activityLabel ?? undefined} messages={messages} />
       ) : null}
       {retryActivity ? <RetryMessage status={retryActivity} /> : null}
       {error && !hasSessionErrorMessage ? <SessionErrorMessage error={error} /> : null}

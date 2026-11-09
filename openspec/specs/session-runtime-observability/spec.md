@@ -155,6 +155,29 @@ and SHALL deduplicate messages by their stable runtime identity.
 - **THEN** the active conversation refreshes and displays the accepted user turn without requiring session navigation
 - **AND** a concurrently received event for the same message does not create a duplicate turn
 
+### Requirement: Visible active sessions use snapshot reconciliation as an event-stream backstop
+
+While a visible session has authoritative active-run or busy evidence, the client
+SHALL perform low-frequency, coalesced snapshot reconciliation. This recovery path
+SHALL stop when the session is hidden or no longer active, and SHALL perform one
+final reconciliation when an observed run ends. It is a transcript recovery
+backstop and SHALL NOT be interpreted as proof that the event-stream transport is
+healthy. Quiet idle sessions SHALL NOT be polled by this mechanism.
+
+#### Scenario: Event stream remains open but stops delivering bytes
+
+- **GIVEN** the active-run coordinator reports that the visible session is running
+- **AND** the event stream neither closes nor delivers the assistant message events
+- **WHEN** a later authoritative snapshot contains assistant output
+- **THEN** the current conversation displays that output without session navigation
+- **AND** overlapping reconciliation reads are coalesced
+
+#### Scenario: Active run reaches a terminal state
+
+- **WHEN** a previously observed visible run becomes inactive
+- **THEN** the client performs one final snapshot reconciliation
+- **AND** stops periodic reconciliation for that session
+
 ### Requirement: Incomplete live messages permit bounded snapshot recovery
 
 A snapshot made stale by live events MAY fill missing stable-ID parts of existing

@@ -12,6 +12,13 @@ JuggleWork Server SHALL be the single owner of workspace runtime state, managed 
 - **WHEN** Electron starts a local JuggleWork workspace
 - **THEN** it embeds JuggleWork Server and Server starts and owns the managed OpenCode child without invoking an orchestrator process
 
+#### Scenario: Local connection details become available after the first probe
+- **GIVEN** Desktop's first local Server information read completes before a usable endpoint is available
+- **WHEN** a later information read returns the current loopback URL and credentials
+- **THEN** Desktop keeps dependent feature pages in a loading state during a bounded startup retry window
+- **AND** Desktop immediately rechecks Server health and publishes the shared ready client
+- **AND** a feature page can use the local Server on its first visit without requiring a manual retry
+
 #### Scenario: Headless starts a local runtime
 - **WHEN** a headless deployment starts JuggleWork Server with managed OpenCode enabled and a resolved OpenCode executable
 - **THEN** Server exposes the JuggleWork API and manages OpenCode without a separate orchestrator process
