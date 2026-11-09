@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
+  CalendarDays,
   Clapperboard,
   ArrowUpRight,
   Check,
@@ -196,6 +197,44 @@ function TaskRailIcon({ active }: { active: boolean }) {
   );
 }
 
+function CalendarRailIcon({ active }: { active: boolean }) {
+  // Selected: solid body with the header rule and date dots cut out in the active background color,
+  // matching the other filled rail icons instead of a plain filled silhouette.
+  const detailColor = active ? "var(--dls-active)" : "currentColor";
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      data-calendar-rail-icon
+    >
+      <path d="M8 2v4" fill="none" />
+      <path d="M16 2v4" fill="none" />
+      <rect
+        x="3"
+        y="4"
+        width="18"
+        height="18"
+        rx="2.5"
+        fill={active ? "currentColor" : "none"}
+        stroke={active ? "none" : "currentColor"}
+      />
+      <path d="M3 10h18" fill="none" stroke={detailColor} data-calendar-rail-header />
+      <g fill="none" stroke={detailColor} strokeWidth="2.4" data-calendar-rail-dates>
+        <path d="M8 14h.01" />
+        <path d="M12 14h.01" />
+        <path d="M16 14h.01" />
+        <path d="M8 18h.01" />
+        <path d="M12 18h.01" />
+        <path d="M16 18h.01" />
+      </g>
+    </svg>
+  );
+}
+
 function ToonFactoryRailIcon({ active }: { active: boolean }) {
   const detailColor = active ? "var(--dls-active)" : "currentColor";
   const bodyFill = active ? "currentColor" : "none";
@@ -348,6 +387,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
   const taskScope = useTaskScope();
   const automationsActive = location.pathname.startsWith("/automations");
   const tasksActive = location.pathname.startsWith("/tasks");
+  const calendarActive = parseWorkspaceAppPath(location.pathname)?.view === "calendar";
   const { hasActiveRuns } = useAutomationActivity();
   const localWorkspaceIndicator = useLocalWorkspaceIndicator();
   const chatView = useJuggleChatStore((state) => state.view);
@@ -423,6 +463,12 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
     navigate("/tasks");
   };
   const toggleTasksPinned = () => setPinnedNavigationItems(setAppNavigationItemPinned("tasks", !tasksPinned));
+  const calendarPinned = pinnedNavigationItems.includes("calendar");
+  const openCalendar = () => {
+    setNavigationMenuOpen(false);
+    navigate("/calendar");
+  };
+  const toggleCalendarPinned = () => setPinnedNavigationItems(setAppNavigationItemPinned("calendar", !calendarPinned));
   const reviewsPinned = pinnedNavigationItems.includes("reviews");
   const openReviews = () => {
     setNavigationMenuOpen(false);
@@ -661,6 +707,46 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
             </div>
             <div
               className="group flex items-center gap-1 rounded-2xl transition-colors hover:bg-accent focus-within:bg-accent"
+              data-testid="app-navigation-more-calendar-row"
+            >
+              <DropdownMenuItem
+                onClick={openCalendar}
+                className="min-w-0 flex-1 bg-transparent py-[5px] focus:bg-transparent! data-highlighted:bg-transparent!"
+                data-testid="app-navigation-more-calendar"
+                data-active={calendarActive ? "true" : undefined}
+                aria-current={calendarActive ? "page" : undefined}
+              >
+                <CalendarDays />
+                <span className="truncate">{t("navigation.calendar")}</span>
+              </DropdownMenuItem>
+              <button
+                type="button"
+                aria-label={calendarPinned ? t("navigation.unpin_item") : t("navigation.pin_item")}
+                title={calendarPinned ? t("navigation.unpin_item") : t("navigation.pin_item")}
+                aria-pressed={calendarPinned}
+                tabIndex={0}
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  toggleCalendarPinned();
+                }}
+                className={cn(
+                  "flex size-8 shrink-0 items-center justify-center rounded-xl text-muted-foreground transition-[background-color,color,opacity,transform] duration-150",
+                  "hover:text-popover-foreground active:scale-[0.94]",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/35",
+                  calendarPinned
+                    ? "text-popover-foreground opacity-100"
+                    : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 focus:pointer-events-auto focus:opacity-100",
+                )}
+                data-testid="app-navigation-pin-calendar"
+                data-pinned={calendarPinned ? "true" : undefined}
+              >
+                <Pin className={cn("size-4", calendarPinned && "fill-current")} />
+              </button>
+            </div>
+            <div
+              className="group flex items-center gap-1 rounded-2xl transition-colors hover:bg-accent focus-within:bg-accent"
               data-testid="app-navigation-more-reviews-row"
             >
               <DropdownMenuItem
@@ -736,7 +822,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
             </div>
           </DropdownMenuContent>
         </DropdownMenu>
-        {tasksPinned || reviewsPinned || toonFactoryPinned ? (
+        {tasksPinned || calendarPinned || reviewsPinned || toonFactoryPinned ? (
           <div className="mt-0.5 flex flex-col items-center gap-2" data-app-navigation-pinned-items>
             <div
               className="h-px w-6 rounded-full bg-dls-secondary/20"
@@ -756,6 +842,17 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
               showTooltip={!tasksActive || !appSidebarPreview.enabled}
             >
               <TaskRailIcon active={tasksActive} />
+            </RailButton>
+            ) : null}
+            {calendarPinned ? (
+            <RailButton
+              label={t("navigation.calendar")}
+              active={calendarActive}
+              onClick={openCalendar}
+              testId="app-rail-pinned-calendar"
+              onPreviewMenuChange={props.onPreviewMenuChange}
+            >
+              <CalendarRailIcon active={calendarActive} />
             </RailButton>
             ) : null}
             {reviewsPinned ? (

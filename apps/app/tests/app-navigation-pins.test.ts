@@ -32,6 +32,14 @@ describe("app navigation pins", () => {
   test("accepts only known, unique pinnable destinations", () => {
     expect(parsePinnedAppNavigationItems('["reviews","unknown","reviews"]')).toEqual(["reviews"]);
     expect(parsePinnedAppNavigationItems('["tasks","reviews","toon-factory","toon-factory"]')).toEqual(["tasks", "reviews", "toon-factory"]);
+    expect(parsePinnedAppNavigationItems('["calendar","tasks","calendar"]')).toEqual(["calendar", "tasks"]);
+  });
+
+  test("keeps legacy pin data and drops unknown or malformed values without losing valid pins", () => {
+    expect(parsePinnedAppNavigationItems('["tasks","reviews"]')).toEqual(["tasks", "reviews"]);
+    expect(parsePinnedAppNavigationItems('["calendar", 7, null, {"id":"calendar"}, "future-app"]')).toEqual(["calendar"]);
+    expect(parsePinnedAppNavigationItems('{"calendar":true}')).toEqual([]);
+    expect(parsePinnedAppNavigationItems('"calendar"')).toEqual([]);
     expect(parsePinnedAppNavigationItems("not json")).toEqual([]);
     expect(parsePinnedAppNavigationItems(null)).toEqual([]);
   });
@@ -65,6 +73,11 @@ describe("app navigation pins", () => {
     expect(setAppNavigationItemPinned("reviews", true)).toEqual(["tasks", "reviews"]);
     expect(readPinnedAppNavigationItems()).toEqual(["tasks", "reviews"]);
     expect(storage.getItem(APP_NAVIGATION_PINS_STORAGE_KEY)).toBe('["tasks","reviews"]');
+    expect(events.at(-1)).toEqual({ type: appNavigationPinsChangedEvent, detail: ["tasks", "reviews"] });
+
+    expect(setAppNavigationItemPinned("calendar", true)).toEqual(["tasks", "reviews", "calendar"]);
+    expect(storage.getItem(APP_NAVIGATION_PINS_STORAGE_KEY)).toBe('["tasks","reviews","calendar"]');
+    expect(setAppNavigationItemPinned("calendar", false)).toEqual(["tasks", "reviews"]);
     expect(events.at(-1)).toEqual({ type: appNavigationPinsChangedEvent, detail: ["tasks", "reviews"] });
 
     expect(setAppNavigationItemPinned("toon-factory", true)).toEqual(["tasks", "reviews", "toon-factory"]);

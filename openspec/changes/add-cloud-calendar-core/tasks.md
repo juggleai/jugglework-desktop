@@ -54,12 +54,12 @@
 
 ## 7. Desktop 路由、导航与月视图
 
-- [ ] 7.1 将全局 `/calendar` 接入 retained app shell，增加 Calendar domain 页面和登录/能力 gate，确保不依赖 workspace、Session、Agent 或 AI Provider，并以 route tests 和 no-Agent render smoke test 验证
-- [ ] 7.2 在 More 增加 Calendar 入口并扩展既有 pin parser/rail 支持置顶和取消置顶，保持旧 pin 数据及未知值安全迁移，并以 navigation tests 验证 active 状态、键盘操作和持久化
-- [ ] 7.3 实现 Calendar 筛选列表、迷你月历、上月/下月/今天导航和 6 周主月格，使用现有设计 token 与 i18n，并以 component tests 覆盖月份边界、筛选隐藏不改云端和已删除 Calendar 退出
-- [ ] 7.4 实现月格 Event 布局和溢出入口，按保存时区/全天日期/排他结束覆盖日期且稳定排序，并以 component tests 覆盖单日、跨月、跨日定时、DST、午夜结束及多事件溢出
-- [ ] 7.5 实现选中日议程、空状态和 Event 详情，全天先于定时且相同开始时间以稳定 ID 排序，并以 component tests 验证月格/迷你月历/议程联动及远端删除时详情退出
-- [ ] 7.6 实现在线 Event 创建、编辑、时间类型转换和删除表单，提交前校验 title/Calendar/time union，区分 pending/saved/validation/network/conflict 状态，并以 interaction tests 验证权威响应、失败草稿和 conflict 解决入口
+- [x] 7.1 将全局 `/calendar` 接入 retained app shell，增加 Calendar domain 页面和登录/能力 gate，确保不依赖 workspace、Session、Agent 或 AI Provider，并以 route tests 和 no-Agent render smoke test 验证
+- [x] 7.2 在 More 增加 Calendar 入口并扩展既有 pin parser/rail 支持置顶和取消置顶，保持旧 pin 数据及未知值安全迁移，并以 navigation tests 验证 active 状态、键盘操作和持久化
+- [x] 7.3 实现 Calendar 筛选列表、迷你月历、上月/下月/今天导航和 6 周主月格，使用现有设计 token 与 i18n，并以 component tests 覆盖月份边界、筛选隐藏不改云端和已删除 Calendar 退出
+- [x] 7.4 实现月格 Event 布局和溢出入口，按保存时区/全天日期/排他结束覆盖日期且稳定排序，并以 component tests 覆盖单日、跨月、跨日定时、DST、午夜结束及多事件溢出
+- [x] 7.5 实现选中日议程、空状态和 Event 详情，全天先于定时且相同开始时间以稳定 ID 排序，并以 component tests 验证月格/迷你月历/议程联动及远端删除时详情退出
+- [x] 7.6 实现在线 Event 创建、编辑、时间类型转换和删除表单，提交前校验 title/Calendar/time union，区分 pending/saved/validation/network/conflict 状态，并以 interaction tests 验证权威响应、失败草稿和 conflict 解决入口
 - [ ] 7.7 实现离线页面与表单体验：已覆盖范围只读、未覆盖范围明确不完整、delete/权威 save 不可用、草稿明确未同步，并以 interaction tests 验证绝不出现虚假“已保存”或自动上线写入
 - [ ] 7.8 完成窄窗口和标准桌面布局、键盘月格导航、可见焦点、语义标签及 Dialog 焦点恢复，并以组件可访问性测试和 Desktop 两种窗口尺寸的可视 smoke test 验证无核心操作依赖整页横向滚动
 - [ ] 7.9 补齐所有支持 locale 的 Calendar 导航、时间、离线、冲突、校验和空状态文案，并运行 `pnpm --filter @jugglework/app test:i18n` 验证无缺失键

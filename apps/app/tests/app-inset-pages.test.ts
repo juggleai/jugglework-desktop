@@ -179,7 +179,7 @@ describe("secondary app inset shells", () => {
     const previewHost = read("react-app/shell/app-navigation-sidebar-preview.tsx");
     const wrapper = workspaceRoute.slice(workspaceRoute.indexOf("className={settingsVisible ||"), workspaceRoute.indexOf('data-testid="retained-session-surface"'));
     expect(workspaceRoute).toContain("navigationPreview.workspaceTarget");
-    expect(wrapper).toContain("settingsVisible || chatVisible || appsVisible || automationsVisible || tasksVisible || reviewsVisible || toonFactoryVisible");
+    expect(wrapper).toContain("settingsVisible || chatVisible || appsVisible || automationsVisible || tasksVisible || reviewsVisible || toonFactoryVisible || calendarVisible");
     expect(wrapper).toContain('"invisible absolute inset-0 z-50');
     expect(wrapper).toContain("[&_[data-session-list-preview=true]]:visible");
     expect(wrapper).toContain("[&_[data-session-list-preview=true]]:pointer-events-auto");
@@ -187,7 +187,7 @@ describe("secondary app inset shells", () => {
     expect(wrapper).toContain(': "hidden"');
     expect(wrapper).toContain(': "h-full min-h-0"');
     expect(wrapper).not.toContain("opacity-0");
-    expect(workspaceRoute).toContain("surfaceVisible={automationSessionVisible || !(settingsVisible || chatVisible || appsVisible || automationsVisible || tasksVisible || reviewsVisible || toonFactoryVisible)}");
+    expect(workspaceRoute).toContain("surfaceVisible={automationSessionVisible || !(settingsVisible || chatVisible || appsVisible || automationsVisible || tasksVisible || reviewsVisible || toonFactoryVisible || calendarVisible)}");
     expect(previewHost).toContain("workspaceTarget: TaskScope | null");
     expect(previewHost).toContain("onWorkspaceTriggerChange");
   });

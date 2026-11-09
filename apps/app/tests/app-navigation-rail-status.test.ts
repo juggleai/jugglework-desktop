@@ -50,7 +50,7 @@ describe("Code Review navigation", () => {
   test("shares the pinned separator while keeping the Review entry conditional", () => {
     const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
     const pinnedSection = source.slice(
-      source.indexOf("{tasksPinned || reviewsPinned || toonFactoryPinned ? ("),
+      source.indexOf("{tasksPinned || calendarPinned || reviewsPinned || toonFactoryPinned ? ("),
       source.indexOf("</nav>"),
     );
     const pinnedBlock = source.slice(source.indexOf("{reviewsPinned ? ("), source.indexOf(") : null}", source.indexOf("{reviewsPinned ? (")));
@@ -78,6 +78,45 @@ describe("Code Review navigation", () => {
     expect(menuRow).not.toContain('group-focus-within:pointer-events-auto');
     expect(menuRow).not.toContain('hover:bg-foreground/10');
     expect(source).toContain('className="w-[180px] rounded-2xl bg-popover/95 p-0.5');
+  });
+});
+
+describe("Calendar navigation", () => {
+  const calendarRow = railSource.slice(
+    railSource.indexOf('data-testid="app-navigation-more-calendar-row"'),
+    railSource.indexOf('data-testid="app-navigation-more-reviews-row"'),
+  );
+  const pinnedBlock = railSource.slice(
+    railSource.indexOf("{calendarPinned ? ("),
+    railSource.indexOf(") : null}", railSource.indexOf("{calendarPinned ? (")),
+  );
+
+  test("lists Calendar in More between Tasks and Code Review", () => {
+    expect(railSource.indexOf('data-testid="app-navigation-more-tasks-row"')).toBeLessThan(railSource.indexOf('data-testid="app-navigation-more-calendar-row"'));
+    expect(railSource.indexOf('data-testid="app-navigation-more-calendar-row"')).toBeLessThan(railSource.indexOf('data-testid="app-navigation-more-reviews-row"'));
+    expect(calendarRow).toContain("onClick={openCalendar}");
+    expect(calendarRow).toContain('data-testid="app-navigation-more-calendar"');
+    expect(railSource).toContain('navigate("/calendar")');
+  });
+
+  test("marks the active Calendar entry from the parsed global route", () => {
+    expect(railSource).toContain('const calendarActive = parseWorkspaceAppPath(location.pathname)?.view === "calendar"');
+    expect(calendarRow).toContain('aria-current={calendarActive ? "page" : undefined}');
+    expect(pinnedBlock).toContain("active={calendarActive}");
+  });
+
+  test("pins and unpins with a keyboard-reachable named toggle", () => {
+    expect(calendarRow).toContain('data-testid="app-navigation-pin-calendar"');
+    expect(calendarRow).toContain("tabIndex={0}");
+    expect(calendarRow).toContain("aria-pressed={calendarPinned}");
+    expect(calendarRow).toContain('aria-label={calendarPinned ? t("navigation.unpin_item") : t("navigation.pin_item")}');
+    expect(calendarRow).toContain("focus:pointer-events-auto focus:opacity-100");
+    expect(railSource).toContain('setAppNavigationItemPinned("calendar", !calendarPinned)');
+  });
+
+  test("shows the pinned rail entry only while pinned and keeps it routing to /calendar", () => {
+    expect(pinnedBlock).toContain('testId="app-rail-pinned-calendar"');
+    expect(pinnedBlock).toContain("onClick={openCalendar}");
   });
 });
 
@@ -251,15 +290,20 @@ describe("navigation rail visual proportions", () => {
     expect(automation).toContain('tooltipLabel={t("automation.tabs.tasks")}');
   });
 
-  test("keeps selected Automation, Tasks, and Toon Factory icon details visible", () => {
+  test("keeps selected Automation, Tasks, Calendar, and Toon Factory icon details visible", () => {
     const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
     const automationIcon = source.slice(source.indexOf("function AutomationRailIcon"), source.indexOf("function TaskRailIcon"));
-    const taskIcon = source.slice(source.indexOf("function TaskRailIcon"), source.indexOf("function ToonFactoryRailIcon"));
+    const taskIcon = source.slice(source.indexOf("function TaskRailIcon"), source.indexOf("function CalendarRailIcon"));
+    const calendarIcon = source.slice(source.indexOf("function CalendarRailIcon"), source.indexOf("function ToonFactoryRailIcon"));
     const toonFactoryIcon = source.slice(source.indexOf("function ToonFactoryRailIcon"), source.indexOf("function RailButton"));
     expect(automationIcon).toContain('stroke={detailColor} data-automation-clock-hands');
     expect(taskIcon).toContain('active ? "var(--dls-active)" : "currentColor"');
     expect(taskIcon).toContain('stroke={detailColor}');
     expect(taskIcon).toContain('data-task-rail-check');
+    expect(calendarIcon).toContain('active ? "var(--dls-active)" : "currentColor"');
+    expect(calendarIcon).toContain('stroke={detailColor} data-calendar-rail-header');
+    expect(calendarIcon).toContain('stroke={detailColor} strokeWidth="2.4" data-calendar-rail-dates');
+    expect(source).toContain('<CalendarRailIcon active={calendarActive} />');
     expect(toonFactoryIcon.match(/data-toon-factory-clapper-detail/g)).toHaveLength(2);
     expect(toonFactoryIcon).toContain('active ? "var(--dls-active)" : "currentColor"');
     expect(toonFactoryIcon).toContain('const bodyStroke = active ? "none" : "currentColor"');

@@ -38,6 +38,18 @@ mock.module("../src/react-app/domains/automations/automation-page", () => ({
 mock.module("../src/react-app/domains/tasks/task-page", () => ({
   TaskPage: () => <div data-testid="mock-task-page" />,
 }));
+// Stub the Calendar page's providers instead of the page module itself: Bun module mocks are
+// process-wide, and calendar tests in the same run load the real CalendarPage.
+mock.module("../src/react-app/domains/settings/cloud/cloud-session-provider", () => ({
+  useCloudSession: () => ({ isSignedIn: false, baseUrl: "", activeOrganization: null, client: {} }),
+}));
+mock.module("../src/react-app/domains/cloud/desktop-config-provider", () => ({
+  useDesktopConfig: () => ({ loading: false, config: {} }),
+}));
+mock.module("../src/react-app/shell/app-navigation-rail", () => ({
+  APP_NAVIGATION_RAIL_WIDTH: 48,
+  AppNavigationRail: () => null,
+}));
 mock.module("../src/react-app/domains/reviews/review-page", () => ({ ReviewPage: (props: Record<string, any>) => { latestReviewProps = props; return null; } }));
 mock.module("../src/react-app/shell/workspace-shell-actions", () => ({
   WorkspaceShellActionsProvider: ({ children }: { children: React.ReactNode }) => children,
@@ -77,6 +89,7 @@ test("retains the session and draft while only the list is revealed over every d
       "/workspace/workspace-1/chat",
       "/automations",
       "/tasks",
+      "/calendar",
       "/workspace/workspace-1/reviews",
       "/workspace/workspace%201/toon-factory",
     ]) {

@@ -1,9 +1,9 @@
 export const APP_NAVIGATION_PINS_STORAGE_KEY = "jugglework.navigation.pinnedItems";
 export const appNavigationPinsChangedEvent = "jugglework-navigation-pins-changed";
 
-export type PinnableAppNavigationItem = "tasks" | "reviews" | "toon-factory";
+export type PinnableAppNavigationItem = "tasks" | "calendar" | "reviews" | "toon-factory";
 
-const PINNABLE_ITEMS = new Set<PinnableAppNavigationItem>(["tasks", "reviews", "toon-factory"]);
+const PINNABLE_ITEMS = new Set<PinnableAppNavigationItem>(["tasks", "calendar", "reviews", "toon-factory"]);
 
 export function parsePinnedAppNavigationItems(raw: string | null | undefined): PinnableAppNavigationItem[] {
   if (!raw) return [];

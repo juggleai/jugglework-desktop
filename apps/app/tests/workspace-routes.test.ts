@@ -89,6 +89,10 @@ describe("workspace app path parsing", () => {
   test("parses global task routes", () => {
     expect(parseWorkspaceAppPath("/tasks")).toEqual({ view: "tasks", workspaceId: null, taskId: null });
     expect(parseWorkspaceAppPath("/tasks/task%2F42")).toEqual({ view: "tasks", workspaceId: null, taskId: "task/42" });
+    expect(parseWorkspaceAppPath("/calendar")).toEqual({ view: "calendar", workspaceId: null });
+    expect(parseWorkspaceAppPath("/calendar/")).toEqual({ view: "calendar", workspaceId: null });
+    expect(parseWorkspaceAppPath("/calendar/2026-11")).toBeNull();
+    expect(parseWorkspaceAppPath("/workspace/workspace-1/calendar")).toBeNull();
   });
 });
 
