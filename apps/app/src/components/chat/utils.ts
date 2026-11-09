@@ -200,6 +200,15 @@ export interface TaskTiming {
   running: boolean
 }
 
+export function loadingTaskUserMessageIndex(messages: UIMessage[]): number {
+  const userMessageIndex = messages.findLastIndex((message) => message.role === "user")
+  if (userMessageIndex < 0 || getMessageCreated(messages[userMessageIndex]!) === null) return -1
+  const hasVisibleAssistantTask = messages.slice(userMessageIndex + 1).some((message) =>
+    message.role === "assistant" && (message.parts.length > 0 || isTaskStoppedMessage(message)),
+  )
+  return hasVisibleAssistantTask ? -1 : userMessageIndex
+}
+
 export function getTaskTiming(
   messages: UIMessage[],
   userMessageIndex: number,

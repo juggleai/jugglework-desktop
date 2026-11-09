@@ -68,6 +68,7 @@ import {
   type ComposerVideoModelOption,
 } from "./composer/video-generation";
 import { effectiveSessionRunning, isSessionBusyError, shouldReportAbortFailure } from "./session-run-recovery";
+import { useActiveSnapshotReconciliation } from "./active-snapshot-reconciliation";
 import { imageModelsQueryOptions, mediaModelQueryScope, videoModelsQueryOptions } from "@/react-app/domains/connections/media-model-queries";
 import { effectiveGenerationState, generationDraftAvailable } from "./composer/generation-model-reconciliation";
 import {
@@ -962,6 +963,16 @@ export function SessionSurface(props: SessionSurfaceProps) {
     activityRunEnded: sessionActivityRunEnded,
     coordinatorActive: coordinatorRun !== null,
     activityTerminalFailure: sessionActivityStatus === "error" || sessionActivityStatus === "incomplete",
+  });
+  const reconcileActiveSnapshot = useCallback(
+    () => queryClient.refetchQueries({ queryKey: snapshotQueryKey, exact: true, type: "active" }),
+    [queryClient, snapshotQueryKey],
+  );
+  useActiveSnapshotReconciliation({
+    active: chatStreaming,
+    visible: props.visible !== false,
+    scopeKey: surfaceIdentity,
+    readSnapshot: reconcileActiveSnapshot,
   });
   const showTaskProgress = shouldShowTaskProgress({
     kind: taskProgressKind,
