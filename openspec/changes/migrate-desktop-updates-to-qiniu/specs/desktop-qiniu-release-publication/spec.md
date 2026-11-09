@@ -307,7 +307,7 @@ A rollout-eligible Windows version SHALL publish Authenticode-signed x64 and arm
 - **AND** the stable Windows channel is not promoted
 
 ### Requirement: Promotion continuation provides read-only staged diagnostics
-The committed macOS continuation SHALL support an independent `--verify-only` CLI path and a default-false `verification_only` boolean in the existing `promotion-only` workflow. Verification-only SHALL require `promote=false`, retain exact candidate/version/source ancestry/committed-content checks and all package trust and immutable/CDN gates, and return before calling promotion. It MUST NOT inspect, acquire, recover or delete a promotion lock, write remote objects or metadata, or refresh CDN. Normal continuation SHALL retain its existing exact-version exceptions and promotion gates.
+The committed macOS continuation SHALL provide read-only `--verify-only` CLI and default-false `verification_only` workflow modes requiring `promote=false`. It SHALL preserve candidate, package trust and immutable/CDN gates and return before promotion without lock access, remote writes or CDN refresh. Normal continuation SHALL retain existing exact-version exceptions and promotion gates.
 
 #### Scenario: Exact macOS ARM64 1.2.33 continuation
 - **WHEN** a trusted dev promotion-only dispatch selects version 1.2.33
@@ -318,6 +318,7 @@ The committed macOS continuation SHALL support an independent `--verify-only` CL
 #### Scenario: Hosted verification-only dispatch
 - **WHEN** a trusted dev dispatch supplies promotion-only, verification_only=true and promote=false for an approved exact candidate
 - **THEN** all five immutable objects are downloaded and verified, the manifest is validated, ZIP and DMG package gates run, and fresh Qiniu metadata/public CDN checks pass before verification succeeds
+- **AND** exact candidate/version/source ancestry/committed-content checks remain required; verification returns before calling promotion and MUST NOT inspect, acquire, recover or delete a promotion lock, write remote objects or metadata, or refresh CDN
 - **AND** a held promotion lock or changed mutable predecessor is neither accessed nor changed
 - **AND** build jobs cannot run with verification_only=true, and mismatched CLI/input boolean pairs fail closed
 
