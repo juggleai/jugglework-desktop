@@ -159,3 +159,34 @@ test('member row invitation sends one private card, never a group notification',
   assert.equal(sent.length,1);
  } finally {delete globalThis.__meetingInviteRuntime;}
 });
+
+test('remote audio retries blocked playback, handles late audio tracks and detaches on leave', async () => {
+ const {bindRemoteAudio}=await load('../src/react-app/domains/meeting/remote-audio.ts');
+ const stream=new EventTarget();const tracks=[];
+ stream.getAudioTracks=()=>tracks;
+ let plays=0,paused=0,reject=true;const states=[];
+ const element={srcObject:null,muted:true,volume:0,play:async()=>{plays++;if(reject)throw Error('NotAllowedError');},pause:()=>paused++};
+ const binding=bindRemoteAudio(element,stream,value=>states.push(value));
+ await Promise.resolve();assert.equal(plays,0);
+ tracks.push({readyState:'live'});stream.dispatchEvent(new Event('addtrack'));
+ await new Promise(resolve=>setTimeout(resolve,0));
+ assert.equal(states.at(-1),true);assert.equal(element.muted,false);assert.equal(element.volume,1);
+ reject=false;await binding.play();assert.equal(states.at(-1),false);
+ binding.dispose();assert.equal(element.srcObject,null);assert.equal(paused,1);
+ const previous=plays;stream.dispatchEvent(new Event('addtrack'));await binding.play();
+ assert.equal(plays,previous);
+});
+
+test('meeting cards pass chat type classification and have readable conversation previews', async () => {
+ const source=await fs.readFile(new URL('../src/react-app/domains/jugglechat/components.tsx',import.meta.url),'utf8');
+ const file=ts.createSourceFile('components.tsx',source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);
+ const nodes=file.statements.filter(node =>
+   (ts.isFunctionDeclaration(node)&&node.name?.text==='messagePreview') ||
+   (ts.isVariableStatement(node)&&node.declarationList.declarations.some(d=>['MESSAGE_NAMES','SUPPORTED_MESSAGE_NAMES'].includes(d.name.getText(file)))));
+ const code=ts.transpileModule(nodes.map(node=>node.getText(file)).join('\n'),{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
+ const check=new Function(code+'; return { supported: SUPPORTED_MESSAGE_NAMES, preview: messagePreview };')();
+ for(const name of ['jw:meeting-card','jw:meeting-invite']){
+   assert.equal(check.supported.has(name),true);
+   assert.equal(check.preview({name,content:{title:'产品讨论'}}),'[会议] 产品讨论');
+ }
+});

@@ -222,6 +222,7 @@ function formatConversationTime(value?: number) {
 
 function messagePreview(message?: ChatMessage) {
   if (!message) return t("chat.preview_none");
+  if (message.name === "jw:meeting-card" || message.name === "jw:meeting-invite") return `[会议] ${String(message.content?.title || "会议邀请")}`;
   if (message.name === "jg:text") return mentionText(message);
   if (message.name === "jg:img") return t("chat.preview_image");
   if (message.name === "jg:file") return `${t("chat.preview_file")} ${message.content?.name || ""}`;
@@ -419,6 +420,8 @@ function messageText(message: ChatMessage) {
 }
 
 const MESSAGE_NAMES = {
+  meetingCard: "jw:meeting-card",
+  meetingInvite: "jw:meeting-invite",
   text: "jg:text",
   image: "jg:img",
   voice: "jg:voice",

@@ -3311,6 +3311,7 @@ async function createMainWindow() {
       // The renderer owns session dispatch + event streams; keep it running
       // while hidden/minimized so background tasks are not interrupted.
       backgroundThrottling: false,
+      autoplayPolicy: "no-user-gesture-required",
       preload: preloadPath,
       contextIsolation: true,
       nodeIntegration: false,
@@ -3424,10 +3425,10 @@ async function createMainWindow() {
     // The meeting UI is a React portal owned by the authenticated main renderer.
     // No second app runtime, IM login or preload is loaded in the blank child.
     if (url === "about:blank" && frameName === "jugglework-meeting-mini") {
-      return { action: "allow", overrideBrowserWindowOptions: { width: 260, height: 82, minWidth: 260, minHeight: 82, show: false, frame: false, resizable: false, maximizable: false, fullscreenable: false, skipTaskbar: true, roundedCorners: true, backgroundColor: "#ffffff", webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true, preload: undefined, backgroundThrottling: false } } };
+      return { action: "allow", overrideBrowserWindowOptions: { width: 260, height: 82, minWidth: 260, minHeight: 82, show: false, frame: false, resizable: false, maximizable: false, fullscreenable: false, skipTaskbar: true, roundedCorners: true, backgroundColor: "#ffffff", webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true, preload: undefined, backgroundThrottling: false, autoplayPolicy: "no-user-gesture-required" } } };
     }
     if (url === "about:blank" && frameName === "jugglework-meeting") {
-      return { action: "allow", overrideBrowserWindowOptions: { width: 1200, height: 800, minWidth: 720, minHeight: 540, titleBarStyle: "hidden", autoHideMenuBar: true, webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true, preload: undefined, backgroundThrottling: false } } };
+      return { action: "allow", overrideBrowserWindowOptions: { width: 1200, height: 800, minWidth: 720, minHeight: 540, titleBarStyle: "hidden", autoHideMenuBar: true, webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true, preload: undefined, backgroundThrottling: false, autoplayPolicy: "no-user-gesture-required" } } };
     }
     if (url.startsWith("file://")) {
       try {

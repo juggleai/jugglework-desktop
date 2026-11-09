@@ -366,7 +366,7 @@ export function MeetingPage() {
                 onClick={() =>
                   void run(() =>
                     create({
-                      title: `${displayName || "我"}的即时会议`,
+                      title: `${displayName || "我"}的音视频会议`,
                       immediate: true,
                       startAt: new Date().toISOString(),
                       endAt: new Date(Date.now() + 1800000).toISOString(),

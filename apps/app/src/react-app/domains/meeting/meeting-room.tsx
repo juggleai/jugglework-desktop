@@ -1,9 +1,10 @@
+import { bindRemoteAudio } from "./remote-audio";
 import { MeetingMembers } from "./meeting-members";
 import { MeetingInvitePicker } from "./meeting-invite-picker";
 import { MeetingPermissionNotice } from "./permission-notice";
 import { focusMeetingWindow, markMeetingMiniReady } from "@/app/lib/desktop";
 import { guardMeetingWindowClose } from "./window-lifecycle";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useDenAuth } from "../cloud/den-auth-provider";
 import { useJuggleChatStore } from "../jugglechat/store";
@@ -13,7 +14,7 @@ import { MeetingDialog } from "./meeting-page";
 import { MeetingIcon as Icon } from "./meeting-icons";
 import type { MediaTile } from "./zego-adapter";
 import "./meeting.css";
-function Video({ tile, local }: { tile: MediaTile; local: boolean }) {
+function Video({ tile }: { tile: MediaTile; local: boolean }) {
   const ref = useRef<HTMLVideoElement>(null);
   useEffect(() => {
     if (ref.current) {
@@ -24,7 +25,21 @@ function Video({ tile, local }: { tile: MediaTile; local: boolean }) {
       if (ref.current) ref.current.srcObject = null;
     };
   }, [tile.stream]);
-  return <video ref={ref} autoPlay playsInline muted={local} />;
+  return <video ref={ref} autoPlay playsInline muted />;
+}
+function RemoteAudio({ tile, onBlocked }: { tile: MediaTile; onBlocked: (id: string, blocked: boolean) => void }) {
+  const ref = useRef<HTMLAudioElement>(null);
+  useEffect(() => {
+    if (!ref.current) return;
+    const player = bindRemoteAudio(ref.current, tile.stream, value => onBlocked(tile.id, value));
+    const resume = () => { void player.play(); };
+    window.addEventListener("meeting:resume-audio", resume);
+    return () => {
+      window.removeEventListener("meeting:resume-audio", resume);
+      player.dispose();
+    };
+  }, [tile.id, tile.stream, onBlocked]);
+  return <audio ref={ref} autoPlay hidden data-meeting-remote-audio={tile.id} />;
 }
 export function MeetingRoomHost() {
   const s = useMeetingStore();
@@ -41,6 +56,15 @@ export function MeetingRoomHost() {
   const [message, setMessage] = useState("");
   const [popup, setPopup] = useState<Window | null>(null);
   const [speaker, setSpeaker] = useState(false);
+  const [blockedAudio, setBlockedAudio] = useState<Set<string>>(new Set());
+  const onAudioBlocked = useCallback((id: string, blocked: boolean) => {
+    setBlockedAudio(previous => {
+      if (previous.has(id) === blocked) return previous;
+      const next = new Set(previous);
+      if (blocked) next.add(id); else next.delete(id);
+      return next;
+    });
+  }, []);
   const [miniPopup, setMiniPopup] = useState<Window | null>(null);
   const uid = user?.id || "";
   const m = s.meeting;
@@ -227,6 +251,10 @@ export function MeetingRoomHost() {
         {s.error || message ? (
           <MeetingPermissionNotice message={message || s.error || ""} onClose={() => { setMessage(""); useMeetingStore.setState({ error: null }); }} />
         ) : null}
+        {blockedAudio.size > 0 ? <div className="notice" role="alert" style={{ margin: 0 }}>
+          <span>会议声音尚未播放，请点击重试。</span>
+          <button onClick={() => window.dispatchEvent(new Event("meeting:resume-audio"))}>播放会议声音</button>
+        </div> : null}
         <div className="room-main">
           <div className="stage">
             {s.tiles
@@ -398,6 +426,9 @@ export function MeetingRoomHost() {
   );
   return (
     <>
+      {s.tiles.filter(t => t.id !== "local" && t.id !== "share").map(tile =>
+        <RemoteAudio key={tile.id} tile={tile} onBlocked={onAudioBlocked} />
+      )}
       {popup && !popup.closed
         ? createPortal(content, popup.document.body)
         : null}
