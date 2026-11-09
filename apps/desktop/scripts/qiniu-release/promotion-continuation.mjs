@@ -39,12 +39,41 @@ const TYPES = ["zip", "dmg", "zip.blockmap", "dmg.blockmap"];
 const failureDetails = new WeakMap();
 const ERROR_NAMES = ["Error", "TypeError", "SyntaxError", "RangeError", "AbortError", "TimeoutError", "AggregateError"];
 const ERROR_CODES = ["ENOENT", "EEXIST", "EACCES", "EPERM", "ENOSPC", "EIO", "ETIMEDOUT", "ECONNRESET", "ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "ENOBUFS", "ABORT_ERR", "ERR_BUFFER_OUT_OF_BOUNDS"];
+const FETCH_CODES = ["UND_ERR_CONNECT_TIMEOUT", "UND_ERR_HEADERS_TIMEOUT", "UND_ERR_BODY_TIMEOUT", "UND_ERR_SOCKET", "UND_ERR_ABORTED",
+  "UND_ERR_RESPONSE_CONTENT_LENGTH_MISMATCH", "UND_ERR_REQ_CONTENT_LENGTH_MISMATCH", "UND_ERR_RES_EXCEEDED_MAX_SIZE",
+  "ERR_TLS_CERT_ALTNAME_INVALID", "CERT_HAS_EXPIRED", "CERT_NOT_YET_VALID", "CERT_REVOKED", "DEPTH_ZERO_SELF_SIGNED_CERT",
+  "SELF_SIGNED_CERT_IN_CHAIN", "UNABLE_TO_VERIFY_LEAF_SIGNATURE", "UNABLE_TO_GET_ISSUER_CERT_LOCALLY", "EPROTO",
+  "ENETUNREACH", "EHOSTUNREACH", "ENOMEM", "ERR_OUT_OF_MEMORY", "ERR_BUFFER_TOO_LARGE", "ERR_INVALID_URL", "ERR_INVALID_ARG_TYPE"];
+const SYSCALLS = ["getaddrinfo", "connect", "read", "write", "open"];
 const PACKAGE_STAGES = ["prepare", "extract", "mount", "inventory", "metadata", "signature", "architecture", "toon", "updater", "apple-trust", "runtime-version", "detach", "cleanup"];
 const STAGES = new Set(["candidate", "manifest.validate", "packages.prepare", "packages.verify", "dmg.outer-trust", "cdn.fresh", "promotion", "evidence.persist",
   ...[...TYPES, "manifest"].map((type) => `download.${type}`),
   ...["zip", "dmg"].flatMap((type) => PACKAGE_STAGES.map((stage) => `${type}.${stage}`))]);
 
-// Closed vocabulary only: never copy message, stack, cause, stdout/stderr, argv or paths.
+// Project cause/AggregateError trees into a bounded closed vocabulary, never raw errors.
+function safeCauses(error) {
+  const result = [];
+  const seen = new Set([error]);
+  const queue = [{ error: error?.cause, depth: 1 }];
+  if (Array.isArray(error?.errors)) queue.push(...error.errors.slice(0, 8).map((child) => ({ error: child, depth: 1 })));
+  for (let i = 0; i < queue.length && i < 8; i++) {
+    const { error: child, depth } = queue[i];
+    if (!child || typeof child !== "object" || seen.has(child)) continue;
+    seen.add(child);
+    const item = { depth };
+    if (ERROR_NAMES.includes(child.name)) item.errorName = child.name;
+    if ([...ERROR_CODES, ...FETCH_CODES].includes(child.code)) item.errorCode = child.code;
+    if (SYSCALLS.includes(child.syscall)) item.syscall = child.syscall;
+    if (Object.keys(item).length > 1) result.push(item);
+    if (depth < 4) {
+      if (child.cause) queue.push({ error: child.cause, depth: depth + 1 });
+      if (Array.isArray(child.errors)) queue.push(...child.errors.slice(0, 8).map((nested) => ({ error: nested, depth: depth + 1 })));
+    }
+  }
+  return result;
+}
+
+// Closed vocabulary only: never copy message, stack, raw cause, stdout/stderr, argv or paths.
 export function safeFailure(error, stage) {
   const known = error && typeof error === "object" ? failureDetails.get(error) : undefined;
   const failure = { stage: STAGES.has(stage) ? stage : "candidate", category: {
@@ -52,7 +81,9 @@ export function safeFailure(error, stage) {
     cdn: "cdn", promotion: "promotion", evidence: "persistence", candidate: "validation",
   }[(STAGES.has(stage) ? stage : "candidate").split(".")[0]] };
   if (ERROR_NAMES.includes(error?.name)) failure.errorName = error.name;
-  if (ERROR_CODES.includes(error?.code)) failure.errorCode = error.code;
+  if ([...ERROR_CODES, ...FETCH_CODES].includes(error?.code)) failure.errorCode = error.code;
+  const causes = safeCauses(error);
+  if (causes.length) failure.causes = causes;
   if (Number.isInteger(error?.status) && error.status >= 100 && error.status <= 599) failure.status = error.status;
   if (known) Object.assign(failure, known);
   return failure;
@@ -196,28 +227,57 @@ export async function loadCommittedCandidate({ root, environment = process.env,
 }
 
 export async function downloadCandidateObject(object, { fetchImpl = globalThis.fetch } = {}) {
-  const response = await fetchImpl(object.url, { redirect: "error", signal: AbortSignal.timeout(600_000) });
-  if (response.status !== 200 || response.headers.get("content-length") !== String(object.size)
-    || response.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase() !== object.mime || !response.body) {
-    const error = new Error("Candidate download metadata mismatch");
-    if (Number.isInteger(response.status) && response.status >= 100 && response.status <= 599) failureDetails.set(error, { status: response.status });
-    throw error;
-  }
-  const file = await open(object.path, "wx", 0o600);
+  const started = performance.now();
+  let phase = "headers";
+  let bytesReceived = 0;
+  let response;
   try {
-    let size = 0;
-    for await (const chunk of response.body) {
-      size += chunk.length;
-      if (size > object.size) throw new Error(`Candidate download exceeds expected size: ${object.key}`);
-      await file.writeFile(chunk);
+    response = await fetchImpl(object.url, { redirect: "error", signal: AbortSignal.timeout(600_000) });
+    phase = "metadata";
+    if (response.status !== 200 || response.headers.get("content-length") !== String(object.size)
+      || response.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase() !== object.mime || !response.body) {
+      const error = new Error("Candidate download metadata mismatch");
+      if (Number.isInteger(response.status) && response.status >= 100 && response.status <= 599) failureDetails.set(error, { status: response.status });
+      throw error;
     }
-    await file.sync();
+    phase = "open";
+    const file = await open(object.path, "wx", 0o600);
+    try {
+      phase = "body";
+      let size = 0;
+      for await (const chunk of response.body) {
+        size += chunk.length;
+        bytesReceived = size;
+        if (size > object.size) throw new Error(`Candidate download exceeds expected size: ${object.key}`);
+        phase = "write";
+        await file.writeFile(chunk);
+        phase = "body";
+      }
+      phase = "sync";
+      await file.sync();
+    } finally {
+      await file.close();
+    }
+    phase = "digest";
+    const actual = await inspectArtifact(object.path);
+    for (const field of ["size", "sha256", "sha512", "etag", "mime"]) {
+      if (actual[field] !== object[field]) throw new Error(`Candidate download ${field} mismatch: ${object.key}`);
+    }
+  } catch (error) {
+    const memory = process.memoryUsage();
+    const runtime = { platform: process.platform, arch: process.arch };
+    for (const [key, value] of [["nodeVersion", process.versions.node], ["undiciVersion", process.versions.undici]]) {
+      if (/^\d+\.\d+\.\d+$/.test(value ?? "")) runtime[key] = value;
+    }
+    const { stage, category, ...diagnostics } = safeFailure(error, "candidate");
+    const details = { ...diagnostics, phase, bytesReceived,
+      elapsedMs: Math.max(0, Math.floor(performance.now() - started)), runtime,
+      memory: Object.fromEntries(["rss", "heapUsed", "heapTotal", "external", "arrayBuffers"].map((key) => [key, memory[key]])) };
+    if (error && typeof error === "object") failureDetails.set(error, details);
+    throw error;
   } finally {
-    await file.close();
-  }
-  const actual = await inspectArtifact(object.path);
-  for (const field of ["size", "sha256", "sha512", "etag", "mime"]) {
-    if (actual[field] !== object[field]) throw new Error(`Candidate download ${field} mismatch: ${object.key}`);
+    // Release rejected/unconsumed responses without masking the original gate failure.
+    if (response?.body && !response.body.locked) await response.body.cancel().catch(() => {});
   }
 }
 

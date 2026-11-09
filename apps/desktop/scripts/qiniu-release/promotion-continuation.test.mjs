@@ -409,6 +409,88 @@ test("bounded subprocess diagnostics include only fixed binary/flags, exit and a
   catch (error) { assert.ok(!JSON.stringify(safeFailure(error, "zip.extract")).includes(secret)); }
 });
 
+test("fetch diagnostics retain bounded nested/aggregate codes without messages, hosts, paths or secrets", () => {
+  const secret = "SENTINEL_SECRET https://private.invalid/?token=never-record";
+  const leaf = Object.assign(new Error(secret), { code: "ETIMEDOUT", syscall: "connect", address: secret, hostname: secret });
+  const aggregate = new AggregateError([leaf, Object.assign(new Error(secret), { code: secret, syscall: secret })], secret);
+  const error = new TypeError(secret, { cause: aggregate });
+  leaf.cause = error;
+  const failure = safeFailure(error, "download.zip");
+  assert.deepEqual(failure.causes, [
+    { depth: 1, errorName: "AggregateError" },
+    { depth: 2, errorName: "Error", errorCode: "ETIMEDOUT", syscall: "connect" },
+    { depth: 2, errorName: "Error" },
+  ]);
+  assert.ok(!JSON.stringify(failure).includes(secret));
+  for (const code of ["UND_ERR_CONNECT_TIMEOUT", "UND_ERR_SOCKET", "ERR_TLS_CERT_ALTNAME_INVALID", "ENOMEM"]) {
+    assert.equal(safeFailure(new TypeError(secret, { cause: Object.assign(new Error(secret), { code }) }), "download.zip").causes[0].errorCode, code);
+  }
+  let deep = leaf;
+  for (let i = 0; i < 100; i++) deep = new AggregateError(Array(20).fill(deep), secret);
+  assert.ok(safeFailure(deep, "download.zip").causes.length <= 8);
+});
+
+test("first GET transport failure retains phase/runtime/cause and stops before all Qiniu effects, without retry", async (t) => {
+  const directory = await temporary(t);
+  const fixture = downloadableCandidate();
+  let fetches = 0;
+  let remoteCalls = 0;
+  const secret = "SENTINEL_SECRET /private/runner token=never-record";
+  const qiniu = new Proxy({}, { get() { remoteCalls++; throw new Error("Must not access Qiniu"); } });
+  let rejected;
+  try {
+    await continuePromotion({ record: fixture.record, recordSha256: "f".repeat(64), toolingCommit: sha, directory, actor: "test-only", qiniu,
+      fetchImpl: async (url, options) => {
+        fetches++;
+        assert.equal(url, candidatePlan(fixture.record, directory).objects[0].url);
+        assert.equal(options.redirect, "error");
+        assert.equal(options.method ?? "GET", "GET");
+        assert.ok(options.signal instanceof AbortSignal);
+        throw new TypeError(secret, { cause: Object.assign(new Error(secret), { code: "UND_ERR_CONNECT_TIMEOUT", hostname: secret }) });
+      } });
+  } catch (error) { rejected = error; }
+  assert.ok(rejected);
+  assert.equal(fetches, 1);
+  assert.equal(remoteCalls, 0);
+  const evidence = JSON.parse(await readFile(path.join(directory, "release-evidence.json"), "utf8"));
+  const failure = evidence.continuation.failure;
+  assert.equal(failure.stage, "download.zip");
+  assert.equal(failure.phase, "headers");
+  assert.equal(failure.bytesReceived, 0);
+  assert.equal(failure.causes[0].errorCode, "UND_ERR_CONNECT_TIMEOUT");
+  assert.equal(failure.runtime.nodeVersion, process.versions.node);
+  assert.equal(failure.runtime.undiciVersion, process.versions.undici);
+  assert.ok(Number.isInteger(failure.elapsedMs) && failure.elapsedMs >= 0);
+  assert.ok(failure.memory.rss > 0 && failure.memory.heapUsed > 0);
+  assert.equal(evidence.workflow.promotion, null);
+  assert.deepEqual(evidence.continuation.checkpoints.map(({ stage, phase }) => [stage, phase]), [["download.zip", "before"]]);
+  assert.ok(!JSON.stringify([evidence, safeFailure(rejected, "candidate"), rejected.message, rejected.stack]).includes(secret));
+});
+
+test("interrupted body diagnostics distinguish received bytes and preserve partial output without retry", async (t) => {
+  const directory = await temporary(t);
+  const body = Buffer.from("immutable candidate bytes");
+  const object = { path: path.join(directory, "test.zip"), ...metadataForBuffer(body, "test.zip") };
+  let fetches = 0;
+  const fetchImpl = async () => {
+    fetches++;
+    let pulls = 0;
+    return new Response(new ReadableStream({ pull(controller) {
+      if (pulls++ === 0) controller.enqueue(body.subarray(0, 4));
+      else controller.error(new TypeError("SENTINEL_SECRET", { cause: Object.assign(new Error("SENTINEL_SECRET"), { code: "UND_ERR_SOCKET" }) }));
+    } }, { highWaterMark: 0 }), { headers: { "content-type": object.mime, "content-length": String(object.size) } });
+  };
+  let failure;
+  try { await downloadCandidateObject(object, { fetchImpl }); }
+  catch (error) { failure = safeFailure(error, "download.zip"); }
+  assert.equal(failure.phase, "body");
+  assert.equal(failure.bytesReceived, 4);
+  assert.equal(failure.causes[0].errorCode, "UND_ERR_SOCKET");
+  assert.equal(fetches, 1);
+  assert.deepEqual(await readFile(object.path), body.subarray(0, 4));
+  assert.ok(!JSON.stringify(failure).includes("SENTINEL_SECRET"));
+});
+
 test("verify-only completes all five downloads, manifest, both package gates and fresh CDN without lock/write/refresh", async (t) => {
   const directory = await temporary(t);
   const fixture = downloadableCandidate();
