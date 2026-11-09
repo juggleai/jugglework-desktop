@@ -28,6 +28,15 @@ The system SHALL prevent a private task from entering a shared list until an aut
 - **WHEN** a user selects a shared list for a private task
 - **THEN** the system requires explicit visibility confirmation before moving the task
 
+#### Scenario: Cancel private task sharing
+- **WHEN** the user cancels the visibility confirmation
+- **THEN** the Desktop sends no move or visibility mutation and preserves the displayed task list
+
+#### Scenario: Authorize and scope a Desktop sharing confirmation
+- **WHEN** a private task is moved to a shared list through the Desktop list picker
+- **THEN** the Desktop loads current task and destination-list permissions, requires task member/visibility management and destination add-task permission, and explains that confirming changes visibility to members and grants authorized list members access
+- **AND** it sends the move with the current task version only after confirmation while the captured deployment, user, organization, and page lifetime remain valid
+
 ### Requirement: Archive and restore lists
 The system SHALL allow list administrators to archive and restore lists without deleting their tasks.
 

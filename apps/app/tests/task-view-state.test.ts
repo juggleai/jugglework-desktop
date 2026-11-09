@@ -1,6 +1,6 @@
 import { beforeEach, expect, test } from "bun:test";
 
-import { defaultTaskWorkbenchSettings, readTaskWorkbenchSettings, reorderTaskWorkbenchFields, taskWorkbenchFields, taskWorkbenchStorageKey, writeTaskWorkbenchSettings } from "../src/react-app/domains/tasks/task-view-state";
+import { defaultTaskWorkbenchSettings, readTaskWorkbenchSettings, reorderTaskWorkbenchFields, taskSectionDefaultSettings, taskWorkbenchFields, taskWorkbenchStorageKey, writeTaskWorkbenchSettings } from "../src/react-app/domains/tasks/task-view-state";
 
 const storage = new Map<string, string>();
 Object.defineProperty(globalThis, "localStorage", {
@@ -25,6 +25,71 @@ test("assigned workbench persistence is isolated by ProductTask scope", () => {
   expect(taskWorkbenchStorageKey(scopeA)).not.toBe(taskWorkbenchStorageKey(scopeB));
 });
 
+test("workbench persistence is also isolated by task section", () => {
+  writeTaskWorkbenchSettings(scopeA, { ...defaultTaskWorkbenchSettings, view: "board" }, "following");
+  expect(readTaskWorkbenchSettings(scopeA, "following").view).toBe("board");
+  expect(readTaskWorkbenchSettings(scopeA, "assigned").view).toBe("list");
+  expect(taskWorkbenchStorageKey(scopeA, "following")).not.toBe(taskWorkbenchStorageKey(scopeA, "assigned"));
+});
+
+test("each task-list workbench has an isolated custom-group default", () => {
+  expect(readTaskWorkbenchSettings(scopeA, "all", "list_one").group).toBe("custom");
+  writeTaskWorkbenchSettings(scopeA, { ...defaultTaskWorkbenchSettings, group: "due" }, "all", "list_one");
+  expect(readTaskWorkbenchSettings(scopeA, "all", "list_one").group).toBe("due");
+  expect(readTaskWorkbenchSettings(scopeA, "all", "list_two").group).toBe("custom");
+  expect(taskWorkbenchStorageKey(scopeA, "all", "list_one")).not.toBe(taskWorkbenchStorageKey(scopeA, "all", "list_two"));
+});
+
+test("task sections populate editable current-member default settings", () => {
+  expect(taskSectionDefaultSettings("assigned", "member_self")).toMatchObject({ assigneeMemberIds: ["member_self"], assigneeMemberOperator: "contains" });
+  expect(taskSectionDefaultSettings("following", "member_self")).toMatchObject({ followerMemberIds: ["member_self"], followerMemberOperator: "contains", creatorMemberIds: ["member_self"], creatorMemberOperator: "not_contains", assigneeMemberIds: ["member_self"], assigneeMemberOperator: "not_contains" });
+  expect(taskSectionDefaultSettings("created", "member_self")).toMatchObject({ creatorMemberIds: ["member_self"], creatorMemberOperator: "contains" });
+  expect(taskSectionDefaultSettings("delegated", "member_self")).toMatchObject({ assigneeMemberIds: ["member_self"], assigneeMemberOperator: "not_contains", assignerMemberIds: ["member_self"], assignerMemberOperator: "contains" });
+  expect(taskSectionDefaultSettings("all", "member_self")).toMatchObject({ status: "all", assigneeMemberIds: [], creatorMemberIds: [] });
+  expect(taskSectionDefaultSettings("completed", "member_self")).toMatchObject({ status: "completed", assigneeMemberIds: [], creatorMemberIds: [] });
+});
+
+test("all and completed populate their initial statuses while later status settings remain editable", () => {
+  expect(readTaskWorkbenchSettings(scopeA, "all").status).toBe("all");
+  expect(readTaskWorkbenchSettings(scopeA, "completed").status).toBe("completed");
+  writeTaskWorkbenchSettings(scopeA, { ...defaultTaskWorkbenchSettings, status: "all", overdue: true }, "completed");
+  expect(readTaskWorkbenchSettings(scopeA, "completed")).toMatchObject({ status: "all", overdue: true });
+});
+
+test("assigned workbench persists custom grouping", () => {
+  writeTaskWorkbenchSettings(scopeA, { ...defaultTaskWorkbenchSettings, group: "custom", customGroupName: "Planning", customGroups: [{ id: "custom-backlog", name: "Backlog" }], customGroupAssignments: { task_one: "custom-backlog" } });
+  expect(readTaskWorkbenchSettings(scopeA)).toMatchObject({ group: "custom", customGroupName: "Planning", customGroups: [{ id: "custom-backlog", name: "Backlog" }], customGroupAssignments: { task_one: "custom-backlog" } });
+  storage.set(taskWorkbenchStorageKey(scopeA), JSON.stringify({ group: "unsupported" }));
+  expect(readTaskWorkbenchSettings(scopeA)).toMatchObject({ group: "none", customGroupName: "", customGroups: [], customGroupAssignments: {} });
+});
+
+test("assigned workbench trims and bounds a persisted custom group name", () => {
+  storage.set(taskWorkbenchStorageKey(scopeA), JSON.stringify({ group: "custom", customGroupName: `  ${"a".repeat(100)}  ` }));
+  expect(readTaskWorkbenchSettings(scopeA).customGroupName).toBe("a".repeat(80));
+});
+
+test("assigned workbench validates, deduplicates, and bounds persisted custom groups", () => {
+  storage.set(taskWorkbenchStorageKey(scopeA), JSON.stringify({ customGroups: [
+    { id: " group-one ", name: " First " },
+    { id: "group-one", name: "Duplicate" },
+    { id: "custom-default", name: "Reserved" },
+    { id: "group-two", name: "a".repeat(100) },
+    { id: "", name: "Missing ID" },
+  ] }));
+  expect(readTaskWorkbenchSettings(scopeA).customGroups).toEqual([
+    { id: "group-one", name: "First" },
+    { id: "group-two", name: "a".repeat(80) },
+  ]);
+});
+
+test("assigned workbench drops custom task assignments for missing groups", () => {
+  storage.set(taskWorkbenchStorageKey(scopeA), JSON.stringify({
+    customGroups: [{ id: "custom-backlog", name: "Backlog" }],
+    customGroupAssignments: { task_one: "custom-backlog", task_two: "custom-missing", "": "custom-backlog" },
+  }));
+  expect(readTaskWorkbenchSettings(scopeA).customGroupAssignments).toEqual({ task_one: "custom-backlog" });
+});
+
 test("assigned workbench safely parses malformed and unknown persisted values", () => {
   storage.set(taskWorkbenchStorageKey(scopeA), "not-json");
   expect(readTaskWorkbenchSettings(scopeA)).toEqual(defaultTaskWorkbenchSettings);
@@ -39,12 +104,25 @@ test("assigned workbench migrates removed priority sorting to updated time desce
 
 test("assigned workbench upgrades the former default columns with assignee and task times", () => {
   storage.set(taskWorkbenchStorageKey(scopeA), JSON.stringify({ fields: ["creator", "created", "id", "list"] }));
-  expect(readTaskWorkbenchSettings(scopeA).fields).toEqual(["assignee", "start", "due", "creator", "created", "id", "list"]);
+  expect(readTaskWorkbenchSettings(scopeA).fields).toEqual(["assignee", "start", "due", "creator", "created", "id", "priority", "list"]);
 });
 
 test("assigned workbench preserves an intentional legacy-sized selection after field ordering is available", () => {
   storage.set(taskWorkbenchStorageKey(scopeA), JSON.stringify({ fieldOrder: taskWorkbenchFields, fields: ["creator", "created", "id", "list"] }));
   expect(readTaskWorkbenchSettings(scopeA).fields).toEqual(["creator", "created", "id", "list"]);
+});
+
+test("assigned workbench inserts the new visible priority field immediately before a legacy list field", () => {
+  const legacyOrder = taskWorkbenchFields.filter((field) => field !== "priority");
+  storage.set(taskWorkbenchStorageKey(scopeA), JSON.stringify({ fieldOrder: legacyOrder, fields: ["id", "list"] }));
+  const settings = readTaskWorkbenchSettings(scopeA);
+  expect(settings.fieldOrder.slice(-3)).toEqual(["id", "priority", "list"]);
+  expect(settings.fields).toEqual(["id", "priority", "list"]);
+});
+
+test("assigned workbench preserves an intentional hidden priority after the new field is known", () => {
+  storage.set(taskWorkbenchStorageKey(scopeA), JSON.stringify({ fieldOrder: taskWorkbenchFields, fields: ["id", "list"] }));
+  expect(readTaskWorkbenchSettings(scopeA).fields).toEqual(["id", "list"]);
 });
 
 test("assigned workbench can persist all optional fields as hidden", () => {

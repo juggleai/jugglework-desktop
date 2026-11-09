@@ -43,12 +43,31 @@ test.each(["prepare", "post"] as const)("main shared sender preserves drafts acr
   const workspaceId = `ws_sender_${stage}`, first = `ses_sender_${stage}`, second = `${first}_other`;
   let currentSession = first;
   let busy = false;
+  let snapshotReads = 0;
   const requests: Array<{ sessionId: string; prompt: { parts: Array<{ type: string; text?: string }> } }> = [];
   const server = Bun.serve({ port: 0, fetch: async (request) => {
     const path = new URL(request.url).pathname;
     const sessionId = /\/sessions\/([^/]+)/.exec(path)?.[1] ?? first;
     if (path.endsWith("/interactions/snapshot")) return Response.json({ item: { rootSessionId: sessionId, permissions: [], questions: [], revision: 1 } });
-    if (path.endsWith("/snapshot")) return Response.json({ item: { session: { id: sessionId, title: "Sender", time: { created: 1, updated: 1 } }, messages: [], status: { type: busy ? "busy" : "idle" }, todos: [] } });
+    if (path.endsWith("/snapshot")) {
+      snapshotReads += 1;
+      const accepted = requests.filter((item) => item.sessionId === sessionId);
+      return Response.json({ item: {
+        session: { id: sessionId, title: "Sender", time: { created: 1, updated: accepted.length + 1 } },
+        messages: accepted.map((item, index) => ({
+          info: { id: `accepted-user-${index + 1}`, role: "user", sessionID: sessionId, time: { created: index + 2 } },
+          parts: item.prompt.parts.map((part, partIndex) => ({
+            id: `accepted-user-${index + 1}-part-${partIndex + 1}`,
+            sessionID: sessionId,
+            messageID: `accepted-user-${index + 1}`,
+            type: part.type,
+            ...(part.text === undefined ? {} : { text: part.text }),
+          })),
+        })),
+        status: { type: busy ? "busy" : "idle" },
+        todos: [],
+      } });
+    }
     if (path.endsWith("/permission-mode")) return Response.json({ state: null, grants: [], supported: true });
     if (path.endsWith("/session-runs")) return Response.json({ items: busy ? [{ sessionId: first, runId: "run_sender", generation: 1 }] : [] });
     if (path.endsWith("/runs/start")) {
@@ -139,6 +158,13 @@ test.each(["prepare", "post"] as const)("main shared sender preserves drafts acr
       expect(useComposerStateStore.getState().history[first]).toBeUndefined();
     } else {
       expect(requests).toEqual([{ sessionId: first, prompt: expect.objectContaining({ parts: [{ type: "text", text: "original draft" }] }) }]);
+      expect(snapshotReads).toBeGreaterThanOrEqual(2);
+      expect(queryClient.getQueryData<import("ai").UIMessage[]>(["react-session-transcript", workspaceId, first]))
+        .toEqual([expect.objectContaining({
+          id: "accepted-user-1",
+          role: "user",
+          parts: [expect.objectContaining({ type: "text", text: "original draft" })],
+        })]);
       expect(composer().draft).toBe("new draft typed during POST");
       expect(useComposerStateStore.getState().history[first]).toEqual(["original draft"]);
       // The real Main Surface must not drain after a file-window Stop preparation.

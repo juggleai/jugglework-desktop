@@ -24,6 +24,8 @@
 - [x] 3.5 Implement paginated task rows, full create, priority filter, basic sorting, and title/due/priority display without quick-create or task search
 - [x] 3.6 Add member, status, start/due time, visibility, list, and field-display controls plus permission-aware inline actions
 - [ ] 3.7 Complete collaborative edit, member management, list-scoped move, and all lifecycle actions including delete/restore; full create and contextual list defaults are complete
+  - Pre-release privacy fix: private-to-shared list moves require explicit native confirmation/cancel, authoritative task/destination permissions, and captured-scope/page-lifetime fencing. Member changes remain governed by the existing Desktop requirements permitting authorized automatic members visibility; no additional confirmation requirement was found for assignees/followers.
+  - Local verification on 2026-11-07: `bun --conditions=development test --isolate tests/tasks-page.test.tsx tests/task-page-state.test.ts tests/den-product-tasks-client.test.ts tests/task-workbench.test.tsx` passed (134 tests); app typecheck, `node scripts/i18n-coverage.mjs --locale zh --strict`, and `git diff --check` passed. Native Electron confirmation and live server integration were not exercised; broader collaborative/lifecycle work remains open.
 - [ ] 3.8 Implement the aggregate Activity view, pagination, unread state, and event navigation
 - [x] 3.9 Add the dedicated route, loading/empty/error shell, section persistence, and no-Agent smoke tests
 - [x] 3.11 Display organization-scoped `t100001`-style task numbers while retaining exact internal IDs for routing and copy actions

@@ -56,10 +56,10 @@ export function TasksSidebar(props: TasksSidebarRegistration & { preview?: boole
       key={section}
       type="button"
       onClick={() => props.onSectionChange?.(section)}
-      aria-current={props.section === section ? "page" : undefined}
+      aria-current={!props.selectedListId && props.section === section ? "page" : undefined}
       className={cn(
         "flex h-10 w-full items-center gap-3 rounded-lg px-3 text-left text-[15px] font-normal transition-colors",
-        props.section === section ? "bg-blue-3 font-medium text-blue-11 dark:bg-blue-4/45 dark:text-blue-10" : "text-dls-text/80 hover:bg-dls-hover hover:text-dls-text",
+        !props.selectedListId && props.section === section ? "bg-blue-3 font-medium text-blue-11 dark:bg-blue-4/45 dark:text-blue-10" : "text-dls-text/80 hover:bg-dls-hover hover:text-dls-text",
       )}
     >
       <Icon aria-hidden="true" className="size-[17px] shrink-0" strokeWidth={1.75} />
@@ -103,7 +103,7 @@ export function TasksSidebar(props: TasksSidebarRegistration & { preview?: boole
             <span>{t("tasks.lists")}</span>
             {props.onCreateList ? <button type="button" onClick={props.onCreateList} aria-label={t("tasks.create_list")} className="rounded p-1 hover:bg-dls-hover hover:text-dls-text"><Plus className="size-3.5" /></button> : null}
           </div>
-          <div className="mt-1.5 space-y-1">{props.lists?.map((list) => <div key={list.id} className="group flex items-center"><button type="button" className={`min-w-0 flex-1 truncate rounded-lg px-3 py-2 text-left text-sm ${props.selectedListId === list.id ? "bg-dls-active text-dls-text" : "text-dls-secondary hover:bg-dls-hover"}`} onClick={() => props.onSelectList?.(list.id)}>{list.marker} {list.name}</button><button type="button" className="invisible rounded p-1 text-dls-secondary hover:bg-dls-hover hover:text-dls-text group-hover:visible group-has-[:focus-visible]:visible focus:visible" aria-label={t("tasks.archive_list")} onClick={() => props.onArchiveList?.(list.id, list.version)}><Archive className="size-3.5" /></button></div>)}</div>
+          <div className="mt-1.5 space-y-1">{props.lists?.map((list) => <div key={list.id} className="group flex items-center"><button type="button" aria-current={props.selectedListId === list.id ? "page" : undefined} className={`min-w-0 flex-1 truncate rounded-lg px-3 py-2 text-left text-sm transition-colors ${props.selectedListId === list.id ? "bg-blue-3 font-medium text-blue-11 dark:bg-blue-4/45 dark:text-blue-10" : "text-dls-secondary hover:bg-dls-hover hover:text-dls-text"}`} onClick={() => props.onSelectList?.(list.id)}>{list.marker} {list.name}</button><button type="button" className="invisible rounded p-1 text-dls-secondary hover:bg-dls-hover hover:text-dls-text group-hover:visible group-has-[:focus-visible]:visible focus:visible" aria-label={t("tasks.archive_list")} onClick={() => props.onArchiveList?.(list.id, list.version)}><Archive className="size-3.5" /></button></div>)}</div>
         </section>
       </div>
     </aside>

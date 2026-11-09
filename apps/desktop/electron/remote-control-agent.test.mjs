@@ -1018,6 +1018,51 @@ describe("remote-control agent context and lifecycle", () => {
     assert.equal(fixture.webSocketInputs.at(-1).accessToken, "short-lived-token-2");
   });
 
+  it("recovers when an older control plane marks a command replay invalid_request as non-retryable", async () => {
+    const fixture = harness();
+    const socket = await connect(fixture);
+    socket.receive(welcome(77));
+    await settle();
+
+    socket.receive(envelope("protocol.error", {
+      schemaVersion: 1,
+      code: "invalid_request",
+      message: "A delayed command lifecycle was rejected.",
+      retryable: false,
+      correlationId: null,
+    }));
+    await settle();
+
+    assert.equal(fixture.agent.status().state, REMOTE_CONTROL_AGENT_STATUS.BACKOFF);
+    assert.equal(fixture.agent.status().lastErrorCode, "invalid_request");
+    assert.equal(fixture.agent.status().localControlEnabled, true);
+    assert.equal(fixture.agent.status().enrolled, true);
+    assert.equal(fixture.disableSettingsCalls, 0);
+    assert.equal(fixture.deleteCalls, 0);
+    const delay = fixture.clock.nextDelay();
+    assert.notEqual(delay, null);
+    await fixture.clock.advance(delay);
+    assert.equal(fixture.sockets.length, 2);
+  });
+
+  it("does not treat a pre-welcome invalid_request as a recoverable command rejection", async () => {
+    const fixture = harness();
+    const socket = await connect(fixture);
+
+    socket.receive(envelope("protocol.error", {
+      schemaVersion: 1,
+      code: "invalid_request",
+      message: "The handshake request is invalid.",
+      retryable: false,
+      correlationId: null,
+    }));
+    await settle();
+
+    assert.equal(fixture.agent.status().state, REMOTE_CONTROL_AGENT_STATUS.ERROR);
+    assert.equal(fixture.agent.status().lastErrorCode, "invalid_request");
+    assert.equal(fixture.clock.nextDelay(), null);
+  });
+
   it("mints a fresh token when the cached token is inside the handshake margin", async () => {
     const fixture = harness({ tokenLifetime: 30_000 });
     const first = await connect(fixture);

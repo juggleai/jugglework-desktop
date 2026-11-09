@@ -3327,6 +3327,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
           <CloudAccountView
             developerMode={developerMode}
             session={denSession}
+            sessions={Object.values(sessionsByWorkspaceId).flat()}
           />
         );
       case "connect":

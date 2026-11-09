@@ -398,7 +398,12 @@ async function fetchWithTimeout(
 
   const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
   const signal = controller?.signal;
-  const initWithSignal = signal && !init?.signal ? { ...(init ?? {}), signal } : init;
+  const callerSignal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
+  // RequestInit.signal overrides Request.signal. Keep cancellation connected
+  // even after headers arrive (SSE bodies can remain open indefinitely).
+  const initWithSignal = signal
+    ? { ...(init ?? {}), signal: callerSignal ? AbortSignal.any([callerSignal, signal]) : signal }
+    : init;
 
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
   const timeoutPromise = new Promise<never>((_, reject) => {
@@ -416,7 +421,7 @@ async function fetchWithTimeout(
     return await Promise.race([fetchImpl(input, initWithSignal), timeoutPromise]);
   } catch (error) {
     const name = (error && typeof error === "object" && "name" in error ? (error as any).name : "") as string;
-    if (name === "AbortError") {
+    if (name === "AbortError" && controller?.signal.aborted && !callerSignal?.aborted) {
       throw new Error("Request timed out.");
     }
     throw error;

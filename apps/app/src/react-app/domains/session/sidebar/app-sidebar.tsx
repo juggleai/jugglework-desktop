@@ -1440,11 +1440,14 @@ function WorkspaceSidebarGroup({
     () => partitionArchivedSessions(group.sessions),
     [group.sessions],
   );
+  // Pinned roots already surface their activity in the global pinned section.
+  // Exclude their whole subtree here so a collapsed workspace only advertises
+  // work that is still represented inside that workspace.
   const hasActiveWork = React.useMemo(
-    () => activeSessions.some((session) => (
-      isActiveWorkSessionStatus(ctx.sessionStatusById?.[session.id])
+    () => getRootSessions(activeSessions).some((session) => (
+      !pinnedIds.has(session.id) && tree.activeIds.has(session.id)
     )),
-    [activeSessions, ctx.sessionStatusById],
+    [activeSessions, pinnedIds, tree.activeIds],
   );
   const showWorkspaceActivity = hasActiveWork && !isExpanded;
   const sessionRows = flattenSessionRows(

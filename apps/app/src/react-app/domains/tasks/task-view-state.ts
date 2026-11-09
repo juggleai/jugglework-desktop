@@ -1,12 +1,15 @@
 import type { DenProductTaskPriority } from "@/app/lib/den";
 import { productTaskScopeKey, type ProductTaskScope } from "./task-queries";
 
+export type TaskWorkbenchSection = "assigned" | "following" | "all" | "created" | "delegated" | "completed";
+
 export type TaskWorkbenchView = "list" | "board";
 export type TaskWorkbenchStatus = "incomplete" | "completed" | "all";
 export type TaskWorkbenchSort = "updated_at" | "created_at" | "start_at" | "due_at" | "completed_at";
-export type TaskWorkbenchGroup = "none" | "list" | "creator" | "start" | "due";
-export type TaskWorkbenchField = "assignee" | "start" | "due" | "creator" | "assigner" | "followers" | "created" | "completed" | "updated" | "id" | "list";
+export type TaskWorkbenchGroup = "none" | "custom" | "list" | "creator" | "start" | "due";
+export type TaskWorkbenchField = "assignee" | "start" | "due" | "creator" | "assigner" | "followers" | "created" | "completed" | "updated" | "id" | "priority" | "list";
 export type TaskPersonFilterOperator = "contains" | "not_contains" | "empty" | "not_empty";
+export type TaskCustomGroup = { id: string; name: string };
 export type TaskWorkbenchSettings = {
   view: TaskWorkbenchView;
   status: TaskWorkbenchStatus;
@@ -24,12 +27,15 @@ export type TaskWorkbenchSettings = {
   sort: TaskWorkbenchSort;
   direction: "asc" | "desc";
   group: TaskWorkbenchGroup;
+  customGroupName: string;
+  customGroups: TaskCustomGroup[];
+  customGroupAssignments: Record<string, string>;
   fieldOrder: TaskWorkbenchField[];
   fields: TaskWorkbenchField[];
 };
 
-export const taskWorkbenchFields: TaskWorkbenchField[] = ["assignee", "start", "due", "creator", "assigner", "followers", "created", "completed", "updated", "id", "list"];
-export const defaultVisibleTaskWorkbenchFields: TaskWorkbenchField[] = ["assignee", "start", "due", "creator", "created", "id", "list"];
+export const taskWorkbenchFields: TaskWorkbenchField[] = ["assignee", "start", "due", "creator", "assigner", "followers", "created", "completed", "updated", "id", "priority", "list"];
+export const defaultVisibleTaskWorkbenchFields: TaskWorkbenchField[] = ["assignee", "start", "due", "creator", "created", "id", "priority", "list"];
 const legacyDefaultTaskWorkbenchFields: TaskWorkbenchField[] = ["creator", "created", "id", "list"];
 
 export function reorderTaskWorkbenchFields(order: TaskWorkbenchField[], source: TaskWorkbenchField, target: TaskWorkbenchField): TaskWorkbenchField[] {
@@ -59,41 +65,125 @@ export const defaultTaskWorkbenchSettings: TaskWorkbenchSettings = {
   sort: "updated_at",
   direction: "desc",
   group: "none",
+  customGroupName: "",
+  customGroups: [],
+  customGroupAssignments: {},
   fieldOrder: taskWorkbenchFields,
   fields: defaultVisibleTaskWorkbenchFields,
 };
 
+export const taskWorkbenchSections: TaskWorkbenchSection[] = ["assigned", "following", "all", "created", "delegated", "completed"];
+
+export function isTaskWorkbenchSection(section: string): section is TaskWorkbenchSection {
+  return taskWorkbenchSections.includes(section as TaskWorkbenchSection);
+}
+
+export function defaultTaskWorkbenchSettingsForSection(section: TaskWorkbenchSection): TaskWorkbenchSettings {
+  if (section === "completed") return { ...defaultTaskWorkbenchSettings, status: "completed" };
+  if (section === "all") return { ...defaultTaskWorkbenchSettings, status: "all" };
+  return defaultTaskWorkbenchSettings;
+}
+
+export function taskSectionDefaultSettings(section: TaskWorkbenchSection, currentMemberId: string | null, settings = defaultTaskWorkbenchSettingsForSection(section)): TaskWorkbenchSettings {
+  const memberIds = currentMemberId ? [currentMemberId] : [];
+  const next: TaskWorkbenchSettings = {
+    ...settings,
+    status: section === "all" ? "all" : section === "completed" ? "completed" : "incomplete",
+    overdue: false,
+    assigneeMemberIds: [],
+    assigneeMemberOperator: "contains",
+    assignerMemberIds: [],
+    assignerMemberOperator: "contains",
+    creatorMemberIds: [],
+    creatorMemberOperator: "contains",
+    followerMemberIds: [],
+    followerMemberOperator: "contains",
+  };
+  if (section === "assigned") return { ...next, assigneeMemberIds: memberIds };
+  if (section === "following") return {
+    ...next,
+    followerMemberIds: memberIds,
+    creatorMemberIds: memberIds,
+    creatorMemberOperator: "not_contains",
+    assigneeMemberIds: memberIds,
+    assigneeMemberOperator: "not_contains",
+  };
+  if (section === "created") return { ...next, creatorMemberIds: memberIds };
+  if (section === "delegated") return {
+    ...next,
+    assigneeMemberIds: memberIds,
+    assigneeMemberOperator: "not_contains",
+    assignerMemberIds: memberIds,
+  };
+  return next;
+}
+
 function normalizeTaskWorkbenchFieldOrder(value: unknown): TaskWorkbenchField[] {
   if (!Array.isArray(value)) return taskWorkbenchFields;
   const persisted = [...new Set(value.filter((item): item is TaskWorkbenchField => taskWorkbenchFields.includes(item as TaskWorkbenchField)))];
-  return [...persisted, ...taskWorkbenchFields.filter((field) => !persisted.includes(field))];
+  const next = [...persisted];
+  for (const field of taskWorkbenchFields) {
+    if (next.includes(field)) continue;
+    if (field === "priority" && next.includes("list")) next.splice(next.indexOf("list"), 0, field);
+    else next.push(field);
+  }
+  return next;
 }
 
-function normalizeTaskWorkbenchFields(value: unknown, fieldOrder: TaskWorkbenchField[], migrateLegacyDefault: boolean): TaskWorkbenchField[] {
+function normalizeTaskWorkbenchFields(value: unknown, fieldOrder: TaskWorkbenchField[], migrateLegacyDefault: boolean, migratePriority: boolean): TaskWorkbenchField[] {
   if (!Array.isArray(value)) return defaultVisibleTaskWorkbenchFields;
   const selected = new Set(value.filter((item): item is TaskWorkbenchField => taskWorkbenchFields.includes(item as TaskWorkbenchField)));
+  const legacyFields = fieldOrder.filter((field) => selected.has(field));
+  if (migrateLegacyDefault && legacyFields.length === legacyDefaultTaskWorkbenchFields.length && legacyDefaultTaskWorkbenchFields.every((field, index) => legacyFields[index] === field)) return defaultVisibleTaskWorkbenchFields;
+  if (migratePriority && selected.has("list")) selected.add("priority");
   const fields = fieldOrder.filter((field) => selected.has(field));
-  return migrateLegacyDefault && fields.length === legacyDefaultTaskWorkbenchFields.length && legacyDefaultTaskWorkbenchFields.every((field, index) => fields[index] === field)
-    ? defaultVisibleTaskWorkbenchFields
-    : fields;
+  return fields;
 }
 
-export function taskWorkbenchStorageKey(scope: ProductTaskScope | null): string {
-  return `jugglework:tasks:workbench:${productTaskScopeKey(scope)}:assigned`;
+function normalizeTaskCustomGroups(value: unknown): TaskCustomGroup[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const groups: TaskCustomGroup[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object") continue;
+    const candidate = item as Partial<TaskCustomGroup>;
+    const id = typeof candidate.id === "string" ? candidate.id.trim().slice(0, 100) : "";
+    const name = typeof candidate.name === "string" ? candidate.name.trim().slice(0, 80) : "";
+    if (!id || !name || id === "custom-default" || seen.has(id)) continue;
+    seen.add(id);
+    groups.push({ id, name });
+  }
+  return groups.slice(0, 100);
 }
 
-export function readTaskWorkbenchSettings(scope: ProductTaskScope | null): TaskWorkbenchSettings {
-  if (typeof localStorage === "undefined") return defaultTaskWorkbenchSettings;
-  try {
-    const value = JSON.parse(localStorage.getItem(taskWorkbenchStorageKey(scope)) ?? "null") as Partial<TaskWorkbenchSettings> | null;
-    if (!value || typeof value !== "object") return defaultTaskWorkbenchSettings;
+function normalizeTaskCustomGroupAssignments(value: unknown, groups: TaskCustomGroup[]): Record<string, string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const groupIds = new Set(groups.map((group) => group.id));
+  const assignments: Record<string, string> = {};
+  for (const [taskId, groupId] of Object.entries(value)) {
+    if (taskId && typeof groupId === "string" && groupIds.has(groupId)) assignments[taskId] = groupId;
+  }
+  return assignments;
+}
+
+export function taskWorkbenchStorageKey(scope: ProductTaskScope | null, section: TaskWorkbenchSection = "assigned", listId?: string | null): string {
+	return `jugglework:tasks:workbench:${productTaskScopeKey(scope)}:${listId ? `list:${listId}` : section}`;
+}
+
+export function readTaskWorkbenchSettings(scope: ProductTaskScope | null, section: TaskWorkbenchSection = "assigned", listId?: string | null): TaskWorkbenchSettings {
+	const defaults = listId ? { ...defaultTaskWorkbenchSettings, group: "custom" as const } : defaultTaskWorkbenchSettingsForSection(section);
+	if (typeof localStorage === "undefined") return defaults;
+	try {
+		const value = JSON.parse(localStorage.getItem(taskWorkbenchStorageKey(scope, section, listId)) ?? "null") as Partial<TaskWorkbenchSettings> | null;
+		if (!value || typeof value !== "object") return defaults;
     const priorities = Array.isArray(value.priorities) ? [...new Set(value.priorities.filter((item): item is DenProductTaskPriority => ["none", "low", "medium", "high"].includes(String(item))))] : [];
     const listIds = Array.isArray(value.listIds) ? [...new Set(value.listIds.filter((item): item is string => typeof item === "string"))] : [];
     const memberIds = (input: unknown) => Array.isArray(input) ? [...new Set(input.filter((item): item is string => typeof item === "string" && item.length > 0))] : [];
     const memberOperator = (input: unknown): TaskPersonFilterOperator => input === "not_contains" || input === "empty" || input === "not_empty" ? input : "contains";
     const fieldOrder = normalizeTaskWorkbenchFieldOrder(value.fieldOrder);
-    const fields = normalizeTaskWorkbenchFields(value.fields, fieldOrder, !Array.isArray(value.fieldOrder));
+    const fields = normalizeTaskWorkbenchFields(value.fields, fieldOrder, !Array.isArray(value.fieldOrder), !Array.isArray(value.fieldOrder) || !value.fieldOrder.includes("priority"));
     const status = value.status === "completed" || value.status === "all" ? value.status : "incomplete";
+    const customGroups = normalizeTaskCustomGroups(value.customGroups);
     return {
       view: value.view === "board" ? "board" : "list",
       status,
@@ -110,19 +200,22 @@ export function readTaskWorkbenchSettings(scope: ProductTaskScope | null): TaskW
       overdue: status !== "completed" && value.overdue === true,
       sort: ["updated_at", "created_at", "start_at", "due_at", "completed_at"].includes(String(value.sort)) ? value.sort as TaskWorkbenchSort : "updated_at",
       direction: value.direction === "asc" ? "asc" : "desc",
-      group: value.group === "list" || value.group === "creator" || value.group === "start" || value.group === "due" ? value.group : "none",
+      group: value.group === "custom" || value.group === "list" || value.group === "creator" || value.group === "start" || value.group === "due" ? value.group : "none",
+      customGroupName: typeof value.customGroupName === "string" ? value.customGroupName.trim().slice(0, 80) : "",
+      customGroups,
+      customGroupAssignments: normalizeTaskCustomGroupAssignments(value.customGroupAssignments, customGroups),
       fieldOrder,
       fields,
     };
-  } catch {
-    return defaultTaskWorkbenchSettings;
-  }
+	} catch {
+		return defaults;
+	}
 }
 
-export function writeTaskWorkbenchSettings(scope: ProductTaskScope | null, settings: TaskWorkbenchSettings): void {
-  if (typeof localStorage === "undefined") return;
-  try {
-    localStorage.setItem(taskWorkbenchStorageKey(scope), JSON.stringify(settings));
+export function writeTaskWorkbenchSettings(scope: ProductTaskScope | null, settings: TaskWorkbenchSettings, section: TaskWorkbenchSection = "assigned", listId?: string | null): void {
+	if (typeof localStorage === "undefined") return;
+	try {
+		localStorage.setItem(taskWorkbenchStorageKey(scope, section, listId), JSON.stringify(settings));
   } catch {
     // Storage can be unavailable in hardened renderer contexts; settings remain usable in memory.
   }

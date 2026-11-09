@@ -141,6 +141,20 @@ reads SHALL NOT resurrect terminal runs or overwrite newer generations.
 - **WHEN** the first stream connection succeeds
 - **THEN** tracked session snapshots are refreshed without requiring navigation
 
+### Requirement: Accepted submissions reconcile the visible transcript
+
+After the runtime accepts a prompt submission, the client SHALL refresh the
+target session's authoritative snapshot instead of depending only on matching
+event-stream message events. Reconciliation SHALL preserve newer live content
+and SHALL deduplicate messages by their stable runtime identity.
+
+#### Scenario: Prompt events are missed during submission
+
+- **GIVEN** the event stream misses the user-message events while a prompt is being accepted
+- **WHEN** the prompt request succeeds and the task starts
+- **THEN** the active conversation refreshes and displays the accepted user turn without requiring session navigation
+- **AND** a concurrently received event for the same message does not create a duplicate turn
+
 ### Requirement: Incomplete live messages permit bounded snapshot recovery
 
 A snapshot made stale by live events MAY fill missing stable-ID parts of existing

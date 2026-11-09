@@ -1,0 +1,166 @@
+{
+  "schema": "com.juggleai.jugglework.desktop-release-result",
+  "schemaVersion": 1,
+  "version": "1.2.34",
+  "channel": "stable",
+  "platform": "mac",
+  "architecture": "arm64",
+  "completedAt": "2026-11-09T04:15:02.183487+00:00",
+  "sourceCommit": "c97ca572189939d7d61ee18b7533285d137c0e21",
+  "candidateRecordCommit": "04dc36853e190d486728f7014e3a636e7f63f648",
+  "promotionToolingCommit": "94a51fe5df109817459a642d8662f588735f38d3",
+  "promotionWorkflow": "https://github.com/juggleai/jugglework-desktop/actions/runs/42559276830",
+  "promotionVerifiedAt": "2026-11-09T04:04:54.672Z",
+  "stableManifest": {
+    "url": "https://downloads.jugglechat.cn/jugglework/releases/stable/mac/latest-mac.yml",
+    "sha256": "c2305f907ed84fb4a2c41d3afc5f514846e52b02a32373bf8c69be75de1c2cc4",
+    "size": 706,
+    "attempts": 1,
+    "checkedAt": "2026-11-09T04:04:54.671Z",
+    "publicCacheControl": "public, max-age=31536000"
+  },
+  "immutableManifest": {
+    "key": "jugglework/releases/v1.2.34/mac/latest-mac.yml",
+    "url": "https://downloads.jugglechat.cn/jugglework/releases/v1.2.34/mac/latest-mac.yml",
+    "sha256": "c2305f907ed84fb4a2c41d3afc5f514846e52b02a32373bf8c69be75de1c2cc4",
+    "sha512": "lZfGxGjxQDuChBfw9zectYOMgyTENXcqdjitOZ3e6/gwrC1Lmw1OwcMbpvxf59tgymbA9KpHS/KoUOiMokekBg==",
+    "size": 706,
+    "etag": "FkAeeu8L5dhnYGnaGH4weN5iTKwf",
+    "mime": "text/yaml"
+  },
+  "preCanaryException": {
+    "scope": "stable-1.2.34-only",
+    "reason": "Operator explicitly authorized stable macOS arm64 1.2.34 to skip only the real-client upgrade canary"
+  },
+  "metadataException": {
+    "scope": "stable-1.2.34-only",
+    "reason": "Operator explicitly authorized stable macOS arm64 1.2.34 to skip only Qiniu Cache-Control metadata mutation and validation"
+  },
+  "installationCanary": "Not performed under exact stable-1.2.34-only authorization; installation, relaunch and retained state remain unverified.",
+  "cacheControlMetadata": "Only mutable Qiniu Cache-Control metadata mutation/validation skipped. Mandatory CDN refresh and exact public digest/size read-back passed. Observed public, max-age=31536000; fleet cache convergence remains unverified.",
+  "legalApproval": "Existing human distribution authorization retained; no new independent legal approval obtained or inferred.",
+  "outOfScope": ["Windows", "Intel macOS/x64", "website", "GitHub Release", "Den/server binary deployment"],
+  "tests": {
+    "provenance": "Historical source/build results, not rerun claims for this records-only closeout; fresh closeout validation is external closeout-validation.json.",
+    "desktop": {"pass": 1083, "skip": 1, "fail": 0},
+    "releasePreparation": {"pass": 313, "skip": 1, "fail": 0},
+    "appFocused": {"files": 16, "pass": 223, "fail": 0},
+    "serverFocused": {"pass": 88, "fail": 0},
+    "candidateRecords": {"pass": 113, "fail": 0},
+    "independentPackagedMedia": {"pass": 26, "fail": 0}
+  },
+  "toonFactory": {
+    "toonflow": {
+      "revision": "sha256:4668de11fde5a98644631999bfd044066c65bcef34f1d197eee0f6c2232b3e16",
+      "version": "unversioned",
+      "lockfileSha256": "eb490e0976076fee21ea6f84dad2cb8b7bc0cc33868deb9953a6210214f8a119"
+    },
+    "target": {"platform": "darwin", "arch": "arm64", "executableName": "bun", "format": "mach-o"},
+    "bun": {"version": "1.3.14", "sha256": "e0c90ec15d33363e6b70713d56bc3b2c7585c17f40a0fe0f8fd9305901d4e233", "bytes": 63096576},
+    "inventorySha256": "05a4705f4509b6d467026335ae2c7789b0eff7b9ba3f26c5ab8a70867b80ac81",
+    "fileCount": 1034,
+    "buildManifestSha256": "6d76a48b8878deaf2017d19f015a8c1eab34bd3b8e6d420db2b6ac7ae33dfc7e",
+    "packagedContainers": ["app", "zip", "dmg"],
+    "packageVerification": "final-package-verification.json",
+    "independentMediaAcceptance": "media-acceptance-pass-report.json",
+    "independentMediaAcceptanceScope": [
+      "Independent current Electron host using candidate modules/resources, not the candidate executable/product main, updater or installed-app acceptance.",
+      "DOM/executeJavaScript automation with disk-seeded fixtures, short synthetic scenes and SIGSTOP-assisted cancellation; not natural timing, many-shot/10-minute or publication-await-race acceptance.",
+      "26/26 groups passed, no orphan processes; seven null-document diagnostics retained."
+    ]
+  },
+  "notarization": {
+    "app": {"status": "accepted", "submissionId": "a6cf02e7-fa67-473f-8aa4-ba2358ccda5d"},
+    "dmg": {"status": "accepted", "submissionId": "a302b00b-4560-4e98-b450-3aaf1d3f4f9f"}
+  },
+  "den": {
+    "china": {
+      "origin": "https://work.jugglechat.cn",
+      "latest": "1.2.34", "minAppVersion": "0.1.0", "publishedCount": 20, "allowedCount": 20,
+      "inventoryPreserved": true, "allowedIncludesTarget": true,
+      "allowlistVerification": "Loaded config + version-override absence + restarted process; not authenticated desktop-config API acceptance.",
+      "oldPid": 1403323, "newPid": 1502648,
+      "processStart": "Mon Nov  9 12:11:51 2026",
+      "executable": "/root/jugglework-server/jugglework",
+      "binarySha256": "62393bedda6fd28790eb8f4fc1ff40040119ebb6dacfae74de2ac97658d921eb",
+      "binarySize": 59413842,
+      "backup": "/root/jugglework-server/backups/desktop-version-1.2.34-20261109T041150688386Z",
+      "configBackupSha256": "cde407c769023da0c7f1d4b4688a37e7cf88a6d08a60924cdcbce2fb4f5da150",
+      "updatedConfigSha256": "7cafbe700b21c02231ef611b430e9467e37adf6ec6c16088dc9464ad7d09aa87",
+      "nonVersionBytesUnchanged": true, "backupRootOnlyVerified": true, "verification": "passed",
+      "verifiedAt": "2026-11-09T04:14:30.104886+00:00",
+      "postCloseoutHealth": "den-1.2.34-china-observe-20261109T041431100551Z.json",
+      "localPublicHTTP": "health/ready/runtime-config/console/app-version all 200",
+      "loopback8021": true, "criticalLogSignatures": 0, "http5xxSignatures": 0,
+      "migrationVerification": "Config-only announcement; no new binary or explicit migration command. Readiness/startup passed; no independent schema query."
+    },
+    "overseas": {
+      "origin": "https://work.juggle.im",
+      "latest": "1.2.34", "minAppVersion": "0.1.0", "publishedCount": 21, "allowedCount": 21,
+      "inventoryPreserved": true, "allowedIncludesTarget": true,
+      "allowlistVerification": "Loaded config + version-override absence + restarted process; not authenticated desktop-config API acceptance.",
+      "oldPid": 17614, "newPid": 80499,
+      "processStart": "Mon Nov  9 12:12:37 2026",
+      "executable": "/root/jugglework-server/jugglework",
+      "binarySha256": "6feb10e94009434a77ffe20f4acab75dab1cdc9b0f8877d8e2a5a4d53b3d4955",
+      "binarySize": 58794199,
+      "backup": "/root/jugglework-server/backups/desktop-version-1.2.34-20261109T041227123551Z",
+      "configBackupSha256": "6259992555f65e97ba6d9c0d7f54efeefb122c7ffd885697b8655dd712f7801d",
+      "updatedConfigSha256": "be3c5cffbb39fe383dc38bf4476019858040ce5f5ad8f9dee5a8bf64cb8ec26f",
+      "nonVersionBytesUnchanged": true, "backupRootOnlyVerified": true, "verification": "passed",
+      "verifiedAt": "2026-11-09T04:14:54.503899+00:00",
+      "postCloseoutHealth": "den-1.2.34-overseas-observe-20261109T041502183487Z.json",
+      "localPublicHTTP": "health/ready/runtime-config/console/app-version all 200",
+      "loopback8021": true, "criticalLogSignatures": 0, "http5xxSignatures": 0,
+      "migrationVerification": "Config-only announcement; no new binary or explicit migration command. Readiness/startup passed; no independent schema query."
+    }
+  },
+  "rollback": {
+    "china": {
+      "config": "/root/jugglework-server/backups/desktop-version-1.2.34-20261109T041150688386Z/config.yml",
+      "checksum": "/root/jugglework-server/backups/desktop-version-1.2.34-20261109T041150688386Z/config.yml.sha256",
+      "baseline": "/root/jugglework-server/backups/desktop-version-1.2.34-20261109T041150688386Z/verification-baseline.json",
+      "expectedCurrentConfigSha256": "7cafbe700b21c02231ef611b430e9467e37adf6ec6c16088dc9464ad7d09aa87",
+      "restoreSha256": "cde407c769023da0c7f1d4b4688a37e7cf88a6d08a60924cdcbce2fb4f5da150"
+    },
+    "overseas": {
+      "config": "/root/jugglework-server/backups/desktop-version-1.2.34-20261109T041227123551Z/config.yml",
+      "checksum": "/root/jugglework-server/backups/desktop-version-1.2.34-20261109T041227123551Z/config.yml.sha256",
+      "baseline": "/root/jugglework-server/backups/desktop-version-1.2.34-20261109T041227123551Z/verification-baseline.json",
+      "expectedCurrentConfigSha256": "be3c5cffbb39fe383dc38bf4476019858040ce5f5ad8f9dee5a8bf64cb8ec26f",
+      "restoreSha256": "6259992555f65e97ba6d9c0d7f54efeefb122c7ffd885697b8655dd712f7801d"
+    },
+    "procedure": "Not executed. Assess already-downloaded clients and schema compatibility first. Restore China then overseas, one environment at a time, only under separate rollback authorization. Stop on current config/binary drift. Verify root:root 0700 backup directory, 0600 files, recorded checksums and baseline; stage config root:root 0600 on same filesystem, atomically replace conf/config.yml, restart Supervisor jugglework once and repeat PID/executable/hash, local/public health/ready/runtime/console/app-version, inventory/allowlist, 8021 and bounded-log checks. No automatic database restore or binary replacement. Do not blindly downgrade Stable; prefer a higher patch for binary recovery.",
+    "stablePredecessor": {
+      "version": "1.2.33",
+      "url": "https://downloads.jugglechat.cn/jugglework/releases/v1.2.33/mac/latest-mac.yml",
+      "sha256": "4870eac860afc4dc365f80ef42e9504d1305ec80e463fa77bdeec43dd2d7d17a",
+      "procedure": "Reference only, not automatic downgrade authorization. Any channel recovery requires separately authorized serialized lock/predecessor checks, CDN refresh and exact read-back."
+    }
+  },
+  "securityWarnings": {
+    "china": {"control8020AllAddresses": true, "supervisorEnvironmentFileModes": ["0o644"]},
+    "overseas": {"control8020AllAddresses": true, "supervisorEnvironmentFileModes": ["0o644"]},
+    "action": "Existing listener/file-mode findings retained; no network, proxy, Supervisor environment, permissions or credential changes. Secret values not emitted."
+  },
+  "limitations": [
+    "Two independent exact stable-1.2.34-only exceptions: real-client upgrade canary and mutable Qiniu Cache-Control metadata mutation/validation only. No notarization, failed-canary, immutable-byte, CDN-refresh or exact-readback waiver.",
+    "Real installation/relaunch/retained state not tested. Public Cache-Control remains public, max-age=31536000; fleet-wide convergence unverified.",
+    "Toon/media 26/26 independent-host acceptance is not product-main or installed-candidate acceptance; seven null-document diagnostics and fixture/timing limitations retained.",
+    "Tasks collaboration/lifecycle/aggregate Activity/security/connected acceptance and complete MVP remain open. Real live-provider SSE and MIME acceptance remain unverified; local cancellation tests and immutable object MIME checks do not close them.",
+    "No independent schema query or authenticated desktop-config acceptance; fresh Den verification is read-only against config-only apply baselines.",
+    "Existing human distribution authorization is not new independent legal approval."
+  ],
+  "failureRecovery": [
+    {"failure": "build-04-package.json", "recovery": "build-04-package-restored.json", "details": "Original failed exit 1 retained. NOTARY_PROFILE_NOT_FOUND diagnosis from separate safe preflight, not unavailable original raw output; later signed/notarized package passed."},
+    {"failures": ["failure-retain-1794193933629.json", "failure-retain-1794193986709.json", "failure-retain-1794194009817.json"], "recovery": "retention-summary.json", "details": "All AssertionError records retained; last clean.worktree expected/actual mismatch retained. Later inventory/blob/mode evidence has no content diff; no discarded user changes."},
+    {"failure": "run-42558106704-promotion/release-evidence.json", "recovery": "run-42559276830-promotion/release-evidence.json", "details": "First run failed download.zip TypeError before promotion; root fetch cause was redacted and is unknown. Diagnostics tooling 94a51fe5d and later successful audited run retained; no causal network fix inferred."}
+  ],
+  "gitCompletion": "Exact final records commit, pushed dev/main refs and returned branch are recorded externally in git-closeout.json to avoid self-reference.",
+  "evidenceRoot": "release-evidence/jugglework-desktop/1.2.34/",
+  "promotionEvidence": "run-42559276830-promotion/release-evidence.json",
+  "promotionAudit": "run-42559276830-promotion/promotion-final-audit.json",
+  "finalEvidence": "final-release-evidence.json",
+  "report": "RELEASE-REPORT.md",
+  "evidenceIndex": "evidence-index.json"
+}

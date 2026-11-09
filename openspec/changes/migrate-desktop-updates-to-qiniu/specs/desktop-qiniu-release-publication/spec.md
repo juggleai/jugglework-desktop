@@ -7,6 +7,13 @@ Define a reproducible and auditable release process that publishes immutable des
 ### Requirement: Versioned desktop release objects are immutable
 Every published desktop version SHALL have an immutable version directory under `jugglework/releases/v<version>/`, and the release process MUST refuse to overwrite an existing versioned object.
 
+#### Scenario: Exact 1.2.34 committed-candidate continuation
+- **WHEN** the operator independently authorizes stable macOS arm64 `1.2.34` to skip only the real-client upgrade canary and mutable Cache-Control metadata mutation/validation
+- **THEN** trusted dev dispatch SHALL require the exact committed `apps/desktop/release-records/1.2.34-candidate.json`, source ancestry and three runtime versions, accepted App/DMG receipts and exact immutable bytes
+- **AND** both reasons SHALL be independently recorded with scope `stable-1.2.34-only`; failed or mismatched canary, wrong path, Alpha, Intel, 1.2.35 and notarization exemptions SHALL remain rejected
+- **AND** fresh package/media/Apple trust, full CDN verification, ownership lock, predecessor/race checks, channel size/ETag, CDN refresh and exact public digest/size read-back SHALL remain mandatory
+- **AND** install/relaunch/retained-state and fleet cache convergence SHALL remain explicitly unverified
+
 #### Scenario: New version publication
 - **WHEN** no object exists at the requested version/platform/architecture keys
 - **THEN** the process may upload the verified release objects without overwrite
@@ -300,7 +307,7 @@ A rollout-eligible Windows version SHALL publish Authenticode-signed x64 and arm
 - **AND** the stable Windows channel is not promoted
 
 ### Requirement: Promotion continuation provides read-only staged diagnostics
-The committed macOS continuation SHALL support an independent `--verify-only` CLI path and a default-false `verification_only` boolean in the existing `promotion-only` workflow. Verification-only SHALL require `promote=false`, retain exact candidate/version/source ancestry/committed-content checks and all package trust and immutable/CDN gates, and return before calling promotion. It MUST NOT inspect, acquire, recover or delete a promotion lock, write remote objects or metadata, or refresh CDN. Normal continuation SHALL retain its existing exact-version exceptions and promotion gates.
+The committed macOS continuation SHALL provide read-only `--verify-only` CLI and default-false `verification_only` workflow modes requiring `promote=false`. It SHALL preserve candidate, package trust and immutable/CDN gates and return before promotion without lock access, remote writes or CDN refresh. Normal continuation SHALL retain existing exact-version exceptions and promotion gates.
 
 #### Scenario: Exact macOS ARM64 1.2.33 continuation
 - **WHEN** a trusted dev promotion-only dispatch selects version 1.2.33
@@ -311,6 +318,7 @@ The committed macOS continuation SHALL support an independent `--verify-only` CL
 #### Scenario: Hosted verification-only dispatch
 - **WHEN** a trusted dev dispatch supplies promotion-only, verification_only=true and promote=false for an approved exact candidate
 - **THEN** all five immutable objects are downloaded and verified, the manifest is validated, ZIP and DMG package gates run, and fresh Qiniu metadata/public CDN checks pass before verification succeeds
+- **AND** exact candidate/version/source ancestry/committed-content checks remain required; verification returns before calling promotion and MUST NOT inspect, acquire, recover or delete a promotion lock, write remote objects or metadata, or refresh CDN
 - **AND** a held promotion lock or changed mutable predecessor is neither accessed nor changed
 - **AND** build jobs cannot run with verification_only=true, and mismatched CLI/input boolean pairs fail closed
 

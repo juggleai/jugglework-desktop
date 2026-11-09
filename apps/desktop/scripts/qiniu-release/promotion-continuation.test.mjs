@@ -21,18 +21,18 @@ async function temporary(t) {
   return directory;
 }
 
-function environment(version = "1.2.33") {
+function environment(version = "1.2.34") {
   return { GITHUB_ACTIONS: "true", GITHUB_EVENT_NAME: "workflow_dispatch", GITHUB_REF: "refs/heads/dev", GITHUB_SHA: sha,
     RELEASE_MODE: "promotion-only", VERSION: version, CHANNEL: "stable", RELEASE_PLATFORM: "mac", PROMOTE: "true",
     CANDIDATE_RECORD: CANDIDATE_RECORDS[version] };
 }
 
 // Synthetic records are confined to temporary test fixtures, never release-records.
-function candidate(version = "1.2.33") {
+function candidate(version = "1.2.34") {
   return JSON.parse(JSON.stringify(original).replaceAll("1.2.31", version));
 }
 
-function downloadableCandidate(version = "1.2.33") {
+function downloadableCandidate(version = "1.2.34") {
   const record = candidate(version);
   const plan = candidatePlan(record, "/unused");
   const bodies = new Map();
@@ -60,7 +60,7 @@ function downloadableCandidate(version = "1.2.33") {
 }
 
 test("dispatch accepts only exact version/path pairs and trusted dev workflow_dispatch context", () => {
-  for (const version of ["1.2.31", "1.2.32", "1.2.33"]) {
+  for (const version of ["1.2.31", "1.2.32", "1.2.33", "1.2.34"]) {
     assert.doesNotThrow(() => assertContinuationInputs(environment(version)));
     for (const patch of [
       { GITHUB_ACTIONS: "false" }, { GITHUB_EVENT_NAME: "push" }, { GITHUB_REF: "refs/heads/main" },
@@ -70,7 +70,7 @@ test("dispatch accepts only exact version/path pairs and trusted dev workflow_di
       { CANDIDATE_RECORD: `./${CANDIDATE_RECORDS[version]}` },
     ]) assert.throws(() => assertContinuationInputs({ ...environment(version), ...patch }));
   }
-  for (const version of ["1.2.34", "1.2.33-alpha.1", "v1.2.33", "1.2.330", "toString"]) {
+  for (const version of ["1.2.35", "1.2.33-alpha.1", "v1.2.33", "1.2.330", "1.2.34-alpha.1", "v1.2.34", "1.2.340", "toString"]) {
     assert.throws(() => assertContinuationInputs(environment(version)), /only exact/);
     assert.throws(() => candidatePlan(candidate(version), "/tmp"), /only exact/);
   }
@@ -83,7 +83,7 @@ test("original 1.2.31 candidate semantics and exception text remain valid", () =
   assert.ok(Object.values(EXCEPTIONS).every((reason) => reason.includes("1.2.31") && reason.trim().length >= 20));
 });
 
-for (const version of ["1.2.32", "1.2.33"]) {
+for (const version of ["1.2.32", "1.2.33", "1.2.34"]) {
 test(`${version} candidate gates retain exact source, signed/notarized receipts, evidence digests, inventory and predecessor`, () => {
   assert.equal(candidatePlan(candidate(version), "/tmp").version, version);
   const mutations = [
@@ -93,6 +93,8 @@ test(`${version} candidate gates retain exact source, signed/notarized receipts,
     (r) => { r.evidence.platform = "windows"; },
     (r) => { r.evidence.architectures = ["x64"]; },
     (r) => { r.evidence.artifacts.pop(); },
+    (r) => { r.evidence.artifacts[0].key = r.evidence.artifacts[0].key.replace(version, "1.2.35"); },
+    (r) => { r.evidence.manifest.key = r.evidence.manifest.key.replace(version, "1.2.35"); },
     (r) => { r.evidence.artifacts[0].url = "https://example.com/file.zip"; },
     (r) => { r.evidence.artifacts[0].sha256 = "f".repeat(64); },
     (r) => { r.evidence.manifest.sha512 = Buffer.alloc(64).toString("base64"); },
@@ -107,6 +109,7 @@ test(`${version} candidate gates retain exact source, signed/notarized receipts,
     (r) => { r.expectedPreviousChannelDigest = "bad"; },
     (r) => { r.expectedPreviousChannelDigest = r.evidence.manifest.sha256; },
     (r) => { r.evidence.workflow.cdn.cdnChecks[0].sha256 = "f".repeat(64); },
+    (r) => { r.evidence.canary = { result: "failed" }; },
     (r) => { r.evidence.workflow.promotion = { status: "verified" }; },
   ];
   for (const mutate of mutations) {
@@ -117,7 +120,7 @@ test(`${version} candidate gates retain exact source, signed/notarized receipts,
 });
 }
 
-for (const version of ["1.2.31", "1.2.32", "1.2.33"]) {
+for (const version of ["1.2.31", "1.2.32", "1.2.33", "1.2.34"]) {
   test(`${version} loads only committed dispatch record with exact HEAD/origin, source ancestry and three package versions`, async (t) => {
     const root = await temporary(t);
     const record = candidate(version);
@@ -158,9 +161,9 @@ for (const version of ["1.2.31", "1.2.32", "1.2.33"]) {
     } }), /Not an ancestor/);
     for (const file of packages) {
       for (const commit of [sha, record.sourceCommit]) {
-        await assert.rejects(loadCommittedCandidate({ root, environment: environment(version), git: (args) => args[1] === `${commit}:${file}` ? '{"version":"1.2.34"}' : git(args) }), /Runtime package version/);
+        await assert.rejects(loadCommittedCandidate({ root, environment: environment(version), git: (args) => args[1] === `${commit}:${file}` ? '{"version":"1.2.35"}' : git(args) }), /Runtime package version/);
       }
-      await writeFile(path.join(root, file), '{"version":"1.2.34"}');
+      await writeFile(path.join(root, file), '{"version":"1.2.35"}');
       await assert.rejects(loadCommittedCandidate({ root, environment: environment(version), git }), /Runtime package version/);
       await writeFile(path.join(root, file), JSON.stringify({ version }));
     }
@@ -171,17 +174,19 @@ for (const version of ["1.2.31", "1.2.32", "1.2.33"]) {
   });
 }
 
-test("missing 1.2.33 committed candidate stops before authentication or continuation", async () => {
+for (const version of ["1.2.33", "1.2.34"]) {
+test(`missing ${version} committed candidate stops before authentication or continuation`, async () => {
   const calls = [];
-  await assert.rejects(main({ argv: [], environment: environment("1.2.33"),
+  await assert.rejects(main({ argv: [], environment: environment(version),
     loadCandidate: async () => { calls.push("load"); throw new Error("Candidate not committed"); },
     adapter: () => { calls.push("authenticate"); },
     continueRelease: async () => { calls.push("continue"); },
   }), /Candidate not committed/);
   assert.deepEqual(calls, ["load"]);
 });
+}
 
-function packageChecks({ media = true, fail = "", version = "1.2.33" } = {}) {
+function packageChecks({ media = true, fail = "", version = "1.2.34" } = {}) {
   const calls = [];
   const trust = { notarization: { status: "accepted" }, staple: { status: "validated" }, gatekeeper: { status: "accepted" } };
   const verifier = Object.fromEntries([
@@ -201,7 +206,7 @@ function packageChecks({ media = true, fail = "", version = "1.2.33" } = {}) {
   return { calls, verifier, run, platform: "darwin", extractAsar: () => Buffer.from(JSON.stringify({ version })) };
 }
 
-for (const version of ["1.2.32", "1.2.33"]) {
+for (const version of ["1.2.32", "1.2.33", "1.2.34"]) {
 test(`${version} freshly verifies both containers with current signed media and Apple trust verifiers`, async (t) => {
   const parent = await temporary(t);
   const plan = candidatePlan(candidate(version), parent);
@@ -292,7 +297,7 @@ function promotionHarness(fixture, { badCdn = false, priorMismatch = false, held
   return { qiniu, fetchImpl, calls, plan, state, lock };
 }
 
-for (const version of ["1.2.32", "1.2.33"]) {
+for (const version of ["1.2.32", "1.2.33", "1.2.34"]) {
 test(`${version} continuation retains fresh CDN, predecessor/lock, exact manifest promotion and refresh/read-back`, async (t) => {
   const directory = await temporary(t);
   const fixture = downloadableCandidate(version);
@@ -307,6 +312,7 @@ test(`${version} continuation retains fresh CDN, predecessor/lock, exact manifes
     assert.ok(exception.reason.trim().length >= 20);
     assert.ok(exception.reason.includes(version));
   }
+  assert.notEqual(result.preCanaryException.reason, result.metadataException.reason);
   assert.equal(result.notarizationException, null);
   assert.equal(result.cacheException, undefined);
   assert.equal(result.readBack.sha256, harness.plan.manifest.sha256);
@@ -318,6 +324,7 @@ test(`${version} continuation retains fresh CDN, predecessor/lock, exact manifes
   for (const item of [...harness.plan.objects, harness.plan.manifest]) {
     assert.ok(harness.calls.slice(0, lockIndex).some(([name, url, method]) => name === "fetch" && url === item.url && method === "HEAD"));
     assert.ok(harness.calls.slice(0, lockIndex).some(([name, url, , range]) => name === "fetch" && url === item.url && range === "bytes=0-0"));
+    assert.ok(harness.calls.slice(0, lockIndex).filter(([name, url, method, range]) => name === "fetch" && url === item.url && method === "GET" && !range).length >= 2);
   }
   assert.ok(harness.calls.some(([name]) => name === "refresh"));
   const evidence = JSON.parse(await readFile(path.join(directory, "release-evidence.json"), "utf8"));
@@ -329,6 +336,12 @@ test(`${version} continuation retains fresh CDN, predecessor/lock, exact manifes
   assert.notEqual(evidence.continuation.sourceCommit, evidence.continuation.toolingCommit);
   assert.equal(evidence.continuation.status, "promoted");
   assert.equal(evidence.workflow.promotion.status, "verified");
+  assert.deepEqual(evidence.workflow.promotion.preCanaryException, result.preCanaryException);
+  assert.deepEqual(evidence.workflow.promotion.metadataException, result.metadataException);
+  assert.equal(evidence.workflow.promotion.lock.expectedPreviousChannelDigest, record.expectedPreviousChannelDigest);
+  assert.equal(evidence.workflow.promotion.lock.candidateDigest, harness.plan.manifest.sha256);
+  assert.equal(evidence.workflow.promotion.lockKey, harness.lock);
+  assert.deepEqual(evidence.workflow.promotion.readBack, result.readBack);
 });
 }
 
@@ -394,6 +407,88 @@ test("bounded subprocess diagnostics include only fixed binary/flags, exit and a
   assert.equal(safeFailure({ status: 999 }, "download.zip").status, undefined);
   try { command(secret, [secret], secret, execute); }
   catch (error) { assert.ok(!JSON.stringify(safeFailure(error, "zip.extract")).includes(secret)); }
+});
+
+test("fetch diagnostics retain bounded nested/aggregate codes without messages, hosts, paths or secrets", () => {
+  const secret = "SENTINEL_SECRET https://private.invalid/?token=never-record";
+  const leaf = Object.assign(new Error(secret), { code: "ETIMEDOUT", syscall: "connect", address: secret, hostname: secret });
+  const aggregate = new AggregateError([leaf, Object.assign(new Error(secret), { code: secret, syscall: secret })], secret);
+  const error = new TypeError(secret, { cause: aggregate });
+  leaf.cause = error;
+  const failure = safeFailure(error, "download.zip");
+  assert.deepEqual(failure.causes, [
+    { depth: 1, errorName: "AggregateError" },
+    { depth: 2, errorName: "Error", errorCode: "ETIMEDOUT", syscall: "connect" },
+    { depth: 2, errorName: "Error" },
+  ]);
+  assert.ok(!JSON.stringify(failure).includes(secret));
+  for (const code of ["UND_ERR_CONNECT_TIMEOUT", "UND_ERR_SOCKET", "ERR_TLS_CERT_ALTNAME_INVALID", "ENOMEM"]) {
+    assert.equal(safeFailure(new TypeError(secret, { cause: Object.assign(new Error(secret), { code }) }), "download.zip").causes[0].errorCode, code);
+  }
+  let deep = leaf;
+  for (let i = 0; i < 100; i++) deep = new AggregateError(Array(20).fill(deep), secret);
+  assert.ok(safeFailure(deep, "download.zip").causes.length <= 8);
+});
+
+test("first GET transport failure retains phase/runtime/cause and stops before all Qiniu effects, without retry", async (t) => {
+  const directory = await temporary(t);
+  const fixture = downloadableCandidate();
+  let fetches = 0;
+  let remoteCalls = 0;
+  const secret = "SENTINEL_SECRET /private/runner token=never-record";
+  const qiniu = new Proxy({}, { get() { remoteCalls++; throw new Error("Must not access Qiniu"); } });
+  let rejected;
+  try {
+    await continuePromotion({ record: fixture.record, recordSha256: "f".repeat(64), toolingCommit: sha, directory, actor: "test-only", qiniu,
+      fetchImpl: async (url, options) => {
+        fetches++;
+        assert.equal(url, candidatePlan(fixture.record, directory).objects[0].url);
+        assert.equal(options.redirect, "error");
+        assert.equal(options.method ?? "GET", "GET");
+        assert.ok(options.signal instanceof AbortSignal);
+        throw new TypeError(secret, { cause: Object.assign(new Error(secret), { code: "UND_ERR_CONNECT_TIMEOUT", hostname: secret }) });
+      } });
+  } catch (error) { rejected = error; }
+  assert.ok(rejected);
+  assert.equal(fetches, 1);
+  assert.equal(remoteCalls, 0);
+  const evidence = JSON.parse(await readFile(path.join(directory, "release-evidence.json"), "utf8"));
+  const failure = evidence.continuation.failure;
+  assert.equal(failure.stage, "download.zip");
+  assert.equal(failure.phase, "headers");
+  assert.equal(failure.bytesReceived, 0);
+  assert.equal(failure.causes[0].errorCode, "UND_ERR_CONNECT_TIMEOUT");
+  assert.equal(failure.runtime.nodeVersion, process.versions.node);
+  assert.equal(failure.runtime.undiciVersion, process.versions.undici);
+  assert.ok(Number.isInteger(failure.elapsedMs) && failure.elapsedMs >= 0);
+  assert.ok(failure.memory.rss > 0 && failure.memory.heapUsed > 0);
+  assert.equal(evidence.workflow.promotion, null);
+  assert.deepEqual(evidence.continuation.checkpoints.map(({ stage, phase }) => [stage, phase]), [["download.zip", "before"]]);
+  assert.ok(!JSON.stringify([evidence, safeFailure(rejected, "candidate"), rejected.message, rejected.stack]).includes(secret));
+});
+
+test("interrupted body diagnostics distinguish received bytes and preserve partial output without retry", async (t) => {
+  const directory = await temporary(t);
+  const body = Buffer.from("immutable candidate bytes");
+  const object = { path: path.join(directory, "test.zip"), ...metadataForBuffer(body, "test.zip") };
+  let fetches = 0;
+  const fetchImpl = async () => {
+    fetches++;
+    let pulls = 0;
+    return new Response(new ReadableStream({ pull(controller) {
+      if (pulls++ === 0) controller.enqueue(body.subarray(0, 4));
+      else controller.error(new TypeError("SENTINEL_SECRET", { cause: Object.assign(new Error("SENTINEL_SECRET"), { code: "UND_ERR_SOCKET" }) }));
+    } }, { highWaterMark: 0 }), { headers: { "content-type": object.mime, "content-length": String(object.size) } });
+  };
+  let failure;
+  try { await downloadCandidateObject(object, { fetchImpl }); }
+  catch (error) { failure = safeFailure(error, "download.zip"); }
+  assert.equal(failure.phase, "body");
+  assert.equal(failure.bytesReceived, 4);
+  assert.equal(failure.causes[0].errorCode, "UND_ERR_SOCKET");
+  assert.equal(fetches, 1);
+  assert.deepEqual(await readFile(object.path), body.subarray(0, 4));
+  assert.ok(!JSON.stringify(failure).includes("SENTINEL_SECRET"));
 });
 
 test("verify-only completes all five downloads, manifest, both package gates and fresh CDN without lock/write/refresh", async (t) => {
