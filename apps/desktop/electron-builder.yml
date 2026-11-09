@@ -97,6 +97,7 @@ mac:
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
+    NSCameraUsageDescription: JuggleWork uses the camera only when you enable video in a meeting.
     NSMicrophoneUsageDescription: JuggleWork uses the microphone for Voice Mode and task dictation when you choose to speak.
     NSScreenCaptureUsageDescription: JuggleWork uses screen recording only when you ask Computer Use to inspect or interact with your screen.
   extraResources:

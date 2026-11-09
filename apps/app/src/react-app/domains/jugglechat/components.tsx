@@ -1,3 +1,4 @@
+import { MeetingChatEntry, MeetingMessageCard } from "../meeting/chat-entry";
 /** @jsxImportSource react */
 import { createElement, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
@@ -413,6 +414,7 @@ function isSame(a: ChatConversation | null, b: ChatConversation | null) {
 }
 
 function messageText(message: ChatMessage) {
+  if (message.name === "jw:meeting-card" || message.name === "jw:meeting-invite") return `[会议] ${String(message.content?.title || "会议邀请")}`;
   return message.content?.content || message.content?.name || messagePreview(message);
 }
 
@@ -679,6 +681,7 @@ function callFinishedText(message: ChatMessage) {
 }
 
 function MessageBubble({ message, onResend }: { message: ChatMessage; onResend?: () => void }) {
+  if (message.name === "jw:meeting-card" || message.name === "jw:meeting-invite") return <MeetingMessageCard message={message} />;
   if (message.name === MESSAGE_NAMES.image) return <ImageMessage message={message} onResend={onResend} />;
   if (message.name === MESSAGE_NAMES.video) return <VideoMessage message={message} onResend={onResend} />;
   if (message.name === MESSAGE_NAMES.file) return <FileMessage message={message} onResend={onResend} />;
@@ -1405,6 +1408,7 @@ export function ConversationSurface({ sidebarOpen = true, onToggleSidebar }: { s
         {/* 顶栏仅显示会话名称（设计要求：不显示头像与 @id） */}
         <div className="jw-im-chat-title tyn-media-col tyn-conver-header-title"><div className="tyn-media-row"><h2 className="name">{name}</h2></div></div>
         <ul className="jw-im-chat-actions tyn-list-inline gap gap-1 ms-auto jg-conversation-header-tools">
+          <li><MeetingChatEntry conversation={conversation}/></li>
           <li ref={actionsMenuRef}><button type="button" className="tool btn btn-icon btn-light wr wr-more-dot" onClick={(event) => { event.stopPropagation(); setActionsOpen((current) => !current); }} title={t("chat.conversation_settings")} aria-expanded={actionsOpen}><MoreHorizontal aria-hidden="true" /></button>
             {actionsOpen ? <ConversationActions conversation={conversation} onClose={() => setActionsOpen(false)} onManageGroup={conversation.conversationType === 2 ? openGroupManager : undefined} /> : null}
           </li>

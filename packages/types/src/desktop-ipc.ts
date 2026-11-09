@@ -600,6 +600,12 @@ export type ToonFactoryProjectOpenResult = ToonFactoryProjectState & {
 // ---------------------------------------------------------------------------
 
 export type DesktopCommandMap = {
+  meetingMediaPermission: { args: [kind: "camera" | "microphone"]; result: { granted: boolean; status: string } };
+  meetingPrivacySettings: { args: [kind: "camera" | "microphone" | "screen"]; result: void };
+  meetingMiniReady: { args: []; result: void };
+  meetingWindowState: { args: []; result: { compact: boolean } };
+  meetingConfigGet: { args: []; result: { enabled: boolean; appId: number; filePath: string } };
+  meetingWindowFocus: { args: [target: "main" | "meeting"]; result: void };
   toonFactoryOpen: { args: [workspaceId: string]; result: ToonFactoryStatus };
   toonFactoryHide: { args: []; result: void };
   toonFactoryClose: { args: []; result: void };

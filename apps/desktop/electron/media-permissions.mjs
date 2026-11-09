@@ -15,17 +15,22 @@ function isLocalRendererOrigin(origin) {
 }
 
 function shouldAllowMainWindowPermission(input) {
-  const { webContents, permission, origin, details, mainWindow } = input;
+  const { webContents, permission, origin, details, mainWindow, meetingWindow } = input;
+  // The blank meeting window has no preload or navigation and may only capture
+  // the display in response to its own user gesture, never camera/microphone.
+  if (permission === "display-capture" && meetingWindow && webContents?.id === meetingWindow.webContents.id) {
+    return isLocalRendererOrigin(origin) || origin === "about:blank" || origin === "null";
+  }
   if (!mainWindow || !webContents || webContents.id !== mainWindow.webContents.id) return false;
   if (!isLocalRendererOrigin(origin)) return false;
   if (permission !== "media" && permission !== "audioCapture") return true;
   const mediaType = typeof details.mediaType === "string" ? details.mediaType : "";
-  if (mediaType && mediaType !== "audio") return false;
+  if (mediaType && !["audio", "video"].includes(mediaType)) return false;
   const mediaTypes = Array.isArray(details.mediaTypes) ? details.mediaTypes : [];
-  return mediaType === "audio" || (mediaTypes.includes("audio") && !mediaTypes.includes("video"));
+  return ["audio", "video"].includes(mediaType) || (mediaTypes.length > 0 && mediaTypes.every((type) => ["audio", "video"].includes(type)));
 }
 
-export function installMediaPermissionHandlers(session, getMainWindow) {
+export function installMediaPermissionHandlers(session, getMainWindow, getMeetingWindow = () => null) {
   session.defaultSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
     callback(shouldAllowMainWindowPermission({
       webContents,
@@ -33,6 +38,7 @@ export function installMediaPermissionHandlers(session, getMainWindow) {
       origin: details?.requestingUrl,
       details: details ?? {},
       mainWindow: getMainWindow(),
+      meetingWindow: getMeetingWindow(),
     }));
   });
   session.defaultSession.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => (
@@ -42,6 +48,7 @@ export function installMediaPermissionHandlers(session, getMainWindow) {
       origin: requestingOrigin,
       details: details ?? {},
       mainWindow: getMainWindow(),
+      meetingWindow: getMeetingWindow(),
     })
   ));
 }

@@ -29,7 +29,7 @@ test("allows local audio capture only from the main window", () => {
   assert.equal(checkHandler(mainWindow.webContents, "audioCapture", "https://example.com", { mediaType: "audio" }), false);
 });
 
-test("allows audio-only media requests and rejects video", () => {
+test("allows audio and video from the trusted main window", () => {
   const { mainWindow, requestHandler } = setup();
   let allowed = null;
   requestHandler(mainWindow.webContents, "media", (value) => { allowed = value; }, {
@@ -42,11 +42,42 @@ test("allows audio-only media requests and rejects video", () => {
     requestingUrl: "file://",
     mediaTypes: ["audio", "video"],
   });
-  assert.equal(allowed, false);
+  assert.equal(allowed, true);
 
   requestHandler(mainWindow.webContents, "media", (value) => { allowed = value; }, {
     requestingUrl: "file://",
     mediaType: "video",
   });
-  assert.equal(allowed, false);
+  assert.equal(allowed, true);
+});
+
+ test("rejects camera requests from remote content and other windows", () => {
+ const { mainWindow, requestHandler } = setup();
+ for (const [sender, url] of [[{id:8}, "file://"], [mainWindow.webContents, "https://example.com"]]) {
+ let allowed;
+ requestHandler(sender,"media",value=>{allowed=value},{requestingUrl:url,mediaTypes:["video"]});
+ assert.equal(allowed,false);
+ }
+ });
+
+test("meeting child may share its display but cannot request camera or grant remote access", () => {
+  /** @type {(...args: any[]) => any} */
+  let check = () => { throw new Error("not installed"); };
+  /** @type {(...args: any[]) => any} */
+  let request = () => { throw new Error("not installed"); };
+  const main = {webContents: {id: 7}};
+  const child = {webContents: {id: 9}};
+  installMediaPermissionHandlers({defaultSession:{
+    setPermissionCheckHandler(handler){check=handler;},
+    setPermissionRequestHandler(handler){request=handler;},
+  }},()=>main,()=>child);
+  for (const origin of ["about:blank", "null", "http://localhost:5173"]) {
+    assert.equal(check(child.webContents,"display-capture",origin,{}),true);
+  }
+  assert.equal(check(child.webContents,"media","about:blank",{mediaType:"video"}),false);
+  assert.equal(check(child.webContents,"display-capture","https://example.com",{}),false);
+  assert.equal(check({id:10},"display-capture","about:blank",{}),false);
+  let allowed;
+  request(child.webContents,"display-capture",value=>allowed=value,{requestingUrl:"about:blank",mediaTypes:["video"]});
+  assert.equal(allowed,true);
 });

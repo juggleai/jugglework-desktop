@@ -1,0 +1,86 @@
+[
+  {
+    "case": "member native close and cancel",
+    "pass": true
+  },
+  {
+    "case": "member confirmed leave",
+    "pass": true,
+    "state": {
+      "phase": "idle",
+      "actions": [
+        "leave"
+      ],
+      "tracks": [
+        {
+          "kind": "audio",
+          "state": "ended"
+        },
+        {
+          "kind": "video",
+          "state": "ended"
+        }
+      ],
+      "chatLeft": 1
+    }
+  },
+  {
+    "case": "failed exit retains confirmation/window",
+    "pass": true
+  },
+  {
+    "case": "return to main floating preview and mic control",
+    "pass": true
+  },
+  {
+    "case": "native focus restores meeting from floating preview",
+    "pass": true
+  },
+  {
+    "case": "host only leave",
+    "pass": true,
+    "state": {
+      "phase": "idle",
+      "actions": [
+        "leave",
+        "leave"
+      ],
+      "tracks": [
+        {
+          "kind": "audio",
+          "state": "ended"
+        },
+        {
+          "kind": "video",
+          "state": "ended"
+        },
+        {
+          "kind": "video",
+          "state": "ended"
+        }
+      ],
+      "chatLeft": 1
+    }
+  },
+  {
+    "case": "host end everyone",
+    "pass": true,
+    "state": {
+      "phase": "idle",
+      "actions": [
+        "end"
+      ],
+      "tracks": [
+        {
+          "kind": "audio",
+          "state": "ended"
+        },
+        {
+          "kind": "video",
+          "state": "ended"
+        }
+      ],
+      "chatLeft": 1
+    }
+  }
+]

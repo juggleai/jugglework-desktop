@@ -92,3 +92,5 @@ evals/results/
 /apps/desktop/resources/toonFactoryV2/
 /apps/desktop/resources/mediaTools/
 /apps/desktop/.media-tools-cache/
+
+/apps/desktop/config/meeting.json

@@ -1,3 +1,4 @@
+import { MeetingIcon } from "../domains/meeting/meeting-icons";
 /** @jsxImportSource react */
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -578,6 +579,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
             >
               <ContactRound />
             </RailButton>
+            <RailButton label="会议" active={location.pathname === "/meetings"} onClick={() => navigate("/meetings")} testId="app-rail-meetings" onPreviewMenuChange={props.onPreviewMenuChange}><MeetingIcon /></RailButton>
           </>
         ) : null}
         <DropdownMenu open={navigationMenuOpen} onOpenChange={setNavigationMenuOpen}>

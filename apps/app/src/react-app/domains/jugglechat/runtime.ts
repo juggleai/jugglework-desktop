@@ -15,6 +15,12 @@ type RuntimeEvent = "state" | "message" | "conversation" | "message-recalled" | 
 type RuntimeListener = (payload: any) => void;
 
 const CUSTOM_MESSAGES = [
+  { name: "jw:meeting-card", isCount: true, isStorage: true },
+  { name: "jw:meeting-invite", isCount: true, isStorage: true },
+  { name: "jw:meeting-chat", isCount: false, isStorage: false },
+  { name: "jw:meeting-ring", isCount: false, isStorage: false },
+  { name: "jw:meeting-ring-response", isCount: false, isStorage: false },
+  { name: "jw:meeting-ring-cancel", isCount: false, isStorage: false },
   { name: "jgd:grpntf", isCount: true, isStorage: true },
   { name: "jgd:friendntf", isCount: true, isStorage: true },
   { name: "jgd:friendapply", isCount: true, isStorage: true },

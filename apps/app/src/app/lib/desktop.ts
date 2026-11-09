@@ -794,3 +794,27 @@ export {
   desktopRemoteControlCredentialDelete,
   desktopRemoteControlStatusRead,
 };
+
+export function focusMeetingWindow(target: "main" | "meeting"): Promise<void> {
+  return invokeElectronHelper("meetingWindowFocus", target);
+}
+
+export function readMeetingDesktopConfig() {
+  return invokeElectronHelper("meetingConfigGet");
+}
+
+export async function requestMeetingDevicePermission(kind: "camera" | "microphone") {
+  if (!window.__JUGGLEWORK_ELECTRON__?.invokeDesktop) return { granted: true, status: "browser-managed" };
+  return invokeElectronHelper("meetingMediaPermission", kind);
+}
+export function openMeetingPrivacySettings(kind: "camera" | "microphone" | "screen") {
+  return invokeElectronHelper("meetingPrivacySettings", kind);
+}
+
+export function readMeetingWindowState() {
+  return invokeElectronHelper("meetingWindowState");
+}
+
+export function markMeetingMiniReady() {
+  return invokeElectronHelper("meetingMiniReady");
+}
