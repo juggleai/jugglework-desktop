@@ -89,6 +89,13 @@ type MutableState = {
   devtoolsWorkspaceId: string | null;
 };
 
+function localHostConnectionKey(info: JuggleWorkServerInfo | null): string {
+  const baseUrl = info?.baseUrl?.trim() ?? "";
+  const clientToken = info?.clientToken?.trim() ?? "";
+  const hostToken = info?.hostToken?.trim() ?? "";
+  return baseUrl && clientToken ? `${baseUrl}\u0000${clientToken}\u0000${hostToken}` : "";
+}
+
 const applyStateAction = <T,>(current: T, next: SetStateAction<T>) =>
   typeof next === "function" ? (next as (value: T) => T)(current) : next;
 
@@ -102,6 +109,7 @@ export function createJuggleWorkServerStore(options: CreateJuggleWorkServerStore
   let started = false;
   let disposed = false;
   let healthTimeoutId: number | null = null;
+  let hostInfoRetryTimeoutId: number | null = null;
   let healthBusy = false;
   let healthDelayMs = 10_000;
   let consecutiveHealthFailures = 0;
@@ -320,6 +328,13 @@ export function createJuggleWorkServerStore(options: CreateJuggleWorkServerStore
     }
   };
 
+  const clearHostInfoRetryTimeout = () => {
+    if (hostInfoRetryTimeoutId !== null) {
+      window.clearTimeout(hostInfoRetryTimeoutId);
+      hostInfoRetryTimeoutId = null;
+    }
+  };
+
   const queueHealthCheck = (delayMs: number) => {
     if (disposed || typeof window === "undefined") return;
     clearHealthTimeout();
@@ -466,24 +481,54 @@ export function createJuggleWorkServerStore(options: CreateJuggleWorkServerStore
     window.addEventListener("visibilitychange", visibilityChangeHandler);
 
     const refreshHostInfo = () => {
+      if (disposed) return;
       if (!isDesktopRuntime()) return;
       if (!options.documentVisible()) return;
       void (async () => {
         try {
           const info = await juggleworkServerInfo() as JuggleWorkServerInfo;
           if (disposed) return;
+          clearHostInfoRetryTimeout();
+          const previousConnectionKey = localHostConnectionKey(state.juggleworkServerHostInfo);
+          const nextConnectionKey = localHostConnectionKey(info);
           mutateState((current) => ({
             ...current,
             juggleworkServerHostInfo: info,
             juggleworkServerHostInfoReady: true,
           }));
+          // Desktop assigns the loopback port and credentials asynchronously.
+          // The first host-info read can fail before the child process is ready;
+          // in that case the initial health check observes no URL and has no
+          // endpoint to poll. Re-check immediately when a usable generation
+          // first appears (or changes), rather than requiring a feature page's
+          // manual Retry action to establish the shared client.
+          if (
+            options.startupPreference() !== "server"
+            && nextConnectionKey
+            && nextConnectionKey !== previousConnectionKey
+          ) {
+            consecutiveHealthFailures = 0;
+            queueHealthCheck(0);
+          }
         } catch {
           if (disposed) return;
+          const retryStartupRead = options.startupPreference() !== "server"
+            && Date.now() - bootStartedAt < 5_000;
           mutateState((current) => ({
             ...current,
             juggleworkServerHostInfo: null,
-            juggleworkServerHostInfoReady: true,
+            // Keep feature pages in their loading state while Desktop is still
+            // inside the bounded startup recovery window. Marking this ready
+            // after the first failed bridge read used to expose a deterministic
+            // "local server disconnected" error on the first Automations visit.
+            juggleworkServerHostInfoReady: !retryStartupRead,
           }));
+          if (retryStartupRead && hostInfoRetryTimeoutId === null) {
+            hostInfoRetryTimeoutId = window.setTimeout(() => {
+              hostInfoRetryTimeoutId = null;
+              refreshHostInfo();
+            }, 250);
+          }
         }
       })();
     };
@@ -606,6 +651,7 @@ export function createJuggleWorkServerStore(options: CreateJuggleWorkServerStore
     disposed = true;
     started = false;
     clearHealthTimeout();
+    clearHostInfoRetryTimeout();
     if (visibilityChangeHandler && typeof window !== "undefined") {
       window.removeEventListener("visibilitychange", visibilityChangeHandler);
       visibilityChangeHandler = null;
