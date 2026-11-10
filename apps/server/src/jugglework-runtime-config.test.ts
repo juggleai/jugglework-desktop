@@ -75,6 +75,7 @@ describe("jugglework runtime config file", () => {
     expect(parsed.compaction).toEqual({ prune: true, reserved: 20_000 });
     expect(Array.isArray(parsed.plugin)).toBe(true);
     expect((parsed.plugin as string[]).some((entry) => entry.includes("jugglework-context-overflow"))).toBe(true);
+    expect((parsed.plugin as string[]).some((entry) => entry.includes("jugglework-screenshot-history"))).toBe(true);
     expect(parsed.agent).toMatchObject({
       jugglework: {
         permission: {
