@@ -67,7 +67,7 @@ import {
   VIDEO_DURATION_DEFAULT_SECONDS,
   type ComposerVideoModelOption,
 } from "./composer/video-generation";
-import { effectiveSessionRunning, isSessionBusyError, shouldReportAbortFailure } from "./session-run-recovery";
+import { effectiveSessionRunning, isSessionBusyError, shouldReconcileAfterCoordinatorEnded, shouldReportAbortFailure } from "./session-run-recovery";
 import { useActiveSnapshotReconciliation } from "./active-snapshot-reconciliation";
 import { imageModelsQueryOptions, mediaModelQueryScope, videoModelsQueryOptions } from "@/react-app/domains/connections/media-model-queries";
 import { effectiveGenerationState, generationDraftAvailable } from "./composer/generation-model-reconciliation";
@@ -1011,6 +1011,26 @@ export function SessionSurface(props: SessionSurfaceProps) {
     if (!activeRunsQuery.isSuccess || coordinatorRun || liveStatus.type !== "idle" || !sessionActivityRunActive) return;
     useSessionActivityStore.getState().setRunStatus(props.workspaceId, props.sessionId, { type: "idle" });
   }, [activeRunsQuery.isSuccess, coordinatorRun, liveStatus.type, props.sessionId, props.workspaceId, sessionActivityRunActive]);
+
+  // When the server-owned run list drops this session while the local
+  // projection still says busy, `session.idle` was probably lost. Re-read the
+  // authoritative snapshot immediately; it alone decides the terminal state.
+  const previousCoordinatorRef = useRef<{ identity: string; active: boolean }>({ identity: surfaceIdentity, active: false });
+  const coordinatorActive = coordinatorRun !== null;
+  useEffect(() => {
+    if (!activeRunsQuery.isSuccess) return;
+    const previous = previousCoordinatorRef.current;
+    previousCoordinatorRef.current = { identity: surfaceIdentity, active: coordinatorActive };
+    if (previous.identity !== surfaceIdentity) return;
+    if (!shouldReconcileAfterCoordinatorEnded({
+      activeRunsSucceeded: true,
+      previousCoordinatorActive: previous.active,
+      coordinatorActive,
+      liveStatus: liveStatus.type,
+      activityRunActive: sessionActivityRunActive,
+    })) return;
+    void queryClient.refetchQueries({ queryKey: snapshotQueryKey, exact: true, type: "active" });
+  }, [activeRunsQuery.isSuccess, activeRunsQuery.dataUpdatedAt, coordinatorActive, liveStatus.type, queryClient, sessionActivityRunActive, snapshotQueryKey, surfaceIdentity]);
 
   useEffect(() => {
     if (!chatStreaming) setSteering(false);

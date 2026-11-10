@@ -6,6 +6,7 @@ import { getReactQueryClient } from "../../../infra/query-client";
 import { captureAnalyticsEvent, takeTaskRunStart } from "@/app/lib/analytics";
 import { trackTaskCompleted, trackTaskFailed } from "@/app/lib/den-telemetry";
 import { createClient } from "@/app/lib/opencode";
+import { recordInspectorEvent } from "@/app/lib/app-inspector";
 import { isFileWindowRuntime } from "@/app/lib/runtime-env";
 import { normalizeEvent } from "@/app/utils";
 import { SYNTHETIC_RUN_DIAGNOSTIC_MESSAGE_PREFIX, SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX, type OpencodeEvent, type PendingPermission, type PendingQuestion } from "@/app/types";
@@ -65,6 +66,8 @@ type SyncOptions = {
   onSessionDeleted?: (sessionId: string) => void;
   onSessionStatus?: (update: { sessionId: string; status: SessionStatus }) => void;
   onReconnect?: () => void;
+  /** Test-only override; production uses the heartbeat-derived defaults. */
+  streamLiveness?: { silenceMs: number; checkMs: number };
 };
 
 export async function reconcileWorkspaceInteractionRoots(
@@ -500,6 +503,19 @@ function getErrorStatus(error: unknown) {
 function shouldRetrySyncSubscribe(error: unknown) {
   const status = getErrorStatus(error);
   return status !== 401 && status !== 403 && status !== 404;
+}
+
+/**
+ * Maximum time without any SSE frame, heartbeats included, before the
+ * transport is treated as half-open. OpenCode emits `server.heartbeat` every
+ * 10 seconds, so a quiet but healthy stream never reaches this bound.
+ */
+export const SESSION_EVENT_STREAM_SILENCE_MS = 45_000;
+const SESSION_EVENT_STREAM_LIVENESS_CHECK_MS = 5_000;
+
+/** True only when a connected transport has received no frame within the bound. */
+export function sessionEventStreamSilent(lastFrameAt: number, now: number, silenceMs = SESSION_EVENT_STREAM_SILENCE_MS): boolean {
+  return now - lastFrameAt >= silenceMs;
 }
 
 export function sessionSyncRetryDelayMs(baseDelayMs: number, random = Math.random): number {
@@ -1968,6 +1984,11 @@ function startSync(input: SyncOptions) {
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
   let watchdogTimer: ReturnType<typeof setInterval> | null = null;
   let activeConnectionController: AbortController | null = null;
+  let livenessTimer: ReturnType<typeof setInterval> | null = null;
+  // Bytes are tracked per connection so a late frame from an aborted
+  // transport cannot keep a replacement connection looking healthy.
+  let liveConnectionController: AbortController | null = null;
+  let lastFrameAt = Date.now();
   const reconciledStalls = new Map<string, number>();
   const recoveringStalls = new Map<string, number>();
   let retryDelayMs = 1_000;
@@ -2071,8 +2092,15 @@ function startSync(input: SyncOptions) {
     if (activeConnectionController && !activeConnectionController.signal.aborted) return;
     const connectionController = new AbortController();
     activeConnectionController = connectionController;
+    // A request that never returns headers is as stuck as a body that stops
+    // delivering bytes, so the silence window starts with the request.
+    liveConnectionController = connectionController;
+    lastFrameAt = Date.now();
     try {
       const client = createClient(input.baseUrl, undefined, { token: input.juggleworkToken, mode: "jugglework" }, {
+        onEventActivity: () => {
+          if (liveConnectionController === connectionController) lastFrameAt = Date.now();
+        },
         // subscribe() is lazy, and the SDK can reconnect internally without
         // returning from its iterator. Calibrate only after a real HTTP success.
         onEventConnected: () => {
@@ -2127,6 +2155,24 @@ function startSync(input: SyncOptions) {
   };
 
   void connect();
+  // OpenCode heartbeats every quiet stream, so total silence means the
+  // transport is half-open: the iterator neither yields nor throws and would
+  // otherwise never reach reconnect reconciliation. A quiet workspace keeps
+  // its connection because heartbeats count as activity.
+  livenessTimer = setInterval(() => {
+    if (disposed || controller.signal.aborted || retryTimer) return;
+    const active = activeConnectionController;
+    if (!active || active.signal.aborted || liveConnectionController !== active) return;
+    const now = Date.now();
+    if (!sessionEventStreamSilent(lastFrameAt, now, input.streamLiveness?.silenceMs)) return;
+    if (typeof window !== "undefined") {
+      recordInspectorEvent("session_sync.stream_silent", { workspaceId: input.workspaceId, silentForMs: now - lastFrameAt });
+    }
+    liveConnectionController = null;
+    active.abort();
+    // The successful replacement reconciles tracked sessions and active runs.
+    scheduleRetry();
+  }, input.streamLiveness?.checkMs ?? SESSION_EVENT_STREAM_LIVENESS_CHECK_MS);
   watchdogTimer = setInterval(() => {
     useSessionActivityStore.getState().refreshStalledStatuses();
     reconcileNewStalls();
@@ -2137,6 +2183,7 @@ function startSync(input: SyncOptions) {
     disposed = true;
     if (retryTimer) clearTimeout(retryTimer);
     if (watchdogTimer) clearInterval(watchdogTimer);
+    if (livenessTimer) clearInterval(livenessTimer);
     activeConnectionController?.abort();
     controller.abort();
   };

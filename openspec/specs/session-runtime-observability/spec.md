@@ -141,6 +141,41 @@ reads SHALL NOT resurrect terminal runs or overwrite newer generations.
 - **WHEN** the first stream connection succeeds
 - **THEN** tracked session snapshots are refreshed without requiring navigation
 
+### Requirement: Half-open event transports are replaced
+
+The client SHALL treat any received event-stream byte, including heartbeat frames
+and SSE comments, as transport activity. A quiet workspace whose stream still
+delivers heartbeats SHALL keep its connection. When a connected transport delivers
+no bytes for longer than several engine heartbeat intervals, the client SHALL
+abort it and open one replacement after bounded backoff; the successful
+replacement SHALL perform authoritative reconnect reconciliation. Business-event
+silence alone SHALL NOT trigger replacement.
+
+#### Scenario: Stream stops delivering bytes without closing
+- **GIVEN** the event transport connected and then neither closes, errors, nor delivers bytes
+- **WHEN** the silence exceeds the liveness bound
+- **THEN** the client aborts that transport and opens a replacement
+- **AND** the replacement refreshes tracked session snapshots and active-run state
+
+#### Scenario: Quiet workspace receives only heartbeats
+- **WHEN** no session events occur but heartbeat bytes keep arriving
+- **THEN** the client keeps the existing transport open
+
+### Requirement: An ended server run reconciles a stuck local run
+
+When the server-owned active-run list stops reporting a visible session whose
+local projection is still busy or retrying, the client SHALL immediately refresh
+that session's authoritative snapshot rather than waiting for periodic
+reconciliation. The snapshot SHALL decide the terminal state; a run-list gap alone
+SHALL NOT force the session idle.
+
+#### Scenario: Terminal idle event was lost
+- **GIVEN** a visible session's run list previously reported it active
+- **AND** its local status remains busy because the idle event was not delivered
+- **WHEN** the run list stops reporting the session
+- **THEN** the client refreshes the authoritative snapshot immediately
+- **AND** the session leaves the running state once the snapshot reports idle
+
 ### Requirement: Accepted submissions reconcile the visible transcript
 
 After the runtime accepts a prompt submission, the client SHALL refresh the

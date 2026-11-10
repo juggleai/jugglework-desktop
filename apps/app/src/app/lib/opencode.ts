@@ -532,7 +532,22 @@ export function unwrap<T>(result: FieldsResult<T>): NonNullable<T> {
   throw new Error(message || "Unknown error");
 }
 
-export function createClient(baseUrl: string, directory?: string, auth?: OpencodeAuth, options?: { onEventConnected?: () => void }) {
+/**
+ * Report every byte chunk of an event-stream body, including SSE comment
+ * heartbeats that never surface as parsed events.
+ */
+export function observeEventStreamActivity(response: Response, onActivity: () => void): Response {
+  if (!response.body) return response;
+  const observed = response.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      onActivity();
+      controller.enqueue(chunk);
+    },
+  }));
+  return new Response(observed, { status: response.status, statusText: response.statusText, headers: response.headers });
+}
+
+export function createClient(baseUrl: string, directory?: string, auth?: OpencodeAuth, options?: { onEventConnected?: () => void; onEventActivity?: () => void }) {
   const headers: Record<string, string> = {};
   if (!isDesktopRuntime()) {
     const authHeader = resolveAuthHeader(auth);
@@ -557,10 +572,11 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
     baseUrl,
     directory,
     headers: Object.keys(headers).length ? headers : undefined,
-    fetch: options?.onEventConnected ? async (input, init) => {
+    fetch: options?.onEventConnected || options?.onEventActivity ? async (input, init) => {
       const response = await fetchImpl(input, init);
-      if (/\/event(?:\?|$)/.test(getRequestUrl(input)) && response.ok && response.body) options.onEventConnected?.();
-      return response;
+      if (!/\/event(?:\?|$)/.test(getRequestUrl(input)) || !response.ok || !response.body) return response;
+      options.onEventConnected?.();
+      return options.onEventActivity ? observeEventStreamActivity(response, options.onEventActivity) : response;
     } : fetchImpl,
   });
 

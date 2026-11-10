@@ -22,6 +22,25 @@ export function effectiveSessionRunning(input: {
 }
 
 /**
+ * The server-owned active-run list stopped reporting a run that the local
+ * projection still treats as running. The terminal `session.idle` event may
+ * have been lost, so the authoritative snapshot must be read now instead of
+ * waiting for the next periodic reconciliation. The snapshot decides the
+ * final state; a run-list gap alone never forces idle, because a delegated
+ * turn boundary can briefly drop the run from the list.
+ */
+export function shouldReconcileAfterCoordinatorEnded(input: {
+  activeRunsSucceeded: boolean;
+  previousCoordinatorActive: boolean;
+  coordinatorActive: boolean;
+  liveStatus: string;
+  activityRunActive: boolean;
+}): boolean {
+  if (!input.activeRunsSucceeded || input.coordinatorActive || !input.previousCoordinatorActive) return false;
+  return input.liveStatus === "busy" || input.liveStatus === "retry" || input.activityRunActive;
+}
+
+/**
  * 判断中止请求失败后是否应向用户报告错误。
  *
  * @param input.abortRequested 引擎是否已接受中止请求
