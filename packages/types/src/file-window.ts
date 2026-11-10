@@ -42,6 +42,12 @@ export type OfficeCreationKind = "docx" | "pptx";
 
 /** 独立窗口最小桥；文件操作通过同一 Server 和原生对话框执行。 */
 export interface FileWindowBridge {
+  /** 查询当前窗口已登记 Word 的真实同步状态。 */
+  cloudSyncState?(documentId: string): Promise<{ status: string }>;
+  /** 使用主窗口当前身份打开已关联云文档，不向文件窗口传递凭据。 */
+  openCloudDocument?(documentId: string): Promise<void>;
+  /** 接收关联变化提示，窗口仅刷新当前文档的状态。 */
+  onCloudSyncChanged?(callback: (input: { documentId: string | null }) => void): () => void;
   /** 查询当前主进程是否已注册文件窗口入口，兼容开发时尚未重启的旧主进程。 */
   available?(): Promise<boolean>;
   open(input: {

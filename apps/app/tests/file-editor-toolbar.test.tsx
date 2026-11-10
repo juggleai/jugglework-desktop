@@ -119,7 +119,7 @@ test("只有真实就绪且无修改的模型显示已保存，导入、故障�
   );
 });
 
-test("两种宿主顶栏同步显示保存状态，不展示上传和分享，AI 入口位于更多菜单之后", async () => {
+test("两种宿主顶栏仅用保存图标和悬浮提示表达状态，AI 入口位于更多菜单之后", async () => {
   const previousAct = Reflect.get(globalThis, "IS_REACT_ACT_ENVIRONMENT");
   Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
   const calls: string[] = [];
@@ -152,14 +152,14 @@ test("两种宿主顶栏同步显示保存状态，不展示上传和分享，AI
       view!.root
         .findAllByType("button")
         .filter((button) => button.props["aria-label"] === label);
+    expect(view!.root.findAllByProps({ role: "status" })).toHaveLength(0);
+    expect(buttons(t("session_files.save")).map(button => button.props.title))
+      .toEqual([`${t("session_files.save")} · ${t("office.saved")}`, `${t("session_files.save")} · ${t("office.saved")}`]);
     expect(
-      view!.root
-        .findAllByProps({ role: "status" })
-        .map((status) => status.children.at(-1)),
-    ).toEqual([t("office.saved"), t("office.saved")]);
-    expect(
-      buttons(t("session_files.save")).every((button) => button.props.disabled),
+      buttons(t("session_files.save")).every((button) => button.props["aria-disabled"]),
     ).toBe(true);
+    for (const button of buttons(t("session_files.save"))) button.props.onClick();
+    expect(calls).toHaveLength(0);
     expect(buttons(t("artifact.upload"))).toHaveLength(0);
     expect(buttons(t("artifact.share"))).toHaveLength(0);
     const windowToolbar = view!.root.findAllByProps({ "data-file-editor-toolbar": true })[1]!;
@@ -181,13 +181,9 @@ test("两种宿主顶栏同步显示保存状态，不展示上传和分享，AI
     await act(async () => {
       view!.update(render(true));
     });
-    expect(
-      view!.root
-        .findAllByProps({ role: "status" })
-        .map((status) => status.children.at(-1)),
-    ).toEqual([t("office.unsaved"), t("office.unsaved")]);
+    expect(buttons(t("session_files.save")).every(button => button.props.title.includes(t("office.unsaved")))).toBe(true);
     for (const button of buttons(t("session_files.save"))) {
-      expect(button.props.disabled).toBe(false);
+      expect(button.props["aria-disabled"]).toBe(false);
       button.props.onClick();
     }
     expect(calls).toEqual([

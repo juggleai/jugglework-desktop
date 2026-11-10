@@ -98,7 +98,7 @@ import { registerFileRoutes, resolveWorkspaceArtifactTargets, normalizeWorkspace
 import { OfficeEngine } from "./office/engine.js";
 import { OfficeDocuments } from "./office/documents.js";
 import { assertOfficeFileEditable } from "./office/file-compatibility.js";
-import { prepareOfficePageSave, readOfficePageSelection, readOfficePageText } from "./office/page-bridge.js";
+import { confirmOfficePageSaved, prepareOfficePageSave, readOfficePageSelection, readOfficePageText } from "./office/page-bridge.js";
 import { LocalOfficeFiles } from "./office/local-files.js";
 import { ensureFileAssistantWorkspace } from "./office/file-assistant-workspace.js";
 import { registerLocalOfficeRoutes } from "./routes/office-local-files.js";
@@ -1094,6 +1094,7 @@ export async function startServer(config: ServerConfig, options: {
     checkFile: assertOfficeFileEditable,
     engine: officeEngine,
     prepareSave: prepareOfficePageSave,
+    afterSaved: confirmOfficePageSaved,
     readSelection: readOfficePageSelection,
     readText: readOfficePageText,
     resolveTurn: async (workspaceId, sessionId, messageId) => {

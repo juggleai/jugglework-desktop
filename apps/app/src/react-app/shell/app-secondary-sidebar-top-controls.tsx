@@ -20,6 +20,7 @@ export function AppSecondarySidebarTopControls(props: {
   sidebarOpen: boolean;
   onOpenTaskSearch: () => void;
   onToggleSidebar: () => void;
+  searchLabel?: string;
 }) {
   const expandedBoundary = `calc(${APP_NAVIGATION_RAIL_WIDTH + APP_INSET_SIDEBAR_OFFSET}px + var(--jugglework-left-sidebar-width))`;
   const controlStyle = {
@@ -41,8 +42,8 @@ export function AppSecondarySidebarTopControls(props: {
           size="icon-sm"
           className="pointer-events-auto rounded-xl text-dls-secondary hover:bg-dls-hover hover:text-dls-text mac:titlebar-no-drag"
           onClick={props.onOpenTaskSearch}
-          title={t("workspace_list.search_sessions")}
-          aria-label={t("workspace_list.search_sessions")}
+          title={props.searchLabel ?? t("workspace_list.search_sessions")}
+          aria-label={props.searchLabel ?? t("workspace_list.search_sessions")}
           data-app-secondary-sidebar-search
         >
           <Search size={17} />

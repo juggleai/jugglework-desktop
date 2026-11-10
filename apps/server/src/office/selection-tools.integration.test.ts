@@ -924,7 +924,7 @@ nativeTest("真实 SDK 的本轮引用在草稿清理后仍固定原模型，漏
     const sheetId = (info.sheets as Array<{ sheet_id: string }>)[0].sheet_id;
     for (const col of [0, 1]) await engine.tool("sheet_set_cell_value", { file_id: fileId, sheet_id: sheetId, cell: { row: 0, col, value_type: "NUMBER", number_value: col + 1 } });
     let col = 0, saves = 0, writes = 0;
-    const document: OfficeDocumentSession = { documentId: "od_fixed", pageId: "page-fixed", artifactId: "artifact", workspaceId: "ws", ownerSessionId: "ses", relativePath: "固定.xlsx", name: "固定.xlsx", state: "ready", engineFileId: fileId, previewUrl: null, dirty: true, savedAt: null };
+    const document: OfficeDocumentSession = { documentId: "od_fixed", pageId: "page-fixed", artifactId: "artifact", workspaceId: "ws", ownerSessionId: "ses", relativePath: "固定.xlsx", name: "固定.xlsx", state: "ready", engineFileId: fileId, previewUrl: null, dirty: true, savedAt: null, savedFileSha256: null };
     const edits = new OfficeSelectionEdits({
       document: async () => structuredClone(document), prepare: async () => {},
       selection: async () => ({ sheetId, ranges: [{ sheetId, startRowIndex: 0, endRowIndex: 0, startColIndex: col, endColIndex: col }] }),
@@ -962,7 +962,7 @@ nativeTest("真实 SDK 写入后响应丢失时不重复执行；失去选区的
     const sheetId = (info.sheets as Array<{ sheet_id: string }>)[0].sheet_id;
     await engine.tool("sheet_set_cell_value", { file_id: fileId, sheet_id: sheetId, cell: { row: 0, col: 0, value_type: "NUMBER", number_value: 1 } });
     let writes = 0;
-    const document: OfficeDocumentSession = { documentId: "od_unknown", pageId: "page-unknown", artifactId: "artifact", workspaceId: "ws", ownerSessionId: "ses", relativePath: "待核对.xlsx", name: "待核对.xlsx", state: "ready", engineFileId: fileId, previewUrl: null, dirty: true, savedAt: null };
+    const document: OfficeDocumentSession = { documentId: "od_unknown", pageId: "page-unknown", artifactId: "artifact", workspaceId: "ws", ownerSessionId: "ses", relativePath: "待核对.xlsx", name: "待核对.xlsx", state: "ready", engineFileId: fileId, previewUrl: null, dirty: true, savedAt: null, savedFileSha256: null };
     const edits = new OfficeSelectionEdits({
       document: async () => document, prepare: async () => {},
       selection: async () => ({ sheetId, ranges: [{ sheetId, startRowIndex: 0, endRowIndex: 0, startColIndex: 0, endColIndex: 0 }] }),

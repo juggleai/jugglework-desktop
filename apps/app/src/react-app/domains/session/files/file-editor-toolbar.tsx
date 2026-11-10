@@ -1,9 +1,5 @@
 import * as React from "react";
 import {
-  CircleCheck,
-  Clock3,
-  ExternalLink,
-  Eye,
   FolderOpen,
   LoaderCircle,
   MoreHorizontal,
@@ -51,14 +47,6 @@ const statusLabels = {
   loading: "office.loading",
   external: "artifact.external_active",
 } as const;
-const statusIcons = {
-  readonly: Eye,
-  saved: CircleCheck,
-  unsaved: Clock3,
-  saving: LoaderCircle,
-  loading: LoaderCircle,
-  external: ExternalLink,
-};
 
 /**
  * 文件编辑顶栏：两种宿主共用文件名、保存状态和操作布局，具体操作仍由原宿主管理。
@@ -95,8 +83,9 @@ export function FileEditorToolbar({
   trailingActions?: React.ReactNode;
 }) {
   // TIPS：失败原因由内容区统一展示，顶栏保留内部状态用于禁用保存，不重复显示通用失败文案。
-  const StatusIcon = status === "error" ? null : statusIcons[status];
   const label = status === "error" ? null : t(statusLabels[status]);
+  // TIPS: 不使用原生 disabled，确保已保存时仍可悬浮查看状态；点击保护保留在操作边界。
+  const saveLabel = label ? `${t("session_files.save")} · ${label}` : t("session_files.save");
   return (
     <div
       data-file-editor-toolbar
@@ -121,20 +110,6 @@ export function FileEditorToolbar({
             <FolderOpen className="size-4" />
           </Button>
         )}
-        {StatusIcon && (
-          <span
-            role="status"
-            aria-live="polite"
-            className="flex shrink-0 items-center gap-1 whitespace-nowrap text-xs text-muted-foreground"
-            title={label ?? undefined}
-          >
-            <StatusIcon
-              aria-hidden="true"
-              className={`size-3.5 ${status === "saving" || status === "loading" ? "animate-spin" : ""}`}
-            />
-            {label}
-          </span>
-        )}
       </div>
       <div className="flex shrink-0 items-center gap-1 text-muted-foreground">
         {children}
@@ -144,12 +119,14 @@ export function FileEditorToolbar({
         <Button
           variant="ghost"
           size="icon-sm"
-          disabled={saveDisabled || status !== "unsaved"}
-          onClick={onSave}
-          title={t("session_files.save")}
+          aria-disabled={saveDisabled || status !== "unsaved"}
+          onClick={() => { if (!saveDisabled && status === "unsaved") onSave(); }}
+          title={saveLabel}
           aria-label={t("session_files.save")}
+          data-save-status={status}
+          className={saveDisabled || status !== "unsaved" ? "opacity-50" : undefined}
         >
-          <Save className="size-4" />
+          {status === "saving" || status === "loading" ? <LoaderCircle className="size-4 animate-spin" /> : <Save className="size-4" />}
         </Button>
         <DropdownMenu>
           <DropdownMenuTrigger

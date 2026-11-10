@@ -34,6 +34,7 @@ import { saveSharedFileText } from "./shared-file-editor";
 import { PreviewError, PreviewLoading } from "../artifacts/preview";
 import { createOfficeFile } from "./office-create";
 import { OfficeCreateItems } from "./office-create-items";
+import { FileWindowCloudSyncAction } from "../office/file-window-cloud-sync-action";
 import { installOfficeComposerBridge } from "../surface/composer/office-composer-bridge";
 
 /** 独立文件窗口：原生标签栏、保存状态及文件操作；文档模型复用现有宿主。 */
@@ -357,7 +358,11 @@ export function FileWindowApp({ onAppearanceChange }: { onAppearanceChange?: (ap
               </Button>
             ) : null
           }
-        />
+        >
+          {active.documentId && active.name.toLowerCase().endsWith(".docx") && (
+            <FileWindowCloudSyncAction documentId={active.documentId} canOpenSession={canConverse} />
+          )}
+        </FileEditorToolbar>
       )}
       <div className="file-window-viewer">
         {error ? (

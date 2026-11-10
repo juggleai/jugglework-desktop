@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 
 import { LOCAL_PREFERENCES_KEY } from "../src/react-app/kernel/local-preferences-storage";
 import { notifyDesktopEvent } from "../src/react-app/shell/desktop-notifications";
@@ -7,6 +7,8 @@ type DesktopCall = { command: string; args: unknown[] };
 
 const storage = new Map<string, string>();
 const calls: DesktopCall[] = [];
+const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+const originalDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
 
 const localStorageStub = {
   getItem: (key: string) => storage.get(key) ?? null,
@@ -114,6 +116,97 @@ describe("desktop notifications", () => {
     });
   });
 
+  test("cloud document mentions preserve the restricted click action", async () => {
+    setPreference("important");
+    const action = {
+      type: "docs.open" as const,
+      contractVersion: 1 as const,
+      source: {
+        server: "https://source.test/deployment",
+        userId: "user_a",
+        tenantId: "org_a",
+        authFingerprint: "4:1234",
+      },
+      payload: {
+        contractVersion: 1 as const,
+        eventId: "00000000-0000-4000-8000-000000000001",
+        tenantId: "org_a",
+        pageId: "page_a",
+        kind: "comment.user_mention",
+        occurredAt: "2026-11-06T00:00:00Z",
+        part: "direct" as const,
+      },
+      conversationId: "jw_docs_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    };
+
+    notifyDesktopEvent({
+      type: "docs.collaboration",
+      action,
+      important: true,
+    });
+    await Promise.resolve();
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      command: "desktopNotificationShow",
+      args: [
+        {
+          title: "Cloud document notification",
+          body: "Someone mentioned you in a cloud document.",
+          action,
+        },
+      ],
+    });
+  });
+
+  test("group cards never claim every member was mentioned", async () => {
+    setPreference("important");
+    const action = {
+      type: "docs.open" as const,
+      contractVersion: 1 as const,
+      source: {
+        server: "https://source.test/deployment",
+        userId: "user_a",
+        tenantId: "org_a",
+        authFingerprint: "4:1234",
+      },
+      payload: {
+        contractVersion: 1 as const,
+        eventId: "00000000-0000-4000-8000-000000000002",
+        tenantId: "org_a",
+        pageId: "page_a",
+        kind: "comment.user_mention",
+        occurredAt: "2026-11-06T00:00:00Z",
+        part: "group" as const,
+      },
+      conversationId: "docs_org_a",
+    };
+    notifyDesktopEvent({
+      type: "docs.collaboration",
+      action,
+      important: false,
+    });
+    await Promise.resolve();
+    expect(calls).toHaveLength(0);
+
+    setPreference("all");
+    notifyDesktopEvent({
+      type: "docs.collaboration",
+      action,
+      important: false,
+    });
+    await Promise.resolve();
+    expect(calls[0]).toMatchObject({
+      command: "desktopNotificationShow",
+      args: [
+        {
+          title: "Cloud document notification",
+          body: "There is a new collaboration update in cloud documents.",
+        },
+      ],
+    });
+  });
+
   test("focused app suppresses native popups", () => {
     setPreference("all");
     installRuntime({ focused: true });
@@ -122,4 +215,13 @@ describe("desktop notifications", () => {
 
     expect(calls).toHaveLength(0);
   });
+});
+
+afterAll(() => {
+  if (originalWindow)
+    Object.defineProperty(globalThis, "window", originalWindow);
+  else Reflect.deleteProperty(globalThis, "window");
+  if (originalDocument)
+    Object.defineProperty(globalThis, "document", originalDocument);
+  else Reflect.deleteProperty(globalThis, "document");
 });

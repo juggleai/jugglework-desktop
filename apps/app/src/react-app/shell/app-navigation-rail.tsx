@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   Clapperboard,
@@ -186,6 +186,36 @@ function ToonFactoryRailIcon({ active }: { active: boolean }) {
   );
 }
 
+/** 云文档导航图标：圆角文档叠放云朵，文字与图层间隔透明镂空并跟随主题。 */
+function CloudDocsRailIcon({ active }: { active: boolean }) {
+  const maskId = useId();
+  const cloud = "M13.1 21h6.15a3 3 0 0 0 .3-5.98 3.8 3.8 0 0 0-7.28-1.05A3.55 3.55 0 0 0 13.1 21Z";
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      data-cloud-docs-rail-icon
+    >
+      <defs>
+        {/* TIPS: 两个入口各用独立 mask；镂空真实透明，不依赖浅色背景填充。 */}
+        <mask id={maskId} maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24">
+          <rect width="24" height="24" fill="white" stroke="none" />
+          <path d="M7.8 6.8h5M7.8 10.3h3.1" stroke="black" strokeWidth="1.7" />
+          <path d={cloud} fill="black" stroke="black" strokeWidth="2.6" />
+        </mask>
+      </defs>
+      <g fill="currentColor" stroke="none" opacity={active ? 1 : 0.84}>
+        <rect x="3.5" y="2.25" width="15.2" height="19" rx="2.4" mask={`url(#${maskId})`} />
+        <path d={cloud} />
+      </g>
+    </svg>
+  );
+}
+
 function RailButton({
   label,
   active = false,
@@ -206,6 +236,8 @@ function RailButton({
   appPreviewTarget,
   onAppPreviewChange,
 }: RailButtonProps) {
+  // TIPS: 原生云文档视图始终高于 DOM；使用系统 title 提示，避免网页浮层被原生页面遮挡。
+  const nativeTooltip = useLocation().pathname.startsWith("/cloud-docs/");
   const resolvedBadgeLabel = badgeLabel ?? t("chat.unread_count", { count: badge });
   const button = (
     <button
@@ -268,7 +300,7 @@ function RailButton({
       ) : null}
     </button>
   );
-  if (!showTooltip) return button;
+  if (!showTooltip || nativeTooltip) return button;
   return (
     <Tooltip>
       <TooltipTrigger render={button} />
@@ -361,6 +393,17 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
   };
   const workspaceId = props.workspaceId.trim();
   const appPath = parseWorkspaceAppPath(location.pathname);
+  const cloudDocsActive = location.pathname.startsWith("/cloud-docs/");
+  const cloudDocsPinned = pinnedNavigationItems.includes("cloud-docs");
+  const openCloudDocs = () => {
+    const tenantId = readDenSettings().activeOrgId;
+    setNavigationMenuOpen(false);
+    if (tenantId) navigate(`/cloud-docs/${encodeURIComponent(tenantId)}`);
+    else props.onOpenAccount();
+  };
+  const toggleCloudDocsPinned = () => {
+    setPinnedNavigationItems(setAppNavigationItemPinned("cloud-docs", !cloudDocsPinned));
+  };
   const toonFactoryActive = appPath?.view === "toon-factory" && appPath.workspaceId === workspaceId;
   const toonFactoryPinned = pinnedNavigationItems.includes("toon-factory");
   const openToonFactory = () => {
@@ -536,13 +579,13 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
                 title={t("navigation.more")}
                 data-testid="app-rail-more"
                 data-app-rail-button
-                data-active={(navigationMenuOpen || (props.reviewsActive && !reviewsPinned) || (toonFactoryActive && !toonFactoryPinned)) ? "true" : undefined}
+                data-active={(navigationMenuOpen || (cloudDocsActive && !cloudDocsPinned) || (props.reviewsActive && !reviewsPinned) || (toonFactoryActive && !toonFactoryPinned)) ? "true" : undefined}
                 className={cn(
                   "relative flex size-9 items-center justify-center rounded-xl text-dls-secondary/80 transition-[background-color,color,transform] duration-150 mac:titlebar-no-drag",
                   "hover:bg-dls-hover hover:text-dls-text active:scale-[0.96]",
                   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/35 focus-visible:ring-offset-1 focus-visible:ring-offset-dls-sidebar",
                   "data-popup-open:bg-dls-active data-popup-open:text-dls-text",
-                  (navigationMenuOpen || (props.reviewsActive && !reviewsPinned) || (toonFactoryActive && !toonFactoryPinned)) && "bg-dls-active text-dls-text",
+                  (navigationMenuOpen || (cloudDocsActive && !cloudDocsPinned) || (props.reviewsActive && !reviewsPinned) || (toonFactoryActive && !toonFactoryPinned)) && "bg-dls-active text-dls-text",
                 )}
               >
                 <Ellipsis className="size-5" strokeWidth={2} />
@@ -556,6 +599,43 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
             className="w-[180px] rounded-2xl bg-popover/95 p-0.5 shadow-[0_18px_48px_rgba(0,0,0,0.20)] ring-1 ring-foreground/10 backdrop-blur-2xl"
             data-testid="app-navigation-more-menu"
           >
+            <div
+              className="group flex items-center gap-1 rounded-2xl transition-colors hover:bg-accent focus-within:bg-accent"
+              data-testid="app-navigation-more-cloud-docs-row"
+            >
+              <DropdownMenuItem
+                onClick={openCloudDocs}
+                className="min-w-0 flex-1 bg-transparent py-[5px] focus:bg-transparent! data-highlighted:bg-transparent!"
+                data-testid="app-navigation-more-cloud-docs"
+              >
+                <CloudDocsRailIcon active={cloudDocsActive} />
+                <span className="truncate">{t("cloud_docs.title")}</span>
+              </DropdownMenuItem>
+              <button
+                type="button"
+                aria-label={cloudDocsPinned ? t("navigation.unpin_item") : t("navigation.pin_item")}
+                title={cloudDocsPinned ? t("navigation.unpin_item") : t("navigation.pin_item")}
+                tabIndex={cloudDocsPinned ? 0 : -1}
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  toggleCloudDocsPinned();
+                }}
+                className={cn(
+                  "flex size-8 shrink-0 items-center justify-center rounded-xl text-muted-foreground transition-[background-color,color,opacity,transform] duration-150",
+                  "hover:text-popover-foreground active:scale-[0.94]",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/35",
+                  cloudDocsPinned
+                    ? "text-popover-foreground opacity-100"
+                    : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100",
+                )}
+                data-testid="app-navigation-pin-cloud-docs"
+                data-pinned={cloudDocsPinned ? "true" : undefined}
+              >
+                <Pin className={cn("size-4", cloudDocsPinned && "fill-current")} />
+              </button>
+            </div>
             <div
               className="group flex items-center gap-1 rounded-2xl transition-colors hover:bg-accent focus-within:bg-accent"
               data-testid="app-navigation-more-reviews-row"
@@ -633,13 +713,24 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
             </div>
           </DropdownMenuContent>
         </DropdownMenu>
-        {reviewsPinned || toonFactoryPinned ? (
+        {cloudDocsPinned || reviewsPinned || toonFactoryPinned ? (
           <div className="mt-0.5 flex flex-col items-center gap-2" data-app-navigation-pinned-items>
             <div
               className="h-px w-6 rounded-full bg-dls-secondary/20"
               aria-hidden="true"
               data-testid="app-navigation-pinned-separator"
             />
+            {cloudDocsPinned ? (
+            <RailButton
+              label={t("cloud_docs.title")}
+              active={cloudDocsActive}
+              onClick={openCloudDocs}
+              testId="app-rail-pinned-cloud-docs"
+              onPreviewMenuChange={props.onPreviewMenuChange}
+            >
+              <CloudDocsRailIcon active={cloudDocsActive} />
+            </RailButton>
+            ) : null}
             {reviewsPinned ? (
             <RailButton
               label={t("navigation.reviews")}

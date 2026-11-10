@@ -1,6 +1,7 @@
 import type { SettingsTab } from "../../app/types";
 
 export type WorkspaceAppPath =
+  | { view: "cloud-docs"; workspaceId: null; tenantId: string }
   | { view: "toon-factory"; workspaceId: string }
   | { view: "session"; workspaceId: string; sessionId: string | null }
   | { view: "settings"; workspaceId: string | null }
@@ -20,6 +21,8 @@ function decodeRoutePart(value: string | undefined): string {
 }
 
 export function parseWorkspaceAppPath(pathname: string): WorkspaceAppPath {
+  const docs = pathname.match(/^\/cloud-docs\/([^/]+)\/?$/);
+  if (docs) return { view: "cloud-docs", workspaceId: null, tenantId: decodeRoutePart(docs[1]) };
   const workspaceToonFactory = pathname.match(/^\/workspace\/([^/]+)\/toon-factory\/?$/);
   if (workspaceToonFactory) {
     const workspaceId = decodeRoutePart(workspaceToonFactory[1]);

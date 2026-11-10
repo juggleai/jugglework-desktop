@@ -7,6 +7,8 @@ import { readOfficePageSelection } from "./office-page-selection.mjs";
 import { readOfficePageText } from "./office-page-text.mjs";
 import { revealOfficePageSelection } from "./office-page-reveal.mjs";
 import { officeSelectionFailure } from "./office-selection-bridge.mjs";
+import { createOfficeWordCloudBridge } from "./office-word-cloud-bridge.mjs";
+import { readOfficeWordBlocks } from "./office-word-blocks-adapter.mjs";
 import { ManagedRuntimeClientError } from "./managed-runtime-client.mjs";
 import {
   waitForSheetPageCommit,
@@ -18,7 +20,7 @@ import {
 
 /**
  * 承载唯一存活的 Office 页面；隐藏或切换标签时保留模型和撤销记录。
- * @param {{ getWindow: () => Electron.BrowserWindow | null, getWindows?: () => Electron.BrowserWindow[], resolveWindow?: (sender: Electron.WebContents) => Electron.BrowserWindow | null, authorizeReferences?: (event: Electron.IpcMainInvokeEvent, input: any) => void, onDocumentClosed?: (id: string) => void, onOpenFile?: (window: Electron.BrowserWindow, input: { workspaceId: string, sessionId: string }) => Promise<void>, composer?: { request: (input: any) => Promise<any> }, client: { getJson: (path: string, options?: { signal?: AbortSignal }) => Promise<any>, postJson: (path: string, body: unknown) => Promise<any>, postHostJson?: (path: string, body: unknown, options?: { signal?: AbortSignal }) => Promise<any> }, resources: ReturnType<import('./office-resources.mjs').createOfficeResources> | (() => ReturnType<import('./office-resources.mjs').createOfficeResources>), platform?: NodeJS.Platform, arch?: string }} options 宿主窗口、资源服务、已有 Server 客户端及平台能力
+ * @param {{ getWindow: () => Electron.BrowserWindow | null, getWindows?: () => Electron.BrowserWindow[], resolveWindow?: (sender: Electron.WebContents) => Electron.BrowserWindow | null, authorizeReferences?: (event: Electron.IpcMainInvokeEvent, input: any) => void, onDocumentClosed?: (id: string) => void, onOpenFile?: (window: Electron.BrowserWindow, input: { workspaceId: string, sessionId: string }) => Promise<void>, beforeSave?: (document: {workspaceId:string,documentId:string,pageId:string}) => Promise<any>, composer?: { request: (input: any) => Promise<any> }, client: { getJson: (path: string, options?: { signal?: AbortSignal }) => Promise<any>, postJson: (path: string, body: unknown) => Promise<any>, postHostJson?: (path: string, body: unknown, options?: { signal?: AbortSignal }) => Promise<any> }, resources: ReturnType<import('./office-resources.mjs').createOfficeResources> | (() => ReturnType<import('./office-resources.mjs').createOfficeResources>), platform?: NodeJS.Platform, arch?: string }} options 宿主窗口、资源服务、已有 Server 客户端及平台能力
  */
 export function createOfficePanel({
   getWindow,
@@ -27,6 +29,7 @@ export function createOfficePanel({
   authorizeReferences,
   onDocumentClosed,
   onOpenFile,
+  beforeSave,
   composer,
   client,
   resources,
@@ -37,6 +40,7 @@ export function createOfficePanel({
   const assignedWindows = new Map();
   const visibleDocuments = new Map();
   const hosts = new Map();
+  const wordCloudBridges = new Map();
   const getResources = () =>
     typeof resources === "function" ? resources() : resources;
   const requireTransferSupport = () => {
@@ -63,9 +67,10 @@ export function createOfficePanel({
     for (const window of windows())
       window.webContents.send("jugglework:office:document", document);
   };
-  const save = async (workspaceId, documentId) =>
-    (await client.postJson(`${base(workspaceId, documentId)}/save`, {}))
+  const save = async (workspaceId, documentId) => {
+    return (await client.postJson(`${base(workspaceId, documentId)}/save`, {}))
       .document;
+  };
   const cancelCapture = (entry) => {
     const task = entry?.captureRequest;
     if (!task) return;
@@ -187,6 +192,9 @@ export function createOfficePanel({
     return host;
   };
   const destroy = (documentId) => {
+    const wordCloudBridge = wordCloudBridges.get(documentId);
+    wordCloudBridges.delete(documentId);
+    void wordCloudBridge?.dispose();
     hide(documentId);
     assignedWindows.delete(documentId);
     const entry = views.get(documentId);
@@ -614,6 +622,13 @@ export function createOfficePanel({
     )
       throw new Error("文档编辑页面已失效，不能确认保存");
     if (entry.commit.error) throw entry.commit.error;
+    const synchronized = await beforeSave?.({
+      workspaceId,
+      documentId,
+      pageId,
+    });
+    if (synchronized && !["active", "detached"].includes(synchronized.status))
+      throw new Error("云文档同步尚未确认，已取消保存");
   };
   const close = async (workspaceId, documentId) => {
     let document = (await client.getJson(base(workspaceId, documentId)))
@@ -681,6 +696,19 @@ export function createOfficePanel({
   return {
     /** 原生页面已绑定身份，渲染层只报告显示区域。 */
     registerIpc(ipcMain) {
+      ipcMain.on("jugglework:office:word-cloud-event", (event, message) => {
+        const source = [...views].find(
+          ([, candidate]) => candidate.view.webContents === event.sender,
+        );
+        const [documentId, entry] = source ?? [];
+        if (
+          !entry ||
+          event.senderFrame !== entry.view.webContents.mainFrame ||
+          entry.kind !== "doc"
+        )
+          return;
+        wordCloudBridges.get(documentId)?.accept(message);
+      });
       ipcMain.handle("jugglework:office:reveal-selection", async (event, input) => {
         owner(event);
         authorizeReferences?.(event, input);
@@ -943,6 +971,57 @@ export function createOfficePanel({
       );
       return current() ? texts : null;
     },
+    /**
+     * 在当前存活 Word SDK 页面安装正式云文档对象桥；同一文件的新关联会释放旧关联。
+     * @param {string} documentId Office 文档标识
+     * @param {(event:any)=>void} onEvent 当前关联事件接收器
+     */
+    async attachWordCloud(documentId, onEvent) {
+      const entry = views.get(documentId);
+      if (
+        !entry ||
+        entry.kind !== "doc" ||
+        entry.view.webContents.isDestroyed()
+      )
+        throw new Error("word_document_unavailable");
+      const previous = wordCloudBridges.get(documentId);
+      wordCloudBridges.delete(documentId);
+      await previous?.dispose();
+      let bridge;
+      bridge = await createOfficeWordCloudBridge({
+        webContents: entry.view.webContents,
+        onEvent,
+        isCurrent: () =>
+          views.get(documentId) === entry &&
+          wordCloudBridges.get(documentId) === bridge,
+      });
+      wordCloudBridges.set(documentId, bridge);
+      return {
+        word: bridge.word,
+        /** 只释放本次页面代次拥有的桥。 */
+        async close() {
+          if (wordCloudBridges.get(documentId) !== bridge) return;
+          wordCloudBridges.delete(documentId);
+          await bridge.dispose();
+        },
+      };
+    },
+    /** 读取当前真实 Word 基础对象，用于创建云文档；关联时会再次核对，期间变化不会被覆盖。 */
+    async readWordBlocks(documentId) {
+      const entry = views.get(documentId);
+      if (
+        !entry ||
+        entry.kind !== "doc" ||
+        entry.view.webContents.isDestroyed()
+      )
+        throw new Error("word_document_unavailable");
+      const blocks = await entry.view.webContents.executeJavaScript(
+        `(${readOfficeWordBlocks.toString()})(window)`,
+      );
+      if (views.get(documentId) !== entry)
+        throw new Error("word_document_generation_changed");
+      return { blocks };
+    },
     /** 保存或关闭前确认当前文档页面的输入已提交。 */
     prepareSave,
     /** 将同一个存活页面重挂到新宿主，不保存关闭、不重新导入模型。 */
@@ -982,6 +1061,8 @@ export function createOfficePanel({
     },
     /** Runtime 已完成关闭后释放所有视图。 */
     destroy() {
+      for (const bridge of wordCloudBridges.values()) void bridge.dispose();
+      wordCloudBridges.clear();
       for (const id of [...views.keys()]) destroy(id);
       for (const host of [...hosts.values()]) host.dispose();
     },

@@ -48,6 +48,7 @@ import { AutomationRunNotificationCoordinator } from "../domains/automations/aut
 import { AutomationActivityProvider } from "../domains/automations/automation-activity-provider";
 import { HostMarketplacePluginsProvider } from "../domains/settings/state/host-marketplace-plugins-provider";
 import { MainOfficeComposerBridge } from "../domains/session/surface/composer/office-composer-bridge";
+import { DocsDesktopNotificationCoordinator } from "../domains/jugglechat/docs-desktop-notification-coordinator";
 
 type DenSigninGateProps = {
   children: ReactNode;
@@ -340,6 +341,7 @@ export function AppRoot() {
                 <AutomationActivityProvider>
                 <HostMarketplacePluginsProvider>
                 <AutomationRunNotificationCoordinator />
+                <DocsDesktopNotificationCoordinator />
                 <Routes>
               <Route
                 path="/signin"

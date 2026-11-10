@@ -8,6 +8,7 @@ import {
   resolveDenAuthFailureStatus,
   shouldRetryDenAuthOnSignal,
   shouldValidateSignedInSession,
+  switchDenOrganizationWithRecovery,
 } from "../src/react-app/domains/cloud/den-auth-provider";
 import { readFileSync } from "node:fs";
 
@@ -36,6 +37,88 @@ describe("retained Den sessions", () => {
     expect(hasRetainedDenSession("unavailable")).toBe(true);
     expect(hasRetainedDenSession("checking")).toBe(false);
     expect(hasRetainedDenSession("signed_out")).toBe(false);
+  });
+});
+
+describe("organization switch recovery", () => {
+  const orgs = [
+    { id: "org-a", name: "A", slug: "a", role: "owner" as const },
+    { id: "org-b", name: "B", slug: "b", role: "member" as const },
+  ];
+
+  test("im=null 是成功结果，不重复发送组织切换", async () => {
+    let switches = 0,
+      reads = 0;
+    const result = await switchDenOrganizationWithRecovery(
+      {
+        setActiveOrganization: async () => {
+          switches += 1;
+          return { im: null };
+        },
+        listOrgs: async () => {
+          reads += 1;
+          return { orgs, activeOrgId: "org-b" };
+        },
+      },
+      "org-b",
+    );
+    expect(result).toEqual({ im: null, recovered: false });
+    expect(switches).toBe(1);
+    expect(reads).toBe(0);
+  });
+
+  test("响应丢失后只读核对权威组织，不重发切换", async () => {
+    let switches = 0,
+      reads = 0;
+    const result = await switchDenOrganizationWithRecovery(
+      {
+        setActiveOrganization: async () => {
+          switches += 1;
+          throw new TypeError("response lost");
+        },
+        listOrgs: async () => {
+          reads += 1;
+          return { orgs, activeOrgId: "org-b" };
+        },
+      },
+      "org-b",
+    );
+    expect(result).toEqual({ im: null, recovered: true });
+    expect(switches).toBe(1);
+    expect(reads).toBe(1);
+  });
+
+  test("明确拒绝不核对，未知结果未切到目标时保留原错误", async () => {
+    let reads = 0;
+    const forbidden = new DenApiError(403, "forbidden", "Forbidden");
+    await expect(
+      switchDenOrganizationWithRecovery(
+        {
+          setActiveOrganization: async () => {
+            throw forbidden;
+          },
+          listOrgs: async () => {
+            reads += 1;
+            return { orgs, activeOrgId: "org-b" };
+          },
+        },
+        "org-b",
+      ),
+    ).rejects.toBe(forbidden);
+    expect(reads).toBe(0);
+
+    const lost = new TypeError("response lost");
+    await expect(
+      switchDenOrganizationWithRecovery(
+        {
+          setActiveOrganization: async () => {
+            throw lost;
+          },
+          listOrgs: async () => ({ orgs, activeOrgId: "org-a" }),
+        },
+        "org-b",
+      ),
+    ).rejects.toBe(lost);
   });
 });
 

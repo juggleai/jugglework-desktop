@@ -1,0 +1,32 @@
+{
+  "date": "2026-11-06",
+  "stage": "M4 in progress: relative text and composed source bridge subset",
+  "roundtrip": {
+    "passed": true,
+    "pageId": "JO-XgnuZbwbjBvgScIvA7",
+    "nativeSourceBridge": true,
+    "desktopSourceController": true,
+    "unforwardedSamePositionInsert": true,
+    "staleProjectionPreservesFollowingInput": true,
+    "wordAndCloudStructureInOneSession": true,
+    "continuedTextAndAiAfterStructure": true,
+    "boldItalicInComposedSession": true,
+    "duplicateRequestNoReplay": true,
+    "conflictingRequestIdRejected": true,
+    "savedReopened": true,
+    "twoNativeClientsReloaded": true,
+    "productionOfficeUiEntry": false,
+    "fullMilestone4Passed": false
+  },
+  "nativeRelativeRegressions": 8,
+  "desktopControllerRegressions": 5,
+  "fullMilestone4Passed": false,
+  "remaining": [
+    "rich structure/table/image mapping and AI/IME/full history matrix",
+    "production Office UI and persistent binding/checkpoint recovery",
+    "file intake conversion and attachment flows",
+    "private Workspace scopes and full permission/cache matrix",
+    "site+IM outbox/group/cards/multi-organization filtering",
+    "performance/cross-platform/production release matrix"
+  ]
+}

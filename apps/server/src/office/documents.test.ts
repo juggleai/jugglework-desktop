@@ -11,6 +11,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 import type { FileArtifact } from "@jugglework/types/file-artifacts";
 import type { OfficeDocumentSession } from "@jugglework/types/office";
 import { OfficeDocuments } from "./documents.js";
@@ -90,6 +91,7 @@ async function fixture(
     closes: [] as Array<{ id: string; discard: boolean }>,
     modified: [] as unknown[][],
     saved: [] as string[],
+    afterSaved: [] as OfficeDocumentSession[],
   };
   const engine = {
     capabilities: async () => ({ available: true, formats: ["docx"] }),
@@ -177,6 +179,9 @@ async function fixture(
     onSaved: async (_workspace, path) => {
       state.saved.push(path);
       files.get(path)!.exists = true;
+    },
+    afterSaved: async (document) => {
+      state.afterSaved.push(document);
     },
     onModified: async (...args) => {
       state.modified.push(args);
@@ -1338,11 +1343,16 @@ test("保存失败保留模型和 dirty，重试保存同一实际文件且不�
   expect(await f.documents.save("ws", doc.documentId, true)).toMatchObject({
     dirty: false,
     state: "ready",
+    savedFileSha256: createHash("sha256")
+      .update("actual model content")
+      .digest("hex"),
   });
   expect(await readFile(join(f.root, "报告 A.docx"), "utf8")).toBe(
     "actual model content",
   );
   expect(f.state.saveCalls).toEqual(["model_A", "model_A"]);
+  expect(f.state.afterSaved).toHaveLength(1);
+  expect(f.state.afterSaved[0].savedFileSha256).toHaveLength(64);
   expect(f.state.closes).toEqual([]);
 });
 

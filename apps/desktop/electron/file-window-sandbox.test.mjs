@@ -42,6 +42,7 @@ if (process.versions.electron) {
       const document = { documentId: "sandbox-doc", pageId: "fixture-page", workspaceId: "ws", ownerSessionId: "dev", relativePath: "fixture.docx", state: "ready", previewUrl: `${origin}/static/doc/pc.html?localFilePath=/fixture.docx` };
       const client = {
         getJson: async (url) => url === "/workspaces" ? { items: [{ id: "ws", path: root }] }
+          : url.endsWith("/capabilities") ? { available: true }
           : url.includes("/files/stat") ? { exists: true, kind: "file" } : { document },
         postJson: async () => ({ document }),
       };
@@ -64,11 +65,12 @@ if (process.versions.electron) {
       const packagedPreload = path.resolve(root, "app.asar/electron", relative);
       // One factory per layout keeps the production constructor and all IPC checks.
       files = createFileWindows({ client, office: panel, getMainWindow: () => main,
+        cloudDocs: { state: () => ({ status: "active" }), open: async id => { assert.equal(id, "sandbox-doc"); } },
         getAccess: async () => ({ baseUrl: origin }), recentPath: path.join(root, "recent.json"),
         preloadPath: devPreload, loadWindow: (window) => window.loadURL(`${origin}/file-window.html`),
       });
       const handlers = new Map();
-      const registry = { handle(name, handler) { handlers.set(name, handler); ipcMain.handle(name, handler); } };
+      const registry = { handle(name, handler) { handlers.set(name, handler); ipcMain.handle(name, handler); }, on: ipcMain.on.bind(ipcMain) };
       files.registerIpc(registry);
       panel.registerIpc(registry);
       ipcMain.handle("jugglework:file-editor:state", (event) => {
@@ -137,6 +139,12 @@ if (process.versions.electron) {
       assert.deepEqual(await view.webContents.executeJavaScript(`({ fileBridge: typeof window.__JUGGLEWORK_ELECTRON__, selection: Object.keys(window.juggleworkOfficeSelection).sort(), node: typeof require })`),
         { fileBridge: "undefined", selection: ["cancel", "capture", "onReview", "submit"], node: "undefined" });
       const officeEvent = { sender: view.webContents, senderFrame: view.webContents.mainFrame };
+      await files.open({ workspaceId: "ws", sessionId: "dev", path: "fixture.docx" });
+      const fileEvent = { sender: dev.webContents, senderFrame: dev.webContents.mainFrame };
+      assert.deepEqual(await handlers.get("jugglework:file-window:cloud-sync-state")(fileEvent, "sandbox-doc"), { status: "active" });
+      await handlers.get("jugglework:file-window:cloud-document-open")(fileEvent, "sandbox-doc");
+      assert.throws(() => handlers.get("jugglework:file-window:cloud-sync-state")(fileEvent, "other-document"), /不属于当前文件窗口/);
+      assert.throws(() => handlers.get("jugglework:file-window:cloud-document-open")(officeEvent, "sandbox-doc"), /文件窗口已关闭/);
       await assert.rejects(handlers.get("jugglework:file-window:state")(officeEvent), /文件窗口已关闭/);
       await assert.rejects(handlers.get("jugglework:office:show")(officeEvent, {}), /Office view requires its host window/);
       panel.destroy();

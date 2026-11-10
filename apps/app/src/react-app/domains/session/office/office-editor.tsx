@@ -1,4 +1,5 @@
 import * as React from "react";
+import { useInRouterContext, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { OfficeDocumentSession } from "@jugglework/types/office";
 import type { JuggleWorkServerClient } from "@/app/lib/jugglework-server";
@@ -19,12 +20,34 @@ import { useArtifactActions } from "../artifacts/artifact-actions-provider";
 import { JuggleWorkServerError } from "@/app/lib/jugglework-server";
 import { loadWorkspaceFile } from "../files/file-content";
 import { PreviewError, PreviewLoading } from "../artifacts/preview";
+import {
+  createDenClient,
+  denCredentialFingerprint,
+  readDenSettings,
+  readDenUserId,
+} from "@/app/lib/den";
+import { denSettingsChangedEvent } from "@/app/lib/den-session-events";
+import { uploadWord } from "../../cloud-docs/upload-word";
+import { OfficeCloudSyncButton } from "./office-cloud-sync-button";
 
 const WorkbookFileView = React.lazy(() =>
   import("../files/workbook-file-view").then((module) => ({
     default: module.WorkbookFileView,
   })),
 );
+
+/** 主窗口内显式跳转云端；编辑器本身也可用于不带路由的独立文件窗口。 */
+function OpenCloudWordButton({ tenantId, pageId, status, workspaceId }: { tenantId: string; pageId: string; status: string; workspaceId: string }) {
+  const navigate = useNavigate();
+  return <OfficeCloudSyncButton status={status} title={t(status === "active" ? "cloud_docs.word_sync_active" : "cloud_docs.word_sync_paused")}
+    onClick={() => navigate(`/cloud-docs/${encodeURIComponent(tenantId)}?pageId=${encodeURIComponent(pageId)}&workspaceId=${encodeURIComponent(workspaceId)}`)} />;
+}
+
+/** 只用于重新触发恢复核对，不保存凭据原文。 */
+function currentRecoveryIdentity() {
+  const settings = readDenSettings();
+  return `${settings.baseUrl}\0${settings.activeOrgId ?? ""}\0${readDenUserId() ?? ""}\0${denCredentialFingerprint(settings.authToken ?? "")}`;
+}
 
 /** 只读取原始工作簿，不建立可能丢失透视数据的原生模型。 */
 function ReadonlyWorkbook({
@@ -69,6 +92,7 @@ export function OfficeEditor({
   hideHeader?: boolean;
 }) {
   const queryClient = useQueryClient();
+  const inRouter = useInRouterContext();
   const actions = useArtifactActions();
   const native =
     typeof window !== "undefined"
@@ -81,7 +105,16 @@ export function OfficeEditor({
     null,
   );
   const [saving, setSaving] = React.useState(false);
+  const [uploading, setUploading] = React.useState(false);
+  const [uploadError, setUploadError] = React.useState("");
+  const [cloudLink, setCloudLink] = React.useState<{
+    attachmentId: string; tenantId: string; pageId: string; workspaceId: string;
+  } | null>(null);
+  const [syncStatus, setSyncStatus] = React.useState("detached");
   const [recovering, setRecovering] = React.useState(false);
+  const [recoveryIdentity, setRecoveryIdentity] = React.useState(
+    currentRecoveryIdentity,
+  );
   const [detached, setDetached] = React.useState(false);
   const [snapshot, setSnapshot] = React.useState<{ image: string; ready?: () => void } | null>(null);
   const snapshotImage = React.useRef<HTMLImageElement>(null);
@@ -91,6 +124,12 @@ export function OfficeEditor({
       snapshot?.ready?.();
   }, [snapshot]);
   const claimed = React.useRef<string | null>(null);
+  const recoveryAttempted = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    const changed = () => setRecoveryIdentity(currentRecoveryIdentity());
+    window.addEventListener(denSettingsChangedEvent, changed);
+    return () => window.removeEventListener(denSettingsChangedEvent, changed);
+  }, []);
   const external = useFilesPanelStore(
     (state) =>
       state.sessions[sessionId]?.externalPaths?.includes(path) ?? false,
@@ -246,6 +285,134 @@ export function OfficeEditor({
     external,
   ]);
 
+  React.useEffect(() => {
+    const bridge = window.__JUGGLEWORK_ELECTRON__?.cloudDocs;
+    const settings = readDenSettings();
+    const sourceUserId = readDenUserId();
+    if (
+      !bridge ||
+      !documentId ||
+      document?.state !== "ready" ||
+      !document.engineFileId ||
+      !document.savedFileSha256 ||
+      !settings.authToken ||
+      !settings.activeOrgId ||
+      !sourceUserId ||
+      recoveryAttempted.current === `${documentId}\0${recoveryIdentity}`
+    )
+      return;
+    recoveryAttempted.current = `${documentId}\0${recoveryIdentity}`;
+    const capturedIdentity = recoveryIdentity;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const pending = await bridge.findWordRecovery({
+          documentId,
+          localWorkspaceId: workspaceId,
+          relativePath: path,
+          sourceServerOrigin: settings.baseUrl,
+          sourceUserId,
+          tenantId: settings.activeOrgId!,
+        });
+        if (
+          !pending ||
+          cancelled ||
+          currentRecoveryIdentity() !== capturedIdentity
+        )
+          return;
+        if (pending.relocationRequired) {
+          if (
+            !window.confirm(
+              t("cloud_docs.word_relocate_confirm", {
+                previousPath: pending.previousRelativePath ?? "",
+                currentPath: path,
+              }),
+            )
+          )
+            return;
+          await bridge.relocateWord({
+            attachmentId: pending.attachmentId,
+            documentId,
+            localWorkspaceId: workspaceId,
+            relativePath: path,
+            sourceServerOrigin: settings.baseUrl,
+            sourceUserId,
+            tenantId: settings.activeOrgId!,
+          });
+          if (cancelled || currentRecoveryIdentity() !== capturedIdentity)
+            return;
+        }
+        const instanceId = crypto.randomUUID();
+        const launch = await createDenClient({
+          baseUrl: settings.baseUrl,
+          token: settings.authToken!,
+        }).launchCloudDocs({
+          tenantId: settings.activeOrgId!,
+          target: {
+            kind: "page",
+            pageId: pending.pageId,
+            workspaceId: pending.docsWorkspaceId,
+          },
+          presentation: { instanceId, mode: "editor" },
+        });
+        if (cancelled || currentRecoveryIdentity() !== capturedIdentity) return;
+        const result = await bridge.recoverWord({
+          ...launch,
+          attachmentId: pending.attachmentId,
+          documentId,
+          localWorkspaceId: workspaceId,
+          relativePath: path,
+          instanceId,
+          sourceServerOrigin: settings.baseUrl,
+          sourceUserId,
+          pageId: pending.pageId,
+        });
+        if (cancelled || currentRecoveryIdentity() !== capturedIdentity) {
+          await bridge.pauseWord(pending.attachmentId).catch(() => undefined);
+          return;
+        }
+        setCloudLink({ attachmentId: pending.attachmentId, tenantId: settings.activeOrgId!,
+          pageId: pending.pageId, workspaceId: pending.docsWorkspaceId });
+        setSyncStatus(result.status);
+        if (result.status === "active")
+          toast.success(t("cloud_docs.word_recovered"));
+        else toast.error(t("cloud_docs.word_recovery_paused"));
+      } catch (error) {
+        if (!cancelled)
+          toast.error(
+            error instanceof Error
+              ? error.message.includes("word_recovery_content_changed")
+                ? t("cloud_docs.word_recovery_content_changed")
+                : error.message.includes("word_recovery_baseline_unconfirmed")
+                  ? t("cloud_docs.word_recovery_baseline_unconfirmed")
+                  : error.message
+              : t("cloud_docs.word_recovery_paused"),
+          );
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [documentId, document?.state, document?.engineFileId, document?.savedFileSha256, workspaceId, path, recoveryIdentity]);
+
+  React.useEffect(() => {
+    setCloudLink(null);
+    setSyncStatus("detached");
+  }, [documentId, recoveryIdentity]);
+
+  React.useEffect(() => {
+    const bridge = window.__JUGGLEWORK_ELECTRON__?.cloudDocs;
+    if (!bridge || !cloudLink) return;
+    let disposed = false;
+    const unsubscribe = bridge.onWordState(state => {
+      if (state.attachmentId === cloudLink.attachmentId) setSyncStatus(state.status);
+    });
+    void bridge.wordState(cloudLink.attachmentId).then(state => {
+      if (!disposed) setSyncStatus(String(state.status ?? "paused"));
+    }).catch(() => { if (!disposed) setSyncStatus("paused"); });
+    return () => { disposed = true; unsubscribe(); };
+  }, [cloudLink]);
+
   React.useLayoutEffect(() => {
     const element = content.current;
     if (
@@ -357,7 +524,7 @@ export function OfficeEditor({
   ]);
 
   const save = async () => {
-    if (!documentId) return;
+    if (!documentId) return null;
     setSaving(true);
     try {
       const result = await client.saveOfficeDocument(workspaceId, documentId);
@@ -366,10 +533,12 @@ export function OfficeEditor({
         queryKey: ["file-deliveries", client.baseUrl, workspaceId, sessionId],
       });
       toast.success(t("session_files.saved"));
+      return result;
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : t("office.save_failed"),
       );
+      return null;
     } finally {
       setSaving(false);
     }
@@ -429,6 +598,45 @@ export function OfficeEditor({
           fileActionsDisabled={saving || actions?.running}
           openWindowDisabled={false}
         >
+          {uploadError && <span role="alert" className="max-w-64 truncate text-xs text-destructive" title={uploadError}>{uploadError}</span>}
+          {cloudLink && (inRouter ? <OpenCloudWordButton {...cloudLink} status={syncStatus} /> :
+            <OfficeCloudSyncButton status={syncStatus} title={t(syncStatus === "active" ? "cloud_docs.word_syncing" : "cloud_docs.word_paused")} />)}
+          {documentId && !cloudLink && path.toLowerCase().endsWith(".docx") && (
+            <OfficeCloudSyncButton
+              status={uploading ? "uploading" : "inactive"}
+              disabled={saving || uploading || document?.state !== "ready"}
+              title={t(uploading ? "cloud_docs.word_uploading" : "cloud_docs.word_sync_inactive")}
+              onClick={async () => {
+                const tenantId = readDenSettings().activeOrgId?.trim();
+                if (!tenantId) {
+                  toast.error(t("cloud_docs.enter_organization"));
+                  return;
+                }
+                const bridge = window.__JUGGLEWORK_ELECTRON__?.cloudDocs;
+                if (!bridge) { toast.error(t("cloud_docs.desktop_required")); return; }
+                setUploading(true);
+                setUploadError("");
+                try {
+                  const saved = await save();
+                  if (!saved?.document.savedFileSha256) return;
+                  const linked = await uploadWord({ bridge, fileClient: client, documentId,
+                    localWorkspaceId: workspaceId, relativePath: path,
+                    savedFileSha256: saved.document.savedFileSha256,
+                    title: (document?.name ?? path.split(/[\\/]/).pop() ?? path).replace(/\.docx$/i, "").slice(0, 200) });
+                  setCloudLink(linked);
+                  setSyncStatus("active");
+                  toast.success(t("cloud_docs.word_linked"));
+                } catch (error) {
+                  const reason = error instanceof Error ? error.message : "";
+                  setUploadError(reason || t("cloud_docs.word_link_failed"));
+                  toast.error(t("cloud_docs.word_link_failed"), { description:
+                    reason.includes("word_file_too_large") ? t("cloud_docs.word_file_too_large") :
+                    reason.includes("word_file_changed_after_save") ? t("cloud_docs.word_file_changed") :
+                    reason.includes("word_source_changed") ? t("cloud_docs.source_changed") : reason });
+                } finally { setUploading(false); }
+              }}
+            />
+          )}
           {externalView && (
             <Button
               size="sm"

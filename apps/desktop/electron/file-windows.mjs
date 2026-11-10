@@ -42,6 +42,7 @@ export function createFileWindows({
   getDesktopConfig,
   getAppearance = async () => ({ lang: "en", theme: "light" }),
   openSession,
+  cloudDocs,
   fetcher = fetch,
 }) {
   const entries = new Map();
@@ -611,6 +612,17 @@ export function createFileWindows({
     },
     /** 注册最小窗口动作，文件选择和导出均使用原生对话框。 */
     registerIpc(ipcMain) {
+      /** 只允许读取／打开 Main 已登记在当前文件窗口中的 Office 模型。 */
+      const cloudDocument = (event, documentId) => {
+        const entry = resolve(event);
+        if (typeof documentId !== "string" || !entry.tabs.some(tab => tab.documentId === documentId))
+          throw new Error("云文档目标不属于当前文件窗口");
+        return documentId;
+      };
+      ipcMain.handle("jugglework:file-window:cloud-sync-state", (event, documentId) =>
+        cloudDocs?.state(cloudDocument(event, documentId)) ?? { status: "detached" });
+      ipcMain.handle("jugglework:file-window:cloud-document-open", (event, documentId) =>
+        cloudDocs?.open(cloudDocument(event, documentId)));
       ipcMain.handle("jugglework:file-window:session-stop-reply", async (event, input) => {
         assertTopLevel(event);
         const pending = pendingStops.get(input?.requestId);

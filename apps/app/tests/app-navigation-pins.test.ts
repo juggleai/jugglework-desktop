@@ -31,7 +31,7 @@ afterEach(() => {
 describe("app navigation pins", () => {
   test("accepts only known, unique pinnable destinations", () => {
     expect(parsePinnedAppNavigationItems('["reviews","unknown","reviews"]')).toEqual(["reviews"]);
-    expect(parsePinnedAppNavigationItems('["reviews","toon-factory","toon-factory"]')).toEqual(["reviews", "toon-factory"]);
+    expect(parsePinnedAppNavigationItems('["cloud-docs","reviews","toon-factory","cloud-docs"]')).toEqual(["cloud-docs", "reviews", "toon-factory"]);
     expect(parsePinnedAppNavigationItems("not json")).toEqual([]);
     expect(parsePinnedAppNavigationItems(null)).toEqual([]);
   });
@@ -61,14 +61,16 @@ describe("app navigation pins", () => {
       },
     });
 
-    expect(setAppNavigationItemPinned("reviews", true)).toEqual(["reviews"]);
-    expect(readPinnedAppNavigationItems()).toEqual(["reviews"]);
-    expect(storage.getItem(APP_NAVIGATION_PINS_STORAGE_KEY)).toBe('["reviews"]');
-    expect(events.at(-1)).toEqual({ type: appNavigationPinsChangedEvent, detail: ["reviews"] });
+    expect(setAppNavigationItemPinned("cloud-docs", true)).toEqual(["cloud-docs"]);
+    expect(readPinnedAppNavigationItems()).toEqual(["cloud-docs"]);
+    expect(storage.getItem(APP_NAVIGATION_PINS_STORAGE_KEY)).toBe('["cloud-docs"]');
+    expect(events.at(-1)).toEqual({ type: appNavigationPinsChangedEvent, detail: ["cloud-docs"] });
 
-    expect(setAppNavigationItemPinned("toon-factory", true)).toEqual(["reviews", "toon-factory"]);
-    expect(setAppNavigationItemPinned("toon-factory", false)).toEqual(["reviews"]);
-    expect(setAppNavigationItemPinned("reviews", false)).toEqual([]);
+    expect(setAppNavigationItemPinned("reviews", true)).toEqual(["cloud-docs", "reviews"]);
+    expect(setAppNavigationItemPinned("toon-factory", true)).toEqual(["cloud-docs", "reviews", "toon-factory"]);
+    expect(setAppNavigationItemPinned("toon-factory", false)).toEqual(["cloud-docs", "reviews"]);
+    expect(setAppNavigationItemPinned("reviews", false)).toEqual(["cloud-docs"]);
+    expect(setAppNavigationItemPinned("cloud-docs", false)).toEqual([]);
     expect(readPinnedAppNavigationItems()).toEqual([]);
     expect(events.at(-1)).toEqual({ type: appNavigationPinsChangedEvent, detail: [] });
   });

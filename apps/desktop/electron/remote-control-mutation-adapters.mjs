@@ -316,12 +316,12 @@ export function createRemoteControlMutationRegistrations({ workspaceStore, manag
           { ...args.preference, expectedRevision: args.expectedRevision },
           { signal },
         );
-        const item = response && typeof response === "object" ? response.item : null;
+        const item = response && typeof response === "object" && "item" in response ? response.item : null;
         const result = item && typeof item === "object" ? {
-          revision: item.revision,
-          mode: item.mode,
-          model: item.model,
-          updatedAt: item.updatedAt,
+          revision: "revision" in item ? item.revision : undefined,
+          mode: "mode" in item ? item.mode : undefined,
+          model: "model" in item ? item.model : undefined,
+          updatedAt: "updatedAt" in item ? item.updatedAt : undefined,
         } : null;
         return desktopRemoteOperationResultSchema.parse({ operation: "session.model.set", payloadVersion: 1, result }).result;
       } catch (error) {

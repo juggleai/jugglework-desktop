@@ -1,0 +1,93 @@
+{
+  "date": "2026-11-06",
+  "stage": "M3-C experimental plain paragraph split/merge and constrained native concurrent text; no production entry",
+  "affineBaseline": "8bbbfcf07874078bcb37cf88c40b81002382d0ba",
+  "office": {
+    "engineVersion": "0.0.0.499",
+    "wrapperVersion": "0.2.196-office.1",
+    "platform": "darwin-arm64",
+    "binarySha256": "4108b17c870cc3d5b6aa6b42f7030c3a59be992d52b4fa4c7e1eb5d55a836201",
+    "identity": "split and merge retain the right paragraph ID in this SDK model",
+    "reopenIdentityGuarantee": false,
+    "reopenScope": "sample IDs were unchanged; SDK tool metadata explicitly does not guarantee paragraph_id stability across save/reopen",
+    "splitWrite": "current independent Range.insertParagraph()",
+    "mergeWrite": "current independent Range.delete(); setText(empty) did not merge the paragraph boundary"
+  },
+  "native": {
+    "identity": "split/merge retains left block ID",
+    "writes": [
+      "Store.transact",
+      "Text.split",
+      "Text.join",
+      "Store.addBlock",
+      "Store.deleteBlock"
+    ],
+    "observation": "spaceDoc afterTransaction; current reactive objects verified after microtask",
+    "association": "in-memory current-instance mapping only, no persisted binding or checkpoint"
+  },
+  "roundtrip": {
+    "passed": true,
+    "pageId": "U5vr6r3kQUw0ltDGyu4iM",
+    "wordHumanSplitMerge": true,
+    "cloudSplitMergeOffsets": [
+      0,
+      4,
+      34
+    ],
+    "wordRetainsRightId": true,
+    "nativeRetainsLeftBlock": true,
+    "remappedBindings": true,
+    "noEcho": true,
+    "savedReopened": true,
+    "twoNativeReloads": true,
+    "nativeConcurrentTextMerge": true,
+    "networkPartitionVerified": true,
+    "bridgeConcurrencyWithUnforwardedWordEdits": false,
+    "structureConcurrencyEnabled": false,
+    "productionUiOrIpcMounted": false,
+    "fullW01ToW16Passed": false
+  },
+  "checks": {
+    "newStructureRegressions": 7,
+    "priorFixedBlockRegressions": 8,
+    "priorSingleParagraphRegressions": 8,
+    "all23Passed": true,
+    "nativeModuleFocusedTypecheck": true,
+    "threeOpenSpecValidations": true
+  },
+  "concurrencyBoundary": {
+    "tested": "peer native connection actually closed and reconnection blocked in isolated nbstore SharedWorker; owner confirmed not to receive peer edit; Word change entered owner native Y.Doc before peer reconnected; native Yjs merged and emitted current text deltas back to Word",
+    "customMergeAlgorithm": false,
+    "pendingBridgeWindowMapped": false,
+    "sameIndexCompleteMatrixPassed": false,
+    "structureConcurrencyEnabled": false,
+    "relativePositionFullMappingPassed": false
+  },
+  "rea": {
+    "targetInventory": "ev_2e6fca5f1b825d4d0a9b972c40fe3064fb2b2372824964591d0c8019088f0609",
+    "passiveBrowserCapture": "ev_f60a4ee2040d73e9f7d9c4503c007dbd64fe0c4e1b4cae29c39e1db1c5897701",
+    "scope": "target inventory and passive attach-window capture only; they do not establish prior split/merge execution. Actual roundtrip results come from the repository driver."
+  },
+  "notDelivered": [
+    "production UI/IPC and persisted binding",
+    "formal composition of fixed-text and structural probes",
+    "AI structural operations and formatted/heading/list split-merge",
+    "bridge window with unforwarded Word edits",
+    "full relative-position and structural concurrency mapping",
+    "comments and undo/redo matrix",
+    "table/image mapping, real IME, full AI admission",
+    "shared checkpoints, permission and offline/crash recovery",
+    "M2 private directory metadata isolation",
+    "file intake and site+IM notifications",
+    "full W-01 through W-16"
+  ],
+  "reproduction": {
+    "driver": "scripts/verify-word-affine-structure.mjs",
+    "requirements": "dedicated loopback CDP browsers, isolated temporary one-paragraph plain DOCX and disposable organization; see milestone-3c.md"
+  },
+  "sourceDigests": {
+    "jugglework-desktop/apps/desktop/electron/office-word-blocks-adapter.mjs": "aa28462fd0c9ec7d210b733a3eede4181fd0d119a6ec90d7876ef37bcc2fefbb",
+    "jugglework-desktop/scripts/verify-word-affine-structure.mjs": "9fa0dc4734a7fc59ac89c5ce19d666ae85acde185e2b226d740b9ebe01b3da44",
+    "jugglework-docs/packages/frontend/core/src/utils/jugglework-word-structure-probe.ts": "e22a7d82269ffb9d7069019f041500bf403cd04a35358d30b69316db57dc22b7"
+  }
+}

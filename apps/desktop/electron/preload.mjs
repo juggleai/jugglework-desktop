@@ -8,8 +8,12 @@ const NATIVE_MENU_ZOOM_EVENT = "jugglework:native-menu:zoom";
 const REMOTE_CONTROL_POLICY_RECOVERY_EVENT = "jugglework:remote-control:policy-recovery";
 const JUGGLECHAT_SKILL_INVOKE_CHANNEL = "jugglework:jugglechat:skill-invoke";
 const JUGGLECHAT_SKILL_REPLY_CHANNEL = "jugglework:jugglechat:skill-reply";
+const DESKTOP_NOTIFICATION_ACTION_CHANNEL = "jugglework:desktop-notification-action";
+const DESKTOP_NOTIFICATION_ACTIONS_READY_CHANNEL = "jugglework:desktop-notification-actions-ready";
+const DESKTOP_NOTIFICATION_ACTIONS_NOT_READY_CHANNEL = "jugglework:desktop-notification-actions-not-ready";
 
 let activeJuggleChatSkillHandler = null;
+let desktopNotificationActionListenerCount = 0;
 
 function setJuggleChatSkillEvent(callback) {
   if (activeJuggleChatSkillHandler) {
@@ -333,6 +337,67 @@ contextBridge.exposeInMainWorld("__JUGGLEWORK_ELECTRON__", {
       const handler = (_event, input) => callback(input);
       ipcRenderer.on("jugglework:file-window:open-in-panel", handler);
       return () => ipcRenderer.removeListener("jugglework:file-window:open-in-panel", handler);
+    },
+  },
+  cloudDocs: {
+    /** 以一次性凭据进入当前组织的云文档。 */
+    open: (input) => ipcRenderer.invoke('jugglework:docs:open', input),
+    /** 释放指定实例或全部云文档视图。 */
+    close: (instanceId) => ipcRenderer.invoke('jugglework:docs:close', instanceId),
+    /** 对齐 React 内容区域并在宿主菜单打开时隐藏原生视图。 */
+    setBounds: (input) => ipcRenderer.send('jugglework:docs:bounds', input),
+    /** 只向当前云文档传递展示配置。 */
+    setAppearance: (input) => ipcRenderer.send('jugglework:docs:appearance', input),
+    /** 将顶部按钮操作传给当前实例的原生侧栏或搜索。 */
+    layoutCommand: (input) => ipcRenderer.send('jugglework:docs:layout-command', input),
+    /** 监听 AFFiNE 原生侧栏状态，包含快捷键和拖动改宽后的结果。 */
+    onLayout(callback) { const handler = (_event, value) => callback(value); ipcRenderer.on('jugglework:docs:layout', handler); return () => ipcRenderer.removeListener('jugglework:docs:layout', handler); },
+    /** 监听当前原生页面就绪或身份失效。 */
+    onState(callback) { const handler = (_event, value) => callback(value); ipcRenderer.on('jugglework:docs:state', handler); return () => ipcRenderer.removeListener('jugglework:docs:state', handler); },
+    /** 使用文件接入返回的稳定对象映射建立 Word 与云文档关联。 */
+    linkWord: (input) => ipcRenderer.invoke("jugglework:docs:word-link", input),
+    /** 在当前产品页所属组织中创建 Word 基础对象文档。 */
+    createWordPage: (input) => ipcRenderer.invoke("jugglework:docs:word-create", input),
+    /** 读取当前真实 Word 基础对象；建立关联时会再次核对。 */
+    readWordBlocks: (documentId) => ipcRenderer.invoke("jugglework:docs:word-snapshot", documentId),
+    /** 按当前账号、组织和真实本地文件查找待恢复关联。 */
+    findWordRecovery: (input) => ipcRenderer.invoke("jugglework:docs:word-recovery-find", input),
+    /** 用户确认文件移动后，按共同检查点摘要重新定位关联。 */
+    relocateWord: (input) => ipcRenderer.invoke("jugglework:docs:word-relocate", input),
+    /** 使用新交接恢复共同检查点并在新检查点落盘前保持受控状态。 */
+    recoverWord: (input) => ipcRenderer.invoke("jugglework:docs:word-recover", input),
+    /** 账号或组织变化时暂停当前关联，保留检查点供正确上下文恢复。 */
+    pauseWord: (attachmentId) => ipcRenderer.invoke("jugglework:docs:word-pause", attachmentId),
+    /** 释放指定 Word 云文档关联。 */
+    unlinkWord: (attachmentId) => ipcRenderer.invoke("jugglework:docs:word-unlink", attachmentId),
+    /** 查询指定 Word 云文档关联状态。 */
+    wordState: (attachmentId) => ipcRenderer.invoke("jugglework:docs:word-state", attachmentId),
+    /** 等待当前对象操作窗口完成，不替代文件保存。 */
+    flushWord: (attachmentId) => ipcRenderer.invoke("jugglework:docs:word-flush", attachmentId),
+    /** 监听 Word 云文档关联状态。 */
+    onWordState(callback) { const handler = (_event, value) => callback(value); ipcRenderer.on("jugglework:docs:word-state", handler); return () => ipcRenderer.removeListener("jugglework:docs:word-state", handler); },
+  },
+  desktopNotifications: {
+    /** 监听系统原生通知点击；主进程只回传已校验的受限应用动作。 */
+    onAction(callback) {
+      if (typeof callback !== "function") return () => {};
+      const handler = (_event, action) => callback(action);
+      ipcRenderer.on(DESKTOP_NOTIFICATION_ACTION_CHANNEL, handler);
+      desktopNotificationActionListenerCount += 1;
+      // TIPS: 先安装监听再声明就绪，保证主进程冲刷启动期暂存动作时不会丢失点击。
+      if (desktopNotificationActionListenerCount === 1) {
+        ipcRenderer.send(DESKTOP_NOTIFICATION_ACTIONS_READY_CHANNEL);
+      }
+      let active = true;
+      return () => {
+        if (!active) return;
+        active = false;
+        ipcRenderer.removeListener(DESKTOP_NOTIFICATION_ACTION_CHANNEL, handler);
+        desktopNotificationActionListenerCount = Math.max(0, desktopNotificationActionListenerCount - 1);
+        if (desktopNotificationActionListenerCount === 0) {
+          ipcRenderer.send(DESKTOP_NOTIFICATION_ACTIONS_NOT_READY_CHANNEL);
+        }
+      };
     },
   },
   browser: {

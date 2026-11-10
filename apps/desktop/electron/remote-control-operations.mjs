@@ -19,7 +19,7 @@ export const REMOTE_CONTROL_DESCENDANT_PAYLOAD_VERSION = 2;
  *   execute(input: RemoteControlOperationExecutionInput): unknown | Promise<unknown>
  * }} RemoteControlOperationRegistration
  */
-/** @typedef {{ registrations?: RemoteControlOperationRegistration[], getFeatureGates?: (context: unknown) => unknown | Promise<unknown>, isOperationAllowed?: (input: { operation: string, context: unknown }) => boolean | Promise<boolean>, isPayloadEncryptionReady?: (context: unknown) => boolean | Promise<boolean>, getBusySessionPolicy?: (context: unknown) => { steer: boolean, enqueue: boolean } | Promise<{ steer: boolean, enqueue: boolean }> }} RemoteControlOperationRegistryOptions */
+/** @typedef {{ registrations?: RemoteControlOperationRegistration[], getFeatureGates?: (context: unknown) => unknown | Promise<unknown>, isOperationAllowed?: (input: { operation: string, context: unknown }) => boolean | Promise<boolean>, isPayloadEncryptionReady?: (context: unknown) => boolean | Promise<boolean>, getBusySessionPolicy?: (context: unknown) => { steer: boolean, enqueue: boolean } | Promise<{ steer: boolean, enqueue: boolean }>, staticFeatures?: string[] }} RemoteControlOperationRegistryOptions */
 /** @typedef {{ advertisedCapabilities?: unknown, context?: unknown, correlationId?: unknown, signal?: AbortSignal }} RemoteControlOperationDispatchOptions */
 /** @typedef {{ advertise(context?: unknown): Promise<RemoteControlCapabilityAdvertisement>, dispatch(request: unknown, options?: RemoteControlOperationDispatchOptions): Promise<RemoteControlOperationDispatchResult> }} RemoteControlOperationRegistry */
 

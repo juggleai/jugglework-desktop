@@ -1,3 +1,7 @@
+import { createCloudDocsPanel } from './cloud-docs-panel.mjs';
+import { createCloudDocsEditors } from "./cloud-docs-editor.mjs";
+import { createOfficeCloudDocsCoordinator } from "./office-cloud-docs-coordinator.mjs";
+import { createCloudDocBindingsStore } from "./cloud-doc-bindings.mjs";
 import "./socket-tos-compat.mjs";
 import { createToonFactoryRuntime } from "./toonFactoryRuntime.mjs";
 import { execFile, execFileSync, spawn } from "node:child_process";
@@ -79,6 +83,11 @@ import { createRemoteSessionEventBridge } from "./remote-session-event-bridge.mj
 import { createRuntimeLifecycleFeedPump } from "./runtime-lifecycle-feed-pump.mjs";
 import { createRemoteEventDiagnostics } from "./remote-event-diagnostics.mjs";
 import { createRemoteControlNotificationController } from "./remote-control-notifications.mjs";
+import {
+  bindDesktopNotificationClick,
+  createDesktopNotificationActionRelay,
+  sanitizeDesktopNotificationAction,
+} from "./desktop-notification-actions.mjs";
 import { createRemoteControlSleepController, createRemoteControlPowerMonitorController } from "./remote-control-power.mjs";
 import { createAppTrayIndicator } from "./app-tray.mjs";
 import { createPlatformTrayIconImage } from "./tray-icon.mjs";
@@ -192,6 +201,8 @@ const uiControlServer = createUiControlServer({
   appIdentifier: APP_IDENTIFIER,
   getWindow: () => createMainWindow(),
   prepareOfficeSave: (document) => officePanel.prepareSave(document),
+  confirmOfficeSaved: (document) =>
+    cloudDocsWordCoordinator?.confirmSaved(document),
   readOfficeSelection: (document) => officePanel.readSelection(document),
   readOfficeText: (document) => officePanel.readText(document),
 });
@@ -577,6 +588,7 @@ function showDesktopNotification(input) {
   }
 
   const body = String(Reflect.get(record, "body") ?? "").trim();
+  const action = sanitizeDesktopNotificationAction(Reflect.get(record, "action"));
   const icon = resolveBrandIconImage() ?? APP_ICON_IMAGE;
   const options = {
     title,
@@ -587,8 +599,14 @@ function showDesktopNotification(input) {
 
   try {
     const notification = new ElectronNotification(options);
-    notification.on("click", () => {
-      void focusMainWindowFromNotification(Reflect.get(record, "href"));
+    bindDesktopNotificationClick(notification, {
+      action,
+      relay: desktopNotificationActionRelay,
+      focus: focusMainWindowFromNotification,
+      href: Reflect.get(record, "href"),
+      onFocusError: error => {
+        console.warn("[desktop-notification] failed to focus main window", error);
+      },
     });
     notification.show();
     return { ok: true };
@@ -927,6 +945,14 @@ const IDLE_ROUTER_INFO = Object.freeze({
 });
 
 let mainWindow = null;
+const desktopNotificationActionRelay = createDesktopNotificationActionRelay({
+  send(owner, action) {
+    const contents = mainWindow?.webContents;
+    if (!contents || contents.isDestroyed() || contents.id !== owner) return false;
+    contents.send("jugglework:desktop-notification-action", action);
+    return true;
+  },
+});
 let desktopPet = null;
 const pendingDeepLinks = [];
 const juggleChatSkillBridge = createJuggleChatSkillBridge({
@@ -982,6 +1008,13 @@ async function installBundledSkills() {
   }
   return results;
 }
+
+/** @type {(scope:{sourceServerOrigin:string,sourceUserId:string,tenantId:string})=>Promise<void>} 当前来源账号和组织的云文档撤权收口。 */
+let cloudDocsScopeRevoker = async (_scope) => {};
+const cloudDocsPanel = createCloudDocsPanel({
+  getWindow: () => mainWindow,
+  onScopeRevoked: scope => cloudDocsScopeRevoker(scope),
+});
 
 const browserPanel = createBrowserPanel({
   remoteDebugPort,
@@ -1479,13 +1512,23 @@ function getOfficeResources() {
 const officeComposerWindow = (input) => input.windowId === undefined || input.windowId === mainWindow?.id
   ? mainWindow : fileWindows.officeComposerWindow(input);
 const officeSelectionBridge = createOfficeSelectionBridge({ ipcMain, getWindow: officeComposerWindow });
+let cloudDocsWordCoordinator = null;
 const officePanel = createOfficePanel({
   getWindow: () => mainWindow,
   getWindows: () => fileWindows.windows(),
   resolveWindow: (sender) => sender.id === mainWindow?.webContents.id ? mainWindow : fileWindows.windowFor(sender),
   authorizeReferences: (event, input) => { if (event.sender !== mainWindow?.webContents) fileWindows.authorizeOfficeReferences(event, input); },
-  onDocumentClosed: (id) => fileWindows.documentClosed(id),
+  onDocumentClosed: (id) => {
+    fileWindows.documentClosed(id);
+    void cloudDocsWordCoordinator
+      ?.unlinkDocument(id, "word_closed")
+      .catch((error) =>
+        console.warn("[cloud-docs] failed to persist closed Word state", error),
+      );
+  },
   onOpenFile: (window, input) => fileWindows.openDialog(window, input),
+  beforeSave: (document) =>
+    cloudDocsWordCoordinator?.prepareCheckpoint(document),
   client: fileHostClient,
   resources: getOfficeResources,
   composer: {
@@ -1512,6 +1555,36 @@ const officePanel = createOfficePanel({
     },
   },
 });
+const cloudDocsEditors = createCloudDocsEditors({
+  onEvent: (attachmentId, message) =>
+    cloudDocsWordCoordinator?.handleNativeEvent(attachmentId, message),
+  onScopeRevoked: scope => cloudDocsScopeRevoker(scope),
+});
+const cloudDocBindingsStore = createCloudDocBindingsStore({
+  filePath: path.join(app.getPath("userData"), "cloud-doc-bindings.json"),
+});
+void cloudDocBindingsStore.pauseUnrestorableAfterRestart().catch((error) =>
+  console.warn("[cloud-docs] failed to reconcile persisted Word bindings", error),
+);
+cloudDocsWordCoordinator = createOfficeCloudDocsCoordinator({
+  officePanel,
+  editors: cloudDocsEditors,
+  bindingsStore: cloudDocBindingsStore,
+  onState: (attachmentId, state) => {
+    if (mainWindow && !mainWindow.isDestroyed())
+      mainWindow.webContents.send("jugglework:docs:word-state", {
+        attachmentId,
+        ...state,
+      });
+    for (const window of fileWindows.windows()) {
+      if (!window.isDestroyed()) window.webContents.send("jugglework:file-window:cloud-sync-changed", { documentId: state.documentId ?? null });
+    }
+  },
+});
+cloudDocsScopeRevoker = async scope => {
+  cloudDocsPanel.closeScope(scope);
+  await cloudDocsWordCoordinator.unlinkScope(scope, "session_expired");
+};
 const fileWindowIconPath = app.isPackaged ? path.join(process.resourcesPath, "app-dist/file-window-logo.png") : path.resolve(__dirname, "../../app/public/file-window-logo.png");
 const fileWindowDock = createFileWindowDock({
   iconPath: fileWindowIconPath,
@@ -1543,6 +1616,15 @@ const fileWindows = createFileWindows({
     ? readFileWindowAppearance(mainWindow, fileContextFallback())
     : fileContextBootstrap.initialize().catch(() => fileContextFallback()),
   getDesktopConfig: () => fileWindowDesktopContext.read(mainWindow),
+  cloudDocs: {
+    state: documentId => ({ status: cloudDocsWordCoordinator.documentState(documentId).status }),
+    async open(documentId) {
+      const target = cloudDocsWordCoordinator.documentState(documentId);
+      if (!target.tenantId || !target.pageId || !target.workspaceId) throw new Error("Word 尚未关联云文档");
+      await createMainWindow();
+      await focusMainWindowFromNotification(`/cloud-docs/${encodeURIComponent(target.tenantId)}?pageId=${encodeURIComponent(target.pageId)}&workspaceId=${encodeURIComponent(target.workspaceId)}`);
+    },
+  },
   fetcher: nodeFetch,
   openSession: async ({ workspaceId, sessionId }) => {
     await createMainWindow();
@@ -3267,7 +3349,10 @@ async function createMainWindow() {
   }
   // TIPS: hash会话跳转也会触发loading，但宿主没有重载；仅跨文档主框架导航才失效未决操作。
   mainWindow.webContents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => {
-    if (isMainFrame && !isInPlace) desktopPet?.resetHost();
+    if (isMainFrame && !isInPlace) {
+      desktopPet?.resetHost();
+      desktopNotificationActionRelay.reset(mainWindow?.webContents.id);
+    }
   });
   if (cachedBrandImage && bootSourceUrl) {
     await applyCachedBrandIcon(cachedBrandImage, bootSourceUrl);
@@ -3311,8 +3396,10 @@ async function createMainWindow() {
 
   const officeComposerContents = mainWindow.webContents;
   mainWindow.on("closed", () => {
+    desktopNotificationActionRelay.reset(officeComposerContents.id);
     desktopPet?.closeHost();
     officeSelectionBridge.cancel(officeComposerContents);
+    cloudDocsPanel.close();
     browserPanel.destroy();
     void toonFactoryRuntime.close().catch(() => {});
     mainWindow = null;
@@ -3381,6 +3468,14 @@ async function createMainWindow() {
 ipcMain.on("jugglework:desktop-bootstrap-sync", (event) => {
   event.returnValue = workspaceStore.readDesktopBootstrapConfigSync();
 });
+ipcMain.on("jugglework:desktop-notification-actions-ready", (event) => {
+  if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return;
+  desktopNotificationActionRelay.ready(event.sender.id);
+});
+ipcMain.on("jugglework:desktop-notification-actions-not-ready", (event) => {
+  if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return;
+  desktopNotificationActionRelay.reset(event.sender.id);
+});
 ipcMain.handle("jugglework:desktop", handleDesktopInvoke);
 ipcMain.handle("jugglework:shell:openExternal", async (_event, url) => {
   if (typeof url !== "string" || url.trim().length === 0) {
@@ -3421,9 +3516,140 @@ for (const operation of ["open", "read", "write", "resize", "terminate", "restar
 }
 
 browserPanel.registerIpc(ipcMain);
+cloudDocsPanel.registerIpc(ipcMain);
+cloudDocsEditors.registerIpc(ipcMain);
 officePanel.registerIpc(ipcMain);
 fileWindows.registerIpc(ipcMain);
 fileEditor.registerIpc(ipcMain);
+
+const requireCloudDocsWordHost = (event) => {
+  if (
+    !mainWindow ||
+    mainWindow.isDestroyed() ||
+    event.sender !== mainWindow.webContents ||
+    event.senderFrame !== mainWindow.webContents.mainFrame
+  )
+    throw new Error("Forbidden");
+};
+ipcMain.handle("jugglework:docs:word-link", async (event, input) => {
+  requireCloudDocsWordHost(event);
+  const result = await cloudDocsWordCoordinator.link(input);
+  try {
+    await fileHostClient.postJson(
+      `/workspace/${encodeURIComponent(input.localWorkspaceId)}/office/${encodeURIComponent(input.documentId)}/save`,
+      {},
+    );
+    if (!cloudDocsWordCoordinator.state(result.attachmentId).checkpointId)
+      throw new Error("word_initial_checkpoint_unconfirmed");
+    return result;
+  } catch (error) {
+    await cloudDocsWordCoordinator
+      .unlink(result.attachmentId, "initial_checkpoint_failed")
+      .catch(() => undefined);
+    throw error;
+  }
+});
+ipcMain.handle("jugglework:docs:word-snapshot", (event, documentId) => {
+  requireCloudDocsWordHost(event);
+  return officePanel.readWordBlocks(documentId);
+});
+ipcMain.handle("jugglework:docs:word-recovery-find", async (event, input) => {
+  requireCloudDocsWordHost(event);
+  /** @type {any} */
+  const response = await fileHostClient.getJson(
+    `/workspace/${encodeURIComponent(input.localWorkspaceId)}/office/${encodeURIComponent(input.documentId)}`,
+  );
+  const document = response.document;
+  if (document.relativePath !== input.relativePath) return null;
+  const identity = {
+    sourceServerOrigin: input.sourceServerOrigin,
+    sourceUserId: input.sourceUserId,
+    tenantId: input.tenantId,
+    localWorkspaceId: document.workspaceId,
+    relativePath: document.relativePath,
+  };
+  const exact = await cloudDocBindingsStore.findRecoverable(identity);
+  if (exact) return { ...exact, relocationRequired: false };
+  const relocated = await cloudDocBindingsStore.findRelocatable({
+    ...identity,
+    savedFileSha256: document.savedFileSha256,
+  });
+  return relocated ? { ...relocated, relocationRequired: true } : null;
+});
+ipcMain.handle("jugglework:docs:word-relocate", async (event, input) => {
+  requireCloudDocsWordHost(event);
+  /** @type {any} */
+  const response = await fileHostClient.getJson(
+    `/workspace/${encodeURIComponent(input.localWorkspaceId)}/office/${encodeURIComponent(input.documentId)}`,
+  );
+  const document = response.document;
+  if (document.relativePath !== input.relativePath || document.state !== "ready")
+    throw new Error("word_relocation_file_changed");
+  await cloudDocBindingsStore.relocate({
+    attachmentId: input.attachmentId,
+    documentId: document.documentId,
+    sourceServerOrigin: input.sourceServerOrigin,
+    sourceUserId: input.sourceUserId,
+    tenantId: input.tenantId,
+    localWorkspaceId: document.workspaceId,
+    relativePath: document.relativePath,
+    savedFileSha256: document.savedFileSha256,
+  });
+  return { status: "relocated" };
+});
+ipcMain.handle("jugglework:docs:word-recover", async (event, input) => {
+  requireCloudDocsWordHost(event);
+  /** @type {any} */
+  const response = await fileHostClient.getJson(
+    `/workspace/${encodeURIComponent(input.localWorkspaceId)}/office/${encodeURIComponent(input.documentId)}`,
+  );
+  const document = response.document;
+  const result = await cloudDocsWordCoordinator.recover({
+    ...input,
+    document,
+  });
+  if (result.status !== "active" || !("attachmentId" in result)) return result;
+  try {
+    await fileHostClient.postJson(
+      `/workspace/${encodeURIComponent(document.workspaceId)}/office/${encodeURIComponent(document.documentId)}/save`,
+      {},
+    );
+    const recoveredState = cloudDocsWordCoordinator.state(
+      result.attachmentId,
+    );
+    if (
+      !recoveredState.checkpointId ||
+      recoveredState.checkpointId === result.recoveryCheckpointId
+    )
+      throw new Error("word_recovery_checkpoint_unconfirmed");
+    return {
+      status: "active",
+      attachmentId: result.attachmentId,
+      pageId: input.pageId,
+    };
+  } catch (error) {
+    await cloudDocsWordCoordinator
+      .unlink(result.attachmentId, "recovery_save_failed")
+      .catch(() => undefined);
+    throw error;
+  }
+});
+ipcMain.handle("jugglework:docs:word-unlink", (event, attachmentId) => {
+  requireCloudDocsWordHost(event);
+  return cloudDocsWordCoordinator.unlink(attachmentId);
+});
+ipcMain.handle("jugglework:docs:word-pause", (event, attachmentId) => {
+  requireCloudDocsWordHost(event);
+  return cloudDocsWordCoordinator.unlink(attachmentId, "identity_changed");
+});
+ipcMain.handle("jugglework:docs:word-state", (event, attachmentId) => {
+  requireCloudDocsWordHost(event);
+  return cloudDocsWordCoordinator.state(attachmentId);
+});
+ipcMain.handle("jugglework:docs:word-flush", (event, attachmentId) => {
+  requireCloudDocsWordHost(event);
+  return cloudDocsWordCoordinator.flush(attachmentId);
+});
 
 registerMigrationIpc({ app, ipcMain });
 const { ensureAutoUpdater } = registerUpdaterIpc({
@@ -3478,6 +3704,7 @@ if (!app.requestSingleInstanceLock()) {
         disposeRuntimeBeforeQuit(),
         uiControlServer.stop(),
         stopJuggleChatRouterServer(),
+        cloudDocsWordCoordinator.dispose(),
       ]).then(({ timedOut, results }) => {
         if (timedOut) console.warn("[quit] cleanup timed out; allowing updater exit");
         else if (results.some((result) => result.status === "rejected")) {

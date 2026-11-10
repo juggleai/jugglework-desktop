@@ -5,6 +5,7 @@ import { Navigate, useLocation, useNavigate } from "react-router-dom";
 
 import { ToonFactoryPage } from "./toonFactoryPage";
 import { AppsPage } from "./apps-page";
+import { CloudDocsPage } from "../domains/cloud-docs/cloud-docs-page";
 import { ChatPage } from "./chat-page";
 import { SessionRoute } from "./session-route";
 import { SettingsRoute } from "./settings-route";
@@ -168,6 +169,7 @@ function WorkspaceAppRouteContent() {
   const automationsVisible = appPath.view === "automations";
   const reviewsVisible = appPath.view === "reviews";
   const toonFactoryVisible = appPath.view === "toon-factory";
+  const cloudDocsVisible = appPath.view === "cloud-docs";
   const sessionPath = activeSession.workspaceId
     ? workspaceSessionRoute(activeSession.workspaceId, activeSession.sessionId)
     : legacySessionRoute(activeSession.sessionId);
@@ -178,7 +180,7 @@ function WorkspaceAppRouteContent() {
       routeSessionId={displayedSession.sessionId}
       embedded={automationSessionVisible}
       onSessionTargetChange={automationSessionVisible ? openAutomationSession : undefined}
-      surfaceVisible={automationSessionVisible || !(settingsVisible || chatVisible || appsVisible || automationsVisible || reviewsVisible || toonFactoryVisible)}
+      surfaceVisible={automationSessionVisible || !(settingsVisible || chatVisible || appsVisible || automationsVisible || reviewsVisible || toonFactoryVisible || cloudDocsVisible)}
     />
   );
 
@@ -202,12 +204,12 @@ function WorkspaceAppRouteContent() {
     <div className="relative h-dvh min-h-screen w-full overflow-hidden">
       <div
         ref={retainedSessionHost}
-        className={settingsVisible || chatVisible || appsVisible || automationsVisible || reviewsVisible || toonFactoryVisible
+        className={settingsVisible || chatVisible || appsVisible || automationsVisible || reviewsVisible || toonFactoryVisible || cloudDocsVisible
           ? navigationPreview.workspaceTarget
             ? "invisible absolute inset-0 z-50 h-full min-h-0 pointer-events-none [&_[data-session-list-preview=true]]:visible [&_[data-session-list-preview=true]]:pointer-events-auto [&_[data-session-preview-title-hover-guard]]:visible"
             : "hidden"
           : "h-full min-h-0"}
-        aria-hidden={(settingsVisible || chatVisible || appsVisible || automationsVisible || reviewsVisible || toonFactoryVisible) && !navigationPreview.workspaceTarget || undefined}
+        aria-hidden={(settingsVisible || chatVisible || appsVisible || automationsVisible || reviewsVisible || toonFactoryVisible || cloudDocsVisible) && !navigationPreview.workspaceTarget || undefined}
         data-testid="retained-session-surface"
       >
         {/* surfaceVisible gates behavior, not paint. Only the preview list and
@@ -300,6 +302,21 @@ function WorkspaceAppRouteContent() {
             onOpenConnect={() => openSurfaceSettings("connect", location.pathname)}
             onOpenTaskSearch={workspaceShellActions.openTaskSearch}
             onOpenCreateWorkspace={workspaceShellActions.openCreateWorkspace}
+          />
+        </div>
+      ) : null}
+
+      {cloudDocsVisible ? (
+        <div className="absolute inset-0">
+          <CloudDocsPage
+            tenantId={appPath.tenantId}
+            workspaceId={activeSession.workspaceId}
+            onOpenAccount={() => openSurfaceSettings("cloud-account", location.pathname)}
+            onOpenHome={() => navigate(sessionPath)}
+            onOpenApps={() => navigate(workspaceAppsRoute(activeSession.workspaceId))}
+            onOpenChat={() => navigate(workspaceChatRoute(activeSession.workspaceId))}
+            onOpenReviews={() => navigate(workspaceReviewsRoute(activeSession.workspaceId))}
+            onOpenSettings={() => openSurfaceSettings("preferences", location.pathname)}
           />
         </div>
       ) : null}
