@@ -141,7 +141,7 @@ TanStack Query key 同样包含 deployment、organization、member、范围和 C
 
 ### 12. 服务端能力门控制 Desktop 可见性和灰度
 
-服务端增加 fail-closed calendar configuration：全局 `enabled`、可选 organization allowlist 和独立写入开关。API 在认证和 membership 后检查 gate；Desktop config 为当前 organization 投影 `calendarEnabled`/`calendarWriteEnabled`，导航和 mutation 按同一服务端能力显示。服务端仍是最终授权，客户端 flag 只控制体验。
+服务端增加 fail-closed calendar configuration：全局 `enabled`、可选 organization allowlist 和独立写入开关。`enabled=false` 时所有组织关闭；allowlist 为空时 `enabled=true` 对所有组织开放，非空时只开放大小写敏感的精确匹配。API 在认证和 membership 后检查 gate；Desktop config 为当前 organization 投影 `calendarEnabled`/`calendarWriteEnabled`，导航和 mutation 按同一服务端能力显示。服务端仍是最终授权，客户端 flag 只控制体验。
 
 首轮先只读内部组织验证 bootstrap、cursor 和查询；随后对 canary organization 开启写入，再按 deployment 扩大。指标只记录 operation、状态码、延迟、结果数、cursor reset、version/idempotency conflict 和 scope 哈希，不记录标题、描述、草稿或搜索文本。
 

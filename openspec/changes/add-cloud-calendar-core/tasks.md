@@ -74,6 +74,7 @@
 - [ ] 8.3 为 migration、默认 Calendar 惰性创建、change/mutation 表增长、cursor reset 和配置 readiness 增加运维检查与告警说明，并在预发布数据库执行 upgrade/readiness/canary 脚本验证可重复运行
 - [ ] 8.4 编写 Calendar feature gate、organization allowlist、只读/写入分阶段、最低 Desktop 版本、指标阈值、支持诊断和非破坏性回滚 runbook，并以 staging 演练验证关闭写 gate 后可读、关闭 enabled 后入口/API fail closed
 - [ ] 8.5 在内部 organization 执行只读 canary，验证 bootstrap/range/search/changes、时区与跨租户拒绝且无内容日志，再记录 gate、指标和通过证据后进入写 canary
+  - 进展（2026-11-10）：国内正式环境已切到只读 gate（`enabled: true`、`writeEnabled: false`、allowlist 仅内部个人组织），配置备份 `backups/config.yml.before-readonly-20261110T032106Z`；重启后本地/公网 health 200，无 panic/迁移错误，未登录访问日历接口返回 401。待完成：登录后验证 bootstrap/range/search/changes、写入返回 `calendar_write_disabled`、时区与跨租户拒绝、日志无内容。
 - [ ] 8.6 在内部 organization 执行写 canary，跨两台 Desktop 验证默认 Calendar、CRUD、版本冲突、幂等重试、软删除、游标收敛、离线草稿和组织切换，并记录无数据丢失/泄漏的通过证据
 - [ ] 8.7 按 organization 再按 deployment 扩大灰度，持续检查 error/latency、cursor reset、conflict、IndexedDB failure 和表增长；任一阈值越界即按 runbook 关闭写入或能力 gate，并以每阶段 rollout checklist 签字验证
 
