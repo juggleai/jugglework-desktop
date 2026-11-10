@@ -2,7 +2,7 @@
 import * as React from "react";
 import { Building2, Check, Loader2, Pencil } from "lucide-react";
 
-import type { DenOrgSummary } from "../../../../app/lib/den";
+import { readDenSettings, writeDenIMLoginBootstrap, type DenOrgSummary } from "../../../../app/lib/den";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Input } from "@/components/ui/input";
 import { SettingsNotice } from "../settings-section";
@@ -11,7 +11,6 @@ import { useDenAuth } from "../../cloud/den-auth-provider";
 import { useCloudSession } from "./cloud-session-provider";
 import {
   accountProfileStorageKey,
-  applyStoredAccountProfile,
   readStoredAccountProfile,
   writeStoredAccountProfile,
   type StoredAccountProfile,
@@ -38,44 +37,54 @@ export function CloudAccountSection({
   orgsError,
   sessions,
 }: CloudAccountSectionProps) {
-  const { user, setUser } = useCloudSession();
-  const { activeOrganization } = useDenAuth();
+  const { user: cloudUser, setUser, client } = useCloudSession();
+  const { user: authoritativeUser, activeOrganization, refresh } = useDenAuth();
+  const user = authoritativeUser ?? cloudUser;
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const [name, setName] = React.useState("");
   const [nameDraft, setNameDraft] = React.useState("");
   const [avatar, setAvatar] = React.useState<string | null>(null);
   const [editingName, setEditingName] = React.useState(false);
   const [profileError, setProfileError] = React.useState<string | null>(null);
+  const [profileSaving, setProfileSaving] = React.useState(false);
   const statistics = React.useMemo(() => accountStatistics(sessions), [sessions]);
   const profileKey = user?.id ? accountProfileStorageKey(user.id) : "";
 
   React.useEffect(() => {
     if (!user || !profileKey) return;
     const stored = readStoredAccountProfile(user.id);
-    const nextName = stored.name || user.name || user.account || user.email;
-    const nextAvatar = stored.avatar || user.avatar || null;
+    const nextName = user.name || stored.name || user.account || user.email;
+    const nextAvatar = user.avatar || stored.avatar || null;
     setName(nextName);
     setNameDraft(nextName);
     setAvatar(nextAvatar);
-    if ((stored.name && stored.name !== user.name) || (stored.avatar && stored.avatar !== user.avatar)) {
-      setUser(applyStoredAccountProfile(user));
-    }
-  }, [profileKey, setUser, user]);
-
-  const saveProfile = React.useCallback((next: StoredAccountProfile) => {
-    if (!profileKey) return false;
-    try {
-      if (!user) return false;
-      writeStoredAccountProfile(user.id, next);
-      setProfileError(null);
-      return true;
-    } catch {
-      setProfileError("无法保存个人资料，请选择更小的图片后重试。");
-      return false;
-    }
   }, [profileKey, user]);
 
-  const commitName = React.useCallback(() => {
+  const saveProfile = React.useCallback(async (next: StoredAccountProfile, avatarDataUrl?: string) => {
+    if (!profileKey || !user || profileSaving) return null;
+    setProfileSaving(true);
+    try {
+      const result = await client.updateProfile({ name: next.name, avatarDataUrl });
+      writeStoredAccountProfile(result.user.id, {
+        name: result.user.name || next.name,
+        avatar: result.user.avatar || next.avatar,
+      });
+      if (result.im) {
+        writeDenIMLoginBootstrap(result.im, activeOrganization?.id ?? readDenSettings().activeOrgId ?? null);
+      }
+      setUser(result.user);
+      await refresh();
+      setProfileError(null);
+      return result.user;
+    } catch (error) {
+      setProfileError(error instanceof Error ? error.message : "无法保存个人资料，请稍后重试。");
+      return null;
+    } finally {
+      setProfileSaving(false);
+    }
+  }, [activeOrganization?.id, client, profileKey, profileSaving, refresh, setUser, user]);
+
+  const commitName = React.useCallback(async () => {
     const nextName = nameDraft.trim();
     setEditingName(false);
     if (!nextName) {
@@ -83,14 +92,16 @@ export function CloudAccountSection({
       return;
     }
     if (nextName === name) return;
-    if (!saveProfile({ name: nextName, avatar })) {
+    const updated = await saveProfile({ name: nextName, avatar });
+    if (!updated) {
       setNameDraft(name);
       return;
     }
-    setName(nextName);
-    setNameDraft(nextName);
-    setUser((current) => current ? { ...current, name: nextName } : current);
-  }, [avatar, name, nameDraft, saveProfile, setUser]);
+    const savedName = updated.name || nextName;
+    setName(savedName);
+    setNameDraft(savedName);
+    setAvatar(updated.avatar || avatar);
+  }, [avatar, name, nameDraft, saveProfile]);
 
   const selectAvatar = React.useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
     const input = event.currentTarget;
@@ -107,13 +118,13 @@ export function CloudAccountSection({
     }
     try {
       const nextAvatar = await readFileAsDataUrl(file);
-      if (!saveProfile({ name, avatar: nextAvatar })) return;
-      setAvatar(nextAvatar);
-      setUser((current) => current ? { ...current, avatar: nextAvatar } : current);
+      const updated = await saveProfile({ name, avatar: nextAvatar }, nextAvatar);
+      if (!updated) return;
+      setAvatar(updated.avatar || nextAvatar);
     } catch {
       setProfileError("无法读取所选图片，请重新选择。");
     }
-  }, [name, saveProfile, setUser]);
+  }, [name, saveProfile]);
 
   const identity = name || user?.name || user?.account || user?.email || "?";
   const handle = user?.account || user?.email.split("@")[0] || "";
@@ -125,6 +136,7 @@ export function CloudAccountSection({
           type="button"
           className="group relative rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-4"
           aria-label="更换头像"
+          disabled={profileSaving}
           onClick={() => fileInputRef.current?.click()}
         >
           <Avatar className="size-28 shadow-sm after:border-dls-border">
@@ -156,7 +168,8 @@ export function CloudAccountSection({
               aria-label="编辑昵称"
               className="h-10 w-64 text-center text-lg font-semibold"
               onChange={(event) => setNameDraft(event.currentTarget.value)}
-              onBlur={commitName}
+              disabled={profileSaving}
+              onBlur={() => void commitName()}
               onKeyDown={(event) => {
                 if (event.key === "Enter") event.currentTarget.blur();
                 if (event.key === "Escape") {

@@ -435,8 +435,12 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
   }, []);
 
   useEffect(() => {
-    void bootstrapChat(user);
-  }, [bootstrapChat, user]);
+    cloud.setUser(user);
+  }, [cloud.setUser, user]);
+
+  useEffect(() => {
+    void bootstrapChat(profileUser);
+  }, [bootstrapChat, profileUser]);
 
   /** Home lists local tasks, the cloud button lists remote ones — same surface. */
   const openTaskScope = (scope: "local" | "remote") => {

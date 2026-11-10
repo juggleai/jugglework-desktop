@@ -3587,6 +3587,22 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
       return user;
     },
 
+    async updateProfile(input: { name: string; avatarDataUrl?: string }): Promise<{ user: DenUser; im: DenIMLoginBootstrap | null }> {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/me/profile", {
+        method: "PATCH",
+        token,
+        body: {
+          name: input.name.trim(),
+          ...(input.avatarDataUrl ? { avatarDataUrl: input.avatarDataUrl } : {}),
+        },
+      });
+      const user = getUser(payload);
+      if (!user) {
+        throw new DenApiError(500, "invalid_profile_payload", "Profile response did not include a user.");
+      }
+      return { user, im: getIMLoginBootstrap(payload) };
+    },
+
     async getAppVersionMetadata(): Promise<DenAppVersionMetadata> {
       const payload = await requestJson<unknown>(baseUrls, "/v1/app-version", {
         method: "GET",

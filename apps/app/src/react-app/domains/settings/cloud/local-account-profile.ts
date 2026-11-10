@@ -28,8 +28,11 @@ export function applyStoredAccountProfile(user: DenUser): DenUser {
   const stored = readStoredAccountProfile(user.id);
   return {
     ...user,
-    name: stored.name || user.name,
-    avatar: stored.avatar || user.avatar,
+    // The server is authoritative so a stale cache from another release can
+    // never hide a profile saved on another device. Cache values only bridge
+    // older deployments that did not return these fields at all.
+    name: user.name || stored.name,
+    avatar: user.avatar || stored.avatar,
   };
 }
 

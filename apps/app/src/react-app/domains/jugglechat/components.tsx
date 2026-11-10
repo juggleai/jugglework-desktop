@@ -834,6 +834,9 @@ function MessageItem({ message, onEdit, onReply, selectionMode, selected, onTogg
   const toggleReaction = useJuggleChatStore((state) => state.toggleReaction);
   const translate = useJuggleChatStore((state) => state.translateMessage);
   const currentUser = useJuggleChatStore((state) => state.user);
+  const liveSender = useJuggleChatStore((state) => (
+    message.isSender ? undefined : state.contacts.find((contact) => contact.user_id === message.sender?.id)
+  ));
   const [menu, setMenu] = useState<MessageMenuPosition | null>(null);
   const [sendEntering, setSendEntering] = useState(() => Boolean(message.isSender && message.localSendAnimation));
   const [expired, setExpired] = useState(Number(message.destroyTime) > 0 && Number(message.destroyTime) <= Date.now());
@@ -851,7 +854,8 @@ function MessageItem({ message, onEdit, onReply, selectionMode, selected, onTogg
     const timer = window.setTimeout(() => setExpired(true), delay);
     return () => window.clearTimeout(timer);
   }, [message.destroyTime]);
-  const senderName = message.sender?.name || message.sender?.id || "用户";
+  const senderName = liveSender?.friend_display_name || liveSender?.nickname || message.sender?.name || message.sender?.id || "用户";
+  const senderPortrait = liveSender?.avatar || message.sender?.portrait;
   const system = message.name === "notify" || message.name === MESSAGE_NAMES.recall || message.name === MESSAGE_NAMES.recallInfo || message.name === MESSAGE_NAMES.groupNotify || message.name === MESSAGE_NAMES.friendNotify || !SUPPORTED_MESSAGE_NAMES.has(message.name);
   if (expired) return null;
   if (system) return <div className="tyn-reply-separator"><span className="tyn-separator-item">{systemMessageText(message)}</span></div>;
@@ -901,7 +905,7 @@ function MessageItem({ message, onEdit, onReply, selectionMode, selected, onTogg
     <div className={cx("jw-im-message tny-content-msg", message.isSender && "is-sender", sendEntering && "jw-im-message-send-enter", selectionMode && "tny-content-msg-operator", selected && "tny-content-msg-select")} onContextMenu={openMenu}>
       {selectionMode ? <button className="jw-im-message-select" onClick={() => onToggleSelected?.(message)}>{selected ? <Check size={14} /> : null}</button> : null}
       <article className={cx("tyn-reply-item", message.isSender ? "outgoing" : "ingoing", selectionMode && "tny-message", compact && "tyn-force-msg-margin")} onClick={() => { if (selectionMode) onToggleSelected?.(message); }}>
-        <div className="tyn-reply-avatar"><div className="tyn-media"><ChatAvatar className="jg-msg-user-avatar" name={message.isSender ? currentUser?.name || currentUser?.id || senderName : senderName} userId={message.isSender ? currentUser?.id : message.sender?.id} src={message.isSender ? currentUser?.portrait : message.sender?.portrait} size="sm" /></div></div>
+        <div className="tyn-reply-avatar"><div className="tyn-media"><ChatAvatar className="jg-msg-user-avatar" name={message.isSender ? currentUser?.name || currentUser?.id || senderName : senderName} userId={message.isSender ? currentUser?.id : message.sender?.id} src={message.isSender ? currentUser?.portrait : senderPortrait} size="sm" /></div></div>
         <div className="tyn-reply-group">
           {!message.isSender && message.conversationType === 2 ? <span className={cx("jg-sender-name-inner", `jg-peer-color-${avatarColorIndex(message.sender?.id || "")}`)}>{senderName}</span> : null}
           <div className={cx("jg-text-row", message.isSender && "jg-text-row-outgoing")}>
