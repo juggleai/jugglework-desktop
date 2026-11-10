@@ -38,7 +38,7 @@ export async function meetingRequest<T>(
   if (init.body) headers.set("Content-Type", "application/json");
   const res = await fetch(
     meetingApiUrl(resolveDenBaseUrls(config).apiBaseUrl, path),
-    { ...init, headers },
+    { ...init, headers, signal: init.signal ?? AbortSignal.timeout(12_000) },
   );
   if (scope !== meetingScope())
     throw new Error("组织或账号已切换，请重新打开会议。");

@@ -1,3 +1,4 @@
+import { acceptDeviceState, type MemberDeviceState } from "./device-state";
 import { readMeetingDesktopConfig } from "@/app/lib/desktop";
 import { create } from "zustand";
 import { meetingAPI, meetingScope } from "./api";
@@ -15,8 +16,22 @@ let activeScope = "";
 let refreshing = false;
 let lastRenewed = 0;
 let chatJoining = false;
+let deviceChanging = false;
+let signalSeq = 0;
+let lastSnapshot = 0;
+let stopWake: (() => void) | undefined;
+function announceState() {
+  if (!lease || !chatroom) return;
+  const state = useMeetingStore.getState();
+  void chatroom.signal({ meetingId: lease.meeting.id, sessionId: lease.sessionId,
+    seq: ++signalSeq, mic: state.mic, camera: state.camera }).catch(() => {});
+}
+
 function dispose() {
   generation++;
+  stopWake?.();
+  stopWake = undefined;
+  deviceChanging = false;
   clearInterval(timer);
   timer = undefined;
   media?.dispose();
@@ -50,6 +65,7 @@ type MeetingState = {
   messages: ChatMessage[];
   chatReady: boolean;
   error: string | null;
+  memberDevices: Record<string, MemberDeviceState>;
   join: (meeting: Meeting, mic: boolean, camera: boolean) => Promise<void>;
   leave: (end?: boolean) => Promise<void>;
   toggleDevice: (device: "mic" | "camera") => Promise<void>;
@@ -68,6 +84,7 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
   messages: [],
   chatReady: false,
   error: null,
+  memberDevices: {},
   async join(meeting, mic, camera) {
     if (get().phase !== "idle") {
       if (get().meeting?.id === meeting.id) {
@@ -138,15 +155,24 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
           })
         ).meeting;
       if (run !== generation) return;
-      set({ meeting: current, phase: "joined" });
+      set({ meeting: current, phase: "joined", memberDevices: {} });
+      // Lifecycle convergence must not wait on IM/chatroom admission.
+      lastRenewed = lastSnapshot = Date.now();
+      timer = setInterval(() => {
+        void refresh(run);
+        announceState();
+      }, 3_000);
+      const wake = () => void refresh(run);
+      window.addEventListener("online", wake);
+      window.addEventListener("focus", wake);
+      stopWake = () => { window.removeEventListener("online", wake); window.removeEventListener("focus", wake); };
       try {
         await get().retryChat();
       } catch {
         /* media remains usable; chat exposes retry */
       }
       if (run !== generation) return;
-      lastRenewed = Date.now();
-      timer = setInterval(() => void refresh(run), 20_000);
+      announceState();
     } catch (error) {
       if (run !== generation) throw error;
       const captured = lease;
@@ -177,6 +203,8 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
     const result = await meetingAPI.action(current.meeting.id, end ? "end" : "leave", {
       sessionId: current.sessionId,
     });
+    if (current !== lease) return;
+    announceState(); // Hint only: peers always verify lifecycle against the server.
     dispose();
     set({
       error: result.cleanupPending ? "会议已结束，本机音视频已停止；服务端正在重试清理远端房间。" : null,
@@ -189,15 +217,24 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
     });
   },
   async toggleDevice(device) {
+    if (deviceChanging || get().phase !== "joined" || !media) return;
+    deviceChanging = true;
+    const run = generation;
     const mic = device === "mic" ? !get().mic : get().mic;
     const camera = device === "camera" ? !get().camera : get().camera;
     try {
       await media?.setDevices(mic, camera);
+      if (run !== generation) return;
       set({ mic, camera });
+      announceState();
     } catch (error) {
+      if (run !== generation) return;
       // Audio-only failures leave the existing camera capture untouched.
-      if (device === "camera") set({ mic: false, camera: false });
+      // Failed device operations do not change the other device or advertise success.
+      announceState();
       throw error;
+    } finally {
+      if (run === generation) deviceChanging = false;
     }
   },
   async toggleShare(devices) {
@@ -213,8 +250,14 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
   },
   async action(action, extra) {
     const id = get().meeting?.id;
-    if (id)
-      set({ meeting: (await meetingAPI.action(id, action, extra)).meeting });
+    const run = generation;
+    if (id) {
+      const next = (await meetingAPI.action(id, action, extra)).meeting;
+      if (run !== generation) return;
+      if (meetingClosed(next)) { forceMeetingCleanup("会议已结束。"); return; }
+      if (next.version >= (get().meeting?.version ?? 0)) set({ meeting: next });
+      announceState();
+    }
   },
   async retryChat() {
     if (!lease || chatroom || chatJoining) return;
@@ -223,6 +266,16 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
     try {
       const joined = await joinMeetingChatroom(lease.chatroomId, (message) => {
         if (run === generation) addMessage(message);
+      }, (message) => {
+        if (run !== generation || !lease) return;
+        const content = message.content;
+        if (content?.meetingId !== lease.meeting.id) return;
+        void refresh(run); // IM is a wake-up hint, never authority to end a meeting.
+        const sender = message.sender?.id;
+        const participant = sender && get().meeting?.participants[sender];
+        if (!sender || !participant) return;
+        const next = acceptDeviceState(content, participant.sessionId, get().memberDevices[sender]);
+        if (next) set(state => ({ memberDevices: { ...state.memberDevices, [sender]: next } }));
       });
       if (run !== generation) {
         await joined.leave();
@@ -230,6 +283,7 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
       }
       chatroom = joined;
       set({ chatReady: true });
+      announceState();
     } catch (error) {
       if (run === generation)
         set({
@@ -256,18 +310,31 @@ async function refresh(run: number) {
       forceMeetingCleanup("主持人已结束会议。");
       return;
     }
-    const next = await meetingAPI.join(snapshot.id, lease.sessionId);
-    if (run !== generation) return;
-    lease = next;
-    media?.renew(next.token);
-    lastRenewed = Date.now();
-    useMeetingStore.setState({ meeting: next.meeting, error: null });
+    const participant = snapshot.participants[lease.userId];
+    if (!participant || participant.sessionId !== lease.sessionId) {
+      forceMeetingCleanup("参会资格已失效或已在其他设备入会。");
+      return;
+    }
+    lastSnapshot = Date.now();
+    const existing = useMeetingStore.getState().meeting;
+    if (!existing || snapshot.version >= existing.version)
+      useMeetingStore.setState({ meeting: snapshot });
+    // Read lifecycle frequently; renew admission only at the lease cadence.
+    if (Date.now() - lastRenewed >= 20_000) {
+      const next = await meetingAPI.join(snapshot.id, lease.sessionId);
+      if (run !== generation) return;
+      if (meetingClosed(next.meeting)) { forceMeetingCleanup("主持人已结束会议。"); return; }
+      lease = next;
+      media?.renew(next.token);
+      lastRenewed = Date.now();
+    }
+    if (!chatroom && !chatJoining) void useMeetingStore.getState().retryChat().catch(() => {});
   } catch (error) {
     if (run !== generation) return;
     useMeetingStore.setState({
       error: error instanceof Error ? error.message : "会议连接恢复中。",
     });
-    if (Date.now() - lastRenewed > 80_000)
+    if (Date.now() - lastSnapshot > 30_000 || Date.now() - lastRenewed > 80_000)
       forceMeetingCleanup("无法续期会议资格，已停止媒体。请重新加入。");
   } finally {
     if (run === generation) refreshing = false;

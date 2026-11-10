@@ -879,3 +879,5 @@
 .meeting-ui .member-status { font-size: 10px; height: 15px; line-height: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--meet-sub); }
 .meeting-ui .member-action { width: 60px; height: 28px; padding: 3px; font-size: 11px; flex-shrink: 0; border-radius: 8px; }
 .meeting-ui .member-presence { width: 6px; height: 6px; margin: 0 10px; flex-shrink: 0; border-radius: 50%; background: #248264; }
+.meeting-ui .member-avatar-status { position: relative; flex-shrink: 0; }
+.meeting-ui .member-mic-off { position: absolute; right: -3px; bottom: -3px; width: 18px; height: 18px; border-radius: 50%; background: var(--meet-bg); color: #df514c; border: 1px solid var(--meet-line); display: grid; place-items: center; }

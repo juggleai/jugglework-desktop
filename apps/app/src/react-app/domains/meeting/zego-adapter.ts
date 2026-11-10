@@ -37,10 +37,12 @@ export class MeetingMedia {
   private share?: MediaStream;
   private disposed = false;
   private cameraEnabled = false;
+  private cameraCaptured = false;
   // ZEGO creates a live silent WebAudio track even when camera.audio is false.
   // Track presence alone does not mean that microphone capture was authorized.
   private microphoneCaptured = false;
   private remote = new Set<string>();
+  private remoteEpoch = new Map<string, number>();
   constructor(
     private update: (tile: MediaTile | null, id: string) => void,
     private error: (message: string) => void,
@@ -65,11 +67,14 @@ export class MeetingMedia {
           const id = stream.streamID;
           if (stream.user.userID === info.userId) continue;
           if (type === "ADD") {
+            if (this.remote.has(id)) continue;
+            const epoch = (this.remoteEpoch.get(id) || 0) + 1;
+            this.remoteEpoch.set(id, epoch);
             this.remote.add(id);
             void this.engine
               .startPlayingStream(id)
               .then((media: MediaStream) => {
-                if (this.disposed || !this.remote.has(id)) {
+                if (this.disposed || !this.remote.has(id) || this.remoteEpoch.get(id) !== epoch) {
                   media.getTracks().forEach((t) => t.stop());
                   return;
                 }
@@ -84,7 +89,8 @@ export class MeetingMedia {
                 );
               })
               .catch(() => this.error("部分远端媒体连接失败，请检查网络。"));
-          } else {
+          } else if (type === "DELETE") {
+            this.remoteEpoch.set(id, (this.remoteEpoch.get(id) || 0) + 1);
             this.remote.delete(id);
             this.engine.stopPlayingStream(id);
             this.update(null, id);
@@ -131,6 +137,7 @@ export class MeetingMedia {
     }
     this.local = stream;
     this.cameraEnabled = camera;
+    this.cameraCaptured = camera;
     this.microphoneCaptured = mic;
     this.update(
       { id: "local", userId: this.joinInfo!.userId, stream, screen: false },
@@ -175,16 +182,35 @@ export class MeetingMedia {
       if (track) track.enabled = mic;
       return;
     }
-    // A camera change may recreate capture; a microphone change never does.
     if (this.local) {
-      this.engine.stopPublishingStream(this.streamId());
-      this.engine.destroyStream(this.local);
-      this.local = undefined;
-      this.microphoneCaptured = false;
-      this.update(null, "local");
+      // Preserve microphone publication and the remote subscription when camera changes.
+      const local = this.local;
+      if (this.cameraCaptured) {
+        if (camera) await ensureMeetingMediaPermissions(false, true);
+        if (this.disposed) return;
+        const enabled = await this.engine.enableVideoCaptureDevice(local, camera);
+        if (enabled === false) throw new Error("摄像头切换失败，请重试");
+      } else if (camera) {
+        await ensureMeetingMediaPermissions(false, true);
+        if (this.disposed) return;
+        let captured: MediaStream;
+        try { captured = await navigator.mediaDevices.getUserMedia({ audio: false, video: true }); }
+        catch (error) { throw new Error(meetingDeviceError(error, false, true)); }
+        if (this.disposed) { captured.getTracks().forEach(t => t.stop()); return; }
+        const video = captured.getVideoTracks()[0];
+        try {
+          const result = await this.engine.addTrack(local, video);
+          if (result?.errorCode) throw new Error("无法开启摄像头");
+          if (this.disposed) { video.stop(); return; }
+        } catch (error) { captured.getTracks().forEach(t => t.stop()); throw error; }
+      }
+      this.cameraEnabled = camera;
+      this.cameraCaptured = this.cameraCaptured || camera;
+      return;
     }
     if (mic || camera) await this.publish(mic, camera);
   }
+
   renew(token: string) {
     if (this.joinInfo && !this.disposed)
       this.engine.renewToken(token, this.joinInfo.roomId);

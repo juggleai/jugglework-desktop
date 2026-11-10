@@ -1,3 +1,5 @@
+import { MeetingIcon } from "./meeting-icons";
+import { useMeetingStore } from "./store";
 import { useEffect, useRef, useState } from "react";
 import { getGroupMembers } from "../jugglechat/api";
 import type { ChatContact } from "../jugglechat/types";
@@ -10,6 +12,8 @@ export function MeetingMembers({ meeting, contacts, userId, onTransfer, busy }: 
   meeting: Meeting; contacts: ChatContact[]; userId: string;
   onTransfer: (id: string) => void; busy: boolean;
 }) {
+  const devices = useMeetingStore(s => s.memberDevices);
+  const localMic = useMeetingStore(s => s.mic);
   const [tab, setTab] = useState<"joined" | "absent">("joined");
   const [query, setQuery] = useState("");
   const [groupMembers, setGroupMembers] = useState<ChatContact[]>([]);
@@ -67,7 +71,11 @@ export function MeetingMembers({ meeting, contacts, userId, onTransfer, busy }: 
         const c = directory.get(id) || { user_id: id, nickname: name(id) };
         const status = feedback[id] || (tab === "joined" ? (id === meeting.hostId ? "主持人 · 已入会" : "已入会") : (meeting.invites[id] ? "已邀请 · 未入会" : "未参会"));
         return <div className="member-row" key={id}>
-          <MeetingMemberAvatar contact={c} />
+          <span className="member-avatar-status">
+            <MeetingMemberAvatar contact={c} />
+            {tab === "joined" && (id === userId ? !localMic : devices[id]?.sessionId === meeting.participants[id]?.sessionId && Date.now() - devices[id].receivedAt < 15_000 && !devices[id].mic)
+              ? <span className="member-mic-off" title="麦克风已关闭" aria-label="麦克风已关闭"><MeetingIcon name="mic" off width={12} height={12} /></span> : null}
+          </span>
           <div className="member-info"><strong title={name(id)}>{name(id)}{id === userId ? "（我）" : ""}</strong><span className="member-status" title={status} aria-live="polite">{status}</span></div>
           {tab === "absent" ? <button className="member-action" disabled={sending[id] || feedback[id] === "邀请已发送"} onClick={() => void invite(id)}>{sending[id] ? "发送中" : feedback[id] === "邀请已发送" ? "已邀请" : "邀请"}</button>
             : meeting.hostId === userId && id !== userId ? <button className="member-action ghost" disabled={busy} onClick={() => onTransfer(id)}>转交主持</button> : <span className="member-presence" aria-label="已入会" />}

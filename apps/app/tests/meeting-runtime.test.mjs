@@ -215,3 +215,63 @@ test('first unmute adds a real microphone over ZEGO silent placeholder', async (
   assert.equal(local.getVideoTracks()[0],video);
  } finally {if(original)Object.defineProperty(globalThis,'navigator',original);else delete globalThis.navigator;}
 });
+
+test('lifecycle polling ends media even when chat admission is pending', async () => {
+ let source=await fs.readFile(new URL('../src/react-app/domains/meeting/store.ts',import.meta.url),'utf8');
+ source=source.replace(/^import .*;$/gm,'');
+ source='const {create,meetingAPI,meetingScope,meetingClosed,MeetingMedia,joinMeetingChatroom,acquireMediaSession,releaseMediaSession}=globalThis.__syncDeps;\n'+source;
+ const output=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
+ const oldWindow=globalThis.window,oldInterval=globalThis.setInterval,oldClear=globalThis.clearInterval;
+ let tick,releaseChat,disposed=0,renewals=0;
+ const snapshot={id:'m',organizationId:'org',status:'live',hostId:'u',version:1,participants:{u:{sessionId:'session'}}};
+ globalThis.window=new EventTarget();
+ globalThis.setInterval=(fn,ms)=>{assert.equal(ms,3000);tick=fn;return 123;};
+ globalThis.clearInterval=()=>{};
+ globalThis.__syncDeps={
+ create:init=>{let state;const set=p=>{state={...state,...(typeof p==='function'?p(state):p)}};const get=()=>state;state=init(set,get);return {getState:get,setState:set};},
+ meetingAPI:{join:async()=>{renewals++;return {meeting:{...snapshot},userId:'u',sessionId:'session',chatroomId:'room',token:'test'};},get:async()=>({meeting:{...snapshot}})},
+ meetingScope:()=> 'org',meetingClosed:m=>m.status==='ended',
+ MeetingMedia:class {async join(){} dispose(){disposed++;} renew(){}},
+ joinMeetingChatroom:()=>new Promise(r=>{releaseChat=r}),
+ acquireMediaSession:()=>{},releaseMediaSession:()=>{},
+ };
+ try{
+  const {useMeetingStore}=await import('data:text/javascript;base64,'+Buffer.from(output).toString('base64'));
+  const joining=useMeetingStore.getState().join(snapshot,false,false);
+  await new Promise(r=>setTimeout(r,0));
+  assert.equal(typeof tick,'function');assert.equal(useMeetingStore.getState().phase,'joined');
+  snapshot.status='ended';snapshot.version++;
+  tick();await new Promise(r=>setTimeout(r,0));
+  assert.equal(useMeetingStore.getState().phase,'idle');assert.equal(disposed,1);assert.equal(renewals,1);
+  releaseChat({leave:async()=>{},signal:async()=>{}});await joining;
+  assert.equal(useMeetingStore.getState().phase,'idle');
+ }finally{globalThis.window=oldWindow;globalThis.setInterval=oldInterval;globalThis.clearInterval=oldClear;delete globalThis.__syncDeps;}
+});
+
+test('camera toggles retain audio publication and microphone capture', async () => {
+ let source=await fs.readFile(new URL('../src/react-app/domains/meeting/zego-adapter.ts',import.meta.url),'utf8');
+ source=source.replace('import { ensureMeetingMediaPermissions, meetingDeviceError } from "./media-permission";','const ensureMeetingMediaPermissions=async()=>{};const meetingDeviceError=e=>e.message;');
+ const output=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
+ const {MeetingMedia}=await import('data:text/javascript;base64,'+Buffer.from(output).toString('base64'));
+ const old=Object.getOwnPropertyDescriptor(globalThis,'navigator');
+ const audio={kind:'audio',enabled:true,readyState:'live'},video={kind:'video',stop(){this.stopped=true;}};
+ let videos=[video];
+ const local={getAudioTracks:()=>[audio],getVideoTracks:()=>videos};
+ Object.defineProperty(globalThis,'navigator',{configurable:true,value:{mediaDevices:{getUserMedia:async c=>{assert.deepEqual(c,{audio:false,video:true});return {getVideoTracks:()=>[video],getTracks:()=>[video]};}}}});
+ try{
+ const media=new MeetingMedia(()=>assert.fail('video updates must not detach audio'),()=>{},()=>{});
+ media.local=local;media.cameraEnabled=true;media.cameraCaptured=true;media.microphoneCaptured=true;
+ media.engine={enableVideoCaptureDevice:async()=>true,removeTrack:async()=>{videos=[];return {errorCode:0}},addTrack:async(s,t)=>{videos=[t];return {errorCode:0}},stopPublishingStream:()=>assert.fail('must not restart publishing')};
+ await media.setDevices(true,false);await media.setDevices(true,true);
+ assert.equal(media.local,local);assert.equal(local.getAudioTracks()[0],audio);assert.equal(audio.enabled,true);assert.equal(media.microphoneCaptured,true);
+ }finally{if(old)Object.defineProperty(globalThis,'navigator',old);else delete globalThis.navigator;}
+});
+
+test('device state rejects stale sessions, duplicates and reordered signals', async () => {
+ const {acceptDeviceState}=await load('../src/react-app/domains/meeting/device-state.ts');
+ const current=acceptDeviceState({sessionId:'new',seq:4,mic:true,camera:false},'new');
+ assert.equal(acceptDeviceState({sessionId:'old',seq:99,mic:false,camera:false},'new',current),null);
+ assert.equal(acceptDeviceState({sessionId:'new',seq:3,mic:false,camera:false},'new',current),null);
+ assert.equal(acceptDeviceState({sessionId:'new',seq:4,mic:false,camera:false},'new',current),null);
+ assert.equal(acceptDeviceState({sessionId:'new',seq:5,mic:false,camera:false},'new',current).mic,false);
+});

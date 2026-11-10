@@ -3,6 +3,7 @@ import type { ChatMessage } from "../jugglechat/types";
 export async function joinMeetingChatroom(
   id: string,
   receive: (message: ChatMessage) => void,
+  signal?: (message: ChatMessage) => void,
 ) {
   if (!juggleChatRuntime.isConnected())
     throw new Error("聊天连接尚未就绪，请稍后重试。");
@@ -12,19 +13,29 @@ export async function joinMeetingChatroom(
     (message: ChatMessage) => {
       if (
         message.conversationType === 3 &&
-        message.conversationId === id &&
-        message.name === "jw:meeting-chat"
-      )
-        receive(message);
+        message.conversationId === id
+      ) {
+        if (message.name === "jw:meeting-chat") receive(message);
+        if (message.name === "jw:meeting-sync") signal?.(message);
+      }
     },
   );
   try {
-    await client.joinChatroom({ id });
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const joining = client.joinChatroom({ id });
+    try {
+      await Promise.race([joining, new Promise((_, reject) => {
+        timeout = setTimeout(() => reject(new Error("聊天室连接超时")), 10_000);
+      })]);
+    } finally { clearTimeout(timeout); }
   } catch (error) {
     stop();
     throw error;
   }
   return {
+    async signal(content: Record<string, unknown>) {
+      return client.sendMessage({ conversationType: 3, conversationId: id, name: "jw:meeting-sync", content });
+    },
     async send(content: string) {
       return client.sendMessage({
         conversationType: 3,
