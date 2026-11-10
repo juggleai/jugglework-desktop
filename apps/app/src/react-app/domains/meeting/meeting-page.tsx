@@ -22,6 +22,8 @@ import {
   type MeetingReadiness,
 } from "./types";
 import { MeetingIcon as Icon } from "./meeting-icons";
+import { MeetingMemberAvatar } from "./meeting-invite-picker";
+import { MeetingCode } from "./meeting-code";
 import { useMeetingStore } from "./store";
 import "./meeting.css";
 const stamp = (date: string) =>
@@ -46,7 +48,8 @@ export function MeetingDialog({
   closeRef.current = onClose;
   useEffect(() => {
     const previous = ownerDocument.activeElement as HTMLElement | null;
-    ref.current?.querySelector<HTMLElement>("input,button")?.focus();
+    (ref.current?.querySelector<HTMLElement>("input:not([disabled]),textarea:not([disabled])")
+      || ref.current?.querySelector<HTMLElement>("button:not([disabled])"))?.focus();
     const key = (e: KeyboardEvent) => {
       if (e.key === "Escape") closeRef.current();
       if (e.key === "Tab") {
@@ -245,14 +248,14 @@ export function MeetingPage() {
     setDialog("schedule");
   }
   const renderItem = (m: Meeting) => (
-    <div className="meeting-item" key={m.id}>
+    <div className="meeting-item" key={m.id} data-status={m.status}>
       <div className="time">
         {stamp(m.startAt)}
         <small>{stamp(m.endAt)}</small>
       </div>
       <div className="meeting-body">
         <div className="row">
-          <h3>{m.title}</h3>
+          <h3 title={m.title}>{m.title}</h3>
           <span className={`pill ${m.status === "live" ? "live" : ""}`}>
             {meetingStatusLabel(m)}
           </span>
@@ -290,12 +293,19 @@ export function MeetingPage() {
     { length: 42 },
     (_, i) => new Date(date.getFullYear(), date.getMonth(), i - offset + 1),
   );
+  const agendaItems = items.filter(m => {
+    const d = new Date(m.startAt);
+    if (view === "day") return localDate(d) === localDate(date);
+    const start = new Date(date);
+    start.setHours(0, 0, 0, 0);
+    start.setDate(start.getDate() - ((start.getDay() + 6) % 7));
+    return +d >= +start && +d < +start + 7 * 86400000;
+  });
   return (
-    <div className="meeting-ui">
-      <header className="header">
-        <strong>会议</strong>
-        <button className="ghost" onClick={() => void run(exportMeetingDiagnostics)}>导出会议诊断</button>
-        <div className="tabs">
+    <div className="meeting-ui meeting-page">
+      <header className="header page-header">
+        <div className="meeting-brand"><span className="brand-icon"><Icon /></span><strong>会议</strong></div>
+        <div className="tabs" role="group" aria-label="会议视图">
           {(["home", "calendar", "history"] as const).map((t, i) => (
             <button
               key={t}
@@ -307,13 +317,17 @@ export function MeetingPage() {
             </button>
           ))}
         </div>
+        <div className="header-tools">
+          <button className="ghost icon-button" title="导出会议诊断" aria-label="导出会议诊断" onClick={() => void run(exportMeetingDiagnostics)}><Icon name="download" width={18} height={18} /></button>
         <button
           className="ghost icon-button"
           aria-label="会议设置"
+          title="会议设置"
           onClick={() => setDialog("settings")}
         >
           <Icon name="settings" />
         </button>
+        </div>
       </header>
       <main className="content">
         {error ? (
@@ -337,7 +351,7 @@ export function MeetingPage() {
         ) : null}
         <div className="welcome row between">
           <div>
-            <div className="eyebrow">MEET, CONNECT, CREATE</div>
+            <div className="eyebrow">{activeOrganization?.name || "团队协作"} · 会议空间</div>
             <h1>
               {tab === "home"
                 ? "让想法，在这里相遇。"
@@ -406,7 +420,7 @@ export function MeetingPage() {
               </button>
             </div>
             <div className="dashboard">
-              <section>
+              <section className="agenda-section">
                 <div className="row between">
                   <h2>{isTodaySelected ? "今日安排" : `${date.getMonth() + 1}月${date.getDate()}日安排`}</h2>
                   <button className="ghost" onClick={() => setTab("calendar")}>
@@ -429,9 +443,12 @@ export function MeetingPage() {
               </section>
               <aside>
                 <div className="mini-calendar">
-                  <strong>
+                  <div className="mini-calendar-heading"><strong>
                     {date.getFullYear()} 年 {date.getMonth() + 1} 月
-                  </strong>
+                  </strong><div className="row">
+                    <button className="ghost icon-button" aria-label="查看上个月" onClick={() => setDate(new Date(date.getFullYear(), date.getMonth() - 1, 1))}><Icon name="chevronLeft" width={15} height={15} /></button>
+                    <button className="ghost icon-button" aria-label="查看下个月" onClick={() => setDate(new Date(date.getFullYear(), date.getMonth() + 1, 1))}><Icon name="chevronRight" width={15} height={15} /></button>
+                  </div></div>
                   <div className="mini-grid">
                     {"一二三四五六日".split("").map((d) => (
                       <span key={d} className="sub">
@@ -445,6 +462,8 @@ export function MeetingPage() {
                         aria-label={`查看 ${localDate(d)} 的会议`}
                         onClick={() => setDate(d)}
                         aria-pressed={localDate(d) === localDate(date)}
+                        aria-current={localDate(d) === localDate(new Date()) ? "date" : undefined}
+                        data-has-meeting={items.some(m => !meetingClosed(m) && localDate(new Date(m.startAt)) === localDate(d))}
                         className={
                           localDate(d) === localDate(date)
                             ? "today"
@@ -457,11 +476,9 @@ export function MeetingPage() {
                       </button>
                     ))}
                   </div>
+                  <div className="mini-calendar-foot"><span><i />有会议安排</span><button className="ghost" onClick={() => setDate(new Date())}>回到今天</button></div>
                 </div>
-                <p
-                  className="sub small"
-                  style={{ padding: "22px 3px", lineHeight: 1.9 }}
-                >
+                <p className="calendar-hint sub small">
                   从群聊发起会议，成员随时加入。
                   <br />
                   也可以从单聊开始，邀请更多伙伴。
@@ -482,7 +499,7 @@ export function MeetingPage() {
                     )
                   }
                 >
-                  ‹
+                  <Icon name="chevronLeft" width={16} height={16} />
                 </button>
                 <h2>
                   {date.getFullYear()} 年 {date.getMonth() + 1} 月
@@ -495,16 +512,16 @@ export function MeetingPage() {
                     )
                   }
                 >
-                  ›
+                  <Icon name="chevronRight" width={16} height={16} />
                 </button>
                 <button onClick={() => setDate(new Date())}>今天</button>
               </div>
               {tab === "calendar" ? (
-                <div className="row">
+                <div className="segmented" role="group" aria-label="日历范围">
                   {(["day", "week", "month"] as const).map((v, i) => (
                     <button
                       key={v}
-                      className={view === v ? "primary" : ""}
+                      aria-pressed={view === v}
                       onClick={() => setView(v)}
                     >
                       {["日", "周", "月"][i]}
@@ -517,7 +534,7 @@ export function MeetingPage() {
               items.filter(meetingClosed).length ? (
                 items.filter(meetingClosed).map(renderItem)
               ) : (
-                <div className="empty">本月暂无历史会议</div>
+                <div className="empty"><span className="empty-icon"><Icon name="clock" /></span><h3>本月暂无历史会议</h3><p className="small">已结束的会议会保留在这里。</p></div>
               )
             ) : view === "month" ? (
               <div className="calendar">
@@ -543,6 +560,8 @@ export function MeetingPage() {
                       .map((m) => (
                         <button
                           className="cal-event"
+                          title={`${stamp(m.startAt)} ${m.title}`}
+                          data-status={m.status}
                           key={m.id}
                           onClick={() => setDetail(m)}
                         >
@@ -566,16 +585,7 @@ export function MeetingPage() {
                 ) : (
                   <p className="sub">本周议程 · 以当前日期所在周为准</p>
                 )}
-                {items
-                  .filter((m) => {
-                    const d = new Date(m.startAt);
-                    if (view === "day") return localDate(d) === localDate(date);
-                    const start = new Date(date);
-                    start.setHours(0, 0, 0, 0);
-                    start.setDate(start.getDate() - ((start.getDay() + 6) % 7));
-                    return +d >= +start && +d < +start + 7 * 86400000;
-                  })
-                  .map(renderItem)}
+                {agendaItems.length ? agendaItems.map(renderItem) : <div className="empty"><span className="empty-icon"><Icon name="calendar" /></span><h3>{view === "day" ? "当天" : "本周"}暂无会议</h3><p className="small">可以选择其他日期，或预约一次新的交流。</p><button className="ghost" onClick={openSchedule}><Icon name="plus" />预约会议</button></div>}
               </>
             )}
           </>
@@ -610,6 +620,7 @@ export function MeetingPage() {
               会议主题
               <input
                 name="title"
+                placeholder="为这次交流起个名字"
                 defaultValue={source?.title || ""}
                 required
                 maxLength={120}
@@ -635,7 +646,7 @@ export function MeetingPage() {
             </label>
             <label className="full">
               说明
-              <textarea name="description" rows={3} maxLength={4000} />
+              <textarea name="description" placeholder="添加议题，让参会成员提前了解（选填）" rows={3} maxLength={4000} />
             </label>
             {source ? (
               <label className="check full">
@@ -649,23 +660,18 @@ export function MeetingPage() {
               </label>
             ) : null}
             <fieldset
-              className="full stack"
-              style={{
-                border: 0,
-                padding: 0,
-                maxHeight: 150,
-                overflow: "auto",
-              }}
+              className="full schedule-invitees"
             >
               <legend>邀请成员（可选）</legend>
-              {contacts
-                .filter((c) => c.user_id !== user?.id)
+              <div className="schedule-people">{contacts
+                .filter((c) => c.user_id !== user?.id && c.conversationType !== 2)
                 .map((c) => (
                   <label className="check" key={c.user_id}>
                     <input type="checkbox" name="invitee" value={c.user_id} />
-                    {c.nickname || c.user_id}
+                    <MeetingMemberAvatar contact={c} /><span>{c.friend_display_name || c.nickname || c.user_id}</span>
                   </label>
-                ))}
+                ))}</div>
+              {!contacts.some(c => c.user_id !== user?.id && c.conversationType !== 2) ? <p className="sub small">暂无可选成员，创建后也可以分享会议号。</p> : null}
             </fieldset>
             <p className="small sub full">
               时区：{Intl.DateTimeFormat().resolvedOptions().timeZone}
@@ -716,8 +722,9 @@ export function MeetingPage() {
           >
             <label>
               会议号
-              <input name="code" required autoComplete="off" />
+              <input className="meeting-code-input" name="code" placeholder="输入会议号" required autoComplete="off" />
             </label>
+            <p className="sub small field-hint">下一步可预览摄像头，并选择是否开启麦克风。</p>
             {error ? (
               <p className="error" role="alert">
                 {error}
@@ -797,17 +804,17 @@ export function MeetingPage() {
               </div>
             </form>
           ) : (
-            <h2>{detail.title}</h2>
+            <div className="detail-title"><span className={`pill ${detail.status === "live" ? "live" : ""}`}>{meetingStatusLabel(detail)}</span><h2>{detail.title}</h2></div>
           )}
           <div className="stack" style={{ marginTop: 20 }}>
-            <p className="sub">
+            <p className="detail-meta sub"><Icon name="clock" width={17} height={17} />
               {new Date(detail.startAt).toLocaleString()} –{" "}
               {stamp(detail.endAt)}
             </p>
-            <p className="sub">
-              会议号 {detail.code} · {meetingStatusLabel(detail)}
+            <p className="detail-meta sub"><Icon width={17} height={17} />
+              会议号 <MeetingCode code={detail.code} />
             </p>
-            <p>{detail.description}</p>
+            {detail.description ? <p className="detail-description">{detail.description}</p> : null}
             {detail.invites[user?.id || ""] ? (
               <div className="row">
                 {["accepted", "tentative", "declined"].map((v, i) => (
@@ -891,6 +898,7 @@ export function MeetingPrejoin({
   meeting: Meeting;
   onClose: () => void;
 }) {
+  const imUser = useJuggleChatStore(s => s.user);
   const [mic, setMic] = useState(false),
     [camera, setCamera] = useState(false),
     [error, setError] = useState(""),
@@ -937,22 +945,20 @@ export function MeetingPrejoin({
         if (!busy) onClose();
       }}
     >
-      <p className="sub small" style={{ marginBottom: 15 }}>
-        {meeting.title} · {meeting.code}
-      </p>
-      <div className="preview">
-        <span className="avatar">我</span>
-        <video autoPlay playsInline muted ref={video} />
+      <div className="prejoin-heading"><h3>{meeting.title}</h3><span className="sub small">会议号 <MeetingCode code={meeting.code} /></span></div>
+      <div className="preview" data-camera-off={!camera}>
+        <MeetingMemberAvatar contact={{user_id: imUser?.id || "me", nickname: imUser?.name || "我", avatar: imUser?.portrait}} />
+        <video autoPlay playsInline muted ref={video} style={{ visibility: camera ? "visible" : "hidden" }} />
         <span className="sub small">
           {camera ? "本地预览" : "摄像头已关闭"}
         </span>
       </div>
-      <div className="row">
-        <button disabled={busy} onClick={() => setMic(!mic)}>
+      <div className="prejoin-devices">
+        <button aria-pressed={mic} className={!mic ? "device-off" : ""} disabled={busy} onClick={() => setMic(!mic)}>
           <Icon name="mic" off={!mic} />
           {mic ? "麦克风开启" : "麦克风关闭"}
         </button>
-        <button disabled={busy} onClick={() => setCamera(!camera)}>
+        <button aria-pressed={camera} className={!camera ? "device-off" : ""} disabled={busy} onClick={() => setCamera(!camera)}>
           <Icon off={!camera} />
           {camera ? "摄像头开启" : "摄像头关闭"}
         </button>
@@ -995,28 +1001,16 @@ function MeetingSettingsDialog({
   return (
     <MeetingDialog title="会议配置状态" onClose={onClose}>
       <div className="stack">
-        <p className="sub">
+        <div className="configuration-summary"><span className="action-icon"><Icon name="settings" /></span><div><strong>{readiness.ready ? "音视频会议已就绪" : s.enabled ? "会议配置待完善" : "音视频会议未启用"}</strong><span className="sub small">{readiness.ready ? "可以发起会议并邀请成员加入" : meetingReadinessReason(readiness)}</span></div></div>
+        <dl className="configuration-list">
+          <div><dt>ZEGO AppID</dt><dd>{s.appId || "未配置"}</dd></div>
+          <div><dt>服务端密钥</dt><dd>{readiness.hasServerSecret ? "已配置" : "未配置"}</dd></div>
+          <div><dt>参会人数上限</dt><dd>{s.capacity} 人</dd></div>
+          <div><dt>准入验证</dt><dd>{s.admissionConfigured ? "已确认" : "待确认"}</dd></div>
+        </dl>
+        <p className="sub small">
           ZEGO 配置由 Server 配置文件统一管理。请修改服务端 conf/config.yml 中的
           meeting 配置，保存后重启 Server。
-        </p>
-        <label>
-          ZEGO AppID
-          <input readOnly value={s.appId || ""} placeholder="未配置" />
-        </label>
-        <p>
-          ServerSecret：
-          {readiness.hasServerSecret ? "已配置（不显示密钥）" : "未配置"}
-        </p>
-        <p>人数上限：{s.capacity} 人</p>
-        <p>准入验证：{s.admissionConfigured ? "已确认" : "待确认"}</p>
-        {!readiness.ready ? <p>{meetingReadinessReason(readiness)}</p> : null}
-        <p>
-          音视频：
-          {readiness.ready
-            ? "可用"
-            : s.enabled
-              ? "已启用，服务依赖尚未就绪"
-              : "未启用"}
         </p>
         <div className="modal-foot">
           <button onClick={onClose}>关闭</button>

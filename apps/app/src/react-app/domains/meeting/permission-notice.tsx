@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { openMeetingPrivacySettings } from "@/app/lib/desktop";
+import { MeetingIcon } from "./meeting-icons";
 export function MeetingPermissionNotice({ message, onClose }: { message: string; onClose: () => void }) {
   const [openError, setOpenError] = useState("");
   const kinds = /权限|Permission denied/i.test(message)
@@ -15,6 +16,6 @@ export function MeetingPermissionNotice({ message, onClose }: { message: string;
       </button>)}
       {openError ? <p>{openError}</p> : null}
     </div>
-    <button type="button" className="ghost icon-button" aria-label="关闭权限提示" onClick={onClose}>×</button>
+    <button type="button" className="ghost icon-button" aria-label="关闭权限提示" onClick={onClose}><MeetingIcon name="close" width={16} height={16} /></button>
   </div>;
 }

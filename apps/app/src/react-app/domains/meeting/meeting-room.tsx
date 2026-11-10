@@ -2,7 +2,9 @@ import { bindMeetingVideo } from "./video-view";
 import { exportMeetingDiagnostics } from "./diagnostics-export";
 import { bindRemoteAudio } from "./remote-audio";
 import { MeetingMembers } from "./meeting-members";
-import { MeetingInvitePicker } from "./meeting-invite-picker";
+import { MeetingChatToasts } from "./meeting-chat-toasts";
+import { MeetingCode } from "./meeting-code";
+import { MeetingInvitePicker, MeetingMemberAvatar } from "./meeting-invite-picker";
 import { MeetingPermissionNotice } from "./permission-notice";
 import { focusMeetingWindow, markMeetingMiniReady } from "@/app/lib/desktop";
 import { guardMeetingWindowClose } from "./window-lifecycle";
@@ -235,18 +237,18 @@ export function MeetingRoomHost() {
     </div>
   );
   const content = (
-    <div className="meeting-ui">
+    <div className="meeting-ui meeting-room-ui">
       <section className="room">
         <header className="header">
           <div className="row">
-            <strong>{m.title}</strong>
+            <strong title={m.title}>{m.title}</strong>
             <span className="pill live">
               {s.phase === "joining" ? "连接中" : "会议中"}
             </span>
           </div>
-          <div className="row">
-            <button className="ghost" onClick={() => void run(exportMeetingDiagnostics)}>导出诊断</button>
-            <button className="ghost" aria-pressed={speaker} onClick={() => setSpeaker(!speaker)}>
+          <div className="row room-header-tools">
+            <button className="ghost icon-button" aria-label="导出诊断" title="导出诊断" onClick={() => void run(exportMeetingDiagnostics)}><Icon name="download" width={17} height={17} /></button>
+            <button className="ghost" aria-pressed={speaker} onClick={() => setSpeaker(!speaker)}><Icon name="grid" width={16} height={16} />
               {speaker ? "宫格布局" : "焦点布局"}
             </button>
             {!popup ? (
@@ -272,46 +274,61 @@ export function MeetingRoomHost() {
           <button onClick={() => window.dispatchEvent(new Event("meeting:resume-audio"))}>播放会议声音</button>
         </div> : null}
         <div className="room-main">
-          <div className="stage">
-            {s.tiles
-              .filter((t) => t.screen)
-              .map((t) => (
-                <div className="tile share-stage" key={t.id}>
-                  <Video tile={t} />
-                  <span className="tile-label">
-                    屏幕共享 · {participantName(t.userId, m.participants[t.userId]?.name)}
-                  </span>
-                </div>
-              ))}
-            {Object.values(m.participants).map((p, i) => {
-              const tile = s.tiles.find(
-                (t) => !t.screen && t.userId === p.userId,
-              );
-              return (
-                <div
-                  className="tile"
-                  key={p.userId}
-                  style={
-                    speaker && i === 0
-                      ? { gridColumn: "1/-1", minHeight: 350 }
-                      : undefined
-                  }
-                >
-                  <span className="avatar">{participantName(p.userId, p.name).slice(0, 1)}</span>
-                  {tile ? <Video tile={tile} /> : null}
-                  <span className="tile-label">
-                    {participantName(p.userId, p.name)}
-                    {p.userId === uid ? "（我）" : ""}
-                    {p.userId === m.hostId ? " · 主持人" : ""}
-                  </span>
-                </div>
-              );
-            })}
+          <div className="stage-area">
+            <div className={`stage${speaker ? " stage-focus" : ""}`}>
+              {s.tiles
+                .filter((t) => t.screen)
+                .map((t, i) => (
+                  <div className="tile share-stage" key={t.id} data-focused={speaker && i === 0}>
+                    <Video tile={t} />
+                    <span className="tile-label">
+                      屏幕共享 · {participantName(t.userId, m.participants[t.userId]?.name)}
+                    </span>
+                  </div>
+                ))}
+              {Object.values(m.participants).map((p, i) => {
+                const tile = s.tiles.find(
+                  (t) => !t.screen && t.userId === p.userId,
+                );
+                const devices = p.userId === uid ? { mic: s.mic, camera: s.camera }
+                  : s.memberDevices[p.userId]?.sessionId === p.sessionId && Date.now() - s.memberDevices[p.userId].receivedAt < 15_000
+                    ? s.memberDevices[p.userId] : undefined;
+                const cameraOn = devices?.camera !== false && !!tile?.stream.getVideoTracks()
+                  .some(track => track.readyState === "live" && track.enabled);
+                const name = participantName(p.userId, p.name);
+                const contact = contacts.find(c => c.user_id === p.userId && c.conversationType !== 2);
+                const micStatus = devices ? (devices.mic ? "on" : "off") : "unknown";
+                const micLabel = devices ? (devices.mic ? "麦克风已开启" : "麦克风已关闭") : "麦克风状态同步中";
+                return (
+                  <div
+                    className="tile"
+                    key={p.userId}
+                    data-camera-off={!cameraOn}
+                    data-focused={speaker && i === 0 && !s.tiles.some(t => t.screen)}
+                  >
+                    <MeetingMemberAvatar contact={{ ...contact, user_id: p.userId, nickname: name,
+                      avatar: p.userId === imUser?.id ? imUser.portrait || contact?.avatar : contact?.avatar }} />
+                    {tile ? <Video tile={tile} /> : null}
+                    <span className="tile-label">
+                      {name}
+                      {p.userId === uid ? "（我）" : ""}
+                      {p.userId === m.hostId ? " · 主持人" : ""}
+                    </span>
+                    <span className="tile-mic-status" data-state={micStatus} role="img"
+                      title={micLabel} aria-label={`${name}：${micLabel}`}>
+                      <Icon name="mic" off={micStatus === "off"} width={16} height={16} />
+                      {micStatus === "unknown" ? <span className="tile-mic-pending">…</span> : null}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+            <MeetingChatToasts key={m.id} messages={s.messages} open={panel === "chat"} userId={uid} onOpen={() => setPanel("chat")} />
           </div>
           {panel ? (
             <aside className="room-panel" key={panel} aria-label={panel === "members" ? "参会成员" : "会议聊天"}>
               <div className="row between">
-                <h3>
+                <h3 className="panel-title"><Icon name={panel === "members" ? "users" : "chat"} width={18} height={18} />
                   {panel === "members"
                     ? `参会成员 (${Object.keys(m.participants).length})`
                     : "会议聊天"}
@@ -341,9 +358,9 @@ export function MeetingRoomHost() {
                   <div className="messages" aria-live="polite">
                     {!s.messages.length ? <div className="chat-empty"><Icon name="chat" width={28} height={28} /><p>聊聊此刻的想法</p><span className="small">消息仅在当前会议内分享</span></div> : null}
                     {s.messages.map((msg, i) => (
-                      <div key={msg.messageId || msg.tid || i}>
+                      <div className={`chat-message ${msg.sender?.id === uid ? "mine" : ""}`} key={msg.messageId || msg.tid || i}>
                         <small className="sub">
-                          {msg.sender?.name || msg.sender?.id || "参会人"}
+                          {participantName(msg.sender?.id || "", msg.sender?.name)}{msg.sender?.id === uid ? "（我）" : ""}
                         </small>
                         <div className="bubble">
                           {String(msg.content?.content || "")}
@@ -380,7 +397,7 @@ export function MeetingRoomHost() {
           ) : null}
         </div>
         <footer className="room-bottom">
-          <span className="room-code"><span className="sub">会议号</span><strong>{m.code}</strong></span>
+          <span className="room-code"><span className="sub">会议号</span><MeetingCode code={m.code} /></span>
           <button
             className={`control ${s.mic ? "" : "off"}`}
             disabled={deviceBusy || s.phase !== "joined"}
@@ -409,17 +426,18 @@ export function MeetingRoomHost() {
             <Icon name="screen" />
             {s.tiles.some((t) => t.id === "share") ? "停止共享" : "共享屏幕"}
           </button>
-          <button className="control" onClick={() => setInvite(true)}>
+          <button className="control" onClick={() => setInvite(true)} title="邀请参会成员">
             <Icon name="plus" />
             邀请
           </button>
           <button
             className="control"
             aria-pressed={panel === "members"}
+            aria-label={`成员，共 ${Object.keys(m.participants).length} 人`}
             onClick={() => setPanel(panel === "members" ? null : "members")}
           >
             <Icon name="users" />
-            成员
+            <span>成员（{Object.keys(m.participants).length}）</span>
           </button>
           <button
             className="control"
