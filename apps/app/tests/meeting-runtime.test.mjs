@@ -190,3 +190,28 @@ test('meeting cards pass chat type classification and have readable conversation
    assert.equal(check.preview({name,content:{title:'产品讨论'}}),'[会议] 产品讨论');
  }
 });
+
+test('first unmute adds a real microphone over ZEGO silent placeholder', async () => {
+ let source=await fs.readFile(new URL('../src/react-app/domains/meeting/zego-adapter.ts',import.meta.url),'utf8');
+ source=source.replace('import { ensureMeetingMediaPermissions, meetingDeviceError } from "./media-permission";','const ensureMeetingMediaPermissions=async()=>{}; const meetingDeviceError=e=>e.message;');
+ const output=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
+ const {MeetingMedia}=await import('data:text/javascript;base64,'+Buffer.from(output).toString('base64'));
+ const original=Object.getOwnPropertyDescriptor(globalThis,'navigator');
+ let captures=0,replacements=0,updates=0;
+ const placeholder={kind:'audio',readyState:'live',enabled:false,label:'MediaStreamAudioDestinationNode'};
+ const microphone={kind:'audio',readyState:'live',enabled:true,stop(){}};
+ const video={kind:'video',readyState:'live'};
+ const tracks=[placeholder];
+ const local={getAudioTracks:()=>tracks,getVideoTracks:()=>[video]};
+ Object.defineProperty(globalThis,'navigator',{configurable:true,value:{mediaDevices:{getUserMedia:async()=>{captures++;return {getAudioTracks:()=>[microphone],getTracks:()=>[microphone]};}}}});
+ try {
+  const media=new MeetingMedia(()=>updates++,()=>{},()=>{});
+  media.local=local;media.cameraEnabled=true;media.microphoneCaptured=false;
+  media.engine={addTrack:async(stream,track)=>{assert.equal(stream,local);tracks[0]=track;replacements++;return {errorCode:0};},replaceTrack:()=>assert.fail('SDK placeholder is not a captured microphone'),muteMicrophone:()=>true};
+  await media.setDevices(true,true);
+  assert.equal(captures,1);assert.equal(replacements,1);assert.equal(tracks[0],microphone);
+  await media.setDevices(false,true);await media.setDevices(true,true);
+  assert.equal(captures,1);assert.equal(replacements,1);assert.equal(updates,0);
+  assert.equal(local.getVideoTracks()[0],video);
+ } finally {if(original)Object.defineProperty(globalThis,'navigator',original);else delete globalThis.navigator;}
+});

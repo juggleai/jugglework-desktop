@@ -37,6 +37,9 @@ export class MeetingMedia {
   private share?: MediaStream;
   private disposed = false;
   private cameraEnabled = false;
+  // ZEGO creates a live silent WebAudio track even when camera.audio is false.
+  // Track presence alone does not mean that microphone capture was authorized.
+  private microphoneCaptured = false;
   private remote = new Set<string>();
   constructor(
     private update: (tile: MediaTile | null, id: string) => void,
@@ -128,6 +131,7 @@ export class MeetingMedia {
     }
     this.local = stream;
     this.cameraEnabled = camera;
+    this.microphoneCaptured = mic;
     this.update(
       { id: "local", userId: this.joinInfo!.userId, stream, screen: false },
       "local",
@@ -139,7 +143,7 @@ export class MeetingMedia {
     if (this.local && camera === this.cameraEnabled) {
       const local = this.local;
       let track = local.getAudioTracks()[0];
-      if (mic && (!track || track.readyState === "ended")) {
+      if (mic && (!this.microphoneCaptured || !track || track.readyState === "ended")) {
         await ensureMeetingMediaPermissions(true, false);
         if (this.disposed) return;
         let captured: MediaStream;
@@ -154,12 +158,13 @@ export class MeetingMedia {
           return;
         }
         try {
-          const result = track
+          const result = this.microphoneCaptured && track
             ? await this.engine.replaceTrack(local, audio)
             : await this.engine.addTrack(local, audio);
           if (result?.errorCode) throw new Error("无法更新麦克风音轨");
           if (this.disposed) { audio.stop(); return; }
           track = audio;
+          this.microphoneCaptured = true;
         } catch (error) {
           captured.getTracks().forEach((t) => t.stop());
           throw error;
@@ -175,6 +180,7 @@ export class MeetingMedia {
       this.engine.stopPublishingStream(this.streamId());
       this.engine.destroyStream(this.local);
       this.local = undefined;
+      this.microphoneCaptured = false;
       this.update(null, "local");
     }
     if (mic || camera) await this.publish(mic, camera);
@@ -235,6 +241,7 @@ export class MeetingMedia {
       this.engine.stopPublishingStream(this.streamId());
       this.engine.destroyStream(this.local);
       this.local = undefined;
+      this.microphoneCaptured = false;
     }
     for (const id of this.remote) this.engine?.stopPlayingStream(id);
     this.remote.clear();
