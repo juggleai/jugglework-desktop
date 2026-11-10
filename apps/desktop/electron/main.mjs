@@ -1,3 +1,4 @@
+import { installMeetingDiagnostics } from "./meeting-diagnostics.mjs";
 import { installMeetingCompactWindow } from "./meeting-compact-window.mjs";
 import { readMeetingConfig } from "./meeting-config.mjs";
 import "./socket-tos-compat.mjs";
@@ -931,6 +932,7 @@ const IDLE_ROUTER_INFO = Object.freeze({
 
 let mainWindow = null;
 let meetingWindow = null;
+let readMeetingNativeDiagnostics = () => ({ storageAvailable: false, records: [] });
 /** @type {import("electron").BrowserWindow | null} */
 let meetingMiniWindow = null;
 /** @type {ReturnType<typeof installMeetingCompactWindow> | null} */
@@ -2362,6 +2364,10 @@ const remoteControlLifecycleManager = createRemoteControlLifecycleManager({
 // typecheck:electron`.
 /** @type {import("@jugglework/types/desktop-ipc").DesktopCommandHandlers<import("electron").IpcMainInvokeEvent>} */
 const desktopCommandHandlers = {
+  "meetingDiagnosticsGet": async (event) => {
+    if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error("仅主窗口可读取会议诊断");
+    return readMeetingNativeDiagnostics();
+  },
   "meetingMediaPermission": async (event, kind) => {
     if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error("仅主窗口可申请设备权限");
     if (kind !== "camera" && kind !== "microphone") throw new Error("无效设备");
@@ -3628,6 +3634,8 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.whenReady().then(async () => {
+    readMeetingNativeDiagnostics = installMeetingDiagnostics(app, path.join(app.getPath("userData"), "meeting-native-diagnostics.json"),
+      window => window === mainWindow ? "main" : window === meetingWindow ? "meeting" : "other");
     installMediaPermissionHandlers(session, () => mainWindow, () => meetingWindow);
     await runPendingNukeCleanup({
       env: process.env,

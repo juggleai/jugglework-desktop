@@ -1,3 +1,4 @@
+import { meetingDiagnostic, meetingDiagnosticStep } from "./diagnostics";
 import { meetingApiUrl } from "./api-url";
 import { readDenSettings, resolveDenBaseUrls } from "@/app/lib/den";
 import type {
@@ -36,10 +37,12 @@ export async function meetingRequest<T>(
   headers.set("Authorization", `Bearer ${config.authToken}`);
   headers.set("x-jugglework-legacy-org-id", config.activeOrgId);
   if (init.body) headers.set("Content-Type", "application/json");
-  const res = await fetch(
+  const route = path.split("?")[0];
+  const res = await meetingDiagnosticStep("http.request", { route, method: init.method || "GET" }, () => fetch(
     meetingApiUrl(resolveDenBaseUrls(config).apiBaseUrl, path),
     { ...init, headers, signal: init.signal ?? AbortSignal.timeout(12_000) },
-  );
+  ));
+  meetingDiagnostic("http.response", { route, status: res.status, serverDate: res.headers.get("Date") });
   if (scope !== meetingScope())
     throw new Error("组织或账号已切换，请重新打开会议。");
   if (res.status === 204) return undefined as T;

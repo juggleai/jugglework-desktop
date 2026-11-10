@@ -1,3 +1,4 @@
+import { meetingDiagnostic, meetingDiagnosticStep, meetingNumericMetrics, meetingTrackSnapshot } from "./diagnostics";
 import { ensureMeetingMediaPermissions, meetingDeviceError } from "./media-permission";
 import type { MeetingJoin } from "./types";
 // The vendored Web SDK is loaded once, without initializing JuggleCall.
@@ -41,6 +42,8 @@ export class MeetingMedia {
   // ZEGO creates a live silent WebAudio track even when camera.audio is false.
   // Track presence alone does not mean that microphone capture was authorized.
   private microphoneCaptured = false;
+  private diagnosticTimer?: ReturnType<typeof setInterval>;
+  private diagnosticStreams = new Map<string, MediaStream>();
   private remote = new Set<string>();
   private remoteEpoch = new Map<string, number>();
   constructor(
@@ -56,6 +59,27 @@ export class MeetingMedia {
     ) => any;
     this.engine = new Engine(info.appId);
     this.joinInfo = info;
+    meetingDiagnostic("rtc.join", { meetingId: info.meeting.id, roomId: info.roomId, userId: info.userId, sessionId: info.sessionId, mic, camera });
+    const sampled = new Map<string, number>();
+    for (const event of ["publisherStateUpdate", "playerStateUpdate", "roomStateUpdate", "publishQualityUpdate", "playQualityUpdate", "remoteMicStatusUpdate", "remoteCameraStatusUpdate", "deviceError"]) {
+      this.engine.on(event, (...args: unknown[]) => {
+        if (this.disposed) return;
+        const key = `${event}:${typeof args[0] === "string" ? args[0] : ""}`;
+        if (event.includes("Quality") && Date.now() - (sampled.get(key) || 0) < 5000) return;
+        sampled.set(key, Date.now());
+        meetingDiagnostic(`rtc.${event}`, { id: event !== "deviceError" && typeof args[0] === "string" ? args[0].slice(0, 200) : undefined,
+          state: typeof args[1] === "string" && /^[A-Z_]+$/.test(args[1]) ? args[1] : undefined,
+          metrics: args.map(a => meetingNumericMetrics(a)) });
+      });
+    }
+    let previousTick = performance.now();
+    this.diagnosticTimer = setInterval(() => {
+      const now = performance.now();
+      meetingDiagnostic("rtc.sample", { elapsedMs: now - previousTick, visibility: document.visibilityState,
+        cameraEnabled: this.cameraEnabled, microphoneCaptured: this.microphoneCaptured,
+        streams: [...this.diagnosticStreams].map(([id, stream]) => ({ id, streamId: stream.id, tracks: meetingTrackSnapshot(stream) })) });
+      previousTick = now;
+    }, 5000);
     this.engine.on(
       "roomStreamUpdate",
       (
@@ -63,6 +87,7 @@ export class MeetingMedia {
         type: string,
         streams: Array<{ streamID: string; user: { userID: string } }>,
       ) => {
+        meetingDiagnostic("rtc.streams", { type, streams: streams.map(s => ({ id: s.streamID, userId: s.user.userID })) });
         for (const stream of streams) {
           const id = stream.streamID;
           if (stream.user.userID === info.userId) continue;
@@ -71,13 +96,13 @@ export class MeetingMedia {
             const epoch = (this.remoteEpoch.get(id) || 0) + 1;
             this.remoteEpoch.set(id, epoch);
             this.remote.add(id);
-            void this.engine
-              .startPlayingStream(id)
+            void meetingDiagnosticStep("rtc.play", { id }, () => this.engine.startPlayingStream(id) as Promise<MediaStream>)
               .then((media: MediaStream) => {
                 if (this.disposed || !this.remote.has(id) || this.remoteEpoch.get(id) !== epoch) {
                   media.getTracks().forEach((t) => t.stop());
                   return;
                 }
+                this.diagnosticStreams.set(id, media);
                 this.update(
                   {
                     id,
@@ -92,6 +117,7 @@ export class MeetingMedia {
           } else if (type === "DELETE") {
             this.remoteEpoch.set(id, (this.remoteEpoch.get(id) || 0) + 1);
             this.remote.delete(id);
+            this.diagnosticStreams.delete(id);
             this.engine.stopPlayingStream(id);
             this.update(null, id);
           }
@@ -101,12 +127,12 @@ export class MeetingMedia {
     this.engine.on("roomStateUpdate", (_room: string, state: string) => {
       if (state === "DISCONNECTED" && !this.disposed) this.disconnected();
     });
-    const ok = await this.engine.loginRoom(
+    const ok = await meetingDiagnosticStep("rtc.login", {}, () => this.engine.loginRoom(
       info.roomId,
       info.token,
       { userID: info.userId, userName: info.userName },
       { userUpdate: true },
-    );
+    ));
     if (ok === false) throw new Error("音视频房间登录失败。");
     if (this.disposed) {
       this.engine.logoutRoom(info.roomId);
@@ -118,11 +144,11 @@ export class MeetingMedia {
     return `${this.joinInfo!.roomId}_${this.joinInfo!.userId}_${this.joinInfo!.sessionId}_${screen ? "screen" : "camera"}`;
   }
   private async publish(mic: boolean, camera: boolean) {
-    await ensureMeetingMediaPermissions(mic, camera);
+    await meetingDiagnosticStep("device.permission", { mic, camera }, () => ensureMeetingMediaPermissions(mic, camera));
     if (this.disposed) return;
     let stream: MediaStream;
     try {
-      stream = await this.engine.createStream({ camera: { audio: mic, video: camera } });
+      stream = await meetingDiagnosticStep("device.create", { mic, camera }, () => this.engine.createStream({ camera: { audio: mic, video: camera } }) as Promise<MediaStream>);
     } catch (error) {
       throw new Error(meetingDeviceError(error, mic, camera));
     }
@@ -130,12 +156,14 @@ export class MeetingMedia {
       this.engine.destroyStream(stream);
       return;
     }
+    meetingDiagnostic("rtc.publish.start", { id: this.streamId(), tracks: meetingTrackSnapshot(stream) });
     this.engine.muteMicrophone(!mic);
     if (this.engine.startPublishingStream(this.streamId(), stream) === false) {
       this.engine.destroyStream(stream);
       throw new Error("无法发布音视频。");
     }
     this.local = stream;
+    this.diagnosticStreams.set("local", stream);
     this.cameraEnabled = camera;
     this.cameraCaptured = camera;
     this.microphoneCaptured = mic;
@@ -151,11 +179,11 @@ export class MeetingMedia {
       const local = this.local;
       let track = local.getAudioTracks()[0];
       if (mic && (!this.microphoneCaptured || !track || track.readyState === "ended")) {
-        await ensureMeetingMediaPermissions(true, false);
+        await meetingDiagnosticStep("device.permission", { mic: true }, () => ensureMeetingMediaPermissions(true, false));
         if (this.disposed) return;
         let captured: MediaStream;
         try {
-          captured = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+          captured = await meetingDiagnosticStep("device.getUserMedia", { mic: true, camera: false }, () => navigator.mediaDevices.getUserMedia({ audio: true, video: false }));
         } catch (error) {
           throw new Error(meetingDeviceError(error, true, false));
         }
@@ -166,8 +194,8 @@ export class MeetingMedia {
         }
         try {
           const result = this.microphoneCaptured && track
-            ? await this.engine.replaceTrack(local, audio)
-            : await this.engine.addTrack(local, audio);
+            ? await meetingDiagnosticStep("device.replaceTrack", { kind: "audio" }, () => this.engine.replaceTrack(local, audio) as Promise<any>)
+            : await meetingDiagnosticStep("device.addTrack", { kind: "audio" }, () => this.engine.addTrack(local, audio) as Promise<any>);
           if (result?.errorCode) throw new Error("无法更新麦克风音轨");
           if (this.disposed) { audio.stop(); return; }
           track = audio;
@@ -186,20 +214,20 @@ export class MeetingMedia {
       // Preserve microphone publication and the remote subscription when camera changes.
       const local = this.local;
       if (this.cameraCaptured) {
-        if (camera) await ensureMeetingMediaPermissions(false, true);
+        if (camera) await meetingDiagnosticStep("device.permission", { camera: true }, () => ensureMeetingMediaPermissions(false, true));
         if (this.disposed) return;
-        const enabled = await this.engine.enableVideoCaptureDevice(local, camera);
+        const enabled = await meetingDiagnosticStep("device.enableVideoCaptureDevice", { kind: "camera" }, () => this.engine.enableVideoCaptureDevice(local, camera) as Promise<any>);
         if (enabled === false) throw new Error("摄像头切换失败，请重试");
       } else if (camera) {
-        await ensureMeetingMediaPermissions(false, true);
+        await meetingDiagnosticStep("device.permission", { camera: true }, () => ensureMeetingMediaPermissions(false, true));
         if (this.disposed) return;
         let captured: MediaStream;
-        try { captured = await navigator.mediaDevices.getUserMedia({ audio: false, video: true }); }
+        try { captured = await meetingDiagnosticStep("device.getUserMedia", { mic: false, camera: true }, () => navigator.mediaDevices.getUserMedia({ audio: false, video: true })); }
         catch (error) { throw new Error(meetingDeviceError(error, false, true)); }
         if (this.disposed) { captured.getTracks().forEach(t => t.stop()); return; }
         const video = captured.getVideoTracks()[0];
         try {
-          const result = await this.engine.addTrack(local, video);
+          const result = await meetingDiagnosticStep("device.addTrack", { kind: "video" }, () => this.engine.addTrack(local, video) as Promise<any>);
           if (result?.errorCode) throw new Error("无法开启摄像头");
           if (this.disposed) { video.stop(); return; }
         } catch (error) { captured.getTracks().forEach(t => t.stop()); throw error; }
@@ -212,6 +240,7 @@ export class MeetingMedia {
   }
 
   renew(token: string) {
+    meetingDiagnostic("rtc.renew", { disposed: this.disposed });
     if (this.joinInfo && !this.disposed)
       this.engine.renewToken(token, this.joinInfo.roomId);
   }
@@ -262,6 +291,9 @@ export class MeetingMedia {
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
+    meetingDiagnostic("rtc.dispose");
+    clearInterval(this.diagnosticTimer);
+    this.diagnosticStreams.clear();
     this.stopShare();
     if (this.local) {
       this.engine.stopPublishingStream(this.streamId());

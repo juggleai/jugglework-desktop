@@ -604,6 +604,7 @@ export type DesktopCommandMap = {
   meetingPrivacySettings: { args: [kind: "camera" | "microphone" | "screen"]; result: void };
   meetingMiniReady: { args: []; result: void };
   meetingWindowState: { args: []; result: { compact: boolean } };
+  meetingDiagnosticsGet: { args: []; result: { storageAvailable: boolean; records: unknown[] } };
   meetingConfigGet: { args: []; result: { enabled: boolean; appId: number; filePath: string } };
   meetingWindowFocus: { args: [target: "main" | "meeting"]; result: void };
   toonFactoryOpen: { args: [workspaceId: string]; result: ToonFactoryStatus };

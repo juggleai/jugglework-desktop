@@ -1,3 +1,4 @@
+import { meetingDiagnostic, meetingDiagnosticError, meetingDiagnosticStep } from "./diagnostics";
 import { acceptDeviceState, type MemberDeviceState } from "./device-state";
 import { readMeetingDesktopConfig } from "@/app/lib/desktop";
 import { create } from "zustand";
@@ -23,8 +24,11 @@ let stopWake: (() => void) | undefined;
 function announceState() {
   if (!lease || !chatroom) return;
   const state = useMeetingStore.getState();
-  void chatroom.signal({ meetingId: lease.meeting.id, sessionId: lease.sessionId,
-    seq: ++signalSeq, mic: state.mic, camera: state.camera }).catch(() => {});
+  const signal = { meetingId: lease.meeting.id, sessionId: lease.sessionId,
+    seq: ++signalSeq, mic: state.mic, camera: state.camera };
+  meetingDiagnostic("signal.send", signal);
+  void chatroom.signal(signal).then(() => meetingDiagnostic("signal.sent", { seq: signal.seq }))
+    .catch(error => meetingDiagnostic("signal.failed", { seq: signal.seq, ...meetingDiagnosticError(error) }));
 }
 
 function dispose() {
@@ -95,6 +99,7 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
     }
     acquireMediaSession("meeting");
     const run = ++generation;
+    meetingDiagnostic("meeting.join", { meetingId: meeting.id, run, mic, camera });
     activeScope = meetingScope();
     set({
       meeting,
@@ -113,7 +118,7 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
       if (localConfig && !localConfig.enabled)
         throw new Error("Desktop 会议配置已禁用会议，请修改 meeting.json。");
       if (run !== generation) return;
-      const admitted = await meetingAPI.join(meeting.id);
+      const admitted = await meetingDiagnosticStep("api.join", { meetingId: meeting.id }, () => meetingAPI.join(meeting.id));
       if (run !== generation) return;
       lease = admitted;
       if (localConfig?.appId && localConfig.appId !== admitted.appId)
@@ -194,16 +199,19 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
     }
   },
   async leave(end = false) {
+    const run = generation;
     const current = lease;
     if (!current) {
       forceMeetingCleanup();
       return;
     }
     // Keep the confirmation window open on rejection; never close with live media.
-    const result = await meetingAPI.action(current.meeting.id, end ? "end" : "leave", {
+    const result = await meetingDiagnosticStep("api.leave", { meetingId: current.meeting.id, sessionId: current.sessionId, end }, () => meetingAPI.action(current.meeting.id, end ? "end" : "leave", {
       sessionId: current.sessionId,
-    });
-    if (current !== lease) return;
+    }));
+    meetingDiagnostic("meeting.leave.result", { status: result.meeting?.status, leaseReplaced: current !== lease });
+    // Renewal replaces the lease object without replacing this meeting session.
+    if (run !== generation) return;
     announceState(); // Hint only: peers always verify lifecycle against the server.
     dispose();
     set({
@@ -223,7 +231,7 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
     const mic = device === "mic" ? !get().mic : get().mic;
     const camera = device === "camera" ? !get().camera : get().camera;
     try {
-      await media?.setDevices(mic, camera);
+      await meetingDiagnosticStep("device.toggle", { device, mic, camera }, () => media!.setDevices(mic, camera));
       if (run !== generation) return;
       set({ mic, camera });
       announceState();
@@ -275,16 +283,21 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
         const participant = sender && get().meeting?.participants[sender];
         if (!sender || !participant) return;
         const next = acceptDeviceState(content, participant.sessionId, get().memberDevices[sender]);
+        meetingDiagnostic("signal.receive", { sender, sessionId: typeof content.sessionId === "string" ? content.sessionId : undefined,
+          seq: typeof content.seq === "number" ? content.seq : undefined, accepted: !!next,
+          mic: typeof content.mic === "boolean" ? content.mic : undefined, camera: typeof content.camera === "boolean" ? content.camera : undefined });
         if (next) set(state => ({ memberDevices: { ...state.memberDevices, [sender]: next } }));
       });
       if (run !== generation) {
         await joined.leave();
         return;
       }
+      meetingDiagnostic("chat.joined");
       chatroom = joined;
       set({ chatReady: true });
       announceState();
     } catch (error) {
+      meetingDiagnostic("chat.failed", meetingDiagnosticError(error));
       if (run === generation)
         set({
           chatReady: false,
@@ -304,7 +317,8 @@ async function refresh(run: number) {
   }
   refreshing = true;
   try {
-    const snapshot = (await meetingAPI.get(lease.meeting.id)).meeting;
+    const snapshot = (await meetingDiagnosticStep("api.snapshot", { meetingId: lease.meeting.id }, () => meetingAPI.get(lease!.meeting.id))).meeting;
+    meetingDiagnostic("meeting.snapshot", { meetingId: snapshot.id, version: snapshot.version, status: snapshot.status, participants: Object.entries(snapshot.participants).map(([id, p]) => ({ id, sessionId: p.sessionId })) });
     if (run !== generation) return;
     if (meetingClosed(snapshot)) {
       forceMeetingCleanup("主持人已结束会议。");
@@ -321,7 +335,7 @@ async function refresh(run: number) {
       useMeetingStore.setState({ meeting: snapshot });
     // Read lifecycle frequently; renew admission only at the lease cadence.
     if (Date.now() - lastRenewed >= 20_000) {
-      const next = await meetingAPI.join(snapshot.id, lease.sessionId);
+      const next = await meetingDiagnosticStep("api.renew", { meetingId: snapshot.id }, () => meetingAPI.join(snapshot.id, lease!.sessionId));
       if (run !== generation) return;
       if (meetingClosed(next.meeting)) { forceMeetingCleanup("主持人已结束会议。"); return; }
       lease = next;
@@ -341,6 +355,7 @@ async function refresh(run: number) {
   }
 }
 export function forceMeetingCleanup(error: string | null = null) {
+  meetingDiagnostic("meeting.cleanup", { reason: error });
   dispose();
   useMeetingStore.setState({
     phase: "idle",

@@ -1,3 +1,4 @@
+import { exportMeetingDiagnostics } from "./diagnostics-export";
 import { bindRemoteAudio } from "./remote-audio";
 import { MeetingMembers } from "./meeting-members";
 import { MeetingInvitePicker } from "./meeting-invite-picker";
@@ -230,6 +231,7 @@ export function MeetingRoomHost() {
             </span>
           </div>
           <div className="row">
+            <button className="ghost" onClick={() => void run(exportMeetingDiagnostics)}>导出诊断</button>
             <button className="ghost" aria-pressed={speaker} onClick={() => setSpeaker(!speaker)}>
               {speaker ? "宫格布局" : "焦点布局"}
             </button>

@@ -1,3 +1,4 @@
+import { exportMeetingDiagnostics } from "./diagnostics-export";
 import { focusMeetingWindow } from "@/app/lib/desktop";
 import { MeetingPermissionNotice } from "./permission-notice";
 import { ensureMeetingMediaPermissions, meetingDeviceError } from "./media-permission";
@@ -293,6 +294,7 @@ export function MeetingPage() {
     <div className="meeting-ui">
       <header className="header">
         <strong>会议</strong>
+        <button className="ghost" onClick={() => void run(exportMeetingDiagnostics)}>导出会议诊断</button>
         <div className="tabs">
           {(["home", "calendar", "history"] as const).map((t, i) => (
             <button

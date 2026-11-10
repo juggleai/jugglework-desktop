@@ -21,3 +21,9 @@ Remote audio uses one independent audio element per received stream in the persi
 The legacy ZEGO createStream API supplies a live silent WebAudio placeholder even when microphone capture is disabled. Desktop tracks actual microphone acquisition explicitly rather than inferring it from track presence. First unmute captures audio and calls addTrack over that placeholder; replaceTrack is reserved for replacing a previously acquired microphone. Capture state resets with stream destruction/recreation. Real ZEGO cloud loopback with a controlled tone verifies first-unmute audio, mute silence and restored audio while retaining the video stream.
 
 Lifecycle convergence runs independently of chat admission: read the server snapshot every three seconds, renew membership at twenty seconds, bound HTTP requests to twelve seconds, and stop local media after thirty seconds without a valid lifecycle snapshot. Reject stale meeting versions and stale async generations. JuggleIM chatroom device hints carry the participant session and increasing sequence; only current members with matching sessions can update device indicators. Hints wake authoritative lifecycle reads and never authorize termination directly. Expired device hints are treated as unknown. Camera capture is controlled independently to retain the microphone publication.
+
+### 双端诊断与退出并发（2026-11-10）
+
+会议首页及会中提供诊断 JSON 导出。保留有界的本地媒体质量、设备操作阶段、播放元素状态、业务快照和 IM 序号事件，附上持久化的原生无响应/渲染器/GPU 等进程退出事件；不采集会话内容或凭据。异常 PC 重启后可从首页导出历史记录。详细采集方式及证据边界见 `docs/meeting/08-cross-pc-diagnostics.md`。
+
+离开/结束请求返回后的清理，以会议 generation 判断请求归属；周期续期替换 lease 对象不能阻止当前会话清理，也不能使旧请求误清理后续会话。双 PC 断音与 Windows 开视频卡死仍待现场日志验证，不以单机回环通过代替双端验收。

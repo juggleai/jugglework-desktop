@@ -2,9 +2,19 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import ts from 'typescript';
+const diagnosticSource = await fs.readFile(new URL('../src/react-app/domains/meeting/diagnostics.ts', import.meta.url), 'utf8');
+const diagnosticUrl = 'data:text/javascript;base64,' + Buffer.from(ts.transpileModule(diagnosticSource, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText).toString('base64');
+function transpile(source, options) {
+ source = source.replace(/from "\.\/diagnostics"/g, `from "${diagnosticUrl}"`);
+ // The store harness strips imports and provides its own dependencies.
+ if (source.includes('meetingDiagnostic(') && !source.includes(diagnosticUrl))
+  source = `import {meetingDiagnostic, meetingDiagnosticError, meetingDiagnosticStep} from "${diagnosticUrl}";\n` + source;
+ return ts.transpileModule(source, options);
+}
+
 async function load(relative) {
  const source=await fs.readFile(new URL(relative,import.meta.url),'utf8');
- const output=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
+ const output=transpile(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
  return import(`data:text/javascript;base64,${Buffer.from(output).toString('base64')}`);
 }
 test('legacy calls and meetings cannot take each other’s media lease',async()=>{
@@ -53,7 +63,7 @@ test('end error only releases the client after server confirms a terminal meetin
  let source=await fs.readFile(new URL('../src/react-app/domains/meeting/api.ts',import.meta.url),'utf8');
  source=source.replace('import { meetingApiUrl } from "./api-url";','const meetingApiUrl = (base, path) => base + "/v1/meetings" + path;')
   .replace('import { readDenSettings, resolveDenBaseUrls } from "@/app/lib/den";','const readDenSettings = () => ({authToken:"test",activeOrgId:"org"}); const resolveDenBaseUrls = () => ({apiBaseUrl:"https://test.invalid"});');
- const output=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
+ const output=transpile(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
  const {meetingAPI}=await import('data:text/javascript;base64,'+Buffer.from(output).toString('base64'));
  const originalFetch=globalThis.fetch, originalWindow=globalThis.window;
  let events=0, requests=[];
@@ -88,7 +98,7 @@ test('end error only releases the client after server confirms a terminal meetin
 test('device permissions are requested only when enabled and denial identifies settings target', async()=>{
  let source=await fs.readFile(new URL('../src/react-app/domains/meeting/media-permission.ts',import.meta.url),'utf8');
  source=source.replace('import { requestMeetingDevicePermission } from "@/app/lib/desktop";','const requestMeetingDevicePermission = (kind) => globalThis.__testMeetingPermission(kind);');
- const output=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
+ const output=transpile(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
  const {ensureMeetingMediaPermissions:ensure,meetingDeviceError:describe}=await import('data:text/javascript;base64,'+Buffer.from(output).toString('base64'));
  const requests=[];
  globalThis.__testMeetingPermission=async kind=>{requests.push(kind);return {granted:kind!=='camera'};};
@@ -105,7 +115,7 @@ test('microphone toggles preserve the local video stream, including first audio 
  let source=await fs.readFile(new URL('../src/react-app/domains/meeting/zego-adapter.ts',import.meta.url),'utf8');
  source=source.replace('import { ensureMeetingMediaPermissions, meetingDeviceError } from "./media-permission";',
  'const ensureMeetingMediaPermissions=async()=>{}; const meetingDeviceError=(e)=>e.message;');
- const output=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
+ const output=transpile(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
  const {MeetingMedia}=await import('data:text/javascript;base64,'+Buffer.from(output).toString('base64'));
  const originalNavigator=Object.getOwnPropertyDescriptor(globalThis,'navigator');
  let captureCount=0, updates=0, added=0;
@@ -146,7 +156,7 @@ test('microphone toggles preserve the local video stream, including first audio 
 test('member row invitation sends one private card, never a group notification', async () => {
  let source=await fs.readFile(new URL('../src/react-app/domains/meeting/im-adapter.ts',import.meta.url),'utf8');
  source=source.replace('import { juggleChatRuntime } from "../jugglechat/runtime";','const juggleChatRuntime = globalThis.__meetingInviteRuntime;');
- const output=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
+ const output=transpile(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
  const sent=[];
  globalThis.__meetingInviteRuntime={isConnected:()=>true,getClient:()=>({sendMessage:async(m)=>sent.push(m)})};
  try {
@@ -183,7 +193,7 @@ test('meeting cards pass chat type classification and have readable conversation
  const nodes=file.statements.filter(node =>
    (ts.isFunctionDeclaration(node)&&node.name?.text==='messagePreview') ||
    (ts.isVariableStatement(node)&&node.declarationList.declarations.some(d=>['MESSAGE_NAMES','SUPPORTED_MESSAGE_NAMES'].includes(d.name.getText(file)))));
- const code=ts.transpileModule(nodes.map(node=>node.getText(file)).join('\n'),{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
+ const code=transpile(nodes.map(node=>node.getText(file)).join('\n'),{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
  const check=new Function(code+'; return { supported: SUPPORTED_MESSAGE_NAMES, preview: messagePreview };')();
  for(const name of ['jw:meeting-card','jw:meeting-invite']){
    assert.equal(check.supported.has(name),true);
@@ -194,7 +204,7 @@ test('meeting cards pass chat type classification and have readable conversation
 test('first unmute adds a real microphone over ZEGO silent placeholder', async () => {
  let source=await fs.readFile(new URL('../src/react-app/domains/meeting/zego-adapter.ts',import.meta.url),'utf8');
  source=source.replace('import { ensureMeetingMediaPermissions, meetingDeviceError } from "./media-permission";','const ensureMeetingMediaPermissions=async()=>{}; const meetingDeviceError=e=>e.message;');
- const output=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
+ const output=transpile(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
  const {MeetingMedia}=await import('data:text/javascript;base64,'+Buffer.from(output).toString('base64'));
  const original=Object.getOwnPropertyDescriptor(globalThis,'navigator');
  let captures=0,replacements=0,updates=0;
@@ -220,7 +230,7 @@ test('lifecycle polling ends media even when chat admission is pending', async (
  let source=await fs.readFile(new URL('../src/react-app/domains/meeting/store.ts',import.meta.url),'utf8');
  source=source.replace(/^import .*;$/gm,'');
  source='const {create,meetingAPI,meetingScope,meetingClosed,MeetingMedia,joinMeetingChatroom,acquireMediaSession,releaseMediaSession}=globalThis.__syncDeps;\n'+source;
- const output=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
+ const output=transpile(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
  const oldWindow=globalThis.window,oldInterval=globalThis.setInterval,oldClear=globalThis.clearInterval;
  let tick,releaseChat,disposed=0,renewals=0;
  const snapshot={id:'m',organizationId:'org',status:'live',hostId:'u',version:1,participants:{u:{sessionId:'session'}}};
@@ -251,7 +261,7 @@ test('lifecycle polling ends media even when chat admission is pending', async (
 test('camera toggles retain audio publication and microphone capture', async () => {
  let source=await fs.readFile(new URL('../src/react-app/domains/meeting/zego-adapter.ts',import.meta.url),'utf8');
  source=source.replace('import { ensureMeetingMediaPermissions, meetingDeviceError } from "./media-permission";','const ensureMeetingMediaPermissions=async()=>{};const meetingDeviceError=e=>e.message;');
- const output=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
+ const output=transpile(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
  const {MeetingMedia}=await import('data:text/javascript;base64,'+Buffer.from(output).toString('base64'));
  const old=Object.getOwnPropertyDescriptor(globalThis,'navigator');
  const audio={kind:'audio',enabled:true,readyState:'live'},video={kind:'video',stop(){this.stopped=true;}};
@@ -274,4 +284,36 @@ test('device state rejects stale sessions, duplicates and reordered signals', as
  assert.equal(acceptDeviceState({sessionId:'new',seq:3,mic:false,camera:false},'new',current),null);
  assert.equal(acceptDeviceState({sessionId:'new',seq:4,mic:false,camera:false},'new',current),null);
  assert.equal(acceptDeviceState({sessionId:'new',seq:5,mic:false,camera:false},'new',current).mic,false);
+});
+
+test('successful leave still disposes media when an in-flight renewal replaces the lease', async () => {
+ let source=await fs.readFile(new URL('../src/react-app/domains/meeting/store.ts',import.meta.url),'utf8');
+ source=source.replace(/^import .*;$/gm,'');
+ source='const {create,meetingAPI,meetingScope,meetingClosed,MeetingMedia,joinMeetingChatroom,acquireMediaSession,releaseMediaSession}=globalThis.__leaveRaceDeps;\n'+source;
+ const output=transpile(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
+ const oldWindow=globalThis.window,oldInterval=globalThis.setInterval,oldClear=globalThis.clearInterval,oldNow=Date.now;
+ let tick,finishLeave,disposed=0,renewals=0,now=1000;
+ const snapshot={id:'m',organizationId:'org',status:'live',hostId:'u',version:1,participants:{u:{sessionId:'session'}}};
+ globalThis.window=new EventTarget(); Date.now=()=>now;
+ globalThis.setInterval=fn=>{tick=fn;return 123;};globalThis.clearInterval=()=>{};
+ globalThis.__leaveRaceDeps={
+ create:init=>{let state;const set=p=>{state={...state,...(typeof p==='function'?p(state):p)}};const get=()=>state;state=init(set,get);return {getState:get,setState:set};},
+ meetingAPI:{join:async()=>{renewals++;return {meeting:{...snapshot},userId:'u',sessionId:'session',chatroomId:'room',token:'test'};},get:async()=>({meeting:{...snapshot}}),action:()=>new Promise(r=>{finishLeave=r;})},
+ meetingScope:()=> 'org',meetingClosed:m=>m.status==='ended',
+ MeetingMedia:class {async join(){} dispose(){disposed++;} renew(){}},
+ joinMeetingChatroom:async()=>({leave:async()=>{},signal:async()=>{}}),
+ acquireMediaSession:()=>{},releaseMediaSession:()=>{},
+ };
+ try {
+  const {useMeetingStore,forceMeetingCleanup}=await import('data:text/javascript;base64,'+Buffer.from(output).toString('base64'));
+  await useMeetingStore.getState().join(snapshot,false,false);
+  const leaving=useMeetingStore.getState().leave(true);
+  now+=21_000;tick();await new Promise(r=>setTimeout(r,0));
+  assert.equal(renewals,2);
+  finishLeave({meeting:{...snapshot,status:'ended'}});await leaving;
+  const phase=useMeetingStore.getState().phase;
+  const disposedBeforeCleanup=disposed;
+  forceMeetingCleanup();
+  assert.equal(phase,'idle');assert.equal(disposedBeforeCleanup,1);
+ } finally {globalThis.window=oldWindow;globalThis.setInterval=oldInterval;globalThis.clearInterval=oldClear;Date.now=oldNow;delete globalThis.__leaveRaceDeps;}
 });
