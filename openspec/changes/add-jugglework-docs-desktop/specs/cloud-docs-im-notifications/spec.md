@@ -12,7 +12,7 @@ Desktop SHALL 在现有自定义消息注册、气泡、会话列表预览及未
 
 #### Scenario: Card belongs to another organization
 - **WHEN** 用户正在 A 中点击 B 的文档通知
-- **THEN** 明确确认切换并重新授权，不把 A 的 Word 绑定或会话带入 B
+- **THEN** 明确确认切换并重新授权，不把 A 的会话带入 B
 
 #### Scenario: Recipient no longer has document access
 - **WHEN** 点击已失权或已删除页面的历史通知
@@ -37,7 +37,7 @@ Desktop SHALL 在现有自定义消息注册、气泡、会话列表预览及未
 - **THEN** 不进入 A 的云文档会话展示和提示，切到 B 后再按原 IM 历史加载
 
 ### Requirement: Committed organization switch survives IM failure
-跨组织点击 SHALL 复用现有 switchOrganization 并等待真实组织状态后才申请 Docs grant。Server 已切换但 im=null 时 SHALL 保持新组织，IM 和 Docs 状态分开。结果未知 SHALL 先刷新权威状态；迟到异步结果 MUST NOT 覆盖新上下文或重绑 Word。
+跨组织点击 SHALL 复用现有 switchOrganization 并等待真实组织状态后才申请 Docs grant。Server 已切换但 im=null 时 SHALL 保持新组织，IM 和 Docs 状态分开。结果未知 SHALL 先刷新权威状态；迟到异步结果 MUST NOT 覆盖新上下文。
 
 #### Scenario: IM bootstrap fails after the switch commits
 - **WHEN** Server 返回 activeOrgId=B、im=null
@@ -45,7 +45,7 @@ Desktop SHALL 在现有自定义消息注册、气泡、会话列表预览及未
 
 #### Scenario: User switches again before the first card opens
 - **WHEN** A→B 的交接未完成时用户已进入 C
-- **THEN** B 的 grant／ready 被丢弃，C 的页面和 Word 关联不受影响
+- **THEN** B 的 grant／ready 被丢弃，C 的页面不受影响
 
 #### Scenario: Target comment was deleted
 - **WHEN** 页面仍可读但 commentId 不再存在

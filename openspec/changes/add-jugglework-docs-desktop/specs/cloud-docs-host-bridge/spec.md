@@ -18,19 +18,12 @@ Desktop SHALL 使用受限 WebContentsView 承载 Docs，账号来源与用户�
 - **WHEN** IM 配置或组织展示资料刷新，但 Server、账号、组织 ID 和登录凭据没有变化
 - **THEN** 保留当前原生文档与协作连接，不重新申请交接或跳回首页
 
-### Requirement: Native editor session ownership
-每个打开的关联 Word SHALL 保持唯一写入桥及原生编辑会话引用，前台导航 MUST NOT 将其导航到另一页。关闭或断开后 SHALL 释放引用；云同步仍使用原生 provider。
-
-#### Scenario: User browses another cloud page while Word is open
-- **WHEN** 前台产品页切换到另一文档
-- **THEN** 已关联 Word 的原生会话仍属于原页面，不重复建立回写桥
-
 ### Requirement: Bounded host authority
-远程页面 SHALL 只访问编辑桥能力，不获得通用 Node、任意文件或可执行代码接口。宿主 SHALL 验证 origin、实例、租户、工作区、页面与绑定一致。
+远程页面 SHALL 只发送宿主桥定义的消息，不获得通用 Node、任意文件或可执行代码接口。宿主 SHALL 验证 origin、实例、租户与工作区一致。
 
-#### Scenario: Page attempts cross-binding write
-- **WHEN** 编辑消息指定其他租户或本地绑定
-- **THEN** 返回 context_mismatch，执行零新模型操作
+#### Scenario: Page sends a message for another tenant
+- **WHEN** 宿主消息中的 tenantId 与当前视图不一致
+- **THEN** 消息被丢弃，不执行任何宿主操作
 
 ### Requirement: Existing shell overlays remain usable
 宿主 SHALL 沿用现有覆盖层模式，使菜单、Dialog 和 Toast 在 Docs 视图之上可操作，并保留布局和中文输入。

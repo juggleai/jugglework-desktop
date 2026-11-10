@@ -20,7 +20,7 @@ Desktop SHALL 在 More 提供带“云朵＋文档页”专用图标的云文档
 - **THEN** 左侧固定入口消失，More 中的云文档入口和当前组织访问能力保持不变
 
 ### Requirement: Entered organization gates every Docs surface
-全局账号登录 MUST NOT 自动显示全部组织云文档。Desktop SHALL 先成功进入目标组织，再为当前上下文装载 Docs；目录、搜索、最近访问、通知、附件预览、上传空间及本地绑定 SHALL 各自固定组织。新打开／重启／切回时 SHALL 在授权确认前隐藏旧原生缓存正文。
+全局账号登录 MUST NOT 自动显示全部组织云文档。Desktop SHALL 先成功进入目标组织，再为当前上下文装载 Docs；目录、搜索、最近访问、通知、附件预览及上传空间 SHALL 各自固定组织。新打开／重启／切回时 SHALL 在授权确认前隐藏旧原生缓存正文。
 
 #### Scenario: User has valid memberships in A and B
 - **WHEN** Desktop 已进入 A
@@ -29,17 +29,6 @@ Desktop SHALL 在 More 提供带“云朵＋文档页”专用图标的云文档
 #### Scenario: Old native cache is available after restart
 - **WHEN** 尚未确认当前源登录与目标组织成员
 - **THEN** 不先展示缓存正文、通知或附件预览后再等待授权拒绝
-
-### Requirement: File intake distinguishes pages and attachments
-文件／产物操作 SHALL 提供当前租户空间选择和真实保存准备。Markdown／HTML 可进入社区正文导入；Word 首次转换与双向适配 SHALL 分别标记；XLSX／CSV／PPTX／PDF SHALL 只作为首版附件。
-
-#### Scenario: AI is still modifying a file
-- **WHEN** 用户在运行或未确认保存期间上传
-- **THEN** 等待现有保存／执行边界，不读取旧磁盘内容并误报成功
-
-#### Scenario: Upload result is unknown
-- **WHEN** 创建请求响应丢失
-- **THEN** 显示上传结果待确认，按同一 requestId 核对结果，不自动创建另一页面
 
 ### Requirement: Visible entry failure recovery
 入口 SHALL 显示 loading、ready、unavailable、unauthorized 与 forbidden 状态。15 秒未收到当前实例 ready SHALL 显示重试，重新打开必须申请新凭据。
