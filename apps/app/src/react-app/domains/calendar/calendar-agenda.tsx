@@ -78,11 +78,26 @@ export function CalendarEventDetail(props: {
   onClose: () => void;
   onEdit?: () => void;
 }) {
+  const sectionRef = React.useRef<HTMLElement | null>(null);
+  // Move focus to the detail when it opens or switches events, so screen readers announce it.
+  React.useEffect(() => { sectionRef.current?.focus(); }, [props.event.id]);
   const interval = React.useMemo(() => {
     try { return parseCalendarEventTime(props.event.time); } catch { return null; }
   }, [props.event.time]);
   return (
-    <section aria-labelledby="calendar-event-detail-title" className="flex min-w-0 flex-col gap-3 rounded-xl border border-dls-border p-3" data-testid="calendar-event-detail">
+    <section
+      ref={sectionRef}
+      tabIndex={-1}
+      aria-labelledby="calendar-event-detail-title"
+      className="flex min-w-0 flex-col gap-3 rounded-xl border border-dls-border p-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/35"
+      data-testid="calendar-event-detail"
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          props.onClose();
+        }
+      }}
+    >
       <div className="flex items-start gap-2">
         <h3 id="calendar-event-detail-title" className="min-w-0 flex-1 break-words text-base font-semibold text-dls-text" data-testid="calendar-event-detail-title">
           {props.event.title}

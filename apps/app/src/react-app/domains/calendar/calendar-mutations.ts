@@ -157,6 +157,9 @@ function usePreparedMutation<TData, TVariables, TPrepared extends PreparedBase<T
   const lastUncertain = useRef<TPrepared | null>(null);
   const mutation = useMutation<TData, Error, PreparedAction<TVariables, TPrepared>, unknown>({
     mutationFn: (action) => isRejected(action) ? Promise.reject(action.error) : input.mutationFn(action),
+    // Never pause offline and resume on reconnect: that would be an implicit offline write queue.
+    // Offline failures surface immediately so the member can retry or keep a local draft explicitly.
+    networkMode: "always",
     retry: shouldRetryCalendarMutation,
     retryDelay: input.retryDelay,
     onSuccess: (data, action) => {

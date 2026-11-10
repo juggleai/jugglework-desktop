@@ -17,7 +17,10 @@ export function CalendarDayEvents(props: {
   locale: string;
   onOpenEvent?: (eventId: string) => void;
   onShowMore: () => void;
+  /** Only the roving-focus day exposes its chips to Tab, so Tab moves cell → chips → next region. */
+  focusable?: boolean;
 }) {
+  const tabIndex = props.focusable ? 0 : -1;
   const { shown, hiddenCount } = splitCalendarDayOverflow(props.entries);
   return (
     <ul className="flex min-h-0 min-w-0 flex-col gap-0.5" data-testid={`calendar-day-events-${props.date}`}>
@@ -29,10 +32,10 @@ export function CalendarDayEvents(props: {
           <li key={entry.event.id} className="min-w-0">
             <button
               type="button"
-              tabIndex={-1}
+              tabIndex={tabIndex}
               onClick={() => props.onOpenEvent?.(entry.event.id)}
               className={cn(
-                "flex w-full min-w-0 items-center gap-1 truncate px-1 py-px text-left text-[11px] leading-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/35",
+                "flex w-full min-w-0 items-center gap-1 truncate px-1 py-px text-left text-[11px] leading-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent focus-visible:ring-offset-1 focus-visible:ring-offset-dls-surface",
                 allDay ? "text-white" : "text-dls-text hover:bg-dls-hover",
                 allDay && !entry.continuesFromPrevious && "rounded-l",
                 allDay && !entry.continuesToNext && "rounded-r",
@@ -57,7 +60,8 @@ export function CalendarDayEvents(props: {
         <li>
           <button
             type="button"
-            tabIndex={-1}
+            tabIndex={tabIndex}
+            aria-label={t("calendar.more_events_label", { count: hiddenCount })}
             onClick={props.onShowMore}
             className="w-full truncate rounded px-1 py-px text-left text-[11px] font-medium text-dls-secondary hover:bg-dls-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/35"
             data-testid={`calendar-day-more-${props.date}`}

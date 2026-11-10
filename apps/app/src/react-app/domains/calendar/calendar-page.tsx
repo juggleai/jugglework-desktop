@@ -1,12 +1,14 @@
 /** @jsxImportSource react */
 import * as React from "react";
 import type { CSSProperties } from "react";
-import { CalendarDays, CircleAlert, LoaderCircle, LogIn } from "lucide-react";
+import { CalendarDays, ChevronDown, CircleAlert, LoaderCircle, LogIn } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 import { Temporal } from "@js-temporal/polyfill";
 
+import type { DenCalendarEvent } from "@/app/lib/den";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { currentLocale, t } from "@/i18n";
 import { useDesktopConfig } from "@/react-app/domains/cloud/desktop-config-provider";
 import { useCloudSession } from "@/react-app/domains/settings/cloud/cloud-session-provider";
@@ -31,9 +33,20 @@ import {
 import { CalendarFilterList, CalendarMiniMonth, CalendarMonthGrid, CalendarMonthToolbar } from "./calendar-month-view";
 import { CalendarDayEvents } from "./calendar-day-events";
 import { CalendarAgenda, CalendarEventDetail } from "./calendar-agenda";
+import { CalendarDraftList, CalendarOfflineBanner } from "./calendar-offline-view";
 import { layoutCalendarEvents } from "./calendar-event-layout";
 import { CalendarEventEditor } from "./calendar-event-editor";
-import { calendarEventToForm, defaultCalendarEventForm } from "./calendar-event-form-model";
+import { calendarEventToForm, defaultCalendarEventForm, type CalendarEventFormValues } from "./calendar-event-form-model";
+import {
+  defaultCalendarOfflineRuntime,
+  draftForm,
+  eventDraftRecord,
+  useCalendarBaselinePersistence,
+  useCalendarEventDrafts,
+  useCalendarOfflineView,
+  useCalendarOnline,
+  type CalendarOfflineRuntime,
+} from "./calendar-offline-runtime";
 
 export type CalendarPageProps = {
   /** Retained-shell workspace, only forwarded to the navigation rail. Calendar data never depends on it. */
@@ -47,6 +60,8 @@ export type CalendarPageProps = {
   onOpenTaskSearch?: () => void;
   /** Injectable for deterministic tests; defaults to the system clock and zone. */
   clock?: CalendarClock;
+  /** Injectable connectivity and local cache; defaults to navigator.onLine and IndexedDB. */
+  offlineRuntime?: CalendarOfflineRuntime;
 };
 
 export function CalendarPage(props: CalendarPageProps) {
@@ -65,7 +80,7 @@ export function CalendarPage(props: CalendarPageProps) {
   const scopeKey = gate.kind === "ready" ? calendarScopeIdentity(gate.scope) : gate.kind;
   return (
     <CalendarPageFrame {...props}>
-      <CalendarGateContent key={scopeKey ?? "none"} gate={gate} onOpenAccount={props.onOpenAccount} clock={props.clock ?? systemCalendarClock} />
+      <CalendarGateContent key={scopeKey ?? "none"} gate={gate} onOpenAccount={props.onOpenAccount} clock={props.clock ?? systemCalendarClock} offlineRuntime={props.offlineRuntime} />
     </CalendarPageFrame>
   );
 }
@@ -99,7 +114,7 @@ function CalendarPageFrame(props: CalendarPageProps & { children: React.ReactNod
   );
 }
 
-function CalendarGateContent(props: { gate: CalendarPageGate; onOpenAccount: () => void; clock: CalendarClock }) {
+function CalendarGateContent(props: { gate: CalendarPageGate; onOpenAccount: () => void; clock: CalendarClock; offlineRuntime?: CalendarOfflineRuntime }) {
   const { gate } = props;
   if (gate.kind === "loading-capability") {
     return (
@@ -140,7 +155,7 @@ function CalendarGateContent(props: { gate: CalendarPageGate; onOpenAccount: () 
       </CalendarCenteredState>
     );
   }
-  return <CalendarReadyView scope={gate.scope} writeEnabled={gate.writeEnabled} clock={props.clock} />;
+  return <CalendarReadyView scope={gate.scope} writeEnabled={gate.writeEnabled} clock={props.clock} offlineRuntime={props.offlineRuntime} />;
 }
 
 export type CalendarClock = { now: () => Temporal.Instant; timeZone: () => string };
@@ -150,66 +165,130 @@ const systemCalendarClock: CalendarClock = {
   timeZone: () => Temporal.Now.timeZoneId(),
 };
 
-function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean; clock: CalendarClock }) {
+function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean; clock: CalendarClock; offlineRuntime?: CalendarOfflineRuntime }) {
   const cloud = useCloudSession();
+  const [offlineRuntime] = React.useState(() => props.offlineRuntime ?? defaultCalendarOfflineRuntime());
+  const online = useCalendarOnline(offlineRuntime.online);
   const locale = currentLocale();
   const timeZone = React.useMemo(() => props.clock.timeZone(), [props.clock]);
   const today = React.useMemo(() => calendarToday(timeZone, props.clock.now()), [props.clock, timeZone]);
   const weekStart = React.useMemo(() => calendarWeekStart(locale), [locale]);
   const [navigation, setNavigation] = React.useState(() => selectCalendarDate(today));
   const [hiddenIds, setHiddenIds] = React.useState(() => readHiddenCalendarIds(props.scope));
-  const calendarsQuery = useCalendarsQuery({ client: cloud.client, scope: props.scope });
-  const calendars = calendarsQuery.data ?? [];
+  const calendarsQuery = useCalendarsQuery({ client: cloud.client, scope: props.scope, active: online });
+  const gridRange = React.useMemo(() => calendarGridRange(navigation.month, weekStart), [navigation.month, weekStart]);
+  const bootstrapQuery = useCalendarBootstrapQuery({ client: cloud.client, scope: props.scope, range: gridRange, active: online });
+  useCalendarBaselinePersistence({ runtime: offlineRuntime, scope: props.scope, bootstrap: bootstrapQuery.data, online });
+  const offlineView = useCalendarOfflineView({ runtime: offlineRuntime, scope: props.scope, range: gridRange, online });
+  const eventDrafts = useCalendarEventDrafts(offlineRuntime, props.scope);
+  // Offline shows only what the scoped local cache fully covers; in-memory online results are not reused.
+  const calendars = online
+    ? calendarsQuery.data ?? []
+    : offlineView.state === "offline-covered" || offlineView.state === "offline-uncovered" ? offlineView.calendars : [];
+  const sourceEvents = online
+    ? bootstrapQuery.data?.events
+    : offlineView.state === "offline-covered" ? offlineView.events : undefined;
   const activeIds = calendars.map((calendar) => calendar.id);
   const activeKey = activeIds.join("\u0000");
 
   // Soft-deleted calendars leave the filter list; their hidden-state entry is dropped too.
   React.useEffect(() => {
-    if (!calendarsQuery.data) return;
+    if (!online || !calendarsQuery.data) return;
     setHiddenIds((current) => {
       const next = reconcileHiddenCalendarIds(current, activeIds);
       if (next.length === current.length) return current;
       writeHiddenCalendarIds(props.scope, next);
       return next;
     });
-  }, [activeKey, calendarsQuery.data, props.scope]);
+  }, [activeKey, calendarsQuery.data, online, props.scope]);
 
-  const gridRange = React.useMemo(() => calendarGridRange(navigation.month, weekStart), [navigation.month, weekStart]);
-  const bootstrapQuery = useCalendarBootstrapQuery({ client: cloud.client, scope: props.scope, range: gridRange });
   const visibleIds = React.useMemo(() => visibleCalendarIds(activeIds, hiddenIds), [activeKey, hiddenIds]);
   const calendarsById = React.useMemo(() => new Map(calendars.map((calendar) => [calendar.id, calendar])), [calendars]);
   const dayEntries = React.useMemo(() => layoutCalendarEvents({
-    events: bootstrapQuery.data?.events ?? [],
+    events: sourceEvents ?? [],
     days: calendarMonthGrid(navigation.month, weekStart),
     visibleCalendarIds: visibleIds,
-  }), [bootstrapQuery.data, navigation.month, visibleIds, weekStart]);
+  }), [navigation.month, sourceEvents, visibleIds, weekStart]);
 
   const [selectedEventId, setSelectedEventId] = React.useState<string | null>(null);
   const eventsById = React.useMemo(
-    () => new Map((bootstrapQuery.data?.events ?? []).map((event) => [event.id, event])),
-    [bootstrapQuery.data],
+    () => new Map((sourceEvents ?? []).map((event) => [event.id, event])),
+    [sourceEvents],
   );
   const selectedEvent = selectedEventId ? eventsById.get(selectedEventId) ?? null : null;
   const selectedEventVisible = selectedEvent ? visibleIds.includes(selectedEvent.calendarId) : false;
   // Once fresh data no longer contains the open event (deleted elsewhere, or its calendar removed), close it.
   React.useEffect(() => {
-    if (!selectedEventId || !bootstrapQuery.data || bootstrapQuery.isFetching) return;
+    if (!selectedEventId || !sourceEvents || (online && bootstrapQuery.isFetching)) return;
     if (!selectedEvent || !selectedEventVisible) setSelectedEventId(null);
-  }, [bootstrapQuery.data, bootstrapQuery.isFetching, selectedEvent, selectedEventId, selectedEventVisible]);
+  }, [bootstrapQuery.isFetching, online, selectedEvent, selectedEventId, selectedEventVisible, sourceEvents]);
   const selectedDayEntries = dayEntries.get(navigation.selectedDate.toString()) ?? [];
-  const [editor, setEditor] = React.useState<{ mode: "create" } | { mode: "edit"; eventId: string } | null>(null);
+  const [editor, setEditor] = React.useState<
+    | { mode: "create"; instance: number; draftId?: string; form?: CalendarEventFormValues }
+    | { mode: "edit"; instance: number; eventId: string; draftId?: string; form?: CalendarEventFormValues; draftBaseVersion?: number }
+    | null
+  >(null);
+  // Remount the form only when a different editing session starts, never when its draft is saved.
+  const editorInstance = React.useRef(0);
+  const nextEditorInstance = () => ++editorInstance.current;
   const editingEvent = editor?.mode === "edit" ? eventsById.get(editor.eventId) : undefined;
+  const draftsAvailable = eventDrafts.available;
+  const saveEditorDraft = draftsAvailable ? async (form: CalendarEventFormValues, base: DenCalendarEvent | undefined) => {
+    const id = editor?.draftId ?? createCalendarDraftId();
+    await eventDrafts.save(eventDraftRecord({ id, form, base: base ? { id: base.id, version: editor?.mode === "edit" && editor.draftBaseVersion !== undefined && editor.draftId === id ? editor.draftBaseVersion : base.version } : undefined }));
+    setEditor((current) => current ? { ...current, draftId: id, form } : current);
+  } : undefined;
+  const restoreDraft = (draftId: string) => {
+    if (!panelOpen) rememberOpener();
+    const draft = eventDrafts.drafts.find((item) => item.id === draftId);
+    const form = draft ? draftForm(draft) : null;
+    if (!draft || !form) return;
+    setSelectedEventId(null);
+    setEditor(draft.operation === "edit"
+      ? { mode: "edit", instance: nextEditorInstance(), eventId: draft.baseEntity.id, draftId, form, draftBaseVersion: draft.baseEntity.version }
+      : { mode: "create", instance: nextEditorInstance(), draftId, form });
+  };
   const openEvent = (eventId: string, date?: Temporal.PlainDate) => {
+    if (!panelOpen) rememberOpener();
     if (date) setNavigation(selectCalendarDate(date));
     setEditor(null);
     setSelectedEventId(eventId);
   };
   const startCreate = () => {
+    if (!panelOpen) rememberOpener();
     setSelectedEventId(null);
-    setEditor({ mode: "create" });
+    setEditor({ mode: "create", instance: nextEditorInstance() });
   };
+  const closeEditorAfterAuthoritativeSave = async (draftId: string | undefined) => {
+    // The draft is removed only after the cloud accepted the write.
+    if (draftId) await eventDrafts.discard(draftId).catch(() => undefined);
+  };
+  // Writes are possible online; offline the form opens only to keep an unsynced local draft.
+  const canOpenEditor = props.writeEnabled && (online || draftsAvailable);
   const defaultCalendarId = calendars.find((calendar) => calendar.isDefault)?.id ?? calendars[0]?.id ?? "";
 
+  const [filtersOpen, setFiltersOpen] = React.useState(false);
+  const panelOpener = React.useRef<HTMLElement | null>(null);
+  const panelOpen = editor !== null || (selectedEvent !== null && selectedEventVisible);
+  const wasPanelOpen = React.useRef(panelOpen);
+  const rememberOpener = () => {
+    const doc = focusableDocument();
+    if (!doc) return;
+    const active = doc.activeElement;
+    if (active instanceof HTMLElement && active !== doc.body) panelOpener.current = active;
+  };
+  React.useEffect(() => {
+    const closed = wasPanelOpen.current && !panelOpen;
+    wasPanelOpen.current = panelOpen;
+    if (!closed) return;
+    const doc = focusableDocument();
+    const opener = panelOpener.current;
+    panelOpener.current = null;
+    if (!doc) return;
+    // The opener may be gone (e.g. its event was deleted); fall back to the selected date in the grid.
+    const target = opener && opener.isConnected ? opener : doc.querySelector<HTMLElement>('[data-calendar-selected-day="true"]');
+    target?.focus();
+  }, [panelOpen]);
   const toggleCalendar = (calendarId: string, visible: boolean) => {
     setHiddenIds((current) => {
       const next = visible ? current.filter((id) => id !== calendarId) : [...new Set([...current, calendarId])];
@@ -220,12 +299,19 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
 
   return (
     <div
-      className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 p-4 lg:flex-row"
+      className="@container/calendar flex min-h-0 min-w-0 flex-1 overflow-y-auto"
+      data-testid="calendar-layout"
+    >
+    <div
+      className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 p-3 @3xl/calendar:p-4 @5xl/calendar:flex-row"
       data-testid="calendar-ready"
       data-calendar-write-enabled={props.writeEnabled ? "true" : "false"}
       data-visible-calendar-ids={visibleIds.join(",")}
     >
-      <aside className="flex shrink-0 flex-col gap-5 lg:w-56" data-testid="calendar-sidebar">
+      {/* Narrow: the filters collapse behind a disclosure and the mini month is hidden (the toolbar and
+          main grid already provide month navigation and date selection). */}
+      <aside className="order-2 flex shrink-0 flex-col gap-3 @5xl/calendar:order-none @5xl/calendar:w-56 @5xl/calendar:gap-5" aria-label={t("calendar.sidebar")} data-testid="calendar-sidebar">
+        <div className="hidden @5xl/calendar:block" data-testid="calendar-mini-month-slot">
         <CalendarMiniMonth
           state={navigation}
           today={today}
@@ -233,9 +319,23 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
           locale={locale}
           onSelectDate={(date) => setNavigation(selectCalendarDate(date))}
         />
-        <CalendarFilterList calendars={calendars} hiddenIds={hiddenIds} onToggle={toggleCalendar} />
+        </div>
+        <button
+          type="button"
+          className="flex items-center gap-1 self-start rounded-lg px-1 py-1 text-sm font-medium text-dls-text hover:bg-dls-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/35 @5xl/calendar:hidden"
+          aria-expanded={filtersOpen}
+          aria-controls="calendar-filter-region"
+          onClick={() => setFiltersOpen((open) => !open)}
+          data-testid="calendar-filter-toggle"
+        >
+          <ChevronDown className={cn("size-4 transition-transform", filtersOpen && "rotate-180")} aria-hidden="true" />
+          {t("calendar.filter_title")}
+        </button>
+        <div id="calendar-filter-region" className={cn(filtersOpen ? "block" : "hidden", "@5xl/calendar:block")} data-testid="calendar-filter-region">
+          <CalendarFilterList calendars={calendars} hiddenIds={hiddenIds} onToggle={toggleCalendar} />
+        </div>
       </aside>
-      <section className="flex min-h-0 min-w-0 flex-1 flex-col gap-3" aria-label={t("calendar.month_view")}>
+      <section className="order-1 flex min-h-[26rem] min-w-0 flex-1 flex-col gap-3 @5xl/calendar:order-none @5xl/calendar:min-h-0" aria-label={t("calendar.month_view")}>
         <CalendarMonthToolbar
           state={navigation}
           locale={locale}
@@ -243,7 +343,8 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
           onNext={() => setNavigation((current) => navigateCalendarMonth(current, 1))}
           onToday={() => setNavigation(selectCalendarDate(today))}
         />
-        {bootstrapQuery.isError ? (
+        {!online ? <CalendarOfflineBanner view={offlineView} locale={locale} /> : null}
+        {online && bootstrapQuery.isError ? (
           <p className="text-sm text-dls-secondary" role="alert" data-testid="calendar-events-error">{t("calendar.events_unavailable")}</p>
         ) : null}
         <CalendarMonthGrid
@@ -253,7 +354,7 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
           locale={locale}
           onSelectDate={(date) => setNavigation(selectCalendarDate(date))}
           onMoveSelection={(days) => setNavigation((current) => moveCalendarSelection(current, days))}
-          renderDayContent={(date) => {
+          renderDayContent={(date, selected) => {
             const key = date.toString();
             const entries = dayEntries.get(key) ?? [];
             if (entries.length === 0) return null;
@@ -265,35 +366,57 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
                 locale={locale}
                 onOpenEvent={(eventId) => openEvent(eventId, date)}
                 onShowMore={() => setNavigation(selectCalendarDate(date))}
+                focusable={selected}
               />
             );
           }}
         />
       </section>
-      <aside className="flex min-h-0 shrink-0 flex-col gap-3 overflow-auto lg:w-72" data-testid="calendar-day-panel">
+      <aside className="order-3 flex shrink-0 flex-col gap-3 @5xl/calendar:order-none @5xl/calendar:min-h-0 @5xl/calendar:w-72 @5xl/calendar:overflow-auto" aria-label={t("calendar.day_panel")} data-testid="calendar-day-panel">
         <CalendarAgenda
           date={navigation.selectedDate}
           entries={selectedDayEntries}
           calendarsById={calendarsById}
           locale={locale}
           selectedEventId={selectedEventId}
-          canCreate={props.writeEnabled && calendars.length > 0}
+          canCreate={canOpenEditor && calendars.length > 0}
           onOpenEvent={(eventId) => openEvent(eventId)}
           onCreate={startCreate}
         />
-        {editor && props.writeEnabled && (editor.mode === "create" || editingEvent) ? (
+        {eventDrafts.drafts.length > 0 ? (
+          <CalendarDraftList
+            drafts={eventDrafts.drafts}
+            eventsById={eventsById}
+            activeDraftId={editor?.draftId}
+            onRestore={restoreDraft}
+            onDiscard={(draftId) => {
+              void eventDrafts.discard(draftId);
+              if (editor?.draftId === draftId) setEditor(null);
+            }}
+          />
+        ) : null}
+        {editor && canOpenEditor && (editor.mode === "create" || editingEvent) ? (
           <CalendarEventEditor
-            key={editor.mode === "edit" ? `edit:${editor.eventId}` : `create:${navigation.selectedDate.toString()}`}
+            key={`editor:${editor.instance}`}
             client={cloud.client}
             scope={props.scope}
             calendars={calendars}
             timeZone={timeZone}
             event={editingEvent}
-            initial={editingEvent
+            initial={editor.form ?? (editingEvent
               ? calendarEventToForm(editingEvent)
-              : defaultCalendarEventForm({ date: navigation.selectedDate, calendarId: defaultCalendarId, timeZone })}
-            onSaved={(event) => { setEditor(null); setSelectedEventId(event.id); }}
-            onDeleted={() => { setEditor(null); setSelectedEventId(null); }}
+              : defaultCalendarEventForm({ date: navigation.selectedDate, calendarId: defaultCalendarId, timeZone }))}
+            online={online}
+            onSaveDraft={saveEditorDraft}
+            restoredFromDraft={Boolean(editor.draftId)}
+            staleDraftBase={editor.mode === "edit" && editor.draftBaseVersion !== undefined && editingEvent !== undefined && editor.draftBaseVersion !== editingEvent.version}
+            onDiscardDraft={editor.draftId ? () => {
+              const draftId = editor.draftId!;
+              void eventDrafts.discard(draftId);
+              setEditor(null);
+            } : undefined}
+            onSaved={(event) => { void closeEditorAfterAuthoritativeSave(editor.draftId); setEditor(null); setSelectedEventId(event.id); }}
+            onDeleted={() => { void closeEditorAfterAuthoritativeSave(editor.draftId); setEditor(null); setSelectedEventId(null); }}
             onCancel={() => setEditor(null)}
           />
         ) : selectedEvent && selectedEventVisible ? (
@@ -302,12 +425,23 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
             calendar={calendarsById.get(selectedEvent.calendarId)}
             locale={locale}
             onClose={() => setSelectedEventId(null)}
-            onEdit={props.writeEnabled ? () => setEditor({ mode: "edit", eventId: selectedEvent.id }) : undefined}
+            onEdit={canOpenEditor ? () => setEditor({ mode: "edit", instance: nextEditorInstance(), eventId: selectedEvent.id }) : undefined}
           />
         ) : null}
       </aside>
     </div>
+    </div>
   );
+}
+
+/** Focus restoration is a progressive enhancement: skip it when no usable DOM is present. */
+function focusableDocument(): Document | null {
+  if (typeof document === "undefined" || typeof HTMLElement === "undefined") return null;
+  return typeof document.querySelector === "function" ? document : null;
+}
+
+function createCalendarDraftId(): string {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto ? `draft-${crypto.randomUUID()}` : `draft-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
 
 function CalendarCenteredState(props: { testId: string; children: React.ReactNode }) {

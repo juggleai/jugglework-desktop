@@ -60,10 +60,12 @@
 - [x] 7.4 实现月格 Event 布局和溢出入口，按保存时区/全天日期/排他结束覆盖日期且稳定排序，并以 component tests 覆盖单日、跨月、跨日定时、DST、午夜结束及多事件溢出
 - [x] 7.5 实现选中日议程、空状态和 Event 详情，全天先于定时且相同开始时间以稳定 ID 排序，并以 component tests 验证月格/迷你月历/议程联动及远端删除时详情退出
 - [x] 7.6 实现在线 Event 创建、编辑、时间类型转换和删除表单，提交前校验 title/Calendar/time union，区分 pending/saved/validation/network/conflict 状态，并以 interaction tests 验证权威响应、失败草稿和 conflict 解决入口
-- [ ] 7.7 实现离线页面与表单体验：已覆盖范围只读、未覆盖范围明确不完整、delete/权威 save 不可用、草稿明确未同步，并以 interaction tests 验证绝不出现虚假“已保存”或自动上线写入
-- [ ] 7.8 完成窄窗口和标准桌面布局、键盘月格导航、可见焦点、语义标签及 Dialog 焦点恢复，并以组件可访问性测试和 Desktop 两种窗口尺寸的可视 smoke test 验证无核心操作依赖整页横向滚动
-- [ ] 7.9 补齐所有支持 locale 的 Calendar 导航、时间、离线、冲突、校验和空状态文案，并运行 `pnpm --filter @jugglework/app test:i18n` 验证无缺失键
-- [ ] 7.10 运行 `pnpm --filter @jugglework/app typecheck`、Calendar 定向测试、`pnpm --filter @jugglework/app test` 和 `pnpm --filter @jugglework/app build`，修复 Calendar 及现有 Desktop 回归
+- [x] 7.7 实现离线页面与表单体验：已覆盖范围只读、未覆盖范围明确不完整、delete/权威 save 不可用、草稿明确未同步，并以 interaction tests 验证绝不出现虚假“已保存”或自动上线写入
+- [x] 7.8 完成窄窗口和标准桌面布局、键盘月格导航、可见焦点、语义标签及 Dialog 焦点恢复，并以组件可访问性测试和 Desktop 两种窗口尺寸的可视 smoke test 验证无核心操作依赖整页横向滚动
+- [x] 7.9 补齐所有支持 locale 的 Calendar 导航、时间、离线、冲突、校验和空状态文案，并运行 `pnpm --filter @jugglework/app test:i18n` 验证无缺失键
+  - 验证记录：9 个非 en locale 的 Calendar key 缺失均为 0，占位符与 en 一致；`test:i18n --strict` 仍因非 Calendar 的既有缺失失败，缺失数与 origin/dev 相同（ru 的 extra 仅多出 Calendar 的 _few/_many 复数形式，与既有 ru 复数写法一致）。
+- [x] 7.10 运行 `pnpm --filter @jugglework/app typecheck`、Calendar 定向测试、`pnpm --filter @jugglework/app test` 和 `pnpm --filter @jugglework/app build`，修复 Calendar 及现有 Desktop 回归
+  - 验证（2026-11-10）：typecheck、build 通过；Calendar 定向 222 pass / 0 fail。全量 `--isolate` 2283 pass / 233 fail（224 个用例），与 origin/dev `d41e996`（已构建 `@jugglework/types`）的失败集合逐条对比无新增，全部为既有失败。修复全量下的跨文件干扰：在线状态订阅与焦点恢复在缺少 `window.addEventListener`/`document.querySelector` 时跳过；测试的 console.error 转发加重入保护。
 
 ## 8. 安全、迁移与灰度发布
 

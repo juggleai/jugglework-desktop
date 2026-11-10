@@ -101,7 +101,8 @@ type GridProps = {
   locale: string;
   onSelectDate: (date: Temporal.PlainDate) => void;
   onMoveSelection?: (days: number) => void;
-  renderDayContent?: (date: Temporal.PlainDate) => React.ReactNode;
+  /** `selected` lets the cell expose its event chips to Tab only for the roving-focus day. */
+  renderDayContent?: (date: Temporal.PlainDate, selected: boolean) => React.ReactNode;
 };
 
 function keyDelta(key: string): number | null {
@@ -216,9 +217,10 @@ export function CalendarMonthGrid(props: GridProps) {
                     tabIndex={selected ? 0 : -1}
                     aria-label={fullDateLabel(day, props.locale)}
                     aria-current={isToday ? "date" : undefined}
+                    data-calendar-selected-day={selected ? "true" : undefined}
                     onClick={() => props.onSelectDate(day)}
                     className={cn(
-                      "flex size-6 shrink-0 items-center justify-center self-start rounded-full text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/35",
+                      "flex size-6 shrink-0 items-center justify-center self-start rounded-full text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent focus-visible:ring-offset-1 focus-visible:ring-offset-dls-surface",
                       outside ? "text-dls-secondary/70" : "text-dls-text",
                       isToday ? "bg-dls-accent font-semibold text-white" : selected ? "font-semibold" : "hover:bg-dls-hover",
                     )}
@@ -226,7 +228,7 @@ export function CalendarMonthGrid(props: GridProps) {
                   >
                     {day.day}
                   </button>
-                  {props.renderDayContent?.(day)}
+                  {props.renderDayContent?.(day, selected)}
                 </div>
               );
             })}
