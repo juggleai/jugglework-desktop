@@ -1,3 +1,4 @@
+import { bindMeetingVideo } from "./video-view";
 import { exportMeetingDiagnostics } from "./diagnostics-export";
 import { bindRemoteAudio } from "./remote-audio";
 import { MeetingMembers } from "./meeting-members";
@@ -15,17 +16,18 @@ import { MeetingDialog } from "./meeting-page";
 import { MeetingIcon as Icon } from "./meeting-icons";
 import type { MediaTile } from "./zego-adapter";
 import "./meeting.css";
-function Video({ tile }: { tile: MediaTile; local: boolean }) {
+function Video({ tile }: { tile: MediaTile }) {
   const ref = useRef<HTMLVideoElement>(null);
+  const binding = useRef<ReturnType<typeof bindMeetingVideo> | null>(null);
   useEffect(() => {
-    if (ref.current) {
-      ref.current.srcObject = tile.stream;
-      void ref.current.play().catch(() => {});
-    }
-    return () => {
-      if (ref.current) ref.current.srcObject = null;
-    };
+    if (!ref.current) return;
+    const current = bindMeetingVideo(ref.current, tile.stream);
+    binding.current = current;
+    return () => { current.dispose(); binding.current = null; };
   }, [tile.stream]);
+  // SDK add/removeTrack calls need not dispatch MediaStream events. Device state
+  // renders also reconcile the video-only view without replacing it on mic toggles.
+  useEffect(() => { binding.current?.sync(); });
   return <video ref={ref} autoPlay playsInline muted />;
 }
 function RemoteAudio({ tile, onBlocked }: { tile: MediaTile; onBlocked: (id: string, blocked: boolean) => void }) {
@@ -275,7 +277,7 @@ export function MeetingRoomHost() {
               .filter((t) => t.screen)
               .map((t) => (
                 <div className="tile share-stage" key={t.id}>
-                  <Video tile={t} local={t.userId === uid} />
+                  <Video tile={t} />
                   <span className="tile-label">
                     屏幕共享 · {participantName(t.userId, m.participants[t.userId]?.name)}
                   </span>
@@ -296,7 +298,7 @@ export function MeetingRoomHost() {
                   }
                 >
                   <span className="avatar">{participantName(p.userId, p.name).slice(0, 1)}</span>
-                  {tile ? <Video tile={tile} local={p.userId === uid} /> : null}
+                  {tile ? <Video tile={tile} /> : null}
                   <span className="tile-label">
                     {participantName(p.userId, p.name)}
                     {p.userId === uid ? "（我）" : ""}

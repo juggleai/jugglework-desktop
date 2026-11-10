@@ -63,7 +63,7 @@ export async function meetingDiagnosticStep<T>(name: string, data: unknown, run:
   } finally { clearTimeout(pending); }
 }
 export function meetingDiagnosticsJson() {
-  return JSON.stringify({ format: 1, instrumentation: "meeting-trace-20261110-1", exportedAt: new Date().toISOString(),
+  return JSON.stringify({ format: 1, instrumentation: "meeting-trace-20261110-2-video-only", exportedAt: new Date().toISOString(),
     endpoint, userAgent: typeof navigator !== "undefined" ? navigator.userAgent : "unknown",
     storageAvailable, note: "Metadata only; no audio, video, chat text or credentials. UTC timestamps plus monotonic clock per endpoint.", entries }, null, 2);
 }

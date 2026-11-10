@@ -368,3 +368,29 @@ test('camera capture returning after the deadline is destroyed without restoring
  finishCapture({getTracks:()=>[video]});await new Promise(r=>setTimeout(r,0));
  assert.equal(audio.readyState,'ended');assert.equal(video.readyState,'ended');assert.equal(media.cameraEnabled,false);
 });
+
+test('meeting child video excludes audio and preserves its video view through device changes', async () => {
+ const {bindMeetingVideo}=await load('../src/react-app/domains/meeting/video-view.ts');
+ const original=globalThis.MediaStream;
+ class Stream extends EventTarget {
+  constructor(tracks=[]){super();this.tracks=[...tracks];}
+  getTracks(){return [...this.tracks];}getVideoTracks(){return this.tracks.filter(t=>t.kind==='video');}
+  addTrack(t){this.tracks.push(t);}removeTrack(t){this.tracks=this.tracks.filter(v=>v!==t);}
+ }
+ globalThis.MediaStream=Stream;
+ const audio=Object.assign(new EventTarget(),{kind:'audio',readyState:'live',enabled:true});
+ const video=Object.assign(new EventTarget(),{kind:'video',readyState:'live',stop:()=>assert.fail('view cannot stop RTC tracks')});
+ const source=new Stream([audio]);let plays=0;
+ const element={muted:false,paused:true,srcObject:null,play:async()=>{plays++;element.paused=false;},pause:()=>{element.paused=true;}};
+ try {
+  const binding=bindMeetingVideo(element,source),view=element.srcObject;
+  assert.notEqual(view,source);assert.deepEqual(view.getTracks(),[]);assert.equal(plays,0);
+  source.addTrack(video);binding.sync();assert.deepEqual(view.getTracks(),[video]);assert.equal(plays,1);
+  audio.enabled=false;binding.sync();assert.equal(element.srcObject,view);assert.equal(plays,1);
+  assert.ok(!view.getTracks().includes(audio));
+  video.readyState='ended';video.dispatchEvent(new Event('ended'));assert.deepEqual(view.getTracks(),[]);
+  const next=Object.assign(new EventTarget(),{kind:'video',readyState:'live'});
+  source.addTrack(next);source.dispatchEvent(new Event('addtrack'));assert.deepEqual(view.getTracks(),[next]);
+  binding.dispose();assert.equal(element.srcObject,null);assert.equal(audio.readyState,'live');assert.equal(next.readyState,'live');
+ } finally {if(original===undefined)delete globalThis.MediaStream;else globalThis.MediaStream=original;}
+});
