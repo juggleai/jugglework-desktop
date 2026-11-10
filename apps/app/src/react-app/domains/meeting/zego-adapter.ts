@@ -36,6 +36,8 @@ export class MeetingMedia {
   private joinInfo?: MeetingJoin;
   private local?: MediaStream;
   private share?: MediaStream;
+  // Keep SDK-created source previews alive while their tracks are published.
+  private cameraSource?: MediaStream;
   private disposed = false;
   private cameraEnabled = false;
   private cameraCaptured = false;
@@ -67,8 +69,11 @@ export class MeetingMedia {
         const key = `${event}:${typeof args[0] === "string" ? args[0] : ""}`;
         if (event.includes("Quality") && Date.now() - (sampled.get(key) || 0) < 5000) return;
         sampled.set(key, Date.now());
-        meetingDiagnostic(`rtc.${event}`, { id: event !== "deviceError" && typeof args[0] === "string" ? args[0].slice(0, 200) : undefined,
-          state: typeof args[1] === "string" && /^[A-Z_]+$/.test(args[1]) ? args[1] : undefined,
+        const detail = args[0] && typeof args[0] === "object" ? args[0] as Record<string, unknown> : {};
+        const id = typeof args[0] === "string" ? args[0] : detail.streamID;
+        const state = typeof args[1] === "string" ? args[1] : detail.state;
+        meetingDiagnostic(`rtc.${event}`, { id: event !== "deviceError" && typeof id === "string" ? id.slice(0, 200) : undefined,
+          state: typeof state === "string" && /^[A-Z_]+$/.test(state) ? state : undefined,
           metrics: args.map(a => meetingNumericMetrics(a)) });
       });
     }
@@ -222,15 +227,16 @@ export class MeetingMedia {
         await meetingDiagnosticStep("device.permission", { camera: true }, () => ensureMeetingMediaPermissions(false, true));
         if (this.disposed) return;
         let captured: MediaStream;
-        try { captured = await meetingDiagnosticStep("device.getUserMedia", { mic: false, camera: true }, () => navigator.mediaDevices.getUserMedia({ audio: false, video: true })); }
+        try { captured = await meetingDiagnosticStep("device.createCamera", {}, () => this.engine.createStream({ camera: { audio: false, video: true } }) as Promise<MediaStream>); }
         catch (error) { throw new Error(meetingDeviceError(error, false, true)); }
-        if (this.disposed) { captured.getTracks().forEach(t => t.stop()); return; }
+        if (this.disposed) { this.engine.destroyStream(captured); return; }
+        this.cameraSource = captured;
         const video = captured.getVideoTracks()[0];
         try {
           const result = await meetingDiagnosticStep("device.addTrack", { kind: "video" }, () => this.engine.addTrack(local, video) as Promise<any>);
           if (result?.errorCode) throw new Error("无法开启摄像头");
-          if (this.disposed) { video.stop(); return; }
-        } catch (error) { captured.getTracks().forEach(t => t.stop()); throw error; }
+          if (this.disposed) { this.engine.destroyStream(captured); return; }
+        } catch (error) { this.engine.destroyStream(captured); this.cameraSource = undefined; throw error; }
       }
       this.cameraEnabled = camera;
       this.cameraCaptured = this.cameraCaptured || camera;
@@ -300,6 +306,10 @@ export class MeetingMedia {
       this.engine.destroyStream(this.local);
       this.local = undefined;
       this.microphoneCaptured = false;
+    }
+    if (this.cameraSource) {
+      this.engine.destroyStream(this.cameraSource);
+      this.cameraSource = undefined;
     }
     for (const id of this.remote) this.engine?.stopPlayingStream(id);
     this.remote.clear();

@@ -39,3 +39,15 @@
 本地自动化覆盖：退出与续期交错、日志保留与重启恢复、敏感字段过滤、存储失败不阻断业务、原生无响应/崩溃事件保留，以及既有媒体与会议信令测试。双真实 PC 的持续通话、Windows 摄像头驱动、双端终止同步，须拿到这次现场日志后定位并按同一路径复测。
 
 本轮本机验证：18 项会议/诊断自动化测试通过，前端与 Electron 类型检查通过，IPC 桥接检查通过；实际启动 Electron，通过真实 IPC 导出到临时 JSON，确认同时包含渲染器事件与 `process.start` 原生事件，两个存储可用标记均为 true。该导出验证没有模拟 Windows 摄像头故障，也没有进行双 PC 通话验收。
+
+## 16:20–16:22 本机现场与修复
+
+已读取这次实际故障的持久化诊断，保存为本机临时证据 `/tmp/meeting-current-evidence.json`（不提交现场用户标识到仓库）。北京时间 16:21:13 点击开视频；授权约 19ms 完成，浏览器摄像头采集约 1501ms 完成；16:21:14 进入 `device.addTrack`，8 秒后仍 pending，直到 16:22:17 断开前都没有 done。期间视频已在传输、生命周期轮询继续，但应用的 `cameraEnabled` 一直为 false，说明是 SDK 操作 Promise 未完成，而非整个渲染进程冻结。
+
+内置 ZEGO 3.12.0 的 `handleTrack(ADD)` 查询轨道所属 SDK preview，再用 `preview.videoInfo` 更新目标 preview。对于直接由 `navigator.getUserMedia` 创建的视频轨道，此处没有源 preview，随后 `updateVideoInfo(undefined)` 读取 width 等字段抛异常。异常发生在内部异步函数，外层 addTrack Promise 未获得 resolve/reject，导致设备状态与实际发送状态不一致，界面共用 busy 一直保持。
+
+修复：首次追加摄像头通过 ZEGO `createStream({camera:{audio:false,video:true}})` 建立源 preview，再追加其视频轨道。源 preview 保留到离会统一销毁；原有麦克风与发布流不重建。设备 busy 与聊天/邀请/导出/离会操作分离。30 秒仍未完成的设备切换停止本机会话并提示重新加入，不让晚到的 SDK 操作恢复已退出的会话。
+
+本机实际验证：音频入会后开启视频约 839ms；连续四次开关摄像头均完成，麦克风轨道保持同一个对象；真实会议窗口模拟 8 秒设备响应慢时仅设备按钮等待，聊天、邀请、导出、离会保持可用。开麦入会与关麦入会后开麦两条路径均测得原始麦克风及 ZEGO 云端返回的非零音频能量，测试结束后轨道为 ended。测试中单机云端返回仅用于定位本机链路，不能作为 Windows 双机验收。
+
+故障现场中，来自对端的 audioBitrate 约 43–50kbps，音频帧和播放时间持续前进，audioLevel 与累计 totalAudioEnergy（SDK 字段 audioSendLevel）始终为零；该现象在本机点击开视频之前已存在。对端 IM 报告 mic=true，RTC 麦克风状态 OPEN，所以不能将 UI 亮麦或有码率等同于有声音。仍需发送端同场日志或实际采集/编码能量验证；本轮不宣称已解决该独立双端无声问题。

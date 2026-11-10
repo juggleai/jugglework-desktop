@@ -1,3 +1,4 @@
+import { withMeetingDeviceDeadline } from "./device-operation";
 import { meetingDiagnostic, meetingDiagnosticError, meetingDiagnosticStep } from "./diagnostics";
 import { acceptDeviceState, type MemberDeviceState } from "./device-state";
 import { readMeetingDesktopConfig } from "@/app/lib/desktop";
@@ -231,7 +232,16 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
     const mic = device === "mic" ? !get().mic : get().mic;
     const camera = device === "camera" ? !get().camera : get().camera;
     try {
-      await meetingDiagnosticStep("device.toggle", { device, mic, camera }, () => media!.setDevices(mic, camera));
+      const target = media!;
+      await meetingDiagnosticStep("device.toggle", { device, mic, camera }, () => withMeetingDeviceDeadline(
+        () => target.setDevices(mic, camera),
+        () => {
+          if (run !== generation) return;
+          const current = lease;
+          forceMeetingCleanup("设备切换超时，已停止本机音视频，请重新加入会议。");
+          if (current) void meetingAPI.action(current.meeting.id, "leave", { sessionId: current.sessionId }).catch(() => {});
+        },
+      ));
       if (run !== generation) return;
       set({ mic, camera });
       announceState();

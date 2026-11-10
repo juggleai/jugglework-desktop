@@ -4,7 +4,11 @@ import fs from 'node:fs/promises';
 import ts from 'typescript';
 const diagnosticSource = await fs.readFile(new URL('../src/react-app/domains/meeting/diagnostics.ts', import.meta.url), 'utf8');
 const diagnosticUrl = 'data:text/javascript;base64,' + Buffer.from(ts.transpileModule(diagnosticSource, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText).toString('base64');
+const deadlineSource = await fs.readFile(new URL('../src/react-app/domains/meeting/device-operation.ts', import.meta.url), 'utf8');
+const deadlineUrl = 'data:text/javascript;base64,' + Buffer.from(ts.transpileModule(deadlineSource, {compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText).toString('base64');
 function transpile(source, options) {
+ if (source.includes('withMeetingDeviceDeadline(') && !source.includes('function withMeetingDeviceDeadline'))
+  source = `import {withMeetingDeviceDeadline} from "${deadlineUrl}";\n` + source;
  source = source.replace(/from "\.\/diagnostics"/g, `from "${diagnosticUrl}"`);
  // The store harness strips imports and provides its own dependencies.
  if (source.includes('meetingDiagnostic(') && !source.includes(diagnosticUrl))
@@ -316,4 +320,51 @@ test('successful leave still disposes media when an in-flight renewal replaces t
   forceMeetingCleanup();
   assert.equal(phase,'idle');assert.equal(disposedBeforeCleanup,1);
  } finally {globalThis.window=oldWindow;globalThis.setInterval=oldInterval;globalThis.clearInterval=oldClear;Date.now=oldNow;delete globalThis.__leaveRaceDeps;}
+});
+
+test('first camera enable uses SDK-owned metadata and keeps source alive until disposal', async () => {
+ let source=await fs.readFile(new URL('../src/react-app/domains/meeting/zego-adapter.ts',import.meta.url),'utf8');
+ source=source.replace('import { ensureMeetingMediaPermissions, meetingDeviceError } from "./media-permission";','const ensureMeetingMediaPermissions=async()=>{}; const meetingDeviceError=e=>e.message;');
+ const {MeetingMedia}=await import('data:text/javascript;base64,'+Buffer.from(transpile(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText).toString('base64'));
+ const audio={kind:'audio',readyState:'live',stop(){this.readyState='ended'}};
+ const video={kind:'video',readyState:'live',stop(){this.readyState='ended'}};
+ const tracks=[audio];const local={getAudioTracks:()=>[audio],getTracks:()=>tracks};
+ const captured={getVideoTracks:()=>[video],getTracks:()=>[video]};
+ const destroyed=[];
+ const media=new MeetingMedia(()=>{},()=>{},()=>{});
+ media.local=local;media.joinInfo={roomId:'r',userId:'u',sessionId:'s'};media.microphoneCaptured=true;
+ let registered=false;
+ media.engine={createStream:async config=>{assert.deepEqual(config,{camera:{audio:false,video:true}});registered=true;return captured;},
+ addTrack:async(s,t)=>{assert.equal(registered,true,'raw getUserMedia tracks have no SDK videoInfo');assert.equal(s,local);assert.equal(t,video);tracks.push(t);return {errorCode:0};},
+ destroyStream:s=>{destroyed.push(s);s.getTracks().forEach(t=>t.stop());},stopPublishingStream(){},logoutRoom(){},destroyEngine(){}};
+ await media.setDevices(true,true);
+ assert.equal(media.cameraEnabled,true);assert.equal(local.getAudioTracks()[0],audio);assert.equal(destroyed.length,0);
+ media.dispose();assert.ok(destroyed.includes(local));assert.ok(destroyed.includes(captured));assert.equal(video.readyState,'ended');
+});
+
+test('hung device operations expire once and late completion cannot succeed', async () => {
+ const {withMeetingDeviceDeadline}=await load('../src/react-app/domains/meeting/device-operation.ts');
+ let resolve,cleanup=0;
+ const work=withMeetingDeviceDeadline(()=>new Promise(r=>{resolve=r}),()=>cleanup++,5);
+ await assert.rejects(work,/设备切换超时/);
+ resolve(true);await new Promise(r=>setTimeout(r,10));assert.equal(cleanup,1);
+ assert.equal(await withMeetingDeviceDeadline(async()=>42,()=>cleanup++,50),42);
+ await assert.rejects(withMeetingDeviceDeadline(async()=>{throw Error('denied')},()=>cleanup++,50),/denied/);
+ assert.equal(cleanup,1);
+});
+
+test('camera capture returning after the deadline is destroyed without restoring exited media', async () => {
+ let source=await fs.readFile(new URL('../src/react-app/domains/meeting/zego-adapter.ts',import.meta.url),'utf8');
+ source=source.replace('import { ensureMeetingMediaPermissions, meetingDeviceError } from "./media-permission";','const ensureMeetingMediaPermissions=async()=>{}; const meetingDeviceError=e=>e.message;');
+ const {MeetingMedia}=await import('data:text/javascript;base64,'+Buffer.from(transpile(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText).toString('base64'));
+ const {withMeetingDeviceDeadline}=await load('../src/react-app/domains/meeting/device-operation.ts');
+ const audio={kind:'audio',readyState:'live',stop(){this.readyState='ended';}};
+ const video={kind:'video',readyState:'live',stop(){this.readyState='ended';}};
+ let finishCapture;
+ const media=new MeetingMedia(()=>assert.fail('must not restore exited tile'),()=>{},()=>{});
+ media.local={getTracks:()=>[audio]};media.joinInfo={roomId:'r',userId:'u',sessionId:'s'};
+ media.engine={createStream:()=>new Promise(r=>{finishCapture=r}),destroyStream:s=>s.getTracks().forEach(t=>t.stop()),stopPublishingStream(){},logoutRoom(){},destroyEngine(){},addTrack:()=>assert.fail('late capture must not publish')};
+ await assert.rejects(withMeetingDeviceDeadline(()=>media.setDevices(true,true),()=>media.dispose(),5),/超时/);
+ finishCapture({getTracks:()=>[video]});await new Promise(r=>setTimeout(r,0));
+ assert.equal(audio.readyState,'ended');assert.equal(video.readyState,'ended');assert.equal(media.cameraEnabled,false);
 });

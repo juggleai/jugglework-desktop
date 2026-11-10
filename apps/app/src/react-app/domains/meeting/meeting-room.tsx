@@ -53,6 +53,8 @@ export function MeetingRoomHost() {
   const [invite, setInvite] = useState(false);
   const [leaving, setLeaving] = useState(false);
   const [text, setText] = useState("");
+  const deviceRequest = useRef(0);
+  const [deviceBusy, setDeviceBusy] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [popup, setPopup] = useState<Window | null>(null);
@@ -69,6 +71,7 @@ export function MeetingRoomHost() {
   const [miniPopup, setMiniPopup] = useState<Window | null>(null);
   const uid = user?.id || "";
   const m = s.meeting;
+  useEffect(() => { deviceRequest.current++; setDeviceBusy(false); }, [m?.id]);
   const previousUser = useRef(uid);
   useEffect(() => {
     if (
@@ -131,6 +134,15 @@ export function MeetingRoomHost() {
     } finally {
       setBusy(false);
     }
+  }
+  async function changeDevice(device: "mic" | "camera") {
+    if (deviceBusy) return;
+    const request = ++deviceRequest.current;
+    setDeviceBusy(true);
+    setMessage("");
+    try { await s.toggleDevice(device); }
+    catch (error) { setMessage(error instanceof Error ? error.message : "设备切换失败"); }
+    finally { if (request === deviceRequest.current) setDeviceBusy(false); }
   }
   function focusWindow(target: "main" | "meeting", child = popup) {
     if (window.__JUGGLEWORK_ELECTRON__?.invokeDesktop) {
@@ -213,8 +225,8 @@ export function MeetingRoomHost() {
       <div className="compact-speaking">正在讲话：</div>
       <div className="compact-controls">
         <button title="展开会议" aria-label="展开会议" onClick={() => focusWindow("meeting")}><Icon name="expand" /></button>
-        <button className={!s.mic ? "device-off" : ""} title={s.mic ? "静音" : "开启麦克风"} aria-label={s.mic ? "静音" : "开启麦克风"} disabled={busy} onClick={() => void run(() => s.toggleDevice("mic"))}><Icon name="mic" off={!s.mic} /></button>
-        <button className={!s.camera ? "device-off" : ""} title={s.camera ? "关闭摄像头" : "开启摄像头"} aria-label={s.camera ? "关闭摄像头" : "开启摄像头"} disabled={busy} onClick={() => void run(() => s.toggleDevice("camera"))}><Icon off={!s.camera} /></button>
+        <button className={!s.mic ? "device-off" : ""} title={s.mic ? "静音" : "开启麦克风"} aria-label={s.mic ? "静音" : "开启麦克风"} disabled={deviceBusy || s.phase !== "joined"} onClick={() => void changeDevice("mic")}><Icon name="mic" off={!s.mic} /></button>
+        <button className={!s.camera ? "device-off" : ""} title={s.camera ? "关闭摄像头" : "开启摄像头"} aria-label={s.camera ? "关闭摄像头" : "开启摄像头"} disabled={deviceBusy || s.phase !== "joined"} onClick={() => void changeDevice("camera")}><Icon off={!s.camera} /></button>
         <button className="compact-hangup" title="离开会议" aria-label="离开会议" onClick={() => { focusWindow("meeting"); setLeaving(true); }}><Icon name="hangup" /></button>
       </div>
       {message || s.error ? <div className="compact-error"><MeetingPermissionNotice message={message || s.error || ""} onClose={() => { setMessage(""); useMeetingStore.setState({ error: null }); }} /></div> : null}
@@ -369,16 +381,16 @@ export function MeetingRoomHost() {
           <span className="room-code"><span className="sub">会议号</span><strong>{m.code}</strong></span>
           <button
             className={`control ${s.mic ? "" : "off"}`}
-            disabled={busy || s.phase !== "joined"}
-            onClick={() => void run(() => s.toggleDevice("mic"))}
+            disabled={deviceBusy || s.phase !== "joined"}
+            onClick={() => void changeDevice("mic")}
           >
             <Icon name="mic" off={!s.mic} />
             {s.mic ? "静音" : "解除静音"}
           </button>
           <button
             className={`control ${s.camera ? "" : "off"}`}
-            disabled={busy || s.phase !== "joined"}
-            onClick={() => void run(() => s.toggleDevice("camera"))}
+            disabled={deviceBusy || s.phase !== "joined"}
+            onClick={() => void changeDevice("camera")}
           >
             <Icon off={!s.camera} />
             {s.camera ? "关闭视频" : "开启视频"}
