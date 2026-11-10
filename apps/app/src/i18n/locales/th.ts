@@ -1153,6 +1153,8 @@ export default {
   "workspace.sandbox_badge": "Sandbox",
   "workspace.selected": "เลือกแล้ว",
   "workspace_list.add_workspace": "เพิ่มพื้นที่ทำงาน",
+  "workspace_list.projects": "โปรเจกต์",
+  "workspace_list.recent": "ล่าสุด",
   "workspace_list.connecting": "กำลังเชื่อมต่อ...",
   "workspace_list.delete_session": "ลบเซสชัน",
   "workspace_list.edit_connection": "แก้ไขการเชื่อมต่อ",

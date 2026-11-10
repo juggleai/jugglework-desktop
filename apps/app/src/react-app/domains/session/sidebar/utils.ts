@@ -8,6 +8,10 @@ export const MAX_SESSIONS_PREVIEW = 6;
 
 export type SessionListItem = WorkspaceSessionGroup["sessions"][number];
 export type FlattenedSessionRow = { session: SessionListItem; depth: number };
+export type RecentSessionEntry = {
+  group: WorkspaceSessionGroup;
+  session: SessionListItem;
+};
 export type SessionTreeState = {
   childrenByParent: Map<string, SessionListItem[]>;
   ancestorIdsBySessionId: Map<string, string[]>;
@@ -129,6 +133,33 @@ export const partitionArchivedSessions = (sessions: WorkspaceSessionGroup["sessi
     (isSessionArchived(session) ? archived : active).push(session);
   }
   return { active, archived };
+};
+
+const sessionRecency = (session: SessionListItem) =>
+  session.time?.updated ?? session.time?.created ?? 0;
+
+/**
+ * Collect active root sessions across workspaces in a single stable recency list.
+ * Child sessions remain reachable from their parent but never become duplicate
+ * top-level entries in the global "Recent" section.
+ */
+export const collectRecentSessions = (
+  groups: WorkspaceSessionGroup[],
+  excludedSessionIds: ReadonlySet<string> = EMPTY_SET,
+): RecentSessionEntry[] => {
+  const entries = groups.flatMap((group, groupIndex) =>
+    getRootSessions(partitionArchivedSessions(group.sessions).active)
+      .filter((session) => !excludedSessionIds.has(session.id))
+      .map((session, sessionIndex) => ({ group, session, groupIndex, sessionIndex })),
+  );
+
+  entries.sort((left, right) =>
+    sessionRecency(right.session) - sessionRecency(left.session)
+    || left.groupIndex - right.groupIndex
+    || left.sessionIndex - right.sessionIndex,
+  );
+
+  return entries.map(({ group, session }) => ({ group, session }));
 };
 
 /**

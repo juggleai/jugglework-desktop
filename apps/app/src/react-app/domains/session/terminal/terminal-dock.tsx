@@ -5,6 +5,7 @@ import { Terminal } from "@xterm/xterm";
 import { X } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
 import { Button } from "@/components/ui/button";
+import { t } from "@/i18n";
 import { captureTerminalTarget, consumeTerminalOutput } from "./terminal-state";
 import { readTerminalTheme, observeTerminalTheme } from "./terminal-theme";
 
@@ -74,10 +75,10 @@ export function TerminalDock(props: Props) {
       terminal.dispose();
     };
   }, [workspaceId, sessionId, isRemoteWorkspace]);
-  return <section className="flex h-full min-h-0 flex-col border-t border-border bg-background text-foreground" aria-label="Terminal">
+  return <section className="flex h-full min-h-0 flex-col border-t border-border bg-background text-foreground" aria-label={t("terminal.title")}>
     <header className="flex h-7 shrink-0 items-center justify-between border-b border-border bg-muted pl-3 pr-1 text-muted-foreground">
-      <span className="text-xs font-medium">Terminal</span>
-      <Button variant="ghost" size="icon-sm" className="size-6" aria-label="Hide terminal" title="Hide terminal" onClick={onClose}>
+      <span className="text-xs font-medium">{t("terminal.title")}</span>
+      <Button variant="ghost" size="icon-sm" className="size-6" aria-label={t("terminal.hide")} title={t("terminal.hide")} onClick={onClose}>
         <X size={14} aria-hidden="true" />
       </Button>
     </header>

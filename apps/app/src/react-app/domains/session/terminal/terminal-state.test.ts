@@ -5,7 +5,7 @@ declare const expect: (value: unknown) => {
   rejects: { toThrow(value: string): Promise<void> };
 };
 import { captureTerminalTarget, consumeTerminalOutput } from "./terminal-state";
-test("open captures action pane and cannot follow subsequent focus/workspace changes", async () => {
+test("one mounted dock keeps the action pane binding it captured at open", async () => {
   const action = { workspaceId: "w", sessionId: "split-right", isRemoteWorkspace: false };
   const captured = captureTerminalTarget(action);
   action.sessionId = "primary"; action.workspaceId = "other";

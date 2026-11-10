@@ -5,6 +5,50 @@ const source = readFileSync(new URL("../src/react-app/domains/session/sidebar/ap
 const progressSource = readFileSync(new URL("../src/react-app/domains/session/sidebar/session-circular-progress.tsx", import.meta.url), "utf8");
 
 describe("workspace sidebar actions", () => {
+  test("splits local navigation into collapsible projects and a cross-workspace recent list", () => {
+    expect(source).toContain("<LocalProjectsSection");
+    expect(source).toContain("<LocalRecentSessions");
+    expect(source).toContain("entries={recentSessions}");
+    expect(source).toContain('taskScope === "local"');
+    expect(source).toContain('t("workspace_list.projects")');
+    expect(source).toContain('t("workspace_list.recent")');
+    expect(source).toMatch(/function LocalProjectsSection[\s\S]+<Collapsible open=\{expanded\} onOpenChange=\{onExpandedChange\}/);
+    expect(source).toMatch(/function LocalProjectsSection[\s\S]+<WorkspaceSidebarGroup/);
+    expect(source).toContain("onAddWorkspace={props.onOpenCreateLocalWorkspace}");
+    expect(source).toMatch(/function LocalRecentSessionItem[\s\S]+workspaceName=\{workspaceLabel\(entry\.group\.workspace\)\}/);
+    expect(source).toMatch(/function LocalRecentSessions[\s\S]+<Collapsible open=\{expanded\} onOpenChange=\{onExpandedChange\}/);
+    expect(source).toMatch(/function LocalRecentSessionItem[\s\S]+showWorkspaceIcon=\{false\}[\s\S]+flushLeft/);
+  });
+
+  test("opens the existing local workspace dialog from the projects heading hover action", () => {
+    const projects = source.slice(source.indexOf("function LocalProjectsSection("), source.indexOf("function LocalRecentSessions("));
+
+    expect(projects).toContain("onAddWorkspace: () => void");
+    expect(projects).toContain("data-local-projects-add-workspace");
+    expect(projects).toContain('aria-label={t("workspace_list.add_workspace")}');
+    expect(projects).toContain("group-hover/projects-heading:opacity-100");
+    expect(projects).toMatch(/onClick=\{\(event\) => \{[\s\S]+event\.stopPropagation\(\);[\s\S]+onAddWorkspace\(\);/);
+  });
+
+  test("aligns and collapses pinned sessions without a reserved leading lane", () => {
+    const pinned = source.slice(source.indexOf("function GlobalPinnedSessions("), source.indexOf("type GlobalArchivedSessionEntry"));
+    expect(pinned).toContain('className="shrink-0 px-0 pb-1 pt-2"');
+    expect(pinned).toContain('<SidebarMenu data-global-pinned-session-list className="px-2">');
+    expect(pinned).toContain("<Collapsible open={expanded} onOpenChange={setExpanded}");
+    expect(pinned).toContain("group-hover/pinned-heading:opacity-100");
+    expect(pinned).toContain("group-data-open/pinned:rotate-90");
+    expect(source).toMatch(/function GlobalPinnedSessionTree[\s\S]+showWorkspaceIcon=\{false\}[\s\S]+flushLeft/);
+  });
+
+  test("uses the project workspace horizontal track for pinned and recent rows", () => {
+    const projects = source.slice(source.indexOf("function LocalProjectsSection("), source.indexOf("function LocalRecentSessions("));
+    const recent = source.slice(source.indexOf("function LocalRecentSessions("), source.indexOf("function LocalRecentSessionItem("));
+
+    expect(projects).toContain('<WorkspaceSidebarGroup');
+    expect(recent).toContain('<SidebarMenu data-local-recent-session-list className="px-2">');
+    expect(source).toContain('<SidebarMenu data-global-pinned-session-list className="px-2">');
+  });
+
   test("hides the workspace color dot on pinned sessions while retaining workspace context", () => {
     const pinned = source.slice(source.indexOf("function GlobalPinnedSessionTree("), source.indexOf("type WorkspaceHeaderProps"));
     expect(pinned).toContain("showWorkspaceIcon={false}");
@@ -58,7 +102,7 @@ describe("workspace sidebar actions", () => {
 
   test("keeps the empty left lane after moving session loading to the trailing slot", () => {
     expect(source).toMatch(/const LEFT_ACTIVITY_SLOT = "flex size-4 shrink-0 items-center justify-center"/);
-    expect(source).toMatch(/const leading = \([\s\S]+aria-hidden="true" className=\{LEFT_ACTIVITY_SLOT\}/);
+    expect(source).toMatch(/const leading = flushLeft \? null : \([\s\S]+aria-hidden="true" className=\{LEFT_ACTIVITY_SLOT\}/);
     expect(source).not.toMatch(/className=\{LEFT_ACTIVITY_SLOT\} role="status"/);
   });
 
@@ -107,7 +151,7 @@ describe("workspace sidebar actions", () => {
 
   test("keeps automation-managed workspaces out of the local workspace sidebar", () => {
     expect(source).toMatch(/sidebarWorkspaceSessionGroups = React\.useMemo\([\s\S]+!group\.workspace\.automationManaged/);
-    expect(source).toMatch(/const inScope = sidebarWorkspaceSessionGroups\.filter/);
+    expect(source).toMatch(/workspaceSessionGroupsInScope = React\.useMemo\([\s\S]+sidebarWorkspaceSessionGroups\.filter/);
     expect(source).toMatch(/resolveWorkspaceSessionIndicator\([\s\S]+sidebarWorkspaceSessionGroups/);
   });
 });

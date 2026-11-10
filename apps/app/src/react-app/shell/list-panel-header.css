@@ -62,6 +62,17 @@
   padding-top: 10px;
 }
 
+.jw-list-panel-header.is-title-only,
+.jw-list-panel-header.is-mac.is-title-only {
+  height: 48px;
+  min-height: 48px;
+  flex-basis: 48px;
+  justify-content: center;
+  gap: 0;
+  padding: 8px 12px;
+  border-bottom: 0;
+}
+
 .jw-list-panel-title-row,
 .jw-list-panel-search-row {
   display: flex;

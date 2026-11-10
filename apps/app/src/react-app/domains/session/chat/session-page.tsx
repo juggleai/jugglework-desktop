@@ -2,7 +2,7 @@
 import type { CSSProperties } from "react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { usePanelRef } from "react-resizable-panels";
-import { ArrowLeft, ArrowRight, Cloud, Columns2, Folders, GitBranch, Globe, Mic2, PanelLeftIcon, Search, Settings2, Terminal, TextSearch, X, Zap } from "lucide-react";
+import { ArrowLeft, ArrowRight, Cloud, Columns2, Folders, GitBranch, Globe, Mic2, PanelLeftIcon, Settings2, Terminal, TextSearch, X, Zap } from "lucide-react";
 
 import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
 import { t } from "../../../../i18n";
@@ -1262,17 +1262,6 @@ export function SessionPage(props: SessionPageProps) {
             <Button
               variant="ghost"
               size="icon-sm"
-              className="pointer-events-auto rounded-xl text-dls-secondary hover:bg-dls-hover hover:text-dls-text mac:titlebar-no-drag"
-              onClick={props.sidebar.onOpenTaskSearch}
-              title={t("workspace_list.search_sessions")}
-              aria-label={t("workspace_list.search_sessions")}
-              data-embedded-session-task-search
-            >
-              <Search size={17} />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon-sm"
               className="pointer-events-auto border-none mac:titlebar-no-drag"
               onClick={() => setSidebarOpen(true)}
               title={t("sidebar.expand")}
@@ -1290,18 +1279,6 @@ export function SessionPage(props: SessionPageProps) {
             style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
             data-session-collapsed-sidebar-controls
           >
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              className="pointer-events-auto rounded-xl text-dls-secondary hover:bg-dls-hover hover:text-dls-text mac:titlebar-no-drag"
-              style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
-              onClick={props.sidebar.onOpenTaskSearch}
-              title={t("workspace_list.search_sessions")}
-              aria-label={t("workspace_list.search_sessions")}
-              data-session-collapsed-task-search
-            >
-              <Search size={17} />
-            </Button>
             <SidebarTrigger
               className="pointer-events-auto mac:titlebar-no-drag"
               style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
@@ -1419,9 +1396,9 @@ export function SessionPage(props: SessionPageProps) {
               "rounded-xl transition-colors hover:bg-muted hover:text-foreground mac:titlebar-no-drag",
               props.terminalOpen && "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary",
             )}
-            aria-label="Terminal"
+            aria-label={t("terminal.title")}
             aria-pressed={Boolean(props.terminalOpen)}
-            title="Terminal (Cmd/Ctrl+J)"
+            title={t("terminal.shortcut_title")}
             onClick={() => props.onTerminalOpenChange?.(!props.terminalOpen)}
           >
             <Terminal size={17} aria-hidden="true" />
@@ -1600,22 +1577,10 @@ export function SessionPage(props: SessionPageProps) {
               data-session-expanded-drag-region
             />
             <div
-              className="pointer-events-auto absolute left-[calc(var(--sidebar-width)-4rem)] top-1.5 z-30 hidden items-center gap-0 mac:flex mac:titlebar-no-drag"
+              className="pointer-events-auto absolute left-[calc(var(--sidebar-width)-2rem)] top-1.5 z-30 hidden items-center gap-0 mac:flex mac:titlebar-no-drag"
               style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
               data-session-sidebar-controls
             >
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                className="pointer-events-auto rounded-xl text-dls-secondary hover:bg-dls-hover hover:text-dls-text mac:titlebar-no-drag"
-                style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
-                onClick={props.sidebar.onOpenTaskSearch}
-                title={t("workspace_list.search_sessions")}
-                aria-label={t("workspace_list.search_sessions")}
-                data-session-task-search
-              >
-                <Search size={17} />
-              </Button>
               <SidebarTrigger
                 className="pointer-events-auto mac:titlebar-no-drag"
                 style={{ WebkitAppRegion: "no-drag" } as CSSProperties}

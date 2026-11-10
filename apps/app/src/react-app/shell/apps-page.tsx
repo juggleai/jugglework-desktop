@@ -47,7 +47,6 @@ export function AppsPage(props: AppsPageProps) {
       />
       <AppSecondarySidebarTopControls
         sidebarOpen={sidebarOpen}
-        onOpenTaskSearch={props.onOpenTaskSearch}
         onToggleSidebar={toggleSidebar}
       />
       <AppInsetSurface className="relative" testId="plugins-inset-surface">

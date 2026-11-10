@@ -1153,6 +1153,8 @@ export default {
   "workspace.sandbox_badge": "Sandbox",
   "workspace.selected": "Đã chọn",
   "workspace_list.add_workspace": "Thêm workspace",
+  "workspace_list.projects": "Dự án",
+  "workspace_list.recent": "Gần đây",
   "workspace_list.connecting": "Đang kết nối...",
   "workspace_list.delete_session": "Xóa phiên",
   "workspace_list.edit_connection": "Chỉnh sửa kết nối",

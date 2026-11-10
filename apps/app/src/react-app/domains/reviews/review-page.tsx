@@ -1006,7 +1006,6 @@ export function ReviewPage(props: ReviewPageProps) {
       />
       <AppSecondarySidebarTopControls
         sidebarOpen={sidebarOpen}
-        onOpenTaskSearch={props.onOpenTaskSearch}
         onToggleSidebar={toggleSidebar}
       />
       <AppInsetSurface className="relative" testId="review-inset-surface">

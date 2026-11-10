@@ -2189,8 +2189,8 @@ export function SessionRoute(props: SessionRouteProps = {}) {
   const terminalPaletteItems = useMemo<PaletteItem[]>(() => [
     {
       id: "terminal.toggle",
-      title: terminalOpen ? "Hide terminal" : "Show terminal",
-      detail: "Toggle the integrated terminal panel for this workspace",
+      title: terminalOpen ? t("terminal.hide") : t("terminal.show"),
+      detail: t("terminal.toggle_detail"),
       meta: "Cmd/Ctrl+J",
       searchText: "terminal shell command line console show hide toggle",
       action: () => {

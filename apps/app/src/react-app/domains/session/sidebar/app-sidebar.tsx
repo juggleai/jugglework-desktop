@@ -14,6 +14,7 @@ import {
   Trash2,
   RefreshCw,
   RotateCcw,
+  Search,
   Settings,
   Share2,
   Folder,
@@ -35,7 +36,6 @@ import {
   isRemoteConnectionErrorMessage,
   getWorkspaceTaskLoadErrorDisplay,
   isRemoteConnectionWorkspace,
-  isMacPlatform,
   isWindowsPlatform,
 } from "../../../../app/utils";
 import { t } from "../../../../i18n";
@@ -103,7 +103,7 @@ import type { SidebarContextValue } from "./app-sidebar-provider";
 import {
   MAX_SESSIONS_PREVIEW,
   buildSessionTreeState,
-  filterSessionsByTitle,
+  collectRecentSessions,
   flattenSessionRows,
   formatSessionRelativeTime,
   getRootSessions,
@@ -115,7 +115,7 @@ import {
   resolveWorkspaceSessionIndicator,
   workspaceLabel,
 } from "./utils";
-import type { FlattenedSessionRow, SessionListItem, SessionTreeState } from "./utils";
+import type { FlattenedSessionRow, RecentSessionEntry, SessionListItem, SessionTreeState } from "./utils";
 import {
   useSessionManagementStore,
   usePinnedSessionIds,
@@ -765,7 +765,8 @@ export function AppSidebar(props: AppSidebarProps) {
   );
   const lastWorkspaceByScope = useTaskScopeStore((state) => state.lastWorkspaceByScope);
   const rememberWorkspace = useTaskScopeStore((state) => state.rememberWorkspace);
-  const [sessionQuery, setSessionQuery] = React.useState("");
+  const [projectsExpanded, setProjectsExpanded] = React.useState(true);
+  const [recentExpanded, setRecentExpanded] = React.useState(true);
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = React.useState<Set<string>>(
     () => new Set(),
   );
@@ -924,14 +925,6 @@ export function AppSidebar(props: AppSidebarProps) {
     props.workspaceSessionGroups,
   ]);
 
-  const trimmedSessionQuery = sessionQuery.trim();
-  const isFiltering = trimmedSessionQuery.length > 0;
-
-  // A query carries no meaning across scopes — the other list has its own sessions.
-  React.useEffect(() => {
-    setSessionQuery("");
-  }, [taskScope]);
-
   const contextValue: SidebarContextValue = {
     selectedWorkspaceId: props.selectedWorkspaceId,
     selectedSessionId: props.selectedSessionId,
@@ -963,24 +956,16 @@ export function AppSidebar(props: AppSidebarProps) {
     toggleSessionExpanded,
     expandedWorkspaceIds,
     expandedSessionIds,
-    filteringSessions: isFiltering,
+    filteringSessions: false,
   };
 
-  // Sessions of the scope on screen, narrowed to the sidebar filter. Workspaces
-  // left without a match drop out so the list only holds results.
-  const visibleWorkspaceSessionGroups = React.useMemo(() => {
-    const inScope = sidebarWorkspaceSessionGroups.filter(
+  const workspaceSessionGroupsInScope = React.useMemo(
+    () => sidebarWorkspaceSessionGroups.filter(
       (group) => workspaceTaskScope(group.workspace) === taskScope,
-    );
-    if (!trimmedSessionQuery) return inScope;
-    return inScope.flatMap((group) => {
-      const sessions = filterSessionsByTitle(
-        group.sessions.filter(isMainSession),
-        trimmedSessionQuery,
-      );
-      return sessions.length ? [{ ...group, sessions }] : [];
-    });
-  }, [sidebarWorkspaceSessionGroups, taskScope, trimmedSessionQuery]);
+    ),
+    [sidebarWorkspaceSessionGroups, taskScope],
+  );
+
   const unseenCompletedSessionIds = useUnseenCompletedSessionIds();
   const localWorkspaceIndicator = React.useMemo(
     () => resolveWorkspaceSessionIndicator(
@@ -998,7 +983,7 @@ export function AppSidebar(props: AppSidebarProps) {
   const pinnedIds = useSessionManagementStore((state) => state.pinnedIds);
   const pinnedSessions = React.useMemo(() => {
     const sessionsById = new Map<string, GlobalPinnedSessionEntry>();
-    for (const group of visibleWorkspaceSessionGroups) {
+    for (const group of workspaceSessionGroupsInScope) {
       const roots = getRootSessions(partitionArchivedSessions(group.sessions).active);
       for (const session of roots) {
         sessionsById.set(session.id, { group, sessionId: session.id });
@@ -1008,19 +993,20 @@ export function AppSidebar(props: AppSidebarProps) {
       const entry = sessionsById.get(sessionId);
       return entry ? [entry] : [];
     });
-  }, [pinnedIds, visibleWorkspaceSessionGroups]);
+  }, [pinnedIds, workspaceSessionGroupsInScope]);
   const archivedSessions = React.useMemo(() => {
     const entries: GlobalArchivedSessionEntry[] = [];
-    for (const group of visibleWorkspaceSessionGroups) {
+    for (const group of workspaceSessionGroupsInScope) {
       for (const session of partitionArchivedSessions(group.sessions).archived.filter(isMainSession)) {
         entries.push({ group, session });
       }
     }
     return entries;
-  }, [visibleWorkspaceSessionGroups]);
-  const createTaskLabel = taskScope === "remote"
-    ? t("navigation.create_cloud_task")
-    : t("navigation.create_local_task");
+  }, [workspaceSessionGroupsInScope]);
+  const recentSessions = React.useMemo(
+    () => collectRecentSessions(workspaceSessionGroupsInScope, new Set(pinnedIds)),
+    [pinnedIds, workspaceSessionGroupsInScope],
+  );
 
   return (
     <SidebarContext.Provider value={contextValue}>
@@ -1041,7 +1027,7 @@ export function AppSidebar(props: AppSidebarProps) {
           {props.railPreviewActive ? (
             <div
               aria-hidden="true"
-              className="pointer-events-auto absolute left-[53px] right-0 top-[45px] z-10 h-10 mac:titlebar-no-drag"
+              className="pointer-events-auto absolute left-[53px] right-12 top-[45px] z-10 h-10 mac:titlebar-no-drag"
               onMouseEnter={props.onRailPreviewEnter}
               onMouseLeave={props.onRailPreviewLeave}
               data-session-preview-title-hover-guard
@@ -1075,27 +1061,17 @@ export function AppSidebar(props: AppSidebarProps) {
           >
             <ListPanelHeader
               title={taskScope === "remote" ? t("navigation.cloud_workspace") : t("navigation.local_workspace")}
-              insetDivider
-              searchValue={sessionQuery}
-              searchPlaceholder={t("workspace_list.search_sessions")}
-              onSearchChange={setSessionQuery}
-              onSearchKeyDown={(event) => {
-                if (event.key !== "Escape" || !sessionQuery) return;
-                event.preventDefault();
-                setSessionQuery("");
-              }}
-              onClearSearch={() => setSessionQuery("")}
-              showClear={isFiltering}
-              shortcut={isMacPlatform() ? "⌘⇧F" : "Ctrl+Shift+F"}
-              addControl={(
+              titleOnly
+              titleEnd={(
                 <button
                   type="button"
-                  onClick={taskScope === "remote" ? props.onOpenConnectRemoteWorkspace : props.onOpenCreateLocalWorkspace}
-                  aria-label={createTaskLabel}
-                  title={createTaskLabel}
-                  data-testid={taskScope === "remote" ? "sidebar-create-cloud-task" : "sidebar-create-local-task"}
+                  className="jw-list-panel-icon-button"
+                  onClick={props.onOpenTaskSearch}
+                  aria-label={t("workspace_list.search_sessions")}
+                  title={t("workspace_list.search_sessions")}
+                  data-session-list-title-search
                 >
-                  <Plus />
+                  <Search />
                 </button>
               )}
             />
@@ -1111,31 +1087,51 @@ export function AppSidebar(props: AppSidebarProps) {
                   {pinnedSessions.length > 0 ? (
                     <GlobalPinnedSessions entries={pinnedSessions} />
                   ) : null}
-                  <div className="flex shrink-0 flex-col gap-0.5">
-                    {visibleWorkspaceSessionGroups.map((group) => (
-                      <m.div
-                        key={group.workspace.id}
-                        layout="position"
-                        transition={{ layout: { duration: 0.2, ease: [0.22, 1, 0.36, 1] } }}
-                      >
-                        {/* Keep session projection local to its workspace. When a
-                            preceding workspace changes height, this outer block
-                            slides once and its session rows travel with it. */}
-                        <LayoutGroup id={`workspace-sessions-${group.workspace.id}`} inherit={false}>
-                          <WorkspaceSidebarGroup
-                            group={group}
-                            className="py-0"
-                            showInitialLoading={props.showInitialLoading}
-                            previewCount={isFiltering ? Number.MAX_SAFE_INTEGER : previewCount(group.workspace.id)}
-                            showMoreSessions={showMoreSessions}
-                          />
-                        </LayoutGroup>
-                      </m.div>
-                    ))}
-                  </div>
-                  {visibleWorkspaceSessionGroups.length === 0 ? (
+                  {taskScope === "local" ? (
+                    <>
+                      <LocalProjectsSection
+                        groups={workspaceSessionGroupsInScope}
+                        expanded={projectsExpanded}
+                        onExpandedChange={setProjectsExpanded}
+                        onAddWorkspace={props.onOpenCreateLocalWorkspace}
+                        showInitialLoading={props.showInitialLoading}
+                        previewCount={previewCount}
+                        showMoreSessions={showMoreSessions}
+                      />
+                      <LocalRecentSessions
+                        entries={recentSessions}
+                        expanded={recentExpanded}
+                        onExpandedChange={setRecentExpanded}
+                        emptyLabel={t("workspace.no_tasks")}
+                      />
+                    </>
+                  ) : (
+                    <div className="flex shrink-0 flex-col gap-0.5">
+                      {workspaceSessionGroupsInScope.map((group) => (
+                        <m.div
+                          key={group.workspace.id}
+                          layout="position"
+                          transition={{ layout: { duration: 0.2, ease: [0.22, 1, 0.36, 1] } }}
+                        >
+                          {/* Keep session projection local to its workspace. When a
+                              preceding workspace changes height, this outer block
+                              slides once and its session rows travel with it. */}
+                          <LayoutGroup id={`workspace-sessions-${group.workspace.id}`} inherit={false}>
+                            <WorkspaceSidebarGroup
+                              group={group}
+                              className="py-0"
+                              showInitialLoading={props.showInitialLoading}
+                              previewCount={previewCount(group.workspace.id)}
+                              showMoreSessions={showMoreSessions}
+                            />
+                          </LayoutGroup>
+                        </m.div>
+                      ))}
+                    </div>
+                  )}
+                  {taskScope !== "local" && workspaceSessionGroupsInScope.length === 0 ? (
                     <div className="flex flex-1 items-center justify-center px-5 py-10 text-center text-xs text-dls-secondary">
-                      {isFiltering ? t("workspace_list.no_matching_sessions") : t("workspace.no_tasks")}
+                      {t("workspace.no_tasks")}
                     </div>
                   ) : null}
                 </m.div>
@@ -1166,26 +1162,196 @@ type GlobalPinnedSessionEntry = {
   sessionId: string;
 };
 
-function GlobalPinnedSessions({ entries }: { entries: GlobalPinnedSessionEntry[] }) {
+function LocalProjectsSection({
+  groups,
+  expanded,
+  onExpandedChange,
+  onAddWorkspace,
+  showInitialLoading,
+  previewCount,
+  showMoreSessions,
+}: {
+  groups: WorkspaceSessionGroup[];
+  expanded: boolean;
+  onExpandedChange: (expanded: boolean) => void;
+  onAddWorkspace: () => void;
+  showInitialLoading?: boolean;
+  previewCount: (workspaceId: string) => number;
+  showMoreSessions: (workspaceId: string, totalRoots: number) => void;
+}) {
   return (
-    <SidebarGroup data-global-pinned-sessions className="shrink-0 pb-1 pt-2">
+    <SidebarGroup data-local-projects className="shrink-0 px-0 pb-1 pt-3">
       <SidebarGroupContent>
-        <div className="px-3 pb-1 text-[13px] font-normal leading-5 tracking-normal text-muted-foreground">
-          {t("session_management.pinned")}
-        </div>
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuSub className="gap-0.5">
-              {entries.map((entry) => (
-                <GlobalPinnedSessionTree
-                  key={`${entry.group.workspace.id}:${entry.sessionId}`}
-                  group={entry.group}
-                  sessionId={entry.sessionId}
+        <Collapsible open={expanded} onOpenChange={onExpandedChange} className="group/projects">
+          <div className="group/projects-heading relative">
+            <CollapsibleTrigger
+              render={(
+                <button
+                  type="button"
+                  className="flex h-8 w-full items-center gap-1 rounded-lg px-3 pe-11 text-left text-[13px] font-medium text-muted-foreground transition-colors hover:bg-sidebar-accent/25 hover:text-sidebar-foreground"
+                >
+                  <span>{t("workspace_list.projects")}</span>
+                  <ChevronRight
+                    aria-hidden="true"
+                    className="size-3.5 opacity-0 transition-[transform,opacity] duration-150 group-hover/projects-heading:opacity-100 group-focus-visible/projects-heading:opacity-100 group-data-open/projects:rotate-90"
+                    strokeWidth={1.8}
+                  />
+                </button>
+              )}
+            />
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onAddWorkspace();
+              }}
+              aria-label={t("workspace_list.add_workspace")}
+              title={t("workspace_list.add_workspace")}
+              data-local-projects-add-workspace
+              className="pointer-events-none absolute right-2 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center rounded-lg text-muted-foreground opacity-0 transition-[opacity,background-color,color] duration-150 hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring group-hover/projects-heading:pointer-events-auto group-hover/projects-heading:opacity-100 group-has-[:focus-visible]/projects-heading:pointer-events-auto group-has-[:focus-visible]/projects-heading:opacity-100"
+            >
+              <Plus className="size-4" />
+            </button>
+          </div>
+          <CollapsibleContent className="flex flex-col gap-0.5 pt-0.5">
+            {groups.map((group) => (
+              <LayoutGroup key={group.workspace.id} id={`local-project-sessions-${group.workspace.id}`} inherit={false}>
+                <WorkspaceSidebarGroup
+                  group={group}
+                  className="py-0"
+                  showInitialLoading={showInitialLoading}
+                  previewCount={previewCount(group.workspace.id)}
+                  showMoreSessions={showMoreSessions}
                 />
-              ))}
-            </SidebarMenuSub>
-          </SidebarMenuItem>
-        </SidebarMenu>
+              </LayoutGroup>
+            ))}
+          </CollapsibleContent>
+        </Collapsible>
+      </SidebarGroupContent>
+    </SidebarGroup>
+  );
+}
+
+function LocalRecentSessions({
+  entries,
+  expanded,
+  onExpandedChange,
+  emptyLabel,
+}: {
+  entries: RecentSessionEntry[];
+  expanded: boolean;
+  onExpandedChange: (expanded: boolean) => void;
+  emptyLabel: string;
+}) {
+  return (
+    <SidebarGroup data-local-recent-sessions className="shrink-0 px-0 pb-2 pt-2">
+      <SidebarGroupContent>
+        <Collapsible open={expanded} onOpenChange={onExpandedChange} className="group/recent">
+          <CollapsibleTrigger
+            render={(
+              <button
+                type="button"
+                className="group/recent-heading flex h-8 w-full items-center gap-1 rounded-lg px-3 text-left text-[13px] font-medium text-muted-foreground transition-colors hover:bg-sidebar-accent/25 hover:text-sidebar-foreground"
+              >
+                <span>{t("workspace_list.recent")}</span>
+                <ChevronRight
+                  aria-hidden="true"
+                  className="size-3.5 opacity-0 transition-[transform,opacity] duration-150 group-hover/recent-heading:opacity-100 group-focus-visible/recent-heading:opacity-100 group-data-open/recent:rotate-90"
+                  strokeWidth={1.8}
+                />
+              </button>
+            )}
+          />
+          <CollapsibleContent className="pt-0.5">
+            {entries.length > 0 ? (
+              <SidebarMenu data-local-recent-session-list className="px-2">
+                <SidebarMenuItem>
+                  <SidebarMenuSub className="gap-0.5 border-l-0">
+                    {entries.map((entry) => (
+                      <LocalRecentSessionItem
+                        key={`${entry.group.workspace.id}:${entry.session.id}`}
+                        entry={entry}
+                      />
+                    ))}
+                  </SidebarMenuSub>
+                </SidebarMenuItem>
+              </SidebarMenu>
+            ) : (
+              <div className="px-3 py-5 text-xs text-dls-secondary">{emptyLabel}</div>
+            )}
+          </CollapsibleContent>
+        </Collapsible>
+      </SidebarGroupContent>
+    </SidebarGroup>
+  );
+}
+
+function LocalRecentSessionItem({ entry }: { entry: RecentSessionEntry }) {
+  const ctx = useSidebarContext();
+  const pinnedIds = usePinnedSessionIds();
+  const tree = useSessionTree(entry.group.sessions, ctx.sessionStatusById);
+  const forcedExpandedSessionIds = React.useMemo(
+    () => new Set(
+      ctx.selectedSessionId
+        ? tree.ancestorIdsBySessionId.get(ctx.selectedSessionId) ?? []
+        : [],
+    ),
+    [ctx.selectedSessionId, tree.ancestorIdsBySessionId],
+  );
+
+  return (
+    <SessionMenuItem
+      session={entry.session}
+      depth={0}
+      tree={tree}
+      workspaceId={entry.group.workspace.id}
+      forcedExpandedSessionIds={forcedExpandedSessionIds}
+      isPinned={pinnedIds.has(entry.session.id)}
+      workspaceName={workspaceLabel(entry.group.workspace)}
+      showWorkspaceIcon={false}
+      flushLeft
+    />
+  );
+}
+
+function GlobalPinnedSessions({ entries }: { entries: GlobalPinnedSessionEntry[] }) {
+  const [expanded, setExpanded] = React.useState(true);
+
+  return (
+    <SidebarGroup data-global-pinned-sessions className="shrink-0 px-0 pb-1 pt-2">
+      <SidebarGroupContent>
+        <Collapsible open={expanded} onOpenChange={setExpanded} className="group/pinned">
+          <CollapsibleTrigger
+            render={(
+              <button
+                type="button"
+                className="group/pinned-heading flex h-8 w-full items-center gap-1 rounded-lg px-3 text-left text-[13px] font-medium text-muted-foreground transition-colors hover:bg-sidebar-accent/25 hover:text-sidebar-foreground"
+              >
+                <span>{t("session_management.pinned")}</span>
+                <ChevronRight
+                  aria-hidden="true"
+                  className="size-3.5 opacity-0 transition-[transform,opacity] duration-150 group-hover/pinned-heading:opacity-100 group-focus-visible/pinned-heading:opacity-100 group-data-open/pinned:rotate-90"
+                  strokeWidth={1.8}
+                />
+              </button>
+            )}
+          />
+          <CollapsibleContent className="pt-0.5">
+            <SidebarMenu data-global-pinned-session-list className="px-2">
+              <SidebarMenuItem>
+                <SidebarMenuSub className="gap-0.5 border-l-0">
+                  {entries.map((entry) => (
+                    <GlobalPinnedSessionTree
+                      key={`${entry.group.workspace.id}:${entry.sessionId}`}
+                      group={entry.group}
+                      sessionId={entry.sessionId}
+                    />
+                  ))}
+                </SidebarMenuSub>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          </CollapsibleContent>
+        </Collapsible>
       </SidebarGroupContent>
     </SidebarGroup>
   );
@@ -1310,6 +1476,7 @@ function GlobalPinnedSessionTree({ group, sessionId }: GlobalPinnedSessionEntry)
       isPinned={pinnedIds.has(row.session.id)}
       workspaceName={row.depth === 0 ? workspaceLabel(group.workspace) : undefined}
       showWorkspaceIcon={false}
+      flushLeft
     />
   ));
 }
@@ -2232,6 +2399,8 @@ type SessionMenuItemProps = {
   groupDraggable?: boolean;
   layoutDependency?: string;
   workspaceName?: string;
+  /** Remove the reserved activity/workspace leading lane for flat global lists. */
+  flushLeft?: boolean;
   /**
    * 是否在标题前显示工作区色点。默认跟随 workspaceName。
    * TIPS: 「已归档」要求与工作区内的会话行长得完全一致，所以关掉色点；
@@ -2252,6 +2421,7 @@ function SessionMenuItem({
   layoutDependency,
   workspaceName,
   showWorkspaceIcon = Boolean(workspaceName),
+  flushLeft = false,
 }: SessionMenuItemProps) {
   const ctx = useSidebarContext();
   const unseenCompletedSessionIds = useUnseenCompletedSessionIds();
@@ -2313,7 +2483,7 @@ function SessionMenuItem({
     depth > 0 && "ps-7",
   );
 
-  const leading = (
+  const leading = flushLeft ? null : (
     <>
       <span aria-hidden="true" className={LEFT_ACTIVITY_SLOT} />
       {showWorkspaceIcon ? <WorkspaceIcon workspaceId={workspaceId} sizeClass="size-3.5" /> : null}

@@ -226,7 +226,6 @@ export function AutomationPage(props: AutomationPageProps) {
       {!templatesVisible && !(props.sessionSelected && !sidebarOpen) ? (
         <AppSecondarySidebarTopControls
           sidebarOpen={sidebarOpen}
-          onOpenTaskSearch={props.onOpenTaskSearch ?? (() => undefined)}
           onToggleSidebar={toggleSidebar}
         />
       ) : null}

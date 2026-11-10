@@ -1152,6 +1152,8 @@ export default {
   "workspace.sandbox_badge": "サンドボックス",
   "workspace.selected": "選択済み",
   "workspace_list.add_workspace": "ワークスペースを追加",
+  "workspace_list.projects": "プロジェクト",
+  "workspace_list.recent": "最近",
   "workspace_list.connecting": "接続中…",
   "workspace_list.delete_session": "セッションを削除",
   "workspace_list.edit_connection": "接続を編集",

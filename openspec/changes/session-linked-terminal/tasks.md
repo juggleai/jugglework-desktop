@@ -4,6 +4,7 @@
 - [x] Extract bounded owner-scoped terminal manager with idempotent open and output replay.
 - [x] Separate hiding the view from terminating its shell.
 - [x] Add toolbar terminal icon, dynamic theme integration, compact title and hide-only control.
+- [x] Hide the terminal dock on workspace changes while retaining the original workspace/session PTY for explicit reopen.
 - [x] Add targeted manager, resolver, native PTY, state and theme tests.
 - [ ] Design recovery for exited terminals and resource cleanup without reintroducing removed header controls.
 - [ ] Make changed view focus versus retained terminal binding safely discoverable without restoring verbose title text.

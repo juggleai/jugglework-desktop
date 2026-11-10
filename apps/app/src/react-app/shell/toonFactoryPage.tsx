@@ -290,7 +290,7 @@ export function ToonFactoryPage(props: {
   return (
     <div className="absolute inset-0 flex min-h-0 overflow-hidden bg-dls-sidebar mac:titlebar-drag" style={pageStyle} data-testid="toon-factory-surface">
       <AppNavigationRail {...props} />
-      <AppSecondarySidebarTopControls sidebarOpen={sidebarOpen} onOpenTaskSearch={props.onOpenTaskSearch ?? (() => undefined)} onToggleSidebar={toggleSidebar} />
+      <AppSecondarySidebarTopControls sidebarOpen={sidebarOpen} onToggleSidebar={toggleSidebar} />
       <AppInsetSurface testId="toon-factory-inset-surface">
         <div className="relative flex h-full min-h-0 w-full overflow-hidden bg-background">
           <div className={cn("h-full shrink-0 overflow-hidden transition-[width] duration-200 ease-linear", sidebarOpen ? "w-[var(--jugglework-left-sidebar-width)]" : "w-0")} data-app-secondary-sidebar-frame>

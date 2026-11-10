@@ -1,7 +1,7 @@
 // Shell panel open-state (command palette, session search, terminal) plus the
 // global keyboard shortcuts that toggle them. Extracted verbatim from
 // session-route.tsx.
-import { useEffect, useEffectEvent, useState } from "react";
+import { useEffect, useEffectEvent, useLayoutEffect, useState } from "react";
 
 export type UseShellShortcutsInput = {
   canCreateTask: boolean;
@@ -36,6 +36,15 @@ export function useShellShortcuts(input: UseShellShortcutsInput) {
   const { commandPaletteOpen, setCommandPaletteOpen } = useCommandPaletteShortcut();
   const [sessionSearchOpen, setSessionSearchOpen] = useState(false);
   const [terminalOpen, setTerminalOpen] = useState(false);
+
+  // A mounted terminal intentionally keeps the workspace/session binding it
+  // captured when opened. Hide that fixed binding before painting a different
+  // workspace so its shell and cwd are never presented as belonging to the new
+  // workspace. The host retains the PTY for an explicit reopen of the original
+  // workspace.
+  useLayoutEffect(() => {
+    setTerminalOpen(false);
+  }, [workspaceId]);
 
   // Global shortcuts:
   //   Cmd/Ctrl+N        -> new task in selected workspace

@@ -7,6 +7,11 @@
  */
 
 export default {
+  "terminal.title": "终端",
+  "terminal.show": "显示终端",
+  "terminal.hide": "隐藏终端",
+  "terminal.shortcut_title": "终端 (Cmd/Ctrl+J)",
+  "terminal.toggle_detail": "显示或隐藏当前工作区的集成终端面板",
   "session.usage_limit_recharge": "你已达到使用上限。若需更多使用额度，请及时充值。",
   "office.in_file_window": "此文档已在独立窗口中打开",
   "file_window.files": "文件",
@@ -2800,6 +2805,8 @@ export default {
   "workspace.sandbox_badge": "沙箱",
   "workspace.selected": "已选择",
   "workspace_list.add_workspace": "添加工作区",
+  "workspace_list.projects": "项目",
+  "workspace_list.recent": "最近",
   "workspace_list.connected": "已连接",
   "workspace_list.connected_loaded_tasks_one": "已连接，加载了{count}个任务。",
   "workspace_list.connected_loaded_tasks_other": "已连接，加载了{count}个任务。",
@@ -2840,7 +2847,7 @@ export default {
   "workspace_list.workspace_options": "工作区选项",
   "session_management.pin_session": "置顶会话",
   "session_management.unpin_session": "取消置顶",
-  "session_management.pinned": "已置顶",
+  "session_management.pinned": "置顶",
   "session_management.archive_session": "归档会话",
   "session_management.unarchive_session": "取消归档",
   "session_management.archive_failed": "无法归档会话",

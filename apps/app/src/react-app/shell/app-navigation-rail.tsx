@@ -6,7 +6,6 @@ import {
   Clapperboard,
   ArrowUpRight,
   Check,
-  Cloud,
   Coins,
   ContactRound,
   Download,
@@ -442,9 +441,9 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
     void bootstrapChat(profileUser);
   }, [bootstrapChat, profileUser]);
 
-  /** Home lists local tasks, the cloud button lists remote ones — same surface. */
-  const openTaskScope = (scope: "local" | "remote") => {
-    setTaskScope(scope);
+  /** The workspace Rail opens the local task scope. */
+  const openLocalTaskScope = () => {
+    setTaskScope("local");
     props.onOpenHome();
   };
   const openChatView = (view: "conversations" | "contacts") => {
@@ -557,7 +556,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
         <RailButton
           label={t("navigation.local_workspace")}
           active={props.homeActive && taskScope === "local"}
-          onClick={() => openTaskScope("local")}
+          onClick={openLocalTaskScope}
           testId="app-rail-home"
           statusIndicator={visibleLocalWorkspaceIndicator(localWorkspaceIndicator, props.homeActive, taskScope)}
           previewScope="local"
@@ -567,19 +566,6 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
           showTooltip={!props.suppressPreviewMenuTooltips}
         >
           <LocalWorkspaceIcon active={Boolean(props.homeActive && taskScope === "local")} />
-        </RailButton>
-        <RailButton
-          label={t("navigation.cloud_workspace")}
-          active={props.homeActive && taskScope === "remote"}
-          onClick={() => openTaskScope("remote")}
-          testId="app-rail-cloud-tasks"
-          previewScope="remote"
-          onPreviewMenuChange={props.onPreviewMenuChange}
-          onWorkspacePreviewOpen={appSidebarPreview.closePreview}
-          onWorkspacePreviewChange={appSidebarPreview.onWorkspaceTriggerChange}
-          showTooltip={!props.suppressPreviewMenuTooltips}
-        >
-          <Cloud className="size-5" strokeWidth={1.8} />
         </RailButton>
         {LOCAL_AUTOMATION_ENABLED ? <RailButton
           label={t("navigation.automations")}

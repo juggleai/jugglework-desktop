@@ -796,6 +796,8 @@ export default {
   "workspace.sandbox_badge": "Sandbox",
   "workspace.selected": "Выбрано",
   "workspace_list.add_workspace": "Добавить рабочее пространство",
+  "workspace_list.projects": "Проекты",
+  "workspace_list.recent": "Недавние",
   "workspace_list.connecting": "Подключение...",
   "workspace_list.delete_session": "Удалить сеанс",
   "workspace_list.edit_connection": "Изменить подключение",

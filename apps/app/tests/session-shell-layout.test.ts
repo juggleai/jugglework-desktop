@@ -59,13 +59,14 @@ describe("desktop session shell layout", () => {
 
   test("keeps the sidebar toggle in one stable top-chrome position", () => {
     expect(sessionPage).toContain('data-session-sidebar-controls');
-    expect(sessionPage).toContain('data-session-task-search');
+    expect(appSidebar).toContain('data-session-list-title-search');
     expect(sessionPage).toContain('data-session-sidebar-toggle');
-    expect(sessionPage).toContain('absolute left-[calc(var(--sidebar-width)-4rem)] top-1.5');
+    expect(sessionPage).toContain('absolute left-[calc(var(--sidebar-width)-2rem)] top-1.5');
     expect(sessionPage).toContain('items-center gap-0');
     expect(sessionPage).toContain('shellConfig.sidebar && sidebarOpen');
     expect(sessionPage).toContain('data-session-collapsed-sidebar-controls');
-    expect(sessionPage).toContain('data-session-collapsed-task-search');
+    expect(sessionPage).not.toContain('data-session-collapsed-task-search');
+    expect(sessionPage).not.toContain('data-embedded-session-task-search');
     expect(sessionPage).toContain('data-session-collapsed-sidebar-toggle');
     expect(sessionPage).toContain('data-session-collapsed-drag-region');
     expect(sessionPage).toContain('absolute left-0 top-0 h-[var(--session-shell-top-inset)] w-[76px] mac:titlebar-drag');
@@ -75,14 +76,14 @@ describe("desktop session shell layout", () => {
     expect(sessionPage).toContain('shellConfig.sidebar && !sidebarOpen && "mac:pl-[76px]"');
     expect(sessionPage).toContain('pointer-events-auto');
     expect(sessionPage).toContain('WebkitAppRegion: "no-drag"');
-    expect(sessionPage).toContain('onClick={props.sidebar.onOpenTaskSearch}');
-    expect(sessionPage.indexOf('data-session-task-search')).toBeLessThan(sessionPage.indexOf('data-session-sidebar-toggle'));
+    expect(appSidebar).toContain('onClick={props.onOpenTaskSearch}');
+    expect(sessionPage).not.toContain('data-session-task-search');
     expect(sessionPage).not.toContain('!sidebarOpen ? <span className="hidden size-8 shrink-0 mac:block"');
     expect(appSidebar).not.toContain('titleEnd={<SidebarTrigger');
   });
 
   test("uses a full-height content divider and an inset top-chrome divider", () => {
-    expect(appSidebar).toContain('insetDivider');
+    expect(appSidebar).not.toContain('insetDivider');
     expect(appSidebar).toContain('border-e-0!');
     expect(listPanelHeader).toContain('has-inset-divider');
     expect(listPanelHeaderCss).toContain('.jw-list-panel-header.has-inset-divider::after');
@@ -108,6 +109,18 @@ describe("desktop session shell layout", () => {
     expect(macHeader).toContain('padding-top: 10px');
   });
 
+  test("uses a title-only workspace header with search on the right", () => {
+    expect(appSidebar).toContain("titleOnly");
+    expect(appSidebar).toContain('data-session-list-title-search');
+    expect(appSidebar).not.toContain('searchValue={sessionQuery}');
+    expect(appSidebar).not.toContain('addControl={(');
+    expect(listPanelHeader).toContain('props.titleOnly ? " is-title-only" : ""');
+    expect(listPanelHeader).toContain('{!props.titleOnly ? (');
+    expect(listPanelHeaderCss).toContain('.jw-list-panel-header.is-title-only');
+    expect(listPanelHeaderCss).toContain('height: 48px');
+    expect(listPanelHeaderCss).toContain('border-bottom: 0');
+  });
+
   test("previews the collapsed session list from the Rail hover target", () => {
     const sidebarPrimitive = readFileSync(new URL("../src/components/ui/sidebar.tsx", import.meta.url), "utf8");
     expect(sessionPage).toContain('data-session-rail-preview-trigger');
@@ -131,7 +144,8 @@ describe("desktop session shell layout", () => {
     expect(appSidebar).toContain('props.railPreviewActive && "pointer-events-none"');
     expect(appSidebar).toContain('props.railPreviewActive && "pointer-events-auto"');
     expect(appSidebar).toContain('data-session-preview-title-hover-guard');
-    expect(appSidebar).toContain('left-[53px] right-0 top-[45px] z-10 h-10');
+    expect(appSidebar).toContain('left-[53px] right-12 top-[45px] z-10 h-10');
+    expect(appSidebar).toMatch(/data-session-preview-title-hover-guard[\s\S]*?<ListPanelHeader[\s\S]*?data-session-list-title-search/);
     expect(appSidebar).toContain('props.railPreviewActive ? <div className="w-12 shrink-0"');
     expect(appSidebar).toContain('onMouseEnter={props.onRailPreviewEnter}');
     expect(appSidebar).toContain('onMouseLeave={props.onRailPreviewLeave}');

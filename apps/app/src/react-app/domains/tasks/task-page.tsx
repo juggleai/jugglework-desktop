@@ -563,7 +563,7 @@ function TaskPageFrame(props: TaskPageProps & { children: React.ReactNode; secti
   usePublishTasksSidebar(sidebarRegistration);
   return <div className="relative flex h-full min-h-0 w-full overflow-hidden bg-dls-sidebar mac:titlebar-drag" style={pageStyle}>
     <AppNavigationRail workspaceId={props.workspaceId} onOpenAccount={props.onOpenAccount} onOpenHome={() => navigate(props.sessionPath)} onOpenApps={props.onOpenApps} onOpenChat={props.onOpenChat} onOpenReviews={props.onOpenReviews} onOpenSettings={props.onOpenSettings} onOpenTaskSearch={props.onOpenTaskSearch} onOpenCreateWorkspace={props.onOpenCreateWorkspace} />
-    <AppSecondarySidebarTopControls sidebarOpen={sidebarOpen} onOpenTaskSearch={props.onOpenTaskSearch ?? (() => undefined)} onToggleSidebar={toggleSidebar} />
+    <AppSecondarySidebarTopControls sidebarOpen={sidebarOpen} onToggleSidebar={toggleSidebar} />
     <AppInsetSurface testId="tasks-inset-surface"><div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">
       <div className={`h-full shrink-0 overflow-hidden transition-[width] duration-200 ease-linear ${sidebarOpen ? "w-[var(--jugglework-left-sidebar-width)]" : "w-0"}`} data-app-secondary-sidebar-frame>
         {sidebarOpen ? <TasksSidebar {...sidebarRegistration} /> : null}

@@ -103,7 +103,9 @@ describe("secondary app inset shells", () => {
     expect(layout).toContain("calc(100vw - 320px)");
 
     const topControls = read("react-app/shell/app-secondary-sidebar-top-controls.tsx");
-    expect(topControls).toContain("data-app-secondary-sidebar-search");
+    expect(topControls).not.toContain("data-app-secondary-sidebar-search");
+    expect(topControls).not.toContain("onOpenTaskSearch");
+    expect(topControls).toContain("CONTROL_GROUP_WIDTH = 32");
     expect(topControls).toContain("data-app-secondary-sidebar-toggle");
     expect(topControls).toContain("data-app-secondary-sidebar-top-divider");
     expect(topControls).toContain('className="pointer-events-auto absolute top-1.5 z-50 flex');

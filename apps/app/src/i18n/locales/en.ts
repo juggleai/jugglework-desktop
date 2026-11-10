@@ -4,6 +4,11 @@
  */
 
 export default {
+  "terminal.title": "Terminal",
+  "terminal.show": "Show terminal",
+  "terminal.hide": "Hide terminal",
+  "terminal.shortcut_title": "Terminal (Cmd/Ctrl+J)",
+  "terminal.toggle_detail": "Toggle the integrated terminal panel for this workspace",
   "session.usage_limit_recharge": "You've reached your usage limit. Please top up to get more usage credits.",
   "office.in_file_window": "This document is open in a separate window",
   "file_window.files": "Files",
@@ -2797,6 +2802,8 @@ export default {
   "workspace.sandbox_badge": "Sandbox",
   "workspace.selected": "Selected",
   "workspace_list.add_workspace": "Add workspace",
+  "workspace_list.projects": "Projects",
+  "workspace_list.recent": "Recent",
   "workspace_list.connected": "Connected",
   "workspace_list.connected_loaded_tasks_one": "Connected. Loaded {count} task.",
   "workspace_list.connected_loaded_tasks_other": "Connected. Loaded {count} tasks.",

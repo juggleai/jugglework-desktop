@@ -1160,6 +1160,8 @@ export default {
   "workspace.sandbox_badge": "Sandbox",
   "workspace.selected": "Selecionado",
   "workspace_list.add_workspace": "Adicionar workspace",
+  "workspace_list.projects": "Projetos",
+  "workspace_list.recent": "Recentes",
   "workspace_list.connecting": "Conectando...",
   "workspace_list.delete_session": "Excluir sessão",
   "workspace_list.edit_connection": "Editar conexão",

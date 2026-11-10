@@ -196,7 +196,7 @@ describe("navigation rail visual proportions", () => {
     expect(source).toContain('rounded-xl border border-dls-border bg-dls-active');
     expect(source).toContain('px-2.5 py-1.5 text-xs font-normal text-dls-text');
     expect(source).toContain('{tooltipLabel ?? label}');
-    for (const testId of ["app-rail-home", "app-rail-cloud-tasks", "app-rail-pinned-reviews", "app-rail-automations", "app-rail-chat", "app-rail-contacts"]) {
+    for (const testId of ["app-rail-home", "app-rail-pinned-reviews", "app-rail-automations", "app-rail-chat", "app-rail-contacts"]) {
       const button = source.slice(source.indexOf(`testId="${testId}"`) - 220, source.indexOf(`testId="${testId}"`) + 220);
       expect(button).not.toContain('showTooltip={false}');
     }
@@ -313,22 +313,26 @@ describe("navigation rail visual proportions", () => {
   test("routes hover previews only for Rail destinations with workspace menus", () => {
     const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
     const local = source.slice(source.indexOf('testId="app-rail-home"') - 360, source.indexOf('testId="app-rail-home"') + 520);
-    const cloud = source.slice(source.indexOf('testId="app-rail-cloud-tasks"') - 360, source.indexOf('testId="app-rail-cloud-tasks"') + 520);
     const automation = source.slice(source.indexOf('testId="app-rail-automations"') - 360, source.indexOf('testId="app-rail-automations"') + 360);
     expect(local).toContain('previewScope="local"');
     expect(local).toContain('onWorkspacePreviewOpen={appSidebarPreview.closePreview}');
     expect(local).toContain('onWorkspacePreviewChange={appSidebarPreview.onWorkspaceTriggerChange}');
     expect(local).toContain('showTooltip={!props.suppressPreviewMenuTooltips}');
-    expect(cloud).toContain('previewScope="remote"');
-    expect(cloud).toContain('onWorkspacePreviewOpen={appSidebarPreview.closePreview}');
-    expect(cloud).toContain('onWorkspacePreviewChange={appSidebarPreview.onWorkspaceTriggerChange}');
-    expect(cloud).toContain('showTooltip={!props.suppressPreviewMenuTooltips}');
+    expect(source).not.toContain('testId="app-rail-cloud-tasks"');
+    expect(source).not.toContain('previewScope="remote"');
     expect(automation).not.toContain('previewScope=');
     expect(automation).not.toContain('showTooltip={!props.suppressPreviewMenuTooltips}');
     expect(source).toContain('onPreviewMenuChange?.(previewScope ?? null)');
     expect(source).toContain('onAppPreviewChange?.(appPreviewTarget, true)');
     expect(source).toContain('onAppPreviewChange?.(appPreviewTarget, false)');
     expect(source).toContain('title={showTooltip ? label : undefined}');
+  });
+
+  test("omits the cloud workspace destination from the primary Rail", () => {
+    const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
+    expect(source).not.toContain('testId="app-rail-cloud-tasks"');
+    expect(source).not.toContain('label={t("navigation.cloud_workspace")}');
+    expect(source).not.toContain('<Cloud className="size-5"');
   });
 
   test("routes Automation and Plugins hover to the global sidebar preview host", () => {

@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
 
-import type { SidebarSessionItem } from "../src/app/types";
+import type { SidebarSessionItem, WorkspaceSessionGroup } from "../src/app/types";
 import {
   buildSessionTreeState,
+  collectRecentSessions,
   flattenSessionRows,
   isActiveWorkSessionStatus,
   overlayCoordinatorSessionRuns,
@@ -63,6 +64,39 @@ describe("global session pinning", () => {
     );
 
     expect(rows.map((row) => row.session.id)).toEqual(["session-b"]);
+  });
+});
+
+describe("local recent sessions", () => {
+  test("merges workspaces by latest activity and omits children, archived sessions, and pinned roots", () => {
+    const groups: WorkspaceSessionGroup[] = [
+      {
+        workspace: { id: "workspace-a", path: "/a", workspaceType: "local" },
+        status: "ready",
+        sessions: [
+          { id: "older", title: "Older", time: { created: 10, updated: 20 } },
+          { id: "newest", title: "Newest", time: { created: 10, updated: 60 } },
+          { id: "child", title: "Child", parentID: "newest", time: { updated: 100 } },
+          { id: "archived", title: "Archived", time: { updated: 90, archived: 91 } },
+        ],
+      },
+      {
+        workspace: { id: "workspace-b", path: "/b", workspaceType: "local" },
+        status: "ready",
+        sessions: [
+          { id: "pinned", title: "Pinned", time: { updated: 80 } },
+          { id: "middle", title: "Middle", time: { created: 40 } },
+        ],
+      },
+    ];
+
+    expect(collectRecentSessions(groups, new Set(["pinned"])).map((entry) => (
+      `${entry.group.workspace.id}:${entry.session.id}`
+    ))).toEqual([
+      "workspace-a:newest",
+      "workspace-b:middle",
+      "workspace-a:older",
+    ]);
   });
 });
 
