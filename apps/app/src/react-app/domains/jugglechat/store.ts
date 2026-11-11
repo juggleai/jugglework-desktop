@@ -271,6 +271,7 @@ function startSubscriptions() {
       void notifyLocalServerOfGithubEventPush();
       return;
     }
+    if (message.conversationType === 3 || message.name?.startsWith("jw:meeting-ring")) return;
     const state = useJuggleChatStore.getState();
     if (isSameConversation(state.activeConversation, message)) {
       useJuggleChatStore.setState({ messages: appendMessages(state.messages, [message]) });

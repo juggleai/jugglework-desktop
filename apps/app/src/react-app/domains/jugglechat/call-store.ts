@@ -1,3 +1,4 @@
+import { acquireMediaSession, releaseMediaSession } from "../meeting/media-session";
 import { create } from "zustand";
 
 import { juggleChatRuntime } from "./runtime";
@@ -50,6 +51,7 @@ export const useJuggleCallStore = create<CallState>((set, get) => ({
         const callId = eventCallId(event);
         const session = callId ? client.getSession({ callId }) : null;
         if (!session || get().phase !== "idle") return;
+        try { acquireMediaSession("call"); } catch { session.hangup?.(); return; }
         set({
           session,
           callId,
@@ -65,7 +67,8 @@ export const useJuggleCallStore = create<CallState>((set, get) => ({
       });
       client.on(CallEvent.CALL_FINISHED, (event: any) => {
         if (eventCallId(event) === get().callId) {
-          set({ session: null, callId: null, phase: "idle", mutedMic: false, mutedCamera: true });
+          releaseMediaSession("call");
+    set({ session: null, callId: null, phase: "idle", mutedMic: false, mutedCamera: true });
         }
       });
       client.on(CallEvent.MEMBER_JOINED, (event: any) => {
@@ -82,6 +85,7 @@ export const useJuggleCallStore = create<CallState>((set, get) => ({
   async start(conversation, video) {
     if (get().phase !== "idle") return;
     try {
+      acquireMediaSession("call");
       const client = await get().initialize();
       const session = client.create();
       const mediaType = video ? 1 : 0;
@@ -98,11 +102,13 @@ export const useJuggleCallStore = create<CallState>((set, get) => ({
       if (conversation.conversationType === 2) {
         set({ error: "群通话需要先从群成员中选择邀请对象" });
         session.hangup?.();
+        releaseMediaSession("call");
         set({ session: null, callId: null, phase: "idle" });
         return;
       }
       session.startSingleCall({ memberId: conversation.conversationId, mediaType, isEnableCamera: video });
     } catch (error) {
+      releaseMediaSession("call");
       set({ phase: "idle", session: null, callId: null, error: error instanceof Error ? error.message : String(error) });
     }
   },
@@ -117,11 +123,13 @@ export const useJuggleCallStore = create<CallState>((set, get) => ({
 
   reject() {
     get().session?.hangup?.();
+    releaseMediaSession("call");
     set({ session: null, callId: null, phase: "idle" });
   },
 
   hangup() {
     get().session?.hangup?.();
+    releaseMediaSession("call");
     set({ session: null, callId: null, phase: "idle", mutedMic: false, mutedCamera: true });
   },
 

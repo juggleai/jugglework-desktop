@@ -402,6 +402,13 @@ contextBridge.exposeInMainWorld("__JUGGLEWORK_ELECTRON__", {
   },
 });
 
+for (const channel of ["jugglework:meeting:screen-picker", "jugglework:meeting:screen-picker-closed"]) {
+  ipcRenderer.on(channel, (_event, payload) => {
+    if (typeof payload?.requestId !== "string") return;
+    window.dispatchEvent(new CustomEvent(channel, { detail: { requestId: payload.requestId } }));
+  });
+}
+
 ipcRenderer.on(NATIVE_DEEP_LINK_EVENT, (_event, urls) => {
   if (typeof window === "undefined") return;
   window.dispatchEvent(new CustomEvent(NATIVE_DEEP_LINK_EVENT, { detail: urls }));

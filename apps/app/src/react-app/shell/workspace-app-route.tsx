@@ -1,3 +1,7 @@
+import { MeetingReminderHost } from "../domains/meeting/meeting-reminders";
+import { MeetingPage } from "../domains/meeting/meeting-page";
+import { MeetingRoomHost } from "../domains/meeting/meeting-room";
+import { AppNavigationRail, APP_NAVIGATION_RAIL_WIDTH } from "./app-navigation-rail";
 /** @jsxImportSource react */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -164,6 +168,7 @@ function WorkspaceAppRouteContent() {
   }
 
   const activeSession = currentSession ?? retainedSession;
+  const meetingsVisible = appPath.view === "meetings";
   const settingsVisible = appPath.view === "settings";
   const chatVisible = appPath.view === "chat";
   const appsVisible = appPath.view === "apps";
@@ -182,7 +187,7 @@ function WorkspaceAppRouteContent() {
       routeSessionId={displayedSession.sessionId}
       embedded={automationSessionVisible}
       onSessionTargetChange={automationSessionVisible ? openAutomationSession : undefined}
-      surfaceVisible={automationSessionVisible || !(settingsVisible || chatVisible || appsVisible || automationsVisible || tasksVisible || reviewsVisible || toonFactoryVisible || calendarVisible)}
+      surfaceVisible={automationSessionVisible || !(settingsVisible || chatVisible || appsVisible || automationsVisible || tasksVisible || reviewsVisible || toonFactoryVisible || calendarVisible || meetingsVisible)}
     />
   );
 
@@ -206,12 +211,12 @@ function WorkspaceAppRouteContent() {
     <div className="relative h-dvh min-h-screen w-full overflow-hidden">
       <div
         ref={retainedSessionHost}
-        className={settingsVisible || chatVisible || appsVisible || automationsVisible || tasksVisible || reviewsVisible || toonFactoryVisible || calendarVisible
+        className={settingsVisible || chatVisible || appsVisible || automationsVisible || tasksVisible || reviewsVisible || toonFactoryVisible || calendarVisible || meetingsVisible
           ? navigationPreview.workspaceTarget
             ? "invisible absolute inset-0 z-50 h-full min-h-0 pointer-events-none [&_[data-session-list-preview=true]]:visible [&_[data-session-list-preview=true]]:pointer-events-auto [&_[data-session-preview-title-hover-guard]]:visible"
             : "hidden"
           : "h-full min-h-0"}
-        aria-hidden={(settingsVisible || chatVisible || appsVisible || automationsVisible || tasksVisible || reviewsVisible || toonFactoryVisible || calendarVisible) && !navigationPreview.workspaceTarget || undefined}
+        aria-hidden={(settingsVisible || chatVisible || appsVisible || automationsVisible || tasksVisible || reviewsVisible || toonFactoryVisible || calendarVisible || meetingsVisible) && !navigationPreview.workspaceTarget || undefined}
         data-testid="retained-session-surface"
       >
         {/* surfaceVisible gates behavior, not paint. Only the preview list and
@@ -237,6 +242,14 @@ function WorkspaceAppRouteContent() {
           workspaceId={(settingsVisible ? appPath.workspaceId : retainedSettings.workspaceId) ?? undefined}
           routePath={settingsVisible ? location.pathname : retainedSettings.routePath}
         />
+      </div>
+
+      <MeetingRoomHost />
+      <MeetingReminderHost />
+      <div className={appPath.view === "meetings" ? "absolute inset-0 z-10 flex bg-background" : "hidden"} aria-hidden={appPath.view !== "meetings" || undefined}>
+        <div style={{ width: APP_NAVIGATION_RAIL_WIDTH }} className="h-full shrink-0">
+          <AppNavigationRail workspaceId={activeSession.workspaceId} onOpenAccount={() => openSurfaceSettings("cloud-account", "/meetings")} onOpenHome={() => navigate(sessionPath)} onOpenApps={() => navigate(workspaceAppsRoute(activeSession.workspaceId))} onOpenChat={() => navigate(workspaceChatRoute(activeSession.workspaceId))} onOpenReviews={() => navigate(workspaceReviewsRoute(activeSession.workspaceId))} onOpenSettings={() => openSurfaceSettings("preferences", "/meetings")} onOpenTaskSearch={workspaceShellActions.openTaskSearch} onOpenCreateWorkspace={workspaceShellActions.openCreateWorkspace}/>
+        </div><div className="h-full min-w-0 flex-1"><MeetingPage /></div>
       </div>
 
       {/* Keep Chat mounted from startup so the React runtime initializes the IM

@@ -599,7 +599,25 @@ export type ToonFactoryProjectOpenResult = ToonFactoryProjectState & {
 // The command map
 // ---------------------------------------------------------------------------
 
+export type MeetingScreenSource = {
+  id: string;
+  kind: "screen" | "window";
+  name: string;
+  thumbnail: string;
+  appIcon: string;
+  appKey: string;
+};
+
 export type DesktopCommandMap = {
+  meetingScreenSources: { args: [requestId: string]; result: MeetingScreenSource[] };
+  meetingScreenChoose: { args: [requestId: string, sourceId: string | null]; result: boolean };
+  meetingMediaPermission: { args: [kind: "camera" | "microphone"]; result: { granted: boolean; status: string } };
+  meetingPrivacySettings: { args: [kind: "camera" | "microphone" | "screen"]; result: void };
+  meetingMiniReady: { args: []; result: void };
+  meetingWindowState: { args: []; result: { compact: boolean } };
+  meetingDiagnosticsGet: { args: []; result: { storageAvailable: boolean; records: unknown[] } };
+  meetingConfigGet: { args: []; result: { enabled: boolean; appId: number; filePath: string } };
+  meetingWindowFocus: { args: [target: "main" | "meeting"]; result: void };
   toonFactoryOpen: { args: [workspaceId: string]; result: ToonFactoryStatus };
   toonFactoryHide: { args: []; result: void };
   toonFactoryClose: { args: []; result: void };

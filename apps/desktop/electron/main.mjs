@@ -1,3 +1,7 @@
+import { createMeetingScreenPicker } from "./meeting-screen-picker.mjs";
+import { installMeetingDiagnostics } from "./meeting-diagnostics.mjs";
+import { installMeetingCompactWindow } from "./meeting-compact-window.mjs";
+import { readMeetingConfig } from "./meeting-config.mjs";
 import "./socket-tos-compat.mjs";
 import { createToonFactoryRuntime } from "./toonFactoryRuntime.mjs";
 import { execFile, execFileSync, spawn } from "node:child_process";
@@ -125,6 +129,7 @@ const {
   app,
   BrowserWindow,
   dialog,
+  desktopCapturer,
   ipcMain,
   Menu,
   nativeImage,
@@ -927,6 +932,13 @@ const IDLE_ROUTER_INFO = Object.freeze({
 });
 
 let mainWindow = null;
+let meetingWindow = null;
+const meetingScreenPicker = createMeetingScreenPicker({ desktopCapturer, getMainWindow: () => mainWindow, getMeetingWindow: () => meetingWindow });
+let readMeetingNativeDiagnostics = () => ({ storageAvailable: false, records: [] });
+/** @type {import("electron").BrowserWindow | null} */
+let meetingMiniWindow = null;
+/** @type {ReturnType<typeof installMeetingCompactWindow> | null} */
+let meetingCompact = null;
 let desktopPet = null;
 const pendingDeepLinks = [];
 const juggleChatSkillBridge = createJuggleChatSkillBridge({
@@ -2354,6 +2366,55 @@ const remoteControlLifecycleManager = createRemoteControlLifecycleManager({
 // typecheck:electron`.
 /** @type {import("@jugglework/types/desktop-ipc").DesktopCommandHandlers<import("electron").IpcMainInvokeEvent>} */
 const desktopCommandHandlers = {
+  "meetingScreenSources": (event, requestId) => meetingScreenPicker.list(event, requestId),
+  "meetingScreenChoose": (event, requestId, sourceId) => meetingScreenPicker.choose(event, requestId, sourceId),
+  "meetingDiagnosticsGet": async (event) => {
+    if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error("仅主窗口可读取会议诊断");
+    return readMeetingNativeDiagnostics();
+  },
+  "meetingMediaPermission": async (event, kind) => {
+    if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error("仅主窗口可申请设备权限");
+    if (kind !== "camera" && kind !== "microphone") throw new Error("无效设备");
+    if (process.platform !== "darwin") return { granted: true, status: "system-managed" };
+    let status = systemPreferences.getMediaAccessStatus(kind);
+    if (status === "not-determined") {
+      await systemPreferences.askForMediaAccess(kind);
+      status = systemPreferences.getMediaAccessStatus(kind);
+    }
+    return { granted: status === "granted", status };
+  },
+  "meetingPrivacySettings": async (event, kind) => {
+    if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error("仅主窗口可打开隐私设置");
+    const panes = { camera: "Privacy_Camera", microphone: "Privacy_Microphone", screen: "Privacy_ScreenCapture" };
+    if (!Object.hasOwn(panes, kind)) throw new Error("无效权限类型");
+    if (process.platform === "darwin") await shell.openExternal("x-apple.systempreferences:com.apple.preference.security?" + panes[kind]);
+    else if (process.platform === "win32" && kind !== "screen") await shell.openExternal(kind === "camera" ? "ms-settings:privacy-webcam" : "ms-settings:privacy-microphone");
+    else throw new Error("请在系统设置中手动打开对应的隐私权限页面。");
+  },
+  "meetingConfigGet": async (event) => {
+    if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error("仅主窗口可读取会议配置");
+    const filePath = process.env.JUGGLEWORK_MEETING_CONFIG?.trim() || (app.isPackaged ? path.join(app.getPath("userData"), "meeting.json") : path.join(__dirname, "../config/meeting.json"));
+    return readMeetingConfig(filePath);
+  },
+  "meetingMiniReady": async (event) => {
+    if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error("仅主窗口可初始化会议小窗");
+    meetingCompact?.markReady();
+  },
+  "meetingWindowState": async (event) => {
+    if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error("仅主窗口可读取会议窗口状态");
+    return { compact: meetingCompact?.isCompact() ?? false };
+  },
+  "meetingWindowFocus": async (event, target) => {
+    if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error("仅主窗口可切换会议窗口");
+    if (target !== "main" && target !== "meeting") throw new Error("无效窗口目标");
+    if (target === "meeting") meetingCompact?.restore();
+    const window = target === "main" ? mainWindow : meetingWindow;
+    if (!window || window.isDestroyed()) throw new Error("会议窗口已关闭");
+    if (target === "main" && meetingWindow && !meetingWindow.isDestroyed()) meetingWindow.hide();
+    if (window.isMinimized()) window.restore();
+    window.show();
+    window.focus();
+  },
   "toonFactoryOpen": async (event, ...args) => {
     if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error("仅主窗口可打开漫剧工厂");
     return toonFactoryRuntime.open(args[0]);
@@ -3260,6 +3321,7 @@ async function createMainWindow() {
       // The renderer owns session dispatch + event streams; keep it running
       // while hidden/minimized so background tasks are not interrupted.
       backgroundThrottling: false,
+      autoplayPolicy: "no-user-gesture-required",
       preload: preloadPath,
       contextIsolation: true,
       nodeIntegration: false,
@@ -3336,7 +3398,30 @@ async function createMainWindow() {
     mainWindow = null;
   });
 
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+  mainWindow.webContents.on("did-create-window", (child, details) => {
+    if (!["jugglework-meeting", "jugglework-meeting-mini"].includes(details.frameName)) return;
+    if (details.frameName === "jugglework-meeting") {
+      meetingWindow = child;
+      child.on("closed", () => { if (meetingWindow === child) { meetingWindow = null; meetingCompact = null; } });
+    } else {
+      meetingMiniWindow = child;
+      if (meetingWindow) meetingCompact = installMeetingCompactWindow(mainWindow, meetingWindow, child, (bounds) => screen.getDisplayMatching(bounds).workArea);
+      child.on("closed", () => { if (meetingMiniWindow === child) meetingMiniWindow = null; });
+    }
+    child.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+    child.webContents.on("will-navigate", (event) => event.preventDefault());
+  });
+  session.defaultSession.setDisplayMediaRequestHandler(meetingScreenPicker.handle, { useSystemPicker: false });
+
+  mainWindow.webContents.setWindowOpenHandler(({ url, frameName }) => {
+    // The meeting UI is a React portal owned by the authenticated main renderer.
+    // No second app runtime, IM login or preload is loaded in the blank child.
+    if (url === "about:blank" && frameName === "jugglework-meeting-mini") {
+      return { action: "allow", overrideBrowserWindowOptions: { width: 260, height: 82, minWidth: 260, minHeight: 82, show: false, frame: false, resizable: false, maximizable: false, fullscreenable: false, skipTaskbar: true, roundedCorners: true, backgroundColor: "#ffffff", webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true, preload: undefined, backgroundThrottling: false, autoplayPolicy: "no-user-gesture-required" } } };
+    }
+    if (url === "about:blank" && frameName === "jugglework-meeting") {
+      return { action: "allow", overrideBrowserWindowOptions: { width: 1200, height: 800, minWidth: 720, minHeight: 540, titleBarStyle: "hidden", autoHideMenuBar: true, webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true, preload: undefined, backgroundThrottling: false, autoplayPolicy: "no-user-gesture-required" } } };
+    }
     if (url.startsWith("file://")) {
       try {
         void shell.openPath(fileURLToPath(url));
@@ -3535,7 +3620,9 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.whenReady().then(async () => {
-    installMediaPermissionHandlers(session, () => mainWindow);
+    readMeetingNativeDiagnostics = installMeetingDiagnostics(app, path.join(app.getPath("userData"), "meeting-native-diagnostics.json"),
+      window => window === mainWindow ? "main" : window === meetingWindow ? "meeting" : "other");
+    installMediaPermissionHandlers(session, () => mainWindow, () => meetingWindow);
     await runPendingNukeCleanup({
       env: process.env,
       homedir: os.homedir(),
