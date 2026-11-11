@@ -1,9 +1,35 @@
 import type { DynamicToolUIPart, TextUIPart } from "ai";
-import type { ToolPart } from "@opencode-ai/sdk/v2/client";
+import type { FilePart, ToolPart } from "@opencode-ai/sdk/v2/client";
 
 import { safeStringify } from "@/app/utils";
 
 export const STRUCTURED_OUTPUT_TOOL = "StructuredOutput";
+const MAX_INLINE_READ_OUTPUT_CHARS = 128 * 1024;
+const READ_OUTPUT_TAIL_CHARS = 16 * 1024;
+const MAX_INLINE_READ_ATTACHMENT_CHARS = 256 * 1024;
+
+export function visibleToolAttachments(part: ToolPart): FilePart[] {
+  if (part.state.status !== "completed" || !part.state.attachments) return [];
+  if (part.tool !== "read") return part.state.attachments;
+  return part.state.attachments.filter((attachment) => !(
+    attachment.mime.toLowerCase().startsWith("image/")
+    && attachment.url.toLowerCase().startsWith("data:image/")
+    && attachment.url.length > MAX_INLINE_READ_ATTACHMENT_CHARS
+  ));
+}
+
+function boundedToolOutput(tool: string, output: unknown) {
+  if (tool !== "read" || typeof output !== "string" || output.length <= MAX_INLINE_READ_OUTPUT_CHARS) {
+    return { output, truncated: false, originalCharacters: null };
+  }
+  const marker = `\n\n[JuggleWork omitted ${output.length - MAX_INLINE_READ_OUTPUT_CHARS} characters from this historical read result to keep the session responsive.]\n\n`;
+  const headChars = MAX_INLINE_READ_OUTPUT_CHARS - READ_OUTPUT_TAIL_CHARS;
+  return {
+    output: `${output.slice(0, headChars)}${marker}${output.slice(-READ_OUTPUT_TAIL_CHARS)}`,
+    truncated: true,
+    originalCharacters: output.length,
+  };
+}
 
 // Keep only the JSON fields needed for historical file changes. Diagnostics and
 // other arbitrary tool metadata should not be copied into the transcript.
@@ -71,10 +97,17 @@ export function parseDynamicToolUIPart(part: ToolPart): DynamicToolUIPart | null
         } : {}),
       }
     : undefined;
+  const boundedOutput = part.state.status === "completed"
+    ? boundedToolOutput(part.tool, part.state.output)
+    : { output: undefined, truncated: false, originalCharacters: null };
   const providerMetadata = {
     opencode: {
       partId: part.id,
       ...(taskMetadata ? { toolMetadata: taskMetadata } : {}),
+      ...(boundedOutput.truncated ? {
+        toolOutputTruncated: true,
+        toolOutputOriginalCharacters: boundedOutput.originalCharacters,
+      } : {}),
       ...(typeof stateTime?.start === "number" ? { toolStartedAt: stateTime.start } : {}),
       ...(stateTime && "end" in stateTime && typeof stateTime.end === "number" ? { toolEndedAt: stateTime.end } : {}),
     },
@@ -99,7 +132,7 @@ export function parseDynamicToolUIPart(part: ToolPart): DynamicToolUIPart | null
       toolCallId: part.callID,
       state: "output-available",
       input: part.state.input,
-      output: part.state.output,
+      output: boundedOutput.output,
       callProviderMetadata: providerMetadata,
     };
   }

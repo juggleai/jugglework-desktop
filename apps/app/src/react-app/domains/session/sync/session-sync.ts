@@ -21,6 +21,7 @@ import {
   parseDynamicToolUIPart,
   parseStructuredOutputUIPart,
   STRUCTURED_OUTPUT_TOOL,
+  visibleToolAttachments,
 } from "./parse-tool-parts";
 import type { JuggleWorkServerClient, JuggleWorkSessionSnapshot } from "@/app/lib/jugglework-server";
 import { applyRevertCursor, reconcileTranscriptMessages } from "./transcript-reconcile";
@@ -1011,7 +1012,7 @@ function toUIParts(part: Part): UIMessage["parts"] {
   if (!mapped) return [];
   if (part.type === "tool" && part.tool === STRUCTURED_OUTPUT_TOOL) return [mapped];
   if (part.type === "tool" && part.state.status === "completed" && part.state.attachments) {
-    return [mapped, ...part.state.attachments.flatMap(toFileUIParts)];
+    return [mapped, ...visibleToolAttachments(part).flatMap(toFileUIParts)];
   }
   return [mapped];
 }

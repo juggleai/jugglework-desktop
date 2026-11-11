@@ -14,6 +14,7 @@ import {
 import {
   parseDynamicToolUIPart,
   parseStructuredOutputUIPart,
+  visibleToolAttachments,
 } from "../src/react-app/domains/session/sync/parse-tool-parts";
 import { parseJuggleWorkSessionCreateResult } from "../src/components/tools/jugglework-session-create";
 import { useSessionActivityStore } from "../src/react-app/domains/session/status/session-activity-store";
@@ -186,6 +187,61 @@ describe("tool part mapper", () => {
       input: { content: "hello", filePath: "src/a.ts" },
       output: "ok",
     });
+  });
+
+  test("bounds anomalously large historical read output in renderer memory", () => {
+    const original = `${"a".repeat(3 * 1024 * 1024)}TAIL`;
+    const source = {
+      ...writeToolPart("completed", { filePath: "large.txt" }),
+      tool: "read",
+      state: {
+        status: "completed",
+        input: { filePath: "large.txt" },
+        output: original,
+        title: "Read",
+        metadata: {},
+        time: { start: 1, end: 2 },
+      },
+    } satisfies Extract<Part, { type: "tool" }>;
+    const mapped = parseDynamicToolUIPart(source)!;
+    expect(mapped.state).toBe("output-available");
+    if (mapped.state !== "output-available") throw new Error("expected completed tool output");
+    expect(typeof mapped.output).toBe("string");
+    expect((mapped.output as string).length).toBeLessThan(140 * 1024);
+    expect(mapped.output).toContain("JuggleWork omitted");
+    expect(mapped.output).toEndWith("TAIL");
+    expect(mapped.callProviderMetadata?.opencode).toMatchObject({
+      toolOutputTruncated: true,
+      toolOutputOriginalCharacters: original.length,
+    });
+    // The source part remains untouched for persistence and model context.
+    expect(source.state.status === "completed" && source.state.output).toBe(original);
+  });
+
+  test("does not duplicate oversized inline read images into UI message memory", () => {
+    const largeImage = `data:image/png;base64,${"a".repeat(3 * 1024 * 1024)}`;
+    const smallImage = `data:image/png;base64,${"b".repeat(1024)}`;
+    const source = {
+      ...writeToolPart("completed", { filePath: "figure.png" }),
+      tool: "read",
+      state: {
+        status: "completed",
+        input: { filePath: "figure.png" },
+        output: "Read image successfully",
+        title: "Read",
+        metadata: {},
+        attachments: [
+          { id: "large", sessionID: "session-a", messageID: "msg-a", type: "file", mime: "image/png", url: largeImage },
+          { id: "small", sessionID: "session-a", messageID: "msg-a", type: "file", mime: "image/png", url: smallImage },
+        ],
+        time: { start: 1, end: 2 },
+      },
+    } satisfies Extract<Part, { type: "tool" }>;
+
+    const visible = visibleToolAttachments(source);
+    expect(visible).toHaveLength(1);
+    expect(visible[0]!.url).toBe(smallImage);
+    expect(source.state.attachments[0]!.url).toBe(largeImage);
   });
 
   test("preserves task child-session metadata for stalled status presentation", () => {

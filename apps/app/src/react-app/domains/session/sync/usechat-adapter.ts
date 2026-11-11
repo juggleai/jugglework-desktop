@@ -20,6 +20,7 @@ import {
   parseDynamicToolUIPart,
   parseStructuredOutputUIPart,
   STRUCTURED_OUTPUT_TOOL,
+  visibleToolAttachments,
 } from "./parse-tool-parts";
 
 function defaultErrorMessage(name: string | null, fallback: string) {
@@ -271,7 +272,7 @@ function mapSnapshotToolParts(part: ToolPart, authoritativeIdle: boolean): UIMes
   if (!mapped) return [];
 
   if (part.state.status === "completed" && part.state.attachments) {
-    return [mapped, ...part.state.attachments.flatMap(mapFileParts)];
+    return [mapped, ...visibleToolAttachments(part).flatMap(mapFileParts)];
   }
 
   return [mapped];
