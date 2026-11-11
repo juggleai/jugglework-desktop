@@ -1,0 +1,427 @@
+{
+  "schema": "com.juggleai.jugglework.desktop-release-result",
+  "schemaVersion": 1,
+  "version": "1.2.35",
+  "channel": "stable",
+  "platform": "mac",
+  "architecture": "arm64",
+  "completedAt": "2026-11-11T13:51:28.986128+00:00",
+  "sourceCommit": "6188db09c0ef79991000b5c2d56bd1e808f07adc",
+  "candidateRecordCommit": "1aac88f5904fe29b2b7a83834d0d2e158f31941d",
+  "candidateSha256": "0120429b07fe240cb2838be940c9250bcebbbe3447e3ef836a461542676a653c",
+  "promotionToolingCommit": "44bd8238b4861765bd21301b1847f7320521adce",
+  "promotionWorkflow": "https://github.com/juggleai/jugglework-desktop/actions/runs/43029214444",
+  "promotionVerifiedAt": "2026-11-11T13:35:12.382Z",
+  "stableManifest": {
+    "status": 200,
+    "size": 706,
+    "sha256": "4401a3fa4f2b67ca30157a4a3e7170821d17061e95d1f3d37d386670bb056a58",
+    "cacheControl": "public, max-age=31536000",
+    "url": "https://downloads.jugglechat.cn/jugglework/releases/stable/mac/latest-mac.yml"
+  },
+  "immutableManifest": {
+    "key": "jugglework/releases/v1.2.35/mac/latest-mac.yml",
+    "url": "https://downloads.jugglechat.cn/jugglework/releases/v1.2.35/mac/latest-mac.yml",
+    "sha256": "4401a3fa4f2b67ca30157a4a3e7170821d17061e95d1f3d37d386670bb056a58",
+    "sha512": "ZBAovZFhv2Xa2bHU6v4Nb7P4B/+b5BN+b81B/TLc25vsHCGkX7VIyaOzCyM95srgTzHkR3dB1VJ2JNvIJ54h2g==",
+    "size": 706,
+    "etag": "FoDX6SOnBE-6hDK9R28Yvm79VrpW",
+    "mime": "text/yaml"
+  },
+  "releasePolicy": {
+    "scope": "stable-mac-arm64-standing-policy",
+    "policyVersion": 1,
+    "minVersion": "1.2.35",
+    "currentCoordinates": {
+      "version": "1.2.35",
+      "channel": "stable",
+      "platform": "mac",
+      "architecture": "arm64",
+      "commit": "6188db09c0ef79991000b5c2d56bd1e808f07adc",
+      "immutableManifestDigest": "4401a3fa4f2b67ca30157a4a3e7170821d17061e95d1f3d37d386670bb056a58",
+      "mutableManifestKey": "jugglework/releases/stable/mac/latest-mac.yml"
+    },
+    "reasons": {
+      "canary": "User standing authorization: skip real immutable-target and mutable Stable-feed lower-client upgrade canaries for matching stable macOS arm64 releases starting at 1.2.35.",
+      "mutableCacheControl": "User standing authorization: skip only Qiniu mutable manifest Cache-Control mutation and required-value validation for matching stable macOS arm64 releases starting at 1.2.35."
+    }
+  },
+  "workflow": {
+    "authorization": "standing_policy",
+    "explicit": true,
+    "canary": "skipped_by_standing_policy",
+    "mutableCacheControlMutation": "skipped_by_standing_policy",
+    "mutableCacheControlValidation": "skipped_by_standing_policy"
+  },
+  "standingPolicySkill": {
+    "path": ".opencode/skills/release-jugglework-desktop/SKILL.md",
+    "sha256": "c93bbb7c80a35889383b73c49df58ae1a7b4e6ba497a1d07f5e195bfd3fe25af",
+    "localUpdated": true,
+    "committedInDesktopRepo": false,
+    "note": "Workspace parent local skill; no Desktop repo commit claim."
+  },
+  "installationCanary": "skipped_by_standing_policy",
+  "installedStateVerification": "not_performed",
+  "olderVersionCacheRisk": true,
+  "observedMutableCacheControl": "public, max-age=31536000",
+  "notarization": {
+    "app": {
+      "schema": "com.juggleai.jugglework.macos-notarization-receipt",
+      "schemaVersion": 1,
+      "producer": "electron-after-sign",
+      "version": "1.2.35",
+      "bundleIdentifier": "com.juggleai.jugglework",
+      "submissionId": "f911ae96-09b9-46af-81a0-611b326e0d98",
+      "status": "accepted",
+      "staple": "validated",
+      "createdAt": "2026-11-11T12:19:12.829Z"
+    },
+    "dmg": {
+      "schema": "com.juggleai.jugglework.macos-dmg-notarization-receipt",
+      "schemaVersion": 1,
+      "producer": "finalize-macos-artifacts",
+      "version": "1.2.35",
+      "architecture": "arm64",
+      "artifactName": "jugglework-mac-arm64-1.2.35.dmg",
+      "teamIdentifier": "H7PDHSK3C7",
+      "submissionId": "35a81cab-e2fe-4eed-b381-23f5f83f6cbe",
+      "status": "accepted",
+      "staple": "validated",
+      "gatekeeper": "accepted",
+      "createdAt": "2026-11-11T12:23:33.753Z"
+    }
+  },
+  "toonFactory": {
+    "bunSha256": "e0c90ec15d33363e6b70713d56bc3b2c7585c17f40a0fe0f8fd9305901d4e233",
+    "fileCount": 1034,
+    "inventorySha256": "e3fd62a5bc87d09982fc173024b108e162d6d824ad381ca8d0357c4d62651ac8",
+    "manifestSha256": "c918872340e3e77fc2510a7a9552314f9da48fea136f40d0cd776eeedbf0f575",
+    "toonflow": {
+      "lockfileSha256": "eb490e0976076fee21ea6f84dad2cb8b7bc0cc33868deb9953a6210214f8a119",
+      "revision": "sha256:4668de11fde5a98644631999bfd044066c65bcef34f1d197eee0f6c2232b3e16",
+      "version": "unversioned"
+    },
+    "packagedContainers": [
+      "app",
+      "zip",
+      "dmg"
+    ],
+    "packageVerification": "final-package-verification.json",
+    "independentMediaAcceptance": "media-acceptance-pass-report.json",
+    "independentMediaAcceptanceScope": [
+      "Independent current Electron host, not the candidate executable/main, updater, notarization or release gate.",
+      "UI automation uses candidate DOM events and Electron executeJavaScript; fixture canvas is seeded on disk, not imported through a file picker.",
+      "Scene detector is exercised on a short synthetic testsrc2 fixture; many-shot/10-minute limits and publication-await races require separate tests.",
+      "Cancellation tests SIGSTOP the next owned real ffmpeg child to make the UI round-trip deterministic, then require candidate cancellation to kill it and wait for close. This verifies lifecycle, not natural processing timing; publication-await races are covered separately."
+    ]
+  },
+  "tests": {
+    "provenance": "历史 source/build results；本次 fresh closeout checks 独立记入 closeout-validation.json，不冒充重新 build 或 full suite。",
+    "sourceChecks": {
+      "desktopMain": {
+        "tests": 1132,
+        "pass": 1131,
+        "fail": 0,
+        "skipped": 1
+      },
+      "desktopPretests": {
+        "windowsPackage": {
+          "pass": 55,
+          "fail": 0,
+          "skipped": 0
+        },
+        "linuxPackage": {
+          "pass": 8,
+          "fail": 0,
+          "skipped": 0
+        },
+        "toonFactoryBuildFixtures": {
+          "pass": 19,
+          "fail": 0,
+          "skipped": 1
+        },
+        "runtimeImports": {
+          "pass": 5,
+          "fail": 0,
+          "skipped": 0
+        }
+      },
+      "includedInDesktopMain": {
+        "releaseWorkflowPackaging": {
+          "pass": 266,
+          "fail": 0,
+          "skipped": 0
+        },
+        "electronRecoveryHealthDiagnostics": {
+          "pass": 15,
+          "fail": 0,
+          "skipped": 0
+        }
+      },
+      "skips": [
+        "real bundled media smoke",
+        "off-macOS updater branch"
+      ],
+      "appCalendarSixSeparateFiles": {
+        "pass": 92,
+        "fail": 0,
+        "bun": "1.3.10+30e609e08"
+      },
+      "typechecks": {
+        "app": "passed",
+        "electron": "passed",
+        "embeddedServer": "passed"
+      },
+      "typecheckScope": "Executed in original checkout; App/Server see preserved unrelated working changes. No clean-worktree typecheck result is claimed.",
+      "strictOpenSpec": {
+        "migrate-desktop-updates-to-qiniu": "passed",
+        "add-cloud-calendar-core": "passed"
+      },
+      "newCommitDiffCheck": "passed",
+      "historicalMainToDevDiffCheck": {
+        "status": "pre-existing warning",
+        "message": "openspec/changes/add-jugglework-docs-desktop/specs/desktop-cloud-docs/spec.md:45: new blank line at EOF.",
+        "reproducedAtOriginalDevBaseline": true
+      },
+      "threePackageVersions": "1.2.35"
+    },
+    "independentMedia": {
+      "passed": 26,
+      "total": 26,
+      "checks": [
+        "candidate modules and signed resources",
+        "isolated packaged runtime",
+        "catalog and renderer boundary",
+        "directory permission denial",
+        "video actions UI",
+        "source decode and playback",
+        "UI trim",
+        "UI extractAudio",
+        "UI separate",
+        "frameAnalysis UI and real analyze",
+        "analysis undo redo",
+        "analysis rebuild idempotence",
+        "save reload",
+        "project switch",
+        "real export",
+        "output decode and playback",
+        "no overwrite",
+        "negative media permissions",
+        "active export cancellation",
+        "active separate cancellation",
+        "active analyze cancellation",
+        "UI cancellation",
+        "project switch during processing",
+        "grant revocation during processing",
+        "no external model requests",
+        "cleanup and no orphan processes"
+      ],
+      "reportSha256": "160e10140f52e47abadab1a7ac61f30c45e407172e8965f84914b617d85fcab8",
+      "hostDiagnosticsSha256": "0e5d86ffa6b1dd66a5f9c035c2e0fbf612c92b1cd540c824c7d0e5006b913dc5",
+      "diagnostics": [
+        "Uncaught TypeError: Cannot read properties of null (reading 'document')",
+        "Uncaught TypeError: Cannot read properties of null (reading 'document')",
+        "Uncaught TypeError: Cannot read properties of null (reading 'document')",
+        "Uncaught TypeError: Cannot read properties of null (reading 'document')",
+        "Uncaught TypeError: Cannot read properties of null (reading 'document')",
+        "Uncaught TypeError: Cannot read properties of null (reading 'document')",
+        "Uncaught TypeError: Cannot read properties of null (reading 'document')"
+      ],
+      "limitations": [
+        "Independent current Electron host, not the candidate executable/main, updater, notarization or release gate.",
+        "UI automation uses candidate DOM events and Electron executeJavaScript; fixture canvas is seeded on disk, not imported through a file picker.",
+        "Scene detector is exercised on a short synthetic testsrc2 fixture; many-shot/10-minute limits and publication-await races require separate tests.",
+        "Cancellation tests SIGSTOP the next owned real ffmpeg child to make the UI round-trip deterministic, then require candidate cancellation to kill it and wait for close. This verifies lifecycle, not natural processing timing; publication-await races are covered separately."
+      ]
+    }
+  },
+  "den": {
+    "china": {
+      "latestAppVersion": "1.2.35",
+      "minAppVersion": "0.1.0",
+      "publishedCount": 21,
+      "allowedCount": 21,
+      "oldPid": 1585139,
+      "pid": 1589126,
+      "binarySha256": "bf41111768a146c4e8f16f4cc4aab8294d9ea8ff1b615d438c0f6f6c56d15fa7",
+      "configSha256": "f71ab71e1db98c8241ee516fc22bddeff4cdf399a6eb78d31c32d02f985c2a8d",
+      "backup": "/root/jugglework-server/backups/desktop-version-1.2.35-20261111T134118701630Z",
+      "backupRootOnlyVerified": true,
+      "backupDirectoryMode": "0700",
+      "backupFileModes": "0600",
+      "binaryUnchanged": true,
+      "nonVersionBytesUnchanged": true,
+      "regionalHistoryPreserved": true,
+      "docsEnabled": false,
+      "loopback8021": true,
+      "classificationAnonymousPost": 401,
+      "authenticatedContractVerified": false,
+      "logs": {
+        "criticalSignatures": 0,
+        "http5xxSignatures": 0,
+        "controlStartup": true,
+        "streamingStartup": true,
+        "bytesChecked": 74578
+      },
+      "applyEvidence": "den-1.2.35-china-apply-20261111T134124128419Z.json",
+      "observeEvidence": "den-1.2.35-china-observe-20261111T134136219562Z.json",
+      "finalReadbackEvidence": "den-1.2.35-china-final-readback-20261111T134530921007Z.json",
+      "scopedCompatibilityEvidence": "den-1.2.35-china-scoped-compatibility-20261111T134025306571Z.json",
+      "origin": "https://work.jugglechat.cn",
+      "verification": "passed",
+      "verifiedAt": "2026-11-11T13:45:29.500834+00:00",
+      "processStart": "Wed Nov 11 21:41:19 2026",
+      "binarySize": 60569026,
+      "localPublicHTTP": "health/ready/runtime-config/console/app-version all 200",
+      "allowlistVerification": "Loaded config + absent version overrides + restarted process, not authenticated desktop-config API acceptance",
+      "supervisorFileModes": [
+        "0o644"
+      ]
+    },
+    "overseas": {
+      "latestAppVersion": "1.2.35",
+      "minAppVersion": "0.1.0",
+      "publishedCount": 22,
+      "allowedCount": 22,
+      "oldPid": 119607,
+      "pid": 124700,
+      "binarySha256": "0d61f3060c87d7f1496536e6a052e11a0f3e324d3254e5626f78e1f8fb1da5e8",
+      "configSha256": "6d16607dcffeff795fa9e2813f9eef84be4a504223accf90aadf4785ed295a02",
+      "backup": "/root/jugglework-server/backups/desktop-version-1.2.35-20261111T134248475946Z",
+      "backupRootOnlyVerified": true,
+      "backupDirectoryMode": "0700",
+      "backupFileModes": "0600",
+      "binaryUnchanged": true,
+      "nonVersionBytesUnchanged": true,
+      "regionalHistoryPreserved": true,
+      "docsEnabled": false,
+      "loopback8021": true,
+      "classificationAnonymousPost": 401,
+      "authenticatedContractVerified": false,
+      "logs": {
+        "criticalSignatures": 0,
+        "http5xxSignatures": 0,
+        "controlStartup": true,
+        "streamingStartup": true,
+        "bytesChecked": 77654
+      },
+      "applyEvidence": "den-1.2.35-overseas-apply-20261111T134304471071Z.json",
+      "observeEvidence": "den-1.2.35-overseas-observe-20261111T134326149619Z.json",
+      "finalReadbackEvidence": "den-1.2.35-overseas-final-readback-20261111T134548862785Z.json",
+      "scopedCompatibilityEvidence": "den-1.2.35-overseas-scoped-compatibility-20261111T134207709127Z.json",
+      "origin": "https://work.juggle.im",
+      "verification": "passed",
+      "verifiedAt": "2026-11-11T13:45:37.020927+00:00",
+      "processStart": "Wed Nov 11 21:42:50 2026",
+      "binarySize": 60003010,
+      "localPublicHTTP": "health/ready/runtime-config/console/app-version all 200",
+      "allowlistVerification": "Loaded config + absent version overrides + restarted process, not authenticated desktop-config API acceptance",
+      "supervisorFileModes": [
+        "0o600",
+        "0o644"
+      ]
+    }
+  },
+  "chinaServer": {
+    "sourceCommit": "99cd53889cf7a98677a2237dfa0dd22920c9b08b",
+    "binarySha256": "bf41111768a146c4e8f16f4cc4aab8294d9ea8ff1b615d438c0f6f6c56d15fa7",
+    "size": 60569026,
+    "status": "deployed-verified-observation-completed",
+    "report": "release-evidence/jugglework-server/china-20261111/DEPLOYMENT-REPORT.md",
+    "migrationsApplied": [
+      2026110601,
+      2026110602,
+      2026111101,
+      2026111102,
+      2026111103
+    ],
+    "highestMigration": 2026111103,
+    "mysqlLifecycleTests": "skipped_no_independent_test_DSN",
+    "docsEnabled": false,
+    "overseasBinaryDeployment": false
+  },
+  "rollback": {
+    "china": {
+      "config": "/root/jugglework-server/backups/desktop-version-1.2.35-20261111T134118701630Z/config.yml",
+      "checksum": "/root/jugglework-server/backups/desktop-version-1.2.35-20261111T134118701630Z/config.yml.sha256",
+      "baseline": "/root/jugglework-server/backups/desktop-version-1.2.35-20261111T134118701630Z/verification-baseline.json",
+      "restoreSha256": "b61b8f5f3ee0ec04d4a34b02a33b777157e9930dd084c877289b49f9edb45771",
+      "expectedCurrentConfigSha256": "f71ab71e1db98c8241ee516fc22bddeff4cdf399a6eb78d31c32d02f985c2a8d",
+      "expectedCurrentBinarySha256": "bf41111768a146c4e8f16f4cc4aab8294d9ea8ff1b615d438c0f6f6c56d15fa7"
+    },
+    "overseas": {
+      "config": "/root/jugglework-server/backups/desktop-version-1.2.35-20261111T134248475946Z/config.yml",
+      "checksum": "/root/jugglework-server/backups/desktop-version-1.2.35-20261111T134248475946Z/config.yml.sha256",
+      "baseline": "/root/jugglework-server/backups/desktop-version-1.2.35-20261111T134248475946Z/verification-baseline.json",
+      "restoreSha256": "94223b32a11dd00462ec4c6f2f4952c473125345171698b2fb6632d620553906",
+      "expectedCurrentConfigSha256": "6d16607dcffeff795fa9e2813f9eef84be4a504223accf90aadf4785ed295a02",
+      "expectedCurrentBinarySha256": "0d61f3060c87d7f1496536e6a052e11a0f3e324d3254e5626f78e1f8fb1da5e8"
+    },
+    "procedure": "未执行。另行授权后先评估已下载客户端及 additive schema 兼容，逐区国内→海外检查 current binary/config 无漂移、root:root 0700 backup/0600 config/checksum/baseline 与记录摘要。仅同文件系统 stage config root:root 0600、原子替换、一次 Supervisor restart 后完整复核；禁止自动 DB restore，不盲目降级 Stable，binary recovery 优先更高 patch。",
+    "stablePredecessor": {
+      "version": "1.2.34",
+      "sha256": "c2305f907ed84fb4a2c41d3afc5f514846e52b02a32373bf8c69be75de1c2cc4",
+      "url": "https://downloads.jugglechat.cn/jugglework/releases/v1.2.34/mac/latest-mac.yml",
+      "procedure": "仅前任参考，不是自动降级授权；另行 channel recovery 保留 lock/predecessor/race/CDN refresh/exact readback。"
+    },
+    "chinaServer": {
+      "backup": "/root/jugglework-server/backups/server-99cd53889cf7a98677a2237dfa0dd22920c9b08b-20261111T112018287703Z",
+      "binary": "jugglework.before",
+      "binarySha256": "f813e64cd983fc2bb149414f178ca22f50525b60d39576e6f87c4f131274401b",
+      "databaseDump": "database.sql.gz",
+      "databaseDumpSha256": "511ba391867baaebe73ee2109600658953ff2b8152029702f3560ec8099a9fe1",
+      "procedure": "以 Server DEPLOYMENT-REPORT.md 为准；先评估旧 binary/schema 兼容，禁止自动 DB restore。"
+    }
+  },
+  "limitations": [
+    "用户长期 standing policy 仅跳过真实 immutable-target / mutable Stable-feed 升级 canary 及 mutable Cache-Control 修改/要求值校验；真实安装、退出重启、已安装版本和状态保留未验。",
+    "Stable Cache-Control 为 public, max-age=31536000（一年）；CDN refresh 与当前正确读回不证明旧客户端或全部 CDN 缓存收敛，仍可能继续返回旧版本。",
+    "独立 Electron host 26/26 使用 candidate 模块与签名资源，并非 candidate executable/product main 或 installed-app 验收；DOM/executeJavaScript、磁盘预置 fixture、短 synthetic scenes、SIGSTOP 辅助取消及 7 条 null-document diagnostics 均保留。many-shot/10分钟/publication-await races 未由该验收证明。",
+    "正式 meeting/TCC、系统真实权限提示、音视频/屏幕采集及真实 App 端到端会议未验；renderer 原生 crash/hang 恢复、未保存状态保留未验。",
+    "Docs/calendar 线上 authenticated business contract、authenticated desktop-config allowlist acceptance 未验；匿名 POST 401 只证明路由和匿名鉴权。海外既有 binary 源码 lineage 未独立证明。",
+    "国内 Docs 维持 disabled/default-false；公网 internal Docs malformed consume 400 / members-status docs_disabled 表明内部路由可从公网抵达，存在独立 exposure risk。",
+    "两区 8020 仍全地址监听；Supervisor 环境相关文件现有 0644 权限风险保留，服务/其他文件实际模式见逐区证据。8021 仍 loopback-only。",
+    "国内五项生产迁移已实际应用 through 2026111103，但 MySQL lifecycle fixture 因无独立测试 DSN skipped；不冒充真实 DB 回归。Den config-only rollout 与本次 closeout 不作独立 DB/schema 验收。",
+    "Tasks 完整 MVP/collaboration/lifecycle/aggregate Activity/security/connected、真实 live-provider SSE/MIME 与其他 OpenSpec acceptance 保持原状态；产物 MIME 不等于 provider MIME 验收。",
+    "既有人类分发授权保留，不宣称新增独立法律批准；Windows、Intel/x64、website、GitHub Release 不在本次范围。",
+    "主 checkout 为 dev，保留 8 个并行 dirty paths；不是 clean。只承诺本次 closeout baseline 起的逐文件哈希保留，不回溯声称早期 4 文件快照一直未变。"
+  ],
+  "failureRecovery": [
+    {
+      "failure": "build-03-media.json",
+      "recovery": "build-03-media-verifier-attestation.json",
+      "details": {
+        "failed": "build-03-media.json",
+        "originalStatus": "failed",
+        "originalErrorCode": "COMMAND_FAILED_sourceVerifier",
+        "attestation": "build-03-media-verifier-attestation.json",
+        "fixedErrorCode": "MEDIA_VERIFIER_RELATIVE_EXECUTABLE_ENOENT",
+        "recoveryScope": "postbuild verifier only; no build or package",
+        "originalsPreserved": true
+      }
+    },
+    {
+      "failure": "failure-candidate-1794401290425.json",
+      "recovery": "1.2.35-candidate-resume.json",
+      "details": "历史 scanner 拒绝精确 nested standing_policy enum；单独 tooling 修复，未改变 artifact source，未重复 upload。"
+    },
+    {
+      "failure": "run-43026652696-promotion/release-evidence.json",
+      "recovery": "run-43029214444-promotion/release-evidence.json",
+      "details": "原 run 在 cdn.fresh 失败，无 promotion checkpoint/lock acquire/channel write；原始子步骤/状态被旧诊断丢弃，根因未知，不认定网络瞬态。后续窄 diagnostics 修复不削弱任何 CDN 门禁；成功 run 单独留存。"
+    }
+  ],
+  "outOfScope": [
+    "Windows",
+    "Intel macOS/x64",
+    "website",
+    "GitHub Release"
+  ],
+  "gitCompletion": "最终 records commit/push/fast-forward 与 post-push readonly observe 由外部 git-closeout.json 绑定，避免自引用；主 dev 保留并行 dirty。",
+  "evidenceRoot": "release-evidence/jugglework-desktop/1.2.35/",
+  "promotionEvidence": "run-43029214444-promotion/release-evidence.json",
+  "promotionAudit": "den-1.2.35-local-promotion-audit-20261111T134012491132Z.json",
+  "finalEvidence": "final-release-evidence.json",
+  "report": "RELEASE-REPORT.md",
+  "evidenceIndex": "evidence-index.json"
+}
