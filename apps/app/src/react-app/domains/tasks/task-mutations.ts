@@ -18,6 +18,11 @@ function currentVersion(error: unknown) {
   return typeof value === "number" ? value : undefined;
 }
 
+async function refreshTaskListsAndActivity(queryClient: ReturnType<typeof useQueryClient>, scope: ProductTaskScope) {
+  void queryClient.invalidateQueries({ queryKey: productTaskKeys.activityFeeds(scope) });
+  await queryClient.invalidateQueries({ queryKey: productTaskKeys.lists(scope) });
+}
+
 export function useCreateProductTask(client: DenClient, scope: ProductTaskScope | null) {
   const queryClient = useQueryClient();
   return useMutation({
@@ -27,7 +32,7 @@ export function useCreateProductTask(client: DenClient, scope: ProductTaskScope 
     onSuccess: async (result, _input, captured) => {
       if (!captured) return;
       queryClient.setQueryData(productTaskKeys.detail(captured.scope, result.task.id), result);
-      await queryClient.invalidateQueries({ queryKey: productTaskKeys.lists(captured.scope) });
+      await refreshTaskListsAndActivity(queryClient, captured.scope);
     },
   });
 }
@@ -52,7 +57,7 @@ export function useUpdateProductTask(client: DenClient, scope: ProductTaskScope 
     onSuccess: async (result: DenProductTaskResult, input, captured) => {
       if (!captured || latestAttempts.current.get(attemptKey(captured.scopeKey, input.taskId)) !== input.attempt) return;
       queryClient.setQueryData(productTaskKeys.detail(captured.scope, result.task.id), result);
-      await queryClient.invalidateQueries({ queryKey: productTaskKeys.lists(captured.scope) });
+      await refreshTaskListsAndActivity(queryClient, captured.scope);
     },
   });
 }
@@ -69,7 +74,7 @@ export function useTransitionProductTask(client: DenClient, scope: ProductTaskSc
     onSuccess: async (result, _input, captured) => {
       if (!captured) return;
       queryClient.setQueryData(productTaskKeys.detail(captured.scope, result.task.id), result);
-      await queryClient.invalidateQueries({ queryKey: productTaskKeys.lists(captured.scope) });
+      await refreshTaskListsAndActivity(queryClient, captured.scope);
     },
   });
 }
@@ -77,13 +82,19 @@ export function useTransitionProductTask(client: DenClient, scope: ProductTaskSc
 export function useAddProductTaskComment(client: DenClient, scope: ProductTaskScope | null) {
   const queryClient = useQueryClient();
   return useMutation({ retry: false, onMutate: (input: { taskId: string; body: string; idempotencyKey: string }) => captureScope(scope, input.taskId), mutationFn: (input) => client.addProductTaskComment(scope!.organizationId, input.taskId, { body: input.body, idempotencyKey: input.idempotencyKey }), onSuccess: async (_result, _input, captured) => {
-    if (captured?.taskId) await queryClient.invalidateQueries({ queryKey: productTaskKeys.activity(captured.scope, captured.taskId) });
+    if (captured?.taskId) {
+      void queryClient.invalidateQueries({ queryKey: productTaskKeys.activityFeeds(captured.scope) });
+      await queryClient.invalidateQueries({ queryKey: productTaskKeys.activity(captured.scope, captured.taskId) });
+    }
   } });
 }
 
 export function useProductTaskListMutations(client: DenClient, scope: ProductTaskScope | null) {
   const queryClient = useQueryClient();
-  const refresh = async (captured?: CapturedMutationScope | null) => { if (captured) await Promise.all([false, true].map((archived) => queryClient.invalidateQueries({ queryKey: productTaskKeys.taskLists(captured.scope, archived) }))); };
+  const refresh = async (captured?: CapturedMutationScope | null) => { if (captured) {
+    void queryClient.invalidateQueries({ queryKey: productTaskKeys.activityFeeds(captured.scope) });
+    await Promise.all([false, true].map((archived) => queryClient.invalidateQueries({ queryKey: productTaskKeys.taskLists(captured.scope, archived) })));
+  } };
   const create = useMutation({ retry: false, onMutate: () => captureScope(scope), mutationFn: (input: Parameters<DenClient["createProductTaskList"]>[1]) => client.createProductTaskList(scope!.organizationId, input), onSuccess: (_result, _input, captured) => refresh(captured) });
   const update = useMutation({ retry: false, onMutate: () => captureScope(scope), mutationFn: (input: { listId: string; patch: Parameters<DenClient["updateProductTaskList"]>[2] }) => client.updateProductTaskList(scope!.organizationId, input.listId, input.patch), onSuccess: (_result, _input, captured) => refresh(captured) });
   const transition = useMutation({ retry: false, onMutate: () => captureScope(scope), mutationFn: (input: { listId: string; operation: "archive" | "restore"; expectedVersion: number; idempotencyKey: string }) => client.transitionProductTaskList(scope!.organizationId, input.listId, input.operation, input), onSuccess: (_result, _input, captured) => refresh(captured) });
@@ -92,7 +103,10 @@ export function useProductTaskListMutations(client: DenClient, scope: ProductTas
 
 export function useProductTaskReminderMutations(client: DenClient, scope: ProductTaskScope | null, taskId: string | null) {
   const queryClient = useQueryClient();
-  const refresh = async (captured?: CapturedMutationScope | null) => { if (captured?.taskId) await queryClient.invalidateQueries({ queryKey: productTaskKeys.reminders(captured.scope, captured.taskId) }); };
+  const refresh = async (captured?: CapturedMutationScope | null) => { if (captured?.taskId) {
+    void queryClient.invalidateQueries({ queryKey: productTaskKeys.activityFeeds(captured.scope) });
+    await queryClient.invalidateQueries({ queryKey: productTaskKeys.reminders(captured.scope, captured.taskId) });
+  } };
   const set = useMutation({ retry: false, onMutate: () => captureScope(scope, taskId ?? undefined), mutationFn: (input: Parameters<DenClient["setProductTaskReminder"]>[2]) => client.setProductTaskReminder(scope!.organizationId, taskId!, input), onSuccess: (_result, _input, captured) => refresh(captured) });
   const cancel = useMutation({ retry: false, onMutate: () => captureScope(scope, taskId ?? undefined), mutationFn: (idempotencyKey: string) => client.cancelProductTaskReminders(scope!.organizationId, taskId!, idempotencyKey), onSuccess: (_result, _input, captured) => refresh(captured) });
   return { set, cancel };

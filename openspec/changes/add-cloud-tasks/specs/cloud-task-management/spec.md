@@ -72,3 +72,20 @@ The system SHALL append immutable task events for creation, assignment, visibili
 #### Scenario: Record assignment
 - **WHEN** a task administrator adds an assignee
 - **THEN** the system records an assignment event with the actor, affected member, task version, and timestamp
+
+The system SHALL expose an organization-scoped aggregate task activity timeline backed by recipient projections, opaque cursor pagination, stable event IDs, monotonic recipient sequences, and server-authoritative multi-device read state. Recipient projection SHALL include the union of the task creator, assignees, followers, explicit Viewers, and related task-list members, but SHALL NOT broadcast every event solely because a task has organization visibility. The system SHALL re-evaluate access when reading projected events and SHALL NOT disclose protected historical task, comment, list, actor, or timing content after access is lost.
+
+#### Scenario: Page the aggregate activity timeline
+- **WHEN** an authenticated member requests aggregate task activity with a limit and optional opaque cursor
+- **THEN** the system returns accessible recipient events in descending sequence order
+- **AND** returns the next cursor, whether more events exist, the authoritative unread count, and the latest visible sequence
+
+#### Scenario: Mark activity through a stable sequence
+- **WHEN** a member marks all activity read through a visible sequence
+- **THEN** the system records that read boundary for the member across devices
+- **AND** events arriving later with a greater sequence remain unread
+
+#### Scenario: Avoid notifying the actor
+- **WHEN** a member causes a task event for which they are also a recipient
+- **THEN** the event may remain visible in their aggregate history
+- **AND** the system does not count it unread or notify that same member

@@ -4,7 +4,7 @@ import React from "react";
 import TestRenderer, { act } from "react-test-renderer";
 import { MemoryRouter } from "react-router-dom";
 
-import { DenApiError, type DenClient, type DenProductTask, type DenProductTaskList, type DenProductTaskResult } from "../src/app/lib/den";
+import { DenApiError, type DenClient, type DenProductTask, type DenProductTaskActivityItem, type DenProductTaskList, type DenProductTaskResult } from "../src/app/lib/den";
 import { taskSectionStorageKey } from "../src/react-app/domains/tasks/task-page-state";
 import { taskWorkbenchStorageKey } from "../src/react-app/domains/tasks/task-view-state";
 
@@ -155,6 +155,9 @@ function connectedClient(overrides: Partial<DenClient> = {}): DenClient {
     listOrganizationMembers: async () => ({ members: [], total: 0, limit: 200, offset: 0 }),
     getProductTask: async () => result(task(1)),
     getProductTaskActivity: async () => ({ comments: [], events: [] }),
+    listProductTaskActivity: async () => ({ items: [], nextCursor: "", hasMore: false, unreadCount: 0, latestSequence: 0 }),
+    markProductTaskActivityRead: async () => undefined,
+    markAllProductTaskActivityRead: async () => undefined,
     listProductTaskReminders: async () => [],
     ...overrides,
   } as DenClient;
@@ -273,11 +276,69 @@ test("Today and Activity keep their page headers free of filters and create acti
   try {
     expect(renderer!.root.findByProps({ "data-testid": "tasks-page-title" }).props.children).toBe("Today");
     expectCleanHeader();
-    const activity = renderer!.root.findByProps({ "data-testid": "tasks-sidebar" }).findAllByType("button").find((button) => Array.isArray(button.props.children) && button.props.children.includes("Activity"))!;
+    const activity = renderer!.root.findByProps({ "data-testid": "tasks-sidebar-section-activity" });
     await act(async () => { activity.props.onClick(); });
     await settle();
     expect(renderer!.root.findByProps({ "data-testid": "tasks-page-title" }).props.children).toBe("Activity");
     expectCleanHeader();
+  } finally { await act(async () => { renderer!.unmount(); }); }
+});
+
+test("Activity shows authoritative unread state, marks events read, and opens task detail", async () => {
+  const item: DenProductTaskActivityItem = {
+    event: { id: "event_one", sequence: 14, eventType: "comment.mentioned", payloadVersion: 1, taskId: "task_activity", taskVersion: 2, listId: "list_one", actorMemberId: "member_two", affectedMemberId: "member_self", occurredAt: new Date().toISOString(), payload: { excerpt: "Please review" } },
+    readAt: null,
+    attentionLevel: "attention",
+    task: { id: "task_activity", displayNumber: 100014, title: "Review launch", accessible: true, deleted: false },
+    list: { id: "list_one", name: "Launch", marker: "L" },
+    actor: { memberId: "member_two", name: "Alice", avatar: null },
+  };
+  const activityOptions: Array<Record<string, unknown>> = [];
+  const readEvents: string[] = [];
+  const readSequences: number[] = [];
+  const detailTaskIds: string[] = [];
+  const client = connectedClient({
+    listProductTaskActivity: async (_orgId, options) => {
+      activityOptions.push(options ?? {});
+      return { items: [item], nextCursor: "", hasMore: false, unreadCount: 1, latestSequence: 14 };
+    },
+    markProductTaskActivityRead: async (_orgId, eventId) => { readEvents.push(eventId); },
+    markAllProductTaskActivityRead: async (_orgId, sequence) => { readSequences.push(sequence); },
+    getProductTask: async (_orgId, taskId) => { detailTaskIds.push(taskId); return result(task(2, "Review launch", "", taskId)); },
+    listProductTaskLists: async () => ({ items: [{ id: "list_one", creatorMemberId: "member_self", name: "Launch", description: "", marker: "L", visibility: "members", version: 1, archivedAt: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }], nextCursor: "" }),
+  });
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client)); });
+  await settle();
+  try {
+    expect(renderer!.root.findByProps({ "data-testid": "task-activity-sidebar-badge" }).props.children).toBe(1);
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "tasks-sidebar-section-activity" }).props.onClick(); });
+    await settle();
+    expect(renderer!.root.findByProps({ "data-testid": "task-activity-row-event_one" })).toBeDefined();
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-activity-filter-unread" }).props.onClick(); });
+    await settle();
+    expect(activityOptions.some((options) => options.unreadOnly === true)).toBe(true);
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-activity-read-all" }).props.onClick(); });
+    await settle();
+    expect(readSequences).toEqual([14]);
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-activity-open-event_one" }).props.onClick(); });
+    await settle();
+    expect(readEvents).toEqual(["event_one"]);
+    expect(detailTaskIds).toContain("task_activity");
+  } finally { await act(async () => { renderer!.unmount(); }); }
+});
+
+test("Activity exposes aggregate endpoint failures instead of a fabricated empty state", async () => {
+  const client = connectedClient({ listProductTaskActivity: async () => { throw new DenApiError(404, "not_found", "Aggregate activity is not available."); } });
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client)); });
+  await settle();
+  try {
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "tasks-sidebar-section-activity" }).props.onClick(); });
+    await settle();
+    expect(renderer!.root.findByProps({ role: "alert" })).toBeDefined();
+    expect(renderer!.root.findAllByProps({ "data-testid": "task-activity-empty" })).toHaveLength(0);
+    expect(renderer!.root.findAll((node) => node.props.children === "Aggregate activity is not available.")).toHaveLength(1);
   } finally { await act(async () => { renderer!.unmount(); }); }
 });
 
@@ -1296,6 +1357,7 @@ test("switching tasks hides recovery while retaining the conflicted task draft",
     getProductTask: async (_orgId, taskId) => { requested.push(taskId); return result(taskId === "task_one" ? first : second); },
     updateProductTask: async () => { throw new DenApiError(409, "task_version_conflict", "Changed elsewhere", { currentVersion: 2 }); },
   });
+  sessionValues.set(taskSectionStorageKey({ baseUrl: "https://work.example", userId: "user_one", organizationId: "org_one" }), "all");
   let renderer: TestRenderer.ReactTestRenderer;
   await act(async () => { renderer = TestRenderer.create(connectedPage(client, "task_one")); });
   await settle();
@@ -1455,6 +1517,7 @@ test("switching tasks suppresses a stale load-latest failure", async () => {
     },
     updateProductTask: async () => { throw new DenApiError(409, "task_version_conflict", "Changed elsewhere", { currentVersion: 2 }); },
   });
+  sessionValues.set(taskSectionStorageKey({ baseUrl: "https://work.example", userId: "user_one", organizationId: "org_one" }), "all");
   let renderer: TestRenderer.ReactTestRenderer;
   await act(async () => { renderer = TestRenderer.create(connectedPage(client, "task_one")); });
   await settle();
@@ -1492,6 +1555,7 @@ test("a pending comment from another task cannot clear the current task input", 
       if (taskId === "task_one") await pendingComment.promise;
     },
   });
+  sessionValues.set(taskSectionStorageKey({ baseUrl: "https://work.example", userId: "user_one", organizationId: "org_one" }), "all");
   let renderer: TestRenderer.ReactTestRenderer;
   await act(async () => { renderer = TestRenderer.create(connectedPage(client, "task_one")); });
   await settle();

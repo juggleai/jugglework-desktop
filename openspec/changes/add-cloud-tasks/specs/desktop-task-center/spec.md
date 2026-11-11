@@ -38,6 +38,34 @@ The Desktop SHALL provide primary task secondary navigation for Today, Assigned 
 - **THEN** the Desktop loads authoritative task permissions and membership before applying the existing multi-assignee completion behavior
 - **AND** refreshes the Today query after a successful transition
 
+### Requirement: Aggregate task activity
+The Desktop SHALL consume the server aggregate task-activity endpoint as one cursor-paginated timeline, SHALL keep server unread state authoritative, and SHALL NOT synthesize the timeline by issuing per-task activity requests. It SHALL present All and Unread filters, local-calendar time groups, an authoritative unread badge in the Tasks sidebar, single-event read actions, mark-all-through-sequence, task and task-list navigation, loading, empty, error, retry, and load-more states.
+
+#### Scenario: Read and navigate an attention event
+- **WHEN** an accessible unread attention event is shown and the user opens it
+- **THEN** the Desktop marks the stable event ID read through the server
+- **AND** opens the existing task detail using the immutable internal task ID
+- **AND** refreshes both aggregate feed filters and the sidebar unread count
+
+#### Scenario: Mark all currently visible activity read
+- **WHEN** the user chooses Mark all as read
+- **THEN** the Desktop sends the latest server sequence from the aggregate page
+- **AND** does not locally mark a concurrently arriving greater sequence as read
+
+#### Scenario: Open the event task list
+- **WHEN** an accessible activity event contains task-list context and the user opens the list name
+- **THEN** the Desktop opens that task list's existing workbench without treating it as a second task membership
+
+#### Scenario: Aggregate activity is unavailable
+- **WHEN** the aggregate endpoint is unavailable or returns an invalid response
+- **THEN** the Desktop displays the real error and Retry
+- **AND** does not render a fabricated empty timeline or issue an N+1 fallback over tasks
+
+#### Scenario: Activity target is no longer accessible
+- **WHEN** the server returns a redacted event whose task is no longer accessible
+- **THEN** the Desktop renders an unavailable placeholder without protected task or list content
+- **AND** disables task and list navigation for that event
+
 ### Requirement: Task list and detail surfaces
 The Desktop SHALL provide a paginated task list, inline permitted actions, and a detail drawer or direct route for task fields, comments, activity, and lifecycle actions.
 

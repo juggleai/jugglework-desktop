@@ -1,6 +1,6 @@
 import { keepPreviousData, useInfiniteQuery, useQuery } from "@tanstack/react-query";
 
-import { DenApiError, type DenClient, type DenOrganizationMember, type DenProductTaskList, type DenProductTaskListOptions, type DenProductTaskMember, type DenProductTaskPage } from "@/app/lib/den";
+import { DenApiError, type DenClient, type DenOrganizationMember, type DenProductTaskActivityItem, type DenProductTaskList, type DenProductTaskListOptions, type DenProductTaskMember, type DenProductTaskPage } from "@/app/lib/den";
 
 export type ProductTaskScope = { baseUrl: string; userId: string; organizationId: string };
 
@@ -19,6 +19,8 @@ export const productTaskKeys = {
   reminders: (scope: ProductTaskScope, taskId: string) => [...productTaskKeys.detail(scope, taskId), "reminders"] as const,
   taskLists: (scope: ProductTaskScope, archived: boolean) => [...productTaskKeys.all(scope), "task-lists", archived] as const,
   organizationMembers: (scope: ProductTaskScope) => [...productTaskKeys.all(scope), "organization-members"] as const,
+  activityFeeds: (scope: ProductTaskScope) => [...productTaskKeys.all(scope), "activity-feed"] as const,
+  activityFeed: (scope: ProductTaskScope, unreadOnly: boolean) => [...productTaskKeys.activityFeeds(scope), { unreadOnly }] as const,
 };
 
 export function flattenProductTaskPages(data: { pages: DenProductTaskPage[] } | undefined) {
@@ -36,6 +38,15 @@ export function flattenProductTaskMembers(data: { pages: DenProductTaskPage[] } 
     for (const task of page.items) result[task.id] ??= page.membersByTaskId?.[task.id] ?? [];
   }
   return result;
+}
+
+export function flattenProductTaskActivityPages(data: { pages: Array<{ items: DenProductTaskActivityItem[] }> } | undefined): DenProductTaskActivityItem[] {
+  const seen = new Set<string>();
+  return (data?.pages ?? []).flatMap((page) => page.items).filter((item) => {
+    if (seen.has(item.event.id)) return false;
+    seen.add(item.event.id);
+    return true;
+  });
 }
 
 export async function loadAllProductTaskLists(input: {
@@ -120,6 +131,18 @@ export function useProductTask(input: { client: DenClient; scope: ProductTaskSco
     enabled: (input.active ?? true) && Boolean(input.scope && input.taskId),
     queryFn: ({ signal }) => input.client.getProductTask(input.scope!.organizationId, input.taskId!, { signal }),
     staleTime: 20_000,
+    retry: false,
+  });
+}
+
+export function useProductTaskActivityFeed(input: { client: DenClient; scope: ProductTaskScope | null; unreadOnly: boolean; active?: boolean }) {
+  return useInfiniteQuery({
+    queryKey: input.scope ? productTaskKeys.activityFeed(input.scope, input.unreadOnly) : ["product-tasks", "activity-feed", "unavailable"],
+    enabled: (input.active ?? true) && Boolean(input.scope),
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam, signal }) => input.client.listProductTaskActivity(input.scope!.organizationId, { cursor: pageParam, limit: 30, unreadOnly: input.unreadOnly || undefined }, { signal }),
+    getNextPageParam: (page) => page.hasMore && page.nextCursor ? page.nextCursor : undefined,
+    staleTime: 15_000,
     retry: false,
   });
 }

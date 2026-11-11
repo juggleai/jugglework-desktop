@@ -25,7 +25,7 @@ import { AppSecondarySidebarTopControls } from "@/react-app/shell/app-secondary-
 import { useUiStateStore } from "@/react-app/shell/ui-state-store";
 import { appInsetSidebarCssWidth, useWorkspaceShellLayout } from "@/react-app/shell/workspace-shell-layout";
 import { useAddProductTaskComment, useCreateProductTask, useProductTaskListMutations, useProductTaskReminderMutations, useTransitionProductTask, useUpdateProductTask, type ProductTaskConflict } from "./task-mutations";
-import { flattenProductTaskMembers, flattenProductTaskPages, productTaskKeys, productTaskScopeKey, useOrganizationMembers, useProductTask, useProductTaskActivity, useProductTaskLists, useProductTaskReminders, useProductTasks, type ProductTaskScope } from "./task-queries";
+import { flattenProductTaskActivityPages, flattenProductTaskMembers, flattenProductTaskPages, productTaskKeys, productTaskScopeKey, useOrganizationMembers, useProductTask, useProductTaskActivity, useProductTaskActivityFeed, useProductTaskLists, useProductTaskReminders, useProductTasks, type ProductTaskScope } from "./task-queries";
 import { productTaskEditDraft, readTaskSection, reapplyProductTaskDraft, taskSectionStorageKey, writeTaskSection, type ProductTaskEditDraft, type TaskSection } from "./task-page-state";
 import { TaskWorkbench, taskWorkbenchServerSort, taskWorkbenchStatuses } from "./task-workbench";
 import { TaskDateTimeCell, type TaskReminderDraft, type TaskTimeField } from "./task-date-time-cell";
@@ -33,6 +33,7 @@ import { TaskListCell } from "./task-list-table";
 import { isTaskWorkbenchSection, readTaskWorkbenchSettings, taskSectionDefaultSettings, writeTaskWorkbenchSettings, type TaskWorkbenchSection, type TaskWorkbenchSettings } from "./task-view-state";
 import { TasksSidebar, taskSectionHeading, type TasksSidebarRegistration } from "./tasks-sidebar";
 import { TodayTaskView } from "./today-task-view";
+import { TaskActivityView } from "./task-activity-view";
 
 export type TaskShellState =
   | { kind: "loading" }
@@ -85,6 +86,7 @@ function ScopedConnectedTaskPage(props: TaskPageProps) {
   const [selectedListId, setSelectedListId] = React.useState<string | null>(null);
   const [showFullCreate, setShowFullCreate] = React.useState(false);
   const [showCreateList, setShowCreateList] = React.useState(false);
+  const [activityUnreadOnly, setActivityUnreadOnly] = React.useState(false);
   const [workbenchSettings, setWorkbenchSettings] = React.useState<TaskWorkbenchSettings>(() => readTaskWorkbenchSettings(scope, isTaskWorkbenchSection(initialSection) ? initialSection : "assigned"));
   const [conflict, setConflict] = React.useState<ProductTaskConflict | null>(null);
   const [editDrafts, setEditDrafts] = React.useState<Record<string, ProductTaskEditDraft>>({});
@@ -148,6 +150,9 @@ function ScopedConnectedTaskPage(props: TaskPageProps) {
     return { ...common, sort, direction: sort === "due_at" ? "asc" as const : "desc" as const };
   }, [priority, section, selectedListId, sort, workbenchSection, workbenchSettings]);
   const tasksQuery = useProductTasks({ client: cloud.client, scope, options: listOptions, active: section !== "activity" && (!memberFilteredSection || Boolean(currentMemberId)) });
+  const activitySummaryQuery = useProductTaskActivityFeed({ client: cloud.client, scope, unreadOnly: false });
+  const unreadActivityQuery = useProductTaskActivityFeed({ client: cloud.client, scope, unreadOnly: true, active: section === "activity" && activityUnreadOnly });
+  const activityFeedQuery = activityUnreadOnly ? unreadActivityQuery : activitySummaryQuery;
   const activeListsQuery = useProductTaskLists({ client: cloud.client, scope, archived: false });
   const selectedTaskList = selectedListId ? (activeListsQuery.data?.items ?? []).find((list) => list.id === selectedListId) ?? null : null;
   const detailQuery = useProductTask({ client: cloud.client, scope, taskId: selectedTaskId });
@@ -165,11 +170,16 @@ function ScopedConnectedTaskPage(props: TaskPageProps) {
   };
   const updateMutation = useUpdateProductTask(cloud.client, scope, handleConflict);
   const transitionMutation = useTransitionProductTask(cloud.client, scope);
+  const [activityReadPending, setActivityReadPending] = React.useState(false);
   const commentMutation = useAddProductTaskComment(cloud.client, scope);
   const listMutations = useProductTaskListMutations(cloud.client, scope);
   const reminderMutations = useProductTaskReminderMutations(cloud.client, scope, selectedTaskId);
   const tasks = flattenProductTaskPages(tasksQuery.data);
   const membersByTaskId = flattenProductTaskMembers(tasksQuery.data);
+  const activityItems = flattenProductTaskActivityPages(activityFeedQuery.data);
+  const activitySummary = activitySummaryQuery.data?.pages[0];
+  const activityUnreadCount = activitySummary?.unreadCount ?? 0;
+  const activityLatestSequence = activitySummary?.latestSequence ?? 0;
   React.useEffect(() => {
     const nextTaskId = props.routeTaskId ?? null;
     conflictLoadAttempt.current += 1;
@@ -227,6 +237,40 @@ function ScopedConnectedTaskPage(props: TaskPageProps) {
     writeTaskSection(scope, next);
     if (isTaskWorkbenchSection(next)) setWorkbenchSettings(sectionSettings(next));
     setSection(next);
+  };
+
+  const refreshActivityQueries = async () => {
+    if (!scope) return;
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: productTaskKeys.activityFeed(scope, false) }),
+      queryClient.invalidateQueries({ queryKey: productTaskKeys.activityFeed(scope, true) }),
+    ]);
+  };
+
+  const markActivityRead = async (eventId: string) => {
+    if (!scope || activityReadPending) return;
+    setActivityReadPending(true);
+    try {
+      await cloud.client.markProductTaskActivityRead(scope.organizationId, eventId);
+      await refreshActivityQueries();
+    } catch (error) {
+      mutationError(error);
+    } finally {
+      setActivityReadPending(false);
+    }
+  };
+
+  const markAllActivityRead = async (throughSequence: number) => {
+    if (!scope || activityReadPending || throughSequence < 1) return;
+    setActivityReadPending(true);
+    try {
+      await cloud.client.markAllProductTaskActivityRead(scope.organizationId, throughSequence);
+      await refreshActivityQueries();
+    } catch (error) {
+      mutationError(error);
+    } finally {
+      setActivityReadPending(false);
+    }
   };
 
   const updateWorkbenchSettings = (next: TaskWorkbenchSettings) => {
@@ -524,7 +568,7 @@ function ScopedConnectedTaskPage(props: TaskPageProps) {
 
   let content: React.ReactNode;
   if (!scope) content = <TaskShellContent state={{ kind: "error", message: t("tasks.sign_in_required"), onRetry: props.onOpenAccount }} />;
-  else if (section === "activity") content = <TaskShellContent state={{ kind: "empty" }} />;
+  else if (section === "activity") content = <TaskActivityView items={activityItems} unreadOnly={activityUnreadOnly} unreadCount={activityUnreadCount} latestSequence={activityLatestSequence} loading={activityFeedQuery.isLoading} error={activityFeedQuery.isError ? (activityFeedQuery.error instanceof Error ? activityFeedQuery.error.message : t("tasks.activity_error_description")) : null} refreshing={activityFeedQuery.isFetching && !activityFeedQuery.isFetchingNextPage} canLoadMore={Boolean(activityFeedQuery.hasNextPage)} loadingMore={activityFeedQuery.isFetchingNextPage} markingRead={activityReadPending} onUnreadOnlyChange={setActivityUnreadOnly} onRetry={() => void activityFeedQuery.refetch()} onLoadMore={() => void activityFeedQuery.fetchNextPage()} onRead={(item) => void markActivityRead(item.event.id)} onReadAll={(sequence) => void markAllActivityRead(sequence)} onOpen={(item) => { if (item.readAt === null && item.attentionLevel !== "ambient") void markActivityRead(item.event.id); if (item.task.accessible) selectTask(item.task.id); }} onOpenList={(listId) => { setSection("all"); writeTaskSection(scope, "all"); setSelectedListId(listId); setWorkbenchSettings(sectionSettings("all", listId)); selectTask(null); }} />;
   else if (tasksQuery.isLoading) content = <TaskShellContent state={{ kind: "loading" }} />;
   else if (tasksQuery.isError) content = <TaskShellContent state={{ kind: "error", message: tasksQuery.error instanceof Error ? tasksQuery.error.message : undefined, onRetry: () => void tasksQuery.refetch() }} />;
   else if (section === "today") content = <TodayTaskView tasks={tasks} membersByTaskId={membersByTaskId} members={availableMembers} lists={activeListsQuery.data?.items ?? []} currentMemberId={currentMemberId} selectedTaskId={selectedTaskId} refreshing={tasksQuery.isFetching && !tasksQuery.isFetchingNextPage} canLoadMore={Boolean(tasksQuery.hasNextPage)} loadingMore={tasksQuery.isFetchingNextPage} onLoadMore={() => void tasksQuery.fetchNextPage()} onSelect={selectTask} onComplete={(task) => void transitionWorkbenchTask(task, "complete")} />;
@@ -532,7 +576,7 @@ function ScopedConnectedTaskPage(props: TaskPageProps) {
   else content = <TaskList tasks={tasks} selectedTaskId={selectedTaskId} onSelect={selectTask} canLoadMore={Boolean(tasksQuery.hasNextPage)} loadingMore={tasksQuery.isFetchingNextPage} onLoadMore={() => void tasksQuery.fetchNextPage()} />;
 
   return (
-    <TaskPageFrame {...props} section={section} pageTitle={selectedTaskList?.name ?? null} onSectionChange={(next) => { selectSection(next); setSelectedListId(null); selectTask(null); }} filters={{ priority, setPriority, sort, setSort }} lists={activeListsQuery.data?.items ?? []} selectedListId={selectedListId} onSelectList={(listId) => { setSection("all"); writeTaskSection(scope, "all"); setSelectedListId(listId); setWorkbenchSettings(sectionSettings("all", listId)); selectTask(null); }} onCreateList={() => setShowCreateList(true)} onArchiveList={(listId, version) => void runMutation(() => listMutations.transition.mutateAsync({ listId, operation: "archive", expectedVersion: version, idempotencyKey: mutationKey("desktop-archive-list") }))}
+    <TaskPageFrame {...props} section={section} activityUnreadCount={activityUnreadCount} pageTitle={selectedTaskList?.name ?? null} onSectionChange={(next) => { selectSection(next); setSelectedListId(null); selectTask(null); }} filters={{ priority, setPriority, sort, setSort }} lists={activeListsQuery.data?.items ?? []} selectedListId={selectedListId} onSelectList={(listId) => { setSection("all"); writeTaskSection(scope, "all"); setSelectedListId(listId); setWorkbenchSettings(sectionSettings("all", listId)); selectTask(null); }} onCreateList={() => setShowCreateList(true)} onArchiveList={(listId, version) => void runMutation(() => listMutations.transition.mutateAsync({ listId, operation: "archive", expectedVersion: version, idempotencyKey: mutationKey("desktop-archive-list") }))}
       onCreateTask={() => setShowFullCreate(true)} onCreateTaskList={() => setShowCreateList(true)}>
       {conflict ? <ConflictBanner conflict={conflict} pending={updateMutation.isPending} onDismiss={dismissConflict} onReload={() => void loadLatestForConflict()} onRetry={() => void retryConflictDraft()} /> : null}
       {content}
@@ -543,7 +587,7 @@ function ScopedConnectedTaskPage(props: TaskPageProps) {
   );
 }
 
-function TaskPageFrame(props: TaskPageProps & { children: React.ReactNode; section?: TaskSection; pageTitle?: string | null; onSectionChange?: (section: TaskSection) => void; filters?: { priority: string; setPriority: (value: "" | "low" | "medium" | "high") => void; sort: string; setSort: (value: "updated_at" | "due_at" | "created_at" | "priority") => void }; lists?: Array<{ id: string; name: string; marker: string; version: number }>; selectedListId?: string | null; onSelectList?: (id: string) => void; onCreateList?: () => void; onArchiveList?: (id: string, version: number) => void; onCreateTask?: () => void; onCreateTaskList?: () => void }) {
+function TaskPageFrame(props: TaskPageProps & { children: React.ReactNode; section?: TaskSection; activityUnreadCount?: number; pageTitle?: string | null; onSectionChange?: (section: TaskSection) => void; filters?: { priority: string; setPriority: (value: "" | "low" | "medium" | "high") => void; sort: string; setSort: (value: "updated_at" | "due_at" | "created_at" | "priority") => void }; lists?: Array<{ id: string; name: string; marker: string; version: number }>; selectedListId?: string | null; onSelectList?: (id: string) => void; onCreateList?: () => void; onArchiveList?: (id: string, version: number) => void; onCreateTask?: () => void; onCreateTaskList?: () => void }) {
   const navigate = useNavigate();
   const sidebarOpen = useUiStateStore((state) => state.sidebarOpen);
   const toggleSidebar = useUiStateStore((state) => state.toggleSidebar);
@@ -555,13 +599,14 @@ function TaskPageFrame(props: TaskPageProps & { children: React.ReactNode; secti
   const showHeaderCreate = activeSection !== "today" && activeSection !== "activity";
   const sidebarRegistration = React.useMemo<TasksSidebarRegistration>(() => ({
     section: activeSection,
+    activityUnreadCount: props.activityUnreadCount,
     onSectionChange: props.onSectionChange,
     lists: props.lists,
     selectedListId: props.selectedListId,
     onSelectList: props.onSelectList,
     onCreateList: props.onCreateList,
     onArchiveList: props.onArchiveList,
-  }), [activeSection, props.lists, props.onArchiveList, props.onCreateList, props.onSectionChange, props.onSelectList, props.selectedListId]);
+  }), [activeSection, props.activityUnreadCount, props.lists, props.onArchiveList, props.onCreateList, props.onSectionChange, props.onSelectList, props.selectedListId]);
   usePublishTasksSidebar(sidebarRegistration);
   return <div className="relative flex h-full min-h-0 w-full overflow-hidden bg-dls-sidebar mac:titlebar-drag" style={pageStyle}>
     <AppNavigationRail workspaceId={props.workspaceId} onOpenAccount={props.onOpenAccount} onOpenHome={() => navigate(props.sessionPath)} onOpenApps={props.onOpenApps} onOpenChat={props.onOpenChat} onOpenReviews={props.onOpenReviews} onOpenSettings={props.onOpenSettings} onOpenTaskSearch={props.onOpenTaskSearch} onOpenCreateWorkspace={props.onOpenCreateWorkspace} />

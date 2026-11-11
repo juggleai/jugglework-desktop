@@ -37,6 +37,7 @@ const taskNavigation = [...primaryNavigation, ...quickAccessNavigation];
 
 export type TasksSidebarRegistration = {
   section: TaskSection;
+  activityUnreadCount?: number;
   onSectionChange?: (section: TaskSection) => void;
   lists?: Array<{ id: string; name: string; marker: string; version: number }>;
   selectedListId?: string | null;
@@ -54,6 +55,7 @@ export function TasksSidebar(props: TasksSidebarRegistration & { preview?: boole
   const navigationButton = ([section, key, Icon]: [TaskSection, string, LucideIcon]) => (
     <button
       key={section}
+      data-testid={`tasks-sidebar-section-${section}`}
       type="button"
       onClick={() => props.onSectionChange?.(section)}
       aria-current={!props.selectedListId && props.section === section ? "page" : undefined}
@@ -64,6 +66,7 @@ export function TasksSidebar(props: TasksSidebarRegistration & { preview?: boole
     >
       <Icon aria-hidden="true" className="size-[17px] shrink-0" strokeWidth={1.75} />
       {t(key)}
+      {section === "activity" && (props.activityUnreadCount ?? 0) > 0 ? <span data-testid="task-activity-sidebar-badge" className="ml-auto flex min-w-5 items-center justify-center rounded-full bg-blue-9 px-1.5 py-0.5 text-[11px] font-medium text-white">{props.activityUnreadCount! > 99 ? "99+" : props.activityUnreadCount}</span> : null}
     </button>
   );
 

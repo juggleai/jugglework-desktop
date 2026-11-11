@@ -3996,7 +3996,7 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
     },
 
     async markProductTaskActivityRead(orgId: string, eventId: string): Promise<void> {
-      await requestJson<unknown>(baseUrls, `/v1/task-activity/${encodeURIComponent(eventId)}/read`, { method: "PUT", token, organizationId: orgId, body: {} });
+      await requestJson<unknown>(baseUrls, `/v1/task-activity/${encodeURIComponent(eventId)}/read`, { method: "PUT", token, organizationId: orgId });
     },
 
     async markAllProductTaskActivityRead(orgId: string, throughSequence: number): Promise<void> {

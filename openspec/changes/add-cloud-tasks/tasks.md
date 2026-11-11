@@ -26,11 +26,13 @@
 - [ ] 3.7 Complete collaborative edit, member management, list-scoped move, and all lifecycle actions including delete/restore; full create and contextual list defaults are complete
   - Pre-release privacy fix: private-to-shared list moves require explicit native confirmation/cancel, authoritative task/destination permissions, and captured-scope/page-lifetime fencing. Member changes remain governed by the existing Desktop requirements permitting authorized automatic members visibility; no additional confirmation requirement was found for assignees/followers.
   - Local verification on 2026-11-07: `bun --conditions=development test --isolate tests/tasks-page.test.tsx tests/task-page-state.test.ts tests/den-product-tasks-client.test.ts tests/task-workbench.test.tsx` passed (134 tests); app typecheck, `node scripts/i18n-coverage.mjs --locale zh --strict`, and `git diff --check` passed. Native Electron confirmation and live server integration were not exercised; broader collaborative/lifecycle work remains open.
-- [ ] 3.8 Implement the aggregate Activity view, pagination, unread state, and event navigation
+- [x] 3.8 Implement the aggregate Activity view, pagination, unread state, and event navigation
+  - Completed on 2026-11-11: Desktop provides strict `/v1/task-activity` validation, opaque cursor pagination, All/Unread filters, local-calendar grouping, single/read-all mutations, task/list navigation, sidebar unread badge, mutation-driven cache refresh, real error/retry states, and focused tests. Server now provides transactionally written recipient projection, historical backfill, snapshot-bound signed cursors, current task/list permission filtering, actor/list redaction, and multi-device single/read-through state.
 - [x] 3.9 Add the dedicated route, loading/empty/error shell, section persistence, and no-Agent smoke tests
 - [x] 3.11 Display organization-scoped `t100001`-style task numbers while retaining exact internal IDs for routing and copy actions
 - [x] 3.12 Implement the dedicated Today action view with mutually exclusive overdue, due-today, and starts-today groups, loaded summary counts, task context, completion, detail navigation, and pagination
 - [ ] 3.10 Add connected Desktop tests for edit, member management, lifecycle actions, Activity, and permission changes; full-create fields/defaults/validation, mutation errors, and scope fencing are covered
+  - Aggregate Activity client, grouping, unread mutation, deep-link, sidebar badge, and unavailable-endpoint behavior have focused Desktop coverage; live managed-server integration remains open.
 
 ## 4. Explicitly Excluded IM Interoperability
 
@@ -42,6 +44,7 @@ IM message creation, Task source references, chat cards, access requests, and Ta
 - [x] 5.2 Implement one-active-reminder-per-recipient scheduling, rescheduling, cancellation, and timezone handling
 - [ ] 5.3 Integrate task events with the Desktop notification center, task activity unread state, and system notifications
   - Reminder events reach the organization-scoped Desktop notification center, Tasks navigation badge, and system notifications with task deep links. Activity unread for the broader task-event matrix remains open.
+  - Desktop Activity now consumes server-authoritative unread counts and stable event IDs, and the managed server provides recipient projection and read-through state. Cross-surface read synchronization with the existing local notification center and system-notification state remains open.
 - [x] 5.4 Add reminder delivery, multi-device deduplication, completed/canceled suppression, and notification-policy tests
 
 ## 6. MVP-B Content and List Enhancements
@@ -56,5 +59,6 @@ IM message creation, Task source references, chat cards, access requests, and Ta
 - [x] 7.1 Add analytics events without Task content and operational metrics for failures, duplicates, reminders, and authorization denials
 - [ ] 7.2 Run server migration, unit, API, Desktop, and i18n test suites and fix regressions
   - Verification completed against the configured local MySQL database on 2026-11-01: migration `20261101`, server unit/vet suites, authenticated Task API CRUD/comments/activity/reminders, Desktop typecheck/focused tests, Electron startup smoke, and visible Task deep-link/list/detail/comment/reminder/full-create flows passed. Connected collaborative Desktop coverage remains incomplete, so this item stays open.
+  - Additional real-MySQL aggregate Activity verification passed on 2026-11-11: migration `2026111101` apply/restart/replay, historical recipient backfill, permission-filtered feed and list metadata, snapshot paging boundary, single/read-through state, and access-revocation behavior. Reminder-delivery/Personal-deactivation concurrency and connected cross-surface notification-read synchronization remain open.
 - [ ] 7.3 Perform security review for private tasks, attachments, search, cache, organization-scoped notifications, and deep links
 - [x] 7.4 Document feature-flag rollout, rollback, data retention, support diagnostics, and MVP-A/MVP-B release gates
