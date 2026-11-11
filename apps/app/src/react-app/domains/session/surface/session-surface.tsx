@@ -1,3 +1,4 @@
+import { captureCloudDocTurn } from "@/app/lib/cloud-doc-turn";
 /** @jsxImportSource react */
 import { isSessionSubmissionPreparing } from "../sync/submission-guard";
 import { clearQueuedSessionDrafts } from "./queued-draft-cleanup";
@@ -1271,6 +1272,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         : resolved;
     return {
       mode: "prompt",
+      cloudDocTurn: captureCloudDocTurn(props.sessionId, text),
       parts,
       attachments: nextAttachments,
       text,
@@ -1279,7 +1281,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       ...(includeVideoGeneration && activeVideoGeneration ? { videoGeneration: activeVideoGeneration } : {}),
       command: slashCommand ?? undefined,
     };
-  }, [capabilities, effectiveImageGeneration.selection, effectiveVideoGeneration.selection, mentions, pasteParts, officeGroups]);
+  }, [capabilities, effectiveImageGeneration.selection, effectiveVideoGeneration.selection, mentions, pasteParts, officeGroups, props.sessionId]);
 
   const handleComposerDraftChange = useCallback((value: string) => {
     const priorIds = getComposerOfficeGroups(useComposerStateStore.getState(), props.sessionId).flatMap((group) => group.references.map((ref) => ref.referenceId));
@@ -2577,6 +2579,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                   >
                     <MessageListProvider
                       historyActionsEnabled={!fileHost}
+                      cloudDocsBusy={chatStreaming}
                       client={fileHost ? null : props.client}
                       workspaceId={props.workspaceId}
                       sessionId={props.sessionId}

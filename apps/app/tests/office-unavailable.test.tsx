@@ -31,6 +31,7 @@ for (const failure of ["version", "capabilities", "open", "bridge"] as const) {
     Object.defineProperty(globalThis, "window", {
       configurable: true,
       value: {
+        localStorage: { getItem: () => null },
         __JUGGLEWORK_ELECTRON__: failure === "bridge" ? undefined : {
           office: { show: async () => { shows++; } },
         },

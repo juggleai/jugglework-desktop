@@ -1,0 +1,152 @@
+{
+  "verifiedAt": "2026-11-06T18:56:41+08:00",
+  "verificationMode": "isolated-databases-and-simulated-providers",
+  "server": {
+    "verifiedAt": "2026-11-06T09:30:44.139Z",
+    "verificationMode": "simulated-provider",
+    "transport": "locked-juggleim-go-sdk-to-local-httptest-server",
+    "storage": "isolated-mysql-test-database",
+    "realProviderVerified": false,
+    "realOrganizationRequired": false,
+    "passed": true,
+    "targetedReverifiedAt": "2026-11-06T18:47:43+08:00",
+    "targetedChecks": [
+      "TestDocsNotificationOrganizationChangeWakeMySQL",
+      "TestDocsNotificationSameIMAppKeepsOrganizationsAndBotsSeparateMySQL"
+    ],
+    "passedTestsIncludingSubtests": 64,
+    "skippedTests": 0,
+    "topLevelTests": [
+      "TestDocsNotificationCanonicalDigestAndFragmentMetadata",
+      "TestDocsNotificationCardBindsPersistedDeliveryMySQL",
+      "TestDocsNotificationConversationContextAndGroupCardMySQL",
+      "TestDocsNotificationDirectoryDoesNotDependOnActorSession",
+      "TestDocsNotificationDirectoryPagesOnlyCurrentUsersMySQL",
+      "TestDocsNotificationFragmentsAreDurableImmutableAndTenantScopedMySQL",
+      "TestDocsNotificationGroupMembershipAndOwnershipFollowCurrentSourceMySQL",
+      "TestDocsNotificationManagementFailedRetryKeepsRouteAndSuccessMySQL",
+      "TestDocsNotificationManagementRevalidatesAdministrator",
+      "TestDocsNotificationManagementSeparatesUnknownAndFailedMySQL",
+      "TestDocsNotificationPublicContextRequiresSessionAndResolvedTenant",
+      "TestDocsNotificationRejectsInvalidIdentityAudienceAndBounds",
+      "TestDocsNotificationSameIMAppKeepsOrganizationsAndBotsSeparateMySQL",
+      "TestDocsNotificationWorkerDefinitiveRejectionHasFiniteRetryBudgetMySQL",
+      "TestDocsNotificationWorkerDepartureExpiresAndDoesNotReviveOldRecipientsMySQL",
+      "TestDocsNotificationWorkerDirectRetryDoesNotReplaySuccessfulTargetMySQL",
+      "TestDocsNotificationWorkerDisabledStopsRetriesMySQL",
+      "TestDocsNotificationWorkerGroupPaginationAndSingleBroadcastMySQL",
+      "TestDocsNotificationWorkerLostReceiptStaysUnknownAfterRecoveryMySQL",
+      "TestDocsNotificationWorkerMissingIMWaitsAndRecoversMySQL",
+      "TestDocsNotificationWorkerPersonalNeverCreatesIMSettingsMySQL",
+      "TestDocsNotificationWorkerSendingCrashAndUnstartedGroupRerouteMySQL",
+      "TestDocsNotificationWorkerUnconfirmedGroupUsesDirectMySQL",
+      "TestDocsNotificationsRejectContentURLsAndExtraJSON",
+      "TestDocsSDKDefinitiveRejectionDiffersFromUnknownResponse",
+      "TestDocsSDKMemberQueryPreservesPaginationAndRejectsFailure",
+      "TestDocsSDKReceiptAndFixedMessageContract",
+      "TestDocsSDKTimeoutIsUnknownAndDoesNotResend",
+      "TestDocsWorkspaceTargetSurvivesGrant"
+    ],
+    "notVerified": [
+      "docs-native-notification-and-outbox-atomic-write",
+      "desktop-card-rendering-navigation-and-unread-isolation",
+      "real-im-provider-behavior",
+      "complete-milestone-4"
+    ],
+    "fullMilestone4Passed": false
+  },
+  "docsNative": {
+    "passed": true,
+    "checks": {
+      "nativeCommentAndSiteRollbackWithOutbox": true,
+      "sameNativeEventForSiteAndOutbox": true,
+      "replyAndMentionMerged": true,
+      "resolveOnlyNotifiesOnTransition": true,
+      "mentionIdempotencyConflictAndRollback": true,
+      "bootstrapCommentRetainsNativeTarget": true,
+      "bootstrapMissingCommentAndEdgeless": true,
+      "bootstrapRevalidatesNativeReadPermission": true,
+      "bootstrapRejectsTrashAndBlocked": true,
+      "lostAcceptResponseReusesFrozenEnvelope": true,
+      "privateScopeNeverBroadcasts": true,
+      "revokedPrivateSiteCountListAndOutboxHidden": true,
+      "trashedDocumentSkippedBeforeDelivery": true,
+      "personalDoesNotReachSourceIM": true
+    },
+    "nativeRuntime": true,
+    "postgres": true,
+    "sourceProvider": "simulated-http",
+    "realIMProvider": false,
+    "fullMilestone4Passed": false
+  },
+  "desktop": {
+    "passed": true,
+    "passedTests": 50,
+    "testFiles": [
+      "cloud-docs-cards.test.ts",
+      "cloud-docs-chat-store.test.ts",
+      "cloud-docs-chat-runtime.test.ts",
+      "cloud-docs-native-panel.test.ts",
+      "desktop-notifications.test.ts",
+      "den-auth-provider.test.ts",
+      "toon-factory-permission-cleanup.test.ts",
+      "apps/desktop/electron/desktop-notification-actions.test.mjs"
+    ],
+    "sdkAndElectron": "mocked-sdk-with-actual-store-runtime-panel-source-renderer-action-validation-and-main-process-action-sanitizer",
+    "checked": [
+      "fixed-card-contract-and-forwarded-fallback",
+      "immutable-source-and-event-deduplication",
+      "same-im-app-credentials-org-switch-history-and-unread",
+      "late-history-a-b-a-discard",
+      "im-null-clears-store-with-chat-unmounted",
+      "classification-failure-clears-history-reply-and-pin",
+      "all-conversation-pages-before-unread-aggregation",
+      "fresh-product-page-and-comment-handoff",
+      "native-denial-and-stale-instance-isolation",
+      "restricted-system-notification-action-no-token-body-or-url",
+      "same-im-app-other-tenant-system-notification-filter",
+      "system-notification-click-reuses-card-validation-and-org-switch",
+      "im-null-success-without-duplicate-organization-switch",
+      "unknown-switch-read-only-authoritative-reconciliation",
+      "card-and-system-notification-share-one-pending-open",
+      "late-account-native-view-and-im-callback-discard",
+      "organization-switch-closes-old-office-session-before-request"
+    ]
+  },
+  "desktopBrowser": {
+    "verifiedAt": "2026-11-06T09:22:51.673Z",
+    "passed": true,
+    "component": "actual-desktop-bubble-and-cloud-docs-page",
+    "provider": "simulated-source-and-electron-host",
+    "checked": [
+      "fixed-template-and-no-action-fallback",
+      "repeated-click-single-fresh-product-handoff",
+      "old-native-instance-event-ignored",
+      "current-native-denial-visible",
+      "late-validation-after-org-switch-no-handoff",
+      "invalid-delivery-no-handoff",
+      "host-theme-card-colors"
+    ],
+    "realElectron": false,
+    "fullMilestone4Passed": false
+  },
+  "builds": {
+    "goServer": true,
+    "desktopTypecheck": true,
+    "desktopVite": true,
+    "docsBackendTypecheck": true,
+    "docsWebBundle": true,
+    "docsServerBundle": true
+  },
+  "notVerified": [
+    "single-live-desk-docs-server-im-session-chain",
+    "real-electron-os-notification-click",
+    "live-office-save-in-progress-organization-switch-matrix",
+    "native-comment-sidebar-render-and-highlight-in-live-desktop",
+    "complete-word-mapping-bindings-checkpoints-and-files",
+    "complete-permission-and-lifecycle-matrix",
+    "three-platform-packages-performance-and-backup-restore"
+  ],
+  "realIMProvider": false,
+  "fullMilestone4Passed": false
+}

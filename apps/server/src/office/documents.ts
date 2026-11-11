@@ -1,5 +1,5 @@
-import { randomUUID } from "node:crypto";
-import { constants } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { constants, createReadStream } from "node:fs";
 import { copyFile, lstat, mkdir, open, realpath, rm, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import type { FileArtifact } from "@jugglework/types/file-artifacts";
@@ -35,6 +35,29 @@ interface DocumentRecord {
   loadingStartedAt: number | null;
 }
 type ModelIdentity = Pick<OfficeDocumentSession, "pageId" | "engineFileId">;
+
+/** 流式计算 Office 实际落盘文件摘要，避免把大型文档整体读入 Server 内存。 */
+async function savedFileSha256(path: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const hash = createHash("sha256");
+    const input = createReadStream(path);
+    input.on("error", reject);
+    hash.on("error", reject);
+    hash.on("finish", () => resolve(hash.digest("hex")));
+    input.pipe(hash);
+  });
+}
+
+/** 文件注册表与磁盘短暂不同步时保留既有打开错误边界；恢复只接受明确摘要。 */
+async function optionalSavedFileSha256(path: string): Promise<string | null> {
+  try {
+    return await savedFileSha256(path);
+  } catch (error) {
+    if (["ENOENT", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? ""))
+      return null;
+    throw error;
+  }
+}
 
 /** 与原生目录一致的内容查询分类；find 仅精确匹配，查找替换仍属于修改。 */
 function isOfficeContentQuery(tool: string): boolean {
@@ -146,6 +169,7 @@ export class OfficeDocuments {
         workspaceRoot?: string;
       }>;
       onSaved: (workspaceId: string, path: string) => Promise<void>;
+      /** 文件和模型均确认稳定后通知桌面宿主建立共同检查点；失败不回滚已成功的 Office 保存。 */
       prepareSave?: (document: OfficeDocumentSession) => Promise<void>;
       readSelection?: (document: OfficeDocumentSession) => Promise<unknown>;
       /** 读取同一页面模型的原文，用于补全结构摘要省略的软换行。 */
@@ -346,7 +370,10 @@ export class OfficeDocuments {
         this.activeDocuments.delete(JSON.stringify([workspaceId, sessionId]));
       throw error;
     }
-    // TIPS: 两个 renderer 可在异步检查期间同时首次打开同一文件。
+    const currentFileSha256 = /\.docx$/i.test(resolved.file.relativePath)
+      ? await optionalSavedFileSha256(resolved.absolutePath)
+      : null;
+    // TIPS: 两个 renderer 可在异步检查及摘要读取期间同时首次打开同一文件。
     // 发布前同步复查已有身份，复查与登记间不再 await，无需引入锁或第二套模型所有者。
     const admitted = [...this.documents.values()].reverse().find((record) =>
       record.session.state !== "closed" && sameFileIdentity(record.identity, identity));
@@ -364,6 +391,7 @@ export class OfficeDocuments {
       previewUrl: null,
       dirty: false,
       savedAt: resolved.file.updatedAt,
+      savedFileSha256: currentFileSha256,
     };
     const record: DocumentRecord = {
       session,
@@ -807,11 +835,13 @@ export class OfficeDocuments {
         requireLiveModel();
         if (!(await stat(record.absolutePath)).isFile())
           throw new Error("保存结果不存在");
+        const digest = await savedFileSha256(record.absolutePath);
         requireLiveModel();
         await this.options.onSaved(workspaceId, session.relativePath);
         requireLiveModel();
         record.session.state = "ready";
         record.session.savedAt = Date.now();
+        record.session.savedFileSha256 = digest;
         delete record.session.error;
         session = await this.get(workspaceId, documentId);
         requireLiveModel();
@@ -854,6 +884,9 @@ export class OfficeDocuments {
     await this.options.checkFile?.(resolved.absolutePath);
     const editor = await this.options.engine.editor(record.absolutePath);
     if (editor) await this.options.engine.close(editor.file_id, true);
+    const currentFileSha256 = /\.docx$/i.test(resolved.file.relativePath)
+      ? await optionalSavedFileSha256(resolved.absolutePath)
+      : null;
     const next: OfficeDocumentSession = {
       ...record.session,
       pageId: randomUUID(),
@@ -861,6 +894,7 @@ export class OfficeDocuments {
       engineFileId: null,
       previewUrl: null,
       dirty: false,
+      savedFileSha256: currentFileSha256,
       error: undefined,
     };
     this.selections.retireDocument(workspaceId, documentId, record.session);

@@ -1,3 +1,6 @@
+import { CloudShareButton } from "../../cloud-docs/cloud-share-button";
+import { canUploadToCloud } from "../../cloud-docs/upload-file";
+import { OfficeCloudUploadButton } from "../office/office-cloud-upload-button";
 import * as React from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { FileText, FolderOpen, Plus, X, ArrowUpRight } from "lucide-react";
@@ -343,6 +346,7 @@ export function FileWindowApp({ onAppearanceChange }: { onAppearanceChange?: (ap
           onSave={() => void save()}
           onReveal={() => void action("reveal")}
           onSaveCopy={() => void action("save-copy")}
+          onUploadCloud={canUploadToCloud(active.name) && !active.cloudAttachment ? () => void (async () => { await save(); await action("upload-cloud"); })() : undefined}
           fileActionsDisabled={busy}
           trailingActions={
             canConverse && !conversationOpen ? (
@@ -357,7 +361,14 @@ export function FileWindowApp({ onAppearanceChange }: { onAppearanceChange?: (ap
               </Button>
             ) : null
           }
-        />
+        >
+          {!active.cloudAttachment && canUploadToCloud(active.name) && <OfficeCloudUploadButton title={t("cloud_docs.upload")} onClick={() => void (async () => { await save(); await action("upload-cloud"); })()} />}
+          {!active.cloudAttachment && active.cloudUpload && <CloudShareButton onClick={() => void (async () => {
+            try { await bridge?.action("share-cloud"); toast.success(t("cloud_docs.link_copied")); }
+            catch { toast.error(t("cloud_docs.copy_link_failed")); }
+          })()} />}
+          {active.cloudAttachment && <span className="text-xs text-muted-foreground">{t("cloud_docs.attachment_readonly")}</span>}
+        </FileEditorToolbar>
       )}
       <div className="file-window-viewer">
         {error ? (

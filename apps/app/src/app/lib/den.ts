@@ -1811,6 +1811,12 @@ export function denCredentialFingerprint(value: string) {
   return `${value.length}:${hash >>> 0}`;
 }
 
+/** 忽略旧登录请求迟到的撤权事件，避免清理已切换账号后的当前页面。 */
+export function isCurrentDenSessionRevocation(event: Event): boolean {
+  const fingerprint = (event as CustomEvent<{ authFingerprint?: string }>).detail?.authFingerprint;
+  return !fingerprint || fingerprint === denCredentialFingerprint(readDenSettings().authToken ?? "");
+}
+
 export function resolveDenAuthToken(input: {
   developmentToken?: string | null;
   persistedToken?: string | null;
@@ -3609,6 +3615,16 @@ async function ensureActiveOrganization(
   return { im: getIMLoginBootstrap(payload) };
 }
 
+/** 云文档一次性交接结果，不含源长期登录凭据。 */
+export type DenDocsLaunch = {
+  contractVersion: 1;
+  launchGrant: string;
+  expiresAt: string;
+  tenantId: string;
+  bootstrapUrl: string;
+  presentation: { instanceId: string; mode: 'product' | 'manage' };
+};
+
 export function createDenClient(options: { baseUrl: string; token?: string | null }) {
   const baseUrls = resolveDenBaseUrls({
     baseUrl: options.baseUrl,
@@ -3616,6 +3632,21 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
   const token = options.token?.trim() ?? null;
 
   return {
+    /** 核对当前已授权组织的云文档群／助手及 SDK 会话归属，不依赖 Docs 开关。 */
+    docsConversationContext: (tenantId: string, groupIds: string[]) => requestJson<unknown>(baseUrls, "/api/v1/docs/notifications/context", {
+      method: "POST", token, organizationId: tenantId, body: { tenantId, groupIds },
+    }),
+    /** 卡片只表达定位；打开前按当前组织复核持久事件及原投递目标。 */
+    validateDocsCard: (input: { tenantId: string; contractVersion: 1; eventId: string; pageId: string; commentId?: string; kind: string; occurredAt: string; part: "group" | "direct"; conversationId: string }) =>
+      requestJson<{ valid: boolean }>(baseUrls, "/api/v1/docs/notifications/validate", { method: "POST", token, organizationId: input.tenantId, body: input }),
+    /** 为当前明确组织申请云文档一次性登录交接。 */
+    launchCloudDocs: (input: {
+      tenantId: string;
+      target: { kind: 'home' | 'page' | 'manage'; pageId?: string; workspaceId?: string; commentId?: string };
+      presentation: DenDocsLaunch['presentation'];
+    }) => requestJson<DenDocsLaunch>(baseUrls, '/api/v1/docs/launch', {
+      method: 'POST', token, body: input,
+    }),
     /** The resolved deployment origin and its derived `/jwork/api` root. */
     baseUrls,
 

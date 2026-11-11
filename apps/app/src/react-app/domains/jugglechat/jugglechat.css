@@ -593,3 +593,11 @@
   .jw-im-list-pane { flex-basis: 270px; }
   .jw-im-message-stack { max-width: 82%; }
 }
+
+/* 云文档卡片复用聊天语义色，明暗主题均由宿主提供。 */
+.jw-im-root .jw-docs-card { min-width: 240px; max-width: 360px; color: var(--ui-text); }
+.jw-docs-card-heading { display: flex; align-items: center; gap: 8px; }
+.jw-docs-card p { margin: 10px 0; font-size: 13px; color: var(--ui-text-secondary); }
+.jw-docs-card small { display: block; color: var(--ui-text-muted); }
+.jw-docs-card-open { margin-top: 12px; padding: 6px 10px; border: 1px solid var(--ui-border); border-radius: 8px; background: var(--ui-surface); color: var(--ui-link, var(--ui-text)); cursor: pointer; }
+.jw-docs-card-open:disabled { opacity: .6; cursor: default; }

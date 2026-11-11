@@ -7,6 +7,7 @@ import {
 } from "@/react-app/kernel/desktop-notification-preferences";
 import { LOCAL_PREFERENCES_KEY } from "@/react-app/kernel/local-preferences-storage";
 import { currentLocale, t } from "@/i18n";
+import type { DesktopDocsNotificationAction } from "@jugglework/types/desktop-ipc";
 
 type DesktopNotificationImportance = "important" | "routine";
 
@@ -19,7 +20,12 @@ export type DesktopNotificationEvent =
   | { type: "video.failed"; sessionId: string; detail?: string }
   | { type: "automation.succeeded"; automationName: string; href: string }
   | { type: "automation.failed"; automationName: string; errorText?: string; href: string }
-  | { type: "product-task.reminder"; taskTitle: string; href: string };
+  | { type: "product-task.reminder"; taskTitle: string; href: string }
+  | {
+      type: "docs.collaboration";
+      action: DesktopDocsNotificationAction;
+      important: boolean;
+    };
 
 type NotificationCopy = {
   title: string;
@@ -114,6 +120,20 @@ function copyForEvent(event: DesktopNotificationEvent): NotificationCopy {
         body: event.taskTitle,
         importance: "important",
       };
+    case "docs.collaboration": {
+      let body = t("cloud_docs.card_comment");
+      if (event.action.payload.part === "group")
+        body = t("cloud_docs.card_group");
+      else if (event.action.payload.kind.endsWith("user_mention"))
+        body = t("cloud_docs.card_mention");
+      else if (event.action.payload.kind === "comment.resolved")
+        body = t("cloud_docs.card_resolved");
+      return {
+        title: t("cloud_docs.card_title"),
+        body,
+        importance: event.important ? "important" : "routine",
+      };
+    }
   }
 }
 
@@ -127,5 +147,6 @@ export function notifyDesktopEvent(event: DesktopNotificationEvent): void {
     title: copy.title,
     body: copy.body,
     ...("href" in event ? { href: event.href } : {}),
+    ...("action" in event ? { action: event.action } : {}),
   }).catch(() => undefined);
 }

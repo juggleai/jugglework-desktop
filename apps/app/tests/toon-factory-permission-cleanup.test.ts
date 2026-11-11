@@ -82,7 +82,7 @@ describe("Toon Factory permission cleanup", () => {
     const reconcileClose = authProviderSource.lastIndexOf("await closeToonFactoryForDenSession(", reconcile);
     expect(reconcileClose).toBeGreaterThan(-1);
     expect(reconcileClose).toBeLessThan(reconcile);
-    const orgSwitch = authProviderSource.indexOf("const switchResult = await client.setActiveOrganization");
+    const orgSwitch = authProviderSource.indexOf("const switchResult = await switchDenOrganizationWithRecovery");
     const orgSwitchClose = authProviderSource.lastIndexOf("await closeToonFactoryForDenSession(authorityChange)", orgSwitch);
     expect(orgSwitchClose).toBeGreaterThan(-1);
     expect(orgSwitchClose).toBeLessThan(orgSwitch);

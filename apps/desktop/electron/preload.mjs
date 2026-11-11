@@ -8,8 +8,12 @@ const NATIVE_MENU_ZOOM_EVENT = "jugglework:native-menu:zoom";
 const REMOTE_CONTROL_POLICY_RECOVERY_EVENT = "jugglework:remote-control:policy-recovery";
 const JUGGLECHAT_SKILL_INVOKE_CHANNEL = "jugglework:jugglechat:skill-invoke";
 const JUGGLECHAT_SKILL_REPLY_CHANNEL = "jugglework:jugglechat:skill-reply";
+const DESKTOP_NOTIFICATION_ACTION_CHANNEL = "jugglework:desktop-notification-action";
+const DESKTOP_NOTIFICATION_ACTIONS_READY_CHANNEL = "jugglework:desktop-notification-actions-ready";
+const DESKTOP_NOTIFICATION_ACTIONS_NOT_READY_CHANNEL = "jugglework:desktop-notification-actions-not-ready";
 
 let activeJuggleChatSkillHandler = null;
+let desktopNotificationActionListenerCount = 0;
 
 function setJuggleChatSkillEvent(callback) {
   if (activeJuggleChatSkillHandler) {
@@ -322,6 +326,14 @@ contextBridge.exposeInMainWorld("__JUGGLEWORK_ELECTRON__", {
     create: (input) => ipcRenderer.invoke("jugglework:file-window:create", input),
     /** 将操作路由到所属文件窗口。 */
     action: (action, path) => ipcRenderer.invoke("jugglework:file-window:action", action, path),
+    /** 独立文件窗口请求把当前文件上传为云文档，由主窗口按当前组织执行。 */
+    /** 只发布当前范围的非敏感链接，独立窗口不能调用。 */
+    setCloudUploads: (input) => ipcRenderer.invoke("jugglework:file-window:cloud-uploads", input),
+    onUploadCloud(callback) {
+      const handler = (_event, input) => callback(input);
+      ipcRenderer.on("jugglework:file-window:upload-cloud", handler);
+      return () => ipcRenderer.removeListener("jugglework:file-window:upload-cloud", handler);
+    },
     /** 监听文件窗口标签变化。 */
     onChanged(callback) {
       const handler = (_event, input) => callback(input);
@@ -333,6 +345,59 @@ contextBridge.exposeInMainWorld("__JUGGLEWORK_ELECTRON__", {
       const handler = (_event, input) => callback(input);
       ipcRenderer.on("jugglework:file-window:open-in-panel", handler);
       return () => ipcRenderer.removeListener("jugglework:file-window:open-in-panel", handler);
+    },
+  },
+  cloudDocs: {
+    /** 以一次性凭据进入当前组织的云文档。 */
+    open: (input) => ipcRenderer.invoke('jugglework:docs:open', input),
+    /** 释放指定实例或全部云文档视图。 */
+    close: (instanceId) => ipcRenderer.invoke('jugglework:docs:close', instanceId),
+    /** 宿主浮窗打开时保留云文档画面，不销毁编辑会话。 */
+    snapshot: (instanceId) => ipcRenderer.invoke('jugglework:docs:snapshot', instanceId),
+    /** 对齐 React 内容区域并在宿主菜单打开时隐藏原生视图。 */
+    setBounds: (input) => ipcRenderer.send('jugglework:docs:bounds', input),
+    /** 只向当前云文档传递展示配置。 */
+    setAppearance: (input) => ipcRenderer.send('jugglework:docs:appearance', input),
+    /** 将顶部按钮操作传给当前实例的原生侧栏或搜索。 */
+    layoutCommand: (input) => ipcRenderer.send('jugglework:docs:layout-command', input),
+    /** 监听 AFFiNE 原生侧栏状态，包含快捷键和拖动改宽后的结果。 */
+    onLayout(callback) { const handler = (_event, value) => callback(value); ipcRenderer.on('jugglework:docs:layout', handler); return () => ipcRenderer.removeListener('jugglework:docs:layout', handler); },
+    /** 监听当前原生页面就绪或身份失效。 */
+    onState(callback) { const handler = (_event, value) => callback(value); ipcRenderer.on('jugglework:docs:state', handler); return () => ipcRenderer.removeListener('jugglework:docs:state', handler); },
+    /** 在当前组织的 product 视图中执行文件上传（lookup／upload）。 */
+    fileIntake: (input) => ipcRenderer.invoke('jugglework:docs:file-intake', input),
+    /** 在当前页面滚动并高亮指定块。 */
+    highlightBlocks: (input) => ipcRenderer.send('jugglework:docs:highlight-blocks', input),
+    /** 在当前组织 product 视图中执行 Docs AI 接口（search／read／edit／create）。 */
+    api: (input) => ipcRenderer.invoke('jugglework:docs:api', input),
+    /** 监听本地 Server 经主进程转来的云文档请求。 */
+    onApiRequest(callback) { const handler = (_event, value) => callback(value); ipcRenderer.on('jugglework:cloud-docs:api-request', handler); return () => ipcRenderer.removeListener('jugglework:cloud-docs:api-request', handler); },
+    /** 返回云文档请求结果。 */
+    apiResponse: (value) => ipcRenderer.send('jugglework:cloud-docs:api-response', value),
+    /** 监听页面发来的块选区引用。 */
+    onAiReference(callback) { const handler = (_event, value) => callback(value); ipcRenderer.on('jugglework:docs:ai-reference', handler); return () => ipcRenderer.removeListener('jugglework:docs:ai-reference', handler); },
+  },
+  desktopNotifications: {
+    /** 监听系统原生通知点击；主进程只回传已校验的受限应用动作。 */
+    onAction(callback) {
+      if (typeof callback !== "function") return () => {};
+      const handler = (_event, action) => callback(action);
+      ipcRenderer.on(DESKTOP_NOTIFICATION_ACTION_CHANNEL, handler);
+      desktopNotificationActionListenerCount += 1;
+      // TIPS: 先安装监听再声明就绪，保证主进程冲刷启动期暂存动作时不会丢失点击。
+      if (desktopNotificationActionListenerCount === 1) {
+        ipcRenderer.send(DESKTOP_NOTIFICATION_ACTIONS_READY_CHANNEL);
+      }
+      let active = true;
+      return () => {
+        if (!active) return;
+        active = false;
+        ipcRenderer.removeListener(DESKTOP_NOTIFICATION_ACTION_CHANNEL, handler);
+        desktopNotificationActionListenerCount = Math.max(0, desktopNotificationActionListenerCount - 1);
+        if (desktopNotificationActionListenerCount === 0) {
+          ipcRenderer.send(DESKTOP_NOTIFICATION_ACTIONS_NOT_READY_CHANNEL);
+        }
+      };
     },
   },
   browser: {

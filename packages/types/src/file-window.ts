@@ -16,6 +16,10 @@ export interface FileWindowTab {
   documentId?: string;
   /** 已确认存在导入损失时，使用原文件只读预览，不创建编辑模型。 */
   readOnly?: boolean;
+  /** 来自云文档附件的只读副本。 */
+  cloudAttachment?: boolean;
+  /** 当前账号组织下，该本地文件最近一次上传的链接。 */
+  cloudUpload?: { url: string; tenantId: string };
 }
 
 /** 窗口状态由 Electron 维护，不包含访问令牌。 */
@@ -42,6 +46,8 @@ export type OfficeCreationKind = "docx" | "pptx";
 
 /** 独立窗口最小桥；文件操作通过同一 Server 和原生对话框执行。 */
 export interface FileWindowBridge {
+  /** 仅主窗口更新当前来源范围的上传结果，供独立文件窗口展示分享入口。 */
+  setCloudUploads?(input: { scope: string | null; records: Array<{ localWorkspaceId: string; path: string; tenantId: string; url: string }> }): Promise<void>;
   /** 查询当前主进程是否已注册文件窗口入口，兼容开发时尚未重启的旧主进程。 */
   available?(): Promise<boolean>;
   open(input: {
@@ -59,7 +65,7 @@ export interface FileWindowBridge {
     kind: OfficeCreationKind;
   }): Promise<{ path: string } | null>;
   action(
-    action: "select" | "close" | "open" | "reveal" | "save-copy" | "open-session",
+    action: "select" | "close" | "open" | "reveal" | "save-copy" | "open-session" | "upload-cloud" | "share-cloud",
     path?: string,
   ): Promise<void>;
   onChanged(callback: (state: FileWindowState) => void): () => void;
@@ -67,6 +73,8 @@ export interface FileWindowBridge {
   subscribeSessionEvents?(listener: (event: { type: string; properties: object }) => void): () => void;
   /** 仅主窗口接收：目标由 Main 已登记文件窗口及当前 run 确认，清理后才允许 abort。 */
   onSessionStopRequest?(callback: (input: { workspaceId: string; sessionId: string }) => Promise<{ ok: true }>): () => void;
+  /** 仅主窗口接收：独立文件窗口请求把当前文件上传为云文档。 */
+  onUploadCloud?(callback: (input: { workspaceId: string; path: string; requestId?: string; lookup?: boolean }) => void): () => void;
   /** 在主窗口编辑区选择文件后，复用所属聊天的右侧文件标签。 */
   onOpenInPanel?(
     callback: (input: {

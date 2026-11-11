@@ -1,0 +1,40 @@
+{
+  "privateScopes": {
+    "passed": true,
+    "privateWorkspace": "b42e601d-f8b3-4fb1-be76-ec7de918fc29",
+    "pageId": "7d9acb419d7f4f7183e685d48ff8c2fa",
+    "nativeUiCreatedAndSaved": true,
+    "baseCookieStable": true,
+    "sharedRootContainsNoPrivateMetadata": true,
+    "unsharedPeerDenied": true,
+    "readerCannotWrite": true,
+    "editorCollaborates": true,
+    "revocationUnmountsCachedEditor": true,
+    "nativeCacheDeleted": true,
+    "revokedBodyRootHistoryAndAttachmentDenied": true,
+    "ownerTransferCoherent": true,
+    "personalAndOtherOrganizationDenied": true,
+    "revokedSearchCommentsAndHistoryQueriesDenied": true,
+    "secondDocumentRejected": true,
+    "creationIdempotent": true,
+    "fullMilestone4Passed": false
+  },
+  "lifecycle": {
+    "passed": true,
+    "offlineMemberRemoval": true,
+    "nativeSessionsRevoked": true,
+    "oldDocGrantRemoved": true,
+    "rejoinGenerationAdvanced": true,
+    "authorIdentityPreserved": true,
+    "otherTenantsUnchanged": true,
+    "nativeWorkspaceOwnershipFollowsSource": true,
+    "departedDocumentOwnerRecovered": true,
+    "departedPrivateOwnerRecovered": true,
+    "privateSharesRevokedBeforeRejoin": true
+  },
+  "backendTypecheck": {
+    "passed": true
+  },
+  "imVerification": "simulated_provider_requested",
+  "fullMilestone4Passed": false
+}

@@ -16,6 +16,8 @@ export type {
   DesktopCommandMap,
   DesktopCommandName,
   DesktopCommandResult,
+  DesktopDocsNotificationAction,
+  DesktopNotificationAction,
   DesktopFetchInit,
   DesktopFetchResult,
   EngineDoctorResult,

@@ -5,6 +5,7 @@ import { homedir, platform } from "node:os";
 import { z } from "zod";
 import { responseLanguageInstruction } from "@jugglework/types/response-language";
 import { generateArtifactFiles } from "./artifact-generate.js";
+import { CLOUD_DOCS_INSTRUCTION } from "./cloud-docs-context.js";
 import { OFFICE_EDITING_INSTRUCTION, renderOfficeEditingContext } from "./office-editing-context.js";
 import type { JuggleWorkAffordanceDescriptor, JuggleWorkAffordanceEffects } from "@jugglework/types/jugglework-affordance";
 import {
@@ -333,6 +334,53 @@ const officeAffordances: JuggleWorkAffordanceDescriptor[] = [
   },
 ];
 
+
+const cloudDocsProvider = { id: "jugglework-cloud-docs", kind: "builtin" } as const;
+const cloudDocsAffordances: JuggleWorkAffordanceDescriptor[] = [
+  {
+    id: "cloud_docs.context", kind: "query", title: "Cloud document scope for this turn",
+    description: "Read this turn's writable cloud documents, selection blockIds, references and the document open in the panel, before editing.",
+    provider: cloudDocsProvider, arguments: [],
+    effects: affordanceReadEffects, confirmation: "never", availability: { enabled: true }, executor: { kind: "jugglework" },
+  },
+  {
+    id: "cloud_docs.search", kind: "query", title: "Search cloud documents",
+    description: "Search readable cloud documents by title keyword.",
+    provider: cloudDocsProvider, arguments: [{ name: "q", type: "string", required: true, description: "Title keyword." }, { name: "limit", type: "number", required: false, description: "At most 20." }],
+    effects: affordanceReadEffects, confirmation: "never", availability: { enabled: true }, executor: { kind: "jugglework" },
+  },
+  {
+    id: "cloud_docs.read", kind: "query", title: "Read a cloud document",
+    description: "Read Markdown with block ids and server-computed hashes. mode auto|full|outline; blockIds limits to specific blocks.",
+    provider: cloudDocsProvider, arguments: [{ name: "workspaceId", type: "string", required: true, description: "Document workspaceId." }, { name: "docId", type: "string", required: true, description: "Document id." }, { name: "mode", type: "string", required: false, description: "auto, full or outline." }, { name: "blockIds", type: "array", required: false, description: "Block ids to read." }],
+    effects: affordanceReadEffects, confirmation: "never", availability: { enabled: true }, executor: { kind: "jugglework" },
+  },
+  {
+    id: "cloud_docs.edit", kind: "command", title: "Edit a cloud document",
+    description: "Apply block operations to a writable cloud document. expectedHash must come from cloud_docs.read.",
+    provider: cloudDocsProvider, arguments: [{ name: "workspaceId", type: "string", required: true, description: "Document workspaceId." }, { name: "docId", type: "string", required: true, description: "Document id." }, { name: "operations", type: "array", required: true, description: "[{op, blockId, expectedHash, markdown?}]" }],
+    effects: affordanceWriteEffects, confirmation: "never", availability: { enabled: true }, executor: { kind: "jugglework" },
+  },
+  {
+    id: "cloud_docs.create", kind: "command", title: "Create a cloud document",
+    description: "Create a new cloud document from Markdown; it becomes writable for this turn.",
+    provider: cloudDocsProvider, arguments: [{ name: "title", type: "string", required: true, description: "Document title." }, { name: "markdown", type: "string", required: true, description: "Markdown body." }],
+    effects: affordanceWriteEffects, confirmation: "never", availability: { enabled: true }, executor: { kind: "jugglework" },
+  },
+  {
+    id: "cloud_docs.import", kind: "command", title: "Upload a workspace file as a cloud document",
+    description: "Upload a saved workspace file (docx, md, html, xlsx, pptx, pdf, ...) as a cloud document; it becomes writable for this turn.",
+    provider: cloudDocsProvider, arguments: [{ name: "path", type: "string", required: true, description: "Workspace-relative file path." }],
+    effects: affordanceWriteEffects, confirmation: "never", availability: { enabled: true }, executor: { kind: "jugglework" },
+  },
+];
+
+/** 云文档工具调用的真实对话与轮次，用于解析本轮可写范围。 */
+function cloudDocsTurn(context: OpenCodeContext) {
+  if (!context.sessionID || !context.messageID) throw new Error("Cloud documents require the calling session and message");
+  return { sessionId: context.sessionID, messageId: context.messageID };
+}
+
 /** 按真实工具上下文解析当前聊天文档，禁止用 UI 全局焦点替代执行归属。 */
 async function currentOfficeDocument(context: OpenCodeContext) {
   if (!context.sessionID) throw new Error("Office requires the calling session");
@@ -553,7 +601,7 @@ async function readJuggleWorkAgentContext(
     readEngineMcpDescriptors(engineMcpStatusClient, engineMcpStatusDirectory),
   ]);
   const contributions = buildJuggleWorkProviderContributions(skills, mcps);
-  const providerAffordances = [...contributions.flatMap((contribution) => contribution.affordances), ...officeAffordances];
+  const providerAffordances = [...contributions.flatMap((contribution) => contribution.affordances), ...officeAffordances, ...cloudDocsAffordances];
   const uiContext = isRecord(uiResult) && isRecord(uiResult.context) ? uiResult.context : null;
   if (!uiContext) {
     return {
@@ -579,6 +627,26 @@ async function readJuggleWorkAgentContext(
 
 async function queryJuggleWorkAffordance(rawArgs: unknown, context: OpenCodeContext): Promise<unknown> {
   const request = juggleworkAffordanceRequestSchema.parse(rawArgs);
+  if (request.id.startsWith("cloud_docs.") && ["cloud_docs.context", "cloud_docs.search", "cloud_docs.read"].includes(request.id)) {
+    const workspace = await resolveContextWorkspace(context.workspaceId ?? context.workspaceID, context);
+    const turn = cloudDocsTurn(context);
+    const base = `/workspace/${encodeURIComponent(workspace.id)}/cloud-docs`;
+    const query = new URLSearchParams(turn);
+    if (request.id === "cloud_docs.context")
+      return affordanceResult(request.id, await serverGet(`${base}/context?${query}`), affordanceReadEffects);
+    if (request.id === "cloud_docs.search") {
+      const args = z.object({ q: z.string().min(1).max(200), limit: z.number().int().positive().max(20).optional() }).strict().parse(request.args ?? {});
+      query.set("q", args.q);
+      if (args.limit) query.set("limit", String(args.limit));
+      return affordanceResult(request.id, await serverGet(`${base}/search?${query}`), affordanceReadEffects);
+    }
+    const args = z.object({ workspaceId: z.string().min(1), docId: z.string().min(1), mode: z.enum(["auto", "full", "outline"]).optional(), blockIds: z.array(z.string().min(1)).max(200).optional() }).strict().parse(request.args ?? {});
+    query.set("workspaceId", args.workspaceId);
+    query.set("docId", args.docId);
+    if (args.mode) query.set("mode", args.mode);
+    if (args.blockIds?.length) query.set("blockIds", args.blockIds.join(","));
+    return affordanceResult(request.id, await serverGet(`${base}/read?${query}`), affordanceReadEffects);
+  }
   if (request.id === "office.tools") {
     if (!context.sessionID || !context.messageID) throw new Error("Office requires the calling session and message");
     const args = z.object({ name: z.string().min(1).optional(), selectionRef: z.string().min(1).optional() }).strict().parse(request.args ?? {});
@@ -639,6 +707,21 @@ async function executeJuggleWorkAffordance(
   context: OpenCodeContext,
 ): Promise<unknown> {
   const request = juggleworkAffordanceRequestSchema.parse(rawArgs);
+  if (request.id === "cloud_docs.edit" || request.id === "cloud_docs.create" || request.id === "cloud_docs.import") {
+    const workspace = await resolveContextWorkspace(context.workspaceId ?? context.workspaceID, context);
+    const turn = cloudDocsTurn(context);
+    const base = `/workspace/${encodeURIComponent(workspace.id)}/cloud-docs`;
+    if (request.id === "cloud_docs.edit") {
+      const args = z.object({ workspaceId: z.string().min(1), docId: z.string().min(1), operations: z.array(z.record(z.string(), z.unknown())).min(1).max(50) }).strict().parse(request.args ?? {});
+      return affordanceResult(request.id, await postJson(`${base}/edit`, { ...turn, ...args }), affordanceWriteEffects);
+    }
+    if (request.id === "cloud_docs.create") {
+      const args = z.object({ title: z.string().min(1).max(200), markdown: z.string().max(256 * 1024) }).strict().parse(request.args ?? {});
+      return affordanceResult(request.id, await postJson(`${base}/create`, { ...turn, ...args }), affordanceWriteEffects);
+    }
+    const args = z.object({ path: z.string().min(1).max(1024) }).strict().parse(request.args ?? {});
+    return affordanceResult(request.id, await postJson(`${base}/import`, { ...turn, ...args }), affordanceWriteEffects);
+  }
   if (request.id === "office.call") {
     if (!context.sessionID || !context.messageID) throw new Error("Office editing requires the calling session and message");
     const args = z.object({name: z.string().min(1), args: z.record(z.string(), z.unknown()), selectionRef: z.string().min(1).optional()}).strict().parse(request.args ?? {});
@@ -1117,6 +1200,7 @@ export const JuggleWorkExtensionsPreview = async (factoryInput?: unknown) => {
       createInstructionSection("routing", extensionDiscovery.instruction),
       createInstructionSection("agent-surface", JUGGLEWORK_AGENT_SURFACE_INSTRUCTION),
       createInstructionSection("office-editing", `${OFFICE_EDITING_INSTRUCTION}\n${renderOfficeEditingContext(officeContext)}`),
+      createInstructionSection("cloud-docs", CLOUD_DOCS_INSTRUCTION),
       createInstructionSection("file-delivery", "For Shell/Python document generation use jugglework_artifact_generate (artifact.generate_files). It runs the executable in a dedicated output directory and automatically collects files, even with silent stdout. Save only deliverables there; use the system temporary directory for scripts/cache. Use absolute input/script paths. Declare outputs for files written elsewhere in the workspace. Do not use background child processes."),
       createInstructionSection("skill-authoring", skillAuthoring.prompt),
       createInstructionSection("connect-skills", skillCatalog.instruction),

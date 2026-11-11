@@ -63,9 +63,10 @@ export function createOfficePanel({
     for (const window of windows())
       window.webContents.send("jugglework:office:document", document);
   };
-  const save = async (workspaceId, documentId) =>
-    (await client.postJson(`${base(workspaceId, documentId)}/save`, {}))
+  const save = async (workspaceId, documentId) => {
+    return (await client.postJson(`${base(workspaceId, documentId)}/save`, {}))
       .document;
+  };
   const cancelCapture = (entry) => {
     const task = entry?.captureRequest;
     if (!task) return;

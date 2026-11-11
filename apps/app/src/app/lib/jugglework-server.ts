@@ -348,6 +348,8 @@ export type JuggleWorkSessionStartResult =
   | { disposition: "steered"; admissionId: string };
 
 export type JuggleWorkSessionPrompt = {
+  /** 云文档引用与面板激活标签，只含定位信息。 */
+  cloudDocTurn?: { currentTenantId: string | null; references: unknown[]; activeDoc?: unknown };
   officeSelectionRefs?: string[];
   officeInstructions?: import("@jugglework/types/office").OfficeSelectionInstruction[];
   messageID?: string;
@@ -2211,9 +2213,14 @@ async function requestBinary(
 
   const contentType = response.headers.get("content-type");
   const disposition = response.headers.get("content-disposition") ?? "";
-  const filenameMatch = disposition.match(/filename\*=UTF-8''([^;]+)|filename="?([^";]+)"?/i);
-  const filenameRaw = filenameMatch?.[1] ?? filenameMatch?.[2] ?? null;
-  const filename = filenameRaw ? decodeURIComponent(filenameRaw) : null;
+  // TIPS: 服务端常先给出 ASCII 回退名，再给出 UTF-8 文件名；必须优先读取后者以保留中文。
+  const extendedName = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+  const fallbackName = disposition.match(/filename="?([^";]+)"?/i)?.[1] ?? null;
+  let filename = fallbackName;
+  if (extendedName) {
+    try { filename = decodeURIComponent(extendedName); }
+    catch { /* 无效扩展名保留服务器回退名，不阻断文件下载。 */ }
+  }
   const data = await response.arrayBuffer();
   return { data, contentType, filename };
 }
@@ -3474,6 +3481,12 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
 
     /** 查询本机 Word 编辑资源，不触发引擎启动。 */
     officeCapabilities: (workspaceId: string) => requestJson<OfficeCapabilities>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/office/capabilities`, { token, hostToken }),
+    /** 云文档：一次获取会话所有轮次汇总，不包含逐块正文。 */
+    cloudDocsSessionChanges: (workspaceId: string, sessionId: string) => requestJson<{ turns: Array<{ messageId: string; documents: Array<{ tenantId: string; workspaceId: string; docId: string; title: string; replaced: number; inserted: number; deleted: number }>; undone: boolean }> }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/cloud-docs/session-changes?sessionId=${encodeURIComponent(sessionId)}`, { token, hostToken }),
+    /** 云文档：按用户 messageId 查询所属轮次的变更汇总。 */
+    cloudDocsChanges: (workspaceId: string, sessionId: string, messageId: string) => requestJson<{ documents: Array<{ tenantId: string; workspaceId: string; docId: string; title: string; replaced: number; inserted: number; deleted: number }>; changes: Array<{ workspaceId: string; docId: string; blockId: string; before?: string; after?: string; blocks: Array<{ blockId: string }> }>; undone: boolean }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/cloud-docs/changes?sessionId=${encodeURIComponent(sessionId)}&messageId=${encodeURIComponent(messageId)}`, { token, hostToken }),
+    /** 云文档：只撤销指定 messageId 的写入，已变化的块跳过。 */
+    cloudDocsUndo: (workspaceId: string, sessionId: string, messageId: string) => requestJson<{ restored: number; conflicts: number }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/cloud-docs/undo`, { token, hostToken, method: "POST", body: { sessionId, messageId } }),
     /** 发送或入队前核对固定引用，不重读当前光标。 */
     validateOfficeSelections: (workspaceId: string, sessionId: string, referenceIds: string[]) => requestJson<{ ok: boolean }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/office/selection-references/validate`, { token, hostToken, method: "POST", body: { sessionId, referenceIds } }),
     /** 只释放未发送登记，已接收任务持有独立快照。 */

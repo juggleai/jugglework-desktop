@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 import * as React from "react";
-import { GitCompare, X } from "lucide-react";
+import { Cloud, GitCompare, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -30,6 +30,8 @@ type FileTabsProps = {
   changesTab: ChangesTabDescriptor | null;
   onSelect: (path: string) => void;
   onClose: (path: string) => void;
+  /** 云文档与本地文件共用标签样式和横向滚动容器。 */
+  cloudTabs?: Array<{ key: string; title: string; active: boolean; onSelect: () => void; onClose: () => void }>;
 };
 
 /**
@@ -42,8 +44,12 @@ type FileTabsProps = {
  * @param onSelect 切换文件标签
  * @param onClose 关闭文件标签
  */
-export function FileTabs({ tabs, activePath, dirtyPaths, changesTab, onSelect, onClose }: FileTabsProps) {
-  if (tabs.length === 0 && !changesTab) return null;
+export function FileTabs({ tabs, activePath, dirtyPaths, changesTab, onSelect, onClose, cloudTabs = [] }: FileTabsProps) {
+  if (tabs.length === 0 && !changesTab && !cloudTabs.length) return null;
+  const documents = [
+    ...tabs.map(tab => ({ key: `file:${tab.path}`, title: tab.path, name: tab.name, active: tab.path === activePath, dirty: dirtyPaths.has(tab.path), cloud: false, select: () => onSelect(tab.path), close: () => onClose(tab.path) })),
+    ...cloudTabs.map(tab => ({ key: `cloud:${tab.key}`, title: `${t("cloud_docs.title")} · ${tab.title}`, name: tab.title, active: tab.active, dirty: false, cloud: true, select: tab.onSelect, close: tab.onClose })),
+  ];
 
   return (
     <div className="no-scrollbar flex h-9 items-center gap-1 overflow-x-auto">
@@ -68,20 +74,20 @@ export function FileTabs({ tabs, activePath, dirtyPaths, changesTab, onSelect, o
           {changesTab.onClose ? <Button type="button" variant="ghost" size="icon-xs" aria-label={t("artifact.close_changes")} className="absolute end-1 top-1/2 -translate-y-1/2 mac:titlebar-no-drag" onClick={changesTab.onClose}><X className="size-3" /></Button> : null}
         </div>
       ) : null}
-      {tabs.map((tab) => {
-        const active = tab.path === activePath;
-        const dirty = dirtyPaths.has(tab.path);
+      {documents.map((tab) => {
+        const { active, dirty } = tab;
 
         return (
           // TIPS: 标签宽度跟着文件名走，最宽到 9rem 就截断——短文件名不再占满一格，
           // 长文件名也不会把标签栏撑开。
-          <div key={tab.path} className="group relative min-w-0 max-w-36 shrink-0">
+          <div key={tab.key} className="group relative min-w-0 max-w-36 shrink-0">
             <Button
               type="button"
               variant="ghost"
               size="sm"
-              title={tab.path}
-              onClick={() => onSelect(tab.path)}
+              title={tab.title}
+              aria-pressed={active}
+              onClick={tab.select}
               className={cn(
                 "w-full min-w-0 justify-start gap-1.5 px-2 text-left text-[13px] font-normal text-muted-foreground transition-[padding] hover:bg-muted hover:text-foreground mac:titlebar-no-drag",
                 // 未选中时不为空的关闭按钮预留空间，让短标题保持紧凑；悬停或
@@ -92,6 +98,7 @@ export function FileTabs({ tabs, activePath, dirtyPaths, changesTab, onSelect, o
                 active && "bg-muted/80 text-foreground",
               )}
             >
+              {tab.cloud && <Cloud className="size-3.5 shrink-0" aria-hidden="true" />}
               <span className="min-w-0 truncate">{tab.name}</span>
               {dirty ? <span className="size-1.5 shrink-0 rounded-full bg-primary" /> : null}
             </Button>
@@ -109,7 +116,7 @@ export function FileTabs({ tabs, activePath, dirtyPaths, changesTab, onSelect, o
               )}
               onClick={(event: React.MouseEvent<HTMLButtonElement>) => {
                 event.stopPropagation();
-                onClose(tab.path);
+                tab.close();
               }}
             >
               <X className="size-3" />

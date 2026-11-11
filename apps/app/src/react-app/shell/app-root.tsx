@@ -1,3 +1,5 @@
+import { CloudDocsCoordinator } from "../domains/cloud-docs/cloud-docs-coordinator";
+import { installUploadedCloudFiles } from "@/react-app/domains/cloud-docs/uploaded-files";
 /** @jsxImportSource react */
 
 import { useEffect, useMemo, useSyncExternalStore, type ReactNode } from "react";
@@ -49,6 +51,7 @@ import { AutomationActivityProvider } from "../domains/automations/automation-ac
 import { HostMarketplacePluginsProvider } from "../domains/settings/state/host-marketplace-plugins-provider";
 import { MainOfficeComposerBridge } from "../domains/session/surface/composer/office-composer-bridge";
 import { ProductTaskNotificationCoordinator } from "../domains/tasks/product-task-notification-coordinator";
+import { DocsDesktopNotificationCoordinator } from "../domains/jugglechat/docs-desktop-notification-coordinator";
 
 type DenSigninGateProps = {
   children: ReactNode;
@@ -174,6 +177,7 @@ function DenSigninGate({ children }: DenSigninGateProps) {
  * the actions are available on every route (including /welcome and /signin).
  */
 function DenAuthControlActions() {
+  useEffect(installUploadedCloudFiles, []);
   const denAuth = useDenAuth();
 
   const exchangeGrantAction = useMemo<JuggleWorkControlAction>(() => ({
@@ -337,11 +341,13 @@ export function AppRoot() {
               <BrandThemeControlActions />
               <RootJuggleWorkServerProvider>
                 <FileWindowSessionStopCoordinator />
+                <CloudDocsCoordinator />
                 <DenSigninGate>
                   <AutomationActivityProvider>
                     <HostMarketplacePluginsProvider>
                       <AutomationRunNotificationCoordinator />
                       <ProductTaskNotificationCoordinator />
+                      <DocsDesktopNotificationCoordinator />
                       <Routes>
                         <Route
                           path="/signin"

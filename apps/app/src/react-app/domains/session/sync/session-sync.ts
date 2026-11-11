@@ -967,7 +967,7 @@ function toUIPart(part: Part): UIMessage["parts"][number] | null {
       type: "text",
       text: part.text,
       state: "done",
-      providerMetadata: { opencode: { partId: part.id, ...(officeSelection ? { officeSelection } : {}) } },
+      providerMetadata: { opencode: { partId: part.id, ...(officeSelection ? { officeSelection } : {}), ...(typeof (part.metadata as { cloudDocSourceText?: unknown } | undefined)?.cloudDocSourceText === "string" ? { cloudDocSourceText: (part.metadata as { cloudDocSourceText: string }).cloudDocSourceText } : {}) } },
     };
   }
   if (part.type === "reasoning") {

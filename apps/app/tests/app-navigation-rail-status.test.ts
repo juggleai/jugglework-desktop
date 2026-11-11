@@ -50,7 +50,7 @@ describe("Code Review navigation", () => {
   test("shares the pinned separator while keeping the Review entry conditional", () => {
     const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
     const pinnedSection = source.slice(
-      source.indexOf("{tasksPinned || calendarPinned || reviewsPinned || toonFactoryPinned ? ("),
+      source.indexOf("{tasksPinned || calendarPinned || cloudDocsPinned || reviewsPinned || toonFactoryPinned ? ("),
       source.indexOf("</nav>"),
     );
     const pinnedBlock = source.slice(source.indexOf("{reviewsPinned ? ("), source.indexOf(") : null}", source.indexOf("{reviewsPinned ? (")));
@@ -440,5 +440,23 @@ describe("account menu", () => {
     expect(source).toContain("buildDenMembershipUpgradeUrl(readDenSettings().baseUrl, upgradeContext)");
     expect(source).toContain("{upgradeContext ? (");
     expect(source).not.toContain("MembershipUpgradeDialog");
+  });
+});
+
+describe("Cloud Docs navigation", () => {
+  test("uses a dedicated cloud-document icon and supports a persistent pin", () => {
+    expect(railSource).toContain("function CloudDocsRailIcon");
+    expect(railSource).toContain("data-cloud-docs-rail-icon");
+    expect(railSource).toContain('data-testid="app-navigation-more-cloud-docs-row"');
+    expect(railSource).toContain('data-testid="app-navigation-pin-cloud-docs"');
+    expect(railSource).toContain('testId="app-rail-pinned-cloud-docs"');
+    expect(railSource).toContain('setAppNavigationItemPinned("cloud-docs", !cloudDocsPinned)');
+  });
+
+  test("keeps More active only while an unpinned Cloud Docs route is visible", () => {
+    expect(railSource).toContain('const cloudDocsActive = location.pathname.startsWith("/cloud-docs/")');
+    expect(railSource).toContain("cloudDocsActive && !cloudDocsPinned");
+    expect(railSource).toContain("active={cloudDocsActive}");
+    expect(railSource).toContain("onClick={openCloudDocs}");
   });
 });

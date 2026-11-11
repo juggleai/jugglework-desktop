@@ -10,8 +10,9 @@ export const PERSISTED_FILES_PANEL_STORE_KEY = "jugglework:files-panel:v1";
  *
  * - `files`：打开的文件
  * - `changes`：当前会话累计产生的文件改动（以「变更」标签的形式出现在标签栏里）
+ * - `cloud`：当前会话选中的云文档；文档身份由云文档标签状态保存
  */
-export type FilesPanelTabKey = "files" | "changes";
+export type FilesPanelTabKey = "files" | "changes" | "cloud";
 
 /**
  * 文件面板中打开的一个文件标签
@@ -94,6 +95,7 @@ function writeSession(
 }
 
 function activeHistoryEntry(session: FilesPanelSessionState) {
+  if (session.activeKey === "cloud") return null;
   if (session.activeKey === "changes") return { key: "changes" as const };
   return session.activePath ? { key: "files" as const, path: session.activePath } : null;
 }
@@ -126,7 +128,7 @@ export const useFilesPanelStore = create<FilesPanelStore>()(
         }),
       clearTurnChanges: (sessionId, showWorkspaceChanges = false) => set((state) => writeSession(state, sessionId, {
         ...readSession(state, sessionId), turnChanges: undefined, selectedChangePath: null,
-        activeKey: showWorkspaceChanges ? "changes" : "files",
+        activeKey: showWorkspaceChanges ? "changes" : readSession(state, sessionId).activeKey === "cloud" ? "cloud" : "files",
         tabHistory: (readSession(state, sessionId).tabHistory ?? []).filter((entry) => entry.key !== "changes"),
       })),
 

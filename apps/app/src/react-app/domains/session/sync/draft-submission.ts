@@ -1,3 +1,4 @@
+import { captureCloudDocTurn } from "@/app/lib/cloud-doc-turn";
 import type { Client, ComposerDraft, ComposerSubmissionOptions, ModelRef } from "@/app/types";
 import type { JuggleWorkServerClient } from "@/app/lib/jugglework-server";
 import type { ResolvedWorkspaceEndpoint } from "@/app/lib/workspace-endpoint";
@@ -47,6 +48,8 @@ function isUnconfirmedSubmissionError(error: unknown) {
 /** 主输入栏与后台队列共用完整提交链路；异步准备期间目标项目和原会话固定。 */
 export async function submitSessionDraft(input: SessionDraftSubmissionInput) {
   const { draft, sessionId, workspaceId, client, host } = input;
+  // TIPS: 兼容旧队列时只恢复显式标签，不能借用发送时才打开的文档。
+  const cloudDocTurn = draft.cloudDocTurn ?? captureCloudDocTurn(sessionId, draft.text, false);
   const submission = input.submission ?? { delivery: "start" };
   if (input.hostKind === "file" && draft.parts.some((part) => part.type === "file" || part.type === "agent" || part.type === "app")) {
     throw new Error(t("file_window.mentions_unavailable"));
@@ -108,7 +111,7 @@ export async function submitSessionDraft(input: SessionDraftSubmissionInput) {
             return;
           }
           const request = {
-            sessionID: sessionId, parts, juggleworkOfficeSelections: office,
+            sessionID: sessionId, parts, juggleworkOfficeSelections: office, ...(input.hostKind !== "file" ? { juggleworkCloudDocTurn: cloudDocTurn } : {}),
             ...(submission.delivery !== "steer" && submission.messageID ? { messageID: submission.messageID } : {}),
             juggleworkDetectedResponseLanguage: detectResponseLanguage(draft) ?? undefined,
             juggleworkDefaultResponseLanguage: currentLocale() === "zh" ? "zh" as const : "en" as const,

@@ -52,11 +52,36 @@ export type EngineInfo = {
   execution: OpencodeExecutionSnapshot | null;
 };
 
+export type DesktopDocsNotificationAction = {
+  type: "docs.open";
+  contractVersion: 1;
+  source: {
+    server: string;
+    userId: string;
+    tenantId: string;
+    authFingerprint: string;
+  };
+  payload: {
+    contractVersion: 1;
+    eventId: string;
+    tenantId: string;
+    pageId: string;
+    commentId?: string;
+    kind: string;
+    occurredAt: string;
+    part: "group" | "direct";
+  };
+  conversationId: string;
+};
+
+export type DesktopNotificationAction = DesktopDocsNotificationAction;
+
 export type DesktopNotificationInput = {
   title: string;
   body?: string;
   href?: string;
   silent?: boolean;
+  action?: DesktopNotificationAction;
 };
 
 export type DesktopNotificationResult =

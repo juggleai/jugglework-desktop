@@ -37,6 +37,8 @@ export interface OfficeDocumentSession {
   previewUrl: string | null;
   dirty: boolean;
   savedAt: number | null;
+  /** 当前模型打开或最近一次保存时读取的真实文件 SHA-256。 */
+  savedFileSha256: string | null;
   error?: string;
 }
 

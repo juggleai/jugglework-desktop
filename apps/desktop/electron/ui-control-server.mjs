@@ -11,7 +11,7 @@ import path from "node:path";
 import { app } from "electron";
 
 /** 创建本机控制服务；保存确认发送到文档所属原生页面，不激活窗口。 */
-export function createUiControlServer({ appName, appIdentifier, getWindow, prepareOfficeSave, readOfficeSelection, readOfficeText }) {
+export function createUiControlServer({ appName, appIdentifier, getWindow, prepareOfficeSave, cloudDocsRequest, readOfficeSelection, readOfficeText }) {
   let uiControlServer = null;
   let uiControlDiscoveryPath = null;
   const uiControlToken = randomBytes(32).toString("hex");
@@ -135,6 +135,12 @@ export function createUiControlServer({ appName, appIdentifier, getWindow, prepa
           if (!prepareOfficeSave) throw new Error("文档保存通道不可用");
           await prepareOfficeSave(await readJsonRequestBody(request));
           sendJsonResponse(response, 200, { ok: true });
+          return;
+        }
+        if (request.method === "POST" && url.pathname === "/cloud-docs/request") {
+          if (!cloudDocsRequest) throw new Error("云文档通道不可用");
+          const result = await cloudDocsRequest(await readJsonRequestBody(request));
+          sendJsonResponse(response, 200, { ok: true, ...result });
           return;
         }
         if (request.method === "POST" && url.pathname === "/office/selection") {

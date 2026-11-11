@@ -2,6 +2,9 @@ import { createMeetingScreenPicker } from "./meeting-screen-picker.mjs";
 import { installMeetingDiagnostics } from "./meeting-diagnostics.mjs";
 import { installMeetingCompactWindow } from "./meeting-compact-window.mjs";
 import { readMeetingConfig } from "./meeting-config.mjs";
+import { createCloudDocsPanel } from './cloud-docs-panel.mjs';
+import { createCloudDocAttachments } from "./cloud-doc-attachments.mjs";
+import { createCloudDocsApi } from "./cloud-docs-api.mjs";
 import "./socket-tos-compat.mjs";
 import { createToonFactoryRuntime } from "./toonFactoryRuntime.mjs";
 import { execFile, execFileSync, spawn } from "node:child_process";
@@ -83,6 +86,11 @@ import { createRemoteSessionEventBridge } from "./remote-session-event-bridge.mj
 import { createRuntimeLifecycleFeedPump } from "./runtime-lifecycle-feed-pump.mjs";
 import { createRemoteEventDiagnostics } from "./remote-event-diagnostics.mjs";
 import { createRemoteControlNotificationController } from "./remote-control-notifications.mjs";
+import {
+  bindDesktopNotificationClick,
+  createDesktopNotificationActionRelay,
+  sanitizeDesktopNotificationAction,
+} from "./desktop-notification-actions.mjs";
 import { createRemoteControlSleepController, createRemoteControlPowerMonitorController } from "./remote-control-power.mjs";
 import { createAppTrayIndicator } from "./app-tray.mjs";
 import { createPlatformTrayIconImage } from "./tray-icon.mjs";
@@ -192,7 +200,9 @@ const applicationMenu = createApplicationMenu({
   getWindow: () => createMainWindow(),
 });
 
+const cloudDocsApi = createCloudDocsApi({ getWindow: () => mainWindow });
 const uiControlServer = createUiControlServer({
+  cloudDocsRequest: (input) => cloudDocsApi.request(input),
   appName: APP_NAME,
   appIdentifier: APP_IDENTIFIER,
   getWindow: () => createMainWindow(),
@@ -582,6 +592,7 @@ function showDesktopNotification(input) {
   }
 
   const body = String(Reflect.get(record, "body") ?? "").trim();
+  const action = sanitizeDesktopNotificationAction(Reflect.get(record, "action"));
   const icon = resolveBrandIconImage() ?? APP_ICON_IMAGE;
   const options = {
     title,
@@ -592,8 +603,14 @@ function showDesktopNotification(input) {
 
   try {
     const notification = new ElectronNotification(options);
-    notification.on("click", () => {
-      void focusMainWindowFromNotification(Reflect.get(record, "href"));
+    bindDesktopNotificationClick(notification, {
+      action,
+      relay: desktopNotificationActionRelay,
+      focus: focusMainWindowFromNotification,
+      href: Reflect.get(record, "href"),
+      onFocusError: error => {
+        console.warn("[desktop-notification] failed to focus main window", error);
+      },
     });
     notification.show();
     return { ok: true };
@@ -939,6 +956,14 @@ let readMeetingNativeDiagnostics = () => ({ storageAvailable: false, records: []
 let meetingMiniWindow = null;
 /** @type {ReturnType<typeof installMeetingCompactWindow> | null} */
 let meetingCompact = null;
+const desktopNotificationActionRelay = createDesktopNotificationActionRelay({
+  send(owner, action) {
+    const contents = mainWindow?.webContents;
+    if (!contents || contents.isDestroyed() || contents.id !== owner) return false;
+    contents.send("jugglework:desktop-notification-action", action);
+    return true;
+  },
+});
 let desktopPet = null;
 const pendingDeepLinks = [];
 const juggleChatSkillBridge = createJuggleChatSkillBridge({
@@ -994,6 +1019,19 @@ async function installBundledSkills() {
   }
   return results;
 }
+
+/** @type {(scope:{sourceServerOrigin:string,sourceUserId:string,tenantId:string})=>Promise<void>} 当前来源账号和组织的云文档撤权收口。 */
+let cloudDocsScopeRevoker = async (_scope) => {};
+const cloudDocAttachments = createCloudDocAttachments({
+  root: path.join(app.getPath("userData"), "cloud-doc-attachments"),
+  openReadOnly: file => fileWindows.openLocal(file, { readOnly: true }),
+  closeUnder: directory => fileWindows.closeLocalUnder(directory),
+});
+const cloudDocsPanel = createCloudDocsPanel({
+  getWindow: () => mainWindow,
+  onScopeRevoked: scope => cloudDocsScopeRevoker(scope),
+  attachments: cloudDocAttachments,
+});
 
 const browserPanel = createBrowserPanel({
   remoteDebugPort,
@@ -1524,6 +1562,10 @@ const officePanel = createOfficePanel({
     },
   },
 });
+cloudDocsScopeRevoker = async scope => {
+  cloudDocsPanel.closeScope(scope);
+  await cloudDocAttachments.clearScope(scope);
+};
 const fileWindowIconPath = app.isPackaged ? path.join(process.resourcesPath, "app-dist/file-window-logo.png") : path.resolve(__dirname, "../../app/public/file-window-logo.png");
 const fileWindowDock = createFileWindowDock({
   iconPath: fileWindowIconPath,
@@ -1555,6 +1597,14 @@ const fileWindows = createFileWindows({
     ? readFileWindowAppearance(mainWindow, fileContextFallback())
     : fileContextBootstrap.initialize().catch(() => fileContextFallback()),
   getDesktopConfig: () => fileWindowDesktopContext.read(mainWindow),
+  lookupCloud: async (input) => {
+    mainWindow?.webContents.send("jugglework:file-window:upload-cloud", { ...input, lookup: true, requestId: crypto.randomUUID() });
+  },
+  uploadCloud: async (input) => {
+    await createMainWindow();
+    mainWindow?.show();
+    mainWindow?.webContents.send("jugglework:file-window:upload-cloud", { ...input, requestId: crypto.randomUUID() });
+  },
   fetcher: nodeFetch,
   openSession: async ({ workspaceId, sessionId }) => {
     await createMainWindow();
@@ -3347,7 +3397,10 @@ async function createMainWindow() {
   }
   // TIPS: hash会话跳转也会触发loading，但宿主没有重载；仅跨文档主框架导航才失效未决操作。
   mainWindow.webContents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => {
-    if (isMainFrame && !isInPlace) desktopPet?.resetHost();
+    if (isMainFrame && !isInPlace) {
+      desktopPet?.resetHost();
+      desktopNotificationActionRelay.reset(mainWindow?.webContents.id);
+    }
   });
   if (cachedBrandImage && bootSourceUrl) {
     await applyCachedBrandIcon(cachedBrandImage, bootSourceUrl);
@@ -3391,8 +3444,10 @@ async function createMainWindow() {
 
   const officeComposerContents = mainWindow.webContents;
   mainWindow.on("closed", () => {
+    desktopNotificationActionRelay.reset(officeComposerContents.id);
     desktopPet?.closeHost();
     officeSelectionBridge.cancel(officeComposerContents);
+    cloudDocsPanel.close();
     browserPanel.destroy();
     void toonFactoryRuntime.close().catch(() => {});
     mainWindow = null;
@@ -3484,6 +3539,14 @@ async function createMainWindow() {
 ipcMain.on("jugglework:desktop-bootstrap-sync", (event) => {
   event.returnValue = workspaceStore.readDesktopBootstrapConfigSync();
 });
+ipcMain.on("jugglework:desktop-notification-actions-ready", (event) => {
+  if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return;
+  desktopNotificationActionRelay.ready(event.sender.id);
+});
+ipcMain.on("jugglework:desktop-notification-actions-not-ready", (event) => {
+  if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return;
+  desktopNotificationActionRelay.reset(event.sender.id);
+});
 ipcMain.handle("jugglework:desktop", handleDesktopInvoke);
 ipcMain.handle("jugglework:shell:openExternal", async (_event, url) => {
   if (typeof url !== "string" || url.trim().length === 0) {
@@ -3524,6 +3587,8 @@ for (const operation of ["open", "read", "write", "resize", "terminate", "restar
 }
 
 browserPanel.registerIpc(ipcMain);
+cloudDocsPanel.registerIpc(ipcMain);
+cloudDocsApi.registerIpc(ipcMain);
 officePanel.registerIpc(ipcMain);
 fileWindows.registerIpc(ipcMain);
 fileEditor.registerIpc(ipcMain);

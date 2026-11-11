@@ -3,6 +3,8 @@ import JuggleCall from "./vendor/jugglecall-es-1.0.0.js";
 
 import { getServerSetting } from "./storage";
 import type { ChatConversation, ChatMessage, ChatUser } from "./types";
+import { readChatConnectionScope } from "./chat-connection";
+import { DOCS_MESSAGE_NAME, type ChatConnectionScope } from "./docs-message";
 
 declare global {
   interface Window {
@@ -12,7 +14,7 @@ declare global {
 }
 
 type RuntimeEvent = "state" | "message" | "conversation" | "message-recalled" | "message-updated" | "message-reaction-changed" | "message-read" | "message-removed" | "message-set-top" | "stream-appended" | "stream-completed";
-type RuntimeListener = (payload: any) => void;
+type RuntimeListener = (payload: any, scope: ChatConnectionScope) => void;
 
 const CUSTOM_MESSAGES = [
   { name: "jw:meeting-sync", isCount: false, isStorage: false },
@@ -22,6 +24,7 @@ const CUSTOM_MESSAGES = [
   { name: "jw:meeting-ring", isCount: false, isStorage: false },
   { name: "jw:meeting-ring-response", isCount: false, isStorage: false },
   { name: "jw:meeting-ring-cancel", isCount: false, isStorage: false },
+  { name: DOCS_MESSAGE_NAME, isCount: true, isStorage: true },
   { name: "jgd:grpntf", isCount: true, isStorage: true },
   { name: "jgd:friendntf", isCount: true, isStorage: true },
   { name: "jgd:friendapply", isCount: true, isStorage: true },
@@ -67,20 +70,29 @@ function resolveImServers(values: string[]) {
 }
 
 class JuggleChatRuntime {
+  private epoch = 0;
+  private scope: ChatConnectionScope | null = null;
+  private connectionAttempt: { client: any; promise: Promise<any> } | null = null;
   private client: any = null;
   private callClient: any = null;
   private initialized: Promise<any> | null = null;
   private wiredClient: any = null;
   private listeners = new Map<RuntimeEvent, Set<RuntimeListener>>();
 
+  /** 按源 Server、账号及组织创建原生 IM 连接，丢弃旧范围的初始化结果。 */
   async initialize() {
+    const scope = readChatConnectionScope();
+    if (!scope) throw new Error("请先进入已登录的 IM 组织");
+    if (this.scope?.key !== scope.key) { if (this.scope) this.reset(); this.scope = scope; }
     if (this.client) return this.client;
     if (this.initialized) return this.initialized;
     const setting = getServerSetting();
+    const epoch = this.epoch;
     if (!setting) throw new Error("请先配置 Chat 组织");
     this.initialized = (async () => {
       await loadScript("aliyun-oss-sdk-6.18.1.min.js", () => Boolean(window.OSS));
       await loadScript("tgs-player.js", () => Boolean(customElements.get("tgs-player")));
+      if (epoch !== this.epoch || readChatConnectionScope()?.key !== scope.key) throw new Error("chat_scope_changed");
       const client = JuggleChat.init({
         appkey: setting.app_key,
         upload: window.OSS,
@@ -88,41 +100,47 @@ class JuggleChatRuntime {
       });
       client.registerMessage(CUSTOM_MESSAGES);
       this.client = client;
-      this.wireClientEvents(client);
+      this.wireClientEvents(client, scope, epoch);
       return client;
     })();
     try {
       return await this.initialized;
     } catch (error) {
-      this.initialized = null;
+      if (epoch === this.epoch) this.initialized = null;
       throw error;
     }
   }
 
-  private wireClientEvents(client: any) {
+  private wireClientEvents(client: any, scope: ChatConnectionScope, epoch: number) {
     if (this.wiredClient === client) return;
     this.wiredClient = client;
     const event = client.Event;
-    client.on(event.STATE_CHANGED, (payload: unknown) => this.emit("state", payload));
-    client.on(event.MESSAGE_RECEIVED, (payload: unknown) => this.emit("message", payload));
-    client.on(event.CONVERSATION_CHANGED, (payload: unknown) => this.emit("conversation", payload));
-    client.on(event.CONVERSATION_ADDED, (payload: unknown) => this.emit("conversation", payload));
+    // TIPS: 回调保留创建连接时的来源；不能在组织切换后给旧消息补上新组织身份。
+    const publish = (event: RuntimeEvent, payload: unknown) => {
+      if (this.client === client && this.epoch === epoch && readChatConnectionScope()?.key === scope.key)
+        this.emit(event, payload, scope);
+    };
+    client.on(event.STATE_CHANGED, (payload: unknown) => publish("state", payload));
+    client.on(event.MESSAGE_RECEIVED, (payload: unknown) => publish("message", payload));
+    client.on(event.CONVERSATION_CHANGED, (payload: unknown) => publish("conversation", payload));
+    client.on(event.CONVERSATION_ADDED, (payload: unknown) => publish("conversation", payload));
     if (event.MESSAGE_RECALLED) {
-      client.on(event.MESSAGE_RECALLED, (payload: unknown) => this.emit("message-recalled", payload));
+      client.on(event.MESSAGE_RECALLED, (payload: unknown) => publish("message-recalled", payload));
     }
     if (event.MESSAGE_UPDATED) {
-      client.on(event.MESSAGE_UPDATED, (payload: unknown) => this.emit("message-updated", payload));
+      client.on(event.MESSAGE_UPDATED, (payload: unknown) => publish("message-updated", payload));
     }
     if (event.MESSAGE_REACTION_CHANGED) {
-      client.on(event.MESSAGE_REACTION_CHANGED, (payload: unknown) => this.emit("message-reaction-changed", payload));
+      client.on(event.MESSAGE_REACTION_CHANGED, (payload: unknown) => publish("message-reaction-changed", payload));
     }
-    if (event.MESSAGE_READ) client.on(event.MESSAGE_READ, (payload: unknown) => this.emit("message-read", payload));
-    if (event.MESSAGE_REMOVED) client.on(event.MESSAGE_REMOVED, (payload: unknown) => this.emit("message-removed", payload));
-    if (event.MESSAGE_SET_TOP) client.on(event.MESSAGE_SET_TOP, (payload: unknown) => this.emit("message-set-top", payload));
-    if (event.STREAM_APPENDED) client.on(event.STREAM_APPENDED, (payload: unknown) => this.emit("stream-appended", payload));
-    if (event.STREAM_COMPLETED) client.on(event.STREAM_COMPLETED, (payload: unknown) => this.emit("stream-completed", payload));
+    if (event.MESSAGE_READ) client.on(event.MESSAGE_READ, (payload: unknown) => publish("message-read", payload));
+    if (event.MESSAGE_REMOVED) client.on(event.MESSAGE_REMOVED, (payload: unknown) => publish("message-removed", payload));
+    if (event.MESSAGE_SET_TOP) client.on(event.MESSAGE_SET_TOP, (payload: unknown) => publish("message-set-top", payload));
+    if (event.STREAM_APPENDED) client.on(event.STREAM_APPENDED, (payload: unknown) => publish("stream-appended", payload));
+    if (event.STREAM_COMPLETED) client.on(event.STREAM_COMPLETED, (payload: unknown) => publish("stream-completed", payload));
   }
 
+  /** 订阅已核对连接来源的 SDK 事件，来源在连接建立时固定。 */
   subscribe(event: RuntimeEvent, listener: RuntimeListener) {
     const listeners = this.listeners.get(event) ?? new Set<RuntimeListener>();
     listeners.add(listener);
@@ -130,14 +148,20 @@ class JuggleChatRuntime {
     return () => listeners.delete(listener);
   }
 
-  private emit(event: RuntimeEvent, payload: unknown) {
-    for (const listener of this.listeners.get(event) ?? []) listener(payload);
+  private emit(event: RuntimeEvent, payload: unknown, scope: ChatConnectionScope) {
+    for (const listener of this.listeners.get(event) ?? []) listener(payload, scope);
   }
 
+  /** 使用当前源范围连接 IM，同一实例的启动请求复用已有连接过程。 */
   async connect(user: ChatUser) {
     const client = await this.initialize();
-    if (client.isConnected()) return client.getCurrentUser();
-    return client.connect({ userId: user.id, token: user.token });
+    if (client.isConnected() && client.getCurrentUser()?.id === user.id) return client.getCurrentUser();
+    const attempt = this.connectionAttempt;
+    if (attempt && attempt.client === client) return attempt.promise;
+    const promise = Promise.resolve(client.connect({ userId: user.id, token: user.token }))
+      .finally(() => { if (this.connectionAttempt?.promise === promise) this.connectionAttempt = null; });
+    this.connectionAttempt = { client, promise };
+    return promise;
   }
 
   isConnected() {
@@ -391,11 +415,14 @@ class JuggleChatRuntime {
   }
 
   reset() {
+    this.epoch++;
     this.disconnect();
     this.client = null;
     this.callClient = null;
     this.initialized = null;
     this.wiredClient = null;
+    this.scope = null;
+    this.connectionAttempt = null;
   }
 }
 

@@ -1,4 +1,5 @@
 import * as React from "react";
+import { useInRouterContext, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { OfficeDocumentSession } from "@jugglework/types/office";
 import type { JuggleWorkServerClient } from "@/app/lib/jugglework-server";
@@ -19,6 +20,15 @@ import { useArtifactActions } from "../artifacts/artifact-actions-provider";
 import { JuggleWorkServerError } from "@/app/lib/jugglework-server";
 import { loadWorkspaceFile } from "../files/file-content";
 import { PreviewError, PreviewLoading } from "../artifacts/preview";
+import {
+  createDenClient,
+  denCredentialFingerprint,
+  readDenSettings,
+  readDenUserId,
+} from "@/app/lib/den";
+import { denSettingsChangedEvent } from "@/app/lib/den-session-events";
+import { canUploadToCloud } from "../../cloud-docs/upload-file";
+import { CloudUploadButton } from "../../cloud-docs/use-cloud-upload";
 
 const WorkbookFileView = React.lazy(() =>
   import("../files/workbook-file-view").then((module) => ({
@@ -69,6 +79,7 @@ export function OfficeEditor({
   hideHeader?: boolean;
 }) {
   const queryClient = useQueryClient();
+  const inRouter = useInRouterContext();
   const actions = useArtifactActions();
   const native =
     typeof window !== "undefined"
@@ -357,7 +368,7 @@ export function OfficeEditor({
   ]);
 
   const save = async () => {
-    if (!documentId) return;
+    if (!documentId) return null;
     setSaving(true);
     try {
       const result = await client.saveOfficeDocument(workspaceId, documentId);
@@ -366,10 +377,12 @@ export function OfficeEditor({
         queryKey: ["file-deliveries", client.baseUrl, workspaceId, sessionId],
       });
       toast.success(t("session_files.saved"));
+      return result;
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : t("office.save_failed"),
       );
+      return null;
     } finally {
       setSaving(false);
     }
@@ -426,9 +439,22 @@ export function OfficeEditor({
               ? () => void actions.runPath("window", path)
               : undefined
           }
+          onUploadCloud={inRouter && actions?.desktop && canUploadToCloud(path) ? () => void actions.runPath("upload-cloud", path) : undefined}
           fileActionsDisabled={saving || actions?.running}
           openWindowDisabled={false}
         >
+          {inRouter && documentId && canUploadToCloud(path) && (
+            <CloudUploadButton
+              client={client}
+              localWorkspaceId={workspaceId}
+              path={path}
+              disabled={saving || document?.state !== "ready"}
+              prepare={async () => {
+                if (actions?.running) { toast.error(t("cloud_docs.upload_busy")); return false; }
+                return !!(await save())?.document.savedFileSha256;
+              }}
+            />
+          )}
           {externalView && (
             <Button
               size="sm"

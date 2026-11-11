@@ -55,6 +55,8 @@ import {
 } from "./api";
 import { parseAutomationTriggerNotificationPayload } from "./automation-event-message";
 import { AutomationTriggerNotificationBubble, bubbleCopy, resolveAutomationTriggerBubbleTemplate } from "./automation-trigger-notification-bubble";
+import { DOCS_MESSAGE_NAME } from "./docs-message";
+import { DocsNotificationBubble } from "./docs-notification-bubble";
 import { useJuggleCallStore } from "./call-store";
 import { juggleChatRuntime } from "./runtime";
 import { useJuggleChatStore } from "./store";
@@ -223,6 +225,7 @@ function formatConversationTime(value?: number) {
 function messagePreview(message?: ChatMessage) {
   if (!message) return t("chat.preview_none");
   if (message.name === "jw:meeting-card" || message.name === "jw:meeting-invite") return `[会议] ${String(message.content?.title || "会议邀请")}`;
+  if (message.name === DOCS_MESSAGE_NAME) return t("cloud_docs.card_title");
   if (message.name === "jg:text") return mentionText(message);
   if (message.name === "jg:img") return t("chat.preview_image");
   if (message.name === "jg:file") return `${t("chat.preview_file")} ${message.content?.name || ""}`;
@@ -685,6 +688,7 @@ function callFinishedText(message: ChatMessage) {
 
 function MessageBubble({ message, onResend }: { message: ChatMessage; onResend?: () => void }) {
   if (message.name === "jw:meeting-card" || message.name === "jw:meeting-invite") return <MeetingMessageCard message={message} />;
+  if (message.name === DOCS_MESSAGE_NAME) return <DocsNotificationBubble message={message} />;
   if (message.name === MESSAGE_NAMES.image) return <ImageMessage message={message} onResend={onResend} />;
   if (message.name === MESSAGE_NAMES.video) return <VideoMessage message={message} onResend={onResend} />;
   if (message.name === MESSAGE_NAMES.file) return <FileMessage message={message} onResend={onResend} />;

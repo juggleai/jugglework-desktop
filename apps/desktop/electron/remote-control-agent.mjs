@@ -2149,9 +2149,12 @@ export function createRemoteControlAgent(options) {
     } catch (error) {
       enrollment = null;
       lastErrorCode = "identity_replacement_failed";
+      const failureCode = typeof error === "object" && error !== null && "code" in error && typeof error.code === "string"
+        ? error.code
+        : "identity_replacement_failed";
       log("error", "identity_replacement_failed", {
         stage: replacementStage,
-        reason: typeof error?.code === "string" ? error.code : "unknown",
+        reason: failureCode,
       });
       if (destructiveBoundaryCrossed) {
         try { await deleteDeviceMaterial(); } catch {}
@@ -2161,7 +2164,7 @@ export function createRemoteControlAgent(options) {
       // code (for example TypeError from a context race). Never pass its message.
       const stages = new Set(["drain_operations", "delete_material", "display_name", "prepare_credential", "exchange", "complete_credential", "e2ee_key"]);
       const failure = Object.assign(new Error("Remote-control identity replacement failed."), {
-        code: typeof error?.code === "string" ? error.code : "identity_replacement_failed",
+        code: failureCode,
         replacementStage: stages.has(replacementStage) ? replacementStage : "unknown",
       });
       throw failure;

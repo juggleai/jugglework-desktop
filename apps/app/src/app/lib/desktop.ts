@@ -1,3 +1,4 @@
+import type { CloudDocsBridge } from './cloud-docs-types';
 import { nativeDeepLinkEvent } from "./deep-link-bridge";
 import type { DesktopPetBridge } from "./desktop-pet-types";
 export type TerminalMetadata = {
@@ -47,6 +48,7 @@ import type {
   DesktopCommandInvokers,
   DesktopCommandName,
   DesktopCommandResult,
+  DesktopNotificationAction,
   EvalRelaunchResult,
   NukeManifestPreview,
   NukeOptions,
@@ -71,6 +73,11 @@ export type BrowserProxyState = {
 declare global {
   interface Window {
     __JUGGLEWORK_ELECTRON__?: {
+      cloudDocs?: CloudDocsBridge;
+      desktopNotifications?: {
+        /** 订阅主进程已校验的系统通知动作。 */
+        onAction?: (callback: (action: DesktopNotificationAction) => void) => () => void;
+      };
       pet?: DesktopPetBridge;
       invokeDesktop?: <C extends DesktopCommandName>(
         command: C,

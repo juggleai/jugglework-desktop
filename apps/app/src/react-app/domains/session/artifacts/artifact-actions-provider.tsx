@@ -1,3 +1,4 @@
+import { useInRouterContext } from "react-router-dom";
 import { getOfficeDocumentKind } from "@jugglework/types/office";
 import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -29,7 +30,7 @@ import { readFileWindowConversationOptions } from "@/react-app/kernel/file-windo
 
 /** 文件卡片与正文入口共用的已实现操作。 */
 export type ArtifactAction =
-  "reveal" | "external" | "attach" | "copy-path" | "save-copy" | "window";
+  "reveal" | "external" | "attach" | "copy-path" | "save-copy" | "window" | "upload-cloud";
 type ArtifactActions = {
   workspaceRoot: string;
   openChanges: (turnId: string, artifacts: ArtifactItem[], path?: string) => void;
@@ -144,6 +145,7 @@ export function ArtifactActionsProvider(props: {
       active = false;
     };
   }, [desktop]);
+  const inRouter = useInRouterContext();
   const running = props.running ?? false;
   const { client, workspaceId, workspaceRoot, sessionId } = props;
   const runPath = React.useCallback(
@@ -152,7 +154,7 @@ export function ArtifactActionsProvider(props: {
         if (action === "window" && !fileWindowAvailable)
           throw new Error(t("artifact.restart_desktop"));
         if (action !== "attach" && !desktop) return;
-        if (["attach", "external", "save-copy", "window"].includes(action)) {
+        if (["attach", "external", "save-copy", "window", "upload-cloud"].includes(action)) {
           if (running && !(action === "window" && getOfficeDocumentKind(path)))
             throw new Error(t("artifact.wait_for_task"));
           const sharedWindow =
@@ -241,6 +243,9 @@ export function ArtifactActionsProvider(props: {
               );
             throw cause;
           }
+        } else if (action === "upload-cloud") {
+          // 已按文件操作流程保存；上传由主窗口内的上传中继接手。
+          window.dispatchEvent(new CustomEvent("jugglework:upload-cloud", { detail: { workspaceId, path, requestId: crypto.randomUUID() } }));
         } else if (action === "save-copy") {
           const result = await saveDesktopArtifactCopy(
             workspaceRoot,

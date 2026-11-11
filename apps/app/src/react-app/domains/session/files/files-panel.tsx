@@ -1,3 +1,4 @@
+import { activateCloudDocTab, closeCloudDocTab, cloudDocTabKey, cloudDocTabsSnapshot, subscribeCloudDocTabs } from "@/app/lib/cloud-doc-tabs";
 import { getOfficeDocumentKind } from "@jugglework/types/office";
 /** @jsxImportSource react */
 import * as React from "react";
@@ -17,6 +18,7 @@ import { cn } from "@/lib/utils";
 import { t } from "../../../../i18n";
 import { ChangesView } from "./changes-view";
 import { TurnChangesView } from "./turn-changes-view";
+import { CloudDocPanel } from "../../cloud-docs/cloud-doc-panel";
 import { FileTabs } from "./file-tabs";
 import { FileTree } from "./file-tree";
 import { FileViewer } from "./file-viewer";
@@ -65,6 +67,8 @@ export function FilesPanel({
   isRemoteWorkspace = false,
 }: FilesPanelProps) {
   const session = useFilesPanelSession(sessionId);
+  const cloudDocs = React.useSyncExternalStore(subscribeCloudDocTabs, () => cloudDocTabsSnapshot(sessionId));
+  const cloudDocActive = session.activeKey === "cloud" && cloudDocs.tabs.some(tab => cloudDocTabKey(tab) === cloudDocs.active);
   // TIPS: 逐个取 action 而不是整包订阅 store —— 整包订阅会让任意会话的状态变化都触发本面板重渲染
   const setActiveKey = useFilesPanelStore((state) => state.setActiveKey);
   const openFile = useFilesPanelStore((state) => state.openFile);
@@ -90,11 +94,11 @@ export function FilesPanel({
   const expandedDirs = React.useMemo(() => new Set(session.expandedDirs), [session.expandedDirs]);
   const dirtyPaths = React.useMemo(() => new Set(Object.keys(session.drafts)), [session.drafts]);
   const activeTab = session.tabs.find((tab) => tab.path === session.activePath) ?? null;
-  const showingChanges = session.activeKey === "changes" && hasChanges;
+  const showingChanges = !cloudDocActive && session.activeKey === "changes" && hasChanges;
   // 全屏时目录树是可折叠的左栏；分栏模式宽度不够，还没打开任何内容时才让目录树占满面板
   const treeColumnVisible = session.fullscreen
     ? !session.treeCollapsed
-    : session.tabs.length === 0 && !showingChanges;
+    : session.tabs.length === 0 && !showingChanges && !cloudDocActive;
 
   // TIPS: 改动被清空（例如提交或回滚）时「变更」标签会消失，内容区必须退回文件，
   // 否则会停在一个已经不存在的标签上。
@@ -168,7 +172,7 @@ export function FilesPanel({
   );
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-background">
+    <div className="relative flex h-full min-h-0 flex-col bg-background">
       {/* TIPS: 标签、目录树开关、全屏开关共用这一行；全屏时它紧贴 macOS 的 hiddenInset
           标题栏，整行设为窗口拖拽区，里面的按钮各自标 titlebar-no-drag，既能拖窗口也点得动。 */}
       <div
@@ -221,7 +225,7 @@ export function FilesPanel({
         <div className="min-w-0 flex-1 overflow-hidden">
           <FileTabs
             tabs={session.tabs}
-            activePath={showingChanges ? null : session.activePath}
+            activePath={showingChanges || cloudDocActive ? null : session.activePath}
             dirtyPaths={dirtyPaths}
             changesTab={hasChanges ? {
               label: t("session_files.tab_changes"),
@@ -232,6 +236,12 @@ export function FilesPanel({
             } : null}
             onSelect={(path) => selectFile(sessionId, path)}
             onClose={closeFile}
+            cloudTabs={cloudDocs.tabs.map(tab => ({
+              key: cloudDocTabKey(tab), title: tab.title || t("cloud_docs.untitled"),
+              active: cloudDocActive && cloudDocTabKey(tab) === cloudDocs.active,
+              onSelect: () => activateCloudDocTab(sessionId, cloudDocTabKey(tab)),
+              onClose: () => closeCloudDocTab(sessionId, cloudDocTabKey(tab)),
+            }))}
           />
         </div>
         <Button
@@ -246,7 +256,10 @@ export function FilesPanel({
         </Button>
       </div>
 
-      <div className="flex min-h-0 flex-1">
+      <div className="relative flex min-h-0 flex-1">
+        <CloudDocPanel sessionId={sessionId} />
+        {/* TIPS: 本地原生编辑器只在本地标签激活时挂载；云文档保留实例但仅显示激活页。 */}
+        {!cloudDocActive && <>
         {treeColumnVisible ? (
           <div
             className={cn(
@@ -312,6 +325,7 @@ export function FilesPanel({
             )}
           </div>
         ) : null}
+        </>}
       </div>
     </div>
   );

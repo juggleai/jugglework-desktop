@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-import { readDenIMLoginBootstrap, readDenSettings, type DenUser } from "@/app/lib/den";
+import { createDenClient, readDenIMLoginBootstrap, readDenSettings, type DenUser } from "@/app/lib/den";
 import { createJuggleWorkServerClient } from "@/app/lib/jugglework-server";
 import { resolveJuggleWorkConnection } from "@/react-app/shell/jugglework-connection";
 import { getChatGroupsForContacts, getMembers } from "./api";
@@ -15,10 +15,15 @@ import { dispatchAutomationReadinessUnblocked } from "@/react-app/domains/automa
 import { juggleChatRuntime } from "./runtime";
 import { startJuggleChatSkillBridge } from "./skill-bridge";
 import type { ChatContact, ChatConversation, ChatMessage, ChatReaction, ChatUser, ChatView } from "./types";
+import { readChatConnectionScope } from "./chat-connection";
+import { denSettingsChangedEvent } from "@/app/lib/den-session-events";
+import { bindDocsMessage, dedupeDocsMessages, docsConversationVisible, parseDocsConversationContext, type ChatConnectionScope, type DocsConversationContext } from "./docs-message";
+import { notifyDocsDesktopMessage } from "./docs-desktop-notifications";
 
 type ConnectionStatus = "idle" | "initializing" | "signed-out" | "connecting" | "connected" | "disconnected" | "error";
 
 type JuggleChatState = {
+  connectionScope: ChatConnectionScope | null;
   status: ConnectionStatus;
   error: string | null;
   user: ChatUser | null;
@@ -71,6 +76,50 @@ type JuggleChatState = {
 // 判断要不要跳过合并，见那里的 TIPS。
 const IGNORED_CONVERSATIONS = new Set(["friend_apply", "post_ntf", ""]);
 let subscriptionsStarted = false;
+let docsContext: DocsConversationContext | null = null;
+let docsContextKey = "";
+let docsContextCheckedAt = 0;
+let conversationLoad: { scope: ChatConnectionScope; promise: Promise<void> } | null = null;
+
+/** 每个异步阶段检查调用时的完整连接范围，迟到 A 结果不能进入 B。 */
+function currentScope(scope: ChatConnectionScope | null): scope is ChatConnectionScope {
+  return !!scope && useJuggleChatStore.getState().connectionScope === scope && readChatConnectionScope()?.key === scope.key;
+}
+
+/** 只为未知群或到期缓存读取源分类；无完整归属时不放行群或云文档助手。 */
+async function classifyConversations(scope: ChatConnectionScope, conversations: Pick<ChatConversation, "conversationId" | "conversationType">[]) {
+  if (!currentScope(scope)) return;
+  if (docsContextKey !== scope.key) { docsContext = null; docsContextKey = scope.key; docsContextCheckedAt = 0; }
+  const expired = Date.now() - docsContextCheckedAt >= 30000;
+  const ids = [...new Set(conversations.filter(c => c.conversationType === 2).map(c => c.conversationId))]
+    .filter(id => /^[A-Za-z0-9_-]{1,64}$/.test(id) && (expired || !docsContext?.groups.some(g => g.conversationId === id)));
+  if (!ids.length && docsContext && Date.now() - docsContextCheckedAt < 30000) return;
+  const settings = readDenSettings();
+  const client = createDenClient({ baseUrl: scope.server, token: settings.authToken });
+  try {
+    for (let start = 0; start < Math.max(ids.length, 1); start += 100) {
+      const batch = ids.slice(start, start + 100);
+      const next = parseDocsConversationContext(await client.docsConversationContext(scope.tenantId, batch), scope.tenantId, batch);
+      if (!currentScope(scope)) return;
+      const groups = new Map(docsContext?.groups.map(item => [item.conversationId, item]));
+      for (const item of next.groups) groups.set(item.conversationId, item);
+      docsContext = { ...next, groups: [...groups.values()] };
+    }
+    docsContextCheckedAt = Date.now();
+  } catch (error) {
+    if (currentScope(scope)) {
+      docsContext = null; docsContextCheckedAt = 0;
+      // TIPS: 分类失败后立即撤下未核实的群内容，包括置顶和回复，避免继续展示旧缓存。
+      const state = useJuggleChatStore.getState();
+      const conversations = state.conversations.filter(c => docsConversationVisible(c, null));
+      const activeConversation = state.activeConversation && docsConversationVisible(state.activeConversation, null) ? state.activeConversation : null;
+      useJuggleChatStore.setState({ conversations, activeConversation,
+        messages: activeConversation ? filterVisibleMessages(state.messages) : [],
+        pinnedMessage: null, replyTo: null, totalUnreadCount: 0, conversationsInitialized: false });
+    }
+    throw error;
+  }
+}
 
 function messageKey(message: ChatMessage) {
   return message.messageId || message.tid || `${message.sentTime ?? 0}:${message.sender?.id ?? ""}`;
@@ -141,7 +190,10 @@ function syncActiveConversation(activeConversation: ChatConversation | null, con
 // 拦截点——这条会话曾经只发哑信号，累积了大量历史消息，会话不再整体过滤之后，用户一打开
 // 就会看到一堆"消息暂不支持"的历史哑信号行。在这里统一过滤，覆盖 append/prepend 两条路径。
 function filterVisibleMessages(messages: ChatMessage[]) {
-  return messages.filter((message) => !isHiddenAutomationConversationMessage(message));
+  const scope = useJuggleChatStore.getState().connectionScope;
+  if (!currentScope(scope)) return [];
+  return dedupeDocsMessages(messages.filter(message => !isHiddenAutomationConversationMessage(message) && docsConversationVisible(message, docsContext))
+    .map(message => bindDocsMessage(message, scope, docsContext)));
 }
 
 function appendMessages(current: ChatMessage[], incoming: ChatMessage[]) {
@@ -151,7 +203,8 @@ function appendMessages(current: ChatMessage[], incoming: ChatMessage[]) {
     if (index >= 0) messages[index] = mergeMessage(messages[index], message);
     else messages.push(message);
   }
-  return messages;
+  // TIPS: SDK 更新也可能把已有卡片改成未知版本；合并后重验，不能沿用旧 Symbol 动作。
+  return filterVisibleMessages(messages);
 }
 
 function prependMessages(current: ChatMessage[], incoming: ChatMessage[]) {
@@ -167,7 +220,7 @@ function prependMessages(current: ChatMessage[], incoming: ChatMessage[]) {
     if (historyIndex >= 0) history[historyIndex] = mergeMessage(history[historyIndex], message);
     else history.push(message);
   }
-  return [...history, ...existing];
+  return filterVisibleMessages([...history, ...existing]);
 }
 
 function releaseLocalMediaUrls(messages: ChatMessage[]) {
@@ -189,12 +242,13 @@ function isHiddenConversationUpdate(conversation: ChatConversation): boolean {
 }
 
 function mergeConversations(current: ChatConversation[], incoming: ChatConversation[], currentUserId?: string) {
-  const map = new Map(current.map((conversation) => [`${conversation.conversationType}:${conversation.conversationId}`, conversation]));
+  const map = new Map(current.filter(conversation => docsConversationVisible(conversation, docsContext)).map((conversation) => [`${conversation.conversationType}:${conversation.conversationId}`, conversation]));
   for (const conversation of incoming) {
     if (!conversation.conversationId || conversation.conversationId === currentUserId || IGNORED_CONVERSATIONS.has(conversation.conversationId)) continue;
+    if (!docsConversationVisible(conversation, docsContext)) continue;
     if (isHiddenConversationUpdate(conversation)) continue;
     const key = `${conversation.conversationType}:${conversation.conversationId}`;
-    map.set(key, { ...map.get(key), ...conversation });
+    map.set(key, { ...map.get(key), ...conversation, ...(conversation.latestMessage ? { latestMessage: filterVisibleMessages([conversation.latestMessage])[0] } : {}) });
   }
   return [...map.values()].sort((a, b) => {
     const top = Number(Boolean(b.isTop)) - Number(Boolean(a.isTop));
@@ -229,6 +283,8 @@ async function notifyLocalServerOfGithubEventPush(): Promise<void> {
 function startSubscriptions() {
   if (subscriptionsStarted) return;
   subscriptionsStarted = true;
+  // TIPS: 聊天页面关闭后 Store 仍用于侧栏未读；组织变化必须立即清掉旧来源，而非等再次打开聊天。
+  window.addEventListener(denSettingsChangedEvent, () => { void useJuggleChatStore.getState().bootstrap(); });
   juggleChatRuntime.subscribe("state", ({ state, error }: { state: number; error?: { code?: number; message?: string } }) => {
     if (state === 0) {
       useJuggleChatStore.setState({ status: "connected", error: null });
@@ -244,50 +300,54 @@ function startSubscriptions() {
       }
     }
   });
-  juggleChatRuntime.subscribe("message", (message: ChatMessage) => {
-    if (message.isStatus) return;
-    // TIPS: jugglework-server 事件中继在生成一条投递后，会顺手往这台设备的 IM 账号推一条
-    // 这个类型的系统消息（见 automation-event-message.ts 顶部注释）——它不是给人
-    // 看的聊天消息，不进消息列表、不算未读，只在这里被拦下来转发给本地 apps/server，让它的
-    // 事件轮询器跳过剩余等待、立刻拉一轮真实投递。转发失败（apps/server 还没起来、这次改动
-    // 之前的旧版本没有这个端点……）只静默忽略——轮询器本来就会在最多一个轮询周期内自己发现
-    // 这条投递，这条推送只是个可选的提速信号，不是这条链路的正确性依赖。
-    // TIPS: 任务 2.3b——这条判断必须排在事件推送唤醒判断之前。两种系统消息共用同一个
-    // 固定发送方身份，事件推送那条的匹配规则接受"仅 sender.id 匹配"兜底，顺序反过来
-    // 会让这条也被误判成"该转发去唤醒轮询"，永远走不到下面这个分支。
-    if (isAutomationReadinessUnblockedMessage(message)) {
-      const payload = parseAutomationReadinessUnblockedPayload(message);
-      if (payload) dispatchAutomationReadinessUnblocked(payload);
-      return;
-    }
-    // TIPS: §4.10——jw:automation-notification 是真实要展示的消息，必须在
-    // isAutomationEventPushMessage 之前判断、且判断为真时不能 return。isAutomationEventPushMessage
-    // 的 sender.id 兜底会把这条也匹配上（三种系统消息现在共用同一个 sender.id），
-    // 用 else if 让它在已经识别成可见通知时完全不被调用，而不是指望它自己排除——
-    // 这条消息该走下面普通消息的处理路径（追加进消息列表/计未读/刷新会话列表）。
-    if (isAutomationNotificationMessage(message)) {
-      // 不特殊处理，直接落进下面的普通消息分支。
-    } else if (isAutomationEventPushMessage(message)) {
-      void notifyLocalServerOfGithubEventPush();
-      return;
-    }
-    if (message.conversationType === 3 || message.name?.startsWith("jw:meeting-ring")) return;
-    const state = useJuggleChatStore.getState();
-    if (isSameConversation(state.activeConversation, message)) {
-      useJuggleChatStore.setState({ messages: appendMessages(state.messages, [message]) });
-      void juggleChatRuntime.clearUnread(state.activeConversation!).then(() => state.refreshTotalUnreadCount());
-    } else {
-      void state.refreshTotalUnreadCount();
-    }
-    void state.loadConversations();
+  juggleChatRuntime.subscribe("message", (message: ChatMessage, receivedScope) => {
+    const scope = useJuggleChatStore.getState().connectionScope;
+    if (!scope || scope.key !== receivedScope.key) return;
+    void (async () => {
+      if (!currentScope(scope)) return;
+      if (message.isStatus) return;
+      await classifyConversations(scope, [message]);
+      if (!currentScope(scope)) return;
+      if (!docsConversationVisible(message, docsContext)) { void useJuggleChatStore.getState().loadConversations(); return; }
+      const visibleMessage = filterVisibleMessages([message])[0];
+      if (!visibleMessage) return;
+      // TIPS: jugglework-server 事件中继在生成一条投递后，会顺手往这台设备的 IM 账号推一条
+      // 这个类型的系统消息（见 automation-event-message.ts 顶部注释）——它不是给人
+      // 看的聊天消息，不进消息列表、不算未读，只在这里被拦下来转发给本地 apps/server，让它的
+      // 事件轮询器跳过剩余等待、立刻拉一轮真实投递。转发失败（apps/server 还没起来、这次改动
+      // 之前的旧版本没有这个端点……）只静默忽略——轮询器本来就会在最多一个轮询周期内自己发现
+      // 这条投递，这条推送只是个可选的提速信号，不是这条链路的正确性依赖。
+      // TIPS: 任务 2.3b——这条判断必须排在事件推送唤醒判断之前。两种系统消息共用同一个
+      // 固定发送方身份，事件推送那条的匹配规则接受"仅 sender.id 匹配"兜底，顺序反过来
+      // 会让这条也被误判成"该转发去唤醒轮询"，永远走不到下面这个分支。
+      if (isAutomationReadinessUnblockedMessage(message)) {
+        const payload = parseAutomationReadinessUnblockedPayload(message);
+        if (payload) dispatchAutomationReadinessUnblocked(payload);
+        return;
+      }
+      // TIPS: §4.10——jw:automation-notification 是真实要展示的消息，必须在
+      // isAutomationEventPushMessage 之前判断、且判断为真时不能 return。isAutomationEventPushMessage
+      // 的 sender.id 兜底会把这条也匹配上（三种系统消息现在共用同一个 sender.id），
+      // 用 else if 让它在已经识别成可见通知时完全不被调用，而不是指望它自己排除——
+      // 这条消息该走下面普通消息的处理路径（追加进消息列表/计未读/刷新会话列表）。
+      if (isAutomationNotificationMessage(message)) {
+        // 不特殊处理，直接落进下面的普通消息分支。
+      } else if (isAutomationEventPushMessage(message)) {
+        void notifyLocalServerOfGithubEventPush();
+        return;
+      }
+      if (message.conversationType === 3 || message.name?.startsWith("jw:meeting-ring")) return;
+      notifyDocsDesktopMessage(visibleMessage);
+      const state = useJuggleChatStore.getState();
+      if (isSameConversation(state.activeConversation, message)) {
+        useJuggleChatStore.setState({ messages: appendMessages(state.messages, [visibleMessage]) });
+        await juggleChatRuntime.clearUnread(state.activeConversation!);
+      }
+      void state.loadConversations();
+    })().catch(() => { if (currentScope(scope)) useJuggleChatStore.setState({ error: "暂时无法核对组织会话，请重试" }); });
   });
-  juggleChatRuntime.subscribe("conversation", ({ conversations = [] }: { conversations?: ChatConversation[] }) => {
-    const state = useJuggleChatStore.getState();
-    const merged = mergeConversations(state.conversations, conversations, state.user?.id);
-    useJuggleChatStore.setState({
-      conversations: merged,
-      activeConversation: syncActiveConversation(state.activeConversation, merged),
-    });
+  juggleChatRuntime.subscribe("conversation", (_payload, scope) => {
+    if (scope.key === useJuggleChatStore.getState().connectionScope?.key) void useJuggleChatStore.getState().loadConversations();
   });
   const updateMessage = (message: ChatMessage) => {
     const state = useJuggleChatStore.getState();
@@ -364,6 +424,7 @@ function startSubscriptions() {
   });
   juggleChatRuntime.subscribe("message-set-top", (notify: { message?: ChatMessage; isTop?: boolean; operator?: Partial<ChatUser>; createdTime?: number }) => {
     const state = useJuggleChatStore.getState();
+    const scope = state.connectionScope;
     const conversation = state.activeConversation;
     if (!conversation) return;
     if (!notify.isTop) {
@@ -373,8 +434,10 @@ function startSubscriptions() {
     }
     if (!notify.message || !isSameConversation(conversation, notify.message)) return;
     void juggleChatRuntime.getTopMessage(conversation).then((result) => {
-      useJuggleChatStore.setState({ pinnedMessage: hasMessageIdentity(result.message) ? { message: result.message, operator: result.operator, createdTime: result.createdTime } : null });
-    });
+      if (!currentScope(scope) || !isSameConversation(useJuggleChatStore.getState().activeConversation, conversation)) return;
+      const message = hasMessageIdentity(result.message) ? filterVisibleMessages([result.message])[0] : null;
+      useJuggleChatStore.setState({ pinnedMessage: message ? { message, operator: result.operator, createdTime: result.createdTime } : null });
+    }).catch(() => {});
   });
   window.addEventListener("jugglechat:unauthorized", () => {
     useJuggleChatStore.setState({ status: "error", error: "IM 登录状态已失效，请重新登录 JuggleWork" });
@@ -382,6 +445,7 @@ function startSubscriptions() {
 }
 
 export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
+  connectionScope: null,
   status: "idle",
   error: null,
   user: null,
@@ -416,6 +480,15 @@ export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
     }
     const settings = readDenSettings();
     const im = readDenIMLoginBootstrap();
+    let scope = readChatConnectionScope();
+    if (get().connectionScope?.key !== scope?.key) {
+      juggleChatRuntime.reset();
+      releaseLocalMediaUrls(get().messages);
+      docsContext = null; docsContextKey = ""; docsContextCheckedAt = 0;
+      set({ connectionScope: scope, user: null, conversations: [], conversationsInitialized: false,
+        activeConversation: null, messages: [], contacts: [], groups: [], totalUnreadCount: 0, pinnedMessage: null, replyTo: null,
+        loadingMessages: false, loadingContacts: false, loadingConversations: false, sending: false });
+    } else scope = get().connectionScope;
     if (!settings.authToken) {
       if (get().user) juggleChatRuntime.reset();
       releaseLocalMediaUrls(get().messages);
@@ -436,7 +509,7 @@ export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
       });
       return;
     }
-    if (!im) {
+    if (!im || !scope) {
       if (get().user) juggleChatRuntime.reset();
       releaseLocalMediaUrls(get().messages);
       set({
@@ -475,46 +548,71 @@ export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
     set({ status: "initializing", user });
     try {
       await juggleChatRuntime.connect(user);
+      if (!currentScope(scope)) return;
       set({ status: "connected", error: null });
       await get().loadConversations();
     } catch (error) {
-      set({ status: "error", error: errorMessage(error) });
+      if (currentScope(scope)) set({ status: "error", error: errorMessage(error) });
     }
   },
 
   async acceptLogin(user) {
-    set({ user, status: "connecting", error: null });
-    try {
-      await juggleChatRuntime.connect(user);
-      set({ status: "connected" });
-      await get().loadConversations();
-    } catch (error) {
-      set({ status: "error", error: errorMessage(error) });
-      throw error;
-    }
+    // TIPS: 旧登录回调也必须通过当前源组织凭据，不能用上一次 IM 身份重建连接。
+    if (readDenIMLoginBootstrap()?.imUserId !== user.id) return;
+    await get().bootstrap();
   },
 
   async loadConversations() {
-    if (!get().user || !juggleChatRuntime.isConnected()) return;
-    set({ loadingConversations: true });
-    try {
-      const result = await juggleChatRuntime.getConversations({ time: 0, count: 100 });
-      const rawConversations = result.conversations ?? [];
-      console.log("[JuggleChat] SDK 原始会话列表", result);
-      const conversations = mergeConversations([], rawConversations, get().user?.id);
-      set({
-        conversations,
-        conversationsInitialized: true,
-        activeConversation: syncActiveConversation(get().activeConversation, conversations),
-        loadingConversations: false,
-      });
-      // TIPS: 会话列表与聊天页顶部的显示名要靠通讯录兜底（引擎给的 conversationTitle
-      // 常为空，单聊尤其如此），所以通讯录不能等用户切到「通讯录」页才加载。
-      if (!get().contacts.length && !get().loadingContacts) void get().loadContacts();
-      await get().refreshTotalUnreadCount();
-    } catch (error) {
-      set({ loadingConversations: false, error: errorMessage(error) });
-    }
+    const scope = get().connectionScope;
+    if (!currentScope(scope) || !get().user || !juggleChatRuntime.isConnected()) return;
+    if (conversationLoad?.scope === scope) return conversationLoad.promise;
+    const promise = (async () => {
+      set({ loadingConversations: true });
+      try {
+        const rawConversations: ChatConversation[] = [];
+        const seen = new Set<string>();
+        let time = 0;
+        for (let page = 0; ; page++) {
+          if (page >= 100) throw new Error("组织会话列表尚未完整加载");
+          const result = await juggleChatRuntime.getConversations({ time, count: 100 });
+          if (!currentScope(scope)) return;
+          const items = result.conversations ?? [];
+          let added = 0;
+          for (const item of items) {
+            const key = `${item.conversationType}:${item.conversationId}`;
+            if (!seen.has(key)) { seen.add(key); rawConversations.push(item); added++; }
+          }
+          if (result.isFinished || !items.length || result.isFinished === undefined && items.length < 100) break;
+          const next = Math.min(...items.map(item => Number(item.sortTime)).filter(value => value > 0));
+          if (!added || !Number.isFinite(next) || time > 0 && next >= time) throw new Error("组织会话分页暂时不可用");
+          time = next;
+        }
+        await classifyConversations(scope, rawConversations);
+        if (!currentScope(scope)) return;
+        const conversations = mergeConversations([], rawConversations, get().user?.id);
+        const active = get().activeConversation;
+        const hidden = !!active && !docsConversationVisible(active, docsContext);
+        set({
+          conversations,
+          conversationsInitialized: true,
+          activeConversation: hidden ? null : syncActiveConversation(active, conversations),
+          ...(hidden ? { messages: [], pinnedMessage: null, replyTo: null } : {}),
+          loadingConversations: false,
+        });
+        // TIPS: 会话列表与聊天页顶部的显示名要靠通讯录兜底（引擎给的 conversationTitle
+        // 常为空，单聊尤其如此），所以通讯录不能等用户切到「通讯录」页才加载。
+        if (!get().contacts.length && !get().loadingContacts) void get().loadContacts();
+        await get().refreshTotalUnreadCount();
+      } catch (error) {
+        if (currentScope(scope)) {
+          const conversations = get().conversations.filter(c => docsConversationVisible(c, docsContext));
+          set({ conversations, activeConversation: conversations.find(c => isSameConversation(c, get().activeConversation)) ?? null,
+            messages: filterVisibleMessages(get().messages), totalUnreadCount: 0, loadingConversations: false, error: errorMessage(error) });
+        }
+      }
+    })().finally(() => { if (conversationLoad?.promise === promise) conversationLoad = null; });
+    conversationLoad = { scope, promise };
+    return promise;
   },
 
   async refreshTotalUnreadCount() {
@@ -523,14 +621,21 @@ export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
       return;
     }
     try {
-      const result = await juggleChatRuntime.getTotalUnreadCount();
-      set({ totalUnreadCount: Math.max(0, Number(result?.count) || 0) });
+      const scope = get().connectionScope;
+      if (!currentScope(scope)) return;
+      if (!get().conversationsInitialized) { void get().loadConversations(); return; }
+      // TIPS: 只聚合已完整分类的 SDK 会话快照；全量计数查询可能混入刚到达的另一组织群。
+      set({ totalUnreadCount: get().conversations.reduce((sum, conversation) => sum + Math.max(0, Number(conversation.unreadCount) || 0), 0) });
     } catch {
       // A transient unread-count failure must not disconnect chat.
     }
   },
 
   async selectConversation(conversation, options) {
+    const scope = get().connectionScope;
+    if (!currentScope(scope)) return;
+    await classifyConversations(scope, [conversation]);
+    if (!currentScope(scope) || !docsConversationVisible(conversation, docsContext)) return;
     releaseLocalMediaUrls(get().messages);
     if (options?.loadHistory === false) {
       set({
@@ -550,47 +655,52 @@ export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
         juggleChatRuntime.getMessages(conversation, 0),
         juggleChatRuntime.getTopMessage(conversation).catch(() => null),
       ]);
-      if (!isSameConversation(get().activeConversation, conversation)) return;
+      if (!currentScope(scope) || !isSameConversation(get().activeConversation, conversation)) return;
       set({
         messages: filterVisibleMessages(result.messages ?? []),
         loadingMessages: false,
         messagesFinished: Boolean(result.isFinished),
-        pinnedMessage: hasMessageIdentity(pinned?.message) ? { message: pinned.message, operator: pinned?.operator, createdTime: pinned?.createdTime } : null,
+        pinnedMessage: hasMessageIdentity(pinned?.message) && filterVisibleMessages([pinned.message]).length ? { message: filterVisibleMessages([pinned.message])[0], operator: pinned?.operator, createdTime: pinned?.createdTime } : null,
       });
       await juggleChatRuntime.clearUnread(conversation);
+      if (!currentScope(scope)) return;
       set({
         conversations: get().conversations.map((item) => isSameConversation(item, conversation) ? { ...item, unreadCount: 0 } : item),
       });
       await get().refreshTotalUnreadCount();
     } catch (error) {
-      if (isSameConversation(get().activeConversation, conversation)) {
+      if (currentScope(scope) && isSameConversation(get().activeConversation, conversation)) {
         set({ loadingMessages: false, error: errorMessage(error) });
       }
     }
   },
 
   async loadEarlierMessages() {
+    const scope = get().connectionScope;
     const conversation = get().activeConversation;
     const first = get().messages[0];
-    if (!conversation || !first || get().loadingMessages || get().messagesFinished) return;
+    if (!currentScope(scope) || !conversation || !first || get().loadingMessages || get().messagesFinished) return;
     set({ loadingMessages: true });
     try {
       const result = await juggleChatRuntime.getMessages(conversation, first.sentTime ?? 0);
-      if (!isSameConversation(get().activeConversation, conversation)) return;
+      if (!currentScope(scope) || !isSameConversation(get().activeConversation, conversation)) return;
       set({
         messages: prependMessages(get().messages, result.messages ?? []),
         messagesFinished: Boolean(result.isFinished),
         loadingMessages: false,
       });
     } catch (error) {
-      set({ loadingMessages: false, error: errorMessage(error) });
+      if (currentScope(scope)) set({ loadingMessages: false, error: errorMessage(error) });
     }
   },
 
   async loadContacts() {
+    const scope = get().connectionScope;
+    if (!currentScope(scope)) return;
     set({ loadingContacts: true });
     try {
       const [membersResult, chatGroups] = await Promise.all([getMembers(), getChatGroupsForContacts()]);
+      if (!currentScope(scope)) return;
       const contacts = membersResult.members.map((member) => ({
         user_id: member.user.imUserId,
         member_id: member.id,
@@ -610,12 +720,15 @@ export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
       }).filter((item) => item.user_id);
       set({ contacts, groups, loadingContacts: false });
     } catch (error) {
-      set({ loadingContacts: false, error: errorMessage(error) });
+      if (currentScope(scope)) set({ loadingContacts: false, error: errorMessage(error) });
     }
   },
 
   async openContact(contact) {
+    const scope = get().connectionScope;
+    if (!currentScope(scope)) return;
     const client = await juggleChatRuntime.initialize();
+    if (!currentScope(scope)) return;
     const conversationType = contact.conversationType ?? client.ConversationType.PRIVATE;
     const displayName = contact.friend_display_name || contact.nickname || contact.user_id;
     const existingInMemory = get().conversations.find((item) => (
@@ -624,6 +737,7 @@ export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
     const result = existingInMemory
       ? null
       : await client.getConversation({ conversationId: contact.user_id, conversationType });
+    if (!currentScope(scope)) return;
     const sdkConversation = hasConversationIdentity(result?.conversation) ? result.conversation : null;
     const existing = existingInMemory ?? sdkConversation;
     // Always prefer the in-memory contact / group name so the conversation
@@ -639,6 +753,8 @@ export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
           ? { conversationPortrait: existing.conversationPortrait }
           : {}),
     };
+    await classifyConversations(scope, [conversation]);
+    if (!currentScope(scope) || !docsConversationVisible(conversation, docsContext)) return;
     // Ensure the conversation appears in the list immediately using the
     // in-memory group / contact data — no need to wait for a full list fetch.
     set({
@@ -649,6 +765,8 @@ export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
   },
 
   async sendText(content, mentionInfo) {
+    const scope = get().connectionScope;
+    if (!currentScope(scope)) return;
     const conversation = get().activeConversation;
     const text = content.trim();
     if (!conversation || !text || get().sending) return;
@@ -677,6 +795,7 @@ export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
     });
     try {
       const message = await juggleChatRuntime.sendText(conversation, text, replyTo, mentionInfo, tid);
+      if (!currentScope(scope)) return;
       if (isSameConversation(get().activeConversation, conversation)) {
         const sent = mergeMessage(draft, { ...message, tid: message.tid || tid, sentState: 2 });
         set({ messages: appendMessages(get().messages, [sent]), sending: false, replyTo: null });
@@ -685,6 +804,7 @@ export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
       }
       await get().loadConversations();
     } catch (error) {
+      if (!currentScope(scope)) return;
       set({
         sending: false,
         messages: get().messages.map((message) => message.tid === tid ? { ...message, sentState: 3 } : message),
@@ -695,6 +815,8 @@ export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
   },
 
   async sendFile(file) {
+    const scope = get().connectionScope;
+    if (!currentScope(scope)) return;
     const conversation = get().activeConversation;
     if (!conversation || get().sending) return;
     const isImage = file.type.startsWith("image/");
@@ -725,9 +847,11 @@ export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
         : isVideo
           ? await getVideoMetadata(localUrl)
           : {};
+      if (!currentScope(scope)) return;
       draft.content = { ...draft.content, ...metadata };
       set({ messages: get().messages.map((item) => item.tid === tid ? mergeMessage(item, draft) : item) });
       const message = await juggleChatRuntime.sendFile(conversation, file, (uploadProgress) => {
+        if (!currentScope(scope)) return;
         const nextPercent = Math.min(99.99, Math.max(0, Math.round(Number(uploadProgress) * 100) / 100));
         const currentPercent = Number(get().messages.find((item) => item.tid === tid)?.percent) || 0;
         const percent = Math.max(currentPercent, nextPercent);
@@ -736,6 +860,7 @@ export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
           messages: get().messages.map((item) => item.tid === tid ? { ...item, percent, sentState: 1 } : item),
         });
       }, { tid, ...metadata });
+      if (!currentScope(scope)) return;
       if (isSameConversation(get().activeConversation, conversation)) {
         const sent = { ...draft, ...message, content: { ...draft.content, ...message.content }, tid: message.tid || tid, localUrl, percent: 100, sentState: 2 };
         set({ messages: appendMessages(get().messages, [sent]), sending: false, uploadProgress: null });
@@ -744,6 +869,7 @@ export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
       }
       await get().loadConversations();
     } catch (error) {
+      if (!currentScope(scope)) return;
       set({
         sending: false,
         uploadProgress: null,
@@ -755,27 +881,41 @@ export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
   },
 
   async recallMessage(message) {
+    const scope = get().connectionScope;
+    if (!currentScope(scope)) return;
+    const conversation = get().activeConversation;
+    if (!conversation || !isSameConversation(conversation, message)) return;
     try {
       await juggleChatRuntime.recallMessage(message);
-      const result = await juggleChatRuntime.getMessages(get().activeConversation!, 0);
+      if (!currentScope(scope)) return;
+      const result = await juggleChatRuntime.getMessages(conversation, 0);
+      if (!currentScope(scope)) return;
+      if (!isSameConversation(get().activeConversation, conversation)) return;
       releaseLocalMediaUrls(get().messages);
-      set({ messages: result.messages ?? [] });
+      set({ messages: filterVisibleMessages(result.messages ?? []) });
     } catch (error) {
+      if (!currentScope(scope)) return;
       set({ error: errorMessage(error) });
     }
   },
 
   async removeMessage(message) {
+    const scope = get().connectionScope;
+    if (!currentScope(scope)) return;
     try {
       await juggleChatRuntime.removeMessages([message]);
+      if (!currentScope(scope)) return;
       releaseLocalMediaUrls([message]);
       set({ messages: get().messages.filter((item) => messageKey(item) !== messageKey(message)) });
     } catch (error) {
+      if (!currentScope(scope)) return;
       set({ error: errorMessage(error) });
     }
   },
 
   async toggleReaction(message, reactionId) {
+    const scope = get().connectionScope;
+    if (!currentScope(scope)) return;
     const user = get().user;
     if (!message.messageId || !user) return;
     const previous = get().messages;
@@ -793,21 +933,29 @@ export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
     set({ messages: next });
     try {
       await juggleChatRuntime.toggleReaction(message, reactionId, remove);
+      if (!currentScope(scope)) return;
     } catch (error) {
+      if (!currentScope(scope)) return;
       set({ messages: previous, error: errorMessage(error) });
     }
   },
 
   async favoriteMessage(message) {
+    const scope = get().connectionScope;
+    if (!currentScope(scope)) return;
     try {
       await juggleChatRuntime.addFavorite(message);
+      if (!currentScope(scope)) return;
     } catch (error) {
+      if (!currentScope(scope)) return;
       set({ error: errorMessage(error) });
       throw error;
     }
   },
 
   async translateMessage(message) {
+    const scope = get().connectionScope;
+    if (!currentScope(scope)) return;
     if (message.name !== "jg:text") return;
     if (message.translation) {
       set({ messages: get().messages.map((item) => item.messageId === message.messageId ? { ...item, isShowTranslation: !item.isShowTranslation } : item) });
@@ -816,8 +964,10 @@ export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
     set({ messages: get().messages.map((item) => item.messageId === message.messageId ? { ...item, isTranslating: true } : item) });
     try {
       const translation = await juggleChatRuntime.translateMessage(message);
+      if (!currentScope(scope)) return;
       set({ messages: get().messages.map((item) => item.messageId === message.messageId ? { ...item, translation, isTranslating: false, isShowTranslation: true } : item) });
     } catch (error) {
+      if (!currentScope(scope)) return;
       set({
         messages: get().messages.map((item) => item.messageId === message.messageId ? { ...item, isTranslating: false } : item),
         error: errorMessage(error),
@@ -826,33 +976,45 @@ export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
   },
 
   async editMessage(message, content) {
+    const scope = get().connectionScope;
+    if (!currentScope(scope)) return;
     const value = content.trim();
     if (!message.messageId || !value) return;
     try {
       await juggleChatRuntime.updateTextMessage(message, value);
+      if (!currentScope(scope)) return;
       set({ messages: get().messages.map((item) => messageKey(item) === messageKey(message) ? { ...item, content: { ...item.content, content: value }, isUpdated: true } : item) });
     } catch (error) {
+      if (!currentScope(scope)) return;
       set({ error: errorMessage(error) });
       throw error;
     }
   },
 
   async resendMessage(message) {
+    const scope = get().connectionScope;
+    if (!currentScope(scope)) return;
     const key = messageKey(message);
     set({ messages: get().messages.map((item) => messageKey(item) === key ? { ...item, sentState: 1 } : item) });
     try {
       const sent = await juggleChatRuntime.resendMessage(message);
+      if (!currentScope(scope)) return;
       set({ messages: get().messages.map((item) => messageKey(item) === key ? mergeMessage(item, { ...sent, sentState: 2 }) : item) });
     } catch (error) {
+      if (!currentScope(scope)) return;
       set({ messages: get().messages.map((item) => messageKey(item) === key ? { ...item, sentState: 3 } : item), error: errorMessage(error) });
     }
   },
 
   async pinMessage(message, isTop = true) {
+    const scope = get().connectionScope;
+    if (!currentScope(scope)) return;
     try {
       await juggleChatRuntime.setTopMessage(message, isTop);
+      if (!currentScope(scope)) return;
       set({ pinnedMessage: isTop ? { message, operator: get().user ?? undefined, createdTime: Date.now() } : null });
     } catch (error) {
+      if (!currentScope(scope)) return;
       set({ error: errorMessage(error) });
     }
   },

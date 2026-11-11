@@ -26,6 +26,7 @@ type FieldsResult<T> =
   | ({ data?: undefined; error: unknown } & { request: Request; response: Response });
 
 type PromptAsyncParameters = Parameters<ReturnType<typeof createOpencodeClient>["session"]["promptAsync"]>[0] & {
+  juggleworkCloudDocTurn?: import("./cloud-doc-turn").CloudDocTurnInput;
   juggleworkOfficeSelections?: { officeSelectionRefs?: string[]; officeInstructions?: import("@jugglework/types/office").OfficeSelectionInstruction[] };
   reasoning_effort?: string;
   juggleworkDelivery?: "steer";
@@ -779,6 +780,7 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
       juggleworkDetectedResponseLanguage,
       juggleworkDefaultResponseLanguage,
       juggleworkOfficeSelections,
+      juggleworkCloudDocTurn,
       model: selectedModel,
       ...body
     } = parameters;
@@ -794,7 +796,7 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
         const result = await juggleworkSessionClient.startSessionRun(juggleworkMount.workspaceId, sessionID, {
           origin: "local-renderer",
           startCommandCorrelationId: juggleworkAdmissionId ?? commandCorrelationId(),
-          prompt: { ...(selectedModel ? { model: selectedModel } : {}), ...body, ...juggleworkOfficeSelections },
+          prompt: { ...(selectedModel ? { model: selectedModel } : {}), ...body, ...juggleworkOfficeSelections, cloudDocTurn: juggleworkCloudDocTurn },
           ...(juggleworkDefaultResponseLanguage ? {
             responseLanguage: {
               ...(juggleworkDetectedResponseLanguage ? { detected: juggleworkDetectedResponseLanguage } : {}),

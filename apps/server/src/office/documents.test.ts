@@ -11,6 +11,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 import type { FileArtifact } from "@jugglework/types/file-artifacts";
 import type { OfficeDocumentSession } from "@jugglework/types/office";
 import { OfficeDocuments } from "./documents.js";
@@ -1338,6 +1339,9 @@ test("保存失败保留模型和 dirty，重试保存同一实际文件且不�
   expect(await f.documents.save("ws", doc.documentId, true)).toMatchObject({
     dirty: false,
     state: "ready",
+    savedFileSha256: createHash("sha256")
+      .update("actual model content")
+      .digest("hex"),
   });
   expect(await readFile(join(f.root, "报告 A.docx"), "utf8")).toBe(
     "actual model content",

@@ -40,6 +40,7 @@ describe("app navigation pins", () => {
     expect(parsePinnedAppNavigationItems('["calendar", 7, null, {"id":"calendar"}, "future-app"]')).toEqual(["calendar"]);
     expect(parsePinnedAppNavigationItems('{"calendar":true}')).toEqual([]);
     expect(parsePinnedAppNavigationItems('"calendar"')).toEqual([]);
+    expect(parsePinnedAppNavigationItems('["cloud-docs","reviews","cloud-docs"]')).toEqual(["cloud-docs", "reviews"]);
     expect(parsePinnedAppNavigationItems("not json")).toEqual([]);
     expect(parsePinnedAppNavigationItems(null)).toEqual([]);
   });

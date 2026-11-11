@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 // This file is both a Node test and an isolated Electron entry; never import Main
 // (which starts the user's runtime). Exercise its real window factory instead.
 if (process.versions.electron) {
-  const { app, BrowserWindow, ipcMain } = await import("electron");
+  const { app, BrowserWindow, clipboard, ipcMain } = await import("electron");
   const root = process.argv.at(-1);
   app.setPath("userData", root);
   app.setPath("sessionData", root);
@@ -42,6 +42,7 @@ if (process.versions.electron) {
       const document = { documentId: "sandbox-doc", pageId: "fixture-page", workspaceId: "ws", ownerSessionId: "dev", relativePath: "fixture.docx", state: "ready", previewUrl: `${origin}/static/doc/pc.html?localFilePath=/fixture.docx` };
       const client = {
         getJson: async (url) => url === "/workspaces" ? { items: [{ id: "ws", path: root }] }
+          : url.endsWith("/capabilities") ? { available: true }
           : url.includes("/files/stat") ? { exists: true, kind: "file" } : { document },
         postJson: async () => ({ document }),
       };
@@ -68,7 +69,7 @@ if (process.versions.electron) {
         preloadPath: devPreload, loadWindow: (window) => window.loadURL(`${origin}/file-window.html`),
       });
       const handlers = new Map();
-      const registry = { handle(name, handler) { handlers.set(name, handler); ipcMain.handle(name, handler); } };
+      const registry = { handle(name, handler) { handlers.set(name, handler); ipcMain.handle(name, handler); }, on: ipcMain.on.bind(ipcMain) };
       files.registerIpc(registry);
       panel.registerIpc(registry);
       ipcMain.handle("jugglework:file-editor:state", (event) => {
@@ -125,6 +126,24 @@ if (process.versions.electron) {
       const dev = files.windows()[0];
       await verify(dev);
 
+      // 真实受限窗口只可复制 Main 发布的当前范围链接，不能伪造上传结果。
+      const uploadEvent = { sender: main.webContents, senderFrame: main.webContents.mainFrame };
+      const fileUploadEvent = { sender: dev.webContents, senderFrame: dev.webContents.mainFrame };
+      const shareUrl = "https://t-fixture.docs.example/workspace/workspace/doc";
+      const previousClipboard = await clipboard.readText();
+      try {
+        await handlers.get("jugglework:file-window:cloud-uploads")(uploadEvent, { scope: "current", records: [{ localWorkspaceId: "ws", path: "notes.md", tenantId: "org", url: shareUrl }] });
+        const shareState = await dev.webContents.executeJavaScript("__JUGGLEWORK_ELECTRON__.fileWindow.state()");
+        assert.equal(shareState.tabs.find(tab => tab.path === "notes.md").cloudUpload.url, shareUrl);
+        await dev.webContents.executeJavaScript("__JUGGLEWORK_ELECTRON__.fileWindow.action('share-cloud')");
+        assert.equal(await clipboard.readText(), shareUrl);
+        assert.throws(() => handlers.get("jugglework:file-window:cloud-uploads")(fileUploadEvent, { scope: "forged", records: [] }), /来源无效/);
+        await handlers.get("jugglework:file-window:cloud-uploads")(uploadEvent, { scope: null, records: [] });
+        const cleared = await dev.webContents.executeJavaScript("__JUGGLEWORK_ELECTRON__.fileWindow.state()");
+        assert.equal(cleared.tabs.find(tab => tab.path === "notes.md").cloudUpload, undefined);
+        await assert.rejects(dev.webContents.executeJavaScript("__JUGGLEWORK_ELECTRON__.fileWindow.action('share-cloud')"));
+      } finally { if (typeof previousClipboard === "string") await clipboard.writeText(previousClipboard); }
+
       // Real Office view in the file host: keep its existing preload and partition.
       await dev.webContents.executeJavaScript(`__JUGGLEWORK_ELECTRON__.office.show({ workspaceId: 'ws', documentId: 'sandbox-doc', bounds: { x: 0, y: 0, width: 200, height: 200 } })`);
       const view = dev.contentView.children[0];
@@ -137,6 +156,8 @@ if (process.versions.electron) {
       assert.deepEqual(await view.webContents.executeJavaScript(`({ fileBridge: typeof window.__JUGGLEWORK_ELECTRON__, selection: Object.keys(window.juggleworkOfficeSelection).sort(), node: typeof require })`),
         { fileBridge: "undefined", selection: ["cancel", "capture", "onReview", "submit"], node: "undefined" });
       const officeEvent = { sender: view.webContents, senderFrame: view.webContents.mainFrame };
+      await files.open({ workspaceId: "ws", sessionId: "dev", path: "fixture.docx" });
+      const fileEvent = { sender: dev.webContents, senderFrame: dev.webContents.mainFrame };
       await assert.rejects(handlers.get("jugglework:file-window:state")(officeEvent), /文件窗口已关闭/);
       await assert.rejects(handlers.get("jugglework:office:show")(officeEvent, {}), /Office view requires its host window/);
       panel.destroy();

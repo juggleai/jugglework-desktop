@@ -10,6 +10,7 @@ import {
 import { ApiError } from "../errors.js";
 import { admitOpencodePrompt, type AdmissionIdentity } from "../opencode-admission.js";
 import { currentRunTerminalStatus } from "../session-completion-evidence.js";
+import { cloudDocTurnSchema } from "../cloud-docs/schema.js";
 import { officeSelectionSubmissionSchema, type OfficeSelectionSubmission } from "../office/selection-edits.js";
 import {
   SessionMutationError,
@@ -143,7 +144,7 @@ const promptBodySchema = z.object({
   variant: z.string().max(256).optional(),
   parts: z.array(z.json()).max(10_000).optional(),
   reasoning_effort: z.string().max(256).optional(),
-}).extend(officeSelectionSubmissionSchema.shape).strict().refine((value) => JSON.stringify(value).length <= 16 * 1024 * 1024, "prompt payload is too large");
+}).extend(officeSelectionSubmissionSchema.shape).extend({ cloudDocTurn: cloudDocTurnSchema.optional() }).strict().refine((value) => JSON.stringify(value).length <= 16 * 1024 * 1024, "prompt payload is too large");
 const remotePromptBodySchema = z.object({
   parts: z.array(desktopRemotePromptPartSchema).min(1).max(1_000),
   model: z.object({ providerID: runIdentifierSchema, modelID: runIdentifierSchema }).strict().optional(),

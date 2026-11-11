@@ -13,6 +13,7 @@ import {
 import {
   clearDenSession,
   createDenClient,
+  DenApiError,
   denCredentialFingerprint,
   ensureDenActiveOrganization,
   denOriginComparisonKey,
@@ -28,6 +29,7 @@ import {
   writeDenLastOrganization,
   writeDenSettings,
   type DenBootstrapConfig,
+  type DenIMLoginBootstrap,
   type DenOrgSummary,
   type DenTenantAccount,
   type DenUser,
@@ -105,6 +107,51 @@ export function shouldValidateSignedInSession(input: {
     && input.online
     && !input.validationInFlight
     && input.now - input.lastValidationAt >= DEN_AUTH_SIGNED_IN_REFRESH_INTERVAL_MS;
+}
+
+type OrganizationSwitchClient = {
+  setActiveOrganization: (input: {
+    organizationId: string;
+  }) => Promise<{ im: DenIMLoginBootstrap | null } | null>;
+  listOrgs: () => Promise<{
+    orgs: DenOrgSummary[];
+    activeOrgId: string | null;
+  }>;
+};
+
+/**
+ * 切换组织并处理响应丢失：仅在网络或服务端异常后读取权威状态，不自动重发切换请求。
+ * @param client 当前登录账号的 Server 客户端
+ * @param targetOrganizationId 目标组织 ID
+ */
+export async function switchDenOrganizationWithRecovery(
+  client: OrganizationSwitchClient,
+  targetOrganizationId: string,
+): Promise<{ im: DenIMLoginBootstrap | null; recovered: boolean }> {
+  try {
+    const result = await client.setActiveOrganization({
+      organizationId: targetOrganizationId,
+    });
+    return { im: result?.im ?? null, recovered: false };
+  } catch (error) {
+    const uncertain =
+      !(error instanceof DenApiError) ||
+      error.status === 408 ||
+      error.status >= 500;
+    if (!uncertain) throw error;
+    let snapshot: Awaited<ReturnType<OrganizationSwitchClient["listOrgs"]>>;
+    try {
+      snapshot = await client.listOrgs();
+    } catch {
+      throw error;
+    }
+    const target = snapshot.orgs.find(
+      (organization) => organization.id === targetOrganizationId,
+    );
+    if (!target || snapshot.activeOrgId !== targetOrganizationId) throw error;
+    // TIPS: POST 已生效但响应丢失时拿不到新的 IM 凭据；清空旧组织凭据即可，Docs 仍按 B 身份工作。
+    return { im: null, recovered: true };
+  }
 }
 
 export type DenAuthStore = {
@@ -189,6 +236,7 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
   const accountSnapshotRef = useRef(false);
   const accountLastRefreshAtRef = useRef(0);
   const accountRefreshGenerationRef = useRef(0);
+  const organizationSwitchGenerationRef = useRef(0);
   const accountRefreshInFlightRef = useRef<Promise<void> | null>(null);
   // Monotonic token so stale async refreshes can't clobber a newer result.
   const refreshTokenRef = useRef(0);
@@ -207,6 +255,7 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
 
   const clearAccountState = useCallback(() => {
     accountRefreshGenerationRef.current += 1;
+    organizationSwitchGenerationRef.current += 1;
     accountRefreshInFlightRef.current = null;
     accountSnapshotRef.current = false;
     accountLastRefreshAtRef.current = 0;
@@ -297,44 +346,53 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
     if (next.id === activeOrganization?.id || next.id === settings.activeOrgId?.trim()) return;
 
     accountRefreshGenerationRef.current += 1;
+    const generation = ++organizationSwitchGenerationRef.current;
     accountRefreshInFlightRef.current = null;
     setAccountBusy(true);
     setAccountError(null);
     try {
       const authorityChange = createDenCredentialAuthorityChange("organization_switched");
+      await window.__JUGGLEWORK_ELECTRON__?.cloudDocs?.close();
       await closeToonFactoryForDenSession(authorityChange);
       await runOrganizationCloudCleanup();
+      if (generation !== organizationSwitchGenerationRef.current) return;
       const client = createDenClient({ baseUrl: settings.baseUrl, token });
       // TIPS: 这次切换的响应里带着新组织重新供给的 IM 凭据（可能是 null，比如切进一个
       // 没开 IM 的组织）——之前这里没接住，切完组织聊天/通讯录永远连不上新组织的 IM，
-      // 见 den.ts 的 ensureActiveOrganization 决策记录。下面 ensureDenActiveOrganization
-      // 那次调用不会重复写：它这时候看到的服务端活跃组织已经等于目标组织，不会再真的
-      // 发起一次切换请求。
-      const switchResult = await client.setActiveOrganization({ organizationId: next.id });
+      // 见 den.ts 的 ensureActiveOrganization 决策记录。明确切换的返回值就是本次权威结果；
+      // im=null 也必须原样落地，不能再调用强制同步重复发送一次切换请求。
+      const switchResult = await switchDenOrganizationWithRecovery(
+        client,
+        next.id,
+      );
+      if (generation !== organizationSwitchGenerationRef.current) return;
+      const account = await client.getTenantAccount(next.id).catch(() => null);
+      if (generation !== organizationSwitchGenerationRef.current) return;
       writeDenSettings({
         ...settings,
         activeOrgId: next.id,
         activeOrgSlug: next.slug,
         activeOrgName: next.name,
       }, { persistBootstrap: false });
-      writeDenIMLoginBootstrap(switchResult?.im ?? null, next.id);
+      writeDenIMLoginBootstrap(switchResult.im, next.id);
       writeDenLastOrganization(readDenUserId(), next.id);
       setActiveOrganization(next);
-      setTenantAccount(await client.getTenantAccount(next.id).catch(() => null));
+      setTenantAccount(account);
       accountSnapshotRef.current = true;
       accountLastRefreshAtRef.current = Date.now();
-      await ensureDenActiveOrganization({ forceServerSync: true }).catch(() => null);
       dispatchDenSessionUpdated({
         status: "authority_changed",
         ...authorityChange,
         baseUrl: settings.baseUrl,
       });
     } catch (nextError) {
+      if (generation !== organizationSwitchGenerationRef.current) return;
       const message = nextError instanceof Error ? nextError.message : t("den.error_load_orgs");
       setAccountError(message);
       throw nextError;
     } finally {
-      setAccountBusy(false);
+      if (generation === organizationSwitchGenerationRef.current)
+        setAccountBusy(false);
     }
   }, [activeOrganization?.id, organizations]);
 
@@ -347,6 +405,7 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
     // unavailable Den, or proxy-generated 401 cannot strand the old app UI.
     refreshTokenRef.current += 1;
     setSignOutBusy(true);
+    await window.__JUGGLEWORK_ELECTRON__?.cloudDocs?.close();
     clearDenSession();
     clearAccountState();
     setAccountBusy(false);
@@ -406,6 +465,8 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
       // before anything reads it under the new account.
       const accountTransition = classifyAccountTransition(readDenUserId(), nextUser?.id);
       if (accountTransition === "switched") {
+        organizationSwitchGenerationRef.current += 1;
+        await window.__JUGGLEWORK_ELECTRON__?.cloudDocs?.close();
         await closeToonFactoryForDenSession(
           pendingSessionAuthority?.reason === "account_switched"
             ? pendingSessionAuthority
@@ -502,6 +563,8 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
 
     const handleSessionUpdated = (event: WindowEventMap[typeof denSessionUpdatedEvent]) => {
       if (event.detail?.status === "success") {
+        // TIPS: 新登录会话一旦到达就使旧账号的组织切换失效，不能等待异步身份查询后再设防。
+        organizationSwitchGenerationRef.current += 1;
         pendingSessionAuthorityRef.current = event.detail;
       }
       void refresh();
