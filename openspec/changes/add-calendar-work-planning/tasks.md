@@ -26,7 +26,7 @@
 
 ## 4. Week and Day Planning UI
 
-- [ ] 4.0 按 Calendar 产品布局增加日/周/月切换，并移除月视图右侧常驻“选中日/今日日程”栏；新建入口放入主工具栏，详情/编辑按需以浮层打开且关闭后恢复焦点，同时保留左侧迷你月历和 Calendar 筛选；以月/周/日组件测试及窄窗口无障碍测试验证主视图获得完整剩余宽度
+- [x] 4.0 按 Calendar 产品布局增加日/周/月切换，并移除月视图右侧常驻“选中日/今日日程”栏；新建入口放入主工具栏，详情/编辑按需以浮层打开且关闭后恢复焦点，同时保留左侧迷你月历和 Calendar 筛选；以月/周/日组件测试及窄窗口无障碍测试验证主视图获得完整剩余宽度
 - [ ] 4.1 Add route-backed week/day selection, visible-range navigation, shared calendar filters, display-timezone handling, and loading/empty/error states independent of Agent availability; verify Desktop component tests and deep-link refresh tests for both views
 - [ ] 4.2 Build the normalized display-item model for one-off events, expanded instances, cross-day timed segments, all-day spans, permissions, versions, and source kinds; verify unit tests preserve one business identity across segments and never convert timed cross-day events into all-day events
 - [ ] 4.3 Implement deterministic all-day row allocation, accessible overflow, and timed overlap grouping/lane geometry using half-open intervals; verify layout fixtures cover equal boundaries, nested overlaps, stable rerenders, dense all-day spans, and responsive desktop widths
