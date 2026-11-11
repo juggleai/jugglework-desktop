@@ -37,3 +37,4 @@ export const juggleworkSafeGrepPluginPath = () => juggleworkPluginPath("jugglewo
 export const juggleworkContextOverflowPluginPath = () => juggleworkPluginPath("jugglework-context-overflow");
 export const juggleworkMcpWorkspacePolicyPluginPath = () => juggleworkPluginPath("jugglework-mcp-workspace-policy");
 export const juggleworkScreenshotHistoryPluginPath = () => juggleworkPluginPath("jugglework-screenshot-history");
+export const juggleworkConfirmationGatePluginPath = () => juggleworkPluginPath("jugglework-confirmation-gate");

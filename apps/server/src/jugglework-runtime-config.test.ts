@@ -76,6 +76,7 @@ describe("jugglework runtime config file", () => {
     expect(Array.isArray(parsed.plugin)).toBe(true);
     expect((parsed.plugin as string[]).some((entry) => entry.includes("jugglework-context-overflow"))).toBe(true);
     expect((parsed.plugin as string[]).some((entry) => entry.includes("jugglework-screenshot-history"))).toBe(true);
+    expect((parsed.plugin as string[]).some((entry) => entry.includes("jugglework-confirmation-gate"))).toBe(true);
     expect(parsed.agent).toMatchObject({
       jugglework: {
         permission: {
@@ -109,6 +110,20 @@ describe("jugglework runtime config file", () => {
     expect(prompt).not.toContain("memory_search");
     // No-secrets guidance is the only v0 plaintext-at-rest mitigation.
     expect(prompt).toMatch(/secret|credential|API key|token|PII/i);
+  });
+
+  test("jugglework prompt requires structured questions for blocking decisions", async () => {
+    const { config } = await setup();
+    await writeJuggleWorkRuntimeConfigFile(config, "ws_1");
+
+    const parsed = await readConfigFile(config);
+    const agent = parsed.agent as Record<string, { prompt?: string }>;
+    const prompt = agent.jugglework?.prompt ?? "";
+
+    expect(prompt).toContain("built-in `question` tool");
+    expect(prompt).toContain("Never ask a blocking question only in prose");
+    expect(prompt).toContain("do not call Bash, editing, delegation, or any other tool except `question`");
+    expect(prompt).toContain("end the turn after the question and wait for a new user message");
   });
 
   test("keepJuggleWorkRuntimeConfigFileFresh rewrites the file on runtime-DB writes", async () => {

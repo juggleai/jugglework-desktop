@@ -25,6 +25,7 @@ import {
   juggleworkContextOverflowPluginPath,
   juggleworkMcpWorkspacePolicyPluginPath,
   juggleworkScreenshotHistoryPluginPath,
+  juggleworkConfirmationGatePluginPath,
 } from "./jugglework-extensions-plugin-path.js";
 import type { ServerConfig } from "./types.js";
 import { runtimeStorageDir } from "./runtime-db.js";
@@ -112,6 +113,8 @@ Hard rule: never copy private memory into repo files. Store only redacted summar
 ## Working style
 
 - If required setup or credentials are missing, ask one targeted question and continue once provided.
+- When a user decision is genuinely required before work can continue, call the built-in \`question\` tool and wait for its result. Never ask a blocking question only in prose, claim that no answer arrived, choose defaults, and continue in the same turn.
+- After stating that confirmation, a choice, or missing information is required, do not call Bash, editing, delegation, or any other tool except \`question\` until the user answers. If \`question\` is unavailable, end the turn after the question and wait for a new user message.
 - If you change code, run the smallest meaningful test.
 - If steps repeat, factor them into a skill.
 - Prefer clear, practical steps over abstract explanations.
@@ -207,6 +210,7 @@ export function buildJuggleWorkRuntimeConfigObjectFromSnapshot(
       juggleworkContextOverflowPluginPath(),
       juggleworkMcpWorkspacePolicyPluginPath(),
       juggleworkScreenshotHistoryPluginPath(),
+      juggleworkConfirmationGatePluginPath(),
       ...runtimePluginList(runtimeConfig),
     ],
     ...(disabledProviders.length ? { disabled_providers: disabledProviders } : {}),
