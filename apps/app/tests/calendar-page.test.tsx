@@ -117,7 +117,7 @@ test("fails closed while the capability is unknown or disabled", async () => {
 test("the calendar domain imports nothing from Session, Agent, workspace, or provider modules", () => {
   const dir = join(import.meta.dir, "../src/react-app/domains/calendar");
   const forbidden = /from\s+["'][^"']*(domains\/session|session-route|opencode|agent|ai-provider|providers\/|workspace\/)[^"']*["']/i;
-  for (const file of ["calendar-page.tsx", "calendar-page-gate.ts", "calendar-month-model.ts", "calendar-month-view.tsx", "calendar-event-layout.ts", "calendar-day-events.tsx"]) {
+  for (const file of ["calendar-page.tsx", "calendar-page-gate.ts", "calendar-month-model.ts", "calendar-month-view.tsx", "calendar-view-model.ts", "calendar-view-toolbar.tsx", "calendar-time-layout.ts", "calendar-time-view.tsx", "calendar-event-layout.ts", "calendar-day-events.tsx"]) {
     const source = readFileSync(join(dir, file), "utf8");
     expect({ file, match: source.match(forbidden)?.[0] ?? null }).toEqual({ file, match: null });
   }

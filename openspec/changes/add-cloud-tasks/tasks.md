@@ -29,6 +29,7 @@
 - [ ] 3.8 Implement the aggregate Activity view, pagination, unread state, and event navigation
 - [x] 3.9 Add the dedicated route, loading/empty/error shell, section persistence, and no-Agent smoke tests
 - [x] 3.11 Display organization-scoped `t100001`-style task numbers while retaining exact internal IDs for routing and copy actions
+- [x] 3.12 Implement the dedicated Today action view with mutually exclusive overdue, due-today, and starts-today groups, loaded summary counts, task context, completion, detail navigation, and pagination
 - [ ] 3.10 Add connected Desktop tests for edit, member management, lifecycle actions, Activity, and permission changes; full-create fields/defaults/validation, mutation errors, and scope fencing are covered
 
 ## 4. Explicitly Excluded IM Interoperability

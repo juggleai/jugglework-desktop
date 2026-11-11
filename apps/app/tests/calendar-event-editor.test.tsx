@@ -124,7 +124,7 @@ const formStatus = (renderer: TestRenderer.ReactTestRenderer) => byId(renderer, 
 test("creating an all-day event shows it only after the authoritative response", async () => {
   const { renderer } = await render();
   try {
-    await click(renderer, "calendar-agenda-create");
+    await click(renderer, "calendar-create-event");
     await change(renderer, "calendar-form-title", "Planning");
     await change(renderer, "calendar-form-calendar", "cal-2");
     await submit(renderer);
@@ -140,7 +140,7 @@ test("creating an all-day event shows it only after the authoritative response",
 test("validation errors block the request and are announced per field", async () => {
   const { renderer } = await render();
   try {
-    await click(renderer, "calendar-agenda-create");
+    await click(renderer, "calendar-create-event");
     await change(renderer, "calendar-form-title", "  ");
     await change(renderer, "calendar-form-end-date", "2026-11-09");
     await submit(renderer);
@@ -155,7 +155,7 @@ test("validation errors block the request and are announced per field", async ()
 test("switching to timed sends a timed union in the local zone with no all-day fields", async () => {
   const { renderer } = await render();
   try {
-    await click(renderer, "calendar-agenda-create");
+    await click(renderer, "calendar-create-event");
     await change(renderer, "calendar-form-title", "Call");
     await change(renderer, "calendar-form-all-day", false);
     expect(text(byId(renderer, "calendar-form-zone"))).toContain("Asia/Shanghai");
@@ -170,7 +170,7 @@ test("a network failure keeps the draft, never reports saved, and retry reuses t
   const { renderer } = await render();
   try {
     failNext = () => new TypeError("Failed to fetch");
-    await click(renderer, "calendar-agenda-create");
+    await click(renderer, "calendar-create-event");
     await change(renderer, "calendar-form-title", "Offline-ish");
     await submit(renderer);
     // Built-in retries run with a 1s delay; wait for them to exhaust.
@@ -192,7 +192,7 @@ test("editing sends only changed fields with the loaded version", async () => {
   events = [baseEvent("e1")];
   const { renderer } = await render();
   try {
-    await click(renderer, "calendar-agenda-item-e1");
+    await click(renderer, "calendar-day-event-2026-11-09-e1");
     await click(renderer, "calendar-event-detail-edit");
     await change(renderer, "calendar-form-title", "Renamed");
     await submit(renderer);
@@ -206,7 +206,7 @@ test("a version conflict keeps my edits and offers explicit resolution", async (
   events = [baseEvent("e1")];
   const { renderer } = await render();
   try {
-    await click(renderer, "calendar-agenda-item-e1");
+    await click(renderer, "calendar-day-event-2026-11-09-e1");
     await click(renderer, "calendar-event-detail-edit");
     await change(renderer, "calendar-form-title", "Mine");
     const theirs = { ...baseEvent("e1"), title: "Theirs", version: 2 };
@@ -227,7 +227,7 @@ test("use-latest on conflict replaces the form with the server version", async (
   events = [baseEvent("e1")];
   const { renderer } = await render();
   try {
-    await click(renderer, "calendar-agenda-item-e1");
+    await click(renderer, "calendar-day-event-2026-11-09-e1");
     await click(renderer, "calendar-event-detail-edit");
     await change(renderer, "calendar-form-title", "Mine");
     failNext = () => new DenApiError(409, "calendar_version_conflict", "conflict", { current: { ...baseEvent("e1"), title: "Theirs", version: 2 } });
@@ -242,7 +242,7 @@ test("delete requires confirmation and removes the event only after the server a
   events = [baseEvent("e1")];
   const { renderer } = await render();
   try {
-    await click(renderer, "calendar-agenda-item-e1");
+    await click(renderer, "calendar-day-event-2026-11-09-e1");
     await click(renderer, "calendar-event-detail-edit");
     await click(renderer, "calendar-form-delete");
     expect(calls).toHaveLength(0);
@@ -259,7 +259,7 @@ test("an auth failure is reported without claiming the save happened", async () 
   const { renderer } = await render();
   try {
     failNext = () => new DenApiError(403, "forbidden", "no");
-    await click(renderer, "calendar-agenda-create");
+    await click(renderer, "calendar-create-event");
     await change(renderer, "calendar-form-title", "X");
     await submit(renderer);
     expect(calls).toHaveLength(1);

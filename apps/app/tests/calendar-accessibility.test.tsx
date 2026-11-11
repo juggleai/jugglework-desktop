@@ -174,17 +174,18 @@ test("every core control has an accessible name and uses visible focus styles", 
   events = [baseEvent("e1")];
   const { renderer } = await render();
   try {
-    await click(renderer, "calendar-agenda-item-e1");
+    await click(renderer, "calendar-day-event-2026-11-09-e1");
     await click(renderer, "calendar-event-detail-edit");
     const controls = interactive(renderer);
     expect(controls.length).toBeGreaterThan(20);
     const unnamed = controls.filter((node) => accessibleName(node) === "").map((node) => node.props["data-testid"]);
     expect(unnamed).toEqual([]);
-    for (const id of ["calendar-day-button-2026-11-09", "calendar-day-event-2026-11-09-e1", "calendar-agenda-item-e1", "calendar-filter-toggle"]) {
+    for (const id of ["calendar-day-button-2026-11-09", "calendar-day-event-2026-11-09-e1", "calendar-filter-toggle", "calendar-view-day"]) {
       expect(String(byId(renderer, id).props.className)).toContain("focus-visible:ring-2");
     }
     expect(byId(renderer, "calendar-sidebar").props["aria-label"]).toBe(t("calendar.sidebar"));
-    expect(byId(renderer, "calendar-day-panel").props["aria-label"]).toBe(t("calendar.day_panel"));
+    expect(has(renderer, "calendar-day-panel")).toBe(false);
+    expect(byId(renderer, "calendar-view-switcher").props["aria-label"]).toBe(t("calendar.view_switcher"));
   } finally { await act(async () => { renderer.unmount(); }); }
 });
 
@@ -208,17 +209,17 @@ test("only the selected day is in the Tab order, and its event chips follow it",
 test("opening the editor focuses its title; cancel and Escape return focus to the opener", async () => {
   const { renderer } = await render();
   try {
-    focusNode("calendar-agenda-create");
-    await click(renderer, "calendar-agenda-create");
+    focusNode("calendar-create-event");
+    await click(renderer, "calendar-create-event");
     expect(focusedId()).toBe("calendar-form-title");
     await click(renderer, "calendar-form-cancel");
-    expect(focusedId()).toBe("calendar-agenda-create");
+    expect(focusedId()).toBe("calendar-create-event");
 
-    focusNode("calendar-agenda-create");
-    await click(renderer, "calendar-agenda-create");
+    focusNode("calendar-create-event");
+    await click(renderer, "calendar-create-event");
     await pressKey(renderer, "calendar-event-form", "Escape");
     expect(has(renderer, "calendar-event-form")).toBe(false);
-    expect(focusedId()).toBe("calendar-agenda-create");
+    expect(focusedId()).toBe("calendar-create-event");
   } finally { await act(async () => { renderer.unmount(); }); }
 });
 
@@ -239,9 +240,9 @@ test("after deleting, focus falls back to the selected day when the opener no lo
   events = [baseEvent("e1")];
   const { renderer } = await render();
   try {
-    const opener = new FakeNode("calendar-agenda-item-e1");
+    const opener = new FakeNode("calendar-day-event-2026-11-09-e1");
     activeNode = opener;
-    await click(renderer, "calendar-agenda-item-e1");
+    await click(renderer, "calendar-day-event-2026-11-09-e1");
     await click(renderer, "calendar-event-detail-edit");
     await click(renderer, "calendar-form-delete");
     opener.isConnected = false; // the agenda row disappears with the event
@@ -256,7 +257,7 @@ test("Escape in the delete confirmation backs out of it without closing the form
   events = [baseEvent("e1")];
   const { renderer } = await render();
   try {
-    await click(renderer, "calendar-agenda-item-e1");
+    await click(renderer, "calendar-day-event-2026-11-09-e1");
     await click(renderer, "calendar-event-detail-edit");
     await click(renderer, "calendar-form-delete");
     await pressKey(renderer, "calendar-event-form", "Escape");
@@ -282,7 +283,8 @@ test("narrow layout: filters collapse behind an expandable toggle; core regions 
     expect(String(byId(renderer, "calendar-layout").props.className)).not.toContain("overflow-x");
     const order = (id: string) => String(byId(renderer, id).props.className).match(/(?:^| )order-(\d)/)?.[1];
     expect(order("calendar-sidebar")).toBe("2");
-    expect(order("calendar-day-panel")).toBe("3");
+    expect(has(renderer, "calendar-day-panel")).toBe(false);
+    expect(has(renderer, "calendar-event-panel")).toBe(false);
     expect(String(byId(renderer, "calendar-mini-month-slot").props.className)).toContain("hidden @5xl/calendar:block");
   } finally { await act(async () => { renderer.unmount(); }); }
 });

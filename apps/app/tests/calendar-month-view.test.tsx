@@ -223,33 +223,27 @@ test("an overflowing day shows a +N more entry that selects that day", async () 
   } finally { await act(async () => { renderer.unmount(); }); }
 });
 
-const agendaIds = (renderer: TestRenderer.ReactTestRenderer) => renderer.root
-  .findAll((node) => typeof node.props["data-testid"] === "string" && node.props["data-testid"].startsWith("calendar-agenda-item-") && node.type === "button")
-  .map((node) => node.props["data-testid"].slice("calendar-agenda-item-".length));
-
-test("the agenda follows the selected day from the grid and the mini month, sorted all-day first", async () => {
+test("the view switcher replaces the right agenda with day, week, and month surfaces", async () => {
   events = [
-    calendarEvent("t-b", { kind: "timed", startInstant: "2026-11-12T02:00:00Z", endInstantExclusive: "2026-11-12T03:00:00Z", timeZone: "Asia/Shanghai" }),
-    calendarEvent("t-a", { kind: "timed", startInstant: "2026-11-12T02:00:00Z", endInstantExclusive: "2026-11-12T03:00:00Z", timeZone: "Asia/Shanghai" }),
-    calendarEvent("t-early", { kind: "timed", startInstant: "2026-11-12T00:00:00Z", endInstantExclusive: "2026-11-12T01:00:00Z", timeZone: "Asia/Shanghai" }),
-    calendarEvent("d-1", { kind: "allDay", startDate: "2026-11-12", endDateExclusive: "2026-11-13" }),
-    calendarEvent("other", { kind: "allDay", startDate: "2026-11-20", endDateExclusive: "2026-11-21" }),
+    calendarEvent("timed", { kind: "timed", startInstant: "2026-11-09T02:00:00Z", endInstantExclusive: "2026-11-09T03:00:00Z", timeZone: "Asia/Shanghai" }),
+    calendarEvent("all-day", { kind: "allDay", startDate: "2026-11-09", endDateExclusive: "2026-11-11" }),
   ];
   const { renderer } = await render();
   try {
-    await click(renderer, "calendar-day-button-2026-11-12");
-    expect(agendaIds(renderer)).toEqual(["d-1", "t-early", "t-a", "t-b"]);
-    await click(renderer, "calendar-mini-day-2026-11-20");
-    expect(agendaIds(renderer)).toEqual(["other"]);
-    expect(byId(renderer, "calendar-day-2026-11-20").props["aria-selected"]).toBe(true);
-  } finally { await act(async () => { renderer.unmount(); }); }
-});
-
-test("an empty day shows an explicit empty state", async () => {
-  const { renderer } = await render();
-  try {
-    expect(has(renderer, "calendar-agenda-empty")).toBe(true);
-    expect(has(renderer, "calendar-agenda-list")).toBe(false);
+    expect(has(renderer, "calendar-day-panel")).toBe(false);
+    expect(byId(renderer, "calendar-view-month").props["aria-pressed"]).toBe(true);
+    await click(renderer, "calendar-view-week");
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    expect(has(renderer, "calendar-week-view")).toBe(true);
+    expect(has(renderer, "calendar-all-day-event-all-day")).toBe(true);
+    expect(has(renderer, "calendar-time-event-2026-11-09-timed")).toBe(true);
+    expect(bootstrapRanges.at(-1)).toBe("2026-11-08/2026-11-15");
+    await click(renderer, "calendar-view-day");
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    expect(has(renderer, "calendar-day-view")).toBe(true);
+    expect(bootstrapRanges.at(-1)).toBe("2026-11-09/2026-11-10");
+    await click(renderer, "calendar-view-month");
+    expect(has(renderer, "calendar-month-grid")).toBe(true);
   } finally { await act(async () => { renderer.unmount(); }); }
 });
 
@@ -260,13 +254,13 @@ test("all-day details show a date range, timed details show local time and zone,
   ];
   const { renderer } = await render();
   try {
-    await click(renderer, "calendar-agenda-item-trip");
+    await click(renderer, "calendar-day-event-2026-11-09-trip");
     expect(text(byId(renderer, "calendar-event-detail-time"))).toBe("Nov 9, 2026 - Nov 10, 2026(calendar.all_day)");
     expect(has(renderer, "calendar-event-detail-zone")).toBe(false);
     expect(text(byId(renderer, "calendar-event-detail-calendar"))).toBe("Personal");
     expect(text(byId(renderer, "calendar-event-detail-description"))).toBe("Line one\n<b>not bold</b>");
     expect(byId(renderer, "calendar-event-detail").findAll((node) => node.type === "b")).toHaveLength(0);
-    await click(renderer, "calendar-agenda-item-call");
+    await click(renderer, "calendar-day-event-2026-11-09-call");
     expect(text(byId(renderer, "calendar-event-detail-title"))).toBe("Title call");
     // Separator wording ("," vs "at") varies by ICU version; assert the meaningful parts.
     const timedLabel = text(byId(renderer, "calendar-event-detail-time"));
@@ -289,16 +283,15 @@ test("opening an event from a month cell selects its day and shows its detail", 
   } finally { await act(async () => { renderer.unmount(); }); }
 });
 
-test("an event deleted on another client closes its detail and leaves the grid and agenda", async () => {
+test("an event deleted on another client closes its detail and leaves the grid", async () => {
   events = [calendarEvent("a", { kind: "allDay", startDate: "2026-11-09", endDateExclusive: "2026-11-10" })];
   const { renderer, queryClient } = await render();
   try {
-    await click(renderer, "calendar-agenda-item-a");
+    await click(renderer, "calendar-day-event-2026-11-09-a");
     expect(has(renderer, "calendar-event-detail")).toBe(true);
     events = [];
     await act(async () => { await queryClient.invalidateQueries(); await new Promise((resolve) => setTimeout(resolve, 0)); });
     expect(has(renderer, "calendar-event-detail")).toBe(false);
     expect(has(renderer, "calendar-day-event-2026-11-09-a")).toBe(false);
-    expect(agendaIds(renderer)).toEqual([]);
   } finally { await act(async () => { renderer.unmount(); }); }
 });

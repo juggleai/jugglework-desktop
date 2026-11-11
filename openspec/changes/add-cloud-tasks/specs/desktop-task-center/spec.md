@@ -27,6 +27,17 @@ The Desktop SHALL provide primary task secondary navigation for Today, Assigned 
 - **THEN** the Desktop does not show task creation actions in the page header
 - **AND** Today does not show the priority or sort controls in that header
 
+#### Scenario: Organize the Today action view
+- **WHEN** the Today query returns accessible todo tasks that are overdue, due today, or start today
+- **THEN** the Desktop renders a dedicated action view with mutually exclusive Overdue, Due today, and Starts today groups in that order
+- **AND** a task matching multiple groups appears only in the first matching group
+- **AND** the view shows loaded pending and overdue counts, task-list context, the current member's primary task relationship, assignees, and the relevant task time
+
+#### Scenario: Complete a task from Today
+- **WHEN** the user activates a Today task's completion control
+- **THEN** the Desktop loads authoritative task permissions and membership before applying the existing multi-assignee completion behavior
+- **AND** refreshes the Today query after a successful transition
+
 ### Requirement: Task list and detail surfaces
 The Desktop SHALL provide a paginated task list, inline permitted actions, and a detail drawer or direct route for task fields, comments, activity, and lifecycle actions.
 

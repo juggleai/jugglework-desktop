@@ -281,6 +281,62 @@ test("Today and Activity keep their page headers free of filters and create acti
   } finally { await act(async () => { renderer!.unmount(); }); }
 });
 
+test("Today renders an action summary and mutually exclusive overdue, due-today, and starts-today groups", async () => {
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const yesterdayNoon = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 12);
+  const overdue = { ...task(1, "Overdue launch", "", "today_overdue"), listId: "list_today", dueAt: yesterdayNoon.toISOString(), priority: "high" as const };
+  const dueToday = { ...task(1, "Review today", "", "today_due"), creatorMemberId: "member_self", listId: "list_today", dueAt: today.toISOString() };
+  const startsToday = { ...task(1, "Start research", "", "today_start"), listId: "list_today", startAt: today.toISOString() };
+  const list: DenProductTaskList = { id: "list_today", creatorMemberId: "member_self", name: "Launch plan", description: "", marker: "L", visibility: "members", version: 1, archivedAt: null, createdAt: today.toISOString(), updatedAt: today.toISOString() };
+  const membersByTaskId = {
+    [overdue.id]: [{ memberId: "member_self", role: "assignee" as const }],
+    [dueToday.id]: [],
+    [startsToday.id]: [{ memberId: "member_self", role: "follower" as const }],
+  };
+  const client = connectedClient({
+    listProductTasks: async () => ({ items: [startsToday, dueToday, overdue], membersByTaskId, nextCursor: "" }),
+    listProductTaskLists: async () => ({ items: [list], nextCursor: "" }),
+    listOrganizationMembers: async () => ({ members: [{ id: "member_self", userId: "user_one", role: "member", user: { id: "user_one", name: "Self", account: null, email: null, avatar: null } }], total: 1, limit: 200, offset: 0 }),
+  });
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client)); });
+  await settle();
+  try {
+    expect(renderer!.root.findByProps({ "data-testid": "today-task-view" })).toBeDefined();
+    expect(renderer!.root.findAll((node) => node.props.children === "3 pending")).toHaveLength(1);
+    expect(renderer!.root.findAll((node) => node.props.children === "1 overdue")).toHaveLength(1);
+    expect(renderer!.root.findByProps({ "data-testid": "today-group-overdue" }).findByProps({ "data-testid": `today-task-row-${overdue.id}` })).toBeDefined();
+    expect(renderer!.root.findByProps({ "data-testid": "today-group-due_today" }).findByProps({ "data-testid": `today-task-row-${dueToday.id}` })).toBeDefined();
+    expect(renderer!.root.findByProps({ "data-testid": "today-group-starts_today" }).findByProps({ "data-testid": `today-task-row-${startsToday.id}` })).toBeDefined();
+    expect(renderer!.root.findAll((node) => node.props.children === "Assigned to me")).not.toHaveLength(0);
+    expect(renderer!.root.findAll((node) => node.props.children === "Created by me")).not.toHaveLength(0);
+    expect(renderer!.root.findAll((node) => node.props.children === "Following")).not.toHaveLength(0);
+    expect(renderer!.root.findAll((node) => Array.isArray(node.props.children) && node.props.children.includes("Launch plan"))).not.toHaveLength(0);
+  } finally { await act(async () => { renderer!.unmount(); }); }
+});
+
+test("Today completion loads authoritative permissions before transitioning the task", async () => {
+  const now = new Date();
+  const listed = { ...task(1, "Finish today", "", "finish_today"), dueAt: new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString() };
+  const authoritative = result({ ...listed, version: 5 });
+  authoritative.members = [{ memberId: "member_self", role: "assignee" }];
+  const transitions: Array<Record<string, unknown>> = [];
+  const client = connectedClient({
+    listProductTasks: async () => ({ items: [listed], membersByTaskId: { [listed.id]: authoritative.members }, nextCursor: "" }),
+    getProductTask: async () => authoritative,
+    transitionProductTask: async (_orgId, taskId, operation, input) => { transitions.push({ taskId, operation, ...input }); return result({ ...authoritative.task, status: "completed", version: 6 }); },
+  });
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client)); });
+  await settle();
+  try {
+    await act(async () => { renderer!.root.findByProps({ "aria-label": "Complete task" }).props.onClick(); });
+    await settle();
+    expect(transitions).toEqual([{ taskId: listed.id, operation: "complete", expectedVersion: 5, idempotencyKey: expect.any(String) }]);
+  } finally { await act(async () => { renderer!.unmount(); }); }
+});
+
 test("selecting Assigned by me queries explicit assignee exclusion and assigner inclusion filters", async () => {
   const options: Array<Record<string, unknown>> = [];
   const client = connectedClient({

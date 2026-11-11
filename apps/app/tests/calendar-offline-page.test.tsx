@@ -155,7 +155,7 @@ test("offline with a cached month shows saved events read-only with a stale-data
     await setOnline(false);
     expect(byId(renderer, "calendar-offline-banner").props["data-offline-state"]).toBe("offline-covered");
     expect(has(renderer, "calendar-day-event-2026-11-09-e1")).toBe(true);
-    await click(renderer, "calendar-agenda-item-e1");
+    await click(renderer, "calendar-day-event-2026-11-09-e1");
     expect(text(byId(renderer, "calendar-event-detail-title"))).toBe("Title e1");
   } finally { await act(async () => { renderer.unmount(); }); }
 });
@@ -178,7 +178,7 @@ test("offline editing never sends a write, disables save and delete, and keeps a
   try {
     await wait();
     await setOnline(false);
-    await click(renderer, "calendar-agenda-item-e1");
+    await click(renderer, "calendar-day-event-2026-11-09-e1");
     await click(renderer, "calendar-event-detail-edit");
     expect(has(renderer, "calendar-form-offline")).toBe(true);
     expect(byId(renderer, "calendar-form-save").props.disabled).toBe(true);
@@ -196,7 +196,7 @@ test("offline editing never sends a write, disables save and delete, and keeps a
     expect(drafts[0]).toMatchObject({ operation: "edit", unsynced: true, baseEntity: { id: "e1", version: 1 } });
     expect(text(byId(renderer, `calendar-draft-badge-${drafts[0]!.id}`))).toBe(t("calendar.draft_unsynced"));
     // The saved event itself is unchanged: drafts never enter authoritative results.
-    expect(text(byId(renderer, "calendar-agenda-item-e1"))).toContain("Title e1");
+    expect(text(byId(renderer, "calendar-day-event-2026-11-09-e1"))).toContain("Title e1");
   } finally { await act(async () => { renderer.unmount(); }); }
 });
 
@@ -205,7 +205,7 @@ test("reconnecting refreshes data but never auto-submits drafts; an explicit sub
   try {
     await wait();
     await setOnline(false);
-    await click(renderer, "calendar-agenda-create");
+    await click(renderer, "calendar-create-event");
     await change(renderer, "calendar-form-title", "Planned offline");
     await click(renderer, "calendar-form-save-draft");
     await wait();
@@ -236,7 +236,7 @@ test("a draft whose base event changed in the cloud requires explicit resolution
   try {
     await wait();
     await setOnline(false);
-    await click(renderer, "calendar-agenda-item-e1");
+    await click(renderer, "calendar-day-event-2026-11-09-e1");
     await click(renderer, "calendar-event-detail-edit");
     await change(renderer, "calendar-form-title", "Mine offline");
     await click(renderer, "calendar-form-save-draft");
@@ -261,7 +261,7 @@ test("a network failure while online can be kept as a draft and never shows save
   const { renderer } = await render();
   try {
     failNext = () => new DenApiError(503, "unavailable", "down");
-    await click(renderer, "calendar-agenda-create");
+    await click(renderer, "calendar-create-event");
     await change(renderer, "calendar-form-title", "Flaky");
     await submit(renderer);
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 2_300)); });

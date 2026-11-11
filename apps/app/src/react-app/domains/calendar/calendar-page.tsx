@@ -18,24 +18,25 @@ import { calendarScopeIdentity, type CalendarScope } from "./calendar-scope";
 import { resolveCalendarPageGate, type CalendarPageGate } from "./calendar-page-gate";
 import { useCalendarBootstrapQuery, useCalendarsQuery } from "./calendar-queries";
 import {
-  calendarGridRange,
   calendarMonthGrid,
   calendarToday,
   calendarWeekStart,
   moveCalendarSelection,
-  navigateCalendarMonth,
   readHiddenCalendarIds,
   reconcileHiddenCalendarIds,
   selectCalendarDate,
   visibleCalendarIds,
   writeHiddenCalendarIds,
 } from "./calendar-month-model";
-import { CalendarFilterList, CalendarMiniMonth, CalendarMonthGrid, CalendarMonthToolbar } from "./calendar-month-view";
+import { CalendarFilterList, CalendarMiniMonth, CalendarMonthGrid } from "./calendar-month-view";
 import { CalendarDayEvents } from "./calendar-day-events";
-import { CalendarAgenda, CalendarEventDetail } from "./calendar-agenda";
+import { CalendarEventDetail } from "./calendar-agenda";
 import { CalendarDraftList, CalendarOfflineBanner } from "./calendar-offline-view";
 import { layoutCalendarEvents } from "./calendar-event-layout";
 import { CalendarEventEditor } from "./calendar-event-editor";
+import { CalendarTimeView } from "./calendar-time-view";
+import { CalendarViewToolbar } from "./calendar-view-toolbar";
+import { calendarViewDays, calendarViewRange, navigateCalendarView, type CalendarViewMode } from "./calendar-view-model";
 import { calendarEventToForm, defaultCalendarEventForm, type CalendarEventFormValues } from "./calendar-event-form-model";
 import {
   defaultCalendarOfflineRuntime,
@@ -174,12 +175,14 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
   const today = React.useMemo(() => calendarToday(timeZone, props.clock.now()), [props.clock, timeZone]);
   const weekStart = React.useMemo(() => calendarWeekStart(locale), [locale]);
   const [navigation, setNavigation] = React.useState(() => selectCalendarDate(today));
+  const [view, setView] = React.useState<CalendarViewMode>("month");
   const [hiddenIds, setHiddenIds] = React.useState(() => readHiddenCalendarIds(props.scope));
   const calendarsQuery = useCalendarsQuery({ client: cloud.client, scope: props.scope, active: online });
-  const gridRange = React.useMemo(() => calendarGridRange(navigation.month, weekStart), [navigation.month, weekStart]);
-  const bootstrapQuery = useCalendarBootstrapQuery({ client: cloud.client, scope: props.scope, range: gridRange, active: online });
+  const visibleDays = React.useMemo(() => calendarViewDays(navigation.selectedDate, view, weekStart), [navigation.selectedDate, view, weekStart]);
+  const visibleRange = React.useMemo(() => calendarViewRange(navigation.selectedDate, view, weekStart), [navigation.selectedDate, view, weekStart]);
+  const bootstrapQuery = useCalendarBootstrapQuery({ client: cloud.client, scope: props.scope, range: visibleRange, active: online });
   useCalendarBaselinePersistence({ runtime: offlineRuntime, scope: props.scope, bootstrap: bootstrapQuery.data, online });
-  const offlineView = useCalendarOfflineView({ runtime: offlineRuntime, scope: props.scope, range: gridRange, online });
+  const offlineView = useCalendarOfflineView({ runtime: offlineRuntime, scope: props.scope, range: visibleRange, online });
   const eventDrafts = useCalendarEventDrafts(offlineRuntime, props.scope);
   // Offline shows only what the scoped local cache fully covers; in-memory online results are not reused.
   const calendars = online
@@ -206,9 +209,9 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
   const calendarsById = React.useMemo(() => new Map(calendars.map((calendar) => [calendar.id, calendar])), [calendars]);
   const dayEntries = React.useMemo(() => layoutCalendarEvents({
     events: sourceEvents ?? [],
-    days: calendarMonthGrid(navigation.month, weekStart),
+    days: visibleDays,
     visibleCalendarIds: visibleIds,
-  }), [navigation.month, sourceEvents, visibleIds, weekStart]);
+  }), [sourceEvents, visibleDays, visibleIds]);
 
   const [selectedEventId, setSelectedEventId] = React.useState<string | null>(null);
   const eventsById = React.useMemo(
@@ -222,7 +225,6 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
     if (!selectedEventId || !sourceEvents || (online && bootstrapQuery.isFetching)) return;
     if (!selectedEvent || !selectedEventVisible) setSelectedEventId(null);
   }, [bootstrapQuery.isFetching, online, selectedEvent, selectedEventId, selectedEventVisible, sourceEvents]);
-  const selectedDayEntries = dayEntries.get(navigation.selectedDate.toString()) ?? [];
   const [editor, setEditor] = React.useState<
     | { mode: "create"; instance: number; draftId?: string; form?: CalendarEventFormValues }
     | { mode: "edit"; instance: number; eventId: string; draftId?: string; form?: CalendarEventFormValues; draftBaseVersion?: number }
@@ -299,7 +301,7 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
 
   return (
     <div
-      className="@container/calendar flex min-h-0 min-w-0 flex-1 overflow-y-auto"
+      className="@container/calendar relative flex min-h-0 min-w-0 flex-1 overflow-y-auto"
       data-testid="calendar-layout"
     >
     <div
@@ -334,55 +336,6 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
         <div id="calendar-filter-region" className={cn(filtersOpen ? "block" : "hidden", "@5xl/calendar:block")} data-testid="calendar-filter-region">
           <CalendarFilterList calendars={calendars} hiddenIds={hiddenIds} onToggle={toggleCalendar} />
         </div>
-      </aside>
-      <section className="order-1 flex min-h-[26rem] min-w-0 flex-1 flex-col gap-3 @5xl/calendar:order-none @5xl/calendar:min-h-0" aria-label={t("calendar.month_view")}>
-        <CalendarMonthToolbar
-          state={navigation}
-          locale={locale}
-          onPrevious={() => setNavigation((current) => navigateCalendarMonth(current, -1))}
-          onNext={() => setNavigation((current) => navigateCalendarMonth(current, 1))}
-          onToday={() => setNavigation(selectCalendarDate(today))}
-        />
-        {!online ? <CalendarOfflineBanner view={offlineView} locale={locale} /> : null}
-        {online && bootstrapQuery.isError ? (
-          <p className="text-sm text-dls-secondary" role="alert" data-testid="calendar-events-error">{t("calendar.events_unavailable")}</p>
-        ) : null}
-        <CalendarMonthGrid
-          state={navigation}
-          today={today}
-          weekStart={weekStart}
-          locale={locale}
-          onSelectDate={(date) => setNavigation(selectCalendarDate(date))}
-          onMoveSelection={(days) => setNavigation((current) => moveCalendarSelection(current, days))}
-          renderDayContent={(date, selected) => {
-            const key = date.toString();
-            const entries = dayEntries.get(key) ?? [];
-            if (entries.length === 0) return null;
-            return (
-              <CalendarDayEvents
-                date={key}
-                entries={entries}
-                calendarsById={calendarsById}
-                locale={locale}
-                onOpenEvent={(eventId) => openEvent(eventId, date)}
-                onShowMore={() => setNavigation(selectCalendarDate(date))}
-                focusable={selected}
-              />
-            );
-          }}
-        />
-      </section>
-      <aside className="order-3 flex shrink-0 flex-col gap-3 @5xl/calendar:order-none @5xl/calendar:min-h-0 @5xl/calendar:w-72 @5xl/calendar:overflow-auto" aria-label={t("calendar.day_panel")} data-testid="calendar-day-panel">
-        <CalendarAgenda
-          date={navigation.selectedDate}
-          entries={selectedDayEntries}
-          calendarsById={calendarsById}
-          locale={locale}
-          selectedEventId={selectedEventId}
-          canCreate={canOpenEditor && calendars.length > 0}
-          onOpenEvent={(eventId) => openEvent(eventId)}
-          onCreate={startCreate}
-        />
         {eventDrafts.drafts.length > 0 ? (
           <CalendarDraftList
             drafts={eventDrafts.drafts}
@@ -395,6 +348,68 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
             }}
           />
         ) : null}
+      </aside>
+      <section className="order-1 flex min-h-[26rem] min-w-0 flex-1 flex-col gap-3 @5xl/calendar:order-none @5xl/calendar:min-h-0" aria-label={t(`calendar.${view}_view`)} data-testid="calendar-view-region">
+        <CalendarViewToolbar
+          view={view}
+          selectedDate={navigation.selectedDate}
+          days={visibleDays}
+          locale={locale}
+          canCreate={canOpenEditor && calendars.length > 0}
+          onPrevious={() => setNavigation((current) => selectCalendarDate(navigateCalendarView(current.selectedDate, view, -1)))}
+          onNext={() => setNavigation((current) => selectCalendarDate(navigateCalendarView(current.selectedDate, view, 1)))}
+          onToday={() => setNavigation(selectCalendarDate(today))}
+          onViewChange={setView}
+          onCreate={startCreate}
+        />
+        {!online ? <CalendarOfflineBanner view={offlineView} locale={locale} /> : null}
+        {online && bootstrapQuery.isError ? (
+          <p className="text-sm text-dls-secondary" role="alert" data-testid="calendar-events-error">{t("calendar.events_unavailable")}</p>
+        ) : null}
+        {view === "month" ? (
+          <CalendarMonthGrid
+            state={navigation}
+            today={today}
+            weekStart={weekStart}
+            locale={locale}
+            onSelectDate={(date) => setNavigation(selectCalendarDate(date))}
+            onMoveSelection={(days) => setNavigation((current) => moveCalendarSelection(current, days))}
+            renderDayContent={(date, selected) => {
+              const key = date.toString();
+              const entries = dayEntries.get(key) ?? [];
+              if (entries.length === 0) return null;
+              return (
+                <CalendarDayEvents
+                  date={key}
+                  entries={entries}
+                  calendarsById={calendarsById}
+                  locale={locale}
+                  onOpenEvent={(eventId) => openEvent(eventId, date)}
+                  onShowMore={() => setNavigation(selectCalendarDate(date))}
+                  focusable={selected}
+                />
+              );
+            }}
+          />
+        ) : (
+          <CalendarTimeView
+            view={view}
+            days={visibleDays}
+            events={sourceEvents ?? []}
+            visibleCalendarIds={visibleIds}
+            calendarsById={calendarsById}
+            displayTimeZone={timeZone}
+            locale={locale}
+            today={today}
+            now={props.clock.now}
+            selectedDate={navigation.selectedDate}
+            onSelectDate={(date) => setNavigation(selectCalendarDate(date))}
+            onOpenEvent={openEvent}
+          />
+        )}
+      </section>
+      {panelOpen ? (
+        <aside className="absolute inset-y-3 right-3 z-20 flex w-[min(26rem,calc(100%-1.5rem))] flex-col gap-3 overflow-auto rounded-xl border border-dls-border bg-dls-surface p-3 shadow-xl @3xl/calendar:inset-y-4 @3xl/calendar:right-4" aria-label={t("calendar.event_panel")} data-testid="calendar-event-panel">
         {editor && canOpenEditor && (editor.mode === "create" || editingEvent) ? (
           <CalendarEventEditor
             key={`editor:${editor.instance}`}
@@ -428,7 +443,8 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
             onEdit={canOpenEditor ? () => setEditor({ mode: "edit", instance: nextEditorInstance(), eventId: selectedEvent.id }) : undefined}
           />
         ) : null}
-      </aside>
+        </aside>
+      ) : null}
     </div>
     </div>
   );
