@@ -197,3 +197,40 @@ test("product task client reads strictly validated notification events", async (
   globalThis.fetch = async () => Response.json({ items: [{ id: "bad" }], nextSequence: 9, hasMore: false });
   await expect(client.listProductTaskNotificationEvents("org_one", { afterSequence: 8 })).rejects.toMatchObject({ code: "invalid_task_events" });
 });
+
+test("product task client reads paginated aggregate activity and sends read mutations", async () => {
+  const requests: Array<{ url: string; init?: RequestInit }> = [];
+  const activity = {
+    items: [{
+      event: { id: "event/one", sequence: 12, eventType: "task.assignee_added", payloadVersion: 1, taskId: "task/one", taskVersion: 3, listId: "list_one", actorMemberId: "member_two", affectedMemberId: "member_one", occurredAt: "2026-11-01T10:00:00Z", payload: { memberId: "member_one" } },
+      readAt: null,
+      attentionLevel: "attention",
+      task: { id: "task/one", displayNumber: 100134, title: "Follow up", accessible: true, deleted: false },
+      list: { id: "list_one", name: "Launch", marker: "L" },
+      actor: { memberId: "member_two", name: "Alice", avatar: null },
+    }],
+    nextCursor: "cursor_two",
+    hasMore: true,
+    unreadCount: 4,
+    latestSequence: 12,
+  };
+  globalThis.fetch = async (input, init) => {
+    requests.push({ url: String(input), init });
+    return String(input).includes("/v1/task-activity?") ? Response.json(activity) : Response.json({});
+  };
+  const client = createDenClient({ baseUrl: "https://work.example", token: "token_one" });
+  const page = await client.listProductTaskActivity("org_one", { cursor: "cursor one", limit: 30, unreadOnly: true });
+  expect(page.items[0]?.event.id).toBe("event/one");
+  expect(page.unreadCount).toBe(4);
+  expect(requests[0]?.url).toContain("/v1/task-activity?cursor=cursor+one&limit=30&unreadOnly=true");
+
+  await client.markProductTaskActivityRead("org_one", "event/one");
+  expect(requests[1]?.url).toContain("/v1/task-activity/event%2Fone/read");
+  expect(requests[1]?.init?.method).toBe("PUT");
+  await client.markAllProductTaskActivityRead("org_one", 12);
+  expect(requests[2]?.url).toContain("/v1/task-activity/read");
+  expect(JSON.parse(String(requests[2]?.init?.body))).toEqual({ throughSequence: 12 });
+
+  globalThis.fetch = async () => Response.json({ ...activity, items: [{ event: { id: "bad" } }] });
+  await expect(client.listProductTaskActivity("org_one")).rejects.toMatchObject({ code: "invalid_task_activity_page" });
+});

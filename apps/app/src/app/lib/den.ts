@@ -144,6 +144,35 @@ export type DenProductTaskActivity = {
   comments: Array<{ id: string; authorMemberId: string; body: string; createdAt: string; updatedAt: string }>;
   events: Array<{ id: string; eventType: string; actorMemberId: string; affectedMemberId: string | null; taskVersion: number; createdAt: string }>;
 };
+export type DenProductTaskActivityAttentionLevel = "ambient" | "attention" | "urgent";
+export type DenProductTaskActivityEvent = {
+  id: string;
+  sequence: number;
+  eventType: string;
+  payloadVersion: number;
+  taskId: string;
+  taskVersion: number;
+  listId: string | null;
+  actorMemberId: string | null;
+  affectedMemberId: string | null;
+  occurredAt: string;
+  payload: Record<string, unknown>;
+};
+export type DenProductTaskActivityItem = {
+  event: DenProductTaskActivityEvent;
+  readAt: string | null;
+  attentionLevel: DenProductTaskActivityAttentionLevel;
+  task: { id: string; displayNumber: number | null; title: string | null; accessible: boolean; deleted: boolean };
+  list: { id: string; name: string; marker: string } | null;
+  actor: { memberId: string; name: string; avatar: string | null } | null;
+};
+export type DenProductTaskActivityPage = {
+  items: DenProductTaskActivityItem[];
+  nextCursor: string;
+  hasMore: boolean;
+  unreadCount: number;
+  latestSequence: number;
+};
 export type DenProductTaskReminder = { id: string; recipientMemberId: string; scheduledAt: string; timezone: string; mode: "absolute" | "due_relative"; dueOffsetSeconds: number; state: "scheduled" | "delivered" | "canceled"; deliveredEventId: string | null };
 export type DenProductTaskNotificationEvent = { sequence: number; id: string; type: "reminder_due"; occurredAt: string; task: { id: string; title: string }; reminder: { scheduledAt: string } };
 export type DenProductTaskNotificationPage = { items: DenProductTaskNotificationEvent[]; nextSequence: number; hasMore: boolean };
@@ -886,6 +915,58 @@ function normalizeProductTaskNotificationPage(value: unknown): DenProductTaskNot
   const items = value.items.flatMap((item) => isRecord(item) && Number.isSafeInteger(item.sequence) && Number(item.sequence) > 0 && typeof item.id === "string" && item.type === "reminder_due" && typeof item.occurredAt === "string" && isRecord(item.task) && typeof item.task.id === "string" && typeof item.task.title === "string" && isRecord(item.reminder) && typeof item.reminder.scheduledAt === "string" ? [{ sequence: Number(item.sequence), id: item.id, type: "reminder_due" as const, occurredAt: item.occurredAt, task: { id: item.task.id, title: item.task.title }, reminder: { scheduledAt: item.reminder.scheduledAt } }] : []);
   if (items.length !== value.items.length) throw new DenApiError(500, "invalid_task_events", "Task event response was invalid.");
   return { items, nextSequence: Number(value.nextSequence), hasMore: value.hasMore };
+}
+
+function normalizeProductTaskActivityItem(value: unknown): DenProductTaskActivityItem | null {
+  if (!isRecord(value) || !isRecord(value.event) || !isRecord(value.task) ||
+    value.readAt !== null && typeof value.readAt !== "string" ||
+    !["ambient", "attention", "urgent"].includes(String(value.attentionLevel))) return null;
+  const event = value.event;
+  const task = value.task;
+  if (typeof event.id !== "string" || !event.id || !Number.isSafeInteger(event.sequence) || Number(event.sequence) < 1 ||
+    typeof event.eventType !== "string" || !event.eventType || !Number.isSafeInteger(event.payloadVersion) || Number(event.payloadVersion) < 1 ||
+    typeof event.taskId !== "string" || !event.taskId || !Number.isSafeInteger(event.taskVersion) || Number(event.taskVersion) < 1 ||
+    event.listId !== null && typeof event.listId !== "string" || event.actorMemberId !== null && typeof event.actorMemberId !== "string" ||
+    event.affectedMemberId !== null && typeof event.affectedMemberId !== "string" || typeof event.occurredAt !== "string" || !isRecord(event.payload) ||
+    typeof task.id !== "string" || task.displayNumber !== null && (!Number.isSafeInteger(task.displayNumber) || Number(task.displayNumber) < 1) ||
+    task.title !== null && typeof task.title !== "string" || typeof task.accessible !== "boolean" || typeof task.deleted !== "boolean") return null;
+  const list = value.list === null ? null : isRecord(value.list) && typeof value.list.id === "string" && typeof value.list.name === "string" && typeof value.list.marker === "string"
+    ? { id: value.list.id, name: value.list.name, marker: value.list.marker }
+    : undefined;
+  const actor = value.actor === null ? null : isRecord(value.actor) && typeof value.actor.memberId === "string" && typeof value.actor.name === "string" && (value.actor.avatar === null || typeof value.actor.avatar === "string")
+    ? { memberId: value.actor.memberId, name: value.actor.name, avatar: value.actor.avatar as string | null }
+    : undefined;
+  if (list === undefined || actor === undefined || event.taskId !== task.id) return null;
+  return {
+    event: {
+      id: event.id,
+      sequence: Number(event.sequence),
+      eventType: event.eventType,
+      payloadVersion: Number(event.payloadVersion),
+      taskId: event.taskId,
+      taskVersion: Number(event.taskVersion),
+      listId: event.listId as string | null,
+      actorMemberId: event.actorMemberId as string | null,
+      affectedMemberId: event.affectedMemberId as string | null,
+      occurredAt: event.occurredAt,
+      payload: event.payload,
+    },
+    readAt: value.readAt as string | null,
+    attentionLevel: value.attentionLevel as DenProductTaskActivityAttentionLevel,
+    task: { id: task.id, displayNumber: task.displayNumber as number | null, title: task.title as string | null, accessible: task.accessible, deleted: task.deleted },
+    list,
+    actor,
+  };
+}
+
+function normalizeProductTaskActivityPage(value: unknown): DenProductTaskActivityPage {
+  if (!isRecord(value) || !Array.isArray(value.items) || typeof value.nextCursor !== "string" || typeof value.hasMore !== "boolean" ||
+    !Number.isSafeInteger(value.unreadCount) || Number(value.unreadCount) < 0 || !Number.isSafeInteger(value.latestSequence) || Number(value.latestSequence) < 0) {
+    throw new DenApiError(500, "invalid_task_activity_page", "Task activity page response was invalid.");
+  }
+  const items = value.items.map(normalizeProductTaskActivityItem);
+  if (items.some((item) => item === null)) throw new DenApiError(500, "invalid_task_activity_page", "Task activity page response was invalid.");
+  return { items: items as DenProductTaskActivityItem[], nextCursor: value.nextCursor, hasMore: value.hasMore, unreadCount: Number(value.unreadCount), latestSequence: Number(value.latestSequence) };
 }
 
 function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
@@ -3903,6 +3984,23 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
       const payload = await requestJson<unknown>(baseUrls, `/v1/tasks/${encodeURIComponent(taskId)}/activity`, { method: "GET", token, organizationId: orgId, signal: requestOptions.signal });
       if (!isRecord(payload) || !Array.isArray(payload.comments) || !Array.isArray(payload.events)) throw new DenApiError(500, "invalid_task_activity", "Task activity response was invalid.");
       return payload as DenProductTaskActivity;
+    },
+
+    async listProductTaskActivity(orgId: string, options: { cursor?: string; limit?: number; unreadOnly?: boolean } = {}, requestOptions: { signal?: AbortSignal } = {}): Promise<DenProductTaskActivityPage> {
+      const params = new URLSearchParams();
+      if (options.cursor) params.set("cursor", options.cursor);
+      if (options.limit !== undefined) params.set("limit", String(options.limit));
+      if (options.unreadOnly !== undefined) params.set("unreadOnly", String(options.unreadOnly));
+      const payload = await requestJson<unknown>(baseUrls, `/v1/task-activity${params.size ? `?${params}` : ""}`, { method: "GET", token, organizationId: orgId, signal: requestOptions.signal });
+      return normalizeProductTaskActivityPage(payload);
+    },
+
+    async markProductTaskActivityRead(orgId: string, eventId: string): Promise<void> {
+      await requestJson<unknown>(baseUrls, `/v1/task-activity/${encodeURIComponent(eventId)}/read`, { method: "PUT", token, organizationId: orgId, body: {} });
+    },
+
+    async markAllProductTaskActivityRead(orgId: string, throughSequence: number): Promise<void> {
+      await requestJson<unknown>(baseUrls, "/v1/task-activity/read", { method: "PUT", token, organizationId: orgId, body: { throughSequence } });
     },
 
     async addProductTaskComment(orgId: string, taskId: string, input: { idempotencyKey: string; body: string }): Promise<void> {
