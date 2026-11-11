@@ -16,6 +16,7 @@ import {
   assertRecordedPromotion,
   createEvidence,
   redactSecrets,
+  secretPaths,
   withEvidenceResults,
 } from "./evidence.mjs";
 import { metadataForBuffer } from "./metadata.mjs";
@@ -214,6 +215,28 @@ test("recursively rejects and redacts broad secret-like evidence key names", () 
     assert.throws(() => assertNoSecrets({ safe: [{ nested: { [key]: "do-not-record" } }] }), /secret-like keys/);
     assert.equal(redactSecrets({ [key]: "secret" })[key], "[REDACTED]");
   }
+});
+
+test("standing policy authorization enum is allowed only at the two exact structural workflow paths", () => {
+  for (const wrap of [(workflow) => ({ workflow }), (workflow) => ({ evidence: { workflow } })]) {
+    assert.deepEqual(secretPaths(wrap({ authorization: "standing_policy" })), []);
+    for (const authorization of ["Bearer fixture-not-a-real-token", "standing_policy ", "STANDING_POLICY", "", null,
+      { value: "standing_policy", token: "fixture" }, ["standing_policy"]]) {
+      assert.throws(() => assertNoSecrets(wrap({ authorization })), /secret-like keys/);
+    }
+    for (const key of ["token", "accessKey", "secretKey", "refresh_token", "apiKey", "Authorization"]) {
+      assert.throws(() => assertNoSecrets(wrap({ authorization: "standing_policy", [key]: "fixture" })), /secret-like keys/);
+    }
+  }
+  for (const value of [
+    { authorization: "standing_policy" }, { nested: { workflow: { authorization: "standing_policy" } } },
+    { evidence: { nested: { workflow: { authorization: "standing_policy" } } } },
+    { evidence: { evidence: { workflow: { authorization: "standing_policy" } } } },
+    { workflow: { nested: { authorization: "standing_policy" } } },
+    { workflow: [{ authorization: "standing_policy" }] }, [{ workflow: { authorization: "standing_policy" } }],
+    { "evidence.workflow": { authorization: "standing_policy" } },
+    { evidence: [{ workflow: { authorization: "standing_policy" } }] },
+  ]) assert.throws(() => assertNoSecrets(value), /secret-like keys/);
 });
 
 test("creates versioned evidence without converting absent external results into success", () => {

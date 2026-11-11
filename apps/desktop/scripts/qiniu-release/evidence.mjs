@@ -44,13 +44,20 @@ function isSecretKey(key) {
 }
 
 export function secretPaths(value, current = "$", found = []) {
-  if (!value || typeof value !== "object") return found;
-  for (const [key, child] of Object.entries(value)) {
-    const childPath = `${current}.${key}`;
-    if (current === "$.workflow" && key === "authorization" && child === "standing_policy") continue;
-    if (isSecretKey(key)) found.push(childPath);
-    else secretPaths(child, childPath, found);
-  }
+  const visit = (node, segments, displayPath) => {
+    if (!node || typeof node !== "object") return;
+    for (const [key, child] of Object.entries(node)) {
+      const childPath = `${displayPath}.${key}`;
+      // Fixed schema enum, not an HTTP Authorization header. Match structural
+      // segments so dotted property names cannot impersonate either exact path.
+      const policyWorkflow = (segments.length === 1 && segments[0] === "workflow")
+        || (segments.length === 2 && segments[0] === "evidence" && segments[1] === "workflow");
+      if (policyWorkflow && key === "authorization" && child === "standing_policy") continue;
+      if (isSecretKey(key)) found.push(childPath);
+      else visit(child, [...segments, key], childPath);
+    }
+  };
+  visit(value, [], current);
   return found;
 }
 

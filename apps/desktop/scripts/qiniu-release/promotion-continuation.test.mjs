@@ -6,7 +6,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { CANDIDATE_RECORDS, EXCEPTIONS, candidateRecordPath, assertContinuationInputs, candidatePlan, command, continuePromotion, downloadCandidateObject, loadCommittedCandidate, main, safeFailure, verifyRestoredPackages } from "./promotion-continuation.mjs";
-import { STANDING_POLICY_SCOPE, STANDING_POLICY_VERSION, STANDING_POLICY_MINIMUM_VERSION } from "./standing-policy.mjs";
+import { STANDING_POLICY_SCOPE, STANDING_POLICY_VERSION, STANDING_POLICY_MINIMUM_VERSION, standingPolicyEvidence } from "./standing-policy.mjs";
 import { promotionLockKey } from "./constants.mjs";
 import { assertPromotionEvidence } from "./evidence.mjs";
 import { normalizeMacManifest } from "./manifest.mjs";
@@ -129,6 +129,40 @@ test("original 1.2.31 candidate semantics and exception text remain valid", () =
   assert.equal(plan.version, "1.2.31");
   assert.equal(assertPromotionEvidence(plan, original.evidence, EXCEPTIONS), original.evidence);
   assert.ok(Object.values(EXCEPTIONS).every((reason) => reason.includes("1.2.31") && reason.trim().length >= 20));
+});
+
+test("1.2.35 runner-shaped candidate accepts nested standing workflow enum but rejects secrets without weakening bindings", () => {
+  // Reproduce the real runner envelope: policy metadata is retained both in the
+  // candidate and evidence, with explicit workflow dispositions inside evidence.
+  // This is an in-memory fixture, never a publishable release record.
+  const record = standingCandidate("1.2.35");
+  const plan = candidatePlan(record, "/unused", standingOptions);
+  const policy = standingPolicyEvidence(plan, record.evidence, { ...standingOptions,
+    preCanaryExceptionReason: record.releasePolicy.reasons.canary,
+    metadataExceptionReason: record.releasePolicy.reasons.mutableCacheControl });
+  record.evidence.releasePolicy = structuredClone(policy.releasePolicy);
+  Object.assign(record.evidence.workflow, policy.workflow);
+  assert.equal(record.evidence.workflow.authorization, "standing_policy");
+  assert.equal(candidatePlan(record, "/unused", standingOptions).version, "1.2.35");
+  for (const mutate of [
+    (r) => { r.evidence.workflow.authorization = "Bearer fixture-not-a-real-token"; },
+    (r) => { r.evidence.workflow.token = "fixture"; },
+    (r) => { r.evidence.workflow.nested = { authorization: "standing_policy" }; },
+    (r) => { r.extra = { evidence: { workflow: { authorization: "standing_policy" } } }; },
+    (r) => { r.releasePolicy.reasons.token = "fixture"; },
+  ]) {
+    const changed = structuredClone(record); mutate(changed);
+    assert.throws(() => candidatePlan(changed, "/unused", standingOptions), /secret-like keys/);
+  }
+  for (const mutate of [
+    (r) => { r.sourceCommit = sha; },
+    (r) => { r.releasePolicy.currentCoordinates.immutableManifestDigest = "f".repeat(64); },
+    (r) => { r.evidence.canary = { result: "failed" }; },
+    (r) => { r.evidence.localVerification.notarization.status = "unavailable"; },
+  ]) {
+    const changed = structuredClone(record); mutate(changed);
+    assert.throws(() => candidatePlan(changed, "/unused", standingOptions));
+  }
 });
 
 for (const version of ["1.2.32", "1.2.33", "1.2.34"]) {

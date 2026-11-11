@@ -17,6 +17,12 @@ Releases selecting `stable-mac-arm64-standing-policy` version 1 SHALL use legal 
 - **AND** signing, separate accepted App/DMG notarization, staples, Gatekeeper, package/media trust, immutable non-overwrite and full public bytes, workflow serialization, lock ownership, explicit predecessor/race, channel size/ETag, CDN refresh, exact public digest/size and durable evidence before unlock SHALL remain mandatory
 - **AND** install/relaunch/retained-state and fleet cache convergence SHALL remain explicitly unverified
 
+#### Scenario: Candidate envelope preserves only the fixed workflow policy enum
+- **WHEN** release evidence or a promotion-candidate envelope records the standing policy workflow disposition
+- **THEN** the secret scanner SHALL permit only the literal `standing_policy` at structural paths `$.workflow.authorization` and `$.evidence.workflow.authorization`
+- **AND** it SHALL reject other authorization values, object/array values, arbitrary nested authorization fields, dotted-key path impersonation and token/secret fields alongside the permitted enum
+- **AND** this scanner compatibility SHALL NOT waive candidate schema, source/manifest binding, receipt, canary or promotion gates
+
 #### Scenario: Future committed candidate continuation is bound to trusted source and exact bytes
 - **WHEN** trusted `workflow_dispatch` on `dev` selects the policy for a future legal stable version
 - **THEN** continuation SHALL require exactly `apps/desktop/release-records/<version>-candidate.json`, valid candidate schema, committed `releasePolicy` with matching scope/version/minimum/reasons/coordinates, exact HEAD/origin/dispatch SHA, source ancestry and all three runtime versions at source and tooling checkout
