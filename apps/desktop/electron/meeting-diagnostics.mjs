@@ -1,6 +1,9 @@
 import { readFileSync, writeFileSync } from "node:fs";
 
-/** Rare native events survive renderer hangs. No URLs, titles or device identifiers. */
+/**
+ * Rare native events survive renderer hangs. No URLs, titles or device identifiers.
+ * @returns {(() => {storageAvailable: boolean, records: Array<Record<string, unknown>>}) & {record: (event: string, data?: Record<string, unknown>) => void}}
+ */
 export function installMeetingDiagnostics(app, filePath, roleOf) {
   let records = [];
   let storageAvailable = true;
@@ -22,5 +25,9 @@ export function installMeetingDiagnostics(app, filePath, roleOf) {
     window.webContents.on("render-process-gone", (_event, details) => record("renderer.gone", { ...context(), reason: details.reason, exitCode: details.exitCode }));
   });
   app.on("child-process-gone", (_event, details) => record("child.gone", { type: details.type, reason: details.reason, exitCode: details.exitCode }));
-  return () => ({ storageAvailable, records });
+  const read = () => ({ storageAvailable, records });
+  // Main-process health guards can append bounded, privacy-safe records to the
+  // same native trace that already survives renderer hangs and restarts.
+  read.record = record;
+  return read;
 }

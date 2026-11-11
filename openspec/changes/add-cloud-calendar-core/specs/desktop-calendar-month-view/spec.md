@@ -21,6 +21,11 @@ Desktop SHALL 为已登录成员提供独立 `/calendar` 页面，并以当前�
 - **WHEN** 未登录用户访问 `/calendar`
 - **THEN** Desktop 不显示任何缓存成员的日历内容并引导用户完成登录
 
+#### Scenario: 仅日历能力 gate 刷新
+- **WHEN** Desktop 配置刷新仅改变 `calendarEnabled` 或 `calendarWriteEnabled`，其他配置保持不变
+- **THEN** Desktop 将该差异应用到当前配置，开启能力后显示可用日历，关闭能力后隐藏受保护内容，撤回写 gate 后保留只读视图并禁用写入
+- **AND** 缺失或非法 gate 仍按关闭处理，开启 gate 不替代登录、完整 organization/member scope 或服务端授权
+
 ### Requirement: 日历入口位于 More 且可置顶
 Desktop SHALL 在 More 导航中提供日历入口，并允许成员使用既有导航定制机制将其置顶或取消置顶。
 

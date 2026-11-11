@@ -83,6 +83,8 @@ const DESKTOP_CONFIG_ITEMS = [
   "brandIconUrl",
   "brandAccentColor",
   "connectEnabled",
+  "calendarEnabled",
+  "calendarWriteEnabled",
   "desktopRemoteFeatureGates",
   "desktopRemotePolicyVersion",
   "onboardingPrompts",
@@ -145,7 +147,7 @@ function desktopConfigItemMatches(
   return previousValue === nextValue;
 }
 
-function getDesktopConfigActions(input: {
+export function getDesktopConfigActions(input: {
   currentConfig: DenDesktopConfig;
   latestConfig: DenDesktopConfig;
 }): DesktopConfigAction[] {

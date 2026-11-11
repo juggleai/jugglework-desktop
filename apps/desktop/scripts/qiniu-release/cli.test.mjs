@@ -27,7 +27,7 @@ for (const version of ["1.2.28", "1.2.29", "1.2.30", "1.2.31", "1.2.32", "1.2.33
     assert.match(usage(), /--metadata-exception-reason/);
     assert.match(usage(), /1\.2\.27, 1\.2\.28, 1\.2\.29, 1\.2\.30, 1\.2\.31, 1\.2\.32, 1\.2\.33, or 1\.2\.34/);
     assert.match(usage(), /CDN refresh and public Stable digest\/size read-back remain required/);
-    assert.match(usage(), /Future 1\.2\.35 is not authorized/);
+    assert.match(usage(), /Without explicit standing policy, 1\.2\.35 and later are not authorized by historical scopes/);
   });
 }
 
@@ -45,6 +45,20 @@ test(`CLI documents independent ${version} exceptions with a real canary require
   assert.match(usage(), /separate audited reasons of at least 20 trimmed characters each/);
   assert.match(usage(), /Without --pre-canary-exception-reason TEXT a real matching local upgrade canary is required/);
   assert.match(usage(), /explicitly failed or mismatched canary is never bypassed/);
+});
+
+test("CLI future 1.2.36 standing policy is explicit, scoped, and requires both audited reasons", () => {
+  const args = ["promote-channel", ...REQUIRED.with(1, "1.2.36").with(7, "arm64"),
+    "--standing-policy", "stable-mac-arm64-standing-policy",
+    "--pre-canary-exception-reason", "Operator selected standing policy to omit absent real-client canary",
+    "--metadata-exception-reason", "Operator selected standing policy to omit only Cache-Control metadata",
+    "--expected-previous-channel-digest", "a".repeat(64)];
+  assert.equal(parseArguments(args).options.standingPolicy, "stable-mac-arm64-standing-policy");
+  for (const [index, value] of [[2, "1.2.34"], [2, "1.2.36-alpha.1"], [4, "alpha"], [6, "windows"], [8, "x64"],
+    [14, "wrong"], [16, "short"], [18, "short"]]) {
+    assert.throws(() => parseArguments(args.with(index, value)));
+  }
+  assert.match(usage(), /--standing-policy stable-mac-arm64-standing-policy/);
 });
 }
 

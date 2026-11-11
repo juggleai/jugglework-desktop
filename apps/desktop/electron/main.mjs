@@ -1,6 +1,8 @@
 import { createMeetingScreenPicker } from "./meeting-screen-picker.mjs";
 import { installMeetingDiagnostics } from "./meeting-diagnostics.mjs";
 import { installMeetingCompactWindow } from "./meeting-compact-window.mjs";
+import { installMainWindowRecovery } from "./main-window-recovery.mjs";
+import { installRuntimeHealthMonitor } from "./runtime-health-monitor.mjs";
 import { readMeetingConfig } from "./meeting-config.mjs";
 import { createCloudDocsPanel } from './cloud-docs-panel.mjs';
 import { createCloudDocAttachments } from "./cloud-doc-attachments.mjs";
@@ -951,7 +953,9 @@ const IDLE_ROUTER_INFO = Object.freeze({
 let mainWindow = null;
 let meetingWindow = null;
 const meetingScreenPicker = createMeetingScreenPicker({ desktopCapturer, getMainWindow: () => mainWindow, getMeetingWindow: () => meetingWindow });
+/** @type {(() => {storageAvailable: boolean, records: Array<Record<string, unknown>>}) & {record?: (event: string, data?: Record<string, unknown>) => void}} */
 let readMeetingNativeDiagnostics = () => ({ storageAvailable: false, records: [] });
+let runtimeHealthMonitor = null;
 /** @type {import("electron").BrowserWindow | null} */
 let meetingMiniWindow = null;
 /** @type {ReturnType<typeof installMeetingCompactWindow> | null} */
@@ -3381,6 +3385,9 @@ async function createMainWindow() {
       plugins: true,
     },
   });
+  const windowRecovery = installMainWindowRecovery(mainWindow, {
+    record: (event, data) => readMeetingNativeDiagnostics.record?.(event, data),
+  });
   ensureJuggleChatRouterServer();
   if (!desktopPet) {
     desktopPet = createDesktopPet({
@@ -3444,6 +3451,7 @@ async function createMainWindow() {
 
   const officeComposerContents = mainWindow.webContents;
   mainWindow.on("closed", () => {
+    windowRecovery.dispose();
     desktopNotificationActionRelay.reset(officeComposerContents.id);
     desktopPet?.closeHost();
     officeSelectionBridge.cancel(officeComposerContents);
@@ -3632,6 +3640,7 @@ if (!app.requestSingleInstanceLock()) {
         return;
       }
       desktopPet?.dispose();
+      runtimeHealthMonitor?.dispose();
       fileWindows.dispose();
       remoteControlPowerMonitorController.stop();
       appTrayIndicator.stop();
@@ -3687,6 +3696,10 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(async () => {
     readMeetingNativeDiagnostics = installMeetingDiagnostics(app, path.join(app.getPath("userData"), "meeting-native-diagnostics.json"),
       window => window === mainWindow ? "main" : window === meetingWindow ? "meeting" : "other");
+    runtimeHealthMonitor = installRuntimeHealthMonitor({
+      runtimeManager,
+      record: (event, data) => readMeetingNativeDiagnostics.record?.(event, data),
+    });
     installMediaPermissionHandlers(session, () => mainWindow, () => meetingWindow);
     await runPendingNukeCleanup({
       env: process.env,

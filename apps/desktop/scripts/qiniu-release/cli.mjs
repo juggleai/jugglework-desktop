@@ -25,6 +25,7 @@ import {
 import { createReleasePlan, printablePlan } from "./plan.mjs";
 import { createQshellAdapter } from "./qshell.mjs";
 import { promoteChannel, recoverPromotionLock, uploadVersion, verifyCdn } from "./workflow.mjs";
+import { assertStandingPolicy } from "./standing-policy.mjs";
 
 const COMMANDS = new Set([
   "plan",
@@ -40,6 +41,7 @@ const COMMANDS = new Set([
 const OPTIONS = new Set([
   "version", "channel", "platform", "arch", "dist", "evidence", "bucket", "releaseDate", "actor", "reason",
   "audit", "commit", "localVerification", "canary", "notarizationExceptionReason", "preCanaryExceptionReason", "cacheExceptionReason", "metadataExceptionReason",
+  "standingPolicy", "expectedPreviousChannelDigest",
 ]);
 
 export function parseArguments(argv) {
@@ -73,6 +75,7 @@ export function parseArguments(argv) {
   assertPlatform(options.platform);
   if (options.platform === "windows") assertWindowsReleaseVersion(options.version);
   options.architectures = normalizeReleaseArchitectures(architectures, options.platform);
+  if (options.standingPolicy) assertStandingPolicy(options, options);
   if (command === "build" && commandArgv.length === 0) throw new Error("build requires a command argv after --");
   if (command === "recover-lock" && (!options.audit || !options.reason)) {
     throw new Error("recover-lock requires --reason TEXT and --audit PATH");
@@ -210,10 +213,13 @@ export async function runCli(argv, {
       preCanaryExceptionReason: options.preCanaryExceptionReason,
       cacheExceptionReason: options.cacheExceptionReason,
       metadataExceptionReason: options.metadataExceptionReason,
+      standingPolicy: options.standingPolicy,
+      expectedPreviousChannelDigest: options.expectedPreviousChannelDigest,
       now,
       onPromotionVerified: options.dryRun ? undefined : async (verified) => {
         const persisted = withEvidenceResults(evidence, {
-          workflow: { promotion: {
+          ...(verified.releasePolicy ? { releasePolicy: verified.releasePolicy } : {}),
+          workflow: { ...verified.workflow, promotion: {
             status: "verified",
             channelKey: verified.channelKey,
             cacheControl: verified.cacheControl,
@@ -223,6 +229,7 @@ export async function runCli(argv, {
             cacheException: verified.cacheException,
             metadataException: verified.metadataException,
             channelObject: verified.channelObject,
+            ...(verified.releasePolicy ? { observedMutableCacheControl: verified.observedMutableCacheControl, olderVersionCacheRisk: verified.olderVersionCacheRisk } : {}),
             promotedAt: now().toISOString(),
           } },
         }, now().toISOString());
@@ -238,6 +245,11 @@ export async function runCli(argv, {
 }
 
 export function usage() {
+  const standingUsage = "Standing policy is opt-in per release: --standing-policy stable-mac-arm64-standing-policy --pre-canary-exception-reason TEXT --metadata-exception-reason TEXT --expected-previous-channel-digest SHA256. Only exact stable/mac/arm64 >=1.2.35 is eligible; two independent trimmed reasons >=20 characters are required. Canary is waived only when absent; supplied failed/mismatched evidence is rejected. Only mutable Cache-Control mutation/validation is skipped; notarization, lock/predecessor/race/size/ETag, immutable/full public digests, CDN refresh and public read-back remain required.\n\n";
+  return standingUsage + historicalUsage().replace("Future 1.2.35 is not authorized", "Without explicit standing policy, 1.2.35 and later are not authorized by historical scopes");
+}
+
+function historicalUsage() {
   return `Usage: node cli.mjs <command> --version VERSION --channel stable|alpha --platform mac|windows --arch ARCH[,ARCH] --dist PATH --evidence PATH [options] [-- argv...]\n\nmac architectures: arm64, x64, universal (universal must be used alone). windows architectures: exactly arm64,x64; input order is normalized and VERSION must be greater than 1.2.17. Stable requires X.Y.Z; alpha also accepts SemVer prereleases. build executes argv after -- without a shell. Windows immutable upload requires persisted, passed local-verification evidence. recover-lock additionally requires --reason TEXT and --audit PATH and recovers only the selected --platform lock. Audited Apple pre-canary exceptions include stable macOS arm64 1.2.22 through 1.2.34 via --pre-canary-exception-reason TEXT. The cache exception is restricted to stable macOS arm64 1.2.23 through 1.2.26 and skips Cache-Control, CDN refresh, and public Stable-manifest convergence validation. Exact stable macOS arm64 1.2.27, 1.2.28, 1.2.29, 1.2.30, 1.2.31, 1.2.32, 1.2.33, or 1.2.34 accepts --metadata-exception-reason TEXT to skip only Qiniu Cache-Control metadata change/verification; CDN refresh and public Stable digest/size read-back remain required. Exceptions require separate audited reasons of at least 20 trimmed characters each; signing and notarization remain mandatory. Exact stable macOS arm64 1.2.31 allows independent pre-canary and metadata-only exceptions scoped to stable-1.2.31-only, never notarization or broader cache exceptions. Exact stable macOS arm64 1.2.32 allows independent pre-canary and metadata-only exceptions scoped to stable-1.2.32-only, never notarization or broader cache exceptions. Exact stable macOS arm64 1.2.33 allows independent pre-canary and metadata-only exceptions scoped to stable-1.2.33-only, never notarization or broader cache exceptions. Exact stable macOS arm64 1.2.34 allows independent pre-canary and metadata-only exceptions scoped to stable-1.2.34-only, never notarization or broader cache exceptions. Without --pre-canary-exception-reason TEXT a real matching local upgrade canary is required; an explicitly failed or mismatched canary is never bypassed. Future 1.2.35 is not authorized for any exception.\nCommands: plan, build, verify-local, upload-version, verify-cdn, promote-channel, verify-only, resume, recover-lock\n`;
 }
 

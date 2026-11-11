@@ -4,6 +4,25 @@ Define a reproducible and auditable release process that publishes immutable des
 
 ## ADDED Requirements
 
+### Requirement: Stable macOS ARM64 standing policy is explicitly selected per release
+Releases selecting `stable-mac-arm64-standing-policy` version 1 SHALL use legal exact stable macOS ARM64 versions at or above `1.2.35`, independent audited reasons and durable release-bound evidence.
+
+#### Scenario: Explicit current and future release selection
+- **WHEN** the operator selects the standing policy for exact stable/mac/arm64 `1.2.35`, `1.2.36` or a later legal stable version
+- **THEN** CLI and trusted dev continuation SHALL require explicit policy selection, two independent reasons of at least 20 trimmed characters, policyVersion 1 and minimumVersion `1.2.35`
+- **AND** each used exception SHALL record scope `stable-mac-arm64-standing-policy`, policy version/minimum, exact release coordinates and reason; historical exact-version candidates and evidence SHALL retain their existing semantics
+- **AND** standard `releasePolicy` SHALL include `scope`, `policyVersion`, `minVersion`, `currentCoordinates` bound to full source commit/immutable manifest digest/mutable manifest key, and separate `reasons.canary` / `reasons.mutableCacheControl`; workflow SHALL record `authorization: standing_policy`, `explicit: true`, applicable `skipped_by_standing_policy` dispositions, observed/absent/unknown mutable Cache-Control and older-version cache risk
+- **AND** supplied canary evidence SHALL match the full source commit and complete artifact SHA-256 inventory, in addition to the existing version/architecture/manifest/check contract
+- **AND** only an absent real-client upgrade canary and mutable Cache-Control metadata preflight/mutation/validation MAY be omitted; supplied failed/mismatched canary, Alpha, Windows, x64/universal, malformed/below-minimum versions, missing/wrong policy/reason and notarization/broader cache exemptions SHALL be rejected
+- **AND** signing, separate accepted App/DMG notarization, staples, Gatekeeper, package/media trust, immutable non-overwrite and full public bytes, workflow serialization, lock ownership, explicit predecessor/race, channel size/ETag, CDN refresh, exact public digest/size and durable evidence before unlock SHALL remain mandatory
+- **AND** install/relaunch/retained-state and fleet cache convergence SHALL remain explicitly unverified
+
+#### Scenario: Future committed candidate continuation is bound to trusted source and exact bytes
+- **WHEN** trusted `workflow_dispatch` on `dev` selects the policy for a future legal stable version
+- **THEN** continuation SHALL require exactly `apps/desktop/release-records/<version>-candidate.json`, valid candidate schema, committed `releasePolicy` with matching scope/version/minimum/reasons/coordinates, exact HEAD/origin/dispatch SHA, source ancestry and all three runtime versions at source and tooling checkout
+- **AND** manifest/object digests, immutable key paths, approved predecessor, original accepted App/DMG receipts and fresh package/media/Apple/CDN verification SHALL remain strongly bound before promotion
+- **AND** no hard-coded latest-version allowlist SHALL prevent explicitly selected `1.2.36`; wrong paths, uncommitted/mismatched candidates or absent policy SHALL stop before authentication or remote effects
+
 ### Requirement: Versioned desktop release objects are immutable
 Every published desktop version SHALL have an immutable version directory under `jugglework/releases/v<version>/`, and the release process MUST refuse to overwrite an existing versioned object.
 

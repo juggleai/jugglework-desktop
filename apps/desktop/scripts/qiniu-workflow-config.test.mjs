@@ -80,12 +80,15 @@ describe("Qiniu release workflow policy", () => {
     assert.equal(inputs.mode.default, "build");
     assert.equal(inputs.verification_only.type, "boolean");
     assert.equal(inputs.verification_only.default, false);
-    assert.equal(inputs.candidate_record.default, "apps/desktop/release-records/1.2.31-candidate.json");
+    assert.equal(inputs.candidate_record.default, "");
+    assert.equal(inputs.standing_policy.default, "");
+    assert.deepEqual(inputs.standing_policy.options, ["", "stable-mac-arm64-standing-policy"]);
     const job = workflow.jobs["promote-existing-macos-arm64"];
     assert.equal(job.if, "inputs.mode == 'promotion-only'");
     assert.equal(job.environment, "qiniu-desktop-release");
     assert.equal(job["runs-on"], "macos-26");
     assert.equal(job.env.VERIFICATION_ONLY, "${{ inputs.verification_only }}");
+    assert.equal(job.env.STANDING_POLICY, "${{ inputs.standing_policy }}");
     const source = job.steps.map((step) => step.run ?? "").join("\n");
     assert.match(source, /test "\$GITHUB_REF" = refs\/heads\/dev/);
     assert.match(source, /git rev-parse HEAD.*GITHUB_SHA/);
@@ -106,13 +109,17 @@ describe("Qiniu release workflow policy", () => {
     }
     assert.match(source, /if \[ "\$VERIFICATION_ONLY" = true \]; then\s+node .*promotion-continuation\.mjs --verify-only/);
     assert.match(source, /test "\$VERIFICATION_ONLY" = false/);
-    for (const version of ["1.2.31", "1.2.32", "1.2.33", "1.2.34", "1.2.35", "1.2.33-alpha.1", "v1.2.33", "1.2.330", "1.2.34-alpha.1", "v1.2.34", "1.2.340"]) {
-      for (const recordVersion of ["1.2.31", "1.2.32", "1.2.33", "1.2.34", "1.2.35"]) {
+    for (const version of ["1.2.31", "1.2.32", "1.2.33", "1.2.34", "1.2.35", "1.2.36", "1.2.33-alpha.1", "v1.2.33", "1.2.330", "1.2.34-alpha.1", "v1.2.34", "1.2.340"]) {
+      for (const recordVersion of ["1.2.31", "1.2.32", "1.2.33", "1.2.34", "1.2.35", "1.2.36", "1.2.330", "1.2.340"]) {
+        for (const standingPolicy of ["", "stable-mac-arm64-standing-policy", "wrong"]) {
         const result = spawnSync("bash", ["-c", gate], { env: {
           GITHUB_REF: "refs/heads/dev", VERSION: version, CHANNEL: "stable", RELEASE_PLATFORM: "mac", PROMOTE: "true",
           CANDIDATE_RECORD: `apps/desktop/release-records/${recordVersion}-candidate.json`,
+          STANDING_POLICY: standingPolicy,
         } });
-        assert.equal(result.status === 0, ["1.2.31", "1.2.32", "1.2.33", "1.2.34"].includes(version) && version === recordVersion);
+        const historical = ["1.2.31", "1.2.32", "1.2.33", "1.2.34"].includes(version);
+        assert.equal(result.status === 0, version === recordVersion && (historical ? standingPolicy === "" : /^1\.2\.\d+$/.test(version) && standingPolicy === "stable-mac-arm64-standing-policy"));
+        }
       }
     }
     assert.match(source, /pnpm install --frozen-lockfile --ignore-scripts/);

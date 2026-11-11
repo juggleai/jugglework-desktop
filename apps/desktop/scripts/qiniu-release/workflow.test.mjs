@@ -7,6 +7,13 @@ import { readBackDigest } from "./cdn.mjs";
 import { CHANNEL_MANIFEST_CACHE_CONTROL, publicUrl } from "./constants.mjs";
 import { metadataForBuffer } from "./metadata.mjs";
 import { preflightImmutable, promoteChannel, recoverPromotionLock, uploadVersion, verifyCdn } from "./workflow.mjs";
+import { STANDING_POLICY_SCOPE, standingPolicyException } from "./standing-policy.mjs";
+
+const standing = {
+  standingPolicy: STANDING_POLICY_SCOPE,
+  preCanaryExceptionReason: "Operator selected standing policy to omit only absent real-client upgrade canary for this release",
+  metadataExceptionReason: "Operator selected standing policy to omit only mutable Cache-Control metadata mutation and validation for this release",
+};
 
 function object(key, content, type = "artifact") {
   return {
@@ -779,4 +786,111 @@ test("dry runs cause no Qiniu, refresh, or read-back mutation", async () => {
   assert.deepEqual(promotion.readBack, { sha256: plan.manifest.sha256, size: plan.manifest.size });
   assert.deepEqual(qiniu.calls, []);
   assert.equal(externalCalls, 0);
+});
+
+for (const version of ["1.2.35", "1.2.36"]) {
+  test(`${version} standing policy retains locked promotion, refresh, full public digest and durable scoped evidence`, async () => {
+    const plan = fixturePlan(version);
+    const evidence = verifiedEvidence(plan);
+    evidence.commit = "a".repeat(40);
+    const matchingCanary = { ...evidence.canary, commit: evidence.commit,
+      artifacts: plan.objects.map(({ name, sha256 }) => ({ name, sha256 })) };
+    const predecessor = "version: 1.2.34\n";
+    const expectedPreviousChannelDigest = metadataForBuffer(predecessor, "latest-mac.yml").sha256;
+    const lockKey = "jugglework/releases/locks/stable-mac.lock";
+    for (const presentCanary of [false, true]) {
+      evidence.canary = presentCanary ? matchingCanary : null;
+      for (const failure of [null, "predecessor", "immutable", "ownership", "race", "size", "etag", "refresh", "digest", "length", "persist"]) {
+        const qiniu = createFakeQiniu(new Map([...plan.objects, plan.manifest].map((item) => [item.key, { size: item.size, etag: item.etag }])));
+        qiniu.state.set(plan.channelManifest.key, { content: predecessor });
+        if (failure === "immutable") qiniu.state.get(plan.objects[0].key).etag = "wrong";
+        const stat = qiniu.stat;
+        let lockStats = 0;
+        qiniu.stat = async (key) => {
+          const value = await stat(key);
+          if (failure === "ownership" && key === lockKey && value && ++lockStats === 2) return { ...value, etag: "stolen" };
+          if (key === plan.channelManifest.key && value && !value.content) {
+            if (failure === "size") return { ...value, size: value.size + 1 };
+            if (failure === "etag") return { ...value, etag: "wrong" };
+          }
+          return value;
+        };
+        if (failure === "race") {
+          let reads = 0;
+          qiniu.readContent = async () => ++reads === 1 ? predecessor : "raced";
+        }
+        let refreshed = false;
+        let recorded;
+        const operation = promoteChannel(plan, evidence, { ...standing, qiniu,
+          expectedPreviousChannelDigest: failure === "predecessor" ? "a".repeat(64) : expectedPreviousChannelDigest,
+          refresh: async () => { if (failure === "refresh") throw new Error("refresh failed"); refreshed = true; },
+          fetchImpl: async () => {
+            assert.equal(refreshed, true);
+            return new Response(failure === "digest" ? "wrong" : plan.manifest.content,
+              { headers: { "content-length": String(plan.manifest.size + (failure === "length" ? 1 : 0)) } });
+          },
+          readBack: (url, digest, options) => readBackDigest(url, digest, { ...options, attempts: 1 }),
+          onPromotionVerified: async (verified) => {
+            assert.equal(qiniu.state.has(lockKey), true);
+            recorded = withEvidenceResults(evidence, { releasePolicy: verified.releasePolicy,
+              workflow: { ...verified.workflow, promotion: { ...verified, workflow: undefined, status: "verified", promotedAt: "2026-11-11T00:00:00Z" } } });
+            assertRecordedPromotion(plan, recorded);
+            assert.equal(recorded.workflow.authorization, "standing_policy");
+            assert.equal(recorded.workflow.canary, presentCanary ? "verified" : "skipped_by_standing_policy");
+            assert.equal(recorded.workflow.mutableCacheControlMutation, "skipped_by_standing_policy");
+            assert.equal(recorded.workflow.mutableCacheControlValidation, "skipped_by_standing_policy");
+            assert.equal(verified.observedMutableCacheControl.status, "absent");
+            for (const mutate of [
+              (e) => { e.releasePolicy.currentCoordinates.commit = "b".repeat(40); },
+              (e) => { e.releasePolicy.currentCoordinates.immutableManifestDigest = "b".repeat(64); },
+              (e) => { e.workflow.canary = "passed"; },
+              (e) => { delete e.workflow.promotion.olderVersionCacheRisk; },
+            ]) {
+              const changed = structuredClone(recorded); mutate(changed);
+              assert.throws(() => assertRecordedPromotion(plan, changed));
+            }
+            assert.deepEqual(verified.preCanaryException, presentCanary ? null : standingPolicyException(plan, standing.preCanaryExceptionReason));
+            assert.deepEqual(verified.metadataException, standingPolicyException(plan, standing.metadataExceptionReason));
+            if (failure === "persist") throw new Error("persist failed");
+          },
+        });
+        if (failure) await assert.rejects(operation);
+        else {
+          await operation;
+          for (const field of ["scope", "policyVersion", "minimumVersion", "version", "channel", "platform", "architectures", "reason"]) {
+            const changed = structuredClone(recorded);
+            changed.workflow.promotion.metadataException[field] = "wrong";
+            assert.throws(() => assertRecordedPromotion(plan, changed));
+          }
+        }
+        assert.equal(qiniu.calls.some(([method]) => method === "setCacheControl"), false);
+        assert.equal(qiniu.state.has(lockKey), ["ownership", "size", "etag", "refresh", "digest", "length", "persist"].includes(failure));
+      }
+    }
+  });
+}
+
+test("standing policy rejects wrong scope/coordinates, missing reasons, failed/mismatched canary and wider waivers before Qiniu", async () => {
+  for (const mutation of [
+    (p, e, o) => { o.standingPolicy = "wrong"; }, (p, e, o) => { delete o.standingPolicy; },
+    (p, e, o) => { o.preCanaryExceptionReason = " "; }, (p, e, o) => { delete o.metadataExceptionReason; },
+    (p) => { p.version = "1.2.34"; }, (p) => { p.version = "1.2.36-alpha.1"; },
+    (p) => { p.channel = "alpha"; }, (p) => { p.platform = "windows"; }, (p) => { p.architectures = ["x64"]; },
+    (p, e) => { e.canary = { ...verifiedEvidence(p).canary, result: "failed" }; },
+    (p, e) => { e.canary = { ...verifiedEvidence(p).canary, manifestSha256: "wrong" }; },
+    (p, e) => { e.canary = { ...verifiedEvidence(p).canary, commit: "b".repeat(40), artifacts: p.objects }; },
+    (p, e) => { e.canary = { ...verifiedEvidence(p).canary, commit: e.commit, artifacts: p.objects.map((o) => ({ ...o, sha256: "wrong" })) }; },
+    (p, e) => { e.localVerification.notarization.status = "unavailable"; },
+    (p, e, o) => { o.notarizationExceptionReason = "Operator asks to waive all Apple notarization gates"; },
+    (p, e, o) => { o.cacheExceptionReason = "Operator asks to waive public cache convergence gates"; },
+    (p, e, o) => { delete o.expectedPreviousChannelDigest; },
+  ]) {
+    const plan = fixturePlan("1.2.36");
+    const evidence = verifiedEvidence(plan); evidence.canary = null; evidence.commit = "a".repeat(40);
+    const options = { ...standing, expectedPreviousChannelDigest: "a".repeat(64) };
+    mutation(plan, evidence, options);
+    const qiniu = createFakeQiniu();
+    await assert.rejects(promoteChannel(plan, evidence, { ...options, qiniu }));
+    assert.deepEqual(qiniu.calls, []);
+  }
 });

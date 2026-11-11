@@ -1,5 +1,6 @@
 import { open, rename, unlink } from "node:fs/promises";
 import path from "node:path";
+import { STANDING_POLICY_SCOPE, assertStandingPolicy, assertStandingPolicyException, standingPolicyEvidence } from "./standing-policy.mjs";
 
 import {
   CDN_ORIGIN,
@@ -46,6 +47,7 @@ export function secretPaths(value, current = "$", found = []) {
   if (!value || typeof value !== "object") return found;
   for (const [key, child] of Object.entries(value)) {
     const childPath = `${current}.${key}`;
+    if (current === "$.workflow" && key === "authorization" && child === "standing_policy") continue;
     if (isSecretKey(key)) found.push(childPath);
     else secretPaths(child, childPath, found);
   }
@@ -432,11 +434,36 @@ export function assertRecordedPromotion(plan, evidence) {
   const promotion = evidence.workflow?.promotion;
   const cacheException = promotion?.cacheException;
   const metadataException = promotion?.metadataException;
-  const metadataExceptionAllowed = metadataException?.scope === `stable-${plan.version}-only`
+  const standing = metadataException?.scope === STANDING_POLICY_SCOPE;
+  if (standing) {
+    assertStandingPolicyException(plan, metadataException);
+    const expected = standingPolicyEvidence(plan, evidence, { standingPolicy: STANDING_POLICY_SCOPE,
+      preCanaryExceptionReason: evidence.releasePolicy?.reasons?.canary, metadataExceptionReason: metadataException.reason });
+    assertPromotionEvidence(plan, evidence, { standingPolicy: STANDING_POLICY_SCOPE,
+      preCanaryExceptionReason: expected.releasePolicy.reasons.canary, metadataExceptionReason: metadataException.reason });
+    if (JSON.stringify(evidence.releasePolicy) !== JSON.stringify(expected.releasePolicy)
+      || Object.entries(expected.workflow).some(([key, value]) => evidence.workflow[key] !== value)
+      || promotion.olderVersionCacheRisk !== true
+      || !["observed", "absent", "unknown"].includes(promotion.observedMutableCacheControl?.status)) {
+      throw new Error("Standing policy release coordinates, workflow disposition or cache risk evidence mismatch");
+    }
+    if (promotion.notarizationException || cacheException) throw new Error("Standing policy cannot record wider exceptions");
+    if (evidence.canary == null) {
+      assertStandingPolicyException(plan, promotion.preCanaryException);
+      if (promotion.preCanaryException.reason !== expected.releasePolicy.reasons.canary) throw new Error("Standing policy canary reason mismatch");
+    }
+    else {
+      assertCanary(plan, evidence.canary);
+      if (promotion.preCanaryException) throw new Error("Standing policy canary waiver applies only when absent");
+    }
+  } else if (promotion?.preCanaryException?.scope === STANDING_POLICY_SCOPE) {
+    throw new Error("Standing policy requires independent metadata evidence");
+  }
+  const metadataExceptionAllowed = standing || (metadataException?.scope === `stable-${plan.version}-only`
     && typeof metadataException.reason === "string"
     && metadataException.reason.trim().length >= 20
     && plan.channel === "stable" && plan.platform === "mac"
-    && ["1.2.27", "1.2.28", "1.2.29", "1.2.30", "1.2.31", "1.2.32", "1.2.33", "1.2.34"].includes(plan.version) && sameArray(plan.architectures, ["arm64"]);
+    && ["1.2.27", "1.2.28", "1.2.29", "1.2.30", "1.2.31", "1.2.32", "1.2.33", "1.2.34"].includes(plan.version) && sameArray(plan.architectures, ["arm64"]));
   const cacheExceptionAllowed = cacheException?.scope === `stable-${plan.version}-only`
     && typeof cacheException.reason === "string"
     && cacheException.reason.length >= 20
@@ -534,9 +561,11 @@ export function assertPromotionEvidence(plan, evidence, {
   preCanaryExceptionReason = "",
   cacheExceptionReason = "",
   metadataExceptionReason = "",
+  standingPolicy = "",
 } = {}) {
   assertEvidenceMatchesPlan(plan, evidence);
-  if (metadataExceptionReason) {
+  if (standingPolicy) assertStandingPolicy(plan, { standingPolicy, preCanaryExceptionReason, metadataExceptionReason, notarizationExceptionReason, cacheExceptionReason });
+  if (metadataExceptionReason && !standingPolicy) {
     assertStableMetadataException(plan, metadataExceptionReason);
     if (cacheExceptionReason) throw new Error("Metadata and cache exceptions cannot be combined");
   }
@@ -550,10 +579,17 @@ export function assertPromotionEvidence(plan, evidence, {
     assertLocalVerification(plan, evidence.localVerification);
   }
   if (preCanaryExceptionReason) {
-    assertStablePreCanaryException(plan, preCanaryExceptionReason);
+    if (!standingPolicy) assertStablePreCanaryException(plan, preCanaryExceptionReason);
     if (evidence.canary !== null && evidence.canary !== undefined) assertCanary(plan, evidence.canary);
   } else {
     assertCanary(plan, evidence.canary);
+  }
+  if (standingPolicy && evidence.canary != null) {
+    if (evidence.canary.commit !== evidence.commit || !Array.isArray(evidence.canary.artifacts)
+      || evidence.canary.artifacts.length !== plan.objects.length
+      || plan.objects.some((object) => !evidence.canary.artifacts.some((item) => item.name === object.name && item.sha256 === object.sha256))) {
+      throw new Error("Standing policy cannot bypass supplied canary source commit or artifact digest mismatch");
+    }
   }
   if (cacheExceptionReason) assertStableCacheException(plan, cacheExceptionReason);
   const objects = [...plan.objects, plan.manifest];

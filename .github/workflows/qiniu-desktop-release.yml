@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "Build a release or continue only an approved exact 1.2.31/1.2.32/1.2.33/1.2.34 candidate"
+        description: "Build a release or continue an approved exact committed stable/mac/arm64 candidate"
         required: true
         default: build
         type: choice
@@ -12,10 +12,18 @@ on:
           - build
           - promotion-only
       candidate_record:
-        description: "Promotion-only: version-matched fixed committed 1.2.31/1.2.32/1.2.33/1.2.34 candidate record path"
+        description: "Promotion-only: apps/desktop/release-records/<exact-version>-candidate.json"
         required: false
-        default: apps/desktop/release-records/1.2.31-candidate.json
+        default: ""
         type: string
+      standing_policy:
+        description: "Promotion-only: explicitly select standing policy for stable/mac/arm64 >=1.2.35; reasons must be committed in candidate releasePolicy"
+        required: false
+        default: ""
+        type: choice
+        options:
+          - ""
+          - stable-mac-arm64-standing-policy
       version:
         description: "Exact release version (stable X.Y.Z; alpha may be prerelease)"
         required: true
@@ -310,6 +318,7 @@ jobs:
       PROMOTE: ${{ inputs.promote }}
       VERIFICATION_ONLY: ${{ inputs.verification_only }}
       CANDIDATE_RECORD: ${{ inputs.candidate_record }}
+      STANDING_POLICY: ${{ inputs.standing_policy }}
     steps:
       - name: Require exact continuation coordinates and dev dispatch
         shell: bash
@@ -324,8 +333,13 @@ jobs:
             *) exit 1 ;;
           esac
           case "$VERSION:$CANDIDATE_RECORD" in
-            1.2.31:apps/desktop/release-records/1.2.31-candidate.json|1.2.32:apps/desktop/release-records/1.2.32-candidate.json|1.2.33:apps/desktop/release-records/1.2.33-candidate.json|1.2.34:apps/desktop/release-records/1.2.34-candidate.json) ;;
-            *) exit 1 ;;
+            1.2.31:apps/desktop/release-records/1.2.31-candidate.json|1.2.32:apps/desktop/release-records/1.2.32-candidate.json|1.2.33:apps/desktop/release-records/1.2.33-candidate.json|1.2.34:apps/desktop/release-records/1.2.34-candidate.json) test -z "${STANDING_POLICY-}" ;;
+            *)
+              test "${STANDING_POLICY-}" = stable-mac-arm64-standing-policy
+              test "$CANDIDATE_RECORD" = "apps/desktop/release-records/$VERSION-candidate.json"
+              [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+              # Exact minimum/safe-number/schema/source checks run after trusted checkout, before authentication.
+              ;;
           esac
 
       - name: Checkout continuation tooling and committed candidate from dev

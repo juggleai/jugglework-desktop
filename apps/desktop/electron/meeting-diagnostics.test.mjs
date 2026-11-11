@@ -12,12 +12,14 @@ test('native hang and renderer/GPU exit evidence survives app restart without wi
   const file=join(directory,'native.json');
   const app=Object.assign(new EventEmitter(),{getVersion:()=> 'test'});
   const get=installMeetingDiagnostics(app,file,()=> 'meeting');
+  get.record('runtime.health',{pressure:'warning',databaseBytes:1024});
   const window=Object.assign(new EventEmitter(), {id:7, webContents:Object.assign(new EventEmitter(),{isDestroyed:()=>false,getOSProcessId:()=>42})});
   app.emit('browser-window-created',{},window);
   window.emit('unresponsive');
   window.webContents.emit('render-process-gone',{}, {reason:'crashed',exitCode:1,url:'https://secret.invalid?token=SECRET'});
   app.emit('child-process-gone',{}, {type:'GPU',reason:'crashed',exitCode:2,serviceName:'SECRET'});
   assert.equal(get().records.at(-3).event,'window.unresponsive');
+  assert.equal(get().records.some(r=>r.event==='runtime.health'),true);
   const stored=await readFile(file,'utf8');assert.ok(!stored.includes('SECRET'));
   const restarted=Object.assign(new EventEmitter(),{getVersion:()=> 'test'});
   const after=installMeetingDiagnostics(restarted,file,()=> 'main')();

@@ -11,6 +11,8 @@ import { normalizeArtifacts, validateMacManifest } from "./manifest.mjs";
 import { inspectArtifact, isCanonicalSha512, metadataForBuffer } from "./metadata.mjs";
 import { createQshellAdapter } from "./qshell.mjs";
 import { promoteChannel, verifyCdn } from "./workflow.mjs";
+import { STANDING_POLICY_SCOPE, STANDING_POLICY_VERSION, STANDING_POLICY_MINIMUM_VERSION,
+  assertStandingPolicyCoordinates, assertStandingPolicy, standingPolicyEvidence } from "./standing-policy.mjs";
 
 export const CANDIDATE_RECORD = "apps/desktop/release-records/1.2.31-candidate.json";
 export const CANDIDATE_RECORDS = Object.freeze({
@@ -24,10 +26,29 @@ export const EXCEPTIONS = Object.freeze({
   preCanaryExceptionReason: "Operator explicitly authorized stable macOS arm64 1.2.31 to skip only the real-client upgrade canary",
   metadataExceptionReason: "Operator explicitly authorized stable macOS arm64 1.2.31 to skip only Qiniu Cache-Control metadata mutation and validation",
 });
-function continuationPolicy(version) {
-  if (!Object.hasOwn(CANDIDATE_RECORDS, version)) throw new Error("Continuation supports only exact 1.2.31, 1.2.32, 1.2.33 or 1.2.34 candidates");
+export function candidateRecordPath(version) {
+  if (Object.hasOwn(CANDIDATE_RECORDS, version)) return CANDIDATE_RECORDS[version];
+  assertStandingPolicyCoordinates({ version, channel: "stable", platform: "mac", architectures: ["arm64"] });
+  return `apps/desktop/release-records/${version}-candidate.json`;
+}
+
+function continuationPolicy(version, { standingPolicy = "", releasePolicy } = {}) {
+  const candidateRecord = candidateRecordPath(version);
+  if (!Object.hasOwn(CANDIDATE_RECORDS, version)) {
+    const fields = ["scope", "policyVersion", "minVersion", "currentCoordinates", "reasons"];
+    if (releasePolicy && Object.keys(releasePolicy).some((key) => !fields.includes(key))) throw new Error("Unsupported standing release policy fields");
+    if (releasePolicy?.scope !== STANDING_POLICY_SCOPE || releasePolicy.policyVersion !== STANDING_POLICY_VERSION
+      || releasePolicy.minVersion !== STANDING_POLICY_MINIMUM_VERSION || releasePolicy.currentCoordinates?.version !== version
+      || releasePolicy.currentCoordinates.channel !== "stable" || releasePolicy.currentCoordinates.platform !== "mac"
+      || releasePolicy.currentCoordinates.architecture !== "arm64") throw new Error("Committed standing policy authorization is required");
+    const exceptions = { standingPolicy, preCanaryExceptionReason: releasePolicy.reasons?.canary,
+      metadataExceptionReason: releasePolicy.reasons?.mutableCacheControl };
+    assertStandingPolicy({ version, channel: "stable", platform: "mac", architectures: ["arm64"] }, exceptions);
+    return { candidateRecord, exceptions };
+  }
+  if (standingPolicy || releasePolicy) throw new Error("Historical candidates cannot inherit standing policy");
   return {
-    candidateRecord: CANDIDATE_RECORDS[version],
+    candidateRecord,
     exceptions: version === "1.2.31" ? EXCEPTIONS : {
       preCanaryExceptionReason: `Operator explicitly authorized stable macOS arm64 ${version} to skip only the real-client upgrade canary`,
       metadataExceptionReason: `Operator explicitly authorized stable macOS arm64 ${version} to skip only Qiniu Cache-Control metadata mutation and validation`,
@@ -129,7 +150,11 @@ export function command(binary, args, cwd, execute = spawnSync) {
 }
 
 export function assertContinuationInputs(environment) {
-  const policy = continuationPolicy(environment.VERSION);
+  const candidateRecord = candidateRecordPath(environment.VERSION);
+  const standingPolicy = environment.STANDING_POLICY ?? "";
+  if (Object.hasOwn(CANDIDATE_RECORDS, environment.VERSION)) {
+    if (standingPolicy) throw new Error("Historical candidates cannot inherit standing policy");
+  } else if (standingPolicy !== STANDING_POLICY_SCOPE) throw new Error("Explicit standing policy selection is required");
   const verificationOnly = environment.VERIFICATION_ONLY ?? "false";
   if (!["true", "false"].includes(verificationOnly) || environment.PROMOTE !== (verificationOnly === "true" ? "false" : "true")) {
     throw new Error("verification_only and promote must be exact opposite booleans");
@@ -140,10 +165,10 @@ export function assertContinuationInputs(environment) {
     || environment.CHANNEL !== "stable" || environment.RELEASE_PLATFORM !== "mac") {
     throw new Error("Continuation requires workflow_dispatch on dev for promotion-only stable/mac/arm64");
   }
-  if (environment.CANDIDATE_RECORD !== policy.candidateRecord) throw new Error("Candidate record path is fixed for the exact version");
+  if (environment.CANDIDATE_RECORD !== candidateRecord) throw new Error("Candidate record path is fixed for the exact version");
 }
 
-export function candidatePlan(record, dist) {
+export function candidatePlan(record, dist, { standingPolicy = "" } = {}) {
   assertNoSecrets(record);
   if (record?.schema !== CANDIDATE_SCHEMA || record.schemaVersion !== 1
     || !/^[a-f0-9]{40}$/.test(record.sourceCommit ?? "") || record.evidence?.commit !== record.sourceCommit
@@ -152,7 +177,7 @@ export function candidatePlan(record, dist) {
   }
   const evidence = record.evidence;
   const version = evidence?.version;
-  const { exceptions } = continuationPolicy(version);
+  const { exceptions } = continuationPolicy(version, { standingPolicy, releasePolicy: record.releasePolicy });
   if (evidence.channel !== "stable" || evidence.platform !== "mac"
     || JSON.stringify(evidence.architectures) !== '["arm64"]' || evidence.artifacts?.length !== 4
     || evidence.workflow?.promotion != null) throw new Error("Candidate must be an unpromoted stable/mac/arm64 release");
@@ -181,6 +206,9 @@ export function candidatePlan(record, dist) {
     channelManifest: { key: channelManifestKey("stable", "mac"), url: publicUrl(channelManifestKey("stable", "mac")) },
   };
   assertPromotionEvidence(plan, evidence, exceptions);
+  if (standingPolicy && JSON.stringify(record.releasePolicy) !== JSON.stringify(standingPolicyEvidence(plan, evidence, exceptions).releasePolicy)) {
+    throw new Error("Committed standing policy source or manifest coordinates mismatch");
+  }
   for (const [type, schema, producer, submissionId] of [
     ["app", "com.juggleai.jugglework.macos-notarization-receipt", "electron-after-sign", evidence.localVerification.notarization.submissionId],
     ["dmg", "com.juggleai.jugglework.macos-dmg-notarization-receipt", "finalize-macos-artifacts", evidence.localVerification.dmg.notarization.submissionId],
@@ -203,15 +231,15 @@ export async function loadCommittedCandidate({ root, environment = process.env,
   git = (args) => args[0] === "show" ? command("git", args, root) : command("git", args, root).trim() }) {
   assertContinuationInputs(environment);
   const version = environment.VERSION;
-  const { candidateRecord } = continuationPolicy(version);
+  const candidateRecord = candidateRecordPath(version);
   const sha = environment.GITHUB_SHA;
   if (git(["rev-parse", "HEAD"]) !== sha || git(["rev-parse", "origin/dev"]) !== sha) {
     throw new Error("Checkout HEAD and origin/dev must exactly match github.sha");
   }
   const committed = git(["show", `${sha}:${candidateRecord}`]);
   const record = JSON.parse(committed);
-  candidatePlan(record, root);
-  if (record.evidence.version !== version) throw new Error("Committed candidate version differs from dispatch version");
+  if (record.evidence?.version !== version) throw new Error("Committed candidate version differs from dispatch version");
+  candidatePlan(record, root, { standingPolicy: environment.STANDING_POLICY });
   git(["merge-base", "--is-ancestor", record.sourceCommit, sha]);
   for (const file of PACKAGES) {
     if (JSON.parse(git(["show", `${record.sourceCommit}:${file}`])).version !== version
@@ -223,7 +251,7 @@ export async function loadCommittedCandidate({ root, environment = process.env,
   if ((await readFile(path.join(root, candidateRecord), "utf8")) !== committed) {
     throw new Error("Working candidate differs from committed candidate");
   }
-  return { record, recordSha256: metadataForBuffer(committed, "candidate.json").sha256, toolingCommit: sha };
+  return { record, recordSha256: metadataForBuffer(committed, "candidate.json").sha256, toolingCommit: sha, standingPolicy: environment.STANDING_POLICY };
 }
 
 export async function downloadCandidateObject(object, { fetchImpl = globalThis.fetch } = {}) {
@@ -282,7 +310,7 @@ export async function downloadCandidateObject(object, { fetchImpl = globalThis.f
 }
 
 export async function verifyRestoredPackages(plan, { parent, platform = process.platform, run = command, verifier, extractAsar, gate = packageGate } = {}) {
-  continuationPolicy(plan.version);
+  candidateRecordPath(plan.version);
   if (platform !== "darwin") throw new Error("Continuation package verification requires macOS");
   const checks = verifier ?? await import("../verify-packaged-macos.mjs");
   const extractFile = extractAsar ?? (await import("@electron/asar")).extractFile;
@@ -365,14 +393,15 @@ export async function verifyRestoredPackages(plan, { parent, platform = process.
 }
 
 export async function continuePromotion({ record, recordSha256, toolingCommit, directory, actor, qiniu,
-  fetchImpl, verifyPackages = verifyRestoredPackages, verificationOnly = false, now = () => new Date(), persist = replaceEvidence }) {
+  fetchImpl, verifyPackages = verifyRestoredPackages, verificationOnly = false, standingPolicy = "", now = () => new Date(), persist = replaceEvidence }) {
   if (typeof verificationOnly !== "boolean") throw new Error("verificationOnly must be boolean");
-  const plan = candidatePlan(record, directory);
-  const { candidateRecord, exceptions } = continuationPolicy(plan.version);
+  const plan = candidatePlan(record, directory, { standingPolicy });
+  const { candidateRecord, exceptions } = continuationPolicy(plan.version, { standingPolicy, releasePolicy: record.releasePolicy });
   const evidencePath = path.join(directory, "release-evidence.json");
   let evidence = structuredClone(record.evidence);
   evidence = withEvidenceResults(evidence, { continuation: {
     candidateRecord, recordSha256, sourceCommit: record.sourceCommit, toolingCommit, receipts: record.receipts,
+    ...(standingPolicy ? { releasePolicy: record.releasePolicy } : {}),
     expectedPreviousChannelDigest: record.expectedPreviousChannelDigest, actor, verificationOnly, status: "started", checkpoints: [],
   } }, now().toISOString());
   await writeEvidence(evidencePath, evidence);
@@ -423,8 +452,9 @@ export async function continuePromotion({ record, recordSha256, toolingCommit, d
       expectedPreviousChannelDigest: record.expectedPreviousChannelDigest,
       onPromotionVerified: async (result) => {
         evidence = withEvidenceResults(evidence, {
+          ...(result.releasePolicy ? { releasePolicy: result.releasePolicy } : {}),
           continuation: { ...evidence.continuation, status: "promoted" },
-          workflow: { promotion: { ...result, status: "verified", promotedAt: now().toISOString() } },
+          workflow: { ...result.workflow, promotion: { ...result, workflow: undefined, status: "verified", promotedAt: now().toISOString() } },
         }, now().toISOString());
         assertRecordedPromotion(plan, evidence);
         await persist(evidencePath, evidence);

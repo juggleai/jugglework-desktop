@@ -5,7 +5,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { CANDIDATE_RECORDS, EXCEPTIONS, assertContinuationInputs, candidatePlan, command, continuePromotion, downloadCandidateObject, loadCommittedCandidate, main, safeFailure, verifyRestoredPackages } from "./promotion-continuation.mjs";
+import { CANDIDATE_RECORDS, EXCEPTIONS, candidateRecordPath, assertContinuationInputs, candidatePlan, command, continuePromotion, downloadCandidateObject, loadCommittedCandidate, main, safeFailure, verifyRestoredPackages } from "./promotion-continuation.mjs";
+import { STANDING_POLICY_SCOPE, STANDING_POLICY_VERSION, STANDING_POLICY_MINIMUM_VERSION } from "./standing-policy.mjs";
 import { promotionLockKey } from "./constants.mjs";
 import { assertPromotionEvidence } from "./evidence.mjs";
 import { normalizeMacManifest } from "./manifest.mjs";
@@ -24,7 +25,8 @@ async function temporary(t) {
 function environment(version = "1.2.34") {
   return { GITHUB_ACTIONS: "true", GITHUB_EVENT_NAME: "workflow_dispatch", GITHUB_REF: "refs/heads/dev", GITHUB_SHA: sha,
     RELEASE_MODE: "promotion-only", VERSION: version, CHANNEL: "stable", RELEASE_PLATFORM: "mac", PROMOTE: "true",
-    CANDIDATE_RECORD: CANDIDATE_RECORDS[version] };
+    CANDIDATE_RECORD: candidateRecordPath(version),
+    ...(!Object.hasOwn(CANDIDATE_RECORDS, version) ? { STANDING_POLICY: STANDING_POLICY_SCOPE } : {}) };
 }
 
 // Synthetic records are confined to temporary test fixtures, never release-records.
@@ -33,8 +35,8 @@ function candidate(version = "1.2.34") {
 }
 
 function downloadableCandidate(version = "1.2.34") {
-  const record = candidate(version);
-  const plan = candidatePlan(record, "/unused");
+  const record = Object.hasOwn(CANDIDATE_RECORDS, version) ? candidate(version) : standingCandidate(version);
+  const plan = candidatePlan(record, "/unused", record.releasePolicy ? standingOptions : {});
   const bodies = new Map();
   const objects = plan.objects.map((item) => {
     const body = Buffer.from(`test bytes for ${item.name}`);
@@ -56,6 +58,7 @@ function downloadableCandidate(version = "1.2.34") {
     cdnChecks: all.map((item) => ({ ...item, https: true, range: true, contentLength: item.size })) };
   const previous = Buffer.from("version: 1.2.31\n");
   record.expectedPreviousChannelDigest = metadataForBuffer(previous, "latest-mac.yml").sha256;
+  if (record.releasePolicy) record.releasePolicy.currentCoordinates.immutableManifestDigest = manifest.sha256;
   return { record, bodies, previous };
 }
 
@@ -71,10 +74,55 @@ test("dispatch accepts only exact version/path pairs and trusted dev workflow_di
     ]) assert.throws(() => assertContinuationInputs({ ...environment(version), ...patch }));
   }
   for (const version of ["1.2.35", "1.2.33-alpha.1", "v1.2.33", "1.2.330", "1.2.34-alpha.1", "v1.2.34", "1.2.340", "toString"]) {
-    assert.throws(() => assertContinuationInputs(environment(version)), /only exact/);
-    assert.throws(() => candidatePlan(candidate(version), "/tmp"), /only exact/);
+    assert.throws(() => assertContinuationInputs({ ...environment("1.2.34"), VERSION: version }));
+    assert.throws(() => candidatePlan(candidate(version), "/tmp"));
   }
 });
+
+const standingOptions = { standingPolicy: STANDING_POLICY_SCOPE };
+function standingCandidate(version) {
+  const record = candidate(version);
+  record.releasePolicy = { scope: STANDING_POLICY_SCOPE, policyVersion: STANDING_POLICY_VERSION,
+    minVersion: STANDING_POLICY_MINIMUM_VERSION,
+    currentCoordinates: { version, channel: "stable", platform: "mac", architecture: "arm64", commit: record.sourceCommit,
+      immutableManifestDigest: record.evidence.manifest.sha256, mutableManifestKey: "jugglework/releases/stable/mac/latest-mac.yml" },
+    reasons: { canary: `User standing authorization selected for ${version}: omit only absent real upgrade canary`,
+      mutableCacheControl: `User standing authorization selected for ${version}: omit only mutable Cache-Control metadata mutation and validation` } };
+  return record;
+}
+
+for (const version of ["1.2.35", "1.2.36", "1.3.0", "2.0.0"]) {
+  test(`${version} requires explicit standing selection and committed scoped reasons with exact candidate bindings`, () => {
+    const record = standingCandidate(version);
+    const context = { ...environment(version), STANDING_POLICY: STANDING_POLICY_SCOPE, CANDIDATE_RECORD: candidateRecordPath(version) };
+    assert.doesNotThrow(() => assertContinuationInputs(context));
+    assert.equal(candidatePlan(record, "/tmp", standingOptions).version, version);
+    assert.throws(() => candidatePlan(record, "/tmp"), /Explicit standing/);
+    for (const patch of [{ STANDING_POLICY: "" }, { STANDING_POLICY: "stable-1.2.34-only" },
+      { CANDIDATE_RECORD: `./${context.CANDIDATE_RECORD}` }, { CANDIDATE_RECORD: candidateRecordPath("1.2.34") },
+      { GITHUB_REF: "refs/heads/main" }, { CHANNEL: "alpha" }, { RELEASE_PLATFORM: "windows" }]) {
+      assert.throws(() => assertContinuationInputs({ ...context, ...patch }));
+    }
+    for (const mutate of [
+      (r) => { delete r.releasePolicy; }, (r) => { r.releasePolicy.scope = "stable-1.2.34-only"; },
+      (r) => { r.releasePolicy.policyVersion = 2; }, (r) => { r.releasePolicy.minVersion = "1.2.34"; },
+      (r) => { r.releasePolicy.currentCoordinates.version = "1.2.34"; },
+      (r) => { r.releasePolicy.currentCoordinates.commit = sha; },
+      (r) => { r.releasePolicy.currentCoordinates.immutableManifestDigest = "a".repeat(64); },
+      (r) => { r.releasePolicy.notarizationExceptionReason = "Operator asks for an unauthorized wider exception"; },
+      (r) => { r.releasePolicy.reasons.canary = "   "; }, (r) => { delete r.releasePolicy.reasons.mutableCacheControl; },
+      (r) => { r.evidence.architectures = ["x64"]; }, (r) => { r.evidence.channel = "alpha"; },
+      (r) => { r.evidence.platform = "windows"; }, (r) => { r.sourceCommit = sha; },
+      (r) => { r.evidence.manifest.key = r.evidence.manifest.key.replace(version, "1.2.34"); },
+      (r) => { r.evidence.canary = { result: "failed" }; },
+      (r) => { r.evidence.localVerification.notarization.status = "unavailable"; },
+      (r) => { r.receipts.dmg.submissionId = "wrong"; },
+    ]) {
+      const changed = structuredClone(record); mutate(changed);
+      assert.throws(() => candidatePlan(changed, "/tmp", standingOptions), undefined, mutate.toString());
+    }
+  });
+}
 
 test("original 1.2.31 candidate semantics and exception text remain valid", () => {
   const plan = candidatePlan(original, "/tmp");
@@ -120,12 +168,12 @@ test(`${version} candidate gates retain exact source, signed/notarized receipts,
 });
 }
 
-for (const version of ["1.2.31", "1.2.32", "1.2.33", "1.2.34"]) {
+for (const version of ["1.2.31", "1.2.32", "1.2.33", "1.2.34", "1.2.35", "1.2.36"]) {
   test(`${version} loads only committed dispatch record with exact HEAD/origin, source ancestry and three package versions`, async (t) => {
     const root = await temporary(t);
-    const record = candidate(version);
+    const record = Object.hasOwn(CANDIDATE_RECORDS, version) ? candidate(version) : standingCandidate(version);
     let committed = `${JSON.stringify(record)}\n`;
-    const recordPath = path.join(root, CANDIDATE_RECORDS[version]);
+    const recordPath = path.join(root, candidateRecordPath(version));
     await mkdir(path.dirname(recordPath), { recursive: true });
     await writeFile(recordPath, committed);
     const packages = ["apps/app/package.json", "apps/desktop/package.json", "apps/server/package.json"];
@@ -138,7 +186,7 @@ for (const version of ["1.2.31", "1.2.32", "1.2.33", "1.2.34"]) {
       calls.push(args);
       if (args[0] === "rev-parse") return sha;
       if (args[0] === "merge-base") return "";
-      if (args[1] === `${sha}:${CANDIDATE_RECORDS[version]}`) return committed;
+      if (args[1] === `${sha}:${candidateRecordPath(version)}`) return committed;
       if (args[0] === "show" && packages.some((file) => args[1] === `${sha}:${file}` || args[1] === `${record.sourceCommit}:${file}`)) return JSON.stringify({ version });
       throw new Error("Unexpected git read");
     };
@@ -149,7 +197,7 @@ for (const version of ["1.2.31", "1.2.32", "1.2.33", "1.2.34"]) {
     assert.notEqual(loaded.record.sourceCommit, loaded.toolingCommit);
     assert.ok(calls.some((args) => JSON.stringify(args) === JSON.stringify(["merge-base", "--is-ancestor", record.sourceCommit, sha])));
     await assert.rejects(loadCommittedCandidate({ root, environment: environment(version), git: (args) => {
-      if (args[1] === `${sha}:${CANDIDATE_RECORDS[version]}`) throw new Error("Candidate not committed");
+      if (args[1] === `${sha}:${candidateRecordPath(version)}`) throw new Error("Candidate not committed");
       return git(args);
     } }), /Candidate not committed/);
     for (const target of ["HEAD", "origin/dev"]) {
@@ -161,9 +209,9 @@ for (const version of ["1.2.31", "1.2.32", "1.2.33", "1.2.34"]) {
     } }), /Not an ancestor/);
     for (const file of packages) {
       for (const commit of [sha, record.sourceCommit]) {
-        await assert.rejects(loadCommittedCandidate({ root, environment: environment(version), git: (args) => args[1] === `${commit}:${file}` ? '{"version":"1.2.35"}' : git(args) }), /Runtime package version/);
+        await assert.rejects(loadCommittedCandidate({ root, environment: environment(version), git: (args) => args[1] === `${commit}:${file}` ? '{"version":"9.9.9"}' : git(args) }), /Runtime package version/);
       }
-      await writeFile(path.join(root, file), '{"version":"1.2.35"}');
+      await writeFile(path.join(root, file), '{"version":"9.9.9"}');
       await assert.rejects(loadCommittedCandidate({ root, environment: environment(version), git }), /Runtime package version/);
       await writeFile(path.join(root, file), JSON.stringify({ version }));
     }
@@ -265,7 +313,7 @@ test("historical no-media path is digest-pinned and cannot apply to replacement 
 function promotionHarness(fixture, { badCdn = false, priorMismatch = false, heldLock = false } = {}) {
   const { record, bodies, previous } = fixture;
   const calls = [];
-  const plan = candidatePlan(record, "/unused");
+  const plan = candidatePlan(record, "/unused", record.releasePolicy ? standingOptions : {});
   const lock = promotionLockKey("stable", "mac");
   const state = new Map([...plan.objects, plan.manifest].map((item) => [item.key, { ...item, content: bodies.get(item.key) }]));
   state.set(plan.channelManifest.key, { content: priorMismatch ? Buffer.from("different predecessor") : previous });
@@ -297,7 +345,7 @@ function promotionHarness(fixture, { badCdn = false, priorMismatch = false, held
   return { qiniu, fetchImpl, calls, plan, state, lock };
 }
 
-for (const version of ["1.2.32", "1.2.33", "1.2.34"]) {
+for (const version of ["1.2.32", "1.2.33", "1.2.34", "1.2.35", "1.2.36"]) {
 test(`${version} continuation retains fresh CDN, predecessor/lock, exact manifest promotion and refresh/read-back`, async (t) => {
   const directory = await temporary(t);
   const fixture = downloadableCandidate(version);
@@ -305,9 +353,10 @@ test(`${version} continuation retains fresh CDN, predecessor/lock, exact manifes
   const { record } = fixture;
   const recordSha256 = metadataForBuffer(JSON.stringify(record), "candidate.json").sha256;
   const result = await continuePromotion({ record, recordSha256, toolingCommit: sha, directory, actor: "test-only", ...harness,
+    ...(record.releasePolicy ? standingOptions : {}),
     verifyPackages: async () => { harness.calls.push(["packages"]); return { status: "verified" }; } });
-  assert.equal(result.preCanaryException.scope, `stable-${version}-only`);
-  assert.equal(result.metadataException.scope, `stable-${version}-only`);
+  assert.equal(result.preCanaryException.scope, record.releasePolicy ? STANDING_POLICY_SCOPE : `stable-${version}-only`);
+  assert.equal(result.metadataException.scope, record.releasePolicy ? STANDING_POLICY_SCOPE : `stable-${version}-only`);
   for (const exception of [result.preCanaryException, result.metadataException]) {
     assert.ok(exception.reason.trim().length >= 20);
     assert.ok(exception.reason.includes(version));
@@ -328,7 +377,7 @@ test(`${version} continuation retains fresh CDN, predecessor/lock, exact manifes
   }
   assert.ok(harness.calls.some(([name]) => name === "refresh"));
   const evidence = JSON.parse(await readFile(path.join(directory, "release-evidence.json"), "utf8"));
-  assert.equal(evidence.continuation.candidateRecord, CANDIDATE_RECORDS[version]);
+  assert.equal(evidence.continuation.candidateRecord, candidateRecordPath(version));
   assert.equal(evidence.continuation.recordSha256, recordSha256);
   assert.equal(evidence.continuation.sourceCommit, record.sourceCommit);
   assert.equal(evidence.commit, record.sourceCommit);

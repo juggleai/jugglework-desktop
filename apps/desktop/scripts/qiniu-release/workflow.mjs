@@ -2,6 +2,7 @@ import { metadataForBuffer } from "./metadata.mjs";
 import { CHANNEL_MANIFEST_CACHE_CONTROL, promotionLockKey } from "./constants.mjs";
 import { readBackDigest, verifyCdnObject } from "./cdn.mjs";
 import { assertEvidenceMatchesPlan, assertLocalVerification, assertPromotionEvidence } from "./evidence.mjs";
+import { standingPolicyException, standingPolicyEvidence } from "./standing-policy.mjs";
 
 function exactRemote(remote, object) {
   return remote?.size === object.size && remote?.etag === object.etag;
@@ -88,25 +89,28 @@ export async function promoteChannel(plan, evidence, {
   preCanaryExceptionReason = "",
   cacheExceptionReason = "",
   metadataExceptionReason = "",
+  standingPolicy = "",
   expectedPreviousChannelDigest,
   onEvent = () => {},
   onPromotionVerified = async () => {},
 } = {}) {
-  assertPromotionEvidence(plan, evidence, { notarizationExceptionReason, preCanaryExceptionReason, cacheExceptionReason, metadataExceptionReason });
+  assertPromotionEvidence(plan, evidence, { notarizationExceptionReason, preCanaryExceptionReason, cacheExceptionReason, metadataExceptionReason, standingPolicy });
+  const policyEvidence = standingPolicy ? standingPolicyEvidence(plan, evidence, { standingPolicy, preCanaryExceptionReason, metadataExceptionReason }) : {};
+  if (standingPolicy && expectedPreviousChannelDigest === undefined) throw new Error("Standing policy requires an explicit approved predecessor digest");
   if (expectedPreviousChannelDigest !== undefined && !/^[a-f0-9]{64}$/.test(expectedPreviousChannelDigest)) {
     throw new Error("Expected predecessor must be a SHA-256 digest");
   }
   const notarizationException = notarizationExceptionReason
     ? { scope: `stable-${plan.version}-only`, reason: notarizationExceptionReason.trim() }
     : null;
-  const preCanaryException = preCanaryExceptionReason
-    ? { scope: `stable-${plan.version}-only`, reason: preCanaryExceptionReason.trim() }
+  const preCanaryException = preCanaryExceptionReason && (!standingPolicy || evidence.canary == null)
+    ? (standingPolicy ? standingPolicyException(plan, preCanaryExceptionReason) : { scope: `stable-${plan.version}-only`, reason: preCanaryExceptionReason.trim() })
     : null;
   const cacheException = cacheExceptionReason
     ? { scope: `stable-${plan.version}-only`, reason: cacheExceptionReason.trim() }
     : null;
   const metadataException = metadataExceptionReason
-    ? { scope: `stable-${plan.version}-only`, reason: metadataExceptionReason.trim() }
+    ? (standingPolicy ? standingPolicyException(plan, metadataExceptionReason) : { scope: `stable-${plan.version}-only`, reason: metadataExceptionReason.trim() })
     : null;
   if (!cacheException && typeof refresh !== "function") throw new Error("CDN cache refresh operation is unavailable");
   if (!cacheException && typeof readBack !== "function") throw new Error("CDN read-back operation is unavailable");
@@ -186,8 +190,15 @@ export async function promoteChannel(plan, evidence, {
       onEvent({ type: "cdn-refresh", url: plan.channelManifest.url });
       await refresh([plan.channelManifest.url]);
       onEvent({ type: "channel-readback", url: plan.channelManifest.url });
-      const readBackResult = await readBack(plan.channelManifest.url, plan.manifest.sha256, { fetchImpl, expectedSize: plan.manifest.size });
-      const result = { lockKey, channelKey: plan.channelManifest.key, channelObject: { size: channelRemote.size, etag: channelRemote.etag, verified: true }, readBack: readBackResult, lock: lockPayload, notarizationException, preCanaryException, metadataException };
+      let observedMutableCacheControl = { status: "unknown", value: null };
+      const observeFetch = async (...args) => {
+        const response = await (fetchImpl ?? globalThis.fetch)(...args);
+        const value = response.headers.get("cache-control");
+        observedMutableCacheControl = { status: value === null ? "absent" : "observed", value };
+        return response;
+      };
+      const readBackResult = await readBack(plan.channelManifest.url, plan.manifest.sha256, { fetchImpl: standingPolicy ? observeFetch : fetchImpl, expectedSize: plan.manifest.size });
+      const result = { ...policyEvidence, ...(standingPolicy ? { observedMutableCacheControl, olderVersionCacheRisk: true } : {}), lockKey, channelKey: plan.channelManifest.key, channelObject: { size: channelRemote.size, etag: channelRemote.etag, verified: true }, readBack: readBackResult, lock: lockPayload, notarizationException, preCanaryException, metadataException };
       await onPromotionVerified(result);
       channelVerified = true;
       return result;

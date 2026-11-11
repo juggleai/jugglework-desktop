@@ -103,9 +103,10 @@ describe("secondary app inset shells", () => {
     expect(layout).toContain("calc(100vw - 320px)");
 
     const topControls = read("react-app/shell/app-secondary-sidebar-top-controls.tsx");
-    expect(topControls).not.toContain("data-app-secondary-sidebar-search");
-    expect(topControls).not.toContain("onOpenTaskSearch");
-    expect(topControls).toContain("CONTROL_GROUP_WIDTH = 32");
+    expect(topControls).toContain("{props.onOpenTaskSearch ? <Button");
+    expect(topControls).toContain("data-app-secondary-sidebar-search");
+    expect(topControls).toContain("const controlGroupWidth = props.onOpenTaskSearch ? 64 : 32");
+    expect(tasks).toContain("<AppSecondarySidebarTopControls sidebarOpen={sidebarOpen} onToggleSidebar={toggleSidebar} />");
     expect(topControls).toContain("data-app-secondary-sidebar-toggle");
     expect(topControls).toContain("data-app-secondary-sidebar-top-divider");
     expect(topControls).toContain('className="pointer-events-auto absolute top-1.5 z-50 flex');
@@ -181,7 +182,7 @@ describe("secondary app inset shells", () => {
     const previewHost = read("react-app/shell/app-navigation-sidebar-preview.tsx");
     const wrapper = workspaceRoute.slice(workspaceRoute.indexOf("className={settingsVisible ||"), workspaceRoute.indexOf('data-testid="retained-session-surface"'));
     expect(workspaceRoute).toContain("navigationPreview.workspaceTarget");
-    expect(wrapper).toContain("settingsVisible || chatVisible || appsVisible || automationsVisible || tasksVisible || reviewsVisible || toonFactoryVisible || calendarVisible || meetingsVisible");
+    expect(wrapper).toContain("settingsVisible || chatVisible || appsVisible || automationsVisible || tasksVisible || reviewsVisible || toonFactoryVisible || calendarVisible || meetingsVisible || cloudDocsVisible");
     expect(wrapper).toContain('"invisible absolute inset-0 z-50');
     expect(wrapper).toContain("[&_[data-session-list-preview=true]]:visible");
     expect(wrapper).toContain("[&_[data-session-list-preview=true]]:pointer-events-auto");
@@ -189,7 +190,7 @@ describe("secondary app inset shells", () => {
     expect(wrapper).toContain(': "hidden"');
     expect(wrapper).toContain(': "h-full min-h-0"');
     expect(wrapper).not.toContain("opacity-0");
-    expect(workspaceRoute).toContain("surfaceVisible={automationSessionVisible || !(settingsVisible || chatVisible || appsVisible || automationsVisible || tasksVisible || reviewsVisible || toonFactoryVisible || calendarVisible || meetingsVisible)}");
+    expect(workspaceRoute).toContain("surfaceVisible={automationSessionVisible || !(settingsVisible || chatVisible || appsVisible || automationsVisible || tasksVisible || reviewsVisible || toonFactoryVisible || calendarVisible || meetingsVisible || cloudDocsVisible)}");
     expect(previewHost).toContain("workspaceTarget: TaskScope | null");
     expect(previewHost).toContain("onWorkspaceTriggerChange");
   });

@@ -223,7 +223,7 @@ test("renders an Agent-independent empty task center shell", async () => {
   }
 });
 
-test("runs Tasks top search and collapses the sidebar into a zero-width frame", async () => {
+test("keeps Tasks top controls search-free and collapses the sidebar into a zero-width frame", async () => {
   let searches = 0;
   let renderer: TestRenderer.ReactTestRenderer;
   await act(async () => {
@@ -244,8 +244,8 @@ test("runs Tasks top search and collapses the sidebar into a zero-width frame", 
     );
   });
   try {
-    await act(async () => { renderer!.root.findByProps({ "data-app-secondary-sidebar-search": true }).props.onClick(); });
-    expect(searches).toBe(1);
+    expect(renderer!.root.findAllByProps({ "data-app-secondary-sidebar-search": true })).toHaveLength(0);
+    expect(searches).toBe(0);
 
     await act(async () => { renderer!.root.findByProps({ "data-app-secondary-sidebar-toggle": true }).props.onClick(); });
     expect(useUiStateStore.getState().sidebarOpen).toBe(false);
@@ -253,10 +253,12 @@ test("runs Tasks top search and collapses the sidebar into a zero-width frame", 
     expect(renderer!.root.findAllByProps({ "data-app-secondary-sidebar-resize-handle": true })).toHaveLength(0);
     expect(renderer!.root.findByProps({ "data-app-secondary-sidebar-frame": true }).props.className).toContain("w-0");
     expect(renderer!.root.findByProps({ "data-testid": "tasks-main" })).toBeDefined();
+    expect(renderer!.root.findAllByProps({ "data-app-secondary-sidebar-search": true })).toHaveLength(0);
 
     await act(async () => { renderer!.root.findByProps({ "data-app-secondary-sidebar-toggle": true }).props.onClick(); });
     expect(useUiStateStore.getState().sidebarOpen).toBe(true);
     expect(renderer!.root.findByProps({ "data-testid": "tasks-sidebar" })).toBeDefined();
+    expect(renderer!.root.findAllByProps({ "data-app-secondary-sidebar-search": true })).toHaveLength(0);
   } finally {
     await act(async () => { renderer!.unmount(); });
   }

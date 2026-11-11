@@ -66,6 +66,8 @@
   - 验证记录：9 个非 en locale 的 Calendar key 缺失均为 0，占位符与 en 一致；`test:i18n --strict` 仍因非 Calendar 的既有缺失失败，缺失数与 origin/dev 相同（ru 的 extra 仅多出 Calendar 的 _few/_many 复数形式，与既有 ru 复数写法一致）。
 - [x] 7.10 运行 `pnpm --filter @jugglework/app typecheck`、Calendar 定向测试、`pnpm --filter @jugglework/app test` 和 `pnpm --filter @jugglework/app build`，修复 Calendar 及现有 Desktop 回归
   - 验证（2026-11-10）：typecheck、build 通过；Calendar 定向 222 pass / 0 fail。全量 `--isolate` 2283 pass / 233 fail（224 个用例），与 origin/dev `d41e996`（已构建 `@jugglework/types`）的失败集合逐条对比无新增，全部为既有失败。修复全量下的跨文件干扰：在线状态订阅与焦点恢复在缺少 `window.addEventListener`/`document.querySelector` 时跳过；测试的 console.error 转发加重入保护。
+  - Source 阻断最小修复（2026-11-11）：`DESKTOP_CONFIG_ITEMS` 纳入 `calendarEnabled` / `calendarWriteEnabled`；`calendar-desktop-config.test.ts` 直接调用生产比较函数，固定其他配置值及对象引用，验证仅 gate 改动可开启/关闭能力、开启/撤回写入，无变化不产生 action，缺失/非法 gate 和缺少登录/组织/成员 scope 仍 fail closed。对照当前 UI 更新 3 处旧契约失配：共享顶部控件保留可选搜索但 Tasks 未接入，Tasks 折叠/展开均无顶部搜索；retained session 可见性断言补上既有 Cloud Docs surface。
+  - 验证（2026-11-11）：在 `apps/app` 使用 pinned Bun `1.3.14`（`0d9b296a`）逐文件独立运行 `bun --no-env-file --conditions=development test ./tests/<file>`：`app-inset-pages.test.ts` 8/0、`tasks-page.test.tsx` 62/0、`calendar-desktop-config.test.ts` 7/0、`calendar-page-gate.test.ts` 3/0、`calendar-page.test.tsx` 4/0、`den-calendar-client.test.ts` 8/0（共 92 pass / 0 fail）。`bun --no-env-file run typecheck` 和 `pnpm --filter @jugglework/app typecheck` 均通过。本次记录仅对应定向 source 修复验证。
 
 ## 8. 安全、迁移与灰度发布
 
