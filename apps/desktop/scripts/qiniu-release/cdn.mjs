@@ -2,8 +2,18 @@ import { createHash } from "node:crypto";
 
 import { CDN_ORIGIN } from "./constants.mjs";
 
+const failures = new WeakMap();
+function cdnError(message, check, status) {
+  const error = new Error(message);
+  failures.set(error, { check, ...(Number.isInteger(status) && status >= 100 && status <= 599 ? { status } : {}) });
+  return error;
+}
+export function cdnFailureDetails(error) {
+  return failures.get(error);
+}
+
 function assertResponse(response, label, statuses = [200]) {
-  if (!statuses.includes(response.status)) throw new Error(`${label} returned HTTP ${response.status}`);
+  if (!statuses.includes(response.status)) throw cdnError(`${label} returned HTTP ${response.status}`, "http_status", response.status);
 }
 
 function contentType(headers) {
@@ -13,17 +23,19 @@ function contentType(headers) {
 function requiredContentLength(response, expected, label) {
   const raw = response.headers.get("content-length");
   if (raw === null || !/^\d+$/.test(raw) || Number(raw) !== expected) {
-    throw new Error(`${label} Content-Length mismatch: expected ${expected}, received ${raw ?? "<missing>"}`);
+    throw cdnError(`${label} Content-Length mismatch: expected ${expected}, received ${raw ?? "<missing>"}`, "content_length");
   }
 }
 
-export async function verifyCdnObject(object, { fetchImpl = globalThis.fetch } = {}) {
+export async function verifyCdnObject(object, { fetchImpl = globalThis.fetch, onCheck = () => {} } = {}) {
   if (typeof fetchImpl !== "function") throw new Error("CDN fetch operation is unavailable");
   const url = new URL(object.url);
   if (url.protocol !== "https:" || url.origin !== CDN_ORIGIN) throw new Error(`Unapproved CDN URL: ${object.url}`);
 
+  onCheck("head");
   let metadataResponse = await fetchImpl(object.url, { method: "HEAD", redirect: "error" });
   if (metadataResponse.status === 405 || metadataResponse.status === 501) {
+    onCheck("metadata_get");
     metadataResponse = await fetchImpl(object.url, { method: "GET", headers: { Range: "bytes=0-0" }, redirect: "error" });
     assertResponse(metadataResponse, `Metadata GET ${object.key}`, [200, 206]);
   } else {
@@ -31,17 +43,19 @@ export async function verifyCdnObject(object, { fetchImpl = globalThis.fetch } =
   }
   requiredContentLength(metadataResponse, metadataResponse.status === 206 ? 1 : object.size, `CDN metadata for ${object.key}`);
   const actualMime = contentType(metadataResponse.headers);
-  if (actualMime !== object.mime) throw new Error(`CDN MIME mismatch for ${object.key}: ${actualMime || "<missing>"}`);
+  if (actualMime !== object.mime) throw cdnError(`CDN MIME mismatch for ${object.key}: ${actualMime || "<missing>"}`, "mime");
 
+  onCheck("range");
   const range = await fetchImpl(object.url, { method: "GET", headers: { Range: "bytes=0-0" }, redirect: "error" });
   assertResponse(range, `Range GET ${object.key}`, [206]);
   requiredContentLength(range, 1, `CDN range for ${object.key}`);
   if (range.headers.get("content-range") !== `bytes 0-0/${object.size}`) {
-    throw new Error(`CDN Content-Range mismatch for ${object.key}`);
+    throw cdnError(`CDN Content-Range mismatch for ${object.key}`, "content_range");
   }
   const rangeBody = Buffer.from(await range.arrayBuffer());
-  if (rangeBody.length !== 1) throw new Error(`CDN byte range returned ${rangeBody.length} bytes for ${object.key}`);
+  if (rangeBody.length !== 1) throw cdnError(`CDN byte range returned ${rangeBody.length} bytes for ${object.key}`, "range_body");
 
+  onCheck("full");
   const full = await fetchImpl(object.url, { method: "GET", redirect: "error" });
   assertResponse(full, `Full GET ${object.key}`);
   requiredContentLength(full, object.size, `CDN full response for ${object.key}`);
@@ -49,9 +63,9 @@ export async function verifyCdnObject(object, { fetchImpl = globalThis.fetch } =
   const sha512 = createHash("sha512").update(body).digest("base64");
   const sha256 = createHash("sha256").update(body).digest("hex");
   if (body.length !== object.size || sha512 !== object.sha512) {
-    throw new Error(`CDN size or SHA-512 mismatch for ${object.key}`);
+    throw cdnError(`CDN size or SHA-512 mismatch for ${object.key}`, "size_or_sha512");
   }
-  if (object.sha256 && sha256 !== object.sha256) throw new Error(`CDN SHA-256 mismatch for ${object.key}`);
+  if (object.sha256 && sha256 !== object.sha256) throw cdnError(`CDN SHA-256 mismatch for ${object.key}`, "sha256");
   return {
     url: object.url,
     https: true,

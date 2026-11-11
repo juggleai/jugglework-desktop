@@ -352,6 +352,7 @@ The committed macOS continuation SHALL provide read-only `--verify-only` CLI and
 - **THEN** local evidence retains bounded before/after checkpoints identifying each download and each container's metadata, signature, architecture, Toon/media, updater, Apple trust and runtime-version checks plus outer DMG trust
 - **AND** it persists failed status and the first exact safe stage/category even if subsequent container cleanup runs
 - **AND** failure diagnostics contain only fixed allowlisted stages/categories, error names/codes, bounded numeric HTTP status or subprocess exit code and fixed binary/flag descriptors when available
+- **AND** a fresh-CDN failure identifies only a fixed object type (`zip`, `dmg`, either blockmap or `manifest`), operation phase (`stat`, `head`, `metadata_get`, `range` or `full`) and producer-owned fixed check identifier, retaining transport cause codes without copying raw error properties
 - **AND** no raw exception message, cause, stack, output, path, credentials or dynamic argv is emitted or stored as failure diagnostics; subprocess capture and execution are bounded
 
 ### Requirement: Windows blockmaps and manifests describe post-signing bytes

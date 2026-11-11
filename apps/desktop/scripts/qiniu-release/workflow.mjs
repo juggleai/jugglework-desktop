@@ -1,6 +1,6 @@
 import { metadataForBuffer } from "./metadata.mjs";
 import { CHANNEL_MANIFEST_CACHE_CONTROL, promotionLockKey } from "./constants.mjs";
-import { readBackDigest, verifyCdnObject } from "./cdn.mjs";
+import { cdnFailureDetails, readBackDigest, verifyCdnObject } from "./cdn.mjs";
 import { assertEvidenceMatchesPlan, assertLocalVerification, assertPromotionEvidence } from "./evidence.mjs";
 import { standingPolicyException, standingPolicyEvidence } from "./standing-policy.mjs";
 
@@ -67,12 +67,41 @@ export async function uploadVersion(plan, { qiniu, evidence, resume = false, dry
   return verifyQiniuObjects([...binaries, manifest], { qiniu });
 }
 
+const cdnFailures = new WeakMap();
+export function verificationFailureDetails(error) {
+  return cdnFailures.get(error);
+}
+
 export async function verifyCdn(plan, { qiniu, fetchImpl, verifyObject = verifyCdnObject }) {
   const objects = [...plan.objects, plan.manifest];
-  const qiniuChecks = await verifyQiniuObjects(objects, { qiniu });
+  const qiniuChecks = [];
   const cdnChecks = [];
-  for (const object of objects) {
-    cdnChecks.push({ key: object.key, ...(await verifyObject(object, { fetchImpl })) });
+  let object;
+  let phase = "stat";
+  let check = "operation_failed";
+  try {
+    for (object of objects) {
+      const remote = await qiniu.stat(object.key);
+      if (!exactRemote(remote, object)) {
+        check = "qiniu_size_or_etag";
+        throw new Error(`Qiniu stat mismatch for ${object.key}`);
+      }
+      qiniuChecks.push({ key: object.key, size: remote.size, etag: remote.etag, verified: true });
+    }
+    for (object of objects) {
+      phase = "head";
+      cdnChecks.push({ key: object.key, ...(await verifyObject(object, { fetchImpl, onCheck: (value) => {
+        if (["head", "metadata_get", "range", "full"].includes(value)) phase = value;
+      } })) });
+    }
+  } catch (error) {
+    // Only producer-owned fixed enums enter continuation evidence. Never retain
+    // raw subprocess output, headers, error messages, object keys or URLs.
+    if (error && typeof error === "object") cdnFailures.set(error, {
+      phase, check, ...cdnFailureDetails(error),
+      ...(["zip", "dmg", "zip.blockmap", "dmg.blockmap", "manifest"].includes(object?.type) ? { objectType: object.type } : {}),
+    });
+    throw error;
   }
   return { qiniuChecks, cdnChecks };
 }

@@ -10,7 +10,7 @@ import { assertNoSecrets, assertPromotionEvidence, assertRecordedPromotion, repl
 import { normalizeArtifacts, validateMacManifest } from "./manifest.mjs";
 import { inspectArtifact, isCanonicalSha512, metadataForBuffer } from "./metadata.mjs";
 import { createQshellAdapter } from "./qshell.mjs";
-import { promoteChannel, verifyCdn } from "./workflow.mjs";
+import { promoteChannel, verificationFailureDetails, verifyCdn } from "./workflow.mjs";
 import { STANDING_POLICY_SCOPE, STANDING_POLICY_VERSION, STANDING_POLICY_MINIMUM_VERSION,
   assertStandingPolicyCoordinates, assertStandingPolicy, standingPolicyEvidence } from "./standing-policy.mjs";
 
@@ -106,6 +106,8 @@ export function safeFailure(error, stage) {
   const causes = safeCauses(error);
   if (causes.length) failure.causes = causes;
   if (Number.isInteger(error?.status) && error.status >= 100 && error.status <= 599) failure.status = error.status;
+  const cdn = verificationFailureDetails(error);
+  if (cdn) Object.assign(failure, cdn);
   if (known) Object.assign(failure, known);
   return failure;
 }

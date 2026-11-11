@@ -428,6 +428,58 @@ test(`${version} continuation retains fresh CDN, predecessor/lock, exact manifes
 });
 }
 
+for (const scenario of ["stat-error", "stat-mismatch", "head-length", "range-status", "full-digest", "transport"]) {
+  test(`standing continuation retains safe precise CDN diagnosis for ${scenario} before all promotion effects`, async (t) => {
+    const directory = await temporary(t);
+    const fixture = downloadableCandidate("1.2.35");
+    const harness = promotionHarness(fixture);
+    const secret = "SENTINEL_SECRET /private/path?token=never-record";
+    const stat = harness.qiniu.stat;
+    harness.qiniu.stat = async (key) => {
+      if (key === harness.plan.objects[0].key) {
+        if (scenario === "stat-error") throw Object.assign(new Error(secret), { phase: secret, check: secret, objectType: secret });
+        if (scenario === "stat-mismatch") return null;
+      }
+      return stat(key);
+    };
+    const fetchImpl = async (url, options = {}) => {
+      if (url === harness.plan.objects[0].url) {
+        if (scenario === "head-length" && options.method === "HEAD") return new Response(null, { headers: { "content-length": "0" } });
+        if (scenario === "range-status" && options.headers?.Range) return new Response(null, { status: 503 });
+        if (scenario === "transport" && options.method === "HEAD") {
+          throw new TypeError(secret, { cause: Object.assign(new Error(secret), { code: "UND_ERR_SOCKET" }) });
+        }
+        // Only the second full GET is the fresh CDN gate; the first restores bytes.
+        if (scenario === "full-digest" && options.method === "GET" && !options.headers?.Range) {
+          const body = Buffer.alloc(harness.plan.objects[0].size, 120);
+          return new Response(body, { headers: { "content-length": String(body.length) } });
+        }
+      }
+      return harness.fetchImpl(url, options);
+    };
+    let rejected;
+    try {
+      await continuePromotion({ record: fixture.record, recordSha256: "f".repeat(64), toolingCommit: sha, directory,
+        actor: "test-only", qiniu: harness.qiniu, fetchImpl, ...standingOptions,
+        verifyPackages: async () => ({ status: "verified" }) });
+    } catch (error) { rejected = error; }
+    assert.ok(rejected);
+    const evidence = JSON.parse(await readFile(path.join(directory, "release-evidence.json"), "utf8"));
+    const failure = evidence.continuation.failure;
+    assert.equal(failure.stage, "cdn.fresh");
+    assert.equal(failure.objectType, "zip");
+    assert.equal(failure.phase, scenario.startsWith("stat") ? "stat" : scenario === "range-status" ? "range" : scenario === "full-digest" ? "full" : "head");
+    assert.equal(failure.check, { "stat-error": "operation_failed", "stat-mismatch": "qiniu_size_or_etag",
+      "head-length": "content_length", "range-status": "http_status", "full-digest": "size_or_sha512", transport: "operation_failed" }[scenario]);
+    if (scenario === "range-status") assert.equal(failure.status, 503);
+    if (scenario === "transport") assert.equal(failure.causes[0].errorCode, "UND_ERR_SOCKET");
+    assert.equal(evidence.workflow.promotion, null);
+    assert.ok(!evidence.continuation.checkpoints.some(({ stage }) => stage === "promotion"));
+    assert.ok(!harness.calls.some(([name, key]) => ["upload", "delete", "refresh", "read"].includes(name) || key === harness.lock));
+    assert.ok(!JSON.stringify([evidence, safeFailure(rejected, "candidate"), rejected.message, rejected.stack]).includes(secret));
+  });
+}
+
 for (const failure of ["badCdn", "priorMismatch", "heldLock", "packages"]) {
   test(`continuation fails closed before channel writes on ${failure}`, async (t) => {
     const directory = await temporary(t);
