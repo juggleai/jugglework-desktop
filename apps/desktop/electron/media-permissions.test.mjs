@@ -81,3 +81,33 @@ test("meeting child may share its display but cannot request camera or grant rem
   request(child.webContents,"display-capture",value=>allowed=value,{requestingUrl:"about:blank",mediaTypes:["video"]});
   assert.equal(allowed,true);
 });
+
+test("legacy screen capture requests are accepted only for trusted top-level windows", () => {
+  /** @type {(...args: any[]) => any} */
+  let request = () => { throw new Error("not installed"); };
+  /** @type {(...args: any[]) => any} */
+  let check = () => { throw new Error("not installed"); };
+  const main = { webContents: { id: 7 } };
+  const child = { webContents: { id: 9 } };
+  installMediaPermissionHandlers({ defaultSession: {
+    setPermissionCheckHandler(handler) { check = handler; },
+    setPermissionRequestHandler(handler) { request = handler; },
+  } }, () => main, () => child);
+  const ask = (sender, details) => {
+    let allowed;
+    request(sender, "media", value => { allowed = value; }, details);
+    return allowed;
+  };
+  const legacy = { isMainFrame: true, mediaTypes: [], requestingUrl: "about:blank", securityOrigin: "http://localhost:5173/" };
+  assert.equal(ask(child.webContents, legacy), true);
+  assert.equal(ask(main.webContents, { ...legacy, requestingUrl: "http://localhost:5173/" }), true);
+  assert.equal(ask(child.webContents, { ...legacy, securityOrigin: "file://" }), true);
+  for (const patch of [
+    { isMainFrame: false }, { isMainFrame: undefined }, { mediaTypes: undefined },
+    { mediaTypes: ["video"] }, { mediaTypes: ["audio"] }, { mediaType: "video" },
+    { requestingUrl: "https://example.com" }, { securityOrigin: "https://example.com" },
+  ]) assert.equal(ask(child.webContents, { ...legacy, ...patch }), false);
+  assert.equal(ask({ id: 10 }, legacy), false);
+  assert.equal(check(child.webContents, "media", "http://localhost:5173/", { isMainFrame: true }), false);
+  assert.equal(check(child.webContents, "display-capture", "http://localhost:5173/", { isMainFrame: false }), false);
+});

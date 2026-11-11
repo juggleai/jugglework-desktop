@@ -394,3 +394,55 @@ test('meeting child video excludes audio and preserves its video view through de
   binding.dispose();assert.equal(element.srcObject,null);assert.equal(audio.readyState,'live');assert.equal(next.readyState,'live');
  } finally {if(original===undefined)delete globalThis.MediaStream;else globalThis.MediaStream=original;}
 });
+
+test('screen sharing distinguishes capture failures and releases failed or late captures', async () => {
+ let source=await fs.readFile(new URL('../src/react-app/domains/meeting/zego-adapter.ts',import.meta.url),'utf8');
+ source=source.replace('import { ensureMeetingMediaPermissions, meetingDeviceError } from "./media-permission";','const ensureMeetingMediaPermissions=async()=>{}; const meetingDeviceError=e=>e.message;');
+ const {MeetingMedia}=await import('data:text/javascript;base64,'+Buffer.from(transpile(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText).toString('base64'));
+ const oldMediaStream=globalThis.MediaStream;
+ globalThis.MediaStream=class {constructor(tracks){this.tracks=tracks;}getTracks(){return this.tracks;}getVideoTracks(){return this.tracks;}};
+ const oldNavigator=Object.getOwnPropertyDescriptor(globalThis,'navigator');
+ Object.defineProperty(globalThis,'navigator',{configurable:true,value:{userAgent:'Mac'}});
+ const updates=[];
+ const media=new MeetingMedia((tile,id)=>updates.push({tile,id}),()=>{},()=>{});
+ media.joinInfo={roomId:'r',userId:'u',sessionId:'s'};
+ let published=0,stopped=0,destroyed=0;const previews=new Set();
+ media.engine={async createStream({custom}){assert.ok(custom.source instanceof MediaStream);const preview=new MediaStream(custom.source.getVideoTracks());previews.add(preview);return preview;},destroyStream(stream){destroyed++;previews.delete(stream);stream.getTracks().forEach(t=>t.stop());},startPublishingStream(id,stream){assert.ok(previews.has(stream),'must register raw capture with ZEGO before publishing');published++;return true;},stopPublishingStream(){stopped++;},logoutRoom(){},destroyEngine(){}};
+ const capture=()=>{
+  const track=Object.assign(new EventTarget(),{kind:'video',getSettings:()=>({width:800,height:500}),readyState:'live',stop(){this.readyState='ended';}});
+  return {track,stream:{getTracks:()=>[track],getVideoTracks:()=>[track]}};
+ };
+ const reject=name=>({getDisplayMedia:async()=>{throw Object.assign(new Error('capture failed'),{name});}});
+ try {
+  await media.startShare(reject('AbortError'));assert.equal(published,0);assert.equal(updates.length,0);
+  await assert.rejects(media.startShare(reject('NotAllowedError')),/权限/);
+  await assert.rejects(media.startShare(reject('InvalidStateError')),/返回会议窗口/);
+  await assert.rejects(media.startShare(reject('NotReadableError')),/系统未能启动屏幕采集/);
+  await assert.rejects(media.startShare(reject('NotFoundError')),/重新选择/);
+  const first=capture();
+  await media.startShare({getDisplayMedia:async(options)=>{assert.deepEqual(options,{video:true,audio:false});return first.stream;}});
+  assert.equal(updates.at(-1).tile.screen,true);assert.equal(published,1);assert.notEqual(updates.at(-1).tile.stream,first.stream);
+  first.track.dispatchEvent(new Event('ended'));
+  assert.equal(stopped,1);assert.equal(destroyed,1);assert.equal(first.track.readyState,'ended');assert.equal(updates.at(-1).tile,null);
+  for(const failure of [()=>false,()=>{throw Error('publisher failed');}]){
+   const failed=capture();media.engine.startPublishingStream=failure;
+   await assert.rejects(media.startShare({getDisplayMedia:async()=>failed.stream}));assert.equal(failed.track.readyState,'ended');
+  }
+  assert.equal(previews.size,0);
+  let finishRegister;const registering=capture();
+  media.engine.createStream=()=>new Promise(r=>{finishRegister=r;});
+  const registration=media.startShare({getDisplayMedia:async()=>registering.stream});
+  await new Promise(r=>setTimeout(r,0));
+  media.stopShare();assert.equal(registering.track.readyState,'ended');
+  finishRegister(new MediaStream(registering.stream.getTracks()));await registration;
+  assert.equal(media.share,undefined);
+  let resolve;
+  const late=capture();const pending=media.startShare({getDisplayMedia:()=>new Promise(r=>{resolve=r;})});
+  await media.startShare({getDisplayMedia:()=>assert.fail('duplicate picker must not open')});
+  media.dispose();resolve(late.stream);await pending;
+  assert.equal(late.track.readyState,'ended');assert.equal(media.share,undefined);
+ }finally{
+  media.dispose();if(oldMediaStream===undefined)delete globalThis.MediaStream;else globalThis.MediaStream=oldMediaStream;
+  if(oldNavigator)Object.defineProperty(globalThis,'navigator',oldNavigator);else delete globalThis.navigator;
+ }
+});

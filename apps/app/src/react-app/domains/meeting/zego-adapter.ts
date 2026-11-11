@@ -1,4 +1,4 @@
-import { meetingDiagnostic, meetingDiagnosticStep, meetingNumericMetrics, meetingTrackSnapshot } from "./diagnostics";
+import { meetingDiagnostic, meetingDiagnosticError, meetingDiagnosticStep, meetingNumericMetrics, meetingTrackSnapshot } from "./diagnostics";
 import { ensureMeetingMediaPermissions, meetingDeviceError } from "./media-permission";
 import type { MeetingJoin } from "./types";
 // The vendored Web SDK is loaded once, without initializing JuggleCall.
@@ -36,6 +36,9 @@ export class MeetingMedia {
   private joinInfo?: MeetingJoin;
   private local?: MediaStream;
   private share?: MediaStream;
+  private shareCapture?: MediaStream;
+  private shareStarting = false;
+  private shareGeneration = 0;
   // Keep SDK-created source previews alive while their tracks are published.
   private cameraSource?: MediaStream;
   private disposed = false;
@@ -251,48 +254,88 @@ export class MeetingMedia {
       this.engine.renewToken(token, this.joinInfo.roomId);
   }
   async startShare(devices: MediaDevices = navigator.mediaDevices) {
-    if (this.share || !this.engine) return;
-    let stream: MediaStream;
+    if (this.share || this.shareStarting || this.disposed || !this.engine) return;
+    const run = ++this.shareGeneration;
+    this.shareStarting = true;
     try {
-      stream = await devices.getDisplayMedia({ video: true, audio: false });
-    } catch (error) {
-      const name = (error as { name?: string })?.name;
-      if (name === "AbortError") return;
-      if (name === "NotAllowedError") {
-        throw new Error(/Mac/.test(navigator.userAgent)
-          ? "未获得屏幕共享权限，或已取消选择。请在 macOS「系统设置 → 隐私与安全性 → 屏幕与系统音频录制」中允许当前应用（开发版为 Electron），完全退出并重新打开应用后重试。"
-          : "未获得屏幕共享权限，或已取消选择。请允许屏幕录制并重新选择要共享的屏幕或窗口。");
+      let capture: MediaStream;
+      try {
+        // Call the requesting window immediately, while its user gesture is active.
+        capture = await meetingDiagnosticStep("rtc.share.capture", {}, () => devices.getDisplayMedia({ video: true, audio: false }));
+      } catch (error) {
+        const name = (error as { name?: string })?.name;
+        if (name === "AbortError") return;
+        if (name === "NotAllowedError") {
+          throw new Error(/Mac/.test(navigator.userAgent)
+            ? "未获得屏幕共享权限，或已取消选择。请在 macOS「系统设置 → 隐私与安全性 → 屏幕与系统音频录制」中允许当前应用（开发版为 Electron），完全退出并重新打开应用后重试。"
+            : "未获得屏幕共享权限，或已取消选择。请允许屏幕录制并重新选择要共享的屏幕或窗口。");
+        }
+        if (name === "InvalidStateError")
+          throw new Error("请返回会议窗口，再点击共享屏幕并选择共享内容。");
+        if (name === "NotReadableError")
+          throw new Error(/Mac/.test(navigator.userAgent)
+            ? "系统未能启动屏幕采集。请检查 macOS「系统设置 → 隐私与安全性 → 屏幕与系统音频录制」中的当前应用权限（开发版为 Electron），更改后完全退出并重新打开应用；若已授权，请重新选择共享窗口。"
+            : "系统未能启动屏幕采集。请确认所选窗口仍然可见，并重新选择共享内容。");
+        throw new Error("无法读取共享画面，请重新选择屏幕或窗口后重试。");
       }
-      if (name === "InvalidStateError")
-        throw new Error("请返回会议窗口，再点击共享屏幕并选择共享内容。");
-      throw new Error("无法读取共享画面，请检查屏幕录制权限后重试。");
+      if (this.disposed || run !== this.shareGeneration) {
+        capture.getTracks().forEach(track => track.stop());
+        return;
+      }
+      this.shareCapture = capture;
+      let stream: MediaStream | undefined;
+      try {
+        // ZEGO 3.12 rejects raw getDisplayMedia streams (1103044). Wrap the
+        // child-window tracks in this renderer's realm, then register a custom
+        // preview with the SDK before publishing. This does not recapture media.
+        const source = new MediaStream(capture.getVideoTracks());
+        stream = await meetingDiagnosticStep("rtc.share.register", {}, () => this.engine.createStream({
+          custom: { source, videoOptimizationMode: "detail" },
+        }) as Promise<MediaStream>);
+        if (this.disposed || run !== this.shareGeneration || !capture.getVideoTracks().some(t => t.readyState === "live")) {
+          if (this.shareCapture === capture) this.shareCapture = undefined;
+          this.releaseShare(stream, capture);
+          return;
+        }
+        if (this.engine.startPublishingStream(this.streamId(true), stream) === false)
+          throw new Error("共享发布失败");
+        this.share = stream;
+        this.diagnosticStreams.set("share", stream);
+        const published = stream;
+        for (const track of new Set([...capture.getVideoTracks(), ...stream.getVideoTracks()]))
+          track.addEventListener("ended", () => { if (this.share === published) this.stopShare(); }, { once: true });
+        meetingDiagnostic("rtc.share.published", { tracks: meetingTrackSnapshot(stream) });
+        this.update({ id: "share", userId: this.joinInfo!.userId, stream, screen: true }, "share");
+      } catch (error) {
+        if (this.shareCapture === capture) this.shareCapture = undefined;
+        this.releaseShare(stream, capture);
+        meetingDiagnostic("rtc.share.publish.failed", meetingDiagnosticError(error));
+        const code = (error as { errorCode?: number })?.errorCode;
+        throw new Error(`屏幕画面已采集，但共享发布失败${typeof code === "number" ? `（${code}）` : ""}，请重试。`);
+      }
+    } finally {
+      if (run === this.shareGeneration) this.shareStarting = false;
     }
-    if (this.disposed) {
-      stream.getTracks().forEach((track) => track.stop());
-      return;
-    }
-    if (
-      this.engine.startPublishingStream(this.streamId(true), stream) === false
-    ) {
-      stream.getTracks().forEach((track) => track.stop());
-      throw new Error("共享发布失败。");
-    }
-    this.share = stream;
-    stream
-      .getVideoTracks()[0]
-      ?.addEventListener("ended", () => this.stopShare(), { once: true });
-    this.update(
-      { id: "share", userId: this.joinInfo!.userId, stream, screen: true },
-      "share",
-    );
+  }
+  private releaseShare(stream: MediaStream | undefined, capture: MediaStream | undefined) {
+    capture?.getTracks().forEach(track => track.stop());
+    if (!stream) return;
+    try { this.engine.destroyStream(stream); }
+    catch (error) { meetingDiagnostic("rtc.share.destroy.failed", meetingDiagnosticError(error)); }
+    finally { stream.getTracks().forEach(track => track.stop()); }
   }
   stopShare() {
-    if (!this.share) return;
-    const stream = this.share;
+    this.shareGeneration++;
+    this.shareStarting = false;
+    const stream = this.share, capture = this.shareCapture;
     this.share = undefined;
-    this.engine.stopPublishingStream(this.streamId(true));
-    stream.getTracks().forEach((track) => track.stop());
-    this.update(null, "share");
+    this.shareCapture = undefined;
+    this.diagnosticStreams.delete("share");
+    try { if (stream) this.engine.stopPublishingStream(this.streamId(true)); }
+    finally {
+      this.releaseShare(stream, capture);
+      if (stream) this.update(null, "share");
+    }
   }
   dispose() {
     if (this.disposed) return;

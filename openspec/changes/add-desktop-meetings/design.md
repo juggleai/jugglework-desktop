@@ -11,6 +11,10 @@ Desktop also reads a local meeting.json before joining (development: apps/deskto
 
 The vendored ZEGO Web SDK 3.12.0 manages media access endpoints. Meeting initializes it with AppID only; no serverUrl is configured, returned in meeting APIs, or required for readiness.
 
+Screen sharing starts from the meeting window's user gesture and MediaDevices. Native permissions accept both `display-capture` and the observed Electron 44 legacy request shape (`media`, explicit empty `mediaTypes`, top-level frame). Legacy compatibility applies only to the trusted main/meeting windows at the permission-request stage; generic media checks and meeting-window camera/microphone requests remain denied. Source selection and OS authorization still apply. Capture failures are diagnosed separately from publication failures; a failed publication or a capture returning after leave must stop all captured tracks. See `docs/meeting/09-screen-sharing.md` for reproduction evidence and OS verification limits.
+
+ZEGO 3.12 requires screen captures to be registered through `createStream({custom:{source}})` before publication; passing the raw browser stream fails with 1103044. Construct the source container in the engine's renderer realm using the captured video tracks. Retain both capture and SDK streams, release both on stop/leave/failure, and invalidate delayed capture/registration results with a sharing generation. A pending request cannot open another picker. Real OS-window capture and ZEGO cloud decoding have passed locally; the user separately confirmed reception on another PC.
+
 
 Audio-only toggles preserve the local MediaStream, video track and video element; the first microphone activation adds an audio track to the existing SDK stream. Rejoining the active meeting focuses its existing window without another admission request.
 

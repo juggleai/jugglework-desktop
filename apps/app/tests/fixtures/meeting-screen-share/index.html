@@ -1,0 +1,40 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>Meeting screen capture regression</title><body><h1>Meeting capture test</h1><script>
+window.runScreenCaptureCheck = async function () {
+  const child = window;
+  child.document.body.innerHTML = '<h1>Local test content only</h1><video autoplay muted style="width:320px"></video>';
+  const video = child.document.querySelector('video');
+  const results = [];
+  let stream;
+  try {
+    for (let i = 0; i < 2; i++) {
+      stream = await child.navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+      video.srcObject = stream;
+      await video.play();
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(Error('Captured video has no frames')), 5000);
+        video.requestVideoFrameCallback(() => { clearTimeout(timer); resolve(); });
+      });
+      const track = stream.getVideoTracks()[0];
+      if (!video.videoWidth || track.readyState !== 'live' || stream.getAudioTracks().length) throw Error('Invalid capture');
+      results.push({ width: video.videoWidth, height: video.videoHeight, state: track.readyState });
+      stream.getTracks().forEach(t => t.stop());
+      if (track.readyState !== 'ended') throw Error('Capture did not stop');
+      video.srcObject = null;
+    }
+    // The native test handler cancels the third picker request.
+    try {
+      stream = await child.navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+      throw Error('Cancelled capture unexpectedly succeeded');
+    } catch (error) { if (error.name !== 'AbortError' && error.name !== 'NotAllowedError') throw error; }
+    try {
+      stream = await child.navigator.mediaDevices.getUserMedia({ video: true });
+      throw Error('Child camera permission unexpectedly granted');
+    } catch (error) { if (error.name !== 'NotAllowedError') throw error; }
+    return { captures: results, cancel: 'rejected', childCamera: 'denied' };
+  } finally {
+    stream?.getTracks().forEach(t => t.stop());
+    video.srcObject = null;
+
+  }
+};
+</script></body></html>
