@@ -60,7 +60,8 @@
 /* Page navigation, quick actions and daily agenda. */
 .meeting-page { scrollbar-gutter: stable; }
 .meeting-ui .header { height: 58px; padding: 0 28px; display: flex; align-items: center; justify-content: space-between; gap: 16px; background: var(--meet-bg); border-bottom: 1px solid var(--meet-line); position: sticky; top: 0; z-index: 2; }
-.meeting-ui .page-header { display: grid; grid-template-columns: 1fr auto 1fr; }
+.meeting-ui .page-header { display: grid; grid-template-columns: 1fr auto 1fr; -webkit-app-region: drag; user-select: none; }
+.meeting-ui .page-header .tabs, .meeting-ui .page-header button { -webkit-app-region: no-drag; }
 .meeting-ui .meeting-brand, .meeting-ui .header-tools { display: flex; align-items: center; gap: 10px; }
 .meeting-ui .meeting-brand { font-size: 14px; }
 .meeting-ui .brand-icon { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 9px; background: var(--meet-hover); }
@@ -405,4 +406,57 @@
 @media (prefers-reduced-motion: reduce) {
   .meeting-ui *, .meeting-dialog-backdrop, .meeting-dialog-backdrop > .meeting-ui { animation: none !important; transition: none !important; }
   .meeting-ui button:not(:disabled):hover, .meeting-ui button:not(:disabled):active { transform: none; }
+}
+
+/* Screen/window selection owns a pending native capture request. */
+.meeting-dialog-backdrop > .meeting-ui.meeting-screen-dialog {
+  box-sizing: border-box; width: min(840px, calc(100vw - 48px)); height: min(760px, calc(100vh - 48px));
+  max-height: none; display: flex; flex-direction: column; padding: 24px 28px 20px; overflow: hidden;
+}
+.meeting-screen-dialog .modal-head { flex-shrink: 0; margin-bottom: 4px; }
+.meeting-screen-dialog .modal-head h2 { font-size: 21px; letter-spacing: -.4px; margin: 0; }
+.meeting-screen-dialog .screen-picker-hint { color: var(--meet-sub); font-size: 12px; margin: 0 0 16px; }
+.meeting-screen-dialog .screen-filter-row { --screen-filter-size: 36px; display: flex; align-items: flex-start; gap: 6px; flex-shrink: 0; padding-bottom: 16px; }
+.meeting-screen-dialog .screen-filters { display: flex; align-items: flex-start; gap: 12px; min-width: 0; flex: 1; overflow-x: auto; padding: 4px 4px 26px; scrollbar-width: none; }
+.meeting-screen-dialog button.screen-filter { position: relative; flex: 0 0 var(--screen-filter-size); display: grid; place-items: center; width: var(--screen-filter-size); height: var(--screen-filter-size); min-height: var(--screen-filter-size); padding: 0; border: 0; border-radius: 12px; background: transparent; font-size: 11px; color: var(--meet-sub); }
+.meeting-screen-dialog .screen-filter-icon { flex-shrink: 0; width: var(--screen-filter-size); height: var(--screen-filter-size); display: grid; place-items: center; border: 1px solid var(--meet-line); border-radius: 10px; background: var(--meet-bg); box-shadow: 0 3px 6px #10182706; transition: border-color 150ms, box-shadow 150ms, background 150ms; }
+.meeting-screen-dialog .screen-filter-icon svg { width: calc(50px / 3); height: calc(50px / 3); }
+.meeting-screen-dialog .screen-filter-icon img { display: block; width: calc(64px / 3); height: calc(64px / 3); max-width: none; object-fit: contain; object-position: center; }
+.meeting-screen-dialog .screen-filter-label { position: absolute; top: calc(100% + 6px); left: 50%; transform: translateX(-50%); line-height: 18px; white-space: nowrap; }
+.meeting-screen-dialog .screen-filter-nav { flex: 0 0 32px; width: 32px; height: var(--screen-filter-size); min-height: var(--screen-filter-size); padding: 0; margin-top: 4px; }
+.meeting-screen-dialog .screen-filter[aria-pressed="true"] { color: #3478ff; }
+.meeting-screen-dialog .screen-filter[aria-pressed="true"] .screen-filter-icon { border-color: #3478ff; box-shadow: 0 0 0 3px #3478ff26; background: color-mix(in srgb, #3478ff 5%, var(--meet-bg)); }
+.meeting-screen-dialog .screen-filter:hover .screen-filter-icon { background: var(--meet-hover); }
+.meeting-screen-dialog .screen-source-list { min-height: 0; flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 8px 8px 4px; margin: 0 -8px; }
+.meeting-screen-dialog .screen-source-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px 28px; }
+.meeting-screen-dialog button.screen-source { display: flex; flex-direction: column; gap: 10px; min-width: 0; border: 0; border-radius: 13px; padding: 0; background: transparent; text-align: center; font-size: 13px; }
+.meeting-screen-dialog .screen-source-preview { position: relative; overflow: hidden; width: 100%; aspect-ratio: 16 / 9; display: grid; place-items: center; border-radius: 12px; border: 1px solid var(--meet-line); background: var(--meet-soft); box-shadow: 0 5px 16px #10182705; transition: border-color 160ms, box-shadow 160ms; }
+/* Clip the bitmap's own corners, not the letterboxed 16:9 container.
+   Native window snapshots may contain black pixels outside OS rounded corners. */
+.meeting-screen-dialog .screen-thumbnail { display: block; position: absolute; top: 50%; left: 50%; width: auto; height: auto; max-width: 100%; max-height: 100%; transform: translate(-50%, -50%); border-radius: 8px; }
+.meeting-screen-dialog .screen-source-badge { position: absolute; left: 10px; top: 10px; display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; background: var(--meet-bg); box-shadow: 0 2px 8px #0002; color: var(--meet-sub); }
+.meeting-screen-dialog .screen-source-badge img { width: 22px; height: 22px; object-fit: contain; }
+.meeting-screen-dialog .screen-source-check { position: absolute; bottom: 10px; right: 10px; display: grid; place-items: center; width: 25px; height: 25px; border-radius: 50%; background: #3478ff; color: white; opacity: 0; transform: scale(.8); transition: opacity 150ms, transform 150ms; }
+.meeting-screen-dialog .screen-source-check svg { width: 16px; height: 16px; }
+.meeting-screen-dialog .screen-source[aria-pressed="true"] .screen-source-preview { border-color: #3478ff; box-shadow: 0 0 0 3px #3478ff26; }
+.meeting-screen-dialog .screen-source[aria-pressed="true"] .screen-source-check { opacity: 1; transform: scale(1); }
+.meeting-screen-dialog .screen-source[aria-pressed="true"] .screen-source-name { color: #3478ff; }
+.meeting-screen-dialog .screen-source:not(:disabled):hover .screen-source-preview { border-color: #3478ff88; }
+.meeting-screen-dialog .screen-source-name { width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 5px; line-height: 22px; }
+.meeting-screen-dialog .screen-preview-unavailable, .meeting-screen-dialog .screen-picker-empty { display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 12px; color: var(--meet-sub); font-size: 12px; }
+.meeting-screen-dialog .screen-picker-empty { height: 100%; min-height: 120px; }
+.meeting-screen-dialog .screen-picker-empty > svg { width: 32px; height: 32px; }
+.meeting-screen-dialog .screen-picker-status { min-height: 24px; padding-top: 6px; color: var(--meet-sub); font-size: 12px; flex-shrink: 0; }
+.meeting-screen-dialog .screen-picker-status[role="alert"] { color: #df4848; }
+.meeting-screen-dialog .screen-picker-foot { flex-shrink: 0; margin-top: 8px; padding-top: 14px; border-top: 1px solid var(--meet-line); gap: 10px; }
+.meeting-screen-dialog .screen-picker-foot > span { flex: 1; min-width: 0; color: var(--meet-sub); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.meeting-screen-dialog .screen-picker-foot > button { min-width: 86px; flex-shrink: 0; }
+.meeting-screen-dialog .screen-picker-foot > .primary { min-width: 112px; background: #3478ff; border-color: #3478ff; color: #fff; }
+.meeting-screen-dialog .screen-picker-foot > .primary:not(:disabled):hover { background: #2566ea; }
+@media (max-width: 600px), (max-height: 600px) {
+  .meeting-dialog-backdrop > .meeting-ui.meeting-screen-dialog { padding: 16px 20px; }
+  .meeting-screen-dialog .screen-picker-hint { margin-bottom: 10px; }
+  .meeting-screen-dialog .screen-filter-row { --screen-filter-size: calc(88px / 3); padding-bottom: 8px; }
+  .meeting-screen-dialog .screen-filter-icon { border-radius: 8px; }
+  .meeting-screen-dialog .screen-source-grid { gap: 16px; }
 }

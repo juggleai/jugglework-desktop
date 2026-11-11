@@ -44,3 +44,21 @@ Background refresh SHALL retain schedule content during loading.
 #### Scenario: Home calendar date selected
 - **WHEN** a user selects a date in the home calendar
 - **THEN** only the adjacent schedule changes and the home view remains selected.
+
+### Requirement: Explicit desktop and window selection
+Electron SHALL present a meeting-window modal with desktop/window thumbnails and filters before sharing. Selection alone SHALL NOT start capture.
+#### Scenario: Confirm a source
+- **WHEN** the user selects an available source and confirms sharing
+- **THEN** the pending display request resolves with that source, preserving the existing ZEGO publication and cleanup path.
+#### Scenario: Cancel or invalidate selection
+- **WHEN** the user cancels, leaves, the request times out, or the owning renderer/window is destroyed
+- **THEN** the pending display request is cancelled without publishing a stream.
+#### Scenario: Selected window has closed
+- **WHEN** the selected source no longer exists at confirmation
+- **THEN** the modal remains open with a refresh/reselection message and no fallback capture starts.
+
+### Requirement: Draggable workbench navigation
+The meeting workbench header SHALL support native window dragging without intercepting navigation controls.
+#### Scenario: Switch meeting views
+- **WHEN** the user clicks Home, Calendar or History in the header
+- **THEN** the selected view changes normally; the tabs remain outside the native drag region.

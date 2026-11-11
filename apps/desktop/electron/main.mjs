@@ -1,3 +1,4 @@
+import { createMeetingScreenPicker } from "./meeting-screen-picker.mjs";
 import { installMeetingDiagnostics } from "./meeting-diagnostics.mjs";
 import { installMeetingCompactWindow } from "./meeting-compact-window.mjs";
 import { readMeetingConfig } from "./meeting-config.mjs";
@@ -932,6 +933,7 @@ const IDLE_ROUTER_INFO = Object.freeze({
 
 let mainWindow = null;
 let meetingWindow = null;
+const meetingScreenPicker = createMeetingScreenPicker({ desktopCapturer, getMainWindow: () => mainWindow, getMeetingWindow: () => meetingWindow });
 let readMeetingNativeDiagnostics = () => ({ storageAvailable: false, records: [] });
 /** @type {import("electron").BrowserWindow | null} */
 let meetingMiniWindow = null;
@@ -2364,6 +2366,8 @@ const remoteControlLifecycleManager = createRemoteControlLifecycleManager({
 // typecheck:electron`.
 /** @type {import("@jugglework/types/desktop-ipc").DesktopCommandHandlers<import("electron").IpcMainInvokeEvent>} */
 const desktopCommandHandlers = {
+  "meetingScreenSources": (event, requestId) => meetingScreenPicker.list(event, requestId),
+  "meetingScreenChoose": (event, requestId, sourceId) => meetingScreenPicker.choose(event, requestId, sourceId),
   "meetingDiagnosticsGet": async (event) => {
     if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error("仅主窗口可读取会议诊断");
     return readMeetingNativeDiagnostics();
@@ -3407,25 +3411,7 @@ async function createMainWindow() {
     child.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
     child.webContents.on("will-navigate", (event) => event.preventDefault());
   });
-  session.defaultSession.setDisplayMediaRequestHandler(async (request, callback) => {
-    const owner = mainWindow && request.frame === mainWindow.webContents.mainFrame
-      ? mainWindow
-      : meetingWindow && request.frame === meetingWindow.webContents.mainFrame ? meetingWindow : null;
-    if (!owner) { callback(null); return; }
-    try {
-      const sources = await desktopCapturer.getSources({ types: ["screen", "window"] });
-      if (!sources.length) { callback(null); return; }
-      const selected = await dialog.showMessageBox(owner, {
-        type: "question", title: "共享屏幕", message: "选择要共享的屏幕或窗口",
-        detail: "确认后，参会者将看到所选内容。", buttons: ["取消", ...sources.map((source) => source.name)], cancelId: 0, defaultId: 0,
-      });
-      const source = sources[selected.response - 1];
-      callback(source && !owner.isDestroyed() ? { video: source } : null);
-    } catch (error) {
-      console.warn("[meeting] screen capture failed", { name: error?.name, screenAccess: process.platform === "darwin" ? systemPreferences.getMediaAccessStatus("screen") : "unknown" });
-      callback(null);
-    }
-  }, { useSystemPicker: true });
+  session.defaultSession.setDisplayMediaRequestHandler(meetingScreenPicker.handle, { useSystemPicker: false });
 
   mainWindow.webContents.setWindowOpenHandler(({ url, frameName }) => {
     // The meeting UI is a React portal owned by the authenticated main renderer.

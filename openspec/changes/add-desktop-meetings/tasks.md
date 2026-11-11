@@ -22,3 +22,4 @@ Implementation boundaries and validation: `docs/meeting/04-implementation-status
 - [x] Stable schedule refresh, circular avatars and attendance/member invitation UI
 - [x] Targeted member invitation regression test (no real recipient contacted)
 - [ ] Updated member panel end-to-end UI acceptance after restart
+- [x] Explicit desktop/window thumbnail picker, safe pending-request lifecycle, real Electron selection/cancel/re-share and ZEGO cloud decode verification

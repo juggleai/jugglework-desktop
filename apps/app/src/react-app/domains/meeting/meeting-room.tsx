@@ -1,14 +1,16 @@
 import { bindMeetingVideo } from "./video-view";
 import { exportMeetingDiagnostics } from "./diagnostics-export";
 import { bindRemoteAudio } from "./remote-audio";
+import { MeetingScreenPicker } from "./meeting-screen-picker";
 import { MeetingMembers } from "./meeting-members";
 import { MeetingChatToasts } from "./meeting-chat-toasts";
 import { MeetingCode } from "./meeting-code";
 import { MeetingInvitePicker, MeetingMemberAvatar } from "./meeting-invite-picker";
 import { MeetingPermissionNotice } from "./permission-notice";
-import { focusMeetingWindow, markMeetingMiniReady } from "@/app/lib/desktop";
+import { chooseMeetingScreenSource, focusMeetingWindow, markMeetingMiniReady } from "@/app/lib/desktop";
+import { syncMeetingWindowStyles } from "./window-styles";
 import { guardMeetingWindowClose } from "./window-lifecycle";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useDenAuth } from "../cloud/den-auth-provider";
 import { useJuggleChatStore } from "../jugglechat/store";
@@ -55,6 +57,13 @@ export function MeetingRoomHost() {
     (id === imUser?.id ? imUser.name : contacts.find((c) => c.user_id === id)?.nickname) || fallback || "参会人";
   const [panel, setPanel] = useState<"members" | "chat" | null>(null);
   const [invite, setInvite] = useState(false);
+  const [screenRequest, setScreenRequest] = useState<string | null>(null);
+  const screenRequestRef = useRef<string | null>(null);
+  const closeScreenPicker = useCallback(() => {
+    const id = screenRequestRef.current;
+    screenRequestRef.current = null; setScreenRequest(null);
+    if (id) void chooseMeetingScreenSource(id, null).catch(() => {});
+  }, []);
   const [leaving, setLeaving] = useState(false);
   const [text, setText] = useState("");
   const deviceRequest = useRef(0);
@@ -73,9 +82,36 @@ export function MeetingRoomHost() {
     });
   }, []);
   const [miniPopup, setMiniPopup] = useState<Window | null>(null);
+  useLayoutEffect(() => {
+    const cleanups = [popup, miniPopup].filter(child => child && !child.closed)
+      .map(child => syncMeetingWindowStyles(document, child!.document));
+    return () => cleanups.forEach(cleanup => cleanup());
+  }, [popup, miniPopup]);
   const uid = user?.id || "";
   const m = s.meeting;
   useEffect(() => { deviceRequest.current++; setDeviceBusy(false); }, [m?.id]);
+  useEffect(() => {
+    const open = (event: Event) => {
+      const id = (event as CustomEvent<{ requestId: string }>).detail?.requestId;
+      if (!id) return;
+      if (!useMeetingStore.getState().meeting) { void chooseMeetingScreenSource(id, null).catch(() => {}); return; }
+      screenRequestRef.current = id; setScreenRequest(id);
+    };
+    const closed = (event: Event) => {
+      if ((event as CustomEvent<{ requestId: string }>).detail?.requestId === screenRequestRef.current) {
+        screenRequestRef.current = null; setScreenRequest(null);
+      }
+    };
+    window.addEventListener("jugglework:meeting:screen-picker", open);
+    window.addEventListener("jugglework:meeting:screen-picker-closed", closed);
+    return () => {
+      window.removeEventListener("jugglework:meeting:screen-picker", open);
+      window.removeEventListener("jugglework:meeting:screen-picker-closed", closed);
+      closeScreenPicker();
+    };
+  }, [closeScreenPicker]);
+  useEffect(() => { if (leaving || !m) closeScreenPicker(); }, [leaving, m?.id, closeScreenPicker]);
+
   const previousUser = useRef(uid);
   useEffect(() => {
     if (
@@ -467,6 +503,7 @@ export function MeetingRoomHost() {
         ? createPortal(content, popup.document.body)
         : null}
       {miniPopup && !miniPopup.closed ? createPortal(compactContent, miniPopup.document.body) : null}
+      {screenRequest && !leaving ? <MeetingScreenPicker key={screenRequest} requestId={screenRequest} ownerDocument={popup?.document} onClose={closeScreenPicker} /> : null}
       {invite ? (
         <MeetingInvitePicker
           ownerDocument={popup?.document}

@@ -1,6 +1,6 @@
 import type { SVGProps } from "react";
 import {
-  ArrowRight, CalendarDays, Check, ChevronLeft, ChevronRight, Clock3, Copy,
+  Monitor, AppWindow, RefreshCw, ArrowRight, CalendarDays, Check, ChevronLeft, ChevronRight, Clock3, Copy,
   Download, LayoutGrid, Maximize2, MessageSquare, Mic, MicOff,
   ScreenShare, ScreenShareOff, Search, Settings, UsersRound, Video, VideoOff, X, Plus,
 } from "lucide-react";
@@ -16,7 +16,7 @@ const icons = {
   download: Download, grid: LayoutGrid, expand: Maximize2, hangup: HangupIcon,
   video: Video, calendar: CalendarDays, plus: Plus, close: X, mic: Mic,
   screen: ScreenShare, chat: MessageSquare, users: UsersRound, arrow: ArrowRight,
-  settings: Settings, copy: Copy, check: Check,
+  settings: Settings, copy: Copy, check: Check, monitor: Monitor, window: AppWindow, refresh: RefreshCw,
 };
 export function MeetingIcon({ name = "video", off, style, ...props }:
   SVGProps<SVGSVGElement> & { name?: keyof typeof icons; off?: boolean }) {

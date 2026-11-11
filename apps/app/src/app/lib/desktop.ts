@@ -818,3 +818,10 @@ export function readMeetingWindowState() {
 export function markMeetingMiniReady() {
   return invokeElectronHelper("meetingMiniReady");
 }
+
+export function listMeetingScreenSources(requestId: string) {
+  return invokeElectronHelper("meetingScreenSources", requestId);
+}
+export function chooseMeetingScreenSource(requestId: string, sourceId: string | null) {
+  return invokeElectronHelper("meetingScreenChoose", requestId, sourceId);
+}

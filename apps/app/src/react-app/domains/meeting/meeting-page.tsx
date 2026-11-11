@@ -37,11 +37,13 @@ export function MeetingDialog({
   children,
   onClose,
   ownerDocument = document,
+  className = "",
 }: {
   title: string;
   children: ReactNode;
   onClose: () => void;
   ownerDocument?: Document;
+  className?: string;
 }) {
   const ref = useRef<HTMLElement>(null);
   const closeRef = useRef(onClose);
@@ -76,7 +78,7 @@ export function MeetingDialog({
   return createPortal(
     <div className="meeting-dialog-backdrop">
       <section
-        className="meeting-ui"
+        className={`meeting-ui ${className}`}
         ref={ref}
         role="dialog"
         aria-modal="true"
@@ -319,14 +321,6 @@ export function MeetingPage() {
         </div>
         <div className="header-tools">
           <button className="ghost icon-button" title="导出会议诊断" aria-label="导出会议诊断" onClick={() => void run(exportMeetingDiagnostics)}><Icon name="download" width={18} height={18} /></button>
-        <button
-          className="ghost icon-button"
-          aria-label="会议设置"
-          title="会议设置"
-          onClick={() => setDialog("settings")}
-        >
-          <Icon name="settings" />
-        </button>
         </div>
       </header>
       <main className="content">
