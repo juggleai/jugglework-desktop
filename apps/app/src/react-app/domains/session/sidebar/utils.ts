@@ -163,6 +163,69 @@ export const collectRecentSessions = (
 };
 
 /**
+ * Apply a saved manual order. Entries not yet in the saved order (for example
+ * newly created sessions) appear first in their incoming recency order, so a
+ * new chat never disappears to the bottom of a hand-sorted list.
+ */
+export function applyManualOrder<T>(
+  entries: T[],
+  orderIds: readonly string[],
+  idOf: (entry: T) => string,
+): T[] {
+  if (orderIds.length === 0) return entries;
+  const rank = new Map(orderIds.map((id, index) => [id, index]));
+  const unranked = entries.filter((entry) => !rank.has(idOf(entry)));
+  const ranked = entries
+    .filter((entry) => rank.has(idOf(entry)))
+    .sort((left, right) => rank.get(idOf(left))! - rank.get(idOf(right))!);
+  return [...unranked, ...ranked];
+}
+
+export type SectionedRecentSessions = {
+  recent: RecentSessionEntry[];
+  bySection: Map<string, RecentSessionEntry[]>;
+};
+
+/**
+ * Split recent root sessions into user sections and the remaining Recent list.
+ * Assignments to deleted sections fall back to Recent. In manual mode each list
+ * follows its own saved order; otherwise lists keep update-time recency.
+ */
+export function partitionRecentSessionsIntoSections(
+  entries: RecentSessionEntry[],
+  input: {
+    sectionIds: readonly string[];
+    assignments: Readonly<Record<string, string>>;
+    sortMode: "recent" | "manual";
+    manualOrder: Readonly<Record<string, readonly string[]>>;
+    recentListId: string;
+  },
+): SectionedRecentSessions {
+  const known = new Set(input.sectionIds);
+  const bySection = new Map<string, RecentSessionEntry[]>(input.sectionIds.map((id) => [id, []]));
+  const recent: RecentSessionEntry[] = [];
+  for (const entry of entries) {
+    const sectionId = input.assignments[entry.session.id];
+    if (sectionId && known.has(sectionId)) bySection.get(sectionId)!.push(entry);
+    else recent.push(entry);
+  }
+  if (input.sortMode !== "manual") return { recent, bySection };
+  const idOf = (entry: RecentSessionEntry) => entry.session.id;
+  for (const [sectionId, list] of bySection) {
+    bySection.set(sectionId, applyManualOrder(list, input.manualOrder[sectionId] ?? [], idOf));
+  }
+  return { recent: applyManualOrder(recent, input.manualOrder[input.recentListId] ?? [], idOf), bySection };
+}
+
+/** Root sessions of a workspace by update time, newest first. */
+export function sortRootsByRecency(roots: SessionListItem[]): SessionListItem[] {
+  return roots
+    .map((session, index) => ({ session, index }))
+    .sort((left, right) => sessionRecency(right.session) - sessionRecency(left.session) || left.index - right.index)
+    .map(({ session }) => session);
+}
+
+/**
  * Sessions whose title matches the sidebar filter, plus the ancestors of every
  * match so each kept session still hangs off a root the tree can walk from.
  * An empty query returns the input untouched.

@@ -4,7 +4,9 @@ import {
   AlertCircle,
   Archive,
   ArchiveRestore,
+  ArrowDownUp,
   ChevronRight,
+  FolderInput,
   FolderPlus,
   MoreHorizontal,
   Pencil,
@@ -20,6 +22,7 @@ import {
   Folder,
   FolderOpen,
   Tag,
+  X,
 } from "lucide-react";
 import { LayoutGroup, LazyMotion, Reorder, domMax, m, useDragControls } from "motion/react";
 
@@ -73,6 +76,8 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuSub,
   DropdownMenuSubContent,
@@ -112,9 +117,23 @@ import {
   isNeedsAttentionSessionStatus,
   isSessionArchived,
   partitionArchivedSessions,
+  partitionRecentSessionsIntoSections,
   resolveWorkspaceSessionIndicator,
+  sortRootsByRecency,
   workspaceLabel,
 } from "./utils";
+import {
+  PINNED_GROUP_ID,
+  PROJECTS_GROUP_ID,
+  RECENT_LIST_ID,
+  RECENT_GROUP_ID,
+  SECTION_GROUP_PREFIX,
+  normalizeSectionLabel,
+  normalizeSidebarGroupOrder,
+  useSidebarSectionsStore,
+  type ChatSortMode,
+  type SidebarSection,
+} from "./sidebar-sections-store";
 import type { FlattenedSessionRow, RecentSessionEntry, SessionListItem, SessionTreeState } from "./utils";
 import {
   useSessionManagementStore,
@@ -292,6 +311,7 @@ function SessionMenuContent({ variant, sessionId, workspaceId, isPinned, isArchi
             )}
           </DropdownMenuSubContent>
         </DropdownMenuSub>
+        {!isArchived ? <MoveToSectionDropdownSub sessionId={sessionId} /> : null}
         {ctx.onArchiveSession ? (
           <DropdownMenuItem onClick={() => ctx.onArchiveSession?.(sessionId, !isArchived)}>
             {isArchived ? <ArchiveRestore className="size-4" /> : <Archive className="size-4" />}
@@ -365,6 +385,7 @@ function SessionMenuContent({ variant, sessionId, workspaceId, isPinned, isArchi
           )}
         </ContextMenuSubContent>
       </ContextMenuSub>
+      {!isArchived ? <MoveToSectionContextSub sessionId={sessionId} /> : null}
       {ctx.onArchiveSession ? (
         <ContextMenuItem onClick={() => ctx.onArchiveSession?.(sessionId, !isArchived)}>
           {isArchived ? <ArchiveRestore className="size-4" /> : <Archive className="size-4" />}
@@ -381,6 +402,217 @@ function SessionMenuContent({ variant, sessionId, workspaceId, isPinned, isArchi
         </>
       ) : null}
     </>
+  );
+}
+
+/** Opens the section-name dialog owned by the sidebar root. */
+const SidebarSectionDialogContext = React.createContext<{
+  openCreateSection: (assignSessionId?: string) => void;
+  openRenameSection: (section: SidebarSection) => void;
+} | null>(null);
+
+function useSidebarSectionDialog() {
+  return React.use(SidebarSectionDialogContext);
+}
+
+function MoveToSectionDropdownSub({ sessionId }: { sessionId: string }) {
+  const localScope = useTaskScope() === "local";
+  const sections = useSidebarSectionsStore((state) => state.sections);
+  const assignedSectionId = useSidebarSectionsStore((state) => state.assignments[sessionId] ?? null);
+  const dialog = useSidebarSectionDialog();
+  const assignSession = useSidebarSectionsStore.getState().assignSession;
+  // Sections are rendered only in the local list.
+  if (!localScope) return null;
+
+  return (
+    <DropdownMenuSub>
+      <DropdownMenuSubTrigger>
+        <FolderInput className="size-4" />
+        {t("sidebar_sections.move_to_section")}
+      </DropdownMenuSubTrigger>
+      <DropdownMenuSubContent className="w-52">
+        {sections.length > 0 ? (
+          <>
+            <DropdownMenuItem onClick={() => assignSession(sessionId, null)} disabled={!assignedSectionId}>
+              {t("sidebar_sections.remove_from_section")}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            {sections.map((section) => (
+              <DropdownMenuItem
+                key={section.id}
+                onClick={() => assignSession(sessionId, section.id)}
+                disabled={assignedSectionId === section.id}
+              >
+                <span className="min-w-0 flex-1 truncate">{section.label}</span>
+              </DropdownMenuItem>
+            ))}
+            <DropdownMenuSeparator />
+          </>
+        ) : null}
+        <DropdownMenuItem onClick={() => dialog?.openCreateSection(sessionId)}>
+          <Plus className="size-4" />
+          {t("sidebar_sections.new_section")}
+        </DropdownMenuItem>
+      </DropdownMenuSubContent>
+    </DropdownMenuSub>
+  );
+}
+
+function MoveToSectionContextSub({ sessionId }: { sessionId: string }) {
+  const localScope = useTaskScope() === "local";
+  const sections = useSidebarSectionsStore((state) => state.sections);
+  const assignedSectionId = useSidebarSectionsStore((state) => state.assignments[sessionId] ?? null);
+  const dialog = useSidebarSectionDialog();
+  const assignSession = useSidebarSectionsStore.getState().assignSession;
+  if (!localScope) return null;
+
+  return (
+    <ContextMenuSub>
+      <ContextMenuSubTrigger>
+        <FolderInput className="mr-2 size-4" />
+        {t("sidebar_sections.move_to_section")}
+      </ContextMenuSubTrigger>
+      <ContextMenuSubContent>
+        {sections.length > 0 ? (
+          <>
+            <ContextMenuItem onClick={() => assignSession(sessionId, null)} disabled={!assignedSectionId}>
+              {t("sidebar_sections.remove_from_section")}
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+            {sections.map((section) => (
+              <ContextMenuItem
+                key={section.id}
+                onClick={() => assignSession(sessionId, section.id)}
+                disabled={assignedSectionId === section.id}
+              >
+                <span className="min-w-0 flex-1 truncate">{section.label}</span>
+              </ContextMenuItem>
+            ))}
+            <ContextMenuSeparator />
+          </>
+        ) : null}
+        <ContextMenuItem onClick={() => dialog?.openCreateSection(sessionId)}>
+          <Plus className="size-4" />
+          {t("sidebar_sections.new_section")}
+        </ContextMenuItem>
+      </ContextMenuSubContent>
+    </ContextMenuSub>
+  );
+}
+
+/**
+ * "⋯" menu on the Projects/Recent headings: chat sort mode and New section.
+ * The trigger shares the heading's hover/focus/open reveal rules.
+ */
+function SidebarListOptionsMenu({ revealClassName }: { revealClassName: string }) {
+  const sortMode = useSidebarSectionsStore((state) => state.sortMode);
+  const dialog = useSidebarSectionDialog();
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={(
+          <button
+            type="button"
+            aria-label={t("sidebar_sections.list_options")}
+            title={t("sidebar_sections.list_options")}
+            data-sidebar-list-options
+            className={cn(
+              "flex size-7 items-center justify-center rounded-lg text-muted-foreground transition-[opacity,background-color,color] duration-150 hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring data-popup-open:pointer-events-auto data-popup-open:bg-sidebar-accent data-popup-open:text-sidebar-foreground data-popup-open:opacity-100",
+              revealClassName,
+            )}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <MoreHorizontal className="size-4" />
+          </button>
+        )}
+      />
+      <DropdownMenuContent align="start" side="bottom" sideOffset={4} className="w-56">
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger>
+            <ArrowDownUp className="size-4" />
+            {t("sidebar_sections.chat_sort")}
+          </DropdownMenuSubTrigger>
+          <DropdownMenuSubContent className="w-44">
+            <DropdownMenuRadioGroup
+              value={sortMode}
+              onValueChange={(value) => {
+                if (value === "recent" || value === "manual") useSidebarSectionsStore.getState().setSortMode(value);
+              }}
+            >
+              {(["recent", "manual"] as const satisfies readonly ChatSortMode[]).map((mode) => (
+                <DropdownMenuRadioItem key={mode} value={mode} data-sort-mode={mode}>
+                  {mode === "recent" ? t("sidebar_sections.sort_recent") : t("sidebar_sections.sort_manual")}
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem data-sidebar-new-section onClick={() => dialog?.openCreateSection()}>
+          <Plus className="size-4" />
+          {t("sidebar_sections.new_section")}
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+/** Shared create/rename dialog for sidebar sections. */
+function SidebarSectionNameDialog({
+  state,
+  onClose,
+}: {
+  state: { mode: "create"; assignSessionId?: string } | { mode: "rename"; section: SidebarSection } | null;
+  onClose: () => void;
+}) {
+  const [label, setLabel] = React.useState("");
+  React.useEffect(() => {
+    if (state) setLabel(state.mode === "rename" ? state.section.label : "");
+  }, [state]);
+  const normalized = normalizeSectionLabel(label);
+  const submit = () => {
+    if (!state || !normalized) return;
+    const store = useSidebarSectionsStore.getState();
+    if (state.mode === "rename") {
+      store.renameSection(state.section.id, normalized);
+    } else {
+      const id = store.createSection(normalized);
+      if (id && state.assignSessionId) store.assignSession(state.assignSessionId, id);
+    }
+    onClose();
+  };
+
+  return (
+    <Dialog open={state !== null} onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle>
+            {state?.mode === "rename" ? t("sidebar_sections.rename_section") : t("sidebar_sections.new_section")}
+          </DialogTitle>
+        </DialogHeader>
+        <Input
+          autoFocus
+          value={label}
+          maxLength={60}
+          placeholder={t("sidebar_sections.section_name")}
+          onChange={(event) => setLabel(event.currentTarget.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") submit();
+          }}
+          aria-label={t("sidebar_sections.section_name")}
+          data-sidebar-section-name-input
+        />
+        <DialogFooter>
+          <DialogClose render={<Button variant="outline" type="button" />}>
+            {t("common.cancel")}
+          </DialogClose>
+          <Button type="button" disabled={!normalized} onClick={submit} data-sidebar-section-submit>
+            {state?.mode === "rename" ? t("common.save") : t("common.create")}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -965,6 +1197,17 @@ export function AppSidebar(props: AppSidebarProps) {
     ),
     [sidebarWorkspaceSessionGroups, taskScope],
   );
+  const reorderLocalWorkspaces = React.useCallback((visibleIds: string[]) => {
+    const orderedVisibleIds = [...visibleIds];
+    const merged = props.workspaceSessionGroups.map((group) => {
+      const isReorderableLocalWorkspace = !group.workspace.automationManaged
+        && workspaceTaskScope(group.workspace) === "local";
+      return isReorderableLocalWorkspace
+        ? orderedVisibleIds.shift() ?? group.workspace.id
+        : group.workspace.id;
+    });
+    props.onReorderWorkspaces?.(merged);
+  }, [props.onReorderWorkspaces, props.workspaceSessionGroups]);
 
   const unseenCompletedSessionIds = useUnseenCompletedSessionIds();
   const localWorkspaceIndicator = React.useMemo(
@@ -1003,13 +1246,40 @@ export function AppSidebar(props: AppSidebarProps) {
     }
     return entries;
   }, [workspaceSessionGroupsInScope]);
-  const recentSessions = React.useMemo(
-    () => collectRecentSessions(workspaceSessionGroupsInScope, new Set(pinnedIds)),
-    [pinnedIds, workspaceSessionGroupsInScope],
+  const sidebarSections = useSidebarSectionsStore((state) => state.sections);
+  const savedSidebarGroupOrder = useSidebarSectionsStore((state) => state.groupOrder);
+  const sectionAssignments = useSidebarSectionsStore((state) => state.assignments);
+  const chatSortMode = useSidebarSectionsStore((state) => state.sortMode);
+  const sectionManualOrder = useSidebarSectionsStore((state) => state.manualOrder);
+  const sectionedSessions = React.useMemo(
+    () => partitionRecentSessionsIntoSections(
+      collectRecentSessions(workspaceSessionGroupsInScope, new Set(pinnedIds)),
+      {
+        sectionIds: sidebarSections.map((section) => section.id),
+        assignments: sectionAssignments,
+        sortMode: chatSortMode,
+        manualOrder: sectionManualOrder,
+        recentListId: RECENT_LIST_ID,
+      },
+    ),
+    [chatSortMode, pinnedIds, sectionAssignments, sectionManualOrder, sidebarSections, workspaceSessionGroupsInScope],
   );
+  const recentSessions = sectionedSessions.recent;
+  const sidebarGroupOrder = React.useMemo(
+    () => normalizeSidebarGroupOrder(savedSidebarGroupOrder, sidebarSections.map((section) => section.id)),
+    [savedSidebarGroupOrder, sidebarSections],
+  );
+  const [sectionDialog, setSectionDialog] = React.useState<
+    { mode: "create"; assignSessionId?: string } | { mode: "rename"; section: SidebarSection } | null
+  >(null);
+  const sectionDialogContext = React.useMemo(() => ({
+    openCreateSection: (assignSessionId?: string) => setSectionDialog({ mode: "create", assignSessionId }),
+    openRenameSection: (section: SidebarSection) => setSectionDialog({ mode: "rename", section }),
+  }), []);
 
   return (
     <SidebarContext.Provider value={contextValue}>
+    <SidebarSectionDialogContext.Provider value={sectionDialogContext}>
       <Sidebar
         collapsible="offcanvas"
         className={cn(
@@ -1084,29 +1354,81 @@ export function AppSidebar(props: AppSidebarProps) {
                   data-sidebar="content"
                   className="no-scrollbar flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto overscroll-contain [--radius:var(--radius-xl)] group-data-[collapsible=icon]:overflow-hidden"
                 >
-                  {pinnedSessions.length > 0 ? (
-                    <GlobalPinnedSessions entries={pinnedSessions} />
-                  ) : null}
                   {taskScope === "local" ? (
-                    <>
-                      <LocalProjectsSection
-                        groups={workspaceSessionGroupsInScope}
-                        expanded={projectsExpanded}
-                        onExpandedChange={setProjectsExpanded}
-                        onAddWorkspace={props.onOpenCreateLocalWorkspace}
-                        showInitialLoading={props.showInitialLoading}
-                        previewCount={previewCount}
-                        showMoreSessions={showMoreSessions}
-                      />
-                      <LocalRecentSessions
-                        entries={recentSessions}
-                        expanded={recentExpanded}
-                        onExpandedChange={setRecentExpanded}
-                        emptyLabel={t("workspace.no_tasks")}
-                      />
-                    </>
+                    <Reorder.Group
+                      as="div"
+                      axis="y"
+                      values={sidebarGroupOrder}
+                      onReorder={(next) => useSidebarSectionsStore.getState().setGroupOrder(next)}
+                      className="flex shrink-0 flex-col gap-0.5"
+                      data-sidebar-group-order
+                    >
+                      {sidebarGroupOrder.map((groupId) => {
+                        if (groupId === PINNED_GROUP_ID) {
+                          return pinnedSessions.length > 0 ? (
+                            <SidebarGroupReorderItem key={groupId} groupId={groupId}>
+                              {(startDrag) => <GlobalPinnedSessions entries={pinnedSessions} onTitlePointerDown={startDrag} />}
+                            </SidebarGroupReorderItem>
+                          ) : null;
+                        }
+                        if (groupId === PROJECTS_GROUP_ID) {
+                          return (
+                            <SidebarGroupReorderItem key={groupId} groupId={groupId}>
+                              {(startDrag) => (
+                                <LocalProjectsSection
+                                  groups={workspaceSessionGroupsInScope}
+                                  expanded={projectsExpanded}
+                                  onExpandedChange={setProjectsExpanded}
+                                  onAddWorkspace={props.onOpenCreateLocalWorkspace}
+                                  showInitialLoading={props.showInitialLoading}
+                                  previewCount={previewCount}
+                                  showMoreSessions={showMoreSessions}
+                                  onReorderWorkspaces={reorderLocalWorkspaces}
+                                  onTitlePointerDown={startDrag}
+                                />
+                              )}
+                            </SidebarGroupReorderItem>
+                          );
+                        }
+                        if (groupId === RECENT_GROUP_ID) {
+                          return (
+                            <SidebarGroupReorderItem key={groupId} groupId={groupId}>
+                              {(startDrag) => (
+                                <LocalRecentSessions
+                                  entries={recentSessions}
+                                  expanded={recentExpanded}
+                                  onExpandedChange={setRecentExpanded}
+                                  emptyLabel={t("workspace.no_tasks")}
+                                  manualSort={chatSortMode === "manual"}
+                                  onTitlePointerDown={startDrag}
+                                />
+                              )}
+                            </SidebarGroupReorderItem>
+                          );
+                        }
+                        if (groupId.startsWith(SECTION_GROUP_PREFIX)) {
+                          const sectionId = groupId.slice(SECTION_GROUP_PREFIX.length);
+                          const section = sidebarSections.find((candidate) => candidate.id === sectionId);
+                          if (!section) return null;
+                          return (
+                            <SidebarGroupReorderItem key={groupId} groupId={groupId}>
+                              {(startDrag) => (
+                                <LocalSidebarSection
+                                  section={section}
+                                  entries={sectionedSessions.bySection.get(section.id) ?? []}
+                                  manualSort={chatSortMode === "manual"}
+                                  onTitlePointerDown={startDrag}
+                                />
+                              )}
+                            </SidebarGroupReorderItem>
+                          );
+                        }
+                        return null;
+                      })}
+                    </Reorder.Group>
                   ) : (
                     <div className="flex shrink-0 flex-col gap-0.5">
+                      {pinnedSessions.length > 0 ? <GlobalPinnedSessions entries={pinnedSessions} /> : null}
                       {workspaceSessionGroupsInScope.map((group) => (
                         <m.div
                           key={group.workspace.id}
@@ -1153,6 +1475,8 @@ export function AppSidebar(props: AppSidebarProps) {
           onPointerDown={props.onStartResize}
         />
       </Sidebar>
+      <SidebarSectionNameDialog state={sectionDialog} onClose={() => setSectionDialog(null)} />
+    </SidebarSectionDialogContext.Provider>
     </SidebarContext.Provider>
   );
 }
@@ -1162,6 +1486,38 @@ type GlobalPinnedSessionEntry = {
   sessionId: string;
 };
 
+type SidebarGroupDragStarter = React.PointerEventHandler<HTMLElement>;
+
+function SidebarGroupReorderItem({
+  groupId,
+  children,
+}: {
+  groupId: string;
+  children: (startDrag: SidebarGroupDragStarter) => React.ReactNode;
+}) {
+  const dragControls = useDragControls();
+  const startDrag = React.useCallback<SidebarGroupDragStarter>((event) => {
+    if (event.button !== 0) return;
+    event.stopPropagation();
+    dragControls.start(event);
+  }, [dragControls]);
+
+  return (
+    <Reorder.Item
+      as="div"
+      value={groupId}
+      dragListener={false}
+      dragControls={dragControls}
+      dragElastic={0}
+      layout="position"
+      data-sidebar-group-reorder-item={groupId}
+      className="relative"
+    >
+      {children(startDrag)}
+    </Reorder.Item>
+  );
+}
+
 function LocalProjectsSection({
   groups,
   expanded,
@@ -1170,6 +1526,8 @@ function LocalProjectsSection({
   showInitialLoading,
   previewCount,
   showMoreSessions,
+  onReorderWorkspaces,
+  onTitlePointerDown,
 }: {
   groups: WorkspaceSessionGroup[];
   expanded: boolean;
@@ -1178,6 +1536,8 @@ function LocalProjectsSection({
   showInitialLoading?: boolean;
   previewCount: (workspaceId: string) => number;
   showMoreSessions: (workspaceId: string, totalRoots: number) => void;
+  onReorderWorkspaces: (workspaceIds: string[]) => void;
+  onTitlePointerDown?: SidebarGroupDragStarter;
 }) {
   return (
     <SidebarGroup data-local-projects className="shrink-0 px-0 pb-1 pt-3">
@@ -1188,47 +1548,165 @@ function LocalProjectsSection({
               render={(
                 <button
                   type="button"
-                  className="flex h-8 w-full items-center gap-1 rounded-lg px-3 pe-11 text-left text-[13px] font-medium text-muted-foreground transition-colors hover:bg-sidebar-accent/25 hover:text-sidebar-foreground"
+                  className="flex h-8 w-full items-center gap-1 rounded-lg px-3 pe-20 text-left text-[13px] font-medium text-muted-foreground transition-colors hover:bg-sidebar-accent/25 hover:text-sidebar-foreground"
                 >
-                  <span>{t("workspace_list.projects")}</span>
+                  <span
+                    className={cn(onTitlePointerDown && "cursor-grab touch-none active:cursor-grabbing")}
+                    onPointerDown={onTitlePointerDown}
+                  >
+                    {t("workspace_list.projects")}
+                  </span>
                   <ChevronRight
                     aria-hidden="true"
-                    className="size-3.5 opacity-0 transition-[transform,opacity] duration-150 group-hover/projects-heading:opacity-100 group-focus-visible/projects-heading:opacity-100 group-data-open/projects:rotate-90"
+                    className={cn(
+                      "size-3.5 transition-[transform,opacity] duration-150",
+                      expanded
+                        ? "rotate-90 opacity-0 group-hover/projects-heading:opacity-100 group-focus-visible/projects-heading:opacity-100"
+                        : "opacity-100",
+                    )}
                     strokeWidth={1.8}
                   />
                 </button>
               )}
             />
-            <button
-              type="button"
-              onClick={(event) => {
-                event.stopPropagation();
-                onAddWorkspace();
-              }}
-              aria-label={t("workspace_list.add_workspace")}
-              title={t("workspace_list.add_workspace")}
-              data-local-projects-add-workspace
-              className="pointer-events-none absolute right-2 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center rounded-lg text-muted-foreground opacity-0 transition-[opacity,background-color,color] duration-150 hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring group-hover/projects-heading:pointer-events-auto group-hover/projects-heading:opacity-100 group-has-[:focus-visible]/projects-heading:pointer-events-auto group-has-[:focus-visible]/projects-heading:opacity-100"
-            >
-              <Plus className="size-4" />
-            </button>
+            <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-0.5">
+              <SidebarListOptionsMenu revealClassName={PROJECTS_HEADING_REVEAL} />
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onAddWorkspace();
+                }}
+                aria-label={t("workspace_list.add_workspace")}
+                title={t("workspace_list.add_workspace")}
+                data-local-projects-add-workspace
+                className={cn(
+                  "flex size-7 items-center justify-center rounded-lg text-muted-foreground transition-[opacity,background-color,color] duration-150 hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring",
+                  PROJECTS_HEADING_REVEAL,
+                )}
+              >
+                <Plus className="size-4" />
+              </button>
+            </div>
           </div>
-          <CollapsibleContent className="flex flex-col gap-0.5 pt-0.5">
-            {groups.map((group) => (
-              <LayoutGroup key={group.workspace.id} id={`local-project-sessions-${group.workspace.id}`} inherit={false}>
-                <WorkspaceSidebarGroup
+          <CollapsibleContent className="pt-0.5">
+            <Reorder.Group
+              as="div"
+              axis="y"
+              values={groups.map((group) => group.workspace.id)}
+              onReorder={onReorderWorkspaces}
+              className="flex flex-col gap-0.5"
+            >
+              {groups.map((group) => (
+                <WorkspaceReorderItem
+                  key={group.workspace.id}
                   group={group}
                   className="py-0"
                   showInitialLoading={showInitialLoading}
                   previewCount={previewCount(group.workspace.id)}
                   showMoreSessions={showMoreSessions}
                 />
-              </LayoutGroup>
-            ))}
+              ))}
+            </Reorder.Group>
           </CollapsibleContent>
         </Collapsible>
       </SidebarGroupContent>
     </SidebarGroup>
+  );
+}
+
+// Heading actions stay hidden until hover, keyboard focus, or an open menu, and
+// never intercept pointer events while hidden.
+const PROJECTS_HEADING_REVEAL = "pointer-events-none opacity-0 focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover/projects-heading:pointer-events-auto group-hover/projects-heading:opacity-100 group-has-[:focus-visible]/projects-heading:pointer-events-auto group-has-[:focus-visible]/projects-heading:opacity-100 group-has-data-popup-open/projects-heading:pointer-events-auto group-has-data-popup-open/projects-heading:opacity-100";
+const LIST_HEADING_REVEAL = "pointer-events-none opacity-0 focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover/list-heading:pointer-events-auto group-hover/list-heading:opacity-100 group-has-[:focus-visible]/list-heading:pointer-events-auto group-has-[:focus-visible]/list-heading:opacity-100 group-has-data-popup-open/list-heading:pointer-events-auto group-has-data-popup-open/list-heading:opacity-100";
+
+/** Collapsible heading shared by Recent and user sections. */
+function SidebarListHeading({
+  label,
+  actions,
+  dataAttribute,
+  onTitlePointerDown,
+  expanded,
+}: {
+  label: string;
+  actions: React.ReactNode;
+  dataAttribute?: Record<string, string>;
+  onTitlePointerDown?: SidebarGroupDragStarter;
+  expanded: boolean;
+}) {
+  return (
+    <div className="group/list-heading relative" {...dataAttribute}>
+      <CollapsibleTrigger
+        render={(
+          <button
+            type="button"
+            className="group/list-trigger flex h-8 w-full items-center gap-1 rounded-lg px-3 pe-12 text-left text-[13px] font-medium text-muted-foreground transition-colors hover:bg-sidebar-accent/25 hover:text-sidebar-foreground"
+          >
+            <span
+              className={cn("min-w-0 truncate", onTitlePointerDown && "cursor-grab touch-none active:cursor-grabbing")}
+              onPointerDown={onTitlePointerDown}
+            >
+              {label}
+            </span>
+            <ChevronRight
+              aria-hidden="true"
+              className={cn(
+                "size-3.5 shrink-0 transition-[transform,opacity] duration-150",
+                expanded
+                  ? "rotate-90 opacity-0 group-hover/list-heading:opacity-100 group-focus-visible/list-trigger:opacity-100"
+                  : "opacity-100",
+              )}
+              strokeWidth={1.8}
+            />
+          </button>
+        )}
+      />
+      <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-0.5">{actions}</div>
+    </div>
+  );
+}
+
+/**
+ * Root-session list for Recent and sections. In manual mode rows are
+ * draggable and the new order is saved under `listId`.
+ */
+function SidebarSessionList({
+  entries,
+  listId,
+  manualSort,
+  dataAttribute,
+}: {
+  entries: RecentSessionEntry[];
+  listId: string;
+  manualSort: boolean;
+  dataAttribute?: Record<string, string>;
+}) {
+  const ids = React.useMemo(() => entries.map((entry) => entry.session.id), [entries]);
+  const items = entries.map((entry) => (
+    <LocalRecentSessionItem
+      key={`${entry.group.workspace.id}:${entry.session.id}`}
+      entry={entry}
+      reorderable={manualSort}
+    />
+  ));
+  return (
+    <SidebarMenu className="px-2" {...dataAttribute}>
+      <SidebarMenuItem>
+        <SidebarMenuSub className="gap-0.5 border-l-0">
+          {manualSort ? (
+            <Reorder.Group
+              as="div"
+              axis="y"
+              values={ids}
+              onReorder={(next) => useSidebarSectionsStore.getState().setManualOrder(listId, next)}
+              className="flex flex-col gap-0.5"
+            >
+              {items}
+            </Reorder.Group>
+          ) : items}
+        </SidebarMenuSub>
+      </SidebarMenuItem>
+    </SidebarMenu>
   );
 }
 
@@ -1237,45 +1715,34 @@ function LocalRecentSessions({
   expanded,
   onExpandedChange,
   emptyLabel,
+  manualSort,
+  onTitlePointerDown,
 }: {
   entries: RecentSessionEntry[];
   expanded: boolean;
   onExpandedChange: (expanded: boolean) => void;
   emptyLabel: string;
+  manualSort: boolean;
+  onTitlePointerDown?: SidebarGroupDragStarter;
 }) {
   return (
     <SidebarGroup data-local-recent-sessions className="shrink-0 px-0 pb-2 pt-2">
       <SidebarGroupContent>
-        <Collapsible open={expanded} onOpenChange={onExpandedChange} className="group/recent">
-          <CollapsibleTrigger
-            render={(
-              <button
-                type="button"
-                className="group/recent-heading flex h-8 w-full items-center gap-1 rounded-lg px-3 text-left text-[13px] font-medium text-muted-foreground transition-colors hover:bg-sidebar-accent/25 hover:text-sidebar-foreground"
-              >
-                <span>{t("workspace_list.recent")}</span>
-                <ChevronRight
-                  aria-hidden="true"
-                  className="size-3.5 opacity-0 transition-[transform,opacity] duration-150 group-hover/recent-heading:opacity-100 group-focus-visible/recent-heading:opacity-100 group-data-open/recent:rotate-90"
-                  strokeWidth={1.8}
-                />
-              </button>
-            )}
+        <Collapsible open={expanded} onOpenChange={onExpandedChange}>
+          <SidebarListHeading
+            label={t("workspace_list.recent")}
+            actions={<SidebarListOptionsMenu revealClassName={LIST_HEADING_REVEAL} />}
+            onTitlePointerDown={onTitlePointerDown}
+            expanded={expanded}
           />
           <CollapsibleContent className="pt-0.5">
             {entries.length > 0 ? (
-              <SidebarMenu data-local-recent-session-list className="px-2">
-                <SidebarMenuItem>
-                  <SidebarMenuSub className="gap-0.5 border-l-0">
-                    {entries.map((entry) => (
-                      <LocalRecentSessionItem
-                        key={`${entry.group.workspace.id}:${entry.session.id}`}
-                        entry={entry}
-                      />
-                    ))}
-                  </SidebarMenuSub>
-                </SidebarMenuItem>
-              </SidebarMenu>
+              <SidebarSessionList
+                entries={entries}
+                listId={RECENT_LIST_ID}
+                manualSort={manualSort}
+                dataAttribute={{ "data-local-recent-session-list": "" }}
+              />
             ) : (
               <div className="px-3 py-5 text-xs text-dls-secondary">{emptyLabel}</div>
             )}
@@ -1286,7 +1753,178 @@ function LocalRecentSessions({
   );
 }
 
-function LocalRecentSessionItem({ entry }: { entry: RecentSessionEntry }) {
+function LocalSidebarSection({
+  section,
+  entries,
+  manualSort,
+  onTitlePointerDown,
+}: {
+  section: SidebarSection;
+  entries: RecentSessionEntry[];
+  manualSort: boolean;
+  onTitlePointerDown?: SidebarGroupDragStarter;
+}) {
+  const ctx = useSidebarContext();
+  const collapsed = useSidebarSectionsStore((state) => state.collapsedSectionIds.includes(section.id));
+  const unseenCompletedSessionIds = useUnseenCompletedSessionIds();
+  const acknowledgedAttentionSessionIds = useAcknowledgedAttentionSessionIds();
+  const dialog = useSidebarSectionDialog();
+  const [deleteOpen, setDeleteOpen] = React.useState(false);
+  const store = useSidebarSectionsStore.getState;
+  const hasUnread = entries.some(({ session }) => {
+    const status = ctx.sessionStatusById?.[session.id];
+    return unseenCompletedSessionIds.has(session.id)
+      || (isNeedsAttentionSessionStatus(status) && !acknowledgedAttentionSessionIds.has(session.id));
+  });
+  const markAllRead = () => {
+    const completionStore = useSessionCompletionStore.getState();
+    for (const { session } of entries) {
+      completionStore.clear(session.id);
+      const status = ctx.sessionStatusById?.[session.id];
+      if (isNeedsAttentionSessionStatus(status)) completionStore.acknowledgeAttention(session.id);
+    }
+  };
+  const archiveChats = () => {
+    if (!ctx.onArchiveSession) return;
+    for (const { session } of entries) ctx.onArchiveSession(session.id, true);
+  };
+
+  return (
+    <SidebarGroup data-sidebar-section={section.id} className="shrink-0 px-0 pb-1 pt-2">
+      <SidebarGroupContent>
+        <SidebarSectionDropZone sectionId={section.id}>
+          <Collapsible open={!collapsed} onOpenChange={() => store().toggleSectionCollapsed(section.id)}>
+            <SidebarListHeading
+              label={section.label}
+              onTitlePointerDown={onTitlePointerDown}
+              expanded={!collapsed}
+              actions={(
+                <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={(
+                    <button
+                      type="button"
+                      aria-label={t("sidebar_sections.section_options")}
+                      title={t("sidebar_sections.section_options")}
+                      data-sidebar-section-options
+                      onClick={(event) => event.stopPropagation()}
+                      className={cn(
+                        "flex size-7 items-center justify-center rounded-lg text-muted-foreground transition-[opacity,background-color,color] duration-150 hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring data-popup-open:bg-sidebar-accent data-popup-open:text-sidebar-foreground",
+                        LIST_HEADING_REVEAL,
+                      )}
+                    >
+                      <MoreHorizontal className="size-4" />
+                    </button>
+                  )}
+                />
+                <DropdownMenuContent align="start" side="bottom" sideOffset={4} className="w-56">
+                  <DropdownMenuItem onClick={() => dialog?.openRenameSection(section)}>
+                    <Settings className="size-4" />
+                    {t("common.edit")}
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem disabled={!hasUnread} onClick={markAllRead}>
+                    <span aria-hidden className="flex size-4 items-center justify-center">✓</span>
+                    {t("sidebar_sections.mark_all_read")}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem disabled={entries.length === 0 || !ctx.onArchiveSession} onClick={archiveChats}>
+                    <Archive className="size-4" />
+                    {t("sidebar_sections.archive_chats")}
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={() => dialog?.openCreateSection()}>
+                    <Plus className="size-4" />
+                    {t("sidebar_sections.new_section")}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setDeleteOpen(true)}>
+                    <X className="size-4" />
+                    {t("sidebar_sections.remove_section")}
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+                </DropdownMenu>
+              )}
+            />
+            <CollapsibleContent className="pt-0.5">
+              {entries.length > 0 ? (
+                <SidebarSessionList entries={entries} listId={section.id} manualSort={manualSort} />
+              ) : (
+                <div className="px-3 py-2 text-xs text-dls-secondary">{t("sidebar_sections.empty_section")}</div>
+              )}
+            </CollapsibleContent>
+          </Collapsible>
+        </SidebarSectionDropZone>
+      </SidebarGroupContent>
+      <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>{t("sidebar_sections.remove_section")}</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            {t("sidebar_sections.delete_section_hint", { name: section.label })}
+          </p>
+          <DialogFooter>
+            <DialogClose render={<Button variant="outline" type="button" />}>
+              {t("common.cancel")}
+            </DialogClose>
+            <Button
+              type="button"
+              variant="destructive"
+              data-sidebar-section-delete-confirm
+              onClick={() => {
+                store().removeSection(section.id);
+                setDeleteOpen(false);
+              }}
+            >
+              {t("sidebar_sections.remove_section")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </SidebarGroup>
+  );
+}
+
+/** Accepts a root session dragged from Recent or another custom section. */
+function SidebarSectionDropZone({ sectionId, children }: { sectionId: string; children: React.ReactNode }) {
+  const [dragOver, setDragOver] = React.useState(false);
+
+  return (
+    <div
+      data-sidebar-section-drop-zone={sectionId}
+      className={cn(
+        "rounded-lg transition-colors",
+        dragOver && "bg-sidebar-accent/50 ring-1 ring-sidebar-ring/50",
+      )}
+      onDragOver={(event) => {
+        if (!event.dataTransfer.types.includes(SESSION_DRAG_TYPE)) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+        setDragOver(true);
+      }}
+      onDragLeave={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragOver(false);
+      }}
+      onDrop={(event) => {
+        setDragOver(false);
+        if (!event.dataTransfer.types.includes(SESSION_DRAG_TYPE)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        try {
+          const payload = JSON.parse(event.dataTransfer.getData(SESSION_DRAG_TYPE)) as { sessionId?: unknown };
+          if (typeof payload.sessionId === "string" && payload.sessionId) {
+            useSidebarSectionsStore.getState().assignSession(payload.sessionId, sectionId);
+          }
+        } catch {
+          // Ignore stale or malformed drag payloads.
+        }
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function LocalRecentSessionItem({ entry, reorderable = false }: { entry: RecentSessionEntry; reorderable?: boolean }) {
   const ctx = useSidebarContext();
   const pinnedIds = usePinnedSessionIds();
   const tree = useSessionTree(entry.group.sessions, ctx.sessionStatusById);
@@ -1310,11 +1948,16 @@ function LocalRecentSessionItem({ entry }: { entry: RecentSessionEntry }) {
       workspaceName={workspaceLabel(entry.group.workspace)}
       showWorkspaceIcon={false}
       flushLeft
+      reorderable={reorderable}
+      groupDraggable
     />
   );
 }
 
-function GlobalPinnedSessions({ entries }: { entries: GlobalPinnedSessionEntry[] }) {
+function GlobalPinnedSessions({ entries, onTitlePointerDown }: {
+  entries: GlobalPinnedSessionEntry[];
+  onTitlePointerDown?: SidebarGroupDragStarter;
+}) {
   const [expanded, setExpanded] = React.useState(true);
 
   return (
@@ -1327,10 +1970,20 @@ function GlobalPinnedSessions({ entries }: { entries: GlobalPinnedSessionEntry[]
                 type="button"
                 className="group/pinned-heading flex h-8 w-full items-center gap-1 rounded-lg px-3 text-left text-[13px] font-medium text-muted-foreground transition-colors hover:bg-sidebar-accent/25 hover:text-sidebar-foreground"
               >
-                <span>{t("session_management.pinned")}</span>
+                <span
+                  className={cn(onTitlePointerDown && "cursor-grab touch-none active:cursor-grabbing")}
+                  onPointerDown={onTitlePointerDown}
+                >
+                  {t("session_management.pinned")}
+                </span>
                 <ChevronRight
                   aria-hidden="true"
-                  className="size-3.5 opacity-0 transition-[transform,opacity] duration-150 group-hover/pinned-heading:opacity-100 group-focus-visible/pinned-heading:opacity-100 group-data-open/pinned:rotate-90"
+                  className={cn(
+                    "size-3.5 transition-[transform,opacity] duration-150",
+                    expanded
+                      ? "rotate-90 opacity-0 group-hover/pinned-heading:opacity-100 group-focus-visible/pinned-heading:opacity-100"
+                      : "opacity-100",
+                  )}
                   strokeWidth={1.8}
                 />
               </button>
@@ -1481,6 +2134,82 @@ function GlobalPinnedSessionTree({ group, sessionId }: GlobalPinnedSessionEntry)
   ));
 }
 
+type WorkspaceReorderItemProps = {
+  className: string;
+  group: WorkspaceSessionGroup;
+  showInitialLoading?: boolean;
+  previewCount: number;
+  showMoreSessions: (workspaceId: string, totalRoots: number) => void;
+};
+
+// A normal click still expands/collapses a workspace. Start reordering only
+// after deliberate pointer movement so the two interactions do not conflict.
+const WORKSPACE_DRAG_THRESHOLD_PX = 5;
+
+function WorkspaceReorderItem({
+  className,
+  group,
+  showInitialLoading,
+  previewCount,
+  showMoreSessions,
+}: WorkspaceReorderItemProps) {
+  const dragControls = useDragControls();
+
+  const startDragOnThreshold = React.useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (event.button !== 0) return;
+      const startX = event.clientX;
+      const startY = event.clientY;
+      let dragStarted = false;
+
+      const cleanup = () => {
+        window.removeEventListener("pointermove", onPointerMove);
+        window.removeEventListener("pointerup", cleanup);
+        window.removeEventListener("pointercancel", cleanup);
+      };
+
+      const onPointerMove = (moveEvent: PointerEvent) => {
+        if (dragStarted) return;
+        const moved = Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY);
+        if (moved < WORKSPACE_DRAG_THRESHOLD_PX) return;
+        dragStarted = true;
+        cleanup();
+        dragControls.start(moveEvent);
+      };
+
+      window.addEventListener("pointermove", onPointerMove);
+      window.addEventListener("pointerup", cleanup);
+      window.addEventListener("pointercancel", cleanup);
+    },
+    [dragControls],
+  );
+
+  return (
+    <Reorder.Item
+      as="div"
+      value={group.workspace.id}
+      id={group.workspace.id}
+      layout="position"
+      dragElastic={0}
+      dragListener={false}
+      dragControls={dragControls}
+      transformTemplate={(_latest, generated) => generated.replace(/ ?scale[XY]?\([^)]*\)/g, "")}
+      className="relative"
+    >
+      <LayoutGroup id={`local-project-sessions-${group.workspace.id}`} inherit={false}>
+        <WorkspaceSidebarGroup
+          group={group}
+          className={className}
+          showInitialLoading={showInitialLoading}
+          previewCount={previewCount}
+          showMoreSessions={showMoreSessions}
+          onWorkspaceTitlePointerDown={startDragOnThreshold}
+        />
+      </LayoutGroup>
+    </Reorder.Item>
+  );
+}
+
 type WorkspaceHeaderProps = React.ComponentProps<typeof SidebarMenuButton> & {
   workspace: WorkspaceInfo;
   statusLabel: string;
@@ -1489,6 +2218,7 @@ type WorkspaceHeaderProps = React.ComponentProps<typeof SidebarMenuButton> & {
   isExpanded: boolean;
   showActivity: boolean;
   onToggleExpanded: () => void;
+  onTitlePointerDown?: React.PointerEventHandler<HTMLDivElement>;
 };
 
 function WorkspaceHeader({
@@ -1499,6 +2229,7 @@ function WorkspaceHeader({
   isExpanded,
   showActivity,
   onToggleExpanded,
+  onTitlePointerDown,
   onClick,
   ...props
 }: WorkspaceHeaderProps) {
@@ -1528,8 +2259,10 @@ function WorkspaceHeader({
         // 扩大尾部留白，让名称以省略号收缩并给「加号 + 更多」让位，与会话行行为一致。
         className={cn(
           "min-w-0 flex-1 transition-[padding] duration-150 group-hover/workspace-header:pr-10 group-has-data-popup-open/workspace-header:pr-10 group-has-[:focus-visible]/workspace-header:pr-10",
+          onTitlePointerDown && "cursor-grab touch-none active:cursor-grabbing",
           showActivity ? "pr-6" : "pr-0",
         )}
+        onPointerDown={onTitlePointerDown}
       >
         <span className="block truncate text-[14px] font-normal text-sidebar-foreground">{workspaceLabel(workspace)}</span>
         {statusLabel ? (
@@ -1548,6 +2281,7 @@ type WorkspaceSidebarGroupProps = {
   showInitialLoading?: boolean;
   previewCount: number;
   showMoreSessions: (workspaceId: string, totalRoots: number) => void;
+  onWorkspaceTitlePointerDown?: React.PointerEventHandler<HTMLDivElement>;
 };
 
 function WorkspaceSidebarGroup({
@@ -1556,6 +2290,7 @@ function WorkspaceSidebarGroup({
   showInitialLoading,
   previewCount,
   showMoreSessions,
+  onWorkspaceTitlePointerDown,
 }: WorkspaceSidebarGroupProps) {
   const ctx = useSidebarContext();
   const workspace = group.workspace;
@@ -1601,7 +2336,21 @@ function WorkspaceSidebarGroup({
   const pinnedIds = usePinnedSessionIds();
   const orderIds = useSessionOrder(workspace.id);
   const { groups: wsGroups, assignments: wsAssignments } = useWorkspaceGroups(workspace.id);
+  const sidebarSections = useSidebarSectionsStore((state) => state.sections);
+  const sidebarSectionAssignments = useSidebarSectionsStore((state) => state.assignments);
   const store = useSessionManagementStore;
+  const sectionedRootIds = React.useMemo(() => {
+    const validSectionIds = new Set(sidebarSections.map((section) => section.id));
+    return new Set(
+      Object.entries(sidebarSectionAssignments)
+        .filter(([, sectionId]) => validSectionIds.has(sectionId))
+        .map(([sessionId]) => sessionId),
+    );
+  }, [sidebarSectionAssignments, sidebarSections]);
+  const rootsHiddenFromWorkspace = React.useMemo(
+    () => new Set([...pinnedIds, ...sectionedRootIds]),
+    [pinnedIds, sectionedRootIds],
+  );
 
   const { active: activeSessions } = React.useMemo(
     () => partitionArchivedSessions(group.sessions),
@@ -1612,11 +2361,21 @@ function WorkspaceSidebarGroup({
   // work that is still represented inside that workspace.
   const hasActiveWork = React.useMemo(
     () => getRootSessions(activeSessions).some((session) => (
-      !pinnedIds.has(session.id) && tree.activeIds.has(session.id)
+      !rootsHiddenFromWorkspace.has(session.id) && tree.activeIds.has(session.id)
     )),
-    [activeSessions, pinnedIds, tree.activeIds],
+    [activeSessions, rootsHiddenFromWorkspace, tree.activeIds],
   );
   const showWorkspaceActivity = hasActiveWork && !isExpanded;
+  const chatSortMode = useSidebarSectionsStore((state) => state.sortMode);
+  const manualSort = chatSortMode === "manual";
+  // Recent mode orders by update time and ignores the saved drag order. Manual
+  // mode follows the drag order, with roots it has not seen yet placed first.
+  const effectiveOrderIds = React.useMemo(() => {
+    const roots = sortRootsByRecency(getRootSessions(activeSessions));
+    if (!manualSort) return roots.map((session) => session.id);
+    const known = new Set(orderIds);
+    return [...roots.filter((session) => !known.has(session.id)).map((session) => session.id), ...orderIds];
+  }, [activeSessions, manualSort, orderIds]);
   const sessionRows = flattenSessionRows(
     group.sessions,
     wsGroups.length > 0 ? Number.MAX_SAFE_INTEGER : previewCount,
@@ -1624,8 +2383,8 @@ function WorkspaceSidebarGroup({
     ctx.expandedSessionIds,
     forcedExpandedSessionIds,
     EMPTY_PINNED_IDS,
-    orderIds,
-    { exclude: pinnedIds },
+    effectiveOrderIds,
+    { exclude: rootsHiddenFromWorkspace },
   );
   const visibleRootIds = React.useMemo(
     () => sessionRows.flatMap((row) => (row.depth === 0 ? [row.session.id] : [])),
@@ -1650,8 +2409,8 @@ function WorkspaceSidebarGroup({
   // The workspace wrapper performs the single FLIP animation in that case.
   const workspaceLayoutDependency = sessionLayoutChanged ? workspaceLayoutKey : undefined;
   const activeRootCount = React.useMemo(
-    () => getRootSessions(activeSessions).filter((session) => !pinnedIds.has(session.id)).length,
-    [activeSessions, pinnedIds],
+    () => getRootSessions(activeSessions).filter((session) => !rootsHiddenFromWorkspace.has(session.id)).length,
+    [activeSessions, rootsHiddenFromWorkspace],
   );
   const remainingRootSessions = Math.max(0, activeRootCount - previewCount);
   const showMoreLabel = remainingRootSessions > 0
@@ -1679,6 +2438,7 @@ function WorkspaceSidebarGroup({
                 isExpanded={isExpanded}
                 showActivity={showWorkspaceActivity}
                 onToggleExpanded={() => ctx.toggleWorkspaceExpanded(workspace.id)}
+                onTitlePointerDown={onWorkspaceTitlePointerDown}
               />
               {/* TIPS: 行尾同一锚点上「运行中 loading」与「加号/更多」互斥呈现：
                   折叠且有任务运行时默认只显示 loading；悬停、键盘聚焦（:focus-visible）
@@ -1788,7 +2548,8 @@ function WorkspaceSidebarGroup({
                             workspaceId={workspace.id}
                             forcedExpandedSessionIds={forcedExpandedSessionIds}
                             isPinned={pinnedIds.has(row.session.id)}
-                            reorderable={row.depth === 0}
+                            reorderable={manualSort && row.depth === 0}
+                            groupDraggable={row.depth === 0}
                             layoutDependency={workspaceLayoutDependency}
                           />
                         ))}
@@ -2137,6 +2898,7 @@ function GroupedSessionList({ sessionRows, groups, assignments, pinnedIds, tree,
   layoutDependency?: string;
 }) {
   const ctx = useSidebarContext();
+  const manualSort = useSidebarSectionsStore((state) => state.sortMode === "manual");
   const [previewCountByGroup, setPreviewCountByGroup] = React.useState<Record<string, number>>({});
 
   const groupPreviewCount = (groupId: string) =>
@@ -2279,7 +3041,7 @@ function GroupedSessionList({ sessionRows, groups, assignments, pinnedIds, tree,
                       workspaceId={workspaceId}
                       forcedExpandedSessionIds={forcedExpandedSessionIds}
                       isPinned={pinnedIds.has(row.session.id)}
-                      reorderable={row.depth === 0}
+                      reorderable={manualSort && row.depth === 0}
                       groupDraggable={row.depth === 0}
                       layoutDependency={layoutDependency}
                     />
