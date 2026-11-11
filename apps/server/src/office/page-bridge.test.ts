@@ -5,7 +5,6 @@ import { tmpdir } from "node:os";
 import type { OfficeDocumentSession } from "@jugglework/types/office";
 import {
   prepareOfficePageSave,
-  confirmOfficePageSaved,
   readOfficePageSelection,
   readOfficePageText,
 } from "./page-bridge.js";
@@ -17,14 +16,13 @@ test("统一保存确认精确页面身份，桌面拒绝时不回退到直接�
   let ready = true;
   let selected = false;
   let readingText = false;
-  let saved = false;
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
     async fetch(request) {
       const route = new URL(request.url).pathname;
       expect(route).toBe(
-        saved ? "/office/saved" : readingText ? "/office/text" : selected ? "/office/selection" : "/office/prepare-save",
+        readingText ? "/office/text" : selected ? "/office/selection" : "/office/prepare-save",
       );
       expect(request.headers.get("authorization")).toBe("Bearer fixture");
       calls.push(await request.json());
@@ -89,10 +87,6 @@ test("统一保存确认精确页面身份，桌面拒绝时不回退到直接�
     expect(calls.at(-1)).toEqual({ workspaceId: "ws", documentId: "od", pageId: "generation", ranges: [{ begin: 0, end: 6 }], version: 7 });
     ready = false;
     await expect(readOfficePageText(document, [{ begin: 0, end: 6 }], 7)).rejects.toThrow("页面已失效");
-    ready = true; saved = true;
-    await confirmOfficePageSaved({ ...document, savedAt: 123456, savedFileSha256: "a".repeat(64) });
-    expect(calls.at(-1)).toEqual({ workspaceId: "ws", documentId: "od", pageId: "generation",
-      savedAt: 123456, savedFileSha256: "a".repeat(64) });
     delete process.env.JUGGLEWORK_UI_CONTROL_DISCOVERY;
     expect(await readOfficePageSelection(document)).toBeNull();
     expect(await readOfficePageText(document, [{ begin: 0, end: 6 }], 7)).toBeNull();

@@ -1,3 +1,5 @@
+import { CloudDocsCoordinator } from "../domains/cloud-docs/cloud-docs-coordinator";
+import { installUploadedCloudFiles } from "@/react-app/domains/cloud-docs/uploaded-files";
 /** @jsxImportSource react */
 
 import { useEffect, useMemo, useSyncExternalStore, type ReactNode } from "react";
@@ -174,6 +176,7 @@ function DenSigninGate({ children }: DenSigninGateProps) {
  * the actions are available on every route (including /welcome and /signin).
  */
 function DenAuthControlActions() {
+  useEffect(installUploadedCloudFiles, []);
   const denAuth = useDenAuth();
 
   const exchangeGrantAction = useMemo<JuggleWorkControlAction>(() => ({
@@ -337,6 +340,7 @@ export function AppRoot() {
           <BrandThemeControlActions />
           <RootJuggleWorkServerProvider>
           <FileWindowSessionStopCoordinator />
+          <CloudDocsCoordinator />
           <DenSigninGate>
                 <AutomationActivityProvider>
                 <HostMarketplacePluginsProvider>

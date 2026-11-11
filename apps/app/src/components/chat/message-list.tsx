@@ -1,3 +1,8 @@
+import { Cloud } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { CloudDocsTurnCard } from "@/react-app/domains/cloud-docs/cloud-docs-turn-card";
+import { parseCloudDocToken, type CloudDocReference } from "@/app/lib/cloud-doc-reference";
+import { openCloudDocTab } from "@/app/lib/cloud-doc-tabs";
 import { toast } from "@/components/ui/sonner"
 import type { OpenTarget } from "@/react-app/domains/session/artifacts/open-target"
 import { materializeComposerAttachment } from "@/react-app/domains/session/sync/attachment-file-part"
@@ -794,6 +799,12 @@ function renderPlainTextWithSearchHighlights(text: string, highlightQuery: strin
   return nodes
 }
 
+/** 用户历史消息保留可点击的云文档引用标签。 */
+function UserCloudDocChip({ reference }: { reference: CloudDocReference }) {
+  const { sessionId } = useMessageList();
+  return <Badge variant="secondary" render={<button type="button" />} title={reference.title} onClick={() => openCloudDocTab(sessionId, reference)}><Cloud aria-hidden />{t("cloud_docs.reference_label")} · {reference.title}{reference.blockIds?.length ? ` · ${t("cloud_docs.reference_blocks", { count: String(reference.blockIds.length) })}` : ""}</Badge>;
+}
+
 /**
  * 把用户消息里的能力指令整句折叠成一枚 tag
  *
@@ -801,6 +812,11 @@ function renderPlainTextWithSearchHighlights(text: string, highlightQuery: strin
  * 云端技能/扩展/MCP 因此在会话记录里裸露成一整句文本。
  */
 function renderUserTextWithSkillChips(text: string, highlightQuery: string | undefined) {
+  const cloudParts = text.split(/(\[cloud-doc [^\]\s]+\])/);
+  if (cloudParts.length > 1) return cloudParts.map((part, index) => {
+    const ref = parseCloudDocToken(part);
+    return ref ? <UserCloudDocChip key={index} reference={ref} /> : <React.Fragment key={index}>{part.startsWith("[cloud-doc ") ? renderPlainTextWithSearchHighlights(part, highlightQuery, String(index)) : renderUserTextWithSkillChips(part, highlightQuery)}</React.Fragment>;
+  });
   if (!CAPABILITY_INSTRUCTION_RE.test(text)) return renderPlainTextWithSearchHighlights(text, highlightQuery, "text")
   let offset = 0
   return text.split(CAPABILITY_INSTRUCTION_RE).map((segment) => {
@@ -868,7 +884,7 @@ const UserMessage = React.memo(
                         );
                         return (
                           <span key={`text-${index}`} className="whitespace-pre-wrap">
-                            {renderUserTextWithSkillChips(part.text, highlightQuery)}
+                            {renderUserTextWithSkillChips(typeof part.providerMetadata?.opencode?.cloudDocSourceText === "string" ? part.providerMetadata.opencode.cloudDocSourceText : part.text, highlightQuery)}
                           </span>
                         )
                       }
@@ -1143,7 +1159,7 @@ function MessageGroup({
   messages,
   isStreaming,
 }: AssistantMessageGroupProps) {
-  const { historyActionsEnabled, onRevertToUserMessage, onForkAtMessage } = useMessageList()
+  const { historyActionsEnabled, onRevertToUserMessage, onForkAtMessage, client, workspaceId, sessionId, cloudDocsBusy } = useMessageList()
   const artifactActions = useArtifactActions()
   const lastItem = items[items.length - 1]
   // Branch/revert must target a real server-side message id. Synthetic
@@ -1288,6 +1304,7 @@ function MessageGroup({
       )}>
         {summaryItems.map((item, groupIndex) => renderItem(item, processItems.length + groupIndex, "summary"))}
       </div>
+      {turnId && <CloudDocsTurnCard client={client} workspaceId={workspaceId} sessionId={sessionId} messageId={turnId} busy={cloudDocsBusy || isStreaming} />}
       {!isLiveGroup ? <ArtifactCards artifacts={cardArtifacts} turnId={turnId} onUndo={historyActionsEnabled && !isStreaming && turnId ? () => onRevertToUserMessage(turnId) : undefined} /> : null}
       {!isLiveGroup && delivery ? <ArtifactDeliveryStatus delivery={delivery} onRetry={() => deliveries!.retry(delivery.turnId)} /> : null}
       <GeneratedImageResultList messages={items.map((item) => item.message)} />

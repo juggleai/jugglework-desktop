@@ -60,6 +60,7 @@ export function FileEditorToolbar({
   onReveal,
   onSaveCopy,
   onOpenWindow,
+  onUploadCloud,
   showFolderShortcut = false,
   fileActionsDisabled = false,
   openWindowDisabled = fileActionsDisabled,
@@ -74,6 +75,8 @@ export function FileEditorToolbar({
   onReveal?: () => void;
   onSaveCopy?: () => void;
   onOpenWindow?: () => void;
+  /** 一次性上传为云文档。 */
+  onUploadCloud?: () => void;
   showFolderShortcut?: boolean;
   fileActionsDisabled?: boolean;
   /** Office 开窗可以进入等待流程，其他需要保存的操作仍受任务运行限制。 */
@@ -136,7 +139,7 @@ export function FileEditorToolbar({
                 size="icon-sm"
                 title={t("file_window.more")}
                 aria-label={t("file_window.more")}
-                disabled={!onReveal && !onSaveCopy && !onOpenWindow}
+                disabled={!onReveal && !onSaveCopy && !onOpenWindow && !onUploadCloud}
               />
             }
           >
@@ -156,6 +159,12 @@ export function FileEditorToolbar({
               <DropdownMenuItem onClick={onReveal}>
                 <FolderOpen />
                 {t("artifact.open_folder")}
+              </DropdownMenuItem>
+            )}
+            {onUploadCloud && (
+              <DropdownMenuItem disabled={fileActionsDisabled} onClick={onUploadCloud}>
+                <Save />
+                {t("cloud_docs.upload")}
               </DropdownMenuItem>
             )}
             {onSaveCopy && (

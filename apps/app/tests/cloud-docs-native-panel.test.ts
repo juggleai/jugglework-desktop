@@ -21,6 +21,7 @@ class Contents extends EventEmitter {
   send = mock((_channel: string, _value: unknown) => {});
   getZoomFactor() { return 1; }
   focus = mock(() => {});
+  async capturePage() { return { toDataURL: () => "data:image/png;base64,fixture" }; }
 }
 class NativeView {
   webContents = new Contents();
@@ -53,14 +54,13 @@ mock.module("electron", () => ({
 }));
 const { createCloudDocsPanel } =
   await import("../../desktop/electron/cloud-docs-panel.mjs");
-const { createCloudDocsEditors } =
-  await import("../../desktop/electron/cloud-docs-editor.mjs");
 afterAll(() => mock.restore());
 
 test("原生视图在新文档授权前隐藏，401/403/404 隐藏并报告，旧实例不能覆盖新实例", async () => {
   const host = {
     mainFrame: {},
     send: mock(() => {}),
+    focus: mock(() => {}),
     getZoomFactor: () => 1,
   };
   const win = {
@@ -115,6 +115,11 @@ test("原生视图在新文档授权前隐藏，401/403/404 隐藏并报告，�
   bounds(a.instanceId);
   expect(first.visible).toBe(true);
   expect(first.webContents.focus).toHaveBeenCalledTimes(1);
+  events.get("jugglework:docs:message")!({ sender: first.webContents, senderFrame: first.webContents.mainFrame }, {
+    contractVersion: 1, instanceId: a.instanceId, tenantId, workspaceId: "ws", docId: "doc", title: "方案", type: "docs.ai-reference", action: "ask", blockIds: ["b1"],
+  });
+  expect(host.focus).toHaveBeenCalledTimes(1);
+  expect(host.send).toHaveBeenLastCalledWith("jugglework:docs:ai-reference", expect.objectContaining({ docId: "doc", blockIds: ["b1"] }));
   // TIPS: 周期 ready／布局更新不能打断用户输入；只有从覆盖层隐藏恢复时才重新聚焦。
   bounds(a.instanceId);
   expect(first.webContents.focus).toHaveBeenCalledTimes(1);
@@ -205,81 +210,6 @@ test("原生视图在新文档授权前隐藏，401/403/404 隐藏并报告，�
   panel.close();
 });
 
-test("后台编辑器撤权按来源账号和组织精确隔离", async () => {
-  const ipcEvents = new Map<string, Function>();
-  const paused: Array<{ attachmentId: string; reason: string }> = [];
-  const editors = createCloudDocsEditors({
-    onEvent: (attachmentId: string, message: { payload?: { reason?: string } }) => {
-      if (message.payload?.reason)
-        paused.push({ attachmentId, reason: message.payload.reason });
-    },
-  });
-  editors.registerIpc({
-    on: (name: string, fn: Function) => ipcEvents.set(name, fn),
-  });
-  const tenantId = "shared_tenant",
-    key = createHash("sha256").update(tenantId).digest("hex").slice(0, 32),
-    bootstrapUrl = `http://t-${key}.localhost:13000/api/jw/session/bootstrap`;
-  const open = async (sourceServerOrigin: string, sourceUserId: string) => {
-    const input = {
-      tenantId,
-      sourceUserId,
-      sourceServerOrigin,
-      instanceId: randomUUID(),
-      attachmentId: randomUUID(),
-      pageId: "page_1",
-      launchGrant: "fixture",
-      bootstrapUrl,
-    };
-    const opening = editors.open(input);
-    await Promise.resolve();
-    const view = views.at(-1)!;
-    const bridgeId = randomUUID();
-    ipcEvents.get("jugglework:docs:editor-message")!(
-      { sender: view.webContents, senderFrame: view.webContents.mainFrame },
-      {
-        contractVersion: 1,
-        instanceId: input.instanceId,
-        tenantId,
-        pageId: input.pageId,
-        workspaceId: "workspace_1",
-        bridgeId,
-        type: "editor.ready",
-        payload: {
-          canEdit: true,
-          capability: "word-relative-plain-v1",
-        },
-      },
-    );
-    return { input, view, bridgeId, handle: await opening };
-  };
-  const first = await open("https://source-a.test", "user-a");
-  const second = await open("https://source-b.test", "user-b");
-  ipcEvents.get("jugglework:docs:editor-message")!(
-    {
-      sender: first.view.webContents,
-      senderFrame: first.view.webContents.mainFrame,
-    },
-    {
-      contractVersion: 1,
-      instanceId: first.input.instanceId,
-      tenantId,
-      pageId: first.input.pageId,
-      workspaceId: "workspace_1",
-      bridgeId: first.bridgeId,
-      type: "editor.paused",
-      payload: { reason: "session_expired" },
-    },
-  );
-  expect(first.view.webContents.closed).toBe(true);
-  expect(second.view.webContents.closed).toBe(false);
-  expect(paused).toEqual([
-    { attachmentId: first.input.attachmentId, reason: "session_expired" },
-  ]);
-  second.handle.close();
-  editors.dispose();
-});
-
 test("主窗口子框架不能控制原生云文档视图", async () => {
   const host = {
     mainFrame: {},
@@ -314,4 +244,85 @@ test("主窗口子框架不能控制原生云文档视图", async () => {
     ),
   ).toThrow("Forbidden");
   panel.close();
+});
+
+test("后台上传不替换前台，页面切换与后台关闭只结束各自的请求", async () => {
+  const host = { mainFrame: {}, send: mock(() => {}), getZoomFactor: () => 1 };
+  const attached: NativeView[] = [];
+  const win = {
+    webContents: host, isDestroyed: () => false,
+    getContentBounds: () => ({ width: 1000, height: 800 }),
+    contentView: {
+      addChildView(view: NativeView) { attached.push(view); },
+      removeChildView(view: NativeView) { attached.splice(attached.indexOf(view), 1); },
+    },
+  };
+  const handlers = new Map<string, Function>(), events = new Map<string, Function>();
+  const panel = createCloudDocsPanel({ getWindow: () => win });
+  panel.registerIpc({
+    handle: (name: string, fn: Function) => handlers.set(name, fn),
+    on: (name: string, fn: Function) => events.set(name, fn),
+  });
+  const tenantId = "native_fixture";
+  const key = createHash("sha256").update(tenantId).digest("hex").slice(0, 32);
+  const input = (background = false) => ({
+    tenantId, sourceUserId: "u", sourceServerOrigin: "https://source.test",
+    instanceId: randomUUID(), launchGrant: "fixture", background,
+    bootstrapUrl: `http://t-${key}.localhost:13000/api/jw/session/bootstrap`,
+    presentation: { mode: "product" },
+  });
+  const event = { sender: host, senderFrame: host.mainFrame };
+  const open = async (value: ReturnType<typeof input>) => {
+    await handlers.get("jugglework:docs:open")!(event, value);
+    const view = views.at(-1)!;
+    events.get("jugglework:docs:message")!({ sender: view.webContents, senderFrame: view.webContents.mainFrame }, {
+      contractVersion: 1, type: "docs.ready", instanceId: value.instanceId, tenantId, workspaceId: "ws",
+    });
+    return view;
+  };
+  const front = input(), back = input(true);
+  const frontView = await open(front);
+  events.get("jugglework:docs:bounds")!(event, { instanceId: front.instanceId, x: 0, y: 0, width: 800, height: 600, visible: true });
+  const backView = await open(back);
+  expect(frontView.visible).toBe(true);
+  expect(frontView.webContents.closed).toBe(false);
+  expect(backView.visible).toBe(false);
+  expect(attached).toEqual([frontView]);
+
+  const requestId = randomUUID();
+  const lookup = handlers.get("jugglework:docs:file-intake")!(event, {
+    action: "lookup", instanceId: back.instanceId, requestId, checksum: "a".repeat(64),
+  });
+  const replacementInput = input();
+  const replacement = await open(replacementInput);
+  expect(frontView.webContents.closed).toBe(true);
+  expect(backView.webContents.closed).toBe(false);
+  events.get("jugglework:docs:file-intake")!({ sender: backView.webContents, senderFrame: backView.webContents.mainFrame }, {
+    instanceId: back.instanceId, requestId, ok: true, result: { existing: [] },
+  });
+  expect(await lookup).toEqual({ existing: [] });
+  panel.close(back.instanceId);
+  expect(backView.webContents.closed).toBe(true);
+  expect(replacement.webContents.closed).toBe(false);
+  expect(attached).toEqual([replacement]);
+  const otherBack = await open(input(true));
+  events.get("jugglework:docs:bounds")!(event, { instanceId: replacementInput.instanceId, x: 0, y: 0, width: 800, height: 600, visible: true });
+  const retained = { ...input(), retain: true };
+  const retainedView = await open(retained);
+  const session = { ...input(), retain: true };
+  const sessionView = await open(session);
+  expect(replacement.visible).toBe(true);
+  expect(retainedView.webContents.closed).toBe(false);
+  expect(retainedView.visible).toBe(false);
+  events.get("jugglework:docs:bounds")!(event, { instanceId: retained.instanceId, x: 0, y: 0, width: 800, height: 600, visible: true });
+  expect(retainedView.visible).toBe(true);
+  expect(sessionView.visible).toBe(false);
+  expect(await handlers.get("jugglework:docs:snapshot")!(event, retained.instanceId)).toBe("data:image/png;base64,fixture");
+  expect(await handlers.get("jugglework:docs:snapshot")!(event, otherBack.webContents.url)).toBeNull();
+  panel.closeScope(front);
+  expect(replacement.webContents.closed).toBe(true);
+  expect(otherBack.webContents.closed).toBe(true);
+  expect(retainedView.webContents.closed).toBe(true);
+  expect(sessionView.webContents.closed).toBe(true);
+  expect(attached).toEqual([]);
 });

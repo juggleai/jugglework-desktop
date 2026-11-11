@@ -91,6 +91,7 @@ function WorkspaceAppRouteContent() {
   });
   const [appsMounted, setAppsMounted] = useState(() => appPath?.view === "apps");
   const [reviewsMounted, setReviewsMounted] = useState(() => appPath?.view === "reviews");
+  const [retainedDocs, setRetainedDocs] = useState<{ tenantId: string; search: string } | null>(() => appPath?.view === "cloud-docs" ? { tenantId: appPath.tenantId, search: location.search } : null);
   const [automationSession, setAutomationSession] = useState<RetainedSessionTarget | null>(null);
   const [automationSessionHost, setAutomationSessionHost] = useState<HTMLDivElement | null>(null);
   const retainedSessionHost = useRef<HTMLDivElement>(null);
@@ -145,6 +146,10 @@ function WorkspaceAppRouteContent() {
   useEffect(() => {
     if (appPath?.view === "reviews") setReviewsMounted(true);
   }, [appPath?.view]);
+
+  useEffect(() => {
+    if (appPath?.view === "cloud-docs") setRetainedDocs({ tenantId: appPath.tenantId, search: location.search });
+  }, [appPath?.view, appPath?.view === "cloud-docs" ? appPath.tenantId : null, location.search]);
 
   useEffect(() => {
     if (appPath?.view !== "settings") return;
@@ -306,10 +311,12 @@ function WorkspaceAppRouteContent() {
         </div>
       ) : null}
 
-      {cloudDocsVisible ? (
-        <div className="absolute inset-0">
+      {cloudDocsVisible || retainedDocs ? (
+        <div className={cloudDocsVisible ? "absolute inset-0" : "hidden"} aria-hidden={!cloudDocsVisible || undefined}>
           <CloudDocsPage
-            tenantId={appPath.tenantId}
+            tenantId={cloudDocsVisible ? appPath.tenantId : retainedDocs!.tenantId}
+            targetSearch={cloudDocsVisible ? location.search : retainedDocs!.search}
+            active={cloudDocsVisible}
             workspaceId={activeSession.workspaceId}
             onOpenAccount={() => openSurfaceSettings("cloud-account", location.pathname)}
             onOpenHome={() => navigate(sessionPath)}

@@ -1,5 +1,5 @@
 import { getOfficeDocumentKind } from "@jugglework/types/office";
-import { BrowserWindow, dialog, shell } from "electron";
+import { BrowserWindow, clipboard, dialog, shell } from "electron";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { saveArtifactFileCopy, resolveArtifactExternalSource } from "./artifact-file-operations.mjs";
@@ -42,10 +42,23 @@ export function createFileWindows({
   getDesktopConfig,
   getAppearance = async () => ({ lang: "en", theme: "light" }),
   openSession,
-  cloudDocs,
+  uploadCloud,
+  lookupCloud,
   fetcher = fetch,
 }) {
   const entries = new Map();
+  let cloudUploads = [];
+  let cloudScope = null;
+  const cloudLookups = new Set();
+  const lookupUpload = (entry) => {
+    const tab = entry.tabs.find(item => item.path === entry.activePath);
+    if (!cloudScope || !lookupCloud || !tab || tab.cloudAttachment || uploaded(entry.workspaceId, tab.path)) return;
+    const key = JSON.stringify([cloudScope, entry.workspaceId, tab.path]);
+    if (cloudLookups.has(key)) return;
+    cloudLookups.add(key);
+    void lookupCloud({ workspaceId: entry.workspaceId, path: tab.path });
+  };
+  const uploaded = (workspaceId, filePath) => cloudUploads.find(item => item.localWorkspaceId === workspaceId && item.path === filePath);
   const pendingStops = new Map();
   // 与既有 composer 请求/确认模式一致，目标只取 Main 登记；不开放 file renderer 停止 IPC。
   const prepareSessionStop = (entry, signal) => {
@@ -104,7 +117,7 @@ export function createFileWindows({
     sessionId: entry.sessionId,
     workspaceRoot: entry.workspaceRoot,
     local: entry.local,
-    tabs: entry.tabs,
+    tabs: entry.tabs.map(tab => ({ ...tab, ...(uploaded(entry.workspaceId, tab.path) ? { cloudUpload: { url: uploaded(entry.workspaceId, tab.path).url, tenantId: uploaded(entry.workspaceId, tab.path).tenantId } } : {}) })),
     activePath: entry.activePath,
     recent: recent
       .filter(
@@ -149,6 +162,7 @@ export function createFileWindows({
         state(entry),
       );
       updateDock();
+      lookupUpload(entry);
     }
   };
   const remember = async (entry, tab) => {
@@ -203,7 +217,7 @@ export function createFileWindows({
     )
       throw new Error("文件窗口工作区或聊天不匹配");
   };
-  const addFile = async (entry, relativePath, absolutePath) => {
+  const addFile = async (entry, relativePath, absolutePath, readOnly = false) => {
     if ((!entry.local || entry.conversation) && office.confirmFileTarget && !await office.confirmFileTarget(entry.window, {
       workspaceId: entry.workspaceId, sessionId: entry.sessionId, path: relativePath,
     })) return null;
@@ -222,7 +236,11 @@ export function createFileWindows({
         name: path.basename(relativePath),
         ...(absolutePath ? { absolutePath } : {}),
       };
-      if (getOfficeDocumentKind(relativePath)) {
+      if (readOnly) {
+        // 云端附件副本只读预览，不打开可编辑的 Office 文档。
+        tab.readOnly = true;
+        tab.cloudAttachment = true;
+      } else if (getOfficeDocumentKind(relativePath)) {
         const { available } = await client.getJson(
           `${base(entry)}/capabilities`,
         );
@@ -285,6 +303,7 @@ export function createFileWindows({
     local = false,
     absolutePath = undefined,
     conversationOptions = undefined,
+    readOnly = false,
   }) => {
     await loaded;
     const key = JSON.stringify([workspaceId, sessionId]);
@@ -373,7 +392,7 @@ export function createFileWindows({
       try {
         await refreshConversation(entry);
         await loadWindow(window);
-        if (!(await addFile(entry, relativePath, absolutePath))) {
+        if (!(await addFile(entry, relativePath, absolutePath, readOnly))) {
           entry.closed = true;
           if (!window.isDestroyed()) window.destroy();
           return;
@@ -389,15 +408,22 @@ export function createFileWindows({
       }
     } else {
       await refreshConversation(entry);
-      if (!(await addFile(entry, relativePath, absolutePath))) return;
+      if (!(await addFile(entry, relativePath, absolutePath, readOnly))) return;
     }
     if (entry.window.isMinimized()) entry.window.restore();
     entry.window.show();
     entry.window.focus();
   };
-  const openLocal = async (absolutePath) => {
+  const openLocal = async (absolutePath, { readOnly = false } = {}) => {
     if (!registerLocalFile) throw new Error("本机文件入口不可用");
-    await open(await registerLocalFile(absolutePath));
+    await open({ ...(await registerLocalFile(absolutePath)), readOnly });
+  };
+  /** 关闭打开自指定目录的本机文件标签，供云文档附件缓存清理前调用。 */
+  const closeLocalUnder = async (directory) => {
+    const prefix = directory.endsWith(path.sep) ? directory : directory + path.sep;
+    for (const entry of [...entries.values()])
+      for (const tab of [...entry.tabs])
+        if (tab.absolutePath?.startsWith(prefix)) await closeTab(entry, tab.path);
   };
   const openDialog = async (window, { workspaceId, sessionId }) => {
     const entry = [...entries.values()].find(
@@ -489,6 +515,7 @@ export function createFileWindows({
     open,
     /** 从系统或本机文件选择器打开明确原件，由既有登记恢复文件助手或存活模型的会话。 */
     openLocal,
+    closeLocalUnder,
     /** 原生编辑区与标签菜单共用文件选择器；区内文件沿用当前宿主，区外原件进入文件助手窗口。 */
     openDialog,
     /** 返回当前存活文件窗口，供 Office 校验和迁移宿主。 */
@@ -612,22 +639,20 @@ export function createFileWindows({
     },
     /** 注册最小窗口动作，文件选择和导出均使用原生对话框。 */
     registerIpc(ipcMain) {
-      /** 只允许读取／打开 Main 已登记在当前文件窗口中的 Office 模型。 */
-      const cloudDocument = (event, documentId) => {
-        const entry = resolve(event);
-        if (typeof documentId !== "string" || !entry.tabs.some(tab => tab.documentId === documentId))
-          throw new Error("云文档目标不属于当前文件窗口");
-        return documentId;
-      };
-      ipcMain.handle("jugglework:file-window:cloud-sync-state", (event, documentId) =>
-        cloudDocs?.state(cloudDocument(event, documentId)) ?? { status: "detached" });
-      ipcMain.handle("jugglework:file-window:cloud-document-open", (event, documentId) =>
-        cloudDocs?.open(cloudDocument(event, documentId)));
       ipcMain.handle("jugglework:file-window:session-stop-reply", async (event, input) => {
         assertTopLevel(event);
         const pending = pendingStops.get(input?.requestId);
         if (!pending || event.sender !== pending.sender || event.sender !== getMainWindow()?.webContents) throw new Error("停止确认来源无效");
         pending.finish(input.ok === true);
+      });
+      ipcMain.handle("jugglework:file-window:cloud-uploads", (event, input) => {
+        assertTopLevel(event);
+        if (event.sender !== getMainWindow()?.webContents) throw new Error("上传结果来源无效");
+        if (cloudScope !== input?.scope) { cloudLookups.clear(); cloudScope = input?.scope ?? null; }
+        cloudUploads = input?.scope && Array.isArray(input.records) ? input.records.slice(-200).filter(item => {
+          try { const url = new URL(item.url); return typeof item.localWorkspaceId === "string" && typeof item.path === "string" && typeof item.tenantId === "string" && ["https:", "http:"].includes(url.protocol) && !url.search && !url.hash && !url.username && !url.password && /^\/workspace\/[\w-]+\/[\w-]+$/.test(url.pathname); } catch { return false; }
+        }) : [];
+        for (const entry of entries.values()) publish(entry);
       });
       ipcMain.handle("jugglework:file-window:available", (event) => {
         resolveHost(event);
@@ -653,6 +678,7 @@ export function createFileWindows({
         if (!access) throw new Error("本地服务不可用");
         const appearance = await getAppearance();
         if (resolve(event) !== entry) throw new Error("文件窗口不存在");
+        lookupUpload(entry);
         return {
           ...state(entry),
           baseUrl: access.baseUrl,
@@ -706,6 +732,17 @@ export function createFileWindows({
           const tab = entry.tabs.find(
             (tab) => tab.path === (requestedPath ?? entry.activePath),
           );
+          if (action === "share-cloud") {
+            const record = tab && uploaded(entry.workspaceId, tab.path);
+            if (!record) throw new Error("该文件尚未上传到当前组织的云文档");
+            await clipboard.writeText(record.url);
+            return;
+          }
+          if (action === "upload-cloud") {
+            if (!tab || !uploadCloud) throw new Error("云文档上传不可用");
+            await uploadCloud({ workspaceId: entry.workspaceId, path: tab.path });
+            return;
+          }
           if (action === "select") {
             if (tab) {
               if ((!entry.local || entry.conversation) && entry.activePath !== tab.path && office.confirmFileTarget && !await office.confirmFileTarget(entry.window, {

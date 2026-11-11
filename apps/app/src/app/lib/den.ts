@@ -1166,6 +1166,12 @@ export function denCredentialFingerprint(value: string) {
   return `${value.length}:${hash >>> 0}`;
 }
 
+/** 忽略旧登录请求迟到的撤权事件，避免清理已切换账号后的当前页面。 */
+export function isCurrentDenSessionRevocation(event: Event): boolean {
+  const fingerprint = (event as CustomEvent<{ authFingerprint?: string }>).detail?.authFingerprint;
+  return !fingerprint || fingerprint === denCredentialFingerprint(readDenSettings().authToken ?? "");
+}
+
 export function resolveDenAuthToken(input: {
   developmentToken?: string | null;
   persistedToken?: string | null;
@@ -2965,7 +2971,7 @@ export type DenDocsLaunch = {
   expiresAt: string;
   tenantId: string;
   bootstrapUrl: string;
-  presentation: { instanceId: string; mode: 'product' | 'manage' | 'editor' };
+  presentation: { instanceId: string; mode: 'product' | 'manage' };
 };
 
 export function createDenClient(options: { baseUrl: string; token?: string | null }) {

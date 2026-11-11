@@ -1,3 +1,5 @@
+import { useCloudDocsTenantId } from "@/app/lib/cloud-doc-turn";
+import { CloudDocChangesProvider } from "@/react-app/domains/cloud-docs/cloud-doc-changes-provider";
 "use memo";
 
 import { useSessionActivityStore } from "@/react-app/domains/session/status/session-activity-store"
@@ -11,6 +13,7 @@ import * as React from "react"
 
 interface MessageListContextValue {
   historyActionsEnabled: boolean
+  cloudDocsBusy: boolean
   client: JuggleWorkServerClient | null
   workspaceId: string
   sessionId: string
@@ -36,6 +39,8 @@ const MessageListContext = React.createContext<MessageListContextValue | null>(n
 
 interface MessageListProviderProps {
   historyActionsEnabled?: boolean
+  /** 会话在提交、执行或重试期间禁止撤销云文档。 */
+  cloudDocsBusy?: boolean
   children: React.ReactNode
   client?: JuggleWorkServerClient | null
   workspaceId: string
@@ -66,6 +71,7 @@ export interface DispatchAction {
 
 export function MessageListProvider({
   historyActionsEnabled = true,
+  cloudDocsBusy = false,
   children,
   client = null,
   workspaceId,
@@ -84,9 +90,11 @@ export function MessageListProvider({
   onMcpReopenAuthorization,
   onMcpRetry,
 }: MessageListProviderProps) {
+  const cloudDocsTenantId = useCloudDocsTenantId()
   const value = React.useMemo(
     () => ({
       historyActionsEnabled,
+      cloudDocsBusy,
       client,
       workspaceId,
       sessionId,
@@ -106,6 +114,7 @@ export function MessageListProvider({
     }),
     [
       historyActionsEnabled,
+      cloudDocsBusy,
       client,
       workspaceId,
       sessionId,
@@ -127,7 +136,7 @@ export function MessageListProvider({
 
   return (
     <MessageListContext.Provider value={value}>
-      {children}
+      <CloudDocChangesProvider client={cloudDocsTenantId ? client : null} workspaceId={workspaceId} sessionId={sessionId} busy={cloudDocsBusy}>{children}</CloudDocChangesProvider>
     </MessageListContext.Provider>
   )
 }

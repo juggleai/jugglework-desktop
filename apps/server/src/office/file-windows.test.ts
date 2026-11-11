@@ -111,7 +111,7 @@ class FakeView {
     this.visible = value;
   }
 }
-mock.module("electron", () => ({
+mock.module("electron", () => ({ clipboard: { writeText: async () => {} },
   app: nativeApp,
   contextBridge: {
     exposeInMainWorld: (_name: string, value: any) =>

@@ -1,3 +1,6 @@
+import { CloudShareButton } from "../../cloud-docs/cloud-share-button";
+import { canUploadToCloud } from "../../cloud-docs/upload-file";
+import { OfficeCloudUploadButton } from "../office/office-cloud-upload-button";
 import * as React from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { FileText, FolderOpen, Plus, X, ArrowUpRight } from "lucide-react";
@@ -34,7 +37,6 @@ import { saveSharedFileText } from "./shared-file-editor";
 import { PreviewError, PreviewLoading } from "../artifacts/preview";
 import { createOfficeFile } from "./office-create";
 import { OfficeCreateItems } from "./office-create-items";
-import { FileWindowCloudSyncAction } from "../office/file-window-cloud-sync-action";
 import { installOfficeComposerBridge } from "../surface/composer/office-composer-bridge";
 
 /** 独立文件窗口：原生标签栏、保存状态及文件操作；文档模型复用现有宿主。 */
@@ -344,6 +346,7 @@ export function FileWindowApp({ onAppearanceChange }: { onAppearanceChange?: (ap
           onSave={() => void save()}
           onReveal={() => void action("reveal")}
           onSaveCopy={() => void action("save-copy")}
+          onUploadCloud={canUploadToCloud(active.name) && !active.cloudAttachment ? () => void (async () => { await save(); await action("upload-cloud"); })() : undefined}
           fileActionsDisabled={busy}
           trailingActions={
             canConverse && !conversationOpen ? (
@@ -359,9 +362,12 @@ export function FileWindowApp({ onAppearanceChange }: { onAppearanceChange?: (ap
             ) : null
           }
         >
-          {active.documentId && active.name.toLowerCase().endsWith(".docx") && (
-            <FileWindowCloudSyncAction documentId={active.documentId} canOpenSession={canConverse} />
-          )}
+          {!active.cloudAttachment && canUploadToCloud(active.name) && <OfficeCloudUploadButton title={t("cloud_docs.upload")} onClick={() => void (async () => { await save(); await action("upload-cloud"); })()} />}
+          {!active.cloudAttachment && active.cloudUpload && <CloudShareButton onClick={() => void (async () => {
+            try { await bridge?.action("share-cloud"); toast.success(t("cloud_docs.link_copied")); }
+            catch { toast.error(t("cloud_docs.copy_link_failed")); }
+          })()} />}
+          {active.cloudAttachment && <span className="text-xs text-muted-foreground">{t("cloud_docs.attachment_readonly")}</span>}
         </FileEditorToolbar>
       )}
       <div className="file-window-viewer">

@@ -130,12 +130,6 @@ contextBridge.exposeInMainWorld("__JUGGLEWORK_ELECTRON__", {
   },
   fileWindow: {
     subscribeSessionEvents,
-    /** 仅读取当前窗口已登记 Word 的真实同步状态，不暴露源登录凭据。 */
-    cloudSyncState: (documentId) => ipcRenderer.invoke("jugglework:file-window:cloud-sync-state", documentId),
-    /** 在主窗口打开已关联页面，仍由主窗口当前账号重新授权。 */
-    openCloudDocument: (documentId) => ipcRenderer.invoke("jugglework:file-window:cloud-document-open", documentId),
-    /** 关联变化后重新读取当前文件状态。 */
-    onCloudSyncChanged: (callback) => listen("jugglework:file-window:cloud-sync-changed", callback),
     /** 确认本机文件窗口能力已经注册。 */
     available: () =>
       ipcRenderer.invoke("jugglework:file-window:available").catch(() => false),

@@ -326,6 +326,14 @@ contextBridge.exposeInMainWorld("__JUGGLEWORK_ELECTRON__", {
     create: (input) => ipcRenderer.invoke("jugglework:file-window:create", input),
     /** 将操作路由到所属文件窗口。 */
     action: (action, path) => ipcRenderer.invoke("jugglework:file-window:action", action, path),
+    /** 独立文件窗口请求把当前文件上传为云文档，由主窗口按当前组织执行。 */
+    /** 只发布当前范围的非敏感链接，独立窗口不能调用。 */
+    setCloudUploads: (input) => ipcRenderer.invoke("jugglework:file-window:cloud-uploads", input),
+    onUploadCloud(callback) {
+      const handler = (_event, input) => callback(input);
+      ipcRenderer.on("jugglework:file-window:upload-cloud", handler);
+      return () => ipcRenderer.removeListener("jugglework:file-window:upload-cloud", handler);
+    },
     /** 监听文件窗口标签变化。 */
     onChanged(callback) {
       const handler = (_event, input) => callback(input);
@@ -344,6 +352,8 @@ contextBridge.exposeInMainWorld("__JUGGLEWORK_ELECTRON__", {
     open: (input) => ipcRenderer.invoke('jugglework:docs:open', input),
     /** 释放指定实例或全部云文档视图。 */
     close: (instanceId) => ipcRenderer.invoke('jugglework:docs:close', instanceId),
+    /** 宿主浮窗打开时保留云文档画面，不销毁编辑会话。 */
+    snapshot: (instanceId) => ipcRenderer.invoke('jugglework:docs:snapshot', instanceId),
     /** 对齐 React 内容区域并在宿主菜单打开时隐藏原生视图。 */
     setBounds: (input) => ipcRenderer.send('jugglework:docs:bounds', input),
     /** 只向当前云文档传递展示配置。 */
@@ -354,28 +364,18 @@ contextBridge.exposeInMainWorld("__JUGGLEWORK_ELECTRON__", {
     onLayout(callback) { const handler = (_event, value) => callback(value); ipcRenderer.on('jugglework:docs:layout', handler); return () => ipcRenderer.removeListener('jugglework:docs:layout', handler); },
     /** 监听当前原生页面就绪或身份失效。 */
     onState(callback) { const handler = (_event, value) => callback(value); ipcRenderer.on('jugglework:docs:state', handler); return () => ipcRenderer.removeListener('jugglework:docs:state', handler); },
-    /** 使用文件接入返回的稳定对象映射建立 Word 与云文档关联。 */
-    linkWord: (input) => ipcRenderer.invoke("jugglework:docs:word-link", input),
-    /** 在当前产品页所属组织中创建 Word 基础对象文档。 */
-    createWordPage: (input) => ipcRenderer.invoke("jugglework:docs:word-create", input),
-    /** 读取当前真实 Word 基础对象；建立关联时会再次核对。 */
-    readWordBlocks: (documentId) => ipcRenderer.invoke("jugglework:docs:word-snapshot", documentId),
-    /** 按当前账号、组织和真实本地文件查找待恢复关联。 */
-    findWordRecovery: (input) => ipcRenderer.invoke("jugglework:docs:word-recovery-find", input),
-    /** 用户确认文件移动后，按共同检查点摘要重新定位关联。 */
-    relocateWord: (input) => ipcRenderer.invoke("jugglework:docs:word-relocate", input),
-    /** 使用新交接恢复共同检查点并在新检查点落盘前保持受控状态。 */
-    recoverWord: (input) => ipcRenderer.invoke("jugglework:docs:word-recover", input),
-    /** 账号或组织变化时暂停当前关联，保留检查点供正确上下文恢复。 */
-    pauseWord: (attachmentId) => ipcRenderer.invoke("jugglework:docs:word-pause", attachmentId),
-    /** 释放指定 Word 云文档关联。 */
-    unlinkWord: (attachmentId) => ipcRenderer.invoke("jugglework:docs:word-unlink", attachmentId),
-    /** 查询指定 Word 云文档关联状态。 */
-    wordState: (attachmentId) => ipcRenderer.invoke("jugglework:docs:word-state", attachmentId),
-    /** 等待当前对象操作窗口完成，不替代文件保存。 */
-    flushWord: (attachmentId) => ipcRenderer.invoke("jugglework:docs:word-flush", attachmentId),
-    /** 监听 Word 云文档关联状态。 */
-    onWordState(callback) { const handler = (_event, value) => callback(value); ipcRenderer.on("jugglework:docs:word-state", handler); return () => ipcRenderer.removeListener("jugglework:docs:word-state", handler); },
+    /** 在当前组织的 product 视图中执行文件上传（lookup／upload）。 */
+    fileIntake: (input) => ipcRenderer.invoke('jugglework:docs:file-intake', input),
+    /** 在当前页面滚动并高亮指定块。 */
+    highlightBlocks: (input) => ipcRenderer.send('jugglework:docs:highlight-blocks', input),
+    /** 在当前组织 product 视图中执行 Docs AI 接口（search／read／edit／create）。 */
+    api: (input) => ipcRenderer.invoke('jugglework:docs:api', input),
+    /** 监听本地 Server 经主进程转来的云文档请求。 */
+    onApiRequest(callback) { const handler = (_event, value) => callback(value); ipcRenderer.on('jugglework:cloud-docs:api-request', handler); return () => ipcRenderer.removeListener('jugglework:cloud-docs:api-request', handler); },
+    /** 返回云文档请求结果。 */
+    apiResponse: (value) => ipcRenderer.send('jugglework:cloud-docs:api-response', value),
+    /** 监听页面发来的块选区引用。 */
+    onAiReference(callback) { const handler = (_event, value) => callback(value); ipcRenderer.on('jugglework:docs:ai-reference', handler); return () => ipcRenderer.removeListener('jugglework:docs:ai-reference', handler); },
   },
   desktopNotifications: {
     /** 监听系统原生通知点击；主进程只回传已校验的受限应用动作。 */

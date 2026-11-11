@@ -24,7 +24,7 @@ let dialogAnswer = async () => ({ response: 0 });
 let saveDialog = async (_options: any) => ({ canceled: true });
 let openDialog = async () => ({ canceled: true, filePaths: [] as string[] });
 const revealed: string[] = [];
-mock.module("electron", () => ({
+mock.module("electron", () => ({ clipboard: { writeText: async () => {} },
   BrowserWindow: Window,
   dialog: { showMessageBox: () => dialogAnswer(), showSaveDialog: (_window: any, options: any) => saveDialog(options), showOpenDialog: () => openDialog(), showErrorBox() {} },
   shell: { showItemInFolder: (path: string) => revealed.push(path) },

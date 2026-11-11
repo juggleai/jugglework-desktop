@@ -91,7 +91,6 @@ async function fixture(
     closes: [] as Array<{ id: string; discard: boolean }>,
     modified: [] as unknown[][],
     saved: [] as string[],
-    afterSaved: [] as OfficeDocumentSession[],
   };
   const engine = {
     capabilities: async () => ({ available: true, formats: ["docx"] }),
@@ -179,9 +178,6 @@ async function fixture(
     onSaved: async (_workspace, path) => {
       state.saved.push(path);
       files.get(path)!.exists = true;
-    },
-    afterSaved: async (document) => {
-      state.afterSaved.push(document);
     },
     onModified: async (...args) => {
       state.modified.push(args);
@@ -1351,8 +1347,6 @@ test("保存失败保留模型和 dirty，重试保存同一实际文件且不�
     "actual model content",
   );
   expect(f.state.saveCalls).toEqual(["model_A", "model_A"]);
-  expect(f.state.afterSaved).toHaveLength(1);
-  expect(f.state.afterSaved[0].savedFileSha256).toHaveLength(64);
   expect(f.state.closes).toEqual([]);
 });
 

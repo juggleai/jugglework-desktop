@@ -133,6 +133,8 @@ export type SlashCommandOption = {
 };
 
 export type ComposerDraft = {
+  /** 创建或入队时固定的云文档范围；不随活动会话改变。 */
+  cloudDocTurn?: import("./lib/cloud-doc-turn").CloudDocTurnInput;
   mode: PromptMode;
   parts: ComposerPart[];
   attachments: ComposerAttachment[];

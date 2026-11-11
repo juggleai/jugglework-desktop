@@ -1,3 +1,4 @@
+import { captureCloudDocTurn } from "@/app/lib/cloud-doc-turn";
 import { create } from "zustand";
 
 import type { ComposerAttachment, ComposerDraft } from "../../../../app/types";
@@ -291,7 +292,7 @@ export const useComposerStateStore = create<ComposerStateStore>((set, get) => ({
     return { history: { ...state.history, [sessionId]: next } };
   }),
   appendQueuedDraft: (sessionId, draft) => {
-    const item = { id: queuedDraftId(), draft, enqueuedAt: Date.now() };
+    const item = { id: queuedDraftId(), draft: { ...draft, cloudDocTurn: structuredClone(draft.cloudDocTurn ?? captureCloudDocTurn(sessionId, draft.text)) }, enqueuedAt: Date.now() };
     set((state) => {
     const current = state.queuedDrafts[sessionId] ?? EMPTY_QUEUED_DRAFTS;
       return { queuedDrafts: { ...state.queuedDrafts, [sessionId]: [...current, item] } };

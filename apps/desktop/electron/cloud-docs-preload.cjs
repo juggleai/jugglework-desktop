@@ -14,18 +14,22 @@ ipcRenderer.on("jugglework:docs:appearance", (_event, message) => {
   );
 });
 
-// TIPS: 编辑桥只转发固定业务消息，实际文件、账号与视图身份由主进程关联，不接受页面选择。
-ipcRenderer.on("jugglework:docs:editor-command", (_event, message) => {
+// TIPS: 产品页只接收已保存的文件内容，文件路径和源登录令牌不进入远程页面。
+ipcRenderer.on("jugglework:docs:file-intake-command", (_event, message) => {
   window.postMessage(
-    { channel: "jugglework-docs-editor-command", message },
+    { channel: "jugglework-docs-file-intake-command", message },
     location.origin,
   );
 });
-
-// TIPS: 产品页只接收已保存的 Word 原件和基础对象，文件路径和源登录令牌不进入远程页面。
-ipcRenderer.on("jugglework:docs:word-intake-command", (_event, message) => {
+ipcRenderer.on("jugglework:docs:api-command", (_event, message) => {
   window.postMessage(
-    { channel: "jugglework-docs-word-intake-command", message },
+    { channel: "jugglework-docs-api-command", message },
+    location.origin,
+  );
+});
+ipcRenderer.on("jugglework:docs:highlight-blocks", (_event, message) => {
+  window.postMessage(
+    { channel: "jugglework-docs-highlight-command", message },
     location.origin,
   );
 });
@@ -33,7 +37,7 @@ window.addEventListener("message", (event) => {
   if (
     event.source !== window ||
     event.origin !== location.origin ||
-    event.data?.channel !== "jugglework-docs-word-intake"
+    event.data?.channel !== "jugglework-docs-file-intake"
   )
     return;
   const message = event.data.message;
@@ -47,32 +51,7 @@ window.addEventListener("message", (event) => {
   } catch {
     return;
   }
-  ipcRenderer.send("jugglework:docs:word-intake", message);
-});
-window.addEventListener("message", (event) => {
-  if (
-    event.source !== window ||
-    event.origin !== location.origin ||
-    event.data?.channel !== "jugglework-docs-editor"
-  )
-    return;
-  const message = event.data.message;
-  if (
-    ![
-      "editor.ready",
-      "editor.response",
-      "editor.pending",
-      "editor.structure",
-      "editor.paused",
-    ].includes(message?.type)
-  )
-    return;
-  try {
-    if (JSON.stringify(message).length > 1024 * 1024) return;
-  } catch {
-    return;
-  }
-  ipcRenderer.send("jugglework:docs:editor-message", message);
+  ipcRenderer.send("jugglework:docs:file-intake", message);
 });
 
 // TIPS: 远程页面只上报状态，不暴露 Node、文件系统或任意宿主调用。
@@ -83,9 +62,14 @@ window.addEventListener("message", (event) => {
   if (envelope?.channel !== "jugglework-docs-host") return;
   const message = envelope.message;
   if (
-    !["docs.ready", "docs.error", "docs.session-expired", "docs.layout"].includes(
-      message?.type,
-    )
+    ![
+      "docs.ready",
+      "docs.error",
+      "docs.session-expired",
+      "docs.layout",
+      "docs.open-attachment",
+      "docs.ai-reference",
+    ].includes(message?.type)
   )
     return;
   ipcRenderer.send("jugglework:docs:message", {
@@ -95,5 +79,11 @@ window.addEventListener("message", (event) => {
     tenantId: message.tenantId,
     workspaceId: message.workspaceId,
     ...(message.type === "docs.layout" ? { layout: message.layout } : {}),
+    ...(message.type === "docs.open-attachment"
+      ? { docId: message.docId, blobId: message.blobId, name: message.name, mimeType: message.mimeType, size: message.size }
+      : {}),
+    ...(message.type === "docs.ai-reference"
+      ? { docId: message.docId, title: message.title, action: message.action, blockIds: message.blockIds }
+      : {}),
   });
 });

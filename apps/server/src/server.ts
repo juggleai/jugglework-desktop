@@ -1,3 +1,4 @@
+import { normalizeCloudDocPromptParts } from "./cloud-docs/prompt.js";
 import { readFile, writeFile, rm, stat } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { createSessionCreationLedger } from "./session-create-idempotency.js";
@@ -98,11 +99,15 @@ import { registerFileRoutes, resolveWorkspaceArtifactTargets, normalizeWorkspace
 import { OfficeEngine } from "./office/engine.js";
 import { OfficeDocuments } from "./office/documents.js";
 import { assertOfficeFileEditable } from "./office/file-compatibility.js";
-import { confirmOfficePageSaved, prepareOfficePageSave, readOfficePageSelection, readOfficePageText } from "./office/page-bridge.js";
+import { prepareOfficePageSave, readOfficePageSelection, readOfficePageText } from "./office/page-bridge.js";
 import { LocalOfficeFiles } from "./office/local-files.js";
 import { ensureFileAssistantWorkspace } from "./office/file-assistant-workspace.js";
 import { registerLocalOfficeRoutes } from "./routes/office-local-files.js";
 import { registerOfficeRoutes } from "./routes/office.js";
+import { registerCloudDocsRoutes } from "./routes/cloud-docs.js";
+import { requestCloudDocsViaDesktop } from "./cloud-docs/bridge.js";
+import { CloudDocsService } from "./cloud-docs/service.js";
+import { CloudDocTurns } from "./cloud-docs/turns.js";
 import { runtimeStorageDir } from "./runtime-db.js";
 import { FileDeliveryService } from "./artifacts/delivery.js";
 import { registerFileDeliveryRoutes } from "./routes/file-deliveries.js";
@@ -1018,6 +1023,8 @@ export async function startServer(config: ServerConfig, options: {
   const lastJournalProgressAtByRun = new Map<string, number>();
   let fileDeliveries: FileDeliveryService | undefined;
   let officeDocuments: OfficeDocuments | undefined;
+  const cloudDocTurns = new CloudDocTurns(500, join(runtimeStorageDir(config), "cloud-doc-changes.json"));
+  const cloudDocs = new CloudDocsService(cloudDocTurns, requestCloudDocsViaDesktop);
   const sessionMutations = createSessionMutationCoordinator({
     allocateGeneration: sessionRunJournal.allocateGeneration,
     initialRuns: sessionRunJournal.listActive(),
@@ -1094,7 +1101,6 @@ export async function startServer(config: ServerConfig, options: {
     checkFile: assertOfficeFileEditable,
     engine: officeEngine,
     prepareSave: prepareOfficePageSave,
-    afterSaved: confirmOfficePageSaved,
     readSelection: readOfficePageSelection,
     readText: readOfficePageText,
     resolveTurn: async (workspaceId, sessionId, messageId) => {
@@ -1582,6 +1588,8 @@ export async function startServer(config: ServerConfig, options: {
     logger,
     fileDeliveries,
     officeDocuments,
+    cloudDocTurns,
+    cloudDocs,
     localOfficeFiles,
     (automationId, prepareOptions) => automationExecutor.prepareSession(automationId, prepareOptions),
   );
@@ -3073,6 +3081,8 @@ function createRoutes(
   logger: ServerLogger,
   fileDeliveries: FileDeliveryService,
   officeDocuments: OfficeDocuments,
+  cloudDocTurns: CloudDocTurns,
+  cloudDocs: CloudDocsService,
   localOfficeFiles: LocalOfficeFiles,
   prepareAutomationSession: (
     automationId: string,
@@ -3181,7 +3191,10 @@ function createRoutes(
       const boundPrompt = run && workspace.workspaceType !== "remote"
         ? fileDeliveries.preparePrompt(workspace.id, sessionId, run.runId, prompt)
         : prompt;
-      const { officeSelectionRefs, officeInstructions, ...enginePrompt } = boundPrompt;
+      const { officeSelectionRefs, officeInstructions, cloudDocTurn, ...enginePrompt } = boundPrompt;
+      normalizeCloudDocPromptParts(enginePrompt.parts);
+      if (typeof enginePrompt.messageID === "string" && workspace.workspaceType !== "remote")
+        cloudDocTurns.register(workspace.id, sessionId, enginePrompt.messageID, (cloudDocTurn as import("./cloud-docs/turns.js").CloudDocTurnInput | undefined) ?? { currentTenantId: null, references: [], activeDoc: null });
       if (workspace.workspaceType === "remote" && ((Array.isArray(officeSelectionRefs) && officeSelectionRefs.length) || (Array.isArray(officeInstructions) && officeInstructions.length)))
         throw new ApiError(409, "office_selection_local_only", "选区编辑需要本机文档会话");
       if (workspace.workspaceType !== "remote" && typeof enginePrompt.messageID === "string") {
@@ -4176,6 +4189,7 @@ function createRoutes(
     },
   });
   registerOfficeRoutes({ routes, config, documents: officeDocuments, jsonResponse, readJsonBody, ensureWritable, requireClientScope, resolveWorkspace });
+  registerCloudDocsRoutes({ routes, config, service: cloudDocs, jsonResponse, readJsonBody, ensureWritable, requireClientScope, resolveWorkspace });
 
   addRoute(routes, "GET", "/workspace/:id/plugins", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);

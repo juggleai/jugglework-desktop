@@ -28,9 +28,15 @@ export interface CloudDocsBridge {
     tenantId: string;
     bootstrapUrl: string;
     launchGrant: string;
-    presentation?: { instanceId: string; mode: "product" | "manage" | "editor" };
+    /** 后台上传／AI 产品页不替换前台页面，完成后按实例独立释放。 */
+    background?: boolean;
+    /** 前台页面切换展示区域时保留实例，隐藏期间继续保存，宿主卸载时释放。 */
+    retain?: boolean;
+    presentation?: { instanceId: string; mode: "product" | "manage" };
   }): Promise<{ instanceId: string }>;
   close(instanceId?: string): Promise<void>;
+  /** 获取当前实例画面，供宿主浮窗覆盖原生视图时保留页面背景。 */
+  snapshot(instanceId: string): Promise<string | null>;
   /** 更新当前实例的主题、语言和界面配色。 */
   setAppearance(input: {
     instanceId: string;
@@ -51,131 +57,49 @@ export interface CloudDocsBridge {
       workspaceId?: string;
     }) => void,
   ): () => void;
-  /** 使用文件接入阶段返回的稳定对象映射建立 Word 双向关联。 */
-  createWordPage(input: {
-    instanceId: string;
-    requestId: string;
-    title: string;
-    blocks: Array<{
-      id: string;
-      text: string;
-      kind: string;
-      marks: Array<{
-        index: number;
-        length: number;
-        bold: boolean;
-        italic: boolean;
-      }>;
-    }>;
-    fileName: string;
-    mimeType: string;
-    fileData: ArrayBuffer;
-    checksum: string;
-  }): Promise<{
-    workspaceId: string;
-    pageId: string;
-    resultPageId: string;
-    title: string;
-    state: "completed";
-    checksum: string;
-    originalFileUrl: string;
-  }>;
-  /** 读取当前真实 Word 基础对象；正式关联时仍会再次核对。 */
-  readWordBlocks(documentId: string): Promise<{
-    blocks: Array<{
-      id: string;
-      text: string;
-      kind: string;
-      marks: Array<{
-        index: number;
-        length: number;
-        bold: boolean;
-        italic: boolean;
-      }>;
-    }>;
-  }>;
-  /** 按当前账号、组织和本地文件精确查找待恢复关联。 */
-  findWordRecovery(input: {
-    documentId: string;
-    localWorkspaceId: string;
-    relativePath: string;
-    sourceServerOrigin: string;
-    sourceUserId: string;
-    tenantId: string;
-  }): Promise<{
-    attachmentId: string;
-    docsWorkspaceId: string;
-    pageId: string;
-    relocationRequired: boolean;
-    previousRelativePath?: string;
-  } | null>;
-  /** 用户确认后按共同检查点摘要重新定位已移动的 Word 文件。 */
-  relocateWord(input: {
-    attachmentId: string;
-    documentId: string;
-    localWorkspaceId: string;
-    relativePath: string;
-    sourceServerOrigin: string;
-    sourceUserId: string;
-    tenantId: string;
-  }): Promise<{ status: "relocated" }>;
-  /** 重新授权同一原生页面并完成共同检查点恢复。 */
-  recoverWord(input: {
-    attachmentId: string;
-    documentId: string;
-    localWorkspaceId: string;
-    relativePath: string;
-    instanceId: string;
-    sourceServerOrigin: string;
-    sourceUserId: string;
-    tenantId: string;
-    bootstrapUrl: string;
-    launchGrant: string;
-    pageId: string;
-  }): Promise<{
-    status: "active" | "paused";
-    attachmentId?: string;
-    pageId?: string;
-    reason?: string;
-  }>;
-  /** 账号或组织变化时暂停当前关联，不删除持久检查点。 */
-  pauseWord(attachmentId: string): Promise<{ status: "detached" }>;
-  /** 使用文件接入阶段返回的稳定对象映射建立 Word 双向关联。 */
-  linkWord(input: {
-    attachmentId: string;
-    documentId: string;
-    localWorkspaceId: string;
-    relativePath: string;
-    instanceId: string;
-    sourceServerOrigin: string;
-    sourceUserId: string;
-    tenantId: string;
-    bootstrapUrl: string;
-    launchGrant: string;
-    pageId: string;
-    bindings: Array<{ paragraphId: string; blockId: string }>;
-    deriveBindings?: boolean;
-    original?: {
-      sourceId: string;
-      name: string;
-      size: number;
-      type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-    };
-  }): Promise<{ status: "active"; attachmentId: string }>;
-  /** 释放指定 Word 双向关联。 */
-  unlinkWord(attachmentId: string): Promise<{ status: "detached" }>;
-  /** 查询当前 Word 双向关联状态。 */
-  wordState(attachmentId: string): Promise<Record<string, unknown>>;
-  /** 等待当前对象操作窗口结束。 */
-  flushWord(attachmentId: string): Promise<Record<string, unknown>>;
-  /** 监听 Word 双向关联生命周期。 */
-  onWordState(
-    callback: (state: {
-      attachmentId: string;
-      status: string;
-      reason?: string;
-      documentId?: string;
-      pageId?: string;
-    }) => void,
-  ): () => void;
+  /** 在当前组织 product 视图中执行文件上传：lookup 查重复，upload 创建云文档。 */
+  fileIntake(
+    input:
+      | { action: "lookup"; instanceId?: string; tenantId?: string; requestId: string; checksum: string }
+      | {
+          action: "upload";
+          instanceId?: string;
+          tenantId?: string;
+          requestId: string;
+          checksum: string;
+          fileName: string;
+          mimeType: string;
+          fileData: ArrayBuffer;
+        },
+  ): Promise<CloudFileIntakeResult>;
+  /** 滚动并高亮当前页面中的指定块。 */
+  highlightBlocks(input: { instanceId: string; docId: string; blockIds: string[] }): void;
+  /** 在当前 product 视图中执行 Docs AI 接口。 */
+  api(input: { instanceId?: string; tenantId?: string; requestId: string; op: "search" | "read" | "edit" | "create"; params: Record<string, unknown> }): Promise<{ status: number; body: unknown }>;
+  /** 监听本地 Server 经主进程转来的云文档请求。 */
+  onApiRequest(callback: (request: { requestId: string; tenantId: string; op: "search" | "read" | "edit" | "create" | "import"; params: Record<string, unknown> }) => void): () => void;
+  /** 返回云文档请求结果。 */
+  apiResponse(value: { requestId: string; ok: boolean; status?: number; body?: unknown; error?: string }): void;
+  /** 监听页面发来的块选区引用。 */
+  onAiReference(callback: (value: CloudDocsAiReference) => void): () => void;
 }
+
+/** 文件接入结果：lookup 返回 existing，upload 返回页面与警告。 */
+export type CloudFileIntakeResult = {
+  existing?: Array<{ workspaceId: string; pageId: string; fileName: string; createdAt: string }>;
+  workspaceId?: string;
+  pageId?: string;
+  state?: string;
+  warnings?: string[];
+};
+
+/** 页面选区引用，只含 blockId，不含正文。 */
+export type CloudDocsAiReference = {
+  instanceId: string;
+  tenantId: string;
+  workspaceId: string;
+  docId: string;
+  title: string;
+  action: "add" | "ask";
+  blockIds: string[];
+};

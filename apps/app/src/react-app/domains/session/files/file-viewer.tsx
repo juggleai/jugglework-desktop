@@ -1,3 +1,6 @@
+import { useInRouterContext } from "react-router-dom";
+import { CloudUploadButton } from "../../cloud-docs/use-cloud-upload";
+import { canUploadToCloud } from "../../cloud-docs/upload-file";
 import { getOfficeDocumentKind } from "@jugglework/types/office";
 /** @jsxImportSource react */
 import * as React from "react";
@@ -94,6 +97,7 @@ export function FileViewer({
       path={path}
       name={name}
       draft={draft}
+      hideOfficeHeader={hideOfficeHeader}
     />
   );
 }
@@ -105,7 +109,9 @@ function StandardFileViewer({
   path,
   name,
   draft: initialDraft,
+  hideOfficeHeader,
 }: FileViewerProps) {
+  const inRouter = useInRouterContext();
   const queryClient = useQueryClient();
   const { draft, setDraft: updateDraft } = useSharedFileEditor(
     workspaceId,
@@ -169,7 +175,7 @@ function StandardFileViewer({
     return () => URL.revokeObjectURL(url);
   }, [data]);
 
-  const { mutate: save, isPending: isSaving } = useMutation({
+  const { mutate: save, mutateAsync: saveAsync, isPending: isSaving } = useMutation({
     mutationFn: async (input: {
       content: string;
       baseUpdatedAt: number | null;
@@ -293,6 +299,13 @@ function StandardFileViewer({
           </Button>
         </div>
       ) : null}
+      {inRouter && !hideOfficeHeader && canUploadToCloud(path) && <div className="flex h-9 shrink-0 items-center justify-end gap-1 border-b border-border/60 px-3">
+        <CloudUploadButton client={client} localWorkspaceId={workspaceId} path={path} disabled={isSaving}
+          prepare={async () => {
+            if (editable && dirty) await saveAsync({ path, content: value, baseUpdatedAt: draft?.baseUpdatedAt ?? data?.updatedAt ?? null });
+            return true;
+          }} />
+      </div>}
       {/* TIPS: 内容区上方常态不放任何工具栏 —— 文件名在标签上已经有了；只有出现未保存
           修改时才浮出保存/放弃这一行，让编辑器尽量占满面板。 */}
       {editable && dirty ? (

@@ -34,6 +34,11 @@ import {
   type EditorConfig,
   type NodeKey,
 } from "lexical";
+import { ComposerCloudDocNode, $createCloudDocNode, $insertCloudDocReference } from "./cloud-doc-node";
+import { parseCloudDocToken, type CloudDocReference } from "@/app/lib/cloud-doc-reference";
+import { openCloudDocTab } from "@/app/lib/cloud-doc-tabs";
+import { toast } from "@/components/ui/sonner";
+import { t } from "@/i18n";
 import type { InitialConfigType } from "@lexical/react/LexicalComposer.js";
 import { decodeComposerMentionValue, encodeComposerMentionValue, type ComposerMentionKind } from "./mention-encoding";
 import {
@@ -75,6 +80,7 @@ type EditorProps = {
   onExpandPastedText?: (label: string) => void;
   onRemoveAttachment?: (id: string) => void;
   onPaste?: React.ClipboardEventHandler<HTMLDivElement>;
+  onPasteCapture?: React.ClipboardEventHandler<HTMLDivElement>;
   onPasteText?: (text: string) => void;
   onDrop?: React.DragEventHandler<HTMLDivElement>;
   onDragOver?: React.DragEventHandler<HTMLDivElement>;
@@ -83,6 +89,8 @@ type EditorProps = {
 };
 
 export type LexicalPromptEditorHandle = {
+  /** 将云文档引用插入光标，或替换待选提及／已校验链接。 */
+  insertCloudDocReference: (reference: CloudDocReference, options?: { mention?: boolean; link?: string }) => void;
   insertSkillAtSelection: (skillName: string, kind?: ComposerCapabilityKind) => void;
   insertTextAtSelection: (text: string) => void;
 };
@@ -667,13 +675,14 @@ function $createComposerAttachmentNode(attachment: ComposerAttachmentToken) {
 
 type ComposerInlineTokenNode =
   | ComposerMentionNode
+  | ComposerCloudDocNode
   | ComposerSlashCommandNode
   | ComposerSkillNode
   | ComposerPastedTextNode
   | ComposerAttachmentNode;
 
 function isComposerInlineTokenNode(node: unknown): node is ComposerInlineTokenNode {
-  return node instanceof ComposerMentionNode
+  return node instanceof ComposerCloudDocNode || node instanceof ComposerMentionNode
     || node instanceof ComposerSlashCommandNode
     || node instanceof ComposerSkillNode
     || node instanceof ComposerPastedTextNode
@@ -751,6 +760,8 @@ function setPrompt(
   const attachmentsById = new Map((attachments ?? []).map((item) => [item.id, item]));
   for (const segment of segments) {
     if (!segment) continue;
+    const cloudDoc = parseCloudDocToken(segment);
+    if (cloudDoc) { paragraph.append($createCloudDocNode(cloudDoc)); continue; }
     const officeMatch = /^\[office-instruction ([\w-]+)\]$/.exec(segment);
     const officeGroup = officeMatch ? officeGroups?.find((group) => group.instruction.instructionId === officeMatch[1]) : undefined;
     if (officeGroup) {
@@ -1047,6 +1058,33 @@ function PastedTextExpandPlugin(props: { pastedText?: PastedTextToken[]; onExpan
   return null;
 }
 
+/** 点击引用在当前会话面板打开，不改变草稿标签。 */
+function CloudDocClickPlugin({ sessionId }: { sessionId?: string }) {
+  const [editor] = useLexicalComposerContext();
+  useEffect(() => {
+    const click = (event: MouseEvent) => {
+      const element = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-cloud-doc-reference]") : null;
+      const ref = element?.dataset.cloudDocReference ? parseCloudDocToken(element.dataset.cloudDocReference) : null;
+      if (ref && sessionId) { event.preventDefault(); openCloudDocTab(sessionId, ref); }
+    };
+    const keydown = (event: KeyboardEvent) => {
+      if ((event.key === "Enter" || event.key === " ") && event.target instanceof HTMLElement && event.target.dataset.cloudDocReference) {
+        event.preventDefault();
+        event.stopPropagation();
+        const ref = parseCloudDocToken(event.target.dataset.cloudDocReference);
+        if (ref && sessionId) openCloudDocTab(sessionId, ref);
+      }
+    };
+    return editor.registerRootListener((root, previous) => {
+      previous?.removeEventListener("click", click, true);
+      previous?.removeEventListener("keydown", keydown, true);
+      root?.addEventListener("click", click, true);
+      root?.addEventListener("keydown", keydown, true);
+    });
+  }, [editor, sessionId]);
+  return null;
+}
+
 function MentionChipNavigationPlugin() {
   const [editor] = useLexicalComposerContext();
 
@@ -1168,6 +1206,13 @@ function ImperativeHandlePlugin(props: { editorRef: ForwardedRef<LexicalPromptEd
   const [editor] = useLexicalComposerContext();
 
   useImperativeHandle(props.editorRef, () => ({
+    insertCloudDocReference(reference, options) {
+      editor.update(() => {
+        try { $insertCloudDocReference(reference, options); }
+        catch (error) { toast.warning(t((error as Error).message)); }
+      });
+      editor.focus();
+    },
     insertSkillAtSelection(skillName: string, kind: ComposerCapabilityKind = "skill") {
       editor.update(() => insertSkillAtSelection(skillName, kind));
       editor.focus();
@@ -1249,7 +1294,7 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
         throw error;
       },
         editable: !props.disabled,
-        nodes: [ComposerMentionNode, ComposerSlashCommandNode, ComposerSkillNode, ComposerPastedTextNode, ComposerAttachmentNode, ComposerOfficeInstructionNode, ComposerOfficeSelectionTagNode],
+        nodes: [ComposerCloudDocNode, ComposerMentionNode, ComposerSlashCommandNode, ComposerSkillNode, ComposerPastedTextNode, ComposerAttachmentNode, ComposerOfficeInstructionNode, ComposerOfficeSelectionTagNode],
         editorState: () => {
           setPrompt(props.value, props.mentions, props.pastedText, props.attachments, props.officeGroups);
         },
@@ -1301,6 +1346,7 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
               aria-placeholder={props.placeholder}
               placeholder={<span />}
               onPaste={props.onPaste}
+              onPasteCapture={props.onPasteCapture}
               onDrop={props.onDrop}
               onDragOver={props.onDragOver}
               onDragLeave={props.onDragLeave}
@@ -1330,6 +1376,7 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
         <PasteChipPlugin onPasteText={props.onPasteText} />
         <PastedTextExpandPlugin pastedText={props.pastedText} onExpandPastedText={props.onExpandPastedText} />
         <AttachmentRemovePlugin onRemoveAttachment={props.onRemoveAttachment} />
+        <CloudDocClickPlugin sessionId={props.officeSessionId} />
         <MentionChipNavigationPlugin />
         <ImperativeHandlePlugin editorRef={ref} />
       </div>

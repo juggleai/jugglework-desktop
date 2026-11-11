@@ -27,3 +27,18 @@
 #### Scenario: Network drops during commit
 - **WHEN** commit 请求无响应
 - **THEN** 查询 status，已完成则显示成功，否则以同一 requestId 继续
+
+### Requirement: Uploaded files expose a copy-link action
+已上传文件 SHALL 在上传图标右侧显示分享图标，工作区右侧面板与独立文件窗口 SHALL 使用相同顺序与悬浮提示。点击 SHALL 将最近一次上传结果链接复制到系统剪贴板。记录 SHALL 按来源、账号、组织和本地文件隔离，MUST NOT 建立双向同步或扩大云文档权限。
+
+#### Scenario: User shares from a detached window
+- **WHEN** 文件已上传，用户在独立文件窗口点击分享图标
+- **THEN** 系统剪贴板包含对应云文档页面链接，不包含交接凭据
+
+#### Scenario: User switches organization
+- **WHEN** 用户从组织 A 切换到 B
+- **THEN** 主窗口与独立窗口均不展示或复制 A 的上传结果
+
+#### Scenario: Existing upload has no local result record
+- **WHEN** 已上传文件缺少本地结果记录
+- **THEN** 以当前文件摘要查询已有上传，只有完全匹配时才恢复分享入口，不按文件名推断

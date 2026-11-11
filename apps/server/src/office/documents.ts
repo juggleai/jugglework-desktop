@@ -170,7 +170,6 @@ export class OfficeDocuments {
       }>;
       onSaved: (workspaceId: string, path: string) => Promise<void>;
       /** 文件和模型均确认稳定后通知桌面宿主建立共同检查点；失败不回滚已成功的 Office 保存。 */
-      afterSaved?: (document: OfficeDocumentSession) => Promise<void>;
       prepareSave?: (document: OfficeDocumentSession) => Promise<void>;
       readSelection?: (document: OfficeDocumentSession) => Promise<unknown>;
       /** 读取同一页面模型的原文，用于补全结构摘要省略的软换行。 */
@@ -846,12 +845,7 @@ export class OfficeDocuments {
         delete record.session.error;
         session = await this.get(workspaceId, documentId);
         requireLiveModel();
-        if (!session.dirty) {
-          await this.options.afterSaved?.(structuredClone(session)).catch(
-            () => undefined,
-          );
-          return session;
-        }
+        if (!session.dirty) return session;
       }
       if (final && session.dirty)
         throw new Error("文档仍有未保存修改，请稍后重试确认");

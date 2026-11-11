@@ -1,6 +1,8 @@
+import { rememberCloudDocsOrigin } from "./product-view";
 /** @jsxImportSource react */
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useNavigate } from "react-router-dom";
+import { useCloudDocsBounds } from "./use-cloud-docs-bounds";
 import { LoaderCircle, PanelRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { t, currentLocale, subscribeLocale } from "@/i18n";
@@ -22,6 +24,8 @@ import { parseCloudDocsTarget } from "./docs-card-navigation";
 
 type Props = {
   tenantId: string;
+  targetSearch: string;
+  active: boolean;
   workspaceId: string;
   onOpenAccount: () => void;
   onOpenHome: () => void;
@@ -41,9 +45,13 @@ function currentCredentialScope(): string {
 export function CloudDocsPage(props: Props) {
   const auth = useDenAuth();
   const navigate = useNavigate();
-  const { search } = useLocation();
-  const target = useMemo(() => parseCloudDocsTarget(search), [search]);
+  const target = useMemo(() => parseCloudDocsTarget(props.targetSearch), [props.targetSearch]);
   const host = useRef<HTMLDivElement>(null);
+  const nativeBounds = useCloudDocsBounds(host);
+  const active = useRef(props.active);
+  active.current = props.active;
+  const updateLayout = useRef<() => void>(() => {});
+  useLayoutEffect(() => { updateLayout.current(); }, [props.active]);
   const activeInstance = useRef<string | null>(null);
   const [layout, setLayout] = useState<{ leftOpen: boolean; leftWidth: number; rightOpen: boolean } | null>(null);
   const layoutCommand = (action: "toggle-left" | "toggle-right" | "search") => {
@@ -129,21 +137,14 @@ export function CloudDocsPage(props: Props) {
       });
     };
     const updateBounds = () => {
-      const rect = host.current?.getBoundingClientRect();
-      if (!rect) return;
-      const overlay = [
-        ...document.querySelectorAll(
-          '[role="dialog"], [role="menu"], [data-slot="dropdown-menu-content"]',
-        ),
-      ].some((el) => el.getClientRects().length > 0);
-      bridge.setBounds({
-        instanceId,
-        x: rect.x,
-        y: rect.y,
-        width: rect.width,
-        height: rect.height,
-        visible: ready && !overlay && !document.hidden,
-      });
+      nativeBounds.sync(instanceId, ready, active.current);
+    };
+    updateLayout.current = () => {
+      updateBounds();
+      if (active.current && ready) {
+        updateAppearance();
+        bridge.layoutCommand({ instanceId, action: "request-state" });
+      }
     };
     const unsubscribe = bridge.onState((value) => {
       if (!stillCurrent() || value.instanceId !== instanceId) return;
@@ -151,8 +152,8 @@ export function CloudDocsPage(props: Props) {
       failed = value.status === "error" || value.status === "unauthorized";
       setState(value.status);
       if (value.status !== "ready") setError(t(value.status === "unauthorized" ? "cloud_docs.no_access" : "cloud_docs.connection_failed"));
-      updateAppearance();
       updateBounds();
+      updateAppearance();
       if (ready) bridge.layoutCommand({ instanceId, action: "request-state" });
     });
     const unsubscribeLayout = bridge.onLayout((value) => {
@@ -199,11 +200,13 @@ export function CloudDocsPage(props: Props) {
           launch.presentation.instanceId !== instanceId
         )
           throw new Error(t("cloud_docs.connection_failed"));
+        rememberCloudDocsOrigin(props.tenantId, launch.bootstrapUrl);
         await bridge.open({
           ...launch,
           instanceId,
           sourceServerOrigin: settings.baseUrl,
           sourceUserId: auth.user!.id,
+          retain: true,
         });
         updateBounds();
       } catch (e) {
@@ -218,6 +221,8 @@ export function CloudDocsPage(props: Props) {
     })();
     return () => {
       disposed = true;
+      nativeBounds.sync(instanceId, false, false);
+      updateLayout.current = () => {};
       clearTimeout(timeout);
       resize.disconnect();
       overlays.disconnect();
@@ -274,6 +279,7 @@ export function CloudDocsPage(props: Props) {
           className="relative min-h-0 flex-1"
           data-testid="cloud-docs-native-host"
         >
+          {nativeBounds.snapshot && <img src={nativeBounds.snapshot} onLoad={nativeBounds.loaded} alt="" aria-hidden="true" className="pointer-events-none absolute inset-0 h-full w-full" />}
           {state !== "ready" ? (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 p-8 text-center text-sm text-muted-foreground">
               {state === "loading" ? (

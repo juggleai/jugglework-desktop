@@ -1,4 +1,8 @@
 /** @jsxImportSource react */
+import { readDenSettings, createDenClient } from "@/app/lib/den";
+import { useCloudDocsTenantId } from "@/app/lib/cloud-doc-turn";
+import { type CloudDocReference } from "@/app/lib/cloud-doc-reference";
+import { withProductView, cloudDocsHostPrefix } from "../../../cloud-docs/product-view";
 import { useVoiceService } from "./use-voice-service";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
@@ -64,9 +68,11 @@ const SketchDialog = lazy(() =>
 
 type MentionItem = {
   id: string;
-  kind: ComposerMentionKind;
+  kind: ComposerMentionKind | "cloud-doc";
   value: string;
   label: string;
+  reference?: CloudDocReference;
+  scope?: string;
 };
 
 type PastedTextChip = {
@@ -445,6 +451,8 @@ export function ReactSessionComposer(props: ComposerProps) {
   const [presentationOpen, setPresentationOpen] = useState(false);
   const [openingAttachment, setOpeningAttachment] = useState(false);
   const plusItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const [cloudDocItems, setCloudDocItems] = useState<MentionItem[]>([]);
+  const [cloudDocSearchState, setCloudDocSearchState] = useState<"loading" | "empty" | "error" | null>(null);
   const [mentionItems, setMentionItems] = useState<MentionItem[]>([]);
   const [mentionOpen, setMentionOpen] = useState(false);
   const [menuIndex, setMenuIndex] = useState(0);
@@ -463,6 +471,8 @@ export function ReactSessionComposer(props: ComposerProps) {
   const plusMenuRef = useRef<HTMLDivElement | null>(null);
   const plusMenuPopupRef = useRef<HTMLDivElement | null>(null);
   const editorRef = useRef<LexicalPromptEditorHandle | null>(null);
+  const draftScopeRef = useRef(props.sessionId);
+  draftScopeRef.current = props.sessionId;
   const voiceDictationRef = useRef<VoiceDictationController | null>(null);
   const onOpenVoiceSettingsRef = useRef(props.onOpenVoiceSettings);
   const [voiceDictation, setVoiceDictation] = useState<VoiceDictationSnapshot>({ phase: "idle" });
@@ -891,6 +901,50 @@ export function ReactSessionComposer(props: ComposerProps) {
     };
   }, [slashOpen, loadCommands]);
 
+  const docsTenantId = useCloudDocsTenantId(!props.restrictedHost && !props.isRemoteWorkspace && !props.isSandboxWorkspace);
+  /** 复用就绪页面或后台产品页，失败只影响云文档分组。 */
+  const requestDocs = async (op: "search" | "read", params: Record<string, unknown>) => {
+    const bridge = window.__JUGGLEWORK_ELECTRON__?.cloudDocs;
+    if (!bridge || !docsTenantId) throw new Error("cloud_docs.no_access");
+    const result = await withProductView(bridge, docsTenantId, instanceId => bridge.api({ instanceId, requestId: crypto.randomUUID(), op, params }));
+    if (result.status !== 200) throw new Error(result.status === 403 || result.status === 404 ? "cloud_docs.no_access" : "cloud_docs.search_error");
+    return result.body as { title?: string; items?: Array<{ workspaceId: string; docId: string; title: string; scope?: string }> };
+  };
+  useEffect(() => {
+    if (!docsTenantId) return;
+    const receive = (event: Event) => {
+      const detail = (event as CustomEvent<{ sessionId: string; reference: CloudDocReference }>).detail;
+      if (detail.sessionId !== props.sessionId || detail.reference.tenantId !== docsTenantId) return;
+      editorRef.current?.insertCloudDocReference(detail.reference);
+    };
+    window.addEventListener("jugglework:cloud-doc-reference", receive);
+    return () => window.removeEventListener("jugglework:cloud-doc-reference", receive);
+  }, [docsTenantId, props.sessionId]);
+  useEffect(() => {
+    setCloudDocItems([]);
+    setCloudDocSearchState(null);
+    if (!mentionOpen || !mentionQuery.trim() || !docsTenantId) return;
+    let cancelled = false;
+    setCloudDocSearchState("loading");
+    const timer = setTimeout(() => {
+      void requestDocs("search", { q: mentionQuery.trim(), limit: 8 }).then(body => {
+        if (cancelled) return;
+        const items = (body.items ?? []).slice(0, 8).map(item => ({ id: `cloud-doc:${item.workspaceId}/${item.docId}`, kind: "cloud-doc" as const, value: item.docId, label: item.title,
+          scope: item.scope, reference: { tenantId: docsTenantId, workspaceId: item.workspaceId, docId: item.docId, title: item.title } }));
+        setCloudDocItems(items);
+        setCloudDocSearchState(items.length ? null : "empty");
+      }).catch(() => { if (!cancelled) setCloudDocSearchState("error"); });
+    }, 300);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [mentionOpen, mentionQuery, docsTenantId]);
+  /** 选中的云文档走原子节点；其他提及沿用原有行为。 */
+  const selectMention = (item: MentionItem) => {
+    if (item.kind === "cloud-doc") {
+      if (item.reference) editorRef.current?.insertCloudDocReference(item.reference, { mention: true });
+    } else props.onInsertMention(item.kind, item.value);
+    setMentionOpen(false);
+  };
+
   useEffect(() => {
     if (props.restrictedHost || !mentionOpen) return;
     let cancelled = false;
@@ -1043,11 +1097,12 @@ export function ReactSessionComposer(props: ComposerProps) {
     () => [...slashCommandFiltered, ...slashSkillFiltered],
     [slashCommandFiltered, slashSkillFiltered],
   );
-  const mentionFiltered = useMemo(() => {
+  const regularMentions = useMemo(() => {
     if (props.restrictedHost || !mentionOpen) return [];
     if (!mentionQuery) return mentionItems.slice(0, 8);
     return fuzzysort.go(mentionQuery, mentionItems, { keys: ["label"], limit: 8 }).map((entry) => entry.obj);
   }, [props.restrictedHost, mentionItems, mentionOpen, mentionQuery]);
+  const mentionFiltered = [...regularMentions, ...cloudDocItems];
   const pastedTextTokens = useMemo(
     () => props.pastedText.map((item) => ({ label: item.label, lines: item.lines, text: item.text })),
     [props.pastedText],
@@ -1261,8 +1316,7 @@ export function ReactSessionComposer(props: ComposerProps) {
     if (activeMenu === "mention") {
       const item = mentionFiltered[menuIndex];
       if (!item) return false;
-      props.onInsertMention(item.kind, item.value);
-      setMentionOpen(false);
+      selectMention(item);
       return true;
     }
     return false;
@@ -1647,7 +1701,7 @@ export function ReactSessionComposer(props: ComposerProps) {
   };
 
   const renderMentionMenu = () => {
-    if (!mentionOpen || mentionFiltered.length === 0) return null;
+    if (!mentionOpen || (!mentionFiltered.length && !cloudDocSearchState)) return null;
     return (
       <div className="absolute bottom-full left-[-1px] right-[-1px] z-30">
           <div className="overflow-hidden rounded-t-[20px] border border-dls-border border-b-0 bg-dls-surface shadow-[var(--dls-shell-shadow)]">
@@ -1658,6 +1712,8 @@ export function ReactSessionComposer(props: ComposerProps) {
           >
             <div className="grid gap-1">
               {mentionFiltered.map((item, index) => (
+                <div key={item.id}>
+                {item.kind === "cloud-doc" && index === regularMentions.length && <div className="px-3 py-1 text-xs text-gray-10">{t("cloud_docs.reference_label")}</div>}
                 <button
                   key={item.id}
                   ref={(element) => {
@@ -1667,8 +1723,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                   className={`flex w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left transition-colors hover:bg-gray-2/70 ${activeMenu === "mention" && mentionFiltered[menuIndex]?.id === item.id ? "bg-gray-3 text-gray-12" : "text-gray-11"}`}
                   onMouseEnter={() => setMenuIndex(index)}
                   onClick={() => {
-                    props.onInsertMention(item.kind, item.value);
-                    setMentionOpen(false);
+                    selectMention(item);
                   }}
                 >
                   {item.kind === "agent" ? (
@@ -1685,11 +1740,13 @@ export function ReactSessionComposer(props: ComposerProps) {
                         ? t("composer.agent_label")
                         : item.kind === "app"
                           ? t("composer.app_kind")
-                          : t("composer.file_kind")}
+                          : item.kind === "cloud-doc" ? t(item.scope === "private" ? "cloud_docs.private_scope" : "cloud_docs.organization_scope") : t("composer.file_kind")}
                     </div>
                   </div>
                 </button>
+                </div>
               ))}
+              {cloudDocSearchState && <div className="px-3 py-2 text-xs text-gray-10" role="status">{t("cloud_docs.reference_label")} · {t(`cloud_docs.search_${cloudDocSearchState}`)}</div>}
             </div>
           </div>
         </div>
@@ -1861,6 +1918,42 @@ export function ReactSessionComposer(props: ComposerProps) {
               onExpandPastedText={handleExpandPastedText}
               onRemoveAttachment={props.onRemoveAttachment}
               onPasteText={props.onPasteText}
+              onPasteCapture={(event) => {
+                // TIPS: 必须早于 Lexical 的默认粘贴，避免链接被插入两次。
+                const pasted = event.clipboardData?.getData("text/plain")?.trim() ?? "";
+                if (docsTenantId && !event.clipboardData?.files.length && /^https?:\/\/[^\s]+$/.test(pasted)) {
+                  let url: URL | null = null;
+                  try { url = new URL(pasted); } catch { /* 普通文本按原样粘贴。 */ }
+                  const path = url ? /^\/workspace\/([\w-]+)\/([\w-]+)\/?$/.exec(url.pathname) : null;
+                  if (url && path) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    editorRef.current?.insertTextAtSelection(pasted);
+                    const targetUrl = url;
+                    const sessionId = props.sessionId;
+                    void (async () => {
+                      try {
+                        if (targetUrl.hostname.split(".")[0] !== await cloudDocsHostPrefix(docsTenantId)) {
+                          if (/^t-[a-f0-9]{32}\./.test(targetUrl.hostname)) {
+                            const docsSettings = readDenSettings();
+                            const { orgs } = await createDenClient({ baseUrl: docsSettings.baseUrl, token: docsSettings.authToken }).listOrgs();
+                            let organization = "";
+                            for (const org of orgs) if (targetUrl.hostname.startsWith(`${await cloudDocsHostPrefix(org.id)}.`)) { organization = org.name; break; }
+                            toast.warning(t(organization ? "cloud_docs.link_switch_organization" : "cloud_docs.link_other_organization", { organization }));
+                          }
+                          return;
+                        }
+                        const body = await requestDocs("read", { workspaceId: path[1], docId: path[2], mode: "outline" });
+                        if (draftScopeRef.current !== sessionId || readDenSettings().activeOrgId !== docsTenantId) return;
+                        editorRef.current?.insertCloudDocReference({ tenantId: docsTenantId, workspaceId: path[1], docId: path[2], title: body.title ?? "" }, { link: pasted });
+                      } catch (error) {
+                        if (draftScopeRef.current === sessionId) toast.warning(t(error instanceof Error && ["cloud_docs.no_access", "cloud_docs.search_error"].includes(error.message) ? error.message : "cloud_docs.link_unavailable"));
+                      }
+                    })();
+                    return;
+                  }
+                }
+              }}
               onPaste={(event) => {
                 // Paste policy:
                 // 1. Actual files on the clipboard -> attach them.

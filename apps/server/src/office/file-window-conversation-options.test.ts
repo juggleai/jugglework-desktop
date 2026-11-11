@@ -19,7 +19,7 @@ class Window extends EventEmitter {
   setTitle() {} show() {} focus() {}
 }
 
-mock.module("electron", () => ({ BrowserWindow: Window, dialog: {}, shell: {} }));
+mock.module("electron", () => ({ clipboard: { writeText: async () => {} }, BrowserWindow: Window, dialog: {}, shell: {} }));
 // @ts-expect-error Main JS is checked by the desktop checkJs project.
 const { createFileWindows } = await import("../../../desktop/electron/file-windows.mjs");
 

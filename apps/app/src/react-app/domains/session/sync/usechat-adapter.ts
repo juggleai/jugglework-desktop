@@ -328,7 +328,7 @@ export function snapshotToUIMessages(snapshot: JuggleWorkSessionSnapshot): UIMes
             type: "text",
             text: getTextPartValue(part),
             state: "done" as const,
-            providerMetadata: { opencode: { partId: part.id, ...(officeSelection ? { officeSelection } : {}) } },
+            providerMetadata: { opencode: { partId: part.id, ...(officeSelection ? { officeSelection } : {}), ...(typeof (part.metadata as { cloudDocSourceText?: unknown } | undefined)?.cloudDocSourceText === "string" ? { cloudDocSourceText: (part.metadata as { cloudDocSourceText: string }).cloudDocSourceText } : {}) } },
           }];
         }
         if (part.type === "reasoning") {

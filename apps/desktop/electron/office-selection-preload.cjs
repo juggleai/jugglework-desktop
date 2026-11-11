@@ -1,27 +1,5 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
-// TIPS: Word 页面只上报固定对象事件；文件、组织、页面及关联身份均由主进程持有。
-window.addEventListener("message", (event) => {
-  if (
-    event.source !== window ||
-    event.origin !== location.origin ||
-    event.data?.channel !== "jugglework-office-word-cloud"
-  )
-    return;
-  const message = event.data.message;
-  if (
-    !/^[a-f0-9-]{36}$/i.test(message?.bridgeId ?? "") ||
-    !["word.changed", "word.structure", "word.paused"].includes(message?.type)
-  )
-    return;
-  try {
-    if (JSON.stringify(message).length > 1024 * 1024) return;
-  } catch {
-    return;
-  }
-  ipcRenderer.send("jugglework:office:word-cloud-event", message);
-});
-
 // TIPS: 编辑页只获得冻结、添加/发送和取消能力；身份由实际 IPC sender 决定。
 contextBridge.exposeInMainWorld("juggleworkOfficeSelection", {
   async capture(captureId, expectedSelection) {
