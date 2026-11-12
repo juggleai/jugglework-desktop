@@ -27,7 +27,8 @@ export function installMainWindowRecovery(window, options = {}) {
     setTimeoutFn = setTimeout,
     clearTimeoutFn = clearTimeout,
   } = options;
-  if (!window?.webContents) throw new Error("window.webContents is required");
+  const webContents = window?.webContents;
+  if (!webContents) throw new Error("window.webContents is required");
   let disposed = false;
   let unresponsive = false;
   let recoveryTimer = null;
@@ -42,11 +43,11 @@ export function installMainWindowRecovery(window, options = {}) {
 
   const context = () => ({
     windowId: window.id ?? null,
-    pid: window.webContents.isDestroyed?.() ? null : window.webContents.getOSProcessId?.() ?? null,
+    pid: webContents.isDestroyed?.() ? null : webContents.getOSProcessId?.() ?? null,
   });
 
   const recover = async (reason) => {
-    if (disposed || recoveryInFlight || window.isDestroyed?.() || window.webContents.isDestroyed?.()) return;
+    if (disposed || recoveryInFlight || window.isDestroyed?.() || webContents.isDestroyed?.()) return;
     // A live, unresponsive renderer may still hold unsaved state or a running
     // session. Only an observed renderer exit authorizes automatic reload.
     if (reason !== "renderer-gone" || !unresponsive) return;
@@ -62,8 +63,8 @@ export function installMainWindowRecovery(window, options = {}) {
     record("main.recovery.started", { ...context(), reason, attempt: attempts.length });
     try {
       await beforeReload({ reason, attempt: attempts.length });
-      if (!disposed && generation === startedGeneration && unresponsive && !window.isDestroyed?.() && !window.webContents.isDestroyed?.()) {
-        window.webContents.reload();
+      if (!disposed && generation === startedGeneration && unresponsive && !window.isDestroyed?.() && !webContents.isDestroyed?.()) {
+        webContents.reload();
         record("main.recovery.reload-requested", { ...context(), reason, attempt: attempts.length });
       }
     } catch {
@@ -72,10 +73,10 @@ export function installMainWindowRecovery(window, options = {}) {
         reason,
         attempt: attempts.length,
       });
-      if (!disposed && generation === startedGeneration && unresponsive && !window.isDestroyed?.() && !window.webContents.isDestroyed?.()) {
+      if (!disposed && generation === startedGeneration && unresponsive && !window.isDestroyed?.() && !webContents.isDestroyed?.()) {
         // The renderer has already exited; a failed diagnostic callback must
         // not prevent its bounded recovery. Never restart the session runtime.
-        try { window.webContents.reload(); }
+        try { webContents.reload(); }
         catch { record("main.recovery.reload-failed", { ...context(), reason }); }
       }
     } finally {
@@ -130,8 +131,8 @@ export function installMainWindowRecovery(window, options = {}) {
 
   window.on("unresponsive", onUnresponsive);
   window.on("responsive", onResponsive);
-  window.webContents.on("render-process-gone", onRendererGone);
-  window.webContents.on("did-finish-load", onFinishedLoad);
+  webContents.on("render-process-gone", onRendererGone);
+  webContents.on("did-finish-load", onFinishedLoad);
 
   const dispose = () => {
     if (disposed) return;
@@ -140,8 +141,8 @@ export function installMainWindowRecovery(window, options = {}) {
     clearRecoveryTimer();
     window.removeListener("unresponsive", onUnresponsive);
     window.removeListener("responsive", onResponsive);
-    window.webContents.removeListener("render-process-gone", onRendererGone);
-    window.webContents.removeListener("did-finish-load", onFinishedLoad);
+    webContents.removeListener("render-process-gone", onRendererGone);
+    webContents.removeListener("did-finish-load", onFinishedLoad);
     window.removeListener("closed", dispose);
   };
   window.once("closed", dispose);

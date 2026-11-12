@@ -142,3 +142,29 @@ test("an unavailable renderer reload is contained without an unhandled rejection
   await new Promise((resolve) => setImmediate(resolve));
   assert.ok(records.includes("main.recovery.reload-failed"));
 });
+
+test("closed cleanup does not access the BrowserWindow after Electron destroys it", () => {
+  const f = fixture();
+  const webContents = f.window.webContents;
+  let destroyed = false;
+  Object.defineProperty(f.window, "webContents", {
+    configurable: true,
+    get() {
+      if (destroyed) throw new TypeError("Object has been destroyed");
+      return webContents;
+    },
+  });
+  f.window.isDestroyed = () => destroyed;
+  installMainWindowRecovery(f.window, {
+    setTimeoutFn: f.setTimeoutFn,
+    clearTimeoutFn: f.clearTimeoutFn,
+  });
+
+  destroyed = true;
+  assert.doesNotThrow(() => f.window.emit("closed"));
+  assert.equal(f.window.listenerCount("unresponsive"), 0);
+  assert.equal(f.window.listenerCount("responsive"), 0);
+  assert.equal(f.window.listenerCount("closed"), 0);
+  assert.equal(webContents.listenerCount("render-process-gone"), 0);
+  assert.equal(webContents.listenerCount("did-finish-load"), 0);
+});
