@@ -1,5 +1,5 @@
 import { meetingDiagnostic, meetingDiagnosticError, meetingDiagnosticStep, meetingNumericMetrics, meetingTrackSnapshot } from "./diagnostics";
-import { ensureMeetingMediaPermissions, meetingDeviceError } from "./media-permission";
+import { ensureMeetingMediaPermissions, handleScreenCaptureDenied, meetingDeviceError } from "./media-permission";
 import type { MeetingJoin } from "./types";
 // The vendored Web SDK is loaded once, without initializing JuggleCall.
 let loaded: Promise<void> | null = null;
@@ -146,13 +146,15 @@ export class MeetingMedia {
       this.engine.logoutRoom(info.roomId);
       return;
     }
-    if (mic || camera) await this.publish(mic, camera);
+    if (mic || camera) {
+      await meetingDiagnosticStep("device.permission", { mic, camera }, () => ensureMeetingMediaPermissions(mic, camera));
+      if (!this.disposed) await this.publish(mic, camera);
+    }
   }
   private streamId(screen = false) {
     return `${this.joinInfo!.roomId}_${this.joinInfo!.userId}_${this.joinInfo!.sessionId}_${screen ? "screen" : "camera"}`;
   }
   private async publish(mic: boolean, camera: boolean) {
-    await meetingDiagnosticStep("device.permission", { mic, camera }, () => ensureMeetingMediaPermissions(mic, camera));
     if (this.disposed) return;
     let stream: MediaStream;
     try {
@@ -187,8 +189,6 @@ export class MeetingMedia {
       const local = this.local;
       let track = local.getAudioTracks()[0];
       if (mic && (!this.microphoneCaptured || !track || track.readyState === "ended")) {
-        await meetingDiagnosticStep("device.permission", { mic: true }, () => ensureMeetingMediaPermissions(true, false));
-        if (this.disposed) return;
         let captured: MediaStream;
         try {
           captured = await meetingDiagnosticStep("device.getUserMedia", { mic: true, camera: false }, () => navigator.mediaDevices.getUserMedia({ audio: true, video: false }));
@@ -222,13 +222,9 @@ export class MeetingMedia {
       // Preserve microphone publication and the remote subscription when camera changes.
       const local = this.local;
       if (this.cameraCaptured) {
-        if (camera) await meetingDiagnosticStep("device.permission", { camera: true }, () => ensureMeetingMediaPermissions(false, true));
-        if (this.disposed) return;
         const enabled = await meetingDiagnosticStep("device.enableVideoCaptureDevice", { kind: "camera" }, () => this.engine.enableVideoCaptureDevice(local, camera) as Promise<any>);
         if (enabled === false) throw new Error("摄像头切换失败，请重试");
       } else if (camera) {
-        await meetingDiagnosticStep("device.permission", { camera: true }, () => ensureMeetingMediaPermissions(false, true));
-        if (this.disposed) return;
         let captured: MediaStream;
         try { captured = await meetingDiagnosticStep("device.createCamera", {}, () => this.engine.createStream({ camera: { audio: false, video: true } }) as Promise<MediaStream>); }
         catch (error) { throw new Error(meetingDeviceError(error, false, true)); }
@@ -266,9 +262,8 @@ export class MeetingMedia {
         const name = (error as { name?: string })?.name;
         if (name === "AbortError") return;
         if (name === "NotAllowedError") {
-          throw new Error(/Mac/.test(navigator.userAgent)
-            ? "未获得屏幕共享权限，或已取消选择。请在 macOS「系统设置 → 隐私与安全性 → 屏幕与系统音频录制」中允许当前应用（开发版为 Electron），完全退出并重新打开应用后重试。"
-            : "未获得屏幕共享权限，或已取消选择。请允许屏幕录制并重新选择要共享的屏幕或窗口。");
+          await handleScreenCaptureDenied();
+          return;
         }
         if (name === "InvalidStateError")
           throw new Error("请返回会议窗口，再点击共享屏幕并选择共享内容。");

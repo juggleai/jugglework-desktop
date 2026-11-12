@@ -62,3 +62,37 @@ export function installMediaPermissionHandlers(session, getMainWindow, getMeetin
     })
   ));
 }
+
+// Preview, an in-room toggle and React effect replays can request the same
+// device concurrently. Only one native prompt should own that decision.
+export function createMeetingPermissionRequester(platform, preferences, requestScreen) {
+  const pending = new Map();
+  let screenRequested = false;
+  async function request(kind) {
+    if (platform !== "darwin" && platform !== "win32") return { granted: true, status: "system-managed" };
+    const before = preferences.getMediaAccessStatus(kind);
+    if (before === "granted") return { granted: true, status: before };
+    if (platform === "win32") {
+      return { granted: before !== "denied" && before !== "restricted", status: before };
+    }
+    if (kind === "screen" && !screenRequested && before !== "restricted") {
+      // Screen preflight can report "denied" even before the first request.
+      screenRequested = true;
+      await requestScreen();
+    } else if (kind !== "screen" && before === "not-determined") {
+      const granted = await preferences.askForMediaAccess(kind);
+      return { granted, status: granted ? "granted" : preferences.getMediaAccessStatus(kind), newlyGranted: granted };
+    }
+    const status = preferences.getMediaAccessStatus(kind);
+    return { granted: status === "granted", status, newlyGranted: status === "granted" };
+  }
+  return async (kind, prompt = true) => {
+    if (!["screen", "microphone", "camera"].includes(kind)) throw new Error("无效权限类型");
+    if (!prompt) {
+      const status = platform === "darwin" || platform === "win32" ? preferences.getMediaAccessStatus(kind) : "system-managed";
+      return { granted: status === "granted" || status === "system-managed", status };
+    }
+    if (!pending.has(kind)) pending.set(kind, request(kind).finally(() => pending.delete(kind)));
+    return pending.get(kind);
+  };
+}

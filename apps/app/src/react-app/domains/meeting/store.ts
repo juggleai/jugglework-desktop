@@ -1,3 +1,4 @@
+import { ensureMeetingMediaPermissions } from "./media-permission";
 import { withMeetingDeviceDeadline } from "./device-operation";
 import { meetingDiagnostic, meetingDiagnosticError, meetingDiagnosticStep } from "./diagnostics";
 import { acceptDeviceState, type MemberDeviceState } from "./device-state";
@@ -233,6 +234,9 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
     const camera = device === "camera" ? !get().camera : get().camera;
     try {
       const target = media!;
+      // Time spent in the native consent dialog is controlled by the user.
+      await ensureMeetingMediaPermissions(device === "mic" && mic, device === "camera" && camera);
+      if (run !== generation) return;
       await meetingDiagnosticStep("device.toggle", { device, mic, camera }, () => withMeetingDeviceDeadline(
         () => target.setDevices(mic, camera),
         () => {

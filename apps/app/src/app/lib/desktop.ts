@@ -810,9 +810,9 @@ export function readMeetingDesktopConfig() {
   return invokeElectronHelper("meetingConfigGet");
 }
 
-export async function requestMeetingDevicePermission(kind: "camera" | "microphone") {
+export async function requestMeetingDevicePermission(kind: "camera" | "microphone" | "screen", prompt = true) {
   if (!window.__JUGGLEWORK_ELECTRON__?.invokeDesktop) return { granted: true, status: "browser-managed" };
-  return invokeElectronHelper("meetingMediaPermission", kind);
+  return invokeElectronHelper("meetingMediaPermission", kind, prompt);
 }
 export function openMeetingPrivacySettings(kind: "camera" | "microphone" | "screen") {
   return invokeElectronHelper("meetingPrivacySettings", kind);

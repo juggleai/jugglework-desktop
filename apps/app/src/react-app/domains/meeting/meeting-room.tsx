@@ -6,7 +6,7 @@ import { MeetingMembers } from "./meeting-members";
 import { MeetingChatToasts } from "./meeting-chat-toasts";
 import { MeetingCode } from "./meeting-code";
 import { MeetingInvitePicker, MeetingMemberAvatar } from "./meeting-invite-picker";
-import { MeetingPermissionNotice } from "./permission-notice";
+import { MeetingPermissionNotice, MeetingPermissionRestart } from "./permission-notice";
 import { chooseMeetingScreenSource, focusMeetingWindow, markMeetingMiniReady } from "@/app/lib/desktop";
 import { syncMeetingWindowStyles } from "./window-styles";
 import { guardMeetingWindowClose } from "./window-lifecycle";
@@ -302,6 +302,7 @@ export function MeetingRoomHost() {
             </button>
           </div>
         </header>
+        <MeetingPermissionRestart />
         {s.error || message ? (
           <MeetingPermissionNotice message={message || s.error || ""} onClose={() => { setMessage(""); useMeetingStore.setState({ error: null }); }} />
         ) : null}

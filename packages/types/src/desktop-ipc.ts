@@ -636,7 +636,7 @@ export type MeetingScreenSource = {
 export type DesktopCommandMap = {
   meetingScreenSources: { args: [requestId: string]; result: MeetingScreenSource[] };
   meetingScreenChoose: { args: [requestId: string, sourceId: string | null]; result: boolean };
-  meetingMediaPermission: { args: [kind: "camera" | "microphone"]; result: { granted: boolean; status: string } };
+  meetingMediaPermission: { args: [kind: "camera" | "microphone" | "screen", prompt?: boolean]; result: { granted: boolean; status: string; newlyGranted?: boolean } };
   meetingPrivacySettings: { args: [kind: "camera" | "microphone" | "screen"]; result: void };
   meetingMiniReady: { args: []; result: void };
   meetingWindowState: { args: []; result: { compact: boolean } };

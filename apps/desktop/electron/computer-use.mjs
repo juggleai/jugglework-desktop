@@ -204,4 +204,5 @@ export {
   getComputerUseMcpCommand,
   listRunningApps,
   openComputerUseSetupApp,
+  requestMainAppScreenRecording,
 };

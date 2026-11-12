@@ -1,11 +1,19 @@
 import { useEffect, useRef, useState } from "react";
 import type { MeetingScreenSource } from "@jugglework/types/desktop-ipc";
-import { openMeetingPrivacySettings, listMeetingScreenSources, chooseMeetingScreenSource } from "@/app/lib/desktop";
+import { listMeetingScreenSources, chooseMeetingScreenSource } from "@/app/lib/desktop";
 import { MeetingDialog } from "./meeting-page";
 import { MeetingIcon as Icon } from "./meeting-icons";
 
+import { MeetingPermissionNotice, MeetingPermissionRestart } from "./permission-notice";
+import { ensureMeetingPermission } from "./media-permission";
+
+async function listSharedScreens(requestId: string) {
+  await ensureMeetingPermission("screen");
+  return listMeetingScreenSources(requestId);
+}
+
 export function MeetingScreenPicker({ requestId, ownerDocument, onClose,
-  listSources = listMeetingScreenSources, chooseSource = chooseMeetingScreenSource,
+  listSources = listSharedScreens, chooseSource = chooseMeetingScreenSource,
 }: { requestId: string; ownerDocument?: Document; onClose: () => void;
   listSources?: typeof listMeetingScreenSources; chooseSource?: typeof chooseMeetingScreenSource }) {
   const [sources, setSources] = useState<MeetingScreenSource[]>([]);
@@ -41,7 +49,11 @@ export function MeetingScreenPicker({ requestId, ownerDocument, onClose,
       setSelected(previous => next.some(source => source.id === previous) ? previous : "");
       setFilter(previous => ["all", "screen", "window"].includes(previous) || next.some(source => source.appKey === previous) ? previous : "all");
     } catch (cause) {
-      if (sequence === generation.current) setError(cause instanceof Error ? cause.message : "无法获取共享画面，请重试。");
+      if (sequence === generation.current) {
+        setSources([]);
+        setSelected("");
+        setError(cause instanceof Error ? cause.message : "无法获取共享画面，请重试。");
+      }
     } finally { if (sequence === generation.current) setLoading(false); }
   }
   useEffect(() => { void refresh(); return () => { generation.current++; }; }, [requestId]);
@@ -90,7 +102,9 @@ export function MeetingScreenPicker({ requestId, ownerDocument, onClose,
             </span><span className="screen-source-name">{source.name}</span>
           </button>)}</div>}
     </div>
-    <div className="screen-picker-status" role={error ? "alert" : "status"}>{error || (loading ? "正在刷新…" : "")}{/权限/.test(error) ? <button className="permission-settings-link" onClick={() => void openMeetingPrivacySettings("screen").catch(cause => setError(cause instanceof Error ? cause.message : "无法打开系统设置"))}>打开系统设置</button> : null}</div>
+    {error ? <MeetingPermissionNotice message={error} onClose={() => setError("")} /> :
+      <div className="screen-picker-status" role="status">{loading ? "正在刷新…" : ""}</div>}
+    <MeetingPermissionRestart />
     <div className="modal-foot screen-picker-foot"><span title={selection?.name}>{selection ? `已选择：${selection.name}` : "请选择一个桌面或窗口"}</span>
       <button onClick={onClose}>取消</button><button className="primary" disabled={!selection || loading || submitting} onClick={() => void confirm()}>{submitting ? "正在共享…" : "开始共享"}</button>
     </div>

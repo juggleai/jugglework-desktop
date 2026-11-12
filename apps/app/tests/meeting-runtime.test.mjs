@@ -102,6 +102,7 @@ test('end error only releases the client after server confirms a terminal meetin
 test('device permissions are requested only when enabled and denial identifies settings target', async()=>{
  let source=await fs.readFile(new URL('../src/react-app/domains/meeting/media-permission.ts',import.meta.url),'utf8');
  source=source.replace('import { requestMeetingDevicePermission } from "@/app/lib/desktop";','const requestMeetingDevicePermission = (kind) => globalThis.__testMeetingPermission(kind);');
+ source=source.replace('import { create } from "zustand";', 'const create=()=>({setState:()=>{}});');
  const output=transpile(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
  const {ensureMeetingMediaPermissions:ensure,meetingDeviceError:describe}=await import('data:text/javascript;base64,'+Buffer.from(output).toString('base64'));
  const requests=[];
@@ -117,7 +118,7 @@ test('device permissions are requested only when enabled and denial identifies s
 
 test('microphone toggles preserve the local video stream, including first audio enable', async () => {
  let source=await fs.readFile(new URL('../src/react-app/domains/meeting/zego-adapter.ts',import.meta.url),'utf8');
- source=source.replace('import { ensureMeetingMediaPermissions, meetingDeviceError } from "./media-permission";',
+ source=source.replace('import { ensureMeetingMediaPermissions, handleScreenCaptureDenied, meetingDeviceError } from "./media-permission";',
  'const ensureMeetingMediaPermissions=async()=>{}; const meetingDeviceError=(e)=>e.message;');
  const output=transpile(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
  const {MeetingMedia}=await import('data:text/javascript;base64,'+Buffer.from(output).toString('base64'));
@@ -207,7 +208,7 @@ test('meeting cards pass chat type classification and have readable conversation
 
 test('first unmute adds a real microphone over ZEGO silent placeholder', async () => {
  let source=await fs.readFile(new URL('../src/react-app/domains/meeting/zego-adapter.ts',import.meta.url),'utf8');
- source=source.replace('import { ensureMeetingMediaPermissions, meetingDeviceError } from "./media-permission";','const ensureMeetingMediaPermissions=async()=>{}; const meetingDeviceError=e=>e.message;');
+ source=source.replace('import { ensureMeetingMediaPermissions, handleScreenCaptureDenied, meetingDeviceError } from "./media-permission";','const ensureMeetingMediaPermissions=async()=>{}; const meetingDeviceError=e=>e.message;');
  const output=transpile(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
  const {MeetingMedia}=await import('data:text/javascript;base64,'+Buffer.from(output).toString('base64'));
  const original=Object.getOwnPropertyDescriptor(globalThis,'navigator');
@@ -264,7 +265,7 @@ test('lifecycle polling ends media even when chat admission is pending', async (
 
 test('camera toggles retain audio publication and microphone capture', async () => {
  let source=await fs.readFile(new URL('../src/react-app/domains/meeting/zego-adapter.ts',import.meta.url),'utf8');
- source=source.replace('import { ensureMeetingMediaPermissions, meetingDeviceError } from "./media-permission";','const ensureMeetingMediaPermissions=async()=>{};const meetingDeviceError=e=>e.message;');
+ source=source.replace('import { ensureMeetingMediaPermissions, handleScreenCaptureDenied, meetingDeviceError } from "./media-permission";','const ensureMeetingMediaPermissions=async()=>{};const meetingDeviceError=e=>e.message;');
  const output=transpile(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
  const {MeetingMedia}=await import('data:text/javascript;base64,'+Buffer.from(output).toString('base64'));
  const old=Object.getOwnPropertyDescriptor(globalThis,'navigator');
@@ -324,7 +325,7 @@ test('successful leave still disposes media when an in-flight renewal replaces t
 
 test('first camera enable uses SDK-owned metadata and keeps source alive until disposal', async () => {
  let source=await fs.readFile(new URL('../src/react-app/domains/meeting/zego-adapter.ts',import.meta.url),'utf8');
- source=source.replace('import { ensureMeetingMediaPermissions, meetingDeviceError } from "./media-permission";','const ensureMeetingMediaPermissions=async()=>{}; const meetingDeviceError=e=>e.message;');
+ source=source.replace('import { ensureMeetingMediaPermissions, handleScreenCaptureDenied, meetingDeviceError } from "./media-permission";','const ensureMeetingMediaPermissions=async()=>{}; const handleScreenCaptureDenied=async()=>{throw Error("屏幕共享权限未开启")}; const meetingDeviceError=e=>e.message;');
  const {MeetingMedia}=await import('data:text/javascript;base64,'+Buffer.from(transpile(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText).toString('base64'));
  const audio={kind:'audio',readyState:'live',stop(){this.readyState='ended'}};
  const video={kind:'video',readyState:'live',stop(){this.readyState='ended'}};
@@ -355,7 +356,7 @@ test('hung device operations expire once and late completion cannot succeed', as
 
 test('camera capture returning after the deadline is destroyed without restoring exited media', async () => {
  let source=await fs.readFile(new URL('../src/react-app/domains/meeting/zego-adapter.ts',import.meta.url),'utf8');
- source=source.replace('import { ensureMeetingMediaPermissions, meetingDeviceError } from "./media-permission";','const ensureMeetingMediaPermissions=async()=>{}; const meetingDeviceError=e=>e.message;');
+ source=source.replace('import { ensureMeetingMediaPermissions, handleScreenCaptureDenied, meetingDeviceError } from "./media-permission";','const ensureMeetingMediaPermissions=async()=>{}; const handleScreenCaptureDenied=async()=>{throw Error("屏幕共享权限未开启")}; const meetingDeviceError=e=>e.message;');
  const {MeetingMedia}=await import('data:text/javascript;base64,'+Buffer.from(transpile(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText).toString('base64'));
  const {withMeetingDeviceDeadline}=await load('../src/react-app/domains/meeting/device-operation.ts');
  const audio={kind:'audio',readyState:'live',stop(){this.readyState='ended';}};
@@ -397,7 +398,7 @@ test('meeting child video excludes audio and preserves its video view through de
 
 test('screen sharing distinguishes capture failures and releases failed or late captures', async () => {
  let source=await fs.readFile(new URL('../src/react-app/domains/meeting/zego-adapter.ts',import.meta.url),'utf8');
- source=source.replace('import { ensureMeetingMediaPermissions, meetingDeviceError } from "./media-permission";','const ensureMeetingMediaPermissions=async()=>{}; const meetingDeviceError=e=>e.message;');
+ source=source.replace('import { ensureMeetingMediaPermissions, handleScreenCaptureDenied, meetingDeviceError } from "./media-permission";','const ensureMeetingMediaPermissions=async()=>{}; const handleScreenCaptureDenied=async()=>{throw Error("屏幕共享权限未开启")}; const meetingDeviceError=e=>e.message;');
  const {MeetingMedia}=await import('data:text/javascript;base64,'+Buffer.from(transpile(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText).toString('base64'));
  const oldMediaStream=globalThis.MediaStream;
  globalThis.MediaStream=class {constructor(tracks){this.tracks=tracks;}getTracks(){return this.tracks;}getVideoTracks(){return this.tracks;}};

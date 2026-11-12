@@ -1,6 +1,6 @@
 import { exportMeetingDiagnostics } from "./diagnostics-export";
 import { focusMeetingWindow } from "@/app/lib/desktop";
-import { MeetingPermissionNotice } from "./permission-notice";
+import { MeetingPermissionNotice, MeetingPermissionRestart, MeetingPermissionSetup } from "./permission-notice";
 import { ensureMeetingMediaPermissions, meetingDeviceError } from "./media-permission";
 import {
   useCallback,
@@ -100,7 +100,7 @@ export function MeetingDialog({
     ownerDocument.body,
   );
 }
-export function MeetingPage() {
+export function MeetingPage({ active }: { active: boolean }) {
   const { activeOrganization, user } = useDenAuth();
   const contacts = useJuggleChatStore((s) => s.contacts);
   const imUser = useJuggleChatStore((s) => s.user);
@@ -324,6 +324,7 @@ export function MeetingPage() {
         </div>
       </header>
       <main className="content">
+        {active && tab === "home" && <MeetingPermissionSetup />}
         {error ? (
           <div className="notice error" role="alert">
             {error}
@@ -947,6 +948,8 @@ export function MeetingPrejoin({
           {camera ? "本地预览" : "摄像头已关闭"}
         </span>
       </div>
+      <p className="sub small">首次开启麦克风或摄像头时，请在系统提示中选择允许。</p>
+      <MeetingPermissionRestart />
       <div className="prejoin-devices">
         <button aria-pressed={mic} className={!mic ? "device-off" : ""} disabled={busy} onClick={() => setMic(!mic)}>
           <Icon name="mic" off={!mic} />

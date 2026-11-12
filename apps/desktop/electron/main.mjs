@@ -30,7 +30,7 @@ import path from "node:path";
 import { unzipSync } from "fflate";
 import { fileURLToPath } from "node:url";
 
-import { configureFakeMediaForTests, installMediaPermissionHandlers } from "./media-permissions.mjs";
+import { configureFakeMediaForTests, createMeetingPermissionRequester, installMediaPermissionHandlers } from "./media-permissions.mjs";
 import { resolveMacArchitectureDownloadUrl } from "./architecture-download.mjs";
 import { registerMigrationIpc } from "./migration.mjs";
 import { createRuntimeManager } from "./runtime.mjs";
@@ -42,6 +42,7 @@ import {
   getComputerUseMcpCommand,
   listRunningApps,
   openComputerUseSetupApp,
+  requestMainAppScreenRecording,
 } from "./computer-use.mjs";
 import { createUiControlServer } from "./ui-control-server.mjs";
 import {
@@ -952,6 +953,7 @@ const IDLE_ROUTER_INFO = Object.freeze({
 
 let mainWindow = null;
 let meetingWindow = null;
+const requestMeetingPermission = createMeetingPermissionRequester(process.platform, systemPreferences, requestMainAppScreenRecording);
 const meetingScreenPicker = createMeetingScreenPicker({ desktopCapturer, getMainWindow: () => mainWindow, getMeetingWindow: () => meetingWindow });
 /** @type {(() => {storageAvailable: boolean, records: Array<Record<string, unknown>>}) & {record?: (event: string, data?: Record<string, unknown>) => void}} */
 let readMeetingNativeDiagnostics = () => ({ storageAvailable: false, records: [] });
@@ -1742,6 +1744,7 @@ function createMainRemoteSessionEventBridge() {
   });
 }
 
+let relaunchAfterCleanup = false;
 let quitCleanupComplete = false;
 let quitCleanupInProgress = false;
 let updaterInstallQuitRequested = false;
@@ -2426,16 +2429,9 @@ const desktopCommandHandlers = {
     if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error("仅主窗口可读取会议诊断");
     return readMeetingNativeDiagnostics();
   },
-  "meetingMediaPermission": async (event, kind) => {
+  "meetingMediaPermission": async (event, kind, prompt) => {
     if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error("仅主窗口可申请设备权限");
-    if (kind !== "camera" && kind !== "microphone") throw new Error("无效设备");
-    if (process.platform !== "darwin") return { granted: true, status: "system-managed" };
-    let status = systemPreferences.getMediaAccessStatus(kind);
-    if (status === "not-determined") {
-      await systemPreferences.askForMediaAccess(kind);
-      status = systemPreferences.getMediaAccessStatus(kind);
-    }
-    return { granted: status === "granted", status };
+    return requestMeetingPermission(kind, prompt);
   },
   "meetingPrivacySettings": async (event, kind) => {
     if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error("仅主窗口可打开隐私设置");
@@ -3563,7 +3559,7 @@ ipcMain.handle("jugglework:shell:openExternal", async (_event, url) => {
   return openExternalUrl(url.trim());
 });
 ipcMain.handle("jugglework:shell:relaunch", async () => {
-  app.relaunch();
+  relaunchAfterCleanup = true;
   app.quit();
 });
 ipcMain.handle("jugglework:system:architecture", async () => resolveArchitectureInfo());
@@ -3632,9 +3628,13 @@ if (!app.requestSingleInstanceLock()) {
     quitCleanupInProgress = true;
     void (async () => {
       try {
-        if (!await fileEditor.prepareQuit()) { quitCleanupInProgress = false; return; }
-        if (!await officePanel.prepareQuit()) { quitCleanupInProgress = false; return; }
+        if (!await fileEditor.prepareQuit() || !await officePanel.prepareQuit()) {
+          relaunchAfterCleanup = false;
+          quitCleanupInProgress = false;
+          return;
+        }
       } catch (error) {
+        relaunchAfterCleanup = false;
         dialog.showErrorBox("文档未能保存，已取消退出", error instanceof Error ? error.message : String(error));
         quitCleanupInProgress = false;
         return;
@@ -3664,6 +3664,7 @@ if (!app.requestSingleInstanceLock()) {
         quitCleanupComplete = true;
         quitCleanupInProgress = false;
         officePanel.destroy();
+        if (relaunchAfterCleanup) app.relaunch();
         app.quit();
       });
     })();

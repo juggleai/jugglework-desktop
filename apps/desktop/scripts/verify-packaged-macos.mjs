@@ -139,6 +139,9 @@ export function verifyBundleMetadata(appPath, expectedVersion = null) {
   if (helperMinimumSystemVersion !== "14.0") {
     fail(`Expected Computer Use helper LSMinimumSystemVersion 14.0, found ${helperMinimumSystemVersion}`);
   }
+  for (const key of ["NSCameraUsageDescription", "NSMicrophoneUsageDescription"]) {
+    if (!plistValue(appPlist, key)) fail(`${key} must not be empty`);
+  }
   const screenCaptureUsageDescription = plistValue(appPlist, "NSScreenCaptureUsageDescription");
   if (!screenCaptureUsageDescription) fail("NSScreenCaptureUsageDescription must not be empty");
   return { bundleIdentifier, bundleVersion, minimumSystemVersion, helperMinimumSystemVersion, screenCaptureUsageDescription };
@@ -203,7 +206,19 @@ export function verifyCodeSignature(appPath) {
   if (identifier !== EXPECTED_APP_ID) fail(`Expected signed identifier ${EXPECTED_APP_ID}, found ${identifier || "<missing>"}`);
   if (teamIdentifier !== EXPECTED_TEAM_ID) fail(`Expected signing TeamIdentifier ${EXPECTED_TEAM_ID}, found ${teamIdentifier || "<missing>"}`);
   if (!/^CodeDirectory .*flags=.*\bruntime\b/m.test(output)) fail("Code signature does not enable hardened runtime");
+  verifyMeetingEntitlements(appPath);
   return { identifier, teamIdentifier, hardenedRuntime: true };
+}
+
+export function verifyMeetingEntitlements(appPath) {
+  const signed = spawnSync("codesign", ["--display", "--entitlements", "-", appPath], { encoding: "utf8" });
+  if (signed.status !== 0 || !signed.stdout) fail("Cannot read signed macOS entitlements");
+  // Modern Apple signatures may contain only DER entitlements. codesign
+  // decodes those too, whereas its --xml option can return an empty plist.
+  const entries = signed.stdout.trim().split(/\s+/).join(" ");
+  for (const key of ["com.apple.security.device.camera", "com.apple.security.device.audio-input"]) {
+    if (!entries.includes(`[Key] ${key} [Value] [Bool] true`)) fail(`Signed app is missing ${key}`);
+  }
 }
 
 export function verifyMacToonFactoryBundle(appPath, requestedArch) {

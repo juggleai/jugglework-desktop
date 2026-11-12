@@ -62,3 +62,22 @@ The meeting workbench header SHALL support native window dragging without interc
 #### Scenario: Switch meeting views
 - **WHEN** the user clicks Home, Calendar or History in the header
 - **THEN** the selected view changes normally; the tabs remain outside the native drag region.
+
+### Requirement: 安装包中的会议设备授权
+
+Desktop SHALL 在会议首页显示待授权的设备，并在用户主动授权或首次启用设备时发起系统请求。macOS 安装包的用途说明和签名授权须覆盖会议摄像头、麦克风，屏幕录制由当前应用请求。
+
+#### Scenario: 首次使用摄像头或麦克风
+
+- **WHEN** 用户首次申请设备权限
+- **THEN** 系统显示该设备的用途，等待用户决定期间会议继续，重复点击共用同一次申请
+
+#### Scenario: 在系统设置中更改授权
+
+- **WHEN** 用户先前拒绝了设备权限
+- **THEN** 可以从会议进入对应隐私设置，授权后选择重启整个 Desktop。已入会者先离开自己的会议，完成退出清理后重新启动 Electron 主进程
+
+#### Scenario: 选择屏幕共享
+
+- **WHEN** 用户点击共享并首次申请 macOS 屏幕录制
+- **THEN** Desktop 请求屏幕录制授权，用户在选择器中确认共享目标后才开始推流
