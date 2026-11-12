@@ -17,7 +17,7 @@ type ImportedProviderRecord = {
   metadataVersion: number | null;
   organizationId: string | null;
   providerConfigFingerprint: string | null;
-  gatewayMirror: { workspaceId: string; organizationId: string; cloudProviderId: string; key: string } | null;
+  gatewayMirror: { workspaceId?: string; organizationId: string; cloudProviderId: string; key: string } | null;
 };
 
 const ORGANIZATION_OWNED_PROVIDER_METADATA_VERSION = 10;
@@ -40,9 +40,15 @@ function importedProviders(value: unknown): ImportedProviderRecord[] {
       : [];
     const fingerprint = typeof raw.providerConfigFingerprint === "string" ? raw.providerConfigFingerprint : null;
     const rawMirror = isRecord(raw.gatewayMirror) ? raw.gatewayMirror : null;
-    const gatewayMirror = rawMirror && typeof rawMirror.workspaceId === "string" && typeof rawMirror.organizationId === "string" &&
+    const legacyWorkspaceId = typeof rawMirror?.workspaceId === "string" ? rawMirror.workspaceId.trim() : "";
+    const gatewayMirror = rawMirror && typeof rawMirror.organizationId === "string" &&
       typeof rawMirror.cloudProviderId === "string" && typeof rawMirror.key === "string"
-      ? { workspaceId: rawMirror.workspaceId, organizationId: rawMirror.organizationId, cloudProviderId: rawMirror.cloudProviderId, key: rawMirror.key }
+      ? {
+        ...(legacyWorkspaceId ? { workspaceId: legacyWorkspaceId } : {}),
+        organizationId: rawMirror.organizationId,
+        cloudProviderId: rawMirror.cloudProviderId,
+        key: rawMirror.key,
+      }
       : null;
     return cloudProviderId && providerId && organizationId
       ? [{ cloudProviderId, providerId, organizationId, metadataVersion, modelIds, providerConfigFingerprint: fingerprint, gatewayMirror }]
@@ -65,11 +71,23 @@ function matchingImport(input: {
     (!input.modelID || entry.modelIds.includes(input.modelID)) &&
     (!input.declaredEnvKey || cloudGatewayCredentialEnvName(entry.cloudProviderId) === input.declaredEnvKey) &&
     (!input.providerConfig || entry.providerConfigFingerprint === cloudProviderConfigFingerprint(input.providerConfig)) &&
-    entry.gatewayMirror?.workspaceId === input.workspaceId &&
-    entry.gatewayMirror.organizationId === entry.organizationId &&
-    entry.gatewayMirror.cloudProviderId === entry.cloudProviderId &&
-    entry.gatewayMirror.key === cloudGatewayMirrorEnvName({ workspaceId: input.workspaceId, organizationId: entry.organizationId!, cloudProviderId: entry.cloudProviderId })
+    Boolean(mirrorOwner(entry, input.workspaceId))
   ) ?? null;
+}
+
+/**
+ * The owner this import's mirror must carry: the shared organization record,
+ * or a legacy record scoped to exactly this workspace. Anything else is
+ * treated as unowned.
+ */
+function mirrorOwner(entry: ImportedProviderRecord, workspaceId: string) {
+  const mirror = entry.gatewayMirror;
+  if (!mirror || !entry.organizationId) return null;
+  if (mirror.organizationId !== entry.organizationId || mirror.cloudProviderId !== entry.cloudProviderId) return null;
+  const owner = mirror.workspaceId
+    ? (mirror.workspaceId === workspaceId ? { workspaceId, organizationId: entry.organizationId, cloudProviderId: entry.cloudProviderId } : null)
+    : { organizationId: entry.organizationId, cloudProviderId: entry.cloudProviderId };
+  return owner && mirror.key === cloudGatewayMirrorEnvName(owner) ? owner : null;
 }
 
 export function resolveProviderCredentialFromSnapshot(input: {
@@ -94,9 +112,10 @@ export function resolveProviderCredentialFromSnapshot(input: {
         declaredEnvKey: key,
         providerConfig: input.providerConfig,
       });
-      if (!owned) continue;
+      const owner = owned ? mirrorOwner(owned, input.workspaceId) : null;
+      if (!owned || !owner) continue;
       const mirror = input.entries.find((entry) => entry.key === owned.gatewayMirror?.key);
-      if (mirror?.owner !== cloudGatewayMirrorOwnerId({ workspaceId: input.workspaceId, organizationId: owned.organizationId!, cloudProviderId: owned.cloudProviderId })) continue;
+      if (!mirror || mirror.owner !== cloudGatewayMirrorOwnerId(owner)) continue;
       const value = mirror.value.trim();
       if (value) return value;
       continue;

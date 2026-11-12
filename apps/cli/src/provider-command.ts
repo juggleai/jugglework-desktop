@@ -62,7 +62,8 @@ export async function importProvider(input: { cloud: Pick<CloudClient, "provider
     if (credentials.primaryApiKey) {
       mirror = (await input.runtime.setCloudProviderMirror(input.workspaceId, provider.id, input.organizationId, credentials.primaryApiKey)).mirror;
     }
-    if (existing?.gatewayMirror && mirror && existing.gatewayMirror.key !== mirror.key) {
+    // Only a legacy workspace-scoped record is replaced; a shared record keeps its key.
+    if (existing?.gatewayMirror?.workspaceId && mirror && existing.gatewayMirror.key !== mirror.key) {
       await input.runtime.removeCloudProviderMirror(input.workspaceId, provider.id);
     }
     if (existing && !existing.gatewayMirror && existing.cloudProviderId === provider.id) {

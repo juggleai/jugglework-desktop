@@ -38,6 +38,31 @@ function importedProviders(config: Record<string, unknown>): Record<string, unkn
   return record(record(config.cloudImports)?.providers) ?? {};
 }
 
+/**
+ * Whether a workspace other than `excludeWorkspaceId` still imports a cloud
+ * provider that matches `matches`.
+ *
+ * The OpenCode auth store and the gateway credential record are both shared
+ * by every workspace on this machine. Removing one workspace's import must not
+ * delete a credential another workspace is still using; that is how one
+ * workspace's cleanup used to leave the others failing with 401.
+ */
+async function importedByAnotherWorkspace(
+  config: ServerConfig,
+  excludeWorkspaceId: string,
+  matches: (item: Record<string, unknown>) => boolean,
+): Promise<boolean> {
+  for (const workspace of config.workspaces) {
+    if (workspace.id === excludeWorkspaceId) continue;
+    const providers = importedProviders(await readJuggleWorkWorkspaceConfig(config, workspace.id));
+    if (Object.values(providers).some((item) => {
+      const entry = record(item);
+      return Boolean(entry && matches(entry));
+    })) return true;
+  }
+  return false;
+}
+
 function parseCloudProviderId(value: string): string {
   const id = value.trim();
   if (!CLOUD_PROVIDER_ID_PATTERN.test(id)) throw new ApiError(400, "invalid_cloud_provider_id", "Cloud provider ID is invalid");
@@ -148,7 +173,10 @@ export function registerProviderAuthRoutes(options: RegisterProviderAuthRoutesOp
     if (!organizationId || !value.trim()) {
       throw new ApiError(400, "invalid_cloud_provider_mirror", "Cloud provider mirror payload is invalid");
     }
-    const owner = { workspaceId: workspace.id, organizationId, cloudProviderId };
+    // The workspace only authorizes the write. The gateway credential is issued
+    // per member and device, so one record per organization provider is shared
+    // by every workspace on this machine instead of drifting per workspace.
+    const owner = { organizationId, cloudProviderId };
     const key = cloudGatewayMirrorEnvName(owner);
     await env.upsertOwned({ key, value, owner: cloudGatewayMirrorOwnerId(owner) });
     return jsonResponse({ ok: true, mirror: { ...owner, key } });
@@ -162,17 +190,25 @@ export function registerProviderAuthRoutes(options: RegisterProviderAuthRoutesOp
     const mirror = record(baseline?.gatewayMirror);
     const organizationId = typeof mirror?.organizationId === "string" ? mirror.organizationId.trim() : "";
     const key = typeof mirror?.key === "string" ? mirror.key.trim() : "";
-    if (mirror?.workspaceId !== workspace.id || mirror?.cloudProviderId !== cloudProviderId || !organizationId ||
-      key !== cloudGatewayMirrorEnvName({ workspaceId: workspace.id, organizationId, cloudProviderId })) {
+    const legacyWorkspaceId = typeof mirror?.workspaceId === "string" ? mirror.workspaceId.trim() : "";
+    const owner = legacyWorkspaceId
+      ? { workspaceId: legacyWorkspaceId, organizationId, cloudProviderId }
+      : { organizationId, cloudProviderId };
+    if ((legacyWorkspaceId && legacyWorkspaceId !== workspace.id) || mirror?.cloudProviderId !== cloudProviderId || !organizationId ||
+      key !== cloudGatewayMirrorEnvName(owner)) {
       throw new ApiError(409, "cloud_provider_mirror_unowned", "Cloud provider mirror has no exact owning baseline");
     }
-    const expectedOwner = cloudGatewayMirrorOwnerId({ workspaceId: workspace.id, organizationId, cloudProviderId });
+    const expectedOwner = cloudGatewayMirrorOwnerId(owner);
     const stored = (await env.list()).find((entry) => entry.key === key);
     if (stored && stored.owner !== expectedOwner) {
       throw new ApiError(409, "cloud_provider_mirror_unowned", "Cloud provider mirror ownership does not match");
     }
-    if (stored) await env.deleteOwned(key, expectedOwner);
-    return jsonResponse({ ok: true });
+    // A shared record stays while any other workspace still imports this
+    // organization provider. A legacy record belongs to this workspace alone.
+    const sharedStillUsed = !legacyWorkspaceId && await importedByAnotherWorkspace(config, workspace.id, (item) =>
+      item.cloudProviderId === cloudProviderId && item.organizationId === organizationId);
+    if (stored && !sharedStillUsed) await env.deleteOwned(key, expectedOwner);
+    return jsonResponse({ ok: true, retained: Boolean(stored && sharedStillUsed) });
   });
 
   addRoute(routes, "PUT", "/workspace/:id/provider-auth/:providerId", "host-token", async (ctx) => {
@@ -189,6 +225,11 @@ export function registerProviderAuthRoutes(options: RegisterProviderAuthRoutesOp
     ensureWritable(config);
     const providerId = parseProviderId(ctx.params.providerId);
     const workspace = await resolveWorkspace(config, ctx.params.id);
+    // OpenCode keeps one auth entry per provider id for the whole machine.
+    // Another workspace that still imports this provider needs the entry.
+    if (await importedByAnotherWorkspace(config, workspace.id, (item) => item.providerId === providerId)) {
+      return jsonResponse({ ok: true, retained: true });
+    }
     const result = await createWorkspaceOpencodeClient(config, workspace).auth.remove({ providerID: providerId });
     assertOpencodeSuccess(result);
     return jsonResponse({ ok: true });

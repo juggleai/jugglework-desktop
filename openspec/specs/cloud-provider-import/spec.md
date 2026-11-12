@@ -49,7 +49,7 @@ A reload request raised by the cloud provider applied check SHALL stay pending f
 - **THEN** A stays pending, and when A is selected again and idle the coordinator reloads it automatically
 
 ### Requirement: Rejected gateway credentials are repaired without replaying the failed turn
-Desktop SHALL treat only an explicit gateway-credential rejection as a repairable imported-provider failure. It SHALL re-fetch the matching organization provider connection, update the workspace-scoped OpenCode authentication and credential mirror through the existing import path, and request an engine reload. It SHALL preserve the failed turn and SHALL NOT automatically replay the message or its tool calls.
+Desktop SHALL treat only an explicit gateway-credential rejection as a repairable imported-provider failure. It SHALL re-fetch the matching organization provider connection, update the shared OpenCode authentication and gateway credential record through the existing import path, and request an engine reload. It SHALL preserve the failed turn and SHALL NOT automatically replay the message or its tool calls.
 
 #### Scenario: Engine rejects a cached gateway credential
 - **WHEN** a live session returns 401 and explicitly reports that the gateway credential is missing, revoked, or expired for an imported provider
@@ -64,3 +64,20 @@ Desktop SHALL treat only an explicit gateway-credential rejection as a repairabl
 - **THEN** Desktop may repair that sole provider
 - **WHEN** the workspace has more than one imported organization provider
 - **THEN** Desktop does not guess a repair target
+
+### Requirement: Gateway credentials are shared across workspaces
+A gateway credential is issued per member, provider, and signed-in device, and the OpenCode auth store holds one entry per provider ID for the whole machine. Desktop SHALL keep one gateway credential record per organization and cloud provider, shared by every workspace that imports that provider. A workspace import only authorizes reading or writing that record. Records written per workspace by older builds SHALL stay readable by their own workspace and SHALL be migrated to the shared record by the next import.
+
+#### Scenario: One workspace removes a provider others still import
+- **WHEN** a workspace removes an imported organization provider, through user action, sync, or account or organization cleanup, and another workspace still imports the same provider
+- **THEN** the server keeps the shared gateway credential record and the OpenCode auth entry, and reports them as retained
+
+#### Scenario: The last importing workspace removes the provider
+- **WHEN** no other workspace imports the provider
+- **THEN** the server deletes the shared gateway credential record and the OpenCode auth entry
+
+#### Scenario: Engine has lost an imported provider's credential
+- **WHEN** sync finds an imported gateway provider that the engine lists but does not report as connected, while its import baseline still looks current
+- **THEN** Desktop re-imports that provider to reinstall the credential instead of skipping it
+- **WHEN** the engine's connected list cannot be read
+- **THEN** Desktop does not treat the credential as lost

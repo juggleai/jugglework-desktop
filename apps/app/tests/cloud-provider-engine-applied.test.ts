@@ -112,6 +112,24 @@ describe("sync reconcile decision", () => {
     })).toBe("reimport");
   });
 
+  test("a gateway provider the engine lists but no longer authenticates is re-imported", () => {
+    // The incident: the shared OpenCode auth entry was deleted, the baseline
+    // and runtime block still looked current, and sync skipped it forever.
+    const live = makeProvider(["model-x"]);
+    const importedProvider = {
+      ...imports(live)[LPR_ID]!,
+      gatewayMirror: { organizationId: "org_current", cloudProviderId: LPR_ID, key: "MCP_GATEWAY_KEY_V2_ORG_x" },
+    };
+    const decide = (connected: ReadonlySet<string> | null) => cloudProviderReconcileAction({
+      liveProvider: live, importedProvider, organizationId: "org_current",
+      engineProviderIds: new Set([LPR_ID]), engineConnectedProviderIds: connected,
+    });
+    expect(decide(new Set())).toBe("reimport");
+    expect(decide(new Set([LPR_ID]))).toBe("keep");
+    // An unreadable connected list is unknown, never a reason to re-import.
+    expect(decide(null)).toBe("keep");
+  });
+
   test("stale baseline re-imports; unreadable engine list does not force one", () => {
     const baseline = imports(makeProvider(["model-x"]))[LPR_ID]!;
     const live = makeProvider(["model-x", "model-y"], "2026-11-02T00:00:00.000Z");

@@ -6,8 +6,17 @@ const envSafeHex = (value: string): string => utf8Hex(value) || "00"
 const legacyGatewayCredentialSuffix = (cloudProviderId: string): string =>
   cloudProviderId.trim().replace(/[^a-zA-Z0-9]/g, "_").toUpperCase()
 
+/**
+ * Who a stored gateway credential belongs to.
+ *
+ * A gateway credential is issued per member, provider, and signed-in device,
+ * never per workspace, so the current shape is shared by every workspace that
+ * imports the same organization provider: `workspaceId` is omitted. Records
+ * written by older builds still carry a `workspaceId`; they stay readable so an
+ * upgrade keeps working until the next import rewrites them as shared.
+ */
 export type CloudGatewayMirrorOwner = {
-  workspaceId: string
+  workspaceId?: string | null
   organizationId: string
   cloudProviderId: string
 }
@@ -16,10 +25,18 @@ export type CloudGatewayMirrorReference = CloudGatewayMirrorOwner & {
   key: string
 }
 
-export const cloudGatewayMirrorOwnerId = (owner: CloudGatewayMirrorOwner): string =>
-  [owner.workspaceId, owner.organizationId, owner.cloudProviderId]
-    .map((part) => `${envSafeHex(part).length}_${envSafeHex(part)}`)
-    .join("_")
+const ownerPart = (part: string): string => `${envSafeHex(part).length}_${envSafeHex(part)}`
+
+/** Shared records use an `ORG_` marker so they can never collide with a legacy workspace-scoped id. */
+export const cloudGatewayMirrorOwnerId = (owner: CloudGatewayMirrorOwner): string => {
+  const workspaceId = owner.workspaceId?.trim()
+  return workspaceId
+    ? [workspaceId, owner.organizationId, owner.cloudProviderId].map(ownerPart).join("_")
+    : `ORG_${[owner.organizationId, owner.cloudProviderId].map(ownerPart).join("_")}`
+}
+
+export const isSharedCloudGatewayMirror = (owner: Pick<CloudGatewayMirrorOwner, "workspaceId">): boolean =>
+  !owner.workspaceId?.trim()
 
 export const cloudGatewayCredentialEnvName = (cloudProviderId: string): string => {
   const suffix = envSafeHex(cloudProviderId)

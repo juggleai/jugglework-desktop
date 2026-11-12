@@ -13,14 +13,21 @@ const CLIENT_TOKEN = "provider-auth-client-token";
 const stops: Array<() => void | Promise<void>> = [];
 const roots: string[] = [];
 
+const previousEnvStore = process.env.JUGGLEWORK_ENV_STORE;
+
 afterEach(async () => {
   while (stops.length) await stops.pop()?.();
   while (roots.length) await rm(roots.pop()!, { recursive: true, force: true });
+  if (previousEnvStore === undefined) delete process.env.JUGGLEWORK_ENV_STORE;
+  else process.env.JUGGLEWORK_ENV_STORE = previousEnvStore;
 });
 
 async function boot() {
   const root = await mkdtemp(join(tmpdir(), "jugglework-provider-auth-"));
   roots.push(root);
+  // Keep the env store and runtime DB inside the temp root. Without this the
+  // server falls back to ~/.config/jugglework and writes the user's real files.
+  process.env.JUGGLEWORK_ENV_STORE = join(root, "state", "env.json");
   const upstreamRequests: Array<{ method: string; path: string; directory: string | null; body: unknown }> = [];
   const upstream = Bun.serve({
     hostname: "127.0.0.1",
@@ -61,6 +68,7 @@ async function boot() {
       workspaceType: "local",
     }],
     authorizedRoots: [root],
+    configPath: join(root, "state", "server.json"),
     readOnly: false,
     startedAt: Date.now(),
     tokenSource: "cli",
@@ -192,6 +200,43 @@ describe("workspace provider auth routes", () => {
       expect(await response.json()).toMatchObject({ code: "invalid_provider_auth" });
     }
     expect(upstreamRequests).toEqual([]);
+  });
+
+  test("keeps the shared credentials while another workspace still imports the provider", async () => {
+    const { config, upstreamRequests, base } = await boot();
+    const otherRoot = await mkdtemp(join(tmpdir(), "jugglework-provider-auth-other-"));
+    roots.push(otherRoot);
+    config.workspaces.push({ ...config.workspaces[0]!, id: "ws_2", name: "Other", path: otherRoot, directory: otherRoot });
+    config.authorizedRoots.push(otherRoot);
+
+    const mirrorPath = (workspaceId: string) => `${base}/workspace/${workspaceId}/cloud-provider-mirror/lpr_codex`;
+    const written = await fetch(mirrorPath("ws_1"), {
+      method: "PUT", headers: hostHeaders(), body: JSON.stringify({ organizationId: "org_1", value: "jwgw_shared" }),
+    });
+    const { mirror } = await written.json() as { mirror: Record<string, unknown> };
+    expect(mirror.workspaceId).toBeUndefined();
+    const baseline = { cloudProviderId: "lpr_codex", providerId: "lpr_codex", organizationId: "org_1", gatewayMirror: mirror };
+    for (const workspaceId of ["ws_1", "ws_2"]) {
+      const stored = await fetch(`${base}/workspace/${workspaceId}/cloud-provider-imports/lpr_codex`, {
+        method: "PUT", headers: hostHeaders(), body: JSON.stringify({ item: baseline }),
+      });
+      expect(stored.status).toBe(200);
+    }
+
+    // ws_1 leaving must not strip what ws_2 is still running on.
+    const retainedMirror = await fetch(mirrorPath("ws_1"), { method: "DELETE", headers: hostHeaders() });
+    expect(await retainedMirror.json()).toEqual({ ok: true, retained: true });
+    const retainedAuth = await fetch(`${base}/workspace/ws_1/provider-auth/lpr_codex`, { method: "DELETE", headers: hostHeaders() });
+    expect(await retainedAuth.json()).toEqual({ ok: true, retained: true });
+    expect(upstreamRequests).toEqual([]);
+
+    // Once the last importer is gone, both are really removed.
+    await fetch(`${base}/workspace/ws_2/cloud-provider-imports/lpr_codex`, { method: "DELETE", headers: hostHeaders() });
+    const removedMirror = await fetch(mirrorPath("ws_1"), { method: "DELETE", headers: hostHeaders() });
+    expect(await removedMirror.json()).toEqual({ ok: true, retained: false });
+    const removedAuth = await fetch(`${base}/workspace/ws_1/provider-auth/lpr_codex`, { method: "DELETE", headers: hostHeaders() });
+    expect(await removedAuth.json()).toEqual({ ok: true });
+    expect(upstreamRequests.map((request) => `${request.method} ${request.path}`)).toEqual(["DELETE /auth/lpr_codex"]);
   });
 
   test("does not return an upstream credential-bearing error body", async () => {

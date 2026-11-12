@@ -3605,7 +3605,7 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
       }),
 
     setCloudProviderMirror: (workspaceId: string, cloudProviderId: string, organizationId: string, value: string) =>
-      requestJson<{ ok: true; mirror: { workspaceId: string; organizationId: string; cloudProviderId: string; key: string } }>(
+      requestJson<{ ok: true; mirror: { workspaceId?: string; organizationId: string; cloudProviderId: string; key: string } }>(
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/cloud-provider-mirror/${encodeURIComponent(cloudProviderId)}`,
         { token, hostToken, method: "PUT", body: { organizationId, value }, timeoutMs: timeouts.config },

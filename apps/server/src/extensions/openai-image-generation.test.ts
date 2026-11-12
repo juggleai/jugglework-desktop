@@ -112,7 +112,7 @@ describe("configured OpenAI image generation", () => {
 
   test("reports a reserved cloud credential ready only with its workspace import baseline", async () => {
     const fx = await fixture();
-    const owner = { workspaceId: "ws", organizationId: "org_current", cloudProviderId: "lpr_images" };
+    const owner = { organizationId: "org_current", cloudProviderId: "lpr_images" };
     const mirrorKey = cloudGatewayMirrorEnvName(owner);
     const providerConfig = {
       npm: "@ai-sdk/openai-compatible",

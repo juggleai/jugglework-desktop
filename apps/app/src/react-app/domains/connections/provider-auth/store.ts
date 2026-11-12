@@ -288,10 +288,21 @@ export function cloudProviderReconcileAction(input: {
   importedProvider: CloudImportedProvider;
   organizationId?: string | null;
   engineProviderIds: ReadonlySet<string> | null;
+  /** Provider ids the engine reports as authenticated; null when unreadable. */
+  engineConnectedProviderIds?: ReadonlySet<string> | null;
 }): "keep" | "reimport" {
   const missingFromEngine = input.engineProviderIds !== null &&
     !input.engineProviderIds.has(input.importedProvider.providerId);
   if (missingFromEngine) return "reimport";
+  // A gateway-credential provider the engine lists but does not report as
+  // authenticated has lost its shared OpenCode auth entry. A reload cannot
+  // bring it back, and the baseline still looks current, so re-import once
+  // to reinstall the credential instead of skipping it forever.
+  const lostCredential = Boolean(input.importedProvider.gatewayMirror) &&
+    input.engineProviderIds !== null &&
+    input.engineConnectedProviderIds != null &&
+    !input.engineConnectedProviderIds.has(input.importedProvider.providerId);
+  if (lostCredential) return "reimport";
   return isCloudProviderOutOfSync(input.liveProvider, input.importedProvider, input.organizationId)
     ? "reimport"
     : "keep";
@@ -1882,7 +1893,10 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         if (!providerGatewayMirror) {
           throw new Error("This JuggleWork server cannot securely own the cloud gateway credential. Update it and retry the import.");
         }
-        if (existingImported?.gatewayMirror && existingImported.gatewayMirror.key !== providerGatewayMirror.key) {
+        // Only a legacy workspace-scoped record is replaced here; it belonged to
+        // this workspace alone. The previous shared record has the same key
+        // and was just overwritten, so there is nothing else to delete.
+        if (existingImported?.gatewayMirror?.workspaceId && existingImported.gatewayMirror.key !== providerGatewayMirror.key) {
           await removeGatewayMirror(mirrorTarget.juggleworkClient, mirrorTarget.juggleworkWorkspaceId ?? "", cloudProviderId);
         }
         if (existingImported && !existingImported.gatewayMirror && existingImported.cloudProviderId === cloudProviderId) {
@@ -2313,6 +2327,9 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     const engineProviderIds = engineProviderList
       ? new Set((engineProviderList.all ?? []).map((provider) => provider.id))
       : null;
+    const engineConnectedProviderIds = engineProviderList
+      ? new Set(engineProviderList.connected ?? [])
+      : null;
     const failures: string[] = [];
     const processedLiveProviderIds = new Set<string>();
     let configChanged = false;
@@ -2336,6 +2353,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         importedProvider,
         organizationId: settings.activeOrgId,
         engineProviderIds,
+        engineConnectedProviderIds,
       }) === "keep") {
         continue;
       }

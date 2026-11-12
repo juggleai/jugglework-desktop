@@ -99,12 +99,17 @@ describe("shared cloud provider transformations", () => {
     ])).toEqual([provider]);
   });
 
-  test("requires an owned mirror when the effective provider uses the reserved gateway alias", () => {
+  test("requires a shared owned mirror when the effective provider uses the reserved gateway alias", () => {
     const gateway = { ...provider, providerConfig: { ...provider.providerConfig, env: ["JUGGLEWORK_GATEWAY_KEY_LPR_ROUTER"] } };
     const withoutMirror = buildCloudImportedProvider(gateway, 1, "org");
     expect(isCloudProviderOutOfSync(gateway, withoutMirror, "org")).toBe(true);
-    const mirror = { workspaceId: "ws", organizationId: "org", cloudProviderId: gateway.id, key: gatewayMirrorEnvName({ workspaceId: "ws", organizationId: "org", cloudProviderId: gateway.id }) };
+    const shared = { organizationId: "org", cloudProviderId: gateway.id };
+    const mirror = { ...shared, key: gatewayMirrorEnvName(shared) };
     expect(isCloudProviderOutOfSync(gateway, buildCloudImportedProvider(gateway, 1, "org", mirror), "org")).toBe(false);
+    // A workspace-scoped record from an older build is migrated by one re-import.
+    const legacy = { workspaceId: "ws", ...shared };
+    const legacyMirror = { ...legacy, key: gatewayMirrorEnvName(legacy) };
+    expect(isCloudProviderOutOfSync(gateway, buildCloudImportedProvider(gateway, 1, "org", legacyMirror), "org")).toBe(true);
   });
 });
 

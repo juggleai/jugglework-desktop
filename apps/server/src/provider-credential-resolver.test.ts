@@ -3,7 +3,7 @@ import { resolveProviderCredentialFromSnapshot } from "./provider-credential-res
 import { cloudGatewayCredentialEnvName, cloudGatewayMirrorEnvName, cloudGatewayMirrorOwnerId, cloudProviderConfigFingerprint } from "@jugglework/types/provider-credentials";
 
 const providerConfig = { npm: "@ai-sdk/openai-compatible", env: [cloudGatewayCredentialEnvName("lpr_media")], options: { baseURL: "https://api.example.test/v1" } };
-const mirrorOwner = { workspaceId: "ws", organizationId: "org_current", cloudProviderId: "lpr_media" };
+const mirrorOwner = { organizationId: "org_current", cloudProviderId: "lpr_media" };
 const mirrorKey = cloudGatewayMirrorEnvName(mirrorOwner);
 
 const ownedImport = {
@@ -68,6 +68,30 @@ describe("workspace provider credential resolver", () => {
         imports: [ownedImport], ...input,
       })).toBeNull();
     }
+  });
+
+  test("every workspace that imports the provider reads the one shared organization record", () => {
+    for (const workspaceId of ["ws", "ws_other"]) {
+      expect(resolveProviderCredentialFromSnapshot({
+        providerID: "lpr_media", workspaceId, modelID: "video", providerConfig,
+        declaredEnvKeys: [cloudGatewayCredentialEnvName("lpr_media")],
+        imports: [ownedImport],
+        entries: [{ key: mirrorKey, value: "shared-secret", owner: cloudGatewayMirrorOwnerId(mirrorOwner) }],
+      })).toBe("shared-secret");
+    }
+  });
+
+  test("still reads a legacy workspace-scoped record, but only from its own workspace", () => {
+    const legacyOwner = { workspaceId: "ws", ...mirrorOwner };
+    const legacyKey = cloudGatewayMirrorEnvName(legacyOwner);
+    const legacyImport = { ...ownedImport, gatewayMirror: { ...legacyOwner, key: legacyKey } };
+    const entries = [{ key: legacyKey, value: "legacy-secret", owner: cloudGatewayMirrorOwnerId(legacyOwner) }];
+    const resolve = (workspaceId: string) => resolveProviderCredentialFromSnapshot({
+      providerID: "lpr_media", workspaceId, modelID: "video", providerConfig,
+      declaredEnvKeys: [cloudGatewayCredentialEnvName("lpr_media")], imports: [legacyImport], entries,
+    });
+    expect(resolve("ws")).toBe("legacy-secret");
+    expect(resolve("ws_other")).toBeNull();
   });
 
   test("continues to resolve explicit non-reserved local credentials", () => {

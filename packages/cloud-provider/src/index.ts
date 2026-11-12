@@ -2,6 +2,7 @@ import {
   cloudGatewayCredentialEnvName,
   cloudGatewayMirrorEnvName,
   cloudProviderConfigFingerprint,
+  isSharedCloudGatewayMirror,
   legacyCloudGatewayMirrorEnvName,
   type CloudGatewayMirrorReference,
 } from "@jugglework/types/provider-credentials";
@@ -161,10 +162,12 @@ export const isCloudProviderOutOfSync = (
   const requiresOwnedMirror = getCloudProviderEnv(effectiveConfig).some((key) => /^JUGGLEWORK_GATEWAY_KEY_V2_[A-F0-9]+$/.test(key));
   const expectedOrganizationId = organizationId?.trim() || null;
   const mirror = importedProvider.gatewayMirror;
+  // A workspace-scoped mirror from an older build counts as stale, so the next
+  // sync re-imports once and rewrites it as the shared organization record.
   const invalidMirror = requiresOwnedMirror && (
-    !mirror || mirror.cloudProviderId !== provider.id ||
+    !mirror || !isSharedCloudGatewayMirror(mirror) || mirror.cloudProviderId !== provider.id ||
     (organizationId !== undefined && mirror.organizationId !== expectedOrganizationId) ||
-    mirror.key !== cloudGatewayMirrorEnvName({ workspaceId: mirror.workspaceId, organizationId: mirror.organizationId, cloudProviderId: mirror.cloudProviderId })
+    mirror.key !== cloudGatewayMirrorEnvName({ organizationId: mirror.organizationId, cloudProviderId: mirror.cloudProviderId })
   );
   return (importedProvider.metadataVersion ?? 0) < CLOUD_PROVIDER_METADATA_VERSION ||
     (organizationId !== undefined && (importedProvider.organizationId ?? null) !== expectedOrganizationId) ||

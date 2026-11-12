@@ -88,7 +88,9 @@ test("built media generation runtime is importable without TypeScript source loa
 
 test("built provider credential runtime is importable without TypeScript source loading", async () => {
   const runtime = await import("@jugglework/types/provider-credentials")
-  const owner = { workspaceId: "ws", organizationId: "org", cloudProviderId: "lpr-a.b" }
-  assert.match(runtime.cloudGatewayMirrorEnvName(owner), /^MCP_GATEWAY_KEY_V2_/)
+  const owner = { organizationId: "org", cloudProviderId: "lpr-a.b" }
+  assert.match(runtime.cloudGatewayMirrorEnvName(owner), /^MCP_GATEWAY_KEY_V2_ORG_/)
   assert.notEqual(runtime.cloudGatewayMirrorEnvName(owner), runtime.cloudGatewayMirrorEnvName({ ...owner, cloudProviderId: "lpr_a_b" }))
+  // A shared record can never collide with a legacy workspace-scoped one.
+  assert.notEqual(runtime.cloudGatewayMirrorEnvName(owner), runtime.cloudGatewayMirrorEnvName({ ...owner, workspaceId: "ws" }))
 })

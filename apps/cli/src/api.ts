@@ -159,7 +159,7 @@ export class JuggleWorkApiClient {
     return this.request<{ ok: true }>(`/env/${encodeURIComponent(key)}`, { method: "DELETE" });
   }
   setCloudProviderMirror(workspaceId: string, cloudProviderId: string, organizationId: string, value: string) {
-    return this.request<{ ok: true; mirror: { workspaceId: string; organizationId: string; cloudProviderId: string; key: string } }>(`/workspace/${encodeURIComponent(workspaceId)}/cloud-provider-mirror/${encodeURIComponent(cloudProviderId)}`, {
+    return this.request<{ ok: true; mirror: { workspaceId?: string; organizationId: string; cloudProviderId: string; key: string } }>(`/workspace/${encodeURIComponent(workspaceId)}/cloud-provider-mirror/${encodeURIComponent(cloudProviderId)}`, {
       method: "PUT", body: JSON.stringify({ organizationId, value }),
     });
   }
