@@ -1007,6 +1007,7 @@ export function AppSidebar(props: AppSidebarProps) {
     () => new Set(),
   );
   const autoExpandedWorkspaceIdRef = React.useRef("");
+  const keepCollapsedWorkspaceIdRef = React.useRef("");
 
   const visibleSessionIds = React.useMemo(
     () => new Set(props.visibleSessionIds ?? (props.selectedSessionId ? [props.selectedSessionId] : [])),
@@ -1064,12 +1065,24 @@ export function AppSidebar(props: AppSidebarProps) {
     });
   }, []);
 
+  const keepWorkspaceCollapsedOnNextSelect = React.useCallback((workspaceId: string) => {
+    const id = workspaceId.trim();
+    // Already the selected workspace: no selection change follows, so a
+    // pending skip would wrongly swallow a later, unrelated selection.
+    if (!id || autoExpandedWorkspaceIdRef.current === id) return;
+    keepCollapsedWorkspaceIdRef.current = id;
+  }, []);
+
   React.useEffect(() => {
     const id = props.selectedWorkspaceId.trim();
     if (!id || autoExpandedWorkspaceIdRef.current === id) return;
     // TIPS: 只在选中的工作区真正变化时自动展开一次。用户手动折叠当前工作区后，普通重渲染
     // 或 onExpandWorkspace 回调身份变化都不能覆盖这次显式操作。
     autoExpandedWorkspaceIdRef.current = id;
+    const keepCollapsed = keepCollapsedWorkspaceIdRef.current === id;
+    keepCollapsedWorkspaceIdRef.current = "";
+    // TIPS: 从「最近」等跨项目列表打开会话时，用户的视线在那个列表里，不应顺带展开项目列表。
+    if (keepCollapsed) return;
     expandWorkspace(id);
   }, [props.selectedWorkspaceId, expandWorkspace]);
 
@@ -1184,6 +1197,7 @@ export function AppSidebar(props: AppSidebarProps) {
     onEditWorkspaceConnection: props.onEditWorkspaceConnection,
     onForgetWorkspace: props.onForgetWorkspace,
     expandWorkspace,
+    keepWorkspaceCollapsedOnNextSelect,
     toggleWorkspaceExpanded,
     toggleSessionExpanded,
     expandedWorkspaceIds,
@@ -1950,6 +1964,7 @@ function LocalRecentSessionItem({ entry, reorderable = false }: { entry: RecentS
       flushLeft
       reorderable={reorderable}
       groupDraggable
+      crossProject
     />
   );
 }
@@ -2090,6 +2105,7 @@ function GlobalArchivedSessionItem({ group, session }: GlobalArchivedSessionEntr
       isPinned={pinnedIds.has(session.id)}
       workspaceName={workspaceLabel(group.workspace)}
       showWorkspaceIcon={false}
+      crossProject
     />
   );
 }
@@ -2130,6 +2146,7 @@ function GlobalPinnedSessionTree({ group, sessionId }: GlobalPinnedSessionEntry)
       workspaceName={row.depth === 0 ? workspaceLabel(group.workspace) : undefined}
       showWorkspaceIcon={false}
       flushLeft
+      crossProject
     />
   ));
 }
@@ -3169,6 +3186,11 @@ type SessionMenuItemProps = {
    * workspaceName 仍然保留，悬浮提示与无障碍标签照样能读出所属工作区。
    */
   showWorkspaceIcon?: boolean;
+  /**
+   * Row lives in a cross-project list (recent, pinned, custom sections,
+   * archived). Opening it must not expand its project in the projects list.
+   */
+  crossProject?: boolean;
 };
 
 function SessionMenuItem({
@@ -3184,6 +3206,7 @@ function SessionMenuItem({
   workspaceName,
   showWorkspaceIcon = Boolean(workspaceName),
   flushLeft = false,
+  crossProject = false,
 }: SessionMenuItemProps) {
   const ctx = useSidebarContext();
   const unseenCompletedSessionIds = useUnseenCompletedSessionIds();
@@ -3204,6 +3227,7 @@ function SessionMenuItem({
     if (isNeedsAttentionSessionStatus(sessionActivityStatus)) {
       useSessionCompletionStore.getState().acknowledgeAttention(session.id);
     }
+    if (crossProject) ctx.keepWorkspaceCollapsedOnNextSelect(workspaceId);
     ctx.onOpenSession(workspaceId, session.id);
   };
 

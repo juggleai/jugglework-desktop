@@ -29,6 +29,12 @@ export type SidebarContextValue = {
   onEditWorkspaceConnection: (workspaceId: string) => void;
   onForgetWorkspace: (workspaceId: string) => void;
   expandWorkspace: (workspaceId: string) => void;
+  /**
+   * Opening a session from a cross-project list (recent, pinned, custom
+   * sections, archived) selects its project; call this first so that
+   * selection does not also expand the project in the projects list.
+   */
+  keepWorkspaceCollapsedOnNextSelect: (workspaceId: string) => void;
   toggleWorkspaceExpanded: (workspaceId: string) => void;
   toggleSessionExpanded: (sessionId: string) => void;
   expandedWorkspaceIds: Set<string>;

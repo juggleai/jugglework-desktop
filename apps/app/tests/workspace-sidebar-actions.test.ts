@@ -243,6 +243,21 @@ describe("workspace sidebar actions", () => {
     expect(source).toMatch(/autoExpandedWorkspaceIdRef\.current = id;[\s\S]+expandWorkspace\(id\)/);
   });
 
+  test("opening a session from a cross-project list does not expand its project", () => {
+    const menuItem = source.slice(source.indexOf("function SessionMenuItem"), source.indexOf("if (!reorderable) return item"));
+    expect(menuItem).toMatch(/if \(crossProject\) ctx\.keepWorkspaceCollapsedOnNextSelect\(workspaceId\);\s+ctx\.onOpenSession/);
+    // The selection effect consumes the one-shot skip instead of expanding.
+    expect(source).toMatch(/const keepCollapsed = keepCollapsedWorkspaceIdRef\.current === id;\s+keepCollapsedWorkspaceIdRef\.current = "";[\s\S]+if \(keepCollapsed\) return;\s+expandWorkspace\(id\)/);
+    // Recent and custom sections, pinned, and archived rows opt in; project rows do not.
+    for (const name of ["function LocalRecentSessionItem", "function GlobalArchivedSessionItem", "function GlobalPinnedSessionTree"]) {
+      const start = source.indexOf(name);
+      const body = source.slice(start, source.indexOf("\nfunction ", start + name.length));
+      expect(body).toMatch(/<SessionMenuItem[\s\S]+crossProject/);
+    }
+    const projectRows = source.slice(source.indexOf("function WorkspaceSidebarGroup"), source.indexOf("function GroupedSessionList"));
+    expect(projectRows).not.toMatch(/crossProject/);
+  });
+
   test("keeps completion aggregation limited to accessible main sessions", () => {
     expect(source).toMatch(/const accessibleMainSessionIds = new Set/);
     expect(source).toMatch(/\.reconcile\([\s\S]+accessibleMainSessionIds/);
