@@ -9,6 +9,7 @@ import { buildCloudImportedProvider } from "../src/react-app/domains/connections
 import {
   cloudProviderReconcileAction,
   resetUnappliedCloudProviderReloadKeysForTest,
+  shouldAttemptLostGatewayCredentialRecovery,
   shouldMarkUnappliedCloudProviderReload,
 } from "../src/react-app/domains/connections/provider-auth/store";
 
@@ -159,5 +160,52 @@ describe("sync reconcile decision", () => {
     expect(cloudProviderReconcileAction({
       liveProvider: makeProvider(["model-x"]), importedProvider: baseline, organizationId: "org_current", engineProviderIds: null,
     })).toBe("keep");
+  });
+});
+
+describe("lost gateway credential recovery circuit breaker", () => {
+  const importedGateway = (importedAt = 1): CloudImportedProvider => ({
+    ...buildCloudImportedProvider(makeProvider(["model-x"]), importedAt, "org_current"),
+    gatewayMirror: {
+      organizationId: "org_current",
+      cloudProviderId: LPR_ID,
+      key: "JUGGLEWORK_GATEWAY_MIRROR_ORG_CURRENT",
+    },
+  });
+
+  test("allows one automatic recovery across store recreation and importedAt rewrites", () => {
+    expect(shouldAttemptLostGatewayCredentialRecovery({
+      workspaceId: "ws_a",
+      importedProvider: importedGateway(1),
+      credentialMissing: true,
+    })).toBe(true);
+    expect(shouldAttemptLostGatewayCredentialRecovery({
+      workspaceId: "ws_a",
+      importedProvider: importedGateway(2),
+      credentialMissing: true,
+    })).toBe(false);
+  });
+
+  test("a healthy engine re-arms a later independent credential loss", () => {
+    const importedProvider = importedGateway();
+    expect(shouldAttemptLostGatewayCredentialRecovery({
+      workspaceId: "ws_a", importedProvider, credentialMissing: true,
+    })).toBe(true);
+    expect(shouldAttemptLostGatewayCredentialRecovery({
+      workspaceId: "ws_a", importedProvider, credentialMissing: false,
+    })).toBe(false);
+    expect(shouldAttemptLostGatewayCredentialRecovery({
+      workspaceId: "ws_a", importedProvider, credentialMissing: true,
+    })).toBe(true);
+  });
+
+  test("scopes the recovery attempt to one workspace", () => {
+    const importedProvider = importedGateway();
+    expect(shouldAttemptLostGatewayCredentialRecovery({
+      workspaceId: "ws_a", importedProvider, credentialMissing: true,
+    })).toBe(true);
+    expect(shouldAttemptLostGatewayCredentialRecovery({
+      workspaceId: "ws_b", importedProvider, credentialMissing: true,
+    })).toBe(true);
   });
 });

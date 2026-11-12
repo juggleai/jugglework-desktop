@@ -128,6 +128,7 @@ import {
   shouldAdoptWorkspaceSnapshot,
 } from "./cloud-provider-sync-queue";
 import { resolveGatewayCredentialRepairTarget } from "./gateway-credential-repair";
+import { digestGatewayCredential } from "./gateway-credential-digest";
 
 const cloudProviderConnectionSingleflight =
   createKeyedSingleflight<string, DenOrgLlmProviderConnection>();
@@ -275,6 +276,65 @@ export type ProviderAuthStore = ReturnType<typeof createProviderAuthStore>;
 const lastUnappliedCloudProviderReloadKeys = new Map<string, string>();
 
 /**
+ * A gateway credential lives in OpenCode's machine-global auth store. When
+ * the engine lists a managed provider but no longer reports it connected, an
+ * automatic cloud sync re-installs the credential once. If the control plane
+ * keeps returning a credential the gateway rejects, reloading the engine
+ * recreates the provider store and would otherwise start the same import
+ * again every few seconds. Keep the successful recovery attempt at module
+ * scope so store recreation cannot turn a persistent 401 into a reload loop.
+ *
+ * The key intentionally excludes importedAt: a recovery import rewrites that
+ * timestamp even when the Den provider revision is unchanged. A connected
+ * engine clears the key and re-arms recovery for a later, independent loss.
+ */
+const lostGatewayCredentialRecoveryAttempts = new Set<string>();
+
+function lostGatewayCredentialRecoveryKey(input: {
+  workspaceId: string;
+  importedProvider: CloudImportedProvider;
+}): string {
+  const imported = input.importedProvider;
+  return JSON.stringify([
+    input.workspaceId.trim(),
+    imported.organizationId?.trim() ?? "",
+    imported.cloudProviderId.trim(),
+    imported.providerId.trim(),
+    imported.updatedAt ?? "",
+    imported.providerConfigFingerprint ?? "",
+    [...imported.modelIds].sort(),
+    imported.gatewayMirror?.key ?? "",
+  ]);
+}
+
+export function shouldAttemptLostGatewayCredentialRecovery(input: {
+  workspaceId: string;
+  importedProvider: CloudImportedProvider;
+  credentialMissing: boolean;
+}): boolean {
+  const key = lostGatewayCredentialRecoveryKey(input);
+  if (!input.credentialMissing) {
+    lostGatewayCredentialRecoveryAttempts.delete(key);
+    return false;
+  }
+  if (lostGatewayCredentialRecoveryAttempts.has(key)) return false;
+  lostGatewayCredentialRecoveryAttempts.add(key);
+  while (lostGatewayCredentialRecoveryAttempts.size > 128) {
+    const oldest = lostGatewayCredentialRecoveryAttempts.values().next().value;
+    if (typeof oldest !== "string") break;
+    lostGatewayCredentialRecoveryAttempts.delete(oldest);
+  }
+  return true;
+}
+
+function forgetLostGatewayCredentialRecovery(input: {
+  workspaceId: string;
+  importedProvider: CloudImportedProvider;
+}): void {
+  lostGatewayCredentialRecoveryAttempts.delete(lostGatewayCredentialRecoveryKey(input));
+}
+
+/**
  * Per-provider decision of the sync pass. Re-import only when the baseline is
  * stale against Den or the engine lacks the provider entirely (its runtime
  * block may be gone). When the baseline matches Den and the engine merely
@@ -311,6 +371,7 @@ export function cloudProviderReconcileAction(input: {
 /** Test hook: forget every recorded difference. */
 export const resetUnappliedCloudProviderReloadKeysForTest = () => {
   lastUnappliedCloudProviderReloadKeys.clear();
+  lostGatewayCredentialRecoveryAttempts.clear();
 };
 
 /**
@@ -1813,7 +1874,11 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
 
   async function connectCloudProviderInternal(
     cloudProviderId: string,
-    optionsArg?: { silent?: boolean; authorityKey?: string },
+    optionsArg?: {
+      silent?: boolean;
+      authorityKey?: string;
+      connection?: DenOrgLlmProviderConnection;
+    },
   ) {
     if (!optionsArg?.silent) {
       setStateField("providerAuthError", null);
@@ -1847,7 +1912,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         token,
         cloudProviderId,
       ]);
-      const provider = await cloudProviderConnectionSingleflight.run(
+      const provider = optionsArg?.connection ?? await cloudProviderConnectionSingleflight.run(
         connectionKey,
         () => den.getOrgLlmProviderConnection(orgId, cloudProviderId),
       );
@@ -1995,12 +2060,8 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     });
   }
 
-  /**
-   * Re-fetch a cloud-managed gateway credential after the gateway rejected the
-   * engine's cached copy. The normal import path is intentionally reused: it
-   * updates OpenCode auth, the workspace-owned mirror, runtime provider config,
-   * and finally reloads the engine. It never touches a manual provider.
-   */
+  /** Rotate only after a gateway-classified 401, then atomically re-import the
+   * returned projection into auth, the mirror, runtime config, and the engine. */
   async function repairGatewayCredential(providerId: string | null): Promise<boolean> {
     const workspaceKey = currentWorkspaceKey();
     const repairKey = `${workspaceKey}::${providerId?.trim() || "single-cloud-provider"}`;
@@ -2011,9 +2072,33 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         if (!target) return false;
 
         const authorityKey = getCloudProviderAuthorityKey();
+        const settings = readDenSettings();
+        const token = settings.authToken?.trim() ?? "";
+        const orgId = settings.activeOrgId?.trim() ?? "";
+        if (!token || !orgId) {
+          throw new Error("Sign in to JuggleWork Cloud and choose an organization first.");
+        }
+        const den = createDenClient({ baseUrl: settings.baseUrl, token });
+        // Normal connect is intentionally idempotent and returns the exact
+        // credential currently installed for this device. Hash it locally;
+        // the raw rejected token never enters the rotation request body.
+        const current = await den.getOrgLlmProviderConnection(orgId, target.cloudProviderId);
+        assertCloudProviderAuthorityCurrent(authorityKey, getCloudProviderAuthorityKey());
+        const rejectedCredential = resolveCloudProviderCredentials(current).primaryApiKey;
+        if (!rejectedCredential) {
+          throw new Error("The cloud provider did not return its current gateway credential.");
+        }
+        const rejectedCredentialDigest = await digestGatewayCredential(rejectedCredential);
+        const connection = await den.rotateOrgLlmProviderGatewayCredential(
+          orgId,
+          target.cloudProviderId,
+          { rejectedCredentialDigest, requestId: globalThis.crypto.randomUUID() },
+        );
+        assertCloudProviderAuthorityCurrent(authorityKey, getCloudProviderAuthorityKey());
         await connectCloudProviderInternal(target.cloudProviderId, {
           silent: true,
           authorityKey,
+          connection,
         });
         return true;
       }),
@@ -2358,6 +2443,30 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
 
       processedLiveProviderIds.add(liveProvider.id);
 
+      const missingFromEngine = engineProviderIds !== null &&
+        !engineProviderIds.has(importedProvider.providerId);
+      const baselineOutOfSync = isCloudProviderOutOfSync(
+        liveProvider,
+        importedProvider,
+        settings.activeOrgId,
+      );
+      const credentialMissing = Boolean(importedProvider.gatewayMirror) &&
+        !missingFromEngine &&
+        !baselineOutOfSync &&
+        engineConnectedProviderIds !== null &&
+        !engineConnectedProviderIds.has(importedProvider.providerId);
+
+      // A healthy connection re-arms the one-shot recovery. Missing provider
+      // blocks and stale Den baselines are separate reconciliation reasons and
+      // must never be suppressed by the credential circuit breaker.
+      if (!credentialMissing) {
+        shouldAttemptLostGatewayCredentialRecovery({
+          workspaceId: target.juggleworkWorkspaceId,
+          importedProvider,
+          credentialMissing: false,
+        });
+      }
+
       if (cloudProviderReconcileAction({
         liveProvider,
         importedProvider,
@@ -2365,6 +2474,14 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         engineProviderIds,
         engineConnectedProviderIds,
       }) === "keep") {
+        continue;
+      }
+
+      if (credentialMissing && !shouldAttemptLostGatewayCredentialRecovery({
+        workspaceId: target.juggleworkWorkspaceId,
+        importedProvider,
+        credentialMissing: true,
+      })) {
         continue;
       }
 
@@ -2379,6 +2496,15 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         await connectCloudProviderInternal(liveProvider.id, { silent: true, authorityKey });
         configChanged = true;
       } catch (error) {
+        // A transient import/write failure did not reach the engine reload, so
+        // a later sync may safely retry. Only a completed import is fenced
+        // while the engine continues to reject its replacement credential.
+        if (credentialMissing) {
+          forgetLostGatewayCredentialRecovery({
+            workspaceId: target.juggleworkWorkspaceId,
+            importedProvider,
+          });
+        }
         if (error instanceof StaleCloudProviderAuthorityError) throw error;
         failures.push(logCloudProviderSyncError(reason, error));
       }

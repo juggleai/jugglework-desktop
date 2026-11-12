@@ -4606,6 +4606,28 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
       return provider;
     },
 
+    async rotateOrgLlmProviderGatewayCredential(
+      orgId: string,
+      llmProviderId: string,
+      input: { rejectedCredentialDigest: string; requestId: string },
+    ): Promise<DenOrgLlmProviderConnection> {
+      const payload = await requestJson<unknown>(
+        baseUrls,
+        `/v1/llm-providers/${encodeURIComponent(llmProviderId)}/gateway-credential/rotate`,
+        {
+          method: "POST",
+          token,
+          organizationId: orgId,
+          body: input,
+        },
+      );
+      const provider = getDenOrgLlmProviderConnection(payload);
+      if (!provider) {
+        throw new DenApiError(500, "invalid_llm_provider_payload", "LLM provider rotation response was missing connection details.");
+      }
+      return provider;
+    },
+
     async listMcpConnections(orgId: string, scope: "usable" | "manageable" = "usable"): Promise<DenExternalMcpConnection[]> {
       const payload = await requestJson<unknown>(
         baseUrls,

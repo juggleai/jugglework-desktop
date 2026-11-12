@@ -184,4 +184,49 @@ describe("managed JuggleRouter Den provider parser", () => {
     expect(provider.source).toBe("juggle_router");
     expect(provider.managedKind).toBe("juggle_router");
   });
+
+  test("rotates a rejected gateway credential through the dedicated endpoint", async () => {
+    const calls: Array<{ url: string; method: string; body: unknown }> = [];
+    const fetchMock: typeof fetch = async (input, init) => {
+      calls.push({
+        url: String(input),
+        method: init?.method ?? "GET",
+        body: typeof init?.body === "string" ? JSON.parse(init.body) : init?.body,
+      });
+      return new Response(JSON.stringify({
+        llmProvider: {
+          ...managedListProvider,
+          providerConfig: {
+            id: "jugglerouter",
+            name: "JuggleRouter",
+            npm: "@ai-sdk/openai-compatible",
+            api: GATEWAY_URL,
+            env: [`JUGGLEWORK_GATEWAY_KEY_${PROVIDER_ID.toUpperCase()}`],
+            options: { baseURL: GATEWAY_URL },
+          },
+          apiKey: "jwgw_rotated_opaque_token",
+          apiKeys: null,
+        },
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    };
+    Object.defineProperty(globalThis, "fetch", { configurable: true, value: fetchMock });
+
+    const provider = await createDenClient({
+      baseUrl: "https://cloud.example.test",
+      token: "session-token",
+    }).rotateOrgLlmProviderGatewayCredential("org_test", PROVIDER_ID, {
+      rejectedCredentialDigest: "a".repeat(64),
+      requestId: "83a9f2bc-e49e-4ca2-8da2-02df2fd9abf4",
+    });
+
+    expect(provider.apiKey).toBe("jwgw_rotated_opaque_token");
+    expect(calls).toEqual([{
+      url: `https://cloud.example.test/jwork/api/v1/llm-providers/${PROVIDER_ID}/gateway-credential/rotate`,
+      method: "POST",
+      body: {
+        rejectedCredentialDigest: "a".repeat(64),
+        requestId: "83a9f2bc-e49e-4ca2-8da2-02df2fd9abf4",
+      },
+    }]);
+  });
 });

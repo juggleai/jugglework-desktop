@@ -8,6 +8,11 @@ import {
   subscribeGatewayCredentialRepair,
 } from "../src/react-app/domains/connections/provider-auth/gateway-credential-repair";
 
+const providerStoreSource = await Bun.file(new URL(
+  "../src/react-app/domains/connections/provider-auth/store.ts",
+  import.meta.url,
+)).text();
+
 const importedProvider = (
   cloudProviderId: string,
   providerId: string,
@@ -90,5 +95,21 @@ describe("gateway credential repair", () => {
     }, null)).toBeNull();
     expect(resolveGatewayCredentialRepairTarget({ cloud_managed: managed }, "openai"))
       .toBeNull();
+  });
+
+  test("uses digest-only forced rotation before the existing import transaction", () => {
+    const start = providerStoreSource.indexOf("async function repairGatewayCredential");
+    const end = providerStoreSource.indexOf("async function removeCloudProviderInternal", start);
+    const source = providerStoreSource.slice(start, end);
+    const currentAt = source.indexOf("den.getOrgLlmProviderConnection");
+    const digestAt = source.indexOf("digestGatewayCredential(rejectedCredential)");
+    const rotateAt = source.indexOf("den.rotateOrgLlmProviderGatewayCredential");
+    const importAt = source.indexOf("connectCloudProviderInternal");
+
+    expect(currentAt).toBeGreaterThan(-1);
+    expect(digestAt).toBeGreaterThan(currentAt);
+    expect(rotateAt).toBeGreaterThan(digestAt);
+    expect(importAt).toBeGreaterThan(rotateAt);
+    expect(source).toContain("{ rejectedCredentialDigest, requestId: globalThis.crypto.randomUUID() }");
   });
 });

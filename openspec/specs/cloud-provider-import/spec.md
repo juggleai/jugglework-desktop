@@ -53,11 +53,15 @@ A reload request raised by the cloud provider applied check SHALL stay pending f
 - **THEN** A stays pending, and when A is selected again and idle the coordinator reloads it automatically
 
 ### Requirement: Rejected gateway credentials are repaired without replaying the failed turn
-Desktop SHALL treat only an explicit gateway-credential rejection as a repairable imported-provider failure. It SHALL re-fetch the matching organization provider connection, update the shared OpenCode authentication and gateway credential record through the existing import path, and request an engine reload. It SHALL preserve the failed turn and SHALL NOT automatically replay the message or its tool calls.
+Desktop SHALL treat only an explicit gateway-credential rejection as a repairable imported-provider failure. It SHALL read the matching device's current organization-provider connection, hash the rejected `jwgw_` credential locally with SHA-256, and send only that digest plus a fresh UUID request ID to the dedicated credential-rotation endpoint. It SHALL install the returned replacement through the existing import path, updating shared OpenCode authentication, the gateway credential record, runtime provider configuration, and requesting one engine reload. It SHALL preserve the failed turn and SHALL NOT automatically replay the message or its tool calls.
 
 #### Scenario: Engine rejects a cached gateway credential
 - **WHEN** a live session returns 401 and explicitly reports that the gateway credential is missing, revoked, or expired for an imported provider
-- **THEN** Desktop refreshes that provider connection once for the workspace and tells the user to retry the preserved message after recovery
+- **THEN** Desktop rotates that provider credential once for the workspace, installs the verified replacement, and tells the user to retry the preserved message after recovery
+
+#### Scenario: Normal connection still returns the rejected credential
+- **WHEN** Desktop prepares a repair and the ordinary connection endpoint returns the device's current rejected credential
+- **THEN** Desktop uses its digest only as rotation input and does not mistake the idempotent connection response for a successful repair
 
 #### Scenario: Provider returns an ordinary authentication failure
 - **WHEN** a provider returns 401 without the explicit gateway-credential rejection

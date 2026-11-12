@@ -68,7 +68,7 @@ import {
   VIDEO_DURATION_DEFAULT_SECONDS,
   type ComposerVideoModelOption,
 } from "./composer/video-generation";
-import { effectiveSessionRunning, isSessionBusyError, shouldReconcileAfterCoordinatorEnded, shouldReportAbortFailure } from "./session-run-recovery";
+import { effectiveSessionRunning, effectiveThreadStatus, isSessionBusyError, shouldReconcileAfterCoordinatorEnded, shouldReportAbortFailure } from "./session-run-recovery";
 import { useActiveSnapshotReconciliation } from "./active-snapshot-reconciliation";
 import { imageModelsQueryOptions, mediaModelQueryScope, videoModelsQueryOptions } from "@/react-app/domains/connections/media-model-queries";
 import { effectiveGenerationState, generationDraftAvailable } from "./composer/generation-model-reconciliation";
@@ -1009,6 +1009,20 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }, [activeRunsQuery.refetch, liveStatus.type, props.sessionId]);
 
   useEffect(() => {
+    if (
+      !activeRunsQuery.isSuccess
+      || !coordinatorRun
+      || sessionActivityRunActive
+      || sessionActivityStatus === "error"
+      || sessionActivityStatus === "incomplete"
+    ) return;
+    // The coordinator is authoritative across session switches and missed
+    // runtime events. Publish its receipt into the shared activity projection
+    // so the transcript and every sidebar representation recover together.
+    useSessionActivityStore.getState().setRunStatus(props.workspaceId, props.sessionId, { type: "running" });
+  }, [activeRunsQuery.isSuccess, coordinatorRun, props.sessionId, props.workspaceId, sessionActivityRunActive, sessionActivityStatus]);
+
+  useEffect(() => {
     if (!activeRunsQuery.isSuccess || coordinatorRun || liveStatus.type !== "idle" || !sessionActivityRunActive) return;
     useSessionActivityStore.getState().setRunStatus(props.workspaceId, props.sessionId, { type: "idle" });
   }, [activeRunsQuery.isSuccess, coordinatorRun, liveStatus.type, props.sessionId, props.workspaceId, sessionActivityRunActive]);
@@ -1036,21 +1050,11 @@ export function SessionSurface(props: SessionSurfaceProps) {
   useEffect(() => {
     if (!chatStreaming) setSteering(false);
   }, [chatStreaming]);
-  const status = useMemo((): ThreadStatus => {
-    if (sending) {
-      return "submitted";
-    }
-
-    if (liveStatus.type === "busy") {
-      return "streaming";
-    }
-
-    if (liveStatus.type === "retry") {
-      return "retrying";
-    }
-
-    return "ready";
-  }, [liveStatus, sending]);
+  const status = useMemo((): ThreadStatus => effectiveThreadStatus({
+    sending,
+    liveStatus: liveStatus.type,
+    running: chatStreaming,
+  }), [chatStreaming, liveStatus.type, sending]);
   const [evalMarkdownMessages, setEvalMarkdownMessages] = useState<UIMessage[]>(EMPTY_TRANSCRIPT);
   useEffect(() => {
     setEvalMarkdownMessages(EMPTY_TRANSCRIPT);

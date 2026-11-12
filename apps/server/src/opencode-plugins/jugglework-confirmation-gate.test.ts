@@ -5,7 +5,8 @@ import { fileURLToPath } from "node:url";
 
 import { juggleworkConfirmationGatePluginPath } from "../jugglework-extensions-plugin-path.js";
 import { buildJuggleWorkRuntimeConfigObject } from "../jugglework-runtime-config.js";
-import { declaresBlockingConfirmation, JuggleWorkConfirmationGate } from "./jugglework-confirmation-gate.js";
+import { JuggleWorkConfirmationGate } from "./jugglework-confirmation-gate.js";
+import { declaresBlockingConfirmation } from "./jugglework-confirmation-gate-policy.js";
 
 const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -86,5 +87,13 @@ describe("JuggleWork confirmation gate plugin", () => {
       scripts?: { build?: unknown };
     };
     expect(packageJson.scripts?.build).toContain("jugglework-confirmation-gate.ts");
+  });
+
+  test("keeps helper exports out of the plugin entry module", async () => {
+    // OpenCode invokes every function exported by a plugin entry as a plugin
+    // factory. Exporting the text predicate here made it receive PluginInput
+    // and throw `text.replace is not a function`, aborting all canary tools.
+    const entry = await import("./jugglework-confirmation-gate.js");
+    expect(Object.keys(entry)).toEqual(["JuggleWorkConfirmationGate"]);
   });
 });

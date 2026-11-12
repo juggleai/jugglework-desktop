@@ -759,6 +759,16 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     () => toSessionGroups(workspaces, sessionsByWorkspaceId, errorsByWorkspaceId, new Set(retryingWorkspaceIds)),
     [errorsByWorkspaceId, retryingWorkspaceIds, sessionsByWorkspaceId, workspaces],
   );
+  const sidebarActiveWorkspaceId = useMemo(() => {
+    const sessionId = selectedSessionId?.trim() ?? "";
+    if (sessionId) {
+      const owner = workspaceSessionGroups.find((group) =>
+        group.sessions.some((session) => session?.id === sessionId),
+      );
+      if (owner?.workspace.id) return owner.workspace.id;
+    }
+    return selectedWorkspaceId;
+  }, [selectedSessionId, selectedWorkspaceId, workspaceSessionGroups]);
   useSessionGroupSync({ workspaces, endpointForWorkspace });
   const selectedWorkspaceGroupState = sessionManagementStore((state) => (
     selectedWorkspaceId ? state.groupsByWorkspace[selectedWorkspaceId] : undefined
@@ -823,6 +833,10 @@ export function SessionRoute(props: SessionRouteProps = {}) {
 
   const coordinatorTrackedWorkspaceIds = useMemo(() => {
     const ids = new Set(activityTrackedWorkspaceIds);
+    // Always probe the visible workspace. This breaks the circular dependency
+    // where a missed runtime event prevented the sidebar from polling the
+    // coordinator that could recover the missing running state.
+    if (sidebarActiveWorkspaceId) ids.add(sidebarActiveWorkspaceId);
     if (petState?.visible) workspaces.forEach((workspace) => ids.add(workspace.id));
     for (const [workspaceId, sessionIds] of Object.entries(coordinatorProbeSessionIdsByWorkspace)) {
       if (sessionIds.length > 0) ids.add(workspaceId);
@@ -831,7 +845,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
       if (sessionIds.length > 0) ids.add(workspaceId);
     }
     return [...ids].sort();
-  }, [activityTrackedWorkspaceIds, coordinatorProbeSessionIdsByWorkspace, coordinatorSessionIdsByWorkspace, petState?.visible, workspaces]);
+  }, [activityTrackedWorkspaceIds, coordinatorProbeSessionIdsByWorkspace, coordinatorSessionIdsByWorkspace, petState?.visible, sidebarActiveWorkspaceId, workspaces]);
 
   useEffect(() => {
     if (coordinatorTrackedWorkspaceIds.length === 0) return;
@@ -923,17 +937,6 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     }
     return next;
   }, [coordinatorProbeSessionIdsByWorkspace, coordinatorSessionIdsByWorkspace, sessionActivityByWorkspaceId, workspaceSessionGroups]);
-
-  const sidebarActiveWorkspaceId = useMemo(() => {
-    const sessionId = selectedSessionId?.trim() ?? "";
-    if (sessionId) {
-      const owner = workspaceSessionGroups.find((group) =>
-        group.sessions.some((session) => session?.id === sessionId),
-      );
-      if (owner?.workspace.id) return owner.workspace.id;
-    }
-    return selectedWorkspaceId;
-  }, [selectedSessionId, selectedWorkspaceId, workspaceSessionGroups]);
 
   const workspaceConnectionStateById = useMemo(() => {
     const next: Record<string, WorkspaceConnectionState> = { ...workspaceConnectionOverrides };

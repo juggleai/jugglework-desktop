@@ -1,9 +1,8 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import type { createOpencodeClient, McpStatus, ToolIds, ToolList } from "@opencode-ai/sdk/v2/client";
 import { ApiError } from "./errors.js";
+import { juggleworkPluginPath } from "./jugglework-extensions-plugin-path.js";
 import { diagnoseMcpToolDenies, type McpToolDeny } from "./mcp.js";
 import { sanitizeDiagnosticString, sanitizeDiagnosticValue } from "./diagnostic-sanitizer.js";
 import { readRuntimeOpencodeConfig, runtimeMcpMap, writeRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
@@ -1932,18 +1931,14 @@ function baseUrlConfigured(config: ServerConfig, workspace: WorkspaceInfo): bool
 }
 
 async function pluginFileHashes(): Promise<CloudMcpCompatibilitySnapshot["pluginFileHashes"]> {
-  const here = dirname(fileURLToPath(import.meta.url));
   const names = ["jugglework-extensions-preview", "jugglework-capabilities-knowledge"];
   return Promise.all(names.map(async (name) => {
-    let lastError = "not found";
-    for (const extension of ["ts", "js"]) {
-      try {
-        return { name, sha256: hashString(await readFile(join(here, "opencode-plugins", `${name}.${extension}`), "utf8")) };
-      } catch (error) {
-        lastError = error instanceof Error ? error.message : String(error);
-      }
+    try {
+      return { name, sha256: hashString(await readFile(juggleworkPluginPath(name), "utf8")) };
+    } catch (error) {
+      const lastError = error instanceof Error ? error.message : String(error);
+      return { name, sha256: null, error: sanitizeDiagnosticString(lastError) };
     }
-    return { name, sha256: null, error: sanitizeDiagnosticString(lastError) };
   }));
 }
 
