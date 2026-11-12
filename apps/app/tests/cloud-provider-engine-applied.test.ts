@@ -81,6 +81,26 @@ describe("model-level cloud provider reload marking", () => {
     expect(shouldMarkUnappliedCloudProviderReload(a)).toBe(false);
   });
 
+  test("asks once when a re-imported gateway credential is not yet read by the engine", () => {
+    // The re-import reinstalled the credential, but its reload was deferred
+    // because a task was running. Provider and models are listed, so only the
+    // connected list shows the gap. The deferred reload must be re-requested.
+    const base = imports(makeProvider(["model-x"]));
+    const imported = {
+      [LPR_ID]: { ...base[LPR_ID]!, gatewayMirror: { organizationId: "org", cloudProviderId: LPR_ID, key: "MCP_GATEWAY_KEY_V2_ORG_x" } },
+    };
+    const input = { workspaceId: "ws_a", imported, engineProviders: engine(["model-x"]), engineConnectedProviderIds: new Set<string>() };
+    expect(shouldMarkUnappliedCloudProviderReload(input)).toBe(true);
+    expect(shouldMarkUnappliedCloudProviderReload(input)).toBe(false);
+    // Once the engine reloads and authenticates the provider, nothing is pending.
+    expect(shouldMarkUnappliedCloudProviderReload({ ...input, engineConnectedProviderIds: new Set([LPR_ID]) })).toBe(false);
+    // An unknown connected list never asks.
+    resetUnappliedCloudProviderReloadKeysForTest();
+    expect(shouldMarkUnappliedCloudProviderReload({ ...input, engineConnectedProviderIds: null })).toBe(false);
+    // Providers without a gateway credential are unaffected.
+    expect(shouldMarkUnappliedCloudProviderReload({ ...input, imported: base })).toBe(false);
+  });
+
   test("extra engine-side models cannot cause a reload loop", () => {
     expect(shouldMarkUnappliedCloudProviderReload({
       workspaceId: "ws_a",

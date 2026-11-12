@@ -27,7 +27,11 @@ Desktop SHALL NOT classify a provider as managed based only on the name or publi
 - **THEN** it imports them under separate provider keys and does not apply managed-points policy to the ordinary provider
 
 ### Requirement: Engine application is verified per imported model
-Desktop SHALL treat an imported cloud provider as applied only when the engine provider list contains that provider and every model ID recorded in the import baseline. Models the engine lists beyond the baseline SHALL NOT count as a difference.
+Desktop SHALL treat an imported cloud provider as applied only when the engine provider list contains that provider and every model ID recorded in the import baseline. A provider that uses a gateway credential SHALL also need to appear in the engine's connected list, when that list is readable. Models the engine lists beyond the baseline SHALL NOT count as a difference.
+
+#### Scenario: Re-imported credential is not yet read by the engine
+- **WHEN** a re-import reinstalled a gateway credential but the reload was deferred (for example 409 while a task was running), so the engine lists the provider and its models but not as connected
+- **THEN** Desktop requests one engine reload for that workspace, which runs once the workspace is idle
 
 #### Scenario: Existing provider gains a model while reload is deferred
 - **WHEN** the baseline already records the new model list but the engine still lists the provider with the previous models (for example because the reload returned 409)

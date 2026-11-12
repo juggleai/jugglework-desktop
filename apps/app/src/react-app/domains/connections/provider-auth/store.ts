@@ -322,8 +322,14 @@ export function shouldMarkUnappliedCloudProviderReload(input: {
   workspaceId: string;
   imported: Record<string, CloudImportedProvider>;
   engineProviders: ReadonlyArray<{ id: string; models?: Record<string, unknown> | null }>;
+  engineConnectedProviderIds?: ReadonlySet<string> | null;
 }): boolean {
-  const reloadKey = unappliedCloudProviderReloadKey(input);
+  const reloadKey = unappliedCloudProviderReloadKey({
+    workspaceId: input.workspaceId,
+    imported: input.imported,
+    engineProviders: input.engineProviders,
+    engineConnectedProviderIds: input.engineConnectedProviderIds,
+  });
   if (!reloadKey) {
     lastUnappliedCloudProviderReloadKeys.delete(input.workspaceId);
     return false;
@@ -2251,10 +2257,14 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
 
     // Model-level: an in-place model edit keeps the provider id, so an
     // id-only check would call a deferred (409) or dropped reload "applied".
+    // Credential-level: a re-import that reinstalled a lost gateway credential
+    // keeps the provider and models listed, so without this the deferred
+    // (409, a task was running) reload looked applied and was never retried.
     if (!shouldMarkUnappliedCloudProviderReload({
       workspaceId,
       imported: state.importedCloudProviders,
       engineProviders: providerList.all ?? [],
+      engineConnectedProviderIds: Array.isArray(providerList.connected) ? new Set(providerList.connected) : null,
     })) return;
     // Scoped to this workspace: a reload of another workspace does not apply
     // this one's runtime config, so it must not clear the request.

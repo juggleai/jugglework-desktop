@@ -237,6 +237,13 @@ export function unappliedCloudProviderReloadKey(input: {
   workspaceId: string;
   imported: Record<string, CloudImportedProvider>;
   engineProviders: readonly CloudProviderEngineEntry[];
+  /**
+   * Provider ids the engine reports as authenticated. When given, a gateway
+   * provider the engine lists without credentials counts as unapplied
+   * (`lpr_a{auth}`): its re-imported credential is on disk but the engine has
+   * not reloaded to read it. Omit when the connected list is unknown.
+   */
+  engineConnectedProviderIds?: ReadonlySet<string> | null;
 }): string | null {
   const engineById = new Map(input.engineProviders.map((entry) => [entry.id.trim(), entry]));
   const parts = new Map<string, string>();
@@ -247,6 +254,8 @@ export function unappliedCloudProviderReloadKey(input: {
     if (result.state === "provider_missing") parts.set(providerId, providerId);
     else if (result.state === "models_missing") {
       parts.set(providerId, `${providerId}[${result.missingModelIds.join("|")}]`);
+    } else if (entry.gatewayMirror && input.engineConnectedProviderIds && !input.engineConnectedProviderIds.has(providerId)) {
+      parts.set(providerId, `${providerId}{auth}`);
     }
   }
   if (parts.size === 0) return null;
