@@ -85,6 +85,7 @@ const DESKTOP_CONFIG_ITEMS = [
   "connectEnabled",
   "calendarEnabled",
   "calendarWriteEnabled",
+  "calendarCollaborationEnabled",
   "desktopRemoteFeatureGates",
   "desktopRemotePolicyVersion",
   "onboardingPrompts",

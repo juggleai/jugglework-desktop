@@ -11,8 +11,10 @@ import {
   calendarMutationConflict,
   useCreateCalendarEventMutation,
   useDeleteCalendarEventMutation,
+  useTeamCalendarEventMutations,
   useUpdateCalendarEventMutation,
   type CalendarMutationClient,
+  type TeamCalendarEventMutationClient,
 } from "./calendar-mutations";
 import { setCanonicalCalendarEvent } from "./calendar-queries";
 import {
@@ -36,9 +38,10 @@ type EditorStatus =
   | { kind: "draft-failed" };
 
 export type CalendarEventEditorProps = {
-  client: CalendarMutationClient;
+  client: CalendarMutationClient & TeamCalendarEventMutationClient;
   scope: CalendarScope;
   calendars: readonly DenCalendar[];
+  teamCalendarIds?: ReadonlySet<string>;
   timeZone: string;
   /** Existing event for edit mode; omitted for create. */
   event?: DenCalendarEvent;
@@ -64,6 +67,7 @@ export function CalendarEventEditor(props: CalendarEventEditorProps) {
   const createMutation = useCreateCalendarEventMutation(props.client, props.scope);
   const updateMutation = useUpdateCalendarEventMutation(props.client, props.scope);
   const deleteMutation = useDeleteCalendarEventMutation(props.client, props.scope);
+  const teamMutations = useTeamCalendarEventMutations(props.client, props.scope);
   const [form, setForm] = React.useState(props.initial);
   const [status, setStatus] = React.useState<EditorStatus>(() =>
     props.staleDraftBase && props.event ? { kind: "conflict", current: props.event, operation: "save" } : { kind: "editing" });
@@ -93,6 +97,10 @@ export function CalendarEventEditor(props: CalendarEventEditorProps) {
     const failure = classifyCalendarSaveFailure(error);
     if (failure.kind === "conflict") {
       const current = calendarMutationConflict(error) as DenCalendarEvent | null;
+      if (current && (!base || current.id !== base.id || current.organizationId !== props.scope.organizationId || current.calendarId !== base.calendarId)) {
+        setStatus({ kind: "failed", failure: { kind: "network", message: "calendar.error_network" } });
+        return;
+      }
       if (current && "calendarId" in current) setCanonicalCalendarEvent(queryClient, props.scope, current);
       setStatus({ kind: "conflict", current, operation });
       return;
@@ -122,12 +130,26 @@ export function CalendarEventEditor(props: CalendarEventEditorProps) {
     const fingerprint = JSON.stringify(validation.values);
     setStatus({ kind: "pending" });
     try {
-      // An uncertain failure with unchanged input replays the same idempotency key instead of creating a duplicate.
+      // Personal writes can replay their idempotency key; team endpoints intentionally do not retry.
+      const teamCalendarId = base
+        ? props.teamCalendarIds?.has(base.calendarId) ? base.calendarId : null
+        : props.teamCalendarIds?.has(validation.values.calendarId) ? validation.values.calendarId : null;
       const mutation = base ? updateMutation : createMutation;
       const replay = mutation.canRetryLast && lastSubmitted.current === fingerprint;
       lastSubmitted.current = fingerprint;
       let result: { event: DenCalendarEvent };
-      if (replay) {
+      if (teamCalendarId && base) {
+        const patch = calendarEventUpdatePatch(base, validation.values);
+        if (Object.keys(patch).length === 0) {
+          props.onSaved(base);
+          return;
+        }
+        const { calendarId: _calendarId, ...teamPatch } = patch;
+        result = await teamMutations.update.mutateAsync({ calendarId: teamCalendarId, eventId: base.id, input: { expectedVersion: base.version, ...teamPatch } });
+      } else if (teamCalendarId) {
+        const { calendarId, ...input } = validation.values;
+        result = await teamMutations.create.mutateAsync({ calendarId, input: { ...input, description: input.description ?? "" } });
+      } else if (replay) {
         result = await (mutation.retryLastAsync as () => Promise<{ event: DenCalendarEvent }>)();
       } else if (base) {
         const patch = calendarEventUpdatePatch(base, validation.values);
@@ -149,7 +171,11 @@ export function CalendarEventEditor(props: CalendarEventEditorProps) {
     if (!base || pending || !online) return;
     setStatus({ kind: "pending" });
     try {
-      await deleteMutation.mutateAsync({ eventId: base.id, expectedVersion: base.version });
+      if (props.teamCalendarIds?.has(base.calendarId)) {
+        await teamMutations.remove.mutateAsync({ calendarId: base.calendarId, eventId: base.id, expectedVersion: base.version });
+      } else {
+        await deleteMutation.mutateAsync({ eventId: base.id, expectedVersion: base.version });
+      }
       props.onDeleted(base.id);
     } catch (error) {
       fail(error, "delete");

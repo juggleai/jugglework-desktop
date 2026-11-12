@@ -86,6 +86,17 @@
 - [ ] 10.5 新增冲突提示和共同可用时间建议 UI，显示 unknown/过期状态并在最终写入的新冲突时要求重新确认，验证界面不渲染或保留底层私密日程详情。
 - [ ] 10.6 添加 Desktop 组件与端到端测试，覆盖四角色、邀请生命周期、重复范围、双设备权限变化、离线缓存清理和键盘/辅助技术可访问性。
 
+### 10.A 已完成的 Desktop 子范围（不代表 10.1/10.2 整项完成）
+
+- [x] 10.A.1 接入默认关闭的 `calendarCollaborationEnabled` Desktop flag，以及真实 `GET /v1/calendar-collaboration/calendars` 扁平角色/capability projection；按 personal/`canManage` 分为“我管理的”，其余真实团队 projection 分为“我订阅的”，不生成占位订阅。
+- [x] 10.A.2 实现迷你月历前后月同步导航、侧栏“添加日历”、个人/团队创建对话框、分组折叠和复用本地显隐 checkbox；团队创建严格使用无幂等字段的 `POST /v1/calendar-collaboration/team-calendars`。
+- [x] 10.A.3 对可见且 `canViewDetails` 的团队日历读取 per-calendar replace snapshot 并合并详情日程；`free-busy` 不伪造详情或忙碌块。
+- [x] 10.A.4 将全局 `calendarWriteEnabled` 与每 Calendar `canEditEvents` 相与，并通过团队日历专用 create/update/delete 路由支持获授权团队日程编辑，禁止个人与团队日历之间移动事件。
+- [x] 10.A.5 添加 10 locales 文案以及 Desktop contract、组件、角色门控、折叠/checkbox、迷你月导航和可访问名称聚焦测试。
+- [x] 10.A.6 实现 manager 可见的团队日历成员管理入口与对话框，使用同组织成员目录添加 `free-busy`/`viewer`/`editor`/`manager`，支持角色调整、撤权、最后 manager 明确错误、pending/失败状态和键盘/辅助技术标签；不提供外部邮箱或自由文本成员输入。
+- [x] 10.A.7 消费 discovery generation 与 per-calendar authorization version 的 replace 契约；撤权、降为 free-busy 或授权版本变化时移除旧团队 snapshot、canonical event detail 与 manager membership cache，并在 manager 权限丢失时关闭成员对话框、恢复焦点。
+- [ ] 10.A.8 尚未实现 free-busy 忙碌块、协作离线缓存与真实双设备撤权验收；因此 10.1、10.2、10.6 保持未完成。
+
 ## 11. Agent 权限一致能力
 
 - [ ] 11.1 扩展 Agent context/affordance 以查询团队日历、自己的邀请、忙闲和共同可用候选，验证 payload 只包含统一服务端投影且模型不能指定 actor、组织或角色绕过身份。

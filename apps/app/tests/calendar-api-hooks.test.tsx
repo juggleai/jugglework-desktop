@@ -14,6 +14,8 @@ import {
   type DenCalendar,
   type DenCalendarDeleteResult,
   type DenCalendarEvent,
+  type DenCalendarCollaborationList,
+  type DenTeamCalendarSnapshot,
   type DenCalendarResult,
 } from "../src/app/lib/den";
 import {
@@ -28,6 +30,7 @@ import {
 } from "../src/react-app/domains/calendar/calendar-mutations";
 import {
   useCalendarBootstrapQuery,
+  useCalendarCollaborationQuery,
   useCalendarChangesQuery,
   useCalendarEventQuery,
   useCalendarEventRangeQuery,
@@ -36,6 +39,7 @@ import {
   useCalendarsQuery,
   setCanonicalCalendar,
   type CalendarQueryClient,
+  type CalendarCollaborationQueryClient,
 } from "../src/react-app/domains/calendar/calendar-queries";
 import { calendarQueryKeys } from "../src/react-app/domains/calendar/calendar-query-keys";
 import { createCalendarScope, type CalendarScope } from "../src/react-app/domains/calendar/calendar-scope";
@@ -146,6 +150,37 @@ function completeMutationClient(overrides: Partial<CalendarMutationClient> = {})
 }
 
 describe("calendar query hooks", () => {
+  test("replaces revoked team authorization namespaces and removes cached event details", async () => {
+    const query = queryClient();
+    const team = {
+      id: "team-1", organizationId: scopeA.organizationId, ownerMemberId: scopeA.memberId, kind: "team" as const, name: "Team", color: "#3366CC", role: "manager" as const,
+      capabilities: { canViewFreeBusy: true, canViewDetails: true, canEditEvents: true, canManage: true },
+      version: 1, authorizationVersion: 2, createdAt: "2026-11-05T00:00:00Z", updatedAt: "2026-11-05T00:00:00Z",
+    };
+    const previous: DenCalendarCollaborationList = { items: [team], authorizationGeneration: 3, reset: { mode: "replace", namespace: "calendar-collaboration" } };
+    const teamEvent = event(1, { id: "team-event", calendarId: team.id });
+    const range = { startDate: "2026-11-01", endDateExclusive: "2026-12-01" };
+    const snapshot: DenTeamCalendarSnapshot = { calendar: team, events: [teamEvent], coverage: { ...range, calendarIds: [team.id] }, authorizationVersion: 2, reset: { mode: "replace", namespace: `calendar:${team.id}` } };
+    query.setQueryData(calendarQueryKeys.collaboration(scopeA), previous);
+    query.setQueryData(calendarQueryKeys.teamSnapshot(scopeA, team.id, 2, range), snapshot);
+    query.setQueryData(calendarQueryKeys.event(scopeA, teamEvent.id), teamEvent);
+    query.setQueryData(calendarQueryKeys.memberships(scopeA, team.id), { items: [], authorizationVersion: 2 });
+    const client = {
+      listCalendarCollaboration: async () => ({ items: [], authorizationGeneration: 4, reset: { mode: "replace" as const, namespace: "calendar-collaboration" as const } }),
+      getTeamCalendarSnapshot: async () => { throw new Error("unexpected snapshot"); },
+      listOrganizationMembers: async () => { throw new Error("unexpected directory"); },
+      listTeamCalendarMemberships: async () => { throw new Error("unexpected memberships"); },
+    } as CalendarCollaborationQueryClient;
+
+    await renderHook(query, () => useCalendarCollaborationQuery({ client, scope: scopeA }));
+    await flushQueries(query);
+
+    expect(query.getQueryData(calendarQueryKeys.teamSnapshot(scopeA, team.id, 2, range))).toBeUndefined();
+    expect(query.getQueryData(calendarQueryKeys.event(scopeA, teamEvent.id))).toBeUndefined();
+    expect(query.getQueryData(calendarQueryKeys.memberships(scopeA, team.id))).toBeUndefined();
+    expect(query.getQueryData<DenCalendarCollaborationList>(calendarQueryKeys.collaboration(scopeA))?.authorizationGeneration).toBe(4);
+  });
+
   test("disables every query for a missing scope or inactive hook", async () => {
     let calls = 0;
     const client = completeQueryClient({

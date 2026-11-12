@@ -46,6 +46,14 @@ describe("Calendar desktop config comparison", () => {
     }
   });
 
+  test("calendar collaboration is an independent fail-closed desktop flag", () => {
+    const disabled = normalizeDenDesktopConfig({ calendarEnabled: true, calendarWriteEnabled: true });
+    const enabled = normalizeDenDesktopConfig({ calendarEnabled: true, calendarWriteEnabled: true, calendarCollaborationEnabled: true });
+    expect(disabled.calendarCollaborationEnabled).toBe(false);
+    expect(enabled.calendarCollaborationEnabled).toBe(true);
+    expect(getDesktopConfigActions({ currentConfig: disabled, latestConfig: enabled }).map(({ item }) => item)).toContain("calendarCollaborationEnabled");
+  });
+
   test("enabled config never substitutes for sign-in or a complete membership scope", () => {
     const config = normalizeDenDesktopConfig(writable);
     expect(resolveCalendarPageGate({ ...identity, ...config, isSignedIn: false })).toEqual({ kind: "signed-out" });

@@ -13,6 +13,11 @@ import {
   normalizeDenCalendarEvent,
   type DenCalendar,
   type DenCalendarCreateInput,
+  type DenCalendarCollaborationList,
+  type DenCalendarMembershipList,
+  type DenCalendarMembershipPutResult,
+  type DenCalendarMembershipRevokeResult,
+  type DenCalendarCollaborationRole,
   type DenCalendarDeleteResult,
   type DenCalendarEvent,
   type DenCalendarEventCreateInput,
@@ -20,6 +25,10 @@ import {
   type DenCalendarEventUpdateInput,
   type DenCalendarResult,
   type DenCalendarUpdateInput,
+  type DenTeamCalendarCreateInput,
+  type DenTeamCalendarCreateResult,
+  type DenTeamCalendarEventCreateInput,
+  type DenTeamCalendarEventUpdateInput,
   type DenClient,
 } from "@/app/lib/den";
 import { calendarQueryKeys } from "./calendar-query-keys";
@@ -33,6 +42,7 @@ export type CalendarDeleteVariables = { calendarId: string; expectedVersion: num
 export type CalendarEventCreateVariables = Omit<DenCalendarEventCreateInput, "idempotencyKey">;
 export type CalendarEventUpdateVariables = { eventId: string; expectedVersion: number; patch: Omit<DenCalendarEventUpdateInput, "idempotencyKey" | "expectedVersion"> };
 export type CalendarEventDeleteVariables = { eventId: string; expectedVersion: number };
+export type TeamCalendarCreateVariables = DenTeamCalendarCreateInput;
 
 export type CalendarMutationOperation =
   | "calendar-create"
@@ -56,6 +66,9 @@ export type CalendarMutationClient = Pick<DenClient,
   | "updateCalendarEvent"
   | "deleteCalendarEvent"
 >;
+export type CalendarCollaborationMutationClient = Pick<DenClient, "createTeamCalendar">;
+export type TeamCalendarEventMutationClient = Pick<DenClient, "createTeamCalendarEvent" | "updateTeamCalendarEvent" | "deleteTeamCalendarEvent">;
+export type TeamCalendarMembershipMutationClient = Pick<DenClient, "putTeamCalendarMembership" | "revokeTeamCalendarMembership">;
 
 type PreparedBase<TVariables> = {
   scope: CalendarScope;
@@ -248,6 +261,125 @@ export function useCreateCalendarMutation(client: CalendarMutationClient, scope:
       await invalidate(queryClient, [calendarQueryKeys.bootstraps(prepared.scope), calendarQueryKeys.changesRoot(prepared.scope)]);
     },
   });
+}
+
+export function useCreateTeamCalendarMutation(client: CalendarCollaborationMutationClient, scope: CalendarScope | null, options: CalendarMutationOptions = {}) {
+  const queryClient = useQueryClient();
+  return useMutation<DenTeamCalendarCreateResult, Error, TeamCalendarCreateVariables>({
+    networkMode: "always",
+    // The server intentionally has no idempotency key for this endpoint.
+    retry: false,
+    mutationFn: (variables) => {
+      const capturedScope = frozenScope(scope);
+      return client.createTeamCalendar(capturedScope.organizationId, Object.freeze({ ...variables }), { signal: options.generation?.signal });
+    },
+    onSuccess: async () => {
+      const capturedScope = frozenScope(scope);
+      throwIfCalendarScopeStale(options.generation);
+      await invalidate(queryClient, [calendarQueryKeys.collaboration(capturedScope), calendarQueryKeys.teamSnapshots(capturedScope)]);
+    },
+  });
+}
+
+export function useTeamCalendarEventMutations(client: TeamCalendarEventMutationClient, scope: CalendarScope | null) {
+  const queryClient = useQueryClient();
+  const refresh = async (capturedScope: CalendarScope) => invalidate(queryClient, [calendarQueryKeys.teamSnapshots(capturedScope)]);
+  const create = useMutation<DenCalendarEventResult, Error, { calendarId: string; input: DenTeamCalendarEventCreateInput }>({
+    networkMode: "always",
+    retry: false,
+    mutationFn: ({ calendarId, input }) => client.createTeamCalendarEvent(frozenScope(scope).organizationId, calendarId, input),
+    onSuccess: async (result) => {
+      const capturedScope = frozenScope(scope);
+      setCanonicalCalendarEvent(queryClient, capturedScope, result.event);
+      await refresh(capturedScope);
+    },
+  });
+  const update = useMutation<DenCalendarEventResult, Error, { calendarId: string; eventId: string; input: DenTeamCalendarEventUpdateInput }>({
+    networkMode: "always",
+    retry: false,
+    mutationFn: ({ calendarId, eventId, input }) => client.updateTeamCalendarEvent(frozenScope(scope).organizationId, calendarId, eventId, input),
+    onSuccess: async (result) => {
+      const capturedScope = frozenScope(scope);
+      setCanonicalCalendarEvent(queryClient, capturedScope, result.event);
+      await refresh(capturedScope);
+    },
+  });
+  const remove = useMutation<DenCalendarDeleteResult, Error, { calendarId: string; eventId: string; expectedVersion: number }>({
+    networkMode: "always",
+    retry: false,
+    mutationFn: ({ calendarId, eventId, expectedVersion }) => client.deleteTeamCalendarEvent(frozenScope(scope).organizationId, calendarId, eventId, { expectedVersion }),
+    onSuccess: async (_result, variables) => {
+      const capturedScope = frozenScope(scope);
+      queryClient.removeQueries({ queryKey: calendarQueryKeys.event(capturedScope, variables.eventId), exact: true });
+      await refresh(capturedScope);
+    },
+  });
+  return { create, update, remove };
+}
+
+function updateCalendarAuthorizationVersion(queryClient: QueryClient, scope: CalendarScope, calendarId: string, authorizationVersion: number): void {
+  queryClient.setQueryData<DenCalendarCollaborationList>(calendarQueryKeys.collaboration(scope), (cached) => cached ? {
+    ...cached,
+    items: cached.items.map((calendar) => calendar.id === calendarId ? { ...calendar, authorizationVersion } : calendar),
+  } : cached);
+}
+
+function applyActorMembershipChange(queryClient: QueryClient, scope: CalendarScope, calendarId: string, memberId: string, role: DenCalendarCollaborationRole | null): void {
+  if (memberId !== scope.memberId) return;
+  queryClient.setQueryData<DenCalendarCollaborationList>(calendarQueryKeys.collaboration(scope), (cached) => {
+    if (!cached) return cached;
+    if (role === null) return { ...cached, authorizationGeneration: cached.authorizationGeneration + 1, items: cached.items.filter((calendar) => calendar.id !== calendarId) };
+    const capabilities = {
+      canViewFreeBusy: true,
+      canViewDetails: role !== "free-busy",
+      canEditEvents: role === "editor" || role === "manager",
+      canManage: role === "manager",
+    };
+    return { ...cached, authorizationGeneration: cached.authorizationGeneration + 1, items: cached.items.map((calendar) => calendar.id === calendarId ? { ...calendar, role, capabilities } : calendar) };
+  });
+  queryClient.removeQueries({ queryKey: calendarQueryKeys.memberships(scope, calendarId), exact: true });
+  queryClient.removeQueries({ queryKey: [...calendarQueryKeys.teamSnapshots(scope), calendarId] });
+  for (const [, event] of queryClient.getQueriesData<DenCalendarEvent>({ queryKey: calendarQueryKeys.events(scope) })) {
+    if (event?.calendarId === calendarId) queryClient.removeQueries({ queryKey: calendarQueryKeys.event(scope, event.id), exact: true });
+  }
+}
+
+export function useTeamCalendarMembershipMutations(client: TeamCalendarMembershipMutationClient, scope: CalendarScope | null, calendarId: string) {
+  const queryClient = useQueryClient();
+  const refresh = async (capturedScope: CalendarScope) => invalidate(queryClient, [calendarQueryKeys.collaboration(capturedScope), calendarQueryKeys.memberships(capturedScope, calendarId)]);
+  const put = useMutation<DenCalendarMembershipPutResult, Error, { memberId: string; role: DenCalendarCollaborationRole; expectedAuthorizationVersion: number }>({
+    networkMode: "always",
+    retry: false,
+    mutationFn: ({ memberId, role, expectedAuthorizationVersion }) => client.putTeamCalendarMembership(frozenScope(scope).organizationId, calendarId, memberId, { role, expectedAuthorizationVersion }),
+    onSuccess: async (result) => {
+      const capturedScope = frozenScope(scope);
+      updateCalendarAuthorizationVersion(queryClient, capturedScope, calendarId, result.authorizationVersion);
+      applyActorMembershipChange(queryClient, capturedScope, calendarId, result.membership.memberId, result.membership.role);
+      queryClient.setQueryData<DenCalendarMembershipList>(calendarQueryKeys.memberships(capturedScope, calendarId), (cached) => cached ? {
+        authorizationVersion: result.authorizationVersion,
+        items: cached.items.some((item) => item.memberId === result.membership.memberId)
+          ? cached.items.map((item) => item.memberId === result.membership.memberId ? result.membership : item)
+          : [...cached.items, result.membership],
+      } : cached);
+      await refresh(capturedScope);
+    },
+  });
+  const revoke = useMutation<DenCalendarMembershipRevokeResult, Error, { memberId: string; expectedAuthorizationVersion: number }>({
+    networkMode: "always",
+    retry: false,
+    mutationFn: ({ memberId, expectedAuthorizationVersion }) => client.revokeTeamCalendarMembership(frozenScope(scope).organizationId, calendarId, memberId, { expectedAuthorizationVersion }),
+    onSuccess: async (result, variables) => {
+      const capturedScope = frozenScope(scope);
+      updateCalendarAuthorizationVersion(queryClient, capturedScope, calendarId, result.authorizationVersion);
+      applyActorMembershipChange(queryClient, capturedScope, calendarId, variables.memberId, null);
+      queryClient.setQueryData<DenCalendarMembershipList>(calendarQueryKeys.memberships(capturedScope, calendarId), (cached) => cached ? {
+        authorizationVersion: result.authorizationVersion,
+        items: cached.items.filter((item) => item.memberId !== variables.memberId),
+      } : cached);
+      await refresh(capturedScope);
+    },
+  });
+  return { put, revoke };
 }
 
 export function useUpdateCalendarMutation(client: CalendarMutationClient, scope: CalendarScope | null, options: CalendarMutationOptions = {}) {

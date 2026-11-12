@@ -11,6 +11,12 @@ function cursorKey(cursor: string | undefined): string | null {
 export const calendarQueryKeys = {
   scope: (scope: CalendarScope) => ["calendar", ...calendarScopeKey(scope)] as const,
   calendars: (scope: CalendarScope) => [...calendarQueryKeys.scope(scope), "calendars"] as const,
+  collaboration: (scope: CalendarScope) => [...calendarQueryKeys.scope(scope), "collaboration"] as const,
+  organizationMembers: (scope: CalendarScope) => [...calendarQueryKeys.scope(scope), "organization-members"] as const,
+  memberships: (scope: CalendarScope, calendarId: string) => [...calendarQueryKeys.collaboration(scope), "memberships", calendarId] as const,
+  teamSnapshots: (scope: CalendarScope) => [...calendarQueryKeys.collaboration(scope), "team-snapshots"] as const,
+  teamSnapshot: (scope: CalendarScope, calendarId: string, authorizationVersion: number, range: { startDate: string; endDateExclusive: string }) =>
+    [...calendarQueryKeys.teamSnapshots(scope), calendarId, authorizationVersion, range.startDate, range.endDateExclusive] as const,
   calendar: (scope: CalendarScope, calendarId: string) => [...calendarQueryKeys.calendars(scope), calendarId] as const,
   bootstraps: (scope: CalendarScope) => [...calendarQueryKeys.scope(scope), "bootstrap"] as const,
   bootstrap: (scope: CalendarScope, range: { startDate: string; endDateExclusive: string; calendarIds?: readonly string[] }) =>

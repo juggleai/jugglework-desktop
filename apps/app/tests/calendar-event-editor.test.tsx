@@ -6,6 +6,8 @@ import TestRenderer, { act } from "react-test-renderer";
 import { MemoryRouter } from "react-router-dom";
 
 import { DenApiError, type DenCalendar, type DenCalendarEvent } from "../src/app/lib/den";
+import { calendarQueryKeys } from "../src/react-app/domains/calendar/calendar-query-keys";
+import { createCalendarScope } from "../src/react-app/domains/calendar/calendar-scope";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -235,6 +237,22 @@ test("use-latest on conflict replaces the form with the server version", async (
     await click(renderer, "calendar-form-conflict-use-latest");
     expect(byId(renderer, "calendar-form-title").props.value).toBe("Theirs");
     expect(formStatus(renderer)).toBe("editing");
+  } finally { await act(async () => { renderer.unmount(); }); }
+});
+
+test("rejects a conflict payload for a different event instead of caching or rebasing it", async () => {
+  events = [baseEvent("e1")];
+  const { renderer, queryClient } = await render();
+  try {
+    await click(renderer, "calendar-day-event-2026-11-09-e1");
+    await click(renderer, "calendar-event-detail-edit");
+    await change(renderer, "calendar-form-title", "Mine");
+    failNext = () => new DenApiError(409, "calendar_version_conflict", "conflict", { current: { ...baseEvent("other"), title: "Secret", version: 2 } });
+    await submit(renderer);
+    expect(formStatus(renderer)).toBe("failed");
+    expect(has(renderer, "calendar-form-failure-network")).toBe(true);
+    const scope = createCalendarScope({ deploymentBaseUrl: "https://den.example/api", organizationId: "org-a", memberId: "member-a" })!;
+    expect(queryClient.getQueryData(calendarQueryKeys.event(scope, "other"))).toBeUndefined();
   } finally { await act(async () => { renderer.unmount(); }); }
 });
 

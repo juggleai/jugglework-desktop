@@ -116,6 +116,19 @@ test("previous, next, and today move the main grid and the selected day", async 
   } finally { await act(async () => { renderer.unmount(); }); }
 });
 
+test("mini-month previous and next buttons synchronize the main navigation", async () => {
+  const { renderer } = await render();
+  try {
+    expect(byId(renderer, "calendar-mini-previous-month").props["aria-label"]).toBe("calendar.previous_month");
+    expect(byId(renderer, "calendar-mini-next-month").props["aria-label"]).toBe("calendar.next_month");
+    await click(renderer, "calendar-mini-next-month");
+    expect(text(byId(renderer, "calendar-visible-month"))).toBe("December 2026");
+    expect(byId(renderer, "calendar-day-2026-12-09").props["aria-selected"]).toBe(true);
+    await click(renderer, "calendar-mini-previous-month");
+    expect(text(byId(renderer, "calendar-visible-month"))).toBe("November 2026");
+  } finally { await act(async () => { renderer.unmount(); }); }
+});
+
 test("selecting a mini-month date outside the visible month switches the main grid", async () => {
   const { renderer } = await render();
   try {
@@ -156,6 +169,20 @@ test("hiding a calendar is local only and survives a remount without any cloud w
     await act(async () => { byId(renderer, "calendar-filter-cal-2").props.onChange({ target: { checked: true } }); });
     expect(byId(renderer, "calendar-ready").props["data-visible-calendar-ids"]).toBe("cal-1,cal-2");
     expect(writes).toEqual([]);
+  } finally { await act(async () => { renderer.unmount(); }); }
+});
+
+test("calendar filters are grouped, collapsible, and retain the existing checkboxes", async () => {
+  const { renderer } = await render();
+  try {
+    expect(has(renderer, "calendar-filter-group-managed")).toBe(true);
+    expect(has(renderer, "calendar-filter-group-subscribed")).toBe(true);
+    const toggle = byId(renderer, "calendar-filter-group-managed-toggle");
+    expect(toggle.props["aria-expanded"]).toBe(true);
+    await click(renderer, "calendar-filter-group-managed-toggle");
+    expect(byId(renderer, "calendar-filter-group-managed-toggle").props["aria-expanded"]).toBe(false);
+    expect(byId(renderer, "calendar-filter-group-managed-region").props.hidden).toBe(true);
+    expect(byId(renderer, "calendar-filter-cal-1").props.checked).toBe(true);
   } finally { await act(async () => { renderer.unmount(); }); }
 });
 

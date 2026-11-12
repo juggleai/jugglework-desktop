@@ -5,6 +5,8 @@ import {
   DenApiError,
   normalizeDenCalendar,
   normalizeDenCalendarEvent,
+  normalizeDenCalendarCollaborationResource,
+  normalizeDenCalendarMembership,
   normalizeDenDesktopConfig,
 } from "../src/app/lib/den";
 
@@ -59,10 +61,122 @@ describe("Den calendar contract", () => {
   });
 
   test("normalizes calendar capability projection fail closed", () => {
-    expect(normalizeDenDesktopConfig({})).toMatchObject({ calendarEnabled: false, calendarWriteEnabled: false });
-    expect(normalizeDenDesktopConfig({ calendarEnabled: "true", calendarWriteEnabled: true })).toMatchObject({ calendarEnabled: false, calendarWriteEnabled: false });
-    expect(normalizeDenDesktopConfig({ calendarEnabled: true, calendarWriteEnabled: "true" })).toMatchObject({ calendarEnabled: true, calendarWriteEnabled: false });
+    expect(normalizeDenDesktopConfig({})).toMatchObject({ calendarEnabled: false, calendarWriteEnabled: false, calendarCollaborationEnabled: false });
+    expect(normalizeDenDesktopConfig({ calendarEnabled: "true", calendarWriteEnabled: true, calendarCollaborationEnabled: true })).toMatchObject({ calendarEnabled: false, calendarWriteEnabled: false, calendarCollaborationEnabled: false });
+    expect(normalizeDenDesktopConfig({ calendarEnabled: true, calendarWriteEnabled: "true", calendarCollaborationEnabled: "true" })).toMatchObject({ calendarEnabled: true, calendarWriteEnabled: false, calendarCollaborationEnabled: false });
     expect(normalizeDenDesktopConfig(fixture.featureCapability)).toMatchObject(fixture.featureCapability);
+  });
+
+  test("uses the strict calendar collaboration projection and routes", async () => {
+    const resource = {
+      id: "team-one", organizationId: "org_one", ownerMemberId: "member_one", kind: "team", name: "Planning", color: "#3366CC", role: "editor",
+      capabilities: { canViewFreeBusy: true, canViewDetails: true, canEditEvents: true, canManage: false },
+      version: 1, authorizationVersion: 2, createdAt: "2026-11-05T01:00:00Z", updatedAt: "2026-11-05T01:00:00Z",
+    };
+    expect(normalizeDenCalendarCollaborationResource(resource)).toEqual(resource);
+    expect(normalizeDenCalendarCollaborationResource({ ...resource, capabilities: { ...resource.capabilities, canManage: true } })).toBeNull();
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const event = { ...fixture.allDayEvent, organizationId: resource.organizationId, ownerMemberId: resource.ownerMemberId, calendarId: resource.id };
+    const responses = [
+      { items: [resource], authorizationGeneration: 3, reset: { mode: "replace", namespace: "calendar-collaboration" } },
+      { calendar: { ...resource, role: "manager", capabilities: { canViewFreeBusy: true, canViewDetails: true, canEditEvents: true, canManage: true } } },
+      { calendar: resource, events: [event], coverage: { startDate: "2026-11-01", endDateExclusive: "2026-12-01", calendarIds: [resource.id] }, authorizationVersion: 2, reset: { mode: "replace", namespace: `calendar:${resource.id}` } },
+    ];
+    globalThis.fetch = async (input, init) => {
+      requests.push({ url: String(input), init });
+      return Response.json(responses.shift());
+    };
+    const client = calendarClient();
+    expect((await client.listCalendarCollaboration("org_one")).items).toEqual([resource]);
+    await client.createTeamCalendar("org_one", { name: "Planning", color: "#3366CC" });
+    expect((await client.getTeamCalendarSnapshot("org_one", resource.id, { startDate: "2026-11-01", endDateExclusive: "2026-12-01" })).events).toEqual([event]);
+    expect(requests.map(({ url }) => new URL(url).pathname)).toEqual([
+      "/deployment/jwork/api/v1/calendar-collaboration/calendars",
+      "/deployment/jwork/api/v1/calendar-collaboration/team-calendars",
+      `/deployment/jwork/api/v1/calendar-collaboration/team-calendars/${resource.id}/snapshot`,
+    ]);
+    expect(JSON.parse(String(requests[1]!.init!.body))).toEqual({ name: "Planning", color: "#3366CC" });
+  });
+
+  test("uses the strict team calendar event routes and envelopes", async () => {
+    const calendarId = "team-one";
+    const created = { ...fixture.allDayEvent, id: "team-event", organizationId: "org_one", calendarId };
+    const updated = { ...created, title: "Updated", version: 2, updatedAt: "2026-11-05T01:06:00Z" };
+    const tombstone = { entityType: "event", entityId: created.id, version: 3, deletedAt: "2026-11-05T01:07:00Z" };
+    const responses = [{ event: created }, { event: updated }, { tombstone }];
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    globalThis.fetch = async (input, init) => {
+      requests.push({ url: String(input), init });
+      return Response.json(responses.shift());
+    };
+    const client = calendarClient();
+
+    expect(await client.createTeamCalendarEvent("org_one", calendarId, { title: created.title, description: created.description, time: created.time })).toEqual({ event: created, replayed: false });
+    expect(await client.updateTeamCalendarEvent("org_one", calendarId, created.id, { expectedVersion: 1, title: updated.title })).toEqual({ event: updated, replayed: false });
+    expect(await client.deleteTeamCalendarEvent("org_one", calendarId, created.id, { expectedVersion: 2 })).toEqual({ tombstone, replayed: false });
+    expect(requests.map(({ url, init }) => [init?.method, new URL(url).pathname])).toEqual([
+      ["POST", `/deployment/jwork/api/v1/calendar-collaboration/team-calendars/${calendarId}/events`],
+      ["PATCH", `/deployment/jwork/api/v1/calendar-collaboration/team-calendars/${calendarId}/events/${created.id}`],
+      ["DELETE", `/deployment/jwork/api/v1/calendar-collaboration/team-calendars/${calendarId}/events/${created.id}`],
+    ]);
+    expect(requests.map(({ init }) => JSON.parse(String(init?.body)))).toEqual([
+      { title: created.title, description: created.description, time: created.time },
+      { expectedVersion: 1, title: updated.title },
+      { expectedVersion: 2 },
+    ]);
+  });
+
+  test("rejects a team delete tombstone for another event", async () => {
+    const error = await captureError({ tombstone: { entityType: "event", entityId: "other", version: 2, deletedAt: "2026-11-05T01:07:00Z" } }, 200, (client) => client.deleteTeamCalendarEvent("org_one", "team-one", "expected", { expectedVersion: 1 }));
+    expect(error).toBeInstanceOf(DenApiError);
+    expect((error as DenApiError).code).toBe("invalid_calendar_payload");
+  });
+
+  test("uses exact membership routes, bodies, and strict normalizers", async () => {
+    const calendarId = "team/calendar";
+    const memberId = "member/target";
+    const membership = { memberId, role: "viewer", createdByMemberId: "member-manager", createdAt: "2026-11-12T01:00:00Z", updatedAt: "2026-11-12T01:00:00Z" } as const;
+    const updated = { ...membership, role: "editor" as const, updatedAt: "2026-11-12T01:01:00Z" };
+    expect(normalizeDenCalendarMembership(membership)).toEqual(membership);
+    expect(normalizeDenCalendarMembership({ ...membership, extra: true })).toBeNull();
+    expect(normalizeDenCalendarMembership({ ...membership, role: "owner" })).toBeNull();
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const responses = [
+      { items: [membership], authorizationVersion: 4 },
+      { membership: updated, authorizationVersion: 5 },
+      { authorizationVersion: 6 },
+    ];
+    globalThis.fetch = async (input, init) => {
+      requests.push({ url: String(input), init });
+      return Response.json(responses.shift());
+    };
+    const client = calendarClient();
+    expect(await client.listTeamCalendarMemberships("org_one", calendarId)).toEqual({ items: [membership], authorizationVersion: 4 });
+    expect(await client.putTeamCalendarMembership("org_one", calendarId, memberId, { role: "editor", expectedAuthorizationVersion: 4 })).toEqual({ membership: updated, authorizationVersion: 5 });
+    expect(await client.revokeTeamCalendarMembership("org_one", calendarId, memberId, { expectedAuthorizationVersion: 5 })).toEqual({ authorizationVersion: 6 });
+    const encodedRoute = "/deployment/jwork/api/v1/calendar-collaboration/team-calendars/team%2Fcalendar/memberships/member%2Ftarget";
+    expect(requests.map(({ url, init }) => [init?.method, new URL(url).pathname])).toEqual([
+      ["GET", "/deployment/jwork/api/v1/calendar-collaboration/team-calendars/team%2Fcalendar/memberships"],
+      ["PUT", encodedRoute],
+      ["DELETE", encodedRoute],
+    ]);
+    expect(requests.slice(1).map(({ init }) => JSON.parse(String(init?.body)))).toEqual([
+      { role: "editor", expectedAuthorizationVersion: 4 },
+      { expectedAuthorizationVersion: 5 },
+    ]);
+
+    expect(await captureError({ error: "calendar_last_manager", message: "A team calendar must retain at least one manager." }, 409, (nextClient) => nextClient.revokeTeamCalendarMembership("org_one", calendarId, memberId, { expectedAuthorizationVersion: 6 }))).toMatchObject({ status: 409, code: "calendar_last_manager" });
+  });
+
+  test("rejects malformed membership success envelopes", async () => {
+    const membership = { memberId: "member-target", role: "viewer", createdByMemberId: "member-manager", createdAt: "2026-11-12T01:00:00Z", updatedAt: "2026-11-12T01:00:00Z" };
+    const malformed: Array<{ response: unknown; action: (client: ReturnType<typeof createDenClient>) => Promise<unknown> }> = [
+      { response: { items: [membership], authorizationVersion: 1, extra: true }, action: (client) => client.listTeamCalendarMemberships("org_one", "team-one") },
+      { response: { items: [{ ...membership, role: "owner" }], authorizationVersion: 1 }, action: (client) => client.listTeamCalendarMemberships("org_one", "team-one") },
+      { response: { membership: { ...membership, memberId: "other" }, authorizationVersion: 2 }, action: (client) => client.putTeamCalendarMembership("org_one", "team-one", membership.memberId, { role: "viewer", expectedAuthorizationVersion: 1 }) },
+      { response: { authorizationVersion: 0 }, action: (client) => client.revokeTeamCalendarMembership("org_one", "team-one", membership.memberId, { expectedAuthorizationVersion: 1 }) },
+    ];
+    for (const entry of malformed) expect(await captureError(entry.response, 200, entry.action)).toMatchObject({ code: "invalid_calendar_payload" });
   });
 
   test("normalizes list, get, mutation, delete, bootstrap, and every change variant", async () => {

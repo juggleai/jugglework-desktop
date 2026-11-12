@@ -188,6 +188,74 @@ export type DenCalendar = {
   createdAt: string;
   updatedAt: string;
 };
+export type DenCalendarCollaborationRole = "free-busy" | "viewer" | "editor" | "manager";
+export type DenCalendarCollaborationCapabilities = {
+  canViewFreeBusy: boolean;
+  canViewDetails: boolean;
+  canEditEvents: boolean;
+  canManage: boolean;
+};
+export type DenCalendarCollaborationResource = {
+  id: string;
+  organizationId: string;
+  ownerMemberId: string;
+  kind: "personal" | "team";
+  name: string;
+  color: string | null;
+  role: DenCalendarCollaborationRole;
+  capabilities: DenCalendarCollaborationCapabilities;
+  version: number;
+  authorizationVersion: number;
+  createdAt: string;
+  updatedAt: string;
+};
+export type DenCalendarCollaborationList = {
+  items: DenCalendarCollaborationResource[];
+  authorizationGeneration: number;
+  reset: { mode: "replace"; namespace: "calendar-collaboration" };
+};
+export type DenTeamCalendarSnapshot = {
+  calendar: DenCalendarCollaborationResource;
+  events: DenCalendarEvent[];
+  coverage: { startDate: string; endDateExclusive: string; calendarIds: string[] };
+  authorizationVersion: number;
+  reset: { mode: "replace"; namespace: string };
+};
+export type DenTeamCalendarCreateInput = { name: string; color?: string | null };
+export type DenTeamCalendarCreateResult = { calendar: DenCalendarCollaborationResource };
+export type DenCalendarMembership = {
+  memberId: string;
+  role: DenCalendarCollaborationRole;
+  createdByMemberId: string;
+  createdAt: string;
+  updatedAt: string;
+};
+export type DenCalendarMembershipList = {
+  items: DenCalendarMembership[];
+  authorizationVersion: number;
+};
+export type DenCalendarMembershipPutInput = {
+  role: DenCalendarCollaborationRole;
+  expectedAuthorizationVersion: number;
+};
+export type DenCalendarMembershipPutResult = {
+  membership: DenCalendarMembership;
+  authorizationVersion: number;
+};
+export type DenCalendarMembershipRevokeInput = { expectedAuthorizationVersion: number };
+export type DenCalendarMembershipRevokeResult = { authorizationVersion: number };
+export type DenTeamCalendarEventCreateInput = {
+  title: string;
+  description: string;
+  time: DenCalendarEventTime;
+};
+export type DenTeamCalendarEventUpdateInput = {
+  expectedVersion: number;
+  title?: string;
+  description?: string;
+  time?: DenCalendarEventTime;
+};
+export type DenTeamCalendarEventDeleteInput = { expectedVersion: number };
 export type DenCalendarEventTime =
   | { kind: "allDay"; startDate: string; endDateExclusive: string }
   | { kind: "timed"; startInstant: string; endInstantExclusive: string; timeZone: string };
@@ -388,6 +456,7 @@ export type DenBootstrapConfig = DenBaseUrls & {
 export type DenDesktopConfig = SharedDesktopConfig & {
   calendarEnabled?: boolean;
   calendarWriteEnabled?: boolean;
+  calendarCollaborationEnabled?: boolean;
 };
 
 export type DenOrgSummary = {
@@ -1048,6 +1117,60 @@ export function normalizeDenCalendarEvent(value: unknown): DenCalendarEvent | nu
   };
 }
 
+export function normalizeDenCalendarCollaborationResource(value: unknown): DenCalendarCollaborationResource | null {
+  if (!isRecord(value) || !hasExactKeys(value, ["id", "organizationId", "ownerMemberId", "kind", "name", "color", "role", "capabilities", "version", "authorizationVersion", "createdAt", "updatedAt"]) ||
+    typeof value.id !== "string" || !value.id || typeof value.organizationId !== "string" || !value.organizationId || typeof value.ownerMemberId !== "string" || !value.ownerMemberId ||
+    !["personal", "team"].includes(String(value.kind)) || typeof value.name !== "string" || !value.name || value.name.length > 100 || value.color !== null && (typeof value.color !== "string" || !/^#[0-9a-fA-F]{6}$/.test(value.color)) ||
+    !["free-busy", "viewer", "editor", "manager"].includes(String(value.role)) || !isPositiveSafeInteger(value.version) || !isPositiveSafeInteger(value.authorizationVersion) ||
+    !isUtcTimestamp(value.createdAt) || !isUtcTimestamp(value.updatedAt) || !isRecord(value.capabilities) ||
+    !hasExactKeys(value.capabilities, ["canViewFreeBusy", "canViewDetails", "canEditEvents", "canManage"]) || Object.values(value.capabilities).some((capability) => typeof capability !== "boolean")) return null;
+  const role = value.role as DenCalendarCollaborationRole;
+  const expected = {
+    "free-busy": [true, false, false, false],
+    viewer: [true, true, false, false],
+    editor: [true, true, true, false],
+    manager: [true, true, true, true],
+  }[role];
+  const actual = [value.capabilities.canViewFreeBusy, value.capabilities.canViewDetails, value.capabilities.canEditEvents, value.capabilities.canManage];
+  if (actual.some((capability, index) => capability !== expected[index])) return null;
+  return {
+    id: value.id,
+    organizationId: value.organizationId,
+    ownerMemberId: value.ownerMemberId,
+    kind: value.kind as "personal" | "team",
+    name: value.name,
+    color: value.color as string | null,
+    role,
+    capabilities: {
+      canViewFreeBusy: value.capabilities.canViewFreeBusy as boolean,
+      canViewDetails: value.capabilities.canViewDetails as boolean,
+      canEditEvents: value.capabilities.canEditEvents as boolean,
+      canManage: value.capabilities.canManage as boolean,
+    },
+    version: value.version,
+    authorizationVersion: value.authorizationVersion,
+    createdAt: value.createdAt,
+    updatedAt: value.updatedAt,
+  };
+}
+
+export function normalizeDenCalendarMembership(value: unknown): DenCalendarMembership | null {
+  if (!isRecord(value) || !hasExactKeys(value, ["memberId", "role", "createdByMemberId", "createdAt", "updatedAt"]) ||
+    typeof value.memberId !== "string" || !value.memberId || !["free-busy", "viewer", "editor", "manager"].includes(String(value.role)) ||
+    typeof value.createdByMemberId !== "string" || !value.createdByMemberId || !isUtcTimestamp(value.createdAt) || !isUtcTimestamp(value.updatedAt)) return null;
+  return {
+    memberId: value.memberId,
+    role: value.role as DenCalendarCollaborationRole,
+    createdByMemberId: value.createdByMemberId,
+    createdAt: value.createdAt,
+    updatedAt: value.updatedAt,
+  };
+}
+
+export function denCalendarFromCollaborationResource(value: DenCalendarCollaborationResource): DenCalendar {
+  return { id: value.id, organizationId: value.organizationId, ownerMemberId: value.ownerMemberId, name: value.name, color: value.color, isDefault: false, version: value.version, createdAt: value.createdAt, updatedAt: value.updatedAt };
+}
+
 function invalidCalendarPayload(message: string): never {
   throw new DenApiError(500, "invalid_calendar_payload", message);
 }
@@ -1061,6 +1184,9 @@ const CALENDAR_ERROR_STATUS = {
   calendar_idempotency_conflict: 409,
   calendar_cursor_resync_required: 409,
   calendar_result_too_large: 422,
+  calendar_authorization_version_conflict: 409,
+  calendar_last_manager: 409,
+  calendar_member_invalid: 400,
 } as const;
 
 type CalendarErrorCode = keyof typeof CALENDAR_ERROR_STATUS;
@@ -1078,7 +1204,7 @@ function normalizeCalendarApiError(status: number, value: unknown): DenApiError 
     return new DenApiError(status, code, value.message, { ...value.details });
   }
 
-  if (["calendar_not_found", "calendar_disabled", "calendar_write_disabled", "calendar_idempotency_conflict"].includes(code)) {
+  if (["calendar_not_found", "calendar_disabled", "calendar_write_disabled", "calendar_idempotency_conflict", "calendar_authorization_version_conflict", "calendar_last_manager", "calendar_member_invalid"].includes(code)) {
     return value.details === undefined ? new DenApiError(status, code, value.message) : invalid();
   }
 
@@ -1101,6 +1227,52 @@ function normalizeCalendarList(value: unknown): DenCalendar[] {
   const items = value.map(normalizeDenCalendar);
   if (items.some((item) => !item)) invalidCalendarPayload("Calendar list response was invalid.");
   return items as DenCalendar[];
+}
+
+function normalizeCalendarCollaborationList(value: unknown, organizationId: string): DenCalendarCollaborationList {
+  if (!isRecord(value) || !hasExactKeys(value, ["items", "authorizationGeneration", "reset"]) || !Array.isArray(value.items) || !isPositiveSafeInteger(value.authorizationGeneration) ||
+    !isRecord(value.reset) || !hasExactKeys(value.reset, ["mode", "namespace"]) || value.reset.mode !== "replace" || value.reset.namespace !== "calendar-collaboration") invalidCalendarPayload("Calendar collaboration list response was invalid.");
+  const items = value.items.map(normalizeDenCalendarCollaborationResource);
+  if (items.some((item) => !item || item.organizationId !== organizationId)) invalidCalendarPayload("Calendar collaboration list response was invalid.");
+  return { items: items as DenCalendarCollaborationResource[], authorizationGeneration: value.authorizationGeneration, reset: { mode: "replace", namespace: "calendar-collaboration" } };
+}
+
+function normalizeTeamCalendarCreateResult(value: unknown, organizationId: string): DenTeamCalendarCreateResult {
+  if (!isRecord(value) || !hasExactKeys(value, ["calendar"])) invalidCalendarPayload("Team calendar mutation response was invalid.");
+  const calendar = normalizeDenCalendarCollaborationResource(value.calendar);
+  if (!calendar || calendar.organizationId !== organizationId || calendar.kind !== "team" || calendar.role !== "manager" || !calendar.capabilities.canManage) invalidCalendarPayload("Team calendar mutation response was invalid.");
+  return { calendar };
+}
+
+function normalizeCalendarMembershipList(value: unknown): DenCalendarMembershipList {
+  if (!isRecord(value) || !hasExactKeys(value, ["items", "authorizationVersion"]) || !Array.isArray(value.items) || !isPositiveSafeInteger(value.authorizationVersion)) invalidCalendarPayload("Calendar membership list response was invalid.");
+  const items = value.items.map(normalizeDenCalendarMembership);
+  if (items.some((item) => !item)) invalidCalendarPayload("Calendar membership list response was invalid.");
+  return { items: items as DenCalendarMembership[], authorizationVersion: value.authorizationVersion };
+}
+
+function normalizeCalendarMembershipPutResult(value: unknown, memberId: string): DenCalendarMembershipPutResult {
+  if (!isRecord(value) || !hasExactKeys(value, ["membership", "authorizationVersion"]) || !isPositiveSafeInteger(value.authorizationVersion)) invalidCalendarPayload("Calendar membership mutation response was invalid.");
+  const membership = normalizeDenCalendarMembership(value.membership);
+  if (!membership || membership.memberId !== memberId) invalidCalendarPayload("Calendar membership mutation response was invalid.");
+  return { membership, authorizationVersion: value.authorizationVersion };
+}
+
+function normalizeCalendarMembershipRevokeResult(value: unknown): DenCalendarMembershipRevokeResult {
+  if (!isRecord(value) || !hasExactKeys(value, ["authorizationVersion"]) || !isPositiveSafeInteger(value.authorizationVersion)) invalidCalendarPayload("Calendar membership mutation response was invalid.");
+  return { authorizationVersion: value.authorizationVersion };
+}
+
+function normalizeTeamCalendarSnapshot(value: unknown, organizationId: string, calendarId: string, range: { startDate: string; endDateExclusive: string }): DenTeamCalendarSnapshot {
+  if (!isRecord(value) || !hasExactKeys(value, ["calendar", "events", "coverage", "authorizationVersion", "reset"]) || !isPositiveSafeInteger(value.authorizationVersion) ||
+    !isRecord(value.coverage) || !hasExactKeys(value.coverage, ["startDate", "endDateExclusive", "calendarIds"]) || !isCalendarDate(value.coverage.startDate) || !isCalendarDate(value.coverage.endDateExclusive) || value.coverage.endDateExclusive <= value.coverage.startDate ||
+    !Array.isArray(value.coverage.calendarIds) || value.coverage.calendarIds.length !== 1 || value.coverage.calendarIds[0] !== calendarId ||
+    !isRecord(value.reset) || !hasExactKeys(value.reset, ["mode", "namespace"]) || value.reset.mode !== "replace" || value.reset.namespace !== `calendar:${calendarId}`) invalidCalendarPayload("Team calendar snapshot response was invalid.");
+  const calendar = normalizeDenCalendarCollaborationResource(value.calendar);
+  if (!calendar || calendar.id !== calendarId || calendar.organizationId !== organizationId || calendar.kind !== "team" || calendar.authorizationVersion !== value.authorizationVersion || value.coverage.startDate !== range.startDate || value.coverage.endDateExclusive !== range.endDateExclusive) invalidCalendarPayload("Team calendar snapshot response was invalid.");
+  const events = normalizeCalendarEventList(value.events);
+  if (events.some((event) => event.organizationId !== organizationId || event.calendarId !== calendarId || event.ownerMemberId !== calendar.ownerMemberId)) invalidCalendarPayload("Team calendar snapshot response was invalid.");
+  return { calendar, events, coverage: { startDate: value.coverage.startDate, endDateExclusive: value.coverage.endDateExclusive, calendarIds: [calendarId] }, authorizationVersion: value.authorizationVersion, reset: { mode: "replace", namespace: `calendar:${calendarId}` } };
 }
 
 function normalizeCalendarEventList(value: unknown): DenCalendarEvent[] {
@@ -1252,6 +1424,7 @@ export function normalizeDenDesktopConfig(payload: unknown): DenDesktopConfig {
     ...config,
     calendarEnabled,
     calendarWriteEnabled: calendarEnabled && raw?.calendarWriteEnabled === true,
+    calendarCollaborationEnabled: calendarEnabled && raw?.calendarCollaborationEnabled === true,
   };
 }
 
@@ -4103,6 +4276,55 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
 
     async createCalendar(orgId: string, input: DenCalendarCreateInput, requestOptions: { signal?: AbortSignal } = {}): Promise<DenCalendarResult> {
       return normalizeCalendarResult(await requestJson<unknown>(baseUrls, "/v1/calendars", { method: "POST", token, organizationId: orgId, body: input, signal: requestOptions.signal }));
+    },
+
+    async listCalendarCollaboration(orgId: string, requestOptions: { signal?: AbortSignal } = {}): Promise<DenCalendarCollaborationList> {
+      return normalizeCalendarCollaborationList(await requestJson<unknown>(baseUrls, "/v1/calendar-collaboration/calendars", { method: "GET", token, organizationId: orgId, signal: requestOptions.signal }), orgId);
+    },
+
+    async createTeamCalendar(orgId: string, input: DenTeamCalendarCreateInput, requestOptions: { signal?: AbortSignal } = {}): Promise<DenTeamCalendarCreateResult> {
+      return normalizeTeamCalendarCreateResult(await requestJson<unknown>(baseUrls, "/v1/calendar-collaboration/team-calendars", { method: "POST", token, organizationId: orgId, body: input, signal: requestOptions.signal }), orgId);
+    },
+
+    async listTeamCalendarMemberships(orgId: string, calendarId: string, requestOptions: { signal?: AbortSignal } = {}): Promise<DenCalendarMembershipList> {
+      return normalizeCalendarMembershipList(await requestJson<unknown>(baseUrls, `/v1/calendar-collaboration/team-calendars/${encodeURIComponent(calendarId)}/memberships`, { method: "GET", token, organizationId: orgId, signal: requestOptions.signal }));
+    },
+
+    async putTeamCalendarMembership(orgId: string, calendarId: string, memberId: string, input: DenCalendarMembershipPutInput, requestOptions: { signal?: AbortSignal } = {}): Promise<DenCalendarMembershipPutResult> {
+      return normalizeCalendarMembershipPutResult(await requestJson<unknown>(baseUrls, `/v1/calendar-collaboration/team-calendars/${encodeURIComponent(calendarId)}/memberships/${encodeURIComponent(memberId)}`, { method: "PUT", token, organizationId: orgId, body: input, signal: requestOptions.signal }), memberId);
+    },
+
+    async revokeTeamCalendarMembership(orgId: string, calendarId: string, memberId: string, input: DenCalendarMembershipRevokeInput, requestOptions: { signal?: AbortSignal } = {}): Promise<DenCalendarMembershipRevokeResult> {
+      return normalizeCalendarMembershipRevokeResult(await requestJson<unknown>(baseUrls, `/v1/calendar-collaboration/team-calendars/${encodeURIComponent(calendarId)}/memberships/${encodeURIComponent(memberId)}`, { method: "DELETE", token, organizationId: orgId, body: input, signal: requestOptions.signal }));
+    },
+
+    async getTeamCalendarSnapshot(orgId: string, calendarId: string, options: Omit<DenCalendarRangeOptions, "calendarIds" | "cursor" | "limit">, requestOptions: { signal?: AbortSignal } = {}): Promise<DenTeamCalendarSnapshot> {
+      const query = calendarQuery({ startDate: options.startDate, endDateExclusive: options.endDateExclusive });
+      return normalizeTeamCalendarSnapshot(await requestJson<unknown>(baseUrls, `/v1/calendar-collaboration/team-calendars/${encodeURIComponent(calendarId)}/snapshot${query}`, { method: "GET", token, organizationId: orgId, signal: requestOptions.signal }), orgId, calendarId, options);
+    },
+
+    async createTeamCalendarEvent(orgId: string, calendarId: string, input: DenTeamCalendarEventCreateInput, requestOptions: { signal?: AbortSignal } = {}): Promise<DenCalendarEventResult> {
+      const payload = await requestJson<unknown>(baseUrls, `/v1/calendar-collaboration/team-calendars/${encodeURIComponent(calendarId)}/events`, { method: "POST", token, organizationId: orgId, body: input, signal: requestOptions.signal });
+      if (!isRecord(payload) || !hasExactKeys(payload, ["event"])) invalidCalendarPayload("Team calendar event response was invalid.");
+      const event = normalizeDenCalendarEvent(payload.event);
+      if (!event || event.organizationId !== orgId || event.calendarId !== calendarId) invalidCalendarPayload("Team calendar event response was invalid.");
+      return { event, replayed: false };
+    },
+
+    async updateTeamCalendarEvent(orgId: string, calendarId: string, eventId: string, input: DenTeamCalendarEventUpdateInput, requestOptions: { signal?: AbortSignal } = {}): Promise<DenCalendarEventResult> {
+      const payload = await requestJson<unknown>(baseUrls, `/v1/calendar-collaboration/team-calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`, { method: "PATCH", token, organizationId: orgId, body: input, signal: requestOptions.signal });
+      if (!isRecord(payload) || !hasExactKeys(payload, ["event"])) invalidCalendarPayload("Team calendar event response was invalid.");
+      const event = normalizeDenCalendarEvent(payload.event);
+      if (!event || event.id !== eventId || event.organizationId !== orgId || event.calendarId !== calendarId) invalidCalendarPayload("Team calendar event response was invalid.");
+      return { event, replayed: false };
+    },
+
+    async deleteTeamCalendarEvent(orgId: string, calendarId: string, eventId: string, input: DenTeamCalendarEventDeleteInput, requestOptions: { signal?: AbortSignal } = {}): Promise<DenCalendarDeleteResult> {
+      const payload = await requestJson<unknown>(baseUrls, `/v1/calendar-collaboration/team-calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`, { method: "DELETE", token, organizationId: orgId, body: input, signal: requestOptions.signal });
+      if (!isRecord(payload) || !hasExactKeys(payload, ["tombstone"])) invalidCalendarPayload("Team calendar event delete response was invalid.");
+      const result = normalizeCalendarDeleteResult({ tombstone: payload.tombstone, replayed: false }, "event");
+      if (result.tombstone.entityId !== eventId) invalidCalendarPayload("Team calendar event delete response was invalid.");
+      return result;
     },
 
     async updateCalendar(orgId: string, calendarId: string, input: DenCalendarUpdateInput, requestOptions: { signal?: AbortSignal } = {}): Promise<DenCalendarResult> {

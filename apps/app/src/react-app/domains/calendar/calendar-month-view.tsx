@@ -1,7 +1,7 @@
 /** @jsxImportSource react */
 import * as React from "react";
 import { Temporal } from "@js-temporal/polyfill";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, Users } from "lucide-react";
 
 import type { DenCalendar } from "@/app/lib/den";
 import { Button } from "@/components/ui/button";
@@ -56,40 +56,84 @@ export function CalendarMonthToolbar(props: {
 }
 
 export function CalendarFilterList(props: {
-  calendars: readonly DenCalendar[];
+  calendars: ReadonlyArray<{ calendar: DenCalendar; managed: boolean; onManageMembers?: () => void }>;
   hiddenIds: readonly string[];
   onToggle: (calendarId: string, visible: boolean) => void;
 }) {
   const hidden = new Set(props.hiddenIds);
+  const managed = props.calendars.filter((item) => item.managed);
+  const subscribed = props.calendars.filter((item) => !item.managed);
   return (
-    <section aria-labelledby="calendar-filter-heading" data-testid="calendar-filter-list">
-      <h3 id="calendar-filter-heading" className="mb-2 px-1 text-xs font-medium text-dls-secondary">
-        {t("calendar.my_calendars")}
-      </h3>
+    <section aria-label={t("calendar.filter_title")} data-testid="calendar-filter-list">
       {props.calendars.length === 0 ? (
         <p className="px-1 text-sm text-dls-secondary" data-testid="calendar-filter-empty">{t("calendar.no_calendars")}</p>
       ) : (
-        <ul className="flex flex-col gap-0.5">
-          {props.calendars.map((calendar) => {
-            const visible = !hidden.has(calendar.id);
-            return (
-              <li key={calendar.id}>
-                <label className="flex cursor-pointer items-center gap-2 rounded-lg px-1 py-1.5 text-sm text-dls-text hover:bg-dls-hover focus-within:ring-2 focus-within:ring-dls-accent/35">
-                  <input
-                    type="checkbox"
-                    className="size-4 accent-current"
-                    style={{ color: calendar.color ?? undefined }}
-                    checked={visible}
-                    onChange={(event) => props.onToggle(calendar.id, event.target.checked)}
-                    data-testid={`calendar-filter-${calendar.id}`}
-                  />
-                  <span className="min-w-0 flex-1 truncate">{calendar.name}</span>
-                </label>
-              </li>
-            );
-          })}
-        </ul>
+        <div className="flex flex-col gap-1">
+          <CalendarFilterGroup id="managed" title={t("calendar.managed_calendars")} items={managed} hidden={hidden} onToggle={props.onToggle} />
+          <CalendarFilterGroup id="subscribed" title={t("calendar.subscribed_calendars")} items={subscribed} hidden={hidden} onToggle={props.onToggle} emptyLabel={t("calendar.no_subscribed_calendars")} />
+        </div>
       )}
+    </section>
+  );
+}
+
+function CalendarFilterGroup(props: {
+  id: "managed" | "subscribed";
+  title: string;
+  items: ReadonlyArray<{ calendar: DenCalendar; onManageMembers?: () => void }>;
+  hidden: ReadonlySet<string>;
+  onToggle: (calendarId: string, visible: boolean) => void;
+  emptyLabel?: string;
+}) {
+  const [open, setOpen] = React.useState(true);
+  const regionId = `calendar-filter-${props.id}-region`;
+  return (
+    <section data-testid={`calendar-filter-group-${props.id}`}>
+      <button
+        type="button"
+        className="flex w-full items-center gap-1 rounded-lg px-1 py-1 text-xs font-medium text-dls-secondary hover:bg-dls-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/35"
+        aria-expanded={open}
+        aria-controls={regionId}
+        aria-label={`${open ? t("calendar.collapse") : t("calendar.expand")} ${props.title}`}
+        onClick={() => setOpen((current) => !current)}
+        data-testid={`calendar-filter-group-${props.id}-toggle`}
+      >
+        <ChevronRight className={cn("size-3.5 transition-transform", open && "rotate-90")} aria-hidden="true" />
+        {props.title}
+      </button>
+      <div id={regionId} hidden={!open} data-testid={`calendar-filter-group-${props.id}-region`}>
+        {props.items.length === 0 ? (
+          props.emptyLabel ? <p className="px-5 py-1 text-xs text-dls-secondary">{props.emptyLabel}</p> : null
+        ) : (
+          <ul className="flex flex-col gap-0.5">
+            {props.items.map(({ calendar, onManageMembers }) => {
+              const visible = !props.hidden.has(calendar.id);
+              return (
+                <li key={calendar.id}>
+                  <div className="flex items-center rounded-lg px-5 py-0.5 hover:bg-dls-hover">
+                    <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 py-1 text-sm text-dls-text focus-within:ring-2 focus-within:ring-dls-accent/35">
+                      <input
+                        type="checkbox"
+                        className="size-4 accent-current"
+                        style={{ color: calendar.color ?? undefined }}
+                        checked={visible}
+                        onChange={(event) => props.onToggle(calendar.id, event.target.checked)}
+                        data-testid={`calendar-filter-${calendar.id}`}
+                      />
+                      <span className="min-w-0 flex-1 truncate">{calendar.name}</span>
+                    </label>
+                    {onManageMembers ? (
+                      <button type="button" className="ml-1 rounded-md p-1 text-dls-secondary hover:bg-dls-surface hover:text-dls-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/35" aria-label={t("calendar.manage_members_label", { name: calendar.name })} aria-haspopup="dialog" onClick={onManageMembers} data-testid={`calendar-manage-members-${calendar.id}`}>
+                        <Users className="size-4" aria-hidden="true" />
+                      </button>
+                    ) : null}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
     </section>
   );
 }
@@ -115,12 +159,20 @@ function keyDelta(key: string): number | null {
   }
 }
 
-export function CalendarMiniMonth(props: GridProps) {
+export function CalendarMiniMonth(props: GridProps & { onPrevious: () => void; onNext: () => void }) {
   const days = calendarMonthGrid(props.state.month, props.weekStart);
   const weekdays = calendarWeekdayOrder(props.weekStart);
   return (
     <section aria-label={t("calendar.mini_month")} data-testid="calendar-mini-month">
-      <p className="mb-2 px-1 text-sm font-medium text-dls-text">{formatCalendarMonth(props.state.month, props.locale)}</p>
+      <div className="mb-2 flex items-center gap-1 px-1">
+        <p className="min-w-0 flex-1 truncate text-sm font-medium text-dls-text" aria-live="polite">{formatCalendarMonth(props.state.month, props.locale)}</p>
+        <Button type="button" variant="ghost" size="icon-sm" aria-label={t("calendar.previous_month")} onClick={props.onPrevious} data-testid="calendar-mini-previous-month">
+          <ChevronLeft className="size-4" aria-hidden="true" />
+        </Button>
+        <Button type="button" variant="ghost" size="icon-sm" aria-label={t("calendar.next_month")} onClick={props.onNext} data-testid="calendar-mini-next-month">
+          <ChevronRight className="size-4" aria-hidden="true" />
+        </Button>
+      </div>
       <div className="grid grid-cols-7 gap-0.5 text-center" role="grid" aria-label={formatCalendarMonth(props.state.month, props.locale)}>
         <div role="row" className="contents">
           {weekdays.map((weekday) => (
