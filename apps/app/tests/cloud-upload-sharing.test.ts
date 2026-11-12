@@ -6,7 +6,7 @@ let launches = 0;
 mock.module("../src/app/lib/den", () => ({ ...actual, readDenSettings: settings, readDenUserId: () => userId,
   createDenClient: () => ({ launchCloudDocs: async ({ tenantId }: any) => {
     launches++;
-    return { tenantId, bootstrapUrl: "https://t-fixture.docs.test/api/jw/session/bootstrap", launchGrant: "test-grant", presentation: { mode: "product" } };
+    return { tenantId, docsOrigin: "https://docs.test", bootstrapUrl: "https://docs.test/api/jw/session/bootstrap", launchGrant: "test-grant", presentation: { mode: "product" } };
   } }),
 }));
 const original = Object.getOwnPropertyDescriptor(globalThis, "window");
@@ -29,7 +29,7 @@ Object.defineProperty(globalThis, "sessionStorage", { configurable: true, value:
 const { uploadCloudFile } = await import("../src/react-app/domains/cloud-docs/upload-file");
 const { installUploadedCloudFiles, uploadedCloudFiles } = await import("../src/react-app/domains/cloud-docs/uploaded-files");
 const { denSettingsChangedEvent, denSessionRevokedEvent } = await import("../src/app/lib/den-session-events");
-const { cloudDocsHostPrefix } = await import("../src/react-app/domains/cloud-docs/product-view");
+const { configuredCloudDocsOrigin } = await import("../src/react-app/domains/cloud-docs/product-view");
 afterAll(() => {
   host.dispatchEvent(new Event(denSessionRevokedEvent));
   mock.restore();
@@ -44,12 +44,12 @@ test("每次上传生成独立页面，分享指向最近结果且不包含凭�
   const input = { bridge, fileClient: client, localWorkspaceId: "local", relativePath: "方案.docx", onDuplicate: async () => "new" as const } as any;
   const first = await uploadCloudFile(input), second = await uploadCloudFile(input);
   expect(first?.pageId).not.toBe(second?.pageId);
-  expect(uploadedCloudFiles()[0].url).toBe("https://t-fixture.docs.test/workspace/native-ws/page-2");
+  expect(uploadedCloudFiles()[0].url).toBe("https://docs.test/workspace/native-ws/page-2?tenantId=org-a");
   expect(uploadedCloudFiles()[0].url).not.toContain("test-grant");
   expect(opens).toBe(1); expect(launches).toBe(1); expect(closes).toBe(0);
   expect(published.at(-1).records[0].url).toBe(uploadedCloudFiles()[0].url);
   const count = launches;
-  expect(await cloudDocsHostPrefix("org-a")).toMatch(/^t-[a-f0-9]{32}$/);
+  expect(await configuredCloudDocsOrigin("org-a")).toBe("https://docs.test");
   expect(launches).toBe(count);
 });
 

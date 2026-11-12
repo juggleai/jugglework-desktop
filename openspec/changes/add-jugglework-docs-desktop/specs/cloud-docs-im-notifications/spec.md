@@ -1,3 +1,5 @@
+> 后续优化设计见 [单域名与 IM 解耦](../../../optimize-docs-single-origin-and-im-isolation/design.md)。其中 IM 分类前置、租户子域名和宿主边界的冲突要求以新设计为准；其余要求及旧版本验收事实保留。新设计待开发项以对应 tasks 为准。
+
 ## ADDED Requirements
 
 ### Requirement: Docs IM card uses existing chat extension points

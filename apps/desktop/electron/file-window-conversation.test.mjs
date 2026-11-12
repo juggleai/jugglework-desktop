@@ -393,3 +393,29 @@ test("SSE frame limits, stalled readers and redirects cancel without following o
     assert.equal(cancelled, true);
   }
 });
+
+test("文件窗口云文档 AI 仅提交当前登记范围，变更卡片和撤销绑定实际会话", () => {
+  const e = entry();
+  const doc = { tenantId:'org', workspaceId:'native-ws', docId:'doc', title:'方案' };
+  e.tabs.push({path:'cloud:org/native-ws/doc',cloudDoc:doc}); e.activePath='cloud:org/native-ws/doc';
+  const input = prompt(); input.prompt.cloudDocTurn = { currentTenantId:'org', references:[{...doc,blockIds:['block']}], activeDoc:doc };
+  assert.equal(authorizeFileWindowFetch(e,access,url('sessions/ses/runs/start'),post(input)).conversation.kind,'start');
+  for (const turn of [
+    {...input.prompt.cloudDocTurn,currentTenantId:'other'},
+    {...input.prompt.cloudDocTurn,activeDoc:{...doc,docId:'unregistered'}},
+    {...input.prompt.cloudDocTurn,references:[{...doc,tenantId:'other'}]},
+    {...input.prompt.cloudDocTurn,sourceToken:'forged'},
+  ]) assert.throws(()=>authorizeFileWindowFetch(e,access,url('sessions/ses/runs/start'),post({...input,prompt:{...input.prompt,cloudDocTurn:turn}})));
+  assert.equal(authorizeFileWindowFetch(e,access,url('cloud-docs/session-changes?sessionId=ses')).conversation.kind,'cloud-changes');
+  assert.throws(()=>authorizeFileWindowFetch(e,access,url('cloud-docs/session-changes?sessionId=foreign')));
+  assert.equal(authorizeFileWindowFetch(e,access,url('cloud-docs/undo'),post({sessionId:'ses',messageId:'message'})).conversation.kind,'cloud-undo');
+  assert.throws(()=>authorizeFileWindowFetch(e,access,url('cloud-docs/undo'),post({sessionId:'foreign',messageId:'message'})));
+  assert.throws(()=>authorizeFileWindowFetch(e,access,url('cloud-docs/edit'),post({sessionId:'ses',messageId:'message'})));
+  // 原生页内已经导航到另一文档时，不能继续把初始标签当成当前可写目标。
+  e.cloudDocument = () => ({...doc,docId:'navigated'});
+  assert.throws(()=>authorizeFileWindowFetch(e,access,url('sessions/ses/runs/start'),post(input)));
+  input.prompt.cloudDocTurn = {currentTenantId:'org',references:[],activeDoc:{...doc,docId:'navigated'}};
+  assert.equal(authorizeFileWindowFetch(e,access,url('sessions/ses/runs/start'),post(input)).conversation.kind,'start');
+  const local = entry(); const plain = prompt(); plain.prompt.cloudDocTurn = {currentTenantId:null,references:[],activeDoc:null};
+  assert.equal(authorizeFileWindowFetch(local,access,url('sessions/ses/runs/start'),post(plain)).conversation.kind,'start');
+});

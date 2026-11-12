@@ -125,8 +125,29 @@ function validateOfficeDisplay(metadata, prompt) {
   }
 }
 
+/** 文件窗口只可把登记云文档标签作为本轮范围，不能伪造其他组织或未打开的可写目标。 */
+function validateCloudDocTurn(entry, turn) {
+  if (turn === undefined) return;
+  keys(turn, ["currentTenantId", "references", "activeDoc"]);
+  if (!Array.isArray(turn.references) || turn.references.length > 32) throw conversationDenied();
+  if (turn.currentTenantId === null && !turn.references.length && !turn.activeDoc) return;
+  const activeTab = entry.tabs.find(tab => tab.path === entry.activePath);
+  const actualDoc = tab => entry.cloudDocument ? entry.cloudDocument(tab) : tab?.cloudDoc;
+  const active = actualDoc(activeTab);
+  if (!active || turn.currentTenantId !== active.tenantId) throw conversationDenied();
+  for (const ref of [...turn.references, ...(turn.activeDoc ? [turn.activeDoc] : [])]) {
+    keys(ref, ["tenantId", "workspaceId", "docId", "title", "blockIds"]);
+    if (ref.tenantId !== active.tenantId || !identifier(ref.workspaceId) || !identifier(ref.docId) ||
+      typeof ref.title !== "string" || ref.title.length > 300 ||
+      (ref.blockIds !== undefined && (!Array.isArray(ref.blockIds) || ref.blockIds.length > 200 || !ref.blockIds.every(identifier))) ||
+      !entry.tabs.some(tab => { const document = actualDoc(tab); return document?.tenantId === ref.tenantId && document.workspaceId === ref.workspaceId && document.docId === ref.docId; })) throw conversationDenied();
+  }
+  if (turn.activeDoc && (turn.activeDoc.workspaceId !== active.workspaceId || turn.activeDoc.docId !== active.docId)) throw conversationDenied();
+}
+
 function validatePrompt(entry, prompt) {
-  keys(prompt, ["messageID", "model", "agent", "variant", "system", "parts", "officeSelectionRefs", "officeInstructions"]);
+  keys(prompt, ["messageID", "model", "agent", "variant", "system", "parts", "officeSelectionRefs", "officeInstructions", "cloudDocTurn"]);
+  validateCloudDocTurn(entry, prompt.cloudDocTurn);
   if (prompt.model !== undefined) {
     keys(prompt.model, ["providerID", "modelID"]);
     if (!modelIdentifier(prompt.model.providerID) || !modelIdentifier(prompt.model.modelID)) throw conversationDenied();
@@ -178,8 +199,19 @@ export function authorizeConversationRequest(entry, url, prefix, method, body) {
     if (url.search && ([...query.keys()].length !== 1 || !query.has("directory") || query.get("directory") !== entry.workspaceRoot)) throw conversationDenied();
     return { kind: url.pathname.endsWith("/provider") ? "provider" : "agent" };
   }
+  if (method === "GET" && ["session-changes", "changes"].some(name => url.pathname === `${prefix}/cloud-docs/${name}`)) {
+    const names = url.pathname.endsWith('/session-changes') ? ['sessionId'] : ['sessionId', 'messageId'];
+    if ([...query.keys()].length !== names.length || names.some(name => query.getAll(name).length !== 1) ||
+      query.get('sessionId') !== entry.sessionId || (names.includes('messageId') && !identifier(query.get('messageId')))) throw conversationDenied();
+    return { kind: "cloud-changes" };
+  }
   noQuery();
   if (method !== "POST") throw conversationDenied();
+  if (url.pathname === `${prefix}/cloud-docs/undo`) {
+    keys(body, ['sessionId', 'messageId']);
+    if (body.sessionId !== entry.sessionId || !identifier(body.messageId)) throw conversationDenied();
+    return { kind: 'cloud-undo' };
+  }
   if (["validate", "release"].some((action) => url.pathname === `${prefix}/office/selection-references/${action}`)) {
     keys(body, ["sessionId", "referenceIds"]);
     if (body.sessionId !== entry.sessionId) throw conversationDenied();

@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebContentsView, session, shell } from "electron";
@@ -17,9 +17,9 @@ export function validateCloudDocsLaunch(input) {
   )
     throw new Error("Invalid Docs context");
   const url = new URL(input.bootstrapUrl);
-  const key = `t-${createHash("sha256").update(input.tenantId).digest("hex").slice(0, 32)}`;
+  const expected = new URL(input.docsOrigin);
   if (
-    !url.hostname.startsWith(`${key}.`) ||
+    url.origin !== expected.origin || expected.href !== `${expected.origin}/` ||
     url.pathname !== "/api/jw/session/bootstrap" ||
     url.search ||
     url.hash ||
@@ -29,7 +29,7 @@ export function validateCloudDocsLaunch(input) {
     throw new Error("Invalid Docs destination");
   if (
     url.protocol !== "https:" &&
-    !(url.protocol === "http:" && url.hostname.endsWith(".localhost"))
+    !(url.protocol === "http:" && (url.hostname === "localhost" || url.hostname.endsWith(".localhost") || ["127.0.0.1", "[::1]"].includes(url.hostname)))
   )
     throw new Error("Docs requires HTTPS");
   if (
@@ -40,7 +40,7 @@ export function validateCloudDocsLaunch(input) {
   )
     throw new Error("Invalid Docs launch");
   const partitionKey = createHash("sha256")
-    .update(`${input.sourceServerOrigin}\0${input.sourceUserId}`)
+    .update(`${input.sourceServerOrigin}\0${input.sourceUserId}\0${input.tenantId}`)
     .digest("hex");
   return {
     origin: url.origin,
@@ -50,33 +50,52 @@ export function validateCloudDocsLaunch(input) {
 
 /**
  * 独立受限原生视图承载云文档，来源／账号隔离，不复用通用浏览器会话。
- * @param {{getWindow:()=>any,onScopeRevoked?:(scope:any)=>Promise<void>|void,attachments?:{open:(input:any)=>Promise<any>,clearScope:(scope:any)=>Promise<void>}}} options 宿主窗口、附件访问和组织撤权回调
+ * @param {{getWindow:()=>any,getWindows?:()=>any[],onDocumentChanged?:(window:any,instanceId:string,document:{tenantId:string,workspaceId:string,docId:string,title:string})=>void,attachments?:{open:(input:any)=>Promise<any>,clearScope:(scope:any)=>Promise<void>,clearContext?:(scope:any,contextId:string)=>Promise<void>}}} options 宿主窗口与受限附件访问
  */
-export function createCloudDocsPanel({ getWindow, onScopeRevoked, attachments }) {
-  let current = null;
+export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow()], onDocumentChanged, attachments }) {
+  const currents = new Map();
   const backgrounds = new Map();
   const retained = new Map();
   const intakes = new Map();
   const revocations = new Map();
-  const items = () => [...new Set([...(current ? [current] : []), ...retained.values(), ...backgrounds.values()])];
-  const active = (item) => !!item && (current === item || retained.get(item.input.instanceId) === item || backgrounds.get(item.input.instanceId) === item);
+  const items = () => [...new Set([...currents.values(), ...retained.values(), ...backgrounds.values()])];
+  const active = (item) => !!item && (currents.get(item.ownerWindow.id) === item || retained.get(item.input.instanceId) === item || backgrounds.get(item.input.instanceId) === item);
   const find = (input) => input?.instanceId
     ? items().find((item) => item.input.instanceId === input.instanceId)
-    : current;
+    : currents.get(getWindow()?.id);
   const send = (value) => {
-    const win = getWindow();
+    const item = find(value);
+    if (item && value.status) item.lastStatus = value.status;
+    const win = item?.ownerWindow ?? getWindow();
     if (win && !win.isDestroyed())
       win.webContents.send("jugglework:docs:state", value);
   };
-  const trusted = (event) => {
-    const win = getWindow();
-    return (
-      !!win &&
-      !win.isDestroyed() &&
-      event.sender === win.webContents &&
-      event.senderFrame === win.webContents.mainFrame
-    );
+  const ownerFor = event => getWindows().find(win => win && !win.isDestroyed() && event.sender === win.webContents && event.senderFrame === win.webContents.mainFrame);
+  const trusted = (event, input) => {
+    const owner = ownerFor(event);
+    const item = input?.instanceId ? find(input) : null;
+    return !!owner && (input?.instanceId || owner === getWindow()) && (!item || item.ownerWindow === owner);
   };
+
+  /** 从受限原生页的实际路由取得当前文档，不能让 Renderer 覆盖当前可写目标。 */
+  function documentFor(instanceId, ownerWindow) {
+    const item = find({ instanceId });
+    if (!item?.ready || item.denied || (ownerWindow && item.ownerWindow !== ownerWindow)) return null;
+    try {
+      const url = new URL(item.view.webContents.getURL());
+      const path = /^\/workspace\/([\w-]+)\/([\w-]+)\/?$/.exec(url.pathname);
+      if (url.origin !== item.origin || !path || ['all','trash','settings','collection','tag','journal','journals','favorites','recent'].includes(path[2])) return null;
+      return { tenantId: item.input.tenantId, workspaceId: path[1], docId: path[2], title: String(item.view.webContents.getTitle?.() || '').slice(0, 200) };
+    } catch { return null; }
+  }
+
+  /** 原生页内部导航也更新宿主定位，避免 AI 继续把初始标签当成当前文档。 */
+  function publishDocument(item) {
+    if (!active(item) || !item.ready || item.denied) return;
+    const document = documentFor(item.input.instanceId);
+    if (document) onDocumentChanged?.(item.ownerWindow, item.input.instanceId, document);
+    send({ instanceId: item.input.instanceId, status: 'ready', workspaceId: document?.workspaceId, docId: document?.docId ?? null, title: document?.title });
+  }
 
   /** 释放指定实例；不带实例时清理全部前后台页面及其未完成请求。 */
   function close(instanceId) {
@@ -86,7 +105,7 @@ export function createCloudDocsPanel({ getWindow, onScopeRevoked, attachments })
     }
     const old = find({ instanceId });
     if (!old) return;
-    if (old === current) current = null;
+    if (currents.get(old.ownerWindow.id) === old) currents.delete(old.ownerWindow.id);
     backgrounds.delete(instanceId);
     retained.delete(instanceId);
     for (const [id, task] of intakes) {
@@ -95,38 +114,53 @@ export function createCloudDocsPanel({ getWindow, onScopeRevoked, attachments })
       task.reject(new Error("docs_view_closed"));
       intakes.delete(id);
     }
-    const win = getWindow();
+    const win = old.ownerWindow;
     if (!old.input.background && win && !win.isDestroyed()) win.contentView.removeChildView(old.view);
     if (!old.view.webContents.isDestroyed()) old.view.webContents.close();
   }
 
+  /** 仅等待原生本地存储确认；超时不销毁含未确认更新的视图。 */
+  function prepareClose(instanceId) {
+    const item = find({ instanceId });
+    if (!item || !item.hasBeenReady || item.view.webContents.isDestroyed()) return Promise.resolve(true);
+    const requestId = randomUUID();
+    return new Promise(resolve => {
+      const timer = setTimeout(() => { intakes.delete(requestId); resolve(false); }, 5000);
+      intakes.set(requestId, { item, timer, resolve: result => resolve(result?.persisted === true), reject: () => resolve(false) });
+      item.view.webContents.send('jugglework:docs:prepare-close', { instanceId, requestId });
+    });
+  }
+
+  /** 退出或更新前统一等待原生本地保存，任一页面未确认就取消退出。 */
+  async function prepareQuit(ownerWindow) {
+    const targets = items().filter(item => !ownerWindow || item.ownerWindow === ownerWindow);
+    return (await Promise.all(targets.map(item => prepareClose(item.input.instanceId)))).every(Boolean);
+  }
+
+  /** 主窗口销毁只释放自己的视图，独立 File Browser 仍保持打开。 */
+  function closeWindow(ownerWindow) {
+    for (const item of items()) if (item.ownerWindow === ownerWindow) close(item.input.instanceId);
+  }
+
   /** 关闭与明确来源账号和组织匹配的可见产品页，不影响同账号其他组织。 */
-  function closeScope(scope) {
+  async function closeScope(scope) {
     for (const item of items()) {
       if (item.input.sourceServerOrigin === scope?.sourceServerOrigin &&
         item.input.sourceUserId === scope?.sourceUserId && item.input.tenantId === scope?.tenantId)
-        close(item.input.instanceId);
+        { item.view.setVisible(false); if (await prepareClose(item.input.instanceId)) close(item.input.instanceId); }
     }
   }
 
-  /** TIPS: 先关闭所有该组织原生视图，再按 Origin 清缓存；同账号其他组织使用不同 Origin，不受影响。 */
+  /** 失权仅隐藏相同绑定，原生本地落盘确认后再释放，不清任何共享 Cookie 或数据库。 */
   function revoke(item) {
-    const key = `${item.target.partition}\0${item.origin}`;
+    const key = `${item.target.partition}\0${item.contextId || item.input.instanceId}`;
     if (revocations.has(key)) return revocations.get(key);
-    closeScope(item.input);
-    const task = Promise.resolve(
-      onScopeRevoked?.({
-        sourceServerOrigin: item.input.sourceServerOrigin,
-        sourceUserId: item.input.sourceUserId,
-        tenantId: item.input.tenantId,
-      }),
-    )
-      .catch(() => undefined)
-      .then(() => item.nativeSession.clearStorageData({ origin: item.origin }))
-      .then(() => item.nativeSession.flushStorageData())
-      // TIPS: 清理失败不能形成未处理拒绝，也不能阻塞同范围重新授权；服务端仍会重新核对权限。
-      .catch(() => undefined)
-      .finally(() => revocations.delete(key));
+    const targets = items().filter(target => target === item || (item.contextId && target.contextId === item.contextId && target.target.partition === item.target.partition));
+    for (const target of targets) { target.denied = true; target.ready = false; target.view.setVisible(false); }
+    const task = (async () => {
+      if (item.contextId) await attachments?.clearContext?.({ sourceServerOrigin: item.input.sourceServerOrigin, sourceUserId: item.input.sourceUserId, tenantId: item.input.tenantId }, item.contextId);
+      for (const target of targets) if (await prepareClose(target.input.instanceId)) close(target.input.instanceId);
+    })().finally(() => revocations.delete(key));
     revocations.set(key, task);
     return task;
   }
@@ -134,7 +168,8 @@ export function createCloudDocsPanel({ getWindow, onScopeRevoked, attachments })
   function bounds(input) {
     const item = find(input);
     if (!item || item.input.background) return;
-    const win = getWindow();
+    const win = item.ownerWindow;
+    const current = currents.get(win.id);
     if (!win || win.isDestroyed()) return;
     const zoom = win.webContents.getZoomFactor();
     const rect = win.getContentBounds();
@@ -152,9 +187,14 @@ export function createCloudDocsPanel({ getWindow, onScopeRevoked, attachments })
     item.view.setBounds({ x, y, width, height });
     const visible = input.visible === true && item.ready && !item.denied && width > 0 && height > 0;
     if (visible && current !== item) {
-      if (current && !current.input.retain) close(current.input.instanceId);
-      else current?.view.setVisible(false);
-      current = item;
+      if (current) {
+        current.view.setVisible(false);
+        if (!current.input.retain) {
+          retained.set(current.input.instanceId, current);
+          void prepareClose(current.input.instanceId).then(saved => { if (saved && currents.get(win.id) !== current) close(current.input.instanceId); });
+        }
+      }
+      currents.set(win.id, item);
     }
     const wasVisible = item.view.getVisible();
     item.view.setVisible(visible);
@@ -163,14 +203,24 @@ export function createCloudDocsPanel({ getWindow, onScopeRevoked, attachments })
   }
 
   /** 用表单 POST 短时凭据打开目标原生页面；长期源令牌不会进入此模块。 */
-  async function open(input) {
+  async function open(input, ownerWindow = getWindow()) {
+    const win = ownerWindow;
+    const current = currents.get(win?.id);
     const target = validateCloudDocsLaunch(input);
     // TIPS: 上传和 AI 的后台产品页不替换可见页面，结束时也只释放自己的实例。
-    if (input.background === true) close(input.instanceId);
-    else if (!input.retain && current?.input.retain) { current.view.setVisible(false); current = null; }
-    else if (!input.retain && current) close(current.input.instanceId);
-    await revocations.get(`${target.partition}\0${target.origin}`);
-    const win = getWindow();
+    const previous = find({ instanceId: input.instanceId });
+    if (previous) {
+      previous.view.setVisible(false);
+      if (!await prepareClose(input.instanceId)) throw new Error('docs_local_save_pending');
+      close(input.instanceId);
+    }
+    if (input.background === true) { /* 后台页不改变当前可见实例。 */ }
+    else if (!input.retain && current?.input.retain) { current.view.setVisible(false); currents.delete(win.id); }
+    else if (!input.retain && current && current !== previous) {
+      current.view.setVisible(false);
+      if (await prepareClose(current.input.instanceId)) close(current.input.instanceId);
+      else { retained.set(current.input.instanceId, current); currents.delete(win.id); }
+    }
     if (!win || win.isDestroyed())
       throw new Error("Desktop window unavailable");
     const nativeSession = session.fromPartition(target.partition);
@@ -189,6 +239,7 @@ export function createCloudDocsPanel({ getWindow, onScopeRevoked, attachments })
       },
     });
     const item = {
+      ownerWindow: win,
       view,
       input,
       target,
@@ -201,7 +252,7 @@ export function createCloudDocsPanel({ getWindow, onScopeRevoked, attachments })
     else {
       // TIPS: 保留型标签可能在后台完成首次加载；只有可见范围请求才激活，不能抢走用户后来选中的页面。
       if (input.retain === true) retained.set(input.instanceId, item);
-      else current = item;
+      else currents.set(win.id, item);
       win.contentView.addChildView(view);
     }
     // 后台页面仍需有正常视口，供原生导入器和 Workspace 布局完成初始化。
@@ -215,6 +266,8 @@ export function createCloudDocsPanel({ getWindow, onScopeRevoked, attachments })
       }
       return { action: "deny" };
     });
+    view.webContents.on("did-navigate-in-page", () => publishDocument(item));
+    view.webContents.on("page-title-updated", () => publishDocument(item));
     view.webContents.on("will-navigate", (event, url) => {
       try {
         if (new URL(url).origin === target.origin) return;
@@ -226,9 +279,11 @@ export function createCloudDocsPanel({ getWindow, onScopeRevoked, attachments })
     // TIPS: 跨原生 Workspace 整页导航时，等待本次授权就绪，不能显示上一页的缓存。
     view.webContents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => {
       if (!active(item) || !isMainFrame || isInPlace) return;
+      // TIPS: 当前实例一旦失权，只能由宿主重新创建；迟到导航不能把拒绝态降级成 loading。
+      if (item.denied) { view.setVisible(false); return; }
       item.ready = false;
-      item.denied = false;
       view.setVisible(false);
+      send({ instanceId: input.instanceId, status: "loading" });
     });
     view.webContents.on(
       "did-fail-load",
@@ -285,7 +340,8 @@ export function createCloudDocsPanel({ getWindow, onScopeRevoked, attachments })
   /** 注册主宿主操作和远程页面的最小只读状态消息。 */
   function registerIpc(ipcMain) {
     ipcMain.on("jugglework:docs:layout-command", (event, input) => {
-      if (!trusted(event) || !current?.ready || current.denied ||
+      const current = find(input);
+      if (!trusted(event, input) || !current?.ready || current.denied ||
         current.input.presentation?.mode !== "product" ||
         input?.instanceId !== current.input.instanceId ||
         !["toggle-left", "toggle-right", "search", "request-state"].includes(input.action)) return;
@@ -296,8 +352,9 @@ export function createCloudDocsPanel({ getWindow, onScopeRevoked, attachments })
       });
     });
     ipcMain.on("jugglework:docs:appearance", (event, input) => {
+      const current = find(input);
       if (
-        !trusted(event) ||
+        !trusted(event, input) ||
         !current ||
         !current.ready ||
         input?.instanceId !== current.input.instanceId
@@ -338,24 +395,36 @@ export function createCloudDocsPanel({ getWindow, onScopeRevoked, attachments })
       });
     });
     ipcMain.handle("jugglework:docs:open", (event, input) => {
-      if (!trusted(event)) throw new Error("Forbidden");
-      return open(input);
+      if (!trusted(event, input) || ownerFor(event) !== getWindow()) throw new Error("Forbidden");
+      return open(input, ownerFor(event));
+    });
+    ipcMain.handle("jugglework:docs:status", (event, instanceId) => {
+      if (!trusted(event, { instanceId })) throw new Error("Forbidden");
+      const item = find({ instanceId }); return { ready: !!item?.ready && !item.denied, status: item?.lastStatus ?? (item ? "loading" : "error"), ...(documentFor(instanceId) ?? { docId: null }) };
     });
     ipcMain.handle("jugglework:docs:snapshot", async (event, instanceId) => {
-      if (!trusted(event)) throw new Error("Forbidden");
+      if (!trusted(event, { instanceId })) throw new Error("Forbidden");
       const item = find({ instanceId });
       if (!item?.ready || item.denied || item.input.background || item.view.webContents.isDestroyed()) return null;
       return (await item.view.webContents.capturePage()).toDataURL();
     });
     ipcMain.handle("jugglework:docs:close", async (event, instanceId) => {
-      if (!trusted(event)) throw new Error("Forbidden");
+      if (!trusted(event, { instanceId }) || (!instanceId && ownerFor(event) !== getWindow())) throw new Error("Forbidden");
       // TIPS: 不带实例的整体关闭发生在切换账号、组织或退出登录时，附件缓存随当前范围清理。
       const scopes = !instanceId ? items().map((item) => item.input) : [];
-      close(instanceId);
+      const targets = instanceId ? [find({ instanceId })].filter(Boolean) : items();
+      if (!instanceId) for (const item of targets) item.view.setVisible(false);
+      let closed = true;
+      for (const item of targets) {
+        const saved = await prepareClose(item.input.instanceId);
+        if (saved) close(item.input.instanceId);
+        else closed = false;
+      }
       for (const scope of scopes) await attachments?.clearScope(scope).catch(() => undefined);
+      return { closed };
     });
     ipcMain.handle("jugglework:docs:file-intake", (event, input) => {
-      if (!trusted(event)) throw new Error("Forbidden");
+      if (!trusted(event, input)) throw new Error("Forbidden");
       const item = find(input);
       const upload = input?.action === "upload";
       if (
@@ -400,7 +469,7 @@ export function createCloudDocsPanel({ getWindow, onScopeRevoked, attachments })
       });
     });
     ipcMain.handle("jugglework:docs:api", (event, input) => {
-      if (!trusted(event)) throw new Error("Forbidden");
+      if (!trusted(event, input)) throw new Error("Forbidden");
       const item = find(input);
       if (
         !item?.ready ||
@@ -433,9 +502,9 @@ export function createCloudDocsPanel({ getWindow, onScopeRevoked, attachments })
       });
     });
     ipcMain.on("jugglework:docs:highlight-blocks", (event, input) => {
-      const item = current;
+      const item = find(input);
       if (
-        !trusted(event) ||
+        !trusted(event, input) ||
         !item?.ready ||
         item.denied ||
         input?.instanceId !== item.input.instanceId ||
@@ -452,7 +521,7 @@ export function createCloudDocsPanel({ getWindow, onScopeRevoked, attachments })
       });
     });
     ipcMain.on("jugglework:docs:bounds", (event, input) => {
-      if (trusted(event)) bounds(input);
+      if (trusted(event, input)) bounds(input);
     });
     ipcMain.on("jugglework:docs:message", (event, message) => {
       const item = find(message);
@@ -475,7 +544,7 @@ export function createCloudDocsPanel({ getWindow, onScopeRevoked, attachments })
           item.input.presentation?.mode !== "product" ||
           typeof layout?.leftOpen !== "boolean" || typeof layout?.rightOpen !== "boolean" ||
           !Number.isFinite(layout.leftWidth) || layout.leftWidth < 248 || layout.leftWidth > 480) return;
-        const win = getWindow();
+        const win = item.ownerWindow;
         if (win && !win.isDestroyed()) win.webContents.send("jugglework:docs:layout", {
           instanceId: item.input.instanceId,
           layout: {
@@ -498,6 +567,7 @@ export function createCloudDocsPanel({ getWindow, onScopeRevoked, attachments })
                 tenantId: item.input.tenantId,
               },
               nativeSession: item.nativeSession,
+              contextId: item.contextId,
               origin: item.origin,
               workspaceId: message.workspaceId,
               docId: message.docId,
@@ -506,7 +576,7 @@ export function createCloudDocsPanel({ getWindow, onScopeRevoked, attachments })
             })
             .catch((error) => send({ instanceId: item.input.instanceId, status: "error", message: `附件打开失败：${error.message}` }));
         } else {
-          const win = getWindow();
+          const win = item.ownerWindow;
           if (win && !win.isDestroyed()) {
             // TIPS: 原生文档持有键盘焦点；先交还宿主，引用标签插入后输入框才能接收输入。
             win.webContents.focus();
@@ -530,12 +600,12 @@ export function createCloudDocsPanel({ getWindow, onScopeRevoked, attachments })
           return;
         // TIPS: 被拒绝的当前页面不能靠迟到的就绪消息重新显示，需重新进入并完成授权。
         if (item.denied) return;
+        item.contextId = message.contextId;
         item.ready = true;
-        send({
-          instanceId: message.instanceId,
-          status: "ready",
-          workspaceId: message.workspaceId,
-        });
+        item.hasBeenReady = true;
+        const document = documentFor(item.input.instanceId);
+        if (document) onDocumentChanged?.(item.ownerWindow, item.input.instanceId, document);
+        send({ instanceId: message.instanceId, status: "ready", workspaceId: message.workspaceId, docId: document?.docId ?? null, title: document?.title });
       } else if (
         message.type === "docs.session-expired" ||
         message.type === "docs.error"
@@ -574,5 +644,5 @@ export function createCloudDocsPanel({ getWindow, onScopeRevoked, attachments })
         );
     });
   }
-  return { registerIpc, close, closeScope };
+  return { registerIpc, open, close, closeWindow, closeScope, prepareClose, prepareQuit, documentFor, hasViews: ownerWindow => items().some(item => !ownerWindow || item.ownerWindow === ownerWindow), hide: instanceId => find({ instanceId })?.view.setVisible(false) };
 }

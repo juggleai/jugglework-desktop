@@ -1,5 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import net from "node:net";
+import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -257,22 +258,44 @@ const resolvedStartUrl = await waitForVite(startUrl);
 const cdpPortRaw = process.env.JUGGLEWORK_ELECTRON_REMOTE_DEBUG_PORT?.trim() ?? "";
 const cdpPort = cdpPortRaw === "" || cdpPortRaw === "0" ? "" : cdpPortRaw;
 
-electronChild = run(pnpmCmd, ["exec", "electron", "./electron/main.mjs"], {
-  cwd: desktopRoot,
-  env: {
-    ...process.env,
-    JUGGLEWORK_DEV_MODE: process.env.JUGGLEWORK_DEV_MODE ?? "1",
-    JUGGLEWORK_DATA_DIR: process.env.JUGGLEWORK_DATA_DIR ?? defaultDevDataDir,
-    JUGGLEWORK_ELECTRON_START_URL: resolvedStartUrl,
-    ...(cdpPort ? { JUGGLEWORK_ELECTRON_REMOTE_DEBUG_PORT: cdpPort } : {}),
-  },
-});
+const electronExecutable = createRequire(import.meta.url)("electron");
+
+/** 启动源码开发版；应用请求重启时复用开发会话及前端服务。 */
+function launchElectron() {
+  let relaunchRequested = false;
+  const child = run(electronExecutable, ["./electron/main.mjs"], {
+    cwd: desktopRoot,
+    stdio: ["ignore", "inherit", "inherit", "ipc"],
+    env: {
+      ...process.env,
+      JUGGLEWORK_DEV_MODE: process.env.JUGGLEWORK_DEV_MODE ?? "1",
+      JUGGLEWORK_DATA_DIR: process.env.JUGGLEWORK_DATA_DIR ?? defaultDevDataDir,
+      JUGGLEWORK_ELECTRON_START_URL: resolvedStartUrl,
+      ...(cdpPort ? { JUGGLEWORK_ELECTRON_REMOTE_DEBUG_PORT: cdpPort } : {}),
+    },
+  });
+  electronChild = child;
+  child.on("message", (message) => {
+    if (message && typeof message === "object" && "type" in message && message.type === "jugglework:dev-relaunch") relaunchRequested = true;
+  });
+  child.once("error", (error) => {
+    console.error("[electron-dev] Electron failed to start:", error.message);
+    void stopAll(1);
+  });
+  child.once("exit", (code) => {
+    if (stopping) return;
+    // TIPS：只有正常完成退出保存、明确请求重启才拉起新进程；崩溃不自动循环重试。
+    if (relaunchRequested && code === 0) {
+      console.log("[electron-dev] Relaunching Electron; keeping Vite running.");
+      launchElectron();
+      return;
+    }
+    void stopAll(code ?? 1);
+  });
+}
+
+launchElectron();
 
 if (cdpPort) {
   console.log(`[jugglework] Electron CDP exposed at http://127.0.0.1:${cdpPort}`);
 }
-
-electronChild.on("exit", (code) => {
-  if (stopping) return;
-  void stopAll(code ?? 0);
-});

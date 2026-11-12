@@ -76,19 +76,7 @@ mock.module(modulePath("app/lib/den.ts"), () => ({
   readDenIMLoginBootstrap: () =>
     hasIM ? { imUserId: "shared-im-user", token: "same-token" } : null,
   createDenClient: () => ({
-    docsConversationContext: async (id: string, ids: string[]) => {
-      if (failContext) throw new Error("offline");
-      return {
-        tenantId: id,
-        botIMUserId: bot(id),
-        groupId: "docs_" + id,
-        groups: ids.map((conversationId) => ({
-          conversationId,
-          managed: conversationId.startsWith("docs_"),
-          currentTenant: conversationId === "docs_" + id,
-        })),
-      };
-    },
+    docsConversationContext: async () => { throw new Error("ordinary chat must not call Docs classification"); },
   }),
 }));
 const actualJuggleWorkServer = await import(
@@ -199,118 +187,49 @@ beforeEach(async () => {
   history = async () => ({ messages: [], isFinished: true });
 });
 
-test("共用 App 和 IM 凭据时仅汇总当前组织文档会话；无聊天组件时切换也立即清空", async () => {
+test("不同 AppKey 组织切换直接使用 SDK 会话，无 Docs 分类依赖", async () => {
+  pages = async () => ({ conversations: [conversation('docs_' + tenant, 3), conversation('regular', 2)], isFinished: true });
   await store.getState().bootstrap();
-  expect(store.getState().conversations.map((c) => c.conversationId)).toEqual([
-    "docs_a",
-    "regular",
-  ]);
+  expect(store.getState().conversations.map(c => c.conversationId)).toEqual(['docs_a', 'regular']);
   expect(store.getState().totalUnreadCount).toBe(5);
-  tenant = "b";
-  host.dispatchEvent(new Event(denSettingsChangedEvent));
-  expect(store.getState().messages).toEqual([]);
-  expect(store.getState().totalUnreadCount).toBe(0);
-  await flush();
-  expect(store.getState().conversations.map((c) => c.conversationId)).toEqual([
-    "docs_b",
-    "regular",
-    bot("b"),
-  ]);
-  expect(store.getState().totalUnreadCount).toBe(18);
-  hasIM = false;
-  host.dispatchEvent(new Event(denSettingsChangedEvent));
+  tenant = 'b'; host.dispatchEvent(new Event(denSettingsChangedEvent));
+  expect(store.getState().messages).toEqual([]); await flush();
+  expect(store.getState().conversations.map(c => c.conversationId)).toEqual(['docs_b', 'regular']);
+  hasIM = false; host.dispatchEvent(new Event(denSettingsChangedEvent));
   expect(store.getState().conversations).toEqual([]);
-  expect(store.getState().totalUnreadCount).toBe(0);
 });
 
-test("同 App 的其他组织实时卡片不产生系统通知，当前组织只通知一次", async () => {
-  await store.getState().bootstrap();
-  listeners.get("message")!(message("other", "b"), scope());
-  await flush();
-  expect(desktopCalls).toHaveLength(0);
-  listeners.get("message")!(message("current"), scope());
-  await flush();
-  expect(desktopCalls).toHaveLength(1);
-  listeners.get("message")!(message("duplicate"), scope());
-  await flush();
-  expect(desktopCalls).toHaveLength(1);
-});
-
-test("完整翻页后再发布未读，不把第一页当作全部会话", async () => {
-  const calls: number[] = [];
-  pages = async ({ time }) => {
-    calls.push(time);
-    return time === 0
-      ? {
-          conversations: [conversation("docs_b", 50, 2, 200)],
-          isFinished: false,
-        }
-      : {
-          conversations: [conversation("docs_a", 4, 2, 100)],
-          isFinished: true,
-        };
-  };
-  await store.getState().bootstrap();
-  expect(calls).toEqual([0, 200]);
-  expect(store.getState().totalUnreadCount).toBe(4);
-});
-
-test("A 历史迟到时即使 B→A 返回同一凭据也不回填、不清未读", async () => {
-  await store.getState().bootstrap();
-  const old = deferred<any>();
-  history = () => old.promise;
-  const pending = store.getState().selectConversation(conversation("docs_a"));
-  await flush();
-  tenant = "b";
-  await store.getState().bootstrap();
-  tenant = "a";
-  await store.getState().bootstrap();
-  old.resolve({ messages: [message("old")], isFinished: true });
-  await pending;
-  expect(store.getState().messages).toEqual([]);
-  expect(cleared).toEqual([]);
-});
-
-test("离线历史绑定来源并按事件去重，另一组织会话不能进入历史或清未读", async () => {
-  await store.getState().bootstrap();
-  history = async () => ({
-    messages: [message("first"), message("duplicate")],
-    isFinished: true,
-  });
-  await store.getState().selectConversation(conversation("docs_b"));
-  expect(cleared).toEqual([]);
-  await store.getState().selectConversation(conversation("docs_a"));
-  expect(store.getState().messages).toHaveLength(1);
-  expect(docsMessageSource(store.getState().messages[0])?.scope.tenantId).toBe(
-    "a",
-  );
-  expect(cleared).toEqual(["docs_a"]);
-  listeners.get("message-updated")!({
-    ...message("first"),
-    content: { ...message("first").content, contractVersion: 2 },
-  });
-  expect(docsMessageSource(store.getState().messages[0])).toBeNull();
-});
-
-test("源分类失败即撤下群历史、回复和置顶，保留普通私聊", async () => {
-  await store.getState().bootstrap();
-  await store
-    .getState()
-    .selectConversation(conversation("docs_a"), { loadHistory: false });
-  store.setState({
-    messages: [message("old")],
-    replyTo: message("reply"),
-    pinnedMessage: { message: message("pinned") },
-  });
+test("Docs 分类服务不可用也不撤下群、历史、回复和置顶", async () => {
   failContext = true;
-  listeners.get("message")!(
-    { ...message("new"), conversationId: "new_unknown_group" },
-    scope(),
-  );
-  await flush();
-  expect(store.getState().activeConversation).toBeNull();
-  expect(store.getState().messages).toEqual([]);
-  expect(store.getState().pinnedMessage).toBeNull();
-  expect(store.getState().replyTo).toBeNull();
-  expect(store.getState().totalUnreadCount).toBe(0);
+  await store.getState().bootstrap();
+  await store.getState().selectConversation(conversation('docs_a'), { loadHistory: false });
+  store.setState({ messages: [message('old')], replyTo: message('reply'), pinnedMessage: { message: message('pinned') } });
+  await store.getState().loadConversations();
+  expect(store.getState().activeConversation?.conversationId).toBe('docs_a');
+  expect(store.getState().replyTo?.messageId).toBe('reply');
+  expect(store.getState().pinnedMessage?.message.messageId).toBe('pinned');
+});
+
+test("当前 SDK 的完整分页保留全部普通群，不按 Docs 命名筛选", async () => {
+  const calls: number[] = [];
+  pages = async ({time}) => { calls.push(time); return time===0 ? {conversations:[conversation('docs_b',50,2,200)],isFinished:false} : {conversations:[conversation('docs_a',4,2,100)],isFinished:true}; };
+  await store.getState().bootstrap(); expect(calls).toEqual([0,200]);
+  expect(store.getState().totalUnreadCount).toBe(54);
+});
+
+test("A 历史迟到不能回填 B 或清除其未读", async () => {
+  await store.getState().bootstrap();
+  const old=deferred<any>(); history=()=>old.promise;
+  const pending=store.getState().selectConversation(conversation('docs_a')); await flush();
+  tenant='b'; await store.getState().bootstrap();
+  old.resolve({messages:[message('old')],isFinished:true}); await pending;
+  expect(store.getState().messages).toEqual([]); expect(cleared).toEqual([]);
+});
+
+test("当前组织卡片绑定且去重，其他组织载荷无动作", async () => {
+  await store.getState().bootstrap();
+  history=async()=>({messages:[message('first'),message('duplicate')],isFinished:true});
+  await store.getState().selectConversation(conversation('docs_a'));
+  expect(store.getState().messages).toHaveLength(1);
+  expect(docsMessageSource(store.getState().messages[0])).not.toBeNull();
 });

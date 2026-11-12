@@ -1,4 +1,5 @@
 import { activateCloudDocTab, closeCloudDocTab, cloudDocTabKey, cloudDocTabsSnapshot, subscribeCloudDocTabs } from "@/app/lib/cloud-doc-tabs";
+import { createDenClient, readDenSettings, readDenUserId } from "@/app/lib/den";
 import { getOfficeDocumentKind } from "@jugglework/types/office";
 /** @jsxImportSource react */
 import * as React from "react";
@@ -240,7 +241,19 @@ export function FilesPanel({
               key: cloudDocTabKey(tab), title: tab.title || t("cloud_docs.untitled"),
               active: cloudDocActive && cloudDocTabKey(tab) === cloudDocs.active,
               onSelect: () => activateCloudDocTab(sessionId, cloudDocTabKey(tab)),
-              onClose: () => closeCloudDocTab(sessionId, cloudDocTabKey(tab)),
+              onClose: () => void closeCloudDocTab(sessionId, cloudDocTabKey(tab)).then(closed => {
+                if (!closed) toast.error(t("cloud_docs.close_save_pending"));
+              }),
+              onOpenWindow: () => void (async () => {
+                const settings = readDenSettings(); const sourceUserId = readDenUserId();
+                const bridge = window.__JUGGLEWORK_ELECTRON__?.fileWindow;
+                if (!workspaceId || !sourceUserId || !settings.authToken || settings.activeOrgId !== tab.tenantId || !bridge?.openCloud) return;
+                try {
+                  const launch = await createDenClient({ baseUrl: settings.baseUrl, token: settings.authToken }).launchCloudDocs({ tenantId: tab.tenantId, target: { kind: 'page', workspaceId: tab.workspaceId, pageId: tab.docId }, presentation: { instanceId: crypto.randomUUID(), mode: 'product' } });
+                  if (settings.authToken !== readDenSettings().authToken || settings.activeOrgId !== readDenSettings().activeOrgId) return;
+                  await bridge.openCloud({ workspaceId, sessionId, document: tab, launch, sourceServerOrigin: settings.baseUrl, sourceUserId });
+                } catch (error) { toast.error(error instanceof Error ? error.message : t('cloud_docs.connection_failed')); }
+              })(),
             }))}
           />
         </div>

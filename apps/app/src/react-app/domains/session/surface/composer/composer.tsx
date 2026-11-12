@@ -1,8 +1,8 @@
 /** @jsxImportSource react */
 import { readDenSettings, createDenClient } from "@/app/lib/den";
-import { useCloudDocsTenantId } from "@/app/lib/cloud-doc-turn";
+import { cloudDocsTenantId, useCloudDocsTenantId } from "@/app/lib/cloud-doc-turn";
 import { type CloudDocReference } from "@/app/lib/cloud-doc-reference";
-import { withProductView, cloudDocsHostPrefix } from "../../../cloud-docs/product-view";
+import { withProductView, configuredCloudDocsOrigin } from "../../../cloud-docs/product-view";
 import { useVoiceService } from "./use-voice-service";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
@@ -901,7 +901,7 @@ export function ReactSessionComposer(props: ComposerProps) {
     };
   }, [slashOpen, loadCommands]);
 
-  const docsTenantId = useCloudDocsTenantId(!props.restrictedHost && !props.isRemoteWorkspace && !props.isSandboxWorkspace);
+  const docsTenantId = useCloudDocsTenantId(!props.isRemoteWorkspace && !props.isSandboxWorkspace);
   /** 复用就绪页面或后台产品页，失败只影响云文档分组。 */
   const requestDocs = async (op: "search" | "read", params: Record<string, unknown>) => {
     const bridge = window.__JUGGLEWORK_ELECTRON__?.cloudDocs;
@@ -1921,7 +1921,7 @@ export function ReactSessionComposer(props: ComposerProps) {
               onPasteCapture={(event) => {
                 // TIPS: 必须早于 Lexical 的默认粘贴，避免链接被插入两次。
                 const pasted = event.clipboardData?.getData("text/plain")?.trim() ?? "";
-                if (docsTenantId && !event.clipboardData?.files.length && /^https?:\/\/[^\s]+$/.test(pasted)) {
+                if (docsTenantId && !props.restrictedHost && !event.clipboardData?.files.length && /^https?:\/\/[^\s]+$/.test(pasted)) {
                   let url: URL | null = null;
                   try { url = new URL(pasted); } catch { /* 普通文本按原样粘贴。 */ }
                   const path = url ? /^\/workspace\/([\w-]+)\/([\w-]+)\/?$/.exec(url.pathname) : null;
@@ -1933,18 +1933,14 @@ export function ReactSessionComposer(props: ComposerProps) {
                     const sessionId = props.sessionId;
                     void (async () => {
                       try {
-                        if (targetUrl.hostname.split(".")[0] !== await cloudDocsHostPrefix(docsTenantId)) {
-                          if (/^t-[a-f0-9]{32}\./.test(targetUrl.hostname)) {
-                            const docsSettings = readDenSettings();
-                            const { orgs } = await createDenClient({ baseUrl: docsSettings.baseUrl, token: docsSettings.authToken }).listOrgs();
-                            let organization = "";
-                            for (const org of orgs) if (targetUrl.hostname.startsWith(`${await cloudDocsHostPrefix(org.id)}.`)) { organization = org.name; break; }
-                            toast.warning(t(organization ? "cloud_docs.link_switch_organization" : "cloud_docs.link_other_organization", { organization }));
-                          }
+                        if (targetUrl.origin !== await configuredCloudDocsOrigin(docsTenantId)) return;
+                        const linkTenant = targetUrl.searchParams.get('tenantId');
+                        if (!linkTenant || linkTenant !== docsTenantId) {
+                          toast.warning(t('cloud_docs.link_other_organization'));
                           return;
                         }
                         const body = await requestDocs("read", { workspaceId: path[1], docId: path[2], mode: "outline" });
-                        if (draftScopeRef.current !== sessionId || readDenSettings().activeOrgId !== docsTenantId) return;
+                        if (draftScopeRef.current !== sessionId || cloudDocsTenantId() !== docsTenantId) return;
                         editorRef.current?.insertCloudDocReference({ tenantId: docsTenantId, workspaceId: path[1], docId: path[2], title: body.title ?? "" }, { link: pasted });
                       } catch (error) {
                         if (draftScopeRef.current === sessionId) toast.warning(t(error instanceof Error && ["cloud_docs.no_access", "cloud_docs.search_error"].includes(error.message) ? error.message : "cloud_docs.link_unavailable"));

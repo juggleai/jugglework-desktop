@@ -6,9 +6,18 @@ import { readFileSync } from "node:fs";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+mock.module("../src/react-app/domains/meeting/meeting-reminders", () => ({ MeetingReminderHost: () => null }));
+mock.module("../src/react-app/domains/meeting/meeting-page", () => ({ MeetingPage: () => null, MeetingDialog: () => null }));
+
+mock.module("../src/react-app/domains/meeting/meeting-room", () => ({ MeetingRoomHost: () => null }));
+
 let workspaceTarget: "local" | "remote" | null = null;
 let mounts = 0;
 let latestReviewProps: Record<string, any> | null = null;
+let latestCloudDocsProps: Record<string, any> | null = null;
+const openedDocs: unknown[] = [];
+mock.module("../src/app/lib/cloud-doc-tabs", () => ({ openCloudDocTab: (...args: unknown[]) => openedDocs.push(args) }));
+mock.module("../src/react-app/domains/cloud-docs/cloud-docs-page", () => ({ CloudDocsPage: (props: Record<string, any>) => { latestCloudDocsProps = props; return null; } }));
 mock.module("../src/react-app/shell/session-route", () => ({
   SessionRoute: (props: { surfaceVisible: boolean; embedded?: boolean; routeWorkspaceId: string; routeSessionId: string | null; onSessionTargetChange?: (workspaceId: string, sessionId: string) => void }) => {
     const [instance] = useState(() => ++mounts);
@@ -182,4 +191,28 @@ test("moves a stable portal container into the automation host instead of duplic
   expect(source).toContain("createPortal(sessionSurface, sessionContainer)");
   expect(source).toContain("host.appendChild(sessionContainer)");
   expect(source).toContain("onSessionHostChange={setAutomationSessionHost}");
+});
+
+
+test("导航页交给 AI 将引用交给保留的会话并打开对应文档，不把原生实例写入标签", async () => {
+  let navigate!: ReturnType<typeof useNavigate>;
+  let pathname = '';
+  const events: Event[] = [];
+  const priorWindow = globalThis.window;
+  (globalThis as any).window = { dispatchEvent: (event: Event) => { events.push(event); return true; } };
+  function Navigation() { navigate = useNavigate(); pathname = useLocation().pathname; return <WorkspaceAppRoute />; }
+  let renderer!: TestRenderer.ReactTestRenderer;
+  try {
+    await act(async () => { renderer = TestRenderer.create(<MemoryRouter initialEntries={["/workspace/workspace-1/session/session-1"]}><Navigation /></MemoryRouter>); });
+    await act(async () => { navigate('/cloud-docs/org-a'); });
+    const reference = { tenantId: 'org-a', workspaceId: 'native-ws', docId: 'doc-1', title: '方案', instanceId: 'native-instance', action: 'add', blockIds: ['b1'] };
+    openedDocs.length = 0;
+    await act(async () => { latestCloudDocsProps!.onAiReference(reference); });
+    expect(pathname).toBe('/workspace/workspace-1/session/session-1');
+    expect((events.at(-1) as CustomEvent).detail.sessionId).toBe('session-1');
+    expect(openedDocs).toEqual([['session-1', {tenantId:'org-a',workspaceId:'native-ws',docId:'doc-1',title:'方案'}, ['b1']]]);
+  } finally {
+    if (renderer) await act(async () => { renderer.unmount(); });
+    (globalThis as any).window = priorWindow;
+  }
 });

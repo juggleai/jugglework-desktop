@@ -77,3 +77,17 @@ test("排队草稿的引用随真实发送内容保留，不读取后来会话�
   store.clearQueuedDrafts("cloud-a");
   store.clearSession("cloud-b");
 });
+
+
+test("原生 AI 引用经输入、草稿恢复和发送后仍有范围，不携带实例或动作字段", () => {
+  const h = harness("请修改 ");
+  h.update(() => $insertCloudDocReference({ ...doc, blockIds: ["b1"], instanceId: "native-page", action: "add" } as any));
+  h.update(() => $getRoot().selectEnd());
+  const saved = h.draft();
+  expect(cloudDocReferences(saved)).toEqual([{ ...doc, blockIds: ["b1"] }]);
+  expect(decodeURIComponent(saved)).not.toContain("instanceId");
+  expect(decodeURIComponent(saved)).not.toContain("action");
+  const restored = harness("");
+  restored.editor.setEditorState(restored.editor.parseEditorState(JSON.stringify(h.editor.getEditorState().toJSON())));
+  expect(cloudDocReferences(restored.draft())).toEqual([{ ...doc, blockIds: ["b1"] }]);
+});

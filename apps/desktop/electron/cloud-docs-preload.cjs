@@ -78,6 +78,8 @@ window.addEventListener("message", (event) => {
     instanceId: message.instanceId,
     tenantId: message.tenantId,
     workspaceId: message.workspaceId,
+    ...(typeof message.reason === "string" && message.reason.length < 64 ? { reason: message.reason } : {}),
+    ...(typeof message.contextId === "string" ? { contextId: message.contextId } : {}),
     ...(message.type === "docs.layout" ? { layout: message.layout } : {}),
     ...(message.type === "docs.open-attachment"
       ? { docId: message.docId, blobId: message.blobId, name: message.name, mimeType: message.mimeType, size: message.size }
@@ -87,3 +89,6 @@ window.addEventListener("message", (event) => {
       : {}),
   });
 });
+
+// 关闭前仅请求原生本地持久化状态，不允许执行任意脚本或文件操作。
+ipcRenderer.on("jugglework:docs:prepare-close", (_event, message) => { window.postMessage({ channel: "jugglework-docs-prepare-close-command", message }, window.location.origin); });

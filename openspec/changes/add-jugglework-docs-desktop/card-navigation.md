@@ -1,3 +1,5 @@
+> 后续优化设计见 [单域名与 IM 解耦](../optimize-docs-single-origin-and-im-isolation/design.md)。其中 IM 分类前置、租户子域名和宿主边界的冲突要求以新设计为准；其余要求及旧版本验收事实保留。新设计待开发项以对应 tasks 为准。
+
 # 群卡片跳转与多组织访问契约
 
 本文是 Desktop 已实现云文档卡片展示、组织进入、跳转和组织切换生命周期的权威交互契约。消息载荷与投递以 [notification-delivery.md](../../../../jugglework-server/openspec/changes/add-jugglework-docs-integration/notification-delivery.md)为准，登录交接以 [api-contract.md](../../../../jugglework-server/openspec/changes/add-jugglework-docs-integration/api-contract.md)为准；真实 Electron 点击和完整联合验收边界见本文末尾。

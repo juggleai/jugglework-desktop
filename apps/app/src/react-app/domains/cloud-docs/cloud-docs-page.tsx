@@ -1,4 +1,5 @@
 import { rememberCloudDocsOrigin } from "./product-view";
+import type { CloudDocsAiReference } from "@/app/lib/cloud-docs-types";
 /** @jsxImportSource react */
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useNavigate } from "react-router-dom";
@@ -27,6 +28,7 @@ type Props = {
   targetSearch: string;
   active: boolean;
   workspaceId: string;
+  onAiReference?: (reference: CloudDocsAiReference) => void;
   onOpenAccount: () => void;
   onOpenHome: () => void;
   onOpenApps: () => void;
@@ -50,6 +52,8 @@ export function CloudDocsPage(props: Props) {
   const nativeBounds = useCloudDocsBounds(host);
   const active = useRef(props.active);
   active.current = props.active;
+  const referenceHandler = useRef(props.onAiReference);
+  referenceHandler.current = props.onAiReference;
   const updateLayout = useRef<() => void>(() => {});
   useLayoutEffect(() => { updateLayout.current(); }, [props.active]);
   const activeInstance = useRef<string | null>(null);
@@ -159,6 +163,10 @@ export function CloudDocsPage(props: Props) {
     const unsubscribeLayout = bridge.onLayout((value) => {
       if (stillCurrent() && value.instanceId === instanceId) setLayout(value.layout);
     });
+    const unsubscribeReference = bridge.onAiReference(reference => {
+      if (active.current && stillCurrent() && reference.instanceId === instanceId && reference.tenantId === props.tenantId)
+        referenceHandler.current?.(reference);
+    });
     const unsubscribeTheme = subscribeToTheme(updateAppearance);
     const unsubscribeLocale = subscribeLocale(updateAppearance);
     const appearanceObserver = new MutationObserver(updateAppearance);
@@ -231,6 +239,7 @@ export function CloudDocsPage(props: Props) {
       unsubscribeLocale();
       unsubscribe();
       unsubscribeLayout();
+      unsubscribeReference();
       if (activeInstance.current === instanceId) activeInstance.current = null;
       window.removeEventListener("resize", updateBounds);
       document.removeEventListener("visibilitychange", updateBounds);

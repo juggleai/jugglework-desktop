@@ -198,6 +198,7 @@ if (process.env.JUGGLEWORK_ELECTRON_USE_MOCK_KEYCHAIN === "1") {
 }
 const DOCS_PAGE_URL = "https://juggle.im/docs";
 const applicationMenu = createApplicationMenu({
+  ...(isDevMode ? { restartDevelopmentApp: () => relaunchDesktopApp() } : {}),
   appName: APP_NAME,
   docsUrl: DOCS_PAGE_URL,
   getWindow: () => createMainWindow(),
@@ -1026,8 +1027,6 @@ async function installBundledSkills() {
   return results;
 }
 
-/** @type {(scope:{sourceServerOrigin:string,sourceUserId:string,tenantId:string})=>Promise<void>} 当前来源账号和组织的云文档撤权收口。 */
-let cloudDocsScopeRevoker = async (_scope) => {};
 const cloudDocAttachments = createCloudDocAttachments({
   root: path.join(app.getPath("userData"), "cloud-doc-attachments"),
   openReadOnly: file => fileWindows.openLocal(file, { readOnly: true }),
@@ -1035,7 +1034,8 @@ const cloudDocAttachments = createCloudDocAttachments({
 });
 const cloudDocsPanel = createCloudDocsPanel({
   getWindow: () => mainWindow,
-  onScopeRevoked: scope => cloudDocsScopeRevoker(scope),
+  getWindows: () => [mainWindow, ...fileWindows.windows()].filter(Boolean),
+  onDocumentChanged: (window, instanceId, document) => fileWindows.updateCloudDocument(window, instanceId, document),
   attachments: cloudDocAttachments,
 });
 
@@ -1514,6 +1514,7 @@ const fileHostClient = createManagedRuntimeClient({
 const fileEditor = createFileEditor({
   client: fileHostClient,
   getWindows: () => [mainWindow, ...fileWindows.windows()].filter(Boolean),
+  onDocumentChanged: (window, instanceId, document) => fileWindows.updateCloudDocument(window, instanceId, document),
   authorizeFileEditor: (event, input) => fileWindows.authorizeFileEditor(event, input),
   canReceiveFileEditor: (window, input) => fileWindows.canReceiveFileEditor(window, input),
 });
@@ -1568,10 +1569,6 @@ const officePanel = createOfficePanel({
     },
   },
 });
-cloudDocsScopeRevoker = async scope => {
-  cloudDocsPanel.closeScope(scope);
-  await cloudDocAttachments.clearScope(scope);
-};
 const fileWindowIconPath = app.isPackaged ? path.join(process.resourcesPath, "app-dist/file-window-logo.png") : path.resolve(__dirname, "../../app/public/file-window-logo.png");
 const fileWindowDock = createFileWindowDock({
   iconPath: fileWindowIconPath,
@@ -1599,6 +1596,7 @@ const fileContextBootstrap = createFileContextBootstrap({
   },
 });
 const fileWindows = createFileWindows({
+  cloudDocs: cloudDocsPanel,
   getAppearance: () => mainWindow && !mainWindow.isDestroyed()
     ? readFileWindowAppearance(mainWindow, fileContextFallback())
     : fileContextBootstrap.initialize().catch(() => fileContextFallback()),
@@ -3237,6 +3235,23 @@ const desktopCommandHandlers = {
   },
 };
 
+let developmentRelaunchRequested = false;
+
+/** 开发启动器保留前端服务并接管重启；独立启动及正式包沿用 Electron 原生重启。 */
+function relaunchDesktopApp() {
+  if (isDevMode && process.connected && typeof process.send === "function") {
+    developmentRelaunchRequested = true;
+  } else {
+    relaunchAfterCleanup = true;
+  }
+  app.quit();
+}
+
+// TIPS：完成保存和清理后才通知启动器。取消退出不会让下一次普通退出意外重启。
+app.on("will-quit", () => {
+  if (developmentRelaunchRequested) process.send?.({ type: "jugglework:dev-relaunch" });
+});
+
 if (isDevMode) {
   desktopCommandHandlers.__evalRelaunch = async () => {
     // Chromium persists localStorage/leveldb lazily; force a flush so the
@@ -3249,11 +3264,7 @@ if (isDevMode) {
       // Best effort — never block the relaunch on a flush failure.
     }
     setTimeout(() => {
-      app.relaunch();
-      // Graceful quit (not app.exit) so before-quit teardown runs and managed
-      // sidecars are stopped — a hard exit orphans them and they can hold
-      // ports (e.g. the CDP debug port) the relaunched instance needs.
-      app.quit();
+      relaunchDesktopApp();
     }, 150);
     return { ok: true };
   };
@@ -3435,23 +3446,27 @@ async function createMainWindow() {
 
   let closingOfficeWindow = false;
   mainWindow.on("close", (event) => {
-    if (event.defaultPrevented || quitCleanupComplete || quitCleanupInProgress || !officePanel.hasViews()) return;
+    if (event.defaultPrevented || quitCleanupComplete || quitCleanupInProgress || (!officePanel.hasViews() && !cloudDocsPanel.hasViews(mainWindow))) return;
     event.preventDefault();
     if (closingOfficeWindow) return;
     closingOfficeWindow = true;
     const window = mainWindow;
-    void officePanel.closeWindow(window).then((confirmed) => { if (confirmed && window && !window.isDestroyed()) window.destroy(); })
+    void (async () => {
+      if (!await cloudDocsPanel.prepareQuit(window)) throw new Error("云文档尚未完成本地保存，请稍后重试");
+      return officePanel.closeWindow(window);
+    })().then((confirmed) => { if (confirmed && window && !window.isDestroyed()) window.destroy(); })
       .catch((error) => dialog.showErrorBox("文档未能保存，已取消关闭", error instanceof Error ? error.message : String(error)))
       .finally(() => { closingOfficeWindow = false; });
   });
 
   const officeComposerContents = mainWindow.webContents;
+  const docsOwnerWindow = mainWindow;
   mainWindow.on("closed", () => {
     windowRecovery.dispose();
     desktopNotificationActionRelay.reset(officeComposerContents.id);
     desktopPet?.closeHost();
     officeSelectionBridge.cancel(officeComposerContents);
-    cloudDocsPanel.close();
+    cloudDocsPanel.closeWindow(docsOwnerWindow);
     browserPanel.destroy();
     void toonFactoryRuntime.close().catch(() => {});
     mainWindow = null;
@@ -3559,8 +3574,7 @@ ipcMain.handle("jugglework:shell:openExternal", async (_event, url) => {
   return openExternalUrl(url.trim());
 });
 ipcMain.handle("jugglework:shell:relaunch", async () => {
-  relaunchAfterCleanup = true;
-  app.quit();
+  relaunchDesktopApp();
 });
 ipcMain.handle("jugglework:system:architecture", async () => resolveArchitectureInfo());
 ipcMain.handle("jugglework:system:microphoneStatus", async () => {
@@ -3606,6 +3620,7 @@ const { ensureAutoUpdater } = registerUpdaterIpc({
     if (!(await fileEditor.prepareQuit())) throw new Error("已取消更新，文件修改保持打开");
     // TIPS: 更新器会先停止 Runtime，必须在此之前完成全部 Office 文档的保存或取消决定。
     if (!(await officePanel.prepareQuit())) throw new Error("已取消更新，Office 文档保持打开");
+    if (!(await cloudDocsPanel.prepareQuit())) throw new Error("云文档尚未完成本地保存，已取消更新");
     fileWindows.dispose();
     await disposeRuntimeBeforeQuit();
     // Keep ordinary close-to-tray behavior active while shutdown is pending.
@@ -3630,12 +3645,15 @@ if (!app.requestSingleInstanceLock()) {
       try {
         if (!await fileEditor.prepareQuit() || !await officePanel.prepareQuit()) {
           relaunchAfterCleanup = false;
+          developmentRelaunchRequested = false;
           quitCleanupInProgress = false;
           return;
         }
+        if (!await cloudDocsPanel.prepareQuit()) throw new Error("云文档尚未完成本地保存，请稍后重试");
       } catch (error) {
         relaunchAfterCleanup = false;
         dialog.showErrorBox("文档未能保存，已取消退出", error instanceof Error ? error.message : String(error));
+        developmentRelaunchRequested = false;
         quitCleanupInProgress = false;
         return;
       }

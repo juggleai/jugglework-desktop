@@ -1,3 +1,4 @@
+import { FileCloudDocView } from "../../cloud-docs/file-cloud-doc-view";
 import { CloudShareButton } from "../../cloud-docs/cloud-share-button";
 import { canUploadToCloud } from "../../cloud-docs/upload-file";
 import { OfficeCloudUploadButton } from "../office/office-cloud-upload-button";
@@ -189,6 +190,7 @@ export function FileWindowApp({ onAppearanceChange }: { onAppearanceChange?: (ap
       : undefined,
   );
   const save = async () => {
+    if (active?.cloudDoc) return;
     if (!client || !state || !active || active.readOnly) return;
     setBusy(true);
     try {
@@ -323,7 +325,7 @@ export function FileWindowApp({ onAppearanceChange }: { onAppearanceChange?: (ap
       </header>
       <main ref={contentRef} className={`file-window-content ${canConverse && conversationOpen ? "has-conversation" : ""}`} style={{ "--conversation-width": `${conversationWidth}%` } as React.CSSProperties}>
       <section className="file-window-document">
-      {active && (
+      {active && !active.cloudDoc && (
         <FileEditorToolbar
           officeDocumentId={active.documentId}
           name={active.name}
@@ -370,12 +372,13 @@ export function FileWindowApp({ onAppearanceChange }: { onAppearanceChange?: (ap
           {active.cloudAttachment && <span className="text-xs text-muted-foreground">{t("cloud_docs.attachment_readonly")}</span>}
         </FileEditorToolbar>
       )}
-      <div className="file-window-viewer">
+      <div className="file-window-viewer" style={{ position: "relative" }}>
+        {state?.tabs.filter(tab => tab.cloudDoc).map(tab => <FileCloudDocView key={tab.cloudDoc!.instanceId} tab={tab} sessionId={state.sessionId} active={tab.path === state.activePath} appearance={state.appearance} />)}
         {error ? (
           <PreviewError message={error} />
         ) : !state || !client ? (
           <PreviewLoading />
-        ) : active ? (
+        ) : active?.cloudDoc ? null : active ? (
           <FileViewer
             key={active.path}
             client={client}

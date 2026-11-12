@@ -11,7 +11,7 @@ const NATIVE_MENU_CHECK_UPDATES_EVENT = "jugglework:native-menu:check-updates";
 const NATIVE_MENU_ZOOM_EVENT = "jugglework:native-menu:zoom";
 
 /** 创建应用菜单；活动文件窗口只改变显示名称，品牌与应用身份仍由主应用维护。 */
-export function createApplicationMenu({ appName, docsUrl, getWindow }) {
+export function createApplicationMenu({ appName, docsUrl, getWindow, restartDevelopmentApp = null }) {
   let applicationMenuVisible = process.platform === "darwin";
   let currentAppName = appName;
   let fileWindowActive = false;
@@ -151,6 +151,7 @@ export function createApplicationMenu({ appName, docsUrl, getWindow }) {
           { type: "separator" },
           { role: "reload" },
           { role: "forceReload" },
+          ...(restartDevelopmentApp ? [{ label: "重启开发版", click: restartDevelopmentApp }] : []),
           // 打开/关闭开发者控制台，统一使用 Cmd/Ctrl+Shift+I 快捷键。
           { role: "toggleDevTools", accelerator: "CommandOrControl+Shift+I" },
           { type: "separator" },

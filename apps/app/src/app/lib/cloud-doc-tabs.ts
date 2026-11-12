@@ -10,9 +10,11 @@ type State = { tabs: CloudDocTab[]; active: string | null; highlight?: CloudDocH
 
 const listeners = new Set<() => void>();
 const cache = new Map<string, State>();
+const closers = new Map<string, () => Promise<boolean>>();
 const empty: State = { tabs: [], active: null };
 const storageKey = (sessionId: string) => `jugglework-cloud-doc-tabs:${sessionId}`;
 const tabKey = (tab: Pick<CloudDocTab, "workspaceId" | "docId">) => `${tab.workspaceId}/${tab.docId}`;
+const closerKey = (sessionId: string, key: string) => `${sessionId}\0${key}`;
 
 function load(sessionId: string): State {
   const cached = cache.get(sessionId);
@@ -58,15 +60,34 @@ export function activateCloudDocTab(sessionId: string, key: string | null) {
   });
 }
 
-/** 关闭云文档标签；当前文档关闭后选中相邻云文档，没有云文档时回到本地文件。 */
-export function closeCloudDocTab(sessionId: string, key: string) {
+/**
+ * 登记云文档标签的原生关闭检查。
+ * @param sessionId 会话 id
+ * @param key 云文档标签 key
+ * @param close 等待原生本地保存并关闭实例，保存未确认时返回 false
+ */
+export function registerCloudDocTabCloser(sessionId: string, key: string, close: () => Promise<boolean>) {
+  const id = closerKey(sessionId, key);
+  closers.set(id, close);
+  return () => { if (closers.get(id) === close) closers.delete(id); };
+}
+
+/** 关闭云文档标签；原生本地保存确认后才移除标签，没有云文档时回到本地文件。 */
+export async function closeCloudDocTab(sessionId: string, key: string) {
+  const closer = closers.get(closerKey(sessionId, key));
+  if (closer) {
+    try { if (!await closer()) return false; }
+    catch { return false; }
+  }
   const state = load(sessionId);
   const index = state.tabs.findIndex(item => tabKey(item) === key);
+  if (index < 0) return true;
   const tabs = state.tabs.filter(item => tabKey(item) !== key);
   const active = state.active === key ? (tabs[Math.min(index, tabs.length - 1)] ? tabKey(tabs[Math.min(index, tabs.length - 1)]) : null) : state.active;
   save(sessionId, { ...state, tabs, active });
   if (!active && useFilesPanelStore.getState().sessions[sessionId]?.activeKey === "cloud")
     useFilesPanelStore.getState().setActiveKey(sessionId, "files");
+  return true;
 }
 
 export { tabKey as cloudDocTabKey };

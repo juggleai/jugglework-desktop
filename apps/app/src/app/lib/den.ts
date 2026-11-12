@@ -3622,6 +3622,7 @@ export type DenDocsLaunch = {
   expiresAt: string;
   tenantId: string;
   bootstrapUrl: string;
+  docsOrigin: string;
   presentation: { instanceId: string; mode: 'product' | 'manage' };
 };
 
@@ -3632,21 +3633,22 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
   const token = options.token?.trim() ?? null;
 
   return {
-    /** 核对当前已授权组织的云文档群／助手及 SDK 会话归属，不依赖 Docs 开关。 */
-    docsConversationContext: (tenantId: string, groupIds: string[]) => requestJson<unknown>(baseUrls, "/api/v1/docs/notifications/context", {
-      method: "POST", token, organizationId: tenantId, body: { tenantId, groupIds },
-    }),
     /** 卡片只表达定位；打开前按当前组织复核持久事件及原投递目标。 */
     validateDocsCard: (input: { tenantId: string; contractVersion: 1; eventId: string; pageId: string; commentId?: string; kind: string; occurredAt: string; part: "group" | "direct"; conversationId: string }) =>
       requestJson<{ valid: boolean }>(baseUrls, "/api/v1/docs/notifications/validate", { method: "POST", token, organizationId: input.tenantId, body: input }),
     /** 为当前明确组织申请云文档一次性登录交接。 */
-    launchCloudDocs: (input: {
+    launchCloudDocs: async (input: {
       tenantId: string;
       target: { kind: 'home' | 'page' | 'manage'; pageId?: string; workspaceId?: string; commentId?: string };
       presentation: DenDocsLaunch['presentation'];
-    }) => requestJson<DenDocsLaunch>(baseUrls, '/api/v1/docs/launch', {
-      method: 'POST', token, body: input,
-    }),
+    }): Promise<DenDocsLaunch> => {
+      const config = await requestJson<{ docs?: { enabled: boolean; publicOrigin: string | null } }>(baseUrls, '/api/runtime-config');
+      if (!config.docs?.enabled || !config.docs.publicOrigin) throw new Error('docs_disabled');
+      const launch = await requestJson<DenDocsLaunch>(baseUrls, '/api/v1/docs/launch', { method: 'POST', token, body: input });
+      return { ...launch, docsOrigin: new URL(config.docs.publicOrigin).origin };
+    },
+    /** 读取已有运行配置中的 Docs 入口，不申请交接凭据。 */
+    docsConfiguration: () => requestJson<{ docs?: { enabled: boolean; publicOrigin: string | null } }>(baseUrls, '/api/runtime-config'),
     /** The resolved deployment origin and its derived `/jwork/api` root. */
     baseUrls,
 

@@ -1,3 +1,4 @@
+import { fileCloudDocView } from "@/app/lib/cloud-doc-turn";
 import { createDenClient, readDenSettings, readDenUserId, isCurrentDenSessionRevocation } from "@/app/lib/den";
 import { denSettingsChangedEvent, denSessionUpdatedEvent, denSessionRevokedEvent } from "@/app/lib/den-session-events";
 import type { CloudDocsBridge } from "@/app/lib/cloud-docs-types";
@@ -46,6 +47,8 @@ const pool = createProductViewPool({
 let installed = false;
 /** 复用组织后台页，搜索、链接校验、AI 和上传共用；授权变化会立即清理。 */
 export async function withProductView<T>(bridge: CloudDocsBridge, tenantId: string, run: (instanceId: string) => Promise<T>) {
+  const fileView = fileCloudDocView();
+  if (fileView?.tenantId === tenantId) return run(fileView.instanceId);
   if (!installed) {
     installed = true;
     let scope = cloudDocsScope();
@@ -65,10 +68,19 @@ export async function withProductView<T>(bridge: CloudDocsBridge, tenantId: stri
   return pool.run(cloudDocsScope(tenantId), run);
 }
 
-/** 当前组织域名前缀在本机计算，不创建登录交接凭据。 */
-export async function cloudDocsHostPrefix(tenantId: string) {
-  const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(tenantId));
-  return `t-${[...new Uint8Array(hash)].map(byte => byte.toString(16).padStart(2, "0")).join("").slice(0, 32)}`;
+/** 固定域名从当前权威 Work 读取；仅缓存来源，绝不为链接申请 grant。 */
+export async function configuredCloudDocsOrigin(tenantId: string) {
+  const fileView = fileCloudDocView();
+  if (fileView?.tenantId === tenantId && fileView.docsOrigin) return fileView.docsOrigin;
+  const known = cloudDocsOrigin(tenantId);
+  if (known) return known;
+  const settings = readDenSettings();
+  const result = await createDenClient({ baseUrl: settings.baseUrl, token: settings.authToken }).docsConfiguration();
+  if (!result.docs?.enabled || !result.docs.publicOrigin) return undefined;
+  if (settings.baseUrl !== readDenSettings().baseUrl || settings.authToken !== readDenSettings().authToken) return undefined;
+  const origin = new URL(result.docs.publicOrigin).origin;
+  rememberCloudDocsOrigin(tenantId, origin);
+  return origin;
 }
 
 // 开发热更新也释放旧模块持有的后台页，避免遗留无主原生实例。

@@ -1,3 +1,6 @@
+import { toast } from "sonner";
+import { t } from "@/i18n";
+import { openCloudDocTab } from "@/app/lib/cloud-doc-tabs";
 import { MeetingReminderHost } from "../domains/meeting/meeting-reminders";
 import { MeetingPage } from "../domains/meeting/meeting-page";
 import { MeetingRoomHost } from "../domains/meeting/meeting-room";
@@ -335,6 +338,14 @@ function WorkspaceAppRouteContent() {
             targetSearch={cloudDocsVisible ? location.search : retainedDocs!.search}
             active={cloudDocsVisible}
             workspaceId={activeSession.workspaceId}
+            onAiReference={reference => {
+              const sessionId = activeSession.sessionId;
+              if (!sessionId) { toast.info(t("cloud_docs.select_session")); navigate(sessionPath); return; }
+              // TIPS：会话面板保持挂载，先向指定会话插入引用，再显示该会话，不能扩大其他会话的范围。
+              window.dispatchEvent(new CustomEvent("jugglework:cloud-doc-reference", { detail: { sessionId, reference } }));
+              openCloudDocTab(sessionId, { tenantId: reference.tenantId, workspaceId: reference.workspaceId, docId: reference.docId, title: reference.title }, reference.blockIds);
+              navigate(sessionPath);
+            }}
             onOpenAccount={() => openSurfaceSettings("cloud-account", location.pathname)}
             onOpenHome={() => navigate(sessionPath)}
             onOpenApps={() => navigate(workspaceAppsRoute(activeSession.workspaceId))}

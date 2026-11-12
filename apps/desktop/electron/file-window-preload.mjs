@@ -128,6 +128,18 @@ contextBridge.exposeInMainWorld("__JUGGLEWORK_ELECTRON__", {
       return () => ipcRenderer.removeListener("jugglework:file-editor:changed", handler);
     },
   },
+  cloudDocs: {
+    status: instanceId => ipcRenderer.invoke("jugglework:docs:status", instanceId),
+    setBounds: input => ipcRenderer.send("jugglework:docs:bounds", input),
+    setAppearance: input => ipcRenderer.send("jugglework:docs:appearance", input),
+    layoutCommand: input => ipcRenderer.send("jugglework:docs:layout-command", input),
+    snapshot: id => ipcRenderer.invoke("jugglework:docs:snapshot", id),
+    onState: callback => listen("jugglework:docs:state", callback),
+    onLayout: callback => listen("jugglework:docs:layout", callback),
+    onAiReference: callback => listen("jugglework:docs:ai-reference", callback),
+    api: input => ipcRenderer.invoke("jugglework:docs:api", input),
+    highlightBlocks: input => ipcRenderer.send("jugglework:docs:highlight-blocks", input),
+  },
   fileWindow: {
     subscribeSessionEvents,
     /** 确认本机文件窗口能力已经注册。 */

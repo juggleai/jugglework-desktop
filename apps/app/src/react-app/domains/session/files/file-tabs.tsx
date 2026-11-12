@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 import * as React from "react";
-import { Cloud, GitCompare, X } from "lucide-react";
+import { Cloud, GitCompare, X, ArrowUpRight } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -31,7 +31,7 @@ type FileTabsProps = {
   onSelect: (path: string) => void;
   onClose: (path: string) => void;
   /** 云文档与本地文件共用标签样式和横向滚动容器。 */
-  cloudTabs?: Array<{ key: string; title: string; active: boolean; onSelect: () => void; onClose: () => void }>;
+  cloudTabs?: Array<{ key: string; title: string; active: boolean; onSelect: () => void; onClose: () => void; onOpenWindow?: () => void }>;
 };
 
 /**
@@ -47,8 +47,8 @@ type FileTabsProps = {
 export function FileTabs({ tabs, activePath, dirtyPaths, changesTab, onSelect, onClose, cloudTabs = [] }: FileTabsProps) {
   if (tabs.length === 0 && !changesTab && !cloudTabs.length) return null;
   const documents = [
-    ...tabs.map(tab => ({ key: `file:${tab.path}`, title: tab.path, name: tab.name, active: tab.path === activePath, dirty: dirtyPaths.has(tab.path), cloud: false, select: () => onSelect(tab.path), close: () => onClose(tab.path) })),
-    ...cloudTabs.map(tab => ({ key: `cloud:${tab.key}`, title: `${t("cloud_docs.title")} · ${tab.title}`, name: tab.title, active: tab.active, dirty: false, cloud: true, select: tab.onSelect, close: tab.onClose })),
+    ...tabs.map(tab => ({ key: `file:${tab.path}`, title: tab.path, name: tab.name, active: tab.path === activePath, dirty: dirtyPaths.has(tab.path), cloud: false, openWindow: undefined as (() => void) | undefined, select: () => onSelect(tab.path), close: () => onClose(tab.path) })),
+    ...cloudTabs.map(tab => ({ key: `cloud:${tab.key}`, title: `${t("cloud_docs.title")} · ${tab.title}`, name: tab.title, active: tab.active, dirty: false, cloud: true, openWindow: tab.onOpenWindow, select: tab.onSelect, close: tab.onClose })),
   ];
 
   return (
@@ -81,6 +81,7 @@ export function FileTabs({ tabs, activePath, dirtyPaths, changesTab, onSelect, o
           // TIPS: 标签宽度跟着文件名走，最宽到 9rem 就截断——短文件名不再占满一格，
           // 长文件名也不会把标签栏撑开。
           <div key={tab.key} className="group relative min-w-0 max-w-36 shrink-0">
+            {tab.openWindow && <Button type="button" variant="ghost" size="icon-xs" title={t("artifact.open_window")} aria-label={t("artifact.open_window")} className="absolute end-6 top-1/2 z-10 -translate-y-1/2 opacity-0 group-hover:opacity-100 focus:opacity-100" onClick={tab.openWindow}><ArrowUpRight className="size-3" /></Button>}
             <Button
               type="button"
               variant="ghost"
@@ -96,6 +97,7 @@ export function FileTabs({ tabs, activePath, dirtyPaths, changesTab, onSelect, o
                   ? "pr-7"
                   : "pr-2 group-hover:pr-7 group-focus-within:pr-7",
                 active && "bg-muted/80 text-foreground",
+                tab.openWindow && "group-hover:pr-12",
               )}
             >
               {tab.cloud && <Cloud className="size-3.5 shrink-0" aria-hidden="true" />}

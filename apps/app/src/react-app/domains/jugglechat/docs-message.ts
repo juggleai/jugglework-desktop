@@ -39,16 +39,6 @@ export type ChatConnectionScope = Readonly<{
   authFingerprint: string;
   imUserId: string;
 }>;
-export type DocsConversationContext = {
-  tenantId: string;
-  botIMUserId: string;
-  groupId: string | null;
-  groups: Array<{
-    conversationId: string;
-    managed: boolean;
-    currentTenant: boolean;
-  }>;
-};
 export type DocsMessageSource = {
   scope: ChatConnectionScope;
   payload: DocsCardPayload;
@@ -98,84 +88,18 @@ export function parseDocsCard(
   };
 }
 
-/** 核对源服务分类的完整性，缺页或其他组织响应不当作普通群放行。 */
-export function parseDocsConversationContext(
-  value: unknown,
-  tenantId: string,
-  requested: string[],
-): DocsConversationContext {
-  const c = value as DocsConversationContext;
-  if (
-    !c ||
-    c.tenantId !== tenantId ||
-    typeof c.botIMUserId !== "string" ||
-    (c.botIMUserId !== "" && !bot.test(c.botIMUserId)) ||
-    (c.groupId !== null &&
-      (typeof c.groupId !== "string" || !id.test(c.groupId))) ||
-    !Array.isArray(c.groups)
-  )
-    throw new Error("invalid_docs_context");
-  const seen = new Set<string>();
-  for (const item of c.groups) {
-    if (
-      !item ||
-      !requested.includes(item.conversationId) ||
-      seen.has(item.conversationId) ||
-      typeof item.managed !== "boolean" ||
-      typeof item.currentTenant !== "boolean" ||
-      (item.currentTenant && !item.managed)
-    )
-      throw new Error("invalid_docs_context");
-    seen.add(item.conversationId);
-  }
-  if (seen.size !== requested.length)
-    throw new Error("incomplete_docs_context");
-  return c;
-}
-
-/** 分类整个会话；群名、最新消息类型和 AppKey 都不能替代源归属。 */
-export function docsConversationVisible(
-  conversation: Pick<ChatConversation, "conversationId" | "conversationType">,
-  context: DocsConversationContext | null,
-): boolean {
-  if (conversation.conversationType === 1)
-    return (
-      !bot.test(conversation.conversationId) ||
-      conversation.conversationId === context?.botIMUserId
-    );
-  if (conversation.conversationType !== 2) return true;
-  const group = context?.groups.find(
-    (item) => item.conversationId === conversation.conversationId,
-  );
-  return !!group && (!group.managed || group.currentTenant);
-}
-
-/** 在历史或实时消息进入当前组织状态之前绑定已核对来源；转发消息只保留通用兜底。 */
-export function bindDocsMessage(
-  message: ChatMessage,
-  scope: ChatConnectionScope,
-  context: DocsConversationContext | null,
-): ChatMessage {
+/** 仅绑定接收连接的组织；卡片点击仍需源服务核验真实事件和实际会话。 */
+export function bindDocsMessage(message: ChatMessage, scope: ChatConnectionScope): ChatMessage {
   const result: BoundMessage = { ...message };
   delete result[boundSource];
   const payload = parseDocsCard(message);
-  if (
-    !context ||
-    !payload ||
-    payload.tenantId !== scope.tenantId ||
-    context.tenantId !== scope.tenantId ||
-    message.sender?.id !== context.botIMUserId ||
-    message.isSender
-  )
-    return result;
-  const expected =
-    payload.part === "group"
-      ? message.conversationType === 2 &&
-        message.conversationId === context.groupId
-      : message.conversationType === 1 &&
-        message.conversationId === context.botIMUserId;
-  if (expected && docsConversationVisible(message, context))
-    result[boundSource] = { scope, payload: Object.freeze(payload) };
+  const sender = message.sender?.id;
+  // TIPS：普通会话不再查询 Docs 分类；格式和连接组织只决定本地候选动作，不授予文档权限。
+  if (!payload || payload.tenantId !== scope.tenantId || !sender || !bot.test(sender) || message.isSender) return result;
+  const candidate = payload.part === "group"
+    ? message.conversationType === 2 && !!message.conversationId
+    : message.conversationType === 1 && message.conversationId === sender;
+  if (candidate) result[boundSource] = { scope, payload: Object.freeze(payload) };
   return result;
 }
 
