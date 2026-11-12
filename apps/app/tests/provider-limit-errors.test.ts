@@ -206,7 +206,7 @@ describe("gateway transport provider errors", () => {
     };
     expect(classifyProviderError(error)).toBe("gateway_credential_invalid");
     const text = describeOpencodeSessionError(error);
-    expect(text).toContain("JuggleWork gateway sign-in expired");
+    expect(text).toContain("JuggleWork gateway connection needs refresh");
     expect(text).toContain("sign in to JuggleWork again");
     expect(text).toContain("Status: 401");
   });

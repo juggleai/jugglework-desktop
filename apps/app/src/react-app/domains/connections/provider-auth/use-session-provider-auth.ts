@@ -16,6 +16,7 @@ import { useReloadCoordinator } from "@/react-app/shell/reload-coordinator";
 import { getReactQueryClient } from "@/react-app/infra/query-client";
 import { type RouteWorkspace, workspaceLabel } from "@/react-app/shell/route-workspaces";
 import { createProviderAuthStore, useProviderAuthStoreSnapshot } from "./store";
+import { subscribeGatewayCredentialRepair } from "./gateway-credential-repair";
 import { isCloudProviderSyncReady } from "./cloud-provider-readiness";
 import { invalidateMediaModelQueries, withProviderMediaModelRefresh } from "../media-model-queries";
 
@@ -181,6 +182,30 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
       store.dispose();
     };
   }, [store]);
+
+  const gatewayCredentialRepairsInFlightRef = useRef(new Set<string>());
+  useEffect(() => subscribeGatewayCredentialRepair((request) => {
+    const workspaceId = selectedWorkspaceEndpoint?.workspaceId ?? null;
+    if (!workspaceId || request.workspaceId !== workspaceId) return;
+    const repairKey = `${workspaceId}::${request.providerId ?? "single-cloud-provider"}`;
+    if (gatewayCredentialRepairsInFlightRef.current.has(repairKey)) return;
+
+    gatewayCredentialRepairsInFlightRef.current.add(repairKey);
+    void store.repairGatewayCredential(request.providerId)
+      .then((repaired) => {
+        if (repaired) {
+          console.info(
+            `[gateway-credential-repair] refreshed ${request.providerId ?? "the workspace cloud provider"}; retry the failed message`,
+          );
+        }
+      })
+      .catch((error) => {
+        console.warn("[gateway-credential-repair] automatic refresh failed", error);
+      })
+      .finally(() => {
+        gatewayCredentialRepairsInFlightRef.current.delete(repairKey);
+      });
+  }), [selectedWorkspaceEndpoint?.workspaceId, store]);
 
   useEffect(() => {
     if (!opencodeClient || !selectedWorkspaceId) return;

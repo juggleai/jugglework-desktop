@@ -47,3 +47,20 @@ A reload request raised by the cloud provider applied check SHALL stay pending f
 #### Scenario: Another workspace reloads first
 - **WHEN** workspace A has a scoped pending reload and the user reloads workspace B
 - **THEN** A stays pending, and when A is selected again and idle the coordinator reloads it automatically
+
+### Requirement: Rejected gateway credentials are repaired without replaying the failed turn
+Desktop SHALL treat only an explicit gateway-credential rejection as a repairable imported-provider failure. It SHALL re-fetch the matching organization provider connection, update the workspace-scoped OpenCode authentication and credential mirror through the existing import path, and request an engine reload. It SHALL preserve the failed turn and SHALL NOT automatically replay the message or its tool calls.
+
+#### Scenario: Engine rejects a cached gateway credential
+- **WHEN** a live session returns 401 and explicitly reports that the gateway credential is missing, revoked, or expired for an imported provider
+- **THEN** Desktop refreshes that provider connection once for the workspace and tells the user to retry the preserved message after recovery
+
+#### Scenario: Provider returns an ordinary authentication failure
+- **WHEN** a provider returns 401 without the explicit gateway-credential rejection
+- **THEN** Desktop keeps the provider's normal authentication error flow and does not refresh an organization gateway credential
+
+#### Scenario: Rejection omits the provider identity
+- **WHEN** the gateway rejection omits a provider ID and the workspace has exactly one imported organization provider
+- **THEN** Desktop may repair that sole provider
+- **WHEN** the workspace has more than one imported organization provider
+- **THEN** Desktop does not guess a repair target

@@ -51,6 +51,10 @@ import {
   upsertLivePermission,
   upsertLiveQuestion,
 } from "./workspace-interactions";
+import {
+  gatewayCredentialRepairRequestFromError,
+  requestGatewayCredentialRepair,
+} from "@/react-app/domains/connections/provider-auth/gateway-credential-repair";
 
 /** 全局通知仍由主窗口消费，文件窗口只维护自己的会话投影。 */
 function notifyDesktopEvent(event: DesktopNotificationEvent) {
@@ -1341,6 +1345,14 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
         }
         settleTerminalSessionStatus(entry, workspaceId, sessionId);
         return;
+      }
+      const gatewayCredentialRepair = gatewayCredentialRepairRequestFromError({
+        workspaceId,
+        sessionId,
+        error: sessionError,
+      });
+      if (gatewayCredentialRepair) {
+        requestGatewayCredentialRepair(gatewayCredentialRepair);
       }
       const errorText = describeOpencodeSessionError(sessionError);
       const runStartedAt = takeTaskRunStart(sessionId);

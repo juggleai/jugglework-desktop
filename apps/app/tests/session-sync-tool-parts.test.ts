@@ -23,6 +23,7 @@ import { deriveRenderedSessionMessages } from "../src/react-app/domains/session/
 import { groupMessages, isMessageGroup } from "../src/components/chat/utils";
 import { snapshotToUIMessages } from "../src/react-app/domains/session/sync/usechat-adapter";
 import { getLiveActivityKind } from "../src/lib/live-activity";
+import { subscribeGatewayCredentialRepair } from "../src/react-app/domains/connections/provider-auth/gateway-credential-repair";
 
 afterEach(() => {
   getReactQueryClient().clear();
@@ -1526,6 +1527,54 @@ describe("tool part mapper", () => {
       expect(useSessionActivityStore.getState().getStatus(workspaceId, sessionId)).toBe("error");
       expect(statusUpdates).toEqual([{ sessionId, status: { type: "idle" } }]);
     } finally {
+      release();
+      cleanup();
+      useSessionActivityStore.getState().removeSession(workspaceId, sessionId);
+    }
+  });
+
+  test("session.error requests a scoped repair for a rejected gateway credential", () => {
+    const workspaceId = "workspace-gateway-repair";
+    const sessionId = "session-gateway-repair";
+    const repairs: unknown[] = [];
+    const unsubscribe = subscribeGatewayCredentialRepair((request) => repairs.push(request));
+    const syncInput = {
+      workspaceId,
+      baseUrl: "http://127.0.0.1:1234",
+      juggleworkToken: "token",
+    };
+    const cleanup = __createWorkspaceSessionSyncForTest(syncInput);
+    const release = trackWorkspaceSessionSync(syncInput, sessionId);
+
+    try {
+      __applySessionSyncEventForTest(syncInput, {
+        type: "session.error",
+        properties: {
+          sessionID: sessionId,
+          error: {
+            name: "APIError",
+            data: {
+              statusCode: 401,
+              providerID: "lpr_managed",
+              responseBody: JSON.stringify({
+                error: {
+                  code: "unauthorized",
+                  message: "The gateway credential is missing, revoked, or expired.",
+                  type: "unauthorized",
+                },
+              }),
+            },
+          },
+        },
+      } as any);
+
+      expect(repairs).toEqual([{
+        workspaceId,
+        sessionId,
+        providerId: "lpr_managed",
+      }]);
+    } finally {
+      unsubscribe();
       release();
       cleanup();
       useSessionActivityStore.getState().removeSession(workspaceId, sessionId);

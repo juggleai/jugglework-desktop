@@ -127,9 +127,12 @@ import {
   StaleCloudProviderAuthorityError,
   shouldAdoptWorkspaceSnapshot,
 } from "./cloud-provider-sync-queue";
+import { resolveGatewayCredentialRepairTarget } from "./gateway-credential-repair";
 
 const cloudProviderConnectionSingleflight =
   createKeyedSingleflight<string, DenOrgLlmProviderConnection>();
+const gatewayCredentialRepairSingleflight =
+  createKeyedSingleflight<string, boolean>();
 const cloudProviderWorkspaceMutationQueue = createKeyedSerialQueue<string>();
 
 /**
@@ -1972,6 +1975,31 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     });
   }
 
+  /**
+   * Re-fetch a cloud-managed gateway credential after the gateway rejected the
+   * engine's cached copy. The normal import path is intentionally reused: it
+   * updates OpenCode auth, the workspace-owned mirror, runtime provider config,
+   * and finally reloads the engine. It never touches a manual provider.
+   */
+  async function repairGatewayCredential(providerId: string | null): Promise<boolean> {
+    const workspaceKey = currentWorkspaceKey();
+    const repairKey = `${workspaceKey}::${providerId?.trim() || "single-cloud-provider"}`;
+    return await gatewayCredentialRepairSingleflight.run(repairKey, () =>
+      cloudProviderWorkspaceMutationQueue.run(workspaceKey, async () => {
+        const importedProviders = await refreshImportedCloudProviders({ strict: true });
+        const target = resolveGatewayCredentialRepairTarget(importedProviders, providerId);
+        if (!target) return false;
+
+        const authorityKey = getCloudProviderAuthorityKey();
+        await connectCloudProviderInternal(target.cloudProviderId, {
+          silent: true,
+          authorityKey,
+        });
+        return true;
+      }),
+    );
+  }
+
   async function removeCloudProviderInternal(
     cloudProviderId: string,
     optionsArg?: { silent?: boolean },
@@ -2678,6 +2706,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     connectCustomProvider,
     readCustomProviderInput,
     connectCloudProvider,
+    repairGatewayCredential,
     removeCloudProvider,
     disconnectProvider,
     deleteProvider,
