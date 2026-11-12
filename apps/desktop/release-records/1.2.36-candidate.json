@@ -72,16 +72,16 @@
       "version":"1.2.36",
       "platform":"mac",
       "architectures":["arm64"],
-      "verifiedAt":"2026-11-12T14:28:13.149Z",
-      "releaseState":"candidate",
-      "credentialState":"missing",
+      "verifiedAt":"2026-11-12T15:26:10.114Z",
+      "releaseState":"release",
+      "credentialState":"available",
       "identity":{"bundleIdentifier":"com.juggleai.jugglework","teamIdentifier":"H7PDHSK3C7"},
       "codesign":{"status":"accepted","deep":true,"strict":true},
       "hardenedRuntime":{"status":"enabled"},
-      "notarization":{"status":"unavailable"},
+      "notarization":{"status":"accepted","submissionId":"2c5dc349-3fc4-4f8e-a0b6-c7c380e8b4b6"},
       "staple":{"status":"validated"},
       "gatekeeper":{"status":"accepted"},
-      "dmg":{"signature":{"status":"accepted","teamIdentifier":"H7PDHSK3C7"},"notarization":{"status":"unavailable"},"staple":{"status":"validated"},"gatekeeper":{"status":"accepted"},"image":{"status":"verified"}},
+      "dmg":{"signature":{"status":"accepted","teamIdentifier":"H7PDHSK3C7"},"notarization":{"status":"accepted","submissionId":"4ace3c0e-5c1b-4a12-92bb-2b2f87c4c041"},"staple":{"status":"validated"},"gatekeeper":{"status":"accepted"},"image":{"status":"verified"}},
       "artifacts":[
         {"name":"jugglework-mac-arm64-1.2.36.zip","size":423058751,"sha256":"630fa3760727c4686824f9ac326ca5baaf511fe2f82f322dc721fa89dd02d3ba","sha512":"KmPOzl8VPboaqT/EeYyRAmYNBby5V9dQKE1ztUek2+w7MYsk3i91YSie6UHAe2LgQ78zuYfUN8JSdCmdQ336PA==","etag":"lu8ZP3lR96jR66Hr6mrKviKj2bN1","mime":"application/zip"},
         {"name":"jugglework-mac-arm64-1.2.36.dmg","size":425601600,"sha256":"baf1135f83851f67ffc826a1c99d0a08cacd8fbe820845825affed6ed8e475f2","sha512":"yMFgsmB+1x2nLkBmKFObDQH8tx9ycDEXZ/6HmsCq2hLxc+qFnw+DeDr/uVR+cFQO5v3bXy2KeJlbRP4ngbmCrw==","etag":"lpjYVgGQXQfLyap1VcecXdQEs0ka","mime":"application/x-apple-diskimage"},
@@ -92,7 +92,7 @@
     },
     "canary": null,
     "workflow": {
-      "local":{"status":"verified","verifiedAt":"2026-11-12T14:28:13.149Z"},
+      "local":{"status":"verified","verifiedAt":"2026-11-12T15:26:10.114Z","verification":"read_only_explicit_login_keychain_rerun"},
       "immutable":{"status":"verified","verifiedAt":"2026-11-12T14:50:06Z","qiniuChecks":[
         {"key":"jugglework/releases/v1.2.36/mac/arm64/jugglework-mac-arm64-1.2.36.zip","size":423058751,"etag":"lu8ZP3lR96jR66Hr6mrKviKj2bN1","verified":true},
         {"key":"jugglework/releases/v1.2.36/mac/arm64/jugglework-mac-arm64-1.2.36.dmg","size":425601600,"etag":"lpjYVgGQXQfLyap1VcecXdQEs0ka","verified":true},
@@ -129,8 +129,8 @@
     },
     "observedMutableCacheControl":{"status":"observed","value":"public, max-age=31536000","source":"fresh public predecessor readback"},
     "olderVersionCacheRisk":true,
-    "evidenceSources":{"artifactPins":"release-evidence/jugglework-desktop/1.2.36/artifact-pins.json","immutableUpload":"release-evidence/jugglework-desktop/1.2.36/immutable-upload-verification.json","localVerification":"release-evidence/jugglework-desktop/1.2.36/local-verification-binding.json","receipts":"release-evidence/jugglework-desktop/1.2.36/receipts.json"},
-    "localVerifierDiscrepancy":"The retained verifier JSON says candidate/unavailable while the independent Apple receipts say accepted/stapled/validated; the original files are retained unchanged and this record does not claim a verifier rerun.",
+    "evidenceSources":{"artifactPins":"release-evidence/jugglework-desktop/1.2.36/artifact-pins.json","immutableUpload":"release-evidence/jugglework-desktop/1.2.36/immutable-upload-verification.json","localVerification":"apps/desktop/release-records/1.2.36-local-verification-correction.json","previousLocalVerification":"release-evidence/jugglework-desktop/1.2.36/local-verification-binding.json","receipts":"release-evidence/jugglework-desktop/1.2.36/receipts.json"},
+    "localVerifierDiscrepancy":"Original Run432 evidence is retained unchanged: its verifier JSON reported candidate/missing/unavailable because it did not run with the explicit login-keychain credential context. A read-only rerun of the standard verifier against the exact final artifacts and normalized 706-byte manifest with the explicit login keychain produced release/available/accepted; no notarization submission, build, upload, promotion, or keychain mutation occurred.",
     "noOverwrite":"Existing objects were audited by stat/get/listbucket2; no existing object was uploaded or overwritten."
   }
 }
