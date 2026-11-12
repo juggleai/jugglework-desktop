@@ -245,7 +245,7 @@ export async function runCli(argv, {
 }
 
 export function usage() {
-  const standingUsage = "Standing policy is opt-in per release: --standing-policy stable-mac-arm64-standing-policy --pre-canary-exception-reason TEXT --metadata-exception-reason TEXT --expected-previous-channel-digest SHA256. Only exact stable/mac/arm64 >=1.2.35 is eligible; two independent trimmed reasons >=20 characters are required. Canary is waived only when absent; supplied failed/mismatched evidence is rejected. Only mutable Cache-Control mutation/validation is skipped; notarization, lock/predecessor/race/size/ETag, immutable/full public digests, CDN refresh and public read-back remain required.\n\n";
+  const standingUsage = "Standing policy is opt-in per release: --standing-policy stable-mac-arm64-standing-policy --pre-canary-exception-reason TEXT --metadata-exception-reason TEXT --expected-previous-channel-digest SHA256. Only exact stable/mac/arm64 >=1.2.35, including 1.2.36, is eligible; two independent trimmed reasons >=20 characters are required. Canary is waived only when absent; supplied failed/mismatched evidence is rejected. Only mutable Cache-Control mutation/validation is skipped; notarization, lock/predecessor/race/size/ETag, immutable/full public digests, CDN refresh and public read-back remain required.\n\n";
   return standingUsage + historicalUsage().replace("Future 1.2.35 is not authorized", "Without explicit standing policy, 1.2.35 and later are not authorized by historical scopes");
 }
 

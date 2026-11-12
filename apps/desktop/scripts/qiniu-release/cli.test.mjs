@@ -60,6 +60,16 @@ test("CLI future 1.2.36 standing policy is explicit, scoped, and requires both a
   }
   assert.match(usage(), /--standing-policy stable-mac-arm64-standing-policy/);
 });
+
+test("CLI documents 1.2.36 as a standing-policy release coordinate", () => {
+  assert.match(usage(), /including 1\.2\.36, is eligible/);
+  const parsed = parseArguments(["promote-channel", ...REQUIRED.with(1, "1.2.36").with(7, "arm64"),
+    "--standing-policy", "stable-mac-arm64-standing-policy",
+    "--pre-canary-exception-reason", "Operator selected standing policy to omit absent real-client canary",
+    "--metadata-exception-reason", "Operator selected standing policy to omit only Cache-Control metadata",
+    "--expected-previous-channel-digest", "a".repeat(64)]);
+  assert.equal(parsed.options.version, "1.2.36");
+});
 }
 
 test("SemVer prereleases are alpha-only and targets stay restricted", () => {

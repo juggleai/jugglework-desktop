@@ -334,6 +334,7 @@ jobs:
           esac
           case "$VERSION:$CANDIDATE_RECORD" in
             1.2.31:apps/desktop/release-records/1.2.31-candidate.json|1.2.32:apps/desktop/release-records/1.2.32-candidate.json|1.2.33:apps/desktop/release-records/1.2.33-candidate.json|1.2.34:apps/desktop/release-records/1.2.34-candidate.json) test -z "${STANDING_POLICY-}" ;;
+            1.2.36:apps/desktop/release-records/1.2.36-candidate.json) test "${STANDING_POLICY-}" = stable-mac-arm64-standing-policy ;;
             *)
               test "${STANDING_POLICY-}" = stable-mac-arm64-standing-policy
               test "$CANDIDATE_RECORD" = "apps/desktop/release-records/$VERSION-candidate.json"
