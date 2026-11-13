@@ -189,6 +189,7 @@ describe("Electron managed runtime", () => {
     let legacyStateRequests = 0;
     let stopFailure = null;
     let stopChecks = 0;
+    let activeSessionRuns = false;
 
     try {
       await mkdir(sidecarDir, { recursive: true });
@@ -265,6 +266,7 @@ describe("Electron managed runtime", () => {
             url: `http://127.0.0.1:${port}`,
             managedOpencodeExecution: null,
             managedOpencode: { pid: 43210, isAlive: () => true },
+            hasActiveSessionRuns: () => activeSessionRuns,
             stop: () => closeServer(server),
           };
         },
@@ -321,6 +323,15 @@ describe("Electron managed runtime", () => {
       }
       assert.equal(stopChecks, 8);
       stopFailure = null;
+      activeSessionRuns = true;
+      assert.equal(manager.hasActiveSessionRuns(), true);
+      for (const operation of operations) {
+        await assert.rejects(operation, { code: "runtime_stop_blocked_active_runs" });
+        assert.deepEqual(manager.managedServerAccess(), accessBefore);
+        assert.equal((await manager.runtimeStatus()).lifecycleState, "healthy");
+      }
+      assert.equal(stopChecks, 8);
+      activeSessionRuns = false;
       await manager.juggleworkServerRestart({});
       assert.equal(stopChecks, 9);
       assert.notEqual(embeddedStartOptions, firstServer);

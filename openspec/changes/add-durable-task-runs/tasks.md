@@ -66,3 +66,9 @@
 - [ ] 9.3 Add crash-point integration coverage around Task Run reservation, prompt admission, Operation completion, recovery claim, upstream recovery admission, and terminal settlement.
 - [ ] 9.4 Run focused app, Desktop, Server, and packaged-sidecar tests; run all affected type checks and `openspec validate add-durable-task-runs --strict`.
 - [ ] 9.5 Document feature enablement, fail-closed behavior, runtime database retention, diagnostics, rollback, and the deferred hard-recovery boundary before enabling the first managed local workspace cohort.
+
+### 9.A Completed session-run compatibility safeguards
+
+- [x] 9.A.1 Expose content-free active session-run ownership from the embedded Server to Electron and block ordinary Runtime stop/restart while a run remains active.
+- [x] 9.A.2 Preserve the current-process `starting` admission fence while allowing restart-restored `starting` runs to converge from authoritative engine state; require explicit interrupted/completed classification and two separated idle samples before terminalization.
+- [x] 9.A.3 Add coordinator, restart, Runtime stop, replacement-generation, and pre-admission regression coverage without treating these compatibility safeguards as completion of the durable Task Run model above.

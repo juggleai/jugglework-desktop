@@ -974,6 +974,10 @@ async function readSessionActivity(config: ServerConfig, workspace: WorkspaceInf
   return status.type === "idle" ? "idle" : "busy";
 }
 
+export type JuggleWorkServerHandle = ServeResult & {
+  hasActiveSessionRuns: () => boolean;
+};
+
 export async function startServer(config: ServerConfig, options: {
   /** 隔离验收使用的文件助手目录；桌面默认使用 Documents/JuggleWork/FileAssistant。 */
   fileAssistantRoot?: string;
@@ -983,7 +987,7 @@ export async function startServer(config: ServerConfig, options: {
   logger?: ServerLogger;
   reviewService?: ReviewReadService;
   auditWriter?: (workspaceRoot: string, entry: AuditEntry) => Promise<void>;
-} = {}): Promise<ServeResult> {
+} = {}): Promise<JuggleWorkServerHandle> {
   const approvals = new ApprovalService(config.approval);
   const reloadEvents = new ReloadEventStore();
   const tokens = new TokenService(config);
@@ -1862,6 +1866,7 @@ export async function startServer(config: ServerConfig, options: {
 
   return {
     ...server,
+    hasActiveSessionRuns: () => sessionMutations.listActive().length > 0,
     stop: async () => {
       clearInterval(lifecycleObserver);
       invalidateEngineMcpServerState(config, engineMcpServerState);

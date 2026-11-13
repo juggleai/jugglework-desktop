@@ -9,12 +9,15 @@ import { AutomationRepository } from "./automation/repository.js";
 import { AUTOMATION_PERMISSION_PROFILE, type AutomationDefinition } from "@jugglework/types/automation";
 import { opencodeAdmissionId } from "./opencode-admission.js";
 import { runtimeDbPath } from "./runtime-db.js";
+import { createSessionMutationCoordinator } from "./session-mutation-coordinator.js";
+import { createSessionRunJournal } from "./session-run-journal.js";
 import type { ArtifactEngineMessage } from "./artifacts/delivery.js";
 import type { ServerConfig } from "./types.js";
 
 type Served = {
   port: number;
   stop: (closeActiveConnections?: boolean) => void | Promise<void>;
+  hasActiveSessionRuns?: () => boolean;
 };
 
 const stops: Array<() => void | Promise<void>> = [];
@@ -67,6 +70,7 @@ function startMockOpencode() {
   const sessions = new Map<string, { id: string; title: string; parentID?: string; directory?: string; time: { created: number; updated: number } }>();
   const heldPrompts = new Map<string, ReturnType<typeof deferred<void>>>();
   const heldMessageReads = new Map<string, ReturnType<typeof deferred<void>>>();
+  const failedMessageReads = new Set<string>();
   const messageReads: string[] = [];
   const heldMessageIds = new Map<string, ReturnType<typeof deferred<void>>>();
   const heldAborts = new Map<string, ReturnType<typeof deferred<void>>>();
@@ -94,6 +98,10 @@ function startMockOpencode() {
       const messageMatch = url.pathname.match(/^\/session\/([^/]+)\/message$/);
       if (request.method === "GET" && messageMatch) {
         const sessionId = decodeURIComponent(messageMatch[1]!);
+        if (failedMessageReads.has(sessionId)) {
+          messageReads.push(sessionId);
+          return Response.json({ name: "MessageReadFailure" }, { status: 503 });
+        }
         const snapshot = messages.get(sessionId) ?? [];
         const held = heldMessageReads.get(sessionId);
         heldMessageReads.delete(sessionId);
@@ -239,6 +247,7 @@ function startMockOpencode() {
     sessions,
     heldPrompts,
     heldMessageReads,
+    failedMessageReads,
     messageReads,
     heldMessageIds,
     heldAborts,
@@ -310,6 +319,7 @@ async function startHarness(enginePort: number) {
     collaboratorHeaders,
     hostHeaders: { "X-JuggleWork-Host-Token": config.hostToken, "Content-Type": "application/json" },
     config,
+    server,
   };
 }
 
@@ -1705,6 +1715,103 @@ describe("authoritative session mutation APIs", () => {
     const second = await fetch(`${harness.base}/workspace/ws_1/session-runs`, { headers: harness.collaboratorHeaders });
     await expect(second.json()).resolves.toMatchObject({ items: [{ sessionId: "ses_list_reconcile" }] });
   });
+
+  test("restart fails a restored run when the replacement engine is authoritatively idle", async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    const sessionId = "ses_interrupted_restart";
+    const started = await fetch(`${runPath(harness.base, sessionId)}/start`, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+      body: JSON.stringify({
+        origin: "local-renderer",
+        startCommandCorrelationId: "cmd_interrupted_restart",
+        prompt: { parts: [{ type: "text", text: "Interrupted by restart" }] },
+      }),
+    });
+    expect(started.status).toBe(202);
+    const { run } = await started.json() as { run: { runId: string } };
+    expect(harness.server.hasActiveSessionRuns?.()).toBe(true);
+
+    await harness.server.stop(true);
+    stops.pop();
+    const restarted = await startServer(harness.config);
+    stops.push(() => restarted.stop());
+    expect(restarted.hasActiveSessionRuns()).toBe(true);
+
+    await waitUntil(() => !restarted.hasActiveSessionRuns(), 3_000);
+    const db = new Database(runtimeDbPath(harness.config), { readonly: true });
+    try {
+      expect(db.query("SELECT terminal_reason FROM session_run_terminals WHERE run_id = ?").all(run.runId))
+        .toEqual([{ terminal_reason: "failed" }]);
+    } finally { db.close(); }
+  }, 5_000);
+
+  test("restart converges a restored starting admission when the engine is authoritatively idle", async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    await harness.server.stop(true);
+    stops.pop();
+
+    const journal = await createSessionRunJournal({ config: harness.config });
+    const coordinator = createSessionMutationCoordinator({
+      allocateGeneration: journal.allocateGeneration,
+      onLifecycleEvent: journal.record,
+      randomUUID: () => "restored-starting-run",
+    });
+    const run = coordinator.reserveStart({
+      workspaceId: "ws_1",
+      sessionId: "ses_restored_starting",
+      origin: "local-renderer",
+      startCommandCorrelationId: "cmd_restored_starting",
+    });
+    journal.close();
+
+    const restarted = await startServer(harness.config);
+    stops.push(() => restarted.stop());
+    expect(restarted.hasActiveSessionRuns()).toBe(true);
+    await waitUntil(() => !restarted.hasActiveSessionRuns(), 3_500);
+
+    const db = new Database(runtimeDbPath(harness.config), { readonly: true });
+    try {
+      expect(db.query("SELECT terminal_reason FROM session_run_terminals WHERE run_id = ?").all(run.runId))
+        .toEqual([{ terminal_reason: "failed" }]);
+      expect(db.query("SELECT event, terminal_reason FROM session_run_journal WHERE run_id = ? ORDER BY id").all(run.runId))
+        .toEqual([
+          { event: "run_reserved", terminal_reason: null },
+          { event: "idle_suspected", terminal_reason: null },
+          { event: "run_terminal", terminal_reason: "failed" },
+        ]);
+    } finally { db.close(); }
+  }, 6_000);
+
+  test("restart keeps a restored run active while terminal messages are unavailable", async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    const sessionId = "ses_restart_message_read_failure";
+    const started = await fetch(`${runPath(harness.base, sessionId)}/start`, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+      body: JSON.stringify({
+        origin: "local-renderer",
+        startCommandCorrelationId: "cmd_restart_message_read_failure",
+        prompt: { parts: [{ type: "text", text: "Keep active until messages recover" }] },
+      }),
+    });
+    expect(started.status).toBe(202);
+    engine.failedMessageReads.add(sessionId);
+
+    await harness.server.stop(true);
+    stops.pop();
+    const restarted = await startServer(harness.config);
+    stops.push(() => restarted.stop());
+    await waitUntil(() => engine.messageReads.includes(sessionId), 2_500);
+    await new Promise((resolve) => setTimeout(resolve, 650));
+    expect(restarted.hasActiveSessionRuns()).toBe(true);
+
+    engine.failedMessageReads.delete(sessionId);
+    await waitUntil(() => !restarted.hasActiveSessionRuns(), 3_500);
+  }, 7_000);
 
   for (const terminal of ["failed", "aborted"] as const) for (const recovery of ["poll", "background", "retry", "idle-observation"] as const) test(`无主窗口上报时通过 ${recovery} 释放 ${terminal} 的本轮运行并保留终态`, async () => {
     const engine = startMockOpencode();
