@@ -1407,6 +1407,7 @@ export default {
   "calendar.delete_event": "Удалить событие",
   "calendar.delete_confirm": "Удалить это событие? Это действие нельзя отменить.",
   "calendar.field_title": "Название",
+  "calendar.field_title_placeholder": "Добавить название",
   "calendar.field_description": "Описание",
   "calendar.field_start_date": "Дата начала",
   "calendar.field_end_date": "Дата окончания",

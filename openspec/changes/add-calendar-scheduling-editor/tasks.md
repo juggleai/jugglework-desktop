@@ -13,6 +13,7 @@
 - [x] 2.3 增加 busy-only 时间轴、unknown/加载/失败/离线状态和隐私说明，不渲染底层日程详情。
 - [x] 2.4 保持编辑的原始 expected-version 基准；后台 authority 新版本触发显式 conflict，不能保留旧表单同时静默推进 base。
 - [x] 2.5 个人日程默认并强制包含创建人参与者；picker 不可移除，validator 防绕过补齐，20 人上限包含创建人，团队日历保持独立 owner 边界。
+- [x] 2.6 持久化视频会议启用状态；详情卡支持外部点击关闭，并在启用时通过既有 Meeting 服务创建即时会议、邀请全部可映射日程参与人和发送邀请通知。
 
 ## 3. Failure and offline boundaries
 
@@ -22,6 +23,6 @@
 
 ## 4. Verification and explicit exclusions
 
-- [x] 4.1 添加 DTO/query、编辑器、validation、occurrence identity、冲突、离线 baseline/draft 和 scheduling failure 回归测试。
+- [x] 4.1 添加 DTO/query、编辑器、validation、occurrence identity、冲突、离线 baseline/draft、视频会议发起和 scheduling failure 回归测试。
 - [x] 4.2 运行 App typecheck、聚焦 Calendar 测试和生产 build；记录严格 i18n 的历史 locale coverage 基线，不用本 change 批量修改旧翻译。
 - [x] 4.3 明确 RSVP、邀请/更新/取消通知、参与人响应、共同可用时间和重复例外仍未实现，继续由 `add-team-calendar-collaboration`/`add-calendar-work-planning` 跟踪。

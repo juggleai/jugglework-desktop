@@ -19,6 +19,7 @@ export type CalendarEventFormValues = {
   calendarId: string;
   title: string;
   description: string;
+  videoConferenceEnabled: boolean;
   time: CalendarTimeForm;
   attendeeMemberIds: string[];
   recurrence: CalendarEventRecurrenceForm;
@@ -78,6 +79,7 @@ export function defaultCalendarEventForm(input: {
     calendarId: input.calendarId,
     title: "",
     description: "",
+    videoConferenceEnabled: true,
     time,
     attendeeMemberIds: input.creatorMemberId ? [input.creatorMemberId] : [],
     recurrence: { frequency: "none" },
@@ -91,6 +93,7 @@ export function calendarEventToForm(event: DenCalendarEvent): CalendarEventFormV
     calendarId: event.calendarId,
     title: event.title,
     description: event.description,
+    videoConferenceEnabled: event.videoConferenceEnabled,
     time: calendarTimeToForm(parseCalendarEventTime(event.time)),
     attendeeMemberIds: Array.isArray(scheduling.attendees) ? scheduling.attendees.map((attendee) => attendee.memberId) : [],
     recurrence,
@@ -156,7 +159,7 @@ function isThirtyMinuteTime(value: string): boolean {
 }
 
 export type CalendarEventFormValidation =
-  | { ok: true; values: { calendarId: string; title: string; description: string; time: DenCalendarEventTime; attendeeMemberIds: string[]; recurrence: DenCalendarSchedulingRecurrence | null } }
+  | { ok: true; values: { calendarId: string; title: string; description: string; videoConferenceEnabled: boolean; time: DenCalendarEventTime; attendeeMemberIds: string[]; recurrence: DenCalendarSchedulingRecurrence | null } }
   | { ok: false; errors: CalendarEventFormErrors };
 
 export function validateCalendarEventForm(
@@ -191,18 +194,19 @@ export function validateCalendarEventForm(
     errors.recurrence = CALENDAR_FORM_ERROR.recurrenceInvalid;
   }
   if (Object.keys(errors).length > 0 || !time) return { ok: false, errors };
-  return { ok: true, values: { calendarId: form.calendarId, title: form.title, description: form.description, time, attendeeMemberIds, recurrence } };
+  return { ok: true, values: { calendarId: form.calendarId, title: form.title, description: form.description, videoConferenceEnabled: form.videoConferenceEnabled, time, attendeeMemberIds, recurrence } };
 }
 
 /** Only the changed fields go into an update, so concurrent edits to other fields are not overwritten blindly. */
 export function calendarEventUpdatePatch(
   original: DenCalendarEvent,
-  next: { calendarId: string; title: string; description: string; time: DenCalendarEventTime; attendeeMemberIds: string[]; recurrence: DenCalendarSchedulingRecurrence | null },
-): Partial<{ calendarId: string; title: string; description: string; time: DenCalendarEventTime; attendeeMemberIds: string[]; recurrence: DenCalendarSchedulingRecurrence | null }> {
-  const patch: Partial<{ calendarId: string; title: string; description: string; time: DenCalendarEventTime; attendeeMemberIds: string[]; recurrence: DenCalendarSchedulingRecurrence | null }> = {};
+  next: { calendarId: string; title: string; description: string; videoConferenceEnabled: boolean; time: DenCalendarEventTime; attendeeMemberIds: string[]; recurrence: DenCalendarSchedulingRecurrence | null },
+): Partial<{ calendarId: string; title: string; description: string; videoConferenceEnabled: boolean; time: DenCalendarEventTime; attendeeMemberIds: string[]; recurrence: DenCalendarSchedulingRecurrence | null }> {
+  const patch: Partial<{ calendarId: string; title: string; description: string; videoConferenceEnabled: boolean; time: DenCalendarEventTime; attendeeMemberIds: string[]; recurrence: DenCalendarSchedulingRecurrence | null }> = {};
   if (next.calendarId !== original.calendarId) patch.calendarId = next.calendarId;
   if (next.title !== original.title) patch.title = next.title;
   if (next.description !== original.description) patch.description = next.description;
+  if (next.videoConferenceEnabled !== original.videoConferenceEnabled) patch.videoConferenceEnabled = next.videoConferenceEnabled;
   if (JSON.stringify(next.time) !== JSON.stringify(original.time)) patch.time = next.time;
   const originalAttendees = "attendees" in original ? (original as DenCalendarSchedulingEvent).attendees.map((attendee) => attendee.memberId) : [];
   const originalRecurrence = "recurrence" in original ? (original as DenCalendarSchedulingEvent).recurrence : null;
@@ -238,14 +242,14 @@ export function normalizeCalendarEventDraftForm(value: unknown, schemaVersion: 1
     ["reject", "earlier", "later"].includes(String(value.time.startDisambiguation)) && ["reject", "earlier", "later"].includes(String(value.time.endDisambiguation))) {
     time = value.time as CalendarTimeForm;
   } else return null;
-  if (schemaVersion === 1) return { calendarId: value.calendarId, title: value.title, description: value.description, time, attendeeMemberIds: [], recurrence: { frequency: "none" } };
+  if (schemaVersion === 1) return { calendarId: value.calendarId, title: value.title, description: value.description, videoConferenceEnabled: true, time, attendeeMemberIds: [], recurrence: { frequency: "none" } };
   if (!Array.isArray(value.attendeeMemberIds) || value.attendeeMemberIds.some((id) => typeof id !== "string" || !id) || !record(value.recurrence)) return null;
   let recurrence: CalendarEventRecurrenceForm;
   if (value.recurrence.frequency === "none" && exactKeys(value.recurrence, ["frequency"])) recurrence = { frequency: "none" };
   else if (["daily", "weekly", "monthly"].includes(String(value.recurrence.frequency)) && exactKeys(value.recurrence, ["frequency", "interval", "endKind", "untilDate", "count"]) && Number.isSafeInteger(value.recurrence.interval) && ["never", "until", "count"].includes(String(value.recurrence.endKind)) && typeof value.recurrence.untilDate === "string" && Number.isSafeInteger(value.recurrence.count)) {
     recurrence = value.recurrence as CalendarEventRecurrenceForm;
   } else return null;
-  return { calendarId: value.calendarId, title: value.title, description: value.description, time, attendeeMemberIds: [...new Set(value.attendeeMemberIds as string[])], recurrence };
+  return { calendarId: value.calendarId, title: value.title, description: value.description, videoConferenceEnabled: true, time, attendeeMemberIds: [...new Set(value.attendeeMemberIds as string[])], recurrence };
 }
 
 export type CalendarSaveFailure =

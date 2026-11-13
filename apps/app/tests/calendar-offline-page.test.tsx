@@ -186,6 +186,11 @@ const click = async (renderer: TestRenderer.ReactTestRenderer, id: string) => {
   await settle();
 };
 const change = async (renderer: TestRenderer.ReactTestRenderer, id: string, value: string | boolean) => {
+  if (id === "calendar-form-recurrence") {
+    await click(renderer, id);
+    await click(renderer, `${id}-option-${value}`);
+    return;
+  }
   await act(async () => { byId(renderer, id).props.onChange({ target: typeof value === "boolean" ? { checked: value } : { value } }); });
 };
 const submit = async (renderer: TestRenderer.ReactTestRenderer) => {
@@ -312,7 +317,7 @@ test("restoring an old edit draft cannot clear authoritative scheduling attendee
   const { renderer } = await render();
   try {
     await click(renderer, "calendar-draft-restore-old-edit-draft");
-    expect(text(byId(renderer, "calendar-form-attendees-trigger"))).toContain("member-b");
+    expect(text(byId(renderer, "calendar-attendee-list"))).toContain("member-b");
     await submit(renderer);
     expect(calls[0]).toMatchObject({ op: "scheduling-update", input: { eventId: "scheduled", title: "Draft title" } });
     expect(calls[0]!.input).toMatchObject({ attendees: [{ memberId: "member-a" }, { memberId: "member-b" }] });

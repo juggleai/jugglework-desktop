@@ -24,7 +24,7 @@ describe("calendar event form model", () => {
     expect(form.time).toEqual({ kind: "allDay", startDate: "2026-11-09", endDateExclusive: "2026-11-10" });
     expect(validateCalendarEventForm({ ...form, title: "x" }, active)).toEqual({
       ok: true,
-      values: { calendarId: "cal-1", title: "x", description: "", time: { kind: "allDay", startDate: "2026-11-09", endDateExclusive: "2026-11-10" }, attendeeMemberIds: [], recurrence: null },
+      values: { calendarId: "cal-1", title: "x", description: "", videoConferenceEnabled: true, time: { kind: "allDay", startDate: "2026-11-09", endDateExclusive: "2026-11-10" }, attendeeMemberIds: [], recurrence: null },
     });
   });
 

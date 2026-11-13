@@ -14,9 +14,10 @@ import { useDesktopConfig } from "@/react-app/domains/cloud/desktop-config-provi
 import { useCloudSession } from "@/react-app/domains/settings/cloud/cloud-session-provider";
 import { AppInsetSurface } from "@/react-app/shell/app-inset-surface";
 import { AppNavigationRail } from "@/react-app/shell/app-navigation-rail";
+import { meetingAPI } from "@/react-app/domains/meeting/api";
 import { calendarScopeIdentity, type CalendarScope } from "./calendar-scope";
 import { resolveCalendarPageGate, type CalendarPageGate } from "./calendar-page-gate";
-import { useCalendarBootstrapQuery, useCalendarCollaborationQuery, useCalendarsQuery, useCalendarSchedulingEventsQuery, useTeamCalendarSnapshotsQuery } from "./calendar-queries";
+import { useCalendarBootstrapQuery, useCalendarCollaborationQuery, useCalendarOrganizationMembersQuery, useCalendarsQuery, useCalendarSchedulingEventsQuery, useTeamCalendarSnapshotsQuery } from "./calendar-queries";
 import {
   calendarToday,
   calendarWeekStart,
@@ -183,6 +184,7 @@ const systemCalendarClock: CalendarClock = {
 
 function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean; collaborationEnabled: boolean; clock: CalendarClock; offlineRuntime?: CalendarOfflineRuntime }) {
   const cloud = useCloudSession();
+  const navigate = useNavigate();
   const setHeaderAction = React.useContext(CalendarPageHeaderActionContext);
   const [offlineRuntime] = React.useState(() => props.offlineRuntime ?? defaultCalendarOfflineRuntime());
   const online = useCalendarOnline(offlineRuntime.online);
@@ -297,11 +299,15 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
   const [filtersOpen, setFiltersOpen] = React.useState(false);
   const [createCalendarOpen, setCreateCalendarOpen] = React.useState(false);
   const [membersCalendarId, setMembersCalendarId] = React.useState<string | null>(null);
+  const [meetingPending, setMeetingPending] = React.useState(false);
+  const [meetingError, setMeetingError] = React.useState("");
   const membersDialogOpener = React.useRef<HTMLElement | null>(null);
   const panelOpener = React.useRef<HTMLElement | null>(null);
-  const createDialogOpen = editor?.mode === "create";
-  const sidePanelOpen = editor?.mode === "edit" || (selectedEvent !== null && selectedEventVisible);
-  const interactionSurfaceOpen = createDialogOpen || sidePanelOpen;
+  const editorDialogOpen = editor !== null;
+  const detailCardOpen = selectedEvent !== null && selectedEventVisible && editor === null;
+  const detailMembersQuery = useCalendarOrganizationMembersQuery({ client: cloud.client, scope: props.scope, active: online && detailCardOpen });
+  const detailMembersById = React.useMemo(() => new Map((detailMembersQuery.data ?? []).map((member) => [member.id, member])), [detailMembersQuery.data]);
+  const interactionSurfaceOpen = editorDialogOpen || detailCardOpen;
   const wasInteractionSurfaceOpen = React.useRef(interactionSurfaceOpen);
   const rememberOpener = () => {
     const doc = focusableDocument();
@@ -355,7 +361,32 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
     if (!interactionSurfaceOpen) rememberOpener();
     if (date) setNavigation(selectCalendarDate(date));
     setEditor(null);
+    setMeetingError("");
     setSelectedEventId(eventId);
+  };
+  const startEventMeeting = async (event: DenCalendarEvent) => {
+    if (meetingPending || !event.videoConferenceEnabled) return;
+    setMeetingPending(true);
+    setMeetingError("");
+    try {
+      const readiness = await meetingAPI.settings();
+      if (!readiness.ready) throw new Error(t("calendar.meeting_unavailable"));
+      const attendeeMemberIds = "attendees" in event && Array.isArray(event.attendees) ? event.attendees.map((attendee) => attendee.memberId) : [event.ownerMemberId];
+      const missing = attendeeMemberIds.filter((memberId) => !detailMembersById.has(memberId));
+      if (missing.length > 0) throw new Error(t("calendar.meeting_attendees_unavailable"));
+      const organizerUserId = detailMembersById.get(props.scope.memberId)?.userId;
+      const invitees = [...new Set(attendeeMemberIds.map((memberId) => detailMembersById.get(memberId)!.userId).filter((userId) => userId && userId !== organizerUserId))];
+      const startAt = props.clock.now();
+      const endAt = startAt.add({ minutes: 30 });
+      const { meeting } = await meetingAPI.create({ title: event.title.slice(0, 120), description: event.description.slice(0, 4000), immediate: true, startAt: startAt.toString(), endAt: endAt.toString(), timezone: timeZone, invitees }, crypto.randomUUID());
+      await meetingAPI.notify(meeting.id);
+      navigate("/meetings");
+      window.dispatchEvent(new CustomEvent("meeting:open", { detail: { meetingId: meeting.id } }));
+    } catch (error) {
+      setMeetingError(error instanceof Error ? error.message : t("calendar.meeting_failed"));
+    } finally {
+      setMeetingPending(false);
+    }
   };
   const startCreate = () => {
     if (!interactionSurfaceOpen) rememberOpener();
@@ -552,7 +583,7 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
           />
         )}
       </section>
-      {createDialogOpen && editor ? (
+      {editor ? (
         <CalendarEventEditor
           key={`editor:${editor.instance}`}
           presentation="dialog"
@@ -561,55 +592,34 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
           calendars={editorCalendars}
           teamCalendarIds={teamCalendarIds}
           timeZone={timeZone}
-          initial={editor.form ?? defaultCalendarEventForm({
-            date: navigation.selectedDate,
-            calendarId: defaultCalendarId,
-            timeZone,
-            creatorMemberId: teamCalendarIds.has(defaultCalendarId) ? undefined : props.scope.memberId,
-          })}
+          event={editor.mode === "edit" ? editingEvent : undefined}
+          initial={editor.form ?? (editor.mode === "edit" && editingEvent ? calendarEventToForm(editingEvent) : defaultCalendarEventForm({ date: navigation.selectedDate, calendarId: defaultCalendarId, timeZone, kind: "timed", creatorMemberId: teamCalendarIds.has(defaultCalendarId) ? undefined : props.scope.memberId }))}
           online={online}
           onSaveDraft={saveEditorDraft}
           restoredFromDraft={Boolean(editor.draftId)}
+          staleDraftBase={editor.mode === "edit" && editor.draftBaseVersion !== undefined && editingEvent !== undefined && editor.draftBaseVersion !== editingEvent.version}
           onDiscardDraft={editor.draftId ? () => {
             const draftId = editor.draftId!;
             void eventDrafts.discard(draftId);
             setEditor(null);
           } : undefined}
           onSaved={(event) => { void closeEditorAfterAuthoritativeSave(editor.draftId); setEditor(null); setSelectedEventId(event.id); }}
-          onDeleted={() => undefined}
+          onDeleted={() => { void closeEditorAfterAuthoritativeSave(editor.draftId); setEditor(null); setSelectedEventId(null); }}
           onCancel={() => setEditor(null)}
         />
       ) : null}
-      {sidePanelOpen ? (
-        <aside className={cn("absolute inset-y-3 right-3 z-20 flex flex-col gap-3 overflow-auto rounded-xl border border-dls-border bg-dls-surface p-3 shadow-xl @3xl/calendar:inset-y-4 @3xl/calendar:right-4", editor?.mode === "edit" ? "w-[min(70rem,calc(100%-1.5rem))]" : "w-[min(26rem,calc(100%-1.5rem))]")} aria-label={t("calendar.event_panel")} data-testid="calendar-event-panel">
-        {editor?.mode === "edit" && canOpenEditor && editingEvent && editingEventAllowed ? (
-          <CalendarEventEditor
-            key={`editor:${editor.instance}`}
-            client={cloud.client}
-            scope={props.scope}
-            calendars={editorCalendars.filter((calendar) => teamCalendarIds.has(editingEvent.calendarId) ? calendar.id === editingEvent.calendarId : !teamCalendarIds.has(calendar.id))}
-            teamCalendarIds={teamCalendarIds}
-            timeZone={timeZone}
-            event={editingEvent}
-            initial={editor.form ?? calendarEventToForm(editingEvent)}
-            online={online}
-            onSaveDraft={saveEditorDraft}
-            restoredFromDraft={Boolean(editor.draftId)}
-            staleDraftBase={editor.mode === "edit" && editor.draftBaseVersion !== undefined && editingEvent !== undefined && editor.draftBaseVersion !== editingEvent.version}
-            onDiscardDraft={editor.draftId ? () => {
-              const draftId = editor.draftId!;
-              void eventDrafts.discard(draftId);
-              setEditor(null);
-            } : undefined}
-            onSaved={(event) => { void closeEditorAfterAuthoritativeSave(editor.draftId); setEditor(null); setSelectedEventId(event.id); }}
-            onDeleted={() => { void closeEditorAfterAuthoritativeSave(editor.draftId); setEditor(null); setSelectedEventId(null); }}
-            onCancel={() => setEditor(null)}
-          />
-        ) : selectedEvent && selectedEventVisible ? (
+      {detailCardOpen && selectedEvent ? (
+        <>
+        <button type="button" className="absolute inset-0 z-10 cursor-default bg-transparent" aria-label={t("calendar.close_detail")} onClick={() => setSelectedEventId(null)} data-testid="calendar-event-detail-dismiss-layer" />
+        <aside className="absolute inset-y-4 right-4 z-20 w-[min(30rem,calc(100%-2rem))] overflow-hidden rounded-xl border border-dls-border bg-dls-surface shadow-2xl" aria-label={t("calendar.event_panel")} data-testid="calendar-event-panel">
           <CalendarEventDetail
             event={selectedEvent}
             calendar={calendarsById.get(selectedEvent.calendarId)}
             locale={locale}
+            membersById={detailMembersById}
+            meetingPending={meetingPending}
+            meetingError={meetingError}
+            onStartMeeting={selectedEvent.videoConferenceEnabled && online ? () => void startEventMeeting(selectedEvent) : undefined}
             recurringOccurrence={schedulingOccurrenceIds.has(selectedEvent.id)}
             schedulingEditUnavailable={!online && "attendees" in selectedEvent
               ? "offline"
@@ -617,10 +627,10 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
                 ? schedulingQuery.isError ? "error" : "loading"
                 : undefined}
             onClose={() => setSelectedEventId(null)}
-            onEdit={!schedulingOccurrenceIds.has(selectedEvent.id) && (online ? teamCalendarIds.has(selectedEvent.calendarId) || schedulingMetadataReady : !("attendees" in selectedEvent)) && canOpenEditor && writableCalendars.some((calendar) => calendar.id === selectedEvent.calendarId) ? () => setEditor({ mode: "edit", instance: nextEditorInstance(), eventId: selectedEvent.id }) : undefined}
+            onEdit={!schedulingOccurrenceIds.has(selectedEvent.id) && (online ? teamCalendarIds.has(selectedEvent.calendarId) || schedulingMetadataReady : !("attendees" in selectedEvent)) && canOpenEditor && writableCalendars.some((calendar) => calendar.id === selectedEvent.calendarId) ? () => { setEditor({ mode: "edit", instance: nextEditorInstance(), eventId: selectedEvent.id }); setSelectedEventId(null); } : undefined}
           />
-        ) : null}
         </aside>
+        </>
       ) : null}
       <CalendarCreateDialog open={createCalendarOpen} client={cloud.client} scope={props.scope} collaborationEnabled={props.collaborationEnabled} online={online} writeEnabled={props.writeEnabled} onOpenChange={setCreateCalendarOpen} />
       {membersCalendar && membersCalendar.capabilities.canManage && props.writeEnabled ? <CalendarMembersDialog open calendar={membersCalendar} client={cloud.client} scope={props.scope} onOpenChange={(open) => {

@@ -1310,6 +1310,7 @@ export default {
   "calendar.delete_event": "Supprimer l'événement",
   "calendar.delete_confirm": "Supprimer cet événement ? Cette action est irréversible.",
   "calendar.field_title": "Titre",
+  "calendar.field_title_placeholder": "Ajouter un titre",
   "calendar.field_description": "Description",
   "calendar.field_start_date": "Date de début",
   "calendar.field_end_date": "Date de fin",

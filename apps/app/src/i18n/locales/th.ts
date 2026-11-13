@@ -1294,6 +1294,7 @@ export default {
   "calendar.delete_event": "ลบกิจกรรม",
   "calendar.delete_confirm": "ลบกิจกรรมนี้หรือไม่ การกระทำนี้ไม่สามารถย้อนกลับได้",
   "calendar.field_title": "ชื่อ",
+  "calendar.field_title_placeholder": "เพิ่มชื่อ",
   "calendar.field_description": "คำอธิบาย",
   "calendar.field_start_date": "วันที่เริ่ม",
   "calendar.field_end_date": "วันที่สิ้นสุด",

@@ -114,7 +114,7 @@ describe("Den calendar contract", () => {
     };
     const client = calendarClient();
 
-    expect(await client.createTeamCalendarEvent("org_one", calendarId, { title: created.title, description: created.description, time: created.time })).toEqual({ event: created, replayed: false });
+    expect(await client.createTeamCalendarEvent("org_one", calendarId, { title: created.title, description: created.description, videoConferenceEnabled: created.videoConferenceEnabled, time: created.time })).toEqual({ event: created, replayed: false });
     expect(await client.updateTeamCalendarEvent("org_one", calendarId, created.id, { expectedVersion: 1, title: updated.title })).toEqual({ event: updated, replayed: false });
     expect(await client.deleteTeamCalendarEvent("org_one", calendarId, created.id, { expectedVersion: 2 })).toEqual({ tombstone, replayed: false });
     expect(requests.map(({ url, init }) => [init?.method, new URL(url).pathname])).toEqual([
@@ -123,7 +123,7 @@ describe("Den calendar contract", () => {
       ["DELETE", `/deployment/jwork/api/v1/calendar-collaboration/team-calendars/${calendarId}/events/${created.id}`],
     ]);
     expect(requests.map(({ init }) => JSON.parse(String(init?.body)))).toEqual([
-      { title: created.title, description: created.description, time: created.time },
+      { title: created.title, description: created.description, videoConferenceEnabled: created.videoConferenceEnabled, time: created.time },
       { expectedVersion: 1, title: updated.title },
       { expectedVersion: 2 },
     ]);
@@ -148,7 +148,7 @@ describe("Den calendar contract", () => {
     };
     const client = calendarClient();
     expect((await client.listCalendarSchedulingEvents("org_one", range)).items[0]?.occurrenceIndex).toBe(1);
-    await client.createCalendarSchedulingEvent("org_one", { idempotencyKey: "create-one", calendarId: event.calendarId, title: event.title, description: event.description, time: event.time, attendees: [{ memberId: "member-two" }], recurrence: event.recurrence });
+    await client.createCalendarSchedulingEvent("org_one", { idempotencyKey: "create-one", calendarId: event.calendarId, title: event.title, description: event.description, videoConferenceEnabled: event.videoConferenceEnabled, time: event.time, attendees: [{ memberId: "member-two" }], recurrence: event.recurrence });
     await client.updateCalendarSchedulingEvent("org_one", "event/one", { idempotencyKey: "update-one", expectedVersion: 1, title: "Updated" });
     expect(await client.getCalendarSchedulingAvailability("org_one", { memberIds: ["member-two"], ...range })).toEqual(availability);
 

@@ -1301,6 +1301,7 @@ export default {
   "calendar.delete_event": "Excluir evento",
   "calendar.delete_confirm": "Excluir este evento? Isso não pode ser desfeito.",
   "calendar.field_title": "Título",
+  "calendar.field_title_placeholder": "Adicionar título",
   "calendar.field_description": "Descrição",
   "calendar.field_start_date": "Data de início",
   "calendar.field_end_date": "Data de término",

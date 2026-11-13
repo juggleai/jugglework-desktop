@@ -1294,6 +1294,7 @@ export default {
   "calendar.delete_event": "Xóa sự kiện",
   "calendar.delete_confirm": "Xóa sự kiện này? Không thể hoàn tác.",
   "calendar.field_title": "Tiêu đề",
+  "calendar.field_title_placeholder": "Thêm tiêu đề",
   "calendar.field_description": "Mô tả",
   "calendar.field_start_date": "Ngày bắt đầu",
   "calendar.field_end_date": "Ngày kết thúc",

@@ -26,6 +26,23 @@ const fixedNow = Temporal.Instant.from("2026-11-09T04:00:00Z");
 const clock = { now: () => fixedNow, timeZone: () => "Asia/Shanghai" };
 mock.module("../src/i18n", () => ({ t: (key: string) => key, currentLocale: () => "en" }));
 mock.module("../src/react-app/shell/app-navigation-rail", () => ({ APP_NAVIGATION_RAIL_WIDTH: 48, AppNavigationRail: () => <nav /> }));
+mock.module("../src/components/ui/dialog", () => ({
+  Dialog: ({ children, open }: { children: React.ReactNode; open?: boolean }) => open === false ? null : <>{children}</>,
+  DialogContent: ({ children, showCloseButton: _showCloseButton, finalFocus: _finalFocus, ...props }: React.ComponentProps<"section"> & { showCloseButton?: boolean; finalFocus?: unknown }) => <section {...props}>{children}</section>,
+  DialogDescription: (props: React.ComponentProps<"p">) => <p {...props} />,
+  DialogFooter: (props: React.ComponentProps<"div">) => <div {...props} />,
+  DialogHeader: (props: React.ComponentProps<"div">) => <div {...props} />,
+  DialogTitle: (props: React.ComponentProps<"h2">) => <h2 {...props} />,
+}));
+const PopoverOpenContext = React.createContext<((open: boolean) => void) | null>(null);
+mock.module("../src/components/ui/popover", () => ({
+  Popover: ({ children, onOpenChange }: { children: React.ReactNode; onOpenChange: (open: boolean) => void }) => <PopoverOpenContext.Provider value={onOpenChange}>{children}</PopoverOpenContext.Provider>,
+  PopoverTrigger: ({ children, render }: { children: React.ReactNode; render: React.ReactElement }) => {
+    const onOpenChange = React.useContext(PopoverOpenContext);
+    return React.cloneElement(render, { onClick: () => onOpenChange?.(true) }, children);
+  },
+  PopoverContent: ({ children, ...props }: React.ComponentProps<"div">) => <div {...props}>{children}</div>,
+}));
 
 const calendar = (id: string, name: string): DenCalendar => ({
   id, organizationId: "org-a", ownerMemberId: "member-a", name, color: "#2563eb", isDefault: id === "cal-1",

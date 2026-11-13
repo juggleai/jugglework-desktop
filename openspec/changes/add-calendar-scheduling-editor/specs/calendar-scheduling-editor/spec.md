@@ -103,3 +103,26 @@ Scheduling 服务失败 MUST NOT 阻止成功的普通 Calendar bootstrap 持久
 
 - **WHEN** Server 接受带组织 member IDs 的 scheduling event
 - **THEN** Desktop 只确认事件保存和参与人集合，不宣称邀请已送达或参与人已接受
+
+### Requirement: Video meeting intent is durable and explicit
+
+日程 SHALL 持久化 `videoConferenceEnabled`。新建表单默认启用，用户显式移除后 MUST 保存为禁用；详情卡只有在该字段启用时才可提供发起会议动作。发起会议 SHALL 使用既有组织 Meeting 服务创建真实即时会议，把日程 attendee member IDs 映射为当前组织 user IDs，排除当前发起人并向其余参与人发送会议邀请。无法映射全部参与人或 Meeting readiness 不满足时 MUST fail closed，不得声称会议已创建或邀请已送达。
+
+#### Scenario: User starts a meeting from an enabled event
+
+- **WHEN** 已启用视频会议的日程详情包含可映射的组织参与人，且 Meeting 服务 ready
+- **THEN** Desktop 创建即时会议，以除发起人外的全部日程参与人 user IDs 作为 invitees，调用通知接口并打开该会议
+
+#### Scenario: User disables video meeting before saving
+
+- **WHEN** 用户在日程编辑器移除视频会议并保存
+- **THEN** Server 权威事件返回 `videoConferenceEnabled: false`，随后详情卡不显示发起视频会议动作
+
+### Requirement: Event detail dismisses on outside interaction
+
+日程详情卡 SHALL 在用户点击卡片外部时关闭，同时保留卡片内部操作、显式关闭按钮和 Escape 关闭行为。
+
+#### Scenario: User clicks calendar outside the detail card
+
+- **WHEN** 日程详情卡已打开且用户点击卡片外的日历区域
+- **THEN** 详情卡关闭且该外部点击不会触发卡片内部动作

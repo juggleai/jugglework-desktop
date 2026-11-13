@@ -5,6 +5,7 @@ import {
   type QueryClient,
   type UseMutationResult,
 } from "@tanstack/react-query";
+import { Temporal } from "@js-temporal/polyfill";
 import { useRef } from "react";
 
 import {
@@ -25,6 +26,7 @@ import {
   type DenCalendarEventResult,
   type DenCalendarEventUpdateInput,
   type DenCalendarSchedulingEventCreateInput,
+  type DenCalendarSchedulingOccurrenceList,
   type DenCalendarSchedulingEventResult,
   type DenCalendarSchedulingEventUpdateInput,
   type DenCalendarResult,
@@ -325,6 +327,36 @@ export function useTeamCalendarEventMutations(client: TeamCalendarEventMutationC
 export function useCalendarSchedulingEventMutations(client: CalendarSchedulingMutationClient, scope: CalendarScope | null) {
   const queryClient = useQueryClient();
   const refresh = async (capturedScope: CalendarScope) => invalidate(queryClient, [calendarQueryKeys.scheduling(capturedScope), calendarQueryKeys.bootstraps(capturedScope), calendarQueryKeys.ranges(capturedScope), calendarQueryKeys.changesRoot(capturedScope)]);
+  const updateLoadedSchedulingRanges = (capturedScope: CalendarScope, event: DenCalendarSchedulingEventResult["event"]): void => {
+    const schedulingEventQueries = [...calendarQueryKeys.scheduling(capturedScope), "events"] as const;
+    for (const [queryKey, cached] of queryClient.getQueriesData<DenCalendarSchedulingOccurrenceList>({ queryKey: schedulingEventQueries })) {
+      if (!cached) continue;
+      const withoutEvent = cached.items.filter((occurrence) => occurrence.event.id !== event.id);
+      const startInstant = queryKey.at(-3);
+      const endInstantExclusive = queryKey.at(-2);
+      const timeZone = queryKey.at(-1);
+      let overlaps = false;
+      if (event.recurrence === null && typeof startInstant === "string" && typeof endInstantExclusive === "string" && typeof timeZone === "string") {
+        try {
+          const eventStart = event.time.kind === "timed"
+            ? Temporal.Instant.from(event.time.startInstant)
+            : Temporal.PlainDate.from(event.time.startDate).toZonedDateTime({ timeZone, plainTime: Temporal.PlainTime.from("00:00") }).toInstant();
+          const eventEnd = event.time.kind === "timed"
+            ? Temporal.Instant.from(event.time.endInstantExclusive)
+            : Temporal.PlainDate.from(event.time.endDateExclusive).toZonedDateTime({ timeZone, plainTime: Temporal.PlainTime.from("00:00") }).toInstant();
+          overlaps = Temporal.Instant.compare(eventStart, Temporal.Instant.from(endInstantExclusive)) < 0 && Temporal.Instant.compare(eventEnd, Temporal.Instant.from(startInstant)) > 0;
+        } catch { /* A refetch below remains authoritative for malformed range metadata. */ }
+      }
+      queryClient.setQueryData<DenCalendarSchedulingOccurrenceList>(queryKey, overlaps ? {
+        ...cached,
+        items: [...withoutEvent, { event, occurrenceIndex: 1, time: event.time }].sort((left, right) => {
+          const leftStart = left.time.kind === "timed" ? left.time.startInstant : `${left.time.startDate}T00:00:00Z`;
+          const rightStart = right.time.kind === "timed" ? right.time.startInstant : `${right.time.startDate}T00:00:00Z`;
+          return leftStart.localeCompare(rightStart) || left.event.id.localeCompare(right.event.id);
+        }),
+      } : { ...cached, items: withoutEvent });
+    }
+  };
   type CreateVariables = Omit<DenCalendarSchedulingEventCreateInput, "idempotencyKey">;
   const create = usePreparedMutation<DenCalendarSchedulingEventResult, CreateVariables, PreparedBase<CreateVariables> & { input: DenCalendarSchedulingEventCreateInput }>({
     retryDelay: 1_000,
@@ -339,7 +371,13 @@ export function useCalendarSchedulingEventMutations(client: CalendarSchedulingMu
     mutationFn: (prepared) => client.createCalendarSchedulingEvent(prepared.scope.organizationId, prepared.input),
     onSuccess: async (result, prepared) => {
       setCanonicalCalendarEvent(queryClient, prepared.scope, result.event);
+      // Publish an authoritative one-off result into mounted scheduling ranges immediately. The
+      // background invalidation still reconciles recurrence expansion and exact range membership.
+      updateLoadedSchedulingRanges(prepared.scope, result.event);
       await refresh(prepared.scope);
+      // The mutation response is authoritative even if the range read is briefly stale (for
+      // example, during read-replica lag). Reapply it after reconciliation so the new event is visible.
+      updateLoadedSchedulingRanges(prepared.scope, result.event);
     },
   });
   type UpdateVariables = { eventId: string; input: Omit<DenCalendarSchedulingEventUpdateInput, "idempotencyKey"> };
@@ -362,7 +400,9 @@ export function useCalendarSchedulingEventMutations(client: CalendarSchedulingMu
     mutationFn: (prepared) => client.updateCalendarSchedulingEvent(prepared.scope.organizationId, prepared.eventId, prepared.input),
     onSuccess: async (result, prepared) => {
       setCanonicalCalendarEvent(queryClient, prepared.scope, result.event);
+      updateLoadedSchedulingRanges(prepared.scope, result.event);
       await refresh(prepared.scope);
+      updateLoadedSchedulingRanges(prepared.scope, result.event);
     },
   });
   return { create, update };

@@ -1310,6 +1310,7 @@ export default {
   "calendar.delete_event": "Suprimeix l'esdeveniment",
   "calendar.delete_confirm": "Vols suprimir aquest esdeveniment? No es pot desfer.",
   "calendar.field_title": "Títol",
+  "calendar.field_title_placeholder": "Afegeix un títol",
   "calendar.field_description": "Descripció",
   "calendar.field_start_date": "Data d'inici",
   "calendar.field_end_date": "Data de finalització",

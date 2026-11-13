@@ -247,12 +247,14 @@ export type DenCalendarMembershipRevokeResult = { authorizationVersion: number }
 export type DenTeamCalendarEventCreateInput = {
   title: string;
   description: string;
+  videoConferenceEnabled: boolean;
   time: DenCalendarEventTime;
 };
 export type DenTeamCalendarEventUpdateInput = {
   expectedVersion: number;
   title?: string;
   description?: string;
+  videoConferenceEnabled?: boolean;
   time?: DenCalendarEventTime;
 };
 export type DenTeamCalendarEventDeleteInput = { expectedVersion: number };
@@ -266,6 +268,7 @@ export type DenCalendarEvent = {
   calendarId: string;
   title: string;
   description: string;
+  videoConferenceEnabled: boolean;
   time: DenCalendarEventTime;
   version: number;
   createdAt: string;
@@ -316,6 +319,7 @@ export type DenCalendarEventCreateInput = {
   calendarId: string;
   title: string;
   description?: string;
+  videoConferenceEnabled: boolean;
   time: DenCalendarEventTime;
 };
 export type DenCalendarEventUpdateInput = {
@@ -324,6 +328,7 @@ export type DenCalendarEventUpdateInput = {
   calendarId?: string;
   title?: string;
   description?: string;
+  videoConferenceEnabled?: boolean;
   time?: DenCalendarEventTime;
 };
 export type DenCalendarDeleteInput = { idempotencyKey: string; expectedVersion: number };
@@ -347,6 +352,7 @@ export type DenCalendarSchedulingEventCreateInput = {
   calendarId: string;
   title: string;
   description: string;
+  videoConferenceEnabled: boolean;
   time: DenCalendarEventTime;
   attendees: DenCalendarSchedulingAttendeeInput[];
   recurrence: DenCalendarSchedulingRecurrence | null;
@@ -357,6 +363,7 @@ export type DenCalendarSchedulingEventUpdateInput = {
   calendarId?: string;
   title?: string;
   description?: string;
+  videoConferenceEnabled?: boolean;
   time?: DenCalendarEventTime;
   attendees?: DenCalendarSchedulingAttendeeInput[];
   recurrence?: DenCalendarSchedulingRecurrence | null;
@@ -1139,9 +1146,9 @@ export function normalizeDenCalendar(value: unknown): DenCalendar | null {
 }
 
 export function normalizeDenCalendarEvent(value: unknown): DenCalendarEvent | null {
-  if (!isRecord(value) || !hasExactKeys(value, ["id", "organizationId", "ownerMemberId", "calendarId", "title", "description", "time", "version", "createdAt", "updatedAt"]) ||
+  if (!isRecord(value) || !hasExactKeys(value, value.videoConferenceEnabled === undefined ? ["id", "organizationId", "ownerMemberId", "calendarId", "title", "description", "time", "version", "createdAt", "updatedAt"] : ["id", "organizationId", "ownerMemberId", "calendarId", "title", "description", "videoConferenceEnabled", "time", "version", "createdAt", "updatedAt"]) ||
     typeof value.id !== "string" || !value.id || typeof value.organizationId !== "string" || !value.organizationId || typeof value.ownerMemberId !== "string" || !value.ownerMemberId ||
-    typeof value.calendarId !== "string" || !value.calendarId || typeof value.title !== "string" || !value.title || value.title.length > 500 || typeof value.description !== "string" || value.description.length > 20_000 ||
+    typeof value.calendarId !== "string" || !value.calendarId || typeof value.title !== "string" || !value.title || value.title.length > 500 || typeof value.description !== "string" || value.description.length > 20_000 || value.videoConferenceEnabled !== undefined && typeof value.videoConferenceEnabled !== "boolean" ||
     !isPositiveSafeInteger(value.version) || !isUtcTimestamp(value.createdAt) || !isUtcTimestamp(value.updatedAt)) return null;
   const time = normalizeCalendarTime(value.time);
   if (!time) return null;
@@ -1152,6 +1159,7 @@ export function normalizeDenCalendarEvent(value: unknown): DenCalendarEvent | nu
     calendarId: value.calendarId,
     title: value.title,
     description: value.description,
+    videoConferenceEnabled: value.videoConferenceEnabled === true,
     time,
     version: value.version,
     createdAt: value.createdAt,
@@ -1170,7 +1178,7 @@ export function normalizeDenCalendarSchedulingRecurrence(value: unknown): DenCal
 }
 
 export function normalizeDenCalendarSchedulingEvent(value: unknown): DenCalendarSchedulingEvent | null {
-  if (!isRecord(value) || !hasExactKeys(value, ["id", "organizationId", "ownerMemberId", "calendarId", "title", "description", "time", "status", "attendees", "recurrence", "version", "createdAt", "updatedAt"]) ||
+  if (!isRecord(value) || !hasExactKeys(value, value.videoConferenceEnabled === undefined ? ["id", "organizationId", "ownerMemberId", "calendarId", "title", "description", "time", "status", "attendees", "recurrence", "version", "createdAt", "updatedAt"] : ["id", "organizationId", "ownerMemberId", "calendarId", "title", "description", "videoConferenceEnabled", "time", "status", "attendees", "recurrence", "version", "createdAt", "updatedAt"]) ||
     value.status !== "active" || !Array.isArray(value.attendees)) return null;
   const core = normalizeDenCalendarEvent(Object.fromEntries(Object.entries(value).filter(([key]) => !["status", "attendees", "recurrence"].includes(key))));
   const attendees = value.attendees.map((attendee): DenCalendarSchedulingAttendee | null => isRecord(attendee) && hasExactKeys(attendee, ["memberId", "responseStatus"]) && typeof attendee.memberId === "string" && attendee.memberId && ["needs-action", "accepted", "declined", "tentative"].includes(String(attendee.responseStatus)) ? { memberId: attendee.memberId, responseStatus: attendee.responseStatus as DenCalendarSchedulingAttendee["responseStatus"] } : null);

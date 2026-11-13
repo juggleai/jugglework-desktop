@@ -1293,6 +1293,7 @@ export default {
   "calendar.delete_event": "予定を削除",
   "calendar.delete_confirm": "この予定を削除しますか？元に戻すことはできません。",
   "calendar.field_title": "タイトル",
+  "calendar.field_title_placeholder": "タイトルを追加",
   "calendar.field_description": "説明",
   "calendar.field_start_date": "開始日",
   "calendar.field_end_date": "終了日",

@@ -32,6 +32,16 @@ mock.module("../src/components/ui/dialog", () => ({
   DialogTitle: (props: React.ComponentProps<"h2">) => <h2 {...props} />,
 }));
 
+const PopoverOpenContext = React.createContext<((open: boolean) => void) | null>(null);
+mock.module("../src/components/ui/popover", () => ({
+  Popover: ({ children, onOpenChange }: { children: React.ReactNode; onOpenChange: (open: boolean) => void }) => <PopoverOpenContext.Provider value={onOpenChange}>{children}</PopoverOpenContext.Provider>,
+  PopoverTrigger: ({ children, render }: { children: React.ReactNode; render: React.ReactElement }) => {
+    const onOpenChange = React.useContext(PopoverOpenContext);
+    return React.cloneElement(render, { onClick: () => onOpenChange?.(true), children } as React.HTMLAttributes<HTMLElement>);
+  },
+  PopoverContent: ({ children, ...props }: React.ComponentProps<"div">) => <div {...props}>{children}</div>,
+}));
+
 const resource = (id: string, kind: "personal" | "team", role: DenCalendarCollaborationResource["role"]): DenCalendarCollaborationResource => ({
   id, organizationId: "org-a", ownerMemberId: "member-a", kind, name: id, color: "#2563eb", role,
   capabilities: {
@@ -212,10 +222,9 @@ test("switching a new event to a team calendar keeps owner semantics out of sche
   const renderer = await render();
   try {
     await click(renderer, "calendar-create-event");
-    const calendarSelect = byId(renderer, "calendar-form-calendar");
-    const managedTeamOption = calendarSelect.findAllByType("option").find((option) => option.props.value === "managed-team");
-    expect(managedTeamOption?.props.disabled).not.toBe(true);
-    await change(renderer, "calendar-form-calendar", "managed-team");
+    await click(renderer, "calendar-form-calendar");
+    expect(byId(renderer, "calendar-form-calendar-option-managed-team").props.disabled).not.toBe(true);
+    await click(renderer, "calendar-form-calendar-option-managed-team");
     expect(has(renderer, "calendar-team-scheduling-unavailable")).toBe(true);
     await change(renderer, "calendar-form-title", "Team planning");
     await submit(renderer);
