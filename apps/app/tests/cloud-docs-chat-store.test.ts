@@ -32,7 +32,7 @@ Object.defineProperty(globalThis, "window", {
   configurable: true,
   value: host,
 });
-const bot = (id: string) => "jw_docs_" + (id === "a" ? "a" : "b").repeat(32);
+const bot = (id: string) => "jw_docs_" + (id === "a" ? "a" : "b").repeat(24);
 let tenant = "a",
   hasIM = true,
   failContext = false;

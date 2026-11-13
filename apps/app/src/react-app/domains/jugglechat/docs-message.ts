@@ -3,7 +3,8 @@ import type { ChatConversation, ChatMessage } from "./types";
 export const DOCS_MESSAGE_NAME = "jw:docs-notification";
 const id = /^[A-Za-z0-9_-]{1,64}$/;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const bot = /^jw_docs_[0-9a-f]{32}$/;
+// TIPS: 新助手总长 32 字符；兼容旧卡片的 40 字符身份，最终仍由 Server 验证事件。
+const bot = /^jw_docs_(?:[0-9a-f]{24}|[0-9a-f]{32})$/;
 const kinds = new Set([
   "page.user_mention",
   "comment.user_mention",

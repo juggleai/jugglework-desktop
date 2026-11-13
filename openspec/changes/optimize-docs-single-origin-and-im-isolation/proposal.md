@@ -1,6 +1,6 @@
 ## Why
 
-组织 IM 已由现有不同 AppKey 隔离，Desk 的 Docs 分类前置造成额外依赖。云文档固定使用 https://docs.juggle.im，需要适配地址与共域名会话；独立打开复用 File Browser。
+组织 IM 已由现有不同 AppKey 隔离，Desk 的 Docs 分类前置造成额外依赖。云文档使用当前 Work 配置下发的 Docs Origin，需要适配地址与共域名会话；独立打开复用 File Browser。测试环境 https://docs.juggle.im 仅为部署配置。
 
 ## What Changes
 

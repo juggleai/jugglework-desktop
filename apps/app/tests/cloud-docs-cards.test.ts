@@ -17,8 +17,8 @@ import {
 } from "../src/react-app/domains/jugglechat/docs-notification-action";
 import type { ChatMessage } from "../src/react-app/domains/jugglechat/types";
 
-const botA = "jw_docs_" + "a".repeat(32),
-  botB = "jw_docs_" + "b".repeat(32);
+const botA = "jw_docs_" + "a".repeat(24),
+  botB = "jw_docs_" + "b".repeat(24);
 const scope: ChatConnectionScope = Object.freeze({
   key: "scopeA",
   server: "https://example.test/deployment-a",
@@ -62,8 +62,10 @@ describe("云文档固定卡片", () => {
   test("实际助手和会话均匹配才能绑定，转发或 JSON 伪造不能继承动作", () => {
     const bound = bindDocsMessage(card(), scope);
     expect(docsMessageSource(bound)?.scope).toBe(scope);
+    expect(docsMessageSource(bindDocsMessage({ ...card(), sender: { id: "jw_docs_" + "a".repeat(32) } }, scope))?.scope).toBe(scope);
     for (const patch of [
       { sender: { id: "human" } },
+      { sender: { id: "jw_docs_" + "a".repeat(25) } },
       { conversationType: 1, conversationId: "regular" },
       { isSender: true },
     ])

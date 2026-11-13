@@ -443,6 +443,7 @@ const MESSAGE_NAMES = {
   // §4.10——必须在这里登记，否则会被下面 SUPPORTED_MESSAGE_NAMES 判成"不支持"，落进
   // system 分支渲染成一条灰色的"消息暂不支持"分隔行，永远走不到 MessageBubble。
   automationNotification: "jw:automation-notification",
+  cloudDocsNotification: DOCS_MESSAGE_NAME,
 } as const;
 
 const SUPPORTED_MESSAGE_NAMES = new Set<string>(Object.values(MESSAGE_NAMES));

@@ -31,7 +31,8 @@ const pool = createProductViewPool({
         if (state.status === "ready") resolve();
         else if (state.status === "error" || state.status === "unauthorized") reject(new Error("cloud_docs_unavailable"));
       });
-      timer = setTimeout(() => reject(new Error("cloud_docs_unavailable")), 30000);
+      // TIPS: 后台首次加载与可见产品页采用相同的远端资源等待窗口。
+      timer = setTimeout(() => reject(new Error("cloud_docs_unavailable")), 60_000);
     });
     void ready.catch(() => undefined);
     try {

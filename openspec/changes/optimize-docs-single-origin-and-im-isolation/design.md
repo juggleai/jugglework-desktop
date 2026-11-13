@@ -25,6 +25,8 @@ Docs 卡片继续使用现有解析、Symbol 来源绑定、事件验证及打�
 
 ## 2. 固定域名
 
+“固定”表示一套部署内组织共用一个可配置 Origin，不表示产品写死域名或服务器 IP。Desktop 从当前 Work 的 runtime-config 获取；自托管／托管／迁机沿用同一契约。可见产品页与后台产品页首次加载等待窗口为 60 秒，允许远端 AFFiNE 冷缓存下载完成。
+
 - 复用 Work 的 runtime-config 获取 docs.enabled／publicOrigin，缓存绑定来源；更换来源或重新连接时重新读取，不为粘贴链接申请 grant，不扩展登录／组织响应。
 - validateCloudDocsLaunch 精确比较配置 Origin 与现有 bootstrapUrl，并保留固定路径、HTTPS、无用户信息／查询／fragment 的检查。删除 t- 前缀判断。
 - 现有 Electron partition 哈希输入增加 tenantId；页面、后台池、会话标签和附件沿用已有 scope 清理。

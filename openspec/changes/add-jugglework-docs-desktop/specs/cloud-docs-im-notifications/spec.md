@@ -5,6 +5,10 @@
 ### Requirement: Docs IM card uses existing chat extension points
 Desktop SHALL 在现有自定义消息注册、气泡、会话列表预览及未知类型兜底中支持 jw:docs-notification。卡片 SHALL 使用通用文案和打开按钮，MUST NOT 展示原始载荷或执行 AI／任意 URL。同一来源＋租户＋事件 SHALL 去重展示，站内未读 SHALL 独立维护。
 
+#### Scenario: Current assistant sends a stored notification
+- **WHEN** 当前组织收到 `jw_docs_` 加 24 位十六进制摘要的助手消息
+- **THEN** 使用云文档卡片组件并绑定接收来源，显示打开动作；兼容旧 32 位摘要格式，最终仍由 Server 核对持久事件
+
 #### Scenario: Unsupported card version arrives
 - **WHEN** 消息 contractVersion 未支持或定位字段不合法
 - **THEN** 显示云文档通知兜底，不执行导航、不展示敏感原始 JSON

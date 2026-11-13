@@ -185,13 +185,14 @@ export function CloudDocsPage(props: Props) {
     });
     window.addEventListener("resize", updateBounds);
     document.addEventListener("visibilitychange", updateBounds);
+    // TIPS: 远端 AFFiNE 首次打开需要下载较大的按需分包；15 秒会在页面即将就绪时误判失败。
     const timeout = window.setTimeout(() => {
       if (stillCurrent() && !ready && !failed) {
         setState("error");
         setError(t("cloud_docs.connection_failed"));
         void bridge.close(instanceId);
       }
-    }, 15000);
+    }, 60_000);
     void (async () => {
       try {
         const launch = await createDenClient({
