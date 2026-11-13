@@ -20,6 +20,7 @@ import { verifyJuggleWorkUiMcp } from "./verify-jugglework-ui-mcp.mjs";
 import { inspectArtifact } from "./qiniu-release/metadata.mjs";
 import { verifyToonFactoryBundle } from "../electron/toonFactoryBundle.mjs";
 import { verifyMediaTools, verifyMediaExecutables } from "../electron/mediaTools.mjs";
+import { verifyOpenCodePluginBundles } from "../../server/script/verify-opencode-plugin-bundles.mjs";
 
 const require = createRequire(import.meta.url);
 const { hasNotaryCredentials } = require("./macos-notary.cjs");
@@ -610,13 +611,16 @@ export async function main() {
       })
     : null;
   const tray = verifyMacTrayResources(appPath);
+  const opencodePlugins = verifyOpenCodePluginBundles(
+    path.join(appPath, "Contents", "Resources", "opencode-plugins"),
+  );
   const nativeModules = verifyPackagedNativeModules(appPath);
   const uiControlMcp = await verifyPackagedUiControlMcp(appPath);
   if (verificationOutput) {
     const outputPath = path.resolve(verificationOutput);
     writeFileSync(outputPath, `${JSON.stringify(localVerification, null, 2)}\n`, { encoding: "utf8", flag: "wx", mode: 0o600 });
   }
-  process.stdout.write(`${JSON.stringify({ ok: true, appPath, architecture, metadata, updater, signature, toonFactory, trust, zip, dmg, dmgTrust, verificationOutput: verificationOutput || null, localVerification, tray, nativeModules, uiControlMcp }, null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify({ ok: true, appPath, architecture, metadata, updater, signature, toonFactory, trust, zip, dmg, dmgTrust, verificationOutput: verificationOutput || null, localVerification, tray, opencodePlugins, nativeModules, uiControlMcp }, null, 2)}\n`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
