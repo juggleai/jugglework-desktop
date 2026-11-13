@@ -173,24 +173,69 @@ export async function getGroupInfo(groupId: string): Promise<ApiEnvelope<Record<
 }
 
 export async function getGroupMembers(groupId: string, limit = 100, offset = "") {
-  void limit;
-  void offset;
+  const normalizedLimit = Math.max(1, Math.min(100, Math.trunc(limit) || 100));
+  const normalizedOffset = /^\d+$/.test(offset) ? Number(offset) : 0;
   const result = await organizationRequest<{
-    members: Array<{ userId: string; imUserId: string; name: string; email: string; avatar?: string | null }>;
-  }>(`/v1/groups/${encodeURIComponent(groupId)}/members`, { method: "GET" });
+    members: Array<{ userId: string; imUserId?: string; name: string; email: string; avatar?: string | null }>;
+    total: number;
+    limit: number;
+    offset: number;
+  }>(`/v1/groups/${encodeURIComponent(groupId)}/members?limit=${normalizedLimit}&offset=${normalizedOffset}`, { method: "GET" });
   const members: ChatGroupMember[] = (result.members ?? []).map((member) => ({
-    id: member.imUserId,
-    user_id: member.imUserId,
+    id: member.imUserId || member.userId,
+    user_id: member.imUserId || member.userId,
     identity_user_id: member.userId,
-    nickname: member.name || member.email || member.imUserId,
-    name: member.name || member.email || member.imUserId,
+    nickname: member.name || member.email || member.imUserId || member.userId,
+    name: member.name || member.email || member.imUserId || member.userId,
     avatar: member.avatar || undefined,
     portrait: member.avatar || undefined,
   }));
+  const nextOffset = normalizedOffset + members.length;
   return {
     code: 0,
-    data: { items: members, members, offset: "" },
-  } satisfies ApiEnvelope<{ items: ChatGroupMember[]; members: ChatGroupMember[]; offset: string }>;
+    data: { items: members, members, offset: nextOffset < result.total ? String(nextOffset) : "", total: result.total },
+  } satisfies ApiEnvelope<{ items: ChatGroupMember[]; members: ChatGroupMember[]; offset: string; total: number }>;
+}
+
+export async function collectAllGroupMembers(
+  getPage: (limit: number, offset: string) => ReturnType<typeof getGroupMembers>,
+  pageSize = 100,
+) {
+  const normalizedPageSize = Math.max(1, Math.min(100, Math.trunc(pageSize) || 100));
+  const maximumPages = 100;
+  const maximumMembers = 10_000;
+  const members: ChatGroupMember[] = [];
+  const seenMemberIds = new Set<string>();
+  const seenOffsets = new Set<string>();
+  let offset = "";
+  let total = 0;
+  for (let pageNumber = 0; pageNumber < maximumPages; pageNumber += 1) {
+    const result = await getPage(normalizedPageSize, offset);
+    const data = result.data;
+    const page = Array.isArray(data?.items) ? data.items : Array.isArray(data?.members) ? data.members : [];
+    for (const member of page) {
+      const identity = member.identity_user_id || member.user_id || member.id;
+      if (identity && seenMemberIds.has(identity)) continue;
+      if (identity) seenMemberIds.add(identity);
+      members.push(member);
+      if (members.length > maximumMembers) throw new Error("群成员数量超过安全上限，请缩小群组后重试");
+    }
+    total = Number.isSafeInteger(data?.total) ? data.total : Math.max(total, members.length);
+    const nextOffset = typeof data?.offset === "string" ? data.offset : "";
+    if (!page.length || members.length >= total || !nextOffset || nextOffset === offset || seenOffsets.has(nextOffset)) break;
+    if (pageNumber === maximumPages - 1) throw new Error("群成员分页超过安全上限，请稍后重试");
+    seenOffsets.add(nextOffset);
+    offset = nextOffset;
+  }
+  return {
+    code: 0,
+    data: { items: members, members, offset: "", total: Math.max(total, members.length) },
+  } satisfies ApiEnvelope<{ items: ChatGroupMember[]; members: ChatGroupMember[]; offset: string; total: number }>;
+}
+
+/** Use for views whose correctness depends on the complete group roster. */
+export function getAllGroupMembers(groupId: string) {
+  return collectAllGroupMembers((limit, offset) => getGroupMembers(groupId, limit, offset));
 }
 
 export function updateGroup(groupId: string, values: { group_name?: string; group_portrait?: string }) {

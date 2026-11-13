@@ -46,8 +46,8 @@ import {
 import {
   createGroup,
   dismissGroup,
+  getAllGroupMembers,
   getGroupInfo,
-  getGroupMembers,
   getMembersPage,
   inviteGroupMembers,
   removeGroupMembers,
@@ -941,26 +941,10 @@ function canMentionAll(settingRight: number, myRole: number) {
   return settingRight === 7 || (settingRight === 1 && myRole === 1) || (settingRight === 3 && (myRole === 1 || myRole === 2));
 }
 
-async function getAllGroupMentionMembers(groupId: string) {
-  const members: ChatGroupMember[] = [];
-  let offset = "";
-  for (let page = 0; page < 50; page += 1) {
-    const result = await getGroupMembers(groupId, 100, offset);
-    assertSuccess(result, "获取群成员失败");
-    const items = extractGroupMembers(result.data);
-    members.push(...items);
-    if (Array.isArray(result.data)) break;
-    const nextOffset = result.data && typeof result.data === "object" && "offset" in result.data ? String(result.data.offset || "") : "";
-    if (!nextOffset || nextOffset === offset || !items.length) break;
-    offset = nextOffset;
-  }
-  return members;
-}
-
 async function getMentionCandidates(groupId: string): Promise<MentionCandidate[]> {
   const [infoResult, listedMembers] = await Promise.all([
     getGroupInfo(groupId),
-    getAllGroupMentionMembers(groupId).catch(() => []),
+    getAllGroupMembers(groupId).then((result) => extractGroupMembers(result.data)).catch(() => []),
   ]);
   assertSuccess(infoResult, "获取群资料失败");
   const data = infoResult.data ?? {};
@@ -1626,7 +1610,7 @@ function GroupManagementModal({ conversation, onClose }: { conversation: ChatCon
     try {
       const [infoResult, membersResult] = await Promise.all([
         getGroupInfo(conversation.conversationId),
-        getGroupMembers(conversation.conversationId),
+        getAllGroupMembers(conversation.conversationId),
       ]);
       assertSuccess(infoResult, "获取群资料失败");
       assertSuccess(membersResult, "获取群成员失败");

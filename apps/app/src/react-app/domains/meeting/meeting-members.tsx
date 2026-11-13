@@ -1,7 +1,7 @@
 import { MeetingIcon } from "./meeting-icons";
 import { useMeetingStore } from "./store";
 import { useEffect, useRef, useState } from "react";
-import { getGroupMembers } from "../jugglechat/api";
+import { getAllGroupMembers } from "../jugglechat/api";
 import type { ChatContact } from "../jugglechat/types";
 import { meetingAPI } from "./api";
 import { sendMeetingInvitation } from "./im-adapter";
@@ -26,7 +26,7 @@ export function MeetingMembers({ meeting, contacts, userId, onTransfer, busy }: 
   useEffect(() => {
     let alive = true;
     if (meeting.sourceKind === "group") {
-      void getGroupMembers(meeting.sourceId).then((r) => {
+      void getAllGroupMembers(meeting.sourceId).then((r) => {
         if (alive) setGroupMembers(r.data.items.map((c) => ({
           user_id: c.user_id || c.id || "", nickname: c.nickname || c.name,
           avatar: c.avatar || c.portrait,
