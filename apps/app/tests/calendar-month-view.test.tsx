@@ -5,7 +5,7 @@ import React from "react";
 import TestRenderer, { act } from "react-test-renderer";
 import { MemoryRouter } from "react-router-dom";
 
-import type { DenCalendar, DenCalendarEvent, DenCalendarEventTime } from "../src/app/lib/den";
+import type { DenCalendar, DenCalendarEvent, DenCalendarEventTime, DenCalendarSchedulingEvent } from "../src/app/lib/den";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -35,19 +35,30 @@ const calendar = (id: string, name: string): DenCalendar => ({
 let calendars: DenCalendar[] = [];
 let events: DenCalendarEvent[] = [];
 const bootstrapRanges: string[] = [];
+const schedulingRanges: Array<{ startInstant: string; endInstantExclusive: string; timeZone: string }> = [];
 const writes: string[] = [];
+let schedulingItems: Array<{ event: DenCalendarSchedulingEvent; occurrenceIndex: number; time: DenCalendarEventTime }> = [];
+let schedulingFailure: Error | null = null;
+let schedulingGate: Promise<void> | null = null;
 const client = {
   listCalendars: async () => calendars,
   getCalendarBootstrap: async (_org: string, range: { startDate: string; endDateExclusive: string }) => {
     bootstrapRanges.push(`${range.startDate}/${range.endDateExclusive}`);
     return { calendars, events, coverage: { ...range, calendarIds: [] }, cursor: "c1" };
   },
+  listCalendarSchedulingEvents: async (_org: string, range: { startInstant: string; endInstantExclusive: string; timeZone: string }) => {
+    schedulingRanges.push({ ...range });
+    if (schedulingGate) await schedulingGate;
+    if (schedulingFailure) throw schedulingFailure;
+    return { items: schedulingItems };
+  },
+  getCalendarSchedulingAvailability: async () => ({ members: [] }),
   createCalendar: async () => { writes.push("create"); throw new Error("unexpected write"); },
   updateCalendar: async () => { writes.push("update"); throw new Error("unexpected write"); },
   deleteCalendar: async () => { writes.push("delete"); throw new Error("unexpected write"); },
 };
 mock.module("../src/react-app/domains/settings/cloud/cloud-session-provider", () => ({
-  useCloudSession: () => ({ isSignedIn: true, baseUrl: "https://den.example/api", activeOrganization: { id: "org-a", orgMemberId: "member-a" }, client }),
+  useCloudSession: () => ({ isSignedIn: true, baseUrl: "https://den.example/api", user: { id: "user-a", name: "Ada", account: "ada", email: "ada@example.com" }, activeOrganization: { id: "org-a", orgMemberId: "member-a" }, client }),
 }));
 mock.module("../src/react-app/domains/cloud/desktop-config-provider", () => ({
   useDesktopConfig: () => ({ loading: false, config: { calendarEnabled: true, calendarWriteEnabled: true } }),
@@ -61,12 +72,13 @@ const calendarEvent = (id: string, time: DenCalendarEventTime, calendarId = "cal
 });
 
 beforeEach(() => {
-  values.clear(); writes.length = 0; bootstrapRanges.length = 0; events = [];
+  values.clear(); writes.length = 0; bootstrapRanges.length = 0; schedulingRanges.length = 0; schedulingItems = []; schedulingFailure = null; schedulingGate = null; events = [];
   calendars = [calendar("cal-1", "Personal"), calendar("cal-2", "Side project")];
 });
 
-async function render() {
+async function render(prepare?: (queryClient: QueryClient) => void) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  prepare?.(queryClient);
   const noop = () => undefined;
   let renderer!: TestRenderer.ReactTestRenderer;
   const tree = () => (
@@ -186,6 +198,27 @@ test("calendar filters are grouped, collapsible, and retain the existing checkbo
   } finally { await act(async () => { renderer.unmount(); }); }
 });
 
+test("shows the signed-in nickname for only the default personal calendar", async () => {
+  const { renderer } = await render();
+  try {
+    const defaultCalendarRow = byId(renderer, "calendar-filter-cal-1").parent;
+    const additionalCalendarRow = byId(renderer, "calendar-filter-cal-2").parent;
+    expect(text(defaultCalendarRow)).toContain("Ada");
+    expect(text(defaultCalendarRow)).not.toContain("Personal");
+    expect(text(additionalCalendarRow)).toContain("Side project");
+    expect(byId(renderer, "calendar-page-actions").findAll((node) => node.type === "button" && node.props["data-testid"] === "calendar-create-event")).toHaveLength(1);
+    expect(byId(renderer, "calendar-view-toolbar").findAll((node) => node.type === "button" && node.props["data-testid"] === "calendar-create-event")).toHaveLength(0);
+  } finally { await act(async () => { renderer.unmount(); }); }
+});
+
+test("does not offer event creation without an authoritative writable default calendar", async () => {
+  calendars = calendars.map((item) => ({ ...item, isDefault: false }));
+  const { renderer } = await render();
+  try {
+    expect(has(renderer, "calendar-create-event")).toBe(false);
+  } finally { await act(async () => { renderer.unmount(); }); }
+});
+
 test("a soft-deleted calendar leaves the filter list and its hidden entry", async () => {
   const { renderer, queryClient } = await render();
   try {
@@ -202,9 +235,83 @@ test("requests exactly the visible six-week range and refetches on month change"
   const { renderer } = await render();
   try {
     expect(bootstrapRanges).toEqual(["2026-11-01/2026-12-13"]);
+    expect(schedulingRanges).toEqual([{ startInstant: "2026-10-31T16:00:00Z", endInstantExclusive: "2026-12-12T16:00:00Z", timeZone: "Asia/Shanghai" }]);
+    expect(Temporal.Instant.from(schedulingRanges[0]!.endInstantExclusive).since(Temporal.Instant.from(schedulingRanges[0]!.startInstant)).total("days")).toBe(42);
     await click(renderer, "calendar-next-month");
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
     expect(bootstrapRanges.at(-1)).toBe("2026-11-29/2027-01-10");
+  } finally { await act(async () => { renderer.unmount(); }); }
+});
+
+test("merges scheduling occurrences into the default 42-day month without showing the series master", async () => {
+  const series = {
+    ...calendarEvent("series", { kind: "allDay", startDate: "2026-11-02", endDateExclusive: "2026-11-03" }),
+    status: "active" as const,
+    attendees: [{ memberId: "member-b", responseStatus: "needs-action" as const }],
+    recurrence: { frequency: "weekly" as const, interval: 1, end: { kind: "never" as const } },
+  };
+  events = [calendarEvent("series", series.time)];
+  schedulingItems = [{ event: series, occurrenceIndex: 3, time: { kind: "allDay", startDate: "2026-11-23", endDateExclusive: "2026-11-24" } }];
+  const { renderer } = await render();
+  try {
+    expect(schedulingRanges[0]).toEqual({ startInstant: "2026-10-31T16:00:00Z", endInstantExclusive: "2026-12-12T16:00:00Z", timeZone: "Asia/Shanghai" });
+    expect(has(renderer, "calendar-day-event-2026-11-02-series")).toBe(false);
+    expect(has(renderer, "calendar-day-event-2026-11-23-scheduling:series:3")).toBe(true);
+    await click(renderer, "calendar-day-event-2026-11-23-scheduling:series:3");
+    expect(has(renderer, "calendar-occurrence-read-only")).toBe(true);
+    expect(has(renderer, "calendar-event-detail-edit")).toBe(false);
+  } finally { await act(async () => { renderer.unmount(); }); }
+});
+
+test("a cold-cache scheduling error leaves bootstrap details visible but blocks edit and delete", async () => {
+  events = [calendarEvent("possibly-series", { kind: "allDay", startDate: "2026-11-09", endDateExclusive: "2026-11-10" })];
+  schedulingFailure = new Error("scheduling unavailable");
+  const { renderer } = await render();
+  try {
+    expect(has(renderer, "calendar-scheduling-events-error")).toBe(true);
+    await click(renderer, "calendar-day-event-2026-11-09-possibly-series");
+    expect(has(renderer, "calendar-scheduling-edit-error")).toBe(true);
+    expect(has(renderer, "calendar-event-detail-edit")).toBe(false);
+    expect(has(renderer, "calendar-form-delete")).toBe(false);
+  } finally { await act(async () => { renderer.unmount(); }); }
+});
+
+test("a cold-cache pending scheduling query blocks edit and delete until classification succeeds", async () => {
+  events = [calendarEvent("possibly-series", { kind: "allDay", startDate: "2026-11-09", endDateExclusive: "2026-11-10" })];
+  let release!: () => void;
+  schedulingGate = new Promise<void>((resolve) => { release = resolve; });
+  const { renderer } = await render();
+  try {
+    await click(renderer, "calendar-day-event-2026-11-09-possibly-series");
+    expect(has(renderer, "calendar-scheduling-edit-loading")).toBe(true);
+    expect(has(renderer, "calendar-event-detail-edit")).toBe(false);
+    expect(has(renderer, "calendar-form-delete")).toBe(false);
+  } finally {
+    release();
+    await act(async () => { await schedulingGate; renderer.unmount(); });
+  }
+});
+
+test("a one-time attendee scheduling event keeps its real ID and remains editable and deletable", async () => {
+  const aggregate: DenCalendarSchedulingEvent = {
+    ...calendarEvent("attendee-event", { kind: "allDay", startDate: "2026-11-09", endDateExclusive: "2026-11-10" }),
+    title: "Authoritative attendee event",
+    status: "active",
+    attendees: [{ memberId: "member-b", responseStatus: "accepted" }],
+    recurrence: null,
+  };
+  events = [calendarEvent("attendee-event", aggregate.time)];
+  schedulingItems = [{ event: aggregate, occurrenceIndex: 0, time: aggregate.time }];
+  const { renderer } = await render();
+  try {
+    expect(has(renderer, "calendar-day-event-2026-11-09-attendee-event")).toBe(true);
+    expect(has(renderer, "calendar-day-event-2026-11-09-scheduling:attendee-event:0")).toBe(false);
+    await click(renderer, "calendar-day-event-2026-11-09-attendee-event");
+    expect(text(byId(renderer, "calendar-event-detail-title"))).toBe("Authoritative attendee event");
+    expect(has(renderer, "calendar-occurrence-read-only")).toBe(false);
+    expect(has(renderer, "calendar-event-detail-edit")).toBe(true);
+    await click(renderer, "calendar-event-detail-edit");
+    expect(has(renderer, "calendar-form-delete")).toBe(true);
   } finally { await act(async () => { renderer.unmount(); }); }
 });
 
@@ -258,6 +365,12 @@ test("the view switcher replaces the right agenda with day, week, and month surf
   const { renderer } = await render();
   try {
     expect(has(renderer, "calendar-day-panel")).toBe(false);
+    expect(text(byId(renderer, "calendar-view-day"))).toBe("calendar.day");
+    expect(text(byId(renderer, "calendar-view-week"))).toBe("calendar.week");
+    expect(text(byId(renderer, "calendar-view-month"))).toBe("calendar.month");
+    expect(byId(renderer, "calendar-view-switcher").props.className).toContain("dark:bg-dls-surface-muted");
+    expect(byId(renderer, "calendar-view-month").props.className).toContain("dark:bg-white");
+    expect(byId(renderer, "calendar-view-month").props.className).toContain("dark:text-black");
     expect(byId(renderer, "calendar-view-month").props["aria-pressed"]).toBe(true);
     await click(renderer, "calendar-view-week");
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });

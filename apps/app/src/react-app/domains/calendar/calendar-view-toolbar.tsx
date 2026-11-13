@@ -1,7 +1,7 @@
 /** @jsxImportSource react */
 import * as React from "react";
 import { Temporal } from "@js-temporal/polyfill";
-import { CalendarPlus, ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -24,12 +24,10 @@ export function CalendarViewToolbar(props: {
   selectedDate: Temporal.PlainDate;
   days: readonly Temporal.PlainDate[];
   locale: string;
-  canCreate: boolean;
   onPrevious: () => void;
   onNext: () => void;
   onToday: () => void;
   onViewChange: (view: CalendarViewMode) => void;
-  onCreate: () => void;
 }) {
   const previousTestId = `calendar-previous-${props.view}`;
   const nextTestId = `calendar-next-${props.view}`;
@@ -47,13 +45,7 @@ export function CalendarViewToolbar(props: {
       <h3 className="ml-1 min-w-0 flex-1 text-[15px] font-semibold text-dls-text" aria-live="polite" data-testid={props.view === "month" ? "calendar-visible-month" : "calendar-visible-range"}>
         {visibleTitle(props.view, props.selectedDate, props.days, props.locale)}
       </h3>
-      {props.canCreate ? (
-        <button type="button" className={buttonVariants({ size: "sm" })} onClick={props.onCreate} data-testid="calendar-create-event">
-          <CalendarPlus className="size-4" aria-hidden="true" />
-          {t("calendar.create_event")}
-        </button>
-      ) : null}
-      <div className="flex rounded-lg border border-dls-border bg-dls-sidebar p-0.5" role="group" aria-label={t("calendar.view_switcher")} data-testid="calendar-view-switcher">
+      <div className="flex rounded-lg border border-dls-border bg-dls-sidebar p-0.5 dark:bg-dls-surface-muted" role="group" aria-label={t("calendar.view_switcher")} data-testid="calendar-view-switcher">
         {(["day", "week", "month"] as const).map((view) => (
           <button
             key={view}
@@ -61,12 +53,12 @@ export function CalendarViewToolbar(props: {
             aria-pressed={props.view === view}
             onClick={() => props.onViewChange(view)}
             className={cn(
-              "min-w-12 rounded-md px-3 py-1 text-xs font-medium text-dls-secondary transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/35",
-              props.view === view && "bg-dls-surface text-dls-accent shadow-sm",
+              "min-w-12 rounded-md px-3 py-1 text-xs font-medium text-dls-text transition-colors hover:bg-dls-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/50 focus-visible:ring-offset-1 focus-visible:ring-offset-dls-sidebar",
+              props.view === view && "bg-dls-text text-background shadow-sm hover:bg-dls-text dark:bg-white dark:text-black dark:hover:bg-white/90",
             )}
             data-testid={`calendar-view-${view}`}
           >
-            {t(`calendar.${view}_view`)}
+            {t(`calendar.${view}`)}
           </button>
         ))}
       </div>

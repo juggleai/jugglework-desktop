@@ -16,7 +16,7 @@ import {
 
 const scope = createCalendarScope({ deploymentBaseUrl: "https://den.example/api", organizationId: "org-a", memberId: "member-a" })!;
 const range = { startDate: "2026-11-01", endDateExclusive: "2026-12-01", calendarIds: [] as string[] };
-const draft: CalendarDraftRecord = { schemaVersion: 1, id: "draft-a", entityType: "event", operation: "edit", baseEntity: { id: "event-a", version: 1 }, unsynced: true, values: { title: "Local input" } };
+const draft: CalendarDraftRecord = { schemaVersion: 2, id: "draft-a", entityType: "event", operation: "edit", baseEntity: { id: "event-a", version: 1 }, unsynced: true, values: { title: "Local input" } };
 
 function cache() { return new CalendarIndexedDbAdapter({ indexedDB: new IDBFactory(), IDBKeyRange }); }
 function event(version: number): CalendarEntityRecord {

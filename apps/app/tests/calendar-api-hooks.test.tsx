@@ -36,6 +36,8 @@ import {
   useCalendarEventRangeQuery,
   useCalendarEventSearchQuery,
   useCalendarQuery,
+  useCalendarSchedulingEventsQuery,
+  useCalendarAvailabilityQuery,
   useCalendarsQuery,
   setCanonicalCalendar,
   type CalendarQueryClient,
@@ -273,6 +275,27 @@ describe("calendar query hooks", () => {
     query.setQueryData(calendarQueryKeys.calendar(scopeA, "calendar-1"), calendar(4));
     expect(setCanonicalCalendar(query, scopeA, calendar(2)).version).toBe(4);
     expect(query.getQueryData<DenCalendar>(calendarQueryKeys.calendar(scopeA, "calendar-1"))?.version).toBe(4);
+  });
+
+  test("scheduling occurrences seed the canonical series event for version-checked edits", async () => {
+    const query = queryClient();
+    const scheduled = { ...event(3), status: "active" as const, attendees: [{ memberId: "member-b", responseStatus: "needs-action" as const }], recurrence: null };
+    const range = { startInstant: "2026-11-01T00:00:00Z", endInstantExclusive: "2026-12-01T00:00:00Z", timeZone: "UTC" };
+    const client = { listCalendarSchedulingEvents: async () => ({ items: [{ event: scheduled, occurrenceIndex: 1, time: scheduled.time }] }), getCalendarSchedulingAvailability: async () => ({ members: [] }) };
+    await renderHook(query, () => useCalendarSchedulingEventsQuery({ client, scope: scopeA, range }));
+    await flushQueries(query);
+    expect(query.getQueryData(calendarQueryKeys.event(scopeA, scheduled.id))).toEqual(scheduled);
+  });
+
+  test("availability rejects a response whose member set differs from the request", async () => {
+    const query = queryClient();
+    const request = { memberIds: ["member-a", "member-b"], startInstant: "2026-11-01T00:00:00Z", endInstantExclusive: "2026-11-02T00:00:00Z", timeZone: "UTC" };
+    const client = { listCalendarSchedulingEvents: async () => ({ items: [] }), getCalendarSchedulingAvailability: async () => ({ members: [{ memberId: "member-a", busy: [] }] }) };
+    const hook = await renderHook(query, () => useCalendarAvailabilityQuery({ client, scope: scopeA, request }));
+    await flushQueries(query);
+    await hook.rerender();
+    expect(hook.current.error).toMatchObject({ code: "invalid_calendar_scheduling_payload" });
+    expect(hook.current.data).toBeUndefined();
   });
 
 });

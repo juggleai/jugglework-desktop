@@ -1,13 +1,13 @@
 /** @jsxImportSource react */
 import * as React from "react";
 import type { CSSProperties } from "react";
-import { CalendarDays, ChevronDown, CircleAlert, LoaderCircle, LogIn, Plus } from "lucide-react";
+import { CalendarDays, CalendarPlus, ChevronDown, CircleAlert, LoaderCircle, LogIn, Plus } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 import { Temporal } from "@js-temporal/polyfill";
 
-import { denCalendarFromCollaborationResource, type DenCalendarEvent } from "@/app/lib/den";
-import { Button } from "@/components/ui/button";
+import { denCalendarFromCollaborationResource, type DenCalendarEvent, type DenCalendarSchedulingEvent } from "@/app/lib/den";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { currentLocale, t } from "@/i18n";
 import { useDesktopConfig } from "@/react-app/domains/cloud/desktop-config-provider";
@@ -16,7 +16,7 @@ import { AppInsetSurface } from "@/react-app/shell/app-inset-surface";
 import { AppNavigationRail } from "@/react-app/shell/app-navigation-rail";
 import { calendarScopeIdentity, type CalendarScope } from "./calendar-scope";
 import { resolveCalendarPageGate, type CalendarPageGate } from "./calendar-page-gate";
-import { useCalendarBootstrapQuery, useCalendarCollaborationQuery, useCalendarsQuery, useTeamCalendarSnapshotsQuery } from "./calendar-queries";
+import { useCalendarBootstrapQuery, useCalendarCollaborationQuery, useCalendarsQuery, useCalendarSchedulingEventsQuery, useTeamCalendarSnapshotsQuery } from "./calendar-queries";
 import {
   calendarToday,
   calendarWeekStart,
@@ -66,6 +66,9 @@ export type CalendarPageProps = {
   offlineRuntime?: CalendarOfflineRuntime;
 };
 
+type CalendarPageHeaderAction = { onCreate: () => void };
+const CalendarPageHeaderActionContext = React.createContext<React.Dispatch<React.SetStateAction<CalendarPageHeaderAction | null>> | null>(null);
+
 export function CalendarPage(props: CalendarPageProps) {
   const cloud = useCloudSession();
   const desktopConfig = useDesktopConfig();
@@ -89,6 +92,7 @@ export function CalendarPage(props: CalendarPageProps) {
 
 function CalendarPageFrame(props: CalendarPageProps & { children: React.ReactNode }) {
   const navigate = useNavigate();
+  const [headerAction, setHeaderAction] = React.useState<CalendarPageHeaderAction | null>(null);
   const pageStyle = { WebkitAppRegion: "drag" } as CSSProperties;
   return (
     <div className="relative flex h-full min-h-0 w-full overflow-hidden bg-dls-sidebar mac:titlebar-drag" style={pageStyle}>
@@ -104,12 +108,22 @@ function CalendarPageFrame(props: CalendarPageProps & { children: React.ReactNod
       />
       <AppInsetSurface testId="calendar-inset-surface">
         <main className="relative flex min-h-0 min-w-0 flex-1 flex-col" data-testid="calendar-main">
-          <div className="flex h-[54px] shrink-0 items-center border-b border-dls-border px-7">
+          <div className="flex h-[54px] shrink-0 items-center justify-between gap-4 border-b border-dls-border px-7" data-testid="calendar-page-header">
             <h2 className="text-[17px] font-semibold tracking-[-0.01em] text-dls-text" data-testid="calendar-page-title">
               {t("calendar.title")}
             </h2>
+            <div className="flex items-center mac:titlebar-no-drag" data-testid="calendar-page-actions">
+              {headerAction ? (
+                <button type="button" className={buttonVariants({ size: "sm" })} onClick={headerAction.onCreate} data-testid="calendar-create-event">
+                  <CalendarPlus className="size-4" aria-hidden="true" />
+                  {t("calendar.create_event")}
+                </button>
+              ) : null}
+            </div>
           </div>
-          <div className="flex min-h-0 flex-1 overflow-auto">{props.children}</div>
+          <CalendarPageHeaderActionContext.Provider value={setHeaderAction}>
+            <div className="flex min-h-0 flex-1 overflow-auto">{props.children}</div>
+          </CalendarPageHeaderActionContext.Provider>
         </main>
       </AppInsetSurface>
     </div>
@@ -169,6 +183,7 @@ const systemCalendarClock: CalendarClock = {
 
 function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean; collaborationEnabled: boolean; clock: CalendarClock; offlineRuntime?: CalendarOfflineRuntime }) {
   const cloud = useCloudSession();
+  const setHeaderAction = React.useContext(CalendarPageHeaderActionContext);
   const [offlineRuntime] = React.useState(() => props.offlineRuntime ?? defaultCalendarOfflineRuntime());
   const online = useCalendarOnline(offlineRuntime.online);
   const locale = currentLocale();
@@ -182,8 +197,13 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
   const collaborationQuery = useCalendarCollaborationQuery({ client: cloud.client, scope: props.scope, active: online && props.collaborationEnabled });
   const visibleDays = React.useMemo(() => calendarViewDays(navigation.selectedDate, view, weekStart), [navigation.selectedDate, view, weekStart]);
   const visibleRange = React.useMemo(() => calendarViewRange(navigation.selectedDate, view, weekStart), [navigation.selectedDate, view, weekStart]);
+  const schedulingRange = React.useMemo(() => ({
+    startInstant: Temporal.PlainDate.from(visibleRange.startDate).toZonedDateTime({ timeZone, plainTime: Temporal.PlainTime.from("00:00") }).toInstant().toString(),
+    endInstantExclusive: Temporal.PlainDate.from(visibleRange.endDateExclusive).toZonedDateTime({ timeZone, plainTime: Temporal.PlainTime.from("00:00") }).toInstant().toString(),
+    timeZone,
+  }), [timeZone, visibleRange.endDateExclusive, visibleRange.startDate]);
   const bootstrapQuery = useCalendarBootstrapQuery({ client: cloud.client, scope: props.scope, range: visibleRange, active: online });
-  useCalendarBaselinePersistence({ runtime: offlineRuntime, scope: props.scope, bootstrap: bootstrapQuery.data, online });
+  const schedulingQuery = useCalendarSchedulingEventsQuery({ client: cloud.client, scope: props.scope, range: schedulingRange, active: online });
   const offlineView = useCalendarOfflineView({ runtime: offlineRuntime, scope: props.scope, range: visibleRange, online });
   const eventDrafts = useCalendarEventDrafts(offlineRuntime, props.scope);
   // Offline shows only what the scoped local cache fully covers; in-memory online results are not reused.
@@ -197,7 +217,37 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
   const visibleTeamDetailCalendars = collaborationResources.filter((calendar) => calendar.kind === "team" && calendar.capabilities.canViewDetails && visibleIds.includes(calendar.id)).map(({ id, authorizationVersion }) => ({ id, authorizationVersion }));
   const teamSnapshotsQuery = useTeamCalendarSnapshotsQuery({ client: cloud.client, scope: props.scope, calendars: visibleTeamDetailCalendars, range: visibleRange, active: online && props.collaborationEnabled });
   const teamEvents = teamSnapshotsQuery.data?.flatMap((snapshot) => snapshot.events) ?? [];
-  const onlineEvents = [...new Map([...(bootstrapQuery.data?.events ?? []), ...teamEvents].map((event) => [event.id, event])).values()];
+  const schedulingOccurrences = schedulingQuery.data?.items ?? [];
+  const schedulingMetadataReady = online && schedulingQuery.isSuccess && !schedulingQuery.isFetching;
+  const schedulingEventIds = new Set(schedulingOccurrences.map((occurrence) => occurrence.event.id));
+  const schedulingEvents = schedulingOccurrences.map((occurrence) => occurrence.event.recurrence
+    ? { ...occurrence.event, id: schedulingOccurrenceId(occurrence.event.id, occurrence.occurrenceIndex), time: occurrence.time }
+    : { ...occurrence.event, time: occurrence.time });
+  const schedulingOccurrenceIds = new Set(schedulingOccurrences
+    .filter((occurrence) => occurrence.event.recurrence !== null)
+    .map((occurrence) => schedulingOccurrenceId(occurrence.event.id, occurrence.occurrenceIndex)));
+  const baseOnlineEvents = [...new Map([...(bootstrapQuery.data?.events ?? []), ...teamEvents]
+    .filter((event) => !schedulingEventIds.has(event.id) && !("attendees" in event))
+    .map((event) => [event.id, event])).values()];
+  const onlineEvents = [...baseOnlineEvents, ...schedulingEvents];
+  const persistedBootstrap = React.useMemo(() => {
+    if (!bootstrapQuery.data) return undefined;
+    // A scheduling outage must not prevent the ordinary Calendar baseline from
+    // remaining available offline. Online edit/delete authority still stays
+    // fail-closed through schedulingMetadataReady below.
+    if (schedulingQuery.isError) return bootstrapQuery.data;
+    if (!schedulingMetadataReady) return undefined;
+    const persistedOccurrences = schedulingQuery.data?.items ?? [];
+    const persistedSchedulingIds = new Set(persistedOccurrences.map((occurrence) => occurrence.event.id));
+    const events = [
+      ...bootstrapQuery.data.events.filter((event) => !persistedSchedulingIds.has(event.id) && !isSchedulingAggregate(event)),
+      ...persistedOccurrences.map((occurrence) => occurrence.event.recurrence
+        ? { ...occurrence.event, id: schedulingOccurrenceId(occurrence.event.id, occurrence.occurrenceIndex), time: occurrence.time }
+        : { ...occurrence.event, time: occurrence.time }),
+    ];
+    return { ...bootstrapQuery.data, events };
+  }, [bootstrapQuery.data, schedulingMetadataReady, schedulingQuery.data, schedulingQuery.isError]);
+  useCalendarBaselinePersistence({ runtime: offlineRuntime, scope: props.scope, bootstrap: persistedBootstrap, online });
   const sourceEvents = online
     ? onlineEvents
     : offlineView.state === "offline-covered" ? offlineView.events : undefined;
@@ -244,10 +294,33 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
     | { mode: "edit"; instance: number; eventId: string; draftId?: string; form?: CalendarEventFormValues; draftBaseVersion?: number }
     | null
   >(null);
+  const [filtersOpen, setFiltersOpen] = React.useState(false);
+  const [createCalendarOpen, setCreateCalendarOpen] = React.useState(false);
+  const [membersCalendarId, setMembersCalendarId] = React.useState<string | null>(null);
+  const membersDialogOpener = React.useRef<HTMLElement | null>(null);
+  const panelOpener = React.useRef<HTMLElement | null>(null);
+  const createDialogOpen = editor?.mode === "create";
+  const sidePanelOpen = editor?.mode === "edit" || (selectedEvent !== null && selectedEventVisible);
+  const interactionSurfaceOpen = createDialogOpen || sidePanelOpen;
+  const wasInteractionSurfaceOpen = React.useRef(interactionSurfaceOpen);
+  const rememberOpener = () => {
+    const doc = focusableDocument();
+    if (!doc) return;
+    const active = doc.activeElement;
+    if (isFocusableElement(active) && active !== doc.body) panelOpener.current = active;
+  };
   // Remount the form only when a different editing session starts, never when its draft is saved.
   const editorInstance = React.useRef(0);
   const nextEditorInstance = () => ++editorInstance.current;
   const editingEvent = editor?.mode === "edit" ? eventsById.get(editor.eventId) : undefined;
+  const editingEventAllowed = editingEvent
+    ? online
+      ? teamCalendarIds.has(editingEvent.calendarId) || schedulingMetadataReady
+      : !("attendees" in editingEvent)
+    : false;
+  React.useEffect(() => {
+    if (!online && editingEvent && "attendees" in editingEvent) setEditor(null);
+  }, [editingEvent, online]);
   const draftsAvailable = eventDrafts.available;
   const saveEditorDraft = draftsAvailable ? async (form: CalendarEventFormValues, base: DenCalendarEvent | undefined) => {
     const id = editor?.draftId ?? createCalendarDraftId();
@@ -255,23 +328,37 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
     setEditor((current) => current ? { ...current, draftId: id, form } : current);
   } : undefined;
   const restoreDraft = (draftId: string) => {
-    if (!panelOpen) rememberOpener();
+    if (!interactionSurfaceOpen) rememberOpener();
     const draft = eventDrafts.drafts.find((item) => item.id === draftId);
     const form = draft ? draftForm(draft) : null;
     if (!draft || !form) return;
+    const event = draft.operation === "edit" ? eventsById.get(draft.baseEntity.id) : undefined;
+    if (draft.operation === "edit" && event && !online && "attendees" in event) {
+      setSelectedEventId(event.id);
+      setEditor(null);
+      return;
+    }
+    if (draft.operation === "edit" && online && !schedulingMetadataReady) {
+      if (!event || !teamCalendarIds.has(event.calendarId)) {
+        setSelectedEventId(event?.id ?? null);
+        setEditor(null);
+        return;
+      }
+    }
+    const restoredForm = event ? preserveAuthoritativeSchedulingAttendees(form, event) : form;
     setSelectedEventId(null);
     setEditor(draft.operation === "edit"
-      ? { mode: "edit", instance: nextEditorInstance(), eventId: draft.baseEntity.id, draftId, form, draftBaseVersion: draft.baseEntity.version }
-      : { mode: "create", instance: nextEditorInstance(), draftId, form });
+      ? { mode: "edit", instance: nextEditorInstance(), eventId: draft.baseEntity.id, draftId, form: restoredForm, draftBaseVersion: draft.baseEntity.version }
+      : { mode: "create", instance: nextEditorInstance(), draftId, form: restoredForm });
   };
   const openEvent = (eventId: string, date?: Temporal.PlainDate) => {
-    if (!panelOpen) rememberOpener();
+    if (!interactionSurfaceOpen) rememberOpener();
     if (date) setNavigation(selectCalendarDate(date));
     setEditor(null);
     setSelectedEventId(eventId);
   };
   const startCreate = () => {
-    if (!panelOpen) rememberOpener();
+    if (!interactionSurfaceOpen) rememberOpener();
     setSelectedEventId(null);
     setEditor({ mode: "create", instance: nextEditorInstance() });
   };
@@ -281,21 +368,22 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
   };
   // Writes are possible online; offline the form opens only to keep an unsynced local draft.
   const canOpenEditor = writableCalendars.length > 0 && (online || draftsAvailable);
-  const defaultCalendarId = writableCalendars.find((calendar) => calendar.isDefault)?.id ?? writableCalendars[0]?.id ?? "";
+  const authoritativeDefaultCalendarId = bootstrapQuery.data?.calendars.find((calendar) => calendar.isDefault)?.id ?? null;
+  const defaultCalendarId = writableCalendars.find((calendar) => calendar.id === authoritativeDefaultCalendarId)?.id ?? "";
+  const canCreateEvent = canOpenEditor && defaultCalendarId !== "";
+  const startCreateRef = React.useRef(startCreate);
+  startCreateRef.current = startCreate;
+  const openCreateFromHeader = React.useCallback(() => startCreateRef.current(), []);
+  React.useEffect(() => {
+    if (!setHeaderAction) return;
+    const action = canCreateEvent ? { onCreate: openCreateFromHeader } : null;
+    setHeaderAction(action);
+    return () => setHeaderAction((current) => current?.onCreate === openCreateFromHeader ? null : current);
+  }, [canCreateEvent, openCreateFromHeader, setHeaderAction]);
 
-  const [filtersOpen, setFiltersOpen] = React.useState(false);
-  const [createCalendarOpen, setCreateCalendarOpen] = React.useState(false);
-  const [membersCalendarId, setMembersCalendarId] = React.useState<string | null>(null);
-  const membersDialogOpener = React.useRef<HTMLElement | null>(null);
-  const panelOpener = React.useRef<HTMLElement | null>(null);
-  const panelOpen = editor !== null || (selectedEvent !== null && selectedEventVisible);
-  const wasPanelOpen = React.useRef(panelOpen);
-  const rememberOpener = () => {
-    const doc = focusableDocument();
-    if (!doc) return;
-    const active = doc.activeElement;
-    if (isFocusableElement(active) && active !== doc.body) panelOpener.current = active;
-  };
+  const currentUserDisplayName = cloud.user?.name?.trim() || cloud.user?.account?.trim() || "";
+  const editorCalendars = React.useMemo(() => writableCalendars.map((calendar) => calendar.id === authoritativeDefaultCalendarId && currentUserDisplayName ? { ...calendar, name: currentUserDisplayName } : calendar), [authoritativeDefaultCalendarId, currentUserDisplayName, writableCalendars]);
+
   React.useEffect(() => {
     if (!props.writeEnabled && createCalendarOpen) setCreateCalendarOpen(false);
   }, [createCalendarOpen, props.writeEnabled]);
@@ -313,8 +401,8 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
     if (membersCalendarId && (!membersCalendar || !membersCalendar.capabilities.canManage || !props.writeEnabled)) closeMembersDialog();
   }, [closeMembersDialog, membersCalendar, membersCalendarId, props.writeEnabled]);
   React.useEffect(() => {
-    const closed = wasPanelOpen.current && !panelOpen;
-    wasPanelOpen.current = panelOpen;
+    const closed = wasInteractionSurfaceOpen.current && !interactionSurfaceOpen;
+    wasInteractionSurfaceOpen.current = interactionSurfaceOpen;
     if (!closed) return;
     const doc = focusableDocument();
     const opener = panelOpener.current;
@@ -323,7 +411,7 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
     // The opener may be gone (e.g. its event was deleted); fall back to the selected date in the grid.
     const target = opener && opener.isConnected ? opener : doc.querySelector<HTMLElement>('[data-calendar-selected-day="true"]');
     target?.focus();
-  }, [panelOpen]);
+  }, [interactionSurfaceOpen]);
   const toggleCalendar = (calendarId: string, visible: boolean) => {
     setHiddenIds((current) => {
       const next = visible ? current.filter((id) => id !== calendarId) : [...new Set([...current, calendarId])];
@@ -376,7 +464,9 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
           <CalendarFilterList calendars={calendars.map((calendar) => {
             const resource = resourcesById.get(calendar.id);
             return {
-              calendar,
+              calendar: calendar.id === authoritativeDefaultCalendarId && currentUserDisplayName
+                ? { ...calendar, name: currentUserDisplayName }
+                : calendar,
               managed: !resource || resource.kind === "personal" || resource.capabilities.canManage,
               onManageMembers: props.writeEnabled && resource?.kind === "team" && resource.capabilities.canManage ? () => {
                 const doc = focusableDocument();
@@ -405,12 +495,10 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
           selectedDate={navigation.selectedDate}
           days={visibleDays}
           locale={locale}
-          canCreate={canOpenEditor}
           onPrevious={() => setNavigation((current) => selectCalendarDate(navigateCalendarView(current.selectedDate, view, -1)))}
           onNext={() => setNavigation((current) => selectCalendarDate(navigateCalendarView(current.selectedDate, view, 1)))}
           onToday={() => setNavigation(selectCalendarDate(today))}
           onViewChange={setView}
-          onCreate={startCreate}
         />
         {!online ? <CalendarOfflineBanner view={offlineView} locale={locale} /> : null}
         {online && bootstrapQuery.isError ? (
@@ -418,6 +506,9 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
         ) : null}
         {online && teamSnapshotsQuery.isError ? (
           <p className="text-sm text-dls-secondary" role="alert" data-testid="calendar-team-events-error">{t("calendar.events_unavailable")}</p>
+        ) : null}
+        {online && schedulingQuery.isError ? (
+          <p className="text-sm text-dls-secondary" role="alert" data-testid="calendar-scheduling-events-error">{t("calendar.scheduling_events_unavailable")}</p>
         ) : null}
         {view === "month" ? (
           <CalendarMonthGrid
@@ -461,22 +552,41 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
           />
         )}
       </section>
-      {panelOpen ? (
-        <aside className="absolute inset-y-3 right-3 z-20 flex w-[min(26rem,calc(100%-1.5rem))] flex-col gap-3 overflow-auto rounded-xl border border-dls-border bg-dls-surface p-3 shadow-xl @3xl/calendar:inset-y-4 @3xl/calendar:right-4" aria-label={t("calendar.event_panel")} data-testid="calendar-event-panel">
-        {editor && canOpenEditor && (editor.mode === "create" || editingEvent) ? (
+      {createDialogOpen && editor ? (
+        <CalendarEventEditor
+          key={`editor:${editor.instance}`}
+          presentation="dialog"
+          client={cloud.client}
+          scope={props.scope}
+          calendars={editorCalendars}
+          teamCalendarIds={teamCalendarIds}
+          timeZone={timeZone}
+          initial={editor.form ?? defaultCalendarEventForm({ date: navigation.selectedDate, calendarId: defaultCalendarId, timeZone })}
+          online={online}
+          onSaveDraft={saveEditorDraft}
+          restoredFromDraft={Boolean(editor.draftId)}
+          onDiscardDraft={editor.draftId ? () => {
+            const draftId = editor.draftId!;
+            void eventDrafts.discard(draftId);
+            setEditor(null);
+          } : undefined}
+          onSaved={(event) => { void closeEditorAfterAuthoritativeSave(editor.draftId); setEditor(null); setSelectedEventId(event.id); }}
+          onDeleted={() => undefined}
+          onCancel={() => setEditor(null)}
+        />
+      ) : null}
+      {sidePanelOpen ? (
+        <aside className={cn("absolute inset-y-3 right-3 z-20 flex flex-col gap-3 overflow-auto rounded-xl border border-dls-border bg-dls-surface p-3 shadow-xl @3xl/calendar:inset-y-4 @3xl/calendar:right-4", editor?.mode === "edit" ? "w-[min(70rem,calc(100%-1.5rem))]" : "w-[min(26rem,calc(100%-1.5rem))]")} aria-label={t("calendar.event_panel")} data-testid="calendar-event-panel">
+        {editor?.mode === "edit" && canOpenEditor && editingEvent && editingEventAllowed ? (
           <CalendarEventEditor
             key={`editor:${editor.instance}`}
             client={cloud.client}
             scope={props.scope}
-            calendars={editingEvent
-              ? writableCalendars.filter((calendar) => teamCalendarIds.has(editingEvent.calendarId) ? calendar.id === editingEvent.calendarId : !teamCalendarIds.has(calendar.id))
-              : writableCalendars}
+            calendars={editorCalendars.filter((calendar) => teamCalendarIds.has(editingEvent.calendarId) ? calendar.id === editingEvent.calendarId : !teamCalendarIds.has(calendar.id))}
             teamCalendarIds={teamCalendarIds}
             timeZone={timeZone}
             event={editingEvent}
-            initial={editor.form ?? (editingEvent
-              ? calendarEventToForm(editingEvent)
-              : defaultCalendarEventForm({ date: navigation.selectedDate, calendarId: defaultCalendarId, timeZone }))}
+            initial={editor.form ?? calendarEventToForm(editingEvent)}
             online={online}
             onSaveDraft={saveEditorDraft}
             restoredFromDraft={Boolean(editor.draftId)}
@@ -495,8 +605,14 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
             event={selectedEvent}
             calendar={calendarsById.get(selectedEvent.calendarId)}
             locale={locale}
+            recurringOccurrence={schedulingOccurrenceIds.has(selectedEvent.id)}
+            schedulingEditUnavailable={!online && "attendees" in selectedEvent
+              ? "offline"
+              : online && !teamCalendarIds.has(selectedEvent.calendarId) && !schedulingMetadataReady
+                ? schedulingQuery.isError ? "error" : "loading"
+                : undefined}
             onClose={() => setSelectedEventId(null)}
-            onEdit={canOpenEditor && writableCalendars.some((calendar) => calendar.id === selectedEvent.calendarId) ? () => setEditor({ mode: "edit", instance: nextEditorInstance(), eventId: selectedEvent.id }) : undefined}
+            onEdit={!schedulingOccurrenceIds.has(selectedEvent.id) && (online ? teamCalendarIds.has(selectedEvent.calendarId) || schedulingMetadataReady : !("attendees" in selectedEvent)) && canOpenEditor && writableCalendars.some((calendar) => calendar.id === selectedEvent.calendarId) ? () => setEditor({ mode: "edit", instance: nextEditorInstance(), eventId: selectedEvent.id }) : undefined}
           />
         ) : null}
         </aside>
@@ -523,6 +639,19 @@ function isFocusableElement(value: unknown): value is HTMLElement {
 
 function createCalendarDraftId(): string {
   return typeof crypto !== "undefined" && "randomUUID" in crypto ? `draft-${crypto.randomUUID()}` : `draft-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
+function schedulingOccurrenceId(eventId: string, occurrenceIndex: number): string {
+  return `scheduling:${encodeURIComponent(eventId)}:${occurrenceIndex}`;
+}
+
+function preserveAuthoritativeSchedulingAttendees(form: CalendarEventFormValues, event: DenCalendarEvent): CalendarEventFormValues {
+  if (!isSchedulingAggregate(event) || form.attendeeMemberIds.length > 0) return form;
+  return { ...form, attendeeMemberIds: event.attendees.map((attendee) => attendee.memberId) };
+}
+
+function isSchedulingAggregate(event: DenCalendarEvent): event is DenCalendarSchedulingEvent {
+  return "attendees" in event && Array.isArray(event.attendees);
 }
 
 function CalendarCenteredState(props: { testId: string; children: React.ReactNode }) {

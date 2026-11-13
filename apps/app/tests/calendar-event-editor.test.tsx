@@ -27,6 +27,23 @@ Object.defineProperty(globalThis, "localStorage", {
 const fixedNow = Temporal.Instant.from("2026-11-09T04:00:00Z");
 const clock = { now: () => fixedNow, timeZone: () => "Asia/Shanghai" };
 mock.module("../src/react-app/shell/app-navigation-rail", () => ({ APP_NAVIGATION_RAIL_WIDTH: 48, AppNavigationRail: () => <nav /> }));
+mock.module("../src/components/ui/dialog", () => ({
+  Dialog: ({ children, open, onOpenChange }: { children: React.ReactNode; open?: boolean; onOpenChange?: (open: boolean) => void }) => open === false ? null : <div data-testid="mock-dialog-root" data-close={() => onOpenChange?.(false)}>{children}</div>,
+  DialogContent: ({ children, showCloseButton: _showCloseButton, finalFocus: _finalFocus, ...props }: React.ComponentProps<"section"> & { showCloseButton?: boolean; finalFocus?: unknown }) => <section {...props}>{children}</section>,
+  DialogDescription: (props: React.ComponentProps<"p">) => <p {...props} />,
+  DialogFooter: (props: React.ComponentProps<"div">) => <div {...props} />,
+  DialogHeader: (props: React.ComponentProps<"div">) => <div {...props} />,
+  DialogTitle: (props: React.ComponentProps<"h2">) => <h2 {...props} />,
+}));
+const PopoverOpenContext = React.createContext<((open: boolean) => void) | null>(null);
+mock.module("../src/components/ui/popover", () => ({
+  Popover: ({ children, onOpenChange }: { children: React.ReactNode; onOpenChange: (open: boolean) => void }) => <PopoverOpenContext.Provider value={onOpenChange}>{children}</PopoverOpenContext.Provider>,
+  PopoverTrigger: ({ children, render }: { children: React.ReactNode; render: React.ReactElement }) => {
+    const onOpenChange = React.useContext(PopoverOpenContext);
+    return React.cloneElement(render, { onClick: () => onOpenChange?.(true), children } as React.HTMLAttributes<HTMLElement>);
+  },
+  PopoverContent: ({ children, ...props }: React.ComponentProps<"div">) => <div {...props}>{children}</div>,
+}));
 
 const calendar = (id: string, name: string): DenCalendar => ({
   id, organizationId: "org-a", ownerMemberId: "member-a", name, color: "#2563eb", isDefault: id === "cal-1",
@@ -39,20 +56,43 @@ type Call = { op: string; input: Record<string, unknown> };
 const calls: Call[] = [];
 /** Per-test server behaviour; returning undefined falls through to the default success path. */
 let failNext: ((op: string) => unknown) | null = null;
+let createGate: Promise<void> | null = null;
 let version = 1;
+let organizationMembers: Array<{ id: string; userId: string; role: "member"; user: { id: string; name: string; account: string; email: string; avatar: null } }> = [];
 const client = {
   listCalendars: async () => calendars,
   getCalendarBootstrap: async (_org: string, range: { startDate: string; endDateExclusive: string }) => ({ calendars, events, coverage: { ...range, calendarIds: [] }, cursor: "c1" }),
+  listCalendarSchedulingEvents: async () => ({ items: events.filter((event) => "attendees" in event).map((event) => ({ event, occurrenceIndex: 1, time: event.time })) }),
+  getCalendarSchedulingAvailability: async (_org: string, input: { memberIds: string[] }) => ({ members: input.memberIds.map((memberId) => ({ memberId, busy: [] })) }),
+  listOrganizationMembers: async () => ({ members: organizationMembers, total: organizationMembers.length, limit: 200, offset: 0 }),
   createCalendar: async () => { throw new Error("unexpected calendar write"); },
   updateCalendar: async () => { throw new Error("unexpected calendar write"); },
   deleteCalendar: async () => { throw new Error("unexpected calendar write"); },
   createCalendarEvent: async (_org: string, input: Record<string, unknown>) => {
     calls.push({ op: "create", input });
     const failure = failNext?.("create"); if (failure) throw failure;
+    if (createGate) await createGate;
     const { idempotencyKey: _key, ...rest } = input;
     const created = { ...baseEvent(`new-${calls.length}`), ...rest, description: (rest.description as string) ?? "" } as DenCalendarEvent;
     events = [...events, created];
     return { event: created };
+  },
+  createCalendarSchedulingEvent: async (_org: string, input: Record<string, unknown>) => {
+    calls.push({ op: "create", input });
+    const failure = failNext?.("create"); if (failure) throw failure;
+    if (createGate) await createGate;
+    const { idempotencyKey: _key, ...rest } = input;
+    const created = { ...baseEvent(`new-${calls.length}`), ...rest, description: (rest.description as string) ?? "", status: "active" } as DenCalendarEvent;
+    events = [...events, created];
+    return { event: created, replayed: false };
+  },
+  updateCalendarSchedulingEvent: async (_org: string, eventId: string, input: Record<string, unknown>) => {
+    calls.push({ op: "scheduling-update", input: { eventId, ...input } });
+    const current = events.find((event) => event.id === eventId)!;
+    const { idempotencyKey: _key, expectedVersion: _v, attendees, ...patch } = input;
+    const updated = { ...current, ...patch, ...(attendees ? { attendees } : {}), status: "active", version: current.version + 1 } as DenCalendarEvent;
+    events = events.map((event) => event.id === eventId ? updated : event);
+    return { event: updated, replayed: false };
   },
   updateCalendarEvent: async (_org: string, eventId: string, input: Record<string, unknown>) => {
     calls.push({ op: "update", input });
@@ -89,7 +129,8 @@ function baseEvent(id: string): DenCalendarEvent {
 }
 
 beforeEach(() => {
-  values.clear(); calls.length = 0; events = []; failNext = null; version = 1;
+  values.clear(); calls.length = 0; events = []; failNext = null; createGate = null; version = 1;
+  organizationMembers = [];
   calendars = [calendar("cal-1", "Personal"), calendar("cal-2", "Side project")];
 });
 
@@ -127,13 +168,24 @@ test("creating an all-day event shows it only after the authoritative response",
   const { renderer } = await render();
   try {
     await click(renderer, "calendar-create-event");
+    expect(has(renderer, "calendar-event-dialog")).toBe(true);
+    expect(has(renderer, "calendar-event-panel")).toBe(false);
+    expect(byId(renderer, "calendar-event-dialog").props["aria-label"]).toBe(t("calendar.create_event"));
+    expect(String(byId(renderer, "calendar-event-dialog").props.className)).toContain("sm:max-w-[1120px]");
+    expect(String(byId(renderer, "calendar-event-dialog").props.className)).toContain("bg-dls-sidebar");
+    expect(String(byId(renderer, "calendar-form-time-grid").props.className)).toContain("grid-cols-1");
+    expect(String(byId(renderer, "calendar-form-time-grid").props.className)).toContain("sm:grid-cols-2");
     await change(renderer, "calendar-form-title", "Planning");
     await change(renderer, "calendar-form-calendar", "cal-2");
     await submit(renderer);
     expect(calls).toHaveLength(1);
     expect(calls[0]!.input).toMatchObject({ calendarId: "cal-2", title: "Planning", description: "", time: { kind: "allDay", startDate: "2026-11-09", endDateExclusive: "2026-11-10" } });
+    expect(calls[0]!.input).not.toHaveProperty("attendees");
+    expect(calls[0]!.input).not.toHaveProperty("recurrence");
     expect(typeof calls[0]!.input.idempotencyKey).toBe("string");
     expect(has(renderer, "calendar-event-form")).toBe(false);
+    expect(has(renderer, "calendar-event-dialog")).toBe(false);
+    expect(has(renderer, "calendar-event-panel")).toBe(true);
     expect(text(byId(renderer, "calendar-event-detail-title"))).toBe("Planning");
     expect(text(byId(renderer, "calendar-event-detail-calendar"))).toBe("Side project");
   } finally { await act(async () => { renderer.unmount(); }); }
@@ -154,17 +206,87 @@ test("validation errors block the request and are announced per field", async ()
   } finally { await act(async () => { renderer.unmount(); }); }
 });
 
-test("switching to timed sends a timed union in the local zone with no all-day fields", async () => {
+test("dialog close requests cancel creation, but are ignored while a save is pending", async () => {
+  const { renderer } = await render();
+  try {
+    await click(renderer, "calendar-create-event");
+    await act(async () => { byId(renderer, "mock-dialog-root").props["data-close"](); });
+    await settle();
+    expect(has(renderer, "calendar-event-dialog")).toBe(false);
+
+    await click(renderer, "calendar-create-event");
+    await change(renderer, "calendar-form-title", "Pending");
+    let release!: () => void;
+    createGate = new Promise<void>((resolve) => { release = resolve; });
+    await act(async () => { void byId(renderer, "calendar-event-form").props.onSubmit({ preventDefault: () => undefined }); });
+    expect(formStatus(renderer)).toBe("pending");
+    expect(byId(renderer, "calendar-form-cancel").props.disabled).toBe(true);
+    await act(async () => { byId(renderer, "mock-dialog-root").props["data-close"](); });
+    expect(has(renderer, "calendar-event-dialog")).toBe(true);
+    await act(async () => { release(); });
+    await settle();
+    expect(has(renderer, "calendar-event-dialog")).toBe(false);
+    expect(has(renderer, "calendar-event-detail")).toBe(true);
+  } finally { await act(async () => { renderer.unmount(); }); }
+});
+
+test("timed inputs use 30-minute options and 09:00-09:30 sends a timed union", async () => {
   const { renderer } = await render();
   try {
     await click(renderer, "calendar-create-event");
     await change(renderer, "calendar-form-title", "Call");
     await change(renderer, "calendar-form-all-day", false);
     expect(text(byId(renderer, "calendar-form-zone"))).toContain("Asia/Shanghai");
-    await change(renderer, "calendar-form-start-time", "14:00");
-    await change(renderer, "calendar-form-end-time", "15:30");
+    expect(byId(renderer, "calendar-form-start-time").props.step).toBe(1800);
+    expect(byId(renderer, "calendar-form-end-time").props.step).toBe(1800);
+    expect(byId(renderer, "calendar-time-options").findAllByType("option")).toHaveLength(48);
+    await change(renderer, "calendar-form-start-time", "09:00");
+    await change(renderer, "calendar-form-end-time", "09:30");
     await submit(renderer);
-    expect(calls[0]!.input.time).toEqual({ kind: "timed", startInstant: "2026-11-09T06:00:00Z", endInstantExclusive: "2026-11-09T07:30:00Z", timeZone: "Asia/Shanghai" });
+    expect(calls[0]!.input.time).toEqual({ kind: "timed", startInstant: "2026-11-09T01:00:00Z", endInstantExclusive: "2026-11-09T01:30:00Z", timeZone: "Asia/Shanghai" });
+  } finally { await act(async () => { renderer.unmount(); }); }
+});
+
+test("09:17 is rejected without sending a request", async () => {
+  const { renderer } = await render();
+  try {
+    await click(renderer, "calendar-create-event");
+    await change(renderer, "calendar-form-title", "Invalid time");
+    await change(renderer, "calendar-form-all-day", false);
+    await change(renderer, "calendar-form-start-time", "09:17");
+    await change(renderer, "calendar-form-end-time", "10:00");
+    await submit(renderer);
+    expect(calls).toHaveLength(0);
+    expect(formStatus(renderer)).toBe("validation");
+    expect(text(byId(renderer, "calendar-form-error-time"))).toBe(t("calendar.error_time_invalid"));
+  } finally { await act(async () => { renderer.unmount(); }); }
+});
+
+test("recurring creates and core event upgrades use the complete scheduling PATCH contract", async () => {
+  const { renderer } = await render();
+  try {
+    await click(renderer, "calendar-create-event");
+    await change(renderer, "calendar-form-title", "Weekly planning");
+    await change(renderer, "calendar-form-recurrence", "weekly");
+    await submit(renderer);
+    expect(calls[0]).toMatchObject({ op: "create", input: { attendees: [], recurrence: { frequency: "weekly", interval: 1, end: { kind: "never" } } } });
+
+    events = [baseEvent("core-event")];
+    organizationMembers = [{ id: "member-b", userId: "user-b", role: "member", user: { id: "user-b", name: "Ben", account: "ben", email: "ben@example.com", avatar: null } }];
+    const { renderer: editor } = await render();
+    try {
+      await click(editor, "calendar-day-event-2026-11-09-core-event");
+      await click(editor, "calendar-event-detail-edit");
+      await click(editor, "calendar-form-attendees-trigger");
+      await click(editor, "calendar-attendee-member-b");
+      await change(editor, "calendar-form-recurrence", "monthly");
+      await submit(editor);
+      const patch = calls.at(-1)!;
+      expect(patch).toMatchObject({ op: "scheduling-update", input: { eventId: "core-event", expectedVersion: 1, attendees: [{ memberId: "member-b" }], recurrence: { frequency: "monthly", interval: 1, end: { kind: "never" } } } });
+      expect(typeof patch.input.idempotencyKey).toBe("string");
+      expect(Object.keys(patch.input).sort()).toEqual(["attendees", "eventId", "expectedVersion", "idempotencyKey", "recurrence"]);
+      expect(patch.input).not.toHaveProperty("status");
+    } finally { await act(async () => { editor.unmount(); }); }
   } finally { await act(async () => { renderer.unmount(); }); }
 });
 
@@ -196,6 +318,8 @@ test("editing sends only changed fields with the loaded version", async () => {
   try {
     await click(renderer, "calendar-day-event-2026-11-09-e1");
     await click(renderer, "calendar-event-detail-edit");
+    expect(has(renderer, "calendar-event-dialog")).toBe(false);
+    expect(has(renderer, "calendar-event-panel")).toBe(true);
     await change(renderer, "calendar-form-title", "Renamed");
     await submit(renderer);
     expect(calls[0]).toMatchObject({ op: "update", input: { title: "Renamed", expectedVersion: 1 } });
@@ -222,6 +346,55 @@ test("a version conflict keeps my edits and offers explicit resolution", async (
     await submit(renderer);
     expect(calls[1]).toMatchObject({ op: "update", input: { title: "Mine", expectedVersion: 2 } });
     expect(text(byId(renderer, "calendar-event-detail-title"))).toBe("Mine");
+  } finally { await act(async () => { renderer.unmount(); }); }
+});
+
+test("a background scheduling refresh preserves edits and requires explicit conflict resolution", async () => {
+  events = [baseEvent("e1")];
+  const { renderer, queryClient } = await render();
+  try {
+    await click(renderer, "calendar-day-event-2026-11-09-e1");
+    await click(renderer, "calendar-event-detail-edit");
+    await change(renderer, "calendar-form-title", "Mine");
+    events = [{
+      ...baseEvent("e1"),
+      title: "Theirs",
+      version: 2,
+      status: "active",
+      attendees: [{ memberId: "member-b", responseStatus: "needs-action" }],
+      recurrence: null,
+    }];
+    await act(async () => { await queryClient.invalidateQueries(); });
+    await settle();
+    expect(formStatus(renderer)).toBe("conflict");
+    expect(byId(renderer, "calendar-form-title").props.value).toBe("Mine");
+    expect(byId(renderer, "calendar-form-save").props.disabled).toBe(true);
+    await click(renderer, "calendar-form-conflict-keep-mine");
+    await submit(renderer);
+    expect(calls.at(-1)).toMatchObject({ op: "scheduling-update", input: { eventId: "e1", title: "Mine", expectedVersion: 2 } });
+  } finally { await act(async () => { renderer.unmount(); }); }
+});
+
+test("a scheduling refresh that removes the last attendee still requires explicit conflict resolution", async () => {
+  events = [baseEvent("e1")];
+  const { renderer, queryClient } = await render();
+  try {
+    await click(renderer, "calendar-day-event-2026-11-09-e1");
+    await click(renderer, "calendar-event-detail-edit");
+    await change(renderer, "calendar-form-title", "Mine");
+    events = [{
+      ...baseEvent("e1"),
+      title: "Theirs",
+      version: 2,
+      status: "active",
+      attendees: [],
+      recurrence: null,
+    }];
+    await act(async () => { await queryClient.invalidateQueries(); });
+    await settle();
+    expect(formStatus(renderer)).toBe("conflict");
+    expect(byId(renderer, "calendar-form-title").props.value).toBe("Mine");
+    expect(byId(renderer, "calendar-form-save").props.disabled).toBe(true);
   } finally { await act(async () => { renderer.unmount(); }); }
 });
 

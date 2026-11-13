@@ -77,6 +77,8 @@ export function CalendarEventDetail(props: {
   locale: string;
   onClose: () => void;
   onEdit?: () => void;
+  recurringOccurrence?: boolean;
+  schedulingEditUnavailable?: "loading" | "error" | "offline";
 }) {
   const sectionRef = React.useRef<HTMLElement | null>(null);
   // Move focus to the detail when it opens or switches events, so screen readers announce it.
@@ -126,6 +128,8 @@ export function CalendarEventDetail(props: {
       {props.event.description ? (
         <p className="whitespace-pre-wrap break-words text-sm text-dls-text" data-testid="calendar-event-detail-description">{props.event.description}</p>
       ) : null}
+      {props.recurringOccurrence ? <p className="rounded-lg bg-dls-hover px-3 py-2 text-xs text-dls-secondary" role="note" data-testid="calendar-occurrence-read-only">{t("calendar.occurrence_read_only")}</p> : null}
+      {props.schedulingEditUnavailable ? <p className="rounded-lg bg-dls-hover px-3 py-2 text-xs text-dls-secondary" role="note" data-testid={`calendar-scheduling-edit-${props.schedulingEditUnavailable}`}>{t(props.schedulingEditUnavailable === "loading" ? "calendar.scheduling_edit_loading" : props.schedulingEditUnavailable === "offline" ? "calendar.scheduling_edit_offline" : "calendar.scheduling_edit_unavailable")}</p> : null}
       {props.onEdit ? (
         <div>
           <Button type="button" size="sm" variant="outline" onClick={props.onEdit} data-testid="calendar-event-detail-edit">{t("calendar.edit_event")}</Button>

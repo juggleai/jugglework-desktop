@@ -93,7 +93,7 @@ const sync: CalendarSyncRecord = {
 };
 
 const draft: CalendarDraftRecord = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   id: "draft-a",
   entityType: "event",
   operation: "edit",
@@ -216,7 +216,7 @@ describe("calendar IndexedDB cache", () => {
   test("round-trips separate create/edit drafts and returns cloned DTOs", async () => {
     const cache = adapter();
     const createDraft: CalendarDraftRecord = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       id: "draft-create",
       entityType: "calendar",
       operation: "create",
@@ -235,6 +235,34 @@ describe("calendar IndexedDB cache", () => {
     await cache.deleteDraft(scope, draft.id);
     expect(await cache.getDraft(scope, draft.id)).toBeUndefined();
     await expect(cache.putDraft(scope, { ...draft, unsynced: false } as unknown as CalendarDraftRecord)).rejects.toThrow(/unsynced/);
+  });
+
+  test("strictly migrates persisted v1 event drafts to v2 and never accepts new v1 writes", async () => {
+    const factory = new IDBFactory();
+    const current = adapter(factory);
+    await current.putSync(scope, sync);
+    await current.close();
+
+    const database = await openDatabase(factory);
+    const transaction = database.transaction("drafts", "readwrite");
+    const scopeKey = JSON.stringify(calendarScopeKey(scope));
+    await new Promise<void>((resolve, reject) => {
+      const request = transaction.objectStore("drafts").put({
+        key: [scopeKey, "legacy-draft"], scopeKey, recordType: "draft", schemaVersion: 1,
+        id: "legacy-draft", entityType: "event", operation: "create", baseEntity: null, unsynced: true,
+        values: { form: { calendarId: "calendar-a", title: "Legacy", description: "", time: { kind: "allDay", startDate: "2026-11-05", endDateExclusive: "2026-11-06" } } },
+      });
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+    });
+    database.close();
+
+    const reopened = adapter(factory);
+    expect(await reopened.getDraft(scope, "legacy-draft")).toEqual({
+      schemaVersion: 2, id: "legacy-draft", entityType: "event", operation: "create", baseEntity: null, unsynced: true,
+      values: { form: { calendarId: "calendar-a", title: "Legacy", description: "", time: { kind: "allDay", startDate: "2026-11-05", endDateExclusive: "2026-11-06" }, attendeeMemberIds: [], recurrence: { frequency: "none" } } },
+    });
+    await expect(reopened.putDraft(scope, { ...draft, schemaVersion: 1 } as unknown as CalendarDraftRecord)).rejects.toThrow(/schema version/);
   });
 
   test("persists across close/reopen in one profile and isolates different factories", async () => {

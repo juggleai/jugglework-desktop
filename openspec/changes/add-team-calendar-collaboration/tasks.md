@@ -96,6 +96,7 @@
 - [x] 10.A.6 实现 manager 可见的团队日历成员管理入口与对话框，使用同组织成员目录添加 `free-busy`/`viewer`/`editor`/`manager`，支持角色调整、撤权、最后 manager 明确错误、pending/失败状态和键盘/辅助技术标签；不提供外部邮箱或自由文本成员输入。
 - [x] 10.A.7 消费 discovery generation 与 per-calendar authorization version 的 replace 契约；撤权、降为 free-busy 或授权版本变化时移除旧团队 snapshot、canonical event detail 与 manager membership cache，并在 manager 权限丢失时关闭成员对话框、恢复焦点。
 - [ ] 10.A.8 尚未实现 free-busy 忙碌块、协作离线缓存与真实双设备撤权验收；因此 10.1、10.2、10.6 保持未完成。
+- [x] 10.A.9 为个人日历排期接入组织成员参与人选择、群组成员分页展开/去重和 20 人硬上限；接入 busy-only availability 时间轴、unknown/失败/离线状态与隐私文案，并在 scheduling 元数据不可确认时保持编辑/删除 fail-closed；当前不实现 RSVP、邀请/更新/取消通知或参与人自助响应，因此 6.x、8.x、10.3 和 10.5 仍保持未完成。
 
 ## 11. Agent 权限一致能力
 

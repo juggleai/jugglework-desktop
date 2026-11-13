@@ -5,7 +5,7 @@ import type { DenCalendar, DenCalendarBootstrap, DenCalendarEvent } from "@/app/
 import { CalendarIndexedDbAdapter, type CalendarDraftRecord } from "./calendar-cache";
 import { persistCalendarBootstrapBaseline } from "./calendar-cache-baseline";
 import { discardCalendarDraft, readCalendarRangeAvailability, saveCalendarDraft, type CalendarRangeAvailability } from "./calendar-offline-drafts";
-import type { CalendarEventFormValues } from "./calendar-event-form-model";
+import { normalizeCalendarEventDraftForm, type CalendarEventFormValues } from "./calendar-event-form-model";
 import type { CalendarScope } from "./calendar-scope";
 
 export type CalendarOnlineSource = {
@@ -126,13 +126,14 @@ export type CalendarEventDraftValues = { form: CalendarEventFormValues };
 export function eventDraftRecord(input: { id: string; form: CalendarEventFormValues; base?: { id: string; version: number } }): CalendarDraftRecord {
   const values: CalendarEventDraftValues = { form: structuredClone(input.form) };
   return input.base
-    ? { schemaVersion: 1, id: input.id, entityType: "event", operation: "edit", baseEntity: { id: input.base.id, version: input.base.version }, unsynced: true, values }
-    : { schemaVersion: 1, id: input.id, entityType: "event", operation: "create", baseEntity: null, unsynced: true, values };
+    ? { schemaVersion: 2, id: input.id, entityType: "event", operation: "edit", baseEntity: { id: input.base.id, version: input.base.version }, unsynced: true, values }
+    : { schemaVersion: 2, id: input.id, entityType: "event", operation: "create", baseEntity: null, unsynced: true, values };
 }
 
 export function draftForm(draft: CalendarDraftRecord): CalendarEventFormValues | null {
-  const values = draft.values as Partial<CalendarEventDraftValues> | null;
-  return values && typeof values === "object" && values.form ? values.form : null;
+  const values = draft.values;
+  if (!values || typeof values !== "object" || Array.isArray(values) || Object.keys(values).length !== 1 || !("form" in values)) return null;
+  return normalizeCalendarEventDraftForm((values as { form: unknown }).form, draft.schemaVersion);
 }
 
 export function useCalendarEventDrafts(runtime: CalendarOfflineRuntime, scope: CalendarScope) {

@@ -13,6 +13,11 @@ export const calendarQueryKeys = {
   calendars: (scope: CalendarScope) => [...calendarQueryKeys.scope(scope), "calendars"] as const,
   collaboration: (scope: CalendarScope) => [...calendarQueryKeys.scope(scope), "collaboration"] as const,
   organizationMembers: (scope: CalendarScope) => [...calendarQueryKeys.scope(scope), "organization-members"] as const,
+  scheduling: (scope: CalendarScope) => [...calendarQueryKeys.scope(scope), "scheduling"] as const,
+  schedulingEvents: (scope: CalendarScope, range: { startInstant: string; endInstantExclusive: string; timeZone: string }) =>
+    [...calendarQueryKeys.scheduling(scope), "events", range.startInstant, range.endInstantExclusive, range.timeZone] as const,
+  availability: (scope: CalendarScope, input: { memberIds: readonly string[]; startInstant: string; endInstantExclusive: string; timeZone: string }) =>
+    [...calendarQueryKeys.scheduling(scope), "availability", [...new Set(input.memberIds)].sort(), input.startInstant, input.endInstantExclusive, input.timeZone] as const,
   memberships: (scope: CalendarScope, calendarId: string) => [...calendarQueryKeys.collaboration(scope), "memberships", calendarId] as const,
   teamSnapshots: (scope: CalendarScope) => [...calendarQueryKeys.collaboration(scope), "team-snapshots"] as const,
   teamSnapshot: (scope: CalendarScope, calendarId: string, authorizationVersion: number, range: { startDate: string; endDateExclusive: string }) =>

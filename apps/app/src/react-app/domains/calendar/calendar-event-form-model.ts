@@ -1,6 +1,6 @@
 import { Temporal } from "@js-temporal/polyfill";
 
-import type { DenApiError, DenCalendarEvent, DenCalendarEventTime } from "@/app/lib/den";
+import type { DenApiError, DenCalendarEvent, DenCalendarEventTime, DenCalendarSchedulingEvent, DenCalendarSchedulingRecurrence } from "@/app/lib/den";
 import {
   calendarTimeToForm,
   convertCalendarTime,
@@ -13,16 +13,27 @@ import {
 /** Must match jugglework-server CalendarEventTitleMaxLength / CalendarEventDescriptionMaxLength (code points). */
 export const CALENDAR_EVENT_TITLE_MAX = 500;
 export const CALENDAR_EVENT_DESCRIPTION_MAX = 20_000;
+export const CALENDAR_EVENT_ATTENDEE_MAX = 20;
 
 export type CalendarEventFormValues = {
   calendarId: string;
   title: string;
   description: string;
   time: CalendarTimeForm;
+  attendeeMemberIds: string[];
+  recurrence: CalendarEventRecurrenceForm;
 };
 
-export type CalendarEventFormField = "title" | "calendarId" | "description" | "time";
+export type CalendarEventRecurrenceForm =
+  | { frequency: "none" }
+  | { frequency: "daily" | "weekly" | "monthly"; interval: number; endKind: "never" | "until" | "count"; untilDate: string; count: number };
+
+export type CalendarEventFormField = "title" | "calendarId" | "description" | "time" | "attendees" | "recurrence";
 export type CalendarEventFormErrors = Partial<Record<CalendarEventFormField, string>>;
+
+export function hasAdvancedCalendarScheduling(values: Pick<CalendarEventFormValues, "attendeeMemberIds" | "recurrence">): boolean {
+  return values.attendeeMemberIds.length > 0 || values.recurrence.frequency !== "none";
+}
 
 /** i18n keys; the UI resolves them so this module stays framework-free. */
 export const CALENDAR_FORM_ERROR = {
@@ -34,6 +45,8 @@ export const CALENDAR_FORM_ERROR = {
   endNotAfterStart: "calendar.error_end_not_after_start",
   timeZoneInvalid: "calendar.error_time_zone_invalid",
   localTimeAmbiguous: "calendar.error_local_time_ambiguous",
+  attendeesTooMany: "calendar.error_attendees_too_many",
+  recurrenceInvalid: "calendar.error_recurrence_invalid",
 } as const;
 
 function codePointLength(value: string): number {
@@ -60,16 +73,46 @@ export function defaultCalendarEventForm(input: {
         endDisambiguation: "reject",
       }
     : { kind: "allDay", startDate: input.date.toString(), endDateExclusive: input.date.add({ days: 1 }).toString() };
-  return { calendarId: input.calendarId, title: "", description: "", time };
+  return { calendarId: input.calendarId, title: "", description: "", time, attendeeMemberIds: [], recurrence: { frequency: "none" } };
 }
 
 export function calendarEventToForm(event: DenCalendarEvent): CalendarEventFormValues {
+  const scheduling = event as Partial<DenCalendarSchedulingEvent>;
+  const recurrence = scheduling.recurrence ? recurrenceToForm(scheduling.recurrence) : { frequency: "none" as const };
   return {
     calendarId: event.calendarId,
     title: event.title,
     description: event.description,
     time: calendarTimeToForm(parseCalendarEventTime(event.time)),
+    attendeeMemberIds: Array.isArray(scheduling.attendees) ? scheduling.attendees.map((attendee) => attendee.memberId) : [],
+    recurrence,
   };
+}
+
+function recurrenceToForm(recurrence: DenCalendarSchedulingRecurrence): CalendarEventRecurrenceForm {
+  return {
+    frequency: recurrence.frequency,
+    interval: recurrence.interval,
+    endKind: recurrence.end.kind,
+    untilDate: recurrence.end.kind === "until" ? recurrence.end.until : "",
+    count: recurrence.end.kind === "count" ? recurrence.end.count : 10,
+  };
+}
+
+export function defaultCalendarRecurrence(frequency: "daily" | "weekly" | "monthly", startDate: string): CalendarEventRecurrenceForm {
+  const date = Temporal.PlainDate.from(startDate);
+  return { frequency, interval: 1, endKind: "never", untilDate: date.add({ months: 1 }).toString(), count: 10 };
+}
+
+function serializeRecurrence(form: CalendarEventRecurrenceForm): DenCalendarSchedulingRecurrence | null {
+  if (form.frequency === "none") return null;
+  if (!Number.isSafeInteger(form.interval) || form.interval < 1 || form.interval > 365) throw new Error("recurrence");
+  const end = form.endKind === "never" ? { kind: "never" as const }
+    : form.endKind === "until" && /^\d{4}-\d{2}-\d{2}$/.test(form.untilDate) ? { kind: "until" as const, until: Temporal.PlainDate.from(form.untilDate).toString() }
+    : form.endKind === "count" && Number.isSafeInteger(form.count) && form.count >= 1 && form.count <= 1000 ? { kind: "count" as const, count: form.count }
+    : null;
+  if (!end) throw new Error("recurrence");
+  return { frequency: form.frequency, interval: form.interval, end };
 }
 
 /**
@@ -100,40 +143,92 @@ function timeError(error: unknown): string {
   return CALENDAR_FORM_ERROR.timeInvalid;
 }
 
+function isThirtyMinuteTime(value: string): boolean {
+  return /^(?:[01]\d|2[0-3]):(?:00|30)(?::00(?:\.0+)?)?$/.test(value);
+}
+
 export type CalendarEventFormValidation =
-  | { ok: true; values: { calendarId: string; title: string; description: string; time: DenCalendarEventTime } }
+  | { ok: true; values: { calendarId: string; title: string; description: string; time: DenCalendarEventTime; attendeeMemberIds: string[]; recurrence: DenCalendarSchedulingRecurrence | null } }
   | { ok: false; errors: CalendarEventFormErrors };
 
 export function validateCalendarEventForm(form: CalendarEventFormValues, activeCalendarIds: readonly string[]): CalendarEventFormValidation {
   const errors: CalendarEventFormErrors = {};
+  const attendeeMemberIds = [...new Set(form.attendeeMemberIds.filter(Boolean))];
   const titleLength = codePointLength(form.title);
   if (form.title.trim() === "") errors.title = CALENDAR_FORM_ERROR.titleRequired;
   else if (titleLength > CALENDAR_EVENT_TITLE_MAX) errors.title = CALENDAR_FORM_ERROR.titleTooLong;
   if (codePointLength(form.description) > CALENDAR_EVENT_DESCRIPTION_MAX) errors.description = CALENDAR_FORM_ERROR.descriptionTooLong;
   if (!form.calendarId || !activeCalendarIds.includes(form.calendarId)) errors.calendarId = CALENDAR_FORM_ERROR.calendarRequired;
+  if (attendeeMemberIds.length > CALENDAR_EVENT_ATTENDEE_MAX) errors.attendees = CALENDAR_FORM_ERROR.attendeesTooMany;
 
   let time: DenCalendarEventTime | null = null;
+  let recurrence: DenCalendarSchedulingRecurrence | null = null;
   try {
+    if (form.time.kind === "timed" && (!isThirtyMinuteTime(form.time.startTime) || !isThirtyMinuteTime(form.time.endTime))) throw new Error("time must use 30-minute increments");
     // createCalendarTimeFromForm only reads the fields of the declared kind, so mixed state cannot leak through.
     time = serializeCalendarEventTime(createCalendarTimeFromForm(form.time));
   } catch (error) {
     errors.time = timeError(error);
   }
+  try {
+    recurrence = serializeRecurrence(form.recurrence);
+  } catch {
+    errors.recurrence = CALENDAR_FORM_ERROR.recurrenceInvalid;
+  }
   if (Object.keys(errors).length > 0 || !time) return { ok: false, errors };
-  return { ok: true, values: { calendarId: form.calendarId, title: form.title, description: form.description, time } };
+  return { ok: true, values: { calendarId: form.calendarId, title: form.title, description: form.description, time, attendeeMemberIds, recurrence } };
 }
 
 /** Only the changed fields go into an update, so concurrent edits to other fields are not overwritten blindly. */
 export function calendarEventUpdatePatch(
   original: DenCalendarEvent,
-  next: { calendarId: string; title: string; description: string; time: DenCalendarEventTime },
-): Partial<{ calendarId: string; title: string; description: string; time: DenCalendarEventTime }> {
-  const patch: Partial<{ calendarId: string; title: string; description: string; time: DenCalendarEventTime }> = {};
+  next: { calendarId: string; title: string; description: string; time: DenCalendarEventTime; attendeeMemberIds: string[]; recurrence: DenCalendarSchedulingRecurrence | null },
+): Partial<{ calendarId: string; title: string; description: string; time: DenCalendarEventTime; attendeeMemberIds: string[]; recurrence: DenCalendarSchedulingRecurrence | null }> {
+  const patch: Partial<{ calendarId: string; title: string; description: string; time: DenCalendarEventTime; attendeeMemberIds: string[]; recurrence: DenCalendarSchedulingRecurrence | null }> = {};
   if (next.calendarId !== original.calendarId) patch.calendarId = next.calendarId;
   if (next.title !== original.title) patch.title = next.title;
   if (next.description !== original.description) patch.description = next.description;
   if (JSON.stringify(next.time) !== JSON.stringify(original.time)) patch.time = next.time;
+  const originalAttendees = "attendees" in original ? (original as DenCalendarSchedulingEvent).attendees.map((attendee) => attendee.memberId) : [];
+  const originalRecurrence = "recurrence" in original ? (original as DenCalendarSchedulingEvent).recurrence : null;
+  if (JSON.stringify(next.attendeeMemberIds) !== JSON.stringify(originalAttendees)) patch.attendeeMemberIds = next.attendeeMemberIds;
+  if (JSON.stringify(next.recurrence) !== JSON.stringify(originalRecurrence)) patch.recurrence = next.recurrence;
   return patch;
+}
+
+function exactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
+  const actual = Object.keys(value).sort();
+  const keys = [...expected].sort();
+  return actual.length === keys.length && actual.every((key, index) => key === keys[index]);
+}
+
+function record(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Strictly reads the persisted form shape and upgrades legacy v1 scheduling defaults. */
+export function normalizeCalendarEventDraftForm(value: unknown, schemaVersion: 1 | 2): CalendarEventFormValues | null {
+  if (!record(value)) return null;
+  const expected = schemaVersion === 1
+    ? ["calendarId", "title", "description", "time"]
+    : ["calendarId", "title", "description", "time", "attendeeMemberIds", "recurrence"];
+  if (!exactKeys(value, expected) || typeof value.calendarId !== "string" || typeof value.title !== "string" || typeof value.description !== "string" || !record(value.time)) return null;
+  let time: CalendarTimeForm;
+  if (value.time.kind === "allDay" && exactKeys(value.time, ["kind", "startDate", "endDateExclusive"]) && typeof value.time.startDate === "string" && typeof value.time.endDateExclusive === "string") {
+    time = { kind: "allDay", startDate: value.time.startDate, endDateExclusive: value.time.endDateExclusive };
+  } else if (value.time.kind === "timed" && exactKeys(value.time, ["kind", "startDate", "startTime", "endDate", "endTime", "timeZone", "startDisambiguation", "endDisambiguation"]) &&
+    typeof value.time.startDate === "string" && typeof value.time.startTime === "string" && typeof value.time.endDate === "string" && typeof value.time.endTime === "string" && typeof value.time.timeZone === "string" &&
+    ["reject", "earlier", "later"].includes(String(value.time.startDisambiguation)) && ["reject", "earlier", "later"].includes(String(value.time.endDisambiguation))) {
+    time = value.time as CalendarTimeForm;
+  } else return null;
+  if (schemaVersion === 1) return { calendarId: value.calendarId, title: value.title, description: value.description, time, attendeeMemberIds: [], recurrence: { frequency: "none" } };
+  if (!Array.isArray(value.attendeeMemberIds) || value.attendeeMemberIds.some((id) => typeof id !== "string" || !id) || !record(value.recurrence)) return null;
+  let recurrence: CalendarEventRecurrenceForm;
+  if (value.recurrence.frequency === "none" && exactKeys(value.recurrence, ["frequency"])) recurrence = { frequency: "none" };
+  else if (["daily", "weekly", "monthly"].includes(String(value.recurrence.frequency)) && exactKeys(value.recurrence, ["frequency", "interval", "endKind", "untilDate", "count"]) && Number.isSafeInteger(value.recurrence.interval) && ["never", "until", "count"].includes(String(value.recurrence.endKind)) && typeof value.recurrence.untilDate === "string" && Number.isSafeInteger(value.recurrence.count)) {
+    recurrence = value.recurrence as CalendarEventRecurrenceForm;
+  } else return null;
+  return { calendarId: value.calendarId, title: value.title, description: value.description, time, attendeeMemberIds: [...new Set(value.attendeeMemberIds as string[])], recurrence };
 }
 
 export type CalendarSaveFailure =

@@ -5,7 +5,7 @@ import React from "react";
 import TestRenderer, { act } from "react-test-renderer";
 import { MemoryRouter } from "react-router-dom";
 
-import { DenApiError, type DenCalendarCollaborationResource, type DenCalendarEvent, type DenCalendarMembership, type DenCalendarCollaborationRole } from "../src/app/lib/den";
+import { DenApiError, type DenCalendar, type DenCalendarCollaborationResource, type DenCalendarEvent, type DenCalendarMembership, type DenCalendarCollaborationRole } from "../src/app/lib/den";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const originalConsoleError = console.error;
@@ -54,6 +54,10 @@ const event = (calendarId: string): DenCalendarEvent => ({
   time: { kind: "allDay", startDate: "2026-11-09", endDateExclusive: "2026-11-10" },
   version: 1, createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z",
 });
+const defaultPersonalCalendar: DenCalendar = {
+  id: "personal", organizationId: "org-a", ownerMemberId: "member-a", name: "Personal", color: "#2563eb", isDefault: true,
+  version: 1, createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z",
+};
 
 let collaborationEnabled = true;
 let calendarWriteEnabled = true;
@@ -67,7 +71,7 @@ let membershipMutationGate: Promise<void> | null = null;
 const client = {
   listCalendars: async () => [],
   listCalendarCollaboration: async () => ({ items: resources, authorizationGeneration: 1, reset: { mode: "replace" as const, namespace: "calendar-collaboration" as const } }),
-  getCalendarBootstrap: async (_organizationId: string, range: { startDate: string; endDateExclusive: string }) => ({ calendars: [], events: [event("personal")], coverage: { ...range, calendarIds: ["personal"] }, cursor: "cursor" }),
+  getCalendarBootstrap: async (_organizationId: string, range: { startDate: string; endDateExclusive: string }) => ({ calendars: [defaultPersonalCalendar], events: [event("personal")], coverage: { ...range, calendarIds: ["personal"] }, cursor: "cursor" }),
   getTeamCalendarSnapshot: async (_organizationId: string, calendarId: string, range: { startDate: string; endDateExclusive: string }) => {
     snapshotCalls.push(calendarId);
     const calendar = resources.find((item) => item.id === calendarId)!;
@@ -114,7 +118,7 @@ const client = {
   },
 };
 mock.module("../src/react-app/domains/settings/cloud/cloud-session-provider", () => ({
-  useCloudSession: () => ({ isSignedIn: true, baseUrl: "https://den.example/api", activeOrganization: { id: "org-a", orgMemberId: "member-a" }, client }),
+  useCloudSession: () => ({ isSignedIn: true, baseUrl: "https://den.example/api", user: { id: "user-a", name: "Ada Manager", account: "ada", email: "ada@example.com" }, activeOrganization: { id: "org-a", orgMemberId: "member-a" }, client }),
 }));
 mock.module("../src/react-app/domains/cloud/desktop-config-provider", () => ({
   useDesktopConfig: () => ({ loading: false, config: { calendarEnabled: true, calendarWriteEnabled, calendarCollaborationEnabled: collaborationEnabled } }),
@@ -149,6 +153,7 @@ async function render() {
 }
 const byId = (renderer: TestRenderer.ReactTestRenderer, id: string) => renderer.root.find((node) => node.props["data-testid"] === id);
 const has = (renderer: TestRenderer.ReactTestRenderer, id: string) => renderer.root.findAll((node) => node.props["data-testid"] === id).length > 0;
+const text = (node: TestRenderer.ReactTestInstance): string => node.children.map((child) => typeof child === "string" ? child : text(child)).join("");
 const click = async (renderer: TestRenderer.ReactTestRenderer, id: string) => {
   await act(async () => { byId(renderer, id).props.onClick(); });
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
@@ -165,6 +170,7 @@ test("groups real role projections and snapshots only visible detail-capable tea
     const managed = byId(renderer, "calendar-filter-group-managed");
     const subscribed = byId(renderer, "calendar-filter-group-subscribed");
     expect(managed.findAll((node) => node.props["data-testid"] === "calendar-filter-personal")).toHaveLength(1);
+    expect(text(managed.find((node) => node.props["data-testid"] === "calendar-filter-personal").parent!)).toContain("Ada Manager");
     expect(managed.findAll((node) => node.props["data-testid"] === "calendar-filter-managed-team")).toHaveLength(1);
     for (const id of ["editable-team", "view-team", "busy-team"]) expect(subscribed.findAll((node) => node.props["data-testid"] === `calendar-filter-${id}`)).toHaveLength(1);
     expect(snapshotCalls.sort()).toEqual(["editable-team", "managed-team", "view-team"]);

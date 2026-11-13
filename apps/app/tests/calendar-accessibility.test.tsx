@@ -25,6 +25,14 @@ Object.defineProperty(globalThis, "localStorage", {
 const fixedNow = Temporal.Instant.from("2026-11-09T04:00:00Z");
 const clock = { now: () => fixedNow, timeZone: () => "Asia/Shanghai" };
 mock.module("../src/react-app/shell/app-navigation-rail", () => ({ APP_NAVIGATION_RAIL_WIDTH: 48, AppNavigationRail: () => <nav /> }));
+mock.module("../src/components/ui/dialog", () => ({
+  Dialog: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  DialogContent: ({ children, showCloseButton: _showCloseButton, finalFocus: _finalFocus, ...props }: React.ComponentProps<"section"> & { showCloseButton?: boolean; finalFocus?: unknown }) => <section {...props}>{children}</section>,
+  DialogDescription: (props: React.ComponentProps<"p">) => <p {...props} />,
+  DialogFooter: (props: React.ComponentProps<"div">) => <div {...props} />,
+  DialogHeader: (props: React.ComponentProps<"div">) => <div {...props} />,
+  DialogTitle: (props: React.ComponentProps<"h2">) => <h2 {...props} />,
+}));
 
 const calendar = (id: string, name: string): DenCalendar => ({
   id, organizationId: "org-a", ownerMemberId: "member-a", name, color: "#2563eb", isDefault: id === "cal-1",
@@ -41,6 +49,7 @@ let version = 1;
 const client = {
   listCalendars: async () => calendars,
   getCalendarBootstrap: async (_org: string, range: { startDate: string; endDateExclusive: string }) => ({ calendars, events, coverage: { ...range, calendarIds: [] }, cursor: "c1" }),
+  listCalendarSchedulingEvents: async () => ({ items: [] }),
   createCalendar: async () => { throw new Error("unexpected calendar write"); },
   updateCalendar: async () => { throw new Error("unexpected calendar write"); },
   deleteCalendar: async () => { throw new Error("unexpected calendar write"); },
@@ -152,7 +161,7 @@ const formStatus = (renderer: TestRenderer.ReactTestRenderer) => byId(renderer, 
 
 const focusedId = () => (activeNode as FakeNode | null)?.id ?? null;
 const pressKey = async (renderer: TestRenderer.ReactTestRenderer, id: string, key: string) => {
-  await act(async () => { byId(renderer, id).props.onKeyDown({ key, preventDefault: () => undefined }); });
+  await act(async () => { byId(renderer, id).props.onKeyDown({ key, preventDefault: () => undefined, stopPropagation: () => undefined }); });
   await settle();
 };
 const focusNode = (id: string) => { activeNode = new FakeNode(id); };
@@ -211,6 +220,9 @@ test("opening the editor focuses its title; cancel and Escape return focus to th
   try {
     focusNode("calendar-create-event");
     await click(renderer, "calendar-create-event");
+    expect(has(renderer, "calendar-event-dialog")).toBe(true);
+    expect(has(renderer, "calendar-event-panel")).toBe(false);
+    expect(byId(renderer, "calendar-event-dialog").props["aria-label"]).toBe(t("calendar.create_event"));
     expect(focusedId()).toBe("calendar-form-title");
     await click(renderer, "calendar-form-cancel");
     expect(focusedId()).toBe("calendar-create-event");

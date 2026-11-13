@@ -11,10 +11,15 @@ import type {
   DenCalendarSearchOptions,
   DenCalendarCollaborationList,
   DenCalendarMembershipList,
+  DenCalendarAvailability,
+  DenCalendarAvailabilityInput,
+  DenCalendarSchedulingOccurrenceList,
+  DenCalendarSchedulingRange,
   DenOrganizationMember,
   DenTeamCalendarSnapshot,
   DenClient,
 } from "@/app/lib/den";
+import { DenApiError } from "@/app/lib/den";
 import { calendarQueryKeys } from "./calendar-query-keys";
 import type { CalendarScope } from "./calendar-scope";
 import { calendarRequestSignal, throwIfCalendarScopeStale, type CalendarScopeGeneration } from "./calendar-scope-lifecycle";
@@ -29,6 +34,7 @@ export type CalendarQueryClient = Pick<DenClient,
   | "getCalendarChanges"
 >;
 export type CalendarCollaborationQueryClient = Pick<DenClient, "listCalendarCollaboration" | "getTeamCalendarSnapshot" | "listOrganizationMembers" | "listTeamCalendarMemberships">;
+export type CalendarSchedulingQueryClient = Pick<DenClient, "listCalendarSchedulingEvents" | "getCalendarSchedulingAvailability">;
 
 const unavailableKey = (kind: string, scope: CalendarScope | null) => scope
   ? [...calendarQueryKeys.scope(scope), "unavailable", kind] as const
@@ -146,6 +152,45 @@ export function useCalendarOrganizationMembersQuery(input: { client: CalendarCol
         offset += page.members.length;
         if (!page.members.length || offset >= page.total) return members;
       }
+    },
+  });
+}
+
+export function useCalendarSchedulingEventsQuery(input: { client: CalendarSchedulingQueryClient; scope: CalendarScope | null; range: DenCalendarSchedulingRange; active?: boolean } & CalendarGenerationInput) {
+  const queryClient = useQueryClient();
+  const scope = useCapturedScope(input.scope);
+  const range = useMemo(() => Object.freeze({ ...input.range }), [input.range.startInstant, input.range.endInstantExclusive, input.range.timeZone]);
+  return useQuery<DenCalendarSchedulingOccurrenceList>({
+    queryKey: scope ? calendarQueryKeys.schedulingEvents(scope, range) : unavailableKey("scheduling-events", scope),
+    enabled: (input.active ?? true) && scope !== null,
+    retry: false,
+    queryFn: async ({ signal }) => {
+      const result = await input.client.listCalendarSchedulingEvents(scope!.organizationId, range, { signal: calendarRequestSignal(signal, input.generation) });
+      throwIfCalendarScopeStale(input.generation, signal);
+      result.items.forEach((occurrence) => setCanonicalCalendarEvent(queryClient, scope!, occurrence.event));
+      return result;
+    },
+  });
+}
+
+export function useCalendarAvailabilityQuery(input: { client: CalendarSchedulingQueryClient; scope: CalendarScope | null; request: DenCalendarAvailabilityInput | null; active?: boolean } & CalendarGenerationInput) {
+  const scope = useCapturedScope(input.scope);
+  const requestKey = input.request ? JSON.stringify({ ...input.request, memberIds: [...new Set(input.request.memberIds)].sort() }) : "";
+  const request = useMemo(() => requestKey ? JSON.parse(requestKey) as DenCalendarAvailabilityInput : null, [requestKey]);
+  return useQuery<DenCalendarAvailability>({
+    queryKey: scope && request ? calendarQueryKeys.availability(scope, request) : unavailableKey("availability", scope),
+    enabled: (input.active ?? true) && scope !== null && request !== null && request.memberIds.length > 0,
+    retry: false,
+    staleTime: 15_000,
+    queryFn: async ({ signal }) => {
+      const result = await input.client.getCalendarSchedulingAvailability(scope!.organizationId, request!, { signal: calendarRequestSignal(signal, input.generation) });
+      throwIfCalendarScopeStale(input.generation, signal);
+      const requested = [...new Set(request!.memberIds)].sort();
+      const returned = result.members.map((member) => member.memberId).sort();
+      if (requested.length !== returned.length || requested.some((memberId, index) => memberId !== returned[index])) {
+        throw new DenApiError(500, "invalid_calendar_scheduling_payload", "Calendar availability members did not match the request.");
+      }
+      return result;
     },
   });
 }

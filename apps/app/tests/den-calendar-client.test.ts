@@ -7,6 +7,9 @@ import {
   normalizeDenCalendarEvent,
   normalizeDenCalendarCollaborationResource,
   normalizeDenCalendarMembership,
+  normalizeDenCalendarSchedulingEvent,
+  normalizeDenCalendarSchedulingRecurrence,
+  normalizeDenCalendarAvailability,
   normalizeDenDesktopConfig,
 } from "../src/app/lib/den";
 
@@ -124,6 +127,46 @@ describe("Den calendar contract", () => {
       { expectedVersion: 1, title: updated.title },
       { expectedVersion: 2 },
     ]);
+  });
+
+  test("uses strict scheduling routes, wire bodies, occurrences, and privacy-safe availability", async () => {
+    const event = { ...fixture.allDayEvent, status: "active", attendees: [{ memberId: "member-two", responseStatus: "accepted" }], recurrence: { frequency: "weekly", interval: 1, end: { kind: "until", until: "2026-12-31" } } };
+    const range = { startInstant: "2026-11-01T00:00:00Z", endInstantExclusive: "2026-12-01T00:00:00Z", timeZone: "Asia/Shanghai" };
+    const availability = { members: [{ memberId: "member-two", busy: [{ startInstant: "2026-11-09T01:00:00Z", endInstantExclusive: "2026-11-09T02:00:00Z" }] }, { memberId: "member-three", unknown: true }] };
+    expect(normalizeDenCalendarSchedulingRecurrence(event.recurrence)).toEqual(event.recurrence);
+    expect(normalizeDenCalendarSchedulingRecurrence({ ...event.recurrence, weekdays: [1] })).toBeNull();
+    expect(normalizeDenCalendarSchedulingEvent(event)).toEqual(event);
+    expect(normalizeDenCalendarSchedulingEvent({ ...event, extra: true })).toBeNull();
+    expect(normalizeDenCalendarAvailability(availability)).toEqual(availability);
+    expect(normalizeDenCalendarAvailability({ members: [{ memberId: "member-two", busy: [], status: "free" }] })).toBeNull();
+
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const responses = [{ items: [{ event, occurrenceIndex: 1, time: event.time }] }, { event, replayed: false }, { event: { ...event, version: 2 }, replayed: true }, availability];
+    globalThis.fetch = async (input, init) => {
+      requests.push({ url: String(input), init });
+      return Response.json(responses.shift());
+    };
+    const client = calendarClient();
+    expect((await client.listCalendarSchedulingEvents("org_one", range)).items[0]?.occurrenceIndex).toBe(1);
+    await client.createCalendarSchedulingEvent("org_one", { idempotencyKey: "create-one", calendarId: event.calendarId, title: event.title, description: event.description, time: event.time, attendees: [{ memberId: "member-two" }], recurrence: event.recurrence });
+    await client.updateCalendarSchedulingEvent("org_one", "event/one", { idempotencyKey: "update-one", expectedVersion: 1, title: "Updated" });
+    expect(await client.getCalendarSchedulingAvailability("org_one", { memberIds: ["member-two"], ...range })).toEqual(availability);
+
+    expect(requests.map(({ url, init }) => [init?.method, new URL(url).pathname])).toEqual([
+      ["GET", "/deployment/jwork/api/v1/calendar-scheduling/events"],
+      ["POST", "/deployment/jwork/api/v1/calendar-scheduling/events"],
+      ["PATCH", "/deployment/jwork/api/v1/calendar-scheduling/events/event%2Fone"],
+      ["POST", "/deployment/jwork/api/v1/calendar-scheduling/availability"],
+    ]);
+    expect(Object.fromEntries(new URL(requests[0]!.url).searchParams)).toEqual(range);
+    expect(JSON.parse(String(requests[1]!.init?.body)).attendees).toEqual([{ memberId: "member-two" }]);
+    expect(JSON.parse(String(requests[2]!.init?.body))).toEqual({ idempotencyKey: "update-one", expectedVersion: 1, title: "Updated" });
+    expect(JSON.parse(String(requests[3]!.init?.body))).toEqual({ memberIds: ["member-two"], ...range });
+  });
+
+  test("rejects malformed scheduling success envelopes with a dedicated error", async () => {
+    const error = await captureError({ items: [{ event: fixture.allDayEvent, occurrenceIndex: 0, time: fixture.allDayEvent.time }] }, 200, (client) => client.listCalendarSchedulingEvents("org_one", { startInstant: "2026-11-01T00:00:00Z", endInstantExclusive: "2026-12-01T00:00:00Z", timeZone: "UTC" }));
+    expect(error).toMatchObject({ code: "invalid_calendar_scheduling_payload" });
   });
 
   test("rejects a team delete tombstone for another event", async () => {
@@ -267,6 +310,12 @@ describe("Den calendar contract", () => {
       status: 409,
       code: "calendar_version_conflict",
       details: { current: fixture.timedEvent },
+    });
+    const schedulingCurrent = { ...fixture.allDayEvent, status: "active", attendees: [{ memberId: "member-two", responseStatus: "tentative" }], recurrence: { frequency: "daily", interval: 1, end: { kind: "never" } } };
+    expect(await captureError({ ...conflict.response, details: { current: schedulingCurrent } }, conflict.status)).toMatchObject({
+      status: 409,
+      code: "calendar_version_conflict",
+      details: { current: schedulingCurrent },
     });
 
     const resync = fixtureError("calendar_cursor_resync_required");
