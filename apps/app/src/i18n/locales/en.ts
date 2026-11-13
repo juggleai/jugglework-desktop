@@ -72,6 +72,7 @@ export default {
   "cloud_docs.card_unavailable": "This document notification is unavailable.",
   "cloud_docs.no_access": "You do not have access to this document, or it was deleted.",
   "cloud_docs.source_changed": "Your account or organization changed. Reopen the notification.",
+  "cloud_docs.context_changed": "Reopen cloud documents in your current space.",
   "cloud_docs.switch_to_open": "Switch to {name} and open this document?",
   "session.usage_limit_recharge": "You've reached your usage limit. Please top up to get more usage credits.",
   "office.in_file_window": "This document is open in a separate window",

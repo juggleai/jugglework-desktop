@@ -17,7 +17,7 @@ let latestReviewProps: Record<string, any> | null = null;
 let latestCloudDocsProps: Record<string, any> | null = null;
 const openedDocs: unknown[] = [];
 mock.module("../src/app/lib/cloud-doc-tabs", () => ({ openCloudDocTab: (...args: unknown[]) => openedDocs.push(args) }));
-mock.module("../src/react-app/domains/cloud-docs/cloud-docs-page", () => ({ CloudDocsPage: (props: Record<string, any>) => { latestCloudDocsProps = props; return null; } }));
+mock.module("../src/react-app/domains/cloud-docs/cloud-docs-page", () => ({ CloudDocsPage: (props: Record<string, any>) => { latestCloudDocsProps = props; return <div data-cloud-docs-tenant={props.tenantId} />; } }));
 mock.module("../src/react-app/shell/session-route", () => ({
   SessionRoute: (props: { surfaceVisible: boolean; embedded?: boolean; routeWorkspaceId: string; routeSessionId: string | null; onSessionTargetChange?: (workspaceId: string, sessionId: string) => void }) => {
     const [instance] = useState(() => ++mounts);
@@ -199,7 +199,7 @@ test("导航页交给 AI 将引用交给保留的会话并打开对应文档，�
   let pathname = '';
   const events: Event[] = [];
   const priorWindow = globalThis.window;
-  (globalThis as any).window = { dispatchEvent: (event: Event) => { events.push(event); return true; } };
+  (globalThis as any).window = { dispatchEvent: (event: Event) => { events.push(event); return true; }, addEventListener() {}, removeEventListener() {} };
   function Navigation() { navigate = useNavigate(); pathname = useLocation().pathname; return <WorkspaceAppRoute />; }
   let renderer!: TestRenderer.ReactTestRenderer;
   try {
@@ -211,6 +211,45 @@ test("导航页交给 AI 将引用交给保留的会话并打开对应文档，�
     expect(pathname).toBe('/workspace/workspace-1/session/session-1');
     expect((events.at(-1) as CustomEvent).detail.sessionId).toBe('session-1');
     expect(openedDocs).toEqual([['session-1', {tenantId:'org-a',workspaceId:'native-ws',docId:'doc-1',title:'方案'}, ['b1']]]);
+  } finally {
+    if (renderer) await act(async () => { renderer.unmount(); });
+    (globalThis as any).window = priorWindow;
+  }
+});
+
+test("切换个人／组织后重置云文档路由和旧页面定位，隐藏页不保留旧租户", async () => {
+  const priorWindow = globalThis.window;
+  let tenantId = 'org-a';
+  const host = Object.assign(new EventTarget(), {
+    localStorage: { getItem: (key: string) => key === 'jugglework.den.activeOrgId' ? tenantId : key === 'jugglework.den.authToken' ? 'session-token' : null },
+  });
+  (globalThis as any).window = host;
+  let navigate!: ReturnType<typeof useNavigate>;
+  let url = '';
+  function Navigation() {
+    navigate = useNavigate();
+    const location = useLocation();
+    url = location.pathname + location.search;
+    return <WorkspaceAppRoute />;
+  }
+  const changeOrganization = async (next: string) => {
+    tenantId = next;
+    await act(async () => { host.dispatchEvent(new CustomEvent('jugglework-den-session-updated', { detail: { status: 'authority_changed', reason: 'organization_switched' } })); });
+  };
+  let renderer!: TestRenderer.ReactTestRenderer;
+  try {
+    await act(async () => { renderer = TestRenderer.create(<MemoryRouter initialEntries={['/cloud-docs/org-a?pageId=old-page&workspaceId=old-workspace&commentId=old-comment']}><Navigation /></MemoryRouter>); });
+    await changeOrganization('personal-user');
+    expect(url).toBe('/cloud-docs/personal-user');
+    expect(latestCloudDocsProps?.tenantId).toBe('personal-user');
+    expect(latestCloudDocsProps?.targetSearch).toBe('');
+    await changeOrganization('org-a');
+    expect(url).toBe('/cloud-docs/org-a');
+    await act(async () => { navigate('/workspace/workspace-1/settings/preferences'); });
+    expect(renderer.root.findAllByProps({ 'data-cloud-docs-tenant': 'org-a' })).toHaveLength(1);
+    await changeOrganization('org-b');
+    expect(url).toBe('/workspace/workspace-1/settings/preferences');
+    expect(renderer.root.findAllByProps({ 'data-cloud-docs-tenant': 'org-a' })).toHaveLength(0);
   } finally {
     if (renderer) await act(async () => { renderer.unmount(); });
     (globalThis as any).window = priorWindow;

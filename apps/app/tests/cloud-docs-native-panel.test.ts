@@ -33,7 +33,7 @@ class NativeView {
     this.visible = value;
   }
   getVisible() { return this.visible; }
-  setBounds() {}
+  setBounds = mock((_bounds: { x: number; y: number; width: number; height: number }) => {});
 }
 const views: NativeView[] = [];
 const clearedOrigins: string[] = [];
@@ -114,6 +114,15 @@ test("原生视图在新文档授权前隐藏，401/403/404 隐藏并报告，�
   bounds(a.instanceId);
   expect(first.visible).toBe(true);
   expect(first.webContents.focus).toHaveBeenCalledTimes(1);
+  const boundsCalls = first.setBounds.mock.calls.length;
+  events.get("jugglework:docs:bounds")!(
+    { sender: host, senderFrame: host.mainFrame },
+    { instanceId: a.instanceId, visible: false, x: 0, y: 0, width: 0, height: 0 },
+  );
+  expect(first.visible).toBe(false);
+  expect(first.setBounds.mock.calls.length).toBe(boundsCalls);
+  bounds(a.instanceId);
+  expect(first.webContents.focus).toHaveBeenCalledTimes(2);
   events.get("jugglework:docs:message")!({ sender: first.webContents, senderFrame: first.webContents.mainFrame }, {
     contractVersion: 1, instanceId: a.instanceId, tenantId, workspaceId: "ws", docId: "doc", title: "方案", type: "docs.ai-reference", action: "ask", blockIds: ["b1"],
   });
@@ -121,13 +130,13 @@ test("原生视图在新文档授权前隐藏，401/403/404 隐藏并报告，�
   expect(host.send).toHaveBeenLastCalledWith("jugglework:docs:ai-reference", expect.objectContaining({ docId: "doc", blockIds: ["b1"] }));
   // TIPS: 周期 ready／布局更新不能打断用户输入；只有从覆盖层隐藏恢复时才重新聚焦。
   bounds(a.instanceId);
-  expect(first.webContents.focus).toHaveBeenCalledTimes(1);
+  expect(first.webContents.focus).toHaveBeenCalledTimes(2);
   events.get("jugglework:docs:bounds")!(
     { sender: host, senderFrame: host.mainFrame },
     { instanceId: a.instanceId, visible: false, x: 0, y: 0, width: 500, height: 400 },
   );
   bounds(a.instanceId);
-  expect(first.webContents.focus).toHaveBeenCalledTimes(2);
+  expect(first.webContents.focus).toHaveBeenCalledTimes(3);
   // TIPS: 顶部控制只能作用于当前主框架、当前实例，状态读取不能打断编辑焦点。
   const command = (senderFrame: object, instanceId: string, action: string) =>
     events.get("jugglework:docs:layout-command")!({ sender: host, senderFrame }, { instanceId, action });
@@ -136,7 +145,7 @@ test("原生视图在新文档授权前隐藏，401/403/404 隐藏并报告，�
   command(host.mainFrame, a.instanceId, "arbitrary-script");
   expect(first.webContents.send).not.toHaveBeenCalled();
   command(host.mainFrame, a.instanceId, "request-state");
-  expect(first.webContents.focus).toHaveBeenCalledTimes(2);
+  expect(first.webContents.focus).toHaveBeenCalledTimes(3);
   command(host.mainFrame, a.instanceId, "toggle-left");
   expect(first.webContents.send).toHaveBeenLastCalledWith("jugglework:docs:layout-command", {
     instanceId: a.instanceId, action: "toggle-left",

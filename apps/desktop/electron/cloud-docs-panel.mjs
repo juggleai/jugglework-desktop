@@ -184,6 +184,11 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
       Math.min(rect.height - y, Math.round(Number(input.height) * zoom)),
     );
     if (![x, y, width, height].every(Number.isFinite)) return;
+    // TIPS: React 隐藏页面会测得零尺寸；只隐藏原生视图，避免触发 AFFiNE 的窄屏自动收起。
+    if (width === 0 || height === 0) {
+      item.view.setVisible(false);
+      return;
+    }
     item.view.setBounds({ x, y, width, height });
     const visible = input.visible === true && item.ready && !item.denied && width > 0 && height > 0;
     if (visible && current !== item) {

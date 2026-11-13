@@ -75,6 +75,7 @@ export default {
   "cloud_docs.card_unavailable": "此文档通知已不可访问",
   "cloud_docs.no_access": "你没有此文档的访问权限，或文档已被删除",
   "cloud_docs.source_changed": "账号或组织已变化，请重新打开通知",
+  "cloud_docs.context_changed": "请重新打开当前空间的云文档",
   "cloud_docs.switch_to_open": "切换到{name}并打开云文档？",
   "session.usage_limit_recharge": "你已达到使用上限。若需更多使用额度，请及时充值。",
   "office.in_file_window": "此文档已在独立窗口中打开",

@@ -67,6 +67,16 @@ export function CloudDocsPage(props: Props) {
   >("loading");
   const [error, setError] = useState("");
   const [credentialScope, setCredentialScope] = useState(currentCredentialScope);
+  /** 授权已切换时重开当前空间首页，不重放旧空间的文档／评论定位。 */
+  const retry = () => {
+    const tenantId = auth.activeOrganization?.id;
+    const settings = readDenSettings();
+    if (auth.isSignedIn && tenantId && settings.activeOrgId === tenantId && tenantId !== props.tenantId) {
+      navigate(`/cloud-docs/${encodeURIComponent(tenantId)}`, { replace: true });
+    } else {
+      setAttempt(value => value + 1);
+    }
+  };
   useEffect(() => {
     // TIPS: 同一个 settings 事件还用于 IM 刷新；不能因此中断原生编辑和待保存增量。
     const changed = () => setCredentialScope(currentCredentialScope());
@@ -97,7 +107,7 @@ export function CloudDocsPage(props: Props) {
       setState("error");
       setError(
         bridge
-          ? t("cloud_docs.enter_organization")
+          ? t(auth.isSignedIn && auth.activeOrganization && props.tenantId !== auth.activeOrganization.id ? "cloud_docs.context_changed" : "cloud_docs.enter_organization")
           : t("cloud_docs.desktop_required"),
       );
       return;
@@ -303,7 +313,7 @@ export function CloudDocsPage(props: Props) {
                   <div className="flex gap-2">
                     <Button
                       variant="outline"
-                      onClick={() => setAttempt((v) => v + 1)}
+                      onClick={retry}
                     >
                       {t("cloud_docs.retry")}
                     </Button>

@@ -257,7 +257,7 @@ function ToonFactoryRailIcon({ active }: { active: boolean }) {
   );
 }
 
-/** 云文档导航图标：圆角文档叠放云朵，文字与图层间隔透明镂空并跟随主题。 */
+/** 云文档导航图标：默认线框，选中实心，内部线条透明镂空并跟随主题。 */
 function CloudDocsRailIcon({ active }: { active: boolean }) {
   const maskId = useId();
   const cloud = "M13.1 21h6.15a3 3 0 0 0 .3-5.98 3.8 3.8 0 0 0-7.28-1.05A3.55 3.55 0 0 0 13.1 21Z";
@@ -271,18 +271,28 @@ function CloudDocsRailIcon({ active }: { active: boolean }) {
       strokeLinejoin="round"
       data-cloud-docs-rail-icon
     >
-      <defs>
-        {/* TIPS: 两个入口各用独立 mask；镂空真实透明，不依赖浅色背景填充。 */}
-        <mask id={maskId} maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24">
-          <rect width="24" height="24" fill="white" stroke="none" />
-          <path d="M7.8 6.8h5M7.8 10.3h3.1" stroke="black" strokeWidth="1.7" />
-          <path d={cloud} fill="black" stroke="black" strokeWidth="2.6" />
-        </mask>
-      </defs>
-      <g fill="currentColor" stroke="none" opacity={active ? 1 : 0.84}>
-        <rect x="3.5" y="2.25" width="15.2" height="19" rx="2.4" mask={`url(#${maskId})`} />
-        <path d={cloud} />
-      </g>
+      {active ? (
+        <>
+          <defs>
+            {/* TIPS: 两个入口各用独立 mask；镂空真实透明，不依赖浅色背景填充。 */}
+            <mask id={maskId} maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24">
+              <rect width="24" height="24" fill="white" stroke="none" />
+              <path d="M14.5 4.8v2.7h2.7Z" fill="black" stroke="none" />
+              <path d="M8 8h2M8 11h5" stroke="black" strokeWidth="1.6" />
+              <path d={cloud} fill="black" stroke="black" strokeWidth="2.5" />
+            </mask>
+          </defs>
+          <g fill="currentColor" stroke="none">
+            <path d="M6 3h8l5 5v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z" mask={`url(#${maskId})`} />
+            <path d={cloud} />
+          </g>
+        </>
+      ) : (
+        <g strokeWidth="1.75">
+          <path d="M9 21H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8l5 5v3M14 3v4a1 1 0 0 0 1 1h4M8 8h2M8 11h5" />
+          <path d={cloud} />
+        </g>
+      )}
     </svg>
   );
 }

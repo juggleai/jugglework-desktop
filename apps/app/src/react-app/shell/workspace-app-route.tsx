@@ -1,6 +1,8 @@
 import { toast } from "sonner";
 import { t } from "@/i18n";
 import { openCloudDocTab } from "@/app/lib/cloud-doc-tabs";
+import { readDenSettings } from "@/app/lib/den";
+import { denSessionUpdatedEvent, type DenSessionUpdatedDetail } from "@/app/lib/den-session-events";
 import { MeetingReminderHost } from "../domains/meeting/meeting-reminders";
 import { MeetingPage } from "../domains/meeting/meeting-page";
 import { MeetingRoomHost } from "../domains/meeting/meeting-room";
@@ -101,6 +103,21 @@ function WorkspaceAppRouteContent() {
   const [appsMounted, setAppsMounted] = useState(() => appPath?.view === "apps");
   const [reviewsMounted, setReviewsMounted] = useState(() => appPath?.view === "reviews");
   const [retainedDocs, setRetainedDocs] = useState<{ tenantId: string; search: string } | null>(() => appPath?.view === "cloud-docs" ? { tenantId: appPath.tenantId, search: location.search } : null);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const changed = (event: Event) => {
+      const { reason } = (event as CustomEvent<DenSessionUpdatedDetail>).detail ?? {};
+      if (reason !== "organization_switched" && reason !== "account_switched" && reason !== "signed_out") return;
+      // TIPS: 授权切换会关闭原生页；必须同时丢弃旧租户路由和页面定位，否则重试仍请求旧空间。
+      setRetainedDocs(null);
+      const settings = readDenSettings();
+      if (reason !== "signed_out" && appPath?.view === "cloud-docs" && settings.authToken && settings.activeOrgId) {
+        navigate(`/cloud-docs/${encodeURIComponent(settings.activeOrgId)}`, { replace: true });
+      }
+    };
+    window.addEventListener(denSessionUpdatedEvent, changed);
+    return () => window.removeEventListener(denSessionUpdatedEvent, changed);
+  }, [appPath?.view, navigate]);
   const [automationSession, setAutomationSession] = useState<RetainedSessionTarget | null>(null);
   const [automationSessionHost, setAutomationSessionHost] = useState<HTMLDivElement | null>(null);
   const retainedSessionHost = useRef<HTMLDivElement>(null);
