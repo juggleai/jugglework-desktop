@@ -206,9 +206,21 @@ export function resolveCachedSessionMcpMaintenanceState(input: {
   if (!input.inputsValid || !input.maintenanceScopeKey || !input.cloudSignedIn) {
     return IDLE_CLOUD_MCP_MAINTENANCE_STATE;
   }
-  return readCloudMcpMaintenanceOutcome(input.maintenanceScopeKey)?.status === "ok"
-    ? { ...IDLE_CLOUD_MCP_MAINTENANCE_STATE, status: "ready" }
-    : CHECKING_CLOUD_MCP_MAINTENANCE_STATE;
+  const outcome = readCloudMcpMaintenanceOutcome(input.maintenanceScopeKey);
+  if (!outcome) return CHECKING_CLOUD_MCP_MAINTENANCE_STATE;
+  if (outcome.status === "ok") {
+    return { ...IDLE_CLOUD_MCP_MAINTENANCE_STATE, status: "ready" };
+  }
+  return {
+    ...IDLE_CLOUD_MCP_MAINTENANCE_STATE,
+    status: "failed",
+    issue: genericCloudMcpMaintenanceIssue({
+      code: outcome.status === "timed_out"
+        ? "cloud_mcp_maintenance_timeout"
+        : "cloud_mcp_maintenance_failed",
+      message: outcome.detail,
+    }),
+  };
 }
 
 function genericCloudMcpMaintenanceIssue(input?: {
@@ -475,11 +487,14 @@ export function useSessionMcpMaintenance(input: {
           workspaceId,
         }),
         directory,
-        engineReloadEpochRef.current,
       ])
     : null;
   const executionTargetKey = maintenanceScopeKey && opencodeClient
-    ? JSON.stringify([maintenanceScopeKey, runtimeObjectId(opencodeClient)])
+    ? JSON.stringify([
+        maintenanceScopeKey,
+        runtimeObjectId(opencodeClient),
+        engineReloadEpochRef.current,
+      ])
     : null;
   // React effects run after paint. Key the render state synchronously so a
   // cross-workspace navigation cannot display the previous workspace's
@@ -552,7 +567,7 @@ export function useSessionMcpMaintenance(input: {
 
     let cancelled = false;
     const previousOutcome = readCloudMcpMaintenanceOutcome(maintenanceScopeKey);
-    const hasPreviousReadyOutcome = previousOutcome?.status === "ok";
+    const hasPreviousOutcome = previousOutcome !== null;
     setCloudMcpState(cachedCloudMcpState);
 
     const recordCloudAttempt = (attemptInput: {
@@ -656,13 +671,13 @@ export function useSessionMcpMaintenance(input: {
       });
     };
 
-    // A successful workspace result is rendered stale-while-revalidate and
-    // does not launch a probe merely because navigation selected this
-    // workspace again. The interval/focus paths refresh it later, while
-    // missing, failed, reconfigured, or reloaded scopes still check now.
-    if (settingsChanged || !hasPreviousReadyOutcome) {
-      void tick({ force: true });
-    }
+    // Keep the persisted outcome stable across engine reloads. A reload still
+    // gets a distinct execution key so callers never wait on an old runtime,
+    // but it must not turn a terminal failure into an unbounded forced retry
+    // loop. Settings changes are explicit repair attempts and remain forced;
+    // a new/failed scope otherwise respects the normal freshness guard.
+    if (settingsChanged) void tick({ force: true });
+    else if (!hasPreviousOutcome || previousOutcome.status !== "ok") void tick();
     const handleOnline = () => void tick({ force: true });
     const handleFocus = () => {
       if (document.visibilityState === "visible") void tick();

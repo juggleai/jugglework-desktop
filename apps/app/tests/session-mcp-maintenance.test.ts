@@ -157,9 +157,26 @@ describe("session MCP maintenance", () => {
 
   test("restores each workspace readiness from its own cache on the navigation render", () => {
     const readyScope = "workspace-ready-scope";
+    const failedScope = "workspace-failed-scope";
     const uncheckedScope = "workspace-unchecked-scope";
     recordCloudMcpMaintenanceOutcome(readyScope, { status: "ok" }, NOW);
+    recordCloudMcpMaintenanceOutcome(failedScope, {
+      status: "error",
+      detail: "JuggleWork extension plugin canary tools are missing.",
+    }, NOW);
 
+    expect(resolveCachedSessionMcpMaintenanceState({
+      cloudSignedIn: true,
+      engineReloadBusy: false,
+      inputsValid: true,
+      maintenanceScopeKey: failedScope,
+    })).toMatchObject({
+      status: "failed",
+      issue: {
+        code: "cloud_mcp_maintenance_failed",
+        message: "JuggleWork extension plugin canary tools are missing.",
+      },
+    });
     expect(resolveCachedSessionMcpMaintenanceState({
       cloudSignedIn: true,
       engineReloadBusy: false,

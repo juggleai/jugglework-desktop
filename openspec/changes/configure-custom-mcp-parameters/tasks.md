@@ -63,3 +63,4 @@
 - [x] 7.8 自定义 MCP 的「断开」改为停用（`setMcpEnabled(name, false)`），条目保留并可一键启用
 - [x] 7.9 详情增加独立的「移除」破坏性动作（两段式确认），不以 connected 为前提
 - [x] 7.10 补测：停用/启用/移除三条路径，及失败条目可移除
+- [x] 7.11 会话 MCP maintenance 在导航恢复时呈现各 workspace 缓存的 ready/failed 终态；engine reload 使用新的执行 key，但不会把持久失败转成无界强制重试，设置变更仍作为显式修复尝试。
