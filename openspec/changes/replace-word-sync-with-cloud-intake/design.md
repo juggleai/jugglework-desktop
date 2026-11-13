@@ -129,6 +129,8 @@ Docs 侧接口、文件类型和数据见 [Docs 设计](../../../../jugglework-d
 
 云文档能力与本地 Office 能力使用同一接入方式：在本地 Server 的 opencode 插件 `jugglework-extensions-preview.ts` 中注册，AI 通过 `jugglework_query`／`jugglework_execute` 按 id 调用；本地 Server 按真实调用对话与轮次解析可写范围、执行选区限制并记录本轮变更。
 
+引用和变更以用户消息 ID 登记。工具携带的是助手消息 ID，`context`、`search`、`read`、`edit`、`create`、`import` 统一复用文件交付器 `messageOrigin`，由引擎真实 `parentID` 和未结束的执行记录解析所属用户轮次；同一轮的多条助手消息共享该选区。无法确认归属时返回 `cloud_doc_turn_unavailable`，不读取最近轮次、其他会话或实时面板作为替代。变更卡片、详情和撤销继续直接使用用户消息 ID，不按助手消息二次解析。
+
 | id | 类型 | 对应 |
 | --- | --- | --- |
 | `cloud_docs.context` | query | 本轮可写范围、引用、选区 blockId 与面板激活云文档 |

@@ -12,6 +12,8 @@ interface CloudDocsRouteOptions {
   ensureWritable: (config: ServerConfig) => void;
   requireClientScope: (ctx: RequestContext, scope: TokenScope) => void;
   resolveWorkspace: (config: ServerConfig, id: string) => Promise<WorkspaceInfo>;
+  /** 按引擎真实助手消息归属解析用户轮次，复用本机会话交付器。 */
+  resolveTurn: (workspaceId: string, sessionId: string, messageId: string) => Promise<string | null>;
 }
 
 function text(value: unknown, name: string, max = 256): string {
@@ -38,20 +40,28 @@ export function registerCloudDocsRoutes(options: CloudDocsRouteOptions): void {
     const get = (name: string) => source instanceof URLSearchParams ? source.get(name) : source[name];
     return { workspaceId, sessionId: text(get("sessionId"), "sessionId"), messageId: text(get("messageId"), "messageId") };
   };
+  /** 工具携带助手消息 ID；引用与变更始终归属其真实用户消息。 */
+  const toolTurn = async (workspaceId: string, source: URLSearchParams | Record<string, unknown>) => {
+    const key = turn(workspaceId, source);
+    // TIPS: 不取最近一条消息或当前面板，避免其他轮次／会话借用选区权限。
+    const messageId = await options.resolveTurn(key.workspaceId, key.sessionId, key.messageId);
+    if (!messageId) throw new ApiError(409, "cloud_doc_turn_unavailable", "尚未确认本轮消息归属，请稍后重新查询");
+    return { ...key, messageId };
+  };
   addRoute(routes, "GET", `${base}/context`, "client", async ctx => {
     const workspace = await local(ctx);
-    return jsonResponse(service.context(turn(workspace.id, ctx.url.searchParams)));
+    return jsonResponse(service.context(await toolTurn(workspace.id, ctx.url.searchParams)));
   });
   addRoute(routes, "GET", `${base}/search`, "client", async ctx => {
     const workspace = await local(ctx);
     const limit = Number(ctx.url.searchParams.get("limit")) || undefined;
-    return jsonResponse(await service.search(turn(workspace.id, ctx.url.searchParams), text(ctx.url.searchParams.get("q"), "q", 200), limit));
+    return jsonResponse(await service.search(await toolTurn(workspace.id, ctx.url.searchParams), text(ctx.url.searchParams.get("q"), "q", 200), limit));
   });
   addRoute(routes, "GET", `${base}/read`, "client", async ctx => {
     const workspace = await local(ctx);
     const query = ctx.url.searchParams;
     const blockIds = query.get("blockIds")?.split(",").filter(Boolean);
-    return jsonResponse(await service.read(turn(workspace.id, query), {
+    return jsonResponse(await service.read(await toolTurn(workspace.id, query), {
       workspaceId: text(query.get("workspaceId"), "workspaceId"),
       docId: text(query.get("docId"), "docId"),
       mode: query.get("mode") ?? undefined,
@@ -62,7 +72,7 @@ export function registerCloudDocsRoutes(options: CloudDocsRouteOptions): void {
     const workspace = await local(ctx, true);
     const body = await options.readJsonBody(ctx.request);
     if (!Array.isArray(body.operations)) throw new ApiError(400, "invalid_payload", "operations is required");
-    return jsonResponse(await service.edit(turn(workspace.id, body), {
+    return jsonResponse(await service.edit(await toolTurn(workspace.id, body), {
       workspaceId: text(body.workspaceId, "workspaceId"),
       docId: text(body.docId, "docId"),
       operations: body.operations as never,
@@ -71,7 +81,7 @@ export function registerCloudDocsRoutes(options: CloudDocsRouteOptions): void {
   addRoute(routes, "POST", `${base}/create`, "client", async ctx => {
     const workspace = await local(ctx, true);
     const body = await options.readJsonBody(ctx.request);
-    return jsonResponse(await service.create(turn(workspace.id, body), {
+    return jsonResponse(await service.create(await toolTurn(workspace.id, body), {
       title: text(body.title, "title", 200),
       markdown: typeof body.markdown === "string" ? body.markdown : "",
     }));
@@ -79,7 +89,7 @@ export function registerCloudDocsRoutes(options: CloudDocsRouteOptions): void {
   addRoute(routes, "POST", `${base}/import`, "client", async ctx => {
     const workspace = await local(ctx, true);
     const body = await options.readJsonBody(ctx.request);
-    return jsonResponse(await service.importFile(turn(workspace.id, body), {
+    return jsonResponse(await service.importFile(await toolTurn(workspace.id, body), {
       localWorkspaceId: workspace.id,
       path: text(body.path, "path", 1024),
     }));

@@ -4183,7 +4183,10 @@ function createRoutes(
     },
   });
   registerOfficeRoutes({ routes, config, documents: officeDocuments, jsonResponse, readJsonBody, ensureWritable, requireClientScope, resolveWorkspace });
-  registerCloudDocsRoutes({ routes, config, service: cloudDocs, jsonResponse, readJsonBody, ensureWritable, requireClientScope, resolveWorkspace });
+  registerCloudDocsRoutes({ routes, config, service: cloudDocs, jsonResponse, readJsonBody, ensureWritable, requireClientScope, resolveWorkspace,
+    resolveTurn: async (workspaceId, sessionId, messageId) =>
+      (await fileDeliveries!.messageOrigin(workspaceId, sessionId, messageId))?.turnId ?? null,
+  });
 
   addRoute(routes, "GET", "/workspace/:id/plugins", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
