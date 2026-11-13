@@ -94,6 +94,7 @@ const client = {
   },
   updateCalendarSchedulingEvent: async (_org: string, eventId: string, input: Record<string, unknown>) => {
     calls.push({ op: "scheduling-update", input: { eventId, ...input } });
+    const failure = failNext?.("update"); if (failure) throw failure;
     const current = events.find((event) => event.id === eventId)! as DenCalendarSchedulingEvent;
     const { idempotencyKey: _key, expectedVersion: _version, attendees, ...patch } = input;
     const updated = { ...current, ...patch, ...(attendees ? { attendees } : {}), version: current.version + 1 } as DenCalendarSchedulingEvent;
@@ -314,7 +315,7 @@ test("restoring an old edit draft cannot clear authoritative scheduling attendee
     expect(text(byId(renderer, "calendar-form-attendees-trigger"))).toContain("member-b");
     await submit(renderer);
     expect(calls[0]).toMatchObject({ op: "scheduling-update", input: { eventId: "scheduled", title: "Draft title" } });
-    expect(calls[0]!.input).not.toHaveProperty("attendees");
+    expect(calls[0]!.input).toMatchObject({ attendees: [{ memberId: "member-a" }, { memberId: "member-b" }] });
   } finally { await act(async () => { renderer.unmount(); }); }
 });
 
@@ -368,7 +369,7 @@ test("offline drafts preserve attendees and recurrence without querying availabi
     await click(renderer, "calendar-form-save-draft");
     await wait();
     const [draft] = await cache.listDrafts(scope, "event");
-    expect(draft?.values).toMatchObject({ form: { attendeeMemberIds: ["member-b"], recurrence: { frequency: "weekly", interval: 1, endKind: "until", untilDate: "2026-12-31" } } });
+    expect(draft?.values).toMatchObject({ form: { attendeeMemberIds: ["member-a", "member-b"], recurrence: { frequency: "weekly", interval: 1, endKind: "until", untilDate: "2026-12-31" } } });
     expect(availabilityCalls).toBe(0);
   } finally { await act(async () => { renderer.unmount(); }); }
 });
@@ -396,7 +397,7 @@ test("a draft whose base event changed in the cloud requires explicit resolution
     await click(renderer, "calendar-form-conflict-keep-mine");
     await submit(renderer);
     await wait();
-    expect(calls[0]).toMatchObject({ op: "update", input: { title: "Mine offline", expectedVersion: 2 } });
+    expect(calls[0]).toMatchObject({ op: "scheduling-update", input: { eventId: "e1", title: "Mine offline", expectedVersion: 2, attendees: [{ memberId: "member-a" }] } });
   } finally { await act(async () => { renderer.unmount(); }); }
 });
 

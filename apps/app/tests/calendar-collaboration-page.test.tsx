@@ -64,6 +64,8 @@ let calendarWriteEnabled = true;
 const snapshotCalls: string[] = [];
 const putMembershipCalls: Array<{ memberId: string; role: DenCalendarCollaborationRole; expectedAuthorizationVersion: number }> = [];
 const revokeMembershipCalls: Array<{ memberId: string; expectedAuthorizationVersion: number }> = [];
+const teamEventCreateCalls: Array<{ calendarId: string; input: Record<string, unknown> }> = [];
+const teamEventUpdateCalls: Array<{ calendarId: string; eventId: string; input: Record<string, unknown> }> = [];
 let membershipAuthorizationVersion = 1;
 let membershipItems: DenCalendarMembership[] = [];
 let directoryOffsets: number[] = [];
@@ -84,8 +86,14 @@ const client = {
   updateCalendarEvent: async () => { throw new Error("unexpected update"); },
   deleteCalendarEvent: async () => { throw new Error("unexpected delete"); },
   createTeamCalendar: async () => { throw new Error("unexpected create"); },
-  createTeamCalendarEvent: async () => { throw new Error("unexpected create"); },
-  updateTeamCalendarEvent: async () => { throw new Error("unexpected update"); },
+  createTeamCalendarEvent: async (_organizationId: string, calendarId: string, input: { title: string; description: string; time: DenCalendarEvent["time"] }) => {
+    teamEventCreateCalls.push({ calendarId, input: { ...input } });
+    return { event: { ...event(calendarId), ...input, id: "created-team-event" } };
+  },
+  updateTeamCalendarEvent: async (_organizationId: string, calendarId: string, eventId: string, input: { expectedVersion: number; title?: string; description?: string; time?: DenCalendarEvent["time"] }) => {
+    teamEventUpdateCalls.push({ calendarId, eventId, input: { ...input } });
+    return { event: { ...event(calendarId), ...input, id: eventId, version: input.expectedVersion + 1 } };
+  },
   deleteTeamCalendarEvent: async () => { throw new Error("unexpected delete"); },
   listOrganizationMembers: async (_organizationId: string, _options: { limit?: number; offset?: number } = {}) => {
     const offset = _options.offset ?? 0;
@@ -129,7 +137,7 @@ const clock = { now: () => Temporal.Instant.from("2026-11-09T04:00:00Z"), timeZo
 const noop = () => undefined;
 
 beforeEach(() => {
-  values.clear(); snapshotCalls.length = 0; putMembershipCalls.length = 0; revokeMembershipCalls.length = 0; directoryOffsets = []; collaborationEnabled = true; calendarWriteEnabled = true;
+  values.clear(); snapshotCalls.length = 0; putMembershipCalls.length = 0; revokeMembershipCalls.length = 0; teamEventCreateCalls.length = 0; teamEventUpdateCalls.length = 0; directoryOffsets = []; collaborationEnabled = true; calendarWriteEnabled = true;
   membershipAuthorizationVersion = 1; membershipMutationGate = null;
   membershipItems = [
     { memberId: "member-a", role: "manager", createdByMemberId: "member-a", createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z" },
@@ -163,6 +171,10 @@ const change = async (renderer: TestRenderer.ReactTestRenderer, id: string, valu
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
 };
+const submit = async (renderer: TestRenderer.ReactTestRenderer) => {
+  await act(async () => { byId(renderer, "calendar-event-form").props.onSubmit({ preventDefault: () => undefined }); });
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+};
 
 test("groups real role projections and snapshots only visible detail-capable teams", async () => {
   const renderer = await render();
@@ -193,6 +205,39 @@ test("hides the team creation choice when the collaboration flag is off", async 
     expect(has(renderer, "calendar-create-personal")).toBe(true);
     expect(has(renderer, "calendar-create-team")).toBe(false);
     expect(snapshotCalls).toEqual([]);
+  } finally { await act(async () => renderer.unmount()); }
+});
+
+test("switching a new event to a team calendar keeps owner semantics out of scheduling attendees", async () => {
+  const renderer = await render();
+  try {
+    await click(renderer, "calendar-create-event");
+    const calendarSelect = byId(renderer, "calendar-form-calendar");
+    const managedTeamOption = calendarSelect.findAllByType("option").find((option) => option.props.value === "managed-team");
+    expect(managedTeamOption?.props.disabled).not.toBe(true);
+    await change(renderer, "calendar-form-calendar", "managed-team");
+    expect(has(renderer, "calendar-team-scheduling-unavailable")).toBe(true);
+    await change(renderer, "calendar-form-title", "Team planning");
+    await submit(renderer);
+    expect(teamEventCreateCalls).toHaveLength(1);
+    expect(teamEventCreateCalls[0]).toMatchObject({ calendarId: "managed-team", input: { title: "Team planning" } });
+    expect(teamEventCreateCalls[0]!.input).not.toHaveProperty("attendees");
+    expect(teamEventCreateCalls[0]!.input).not.toHaveProperty("recurrence");
+  } finally { await act(async () => renderer.unmount()); }
+});
+
+test("updating a team event never sends scheduling fields", async () => {
+  const renderer = await render();
+  try {
+    await click(renderer, "calendar-view-week");
+    await click(renderer, "calendar-all-day-event-event-managed-team");
+    await click(renderer, "calendar-event-detail-edit");
+    await change(renderer, "calendar-form-title", "Renamed team event");
+    await submit(renderer);
+    expect(teamEventUpdateCalls).toHaveLength(1);
+    expect(teamEventUpdateCalls[0]).toEqual({ calendarId: "managed-team", eventId: "event-managed-team", input: { expectedVersion: 1, title: "Renamed team event" } });
+    expect(teamEventUpdateCalls[0]!.input).not.toHaveProperty("attendees");
+    expect(teamEventUpdateCalls[0]!.input).not.toHaveProperty("recurrence");
   } finally { await act(async () => renderer.unmount()); }
 });
 

@@ -31,7 +31,6 @@ import {
   CALENDAR_EVENT_ATTENDEE_MAX,
   classifyCalendarSaveFailure,
   defaultCalendarRecurrence,
-  hasAdvancedCalendarScheduling,
   switchCalendarFormTimeKind,
   validateCalendarEventForm,
   type CalendarEventFormErrors,
@@ -172,7 +171,12 @@ export function CalendarEventEditor(props: CalendarEventEditorProps) {
   const deleteMutation = useDeleteCalendarEventMutation(props.client, props.scope);
   const teamMutations = useTeamCalendarEventMutations(props.client, props.scope);
   const schedulingMutations = useCalendarSchedulingEventMutations(props.client, props.scope);
-  const [form, setForm] = React.useState(props.initial);
+  const creatorMemberId = props.event?.ownerMemberId ?? props.scope.memberId;
+  const [form, setForm] = React.useState(() => ensureRequiredCreatorAttendee(
+    props.initial,
+    creatorMemberId,
+    props.teamCalendarIds,
+  ));
   const [peopleOpen, setPeopleOpen] = React.useState(false);
   const [peopleSearch, setPeopleSearch] = React.useState("");
   const [groups, setGroups] = React.useState<OrganizationChatGroup[]>([]);
@@ -195,8 +199,8 @@ export function CalendarEventEditor(props: CalendarEventEditorProps) {
   const pending = status.kind === "pending";
   const errors = status.kind === "validation" ? status.errors : {};
   const activeIds = props.calendars.map((calendar) => calendar.id);
-  const advancedScheduling = hasAdvancedCalendarScheduling(form);
   const teamSelected = props.teamCalendarIds?.has(form.calendarId) === true;
+  const advancedScheduling = form.attendeeMemberIds.some((memberId) => memberId !== creatorMemberId) || form.recurrence.frequency !== "none";
   const membersQuery = useCalendarOrganizationMembersQuery({ client: props.client, scope: props.scope, active: online });
   const members = membersQuery.data ?? [];
   const membersById = React.useMemo(() => new Map(members.map((member) => [member.id, member])), [members]);
@@ -229,7 +233,7 @@ export function CalendarEventEditor(props: CalendarEventEditorProps) {
       setStatus((current) => current.kind === "pending" ? current : { kind: "conflict", current: props.event!, operation: "save" });
       return;
     }
-    const attendeeMemberIds = props.event.attendees.map((attendee) => attendee.memberId);
+    const attendeeMemberIds = [...new Set([creatorMemberId, ...props.event.attendees.map((attendee) => attendee.memberId)])];
     setBase(props.event);
     setForm((current) => current.attendeeMemberIds.length > 0 ? current : { ...current, attendeeMemberIds });
   }, [base, props.event]);
@@ -242,6 +246,7 @@ export function CalendarEventEditor(props: CalendarEventEditorProps) {
   }, [groups.length, groupsError, peopleOpen]);
 
   const toggleMember = (memberId: string) => {
+    if (!teamSelected && memberId === creatorMemberId) return;
     if (!form.attendeeMemberIds.includes(memberId) && form.attendeeMemberIds.length >= MAX_SCHEDULING_MEMBERS) {
       setGroupFeedback(t("calendar.attendees_limit", { count: MAX_SCHEDULING_MEMBERS }));
       return;
@@ -315,7 +320,7 @@ export function CalendarEventEditor(props: CalendarEventEditorProps) {
     if (pending) return;
     // Offline never sends or queues an authoritative write.
     if (!online) return;
-    const validation = validateCalendarEventForm(form, activeIds);
+    const validation = validateCalendarEventForm(form, activeIds, teamSelected ? undefined : creatorMemberId);
     if (!validation.ok) {
       setStatus({ kind: "validation", errors: validation.errors });
       return;
@@ -397,7 +402,7 @@ export function CalendarEventEditor(props: CalendarEventEditorProps) {
   const useLatest = () => {
     if (status.kind !== "conflict" || !status.current) return;
     setBase(status.current);
-    setForm(calendarEventToForm(status.current));
+    setForm(ensureRequiredCreatorAttendee(calendarEventToForm(status.current), status.current.ownerMemberId, props.teamCalendarIds));
     lastSubmitted.current = null;
     setStatus({ kind: "editing" });
   };
@@ -477,7 +482,16 @@ export function CalendarEventEditor(props: CalendarEventEditorProps) {
             value={form.calendarId}
             aria-invalid={errors.calendarId ? true : undefined}
             aria-describedby={describedBy("calendarId")}
-            onChange={(event) => update({ calendarId: event.target.value })}
+            onChange={(event) => {
+              const calendarId = event.target.value;
+              const selectingTeam = props.teamCalendarIds?.has(calendarId) === true;
+              update({
+                calendarId,
+                attendeeMemberIds: selectingTeam
+                  ? form.attendeeMemberIds.filter((memberId) => memberId !== creatorMemberId)
+                  : [...new Set([creatorMemberId, ...form.attendeeMemberIds])],
+              });
+            }}
             data-testid="calendar-form-calendar"
           >
             {props.calendars.map((calendar) => <option key={calendar.id} value={calendar.id} disabled={advancedScheduling && props.teamCalendarIds?.has(calendar.id)}>{calendar.name}</option>)}
@@ -501,7 +515,8 @@ export function CalendarEventEditor(props: CalendarEventEditorProps) {
               {membersQuery.isError ? <p className="p-2 text-xs text-red-600">{t("calendar.attendees_failed")}</p> : null}
               {members.filter((member) => memberName(member).toLocaleLowerCase().includes(peopleSearch.trim().toLocaleLowerCase())).map((member) => {
                 const selected = form.attendeeMemberIds.includes(member.id);
-                return <button key={member.id} type="button" className="flex h-9 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-dls-text hover:bg-dls-hover" onClick={() => toggleMember(member.id)} data-testid={`calendar-attendee-${member.id}`}><span className="flex-1 truncate">{memberName(member)}</span>{selected ? <Check className="size-4 text-dls-accent" /> : null}</button>;
+                 const requiredCreator = !teamSelected && member.id === creatorMemberId;
+                 return <button key={member.id} type="button" className="flex h-9 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-dls-text hover:bg-dls-hover disabled:cursor-not-allowed disabled:opacity-70" disabled={requiredCreator} aria-disabled={requiredCreator || undefined} onClick={() => toggleMember(member.id)} data-testid={`calendar-attendee-${member.id}`}><span className="flex-1 truncate">{memberName(member)}</span>{selected ? <Check className="size-4 text-dls-accent" /> : null}</button>;
               })}
               <div className="my-2 h-px bg-dls-border" />
               <p className="px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-dls-secondary">{t("calendar.groups")}</p>
@@ -663,4 +678,15 @@ export function CalendarEventEditor(props: CalendarEventEditorProps) {
 
 function isSchedulingAggregate(event: DenCalendarEvent): event is DenCalendarSchedulingEvent {
   return "attendees" in event && Array.isArray(event.attendees);
+}
+
+function ensureRequiredCreatorAttendee(
+  form: CalendarEventFormValues,
+  creatorMemberId: string,
+  teamCalendarIds?: ReadonlySet<string>,
+): CalendarEventFormValues {
+  if (teamCalendarIds?.has(form.calendarId)) {
+    return { ...form, attendeeMemberIds: form.attendeeMemberIds.filter((memberId) => memberId !== creatorMemberId) };
+  }
+  return { ...form, attendeeMemberIds: [...new Set([creatorMemberId, ...form.attendeeMemberIds])] };
 }

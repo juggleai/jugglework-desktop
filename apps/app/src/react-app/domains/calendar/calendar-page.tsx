@@ -561,7 +561,12 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
           calendars={editorCalendars}
           teamCalendarIds={teamCalendarIds}
           timeZone={timeZone}
-          initial={editor.form ?? defaultCalendarEventForm({ date: navigation.selectedDate, calendarId: defaultCalendarId, timeZone })}
+          initial={editor.form ?? defaultCalendarEventForm({
+            date: navigation.selectedDate,
+            calendarId: defaultCalendarId,
+            timeZone,
+            creatorMemberId: teamCalendarIds.has(defaultCalendarId) ? undefined : props.scope.memberId,
+          })}
           online={online}
           onSaveDraft={saveEditorDraft}
           restoredFromDraft={Boolean(editor.draftId)}

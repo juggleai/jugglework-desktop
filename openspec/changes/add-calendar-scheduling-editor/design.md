@@ -31,7 +31,7 @@ Calendar core 继续提供普通事件、版本、幂等和离线 baseline。Sch
 
 ### 3. 参与人硬限制在 UI 和 validator 双层执行
 
-成员/群组选取在 UI 达到 20 人时停止；framework-free validator 对去重后的非空 member IDs 再次执行 20 人上限。群组按服务端 cursor/offset 完整分页，但只把当前组织目录可映射成员加入选择，并报告 added/skipped/over-limit。
+个人日程以事件 owner（新建时为当前 scope member）作为不可移除的创建人参与者。成员/群组选取在 UI 达到包含创建人在内的 20 人时停止；framework-free validator 先补齐创建人，再对去重后的非空 member IDs 执行 20 人上限。群组按服务端 cursor/offset 完整分页，但只把当前组织目录可映射成员加入选择，并报告 added/skipped/over-limit。团队日历继续由其独立 owner/授权模型表达创建人，不把参与人字段发送到不支持的 scheduling endpoint。
 
 ### 4. Availability 是隐私最小投影
 

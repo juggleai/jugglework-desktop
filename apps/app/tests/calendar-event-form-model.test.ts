@@ -28,6 +28,18 @@ describe("calendar event form model", () => {
     });
   });
 
+  test("a new personal event requires the creator as an attendee", () => {
+    const form = defaultCalendarEventForm({
+      date,
+      calendarId: "cal-1",
+      timeZone: "Asia/Shanghai",
+      creatorMemberId: "member-a",
+    });
+    expect(form.attendeeMemberIds).toEqual(["member-a"]);
+    expect(validateCalendarEventForm({ ...form, title: "Owned event", attendeeMemberIds: [] }, active, "member-a"))
+      .toMatchObject({ ok: true, values: { attendeeMemberIds: ["member-a"] } });
+  });
+
   test("a valid timed form serializes to instants in its IANA zone", () => {
     const initial = defaultCalendarEventForm({ date, calendarId: "cal-1", timeZone: "Asia/Shanghai", kind: "timed" });
     const form = { ...initial, title: "Call", time: { ...initial.time, startTime: "09:00", endTime: "09:30" } as typeof initial.time };
@@ -56,6 +68,14 @@ describe("calendar event form model", () => {
       ...base(),
       attendeeMemberIds: [...Array.from({ length: 20 }, (_, index) => `member-${index}`), "member-0", ""],
     }, active)).toMatchObject({ ok: true, values: { attendeeMemberIds: Array.from({ length: 20 }, (_, index) => `member-${index}`) } });
+    expect(validateCalendarEventForm({
+      ...base(),
+      attendeeMemberIds: Array.from({ length: 20 }, (_, index) => `guest-${index}`),
+    }, active, "member-a")).toMatchObject({ ok: false, errors: { attendees: CALENDAR_FORM_ERROR.attendeesTooMany } });
+    expect(validateCalendarEventForm({
+      ...base(),
+      attendeeMemberIds: Array.from({ length: 19 }, (_, index) => `guest-${index}`),
+    }, active, "member-a")).toMatchObject({ ok: true, values: { attendeeMemberIds: ["member-a", ...Array.from({ length: 19 }, (_, index) => `guest-${index}`)] } });
   });
 
   test("an end not after the start is rejected for both kinds", () => {
@@ -118,6 +138,18 @@ describe("calendar event form model", () => {
     expect(validateCalendarEventForm({ ...form, recurrence: { frequency: "monthly", interval: 1, endKind: "count", untilDate: "", count: 1000 } }, active)).toMatchObject({ ok: true, values: { recurrence: { frequency: "monthly", interval: 1, end: { kind: "count", count: 1000 } } } });
     expect(validateCalendarEventForm({ ...form, recurrence: { frequency: "daily", interval: 365, endKind: "never", untilDate: "", count: 1 } }, active)).toMatchObject({ ok: true });
     expect(validateCalendarEventForm({ ...form, recurrence: { frequency: "daily", interval: 366, endKind: "never", untilDate: "", count: 1 } }, active)).toMatchObject({ ok: false, errors: { recurrence: "calendar.error_recurrence_invalid" } });
+  });
+
+  test("attendee order alone does not create an update patch", () => {
+    const event: DenCalendarSchedulingEvent = {
+      id: "scheduled", organizationId: "org-a", ownerMemberId: "member-z", calendarId: "cal-1", title: "Standup", description: "",
+      time: { kind: "allDay", startDate: "2026-11-09", endDateExclusive: "2026-11-10" }, status: "active",
+      attendees: [{ memberId: "member-a", responseStatus: "accepted" }, { memberId: "member-z", responseStatus: "needs-action" }], recurrence: null,
+      version: 1, createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z",
+    };
+    const form = calendarEventToForm(event);
+    const validation = validateCalendarEventForm({ ...form, attendeeMemberIds: ["member-z", "member-a"] }, active, "member-z");
+    expect(validation.ok && calendarEventUpdatePatch(event, validation.values)).toEqual({});
   });
 
   test("save failures are classified so the UI never reports a false save", () => {

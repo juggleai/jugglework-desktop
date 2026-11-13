@@ -8,7 +8,17 @@
 
 ### Requirement: Organization member attendee selection is bounded
 
-排期编辑器 SHALL 只从当前组织成员目录和可映射到该目录的群成员选择参与人。提交前 MUST 对非空 member IDs 去重并拒绝超过 20 人；外部联系人、跨组织主体和无法映射群成员不得进入请求。
+排期编辑器 SHALL 只从当前组织成员目录和可映射到该目录的群成员选择参与人。个人日程的创建人 SHALL 始终作为不可移除的参与人；新建和更新请求在 UI 被绕过时仍 MUST 补齐创建人的 member ID。提交前 MUST 对非空 member IDs 去重并拒绝超过 20 人；外部联系人、跨组织主体和无法映射群成员不得进入请求。
+
+#### Scenario: User creates a personal event
+
+- **WHEN** 当前组织成员新建个人日程
+- **THEN** 表单默认选中且不可取消该创建人，最终 scheduling 请求至少包含创建人的 member ID
+
+#### Scenario: A caller removes the creator from form state
+
+- **WHEN** 调用方绕过 picker 并从个人日程表单状态移除创建人
+- **THEN** framework-free validator 在计入 20 人总上限的前提下补回创建人
 
 #### Scenario: Group contains more than the allowed attendees
 

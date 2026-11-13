@@ -12,6 +12,7 @@
 - [x] 2.2 增加组织成员与群组参与人选择、完整群成员分页/目录映射、去重、结果反馈及 20 人 UI/validator 双层硬限制。
 - [x] 2.3 增加 busy-only 时间轴、unknown/加载/失败/离线状态和隐私说明，不渲染底层日程详情。
 - [x] 2.4 保持编辑的原始 expected-version 基准；后台 authority 新版本触发显式 conflict，不能保留旧表单同时静默推进 base。
+- [x] 2.5 个人日程默认并强制包含创建人参与者；picker 不可移除，validator 防绕过补齐，20 人上限包含创建人，团队日历保持独立 owner 边界。
 
 ## 3. Failure and offline boundaries
 

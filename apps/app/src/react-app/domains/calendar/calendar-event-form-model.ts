@@ -60,6 +60,7 @@ export function defaultCalendarEventForm(input: {
   calendarId: string;
   timeZone: string;
   kind?: "allDay" | "timed";
+  creatorMemberId?: string;
 }): CalendarEventFormValues {
   const time: CalendarTimeForm = input.kind === "timed"
     ? {
@@ -73,7 +74,14 @@ export function defaultCalendarEventForm(input: {
         endDisambiguation: "reject",
       }
     : { kind: "allDay", startDate: input.date.toString(), endDateExclusive: input.date.add({ days: 1 }).toString() };
-  return { calendarId: input.calendarId, title: "", description: "", time, attendeeMemberIds: [], recurrence: { frequency: "none" } };
+  return {
+    calendarId: input.calendarId,
+    title: "",
+    description: "",
+    time,
+    attendeeMemberIds: input.creatorMemberId ? [input.creatorMemberId] : [],
+    recurrence: { frequency: "none" },
+  };
 }
 
 export function calendarEventToForm(event: DenCalendarEvent): CalendarEventFormValues {
@@ -151,9 +159,16 @@ export type CalendarEventFormValidation =
   | { ok: true; values: { calendarId: string; title: string; description: string; time: DenCalendarEventTime; attendeeMemberIds: string[]; recurrence: DenCalendarSchedulingRecurrence | null } }
   | { ok: false; errors: CalendarEventFormErrors };
 
-export function validateCalendarEventForm(form: CalendarEventFormValues, activeCalendarIds: readonly string[]): CalendarEventFormValidation {
+export function validateCalendarEventForm(
+  form: CalendarEventFormValues,
+  activeCalendarIds: readonly string[],
+  requiredAttendeeMemberId?: string,
+): CalendarEventFormValidation {
   const errors: CalendarEventFormErrors = {};
-  const attendeeMemberIds = [...new Set(form.attendeeMemberIds.filter(Boolean))];
+  const attendeeMemberIds = [...new Set([
+    ...(requiredAttendeeMemberId ? [requiredAttendeeMemberId] : []),
+    ...form.attendeeMemberIds.filter(Boolean),
+  ])];
   const titleLength = codePointLength(form.title);
   if (form.title.trim() === "") errors.title = CALENDAR_FORM_ERROR.titleRequired;
   else if (titleLength > CALENDAR_EVENT_TITLE_MAX) errors.title = CALENDAR_FORM_ERROR.titleTooLong;
@@ -191,7 +206,9 @@ export function calendarEventUpdatePatch(
   if (JSON.stringify(next.time) !== JSON.stringify(original.time)) patch.time = next.time;
   const originalAttendees = "attendees" in original ? (original as DenCalendarSchedulingEvent).attendees.map((attendee) => attendee.memberId) : [];
   const originalRecurrence = "recurrence" in original ? (original as DenCalendarSchedulingEvent).recurrence : null;
-  if (JSON.stringify(next.attendeeMemberIds) !== JSON.stringify(originalAttendees)) patch.attendeeMemberIds = next.attendeeMemberIds;
+  const sortedNextAttendees = [...next.attendeeMemberIds].sort();
+  const sortedOriginalAttendees = [...originalAttendees].sort();
+  if (JSON.stringify(sortedNextAttendees) !== JSON.stringify(sortedOriginalAttendees)) patch.attendeeMemberIds = next.attendeeMemberIds;
   if (JSON.stringify(next.recurrence) !== JSON.stringify(originalRecurrence)) patch.recurrence = next.recurrence;
   return patch;
 }

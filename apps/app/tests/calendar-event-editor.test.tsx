@@ -88,6 +88,7 @@ const client = {
   },
   updateCalendarSchedulingEvent: async (_org: string, eventId: string, input: Record<string, unknown>) => {
     calls.push({ op: "scheduling-update", input: { eventId, ...input } });
+    const failure = failNext?.("update"); if (failure) throw failure;
     const current = events.find((event) => event.id === eventId)!;
     const { idempotencyKey: _key, expectedVersion: _v, attendees, ...patch } = input;
     const updated = { ...current, ...patch, ...(attendees ? { attendees } : {}), status: "active", version: current.version + 1 } as DenCalendarEvent;
@@ -175,19 +176,36 @@ test("creating an all-day event shows it only after the authoritative response",
     expect(String(byId(renderer, "calendar-event-dialog").props.className)).toContain("bg-dls-sidebar");
     expect(String(byId(renderer, "calendar-form-time-grid").props.className)).toContain("grid-cols-1");
     expect(String(byId(renderer, "calendar-form-time-grid").props.className)).toContain("sm:grid-cols-2");
+    expect(text(byId(renderer, "calendar-form-attendees-trigger"))).toContain("member-a");
     await change(renderer, "calendar-form-title", "Planning");
     await change(renderer, "calendar-form-calendar", "cal-2");
     await submit(renderer);
     expect(calls).toHaveLength(1);
     expect(calls[0]!.input).toMatchObject({ calendarId: "cal-2", title: "Planning", description: "", time: { kind: "allDay", startDate: "2026-11-09", endDateExclusive: "2026-11-10" } });
-    expect(calls[0]!.input).not.toHaveProperty("attendees");
-    expect(calls[0]!.input).not.toHaveProperty("recurrence");
+    expect(calls[0]!.input).toMatchObject({ attendees: [{ memberId: "member-a" }], recurrence: null });
     expect(typeof calls[0]!.input.idempotencyKey).toBe("string");
     expect(has(renderer, "calendar-event-form")).toBe(false);
     expect(has(renderer, "calendar-event-dialog")).toBe(false);
     expect(has(renderer, "calendar-event-panel")).toBe(true);
     expect(text(byId(renderer, "calendar-event-detail-title"))).toBe("Planning");
     expect(text(byId(renderer, "calendar-event-detail-calendar"))).toBe("Side project");
+  } finally { await act(async () => { renderer.unmount(); }); }
+});
+
+test("the creator is selected and cannot be removed from a personal event", async () => {
+  organizationMembers = [{ id: "member-a", userId: "user-a", role: "member", user: { id: "user-a", name: "Ada", account: "ada", email: "ada@example.com", avatar: null } }];
+  const { renderer } = await render();
+  try {
+    await click(renderer, "calendar-create-event");
+    await click(renderer, "calendar-form-attendees-trigger");
+    const creator = byId(renderer, "calendar-attendee-member-a");
+    expect(creator.props.disabled).toBe(true);
+    expect(creator.props["aria-disabled"]).toBe(true);
+    await act(async () => { creator.props.onClick?.(); });
+    expect(text(byId(renderer, "calendar-form-attendees-trigger"))).toContain("Ada");
+    await change(renderer, "calendar-form-title", "Creator required");
+    await submit(renderer);
+    expect(calls[0]).toMatchObject({ op: "create", input: { attendees: [{ memberId: "member-a" }] } });
   } finally { await act(async () => { renderer.unmount(); }); }
 });
 
@@ -269,7 +287,7 @@ test("recurring creates and core event upgrades use the complete scheduling PATC
     await change(renderer, "calendar-form-title", "Weekly planning");
     await change(renderer, "calendar-form-recurrence", "weekly");
     await submit(renderer);
-    expect(calls[0]).toMatchObject({ op: "create", input: { attendees: [], recurrence: { frequency: "weekly", interval: 1, end: { kind: "never" } } } });
+    expect(calls[0]).toMatchObject({ op: "create", input: { attendees: [{ memberId: "member-a" }], recurrence: { frequency: "weekly", interval: 1, end: { kind: "never" } } } });
 
     events = [baseEvent("core-event")];
     organizationMembers = [{ id: "member-b", userId: "user-b", role: "member", user: { id: "user-b", name: "Ben", account: "ben", email: "ben@example.com", avatar: null } }];
@@ -282,7 +300,7 @@ test("recurring creates and core event upgrades use the complete scheduling PATC
       await change(editor, "calendar-form-recurrence", "monthly");
       await submit(editor);
       const patch = calls.at(-1)!;
-      expect(patch).toMatchObject({ op: "scheduling-update", input: { eventId: "core-event", expectedVersion: 1, attendees: [{ memberId: "member-b" }], recurrence: { frequency: "monthly", interval: 1, end: { kind: "never" } } } });
+      expect(patch).toMatchObject({ op: "scheduling-update", input: { eventId: "core-event", expectedVersion: 1, attendees: [{ memberId: "member-a" }, { memberId: "member-b" }], recurrence: { frequency: "monthly", interval: 1, end: { kind: "never" } } } });
       expect(typeof patch.input.idempotencyKey).toBe("string");
       expect(Object.keys(patch.input).sort()).toEqual(["attendees", "eventId", "expectedVersion", "idempotencyKey", "recurrence"]);
       expect(patch.input).not.toHaveProperty("status");
@@ -322,8 +340,8 @@ test("editing sends only changed fields with the loaded version", async () => {
     expect(has(renderer, "calendar-event-panel")).toBe(true);
     await change(renderer, "calendar-form-title", "Renamed");
     await submit(renderer);
-    expect(calls[0]).toMatchObject({ op: "update", input: { title: "Renamed", expectedVersion: 1 } });
-    expect(Object.keys(calls[0]!.input).sort()).toEqual(["expectedVersion", "idempotencyKey", "title"]);
+    expect(calls[0]).toMatchObject({ op: "scheduling-update", input: { eventId: "e1", title: "Renamed", expectedVersion: 1, attendees: [{ memberId: "member-a" }] } });
+    expect(Object.keys(calls[0]!.input).sort()).toEqual(["attendees", "eventId", "expectedVersion", "idempotencyKey", "title"]);
     expect(text(byId(renderer, "calendar-event-detail-title"))).toBe("Renamed");
   } finally { await act(async () => { renderer.unmount(); }); }
 });
@@ -344,7 +362,7 @@ test("a version conflict keeps my edits and offers explicit resolution", async (
     events = [theirs];
     await click(renderer, "calendar-form-conflict-keep-mine");
     await submit(renderer);
-    expect(calls[1]).toMatchObject({ op: "update", input: { title: "Mine", expectedVersion: 2 } });
+    expect(calls[1]).toMatchObject({ op: "scheduling-update", input: { eventId: "e1", title: "Mine", expectedVersion: 2, attendees: [{ memberId: "member-a" }] } });
     expect(text(byId(renderer, "calendar-event-detail-title"))).toBe("Mine");
   } finally { await act(async () => { renderer.unmount(); }); }
 });
