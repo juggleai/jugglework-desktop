@@ -1,9 +1,8 @@
 /** @jsxImportSource react */
-import { useRef, useState } from "react";
+import { useRef } from "react";
 import { CircleAlert, Info } from "lucide-react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { ConfirmModal } from "../../../design-system/modals/confirm-modal";
 import { Button } from "@/components/ui/button";
 import { Progress, ProgressLabel, ProgressValue } from "@/components/ui/progress";
 import { Switch } from "@/components/ui/switch";
@@ -63,7 +62,6 @@ export type UpdatesViewProps = {
 };
 
 export function UpdatesView(props: UpdatesViewProps) {
-  const [confirmRestartOpen, setConfirmRestartOpen] = useState(false);
   const versionClickRef = useRef({ count: 0, lastClickedAt: 0 });
   const updateState = props.updateStatus?.state ?? "idle";
   const updateVersion = props.updateStatus?.version ?? null;
@@ -157,13 +155,7 @@ export function UpdatesView(props: UpdatesViewProps) {
                     {updateState === "ready" ? (
                       <Button
                         variant="secondary"
-                        onClick={() => {
-                          if (props.anyActiveRuns) {
-                            setConfirmRestartOpen(true);
-                            return;
-                          }
-                          void props.installUpdateAndRestart();
-                        }}
+                        onClick={() => void props.installUpdateAndRestart()}
                         disabled={props.busy}
                       >
                         {t("settings.update_install_button")}
@@ -198,18 +190,6 @@ export function UpdatesView(props: UpdatesViewProps) {
                 </Alert>
               ) : null}
 
-              <ConfirmModal
-                open={confirmRestartOpen}
-                title={t("settings.update_restart_confirm_title")}
-                message={t("settings.update_restart_confirm_message")}
-                confirmLabel={t("settings.update_install_button")}
-                cancelLabel={t("common.cancel")}
-                onConfirm={() => {
-                  setConfirmRestartOpen(false);
-                  void props.installUpdateAndRestart();
-                }}
-                onCancel={() => setConfirmRestartOpen(false)}
-              />
             </LayoutSectionItem>
 
             {updateState === "available" && updateNotes ? (

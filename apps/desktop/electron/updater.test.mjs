@@ -609,6 +609,27 @@ describe("updater IPC hardening", () => {
     }
   });
 
+  it("never trusts renderer install options as active-run interruption authority", async () => {
+    const preparations = [];
+    const harness = await updaterHarness({
+      updater: { quitAndInstall: () => {} },
+      onInstallAndRestart: (options) => preparations.push(options),
+    });
+    try {
+      const checked = await harness.handlers.get("jugglework:updater:check")();
+      await harness.handlers.get("jugglework:updater:download")(null, checked.updateId);
+      const result = await harness.handlers.get("jugglework:updater:installAndRestart")(
+        null,
+        checked.updateId,
+        { allowActiveRuns: true },
+      );
+      assert.equal(result.ok, true);
+      assert.deepEqual(preparations, [undefined]);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
   it("restores the downloaded candidate when async IPC preparation fails", async () => {
     const calls = [];
     let preparationShouldFail = true;

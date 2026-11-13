@@ -1758,6 +1758,29 @@ const disposeRuntimeBeforeQuit = createJoinableCleanup(() => {
   return runtimeManager.dispose();
 });
 
+async function confirmActiveTaskInterruption(action = "quit") {
+  if (!runtimeManager.hasActiveSessionRuns()) return true;
+  const installingUpdate = action === "update";
+  /** @type {import("electron").MessageBoxOptions} */
+  const options = {
+    type: "warning",
+    title: installingUpdate ? "安装更新会中断任务" : "退出会中断任务",
+    message: "仍有服务端任务正在运行",
+    detail: installingUpdate
+      ? "安装更新并重启 JuggleWork 会立即停止当前任务，未生成完成的回复可能无法恢复。"
+      : "退出 JuggleWork 会立即停止当前任务，未生成完成的回复可能无法恢复。",
+    buttons: ["取消", installingUpdate ? "中断任务并安装更新" : "中断任务并退出"],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+  };
+  const owner = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+  const result = owner
+    ? await dialog.showMessageBox(owner, options)
+    : await dialog.showMessageBox(options);
+  return result.response === 1;
+}
+
 function showShutdownScreen() {
   const win = mainWindow;
   if (!win || win.isDestroyed()) return;
@@ -3621,6 +3644,11 @@ const { ensureAutoUpdater } = registerUpdaterIpc({
     // TIPS: 更新器会先停止 Runtime，必须在此之前完成全部 Office 文档的保存或取消决定。
     if (!(await officePanel.prepareQuit())) throw new Error("已取消更新，Office 文档保持打开");
     if (!(await cloudDocsPanel.prepareQuit())) throw new Error("云文档尚未完成本地保存，已取消更新");
+    // Main owns the last-moment authority check. Renderer state may be stale,
+    // and a task may start while an asynchronous save decision is open.
+    if (runtimeManager.hasActiveSessionRuns() && !await confirmActiveTaskInterruption("update")) {
+      throw new Error("已取消更新，正在运行的任务不会被中断");
+    }
     fileWindows.dispose();
     await disposeRuntimeBeforeQuit();
     // Keep ordinary close-to-tray behavior active while shutdown is pending.
@@ -3656,6 +3684,16 @@ if (!app.requestSingleInstanceLock()) {
         developmentRelaunchRequested = false;
         quitCleanupInProgress = false;
         return;
+      }
+      // Confirm only after every asynchronous save decision, using the latest
+      // authoritative run state immediately before Runtime disposal.
+      if (runtimeManager.hasActiveSessionRuns()) {
+        if (!await confirmActiveTaskInterruption()) {
+          relaunchAfterCleanup = false;
+          developmentRelaunchRequested = false;
+          quitCleanupInProgress = false;
+          return;
+        }
       }
       desktopPet?.dispose();
       runtimeHealthMonitor?.dispose();
