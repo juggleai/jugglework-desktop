@@ -1151,6 +1151,7 @@ export default {
   "navigation.local_workspace": "本地工作区",
   "navigation.primary": "主导航",
   "navigation.more": "更多",
+  "navigation.meetings": "会议",
   "navigation.pin_item": "置顶",
   "navigation.reviews": "代码审查",
   "navigation.toon_factory": "漫剧工厂",

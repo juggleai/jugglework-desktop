@@ -50,7 +50,7 @@ describe("Code Review navigation", () => {
   test("shares the pinned separator while keeping the Review entry conditional", () => {
     const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
     const pinnedSection = source.slice(
-      source.indexOf("{tasksPinned || calendarPinned || cloudDocsPinned || reviewsPinned || toonFactoryPinned ? ("),
+      source.indexOf("{tasksPinned || calendarPinned || (imNavigationVisible && meetingsPinned) || cloudDocsPinned || reviewsPinned || toonFactoryPinned ? ("),
       source.indexOf("</nav>"),
     );
     const pinnedBlock = source.slice(source.indexOf("{reviewsPinned ? ("), source.indexOf(") : null}", source.indexOf("{reviewsPinned ? (")));
@@ -117,6 +117,47 @@ describe("Calendar navigation", () => {
   test("shows the pinned rail entry only while pinned and keeps it routing to /calendar", () => {
     expect(pinnedBlock).toContain('testId="app-rail-pinned-calendar"');
     expect(pinnedBlock).toContain("onClick={openCalendar}");
+  });
+});
+
+describe("Meetings navigation", () => {
+  const meetingsRow = railSource.slice(
+    railSource.indexOf('data-testid="app-navigation-more-meetings-row"'),
+    railSource.indexOf('data-testid="app-navigation-more-reviews-row"'),
+  );
+  const pinnedBlock = railSource.slice(
+    railSource.indexOf("{imNavigationVisible && meetingsPinned ? ("),
+    railSource.indexOf(") : null}", railSource.indexOf("{imNavigationVisible && meetingsPinned ? (")),
+  );
+
+  test("moves Meetings from the primary Rail into More directly below Calendar", () => {
+    expect(railSource).not.toContain('testId="app-rail-meetings"');
+    expect(railSource.indexOf('data-testid="app-navigation-more-calendar-row"')).toBeLessThan(railSource.indexOf('data-testid="app-navigation-more-meetings-row"'));
+    expect(railSource.indexOf('data-testid="app-navigation-more-meetings-row"')).toBeLessThan(railSource.indexOf('data-testid="app-navigation-more-reviews-row"'));
+    expect(meetingsRow).toContain("onClick={openMeetings}");
+    expect(meetingsRow).toContain('data-testid="app-navigation-more-meetings"');
+    expect(meetingsRow).toContain('t("navigation.meetings")');
+    expect(railSource).toContain('navigate("/meetings")');
+  });
+
+  test("uses parsed route activity and keeps Meetings behind IM availability", () => {
+    expect(railSource).toContain('const meetingsActive = parseWorkspaceAppPath(location.pathname)?.view === "meetings"');
+    expect(meetingsRow).toContain('aria-current={meetingsActive ? "page" : undefined}');
+    expect(railSource).toContain("imNavigationVisible && meetingsActive && !meetingsPinned");
+    expect(railSource).toContain("{imNavigationVisible ? (");
+  });
+
+  test("supports a keyboard-reachable pin and shows the pinned entry below Calendar", () => {
+    expect(meetingsRow).toContain('data-testid="app-navigation-pin-meetings"');
+    expect(meetingsRow).toContain("tabIndex={0}");
+    expect(meetingsRow).toContain("aria-pressed={meetingsPinned}");
+    expect(meetingsRow).toContain('aria-label={meetingsPinned ? t("navigation.unpin_item") : t("navigation.pin_item")}');
+    expect(railSource).toContain('setAppNavigationItemPinned("meetings", !meetingsPinned)');
+    expect(pinnedBlock).toContain('testId="app-rail-pinned-meetings"');
+    expect(pinnedBlock).toContain("active={meetingsActive}");
+    expect(pinnedBlock).toContain("onClick={openMeetings}");
+    expect(railSource.indexOf('testId="app-rail-pinned-calendar"')).toBeLessThan(railSource.indexOf('testId="app-rail-pinned-meetings"'));
+    expect(railSource.indexOf('testId="app-rail-pinned-meetings"')).toBeLessThan(railSource.indexOf('testId="app-rail-pinned-reviews"'));
   });
 });
 

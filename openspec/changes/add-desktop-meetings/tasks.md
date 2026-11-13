@@ -23,3 +23,4 @@ Implementation boundaries and validation: `docs/meeting/04-implementation-status
 - [x] Targeted member invitation regression test (no real recipient contacted)
 - [ ] Updated member panel end-to-end UI acceptance after restart
 - [x] Explicit desktop/window thumbnail picker, safe pending-request lifecycle, real Electron selection/cancel/re-share and ZEGO cloud decode verification
+- [x] Move Meetings from the always-visible primary Rail into the IM-gated More menu, preserve route activity, and support the shared keyboard-accessible pin/unpin model below Calendar

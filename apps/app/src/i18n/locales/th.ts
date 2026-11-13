@@ -407,6 +407,7 @@ export default {
   "navigation.toon_factory_desktop_required": "Toon Factory requires the JuggleWork desktop app.",
   "navigation.toon_factory_starting": "Starting Toon Factory…",
   "navigation.more": "เพิ่มเติม",
+  "navigation.meetings": "การประชุม",
   "navigation.pin_item": "ปักหมุด",
   "navigation.unpin_item": "เลิกปักหมุด",
   "navigation.cloud_tasks": "งานบนคลาวด์",

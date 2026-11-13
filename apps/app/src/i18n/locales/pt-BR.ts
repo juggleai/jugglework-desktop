@@ -412,6 +412,7 @@ export default {
   "navigation.toon_factory_desktop_required": "Toon Factory requires the JuggleWork desktop app.",
   "navigation.toon_factory_starting": "Starting Toon Factory…",
   "navigation.more": "Mais",
+  "navigation.meetings": "Reuniões",
   "navigation.pin_item": "Fixar",
   "navigation.unpin_item": "Desafixar",
   "navigation.cloud_tasks": "Tarefas na nuvem",

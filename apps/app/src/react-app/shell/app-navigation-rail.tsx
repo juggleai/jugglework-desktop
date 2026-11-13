@@ -430,6 +430,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
   const automationsActive = location.pathname.startsWith("/automations");
   const tasksActive = location.pathname.startsWith("/tasks");
   const calendarActive = parseWorkspaceAppPath(location.pathname)?.view === "calendar";
+  const meetingsActive = parseWorkspaceAppPath(location.pathname)?.view === "meetings";
   const { hasActiveRuns } = useAutomationActivity();
   const localWorkspaceIndicator = useLocalWorkspaceIndicator();
   const chatView = useJuggleChatStore((state) => state.view);
@@ -526,6 +527,12 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
     navigate("/calendar");
   };
   const toggleCalendarPinned = () => setPinnedNavigationItems(setAppNavigationItemPinned("calendar", !calendarPinned));
+  const meetingsPinned = pinnedNavigationItems.includes("meetings");
+  const openMeetings = () => {
+    setNavigationMenuOpen(false);
+    navigate("/meetings");
+  };
+  const toggleMeetingsPinned = () => setPinnedNavigationItems(setAppNavigationItemPinned("meetings", !meetingsPinned));
   const reviewsPinned = pinnedNavigationItems.includes("reviews");
   const openReviews = () => {
     setNavigationMenuOpen(false);
@@ -669,7 +676,6 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
             >
               <ContactRound />
             </RailButton>
-            <RailButton label="会议" active={location.pathname === "/meetings"} onClick={() => navigate("/meetings")} testId="app-rail-meetings" onPreviewMenuChange={props.onPreviewMenuChange}><MeetingIcon /></RailButton>
           </>
         ) : null}
         <DropdownMenu open={navigationMenuOpen} onOpenChange={setNavigationMenuOpen}>
@@ -681,13 +687,13 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
                 title={t("navigation.more")}
                 data-testid="app-rail-more"
                 data-app-rail-button
-                data-active={(navigationMenuOpen || (tasksActive && !tasksPinned) || (calendarActive && !calendarPinned) || (cloudDocsActive && !cloudDocsPinned) || (props.reviewsActive && !reviewsPinned) || (toonFactoryActive && !toonFactoryPinned)) ? "true" : undefined}
+                data-active={(navigationMenuOpen || (tasksActive && !tasksPinned) || (calendarActive && !calendarPinned) || (imNavigationVisible && meetingsActive && !meetingsPinned) || (cloudDocsActive && !cloudDocsPinned) || (props.reviewsActive && !reviewsPinned) || (toonFactoryActive && !toonFactoryPinned)) ? "true" : undefined}
                 className={cn(
                   "relative flex size-9 items-center justify-center rounded-xl text-dls-secondary/80 transition-[background-color,color,transform] duration-150 mac:titlebar-no-drag",
                   "hover:bg-dls-hover hover:text-dls-text active:scale-[0.96]",
                   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/35 focus-visible:ring-offset-1 focus-visible:ring-offset-dls-sidebar",
                   "data-popup-open:bg-dls-active data-popup-open:text-dls-text",
-                  (navigationMenuOpen || (tasksActive && !tasksPinned) || (calendarActive && !calendarPinned) || (cloudDocsActive && !cloudDocsPinned) || (props.reviewsActive && !reviewsPinned) || (toonFactoryActive && !toonFactoryPinned)) && "bg-dls-active text-dls-text",
+                  (navigationMenuOpen || (tasksActive && !tasksPinned) || (calendarActive && !calendarPinned) || (imNavigationVisible && meetingsActive && !meetingsPinned) || (cloudDocsActive && !cloudDocsPinned) || (props.reviewsActive && !reviewsPinned) || (toonFactoryActive && !toonFactoryPinned)) && "bg-dls-active text-dls-text",
                 )}
               >
                 <Ellipsis className="size-5" strokeWidth={2} />
@@ -827,6 +833,48 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
                 <Pin className={cn("size-4", calendarPinned && "fill-current")} />
               </button>
             </div>
+            {imNavigationVisible ? (
+              <div
+                className="group flex items-center gap-1 rounded-2xl transition-colors hover:bg-accent focus-within:bg-accent"
+                data-testid="app-navigation-more-meetings-row"
+              >
+                <DropdownMenuItem
+                  onClick={openMeetings}
+                  className="min-w-0 flex-1 bg-transparent py-[5px] focus:bg-transparent! data-highlighted:bg-transparent!"
+                  data-testid="app-navigation-more-meetings"
+                  data-active={meetingsActive ? "true" : undefined}
+                  aria-current={meetingsActive ? "page" : undefined}
+                >
+                  <MeetingIcon />
+                  <span className="truncate">{t("navigation.meetings")}</span>
+                </DropdownMenuItem>
+                <button
+                  type="button"
+                  aria-label={meetingsPinned ? t("navigation.unpin_item") : t("navigation.pin_item")}
+                  title={meetingsPinned ? t("navigation.unpin_item") : t("navigation.pin_item")}
+                  aria-pressed={meetingsPinned}
+                  tabIndex={0}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    toggleMeetingsPinned();
+                  }}
+                  className={cn(
+                    "flex size-8 shrink-0 items-center justify-center rounded-xl text-muted-foreground transition-[background-color,color,opacity,transform] duration-150",
+                    "hover:text-popover-foreground active:scale-[0.94]",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/35",
+                    meetingsPinned
+                      ? "text-popover-foreground opacity-100"
+                      : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 focus:pointer-events-auto focus:opacity-100",
+                  )}
+                  data-testid="app-navigation-pin-meetings"
+                  data-pinned={meetingsPinned ? "true" : undefined}
+                >
+                  <Pin className={cn("size-4", meetingsPinned && "fill-current")} />
+                </button>
+              </div>
+            ) : null}
             <div
               className="group flex items-center gap-1 rounded-2xl transition-colors hover:bg-accent focus-within:bg-accent"
               data-testid="app-navigation-more-reviews-row"
@@ -904,7 +952,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
             </div>
           </DropdownMenuContent>
         </DropdownMenu>
-        {tasksPinned || calendarPinned || cloudDocsPinned || reviewsPinned || toonFactoryPinned ? (
+        {tasksPinned || calendarPinned || (imNavigationVisible && meetingsPinned) || cloudDocsPinned || reviewsPinned || toonFactoryPinned ? (
           <div className="mt-0.5 flex flex-col items-center gap-2" data-app-navigation-pinned-items>
             <div
               className="h-px w-6 rounded-full bg-dls-secondary/20"
@@ -946,6 +994,17 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
               onPreviewMenuChange={props.onPreviewMenuChange}
             >
               <CalendarRailIcon active={calendarActive} />
+            </RailButton>
+            ) : null}
+            {imNavigationVisible && meetingsPinned ? (
+            <RailButton
+              label={t("navigation.meetings")}
+              active={meetingsActive}
+              onClick={openMeetings}
+              testId="app-rail-pinned-meetings"
+              onPreviewMenuChange={props.onPreviewMenuChange}
+            >
+              <MeetingIcon />
             </RailButton>
             ) : null}
             {reviewsPinned ? (

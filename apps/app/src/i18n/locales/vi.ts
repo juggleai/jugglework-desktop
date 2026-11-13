@@ -407,6 +407,7 @@ export default {
   "navigation.toon_factory_desktop_required": "Toon Factory requires the JuggleWork desktop app.",
   "navigation.toon_factory_starting": "Starting Toon Factory…",
   "navigation.more": "Thêm",
+  "navigation.meetings": "Cuộc họp",
   "navigation.pin_item": "Ghim",
   "navigation.unpin_item": "Bỏ ghim",
   "navigation.cloud_tasks": "Tác vụ đám mây",

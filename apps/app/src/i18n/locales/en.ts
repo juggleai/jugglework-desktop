@@ -1148,6 +1148,7 @@ export default {
   "navigation.local_workspace": "Local workspace",
   "navigation.primary": "Primary navigation",
   "navigation.more": "More",
+  "navigation.meetings": "Meetings",
   "navigation.pin_item": "Pin",
   "navigation.reviews": "Code Review",
   "navigation.toon_factory": "Toon Factory",
