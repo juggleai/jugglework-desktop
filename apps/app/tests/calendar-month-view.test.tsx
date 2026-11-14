@@ -212,6 +212,8 @@ test("calendar filters are grouped, collapsible, and retain the existing checkbo
     expect(byId(renderer, "calendar-filter-group-managed-toggle").props["aria-expanded"]).toBe(false);
     expect(byId(renderer, "calendar-filter-group-managed-region").props.hidden).toBe(true);
     expect(byId(renderer, "calendar-filter-cal-1").props.checked).toBe(true);
+    expect(byId(renderer, "calendar-filter-check-cal-1").props.style.backgroundColor).toBe("#2563eb");
+    expect(String(byId(renderer, "calendar-filter-check-cal-1").findByType("svg").props.className)).toContain("text-white");
   } finally { await act(async () => { renderer.unmount(); }); }
 });
 

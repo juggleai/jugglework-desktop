@@ -1,7 +1,7 @@
 /** @jsxImportSource react */
 import * as React from "react";
 import { Temporal } from "@js-temporal/polyfill";
-import { ChevronLeft, ChevronRight, Users } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Users } from "lucide-react";
 
 import type { DenCalendar } from "@/app/lib/den";
 import { Button } from "@/components/ui/button";
@@ -114,12 +114,25 @@ function CalendarFilterGroup(props: {
                     <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 py-1 text-sm text-dls-text focus-within:ring-2 focus-within:ring-dls-accent/35">
                       <input
                         type="checkbox"
-                        className="size-4 accent-current"
-                        style={{ color: calendar.color ?? undefined }}
+                        className="peer sr-only"
                         checked={visible}
                         onChange={(event) => props.onToggle(calendar.id, event.target.checked)}
                         data-testid={`calendar-filter-${calendar.id}`}
                       />
+                      <span
+                        className={cn(
+                          "flex size-4 shrink-0 items-center justify-center rounded-[3px] border transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-dls-accent/40 peer-focus-visible:ring-offset-1 peer-focus-visible:ring-offset-dls-surface",
+                          visible ? "text-white" : "bg-dls-surface dark:bg-dls-sidebar",
+                        )}
+                        style={{
+                          backgroundColor: visible ? calendar.color ?? "var(--dls-accent)" : undefined,
+                          borderColor: calendar.color ?? "var(--dls-border)",
+                        }}
+                        aria-hidden="true"
+                        data-testid={`calendar-filter-check-${calendar.id}`}
+                      >
+                        {visible ? <Check className="size-3 stroke-[3.5] text-white" aria-hidden="true" /> : null}
+                      </span>
                       <span className="min-w-0 flex-1 truncate">{calendar.name}</span>
                     </label>
                     {onManageMembers ? (
