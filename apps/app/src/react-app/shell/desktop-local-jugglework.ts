@@ -76,7 +76,7 @@ export async function ensureDesktopLocalJuggleWorkConnection(
 
     const info = await juggleworkServerInfo() as JuggleWorkServerInfo | null;
     if (!info?.baseUrl) {
-      throw new Error("JuggleWork server did not report a base URL after activation.");
+      throw new Error("北数Work server did not report a base URL after activation.");
     }
 
     writeJuggleWorkServerSettings({

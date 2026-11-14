@@ -501,7 +501,7 @@ function PetWorkspaceRuntime({ workspace, endpoint, enabled, latest, entries, ch
           if (choice.model && (isDesktopModelBlocked({ model: choice.model, checkRestriction: options.current.checkRestriction, allowedModels: options.current.allowedModels, providerSource: getProviderSource(providers, choice.model.providerID) }) || !isModelAvailableInConnectedProviders(providers, choice.model))) throw new Error("该任务的模型不可用，请打开原聊天选择模型");
           if (choice.model && isCloudManagedProviderKey(choice.model.providerID) && !isManagedModelSubmissionReady({ cloudProviderSyncReady: false, providerList: providers, model: choice.model })) throw new Error(t("app.error_managed_model_preparing"));
           const resume = await options.current.maintenance.waitForResumeMaintenance();
-          if (resume.outcome === "timed_out" || resume.outcome === "failed") throw new Error("JuggleWork Connect 恢复未完成，请稍后重试");
+          if (resume.outcome === "timed_out" || resume.outcome === "failed") throw new Error("北数Work Connect 恢复未完成，请稍后重试");
           await options.current.marketplace.ensureReadyForTarget({ client: endpoint.client, token: endpoint.token, hostToken: endpoint.hostToken, workspaceType: workspace.workspaceType, remoteType: workspace.remoteType });
           if (disposed || latest.current.reloadBusy) throw new Error("目标上下文已变化，请重新发送");
           const modelEntry = providers.all.find((item) => item.id === choice.model?.providerID)?.models[choice.model?.modelID ?? ""];

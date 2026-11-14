@@ -50,7 +50,7 @@ export async function buildJuggleWorkEnvSystemContext(
     const keyList = keys.map((key) => `- ${key}`).join("\n");
 
     const context = [
-      "JuggleWork environment variables configured:",
+      "北数Work environment variables configured:",
       keyList,
       "Only names are shown; values are secret. Use these names when relevant.",
     ].join("\n");

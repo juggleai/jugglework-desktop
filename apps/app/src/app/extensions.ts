@@ -153,13 +153,13 @@ export const BUILT_IN_JUGGLEWORK_EXTENSION_MANIFESTS: JuggleWorkExtensionManifes
   {
     schemaVersion: 1,
     id: "jugglework-browser",
-    name: "JuggleWork Browser",
-    description: "Automate the built-in browser panel that stays visible inside JuggleWork.",
+    name: "北数Work Browser",
+    description: "Automate the built-in browser panel that stays visible inside 北数Work.",
     source: { format: "jugglework-builtin", origin: "builtin", trusted: true },
     icon: { src: "/jugglework-logo.png" },
-    composer: { prompt: "Use the JuggleWork Browser extension to " },
+    composer: { prompt: "Use the 北数Work Browser extension to " },
     setup: {
-      instructions: "JuggleWork Browser is ready by default in desktop workspaces.",
+      instructions: "北数Work Browser is ready by default in desktop workspaces.",
     },
     resources: [
       {
@@ -172,7 +172,7 @@ export const BUILT_IN_JUGGLEWORK_EXTENSION_MANIFESTS: JuggleWorkExtensionManifes
     contributions: [
       { type: "settings-panel", ref: "jugglework.browser.settings", location: "settings-detail" },
       { type: "session-side-panel", ref: "jugglework.browser.panel", location: "session-right-pane" },
-      { type: "composer-prompt", prompt: "Use the JuggleWork Browser extension to ", location: "composer" },
+      { type: "composer-prompt", prompt: "Use the 北数Work Browser extension to ", location: "composer" },
     ],
     enablement: [
       { type: "toggle-enabled", ref: "jugglework-browser", label: "Enabled" },
@@ -231,13 +231,13 @@ export const BUILT_IN_JUGGLEWORK_EXTENSION_MANIFESTS: JuggleWorkExtensionManifes
     schemaVersion: 1,
     id: "jugglework-voice",
     name: "Voice Mode",
-    description: "Talk to JuggleWork through a Realtime voice panel that drives the same semantic UI controls as JuggleWork UI MCP.",
+    description: "Talk to 北数Work through a Realtime voice panel that drives the same semantic UI controls as 北数Work UI MCP.",
     preview: true,
     source: { format: "jugglework-builtin", origin: "builtin", trusted: true },
     icon: { src: "/jugglework-logo.png" },
     composer: { prompt: "Use Voice Mode to " },
     setup: {
-      instructions: "Voice Mode uses OpenAI Realtime. Save an OpenAI API key in JuggleWork env vars, then open the session rail panel and speak or send a typed voice command.",
+      instructions: "Voice Mode uses OpenAI Realtime. Save an OpenAI API key in 北数Work env vars, then open the session rail panel and speak or send a typed voice command.",
       primaryCta: "Save OpenAI key",
       secondaryCta: "Test Realtime",
       requiredEnv: ["OPENAI_REALTIME_API_KEY", "OPENAI_API_KEY"],
@@ -267,13 +267,13 @@ export const BUILT_IN_JUGGLEWORK_EXTENSION_MANIFESTS: JuggleWorkExtensionManifes
     schemaVersion: 1,
     id: "google-workspace",
     name: "Google Workspace",
-    description: "Let JuggleWork help with meetings, selected Drive files, and Gmail drafts.",
+    description: "Let 北数Work help with meetings, selected Drive files, and Gmail drafts.",
     preview: true,
     source: { format: "jugglework-builtin", origin: "builtin", trusted: true },
     icon: { simpleIconSlug: "google" },
     composer: { prompt: "Use Google Workspace to " },
     setup: {
-      instructions: "Connect your Google account to use Calendar, Drive, and Gmail drafts in JuggleWork.",
+      instructions: "Connect your Google account to use Calendar, Drive, and Gmail drafts in 北数Work.",
       primaryCta: "Connect Google Workspace",
       secondaryCta: "Test connection",
       testActionRef: "jugglework.googleWorkspace.testConnection",

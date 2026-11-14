@@ -72,7 +72,7 @@ function JuggleWorkConnectIndicator(props: {
             ? "loading"
             : "disconnected"}
       />
-      <span>JuggleWork Connect: {props.status.label}</span>
+      <span>北数Work Connect: {props.status.label}</span>
     </span>
   );
 
@@ -101,7 +101,7 @@ function JuggleWorkConnectIndicator(props: {
       </PopoverTrigger>
       <PopoverContent side="top" align="start" className="w-80 gap-3 rounded-xl">
         <PopoverHeader>
-          <PopoverTitle>JuggleWork Connect needs attention</PopoverTitle>
+          <PopoverTitle>北数Work Connect needs attention</PopoverTitle>
           <PopoverDescription>{props.status.description}</PopoverDescription>
         </PopoverHeader>
         <Button size="sm" onClick={props.onRunDiagnostics}>Run diagnostics</Button>
@@ -253,7 +253,7 @@ export function StatusBar(props: StatusBarProps) {
 
   const docsControlAction = useMemo<JuggleWorkControlAction>(() => ({
     id: "status.docs.open",
-    label: "Open JuggleWork docs",
+    label: "Open 北数Work docs",
     description: "Open the documentation from the status bar.",
     sideEffect: "external",
     targetRef: docsButtonRef,
@@ -264,7 +264,7 @@ export function StatusBar(props: StatusBarProps) {
   const feedbackControlAction = useMemo<JuggleWorkControlAction>(() => ({
     id: "status.feedback.open",
     label: "Send feedback",
-    description: "Open the JuggleWork feedback surface from the status bar.",
+    description: "Open the 北数Work feedback surface from the status bar.",
     sideEffect: "external",
     targetRef: feedbackButtonRef,
     execute: props.onSendFeedback,

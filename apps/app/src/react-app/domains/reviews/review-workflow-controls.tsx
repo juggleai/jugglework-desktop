@@ -115,7 +115,7 @@ export function ReviewWorkflowControls(props: {
         } else {
           setDialog("ai");
         }
-      }}><Bot />{text("Review with JuggleWork", "使用 JuggleWork 审查")}{running ? <LoaderCircle className="size-3.5 animate-spin" /> : run?.status === "completed" && run.analysis ? ` · ${run.analysis.findings.length}` : ""}</Button>
+      }}><Bot />{text("Review with 北数Work", "使用 北数Work 审查")}{running ? <LoaderCircle className="size-3.5 animate-spin" /> : run?.status === "completed" && run.analysis ? ` · ${run.analysis.findings.length}` : ""}</Button>
       {!isOwnPullRequest ? <Button className="h-8 rounded-full px-3.5 text-sm" onClick={openPublish} disabled={!props.operations?.comment && !props.operations?.submitReview} title={!props.operations?.submitReview ? text("Check organization GitHub write permissions", "请检查组织 GitHub 连接器的写入权限") : undefined}><MessageSquareText />{text("Submit review", "提交评审")}</Button> : null}
     </div>
     {notice ? <span role="status" className="text-xs text-green-11">{notice}</span> : null}

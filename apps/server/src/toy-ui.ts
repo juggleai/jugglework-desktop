@@ -310,7 +310,7 @@ export const TOY_UI_HTML = `<!doctype html>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>JuggleWork Toy UI</title>
+    <title>北数Work Toy UI</title>
     <link rel="icon" type="image/svg+xml" href="/ui/assets/jugglework-mark.svg" />
     <link rel="stylesheet" href="/ui/assets/toy.css" />
   </head>
@@ -318,7 +318,7 @@ export const TOY_UI_HTML = `<!doctype html>
     <div class="wrap">
       <div class="top">
         <div class="title">
-          <h1>JuggleWork Toy UI</h1>
+          <h1>北数Work Toy UI</h1>
           <div class="sub">Local-first host contract harness (served by jugglework-server)</div>
         </div>
         <div class="row">
@@ -742,7 +742,7 @@ async function ensureSession(workspaceId) {
   if (existing) return existing;
   const created = await apiFetch("/w/" + encodeURIComponent(workspaceId) + "/opencode/session", {
     method: "POST",
-    body: JSON.stringify({ title: "JuggleWork Toy UI" }),
+    body: JSON.stringify({ title: "北数Work Toy UI" }),
   });
   const id = created && created.id ? String(created.id) : "";
   if (!id) throw new Error("session_create_failed");
@@ -1495,7 +1495,7 @@ async function main() {
   };
 
   qs("#btn-delete-workspace").onclick = async () => {
-    if (!confirm("Delete this workspace from the host's JuggleWork server config?")) return;
+    if (!confirm("Delete this workspace from the host's 北数Work server config?")) return;
     try {
       await apiFetch("/workspaces/" + encodeURIComponent(workspaceId), { method: "DELETE" });
       setStatus("Workspace deleted (refresh workspaces)", "ok");

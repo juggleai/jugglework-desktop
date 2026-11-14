@@ -516,7 +516,7 @@ export function createSandboxRuntime(options = {}) {
           const response = await (options.fetchImpl ?? fetch)(`${juggleworkUrl}/tokens`, {
             method: "POST",
             headers: { "Content-Type": "application/json", "X-JuggleWork-Host-Token": hostToken },
-            body: JSON.stringify({ scope: "owner", label: "JuggleWork desktop sandbox owner token" }),
+            body: JSON.stringify({ scope: "owner", label: "北数Work desktop sandbox owner token" }),
           });
           if (response.ok) ownerToken = String((await response.json())?.token ?? "").trim() || null;
         } catch {

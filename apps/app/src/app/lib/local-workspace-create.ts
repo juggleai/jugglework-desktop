@@ -49,7 +49,7 @@ export async function createLocalWorkspaceForRuntime(
   const workspace = list.workspaces.find((candidate) => candidate.id === workspaceId) ?? null;
 
   if (!workspaceId || !workspace) {
-    throw new Error("JuggleWork server did not return the created workspace.");
+    throw new Error("北数Work server did not return the created workspace.");
   }
 
   if (dependencies.isDesktopRuntime()) {

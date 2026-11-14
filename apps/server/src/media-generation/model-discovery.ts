@@ -75,7 +75,7 @@ export async function discoverVideoModels(options: VideoModelDiscoveryOptions): 
         ...(availability === "managed_billing_unavailable"
           ? { diagnostic: MANAGED_MEDIA_BILLING_DIAGNOSTIC }
           : availability === "unsupported_adapter"
-          ? { diagnostic: "JuggleWork has no adapter for this configured video model." }
+          ? { diagnostic: "北数Work has no adapter for this configured video model." }
           : availability === "missing_credentials"
             ? { diagnostic: "The provider credential is not available to video generation." }
             : {}),

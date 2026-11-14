@@ -90,27 +90,27 @@ export function brandingRestartSummary(
   if (name && icon) {
     return {
       title: "Workspace identity is ready",
-      description: `Restart JuggleWork once to finish applying ${workspace}'s name and app icon everywhere.`,
+      description: `Restart 北数Work once to finish applying ${workspace}'s name and app icon everywhere.`,
       detail: "Restarting sets the application name your operating system reads and retries the workspace app icon.",
     };
   }
   if (name) {
     return {
       title: "Workspace name is ready",
-      description: `Restart JuggleWork once to finish applying ${workspace}'s name everywhere.`,
+      description: `Restart 北数Work once to finish applying ${workspace}'s name everywhere.`,
       detail: "The menu bar and window title already use the workspace name. Restarting applies it to the application name your operating system reads.",
     };
   }
   if (icon) {
     return {
       title: "Workspace icon needs a restart",
-      description: `Restart JuggleWork to finish applying ${workspace}'s app icon.`,
+      description: `Restart 北数Work to finish applying ${workspace}'s app icon.`,
       detail: "The icon is downloaded and saved. Restarting re-applies it during startup, which usually succeeds when applying it live did not.",
     };
   }
   return {
     title: "Workspace identity is ready",
-    description: `Restart JuggleWork once to finish applying ${workspace}'s branding.`,
+    description: `Restart 北数Work once to finish applying ${workspace}'s branding.`,
     detail: "Restarting re-applies the workspace branding from a clean startup.",
   };
 }

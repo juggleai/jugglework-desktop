@@ -219,7 +219,7 @@ test("external handover pauses the internal editor and exposes explicit reload",
     });
     const html = JSON.stringify(view!.toJSON());
     expect(html).toContain("# Saved content");
-    expect(html).toContain("Reload in JuggleWork");
+    expect(html).toContain("Reload in 北数Work");
     expect(html).not.toContain("textarea");
     expect(html).not.toContain("contenteditable");
   } finally {

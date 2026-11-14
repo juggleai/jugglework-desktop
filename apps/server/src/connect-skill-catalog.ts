@@ -150,7 +150,7 @@ export function renderJuggleWorkConnectSkillInstruction(skills: JuggleWorkConnec
   }
   const injectedMarketplaceSkills: InjectedMarketplaceSkill[] = [];
   const lines = [
-    "Remote Agent Skills are available from JuggleWork Connect. The catalog below contains discovery metadata only.",
+    "Remote Agent Skills are available from 北数Work Connect. The catalog below contains discovery metadata only.",
     "Use each skill's human-readable title and description to decide whether it applies. The name is its stable machine identifier; marketplace and plugin identify its source when present.",
     "These remote skills are not installed in the engine's native skill registry. NEVER use the native Load Skill tool or search the local filesystem for them.",
     "When a task matches a remote skill description, call jugglework-cloud_execute_capability with the exact value from that skill's <capability> field as { name: <capability> }. Read the returned full SKILL.md body before following it. Do not call jugglework-cloud_search_capabilities first when the exact capability is already listed here.",

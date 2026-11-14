@@ -13,7 +13,7 @@ export async function ensureMeetingPermission(kind: keyof typeof meetingPermissi
     if (platform === "darwin") usePermissionRestart.setState({ reason: "settings" });
     const hint = platform === "windows"
       ? "请在系统设置中允许桌面应用访问此设备。"
-      : "请打开系统设置，为 JuggleWork（开发版为 Electron）开启此项权限。";
+      : "请打开系统设置，为 北数Work（开发版为 Electron）开启此项权限。";
     throw new Error(`${label}权限未开启。${hint}`);
   }
   if ("newlyGranted" in result && result.newlyGranted) usePermissionRestart.setState({ reason: "granted" });

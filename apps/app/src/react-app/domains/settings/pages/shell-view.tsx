@@ -271,7 +271,7 @@ export function ShellCustomizationView() {
                   id="shell-app-name"
                   className="h-8 text-xs"
                   value={brandAppName}
-                  placeholder="JuggleWork"
+                  placeholder="北数Work"
                   disabled
                   onChange={(event) => update({ appName: event.currentTarget.value || DEFAULT_SHELL_CONFIG.appName })}
                 />
@@ -281,7 +281,7 @@ export function ShellCustomizationView() {
           <Alert>
             <Info />
             <AlertDescription>
-              {brandAppName === "JuggleWork" ? t("settings.shell_app_name_unmanaged") : t("settings.shell_app_name_managed")}
+              {brandAppName === "北数Work" ? t("settings.shell_app_name_unmanaged") : t("settings.shell_app_name_managed")}
             </AlertDescription>
           </Alert>
         </LayoutSectionItem>

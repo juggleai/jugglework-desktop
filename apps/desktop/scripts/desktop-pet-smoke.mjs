@@ -450,14 +450,14 @@ try {
   await waitFor('Boolean(document.querySelector(".pet-tools"))');
   report.assertions.sendUsesSelectedConversation = report.actions.some((action) => action.type === "send" && action.target.key === "other:history" && action.text === "发送到选择的历史会话");
   await evaluate('document.querySelectorAll(".pet-tools button")[0].click()');
-  await waitFor('[...document.querySelectorAll(".pet-retarget")].some((button) => button.textContent === "打开 JuggleWork 创建任务")');
+  await waitFor('[...document.querySelectorAll(".pet-retarget")].some((button) => button.textContent === "打开 北数Work 创建任务")');
   report.assertions.noTargetOffersCreateEntry = true;
   sessionTargets = [];
   await evaluate('document.querySelector(".pet-target").click()');
   await waitFor('document.querySelector(".pet-input-options")?.textContent.includes("暂无可发送的会话")');
   report.assertions.emptyConversationListOffersCreateEntry = await evaluate('Boolean(document.querySelector(".pet-input-options .pet-retarget"))');
   await evaluate('document.querySelector(".pet-target").click()');
-  await evaluate('[...document.querySelectorAll(".pet-retarget")].find((button) => button.textContent === "打开 JuggleWork 创建任务").click()');
+  await evaluate('[...document.querySelectorAll(".pet-retarget")].find((button) => button.textContent === "打开 北数Work 创建任务").click()');
   await new Promise((resolve) => setTimeout(resolve, 100));
   report.assertions.createEntryRaisesMain = main.isVisible() && report.actions.some((action) => action.type === "open-app");
   main.hide();

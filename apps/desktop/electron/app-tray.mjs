@@ -1,5 +1,5 @@
-export const APP_TRAY_TOOLTIP = "JuggleWork";
-export const REMOTE_CONTROL_BACKGROUND_TOOLTIP = "JuggleWork remote control is running in the background.";
+export const APP_TRAY_TOOLTIP = "北数Work";
+export const REMOTE_CONTROL_BACKGROUND_TOOLTIP = "北数Work remote control is running in the background.";
 
 /**
  * 常驻应用托盘指示器（macOS 状态栏 / Windows 系统托盘）。
@@ -43,13 +43,13 @@ export function createAppTrayIndicator({ createTray, buildMenu, restoreWindow, q
 
   function buildTrayMenu() {
     const template = [
-      { label: "Open JuggleWork", click: () => safeInvoke(restoreWindow) },
+      { label: "Open 北数Work", click: () => safeInvoke(restoreWindow) },
       ...(remoteControlMenu ? [
         { type: "separator" },
         { label: "Stop All", click: () => safeInvoke(remoteControlMenu.stopAll) },
       ] : []),
       { type: "separator" },
-      { label: "Quit JuggleWork", click: () => safeInvoke(quitApp) },
+      { label: "Quit 北数Work", click: () => safeInvoke(quitApp) },
     ];
     return buildMenu(template);
   }

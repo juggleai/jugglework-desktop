@@ -717,7 +717,7 @@ function strictCloudMcpDesiredConfigProblem(config: Record<string, unknown>, met
       code: "cloud_endpoint_invalid",
       stage: "desired_config",
       retryable: false,
-      recommendedAction: "Reconnect JuggleWork Cloud",
+      recommendedAction: "Reconnect 北数Work Cloud",
       message: "jugglework-cloud must be configured as a remote MCP endpoint.",
       details: { type: typeof config.type === "string" ? config.type : null },
     };
@@ -742,7 +742,7 @@ function strictCloudMcpDesiredConfigProblem(config: Record<string, unknown>, met
       code: "cloud_endpoint_invalid",
       stage: "desired_config",
       retryable: false,
-      recommendedAction: "Reconnect JuggleWork Cloud",
+      recommendedAction: "Reconnect 北数Work Cloud",
       message: "jugglework-cloud URL must be a valid http(s) endpoint at /mcp/agent.",
       details: { url: typeof config.url === "string" ? sanitizeDiagnosticString(config.url) : null },
     };
@@ -754,7 +754,7 @@ function strictCloudMcpDesiredConfigProblem(config: Record<string, unknown>, met
       code: "invalid_mcp_token",
       stage: "desired_config",
       retryable: false,
-      recommendedAction: "Reconnect JuggleWork Cloud",
+      recommendedAction: "Reconnect 北数Work Cloud",
       message: "jugglework-cloud desired config is missing an Authorization header.",
       aliases: ["jugglework_cloud_auth_required"],
     };
@@ -765,7 +765,7 @@ function strictCloudMcpDesiredConfigProblem(config: Record<string, unknown>, met
       code: "invalid_mcp_token",
       stage: "desired_config",
       retryable: false,
-      recommendedAction: "Reconnect JuggleWork Cloud",
+      recommendedAction: "Reconnect 北数Work Cloud",
       message: "jugglework-cloud desired config must use the minted bearer token, not OAuth.",
       aliases: ["jugglework_cloud_auth_invalid"],
       details: { oauth: config.oauth === undefined ? "missing" : "configured" },
@@ -792,7 +792,7 @@ function strictCloudMcpDesiredConfigProblem(config: Record<string, unknown>, met
       code: "cloud_endpoint_invalid",
       stage: "desired_config",
       retryable: false,
-      recommendedAction: "Reconnect JuggleWork Cloud",
+      recommendedAction: "Reconnect 北数Work Cloud",
       message: "jugglework-cloud desired config is not a valid remote MCP config.",
       details: { error: error instanceof Error ? error.message : String(error) },
     };
@@ -985,7 +985,7 @@ function opencodeRequestFailure(stage: CloudMcpFailureStage, path: string, respo
       code: "opencode_tool_ids_unsupported",
       stage,
       retryable: false,
-      recommendedAction: "Update JuggleWork",
+      recommendedAction: "Update 北数Work",
       message: "OpenCode does not support listing tool IDs.",
       details: { path, status: response.status, error },
     });
@@ -994,7 +994,7 @@ function opencodeRequestFailure(stage: CloudMcpFailureStage, path: string, respo
     code: stage === "provider_projection" ? "provider_tool_projection_missing" : "opencode_tool_ids_unavailable",
     stage,
     retryable: response.status >= 500,
-    recommendedAction: response.status >= 500 ? "Retry after OpenCode is healthy" : "Update JuggleWork",
+    recommendedAction: response.status >= 500 ? "Retry after OpenCode is healthy" : "Update 北数Work",
     message: "OpenCode request failed while checking jugglework-cloud MCP readiness.",
     aliases: stage === "provider_projection" ? ["provider_projection_unavailable"] : undefined,
     details: { path, status: response.status, error },
@@ -1103,7 +1103,7 @@ function directCloudToolsFailure(input: {
     code: "cloud_tools_missing",
     stage: "tool_registration",
     retryable: input.retryable,
-    recommendedAction: "Reconnect JuggleWork Cloud or contact JuggleWork support",
+    recommendedAction: "Reconnect 北数Work Cloud or contact 北数Work support",
     message: input.message,
     details: input.details,
   });
@@ -1115,8 +1115,8 @@ function directCloudAuthFailure(response: Response, payload: unknown, endpoint: 
       code: "invalid_mcp_token",
       stage: "transport_auth",
       retryable: false,
-      recommendedAction: "Reconnect JuggleWork Cloud",
-      message: "The JuggleWork Cloud MCP endpoint rejected the persisted Authorization header.",
+      recommendedAction: "Reconnect 北数Work Cloud",
+      message: "The 北数Work Cloud MCP endpoint rejected the persisted Authorization header.",
       aliases: ["jugglework_cloud_auth_invalid"],
       details: { endpoint, status: response.status, response: payload },
     });
@@ -1127,7 +1127,7 @@ function directCloudAuthFailure(response: Response, payload: unknown, endpoint: 
       stage: "transport_auth",
       retryable: false,
       recommendedAction: "Check organization policy and resource access",
-      message: "The JuggleWork Cloud MCP endpoint denied access to this resource.",
+      message: "The 北数Work Cloud MCP endpoint denied access to this resource.",
       aliases: ["jugglework_cloud_resource_forbidden"],
       details: { endpoint, status: response.status, response: payload },
     });
@@ -1154,7 +1154,7 @@ function directToolsFromNames(names: string[]): DirectCloudToolsSnapshot {
   const failureResult = split.missing.length
     ? directCloudToolsFailure({
         retryable: false,
-        message: "The JuggleWork Cloud MCP endpoint tools/list is missing required unprefixed tools.",
+        message: "The 北数Work Cloud MCP endpoint tools/list is missing required unprefixed tools.",
         details: { expected: split.expected, present: split.present, missing: split.missing },
       })
     : undefined;
@@ -1256,7 +1256,7 @@ async function readDirectCloudTools(config: Record<string, unknown>): Promise<Di
   if (!url || !authorization) {
     const failureResult = directCloudToolsFailure({
       retryable: false,
-      message: "The persisted JuggleWork Cloud MCP config cannot be used for direct tools/list verification.",
+      message: "The persisted 北数Work Cloud MCP config cannot be used for direct tools/list verification.",
       details: { endpoint, authorizationPresent: Boolean(authorization) },
     });
     return { ...directToolsNotChecked(), checked: true, missing: expectedDirectToolNames(), trace: trace(), error: failureResult.details, failure: failureResult };
@@ -1291,7 +1291,7 @@ async function readDirectCloudTools(config: Record<string, unknown>): Promise<Di
       const authFailure = directCloudAuthFailure(initialized.response, initialized.payload, endpoint ?? "unknown");
       const failureResult = authFailure ?? directCloudToolsFailure({
         retryable: initialized.response.status >= 500,
-        message: "The JuggleWork Cloud MCP endpoint initialize request failed during direct verification.",
+        message: "The 北数Work Cloud MCP endpoint initialize request failed during direct verification.",
         details: { endpoint, status: initialized.response.status, response: initialized.payload },
       });
       return { ...directToolsNotChecked(), checked: true, missing: expectedDirectToolNames(), trace: trace(), error: failureResult.details, failure: failureResult };
@@ -1341,7 +1341,7 @@ async function readDirectCloudTools(config: Record<string, unknown>): Promise<Di
       const authFailure = directCloudAuthFailure(listed.response, listed.payload, endpoint ?? "unknown");
       const failureResult = authFailure ?? directCloudToolsFailure({
         retryable: listed.response.status >= 500,
-        message: "The JuggleWork Cloud MCP endpoint tools/list request failed during direct verification.",
+        message: "The 北数Work Cloud MCP endpoint tools/list request failed during direct verification.",
         details: { endpoint, status: listed.response.status, response: listed.payload },
       });
       return { ...directToolsNotChecked(), checked: true, missing: expectedDirectToolNames(), trace: trace(), error: failureResult.details, failure: failureResult };
@@ -1350,7 +1350,7 @@ async function readDirectCloudTools(config: Record<string, unknown>): Promise<Di
     if (!toolNames.names) {
       const failureResult = directCloudToolsFailure({
         retryable: false,
-        message: "The JuggleWork Cloud MCP endpoint tools/list response could not be parsed.",
+        message: "The 北数Work Cloud MCP endpoint tools/list response could not be parsed.",
         details: { endpoint, error: toolNames.error },
       });
       return { ...directToolsNotChecked(), checked: true, missing: expectedDirectToolNames(), trace: trace(), error: failureResult.details, failure: failureResult };
@@ -1365,7 +1365,7 @@ async function readDirectCloudTools(config: Record<string, unknown>): Promise<Di
       stage: "tool_registration",
       retryable: true,
       recommendedAction: "Check this machine's network path (proxy/TLS trust) to the Cloud MCP endpoint. The engine's own MCP connection is authoritative.",
-      message: "The JuggleWork server could not reach the Cloud MCP endpoint for direct verification (transport error before any HTTP response). This does not indicate missing tools.",
+      message: "The 北数Work server could not reach the Cloud MCP endpoint for direct verification (transport error before any HTTP response). This does not indicate missing tools.",
       details: { endpoint, error: error instanceof Error ? error.message : String(error), transport: describeTransportError(error) },
     });
     return { ...directToolsNotChecked(), checked: false, missing: [], trace: trace(), error: failureResult.details, failure: failureResult };
@@ -1483,7 +1483,7 @@ async function readProviderCapability(input: {
           code: "provider_tool_projection_missing",
           stage: "provider_projection",
           retryable: false,
-          recommendedAction: "Choose a model that can use JuggleWork Cloud tools",
+          recommendedAction: "Choose a model that can use 北数Work Cloud tools",
           message: modelExists ? "The selected provider/model does not support tool calling." : "The selected provider/model was not found in OpenCode provider catalog.",
           aliases: ["provider_projection_missing"],
           details: {
@@ -1553,7 +1553,7 @@ function statusFailure(status: McpStatus | undefined): CloudMcpFailure {
       code: "cloud_mcp_needs_auth",
       stage: "transport_auth",
       retryable: false,
-      recommendedAction: "Reconnect JuggleWork Cloud",
+      recommendedAction: "Reconnect 北数Work Cloud",
       message: "jugglework-cloud MCP needs authentication.",
       aliases: ["jugglework_cloud_auth_required"],
     });
@@ -1563,7 +1563,7 @@ function statusFailure(status: McpStatus | undefined): CloudMcpFailure {
       code: "opencode_mcp_sync_failed",
       stage: "engine_delivery",
       retryable: false,
-      recommendedAction: "Reconnect JuggleWork Cloud or update JuggleWork",
+      recommendedAction: "Reconnect 北数Work Cloud or update 北数Work",
       message: "jugglework-cloud MCP needs OAuth client registration.",
       aliases: ["jugglework_cloud_client_registration_required"],
       details: { error: status.error },
@@ -1598,34 +1598,34 @@ function inferFailedStatus(error: string): CloudMcpFailure {
     lower.includes("self signed") ||
     lower.includes("self-signed");
   if (!certTransport && lower.includes("expired")) {
-    return failure({ code: "invalid_mcp_token", stage: "transport_auth", retryable: false, recommendedAction: "Reconnect JuggleWork Cloud", message: "jugglework-cloud token is expired.", aliases: ["jugglework_cloud_token_expired"], details: { error } });
+    return failure({ code: "invalid_mcp_token", stage: "transport_auth", retryable: false, recommendedAction: "Reconnect 北数Work Cloud", message: "jugglework-cloud token is expired.", aliases: ["jugglework_cloud_token_expired"], details: { error } });
   }
   if (!certTransport && (lower.includes("invalid_token") || lower.includes("unauthorized") || lower.includes("401") || lower.includes("auth"))) {
-    return failure({ code: "invalid_mcp_token", stage: "transport_auth", retryable: false, recommendedAction: "Reconnect JuggleWork Cloud", message: "jugglework-cloud authentication failed.", aliases: ["jugglework_cloud_auth_invalid"], details: { error } });
+    return failure({ code: "invalid_mcp_token", stage: "transport_auth", retryable: false, recommendedAction: "Reconnect 北数Work Cloud", message: "jugglework-cloud authentication failed.", aliases: ["jugglework_cloud_auth_invalid"], details: { error } });
   }
   if (!certTransport && (lower.includes("invalid_grant") || lower.includes("session") || lower.includes("revoked"))) {
-    return failure({ code: "mcp_session_revoked", stage: "transport_auth", retryable: false, recommendedAction: "Reconnect JuggleWork Cloud", message: "jugglework-cloud session was revoked.", details: { error } });
+    return failure({ code: "mcp_session_revoked", stage: "transport_auth", retryable: false, recommendedAction: "Reconnect 北数Work Cloud", message: "jugglework-cloud session was revoked.", details: { error } });
   }
   if (lower.includes("membership") || lower.includes("member")) {
-    return failure({ code: "mcp_membership_revoked", stage: "transport_auth", retryable: false, recommendedAction: "Ask an organization admin to grant access", message: "JuggleWork Cloud membership is required.", aliases: ["jugglework_cloud_membership_required"], details: { error } });
+    return failure({ code: "mcp_membership_revoked", stage: "transport_auth", retryable: false, recommendedAction: "Ask an organization admin to grant access", message: "北数Work Cloud membership is required.", aliases: ["jugglework_cloud_membership_required"], details: { error } });
   }
   if (lower.includes("insufficient_scope") || lower.includes("scope")) {
-    return failure({ code: "insufficient_mcp_scope", stage: "transport_auth", retryable: false, recommendedAction: "Reconnect JuggleWork Cloud with the required scopes", message: "jugglework-cloud token is missing required scopes.", aliases: ["jugglework_cloud_scope_missing"], details: { error } });
+    return failure({ code: "insufficient_mcp_scope", stage: "transport_auth", retryable: false, recommendedAction: "Reconnect 北数Work Cloud with the required scopes", message: "jugglework-cloud token is missing required scopes.", aliases: ["jugglework_cloud_scope_missing"], details: { error } });
   }
   if (lower.includes("forbidden") || lower.includes("403") || lower.includes("policy")) {
-    return failure({ code: "wrong_mcp_resource", stage: "transport_auth", retryable: false, recommendedAction: "Check organization policy and resource access", message: "JuggleWork Cloud denied access to this resource.", aliases: ["jugglework_cloud_resource_forbidden"], details: { error } });
+    return failure({ code: "wrong_mcp_resource", stage: "transport_auth", retryable: false, recommendedAction: "Check organization policy and resource access", message: "北数Work Cloud denied access to this resource.", aliases: ["jugglework_cloud_resource_forbidden"], details: { error } });
   }
   if (lower.includes("not found") || lower.includes("404") || lower.includes("resource")) {
-    return failure({ code: "wrong_mcp_resource", stage: "transport_auth", retryable: false, recommendedAction: "Reconnect JuggleWork Cloud or choose an accessible organization", message: "JuggleWork Cloud resource was not found.", aliases: ["jugglework_cloud_resource_not_found"], details: { error } });
+    return failure({ code: "wrong_mcp_resource", stage: "transport_auth", retryable: false, recommendedAction: "Reconnect 北数Work Cloud or choose an accessible organization", message: "北数Work Cloud resource was not found.", aliases: ["jugglework_cloud_resource_not_found"], details: { error } });
   }
   if (lower.includes("client registration")) {
-    return failure({ code: "opencode_mcp_sync_failed", stage: "engine_delivery", retryable: false, recommendedAction: "Reconnect JuggleWork Cloud or update JuggleWork", message: "jugglework-cloud needs client registration.", aliases: ["jugglework_cloud_client_registration_required"], details: { error } });
+    return failure({ code: "opencode_mcp_sync_failed", stage: "engine_delivery", retryable: false, recommendedAction: "Reconnect 北数Work Cloud or update 北数Work", message: "jugglework-cloud needs client registration.", aliases: ["jugglework_cloud_client_registration_required"], details: { error } });
   }
   return failure({
     code: "opencode_mcp_sync_failed",
     stage: "engine_delivery",
     retryable: true,
-    recommendedAction: "Retry reconcile or reconnect JuggleWork Cloud",
+    recommendedAction: "Retry reconcile or reconnect 北数Work Cloud",
     message: "jugglework-cloud MCP connection failed.",
     aliases: ["cloud_connection_failed"],
     details: { error },
@@ -1796,8 +1796,8 @@ async function inspectJuggleWorkCloud(input: {
       code: "extensions_plugin_missing",
       stage: "plugin_load",
       retryable: true,
-      recommendedAction: "Reload the OpenCode engine so JuggleWork extensions are loaded",
-      message: "JuggleWork extension plugin canary tools are missing.",
+      recommendedAction: "Reload the OpenCode engine so 北数Work extensions are loaded",
+      message: "北数Work extension plugin canary tools are missing.",
       details: { missing: pluginCanaries.missing },
     }));
   }
@@ -2000,7 +2000,7 @@ export async function readJuggleWorkCloudMcpHealth(input: {
       code: "cloud_mcp_missing",
       stage: "desired_config",
       retryable: false,
-      recommendedAction: "Connect JuggleWork Cloud",
+      recommendedAction: "Connect 北数Work Cloud",
       message: "No jugglework-cloud MCP desired config is persisted for this workspace.",
       aliases: ["cloud_desired_missing"],
     }));

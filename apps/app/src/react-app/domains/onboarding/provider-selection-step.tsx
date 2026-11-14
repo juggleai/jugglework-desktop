@@ -25,7 +25,7 @@ export function ProviderSelectionStep({ onBringYourOwn, onSkip }: ProviderSelect
         <PageHeader className="mb-8 text-center">
           <PageTitle>Power your first task</PageTitle>
           <PageDescription>
-            Connect a model, then try a real task in chat so you can see JuggleWork work.
+            Connect a model, then try a real task in chat so you can see 北数Work work.
           </PageDescription>
         </PageHeader>
 

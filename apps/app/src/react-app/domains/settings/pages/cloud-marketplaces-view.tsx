@@ -717,7 +717,7 @@ export function CloudMarketplacesView({
       return {
         source: "built-in",
         marketplaceId: "jugglework-builtins",
-        marketplaceName: "JuggleWork Built-ins",
+        marketplaceName: "北数Work Built-ins",
         entry,
         active,
         setupReady,

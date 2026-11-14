@@ -252,7 +252,7 @@ export function ReviewSessionComposer(props: {
     compact={props.compact}
     compactJoined={props.compactJoined}
     onFocusCapture={props.onComposerFocus}
-    compactPlaceholder={text("Use JuggleWork", "使用 JuggleWork")}
+    compactPlaceholder={text("Use 北数Work", "使用 北数Work")}
     draft={draft}
     mentions={{}}
     onDraftChange={setDraft}

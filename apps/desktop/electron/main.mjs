@@ -168,10 +168,15 @@ const TAURI_APP_IDENTIFIER = "com.juggleai.jugglework";
 const DEV_APP_IDENTIFIER = "com.juggleai.jugglework.dev";
 const DESKTOP_PROTOCOL_SCHEME = "jugglework";
 const isDevMode = process.env.JUGGLEWORK_DEV_MODE === "1";
+// TIPS: APP_NAME 是进程身份（ready 前的 app.setName、安装程序创建的 Windows 快捷方式文件名），
+// 必须与 electron-builder 的 productName 保持一致；界面显示名单独由 DEFAULT_DISPLAY_APP_NAME 提供。
 const APP_NAME =
   process.env.JUGGLEWORK_ELECTRON_APP_NAME?.trim() ||
   (isDevMode ? "JuggleWork - Dev" : "JuggleWork");
-let currentDisplayAppName = APP_NAME;
+const DEFAULT_DISPLAY_APP_NAME =
+  process.env.JUGGLEWORK_ELECTRON_APP_NAME?.trim() ||
+  (isDevMode ? "北数Work - Dev" : "北数Work");
+let currentDisplayAppName = DEFAULT_DISPLAY_APP_NAME;
 const systemFiles = createSystemFileOpening({
   app,
   openFile: async (file) => {
@@ -198,7 +203,7 @@ if (process.env.JUGGLEWORK_ELECTRON_USE_MOCK_KEYCHAIN === "1") {
 }
 const DOCS_PAGE_URL = "https://juggle.im/docs";
 const applicationMenu = createApplicationMenu({
-  appName: APP_NAME,
+  appName: DEFAULT_DISPLAY_APP_NAME,
   docsUrl: DOCS_PAGE_URL,
   getWindow: () => createMainWindow(),
 });
@@ -206,7 +211,7 @@ const applicationMenu = createApplicationMenu({
 const cloudDocsApi = createCloudDocsApi({ getWindow: () => mainWindow });
 const uiControlServer = createUiControlServer({
   cloudDocsRequest: (input) => cloudDocsApi.request(input),
-  appName: APP_NAME,
+  appName: DEFAULT_DISPLAY_APP_NAME,
   appIdentifier: APP_IDENTIFIER,
   getWindow: () => createMainWindow(),
   prepareOfficeSave: (document) => officePanel.prepareSave(document),
@@ -1782,7 +1787,7 @@ function showShutdownScreen() {
   <body>
     <main>
       <div class="spinner" aria-hidden="true"></div>
-      <div class="title">Stopping JuggleWork services</div>
+      <div class="title">Stopping 北数Work services</div>
       <div class="body">Closing local workers and background services...</div>
     </main>
   </body>
@@ -1794,13 +1799,13 @@ function showShutdownScreen() {
 
 function assertJuggleWorkServerReady(info) {
   if (!info?.running) {
-    throw new Error("JuggleWork server did not stay running after startup.");
+    throw new Error("北数Work server did not stay running after startup.");
   }
   if (!info.baseUrl) {
-    throw new Error("JuggleWork server did not report a base URL after startup.");
+    throw new Error("北数Work server did not report a base URL after startup.");
   }
   if (!info.ownerToken && !info.clientToken) {
-    throw new Error("JuggleWork server did not report an access token after startup.");
+    throw new Error("北数Work server did not report an access token after startup.");
   }
   return info;
 }
@@ -3074,7 +3079,7 @@ const desktopCommandHandlers = {
   },
   "__applyBrandAppName": async (event, ...args) => {
     currentDisplayAppName = applyBrandAppName(args[0], {
-      fallbackName: APP_NAME,
+      fallbackName: DEFAULT_DISPLAY_APP_NAME,
       platform: process.platform,
       updateElectronAppName: process.platform === "darwin",
       runtimeProcess: process,
@@ -3713,7 +3718,7 @@ if (!app.requestSingleInstanceLock()) {
     await workspaceStore.importBundledDesktopBootstrapConfigIfPreferred();
     const bootstrapConfig = await workspaceStore.getDesktopBootstrapConfig();
     currentDisplayAppName = applyBrandAppName(bootstrapConfig.brandAppName, {
-      fallbackName: APP_NAME,
+      fallbackName: DEFAULT_DISPLAY_APP_NAME,
       platform: process.platform,
       updateElectronAppName: true,
       runtimeProcess: process,

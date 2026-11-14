@@ -33,7 +33,7 @@ export function LoadingOverlay() {
           <div className="flex flex-col gap-2 text-[12px] leading-5 text-red-11">
             <div>{error}</div>
             <div className="text-dls-secondary">
-              Retry after checking your connection. JuggleWork will not switch to an unapproved update source.
+              Retry after checking your connection. 北数Work will not switch to an unapproved update source.
             </div>
           </div>
         ) : null}

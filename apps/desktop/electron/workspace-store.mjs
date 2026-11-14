@@ -795,7 +795,7 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
         cache: "no-store",
       });
       if (!response.ok) {
-        throw new Error(`JuggleWork workspace discovery failed (${response.status} ${response.statusText || "HTTP error"})`);
+        throw new Error(`北数Work workspace discovery failed (${response.status} ${response.statusText || "HTTP error"})`);
       }
       return await response.json();
     } finally {
@@ -890,7 +890,7 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
       const recoveredWorkspaces = await recoverWorkspacesFromKnownState();
       if (recoveredWorkspaces.length > 0) {
         const selectedWorkspace = recoveredWorkspaces[0];
-        console.info("[migration] recovered desktop workspaces from persisted JuggleWork state", {
+        console.info("[migration] recovered desktop workspaces from persisted 北数Work state", {
           count: recoveredWorkspaces.length,
           selectedWorkspaceId: selectedWorkspace.id,
         });
@@ -1101,8 +1101,8 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
       if (!discovered?.id) {
         throw new Error(
           directory
-            ? `JuggleWork server has no workspace matching ${directory}.`
-            : "JuggleWork server returned no workspaces.",
+            ? `北数Work server has no workspace matching ${directory}.`
+            : "北数Work server returned no workspaces.",
         );
       }
       resolvedJuggleWorkWorkspaceId = String(discovered.id).trim();
@@ -1176,8 +1176,8 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
           if (!discovered?.id) {
             throw new Error(
               directory
-                ? `JuggleWork server has no workspace matching ${directory}.`
-                : "JuggleWork server returned no workspaces.",
+                ? `北数Work server has no workspace matching ${directory}.`
+                : "北数Work server returned no workspaces.",
             );
           }
           remoteWorkspaceId = String(discovered.id).trim();

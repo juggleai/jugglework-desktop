@@ -46,7 +46,7 @@ describe("app tray indicator", () => {
     assert.equal(h.indicator.start(), true); // idempotent
     assert.equal(h.trays.length, 1);
     assert.equal(h.trays[0].tooltip, APP_TRAY_TOOLTIP);
-    assert.deepEqual(labels(h.menus[0]), ["Open JuggleWork", "separator", "Quit JuggleWork"]);
+    assert.deepEqual(labels(h.menus[0]), ["Open 北数Work", "separator", "Quit 北数Work"]);
     h.trays[0].listeners.click();
     h.menus[0][0].click();
     h.menus[0][2].click();
@@ -60,14 +60,14 @@ describe("app tray indicator", () => {
     h.indicator.start();
     h.indicator.updateRemoteControl({ backgroundRequested: true, stopAll: h.stopAll });
     assert.equal(h.trays[0].tooltip, REMOTE_CONTROL_BACKGROUND_TOOLTIP);
-    assert.deepEqual(labels(h.menus[1]), ["Open JuggleWork", "separator", "Stop All", "separator", "Quit JuggleWork"]);
+    assert.deepEqual(labels(h.menus[1]), ["Open 北数Work", "separator", "Stop All", "separator", "Quit 北数Work"]);
     h.menus[1][2].click();
     await Promise.resolve();
     assert.equal(h.stoppedAll, 1);
 
     h.indicator.updateRemoteControl({ backgroundRequested: false });
     assert.equal(h.trays[0].tooltip, APP_TRAY_TOOLTIP);
-    assert.deepEqual(labels(h.menus[2]), ["Open JuggleWork", "separator", "Quit JuggleWork"]);
+    assert.deepEqual(labels(h.menus[2]), ["Open 北数Work", "separator", "Quit 北数Work"]);
   });
 
   it("applies remote-control state recorded before the tray starts", async () => {
@@ -75,7 +75,7 @@ describe("app tray indicator", () => {
     h.indicator.updateRemoteControl({ backgroundRequested: true, stopAll: () => {} });
     assert.equal(h.indicator.start(), true);
     assert.equal(h.trays[0].tooltip, REMOTE_CONTROL_BACKGROUND_TOOLTIP);
-    assert.deepEqual(labels(h.menus[0]), ["Open JuggleWork", "separator", "Stop All", "separator", "Quit JuggleWork"]);
+    assert.deepEqual(labels(h.menus[0]), ["Open 北数Work", "separator", "Stop All", "separator", "Quit 北数Work"]);
   });
 
   it("destroys the tray permanently on stop", () => {

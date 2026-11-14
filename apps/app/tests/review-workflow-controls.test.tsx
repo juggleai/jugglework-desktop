@@ -51,7 +51,7 @@ test("opening submit review does not publish; only the final button sends the se
 test("read-only organization connections can run AI review without enabling external publishing", async () => {
   await render(false);
   expect(button("Submit review").props.disabled).toBe(true);
-  await act(async () => { button("Review with JuggleWork").props.onClick(); });
+  await act(async () => { button("Review with 北数Work").props.onClick(); });
   expect(start).not.toHaveBeenCalled();
   await act(async () => { button("Start review").props.onClick(); await Bun.sleep(5); });
   expect(start).toHaveBeenCalledTimes(1);
@@ -60,7 +60,7 @@ test("read-only organization connections can run AI review without enabling exte
 
 test("the review panel opens and owns starting its PR-bound session", async () => {
   await render(true, head, review.relationship, undefined, true);
-  await act(async () => { button("Review with JuggleWork").props.onClick(); await Bun.sleep(5); });
+  await act(async () => { button("Review with 北数Work").props.onClick(); await Bun.sleep(5); });
   expect(openReviewPanel).toHaveBeenCalledTimes(1);
   expect(start).not.toHaveBeenCalled();
   expect(view.root.findAllByProps({ role: "dialog" })).toHaveLength(0);
@@ -69,16 +69,16 @@ test("the review panel opens and owns starting its PR-bound session", async () =
 test("authored pull requests hide every submit-review entry point", async () => {
   run = { id: crypto.randomUUID(), reviewId: review.id, headRevision: head, status: "completed", createdAt: new Date().toISOString(), partial: false, analysis: { summary: "One regression", findings: [{ id: "finding-1", priority: 1, title: "Bug", body: "Impact" }] } };
   await render(true, head, "requested", true);
-  expect(button("Review with JuggleWork")).toBeTruthy();
+  expect(button("Review with 北数Work")).toBeTruthy();
   expect(button("Submit review")).toBeUndefined();
-  await act(async () => { button("Review with JuggleWork").props.onClick(); });
+  await act(async () => { button("Review with 北数Work").props.onClick(); });
   expect(button("Use in review…")).toBeUndefined();
 });
 
 test("selected findings create a fix task and navigate to the returned session", async () => {
   run = { id: crypto.randomUUID(), reviewId: review.id, headRevision: head, status: "completed", createdAt: new Date().toISOString(), partial: false, analysis: { summary: "One regression", findings: [{ id: "finding-1", priority: 1, title: "Bug", body: "Impact", path: "a.ts", line: 2 }] } };
   await render();
-  await act(async () => { button("Review with JuggleWork").props.onClick(); });
+  await act(async () => { button("Review with 北数Work").props.onClick(); });
   await act(async () => { button("Fix selected").props.onClick(); await Bun.sleep(5); });
   expect(fix.mock.calls[0]?.[2]).toMatchObject({ runId: run.id, findingIds: ["finding-1"], expectedHeadRevision: head });
   expect(openSession).toHaveBeenCalledWith("fix-session");
@@ -92,7 +92,7 @@ test("shows deduplicated PR-related review and historical fix tasks", async () =
     history: [{ id: crypto.randomUUID(), headRevision: "b".repeat(40), status: "completed", createdAt: new Date().toISOString(), partial: false, sessionId: "review-session", fixSessionId: "old-fix", analysis: { summary: "Old", findings: [] } }],
   };
   await render();
-  await act(async () => { button("Review with JuggleWork").props.onClick(); });
+  await act(async () => { button("Review with 北数Work").props.onClick(); });
   expect(view.root.findByProps({ "data-testid": "review-related-tasks" })).toBeTruthy();
   await act(async () => { button("Open review task").props.onClick(); });
   expect(openSession).toHaveBeenCalledWith("review-session");
@@ -102,7 +102,7 @@ test("shows deduplicated PR-related review and historical fix tasks", async () =
 test("findings for an old PR revision cannot be published or fixed", async () => {
   run = { id: crypto.randomUUID(), reviewId: review.id, headRevision: "b".repeat(40), status: "completed", createdAt: new Date().toISOString(), partial: false, analysis: { summary: "Old revision", findings: [{ id: "finding-1", priority: 1, title: "Old bug", body: "Impact" }] } };
   await render();
-  await act(async () => { button("Review with JuggleWork").props.onClick(); });
+  await act(async () => { button("Review with 北数Work").props.onClick(); });
   expect(button("Fix selected").props.disabled).toBe(true);
   expect(button("Use in review…").props.disabled).toBe(true);
   expect(start).not.toHaveBeenCalled(); expect(fix).not.toHaveBeenCalled(); expect(publish).not.toHaveBeenCalled();

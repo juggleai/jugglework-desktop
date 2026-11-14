@@ -175,7 +175,7 @@ export function createToonFactoryVideoEditor({ isDirectoryGranted, mediaToolsRoo
       object(input, ["operation", "directory", ...(operations[input?.operation] ?? [])]);
       if (!Object.hasOwn(operations, input.operation) || typeof input.directory !== "string" || !path.isAbsolute(input.directory)) throw new Error("无效的媒体操作或目录");
       const root = await realpath(input.directory);
-      if (!isDirectoryGranted(root)) throw new Error("项目目录未经 JuggleWork 授权");
+      if (!isDirectoryGranted(root)) throw new Error("项目目录未经 北数Work 授权");
       // The outer signed app seals the manifest; its mutable local build hashes
       // alone are not an upstream trust anchor. Development uses verified staging.
       if (packaged && mediaTarget.platform === "darwin") mediaRun("/usr/bin/codesign", ["--verify", "--strict", "-R", '=anchor apple generic and certificate leaf[subject.OU] = "H7PDHSK3C7" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists', path.resolve(mediaToolsRoot, "../../..")]);

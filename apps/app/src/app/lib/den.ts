@@ -260,7 +260,7 @@ export type DenCalendarEventUpdateInput = {
 };
 export type DenCalendarDeleteInput = { idempotencyKey: string; expectedVersion: number };
 
-export const DEFAULT_DEN_AUTH_NAME = "JuggleWork User";
+export const DEFAULT_DEN_AUTH_NAME = "北数Work User";
 const BUILD_DEN_BASE_URL =
   (typeof import.meta !== "undefined" && typeof import.meta.env?.VITE_DEN_BASE_URL === "string"
     ? import.meta.env.VITE_DEN_BASE_URL

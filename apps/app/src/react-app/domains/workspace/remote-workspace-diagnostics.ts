@@ -142,11 +142,11 @@ function classifyUnreachableError(error: unknown): boolean {
 }
 
 function workerUnreachableMessage(target: RemoteWorkspaceConnectionTarget, cause: string) {
-  return `Cannot reach ${target.endpointLabel} (${cause}). The cloud workspace may have been redeployed and its URL changed. Copy the new connection details from the JuggleWork Cloud console and update this connection.`;
+  return `Cannot reach ${target.endpointLabel} (${cause}). The cloud workspace may have been redeployed and its URL changed. Copy the new connection details from the 北数Work Cloud console and update this connection.`;
 }
 
 function remoteSupportMessage(message: string) {
-  return `${message} Upgrade the JuggleWork host and try again. If this continues, contact team@juggle.im.`;
+  return `${message} Upgrade the 北数Work host and try again. If this continues, contact team@juggle.im.`;
 }
 
 export function redactRemoteDiagnosticText(value: string): string {
@@ -208,7 +208,7 @@ export function resolveRemoteWorkspaceConnectionTarget(workspace: WorkspaceInfo)
       ok: false,
       state: {
         status: "error",
-        message: "Connection diagnostics are only available for JuggleWork remote workers.",
+        message: "Connection diagnostics are only available for 北数Work remote workers.",
         checkedAt: Date.now(),
       },
     };
@@ -307,7 +307,7 @@ export async function testRemoteWorkspaceConnection(
 
   if (!target.token) {
     return fail(
-      remoteSupportMessage(`Token is missing for ${target.endpointLabel}. Edit connection and paste a valid JuggleWork token.`),
+      remoteSupportMessage(`Token is missing for ${target.endpointLabel}. Edit connection and paste a valid 北数Work token.`),
       checkedAt,
     );
   }

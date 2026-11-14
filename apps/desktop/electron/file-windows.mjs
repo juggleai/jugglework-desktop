@@ -109,7 +109,7 @@ export function createFileWindows({
           id: entry.window.id,
           title:
             entry.tabs.find((tab) => tab.path === entry.activePath)?.name ??
-            "JuggleWork 文件浏览器",
+            "北数Work 文件浏览器",
         })),
     );
   const state = (entry) => ({
@@ -156,7 +156,7 @@ export function createFileWindows({
   };
   const publish = (entry) => {
     if (!entry.window.isDestroyed()) {
-      entry.window.setTitle("JuggleWork 文件浏览器");
+      entry.window.setTitle("北数Work 文件浏览器");
       entry.window.webContents.send(
         "jugglework:file-window:changed",
         state(entry),
@@ -320,7 +320,7 @@ export function createFileWindows({
         height: 860,
         minWidth: 680,
         minHeight: 500,
-        title: "JuggleWork 文件浏览器",
+        title: "北数Work 文件浏览器",
         icon: iconPath,
         show: false,
         backgroundColor: "#f4f5f7",

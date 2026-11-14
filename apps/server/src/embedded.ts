@@ -129,7 +129,7 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
 
     if (errors.length === 1) throw errors[0];
     if (errors.length > 1) {
-      throw new AggregateError(errors, "Failed to stop embedded JuggleWork server");
+      throw new AggregateError(errors, "Failed to stop embedded 北数Work server");
     }
   };
 
@@ -150,7 +150,7 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
       } catch (cleanupError) {
         throw new AggregateError(
           [startupError, cleanupError],
-          "Embedded JuggleWork server startup failed and cleanup was incomplete",
+          "Embedded 北数Work server startup failed and cleanup was incomplete",
         );
       }
       throw startupError;

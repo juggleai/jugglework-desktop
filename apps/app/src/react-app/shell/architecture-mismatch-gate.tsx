@@ -108,10 +108,10 @@ export function ArchitectureMismatchGate({ children }: ArchitectureMismatchGateP
               </div>
               <div className="space-y-4">
                 <h1 className="max-w-2xl text-4xl font-semibold tracking-[-0.04em] text-white sm:text-5xl">
-                  Install the correct JuggleWork build
+                  Install the correct 北数Work build
                 </h1>
                 <p className="max-w-2xl text-base leading-7 text-white/72 sm:text-lg">
-                  Your application is running the {info.appArchLabel} version of JuggleWork, but this {platformLabel(info.platform)} system is {info.systemArchLabel}. This may cause unpredictable issues.
+                  Your application is running the {info.appArchLabel} version of 北数Work, but this {platformLabel(info.platform)} system is {info.systemArchLabel}. This may cause unpredictable issues.
                 </p>
               </div>
 
@@ -156,12 +156,12 @@ export function ArchitectureMismatchGate({ children }: ArchitectureMismatchGateP
 
             <aside className="border-t border-white/10 bg-gradient-to-br from-emerald-300/12 via-sky-300/8 to-transparent p-8 sm:p-10 lg:border-l lg:border-t-0 lg:p-12">
               <div className="space-y-5 rounded-[28px] border border-white/10 bg-black/25 p-6 text-sm leading-6 text-white/68">
-                <div className="text-lg font-semibold text-white">Why JuggleWork stopped here</div>
+                <div className="text-lg font-semibold text-white">Why 北数Work stopped here</div>
                 <p>
-                  JuggleWork blocks startup when the installed app architecture does not match the machine architecture. This prevents runtime sidecars, browser tooling, and update downloads from continuing on the wrong build.
+                  北数Work blocks startup when the installed app architecture does not match the machine architecture. This prevents runtime sidecars, browser tooling, and update downloads from continuing on the wrong build.
                 </p>
                 <p>
-                  After installing the correct {info.systemArchLabel} build, quit this copy and launch JuggleWork again. Your workspaces and settings are kept in the same app data folder.
+                  After installing the correct {info.systemArchLabel} build, quit this copy and launch 北数Work again. Your workspaces and settings are kept in the same app data folder.
                 </p>
                 <div className="rounded-2xl bg-white/[0.06] p-4 font-mono text-xs text-white/55">
                   v{info.version} · {platformLabel(info.platform)} · {info.systemArch}

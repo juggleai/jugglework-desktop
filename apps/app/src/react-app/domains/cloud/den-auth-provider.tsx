@@ -509,7 +509,7 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
       setError(
         nextError instanceof Error
           ? nextError.message
-          : "Failed to restore JuggleWork Cloud session.",
+          : "Failed to restore 北数Work Cloud session.",
       );
       updateStatus(failureStatus);
     }

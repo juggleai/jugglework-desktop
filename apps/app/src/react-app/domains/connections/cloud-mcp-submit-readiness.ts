@@ -188,7 +188,7 @@ function genericSubmissionIssue(input?: {
     stage: input?.stage ?? "engine_delivery",
     retryable: input?.retryable ?? true,
     recommendedAction: input?.recommendedAction ?? "Retry, then open Settings → Connect if the problem continues.",
-    message: input?.message ?? "JuggleWork could not verify connected service tools for the selected model.",
+    message: input?.message ?? "北数Work could not verify connected service tools for the selected model.",
   };
 }
 
@@ -251,8 +251,8 @@ function authResolutionIssue(input?: { timedOut?: boolean }): CloudMcpSubmission
       ? "cloud_mcp_auth_resolution_timeout"
       : "cloud_mcp_auth_resolution_failed",
     message: input?.timedOut
-      ? "JuggleWork timed out while restoring connected service access."
-      : "JuggleWork could not finish restoring connected service access.",
+      ? "北数Work timed out while restoring connected service access."
+      : "北数Work could not finish restoring connected service access.",
     recommendedAction: "Retry or open Settings → Connect.",
   });
 }
@@ -313,7 +313,7 @@ export function assessCloudMcpSubmissionReadiness(input: {
       issue: genericSubmissionIssue({
         code: "cloud_mcp_direct_tools_unverified",
         stage: "tool_registration",
-        message: "JuggleWork Cloud did not prove that search_capabilities and execute_capability are available.",
+        message: "北数Work Cloud did not prove that search_capabilities and execute_capability are available.",
       }),
     };
   }
@@ -348,7 +348,7 @@ export function assessCloudMcpSubmissionReadiness(input: {
         stage: "provider_projection",
         retryable: false,
         message: "The current engine cannot prove that connected service tools were injected into the selected model.",
-        recommendedAction: "Update or restart JuggleWork, then Retry. Open Connect for detailed diagnostics.",
+        recommendedAction: "Update or restart 北数Work, then Retry. Open Connect for detailed diagnostics.",
       }),
     };
   }
@@ -375,7 +375,7 @@ export function assessCloudMcpSubmissionReadiness(input: {
 function timeoutIssue(): CloudMcpSubmissionIssue {
   return genericSubmissionIssue({
     code: "cloud_mcp_submission_timeout",
-    message: "JuggleWork timed out while preparing connected service tools.",
+    message: "北数Work timed out while preparing connected service tools.",
   });
 }
 
@@ -401,7 +401,7 @@ function errorAssessment(error: unknown): CloudMcpSubmissionReadinessAssessment 
       ? timeoutIssue()
       : genericSubmissionIssue({
           code: "cloud_mcp_submission_check_failed",
-          message: "JuggleWork could not check connected service tools before sending.",
+          message: "北数Work could not check connected service tools before sending.",
         }),
   };
 }

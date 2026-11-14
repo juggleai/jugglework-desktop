@@ -620,7 +620,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     const persisted = await writeWorkspaceJuggleWorkConfigRecord(nextConfig);
     if (!persisted) {
       throw new Error(
-        "JuggleWork server unavailable. Connect to manage imported cloud providers.",
+        "北数Work server unavailable. Connect to manage imported cloud providers.",
       );
     }
     setStateField("importedCloudProviders", nextProviders);
@@ -639,7 +639,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
 
     if (hasJuggleWorkTarget) {
-      throw new Error("JuggleWork server config API is unavailable for this workspace.");
+      throw new Error("北数Work server config API is unavailable for this workspace.");
     }
 
     if (isLocalWorkspace && isDesktopRuntime() && root) {
@@ -672,7 +672,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
 
     if (hasJuggleWorkTarget) {
-      throw new Error("JuggleWork server config API is unavailable for this workspace.");
+      throw new Error("北数Work server config API is unavailable for this workspace.");
     }
 
     if (isLocalWorkspace && isDesktopRuntime() && root) {
@@ -703,7 +703,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     const { juggleworkClient, juggleworkWorkspaceId, canUseJuggleWorkServer } =
       await resolveJuggleWorkConfigTarget("write");
     if (!canUseJuggleWorkServer || !juggleworkClient || !juggleworkWorkspaceId) {
-      throw new Error("JuggleWork server unavailable. Connect to manage cloud providers.");
+      throw new Error("北数Work server unavailable. Connect to manage cloud providers.");
     }
     await juggleworkClient.patchConfig(juggleworkWorkspaceId, {
       opencode: { provider: update },
@@ -889,7 +889,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   ) => {
     const target = await resolveJuggleWorkConfigTarget("write");
     if (!target.canUseJuggleWorkServer || !target.juggleworkClient || !target.juggleworkWorkspaceId) {
-      throw new Error("JuggleWork server unavailable. Connect to manage cloud providers.");
+      throw new Error("北数Work server unavailable. Connect to manage cloud providers.");
     }
 
     const result = await removeManagedRuntimeDisabledProviders({
@@ -1690,7 +1690,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         if (envEntry) {
           const target = await resolveJuggleWorkConfigTarget("write");
           if (!target.canUseJuggleWorkServer || !target.juggleworkClient) {
-            throw new Error("JuggleWork server unavailable. Connect to store the media provider credential.");
+            throw new Error("北数Work server unavailable. Connect to store the media provider credential.");
           }
           await target.juggleworkClient.upsertUserEnv([envEntry]);
         }
@@ -1827,7 +1827,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     const token = settings.authToken?.trim() ?? "";
     const orgId = settings.activeOrgId?.trim() ?? "";
     if (!token || !orgId) {
-      throw new Error("Sign in to JuggleWork Cloud and choose an organization first.");
+      throw new Error("Sign in to 北数Work Cloud and choose an organization first.");
     }
     const authorityKey = optionsArg?.authorityKey ?? getCloudProviderAuthorityKey();
     const assertCurrentAuthority = () => {
@@ -1873,7 +1873,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
           throw new Error(
             `${provider.name} needs environment variables (${envEntries
               .map((entry) => entry.key)
-              .join(", ")}) but the JuggleWork server is not available.`,
+              .join(", ")}) but the 北数Work server is not available.`,
           );
         }
         await juggleworkClient.upsertUserEnv(envEntries);
@@ -1897,7 +1897,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         );
         assertCurrentAuthority();
         if (!providerGatewayMirror) {
-          throw new Error("This JuggleWork server cannot securely own the cloud gateway credential. Update it and retry the import.");
+          throw new Error("This 北数Work server cannot securely own the cloud gateway credential. Update it and retry the import.");
         }
         // Only a legacy workspace-scoped record is replaced here; it belonged to
         // this workspace alone. The previous shared record has the same key

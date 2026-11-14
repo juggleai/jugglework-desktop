@@ -72,7 +72,7 @@ export function createUiControlServer({ appName, appIdentifier, getWindow, prepa
     if (command === "snapshot") {
       return evaluateJuggleWorkControl(`(async () => {
         const control = window.__juggleworkControl;
-        if (!control) return { ok: false, error: "JuggleWork control surface is not available yet." };
+        if (!control) return { ok: false, error: "北数Work control surface is not available yet." };
         control.setEnabled?.(true);
         return { ok: true, ...control.snapshot() };
       })()`);
@@ -80,7 +80,7 @@ export function createUiControlServer({ appName, appIdentifier, getWindow, prepa
     if (command === "actions") {
       return evaluateJuggleWorkControl(`(async () => {
         const control = window.__juggleworkControl;
-        if (!control) return { ok: false, error: "JuggleWork control surface is not available yet." };
+        if (!control) return { ok: false, error: "北数Work control surface is not available yet." };
         control.setEnabled?.(true);
         return { ok: true, actions: control.listActions() };
       })()`);
@@ -88,7 +88,7 @@ export function createUiControlServer({ appName, appIdentifier, getWindow, prepa
     if (command === "context") {
       return evaluateJuggleWorkControl(`(async () => {
         const control = window.__juggleworkControl;
-        if (!control) return { ok: false, error: "JuggleWork control surface is not available yet." };
+        if (!control) return { ok: false, error: "北数Work control surface is not available yet." };
         return { ok: true, context: control.context() };
       })()`);
     }
@@ -96,9 +96,9 @@ export function createUiControlServer({ appName, appIdentifier, getWindow, prepa
       return evaluateJuggleWorkControl(`(async () => {
         const control = window.__juggleworkControl;
         const input = JSON.parse(${argsJsonLiteral});
-        if (!control) return { ok: false, error: "JuggleWork control surface is not available yet." };
+        if (!control) return { ok: false, error: "北数Work control surface is not available yet." };
         if (!input || typeof input.id !== "string" || !input.id.trim()) {
-          return { ok: false, error: "Missing JuggleWork affordance id." };
+          return { ok: false, error: "Missing 北数Work affordance id." };
         }
         return control[${JSON.stringify(command)}](input);
       })()`);
@@ -107,15 +107,15 @@ export function createUiControlServer({ appName, appIdentifier, getWindow, prepa
       return evaluateJuggleWorkControl(`(async () => {
         const control = window.__juggleworkControl;
         const input = JSON.parse(${argsJsonLiteral});
-        if (!control) return { ok: false, error: "JuggleWork control surface is not available yet." };
+        if (!control) return { ok: false, error: "北数Work control surface is not available yet." };
         if (!input || typeof input.actionId !== "string" || !input.actionId.trim()) {
-          return { ok: false, error: "Missing JuggleWork actionId." };
+          return { ok: false, error: "Missing 北数Work actionId." };
         }
         control.setEnabled?.(true);
         return control.execute(input.actionId, input.args ?? {});
       })()`);
     }
-    return { ok: false, error: `Unknown JuggleWork control command: ${command}` };
+    return { ok: false, error: `Unknown 北数Work control command: ${command}` };
   }
 
   async function start() {
@@ -190,7 +190,7 @@ export function createUiControlServer({ appName, appIdentifier, getWindow, prepa
     });
     const address = uiControlServer.address();
     const port = typeof address === "object" && address ? address.port : null;
-    if (!port) throw new Error("Could not start JuggleWork UI control bridge.");
+    if (!port) throw new Error("Could not start 北数Work UI control bridge.");
     uiControlDiscoveryPath = path.join(app.getPath("userData"), "jugglework-ui-control.json");
     await writeFile(
       uiControlDiscoveryPath,

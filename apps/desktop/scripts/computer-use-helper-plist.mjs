@@ -9,7 +9,7 @@ export function computerUseHelperInfoPlist({
   <key>CFBundleDevelopmentRegion</key>
   <string>en</string>
   <key>CFBundleDisplayName</key>
-  <string>JuggleWork Computer Use</string>
+  <string>北数Work Computer Use</string>
   <key>CFBundleExecutable</key>
   <string>${executableName}</string>
   <key>CFBundleIdentifier</key>
@@ -19,7 +19,7 @@ export function computerUseHelperInfoPlist({
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>
-  <string>JuggleWork Computer Use</string>
+  <string>北数Work Computer Use</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>

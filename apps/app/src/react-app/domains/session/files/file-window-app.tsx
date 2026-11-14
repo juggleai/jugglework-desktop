@@ -318,7 +318,7 @@ export function FileWindowApp({ onAppearanceChange }: { onAppearanceChange?: (ap
         <img
           className="file-window-logo"
           src="./file-window-logo.png"
-          alt="JuggleWork"
+          alt="北数Work"
         />
       </header>
       <main ref={contentRef} className={`file-window-content ${canConverse && conversationOpen ? "has-conversation" : ""}`} style={{ "--conversation-width": `${conversationWidth}%` } as React.CSSProperties}>
@@ -415,7 +415,7 @@ export function FileWindowApp({ onAppearanceChange }: { onAppearanceChange?: (ap
       {canConverse && conversationMounted && conversationOptions && state && client && bridge && <aside id="file-window-conversation" className="file-window-conversation" hidden={!conversationOpen}>
         <div className="file-window-conversation-header">
           <img className="file-window-assistant-icon" src="./jugglework-assistant.png" alt="" />
-          <span className="file-window-conversation-title">JuggleWork</span>
+          <span className="file-window-conversation-title">北数Work</span>
           <Button className="file-window-open-session" variant="ghost" size="icon-sm" title={t("file_window.open_session")} aria-label={t("file_window.open_session")} onClick={() => void action("open-session")}><ArrowUpRight className="size-4" /></Button>
           <Button className="file-window-close-conversation" variant="ghost" size="icon-sm" title={t("file_window.show_document")} aria-label={t("file_window.show_document")} onClick={() => setConversationOpen(false)}><X className="size-4" /></Button>
         </div>

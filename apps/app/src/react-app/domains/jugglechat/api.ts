@@ -24,7 +24,7 @@ function apiBase() {
 
 function organizationApiBase() {
   const settings = readDenSettings();
-  if (!settings.baseUrl) throw new Error("尚未配置 JuggleWork 服务地址");
+  if (!settings.baseUrl) throw new Error("尚未配置 北数Work 服务地址");
   return resolveDenBaseUrls(settings).apiBaseUrl.replace(/\/$/, "");
 }
 
@@ -35,7 +35,7 @@ function apiErrorMessage(payload: unknown, status: number) {
     if (typeof value.msg === "string" && value.msg.trim()) return value.msg;
     if (typeof value.error === "string" && value.error.trim()) return value.error;
   }
-  return `JuggleWork 服务请求失败（HTTP ${status}）`;
+  return `北数Work 服务请求失败（HTTP ${status}）`;
 }
 
 async function organizationRequest<T>(path: string, init: RequestInit = {}, authenticated = true) {
@@ -51,7 +51,7 @@ async function organizationRequest<T>(path: string, init: RequestInit = {}, auth
     try {
       payload = JSON.parse(text);
     } catch {
-      throw new Error(`JuggleWork 服务返回了无效数据（HTTP ${response.status}）`);
+      throw new Error(`北数Work 服务返回了无效数据（HTTP ${response.status}）`);
     }
   }
   if (!response.ok) {

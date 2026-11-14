@@ -2024,7 +2024,7 @@ test("重复打开激活已有窗口，关闭一个文件保留其他标签，�
   const state = await f.state(window);
   expect(state.tabs.map((tab: any) => tab.path)).toEqual(["报告.docx"]);
   expect(state.activePath).toBe("报告.docx");
-  expect(window.title).toBe("JuggleWork 文件浏览器");
+  expect(window.title).toBe("北数Work 文件浏览器");
   expect(state.recent.map((tab: any) => tab.path)).toEqual([
     "报告.docx",
     "说明.md",
@@ -2039,7 +2039,7 @@ test("关闭全部 tab 后保留文件浏览器主页和窗口归属，再打开
   const home = await f.state(window);
   expect(home.tabs).toEqual([]);
   expect(home.activePath).toBeNull();
-  expect(window.title).toBe("JuggleWork 文件浏览器");
+  expect(window.title).toBe("北数Work 文件浏览器");
   expect(window.isDestroyed()).toBe(false);
   // TIPS: macOS 菜单按宿主窗口归属命名，空白主页仍是文件窗口，不能按 tab 数量降级成聊天窗口。
   expect(f.files.windowFor(window.webContents)).toBe(window);
@@ -2413,7 +2413,7 @@ test("批量关闭模型也同步清除文件标签，保留尚未销毁的文�
   expect(await f.panel.prepareQuit()).toBe(true);
   expect((await f.state(host)).tabs).toHaveLength(0);
   expect(host.destroyed).toBe(false);
-  expect(host.title).toBe("JuggleWork 文件浏览器");
+  expect(host.title).toBe("北数Work 文件浏览器");
   f.panel.destroy();
   f.files.dispose();
 });

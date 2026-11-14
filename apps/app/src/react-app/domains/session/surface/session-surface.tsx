@@ -173,11 +173,11 @@ import {
 
 const EMPTY_TRANSCRIPT: UIMessage[] = [];
 const IDLE_STATUS: SessionStatus = { type: "idle" };
-const DEFAULT_COMPOSER_CONTROL_TEXT = "Help me outline the next JuggleWork task.";
+const DEFAULT_COMPOSER_CONTROL_TEXT = "Help me outline the next 北数Work task.";
 const SESSION_SURFACE_SELECTOR = "[data-session-surface-id]";
 const MARKDOWN_PRIMITIVE_EVAL_TEXT = `# Markdown proof heading
 
-This shared renderer keeps **bold proof text**, inline \`renderMarkdownHtml\`, and [JuggleWork link](https://juggle.im) readable in one message.
+This shared renderer keeps **bold proof text**, inline \`renderMarkdownHtml\`, and [北数Work link](https://juggle.im) readable in one message.
 
 \`\`\`ts
 const pipeline = "shared markdown primitive";
@@ -283,7 +283,7 @@ export type SessionSurfaceProps = {
 };
 
 function messageToReadableText(message: UIMessage) {
-  const header = message.role === "user" ? "You" : message.role === "assistant" ? "JuggleWork" : message.role;
+  const header = message.role === "user" ? "You" : message.role === "assistant" ? "北数Work" : message.role;
   const body = message.parts
     .flatMap((part) => {
       if (part.type === "text") return [part.text];
@@ -2293,7 +2293,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     const organizationId = settings.activeOrgId?.trim() ?? "";
     if (!token || !organizationId) {
       props.onOpenConnect();
-      throw new Error("Sign in to JuggleWork Cloud, then try reconnecting again.");
+      throw new Error("Sign in to 北数Work Cloud, then try reconnecting again.");
     }
 
     const scope: ChatMcpReconnectScope = {

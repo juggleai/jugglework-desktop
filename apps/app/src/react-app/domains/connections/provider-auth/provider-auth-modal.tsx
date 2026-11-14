@@ -1109,12 +1109,12 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
         : "Use OpenAI's device flow when the local browser callback is unreliable.";
     }
     if (method.type === "oauth") {
-      return "Continue in the browser and let JuggleWork finish the connection automatically.";
+      return "Continue in the browser and let 北数Work finish the connection automatically.";
     }
     if (method.type === "cloud") {
       return method.description ?? "Use the provider and credential managed by your organization.";
     }
-    return "Paste a secret key that JuggleWork stores locally on this device.";
+    return "Paste a secret key that 北数Work stores locally on this device.";
   };
 
   return (

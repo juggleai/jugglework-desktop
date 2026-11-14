@@ -87,7 +87,7 @@ export function AttributionStep({ onSubmit, onSkip }: AttributionStepProps) {
 
       <div className="relative z-10 w-full max-w-md px-6">
         <PageHeader className="mb-8 text-center">
-          <PageTitle>How did you hear about JuggleWork?</PageTitle>
+          <PageTitle>How did you hear about 北数Work?</PageTitle>
           <PageDescription>
             One quick question — it helps us know where to show up.
           </PageDescription>

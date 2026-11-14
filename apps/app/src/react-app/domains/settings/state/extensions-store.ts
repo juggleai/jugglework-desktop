@@ -1099,7 +1099,7 @@ export function createExtensionsStore(options: {
     const nextConfig = withWorkspaceCloudImports(config, nextCloudImports);
     const persisted = await writeWorkspaceJuggleWorkConfigRecord(nextConfig);
     if (!persisted) {
-      throw new Error("JuggleWork server unavailable. Connect to manage imported cloud marketplaces.");
+      throw new Error("北数Work server unavailable. Connect to manage imported cloud marketplaces.");
     }
     setStateField("importedCloudMarketplaces", nextMarketplaces);
     void refreshPendingCloudPluginChanges();
@@ -1115,7 +1115,7 @@ export function createExtensionsStore(options: {
     const nextConfig = withWorkspaceCloudImports(config, nextCloudImports);
     const persisted = await writeWorkspaceJuggleWorkConfigRecord(nextConfig);
     if (!persisted) {
-      throw new Error("JuggleWork server unavailable. Connect to manage imported cloud plugins.");
+      throw new Error("北数Work server unavailable. Connect to manage imported cloud plugins.");
     }
     setStateField("importedCloudPlugins", nextPlugins);
     void refreshPendingCloudPluginChanges(nextPlugins);
@@ -1153,11 +1153,11 @@ export function createExtensionsStore(options: {
     }
 
     if (hasJuggleWorkTarget) {
-      throw new Error("JuggleWork server cannot remove skills for this workspace.");
+      throw new Error("北数Work server cannot remove skills for this workspace.");
     }
 
     if (isRemoteWorkspace) {
-      throw new Error("JuggleWork server unavailable. Connect to remove skills.");
+      throw new Error("北数Work server unavailable. Connect to remove skills.");
     }
 
     if (!isDesktopRuntime()) {
@@ -1371,7 +1371,7 @@ export function createExtensionsStore(options: {
       await juggleworkClient.addMcp(juggleworkWorkspaceId, { name, config });
       return;
     }
-    throw new Error("JuggleWork server unavailable. Connect to import MCP servers into this workspace.");
+    throw new Error("北数Work server unavailable. Connect to import MCP servers into this workspace.");
   };
 
   const deletePluginMcpConfig = async (name: string) => {
@@ -1387,7 +1387,7 @@ export function createExtensionsStore(options: {
       await juggleworkClient.removeMcp(juggleworkWorkspaceId, name);
       return;
     }
-    throw new Error("JuggleWork server unavailable. Connect to remove imported MCP servers from this workspace.");
+    throw new Error("北数Work server unavailable. Connect to remove imported MCP servers from this workspace.");
   };
 
   const pluginReloadReason = (objectType: string): ReloadReason => {
@@ -1418,7 +1418,7 @@ export function createExtensionsStore(options: {
       await juggleworkClient.writeWorkspaceFile(juggleworkWorkspaceId, { path, content, force: true });
       return;
     }
-    throw new Error("JuggleWork server unavailable. Connect to import plugin files into this workspace.");
+    throw new Error("北数Work server unavailable. Connect to import plugin files into this workspace.");
   };
 
   const deletePluginWorkspaceFiles = async (files: Array<{ path: string; recursive?: boolean }>) => {
@@ -1441,7 +1441,7 @@ export function createExtensionsStore(options: {
       }
       return;
     }
-    throw new Error("JuggleWork server unavailable. Connect to remove imported plugin files from this workspace.");
+    throw new Error("北数Work server unavailable. Connect to remove imported plugin files from this workspace.");
   };
 
   const applyCloudOrgPluginImport = async (
@@ -1709,7 +1709,7 @@ export function createExtensionsStore(options: {
       const settings = readDenSettings();
       const token = settings.authToken?.trim() ?? "";
       const orgId = settings.activeOrgId?.trim() ?? "";
-      if (!token || !orgId) throw new Error("Sign in to JuggleWork Cloud and choose an organization first.");
+      if (!token || !orgId) throw new Error("Sign in to 北数Work Cloud and choose an organization first.");
       const client = createDenClient({ baseUrl: settings.baseUrl, token });
       const resolved = await client.getOrgPluginResolved(orgId, plugin);
       if (operation.client && operation.workspaceId) {
@@ -1778,7 +1778,7 @@ export function createExtensionsStore(options: {
   async function previewClaudePlugin(url: string): Promise<JuggleWorkClaudePluginPreview> {
     const target = await resolveWorkspaceServerTarget();
     if (!target.juggleworkClient || !target.juggleworkWorkspaceId) {
-      throw new Error("JuggleWork server unavailable. Connect to install plugins from GitHub.");
+      throw new Error("北数Work server unavailable. Connect to install plugins from GitHub.");
     }
     const result = await target.juggleworkClient.previewClaudePlugin(target.juggleworkWorkspaceId, { url });
     return result.preview;
@@ -1794,7 +1794,7 @@ export function createExtensionsStore(options: {
         throw new Error(workspacePluginAccessMessage(operation.access.reason));
       }
       if (!operation.client || !operation.workspaceId) {
-        throw new Error("JuggleWork server unavailable. Connect to install plugins from GitHub.");
+        throw new Error("北数Work server unavailable. Connect to install plugins from GitHub.");
       }
       const result = await operation.client.installClaudePlugin(operation.workspaceId, { url });
       pluginId = result.item.pluginId;
@@ -2015,7 +2015,7 @@ export function createExtensionsStore(options: {
       mutateState((current) => ({
         ...current,
         skills: [],
-        skillsStatus: "JuggleWork server cannot read skills for this workspace.",
+        skillsStatus: "北数Work server cannot read skills for this workspace.",
       }));
       return;
     }
@@ -2066,7 +2066,7 @@ export function createExtensionsStore(options: {
       mutateState((current) => ({
         ...current,
         skills: [],
-        skillsStatus: "JuggleWork server unavailable. Connect to load skills.",
+        skillsStatus: "北数Work server unavailable. Connect to load skills.",
       }));
       return;
     }
@@ -2186,9 +2186,9 @@ export function createExtensionsStore(options: {
     if (scope === "project" && hasJuggleWorkTarget) {
       mutateState((current) => ({
         ...current,
-        pluginStatus: "JuggleWork server cannot read plugins for this workspace.",
+        pluginStatus: "北数Work server cannot read plugins for this workspace.",
         pluginList: [],
-        sidebarPluginStatus: "JuggleWork server cannot read plugins for this workspace.",
+        sidebarPluginStatus: "北数Work server cannot read plugins for this workspace.",
         sidebarPluginList: [],
       }));
       refreshPluginsInFlight = false;
@@ -2210,9 +2210,9 @@ export function createExtensionsStore(options: {
     if (!isLocalWorkspace && !canUseJuggleWorkServer) {
       mutateState((current) => ({
         ...current,
-        pluginStatus: "JuggleWork server unavailable. Connect to manage plugins.",
+        pluginStatus: "北数Work server unavailable. Connect to manage plugins.",
         pluginList: [],
-        sidebarPluginStatus: "Connect a JuggleWork server to load plugins.",
+        sidebarPluginStatus: "Connect a 北数Work server to load plugins.",
         sidebarPluginList: [],
       }));
       refreshPluginsInFlight = false;
@@ -2330,7 +2330,7 @@ export function createExtensionsStore(options: {
     }
 
     if (snapshot.pluginScope === "project" && hasJuggleWorkTarget) {
-      setStateField("pluginStatus", "JuggleWork server cannot write plugins for this workspace.");
+      setStateField("pluginStatus", "北数Work server cannot write plugins for this workspace.");
       return;
     }
 
@@ -2340,7 +2340,7 @@ export function createExtensionsStore(options: {
     }
 
     if (!isLocalWorkspace) {
-      setStateField("pluginStatus", "JuggleWork server unavailable. Connect to manage plugins.");
+      setStateField("pluginStatus", "北数Work server unavailable. Connect to manage plugins.");
       return;
     }
 
@@ -2420,7 +2420,7 @@ export function createExtensionsStore(options: {
     }
 
     if (snapshot.pluginScope === "project" && hasJuggleWorkTarget) {
-      setStateField("pluginStatus", "JuggleWork server cannot write plugins for this workspace.");
+      setStateField("pluginStatus", "北数Work server cannot write plugins for this workspace.");
       return;
     }
 
@@ -2430,7 +2430,7 @@ export function createExtensionsStore(options: {
     }
 
     if (!isLocalWorkspace) {
-      setStateField("pluginStatus", "JuggleWork server unavailable. Connect to manage plugins.");
+      setStateField("pluginStatus", "北数Work server unavailable. Connect to manage plugins.");
       return;
     }
 
@@ -2540,13 +2540,13 @@ export function createExtensionsStore(options: {
     }
 
     if (hasJuggleWorkTarget) {
-      const message = "JuggleWork server cannot write skills for this workspace.";
+      const message = "北数Work server cannot write skills for this workspace.";
       setStateField("skillsStatus", message);
       return { ok: false, message };
     }
 
     if (isRemoteWorkspace) {
-      const message = "JuggleWork server unavailable. Connect to install skills.";
+      const message = "北数Work server unavailable. Connect to install skills.";
       setStateField("skillsStatus", message);
       return { ok: false, message };
     }
@@ -2681,7 +2681,7 @@ export function createExtensionsStore(options: {
     }
 
     if (hasJuggleWorkTarget) {
-      setStateField("skillsStatus", "JuggleWork server cannot read skills for this workspace.");
+      setStateField("skillsStatus", "北数Work server cannot read skills for this workspace.");
       return null;
     }
 
@@ -2691,7 +2691,7 @@ export function createExtensionsStore(options: {
     }
 
     if (isRemoteWorkspace) {
-      setStateField("skillsStatus", "JuggleWork server unavailable. Connect to view skills.");
+      setStateField("skillsStatus", "北数Work server unavailable. Connect to view skills.");
       return null;
     }
     if (!isDesktopRuntime()) {
@@ -2749,7 +2749,7 @@ export function createExtensionsStore(options: {
     }
 
     if (hasJuggleWorkTarget) {
-      const message = "JuggleWork server cannot write skills for this workspace.";
+      const message = "北数Work server cannot write skills for this workspace.";
       setStateField("skillsStatus", message);
       throw new Error(message);
     }
@@ -2761,7 +2761,7 @@ export function createExtensionsStore(options: {
     }
 
     if (isRemoteWorkspace) {
-      const message = "JuggleWork server unavailable. Connect to edit skills.";
+      const message = "北数Work server unavailable. Connect to edit skills.";
       setStateField("skillsStatus", message);
       throw new Error(message);
     }

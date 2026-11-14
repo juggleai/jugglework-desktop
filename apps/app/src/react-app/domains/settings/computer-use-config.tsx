@@ -111,7 +111,7 @@ export function ComputerUseConfig({
   } = useMutation({
     mutationFn: async () => {
       if (!hasDesktopBridge()) {
-        throw new Error("Computer Use is Mac only and requires the JuggleWork desktop app on macOS.");
+        throw new Error("Computer Use is Mac only and requires the 北数Work desktop app on macOS.");
       }
 
       return parsePermissionResult(await desktopBridge.openComputerUsePermissionSetup());

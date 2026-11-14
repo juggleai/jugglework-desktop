@@ -862,7 +862,7 @@ export function McpView(props: McpViewProps) {
             description={detailSkill.description ?? "Installed skill"}
             kind="skill"
             connected={true}
-            connectedLabel={detailSkill.origin === "jugglework-connect" ? "Available through JuggleWork Connect" : undefined}
+            connectedLabel={detailSkill.origin === "jugglework-connect" ? "Available through 北数Work Connect" : undefined}
             hidden={hidden}
             path={detailSkill.origin === "jugglework-connect" ? undefined : detailSkill.path}
             trigger={detailSkill.trigger}
@@ -890,11 +890,11 @@ export function McpView(props: McpViewProps) {
               ? `Provided by ${detailConnectMcp.pluginName}${detailConnectMcp.marketplaceName ? ` · ${detailConnectMcp.marketplaceName}` : ""}.`
               : detailConnectMcp.marketplaceName
                 ? `Provided by ${detailConnectMcp.marketplaceName}.`
-                : "Available through JuggleWork Connect."
+                : "Available through 北数Work Connect."
           }
           kind="mcp"
           connected={(props.availableConnectMcpStatuses?.[detailConnectMcp.id ?? detailConnectMcp.name]?.status) === "connected"}
-          connectedLabel="Available through JuggleWork Connect"
+          connectedLabel="Available through 北数Work Connect"
           disconnectedLabel="Setup required"
           url={detailConnectMcp.config.type === "remote" ? detailConnectMcp.config.url : undefined}
           oauth={detailConnectMcp.config.type === "remote"}
@@ -1104,7 +1104,7 @@ function McpQuickConnectSection(props: {
                   ? `Provided by ${entry.pluginName}${entry.marketplaceName ? ` · ${entry.marketplaceName}` : ""}.`
                   : entry.marketplaceName
                     ? `Provided by ${entry.marketplaceName}.`
-                    : "Available through JuggleWork Connect."
+                    : "Available through 北数Work Connect."
               }
               kind="mcp"
               connected={status === "connected"}

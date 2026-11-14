@@ -4,14 +4,22 @@ import {
   Cloud,
   ChevronDown,
   ChevronUp,
+  FileText,
+  FolderOpen,
+  Globe,
+  Plug,
+  Sheet,
   Users,
   Share2,
+  Workflow,
+  type LucideIcon,
 } from "lucide-react";
 import { PaperGrainGradient } from "@jugglework/ui/react";
 
 import { t } from "../../../i18n";
 import { DEFAULT_DEN_BASE_URL } from "../../../app/lib/den";
 import { Button } from "@/components/ui/button";
+import { resolveExtensionIconSrc } from "../../design-system/extension-icon-src";
 import { TextInput } from "../../design-system/text-input";
 import { OrganizationServerAffordance } from "../settings/cloud/organization-server-affordance";
 import { SignInFallbackNotice } from "./signin-fallback-notice";
@@ -57,61 +65,54 @@ const softNoticeClass =
 const errorBannerClass =
   "rounded-xl border border-red-7/30 bg-red-1/40 px-3 py-2 text-xs text-red-11";
 
-/* ------------------------------------------------------------------ */
-/*  Brand icon via Simple Icons CDN                                    */
-/* ------------------------------------------------------------------ */
-
-function BrandIcon({ slug, size = 18 }: { slug: string; size?: number }) {
-  return (
-    <img
-      src={`https://cdn.simpleicons.org/${slug}`}
-      alt=""
-      width={size}
-      height={size}
-      loading="lazy"
-      style={{ display: "block" }}
-    />
-  );
-}
+/** 未配置组织 Logo 时使用随包交付的应用标识，避免首次启动页面没有任何品牌标识。 */
+const DEFAULT_SIGNIN_LOGO_SRC = resolveExtensionIconSrc("/jugglework-logo.png");
 
 /* ------------------------------------------------------------------ */
 /*  Right-side showcase: capabilities + team features                  */
 /* ------------------------------------------------------------------ */
 
-const capabilities = [
-  { slug: "googlesheets", title: "Edit spreadsheets", desc: "Create, clean, and transform CSV and Excel files." },
-  { slug: "semanticweb", title: "Control your browser", desc: "Automate the built-in browser for repetitive web tasks." },
-  { slug: "apple", title: "Organize files", desc: "Read, write, and manage files and folders." },
-  { slug: "zapier", title: "Automate tasks", desc: "Build reusable workflows with skills and commands." },
-  { slug: "medium", title: "Generate content", desc: "Draft documents, emails, and reports." },
-  { slug: "stripe", title: "Connect to APIs", desc: "Plug into external services and tools via MCP." },
+// TIPS: 图标使用本地 lucide 组件，不依赖外部 CDN，离线首次启动也能完整显示。
+const capabilities: Array<{ key: string; icon: LucideIcon }> = [
+  { key: "spreadsheets", icon: Sheet },
+  { key: "browser", icon: Globe },
+  { key: "files", icon: FolderOpen },
+  { key: "automation", icon: Workflow },
+  { key: "content", icon: FileText },
+  { key: "integrations", icon: Plug },
 ];
 
-function ShowcasePanel() {
+const teamFeatures: Array<{ key: string; icon: LucideIcon }> = [
+  { key: "shared_extensions", icon: Share2 },
+  { key: "team", icon: Users },
+];
+
+function ShowcasePanel({ appName }: { appName: string }) {
   return (
     <div className="flex flex-col gap-5">
       {/* Hero */}
-      <div>
+      <div className="space-y-1.5">
         <h2 className="text-[20px] font-semibold tracking-[-0.01em] text-dls-text">
-          Your computer,
-          <br />
-          but it works for you.
+          {t("den.showcase_title", { appName })}
         </h2>
+        <p className="text-[13px] leading-relaxed text-dls-secondary">
+          {t("den.showcase_subtitle")}
+        </p>
       </div>
 
       {/* Capabilities */}
       <div className="grid grid-cols-3 gap-2">
-        {capabilities.map((cap) => (
+        {capabilities.map(({ key, icon: Icon }) => (
           <div
-            key={cap.title}
+            key={key}
             className="flex flex-col gap-1.5 rounded-xl border border-dls-border bg-dls-surface p-3"
           >
-            <BrandIcon slug={cap.slug} size={18} />
+            <Icon size={18} className="text-dls-accent" strokeWidth={1.75} />
             <div className="text-[12px] font-medium leading-tight text-dls-text">
-              {cap.title}
+              {t(`den.showcase_${key}_title`)}
             </div>
             <div className="text-[11px] leading-snug text-dls-secondary">
-              {cap.desc}
+              {t(`den.showcase_${key}_desc`)}
             </div>
           </div>
         ))}
@@ -119,28 +120,22 @@ function ShowcasePanel() {
 
       {/* Team features */}
       <div className="grid grid-cols-2 gap-2">
-        <div className="flex items-start gap-2.5 rounded-xl border border-dls-border bg-dls-surface p-3">
-          <Share2 size={16} className="mt-0.5 shrink-0 text-dls-secondary" strokeWidth={1.5} />
-          <div>
-            <div className="text-[12px] font-medium text-dls-text">
-              Shared extensions
-            </div>
-            <div className="mt-0.5 text-[11px] leading-snug text-dls-secondary">
-              Share approved skills, MCPs, and plugins with your organization.
-            </div>
-          </div>
-        </div>
-        <div className="flex items-start gap-2.5 rounded-xl border border-dls-border bg-dls-surface p-3">
-          <Users size={16} className="mt-0.5 shrink-0 text-dls-secondary" strokeWidth={1.5} />
-          <div>
-            <div className="text-[12px] font-medium text-dls-text">
-              Provision your team
-            </div>
-            <div className="mt-0.5 text-[11px] leading-snug text-dls-secondary">
-              Manage workspaces, models, and permissions.
+        {teamFeatures.map(({ key, icon: Icon }) => (
+          <div
+            key={key}
+            className="flex items-start gap-2.5 rounded-xl border border-dls-border bg-dls-surface p-3"
+          >
+            <Icon size={16} className="mt-0.5 shrink-0 text-dls-secondary" strokeWidth={1.5} />
+            <div>
+              <div className="text-[12px] font-medium text-dls-text">
+                {t(`den.showcase_${key}_title`)}
+              </div>
+              <div className="mt-0.5 text-[11px] leading-snug text-dls-secondary">
+                {t(`den.showcase_${key}_desc`)}
+              </div>
             </div>
           </div>
-        </div>
+        ))}
       </div>
     </div>
   );
@@ -161,7 +156,7 @@ function ShowcasePanel() {
  */
 export function DenSignInSurface(props: DenSignInSurfaceProps) {
   const variant: DenSignInSurfaceVariant = props.variant ?? "panel";
-  const appName = props.appName?.trim() || "JuggleWork";
+  const appName = props.appName?.trim() || "北数Work";
 
   /* -- Panel content (reused by both variants) -- */
   const panelContent = (
@@ -323,13 +318,21 @@ export function DenSignInSurface(props: DenSignInSurfaceProps) {
             <div className="w-full max-w-md space-y-8">
               <div className="space-y-2">
                 {props.logoUrl ? (
-                  <img src={props.logoUrl} alt={`${appName} logo`} className="mb-6 max-h-16 max-w-64 object-contain object-left" />
-                ) : null}
+                  <img src={props.logoUrl} alt={t("den.signin_logo_alt", { appName })} className="mb-6 max-h-16 max-w-64 object-contain object-left" />
+                ) : (
+                  <img
+                    src={DEFAULT_SIGNIN_LOGO_SRC}
+                    alt={t("den.signin_logo_alt", { appName })}
+                    width={56}
+                    height={56}
+                    className="mb-6 size-14 rounded-2xl object-contain"
+                  />
+                )}
                 <h1 className="text-2xl font-semibold tracking-tight text-dls-text">
-                  Welcome to {appName}
+                  {t("den.signin_welcome_title", { appName })}
                 </h1>
                 <p className="text-sm text-dls-secondary">
-                  Sign in to get started with your workspace.
+                  {t("den.signin_welcome_subtitle")}
                 </p>
               </div>
 
@@ -342,7 +345,7 @@ export function DenSignInSurface(props: DenSignInSurfaceProps) {
                 onClick={() => props.onOpenBrowserAuth("sign-up")}
                 disabled={props.authBusy || props.sessionBusy}
               >
-                Sign in to {appName}
+                {t("den.signin_cta", { appName })}
                 <ArrowUpRight size={15} />
               </button>
 
@@ -485,7 +488,7 @@ export function DenSignInSurface(props: DenSignInSurfaceProps) {
 
               {/* Inner: card with capabilities */}
               <div className="relative z-10 m-3 rounded-2xl bg-dls-surface p-7">
-                <ShowcasePanel />
+                <ShowcasePanel appName={appName} />
               </div>
             </div>
           </div>

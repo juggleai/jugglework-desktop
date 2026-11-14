@@ -143,7 +143,7 @@ export function buildJuggleWorkContext(
       ? `${screen.panel} settings`
       : screen.kind === "review"
         ? screen.reviewId ? `Review ${screen.reviewId}` : "Code Review"
-        : "JuggleWork",
+        : "北数Work",
     provider,
     state: { kind: screen.kind, route: input.route },
   }];

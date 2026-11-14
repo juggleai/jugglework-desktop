@@ -22,7 +22,7 @@ function boundedToolOutput(tool: string, output: unknown) {
   if (tool !== "read" || typeof output !== "string" || output.length <= MAX_INLINE_READ_OUTPUT_CHARS) {
     return { output, truncated: false, originalCharacters: null };
   }
-  const marker = `\n\n[JuggleWork omitted ${output.length - MAX_INLINE_READ_OUTPUT_CHARS} characters from this historical read result to keep the session responsive.]\n\n`;
+  const marker = `\n\n[北数Work omitted ${output.length - MAX_INLINE_READ_OUTPUT_CHARS} characters from this historical read result to keep the session responsive.]\n\n`;
   const headChars = MAX_INLINE_READ_OUTPUT_CHARS - READ_OUTPUT_TAIL_CHARS;
   return {
     output: `${output.slice(0, headChars)}${marker}${output.slice(-READ_OUTPUT_TAIL_CHARS)}`,

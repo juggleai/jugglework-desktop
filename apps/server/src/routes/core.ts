@@ -526,7 +526,7 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
           400,
           error.code,
           error.code === "reserved_env_key"
-            ? "Environment variable name is reserved for JuggleWork internals"
+            ? "Environment variable name is reserved for 北数Work internals"
             : "Invalid environment variable name",
         );
       }

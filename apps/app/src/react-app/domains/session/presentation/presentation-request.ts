@@ -91,7 +91,7 @@ export function buildPresentationPrompt(value: unknown): string {
     ? `Use the attached structured file part named ${JSON.stringify(request.currentFile.name)} as source material.`
     : "Use this session's conversation as the source material; no current file was selected.";
   return [
-    "Create one editable PowerPoint presentation using JuggleWork's bundled presentation generator.",
+    "Create one editable PowerPoint presentation using 北数Work's bundled presentation generator.",
     source,
     "Do not install packages, call Office lifecycle tools, handcraft an unvalidated artifact, or use artifact.register_outputs.",
     "First turn the request into one compact JSON object with exactly: version=1; template=executive, editorial, or minimal; outputName as a safe .pptx filename; and slides as 1-30 objects containing title, optional subtitle, and optional bullets.",

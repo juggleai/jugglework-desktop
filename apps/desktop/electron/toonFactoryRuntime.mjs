@@ -52,7 +52,7 @@ export function createToonFactoryMediaRequests(execute, isDirectoryGranted, plat
       try {
         const canonical = await realpath(input.directory);
         if (directoryGrantKey(canonical, platform) !== directory) throw new Error("媒体目录必须是规范项目目录");
-        if (!isDirectoryGranted(canonical)) throw new Error("项目目录未经 JuggleWork 授权");
+        if (!isDirectoryGranted(canonical)) throw new Error("项目目录未经 北数Work 授权");
         combined.throwIfAborted();
         const { requestId: _requestId, ...request } = input;
         return await execute({ ...request, directory: canonical }, combined);
@@ -73,7 +73,7 @@ export function createToonFactoryMediaRequests(execute, isDirectoryGranted, plat
       if (used.has(id) && used.get(id).directory !== directory) throw new Error("媒体任务不属于此项目");
       if (used.get(id)?.error) throw used.get(id).error;
       if (!task && !used.has(id)) {
-        if (!isDirectoryGranted(input.directory)) throw new Error("项目目录未经 JuggleWork 授权");
+        if (!isDirectoryGranted(input.directory)) throw new Error("项目目录未经 北数Work 授权");
         remember(id, directory);
         cancelled.set(id, Date.now() + 30_000); // Bounded cancel-before-start tombstone.
       }
@@ -415,7 +415,7 @@ export function createToonFactoryRuntime({ app, getWindow, getAccess, moduleRoot
           if (!input || Object.keys(input).some(key => key !== "directory") || !(input.directory === null || typeof input.directory === "string" && input.directory.length <= 4096 && path.isAbsolute(input.directory))) throw new Error("无效的媒体项目目录");
           const directory = input.directory === null ? null : await realpath(input.directory);
           if (bridgeToken !== requestBridgeToken || workspaceId !== requestWorkspaceId || requestProjectRevision !== mediaProjectRevision) throw new Error("剪辑工作区授权已失效");
-          if (directory && !directoryGrants.has(directoryGrantKey(directory, platform))) throw new Error("项目目录未经 JuggleWork 授权");
+          if (directory && !directoryGrants.has(directoryGrantKey(directory, platform))) throw new Error("项目目录未经 北数Work 授权");
           mediaProjectDirectory = null; // Block starts before waiting for the old project's cleanup.
           const revision = ++mediaProjectRevision;
           await requestMediaRequests.cancelAll();
@@ -430,7 +430,7 @@ export function createToonFactoryRuntime({ app, getWindow, getAccess, moduleRoot
         }
         res.setHeader("Content-Type", "application/json"); res.end(JSON.stringify(result)); return;
       }
-      const access = await getAccess(); if (!access) throw new Error("JuggleWork 模型服务尚未就绪");
+      const access = await getAccess(); if (!access) throw new Error("北数Work 模型服务尚未就绪");
       const prefix = `${access.baseUrl}/workspace/${encodeURIComponent(requestWorkspaceId)}/toonflow`;
       let endpoint, body;
       if (req.method === "GET" && url.pathname === "/catalog") endpoint = `${prefix}/models`;
@@ -718,7 +718,7 @@ export function createToonFactoryRuntime({ app, getWindow, getAccess, moduleRoot
       enteredWorkspaceIds.clear();
     },
     async open(id) {
-      if (typeof id !== "string" || !id.trim() || id.length > 256) throw new Error("请先选择 JuggleWork 工作区以使用已配置的模型");
+      if (typeof id !== "string" || !id.trim() || id.length > 256) throw new Error("请先选择 北数Work 工作区以使用已配置的模型");
       hidden = false;
       cancelIdleClose();
       return enqueue(async () => {
@@ -749,7 +749,7 @@ export function createToonFactoryRuntime({ app, getWindow, getAccess, moduleRoot
       });
     },
     async restart(id) {
-      if (typeof id !== "string" || !id.trim() || id.length > 256) throw new Error("请先选择 JuggleWork 工作区以使用已配置的模型");
+      if (typeof id !== "string" || !id.trim() || id.length > 256) throw new Error("请先选择 北数Work 工作区以使用已配置的模型");
       hidden = false;
       cancelIdleClose();
       return enqueue(async () => {

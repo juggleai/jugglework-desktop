@@ -559,7 +559,7 @@ describe("JuggleWork Cloud MCP reconciler", () => {
     })).toMatchObject({
       statusLabel: "Degraded",
       stageLabel: "Current model can’t use Cloud tools",
-      recommendedAction: "Choose a model that can use JuggleWork Cloud tools.",
+      recommendedAction: "Choose a model that can use 北数Work Cloud tools.",
     });
 
     const summary = cloudMcpDisplaySummary({

@@ -1192,7 +1192,7 @@ export async function createHostMarketplacePluginRegistry(options: HostMarketpla
 
   function assertHostWritable(): void {
     if (options.managed === false || options.readOnly === true) {
-      throw new HostMarketplacePluginError(409, "host_marketplace_mutation_unavailable", "This execution host is not a writable JuggleWork-managed runtime.");
+      throw new HostMarketplacePluginError(409, "host_marketplace_mutation_unavailable", "This execution host is not a writable 北数Work-managed runtime.");
     }
   }
 

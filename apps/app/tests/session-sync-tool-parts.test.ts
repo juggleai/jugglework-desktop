@@ -209,7 +209,7 @@ describe("tool part mapper", () => {
     if (mapped.state !== "output-available") throw new Error("expected completed tool output");
     expect(typeof mapped.output).toBe("string");
     expect((mapped.output as string).length).toBeLessThan(140 * 1024);
-    expect(mapped.output).toContain("JuggleWork omitted");
+    expect(mapped.output).toContain("北数Work omitted");
     expect(mapped.output).toEndWith("TAIL");
     expect(mapped.callProviderMetadata?.opencode).toMatchObject({
       toolOutputTruncated: true,

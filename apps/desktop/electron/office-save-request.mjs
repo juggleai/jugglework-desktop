@@ -43,13 +43,13 @@ export async function handleOfficeSaveRequest(request, host) {
         })
       : json({ code: -1, message }, 409);
   if (isCloseApi || (isMcp && tool !== "save_file"))
-    return fail("请使用 JuggleWork 的文件打开和关闭操作");
+    return fail("请使用 北数Work 的文件打开和关闭操作");
   const args = isMcp ? (body.params?.arguments ?? {}) : body;
   if (
     (args.file_path && args.file_path !== host.filePath) ||
     (args.output_format && args.output_format !== "native")
   )
-    return fail("请使用 JuggleWork 的另存为操作导出副本");
+    return fail("请使用 北数Work 的另存为操作导出副本");
   try {
     const document = await host.save();
     const result = {

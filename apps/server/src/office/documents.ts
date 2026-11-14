@@ -1029,7 +1029,7 @@ export class OfficeDocuments {
       throw new ApiError(
         409,
         "office_tool_host_owned",
-        "请通过 JuggleWork Office 动作管理文档生命周期和导出",
+        "请通过 北数Work Office 动作管理文档生命周期和导出",
       );
     const session = await this.documentForTurn(workspaceId, sessionId, turnId);
     if (!session || session.state !== "ready" || !session.engineFileId)

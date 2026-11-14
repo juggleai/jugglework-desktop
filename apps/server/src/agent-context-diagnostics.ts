@@ -455,20 +455,20 @@ function cloudCatalogCheck(probe: CloudCatalogProbe): AgentContextDiagnosticChec
       evidenceKind: "observed",
       code: exact ? "cloud_catalog_exact_match" : "cloud_catalog_mismatch",
       message: exact
-        ? "The canonical JuggleWork Cloud catalog exposes exactly the two required capability tools."
-        : "The JuggleWork Cloud catalog does not match the required two-tool contract.",
+        ? "The canonical 北数Work Cloud catalog exposes exactly the two required capability tools."
+        : "The 北数Work Cloud catalog does not match the required two-tool contract.",
       owner: exact ? "jugglework-server" : "jugglework-support",
       action: exact
         ? "No action is required."
-        : "Review the JuggleWork Cloud deployment and restore the canonical capability catalog.",
+        : "Review the 北数Work Cloud deployment and restore the canonical capability catalog.",
     });
   }
 
   let status: AgentContextDiagnosticCheck["status"] = "failed";
   let evidenceKind: AgentContextDiagnosticCheck["evidenceKind"] = probe.performed ? "observed" : "derived";
-  let message = "The selected workspace does not have a usable managed JuggleWork Cloud MCP configuration.";
+  let message = "The selected workspace does not have a usable managed 北数Work Cloud MCP configuration.";
   let owner: AgentContextDiagnosticCheck["owner"] = "jugglework-server";
-  let action = "Reconnect JuggleWork Cloud from Settings > Connect and rerun diagnostics.";
+  let action = "Reconnect 北数Work Cloud from Settings > Connect and rerun diagnostics.";
 
   switch (probe.code) {
     case "runtime_config_unavailable":
@@ -481,71 +481,71 @@ function cloudCatalogCheck(probe: CloudCatalogProbe): AgentContextDiagnosticChec
       status = "warning";
       evidenceKind = "unavailable";
       message = "A local runtime credential was not inspected or used for this remote workspace shell.";
-      action = "Run diagnostics on the JuggleWork server that owns the workspace.";
+      action = "Run diagnostics on the 北数Work server that owns the workspace.";
       break;
     case "cloud_mcp_missing":
       owner = "jugglework-client";
-      message = "The selected client workspace has no synced JuggleWork Cloud MCP entry.";
+      message = "The selected client workspace has no synced 北数Work Cloud MCP entry.";
       break;
     case "cloud_mcp_disabled":
       owner = "jugglework-client";
-      message = "The selected workspace JuggleWork Cloud MCP entry is disabled.";
-      action = "Enable or reconnect JuggleWork Cloud from Settings > Connect, then rerun diagnostics.";
+      message = "The selected workspace 北数Work Cloud MCP entry is disabled.";
+      action = "Enable or reconnect 北数Work Cloud from Settings > Connect, then rerun diagnostics.";
       break;
     case "cloud_tool_policy_unavailable":
       status = "warning";
       evidenceKind = "unavailable";
       owner = "opencode-engine";
-      message = "Required tool visibility could not be observed from the selected engine's effective JuggleWork agent, so the cloud catalog request was not started.";
+      message = "Required tool visibility could not be observed from the selected engine's effective 北数Work agent, so the cloud catalog request was not started.";
       action = "Check the selected workspace engine health and rerun diagnostics.";
       break;
     case "cloud_tool_policy_denied":
       owner = "member";
-      message = "Policy evidence denies at least one required JuggleWork Cloud tool, so the cloud catalog request was not started.";
-      action = "Allow the required jugglework-cloud capability tool IDs in the workspace or JuggleWork agent policy, then rerun diagnostics.";
+      message = "Policy evidence denies at least one required 北数Work Cloud tool, so the cloud catalog request was not started.";
+      action = "Allow the required jugglework-cloud capability tool IDs in the workspace or 北数Work agent policy, then rerun diagnostics.";
       break;
     case "cloud_mcp_not_remote":
-      message = "The managed JuggleWork Cloud entry is not configured as a remote MCP.";
-      action = "Reconnect JuggleWork Cloud to restore its managed remote configuration.";
+      message = "The managed 北数Work Cloud entry is not configured as a remote MCP.";
+      action = "Reconnect 北数Work Cloud to restore its managed remote configuration.";
       break;
     case "invalid_endpoint":
-      message = "The managed JuggleWork Cloud endpoint is not credential-safe or does not end at the required /mcp/agent route.";
-      action = "Reconnect JuggleWork Cloud to restore its managed endpoint, then rerun diagnostics.";
+      message = "The managed 北数Work Cloud endpoint is not credential-safe or does not end at the required /mcp/agent route.";
+      action = "Reconnect 北数Work Cloud to restore its managed endpoint, then rerun diagnostics.";
       break;
     case "untrusted_endpoint":
-      message = "The managed JuggleWork Cloud endpoint is outside the server's diagnostics trust policy.";
-      action = "Use the hosted JuggleWork Cloud endpoint or have the server administrator explicitly trust the development origin.";
+      message = "The managed 北数Work Cloud endpoint is outside the server's diagnostics trust policy.";
+      action = "Use the hosted 北数Work Cloud endpoint or have the server administrator explicitly trust the development origin.";
       break;
     case "credential_missing":
     case "duplicate_authorization":
       owner = "jugglework-client";
-      message = "The managed JuggleWork Cloud entry does not contain one unambiguous authentication value.";
-      action = "Reconnect JuggleWork Cloud so the client can replace the managed credential, then rerun diagnostics.";
+      message = "The managed 北数Work Cloud entry does not contain one unambiguous authentication value.";
+      action = "Reconnect 北数Work Cloud so the client can replace the managed credential, then rerun diagnostics.";
       break;
     case "registration_failed":
       owner = "opencode-engine";
-      message = "The selected engine reported that this exact JuggleWork Cloud registration failed, so no new egress was started.";
+      message = "The selected engine reported that this exact 北数Work Cloud registration failed, so no new egress was started.";
       action = "Repair the selected workspace runtime registration, then rerun diagnostics.";
       break;
     case "registration_disabled":
       owner = "opencode-engine";
-      message = "The selected engine reported this enabled JuggleWork Cloud registration as disabled, so no new egress was started.";
-      action = "Enable the managed JuggleWork Cloud MCP in the selected engine, then rerun diagnostics.";
+      message = "The selected engine reported this enabled 北数Work Cloud registration as disabled, so no new egress was started.";
+      action = "Enable the managed 北数Work Cloud MCP in the selected engine, then rerun diagnostics.";
       break;
     case "registration_needs_auth":
       owner = "member";
-      message = "The selected engine reported that JuggleWork Cloud needs authentication, so no new egress was started.";
-      action = "Reconnect JuggleWork Cloud from Settings > Connect, then rerun diagnostics.";
+      message = "The selected engine reported that 北数Work Cloud needs authentication, so no new egress was started.";
+      action = "Reconnect 北数Work Cloud from Settings > Connect, then rerun diagnostics.";
       break;
     case "registration_needs_client_registration":
       owner = "jugglework-server";
-      message = "The selected engine reported that JuggleWork Cloud needs MCP client registration, so no new egress was started.";
+      message = "The selected engine reported that 北数Work Cloud needs MCP client registration, so no new egress was started.";
       action = "Repair the selected engine MCP client-registration flow, then rerun diagnostics.";
       break;
     case "registration_not_recorded":
       status = "warning";
       owner = "opencode-engine";
-      message = "This exact runtime-managed JuggleWork Cloud configuration has no current engine registration record, so no new egress was started.";
+      message = "This exact runtime-managed 北数Work Cloud configuration has no current engine registration record, so no new egress was started.";
       action = "Start the selected workspace runtime so its managed MCP registration connects, then rerun diagnostics.";
       break;
     case "timeout":
@@ -553,45 +553,45 @@ function cloudCatalogCheck(probe: CloudCatalogProbe): AgentContextDiagnosticChec
     case "redirect_rejected":
     case "http_error":
       owner = "network-admin";
-      message = "The one-shot JuggleWork Cloud catalog request could not be completed through the configured network path.";
-      action = "Verify server egress, DNS, TLS, proxy policy, and the configured JuggleWork Cloud service, then rerun diagnostics.";
+      message = "The one-shot 北数Work Cloud catalog request could not be completed through the configured network path.";
+      action = "Verify server egress, DNS, TLS, proxy policy, and the configured 北数Work Cloud service, then rerun diagnostics.";
       break;
     case "dns_error":
       owner = "network-admin";
-      message = "The one-shot JuggleWork Cloud catalog request could not resolve the configured service hostname.";
-      action = "Verify DNS resolution from the JuggleWork server, then rerun diagnostics.";
+      message = "The one-shot 北数Work Cloud catalog request could not resolve the configured service hostname.";
+      action = "Verify DNS resolution from the 北数Work server, then rerun diagnostics.";
       break;
     case "connection_refused":
       owner = "network-admin";
-      message = "The configured JuggleWork Cloud service refused the one-shot catalog connection.";
+      message = "The configured 北数Work Cloud service refused the one-shot catalog connection.";
       action = "Verify the service listener, firewall, and egress route, then rerun diagnostics.";
       break;
     case "connection_reset":
       owner = "network-admin";
-      message = "The one-shot JuggleWork Cloud catalog connection was reset before a response completed.";
+      message = "The one-shot 北数Work Cloud catalog connection was reset before a response completed.";
       action = "Verify the service, proxy, and network path, then rerun diagnostics.";
       break;
     case "tls_error":
       owner = "network-admin";
-      message = "The one-shot JuggleWork Cloud catalog request failed TLS certificate validation or negotiation.";
+      message = "The one-shot 北数Work Cloud catalog request failed TLS certificate validation or negotiation.";
       action = "Verify the server trust store, enterprise certificates, TLS inspection, and service certificate, then rerun diagnostics.";
       break;
     case "proxy_error":
       owner = "network-admin";
-      message = "The configured proxy could not complete the one-shot JuggleWork Cloud catalog request.";
+      message = "The configured proxy could not complete the one-shot 北数Work Cloud catalog request.";
       action = "Verify proxy reachability, authentication, and bypass policy, then rerun diagnostics.";
       break;
     case "unauthorized":
     case "forbidden":
       owner = "jugglework-client";
-      message = "JuggleWork Cloud rejected the configured credential during the one-shot catalog request.";
-      action = "Reconnect JuggleWork Cloud so the client can replace the managed credential, then rerun diagnostics.";
+      message = "北数Work Cloud rejected the configured credential during the one-shot catalog request.";
+      action = "Reconnect 北数Work Cloud so the client can replace the managed credential, then rerun diagnostics.";
       break;
     case "rate_limited":
       status = "warning";
       owner = "jugglework-support";
-      message = "JuggleWork Cloud rate-limited the one-shot catalog request.";
-      action = "Wait before rerunning diagnostics; contact JuggleWork support if rate limiting persists.";
+      message = "北数Work Cloud rate-limited the one-shot catalog request.";
+      action = "Wait before rerunning diagnostics; contact 北数Work support if rate limiting persists.";
       break;
     case "probe_busy":
       status = "warning";
@@ -607,8 +607,8 @@ function cloudCatalogCheck(probe: CloudCatalogProbe): AgentContextDiagnosticChec
     case "pagination_unsupported":
     case "invalid_catalog":
       owner = "jugglework-support";
-      message = "JuggleWork Cloud returned a response that does not satisfy the bounded tools/list protocol contract.";
-      action = "Review the JuggleWork Cloud deployment and restore the canonical two-tool catalog response.";
+      message = "北数Work Cloud returned a response that does not satisfy the bounded tools/list protocol contract.";
+      action = "Review the 北数Work Cloud deployment and restore the canonical two-tool catalog response.";
       break;
   }
   return diagnosticCheck({
@@ -643,7 +643,7 @@ function organizationCheck(request: AgentContextDiagnosticsRequest): AgentContex
       evidenceKind: "client-observed",
       code: request.organizationConnectionsProbe.code ?? "organization_connections_skipped",
       message: remotePrivacy
-        ? "Local Den organization topology was intentionally omitted from the remote JuggleWork diagnostics request."
+        ? "Local Den organization topology was intentionally omitted from the remote 北数Work diagnostics request."
         : "Organization connection readiness was not observed for this run.",
       owner: remotePrivacy ? "jugglework-client" : "member",
       action: remotePrivacy
@@ -800,12 +800,12 @@ function engineAgentCheck(
     evidenceKind: "observed",
     code: agent ? "effective_jugglework_agent_observed" : "effective_jugglework_agent_missing",
     message: agent
-      ? "The selected engine resolved the JuggleWork agent."
-      : "The selected engine did not resolve a JuggleWork agent.",
+      ? "The selected engine resolved the 北数Work agent."
+      : "The selected engine did not resolve a 北数Work agent.",
     owner: agent ? "opencode-engine" : "jugglework-server",
     action: agent
       ? "No action is required."
-      : "Restore the JuggleWork runtime agent injection and restart the selected workspace engine.",
+      : "Restore the 北数Work runtime agent injection and restart the selected workspace engine.",
     details: {
       engineApiReadPerformed: true,
       effectiveAgentCount: snapshot.agents.length,
@@ -859,9 +859,9 @@ function runtimeHealthCheck(
     action: status === "passed"
       ? "No action is required."
       : corrupt
-        ? "Repair the JuggleWork runtime state before relying on injected configuration."
+        ? "Repair the 北数Work runtime state before relying on injected configuration."
         : remote
-          ? "Run diagnostics on the JuggleWork server that owns the workspace."
+          ? "Run diagnostics on the 北数Work server that owns the workspace."
           : "Start or configure the selected workspace runtime, then rerun diagnostics.",
     details: {
       workspaceType: workspace.workspaceType,
@@ -1179,13 +1179,13 @@ export async function runAgentContextDiagnostics(input: {
       message: !connectSnapshotAvailable
         ? "The passive Connect steering state could not be inspected."
         : crossWorkspaceSteeringDrift
-          ? "Global Connect steering sees JuggleWork Cloud, but the selected workspace does not contain that managed MCP."
+          ? "Global Connect steering sees 北数Work Cloud, but the selected workspace does not contain that managed MCP."
           : "The expected Connect steering branch is internally consistent for the selected workspace.",
       owner: !connectSnapshotAvailable || crossWorkspaceSteeringDrift ? "jugglework-server" : "jugglework-client",
       action: !connectSnapshotAvailable
-        ? "Verify the JuggleWork server runtime state and rerun diagnostics."
+        ? "Verify the 北数Work server runtime state and rerun diagnostics."
         : crossWorkspaceSteeringDrift
-          ? "Reconnect or sync JuggleWork Cloud for the selected workspace."
+          ? "Reconnect or sync 北数Work Cloud for the selected workspace."
           : "No action is required.",
       details: {
         expectedBranch: branch,
@@ -1219,22 +1219,22 @@ export async function runAgentContextDiagnostics(input: {
           : "runtime_agent_intent_only",
       message: effectiveEngine
         ? !effectiveJuggleWorkAgent
-          ? "The effective engine configuration does not contain the JuggleWork agent."
+          ? "The effective engine configuration does not contain the 北数Work agent."
           : effectiveEngine.defaultAgent !== "jugglework"
-            ? "The effective engine default does not select the JuggleWork agent."
+            ? "The effective engine default does not select the 北数Work agent."
             : effectiveJuggleWorkAgent.hidden
-              ? "The effective JuggleWork agent is hidden and cannot be used as the default agent."
+              ? "The effective 北数Work agent is hidden and cannot be used as the default agent."
               : !effectiveAgentModeUsable
-                ? "The effective JuggleWork agent is subagent-only and cannot be used as the default agent."
-            : "The effective engine default selects the resolved JuggleWork agent."
+                ? "The effective 北数Work agent is subagent-only and cannot be used as the default agent."
+            : "The effective engine default selects the resolved 北数Work agent."
         : projectOverrideDetected
-          ? "The configured JuggleWork agent intent has project override layers and could not be confirmed live."
-          : "Only the configured JuggleWork agent intent was available; effective resolution was not observed.",
+          ? "The configured 北数Work agent intent has project override layers and could not be confirmed live."
+          : "Only the configured 北数Work agent intent was available; effective resolution was not observed.",
       owner: effectiveEngine ? "opencode-engine" : projectOverrideDetected ? "member" : "opencode-engine",
       action: effectiveEngine && effectiveAgentUsable
         ? "No action is required."
         : effectiveEngine
-          ? "Restore the JuggleWork agent and default-agent injection, then restart the selected workspace engine."
+          ? "Restore the 北数Work agent and default-agent injection, then restart the selected workspace engine."
           : "Check the selected workspace engine health and rerun diagnostics.",
       details: {
         configuredAgentPresent: Boolean(expectedAgent),
@@ -1261,19 +1261,19 @@ export async function runAgentContextDiagnostics(input: {
           : effectiveEngine ? "effective_prompt_digest_mismatch" : "configured_prompt_digest_mismatch",
       message: promptMatchesCanonicalIntent
         ? effectiveEngine
-          ? "The effective JuggleWork base prompt exactly matches the canonical configured injection and contains every required marker."
-          : "The configured JuggleWork base prompt intent matches its canonical generated injection and contains every required marker."
+          ? "The effective 北数Work base prompt exactly matches the canonical configured injection and contains every required marker."
+          : "The configured 北数Work base prompt intent matches its canonical generated injection and contains every required marker."
         : !promptMarkersPresent
           ? effectiveEngine
-            ? "The effective JuggleWork base prompt is missing one or more required markers."
-            : "The configured JuggleWork base prompt intent is missing one or more required markers."
+            ? "The effective 北数Work base prompt is missing one or more required markers."
+            : "The configured 北数Work base prompt intent is missing one or more required markers."
           : effectiveEngine
-            ? "The effective JuggleWork base prompt contains the markers but does not match the canonical configured injection."
-            : "The configured JuggleWork base prompt markers are present, but its digest does not match the canonical generated injection.",
+            ? "The effective 北数Work base prompt contains the markers but does not match the canonical configured injection."
+            : "The configured 北数Work base prompt markers are present, but its digest does not match the canonical generated injection.",
       owner: effectiveEngine ? "opencode-engine" : "jugglework-server",
       action: promptMatchesCanonicalIntent
         ? "No action is required."
-        : "Restore the canonical JuggleWork runtime agent definition.",
+        : "Restore the canonical 北数Work runtime agent definition.",
       details: {
         ...prompt.markers,
         promptLength: prompt.length,
@@ -1300,18 +1300,18 @@ export async function runAgentContextDiagnostics(input: {
           : "required_connect_tool_ids_not_denied_by_effective_policy",
       message: cloudToolPolicyStatus === "denied"
         ? !effectiveEngine && staticallyDeniedCloudAgentToolIds.size > 0
-          ? "A passively inspected static OpenCode policy denies one or more required JuggleWork Cloud capability tools."
-          : "The effective OpenCode agent policy hides one or more required JuggleWork Cloud capability tools."
+          ? "A passively inspected static OpenCode policy denies one or more required 北数Work Cloud capability tools."
+          : "The effective OpenCode agent policy hides one or more required 北数Work Cloud capability tools."
         : cloudToolPolicyStatus === "unavailable"
-          ? "Required JuggleWork Cloud tool visibility could not be verified from the effective selected-engine agent."
-          : "The effective OpenCode agent policy does not deny either required JuggleWork Cloud candidate tool ID; the live engine tool registry was not read.",
+          ? "Required 北数Work Cloud tool visibility could not be verified from the effective selected-engine agent."
+          : "The effective OpenCode agent policy does not deny either required 北数Work Cloud candidate tool ID; the live engine tool registry was not read.",
       owner: cloudToolPolicyStatus === "available"
         ? "jugglework-server"
         : cloudToolPolicyStatus === "unavailable"
           ? "opencode-engine"
           : "member",
       action: cloudToolPolicyStatus === "denied"
-        ? "Allow the denied jugglework-cloud capability tool IDs in top-level or JuggleWork agent permission policy, then rerun diagnostics."
+        ? "Allow the denied jugglework-cloud capability tool IDs in top-level or 北数Work agent permission policy, then rerun diagnostics."
         : cloudToolPolicyStatus === "unavailable"
           ? "Check the selected workspace engine health and rerun diagnostics."
           : "No policy change is required; confirm catalog and registration evidence because this policy check alone does not prove live tool presence.",
@@ -1344,7 +1344,7 @@ export async function runAgentContextDiagnostics(input: {
       owner: effectiveEngine ? "opencode-engine" : "jugglework-server",
       action: canonicalPluginSpecMatched
         ? "No action is required."
-        : "Restore the canonical JuggleWork runtime plugin bundle.",
+        : "Restore the canonical 北数Work runtime plugin bundle.",
       details: {
         configuredPluginLabels: pluginLabels,
         canonicalPluginSpecMatched,
@@ -1379,7 +1379,7 @@ export async function runAgentContextDiagnostics(input: {
       message: effectiveEngine
         ? inventoryTotal > 200
           ? "The combined engine-configuration and runtime-managed MCP evidence exceeded the report limit and was truncated."
-          : "The selected engine's merged MCP configuration and JuggleWork-managed dynamic injection intent were inventoried as separate evidence sources."
+          : "The selected engine's merged MCP configuration and 北数Work-managed dynamic injection intent were inventoried as separate evidence sources."
         : layerHealthProblem
         ? "One or more static MCP configuration layers are invalid or unreadable."
         : inventoryTotal > 200
@@ -1394,7 +1394,7 @@ export async function runAgentContextDiagnostics(input: {
         : layerHealthProblem ? "member" : inventory.collisions.length > 0 ? "member" : "jugglework-server",
       action: effectiveEngine
         ? inventoryTotal > 200
-          ? "Reduce the configured MCP count or inspect the engine and JuggleWork runtime sources directly."
+          ? "Reduce the configured MCP count or inspect the engine and 北数Work runtime sources directly."
           : "No action is required; review registration evidence for runtime-managed dynamic MCP connection state."
         : layerHealthProblem
         ? "Repair the invalid or unreadable OpenCode configuration layer, then rerun diagnostics."
@@ -1460,7 +1460,7 @@ export async function runAgentContextDiagnostics(input: {
         : missingRegistrationCount > 0
           ? "One or more enabled managed MCPs do not have a current engine registration record."
           : remoteMcps.length > 0
-            ? "Every enabled JuggleWork-managed MCP has a current connected registration result; configured-disabled entries are not treated as injected tools."
+            ? "Every enabled 北数Work-managed MCP has a current connected registration result; configured-disabled entries are not treated as injected tools."
             : "No server-managed MCP registration was available to inspect.",
       owner: failedRegistrationCount > 0 || missingRegistrationCount > 0 ? "opencode-engine" : "jugglework-server",
       action: failedRegistrationCount > 0 || missingRegistrationCount > 0
@@ -1493,7 +1493,7 @@ export async function runAgentContextDiagnostics(input: {
       code: "live_mcp_status_intentionally_not_queried",
       message: "Live MCP status was not queried because that endpoint can connect every enabled MCP.",
       owner: "opencode-engine",
-      action: "Review the bounded JuggleWork Cloud catalog probe and exact managed registration response evidence instead.",
+      action: "Review the bounded 北数Work Cloud catalog probe and exact managed registration response evidence instead.",
       details: {
         effectiveMcpConfigurationObserved: Boolean(effectiveEngine),
         mcpStatusApiReadPerformed: false,

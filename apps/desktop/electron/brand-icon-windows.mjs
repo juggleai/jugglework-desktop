@@ -67,16 +67,16 @@ export function windowsBrandAppUserModelId(baseAppId, sourceUrl) {
 }
 
 export function windowsBrandShortcutFileName(appName) {
-  const safeName = String(appName ?? "JuggleWork")
+  const safeName = String(appName ?? "北数Work")
     .replace(/[<>:"/\\|?*]/g, "-")
-    .trim() || "JuggleWork";
+    .trim() || "北数Work";
   return `${safeName}.lnk`;
 }
 
 export function windowsInstalledShortcutFileName(appName) {
-  const safeName = String(appName ?? "JuggleWork")
+  const safeName = String(appName ?? "北数Work")
     .replace(/[<>:"/\\|?*]/g, "-")
-    .trim() || "JuggleWork";
+    .trim() || "北数Work";
   return `${safeName}.lnk`;
 }
 

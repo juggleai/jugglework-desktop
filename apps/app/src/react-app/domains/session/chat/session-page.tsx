@@ -761,7 +761,7 @@ export function SessionPage(props: SessionPageProps) {
   const openBrowserUrlControlAction = useMemo<JuggleWorkControlAction>(() => ({
     id: "browser.open_url",
     label: "Open URL in built-in browser",
-    description: "Create or select a JuggleWork built-in browser tab, navigate it to a URL, and return the CDP handle for browser automation.",
+    description: "Create or select a 北数Work built-in browser tab, navigate it to a URL, and return the CDP handle for browser automation.",
     sideEffect: "navigation",
     requiresArgs: true,
     args: [
@@ -1113,7 +1113,7 @@ export function SessionPage(props: SessionPageProps) {
       name: "sessionId",
       type: "string",
       required: true,
-      description: "Session id from the JuggleWork context resources or conversation tabs.",
+      description: "Session id from the 北数Work context resources or conversation tabs.",
     }],
     execute: (args) => {
       if (!args || typeof args !== "object" || !("sessionId" in args) || typeof args.sessionId !== "string") {
@@ -1308,7 +1308,7 @@ export function SessionPage(props: SessionPageProps) {
             </span>
             <span className="flex items-center gap-2 whitespace-nowrap">
               <span className={cn("size-2 rounded-full", readinessDotClass(connectTone))} />
-              <span>JuggleWork Connect: {connectStatusLabel}</span>
+              <span>北数Work Connect: {connectStatusLabel}</span>
             </span>
           </TooltipContent>
         </Tooltip>

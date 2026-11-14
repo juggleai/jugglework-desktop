@@ -21,7 +21,7 @@ describe("session read model output bounds", () => {
     const result = buildSessionMessages(input as never);
     const output = (result[0]!.parts[0] as any).state.output as string;
     expect(output.length).toBeLessThan(140 * 1024);
-    expect(output).toContain("JuggleWork omitted");
+    expect(output).toContain("北数Work omitted");
     expect(output).toEndWith("TAIL");
     expect((input[0]!.parts[0]!.state.output)).toBe(original);
   });

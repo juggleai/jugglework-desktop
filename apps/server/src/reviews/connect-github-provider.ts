@@ -319,15 +319,15 @@ export class ConnectGithubReviewProvider implements ReviewReadProvider {
       ? await this.options.resolveCloudConfig(input.workspace.id)
       : (() => inspectRuntimeOpencodeConfigState(this.options.config, input.workspace.id, { signal: input.signal })
         .then((inspection) => inspection.status === "available" ? runtimeMcpMap(inspection.config)[JUGGLEWORK_CLOUD_MCP_NAME] ?? null : null))());
-    if (!config) throw new ApiError(503, "github_provider_unavailable", "JuggleWork Connect is unavailable for this workspace.", { retryable: true });
+    if (!config) throw new ApiError(503, "github_provider_unavailable", "北数Work Connect is unavailable for this workspace.", { retryable: true });
     try {
       const session = await openCloudMcpSession(config, this.fetcher(), "jugglework-review-readonly", { signal: input.signal, timeoutMs: 12_000, maxBytes: 1_048_576 });
-      if (!session) throw new ApiError(503, "github_provider_unavailable", "JuggleWork Connect is unavailable.", { retryable: true });
+      if (!session) throw new ApiError(503, "github_provider_unavailable", "北数Work Connect is unavailable.", { retryable: true });
       return session;
     } catch (error) {
       if (error instanceof ApiError) throw error;
       if (input.signal?.aborted) throw error;
-      throw new ApiError(503, "github_provider_unavailable", "JuggleWork Connect is unavailable.", { retryable: true });
+      throw new ApiError(503, "github_provider_unavailable", "北数Work Connect is unavailable.", { retryable: true });
     }
   }
 

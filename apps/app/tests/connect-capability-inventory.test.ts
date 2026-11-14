@@ -460,7 +460,7 @@ describe("assigned JuggleWork Connect capability inventory", () => {
     });
     expect(inventory.mcpStatuses[byName["远端检索"]?.id ?? ""]).toEqual({
       status: "failed",
-      error: "This JuggleWork Connect capability is not ready.",
+      error: "This 北数Work Connect capability is not ready.",
     });
   });
 

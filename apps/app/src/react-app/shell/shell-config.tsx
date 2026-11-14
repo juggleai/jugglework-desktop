@@ -37,7 +37,7 @@ export type ShellConfig = {
 /* ------------------------------------------------------------------ */
 
 export const DEFAULT_SHELL_CONFIG: ShellConfig = {
-  appName: "JuggleWork",
+  appName: "北数Work",
   statusBar: true,
   sidebar: true,
   docsButton: false,

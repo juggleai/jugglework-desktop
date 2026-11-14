@@ -424,7 +424,7 @@ function ReviewHeader(props: {
         <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
           {props.viewSwitcher}
           <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-2">{props.changesTools}{props.actions ?? <>
-            <Button variant="outline" className="h-8 rounded-full px-3.5 text-sm" disabled title={text("Available after AI Review is connected", "接入 AI Review 后可用")}><Bot />{text("Review with JuggleWork", "使用 JuggleWork 审查")}</Button>
+            <Button variant="outline" className="h-8 rounded-full px-3.5 text-sm" disabled title={text("Available after AI Review is connected", "接入 AI Review 后可用")}><Bot />{text("Review with 北数Work", "使用 北数Work 审查")}</Button>
             <Button className="h-8 rounded-full px-3.5 text-sm" disabled title={text("Available after provider write access is connected", "接入平台写权限后可用")}>{text("Submit review", "提交审查")}</Button>
           </>}</div>
         </div>
@@ -1217,8 +1217,8 @@ export function ConnectedState(props: { loading?: boolean; connection?: ReviewCo
         "请打开连接设置，检查组织是否已提供 GitHub，并授权你自己的 GitHub 账号，然后重试。",
       )
       : text(
-        "JuggleWork uses your member-authorized GitHub account through Connect.",
-        "JuggleWork 通过 Connect 使用你本人授权的 GitHub 账号。",
+        "北数Work uses your member-authorized GitHub account through Connect.",
+        "北数Work 通过 Connect 使用你本人授权的 GitHub 账号。",
       ));
 
   return <div className="flex min-h-0 min-w-0 flex-1 items-center justify-center bg-dls-surface/40 p-8" data-testid="review-connection-state"><div className="max-w-md rounded-2xl border border-dls-border bg-background p-7 text-center shadow-[var(--dls-card-shadow)]">{props.loading ? <LoaderCircle className="mx-auto size-7 animate-spin text-violet-11" /> : <GitPullRequestArrow className="mx-auto size-8 text-violet-11" />}<h2 className="mt-4 text-base font-semibold text-dls-text">{title}</h2><p className="mt-2 text-sm leading-6 text-dls-secondary">{description}</p><div className="mt-5 flex flex-wrap justify-center gap-2">{!props.loading ? <Button onClick={props.onConnect}>{text("Open Connect settings", "打开连接设置")}</Button> : null}{unavailable ? <Button variant="outline" onClick={props.onRetry}><RefreshCw />{text("Retry", "重试")}</Button> : null}</div></div></div>;

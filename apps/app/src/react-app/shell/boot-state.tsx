@@ -48,7 +48,7 @@ const DEFAULT_STATE: BootStateSnapshot = {
 const PHASE_MESSAGES: Record<BootPhaseId, string> = {
   idle: "",
   "bootstrapping-workspaces": "Loading your workspaces",
-  "starting-jugglework-server": "Starting the JuggleWork server",
+  "starting-jugglework-server": "Starting the 北数Work server",
   "starting-engine": "Preparing workspace",
   "activating-workspace": "Activating your workspace",
   ready: "Ready",

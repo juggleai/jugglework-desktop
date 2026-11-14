@@ -80,7 +80,7 @@ export function verifyMediaTools(root, target = process, { phase = "any", team }
     }
     return { ...tools, root, manifest, manifestPath };
   } catch (error) {
-    throw new Error(`[media-tools] 随包媒体工具缺失或校验失败，请重新构建（pnpm build:media-tools / build:toon-factory）或重新安装 JuggleWork：${error.message}`, { cause: error });
+    throw new Error(`[media-tools] 随包媒体工具缺失或校验失败，请重新构建（pnpm build:media-tools / build:toon-factory）或重新安装 北数Work：${error.message}`, { cause: error });
   }
 }
 export function verifyMediaExecutables(tools) {

@@ -80,7 +80,7 @@ export function buildImageGenerationInstruction(
     : "Let the provider choose the output size automatically.";
 
   return [
-    "Generate exactly one image for the request below using the JuggleWork image-generation tool.",
+    "Generate exactly one image for the request below using the 北数Work image-generation tool.",
     "Call `jugglework_image_generate` with mode `text-to-image`; do not substitute another model or create a handcrafted placeholder.",
     `Use model providerID \`${options.model.providerID}\` and modelID \`${options.model.modelID}\`.`,
     sizeInstruction,

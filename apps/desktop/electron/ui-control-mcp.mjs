@@ -27,7 +27,7 @@ export function packagedUiControlMcpRuntime({
     ? String(appImagePath).trim()
     : String(executablePath ?? "").trim();
   if (!runtime) {
-    throw new Error("JuggleWork UI control MCP cannot start because the application runtime path is unavailable.");
+    throw new Error("北数Work UI control MCP cannot start because the application runtime path is unavailable.");
   }
   return runtime;
 }
@@ -37,7 +37,7 @@ async function installBundledUiControlMcpOnce({ resourcesPath, userDataPath, ver
   const profileRoot = String(userDataPath ?? "").trim();
   const release = String(version ?? "").trim();
   if (!source || !profileRoot || !release || !existsSync(source)) {
-    throw new Error(`JuggleWork UI control MCP is missing from this JuggleWork build: ${source ?? "<missing resources path>"}`);
+    throw new Error(`北数Work UI control MCP is missing from this 北数Work build: ${source ?? "<missing resources path>"}`);
   }
   const destinationDirectory = path.join(profileRoot, "runtime", "jugglework-ui-mcp", release);
   const destination = path.join(destinationDirectory, UI_CONTROL_MCP_ENTRY);
@@ -84,20 +84,20 @@ export function getJuggleWorkUiMcpCommand({
   const entryPath = packaged ? bundledPath ?? bundledUiControlMcpPath(resourcesPath) : sourcePath;
   if (!entryPath || !pathExists(entryPath)) {
     const location = entryPath ?? "<missing resources path>";
-    throw new Error(`JuggleWork UI control MCP is missing from this JuggleWork build: ${location}`);
+    throw new Error(`北数Work UI control MCP is missing from this 北数Work build: ${location}`);
   }
 
   const runtime = packaged
     ? packagedUiControlMcpRuntime({ platform, executablePath, appImagePath })
     : String(executablePath ?? "").trim();
-  if (!runtime) throw new Error("JuggleWork UI control MCP cannot start because the application runtime path is unavailable.");
+  if (!runtime) throw new Error("北数Work UI control MCP cannot start because the application runtime path is unavailable.");
   return [runtime, entryPath];
 }
 
 export function getJuggleWorkUiMcpEnvironment(userDataPath) {
   const root = String(userDataPath ?? "").trim();
   if (!root) {
-    throw new Error("JuggleWork UI control MCP cannot resolve the current application profile.");
+    throw new Error("北数Work UI control MCP cannot resolve the current application profile.");
   }
   return {
     ELECTRON_RUN_AS_NODE: "1",

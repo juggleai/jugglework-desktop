@@ -85,7 +85,7 @@ export function buildVideoGenerationInstruction(
     : "Let the provider choose the output aspect ratio automatically; omit resolution.";
 
   return [
-    "Generate exactly one video for the request below using the JuggleWork video-generation tools.",
+    "Generate exactly one video for the request below using the 北数Work video-generation tools.",
     "Call `jugglework_video_generate` exactly once with mode `text-to-video`; do not substitute another model or create a handcrafted placeholder.",
     `Use model providerID \`${options.model.providerID}\` and modelID \`${options.model.modelID}\`.`,
     `Pass durationSeconds \`${options.durationSeconds}\`.`,

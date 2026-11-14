@@ -197,7 +197,7 @@ export function WelcomeRoute() {
           list = null;
         }
         if (!list) {
-          throw new Error("JuggleWork server is unavailable. Start or reconnect the server before creating a workspace.");
+          throw new Error("北数Work server is unavailable. Start or reconnect the server before creating a workspace.");
         }
         const targetWorkspaceId = list.activeId || list.selectedId || list.workspaces[list.workspaces.length - 1]?.id || "";
         const targetWorkspace = list.workspaces.find((workspace: WorkspaceInfo) => workspace.id === targetWorkspaceId) ?? null;
@@ -295,7 +295,7 @@ export function WelcomeRoute() {
           }
         }
         if (!list) {
-          throw new Error("JuggleWork server is unavailable. Start or reconnect the server before connecting a remote workspace.");
+          throw new Error("北数Work server is unavailable. Start or reconnect the server before connecting a remote workspace.");
         }
         const createdId =
           resolveWorkspaceListSelectedId(list) ||

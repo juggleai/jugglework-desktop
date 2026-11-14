@@ -338,7 +338,7 @@ export async function buildWorkspaceImportPreview(
     changes.push({
       kind: "jugglework",
       action: actionForTarget(existsBefore, !sameJson(before, after), input.modes.jugglework),
-      label: "JuggleWork config",
+      label: "北数Work config",
       path: rel(workspaceRoot, path),
       absolutePath: path,
       beforeDigest: existsBefore ? jsonDigest(before) : textDigest(null),

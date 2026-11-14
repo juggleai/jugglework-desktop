@@ -107,7 +107,7 @@ export function useDesktopRuntimeBoot() {
         };
 
         const startServerWithoutDesktopWorkspace = async () => {
-          setPhase("starting-engine", "Starting JuggleWork server");
+          setPhase("starting-engine", "Starting 北数Work server");
           // TIPS: 文件模式已启动同一运行时；首次打开零工作区主窗口时必须复用，避免重启原生文件的模型所有者。
           const existing = await juggleworkServerInfo().catch(() => null);
           const reuseExisting = isJuggleWorkServerReady(existing ?? undefined) &&
@@ -118,7 +118,7 @@ export function useDesktopRuntimeBoot() {
               return null;
             });
           if (!isJuggleWorkServerInfoLike(serverInfo) || !isJuggleWorkServerReady(serverInfo)) {
-            setError("JuggleWork server did not finish starting. Please restart JuggleWork.");
+            setError("北数Work server did not finish starting. Please restart 北数Work.");
             return;
           }
           publishJuggleWorkServerInfo(serverInfo);
@@ -161,12 +161,12 @@ export function useDesktopRuntimeBoot() {
           };
 
           if (boot.ok === false) {
-            setError(boot.error || "Failed to start JuggleWork runtime");
+            setError(boot.error || "Failed to start 北数Work runtime");
             return;
           }
 
           if (!boot.skipped && !isJuggleWorkServerReady(boot.juggleworkServer)) {
-            setError("JuggleWork server did not finish starting. Please restart JuggleWork.");
+            setError("北数Work server did not finish starting. Please restart 北数Work.");
             return;
           }
 

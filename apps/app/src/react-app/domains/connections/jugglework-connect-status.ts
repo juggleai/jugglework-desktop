@@ -29,7 +29,7 @@ export function resolveJuggleWorkConnectStatus(
       state: "needs_attention",
       label: "Needs attention",
       description: maintenance.issue?.message
-        ?? "JuggleWork Connect could not verify connected service tools. Run diagnostics for details.",
+        ?? "北数Work Connect could not verify connected service tools. Run diagnostics for details.",
     };
   }
 

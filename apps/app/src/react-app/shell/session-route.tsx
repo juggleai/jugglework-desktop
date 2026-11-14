@@ -251,7 +251,7 @@ function describeTaskCreateError(error: unknown) {
     lower.includes("internal_error") ||
     lower.includes("unexpected server error")
   ) {
-    return "OpenCode is unavailable for this workspace. Retry once it restarts, or restart JuggleWork if the problem continues.";
+    return "OpenCode is unavailable for this workspace. Retry once it restarts, or restart 北数Work if the problem continues.";
   }
   return message;
 }
@@ -1495,7 +1495,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
                   code: "cloud_mcp_resume_maintenance_timeout",
                   stage: "engine_delivery",
                   retryable: true,
-                  message: "JuggleWork Connect is still restoring after the app resumed.",
+                  message: "北数Work Connect is still restoring after the app resumed.",
                   recommendedAction: "Wait a moment, then retry the message.",
                 });
               }
@@ -1504,7 +1504,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
                   code: "cloud_mcp_resume_maintenance_failed",
                   stage: "engine_delivery",
                   retryable: true,
-                  message: "JuggleWork Connect could not finish restoring after the app resumed.",
+                  message: "北数Work Connect could not finish restoring after the app resumed.",
                   recommendedAction: "Retry the message, then open Settings → Connect if the problem continues.",
                 });
               }
@@ -1719,7 +1719,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     setRenameWorkspaceBusy(true);
     try {
       if (!client) {
-        toast.error("JuggleWork server is unavailable. Reconnect the server before renaming workspaces.");
+        toast.error("北数Work server is unavailable. Reconnect the server before renaming workspaces.");
         return;
       }
       await client.updateWorkspaceDisplayName(renameWorkspaceId, trimmed);
@@ -1768,7 +1768,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         downloadWorkspaceJson(workspaceExportFilename(workspace), payload);
         return;
       }
-      throw new Error("JuggleWork server is unavailable. Reconnect the server before exporting workspace config.");
+      throw new Error("北数Work server is unavailable. Reconnect the server before exporting workspace config.");
     },
     [endpointForWorkspace, workspaces],
   );
@@ -2370,7 +2370,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     try {
       const workspaceName = folderNameFromPath(folder);
       if (!client) {
-        throw new Error("JuggleWork server is unavailable. Start or reconnect the server before creating a workspace.");
+        throw new Error("北数Work server is unavailable. Start or reconnect the server before creating a workspace.");
       }
       const created = await createLocalWorkspaceForRuntime(client, {
         folderPath: folder,
@@ -2463,7 +2463,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         list = await client.createRemoteWorkspace(payload).catch(() => null);
       }
       if (!list) {
-        throw new Error("JuggleWork server is unavailable. Start or reconnect the server before connecting a remote workspace.");
+        throw new Error("北数Work server is unavailable. Start or reconnect the server before connecting a remote workspace.");
       }
       const createdId = resolveWorkspaceListSelectedId(list) || list.workspaces[list.workspaces.length - 1]?.id || "";
       if (createdId) {

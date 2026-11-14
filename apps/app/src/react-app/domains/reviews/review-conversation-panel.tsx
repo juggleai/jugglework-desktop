@@ -236,7 +236,7 @@ export function ReviewConversationPanel(props: {
   const workingLabel = ensureConversation.isPending
     ? text("Preparing the PR conversation…", "正在准备 PR 快捷对话…")
     : run?.sessionId
-      ? text("JuggleWork is working on this pull request…", "JuggleWork 正在处理这个 Pull Request…")
+      ? text("北数Work is working on this pull request…", "北数Work 正在处理这个 Pull Request…")
       : text("Creating the PR review task…", "正在创建与此 PR 关联的审查任务…");
   const error = runQuery.error ?? start.error ?? ensureConversation.error ?? cancel.error ?? (run?.status === "running" || start.isPending ? null : snapshot.error);
   const minimize = () => props.onLayoutChange(props.layout === "floating" ? "minimized" : "floating");

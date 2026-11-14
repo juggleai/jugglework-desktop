@@ -228,7 +228,7 @@ function AgentAccessCard(props: {
       if (result.status === "skipped") {
         setError(
           result.skippedReason === "unsupported"
-            ? "This JuggleWork server does not support engine refresh yet. Update JuggleWork, then retry."
+            ? "This 北数Work server does not support engine refresh yet. Update 北数Work, then retry."
             : "Select a workspace before refreshing the engine connection.",
         );
       }

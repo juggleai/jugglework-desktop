@@ -294,7 +294,7 @@ export class InvalidEnvKeyError extends Error {
   constructor(key: string, code: "invalid_env_key" | "reserved_env_key") {
     super(
       code === "reserved_env_key"
-        ? `Environment variable name is reserved for JuggleWork internals: ${key}`
+        ? `Environment variable name is reserved for 北数Work internals: ${key}`
         : `Invalid environment variable name: ${key}`,
     );
     this.code = code;

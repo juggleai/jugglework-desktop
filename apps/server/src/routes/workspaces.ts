@@ -138,13 +138,13 @@ async function fetchJuggleWorkWorkspaceList(hostUrl: string, token: string, host
       throw new ApiError(
         502,
         "jugglework_workspace_discovery_failed",
-        `JuggleWork workspace discovery failed (${response.status} ${response.statusText || "HTTP error"})`,
+        `北数Work workspace discovery failed (${response.status} ${response.statusText || "HTTP error"})`,
       );
     }
     return await response.json();
   } catch (error) {
     if (error instanceof ApiError) throw error;
-    throw new ApiError(502, "jugglework_workspace_discovery_failed", "JuggleWork workspace discovery failed", {
+    throw new ApiError(502, "jugglework_workspace_discovery_failed", "北数Work workspace discovery failed", {
       error: String(error),
     });
   } finally {
@@ -367,8 +367,8 @@ export function registerWorkspaceRoutes(options: RegisterWorkspaceRoutesOptions)
           400,
           "jugglework_workspace_not_found",
           directory
-            ? `JuggleWork server has no workspace matching ${directory}.`
-            : "JuggleWork server returned no workspaces.",
+            ? `北数Work server has no workspace matching ${directory}.`
+            : "北数Work server returned no workspaces.",
         );
       }
     }
@@ -502,7 +502,7 @@ export function registerWorkspaceRoutes(options: RegisterWorkspaceRoutesOptions)
       actor: ctx.actor ?? { type: "host" },
       action: "workspace.delete",
       target: "workspace",
-      summary: "Deleted workspace from JuggleWork server",
+      summary: "Deleted workspace from 北数Work server",
       timestamp: Date.now(),
     });
 

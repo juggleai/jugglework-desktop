@@ -51,7 +51,7 @@ function renderWorkbench(
       pinned={Boolean(review?.pinned)}
       onTogglePin={noop}
       onChanged={noop}
-      actions={review ? <><button>Review with JuggleWork</button><button>Submit review</button></> : undefined}
+      actions={review ? <><button>Review with 北数Work</button><button>Submit review</button></> : undefined}
       sections={sections as Parameters<typeof ReviewWorkbench>[0]["sections"]}
       expandedSections={["pinned", "authored", "requested", "team", "recently_merged"]}
       pinnedReviews={options?.pinnedReviews}
@@ -128,7 +128,7 @@ describe("Review workbench preview", () => {
     expect(html).toContain("1 comment");
     expect(html).toContain("Reviewers");
     expect(html).toContain("Checks");
-    expect(html).toContain("Review with JuggleWork");
+    expect(html).toContain("Review with 北数Work");
     expect(html).toContain("Submit review");
     expect(html).toContain("Unpin from sidebar");
     expect(html).toContain("Copy URL");

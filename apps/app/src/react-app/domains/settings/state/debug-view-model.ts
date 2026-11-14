@@ -833,7 +833,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       });
       setJuggleWorkServiceStatus({
         tone: "success",
-        message: t("settings.restart_succeeded_template", { service: "JuggleWork server" }),
+        message: t("settings.restart_succeeded_template", { service: "北数Work server" }),
       });
       pushDeveloperLog("Restarted jugglework-server");
       await juggleworkServerStore.reconnectJuggleWorkServer();
@@ -841,7 +841,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       const message = error instanceof Error ? error.message : safeStringify(error);
       setJuggleWorkServiceStatus({
         tone: "error",
-        message: `${t("settings.restart_failed_template", { service: "JuggleWork server" })} ${message}`,
+        message: `${t("settings.restart_failed_template", { service: "北数Work server" })} ${message}`,
       });
       setServiceRestartError(message);
     } finally {
@@ -906,7 +906,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
     }
     try {
       await navigator.clipboard.writeText(text);
-      setJuggleWorkLogStatus(t("settings.copied_service_logs", { service: "JuggleWork server" }));
+      setJuggleWorkLogStatus(t("settings.copied_service_logs", { service: "北数Work server" }));
     } catch (error) {
       setJuggleWorkLogStatus(error instanceof Error ? error.message : safeStringify(error));
     }
@@ -938,7 +938,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       if (!isDesktopRuntime()) return;
       const message =
         mode === "all"
-          ? "Reset ALL JuggleWork app data? Open sessions and workspaces will be removed."
+          ? "Reset ALL 北数Work app data? Open sessions and workspaces will be removed."
           : "Reset onboarding state only?";
       if (typeof window !== "undefined" && !window.confirm(message)) {
         return;
@@ -950,7 +950,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
           clearJuggleWorkLocalStorageForReset(mode);
           setResetStatus(
             mode === "all"
-              ? "Reset JuggleWork state. Restart the app to see changes."
+              ? "Reset 北数Work state. Restart the app to see changes."
               : "Reset onboarding state. Restart the app to see changes.",
           );
           pushDeveloperLog(`reset_jugglework_state mode=${mode}`);

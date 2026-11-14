@@ -66,9 +66,9 @@ export function MeetingPermissionRestart() {
     } finally { setBusy(false); }
   }
   return <div className="notice meeting-permission-notice" role="status">
-    <div><span>{reason === "granted" ? "已获得授权。重启 JuggleWork 以应用新的设备权限。" : "在系统设置中完成授权后，请重启 JuggleWork。"}</span>
+    <div><span>{reason === "granted" ? "已获得授权。重启 北数Work 以应用新的设备权限。" : "在系统设置中完成授权后，请重启 北数Work。"}</span>
       <button type="button" className="permission-settings-link" disabled={busy || phase === "joining"} onClick={() => void restart()}>
-        {phase === "idle" ? "重启 JuggleWork" : "离开会议并重启 JuggleWork"}
+        {phase === "idle" ? "重启 北数Work" : "离开会议并重启 北数Work"}
       </button>
       <button type="button" className="ghost" disabled={busy} onClick={() => usePermissionRestart.setState({ reason: null })}>稍后</button>
       {error && <p role="alert">{error}</p>}

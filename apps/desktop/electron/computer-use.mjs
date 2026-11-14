@@ -41,7 +41,7 @@ function getComputerUseMcpCommand() {
   if (helperExecutable) return [helperExecutable, "mcp"];
 
   if (app.isPackaged) {
-    throw new Error("JuggleWork Computer Use is missing from this JuggleWork build.");
+    throw new Error("北数Work Computer Use is missing from this 北数Work build.");
   }
 
   if (process.env.JUGGLEWORK_DEV_MODE === "1") {

@@ -300,19 +300,19 @@ const JUGGLEWORK_VOICE_REALTIME_TOOLS = [
   {
     type: "function",
     name: "jugglework_snapshot",
-    description: "Read the current JuggleWork UI control snapshot: route, status, narration, and visible action metadata.",
+    description: "Read the current 北数Work UI control snapshot: route, status, narration, and visible action metadata.",
     parameters: { type: "object", properties: {}, additionalProperties: false },
   },
   {
     type: "function",
     name: "jugglework_list_actions",
-    description: "List semantic JuggleWork UI actions. Call this before jugglework_execute_action when you do not know the exact action id.",
+    description: "List semantic 北数Work UI actions. Call this before jugglework_execute_action when you do not know the exact action id.",
     parameters: { type: "object", properties: {}, additionalProperties: false },
   },
   {
     type: "function",
     name: "jugglework_execute_action",
-    description: "Execute a semantic JuggleWork UI action by id. Prefer this over screen coordinates or DOM guessing.",
+    description: "Execute a semantic 北数Work UI action by id. Prefer this over screen coordinates or DOM guessing.",
     parameters: {
       type: "object",
       properties: {
@@ -607,8 +607,8 @@ ${trimmedContext}`
     : "";
   return `# Role and Objective
 
-You are JuggleWork Voice Mode, a voice-first control layer inside JuggleWork.
-Help the user control JuggleWork by using the semantic JuggleWork UI tools.
+You are 北数Work Voice Mode, a voice-first control layer inside 北数Work.
+Help the user control 北数Work by using the semantic 北数Work UI tools.
 
 # Tool Policy
 
@@ -623,7 +623,7 @@ Help the user control JuggleWork by using the semantic JuggleWork UI tools.
 
 - Be concise, calm, and direct.
 - If audio is unclear, ask the user to repeat it instead of guessing.
-- Ignore background speech that is not addressed to JuggleWork.
+- Ignore background speech that is not addressed to 北数Work.
 - Summarize tool results briefly and offer the next useful step.${contextSection}`;
 }
 
@@ -658,13 +658,13 @@ async function createOpenAiRealtimeVoiceSession(env: EnvService, input: unknown)
       if (error instanceof ApiError && error.status === 503) {
         const fallbackKey = await resolveOpenAiRealtimeApiKey(env);
         if (fallbackKey) {
-          console.warn("[voice] JuggleWork Models broker returned 503 — falling back to direct OpenAI Realtime.");
+          console.warn("[voice] 北数Work Models broker returned 503 — falling back to direct OpenAI Realtime.");
           return createDirectOpenAiVoiceSession(fallbackKey, input);
         }
         throw new ApiError(
           503,
           "jugglework_models_voice_unavailable",
-          "JuggleWork Models voice is active but the server is not fully configured. Ask your admin to add an OpenAI key, or save your own OPENAI_API_KEY in Environment settings.",
+          "北数Work Models voice is active but the server is not fully configured. Ask your admin to add an OpenAI key, or save your own OPENAI_API_KEY in Environment settings.",
         );
       }
       throw error;
@@ -676,7 +676,7 @@ async function createOpenAiRealtimeVoiceSession(env: EnvService, input: unknown)
     throw new ApiError(
       400,
       "openai_api_key_missing",
-      "OpenAI API key missing. Save OPENAI_API_KEY in JuggleWork Environment Variables or configure the Voice Mode extension.",
+      "OpenAI API key missing. Save OPENAI_API_KEY in 北数Work Environment Variables or configure the Voice Mode extension.",
     );
   }
 
@@ -702,7 +702,7 @@ async function createManagedVoiceSession(config: { baseUrl: string; apiKey: stri
   if (!response.ok) {
     const errorPayload = isRecord(payload) && isRecord(payload.error) ? payload.error : null;
     const message = typeof errorPayload?.message === "string" ? errorPayload.message : response.statusText;
-    throw new ApiError(response.status, "jugglework_models_voice_failed", message || "JuggleWork Models could not create a voice session");
+    throw new ApiError(response.status, "jugglework_models_voice_failed", message || "北数Work Models could not create a voice session");
   }
   if (
     !isRecord(payload) ||
@@ -712,7 +712,7 @@ async function createManagedVoiceSession(config: { baseUrl: string; apiKey: stri
     !Array.isArray(payload.tools) ||
     payload.tools.some((tool) => typeof tool !== "string")
   ) {
-    throw new ApiError(502, "jugglework_models_voice_invalid_response", "JuggleWork Models did not return a usable Realtime session payload");
+    throw new ApiError(502, "jugglework_models_voice_invalid_response", "北数Work Models did not return a usable Realtime session payload");
   }
   return {
     ok: true,
@@ -1900,7 +1900,7 @@ export async function startServer(config: ServerConfig, options: {
       try { hostMarketplacePlugins.close(); } catch (error) { errors.push(error); }
       clearHostMarketplaceMcpOverlay(config);
       if (errors.length === 1) throw errors[0];
-      if (errors.length > 1) throw new AggregateError(errors, "Failed to stop JuggleWork server");
+      if (errors.length > 1) throw new AggregateError(errors, "Failed to stop 北数Work server");
     },
   };
 }
@@ -3358,7 +3358,7 @@ function createRoutes(
       throw new ApiError(
         400,
         "agent_diagnostics_workspace_unsupported",
-        "Agent diagnostics must run on the JuggleWork server that owns a local workspace",
+        "Agent diagnostics must run on the 北数Work server that owns a local workspace",
       );
     }
     // Reserve before consuming untrusted bytes and hold the reservation through

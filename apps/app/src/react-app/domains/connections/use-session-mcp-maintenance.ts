@@ -79,8 +79,8 @@ export function resolveStalledMaintenanceState(input: {
         ? "Retry, then open Settings → Connect if the problem continues."
         : "Reopen the workspace, then open Settings → Connect if the problem continues.",
       message: inputsValid
-        ? "JuggleWork Connect checks stalled while the workspace engine was busy."
-        : "JuggleWork Connect checks could not run because the workspace runtime is unavailable.",
+        ? "北数Work Connect checks stalled while the workspace engine was busy."
+        : "北数Work Connect checks could not run because the workspace runtime is unavailable.",
     },
   };
 }
@@ -221,7 +221,7 @@ function genericCloudMcpMaintenanceIssue(input?: {
     stage: "engine_delivery",
     retryable: input?.retryable ?? true,
     recommendedAction: "Retry, then open Settings → Connect if the problem continues.",
-    message: input?.message ?? "JuggleWork could not verify connected service tools for this workspace.",
+    message: input?.message ?? "北数Work could not verify connected service tools for this workspace.",
   };
 }
 
@@ -372,7 +372,7 @@ export async function syncCloudControlMcpInBackground(input: {
       return failedCloudMcpBackgroundSync({
         health: result.health,
         code: "cloud_mcp_token_mint_failed",
-        message: "JuggleWork could not refresh Cloud authentication for connected service tools.",
+        message: "北数Work could not refresh Cloud authentication for connected service tools.",
       });
     }
   }
@@ -630,7 +630,7 @@ export function useSessionMcpMaintenance(input: {
           if (healFailure) {
             throw healFailure instanceof Error
               ? healFailure
-              : new Error("JuggleWork could not restore workspace MCP connections.");
+              : new Error("北数Work could not restore workspace MCP connections.");
           }
         },
       }).then((run) => {

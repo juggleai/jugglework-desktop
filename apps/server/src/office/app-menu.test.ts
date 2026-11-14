@@ -31,10 +31,10 @@ test("macOS 文件窗口名称随焦点切换，品牌更新不覆盖活动文�
     menu.install();
     expect(template[0].label).toBe("JuggleWork");
     menu.setFileWindowActive(true);
-    expect(template[0].label).toBe("JuggleWork 文件浏览器");
-    expect(process.title).toBe("JuggleWork 文件浏览器");
+    expect(template[0].label).toBe("北数Work 文件浏览器");
+    expect(process.title).toBe("北数Work 文件浏览器");
     menu.setAppName("品牌名称");
-    expect(template[0].label).toBe("JuggleWork 文件浏览器");
+    expect(template[0].label).toBe("北数Work 文件浏览器");
     menu.setFileWindowActive(false);
     expect(template[0].label).toBe("品牌名称");
     expect(process.title).toBe("品牌名称");

@@ -60,7 +60,7 @@ if (import.meta.hot) {
 
 const MARKDOWN_PRIMITIVE_ARTIFACT_CONTENT = `# Artifact Markdown Proof
 
-The artifact preview keeps **outside-chat Markdown** readable with inline \`surface renderer\`, a fenced code block, and [JuggleWork](https://juggle.im).
+The artifact preview keeps **outside-chat Markdown** readable with inline \`surface renderer\`, a fenced code block, and [北数Work](https://juggle.im).
 
 \`\`\`ts
 const surface = "shared markdown primitive";

@@ -35,7 +35,7 @@ export function createFileWindowDock({
         appId: "com.juggleai.jugglework.documents",
         appIconPath: ico,
         relaunchCommand: `"${process.execPath}"`,
-        relaunchDisplayName: "JuggleWork 文件浏览器",
+        relaunchDisplayName: "北数Work 文件浏览器",
       });
     },
     /** 同步存活窗口；最后一个窗口关闭后退出 Dock 入口。 */

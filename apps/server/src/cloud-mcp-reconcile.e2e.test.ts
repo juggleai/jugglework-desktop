@@ -564,7 +564,7 @@ describe("jugglework-cloud MCP strict reconcile", () => {
 
     const body = await responseRecord(await reconcile(jugglework.base, "ws_1", { provider: "anthropic", model: "claude" }));
     expect(firstFailure(body).code).toBe("provider_tool_projection_missing");
-    expect(firstFailure(body).recommendedAction).toBe("Choose a model that can use JuggleWork Cloud tools");
+    expect(firstFailure(body).recommendedAction).toBe("Choose a model that can use 北数Work Cloud tools");
     expect(requireRecord(requireRecord(body.tools, "tools").providerProjection, "projection")).toMatchObject({
       source: "provider_capability",
       modelExists: true,
@@ -616,7 +616,7 @@ describe("jugglework-cloud MCP strict reconcile", () => {
 
     const body = await responseRecord(await reconcile(jugglework.base));
     expect(firstFailure(body).code).toBe("opencode_tool_ids_unsupported");
-    expect(firstFailure(body).recommendedAction).toBe("Update JuggleWork");
+    expect(firstFailure(body).recommendedAction).toBe("Update 北数Work");
   });
 
   test("health detects project tool denies while generic MCP add remains best-effort", async () => {
@@ -726,7 +726,7 @@ describe("jugglework-cloud MCP engine refresh", () => {
     // A transport/cert failure must never be classified as an expired token:
     // "Reconnect JuggleWork Cloud" cannot repair a broken TLS path.
     expect(failure.code).toBe("opencode_mcp_sync_failed");
-    expect(failure.recommendedAction).toBe("Retry reconcile or reconnect JuggleWork Cloud");
+    expect(failure.recommendedAction).toBe("Retry reconcile or reconnect 北数Work Cloud");
   });
 
   test("token-expired engine errors keep their token classification", async () => {

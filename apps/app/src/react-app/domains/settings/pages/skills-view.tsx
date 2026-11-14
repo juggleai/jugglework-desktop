@@ -385,7 +385,7 @@ export function SkillsView(props: SkillsViewProps) {
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
                           <h4 className="truncate text-[14px] font-semibold text-dls-text">{skill.name}</h4>
-                          {isJuggleWorkProvidedSkill(skill) ? <span className={tagClass}>JuggleWork</span> : null}
+                          {isJuggleWorkProvidedSkill(skill) ? <span className={tagClass}>北数Work</span> : null}
                         </div>
                         <p className="mt-2 line-clamp-2 text-[13px] leading-relaxed text-dls-secondary">
                           {skill.description || t("skills.no_description")}

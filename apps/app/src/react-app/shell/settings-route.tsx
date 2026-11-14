@@ -1316,7 +1316,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const installOpenAiImageExtension = useCallback(async (apiKey: string) => {
     const resolvedApiKey = apiKey.trim();
     if (!juggleworkClient) {
-      setImageExtensionError("JuggleWork server is not connected.");
+      setImageExtensionError("北数Work server is not connected.");
       return;
     }
     if (!resolvedApiKey) {
@@ -1330,7 +1330,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     try {
       await juggleworkClient.upsertUserEnv([{ key: "OPENAI_API_KEY", value: resolvedApiKey }]);
       setUserEnvKeys((current) => Array.from(new Set([...current, "OPENAI_API_KEY"])));
-      setImageExtensionStatus("Saved OPENAI_API_KEY. Agents can use JuggleWork extension actions for image generation.");
+      setImageExtensionStatus("Saved OPENAI_API_KEY. Agents can use 北数Work extension actions for image generation.");
     } catch (error) {
       setImageExtensionError(describeRouteError(error));
     } finally {
@@ -1344,7 +1344,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     const apiKey = input.apiKey.trim();
     const prompt = input.prompt.trim();
     if (!client || !workspaceId) {
-      setImageGenerationError("JuggleWork server is not connected for this workspace.");
+      setImageGenerationError("北数Work server is not connected for this workspace.");
       return;
     }
     if (!apiKey) {
@@ -1408,7 +1408,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
 
   const testVoiceSession = useCallback(async () => {
     if (!juggleworkClient) {
-      setVoiceError("JuggleWork server is not connected.");
+      setVoiceError("北数Work server is not connected.");
       return;
     }
     setVoiceBusy(true);
@@ -1416,7 +1416,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     setVoiceError(null);
     try {
       const session = await juggleworkClient.createVoiceRealtimeSession();
-      setVoiceStatus(`Realtime ready with ${session.model} (${session.tools.length} JuggleWork tools).`);
+      setVoiceStatus(`Realtime ready with ${session.model} (${session.tools.length} 北数Work tools).`);
     } catch (error) {
       setVoiceError(describeRouteError(error));
     } finally {
@@ -1429,7 +1429,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     const workspaceId = runtimeWorkspaceId?.trim() ?? "";
     const modelId = input.modelId.trim();
     if (!client || !workspaceId) {
-      setLocalProviderError("JuggleWork server is not connected for this workspace.");
+      setLocalProviderError("北数Work server is not connected for this workspace.");
       return;
     }
     if (!modelId) {
@@ -2676,7 +2676,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     setRenameWorkspaceBusy(true);
     try {
       if (!juggleworkClient) {
-        toast.error("JuggleWork server is unavailable. Reconnect the server before renaming workspaces.");
+        toast.error("北数Work server is unavailable. Reconnect the server before renaming workspaces.");
         return;
       }
       await juggleworkClient.updateWorkspaceDisplayName(renameWorkspaceId, trimmed);
@@ -2713,7 +2713,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       }
       return;
     }
-    throw new Error("JuggleWork server is unavailable. Reconnect the server before exporting workspace config.");
+    throw new Error("北数Work server is unavailable. Reconnect the server before exporting workspace config.");
   }, [workspaceServerClientResolver, workspaces]);
 
   const handleForgetWorkspace = useCallback(async (workspaceId: string) => {
@@ -2745,7 +2745,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     try {
       const workspaceName = folderNameFromPath(folder);
       if (!juggleworkClient) {
-        throw new Error("JuggleWork server is unavailable. Start or reconnect the server before creating a workspace.");
+        throw new Error("北数Work server is unavailable. Start or reconnect the server before creating a workspace.");
       }
       await createLocalWorkspaceForRuntime(juggleworkClient, {
         folderPath: folder,
@@ -2788,7 +2788,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         list = await juggleworkClient.createRemoteWorkspace(payload).catch(() => null);
       }
       if (!list) {
-        throw new Error("JuggleWork server is unavailable. Start or reconnect the server before connecting a remote workspace.");
+        throw new Error("北数Work server is unavailable. Start or reconnect the server before connecting a remote workspace.");
       }
       const createdId = resolveWorkspaceListSelectedId(list) || list.workspaces[list.workspaces.length - 1]?.id || "";
       if (createdId) {

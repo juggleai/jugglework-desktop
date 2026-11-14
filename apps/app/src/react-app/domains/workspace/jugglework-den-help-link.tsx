@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/dialog";
 
 const SUPPORT_EMAIL = "team@juggle.im";
-const SUPPORT_MAILTO = `mailto:${SUPPORT_EMAIL}?subject=JuggleWork%20Den%20remote%20worker%20upgrade`;
+const SUPPORT_MAILTO = `mailto:${SUPPORT_EMAIL}?subject=北数Work%20Den%20remote%20worker%20upgrade`;
 
 /**
  * Small inline link rendered inside the remote-worker error card. When clicked,

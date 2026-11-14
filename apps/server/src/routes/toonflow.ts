@@ -397,7 +397,7 @@ export function registerToonflowRoutes(options: {
       return parsed.data;
     })();
     const model = (await models(ctx.params.id)).find((item) => item.providerId === ctx.params.providerId && item.modelId === input.modelId);
-    if (!model) throw new ApiError(403, "model_unavailable", "模型未配置、已禁用或凭据不可用，请在 JuggleWork 设置中检查");
+    if (!model) throw new ApiError(403, "model_unavailable", "模型未配置、已禁用或凭据不可用，请在 北数Work 设置中检查");
     if (!(operation in textPayloadSchemas) || model.type !== "text") throw new ApiError(400, "unsupported_operation", "不支持此模型操作");
     const expectedOperation = textProtocolOperations[model.protocol as keyof typeof textProtocolOperations];
     if (operation !== expectedOperation) throw new ApiError(400, "protocol_mismatch", "模型协议不匹配");

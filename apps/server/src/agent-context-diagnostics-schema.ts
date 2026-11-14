@@ -549,7 +549,7 @@ export const agentContextDiagnosticsReportSchema = z.object({
     if (!runtimeCloudMcp) {
       context.addIssue({
         code: "custom",
-        message: "cloud tools/list requires retained connected runtime JuggleWork Cloud evidence",
+        message: "cloud tools/list requires retained connected runtime 北数Work Cloud evidence",
         path: ["mcps"],
       });
     }

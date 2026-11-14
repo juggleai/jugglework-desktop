@@ -62,7 +62,7 @@ test("file window updates split state, keeps its viewer and conversation mounted
     await act(async () => { button("file-window-conversation").props.onClick(); });
     expect(conversationMounts).toBe(1);
     expect(view!.root.findAllByProps({ "aria-controls": "file-window-conversation" })).toHaveLength(0);
-    expect(view!.root.findByProps({ className: "file-window-conversation-title" }).children).toEqual(["JuggleWork"]);
+    expect(view!.root.findByProps({ className: "file-window-conversation-title" }).children).toEqual(["北数Work"]);
     expect(view!.root.findByType("main").props.className).toContain("has-conversation");
     const separator = () => view!.root.findByProps({ role: "separator" });
     await act(async () => { separator().props.onKeyDown({ key: "ArrowLeft", preventDefault() {} }); });

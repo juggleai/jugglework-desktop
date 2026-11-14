@@ -294,7 +294,7 @@ function startSubscriptions() {
     } else if (state === 2 || state === 3) {
       const unauthorized = [11005, 11006, 11011, 11012].includes(Number(error?.code));
       if (unauthorized) {
-        useJuggleChatStore.setState({ status: "error", error: "IM 登录状态已失效，请重新登录 JuggleWork" });
+        useJuggleChatStore.setState({ status: "error", error: "IM 登录状态已失效，请重新登录 北数Work" });
       } else {
         useJuggleChatStore.setState({ status: "disconnected", error: error?.message ?? null });
       }
@@ -440,7 +440,7 @@ function startSubscriptions() {
     }).catch(() => {});
   });
   window.addEventListener("jugglechat:unauthorized", () => {
-    useJuggleChatStore.setState({ status: "error", error: "IM 登录状态已失效，请重新登录 JuggleWork" });
+    useJuggleChatStore.setState({ status: "error", error: "IM 登录状态已失效，请重新登录 北数Work" });
   });
 }
 
@@ -525,7 +525,7 @@ export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
         totalUnreadCount: 0,
         pinnedMessage: null,
         replyTo: null,
-        error: "当前 JuggleWork 登录状态缺少 IM 凭据，请退出后重新登录",
+        error: "当前 北数Work 登录状态缺少 IM 凭据，请退出后重新登录",
       });
       return;
     }

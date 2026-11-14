@@ -49,12 +49,12 @@ export function createApplicationMenu({ appName, docsUrl, getWindow }) {
   function install() {
     const isMac = process.platform === "darwin";
     // TIPS: AppKit 的应用菜单名还取自进程显示标题，不能只改菜单模板 label。
-    if (isMac) process.title = fileWindowActive ? "JuggleWork 文件浏览器" : currentAppName;
+    if (isMac) process.title = fileWindowActive ? "北数Work 文件浏览器" : currentAppName;
     const template = /** @type {import("electron").MenuItemConstructorOptions[]} */ ([
       ...(isMac
         ? [
             {
-              label: fileWindowActive ? "JuggleWork 文件浏览器" : currentAppName,
+              label: fileWindowActive ? "北数Work 文件浏览器" : currentAppName,
               submenu: [
                 { role: "about" },
                 {

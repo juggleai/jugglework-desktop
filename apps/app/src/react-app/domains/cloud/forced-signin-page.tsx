@@ -48,7 +48,7 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
 
   const initial = readDenSettings();
   const bootstrap = readDenBootstrapConfig();
-  const appName = bootstrap.brandAppName?.trim() || "JuggleWork";
+  const appName = bootstrap.brandAppName?.trim() || "北数Work";
   const initialBaseUrl = initial.baseUrl || DEFAULT_DEN_BASE_URL;
 
   const [baseUrl, setBaseUrl] = useState(initialBaseUrl);

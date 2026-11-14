@@ -414,7 +414,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
         if (!isCurrentOperation()) return;
         const currentVersion = channelState?.currentVersion ?? appVersion;
         if (!currentVersion) {
-          throw new Error("Could not determine the installed JuggleWork version.");
+          throw new Error("Could not determine the installed 北数Work version.");
         }
 
         const selection = await resolveFreshStableDesktopUpdate({

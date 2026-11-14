@@ -128,8 +128,8 @@ export function attributeChatToolError(errorText: string): ToolErrorAttribution 
     || category === "lifecycle_deadline"
   ) {
     return confirmed(
-      "JuggleWork timeout",
-      "JuggleWork created this deadline. The external operation may still have completed, so verify its state before retrying.",
+      "北数Work timeout",
+      "北数Work created this deadline. The external operation may still have completed, so verify its state before retrying.",
     )
   }
 
@@ -138,7 +138,7 @@ export function attributeChatToolError(errorText: string): ToolErrorAttribution 
     || code === "MCP_URL_BLOCKED"
     || code === "MCP_FETCH_FORBIDDEN_PORT"
   ) {
-    return confirmed("Blocked by JuggleWork", "JuggleWork blocked the request before it was sent.")
+    return confirmed("Blocked by 北数Work", "北数Work blocked the request before it was sent.")
   }
 
   if (httpStatus !== undefined && (httpStatus < 200 || httpStatus >= 300)) {

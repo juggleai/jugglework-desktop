@@ -318,7 +318,7 @@ export function createConnectionsStore(options: {
     });
 
     if (hasJuggleWorkTarget && !canTryJuggleWorkServer) {
-      throw new Error("JuggleWork server cannot read MCP config for this workspace.");
+      throw new Error("北数Work server cannot read MCP config for this workspace.");
     }
 
     if (!canTryJuggleWorkServer || !juggleworkClient || !juggleworkWorkspaceId) return null;
@@ -362,7 +362,7 @@ export function createConnectionsStore(options: {
       if (!fallbackOnError) {
         throw error instanceof Error
           ? error
-          : new Error("Computer Use helper app is unavailable. Restart JuggleWork or reinstall the app.");
+          : new Error("Computer Use helper app is unavailable. Restart 北数Work or reinstall the app.");
       }
       // Fall through to the published package command in the manifest/catalog.
     }
@@ -399,7 +399,7 @@ export function createConnectionsStore(options: {
         }
       }
       if (builtIn.ELECTRON_RUN_AS_NODE !== "1" || !builtIn.JUGGLEWORK_UI_CONTROL_DISCOVERY?.trim()) {
-        throw new Error("JuggleWork UI control MCP runtime environment is unavailable. Restart or reinstall JuggleWork.");
+        throw new Error("北数Work UI control MCP runtime environment is unavailable. Restart or reinstall 北数Work.");
       }
     }
 
@@ -570,7 +570,7 @@ export function createConnectionsStore(options: {
     if (isRemoteWorkspace) {
       mutateState((current) => ({
         ...current,
-        mcpStatus: "JuggleWork server unavailable. MCP config is read-only.",
+        mcpStatus: "北数Work server unavailable. MCP config is read-only.",
         mcpServers: [],
         mcpStatuses: {},
       }));
@@ -698,7 +698,7 @@ export function createConnectionsStore(options: {
       await resolveWritableJuggleWorkTarget();
 
     if (isRemoteWorkspace && !canUseJuggleWorkServer) {
-      setStateField("mcpStatus", "JuggleWork server unavailable. MCP config is read-only.");
+      setStateField("mcpStatus", "北数Work server unavailable. MCP config is read-only.");
       finishPerf(options.developerMode(), "mcp.connect", "blocked", startedAt, {
         reason: "jugglework-server-unavailable",
       });
@@ -706,7 +706,7 @@ export function createConnectionsStore(options: {
     }
 
     if (hasJuggleWorkTarget && !canUseJuggleWorkServer) {
-      setStateField("mcpStatus", "JuggleWork server MCP config is read-only.");
+      setStateField("mcpStatus", "北数Work server MCP config is read-only.");
       finishPerf(options.developerMode(), "mcp.connect", "blocked", startedAt, {
         reason: "jugglework-server-read-only",
       });
@@ -755,11 +755,11 @@ export function createConnectionsStore(options: {
 
       if (entry.serverName === CLOUD_MCP_SERVER_NAME) {
         if (!canUseJuggleWorkServer || !juggleworkClient || !juggleworkWorkspaceId) {
-          throw new Error("JuggleWork server is required to repair agent access to connected services.");
+          throw new Error("北数Work server is required to repair agent access to connected services.");
         }
         const context = await resolveCloudMcpOperationContext(entry.url);
         if (!context) {
-          throw new Error("Sign in to JuggleWork Cloud and choose an organization first.");
+          throw new Error("Sign in to 北数Work Cloud and choose an organization first.");
         }
         clearCloudMcpDisabledIntent(context);
         const capturedSettings = readDenSettings();
@@ -826,7 +826,7 @@ export function createConnectionsStore(options: {
 
       if (entryType === "remote") {
         if (!resolvedUrl) {
-          throw new Error("Missing MCP URL. Is the JuggleWork desktop app running?");
+          throw new Error("Missing MCP URL. Is the 北数Work desktop app running?");
         }
         mcpEntryConfig["url"] = resolvedUrl;
         // TIPS: 内置桥接头与用户填写的请求头合并，用户输入优先级更高。
@@ -1107,12 +1107,12 @@ export function createConnectionsStore(options: {
       await resolveWritableJuggleWorkTarget();
 
     if (isRemoteWorkspace && !canUseJuggleWorkServer) {
-      setStateField("mcpStatus", "JuggleWork server unavailable. MCP auth is read-only.");
+      setStateField("mcpStatus", "北数Work server unavailable. MCP auth is read-only.");
       return;
     }
 
     if (hasJuggleWorkTarget && !canUseJuggleWorkServer) {
-      setStateField("mcpStatus", "JuggleWork server MCP auth is read-only.");
+      setStateField("mcpStatus", "北数Work server MCP auth is read-only.");
       return;
     }
 
@@ -1181,7 +1181,7 @@ export function createConnectionsStore(options: {
         await juggleworkClient.removeMcp(juggleworkWorkspaceId, name);
       } else {
         if (hasJuggleWorkTarget) {
-          setStateField("mcpStatus", "JuggleWork server MCP config is read-only.");
+          setStateField("mcpStatus", "北数Work server MCP config is read-only.");
           return;
         }
         const projectDir = options.projectDir().trim();

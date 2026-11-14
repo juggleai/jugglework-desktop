@@ -275,13 +275,13 @@ function redactedExecutionSnapshot(command, args, cwd, injectedEnv) {
 
 function assertJuggleWorkServerReady(snapshot) {
   if (!snapshot?.running) {
-    throw new Error("JuggleWork server did not stay running after startup.");
+    throw new Error("北数Work server did not stay running after startup.");
   }
   if (!snapshot.baseUrl) {
-    throw new Error("JuggleWork server did not report a base URL after startup.");
+    throw new Error("北数Work server did not report a base URL after startup.");
   }
   if (!snapshot.ownerToken && !snapshot.clientToken) {
-    throw new Error("JuggleWork server did not report an access token after startup.");
+    throw new Error("北数Work server did not report an access token after startup.");
   }
   return snapshot;
 }
@@ -583,7 +583,7 @@ export async function resolveSystemCaEnv({
   const env = parentEnv ?? {};
   if (Object.prototype.hasOwnProperty.call(env, "NODE_EXTRA_CA_CERTS")) {
     if (typeof logInfo === "function") {
-      logInfo("JuggleWork runtime: NODE_EXTRA_CA_CERTS is already set; skipping system CA bundle export.");
+      logInfo("北数Work runtime: NODE_EXTRA_CA_CERTS is already set; skipping system CA bundle export.");
     }
     return {};
   }
@@ -1064,7 +1064,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
           "Content-Type": "application/json",
           "X-JuggleWork-Host-Token": hostToken,
         },
-        body: JSON.stringify({ scope: "owner", label: "JuggleWork desktop owner token" }),
+        body: JSON.stringify({ scope: "owner", label: "北数Work desktop owner token" }),
       },
       5000,
     );
@@ -1142,7 +1142,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       : [...packagedPaths, devPath];
     const embeddedPath = startEmbeddedServerOverride ? null : candidates.find((candidate) => existsSync(candidate));
     if (!startEmbeddedServerOverride && !embeddedPath) {
-      throw new Error(`Cannot find JuggleWork embedded server bundle. Checked: ${candidates.join(", ")}`);
+      throw new Error(`Cannot find 北数Work embedded server bundle. Checked: ${candidates.join(", ")}`);
     }
     const startEmbeddedServer = startEmbeddedServerOverride
       ?? (await import(embeddedServerImportUrl(embeddedPath))).startEmbeddedServer;
@@ -1229,7 +1229,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
           engineState.childExited = false;
         }
       } catch (error) {
-        appendOutput(juggleworkServerState, "lastStderr", `JuggleWork server workspace probe: ${error instanceof Error ? error.message : String(error)}\n`);
+        appendOutput(juggleworkServerState, "lastStderr", `北数Work server workspace probe: ${error instanceof Error ? error.message : String(error)}\n`);
       }
     }
     if (!portSelection.preferredPort || boundPort === portSelection.preferredPort) {
@@ -1335,7 +1335,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
         opencodeBinPath: options.opencodeBinPath,
       });
     } catch (error) {
-      appendOutput(engineState, "lastStderr", `JuggleWork server: ${error instanceof Error ? error.message : String(error)}\n`);
+      appendOutput(engineState, "lastStderr", `北数Work server: ${error instanceof Error ? error.message : String(error)}\n`);
       throw error;
     }
 
@@ -1525,7 +1525,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
         status: -1,
         stdout: "",
         stderr:
-          "Guided install is not supported on Windows yet. Install the JuggleWork-pinned OpenCode version manually, then restart JuggleWork.",
+          "Guided install is not supported on Windows yet. Install the 北数Work-pinned OpenCode version manually, then restart 北数Work.",
       };
     }
 

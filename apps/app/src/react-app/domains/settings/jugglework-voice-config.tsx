@@ -63,7 +63,7 @@ export function JuggleWorkVoiceConfig(props: JuggleWorkVoiceConfigProps) {
             <Mic2 />
             <AlertTitle>{t("voice.key_detected")}</AlertTitle>
             <AlertDescription>
-              Voice Mode will use OPENAI_REALTIME_API_KEY when present, otherwise OPENAI_API_KEY from JuggleWork environment variables.
+              Voice Mode will use OPENAI_REALTIME_API_KEY when present, otherwise OPENAI_API_KEY from 北数Work environment variables.
             </AlertDescription>
           </Alert>
         ) : null}
@@ -79,7 +79,7 @@ export function JuggleWorkVoiceConfig(props: JuggleWorkVoiceConfigProps) {
               placeholder="sk-..."
             />
             <FieldDescription>
-              Saved as OPENAI_API_KEY in JuggleWork's local env store. The renderer only receives short-lived Realtime client secrets.
+              Saved as OPENAI_API_KEY in 北数Work's local env store. The renderer only receives short-lived Realtime client secrets.
             </FieldDescription>
           </Field>
         </FieldGroup>

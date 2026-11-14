@@ -64,8 +64,8 @@ writeFileSync(
 <plist version="1.0"><dict>
 <key>CFBundleExecutable</key><string>DocumentDock</string>
 <key>CFBundleIdentifier</key><string>com.juggleai.jugglework.documents</string>
-<key>CFBundleName</key><string>JuggleWork 文件浏览器</string>
-<key>CFBundleDisplayName</key><string>JuggleWork 文件浏览器</string>
+<key>CFBundleName</key><string>北数Work 文件浏览器</string>
+<key>CFBundleDisplayName</key><string>北数Work 文件浏览器</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>CFBundleVersion</key><string>1</string>

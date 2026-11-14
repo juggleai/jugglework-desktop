@@ -149,7 +149,7 @@ function GoogleWorkspaceConfig({ juggleworkServerClient, hostJuggleWorkServerCli
       const result = await Promise.race([
         command(),
         new Promise<never>((_, reject) => {
-          window.setTimeout(() => reject(new Error("Google Workspace connection is taking too long. Try again, or restart JuggleWork if the browser already said authorization was received.")), DESKTOP_ACTION_TIMEOUT_MS);
+          window.setTimeout(() => reject(new Error("Google Workspace connection is taking too long. Try again, or restart 北数Work if the browser already said authorization was received.")), DESKTOP_ACTION_TIMEOUT_MS);
         }),
       ]);
       const next = normalizeGoogleWorkspaceAuthStatus(result);
@@ -184,9 +184,9 @@ function GoogleWorkspaceConfig({ juggleworkServerClient, hostJuggleWorkServerCli
       onSaved();
       if (restartLocalServer) {
         const restarted = await restartLocalServer();
-        if (!restarted) setError("Saved Google OAuth settings. Restart JuggleWork to apply them.");
+        if (!restarted) setError("Saved Google OAuth settings. Restart 北数Work to apply them.");
       } else {
-        setError("Saved Google OAuth settings. Restart JuggleWork to apply them.");
+        setError("Saved Google OAuth settings. Restart 北数Work to apply them.");
       }
       await loadStatus({ clearError: false });
     } catch (err) {
@@ -213,7 +213,7 @@ function GoogleWorkspaceConfig({ juggleworkServerClient, hostJuggleWorkServerCli
       return;
     }
     if (id === JUGGLEWORK_BUILTIN_GOOGLE_CLIENT_ID) {
-      setError("That is the built-in JuggleWork client ID, which cannot unlock Gmail read access. Create your own OAuth client in Google Cloud Console (APIs & Services > Credentials > Create OAuth client ID > Desktop app) and paste its client ID here.");
+      setError("That is the built-in 北数Work client ID, which cannot unlock Gmail read access. Create your own OAuth client in Google Cloud Console (APIs & Services > Credentials > Create OAuth client ID > Desktop app) and paste its client ID here.");
       return;
     }
     await saveOauthEnv(

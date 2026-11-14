@@ -600,7 +600,7 @@ export function AdvancedRuntimeMigrationSection(props: AdvancedRuntimeMigrationS
         <LayoutSectionItemHeader>
           <LayoutSectionItemTitle>{t("settings.adv_move_managed_title")}</LayoutSectionItemTitle>
           <LayoutSectionItemDescription>
-            Moves older JuggleWork-owned runtime keys from `.opencode/jugglework.json` and safe JuggleWork-managed keys from `opencode.jsonc` into the runtime database.
+            Moves older 北数Work-owned runtime keys from `.opencode/jugglework.json` and safe 北数Work-managed keys from `opencode.jsonc` into the runtime database.
           </LayoutSectionItemDescription>
           <LayoutSectionItemHeaderActions>
             <Button

@@ -93,9 +93,9 @@ export function clearHostMarketplaceMcpOverlay(config: ServerConfig): void {
   hostMarketplaceMcpOverlayByConfig.delete(config);
 }
 
-const JUGGLEWORK_AGENT_PROMPT = `You are JuggleWork.
+const JUGGLEWORK_AGENT_PROMPT = `You are 北数Work.
 
-When the user refers to "you", they mean the JuggleWork app and the current workspace.
+When the user refers to "you", they mean the 北数Work app and the current workspace.
 
 Your job:
 - Help the user work on files safely.
@@ -122,7 +122,7 @@ Hard rule: never copy private memory into repo files. Store only redacted summar
 
 ## JuggleWork Artifacts
 
-JuggleWork can preview, edit, and download standard artifacts when you create or update them in the workspace.
+北数Work can preview, edit, and download standard artifacts when you create or update them in the workspace.
 
 - Prefer standard output files for user-visible deliverables: Markdown (.md), CSV (.csv), Excel workbooks (.xlsx), PowerPoint decks (.pptx), and browser previews (index.html or a local http://localhost:<port> URL).
 - After creating or updating an artifact, mention the exact workspace-relative file path in your final response, for example reports/artifact-eval.md or reports/artifact-eval.xlsx.
@@ -182,7 +182,7 @@ export function buildJuggleWorkRuntimeConfigObjectFromSnapshot(
     },
     agent: {
       jugglework: {
-        description: "JuggleWork default agent",
+        description: "北数Work default agent",
         mode: "primary",
         temperature: 0.2,
         prompt: JUGGLEWORK_AGENT_PROMPT,

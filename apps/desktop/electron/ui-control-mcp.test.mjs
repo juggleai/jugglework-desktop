@@ -46,7 +46,7 @@ test("packaged UI control MCP fails closed when its resource is missing", () => 
       resourcesPath: "/Applications/JuggleWork.app/Contents/Resources",
       pathExists: () => false,
     }),
-    /missing from this JuggleWork build/,
+    /missing from this 北数Work build/,
   );
 });
 

@@ -109,7 +109,7 @@ function assertReadCapability(
   environment: JuggleWorkHostMarketplaceEnvironment,
 ): void {
   if (capabilities.hostMarketplacePlugins?.read === false || !environment.capability.read) {
-    throw new Error("This JuggleWork host does not support reading host Marketplace plugins.");
+    throw new Error("This 北数Work host does not support reading host Marketplace plugins.");
   }
 }
 
@@ -125,7 +125,7 @@ function assertWriteCapability(
   environment: JuggleWorkHostMarketplaceEnvironment,
 ): void {
   if (capabilities.hostMarketplacePlugins?.write !== true || !environment.capability.write) {
-    throw new Error("This JuggleWork host does not support changing host Marketplace plugins.");
+    throw new Error("This 北数Work host does not support changing host Marketplace plugins.");
   }
 }
 

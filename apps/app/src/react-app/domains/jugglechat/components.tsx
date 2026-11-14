@@ -582,7 +582,7 @@ function MessageMeta({ message, overlay, sticker, onResend }: { message: ChatMes
 
 function TranslationBlock({ message }: { message: ChatMessage }) {
   if (!message.isTranslating && !(message.translation && message.isShowTranslation)) return null;
-  return <div className="jg-translate"><div className={cx("jg-translate-content", `jg-peer-color-${avatarColorIndex(message.sender?.id || "")}`)}><div className="wrapper">{message.isTranslating ? <div className="loading-container"><div className="loading-spinner" /></div> : <span className={cx("content", isMarkdownContent(message.translation || "") && "markdown-body")} dangerouslySetInnerHTML={{ __html: messageHtml(message, true) }} />}</div><div className="label">由 JuggleWork 提供翻译支持</div></div></div>;
+  return <div className="jg-translate"><div className={cx("jg-translate-content", `jg-peer-color-${avatarColorIndex(message.sender?.id || "")}`)}><div className="wrapper">{message.isTranslating ? <div className="loading-container"><div className="loading-spinner" /></div> : <span className={cx("content", isMarkdownContent(message.translation || "") && "markdown-body")} dangerouslySetInnerHTML={{ __html: messageHtml(message, true) }} />}</div><div className="label">由 北数Work 提供翻译支持</div></div></div>;
 }
 
 function UploadProgressOverlay({ message }: { message: ChatMessage }) {

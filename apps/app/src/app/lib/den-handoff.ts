@@ -47,7 +47,7 @@ export async function exchangeHandoffAndSignIn(
   grant: string,
   options: ExchangeHandoffOptions,
 ): Promise<ExchangeHandoffResult> {
-  const fallback = options.fallbackErrorMessage ?? "Failed to sign in to JuggleWork Cloud.";
+  const fallback = options.fallbackErrorMessage ?? "Failed to sign in to 北数Work Cloud.";
   const client = options.client ?? createDenClient({ baseUrl: options.baseUrl });
 
   try {
