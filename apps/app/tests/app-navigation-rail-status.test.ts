@@ -81,6 +81,20 @@ describe("Code Review navigation", () => {
   });
 });
 
+describe("Code Review visibility flag", () => {
+  test("hides Code Review by default and gates every entry point", async () => {
+    const { CODE_REVIEW_ENABLED } = await import("../src/react-app/domains/reviews/review-feature-flags");
+    expect(CODE_REVIEW_ENABLED).toBe(false);
+
+    const moreRowStart = railSource.indexOf('data-testid="app-navigation-more-reviews-row"');
+    expect(railSource.lastIndexOf("{CODE_REVIEW_ENABLED ? (", moreRowStart)).toBeGreaterThan(railSource.indexOf('data-testid="app-navigation-more-calendar-row"'));
+    expect(railSource).toContain('const reviewsPinned = CODE_REVIEW_ENABLED && pinnedNavigationItems.includes("reviews");');
+
+    const routeSource = readFileSync(new URL("../src/react-app/shell/workspace-app-route.tsx", import.meta.url), "utf8");
+    expect(routeSource).toContain('if (appPath.view === "reviews" && !CODE_REVIEW_ENABLED) {');
+  });
+});
+
 describe("Calendar navigation", () => {
   const calendarRow = railSource.slice(
     railSource.indexOf('data-testid="app-navigation-more-calendar-row"'),

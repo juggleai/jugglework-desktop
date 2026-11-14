@@ -64,6 +64,7 @@ import {
   type PinnableAppNavigationItem,
 } from "./app-navigation-pins";
 import { LOCAL_AUTOMATION_ENABLED } from "@/react-app/domains/automations/automation-feature-flags";
+import { CODE_REVIEW_ENABLED } from "@/react-app/domains/reviews/review-feature-flags";
 import { useAutomationActivity } from "@/react-app/domains/automations/automation-activity-provider";
 import { isIMNavigationVisible, visibleLocalWorkspaceIndicator } from "./app-navigation-status";
 import { accountDisplayName, membershipTierLabel, membershipUpgradeContext, organizationMenuGroups } from "./account-menu-model";
@@ -516,7 +517,8 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
     navigate("/calendar");
   };
   const toggleCalendarPinned = () => setPinnedNavigationItems(setAppNavigationItemPinned("calendar", !calendarPinned));
-  const reviewsPinned = pinnedNavigationItems.includes("reviews");
+  // 模块隐藏时，历史上已置顶的代码审查也不再显示在导航栏。
+  const reviewsPinned = CODE_REVIEW_ENABLED && pinnedNavigationItems.includes("reviews");
   const openReviews = () => {
     setNavigationMenuOpen(false);
     props.onOpenReviews();
@@ -817,6 +819,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
                 <Pin className={cn("size-4", calendarPinned && "fill-current")} />
               </button>
             </div>
+            {CODE_REVIEW_ENABLED ? (
             <div
               className="group flex items-center gap-1 rounded-2xl transition-colors hover:bg-accent focus-within:bg-accent"
               data-testid="app-navigation-more-reviews-row"
@@ -854,6 +857,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
                 <Pin className={cn("size-4", reviewsPinned && "fill-current")} />
               </button>
             </div>
+            ) : null}
             <div
               className="group flex items-center gap-1 rounded-2xl transition-colors hover:bg-accent focus-within:bg-accent"
               data-testid="app-navigation-more-toon-factory-row"

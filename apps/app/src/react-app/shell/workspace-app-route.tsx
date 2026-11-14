@@ -17,6 +17,7 @@ import { AutomationPage } from "../domains/automations/automation-page";
 import { TaskPage } from "../domains/tasks/task-page";
 import { CalendarPage } from "../domains/calendar/calendar-page";
 import { ReviewPage } from "../domains/reviews/review-page";
+import { CODE_REVIEW_ENABLED } from "../domains/reviews/review-feature-flags";
 import { AppNavigationSidebarPreviewProvider } from "./app-navigation-sidebar-preview";
 import { useAppNavigationSidebarPreview } from "./app-navigation-sidebar-preview";
 import { readActiveWorkspaceId, readLastSessionFor } from "./session-memory";
@@ -168,6 +169,10 @@ function WorkspaceAppRouteContent() {
 
   if (!appPath) {
     return <Navigate to="/session" replace />;
+  }
+  // 代码审查模块隐藏时，旧链接或历史路由直接回到会话页，不挂载审查页面。
+  if (appPath.view === "reviews" && !CODE_REVIEW_ENABLED) {
+    return <Navigate to={workspaceSessionRoute(appPath.workspaceId, readLastSessionFor(appPath.workspaceId))} replace />;
   }
   if (appPath.view === "toon-factory" && !appPath.workspaceId.trim()) {
     return <Navigate to="/session" replace />;
