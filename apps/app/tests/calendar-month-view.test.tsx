@@ -43,6 +43,15 @@ mock.module("../src/components/ui/popover", () => ({
   },
   PopoverContent: ({ children, ...props }: React.ComponentProps<"div">) => <div {...props}>{children}</div>,
 }));
+mock.module("../src/components/ui/dropdown-menu", () => ({
+  DropdownMenu: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  DropdownMenuTrigger: ({ children, render }: { children: React.ReactNode; render: React.ReactElement }) => React.cloneElement(render, {}, children),
+  DropdownMenuContent: ({ children, ...props }: React.ComponentProps<"div">) => <div {...props}>{children}</div>,
+  DropdownMenuItem: ({ children, ...props }: React.ComponentProps<"button">) => <button type="button" {...props}>{children}</button>,
+  DropdownMenuSub: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  DropdownMenuSubTrigger: ({ children, ...props }: React.ComponentProps<"button">) => <button type="button" {...props}>{children}</button>,
+  DropdownMenuSubContent: ({ children, ...props }: React.ComponentProps<"div">) => <div {...props}>{children}</div>,
+}));
 
 const calendar = (id: string, name: string): DenCalendar => ({
   id, organizationId: "org-a", ownerMemberId: "member-a", name, color: "#2563eb", isDefault: id === "cal-1",
@@ -214,6 +223,40 @@ test("calendar filters are grouped, collapsible, and retain the existing checkbo
     expect(byId(renderer, "calendar-filter-cal-1").props.checked).toBe(true);
     expect(byId(renderer, "calendar-filter-check-cal-1").props.style.backgroundColor).toBe("#2563eb");
     expect(String(byId(renderer, "calendar-filter-check-cal-1").findByType("svg").props.className)).toContain("text-white");
+  } finally { await act(async () => { renderer.unmount(); }); }
+});
+
+test("calendar row menu changes its display color locally and keeps it after remount", async () => {
+  events = [calendarEvent("colored-event", { kind: "allDay", startDate: "2026-11-09", endDateExclusive: "2026-11-10" }, "cal-2")];
+  let { renderer } = await render();
+  try {
+    expect(byId(renderer, "calendar-filter-check-cal-2").props.style.backgroundColor).toBe("#2563eb");
+    expect(String(byId(renderer, "calendar-filter-check-cal-2").findByType("svg").props.className)).toContain("text-white");
+    expect(byId(renderer, "calendar-day-event-2026-11-09-colored-event").props.style.backgroundColor).toBe("#2563eb");
+    expect(byId(renderer, "calendar-color-cal-2-d84fa3").props["aria-pressed"]).toBe(false);
+    await click(renderer, "calendar-color-cal-2-d84fa3");
+    expect(byId(renderer, "calendar-filter-check-cal-2").props.style.backgroundColor).toBe("#d84fa3");
+    expect(byId(renderer, "calendar-day-event-2026-11-09-colored-event").props.style.backgroundColor).toBe("#d84fa3");
+    expect(byId(renderer, "calendar-color-cal-2-d84fa3").props["aria-pressed"]).toBe(true);
+    expect(writes).toEqual([]);
+  } finally { await act(async () => { renderer.unmount(); }); }
+  ({ renderer } = await render());
+  try {
+    expect(byId(renderer, "calendar-filter-check-cal-2").props.style.backgroundColor).toBe("#d84fa3");
+    expect(byId(renderer, "calendar-day-event-2026-11-09-colored-event").props.style.backgroundColor).toBe("#d84fa3");
+    expect(byId(renderer, "calendar-color-cal-2-d84fa3").props["aria-pressed"]).toBe(true);
+    expect(writes).toEqual([]);
+  } finally { await act(async () => { renderer.unmount(); }); }
+});
+
+test("calendar row menu can show only one calendar", async () => {
+  const { renderer } = await render();
+  try {
+    await click(renderer, "calendar-show-only-cal-2");
+    expect(byId(renderer, "calendar-ready").props["data-visible-calendar-ids"]).toBe("cal-2");
+    expect(byId(renderer, "calendar-filter-cal-1").props.checked).toBe(false);
+    expect(byId(renderer, "calendar-filter-cal-2").props.checked).toBe(true);
+    expect(writes).toEqual([]);
   } finally { await act(async () => { renderer.unmount(); }); }
 });
 
@@ -396,6 +439,11 @@ test("the view switcher replaces the right agenda with day, week, and month surf
     expect(has(renderer, "calendar-week-view")).toBe(true);
     expect(has(renderer, "calendar-all-day-event-all-day")).toBe(true);
     expect(has(renderer, "calendar-time-event-2026-11-09-timed")).toBe(true);
+    expect(text(byId(renderer, "calendar-time-hour-9"))).toBe("09:00");
+    expect(text(byId(renderer, "calendar-current-time-label"))).toBe("12:00");
+    expect(byId(renderer, "calendar-current-time").props["data-current-day-index"]).toBe(1);
+    expect(byId(renderer, "calendar-current-time").props.className).toContain("inset-x-0");
+    expect(byId(renderer, "calendar-time-day-2026-11-08").props.className).toContain("text-left");
     expect(bootstrapRanges.at(-1)).toBe("2026-11-08/2026-11-15");
     await click(renderer, "calendar-view-day");
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });

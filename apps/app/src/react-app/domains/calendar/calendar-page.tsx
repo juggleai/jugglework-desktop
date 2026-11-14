@@ -22,10 +22,13 @@ import {
   calendarToday,
   calendarWeekStart,
   moveCalendarSelection,
+  readCalendarColorOverrides,
   readHiddenCalendarIds,
+  reconcileCalendarColorOverrides,
   reconcileHiddenCalendarIds,
   selectCalendarDate,
   visibleCalendarIds,
+  writeCalendarColorOverrides,
   writeHiddenCalendarIds,
 } from "./calendar-month-model";
 import { CalendarFilterList, CalendarMiniMonth, CalendarMonthGrid } from "./calendar-month-view";
@@ -195,6 +198,7 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
   const [navigation, setNavigation] = React.useState(() => selectCalendarDate(today));
   const [view, setView] = React.useState<CalendarViewMode>("month");
   const [hiddenIds, setHiddenIds] = React.useState(() => readHiddenCalendarIds(props.scope));
+  const [colorOverrides, setColorOverrides] = React.useState(() => readCalendarColorOverrides(props.scope));
   const calendarsQuery = useCalendarsQuery({ client: cloud.client, scope: props.scope, active: online && !props.collaborationEnabled });
   const collaborationQuery = useCalendarCollaborationQuery({ client: cloud.client, scope: props.scope, active: online && props.collaborationEnabled });
   const visibleDays = React.useMemo(() => calendarViewDays(navigation.selectedDate, view, weekStart), [navigation.selectedDate, view, weekStart]);
@@ -210,9 +214,10 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
   const eventDrafts = useCalendarEventDrafts(offlineRuntime, props.scope);
   // Offline shows only what the scoped local cache fully covers; in-memory online results are not reused.
   const collaborationResources = props.collaborationEnabled ? collaborationQuery.data?.items ?? [] : [];
-  const calendars = online
+  const sourceCalendars = online
     ? props.collaborationEnabled ? collaborationResources.map(denCalendarFromCollaborationResource) : calendarsQuery.data ?? []
     : offlineView.state === "offline-covered" || offlineView.state === "offline-uncovered" ? offlineView.calendars : [];
+  const calendars = sourceCalendars.map((calendar) => colorOverrides[calendar.id] ? { ...calendar, color: colorOverrides[calendar.id]! } : calendar);
   const activeIds = calendars.map((calendar) => calendar.id);
   const activeKey = activeIds.join("\u0000");
   const visibleIds = React.useMemo(() => visibleCalendarIds(activeIds, hiddenIds), [activeKey, hiddenIds]);
@@ -261,6 +266,16 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
       const next = reconcileHiddenCalendarIds(current, activeIds);
       if (next.length === current.length) return current;
       writeHiddenCalendarIds(props.scope, next);
+      return next;
+    });
+  }, [activeKey, calendarsQuery.data, collaborationQuery.data, online, props.collaborationEnabled, props.scope]);
+  React.useEffect(() => {
+    if (!online || !(props.collaborationEnabled ? collaborationQuery.data : calendarsQuery.data)) return;
+    setColorOverrides((current) => {
+      const next = reconcileCalendarColorOverrides(current, activeIds);
+      const nextEntries = Object.entries(next);
+      if (nextEntries.length === Object.keys(current).length && nextEntries.every(([id, color]) => current[id] === color)) return current;
+      writeCalendarColorOverrides(props.scope, next);
       return next;
     });
   }, [activeKey, calendarsQuery.data, collaborationQuery.data, online, props.collaborationEnabled, props.scope]);
@@ -450,6 +465,18 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
       return next;
     });
   };
+  const showOnlyCalendar = (calendarId: string) => {
+    const next = activeIds.filter((id) => id !== calendarId);
+    writeHiddenCalendarIds(props.scope, next);
+    setHiddenIds(next);
+  };
+  const changeCalendarColor = (calendarId: string, color: string) => {
+    setColorOverrides((current) => {
+      const next = { ...current, [calendarId]: color };
+      writeCalendarColorOverrides(props.scope, next);
+      return next;
+    });
+  };
 
   return (
     <div
@@ -505,7 +532,7 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
                 setMembersCalendarId(resource.id);
               } : undefined,
             };
-          })} hiddenIds={hiddenIds} onToggle={toggleCalendar} />
+          })} hiddenIds={hiddenIds} onToggle={toggleCalendar} onShowOnly={showOnlyCalendar} onColorChange={changeCalendarColor} />
         </div>
         {eventDrafts.drafts.length > 0 ? (
           <CalendarDraftList

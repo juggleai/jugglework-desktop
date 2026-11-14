@@ -1,10 +1,19 @@
 /** @jsxImportSource react */
 import * as React from "react";
 import { Temporal } from "@js-temporal/polyfill";
-import { Check, ChevronLeft, ChevronRight, Users } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, MoreHorizontal, Users } from "lucide-react";
 
 import type { DenCalendar } from "@/app/lib/den";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { t } from "@/i18n";
 import {
@@ -17,6 +26,11 @@ import {
 const WEEKDAY_REFERENCE: Record<CalendarWeekday, string> = {
   1: "2026-11-02", 2: "2026-11-03", 3: "2026-11-04", 4: "2026-11-05", 5: "2026-11-06", 6: "2026-11-07", 7: "2026-11-08",
 };
+
+export const CALENDAR_COLOR_PALETTE = [
+  "#d84fa3", "#f54a45", "#ff7a1a", "#fbbd0b", "#2fbd50", "#2fc9b7",
+  "#3370ff", "#3dbbed", "#4d55e7", "#7a36e8", "#bd35b5", "#8d949e",
+] as const;
 
 function weekdayLabel(weekday: CalendarWeekday, locale: string, style: "short" | "narrow" | "long"): string {
   return Temporal.PlainDate.from(WEEKDAY_REFERENCE[weekday]).toLocaleString(locale, { weekday: style });
@@ -59,6 +73,8 @@ export function CalendarFilterList(props: {
   calendars: ReadonlyArray<{ calendar: DenCalendar; managed: boolean; onManageMembers?: () => void }>;
   hiddenIds: readonly string[];
   onToggle: (calendarId: string, visible: boolean) => void;
+  onShowOnly: (calendarId: string) => void;
+  onColorChange: (calendarId: string, color: string) => void;
 }) {
   const hidden = new Set(props.hiddenIds);
   const managed = props.calendars.filter((item) => item.managed);
@@ -69,8 +85,8 @@ export function CalendarFilterList(props: {
         <p className="px-1 text-sm text-dls-secondary" data-testid="calendar-filter-empty">{t("calendar.no_calendars")}</p>
       ) : (
         <div className="flex flex-col gap-1">
-          <CalendarFilterGroup id="managed" title={t("calendar.managed_calendars")} items={managed} hidden={hidden} onToggle={props.onToggle} />
-          <CalendarFilterGroup id="subscribed" title={t("calendar.subscribed_calendars")} items={subscribed} hidden={hidden} onToggle={props.onToggle} emptyLabel={t("calendar.no_subscribed_calendars")} />
+          <CalendarFilterGroup id="managed" title={t("calendar.managed_calendars")} items={managed} hidden={hidden} onToggle={props.onToggle} onShowOnly={props.onShowOnly} onColorChange={props.onColorChange} />
+          <CalendarFilterGroup id="subscribed" title={t("calendar.subscribed_calendars")} items={subscribed} hidden={hidden} onToggle={props.onToggle} onShowOnly={props.onShowOnly} onColorChange={props.onColorChange} emptyLabel={t("calendar.no_subscribed_calendars")} />
         </div>
       )}
     </section>
@@ -83,6 +99,8 @@ function CalendarFilterGroup(props: {
   items: ReadonlyArray<{ calendar: DenCalendar; onManageMembers?: () => void }>;
   hidden: ReadonlySet<string>;
   onToggle: (calendarId: string, visible: boolean) => void;
+  onShowOnly: (calendarId: string) => void;
+  onColorChange: (calendarId: string, color: string) => void;
   emptyLabel?: string;
 }) {
   const [open, setOpen] = React.useState(true);
@@ -110,7 +128,7 @@ function CalendarFilterGroup(props: {
               const visible = !props.hidden.has(calendar.id);
               return (
                 <li key={calendar.id}>
-                  <div className="flex items-center rounded-lg px-5 py-0.5 hover:bg-dls-hover">
+                  <div className="group/calendar-row flex items-center rounded-lg px-5 py-0.5 hover:bg-dls-hover focus-within:bg-dls-hover">
                     <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 py-1 text-sm text-dls-text focus-within:ring-2 focus-within:ring-dls-accent/35">
                       <input
                         type="checkbox"
@@ -140,6 +158,7 @@ function CalendarFilterGroup(props: {
                         <Users className="size-4" aria-hidden="true" />
                       </button>
                     ) : null}
+                    <CalendarColorMenu calendar={calendar} onShowOnly={() => props.onShowOnly(calendar.id)} onColorChange={(color) => props.onColorChange(calendar.id, color)} />
                   </div>
                 </li>
               );
@@ -148,6 +167,49 @@ function CalendarFilterGroup(props: {
         )}
       </div>
     </section>
+  );
+}
+
+function CalendarColorMenu(props: { calendar: DenCalendar; onShowOnly: () => void; onColorChange: (color: string) => void }) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={<button type="button" className="ml-1 flex size-7 shrink-0 items-center justify-center rounded-md text-dls-secondary opacity-0 transition-opacity hover:bg-dls-surface hover:text-dls-text focus:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/35 group-hover/calendar-row:opacity-100 data-popup-open:opacity-100" aria-label={t("calendar.more_actions", { name: props.calendar.name })} data-testid={`calendar-more-${props.calendar.id}`} />}
+      >
+        <MoreHorizontal className="size-4" aria-hidden="true" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" sideOffset={4} className="min-w-44 rounded-lg border border-dls-border bg-dls-surface p-1 text-dls-text shadow-xl before:hidden dark:bg-dls-surface">
+        <DropdownMenuItem className="h-9 rounded-md px-3 font-normal focus:bg-dls-hover focus:text-dls-text" onClick={props.onShowOnly} data-testid={`calendar-show-only-${props.calendar.id}`}>
+          {t("calendar.show_only_this")}
+        </DropdownMenuItem>
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger className="h-9 rounded-md px-3 font-normal focus:bg-dls-hover focus:text-dls-text data-popup-open:bg-dls-hover data-popup-open:text-dls-text" data-testid={`calendar-change-color-${props.calendar.id}`}>
+            {t("calendar.change_color")}
+          </DropdownMenuSubTrigger>
+          <DropdownMenuSubContent sideOffset={6} className="min-w-0 rounded-lg border border-dls-border bg-dls-surface p-3 text-dls-text shadow-xl before:hidden dark:bg-dls-surface" data-testid={`calendar-color-palette-${props.calendar.id}`}>
+            <div className="grid grid-cols-6 gap-2" role="group" aria-label={t("calendar.change_color")}>
+              {CALENDAR_COLOR_PALETTE.map((color) => {
+                const selected = props.calendar.color?.toLowerCase() === color;
+                return (
+                  <button
+                    key={color}
+                    type="button"
+                    className="flex size-8 items-center justify-center rounded-md outline-none ring-offset-2 ring-offset-dls-surface transition-transform hover:scale-105 focus-visible:ring-2 focus-visible:ring-dls-text"
+                    style={{ backgroundColor: color }}
+                    aria-label={t("calendar.choose_color", { color })}
+                    aria-pressed={selected}
+                    onClick={() => props.onColorChange(color)}
+                    data-testid={`calendar-color-${props.calendar.id}-${color.slice(1)}`}
+                  >
+                    {selected ? <span className="flex size-6 items-center justify-center rounded-md border-2 border-white text-white"><Check className="size-4 stroke-[3]" aria-hidden="true" /></span> : null}
+                  </button>
+                );
+              })}
+            </div>
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 

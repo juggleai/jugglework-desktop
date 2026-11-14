@@ -9,6 +9,9 @@ export type CalendarWeekday = 1 | 2 | 3 | 4 | 5 | 6 | 7;
 export const CALENDAR_GRID_DAYS = 42;
 
 export function calendarWeekStart(locale: string): CalendarWeekday {
+  // Feishu's Chinese calendar uses a Sunday-first week in both the mini month
+  // and the week surface, even though Intl.Locale reports Monday for zh-CN.
+  if (/^zh(?:-|$)/i.test(locale)) return 7;
   try {
     const intlLocale = new Intl.Locale(locale) as Intl.Locale & {
       getWeekInfo?: () => { firstDay?: number };
@@ -64,6 +67,10 @@ export function moveCalendarSelection(state: CalendarMonthNavigation, days: numb
 /* ---- Local, per-scope visibility filter. Never written to the cloud. ---- */
 
 const HIDDEN_CALENDARS_PREFIX = "jugglework.calendar.hidden:";
+const CALENDAR_COLORS_PREFIX = "jugglework.calendar.colors:";
+const HEX_COLOR = /^#[0-9a-f]{6}$/i;
+
+export type CalendarColorOverrides = Record<string, string>;
 
 export function calendarHiddenStorageKey(scope: CalendarScope): string {
   return `${HIDDEN_CALENDARS_PREFIX}${calendarScopeIdentity(scope)}`;
@@ -89,6 +96,37 @@ export function writeHiddenCalendarIds(scope: CalendarScope, ids: readonly strin
   const unique = [...new Set(ids)];
   if (unique.length === 0) storage.removeItem(calendarHiddenStorageKey(scope));
   else storage.setItem(calendarHiddenStorageKey(scope), JSON.stringify(unique));
+}
+
+export function calendarColorsStorageKey(scope: CalendarScope): string {
+  return `${CALENDAR_COLORS_PREFIX}${calendarScopeIdentity(scope)}`;
+}
+
+export function parseCalendarColorOverrides(raw: string | null | undefined): CalendarColorOverrides {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return Object.fromEntries(Object.entries(parsed).filter(([calendarId, color]) => calendarId.trim() !== "" && typeof color === "string" && HEX_COLOR.test(color)));
+  } catch {
+    return {};
+  }
+}
+
+export function readCalendarColorOverrides(scope: CalendarScope, storage: Pick<Storage, "getItem"> | null = safeStorage()): CalendarColorOverrides {
+  return parseCalendarColorOverrides(storage?.getItem(calendarColorsStorageKey(scope)));
+}
+
+export function writeCalendarColorOverrides(scope: CalendarScope, colors: CalendarColorOverrides, storage: Pick<Storage, "setItem" | "removeItem"> | null = safeStorage()): void {
+  if (!storage) return;
+  const valid = Object.fromEntries(Object.entries(colors).filter(([calendarId, color]) => calendarId.trim() !== "" && HEX_COLOR.test(color)));
+  if (Object.keys(valid).length === 0) storage.removeItem(calendarColorsStorageKey(scope));
+  else storage.setItem(calendarColorsStorageKey(scope), JSON.stringify(valid));
+}
+
+export function reconcileCalendarColorOverrides(colors: CalendarColorOverrides, activeCalendarIds: readonly string[]): CalendarColorOverrides {
+  const active = new Set(activeCalendarIds);
+  return Object.fromEntries(Object.entries(colors).filter(([calendarId]) => active.has(calendarId)));
 }
 
 /** Drop ids of calendars no longer active (e.g. soft-deleted) so they cannot linger as filter entries. */

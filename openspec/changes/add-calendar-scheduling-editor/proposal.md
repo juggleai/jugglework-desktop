@@ -12,6 +12,7 @@
 - scheduling 元数据失败或加载中时，普通事件仍可读，但相关编辑/删除保持 fail-closed；基础 Calendar bootstrap 仍可持久化为离线只读 baseline。
 - 离线不查询 availability、不进行权威写入；参与人 scheduling aggregate 离线只读，草稿可保留排期字段。
 - 日程可持久化是否启用 JuggleWork 视频会议；详情卡只在启用时提供发起会议动作，并把当前组织内日程参与人映射为会议邀请人后交给既有 Meeting 服务通知。
+- 优化 Calendar 导航与时间视图：中文日历使用周日起始，日历筛选支持仅显示单个日历与本地颜色覆盖，周视图显示 24 小时时标、当前时间线和更清晰的重叠日程布局。
 - 本变更不实现 RSVP、邀请/更新/取消通知、参与人自助响应、共同可用时间建议、单次重复例外或跨组织/外部联系人。
 
 ## Capabilities
@@ -26,6 +27,6 @@
 
 ## Impact
 
-- `apps/app`：Calendar DTO/query/cache/editor、详情卡、组织成员和群成员分页消费、重复、availability 及 Meeting 发起 UI。
+- `apps/app`：Calendar DTO/query/cache/editor、详情卡、月/周/日视图、组织成员和群成员分页消费、重复、availability 及 Meeting 发起 UI。
 - `jugglework-server`（独立仓库已部署的对应 API）：scheduling event/occurrence 与 availability 权威响应。
 - OpenSpec：只关闭本 change 的窄范围任务，不关闭 `add-team-calendar-collaboration` 的 RSVP、通知、共享授权或完整 availability 任务。

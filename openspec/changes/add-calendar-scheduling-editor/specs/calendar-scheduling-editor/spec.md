@@ -126,3 +126,31 @@ Scheduling 服务失败 MUST NOT 阻止成功的普通 Calendar bootstrap 持久
 
 - **WHEN** 日程详情卡已打开且用户点击卡片外的日历区域
 - **THEN** 详情卡关闭且该外部点击不会触发卡片内部动作
+
+### Requirement: Calendar presentation preferences remain local and scoped
+
+Calendar 筛选 SHALL 支持仅显示一个日历和从受限调色板覆盖其展示颜色。隐藏集合和颜色覆盖 MUST 按 deployment、organization 和 member scope 存储在本地，不得写入云端日历资源；已删除日历的本地项 MUST 在权威目录刷新后移除。选中标记 SHALL 使用白色对勾，并在明暗主题中保持可辨识。
+
+#### Scenario: User changes a calendar display color
+
+- **WHEN** 用户从日历行菜单选择另一种颜色
+- **THEN** 当前日历的筛选标记和事件展示立即使用该颜色，重新挂载后仍保留，且不发送 Calendar 写请求
+
+#### Scenario: User shows only one calendar
+
+- **WHEN** 用户选择“仅显示此日历”
+- **THEN** 其他活动日历仅在当前本地 scope 中隐藏，目标日历保持显示
+
+### Requirement: Time views expose a stable readable day timeline
+
+中文 locale 的月和周导航 SHALL 使用周日作为每周首日。周视图 SHALL 显示明确的 24 小时时标、时区和跨可见日期区域的当前时间线；初次打开时 SHALL 将当前时间附近滚入视口。重叠 timed events SHALL 使用确定性 lane 分配，并在右侧 lane 对其完整时段无冲突时扩展宽度。
+
+#### Scenario: Chinese user opens week view
+
+- **WHEN** 当前 locale 为中文且用户打开周视图
+- **THEN** 一周从周日开始，小时标签使用 `HH:00`，今天列对应的当前时间由红色时间线标识
+
+#### Scenario: A later event can occupy free adjacent lanes
+
+- **WHEN** 某 timed event 所在 lane 右侧的连续 lanes 在该事件完整时段内均无重叠
+- **THEN** 该事件扩展到这些 lanes，但不得覆盖任何冲突事件
