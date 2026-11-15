@@ -297,7 +297,7 @@ function RailButton({
     <button
       type="button"
       aria-label={badge > 0 ? `${label}, ${resolvedBadgeLabel}` : label}
-      title={showTooltip ? label : undefined}
+      title={showTooltip ? (tooltipLabel ?? label) : undefined}
       disabled={disabled}
       onClick={onClick}
       onMouseEnter={() => {
@@ -972,6 +972,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
             {imNavigationVisible && meetingsPinned ? (
             <RailButton
               label={t("navigation.meetings")}
+              tooltipLabel={t("calendar.video_conference")}
               active={meetingsActive}
               onClick={openMeetings}
               testId="app-rail-pinned-meetings"

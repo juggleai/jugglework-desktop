@@ -586,7 +586,7 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
     >
       {/* Narrow: the filters collapse behind a disclosure and the mini month is hidden (the toolbar and
           main grid already provide month navigation and date selection). */}
-      <aside className="order-2 flex shrink-0 flex-col gap-3 @5xl/calendar:order-none @5xl/calendar:w-56 @5xl/calendar:gap-5" aria-label={t("calendar.sidebar")} data-testid="calendar-sidebar">
+      <aside className="order-2 flex shrink-0 flex-col gap-3 bg-[var(--app-secondary-sidebar-bg)] @5xl/calendar:order-none @5xl/calendar:w-56 @5xl/calendar:gap-5" aria-label={t("calendar.sidebar")} data-testid="calendar-sidebar">
         <div className="hidden @5xl/calendar:block" data-testid="calendar-mini-month-slot">
         <CalendarMiniMonth
           state={navigation}

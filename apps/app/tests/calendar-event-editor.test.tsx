@@ -142,6 +142,7 @@ mock.module("../src/react-app/domains/meeting/api", () => ({
 }));
 
 const { CalendarPage } = await import("../src/react-app/domains/calendar/calendar-page");
+const { CalendarEventCreateDialog } = await import("../src/react-app/domains/calendar/calendar-event-create-dialog");
 const { t } = await import("../src/i18n");
 
 function baseEvent(id: string): DenCalendarEvent {
@@ -162,13 +163,13 @@ beforeEach(() => {
   calendars = [calendar("cal-1", "Personal"), calendar("cal-2", "Side project")];
 });
 
-async function render() {
+async function render(initialEntry: string | { pathname: string; state?: unknown } = "/calendar") {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const noop = () => undefined;
   let renderer!: TestRenderer.ReactTestRenderer;
   const tree = () => (
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={["/calendar"]}>
+      <MemoryRouter initialEntries={[initialEntry]}>
         <CalendarPage workspaceId="" sessionPath="/session" clock={clock} onOpenAccount={noop} onOpenApps={noop} onOpenChat={noop} onOpenReviews={noop} onOpenSettings={noop} />
       </MemoryRouter>
     </QueryClientProvider>
@@ -196,6 +197,25 @@ const submit = async (renderer: TestRenderer.ReactTestRenderer) => {
   await settle();
 };
 const formStatus = (renderer: TestRenderer.ReactTestRenderer) => byId(renderer, "calendar-event-form").props["data-status"];
+
+test("cross-page create entry opens the shared calendar event dialog in place", async () => {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  function Harness() {
+    const [open, setOpen] = React.useState(true);
+    return <CalendarEventCreateDialog open={open} onOpenChange={setOpen} now={clock.now} timeZone={clock.timeZone} />;
+  }
+  let renderer!: TestRenderer.ReactTestRenderer;
+  await act(async () => {
+    renderer = TestRenderer.create(<QueryClientProvider client={queryClient}><Harness /></QueryClientProvider>);
+  });
+  await settle();
+  try {
+    expect(has(renderer, "calendar-event-dialog")).toBe(true);
+    expect(byId(renderer, "calendar-form-video-conference-remove")).toBeTruthy();
+    await click(renderer, "calendar-form-cancel");
+    expect(has(renderer, "calendar-event-dialog")).toBe(false);
+  } finally { await act(async () => { renderer.unmount(); }); }
+});
 
 test("creating a timed event shows it only after the authoritative response", async () => {
   staleSchedulingRead = true;

@@ -127,6 +127,15 @@ Scheduling 服务失败 MUST NOT 阻止成功的普通 Calendar bootstrap 持久
 - **WHEN** 日程详情卡已打开且用户点击卡片外的日历区域
 - **THEN** 详情卡关闭且该外部点击不会触发卡片内部动作
 
+### Requirement: Cross-page scheduling reuses the authoritative editor
+
+Desktop 中的非 Calendar 排期入口 SHALL 复用同一个 Calendar 创建编辑器、capability gate、日历目录和 scheduling validation，不得维护功能较少的平行预约表单。弹窗关闭后 MUST 保持来源页面和已有内容不变。
+
+#### Scenario: User schedules from the meeting workspace
+
+- **WHEN** 用户在会议工作区点击预约会议
+- **THEN** 当前页面打开 Calendar 创建编辑器，包含参与人、重复和视频会议设置；取消或保存后关闭弹窗且不切换页面
+
 ### Requirement: Calendar presentation preferences remain local and scoped
 
 Calendar 筛选 SHALL 支持仅显示一个日历和从受限调色板覆盖其展示颜色。隐藏集合和颜色覆盖 MUST 按 deployment、organization 和 member scope 存储在本地，不得写入云端日历资源；已删除日历的本地项 MUST 在权威目录刷新后移除。选中标记 SHALL 使用白色对勾，并在明暗主题中保持可辨识。

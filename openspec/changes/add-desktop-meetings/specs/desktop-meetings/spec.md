@@ -41,9 +41,12 @@ Desktop SHALL distinguish active participants from absent members and allow invi
 
 ### Requirement: Stable scheduling display
 Background refresh SHALL retain schedule content during loading.
-#### Scenario: Home calendar date selected
-- **WHEN** a user selects a date in the home calendar
-- **THEN** only the adjacent schedule changes and the home view remains selected.
+#### Scenario: User opens the meeting workspace
+- **WHEN** the meeting workspace has loaded
+- **THEN** a launcher sidebar exposes start, join and schedule actions while the overview keeps upcoming and historical meetings in chronological sections.
+#### Scenario: User schedules from the meeting workspace
+- **WHEN** the user chooses the schedule action
+- **THEN** Desktop opens the shared Calendar event creation dialog without navigating away, and closing it returns to the unchanged meeting overview.
 
 ### Requirement: Explicit desktop and window selection
 Electron SHALL present a meeting-window modal with desktop/window thumbnails and filters before sharing. Selection alone SHALL NOT start capture.
@@ -57,11 +60,11 @@ Electron SHALL present a meeting-window modal with desktop/window thumbnails and
 - **WHEN** the selected source no longer exists at confirmation
 - **THEN** the modal remains open with a refresh/reselection message and no fallback capture starts.
 
-### Requirement: Draggable workbench navigation
-The meeting workbench header SHALL support native window dragging without intercepting navigation controls.
-#### Scenario: Switch meeting views
-- **WHEN** the user clicks Home, Calendar or History in the header
-- **THEN** the selected view changes normally; the tabs remain outside the native drag region.
+### Requirement: Draggable meeting workbench
+The meeting workbench SHALL preserve native window dragging on empty shell space without intercepting launcher or overview controls.
+#### Scenario: Use a launcher action
+- **WHEN** the user clicks start, join or schedule in the launcher
+- **THEN** the requested action runs normally outside the native drag region.
 
 ### Requirement: 安装包中的会议设备授权
 

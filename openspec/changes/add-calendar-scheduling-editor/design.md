@@ -41,6 +41,10 @@ Calendar core 继续提供普通事件、版本、幂等和离线 baseline。Sch
 
 Scheduling 查询失败时，在线 UI 继续显示 bootstrap 事件并展示错误，但个人事件的编辑/删除保持 fail-closed。离线持久化仍保存普通 bootstrap baseline，避免一个扩展服务故障清空整个离线 Calendar；只有 fresh scheduling success 才把 occurrences 合并进持久 baseline。
 
+### 6. 跨页面创建入口复用同一个 Calendar 编辑器
+
+会议等非 Calendar 页面只负责控制共享创建弹窗的打开状态，不复制排期表单或直接调用 Meeting 预约 API。共享入口重新执行 Calendar capability gate、权威日历/bootstrap 查询和默认日历选择，并把保存、取消和错误状态留在当前页面的模态层中；这样参与人、重复、视频会议意图和写权限边界与 Calendar 页面保持一致。
+
 ## Risks / Trade-offs
 
 - 普通 baseline 在 scheduling 故障时可能包含无法分类的 aggregate → 离线统一只读，在线相关编辑/删除禁用。

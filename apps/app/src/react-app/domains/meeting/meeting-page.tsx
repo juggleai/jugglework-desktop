@@ -1,4 +1,3 @@
-import { exportMeetingDiagnostics } from "./diagnostics-export";
 import { focusMeetingWindow } from "@/app/lib/desktop";
 import { MeetingPermissionNotice, MeetingPermissionRestart, MeetingPermissionSetup } from "./permission-notice";
 import { ensureMeetingMediaPermissions, meetingDeviceError } from "./media-permission";
@@ -7,11 +6,17 @@ import {
   useEffect,
   useRef,
   useState,
+  type CSSProperties,
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
+import { AppInsetSurface } from "@/react-app/shell/app-inset-surface";
+import { AppSecondarySidebarResizeHandle } from "@/react-app/shell/app-secondary-sidebar-resize-handle";
+import { ListPanelHeader } from "@/react-app/shell/list-panel-header";
+import { appInsetSidebarCssWidth, useWorkspaceShellLayout } from "@/react-app/shell/workspace-shell-layout";
 import { useDenAuth } from "../cloud/den-auth-provider";
 import { useJuggleChatStore } from "../jugglechat/store";
+import { CalendarEventCreateDialog } from "../calendar/calendar-event-create-dialog";
 import { meetingAPI } from "./api";
 import { meetingReadinessReason } from "./readiness";
 import {
@@ -28,6 +33,8 @@ import { useMeetingStore } from "./store";
 import "./meeting.css";
 const stamp = (date: string) =>
   new Date(date).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+const dateStamp = (date: string) =>
+  new Date(date).toLocaleDateString([], { month: "numeric", day: "numeric", weekday: "short" });
 const localDate = (date: Date) =>
   `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 const inputDate = (date: Date) =>
@@ -101,20 +108,24 @@ export function MeetingDialog({
   );
 }
 export function MeetingPage({ active }: { active: boolean }) {
+  const { leftSidebarResizing, leftSidebarWidth, startLeftSidebarResize } = useWorkspaceShellLayout({
+    expandedRightWidth: 520,
+  });
+  const pageStyle = {
+    "--jugglework-left-sidebar-width": appInsetSidebarCssWidth(leftSidebarWidth),
+  } as CSSProperties;
   const { activeOrganization, user } = useDenAuth();
   const contacts = useJuggleChatStore((s) => s.contacts);
   const imUser = useJuggleChatStore((s) => s.user);
   const displayName = imUser?.id === user?.id ? imUser?.name || user?.name : user?.name;
   const [cancelTarget, setCancelTarget] = useState<Meeting | null>(null);
   const [editing, setEditing] = useState(false);
-  const [tab, setTab] = useState<"home" | "calendar" | "history">("home");
-  const [view, setView] = useState<"month" | "week" | "day">("month");
-  const [date, setDate] = useState(new Date());
   const [items, setItems] = useState<Meeting[]>([]);
   const [readiness, setReadiness] = useState<MeetingReadiness | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [calendarScheduleOpen, setCalendarScheduleOpen] = useState(false);
   const [dialog, setDialog] = useState<"schedule" | "join" | "settings" | null>(
     null,
   );
@@ -134,8 +145,9 @@ export function MeetingPage({ active }: { active: boolean }) {
   } | null>(null);
   const requestKey = useRef(crypto.randomUUID());
   const epoch = useRef(0);
-  const calendarYear = date.getFullYear();
-  const calendarMonth = date.getMonth();
+  const currentMonth = new Date();
+  const calendarYear = currentMonth.getFullYear();
+  const calendarMonth = currentMonth.getMonth();
   const refresh = useCallback(async () => {
     const run = ++epoch.current;
     // Background refresh keeps the existing schedule mounted.
@@ -222,13 +234,12 @@ export function MeetingPage({ active }: { active: boolean }) {
     setSource(null);
   }, []);
   const upcoming = items.filter((m) => !meetingClosed(m));
-  const today = upcoming.filter(
-    (m) => localDate(new Date(m.startAt)) === localDate(new Date()),
+  const upcomingForHome = [...upcoming].sort(
+    (a, b) => +new Date(a.startAt) - +new Date(b.startAt),
   );
-  const selectedDayMeetings = upcoming.filter(
-    (m) => localDate(new Date(m.startAt)) === localDate(date),
-  );
-  const isTodaySelected = localDate(date) === localDate(new Date());
+  const historyForHome = items
+    .filter(meetingClosed)
+    .sort((a, b) => +new Date(b.startAt) - +new Date(a.startAt));
   async function create(input: MeetingCreate) {
     const { meeting } = await meetingAPI.create(input, requestKey.current);
     requestKey.current = crypto.randomUUID();
@@ -246,35 +257,24 @@ export function MeetingPage({ active }: { active: boolean }) {
     }
   }
   function openSchedule() {
-    requestKey.current = crypto.randomUUID();
-    setDialog("schedule");
+    setCalendarScheduleOpen(true);
   }
-  const renderItem = (m: Meeting) => (
-    <div className="meeting-item" key={m.id} data-status={m.status}>
-      <div className="time">
-        {stamp(m.startAt)}
-        <small>{stamp(m.endAt)}</small>
-      </div>
-      <div className="meeting-body">
+  const renderHomeItem = (m: Meeting) => (
+    <div className="home-meeting-item" key={m.id} data-status={m.status}>
+      <span className="home-meeting-icon"><Icon /></span>
+      <div className="home-meeting-copy">
         <div className="row">
           <h3 title={m.title}>{m.title}</h3>
-          <span className={`pill ${m.status === "live" ? "live" : ""}`}>
-            {meetingStatusLabel(m)}
-          </span>
+          {m.status === "live" ? <span className="pill live">进行中</span> : null}
         </div>
-        <span className="sub small">
-          {m.sourceKind === "group"
-            ? "来自组织群"
-            : m.sourceKind === "direct"
-              ? "来自单聊"
-              : m.organizerId === user?.id
-                ? "我发起的会议"
-                : "受邀会议"}{" "}
-          · {meetingClosed(m) ? (m.status === "cancelled" ? "会议已取消" : "会议已结束") : m.status === "live" ? `${Object.keys(m.participants).length} 人在会` : "尚未开始"}
-        </span>
+        <p className="sub">
+          {dateStamp(m.startAt)} {stamp(m.startAt)}–{stamp(m.endAt)}
+          <span aria-hidden="true"> · </span>
+          <span className="meeting-code">{m.code}</span>
+        </p>
       </div>
       <button
-        className={m.status === "live" ? "primary" : ""}
+        className={m.status === "live" ? "primary" : "home-meeting-open"}
         onClick={() => void run(async () => {
           if (useMeetingStore.getState().meeting?.id === m.id) {
             await focusMeetingWindow("meeting");
@@ -285,93 +285,20 @@ export function MeetingPage({ active }: { active: boolean }) {
           else setDetail(current);
         })}
       >
-        {m.status === "live" ? "加入会议" : "查看详情"}
+        {m.status === "live" ? "加入" : "详情"}
       </button>
     </div>
   );
-  const offset =
-    (new Date(date.getFullYear(), date.getMonth(), 1).getDay() + 6) % 7;
-  const days = Array.from(
-    { length: 42 },
-    (_, i) => new Date(date.getFullYear(), date.getMonth(), i - offset + 1),
-  );
-  const agendaItems = items.filter(m => {
-    const d = new Date(m.startAt);
-    if (view === "day") return localDate(d) === localDate(date);
-    const start = new Date(date);
-    start.setHours(0, 0, 0, 0);
-    start.setDate(start.getDate() - ((start.getDay() + 6) % 7));
-    return +d >= +start && +d < +start + 7 * 86400000;
-  });
   return (
-    <div className="meeting-ui meeting-page">
-      <header className="header page-header">
-        <div className="meeting-brand"><span className="brand-icon"><Icon /></span><strong>会议</strong></div>
-        <div className="tabs" role="group" aria-label="会议视图">
-          {(["home", "calendar", "history"] as const).map((t, i) => (
-            <button
-              key={t}
-              className={tab === t ? "selected" : ""}
-              aria-pressed={tab === t}
-              onClick={() => setTab(t)}
-            >
-              {["首页", "日历", "历史会议"][i]}
-            </button>
-          ))}
-        </div>
-        <div className="header-tools">
-          <button className="ghost icon-button" title="导出会议诊断" aria-label="导出会议诊断" onClick={() => void run(exportMeetingDiagnostics)}><Icon name="download" width={18} height={18} /></button>
-        </div>
-      </header>
-      <main className="content">
-        {active && tab === "home" && <MeetingPermissionSetup />}
-        {error ? (
-          <div className="notice error" role="alert">
-            {error}
-            <button className="ghost" onClick={() => void refresh()}>
-              刷新
-            </button>
-          </div>
-        ) : null}
-        {readiness && !readiness.ready ? (
-          <div className="notice">
-            <span>
-              {meetingReadinessReason(readiness)}。可以先预约。
-            </span>
-            <button onClick={() => setDialog("settings")}>查看配置</button>
-            <button disabled={loading} onClick={() => void refresh()}>
-              重新检查
-            </button>
-          </div>
-        ) : null}
-        <div className="welcome row between">
-          <div>
-            <div className="eyebrow">{activeOrganization?.name || "团队协作"} · 会议空间</div>
-            <h1>
-              {tab === "home"
-                ? "让想法，在这里相遇。"
-                : tab === "calendar"
-                  ? "会议日历"
-                  : "历史会议"}
-            </h1>
-            <p className="sub">
-              {tab === "home"
-                ? `${displayName || "你好"}，今天有 ${today.length} 场会议。`
-                : "为每一次有价值的交流留出时间。"}
-            </p>
-          </div>
-          {tab !== "home" ? (
-            <button className="primary" onClick={openSchedule}>
-              <Icon name="plus" />
-              预约会议
-            </button>
-          ) : null}
-        </div>
-        {tab === "home" ? (
-          <>
-            <div className="actions">
+    <div className="meeting-ui meeting-page" style={pageStyle}>
+      <AppInsetSurface className="meeting-inset-surface" testId="meeting-inset-surface">
+        <div className="meeting-home">
+          <aside className="meeting-launcher">
+            <ListPanelHeader title="视频会议" titleOnly />
+            <div className="meeting-launcher-content">
+              <div className="actions">
               <button
-                className="action"
+                className="action action-start"
                 disabled={busy || !readiness?.ready}
                 title={meetingReadinessReason(readiness)}
                 onClick={() =>
@@ -391,11 +318,11 @@ export function MeetingPage({ active }: { active: boolean }) {
                   <Icon />
                 </span>
                 <span>
-                  <h3>快速会议</h3>
-                  <small>即刻开始，让讨论发生</small>
+                  <h3>发起会议</h3>
+                  <small>即刻开始音视频会议</small>
                 </span>
               </button>
-              <button className="action" onClick={() => setDialog("join")}>
+              <button className="action action-join" onClick={() => setDialog("join")}>
                 <span className="action-icon">
                   <Icon name="plus" />
                 </span>
@@ -404,7 +331,7 @@ export function MeetingPage({ active }: { active: boolean }) {
                   <small>通过会议号加入</small>
                 </span>
               </button>
-              <button className="action" onClick={openSchedule}>
+              <button className="action action-schedule" onClick={openSchedule}>
                 <span className="action-icon">
                   <Icon name="calendar" />
                 </span>
@@ -413,179 +340,74 @@ export function MeetingPage({ active }: { active: boolean }) {
                   <small>为下一次交流留出时间</small>
                 </span>
               </button>
+              </div>
             </div>
-            <div className="dashboard">
-              <section className="agenda-section">
-                <div className="row between">
-                  <h2>{isTodaySelected ? "今日安排" : `${date.getMonth() + 1}月${date.getDate()}日安排`}</h2>
-                  <button className="ghost" onClick={() => setTab("calendar")}>
-                    查看日历
-                    <Icon name="arrow" />
-                  </button>
-                </div>
-                {loading ? (
-                  <div className="empty" role="status"><span className="meeting-loader" />正在加载会议…</div>
-                ) : selectedDayMeetings.length ? (
-                  selectedDayMeetings.map(renderItem)
-                ) : (
-                  <div className="empty">
-                    <span className="empty-icon"><Icon name="calendar" width={26} height={26} /></span>
-                    <h3>{isTodaySelected ? "今天" : "当天"}暂无会议</h3>
-                    <p className="small">留一点时间，给下一次有价值的交流。</p>
-                    <button className="ghost" onClick={openSchedule}><Icon name="plus" />预约一次会议</button>
+          </aside>
+            <section className="meeting-overview">
+              <div className="meeting-notice-stack">
+                {active && <MeetingPermissionSetup />}
+                {error ? (
+                  <div className="notice error" role="alert">
+                    {error}
+                    <button className="ghost" onClick={() => void refresh()}>刷新</button>
                   </div>
-                )}
+                ) : null}
+                {readiness && !readiness.ready ? (
+                  <div className="notice">
+                    <span>{meetingReadinessReason(readiness)}。可以先预约。</span>
+                    <button onClick={() => setDialog("settings")}>查看配置</button>
+                    <button disabled={loading} onClick={() => void refresh()}>重新检查</button>
+                  </div>
+                ) : null}
+              </div>
+              <section className="home-list-section">
+                <div className="section-heading row between">
+                  <h2>即将开始</h2>
+                  <span className="section-count">{upcomingForHome.length} 场</span>
+                </div>
+                <div className="home-meeting-list">
+                  {loading ? (
+                    <div className="home-list-empty" role="status"><span className="meeting-loader" />正在加载会议…</div>
+                  ) : upcomingForHome.length ? (
+                    upcomingForHome.slice(0, 4).map(renderHomeItem)
+                  ) : (
+                    <div className="home-list-empty">
+                      <span className="empty-icon"><Icon name="calendar" /></span>
+                      <div><h3>暂无即将开始的会议</h3><p className="sub small">预约一次会议，为下一次交流留出时间。</p></div>
+                      <button onClick={openSchedule}>预约会议</button>
+                    </div>
+                  )}
+                </div>
               </section>
-              <aside>
-                <div className="mini-calendar">
-                  <div className="mini-calendar-heading"><strong>
-                    {date.getFullYear()} 年 {date.getMonth() + 1} 月
-                  </strong><div className="row">
-                    <button className="ghost icon-button" aria-label="查看上个月" onClick={() => setDate(new Date(date.getFullYear(), date.getMonth() - 1, 1))}><Icon name="chevronLeft" width={15} height={15} /></button>
-                    <button className="ghost icon-button" aria-label="查看下个月" onClick={() => setDate(new Date(date.getFullYear(), date.getMonth() + 1, 1))}><Icon name="chevronRight" width={15} height={15} /></button>
-                  </div></div>
-                  <div className="mini-grid">
-                    {"一二三四五六日".split("").map((d) => (
-                      <span key={d} className="sub">
-                        {d}
-                      </span>
-                    ))}
-                    {days.map((d) => (
-                      <button
-                        key={d.toISOString()}
-                        type="button"
-                        aria-label={`查看 ${localDate(d)} 的会议`}
-                        onClick={() => setDate(d)}
-                        aria-pressed={localDate(d) === localDate(date)}
-                        aria-current={localDate(d) === localDate(new Date()) ? "date" : undefined}
-                        data-has-meeting={items.some(m => !meetingClosed(m) && localDate(new Date(m.startAt)) === localDate(d))}
-                        className={
-                          localDate(d) === localDate(date)
-                            ? "today"
-                            : d.getMonth() !== date.getMonth()
-                              ? "sub"
-                              : ""
-                        }
-                      >
-                        {d.getDate()}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="mini-calendar-foot"><span><i />有会议安排</span><button className="ghost" onClick={() => setDate(new Date())}>回到今天</button></div>
+              <section className="home-list-section history-section">
+                <div className="section-heading row between">
+                  <h2>历史会议</h2>
+                  <span className="section-count">{historyForHome.length} 场</span>
                 </div>
-                <p className="calendar-hint sub small">
-                  从群聊发起会议，成员随时加入。
-                  <br />
-                  也可以从单聊开始，邀请更多伙伴。
-                </p>
-              </aside>
-            </div>
-          </>
-        ) : null}
-        {tab !== "home" ? (
-          <>
-            <div className="row between calendar-toolbar">
-              <div className="row">
-                <button
-                  aria-label="上个月"
-                  onClick={() =>
-                    setDate(
-                      new Date(date.getFullYear(), date.getMonth() - 1, 1),
-                    )
-                  }
-                >
-                  <Icon name="chevronLeft" width={16} height={16} />
-                </button>
-                <h2>
-                  {date.getFullYear()} 年 {date.getMonth() + 1} 月
-                </h2>
-                <button
-                  aria-label="下个月"
-                  onClick={() =>
-                    setDate(
-                      new Date(date.getFullYear(), date.getMonth() + 1, 1),
-                    )
-                  }
-                >
-                  <Icon name="chevronRight" width={16} height={16} />
-                </button>
-                <button onClick={() => setDate(new Date())}>今天</button>
-              </div>
-              {tab === "calendar" ? (
-                <div className="segmented" role="group" aria-label="日历范围">
-                  {(["day", "week", "month"] as const).map((v, i) => (
-                    <button
-                      key={v}
-                      aria-pressed={view === v}
-                      onClick={() => setView(v)}
-                    >
-                      {["日", "周", "月"][i]}
-                    </button>
-                  ))}
+                <div className="home-meeting-list">
+                  {loading ? (
+                    <div className="home-list-empty" role="status"><span className="meeting-loader" />正在加载记录…</div>
+                  ) : historyForHome.length ? (
+                    historyForHome.map(renderHomeItem)
+                  ) : (
+                    <div className="home-list-empty compact">
+                      <span className="empty-icon"><Icon name="clock" /></span>
+                      <div><h3>暂无历史会议</h3><p className="sub small">已结束的会议会保留在这里。</p></div>
+                    </div>
+                  )}
                 </div>
-              ) : null}
-            </div>
-            {tab === "history" ? (
-              items.filter(meetingClosed).length ? (
-                items.filter(meetingClosed).map(renderItem)
-              ) : (
-                <div className="empty"><span className="empty-icon"><Icon name="clock" /></span><h3>本月暂无历史会议</h3><p className="small">已结束的会议会保留在这里。</p></div>
-              )
-            ) : view === "month" ? (
-              <div className="calendar">
-                {"一二三四五六日".split("").map((d) => (
-                  <div key={d} className="cal-day cal-head">
-                    周{d}
-                  </div>
-                ))}
-                {days.map((d) => (
-                  <div
-                    key={d.toISOString()}
-                    className={`cal-day ${localDate(d) === localDate(new Date()) ? "today" : ""}`}
-                  >
-                    <span
-                      className={d.getMonth() !== date.getMonth() ? "sub" : ""}
-                    >
-                      {d.getDate()}
-                    </span>
-                    {items
-                      .filter(
-                        (m) => localDate(new Date(m.startAt)) === localDate(d),
-                      )
-                      .map((m) => (
-                        <button
-                          className="cal-event"
-                          title={`${stamp(m.startAt)} ${m.title}`}
-                          data-status={m.status}
-                          key={m.id}
-                          onClick={() => setDetail(m)}
-                        >
-                          {stamp(m.startAt)} {m.title}
-                        </button>
-                      ))}
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <>
-                {view === "day" ? (
-                  <input
-                    aria-label="选择日期"
-                    type="date"
-                    value={localDate(date)}
-                    onChange={(e) =>
-                      setDate(new Date(`${e.target.value}T12:00:00`))
-                    }
-                  />
-                ) : (
-                  <p className="sub">本周议程 · 以当前日期所在周为准</p>
-                )}
-                {agendaItems.length ? agendaItems.map(renderItem) : <div className="empty"><span className="empty-icon"><Icon name="calendar" /></span><h3>{view === "day" ? "当天" : "本周"}暂无会议</h3><p className="small">可以选择其他日期，或预约一次新的交流。</p><button className="ghost" onClick={openSchedule}><Icon name="plus" />预约会议</button></div>}
-              </>
-            )}
-          </>
-        ) : null}
-      </main>
+              </section>
+            </section>
+        </div>
+        <AppSecondarySidebarResizeHandle
+          resizing={leftSidebarResizing}
+          onPointerDown={startLeftSidebarResize}
+        />
+      </AppInsetSurface>
+      <CalendarEventCreateDialog
+        open={calendarScheduleOpen}
+        onOpenChange={setCalendarScheduleOpen}
+      />
       {dialog === "schedule" ? (
         <MeetingDialog
           title={source ? "从会话发起会议" : "预约会议"}

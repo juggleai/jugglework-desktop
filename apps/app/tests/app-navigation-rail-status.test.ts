@@ -156,6 +156,7 @@ describe("Meetings navigation", () => {
     expect(meetingsRow).toContain('aria-label={meetingsPinned ? t("navigation.unpin_item") : t("navigation.pin_item")}');
     expect(railSource).toContain('setAppNavigationItemPinned("meetings", !meetingsPinned)');
     expect(pinnedBlock).toContain('testId="app-rail-pinned-meetings"');
+    expect(pinnedBlock).toContain('tooltipLabel={t("calendar.video_conference")}');
     expect(pinnedBlock).toContain("active={meetingsActive}");
     expect(pinnedBlock).toContain("onClick={openMeetings}");
     expect(railSource.indexOf('testId="app-rail-pinned-calendar"')).toBeLessThan(railSource.indexOf('testId="app-rail-pinned-meetings"'));
@@ -365,7 +366,7 @@ describe("navigation rail visual proportions", () => {
     expect(source).toContain('onPreviewMenuChange?.(previewScope ?? null)');
     expect(source).toContain('onAppPreviewChange?.(appPreviewTarget, true)');
     expect(source).toContain('onAppPreviewChange?.(appPreviewTarget, false)');
-    expect(source).toContain('title={showTooltip ? label : undefined}');
+    expect(source).toContain('title={showTooltip ? (tooltipLabel ?? label) : undefined}');
   });
 
   test("omits the cloud workspace destination from the primary Rail", () => {
