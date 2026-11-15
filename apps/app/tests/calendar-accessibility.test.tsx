@@ -6,6 +6,8 @@ import TestRenderer, { act } from "react-test-renderer";
 import { MemoryRouter } from "react-router-dom";
 
 import { DenApiError, type DenCalendar, type DenCalendarEvent } from "../src/app/lib/den";
+import { createCalendarScope } from "../src/react-app/domains/calendar/calendar-scope";
+import { calendarViewStorageKey } from "../src/react-app/domains/calendar/calendar-view-model";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -24,6 +26,7 @@ Object.defineProperty(globalThis, "localStorage", {
 
 const fixedNow = Temporal.Instant.from("2026-11-09T04:00:00Z");
 const clock = { now: () => fixedNow, timeZone: () => "Asia/Shanghai" };
+const calendarScope = createCalendarScope({ deploymentBaseUrl: "https://den.example/api", organizationId: "org-a", memberId: "member-a" })!;
 mock.module("../src/react-app/shell/app-navigation-rail", () => ({ APP_NAVIGATION_RAIL_WIDTH: 48, AppNavigationRail: () => <nav /> }));
 mock.module("../src/components/ui/dialog", () => ({
   Dialog: ({ children }: { children: React.ReactNode }) => <>{children}</>,
@@ -126,6 +129,7 @@ function baseEvent(id: string): DenCalendarEvent {
 beforeEach(() => {
   activeNode = null; selectedDayNode = null;
   values.clear(); calls.length = 0; events = []; failNext = null; version = 1;
+  values.set(calendarViewStorageKey(calendarScope), "month");
   calendars = [calendar("cal-1", "Personal"), calendar("cal-2", "Side project")];
 });
 

@@ -10,6 +10,7 @@ import { DenApiError, type DenCalendar, type DenCalendarEvent, type DenCalendarS
 import { calendarQueryKeys } from "../src/react-app/domains/calendar/calendar-query-keys";
 import { calendarEventToForm } from "../src/react-app/domains/calendar/calendar-event-form-model";
 import { createCalendarScope } from "../src/react-app/domains/calendar/calendar-scope";
+import { calendarViewStorageKey } from "../src/react-app/domains/calendar/calendar-view-model";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -32,6 +33,7 @@ Object.defineProperty(globalThis, "localStorage", {
 
 const fixedNow = Temporal.Instant.from("2026-11-09T04:00:00Z");
 const clock = { now: () => fixedNow, timeZone: () => "Asia/Shanghai" };
+const calendarScope = createCalendarScope({ deploymentBaseUrl: "https://den.example/api", organizationId: "org-a", memberId: "member-a" })!;
 mock.module("../src/react-app/shell/app-navigation-rail", () => ({ APP_NAVIGATION_RAIL_WIDTH: 48, AppNavigationRail: () => <nav /> }));
 mock.module("../src/components/ui/dialog", () => ({
   Dialog: ({ children }: { children: React.ReactNode }) => <>{children}</>,
@@ -154,6 +156,7 @@ let bootstrapCalls = 0;
 
 beforeEach(() => {
   values.clear(); calls.length = 0; events = []; failNext = null; version = 1;
+  values.set(calendarViewStorageKey(calendarScope), "month");
   isOnline = true; onlineListeners.clear(); bootstrapCalls = 0; availabilityCalls = 0; organizationMembers = []; schedulingGate = null; schedulingFailure = null;
   cache = new CalendarIndexedDbAdapter({ indexedDB: new IDBFactory(), IDBKeyRange });
   currentRuntime = runtime();
@@ -275,7 +278,7 @@ test("offline scheduling aggregates are read-only until fresh scheduling metadat
   events = [{
     ...baseEvent("scheduled"),
     status: "active",
-    attendees: [{ memberId: "member-b", responseStatus: "accepted" }],
+    attendees: [{ memberId: "member-a", responseStatus: "accepted" }, { memberId: "member-b", responseStatus: "needs-action" }],
     recurrence: null,
   } satisfies DenCalendarSchedulingEvent];
   const { renderer } = await render();

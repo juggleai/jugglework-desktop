@@ -8,6 +8,7 @@ import { MemoryRouter } from "react-router-dom";
 import { DenApiError, type DenCalendar, type DenCalendarEvent, type DenCalendarSchedulingEvent } from "../src/app/lib/den";
 import { calendarQueryKeys } from "../src/react-app/domains/calendar/calendar-query-keys";
 import { createCalendarScope } from "../src/react-app/domains/calendar/calendar-scope";
+import { calendarViewStorageKey } from "../src/react-app/domains/calendar/calendar-view-model";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -26,6 +27,7 @@ Object.defineProperty(globalThis, "localStorage", {
 
 const fixedNow = Temporal.Instant.from("2026-11-09T04:00:00Z");
 const clock = { now: () => fixedNow, timeZone: () => "Asia/Shanghai" };
+const calendarScope = createCalendarScope({ deploymentBaseUrl: "https://den.example/api", organizationId: "org-a", memberId: "member-a" })!;
 mock.module("../src/react-app/shell/app-navigation-rail", () => ({ APP_NAVIGATION_RAIL_WIDTH: 48, AppNavigationRail: () => <nav /> }));
 mock.module("../src/components/ui/dialog", () => ({
   Dialog: ({ children, open, onOpenChange }: { children: React.ReactNode; open?: boolean; onOpenChange?: (open: boolean) => void }) => open === false ? null : <div data-testid="mock-dialog-root" data-close={() => onOpenChange?.(false)}>{children}</div>,
@@ -152,6 +154,7 @@ function baseEvent(id: string): DenCalendarEvent {
 
 beforeEach(() => {
   values.clear(); calls.length = 0; events = []; failNext = null; createGate = null; version = 1;
+  values.set(calendarViewStorageKey(calendarScope), "month");
   organizationMembers = [];
   availabilityBusy = {};
   meetingCalls.length = 0;
@@ -212,7 +215,7 @@ test("creating a timed event shows it only after the authoritative response", as
     await change(renderer, "calendar-form-calendar", "cal-2");
     await submit(renderer);
     expect(calls).toHaveLength(1);
-    expect(calls[0]!.input).toMatchObject({ calendarId: "cal-2", title: "Planning", description: "", time: { kind: "timed", startInstant: "2026-11-09T01:00:00Z", endInstantExclusive: "2026-11-09T02:00:00Z", timeZone: "Asia/Shanghai" } });
+    expect(calls[0]!.input).toMatchObject({ calendarId: "cal-2", title: "Planning", description: "", time: { kind: "timed", startInstant: "2026-11-09T04:30:00Z", endInstantExclusive: "2026-11-09T05:00:00Z", timeZone: "Asia/Shanghai" } });
     expect(calls[0]!.input).toMatchObject({ attendees: [{ memberId: "member-a" }], recurrence: null });
     expect(typeof calls[0]!.input.idempotencyKey).toBe("string");
     expect(has(renderer, "calendar-event-form")).toBe(false);
@@ -221,6 +224,40 @@ test("creating a timed event shows it only after the authoritative response", as
     expect(text(byId(renderer, "calendar-event-detail-title"))).toBe("Planning");
     expect(text(byId(renderer, "calendar-event-detail-calendar"))).toBe("Side project");
     expect(has(renderer, "calendar-day-event-2026-11-09-new-1")).toBe(true);
+  } finally { await act(async () => { renderer.unmount(); }); }
+});
+
+test("quick create saves the clicked half-hour slot through the authoritative create flow", async () => {
+  staleSchedulingRead = true;
+  values.set(calendarViewStorageKey(calendarScope), "week");
+  const { renderer } = await render();
+  try {
+    await act(async () => {
+      byId(renderer, "calendar-time-create-2026-11-09").props.onClick({
+        detail: 1,
+        clientX: 520,
+        clientY: 624,
+        currentTarget: { getBoundingClientRect: () => ({ left: 400, right: 600, top: 0, bottom: 1152, width: 200, height: 1152, x: 400, y: 0, toJSON: () => ({}) }) },
+      });
+    });
+    expect(has(renderer, "calendar-quick-create")).toBe(true);
+    expect(byId(renderer, "calendar-form-start-time").props.value).toBe("13:00");
+    expect(byId(renderer, "calendar-form-end-time").props.value).toBe("13:30");
+    await change(renderer, "calendar-form-title", "Quick sync");
+    await act(async () => { byId(renderer, "calendar-quick-create").props.onSubmit({ preventDefault: () => undefined }); });
+    await settle();
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.input).toMatchObject({
+      calendarId: "cal-1",
+      title: "Quick sync",
+      time: { kind: "timed", startInstant: "2026-11-09T05:00:00Z", endInstantExclusive: "2026-11-09T05:30:00Z", timeZone: "Asia/Shanghai" },
+      attendees: [{ memberId: "member-a" }],
+      recurrence: null,
+    });
+    expect(has(renderer, "calendar-quick-create")).toBe(false);
+    expect(has(renderer, "calendar-event-panel")).toBe(true);
+    expect(text(byId(renderer, "calendar-event-detail-title"))).toBe("Quick sync");
   } finally { await act(async () => { renderer.unmount(); }); }
 });
 
@@ -690,7 +727,7 @@ test("date selection preserves duration and availability navigation does not cha
     expect(has(renderer, "calendar-form-start-date-menu")).toBe(false);
     const startLabel = text(byId(renderer, "calendar-form-start-date"));
     expect(text(byId(renderer, "calendar-form-end-date"))).toBe(startLabel);
-    expect(byId(renderer, "calendar-form-end-time").props.value).toBe("10:00");
+    expect(byId(renderer, "calendar-form-end-time").props.value).toBe("13:00");
     expect(has(renderer, "calendar-availability-selection")).toBe(true);
     await click(renderer, "calendar-availability-next");
     expect(has(renderer, "calendar-availability-selection")).toBe(false);
@@ -699,7 +736,7 @@ test("date selection preserves duration and availability navigation does not cha
     expect(has(renderer, "calendar-availability-selection")).toBe(true);
     await change(renderer, "calendar-form-title", "Moved meeting");
     await submit(renderer);
-    expect(calls[0]!.input.time).toMatchObject({ startInstant: "2026-11-12T01:00:00Z", endInstantExclusive: "2026-11-12T02:00:00Z" });
+    expect(calls[0]!.input.time).toMatchObject({ startInstant: "2026-11-12T04:30:00Z", endInstantExclusive: "2026-11-12T05:00:00Z" });
   } finally { await act(async () => renderer.unmount()); }
 });
 
@@ -726,8 +763,8 @@ test("Escape dismisses a date menu without cancelling the form, and time arrows 
     expect(has(renderer, "calendar-form-start-date-menu")).toBe(false);
     expect(has(renderer, "calendar-event-dialog")).toBe(true);
     await act(async () => byId(renderer, "calendar-form-start-time").props.onKeyDown({ key: "ArrowDown", preventDefault() {}, stopPropagation() {} }));
-    expect(byId(renderer, "calendar-form-start-time").props.value).toBe("09:30");
-    expect(byId(renderer, "calendar-form-end-time").props.value).toBe("10:30");
+    expect(byId(renderer, "calendar-form-start-time").props.value).toBe("13:00");
+    expect(byId(renderer, "calendar-form-end-time").props.value).toBe("13:30");
     await act(async () => byId(renderer, "calendar-form-start-time").props.onKeyDown({ key: "Enter", preventDefault() {}, stopPropagation() {} }));
     expect(has(renderer, "calendar-form-start-time-menu")).toBe(false);
     expect(calls).toHaveLength(0);

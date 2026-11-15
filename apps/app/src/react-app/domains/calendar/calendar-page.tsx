@@ -42,8 +42,8 @@ import { CalendarViewToolbar } from "./calendar-view-toolbar";
 import { CalendarCreateDialog } from "./calendar-create-dialog";
 import { CalendarMembersDialog } from "./calendar-members-dialog";
 import { useCalendarSchedulingEventMutations, useDeleteCalendarEventMutation, useTeamCalendarEventMutations, type CalendarSchedulingOccurrenceIdentity } from "./calendar-mutations";
-import { calendarViewDays, calendarViewRange, navigateCalendarView, type CalendarViewMode } from "./calendar-view-model";
-import { calendarEventToForm, defaultCalendarEventForm, type CalendarEventFormValues } from "./calendar-event-form-model";
+import { calendarViewDays, calendarViewRange, navigateCalendarView, readCalendarViewMode, writeCalendarViewMode, type CalendarViewMode } from "./calendar-view-model";
+import { calendarEventFormForTimeSlot, calendarEventFormWithNextHalfHour, calendarEventToForm, defaultCalendarEventForm, type CalendarEventFormValues } from "./calendar-event-form-model";
 import {
   defaultCalendarOfflineRuntime,
   draftForm,
@@ -197,7 +197,7 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
   const today = React.useMemo(() => calendarToday(timeZone, props.clock.now()), [props.clock, timeZone]);
   const weekStart = React.useMemo(() => calendarWeekStart(locale), [locale]);
   const [navigation, setNavigation] = React.useState(() => selectCalendarDate(today));
-  const [view, setView] = React.useState<CalendarViewMode>("month");
+  const [view, setView] = React.useState<CalendarViewMode>(() => readCalendarViewMode(props.scope));
   const [hiddenIds, setHiddenIds] = React.useState(() => readHiddenCalendarIds(props.scope));
   const [colorOverrides, setColorOverrides] = React.useState(() => readCalendarColorOverrides(props.scope));
   const calendarsQuery = useCalendarsQuery({ client: cloud.client, scope: props.scope, active: online && !props.collaborationEnabled });
@@ -300,11 +300,13 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
   }), [sourceEvents, visibleDays, visibleIds]);
 
   const [selectedEventId, setSelectedEventId] = React.useState<string | null>(null);
+  const [detailAnchor, setDetailAnchor] = React.useState<DOMRect | null>(null);
   const eventsById = React.useMemo(
     () => new Map((sourceEvents ?? []).map((event) => [event.id, event])),
     [sourceEvents],
   );
   const selectedEvent = selectedEventId ? eventsById.get(selectedEventId) ?? null : null;
+  React.useEffect(() => { if (!selectedEventId) setDetailAnchor(null); }, [selectedEventId]);
   const selectedSchedulingIdentity = selectedEventId ? schedulingIdentityByDisplayId.get(selectedEventId) : undefined;
   const selectedEventVisible = selectedEvent ? visibleIds.includes(selectedEvent.calendarId) : false;
   // Once fresh data no longer contains the open event (deleted elsewhere, or its calendar removed), close it.
@@ -313,7 +315,7 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
     if (!selectedEvent || !selectedEventVisible) setSelectedEventId(null);
   }, [bootstrapQuery.isFetching, online, selectedEvent, selectedEventId, selectedEventVisible, sourceEvents]);
   const [editor, setEditor] = React.useState<
-    | { mode: "create"; instance: number; draftId?: string; form?: CalendarEventFormValues }
+    | { mode: "create"; instance: number; draftId?: string; form?: CalendarEventFormValues; presentation?: "dialog" | "quick"; anchor?: { x: number; y: number } }
     | { mode: "edit"; instance: number; eventId: string; draftId?: string; form?: CalendarEventFormValues; draftBaseVersion?: number }
     | null
   >(null);
@@ -382,12 +384,13 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
       ? { mode: "edit", instance: nextEditorInstance(), eventId: draft.baseEntity.id, draftId, form: restoredForm, draftBaseVersion: draft.baseEntity.version }
       : { mode: "create", instance: nextEditorInstance(), draftId, form: restoredForm });
   };
-  const openEvent = (eventId: string, date?: Temporal.PlainDate) => {
+  const openEvent = (eventId: string, date?: Temporal.PlainDate, anchor?: DOMRect) => {
     if (!interactionSurfaceOpen) rememberOpener();
     if (date) setNavigation(selectCalendarDate(date));
     setEditor(null);
     setMeetingError("");
     setActionError("");
+    setDetailAnchor(anchor ?? null);
     setSelectedEventId(eventId);
   };
   const deleteSelectedEvent = async (scope: "this" | "this-and-following") => {
@@ -443,7 +446,20 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
   const startCreate = () => {
     if (!interactionSurfaceOpen) rememberOpener();
     setSelectedEventId(null);
-    setEditor({ mode: "create", instance: nextEditorInstance() });
+    const now = props.clock.now();
+    const date = now.toZonedDateTimeISO(timeZone).toPlainDate();
+    const allDay = defaultCalendarEventForm({
+      date,
+      calendarId: defaultCalendarId,
+      timeZone,
+      creatorMemberId: teamCalendarIds.has(defaultCalendarId) ? undefined : props.scope.memberId,
+    });
+    setEditor({
+      mode: "create",
+      instance: nextEditorInstance(),
+      presentation: "dialog",
+      form: calendarEventFormWithNextHalfHour(allDay, now, timeZone),
+    });
   };
   const closeEditorAfterAuthoritativeSave = async (draftId: string | undefined) => {
     // The draft is removed only after the cloud accepted the write.
@@ -454,6 +470,48 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
   const authoritativeDefaultCalendarId = bootstrapQuery.data?.calendars.find((calendar) => calendar.isDefault)?.id ?? null;
   const defaultCalendarId = writableCalendars.find((calendar) => calendar.id === authoritativeDefaultCalendarId)?.id ?? "";
   const canCreateEvent = canOpenEditor && defaultCalendarId !== "";
+  const startQuickCreate = (slot: { date: Temporal.PlainDate; startMinute: number; durationMinutes?: number; snapToHalfHour?: boolean; clientX: number; clientY: number }) => {
+    if (!canCreateEvent) return;
+    if (!interactionSurfaceOpen) rememberOpener();
+    setNavigation(selectCalendarDate(slot.date));
+    setSelectedEventId(null);
+    setEditor({
+      mode: "create",
+      instance: nextEditorInstance(),
+      presentation: "quick",
+      anchor: { x: slot.clientX, y: slot.clientY },
+      form: calendarEventFormForTimeSlot({
+        date: slot.date,
+        startMinute: slot.startMinute,
+        durationMinutes: slot.durationMinutes,
+        snapToHalfHour: slot.snapToHalfHour,
+        calendarId: defaultCalendarId,
+        timeZone,
+        creatorMemberId: teamCalendarIds.has(defaultCalendarId) ? undefined : props.scope.memberId,
+      }),
+    });
+  };
+  const startMonthQuickCreate = (input: { date: Temporal.PlainDate; clientX: number; clientY: number }) => {
+    if (!canCreateEvent) return;
+    if (!interactionSurfaceOpen) rememberOpener();
+    setNavigation(selectCalendarDate(input.date));
+    setSelectedEventId(null);
+    setEditor({
+      mode: "create",
+      instance: nextEditorInstance(),
+      presentation: "quick",
+      anchor: { x: input.clientX, y: input.clientY },
+      form: defaultCalendarEventForm({
+        date: input.date,
+        calendarId: defaultCalendarId,
+        timeZone,
+        creatorMemberId: teamCalendarIds.has(defaultCalendarId) ? undefined : props.scope.memberId,
+      }),
+    });
+  };
+  const updateQuickCreateForm = React.useCallback((form: CalendarEventFormValues) => {
+    setEditor((current) => current?.mode === "create" && current.presentation === "quick" && current.form !== form ? { ...current, form } : current);
+  }, []);
   const startCreateRef = React.useRef(startCreate);
   startCreateRef.current = startCreate;
   const openCreateFromHeader = React.useCallback(() => startCreateRef.current(), []);
@@ -593,7 +651,10 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
           onPrevious={() => setNavigation((current) => selectCalendarDate(navigateCalendarView(current.selectedDate, view, -1)))}
           onNext={() => setNavigation((current) => selectCalendarDate(navigateCalendarView(current.selectedDate, view, 1)))}
           onToday={() => setNavigation(selectCalendarDate(today))}
-          onViewChange={setView}
+           onViewChange={(nextView) => {
+             setView(nextView);
+             writeCalendarViewMode(props.scope, nextView);
+           }}
         />
         {!online ? <CalendarOfflineBanner view={offlineView} locale={locale} /> : null}
         {online && bootstrapQuery.isError ? (
@@ -612,20 +673,28 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
             weekStart={weekStart}
             locale={locale}
             onSelectDate={(date) => setNavigation(selectCalendarDate(date))}
+            onCreateDate={canCreateEvent ? startMonthQuickCreate : undefined}
             onMoveSelection={(days) => setNavigation((current) => moveCalendarSelection(current, days))}
             renderDayContent={(date, selected) => {
               const key = date.toString();
               const entries = dayEntries.get(key) ?? [];
-              if (entries.length === 0) return null;
+              const quickPreview = editor?.mode === "create" && editor.presentation === "quick" && editor.form?.time.startDate === key ? {
+                title: editor.form.title,
+                calendarColor: calendarsById.get(editor.form.calendarId)?.color ?? "var(--dls-accent)",
+                startTime: editor.form.time.kind === "timed" ? editor.form.time.startTime : undefined,
+              } : undefined;
+              if (entries.length === 0 && !quickPreview) return null;
               return (
                 <CalendarDayEvents
                   date={key}
                   entries={entries}
                   calendarsById={calendarsById}
                   locale={locale}
-                  onOpenEvent={(eventId) => openEvent(eventId, date)}
+                  currentMemberId={props.scope.memberId}
+                  onOpenEvent={(eventId, anchor) => openEvent(eventId, date, anchor)}
                   onShowMore={() => setNavigation(selectCalendarDate(date))}
                   focusable={selected}
+                  quickCreatePreview={quickPreview}
                 />
               );
             }}
@@ -642,20 +711,34 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
             today={today}
             now={props.clock.now}
             selectedDate={navigation.selectedDate}
+            currentMemberId={props.scope.memberId}
             onSelectDate={(date) => setNavigation(selectCalendarDate(date))}
             onOpenEvent={openEvent}
+            onCreateAt={canCreateEvent ? startQuickCreate : undefined}
+            quickCreatePreview={editor?.mode === "create" && editor.presentation === "quick" && editor.form?.time.kind === "timed" ? {
+              title: editor.form.title,
+              calendarColor: calendarsById.get(editor.form.calendarId)?.color ?? "var(--dls-accent)",
+              startDate: editor.form.time.startDate,
+              startTime: editor.form.time.startTime,
+              endDate: editor.form.time.endDate,
+              endTime: editor.form.time.endTime,
+            } : undefined}
           />
         )}
       </section>
       {editor ? (
+        <>
+        {editor.mode === "create" && editor.presentation === "quick" && editor.anchor ? <button type="button" className="fixed inset-0 z-30 cursor-default bg-transparent" aria-label={t("calendar.cancel")} onClick={() => setEditor(null)} data-testid="calendar-quick-create-dismiss" /> : null}
+        <div className={editor.mode === "create" && editor.presentation === "quick" && editor.anchor ? "fixed z-40 max-h-[calc(100vh-2rem)] overflow-y-auto rounded-2xl" : undefined} style={editor.mode === "create" && editor.presentation === "quick" && editor.anchor ? quickCreateStyle(editor.anchor) : undefined} data-testid={editor.mode === "create" && editor.presentation === "quick" ? "calendar-quick-create-positioner" : undefined}>
         <CalendarEventEditor
           key={`editor:${editor.instance}`}
-          presentation="dialog"
+          presentation={editor.mode === "create" ? editor.presentation ?? "dialog" : "dialog"}
           client={cloud.client}
           scope={props.scope}
           calendars={editorCalendars}
           teamCalendarIds={teamCalendarIds}
           timeZone={timeZone}
+          now={props.clock.now}
           event={editor.mode === "edit" ? editingEvent : undefined}
           initial={editor.form ?? (editor.mode === "edit" && editingEvent ? calendarEventToForm(editingEvent) : defaultCalendarEventForm({ date: navigation.selectedDate, calendarId: defaultCalendarId, timeZone, kind: "timed", creatorMemberId: teamCalendarIds.has(defaultCalendarId) ? undefined : props.scope.memberId }))}
           online={online}
@@ -668,21 +751,26 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
             void eventDrafts.discard(draftId);
             setEditor(null);
           } : undefined}
+          onMoreOptions={editor.mode === "create" ? (form) => setEditor({ mode: "create", instance: nextEditorInstance(), draftId: editor.draftId, form, presentation: "dialog" }) : undefined}
+          onFormChange={editor.mode === "create" && editor.presentation === "quick" ? updateQuickCreateForm : undefined}
           onSaved={(event) => { void closeEditorAfterAuthoritativeSave(editor.draftId); setEditor(null); setSelectedEventId(event.id); }}
           onDeleted={() => { void closeEditorAfterAuthoritativeSave(editor.draftId); setEditor(null); setSelectedEventId(null); }}
           onCancel={() => setEditor(null)}
         />
+        </div>
+        </>
       ) : null}
       {detailCardOpen && selectedEvent ? (
         <>
-        <button type="button" className="absolute inset-0 z-10 cursor-default bg-transparent" aria-label={t("calendar.close_detail")} onClick={() => setSelectedEventId(null)} data-testid="calendar-event-detail-dismiss-layer" />
-        <aside className="absolute inset-y-4 left-4 right-4 z-20 overflow-hidden rounded-[14px] border border-black/[0.035] bg-dls-surface shadow-[0_18px_48px_rgba(15,23,42,0.18)] sm:left-1/2 sm:right-auto sm:w-[min(25rem,calc(100%-2rem))] sm:-translate-x-1/2 dark:border-white/10 dark:shadow-[0_20px_56px_rgba(0,0,0,0.46)]" aria-label={t("calendar.event_panel")} data-testid="calendar-event-panel">
+        <button type="button" className="fixed inset-0 z-30 cursor-default bg-transparent" aria-label={t("calendar.close_detail")} onClick={() => { setSelectedEventId(null); setDetailAnchor(null); }} data-testid="calendar-event-detail-dismiss-layer" />
+        <aside className={cn("fixed z-40 h-[min(40rem,calc(100vh-2rem))] w-[min(25rem,calc(100vw-2rem))] overflow-hidden rounded-[14px] border border-black/[0.035] bg-dls-surface shadow-[0_18px_48px_rgba(15,23,42,0.18)] dark:border-white/10 dark:shadow-[0_20px_56px_rgba(0,0,0,0.46)]", !detailAnchor && "left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2")} style={detailAnchor ? anchoredDetailStyle(detailAnchor) : undefined} aria-label={t("calendar.event_panel")} data-detail-anchored={detailAnchor ? "true" : undefined} data-detail-layout="uniform" data-testid="calendar-event-panel">
           <CalendarEventDetail
             event={selectedEvent}
             calendar={calendarsById.get(selectedEvent.calendarId)}
             locale={locale}
             membersById={detailMembersById}
             currentMemberId={props.scope.memberId}
+            currentUserLabel={cloud.user?.name?.trim() || cloud.user?.account?.trim() || cloud.user?.email?.trim() || undefined}
             meetingPending={meetingPending}
             meetingError={meetingError}
             onStartMeeting={selectedEvent.videoConferenceEnabled && online ? () => void startEventMeeting(selectedEvent) : undefined}
@@ -696,7 +784,7 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
             onRsvp={online && props.writeEnabled && isSchedulingAggregate(selectedEvent) && selectedSchedulingIdentity && selectedEvent.attendees.some((attendee) => attendee.memberId === props.scope.memberId) ? (responseStatus, scope) => void rsvpSelectedEvent(responseStatus, scope) : undefined}
             actionPending={actionPending}
             actionError={actionError}
-            onClose={() => setSelectedEventId(null)}
+            onClose={() => { setSelectedEventId(null); setDetailAnchor(null); }}
             onEdit={!schedulingOccurrenceIds.has(selectedEvent.id) && (online ? teamCalendarIds.has(selectedEvent.calendarId) || schedulingMetadataReady : !("attendees" in selectedEvent)) && canOpenEditor && writableCalendars.some((calendar) => calendar.id === selectedEvent.calendarId) ? () => { setEditor({ mode: "edit", instance: nextEditorInstance(), eventId: selectedEvent.id }); setSelectedEventId(null); } : undefined}
           />
         </aside>
@@ -716,6 +804,33 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
 function focusableDocument(): Document | null {
   if (typeof document === "undefined") return null;
   return typeof document.querySelector === "function" ? document : null;
+}
+
+function anchoredDetailStyle(anchor: DOMRect): CSSProperties {
+  const viewportWidth = typeof window === "undefined" ? 1024 : window.innerWidth;
+  const viewportHeight = typeof window === "undefined" ? 768 : window.innerHeight;
+  const margin = 16;
+  const gap = 8;
+  const width = Math.min(400, Math.max(280, viewportWidth - margin * 2));
+  const height = Math.min(640, viewportHeight - margin * 2);
+  const roomOnRight = viewportWidth - anchor.right - margin;
+  const preferredLeft = roomOnRight >= width + gap ? anchor.right + gap : anchor.left - width - gap;
+  const left = Math.min(Math.max(preferredLeft, margin), Math.max(margin, viewportWidth - width - margin));
+  const top = Math.min(Math.max(anchor.top - 24, margin), Math.max(margin, viewportHeight - height - margin));
+  return { left, top, width, height, maxWidth: `calc(100vw - ${margin * 2}px)`, maxHeight: `calc(100vh - ${margin * 2}px)` };
+}
+
+function quickCreateStyle(anchor: { x: number; y: number }): CSSProperties {
+  const viewportWidth = typeof window === "undefined" ? 1024 : window.innerWidth;
+  const viewportHeight = typeof window === "undefined" ? 768 : window.innerHeight;
+  const margin = 16;
+  const gap = 12;
+  const width = Math.min(460, Math.max(300, viewportWidth - margin * 2));
+  const estimatedHeight = 560;
+  const preferredLeft = anchor.x + gap + width <= viewportWidth - margin ? anchor.x + gap : anchor.x - width - gap;
+  const left = Math.min(Math.max(preferredLeft, margin), Math.max(margin, viewportWidth - width - margin));
+  const top = Math.min(Math.max(anchor.y - 32, margin), Math.max(margin, viewportHeight - estimatedHeight - margin));
+  return { left, top, width, maxWidth: `calc(100vw - ${margin * 2}px)` };
 }
 
 function isFocusableElement(value: unknown): value is HTMLElement {

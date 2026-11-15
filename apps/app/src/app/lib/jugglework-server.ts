@@ -301,6 +301,16 @@ export type JuggleWorkSessionMessage = {
   parts: Part[];
 };
 
+export type JuggleWorkSessionMessagePage = {
+  olderCursor: string | null;
+  hasOlder: boolean;
+};
+
+export type JuggleWorkSessionMessagesResponse = {
+  items: JuggleWorkSessionMessage[];
+  page: JuggleWorkSessionMessagePage;
+};
+
 export type JuggleWorkSessionStatus =
   | { type: "idle" }
   | { type: "busy" }
@@ -314,6 +324,8 @@ export type JuggleWorkSessionListItem = Session & {
 export type JuggleWorkSessionSnapshot = {
   session: Session;
   messages: JuggleWorkSessionMessage[];
+  /** Added by paginated servers; absence keeps older-server snapshots usable. */
+  messagePage?: JuggleWorkSessionMessagePage;
   todos: Todo[];
   status: JuggleWorkSessionStatus;
 };
@@ -2721,11 +2733,12 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
         `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}`,
         { token, hostToken, timeoutMs: timeouts.sessionRead, signal: requestOptions?.signal },
       ),
-    getSessionMessages: (workspaceId: string, sessionId: string, options?: { limit?: number; signal?: AbortSignal }) => {
+    getSessionMessages: (workspaceId: string, sessionId: string, options?: { limit?: number; before?: string; signal?: AbortSignal }) => {
       const query = new URLSearchParams();
       if (typeof options?.limit === "number") query.set("limit", String(options.limit));
+      if (typeof options?.before === "string") query.set("before", options.before);
       const suffix = query.size ? `?${query.toString()}` : "";
-      return requestJson<{ items: JuggleWorkSessionMessage[] }>(
+      return requestJson<JuggleWorkSessionMessagesResponse>(
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/messages${suffix}`,
         { token, hostToken, timeoutMs: timeouts.sessionRead, signal: options?.signal },

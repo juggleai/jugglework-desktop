@@ -219,6 +219,7 @@ type GridProps = {
   weekStart: CalendarWeekday;
   locale: string;
   onSelectDate: (date: Temporal.PlainDate) => void;
+  onCreateDate?: (input: { date: Temporal.PlainDate; clientX: number; clientY: number }) => void;
   onMoveSelection?: (days: number) => void;
   /** `selected` lets the cell expose its event chips to Tab only for the roving-focus day. */
   renderDayContent?: (date: Temporal.PlainDate, selected: boolean) => React.ReactNode;
@@ -237,6 +238,7 @@ function keyDelta(key: string): number | null {
 export function CalendarMiniMonth(props: GridProps & { onPrevious: () => void; onNext: () => void }) {
   const days = calendarMonthGrid(props.state.month, props.weekStart);
   const weekdays = calendarWeekdayOrder(props.weekStart);
+  const todayVisible = days.some((day) => day.equals(props.today));
   return (
     <section aria-label={t("calendar.mini_month")} data-testid="calendar-mini-month">
       <div className="mb-2 flex items-center gap-1 px-1">
@@ -251,13 +253,15 @@ export function CalendarMiniMonth(props: GridProps & { onPrevious: () => void; o
       <div className="grid grid-cols-7 gap-0.5 text-center" role="grid" aria-label={formatCalendarMonth(props.state.month, props.locale)}>
         <div role="row" className="contents">
           {weekdays.map((weekday) => (
-            <span key={weekday} role="columnheader" className="py-1 text-[11px] text-dls-secondary" aria-label={weekdayLabel(weekday, props.locale, "long")}>
+            <span key={weekday} role="columnheader" className={cn("py-1 text-[11px] text-dls-secondary", todayVisible && weekday === props.today.dayOfWeek && "font-semibold text-dls-accent dark:text-[color:color-mix(in_oklab,var(--dls-accent)_42%,white)]")} aria-label={weekdayLabel(weekday, props.locale, "long")} data-current-weekday={todayVisible && weekday === props.today.dayOfWeek ? "true" : undefined}>
               {weekdayLabel(weekday, props.locale, "narrow")}
             </span>
           ))}
         </div>
-        {chunkWeeks(days).map((week) => (
-          <div key={week[0]!.toString()} role="row" className="contents">
+        {chunkWeeks(days).map((week) => {
+          const currentWeek = week.some((day) => day.equals(props.today));
+          return (
+          <div key={week[0]!.toString()} role="row" className="contents" data-current-week={currentWeek ? "true" : undefined}>
             {week.map((day) => {
               const selected = day.equals(props.state.selectedDate);
               const outside = day.month !== props.state.month.month || day.year !== props.state.month.year;
@@ -274,8 +278,8 @@ export function CalendarMiniMonth(props: GridProps & { onPrevious: () => void; o
                   className={cn(
                     "mx-auto flex size-7 items-center justify-center rounded-full text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/35",
                     outside ? "text-dls-secondary/60" : "text-dls-text",
-                    day.equals(props.today) && !selected && "font-semibold text-dls-accent",
-                    selected ? "bg-dls-accent text-white" : "hover:bg-dls-hover",
+                    day.equals(props.today) && !selected && "font-semibold text-dls-accent dark:text-[color:color-mix(in_oklab,var(--dls-accent)_42%,white)]",
+                    selected ? "bg-dls-accent text-[var(--dls-accent-fg)] dark:bg-[color:color-mix(in_oklab,var(--dls-accent)_58%,white_42%)] dark:text-black dark:shadow-[0_0_0_2px_rgba(255,255,255,0.12)]" : "hover:bg-dls-hover",
                   )}
                   data-testid={`calendar-mini-day-${day.toString()}`}
                 >
@@ -284,7 +288,8 @@ export function CalendarMiniMonth(props: GridProps & { onPrevious: () => void; o
               );
             })}
           </div>
-        ))}
+          );
+        })}
       </div>
     </section>
   );
@@ -293,6 +298,7 @@ export function CalendarMiniMonth(props: GridProps & { onPrevious: () => void; o
 export function CalendarMonthGrid(props: GridProps) {
   const days = calendarMonthGrid(props.state.month, props.weekStart);
   const weekdays = calendarWeekdayOrder(props.weekStart);
+  const todayVisible = days.some((day) => day.equals(props.today));
   const selectedRef = React.useRef<HTMLButtonElement | null>(null);
   const focusAfterMove = React.useRef(false);
   React.useEffect(() => {
@@ -318,13 +324,15 @@ export function CalendarMonthGrid(props: GridProps) {
       >
         <div role="row" className="contents">
           {weekdays.map((weekday) => (
-            <span key={weekday} role="columnheader" className="border-b border-r border-dls-border px-2 py-1.5 text-xs font-medium text-dls-secondary" aria-label={weekdayLabel(weekday, props.locale, "long")}>
+            <span key={weekday} role="columnheader" className={cn("border-b border-r border-dls-border px-2 py-1.5 text-xs font-medium text-dls-secondary", todayVisible && weekday === props.today.dayOfWeek && "bg-[rgba(var(--dls-accent-rgb),0.055)] text-dls-accent dark:bg-[color:color-mix(in_oklab,color-mix(in_oklab,var(--dls-accent)_65%,white)_18%,transparent)] dark:text-[color:color-mix(in_oklab,var(--dls-accent)_42%,white)]")} aria-label={weekdayLabel(weekday, props.locale, "long")} data-current-weekday={todayVisible && weekday === props.today.dayOfWeek ? "true" : undefined}>
               {weekdayLabel(weekday, props.locale, "short")}
             </span>
           ))}
         </div>
-        {chunkWeeks(days).map((week) => (
-          <div key={week[0]!.toString()} role="row" className="contents">
+        {chunkWeeks(days).map((week) => {
+          const currentWeek = week.some((day) => day.equals(props.today));
+          return (
+          <div key={week[0]!.toString()} role="row" className="contents" data-current-week={currentWeek ? "true" : undefined}>
             {week.map((day) => {
               const selected = day.equals(props.state.selectedDate);
               const outside = day.month !== props.state.month.month || day.year !== props.state.month.year;
@@ -334,9 +342,19 @@ export function CalendarMonthGrid(props: GridProps) {
                   key={day.toString()}
                   role="gridcell"
                   aria-selected={selected}
-                  className={cn("flex min-h-0 min-w-0 flex-col gap-0.5 overflow-hidden border-b border-r border-dls-border p-1", outside && "bg-dls-sidebar/40", selected && "bg-dls-active/40")}
+                  className={cn(
+                    "flex min-h-0 min-w-0 flex-col gap-0.5 overflow-hidden border-b border-r border-dls-border p-1 transition-colors",
+                    outside && !currentWeek && "bg-dls-sidebar/40",
+                    currentWeek && "bg-[rgba(var(--dls-accent-rgb),0.055)] dark:bg-[color:color-mix(in_oklab,color-mix(in_oklab,var(--dls-accent)_65%,white)_12%,transparent)]",
+                    selected && "bg-dls-active/55",
+                  )}
                   data-testid={`calendar-day-${day.toString()}`}
                   data-outside-month={outside ? "true" : undefined}
+                  data-current-week={currentWeek ? "true" : undefined}
+                  onClick={(event) => {
+                    if (event.target !== event.currentTarget || !props.onCreateDate) return;
+                    props.onCreateDate({ date: day, clientX: event.clientX, clientY: event.clientY });
+                  }}
                 >
                   <button
                     ref={selected ? selectedRef : undefined}
@@ -349,7 +367,7 @@ export function CalendarMonthGrid(props: GridProps) {
                     className={cn(
                       "flex size-6 shrink-0 items-center justify-center self-start rounded-full text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent focus-visible:ring-offset-1 focus-visible:ring-offset-dls-surface",
                       outside ? "text-dls-secondary/70" : "text-dls-text",
-                      isToday ? "bg-dls-accent font-semibold text-white" : selected ? "font-semibold" : "hover:bg-dls-hover",
+                      isToday ? "bg-dls-accent font-semibold text-[var(--dls-accent-fg)] shadow-[0_0_0_2px_rgba(var(--dls-accent-rgb),0.14)] dark:bg-[color:color-mix(in_oklab,var(--dls-accent)_58%,white_42%)] dark:text-black dark:shadow-[0_0_0_2px_rgba(255,255,255,0.12)]" : selected ? "font-semibold" : "hover:bg-dls-hover",
                     )}
                     data-testid={`calendar-day-button-${day.toString()}`}
                   >
@@ -360,7 +378,8 @@ export function CalendarMonthGrid(props: GridProps) {
               );
             })}
           </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

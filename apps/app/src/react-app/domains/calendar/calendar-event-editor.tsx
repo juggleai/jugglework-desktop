@@ -29,6 +29,7 @@ import { getAllGroupMembers, getChatGroupsForContacts } from "../jugglechat/api"
 import type { OrganizationChatGroup } from "../jugglechat/types";
 import {
   calendarEventToForm,
+  calendarEventFormWithNextHalfHour,
   calendarEventUpdatePatch,
   CALENDAR_EVENT_ATTENDEE_MAX,
   classifyCalendarSaveFailure,
@@ -72,8 +73,12 @@ export type CalendarEventEditorProps = {
   /** A restored edit draft based on an older version: require explicit resolution before saving. */
   staleDraftBase?: boolean;
   onDiscardDraft?: () => void;
+  onMoreOptions?: (form: CalendarEventFormValues) => void;
+  onFormChange?: (form: CalendarEventFormValues) => void;
+  /** Injected page clock keeps quick-create defaults deterministic and testable. */
+  now?: () => Temporal.Instant;
   /** Create flows use a large modal; edit flows remain in the event side panel. */
-  presentation?: "panel" | "dialog";
+  presentation?: "panel" | "dialog" | "quick";
 };
 
 const inputClass = "h-8 w-full min-w-0 rounded-lg border border-dls-border bg-dls-surface px-2 text-sm text-dls-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/35 aria-[invalid=true]:border-red-500";
@@ -348,6 +353,7 @@ export function CalendarEventEditor(props: CalendarEventEditorProps) {
     creatorMemberId,
     props.teamCalendarIds,
   ));
+  React.useEffect(() => { props.onFormChange?.(form); }, [form, props.onFormChange]);
   const [availabilityDate, setAvailabilityDate] = React.useState(props.initial.time.startDate);
   React.useEffect(() => { setAvailabilityDate(form.time.startDate); }, [form.time.startDate]);
   const [hiddenAvailabilityMemberIds, setHiddenAvailabilityMemberIds] = React.useState<Set<string>>(() => new Set());
@@ -374,6 +380,7 @@ export function CalendarEventEditor(props: CalendarEventEditorProps) {
   React.useEffect(() => { titleInput.current?.focus(); }, []);
   const isEdit = Boolean(props.event);
   const dialogPresentation = props.presentation === "dialog";
+  const quickPresentation = props.presentation === "quick";
   const online = props.online ?? true;
   const writeEnabled = props.writeEnabled ?? true;
   const pending = status.kind === "pending";
@@ -668,6 +675,141 @@ export function CalendarEventEditor(props: CalendarEventEditorProps) {
     ? <p id={`${formId}-${field}-error`} className="text-xs text-red-600" data-testid={`calendar-form-error-${field}`}>{t(errors[field]!)}</p>
     : null;
   const describedBy = (field: keyof CalendarEventFormErrors) => errors[field] ? `${formId}-${field}-error` : undefined;
+
+  if (quickPresentation) {
+    return (
+      <form
+        aria-labelledby={`${formId}-title`}
+        className="flex w-full min-w-0 flex-col gap-4 rounded-2xl border border-dls-border bg-dls-surface p-5 text-dls-text shadow-[0_20px_56px_rgba(15,23,42,0.22)] dark:shadow-[0_24px_64px_rgba(0,0,0,0.55)]"
+        data-testid="calendar-quick-create"
+        data-status={status.kind}
+        noValidate
+        onKeyDown={(event) => {
+          if (event.key === "Escape" && !pending && !event.defaultPrevented) {
+            event.preventDefault();
+            event.stopPropagation();
+            props.onCancel();
+          }
+        }}
+        onSubmit={(event) => { event.preventDefault(); void submit(); }}
+      >
+        <h3 id={`${formId}-title`} className="sr-only">{t("calendar.create_event")}</h3>
+        <label className="flex flex-col gap-1">
+          <span className="sr-only">{t("calendar.field_title")}</span>
+          <input
+            ref={titleInput}
+            className="h-11 w-full border-0 border-b border-dls-border bg-transparent px-0 text-xl font-semibold text-dls-text outline-none placeholder:text-dls-secondary focus:border-dls-accent"
+            value={form.title}
+            placeholder={t("calendar.field_title_placeholder")}
+            aria-invalid={errors.title ? true : undefined}
+            aria-describedby={describedBy("title")}
+            onChange={(event) => update({ title: event.target.value })}
+            data-testid="calendar-form-title"
+          />
+          {fieldError("title")}
+        </label>
+        {!teamSelected ? <Popover open={peopleOpen} onOpenChange={setPeopleOpen}>
+          <div className="flex flex-col gap-2">
+            <PopoverTrigger render={<button type="button" className="flex min-h-9 w-full items-center gap-3 rounded-md px-1 text-left text-sm text-dls-secondary hover:bg-dls-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/35" aria-expanded={peopleOpen} aria-haspopup="listbox" data-testid="calendar-form-attendees-trigger" />}>
+              <Users className="size-4 shrink-0" aria-hidden="true" />
+              <span className="min-w-0 flex-1 truncate">{invitedAttendeeMemberIds.length ? t("calendar.attendees_count", { count: form.attendeeMemberIds.length }) : t("calendar.attendees_placeholder")}</span>
+              <ChevronDown className="size-4 shrink-0" aria-hidden="true" />
+            </PopoverTrigger>
+            {invitedAttendeeMemberIds.length ? <div className="ml-8 flex flex-wrap gap-1.5" data-testid="calendar-quick-attendees">
+              {invitedAttendeeMemberIds.map((memberId) => {
+                const member = membersById.get(memberId);
+                const name = member ? memberName(member) : memberId;
+                return <span key={memberId} className="inline-flex h-7 max-w-44 items-center gap-1 rounded-full bg-dls-hover px-2 text-xs text-dls-text"><span className="truncate">{name}</span><button type="button" className="rounded-full text-dls-secondary hover:text-dls-text" aria-label={t("calendar.attendee_remove", { name })} onClick={() => toggleMember(memberId)}><X className="size-3" /></button></span>;
+              })}
+            </div> : null}
+          </div>
+          {peopleOpen ? <PopoverContent align="start" className="max-h-80 w-[min(28rem,calc(100vw-2rem))] gap-0 overflow-y-auto rounded-md border border-dls-border bg-dls-surface p-2 shadow-xl" role="listbox" data-testid="calendar-attendees-picker">
+            <label className="mb-2 flex items-center gap-2 rounded-lg border border-dls-border px-2"><Search className="size-3.5" aria-hidden="true" /><input aria-label={t("calendar.attendees_search")} className="h-8 min-w-0 flex-1 bg-transparent text-sm text-dls-text outline-none" value={peopleSearch} onChange={(event) => setPeopleSearch(event.target.value)} placeholder={t("calendar.attendees_search")} /></label>
+            {membersQuery.isLoading ? <p className="p-2 text-xs">{t("calendar.attendees_loading")}</p> : null}
+            {membersQuery.isError ? <p className="p-2 text-xs text-red-600">{t("calendar.attendees_failed")}</p> : null}
+            {members.filter((member) => member.id !== creatorMemberId && memberName(member).toLocaleLowerCase().includes(peopleSearch.trim().toLocaleLowerCase())).map((member) => {
+              const selected = form.attendeeMemberIds.includes(member.id);
+              return <button key={member.id} type="button" className="flex h-8 w-full shrink-0 items-center gap-2 rounded-lg px-2 text-left text-sm text-dls-text hover:bg-dls-hover" onClick={() => toggleMember(member.id)} data-testid={`calendar-attendee-${member.id}`}><span className="flex-1 truncate">{memberName(member)}</span>{selected ? <Check className="size-4 text-dls-accent" /> : null}</button>;
+            })}
+            <div className="my-2 h-px bg-dls-border" />
+            <p className="px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-dls-secondary">{t("calendar.groups")}</p>
+            {groupsError ? <p className="p-2 text-xs text-red-600">{groupsError}</p> : null}
+            {groups.filter((group) => group.name.toLocaleLowerCase().includes(peopleSearch.trim().toLocaleLowerCase())).map((group) => <button key={group.id} type="button" disabled={loadingGroupId !== null || !membersQuery.isSuccess} className="flex h-8 w-full shrink-0 items-center gap-2 rounded-lg px-2 text-left text-sm text-dls-text hover:bg-dls-hover disabled:opacity-50" onClick={() => void addGroup(group)} data-testid={`calendar-group-${group.id}`}><Users className="size-4 text-dls-secondary" /><span className="flex-1 truncate">{group.name}</span>{loadingGroupId === group.id ? <LoaderCircle className="size-3 animate-spin" /> : null}</button>)}
+            {groupFeedback ? <p className="p-2 text-xs text-dls-secondary" role="status">{groupFeedback}</p> : null}
+          </PopoverContent> : null}
+          {fieldError("attendees")}
+        </Popover> : null}
+        {time.kind === "allDay" ? (
+          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-2" role="group" aria-label={t("calendar.detail_time")} aria-describedby={describedBy("time")} data-testid="calendar-form-time-grid">
+            <Clock3 className="mr-1 size-4 shrink-0 text-dls-secondary" aria-hidden="true" />
+            <CalendarEditorDatePicker timeZone={props.timeZone} label={t("calendar.field_start_date")} value={time.startDate} onChange={(value) => updateTime({ startDate: value })} testId="calendar-form-start-date" disabled={pending} />
+            <span className="text-dls-secondary" aria-hidden="true">—</span>
+            <CalendarEditorDatePicker timeZone={props.timeZone} label={t("calendar.field_end_date")} value={Temporal.PlainDate.from(time.endDateExclusive).subtract({ days: 1 }).toString()} onChange={(value) => updateTime({ endDateExclusive: Temporal.PlainDate.from(value).add({ days: 1 }).toString() })} testId="calendar-form-end-date" disabled={pending} />
+            <button
+              type="button"
+              className="ml-auto rounded-md px-2 py-1.5 text-sm font-medium text-dls-accent hover:bg-[rgba(var(--dls-accent-rgb),0.08)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/40 dark:text-[color:color-mix(in_oklab,var(--dls-accent)_38%,white)]"
+              disabled={pending}
+              onClick={() => {
+                setForm((current) => calendarEventFormWithNextHalfHour(current, props.now?.() ?? Temporal.Now.instant(), props.timeZone));
+                if (status.kind === "validation") setStatus({ kind: "editing" });
+              }}
+              data-testid="calendar-quick-add-time"
+            >
+              {t("calendar.add_time")}
+            </button>
+          </div>
+        ) : (
+          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-2" role="group" aria-label={t("calendar.detail_time")} aria-describedby={describedBy("time")} data-testid="calendar-form-time-grid">
+            <Clock3 className="mr-1 size-4 shrink-0 text-dls-secondary" aria-hidden="true" />
+            <CalendarEditorDatePicker timeZone={props.timeZone} label={t("calendar.field_start_date")} value={time.startDate} onChange={(value) => updateTime({ startDate: value })} testId="calendar-form-start-date" disabled={pending} />
+            <CalendarTimePicker label={t("calendar.field_start_time")} value={time.startTime.slice(0, 5)} onChange={(value) => updateTime({ startTime: value })} testId="calendar-form-start-time" disabled={pending} />
+            <span className="text-dls-secondary" aria-hidden="true">—</span>
+            <CalendarTimePicker label={t("calendar.field_end_time")} value={time.endTime.slice(0, 5)} onChange={(value) => updateTime({ endTime: value })} testId="calendar-form-end-time" disabled={pending} />
+            <CalendarEditorDatePicker timeZone={props.timeZone} label={t("calendar.field_end_date")} value={time.endDate} onChange={(value) => updateTime({ endDate: value })} testId="calendar-form-end-date" disabled={pending} />
+          </div>
+        )}
+        {fieldError("time")}
+        {form.videoConferenceEnabled ? <div className="group flex min-h-9 items-center gap-3 rounded-md px-1 text-sm text-dls-text hover:bg-dls-hover" data-testid="calendar-form-video-conference">
+          <Video className="size-4 shrink-0 text-dls-secondary" aria-hidden="true" />
+          <span className="min-w-0 flex-1 truncate">{t("calendar.video_conference")}</span>
+          <button type="button" className="flex size-7 items-center justify-center rounded-md text-dls-secondary hover:bg-dls-surface hover:text-dls-text" aria-label={t("calendar.video_conference_remove")} onClick={() => update({ videoConferenceEnabled: false })} data-testid="calendar-form-video-conference-remove"><X className="size-4" /></button>
+        </div> : <button type="button" className="flex min-h-9 items-center gap-3 rounded-md px-1 text-left text-sm text-dls-accent hover:bg-dls-hover dark:text-[color:color-mix(in_oklab,var(--dls-accent)_42%,white)]" onClick={() => update({ videoConferenceEnabled: true })} data-testid="calendar-form-video-conference-add"><Video className="size-4 shrink-0 text-dls-secondary" />{t("calendar.video_conference_add")}</button>}
+        <label className="flex items-start gap-3 rounded-md px-1 text-sm text-dls-secondary focus-within:bg-dls-hover/50">
+          <AlignLeft className="mt-2 size-4 shrink-0" aria-hidden="true" />
+          <span className="sr-only">{t("calendar.field_description")}</span>
+          <textarea ref={descriptionInput} rows={1} className="min-h-9 flex-1 resize-none overflow-y-auto border-0 bg-transparent py-1.5 text-sm leading-5 text-dls-text outline-none placeholder:text-dls-secondary" value={form.description} placeholder={t("calendar.field_description_placeholder")} aria-invalid={errors.description ? true : undefined} aria-describedby={describedBy("description")} onChange={(event) => update({ description: event.target.value })} data-testid="calendar-form-description" />
+        </label>
+        {fieldError("description")}
+        <label className="flex min-h-9 items-center gap-3 text-sm text-dls-text">
+          <CalendarDays className="size-4 shrink-0 text-dls-secondary" aria-hidden="true" />
+          <span className="sr-only">{t("calendar.detail_calendar")}</span>
+          <CalendarEditorSelect
+            label={t("calendar.detail_calendar")}
+            value={form.calendarId}
+            invalid={Boolean(errors.calendarId)}
+            describedBy={describedBy("calendarId")}
+            onChange={(calendarId) => {
+              const selectingTeam = props.teamCalendarIds?.has(calendarId) === true;
+              update({ calendarId, attendeeMemberIds: selectingTeam ? form.attendeeMemberIds.filter((memberId) => memberId !== creatorMemberId) : [...new Set([creatorMemberId, ...form.attendeeMemberIds])] });
+            }}
+            testId="calendar-form-calendar"
+            options={props.calendars.map((calendar) => ({ value: calendar.id, label: calendar.name, disabled: advancedScheduling && props.teamCalendarIds?.has(calendar.id) }))}
+          />
+        </label>
+        {fieldError("calendarId")}
+        <div role="status" aria-live="polite" className="min-h-4 text-xs" data-testid="calendar-form-status">
+          {pending ? <span className="inline-flex items-center gap-1 text-dls-secondary"><LoaderCircle className="size-3 animate-spin" aria-hidden="true" />{t("calendar.status_saving")}</span> : null}
+          {status.kind === "failed" ? <span className="text-red-600" role="alert" data-testid={`calendar-form-failure-${status.failure.kind}`}>{t(status.failure.message)}</span> : null}
+        </div>
+        <div className="flex flex-wrap items-center gap-2" data-testid="calendar-form-actions">
+          <button type="button" className="mr-auto rounded-md px-2 py-1.5 text-sm font-medium text-dls-accent hover:bg-[rgba(var(--dls-accent-rgb),0.08)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/40 dark:text-[color:color-mix(in_oklab,var(--dls-accent)_38%,white)] dark:hover:bg-[color:color-mix(in_oklab,color-mix(in_oklab,var(--dls-accent)_65%,white)_14%,transparent)]" disabled={pending} onClick={() => props.onMoreOptions?.(form)} data-testid="calendar-quick-more-options">{t("calendar.more_options")}</button>
+          <Button type="button" size="sm" variant="outline" className="min-w-20" disabled={pending} onClick={props.onCancel} data-testid="calendar-form-cancel">{t("calendar.cancel")}</Button>
+          {props.onSaveDraft && (!online || (status.kind === "failed" && status.failure.kind === "network")) ? <Button type="button" size="sm" variant="outline" disabled={pending} onClick={() => void keepDraft()} data-testid="calendar-form-save-draft">{t("calendar.draft_keep")}</Button> : null}
+          <Button type="submit" size="sm" className="min-w-20" disabled={!online || !writeEnabled || pending} data-testid="calendar-form-save">{status.kind === "failed" && status.failure.kind === "network" ? t("calendar.retry_save") : t("calendar.save")}</Button>
+        </div>
+      </form>
+    );
+  }
 
   const actionsView = (
     <div className={cn(

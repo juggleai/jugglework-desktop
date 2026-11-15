@@ -5,7 +5,8 @@ import React from "react";
 import TestRenderer, { act } from "react-test-renderer";
 import { MemoryRouter } from "react-router-dom";
 
-import type { DenCalendar, DenCalendarEvent, DenCalendarEventTime, DenCalendarSchedulingEvent } from "../src/app/lib/den";
+import type { DenCalendar, DenCalendarEvent, DenCalendarEventTime, DenCalendarSchedulingEvent, DenOrganizationMember } from "../src/app/lib/den";
+import { calendarViewStorageKey } from "../src/react-app/domains/calendar/calendar-view-model";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -24,6 +25,7 @@ Object.defineProperty(globalThis, "localStorage", {
 
 const fixedNow = Temporal.Instant.from("2026-11-09T04:00:00Z");
 const clock = { now: () => fixedNow, timeZone: () => "Asia/Shanghai" };
+const calendarScope = { deployment: "https://den.example/api", organizationId: "org-a", memberId: "member-a" } as const;
 mock.module("../src/i18n", () => ({ t: (key: string) => key, currentLocale: () => "en" }));
 mock.module("../src/react-app/shell/app-navigation-rail", () => ({ APP_NAVIGATION_RAIL_WIDTH: 48, AppNavigationRail: () => <nav /> }));
 mock.module("../src/components/ui/dialog", () => ({
@@ -59,6 +61,7 @@ const calendar = (id: string, name: string): DenCalendar => ({
 });
 
 let calendars: DenCalendar[] = [];
+let organizationMembers: DenOrganizationMember[] = [];
 let events: DenCalendarEvent[] = [];
 const bootstrapRanges: string[] = [];
 const schedulingRanges: Array<{ startInstant: string; endInstantExclusive: string; timeZone: string }> = [];
@@ -80,6 +83,7 @@ const client = {
     return { items: schedulingItems };
   },
   getCalendarSchedulingAvailability: async () => ({ members: [] }),
+  listOrganizationMembers: async (_org: string, input: { limit: number; offset: number }) => ({ members: organizationMembers.slice(input.offset, input.offset + input.limit), total: organizationMembers.length, limit: input.limit, offset: input.offset }),
   createCalendar: async () => { writes.push("create"); throw new Error("unexpected write"); },
   updateCalendar: async () => { writes.push("update"); throw new Error("unexpected write"); },
   deleteCalendar: async () => { writes.push("delete"); throw new Error("unexpected write"); },
@@ -113,7 +117,8 @@ const calendarEvent = (id: string, time: DenCalendarEventTime, calendarId = "cal
 
 beforeEach(() => {
   values.clear(); writes.length = 0; schedulingWrites.length = 0; bootstrapRanges.length = 0; schedulingRanges.length = 0; schedulingItems = []; schedulingFailure = null; schedulingGate = null; events = [];
-  calendars = [calendar("cal-1", "Personal"), calendar("cal-2", "Side project")];
+  values.set(calendarViewStorageKey(calendarScope), "month");
+  calendars = [calendar("cal-1", "Personal"), calendar("cal-2", "Side project")]; organizationMembers = [];
 });
 
 async function render(prepare?: (queryClient: QueryClient) => void) {
@@ -151,6 +156,16 @@ test("opens on today's month with a six-week grid spanning the month boundary", 
     expect(byId(renderer, "calendar-day-2026-12-01").props["data-outside-month"]).toBe("true");
     expect(byId(renderer, "calendar-day-2026-11-09").props["aria-selected"]).toBe(true);
     expect(byId(renderer, "calendar-day-button-2026-11-09").props["aria-current"]).toBe("date");
+    for (const day of ["08", "09", "10", "11", "12", "13", "14"]) expect(byId(renderer, `calendar-day-2026-11-${day}`).props["data-current-week"]).toBe("true");
+    expect(byId(renderer, "calendar-day-2026-11-07").props["data-current-week"]).toBeUndefined();
+    expect(byId(renderer, "calendar-day-2026-11-15").props["data-current-week"]).toBeUndefined();
+    expect(byId(renderer, "calendar-day-2026-11-09").props.className).toContain("color-mix");
+    expect(byId(renderer, "calendar-day-button-2026-11-09").props.className).toContain("dark:text-black");
+    expect(byId(renderer, "calendar-mini-day-2026-11-09").props.className).toContain("dark:text-black");
+    expect(byId(renderer, "calendar-mini-day-2026-11-10").props.className).not.toContain("--dls-accent-rgb");
+    expect(byId(renderer, "calendar-mini-day-2026-11-10").props.className).not.toContain("dark:bg-[color:color-mix");
+    expect(renderer.root.findAll((node) => node.props["data-current-weekday"] === "true")).toHaveLength(2);
+    for (const header of renderer.root.findAll((node) => node.props["data-current-weekday"] === "true")) expect(header.props.className).toContain("color-mix");
   } finally { await act(async () => { renderer.unmount(); }); }
 });
 
@@ -287,6 +302,18 @@ test("shows the signed-in nickname for only the default personal calendar", asyn
   } finally { await act(async () => { renderer.unmount(); }); }
 });
 
+test("the header create action defaults to today and the next half-hour boundary", async () => {
+  const { renderer } = await render();
+  try {
+    await act(async () => { byId(renderer, "calendar-day-button-2026-11-20").props.onClick(); });
+    await click(renderer, "calendar-create-event");
+    expect(text(byId(renderer, "calendar-form-start-date"))).toContain("Nov 9, 2026");
+    expect(text(byId(renderer, "calendar-form-end-date"))).toContain("Nov 9, 2026");
+    expect(byId(renderer, "calendar-form-start-time").props.value).toBe("12:30");
+    expect(byId(renderer, "calendar-form-end-time").props.value).toBe("13:00");
+  } finally { await act(async () => { renderer.unmount(); }); }
+});
+
 test("does not offer event creation without an authoritative writable default calendar", async () => {
   calendars = calendars.map((item) => ({ ...item, isDefault: false }));
   const { renderer } = await render();
@@ -339,9 +366,10 @@ test("merges scheduling occurrences into the default 42-day month without showin
   } finally { await act(async () => { renderer.unmount(); }); }
 });
 
-test("recurring detail sends canonical identity for scoped RSVP and delete without parsing the synthetic ID", async () => {
+test("recurring attendee detail sends canonical identity for scoped RSVP without parsing the synthetic ID", async () => {
   const series: DenCalendarSchedulingEvent = {
     ...calendarEvent("series/with:syntax", { kind: "allDay", startDate: "2026-11-02", endDateExclusive: "2026-11-03" }),
+    ownerMemberId: "member-b",
     status: "active",
     attendees: [{ memberId: "member-a", responseStatus: "needs-action" }],
     recurrence: { frequency: "weekly", interval: 1, end: { kind: "never" } },
@@ -352,16 +380,117 @@ test("recurring detail sends canonical identity for scoped RSVP and delete witho
   try {
     await click(renderer, "calendar-day-event-2026-11-23-scheduling:series%2Fwith%3Asyntax:3");
     const responses = byId(renderer, "calendar-event-detail-rsvp").findAll((node) => node.type === "button");
+    expect(responses.map((button) => text(button))).toEqual(["calendar.rsvp_accept", "calendar.rsvp_decline", "calendar.rsvp_tentative"]);
     await act(async () => { responses[0]!.props.onClick(); });
     expect(has(renderer, "calendar-event-rsvp-scope")).toBe(true);
     await click(renderer, "calendar-event-rsvp-scope-this");
     await click(renderer, "calendar-event-rsvp-scope-confirm");
     expect(schedulingWrites[0]).toMatchObject({ op: "rsvp", eventId: "series/with:syntax", input: { scope: "this", occurrence: { occurrenceIndex: 3, startDate: "2026-11-23" }, responseStatus: "accepted" } });
+    expect(has(renderer, "calendar-event-detail-delete")).toBe(false);
+  } finally { await act(async () => { renderer.unmount(); }); }
+});
+
+test("RSVP buttons show completed labels, disable only the active response, and allow switching", async () => {
+  const event: DenCalendarSchedulingEvent = {
+    ...calendarEvent("rsvp-states", { kind: "allDay", startDate: "2026-11-09", endDateExclusive: "2026-11-10" }),
+    ownerMemberId: "member-b",
+    status: "active",
+    attendees: [
+      { memberId: "member-a", responseStatus: "needs-action" },
+      { memberId: "member-b", responseStatus: "accepted" },
+    ],
+    recurrence: null,
+  };
+  schedulingItems = [{ event, occurrenceIndex: 1, time: event.time }];
+  const { renderer } = await render();
+  try {
+    await click(renderer, "calendar-day-event-2026-11-09-rsvp-states");
+    let responses = byId(renderer, "calendar-event-detail-rsvp").findAll((node) => node.type === "button");
+    expect(byId(renderer, "calendar-event-detail-rsvp").props["data-response-status"]).toBe("needs-action");
+    expect(responses.map((button) => text(button))).toEqual(["calendar.rsvp_accept", "calendar.rsvp_decline", "calendar.rsvp_tentative"]);
+    expect(responses.map((button) => button.props.disabled)).toEqual([false, false, false]);
+    expect(responses.map((button) => button.props["aria-pressed"])).toEqual([false, false, false]);
+    expect(schedulingWrites).toHaveLength(0);
+
+    await act(async () => { responses[1]!.props.onClick(); });
+    await act(async () => {});
+    responses = byId(renderer, "calendar-event-detail-rsvp").findAll((node) => node.type === "button");
+    expect(responses.map((button) => text(button))).toEqual(["calendar.rsvp_accept", "calendar.rsvp_declined", "calendar.rsvp_tentative"]);
+    expect(responses.map((button) => button.props.disabled)).toEqual([false, true, false]);
+    expect(responses[1]!.props.className).toContain("bg-[#fff1f0]");
+    expect(byId(renderer, "calendar-day-event-2026-11-09-rsvp-states").props.className).toContain("line-through");
+    expect(byId(renderer, "calendar-day-event-2026-11-09-rsvp-states").props.className).not.toContain("bg-[#f2f3f5]");
+    expect(byId(renderer, "calendar-day-event-2026-11-09-rsvp-states").props.style).toBeUndefined();
+    expect(byId(renderer, "calendar-day-declined-marker-2026-11-09-rsvp-states").props.className).toContain("bg-transparent");
+
+    await act(async () => { responses[2]!.props.onClick(); });
+    await act(async () => {});
+    responses = byId(renderer, "calendar-event-detail-rsvp").findAll((node) => node.type === "button");
+    expect(responses.map((button) => text(button))).toEqual(["calendar.rsvp_accept", "calendar.rsvp_decline", "calendar.rsvp_tentative_selected"]);
+    expect(responses.map((button) => button.props.disabled)).toEqual([false, false, true]);
+    expect(responses[2]!.props.className).toContain("bg-[#f2f3f5]");
+
+    await act(async () => { responses[0]!.props.onClick(); });
+    await act(async () => {});
+    responses = byId(renderer, "calendar-event-detail-rsvp").findAll((node) => node.type === "button");
+    expect(responses.map((button) => text(button))).toEqual(["calendar.rsvp_accepted", "calendar.rsvp_decline", "calendar.rsvp_tentative"]);
+    expect(responses.map((button) => button.props.disabled)).toEqual([true, false, false]);
+    expect(responses[0]!.props.className).toContain("bg-[#e5f8e5]");
+    expect(schedulingWrites.filter((write) => write.op === "rsvp").map((write) => write.input.responseStatus)).toEqual(["declined", "tentative", "accepted"]);
+  } finally { await act(async () => { renderer.unmount(); }); }
+});
+
+test("attendee avatars show badges only for explicit accepted, declined, and tentative responses", async () => {
+  const event: DenCalendarSchedulingEvent = {
+    ...calendarEvent("attendee-badges", { kind: "allDay", startDate: "2026-11-09", endDateExclusive: "2026-11-10" }),
+    status: "active",
+    attendees: [
+      { memberId: "member-a", responseStatus: "accepted" },
+      { memberId: "member-b", responseStatus: "declined" },
+      { memberId: "member-c", responseStatus: "needs-action" },
+      { memberId: "member-d", responseStatus: "tentative" },
+    ],
+    recurrence: null,
+  };
+  schedulingItems = [{ event, occurrenceIndex: 1, time: event.time }];
+  const { renderer } = await render();
+  try {
+    await click(renderer, "calendar-day-event-2026-11-09-attendee-badges");
+    const statuses = byId(renderer, "calendar-event-detail").findAll((node) => typeof node.props["data-response-status"] === "string").map((node) => node.props["data-response-status"]);
+    expect(statuses).toContain("accepted");
+    expect(statuses).toContain("declined");
+    expect(statuses).toContain("needs-action");
+    expect(statuses).toContain("tentative");
+    const badges = byId(renderer, "calendar-event-detail").findAll((node) => typeof node.props["data-response-badge"] === "string").map((node) => node.props["data-response-badge"]);
+    expect(badges).toContain("accepted");
+    expect(badges).toContain("declined");
+    expect(badges).toContain("tentative");
+    expect(badges).not.toContain("needs-action");
+  } finally { await act(async () => { renderer.unmount(); }); }
+});
+
+test("recurring organizer detail shows accepted RSVP and sends canonical identity for scoped delete", async () => {
+  const series: DenCalendarSchedulingEvent = {
+    ...calendarEvent("series/with:syntax", { kind: "allDay", startDate: "2026-11-02", endDateExclusive: "2026-11-03" }),
+    status: "active",
+    attendees: [
+      { memberId: "member-a", responseStatus: "accepted" },
+      { memberId: "member-b", responseStatus: "needs-action" },
+    ],
+    recurrence: { frequency: "weekly", interval: 1, end: { kind: "never" } },
+  };
+  const occurrenceTime = { kind: "allDay" as const, startDate: "2026-11-23", endDateExclusive: "2026-11-24" };
+  schedulingItems = [{ event: series, occurrenceIndex: 3, time: occurrenceTime }];
+  const { renderer } = await render();
+  try {
+    await click(renderer, "calendar-day-event-2026-11-23-scheduling:series%2Fwith%3Asyntax:3");
+    const responses = byId(renderer, "calendar-event-detail-rsvp").findAll((node) => node.type === "button");
+    expect(responses.map((button) => button.props["aria-pressed"])).toEqual([true, false, false]);
     await click(renderer, "calendar-event-detail-delete");
     expect(has(renderer, "calendar-event-delete-scope")).toBe(true);
     await click(renderer, "calendar-event-delete-scope-all");
     await click(renderer, "calendar-event-delete-scope-confirm");
-    expect(schedulingWrites[1]).toMatchObject({ op: "delete", eventId: "series/with:syntax", input: { scope: "this-and-following", occurrence: { occurrenceIndex: 3, startDate: "2026-11-23" } } });
+    expect(schedulingWrites[0]).toMatchObject({ op: "delete", eventId: "series/with:syntax", input: { scope: "this-and-following", occurrence: { occurrenceIndex: 3, startDate: "2026-11-23" } } });
   } finally { await act(async () => { renderer.unmount(); }); }
 });
 
@@ -413,17 +542,25 @@ test("a one-time attendee scheduling event keeps its real ID and remains editabl
     expect(has(renderer, "calendar-day-event-2026-11-09-scheduling:attendee-event:1")).toBe(false);
     await click(renderer, "calendar-day-event-2026-11-09-attendee-event");
     expect(text(byId(renderer, "calendar-event-detail-title"))).toBe("Authoritative attendee event");
-    expect(byId(renderer, "calendar-event-panel").props.className).toContain("sm:left-1/2");
-    expect(byId(renderer, "calendar-event-panel").props.className).toContain("sm:w-[min(25rem,calc(100%-2rem))]");
+    expect(byId(renderer, "calendar-event-panel").props.className).toContain("left-1/2");
+    expect(byId(renderer, "calendar-event-panel").props.className).toContain("h-[min(40rem,calc(100vh-2rem))]");
+    expect(byId(renderer, "calendar-event-panel").props.className).toContain("w-[min(25rem,calc(100vw-2rem))]");
+    expect(byId(renderer, "calendar-event-panel").props["data-detail-layout"]).toBe("uniform");
     expect(byId(renderer, "calendar-event-detail").props.className).toContain("h-full");
     expect(byId(renderer, "calendar-event-detail-hero").props.className).toContain("linear-gradient");
+    expect(byId(renderer, "calendar-event-detail-hero").props.className).toContain("pb-5");
+    expect(byId(renderer, "calendar-event-detail-hero").props.className).toContain("pt-3");
+    expect(byId(renderer, "calendar-event-detail-actions").props.className).toContain("h-8");
     expect(byId(renderer, "calendar-event-detail-body").props.className).toContain("overflow-y-auto");
+    expect(byId(renderer, "calendar-event-detail-body").props.className).toContain("pt-5");
     expect(has(renderer, "calendar-event-detail-delete")).toBe(true);
     expect(has(renderer, "calendar-event-detail-share")).toBe(false);
     expect(has(renderer, "calendar-event-detail-more")).toBe(false);
     expect(text(byId(renderer, "calendar-event-detail-attendees"))).toContain("member-a");
     expect(text(byId(renderer, "calendar-event-detail-attendees"))).toContain("member-b");
     expect(text(byId(renderer, "calendar-event-detail-reminder"))).toBe("calendar.reminder_minutes_before");
+    expect(text(byId(renderer, "calendar-event-detail-calendar"))).toBe("Ada");
+    expect(byId(renderer, "calendar-event-detail-calendar-icon").props.style).toBeUndefined();
     const responses = byId(renderer, "calendar-event-detail-rsvp").findAll((node) => node.type === "button");
     expect(responses).toHaveLength(3);
     expect(responses.map((button) => button.props["aria-pressed"])).toEqual([true, false, false]);
@@ -464,7 +601,7 @@ test("hiding a calendar removes its events from the grid", async () => {
   } finally { await act(async () => { renderer.unmount(); }); }
 });
 
-test("an overflowing day shows a +N more entry that selects that day", async () => {
+test("an overflowing day opens every event and anchors detail near the selected overflow item", async () => {
   events = ["e1", "e2", "e3", "e4", "e5"].map((id) => calendarEvent(id, { kind: "allDay", startDate: "2026-11-12", endDateExclusive: "2026-11-13" }));
   const { renderer } = await render();
   try {
@@ -473,12 +610,61 @@ test("an overflowing day shows a +N more entry that selects that day", async () 
     expect(text(byId(renderer, "calendar-day-more-2026-11-12"))).toBe("calendar.more_events");
     await click(renderer, "calendar-day-more-2026-11-12");
     expect(byId(renderer, "calendar-day-2026-11-12").props["aria-selected"]).toBe(true);
+    expect(has(renderer, "calendar-day-overflow-2026-11-12")).toBe(true);
+    expect(byId(renderer, "calendar-day-overflow-2026-11-12").props.role).toBe("dialog");
+    for (const id of ["e1", "e2", "e3", "e4", "e5"]) expect(text(byId(renderer, `calendar-day-overflow-event-2026-11-12-${id}`))).toContain(`Title ${id}`);
+
+    await act(async () => {
+      byId(renderer, "calendar-day-overflow-event-2026-11-12-e5").props.onClick({
+        currentTarget: { getBoundingClientRect: () => ({ left: 200, right: 300, top: 220, bottom: 250, width: 100, height: 30, x: 200, y: 220, toJSON: () => ({}) }) },
+      });
+    });
+    expect(has(renderer, "calendar-day-overflow-2026-11-12")).toBe(false);
+    expect(text(byId(renderer, "calendar-event-detail-title"))).toBe("Title e5");
+    expect(byId(renderer, "calendar-event-panel").props["data-detail-anchored"]).toBe("true");
+    expect(byId(renderer, "calendar-event-panel").props["data-detail-layout"]).toBe("uniform");
+    expect(byId(renderer, "calendar-event-panel").props.className).toContain("h-[min(40rem,calc(100vh-2rem))]");
+    expect(byId(renderer, "calendar-event-panel").props.className).toContain("w-[min(25rem,calc(100vw-2rem))]");
+    expect(byId(renderer, "calendar-event-panel").props.className).toContain("fixed");
+    expect(byId(renderer, "calendar-event-panel").props.style.left).toBe(308);
+    expect(byId(renderer, "calendar-event-panel").props.style.top).toBe(112);
+    expect(byId(renderer, "calendar-event-panel").props.style.height).toBe(640);
+  } finally { await act(async () => { renderer.unmount(); }); }
+});
+
+test("week timed declined events use a subdued dark-mode surface without inline light colors", async () => {
+  const event: DenCalendarSchedulingEvent = {
+    ...calendarEvent("declined-timed", { kind: "timed", startInstant: "2026-11-09T05:30:00Z", endInstantExclusive: "2026-11-09T06:30:00Z", timeZone: "Asia/Shanghai" }),
+    ownerMemberId: "member-b",
+    status: "active",
+    attendees: [{ memberId: "member-a", responseStatus: "declined" }],
+    recurrence: null,
+  };
+  schedulingItems = [{ event, occurrenceIndex: 1, time: event.time }];
+  const { renderer } = await render();
+  try {
+    const monthEvent = byId(renderer, "calendar-day-event-2026-11-09-declined-timed");
+    expect(monthEvent.props.className).toContain("line-through");
+    expect(monthEvent.props.className).not.toContain("bg-[#f2f3f5]");
+    expect(byId(renderer, "calendar-day-declined-marker-2026-11-09-declined-timed").props.className).toContain("border-[#b8bdc5]");
+
+    await click(renderer, "calendar-view-week");
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    const weekEvent = byId(renderer, "calendar-time-event-2026-11-09-declined-timed");
+    expect(weekEvent.props.className).toContain("dark:bg-white/[0.07]");
+    expect(weekEvent.props.className).toContain("dark:text-white/25");
+    expect(weekEvent.props.className).toContain("dark:border-l-white/15");
+    expect(weekEvent.props.style.backgroundColor).toBeUndefined();
+    expect(weekEvent.props.style.color).toBeUndefined();
+    expect(weekEvent.props.style.borderLeftColor).toBeUndefined();
   } finally { await act(async () => { renderer.unmount(); }); }
 });
 
 test("the view switcher replaces the right agenda with day, week, and month surfaces", async () => {
   events = [
     calendarEvent("timed", { kind: "timed", startInstant: "2026-11-09T02:00:00Z", endInstantExclusive: "2026-11-09T03:00:00Z", timeZone: "Asia/Shanghai" }),
+    calendarEvent("timed-parallel", { kind: "timed", startInstant: "2026-11-09T02:00:00Z", endInstantExclusive: "2026-11-09T03:00:00Z", timeZone: "Asia/Shanghai" }),
+    calendarEvent("short-timed", { kind: "timed", startInstant: "2026-11-09T03:00:00Z", endInstantExclusive: "2026-11-09T03:30:00Z", timeZone: "Asia/Shanghai" }),
     calendarEvent("all-day", { kind: "allDay", startDate: "2026-11-09", endDateExclusive: "2026-11-11" }),
   ];
   const { renderer } = await render();
@@ -496,12 +682,58 @@ test("the view switcher replaces the right agenda with day, week, and month surf
     expect(has(renderer, "calendar-week-view")).toBe(true);
     expect(has(renderer, "calendar-all-day-event-all-day")).toBe(true);
     expect(has(renderer, "calendar-time-event-2026-11-09-timed")).toBe(true);
+    expect(has(renderer, "calendar-time-event-2026-11-09-timed-parallel")).toBe(true);
+    expect(has(renderer, "calendar-time-event-2026-11-09-short-timed")).toBe(true);
     expect(text(byId(renderer, "calendar-time-hour-9"))).toBe("09:00");
+    expect(text(byId(renderer, "calendar-time-hour-0"))).toBe("00:00");
+    expect(byId(renderer, "calendar-time-hour-0").props.className).toContain("translate-y-1");
+    expect(byId(renderer, "calendar-time-hour-0").props.className).not.toContain("-translate-y-1/2");
+    expect(byId(renderer, "calendar-time-hour-1").props.className).toContain("-translate-y-1/2");
     expect(text(byId(renderer, "calendar-current-time-label"))).toBe("12:00");
-    expect(byId(renderer, "calendar-current-time").props["data-current-day-index"]).toBe(1);
+    expect(byId(renderer, "calendar-current-time").props["data-current-day-index"]).toBe(0);
     expect(byId(renderer, "calendar-current-time").props.className).toContain("inset-x-0");
-    expect(byId(renderer, "calendar-time-day-2026-11-08").props.className).toContain("text-left");
-    expect(bootstrapRanges.at(-1)).toBe("2026-11-08/2026-11-15");
+    expect(byId(renderer, "calendar-time-day-2026-11-09").props.className).toContain("text-left");
+    expect(byId(renderer, "calendar-time-day-2026-11-09").props.className).toContain("min-h-[4.5rem]");
+    expect(byId(renderer, "calendar-time-day-2026-11-09").findAll((node) => node.type === "span")[0]!.props.className).toContain("text-xs");
+    expect(byId(renderer, "calendar-time-day-2026-11-09").findAll((node) => node.type === "span")[0]!.props.className).toContain("leading-4");
+    expect(byId(renderer, "calendar-time-day-2026-11-09").findAll((node) => node.type === "span")[1]!.props.className).toContain("text-xl");
+    expect(byId(renderer, "calendar-time-day-2026-11-09").findAll((node) => node.type === "span")[1]!.props.className).toContain("size-8");
+    expect(byId(renderer, "calendar-time-day-2026-11-09").props["data-today"]).toBe("true");
+    expect(byId(renderer, "calendar-time-day-2026-11-09").props.className).toContain("--dls-accent-rgb");
+    expect(byId(renderer, "calendar-time-day-2026-11-09").props.className).toContain("color-mix");
+    expect(byId(renderer, "calendar-time-day-2026-11-09").findAll((node) => node.type === "span")[1]!.props.className).toContain("dark:text-black");
+    expect(byId(renderer, "calendar-time-column-2026-11-09").props["data-today"]).toBe("true");
+    expect(byId(renderer, "calendar-time-column-2026-11-09").props.className).toContain("--dls-accent-rgb");
+    expect(byId(renderer, "calendar-all-day-column-2026-11-09").props["data-today"]).toBe("true");
+    expect(byId(renderer, "calendar-time-day-2026-11-10").props["data-today"]).toBeUndefined();
+    expect(byId(renderer, "calendar-time-event-2026-11-09-timed").props["data-compact"]).toBeUndefined();
+    expect(byId(renderer, "calendar-time-event-2026-11-09-timed").props.style.width).toBe("calc(50% - 14px - 4px)");
+    expect(byId(renderer, "calendar-time-event-2026-11-09-timed-parallel").props.style.width).toBe("calc(50% - 14px - 4px)");
+    expect(byId(renderer, "calendar-time-event-2026-11-09-timed-parallel").props.style.left).toBe("calc(50% - 14px + 2px)");
+    expect(byId(renderer, "calendar-time-create-alongside-2026-11-09-600-660").props.style.left).toBe("calc(100% - 26px)");
+    expect(byId(renderer, "calendar-time-create-alongside-2026-11-09-600-660").props.style.width).toBe(24);
+    expect(byId(renderer, "calendar-time-event-2026-11-09-short-timed").props["data-compact"]).toBe("true");
+    expect(byId(renderer, "calendar-time-event-2026-11-09-short-timed").props.style.width).toBe("calc(100% - 28px - 4px)");
+    expect(byId(renderer, "calendar-time-create-alongside-2026-11-09-660-690").props.style.left).toBe("calc(100% - 26px)");
+    expect(byId(renderer, "calendar-time-event-2026-11-09-short-timed").props.className).toContain("items-center");
+    expect(byId(renderer, "calendar-time-event-2026-11-09-short-timed").props.className).toContain("py-0");
+    expect(text(byId(renderer, "calendar-time-event-2026-11-09-short-timed"))).toContain("· ");
+    await act(async () => {
+      byId(renderer, "calendar-time-create-alongside-2026-11-09-600-660").props.onClick({
+        detail: 1,
+        clientX: 700,
+        clientY: 500,
+        stopPropagation: () => undefined,
+        currentTarget: { getBoundingClientRect: () => ({ left: 650, right: 750, top: 480, bottom: 528, width: 100, height: 48, x: 650, y: 480, toJSON: () => ({}) }) },
+      });
+    });
+    expect(byId(renderer, "calendar-form-start-time").props.value).toBe("10:00");
+    expect(byId(renderer, "calendar-form-end-time").props.value).toBe("11:00");
+    expect(byId(renderer, "calendar-quick-create-preview-2026-11-09").props.className).toContain("inset-x-0");
+    expect(byId(renderer, "calendar-quick-create-preview-2026-11-09").props.className).toContain("z-[3]");
+    expect(byId(renderer, "calendar-quick-create-preview-2026-11-09").props.style.left).toBeUndefined();
+    await click(renderer, "calendar-quick-create-dismiss");
+    expect(bootstrapRanges.at(-1)).toBe("2026-11-09/2026-11-16");
     await click(renderer, "calendar-view-day");
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
     expect(has(renderer, "calendar-day-view")).toBe(true);
@@ -511,21 +743,133 @@ test("the view switcher replaces the right agenda with day, week, and month surf
   } finally { await act(async () => { renderer.unmount(); }); }
 });
 
+test("clicking an empty week slot opens a half-hour quick create and more options preserves edits", async () => {
+  const { renderer } = await render();
+  try {
+    await click(renderer, "calendar-view-week");
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    await act(async () => {
+      byId(renderer, "calendar-time-create-2026-11-10").props.onClick({
+        detail: 1,
+        clientX: 640,
+        clientY: 624,
+        currentTarget: { getBoundingClientRect: () => ({ left: 500, right: 700, top: 0, bottom: 1152, width: 200, height: 1152, x: 500, y: 0, toJSON: () => ({}) }) },
+      });
+    });
+    expect(has(renderer, "calendar-quick-create")).toBe(true);
+    expect(has(renderer, "calendar-quick-create-positioner")).toBe(true);
+    expect(has(renderer, "calendar-quick-create-preview-2026-11-10")).toBe(true);
+    expect(byId(renderer, "calendar-quick-create-preview-2026-11-10").props["data-compact"]).toBe("true");
+    expect(byId(renderer, "calendar-quick-create-preview-2026-11-10").props.className).toContain("items-center");
+    expect(byId(renderer, "calendar-quick-create-preview-2026-11-10").props.className).toContain("py-0");
+    expect(text(byId(renderer, "calendar-quick-create-preview-2026-11-10"))).toContain("calendar.create_event");
+    expect(text(byId(renderer, "calendar-quick-create-preview-2026-11-10"))).toContain("13:00 – 13:30");
+    expect(has(renderer, "calendar-form-attendees-trigger")).toBe(true);
+    expect(has(renderer, "calendar-form-video-conference")).toBe(true);
+    expect(has(renderer, "calendar-form-description")).toBe(true);
+    expect(has(renderer, "calendar-form-calendar")).toBe(true);
+    expect(byId(renderer, "calendar-quick-more-options").props.className).toContain("color-mix");
+    expect(byId(renderer, "calendar-form-start-time").props.value).toBe("13:00");
+    expect(byId(renderer, "calendar-form-end-time").props.value).toBe("13:30");
+    expect(text(byId(renderer, "calendar-form-start-date"))).toContain("Nov 10, 2026");
+    expect(text(byId(renderer, "calendar-form-end-date"))).toContain("Nov 10, 2026");
+
+    await act(async () => { byId(renderer, "calendar-form-title").props.onChange({ target: { value: "Quick planning" } }); });
+    await act(async () => { byId(renderer, "calendar-form-start-time").props.onChange({ target: { value: "14:00" } }); });
+    expect(byId(renderer, "calendar-form-end-time").props.value).toBe("14:30");
+    expect(text(byId(renderer, "calendar-quick-create-preview-2026-11-10"))).toContain("Quick planning");
+    expect(text(byId(renderer, "calendar-quick-create-preview-2026-11-10"))).toContain("14:00 – 14:30");
+    await click(renderer, "calendar-form-video-conference-remove");
+    expect(has(renderer, "calendar-form-video-conference")).toBe(false);
+    expect(has(renderer, "calendar-form-video-conference-add")).toBe(true);
+    await act(async () => { byId(renderer, "calendar-form-description").props.onChange({ target: { value: "Quick notes" } }); });
+    await click(renderer, "calendar-quick-more-options");
+
+    expect(has(renderer, "calendar-quick-create")).toBe(false);
+    expect(has(renderer, "calendar-event-dialog")).toBe(true);
+    expect(byId(renderer, "calendar-form-title").props.value).toBe("Quick planning");
+    expect(byId(renderer, "calendar-form-start-time").props.value).toBe("14:00");
+    expect(byId(renderer, "calendar-form-end-time").props.value).toBe("14:30");
+    expect(text(byId(renderer, "calendar-form-start-date"))).toContain("Nov 10, 2026");
+    expect(text(byId(renderer, "calendar-form-calendar"))).toContain("Ada");
+    expect(byId(renderer, "calendar-form-description").props.value).toBe("Quick notes");
+    expect(has(renderer, "calendar-form-video-conference")).toBe(false);
+  } finally { await act(async () => { renderer.unmount(); }); }
+});
+
+test("clicking empty space in a month cell opens an all-day quick create that can add the next half-hour", async () => {
+  const { renderer } = await render();
+  try {
+    const cell = byId(renderer, "calendar-day-2026-11-10");
+    const hitTarget = {};
+    await act(async () => {
+      cell.props.onClick({ target: hitTarget, currentTarget: hitTarget, clientX: 480, clientY: 260 });
+    });
+
+    expect(has(renderer, "calendar-quick-create")).toBe(true);
+    expect(has(renderer, "calendar-month-quick-create-preview-2026-11-10")).toBe(true);
+    expect(text(byId(renderer, "calendar-month-quick-create-preview-2026-11-10"))).toContain("calendar.create_event");
+    expect(text(byId(renderer, "calendar-form-start-date"))).toContain("Nov 10, 2026");
+    expect(text(byId(renderer, "calendar-form-end-date"))).toContain("Nov 10, 2026");
+    expect(has(renderer, "calendar-form-start-time")).toBe(false);
+    expect(has(renderer, "calendar-form-end-time")).toBe(false);
+    expect(has(renderer, "calendar-quick-add-time")).toBe(true);
+
+    await act(async () => { byId(renderer, "calendar-form-title").props.onChange({ target: { value: "Month planning" } }); });
+    expect(text(byId(renderer, "calendar-month-quick-create-preview-2026-11-10"))).toContain("Month planning");
+
+    await click(renderer, "calendar-quick-add-time");
+    expect(byId(renderer, "calendar-form-start-time").props.value).toBe("12:30");
+    expect(byId(renderer, "calendar-form-end-time").props.value).toBe("13:00");
+    expect(text(byId(renderer, "calendar-month-quick-create-preview-2026-11-10"))).toContain("12:30");
+    expect(has(renderer, "calendar-quick-add-time")).toBe(false);
+  } finally { await act(async () => { renderer.unmount(); }); }
+});
+
+test("clicking a month event opens its detail without starting quick create", async () => {
+  events = [calendarEvent("existing", { kind: "allDay", startDate: "2026-11-10", endDateExclusive: "2026-11-11" })];
+  const { renderer } = await render();
+  try {
+    await click(renderer, "calendar-day-event-2026-11-10-existing");
+    expect(text(byId(renderer, "calendar-event-detail-title"))).toBe("Title existing");
+    expect(has(renderer, "calendar-quick-create")).toBe(false);
+  } finally { await act(async () => { renderer.unmount(); }); }
+});
+
+test("defaults to week and restores the selected view after leaving and returning", async () => {
+  values.delete(calendarViewStorageKey(calendarScope));
+  const first = await render();
+  try {
+    expect(has(first.renderer, "calendar-week-view")).toBe(true);
+    expect(byId(first.renderer, "calendar-view-week").props["aria-pressed"]).toBe(true);
+    await click(first.renderer, "calendar-view-day");
+    expect(has(first.renderer, "calendar-day-view")).toBe(true);
+    expect(values.get(calendarViewStorageKey(calendarScope))).toBe("day");
+  } finally { await act(async () => { first.renderer.unmount(); }); }
+
+  const second = await render();
+  try {
+    expect(has(second.renderer, "calendar-day-view")).toBe(true);
+    expect(byId(second.renderer, "calendar-view-day").props["aria-pressed"]).toBe(true);
+  } finally { await act(async () => { second.renderer.unmount(); }); }
+});
+
 test("all-day details show a date range, timed details show local time and zone, text stays plain", async () => {
   events = [
     { ...calendarEvent("trip", { kind: "allDay", startDate: "2026-11-09", endDateExclusive: "2026-11-11" }), description: "Line one\n<b>not bold</b>" },
-    calendarEvent("call", { kind: "timed", startInstant: "2026-11-09T06:00:00Z", endInstantExclusive: "2026-11-09T07:00:00Z", timeZone: "Asia/Shanghai" }),
+    calendarEvent("call", { kind: "timed", startInstant: "2026-11-09T06:00:00Z", endInstantExclusive: "2026-11-09T07:00:00Z", timeZone: "Asia/Shanghai" }, "cal-2"),
   ];
   const { renderer } = await render();
   try {
     await click(renderer, "calendar-day-event-2026-11-09-trip");
     expect(text(byId(renderer, "calendar-event-detail-time"))).toBe("Nov 9, 2026 - Nov 10, 2026(calendar.all_day)");
     expect(has(renderer, "calendar-event-detail-zone")).toBe(false);
-    expect(text(byId(renderer, "calendar-event-detail-calendar"))).toBe("Personal");
+    expect(text(byId(renderer, "calendar-event-detail-calendar"))).toBe("Ada");
     expect(text(byId(renderer, "calendar-event-detail-description"))).toBe("Line one\n<b>not bold</b>");
     expect(byId(renderer, "calendar-event-detail").findAll((node) => node.type === "b")).toHaveLength(0);
     await click(renderer, "calendar-day-event-2026-11-09-call");
     expect(text(byId(renderer, "calendar-event-detail-title"))).toBe("Title call");
+    expect(text(byId(renderer, "calendar-event-detail-calendar"))).toBe("Side project");
     // Separator wording ("," vs "at") varies by ICU version; assert the meaningful parts.
     const timedLabel = text(byId(renderer, "calendar-event-detail-time"));
     expect(timedLabel).toContain("2:00 PM");

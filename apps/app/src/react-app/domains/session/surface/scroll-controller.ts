@@ -271,6 +271,11 @@ export function useSessionScrollController(
     [options.containerRef, releaseProgrammaticScrollSoon, selectedSessionId, setManualScroll],
   );
 
+  const syncManualScroll = useCallback((scrollTop: number) => {
+    lastKnownScrollTopRef.current = scrollTop;
+    setManualScroll(selectedSessionId, scrollTop, null);
+  }, [selectedSessionId, setManualScroll]);
+
   useEffect(() => {
     updateOverflowAnchor();
     return useSessionScrollStore.subscribe(updateOverflowAnchor);
@@ -359,5 +364,6 @@ export function useSessionScrollController(
     jumpToLatest,
     jumpToStartOfMessage,
     jumpToMessage,
+    syncManualScroll,
   };
 }

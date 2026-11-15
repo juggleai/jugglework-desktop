@@ -6,6 +6,8 @@ import {
   CALENDAR_EVENT_DESCRIPTION_MAX,
   CALENDAR_EVENT_TITLE_MAX,
   CALENDAR_FORM_ERROR,
+  calendarEventFormForTimeSlot,
+  calendarEventFormWithNextHalfHour,
   calendarEventToForm,
   calendarEventUpdatePatch,
   classifyCalendarSaveFailure,
@@ -48,6 +50,37 @@ describe("calendar event form model", () => {
     expect(validateCalendarEventForm({ ...form, time: { ...form.time, startTime: "09:00:00", endTime: "09:30:00" } as typeof form.time }, active).ok).toBe(true);
     expect(validateCalendarEventForm({ ...form, time: { ...form.time, startTime: "09:17" } as typeof form.time }, active)).toMatchObject({ ok: false, errors: { time: CALENDAR_FORM_ERROR.timeInvalid } });
     expect(validateCalendarEventForm({ ...form, time: { ...form.time, startTime: "09:00:01" } as typeof form.time }, active)).toMatchObject({ ok: false, errors: { time: CALENDAR_FORM_ERROR.timeInvalid } });
+  });
+
+  test("a clicked time slot snaps down to 30 minutes and creates a half-hour range", () => {
+    const form = calendarEventFormForTimeSlot({ date, startMinute: 13 * 60 + 12, calendarId: "cal-1", timeZone: "Asia/Shanghai", creatorMemberId: "member-a" });
+    expect(form.time).toEqual({ kind: "timed", startDate: "2026-11-09", startTime: "13:00", endDate: "2026-11-09", endTime: "13:30", timeZone: "Asia/Shanghai", startDisambiguation: "reject", endDisambiguation: "reject" });
+    expect(form.attendeeMemberIds).toEqual(["member-a"]);
+  });
+
+  test("the last time slot crosses midnight without producing an invalid local time", () => {
+    const form = calendarEventFormForTimeSlot({ date, startMinute: 23 * 60 + 59, calendarId: "cal-1", timeZone: "Asia/Shanghai" });
+    expect(form.time).toMatchObject({ startDate: "2026-11-09", startTime: "23:30", endDate: "2026-11-10", endTime: "00:00" });
+  });
+
+  test("a slot alongside an existing event preserves its exact half-hour range", () => {
+    const form = calendarEventFormForTimeSlot({ date, startMinute: 13 * 60 + 30, durationMinutes: 60, snapToHalfHour: false, calendarId: "cal-1", timeZone: "Asia/Shanghai" });
+    expect(form.time).toMatchObject({ startDate: "2026-11-09", startTime: "13:30", endDate: "2026-11-09", endTime: "14:30" });
+    expect(validateCalendarEventForm({ ...form, title: "Parallel" }, active).ok).toBe(true);
+  });
+
+  test("adding time to an all-day quick event uses the first half-hour boundary strictly after now", () => {
+    const allDay = defaultCalendarEventForm({ date, calendarId: "cal-1", timeZone: "Asia/Shanghai" });
+    expect(calendarEventFormWithNextHalfHour(allDay, Temporal.Instant.from("2026-11-09T08:01:00Z"), "Asia/Shanghai").time)
+      .toMatchObject({ kind: "timed", startDate: "2026-11-09", startTime: "16:30", endDate: "2026-11-09", endTime: "17:00" });
+    expect(calendarEventFormWithNextHalfHour(allDay, Temporal.Instant.from("2026-11-09T08:30:00Z"), "Asia/Shanghai").time)
+      .toMatchObject({ kind: "timed", startDate: "2026-11-09", startTime: "17:00", endDate: "2026-11-09", endTime: "17:30" });
+  });
+
+  test("adding time near midnight creates a valid half-hour range on the next day", () => {
+    const allDay = defaultCalendarEventForm({ date, calendarId: "cal-1", timeZone: "Asia/Shanghai" });
+    expect(calendarEventFormWithNextHalfHour(allDay, Temporal.Instant.from("2026-11-09T15:45:00Z"), "Asia/Shanghai").time)
+      .toMatchObject({ kind: "timed", startDate: "2026-11-10", startTime: "00:00", endDate: "2026-11-10", endTime: "00:30" });
   });
 
   test("required fields and code-point length limits match the server", () => {

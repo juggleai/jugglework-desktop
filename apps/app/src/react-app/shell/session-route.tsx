@@ -857,11 +857,20 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         const workspace = workspaces.find((item) => item.id === workspaceId);
         const endpoint = workspace ? endpointForWorkspace(workspace) : null;
         if (!endpoint) return { workspaceId, sessionIds: null as string[] | null };
+        const activityWorkspaceIds = Array.from(new Set([workspaceId, endpoint.workspaceId].filter(Boolean)));
+        const activityRecords = useSessionActivityStore.getState().recordsByWorkspaceId;
+        const observedRunGenerations = Object.fromEntries(activityWorkspaceIds.map((activityWorkspaceId) => [
+          activityWorkspaceId,
+          Object.fromEntries(Object.entries(activityRecords[activityWorkspaceId] ?? {})
+            .filter(([, record]) => record.runActive)
+            .map(([sessionId, record]) => [sessionId, record.runGeneration])),
+        ]));
         try {
           const response = await endpoint.client.listActiveSessionRuns(endpoint.workspaceId);
           return {
             workspaceId,
             sessionIds: Array.from(new Set(response.items.map((run) => run.sessionId.trim()).filter(Boolean))).sort(),
+            observedRunGenerations,
           };
         } catch {
           // Preserve the last authoritative receipt while the endpoint is
@@ -871,6 +880,16 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         }
       }));
       if (disposed) return;
+      const activityStore = useSessionActivityStore.getState();
+      for (const result of results) {
+        const observedRunGenerations = "observedRunGenerations" in result
+          ? result.observedRunGenerations
+          : undefined;
+        if (result.sessionIds === null || !observedRunGenerations) continue;
+        for (const [activityWorkspaceId, generations] of Object.entries(observedRunGenerations)) {
+          activityStore.reconcileCoordinatorRuns(activityWorkspaceId, result.sessionIds, generations);
+        }
+      }
       setCoordinatorSessionIdsByWorkspace((current) => {
         let changed = false;
         const next = { ...current };

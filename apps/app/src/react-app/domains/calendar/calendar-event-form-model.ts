@@ -86,6 +86,63 @@ export function defaultCalendarEventForm(input: {
   };
 }
 
+export function calendarEventFormForTimeSlot(input: {
+  date: Temporal.PlainDate;
+  startMinute: number;
+  calendarId: string;
+  timeZone: string;
+  creatorMemberId?: string;
+  durationMinutes?: number;
+  snapToHalfHour?: boolean;
+}): CalendarEventFormValues {
+  const startMinute = input.snapToHalfHour === false
+    ? Math.min(23 * 60 + 59, Math.max(0, Math.floor(input.startMinute)))
+    : Math.min(23 * 60 + 30, Math.max(0, Math.floor(input.startMinute / 30) * 30));
+  const durationMinutes = input.durationMinutes ?? 30;
+  const start = input.date.toPlainDateTime({ hour: Math.floor(startMinute / 60), minute: startMinute % 60 });
+  const end = start.add({ minutes: durationMinutes });
+  const form = defaultCalendarEventForm({ date: input.date, calendarId: input.calendarId, timeZone: input.timeZone, kind: "timed", creatorMemberId: input.creatorMemberId });
+  return {
+    ...form,
+    time: {
+      kind: "timed",
+      startDate: start.toPlainDate().toString(),
+      startTime: start.toPlainTime().toString().slice(0, 5),
+      endDate: end.toPlainDate().toString(),
+      endTime: end.toPlainTime().toString().slice(0, 5),
+      timeZone: input.timeZone,
+      startDisambiguation: "reject",
+      endDisambiguation: "reject",
+    },
+  };
+}
+
+/** Convert an all-day quick form to the first half-hour boundary strictly after `now`. */
+export function calendarEventFormWithNextHalfHour(
+  form: CalendarEventFormValues,
+  now: Temporal.Instant,
+  timeZone: string,
+): CalendarEventFormValues {
+  const localNow = now.toZonedDateTimeISO(timeZone);
+  const nextBoundaryMinute = (Math.floor((localNow.hour * 60 + localNow.minute) / 30) + 1) * 30;
+  const startDate = Temporal.PlainDate.from(form.time.startDate);
+  const start = startDate.toPlainDateTime("00:00").add({ minutes: nextBoundaryMinute });
+  const end = start.add({ minutes: 30 });
+  return {
+    ...form,
+    time: {
+      kind: "timed",
+      startDate: start.toPlainDate().toString(),
+      startTime: start.toPlainTime().toString().slice(0, 5),
+      endDate: end.toPlainDate().toString(),
+      endTime: end.toPlainTime().toString().slice(0, 5),
+      timeZone,
+      startDisambiguation: "reject",
+      endDisambiguation: "reject",
+    },
+  };
+}
+
 export function calendarEventToForm(event: DenCalendarEvent): CalendarEventFormValues {
   const scheduling = event as Partial<DenCalendarSchedulingEvent>;
   const recurrence = scheduling.recurrence ? recurrenceToForm(scheduling.recurrence) : { frequency: "none" as const };

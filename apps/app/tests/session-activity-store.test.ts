@@ -56,6 +56,35 @@ describe("session activity reconciliation", () => {
     expect(useSessionActivityStore.getState().getStatus(workspaceId, sessionId)).toBe("idle");
   });
 
+  test("coordinator reconciliation clears a missed idle while preserving active sibling sessions", () => {
+    const store = useSessionActivityStore.getState();
+    const activeSiblingId = "session-2";
+    store.setRunStatus(workspaceId, sessionId, { type: "busy" });
+    store.setRunStatus(workspaceId, activeSiblingId, { type: "busy" });
+    const observedRunGenerations = Object.fromEntries(
+      Object.entries(useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]!)
+        .map(([id, record]) => [id, record.runGeneration]),
+    );
+
+    store.reconcileCoordinatorRuns(workspaceId, [activeSiblingId], observedRunGenerations);
+
+    expect(useSessionActivityStore.getState().getStatus(workspaceId, sessionId)).toBe("idle");
+    expect(useSessionActivityStore.getState().getStatus(workspaceId, activeSiblingId)).toBe("thinking");
+  });
+
+  test("an older coordinator response cannot terminate a newly started run", () => {
+    const store = useSessionActivityStore.getState();
+    store.setRunStatus(workspaceId, sessionId, { type: "busy" });
+    const observedGeneration = useSessionActivityStore.getState()
+      .recordsByWorkspaceId[workspaceId]![sessionId]!.runGeneration;
+
+    store.setRunStatus(workspaceId, sessionId, { type: "idle" });
+    store.setRunStatus(workspaceId, sessionId, { type: "busy" });
+    store.reconcileCoordinatorRuns(workspaceId, [], { [sessionId]: observedGeneration });
+
+    expect(useSessionActivityStore.getState().getStatus(workspaceId, sessionId)).toBe("thinking");
+  });
+
   test("marks a silent busy session as stalled without stopping it", () => {
     const store = useSessionActivityStore.getState();
     store.setRunStatus(workspaceId, sessionId, { type: "busy" });
