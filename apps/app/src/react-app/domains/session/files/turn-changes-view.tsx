@@ -1,12 +1,14 @@
 /** @jsxImportSource react */
 import * as React from "react";
-import { ArtifactCard, ChangeCounts } from "@/components/chat/artifact";
+import { ChangeCounts } from "@/components/chat/artifact";
 import { Button } from "@/components/ui/button";
 import type { ArtifactItem } from "@/lib/artifacts";
 import { t } from "@/i18n";
+import { DiffCode, useDiffHighlight } from "./diff-code";
+import { FileChangeSection, useExpandedChanges } from "./file-change-section";
 import { parseUnifiedDiff, type DiffLine } from "./parse-unified-diff";
 
-/** Pair adjacent deletion/addition blocks without moving context across hunks. */
+/** 配对相邻删除与新增内容，不跨越上下文和差异块。 */
 export function splitDiffLines(lines: DiffLine[]) {
   const rows: Array<{ left?: DiffLine; right?: DiffLine }> = [];
   let removed: DiffLine[] = [], added: DiffLine[] = [];
@@ -23,8 +25,9 @@ export function splitDiffLines(lines: DiffLine[]) {
   return rows;
 }
 
-function SplitDiff({ patch }: { patch: string }) {
+function SplitDiff({ path, patch }: { path: string; patch: string }) {
   const hunks = React.useMemo(() => parseUnifiedDiff(patch), [patch]);
+  const tokens = useDiffHighlight(path, hunks);
   const [showLarge, setShowLarge] = React.useState(false);
   if (!hunks.length) return null;
   const count = hunks.reduce((sum, hunk) => sum + hunk.lines.length, 0);
@@ -32,12 +35,11 @@ function SplitDiff({ patch }: { patch: string }) {
   return <div className="overflow-x-auto" data-testid="turn-split-diff">
     <table className="w-full table-fixed border-collapse font-mono text-xs leading-5"><tbody>
       {hunks.map((hunk, index) => <React.Fragment key={index}>
-        <tr className="bg-muted/50 text-muted-foreground"><td colSpan={2} className="px-3 py-1">{hunk.header}</td></tr>
         {splitDiffLines(hunk.lines).map((row, i) => <tr key={i}>
           {(["left", "right"] as const).map((side) => {
             const line = row[side];
-            return <td key={side} className={`w-1/2 border-r border-border/40 align-top ${line?.kind === "del" ? "bg-red-3/60" : line?.kind === "add" ? "bg-green-3/60" : !line ? "bg-muted/40" : ""}`}>
-              <div className="flex"><span className="w-12 shrink-0 select-none px-2 text-right text-muted-foreground">{side === "left" ? line?.oldLine : line?.newLine}</span><span className="whitespace-pre-wrap break-all px-2">{line?.content ?? " "}</span></div>
+            return <td key={side} className="workspace-diff-row w-1/2 border-r border-border/40 align-top" data-kind={line?.kind}>
+              <div className="flex"><span className="diff-line-number w-12 shrink-0 select-none px-2 text-right">{side === "left" ? line?.oldLine : line?.newLine}</span><span className="whitespace-pre-wrap break-all px-2">{line ? <DiffCode line={line} tokens={tokens} /> : " "}</span></div>
             </td>;
           })}
         </tr>)}
@@ -46,12 +48,13 @@ function SplitDiff({ patch }: { patch: string }) {
   </div>;
 }
 
-/** Immutable turn records, separate from the current working-tree changes. */
+/** 本轮产物快照；文件独立展开，原文保持回合记录不变。 */
 export function TurnChangesView({ artifacts, selectedPath, onSelect, onOpenFile, onWorkspaceChanges }: {
   artifacts: ArtifactItem[]; selectedPath: string | null; onSelect: (path: string | null) => void;
   onOpenFile?: (artifact: ArtifactItem) => void;
   onWorkspaceChanges?: () => void;
 }) {
+  const { expanded, toggle } = useExpandedChanges(selectedPath, onSelect);
   const selectedRef = React.useRef<HTMLDivElement>(null);
   React.useEffect(() => { selectedRef.current?.scrollIntoView?.({ block: "nearest" }); }, [selectedPath]);
   const changes = artifacts.flatMap((artifact) => artifact.change ? [artifact.change] : []);
@@ -64,16 +67,15 @@ export function TurnChangesView({ artifacts, selectedPath, onSelect, onOpenFile,
     <div className="subtle-scrollbar min-h-0 flex-1 overflow-y-auto">
       {artifacts.map((artifact) => {
         const hasTextDiff = parseUnifiedDiff(artifact.change?.patch ?? "").length > 0;
-        return <div key={artifact.id} ref={selectedPath === artifact.path ? selectedRef : undefined} className="border-b border-border">
-          <ArtifactCard
-            artifact={artifact}
-            compact
-            onOpenInTab={onOpenFile ? () => onOpenFile(artifact) : undefined}
-            onViewChange={hasTextDiff
-              ? () => onSelect(selectedPath === artifact.path ? null : artifact.path)
-              : onOpenFile ? () => onOpenFile(artifact) : undefined}
-          />
-          {hasTextDiff && selectedPath === artifact.path ? <SplitDiff key={artifact.id} patch={artifact.change!.patch} /> : null}
+        return <div key={artifact.id} ref={selectedPath === artifact.path ? selectedRef : undefined}>
+          <FileChangeSection
+            change={{ path: artifact.path, status: artifact.legacy_target.exists === false ? "deleted" : "modified", additions: artifact.change?.additions ?? 0, deletions: artifact.change?.deletions ?? 0, patch: artifact.change?.patch ?? "" }}
+            expanded={hasTextDiff && expanded.has(artifact.path)}
+            onToggle={hasTextDiff ? () => toggle(artifact.path) : undefined}
+            onOpenFile={onOpenFile ? () => onOpenFile(artifact) : undefined}
+          >
+            <SplitDiff path={artifact.path} patch={artifact.change?.patch ?? ""} />
+          </FileChangeSection>
         </div>;
       })}
     </div>

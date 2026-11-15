@@ -5,15 +5,19 @@ import { markdown } from "@codemirror/lang-markdown";
 import { EditorState } from "@codemirror/state";
 import { EditorView, keymap, lineNumbers } from "@codemirror/view";
 import { cn } from "@/lib/utils";
+import { sourceLanguage } from "./source-language";
 import { markdownLivePreview } from "./markdown-live-preview";
 
 type ArtifactTextEditorProps = {
   className?: string;
   value: string;
   language: "markdown" | "text";
+  /** 源文件名用于选择语法解析器，纯文本与 Markdown 可省略。 */
+  filename?: string;
   onChange: (value: string) => void;
 };
 
+/** 可编辑文件正文，复用 CodeMirror 的撤销、选区和文件类型语法着色。 */
 export function ArtifactTextEditor(props: ArtifactTextEditorProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -38,7 +42,7 @@ export function ArtifactTextEditor(props: ArtifactTextEditorProps) {
           props.language === "markdown" ? [] : lineNumbers(),
           history(),
           keymap.of([...defaultKeymap, ...historyKeymap]),
-          props.language === "markdown" ? [markdown(), markdownLivePreview()] : [],
+          props.language === "markdown" ? [markdown(), markdownLivePreview()] : sourceLanguage(props.filename ?? ""),
           EditorView.lineWrapping,
           EditorView.updateListener.of((update) => {
             if (update.docChanged) {
@@ -79,7 +83,7 @@ export function ArtifactTextEditor(props: ArtifactTextEditorProps) {
         delete (window as unknown as { __artifactEditorView?: EditorView }).__artifactEditorView;
       }
     };
-  }, [props.language]);
+  }, [props.language, props.filename]);
 
   useEffect(() => {
     const view = viewRef.current;
@@ -97,5 +101,5 @@ export function ArtifactTextEditor(props: ArtifactTextEditorProps) {
     view.dispatch({ changes: { from: 0, to: current.length, insert: props.value } });
   }, [props.value]);
 
-  return <div ref={rootRef} className={cn("h-full min-h-0 overflow-hidden", props.className)} />;
+  return <div ref={rootRef} className={cn("h-full min-h-0 overflow-hidden file-source-editor", props.className)} />;
 }

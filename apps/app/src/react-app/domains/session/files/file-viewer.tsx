@@ -351,6 +351,7 @@ function StandardFileViewer({
           <React.Suspense fallback={<PreviewLoading />}>
             <div className="relative h-full min-h-0">
               <ArtifactTextEditor
+                filename={path}
                 value={value}
                 language={
                   data.presentation === "markdown" ? "markdown" : "text"

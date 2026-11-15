@@ -291,6 +291,7 @@ export function FilesPanel({
             {showingChanges && turnChanges && client && workspaceId ? (
               <ArtifactActionsProvider client={client} workspaceId={workspaceId} workspaceRoot={workspaceRoot} sessionId={sessionId} remote={isRemoteWorkspace} running={busy}>
                 <TurnChangesView
+                  key={turnChanges.turnId}
                   artifacts={turnChanges.artifacts}
                   selectedPath={session.selectedChangePath}
                   onSelect={(path) => selectChange(sessionId, path)}
@@ -302,17 +303,20 @@ export function FilesPanel({
                 />
               </ArtifactActionsProvider>
             ) : showingChanges ? (
-              <ChangesView
-                changes={changes}
-                loading={changesQuery.isLoading}
-                refreshing={changesQuery.isFetching}
-                error={changesQuery.isError ? (changesQuery.error instanceof Error ? changesQuery.error.message : t("session_files.load_failed")) : null}
-                vcsAvailable={vcsAvailable}
-                selectedPath={session.selectedChangePath}
-                onSelect={(path) => selectChange(sessionId, path)}
-                onOpenFile={openChangeFile}
-                onRefresh={refreshChanges}
-              />
+              <ArtifactActionsProvider client={client!} workspaceId={workspaceId!} workspaceRoot={workspaceRoot} sessionId={sessionId} remote={isRemoteWorkspace} running={busy} enabled={Boolean(client && workspaceId)}>
+                <ChangesView
+                  key={`${workspaceId}:${sessionId}`}
+                  changes={changes}
+                  loading={changesQuery.isLoading}
+                  refreshing={changesQuery.isFetching}
+                  error={changesQuery.isError ? (changesQuery.error instanceof Error ? changesQuery.error.message : t("session_files.load_failed")) : null}
+                  vcsAvailable={vcsAvailable}
+                  selectedPath={session.selectedChangePath}
+                  onSelect={(path) => selectChange(sessionId, path)}
+                  onOpenFile={openChangeFile}
+                  onRefresh={refreshChanges}
+                />
+              </ArtifactActionsProvider>
             ) : activeTab && client && workspaceId ? (
               <ArtifactActionsProvider
                 client={client}

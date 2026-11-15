@@ -2,6 +2,8 @@ import { readFileSync } from "node:fs";
 import { describe, expect, test } from "bun:test";
 import { isIMNavigationVisible, visibleLocalWorkspaceIndicator } from "../src/react-app/shell/app-navigation-status";
 
+const railIconsSource = readFileSync(new URL("../src/react-app/design-system/navigation-rail-icons.tsx", import.meta.url), "utf8");
+
 const railSource = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
 
 describe("local workspace rail status", () => {
@@ -201,13 +203,10 @@ describe("navigation rail visual proportions", () => {
     expect(localWorkspace).not.toContain('<FolderOpen');
   });
 
-  test("keeps a background-colored doorway in the filled home icon", () => {
-    const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
-    const icon = source.slice(source.indexOf('function LocalWorkspaceIcon'), source.indexOf('function RailButton'));
-    expect(icon).toContain('data-local-workspace-icon="filled"');
-    expect(icon).toContain('fill="currentColor"');
-    expect(icon).toContain('data-local-workspace-doorway');
-    expect(icon).toContain('fill="var(--dls-active)"');
+  test("uses explicit outline and filled home variants instead of filling the outline SVG", () => {
+    expect(railIconsSource).toContain('data-local-workspace-icon={active ? "filled" : "outline"}');
+    expect(railIconsSource).toContain('viewBox="0 0 20 20"');
+    expect(railIconsSource).toContain('fill="none"');
   });
 
   test("fills the selected Rail icon black in light mode and white in dark mode", () => {
@@ -301,7 +300,7 @@ describe("navigation rail visual proportions", () => {
     expect(source).toContain('label={t("project_extensions.group_plugin")}');
     expect(source).toContain("active={props.appsActive}");
     expect(source).toContain("onClick={props.onOpenApps}");
-    expect(source).toContain("<PluginOrbitIcon />");
+    expect(source).toContain("<PluginOrbitIcon active={Boolean(props.appsActive)} />");
     expect(source).not.toContain("<Puzzle />");
     expect(source.indexOf('testId="app-rail-automations"')).toBeLessThan(source.indexOf('testId="app-rail-plugins"'));
     expect(source.indexOf('testId="app-rail-plugins"')).toBeLessThan(source.indexOf('testId="app-rail-chat"'));
@@ -379,7 +378,7 @@ describe("navigation rail visual proportions", () => {
   test("routes Automation and Plugins hover to the global sidebar preview host", () => {
     const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
     const automation = source.slice(source.indexOf('label={t("navigation.automations")}'), source.indexOf('</RailButton>', source.indexOf('label={t("navigation.automations")}')));
-    const plugins = source.slice(source.indexOf('label={t("project_extensions.group_plugin")}'), source.indexOf('<PluginOrbitIcon />'));
+    const plugins = source.slice(source.indexOf('label={t("project_extensions.group_plugin")}'), source.indexOf('<PluginOrbitIcon active={Boolean(props.appsActive)} />'));
     expect(automation).toContain('appPreviewTarget="automation"');
     expect(automation).toContain('onAppPreviewChange={appSidebarPreview.onTriggerChange}');
     expect(automation).toContain('showTooltip={!appSidebarPreview.enabled}');

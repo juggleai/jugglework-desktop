@@ -8,16 +8,12 @@ import {
   ArrowUpRight,
   Check,
   Coins,
-  ContactRound,
   Download,
   Ellipsis,
   Globe,
   HelpCircle,
-  House,
   LoaderCircle,
   LogOut,
-  MessageSquare,
-  GitPullRequestArrow,
   PackageCheck,
   Pin,
   RefreshCw,
@@ -67,6 +63,7 @@ import { LOCAL_AUTOMATION_ENABLED } from "@/react-app/domains/automations/automa
 import { useAutomationActivity } from "@/react-app/domains/automations/automation-activity-provider";
 import { isIMNavigationVisible, visibleLocalWorkspaceIndicator } from "./app-navigation-status";
 import { accountDisplayName, membershipTierLabel, membershipUpgradeContext, organizationMenuGroups } from "./account-menu-model";
+import { ChatRailIcon, CodeReviewRailIcon, ContactsRailIcon, LocalWorkspaceIcon } from "@/react-app/design-system/navigation-rail-icons";
 import { PluginOrbitIcon } from "@/react-app/design-system/plugin-orbit-icon";
 import { useAppNavigationSidebarPreview, type AppNavigationSidebarPreviewTarget } from "./app-navigation-sidebar-preview";
 import { parseWorkspaceAppPath, workspaceToonFactoryRoute } from "./workspace-routes";
@@ -119,30 +116,6 @@ type RailButtonProps = {
   appPreviewTarget?: AppNavigationSidebarPreviewTarget;
   onAppPreviewChange?: (target: AppNavigationSidebarPreviewTarget, open: boolean) => void;
 };
-
-function LocalWorkspaceIcon({ active }: { active: boolean }) {
-  if (!active) {
-    return <House className="size-5 text-current" strokeWidth={1.85} data-local-workspace-icon="outline" />;
-  }
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      aria-hidden="true"
-      className="size-5 text-current"
-      data-local-workspace-icon="filled"
-    >
-      <path
-        d="M3.35 10.05c0-.58.25-1.13.69-1.51l6.67-5.72a2 2 0 0 1 2.58 0l6.67 5.72c.44.38.69.93.69 1.51V19a2 2 0 0 1-2 2H5.35a2 2 0 0 1-2-2v-8.95Z"
-        fill="currentColor"
-      />
-      <path
-        d="M9.75 21v-5.8c0-.66.54-1.2 1.2-1.2h2.1c.66 0 1.2.54 1.2 1.2V21h-4.5Z"
-        fill="var(--dls-active)"
-        data-local-workspace-doorway
-      />
-    </svg>
-  );
-}
 
 function AutomationRailIcon({ active }: { active: boolean }) {
   const detailColor = active ? "var(--dls-active)" : "currentColor";
@@ -652,7 +625,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
           onAppPreviewChange={appSidebarPreview.onTriggerChange}
           showTooltip={!appSidebarPreview.enabled}
         >
-          <PluginOrbitIcon />
+          <PluginOrbitIcon active={Boolean(props.appsActive)} />
         </RailButton>
         {imNavigationVisible ? (
           <>
@@ -665,7 +638,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
               badge={totalUnreadCount}
               badgeVariant="dot"
             >
-              <MessageSquare />
+              <ChatRailIcon active={Boolean(props.chatActive && chatView !== "contacts")} />
             </RailButton>
             <RailButton
               label={t("navigation.contacts")}
@@ -674,7 +647,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
               testId="app-rail-contacts"
               onPreviewMenuChange={props.onPreviewMenuChange}
             >
-              <ContactRound />
+              <ContactsRailIcon active={Boolean(props.chatActive && chatView === "contacts")} />
             </RailButton>
           </>
         ) : null}
@@ -884,7 +857,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
                 className="min-w-0 flex-1 bg-transparent py-[5px] focus:bg-transparent! data-highlighted:bg-transparent!"
                 data-testid="app-navigation-more-reviews"
               >
-                <GitPullRequestArrow />
+                <CodeReviewRailIcon />
                 <span className="truncate">{t("navigation.reviews")}</span>
               </DropdownMenuItem>
               <button
@@ -1015,7 +988,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
               testId="app-rail-pinned-reviews"
               onPreviewMenuChange={props.onPreviewMenuChange}
             >
-              <GitPullRequestArrow />
+              <CodeReviewRailIcon />
             </RailButton>
             ) : null}
             {toonFactoryPinned ? (
