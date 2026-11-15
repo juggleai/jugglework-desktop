@@ -63,6 +63,7 @@ let events: DenCalendarEvent[] = [];
 const bootstrapRanges: string[] = [];
 const schedulingRanges: Array<{ startInstant: string; endInstantExclusive: string; timeZone: string }> = [];
 const writes: string[] = [];
+const schedulingWrites: Array<{ op: string; eventId: string; input: Record<string, unknown> }> = [];
 let schedulingItems: Array<{ event: DenCalendarSchedulingEvent; occurrenceIndex: number; time: DenCalendarEventTime }> = [];
 let schedulingFailure: Error | null = null;
 let schedulingGate: Promise<void> | null = null;
@@ -82,6 +83,19 @@ const client = {
   createCalendar: async () => { writes.push("create"); throw new Error("unexpected write"); },
   updateCalendar: async () => { writes.push("update"); throw new Error("unexpected write"); },
   deleteCalendar: async () => { writes.push("delete"); throw new Error("unexpected write"); },
+  deleteCalendarSchedulingEvent: async (_org: string, eventId: string, input: Record<string, unknown>) => {
+    schedulingWrites.push({ op: "delete", eventId, input });
+    const current = schedulingItems.find((item) => item.event.id === eventId)!.event;
+    schedulingItems = [];
+    return { event: { ...current, version: current.version + 1 }, tombstone: null, replayed: false };
+  },
+  rsvpCalendarSchedulingEvent: async (_org: string, eventId: string, input: Record<string, unknown>) => {
+    schedulingWrites.push({ op: "rsvp", eventId, input });
+    const current = schedulingItems.find((item) => item.event.id === eventId)!.event;
+    const updated = { ...current, version: current.version + 1, attendees: current.attendees.map((attendee) => attendee.memberId === "member-a" ? { ...attendee, responseStatus: input.responseStatus as "accepted" | "declined" | "tentative" } : attendee) };
+    schedulingItems = schedulingItems.map((item) => item.event.id === eventId ? { ...item, event: updated } : item);
+    return { event: updated, replayed: false };
+  },
 };
 mock.module("../src/react-app/domains/settings/cloud/cloud-session-provider", () => ({
   useCloudSession: () => ({ isSignedIn: true, baseUrl: "https://den.example/api", user: { id: "user-a", name: "Ada", account: "ada", email: "ada@example.com" }, activeOrganization: { id: "org-a", orgMemberId: "member-a" }, client }),
@@ -98,7 +112,7 @@ const calendarEvent = (id: string, time: DenCalendarEventTime, calendarId = "cal
 });
 
 beforeEach(() => {
-  values.clear(); writes.length = 0; bootstrapRanges.length = 0; schedulingRanges.length = 0; schedulingItems = []; schedulingFailure = null; schedulingGate = null; events = [];
+  values.clear(); writes.length = 0; schedulingWrites.length = 0; bootstrapRanges.length = 0; schedulingRanges.length = 0; schedulingItems = []; schedulingFailure = null; schedulingGate = null; events = [];
   calendars = [calendar("cal-1", "Personal"), calendar("cal-2", "Side project")];
 });
 
@@ -325,6 +339,32 @@ test("merges scheduling occurrences into the default 42-day month without showin
   } finally { await act(async () => { renderer.unmount(); }); }
 });
 
+test("recurring detail sends canonical identity for scoped RSVP and delete without parsing the synthetic ID", async () => {
+  const series: DenCalendarSchedulingEvent = {
+    ...calendarEvent("series/with:syntax", { kind: "allDay", startDate: "2026-11-02", endDateExclusive: "2026-11-03" }),
+    status: "active",
+    attendees: [{ memberId: "member-a", responseStatus: "needs-action" }],
+    recurrence: { frequency: "weekly", interval: 1, end: { kind: "never" } },
+  };
+  const occurrenceTime = { kind: "allDay" as const, startDate: "2026-11-23", endDateExclusive: "2026-11-24" };
+  schedulingItems = [{ event: series, occurrenceIndex: 3, time: occurrenceTime }];
+  const { renderer } = await render();
+  try {
+    await click(renderer, "calendar-day-event-2026-11-23-scheduling:series%2Fwith%3Asyntax:3");
+    const responses = byId(renderer, "calendar-event-detail-rsvp").findAll((node) => node.type === "button");
+    await act(async () => { responses[0]!.props.onClick(); });
+    expect(has(renderer, "calendar-event-rsvp-scope")).toBe(true);
+    await click(renderer, "calendar-event-rsvp-scope-this");
+    await click(renderer, "calendar-event-rsvp-scope-confirm");
+    expect(schedulingWrites[0]).toMatchObject({ op: "rsvp", eventId: "series/with:syntax", input: { scope: "this", occurrence: { occurrenceIndex: 3, startDate: "2026-11-23" }, responseStatus: "accepted" } });
+    await click(renderer, "calendar-event-detail-delete");
+    expect(has(renderer, "calendar-event-delete-scope")).toBe(true);
+    await click(renderer, "calendar-event-delete-scope-all");
+    await click(renderer, "calendar-event-delete-scope-confirm");
+    expect(schedulingWrites[1]).toMatchObject({ op: "delete", eventId: "series/with:syntax", input: { scope: "this-and-following", occurrence: { occurrenceIndex: 3, startDate: "2026-11-23" } } });
+  } finally { await act(async () => { renderer.unmount(); }); }
+});
+
 test("a cold-cache scheduling error leaves bootstrap details visible but blocks edit and delete", async () => {
   events = [calendarEvent("possibly-series", { kind: "allDay", startDate: "2026-11-09", endDateExclusive: "2026-11-10" })];
   schedulingFailure = new Error("scheduling unavailable");
@@ -359,17 +399,34 @@ test("a one-time attendee scheduling event keeps its real ID and remains editabl
     ...calendarEvent("attendee-event", { kind: "allDay", startDate: "2026-11-09", endDateExclusive: "2026-11-10" }),
     title: "Authoritative attendee event",
     status: "active",
-    attendees: [{ memberId: "member-b", responseStatus: "accepted" }],
+    attendees: [
+      { memberId: "member-a", responseStatus: "accepted" },
+      { memberId: "member-b", responseStatus: "needs-action" },
+    ],
     recurrence: null,
   };
   events = [calendarEvent("attendee-event", aggregate.time)];
-  schedulingItems = [{ event: aggregate, occurrenceIndex: 0, time: aggregate.time }];
+  schedulingItems = [{ event: aggregate, occurrenceIndex: 1, time: aggregate.time }];
   const { renderer } = await render();
   try {
     expect(has(renderer, "calendar-day-event-2026-11-09-attendee-event")).toBe(true);
-    expect(has(renderer, "calendar-day-event-2026-11-09-scheduling:attendee-event:0")).toBe(false);
+    expect(has(renderer, "calendar-day-event-2026-11-09-scheduling:attendee-event:1")).toBe(false);
     await click(renderer, "calendar-day-event-2026-11-09-attendee-event");
     expect(text(byId(renderer, "calendar-event-detail-title"))).toBe("Authoritative attendee event");
+    expect(byId(renderer, "calendar-event-panel").props.className).toContain("sm:left-1/2");
+    expect(byId(renderer, "calendar-event-panel").props.className).toContain("sm:w-[min(25rem,calc(100%-2rem))]");
+    expect(byId(renderer, "calendar-event-detail").props.className).toContain("h-full");
+    expect(byId(renderer, "calendar-event-detail-hero").props.className).toContain("linear-gradient");
+    expect(byId(renderer, "calendar-event-detail-body").props.className).toContain("overflow-y-auto");
+    expect(has(renderer, "calendar-event-detail-delete")).toBe(true);
+    expect(has(renderer, "calendar-event-detail-share")).toBe(false);
+    expect(has(renderer, "calendar-event-detail-more")).toBe(false);
+    expect(text(byId(renderer, "calendar-event-detail-attendees"))).toContain("member-a");
+    expect(text(byId(renderer, "calendar-event-detail-attendees"))).toContain("member-b");
+    expect(text(byId(renderer, "calendar-event-detail-reminder"))).toBe("calendar.reminder_minutes_before");
+    const responses = byId(renderer, "calendar-event-detail-rsvp").findAll((node) => node.type === "button");
+    expect(responses).toHaveLength(3);
+    expect(responses.map((button) => button.props["aria-pressed"])).toEqual([true, false, false]);
     expect(has(renderer, "calendar-occurrence-read-only")).toBe(false);
     expect(has(renderer, "calendar-event-detail-edit")).toBe(true);
     await click(renderer, "calendar-event-detail-edit");

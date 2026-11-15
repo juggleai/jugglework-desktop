@@ -63,6 +63,8 @@ export type CalendarEventEditorProps = {
   onCancel: () => void;
   /** false while offline: authoritative save/delete are unavailable; only a local draft may be kept. */
   online?: boolean;
+  /** false when the Calendar write policy is revoked while the editor is open. */
+  writeEnabled?: boolean;
   /** Present when local draft storage is available. */
   onSaveDraft?: (form: CalendarEventFormValues, base: DenCalendarEvent | undefined) => Promise<void>;
   /** Shown when the form was restored from an unsynced local draft. */
@@ -373,6 +375,7 @@ export function CalendarEventEditor(props: CalendarEventEditorProps) {
   const isEdit = Boolean(props.event);
   const dialogPresentation = props.presentation === "dialog";
   const online = props.online ?? true;
+  const writeEnabled = props.writeEnabled ?? true;
   const pending = status.kind === "pending";
   const errors = status.kind === "validation" ? status.errors : {};
   const activeIds = props.calendars.map((calendar) => calendar.id);
@@ -554,7 +557,7 @@ export function CalendarEventEditor(props: CalendarEventEditorProps) {
   const submit = async () => {
     if (pending) return;
     // Offline never sends or queues an authoritative write.
-    if (!online) return;
+    if (!online || !writeEnabled) return;
     const validation = validateCalendarEventForm(form, activeIds, teamSelected ? undefined : creatorMemberId);
     if (!validation.ok) {
       setStatus({ kind: "validation", errors: validation.errors });
@@ -567,6 +570,11 @@ export function CalendarEventEditor(props: CalendarEventEditorProps) {
     const fingerprint = JSON.stringify(validation.values);
     setStatus({ kind: "pending" });
     try {
+      // Aggregate query results are the edit authority, but their canonical detail cache may be
+      // evicted independently while the editor remains open. Re-seed only the missing/older entry
+      // from the editor's fixed base; setCanonicalCalendarEvent preserves any newer cached version,
+      // so the mutation version gate still rejects stale edits instead of silently advancing them.
+      if (base) setCanonicalCalendarEvent(queryClient, props.scope, base);
       // Personal writes can replay their idempotency key; team endpoints intentionally do not retry.
       const teamCalendarId = base
         ? props.teamCalendarIds?.has(base.calendarId) ? base.calendarId : null
@@ -620,11 +628,17 @@ export function CalendarEventEditor(props: CalendarEventEditorProps) {
   };
 
   const remove = async () => {
-    if (!base || pending || !online) return;
+    if (!base || pending || !online || !writeEnabled) return;
     setStatus({ kind: "pending" });
     try {
+      setCanonicalCalendarEvent(queryClient, props.scope, base);
       if (props.teamCalendarIds?.has(base.calendarId)) {
         await teamMutations.remove.mutateAsync({ calendarId: base.calendarId, eventId: base.id, expectedVersion: base.version });
+      } else if (isSchedulingAggregate(base)) {
+        const occurrence = base.time.kind === "allDay"
+          ? { occurrenceIndex: 1, startDate: base.time.startDate }
+          : { occurrenceIndex: 1, startInstant: base.time.startInstant };
+        await schedulingMutations.remove.mutateAsync({ eventId: base.id, occurrenceIndex: 1, occurrence, expectedVersion: base.version, scope: "this" });
       } else {
         await deleteMutation.mutateAsync({ eventId: base.id, expectedVersion: base.version });
       }
@@ -661,7 +675,7 @@ export function CalendarEventEditor(props: CalendarEventEditorProps) {
       dialogPresentation && "mt-auto min-h-20 shrink-0 gap-3 border-t border-dls-border bg-dls-surface px-6 py-6",
     )} data-testid="calendar-form-actions">
       {base ? (
-        <Button type="button" size="sm" variant="ghost" disabled={pending || !online} title={!online ? t("calendar.offline_delete_unavailable") : undefined} onClick={() => setConfirmingDelete(true)} aria-label={t("calendar.delete_event")} data-testid="calendar-form-delete">
+        <Button type="button" size="sm" variant="ghost" disabled={pending || !online || !writeEnabled} title={!online ? t("calendar.offline_delete_unavailable") : undefined} onClick={() => setConfirmingDelete(true)} aria-label={t("calendar.delete_event")} data-testid="calendar-form-delete">
           <Trash2 className="size-4" aria-hidden="true" />
         </Button>
       ) : null}
@@ -671,7 +685,7 @@ export function CalendarEventEditor(props: CalendarEventEditorProps) {
           {t("calendar.draft_keep")}
         </Button>
       ) : null}
-      <Button type="submit" size="sm" className={cn("min-w-24", dialogPresentation && "h-8 min-w-20 rounded-md px-5 font-normal before:rounded-md")} disabled={!online || pending || (status.kind === "conflict")} data-testid="calendar-form-save">
+      <Button type="submit" size="sm" className={cn("min-w-24", dialogPresentation && "h-8 min-w-20 rounded-md px-5 font-normal before:rounded-md")} disabled={!online || !writeEnabled || pending || (status.kind === "conflict")} data-testid="calendar-form-save">
         {status.kind === "failed" && status.failure.kind === "network" ? t("calendar.retry_save") : t("calendar.save")}
       </Button>
     </div>
@@ -984,7 +998,7 @@ export function CalendarEventEditor(props: CalendarEventEditorProps) {
         <div className="flex flex-col gap-2 rounded-lg border border-red-500/40 p-2" role="alertdialog" aria-label={t("calendar.delete_event")} data-testid="calendar-form-delete-confirm">
           <p className="text-xs text-dls-text">{t("calendar.delete_confirm")}</p>
           <div className="flex gap-2">
-            <Button type="button" size="sm" variant="destructive" disabled={pending || !online} onClick={() => void remove()} data-testid="calendar-form-delete-confirm-button">{t("calendar.delete_event")}</Button>
+            <Button type="button" size="sm" variant="destructive" disabled={pending || !online || !writeEnabled} onClick={() => void remove()} data-testid="calendar-form-delete-confirm-button">{t("calendar.delete_event")}</Button>
             <Button type="button" size="sm" variant="ghost" onClick={() => setConfirmingDelete(false)} data-testid="calendar-form-delete-cancel">{t("calendar.cancel")}</Button>
           </div>
         </div>

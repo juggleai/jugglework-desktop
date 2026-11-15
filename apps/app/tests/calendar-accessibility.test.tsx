@@ -248,6 +248,19 @@ test("event detail takes focus, Escape closes it, and focus returns to the chip 
   } finally { await act(async () => { renderer.unmount(); }); }
 });
 
+test("detail delete is a named keyboard control and removed placeholders are not tabbable", async () => {
+  events = [baseEvent("e1")];
+  const { renderer } = await render();
+  try {
+    await click(renderer, "calendar-day-event-2026-11-09-e1");
+    const remove = byId(renderer, "calendar-event-detail-delete");
+    expect(accessibleName(remove)).toBe(t("calendar.delete_event"));
+    expect(remove.props.disabled).toBe(false);
+    expect(has(renderer, "calendar-event-detail-share")).toBe(false);
+    expect(has(renderer, "calendar-event-detail-more")).toBe(false);
+  } finally { await act(async () => { renderer.unmount(); }); }
+});
+
 test("after deleting, focus falls back to the selected day when the opener no longer exists", async () => {
   events = [baseEvent("e1")];
   const { renderer } = await render();

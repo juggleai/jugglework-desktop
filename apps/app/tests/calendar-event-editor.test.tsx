@@ -5,7 +5,7 @@ import React from "react";
 import TestRenderer, { act } from "react-test-renderer";
 import { MemoryRouter } from "react-router-dom";
 
-import { DenApiError, type DenCalendar, type DenCalendarEvent } from "../src/app/lib/den";
+import { DenApiError, type DenCalendar, type DenCalendarEvent, type DenCalendarSchedulingEvent } from "../src/app/lib/den";
 import { calendarQueryKeys } from "../src/react-app/domains/calendar/calendar-query-keys";
 import { createCalendarScope } from "../src/react-app/domains/calendar/calendar-scope";
 
@@ -101,6 +101,13 @@ const client = {
     events = events.map((event) => event.id === eventId ? updated : event);
     return { event: updated, replayed: false };
   },
+  deleteCalendarSchedulingEvent: async (_org: string, eventId: string, input: Record<string, unknown>) => {
+    calls.push({ op: "scheduling-delete", input: { eventId, ...input } });
+    const current = events.find((event) => event.id === eventId)! as DenCalendarSchedulingEvent;
+    events = events.filter((event) => event.id !== eventId);
+    return { event: null, tombstone: { entityType: "event", entityId: eventId, version: current.version + 1, deletedAt: "2026-11-09T05:00:00Z" }, replayed: false };
+  },
+  rsvpCalendarSchedulingEvent: async () => { throw new Error("unexpected RSVP"); },
   updateCalendarEvent: async (_org: string, eventId: string, input: Record<string, unknown>) => {
     calls.push({ op: "update", input });
     const failure = failNext?.("update"); if (failure) throw failure;
@@ -387,6 +394,32 @@ test("availability lays attendees left to right and busy intervals top to bottom
   } finally { await act(async () => { renderer.unmount(); }); }
 });
 
+test("created attendee event keeps every selected member in detail and when editing again", async () => {
+  organizationMembers = [
+    { id: "member-a", userId: "user-a", role: "member", user: { id: "user-a", name: "Ada", account: "ada", email: "ada@example.com", avatar: null } },
+    { id: "member-b", userId: "user-b", role: "member", user: { id: "user-b", name: "Ben", account: "ben", email: "ben@example.com", avatar: null } },
+  ];
+  const { renderer } = await render();
+  try {
+    await click(renderer, "calendar-create-event");
+    await change(renderer, "calendar-form-title", "Two-person planning");
+    await click(renderer, "calendar-form-attendees-trigger");
+    await click(renderer, "calendar-attendee-member-b");
+    expect(text(byId(renderer, "calendar-attendee-list"))).toContain(t("calendar.attendees_count", { count: 2 }));
+    await submit(renderer);
+
+    expect(calls[0]).toMatchObject({ op: "create", input: { attendees: [{ memberId: "member-a" }, { memberId: "member-b" }] } });
+    expect(text(byId(renderer, "calendar-event-detail-attendees"))).toContain("Ada");
+    expect(text(byId(renderer, "calendar-event-detail-attendees"))).toContain("Ben");
+    expect(text(byId(renderer, "calendar-event-detail"))).toContain(t("calendar.attendees_count", { count: 2 }));
+
+    await click(renderer, "calendar-event-detail-edit");
+    expect(text(byId(renderer, "calendar-attendee-list"))).toContain(t("calendar.attendees_count", { count: 2 }));
+    expect(has(renderer, "calendar-selected-attendee-member-a")).toBe(true);
+    expect(has(renderer, "calendar-selected-attendee-member-b")).toBe(true);
+  } finally { await act(async () => { renderer.unmount(); }); }
+});
+
 test("availability marks the current time only when viewing today", async () => {
   const { renderer } = await render();
   try {
@@ -439,6 +472,37 @@ test("recurring creates and core event upgrades use the complete scheduling PATC
       expect(Object.keys(patch.input).sort()).toEqual(["attendees", "eventId", "expectedVersion", "idempotencyKey", "recurrence"]);
       expect(patch.input).not.toHaveProperty("status");
     } finally { await act(async () => { editor.unmount(); }); }
+  } finally { await act(async () => { renderer.unmount(); }); }
+});
+
+test("editing with attendees re-seeds an evicted canonical event before scheduling PATCH", async () => {
+  events = [baseEvent("core-event")];
+  organizationMembers = [{ id: "member-b", userId: "user-b", role: "member", user: { id: "user-b", name: "Ben", account: "ben", email: "ben@example.com", avatar: null } }];
+  const { renderer, queryClient } = await render();
+  try {
+    const scope = createCalendarScope({ deploymentBaseUrl: "https://den.example/api", organizationId: "org-a", memberId: "member-a" })!;
+    await click(renderer, "calendar-day-event-2026-11-09-core-event");
+    await click(renderer, "calendar-event-detail-edit");
+    queryClient.removeQueries({ queryKey: calendarQueryKeys.event(scope, "core-event"), exact: true });
+    expect(queryClient.getQueryData(calendarQueryKeys.event(scope, "core-event"))).toBeUndefined();
+    await click(renderer, "calendar-form-attendees-trigger");
+    await click(renderer, "calendar-attendee-member-b");
+    await submit(renderer);
+    expect(calls.at(-1)).toMatchObject({ op: "scheduling-update", input: { eventId: "core-event", expectedVersion: 1, attendees: [{ memberId: "member-a" }, { memberId: "member-b" }] } });
+    expect(has(renderer, "calendar-form-failure-network")).toBe(false);
+  } finally { await act(async () => { renderer.unmount(); }); }
+});
+
+test("editor deletes a scheduling aggregate through scheduling API", async () => {
+  events = [{ ...baseEvent("scheduled"), status: "active", attendees: [{ memberId: "member-a", responseStatus: "accepted" }], recurrence: null } satisfies DenCalendarSchedulingEvent];
+  const { renderer } = await render();
+  try {
+    await click(renderer, "calendar-day-event-2026-11-09-scheduled");
+    await click(renderer, "calendar-event-detail-edit");
+    await click(renderer, "calendar-form-delete");
+    await click(renderer, "calendar-form-delete-confirm-button");
+    expect(calls.at(-1)).toMatchObject({ op: "scheduling-delete", input: { eventId: "scheduled", expectedVersion: 1, scope: "this", occurrence: { occurrenceIndex: 1, startDate: "2026-11-09" } } });
+    expect(calls.some((call) => call.op === "delete")).toBe(false);
   } finally { await act(async () => { renderer.unmount(); }); }
 });
 

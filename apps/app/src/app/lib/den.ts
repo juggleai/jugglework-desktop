@@ -371,6 +371,30 @@ export type DenCalendarSchedulingEventUpdateInput = {
 export type DenCalendarSchedulingEventResult = { event: DenCalendarSchedulingEvent; replayed: boolean };
 export type DenCalendarSchedulingOccurrence = { event: DenCalendarSchedulingEvent; occurrenceIndex: number; time: DenCalendarEventTime };
 export type DenCalendarSchedulingOccurrenceList = { items: DenCalendarSchedulingOccurrence[] };
+export type DenCalendarSchedulingOccurrenceTarget =
+  | { occurrenceIndex: number; startDate: string }
+  | { occurrenceIndex: number; startInstant: string };
+export type DenCalendarSchedulingDeleteInput = {
+  idempotencyKey: string;
+  expectedVersion: number;
+  scope: "this" | "this-and-following";
+  occurrence: DenCalendarSchedulingOccurrenceTarget;
+};
+export type DenCalendarSchedulingDeleteResult = {
+  event: DenCalendarSchedulingEvent | null;
+  tombstone: DenCalendarTombstone | null;
+  replayed: boolean;
+};
+export type DenCalendarSchedulingActionResult = DenCalendarSchedulingDeleteResult;
+type DenCalendarSchedulingRsvpBase = {
+  idempotencyKey: string;
+  expectedVersion: number;
+  responseStatus: "accepted" | "declined" | "tentative";
+};
+export type DenCalendarSchedulingRsvpInput = DenCalendarSchedulingRsvpBase & (
+  | { scope: "this"; occurrence: DenCalendarSchedulingOccurrenceTarget }
+  | { scope: "all"; occurrence?: never }
+);
 export type DenCalendarSchedulingRange = { startInstant: string; endInstantExclusive: string; timeZone: string };
 export type DenCalendarAvailabilityInput = DenCalendarSchedulingRange & { memberIds: string[] };
 export type DenCalendarBusyInterval = { startInstant: string; endInstantExclusive: string };
@@ -1388,6 +1412,29 @@ function normalizeCalendarSchedulingEventResult(value: unknown): DenCalendarSche
   const event = normalizeDenCalendarSchedulingEvent(value.event);
   if (!event) invalidCalendarSchedulingPayload("Calendar scheduling mutation response was invalid.");
   return { event, replayed: value.replayed };
+}
+
+function normalizeCalendarSchedulingDeleteResult(value: unknown): DenCalendarSchedulingDeleteResult {
+  if (!isRecord(value) || !hasExactKeys(value, ["event", "tombstone", "replayed"]) || typeof value.replayed !== "boolean") {
+    invalidCalendarSchedulingPayload("Calendar scheduling delete response was invalid.");
+  }
+  const event = value.event === null ? null : normalizeDenCalendarSchedulingEvent(value.event);
+  let tombstone: DenCalendarTombstone | null = null;
+  if (value.tombstone !== null) {
+    if (!isRecord(value.tombstone) || !hasExactKeys(value.tombstone, ["entityType", "entityId", "version", "deletedAt"]) || value.tombstone.entityType !== "event" ||
+      typeof value.tombstone.entityId !== "string" || !value.tombstone.entityId || !isPositiveSafeInteger(value.tombstone.version) || !isUtcTimestamp(value.tombstone.deletedAt)) {
+      invalidCalendarSchedulingPayload("Calendar scheduling delete response was invalid.");
+    }
+    tombstone = value.tombstone as DenCalendarTombstone;
+  }
+  if ((!event && !tombstone) || (event && tombstone)) invalidCalendarSchedulingPayload("Calendar scheduling delete response was invalid.");
+  return { event, tombstone, replayed: value.replayed };
+}
+
+function normalizeCalendarSchedulingRsvpResult(value: unknown): DenCalendarSchedulingEventResult {
+  const result = normalizeCalendarSchedulingDeleteResult(value);
+  if (!result.event || result.tombstone) invalidCalendarSchedulingPayload("Calendar scheduling RSVP response was invalid.");
+  return { event: result.event, replayed: result.replayed };
 }
 
 function normalizeCalendarSchedulingOccurrenceList(value: unknown): DenCalendarSchedulingOccurrenceList {
@@ -4492,6 +4539,18 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
 
     async updateCalendarSchedulingEvent(orgId: string, eventId: string, input: DenCalendarSchedulingEventUpdateInput, requestOptions: { signal?: AbortSignal } = {}): Promise<DenCalendarSchedulingEventResult> {
       return normalizeCalendarSchedulingEventResult(await requestJson<unknown>(baseUrls, `/v1/calendar-scheduling/events/${encodeURIComponent(eventId)}`, { method: "PATCH", token, organizationId: orgId, body: input, signal: requestOptions.signal }));
+    },
+
+    async deleteCalendarSchedulingEvent(orgId: string, eventId: string, input: DenCalendarSchedulingDeleteInput, requestOptions: { signal?: AbortSignal } = {}): Promise<DenCalendarSchedulingDeleteResult> {
+      const result = normalizeCalendarSchedulingDeleteResult(await requestJson<unknown>(baseUrls, `/v1/calendar-scheduling/events/${encodeURIComponent(eventId)}`, { method: "DELETE", token, organizationId: orgId, body: input, signal: requestOptions.signal }));
+      if (result.event && (result.event.id !== eventId || result.event.organizationId !== orgId) || result.tombstone && result.tombstone.entityId !== eventId) invalidCalendarSchedulingPayload("Calendar scheduling delete response was invalid.");
+      return result;
+    },
+
+    async rsvpCalendarSchedulingEvent(orgId: string, eventId: string, input: DenCalendarSchedulingRsvpInput, requestOptions: { signal?: AbortSignal } = {}): Promise<DenCalendarSchedulingEventResult> {
+      const result = normalizeCalendarSchedulingRsvpResult(await requestJson<unknown>(baseUrls, `/v1/calendar-scheduling/events/${encodeURIComponent(eventId)}/rsvp`, { method: "PUT", token, organizationId: orgId, body: input, signal: requestOptions.signal }));
+      if (result.event.id !== eventId || result.event.organizationId !== orgId) invalidCalendarSchedulingPayload("Calendar scheduling RSVP response was invalid.");
+      return result;
     },
 
     async getCalendarSchedulingAvailability(orgId: string, input: DenCalendarAvailabilityInput, requestOptions: { signal?: AbortSignal } = {}): Promise<DenCalendarAvailability> {

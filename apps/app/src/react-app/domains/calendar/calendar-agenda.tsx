@@ -1,11 +1,27 @@
 /** @jsxImportSource react */
 import * as React from "react";
 import type { Temporal } from "@js-temporal/polyfill";
-import { Bell, CalendarPlus, Clock3, FileText, LoaderCircle, Pencil, UserRound, Users, Video, X } from "lucide-react";
+import {
+  Bell,
+  CalendarPlus,
+  Check,
+  FileText,
+  LoaderCircle,
+  Pencil,
+  Trash2,
+  UserRound,
+  Users,
+  Video,
+  X,
+} from "lucide-react";
 
 import type { DenCalendar, DenCalendarEvent, DenCalendarSchedulingEvent, DenOrganizationMember } from "@/app/lib/den";
+import { Avatar, AvatarBadge, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { t } from "@/i18n";
+import { cn } from "@/lib/utils";
 import type { CalendarDayEntry } from "./calendar-event-layout";
 import { formatCalendarTime, parseCalendarEventTime } from "./calendar-time-adapter";
 
@@ -81,8 +97,13 @@ export function CalendarEventDetail(props: {
   meetingPending?: boolean;
   meetingError?: string;
   membersById?: ReadonlyMap<string, DenOrganizationMember>;
+  currentMemberId?: string;
   recurringOccurrence?: boolean;
   schedulingEditUnavailable?: "loading" | "error" | "offline";
+  onDelete?: (scope: "this" | "this-and-following") => void;
+  onRsvp?: (responseStatus: "accepted" | "declined" | "tentative", scope: "this" | "all") => void;
+  actionPending?: boolean;
+  actionError?: string;
 }) {
   const sectionRef = React.useRef<HTMLElement | null>(null);
   // Move focus to the detail when it opens or switches events, so screen readers announce it.
@@ -99,12 +120,37 @@ export function CalendarEventDetail(props: {
   const recurrenceLabel = scheduling?.recurrence
     ? t(`calendar.recurrence_${scheduling.recurrence.frequency}`)
     : null;
+  const attendeeResponse = scheduling?.attendees.find((attendee) => attendee.memberId === props.currentMemberId)?.responseStatus;
+  const accepted = scheduling?.attendees.filter((item) => item.responseStatus === "accepted").length ?? 0;
+  const pending = scheduling?.attendees.filter((item) => item.responseStatus === "needs-action").length ?? 0;
+  const eventColor = props.calendar?.color ?? "#3370ff";
+  const [scopeAction, setScopeAction] = React.useState<{ kind: "delete" } | { kind: "rsvp"; responseStatus: "accepted" | "declined" | "tentative" } | null>(null);
+  const [scopeSelection, setScopeSelection] = React.useState<"this" | "following">("this");
+  React.useEffect(() => { setScopeAction(null); setScopeSelection("this"); }, [props.event.id]);
+  const requestDelete = () => {
+    if (!props.onDelete || props.actionPending) return;
+    if (props.recurringOccurrence) { setScopeSelection("this"); setScopeAction({ kind: "delete" }); }
+    else props.onDelete("this");
+  };
+  const requestRsvp = (responseStatus: "accepted" | "declined" | "tentative") => {
+    if (!props.onRsvp || props.actionPending) return;
+    if (props.recurringOccurrence) { setScopeSelection("this"); setScopeAction({ kind: "rsvp", responseStatus }); }
+    else props.onRsvp(responseStatus, "all");
+  };
+  const confirmScopeAction = () => {
+    if (!scopeAction || props.actionPending) return;
+    const action = scopeAction;
+    setScopeAction(null);
+    if (action.kind === "delete") props.onDelete?.(scopeSelection === "this" ? "this" : "this-and-following");
+    else props.onRsvp?.(action.responseStatus, scopeSelection === "this" ? "this" : "all");
+  };
   return (
     <section
       ref={sectionRef}
       tabIndex={-1}
+      aria-busy={props.actionPending || undefined}
       aria-labelledby="calendar-event-detail-title"
-      className="flex min-w-0 flex-col overflow-hidden rounded-xl bg-dls-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/35"
+      className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-[14px] bg-dls-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/35"
       data-testid="calendar-event-detail"
       onKeyDown={(event) => {
         if (event.key === "Escape") {
@@ -113,62 +159,156 @@ export function CalendarEventDetail(props: {
         }
       }}
     >
-      <div className="flex h-14 items-center justify-end gap-1 border-b border-dls-border px-3">
-        {props.onEdit ? <Button type="button" variant="ghost" size="icon-sm" aria-label={t("calendar.edit_event")} title={t("calendar.edit_event")} onClick={props.onEdit} data-testid="calendar-event-detail-edit"><Pencil className="size-4" aria-hidden="true" /></Button> : null}
-        <Button type="button" variant="ghost" size="icon-sm" aria-label={t("calendar.close_detail")} onClick={props.onClose} data-testid="calendar-event-detail-close">
-          <X className="size-4" aria-hidden="true" />
-        </Button>
-      </div>
-      <div className="min-h-0 overflow-y-auto px-5 py-5">
-        <div className="flex items-start gap-3">
-          <span className="mt-1.5 size-4 shrink-0 rounded" style={{ backgroundColor: props.calendar?.color ?? "var(--dls-accent)" }} aria-hidden="true" />
-          <div className="min-w-0 flex-1">
-            <h3 id="calendar-event-detail-title" className="break-words text-xl font-semibold text-dls-accent" data-testid="calendar-event-detail-title">{props.event.title}</h3>
-            <p className="mt-2 text-sm text-dls-accent" data-testid="calendar-event-detail-time">
+      <header
+        className="shrink-0 bg-[linear-gradient(135deg,rgba(233,240,255,0.96)_0%,rgba(247,249,255,0.98)_62%,rgba(255,255,255,1)_100%)] px-7 pb-7 pt-4 dark:bg-[linear-gradient(135deg,rgba(27,38,66,0.98)_0%,rgba(24,29,42,0.98)_65%,rgba(20,20,22,1)_100%)] sm:px-8"
+        data-testid="calendar-event-detail-hero"
+      >
+        <div className="flex h-10 items-center justify-end gap-1" data-testid="calendar-event-detail-actions">
+          {props.onEdit ? (
+            <Button type="button" variant="ghost" size="icon-sm" className="rounded-lg text-dls-text hover:bg-white/65 dark:hover:bg-white/10" aria-label={t("calendar.edit_event")} title={t("calendar.edit_event")} onClick={props.onEdit} data-testid="calendar-event-detail-edit">
+              <Pencil className="size-[18px]" aria-hidden="true" />
+            </Button>
+          ) : null}
+          {props.onDelete ? <Button type="button" variant="ghost" size="icon-sm" className="rounded-lg text-dls-text hover:bg-white/65 dark:hover:bg-white/10" disabled={props.actionPending} aria-label={t("calendar.delete_event")} onClick={requestDelete} data-testid="calendar-event-detail-delete"><Trash2 className="size-[18px]" aria-hidden="true" /></Button> : null}
+          <span className="mx-1 h-5 w-px bg-dls-border" aria-hidden="true" />
+          <Button type="button" variant="ghost" size="icon-sm" className="rounded-lg text-dls-text hover:bg-white/65 dark:hover:bg-white/10" aria-label={t("calendar.close_detail")} onClick={props.onClose} data-testid="calendar-event-detail-close">
+            <X className="size-5" aria-hidden="true" />
+          </Button>
+        </div>
+        <div className="mt-5 grid grid-cols-[18px_minmax(0,1fr)] items-start gap-x-5">
+          <span className="mt-1.5 size-[18px] shrink-0 rounded-[5px]" style={{ backgroundColor: eventColor }} aria-hidden="true" />
+          <div className="min-w-0">
+            <h3 id="calendar-event-detail-title" className="break-words text-[24px] font-semibold leading-8 tracking-[-0.02em]" style={{ color: eventColor }} data-testid="calendar-event-detail-title">{props.event.title}</h3>
+            <p className="mt-3 text-[15px] leading-6" style={{ color: eventColor }} data-testid="calendar-event-detail-time">
               {interval ? formatCalendarTime(interval, props.locale) : "—"}
               {interval?.kind === "allDay" ? <span className="ml-1">({t("calendar.all_day")})</span> : null}
               {interval?.kind === "timed" ? <span className="ml-1">(<span data-testid="calendar-event-detail-zone">{interval.timeZone}</span>)</span> : null}
             </p>
-            {recurrenceLabel ? <p className="mt-1 text-sm text-dls-accent">{recurrenceLabel}</p> : null}
+            {recurrenceLabel ? <p className="mt-1 text-[15px] leading-6" style={{ color: eventColor }} data-testid="calendar-event-detail-recurrence">{recurrenceLabel}</p> : null}
             <p className="sr-only" data-testid="calendar-event-detail-calendar">{props.calendar?.name ?? "—"}</p>
             <p className="sr-only" data-testid="calendar-event-detail-status">{t("calendar.status_saved")}</p>
           </div>
         </div>
-
-        <div className="mt-6 space-y-5 text-sm">
+      </header>
+      <div className="subtle-scrollbar min-h-0 flex-1 overflow-y-auto px-7 pb-7 pt-7 sm:px-8" data-testid="calendar-event-detail-body">
+        <div className="space-y-6 text-[15px]">
           {props.event.videoConferenceEnabled && props.onStartMeeting ? (
-            <div className="flex items-start gap-3">
-              <Video className="mt-2 size-5 shrink-0 text-dls-secondary" aria-hidden="true" />
+            <DetailRow icon={<Video className="size-5" />}>
               <div className="min-w-0 flex-1">
-                <Button type="button" variant="outline" disabled={props.meetingPending} onClick={props.onStartMeeting} data-testid="calendar-event-start-meeting">
-                  {props.meetingPending ? <LoaderCircle className="size-4 animate-spin" aria-hidden="true" /> : <Video className="size-4" aria-hidden="true" />}
-                  {props.meetingPending ? t("calendar.meeting_starting") : t("calendar.meeting_start")}
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button type="button" variant="outline" className="h-9 rounded-lg bg-dls-surface px-4 font-normal" disabled={props.meetingPending} onClick={props.onStartMeeting} data-testid="calendar-event-start-meeting">
+                    {props.meetingPending ? <LoaderCircle className="size-4 animate-spin" aria-hidden="true" /> : null}
+                    {props.meetingPending ? t("calendar.meeting_starting") : t("calendar.meeting_start")}
+                  </Button>
+                </div>
                 {props.meetingError ? <p className="mt-2 text-xs text-red-600" role="alert" data-testid="calendar-event-meeting-error">{props.meetingError}</p> : null}
               </div>
-            </div>
+            </DetailRow>
           ) : null}
-          <div className="flex items-center gap-3"><UserRound className="size-5 shrink-0 text-dls-secondary" aria-hidden="true" /><span className="text-dls-text">{owner ? displayName(owner.id) : displayName(props.event.ownerMemberId)}</span><span className="rounded bg-dls-accent/10 px-1.5 py-0.5 text-xs text-dls-accent">{t("calendar.attendee_creator")}</span></div>
+          <DetailRow icon={<UserRound className="size-5" />}>
+            <MemberLine member={owner} fallbackName={owner ? displayName(owner.id) : displayName(props.event.ownerMemberId)} status={scheduling?.attendees.find((item) => item.memberId === props.event.ownerMemberId)?.responseStatus} />
+            <span className="rounded-md bg-[#e8efff] px-1.5 py-0.5 text-xs font-medium text-[#2864dc] dark:bg-blue-500/15 dark:text-blue-300">{t("calendar.attendee_creator")}</span>
+          </DetailRow>
           {scheduling ? (
-            <div className="flex items-start gap-3">
-              <Users className="mt-0.5 size-5 shrink-0 text-dls-secondary" aria-hidden="true" />
+            <DetailRow icon={<Users className="size-5" />} align="start">
               <div className="min-w-0 flex-1">
-                <p className="font-medium text-dls-text">{t("calendar.attendees_count", { count: scheduling.attendees.length })}</p>
-                <p className="mt-1 text-xs text-dls-secondary">{t("calendar.attendee_response_summary", { accepted: scheduling.attendees.filter((item) => item.responseStatus === "accepted").length, pending: scheduling.attendees.filter((item) => item.responseStatus === "needs-action").length })}</p>
-                <div className="mt-3 space-y-2" data-testid="calendar-event-detail-attendees">
-                  {scheduling.attendees.map((attendee) => <div key={attendee.memberId} className="flex items-center gap-2"><span className="flex size-7 items-center justify-center rounded-full bg-dls-text/10 text-xs font-medium">{displayName(attendee.memberId).slice(0, 1).toLocaleUpperCase()}</span><span className="truncate text-dls-text">{displayName(attendee.memberId)}</span></div>)}
+                <p className="font-medium leading-6 text-dls-text">{t("calendar.attendees_count", { count: scheduling.attendees.length })}</p>
+                <p className="mt-0.5 text-[13px] leading-5 text-dls-secondary">{t("calendar.attendee_response_summary", { accepted, pending })}</p>
+                <div className="mt-4 space-y-3" data-testid="calendar-event-detail-attendees">
+                  {scheduling.attendees.map((attendee) => {
+                    const member = props.membersById?.get(attendee.memberId);
+                    return <MemberLine key={attendee.memberId} member={member} fallbackName={displayName(attendee.memberId)} status={attendee.responseStatus} />;
+                  })}
                 </div>
               </div>
-            </div>
+            </DetailRow>
           ) : null}
-          {props.event.description ? <div className="flex items-start gap-3"><FileText className="mt-0.5 size-5 shrink-0 text-dls-secondary" aria-hidden="true" /><p className="whitespace-pre-wrap break-words text-dls-text" data-testid="calendar-event-detail-description">{props.event.description}</p></div> : null}
-          <div className="flex items-center gap-3"><Bell className="size-5 shrink-0 text-dls-secondary" aria-hidden="true" /><span className="text-dls-text">{t("calendar.reminder_minutes_before", { count: 5 })}</span></div>
-          <div className="flex items-center gap-3"><Clock3 className="size-5 shrink-0 text-dls-secondary" aria-hidden="true" /><span className="text-dls-secondary">{props.calendar?.name ?? "—"}</span></div>
+          {props.event.description ? <DetailRow icon={<FileText className="size-5" />} align="start"><p className="whitespace-pre-wrap break-words leading-6 text-dls-text" data-testid="calendar-event-detail-description">{props.event.description}</p></DetailRow> : null}
+          <DetailRow icon={<Bell className="size-5" />}>
+            <p className="leading-6 text-dls-text" data-testid="calendar-event-detail-reminder">{t("calendar.reminder_minutes_before", { count: 5 })}</p>
+          </DetailRow>
         </div>
         {props.recurringOccurrence ? <p className="mt-5 rounded-lg bg-dls-hover px-3 py-2 text-xs text-dls-secondary" role="note" data-testid="calendar-occurrence-read-only">{t("calendar.occurrence_read_only")}</p> : null}
         {props.schedulingEditUnavailable ? <p className="mt-5 rounded-lg bg-dls-hover px-3 py-2 text-xs text-dls-secondary" role="note" data-testid={`calendar-scheduling-edit-${props.schedulingEditUnavailable}`}>{t(props.schedulingEditUnavailable === "loading" ? "calendar.scheduling_edit_loading" : props.schedulingEditUnavailable === "offline" ? "calendar.scheduling_edit_offline" : "calendar.scheduling_edit_unavailable")}</p> : null}
+        {props.actionError ? <p className="mt-5 text-sm text-red-600" role="alert" data-testid="calendar-event-action-error">{props.actionError}</p> : null}
       </div>
+      <Dialog open={scopeAction !== null} onOpenChange={(open) => { if (!open && !props.actionPending) setScopeAction(null); }}>
+        {scopeAction ? (
+          <DialogContent showCloseButton={false} data-testid={`calendar-event-${scopeAction.kind}-scope`}>
+            <DialogHeader>
+              <DialogTitle>{t(scopeAction.kind === "delete" ? "calendar.delete_scope_title" : "calendar.rsvp_scope_title")}</DialogTitle>
+            </DialogHeader>
+            <RadioGroup value={scopeSelection} onValueChange={(value) => { if (value === "this" || value === "following") setScopeSelection(value); }} aria-label={t(scopeAction.kind === "delete" ? "calendar.delete_scope_title" : "calendar.rsvp_scope_title")}>
+              <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-dls-border px-4 py-3 text-sm text-dls-text hover:bg-dls-hover">
+                <RadioGroupItem value="this" disabled={props.actionPending} onClick={() => setScopeSelection("this")} data-testid={`calendar-event-${scopeAction.kind}-scope-this`} />
+                <span>{t(scopeAction.kind === "delete" ? "calendar.delete_scope_this" : "calendar.rsvp_scope_this")}</span>
+              </label>
+              <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-dls-border px-4 py-3 text-sm text-dls-text hover:bg-dls-hover">
+                <RadioGroupItem value="following" disabled={props.actionPending} onClick={() => setScopeSelection("following")} data-testid={`calendar-event-${scopeAction.kind}-scope-all`} />
+                <span>{t(scopeAction.kind === "delete" ? "calendar.delete_scope_this_and_following" : "calendar.rsvp_scope_all")}</span>
+              </label>
+            </RadioGroup>
+            <DialogFooter>
+              <Button type="button" variant="outline" disabled={props.actionPending} onClick={() => setScopeAction(null)}>{t("calendar.cancel")}</Button>
+              <Button type="button" variant={scopeAction.kind === "delete" ? "destructive" : "default"} disabled={props.actionPending} onClick={confirmScopeAction} data-testid={`calendar-event-${scopeAction.kind}-scope-confirm`}>
+                {scopeAction.kind === "delete" ? t("calendar.delete_event") : t(`calendar.rsvp_${scopeAction.responseStatus === "accepted" ? "accept" : scopeAction.responseStatus === "declined" ? "decline" : "tentative"}`)}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        ) : null}
+      </Dialog>
+      {scheduling ? (
+        <footer className="shrink-0 border-t border-dls-border bg-dls-surface px-7 py-4 sm:px-8" data-testid="calendar-event-detail-rsvp">
+          <div className="grid grid-cols-3 gap-3">
+            <ResponseButton active={attendeeResponse === "accepted"} tone="accepted" disabled={!props.onRsvp || props.actionPending === true} onClick={() => requestRsvp("accepted")}>{t("calendar.rsvp_accept")}</ResponseButton>
+            <ResponseButton active={attendeeResponse === "declined"} tone="declined" disabled={!props.onRsvp || props.actionPending === true} onClick={() => requestRsvp("declined")}>{t("calendar.rsvp_decline")}</ResponseButton>
+            <ResponseButton active={attendeeResponse === "tentative"} tone="tentative" disabled={!props.onRsvp || props.actionPending === true} onClick={() => requestRsvp("tentative")}>{t("calendar.rsvp_tentative")}</ResponseButton>
+          </div>
+        </footer>
+      ) : null}
     </section>
+  );
+}
+
+function DetailRow(props: { icon: React.ReactNode; children: React.ReactNode; align?: "center" | "start" }) {
+  return (
+    <div className={cn("grid grid-cols-[20px_minmax(0,1fr)] gap-x-5", props.align === "start" ? "items-start" : "items-center")}>
+      <span className={cn("text-[#8f98a6]", props.align === "start" && "mt-0.5")} aria-hidden="true">{props.icon}</span>
+      <div className="flex min-w-0 items-center gap-2">{props.children}</div>
+    </div>
+  );
+}
+
+function MemberLine(props: { member?: DenOrganizationMember; fallbackName: string; status?: DenCalendarSchedulingEvent["attendees"][number]["responseStatus"] }) {
+  const name = props.fallbackName.trim() || "?";
+  return (
+    <div className="flex min-w-0 items-center gap-3">
+      <Avatar size="lg" className="size-9 bg-dls-text/10">
+        {props.member?.user.avatar ? <AvatarImage src={props.member.user.avatar} alt="" /> : null}
+        <AvatarFallback className="bg-dls-text/10 text-[13px] font-medium text-dls-text">{name.slice(0, 1).toLocaleUpperCase()}</AvatarFallback>
+        {props.status === "accepted" ? <AvatarBadge className="size-3.5 bg-[#20b94b] ring-2 ring-dls-surface"><Check className="size-2.5 stroke-[3]" aria-hidden="true" /></AvatarBadge> : null}
+      </Avatar>
+      <span className="min-w-0 truncate leading-6 text-dls-text">{name}</span>
+    </div>
+  );
+}
+
+function ResponseButton(props: { active: boolean; tone: "accepted" | "declined" | "tentative"; disabled: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      disabled={props.disabled}
+      onClick={props.onClick}
+      aria-pressed={props.active}
+      className={cn(
+        "h-10 rounded-lg border border-dls-border bg-dls-surface px-3 text-sm font-medium text-dls-text shadow-[0_1px_1px_rgba(15,23,42,0.03)] hover:bg-dls-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/35 disabled:cursor-not-allowed disabled:opacity-50",
+        props.active && props.tone === "accepted" && "border-[#21a443] bg-[#e5f8e5] text-[#178332] dark:border-green-500/70 dark:bg-green-500/15 dark:text-green-300",
+        props.active && props.tone === "declined" && "border-red-400 bg-red-50 text-red-700 dark:bg-red-500/15 dark:text-red-300",
+        props.active && props.tone === "tentative" && "border-amber-400 bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300",
+      )}
+    >
+      {props.children}
+    </button>
   );
 }
 

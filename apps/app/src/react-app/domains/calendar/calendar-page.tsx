@@ -41,6 +41,7 @@ import { CalendarTimeView } from "./calendar-time-view";
 import { CalendarViewToolbar } from "./calendar-view-toolbar";
 import { CalendarCreateDialog } from "./calendar-create-dialog";
 import { CalendarMembersDialog } from "./calendar-members-dialog";
+import { useCalendarSchedulingEventMutations, useDeleteCalendarEventMutation, useTeamCalendarEventMutations, type CalendarSchedulingOccurrenceIdentity } from "./calendar-mutations";
 import { calendarViewDays, calendarViewRange, navigateCalendarView, type CalendarViewMode } from "./calendar-view-model";
 import { calendarEventToForm, defaultCalendarEventForm, type CalendarEventFormValues } from "./calendar-event-form-model";
 import {
@@ -233,6 +234,10 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
   const schedulingOccurrenceIds = new Set(schedulingOccurrences
     .filter((occurrence) => occurrence.event.recurrence !== null)
     .map((occurrence) => schedulingOccurrenceId(occurrence.event.id, occurrence.occurrenceIndex)));
+  const schedulingIdentityByDisplayId = React.useMemo(() => new Map(schedulingOccurrences.map((occurrence) => {
+    const displayId = occurrence.event.recurrence ? schedulingOccurrenceId(occurrence.event.id, occurrence.occurrenceIndex) : occurrence.event.id;
+    return [displayId, schedulingOccurrenceIdentity(occurrence.event.id, occurrence.occurrenceIndex, occurrence.time)] as const;
+  })), [schedulingOccurrences]);
   const baseOnlineEvents = [...new Map([...(bootstrapQuery.data?.events ?? []), ...teamEvents]
     .filter((event) => !schedulingEventIds.has(event.id) && !("attendees" in event))
     .map((event) => [event.id, event])).values()];
@@ -300,6 +305,7 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
     [sourceEvents],
   );
   const selectedEvent = selectedEventId ? eventsById.get(selectedEventId) ?? null : null;
+  const selectedSchedulingIdentity = selectedEventId ? schedulingIdentityByDisplayId.get(selectedEventId) : undefined;
   const selectedEventVisible = selectedEvent ? visibleIds.includes(selectedEvent.calendarId) : false;
   // Once fresh data no longer contains the open event (deleted elsewhere, or its calendar removed), close it.
   React.useEffect(() => {
@@ -316,6 +322,10 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
   const [membersCalendarId, setMembersCalendarId] = React.useState<string | null>(null);
   const [meetingPending, setMeetingPending] = React.useState(false);
   const [meetingError, setMeetingError] = React.useState("");
+  const [actionError, setActionError] = React.useState("");
+  const schedulingMutations = useCalendarSchedulingEventMutations(cloud.client, props.scope);
+  const deleteMutation = useDeleteCalendarEventMutation(cloud.client, props.scope);
+  const teamMutations = useTeamCalendarEventMutations(cloud.client, props.scope);
   const membersDialogOpener = React.useRef<HTMLElement | null>(null);
   const panelOpener = React.useRef<HTMLElement | null>(null);
   const editorDialogOpen = editor !== null;
@@ -377,8 +387,35 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
     if (date) setNavigation(selectCalendarDate(date));
     setEditor(null);
     setMeetingError("");
+    setActionError("");
     setSelectedEventId(eventId);
   };
+  const deleteSelectedEvent = async (scope: "this" | "this-and-following") => {
+    if (!selectedEvent || !online || actionPending) return;
+    setActionError("");
+    try {
+      if (selectedSchedulingIdentity) {
+        await schedulingMutations.remove.mutateAsync({ ...selectedSchedulingIdentity, expectedVersion: selectedEvent.version, scope });
+      } else if (teamCalendarIds.has(selectedEvent.calendarId)) {
+        await teamMutations.remove.mutateAsync({ calendarId: selectedEvent.calendarId, eventId: selectedEvent.id, expectedVersion: selectedEvent.version });
+      } else {
+        await deleteMutation.mutateAsync({ eventId: selectedEvent.id, expectedVersion: selectedEvent.version });
+      }
+      setSelectedEventId(null);
+    } catch {
+      setActionError(t("calendar.action_failed"));
+    }
+  };
+  const rsvpSelectedEvent = async (responseStatus: "accepted" | "declined" | "tentative", scope: "this" | "all") => {
+    if (!selectedEvent || !selectedSchedulingIdentity || !online || !props.writeEnabled || actionPending) return;
+    setActionError("");
+    try {
+      await schedulingMutations.rsvp.mutateAsync({ ...selectedSchedulingIdentity, expectedVersion: selectedEvent.version, scope, responseStatus });
+    } catch {
+      setActionError(t("calendar.action_failed"));
+    }
+  };
+  const actionPending = schedulingMutations.remove.isPending || schedulingMutations.rsvp.isPending || deleteMutation.isPending || teamMutations.remove.isPending;
   const startEventMeeting = async (event: DenCalendarEvent) => {
     if (meetingPending || !event.videoConferenceEnabled) return;
     setMeetingPending(true);
@@ -622,6 +659,7 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
           event={editor.mode === "edit" ? editingEvent : undefined}
           initial={editor.form ?? (editor.mode === "edit" && editingEvent ? calendarEventToForm(editingEvent) : defaultCalendarEventForm({ date: navigation.selectedDate, calendarId: defaultCalendarId, timeZone, kind: "timed", creatorMemberId: teamCalendarIds.has(defaultCalendarId) ? undefined : props.scope.memberId }))}
           online={online}
+          writeEnabled={props.writeEnabled}
           onSaveDraft={saveEditorDraft}
           restoredFromDraft={Boolean(editor.draftId)}
           staleDraftBase={editor.mode === "edit" && editor.draftBaseVersion !== undefined && editingEvent !== undefined && editor.draftBaseVersion !== editingEvent.version}
@@ -638,12 +676,13 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
       {detailCardOpen && selectedEvent ? (
         <>
         <button type="button" className="absolute inset-0 z-10 cursor-default bg-transparent" aria-label={t("calendar.close_detail")} onClick={() => setSelectedEventId(null)} data-testid="calendar-event-detail-dismiss-layer" />
-        <aside className="absolute inset-y-4 right-4 z-20 w-[min(30rem,calc(100%-2rem))] overflow-hidden rounded-xl border border-dls-border bg-dls-surface shadow-2xl" aria-label={t("calendar.event_panel")} data-testid="calendar-event-panel">
+        <aside className="absolute inset-y-4 left-4 right-4 z-20 overflow-hidden rounded-[14px] border border-black/[0.035] bg-dls-surface shadow-[0_18px_48px_rgba(15,23,42,0.18)] sm:left-1/2 sm:right-auto sm:w-[min(25rem,calc(100%-2rem))] sm:-translate-x-1/2 dark:border-white/10 dark:shadow-[0_20px_56px_rgba(0,0,0,0.46)]" aria-label={t("calendar.event_panel")} data-testid="calendar-event-panel">
           <CalendarEventDetail
             event={selectedEvent}
             calendar={calendarsById.get(selectedEvent.calendarId)}
             locale={locale}
             membersById={detailMembersById}
+            currentMemberId={props.scope.memberId}
             meetingPending={meetingPending}
             meetingError={meetingError}
             onStartMeeting={selectedEvent.videoConferenceEnabled && online ? () => void startEventMeeting(selectedEvent) : undefined}
@@ -653,6 +692,10 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
               : online && !teamCalendarIds.has(selectedEvent.calendarId) && !schedulingMetadataReady
                 ? schedulingQuery.isError ? "error" : "loading"
                 : undefined}
+            onDelete={online && props.writeEnabled && !teamCalendarIds.has(selectedEvent.calendarId) && schedulingMetadataReady && selectedEvent.ownerMemberId === props.scope.memberId && (!isSchedulingAggregate(selectedEvent) || selectedSchedulingIdentity) ? (scope) => void deleteSelectedEvent(scope) : online && props.writeEnabled && teamCalendarIds.has(selectedEvent.calendarId) && writableCalendars.some((calendar) => calendar.id === selectedEvent.calendarId) ? (scope) => void deleteSelectedEvent(scope) : undefined}
+            onRsvp={online && props.writeEnabled && isSchedulingAggregate(selectedEvent) && selectedSchedulingIdentity && selectedEvent.attendees.some((attendee) => attendee.memberId === props.scope.memberId) ? (responseStatus, scope) => void rsvpSelectedEvent(responseStatus, scope) : undefined}
+            actionPending={actionPending}
+            actionError={actionError}
             onClose={() => setSelectedEventId(null)}
             onEdit={!schedulingOccurrenceIds.has(selectedEvent.id) && (online ? teamCalendarIds.has(selectedEvent.calendarId) || schedulingMetadataReady : !("attendees" in selectedEvent)) && canOpenEditor && writableCalendars.some((calendar) => calendar.id === selectedEvent.calendarId) ? () => { setEditor({ mode: "edit", instance: nextEditorInstance(), eventId: selectedEvent.id }); setSelectedEventId(null); } : undefined}
           />
@@ -685,6 +728,16 @@ function createCalendarDraftId(): string {
 
 function schedulingOccurrenceId(eventId: string, occurrenceIndex: number): string {
   return `scheduling:${encodeURIComponent(eventId)}:${occurrenceIndex}`;
+}
+
+function schedulingOccurrenceIdentity(eventId: string, occurrenceIndex: number, time: DenCalendarEvent["time"]): CalendarSchedulingOccurrenceIdentity {
+  return {
+    eventId,
+    occurrenceIndex,
+    occurrence: time.kind === "allDay"
+      ? { occurrenceIndex, startDate: time.startDate }
+      : { occurrenceIndex, startInstant: time.startInstant },
+  };
 }
 
 function preserveAuthoritativeSchedulingAttendees(form: CalendarEventFormValues, event: DenCalendarEvent): CalendarEventFormValues {

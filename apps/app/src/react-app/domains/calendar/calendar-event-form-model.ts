@@ -230,10 +230,11 @@ function record(value: unknown): value is Record<string, unknown> {
 /** Strictly reads the persisted form shape and upgrades legacy v1 scheduling defaults. */
 export function normalizeCalendarEventDraftForm(value: unknown, schemaVersion: 1 | 2): CalendarEventFormValues | null {
   if (!record(value)) return null;
-  const expected = schemaVersion === 1
+  const legacyExpected = schemaVersion === 1
     ? ["calendarId", "title", "description", "time"]
     : ["calendarId", "title", "description", "time", "attendeeMemberIds", "recurrence"];
-  if (!exactKeys(value, expected) || typeof value.calendarId !== "string" || typeof value.title !== "string" || typeof value.description !== "string" || !record(value.time)) return null;
+  const currentExpected = [...legacyExpected, "videoConferenceEnabled"];
+  if ((!exactKeys(value, legacyExpected) && !exactKeys(value, currentExpected)) || typeof value.calendarId !== "string" || typeof value.title !== "string" || typeof value.description !== "string" || (value.videoConferenceEnabled !== undefined && typeof value.videoConferenceEnabled !== "boolean") || !record(value.time)) return null;
   let time: CalendarTimeForm;
   if (value.time.kind === "allDay" && exactKeys(value.time, ["kind", "startDate", "endDateExclusive"]) && typeof value.time.startDate === "string" && typeof value.time.endDateExclusive === "string") {
     time = { kind: "allDay", startDate: value.time.startDate, endDateExclusive: value.time.endDateExclusive };
@@ -242,14 +243,15 @@ export function normalizeCalendarEventDraftForm(value: unknown, schemaVersion: 1
     ["reject", "earlier", "later"].includes(String(value.time.startDisambiguation)) && ["reject", "earlier", "later"].includes(String(value.time.endDisambiguation))) {
     time = value.time as CalendarTimeForm;
   } else return null;
-  if (schemaVersion === 1) return { calendarId: value.calendarId, title: value.title, description: value.description, videoConferenceEnabled: true, time, attendeeMemberIds: [], recurrence: { frequency: "none" } };
+  const videoConferenceEnabled = typeof value.videoConferenceEnabled === "boolean" ? value.videoConferenceEnabled : true;
+  if (schemaVersion === 1) return { calendarId: value.calendarId, title: value.title, description: value.description, videoConferenceEnabled, time, attendeeMemberIds: [], recurrence: { frequency: "none" } };
   if (!Array.isArray(value.attendeeMemberIds) || value.attendeeMemberIds.some((id) => typeof id !== "string" || !id) || !record(value.recurrence)) return null;
   let recurrence: CalendarEventRecurrenceForm;
   if (value.recurrence.frequency === "none" && exactKeys(value.recurrence, ["frequency"])) recurrence = { frequency: "none" };
   else if (["daily", "weekly", "monthly"].includes(String(value.recurrence.frequency)) && exactKeys(value.recurrence, ["frequency", "interval", "endKind", "untilDate", "count"]) && Number.isSafeInteger(value.recurrence.interval) && ["never", "until", "count"].includes(String(value.recurrence.endKind)) && typeof value.recurrence.untilDate === "string" && Number.isSafeInteger(value.recurrence.count)) {
     recurrence = value.recurrence as CalendarEventRecurrenceForm;
   } else return null;
-  return { calendarId: value.calendarId, title: value.title, description: value.description, videoConferenceEnabled: true, time, attendeeMemberIds: [...new Set(value.attendeeMemberIds as string[])], recurrence };
+  return { calendarId: value.calendarId, title: value.title, description: value.description, videoConferenceEnabled, time, attendeeMemberIds: [...new Set(value.attendeeMemberIds as string[])], recurrence };
 }
 
 export type CalendarSaveFailure =

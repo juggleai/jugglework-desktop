@@ -17,6 +17,7 @@ import {
   type DenCalendarCollaborationList,
   type DenTeamCalendarSnapshot,
   type DenCalendarResult,
+  type DenCalendarSchedulingEvent,
 } from "../src/app/lib/den";
 import {
   calendarMutationConflict,
@@ -26,6 +27,7 @@ import {
   useDeleteCalendarMutation,
   useUpdateCalendarEventMutation,
   useUpdateCalendarMutation,
+  useCalendarSchedulingEventMutations,
   type CalendarMutationClient,
 } from "../src/react-app/domains/calendar/calendar-mutations";
 import {
@@ -301,6 +303,38 @@ describe("calendar query hooks", () => {
 });
 
 describe("calendar mutation hooks", () => {
+  test("scheduling occurrence actions preserve explicit identity, omit all-scope occurrence, and update loaded caches", async () => {
+    const query = queryClient();
+    const scheduled = { ...event(4), status: "active" as const, attendees: [{ memberId: scopeA.memberId, responseStatus: "needs-action" as const }], recurrence: { frequency: "weekly" as const, interval: 1, end: { kind: "never" as const } } } satisfies DenCalendarSchedulingEvent;
+    const occurrenceTime = { kind: "allDay" as const, startDate: "2026-11-19", endDateExclusive: "2026-11-20" };
+    const range = { startInstant: "2026-11-01T00:00:00Z", endInstantExclusive: "2026-12-01T00:00:00Z", timeZone: "UTC" };
+    query.setQueryData(calendarQueryKeys.event(scopeA, scheduled.id), scheduled);
+    query.setQueryData(calendarQueryKeys.schedulingEvents(scopeA, range), { items: [{ event: scheduled, occurrenceIndex: 3, time: occurrenceTime }] });
+    const wire: Array<{ kind: string; eventId: string; input: Record<string, unknown> }> = [];
+    const client = {
+      createCalendarSchedulingEvent: async () => { throw new Error("unexpected create"); },
+      updateCalendarSchedulingEvent: async () => { throw new Error("unexpected update"); },
+      deleteCalendarSchedulingEvent: async (_org: string, eventId: string, input: Record<string, unknown>) => {
+        wire.push({ kind: "delete", eventId, input });
+        return { event: { ...scheduled, version: 5 }, tombstone: null, replayed: false };
+      },
+      rsvpCalendarSchedulingEvent: async (_org: string, eventId: string, input: Record<string, unknown>) => {
+        wire.push({ kind: "rsvp", eventId, input });
+        return { event: { ...scheduled, version: 6, attendees: [{ memberId: scopeA.memberId, responseStatus: "tentative" as const }] }, replayed: false };
+      },
+    };
+    const keys = ["calendar.scheduling-delete.one", "calendar.scheduling-rsvp.one"];
+    const hook = await renderHook(query, () => useCalendarSchedulingEventMutations(client, scopeA, { retryDelay: 0, idempotencyKeyFactory: () => keys.shift()! }));
+    const identity = { eventId: scheduled.id, occurrenceIndex: 3, occurrence: { occurrenceIndex: 3, startDate: occurrenceTime.startDate } } as const;
+    await inAct(async () => { await hook.current.remove.mutateAsync({ ...identity, expectedVersion: 4, scope: "this" }); });
+    expect(wire[0]).toEqual({ kind: "delete", eventId: "event-1", input: { idempotencyKey: "calendar.scheduling-delete.one", expectedVersion: 4, scope: "this", occurrence: identity.occurrence } });
+    expect(query.getQueryData<{ items: unknown[] }>(calendarQueryKeys.schedulingEvents(scopeA, range))?.items).toEqual([]);
+    query.setQueryData(calendarQueryKeys.schedulingEvents(scopeA, range), { items: [{ event: { ...scheduled, version: 5 }, occurrenceIndex: 3, time: occurrenceTime }] });
+    await inAct(async () => { await hook.current.rsvp.mutateAsync({ ...identity, expectedVersion: 5, scope: "all", responseStatus: "tentative" }); });
+    expect(wire[1]).toEqual({ kind: "rsvp", eventId: "event-1", input: { idempotencyKey: "calendar.scheduling-rsvp.one", expectedVersion: 5, scope: "all", responseStatus: "tentative" } });
+    expect(query.getQueryData<{ items: Array<{ event: DenCalendarSchedulingEvent }> }>(calendarQueryKeys.schedulingEvents(scopeA, range))?.items[0]?.event.attendees[0]?.responseStatus).toBe("tentative");
+  });
+
   test("retries network errors with identical prepared wire input, then creates a new key and reads the new version", async () => {
     const query = queryClient();
     query.setQueryData(calendarQueryKeys.calendar(scopeA, "calendar-1"), calendar(3));
@@ -339,7 +373,7 @@ describe("calendar mutation hooks", () => {
     expect(calls).toBe(1);
     expect(caught).toBe(conflict);
     expect(hook.current.variables).toEqual(publicInput);
-    expect(calendarMutationConflict(caught)).toEqual(current);
+    expect(calendarMutationConflict(caught)).toEqual({ ...current, videoConferenceEnabled: false });
     expect(query.getQueryData<DenCalendarEvent>(calendarQueryKeys.event(scopeA, "event-1"))?.title).toBe("AUTHORITATIVE");
     expect(hook.current.canRetryLast).toBe(false);
     await expect(hook.current.retryLastAsync()).rejects.toThrow("no uncertain failed");

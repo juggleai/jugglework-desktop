@@ -199,6 +199,11 @@ const submit = async (renderer: TestRenderer.ReactTestRenderer) => {
 };
 
 const wait = (ms = 30) => act(async () => { await new Promise((resolve) => setTimeout(resolve, ms)); });
+const waitFor = async (predicate: () => boolean, timeoutMs = 1_000) => {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate() && Date.now() < deadline) await wait(20);
+  expect(predicate()).toBe(true);
+};
 
 test("offline with a cached month shows saved events read-only with a stale-data banner", async () => {
   events = [baseEvent("e1")];
@@ -281,6 +286,9 @@ test("offline scheduling aggregates are read-only until fresh scheduling metadat
     expect(has(renderer, "calendar-scheduling-edit-offline")).toBe(true);
     expect(text(byId(renderer, "calendar-scheduling-edit-offline"))).toBe(t("calendar.scheduling_edit_offline"));
     expect(has(renderer, "calendar-event-detail-edit")).toBe(false);
+    expect(has(renderer, "calendar-event-detail-delete")).toBe(false);
+    const responseButtons = byId(renderer, "calendar-event-detail-rsvp").findAll((node) => node.type === "button");
+    expect(responseButtons.every((button) => button.props.disabled === true)).toBe(true);
     expect(has(renderer, "calendar-form-delete")).toBe(false);
 
     let release!: () => void;
@@ -316,7 +324,12 @@ test("restoring an old edit draft cannot clear authoritative scheduling attendee
   });
   const { renderer } = await render();
   try {
+    await waitFor(() => has(renderer, "calendar-draft-restore-old-edit-draft"));
+    await click(renderer, "calendar-day-event-2026-11-09-scheduled");
+    await waitFor(() => has(renderer, "calendar-event-detail-edit"));
+    await click(renderer, "calendar-event-detail-close");
     await click(renderer, "calendar-draft-restore-old-edit-draft");
+    await waitFor(() => has(renderer, "calendar-attendee-list"));
     expect(text(byId(renderer, "calendar-attendee-list"))).toContain("member-b");
     await submit(renderer);
     expect(calls[0]).toMatchObject({ op: "scheduling-update", input: { eventId: "scheduled", title: "Draft title" } });
@@ -393,9 +406,12 @@ test("a draft whose base event changed in the cloud requires explicit resolution
     await click(renderer, "calendar-form-cancel");
     events = [{ ...baseEvent("e1"), title: "Theirs", version: 2 }];
     await setOnline(true);
-    await wait(60);
+    await click(renderer, "calendar-day-event-2026-11-09-e1");
+    await waitFor(() => has(renderer, "calendar-event-detail-edit"));
+    await click(renderer, "calendar-event-detail-close");
     const [draft] = await cache.listDrafts({ deployment: "https://den.example/api", organizationId: "org-a", memberId: "member-a" }, "event");
     await click(renderer, `calendar-draft-restore-${draft!.id}`);
+    await waitFor(() => has(renderer, "calendar-event-form"));
     expect(byId(renderer, "calendar-event-form").props["data-status"]).toBe("conflict");
     expect(byId(renderer, "calendar-form-title").props.value).toBe("Mine offline");
     expect(byId(renderer, "calendar-form-save").props.disabled).toBe(true);
