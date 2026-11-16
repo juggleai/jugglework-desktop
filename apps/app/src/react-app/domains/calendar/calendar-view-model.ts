@@ -36,9 +36,7 @@ export function calendarViewDays(
 ): Temporal.PlainDate[] {
   if (view === "day") return [selectedDate];
   if (view === "month") return calendarMonthGrid(selectedDate.toPlainYearMonth(), weekStart);
-  // The week surface is always Monday through Sunday. Month grids keep their
-  // locale-specific week start (for example, Sunday-first in Chinese locales).
-  const start = calendarWeekStartDate(selectedDate, 1);
+  const start = calendarWeekStartDate(selectedDate, weekStart);
   return Array.from({ length: 7 }, (_, index) => start.add({ days: index }));
 }
 

@@ -690,7 +690,7 @@ test("the view switcher replaces the right agenda with day, week, and month surf
     expect(byId(renderer, "calendar-time-hour-0").props.className).not.toContain("-translate-y-1/2");
     expect(byId(renderer, "calendar-time-hour-1").props.className).toContain("-translate-y-1/2");
     expect(text(byId(renderer, "calendar-current-time-label"))).toBe("12:00");
-    expect(byId(renderer, "calendar-current-time").props["data-current-day-index"]).toBe(0);
+    expect(byId(renderer, "calendar-current-time").props["data-current-day-index"]).toBe(1);
     expect(byId(renderer, "calendar-current-time").props.className).toContain("inset-x-0");
     expect(byId(renderer, "calendar-time-day-2026-11-09").props.className).toContain("text-left");
     expect(byId(renderer, "calendar-time-day-2026-11-09").props.className).toContain("min-h-[4.5rem]");
@@ -733,7 +733,7 @@ test("the view switcher replaces the right agenda with day, week, and month surf
     expect(byId(renderer, "calendar-quick-create-preview-2026-11-09").props.className).toContain("z-[3]");
     expect(byId(renderer, "calendar-quick-create-preview-2026-11-09").props.style.left).toBeUndefined();
     await click(renderer, "calendar-quick-create-dismiss");
-    expect(bootstrapRanges.at(-1)).toBe("2026-11-09/2026-11-16");
+    expect(bootstrapRanges.at(-1)).toBe("2026-11-08/2026-11-15");
     await click(renderer, "calendar-view-day");
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
     expect(has(renderer, "calendar-day-view")).toBe(true);

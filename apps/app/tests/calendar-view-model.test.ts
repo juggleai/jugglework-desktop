@@ -8,21 +8,21 @@ const date = Temporal.PlainDate.from("2026-11-11");
 
 test("day, week, and month ranges use exclusive end dates", () => {
   expect(calendarViewRange(date, "day", 7)).toEqual({ startDate: "2026-11-11", endDateExclusive: "2026-11-12" });
-  expect(calendarViewRange(date, "week", 7)).toEqual({ startDate: "2026-11-09", endDateExclusive: "2026-11-16" });
+  expect(calendarViewRange(date, "week", 7)).toEqual({ startDate: "2026-11-08", endDateExclusive: "2026-11-15" });
   expect(calendarViewDays(date, "week", 1).map(String)).toEqual([
     "2026-11-09", "2026-11-10", "2026-11-11", "2026-11-12", "2026-11-13", "2026-11-14", "2026-11-15",
   ]);
   expect(calendarViewDays(date, "week", 7).map(String)).toEqual([
-    "2026-11-09", "2026-11-10", "2026-11-11", "2026-11-12", "2026-11-13", "2026-11-14", "2026-11-15",
+    "2026-11-08", "2026-11-09", "2026-11-10", "2026-11-11", "2026-11-12", "2026-11-13", "2026-11-14",
   ]);
   expect(calendarViewDays(date, "month", 7)).toHaveLength(42);
 });
 
-test("week view starts on the containing Monday across month and year boundaries", () => {
+test("Sunday-first week view stays aligned across month and year boundaries", () => {
   expect(calendarViewDays(Temporal.PlainDate.from("2026-11-01"), "week", 7).map(String)).toEqual([
-    "2026-10-26", "2026-10-27", "2026-10-28", "2026-10-29", "2026-10-30", "2026-10-31", "2026-11-01",
+    "2026-11-01", "2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05", "2026-11-06", "2026-11-07",
   ]);
-  expect(calendarViewRange(Temporal.PlainDate.from("2027-01-01"), "week", 7)).toEqual({ startDate: "2026-12-28", endDateExclusive: "2027-01-04" });
+  expect(calendarViewRange(Temporal.PlainDate.from("2027-01-01"), "week", 7)).toEqual({ startDate: "2026-12-27", endDateExclusive: "2027-01-03" });
 });
 
 test("view navigation advances by the visible period and clamps month dates", () => {
