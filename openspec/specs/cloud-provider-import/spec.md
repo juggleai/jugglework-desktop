@@ -5,6 +5,29 @@ Define how Desktop imports managed and ordinary cloud routing providers while pr
 
 ## Requirements
 
+### Requirement: Startup readiness does not invalidate cloud providers
+Desktop SHALL NOT remove imported cloud providers or their credentials merely because the engine client, active organization, or workspace target is not yet ready. Startup cleanup SHALL run only when no authentication token is present, through the existing workspace mutation queue, and SHALL recheck session presence, workspace identity, and store disposal before execution. A failed sign-in attempt SHALL NOT trigger sign-out cleanup; explicit sign-out and existing account/organization ownership cleanup SHALL retain their behavior.
+
+Signed-out startup cleanup SHALL resolve the workspace target before choosing its queue key, and SHALL refresh that target's import baseline inside the queue before cleanup. When the workspace target or host becomes ready after startup, options synchronization SHALL schedule the pending cleanup. An unchanged, successfully cleaned target SHALL NOT be purged again on repeated options synchronization. Cleanup from a disposed store lifecycle SHALL NOT resume after that store restarts.
+
+#### Scenario: Signed-in Desktop starts before the engine is ready
+- **WHEN** Desktop restores an authenticated session while the engine client or workspace context is still initializing
+- **THEN** Desktop preserves the imported providers and resumes synchronization when prerequisites are ready
+
+#### Scenario: Session or workspace changes while startup cleanup waits
+- **WHEN** a signed-out startup cleanup is queued and the user signs in, switches workspace, or the store is disposed before it executes
+- **THEN** Desktop skips that startup cleanup
+
+#### Scenario: Signed-out workspace target becomes ready
+- **WHEN** Desktop starts without an authentication token and workspace resolution supplies its runtime ID, or the workspace target or host becomes available later
+- **THEN** Desktop cleans the resolved target using its freshly read import baseline once ready
+- **AND** repeated unchanged options synchronization does not repeat successful cleanup
+
+#### Scenario: Provider reconciliation follows a transient empty engine list
+- **WHEN** cloud provider synchronization verifies engine application after an earlier empty provider-list response
+- **THEN** Desktop fetches the current engine list rather than relying on the cached response
+- **AND** ordinary cached provider-list reads revalidate expired entries and await the fresh result
+
 ### Requirement: Desktop recognizes both managed router generations
 Desktop SHALL recognize `managedIdentity=jwork_router` as the canonical managed routing identity and SHALL recognize the legacy `juggle_router` managed discriminator when the canonical field is absent.
 

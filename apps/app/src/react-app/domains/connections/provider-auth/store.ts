@@ -2417,7 +2417,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     // reload cannot recover anything, so force one idempotent re-import.
     // Treat an unreadable engine list as unknown rather than re-importing on
     // a transient startup/network error.
-    const engineProviderList = await refreshProviders().catch(() => null);
+    const engineProviderList = await refreshProviders({ force: true }).catch(() => null);
     assertCurrentAuthority();
     const engineProviderIds = engineProviderList
       ? new Set((engineProviderList.all ?? []).map((provider) => provider.id))
@@ -2732,6 +2732,83 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   const currentWorkspaceKey = () =>
     `${options.selectedWorkspaceRoot().trim()}::${options.runtimeWorkspaceId() ?? ""}`;
 
+  let signedOutCleanupContext: {
+    workspaceKey: string;
+    client: JuggleWorkServerClient;
+  } | null = null;
+
+  const scheduleSignedOutCleanup = () => {
+    if (!started || disposed) return;
+    if (readDenSettings().authToken?.trim()) {
+      signedOutCleanupContext = null;
+      return;
+    }
+    const host = options.juggleworkServer.getSnapshot();
+    const client = host.juggleworkServerClient;
+    const root = options.selectedWorkspaceRoot().trim();
+    const workspaceId = options.runtimeWorkspaceId()?.trim() || "";
+    if (
+      host.juggleworkServerStatus !== "connected" || !client ||
+      host.juggleworkServerCapabilities?.config?.read === false ||
+      host.juggleworkServerCapabilities?.config?.write === false ||
+      (!root && !workspaceId)
+    ) {
+      signedOutCleanupContext = null;
+      return;
+    }
+    const workspaceKey = currentWorkspaceKey();
+    if (signedOutCleanupContext?.workspaceKey === workspaceKey && signedOutCleanupContext.client === client) return;
+    const context = { workspaceKey, client };
+    signedOutCleanupContext = context;
+    const isCurrent = () => {
+      const currentHost = options.juggleworkServer.getSnapshot();
+      return !disposed && started && signedOutCleanupContext === context &&
+        !readDenSettings().authToken?.trim() &&
+        currentWorkspaceKey() === context.workspaceKey &&
+        currentHost.juggleworkServerStatus === "connected" &&
+        currentHost.juggleworkServerClient === client &&
+        currentHost.juggleworkServerCapabilities?.config?.read !== false &&
+        currentHost.juggleworkServerCapabilities?.config?.write !== false;
+    };
+    void (async () => {
+      const target = await resolveJuggleWorkConfigTarget("write");
+      // Resolving this same workspace may fill in its previously unknown id.
+      // Any other target transition belongs to a later options sync.
+      const currentWorkspaceId = options.runtimeWorkspaceId()?.trim() || "";
+      const sameWorkspaceId = currentWorkspaceId === workspaceId ||
+        (!workspaceId && currentWorkspaceId === target.juggleworkWorkspaceId);
+      if (
+        disposed || signedOutCleanupContext !== context ||
+        options.selectedWorkspaceRoot().trim() !== root ||
+        !sameWorkspaceId ||
+        !target.canUseJuggleWorkServer || target.juggleworkClient !== client ||
+        !target.juggleworkWorkspaceId
+      ) return;
+      context.workspaceKey = currentWorkspaceKey();
+      if (!isCurrent()) return;
+      const cleanupWorkspaceId = target.juggleworkWorkspaceId;
+      // Adopt the baseline for the UI even while another store owns the queue.
+      const refreshCleanupBaseline = async () => {
+        const config = await client.getConfig(cleanupWorkspaceId);
+        if (!isCurrent()) return false;
+        setStateField("importedCloudProviders", readWorkspaceCloudImports(config.jugglework ?? {}).providers);
+        importedCloudProvidersWorkspaceKey = context.workspaceKey;
+        return isCurrent();
+      };
+      if (!await refreshCleanupBaseline()) return;
+      return cloudProviderWorkspaceMutationQueue.run(context.workspaceKey, async () => {
+        if (!isCurrent()) return;
+        // Re-read the pinned target after earlier mutations; never purge using
+        // another workspace's or a pre-queue snapshot (including an empty one).
+        if (!await refreshCleanupBaseline()) return;
+        await purgeWorkspaceCloudState();
+        return true;
+      });
+    })().catch(() => false).then((cleaned) => {
+      if (!cleaned && signedOutCleanupContext === context) signedOutCleanupContext = null;
+    });
+  };
+
   const syncFromOptions = () => {
     const workspaceKey = currentWorkspaceKey();
     const workspaceChanged = workspaceKey !== lastWorkspaceKey;
@@ -2762,9 +2839,10 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       refreshSnapshot();
       emitChange();
     }
-    if (workspaceChanged) {
+    if (workspaceChanged && readDenSettings().authToken?.trim()) {
       void refreshImportedCloudProviders();
     }
+    scheduleSignedOutCleanup();
     if (!hasCloudProviderSyncPrerequisites()) {
       cloudProviderSyncContextKey = "";
       return;
@@ -2784,6 +2862,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     // StrictMode double-mount re-arms after dispose.
     disposed = false;
     started = true;
+    signedOutCleanupContext = null;
     organizationCloudCleanup = registerOrganizationCloudCleanup(purgeWorkspaceCloudState);
     lastWorkspaceKey = currentWorkspaceKey();
     if (typeof window !== "undefined") {
@@ -2801,8 +2880,8 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
             providerAuthMethods: {},
           }));
           void runCloudProviderSync("sign_in");
-        } else {
-          // Sign-out or error: this workspace keeps nothing from the session.
+        } else if (detail?.status === "signed_out") {
+          // A failed sign-in attempt does not invalidate the current session.
           const workspaceKey = currentWorkspaceKey();
           void cloudProviderWorkspaceMutationQueue.run(workspaceKey, purgeWorkspaceCloudState);
         }
@@ -2818,14 +2897,11 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         );
       };
     }
-    void refreshImportedCloudProviders().then((imported) => {
-      // Startup cleanup: if no auth token, remove any cloud providers that
-      // were left behind. Handles orphans from a previous sign-out that
-      // didn't clean up (e.g. crash, force-quit, external edit).
-      if (!hasCloudProviderSyncPrerequisites()) {
-        void purgeWorkspaceCloudState().catch(() => undefined);
-      }
-    });
+    if (readDenSettings().authToken?.trim()) {
+      void refreshImportedCloudProviders();
+    } else {
+      scheduleSignedOutCleanup();
+    }
     refreshSnapshot();
     emitChange();
   };

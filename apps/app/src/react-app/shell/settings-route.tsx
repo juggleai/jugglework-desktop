@@ -2220,17 +2220,30 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   useEffect(() => {
     juggleworkServerStore.syncFromOptions();
     connectionsStore.syncFromOptions();
-    providerAuthStore.syncFromOptions();
     extensionsStore.syncFromOptions();
   }, [
     activeClient,
     connectionsStore,
     extensionsStore,
     juggleworkServerStore,
-    providerAuthStore,
     selectedWorkspace?.id,
     selectedWorkspace?.workspaceType,
     selectedWorkspaceRoot,
+  ]);
+
+  useEffect(() => {
+    providerAuthStore.syncFromOptions();
+  }, [
+    activeClient,
+    providerAuthStore,
+    runtimeWorkspaceId,
+    selectedWorkspace?.id,
+    selectedWorkspace?.workspaceType,
+    selectedWorkspaceRoot,
+    juggleworkServerSnapshot.juggleworkServerStatus,
+    juggleworkServerSnapshot.juggleworkServerClient,
+    juggleworkServerSnapshot.juggleworkServerCapabilities?.config?.read,
+    juggleworkServerSnapshot.juggleworkServerCapabilities?.config?.write,
   ]);
 
   useEffect(() => {
