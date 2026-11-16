@@ -10,6 +10,10 @@ import path from "node:path";
 import { juggleworkWorkspaceDisplayName, selectJuggleWorkWorkspaceForConnection } from "./remote-workspace.mjs";
 import { exportWorkspaceConfig, importWorkspaceConfig } from "./workspace-archive.mjs";
 
+// 首次启动默认创建的本地办公工作区：~/Documents/北数Work/日常办公
+const DEFAULT_OFFICE_WORKSPACE_PARENT = "北数Work";
+const DEFAULT_OFFICE_WORKSPACE_NAME = "日常办公";
+
 const EMPTY_WORKSPACE_LIST = Object.freeze({
   selectedId: "",
   watchedId: null,
@@ -579,6 +583,38 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
     };
   }
 
+  function defaultOfficeWorkspaceEnabled() {
+    return process.env.JUGGLEWORK_DESKTOP_DISABLE_DEFAULT_WORKSPACE !== "1";
+  }
+
+  /** 默认办公工作区目录；隔离环境可用 JUGGLEWORK_DEFAULT_WORKSPACE_ROOT 指向临时目录。 */
+  function defaultOfficeWorkspaceRoot() {
+    const override = process.env.JUGGLEWORK_DEFAULT_WORKSPACE_ROOT?.trim();
+    if (override) return path.resolve(override);
+    return path.join(app.getPath("documents"), DEFAULT_OFFICE_WORKSPACE_PARENT, DEFAULT_OFFICE_WORKSPACE_NAME);
+  }
+
+  /**
+   * 创建首次启动的「日常办公」本地工作区目录与配置，返回待写入状态的工作区条目。
+   * 目录已存在时直接复用，不覆盖其中的文件。
+   */
+  async function createDefaultOfficeWorkspaceEntry() {
+    const folderPath = await normalizeLocalWorkspacePath(defaultOfficeWorkspaceRoot());
+    await mkdir(path.join(folderPath, ".opencode"), { recursive: true });
+    const juggleworkConfigPath = path.join(folderPath, ".opencode", "jugglework.json");
+    if (!(await pathExists(juggleworkConfigPath))) {
+      await writeWorkspaceJuggleWorkConfig(folderPath, defaultWorkspaceJuggleWorkConfig(folderPath, "starter"));
+    }
+    return normalizeWorkspaceEntry({
+      id: localWorkspaceId(folderPath),
+      name: DEFAULT_OFFICE_WORKSPACE_NAME,
+      displayName: DEFAULT_OFFICE_WORKSPACE_NAME,
+      path: folderPath,
+      preset: "starter",
+      workspaceType: "local",
+    });
+  }
+
   async function normalizeLocalWorkspacePath(rawPath) {
     const trimmed = String(rawPath ?? "").trim();
     if (!trimmed) return "";
@@ -901,6 +937,23 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
         watchedId = selectedWorkspace.id;
         activeId = selectedWorkspace.id;
         workspaces = recoveredWorkspaces;
+        changed = true;
+      }
+    }
+    // TIPS: 只在真正的首次启动（没有工作区状态文件、也没有可恢复的历史）时创建默认办公工作区。
+    // 状态文件一旦写入，用户主动删光工作区也不会被重新创建。
+    if (!workspaceStateExists && workspaces.length === 0 && defaultOfficeWorkspaceEnabled()) {
+      const officeWorkspace = await createDefaultOfficeWorkspaceEntry().catch((error) => {
+        console.warn("[workspace] failed to create the default office workspace", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return null;
+      });
+      if (officeWorkspace) {
+        selectedId = officeWorkspace.id;
+        watchedId = officeWorkspace.id;
+        activeId = officeWorkspace.id;
+        workspaces = [officeWorkspace];
         changed = true;
       }
     }

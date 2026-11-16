@@ -8,6 +8,8 @@ import {
   useState,
 } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import type { SessionHomeOptions } from "../domains/session/surface/session-surface";
+import { LOCAL_AUTOMATION_ENABLED } from "../domains/automations/automation-feature-flags";
 import { toast } from "@/components/ui/sonner";
 import type {
   ProviderListResponse,
@@ -1906,6 +1908,22 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     }
     });
   }, [baseUrl, activateWorkspaceForNavigation, activatingWorkspaceId, endpointForWorkspace, loading, openSessionForNavigation, refreshRouteState, rememberPendingCreatedSession, retryingWorkspaceIds, selectedWorkspaceId, sessionProviderAuthStore, workspaceActivationErrorId, workspaces]);
+  // 新建任务首页：输入框下方的工作区下拉与「定时任务」入口。
+  // 切换工作区时直接在目标工作区新建任务，空白草稿会话不跨工作区复用。
+  const sessionHomeOptions = useMemo<SessionHomeOptions>(() => ({
+    workspaces: workspaces
+      .filter((workspace) => !workspace.hidden && !workspace.automationManaged)
+      .map((workspace) => ({
+        id: workspace.id,
+        label: workspaceLabel(workspace),
+        remote: workspace.workspaceType === "remote",
+      })),
+    onSelectWorkspace: (workspaceId: string) => {
+      void handleCreateTaskInWorkspace(workspaceId);
+    },
+    onCreateWorkspace: () => openCreateWorkspace("local"),
+    onOpenSchedule: LOCAL_AUTOMATION_ENABLED ? () => navigate("/automations") : undefined,
+  }), [handleCreateTaskInWorkspace, navigate, openCreateWorkspace, workspaces]);
 
   // Latest session-list state for prev/next session tab navigation. The
   // `options` field is updated by `onSessionTabsChange` from SessionPage so we
@@ -2728,7 +2746,9 @@ export function SessionRoute(props: SessionRouteProps = {}) {
       surface={surfaceProps ? {
         ...surfaceProps,
         onCreateNewSession: () => handleCreateTaskInWorkspace(selectedWorkspaceId),
+        home: sessionHomeOptions,
       } : null}
+      home={sessionHomeOptions}
       history={{
         canUndo: false,
         canRedo: false,

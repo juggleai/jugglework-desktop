@@ -4,7 +4,6 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { usePanelRef } from "react-resizable-panels";
 import { ArrowLeft, ArrowRight, Cloud, Columns2, Folders, GitBranch, Globe, Mic2, PanelLeftIcon, Settings2, Terminal, TextSearch, X, Zap } from "lucide-react";
 
-import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
 import { t } from "../../../../i18n";
 import { JUGGLEWORK_EXTENSION_CATALOG } from "../../../../app/constants";
 import { buildDenAuthUrl, readDenBootstrapConfig, readDenSettings } from "../../../../app/lib/den";
@@ -44,7 +43,9 @@ import { APP_NAVIGATION_RAIL_WIDTH, AppNavigationRail } from "../../../shell/app
 import { useAppNavigationSidebarPreview } from "../../../shell/app-navigation-sidebar-preview";
 import { useSessionManagementStore } from "../sidebar/session-management-store";
 import type { TaskScope } from "../sidebar/task-scope-store";
-import { SessionSurface, type SessionSurfaceProps } from "../surface/session-surface";
+import { SessionSurface, type SessionHomeOptions, type SessionSurfaceProps } from "../surface/session-surface";
+import { SessionHomeEntry } from "../surface/session-home-entry";
+import { useBrandAppName } from "../../cloud/brand-theme";
 import { AutomationSessionStatus } from "../../automations/automation-session-status";
 import { useSessionFindStore } from "../surface/find-store";
 import {
@@ -261,6 +262,8 @@ export type SessionPageProps = {
   respondQuestion?: (requestID: string, answers: string[][]) => void;
   statusBar?: Partial<StatusBarOverrides>;
   notFoundMessage?: string | null;
+  /** 新建任务首页的工作区与定时任务入口；未选中会话时也用它显示首页。 */
+  home?: SessionHomeOptions | null;
   onOpenProviderAuth?: () => void;
   onRenameSession?: (sessionId: string, title: string) => Promise<void> | void;
   onDeleteSession?: (sessionId: string) => Promise<void> | void;
@@ -1017,6 +1020,7 @@ export function SessionPage(props: SessionPageProps) {
     [props.sidebar.workspaceSessionGroups, sessionActionId],
   );
   const providerCount = props.hasUsableModel ? 1 : props.providerConnectedIds.length;
+  const brandAppName = useBrandAppName();
   const messageCountVisible = props.selectedSessionId ? 1 : 0;
   const showWorkspaceSetupEmptyState = props.workspaces.length === 0 && !props.selectedSessionId;
   const showStartupSkeleton =
@@ -1050,6 +1054,12 @@ export function SessionPage(props: SessionPageProps) {
     selectedWorkspaceGroupError ||
     "";
   const showSelectedWorkspaceError = Boolean(selectedWorkspaceErrorMessage);
+  /** 与下方渲染分支一致：没有错误/空状态/选中会话时显示新建任务首页。 */
+  const showHomeEntry = Boolean(props.home) &&
+    !props.notFoundMessage &&
+    !showWorkspaceSetupEmptyState &&
+    !showSelectedWorkspaceError &&
+    !props.selectedSessionId;
   // Redeployed cloud workers get a new URL; when the saved endpoint cannot be
   // reached at all, present the "update connection" prompt instead of a
   // generic remote-unavailable card.
@@ -1806,6 +1816,7 @@ export function SessionPage(props: SessionPageProps) {
                           {...props.surface!}
                           {...(props.surface!.resolveSessionModelProps?.(splitSessionId!) ?? {})}
                           {...(props.surface!.resolveSessionAgentProps?.(splitSessionId!) ?? {})}
+                          home={null}
                           client={props.juggleworkServerClient!}
                           environmentClient={props.environmentClient}
                           workspaceId={props.runtimeWorkspaceId!}
@@ -1823,7 +1834,12 @@ export function SessionPage(props: SessionPageProps) {
               ) : null}
 
               {!showDelayedSessionLoadingState && !canRenderReactSurface && !showStartupSkeleton ? (
-                <div className={`mx-auto max-w-[800px] px-6 ${showWorkspaceSetupEmptyState ? "pt-20" : "pt-10"}`}>
+                <div
+                  className={showHomeEntry
+                    // TIPS: 首页需要撑满内容区高度，标题和底部输入框才能按整个窗口定位。
+                    ? "flex h-full min-h-0 flex-col"
+                    : `mx-auto max-w-[800px] px-6 ${showWorkspaceSetupEmptyState ? "pt-20" : "pt-10"}`}
+                >
                   {props.notFoundMessage ? (
                     <div className="px-6 py-16 text-center">
                       <div className="mx-auto max-w-md rounded-2xl border border-dls-border bg-dls-card px-5 py-6 shadow-[var(--dls-card-shadow)]">
@@ -1901,86 +1917,37 @@ export function SessionPage(props: SessionPageProps) {
                     <div className="px-6 py-16 text-center text-sm text-dls-secondary">
                       {t("session.loading_detail")}
                     </div>
-                  ) : (
-                    <div className="flex flex-1 items-center justify-center px-6 py-16">
-                      <div className="w-full max-w-md space-y-6">
-                        <div className="space-y-1 text-center">
-                          <h2 className="text-lg font-semibold text-dls-text">
-                            {providerCount === 0
-                              ? t("session.connect_model_to_start")
-                              : t("session.select_or_create_session")}
-                          </h2>
-                          <p className="text-xs text-dls-secondary">
-                            {providerCount === 0
-                              ? t("session.new_session_provider_hint")
-                              : t("session.new_session_starter_hint")}
-                          </p>
-                        </div>
-                        <div className="space-y-2">
-                          {providerCount === 0 ? (
-                            <button
-                              type="button"
-                              className="flex w-full items-start gap-3 rounded-xl border border-blue-7/50 bg-blue-2/40 p-3.5 text-left transition-colors hover:bg-blue-3/50"
-                              onClick={() => props.onOpenProviderAuth?.()}
-                            >
-                              <Zap className="mt-0.5 size-5 shrink-0 text-blue-10" />
-                              <div>
-                                <div className="text-[13px] font-medium text-dls-text">{t("session.new_session_connect_provider_title")}</div>
-                                <div className="mt-0.5 text-[11px] text-dls-secondary">
-                                  {t("session.new_session_connect_provider_desc")}
-                                </div>
-                              </div>
-                            </button>
-                          ) : null}
-                          <button
-                            type="button"
-                            className="flex w-full items-start gap-3 rounded-xl border border-dls-border bg-dls-surface p-3.5 text-left transition-colors hover:bg-dls-hover"
-                            onClick={() => {
-                              props.sidebar.onCreateTaskWithPrompt?.(
-                                props.selectedWorkspaceId,
-                                t("session.new_session_csv_prompt"),
-                              );
-                            }}
-                          >
-                            <img src="https://cdn.simpleicons.org/googlesheets" alt="" width={20} height={20} className="mt-0.5 shrink-0" />
-                            <div>
-                              <div className="text-[13px] font-medium text-dls-text">{t("session.new_session_csv_title")}</div>
-                              <div className="mt-0.5 text-[11px] text-dls-secondary">{t("session.new_session_csv_desc")}</div>
+                  ) : props.home ? (
+                    <SessionHomeEntry
+                      appName={brandAppName}
+                      workspaceId={props.selectedWorkspaceId}
+                      home={props.home}
+                      disabled={props.sidebar.newTaskDisabled}
+                      onCreateTask={(prompt) => {
+                        if (prompt && props.sidebar.onCreateTaskWithPrompt) {
+                          props.sidebar.onCreateTaskWithPrompt(props.selectedWorkspaceId, prompt);
+                        } else {
+                          props.sidebar.onCreateTaskInWorkspace(props.selectedWorkspaceId);
+                        }
+                      }}
+                    >
+                      {providerCount === 0 ? (
+                        <button
+                          type="button"
+                          className="flex w-full items-start gap-3 rounded-xl border border-blue-7/50 bg-blue-2/40 p-3.5 text-left transition-colors hover:bg-blue-3/50"
+                          onClick={() => props.onOpenProviderAuth?.()}
+                        >
+                          <Zap className="mt-0.5 size-5 shrink-0 text-blue-10" />
+                          <div>
+                            <div className="text-[13px] font-medium text-dls-text">{t("session.new_session_connect_provider_title")}</div>
+                            <div className="mt-0.5 text-[11px] text-dls-secondary">
+                              {t("session.new_session_provider_hint")}
                             </div>
-                          </button>
-                          <button
-                            type="button"
-                            className="flex w-full items-start gap-3 rounded-xl border border-dls-border bg-dls-surface p-3.5 text-left transition-colors hover:bg-dls-hover"
-                            onClick={() => {
-                              props.sidebar.onCreateTaskWithPrompt?.(
-                                props.selectedWorkspaceId,
-                                t("session.new_session_browser_prompt"),
-                              );
-                            }}
-                          >
-                            <img src={resolveExtensionIconSrc("/jugglework-logo.png")} alt="" width={20} height={20} className="mt-0.5 shrink-0" />
-                            <div>
-                              <div className="text-[13px] font-medium text-dls-text">{t("session.new_session_browser_title")}</div>
-                              <div className="mt-0.5 text-[11px] text-dls-secondary">{t("session.new_session_browser_desc")}</div>
-                            </div>
-                          </button>
-                          <button
-                            type="button"
-                            className="flex w-full items-start gap-3 rounded-xl border border-dls-border bg-dls-surface p-3.5 text-left transition-colors hover:bg-dls-hover"
-                            onClick={() => {
-                              props.onOpenSettings?.();
-                            }}
-                          >
-                            <img src="https://cdn.simpleicons.org/hackthebox" alt="" width={20} height={20} className="mt-0.5 shrink-0" />
-                            <div>
-                              <div className="text-[13px] font-medium text-dls-text">{t("session.new_session_extension_title")}</div>
-                              <div className="mt-0.5 text-[11px] text-dls-secondary">{t("session.new_session_extension_desc")}</div>
-                            </div>
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  )}
+                          </div>
+                        </button>
+                      ) : null}
+                    </SessionHomeEntry>
+                  ) : null}
                 </div>
               ) : null}
             </div>

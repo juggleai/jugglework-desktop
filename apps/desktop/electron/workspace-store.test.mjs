@@ -26,8 +26,10 @@ async function withIsolatedBootstrapStore(callback) {
   const previousOverride = process.env.JUGGLEWORK_DESKTOP_BOOTSTRAP_PATH;
   const previousBundleDir = process.env.JUGGLEWORK_BOOTSTRAP_BUNDLE_DIR;
   const previousDevMode = process.env.JUGGLEWORK_DEV_MODE;
+  const previousDefaultWorkspace = process.env.JUGGLEWORK_DESKTOP_DISABLE_DEFAULT_WORKSPACE;
 
   process.env.HOME = home;
+  process.env.JUGGLEWORK_DESKTOP_DISABLE_DEFAULT_WORKSPACE = "1";
   if (process.platform === "win32") process.env.USERPROFILE = home;
   process.env.XDG_CONFIG_HOME = xdg;
   delete process.env.JUGGLEWORK_DESKTOP_BOOTSTRAP_PATH;
@@ -58,6 +60,7 @@ async function withIsolatedBootstrapStore(callback) {
     restoreEnv("JUGGLEWORK_DESKTOP_BOOTSTRAP_PATH", previousOverride);
     restoreEnv("JUGGLEWORK_BOOTSTRAP_BUNDLE_DIR", previousBundleDir);
     restoreEnv("JUGGLEWORK_DEV_MODE", previousDevMode);
+    restoreEnv("JUGGLEWORK_DESKTOP_DISABLE_DEFAULT_WORKSPACE", previousDefaultWorkspace);
   }
 }
 
@@ -221,13 +224,68 @@ test("prefers server config workspaces when desktop state is missing", async () 
   }
 });
 
-test("does not create a default workspace when desktop state is absent", async () => {
+test("creates and selects the default office workspace on first launch", async () => {
+  const root = await realpath(await mkdtemp(path.join(tmpdir(), "jugglework-workspace-store-")));
+  const userData = path.join(root, "userData");
+  const documents = path.join(root, "Documents");
+  const previousServerConfig = process.env.JUGGLEWORK_SERVER_CONFIG;
+  process.env.JUGGLEWORK_SERVER_CONFIG = path.join(root, "missing-server.json");
+  try {
+    const store = createWorkspaceStore({
+      app: { getPath: (name) => name === "userData" ? userData : name === "documents" ? documents : root },
+      defaultDenBaseUrl: "https://example.test",
+      defaultRequireSignin: false,
+      forceRequireSignin: false,
+    });
+
+    const state = await store.readWorkspaceState();
+    const officeRoot = await realpath(path.join(documents, "北数Work", "日常办公"));
+    assert.equal(state.workspaces.length, 1);
+    assert.equal(state.workspaces[0].name, "日常办公");
+    assert.equal(state.workspaces[0].workspaceType, "local");
+    assert.equal(state.workspaces[0].path, officeRoot);
+    assert.equal(state.selectedId, state.workspaces[0].id);
+    const config = JSON.parse(await readFile(path.join(officeRoot, ".opencode", "jugglework.json"), "utf8"));
+    assert.deepEqual(config.authorizedRoots, [officeRoot]);
+
+    // 第二次读取复用已持久化的状态，不重复创建。
+    const again = await store.readWorkspaceState();
+    assert.deepEqual(again.workspaces.map((workspace) => workspace.id), [state.workspaces[0].id]);
+  } finally {
+    restoreEnv("JUGGLEWORK_SERVER_CONFIG", previousServerConfig);
+  }
+});
+
+test("does not recreate the default office workspace after the user removes every workspace", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "jugglework-workspace-store-"));
   const userData = path.join(root, "userData");
-  const previousDevMode = process.env.JUGGLEWORK_DEV_MODE;
+  const documents = path.join(root, "Documents");
   const previousServerConfig = process.env.JUGGLEWORK_SERVER_CONFIG;
-  process.env.JUGGLEWORK_DEV_MODE = "1";
   process.env.JUGGLEWORK_SERVER_CONFIG = path.join(root, "missing-server.json");
+  try {
+    const store = createWorkspaceStore({
+      app: { getPath: (name) => name === "userData" ? userData : name === "documents" ? documents : root },
+      defaultDenBaseUrl: "https://example.test",
+      defaultRequireSignin: false,
+      forceRequireSignin: false,
+    });
+
+    const first = await store.readWorkspaceState();
+    await store.forgetWorkspace(first.workspaces[0].id);
+    const state = await store.readWorkspaceState();
+    assert.equal(state.workspaces.length, 0);
+  } finally {
+    restoreEnv("JUGGLEWORK_SERVER_CONFIG", previousServerConfig);
+  }
+});
+
+test("does not create a default workspace when the default office workspace is disabled", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "jugglework-workspace-store-"));
+  const userData = path.join(root, "userData");
+  const previousServerConfig = process.env.JUGGLEWORK_SERVER_CONFIG;
+  const previousDisabled = process.env.JUGGLEWORK_DESKTOP_DISABLE_DEFAULT_WORKSPACE;
+  process.env.JUGGLEWORK_SERVER_CONFIG = path.join(root, "missing-server.json");
+  process.env.JUGGLEWORK_DESKTOP_DISABLE_DEFAULT_WORKSPACE = "1";
   try {
     const store = createWorkspaceStore({
       app: { getPath: (name) => name === "userData" ? userData : root },
@@ -238,10 +296,10 @@ test("does not create a default workspace when desktop state is absent", async (
 
     const state = await store.readWorkspaceState();
     assert.equal(state.workspaces.length, 0);
-    await assert.rejects(readFile(path.join(userData, "jugglework-dev-data", "home", "JuggleWork", ".opencode", "jugglework.json"), "utf8"));
+    await assert.rejects(readFile(path.join(root, "北数Work", "日常办公", ".opencode", "jugglework.json"), "utf8"));
   } finally {
-    restoreEnv("JUGGLEWORK_DEV_MODE", previousDevMode);
     restoreEnv("JUGGLEWORK_SERVER_CONFIG", previousServerConfig);
+    restoreEnv("JUGGLEWORK_DESKTOP_DISABLE_DEFAULT_WORKSPACE", previousDisabled);
   }
 });
 

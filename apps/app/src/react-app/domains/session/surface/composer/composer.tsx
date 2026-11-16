@@ -254,6 +254,10 @@ export type ComposerProps = {
   onUploadInboxFiles?: ((files: File[]) => void | Promise<unknown>) | null;
   draftScopeKey?: string;
   topAccessory?: ReactNode;
+  /** 输入框面板下方的一行附加控件（新建任务首页的工作区与权限选择）。 */
+  footerAccessory?: ReactNode;
+  /** 新建任务首页：取消吸底与渐变背景，由宿主把输入框放在页面中部。 */
+  homeLayout?: boolean;
   /** Compact single-row presentation used by embedded quick-conversation surfaces. */
   compact?: boolean;
   /** Join the compact composer to a control bar rendered immediately above it. */
@@ -1757,7 +1761,7 @@ export function ReactSessionComposer(props: ComposerProps) {
   return (
     <div
       ref={rootRef}
-      className={`sticky bottom-0 ${plusMenuOpen || slashOpen ? "z-50" : "z-20"} ${props.compact ? "bg-transparent p-0" : props.restrictedHost ? "bg-gradient-to-t from-dls-surface via-dls-surface/95 to-transparent px-6 pb-4" : "bg-gradient-to-t from-dls-surface via-dls-surface/95 to-transparent px-4 pb-2 md:px-8"}`}
+      className={`${props.homeLayout ? "relative" : "sticky bottom-0"} ${plusMenuOpen || slashOpen ? "z-50" : "z-20"} ${props.compact ? "bg-transparent p-0" : props.homeLayout ? "bg-transparent px-4 md:px-8" : props.restrictedHost ? "bg-gradient-to-t from-dls-surface via-dls-surface/95 to-transparent px-6 pb-4" : "bg-gradient-to-t from-dls-surface via-dls-surface/95 to-transparent px-4 pb-2 md:px-8"}`}
       style={{ contain: "layout style" }}
       onFocusCapture={props.onFocusCapture}
       onKeyDownCapture={handleKeyDownCapture}
@@ -1911,7 +1915,9 @@ export function ReactSessionComposer(props: ComposerProps) {
                 ? t("composer.video_generation_placeholder")
                 : props.imageGeneration
                   ? t("composer.image_generation_placeholder")
-                  : t("composer.placeholder")}
+                  : props.homeLayout
+                    ? t("composer.home_placeholder")
+                    : t("composer.placeholder")}
               onChange={handleEditorDraftChange}
               onSubmit={handleEditorSubmit}
               isComposing={() => imeComposingRef.current}
@@ -2191,6 +2197,12 @@ export function ReactSessionComposer(props: ComposerProps) {
             </div>
           </div>
         </div>
+
+        {props.footerAccessory ? (
+          <div className="mt-1.5 flex flex-wrap items-center gap-1 px-3" data-testid="composer-footer-accessory">
+            {props.footerAccessory}
+          </div>
+        ) : null}
 
         {props.onCreatePresentation ? (
           <PresentationDialog

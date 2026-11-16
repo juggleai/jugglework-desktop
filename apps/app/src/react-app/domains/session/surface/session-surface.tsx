@@ -87,6 +87,9 @@ import { DevProfiler } from "@/react-app/shell/dev-profiler";
 import { useShellConfig } from "@/react-app/shell/shell-config";
 import { useReactRenderWatchdog } from "@/react-app/shell/react-render-watchdog";
 import { SessionDebugPanel } from "./debug-panel";
+import { SessionHomeScenarios, SessionHomeTitle, useHomeTitleCentered } from "./session-home-hero";
+import { WorkspaceSelect, type HomeWorkspaceOption } from "./composer/workspace-select";
+import { useBrandAppName } from "@/react-app/domains/cloud/brand-theme";
 import { deriveContextEstimationMessages, deriveRenderedSessionMessages, resolveRenderedSessionSnapshot } from "./session-render-state";
 import { useLocal } from "@/react-app/kernel/local-provider";
 import { isAttachmentFileReadable, resolveAttachmentFileMetadata, materializeComposerAttachment } from "@/react-app/domains/session/sync/attachment-file-part";
@@ -280,6 +283,18 @@ export type SessionSurfaceProps = {
   environmentRuntimeKey?: string | null;
   onApplyEnvironmentChanges?: () => Promise<ApplyEnvironmentChangesResult>;
   quickNavigationLeftOffset?: number;
+  /**
+   * 新建任务首页数据。提供后，空会话显示居中标题、办公场景与居中输入框，
+   * 输入框下方显示工作区与权限选择；发出第一条消息后恢复普通聊天布局。
+   */
+  home?: SessionHomeOptions | null;
+};
+
+export type SessionHomeOptions = {
+  workspaces: HomeWorkspaceOption[];
+  onSelectWorkspace: (workspaceId: string) => void;
+  onCreateWorkspace?: () => void;
+  onOpenSchedule?: () => void;
 };
 
 function messageToReadableText(message: UIMessage) {
@@ -592,6 +607,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const taskProgressPreviousKindRef = useRef(taskProgressKind);
   const taskProgressRunEndedAtRef = useRef(0);
   const { config: shellConfig } = useShellConfig();
+  const brandAppName = useBrandAppName();
   const showThinking = local.prefs.showThinking;
   const findOpen = useSessionFindStore((state) => state.open);
   const findSessionId = useSessionFindStore((state) => state.sessionId);
@@ -1122,6 +1138,22 @@ export function SessionSurface(props: SessionSurfaceProps) {
         ? "responding"
         : "idle";
   const sharedTaskPresentation = sessionTaskPresentation(renderedMessages, todos, useSessionActivityStore.getState().recordsByWorkspaceId[props.workspaceId]?.[props.sessionId]);
+  // 首页只在已加载完成、确实为空、且没有任何进行中状态的会话上显示，避免遮住加载中的历史。
+  const homeVisible = Boolean(props.home) &&
+    !fileHost &&
+    Boolean(snapshot) &&
+    snapshot!.messages.length === 0 &&
+    renderedMessages.length === 0 &&
+    effectiveActivityStatus === "idle" &&
+    !chatStreaming &&
+    !sending &&
+    !submissionPreparing &&
+    !error &&
+    queuedDrafts.length === 0;
+  const homeRootRef = useRef<HTMLDivElement | null>(null);
+  const homeBottomRef = useRef<HTMLDivElement | null>(null);
+  const homeTitleRef = useRef<HTMLDivElement | null>(null);
+  const homeTitleCentered = useHomeTitleCentered(homeRootRef, homeBottomRef, homeTitleRef);
   useReactRenderWatchdog("SessionSurface", {
     sessionId: props.sessionId,
     workspaceId: props.workspaceId,
@@ -2486,14 +2518,43 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }), [props.sessionId, renderedMessages]);
   useControlAction(props.isControlTarget ? sessionReadTranscriptControlAction : null);
 
+  const permissionModeSelector = fileHost ? null : (
+    <PermissionModeSelect
+      requestedMode={sessionPermissionMode.state?.requestedMode ?? null}
+      effectiveMode={sessionPermissionMode.state?.effectiveMode ?? null}
+      grants={sessionPermissionMode.grants}
+      disabledReason={
+        !sessionPermissionMode.supported
+          ? t("session.permission_mode_unsupported")
+          : null
+      }
+      busy={sessionPermissionMode.updating}
+      running={chatStreaming}
+      desktopConfig={orgRestrictions}
+      onSelectRequestApproval={() => {
+        void sessionPermissionMode.requestApproval();
+      }}
+      onSelectFullAccess={() => {
+        void sessionPermissionMode.enableFullAccess();
+      }}
+    />
+  );
+
   return (
     <DevProfiler id="SessionSurface">
     <div
+      ref={homeRootRef}
       data-session-surface-id={props.sessionId}
       onPointerDownCapture={handleFindSurfaceInteraction}
       onFocusCapture={handleFindSurfaceInteraction}
-      className="flex h-full min-h-0 flex-col"
+      className={`flex h-full min-h-0 flex-col ${homeVisible ? "relative overflow-y-auto" : ""}`}
+      data-session-home={homeVisible ? "true" : undefined}
     >
+      {homeVisible && props.home ? (
+        // TIPS: 标题绝对定位在内容区偏上居中处；底部区域 flex-1 + justify-end 把场景按钮和输入框压到最下方。
+        // 窗口太矮放不下时 useHomeTitleCentered 返回 false，标题改为正常排版，避免盖住输入框。
+        <SessionHomeTitle ref={homeTitleRef} appName={brandAppName} centered={homeTitleCentered} />
+      ) : null}
       {model.transitionState === "switching" && showDelayedLoading ? (
         <div className="flex justify-center px-6 pt-4">
           <div className="rounded-full border border-dls-border bg-dls-hover/80 px-3 py-1 text-xs text-dls-secondary">
@@ -2502,7 +2563,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
         </div>
       ) : null}
 
-      <TranscriptRoot className="relative min-h-0 flex-1">
+      {/* TIPS: 首页隐藏消息区但保持挂载，发出第一条消息时滚动与查找状态无需重建。 */}
+      <TranscriptRoot className={homeVisible ? "hidden" : "relative min-h-0 flex-1"}>
         <TranscriptViewport
           ref={scrollRef}
           onWheel={(event) => {
@@ -2633,6 +2695,15 @@ export function SessionSurface(props: SessionSurfaceProps) {
         />
       </TranscriptRoot>
 
+      {/* TIPS: 这层包裹始终存在（非首页时 display: contents），切换首页不会让输入框重新挂载。 */}
+      <div ref={homeBottomRef} className={homeVisible ? "relative z-10 flex min-h-0 flex-1 flex-col justify-end pb-[4vh]" : "contents"} data-session-home-bottom={homeVisible ? "true" : undefined}>
+      {homeVisible && props.home ? (
+        <SessionHomeScenarios
+          className="mb-3 shrink-0"
+          onFillPrompt={handleMessageListSetPrompt}
+          onOpenSchedule={props.home.onOpenSchedule}
+        />
+      ) : null}
       <div ref={composerShellRef} className={`shrink-0 px-0 ${fileHost ? "pb-0" : "pb-2"}`}>
         {(props.providerConnectedCount ?? 0) === 0 ? (
           <button
@@ -2740,27 +2811,19 @@ export function SessionSurface(props: SessionSurfaceProps) {
          modelVariant={props.modelVariant}
          modelBehaviorOptions={props.modelBehaviorOptions}
          onModelVariantChange={props.onModelVariantChange}
-          permissionModeSelector={
-            !fileHost && <PermissionModeSelect
-             requestedMode={sessionPermissionMode.state?.requestedMode ?? null}
-             effectiveMode={sessionPermissionMode.state?.effectiveMode ?? null}
-             grants={sessionPermissionMode.grants}
-             disabledReason={
-               !sessionPermissionMode.supported
-                 ? t("session.permission_mode_unsupported")
-                 : null
-             }
-             busy={sessionPermissionMode.updating}
-             running={chatStreaming}
-             desktopConfig={orgRestrictions}
-             onSelectRequestApproval={() => {
-               void sessionPermissionMode.requestApproval();
-             }}
-             onSelectFullAccess={() => {
-               void sessionPermissionMode.enableFullAccess();
-             }}
-           />
-         }
+          permissionModeSelector={homeVisible ? null : permissionModeSelector}
+          homeLayout={homeVisible}
+          footerAccessory={homeVisible && props.home ? (
+            <>
+              <WorkspaceSelect
+                workspaces={props.home.workspaces}
+                selectedWorkspaceId={props.workspaceId}
+                onSelect={props.home.onSelectWorkspace}
+                onCreateWorkspace={props.home.onCreateWorkspace}
+              />
+              {permissionModeSelector}
+            </>
+          ) : null}
         agentLabel={props.agentLabel}
         selectedAgent={props.selectedAgent}
         listAgents={props.listAgents}
@@ -2833,6 +2896,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
           }
         />
         </DevProfiler>
+      </div>
       </div>
       {/* Error display moved inline into the session conversation area */}
       {props.developerMode ? <SessionDebugPanel model={model} snapshot={snapshot} /> : null}
