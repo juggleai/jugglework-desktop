@@ -1148,7 +1148,7 @@ export default {
   "navigation.create_local_task": "新建本地任务",
   "navigation.home": "首页",
   "navigation.local_tasks": "本地任务",
-  "navigation.local_workspace": "本地工作区",
+  "navigation.local_workspace": "工作区",
   "navigation.primary": "主导航",
   "navigation.more": "更多",
   "navigation.meetings": "会议",

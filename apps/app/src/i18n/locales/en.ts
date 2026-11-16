@@ -1145,7 +1145,7 @@ export default {
   "navigation.create_local_task": "New local task",
   "navigation.home": "Home",
   "navigation.local_tasks": "Local tasks",
-  "navigation.local_workspace": "Local workspace",
+  "navigation.local_workspace": "Workspace",
   "navigation.primary": "Primary navigation",
   "navigation.more": "More",
   "navigation.meetings": "Meetings",
