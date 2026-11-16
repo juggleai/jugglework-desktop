@@ -13,6 +13,10 @@
 - **WHEN** 一个有效组织成员创建团队日历
 - **THEN** 系统在该组织内创建日历，并将创建者设为初始 `manager`
 
+#### Scenario: Desktop suggests a team calendar color
+- **WHEN** 成员打开团队日历创建对话框且没有手动选择颜色
+- **THEN** Desktop 从与个人日历相同且不含黑色的可选色板中提交第一个未使用颜色，色板耗尽后循环
+
 #### Scenario: Cross-organization member is supplied
 - **WHEN** 调用方尝试把其他组织成员或外部联系人加入团队日历
 - **THEN** 系统拒绝操作，且不创建成员关系或泄露目标日历信息

@@ -27,6 +27,7 @@ export interface CloudDocsBridge {
     sourceUserId: string;
     tenantId: string;
     bootstrapUrl: string;
+    docsOrigin: string;
     launchGrant: string;
     /** 后台上传／AI 产品页不替换前台页面，完成后按实例独立释放。 */
     background?: boolean;
@@ -34,9 +35,12 @@ export interface CloudDocsBridge {
     retain?: boolean;
     presentation?: { instanceId: string; mode: "product" | "manage" };
   }): Promise<{ instanceId: string }>;
-  close(instanceId?: string): Promise<void>;
+  /** 关闭指定实例；原生本地保存尚未确认时返回 closed=false 并保留页面。 */
+  close(instanceId?: string): Promise<{ closed: boolean }>;
   /** 获取当前实例画面，供宿主浮窗覆盖原生视图时保留页面背景。 */
   snapshot(instanceId: string): Promise<string | null>;
+  /** 查询已登记实例状态，不重新申请登录交接。 */
+  status?(instanceId: string): Promise<{ ready: boolean; status?: "loading" | "ready" | "error" | "unauthorized"; workspaceId?: string; docId?: string | null; title?: string }>;
   /** 更新当前实例的主题、语言和界面配色。 */
   setAppearance(input: {
     instanceId: string;
@@ -55,6 +59,8 @@ export interface CloudDocsBridge {
       instanceId: string;
       status: "loading" | "ready" | "error" | "unauthorized";
       workspaceId?: string;
+      docId?: string | null;
+      title?: string;
     }) => void,
   ): () => void;
   /** 在当前组织 product 视图中执行文件上传：lookup 查重复，upload 创建云文档。 */

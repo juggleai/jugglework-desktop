@@ -42,6 +42,8 @@ function startMockOpencode(input?: {
   createStarted?: () => void;
   config?: Record<string, unknown>;
   statuses?: unknown;
+  messagePages?: Record<string, { ids: string[]; olderCursor?: string }>;
+  invalidMessageCursor?: string;
 }) {
   const requests: Array<{ pathname: string; search: string; directory: string | null; method: string; body?: unknown }> = [];
   let config = input?.config ?? {};
@@ -131,25 +133,29 @@ function startMockOpencode(input?: {
       }
 
       if (url.pathname === "/session/ses_1/message") {
-        return Response.json([
-          {
-            info: {
-              id: "msg_1",
-              sessionID: "ses_1",
-              role: "assistant",
-              time: { created: 200 },
-            },
-            parts: [
-              {
-                id: "prt_1",
-                messageID: "msg_1",
-                sessionID: "ses_1",
-                type: "text",
-                text: "hostname: mock-host",
-              },
-            ],
+        const before = url.searchParams.get("before");
+        if (before !== null && before === input?.invalidMessageCursor) {
+          return Response.json({ code: "invalid_cursor", message: "Invalid cursor" }, { status: 400 });
+        }
+        const page = input?.messagePages?.[before ?? ""];
+        const ids = page?.ids ?? ["msg_1"];
+        return Response.json(ids.map((id, index) => ({
+          info: {
+            id,
+            sessionID: "ses_1",
+            role: "assistant",
+            time: { created: 200 + index },
           },
-        ]);
+          parts: [
+            {
+              id: `prt_${id}`,
+              messageID: id,
+              sessionID: "ses_1",
+              type: "text",
+              text: id === "msg_1" ? "hostname: mock-host" : `message: ${id}`,
+            },
+          ],
+        })), page?.olderCursor ? { headers: { "X-Next-Cursor": page.olderCursor } } : undefined);
       }
 
       if (url.pathname === "/session/ses_created/prompt_async" && request.method === "POST") {
@@ -184,6 +190,7 @@ async function startJuggleWorkServer(input: { workspaceRoot: string; opencodeBas
     port: 0,
     token: "owt_test_token",
     hostToken: "owt_host_token",
+    configPath: join(input.workspaceRoot, ".jugglework", "config.json"),
     approval: { mode: "auto", timeoutMs: 1000 },
     corsOrigins: ["*"],
     workspaces: [
@@ -239,9 +246,9 @@ function deferred() {
   return { promise, resolve };
 }
 
-async function waitUntil(predicate: () => boolean) {
+async function waitUntil(predicate: () => boolean | Promise<boolean>) {
   for (let index = 0; index < 20; index++) {
-    if (predicate()) return true;
+    if (await predicate()) return true;
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   return predicate();
@@ -371,6 +378,7 @@ describe("workspace session read APIs", () => {
     expect(messagesBody.items).toHaveLength(1);
     expect(messagesBody.items[0]?.info.id).toBe("msg_1");
     expect(messagesBody.items[0]?.parts[0]?.text).toBe("hostname: mock-host");
+    expect(messagesBody.page).toEqual({ olderCursor: null, hasOlder: false });
 
     const snapshotResponse = await fetch(`${base}/workspace/ws_1/sessions/ses_1/snapshot?limit=5`, {
       headers: auth(jugglework.token),
@@ -379,6 +387,7 @@ describe("workspace session read APIs", () => {
     const snapshotBody = await snapshotResponse.json();
     expect(snapshotBody.item.session.id).toBe("ses_1");
     expect(snapshotBody.item.messages).toHaveLength(1);
+    expect(snapshotBody.item.messagePage).toEqual({ olderCursor: null, hasOlder: false });
     expect(snapshotBody.item.todos).toEqual([
       {
         content: "Validate session reads",
@@ -395,6 +404,113 @@ describe("workspace session read APIs", () => {
     expect(listRequest?.search).toContain("search=host");
     expect(listRequest?.search).toContain("start=10");
 
+  });
+
+  test("reads first, middle, final, and exact-full message pages with opaque cursors", async () => {
+    const workspaceRoot = await createWorkspaceRoot();
+    const middleCursor = "opaque+/middle==";
+    const finalCursor = "opaque.final";
+    const mock = startMockOpencode({
+      messagePages: {
+        "": { ids: ["msg_5", "msg_6"], olderCursor: middleCursor },
+        [middleCursor]: { ids: ["msg_3", "msg_4"], olderCursor: finalCursor },
+        [finalCursor]: { ids: ["msg_1", "msg_2"] },
+        exact: { ids: ["msg_a", "msg_b"] },
+      },
+    });
+    const jugglework = await startJuggleWorkServer({
+      workspaceRoot,
+      opencodeBaseUrl: `http://127.0.0.1:${mock.server.port}`,
+    });
+    const endpoint = `http://127.0.0.1:${jugglework.server.port}/workspace/ws_1/sessions/ses_1/messages`;
+    const read = async (before?: string) => {
+      const query = new URLSearchParams({ limit: "2" });
+      if (before !== undefined) query.set("before", before);
+      const response = await fetch(`${endpoint}?${query}`, { headers: auth(jugglework.token) });
+      expect(response.status).toBe(200);
+      return response.json();
+    };
+
+    await expect(read()).resolves.toMatchObject({
+      items: [{ info: { id: "msg_5" } }, { info: { id: "msg_6" } }],
+      page: { olderCursor: middleCursor, hasOlder: true },
+    });
+    await expect(read(middleCursor)).resolves.toMatchObject({
+      items: [{ info: { id: "msg_3" } }, { info: { id: "msg_4" } }],
+      page: { olderCursor: finalCursor, hasOlder: true },
+    });
+    await expect(read(finalCursor)).resolves.toMatchObject({
+      items: [{ info: { id: "msg_1" } }, { info: { id: "msg_2" } }],
+      page: { olderCursor: null, hasOlder: false },
+    });
+    await expect(read("exact")).resolves.toMatchObject({
+      items: [{ info: { id: "msg_a" } }, { info: { id: "msg_b" } }],
+      page: { olderCursor: null, hasOlder: false },
+    });
+
+    const messageRequests = mock.requests.filter((request) => request.pathname === "/session/ses_1/message");
+    expect(messageRequests.map((request) => new URLSearchParams(request.search).get("before"))).toEqual([
+      null,
+      middleCursor,
+      finalCursor,
+      "exact",
+    ]);
+    expect(messageRequests.every((request) => new URLSearchParams(request.search).get("limit") === "2")).toBe(true);
+  });
+
+  test("reuses the snapshot message read for pagination metadata and preserves the snapshot limit contract", async () => {
+    const workspaceRoot = await createWorkspaceRoot();
+    const mock = startMockOpencode({ messagePages: { "": { ids: ["msg_1"], olderCursor: "snapshot-cursor" } } });
+    const jugglework = await startJuggleWorkServer({
+      workspaceRoot,
+      opencodeBaseUrl: `http://127.0.0.1:${mock.server.port}`,
+    });
+
+    const response = await fetch(
+      `http://127.0.0.1:${jugglework.server.port}/workspace/ws_1/sessions/ses_1/snapshot?limit=1500`,
+      { headers: auth(jugglework.token) },
+    );
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      item: { messagePage: { olderCursor: "snapshot-cursor", hasOlder: true } },
+    });
+    const messageRequests = mock.requests.filter((request) => request.pathname === "/session/ses_1/message");
+    expect(messageRequests).toHaveLength(1);
+    expect(new URLSearchParams(messageRequests[0]!.search).get("limit")).toBe("1500");
+
+    const legacyResponse = await fetch(
+      `http://127.0.0.1:${jugglework.server.port}/workspace/ws_1/sessions/ses_1/snapshot`,
+      { headers: auth(jugglework.token) },
+    );
+    expect(legacyResponse.status).toBe(200);
+    expect(mock.requests.filter((request) => request.pathname === "/session/ses_1/message")).toHaveLength(2);
+    expect(new URLSearchParams(mock.requests.at(-1)!.search).has("limit")).toBe(false);
+  });
+
+  test("rejects oversized page inputs locally and maps an upstream invalid cursor to 400", async () => {
+    const workspaceRoot = await createWorkspaceRoot();
+    const mock = startMockOpencode({ invalidMessageCursor: "invalid-upstream" });
+    const jugglework = await startJuggleWorkServer({
+      workspaceRoot,
+      opencodeBaseUrl: `http://127.0.0.1:${mock.server.port}`,
+    });
+    const endpoint = `http://127.0.0.1:${jugglework.server.port}/workspace/ws_1/sessions/ses_1/messages`;
+
+    const oversized = await fetch(`${endpoint}?before=${"x".repeat(4097)}`, { headers: auth(jugglework.token) });
+    expect(oversized.status).toBe(400);
+    await expect(oversized.json()).resolves.toMatchObject({ code: "invalid_query" });
+    expect(mock.requests.filter((request) => request.pathname === "/session/ses_1/message")).toHaveLength(0);
+
+    const oversizedLimit = await fetch(`${endpoint}?limit=1001`, { headers: auth(jugglework.token) });
+    expect(oversizedLimit.status).toBe(400);
+    await expect(oversizedLimit.json()).resolves.toMatchObject({ code: "invalid_query" });
+    expect(mock.requests.filter((request) => request.pathname === "/session/ses_1/message")).toHaveLength(0);
+
+    const upstream = await fetch(`${endpoint}?before=invalid-upstream`, { headers: auth(jugglework.token) });
+    expect(upstream.status).toBe(400);
+    await expect(upstream.json()).resolves.toMatchObject({ code: "invalid_query" });
+    expect(new URLSearchParams(mock.requests.find((request) => request.pathname === "/session/ses_1/message")!.search).get("before"))
+      .toBe("invalid-upstream");
   });
 
   test("treats sessions omitted from the authoritative status map as idle", async () => {
@@ -630,6 +746,15 @@ describe("workspace session read APIs", () => {
     const sawCommand = await waitUntil(() => mock.requests.some((request) => request.pathname === "/session/ses_1/command"));
     command.resolve();
     expect(sawCommand).toBe(true);
+    // The command is acknowledged before completion; drain its reservation
+    // before teardown closes the journal used by the completion callback.
+    expect(await waitUntil(async () => {
+      const runs = await fetch(`http://127.0.0.1:${jugglework.server.port}/workspace/ws_1/session-runs`, {
+        headers: auth(jugglework.token),
+      });
+      const body = await runs.json() as { items: unknown[] };
+      return runs.ok && body.items.length === 0;
+    })).toBe(true);
   });
 
   test("keeps legacy /w workspace opencode proxy alias", async () => {

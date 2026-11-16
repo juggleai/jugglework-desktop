@@ -14,6 +14,7 @@ import {
   registerTrustedOpencodeProcess,
   startServer,
   syncAllWorkspacesRuntimeMcpToEngine,
+  type JuggleWorkServerHandle,
   type ServerLogger,
 } from "./server.js";
 import { ensureLocalWorkspaceFiles } from "./workspace-init.js";
@@ -21,7 +22,6 @@ import { findManagedEngineWorkspace } from "./workspaces.js";
 import { ensureFileAssistantWorkspace } from "./office/file-assistant-workspace.js";
 import { keepJuggleWorkRuntimeConfigFileFresh, writeJuggleWorkRuntimeConfigFile } from "./jugglework-runtime-config.js";
 import { sweepLegacyOpenCodeConfig } from "./legacy-config-sweep.js";
-import type { ServeResult } from "./serve-node.js";
 import type { ServerConfig } from "./types.js";
 
 export type EmbeddedServerOptions = CliArgs & {
@@ -59,6 +59,8 @@ export type EmbeddedServerHandle = {
   managedOpencodeExecution: OpencodeExecutionSnapshot | null;
   /** Liveness for the managed OpenCode child process, when spawned. */
   managedOpencode: { pid: number | null; isAlive: () => boolean } | null;
+  /** Whether the durable session coordinator currently owns any active runs. */
+  hasActiveSessionRuns: () => boolean;
   /** Stop the HTTP server and managed OpenCode (if any). */
   stop: () => Promise<void>;
 };
@@ -81,7 +83,7 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
   let managedOpencode: ManagedOpencodeServer | null = null;
   let managedOpencodeIdentity: string | null = null;
   let stopRuntimeConfigFileRefresh: (() => void) | null = null;
-  let server: ServeResult | null = null;
+  let server: JuggleWorkServerHandle | null = null;
   let stopPromise: Promise<void> | null = null;
 
   const releaseResources = async (): Promise<void> => {
@@ -247,6 +249,7 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
     managedOpencode: managedOpencode
       ? { pid: managedOpencode.pid ?? null, isAlive: managedOpencode.isAlive }
       : null,
+    hasActiveSessionRuns: () => server?.hasActiveSessionRuns() ?? false,
     stop,
   };
 }

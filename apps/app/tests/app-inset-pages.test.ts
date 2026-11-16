@@ -121,9 +121,10 @@ describe("secondary app inset shells", () => {
     }
   });
 
-  test("uses the Automation sidebar background for local and cloud workspace menus", () => {
+  test("uses the local workspace sidebar background across secondary app sidebars", () => {
     const automation = read("react-app/domains/automations/automation-page.tsx");
     const workspaceSidebar = read("react-app/domains/session/sidebar/app-sidebar.tsx");
+    const meetingStyles = read("react-app/domains/meeting/meeting.css");
     const appStyles = read("app/index.css");
 
     expect(appStyles.match(/--app-secondary-sidebar-bg:/g)).toHaveLength(2);
@@ -134,6 +135,36 @@ describe("secondary app inset shells", () => {
     expect(pluginSidebar).not.toContain("bg-dls-sidebar/55");
     expect(workspaceSidebar).toContain("flex min-h-0 min-w-0 flex-1 flex-col bg-[var(--app-secondary-sidebar-bg)]");
     expect(workspaceSidebar).toContain("data-session-list-surface");
+    expect(meetingStyles).toContain("--meet-side: var(--app-secondary-sidebar-bg");
+    expect(meetingStyles).toContain(".meeting-ui .meeting-launcher { min-width: 0; min-height: 0; overflow-y: auto; border-right: 1px solid var(--dls-border, var(--meet-line)); background: var(--meet-side);");
+    expect(meetingStyles).toContain("border-bottom: 1px solid var(--dls-border, var(--meet-line));");
+  });
+
+  test("places the complete Meeting workspace inside the shared rounded surface", () => {
+    const meetingPage = read("react-app/domains/meeting/meeting-page.tsx");
+    const meetingStyles = read("react-app/domains/meeting/meeting.css");
+    const workspaceRoute = read("react-app/shell/workspace-app-route.tsx");
+
+    expect(meetingPage).toContain('<AppInsetSurface className="meeting-inset-surface" testId="meeting-inset-surface">');
+    expect(meetingPage).toContain('<div className="meeting-home">');
+    expect(meetingPage).toContain('<aside className="meeting-launcher">');
+    expect(meetingPage).toContain('<section className="meeting-overview">');
+    expect(meetingStyles).toContain("--meet-shell: var(--dls-sidebar");
+    expect(meetingStyles).toContain(".meeting-page { position: relative; display: flex; overflow: hidden; scrollbar-gutter: stable; background: var(--meet-shell);");
+    expect(workspaceRoute).toContain('appPath.view === "meetings" ? "absolute inset-0 z-10 flex bg-dls-sidebar"');
+  });
+
+  test("keeps per-row schedule links out of Meeting lists and reveals start actions only for upcoming rows", () => {
+    const meetingPage = read("react-app/domains/meeting/meeting-page.tsx");
+    const meetingStyles = read("react-app/domains/meeting/meeting.css");
+
+    expect(meetingPage).not.toContain("查看日程");
+    expect(meetingPage).toContain("upcomingForHome.slice(0, 4).map((entry) => renderHomeItem(entry, true))");
+    expect(meetingPage).toContain("historyForHome.map((entry) => renderHomeItem(entry))");
+    expect(meetingPage).toContain("if (upcoming || current.status === \"live\") openPreview(current)");
+    expect(meetingPage).toContain("onClick={() => void run(() => startCalendarOccurrence(occurrence))}");
+    expect(meetingStyles).toContain(".home-meeting-item:hover .home-meeting-start");
+    expect(meetingStyles).toContain(".home-meeting-item:focus-within .home-meeting-start");
   });
 
   test("reveals collapsed Automation, Plugins, Tasks, and Toon Factory sidebars as Rail hover flyouts", () => {

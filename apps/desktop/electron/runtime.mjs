@@ -1075,8 +1075,30 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
   // In-process server handle. Kept alive across restarts so we can stop it.
   let inProcessServer = null;
 
+  function hasActiveSessionRuns() {
+    return inProcessServer?.hasActiveSessionRuns?.() === true;
+  }
+
+  function assertRuntimeCanStop() {
+    if (!hasActiveSessionRuns()) return;
+    const error = /** @type {Error & { code: string }} */ (
+      new Error("Active tasks must finish or be stopped before restarting the runtime.")
+    );
+    error.code = "runtime_stop_blocked_active_runs";
+    throw error;
+  }
+
+  async function prepareRuntimeStop() {
+    if (!inProcessServer) return;
+    assertRuntimeCanStop();
+    await beforeStop();
+    // Re-check after an asynchronous document-save decision so a task that
+    // started while the dialog was open cannot be stopped by this operation.
+    assertRuntimeCanStop();
+  }
+
   async function startJuggleWorkServer(options) {
-    if (inProcessServer) await beforeStop();
+    await prepareRuntimeStop();
     const currentPort = juggleworkServerState.port;
     // Stop any previously running in-process server
     if (inProcessServer) {
@@ -1315,7 +1337,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
 
   async function prepareFreshRuntime() {
     // TIPS: 确认期间保留原生命周期和服务访问；取消或保存失败不能先停服务再补救。
-    if (inProcessServer) await beforeStop();
+    await prepareRuntimeStop();
     lifecycleState = "cleaning";
     await stopAllRuntimeChildren();
     await cleanupPackagedSidecars();
@@ -1407,7 +1429,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
   }
 
   async function engineStop() {
-    if (inProcessServer) await beforeStop();
+    await prepareRuntimeStop();
     lifecycleState = "stopping";
     await stopAllRuntimeChildren();
     lifecycleState = "idle";
@@ -1586,6 +1608,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     engineInstall,
     juggleworkServerInfo,
     managedServerAccess,
+    hasActiveSessionRuns,
     ensureFileRuntime: () => withRuntimeLifecycle(() => ensureFileRuntime()),
     juggleworkServerRestart: (options) => withRuntimeLifecycle(() => juggleworkServerRestart(options)),
     workspaceActivate: (input) => withRuntimeLifecycle(() => workspaceActivate(input)),

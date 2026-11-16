@@ -41,9 +41,21 @@ Desktop SHALL distinguish active participants from absent members and allow invi
 
 ### Requirement: Stable scheduling display
 Background refresh SHALL retain schedule content during loading.
-#### Scenario: Home calendar date selected
-- **WHEN** a user selects a date in the home calendar
-- **THEN** only the adjacent schedule changes and the home view remains selected.
+#### Scenario: User opens the meeting workspace
+- **WHEN** the meeting workspace has loaded
+- **THEN** a launcher sidebar exposes start, join and schedule actions while the overview keeps upcoming and historical meetings in chronological sections.
+#### Scenario: User schedules from the meeting workspace
+- **WHEN** the user chooses the schedule action
+- **THEN** Desktop opens the shared Calendar event creation dialog without navigating away, and closing it returns to the unchanged meeting overview.
+#### Scenario: Calendar video schedule is listed
+- **WHEN** a Calendar event has video meeting enabled, including each expanded occurrence of a recurring event
+- **THEN** the meeting overview merges it into the rolling upcoming or historical section according to the occurrence end time, and identifies it as a Calendar schedule rather than an already-created Meeting room.
+#### Scenario: Meeting overview stays compact and avoids repeated history
+- **WHEN** the overview contains upcoming Calendar schedules and multiple historical occurrences from one recurring series
+- **THEN** every row uses the meeting icon, upcoming rows use the compact agenda spacing, history keeps one latest collection row per recurring series, section totals are omitted, and the upcoming heading provides an action to view everything in Calendar.
+#### Scenario: User starts an upcoming meeting from its row
+- **WHEN** the user hovers or focuses an upcoming Meeting or Calendar video schedule row and chooses the start action
+- **THEN** Desktop reveals the action at the right edge, opens an existing Meeting through its authoritative admission flow, or creates and opens an immediate Meeting for the Calendar schedule with its mapped invitees; upcoming and historical rows do not expose a per-row view-schedule action.
 
 ### Requirement: Explicit desktop and window selection
 Electron SHALL present a meeting-window modal with desktop/window thumbnails and filters before sharing. Selection alone SHALL NOT start capture.
@@ -57,11 +69,11 @@ Electron SHALL present a meeting-window modal with desktop/window thumbnails and
 - **WHEN** the selected source no longer exists at confirmation
 - **THEN** the modal remains open with a refresh/reselection message and no fallback capture starts.
 
-### Requirement: Draggable workbench navigation
-The meeting workbench header SHALL support native window dragging without intercepting navigation controls.
-#### Scenario: Switch meeting views
-- **WHEN** the user clicks Home, Calendar or History in the header
-- **THEN** the selected view changes normally; the tabs remain outside the native drag region.
+### Requirement: Draggable meeting workbench
+The meeting workbench SHALL preserve native window dragging on empty shell space without intercepting launcher or overview controls.
+#### Scenario: Use a launcher action
+- **WHEN** the user clicks start, join or schedule in the launcher
+- **THEN** the requested action runs normally outside the native drag region.
 
 ### Requirement: 安装包中的会议设备授权
 

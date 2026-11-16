@@ -199,7 +199,8 @@ test('meeting cards pass chat type classification and have readable conversation
    (ts.isFunctionDeclaration(node)&&node.name?.text==='messagePreview') ||
    (ts.isVariableStatement(node)&&node.declarationList.declarations.some(d=>['MESSAGE_NAMES','SUPPORTED_MESSAGE_NAMES'].includes(d.name.getText(file)))));
  const code=transpile(nodes.map(node=>node.getText(file)).join('\n'),{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
- const check=new Function(code+'; return { supported: SUPPORTED_MESSAGE_NAMES, preview: messagePreview };')();
+ const {DOCS_MESSAGE_NAME}=await load('../src/react-app/domains/jugglechat/docs-message.ts');
+ const check=new Function('DOCS_MESSAGE_NAME',code+'; return { supported: SUPPORTED_MESSAGE_NAMES, preview: messagePreview };')(DOCS_MESSAGE_NAME);
  for(const name of ['jw:meeting-card','jw:meeting-invite']){
    assert.equal(check.supported.has(name),true);
    assert.equal(check.preview({name,content:{title:'产品讨论'}}),'[会议] 产品讨论');

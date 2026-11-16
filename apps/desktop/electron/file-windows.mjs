@@ -44,6 +44,7 @@ export function createFileWindows({
   openSession,
   uploadCloud,
   lookupCloud,
+  cloudDocs,
   fetcher = fetch,
 }) {
   const entries = new Map();
@@ -52,7 +53,7 @@ export function createFileWindows({
   const cloudLookups = new Set();
   const lookupUpload = (entry) => {
     const tab = entry.tabs.find(item => item.path === entry.activePath);
-    if (!cloudScope || !lookupCloud || !tab || tab.cloudAttachment || uploaded(entry.workspaceId, tab.path)) return;
+    if (!cloudScope || !lookupCloud || !tab || tab.cloudDoc || tab.cloudAttachment || uploaded(entry.workspaceId, tab.path)) return;
     const key = JSON.stringify([cloudScope, entry.workspaceId, tab.path]);
     if (cloudLookups.has(key)) return;
     cloudLookups.add(key);
@@ -275,7 +276,12 @@ export function createFileWindows({
   const closeTab = async (entry, relativePath) => {
     const tab = entry.tabs.find((tab) => tab.path === relativePath);
     if (!tab) return true;
+    if (tab.cloudDoc) {
+      if (!await cloudDocs.prepareClose(tab.cloudDoc.instanceId)) throw new Error("文档尚未保存完成，请稍后再试");
+      cloudDocs.close(tab.cloudDoc.instanceId);
+    }
     if (
+      !tab.cloudDoc &&
       !tab.documentId &&
       fileEditor &&
       !(await fileEditor.close(
@@ -304,6 +310,8 @@ export function createFileWindows({
     absolutePath = undefined,
     conversationOptions = undefined,
     readOnly = false,
+    cloudDoc = undefined,
+    launch = undefined,
   }) => {
     await loaded;
     const key = JSON.stringify([workspaceId, sessionId]);
@@ -350,6 +358,7 @@ export function createFileWindows({
         local,
         conversationOptions: options,
         tabs: [],
+        cloudDocument: tab => tab?.cloudDoc ? cloudDocs?.documentFor(tab.cloudDoc.instanceId, window) : null,
         activePath: null,
         closing: false,
         closed: false,
@@ -392,7 +401,7 @@ export function createFileWindows({
       try {
         await refreshConversation(entry);
         await loadWindow(window);
-        if (!(await addFile(entry, relativePath, absolutePath, readOnly))) {
+        if (!cloudDoc && !(await addFile(entry, relativePath, absolutePath, readOnly))) {
           entry.closed = true;
           if (!window.isDestroyed()) window.destroy();
           return;
@@ -408,7 +417,19 @@ export function createFileWindows({
       }
     } else {
       await refreshConversation(entry);
-      if (!(await addFile(entry, relativePath, absolutePath, readOnly))) return;
+      if (!cloudDoc && !(await addFile(entry, relativePath, absolutePath, readOnly))) return;
+    }
+    if (cloudDoc) {
+      const id = `cloud:${launch.presentation.instanceId}`;
+      const existing = entry.tabs.find(tab => { const current = entry.cloudDocument(tab); return current?.tenantId === cloudDoc.tenantId && current.workspaceId === cloudDoc.workspaceId && current.docId === cloudDoc.docId; });
+      if (existing) { entry.activePath = existing.path; publish(entry); }
+      else {
+        const instanceId = launch.presentation.instanceId;
+        entry.tabs.push({ kind: 'cloud-document', path: id, name: cloudDoc.title || 'Untitled', cloudScope: JSON.stringify([launch.sourceServerOrigin, launch.sourceUserId, cloudDoc.tenantId]), cloudDoc: { tenantId: cloudDoc.tenantId, workspaceId: cloudDoc.workspaceId, docId: cloudDoc.docId, instanceId, docsOrigin: launch.docsOrigin } });
+        entry.activePath = id; publish(entry);
+        try { await cloudDocs.open({ ...launch, instanceId, retain: true }, entry.window); }
+        catch (error) { entry.tabs = entry.tabs.filter(tab => tab.path !== id); publish(entry); throw error; }
+      }
     }
     if (entry.window.isMinimized()) entry.window.restore();
     entry.window.show();
@@ -561,6 +582,15 @@ export function createFileWindows({
     /** 按渲染进程查找可信文件宿主。 */
     windowFor: (sender) => entryFor(sender)?.window ?? null,
     /** 仅向同一工作区、聊天的已登记 AI 宿主投递选区；引用必须来自 Main 的真实采集。 */
+    /** 采用 Main 原生路由更新现有标签定位和标题，标签实例保持不变。 */
+    updateCloudDocument(window, instanceId, document) {
+      const entry = [...entries.values()].find(entry => entry.window === window);
+      const tab = entry?.tabs.find(tab => tab.cloudDoc?.instanceId === instanceId);
+      if (!tab || tab.cloudDoc.tenantId !== document.tenantId) return;
+      tab.cloudDoc = { ...tab.cloudDoc, workspaceId: document.workspaceId, docId: document.docId };
+      if (document.title) tab.name = document.title;
+      publish(entry);
+    },
     officeComposerWindow(input) {
       const entry = [...entries.values()].find((item) => item.window.id === input.windowId);
       if (!entry || !entry.conversation || entry.workspaceId !== input.workspaceId ||
@@ -648,9 +678,17 @@ export function createFileWindows({
       ipcMain.handle("jugglework:file-window:cloud-uploads", (event, input) => {
         assertTopLevel(event);
         if (event.sender !== getMainWindow()?.webContents) throw new Error("上传结果来源无效");
-        if (cloudScope !== input?.scope) { cloudLookups.clear(); cloudScope = input?.scope ?? null; }
+        if (cloudScope !== input?.scope) {
+          cloudLookups.clear(); cloudScope = input?.scope ?? null;
+          for (const entry of entries.values()) {
+            const stale = entry.tabs.filter(tab => tab.cloudDoc && tab.cloudScope !== cloudScope);
+            for (const tab of stale) { cloudDocs?.hide(tab.cloudDoc.instanceId); void cloudDocs?.prepareClose(tab.cloudDoc.instanceId).then(ok => { if (ok) cloudDocs.close(tab.cloudDoc.instanceId); }); }
+            entry.tabs = entry.tabs.filter(tab => !stale.includes(tab));
+            if (!entry.tabs.some(tab => tab.path === entry.activePath)) entry.activePath = entry.tabs.at(-1)?.path ?? null;
+          }
+        }
         cloudUploads = input?.scope && Array.isArray(input.records) ? input.records.slice(-200).filter(item => {
-          try { const url = new URL(item.url); return typeof item.localWorkspaceId === "string" && typeof item.path === "string" && typeof item.tenantId === "string" && ["https:", "http:"].includes(url.protocol) && !url.search && !url.hash && !url.username && !url.password && /^\/workspace\/[\w-]+\/[\w-]+$/.test(url.pathname); } catch { return false; }
+          try { const url = new URL(item.url); return typeof item.localWorkspaceId === "string" && typeof item.path === "string" && typeof item.tenantId === "string" && ["https:", "http:"].includes(url.protocol) && (!url.search || (url.searchParams.get("tenantId") === item.tenantId && [...url.searchParams.keys()].every(key => key === "tenantId"))) && !url.hash && !url.username && !url.password && /^\/workspace\/[\w-]+\/[\w-]+$/.test(url.pathname); } catch { return false; }
         }) : [];
         for (const entry of entries.values()) publish(entry);
       });
@@ -670,6 +708,12 @@ export function createFileWindows({
           // 仅 resolveHost 确认的主窗口顶层可 seed；文件宿主只沿用已有 entry。
           conversationOptions: entry ? undefined : input.conversationOptions,
         });
+      });
+      ipcMain.handle("jugglework:file-window:open-cloud", async (event, input) => {
+        if (resolveHost(event) !== getMainWindow() || entryFor(event.sender)) throw new Error('Forbidden');
+        const doc = input?.document, launch = input?.launch;
+        if (!cloudDocs || !doc || !launch || doc.tenantId !== launch.tenantId || launch.presentation?.mode !== 'product' || ![doc.tenantId, doc.workspaceId, doc.docId].every(value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value))) throw new Error('Invalid cloud document');
+        await open({ workspaceId: input.workspaceId, sessionId: input.sessionId, path: '', cloudDoc: doc, launch: { ...launch, sourceServerOrigin: input.sourceServerOrigin, sourceUserId: input.sourceUserId } });
       });
       ipcMain.handle("jugglework:file-window:state", async (event) => {
         const entry = resolve(event);
@@ -732,6 +776,7 @@ export function createFileWindows({
           const tab = entry.tabs.find(
             (tab) => tab.path === (requestedPath ?? entry.activePath),
           );
+          if (tab?.cloudDoc && !["select", "close", "share-cloud"].includes(action)) throw new Error("云文档不支持本地文件操作");
           if (action === "share-cloud") {
             const record = tab && uploaded(entry.workspaceId, tab.path);
             if (!record) throw new Error("该文件尚未上传到当前组织的云文档");

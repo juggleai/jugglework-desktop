@@ -21,6 +21,7 @@ const actualDen = await import("../src/app/lib/den.ts?unified-tabs-real");
 const launches: string[] = [];
 const opened: Array<{ instanceId: string }> = [];
 const closed: string[] = [];
+let closeAllowed = true;
 const visibility = new Map<string, boolean>();
 const states = new Set<(value: unknown) => void>();
 mock.module("../src/app/lib/den", () => ({ ...actualDen,
@@ -37,7 +38,10 @@ mock.module("../src/react-app/domains/cloud-docs/product-view", () => ({ remembe
 mock.module("../src/react-app/domains/cloud-docs/use-cloud-docs-bounds", () => ({ useCloudDocsBounds: () => ({ snapshot: null, loaded() {}, sync: (id: string, ready: boolean, active: boolean) => visibility.set(id, ready && active) }) }));
 hostWindow.__JUGGLEWORK_ELECTRON__ = { cloudDocs: {
   open: async (input: { instanceId: string }) => { opened.push(input); states.forEach(fn => fn({ instanceId: input.instanceId, status: "ready" })); },
-  close: async (id: string) => { closed.push(id); },
+  close: async (id: string) => {
+    if (closeAllowed) closed.push(id);
+    return { closed: closeAllowed };
+  },
   onState: (fn: (value: unknown) => void) => { states.add(fn); return () => states.delete(fn); },
   onLayout: () => () => {}, onAiReference: () => () => {}, setAppearance() {}, layoutCommand() {}, highlightBlocks() {},
 } };
@@ -90,6 +94,11 @@ test("本地与多篇云文档反复切换保留各自实例；关闭标签和�
   await act(async () => activateCloudDocTab(sessionId, "cloud-ws/b"));
   expect(cloudDocTabsSnapshot(sessionId).active).toBe("cloud-ws/a");
   switchAllowed = true;
+  closeAllowed = false;
+  await act(async () => closeCloudDocTab(sessionId, "cloud-ws/b"));
+  expect(cloudDocTabsSnapshot(sessionId).tabs.some(item => item.docId === "b")).toBe(true);
+  expect(closed).toEqual([]);
+  closeAllowed = true;
   await act(async () => closeCloudDocTab(sessionId, "cloud-ws/b"));
   expect(closed).toEqual([b]);
   expect(captureCloudDocTurn(sessionId, "修改当前文档").activeDoc?.docId).toBe("a");

@@ -8,15 +8,17 @@ function fixture() {
   let reloads = 0;
   let nextTimer = 1;
   const timers = new Map();
+  /** @type {() => boolean} */
+  const isDestroyed = () => false;
   const webContents = Object.assign(new EventEmitter(), {
-    isDestroyed: () => false,
+    isDestroyed,
     getOSProcessId: () => 99,
     reload: () => { reloads += 1; },
   });
   const window = Object.assign(new EventEmitter(), {
     id: 7,
     webContents,
-    isDestroyed: () => false,
+    isDestroyed,
   });
   return {
     window,

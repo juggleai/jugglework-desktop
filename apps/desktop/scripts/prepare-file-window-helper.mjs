@@ -73,4 +73,7 @@ writeFileSync(
 </dict></plist>`,
 );
 run("codesign", ["--force", "--sign", "-", bundle]);
+// TIPS：旧名称与文件浏览器使用相同 Bundle ID，残留时会被系统识别为重复应用。
+// 仅在新入口构建及签名成功后清理旧产物，保留可用的文件浏览器入口。
+rmSync(join(out, "JuggleWork Documents.app"), { recursive: true, force: true });
 console.log(JSON.stringify({ ok: true, bundle, arch }));

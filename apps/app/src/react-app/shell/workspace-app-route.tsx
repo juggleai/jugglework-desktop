@@ -1,3 +1,8 @@
+import { toast } from "sonner";
+import { t } from "@/i18n";
+import { openCloudDocTab } from "@/app/lib/cloud-doc-tabs";
+import { readDenSettings } from "@/app/lib/den";
+import { denSessionUpdatedEvent, type DenSessionUpdatedDetail } from "@/app/lib/den-session-events";
 import { MeetingReminderHost } from "../domains/meeting/meeting-reminders";
 import { MeetingPage } from "../domains/meeting/meeting-page";
 import { MeetingRoomHost } from "../domains/meeting/meeting-room";
@@ -99,6 +104,21 @@ function WorkspaceAppRouteContent() {
   const [appsMounted, setAppsMounted] = useState(() => appPath?.view === "apps");
   const [reviewsMounted, setReviewsMounted] = useState(() => appPath?.view === "reviews");
   const [retainedDocs, setRetainedDocs] = useState<{ tenantId: string; search: string } | null>(() => appPath?.view === "cloud-docs" ? { tenantId: appPath.tenantId, search: location.search } : null);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const changed = (event: Event) => {
+      const { reason } = (event as CustomEvent<DenSessionUpdatedDetail>).detail ?? {};
+      if (reason !== "organization_switched" && reason !== "account_switched" && reason !== "signed_out") return;
+      // TIPS: 授权切换会关闭原生页；必须同时丢弃旧租户路由和页面定位，否则重试仍请求旧空间。
+      setRetainedDocs(null);
+      const settings = readDenSettings();
+      if (reason !== "signed_out" && appPath?.view === "cloud-docs" && settings.authToken && settings.activeOrgId) {
+        navigate(`/cloud-docs/${encodeURIComponent(settings.activeOrgId)}`, { replace: true });
+      }
+    };
+    window.addEventListener(denSessionUpdatedEvent, changed);
+    return () => window.removeEventListener(denSessionUpdatedEvent, changed);
+  }, [appPath?.view, navigate]);
   const [automationSession, setAutomationSession] = useState<RetainedSessionTarget | null>(null);
   const [automationSessionHost, setAutomationSessionHost] = useState<HTMLDivElement | null>(null);
   const retainedSessionHost = useRef<HTMLDivElement>(null);
@@ -258,7 +278,7 @@ function WorkspaceAppRouteContent() {
 
       <MeetingRoomHost />
       <MeetingReminderHost />
-      <div className={appPath.view === "meetings" ? "absolute inset-0 z-10 flex bg-background" : "hidden"} aria-hidden={appPath.view !== "meetings" || undefined}>
+      <div className={appPath.view === "meetings" ? "absolute inset-0 z-10 flex bg-dls-sidebar" : "hidden"} aria-hidden={appPath.view !== "meetings" || undefined}>
         <div style={{ width: APP_NAVIGATION_RAIL_WIDTH }} className="h-full shrink-0">
           <AppNavigationRail workspaceId={activeSession.workspaceId} onOpenAccount={() => openSurfaceSettings("cloud-account", "/meetings")} onOpenHome={() => navigate(sessionPath)} onOpenApps={() => navigate(workspaceAppsRoute(activeSession.workspaceId))} onOpenChat={() => navigate(workspaceChatRoute(activeSession.workspaceId))} onOpenReviews={() => navigate(workspaceReviewsRoute(activeSession.workspaceId))} onOpenSettings={() => openSurfaceSettings("preferences", "/meetings")} onOpenTaskSearch={workspaceShellActions.openTaskSearch} onOpenCreateWorkspace={workspaceShellActions.openCreateWorkspace}/>
         </div><div className="h-full min-w-0 flex-1"><MeetingPage active={meetingsVisible} /></div>
@@ -340,6 +360,14 @@ function WorkspaceAppRouteContent() {
             targetSearch={cloudDocsVisible ? location.search : retainedDocs!.search}
             active={cloudDocsVisible}
             workspaceId={activeSession.workspaceId}
+            onAiReference={reference => {
+              const sessionId = activeSession.sessionId;
+              if (!sessionId) { toast.info(t("cloud_docs.select_session")); navigate(sessionPath); return; }
+              // TIPS：会话面板保持挂载，先向指定会话插入引用，再显示该会话，不能扩大其他会话的范围。
+              window.dispatchEvent(new CustomEvent("jugglework:cloud-doc-reference", { detail: { sessionId, reference } }));
+              openCloudDocTab(sessionId, { tenantId: reference.tenantId, workspaceId: reference.workspaceId, docId: reference.docId, title: reference.title }, reference.blockIds);
+              navigate(sessionPath);
+            }}
             onOpenAccount={() => openSurfaceSettings("cloud-account", location.pathname)}
             onOpenHome={() => navigate(sessionPath)}
             onOpenApps={() => navigate(workspaceAppsRoute(activeSession.workspaceId))}

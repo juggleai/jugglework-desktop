@@ -33,7 +33,7 @@
 - **THEN** 该 Calendar 下既有 CalendarEvent 的稳定 ID 保持不变
 
 ### Requirement: 成员拥有个人日历集合
-系统 SHALL 为每个组织成员提供至少一个不可删除的默认个人 Calendar，并允许该成员创建、查看、更新和软删除其他个人 Calendar。
+系统 SHALL 为每个组织成员提供至少一个不可删除的默认个人 Calendar，并允许该成员创建、查看、更新和软删除其他个人 Calendar。默认个人 Calendar SHALL 使用日历可选色板的首个蓝色；Desktop 创建其他 Calendar 时 SHALL 从同一不含黑色的色板中优先选择尚未使用的颜色，色板耗尽后才循环。旧 `color: null` Calendar MUST 获得按稳定 Calendar ID 分配的非黑色色板回退，列表重排不得令同一组 Calendar 互换颜色，显式颜色不得被覆盖。
 
 #### Scenario: 首次访问默认日历
 - **WHEN** 有效组织成员首次读取个人日历集合
@@ -42,6 +42,14 @@
 #### Scenario: 创建额外个人日历
 - **WHEN** 成员提交有效的个人 Calendar 名称和可选展示颜色
 - **THEN** 系统创建归属该成员的新 Calendar 并返回其权威状态
+
+#### Scenario: 创建时未手动更改建议颜色
+- **WHEN** 成员打开创建 Calendar 对话框且没有手动选择颜色
+- **THEN** Desktop 从可选色板中提交第一个未被当前日历使用的颜色；当尚无日历时首色为蓝色
+
+#### Scenario: Legacy calendars omit colors
+- **WHEN** Desktop 读取一个或多个 `color: null` Calendar
+- **THEN** 每个 Calendar 使用按稳定 ID 分配的非黑色色板颜色，且显式颜色保持不变
 
 #### Scenario: 删除默认日历
 - **WHEN** 成员请求删除其默认个人 Calendar

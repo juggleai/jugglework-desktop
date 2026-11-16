@@ -26,6 +26,7 @@ export interface ActiveSessionMutation {
 interface StoredSessionMutation extends ActiveSessionMutation {
   abortAccepted: boolean;
   authoritativeIdleObservedAt: number | null;
+  restored: boolean;
 }
 
 export interface SessionMutationIdleReconciliation {
@@ -72,6 +73,7 @@ function publicRun(run: StoredSessionMutation): ActiveSessionMutation {
   const {
     abortAccepted: _abortAccepted,
     authoritativeIdleObservedAt: _authoritativeIdleObservedAt,
+    restored: _restored,
     ...safe
   } = run;
   return { ...safe };
@@ -94,6 +96,7 @@ export function createSessionMutationCoordinator(options: {
       ...restored,
       abortAccepted: restored.status === "aborting",
       authoritativeIdleObservedAt: null,
+      restored: true,
     };
     runs.set(sessionKey(run.workspaceId, run.sessionId), run);
     generations.set(sessionKey(run.workspaceId, run.sessionId), run.generation);
@@ -131,6 +134,7 @@ export function createSessionMutationCoordinator(options: {
       abortRequestedAt: null,
       abortAccepted: false,
       authoritativeIdleObservedAt: null,
+      restored: false,
     };
     emit({ event: "run_reserved", run: publicRun(run) });
     runs.set(key, run);
@@ -272,6 +276,7 @@ export function createSessionMutationCoordinator(options: {
     const timestamp = now();
     run.revision += 1;
     run.authoritativeIdleObservedAt = null;
+    run.restored = false;
     if (input.status !== "starting" && !run.observedActive) {
       run.observedActive = true;
       run.activeObservedAt = timestamp;
@@ -300,6 +305,7 @@ export function createSessionMutationCoordinator(options: {
     sessionId: string;
     runId: string;
     minimumIntervalMs: number;
+    terminalStatus?: Exclude<SessionMutationTerminalStatus, "aborted">;
   }): SessionMutationIdleReconciliation {
     const key = sessionKey(input.workspaceId, input.sessionId);
     const run = runs.get(key);
@@ -311,7 +317,7 @@ export function createSessionMutationCoordinator(options: {
       throw new TypeError("minimumIntervalMs must be a non-negative finite number");
     }
 
-    if (run.status === "starting") {
+    if (run.status === "starting" && (!run.restored || input.terminalStatus === undefined)) {
       return {
         cleared: false,
         run: publicRun(run),
@@ -362,9 +368,10 @@ export function createSessionMutationCoordinator(options: {
       };
     }
 
-    emit({ event: "run_terminal", run: publicRun(run), terminalReason: "completed" });
+    const terminalStatus = input.terminalStatus ?? "completed";
+    emit({ event: "run_terminal", run: publicRun(run), terminalReason: terminalStatus });
     runs.delete(key);
-    return { cleared: true, run: null, terminalStatus: "completed", retryAfterMs: null };
+    return { cleared: true, run: null, terminalStatus, retryAfterMs: null };
   }
 
   function listActive(workspaceId?: string): ActiveSessionMutation[] {
@@ -376,6 +383,11 @@ export function createSessionMutationCoordinator(options: {
   function getActive(workspaceId: string, sessionId: string): ActiveSessionMutation | null {
     const run = runs.get(sessionKey(workspaceId, sessionId));
     return run ? publicRun(run) : null;
+  }
+
+  function isRestored(workspaceId: string, sessionId: string, runId: string): boolean {
+    const run = runs.get(sessionKey(workspaceId, sessionId));
+    return Boolean(run && run.runId === runId && run.restored);
   }
 
   function updateTitle(input: { workspaceId: string; sessionId: string; title: string }): ActiveSessionMutation | null {
@@ -406,6 +418,7 @@ export function createSessionMutationCoordinator(options: {
     reconcileAuthoritativeIdle,
     listActive,
     getActive,
+    isRestored,
     updateTitle,
   });
 }

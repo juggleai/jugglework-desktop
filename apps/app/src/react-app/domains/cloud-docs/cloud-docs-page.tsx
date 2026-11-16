@@ -1,4 +1,5 @@
 import { rememberCloudDocsOrigin } from "./product-view";
+import type { CloudDocsAiReference } from "@/app/lib/cloud-docs-types";
 /** @jsxImportSource react */
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useNavigate } from "react-router-dom";
@@ -27,6 +28,7 @@ type Props = {
   targetSearch: string;
   active: boolean;
   workspaceId: string;
+  onAiReference?: (reference: CloudDocsAiReference) => void;
   onOpenAccount: () => void;
   onOpenHome: () => void;
   onOpenApps: () => void;
@@ -50,6 +52,8 @@ export function CloudDocsPage(props: Props) {
   const nativeBounds = useCloudDocsBounds(host);
   const active = useRef(props.active);
   active.current = props.active;
+  const referenceHandler = useRef(props.onAiReference);
+  referenceHandler.current = props.onAiReference;
   const updateLayout = useRef<() => void>(() => {});
   useLayoutEffect(() => { updateLayout.current(); }, [props.active]);
   const activeInstance = useRef<string | null>(null);
@@ -63,6 +67,16 @@ export function CloudDocsPage(props: Props) {
   >("loading");
   const [error, setError] = useState("");
   const [credentialScope, setCredentialScope] = useState(currentCredentialScope);
+  /** 授权已切换时重开当前空间首页，不重放旧空间的文档／评论定位。 */
+  const retry = () => {
+    const tenantId = auth.activeOrganization?.id;
+    const settings = readDenSettings();
+    if (auth.isSignedIn && tenantId && settings.activeOrgId === tenantId && tenantId !== props.tenantId) {
+      navigate(`/cloud-docs/${encodeURIComponent(tenantId)}`, { replace: true });
+    } else {
+      setAttempt(value => value + 1);
+    }
+  };
   useEffect(() => {
     // TIPS: 同一个 settings 事件还用于 IM 刷新；不能因此中断原生编辑和待保存增量。
     const changed = () => setCredentialScope(currentCredentialScope());
@@ -93,7 +107,7 @@ export function CloudDocsPage(props: Props) {
       setState("error");
       setError(
         bridge
-          ? t("cloud_docs.enter_organization")
+          ? t(auth.isSignedIn && auth.activeOrganization && props.tenantId !== auth.activeOrganization.id ? "cloud_docs.context_changed" : "cloud_docs.enter_organization")
           : t("cloud_docs.desktop_required"),
       );
       return;
@@ -159,6 +173,10 @@ export function CloudDocsPage(props: Props) {
     const unsubscribeLayout = bridge.onLayout((value) => {
       if (stillCurrent() && value.instanceId === instanceId) setLayout(value.layout);
     });
+    const unsubscribeReference = bridge.onAiReference(reference => {
+      if (active.current && stillCurrent() && reference.instanceId === instanceId && reference.tenantId === props.tenantId)
+        referenceHandler.current?.(reference);
+    });
     const unsubscribeTheme = subscribeToTheme(updateAppearance);
     const unsubscribeLocale = subscribeLocale(updateAppearance);
     const appearanceObserver = new MutationObserver(updateAppearance);
@@ -177,13 +195,14 @@ export function CloudDocsPage(props: Props) {
     });
     window.addEventListener("resize", updateBounds);
     document.addEventListener("visibilitychange", updateBounds);
+    // TIPS: 远端 AFFiNE 首次打开需要下载较大的按需分包；15 秒会在页面即将就绪时误判失败。
     const timeout = window.setTimeout(() => {
       if (stillCurrent() && !ready && !failed) {
         setState("error");
         setError(t("cloud_docs.connection_failed"));
         void bridge.close(instanceId);
       }
-    }, 15000);
+    }, 60_000);
     void (async () => {
       try {
         const launch = await createDenClient({
@@ -231,6 +250,7 @@ export function CloudDocsPage(props: Props) {
       unsubscribeLocale();
       unsubscribe();
       unsubscribeLayout();
+      unsubscribeReference();
       if (activeInstance.current === instanceId) activeInstance.current = null;
       window.removeEventListener("resize", updateBounds);
       document.removeEventListener("visibilitychange", updateBounds);
@@ -293,7 +313,7 @@ export function CloudDocsPage(props: Props) {
                   <div className="flex gap-2">
                     <Button
                       variant="outline"
-                      onClick={() => setAttempt((v) => v + 1)}
+                      onClick={retry}
                     >
                       {t("cloud_docs.retry")}
                     </Button>

@@ -18,7 +18,7 @@
 - CSV 与 Word 共用 OfficeEditor 及原生 Office 宿主，按格式打开 SDK 的 doc/sheet 页面，保存、关闭、自动保存与外部交接沿用同一服务；CSV 不进入 React 轻量表格及文本草稿写回路径，保存仍为 UTF-8 CSV，并要求单个工作表。TSV 保留轻量表格编辑和共享文本草稿。
 - Electron preload 通过异步能力检查确认实际主进程已注册文件窗口。旧主进程或旧 preload 下禁用独立入口并提示重启，避免 Vite 更新后仍调用不存在的 IPC；不自动重启正在运行任务的桌面应用。
 - 文件浏览器与聊天右侧栏共同使用 FileViewer 和同一本地 Server。TSV、Markdown 与文本通过 Electron 共享草稿、统一保存及关闭确认；DOCX、CSV、XLSX、PPTX 两处显示同一内容，显式激活时交接同一存活 WebContentsView，非活动宿主显示当前快照。
-- 原生文件窗口、页面标题及任务栏/Dock 名称统一为“JuggleWork 文件浏览器”，文件名在内部标签展示；macOS 辅助包为 `JuggleWork File Browser.app`，不复用测试宿主名称。
+- 原生文件窗口、页面标题及任务栏/Dock 名称统一为“JuggleWork 文件浏览器”，文件名在内部标签展示；macOS 辅助包为 `JuggleWork File Browser.app`，不复用测试宿主名称。构建及签名成功后清理同 Bundle ID 的旧 `JuggleWork Documents.app` 产物；云文档不新增独立应用包。
 - 生成文件、交付完成及恢复历史只更新产物，不自动打开面板。点击正文引用、卡片主体或产物列表文件时，复用右侧既有“文件”面板的路径 tab；卡片右侧“在独立窗口打开”图标单独触发窗口动作。
 - 指定文档 Logo 用于窗口和任务栏。Windows 使用文档独立 AppUserModelID 与 ICO；macOS 使用轻量 AppKit Dock 入口及 ICNS，通过管道激活主进程持有的文件窗口，保持同一 Office 页面与模型。Dock 入口不承载编辑器，系统窗口归属仍在主进程。取消退出或保存失败时保留窗口和入口，清理窗口后才停止 Runtime。
 - 完整产物索引采用工作区 JSON manifest 与唯一 Server 写入方；不新增数据库或复杂锁。初期消息候选校验路径作为旧消息兼容，不视为已完成受控生成与历史快照能力。

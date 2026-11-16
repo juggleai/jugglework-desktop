@@ -11,6 +11,8 @@ export interface FileWindowConversationOptions {
 export interface FileWindowTab {
   path: string;
   name: string;
+  kind?: "local-file" | "cloud-document" | "cloud-attachment";
+  cloudDoc?: { tenantId: string; workspaceId: string; docId: string; instanceId: string; docsOrigin?: string };
   /** 系统明确选择文件的原位置，仅本机文件标签提供；不授予父目录能力。 */
   absolutePath?: string;
   documentId?: string;
@@ -46,6 +48,8 @@ export type OfficeCreationKind = "docx" | "pptx";
 
 /** 独立窗口最小桥；文件操作通过同一 Server 和原生对话框执行。 */
 export interface FileWindowBridge {
+  /** 主窗口将已授权的原生云文档交接给现有 File Browser，不传源长期 Token。 */
+  openCloud?(input: { workspaceId: string; sessionId: string; document: { tenantId: string; workspaceId: string; docId: string; title: string }; launch: { tenantId: string; bootstrapUrl: string; docsOrigin: string; launchGrant: string; presentation: { instanceId: string; mode: "product" | "manage" } }; sourceServerOrigin: string; sourceUserId: string }): Promise<void>;
   /** 仅主窗口更新当前来源范围的上传结果，供独立文件窗口展示分享入口。 */
   setCloudUploads?(input: { scope: string | null; records: Array<{ localWorkspaceId: string; path: string; tenantId: string; url: string }> }): Promise<void>;
   /** 查询当前主进程是否已注册文件窗口入口，兼容开发时尚未重启的旧主进程。 */

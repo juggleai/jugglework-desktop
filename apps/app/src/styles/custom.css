@@ -18,3 +18,26 @@
 [data-theme="dark"] [data-app-rail-button][data-active="true"] {
   color: #fff;
 }
+
+/* 变更行的背景、行号底色和标记独立于代码 token，着色不覆盖增删提示。 */
+.workspace-diff-row .diff-line-number { color: var(--muted-foreground); border-inline-start: 4px solid transparent; }
+.workspace-diff-row[data-kind="add"] { background: #e6f4e7; color: #1f2328; }
+.workspace-diff-row[data-kind="del"] { background: #fce6e2; color: #1f2328; }
+.workspace-diff-row[data-kind="add"] .diff-line-number { background: #edf9ee; color: #009b35; border-inline-start-color: #00a63d; }
+.workspace-diff-row[data-kind="del"] .diff-line-number { background: #feeeeb; color: #d1242f; border-inline-start-color: #d1242f; }
+.diff-code-token { color: var(--diff-light); }
+:is(.dark, [data-theme="dark"]) .diff-code-token { color: var(--diff-dark); }
+/* TIPS: 增删行按产品要求保留浅底；暗色主题也使用浅底对应的语法颜色。 */
+.workspace-diff-row[data-kind="add"] .diff-code-token,
+.workspace-diff-row[data-kind="del"] .diff-code-token { color: var(--diff-light); }
+.file-tab-label[data-overflow="true"] { mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent); }
+
+/* 编辑正文使用增量语法解析，不改变编辑器的内容、历史和保存管线。 */
+.file-source-editor { --source-keyword: #d73a49; --source-string: #032f62; --source-constant: #005cc5; --source-function: #6f42c1; --source-tag: #22863a; --source-comment: #6a737d; }
+:is(.dark, [data-theme="dark"]) .file-source-editor { --source-keyword: #f97583; --source-string: #9ecbff; --source-constant: #79b8ff; --source-function: #b392f0; --source-tag: #85e89d; --source-comment: #959da5; }
+.source-code-keyword { color: var(--source-keyword); }
+.source-code-string { color: var(--source-string); }
+.source-code-constant { color: var(--source-constant); }
+.source-code-function, .source-code-type { color: var(--source-function); }
+.source-code-tag { color: var(--source-tag); }
+.source-code-comment { color: var(--source-comment); }

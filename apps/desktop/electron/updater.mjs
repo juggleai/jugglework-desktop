@@ -663,7 +663,7 @@ export function registerUpdaterIpc({
       installIntentActive = true;
       await triggerUpdaterInstall(
         updater,
-        onInstallAndRestart,
+        () => onInstallAndRestart?.(),
         failInstallIntent,
         () => installIntentActive
           && consumedUpdateIds.has(updateId)

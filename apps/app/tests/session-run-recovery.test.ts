@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { JuggleWorkServerError } from "../src/app/lib/jugglework-server";
 import {
   effectiveSessionRunning,
+  effectiveThreadStatus,
   isSessionBusyError,
   shouldReportAbortFailure,
 } from "../src/react-app/domains/session/surface/session-run-recovery";
@@ -15,13 +16,25 @@ describe("session run recovery", () => {
     })).toBe(true);
   });
   test("keeps Stop/Queue mode when the coordinator is active but OpenCode is idle", () => {
-    expect(effectiveSessionRunning({
+    const running = effectiveSessionRunning({
       sending: false,
       liveStatus: "idle",
       activityRunActive: false,
       activityRunEnded: false,
       coordinatorActive: true,
-    })).toBe(true);
+    });
+    expect(running).toBe(true);
+    expect(effectiveThreadStatus({
+      sending: false,
+      liveStatus: "idle",
+      running,
+    })).toBe("streaming");
+  });
+
+  test("keeps retry and submission presentation precedence", () => {
+    expect(effectiveThreadStatus({ sending: false, liveStatus: "retry", running: true })).toBe("retrying");
+    expect(effectiveThreadStatus({ sending: true, liveStatus: "retry", running: true })).toBe("submitted");
+    expect(effectiveThreadStatus({ sending: false, liveStatus: "idle", running: false })).toBe("ready");
   });
 
   test("keeps optimistic run state before the first busy event", () => {

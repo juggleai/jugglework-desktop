@@ -35,7 +35,8 @@ export function mergeCloudDocReferences(refs: CloudDocReference[], next: CloudDo
   const prior = refs[index];
   const blockIds = prior && (!prior.blockIds?.length || !next.blockIds?.length) ? undefined : [...new Set([...(prior?.blockIds ?? []), ...(next.blockIds ?? [])])];
   if (blockIds && blockIds.length > 200) throw new Error("cloud_docs.selection_limit");
-  const merged = { ...next, blockIds: blockIds?.length ? blockIds : undefined };
+  // TIPS：原生桥消息还带有 instanceId／action；草稿引用只保存稳定定位，避免恢复时被严格解析器拒绝。
+  const merged = { tenantId: next.tenantId, workspaceId: next.workspaceId, docId: next.docId, title: next.title, blockIds: blockIds?.length ? blockIds : undefined };
   return index < 0 ? [...refs, merged] : refs.map((ref, i) => i === index ? merged : ref);
 }
 

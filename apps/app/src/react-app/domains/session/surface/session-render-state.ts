@@ -1,11 +1,12 @@
 import type { UIMessage } from "ai";
 
-import type { JuggleWorkSessionSnapshot } from "../../../../app/lib/jugglework-server";
+import type { JuggleWorkSessionMessagesResponse, JuggleWorkSessionSnapshot } from "../../../../app/lib/jugglework-server";
 import { SYNTHETIC_RUN_DIAGNOSTIC_MESSAGE_PREFIX } from "../../../../app/types";
 import { mergeSnapshotAndLiveMessages } from "../sync/message-merge";
 import { applyRevertCursor } from "../sync/transcript-reconcile";
 import { snapshotToUIMessages } from "../sync/usechat-adapter";
 import { toCompactionPresentationMessage } from "../../../../app/lib/session-compaction";
+import { applyRawMessageRevertCursor, mergeHistoricalSessionMessages } from "../sync/session-history";
 
 export function resolveRenderedSessionSnapshot(input: {
   sessionId: string;
@@ -29,6 +30,7 @@ export function deriveRenderedSessionMessages(input: {
   transcriptState: UIMessage[] | null | undefined;
   snapshot: JuggleWorkSessionSnapshot | null | undefined;
   snapshotCurrent?: boolean;
+  historyPages?: JuggleWorkSessionMessagesResponse[];
 }) {
   return deriveContextEstimationMessages(input).map(toCompactionPresentationMessage);
 }
@@ -44,20 +46,43 @@ export function deriveContextEstimationMessages(input: {
   transcriptState: UIMessage[] | null | undefined;
   snapshot: JuggleWorkSessionSnapshot | null | undefined;
   snapshotCurrent?: boolean;
+  historyPages?: JuggleWorkSessionMessagesResponse[];
 }) {
   const revertMessageId = input.snapshotCurrent === false ? null : (input.snapshot?.session as any)?.revert?.messageID ?? null;
   const liveMessages = input.transcriptState ?? [];
 
   // TIPS: 失效快照的缺失历史已由同步层补入缓存；展示层不能再次合并旧元数据而丢失停止和完成时间。
-  const snapshotMessages = input.snapshotCurrent !== false && input.snapshot && input.snapshot.messages.length > 0
-    ? snapshotToUIMessages(input.snapshot)
+  const currentRawMessages = input.snapshotCurrent !== false ? input.snapshot?.messages ?? [] : [];
+  const historicalRawMessages = mergeHistoricalSessionMessages(input.historyPages ?? [], currentRawMessages);
+  const oldestPage = input.historyPages?.at(-1)?.page ?? input.snapshot?.messagePage;
+  const revertFallsBeforeLoadedWindow = Boolean(
+    revertMessageId
+    && oldestPage?.hasOlder !== false
+    && !historicalRawMessages.some((message) => message.info.id === revertMessageId),
+  );
+  if (revertFallsBeforeLoadedWindow) return [];
+  const visibleRawMessages = applyRawMessageRevertCursor(historicalRawMessages, revertMessageId, oldestPage?.hasOlder === true);
+  // An authoritative revert can legitimately remove the full loaded raw
+  // window. Do not then fall back to a stale live-only tail.
+  if (revertMessageId && visibleRawMessages.length === 0) return [];
+  const snapshotMessages = visibleRawMessages.length > 0
+    ? snapshotToUIMessages({
+        ...(input.snapshot ?? { session: { id: "history" }, todos: [], status: { type: "idle" } }),
+        messages: visibleRawMessages,
+      } as JuggleWorkSessionSnapshot)
     : [];
 
   // Render the server snapshot as the history floor and layer live stream
   // updates on top. During prompt submission the live cache can briefly contain
   // only the new turn; it must not replace the older persisted transcript.
   const messages = snapshotMessages.length > 0
-    ? mergeSnapshotAndLiveMessages(snapshotMessages, liveMessages, { appendLiveOnlyMessages: true })
+    ? mergeSnapshotAndLiveMessages(snapshotMessages, liveMessages, {
+        // A live-only record has no provable position relative to an active
+        // revert boundary. Overlapping live records can still update retained
+        // messages, but stale tail records must not be appended.
+        appendLiveOnlyMessages: !revertMessageId,
+        preserveLiveMessages: input.snapshotCurrent === false || (input.historyPages?.length ?? 0) > 0,
+      })
     : liveMessages;
 
   // Older clients may have left synthetic completion diagnostics in the live

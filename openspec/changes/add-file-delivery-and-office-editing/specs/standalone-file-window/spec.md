@@ -7,6 +7,10 @@
 - **WHEN** 用户打开任意格式的独立文件窗口
 - **THEN** 原生窗口、页面标题及任务栏/Dock 名称均为“JuggleWork 文件浏览器”，文件名在内部标签显示，不使用 Word Preview 等测试名称
 
+#### Scenario: 清理旧名称的 macOS 入口
+- **WHEN** 文件窗口辅助包构建成功，输出目录仍包含旧 `JuggleWork Documents.app`
+- **THEN** 清理旧名称产物，仅保留 `JuggleWork File Browser.app` 文件窗口入口，云文档不额外创建独立应用包
+
 #### Scenario: 关闭部分标签
 - **WHEN** 窗口中打开多个文件并关闭其中一个
 - **THEN** 其他标签及其存活编辑页面保留，不清空整个窗口

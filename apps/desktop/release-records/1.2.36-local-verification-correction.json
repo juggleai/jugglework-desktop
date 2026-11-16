@@ -1,0 +1,61 @@
+{
+  "schema": "com.juggleai.jugglework.macos-local-verification-correction",
+  "schemaVersion": 1,
+  "version": "1.2.36",
+  "sourceCommit": "be9eec8b5536e4ffe3ec93a454f118f957077f05",
+  "run": "Run432",
+  "correctionReason": "The original verifier ran without the explicit login-keychain credential context and recorded candidate/missing/unavailable despite accepted stapled receipts and Gatekeeper results. The standard verifier was rerun read-only with the explicit login keychain against the exact final artifacts and normalized immutable manifest.",
+  "oldDiscrepancy": {
+    "status": "preserved_unchanged",
+    "localVerification": "release-evidence/jugglework-desktop/1.2.36/local-verification-binding.json",
+    "originalVerifierLog": "/private/var/folders/yx/2rczyx6d17bfk49syjynq_640000gn/T/opencode/temp-runner-1.2.36/evidence/localManualEvidence/verify-packaged-macos-repaired.log",
+    "originalLocalVerification": "/private/var/folders/yx/2rczyx6d17bfk49syjynq_640000gn/T/opencode/temp-runner-1.2.36/evidence/localManualEvidence/macos-local-verification.json",
+    "originalState": "candidate",
+    "originalCredentialState": "missing",
+    "originalNotarization": "unavailable"
+  },
+  "correctedVerification": {
+    "status": "passed",
+    "localVerification": "/private/var/folders/yx/2rczyx6d17bfk49syjynq_640000gn/T/opencode/temp-runner-1.2.36/evidence/localManualEvidence/macos-local-verification-rerun.json",
+    "localVerificationSha256": "7124f01d371a87a7c7f18192d81b73fcac59225360194a5535893f1be4be8d70",
+    "verifierLog": "/private/var/folders/yx/2rczyx6d17bfk49syjynq_640000gn/T/opencode/temp-runner-1.2.36/evidence/localManualEvidence/verify-packaged-macos-rerun.log",
+    "verifierLogSha256": "ede6ddfff6891140b877de6fab9f1c0e7b64477ebb04a926268b41d8a1ae0e7a",
+    "verifiedAt": "2026-11-12T15:26:10.114Z",
+    "releaseState": "release",
+    "credentialState": "available",
+    "credentialCheck": "xcrun notarytool history --keychain $HOME/Library/Keychains/login.keychain-db --keychain-profile JUGGLEWORK_NOTARY_PROFILE --output-format json",
+    "trust": {
+      "app": "accepted/stapled/validated",
+      "dmg": "accepted/stapled/validated/Gatekeeper accepted",
+      "appSubmissionId": "2c5dc349-3fc4-4f8e-a0b6-c7c380e8b4b6",
+      "dmgSubmissionId": "4ace3c0e-5c1b-4a12-92bb-2b2f87c4c041"
+    }
+  },
+  "artifactBinding": {
+    "manifest": {
+      "name": "qiniu-v1.2.36-latest-mac.yml",
+      "size": 706,
+      "sha256": "9ae4ee110fbd7dc4fe0e286774c422d34868af3a7b47d563a5dff6427e600891"
+    },
+    "zip": {
+      "name": "jugglework-mac-arm64-1.2.36.zip",
+      "size": 423058751,
+      "sha256": "630fa3760727c4686824f9ac326ca5baaf511fe2f82f322dc721fa89dd02d3ba"
+    },
+    "dmg": {
+      "name": "jugglework-mac-arm64-1.2.36.dmg",
+      "size": 425601600,
+      "sha256": "baf1135f83851f67ffc826a1c99d0a08cacd8fbe820845825affed6ed8e475f2"
+    },
+    "zipBlockmapSha256": "50bc68044cf9fe0e6ab8945dcc30fc2eafad0d2f72e16e21bf8ce190ce0f537d",
+    "dmgBlockmapSha256": "edc9874b2e946957e1142ada38b4ea3a67294cb940ccdfbab91f719494c8eb1f"
+  },
+  "safety": {
+    "readOnly": true,
+    "notarySubmissionRerun": false,
+    "buildRerun": false,
+    "upload": false,
+    "promotion": false,
+    "keychainMutation": false
+  }
+}

@@ -83,10 +83,15 @@ const sessionListSchema = z.array(sessionInfoSchema);
 const sessionMessagesSchema = z.array(sessionMessageSchema);
 const sessionTodosSchema = z.array(sessionTodoSchema);
 const sessionStatusesSchema = z.record(z.string(), sessionStatusSchema);
+const sessionMessagePageSchema = z.object({
+  olderCursor: z.string().nullable(),
+  hasOlder: z.boolean(),
+});
 
 const sessionSnapshotSchema = z.object({
   session: sessionInfoSchema,
   messages: sessionMessagesSchema,
+  messagePage: sessionMessagePageSchema.optional(),
   todos: sessionTodosSchema,
   status: sessionStatusSchema,
 });
@@ -94,6 +99,7 @@ const sessionSnapshotSchema = z.object({
 export type SessionInfoReadModel = z.infer<typeof sessionInfoSchema>;
 export type SessionListItemReadModel = SessionInfoReadModel & { status: SessionStatusReadModel };
 export type SessionMessageReadModel = z.infer<typeof sessionMessageSchema>;
+export type SessionMessagePageReadModel = z.infer<typeof sessionMessagePageSchema>;
 export type SessionTodoReadModel = z.infer<typeof sessionTodoSchema>;
 export type SessionStatusReadModel = z.infer<typeof sessionStatusSchema>;
 export type SessionSnapshotReadModel = z.infer<typeof sessionSnapshotSchema>;
@@ -206,6 +212,11 @@ export function buildSessionMessages(value: SessionMessagesArrayResponse): Sessi
   return boundReadToolPayload(parseOrThrow(sessionMessagesSchema, value, "session messages"));
 }
 
+export function buildSessionMessagePage(response: Pick<Response, "headers">): SessionMessagePageReadModel {
+  const olderCursor = response.headers.get("X-Next-Cursor");
+  return { olderCursor, hasOlder: olderCursor !== null };
+}
+
 export function buildSessionTodos(value: SessionTodoResponse): SessionTodoReadModel[] {
   return parseOrThrow(sessionTodosSchema, value, "session todos");
 }
@@ -217,6 +228,7 @@ export function buildSessionStatuses(value: SessionStatusResponse): Record<strin
 export function buildSessionSnapshot(input: {
   session: SessionGetResponse;
   messages: SessionMessagesArrayResponse;
+  messagePage?: SessionMessagePageReadModel;
   todos: SessionTodoResponse;
   statuses: SessionStatusResponse;
 }): SessionSnapshotReadModel {
@@ -229,6 +241,7 @@ export function buildSessionSnapshot(input: {
     {
       session,
       messages,
+      ...(input.messagePage ? { messagePage: input.messagePage } : {}),
       todos,
       status: statuses[session.id] ?? IDLE_STATUS,
     },

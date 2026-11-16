@@ -2,12 +2,9 @@ import { describe, expect, test } from "bun:test";
 import {
   bindDocsMessage,
   dedupeDocsMessages,
-  docsConversationVisible,
   docsMessageSource,
   parseDocsCard,
-  parseDocsConversationContext,
   type ChatConnectionScope,
-  type DocsConversationContext,
 } from "../src/react-app/domains/jugglechat/docs-message";
 import {
   openDocsCard,
@@ -20,8 +17,8 @@ import {
 } from "../src/react-app/domains/jugglechat/docs-notification-action";
 import type { ChatMessage } from "../src/react-app/domains/jugglechat/types";
 
-const botA = "jw_docs_" + "a".repeat(32),
-  botB = "jw_docs_" + "b".repeat(32);
+const botA = "jw_docs_" + "a".repeat(24),
+  botB = "jw_docs_" + "b".repeat(24);
 const scope: ChatConnectionScope = Object.freeze({
   key: "scopeA",
   server: "https://example.test/deployment-a",
@@ -30,16 +27,6 @@ const scope: ChatConnectionScope = Object.freeze({
   authFingerprint: "4:1234",
   imUserId: "u",
 });
-const context: DocsConversationContext = {
-  tenantId: "a",
-  botIMUserId: botA,
-  groupId: "docs_a",
-  groups: [
-    { conversationId: "docs_a", managed: true, currentTenant: true },
-    { conversationId: "docs_b", managed: true, currentTenant: false },
-    { conversationId: "regular", managed: false, currentTenant: false },
-  ],
-};
 const card = (): ChatMessage => ({
   messageId: "message-1",
   name: "jw:docs-notification",
@@ -72,64 +59,33 @@ describe("云文档固定卡片", () => {
       ).toBeNull();
     expect(parseDocsCard(card())?.pageId).toBe("page_1");
   });
-  test("同 App 的另一组织群和助手隐藏，普通群不受其载荷影响", () => {
-    expect(
-      docsConversationVisible(
-        { conversationId: "docs_b", conversationType: 2 },
-        context,
-      ),
-    ).toBe(false);
-    expect(
-      docsConversationVisible(
-        { conversationId: botB, conversationType: 1 },
-        context,
-      ),
-    ).toBe(false);
-    expect(
-      docsConversationVisible(
-        { conversationId: "regular", conversationType: 2 },
-        context,
-      ),
-    ).toBe(true);
-    expect(
-      docsConversationVisible(
-        { conversationId: "unknown", conversationType: 2 },
-        context,
-      ),
-    ).toBe(false);
-    expect(
-      docsConversationVisible(
-        { conversationId: "human", conversationType: 1 },
-        null,
-      ),
-    ).toBe(true);
-  });
   test("实际助手和会话均匹配才能绑定，转发或 JSON 伪造不能继承动作", () => {
-    const bound = bindDocsMessage(card(), scope, context);
+    const bound = bindDocsMessage(card(), scope);
     expect(docsMessageSource(bound)?.scope).toBe(scope);
+    expect(docsMessageSource(bindDocsMessage({ ...card(), sender: { id: "jw_docs_" + "a".repeat(32) } }, scope))?.scope).toBe(scope);
     for (const patch of [
       { sender: { id: "human" } },
-      { conversationId: "regular" },
+      { sender: { id: "jw_docs_" + "a".repeat(25) } },
+      { conversationType: 1, conversationId: "regular" },
       { isSender: true },
     ])
       expect(
         docsMessageSource(
-          bindDocsMessage({ ...card(), ...patch }, scope, context),
+          bindDocsMessage({ ...card(), ...patch }, scope),
         ),
       ).toBeNull();
     expect(docsMessageSource(JSON.parse(JSON.stringify(bound)))).toBeNull();
     expect(
       docsMessageSource(
-        bindDocsMessage(bound, { ...scope, tenantId: "b" }, context),
+        bindDocsMessage(bound, { ...scope, tenantId: "b" }),
       ),
     ).toBeNull();
   });
   test("同一事件的不同 IM 消息去重，未修改外部 SDK 消息和未读索引", () => {
-    const a = bindDocsMessage(card(), scope, context),
+    const a = bindDocsMessage(card(), scope),
       b = bindDocsMessage(
         { ...card(), messageId: "message-2" },
         scope,
-        context,
       );
     expect(dedupeDocsMessages([a, b])).toEqual([a]);
     expect(
@@ -140,25 +96,7 @@ describe("云文档固定卡片", () => {
     ).toEqual([a]);
     expect(card().messageId).toBe("message-1");
   });
-  test("源分类缺页、重复项或跨组织响应不放行", () => {
-    expect(() =>
-      parseDocsConversationContext(context, "b", [
-        "docs_a",
-        "docs_b",
-        "regular",
-      ]),
-    ).toThrow();
-    expect(() =>
-      parseDocsConversationContext({ ...context, groups: [] }, "a", ["docs_a"]),
-    ).toThrow();
-    expect(() =>
-      parseDocsConversationContext(
-        { ...context, groups: [context.groups[0], context.groups[0]] },
-        "a",
-        ["docs_a"],
-      ),
-    ).toThrow();
-  });
+
 });
 
 describe("卡片交接状态机", () => {
@@ -195,7 +133,7 @@ describe("卡片交接状态机", () => {
   test("同组织核对持久事件后构造固定页面和评论路由", async () => {
     const f = fixture();
     expect(
-      await openDocsCard(bindDocsMessage(card(), scope, context), f.navigation),
+      await openDocsCard(bindDocsMessage(card(), scope), f.navigation),
     ).toBe("opened");
     expect(f.paths).toEqual([
       "/cloud-docs/a?pageId=page_1&commentId=comment_1",
@@ -205,7 +143,7 @@ describe("卡片交接状态机", () => {
   test("系统通知保留接收时来源并复用同一交接状态机", async () => {
     const f = fixture();
     const action = createDocsNotificationAction(
-      bindDocsMessage(card(), scope, context),
+      bindDocsMessage(card(), scope),
     );
     expect(action).not.toBeNull();
     const parsed = parseDocsNotificationAction(action);
@@ -238,7 +176,7 @@ describe("卡片交接状态机", () => {
       f.account = { ...f.account, ...patch };
       expect(
         await openDocsCard(
-          bindDocsMessage(card(), scope, context),
+          bindDocsMessage(card(), scope),
           f.navigation,
         ),
       ).toBe("source-changed");
@@ -250,7 +188,7 @@ describe("卡片交接状态机", () => {
     const f = fixture();
     f.account = { ...f.account, tenantId: "b" };
     f.navigation.confirmSwitch = () => false;
-    const message = bindDocsMessage(card(), scope, context);
+    const message = bindDocsMessage(card(), scope);
     expect(await openDocsCard(message, f.navigation)).toBe("cancelled");
     expect(f.account.tenantId).toBe("b");
     f.navigation.confirmSwitch = () => true;
@@ -261,7 +199,7 @@ describe("卡片交接状态机", () => {
     const f = fixture();
     f.account = { ...f.account, tenantId: "b" };
     f.navigation.switchOrganization = async () => {};
-    const message = bindDocsMessage(card(), scope, context);
+    const message = bindDocsMessage(card(), scope);
     expect(await openDocsCard(message, f.navigation)).toBe("source-changed");
     f.account = { ...scope };
     f.navigation.validate = async () => {
@@ -282,7 +220,7 @@ describe("卡片交接状态机", () => {
       await gate;
       return { valid: true };
     };
-    const message = bindDocsMessage(card(), scope, context);
+    const message = bindDocsMessage(card(), scope);
     const action = createDocsNotificationAction(message)!;
     const fromCard = openDocsCard(message, f.navigation);
     const fromSystem = openDocsSource(
@@ -306,7 +244,7 @@ describe("卡片交接状态机", () => {
     const f = fixture();
     f.navigation.validate = async () => ({ valid: false });
     expect(
-      await openDocsCard(bindDocsMessage(card(), scope, context), f.navigation),
+      await openDocsCard(bindDocsMessage(card(), scope), f.navigation),
     ).toBe("unavailable");
     expect(await openDocsCard(card(), f.navigation)).toBe("unavailable");
     expect(f.paths).toHaveLength(0);

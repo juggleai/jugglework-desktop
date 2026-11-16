@@ -1,8 +1,56 @@
 import { describe, expect, test } from "bun:test";
 
-import { buildSessionMessages } from "./session-read-model.js";
+import { buildSessionMessagePage, buildSessionMessages, buildSessionSnapshot } from "./session-read-model.js";
+import { readOpencodeSessionMessages } from "./routes/sessions.js";
 
 describe("session read model output bounds", () => {
+  test("passes opaque cursors and cancellation through the legacy SDK wrapper", async () => {
+    const controller = new AbortController();
+    let capturedParameters: unknown;
+    let capturedSignal: AbortSignal | undefined;
+    const opencode = {
+      session: {
+        messages(parameters: unknown, options?: { signal?: AbortSignal }) {
+          capturedParameters = parameters;
+          capturedSignal = options?.signal;
+          return new Promise((_, reject) => {
+            options?.signal?.addEventListener("abort", () => reject(options.signal?.reason), { once: true });
+          });
+        },
+      },
+    };
+
+    const pending = readOpencodeSessionMessages(opencode as never, "ses_1", {
+      limit: 100,
+      before: "opaque+/cursor==",
+      signal: controller.signal,
+    });
+    expect(capturedParameters).toEqual({ sessionID: "ses_1", limit: 100, before: "opaque+/cursor==" });
+    expect(capturedSignal).toBe(controller.signal);
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+  });
+
+  test("maps the opaque next cursor without interpreting it", () => {
+    const cursor = "opaque+/cursor==";
+    expect(buildSessionMessagePage(new Response(null, { headers: { "X-Next-Cursor": cursor } }))).toEqual({
+      olderCursor: cursor,
+      hasOlder: true,
+    });
+    expect(buildSessionMessagePage(new Response())).toEqual({ olderCursor: null, hasOlder: false });
+  });
+
+  test("includes optional message page metadata in snapshots", () => {
+    const snapshot = buildSessionSnapshot({
+      session: { id: "ses_1", title: "Test", directory: "/tmp", time: { created: 1, updated: 1 } },
+      messages: [],
+      messagePage: { olderCursor: "cursor_1", hasOlder: true },
+      todos: [],
+      statuses: {},
+    } as never);
+    expect(snapshot.messagePage).toEqual({ olderCursor: "cursor_1", hasOlder: true });
+  });
+
   test("bounds large read results before they cross into the renderer", () => {
     const original = `${"x".repeat(3 * 1024 * 1024)}TAIL`;
     const input = [{

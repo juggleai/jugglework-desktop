@@ -134,7 +134,7 @@ test("legacy absolute paths do not render a duplicated directory separator", () 
   expect(html).not.toContain("opencode//review_overlay.json");
 });
 
-test("active file tab always shows close while inactive tabs reveal it on hover", () => {
+test("selected tabs show close; inactive tabs reveal close on hover or keyboard focus", () => {
   const html = renderToStaticMarkup(<FileTabs
     tabs={[
       { path: "artifacts/截图中都有什么字.docx", name: "截图中都有什么字.docx" },
@@ -149,13 +149,29 @@ test("active file tab always shows close while inactive tabs reveal it on hover"
   expect(html).not.toContain("invisible");
   expect(html).toContain('data-active="true"');
   expect(html).toContain('data-active="false"');
-  expect(html).toContain("opacity-100");
-  expect(html).toContain("opacity-0");
-  expect(html).toContain("group-hover:opacity-100");
-  expect(html).toContain("pr-2 group-hover:pr-7 group-focus-within:pr-7");
-  expect(html).toContain("pr-7");
-  expect(html).toContain("truncate");
+  const closeButtons = html.match(/<button[^>]+aria-label="Close [^"]+"[^>]*>/g)!;
+  expect(closeButtons).toHaveLength(2);
+  expect(closeButtons[0]).toContain("opacity-100");
+  expect(closeButtons[0]).not.toContain("opacity-0");
+  expect(closeButtons[1]).toContain("pointer-events-none opacity-0");
+  expect(closeButtons[1]).toContain("group-hover:opacity-100");
+  expect(closeButtons[1]).toContain("group-has-[:focus-visible]:opacity-100");
+  expect(html).not.toContain("group-hover:pr-");
+  expect(html).toContain("pr-8");
+  expect(html).toContain("file-tab-label");
+  expect(html).not.toContain("truncate");
   expect(html).toContain("Close 截图中都有什么字.docx");
+});
+
+test("cloud tab pop-out is not an invisible pointer target and stays keyboard reachable", () => {
+  const html = renderToStaticMarkup(<FileTabs tabs={[]} activePath={null} dirtyPaths={new Set()} changesTab={null} onSelect={() => {}} onClose={() => {}}
+    cloudTabs={[{ key: "doc", title: "Cloud document", active: true, onSelect() {}, onClose() {}, onOpenWindow() {} }]} />);
+  const button = html.match(/<button[^>]+aria-label="Open in separate window"[^>]*>/)?.[0];
+  expect(button).toBeDefined();
+  expect(button).toContain("pointer-events-none opacity-0");
+  expect(button).toContain("group-hover:pointer-events-auto");
+  expect(button).toContain("group-has-[:focus-visible]:pointer-events-auto");
+  expect(button).toContain("mac:titlebar-no-drag");
 });
 
 test("reveals all remaining artifacts at once and then collapses", async () => {
@@ -270,8 +286,9 @@ test("turn viewer pairs changed lines and opens a binary file in a file tab", as
   const doc = artifact("report.docx");
   const html = renderToStaticMarkup(<TurnChangesView artifacts={[changed, doc]} selectedPath={changed.path} onSelect={() => {}} />);
   expect(html).toContain('data-testid="turn-split-diff"');
-  expect(html).toContain("bg-red-3");
-  expect(html).toContain("bg-green-3");
+  expect(html).not.toContain("@@ -10,2 +10,3 @@");
+  expect(html).toContain('data-kind="del"');
+  expect(html).toContain('data-kind="add"');
   expect(html).toContain("old");
   expect(html).toContain("extra");
   const binaryHtml = renderToStaticMarkup(<TurnChangesView artifacts={[doc]} selectedPath={doc.path} onSelect={() => {}} onOpenFile={() => {}} />);
@@ -289,9 +306,9 @@ test("turn viewer pairs changed lines and opens a binary file in a file tab", as
   let view: ReactTestRenderer | undefined;
   try {
     await act(async () => { view = create(<TurnChangesView artifacts={[doc]} selectedPath={null} onSelect={() => {}} onOpenFile={openFile} />); });
-    await act(async () => view!.root.findByProps({ "data-testid": "artifact-card" }).findAllByType("button")[0]!.props.onClick());
+    await act(async () => view!.root.findByProps({ "data-testid": "file-change-section" }).findAllByType("button")[0]!.props.onClick());
     expect(openFile).toHaveBeenCalledWith(doc);
-    await act(async () => view!.root.findByProps({ "data-testid": "artifact-card" }).findAllByType("button")[1]!.props.onClick());
+    await act(async () => view!.root.findByProps({ "data-testid": "file-change-section" }).findAllByType("button")[1]!.props.onClick());
     expect(openFile).toHaveBeenCalledTimes(2);
   } finally {
     await act(async () => view?.unmount());
@@ -311,7 +328,7 @@ test("turn viewer selection and closing do not alter other sessions or open file
   const select = mock((path: string | null) => store.selectChange("changes-a", path));
   try {
     await act(async () => { view = create(<TurnChangesView artifacts={items} selectedPath="first.md" onSelect={select} />); });
-    await act(async () => view!.root.findAllByProps({ "data-testid": "artifact-card" })[1]!.findAllByType("button")[0]!.props.onClick());
+    await act(async () => view!.root.findAllByProps({ "data-testid": "file-change-section" })[1]!.findAllByType("button")[0]!.props.onClick());
     expect(select).toHaveBeenCalledWith("second.md");
     store.openFile("changes-a", { path: "report.docx", name: "report.docx" });
     expect(useFilesPanelStore.getState().sessions["changes-a"]).toMatchObject({ activeKey: "files", activePath: "report.docx" });

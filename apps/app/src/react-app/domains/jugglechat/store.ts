@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-import { createDenClient, readDenIMLoginBootstrap, readDenSettings, type DenUser } from "@/app/lib/den";
+import { readDenIMLoginBootstrap, readDenSettings, type DenUser } from "@/app/lib/den";
 import { createJuggleWorkServerClient } from "@/app/lib/jugglework-server";
 import { resolveJuggleWorkConnection } from "@/react-app/shell/jugglework-connection";
 import { getChatGroupsForContacts, getMembers } from "./api";
@@ -17,7 +17,7 @@ import { startJuggleChatSkillBridge } from "./skill-bridge";
 import type { ChatContact, ChatConversation, ChatMessage, ChatReaction, ChatUser, ChatView } from "./types";
 import { readChatConnectionScope } from "./chat-connection";
 import { denSettingsChangedEvent } from "@/app/lib/den-session-events";
-import { bindDocsMessage, dedupeDocsMessages, docsConversationVisible, parseDocsConversationContext, type ChatConnectionScope, type DocsConversationContext } from "./docs-message";
+import { bindDocsMessage, dedupeDocsMessages, type ChatConnectionScope } from "./docs-message";
 import { notifyDocsDesktopMessage } from "./docs-desktop-notifications";
 
 type ConnectionStatus = "idle" | "initializing" | "signed-out" | "connecting" | "connected" | "disconnected" | "error";
@@ -76,49 +76,11 @@ type JuggleChatState = {
 // 判断要不要跳过合并，见那里的 TIPS。
 const IGNORED_CONVERSATIONS = new Set(["friend_apply", "post_ntf", ""]);
 let subscriptionsStarted = false;
-let docsContext: DocsConversationContext | null = null;
-let docsContextKey = "";
-let docsContextCheckedAt = 0;
 let conversationLoad: { scope: ChatConnectionScope; promise: Promise<void> } | null = null;
 
 /** 每个异步阶段检查调用时的完整连接范围，迟到 A 结果不能进入 B。 */
 function currentScope(scope: ChatConnectionScope | null): scope is ChatConnectionScope {
   return !!scope && useJuggleChatStore.getState().connectionScope === scope && readChatConnectionScope()?.key === scope.key;
-}
-
-/** 只为未知群或到期缓存读取源分类；无完整归属时不放行群或云文档助手。 */
-async function classifyConversations(scope: ChatConnectionScope, conversations: Pick<ChatConversation, "conversationId" | "conversationType">[]) {
-  if (!currentScope(scope)) return;
-  if (docsContextKey !== scope.key) { docsContext = null; docsContextKey = scope.key; docsContextCheckedAt = 0; }
-  const expired = Date.now() - docsContextCheckedAt >= 30000;
-  const ids = [...new Set(conversations.filter(c => c.conversationType === 2).map(c => c.conversationId))]
-    .filter(id => /^[A-Za-z0-9_-]{1,64}$/.test(id) && (expired || !docsContext?.groups.some(g => g.conversationId === id)));
-  if (!ids.length && docsContext && Date.now() - docsContextCheckedAt < 30000) return;
-  const settings = readDenSettings();
-  const client = createDenClient({ baseUrl: scope.server, token: settings.authToken });
-  try {
-    for (let start = 0; start < Math.max(ids.length, 1); start += 100) {
-      const batch = ids.slice(start, start + 100);
-      const next = parseDocsConversationContext(await client.docsConversationContext(scope.tenantId, batch), scope.tenantId, batch);
-      if (!currentScope(scope)) return;
-      const groups = new Map(docsContext?.groups.map(item => [item.conversationId, item]));
-      for (const item of next.groups) groups.set(item.conversationId, item);
-      docsContext = { ...next, groups: [...groups.values()] };
-    }
-    docsContextCheckedAt = Date.now();
-  } catch (error) {
-    if (currentScope(scope)) {
-      docsContext = null; docsContextCheckedAt = 0;
-      // TIPS: 分类失败后立即撤下未核实的群内容，包括置顶和回复，避免继续展示旧缓存。
-      const state = useJuggleChatStore.getState();
-      const conversations = state.conversations.filter(c => docsConversationVisible(c, null));
-      const activeConversation = state.activeConversation && docsConversationVisible(state.activeConversation, null) ? state.activeConversation : null;
-      useJuggleChatStore.setState({ conversations, activeConversation,
-        messages: activeConversation ? filterVisibleMessages(state.messages) : [],
-        pinnedMessage: null, replyTo: null, totalUnreadCount: 0, conversationsInitialized: false });
-    }
-    throw error;
-  }
 }
 
 function messageKey(message: ChatMessage) {
@@ -192,8 +154,8 @@ function syncActiveConversation(activeConversation: ChatConversation | null, con
 function filterVisibleMessages(messages: ChatMessage[]) {
   const scope = useJuggleChatStore.getState().connectionScope;
   if (!currentScope(scope)) return [];
-  return dedupeDocsMessages(messages.filter(message => !isHiddenAutomationConversationMessage(message) && docsConversationVisible(message, docsContext))
-    .map(message => bindDocsMessage(message, scope, docsContext)));
+  return dedupeDocsMessages(messages.filter(message => !isHiddenAutomationConversationMessage(message))
+    .map(message => bindDocsMessage(message, scope)));
 }
 
 function appendMessages(current: ChatMessage[], incoming: ChatMessage[]) {
@@ -242,10 +204,9 @@ function isHiddenConversationUpdate(conversation: ChatConversation): boolean {
 }
 
 function mergeConversations(current: ChatConversation[], incoming: ChatConversation[], currentUserId?: string) {
-  const map = new Map(current.filter(conversation => docsConversationVisible(conversation, docsContext)).map((conversation) => [`${conversation.conversationType}:${conversation.conversationId}`, conversation]));
+  const map = new Map(current.map((conversation) => [`${conversation.conversationType}:${conversation.conversationId}`, conversation]));
   for (const conversation of incoming) {
     if (!conversation.conversationId || conversation.conversationId === currentUserId || IGNORED_CONVERSATIONS.has(conversation.conversationId)) continue;
-    if (!docsConversationVisible(conversation, docsContext)) continue;
     if (isHiddenConversationUpdate(conversation)) continue;
     const key = `${conversation.conversationType}:${conversation.conversationId}`;
     map.set(key, { ...map.get(key), ...conversation, ...(conversation.latestMessage ? { latestMessage: filterVisibleMessages([conversation.latestMessage])[0] } : {}) });
@@ -306,9 +267,6 @@ function startSubscriptions() {
     void (async () => {
       if (!currentScope(scope)) return;
       if (message.isStatus) return;
-      await classifyConversations(scope, [message]);
-      if (!currentScope(scope)) return;
-      if (!docsConversationVisible(message, docsContext)) { void useJuggleChatStore.getState().loadConversations(); return; }
       const visibleMessage = filterVisibleMessages([message])[0];
       if (!visibleMessage) return;
       // TIPS: jugglework-server 事件中继在生成一条投递后，会顺手往这台设备的 IM 账号推一条
@@ -484,7 +442,6 @@ export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
     if (get().connectionScope?.key !== scope?.key) {
       juggleChatRuntime.reset();
       releaseLocalMediaUrls(get().messages);
-      docsContext = null; docsContextKey = ""; docsContextCheckedAt = 0;
       set({ connectionScope: scope, user: null, conversations: [], conversationsInitialized: false,
         activeConversation: null, messages: [], contacts: [], groups: [], totalUnreadCount: 0, pinnedMessage: null, replyTo: null,
         loadingMessages: false, loadingContacts: false, loadingConversations: false, sending: false });
@@ -587,16 +544,13 @@ export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
           if (!added || !Number.isFinite(next) || time > 0 && next >= time) throw new Error("组织会话分页暂时不可用");
           time = next;
         }
-        await classifyConversations(scope, rawConversations);
         if (!currentScope(scope)) return;
         const conversations = mergeConversations([], rawConversations, get().user?.id);
         const active = get().activeConversation;
-        const hidden = !!active && !docsConversationVisible(active, docsContext);
         set({
           conversations,
           conversationsInitialized: true,
-          activeConversation: hidden ? null : syncActiveConversation(active, conversations),
-          ...(hidden ? { messages: [], pinnedMessage: null, replyTo: null } : {}),
+          activeConversation: syncActiveConversation(active, conversations),
           loadingConversations: false,
         });
         // TIPS: 会话列表与聊天页顶部的显示名要靠通讯录兜底（引擎给的 conversationTitle
@@ -605,9 +559,7 @@ export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
         await get().refreshTotalUnreadCount();
       } catch (error) {
         if (currentScope(scope)) {
-          const conversations = get().conversations.filter(c => docsConversationVisible(c, docsContext));
-          set({ conversations, activeConversation: conversations.find(c => isSameConversation(c, get().activeConversation)) ?? null,
-            messages: filterVisibleMessages(get().messages), totalUnreadCount: 0, loadingConversations: false, error: errorMessage(error) });
+          set({ loadingConversations: false, error: errorMessage(error) });
         }
       }
     })().finally(() => { if (conversationLoad?.promise === promise) conversationLoad = null; });
@@ -624,7 +576,7 @@ export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
       const scope = get().connectionScope;
       if (!currentScope(scope)) return;
       if (!get().conversationsInitialized) { void get().loadConversations(); return; }
-      // TIPS: 只聚合已完整分类的 SDK 会话快照；全量计数查询可能混入刚到达的另一组织群。
+      // TIPS: 只聚合当前 AppKey 连接的 SDK 会话快照，保留系统会话过滤。
       set({ totalUnreadCount: get().conversations.reduce((sum, conversation) => sum + Math.max(0, Number(conversation.unreadCount) || 0), 0) });
     } catch {
       // A transient unread-count failure must not disconnect chat.
@@ -634,8 +586,6 @@ export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
   async selectConversation(conversation, options) {
     const scope = get().connectionScope;
     if (!currentScope(scope)) return;
-    await classifyConversations(scope, [conversation]);
-    if (!currentScope(scope) || !docsConversationVisible(conversation, docsContext)) return;
     releaseLocalMediaUrls(get().messages);
     if (options?.loadHistory === false) {
       set({
@@ -753,8 +703,6 @@ export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
           ? { conversationPortrait: existing.conversationPortrait }
           : {}),
     };
-    await classifyConversations(scope, [conversation]);
-    if (!currentScope(scope) || !docsConversationVisible(conversation, docsContext)) return;
     // Ensure the conversation appears in the list immediately using the
     // in-memory group / contact data — no need to wait for a full list fetch.
     set({

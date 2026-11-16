@@ -4,17 +4,23 @@ import { Temporal } from "@js-temporal/polyfill";
 import { createCalendarScope } from "../src/react-app/domains/calendar/calendar-scope";
 import {
   CALENDAR_GRID_DAYS,
+  calendarColorsStorageKey,
   calendarGridRange,
   calendarHiddenStorageKey,
   calendarMonthGrid,
   calendarToday,
+  calendarWeekStart,
   calendarWeekdayOrder,
   navigateCalendarMonth,
+  parseCalendarColorOverrides,
   parseHiddenCalendarIds,
+  readCalendarColorOverrides,
   readHiddenCalendarIds,
+  reconcileCalendarColorOverrides,
   reconcileHiddenCalendarIds,
   selectCalendarDate,
   visibleCalendarIds,
+  writeCalendarColorOverrides,
   writeHiddenCalendarIds,
 } from "../src/react-app/domains/calendar/calendar-month-model";
 
@@ -31,6 +37,11 @@ describe("calendar month model", () => {
     expect(sunday[0]!.toString()).toBe("2026-11-01");
     expect(calendarGridRange(month("2026-11"), 1)).toEqual({ startDate: "2026-10-26", endDateExclusive: "2026-12-07" });
     expect(calendarWeekdayOrder(7)).toEqual([7, 1, 2, 3, 4, 5, 6]);
+  });
+
+  test("uses Feishu's Sunday-first convention for Chinese calendars", () => {
+    expect(calendarWeekStart("zh-CN")).toBe(7);
+    expect(calendarWeekStart("zh-TW")).toBe(7);
   });
 
   test("handles month and year boundaries", () => {
@@ -60,5 +71,21 @@ describe("calendar month model", () => {
     expect(values.size).toBe(0);
     expect(parseHiddenCalendarIds('["a", 3, "", null, "a"]')).toEqual(["a"]);
     expect(parseHiddenCalendarIds("nope")).toEqual([]);
+  });
+
+  test("keeps validated calendar color overrides local and scoped", () => {
+    const values = new Map<string, string>();
+    const storage = { getItem: (k: string) => values.get(k) ?? null, setItem: (k: string, v: string) => { values.set(k, v); }, removeItem: (k: string) => { values.delete(k); } };
+    const scopeA = createCalendarScope({ deploymentBaseUrl: "https://den.example/api", organizationId: "org-a", memberId: "member-a" })!;
+    const scopeB = createCalendarScope({ deploymentBaseUrl: "https://den.example/api", organizationId: "org-b", memberId: "member-a" })!;
+    writeCalendarColorOverrides(scopeA, { "cal-1": "#3370ff", "cal-2": "#d84fa3" }, storage);
+    expect(readCalendarColorOverrides(scopeA, storage)).toEqual({ "cal-1": "#3370ff", "cal-2": "#d84fa3" });
+    expect(readCalendarColorOverrides(scopeB, storage)).toEqual({});
+    expect(calendarColorsStorageKey(scopeA)).not.toBe(calendarColorsStorageKey(scopeB));
+    expect(reconcileCalendarColorOverrides({ "cal-1": "#3370ff", gone: "#ffffff" }, ["cal-1"])).toEqual({ "cal-1": "#3370ff" });
+    expect(parseCalendarColorOverrides('{"ok":"#abcdef","short":"#fff","bad":"red","":"#123456"}')).toEqual({ ok: "#abcdef" });
+    expect(parseCalendarColorOverrides("nope")).toEqual({});
+    writeCalendarColorOverrides(scopeA, {}, storage);
+    expect(values.size).toBe(0);
   });
 });

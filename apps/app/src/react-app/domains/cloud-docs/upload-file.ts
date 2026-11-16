@@ -112,7 +112,7 @@ export async function uploadCloudFile(input: {
     const origin = cloudDocsOrigin(tenantId!);
     if (!origin) return;
     rememberUploadedCloudFile({ localWorkspaceId: input.localWorkspaceId, path: input.relativePath, tenantId: tenantId!, workspaceId, pageId,
-      url: `${origin}/workspace/${encodeURIComponent(workspaceId)}/${encodeURIComponent(pageId)}` });
+      url: `${origin}/workspace/${encodeURIComponent(workspaceId)}/${encodeURIComponent(pageId)}?tenantId=${encodeURIComponent(tenantId!)}` });
   }
 }
 
@@ -136,5 +136,5 @@ export async function lookupUploadedCloudFile(fileClient: Pick<JuggleWorkServerC
   const existing = result.existing?.[0];
   if (!existing || !origin || current.baseUrl !== settings.baseUrl || current.authToken !== settings.authToken || current.activeOrgId !== tenantId || readDenUserId() !== sourceUserId) return;
   rememberUploadedCloudFile({ localWorkspaceId, path, tenantId, workspaceId: existing.workspaceId, pageId: existing.pageId,
-    url: `${origin}/workspace/${encodeURIComponent(existing.workspaceId)}/${encodeURIComponent(existing.pageId)}` });
+    url: `${origin}/workspace/${encodeURIComponent(existing.workspaceId)}/${encodeURIComponent(existing.pageId)}?tenantId=${encodeURIComponent(tenantId!)}` });
 }

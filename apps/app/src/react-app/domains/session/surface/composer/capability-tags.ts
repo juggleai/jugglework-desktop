@@ -70,11 +70,14 @@ export function replaceComposerCapabilityTokens(
  * @returns tag 的 className
  */
 export function composerCapabilityTagClassName(kind: ComposerCapabilityKind) {
-  const base = "inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium";
+  const base = COMPOSER_TAG_BASE_CLASS;
   return kind === "skill"
     ? `${base} border-violet-6/35 bg-violet-3/20 text-violet-11`
     : `${base} border-orange-6/35 bg-orange-3/25 text-orange-11`;
 }
+
+/** 输入框原子标签共用的圆角、字号与留白，云文档和能力标签保持同一比例。 */
+export const COMPOSER_TAG_BASE_CLASS = "inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium";
 
 /**
  * 能力标签的悬浮说明前缀

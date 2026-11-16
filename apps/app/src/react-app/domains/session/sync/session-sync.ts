@@ -27,6 +27,12 @@ import type { JuggleWorkServerClient, JuggleWorkSessionSnapshot } from "@/app/li
 import { applyRevertCursor, reconcileTranscriptMessages } from "./transcript-reconcile";
 import { mergeSnapshotAndLiveMessages } from "./message-merge";
 import {
+  applyRevertToSessionHistory,
+  removeMessageFromSessionHistory,
+  sessionHistoryKey,
+  type SessionHistoryData,
+} from "./session-history";
+import {
   SESSION_STALLED_AFTER_MS,
   useSessionActivityStore,
   type SessionActivityRecord,
@@ -1276,6 +1282,15 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       const key = todoRevisionKey(workspaceId, update.sessionId);
       liveSessionRevision.set(key, ++sessionRevision);
       sessionHistoryRevision.set(key, sessionRevision);
+      void queryClient.cancelQueries({ queryKey: sessionHistoryKey(workspaceId, update.sessionId), exact: true });
+      if (nextRevert?.messageID) {
+        queryClient.setQueryData<SessionHistoryData>(
+          sessionHistoryKey(workspaceId, update.sessionId),
+          (current) => applyRevertToSessionHistory(current, nextRevert.messageID),
+        );
+      } else {
+        queryClient.removeQueries({ queryKey: sessionHistoryKey(workspaceId, update.sessionId), exact: true });
+      }
     }
     if (Object.prototype.hasOwnProperty.call(update.info, "parentID")) {
       seedWorkspaceSessionAncestry(workspaceId, [{
@@ -1313,6 +1328,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       liveSessionTitles.delete(todoRevisionKey(workspaceId, sessionId));
       entry.pendingCompactionModes.delete(sessionId);
       removeWorkspaceSessionAncestry(workspaceId, sessionId);
+      queryClient.removeQueries({ queryKey: sessionHistoryKey(workspaceId, sessionId), exact: true });
     }
     if (sessionId) {
       for (const listener of entry.sessionDeletedListeners) listener(sessionId);
@@ -1625,6 +1641,11 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     if (!props.sessionID || !props.messageID) return;
     dropContinuationRuntimeState(entry, props.sessionID, props.messageID);
     if (!isTrackedSession(entry, props.sessionID)) return;
+    void queryClient.cancelQueries({ queryKey: sessionHistoryKey(workspaceId, props.sessionID), exact: true });
+    queryClient.setQueryData<SessionHistoryData>(
+      sessionHistoryKey(workspaceId, props.sessionID),
+      (current) => removeMessageFromSessionHistory(current, props.messageID!),
+    );
     queryClient.setQueryData<UIMessage[]>(transcriptKey(workspaceId, props.sessionID), (current = []) =>
       current.filter((message) => message.id !== props.messageID),
     );
@@ -2364,6 +2385,15 @@ export function applySessionRevert(workspaceId: string, session: Session) {
   const revertMessageId = session.revert?.messageID ?? null;
   liveSessionRevision.set(todoRevisionKey(workspaceId, session.id), ++sessionRevision);
   sessionHistoryRevision.set(todoRevisionKey(workspaceId, session.id), sessionRevision);
+  void queryClient.cancelQueries({ queryKey: sessionHistoryKey(workspaceId, session.id), exact: true });
+  if (revertMessageId) {
+    queryClient.setQueryData<SessionHistoryData>(
+      sessionHistoryKey(workspaceId, session.id),
+      (current) => applyRevertToSessionHistory(current, revertMessageId),
+    );
+  } else {
+    queryClient.removeQueries({ queryKey: sessionHistoryKey(workspaceId, session.id), exact: true });
+  }
 
   queryClient.setQueryData<JuggleWorkSessionSnapshot>(
     snapshotKey(workspaceId, session.id),

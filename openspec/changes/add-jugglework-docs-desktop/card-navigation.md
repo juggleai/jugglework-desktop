@@ -1,3 +1,5 @@
+> 后续优化设计见 [单域名与 IM 解耦](../optimize-docs-single-origin-and-im-isolation/design.md)。其中 IM 分类前置、租户子域名和宿主边界的冲突要求以新设计为准；其余要求及旧版本验收事实保留。新设计待开发项以对应 tasks 为准。
+
 # 群卡片跳转与多组织访问契约
 
 本文是 Desktop 已实现云文档卡片展示、组织进入、跳转和组织切换生命周期的权威交互契约。消息载荷与投递以 [notification-delivery.md](../../../../jugglework-server/openspec/changes/add-jugglework-docs-integration/notification-delivery.md)为准，登录交接以 [api-contract.md](../../../../jugglework-server/openspec/changes/add-jugglework-docs-integration/api-contract.md)为准；真实 Electron 点击和完整联合验收边界见本文末尾。
@@ -94,6 +96,8 @@ IM 提供方按当前要求使用本地模拟服务，不需要真实业务组�
 
 
 ## 7. 已实现的来源与历史过滤
+
+2026-11-13，开发版 Desktop 已通过真实组织群的普通评论和评论 @ 卡片点击，打开正确文档并高亮目标评论；重启后历史卡片仍可用。正文 @ 事件已核对真实 IM 历史。助手新身份为 `jw_docs_` 加 24 位摘要，总长 32；客户端兼容旧 32 位摘要，并将固定通知类型纳入正常消息气泡分支。实测评论 @ 的空关键词列表和 `li` 姓名搜索均可找到其他组织成员。权威证据与未覆盖项见 [真实 IM 验收](../../../../jugglework-docs/openspec/changes/add-jugglework-docs-adaptation/evidence/real-im-notifications-20261113.json)。
 
 连接来源包含完整 Server 部署前缀、源用户、租户、源凭据指纹及 IM App／端点／用户／凭据指纹。同一套 IM 凭据在不同组织仍重建连接；连接创建时捕获来源，旧回调和旧加载结果不补用新组织身份。A→B→A 以 Store 范围实例识别旧请求。
 

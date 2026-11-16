@@ -68,7 +68,7 @@ import {
   VIDEO_DURATION_DEFAULT_SECONDS,
   type ComposerVideoModelOption,
 } from "./composer/video-generation";
-import { effectiveSessionRunning, isSessionBusyError, shouldReconcileAfterCoordinatorEnded, shouldReportAbortFailure } from "./session-run-recovery";
+import { effectiveSessionRunning, effectiveThreadStatus, isSessionBusyError, shouldReconcileAfterCoordinatorEnded, shouldReportAbortFailure } from "./session-run-recovery";
 import { useActiveSnapshotReconciliation } from "./active-snapshot-reconciliation";
 import { imageModelsQueryOptions, mediaModelQueryScope, videoModelsQueryOptions } from "@/react-app/domains/connections/media-model-queries";
 import { effectiveGenerationState, generationDraftAvailable } from "./composer/generation-model-reconciliation";
@@ -95,9 +95,13 @@ import { useLocal } from "@/react-app/kernel/local-provider";
 import { isAttachmentFileReadable, resolveAttachmentFileMetadata, materializeComposerAttachment } from "@/react-app/domains/session/sync/attachment-file-part";
 import { deriveSessionRenderModel } from "@/react-app/domains/session/sync/transition-controller";
 import { useSessionScrollController } from "./scroll-controller";
+import { useSessionScrollStore } from "./scroll-store";
 import { SessionScrollOverlay } from "./scroll-overlay";
 import { SessionQuickNavigation } from "./session-quick-navigation";
 import { SessionFindBar } from "./find-bar";
+import { SessionHistoryControl } from "./session-history-control";
+import { useSessionHistoryScrollController } from "./session-history-scroll-controller";
+import { useSessionOlderHistory } from "./use-session-older-history";
 import { useSessionFindStore } from "./find-store";
 import { getSessionActivityStatusLabel, useSessionActivityStore, type SessionActivityStatus } from "@/react-app/domains/session/status/session-activity-store";
 import { PermissionApprovalPanel } from "@/react-app/domains/session/chat/permission-approval-modal";
@@ -959,6 +963,19 @@ export function SessionSurface(props: SessionSurfaceProps) {
     currentSnapshot,
     cachedRendered: rendered,
   });
+  const {
+    pages: olderHistoryPages,
+    hasOlder: hasOlderHistory,
+    isLoadingOlder,
+    error: olderHistoryError,
+    generationKey: historyGenerationKey,
+    loadOlder,
+  } = useSessionOlderHistory({
+    client: props.client,
+    workspaceId: props.workspaceId,
+    sessionId: props.sessionId,
+    initialPage: snapshot?.messagePage,
+  });
   const liveStatus = statusState ?? snapshot?.status ?? IDLE_STATUS;
   const coordinatorRun = activeRunsQuery.data?.items.find((run) => run.sessionId === props.sessionId) ?? null;
   const surfaceIdentity = `${props.workspaceId}:${props.sessionId}`;
@@ -1025,6 +1042,20 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }, [activeRunsQuery.refetch, liveStatus.type, props.sessionId]);
 
   useEffect(() => {
+    if (
+      !activeRunsQuery.isSuccess
+      || !coordinatorRun
+      || sessionActivityRunActive
+      || sessionActivityStatus === "error"
+      || sessionActivityStatus === "incomplete"
+    ) return;
+    // The coordinator is authoritative across session switches and missed
+    // runtime events. Publish its receipt into the shared activity projection
+    // so the transcript and every sidebar representation recover together.
+    useSessionActivityStore.getState().setRunStatus(props.workspaceId, props.sessionId, { type: "running" });
+  }, [activeRunsQuery.isSuccess, coordinatorRun, props.sessionId, props.workspaceId, sessionActivityRunActive, sessionActivityStatus]);
+
+  useEffect(() => {
     if (!activeRunsQuery.isSuccess || coordinatorRun || liveStatus.type !== "idle" || !sessionActivityRunActive) return;
     useSessionActivityStore.getState().setRunStatus(props.workspaceId, props.sessionId, { type: "idle" });
   }, [activeRunsQuery.isSuccess, coordinatorRun, liveStatus.type, props.sessionId, props.workspaceId, sessionActivityRunActive]);
@@ -1052,33 +1083,23 @@ export function SessionSurface(props: SessionSurfaceProps) {
   useEffect(() => {
     if (!chatStreaming) setSteering(false);
   }, [chatStreaming]);
-  const status = useMemo((): ThreadStatus => {
-    if (sending) {
-      return "submitted";
-    }
-
-    if (liveStatus.type === "busy") {
-      return "streaming";
-    }
-
-    if (liveStatus.type === "retry") {
-      return "retrying";
-    }
-
-    return "ready";
-  }, [liveStatus, sending]);
+  const status = useMemo((): ThreadStatus => effectiveThreadStatus({
+    sending,
+    liveStatus: liveStatus.type,
+    running: chatStreaming,
+  }), [chatStreaming, liveStatus.type, sending]);
   const [evalMarkdownMessages, setEvalMarkdownMessages] = useState<UIMessage[]>(EMPTY_TRANSCRIPT);
   useEffect(() => {
     setEvalMarkdownMessages(EMPTY_TRANSCRIPT);
   }, [props.sessionId]);
 
   const baseRenderedMessages = useMemo(
-    () => deriveRenderedSessionMessages({ transcriptState, snapshot, snapshotCurrent: !snapshot || isSessionSnapshotCurrent(props.workspaceId, snapshot) }),
-    [snapshot, transcriptState, props.workspaceId],
+    () => deriveRenderedSessionMessages({ transcriptState, snapshot, historyPages: olderHistoryPages, snapshotCurrent: !snapshot || isSessionSnapshotCurrent(props.workspaceId, snapshot) }),
+    [olderHistoryPages, snapshot, transcriptState, props.workspaceId],
   );
   const contextEstimationMessages = useMemo(
-    () => deriveContextEstimationMessages({ transcriptState, snapshot, snapshotCurrent: !snapshot || isSessionSnapshotCurrent(props.workspaceId, snapshot) }),
-    [snapshot, transcriptState, props.workspaceId],
+    () => deriveContextEstimationMessages({ transcriptState, snapshot, historyPages: olderHistoryPages, snapshotCurrent: !snapshot || isSessionSnapshotCurrent(props.workspaceId, snapshot) }),
+    [olderHistoryPages, snapshot, transcriptState, props.workspaceId],
   );
   const renderedMessages = useMemo(() => {
     if (evalMarkdownMessages.length === 0) return baseRenderedMessages;
@@ -2247,6 +2268,23 @@ export function SessionSurface(props: SessionSurfaceProps) {
     containerRef: scrollRef,
     contentRef,
   });
+  const historyScroll = useSessionHistoryScrollController({
+    scopeKey: historyGenerationKey,
+    containerRef: scrollRef,
+    loadedPageCount: olderHistoryPages.length,
+    hasOlder: hasOlderHistory,
+    isLoading: isLoadingOlder,
+    loadOlder,
+    onBeforeLoad: () => {
+      const container = scrollRef.current;
+      if (!container) return;
+      useSessionScrollStore.getState().setManualScroll(props.sessionId, container.scrollTop, null);
+    },
+    onAfterRestore: sessionScroll.syncManualScroll,
+  });
+  const showHistoryStart = renderedMessages.length > 0
+    && !hasOlderHistory
+    && (olderHistoryPages.length > 0 || snapshot?.messagePage?.hasOlder === false);
 
   const handleFindBeforeJump = useCallback(() => {
     sessionScroll.markScrollGesture(scrollRef.current);
@@ -2569,18 +2607,30 @@ export function SessionSurface(props: SessionSurfaceProps) {
           ref={scrollRef}
           onWheel={(event) => {
             sessionScroll.markScrollGesture(event.target);
+            historyScroll.markUserScrollIntent();
           }}
           onTouchStart={(event) => {
             sessionScroll.markScrollGesture(event.target);
+            historyScroll.markUserScrollIntent();
           }}
           onTouchMove={(event) => {
             sessionScroll.markScrollGesture(event.target);
+            historyScroll.markUserScrollIntent();
           }}
           onPointerDown={(event) => {
             if (event.target !== event.currentTarget) return;
             sessionScroll.markScrollGesture(event.currentTarget);
+            historyScroll.markUserScrollIntent();
           }}
-          onScroll={sessionScroll.handleScroll}
+          onKeyDown={(event) => {
+            if (!["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) return;
+            sessionScroll.markScrollGesture(event.currentTarget);
+            historyScroll.markUserScrollIntent();
+          }}
+          onScroll={(event) => {
+            sessionScroll.handleScroll(event);
+            historyScroll.handleScroll(event);
+          }}
           // Extra top padding while the find bar is open so it never covers
           // the first message (short transcripts cannot scroll it clear).
           className={`${fileHost ? "px-2" : "subtle-scrollbar px-3 sm:px-5"} absolute inset-0 overflow-x-hidden overflow-y-auto overscroll-y-contain pb-4 ${findOwned ? "pt-16" : "pt-4"}`}
@@ -2589,6 +2639,13 @@ export function SessionSurface(props: SessionSurfaceProps) {
                desktop breakpoint, so an 864px column aligns their 800px text
                area with the composer while preserving the narrower cap below lg. */}
           <TranscriptContent ref={contentRef} className="mx-auto w-full max-w-[720px] lg:max-w-[864px]">
+            <SessionHistoryControl
+              hasOlder={hasOlderHistory}
+              isLoading={isLoadingOlder}
+              error={olderHistoryError}
+              showHistoryStart={showHistoryStart}
+              onLoadOlder={() => { void historyScroll.requestOlder(); }}
+            />
             <FileDeliveriesProvider client={props.client} workspaceId={props.workspaceId} sessionId={props.sessionId} enabled={!fileHost && !props.isRemoteWorkspace} running={chatStreaming} messageKey={`${renderedMessages.length}:${renderedMessages.at(-1)?.id ?? ""}`}>
             {!fileHost && <PresentationDeliveryCoordinator
               workspaceId={props.workspaceId}

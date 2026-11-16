@@ -111,7 +111,7 @@ export async function submitSessionDraft(input: SessionDraftSubmissionInput) {
             return;
           }
           const request = {
-            sessionID: sessionId, parts, juggleworkOfficeSelections: office, ...(input.hostKind !== "file" ? { juggleworkCloudDocTurn: cloudDocTurn } : {}),
+            sessionID: sessionId, parts, juggleworkOfficeSelections: office, juggleworkCloudDocTurn: cloudDocTurn,
             ...(submission.delivery !== "steer" && submission.messageID ? { messageID: submission.messageID } : {}),
             juggleworkDetectedResponseLanguage: detectResponseLanguage(draft) ?? undefined,
             juggleworkDefaultResponseLanguage: currentLocale() === "zh" ? "zh" as const : "en" as const,

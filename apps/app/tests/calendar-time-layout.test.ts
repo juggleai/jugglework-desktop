@@ -25,6 +25,20 @@ test("timed overlap lanes are deterministic and equal boundaries do not overlap"
   ]);
 });
 
+test("a later event expands across lanes that are free for its full duration", () => {
+  const result = layoutCalendarTimeView({
+    days, visibleCalendarIds: ["cal"], displayTimeZone: "Asia/Shanghai",
+    events: [
+      event("long", { kind: "timed", startInstant: "2026-11-09T01:00:00Z", endInstantExclusive: "2026-11-09T04:00:00Z", timeZone: "Asia/Shanghai" }),
+      event("middle", { kind: "timed", startInstant: "2026-11-09T01:00:00Z", endInstantExclusive: "2026-11-09T02:30:00Z", timeZone: "Asia/Shanghai" }),
+      event("short", { kind: "timed", startInstant: "2026-11-09T01:30:00Z", endInstantExclusive: "2026-11-09T02:00:00Z", timeZone: "Asia/Shanghai" }),
+      event("expand", { kind: "timed", startInstant: "2026-11-09T02:30:00Z", endInstantExclusive: "2026-11-09T03:00:00Z", timeZone: "Asia/Shanghai" }),
+    ],
+  });
+  const expanded = result.timedByDate.get("2026-11-09")!.find((segment) => segment.event.id === "expand");
+  expect(expanded).toMatchObject({ lane: 1, laneCount: 3, laneSpan: 2 });
+});
+
 test("cross-midnight timed events split by day while all-day events keep one span", () => {
   const result = layoutCalendarTimeView({
     days, visibleCalendarIds: ["cal"], displayTimeZone: "Asia/Shanghai",

@@ -18,22 +18,27 @@ async function fixture(body = "xlsx fixture") {
     closeUnder: async directory => { closed.push(directory); },
   });
   const nativeSession = {
-    fetch: async url => { requests.push(url); return new Response(body, { status: 200 }); },
+    fetch: async (url, options) => { requests.push({url, options}); return new Response(body, { status: 200 }); },
   };
-  const input = { scope, nativeSession, origin: "https://docs.test", workspaceId: "ws", docId: "doc", blobId: "blob-1", name: "../报告.xlsx" };
+  const input = { scope, nativeSession, contextId: "a".repeat(43), origin: "https://docs.test", workspaceId: "ws", docId: "doc", blobId: "blob-1", name: "../报告.xlsx" };
   return { root, opened, closed, requests, attachments, input };
 }
 
-test("附件经云文档会话下载到范围缓存并只读打开，已缓存时不再下载", async () => {
+test("附件经云文档会话下载到范围缓存并只读打开，已缓存时仍复核原生权限", async () => {
   const f = await fixture();
   const first = await f.attachments.open(f.input);
   assert.equal(path.basename(first.file), "报告.xlsx");
   assert.equal(await fs.readFile(first.file, "utf8"), "xlsx fixture");
   assert.ok(first.file.startsWith(f.root));
   await f.attachments.open(f.input);
-  assert.equal(f.requests.length, 1);
+  assert.equal(f.requests.length, 2);
   assert.equal(f.opened.length, 2);
-  assert.match(f.requests[0], /\/api\/jw\/session\/attachments\/ws\/doc\/blob-1$/);
+  assert.equal(f.requests[0].options.headers['X-Jugglework-Docs-Context'], f.input.contextId);
+  assert.equal(f.requests[0].options.redirect, 'error');
+  f.input.nativeSession.fetch = async () => new Response('', {status: 403});
+  await assert.rejects(f.attachments.open(f.input), /download_failed:403/);
+  assert.equal(f.opened.length, 2);
+  assert.match(f.requests[0].url, /\/api\/jw\/session\/attachments\/ws\/doc\/blob-1$/);
 });
 
 test("清理范围先关闭只读窗口再删除缓存目录", async () => {
@@ -72,5 +77,16 @@ test("下载中撤权取消旧请求，等待任务结束后清缓存，不重�
   assert.equal(f.opened.length, 0);
   assert.equal(f.closed.length, 1);
   await assert.rejects(fs.stat(f.closed[0]));
+  await fs.rm(f.root, { recursive: true, force: true });
+});
+
+test("撤销旧绑定不关闭或删除同账号新会话的附件", async () => {
+  const f = await fixture();
+  const old = await f.attachments.open(f.input);
+  const current = await f.attachments.open({ ...f.input, contextId: 'b'.repeat(43) });
+  await f.attachments.clearContext(scope, f.input.contextId);
+  await assert.rejects(fs.stat(old.file));
+  assert.ok((await fs.stat(current.file)).isFile());
+  assert.ok(!current.file.startsWith(f.closed[0]));
   await fs.rm(f.root, { recursive: true, force: true });
 });

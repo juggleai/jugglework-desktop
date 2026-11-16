@@ -305,6 +305,8 @@ contextBridge.exposeInMainWorld("__JUGGLEWORK_ELECTRON__", {
     },
   },
   fileWindow: {
+    /** 仅主窗口可提交一次性 Docs 交接创建独立标签。 */
+    openCloud: (input) => ipcRenderer.invoke("jugglework:file-window:open-cloud", input),
     /** 仅主窗口处理 Main 固定目标的停止准备；确认前不会中止运行。 */
     onSessionStopRequest(callback) {
       const handler = async (_event, input) => {
@@ -348,6 +350,7 @@ contextBridge.exposeInMainWorld("__JUGGLEWORK_ELECTRON__", {
     },
   },
   cloudDocs: {
+    status: instanceId => ipcRenderer.invoke("jugglework:docs:status", instanceId),
     /** 以一次性凭据进入当前组织的云文档。 */
     open: (input) => ipcRenderer.invoke('jugglework:docs:open', input),
     /** 释放指定实例或全部云文档视图。 */

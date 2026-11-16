@@ -18,7 +18,7 @@ import {
   type SessionMutationObservationStatus,
   type SessionMutationOrigin,
 } from "../session-mutation-coordinator.js";
-import { buildSession, buildSessionList, buildSessionMessages, buildSessionSnapshot } from "../session-read-model.js";
+import { buildSession, buildSessionList, buildSessionMessagePage, buildSessionMessages, buildSessionSnapshot } from "../session-read-model.js";
 import {
   createSessionGroupId,
   normalizeSessionGroupState,
@@ -44,8 +44,8 @@ type ParseOptionalNonNegativeInteger = (value: string | null, name: string) => n
 type ReadJsonBody = (request: Request) => Promise<Record<string, unknown>>;
 type WorkspaceOpencodeClient = ReturnType<typeof createOpencodeClient>;
 type OpencodeClientResult<T, E> =
-  | { data: T | undefined; error: undefined; response: Response }
-  | { data: undefined; error: E; response: Response };
+  | { data: T | undefined; error: undefined; request: Request; response: Response }
+  | { data: undefined; error: E; request: Request; response: Response };
 type UnwrapOpencodeResult = <T, E>(result: OpencodeClientResult<T, E>, path: string) => NonNullable<T>;
 
 interface RegisterSessionRoutesOptions {
@@ -207,6 +207,35 @@ const legacyObserveRunBodySchema = z.object({
 const opencodeTargetSessionStatusSchema = z.object({
   type: z.enum(["idle", "busy", "running", "retry", "retrying", "waiting"]),
 }).passthrough();
+const MAX_SESSION_MESSAGE_LIMIT = 1_000;
+const MAX_SESSION_MESSAGE_CURSOR_LENGTH = 4_096;
+
+function parseSessionMessageCursor(value: string | null): string | undefined {
+  if (value === null) return undefined;
+  if (value.length === 0 || value.length > MAX_SESSION_MESSAGE_CURSOR_LENGTH) {
+    throw new ApiError(400, "invalid_query", `before must contain 1 to ${MAX_SESSION_MESSAGE_CURSOR_LENGTH} characters`);
+  }
+  return value;
+}
+
+function boundSessionMessageLimit(limit: number | undefined): number | undefined {
+  if (limit !== undefined && limit > MAX_SESSION_MESSAGE_LIMIT) {
+    throw new ApiError(400, "invalid_query", `limit must be at most ${MAX_SESSION_MESSAGE_LIMIT}`);
+  }
+  return limit;
+}
+
+export function readOpencodeSessionMessages(
+  opencode: WorkspaceOpencodeClient,
+  sessionId: string,
+  input: { limit?: number; before?: string; signal?: AbortSignal },
+) {
+  return opencode.session.messages({
+    sessionID: sessionId,
+    limit: input.limit,
+    before: input.before,
+  }, { signal: input.signal });
+}
 
 function parseRunBody<T>(schema: z.ZodType<T>, body: Record<string, unknown>): T {
   const parsed = schema.safeParse(body);
@@ -439,8 +468,13 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions) {
 
   async function reconcileWorkspaceActiveRuns(workspace: WorkspaceInfo, signal?: AbortSignal): Promise<void> {
     for (const active of sessionMutations.listActive(workspace.id)) {
-      // Dispatch has not been accepted yet; no engine sample can settle it.
-      if (active.status === "starting") continue;
+      // A current-process admission remains fenced until its dispatch returns.
+      // After a restart that continuation no longer exists, so a restored
+      // starting run must be allowed to converge from authoritative engine
+      // state instead of blocking runtime shutdown forever.
+      const restoredStarting = active.status === "starting" &&
+        sessionMutations.isRestored(workspace.id, active.sessionId, active.runId);
+      if (active.status === "starting" && !restoredStarting) continue;
       let engineStatus: NormalizedEngineSessionStatus;
       try {
         engineStatus = await readEngineSessionStatus(workspace, active.sessionId, signal);
@@ -450,19 +484,26 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions) {
       }
       try {
         if (engineStatus === "idle") {
-          const terminal = active.status === "aborting" ? null : await readCurrentRunTerminalStatus(workspace, active, signal);
+          const terminalRead = active.status === "aborting"
+            ? { available: true as const, status: null }
+            : await readCurrentRunTerminalStatus(workspace, active, signal);
+          if (!terminalRead.available) continue;
+          const terminal = terminalRead.status;
           signal?.throwIfAborted();
           if (terminal === "failed" || terminal === "aborted") {
             sessionMutations.observe({ workspaceId: workspace.id, sessionId: active.sessionId, runId: active.runId, status: terminal });
             finalizeClearedRun(workspace.id, active.sessionId, active.runId);
             continue;
           }
-          if (active.status !== "aborting" && !terminal) continue;
+          const restored = sessionMutations.isRestored(workspace.id, active.sessionId, active.runId);
+          const interruptedAfterRestart = active.status !== "aborting" && !terminal && restored;
+          if (active.status !== "aborting" && !terminal && !interruptedAfterRestart) continue;
           const reconciliation = sessionMutations.reconcileAuthoritativeIdle({
             workspaceId: workspace.id,
             sessionId: active.sessionId,
             runId: active.runId,
             minimumIntervalMs: SESSION_PENDING_OPERATION_IDLE_CONFIRM_MS,
+            terminalStatus: interruptedAfterRestart ? "failed" : terminal === "completed" ? "completed" : undefined,
           });
           if (reconciliation.cleared) finalizeClearedRun(workspace.id, active.sessionId, active.runId);
         } else {
@@ -483,16 +524,19 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions) {
     workspace: WorkspaceInfo,
     run: { sessionId: string; startedAt: number },
     signal?: AbortSignal,
-  ): Promise<"completed" | "failed" | "aborted" | null> {
+  ): Promise<
+    | { available: true; status: "completed" | "failed" | "aborted" | null }
+    | { available: false; status: null }
+  > {
     const opencode = createWorkspaceOpencodeClient(config, workspace);
     try {
       const messages = unwrapOpencodeResult(
         await opencode.session.messages({ sessionID: run.sessionId, limit: 10 }, { signal }),
         "/session/message",
       );
-      return currentRunTerminalStatus(messages, run.startedAt);
+      return { available: true, status: currentRunTerminalStatus(messages, run.startedAt) };
     } catch {
-      return null;
+      return { available: false, status: null };
     }
   }
 
@@ -571,17 +615,19 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions) {
   async function readWorkspaceSessionMessages(
     workspace: WorkspaceInfo,
     sessionId: string,
-    input: { limit?: number },
+    input: { limit?: number; before?: string; signal?: AbortSignal },
   ) {
     try {
       const opencode = createWorkspaceOpencodeClient(config, workspace);
-      return buildSessionMessages(
-        unwrapOpencodeResult(
-          await opencode.session.messages({ sessionID: sessionId, limit: input.limit }),
-          `/session/${encodeURIComponent(sessionId)}/message`,
-        ),
-      );
+      const result = await readOpencodeSessionMessages(opencode, sessionId, input);
+      input.signal?.throwIfAborted();
+      const items = buildSessionMessages(unwrapOpencodeResult(
+        result,
+        `/session/${encodeURIComponent(sessionId)}/message`,
+      ));
+      return { items, page: buildSessionMessagePage(result.response) };
     } catch (error) {
+      if (input.signal?.aborted) throw new ApiError(499, "request_cancelled", "Session message read was cancelled");
       remapSessionReadError(error);
     }
   }
@@ -589,24 +635,26 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions) {
   async function readWorkspaceSessionSnapshot(
     workspace: WorkspaceInfo,
     sessionId: string,
-    input: { limit?: number },
+    input: { limit?: number; signal?: AbortSignal },
   ) {
     try {
       const opencode = createWorkspaceOpencodeClient(config, workspace);
-      const [session, messages, todos, statuses] = await Promise.all([
-        opencode.session
-          .get({ sessionID: sessionId })
-          .then((result) => unwrapOpencodeResult(result, `/session/${encodeURIComponent(sessionId)}`)),
-        opencode.session
-          .messages({ sessionID: sessionId, limit: input.limit })
-          .then((result) => unwrapOpencodeResult(result, `/session/${encodeURIComponent(sessionId)}/message`)),
-        opencode.session
-          .todo({ sessionID: sessionId })
-          .then((result) => unwrapOpencodeResult(result, `/session/${encodeURIComponent(sessionId)}/todo`)),
-        opencode.session.status().then((result) => unwrapOpencodeResult(result, "/session/status")),
+      const [sessionResult, messagesResult, todosResult, statusesResult] = await Promise.all([
+        opencode.session.get({ sessionID: sessionId }, { signal: input.signal }),
+        opencode.session.messages({ sessionID: sessionId, limit: input.limit }, { signal: input.signal }),
+        opencode.session.todo({ sessionID: sessionId }, { signal: input.signal }),
+        opencode.session.status(undefined, { signal: input.signal }),
       ]);
-      return buildSessionSnapshot({ session, messages, todos, statuses });
+      input.signal?.throwIfAborted();
+      return buildSessionSnapshot({
+        session: unwrapOpencodeResult(sessionResult, `/session/${encodeURIComponent(sessionId)}`),
+        messages: unwrapOpencodeResult(messagesResult, `/session/${encodeURIComponent(sessionId)}/message`),
+        messagePage: buildSessionMessagePage(messagesResult.response),
+        todos: unwrapOpencodeResult(todosResult, `/session/${encodeURIComponent(sessionId)}/todo`),
+        statuses: unwrapOpencodeResult(statusesResult, "/session/status"),
+      });
     } catch (error) {
+      if (input.signal?.aborted) throw new ApiError(499, "request_cancelled", "Session snapshot read was cancelled");
       remapSessionReadError(error);
     }
   }
@@ -810,10 +858,12 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions) {
     if (!sessionId) {
       throw new ApiError(400, "invalid_payload", "sessionId is required");
     }
-    const items = await readWorkspaceSessionMessages(workspace, sessionId, {
-      limit: parseOptionalPositiveInteger(ctx.url.searchParams.get("limit"), "limit"),
+    const result = await readWorkspaceSessionMessages(workspace, sessionId, {
+      limit: boundSessionMessageLimit(parseOptionalPositiveInteger(ctx.url.searchParams.get("limit"), "limit")),
+      before: parseSessionMessageCursor(ctx.url.searchParams.get("before")),
+      signal: ctx.request.signal,
     });
-    return jsonResponse({ items });
+    return jsonResponse(result);
   });
 
   addRoute(routes, "GET", "/workspace/:id/sessions/:sessionId/snapshot", "client", async (ctx) => {
@@ -822,8 +872,10 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions) {
     if (!sessionId) {
       throw new ApiError(400, "invalid_payload", "sessionId is required");
     }
+    const requestedLimit = parseOptionalPositiveInteger(ctx.url.searchParams.get("limit"), "limit");
     const item = await readWorkspaceSessionSnapshot(workspace, sessionId, {
-      limit: parseOptionalPositiveInteger(ctx.url.searchParams.get("limit"), "limit"),
+      limit: requestedLimit,
+      signal: ctx.request.signal,
     });
     return jsonResponse({ item: { ...item, modelPreference: sessionModelPreferences.get(workspace.id, sessionId) } });
   });
@@ -947,7 +999,10 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions) {
       let engineStatus = await readEngineSessionStatus(workspace, input.sessionId);
       let active = sessionMutations.getActive(workspace.id, input.sessionId);
 
-      const terminal = engineStatus === "idle" && active && active.status !== "aborting" ? await readCurrentRunTerminalStatus(workspace, active) : null;
+      const terminalRead = engineStatus === "idle" && active && active.status !== "aborting"
+        ? await readCurrentRunTerminalStatus(workspace, active)
+        : { available: true as const, status: null };
+      const terminal = terminalRead.available ? terminalRead.status : null;
       if (active && (terminal === "failed" || terminal === "aborted")) {
         sessionMutations.observe({ workspaceId: workspace.id, sessionId: input.sessionId, runId: active.runId, status: terminal });
         finalizeClearedRun(workspace.id, input.sessionId, active.runId);
@@ -1239,7 +1294,11 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions) {
         if (engineStatus !== "idle") {
           return jsonResponse(sessionMutations.observe({ workspaceId: workspace.id, ...input, status: engineStatus }));
         }
-        const terminal = await readCurrentRunTerminalStatus(workspace, active);
+        const terminalRead = await readCurrentRunTerminalStatus(workspace, active);
+        if (!terminalRead.available) {
+          return jsonResponse({ cleared: false, run: active, terminalStatus: null });
+        }
+        const terminal = terminalRead.status;
         if (!terminal) {
           return jsonResponse({ cleared: false, run: active, terminalStatus: null });
         }

@@ -67,6 +67,11 @@ type SessionActivityStore = {
   seedWorkspaceSessions: (workspaceId: string, sessions: SessionLike[]) => void;
   seedSessionRun: (workspaceId: string, sessionId: string, status: unknown, assistantOutput: boolean) => void;
   setRunStatus: (workspaceId: string, sessionId: string, status: unknown) => void;
+  reconcileCoordinatorRuns: (
+    workspaceId: string,
+    activeSessionIds: readonly string[],
+    observedRunGenerations: Readonly<Record<string, number>>,
+  ) => void;
   markMessageRole: (workspaceId: string, sessionId: string, messageId: string, role: SessionMessageRole) => void;
   removeMessageRole: (workspaceId: string, sessionId: string, messageId: string) => void;
   markAssistantOutput: (workspaceId: string, sessionId: string, messageId?: string, options?: { allowUnknownMessageRole?: boolean }) => void;
@@ -348,6 +353,21 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
         stalledAt: runActive ? record.stalledAt : null,
       };
     }));
+  },
+  reconcileCoordinatorRuns: (workspaceId, activeSessionIds, observedRunGenerations) => {
+    const workspace = workspaceId.trim();
+    if (!workspace) return;
+    const active = new Set(activeSessionIds.map((sessionId) => sessionId.trim()).filter(Boolean));
+    for (const [rawSessionId, observedGeneration] of Object.entries(observedRunGenerations)) {
+      const sessionId = rawSessionId.trim();
+      if (!sessionId || active.has(sessionId)) continue;
+      const current = get().recordsByWorkspaceId[workspace]?.[sessionId];
+      // The coordinator response was issued against an earlier activity
+      // generation. Never let that response terminate a run that began while
+      // the request was in flight.
+      if (!current?.runActive || current.runGeneration !== observedGeneration) continue;
+      get().setRunStatus(workspace, sessionId, { type: "idle" });
+    }
   },
   markMessageRole: (workspaceId, sessionId, messageId, role) => {
     const workspace = workspaceId.trim();

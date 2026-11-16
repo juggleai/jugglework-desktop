@@ -100,16 +100,18 @@ if (process.versions.electron) {
           const events = [];
           window.fixtureEvents = events;
           window.fixtureStop = b.fileWindow.onChanged(value => events.push(value));
-          return { keys: Object.keys(b).sort(), node: typeof require, process: typeof process,
-            selection: typeof window.juggleworkOfficeSelection, denied,
+          return { keys: Object.keys(b).sort(), cloudKeys: Object.keys(b.cloudDocs).sort(), node: typeof require, process: typeof process,
+            selection: typeof window.juggleworkOfficeSelection, cloudOpen: typeof b.fileWindow.openCloud, denied,
             available: await b.fileWindow.available(), state: await b.fileWindow.state(),
             resources: await b.office.resources('missing'), editor: await b.fileEditor.state({}),
             fetch: await b.invokeDesktop('__fetch', 'fixture') };
         })()`);
-        assert.deepEqual(result.keys, ["fileEditor", "fileWindow", "invokeDesktop", "office", "platform"]);
+        assert.deepEqual(result.keys, ["cloudDocs", "fileEditor", "fileWindow", "invokeDesktop", "office", "platform"]);
+        assert.deepEqual(result.cloudKeys, ["api", "highlightBlocks", "layoutCommand", "onAiReference", "onLayout", "onState", "setAppearance", "setBounds", "snapshot", "status"]);
         assert.equal(result.node, "undefined");
         assert.equal(result.process, "undefined");
         assert.equal(result.selection, "undefined");
+        assert.equal(result.cloudOpen, "undefined");
         assert.equal(result.denied, true);
         assert.equal(result.available, true);
         assert.equal(result.state.activePath, "notes.md");

@@ -68,6 +68,13 @@ if (patched !== serverJsSrc) {
 rmSync(packagedServerRoot, { recursive: true, force: true });
 cpSync(serverDistDir, resolve(packagedServerRoot, "dist"), { recursive: true });
 copyFileSync(resolve(repoRoot, "apps", "server", "package.json"), resolve(packagedServerRoot, "package.json"));
+// Fail before electron-builder if the staged plugins are stale tsc output.
+// Those files run outside app.asar and cannot resolve workspace dependencies.
+run(nodeCmd, [
+  resolve(repoRoot, "apps", "server", "script", "verify-opencode-plugin-bundles.mjs"),
+  "--dir",
+  resolve(packagedServerRoot, "dist", "opencode-plugins"),
+], repoRoot);
 // TIPS: 从桌面暂存目录导入 Server，避免源码 Server 的 node_modules 掩盖安装包漏带的依赖。
 run(pnpmCmd, ["--dir", desktopRoot, "exec", "electron", resolve(__dirname, "check-electron-runtime-imports.mjs")], repoRoot, {
   ELECTRON_RUN_AS_NODE: "1",

@@ -14,7 +14,10 @@ import {
   type DenCalendar,
   type DenCalendarDeleteResult,
   type DenCalendarEvent,
+  type DenCalendarCollaborationList,
+  type DenTeamCalendarSnapshot,
   type DenCalendarResult,
+  type DenCalendarSchedulingEvent,
 } from "../src/app/lib/den";
 import {
   calendarMutationConflict,
@@ -24,18 +27,23 @@ import {
   useDeleteCalendarMutation,
   useUpdateCalendarEventMutation,
   useUpdateCalendarMutation,
+  useCalendarSchedulingEventMutations,
   type CalendarMutationClient,
 } from "../src/react-app/domains/calendar/calendar-mutations";
 import {
   useCalendarBootstrapQuery,
+  useCalendarCollaborationQuery,
   useCalendarChangesQuery,
   useCalendarEventQuery,
   useCalendarEventRangeQuery,
   useCalendarEventSearchQuery,
   useCalendarQuery,
+  useCalendarSchedulingEventsQuery,
+  useCalendarAvailabilityQuery,
   useCalendarsQuery,
   setCanonicalCalendar,
   type CalendarQueryClient,
+  type CalendarCollaborationQueryClient,
 } from "../src/react-app/domains/calendar/calendar-queries";
 import { calendarQueryKeys } from "../src/react-app/domains/calendar/calendar-query-keys";
 import { createCalendarScope, type CalendarScope } from "../src/react-app/domains/calendar/calendar-scope";
@@ -146,6 +154,37 @@ function completeMutationClient(overrides: Partial<CalendarMutationClient> = {})
 }
 
 describe("calendar query hooks", () => {
+  test("replaces revoked team authorization namespaces and removes cached event details", async () => {
+    const query = queryClient();
+    const team = {
+      id: "team-1", organizationId: scopeA.organizationId, ownerMemberId: scopeA.memberId, kind: "team" as const, name: "Team", color: "#3366CC", role: "manager" as const,
+      capabilities: { canViewFreeBusy: true, canViewDetails: true, canEditEvents: true, canManage: true },
+      version: 1, authorizationVersion: 2, createdAt: "2026-11-05T00:00:00Z", updatedAt: "2026-11-05T00:00:00Z",
+    };
+    const previous: DenCalendarCollaborationList = { items: [team], authorizationGeneration: 3, reset: { mode: "replace", namespace: "calendar-collaboration" } };
+    const teamEvent = event(1, { id: "team-event", calendarId: team.id });
+    const range = { startDate: "2026-11-01", endDateExclusive: "2026-12-01" };
+    const snapshot: DenTeamCalendarSnapshot = { calendar: team, events: [teamEvent], coverage: { ...range, calendarIds: [team.id] }, authorizationVersion: 2, reset: { mode: "replace", namespace: `calendar:${team.id}` } };
+    query.setQueryData(calendarQueryKeys.collaboration(scopeA), previous);
+    query.setQueryData(calendarQueryKeys.teamSnapshot(scopeA, team.id, 2, range), snapshot);
+    query.setQueryData(calendarQueryKeys.event(scopeA, teamEvent.id), teamEvent);
+    query.setQueryData(calendarQueryKeys.memberships(scopeA, team.id), { items: [], authorizationVersion: 2 });
+    const client = {
+      listCalendarCollaboration: async () => ({ items: [], authorizationGeneration: 4, reset: { mode: "replace" as const, namespace: "calendar-collaboration" as const } }),
+      getTeamCalendarSnapshot: async () => { throw new Error("unexpected snapshot"); },
+      listOrganizationMembers: async () => { throw new Error("unexpected directory"); },
+      listTeamCalendarMemberships: async () => { throw new Error("unexpected memberships"); },
+    } as CalendarCollaborationQueryClient;
+
+    await renderHook(query, () => useCalendarCollaborationQuery({ client, scope: scopeA }));
+    await flushQueries(query);
+
+    expect(query.getQueryData(calendarQueryKeys.teamSnapshot(scopeA, team.id, 2, range))).toBeUndefined();
+    expect(query.getQueryData(calendarQueryKeys.event(scopeA, teamEvent.id))).toBeUndefined();
+    expect(query.getQueryData(calendarQueryKeys.memberships(scopeA, team.id))).toBeUndefined();
+    expect(query.getQueryData<DenCalendarCollaborationList>(calendarQueryKeys.collaboration(scopeA))?.authorizationGeneration).toBe(4);
+  });
+
   test("disables every query for a missing scope or inactive hook", async () => {
     let calls = 0;
     const client = completeQueryClient({
@@ -240,9 +279,62 @@ describe("calendar query hooks", () => {
     expect(query.getQueryData<DenCalendar>(calendarQueryKeys.calendar(scopeA, "calendar-1"))?.version).toBe(4);
   });
 
+  test("scheduling occurrences seed the canonical series event for version-checked edits", async () => {
+    const query = queryClient();
+    const scheduled = { ...event(3), status: "active" as const, attendees: [{ memberId: "member-b", responseStatus: "needs-action" as const }], recurrence: null };
+    const range = { startInstant: "2026-11-01T00:00:00Z", endInstantExclusive: "2026-12-01T00:00:00Z", timeZone: "UTC" };
+    const client = { listCalendarSchedulingEvents: async () => ({ items: [{ event: scheduled, occurrenceIndex: 1, time: scheduled.time }] }), getCalendarSchedulingAvailability: async () => ({ members: [] }) };
+    await renderHook(query, () => useCalendarSchedulingEventsQuery({ client, scope: scopeA, range }));
+    await flushQueries(query);
+    expect(query.getQueryData(calendarQueryKeys.event(scopeA, scheduled.id))).toEqual(scheduled);
+  });
+
+  test("availability rejects a response whose member set differs from the request", async () => {
+    const query = queryClient();
+    const request = { memberIds: ["member-a", "member-b"], startInstant: "2026-11-01T00:00:00Z", endInstantExclusive: "2026-11-02T00:00:00Z", timeZone: "UTC" };
+    const client = { listCalendarSchedulingEvents: async () => ({ items: [] }), getCalendarSchedulingAvailability: async () => ({ members: [{ memberId: "member-a", busy: [] }] }) };
+    const hook = await renderHook(query, () => useCalendarAvailabilityQuery({ client, scope: scopeA, request }));
+    await flushQueries(query);
+    await hook.rerender();
+    expect(hook.current.error).toMatchObject({ code: "invalid_calendar_scheduling_payload" });
+    expect(hook.current.data).toBeUndefined();
+  });
+
 });
 
 describe("calendar mutation hooks", () => {
+  test("scheduling occurrence actions preserve explicit identity, omit all-scope occurrence, and update loaded caches", async () => {
+    const query = queryClient();
+    const scheduled = { ...event(4), status: "active" as const, attendees: [{ memberId: scopeA.memberId, responseStatus: "needs-action" as const }], recurrence: { frequency: "weekly" as const, interval: 1, end: { kind: "never" as const } } } satisfies DenCalendarSchedulingEvent;
+    const occurrenceTime = { kind: "allDay" as const, startDate: "2026-11-19", endDateExclusive: "2026-11-20" };
+    const range = { startInstant: "2026-11-01T00:00:00Z", endInstantExclusive: "2026-12-01T00:00:00Z", timeZone: "UTC" };
+    query.setQueryData(calendarQueryKeys.event(scopeA, scheduled.id), scheduled);
+    query.setQueryData(calendarQueryKeys.schedulingEvents(scopeA, range), { items: [{ event: scheduled, occurrenceIndex: 3, time: occurrenceTime }] });
+    const wire: Array<{ kind: string; eventId: string; input: Record<string, unknown> }> = [];
+    const client = {
+      createCalendarSchedulingEvent: async () => { throw new Error("unexpected create"); },
+      updateCalendarSchedulingEvent: async () => { throw new Error("unexpected update"); },
+      deleteCalendarSchedulingEvent: async (_org: string, eventId: string, input: Record<string, unknown>) => {
+        wire.push({ kind: "delete", eventId, input });
+        return { event: { ...scheduled, version: 5 }, tombstone: null, replayed: false };
+      },
+      rsvpCalendarSchedulingEvent: async (_org: string, eventId: string, input: Record<string, unknown>) => {
+        wire.push({ kind: "rsvp", eventId, input });
+        return { event: { ...scheduled, version: 6, attendees: [{ memberId: scopeA.memberId, responseStatus: "tentative" as const }] }, replayed: false };
+      },
+    };
+    const keys = ["calendar.scheduling-delete.one", "calendar.scheduling-rsvp.one"];
+    const hook = await renderHook(query, () => useCalendarSchedulingEventMutations(client, scopeA, { retryDelay: 0, idempotencyKeyFactory: () => keys.shift()! }));
+    const identity = { eventId: scheduled.id, occurrenceIndex: 3, occurrence: { occurrenceIndex: 3, startDate: occurrenceTime.startDate } } as const;
+    await inAct(async () => { await hook.current.remove.mutateAsync({ ...identity, expectedVersion: 4, scope: "this" }); });
+    expect(wire[0]).toEqual({ kind: "delete", eventId: "event-1", input: { idempotencyKey: "calendar.scheduling-delete.one", expectedVersion: 4, scope: "this", occurrence: identity.occurrence } });
+    expect(query.getQueryData<{ items: unknown[] }>(calendarQueryKeys.schedulingEvents(scopeA, range))?.items).toEqual([]);
+    query.setQueryData(calendarQueryKeys.schedulingEvents(scopeA, range), { items: [{ event: { ...scheduled, version: 5 }, occurrenceIndex: 3, time: occurrenceTime }] });
+    await inAct(async () => { await hook.current.rsvp.mutateAsync({ ...identity, expectedVersion: 5, scope: "all", responseStatus: "tentative" }); });
+    expect(wire[1]).toEqual({ kind: "rsvp", eventId: "event-1", input: { idempotencyKey: "calendar.scheduling-rsvp.one", expectedVersion: 5, scope: "all", responseStatus: "tentative" } });
+    expect(query.getQueryData<{ items: Array<{ event: DenCalendarSchedulingEvent }> }>(calendarQueryKeys.schedulingEvents(scopeA, range))?.items[0]?.event.attendees[0]?.responseStatus).toBe("tentative");
+  });
+
   test("retries network errors with identical prepared wire input, then creates a new key and reads the new version", async () => {
     const query = queryClient();
     query.setQueryData(calendarQueryKeys.calendar(scopeA, "calendar-1"), calendar(3));
@@ -281,7 +373,7 @@ describe("calendar mutation hooks", () => {
     expect(calls).toBe(1);
     expect(caught).toBe(conflict);
     expect(hook.current.variables).toEqual(publicInput);
-    expect(calendarMutationConflict(caught)).toEqual(current);
+    expect(calendarMutationConflict(caught)).toEqual({ ...current, videoConferenceEnabled: false });
     expect(query.getQueryData<DenCalendarEvent>(calendarQueryKeys.event(scopeA, "event-1"))?.title).toBe("AUTHORITATIVE");
     expect(hook.current.canRetryLast).toBe(false);
     await expect(hook.current.retryLastAsync()).rejects.toThrow("no uncertain failed");

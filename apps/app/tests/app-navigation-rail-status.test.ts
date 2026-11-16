@@ -2,6 +2,8 @@ import { readFileSync } from "node:fs";
 import { describe, expect, test } from "bun:test";
 import { isIMNavigationVisible, visibleLocalWorkspaceIndicator } from "../src/react-app/shell/app-navigation-status";
 
+const railIconsSource = readFileSync(new URL("../src/react-app/design-system/navigation-rail-icons.tsx", import.meta.url), "utf8");
+
 const railSource = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
 
 describe("local workspace rail status", () => {
@@ -50,7 +52,7 @@ describe("Code Review navigation", () => {
   test("shares the pinned separator while keeping the Review entry conditional", () => {
     const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
     const pinnedSection = source.slice(
-      source.indexOf("{tasksPinned || calendarPinned || cloudDocsPinned || reviewsPinned || toonFactoryPinned ? ("),
+      source.indexOf("{tasksPinned || calendarPinned || (imNavigationVisible && meetingsPinned) || cloudDocsPinned || reviewsPinned || toonFactoryPinned ? ("),
       source.indexOf("</nav>"),
     );
     const pinnedBlock = source.slice(source.indexOf("{reviewsPinned ? ("), source.indexOf(") : null}", source.indexOf("{reviewsPinned ? (")));
@@ -134,6 +136,48 @@ describe("Calendar navigation", () => {
   });
 });
 
+describe("Meetings navigation", () => {
+  const meetingsRow = railSource.slice(
+    railSource.indexOf('data-testid="app-navigation-more-meetings-row"'),
+    railSource.indexOf('data-testid="app-navigation-more-reviews-row"'),
+  );
+  const pinnedBlock = railSource.slice(
+    railSource.indexOf("{imNavigationVisible && meetingsPinned ? ("),
+    railSource.indexOf(") : null}", railSource.indexOf("{imNavigationVisible && meetingsPinned ? (")),
+  );
+
+  test("moves Meetings from the primary Rail into More directly below Calendar", () => {
+    expect(railSource).not.toContain('testId="app-rail-meetings"');
+    expect(railSource.indexOf('data-testid="app-navigation-more-calendar-row"')).toBeLessThan(railSource.indexOf('data-testid="app-navigation-more-meetings-row"'));
+    expect(railSource.indexOf('data-testid="app-navigation-more-meetings-row"')).toBeLessThan(railSource.indexOf('data-testid="app-navigation-more-reviews-row"'));
+    expect(meetingsRow).toContain("onClick={openMeetings}");
+    expect(meetingsRow).toContain('data-testid="app-navigation-more-meetings"');
+    expect(meetingsRow).toContain('t("navigation.meetings")');
+    expect(railSource).toContain('navigate("/meetings")');
+  });
+
+  test("uses parsed route activity and keeps Meetings behind IM availability", () => {
+    expect(railSource).toContain('const meetingsActive = parseWorkspaceAppPath(location.pathname)?.view === "meetings"');
+    expect(meetingsRow).toContain('aria-current={meetingsActive ? "page" : undefined}');
+    expect(railSource).toContain("imNavigationVisible && meetingsActive && !meetingsPinned");
+    expect(railSource).toContain("{imNavigationVisible ? (");
+  });
+
+  test("supports a keyboard-reachable pin and shows the pinned entry below Calendar", () => {
+    expect(meetingsRow).toContain('data-testid="app-navigation-pin-meetings"');
+    expect(meetingsRow).toContain("tabIndex={0}");
+    expect(meetingsRow).toContain("aria-pressed={meetingsPinned}");
+    expect(meetingsRow).toContain('aria-label={meetingsPinned ? t("navigation.unpin_item") : t("navigation.pin_item")}');
+    expect(railSource).toContain('setAppNavigationItemPinned("meetings", !meetingsPinned)');
+    expect(pinnedBlock).toContain('testId="app-rail-pinned-meetings"');
+    expect(pinnedBlock).toContain('tooltipLabel={t("calendar.video_conference")}');
+    expect(pinnedBlock).toContain("active={meetingsActive}");
+    expect(pinnedBlock).toContain("onClick={openMeetings}");
+    expect(railSource.indexOf('testId="app-rail-pinned-calendar"')).toBeLessThan(railSource.indexOf('testId="app-rail-pinned-meetings"'));
+    expect(railSource.indexOf('testId="app-rail-pinned-meetings"')).toBeLessThan(railSource.indexOf('testId="app-rail-pinned-reviews"'));
+  });
+});
+
 describe("Toon Factory navigation", () => {
   test("keeps Toon Factory below Code Review in More and supports pinning", () => {
     expect(railSource.indexOf('data-testid="app-navigation-more-reviews-row"')).toBeLessThan(
@@ -174,13 +218,10 @@ describe("navigation rail visual proportions", () => {
     expect(localWorkspace).not.toContain('<FolderOpen');
   });
 
-  test("keeps a background-colored doorway in the filled home icon", () => {
-    const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
-    const icon = source.slice(source.indexOf('function LocalWorkspaceIcon'), source.indexOf('function RailButton'));
-    expect(icon).toContain('data-local-workspace-icon="filled"');
-    expect(icon).toContain('fill="currentColor"');
-    expect(icon).toContain('data-local-workspace-doorway');
-    expect(icon).toContain('fill="var(--dls-active)"');
+  test("uses explicit outline and filled home variants instead of filling the outline SVG", () => {
+    expect(railIconsSource).toContain('data-local-workspace-icon={active ? "filled" : "outline"}');
+    expect(railIconsSource).toContain('viewBox="0 0 20 20"');
+    expect(railIconsSource).toContain('fill="none"');
   });
 
   test("fills the selected Rail icon black in light mode and white in dark mode", () => {
@@ -274,7 +315,7 @@ describe("navigation rail visual proportions", () => {
     expect(source).toContain('label={t("project_extensions.group_plugin")}');
     expect(source).toContain("active={props.appsActive}");
     expect(source).toContain("onClick={props.onOpenApps}");
-    expect(source).toContain("<PluginOrbitIcon />");
+    expect(source).toContain("<PluginOrbitIcon active={Boolean(props.appsActive)} />");
     expect(source).not.toContain("<Puzzle />");
     expect(source.indexOf('testId="app-rail-automations"')).toBeLessThan(source.indexOf('testId="app-rail-plugins"'));
     expect(source.indexOf('testId="app-rail-plugins"')).toBeLessThan(source.indexOf('testId="app-rail-chat"'));
@@ -339,7 +380,7 @@ describe("navigation rail visual proportions", () => {
     expect(source).toContain('onPreviewMenuChange?.(previewScope ?? null)');
     expect(source).toContain('onAppPreviewChange?.(appPreviewTarget, true)');
     expect(source).toContain('onAppPreviewChange?.(appPreviewTarget, false)');
-    expect(source).toContain('title={showTooltip ? label : undefined}');
+    expect(source).toContain('title={showTooltip ? (tooltipLabel ?? label) : undefined}');
   });
 
   test("omits the cloud workspace destination from the primary Rail", () => {
@@ -352,7 +393,7 @@ describe("navigation rail visual proportions", () => {
   test("routes Automation and Plugins hover to the global sidebar preview host", () => {
     const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
     const automation = source.slice(source.indexOf('label={t("navigation.automations")}'), source.indexOf('</RailButton>', source.indexOf('label={t("navigation.automations")}')));
-    const plugins = source.slice(source.indexOf('label={t("project_extensions.group_plugin")}'), source.indexOf('<PluginOrbitIcon />'));
+    const plugins = source.slice(source.indexOf('label={t("project_extensions.group_plugin")}'), source.indexOf('<PluginOrbitIcon active={Boolean(props.appsActive)} />'));
     expect(automation).toContain('appPreviewTarget="automation"');
     expect(automation).toContain('onAppPreviewChange={appSidebarPreview.onTriggerChange}');
     expect(automation).toContain('showTooltip={!appSidebarPreview.enabled}');

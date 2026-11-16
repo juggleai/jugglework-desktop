@@ -1,10 +1,19 @@
 /** @jsxImportSource react */
 import * as React from "react";
 import { Temporal } from "@js-temporal/polyfill";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, MoreHorizontal, Users } from "lucide-react";
 
 import type { DenCalendar } from "@/app/lib/den";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { t } from "@/i18n";
 import {
@@ -13,6 +22,7 @@ import {
   type CalendarMonthNavigation,
   type CalendarWeekday,
 } from "./calendar-month-model";
+import { CALENDAR_COLOR_PALETTE } from "./calendar-colors";
 
 const WEEKDAY_REFERENCE: Record<CalendarWeekday, string> = {
   1: "2026-11-02", 2: "2026-11-03", 3: "2026-11-04", 4: "2026-11-05", 5: "2026-11-06", 6: "2026-11-07", 7: "2026-11-08",
@@ -56,41 +66,146 @@ export function CalendarMonthToolbar(props: {
 }
 
 export function CalendarFilterList(props: {
-  calendars: readonly DenCalendar[];
+  calendars: ReadonlyArray<{ calendar: DenCalendar; managed: boolean; onManageMembers?: () => void }>;
   hiddenIds: readonly string[];
   onToggle: (calendarId: string, visible: boolean) => void;
+  onShowOnly: (calendarId: string) => void;
+  onColorChange: (calendarId: string, color: string) => void;
 }) {
   const hidden = new Set(props.hiddenIds);
+  const managed = props.calendars.filter((item) => item.managed);
+  const subscribed = props.calendars.filter((item) => !item.managed);
   return (
-    <section aria-labelledby="calendar-filter-heading" data-testid="calendar-filter-list">
-      <h3 id="calendar-filter-heading" className="mb-2 px-1 text-xs font-medium text-dls-secondary">
-        {t("calendar.my_calendars")}
-      </h3>
+    <section aria-label={t("calendar.filter_title")} data-testid="calendar-filter-list">
       {props.calendars.length === 0 ? (
         <p className="px-1 text-sm text-dls-secondary" data-testid="calendar-filter-empty">{t("calendar.no_calendars")}</p>
       ) : (
-        <ul className="flex flex-col gap-0.5">
-          {props.calendars.map((calendar) => {
-            const visible = !hidden.has(calendar.id);
-            return (
-              <li key={calendar.id}>
-                <label className="flex cursor-pointer items-center gap-2 rounded-lg px-1 py-1.5 text-sm text-dls-text hover:bg-dls-hover focus-within:ring-2 focus-within:ring-dls-accent/35">
-                  <input
-                    type="checkbox"
-                    className="size-4 accent-current"
-                    style={{ color: calendar.color ?? undefined }}
-                    checked={visible}
-                    onChange={(event) => props.onToggle(calendar.id, event.target.checked)}
-                    data-testid={`calendar-filter-${calendar.id}`}
-                  />
-                  <span className="min-w-0 flex-1 truncate">{calendar.name}</span>
-                </label>
-              </li>
-            );
-          })}
-        </ul>
+        <div className="flex flex-col gap-1">
+          <CalendarFilterGroup id="managed" title={t("calendar.managed_calendars")} items={managed} hidden={hidden} onToggle={props.onToggle} onShowOnly={props.onShowOnly} onColorChange={props.onColorChange} />
+          <CalendarFilterGroup id="subscribed" title={t("calendar.subscribed_calendars")} items={subscribed} hidden={hidden} onToggle={props.onToggle} onShowOnly={props.onShowOnly} onColorChange={props.onColorChange} emptyLabel={t("calendar.no_subscribed_calendars")} />
+        </div>
       )}
     </section>
+  );
+}
+
+function CalendarFilterGroup(props: {
+  id: "managed" | "subscribed";
+  title: string;
+  items: ReadonlyArray<{ calendar: DenCalendar; onManageMembers?: () => void }>;
+  hidden: ReadonlySet<string>;
+  onToggle: (calendarId: string, visible: boolean) => void;
+  onShowOnly: (calendarId: string) => void;
+  onColorChange: (calendarId: string, color: string) => void;
+  emptyLabel?: string;
+}) {
+  const [open, setOpen] = React.useState(true);
+  const regionId = `calendar-filter-${props.id}-region`;
+  return (
+    <section data-testid={`calendar-filter-group-${props.id}`}>
+      <button
+        type="button"
+        className="flex w-full items-center gap-1 rounded-lg px-1 py-1 text-xs font-medium text-dls-secondary hover:bg-dls-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/35"
+        aria-expanded={open}
+        aria-controls={regionId}
+        aria-label={`${open ? t("calendar.collapse") : t("calendar.expand")} ${props.title}`}
+        onClick={() => setOpen((current) => !current)}
+        data-testid={`calendar-filter-group-${props.id}-toggle`}
+      >
+        <ChevronRight className={cn("size-3.5 transition-transform", open && "rotate-90")} aria-hidden="true" />
+        {props.title}
+      </button>
+      <div id={regionId} hidden={!open} data-testid={`calendar-filter-group-${props.id}-region`}>
+        {props.items.length === 0 ? (
+          props.emptyLabel ? <p className="px-5 py-1 text-xs text-dls-secondary">{props.emptyLabel}</p> : null
+        ) : (
+          <ul className="flex flex-col gap-0.5">
+            {props.items.map(({ calendar, onManageMembers }) => {
+              const visible = !props.hidden.has(calendar.id);
+              return (
+                <li key={calendar.id}>
+                  <div className="group/calendar-row flex items-center rounded-lg px-5 py-0.5 hover:bg-dls-hover focus-within:bg-dls-hover">
+                    <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 py-1 text-sm text-dls-text focus-within:ring-2 focus-within:ring-dls-accent/35">
+                      <input
+                        type="checkbox"
+                        className="peer sr-only"
+                        checked={visible}
+                        onChange={(event) => props.onToggle(calendar.id, event.target.checked)}
+                        data-testid={`calendar-filter-${calendar.id}`}
+                      />
+                      <span
+                        className={cn(
+                          "flex size-4 shrink-0 items-center justify-center rounded-[3px] border transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-dls-accent/40 peer-focus-visible:ring-offset-1 peer-focus-visible:ring-offset-dls-surface",
+                          visible ? "text-white" : "bg-dls-surface dark:bg-dls-sidebar",
+                        )}
+                        style={{
+                          backgroundColor: visible ? calendar.color ?? "var(--dls-accent)" : undefined,
+                          borderColor: calendar.color ?? "var(--dls-border)",
+                        }}
+                        aria-hidden="true"
+                        data-testid={`calendar-filter-check-${calendar.id}`}
+                      >
+                        {visible ? <Check className="size-3 stroke-[3.5] text-white" aria-hidden="true" /> : null}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate">{calendar.name}</span>
+                    </label>
+                    {onManageMembers ? (
+                      <button type="button" className="ml-1 rounded-md p-1 text-dls-secondary hover:bg-dls-surface hover:text-dls-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/35" aria-label={t("calendar.manage_members_label", { name: calendar.name })} aria-haspopup="dialog" onClick={onManageMembers} data-testid={`calendar-manage-members-${calendar.id}`}>
+                        <Users className="size-4" aria-hidden="true" />
+                      </button>
+                    ) : null}
+                    <CalendarColorMenu calendar={calendar} onShowOnly={() => props.onShowOnly(calendar.id)} onColorChange={(color) => props.onColorChange(calendar.id, color)} />
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function CalendarColorMenu(props: { calendar: DenCalendar; onShowOnly: () => void; onColorChange: (color: string) => void }) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={<button type="button" className="ml-1 flex size-7 shrink-0 items-center justify-center rounded-md text-dls-secondary opacity-0 transition-opacity hover:bg-dls-surface hover:text-dls-text focus:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/35 group-hover/calendar-row:opacity-100 data-popup-open:opacity-100" aria-label={t("calendar.more_actions", { name: props.calendar.name })} data-testid={`calendar-more-${props.calendar.id}`} />}
+      >
+        <MoreHorizontal className="size-4" aria-hidden="true" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" sideOffset={4} className="min-w-44 rounded-lg border border-dls-border bg-dls-surface p-1 text-dls-text shadow-xl before:hidden dark:bg-dls-surface">
+        <DropdownMenuItem className="h-9 rounded-md px-3 font-normal focus:bg-dls-hover focus:text-dls-text" onClick={props.onShowOnly} data-testid={`calendar-show-only-${props.calendar.id}`}>
+          {t("calendar.show_only_this")}
+        </DropdownMenuItem>
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger className="h-9 rounded-md px-3 font-normal focus:bg-dls-hover focus:text-dls-text data-popup-open:bg-dls-hover data-popup-open:text-dls-text" data-testid={`calendar-change-color-${props.calendar.id}`}>
+            {t("calendar.change_color")}
+          </DropdownMenuSubTrigger>
+          <DropdownMenuSubContent sideOffset={6} className="min-w-0 rounded-lg border border-dls-border bg-dls-surface p-3 text-dls-text shadow-xl before:hidden dark:bg-dls-surface" data-testid={`calendar-color-palette-${props.calendar.id}`}>
+            <div className="grid grid-cols-6 gap-2" role="group" aria-label={t("calendar.change_color")}>
+              {CALENDAR_COLOR_PALETTE.map((color) => {
+                const selected = props.calendar.color?.toLowerCase() === color;
+                return (
+                  <button
+                    key={color}
+                    type="button"
+                    className="flex size-8 items-center justify-center rounded-md outline-none ring-offset-2 ring-offset-dls-surface transition-transform hover:scale-105 focus-visible:ring-2 focus-visible:ring-dls-text"
+                    style={{ backgroundColor: color }}
+                    aria-label={t("calendar.choose_color", { color })}
+                    aria-pressed={selected}
+                    onClick={() => props.onColorChange(color)}
+                    data-testid={`calendar-color-${props.calendar.id}-${color.slice(1)}`}
+                  >
+                    {selected ? <span className="flex size-6 items-center justify-center rounded-md border-2 border-white text-white"><Check className="size-4 stroke-[3]" aria-hidden="true" /></span> : null}
+                  </button>
+                );
+              })}
+            </div>
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -100,6 +215,7 @@ type GridProps = {
   weekStart: CalendarWeekday;
   locale: string;
   onSelectDate: (date: Temporal.PlainDate) => void;
+  onCreateDate?: (input: { date: Temporal.PlainDate; clientX: number; clientY: number }) => void;
   onMoveSelection?: (days: number) => void;
   /** `selected` lets the cell expose its event chips to Tab only for the roving-focus day. */
   renderDayContent?: (date: Temporal.PlainDate, selected: boolean) => React.ReactNode;
@@ -115,22 +231,33 @@ function keyDelta(key: string): number | null {
   }
 }
 
-export function CalendarMiniMonth(props: GridProps) {
+export function CalendarMiniMonth(props: GridProps & { onPrevious: () => void; onNext: () => void }) {
   const days = calendarMonthGrid(props.state.month, props.weekStart);
   const weekdays = calendarWeekdayOrder(props.weekStart);
+  const todayVisible = days.some((day) => day.equals(props.today));
   return (
     <section aria-label={t("calendar.mini_month")} data-testid="calendar-mini-month">
-      <p className="mb-2 px-1 text-sm font-medium text-dls-text">{formatCalendarMonth(props.state.month, props.locale)}</p>
+      <div className="mb-2 flex items-center gap-1 px-1">
+        <p className="min-w-0 flex-1 truncate text-sm font-medium text-dls-text" aria-live="polite">{formatCalendarMonth(props.state.month, props.locale)}</p>
+        <Button type="button" variant="ghost" size="icon-sm" aria-label={t("calendar.previous_month")} onClick={props.onPrevious} data-testid="calendar-mini-previous-month">
+          <ChevronLeft className="size-4" aria-hidden="true" />
+        </Button>
+        <Button type="button" variant="ghost" size="icon-sm" aria-label={t("calendar.next_month")} onClick={props.onNext} data-testid="calendar-mini-next-month">
+          <ChevronRight className="size-4" aria-hidden="true" />
+        </Button>
+      </div>
       <div className="grid grid-cols-7 gap-0.5 text-center" role="grid" aria-label={formatCalendarMonth(props.state.month, props.locale)}>
         <div role="row" className="contents">
           {weekdays.map((weekday) => (
-            <span key={weekday} role="columnheader" className="py-1 text-[11px] text-dls-secondary" aria-label={weekdayLabel(weekday, props.locale, "long")}>
+            <span key={weekday} role="columnheader" className={cn("py-1 text-[11px] text-dls-secondary", todayVisible && weekday === props.today.dayOfWeek && "font-semibold text-dls-accent dark:text-[color:color-mix(in_oklab,var(--dls-accent)_42%,white)]")} aria-label={weekdayLabel(weekday, props.locale, "long")} data-current-weekday={todayVisible && weekday === props.today.dayOfWeek ? "true" : undefined}>
               {weekdayLabel(weekday, props.locale, "narrow")}
             </span>
           ))}
         </div>
-        {chunkWeeks(days).map((week) => (
-          <div key={week[0]!.toString()} role="row" className="contents">
+        {chunkWeeks(days).map((week) => {
+          const currentWeek = week.some((day) => day.equals(props.today));
+          return (
+          <div key={week[0]!.toString()} role="row" className="contents" data-current-week={currentWeek ? "true" : undefined}>
             {week.map((day) => {
               const selected = day.equals(props.state.selectedDate);
               const outside = day.month !== props.state.month.month || day.year !== props.state.month.year;
@@ -147,8 +274,8 @@ export function CalendarMiniMonth(props: GridProps) {
                   className={cn(
                     "mx-auto flex size-7 items-center justify-center rounded-full text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/35",
                     outside ? "text-dls-secondary/60" : "text-dls-text",
-                    day.equals(props.today) && !selected && "font-semibold text-dls-accent",
-                    selected ? "bg-dls-accent text-white" : "hover:bg-dls-hover",
+                    day.equals(props.today) && !selected && "font-semibold text-dls-accent dark:text-[color:color-mix(in_oklab,var(--dls-accent)_42%,white)]",
+                    selected ? "bg-dls-accent text-[var(--dls-accent-fg)] dark:bg-[color:color-mix(in_oklab,var(--dls-accent)_58%,white_42%)] dark:text-black dark:shadow-[0_0_0_2px_rgba(255,255,255,0.12)]" : "hover:bg-dls-hover",
                   )}
                   data-testid={`calendar-mini-day-${day.toString()}`}
                 >
@@ -157,7 +284,8 @@ export function CalendarMiniMonth(props: GridProps) {
               );
             })}
           </div>
-        ))}
+          );
+        })}
       </div>
     </section>
   );
@@ -166,6 +294,7 @@ export function CalendarMiniMonth(props: GridProps) {
 export function CalendarMonthGrid(props: GridProps) {
   const days = calendarMonthGrid(props.state.month, props.weekStart);
   const weekdays = calendarWeekdayOrder(props.weekStart);
+  const todayVisible = days.some((day) => day.equals(props.today));
   const selectedRef = React.useRef<HTMLButtonElement | null>(null);
   const focusAfterMove = React.useRef(false);
   React.useEffect(() => {
@@ -191,13 +320,15 @@ export function CalendarMonthGrid(props: GridProps) {
       >
         <div role="row" className="contents">
           {weekdays.map((weekday) => (
-            <span key={weekday} role="columnheader" className="border-b border-r border-dls-border px-2 py-1.5 text-xs font-medium text-dls-secondary" aria-label={weekdayLabel(weekday, props.locale, "long")}>
+            <span key={weekday} role="columnheader" className={cn("border-b border-r border-dls-border px-2 py-1.5 text-xs font-medium text-dls-secondary", todayVisible && weekday === props.today.dayOfWeek && "bg-[rgba(var(--dls-accent-rgb),0.055)] text-dls-accent dark:bg-[color:color-mix(in_oklab,color-mix(in_oklab,var(--dls-accent)_65%,white)_18%,transparent)] dark:text-[color:color-mix(in_oklab,var(--dls-accent)_42%,white)]")} aria-label={weekdayLabel(weekday, props.locale, "long")} data-current-weekday={todayVisible && weekday === props.today.dayOfWeek ? "true" : undefined}>
               {weekdayLabel(weekday, props.locale, "short")}
             </span>
           ))}
         </div>
-        {chunkWeeks(days).map((week) => (
-          <div key={week[0]!.toString()} role="row" className="contents">
+        {chunkWeeks(days).map((week) => {
+          const currentWeek = week.some((day) => day.equals(props.today));
+          return (
+          <div key={week[0]!.toString()} role="row" className="contents" data-current-week={currentWeek ? "true" : undefined}>
             {week.map((day) => {
               const selected = day.equals(props.state.selectedDate);
               const outside = day.month !== props.state.month.month || day.year !== props.state.month.year;
@@ -207,9 +338,19 @@ export function CalendarMonthGrid(props: GridProps) {
                   key={day.toString()}
                   role="gridcell"
                   aria-selected={selected}
-                  className={cn("flex min-h-0 min-w-0 flex-col gap-0.5 overflow-hidden border-b border-r border-dls-border p-1", outside && "bg-dls-sidebar/40", selected && "bg-dls-active/40")}
+                  className={cn(
+                    "flex min-h-0 min-w-0 flex-col gap-0.5 overflow-hidden border-b border-r border-dls-border p-1 transition-colors",
+                    outside && !currentWeek && "bg-dls-sidebar/40",
+                    currentWeek && "bg-[rgba(var(--dls-accent-rgb),0.055)] dark:bg-[color:color-mix(in_oklab,color-mix(in_oklab,var(--dls-accent)_65%,white)_12%,transparent)]",
+                    selected && "bg-dls-active/55",
+                  )}
                   data-testid={`calendar-day-${day.toString()}`}
                   data-outside-month={outside ? "true" : undefined}
+                  data-current-week={currentWeek ? "true" : undefined}
+                  onClick={(event) => {
+                    if (event.target !== event.currentTarget || !props.onCreateDate) return;
+                    props.onCreateDate({ date: day, clientX: event.clientX, clientY: event.clientY });
+                  }}
                 >
                   <button
                     ref={selected ? selectedRef : undefined}
@@ -222,7 +363,7 @@ export function CalendarMonthGrid(props: GridProps) {
                     className={cn(
                       "flex size-6 shrink-0 items-center justify-center self-start rounded-full text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent focus-visible:ring-offset-1 focus-visible:ring-offset-dls-surface",
                       outside ? "text-dls-secondary/70" : "text-dls-text",
-                      isToday ? "bg-dls-accent font-semibold text-white" : selected ? "font-semibold" : "hover:bg-dls-hover",
+                      isToday ? "bg-dls-accent font-semibold text-[var(--dls-accent-fg)] shadow-[0_0_0_2px_rgba(var(--dls-accent-rgb),0.14)] dark:bg-[color:color-mix(in_oklab,var(--dls-accent)_58%,white_42%)] dark:text-black dark:shadow-[0_0_0_2px_rgba(255,255,255,0.12)]" : selected ? "font-semibold" : "hover:bg-dls-hover",
                     )}
                     data-testid={`calendar-day-button-${day.toString()}`}
                   >
@@ -233,7 +374,8 @@ export function CalendarMonthGrid(props: GridProps) {
               );
             })}
           </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

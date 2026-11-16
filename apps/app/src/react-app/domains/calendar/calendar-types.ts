@@ -21,6 +21,7 @@ export type CalendarEvent = {
   calendarId: string;
   title: string;
   description: string;
+  videoConferenceEnabled: boolean;
   time: CalendarEventTime;
   version: number;
   createdAt: string;

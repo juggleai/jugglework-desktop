@@ -46,8 +46,8 @@ import {
 import {
   createGroup,
   dismissGroup,
+  getAllGroupMembers,
   getGroupInfo,
-  getGroupMembers,
   getMembersPage,
   inviteGroupMembers,
   removeGroupMembers,
@@ -443,6 +443,7 @@ const MESSAGE_NAMES = {
   // §4.10——必须在这里登记，否则会被下面 SUPPORTED_MESSAGE_NAMES 判成"不支持"，落进
   // system 分支渲染成一条灰色的"消息暂不支持"分隔行，永远走不到 MessageBubble。
   automationNotification: "jw:automation-notification",
+  cloudDocsNotification: DOCS_MESSAGE_NAME,
 } as const;
 
 const SUPPORTED_MESSAGE_NAMES = new Set<string>(Object.values(MESSAGE_NAMES));
@@ -940,26 +941,10 @@ function canMentionAll(settingRight: number, myRole: number) {
   return settingRight === 7 || (settingRight === 1 && myRole === 1) || (settingRight === 3 && (myRole === 1 || myRole === 2));
 }
 
-async function getAllGroupMentionMembers(groupId: string) {
-  const members: ChatGroupMember[] = [];
-  let offset = "";
-  for (let page = 0; page < 50; page += 1) {
-    const result = await getGroupMembers(groupId, 100, offset);
-    assertSuccess(result, "获取群成员失败");
-    const items = extractGroupMembers(result.data);
-    members.push(...items);
-    if (Array.isArray(result.data)) break;
-    const nextOffset = result.data && typeof result.data === "object" && "offset" in result.data ? String(result.data.offset || "") : "";
-    if (!nextOffset || nextOffset === offset || !items.length) break;
-    offset = nextOffset;
-  }
-  return members;
-}
-
 async function getMentionCandidates(groupId: string): Promise<MentionCandidate[]> {
   const [infoResult, listedMembers] = await Promise.all([
     getGroupInfo(groupId),
-    getAllGroupMentionMembers(groupId).catch(() => []),
+    getAllGroupMembers(groupId).then((result) => extractGroupMembers(result.data)).catch(() => []),
   ]);
   assertSuccess(infoResult, "获取群资料失败");
   const data = infoResult.data ?? {};
@@ -1625,7 +1610,7 @@ function GroupManagementModal({ conversation, onClose }: { conversation: ChatCon
     try {
       const [infoResult, membersResult] = await Promise.all([
         getGroupInfo(conversation.conversationId),
-        getGroupMembers(conversation.conversationId),
+        getAllGroupMembers(conversation.conversationId),
       ]);
       assertSuccess(infoResult, "获取群资料失败");
       assertSuccess(membersResult, "获取群成员失败");

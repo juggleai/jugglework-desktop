@@ -24,7 +24,7 @@
 Docs 原生通知／outbox、Server 投递和组织通知管理的分层结果见 [m4-notification-chain.json](evidence/m4-notification-chain.json)。三仓独立数据库＋模拟 IM 联合结果见 [m4-notification-chain-three-repository.json](evidence/m4-notification-chain-three-repository.json)；真实 IM 提供方、操作系统通知中心人工点击和单进程生产部署仍未验收。
 
 - [x] 4.1 启动交接传入 presentation／instanceId，产品页、双标签和旧实例消息丢弃已通过分层验证。
-- [ ] 4.2 原生 nbstore 批合并及撤权后仅清目标 Docs Origin 缓存已接通；两个原生客户端已测得 234 次操作合并为 270 字节更新、19.889 ms ACK、19.960 ms 远端可见、重启恢复及 851 ms 撤权，仍需真实 Electron 链路、中文 IME、长文和并发负载验收。
+- [ ] 4.2 原生 nbstore 批合并已接通；当前撤权按绑定上下文隐藏并暂停同步，保留原生待同步数据；两个原生客户端已测得 234 次操作合并为 270 字节更新、19.889 ms ACK、19.960 ms 远端可见、重启恢复及 851 ms 撤权，仍需真实 Electron 链路、中文 IME、长文和并发负载验收。
 - [x] 4.3 在既有 jugglechat 注册 jw:docs-notification，完成群／定向卡片、会话预览、未知版本兜底、来源校验和展示去重。
 - [ ] 4.4 通知点击的新交接、跨租户确认、评论定位、退出／删除／失权、离线 IM 历史和站内独立未读已通过三仓模拟联合验收；Electron 主进程已在启动／重载期间暂存并去重点击动作，渲染器安装监听后交接。真实操作系统通知中心人工点击仍未验收。
 - [x] 4.5 按 card-navigation.md 固定卡片模板、真实群／助手映射、接收时来源及系统通知点击上下文，验证转发／伪造／未知来源的无动作兜底。

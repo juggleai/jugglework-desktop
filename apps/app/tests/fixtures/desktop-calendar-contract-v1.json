@@ -48,6 +48,7 @@
     "calendarId": "calendar_primary",
     "title": "Planning day",
     "description": "",
+    "videoConferenceEnabled": false,
     "time": {
       "kind": "allDay",
       "startDate": "2026-11-05",
@@ -64,6 +65,7 @@
     "calendarId": "calendar_primary",
     "title": "Design review",
     "description": "Calendar core",
+    "videoConferenceEnabled": false,
     "time": {
       "kind": "timed",
       "startInstant": "2026-11-05T02:00:00Z",
@@ -96,6 +98,7 @@
         "calendarId": "calendar_primary",
         "title": "Planning day",
         "description": "",
+        "videoConferenceEnabled": false,
         "time": {
           "kind": "allDay",
           "startDate": "2026-11-05",
@@ -112,6 +115,7 @@
         "calendarId": "calendar_primary",
         "title": "Design review",
         "description": "Calendar core",
+        "videoConferenceEnabled": false,
         "time": {
           "kind": "timed",
           "startInstant": "2026-11-05T02:00:00Z",
@@ -159,6 +163,7 @@
           "calendarId": "calendar_primary",
           "title": "Design review",
           "description": "Calendar core",
+          "videoConferenceEnabled": false,
           "time": {
             "kind": "timed",
             "startInstant": "2026-11-05T02:00:00Z",

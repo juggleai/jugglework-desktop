@@ -1,11 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { Temporal } from "@js-temporal/polyfill";
 
-import { DenApiError, type DenCalendarEvent } from "../src/app/lib/den";
+import { DenApiError, type DenCalendarEvent, type DenCalendarSchedulingEvent } from "../src/app/lib/den";
 import {
   CALENDAR_EVENT_DESCRIPTION_MAX,
   CALENDAR_EVENT_TITLE_MAX,
   CALENDAR_FORM_ERROR,
+  calendarEventFormForTimeSlot,
+  calendarEventFormWithNextHalfHour,
   calendarEventToForm,
   calendarEventUpdatePatch,
   classifyCalendarSaveFailure,
@@ -24,14 +26,61 @@ describe("calendar event form model", () => {
     expect(form.time).toEqual({ kind: "allDay", startDate: "2026-11-09", endDateExclusive: "2026-11-10" });
     expect(validateCalendarEventForm({ ...form, title: "x" }, active)).toEqual({
       ok: true,
-      values: { calendarId: "cal-1", title: "x", description: "", time: { kind: "allDay", startDate: "2026-11-09", endDateExclusive: "2026-11-10" } },
+      values: { calendarId: "cal-1", title: "x", description: "", videoConferenceEnabled: true, time: { kind: "allDay", startDate: "2026-11-09", endDateExclusive: "2026-11-10" }, attendeeMemberIds: [], recurrence: null },
     });
   });
 
+  test("a new personal event requires the creator as an attendee", () => {
+    const form = defaultCalendarEventForm({
+      date,
+      calendarId: "cal-1",
+      timeZone: "Asia/Shanghai",
+      creatorMemberId: "member-a",
+    });
+    expect(form.attendeeMemberIds).toEqual(["member-a"]);
+    expect(validateCalendarEventForm({ ...form, title: "Owned event", attendeeMemberIds: [] }, active, "member-a"))
+      .toMatchObject({ ok: true, values: { attendeeMemberIds: ["member-a"] } });
+  });
+
   test("a valid timed form serializes to instants in its IANA zone", () => {
-    const form = { ...defaultCalendarEventForm({ date, calendarId: "cal-1", timeZone: "Asia/Shanghai", kind: "timed" }), title: "Call" };
+    const initial = defaultCalendarEventForm({ date, calendarId: "cal-1", timeZone: "Asia/Shanghai", kind: "timed" });
+    const form = { ...initial, title: "Call", time: { ...initial.time, startTime: "09:00", endTime: "09:30" } as typeof initial.time };
     const result = validateCalendarEventForm(form, active);
-    expect(result).toMatchObject({ ok: true, values: { time: { kind: "timed", startInstant: "2026-11-09T01:00:00Z", endInstantExclusive: "2026-11-09T02:00:00Z", timeZone: "Asia/Shanghai" } } });
+    expect(result).toMatchObject({ ok: true, values: { time: { kind: "timed", startInstant: "2026-11-09T01:00:00Z", endInstantExclusive: "2026-11-09T01:30:00Z", timeZone: "Asia/Shanghai" } } });
+    expect(validateCalendarEventForm({ ...form, time: { ...form.time, startTime: "09:00:00", endTime: "09:30:00" } as typeof form.time }, active).ok).toBe(true);
+    expect(validateCalendarEventForm({ ...form, time: { ...form.time, startTime: "09:17" } as typeof form.time }, active)).toMatchObject({ ok: false, errors: { time: CALENDAR_FORM_ERROR.timeInvalid } });
+    expect(validateCalendarEventForm({ ...form, time: { ...form.time, startTime: "09:00:01" } as typeof form.time }, active)).toMatchObject({ ok: false, errors: { time: CALENDAR_FORM_ERROR.timeInvalid } });
+  });
+
+  test("a clicked time slot snaps down to 30 minutes and creates a half-hour range", () => {
+    const form = calendarEventFormForTimeSlot({ date, startMinute: 13 * 60 + 12, calendarId: "cal-1", timeZone: "Asia/Shanghai", creatorMemberId: "member-a" });
+    expect(form.time).toEqual({ kind: "timed", startDate: "2026-11-09", startTime: "13:00", endDate: "2026-11-09", endTime: "13:30", timeZone: "Asia/Shanghai", startDisambiguation: "reject", endDisambiguation: "reject" });
+    expect(form.attendeeMemberIds).toEqual(["member-a"]);
+  });
+
+  test("the last time slot crosses midnight without producing an invalid local time", () => {
+    const form = calendarEventFormForTimeSlot({ date, startMinute: 23 * 60 + 59, calendarId: "cal-1", timeZone: "Asia/Shanghai" });
+    expect(form.time).toMatchObject({ startDate: "2026-11-09", startTime: "23:30", endDate: "2026-11-10", endTime: "00:00" });
+  });
+
+  test("a slot alongside an existing event preserves its exact half-hour range", () => {
+    const form = calendarEventFormForTimeSlot({ date, startMinute: 13 * 60 + 30, durationMinutes: 60, snapToHalfHour: false, calendarId: "cal-1", timeZone: "Asia/Shanghai" });
+    expect(form.time).toMatchObject({ startDate: "2026-11-09", startTime: "13:30", endDate: "2026-11-09", endTime: "14:30" });
+    expect(validateCalendarEventForm({ ...form, title: "Parallel" }, active).ok).toBe(true);
+  });
+
+  test("adding time to an all-day quick event uses the first half-hour boundary strictly after now", () => {
+    const allDay = defaultCalendarEventForm({ date, calendarId: "cal-1", timeZone: "Asia/Shanghai" });
+    expect(calendarEventFormWithNextHalfHour(allDay, Temporal.Instant.from("2026-11-09T08:01:00Z"), "Asia/Shanghai").time)
+      .toMatchObject({ kind: "timed", startDate: "2026-11-09", startTime: "16:30", endDate: "2026-11-09", endTime: "17:00" });
+    expect(calendarEventFormWithNextHalfHour(allDay, Temporal.Instant.from("2026-11-09T08:30:00Z"), "Asia/Shanghai").time)
+      .toMatchObject({ kind: "timed", startDate: "2026-11-09", startTime: "17:00", endDate: "2026-11-09", endTime: "17:30" });
+  });
+
+  test("adding time near midnight creates a valid half-hour range on the next day", () => {
+    const allDay = defaultCalendarEventForm({ date, calendarId: "cal-1", timeZone: "Asia/Shanghai" });
+    expect(calendarEventFormWithNextHalfHour(allDay, Temporal.Instant.from("2026-11-09T15:45:00Z"), "Asia/Shanghai").time)
+      .toMatchObject({ kind: "timed", startDate: "2026-11-10", startTime: "00:00", endDate: "2026-11-10", endTime: "00:30" });
   });
 
   test("required fields and code-point length limits match the server", () => {
@@ -41,6 +90,25 @@ describe("calendar event form model", () => {
     expect(validateCalendarEventForm({ ...base(), description: "a".repeat(CALENDAR_EVENT_DESCRIPTION_MAX + 1) }, active)).toMatchObject({ ok: false, errors: { description: CALENDAR_FORM_ERROR.descriptionTooLong } });
     expect(validateCalendarEventForm({ ...base(), calendarId: "" }, active)).toMatchObject({ ok: false, errors: { calendarId: CALENDAR_FORM_ERROR.calendarRequired } });
     expect(validateCalendarEventForm({ ...base(), calendarId: "deleted" }, active)).toMatchObject({ ok: false, errors: { calendarId: CALENDAR_FORM_ERROR.calendarRequired } });
+  });
+
+  test("rejects more than 20 unique attendees even when the UI is bypassed", () => {
+    expect(validateCalendarEventForm({
+      ...base(),
+      attendeeMemberIds: Array.from({ length: 21 }, (_, index) => `member-${index}`),
+    }, active)).toMatchObject({ ok: false, errors: { attendees: CALENDAR_FORM_ERROR.attendeesTooMany } });
+    expect(validateCalendarEventForm({
+      ...base(),
+      attendeeMemberIds: [...Array.from({ length: 20 }, (_, index) => `member-${index}`), "member-0", ""],
+    }, active)).toMatchObject({ ok: true, values: { attendeeMemberIds: Array.from({ length: 20 }, (_, index) => `member-${index}`) } });
+    expect(validateCalendarEventForm({
+      ...base(),
+      attendeeMemberIds: Array.from({ length: 20 }, (_, index) => `guest-${index}`),
+    }, active, "member-a")).toMatchObject({ ok: false, errors: { attendees: CALENDAR_FORM_ERROR.attendeesTooMany } });
+    expect(validateCalendarEventForm({
+      ...base(),
+      attendeeMemberIds: Array.from({ length: 19 }, (_, index) => `guest-${index}`),
+    }, active, "member-a")).toMatchObject({ ok: true, values: { attendeeMemberIds: ["member-a", ...Array.from({ length: 19 }, (_, index) => `guest-${index}`)] } });
   });
 
   test("an end not after the start is rejected for both kinds", () => {
@@ -88,6 +156,33 @@ describe("calendar event form model", () => {
     expect(unchanged.ok && calendarEventUpdatePatch(event, unchanged.values)).toEqual({});
     const edited = validateCalendarEventForm({ ...form, title: "Review v2", calendarId: "cal-2" }, active);
     expect(edited.ok && calendarEventUpdatePatch(event, edited.values)).toEqual({ title: "Review v2", calendarId: "cal-2" });
+  });
+
+  test("round-trips scheduling attendees and recurrence using the server until/count contract", () => {
+    const event: DenCalendarSchedulingEvent = {
+      id: "scheduled", organizationId: "org-a", ownerMemberId: "member-a", calendarId: "cal-1", title: "Standup", description: "",
+      time: { kind: "allDay", startDate: "2026-11-09", endDateExclusive: "2026-11-10" }, status: "active",
+      attendees: [{ memberId: "member-b", responseStatus: "accepted" }], recurrence: { frequency: "weekly", interval: 2, end: { kind: "until", until: "2026-12-31" } },
+      version: 1, createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z",
+    };
+    const form = calendarEventToForm(event);
+    expect(form).toMatchObject({ attendeeMemberIds: ["member-b"], recurrence: { frequency: "weekly", interval: 2, endKind: "until", untilDate: "2026-12-31" } });
+    expect(validateCalendarEventForm(form, active)).toMatchObject({ ok: true, values: { recurrence: event.recurrence } });
+    expect(validateCalendarEventForm({ ...form, recurrence: { frequency: "monthly", interval: 1, endKind: "count", untilDate: "", count: 1000 } }, active)).toMatchObject({ ok: true, values: { recurrence: { frequency: "monthly", interval: 1, end: { kind: "count", count: 1000 } } } });
+    expect(validateCalendarEventForm({ ...form, recurrence: { frequency: "daily", interval: 365, endKind: "never", untilDate: "", count: 1 } }, active)).toMatchObject({ ok: true });
+    expect(validateCalendarEventForm({ ...form, recurrence: { frequency: "daily", interval: 366, endKind: "never", untilDate: "", count: 1 } }, active)).toMatchObject({ ok: false, errors: { recurrence: "calendar.error_recurrence_invalid" } });
+  });
+
+  test("attendee order alone does not create an update patch", () => {
+    const event: DenCalendarSchedulingEvent = {
+      id: "scheduled", organizationId: "org-a", ownerMemberId: "member-z", calendarId: "cal-1", title: "Standup", description: "",
+      time: { kind: "allDay", startDate: "2026-11-09", endDateExclusive: "2026-11-10" }, status: "active",
+      attendees: [{ memberId: "member-a", responseStatus: "accepted" }, { memberId: "member-z", responseStatus: "needs-action" }], recurrence: null,
+      version: 1, createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z",
+    };
+    const form = calendarEventToForm(event);
+    const validation = validateCalendarEventForm({ ...form, attendeeMemberIds: ["member-z", "member-a"] }, active, "member-z");
+    expect(validation.ok && calendarEventUpdatePatch(event, validation.values)).toEqual({});
   });
 
   test("save failures are classified so the UI never reports a false save", () => {

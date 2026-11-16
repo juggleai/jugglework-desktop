@@ -17,6 +17,7 @@ import {
   JuggleWorkServerError,
   type JuggleWorkSessionRun,
   type JuggleWorkSessionRunObservation,
+  type JuggleWorkSessionMessagePage,
 } from "./jugglework-server";
 import { isDesktopRuntime, isFileWindowRuntime } from "./runtime-env";
 import { fileWindowEventResponse } from "./file-window-conversation-bridge";
@@ -65,7 +66,10 @@ type SessionMessagesParameters = {
   sessionID: string;
   directory?: string;
   limit?: number;
+  before?: string;
 };
+
+type ReadOptions = { throwOnError?: boolean; signal?: AbortSignal };
 
 type SessionAbortParameters = {
   sessionID: string;
@@ -189,13 +193,13 @@ function createSyntheticResult<T>(
   url: string,
   method: string,
   input:
-    | { ok: true; data: T; status?: number }
+    | { ok: true; data: T; status?: number; headers?: HeadersInit }
     | { ok: false; error: unknown; status?: number },
 ): FieldsResult<T> {
   const request = new Request(url, { method });
   const response = new Response(input.ok ? JSON.stringify(input.data) : null, {
     status: input.status ?? (input.ok ? 200 : 500),
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...(input.ok ? Object.fromEntries(new Headers(input.headers)) : {}) },
   });
   if (input.ok) {
     return { data: input.data, request, response };
@@ -373,6 +377,31 @@ async function wrapJuggleWorkReadWithFallback<T>(
 ): Promise<FieldsResult<T>> {
   try {
     return createSyntheticResult(url, "GET", { ok: true, data: await read() });
+  } catch (error) {
+    if (!shouldFallbackToLegacySessionRead(error)) {
+      if (options?.throwOnError) throw error;
+      return createSyntheticResult(url, "GET", {
+        ok: false,
+        error,
+        status: error instanceof JuggleWorkServerError ? error.status : 500,
+      });
+    }
+    return fallback();
+  }
+}
+
+async function wrapJuggleWorkMessagesReadWithFallback<T>(
+  url: string,
+  read: () => Promise<{ items: T; page?: JuggleWorkSessionMessagePage }>,
+  fallback: () => Promise<FieldsResult<T>>,
+  options?: ReadOptions,
+): Promise<FieldsResult<T>> {
+  try {
+    const result = await read();
+    const headers = result.page?.hasOlder && result.page.olderCursor
+      ? { "X-Next-Cursor": result.page.olderCursor }
+      : undefined;
+    return createSyntheticResult(url, "GET", { ok: true, data: result.items, headers });
   } catch (error) {
     if (!shouldFallbackToLegacySessionRead(error)) {
       if (options?.throwOnError) throw error;
@@ -685,7 +714,7 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
   const sessionOverrides = session as any as {
     list: (parameters?: SessionListParameters, options?: { throwOnError?: boolean }) => Promise<FieldsResult<Session[]>>;
     get: (parameters: SessionLookupParameters, options?: { throwOnError?: boolean }) => Promise<FieldsResult<Session>>;
-    messages: (parameters: SessionMessagesParameters, options?: { throwOnError?: boolean }) => Promise<FieldsResult<Array<{ info: Message; parts: Part[] }>>>;
+    messages: (parameters: SessionMessagesParameters, options?: ReadOptions) => Promise<FieldsResult<Array<{ info: Message; parts: Part[] }>>>;
     todo: (parameters: SessionLookupParameters, options?: { throwOnError?: boolean }) => Promise<FieldsResult<Todo[]>>;
     promptAsync: (parameters: PromptAsyncParameters, options?: { throwOnError?: boolean }) => Promise<FieldsResult<{}>>;
     abort: (parameters: SessionAbortParameters, options?: { throwOnError?: boolean }) => Promise<FieldsResult<boolean>>;
@@ -726,19 +755,21 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
   };
 
   const messagesOriginal = sessionOverrides.messages.bind(session);
-  sessionOverrides.messages = (parameters: SessionMessagesParameters, options?: { throwOnError?: boolean }) => {
+  sessionOverrides.messages = (parameters: SessionMessagesParameters, options?: ReadOptions) => {
     if (!juggleworkMount || !juggleworkSessionClient) {
       return messagesOriginal(parameters, options);
     }
     const query = new URLSearchParams();
     if (typeof parameters.limit === "number") query.set("limit", String(parameters.limit));
+    if (typeof parameters.before === "string") query.set("before", parameters.before);
     const url = `${juggleworkMount.baseUrl}/workspace/${encodeURIComponent(juggleworkMount.workspaceId)}/sessions/${encodeURIComponent(parameters.sessionID)}/messages${query.size ? `?${query.toString()}` : ""}`;
-    return wrapJuggleWorkReadWithFallback(
+    return wrapJuggleWorkMessagesReadWithFallback(
       url,
-      async () =>
-        (await juggleworkSessionClient.getSessionMessages(juggleworkMount.workspaceId, parameters.sessionID, {
+      () => juggleworkSessionClient.getSessionMessages(juggleworkMount.workspaceId, parameters.sessionID, {
           limit: parameters.limit,
-        })).items,
+          before: parameters.before,
+          signal: options?.signal,
+        }),
       () => messagesOriginal(parameters, options),
       options,
     );

@@ -1,8 +1,28 @@
 import { Temporal } from "@js-temporal/polyfill";
 
 import { calendarMonthGrid, type CalendarWeekday } from "./calendar-month-model";
+import type { CalendarScope } from "./calendar-scope";
+import { calendarScopeIdentity } from "./calendar-scope";
 
 export type CalendarViewMode = "day" | "week" | "month";
+
+const CALENDAR_VIEW_PREFIX = "jugglework.calendar.view:";
+
+export function calendarViewStorageKey(scope: CalendarScope): string {
+  return `${CALENDAR_VIEW_PREFIX}${calendarScopeIdentity(scope)}`;
+}
+
+export function parseCalendarViewMode(raw: string | null | undefined): CalendarViewMode {
+  return raw === "day" || raw === "month" || raw === "week" ? raw : "week";
+}
+
+export function readCalendarViewMode(scope: CalendarScope, storage: Pick<Storage, "getItem"> | null = safeStorage()): CalendarViewMode {
+  return parseCalendarViewMode(storage?.getItem(calendarViewStorageKey(scope)));
+}
+
+export function writeCalendarViewMode(scope: CalendarScope, view: CalendarViewMode, storage: Pick<Storage, "setItem"> | null = safeStorage()): void {
+  storage?.setItem(calendarViewStorageKey(scope), view);
+}
 
 export function calendarWeekStartDate(date: Temporal.PlainDate, weekStart: CalendarWeekday): Temporal.PlainDate {
   const offset = (date.dayOfWeek - weekStart + 7) % 7;
@@ -41,4 +61,12 @@ export function navigateCalendarView(
   if (view === "week") return selectedDate.add({ weeks: direction });
   const targetMonth = selectedDate.toPlainYearMonth().add({ months: direction });
   return targetMonth.toPlainDate({ day: Math.min(selectedDate.day, targetMonth.daysInMonth) });
+}
+
+function safeStorage(): Storage | null {
+  try {
+    return typeof localStorage === "undefined" ? null : localStorage;
+  } catch {
+    return null;
+  }
 }

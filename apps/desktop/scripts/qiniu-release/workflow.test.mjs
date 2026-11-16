@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { parse as parseYaml } from "yaml";
 
 import { CANARY_SCHEMA, EXPECTED_BUNDLE_ID, EXPECTED_TEAM_ID, LOCAL_VERIFICATION_SCHEMA, assertRecordedPromotion, createEvidence, withEvidenceResults } from "./evidence.mjs";
 import { readBackDigest } from "./cdn.mjs";
@@ -343,6 +344,21 @@ test(`${version} approved predecessor preserves lock race checks and records the
 test("production scheduler serializes channel/platform publishers without cancellation", async () => {
   const workflow = await readFile(new URL("../../../../.github/workflows/qiniu-desktop-release.yml", import.meta.url), "utf8");
   assert.match(workflow, /^concurrency:\s*\n  group: qiniu-desktop-release-\$\{\{ inputs\.channel \}\}-\$\{\{ inputs\.platform \}\}\s*\n  cancel-in-progress: false\s*$/m);
+});
+
+test("promotion-only installs the source-pinned pnpm under Node 24 without a conflicting action version", async () => {
+  const workflow = parseYaml(await readFile(new URL("../../../../.github/workflows/qiniu-desktop-release.yml", import.meta.url), "utf8"));
+  const steps = workflow.jobs["promote-existing-macos-arm64"].steps;
+  const nodeIndex = steps.findIndex((step) => step.uses === "actions/setup-node@v6");
+  const pnpmIndex = steps.findIndex((step) => step.uses === "pnpm/action-setup@v4");
+  const installIndex = steps.findIndex((step) => step.run === "pnpm install --frozen-lockfile --ignore-scripts");
+  assert.ok(nodeIndex >= 0 && nodeIndex < pnpmIndex && pnpmIndex < installIndex);
+  assert.equal(steps[nodeIndex].with["node-version"], 24);
+  assert.equal(steps[nodeIndex].with.cache, undefined);
+  assert.equal(steps[pnpmIndex].with?.version, undefined);
+  assert.equal(steps[pnpmIndex].with?.["package_json_file"], undefined);
+  const root = JSON.parse(await readFile(new URL("../../../../package.json", import.meta.url), "utf8"));
+  assert.match(root.packageManager, /^pnpm@\d+\.\d+\.\d+\+sha512\.[a-f0-9]{128}$/);
 });
 
 test("records the narrowly scoped notarization exception in promotion output", async () => {

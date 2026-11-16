@@ -334,6 +334,7 @@ jobs:
           esac
           case "$VERSION:$CANDIDATE_RECORD" in
             1.2.31:apps/desktop/release-records/1.2.31-candidate.json|1.2.32:apps/desktop/release-records/1.2.32-candidate.json|1.2.33:apps/desktop/release-records/1.2.33-candidate.json|1.2.34:apps/desktop/release-records/1.2.34-candidate.json) test -z "${STANDING_POLICY-}" ;;
+            1.2.36:apps/desktop/release-records/1.2.36-candidate.json) test "${STANDING_POLICY-}" = stable-mac-arm64-standing-policy ;;
             *)
               test "${STANDING_POLICY-}" = stable-mac-arm64-standing-policy
               test "$CANDIDATE_RECORD" = "apps/desktop/release-records/$VERSION-candidate.json"
@@ -355,15 +356,14 @@ jobs:
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           test "$(git rev-parse origin/dev)" = "$GITHUB_SHA"
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 11.4.0
-
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
           node-version: 24
+
+      # Honor the checked-out root packageManager, including its integrity pin.
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
 
       - name: Install verification dependencies without lifecycle scripts
         shell: bash

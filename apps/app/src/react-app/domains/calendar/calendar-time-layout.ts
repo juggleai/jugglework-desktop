@@ -10,6 +10,7 @@ export type CalendarTimedSegment = {
   endMinute: number;
   lane: number;
   laneCount: number;
+  laneSpan: number;
   continuesFromPrevious: boolean;
   continuesToNext: boolean;
 };
@@ -27,7 +28,7 @@ export type CalendarTimeLayout = {
   allDayRowCount: number;
 };
 
-type PendingTimedSegment = Omit<CalendarTimedSegment, "lane" | "laneCount">;
+type PendingTimedSegment = Omit<CalendarTimedSegment, "lane" | "laneCount" | "laneSpan">;
 
 function minuteOfDay(value: Temporal.ZonedDateTime): number {
   return value.hour * 60 + value.minute + value.second / 60;
@@ -56,7 +57,17 @@ function assignTimedLanes(segments: PendingTimedSegment[]): CalendarTimedSegment
       return { ...segment, lane };
     });
     const laneCount = Math.max(laneEnds.length, 1);
-    output.push(...placed.map((segment) => ({ ...segment, laneCount })));
+    output.push(...placed.map((segment) => {
+      let laneSpan = 1;
+      for (let lane = segment.lane + 1; lane < laneCount; lane += 1) {
+        const blocked = placed.some((candidate) => candidate.lane === lane
+          && candidate.startMinute < segment.endMinute
+          && segment.startMinute < candidate.endMinute);
+        if (blocked) break;
+        laneSpan += 1;
+      }
+      return { ...segment, laneCount, laneSpan };
+    }));
     group = [];
     groupEnd = -1;
   };

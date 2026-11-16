@@ -1,4 +1,4 @@
-import { badgeVariants } from "@/components/ui/badge";
+import { COMPOSER_TAG_BASE_CLASS } from "./capability-tags";
 import { $applyNodeReplacement, $createTextNode, $getRoot, $getSelection, $isRangeSelection, $isTextNode, $nodesOfType, TextNode, type NodeKey, type SerializedTextNode, type Spread } from "lexical";
 import { cloudDocToken, mergeCloudDocReferences, type CloudDocReference } from "@/app/lib/cloud-doc-reference";
 import { readDenSettings } from "@/app/lib/den";
@@ -19,21 +19,30 @@ export class ComposerCloudDocNode extends TextNode {
   override exportJSON(): SerializedCloudDocNode { return { ...super.exportJSON(), type: "cloud-doc", version: 1, reference: this.__reference }; }
   override createDOM() {
     const dom = document.createElement("span");
-    dom.className = `${badgeVariants({ variant: "secondary" })} cursor-pointer`;
+    dom.className = `${COMPOSER_TAG_BASE_CLASS} max-w-full gap-1.5 border-transparent bg-green-3 text-green-11 align-middle cursor-pointer transition-colors hover:bg-green-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-7`;
     const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
     icon.setAttribute("viewBox", "0 0 24 24"); icon.setAttribute("fill", "none"); icon.setAttribute("stroke", "currentColor"); icon.setAttribute("stroke-width", "2"); icon.setAttribute("stroke-linecap", "round"); icon.setAttribute("stroke-linejoin", "round"); icon.setAttribute("aria-hidden", "true"); icon.setAttribute("class", "size-3 shrink-0");
     const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-    // TIPS: Lexical 标签使用 DOM 节点，沿用 lucide Cloud 的图形和项目 Badge 样式。
+    // TIPS: Lexical 标签使用 DOM 节点，沿用 lucide Cloud 图形和输入框共用 tag 比例；主题色同时覆盖明暗模式。
     path.setAttribute("d", "M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z");
     icon.append(path);
     const ref = this.__reference;
     const label = document.createElement("span");
-    label.textContent = `${t("cloud_docs.reference_label")} · ${ref.title || t("cloud_docs.untitled")}${ref.blockIds?.length ? ` · ${t("cloud_docs.reference_blocks", { count: String(ref.blockIds.length) })}` : ""}`;
+    label.textContent = ref.title || t("cloud_docs.untitled");
+    label.className = "min-w-0 max-w-[min(20rem,70vw)] truncate";
     dom.append(icon, label);
+    const count = ref.blockIds?.length ? t("cloud_docs.reference_blocks", { count: String(ref.blockIds.length) }) : "";
+    if (count) {
+      const selection = document.createElement("span");
+      selection.className = "shrink-0 text-green-11/70";
+      selection.textContent = `· ${count}`;
+      dom.append(selection);
+    }
     const settings = readDenSettings();
     dom.title = `${ref.title}\n${settings.activeOrgId === ref.tenantId ? settings.activeOrgName || ref.tenantId : ref.tenantId}${ref.blockIds?.length ? `\n${t("cloud_docs.reference_blocks", { count: String(ref.blockIds.length) })}` : ""}`;
     dom.contentEditable = "false";
     dom.setAttribute("role", "button");
+    dom.setAttribute("aria-label", `${t("cloud_docs.reference_label")} · ${label.textContent}${count ? ` · ${count}` : ""}`);
     dom.tabIndex = 0;
     dom.dataset.cloudDocReference = cloudDocToken(ref);
     return dom;

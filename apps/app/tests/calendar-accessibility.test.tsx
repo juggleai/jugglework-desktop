@@ -6,6 +6,8 @@ import TestRenderer, { act } from "react-test-renderer";
 import { MemoryRouter } from "react-router-dom";
 
 import { DenApiError, type DenCalendar, type DenCalendarEvent } from "../src/app/lib/den";
+import { createCalendarScope } from "../src/react-app/domains/calendar/calendar-scope";
+import { calendarViewStorageKey } from "../src/react-app/domains/calendar/calendar-view-model";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -24,7 +26,16 @@ Object.defineProperty(globalThis, "localStorage", {
 
 const fixedNow = Temporal.Instant.from("2026-11-09T04:00:00Z");
 const clock = { now: () => fixedNow, timeZone: () => "Asia/Shanghai" };
+const calendarScope = createCalendarScope({ deploymentBaseUrl: "https://den.example/api", organizationId: "org-a", memberId: "member-a" })!;
 mock.module("../src/react-app/shell/app-navigation-rail", () => ({ APP_NAVIGATION_RAIL_WIDTH: 48, AppNavigationRail: () => <nav /> }));
+mock.module("../src/components/ui/dialog", () => ({
+  Dialog: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  DialogContent: ({ children, showCloseButton: _showCloseButton, finalFocus: _finalFocus, ...props }: React.ComponentProps<"section"> & { showCloseButton?: boolean; finalFocus?: unknown }) => <section {...props}>{children}</section>,
+  DialogDescription: (props: React.ComponentProps<"p">) => <p {...props} />,
+  DialogFooter: (props: React.ComponentProps<"div">) => <div {...props} />,
+  DialogHeader: (props: React.ComponentProps<"div">) => <div {...props} />,
+  DialogTitle: (props: React.ComponentProps<"h2">) => <h2 {...props} />,
+}));
 
 const calendar = (id: string, name: string): DenCalendar => ({
   id, organizationId: "org-a", ownerMemberId: "member-a", name, color: "#2563eb", isDefault: id === "cal-1",
@@ -41,6 +52,7 @@ let version = 1;
 const client = {
   listCalendars: async () => calendars,
   getCalendarBootstrap: async (_org: string, range: { startDate: string; endDateExclusive: string }) => ({ calendars, events, coverage: { ...range, calendarIds: [] }, cursor: "c1" }),
+  listCalendarSchedulingEvents: async () => ({ items: [] }),
   createCalendar: async () => { throw new Error("unexpected calendar write"); },
   updateCalendar: async () => { throw new Error("unexpected calendar write"); },
   deleteCalendar: async () => { throw new Error("unexpected calendar write"); },
@@ -117,6 +129,7 @@ function baseEvent(id: string): DenCalendarEvent {
 beforeEach(() => {
   activeNode = null; selectedDayNode = null;
   values.clear(); calls.length = 0; events = []; failNext = null; version = 1;
+  values.set(calendarViewStorageKey(calendarScope), "month");
   calendars = [calendar("cal-1", "Personal"), calendar("cal-2", "Side project")];
 });
 
@@ -152,7 +165,7 @@ const formStatus = (renderer: TestRenderer.ReactTestRenderer) => byId(renderer, 
 
 const focusedId = () => (activeNode as FakeNode | null)?.id ?? null;
 const pressKey = async (renderer: TestRenderer.ReactTestRenderer, id: string, key: string) => {
-  await act(async () => { byId(renderer, id).props.onKeyDown({ key, preventDefault: () => undefined }); });
+  await act(async () => { byId(renderer, id).props.onKeyDown({ key, preventDefault: () => undefined, stopPropagation: () => undefined }); });
   await settle();
 };
 const focusNode = (id: string) => { activeNode = new FakeNode(id); };
@@ -211,6 +224,9 @@ test("opening the editor focuses its title; cancel and Escape return focus to th
   try {
     focusNode("calendar-create-event");
     await click(renderer, "calendar-create-event");
+    expect(has(renderer, "calendar-event-dialog")).toBe(true);
+    expect(has(renderer, "calendar-event-panel")).toBe(false);
+    expect(byId(renderer, "calendar-event-dialog").props["aria-label"]).toBe(t("calendar.create_event"));
     expect(focusedId()).toBe("calendar-form-title");
     await click(renderer, "calendar-form-cancel");
     expect(focusedId()).toBe("calendar-create-event");
@@ -233,6 +249,19 @@ test("event detail takes focus, Escape closes it, and focus returns to the chip 
     await pressKey(renderer, "calendar-event-detail", "Escape");
     expect(has(renderer, "calendar-event-detail")).toBe(false);
     expect(focusedId()).toBe("calendar-day-event-2026-11-09-e1");
+  } finally { await act(async () => { renderer.unmount(); }); }
+});
+
+test("detail delete is a named keyboard control and removed placeholders are not tabbable", async () => {
+  events = [baseEvent("e1")];
+  const { renderer } = await render();
+  try {
+    await click(renderer, "calendar-day-event-2026-11-09-e1");
+    const remove = byId(renderer, "calendar-event-detail-delete");
+    expect(accessibleName(remove)).toBe(t("calendar.delete_event"));
+    expect(remove.props.disabled).toBe(false);
+    expect(has(renderer, "calendar-event-detail-share")).toBe(false);
+    expect(has(renderer, "calendar-event-detail-more")).toBe(false);
   } finally { await act(async () => { renderer.unmount(); }); }
 });
 

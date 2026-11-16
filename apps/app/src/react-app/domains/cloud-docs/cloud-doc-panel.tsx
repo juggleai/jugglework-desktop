@@ -5,7 +5,7 @@ import { t, currentLocale } from "@/i18n";
 import { getResolvedThemeMode } from "@/app/theme";
 import { createDenClient, readDenSettings, readDenUserId, denCredentialFingerprint, isCurrentDenSessionRevocation } from "@/app/lib/den";
 import {
-  cloudDocTabKey, cloudDocTabsSnapshot, subscribeCloudDocTabs, type CloudDocTab, type CloudDocHighlight,
+  cloudDocTabKey, cloudDocTabsSnapshot, registerCloudDocTabCloser, subscribeCloudDocTabs, type CloudDocTab, type CloudDocHighlight,
 } from "@/app/lib/cloud-doc-tabs";
 import { useCloudDocsBounds } from "./use-cloud-docs-bounds";
 import { setActiveCloudDoc } from "@/app/lib/cloud-doc-turn";
@@ -23,15 +23,22 @@ function CloudDocView({ tab, highlight, sessionId, active }: { tab: CloudDocTab;
   const highlightRef = React.useRef(highlight);
   highlightRef.current = highlight;
   const instanceRef = React.useRef<{ id: string; ready: boolean } | null>(null);
+  const documentRef = React.useRef<{workspaceId: string; docId: string} | null>(null);
   const applyHighlight = React.useCallback(() => {
     const current = instanceRef.current;
     const target = highlightRef.current;
-    if (activeRef.current && current?.ready && target?.workspaceId === tab.workspaceId && target.docId === tab.docId)
-      window.__JUGGLEWORK_ELECTRON__?.cloudDocs?.highlightBlocks({ instanceId: current.id, docId: tab.docId, blockIds: target.blockIds });
+    if (activeRef.current && current?.ready && target && documentRef.current && target.workspaceId === documentRef.current.workspaceId && target.docId === documentRef.current.docId)
+      window.__JUGGLEWORK_ELECTRON__?.cloudDocs?.highlightBlocks({ instanceId: current.id, docId: target.docId, blockIds: target.blockIds });
   }, [tab.workspaceId, tab.docId]);
   React.useEffect(applyHighlight, [highlight?.requestId, applyHighlight]);
   const [state, setState] = React.useState<"loading" | "ready" | "error">("loading");
   const [message, setMessage] = React.useState("");
+  const [liveDoc, setLiveDoc] = React.useState<{ tenantId: string; workspaceId: string; docId: string; title: string } | null>(null);
+  React.useEffect(() => {
+    if (!active) return;
+    setActiveCloudDoc(sessionId, state === 'ready' ? liveDoc : null);
+    return () => setActiveCloudDoc(sessionId, null);
+  }, [active, state, liveDoc, sessionId]);
   React.useEffect(() => {
     const bridge = window.__JUGGLEWORK_ELECTRON__?.cloudDocs;
     const settings = readDenSettings();
@@ -40,9 +47,15 @@ function CloudDocView({ tab, highlight, sessionId, active }: { tab: CloudDocTab;
     instanceRef.current = { id: instanceId, ready: false };
     let disposed = false;
     let ready = false;
+    let released = false;
     setState("loading");
     if (!bridge || !settings.authToken || !sourceUserId) { setState("error"); setMessage(t("cloud_docs.desktop_required")); return; }
     if (settings.activeOrgId !== tab.tenantId) { setState("error"); setMessage(t("cloud_docs.other_organization")); return; }
+    const unregisterCloser = registerCloudDocTabCloser(sessionId, cloudDocTabKey(tab), async () => {
+      const result = await bridge.close(instanceId);
+      released = result.closed;
+      return released;
+    });
     const bounds = () => {
       nativeBounds.sync(instanceId, ready, activeRef.current);
     };
@@ -68,6 +81,10 @@ function CloudDocView({ tab, highlight, sessionId, active }: { tab: CloudDocTab;
     const unsubscribe = bridge.onState(value => {
       if (disposed || value.instanceId !== instanceId) return;
       ready = value.status === "ready";
+      documentRef.current = !ready || value.docId === null ? null : value.docId && value.workspaceId ? {workspaceId:value.workspaceId,docId:value.docId} : {workspaceId:tab.workspaceId,docId:tab.docId};
+      setLiveDoc(!ready || value.docId === null ? null : value.docId && value.workspaceId
+        ? {tenantId: tab.tenantId, workspaceId: value.workspaceId, docId: value.docId, title: value.title || ''}
+        : {tenantId: tab.tenantId, workspaceId: tab.workspaceId, docId: tab.docId, title: tab.title});
       instanceRef.current = { id: instanceId, ready };
       applyHighlight();
       setState(value.status === "ready" ? "ready" : value.status === "loading" ? "loading" : "error");
@@ -114,6 +131,7 @@ function CloudDocView({ tab, highlight, sessionId, active }: { tab: CloudDocTab;
     })();
     return () => {
       disposed = true;
+      unregisterCloser();
       nativeBounds.sync(instanceId, false, false);
       updateLayout.current = () => {};
       instanceRef.current = null;
@@ -124,7 +142,7 @@ function CloudDocView({ tab, highlight, sessionId, active }: { tab: CloudDocTab;
       stopReference();
       window.removeEventListener("resize", bounds);
       document.removeEventListener("visibilitychange", bounds);
-      void bridge.close(instanceId);
+      if (!released) void bridge.close(instanceId);
     };
   }, [sessionId, tab.tenantId, tab.workspaceId, tab.docId, applyHighlight]);
   return (
@@ -175,10 +193,6 @@ export function CloudDocPanel({ sessionId }: { sessionId: string }) {
   }, []);
   const active = files.activeKey === "cloud" ? state.tabs.find(tab => cloudDocTabKey(tab) === state.active) ?? null : null;
   const allowed = active?.tenantId === credential?.tenantId;
-  React.useEffect(() => {
-    setActiveCloudDoc(sessionId, active && allowed ? { tenantId: active.tenantId, workspaceId: active.workspaceId, docId: active.docId, title: active.title } : null);
-    return () => setActiveCloudDoc(sessionId, null);
-  }, [sessionId, allowed, active?.tenantId, active?.workspaceId, active?.docId, active?.title]);
   return <>
     {credential && state.tabs.filter(tab => tab.tenantId === credential.tenantId).map(tab =>
       <CloudDocSlot key={`${credential.key}/${cloudDocTabKey(tab)}`} tab={tab} highlight={state.highlight} sessionId={sessionId} active={tab === active} />)}

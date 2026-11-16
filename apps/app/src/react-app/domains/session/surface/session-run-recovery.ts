@@ -21,6 +21,24 @@ export function effectiveSessionRunning(input: {
     input.liveStatus === "busy" || input.liveStatus === "retry";
 }
 
+export type EffectiveThreadStatus = "submitted" | "streaming" | "retrying" | "ready";
+
+/**
+ * Keep transcript activity aligned with the composer controls. A coordinator
+ * receipt can be the only surviving proof of a run after switching sessions
+ * or missing the initial runtime event, so `liveStatus` alone is insufficient.
+ */
+export function effectiveThreadStatus(input: {
+  sending: boolean;
+  liveStatus: string;
+  running: boolean;
+}): EffectiveThreadStatus {
+  if (input.sending) return "submitted";
+  if (input.liveStatus === "retry") return "retrying";
+  if (input.running) return "streaming";
+  return "ready";
+}
+
 /**
  * The server-owned active-run list stopped reporting a run that the local
  * projection still treats as running. The terminal `session.idle` event may

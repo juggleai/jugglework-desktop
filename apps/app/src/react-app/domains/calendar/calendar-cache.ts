@@ -1,6 +1,7 @@
 import { Temporal } from "@js-temporal/polyfill";
 
-import { normalizeDenCalendar, normalizeDenCalendarEvent } from "../../../app/lib/den";
+import { normalizeDenCalendar, normalizeDenCalendarEvent, normalizeDenCalendarSchedulingEvent } from "../../../app/lib/den";
+import { normalizeCalendarEventDraftForm } from "./calendar-event-form-model";
 import { calendarCoverageDates, parseCalendarEventTime } from "./calendar-time-adapter";
 import type { CalendarScope } from "./calendar-scope";
 import type { Calendar, CalendarEvent } from "./calendar-types";
@@ -50,12 +51,14 @@ export type CalendarSyncRecord = {
 };
 
 type CalendarDraftBase = {
-  schemaVersion: 1;
+  schemaVersion: 2;
   id: string;
   entityType: "calendar" | "event";
   unsynced: true;
   values: unknown;
 };
+
+type LegacyCalendarDraftRecord = Omit<CalendarDraftRecord, "schemaVersion"> & { schemaVersion: 1 };
 
 export type CalendarDraftRecord =
   | (CalendarDraftBase & { operation: "create"; baseEntity: null })
@@ -242,7 +245,7 @@ function validateEntity(scope: CalendarScope, record: CalendarEntityRecord): Cal
     }
     return { schemaVersion: 1, entityType: "calendar", entity };
   }
-  const event = normalizeDenCalendarEvent(record.entity);
+  const event = normalizeDenCalendarSchedulingEvent(record.entity) ?? normalizeDenCalendarEvent(record.entity);
   if (!event) throw new TypeError("Calendar entity payload is invalid.");
   if (event.organizationId !== scope.organizationId || event.ownerMemberId !== scope.memberId) {
     throw new TypeError("Calendar entity owner does not match the cache scope.");
@@ -287,21 +290,30 @@ function validateSync(record: CalendarSyncRecord): CalendarSyncRecord {
   return { schemaVersion: 1, cursor: record.cursor, refreshedAt: record.refreshedAt };
 }
 
-function validateDraft(record: CalendarDraftRecord): CalendarDraftRecord {
-  if (!record || record.schemaVersion !== 1) throw new TypeError("Calendar draft schema version is invalid.");
+function validateDraft(input: CalendarDraftRecord | LegacyCalendarDraftRecord, allowLegacy = false): CalendarDraftRecord {
+  if (!input || input.schemaVersion !== 2 && (!allowLegacy || input.schemaVersion !== 1)) throw new TypeError("Calendar draft schema version is invalid.");
+  const record = input;
   assertOpaqueId(record.id, "Calendar draft id");
   assertEntityType(record.entityType);
   if (record.unsynced !== true) throw new TypeError("Calendar drafts must be marked unsynced.");
-  const values = cloneChecked(record.values, "Calendar draft values");
+  let values = cloneChecked(record.values, "Calendar draft values");
+  if (record.schemaVersion === 1) {
+    if (record.entityType !== "event" || !values || typeof values !== "object" || Array.isArray(values) || Object.keys(values).length !== 1 || !("form" in values)) {
+      throw new TypeError("Legacy calendar draft values are invalid.");
+    }
+    const form = normalizeCalendarEventDraftForm((values as { form: unknown }).form, 1);
+    if (!form) throw new TypeError("Legacy calendar draft values are invalid.");
+    values = { form };
+  }
   if (record.operation === "create") {
     if (record.baseEntity !== null) throw new TypeError("Calendar create drafts must have a null base entity.");
-    return { schemaVersion: 1, id: record.id, entityType: record.entityType, operation: "create", baseEntity: null, unsynced: true, values };
+    return { schemaVersion: 2, id: record.id, entityType: record.entityType, operation: "create", baseEntity: null, unsynced: true, values };
   }
   if (record.operation !== "edit" || !record.baseEntity) throw new TypeError("Calendar draft operation is invalid.");
   assertOpaqueId(record.baseEntity.id, "Calendar draft base entity id");
   assertPositiveVersion(record.baseEntity.version, "Calendar draft base entity version");
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     id: record.id,
     entityType: record.entityType,
     operation: "edit",
@@ -508,11 +520,21 @@ export class CalendarIndexedDbAdapter {
     const requireWrite = (): void => {
       if (mode !== "readwrite") throw new TypeError("Calendar cache write requires a readwrite transaction.");
     };
+    const decodeStored = <TRecord>(storeName: CalendarCacheStoreName, stored: StoredRecord, decode: (record: StoredRecord) => TRecord): TRecord => {
+      const supportedSchema = storeName === "drafts" ? stored.schemaVersion === 1 || stored.schemaVersion === 2 : stored.schemaVersion === 1;
+      if (!supportedSchema) throw new CalendarCacheCorruptRecordError(storeName);
+      try {
+        return decode(stored);
+      } catch (error) {
+        if (error instanceof CalendarCacheCorruptRecordError) throw error;
+        throw new CalendarCacheCorruptRecordError(storeName);
+      }
+    };
     const readOne = async <TRecord>(storeName: CalendarCacheStoreName, key: readonly IDBValidKey[], decode: (stored: StoredRecord) => TRecord): Promise<TRecord | undefined> => {
       const stored = await requestResult(requireStore(storeName).get([...key])) as StoredRecord | undefined;
       if (stored === undefined) return undefined;
-      if (!equalKey(stored.key, key) || stored.scopeKey !== scopeKey || stored.schemaVersion !== 1) throw new CalendarCacheCorruptRecordError(storeName);
-      return clone(decode(stored));
+      if (!equalKey(stored.key, key) || stored.scopeKey !== scopeKey) throw new CalendarCacheCorruptRecordError(storeName);
+      return clone(decodeStored(storeName, stored, decode));
     };
     const readMany = async <TRecord>(
       storeName: CalendarCacheStoreName,
@@ -522,10 +544,10 @@ export class CalendarIndexedDbAdapter {
     ): Promise<TRecord[]> => {
       const stored = await requestResult(requireStore(storeName).index(indexName).getAll(this.keyRange.only(indexKey))) as StoredRecord[];
       return stored.map((item) => {
-        if (item.scopeKey !== scopeKey || item.schemaVersion !== 1 || !Array.isArray(item.key) || item.key[0] !== scopeKey) {
+        if (item.scopeKey !== scopeKey || !Array.isArray(item.key) || item.key[0] !== scopeKey) {
           throw new CalendarCacheCorruptRecordError(storeName);
         }
-        return clone(decode(item));
+        return clone(decodeStored(storeName, item, decode));
       });
     };
 
@@ -659,7 +681,7 @@ export class CalendarIndexedDbAdapter {
         assertOpaqueId(id, "Calendar draft id");
         return readOne("drafts", [scopeKey, id], (stored) => {
           if (stored.id !== id) throw new CalendarCacheCorruptRecordError("drafts");
-          return validateDraft(stored as unknown as CalendarDraftRecord);
+          return validateDraft(stored as unknown as CalendarDraftRecord | LegacyCalendarDraftRecord, true);
         });
       },
       listDrafts: (entityType) => {
@@ -669,12 +691,12 @@ export class CalendarIndexedDbAdapter {
             if (stored.entityType !== entityType || typeof stored.id !== "string" || !equalKey(stored.key, [scopeKey, stored.id])) {
               throw new CalendarCacheCorruptRecordError("drafts");
             }
-            return validateDraft(stored as unknown as CalendarDraftRecord);
+            return validateDraft(stored as unknown as CalendarDraftRecord | LegacyCalendarDraftRecord, true);
           });
         }
         return readMany("drafts", "byScope", scopeKey, (stored) => {
           if (typeof stored.id !== "string" || !equalKey(stored.key, [scopeKey, stored.id])) throw new CalendarCacheCorruptRecordError("drafts");
-          return validateDraft(stored as unknown as CalendarDraftRecord);
+          return validateDraft(stored as unknown as CalendarDraftRecord | LegacyCalendarDraftRecord, true);
         });
       },
       putDraft: async (input) => {
