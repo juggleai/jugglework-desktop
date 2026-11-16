@@ -1,23 +1,31 @@
 import { focusMeetingWindow } from "@/app/lib/desktop";
+import { Temporal } from "@js-temporal/polyfill";
 import { MeetingPermissionNotice, MeetingPermissionRestart, MeetingPermissionSetup } from "./permission-notice";
 import { ensureMeetingMediaPermissions, meetingDeviceError } from "./media-permission";
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
+import { useNavigate } from "react-router-dom";
 import { AppInsetSurface } from "@/react-app/shell/app-inset-surface";
 import { AppSecondarySidebarResizeHandle } from "@/react-app/shell/app-secondary-sidebar-resize-handle";
 import { ListPanelHeader } from "@/react-app/shell/list-panel-header";
 import { appInsetSidebarCssWidth, useWorkspaceShellLayout } from "@/react-app/shell/workspace-shell-layout";
 import { useDenAuth } from "../cloud/den-auth-provider";
+import { useDesktopConfig } from "../cloud/desktop-config-provider";
+import { useCloudSession } from "../settings/cloud/cloud-session-provider";
 import { useJuggleChatStore } from "../jugglechat/store";
 import { CalendarEventCreateDialog } from "../calendar/calendar-event-create-dialog";
+import { resolveCalendarPageGate } from "../calendar/calendar-page-gate";
+import { useCalendarBootstrapQuery, useCalendarOrganizationMembersQuery, useCalendarSchedulingEventsQuery } from "../calendar/calendar-queries";
 import { meetingAPI } from "./api";
+import { calendarMeetingOccurrences, collapseHistoricalCalendarOccurrences, meetingOverviewWindow, type CalendarMeetingOccurrence } from "./meeting-overview";
 import { meetingReadinessReason } from "./readiness";
 import {
   meetingClosed,
@@ -108,6 +116,7 @@ export function MeetingDialog({
   );
 }
 export function MeetingPage({ active }: { active: boolean }) {
+  const navigate = useNavigate();
   const { leftSidebarResizing, leftSidebarWidth, startLeftSidebarResize } = useWorkspaceShellLayout({
     expandedRightWidth: 520,
   });
@@ -115,6 +124,8 @@ export function MeetingPage({ active }: { active: boolean }) {
     "--jugglework-left-sidebar-width": appInsetSidebarCssWidth(leftSidebarWidth),
   } as CSSProperties;
   const { activeOrganization, user } = useDenAuth();
+  const cloud = useCloudSession();
+  const desktopConfig = useDesktopConfig();
   const contacts = useJuggleChatStore((s) => s.contacts);
   const imUser = useJuggleChatStore((s) => s.user);
   const displayName = imUser?.id === user?.id ? imUser?.name || user?.name : user?.name;
@@ -145,19 +156,60 @@ export function MeetingPage({ active }: { active: boolean }) {
   } | null>(null);
   const requestKey = useRef(crypto.randomUUID());
   const epoch = useRef(0);
-  const currentMonth = new Date();
-  const calendarYear = currentMonth.getFullYear();
-  const calendarMonth = currentMonth.getMonth();
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const todayKey = localDate(new Date());
+  const overviewWindow = useMemo(
+    () => meetingOverviewWindow(Temporal.Now.instant(), timeZone),
+    [timeZone, todayKey],
+  );
+  const calendarGate = useMemo(() => resolveCalendarPageGate({
+    isSignedIn: cloud.isSignedIn,
+    baseUrl: cloud.baseUrl,
+    organizationId: cloud.activeOrganization?.id,
+    memberId: cloud.activeOrganization?.orgMemberId || cloud.activeOrganization?.membershipId,
+    configLoading: desktopConfig.loading,
+    calendarEnabled: desktopConfig.config.calendarEnabled,
+    calendarWriteEnabled: desktopConfig.config.calendarWriteEnabled,
+  }), [
+    cloud.activeOrganization?.id,
+    cloud.activeOrganization?.membershipId,
+    cloud.activeOrganization?.orgMemberId,
+    cloud.baseUrl,
+    cloud.isSignedIn,
+    desktopConfig.config.calendarEnabled,
+    desktopConfig.config.calendarWriteEnabled,
+    desktopConfig.loading,
+  ]);
+  const calendarScope = calendarGate.kind === "ready" ? calendarGate.scope : null;
+  const calendarBootstrap = useCalendarBootstrapQuery({
+    client: cloud.client,
+    scope: calendarScope,
+    range: overviewWindow.calendarRange,
+    active: active && calendarScope !== null,
+  });
+  const calendarScheduling = useCalendarSchedulingEventsQuery({
+    client: cloud.client,
+    scope: calendarScope,
+    range: overviewWindow.schedulingRange,
+    active: active && calendarScope !== null,
+  });
+  const calendarMembers = useCalendarOrganizationMembersQuery({
+    client: cloud.client,
+    scope: calendarScope,
+    active: active && calendarScope !== null,
+  });
+  const calendarMembersById = useMemo(
+    () => new Map((calendarMembers.data ?? []).map((member) => [member.id, member])),
+    [calendarMembers.data],
+  );
   const refresh = useCallback(async () => {
     const run = ++epoch.current;
     // Background refresh keeps the existing schedule mounted.
 
     try {
-      const from = new Date(calendarYear, calendarMonth, 1);
-      const to = new Date(calendarYear, calendarMonth + 1, 1);
       const [settings, list] = await Promise.allSettled([
         meetingAPI.settings(),
-        meetingAPI.list(from, to),
+        meetingAPI.list(overviewWindow.from, overviewWindow.to),
       ]);
       if (run !== epoch.current) return;
       if (settings.status === "fulfilled") setReadiness(settings.value);
@@ -175,7 +227,7 @@ export function MeetingPage({ active }: { active: boolean }) {
     } finally {
       if (run === epoch.current) setLoading(false);
     }
-  }, [calendarYear, calendarMonth, activeOrganization?.id, user?.id]);
+  }, [overviewWindow, activeOrganization?.id, user?.id]);
   useEffect(() => {
     setLoading(true);
     setError("");
@@ -187,7 +239,14 @@ export function MeetingPage({ active }: { active: boolean }) {
     };
   }, [refresh]);
   useEffect(() => {
-    const update = () => void refresh();
+    const update = () => {
+      void refresh();
+      if (active && calendarScope) {
+        void calendarBootstrap.refetch();
+        void calendarScheduling.refetch();
+        void calendarMembers.refetch();
+      }
+    };
     window.addEventListener("meeting:changed", update);
     window.addEventListener("focus", update);
     const timer = window.setInterval(update, 30000);
@@ -196,7 +255,7 @@ export function MeetingPage({ active }: { active: boolean }) {
       window.removeEventListener("focus", update);
       clearInterval(timer);
     };
-  }, [refresh]);
+  }, [active, calendarBootstrap.refetch, calendarMembers.refetch, calendarScheduling.refetch, calendarScope, refresh]);
   useEffect(() => {
     const open = (event: Event) => {
       const d = (event as CustomEvent).detail;
@@ -233,13 +292,27 @@ export function MeetingPage({ active }: { active: boolean }) {
     setPreview(null);
     setSource(null);
   }, []);
-  const upcoming = items.filter((m) => !meetingClosed(m));
-  const upcomingForHome = [...upcoming].sort(
-    (a, b) => +new Date(a.startAt) - +new Date(b.startAt),
+  const calendarOccurrences = calendarMeetingOccurrences(
+    calendarBootstrap.data?.events ?? [],
+    calendarScheduling.data?.items ?? [],
+    timeZone,
   );
-  const historyForHome = items
-    .filter(meetingClosed)
-    .sort((a, b) => +new Date(b.startAt) - +new Date(a.startAt));
+  type HomeEntry = { kind: "meeting"; value: Meeting } | { kind: "calendar"; value: CalendarMeetingOccurrence };
+  const now = Date.now();
+  const upcomingForHome: HomeEntry[] = [
+    ...items.filter((meeting) => !meetingClosed(meeting)).map((value) => ({ kind: "meeting" as const, value })),
+    ...calendarOccurrences.filter((occurrence) => +new Date(occurrence.endAt) > now).map((value) => ({ kind: "calendar" as const, value })),
+  ].sort((a, b) => +new Date(a.value.startAt) - +new Date(b.value.startAt));
+  const historicalCalendarOccurrences = collapseHistoricalCalendarOccurrences(
+    calendarOccurrences.filter((occurrence) => +new Date(occurrence.endAt) <= now),
+  );
+  const historyForHome: HomeEntry[] = [
+    ...items.filter(meetingClosed).map((value) => ({ kind: "meeting" as const, value })),
+    ...historicalCalendarOccurrences.map((value) => ({ kind: "calendar" as const, value })),
+  ].sort((a, b) => +new Date(b.value.startAt) - +new Date(a.value.startAt));
+  const calendarLoading = calendarScope !== null && (calendarBootstrap.isLoading || calendarScheduling.isLoading);
+  const calendarError = calendarScope !== null && (calendarBootstrap.isError || calendarScheduling.isError || calendarMembers.isError);
+  const calendarStartUnavailable = calendarError || calendarMembers.isLoading;
   async function create(input: MeetingCreate) {
     const { meeting } = await meetingAPI.create(input, requestKey.current);
     requestKey.current = crypto.randomUUID();
@@ -259,36 +332,89 @@ export function MeetingPage({ active }: { active: boolean }) {
   function openSchedule() {
     setCalendarScheduleOpen(true);
   }
-  const renderHomeItem = (m: Meeting) => (
-    <div className="home-meeting-item" key={m.id} data-status={m.status}>
-      <span className="home-meeting-icon"><Icon /></span>
-      <div className="home-meeting-copy">
-        <div className="row">
-          <h3 title={m.title}>{m.title}</h3>
-          {m.status === "live" ? <span className="pill live">进行中</span> : null}
+  async function startCalendarOccurrence(occurrence: CalendarMeetingOccurrence) {
+    if (!calendarScope) throw new Error("日历会议暂不可用");
+    const missing = occurrence.attendeeMemberIds.filter((memberId) => !calendarMembersById.has(memberId));
+    if (missing.length > 0) throw new Error("部分日程参与人暂不可用，无法发起会议");
+    const organizerUserId = calendarMembersById.get(calendarScope.memberId)?.userId;
+    const invitees = [...new Set(occurrence.attendeeMemberIds
+      .map((memberId) => calendarMembersById.get(memberId)!.userId)
+      .filter((userId) => userId && userId !== organizerUserId))];
+    const startAt = new Date();
+    requestKey.current = crypto.randomUUID();
+    await create({
+      title: occurrence.title.slice(0, 120),
+      description: occurrence.description.slice(0, 4000),
+      immediate: true,
+      startAt: startAt.toISOString(),
+      endAt: new Date(startAt.getTime() + 1_800_000).toISOString(),
+      timezone: timeZone,
+      invitees,
+    });
+  }
+  const renderHomeItem = (entry: HomeEntry, upcoming = false) => {
+    if (entry.kind === "calendar") {
+      const occurrence = entry.value;
+      return (
+        <div className="home-meeting-item" key={occurrence.key} data-status="calendar" data-source="calendar">
+          <span className="home-meeting-icon"><Icon /></span>
+          <div className="home-meeting-copy">
+            <div className="row">
+              <h3 title={occurrence.title}>{occurrence.title}</h3>
+              {occurrence.recurring && !(occurrence.collapsedCount && occurrence.collapsedCount > 1) ? <span className="pill">循环日程</span> : null}
+            </div>
+            <p className="sub">
+              {dateStamp(occurrence.startAt)} {occurrence.allDay ? "全天" : `${stamp(occurrence.startAt)}–${stamp(occurrence.endAt)}`}
+              <span aria-hidden="true"> · </span>
+              <span>日历视频会议</span>
+            </p>
+          </div>
+          {upcoming ? (
+            <button
+              className="primary home-meeting-start"
+              disabled={busy || !readiness?.ready || calendarStartUnavailable}
+              onClick={() => void run(() => startCalendarOccurrence(occurrence))}
+              data-testid={`meeting-start-calendar-${occurrence.key}`}
+            >
+              发起会议
+            </button>
+          ) : null}
         </div>
-        <p className="sub">
-          {dateStamp(m.startAt)} {stamp(m.startAt)}–{stamp(m.endAt)}
-          <span aria-hidden="true"> · </span>
-          <span className="meeting-code">{m.code}</span>
-        </p>
+      );
+    }
+    const m = entry.value;
+    return (
+      <div className="home-meeting-item" key={m.id} data-status={m.status} data-source="meeting">
+        <span className="home-meeting-icon"><Icon /></span>
+        <div className="home-meeting-copy">
+          <div className="row">
+            <h3 title={m.title}>{m.title}</h3>
+            {m.status === "live" ? <span className="pill live">进行中</span> : null}
+          </div>
+          <p className="sub">
+            {dateStamp(m.startAt)} {stamp(m.startAt)}–{stamp(m.endAt)}
+            <span aria-hidden="true"> · </span>
+            <span className="meeting-code">{m.code}</span>
+          </p>
+        </div>
+        <button
+          className={upcoming ? "primary home-meeting-start" : m.status === "live" ? "primary" : "home-meeting-open"}
+          disabled={upcoming && (busy || !readiness?.ready)}
+          onClick={() => void run(async () => {
+            if (useMeetingStore.getState().meeting?.id === m.id) {
+              await focusMeetingWindow("meeting");
+              return;
+            }
+            const current = (await meetingAPI.get(m.id)).meeting;
+            if (upcoming || current.status === "live") openPreview(current);
+            else setDetail(current);
+          })}
+        >
+          {upcoming ? "发起会议" : m.status === "live" ? "加入" : "详情"}
+        </button>
       </div>
-      <button
-        className={m.status === "live" ? "primary" : "home-meeting-open"}
-        onClick={() => void run(async () => {
-          if (useMeetingStore.getState().meeting?.id === m.id) {
-            await focusMeetingWindow("meeting");
-            return;
-          }
-          const current = (await meetingAPI.get(m.id)).meeting;
-          if (current.status === "live") openPreview(current);
-          else setDetail(current);
-        })}
-      >
-        {m.status === "live" ? "加入" : "详情"}
-      </button>
-    </div>
-  );
+    );
+  };
   return (
     <div className="meeting-ui meeting-page" style={pageStyle}>
       <AppInsetSurface className="meeting-inset-surface" testId="meeting-inset-surface">
@@ -352,6 +478,12 @@ export function MeetingPage({ active }: { active: boolean }) {
                     <button className="ghost" onClick={() => void refresh()}>刷新</button>
                   </div>
                 ) : null}
+                {calendarError ? (
+                  <div className="notice error" role="alert">
+                    部分日历会议未能加载。
+                    <button className="ghost" onClick={() => { void calendarBootstrap.refetch(); void calendarScheduling.refetch(); void calendarMembers.refetch(); }}>刷新</button>
+                  </div>
+                ) : null}
                 {readiness && !readiness.ready ? (
                   <div className="notice">
                     <span>{meetingReadinessReason(readiness)}。可以先预约。</span>
@@ -363,16 +495,16 @@ export function MeetingPage({ active }: { active: boolean }) {
               <section className="home-list-section">
                 <div className="section-heading row between">
                   <h2>即将开始</h2>
-                  <span className="section-count">{upcomingForHome.length} 场</span>
+                  <button type="button" className="ghost calendar-all-link" onClick={() => navigate("/calendar")}>在日历中查看全部 <Icon name="chevronRight" /></button>
                 </div>
                 <div className="home-meeting-list">
-                  {loading ? (
+                  {loading || calendarLoading ? (
                     <div className="home-list-empty" role="status"><span className="meeting-loader" />正在加载会议…</div>
                   ) : upcomingForHome.length ? (
-                    upcomingForHome.slice(0, 4).map(renderHomeItem)
+                    upcomingForHome.slice(0, 4).map((entry) => renderHomeItem(entry, true))
                   ) : (
                     <div className="home-list-empty">
-                      <span className="empty-icon"><Icon name="calendar" /></span>
+                      <span className="empty-icon"><Icon /></span>
                       <div><h3>暂无即将开始的会议</h3><p className="sub small">预约一次会议，为下一次交流留出时间。</p></div>
                       <button onClick={openSchedule}>预约会议</button>
                     </div>
@@ -382,16 +514,15 @@ export function MeetingPage({ active }: { active: boolean }) {
               <section className="home-list-section history-section">
                 <div className="section-heading row between">
                   <h2>历史会议</h2>
-                  <span className="section-count">{historyForHome.length} 场</span>
                 </div>
                 <div className="home-meeting-list">
-                  {loading ? (
+                  {loading || calendarLoading ? (
                     <div className="home-list-empty" role="status"><span className="meeting-loader" />正在加载记录…</div>
                   ) : historyForHome.length ? (
-                    historyForHome.map(renderHomeItem)
+                    historyForHome.map((entry) => renderHomeItem(entry))
                   ) : (
                     <div className="home-list-empty compact">
-                      <span className="empty-icon"><Icon name="clock" /></span>
+                      <span className="empty-icon"><Icon /></span>
                       <div><h3>暂无历史会议</h3><p className="sub small">已结束的会议会保留在这里。</p></div>
                     </div>
                   )}
@@ -407,6 +538,7 @@ export function MeetingPage({ active }: { active: boolean }) {
       <CalendarEventCreateDialog
         open={calendarScheduleOpen}
         onOpenChange={setCalendarScheduleOpen}
+        onSaved={() => { void calendarBootstrap.refetch(); void calendarScheduling.refetch(); }}
       />
       {dialog === "schedule" ? (
         <MeetingDialog

@@ -273,7 +273,7 @@ function WorkspaceAppRouteContent() {
 
       <MeetingRoomHost />
       <MeetingReminderHost />
-      <div className={appPath.view === "meetings" ? "absolute inset-0 z-10 flex bg-background" : "hidden"} aria-hidden={appPath.view !== "meetings" || undefined}>
+      <div className={appPath.view === "meetings" ? "absolute inset-0 z-10 flex bg-dls-sidebar" : "hidden"} aria-hidden={appPath.view !== "meetings" || undefined}>
         <div style={{ width: APP_NAVIGATION_RAIL_WIDTH }} className="h-full shrink-0">
           <AppNavigationRail workspaceId={activeSession.workspaceId} onOpenAccount={() => openSurfaceSettings("cloud-account", "/meetings")} onOpenHome={() => navigate(sessionPath)} onOpenApps={() => navigate(workspaceAppsRoute(activeSession.workspaceId))} onOpenChat={() => navigate(workspaceChatRoute(activeSession.workspaceId))} onOpenReviews={() => navigate(workspaceReviewsRoute(activeSession.workspaceId))} onOpenSettings={() => openSurfaceSettings("preferences", "/meetings")} onOpenTaskSearch={workspaceShellActions.openTaskSearch} onOpenCreateWorkspace={workspaceShellActions.openCreateWorkspace}/>
         </div><div className="h-full min-w-0 flex-1"><MeetingPage active={meetingsVisible} /></div>

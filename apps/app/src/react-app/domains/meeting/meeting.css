@@ -1,7 +1,8 @@
 /* Meeting surfaces follow the desktop theme. Media/window transitions stay inert. */
 .meeting-ui {
   --meet-bg: var(--background, #fff);
-  --meet-side: var(--sidebar, #f7f7f8);
+  --meet-shell: var(--dls-sidebar, var(--sidebar, #f7f7f8));
+  --meet-side: var(--app-secondary-sidebar-bg, var(--sidebar, #f7f7f8));
   --meet-text: var(--foreground, #202329);
   --meet-sub: var(--muted-foreground, #737983);
   --meet-line: var(--border, #e8eaee);
@@ -60,7 +61,7 @@
 .meeting-ui .pill.live::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
 
 /* Page navigation, quick actions and daily agenda. */
-.meeting-page { position: relative; display: flex; overflow: hidden; scrollbar-gutter: stable; background: var(--meet-side); -webkit-app-region: drag; }
+.meeting-page { position: relative; display: flex; overflow: hidden; scrollbar-gutter: stable; background: var(--meet-shell); -webkit-app-region: drag; }
 .meeting-ui .header { height: 44px; padding: 0 20px 0 calc(var(--jugglework-left-sidebar-width) + 28px); display: flex; align-items: center; justify-content: space-between; gap: 16px; background: transparent; position: absolute; inset: 0 0 auto; z-index: 2; }
 .meeting-ui .page-header { display: grid; grid-template-columns: 1fr auto; -webkit-app-region: drag; user-select: none; }
 .meeting-ui .page-header .tabs, .meeting-ui .page-header button { -webkit-app-region: no-drag; }
@@ -107,7 +108,7 @@
 
 /* One rounded workspace surface with a launcher rail and meeting overview. */
 .meeting-ui .meeting-home { height: 100%; min-height: 0; width: 100%; display: grid; grid-template-columns: var(--jugglework-left-sidebar-width) minmax(0, 1fr); gap: 0; align-items: stretch; overflow: hidden; background: var(--meet-bg); }
-.meeting-ui .meeting-launcher { min-width: 0; min-height: 0; overflow-y: auto; border-right: 1px solid var(--meet-line); background: var(--meet-side); }
+.meeting-ui .meeting-launcher { min-width: 0; min-height: 0; overflow-y: auto; border-right: 1px solid var(--dls-border, var(--meet-line)); background: var(--meet-side); }
 .meeting-ui .meeting-launcher > .jw-list-panel-header { position: sticky; top: 0; z-index: 2; background: var(--meet-side); }
 .meeting-ui .meeting-launcher .jw-list-panel-title { font-size: 16px; line-height: 20px; font-weight: 600; }
 .meeting-ui .meeting-launcher-content { padding: 16px 12px 24px; }
@@ -130,9 +131,10 @@
 .meeting-ui .home-list-section { min-width: 0; }
 .meeting-ui .section-heading { min-height: 38px; margin-bottom: 10px; }
 .meeting-ui .section-heading h2 { font-size: 17px; }
-.meeting-ui .section-count { color: var(--meet-sub); font-size: 11px; font-variant-numeric: tabular-nums; }
 .meeting-ui .section-heading button { min-height: 28px; padding: 4px 2px 4px 10px; font-size: 11px; }
 .meeting-ui .section-heading button svg { width: 15px; height: 15px; }
+.meeting-ui .section-heading .calendar-all-link { border-color: transparent; background: transparent; color: var(--meet-sub); font-size: 12px; white-space: nowrap; }
+.meeting-ui .section-heading .calendar-all-link:not(:disabled):hover { border-color: transparent; background: transparent; color: var(--meet-text); }
 .meeting-ui .home-meeting-list { overflow: hidden; border: 1px solid var(--meet-line); border-radius: 18px; background: var(--meet-panel); }
 .meeting-ui .home-meeting-item { min-width: 0; min-height: 88px; display: flex; align-items: center; gap: 16px; padding: 15px 20px; transition: background-color 150ms; }
 .meeting-ui .home-meeting-item + .home-meeting-item { border-top: 1px solid var(--meet-line); }
@@ -145,6 +147,15 @@
 .meeting-ui .home-meeting-copy p { overflow: hidden; margin-top: 5px; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .meeting-ui .home-meeting-item > button { min-width: 62px; min-height: 30px; padding: 4px 10px; font-size: 11px; }
 .meeting-ui .home-meeting-open { border-color: transparent; background: transparent; color: var(--meet-sub); }
+.meeting-ui .home-meeting-open svg { width: 14px; height: 14px; }
+.meeting-ui .home-meeting-start { opacity: 0; pointer-events: none; transform: translateX(6px); transition: opacity 150ms, transform 180ms var(--meet-ease), background-color 150ms, border-color 150ms, color 150ms, box-shadow 180ms; }
+.meeting-ui .home-meeting-item:hover .home-meeting-start,
+.meeting-ui .home-meeting-item:focus-within .home-meeting-start { opacity: 1; pointer-events: auto; transform: translateX(0); }
+.meeting-ui .home-meeting-start:disabled { transform: translateX(0); }
+.meeting-ui .home-list-section:not(.history-section) .home-meeting-item { min-height: 72px; gap: 14px; padding: 10px 18px; }
+.meeting-ui .home-list-section:not(.history-section) .home-meeting-icon { width: 40px; height: 40px; flex-basis: 40px; }
+.meeting-ui .home-list-section:not(.history-section) .home-meeting-copy h3 { line-height: 20px; }
+.meeting-ui .home-list-section:not(.history-section) .home-meeting-copy p { margin-top: 2px; line-height: 18px; }
 .meeting-ui .home-list-empty { min-height: 132px; display: flex; align-items: center; justify-content: center; gap: 14px; padding: 24px; color: var(--meet-sub); }
 .meeting-ui .home-list-empty.compact { min-height: 112px; }
 .meeting-ui .home-list-empty .empty-icon { margin: 0; flex: 0 0 44px; width: 44px; height: 44px; border-radius: 13px; box-shadow: none; }
@@ -423,7 +434,7 @@
   .meeting-ui .content { padding: 24px 18px 32px; }
   .meeting-ui .meeting-inset-surface { overflow-y: auto; }
   .meeting-ui .meeting-home { height: auto; min-height: 100%; grid-template-columns: minmax(0, 1fr); }
-  .meeting-ui .meeting-launcher { overflow: visible; border-right: 0; border-bottom: 1px solid var(--meet-line); }
+  .meeting-ui .meeting-launcher { overflow: visible; border-right: 0; border-bottom: 1px solid var(--dls-border, var(--meet-line)); }
   .meeting-ui .meeting-launcher-content { padding: 20px; }
   .meeting-ui .meeting-launcher .actions { grid-template-columns: minmax(0, 1fr); }
   .meeting-ui .meeting-launcher .action { min-height: 118px; aspect-ratio: auto; text-align: left; align-items: flex-start; padding: 15px; }
