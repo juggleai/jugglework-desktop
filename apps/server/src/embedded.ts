@@ -61,6 +61,10 @@ export type EmbeddedServerHandle = {
   managedOpencode: { pid: number | null; isAlive: () => boolean } | null;
   /** Whether the durable session coordinator currently owns any active runs. */
   hasActiveSessionRuns: () => boolean;
+  /** Safe active-run summaries for shutdown confirmation and diagnostics. */
+  listActiveSessionRuns: JuggleWorkServerHandle["listActiveSessionRuns"];
+  /** Reconcile durable runs against the engine immediately. */
+  reconcileActiveSessionRuns: JuggleWorkServerHandle["reconcileActiveSessionRuns"];
   /** Stop the HTTP server and managed OpenCode (if any). */
   stop: () => Promise<void>;
 };
@@ -250,6 +254,8 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
       ? { pid: managedOpencode.pid ?? null, isAlive: managedOpencode.isAlive }
       : null,
     hasActiveSessionRuns: () => server?.hasActiveSessionRuns() ?? false,
+    listActiveSessionRuns: () => server?.listActiveSessionRuns() ?? [],
+    reconcileActiveSessionRuns: () => server?.reconcileActiveSessionRuns() ?? Promise.resolve([]),
     stop,
   };
 }

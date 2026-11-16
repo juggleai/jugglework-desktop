@@ -26,6 +26,7 @@ interface RegisterWorkspaceRoutesOptions {
   ensureWritable: (config: ServerConfig) => void;
   resolveWorkspaceWithoutBootstrap: (config: ServerConfig, id: string) => Promise<WorkspaceInfo>;
   serializeWorkspace: (workspace: ServerConfig["workspaces"][number]) => unknown;
+  prepareWorkspaceRemoval?: (workspace: WorkspaceInfo) => Promise<void>;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -246,6 +247,7 @@ export function registerWorkspaceRoutes(options: RegisterWorkspaceRoutesOptions)
     ensureWritable,
     resolveWorkspaceWithoutBootstrap,
     serializeWorkspace,
+    prepareWorkspaceRemoval,
   } = options;
 
   const resolveWorkspaceForRegistry = async (id: string): Promise<WorkspaceInfo> => {
@@ -484,6 +486,7 @@ export function registerWorkspaceRoutes(options: RegisterWorkspaceRoutesOptions)
     ensureWritable(config);
 
     const workspace = await resolveWorkspaceForRegistry(ctx.params.id);
+    await prepareWorkspaceRemoval?.(workspace);
 
     const before = config.workspaces.length;
     config.workspaces = config.workspaces.filter((entry) => entry.id !== workspace.id);

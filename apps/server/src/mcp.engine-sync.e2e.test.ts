@@ -65,6 +65,9 @@ function startMockOpencode(options?: {
       if (url.pathname === "/instance/dispose") {
         return options?.disposeResponse?.() ?? Response.json({ disposed: true });
       }
+      if (url.pathname === "/global/dispose") {
+        return options?.disposeResponse?.() ?? Response.json({ disposed: true });
+      }
       if (url.pathname === "/mcp" && request.method === "POST") {
         const name = (body as { name?: string } | null)?.name;
         if (name && options?.failMcpNames?.includes(name)) {
@@ -1276,6 +1279,27 @@ describe("runtime MCP engine sync", () => {
       expect(disposeIndex).toBeGreaterThanOrEqual(0);
       expect(syncIndex).toBeGreaterThan(disposeIndex);
       expect(mock.requests[syncIndex]?.body).toEqual({ name: "posthog", config: POSTHOG_CONFIG });
+    } finally {
+      if (previousDb === undefined) delete process.env.JUGGLEWORK_RUNTIME_DB;
+      else process.env.JUGGLEWORK_RUNTIME_DB = previousDb;
+    }
+  });
+
+  test("uses global dispose when a global config cache refresh is requested", async () => {
+    const workspaceRoot = await createWorkspaceRoot();
+    const previousDb = process.env.JUGGLEWORK_RUNTIME_DB;
+    process.env.JUGGLEWORK_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
+    try {
+      const mock = startMockOpencode();
+      const jugglework = await startJuggleWorkServer(workspaceRoot, `http://127.0.0.1:${mock.server.port}`);
+
+      const reloadResponse = await fetch(
+        `${jugglework.base}/workspace/ws_1/engine/reload?scope=global`,
+        { method: "POST", headers: auth(jugglework.token) },
+      );
+      expect(reloadResponse.status).toBe(200);
+      expect(mock.requests.some((entry) => entry.pathname === "/global/dispose")).toBe(true);
+      expect(mock.requests.some((entry) => entry.pathname === "/instance/dispose")).toBe(false);
     } finally {
       if (previousDb === undefined) delete process.env.JUGGLEWORK_RUNTIME_DB;
       else process.env.JUGGLEWORK_RUNTIME_DB = previousDb;

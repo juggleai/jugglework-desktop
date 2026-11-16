@@ -3065,13 +3065,15 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
         { token, hostToken },
       );
     },
-    reloadEngine: (workspaceId: string) =>
-      requestJson<{ ok: boolean; reloadedAt?: number }>(baseUrl, `/workspace/${workspaceId}/engine/reload`, {
+    reloadEngine: (workspaceId: string, options?: { scope?: "workspace" | "global" }) => {
+      const query = options?.scope === "global" ? "?scope=global" : "";
+      return requestJson<{ ok: boolean; reloadedAt?: number }>(baseUrl, `/workspace/${workspaceId}/engine/reload${query}`, {
         token,
         hostToken,
         method: "POST",
         timeoutMs: ENGINE_RELOAD_TIMEOUT_MS,
-      }),
+      });
+    },
     listPlugins: (workspaceId: string, options?: { includeGlobal?: boolean }) => {
       const query = options?.includeGlobal ? "?includeGlobal=true" : "";
       return requestJson<{ items: JuggleWorkPluginItem[]; loadOrder: string[] }>(

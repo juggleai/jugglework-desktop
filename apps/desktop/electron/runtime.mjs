@@ -1079,6 +1079,18 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     return inProcessServer?.hasActiveSessionRuns?.() === true;
   }
 
+  function listActiveSessionRuns() {
+    const runs = inProcessServer?.listActiveSessionRuns?.();
+    return Array.isArray(runs) ? runs : [];
+  }
+
+  async function reconcileActiveSessionRuns() {
+    const reconcile = inProcessServer?.reconcileActiveSessionRuns;
+    if (typeof reconcile !== "function") return listActiveSessionRuns();
+    const runs = await reconcile();
+    return Array.isArray(runs) ? runs : listActiveSessionRuns();
+  }
+
   function assertRuntimeCanStop() {
     if (!hasActiveSessionRuns()) return;
     const error = /** @type {Error & { code: string }} */ (
@@ -1609,6 +1621,8 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     juggleworkServerInfo,
     managedServerAccess,
     hasActiveSessionRuns,
+    listActiveSessionRuns,
+    reconcileActiveSessionRuns,
     ensureFileRuntime: () => withRuntimeLifecycle(() => ensureFileRuntime()),
     juggleworkServerRestart: (options) => withRuntimeLifecycle(() => juggleworkServerRestart(options)),
     workspaceActivate: (input) => withRuntimeLifecycle(() => workspaceActivate(input)),

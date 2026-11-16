@@ -98,12 +98,14 @@ import {
 } from "./cloud-provider-cleanup";
 import {
   buildCustomProviderConfig,
+  configuredLocalProvidersFromConfigContent,
   customProviderCredentialEnvEntry,
   customProviderInputFromConfigContent,
   formatConfigWithCustomProvider,
   formatConfigWithoutCustomProvider,
   normalizeCustomProviderInput,
   validateCustomProviderInput,
+  type ConfiguredLocalProviderSummary,
   type CustomProviderInput,
 } from "./custom-provider-config";
 import { loadDeploymentModelCatalog } from "./deployment-model-catalog";
@@ -218,6 +220,7 @@ export type ProviderAuthStoreSnapshot = {
   cloudOrgProviders: DenOrgLlmProvider[];
   cloudOrgProvidersError: string | null;
   importedCloudProviders: Record<string, CloudImportedProvider>;
+  configuredLocalProviders: ConfiguredLocalProviderSummary[];
 };
 
 type CreateProviderAuthStoreOptions = {
@@ -241,7 +244,10 @@ type CreateProviderAuthStoreOptions = {
   setDisabledProviders: (value: string[]) => void;
   /** Without a scope the mark is global (any successful reload clears it).
    *  With `workspaceId` it stays pending until that workspace itself reloads. */
-  markOpencodeConfigReloadRequired: (scope?: { workspaceId?: string | null }) => void;
+  markOpencodeConfigReloadRequired: (scope?: {
+    workspaceId?: string | null;
+    global?: boolean;
+  }) => void;
   focusPromptSoon?: () => void;
   /** Best-effort notification after lifecycle cleanup changes provider availability. */
   onProviderAvailabilityChanged?: (scope: {
@@ -261,6 +267,7 @@ type MutableState = {
   cloudOrgProviders: DenOrgLlmProvider[];
   cloudOrgProvidersError: string | null;
   importedCloudProviders: Record<string, CloudImportedProvider>;
+  configuredLocalProviders: ConfiguredLocalProviderSummary[];
 };
 
 export type ProviderAuthStore = ReturnType<typeof createProviderAuthStore>;
@@ -427,6 +434,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     cloudOrgProviders: [],
     cloudOrgProvidersError: null,
     importedCloudProviders: {},
+    configuredLocalProviders: [],
   };
 
   let cloudOrgProvidersLoadKey = "";
@@ -436,6 +444,9 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   let cloudProviderSyncContextKey = "";
   let cloudProviderDenContextKey = "";
   let importedCloudProvidersWorkspaceKey = "";
+
+  const currentWorkspaceKey = () =>
+    `${options.selectedWorkspaceRoot().trim()}::${options.runtimeWorkspaceId() ?? ""}`;
 
   const emitChange = () => {
     for (const listener of listeners) listener();
@@ -534,6 +545,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       cloudOrgProviders: state.cloudOrgProviders,
       cloudOrgProvidersError: state.cloudOrgProvidersError,
       importedCloudProviders: state.importedCloudProviders,
+      configuredLocalProviders: state.configuredLocalProviders,
     };
   };
 
@@ -753,6 +765,27 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   const readGlobalConfigFile = () => readProviderConfigFile("global");
   const writeGlobalConfigFile = (content: string) =>
     writeProviderConfigFile("global", content);
+
+  let configuredLocalProvidersLoadVersion = 0;
+  const refreshConfiguredLocalProviders = async () => {
+    const loadVersion = ++configuredLocalProvidersLoadVersion;
+    const workspaceKey = currentWorkspaceKey();
+    try {
+      const configFile = await readGlobalConfigFile() as { content?: string } | null;
+      const providers = configuredLocalProvidersFromConfigContent(configFile?.content ?? "");
+      if (
+        loadVersion === configuredLocalProvidersLoadVersion &&
+        workspaceKey === currentWorkspaceKey()
+      ) {
+        setStateField("configuredLocalProviders", providers);
+      }
+      return providers;
+    } catch {
+      // Keep the last successful inventory on transient read failures. The
+      // runtime provider list remains authoritative for connection state.
+      return state.configuredLocalProviders;
+    }
+  };
 
   /**
    * Upsert/delete cloud-managed provider entries in the workspace's runtime
@@ -1477,7 +1510,11 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
   }
 
-  async function refreshProviders(optionsArg?: { dispose?: boolean; force?: boolean }) {
+  async function refreshProviders(optionsArg?: {
+    dispose?: boolean;
+    force?: boolean;
+    global?: boolean;
+  }) {
     const c = options.client();
     if (!c) return null;
 
@@ -1498,7 +1535,10 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
             "";
           if (workspaceId) {
             try {
-              await juggleworkClient.reloadEngine(workspaceId);
+              await juggleworkClient.reloadEngine(
+                workspaceId,
+                optionsArg.global ? { scope: "global" } : undefined,
+              );
             } catch (error) {
               fallbackAllowed = shouldFallbackToDirectEngineDispose(error);
               if (!fallbackAllowed) throw error;
@@ -1518,7 +1558,11 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
 
       if (!reloaded && fallbackAllowed) {
         try {
-          unwrap(await c.instance.dispose());
+          if (optionsArg.global) {
+            unwrap(await c.global.dispose());
+          } else {
+            unwrap(await c.instance.dispose());
+          }
         } catch {
           // ignore dispose failures and try reading current state anyway
         }
@@ -1696,6 +1740,10 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     if (!configsAreSemanticallyEqual(globalRaw, nextGlobal)) {
       await writeGlobalConfigFile(nextGlobal);
     }
+    setStateField(
+      "configuredLocalProviders",
+      configuredLocalProvidersFromConfigContent(nextGlobal),
+    );
 
     const projectConfigFile = (await readProjectConfigFile()) as { content?: string } | null;
     if (!projectConfigFile?.content?.trim()) return;
@@ -1758,8 +1806,8 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         await setProviderAuthCredentials(normalized.providerId, { type: "api", key: apiKey });
       }
 
-      options.markOpencodeConfigReloadRequired();
-      await refreshProviders({ dispose: true });
+      options.markOpencodeConfigReloadRequired({ global: true });
+      await refreshProviders({ dispose: true, global: true });
       refreshSnapshot();
       emitChange();
       return `${t("status.connected")} ${normalized.name}`;
@@ -1809,6 +1857,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     await removeCustomProviderConfigFrom("global", providerId);
     // 同时清理旧版本遗留在当前项目中的同名模型组。
     await removeCustomProviderConfigFrom("project", providerId);
+    await refreshConfiguredLocalProviders();
   };
 
   const assertLocalConfigOwnsProvider = async (providerId: string) => {
@@ -1859,8 +1908,8 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       options.setDisabledProviders(
         options.disabledProviders().filter((entry) => entry.trim() !== resolved),
       );
-      options.markOpencodeConfigReloadRequired();
-      await refreshProviders({ dispose: true });
+      options.markOpencodeConfigReloadRequired({ global: true });
+      await refreshProviders({ dispose: true, global: true });
       removeProviderFromState(resolved);
       refreshSnapshot();
       emitChange();
@@ -2729,9 +2778,6 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     };
   };
 
-  const currentWorkspaceKey = () =>
-    `${options.selectedWorkspaceRoot().trim()}::${options.runtimeWorkspaceId() ?? ""}`;
-
   let signedOutCleanupContext: {
     workspaceKey: string;
     client: JuggleWorkServerClient;
@@ -2842,6 +2888,9 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     if (workspaceChanged && readDenSettings().authToken?.trim()) {
       void refreshImportedCloudProviders();
     }
+    if (workspaceChanged) {
+      void refreshConfiguredLocalProviders();
+    }
     scheduleSignedOutCleanup();
     if (!hasCloudProviderSyncPrerequisites()) {
       cloudProviderSyncContextKey = "";
@@ -2902,6 +2951,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     } else {
       scheduleSignedOutCleanup();
     }
+    void refreshConfiguredLocalProviders();
     refreshSnapshot();
     emitChange();
   };

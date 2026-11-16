@@ -180,6 +180,7 @@ import { GithubEventAuthStore } from "./automation/github-event-auth-store.js";
 import {
   createSessionMutationCoordinator,
   SessionMutationError,
+  type ActiveSessionMutation,
   type SessionMutationCoordinator,
 } from "./session-mutation-coordinator.js";
 import {
@@ -976,6 +977,8 @@ async function readSessionActivity(config: ServerConfig, workspace: WorkspaceInf
 
 export type JuggleWorkServerHandle = ServeResult & {
   hasActiveSessionRuns: () => boolean;
+  listActiveSessionRuns: () => ActiveSessionMutation[];
+  reconcileActiveSessionRuns: () => Promise<ActiveSessionMutation[]>;
 };
 
 export async function startServer(config: ServerConfig, options: {
@@ -1058,6 +1061,38 @@ export async function startServer(config: ServerConfig, options: {
       }
     },
   });
+  const terminateOrphanedSessionRuns = (): number => {
+    const registeredWorkspaceIds = new Set(config.workspaces.map((workspace) => workspace.id));
+    let terminated = 0;
+    for (const active of sessionMutations.listActive()) {
+      if (registeredWorkspaceIds.has(active.workspaceId)) continue;
+      try {
+        sessionMutations.observe({
+          workspaceId: active.workspaceId,
+          sessionId: active.sessionId,
+          runId: active.runId,
+          status: "failed",
+        });
+        terminated += 1;
+        logger.log("warn", "orphaned_session_run_terminalized", {
+          workspaceId: active.workspaceId,
+          sessionId: active.sessionId,
+          runId: active.runId,
+        });
+      } catch (error) {
+        logger.log("warn", "orphaned_session_run_terminalize_failed", {
+          workspaceId: active.workspaceId,
+          sessionId: active.sessionId,
+          runId: active.runId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    return terminated;
+  };
+  // Older builds could remove a workspace without settling its durable run.
+  // Repair those records before Electron asks whether shutdown is safe.
+  terminateOrphanedSessionRuns();
   const localOfficeFiles = new LocalOfficeFiles({ root: options.fileAssistantRoot, statePath: join(runtimeStorageDir(config), "file-assistant.json") });
   fileDeliveries = new FileDeliveryService({
     workspace(workspaceId) {
@@ -1849,9 +1884,8 @@ export async function startServer(config: ServerConfig, options: {
     sessionPermissionBroker.start();
   }
   mediaGenerationWorker.start();
-  // Runtime-owned observer closes runs even when no Electron/phone/SSE consumer
-  // exists. It only writes through the durable coordinator authority.
-  const lifecycleObserver = setInterval(() => void (async () => {
+  const reconcileActiveSessionRuns = async (): Promise<ActiveSessionMutation[]> => {
+    terminateOrphanedSessionRuns();
     const workspaceIds = new Set(sessionMutations.listActive().map((active) => active.workspaceId));
     for (const workspaceId of workspaceIds) {
       try {
@@ -1861,12 +1895,18 @@ export async function startServer(config: ServerConfig, options: {
         // Engine or storage uncertainty is fail closed; retry the exact run.
       }
     }
-  })(), 1_000);
+    return sessionMutations.listActive();
+  };
+  // Runtime-owned observer closes runs even when no Electron/phone/SSE consumer
+  // exists. It only writes through the durable coordinator authority.
+  const lifecycleObserver = setInterval(() => void reconcileActiveSessionRuns(), 1_000);
   lifecycleObserver.unref?.();
 
   return {
     ...server,
     hasActiveSessionRuns: () => sessionMutations.listActive().length > 0,
+    listActiveSessionRuns: () => sessionMutations.listActive(),
+    reconcileActiveSessionRuns,
     stop: async () => {
       clearInterval(lifecycleObserver);
       invalidateEngineMcpServerState(config, engineMcpServerState);
@@ -3078,6 +3118,7 @@ function createRoutes(
   ) => Promise<{ workspaceId: string; sessionId: string }>,
 ): { routes: Route[]; reconcileWorkspaceActiveRuns: (workspace: WorkspaceInfo, signal?: AbortSignal) => Promise<void> } {
   const routes: Route[] = [];
+  let reconcileWorkspaceActiveRunsForMutation: (workspace: WorkspaceInfo, signal?: AbortSignal) => Promise<void> = async () => {};
   registerHostMarketplacePluginRoutes({
     routes,
     config,
@@ -3125,6 +3166,15 @@ function createRoutes(
     ensureWritable,
     resolveWorkspaceWithoutBootstrap,
     serializeWorkspace,
+    prepareWorkspaceRemoval: async (workspace) => {
+      await reconcileWorkspaceActiveRunsForMutation(workspace, AbortSignal.timeout(5_000));
+      const activeRuns = sessionMutations.listActive(workspace.id);
+      if (activeRuns.length > 0) {
+        throw new ApiError(409, "workspace_active_runs", "Stop active tasks before removing this workspace", {
+          activeRunCount: activeRuns.length,
+        });
+      }
+    },
   });
 
   registerReviewRoutes({
@@ -3160,7 +3210,7 @@ function createRoutes(
     env,
   });
 
-  const { reconcileWorkspaceActiveRuns } = registerSessionRoutes({
+  const sessionRoutes = registerSessionRoutes({
     routes,
     config,
     jsonResponse,
@@ -3261,6 +3311,8 @@ function createRoutes(
       sessionModelPreferences.delete(workspaceId, sessionId);
     },
   });
+  const { reconcileWorkspaceActiveRuns } = sessionRoutes;
+  reconcileWorkspaceActiveRunsForMutation = reconcileWorkspaceActiveRuns;
 
   addRoute(routes, "GET", "/internal/session-response-language/:sessionId", "client", async (ctx) => {
     const directory = ctx.url.searchParams.get("directory")?.trim() ?? "";
@@ -4130,8 +4182,8 @@ function createRoutes(
     requireClientScope,
     resolveWorkspace,
     hasAnyActiveSessionRuns: () => sessionMutations.listActive().length > 0,
-    reloadOpencodeEngine: (routeConfig, workspace) =>
-      reloadOpencodeEngine(routeConfig, workspace, engineMcpServerState),
+    reloadOpencodeEngine: (routeConfig, workspace, options) =>
+      reloadOpencodeEngine(routeConfig, workspace, engineMcpServerState, options),
   });
 
   registerLocalOfficeRoutes({ routes, files: localOfficeFiles, documents: officeDocuments, jsonResponse, readJsonBody, ensureWritable: () => ensureWritable(config),
@@ -5343,12 +5395,16 @@ function normalizeOpencodeDirectory(directory: string): string {
   return directory;
 }
 
-function buildOpencodeReloadUrl(baseUrl: string, directory?: string | null): string {
+function buildOpencodeReloadUrl(
+  baseUrl: string,
+  directory?: string | null,
+  scope: "workspace" | "global" = "workspace",
+): string {
   try {
     const url = new URL(baseUrl);
-    url.pathname = "/instance/dispose";
+    url.pathname = scope === "global" ? "/global/dispose" : "/instance/dispose";
     url.search = "";
-    if (directory) {
+    if (scope === "workspace" && directory) {
       url.searchParams.set("directory", directory);
     }
     return url.toString();
@@ -5371,6 +5427,7 @@ async function reloadOpencodeEngine(
   config: ServerConfig,
   workspace: WorkspaceInfo,
   serverState?: EngineMcpServerState,
+  options?: { scope?: "workspace" | "global" },
 ): Promise<void> {
   const activeState = activeEngineMcpServerState(config, serverState);
   if (activeState) invalidateEngineMcpWorkspace(activeState, workspace.id);
@@ -5399,7 +5456,7 @@ async function reloadOpencodeEngine(
   }
 
   const directory = resolveOpencodeDirectory(workspace);
-  const targetUrl = buildOpencodeReloadUrl(baseUrl, directory);
+  const targetUrl = buildOpencodeReloadUrl(baseUrl, directory, options?.scope);
   const headers: Record<string, string> = {};
   const auth = connection.authHeader ?? null;
   if (auth) headers.Authorization = auth;

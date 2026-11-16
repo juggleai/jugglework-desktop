@@ -14,7 +14,11 @@ interface RegisterOperationRoutesOptions {
   readJsonBody: ReadJsonBody;
   requireClientScope: (ctx: RequestContext, required: TokenScope) => void;
   resolveWorkspace: (config: ServerConfig, id: string) => Promise<WorkspaceInfo>;
-  reloadOpencodeEngine: (config: ServerConfig, workspace: WorkspaceInfo) => Promise<void>;
+  reloadOpencodeEngine: (
+    config: ServerConfig,
+    workspace: WorkspaceInfo,
+    options?: { scope?: "workspace" | "global" },
+  ) => Promise<void>;
   hasAnyActiveSessionRuns: () => boolean;
 }
 
@@ -45,7 +49,8 @@ export function registerOperationRoutes(options: RegisterOperationRoutesOptions)
       throw new ApiError(409, "engine_reload_blocked_active_runs", "Configuration reload is deferred until all active tasks finish");
     }
 
-    await reloadOpencodeEngine(config, workspace);
+    const scope = ctx.url.searchParams.get("scope") === "global" ? "global" : "workspace";
+    await reloadOpencodeEngine(config, workspace, { scope });
 
     await recordAudit(workspace.path, {
       id: shortId(),

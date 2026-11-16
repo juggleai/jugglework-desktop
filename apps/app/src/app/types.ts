@@ -449,6 +449,8 @@ export type ReloadTrigger = {
   name?: string;
   action?: "added" | "removed" | "updated";
   path?: string;
+  /** Global config caches require `/global/dispose`, not one directory's instance dispose. */
+  scope?: "workspace" | "global";
 };
 
 export type PendingPermission = Omit<ApiPermissionRequest, "always"> & {

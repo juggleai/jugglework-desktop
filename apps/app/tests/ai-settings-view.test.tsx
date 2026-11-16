@@ -79,7 +79,28 @@ describe("AI settings model group rows", () => {
       providerAuthError: null,
     });
 
-    expect(rows.localProviders.map((provider) => provider.id)).toEqual(["openai", "local"]);
+    expect(rows.localProviders.map((provider) => provider.id)).toEqual(["local", "openai"]);
+  });
+
+  test("keeps a config-owned local row visible while engine reload is pending", () => {
+    const rows = buildModelGroupRows({
+      runtimeProviders: [
+        { id: "ready-local", name: "Runtime name", source: "config", connected: true },
+      ],
+      configuredLocalProviders: [
+        { id: "pending-local", name: "Pending Local" },
+        { id: "READY-LOCAL", name: "Stale config name" },
+      ],
+      connectedProviderIds: ["ready-local"],
+      cloudOrgProviders: [],
+      importedCloudProviders: {},
+      providerAuthError: null,
+    });
+
+    expect(rows.localProviders).toEqual([
+      { id: "pending-local", name: "Pending Local", source: "config", connected: false },
+      { id: "ready-local", name: "Runtime name", source: "config", connected: true },
+    ]);
   });
 });
 

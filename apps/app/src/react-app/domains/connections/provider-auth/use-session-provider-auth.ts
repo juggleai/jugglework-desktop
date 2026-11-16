@@ -142,7 +142,8 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
             type: "config",
             name: "opencode.json",
             action: "updated",
-          }, scope);
+            scope: scope?.global ? "global" : "workspace",
+          }, { workspaceId: scope?.workspaceId });
         },
         onProviderAvailabilityChanged: (scope) => invalidateMediaModelQueries(getReactQueryClient(), scope),
       });

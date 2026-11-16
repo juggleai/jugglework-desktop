@@ -59,6 +59,36 @@ export type CustomProviderInput = {
   outputLimit?: number | null;
 };
 
+export type ConfiguredLocalProviderSummary = {
+  id: string;
+  name: string;
+};
+
+/**
+ * Minimal, secret-free inventory used while the long-lived engine is still
+ * applying a freshly written global provider config. The settings list must
+ * not make a successfully saved model group disappear just because the
+ * runtime projection is one reload behind.
+ */
+export function configuredLocalProvidersFromConfigContent(
+  content: string,
+): ConfiguredLocalProviderSummary[] {
+  const parsed = parse(content) as Record<string, unknown> | undefined;
+  const providers = isRecord(parsed?.provider) ? parsed.provider : {};
+  return Object.entries(providers)
+    .flatMap(([rawId, value]) => {
+      const id = rawId.trim();
+      if (!id || !isRecord(value) || isCloudManagedProviderKey(id) || id.toLowerCase() === "jugglework") {
+        return [];
+      }
+      const name = typeof value.name === "string" && value.name.trim()
+        ? value.name.trim()
+        : id;
+      return [{ id, name }];
+    })
+    .toSorted((left, right) => left.id.localeCompare(right.id));
+}
+
 const PROVIDER_ID_PATTERN = /^[a-z0-9][a-z0-9._-]*$/;
 const ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 

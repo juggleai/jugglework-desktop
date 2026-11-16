@@ -267,6 +267,12 @@ describe("Electron managed runtime", () => {
             managedOpencodeExecution: null,
             managedOpencode: { pid: 43210, isAlive: () => true },
             hasActiveSessionRuns: () => activeSessionRuns,
+            listActiveSessionRuns: () => activeSessionRuns
+              ? [{ workspaceId: "ws_runtime", sessionId: "ses_runtime", runId: "run_runtime", title: "Runtime task" }]
+              : [],
+            reconcileActiveSessionRuns: async () => activeSessionRuns
+              ? [{ workspaceId: "ws_runtime", sessionId: "ses_runtime", runId: "run_runtime", title: "Runtime task" }]
+              : [],
             stop: () => closeServer(server),
           };
         },
@@ -325,6 +331,8 @@ describe("Electron managed runtime", () => {
       stopFailure = null;
       activeSessionRuns = true;
       assert.equal(manager.hasActiveSessionRuns(), true);
+      assert.equal(manager.listActiveSessionRuns().length, 1);
+      assert.equal((await manager.reconcileActiveSessionRuns()).length, 1);
       for (const operation of operations) {
         await assert.rejects(operation, { code: "runtime_stop_blocked_active_runs" });
         assert.deepEqual(manager.managedServerAccess(), accessBefore);

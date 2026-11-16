@@ -134,7 +134,7 @@ export type WorkspaceReloadControls = {
    *  this workspace become current (and auto-apply) while it is registered. */
   workspaceId?: string | null;
   canReloadWorkspaceEngine: () => boolean;
-  reloadWorkspaceEngine: () => Promise<boolean>;
+  reloadWorkspaceEngine: (options?: { scope?: "workspace" | "global" }) => Promise<boolean>;
   activeSessions?: () => ReloadSession[];
   stopSession?: (sessionId: string) => void | Promise<void>;
 };
@@ -160,6 +160,7 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
   const [controlsWorkspaceId, setControlsWorkspaceId] = useState<string | null>(null);
   const [orgOnboardingVisible, setOrgOnboardingVisible] = useState(false);
   const pendingReloadTriggerRef = useRef<ReloadTrigger | null>(null);
+  const globalReloadRequiredRef = useRef(false);
   const hadPendingReloadRef = useRef(false);
   const lastAutoReloadAtRef = useRef(0);
   const alertedReloadErrorRef = useRef<string | null>(null);
@@ -185,7 +186,9 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
   const reloadWorkspaceEngine = useCallback(async () => {
     const controls = controlsRef.current;
     if (!controls?.reloadWorkspaceEngine) return false;
-    return controls.reloadWorkspaceEngine();
+    return controls.reloadWorkspaceEngine({
+      scope: globalReloadRequiredRef.current ? "global" : "workspace",
+    });
   }, []);
   const ignoreError = useCallback(() => {}, []);
 
@@ -193,6 +196,7 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
   // but only when changes were actually pending (settings' bare "Reload
   // engine" button shouldn't generate noise).
   const handleReloadComplete = useCallback(() => {
+    globalReloadRequiredRef.current = false;
     if (!hadPendingReloadRef.current) return;
     const trigger = pendingReloadTriggerRef.current;
     hadPendingReloadRef.current = false;
@@ -220,6 +224,19 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
 
   const systemState = useSystemState(systemStateOptions);
 
+  const markReloadRequired = useCallback(
+    (reason: ReloadReason, trigger?: ReloadTrigger, scope?: ReloadScope) => {
+      if (trigger?.scope === "global") globalReloadRequiredRef.current = true;
+      systemState.markReloadRequired(reason, trigger, scope);
+    },
+    [systemState.markReloadRequired],
+  );
+
+  const clearReloadRequired = useCallback((workspaceId?: string | null) => {
+    globalReloadRequiredRef.current = false;
+    systemState.clearReloadRequired(workspaceId);
+  }, [systemState.clearReloadRequired]);
+
   useEffect(() => {
     const update = (event: Event) => {
       setOrgOnboardingVisible(Boolean((event as CustomEvent<{ visible?: boolean }>).detail?.visible));
@@ -235,13 +252,13 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
   useEffect(() => {
     const handler = (event: Event) => {
       const detail = (event as CustomEvent<{ reason?: ReloadReason; trigger?: ReloadTrigger }>).detail;
-      systemState.markReloadRequired(detail?.reason ?? "config", detail?.trigger);
+      markReloadRequired(detail?.reason ?? "config", detail?.trigger);
     };
 
     window.addEventListener("jugglework-reload-required", handler);
 
     return () => window.removeEventListener("jugglework-reload-required", handler);
-  }, [systemState.markReloadRequired]);
+  }, [markReloadRequired]);
 
   // Track what is pending so the post-reload receipt can describe it.
   useEffect(() => {
@@ -350,8 +367,8 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
 
   const value = useMemo<ReloadCoordinatorContextValue>(
     () => ({
-      markReloadRequired: systemState.markReloadRequired,
-      clearReloadRequired: systemState.clearReloadRequired,
+      markReloadRequired,
+      clearReloadRequired,
       reloadWorkspaceEngine: systemState.reloadWorkspaceEngine,
       canReloadWorkspaceEngine: systemState.canReloadWorkspaceEngine,
       reloadPending: systemState.reload.reloadPending,
@@ -361,9 +378,9 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
     }),
     [
       registerWorkspaceReloadControls,
+      clearReloadRequired,
+      markReloadRequired,
       systemState.canReloadWorkspaceEngine,
-      systemState.clearReloadRequired,
-      systemState.markReloadRequired,
       systemState.reload.reloadPending,
       systemState.reload.reloadBusy,
       systemState.reload.reloadError,

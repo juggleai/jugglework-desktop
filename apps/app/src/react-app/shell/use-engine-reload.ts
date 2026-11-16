@@ -74,7 +74,9 @@ export function useEngineReload(input: UseEngineReloadInput) {
   const [engineReloadVersion, setEngineReloadVersion] = useState(0);
   const [routeEngineInfo, setRouteEngineInfo] = useState<EngineInfo | null>(null);
   const reloadEventCursorByWorkspaceRef = useRef<Record<string, number | null>>({});
-  const reloadWorkspaceEngineFromUi = useCallback(async () => {
+  const reloadWorkspaceEngineFromUi = useCallback(async (
+    options?: { scope?: "workspace" | "global" },
+  ) => {
     if (!client || !workspaceId) {
       onError(t("app.error_connect_first"));
       return false;
@@ -86,7 +88,7 @@ export function useEngineReload(input: UseEngineReloadInput) {
     }
     let restartedEngine = false;
     try {
-      await endpoint.client.reloadEngine(endpoint.workspaceId);
+      await endpoint.client.reloadEngine(endpoint.workspaceId, options);
     } catch (error) {
       const unreachable =
         error instanceof JuggleWorkServerError && error.code === "opencode_engine_unreachable";

@@ -18,6 +18,8 @@ type Served = {
   port: number;
   stop: (closeActiveConnections?: boolean) => void | Promise<void>;
   hasActiveSessionRuns?: () => boolean;
+  listActiveSessionRuns?: () => Array<{ workspaceId: string; sessionId: string; runId: string }>;
+  reconcileActiveSessionRuns?: () => Promise<Array<{ workspaceId: string; sessionId: string; runId: string }>>;
 };
 
 const stops: Array<() => void | Promise<void>> = [];
@@ -1714,6 +1716,69 @@ describe("authoritative session mutation APIs", () => {
     await new Promise((resolve) => setTimeout(resolve, 510));
     const second = await fetch(`${harness.base}/workspace/ws_1/session-runs`, { headers: harness.collaboratorHeaders });
     await expect(second.json()).resolves.toMatchObject({ items: [{ sessionId: "ses_list_reconcile" }] });
+  });
+
+  test("startup terminalizes a durable run whose workspace was removed", async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    const sessionId = "ses_removed_workspace";
+    const started = await fetch(`${runPath(harness.base, sessionId)}/start`, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+      body: JSON.stringify({
+        origin: "local-renderer",
+        startCommandCorrelationId: "cmd_removed_workspace",
+        prompt: { parts: [{ type: "text", text: "Workspace will be removed" }] },
+      }),
+    });
+    expect(started.status).toBe(202);
+    const { run } = await started.json() as { run: { runId: string } };
+    expect(harness.server.hasActiveSessionRuns?.()).toBe(true);
+
+    await harness.server.stop(true);
+    stops.pop();
+    harness.config.workspaces = harness.config.workspaces.filter((workspace) => workspace.id !== "ws_1");
+    harness.config.authorizedRoots = harness.config.authorizedRoots.filter((root) => root !== harness.root);
+
+    const restarted = await startServer(harness.config);
+    stops.push(() => restarted.stop());
+    expect(restarted.hasActiveSessionRuns()).toBe(false);
+    expect(restarted.listActiveSessionRuns()).toEqual([]);
+
+    const db = new Database(runtimeDbPath(harness.config), { readonly: true });
+    try {
+      expect(db.query("SELECT terminal_reason FROM session_runs WHERE run_id = ?").all(run.runId))
+        .toEqual([{ terminal_reason: "failed" }]);
+      expect(db.query("SELECT terminal_reason FROM session_run_terminals WHERE run_id = ?").all(run.runId))
+        .toEqual([{ terminal_reason: "failed" }]);
+    } finally { db.close(); }
+  });
+
+  test("workspace removal is blocked while its authoritative run is active", async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    const sessionId = "ses_workspace_delete_fence";
+    const started = await fetch(`${runPath(harness.base, sessionId)}/start`, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+      body: JSON.stringify({
+        origin: "local-renderer",
+        startCommandCorrelationId: "cmd_workspace_delete_fence",
+        prompt: { parts: [{ type: "text", text: "Keep workspace active" }] },
+      }),
+    });
+    expect(started.status).toBe(202);
+
+    const removed = await fetch(`${harness.base}/workspaces/ws_1`, {
+      method: "DELETE",
+      headers: harness.hostHeaders,
+    });
+    expect(removed.status).toBe(409);
+    await expect(removed.json()).resolves.toMatchObject({
+      code: "workspace_active_runs",
+      details: { activeRunCount: 1 },
+    });
+    expect(harness.config.workspaces.some((workspace) => workspace.id === "ws_1")).toBe(true);
   });
 
   test("restart fails a restored run when the replacement engine is authoritatively idle", async () => {

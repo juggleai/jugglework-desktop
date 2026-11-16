@@ -8,6 +8,7 @@ export function buildModelGroupRows(input: {
     source?: "env" | "api" | "config" | "custom";
     connected: boolean;
   }>;
+  configuredLocalProviders?: Array<{ id: string; name: string }>;
   connectedProviderIds: readonly string[];
   cloudOrgProviders: Array<{ id: string; providerId: string; name: string; models: unknown[] }>;
   importedCloudProviders: Record<string, CloudImportedProvider>;
@@ -25,6 +26,22 @@ export function buildModelGroupRows(input: {
   const importedLocalIds = new Set(
     Array.from(currentImportedByCloudId.values(), (imported) => normalize(imported.providerId)),
   );
+  const localRows = new Map(
+    input.runtimeProviders.map((provider) => [normalize(provider.id), provider]),
+  );
+  // A config write can complete while the engine reload is deferred by an
+  // active task. Preserve a visible, disconnected row until the runtime
+  // projection catches up; a live row always wins when both are present.
+  for (const provider of input.configuredLocalProviders ?? []) {
+    const id = normalize(provider.id);
+    if (!id || localRows.has(id)) continue;
+    localRows.set(id, {
+      id: provider.id,
+      name: provider.name,
+      source: "config",
+      connected: false,
+    });
+  }
 
   const orgManagedProviders: OrgManagedProvider[] = input.cloudOrgProviders.map((provider) => {
     const imported = currentImportedByCloudId.get(provider.id.trim());
@@ -40,10 +57,13 @@ export function buildModelGroupRows(input: {
   });
 
   return {
-    localProviders: input.runtimeProviders.filter((provider) => {
-      const id = normalize(provider.id);
-      return !cloudRuntimeIds.has(id) && !importedLocalIds.has(id);
-    }),
+    localProviders: Array.from(localRows.entries())
+      .toSorted(([leftId], [rightId]) => leftId.localeCompare(rightId))
+      .map(([, provider]) => provider)
+      .filter((provider) => {
+        const id = normalize(provider.id);
+        return !cloudRuntimeIds.has(id) && !importedLocalIds.has(id);
+      }),
     orgManagedProviders,
   };
 }

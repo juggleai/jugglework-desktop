@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import en from "../src/i18n/locales/en";
 import zh from "../src/i18n/locales/zh";
 import {
+  configuredLocalProvidersFromConfigContent,
   buildCustomProviderConfig,
   CUSTOM_PROVIDER_NPM,
   CUSTOM_PROVIDER_RESPONSES_NPM,
@@ -28,6 +29,23 @@ const baseInput = (overrides: Partial<CustomProviderInput> = {}): CustomProvider
     models: [{ id: "gpt-4o", name: "GPT-4o" }],
     ...overrides,
   });
+
+describe("configured local provider inventory", () => {
+  test("keeps saved local groups visible before the engine projection refreshes", () => {
+    expect(configuredLocalProvidersFromConfigContent(`{
+      // JSONC comments are supported in the user's global config.
+      "provider": {
+        "z-local": { "name": "Z Local", "options": { "apiKey": "must-not-leak" } },
+        "a-local": { "models": { "chat": { "name": "Chat" } } },
+        "lpr_managed": { "name": "Organization managed" },
+        "jugglework": { "name": "Reserved" }
+      }
+    }`)).toEqual([
+      { id: "a-local", name: "a-local" },
+      { id: "z-local", name: "Z Local" },
+    ]);
+  });
+});
 
 describe("custom provider raw config edit source", () => {
   test("keeps video metadata when the runtime provider projection drops it", () => {

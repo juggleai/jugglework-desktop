@@ -1758,17 +1758,42 @@ const disposeRuntimeBeforeQuit = createJoinableCleanup(() => {
   return runtimeManager.dispose();
 });
 
-async function confirmActiveTaskInterruption(action = "quit") {
-  if (!runtimeManager.hasActiveSessionRuns()) return true;
+async function activeSessionRunsBeforeShutdown() {
+  try {
+    return await runtimeManager.reconcileActiveSessionRuns();
+  } catch (error) {
+    console.warn("[quit] active-run reconciliation failed; preserving the shutdown fence", error);
+    return runtimeManager.listActiveSessionRuns();
+  }
+}
+
+async function confirmActiveTaskInterruption(action = "quit", activeRuns = runtimeManager.listActiveSessionRuns()) {
+  if (!activeRuns.length) return true;
   const installingUpdate = action === "update";
+  const visibleRuns = activeRuns.slice(0, 3).map((run) => {
+    const title = typeof run?.title === "string" && run.title.trim()
+      ? run.title.trim()
+      : typeof run?.sessionId === "string"
+        ? run.sessionId
+        : "未命名任务";
+    const workspace = typeof run?.workspaceId === "string" ? run.workspaceId : "未知工作区";
+    return `• ${title}（${workspace}）`;
+  });
+  const remaining = Math.max(0, activeRuns.length - visibleRuns.length);
+  const taskDetails = [
+    `${activeRuns.length} 个任务仍被服务端确认为运行中：`,
+    ...visibleRuns,
+    ...(remaining > 0 ? [`• 以及其他 ${remaining} 个任务`] : []),
+    "",
+  ].join("\n");
   /** @type {import("electron").MessageBoxOptions} */
   const options = {
     type: "warning",
     title: installingUpdate ? "安装更新会中断任务" : "退出会中断任务",
     message: "仍有服务端任务正在运行",
     detail: installingUpdate
-      ? "安装更新并重启 JuggleWork 会立即停止当前任务，未生成完成的回复可能无法恢复。"
-      : "退出 JuggleWork 会立即停止当前任务，未生成完成的回复可能无法恢复。",
+      ? `${taskDetails}安装更新并重启 JuggleWork 会立即停止这些任务，未生成完成的回复可能无法恢复。`
+      : `${taskDetails}退出 JuggleWork 会立即停止这些任务，未生成完成的回复可能无法恢复。`,
     buttons: ["取消", installingUpdate ? "中断任务并安装更新" : "中断任务并退出"],
     defaultId: 0,
     cancelId: 0,
@@ -3646,7 +3671,8 @@ const { ensureAutoUpdater } = registerUpdaterIpc({
     if (!(await cloudDocsPanel.prepareQuit())) throw new Error("云文档尚未完成本地保存，已取消更新");
     // Main owns the last-moment authority check. Renderer state may be stale,
     // and a task may start while an asynchronous save decision is open.
-    if (runtimeManager.hasActiveSessionRuns() && !await confirmActiveTaskInterruption("update")) {
+    const activeRuns = await activeSessionRunsBeforeShutdown();
+    if (activeRuns.length > 0 && !await confirmActiveTaskInterruption("update", activeRuns)) {
       throw new Error("已取消更新，正在运行的任务不会被中断");
     }
     fileWindows.dispose();
@@ -3687,8 +3713,9 @@ if (!app.requestSingleInstanceLock()) {
       }
       // Confirm only after every asynchronous save decision, using the latest
       // authoritative run state immediately before Runtime disposal.
-      if (runtimeManager.hasActiveSessionRuns()) {
-        if (!await confirmActiveTaskInterruption()) {
+      const activeRuns = await activeSessionRunsBeforeShutdown();
+      if (activeRuns.length > 0) {
+        if (!await confirmActiveTaskInterruption("quit", activeRuns)) {
           relaunchAfterCleanup = false;
           developmentRelaunchRequested = false;
           quitCleanupInProgress = false;

@@ -258,10 +258,11 @@ const ROUTE_JUGGLEWORK_CAPABILITIES: JuggleWorkServerCapabilities = {
 async function reloadEngineOrRestartDesktop(
   client: Pick<JuggleWorkServerClient, "reloadEngine">,
   workspaceId: string,
+  options?: { scope?: "workspace" | "global" },
   afterRestart?: () => Promise<void>,
 ): Promise<void> {
   try {
-    await client.reloadEngine(workspaceId);
+    await client.reloadEngine(workspaceId, options);
   } catch (error) {
     const unreachable =
       error instanceof JuggleWorkServerError && error.code === "opencode_engine_unreachable";
@@ -778,11 +779,14 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
           // while reload controls register the server-side id. A scoped mark
           // would never match, so remote workspaces keep the global mark.
           const scopedToLocalWorkspace =
-            routeStateRef.current.selectedWorkspaceType === "remote" ? undefined : scope;
+            routeStateRef.current.selectedWorkspaceType === "remote"
+              ? undefined
+              : { workspaceId: scope?.workspaceId };
           reloadCoordinator.markReloadRequired("config", {
             type: "config",
             name: "opencode.json",
             action: "updated",
+            scope: scope?.global ? "global" : "workspace",
           }, scopedToLocalWorkspace);
         },
         onProviderAvailabilityChanged: (scope) => invalidateMediaModelQueries(getReactQueryClient(), scope),
@@ -1657,14 +1661,16 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     [performRefreshRouteState, refreshRouteStateQueue],
   );
 
-  const reloadWorkspaceEngineFromUi = useCallback(async () => {
+  const reloadWorkspaceEngineFromUi = useCallback(async (
+    options?: { scope?: "workspace" | "global" },
+  ) => {
     const workspaceId = routeStateRef.current.runtimeWorkspaceId?.trim() || selectedWorkspaceId.trim();
     if (!juggleworkClient || !workspaceId) {
       toast.error(t("app.error_connect_first"));
       return false;
     }
 
-    await reloadEngineOrRestartDesktop(juggleworkClient, workspaceId, refreshRouteState);
+    await reloadEngineOrRestartDesktop(juggleworkClient, workspaceId, options, refreshRouteState);
     await refreshProviderListQueries(getReactQueryClient());
 
     try {
@@ -2347,6 +2353,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     .map(([, row]) => row);
   const modelGroupRows = buildModelGroupRows({
     runtimeProviders: connectedProviders,
+    configuredLocalProviders: providerAuthSnapshot.configuredLocalProviders,
     connectedProviderIds: providerConnectedIds,
     cloudOrgProviders: providerAuthSnapshot.cloudOrgProviders,
     importedCloudProviders: providerAuthSnapshot.importedCloudProviders,

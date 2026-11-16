@@ -38,6 +38,18 @@ Server SHALL clean up every acquired runtime resource when startup fails and SHA
 - **WHEN** any workspace has an active task and a different workspace requests an explicit managed-engine reload
 - **THEN** Server rejects or defers the reload without disposing the shared engine until every active task has reached a terminal state
 
+#### Scenario: A durable run outlives its workspace registration
+- **WHEN** Server restores an unfinished run whose workspace is no longer registered
+- **THEN** Server records a failed terminal outcome before reporting shutdown safety and does not preserve the run as permanently active
+
+#### Scenario: A workspace is removed during an active task
+- **WHEN** a caller requests workspace removal while Server still owns an authoritative active run in that workspace
+- **THEN** Server reconciles current engine state and rejects removal until the run reaches a terminal state
+
+#### Scenario: Desktop checks active tasks before shutdown
+- **WHEN** the local user quits or installs an update
+- **THEN** Desktop asks Server to reconcile durable runs immediately and warns only for the remaining authoritative tasks, identifying the bounded task set in the confirmation dialog
+
 ### Requirement: Managed OpenCode receives valid runtime endpoints
 Server SHALL inject the actual reachable JuggleWork Server URL and current runtime configuration into managed OpenCode.
 
