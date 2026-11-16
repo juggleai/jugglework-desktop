@@ -260,7 +260,7 @@ describe("calendar IndexedDB cache", () => {
     const reopened = adapter(factory);
     expect(await reopened.getDraft(scope, "legacy-draft")).toEqual({
       schemaVersion: 2, id: "legacy-draft", entityType: "event", operation: "create", baseEntity: null, unsynced: true,
-      values: { form: { calendarId: "calendar-a", title: "Legacy", description: "", time: { kind: "allDay", startDate: "2026-11-05", endDateExclusive: "2026-11-06" }, attendeeMemberIds: [], recurrence: { frequency: "none" } } },
+      values: { form: { calendarId: "calendar-a", title: "Legacy", description: "", videoConferenceEnabled: true, time: { kind: "allDay", startDate: "2026-11-05", endDateExclusive: "2026-11-06" }, attendeeMemberIds: [], recurrence: { frequency: "none" } } },
     });
     await expect(reopened.putDraft(scope, { ...draft, schemaVersion: 1 } as unknown as CalendarDraftRecord)).rejects.toThrow(/schema version/);
   });

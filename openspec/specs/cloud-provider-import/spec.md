@@ -6,9 +6,11 @@ Define how Desktop imports managed and ordinary cloud routing providers while pr
 ## Requirements
 
 ### Requirement: Startup readiness does not invalidate cloud providers
-Desktop SHALL NOT remove imported cloud providers or their credentials merely because the engine client, active organization, or workspace target is not yet ready. Startup cleanup SHALL run only when no authentication token is present, through the existing workspace mutation queue, and SHALL recheck session presence, workspace identity, and store disposal before execution. A failed sign-in attempt SHALL NOT trigger sign-out cleanup; explicit sign-out and existing account/organization ownership cleanup SHALL retain their behavior.
+Desktop SHALL NOT remove imported cloud providers or their credentials merely because the engine client, active organization, or workspace target is not yet ready. Startup cleanup SHALL run only when no authentication token is present, through the existing workspace mutation queue, and SHALL recheck session presence, workspace identity, and store disposal before execution.
 
-Signed-out startup cleanup SHALL resolve the workspace target before choosing its queue key, and SHALL refresh that target's import baseline inside the queue before cleanup. When the workspace target or host becomes ready after startup, options synchronization SHALL schedule the pending cleanup. An unchanged, successfully cleaned target SHALL NOT be purged again on repeated options synchronization. Cleanup from a disposed store lifecycle SHALL NOT resume after that store restarts.
+#### Scenario: Sign-in fails without explicit sign-out
+- **WHEN** a sign-in attempt fails without an explicit sign-out
+- **THEN** A failed sign-in attempt SHALL NOT trigger sign-out cleanup; explicit sign-out and existing account/organization ownership cleanup SHALL retain their behavior.
 
 #### Scenario: Signed-in Desktop starts before the engine is ready
 - **WHEN** Desktop restores an authenticated session while the engine client or workspace context is still initializing
@@ -22,6 +24,7 @@ Signed-out startup cleanup SHALL resolve the workspace target before choosing it
 - **WHEN** Desktop starts without an authentication token and workspace resolution supplies its runtime ID, or the workspace target or host becomes available later
 - **THEN** Desktop cleans the resolved target using its freshly read import baseline once ready
 - **AND** repeated unchanged options synchronization does not repeat successful cleanup
+- **AND** Signed-out startup cleanup SHALL resolve the workspace target before choosing its queue key, and SHALL refresh that target's import baseline inside the queue before cleanup. When the workspace target or host becomes ready after startup, options synchronization SHALL schedule the pending cleanup. An unchanged, successfully cleaned target SHALL NOT be purged again on repeated options synchronization. Cleanup from a disposed store lifecycle SHALL NOT resume after that store restarts.
 
 #### Scenario: Provider reconciliation follows a transient empty engine list
 - **WHEN** cloud provider synchronization verifies engine application after an earlier empty provider-list response
@@ -69,18 +72,20 @@ Desktop SHALL treat an imported cloud provider as applied only when the engine p
 - **THEN** Desktop requests the reload only once, and requests it again only after the difference disappears or changes
 
 ### Requirement: Cloud provider reload requests are workspace scoped
-A reload request raised by the cloud provider applied check SHALL stay pending for its workspace until a reload targeting that same workspace succeeds. A successful reload of another workspace SHALL NOT clear it. Unscoped reload requests keep their existing behavior. When the requesting surface cannot address the workspace by the same server-side ID used to register reload controls (for example a remote workspace in Settings), Desktop SHALL fall back to an unscoped request rather than a scoped request that can never be applied.
+A reload request raised by the cloud provider applied check SHALL stay pending for its workspace until a reload targeting that same workspace succeeds. A successful reload of another workspace SHALL NOT clear it. Unscoped reload requests keep their existing behavior.
 
 #### Scenario: Another workspace reloads first
 - **WHEN** workspace A has a scoped pending reload and the user reloads workspace B
 - **THEN** A stays pending, and when A is selected again and idle the coordinator reloads it automatically
+- **AND** When the requesting surface cannot address the workspace by the same server-side ID used to register reload controls (for example a remote workspace in Settings), Desktop SHALL fall back to an unscoped request rather than a scoped request that can never be applied.
 
 ### Requirement: Rejected gateway credentials are repaired without replaying the failed turn
-Desktop SHALL treat only an explicit gateway-credential rejection as a repairable imported-provider failure. It SHALL read the matching device's current organization-provider connection, hash the rejected `jwgw_` credential locally with SHA-256, and send only that digest plus a fresh UUID request ID to the dedicated credential-rotation endpoint. It SHALL install the returned replacement through the existing import path, updating shared OpenCode authentication, the gateway credential record, runtime provider configuration, and requesting one engine reload. It SHALL preserve the failed turn and SHALL NOT automatically replay the message or its tool calls.
+Desktop SHALL treat only an explicit gateway-credential rejection as a repairable imported-provider failure. It SHALL preserve the failed turn and SHALL NOT automatically replay the message or its tool calls.
 
 #### Scenario: Engine rejects a cached gateway credential
 - **WHEN** a live session returns 401 and explicitly reports that the gateway credential is missing, revoked, or expired for an imported provider
 - **THEN** Desktop rotates that provider credential once for the workspace, installs the verified replacement, and tells the user to retry the preserved message after recovery
+- **AND** It SHALL read the matching device's current organization-provider connection, hash the rejected `jwgw_` credential locally with SHA-256, and send only that digest plus a fresh UUID request ID to the dedicated credential-rotation endpoint. It SHALL install the returned replacement through the existing import path, updating shared OpenCode authentication, the gateway credential record, runtime provider configuration, and requesting one engine reload.
 
 #### Scenario: Normal connection still returns the rejected credential
 - **WHEN** Desktop prepares a repair and the ordinary connection endpoint returns the device's current rejected credential
@@ -97,7 +102,11 @@ Desktop SHALL treat only an explicit gateway-credential rejection as a repairabl
 - **THEN** Desktop does not guess a repair target
 
 ### Requirement: Gateway credentials are shared across workspaces
-A gateway credential is issued per member, provider, and signed-in device, and the OpenCode auth store holds one entry per provider ID for the whole machine. Desktop SHALL keep one gateway credential record per organization and cloud provider, shared by every workspace that imports that provider. A workspace import only authorizes reading or writing that record. Records written per workspace by older builds SHALL stay readable by their own workspace and SHALL be migrated to the shared record by the next import.
+A gateway credential is issued per member, provider, and signed-in device, and the OpenCode auth store holds one entry per provider ID for the whole machine. Desktop SHALL keep one gateway credential record per organization and cloud provider, shared by every workspace that imports that provider. A workspace import only authorizes reading or writing that record.
+
+#### Scenario: Legacy workspace credential is imported again
+- **WHEN** the next import encounters a credential record written per workspace by an older build
+- **THEN** Records written per workspace by older builds SHALL stay readable by their own workspace and SHALL be migrated to the shared record by the next import.
 
 #### Scenario: One workspace removes a provider others still import
 - **WHEN** a workspace removes an imported organization provider, through user action, sync, or account or organization cleanup, and another workspace still imports the same provider

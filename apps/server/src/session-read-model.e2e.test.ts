@@ -246,9 +246,9 @@ function deferred() {
   return { promise, resolve };
 }
 
-async function waitUntil(predicate: () => boolean) {
+async function waitUntil(predicate: () => boolean | Promise<boolean>) {
   for (let index = 0; index < 20; index++) {
-    if (predicate()) return true;
+    if (await predicate()) return true;
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   return predicate();
@@ -746,6 +746,15 @@ describe("workspace session read APIs", () => {
     const sawCommand = await waitUntil(() => mock.requests.some((request) => request.pathname === "/session/ses_1/command"));
     command.resolve();
     expect(sawCommand).toBe(true);
+    // The command is acknowledged before completion; drain its reservation
+    // before teardown closes the journal used by the completion callback.
+    expect(await waitUntil(async () => {
+      const runs = await fetch(`http://127.0.0.1:${jugglework.server.port}/workspace/ws_1/session-runs`, {
+        headers: auth(jugglework.token),
+      });
+      const body = await runs.json() as { items: unknown[] };
+      return runs.ok && body.items.length === 0;
+    })).toBe(true);
   });
 
   test("keeps legacy /w workspace opencode proxy alias", async () => {

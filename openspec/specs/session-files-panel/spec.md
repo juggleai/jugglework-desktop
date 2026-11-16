@@ -91,15 +91,10 @@ Provide a session-scoped workspace file panel for browsing, previewing, editing,
 ### Requirement: 文件查看与编辑
 文件标签 SHALL 复用现有产物预览与编辑能力展示文件内容：文本类文件可编辑并保存，图片、PDF、表格等按既有预览方式渲染，不支持的类型显示不可预览提示。保存 MUST 携带打开时的 `updatedAt` 进行乐观并发校验。内容区上方 MUST NOT 常驻工具栏，仅在存在未保存修改时展示保存与放弃操作。
 
-Markdown 文件 SHALL 默认展示格式化预览，并提供切换到源码编辑的入口。预览 MUST 支持 GFM 表格，宽表格 MUST 在内容区域内横向滚动而不是撑破面板；`mermaid` 围栏代码块 MUST 渲染为图形。无效 Mermaid MUST 只在对应图形位置显示错误与源码，不得导致整篇 Markdown 无法查看。Markdown 原始 HTML 与 Mermaid 标签 MUST 按安全模式处理，不得执行文档内脚本。
-
-Markdown 预览中的普通围栏代码块 SHALL 在右上角提供复制图标，点击或键盘激活后 MUST 将保留缩进与换行的代码原文写入剪贴板，并展示短暂的成功反馈；渲染为图形的 Mermaid 代码块不展示代码复制按钮。
-
-HTML 文件预览 MUST 使用不透明来源的 sandbox iframe，MUST NOT 授予 `allow-same-origin`、表单、弹窗或顶层导航能力，并 MUST 在产物内容解析前应用限制性 Content Security Policy。预览脚本 MUST NOT 能读取父 Renderer DOM、父页面持久化存储或 Electron bridge，MUST NOT 能连接外部或本地网络、提交表单、创建嵌套 frame/object/worker 或导航父页面。无效 UTF-8 或二进制 HTML MUST 安全降级为不可预览，不得通过 object/blob URL 执行。
-
 #### Scenario: 预览并编辑 Markdown 文件
 - **WHEN** 用户从文件目录打开 Markdown 文件
 - **THEN** 默认显示格式化预览；点击编辑入口后显示源码编辑器，保存成功后返回最新预览
+- **AND** Markdown 文件 SHALL 默认展示格式化预览，并提供切换到源码编辑的入口。预览 MUST 支持 GFM 表格，宽表格 MUST 在内容区域内横向滚动而不是撑破面板；`mermaid` 围栏代码块 MUST 渲染为图形。无效 Mermaid MUST 只在对应图形位置显示错误与源码，不得导致整篇 Markdown 无法查看。Markdown 原始 HTML 与 Mermaid 标签 MUST 按安全模式处理，不得执行文档内脚本。
 
 #### Scenario: 在独立窗口查看图片和视频
 - **WHEN** 用户在独立文件窗口打开支持的图片或视频文件
@@ -117,10 +112,12 @@ HTML 文件预览 MUST 使用不透明来源的 sandbox iframe，MUST NOT 授予
 #### Scenario: 复制 Markdown 代码片段
 - **WHEN** 用户点击 Markdown 普通代码块右上角的复制图标
 - **THEN** 代码原文写入剪贴板，复制图标短暂切换为成功状态
+- **AND** Markdown 预览中的普通围栏代码块 SHALL 在右上角提供复制图标，点击或键盘激活后 MUST 将保留缩进与换行的代码原文写入剪贴板，并展示短暂的成功反馈；渲染为图形的 Mermaid 代码块不展示代码复制按钮。
 
 #### Scenario: 隔离不可信 HTML
 - **WHEN** 用户预览包含脚本、网络请求、表单、弹窗、父页面访问或 Electron bridge 调用的 HTML 文件
 - **THEN** 自包含脚本只能在不透明来源沙箱内运行，不能访问父页面或 bridge，网络、表单、弹窗、嵌套内容与父页面导航均被阻止
+- **AND** HTML 文件预览 MUST 使用不透明来源的 sandbox iframe，MUST NOT 授予 `allow-same-origin`、表单、弹窗或顶层导航能力，并 MUST 在产物内容解析前应用限制性 Content Security Policy。预览脚本 MUST NOT 能读取父 Renderer DOM、父页面持久化存储或 Electron bridge，MUST NOT 能连接外部或本地网络、提交表单、创建嵌套 frame/object/worker 或导航父页面。无效 UTF-8 或二进制 HTML MUST 安全降级为不可预览，不得通过 object/blob URL 执行。
 
 #### Scenario: 二进制 HTML 安全降级
 - **WHEN** `.html` 或 `.htm` 文件不是有效 UTF-8 文本
