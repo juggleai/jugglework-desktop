@@ -3,8 +3,10 @@
 - [x] 1.2 Split the Electron process name from the default display name so packaging and installer shortcuts are unchanged.
 - [x] 1.3 Localize the sign-in page, add a default logo, and replace the introduction panel with bundled icons.
 - [x] 1.4 Keep internal identities, on-disk folder names, model prompts, and code-matched strings unchanged.
+- [x] 1.5 Treat the server's default `brandAppName: JuggleWork` as unset in the desktop policy and the desktop bootstrap config so the sign-in page and window titles show 北数Work.
 
 ## 2. Verification
 - [x] 2.1 Update tests that assert visible copy.
 - [x] 2.2 Run app and server type checking and the app, server, and desktop test suites; failures match the pre-change baseline.
 - [x] 2.3 Render the sign-in page in Chinese and English and inspect the result.
+- [x] 2.4 Add policy and bootstrap tests that `JuggleWork` is ignored while a real organization name is kept.

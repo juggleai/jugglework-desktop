@@ -592,6 +592,25 @@ test("desktop bootstrap writes include a fresh writtenAt stamp", async () => {
   });
 });
 
+test("desktop bootstrap treats the upstream JuggleWork brand name as unset", async () => {
+  await withIsolatedBootstrapStore(async ({ store, canonicalPath }) => {
+    await writeBootstrapConfig(canonicalPath, {
+      baseUrl: "https://work.juggle.im",
+      requireSignin: false,
+      brandAppName: " JuggleWork ",
+      writtenAt: "2026-11-14T11:58:39.868Z",
+    });
+    const config = await store.getDesktopBootstrapConfig();
+    assert.equal("brandAppName" in config, false);
+
+    const written = await store.setDesktopBootstrapConfig({
+      baseUrl: "https://work.juggle.im",
+      brandAppName: "Example Org Work",
+    });
+    assert.equal(written.brandAppName, "Example Org Work");
+  });
+});
+
 test("imports the newest organization bootstrap beside a Windows installer when config is absent", async () => {
   await withIsolatedBootstrapStore(async ({ store, canonicalPath, root }) => {
     const bundleDir = path.join(root, "downloads", "JuggleWork-example-org");

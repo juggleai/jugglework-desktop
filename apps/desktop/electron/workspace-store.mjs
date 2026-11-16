@@ -264,7 +264,10 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
     });
     const writtenAt = typeof input?.writtenAt === "string" ? input.writtenAt.trim() : "";
     const apiBaseUrl = typeof input?.apiBaseUrl === "string" ? input.apiBaseUrl.trim() : "";
-    const brandAppName = typeof input?.brandAppName === "string" ? input.brandAppName.trim().slice(0, 64) : "";
+    // TIPS: 服务端默认会下发上游产品名 "JuggleWork"，它不是组织品牌；按未设置处理，
+    // 避免旧的 desktop-bootstrap.json 让登录页、窗口标题和菜单显示 JuggleWork。
+    const rawBrandAppName = typeof input?.brandAppName === "string" ? input.brandAppName.trim() : "";
+    const brandAppName = rawBrandAppName.toLowerCase() === "jugglework" ? "" : rawBrandAppName.slice(0, 64);
     const brandLogoUrl = typeof input?.brandLogoUrl === "string" ? input.brandLogoUrl.trim() : "";
     const brandIconUrl = typeof input?.brandIconUrl === "string" ? input.brandIconUrl.trim() : "";
 

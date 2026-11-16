@@ -282,4 +282,10 @@ describe("Den desktop config client", () => {
       onboardingPromptDescriptions: null,
     });
   });
+
+  test("treats the upstream JuggleWork brand name as unset so the client default shows", () => {
+    expect(normalizeDenDesktopConfig({ brandAppName: "JuggleWork" }).brandAppName).toBeUndefined();
+    expect(normalizeDenDesktopConfig({ brandAppName: " jugglework " }).brandAppName).toBeUndefined();
+    expect(normalizeDenDesktopConfig({ brandAppName: "Acme Work" }).brandAppName).toBe("Acme Work");
+  });
 });

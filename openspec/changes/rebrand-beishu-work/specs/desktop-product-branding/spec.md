@@ -11,6 +11,10 @@ The desktop application SHALL display the product name `北数Work` on every use
 - **WHEN** the desktop bootstrap config provides `brandAppName`
 - **THEN** the configured name replaces `北数Work` on those surfaces
 
+#### Scenario: Server sends the upstream default brand name
+- **WHEN** the desktop policy or the desktop bootstrap config sets `brandAppName` to `JuggleWork` (any case), which is the server's default rather than an organization brand
+- **THEN** the name is treated as unset and windows, the application menu, the sign-in page, and the document title display `北数Work`
+
 #### Scenario: Internal identities stay stable
 - **WHEN** the application starts, updates, or registers OS integrations
 - **THEN** the app ID, protocol scheme, userData path, packaged product name, bundle and executable file names, and on-disk Documents folders are unchanged from JuggleWork

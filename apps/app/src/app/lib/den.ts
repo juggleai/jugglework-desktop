@@ -1,4 +1,5 @@
 import {
+  isUpstreamDefaultBrandAppName,
   normalizeDesktopConfig,
   type DesktopConfig as SharedDesktopConfig,
 } from "@jugglework/types/den/desktop-policies";
@@ -1527,7 +1528,9 @@ function resolveDenBootstrapConfig(
     ...resolveDenBaseUrls(input),
     source: input.source === "file" || input.fromFile === true ? "file" : "default",
     requireSignin: input.requireSignin === true,
-    ...(input.brandAppName?.trim() ? { brandAppName: input.brandAppName.trim().slice(0, 64) } : {}),
+    ...(input.brandAppName?.trim() && !isUpstreamDefaultBrandAppName(input.brandAppName)
+      ? { brandAppName: input.brandAppName.trim().slice(0, 64) }
+      : {}),
     ...(input.brandLogoUrl?.trim() ? { brandLogoUrl: input.brandLogoUrl.trim() } : {}),
     ...(input.brandIconUrl?.trim() ? { brandIconUrl: input.brandIconUrl.trim() } : {}),
     ...(input.claimLinks ? { claimLinks: input.claimLinks } : {}),

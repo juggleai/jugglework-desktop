@@ -643,10 +643,19 @@ function normalizeBrandUrl(value: unknown): string | undefined {
   }
 }
 
+/**
+ * 服务端默认配置会下发上游产品名 "JuggleWork"，它不是组织自定义品牌；
+ * 视为未设置，让客户端回落到自己的默认显示名（北数Work）。
+ */
+export function isUpstreamDefaultBrandAppName(value: string): boolean {
+  return value.trim().toLowerCase() === "jugglework";
+}
+
 function normalizeBrandAppName(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
-  return trimmed ? trimmed.slice(0, 64) : undefined;
+  if (!trimmed || isUpstreamDefaultBrandAppName(trimmed)) return undefined;
+  return trimmed.slice(0, 64);
 }
 
 function normalizeBrandAccentColor(value: unknown): BrandAccentColor | undefined {
