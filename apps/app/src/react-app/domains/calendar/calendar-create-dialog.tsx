@@ -10,6 +10,7 @@ import { t } from "@/i18n";
 import { useCreateCalendarMutation, useCreateTeamCalendarMutation } from "./calendar-mutations";
 import { calendarQueryKeys } from "./calendar-query-keys";
 import type { CalendarScope } from "./calendar-scope";
+import { CALENDAR_COLOR_PALETTE } from "./calendar-colors";
 
 export function CalendarCreateDialog(props: {
   open: boolean;
@@ -18,6 +19,7 @@ export function CalendarCreateDialog(props: {
   collaborationEnabled: boolean;
   online: boolean;
   writeEnabled: boolean;
+  defaultColor: string;
   onOpenChange: (open: boolean) => void;
 }) {
   const queryClient = useQueryClient();
@@ -25,17 +27,20 @@ export function CalendarCreateDialog(props: {
   const team = useCreateTeamCalendarMutation(props.client, props.scope);
   const [kind, setKind] = React.useState<"personal" | "team">("personal");
   const [name, setName] = React.useState("");
-  const [color, setColor] = React.useState("");
+  const [color, setColor] = React.useState(props.defaultColor);
   const [error, setError] = React.useState<string | null>(null);
+  const wasOpen = React.useRef(false);
   const pending = personal.isPending || team.isPending;
 
   React.useEffect(() => {
-    if (!props.open) return;
-    setKind("personal");
-    setName("");
-    setColor("");
-    setError(null);
-  }, [props.open]);
+    if (props.open && !wasOpen.current) {
+      setKind("personal");
+      setName("");
+      setColor(props.defaultColor);
+      setError(null);
+    }
+    wasOpen.current = props.open;
+  }, [props.defaultColor, props.open]);
 
   const submit = async () => {
     if (!props.writeEnabled) return;
@@ -45,7 +50,7 @@ export function CalendarCreateDialog(props: {
       return;
     }
     setError(null);
-    const input = { name: trimmed, ...(color ? { color } : {}) };
+    const input = { name: trimmed, color };
     try {
       if (kind === "team") await team.mutateAsync(input);
       else {
@@ -82,10 +87,25 @@ export function CalendarCreateDialog(props: {
               {t("calendar.calendar_name")}
               <input autoFocus className="h-9 rounded-lg border border-dls-border bg-dls-surface px-2 text-sm text-dls-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/35" maxLength={100} value={name} onChange={(event) => setName(event.target.value)} aria-invalid={error ? true : undefined} data-testid="calendar-create-name" />
             </label>
-            <label className="flex flex-col gap-1 text-xs text-dls-secondary">
-              {t("calendar.calendar_color")}
-              <input type="color" className="h-9 w-full rounded-lg border border-dls-border bg-dls-surface p-1" value={color || "#2563eb"} onChange={(event) => setColor(event.target.value)} data-testid="calendar-create-color" />
-            </label>
+            <fieldset className="flex flex-col gap-2">
+              <legend className="text-xs text-dls-secondary">{t("calendar.calendar_color")}</legend>
+              <div className="grid grid-cols-6 gap-2" role="group" aria-label={t("calendar.calendar_color")} data-testid="calendar-create-color">
+                {CALENDAR_COLOR_PALETTE.map((option) => (
+                  <button
+                    key={option}
+                    type="button"
+                    className="flex size-8 items-center justify-center rounded-md outline-none ring-offset-2 ring-offset-dls-surface transition-transform hover:scale-105 focus-visible:ring-2 focus-visible:ring-dls-text"
+                    style={{ backgroundColor: option }}
+                    aria-label={t("calendar.choose_color", { color: option })}
+                    aria-pressed={color === option}
+                    onClick={() => setColor(option)}
+                    data-testid={`calendar-create-color-${option.slice(1)}`}
+                  >
+                    {color === option ? <span className="size-5 rounded-md border-2 border-white" aria-hidden="true" /> : null}
+                  </button>
+                ))}
+              </div>
+            </fieldset>
           </fieldset>
           {error ? <p className="text-sm text-red-600" role="alert" data-testid="calendar-create-error">{error}</p> : null}
           {!props.online ? <p className="text-sm text-dls-secondary" role="note">{t("calendar.offline_create_calendar")}</p> : null}

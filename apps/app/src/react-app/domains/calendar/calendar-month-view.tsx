@@ -22,15 +22,11 @@ import {
   type CalendarMonthNavigation,
   type CalendarWeekday,
 } from "./calendar-month-model";
+import { CALENDAR_COLOR_PALETTE } from "./calendar-colors";
 
 const WEEKDAY_REFERENCE: Record<CalendarWeekday, string> = {
   1: "2026-11-02", 2: "2026-11-03", 3: "2026-11-04", 4: "2026-11-05", 5: "2026-11-06", 6: "2026-11-07", 7: "2026-11-08",
 };
-
-export const CALENDAR_COLOR_PALETTE = [
-  "#d84fa3", "#f54a45", "#ff7a1a", "#fbbd0b", "#2fbd50", "#2fc9b7",
-  "#3370ff", "#3dbbed", "#4d55e7", "#7a36e8", "#bd35b5", "#8d949e",
-] as const;
 
 function weekdayLabel(weekday: CalendarWeekday, locale: string, style: "short" | "narrow" | "long"): string {
   return Temporal.PlainDate.from(WEEKDAY_REFERENCE[weekday]).toLocaleString(locale, { weekday: style });

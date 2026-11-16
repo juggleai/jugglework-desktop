@@ -43,7 +43,7 @@ mock.module("../src/components/ui/popover", () => ({
 }));
 
 const resource = (id: string, kind: "personal" | "team", role: DenCalendarCollaborationResource["role"]): DenCalendarCollaborationResource => ({
-  id, organizationId: "org-a", ownerMemberId: "member-a", kind, name: id, color: "#2563eb", role,
+  id, organizationId: "org-a", ownerMemberId: "member-a", kind, name: id, color: kind === "personal" ? "#3370ff" : "#2563eb", role,
   capabilities: {
     canViewFreeBusy: true,
     canViewDetails: role !== "free-busy",
@@ -65,7 +65,7 @@ const event = (calendarId: string): DenCalendarEvent => ({
   version: 1, createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z",
 });
 const defaultPersonalCalendar: DenCalendar = {
-  id: "personal", organizationId: "org-a", ownerMemberId: "member-a", name: "Personal", color: "#2563eb", isDefault: true,
+  id: "personal", organizationId: "org-a", ownerMemberId: "member-a", name: "Personal", color: "#3370ff", isDefault: true,
   version: 1, createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z",
 };
 
@@ -76,6 +76,8 @@ const putMembershipCalls: Array<{ memberId: string; role: DenCalendarCollaborati
 const revokeMembershipCalls: Array<{ memberId: string; expectedAuthorizationVersion: number }> = [];
 const teamEventCreateCalls: Array<{ calendarId: string; input: Record<string, unknown> }> = [];
 const teamEventUpdateCalls: Array<{ calendarId: string; eventId: string; input: Record<string, unknown> }> = [];
+const personalCalendarCreateCalls: Array<{ name: string; color?: string }> = [];
+const teamCalendarCreateCalls: Array<{ name: string; color?: string }> = [];
 let membershipAuthorizationVersion = 1;
 let membershipItems: DenCalendarMembership[] = [];
 let directoryOffsets: number[] = [];
@@ -89,13 +91,19 @@ const client = {
     const calendar = resources.find((item) => item.id === calendarId)!;
     return { calendar, events: [event(calendarId)], coverage: { ...range, calendarIds: [calendarId] }, authorizationVersion: 1, reset: { mode: "replace" as const, namespace: `calendar:${calendarId}` } };
   },
-  createCalendar: async () => { throw new Error("unexpected create"); },
+  createCalendar: async (_organizationId: string, input: { name: string; color?: string }) => {
+    personalCalendarCreateCalls.push({ ...input });
+    return { calendar: { ...defaultPersonalCalendar, id: "created-personal", name: input.name, color: input.color ?? null, isDefault: false }, replayed: false };
+  },
   updateCalendar: async () => { throw new Error("unexpected update"); },
   deleteCalendar: async () => { throw new Error("unexpected delete"); },
   createCalendarEvent: async () => { throw new Error("unexpected create"); },
   updateCalendarEvent: async () => { throw new Error("unexpected update"); },
   deleteCalendarEvent: async () => { throw new Error("unexpected delete"); },
-  createTeamCalendar: async () => { throw new Error("unexpected create"); },
+  createTeamCalendar: async (_organizationId: string, input: { name: string; color?: string }) => {
+    teamCalendarCreateCalls.push({ ...input });
+    return { calendar: { ...resource("created-team", "team", "manager"), name: input.name, color: input.color ?? null } };
+  },
   createTeamCalendarEvent: async (_organizationId: string, calendarId: string, input: { title: string; description: string; time: DenCalendarEvent["time"] }) => {
     teamEventCreateCalls.push({ calendarId, input: { ...input } });
     return { event: { ...event(calendarId), ...input, id: "created-team-event" } };
@@ -147,7 +155,7 @@ const clock = { now: () => Temporal.Instant.from("2026-11-09T04:00:00Z"), timeZo
 const noop = () => undefined;
 
 beforeEach(() => {
-  values.clear(); snapshotCalls.length = 0; putMembershipCalls.length = 0; revokeMembershipCalls.length = 0; teamEventCreateCalls.length = 0; teamEventUpdateCalls.length = 0; directoryOffsets = []; collaborationEnabled = true; calendarWriteEnabled = true;
+  values.clear(); snapshotCalls.length = 0; putMembershipCalls.length = 0; revokeMembershipCalls.length = 0; teamEventCreateCalls.length = 0; teamEventUpdateCalls.length = 0; personalCalendarCreateCalls.length = 0; teamCalendarCreateCalls.length = 0; directoryOffsets = []; collaborationEnabled = true; calendarWriteEnabled = true;
   membershipAuthorizationVersion = 1; membershipMutationGate = null;
   membershipItems = [
     { memberId: "member-a", role: "manager", createdByMemberId: "member-a", createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z" },
@@ -215,6 +223,27 @@ test("hides the team creation choice when the collaboration flag is off", async 
     expect(has(renderer, "calendar-create-personal")).toBe(true);
     expect(has(renderer, "calendar-create-team")).toBe(false);
     expect(snapshotCalls).toEqual([]);
+  } finally { await act(async () => renderer.unmount()); }
+});
+
+test("personal and team calendar creation submit the first unused palette color", async () => {
+  const renderer = await render();
+  try {
+    await click(renderer, "calendar-add-calendar");
+    expect(byId(renderer, "calendar-create-color-d84fa3").props["aria-pressed"]).toBe(true);
+    expect(has(renderer, "calendar-create-color-000000")).toBe(false);
+    await change(renderer, "calendar-create-name", "Personal planning");
+    await act(async () => { byId(renderer, "calendar-create-form").props.onSubmit({ preventDefault: () => undefined }); });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    expect(personalCalendarCreateCalls).toHaveLength(1);
+    expect(personalCalendarCreateCalls[0]).toMatchObject({ name: "Personal planning", color: "#d84fa3" });
+
+    await click(renderer, "calendar-add-calendar");
+    await act(async () => { byId(renderer, "calendar-create-team").props.onChange(); });
+    await change(renderer, "calendar-create-name", "Team planning");
+    await act(async () => { byId(renderer, "calendar-create-form").props.onSubmit({ preventDefault: () => undefined }); });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    expect(teamCalendarCreateCalls).toEqual([{ name: "Team planning", color: "#d84fa3" }]);
   } finally { await act(async () => renderer.unmount()); }
 });
 

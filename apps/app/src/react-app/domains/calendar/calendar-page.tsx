@@ -40,6 +40,7 @@ import { CalendarEventEditor } from "./calendar-event-editor";
 import { CalendarTimeView } from "./calendar-time-view";
 import { CalendarViewToolbar } from "./calendar-view-toolbar";
 import { CalendarCreateDialog } from "./calendar-create-dialog";
+import { nextCalendarColor, withDefaultCalendarColors } from "./calendar-colors";
 import { CalendarMembersDialog } from "./calendar-members-dialog";
 import { useCalendarSchedulingEventMutations, useDeleteCalendarEventMutation, useTeamCalendarEventMutations, type CalendarSchedulingOccurrenceIdentity } from "./calendar-mutations";
 import { calendarViewDays, calendarViewRange, navigateCalendarView, readCalendarViewMode, writeCalendarViewMode, type CalendarViewMode } from "./calendar-view-model";
@@ -218,7 +219,7 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
   const sourceCalendars = online
     ? props.collaborationEnabled ? collaborationResources.map(denCalendarFromCollaborationResource) : calendarsQuery.data ?? []
     : offlineView.state === "offline-covered" || offlineView.state === "offline-uncovered" ? offlineView.calendars : [];
-  const calendars = sourceCalendars.map((calendar) => colorOverrides[calendar.id] ? { ...calendar, color: colorOverrides[calendar.id]! } : calendar);
+  const calendars = withDefaultCalendarColors(sourceCalendars.map((calendar) => colorOverrides[calendar.id] ? { ...calendar, color: colorOverrides[calendar.id]! } : calendar));
   const activeIds = calendars.map((calendar) => calendar.id);
   const activeKey = activeIds.join("\u0000");
   const visibleIds = React.useMemo(() => visibleCalendarIds(activeIds, hiddenIds), [activeKey, hiddenIds]);
@@ -790,7 +791,7 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
         </aside>
         </>
       ) : null}
-      <CalendarCreateDialog open={createCalendarOpen} client={cloud.client} scope={props.scope} collaborationEnabled={props.collaborationEnabled} online={online} writeEnabled={props.writeEnabled} onOpenChange={setCreateCalendarOpen} />
+      <CalendarCreateDialog open={createCalendarOpen} client={cloud.client} scope={props.scope} collaborationEnabled={props.collaborationEnabled} online={online} writeEnabled={props.writeEnabled} defaultColor={nextCalendarColor(calendars.map((calendar) => calendar.color))} onOpenChange={setCreateCalendarOpen} />
       {membersCalendar && membersCalendar.capabilities.canManage && props.writeEnabled ? <CalendarMembersDialog open calendar={membersCalendar} client={cloud.client} scope={props.scope} onOpenChange={(open) => {
         if (open) return;
         closeMembersDialog();
