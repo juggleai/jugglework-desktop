@@ -865,14 +865,20 @@ function logRequest(input: {
   proxyService?: "opencode";
   proxyBaseUrl?: string;
   error?: string;
+  requestDiagnostics?: RequestContext["requestDiagnostics"];
 }) {
-  const { logger, request, response, durationMs, authMode, proxyService, proxyBaseUrl, error } = input;
+  const { logger, request, response, durationMs, authMode, proxyService, proxyBaseUrl, error, requestDiagnostics } = input;
   const status = response.status;
   const level: LogLevel = status >= 500 ? "error" : status >= 400 ? "warn" : "info";
   const url = new URL(request.url);
   const method = request.method.toUpperCase();
   const proxyLabel = proxyBaseUrl ? ` (${proxyService ?? "proxy"})` : "";
-  const message = `${method} ${url.pathname} ${status} ${durationMs}ms${proxyLabel}`;
+  const suggestionReason = requestDiagnostics?.promptSuggestionReason;
+  const suggestionDetail = requestDiagnostics?.promptSuggestionDetail;
+  const suggestionLabel = suggestionReason ? ` prompt_suggestion=${suggestionReason}${suggestionDetail ? ` detail=${suggestionDetail}` : ""}` : "";
+  const suggestionTimings = Object.entries(requestDiagnostics?.promptSuggestionTimings ?? {}).map(([stage, milliseconds]) => [stage, Math.round(milliseconds)] as const);
+  const timingLabel = suggestionTimings.map(([stage, milliseconds]) => ` ${stage}_ms=${milliseconds}`).join("");
+  const message = `${method} ${url.pathname} ${status} ${durationMs}ms${proxyLabel}${suggestionLabel}${timingLabel}`;
   const attributes: LogAttributes = {
     method,
     path: url.pathname,
@@ -887,6 +893,9 @@ function logRequest(input: {
   if (error) {
     attributes.error = error;
   }
+  if (suggestionReason) attributes["prompt_suggestion.reason"] = suggestionReason;
+  if (suggestionDetail) attributes["prompt_suggestion.detail"] = suggestionDetail;
+  for (const [stage, milliseconds] of suggestionTimings) attributes[`prompt_suggestion.${stage}_ms`] = milliseconds;
   logger.log(level, message, attributes);
 }
 
@@ -1648,6 +1657,7 @@ export async function startServer(config: ServerConfig, options: {
       let proxyService: "opencode" | undefined;
       let proxyBaseUrl: string | undefined;
       let errorMessage: string | undefined;
+      const requestDiagnostics: NonNullable<RequestContext["requestDiagnostics"]> = {};
 
       const finalize = (response: Response) => {
         const wrapped = withCors(response, request, config);
@@ -1661,6 +1671,7 @@ export async function startServer(config: ServerConfig, options: {
               proxyService,
               proxyBaseUrl,
               error: errorMessage,
+              requestDiagnostics,
             });
         }
         return wrapped;
@@ -1776,6 +1787,7 @@ export async function startServer(config: ServerConfig, options: {
           reloadEvents,
           tokens,
           actor,
+          requestDiagnostics,
         });
         return finalize(response);
       } catch (error) {
@@ -2500,6 +2512,7 @@ function buildCapabilities(config: ServerConfig): Capabilities {
     mcp: { read: true, write: writeEnabled },
     commands: { read: true, write: writeEnabled },
     config: { read: true, write: writeEnabled },
+    sessions: { promptSuggestions: writeEnabled },
     hostMarketplacePlugins: {
       read: true,
       write: writeEnabled && config.managedRuntime === true,
@@ -3213,6 +3226,7 @@ function createRoutes(
   const sessionRoutes = registerSessionRoutes({
     routes,
     config,
+    env,
     jsonResponse,
     parseOptionalBoolean,
     parseOptionalPositiveInteger,

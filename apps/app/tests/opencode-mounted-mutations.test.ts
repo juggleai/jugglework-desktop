@@ -177,7 +177,7 @@ describe("mounted JuggleWork session mutations", () => {
       format: { type: "json_schema" as const, schema: { type: "object" }, retryCount: 2 },
       system: "system text",
       variant: "high",
-      parts: [{ type: "text" as const, text: "hello" }],
+      parts: [{ type: "text" as const, text: "hello", metadata: { composerTextSource: "user" } }],
       reasoning_effort: "medium",
       juggleworkDetectedResponseLanguage: "zh" as const,
       juggleworkDefaultResponseLanguage: "en" as const,

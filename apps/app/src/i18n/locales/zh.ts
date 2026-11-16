@@ -7,6 +7,9 @@
  */
 
 export default {
+  "settings.prompt_suggestions": "下一轮输入建议",
+  "settings.prompt_suggestions_desc": "在回复结束后，使用当前会话模型生成下一轮输入建议；可能产生额外模型费用。按 Tab 填入后可编辑，不会自动发送。",
+  "composer.prompt_suggestion.available_hint": "下一轮输入建议已可用。按 Tab 填入可编辑草稿，不会发送。",
   "terminal.title": "终端",
   "terminal.show": "显示终端",
   "terminal.hide": "隐藏终端",

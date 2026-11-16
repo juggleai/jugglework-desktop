@@ -5,19 +5,13 @@ import type { TurnDelivery } from "@jugglework/types/file-artifacts";
 import { getOfficeDocumentKind } from "@jugglework/types/office";
 import {
   ChevronDown,
-  CloudUpload,
-  Copy,
-  ExternalLink,
   FileDiff,
-  FolderOpen,
-  MessageSquarePlus,
-  MoreHorizontal,
-  Save,
   Share2,
   SquareArrowOutUpRight,
   Undo2,
 } from "lucide-react";
 
+import { ArtifactFileMenu } from "@/react-app/domains/session/artifacts/artifact-file-menu";
 import { ArtifactIcon } from "@/components/chat/artifact-icon";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -26,13 +20,6 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import {
   type ArtifactItem,
   canDisplayArtifact,
@@ -54,7 +41,6 @@ export function ArtifactCard({ artifact, compact = false, onViewChange, onOpenIn
   const actions = useArtifactActions();
   const [busy, setBusy] = React.useState(false);
   const canOpen = canOpenArtifact(artifact);
-  const native = Boolean(actions?.desktop && canOpen && !busy);
   const run = async (action: ArtifactAction) => {
     if (!actions || busy) return;
     setBusy(true);
@@ -173,64 +159,7 @@ export function ArtifactCard({ artifact, compact = false, onViewChange, onOpenIn
             <Share2 className="size-4" />
           </Button>
         </span> : null}
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            render={
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label={t("artifact.more")}
-                title={t("artifact.more")}
-              />
-            }
-          >
-            <MoreHorizontal className="size-4" />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="min-w-56">
-            <DropdownMenuItem
-              disabled={!native}
-              onClick={() => void run("reveal")}
-            >
-              <FolderOpen />
-              {t("artifact.open_folder")}
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              disabled={!native || actions?.running}
-              onClick={() => void run("external")}
-            >
-              <ExternalLink />
-              {t("artifact.open_external")}
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              disabled={!actions || !canOpen || busy || actions.running}
-              onClick={() => void run("attach")}
-            >
-              <MessageSquarePlus />
-              {t("artifact.add_to_chat")}
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              disabled={!native}
-              onClick={() => void run("copy-path")}
-            >
-              <Copy />
-              {t("artifact.copy_path")}
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              disabled={!native || actions?.running}
-              onClick={() => void run("save-copy")}
-            >
-              <Save />
-              {t("artifact.save_copy")}
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem disabled title={t("artifact.upload_unavailable")}>
-              <CloudUpload />
-              {t("artifact.upload")}
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <ArtifactFileMenu path={artifact.legacy_target.value} available={canOpen} busy={busy} onAction={run} />
       </div>
     </div>
   );

@@ -4,6 +4,9 @@
  */
 
 export default {
+  "settings.prompt_suggestions": "Suggeriments per al missatge següent",
+  "settings.prompt_suggestions_desc": "Després d’una resposta, fa servir el model de la sessió actual per suggerir el missatge següent. Això pot generar costos addicionals del model. Prem Tab per omplir un esborrany editable; no s’enviarà automàticament.",
+  "composer.prompt_suggestion.available_hint": "Hi ha un suggeriment per al missatge següent. Prem Tab per aplicar-lo com a esborrany editable, sense enviar-lo.",
   "session.usage_limit_recharge": "Has arribat al límit d'ús. Recarrega el saldo per obtenir més crèdits d'ús.",
   "app.compact_command_desc": "Resumeix aquesta sessió per reduir la mida del context.",
   "app.error_audit_load": "No s'ha pogut carregar el registre d'auditoria.",

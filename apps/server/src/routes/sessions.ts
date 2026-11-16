@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import type { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import { desktopRemotePromptPartSchema } from "@jugglework/types/desktop-remote-control";
 import { isChatSelectableProviderModel } from "@jugglework/types/media-generation";
@@ -8,6 +9,9 @@ import {
   type ResponseLanguage,
 } from "@jugglework/types/response-language";
 import { ApiError } from "../errors.js";
+import type { EnvService } from "../env-file.js";
+import { createTextModelResolver, withSignal } from "../text-model-inference.js";
+import { generatePromptSuggestion, readPromptSuggestionRequest, suggestionReadError } from "../session-prompt-suggestions.js";
 import { admitOpencodePrompt, type AdmissionIdentity } from "../opencode-admission.js";
 import { currentRunTerminalStatus } from "../session-completion-evidence.js";
 import { cloudDocTurnSchema } from "../cloud-docs/schema.js";
@@ -51,6 +55,7 @@ type UnwrapOpencodeResult = <T, E>(result: OpencodeClientResult<T, E>, path: str
 interface RegisterSessionRoutesOptions {
   routes: Route[];
   config: ServerConfig;
+  env: EnvService;
   jsonResponse: JsonResponse;
   parseOptionalBoolean: ParseOptionalBoolean;
   parseOptionalPositiveInteger: ParseOptionalPositiveInteger;
@@ -361,6 +366,7 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions) {
     readSessionResponseLanguage,
     onSessionDeleted,
   } = options;
+  const resolveSuggestionModel = createTextModelResolver({ config, env: options.env });
 
   async function validateExplicitModel(workspace: WorkspaceInfo, model: { providerID: string; modelID: string }) {
     const catalog = await createWorkspaceOpencodeClient(config, workspace).provider.list();
@@ -682,6 +688,91 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions) {
     }
     return value.trim();
   }
+
+  addRoute(routes, "POST", "/workspace/:id/sessions/:sessionId/prompt-suggestions", "client", async (ctx) => {
+    const deadline = new AbortController();
+    const timer = setTimeout(() => deadline.abort(new Error("prompt_suggestion_deadline")), 8_000);
+    const signal = AbortSignal.any([ctx.request.signal, deadline.signal]);
+    const diagnose = (detail: string) => { if (ctx.requestDiagnostics) ctx.requestDiagnostics.promptSuggestionDetail = detail; };
+    try {
+      ensureWritable(config);
+      requireClientScope(ctx, "collaborator");
+      const sessionId = parseRunIdentifier(ctx.params.sessionId, "sessionId");
+      const body = await readPromptSuggestionRequest(ctx.request, signal);
+      const workspace = await withSignal(signal, () => resolveWorkspaceWithoutBootstrap(config, ctx.params.id));
+      const client = createWorkspaceOpencodeClient(config, workspace);
+      const modelMatches = (model: { providerID?: string; modelID?: string; id?: string } | null | undefined) =>
+        !model || (model.providerID === body.model.providerID && (model.modelID ?? model.id) === body.model.modelID);
+      const hostIdle = () => !sessionMutations.getActive(workspace.id, sessionId) &&
+        !sessionPendingOperations.list(workspace.id, sessionId).some(item => ["pending", "dispatching", "admitted"].includes(item.state));
+      const result = await generatePromptSuggestion(body, {
+        diagnose,
+        measure: (stage, milliseconds) => {
+          if (!ctx.requestDiagnostics) return;
+          const timings = ctx.requestDiagnostics.promptSuggestionTimings ??= {};
+          timings[stage] = (timings[stage] ?? 0) + milliseconds;
+        },
+        readState: async () => {
+          const session = buildSession(unwrapOpencodeResult(await client.session.get({ sessionID: sessionId }, { signal }), `/session/${sessionId}`));
+          signal.throwIfAborted();
+          const expectedDirectory = workspace.directory?.trim() || (workspace.workspaceType === "local" ? workspace.path : null);
+          if (session.id !== sessionId || !expectedDirectory || typeof session.directory !== "string" || resolve(session.directory) !== resolve(expectedDirectory)) {
+            throw new ApiError(404, "session_not_found", "Session not found in workspace");
+          }
+          const preference = sessionModelPreferences.get(workspace.id, sessionId);
+          let idle = true;
+          if (!hostIdle()) { diagnose("host_busy_or_pending"); idle = false; }
+          else if (session.time?.compacting) { diagnose("session_compacting"); idle = false; }
+          else if (!modelMatches(preference.model)) { diagnose("preference_model_mismatch"); idle = false; }
+          else if (!modelMatches(session.model as any)) { diagnose("session_model_mismatch"); idle = false; }
+          if (idle) {
+            idle = await readEngineSessionStatus(workspace, sessionId, signal) === "idle";
+            if (!idle) diagnose("engine_not_idle");
+          }
+          signal.throwIfAborted();
+          // Both protocol views are read: mixed engines can expose legacy waits alongside v2 waits.
+          if (idle) {
+            const reads = await Promise.all([
+              client.permission.list(undefined, { signal }), client.question.list(undefined, { signal }),
+              client.v2.session.permission.list({ sessionID: sessionId }, { signal }),
+              client.v2.session.question.list({ sessionID: sessionId }, { signal }),
+            ]);
+            signal.throwIfAborted();
+            for (let index = 0; index < reads.length; index++) {
+              const read = reads[index];
+              if (index >= 2 && ([405, 501].includes(read.response.status) || (read.response.status === 404 && isRecord(read.error) && (read.error as Record<string, unknown>).code === "not_found"))) continue;
+              if (read.error || !read.response.ok) { diagnose("interaction_read_failed"); idle = false; break; }
+              const items = index < 2 ? read.data : (read.data as { data?: unknown })?.data;
+              if (!Array.isArray(items) || items.some(item => !isRecord(item) || typeof item.sessionID !== "string")) { diagnose("interaction_shape_invalid"); idle = false; break; }
+              if (items.some(item => item.sessionID === sessionId)) { diagnose("interaction_waiting"); idle = false; break; }
+            }
+          }
+          if (idle && !hostIdle()) { diagnose("host_busy_or_pending"); idle = false; }
+          return { session, preferenceRevision: preference.revision, idle };
+        },
+        readPage: async (before) => {
+          const response = await readOpencodeSessionMessages(client, sessionId, { before, limit: 60, signal });
+          signal.throwIfAborted();
+          const items = buildSessionMessages(unwrapOpencodeResult(response, `/session/${sessionId}/message`));
+          if (items.length > 60 || items.some(item => item.info.sessionID !== sessionId || item.parts.some(part => part.sessionID !== sessionId || part.messageID !== item.info.id)))
+            throw new ApiError(502, "opencode_invalid_response", "Invalid session history");
+          return { items, olderCursor: buildSessionMessagePage(response.response).olderCursor };
+        },
+        resolveModel: async (ref) => {
+          const catalog = unwrapOpencodeResult(await client.provider.list(undefined, { signal }), "/provider");
+          signal.throwIfAborted();
+          return resolveSuggestionModel(workspace, ref, catalog, signal, diagnose);
+        },
+      }, signal, ctx.request.signal);
+      if (ctx.requestDiagnostics) ctx.requestDiagnostics.promptSuggestionReason = result.reason ?? "suggestion_ready";
+      return jsonResponse(result);
+    } catch (error) {
+      if (ctx.requestDiagnostics) ctx.requestDiagnostics.promptSuggestionReason = ctx.request.signal.aborted ? "request_cancelled" : signal.aborted ? "deadline_exceeded" : "request_failed";
+      suggestionReadError(error, ctx.request.signal, signal);
+    } finally {
+      clearTimeout(timer);
+    }
+  });
 
   addRoute(routes, "POST", "/workspace/:id/sessions", "client", async (ctx) => {
     ensureWritable(config);

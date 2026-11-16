@@ -4,6 +4,9 @@
  */
 
 export default {
+  "settings.prompt_suggestions": "Sugestões para a próxima mensagem",
+  "settings.prompt_suggestions_desc": "Após uma resposta, usa o modelo da sessão atual para sugerir a próxima mensagem. Isso pode gerar custos adicionais do modelo. Pressione Tab para preencher um rascunho editável; ele não será enviado automaticamente.",
+  "composer.prompt_suggestion.available_hint": "Há uma sugestão para a próxima mensagem. Pressione Tab para aplicá-la como rascunho editável, sem enviar.",
   "session.usage_limit_recharge": "Você atingiu seu limite de uso. Recarregue seu saldo para obter mais créditos de uso.",
   "app.compact_command_desc": "Resumir esta sessão para reduzir o tamanho do contexto.",
   "app.error_audit_load": "Falha ao carregar o log de auditoria.",

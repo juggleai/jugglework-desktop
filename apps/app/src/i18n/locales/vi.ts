@@ -4,6 +4,9 @@
  */
 
 export default {
+  "settings.prompt_suggestions": "Gợi ý lời nhắc tiếp theo",
+  "settings.prompt_suggestions_desc": "Sau khi câu trả lời kết thúc, dùng mô hình của phiên hiện tại để gợi ý lời nhắc tiếp theo. Việc này có thể phát sinh thêm phí mô hình. Nhấn Tab để điền bản nháp có thể chỉnh sửa; nội dung sẽ không tự động gửi.",
+  "composer.prompt_suggestion.available_hint": "Có gợi ý lời nhắc tiếp theo. Nhấn Tab để điền bản nháp có thể chỉnh sửa mà không gửi.",
   "session.usage_limit_recharge": "Bạn đã đạt giới hạn sử dụng. Vui lòng nạp thêm để có thêm tín dụng sử dụng.",
   "app.compact_command_desc": "Tóm tắt phiên này để giảm kích thước ngữ cảnh.",
   "app.error_audit_load": "Tải nhật ký kiểm toán thất bại.",

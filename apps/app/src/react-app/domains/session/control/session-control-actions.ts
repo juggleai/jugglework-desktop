@@ -1,5 +1,6 @@
 /** @jsxImportSource react */
 import { useCallback, useMemo } from "react";
+import { promptSuggestionsStore } from "../surface/prompt-suggestions-store";
 
 import type { createClient } from "../../../../app/lib/opencode";
 import type { JuggleWorkServerClient, JuggleWorkWorkspaceInfo } from "../../../../app/lib/jugglework-server";
@@ -212,6 +213,7 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
       const targetWorkspace = findSessionWorkspace(workspaces, sessionsByWorkspaceId, sessionId);
       if (!targetWorkspace) return { ok: false, error: "Session was not found in the current session list" };
       await juggleworkClient.deleteSession(targetWorkspace.id, sessionId);
+      promptSuggestionsStore.removeSession(juggleworkClient.baseUrl, targetWorkspace.id, sessionId);
       if (selectedSessionId === sessionId) {
         navigateToSessionRoot();
       }

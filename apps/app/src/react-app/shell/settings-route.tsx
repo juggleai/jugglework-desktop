@@ -2994,6 +2994,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             onToggleShowThinking={() => {
               local.setPrefs((previous) => ({ ...previous, showThinking: !previous.showThinking }));
             }}
+            promptSuggestionsEnabled={local.prefs.promptSuggestionsEnabled}
+            onTogglePromptSuggestions={() => {
+              local.setPrefs((previous) => ({ ...previous, promptSuggestionsEnabled: !previous.promptSuggestionsEnabled }));
+            }}
             autoCompactContext={autoCompactContext}
             autoCompactContextBusy={autoCompactContextBusy}
             onToggleAutoCompactContext={toggleAutoCompactContext}

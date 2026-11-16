@@ -166,8 +166,16 @@ export type ComposerProps = {
   onCreatePresentation?: (request: PresentationRequest) => void | Promise<void>;
   focusEligible: boolean;
   draft: string;
+  /** 持久建议由调用方管理；仅在草稿完全空时作为占位展示。 */
+  promptSuggestion?: string | null;
+  promptSuggestionPending?: boolean;
+  /** Lexical 接受建议、同步草稿前的生命周期通知；不要再次写入 draft。 */
+  onAcceptPromptSuggestion?: (text: string) => void;
+  onDismissPromptSuggestion?: () => void;
   mentions: Record<string, ComposerMentionKind>;
   onDraftChange: (value: string) => void;
+  /** 真实编辑（包括 undo/redo），不含外部草稿同步和 Tab 接受。 */
+  onUserEdit?: () => void;
   onSend: () => void | Promise<void>;
   onSteer: () => void | Promise<void>;
   onQueue: () => void | Promise<void>;
@@ -1117,6 +1125,9 @@ export function ReactSessionComposer(props: ComposerProps) {
   const activeMenu = slashOpen ? "slash" : mentionOpen ? "mention" : null;
   const activeItems = activeMenu === "slash" ? slashFiltered : activeMenu === "mention" ? mentionFiltered : [];
   const canSend = props.draft.trim().length > 0 || props.attachments.length > 0;
+  const promptSuggestion = !props.disabled && props.draft.length === 0 && !props.attachments.length &&
+    !Object.keys(props.mentions).length && !props.pastedText.length && !props.officeGroups?.length && !props.queuedCount
+    ? props.promptSuggestion || null : null;
 
   useEffect(() => {
     if (!activeItems.length) {
@@ -1369,6 +1380,7 @@ export function ReactSessionComposer(props: ComposerProps) {
     // Leave candidate confirmation, navigation and cancellation to the IME.
     const imeActive =
       imeComposingRef.current ||
+      editorRef.current?.isComposing() ||
       (event.nativeEvent as KeyboardEvent).isComposing === true ||
       event.keyCode === 229;
     // Candidate navigation and Escape belong to the IME too.
@@ -1378,10 +1390,26 @@ export function ReactSessionComposer(props: ComposerProps) {
     if (event.key === "Enter" && event.altKey) {
       return;
     }
-    // Escape-to-stop while the agent is busy. Only when no menu is open so
-    // Escape can still close menus. First press arms a confirmation prompt
-    // for 3s; a second Escape within that window stops the agent.
-    const anyMenuOpen = plusMenuOpen || Boolean(activeMenu);
+    const anyMenuOpen = plusMenuOpen || Boolean(activeMenu) || props.modelPickerOpen;
+    if (!event.defaultPrevented && !anyMenuOpen) {
+      // Tab only belongs to the editable itself, never toolbar controls.
+      if (promptSuggestion && event.key === "Tab" && !event.repeat && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey &&
+        event.target instanceof HTMLElement && event.target.matches("[contenteditable='true']")) {
+        if (editorRef.current?.acceptPromptSuggestion(promptSuggestion, () => props.onAcceptPromptSuggestion?.(promptSuggestion))) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+        return;
+      }
+      if (event.key === "Escape" && ((promptSuggestion && editorRef.current?.isEmpty()) || (!props.disabled && props.promptSuggestionPending))) {
+        event.preventDefault();
+        event.stopPropagation();
+        props.onDismissPromptSuggestion?.();
+        return;
+      }
+    }
+    // Escape-to-stop remains after menus and suggestion dismissal.
+    // First press arms a prompt for 3s; a second press stops the agent.
     if (event.key === "Escape" && props.busy && !anyMenuOpen) {
       event.preventDefault();
       if (escapeArmed) {
@@ -1461,6 +1489,12 @@ export function ReactSessionComposer(props: ComposerProps) {
       }
     }
 
+    if (activeMenu && event.key === "Escape") {
+      event.preventDefault();
+      setSlashOpen(false);
+      setMentionOpen(false);
+      return;
+    }
     if (!activeMenu || !activeItems.length) return;
     if (event.key === "ArrowDown") {
       event.preventDefault();
@@ -1477,11 +1511,6 @@ export function ReactSessionComposer(props: ComposerProps) {
       event.stopPropagation();
       void acceptActiveItem();
       return;
-    }
-    if (event.key === "Escape") {
-      event.preventDefault();
-      setSlashOpen(false);
-      setMentionOpen(false);
     }
   };
 
@@ -1904,6 +1933,7 @@ export function ReactSessionComposer(props: ComposerProps) {
               officeGroups={props.officeGroups}
               ref={editorRef}
               value={draftWithoutAttachments}
+              promptSuggestion={promptSuggestion}
               mentions={props.mentions}
               pastedText={pastedTextTokens}
               disabled={props.disabled}
@@ -1913,6 +1943,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                   ? t("composer.image_generation_placeholder")
                   : t("composer.placeholder")}
               onChange={handleEditorDraftChange}
+              onUserEdit={props.onUserEdit}
               onSubmit={handleEditorSubmit}
               isComposing={() => imeComposingRef.current}
               onExpandPastedText={handleExpandPastedText}

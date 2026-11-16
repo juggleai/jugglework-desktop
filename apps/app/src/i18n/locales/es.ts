@@ -4,6 +4,9 @@
  */
 
 export default {
+  "settings.prompt_suggestions": "Sugerencias para el siguiente mensaje",
+  "settings.prompt_suggestions_desc": "Tras una respuesta, usa el modelo de la sesión actual para sugerir el siguiente mensaje. Esto puede generar cargos adicionales del modelo. Pulsa Tab para completar un borrador editable; no se enviará automáticamente.",
+  "composer.prompt_suggestion.available_hint": "Hay una sugerencia para el siguiente mensaje. Pulsa Tab para aplicarla como borrador editable, sin enviarla.",
   "session.usage_limit_recharge": "Has alcanzado el límite de uso. Recarga tu saldo para obtener más créditos de uso.",
   "app.compact_command_desc": "Resume esta sesión para reducir el contexto.",
   "app.error_audit_load": "No se pudo cargar el audit log.",

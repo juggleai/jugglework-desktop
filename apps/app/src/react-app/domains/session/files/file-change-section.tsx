@@ -5,20 +5,15 @@ import {
   FileMinus2,
   FilePen,
   FilePlus2,
-  MoreHorizontal,
   SquareArrowOutUpRight,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { joinDesktopPath } from "@/app/lib/desktop";
-import { toast } from "@/components/ui/sonner";
 import { t } from "@/i18n";
-import { useArtifactActions } from "../artifacts/artifact-actions-provider";
+import { ArtifactFileMenu } from "../artifacts/artifact-file-menu";
+import {
+  useArtifactActions,
+  type ArtifactAction,
+} from "../artifacts/artifact-actions-provider";
 import type { WorkspaceChange } from "./use-workspace-changes";
 
 /** 文件变更行：完整路径提示、尾部优先省略、独立展开和已有文件操作。 */
@@ -40,15 +35,15 @@ export function FileChangeSection({
   const path = change.path.replace(/\\/g, "/");
   const separator = path.lastIndexOf("/");
   const openFile = change.status !== "deleted" ? onOpenFile : undefined;
-  const copyPath = async () => {
+  const [busy, setBusy] = React.useState(false);
+  const run = async (action: ArtifactAction) => {
+    if (!actions || busy || change.status === "deleted") return;
+    setBusy(true);
     try {
-      const value = actions?.desktop
-        ? await joinDesktopPath(actions.workspaceRoot, change.path)
-        : change.path;
-      await navigator.clipboard.writeText(value);
-      toast.success(t("session_files.path_copied"));
-    } catch {
-      toast.error(t("session_files.path_action_failed"));
+      // TIPS: 复用已有保存、文件校验和工作区操作管线，不绕过草稿与执行中限制。
+      await actions.runPath(action, change.path);
+    } finally {
+      setBusy(false);
     }
   };
   return (
@@ -127,40 +122,13 @@ export function FileChangeSection({
             <SquareArrowOutUpRight className="size-3.5" />
           </Button>
         ) : null}
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            render={
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                aria-label={t("artifact.more")}
-                title={t("artifact.more")}
-              />
-            }
-          >
-            <MoreHorizontal className="size-4" />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem onClick={() => void copyPath()}>
-              {t("artifact.copy_path")}
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              disabled={!actions?.desktop || change.status === "deleted"}
-              onClick={() => void actions?.runPath("reveal", change.path)}
-            >
-              {t("session_files.open_in_editor")}
-            </DropdownMenuItem>
-            {onToggle ? (
-              <DropdownMenuItem onClick={onToggle}>
-                {t(
-                  expanded
-                    ? "session_files.collapse_file"
-                    : "session_files.expand_file",
-                )}
-              </DropdownMenuItem>
-            ) : null}
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <ArtifactFileMenu
+          path={change.path}
+          available={change.status !== "deleted"}
+          busy={busy}
+          onAction={run}
+          size="icon-xs"
+        />
       </div>
       {expanded && <div id={contentId}>{children}</div>}
     </section>

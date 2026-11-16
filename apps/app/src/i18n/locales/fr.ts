@@ -4,6 +4,9 @@
  */
 
 export default {
+  "settings.prompt_suggestions": "Suggestions de prochain message",
+  "settings.prompt_suggestions_desc": "Après une réponse, utilise le modèle de la session actuelle pour suggérer le prochain message. Cela peut entraîner des frais de modèle supplémentaires. Appuyez sur Tab pour remplir un brouillon modifiable ; il ne sera pas envoyé automatiquement.",
+  "composer.prompt_suggestion.available_hint": "Une suggestion de prochain message est disponible. Appuyez sur Tab pour en faire un brouillon modifiable, sans l’envoyer.",
   "session.usage_limit_recharge": "Vous avez atteint votre limite d’utilisation. Rechargez votre solde pour obtenir davantage de crédits.",
   "app.compact_command_desc": "Résumez cette session pour réduire la taille du contexte.",
   "app.error_audit_load": "Échec du chargement du journal d'audit.",

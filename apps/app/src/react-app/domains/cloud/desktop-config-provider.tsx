@@ -52,6 +52,8 @@ import {
 export type DesktopConfigStore = {
   config: DenDesktopConfig;
   loading: boolean;
+  /** Current-scope policy is known (local signed-out, scoped cache, or fetched). Not remote-control freshness. */
+  policyConfirmed: boolean;
   refresh: () => Promise<void>;
   refreshFresh: () => Promise<{ config: DenDesktopConfig; scope: DesktopRemoteControlPolicyScope }>;
   /**
@@ -204,6 +206,7 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
     loading: true,
   });
   const [remotePolicyValidation, setRemotePolicyValidation] = useState<RemotePolicyValidation | null>(null);
+  const [confirmedPolicyContext, setConfirmedPolicyContext] = useState<string | null>(null);
   const { config, loading } = desktopConfigState;
   // Bumped whenever the browser tells us the Den session or settings changed.
   const [settingsVersion, bumpSettingsVersion] = useReducer((value: number) => value + 1, 0);
@@ -315,6 +318,7 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
     const requestedScope = currentPolicyScope();
 
     if (!isSignedIn || !token || !activeOrgId) {
+      setConfirmedPolicyContext(null);
       if (currentAuthRef.current.status === "signed_out") syncFileWindowPolicy(null);
       applyDesktopConfigActions(DEFAULT_DESKTOP_CONFIG);
       setDesktopConfigState((current) => ({ ...current, loading: false }));
@@ -322,6 +326,7 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
     }
 
     const cached = readCachedDesktopConfig(cacheKey);
+    setConfirmedPolicyContext(cached && policyContextKey ? policyContextKey : null);
     if (cached) {
       applyDesktopConfigActions(cached);
       syncFileWindowPolicy(cached);
@@ -349,6 +354,7 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
       writeCachedDesktopConfig(cacheKey, nextConfig);
       syncFileWindowPolicy(nextConfig);
       applyDesktopConfigActions(nextConfig);
+      setConfirmedPolicyContext(policyContextKey || null);
       if (policyContextKey) {
         setRemotePolicyValidation({
           contextKey: policyContextKey,
@@ -375,6 +381,8 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
       }
 
       const fallbackConfig = cached ?? DEFAULT_DESKTOP_CONFIG;
+      setConfirmedPolicyContext(cached && currentRemotePolicyContextKey(currentAuthRef.current.userId) === policyContextKey
+        ? policyContextKey : null);
       setRemotePolicyValidation(null);
       applyDesktopConfigActions(fallbackConfig);
       if (requireFresh) throw error;
@@ -464,6 +472,7 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
     void settingsVersion;
 
     if (!isSignedIn) {
+      setConfirmedPolicyContext(null);
       setRemotePolicyValidation(null);
       applyDesktopConfigActions(DEFAULT_DESKTOP_CONFIG);
       setDesktopConfigState((current) => ({ ...current, loading: false }));
@@ -472,6 +481,7 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
 
     const cacheKey = getDesktopConfigCacheKey();
     const cached = readCachedDesktopConfig(cacheKey);
+    setConfirmedPolicyContext(cached ? currentRemotePolicyContextKey(denAuth.user?.id) || null : null);
     applyDesktopConfigActions(cached ?? DEFAULT_DESKTOP_CONFIG);
     setDesktopConfigState((current) => ({ ...current, loading: !cached }));
     void desktopConfigHandler();
@@ -639,13 +649,17 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
     };
   }, [applyDesktopConfigActions]);
 
+  const policyContextKey = currentRemotePolicyContextKey(denAuth.user?.id);
+  const policyConfirmed = denAuth.status === "signed_out" || Boolean(
+    denAuth.status === "signed_in" && policyContextKey && confirmedPolicyContext === policyContextKey,
+  );
   const value = useMemo<DesktopConfigStore>(() => {
     // Bind the checker to the latest `config` so callers see the most
     // recent org restrictions without having to recompute every render.
     const checkRestriction: DesktopAppRestrictionChecker = ({ restriction }) =>
       checkDesktopAppRestriction({ config, restriction });
-    return { config, loading, refresh, refreshFresh, checkRestriction };
-  }, [config, loading, refresh, refreshFresh]);
+    return { config, loading, policyConfirmed, refresh, refreshFresh, checkRestriction };
+  }, [config, loading, policyConfirmed, refresh, refreshFresh]);
 
   return (
     <DesktopConfigContext.Provider value={value}>
@@ -665,7 +679,7 @@ export function useDesktopConfig(): DesktopConfigStore {
 /** Main 提供的只读策略投影；文件入口不启动组织配置或全局连接恢复。 */
 export function SessionDesktopConfigProvider({ config, children }: { config: DenDesktopConfig; children: ReactNode }) {
   const value = useMemo<DesktopConfigStore>(() => ({
-    config, loading: false,
+    config, loading: false, policyConfirmed: true,
     refresh: async () => {},
     refreshFresh: async () => { throw new Error("Open desktop settings in the main window."); },
     checkRestriction: (input) => checkDesktopAppRestriction({ config, ...input }),

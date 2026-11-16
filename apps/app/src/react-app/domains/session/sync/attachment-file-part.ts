@@ -173,6 +173,7 @@ function attachmentPathNotePart(uploaded: UploadedChatAttachment[]): TextPartInp
   return {
     type: "text",
     synthetic: true,
+    metadata: { composerTextSource: "attachment" },
     text: [
       "Attached files were copied into this worker workspace for tool access:",
       ...uploaded.map((item) => `- ${item.filename}: ${item.workspacePath} (${item.url})`),

@@ -75,6 +75,7 @@ import {
 } from "@jugglework/types/reviews";
 
 export type JuggleWorkServerCapabilities = {
+  sessions?: { promptSuggestions?: boolean };
   skills: { read: boolean; write: boolean; source: "jugglework" | "opencode" };
   plugins: { read: boolean; write: boolean };
   mcp: { read: boolean; write: boolean };
@@ -374,6 +375,17 @@ export type JuggleWorkSessionPrompt = {
   variant?: string;
   parts?: Array<TextPartInput | FilePartInput | AgentPartInput | SubtaskPartInput>;
   reasoning_effort?: string;
+};
+
+export type JuggleWorkPromptSuggestionInput = {
+  turnKey: string;
+  model: { providerID: string; modelID: string };
+};
+
+export type JuggleWorkPromptSuggestion = {
+  turnKey: string;
+  suggestion: string | null;
+  reason?: "no_suggestion" | "ineligible_turn" | "context_unavailable" | "model_unavailable";
 };
 
 export type JuggleWorkSessionModelPreference = {
@@ -2103,10 +2115,15 @@ async function fetchWithTimeout(
 async function requestJson<T>(
   baseUrl: string,
   path: string,
-  options: { method?: string; token?: string; hostToken?: string; body?: unknown; timeoutMs?: number; signal?: AbortSignal } = {},
+  options: { method?: string; token?: string; hostToken?: string; body?: unknown; timeoutMs?: number; signal?: AbortSignal; cancellable?: boolean } = {},
 ): Promise<T> {
   const url = `${baseUrl}${path}`;
-  const fetchImpl = resolveFetch(url);
+  // __fetch IPC only rejects the renderer's wait on abort; it cannot cancel
+  // main-process I/O. Cancellable side requests use the native transport through
+  // this same authenticated client, just as event streams do.
+  const fetchImpl = options.cancellable
+    ? (typeof window !== "undefined" && typeof window.fetch === "function" ? window.fetch.bind(window) : globalThis.fetch)
+    : resolveFetch(url);
   const response = await fetchWithTimeout(
     fetchImpl,
     url,
@@ -2120,7 +2137,9 @@ async function requestJson<T>(
   );
 
   const text = await response.text();
-  const json = text ? JSON.parse(text) : null;
+  let json: any = null;
+  try { json = text ? JSON.parse(text) : null; }
+  catch (error) { if (response.ok) throw error; }
 
   if (!response.ok) {
     const code = typeof json?.code === "string" ? json.code : "request_failed";
@@ -2257,6 +2276,7 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
   const baseUrl = options.baseUrl.replace(/\/+$/, "");
   const token = options.token;
   const hostToken = options.hostToken;
+  let promptSuggestionsUnsupported = false;
 
   const timeouts = {
     health: 3_000,
@@ -2286,6 +2306,37 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
       requestJson<{ ok: boolean; version: string; uptimeMs: number }>(baseUrl, "/health", { token, hostToken, timeoutMs: timeouts.health }),
     status: () => requestJson<JuggleWorkServerDiagnostics>(baseUrl, "/status", { token, hostToken, timeoutMs: timeouts.status }),
     capabilities: () => requestJson<JuggleWorkServerCapabilities>(baseUrl, "/capabilities", { token, hostToken, timeoutMs: timeouts.capabilities }),
+    supportsPromptSuggestions: () => !promptSuggestionsUnsupported,
+    getPromptSuggestion: async (workspaceId: string, sessionId: string, input: JuggleWorkPromptSuggestionInput, requestOptions: { signal: AbortSignal }): Promise<JuggleWorkPromptSuggestion> => {
+      if (promptSuggestionsUnsupported) return { turnKey: input.turnKey, suggestion: null, reason: "model_unavailable" };
+      const controller = new AbortController();
+      const abort = () => controller.abort();
+      if (requestOptions.signal.aborted) abort();
+      requestOptions.signal.addEventListener("abort", abort, { once: true });
+      // Keep the deadline alive through response.text(), not just headers.
+      const deadline = setTimeout(abort, 8_000);
+      try {
+        const result = await requestJson<JuggleWorkPromptSuggestion>(baseUrl,
+          `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/prompt-suggestions`, {
+            token, hostToken, method: "POST", cancellable: true, signal: controller.signal, timeoutMs: 0,
+            body: { turnKey: input.turnKey, model: { providerID: input.model.providerID, modelID: input.model.modelID } },
+          });
+        controller.signal.throwIfAborted();
+        if (result?.turnKey !== input.turnKey || (result.suggestion !== null &&
+          (typeof result.suggestion !== "string" || !result.suggestion.trim() || result.suggestion.length > 240 || /[\r\n]/.test(result.suggestion)))) {
+          throw new Error("Invalid prompt suggestion response.");
+        }
+        return result;
+      } catch (error) {
+        if (error instanceof JuggleWorkServerError && (error.status === 404 || error.status === 501)) {
+          promptSuggestionsUnsupported = true;
+        }
+        throw error;
+      } finally {
+        clearTimeout(deadline);
+        requestOptions.signal.removeEventListener("abort", abort);
+      }
+    },
     getHostMarketplaceEnvironment: async () => parseJuggleWorkHostMarketplaceEnvironment(
       await requestJson<unknown>(baseUrl, "/host/marketplace-plugins/environment", {
         token,

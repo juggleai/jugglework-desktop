@@ -8,6 +8,13 @@ import { appMentionInstruction } from "../surface/composer/app-mentions";
 import { decodeComposerMentionValue } from "../surface/composer/mention-encoding";
 import { COMPOSER_TOKEN_SPLIT_RE, buildCapabilityInstruction, fallbackCapabilityPrompt, parseComposerCapabilityToken } from "../surface/composer/capability-tags";
 
+/** 只标记真实输入；云文档标签保留专用来源，正文与展开顺序保持不变。 */
+function userTextPart(text: string): TextPartInput {
+  // 与发送端云文档规范化保持一致，包括会被规范化为无效引用的标签。
+  const hasCloudDoc = text.includes("[cloud-doc ");
+  return { type: "text", text, metadata: hasCloudDoc ? { cloudDocSourceText: text } : { composerTextSource: "user" } };
+}
+
 /** 将会话草稿按原有顺序转换为文件、Office选区及能力指令，始终使用显式目标项目。 */
 export async function draftToParts(
   draft: ComposerDraft,
@@ -71,20 +78,20 @@ export async function draftToParts(
       const pasteMatch = segment.match(/^\[pasted text (.+)\]$/);
       if (pasteMatch?.[1]) {
         const pasted = pasteByLabel.get(pasteMatch[1]);
-        if (pasted) parts.push({ type: "text", text: pasted });
+        if (pasted) parts.push(userTextPart(pasted));
         continue;
       }
       const capability = parseComposerCapabilityToken(segment);
       if (capability) {
         if (capability.kind === "skill") {
-          parts.push({ type: "text", text: buildCapabilityInstruction("skill", capability.name) });
+          parts.push({ type: "text", text: buildCapabilityInstruction("skill", capability.name), metadata: { composerTextSource: "capability" } });
         } else {
           // 云端技能/扩展/MCP：发送插入时登记的完整指令，而不是裸 token。
           const registered = draft.parts.find(
             (part): part is Extract<ComposerPart, { type: "capability" }> =>
               part.type === "capability" && part.kind === capability.kind && part.name === capability.name,
           );
-          parts.push({ type: "text", text: registered?.prompt ?? fallbackCapabilityPrompt(capability.kind, capability.name) });
+          parts.push({ type: "text", text: registered?.prompt ?? fallbackCapabilityPrompt(capability.kind, capability.name), metadata: { composerTextSource: "capability" } });
         }
         continue;
       }
@@ -100,7 +107,7 @@ export async function draftToParts(
           continue;
         }
         if (mentionPart?.type === "app") {
-          parts.push({ type: "text", text: appMentionInstruction(mentionPart.name) });
+          parts.push({ type: "text", text: appMentionInstruction(mentionPart.name), metadata: { composerTextSource: "app" } });
           continue;
         }
         if (mentionPart?.type === "file") {
@@ -109,7 +116,7 @@ export async function draftToParts(
           continue;
         }
       }
-      parts.push({ type: "text", text: segment });
+      parts.push(userTextPart(segment));
     }
     for (const filePart of attachmentFileById.values()) {
       parts.push(filePart);
@@ -121,11 +128,11 @@ export async function draftToParts(
         continue;
       }
       if (part.type === "text") {
-        parts.push({ type: "text", text: part.text });
+        parts.push(userTextPart(part.text));
         continue;
       }
       if (part.type === "paste") {
-        parts.push({ type: "text", text: part.text });
+        parts.push(userTextPart(part.text));
         continue;
       }
       if (part.type === "agent") {
@@ -133,15 +140,15 @@ export async function draftToParts(
         continue;
       }
       if (part.type === "skill") {
-        parts.push({ type: "text", text: buildCapabilityInstruction("skill", part.name) });
+        parts.push({ type: "text", text: buildCapabilityInstruction("skill", part.name), metadata: { composerTextSource: "capability" } });
         continue;
       }
       if (part.type === "capability") {
-        parts.push({ type: "text", text: part.prompt });
+        parts.push({ type: "text", text: part.prompt, metadata: { composerTextSource: "capability" } });
         continue;
       }
       if (part.type === "app") {
-        parts.push({ type: "text", text: appMentionInstruction(part.name) });
+        parts.push({ type: "text", text: appMentionInstruction(part.name), metadata: { composerTextSource: "app" } });
         continue;
       }
       if (part.type === "file") {

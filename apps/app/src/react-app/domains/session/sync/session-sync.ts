@@ -1,5 +1,6 @@
 import { isToolUIPart, type UIMessage } from "ai";
 import { officeSelectionDisplay } from "./office-selection-display";
+import { promptSuggestionsStore } from "../surface/prompt-suggestions-store";
 import type { FilePart, Part, PermissionRequest, PermissionV2Request, QuestionRequest, Session, SessionStatus, Todo } from "@opencode-ai/sdk/v2/client";
 
 import { getReactQueryClient } from "../../../infra/query-client";
@@ -72,6 +73,7 @@ type SyncOptions = {
   baseUrl: string;
   juggleworkToken: string;
   interactionClient?: JuggleWorkServerClient;
+  promptSuggestionsEndpoint?: string;
   onSessionCreated?: (session: Session) => void;
   onSessionUpdated?: (update: { sessionId: string; info: Record<string, unknown> }) => void;
   onSessionDeleted?: (sessionId: string) => void;
@@ -1320,6 +1322,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     const props = (event.properties ?? {}) as { sessionID?: string; info?: { id?: string } };
     const sessionId = props.sessionID ?? props.info?.id ?? "";
     if (sessionId) {
+      promptSuggestionsStore.removeSession(input.promptSuggestionsEndpoint ?? input.interactionClient?.baseUrl ?? input.baseUrl, workspaceId, sessionId);
       clearSessionBuffers(entry, sessionId);
       // The session is gone server-side; its continuation tombstones can no
       // longer be observed by any snapshot and would only suppress a
@@ -2237,6 +2240,7 @@ export function ensureWorkspaceSessionSync(input: SyncOptions) {
     if (input.onSessionStatus) existing.sessionStatusListeners.add(input.onSessionStatus);
     if (input.onReconnect) existing.reconnectListeners.add(input.onReconnect);
     if (input.interactionClient) existing.input.interactionClient = input.interactionClient;
+    if (input.promptSuggestionsEndpoint) existing.input.promptSuggestionsEndpoint = input.promptSuggestionsEndpoint;
     existing.refs += 1;
     return () => releaseWorkspaceSessionSync(input);
   }

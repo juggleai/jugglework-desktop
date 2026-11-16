@@ -157,7 +157,7 @@ test.each(["prepare", "post"] as const)("main shared sender preserves drafts acr
       expect(composer().draft).toBe("original draft");
       expect(useComposerStateStore.getState().history[first]).toBeUndefined();
     } else {
-      expect(requests).toEqual([{ sessionId: first, prompt: expect.objectContaining({ parts: [{ type: "text", text: "original draft" }] }) }]);
+      expect(requests).toEqual([{ sessionId: first, prompt: expect.objectContaining({ parts: [{ type: "text", text: "original draft", metadata: { composerTextSource: "user" } }] }) }]);
       expect(snapshotReads).toBeGreaterThanOrEqual(2);
       expect(queryClient.getQueryData<import("ai").UIMessage[]>(["react-session-transcript", workspaceId, first]))
         .toEqual([expect.objectContaining({
@@ -333,7 +333,7 @@ for (const delivery of ["start", "steer"] as const) test.each(["prepare", "parts
     if (delivery === "steer") await act(async () => { await view!.root.findByType(QueuedMessagesPanel).props.onSteer(id); });
     for (let i = 0; i < 30 && !requests.length; i++) await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
     expect(requests).toHaveLength(1);
-    expect(requests[0].prompt.parts).toEqual([{ type: "text", text: "fresh queued turn" }]);
+    expect(requests[0].prompt.parts).toEqual([{ type: "text", text: "fresh queued turn", metadata: { composerTextSource: "user" } }]);
     expect(requests[0].whenBusy).toBe(delivery === "steer" ? "steer" : undefined);
     expect(requests[0]).not.toHaveProperty("claimId");
   } finally {

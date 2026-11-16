@@ -3,6 +3,9 @@
  */
 
 export default {
+  "settings.prompt_suggestions": "次の入力候補",
+  "settings.prompt_suggestions_desc": "返信の終了後、現在のセッションのモデルで次の入力候補を生成します。追加のモデル料金が発生する場合があります。Tab で編集可能な下書きに適用でき、自動送信はされません。",
+  "composer.prompt_suggestion.available_hint": "次の入力候補があります。Tab で編集可能な下書きに適用できます。送信はされません。",
   "session.usage_limit_recharge": "利用上限に達しました。引き続き利用するには、チャージしてください。",
   "app.compact_command_desc": "このセッションを要約してコンテキストサイズを削減します。",
   "app.error_audit_load": "監査ログの読み込みに失敗しました。",

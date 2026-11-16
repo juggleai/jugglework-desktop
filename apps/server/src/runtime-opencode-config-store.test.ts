@@ -8,6 +8,7 @@ import { readJuggleWorkWorkspaceConfig } from "./jugglework-workspace-config-sto
 import { addPlugin, listPlugins, removePlugin } from "./plugins.js";
 import {
   onRuntimeOpencodeConfigWrite,
+  mergeOpencodeConfigs,
   readRuntimeOpencodeConfig,
   writeRuntimeOpencodeConfig,
 } from "./runtime-opencode-config-store.js";
@@ -60,6 +61,15 @@ async function expectMissing(path: string): Promise<void> {
 }
 
 describe("runtime OpenCode config store", () => {
+  test("provider allowlists survive effective config merge and runtime round-trip", async () => {
+    expect(mergeOpencodeConfigs({}, { enabled_providers: ["allowed"] }).enabled_providers).toEqual(["allowed"]);
+    expect(mergeOpencodeConfigs({ enabled_providers: ["allowed"] }, {}).enabled_providers).toEqual(["allowed"]);
+    expect(mergeOpencodeConfigs({ enabled_providers: ["allowed"] }, { enabled_providers: [] }).enabled_providers).toEqual([]);
+    await withWorkspace(async ({ config }) => {
+      await writeRuntimeOpencodeConfig(config, WORKSPACE_ID, () => ({ enabled_providers: ["allowed"] }));
+      expect((await readRuntimeOpencodeConfig(config, WORKSPACE_ID)).enabled_providers).toEqual(["allowed"]);
+    });
+  });
   test("normalizes and round-trips compaction settings", async () => {
     await withWorkspace(async ({ config }) => {
       await writeRuntimeOpencodeConfig(config, WORKSPACE_ID, (current) => ({

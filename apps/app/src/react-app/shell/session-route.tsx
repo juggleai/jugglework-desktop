@@ -109,6 +109,7 @@ import {
 } from "@/react-app/kernel/session-model-store";
 import { usePlatform } from "@/react-app/kernel/platform";
 import { SessionPage, type OpenSessionTab } from "@/react-app/domains/session/chat/session-page";
+import { promptSuggestionsStore } from "@/react-app/domains/session/surface/prompt-suggestions-store";
 import {
   isDesktopModelBlocked,
   isDesktopProviderBlocked,
@@ -1398,6 +1399,8 @@ export function SessionRoute(props: SessionRouteProps = {}) {
       },
       modelPickerOpen: modelPicker.compactOpen,
       modelUnavailable: selectedModelUnavailable,
+      promptSuggestionsProviderReady: !loading && providerListQuery.isSuccess && Boolean(activeModel) &&
+        !selectedModelUnavailable && isManagedModelReady(activeModel),
       taskSubmissionDisabled: !canAcceptTask || selectedModelUnavailable || selectedManagedModelPreparing,
       selectedModel: activeModel ?? { providerID: "", modelID: "" },
       contextWindowTokens: resolveModelContextLimit(
@@ -1429,6 +1432,8 @@ export function SessionRoute(props: SessionRouteProps = {}) {
           ),
           modelLabel: model ? resolveModelDisplayName(model.modelID) : t("session.default_model"),
           modelUnavailable: isModelUnavailable(model),
+          promptSuggestionsProviderReady: !loading && providerListQuery.isSuccess && Boolean(model) &&
+            !isModelUnavailable(model) && isManagedModelReady(model),
           taskSubmissionDisabled: Boolean(
             !canAcceptTask ||
             isModelUnavailable(model) ||
@@ -1646,6 +1651,8 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     describeModel,
     isManagedModelReady,
     isModelUnavailable,
+    loading,
+    providerListQuery.isSuccess,
     modelPicker.compactOpen,
     refreshCloudProviderReadiness,
     handleOpenSettings,
@@ -2811,6 +2818,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
               const endpoint = endpointForWorkspace(selectedWorkspace);
               if (!endpoint) return;
               await endpoint.client.deleteSession(endpoint.workspaceId, sessionId);
+              promptSuggestionsStore.removeSession(endpoint.client.baseUrl, endpoint.workspaceId, sessionId);
               clearSessionModelChoice(selectedWorkspaceId, sessionId);
               setSessionAgentChoice(selectedWorkspaceId, sessionId, null);
               if (selectedSessionId === sessionId) {

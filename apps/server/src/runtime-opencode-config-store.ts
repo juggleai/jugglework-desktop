@@ -10,6 +10,7 @@ export type RuntimeOpencodeConfig = {
   default_agent?: string;
   plugin?: string[];
   disabled_providers?: string[];
+  enabled_providers?: string[];
   mcp?: Record<string, Record<string, unknown>>;
   permission?: {
     external_directory?: Record<string, unknown>;
@@ -69,6 +70,9 @@ function normalizeRuntimeOpencodeConfig(value: unknown): RuntimeOpencodeConfig {
   const disabledProviders = Array.isArray(value.disabled_providers)
     ? value.disabled_providers.filter((item) => typeof item === "string")
     : undefined;
+  const enabledProviders = Array.isArray(value.enabled_providers)
+    ? value.enabled_providers.filter((item): item is string => typeof item === "string")
+    : undefined;
   const mcp = isRecord(value.mcp) ? value.mcp as Record<string, Record<string, unknown>> : undefined;
   const permission = isRecord(value.permission) ? value.permission : undefined;
   const externalDirectory = permission && isRecord(permission.external_directory) ? permission.external_directory : undefined;
@@ -78,6 +82,7 @@ function normalizeRuntimeOpencodeConfig(value: unknown): RuntimeOpencodeConfig {
     ...(defaultAgent ? { default_agent: defaultAgent } : {}),
     ...(plugin ? { plugin } : {}),
     ...(disabledProviders ? { disabled_providers: disabledProviders } : {}),
+    ...(enabledProviders ? { enabled_providers: enabledProviders } : {}),
     ...(mcp ? { mcp } : {}),
     ...(externalDirectory ? { permission: { external_directory: externalDirectory } } : {}),
     ...(provider ? { provider } : {}),
@@ -414,6 +419,7 @@ export function mergeOpencodeConfigs(
   const persistedCompaction = isRecord(persisted.compaction) ? persisted.compaction : {};
   return {
     ...persisted,
+    ...(runtime.enabled_providers ? { enabled_providers: runtime.enabled_providers } : {}),
     plugin: [
       ...(Array.isArray(persisted.plugin) ? persisted.plugin.filter((item) => typeof item === "string") : []),
       ...runtimePluginList(runtime),

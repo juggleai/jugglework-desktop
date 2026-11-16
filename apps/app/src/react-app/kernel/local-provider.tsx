@@ -58,6 +58,8 @@ export type LocalPreferences = {
    * opt-out in Settings -> Preferences. Never includes message content.
    */
   analyticsEnabled: boolean;
+  /** 本机全局下一轮输入建议，默认关闭；使用当前会话模型的额外调用。 */
+  promptSuggestionsEnabled: boolean;
   /**
    * Native OS notifications from the desktop app. Off by default so upgrading
    * users are not surprised by system popups.
@@ -77,6 +79,7 @@ const LocalContext = createContext<LocalContextValue | undefined>(undefined);
 
 const UI_STORAGE_KEY = "jugglework.ui";
 export const DEFAULT_SHOW_THINKING = true;
+export const DEFAULT_PROMPT_SUGGESTIONS_ENABLED = false;
 
 const INITIAL_UI: LocalUIState = { view: "settings", tab: "general" };
 const INITIAL_PREFS: LocalPreferences = {
@@ -88,6 +91,7 @@ const INITIAL_PREFS: LocalPreferences = {
   featureFlags: { microsandboxCreateSandbox: true, memory: false },
   hasCompletedOnboarding: false,
   analyticsEnabled: true,
+  promptSuggestionsEnabled: DEFAULT_PROMPT_SUGGESTIONS_ENABLED,
   desktopNotifications: DEFAULT_DESKTOP_NOTIFICATION_PREFERENCE,
 };
 
@@ -126,6 +130,7 @@ export function LocalProvider({ children, persist = true }: LocalProviderProps) 
   );
   const [prefs, setPrefsRaw] = useState<LocalPreferences>(() => {
     const persisted = readPersisted(LOCAL_PREFERENCES_KEY, INITIAL_PREFS);
+    persisted.promptSuggestionsEnabled = persisted.promptSuggestionsEnabled === true;
     persisted.desktopNotifications = isDesktopNotificationPreference(persisted.desktopNotifications)
       ? persisted.desktopNotifications
       : DEFAULT_DESKTOP_NOTIFICATION_PREFERENCE;

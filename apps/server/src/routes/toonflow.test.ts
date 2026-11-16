@@ -300,3 +300,68 @@ test("Toonflow broker uses canonical credentials and durable workspace-owned vid
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("Toonflow keeps public aliases and headers private while routing all three text protocols", async () => {
+  const root = await mkdtemp(join(tmpdir(), "toonflow-alias-headers-"));
+  const previousDb = process.env.JUGGLEWORK_RUNTIME_DB;
+  const previousConfig = process.env.OPENCODE_CONFIG_DIR;
+  const originalFetch = globalThis.fetch;
+  process.env.JUGGLEWORK_RUNTIME_DB = join(root, "runtime.sqlite");
+  process.env.OPENCODE_CONFIG_DIR = join(root, "synthetic-global");
+  try {
+    await mkdir(join(root, "synthetic-global"));
+    const workspace = { id: "ws", name: "Synthetic", path: root, preset: "starter", workspaceType: "local" as const };
+    const config = { workspaces: [workspace], readOnly: false } as ServerConfig;
+    const protocols = [
+      { id: "chat", npm: "@ai-sdk/openai-compatible", operation: "chat", endpoint: "chat/completions" },
+      { id: "responses", npm: "@ai-sdk/openai", operation: "responses", endpoint: "responses" },
+      { id: "anthropic", npm: "@ai-sdk/anthropic", operation: "messages", endpoint: "messages" },
+    ];
+    await writeRuntimeOpencodeConfig(config, "ws", () => ({ provider: Object.fromEntries(protocols.map(protocol => [protocol.id, {
+      npm: protocol.npm, env: ["SYNTHETIC_TOON_KEY"],
+      options: { baseURL: "https://synthetic.example/v1", headers: { "x-tenant": "synthetic-tenant-private", "X-Route": "provider-route" } },
+      models: { public: { id: `${protocol.id}-deployment`, headers: { "x-route": "model-route" } } },
+    }])) }));
+    const routes: Route[] = [];
+    registerToonflowRoutes({ routes, config, env: { list: async () => [{ key: "SYNTHETIC_TOON_KEY", value: "synthetic-key-private" }] } as any,
+      mediaGenerationRuntime: { listModels: async () => ({ models: [] }) } as any,
+      imageGenerationRuntime: { listModels: async () => [] } as any,
+      resolveWorkspace: async () => workspace,
+      listProviders: async () => ({ connected: protocols.map(protocol => protocol.id), all: protocols.map(protocol => ({ id: protocol.id,
+        models: { public: { id: "public", api: { id: `${protocol.id}-deployment` }, headers: { "x-inherited": "inherited-value" } } },
+      })) }),
+      jsonResponse: (value, status = 200) => Response.json(value, { status }),
+    });
+    const request = async (path: string, body?: unknown) => {
+      const url = new URL(`http://server/workspace/ws/toonflow/${path}`);
+      const route = matchRoute(routes, body === undefined ? "GET" : "POST", url.pathname)!;
+      return route.handler({ url, params: route.params, config, request: new Request(url, body === undefined ? {} : {
+        method: "POST", body: JSON.stringify(body), headers: { "Content-Type": "application/json", "x-tenant": "client-cannot-override" },
+      }) } as RequestContext);
+    };
+    const catalog = await (await request("models")).text();
+    expect(JSON.parse(catalog).models.map((item: any) => item.modelId)).toEqual(["public", "public", "public"]);
+    for (const privateValue of ["synthetic-key-private", "synthetic-tenant-private", "model-route", "upstreamModelId", "headers", "chat-deployment"]) expect(catalog).not.toContain(privateValue);
+    let calls = 0;
+    globalThis.fetch = (async (url: string, init: RequestInit) => {
+      const protocol = protocols[calls++];
+      expect(url).toBe(`https://synthetic.example/v1/${protocol.endpoint}`);
+      const headers = new Headers(init.headers);
+      expect(headers.get("x-tenant")).toBe("synthetic-tenant-private");
+      expect(headers.get("x-route")).toBe("model-route"); expect(headers.get("x-inherited")).toBe("inherited-value");
+      expect(JSON.parse(String(init.body)).model).toBe(`${protocol.id}-deployment`);
+      return Response.json({ ok: true });
+    }) as typeof fetch;
+    for (const protocol of protocols) {
+      const payload = protocol.operation === "responses" ? { model: "untrusted", input: "hello", stream: false } :
+        { model: "untrusted", messages: [{ role: "user", content: "hello" }], stream: false, ...(protocol.operation === "messages" ? { max_tokens: 512 } : {}) };
+      expect((await request(`proxy/${protocol.id}/${protocol.operation}`, { modelId: "public", payload })).status).toBe(200);
+    }
+    expect(calls).toBe(3);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (previousDb === undefined) delete process.env.JUGGLEWORK_RUNTIME_DB; else process.env.JUGGLEWORK_RUNTIME_DB = previousDb;
+    if (previousConfig === undefined) delete process.env.OPENCODE_CONFIG_DIR; else process.env.OPENCODE_CONFIG_DIR = previousConfig;
+    await rm(root, { recursive: true, force: true });
+  }
+});

@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, type ForwardedRef } from "react";
+import { forwardRef, useCallback, useEffect, useId, useImperativeHandle, useMemo, useRef, useState, type ForwardedRef } from "react";
 import { LexicalComposer } from "@lexical/react/LexicalComposer.js";
 import { PlainTextPlugin } from "@lexical/react/LexicalPlainTextPlugin.js";
 import { ContentEditable } from "@lexical/react/LexicalContentEditable.js";
@@ -28,10 +28,12 @@ import {
   KEY_ENTER_COMMAND,
   PASTE_COMMAND,
   HISTORIC_TAG,
+  HISTORY_PUSH_TAG,
   type SerializedTextNode,
   type Spread,
   TextNode,
   type EditorConfig,
+  type LexicalEditor,
   type NodeKey,
 } from "lexical";
 import { ComposerCloudDocNode, $createCloudDocNode, $insertCloudDocReference } from "./cloud-doc-node";
@@ -57,6 +59,8 @@ import { getComposerOfficeGroups, releasableOfficeReferences, useComposerStateSt
 import type { OfficeComposerGroup } from "./office-selection-draft";
 
 type PastedTextToken = { label: string; lines: number; text: string };
+const EXTERNAL_SYNC_TAG = "composer-external-sync";
+const SUGGESTION_ACCEPT_TAG = "composer-suggestion-accept";
 
 export type ComposerAttachmentToken = {
   id: string;
@@ -69,12 +73,15 @@ type EditorProps = {
   officeSessionId?: string;
   officeGroups?: OfficeComposerGroup[];
   value: string;
+  promptSuggestion?: string | null;
   mentions: Record<string, ComposerMentionKind>;
   pastedText?: PastedTextToken[];
   attachments?: ComposerAttachmentToken[];
   disabled: boolean;
   placeholder: string;
   onChange: (value: string) => void;
+  /** Content edits including undo/redo; excludes external value sync and suggestion acceptance. */
+  onUserEdit?: () => void;
   onSubmit?: (options: { queue: boolean }) => void | Promise<void>;
   isComposing?: () => boolean;
   onExpandPastedText?: (label: string) => void;
@@ -89,6 +96,10 @@ type EditorProps = {
 };
 
 export type LexicalPromptEditorHandle = {
+  isComposing: () => boolean;
+  isEmpty: () => boolean;
+  /** 仅在草稿完全空时插入纯文本，作为独立撤销步骤；不发送、不主动聚焦。 */
+  acceptPromptSuggestion: (text: string, onAccept?: () => void) => boolean;
   /** 将云文档引用插入光标，或替换待选提及／已校验链接。 */
   insertCloudDocReference: (reference: CloudDocReference, options?: { mention?: boolean; link?: string }) => void;
   insertSkillAtSelection: (skillName: string, kind?: ComposerCapabilityKind) => void;
@@ -859,7 +870,7 @@ function OfficeSelectionEditingPlugin(props: { sessionId?: string; groups?: Offi
         const group = groups.find((item) => item.instruction.instructionId === node.__instructionId);
         if (group) $syncOfficeInstructionNode(node, group);
       }
-    }, { tag: HISTORIC_TAG });
+    }, { tag: [HISTORIC_TAG, EXTERNAL_SYNC_TAG] });
   }, [editor, props.sessionId, props.groups]);
   return null;
 }
@@ -916,7 +927,7 @@ function SyncPlugin(props: {
       } else {
         $getRoot().selectEnd();
       }
-    });
+    }, { tag: EXTERNAL_SYNC_TAG });
   }, [editor, props.attachments, props.mentions, props.pastedText, props.value, props.officeGroups]);
 
   return null;
@@ -1202,10 +1213,29 @@ function MentionChipNavigationPlugin() {
   return null;
 }
 
-function ImperativeHandlePlugin(props: { editorRef: ForwardedRef<LexicalPromptEditorHandle> }) {
+function ImperativeHandlePlugin(props: { editorRef: ForwardedRef<LexicalPromptEditorHandle>; canAcceptPromptSuggestion: boolean }) {
   const [editor] = useLexicalComposerContext();
 
   useImperativeHandle(props.editorRef, () => ({
+    isComposing: () => editor.isComposing(),
+    isEmpty: () => props.canAcceptPromptSuggestion && editor.getEditorState().read(() => serializePromptFromRoot().length === 0),
+    acceptPromptSuggestion(text, onAccept) {
+      if (!text || !props.canAcceptPromptSuggestion || !editor.isEditable() || editor.isComposing()) return false;
+      let accepted = false;
+      editor.update(() => {
+        if (serializePromptFromRoot().length !== 0) return;
+        $getRoot().selectEnd();
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) return;
+        // Plain text, not setPrompt's capability/mention token interpretation.
+        selection.insertRawText(text);
+        accepted = true;
+        // Hide the placeholder before syncing the draft; the caller retains
+        // the suggestion so clearing or undo can reveal it again.
+        onAccept?.();
+      }, { tag: [HISTORY_PUSH_TAG, SUGGESTION_ACCEPT_TAG], discrete: true });
+      return accepted;
+    },
     insertCloudDocReference(reference, options) {
       editor.update(() => {
         try { $insertCloudDocReference(reference, options); }
@@ -1226,7 +1256,7 @@ function ImperativeHandlePlugin(props: { editorRef: ForwardedRef<LexicalPromptEd
       }), { tag: "composer-voice-dictation" });
       editor.focus();
     },
-  }), [editor]);
+  }), [editor, props.canAcceptPromptSuggestion]);
 
   return null;
 }
@@ -1274,8 +1304,15 @@ function AttachmentRemovePlugin(props: { onRemoveAttachment?: (id: string) => vo
 }
 
 export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorProps>(function LexicalPromptEditor(props, ref) {
+  const suggestionHintId = useId();
+  const [editorEmpty, setEditorEmpty] = useState(props.value.length === 0);
+  const draftEmpty = props.value.length === 0 &&
+    !Object.keys(props.mentions).length && !props.attachments?.length && !props.pastedText?.length && !props.officeGroups?.length;
+  const promptSuggestion = !props.disabled && draftEmpty && editorEmpty ? props.promptSuggestion : null;
   const valueRef = useRef(props.value);
   const onChangeRef = useRef(props.onChange);
+  const onUserEditRef = useRef(props.onUserEdit);
+  onUserEditRef.current = props.onUserEdit;
   const officeSessionRef = useRef(props.officeSessionId);
   officeSessionRef.current = props.officeSessionId;
 
@@ -1303,12 +1340,17 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
   );
 
   const syncPromptFromEditorState = useCallback(
-    (state: Parameters<NonNullable<React.ComponentProps<typeof OnChangePlugin>["onChange"]>>[0]) => {
+    (state: Parameters<NonNullable<React.ComponentProps<typeof OnChangePlugin>["onChange"]>>[0], _editor: LexicalEditor, tags: Set<string>) => {
       state.read(() => {
         const sessionId = officeSessionRef.current;
         const store = useComposerStateStore.getState();
         const priorGroups = sessionId ? getComposerOfficeGroups(store, sessionId) : [];
         const parsed = $readOfficeComposerDraft(priorGroups);
+        setEditorEmpty(parsed.draft.length === 0);
+        const changed = parsed.draft !== valueRef.current || JSON.stringify(parsed.groups) !== JSON.stringify(priorGroups);
+        // Undo/redo carry HISTORIC_TAG too: only our explicit external-sync
+        // and acceptance tags suppress user-edit notification.
+        if (changed && !tags.has(EXTERNAL_SYNC_TAG) && !tags.has(SUGGESTION_ACCEPT_TAG)) onUserEditRef.current?.();
         if (sessionId) {
           store.syncOfficeEditor(sessionId, parsed.draft, parsed.groups);
           const ids = releasableOfficeReferences(useComposerStateStore.getState(), sessionId, priorGroups.flatMap((group) => group.references.map((ref) => ref.referenceId)));
@@ -1335,15 +1377,17 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
         - max-h caps the composer — long pastes / multi-paragraph drafts scroll
           inside the editor instead of pushing the transcript out of view.
       */}
-      <div className="relative">
+      <div className="relative grid">
         <PlainTextPlugin
           contentEditable={
             <ContentEditable
               data-session-composer-input={props.officeSessionId ? "" : undefined}
               className={props.compact
-                ? "h-10 min-h-10 max-h-[112px] w-full resize-none overflow-y-auto bg-transparent px-2 py-2 text-[17px] leading-6 text-dls-text outline-none [&_p]:m-0 [&_p]:min-h-6 [&_p]:leading-6"
-                : "min-h-[60px] max-h-[280px] w-full resize-none overflow-y-auto bg-transparent text-[15px] leading-6 text-dls-text outline-none placeholder:text-dls-secondary [&_p]:min-h-[1.5rem] [&_p]:m-0"}
+                ? "h-10 min-h-10 max-h-[112px] w-full resize-none overflow-y-auto bg-transparent px-2 py-2 text-[17px] leading-6 text-dls-text outline-none [&_p]:m-0 [&_p]:min-h-6 [&_p]:leading-6 col-start-1 row-start-1"
+                : "min-h-[60px] max-h-[280px] w-full resize-none overflow-y-auto bg-transparent text-[15px] leading-6 text-dls-text outline-none placeholder:text-dls-secondary [&_p]:min-h-[1.5rem] [&_p]:m-0 col-start-1 row-start-1"}
               aria-placeholder={props.placeholder}
+              aria-describedby={promptSuggestion ? suggestionHintId : undefined}
+              aria-keyshortcuts={promptSuggestion ? "Tab" : undefined}
               placeholder={<span />}
               onPaste={props.onPaste}
               onPasteCapture={props.onPasteCapture}
@@ -1352,15 +1396,28 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
               onDragLeave={props.onDragLeave}
             />
           }
-          placeholder={
+          placeholder={promptSuggestion ? null : (
             <div className={props.compact
               ? "pointer-events-none absolute left-2 top-2 text-[17px] leading-6 text-gray-8"
               : "pointer-events-none absolute left-0 top-0 text-[15px] leading-6 text-dls-secondary/70"}>
               {props.placeholder}
             </div>
-          }
+          )}
           ErrorBoundary={LexicalErrorBoundary}
         />
+        {promptSuggestion ? (
+          <div aria-hidden={true} className={[
+            "pointer-events-none col-start-1 min-w-0 whitespace-pre-wrap break-words text-dls-secondary/70",
+            "row-start-1 overflow-hidden",
+            props.compact ? "px-2 py-2 text-[17px] leading-6" : "text-[15px] leading-6",
+            props.compact ? "max-h-[112px]" : "max-h-[280px]",
+          ].join(" ")}>
+            {promptSuggestion}
+          </div>
+        ) : null}
+        <span id={suggestionHintId} className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+          {promptSuggestion ? t("composer.prompt_suggestion.available_hint") : ""}
+        </span>
         <OnChangePlugin onChange={syncPromptFromEditorState} />
         <HistoryPlugin />
         <OfficeSelectionEditingPlugin sessionId={props.officeSessionId} groups={props.officeGroups} />
@@ -1378,7 +1435,7 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
         <AttachmentRemovePlugin onRemoveAttachment={props.onRemoveAttachment} />
         <CloudDocClickPlugin sessionId={props.officeSessionId} />
         <MentionChipNavigationPlugin />
-        <ImperativeHandlePlugin editorRef={ref} />
+        <ImperativeHandlePlugin editorRef={ref} canAcceptPromptSuggestion={draftEmpty} />
       </div>
     </LexicalComposer>
     </OfficeComposerContext.Provider>

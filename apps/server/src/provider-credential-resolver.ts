@@ -6,7 +6,7 @@ import {
   isCloudGatewayCredentialEnvName,
 } from "@jugglework/types/provider-credentials";
 import type { EnvService } from "./env-file.js";
-import { readJuggleWorkWorkspaceConfig } from "./jugglework-workspace-config-store.js";
+import { inspectJuggleWorkWorkspaceConfig, readJuggleWorkWorkspaceConfig } from "./jugglework-workspace-config-store.js";
 import type { ServerConfig } from "./types.js";
 
 type CredentialStoreEntry = { key: string; value: string; owner?: string };
@@ -131,14 +131,19 @@ export function resolveProviderCredentialFromSnapshot(input: {
 export function createWorkspaceProviderCredentialResolver(options: {
   config: ServerConfig;
   env: EnvService;
+  readOnly?: boolean;
 }) {
-  const snapshot = async (workspaceId: string) => ({
-    entries: await options.env.list(),
-    imports: importedProviders(await readJuggleWorkWorkspaceConfig(options.config, workspaceId)),
-  });
+  const snapshot = async (workspaceId: string, signal?: AbortSignal) => {
+    signal?.throwIfAborted();
+    const entries = await options.env.list();
+    signal?.throwIfAborted();
+    const imports = importedProviders(await (options.readOnly ? inspectJuggleWorkWorkspaceConfig : readJuggleWorkWorkspaceConfig)(options.config, workspaceId));
+    signal?.throwIfAborted();
+    return { entries, imports };
+  };
   return {
-    async resolve(input: { workspaceId: string; providerID: string; modelID?: string; declaredEnvKeys: readonly string[]; providerConfig?: unknown }) {
-      const current = await snapshot(input.workspaceId);
+    async resolve(input: { workspaceId: string; providerID: string; modelID?: string; declaredEnvKeys: readonly string[]; providerConfig?: unknown }, signal?: AbortSignal) {
+      const current = await snapshot(input.workspaceId, signal);
       return resolveProviderCredentialFromSnapshot({ ...input, ...current, processEnv: process.env });
     },
     async organizationProviderProvenance(input: { workspaceId: string; providerID: string; modelID: string; declaredEnvKeys: readonly string[]; providerConfig: unknown }) {

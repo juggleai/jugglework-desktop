@@ -689,6 +689,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
         workspaceId: endpoint.workspaceId,
         baseUrl: endpoint.opencodeBaseUrl,
         juggleworkToken: endpoint.token,
+        promptSuggestionsEndpoint: endpoint.client.baseUrl,
         onSessionUpdated: (update) => {
           const directory = update.info.directory;
           if (!endpoint.isRemote && typeof directory === "string" && workspace.path &&

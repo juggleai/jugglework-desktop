@@ -3,6 +3,9 @@ import { captureCloudDocTurn } from "@/app/lib/cloud-doc-turn";
 import { isSessionSubmissionPreparing } from "../sync/submission-guard";
 import { clearQueuedSessionDrafts } from "./queued-draft-cleanup";
 import { sessionTaskPresentation } from "../status/task-presentation";
+import { promptSuggestionPolicyKey, usePromptSuggestionIdentity, usePromptSuggestions } from "./prompt-suggestions";
+import { promptSuggestionUserHistory } from "./prompt-suggestions-history";
+import { readPromptSuggestionSnapshot, usePromptSuggestionSnapshotRefresh, type ClientHistorySnapshot } from "./prompt-suggestions-snapshot";
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import type { UIMessage } from "ai";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -18,7 +21,7 @@ import { t } from "@/i18n";
 import { readWorkspaceCloudImports, type CloudImportedPlugin } from "@/app/cloud/import-state";
 import { createDenClient, readDenSettings } from "@/app/lib/den";
 import { denSettingsChangedEvent } from "@/app/lib/den-session-events";
-import { useOrgRestrictions } from "@/react-app/domains/cloud/desktop-config-provider";
+import { useDesktopConfig, useOrgRestrictions } from "@/react-app/domains/cloud/desktop-config-provider";
 import { useSessionPermissionMode } from "@/react-app/domains/session/sync/use-session-permission-mode";
 import { PermissionModeSelect } from "@/react-app/domains/session/surface/composer/permission-mode-select";
 import type {
@@ -236,6 +239,7 @@ export type SessionSurfaceProps = {
   onModelClick: () => void;
   modelPickerOpen: boolean;
   modelUnavailable?: boolean;
+  promptSuggestionsProviderReady?: boolean;
   taskSubmissionDisabled?: boolean;
   ensureHostMarketplaceReady?: () => Promise<unknown>;
   selectedModel: ModelRef;
@@ -568,6 +572,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     sessionId: props.sessionId,
   });
   const orgRestrictions = useOrgRestrictions();
+  const desktopPolicy = useDesktopConfig();
   const sessionPermissionMode = useSessionPermissionMode({
     client: props.client,
     workspaceId: props.workspaceId,
@@ -827,9 +832,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
     setVideoGeneration(null);
   }, [setVideoGeneration, videoGeneration, videoGenerationModels, videoGenerationUnavailable]);
   const snapshotTodoRevisionBySnapshotRef = useRef(new WeakMap<JuggleWorkSessionSnapshot, number>());
-  const snapshotQuery = useQuery<JuggleWorkSessionSnapshot>({
+  const promptHistoryIdentity = usePromptSuggestionIdentity();
+  const snapshotQuery = useQuery<ClientHistorySnapshot>({
     queryKey: snapshotQueryKey,
-    queryFn: async ({ signal }) => {
+    queryFn: ({ signal }) => readPromptSuggestionSnapshot(async (signal) => {
       const revision = captureSessionSnapshotRevision(props.workspaceId, props.sessionId);
       const titleRevision = captureSessionTitleRevision();
       const todoRevision = captureTodoSnapshotRevision();
@@ -838,12 +844,13 @@ export function SessionSurface(props: SessionSurfaceProps) {
         revision, titleRevision);
       snapshotTodoRevisionBySnapshotRef.current.set(snapshot, todoRevision);
       return snapshot;
-    },
+    }, signal),
     // TIPS: 请求版本绑定在快照对象上，保留其身份，缓存重放不能把旧响应当成新读取。
     structuralSharing: false,
     staleTime: 500,
     refetchInterval: fileHost ? 5000 : false,
   });
+  usePromptSuggestionSnapshotRefresh(queryClient, snapshotQueryKey, promptHistoryIdentity);
 
   const currentSnapshot = snapshotQuery.data?.session.id === props.sessionId ? snapshotQuery.data : null;
   const currentSnapshotTodoRevision = currentSnapshot
@@ -1142,7 +1149,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       : showAssistantRespondingState
         ? "responding"
         : "idle";
-  const sharedTaskPresentation = sessionTaskPresentation(renderedMessages, todos, useSessionActivityStore.getState().recordsByWorkspaceId[props.workspaceId]?.[props.sessionId]);
+  const sharedTaskPresentation = sessionTaskPresentation(baseRenderedMessages, todos, useSessionActivityStore.getState().recordsByWorkspaceId[props.workspaceId]?.[props.sessionId]);
   useReactRenderWatchdog("SessionSurface", {
     sessionId: props.sessionId,
     workspaceId: props.workspaceId,
@@ -1217,6 +1224,38 @@ export function SessionSurface(props: SessionSurfaceProps) {
     hasSnapshot: Boolean(snapshot) || renderedMessages.length > 0,
     isFetching: snapshotQuery.isFetching,
     isError: snapshotQuery.isError || Boolean(error),
+  });
+
+  // Revert changes the visible projection, not which user turns already exist.
+  const promptUserHistory = useMemo(() => promptSuggestionUserHistory(snapshot?.messages ?? []), [snapshot]);
+  const verifiedPromptHistoryIdentity = snapshot && (!sharedTaskPresentation.turnKey || promptUserHistory.turnKeys.has(sharedTaskPresentation.turnKey))
+    ? (snapshot as ClientHistorySnapshot).clientHistoryIdentity ?? null : null;
+  const promptSuggestions = usePromptSuggestions({
+    client: props.client,
+    workspaceId: props.workspaceId,
+    sessionId: props.sessionId,
+    model: props.selectedModel,
+    enabled: !fileHost && local.prefs.promptSuggestionsEnabled,
+    active: !fileHost && props.visible !== false && props.isControlTarget,
+    loaded: Boolean(snapshot),
+    historyIdentity: verifiedPromptHistoryIdentity,
+    // Eval fixtures are presentation-only and must never mint a real turn.
+    turnKey: sharedTaskPresentation.turnKey,
+    turnCreatedAt: sharedTaskPresentation.turnCreatedAt,
+    userCreatedAtBaseline: promptUserHistory.userCreatedAtBaseline,
+    completed: !evalMarkdownMessages.length && sharedTaskPresentation.completed && Boolean(sharedTaskPresentation.responseText),
+    running: chatStreaming || sharedTaskPresentation.active,
+    blocked: sharedTaskPresentation.stopped || sharedTaskPresentation.resumable || sharedTaskPresentation.waiting ||
+      Boolean(activePermission || activeQuestion) || sending || submissionPreparing ||
+      isSessionSubmissionPreparing(props.workspaceId, props.sessionId) || queuedDrafts.length > 0 ||
+      Boolean(error) || evalMarkdownMessages.length > 0 || model.transitionState !== "idle",
+    empty: draft.length === 0 && attachments.length === 0 && Object.keys(mentions).length === 0 &&
+      pasteParts.length === 0 && capabilities.length === 0 && officeGroups.length === 0 && !officeSend &&
+      !imageGeneration && !videoGeneration,
+    ready: desktopPolicy.policyConfirmed && !desktopPolicy.loading && props.promptSuggestionsProviderReady === true &&
+      !props.modelUnavailable && !props.taskSubmissionDisabled && activeRunsQuery.isSuccess &&
+      !coordinatorRun && liveStatus.type === "idle" && Boolean(props.selectedModel.providerID && props.selectedModel.modelID),
+    policyKey: desktopPolicy.policyConfirmed && !desktopPolicy.loading ? promptSuggestionPolicyKey(desktopPolicy.config) : null,
   });
 
   const buildDraft = useCallback((text: string, nextAttachments: ComposerAttachment[]): ComposerDraft => {
@@ -1359,6 +1398,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     if (inFlightSendIdentitiesRef.current.has(surfaceIdentity)) {
       return { outcome: "cancelled", reason: "context_changed" } as const;
     }
+    promptSuggestions.dismiss();
     inFlightSendIdentitiesRef.current.add(surfaceIdentity);
     const runGenerationBeforeSend = useSessionActivityStore.getState()
       .recordsByWorkspaceId[workspaceId]?.[sessionId]?.runGeneration ?? 0;
@@ -1440,7 +1480,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     } finally {
       inFlightSendIdentitiesRef.current.delete(surfaceIdentity);
     }
-  }, [fileHost, activeRunsQuery.refetch, appendComposerHistory, imageGenerationModels, imageGenerationUnavailable, props.onSendDraft, props.sessionId, props.taskSubmissionDisabled, props.workspaceId, props.client, queryClient, renderedMessages.length, videoGenerationModels, videoGenerationUnavailable]);
+  }, [fileHost, activeRunsQuery.refetch, appendComposerHistory, imageGenerationModels, imageGenerationUnavailable, promptSuggestions.dismiss, props.onSendDraft, props.sessionId, props.taskSubmissionDisabled, props.workspaceId, props.client, queryClient, renderedMessages.length, videoGenerationModels, videoGenerationUnavailable]);
 
   const clearComposer = useCallback((release = false) => {
     const ids = getComposerOfficeGroups(useComposerStateStore.getState(), props.sessionId).flatMap((group) => group.references.map((ref) => ref.referenceId));
@@ -2751,6 +2791,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
           onCreatePresentation={fileHost || props.isRemoteWorkspace ? undefined : handleCreatePresentation}
           focusEligible={props.visible !== false && props.isControlTarget && !props.modelPickerOpen}
           draft={draft}
+          promptSuggestion={promptSuggestions.suggestion}
+          promptSuggestionPending={promptSuggestions.pending}
+          onAcceptPromptSuggestion={promptSuggestions.accept}
+          onDismissPromptSuggestion={promptSuggestions.dismiss}
           mentions={mentions}
           onDraftChange={handleComposerDraftChange}
         onSend={handleSend}

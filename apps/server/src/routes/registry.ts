@@ -14,6 +14,11 @@ export interface RequestContext {
   reloadEvents: ReloadEventStore;
   tokens: TokenService;
   actor?: Actor;
+  /** Server-owned fixed diagnostic codes and numeric timings, never request/response content. */
+  requestDiagnostics?: {
+    promptSuggestionReason?: string; promptSuggestionDetail?: string;
+    promptSuggestionTimings?: Partial<Record<"state" | "context" | "model" | "inference" | "revalidate", number>>;
+  };
 }
 
 export interface Route {

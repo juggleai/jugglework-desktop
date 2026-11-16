@@ -1,4 +1,5 @@
 import { eq } from "drizzle-orm";
+import { existsSync } from "node:fs";
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 import { openRuntimeSqliteDatabase, runtimeDbPath } from "./runtime-db.js";
 import type { ServerConfig } from "./types.js";
@@ -82,6 +83,34 @@ export async function readJuggleWorkWorkspaceConfig(config: ServerConfig, worksp
     return normalizeJuggleWorkWorkspaceConfig(JSON.parse(row.configJson));
   } catch {
     return {};
+  }
+}
+
+/** Credential-only reads must not create a database or initialize its schema. */
+export async function inspectJuggleWorkWorkspaceConfig(config: ServerConfig, workspaceId: string): Promise<Record<string, unknown>> {
+  const path = runtimeDbPath(config);
+  if (!existsSync(path)) return {};
+  const sql = "SELECT CASE WHEN length(CAST(config_json AS BLOB)) <= 1048576 THEN config_json ELSE NULL END AS configJson FROM jugglework_workspace_configs WHERE workspace_id = ?";
+  let sqlite: { close(): void; query?: (sql: string) => { get(...args: unknown[]): unknown }; prepare?: (sql: string) => { get(...args: unknown[]): unknown } } | undefined;
+  try {
+    if (process.versions.bun) {
+      const { Database } = await import("bun:sqlite");
+      sqlite = new Database(path, { readonly: true, create: false });
+    } else {
+      const { DatabaseSync } = await import("node:sqlite");
+      sqlite = new DatabaseSync(path, { readOnly: true });
+    }
+    const row = (sqlite.query ? sqlite.query(sql) : sqlite.prepare!(sql)).get(workspaceId);
+    if (!isRecord(row)) return {};
+    if (typeof row.configJson !== "string" || row.configJson.length > 1024 * 1024) throw new Error("workspace_config_unavailable");
+    const value: unknown = JSON.parse(row.configJson);
+    if (!isRecord(value)) throw new Error("workspace_config_unavailable");
+    return value;
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("no such table")) return {};
+    throw new Error("workspace_config_unavailable");
+  } finally {
+    sqlite?.close();
   }
 }
 

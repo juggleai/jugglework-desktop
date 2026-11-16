@@ -11,7 +11,7 @@ import { readValidatedImageArtifact } from "../extensions/openai-image-generatio
 import type { ToonflowImageRuntime } from "../media-generation/image-runtime.js";
 import { readValidatedVideoArtifact, safeWorkspaceChild } from "../media-generation/artifact-publisher.js";
 import { createWorkspaceProviderCredentialResolver } from "../provider-credential-resolver.js";
-import { externalFetch } from "../server-fetch.js";
+import { describeConfiguredTextModel, requestTextModel, type TextProtocol } from "../text-model-inference.js";
 import type { ServerConfig, WorkspaceInfo } from "../types.js";
 import { addRoute, type Route } from "./registry.js";
 
@@ -271,7 +271,6 @@ export function registerToonflowRoutes(options: {
         options: { ...record(liveProvider.options), ...record(providerConfig.options) },
         models: { ...record(liveProvider.models), ...record(providerConfig.models) },
       };
-      const settings = record(provider.options);
       for (const [modelId, raw] of Object.entries(record(provider.models))) {
         if (Array.isArray(provider.blacklist) && provider.blacklist.includes(modelId)) continue;
         if (Array.isArray(provider.whitelist) && !provider.whitelist.includes(modelId)) continue;
@@ -283,14 +282,9 @@ export function registerToonflowRoutes(options: {
           continue;
         }
         if (model.imageGeneration !== undefined) continue;
-        const liveModel = record(liveProvider.models?.[modelId]);
-        const baseURL = String(settings.baseURL ?? record(model.api).url ?? record(liveModel.api).url ?? provider.api ?? "").replace(/\/+$/, "");
-        if (!URL.canParse(baseURL)) continue;
-        const url = new URL(baseURL);
-        if (url.username || url.password || url.search || url.hash || (url.protocol !== "https:" && !(url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)))) continue;
-        const npm = String(record(model.provider).npm ?? record(model.api).npm ?? provider.npm ?? record(liveModel.api).npm ?? "");
-        const protocol = npm.includes("anthropic") ? "anthropic-messages" : npm.includes("openai-compatible") ? "openai-completions" : npm.includes("openai") ? "openai-responses" : null;
-        if (!protocol) continue;
+        const described = describeConfiguredTextModel(effective, live ?? { all: [] }, { providerID: providerId, modelID: modelId });
+        if (!described) continue;
+        const { baseURL, protocol, upstreamModelId, headers } = described;
         const video = parseMediaGenerationCapabilities(model.mediaGeneration);
         if (video && !readyVideoModels.has(`${providerId}\0${modelId}`)) continue;
         const envKeys = Array.isArray(providerConfig.env) ? providerConfig.env.filter((key: unknown): key is string => typeof key === "string") : [];
@@ -299,14 +293,14 @@ export function registerToonflowRoutes(options: {
         result.push({ providerId, providerLabel: String(provider.name ?? providerId), modelId, label: String(model.name ?? modelId),
           protocol, type: video ? "video" : "text", video,
           contextWindow: record(model.limit).context, maxOutputTokens: record(model.limit).output,
-          baseURL, key });
+          baseURL, key, upstreamModelId, headers });
       }
     }
     return result;
   }
 
   addRoute(routes, "GET", "/workspace/:id/toonflow/models", "client", async (ctx) =>
-    jsonResponse({ models: (await models(ctx.params.id)).map(({ key, baseURL, ...publicModel }) => publicModel) }));
+    jsonResponse({ models: (await models(ctx.params.id)).map(({ key, baseURL, upstreamModelId, headers, ...publicModel }) => publicModel) }));
 
   addRoute(routes, "POST", "/workspace/:id/toonflow/proxy/:providerId/:operation", "client", async (ctx) => {
     if (config.readOnly) throw new ApiError(403, "read_only", "当前服务为只读模式");
@@ -403,36 +397,12 @@ export function registerToonflowRoutes(options: {
     if (operation !== expectedOperation) throw new ApiError(400, "protocol_mismatch", "模型协议不匹配");
     const payload = textPayloadSchemas[operation as keyof typeof textPayloadSchemas].safeParse(input.payload);
     if (!payload.success) invalidRequest();
-    const endpoint = { chat: "chat/completions", responses: "responses", messages: "messages" }[operation]!;
     const requestBody: Record<string, unknown> = { ...payload.data, model: input.modelId };
-    const headers: Record<string, string> = { Authorization: `Bearer ${model.key}`, "Content-Type": "application/json" };
-    if (operation === "messages") {
-      delete headers.Authorization;
-      headers["x-api-key"] = String(model.key);
-      headers["anthropic-version"] = "2023-06-01";
-      const betas = Array.isArray(requestBody.betas) ? requestBody.betas as string[] : [];
-      if (record(requestBody.thinking).type === "enabled" && !betas.includes("interleaved-thinking-2025-05-14")) {
-        betas.push("interleaved-thinking-2025-05-14");
-      }
-      if (betas.length) headers["anthropic-beta"] = [...new Set(betas)].join(",");
-      delete requestBody.betas;
-    }
     const timeoutSignal = AbortSignal.timeout(180_000);
-    let upstream: Response;
-    try {
-      upstream = await externalFetch(`${model.baseURL}/${endpoint}`, { method: "POST", headers, body: JSON.stringify(requestBody), redirect: "error", signal: AbortSignal.any([ctx.request.signal, timeoutSignal]) });
-    } catch {
-      if (ctx.request.signal.aborted) throw new ApiError(499, "request_cancelled", "模型请求已取消");
-      if (timeoutSignal.aborted) throw new ApiError(504, "model_request_timeout", "模型请求超时");
-      throw new ApiError(502, "model_transport_failed", "模型请求失败，请检查供应商连接");
-    }
-    if (!upstream.ok) { await upstream.body?.cancel(); throw new ApiError(upstream.status, "model_request_failed", `模型服务返回 HTTP ${upstream.status}`); }
+    const upstream = await requestTextModel({ model: { protocol: model.protocol as TextProtocol, baseURL: model.baseURL!, key: model.key!, upstreamModelId: model.upstreamModelId!, headers: model.headers! },
+      payload: requestBody, signal: AbortSignal.any([ctx.request.signal, timeoutSignal]), requestSignal: ctx.request.signal });
     const contentType = upstream.headers.get("content-type") ?? "";
     const streaming = requestBody.stream === true;
-    if ((streaming && !contentType.toLowerCase().startsWith("text/event-stream")) || (!streaming && !contentType.toLowerCase().startsWith("application/json"))) {
-      await upstream.body?.cancel();
-      throw new ApiError(502, "invalid_model_response", "模型服务返回了不匹配的响应协议");
-    }
     const responseHeaders: Record<string, string> = { "Content-Type": contentType, "Cache-Control": "no-store, no-transform" };
     if (streaming) responseHeaders["X-Accel-Buffering"] = "no";
     return new Response(upstream.body, { status: upstream.status, headers: responseHeaders });

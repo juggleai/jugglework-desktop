@@ -1,4 +1,5 @@
 /** @jsxImportSource react */
+import { useId } from "react";
 import {
   Select,
   SelectContent,
@@ -29,6 +30,8 @@ export type PreferencesViewProps = {
   busy: boolean;
   showThinking: boolean;
   onToggleShowThinking: () => void;
+  promptSuggestionsEnabled: boolean;
+  onTogglePromptSuggestions: () => void;
   autoCompactContext: boolean;
   autoCompactContextBusy: boolean;
   onToggleAutoCompactContext: () => void;
@@ -52,6 +55,7 @@ function desktopNotificationPreferenceLabel(value: DesktopNotificationPreference
 }
 
 export function PreferencesView(props: PreferencesViewProps) {
+  const promptSuggestionsDescriptionId = useId();
   const desktopNotificationItems = DESKTOP_NOTIFICATION_PREFERENCE_VALUES.map((value) => ({
     value,
     label: desktopNotificationPreferenceLabel(value),
@@ -71,6 +75,22 @@ export function PreferencesView(props: PreferencesViewProps) {
                 checked={props.showThinking}
                 disabled={props.busy}
                 onCheckedChange={props.onToggleShowThinking}
+              />
+            </LayoutSectionItemHeaderActions>
+          </LayoutSectionItemHeader>
+        </LayoutSectionItem>
+
+        <LayoutSectionItem>
+          <LayoutSectionItemHeader>
+            <LayoutSectionItemTitle>{t("settings.prompt_suggestions")}</LayoutSectionItemTitle>
+            <LayoutSectionItemDescription><span id={promptSuggestionsDescriptionId}>{t("settings.prompt_suggestions_desc")}</span></LayoutSectionItemDescription>
+            <LayoutSectionItemHeaderActions>
+              <Switch
+                aria-label={t("settings.prompt_suggestions")}
+                aria-describedby={promptSuggestionsDescriptionId}
+                checked={props.promptSuggestionsEnabled}
+                disabled={props.busy}
+                onCheckedChange={props.onTogglePromptSuggestions}
               />
             </LayoutSectionItemHeaderActions>
           </LayoutSectionItemHeader>

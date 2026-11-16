@@ -189,6 +189,7 @@ export type SessionModelSurfaceProps = Pick<
   | "contextWindowTokens"
   | "modelLabel"
   | "modelUnavailable"
+  | "promptSuggestionsProviderReady"
   | "taskSubmissionDisabled"
   | "modelVariant"
   | "modelVariantLabel"
