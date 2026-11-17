@@ -5,6 +5,12 @@ import { getServerSetting } from "./storage";
 import type { ChatConversation, ChatMessage, ChatUser } from "./types";
 import { readChatConnectionScope } from "./chat-connection";
 import { DOCS_MESSAGE_NAME, type ChatConnectionScope } from "./docs-message";
+import {
+  IM_CONNECT_TIMEOUT_MS,
+  IM_INIT_TIMEOUT_MS,
+  loadVendorScript,
+  withTimeout,
+} from "./vendor-scripts";
 
 declare global {
   interface Window {
@@ -40,25 +46,9 @@ function staticUrl(name: string) {
 }
 
 function loadScript(name: string, ready: () => boolean) {
-  if (ready()) return Promise.resolve();
-  const src = staticUrl(name);
-  const existing = document.querySelector<HTMLScriptElement>(`script[data-jugglechat-vendor="${name}"]`);
-  if (existing) {
-    return new Promise<void>((resolve, reject) => {
-      if (ready()) return resolve();
-      existing.addEventListener("load", () => resolve(), { once: true });
-      existing.addEventListener("error", () => reject(new Error(`无法加载 ${name}`)), { once: true });
-    });
-  }
-  return new Promise<void>((resolve, reject) => {
-    const script = document.createElement("script");
-    script.src = src;
-    script.async = false;
-    script.dataset.jugglechatVendor = name;
-    script.addEventListener("load", () => resolve(), { once: true });
-    script.addEventListener("error", () => reject(new Error(`无法加载 ${name}`)), { once: true });
-    document.head.appendChild(script);
-  });
+  // TIPS: 复用已插入 vendor 标签时不能只等 load 事件——事件早已触发完，
+  // 等待会永久挂起初始化；loadVendorScript 改为轮询 ready() 并带超时。
+  return loadVendorScript({ name, src: staticUrl(name), ready });
 }
 
 function resolveImServers(values: string[]) {
@@ -89,7 +79,7 @@ class JuggleChatRuntime {
     const setting = getServerSetting();
     const epoch = this.epoch;
     if (!setting) throw new Error("请先配置 Chat 组织");
-    this.initialized = (async () => {
+    const startup = (async () => {
       await loadScript("aliyun-oss-sdk-6.18.1.min.js", () => Boolean(window.OSS));
       await loadScript("tgs-player.js", () => Boolean(customElements.get("tgs-player")));
       if (epoch !== this.epoch || readChatConnectionScope()?.key !== scope.key) throw new Error("chat_scope_changed");
@@ -103,6 +93,9 @@ class JuggleChatRuntime {
       this.wireClientEvents(client, scope, epoch);
       return client;
     })();
+    // TIPS: 脚本加载和 SDK init 都可能永不返回。超时后置空缓存并抛可读错误，
+    // 让上层把 status 落到 error，而不是让消息页无限显示"正在初始化"。
+    this.initialized = withTimeout(startup, IM_INIT_TIMEOUT_MS, "IM 初始化超时，请检查网络后重试");
     try {
       return await this.initialized;
     } catch (error) {
@@ -158,8 +151,13 @@ class JuggleChatRuntime {
     if (client.isConnected() && client.getCurrentUser()?.id === user.id) return client.getCurrentUser();
     const attempt = this.connectionAttempt;
     if (attempt && attempt.client === client) return attempt.promise;
-    const promise = Promise.resolve(client.connect({ userId: user.id, token: user.token }))
-      .finally(() => { if (this.connectionAttempt?.promise === promise) this.connectionAttempt = null; });
+    // TIPS: ws 停在 CONNECTING（没有 open/close/error）时 SDK 不会 settle，
+    // bootstrap 会永久留在 initializing；超时后走 error 分支让用户看到失败原因。
+    const promise = withTimeout(
+      Promise.resolve(client.connect({ userId: user.id, token: user.token })),
+      IM_CONNECT_TIMEOUT_MS,
+      "IM 连接超时，请检查网络后重试",
+    ).finally(() => { if (this.connectionAttempt?.promise === promise) this.connectionAttempt = null; });
     this.connectionAttempt = { client, promise };
     return promise;
   }

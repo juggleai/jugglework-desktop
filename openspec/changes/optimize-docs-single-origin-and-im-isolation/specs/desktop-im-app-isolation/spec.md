@@ -17,3 +17,14 @@ Docs 卡片 SHALL 复用现有解析与接收来源绑定，只移除分类上�
 #### Scenario: A forged or forwarded card arrives
 - **WHEN** 卡片不符合当前连接来源或真实事件会话
 - **THEN** 卡片兜底或打开被拒，普通群与未读不受影响
+
+### Requirement: Chat loading always ends its spinner
+聊天初始化与会话加载 SHALL 在脚本加载、SDK 建连和会话请求上设置有限等待；任一步骤失败、超时或来源失效时 MUST 结束 loading 状态并展示可操作错误，不得无限骨架屏或永久停留在"正在初始化"。
+
+#### Scenario: IM connection never settles
+- **WHEN** WebSocket 一直停在连接中，或 vendor 脚本标签已存在但尚未就绪
+- **THEN** 到达等待上限后结束转圈，显示超时错误并提供重连入口
+
+#### Scenario: A pending conversation load is retried
+- **WHEN** 上一次会话加载超过等待上限仍未结束，用户重进消息页或触发刷新
+- **THEN** 发起新的加载请求，旧请求的迟到结果不覆盖新结果

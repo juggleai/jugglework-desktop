@@ -76,7 +76,11 @@ type JuggleChatState = {
 // 判断要不要跳过合并，见那里的 TIPS。
 const IGNORED_CONVERSATIONS = new Set(["friend_apply", "post_ntf", ""]);
 let subscriptionsStarted = false;
-let conversationLoad: { scope: ChatConnectionScope; promise: Promise<void> } | null = null;
+// TIPS: 超过这个时间仍未结束的会话加载不能再被复用：SDK 命令回调可能永远不来，
+// 复用会让 loadingConversations 永久为 true，左侧列表一直停在骨架屏。
+const CONVERSATION_LOAD_STALE_MS = 30_000;
+let conversationLoad: { scope: ChatConnectionScope; promise: Promise<void>; startedAt: number } | null = null;
+let conversationLoadId = 0;
 
 /** 每个异步阶段检查调用时的完整连接范围，迟到 A 结果不能进入 B。 */
 function currentScope(scope: ChatConnectionScope | null): scope is ChatConnectionScope {
@@ -509,7 +513,12 @@ export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
       set({ status: "connected", error: null });
       await get().loadConversations();
     } catch (error) {
-      if (currentScope(scope)) set({ status: "error", error: errorMessage(error) });
+      // TIPS: 只有"这次尝试仍代表当前界面"时才落错误，避免覆盖更新的连接。
+      // 但状态若还停在 initializing（来源在等待期间瞬时失效等），也必须退出转圈，
+      // 否则消息页会永远显示"正在初始化"。
+      if (currentScope(scope) || (get().status === "initializing" && get().connectionScope === scope)) {
+        set({ status: "error", error: errorMessage(error) });
+      }
     }
   },
 
@@ -522,7 +531,14 @@ export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
   async loadConversations() {
     const scope = get().connectionScope;
     if (!currentScope(scope) || !get().user || !juggleChatRuntime.isConnected()) return;
-    if (conversationLoad?.scope === scope) return conversationLoad.promise;
+    const cached = conversationLoad;
+    if (cached && cached.scope === scope) {
+      if (Date.now() - cached.startedAt < CONVERSATION_LOAD_STALE_MS) return cached.promise;
+      // TIPS: 旧请求已经不可能是"正常慢"，允许重建；旧 Promise 结束后仍由 loadId 判定
+      // 是否还能写回状态，避免它的 finally 误清新请求的 loading。
+      conversationLoad = null;
+    }
+    const loadId = ++conversationLoadId;
     const promise = (async () => {
       set({ loadingConversations: true });
       try {
@@ -545,25 +561,30 @@ export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
           time = next;
         }
         if (!currentScope(scope)) return;
+        // TIPS: stale 重建后旧请求可能迟到，不能让它覆盖新请求的结果。
+        if (loadId !== conversationLoadId) return;
         const conversations = mergeConversations([], rawConversations, get().user?.id);
         const active = get().activeConversation;
         set({
           conversations,
           conversationsInitialized: true,
           activeConversation: syncActiveConversation(active, conversations),
-          loadingConversations: false,
         });
         // TIPS: 会话列表与聊天页顶部的显示名要靠通讯录兜底（引擎给的 conversationTitle
         // 常为空，单聊尤其如此），所以通讯录不能等用户切到「通讯录」页才加载。
         if (!get().contacts.length && !get().loadingContacts) void get().loadContacts();
         await get().refreshTotalUnreadCount();
       } catch (error) {
-        if (currentScope(scope)) {
-          set({ loadingConversations: false, error: errorMessage(error) });
+        if (currentScope(scope) && loadId === conversationLoadId) set({ error: errorMessage(error) });
+      } finally {
+        // TIPS: 成功、失败、来源失效和分页异常都必须结束转圈。此前复位只写在
+        // 成功和 catch 分支里，一次悬挂或 scope 变化就能让列表永久 loading。
+        if (loadId === conversationLoadId && get().loadingConversations) {
+          set({ loadingConversations: false });
         }
       }
     })().finally(() => { if (conversationLoad?.promise === promise) conversationLoad = null; });
-    conversationLoad = { scope, promise };
+    conversationLoad = { scope, promise, startedAt: Date.now() };
     return promise;
   },
 
@@ -620,7 +641,12 @@ export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
       await get().refreshTotalUnreadCount();
     } catch (error) {
       if (currentScope(scope) && isSameConversation(get().activeConversation, conversation)) {
-        set({ loadingMessages: false, error: errorMessage(error) });
+        set({ error: errorMessage(error) });
+      }
+    } finally {
+      // TIPS: 历史请求悬挂时也不能让消息区一直转圈；只在当前会话仍是它时复位。
+      if (isSameConversation(get().activeConversation, conversation) && get().loadingMessages) {
+        set({ loadingMessages: false });
       }
     }
   },
@@ -637,10 +663,13 @@ export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
       set({
         messages: prependMessages(get().messages, result.messages ?? []),
         messagesFinished: Boolean(result.isFinished),
-        loadingMessages: false,
       });
     } catch (error) {
-      if (currentScope(scope)) set({ loadingMessages: false, error: errorMessage(error) });
+      if (currentScope(scope)) set({ error: errorMessage(error) });
+    } finally {
+      if (isSameConversation(get().activeConversation, conversation) && get().loadingMessages) {
+        set({ loadingMessages: false });
+      }
     }
   },
 
@@ -668,9 +697,11 @@ export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
           conversationType: 2,
         } satisfies ChatContact;
       }).filter((item) => item.user_id);
-      set({ contacts, groups, loadingContacts: false });
+      set({ contacts, groups });
     } catch (error) {
-      if (currentScope(scope)) set({ loadingContacts: false, error: errorMessage(error) });
+      if (currentScope(scope)) set({ error: errorMessage(error) });
+    } finally {
+      if (currentScope(scope) && get().loadingContacts) set({ loadingContacts: false });
     }
   },
 
