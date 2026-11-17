@@ -75,8 +75,8 @@ export { APP_PRIMARY_RAIL_ORDER } from "./app-navigation-order";
 export const APP_NAVIGATION_RAIL_WIDTH = 48;
 // 云文档能力和深链保持可用，当前产品版本仅隐藏应用导航入口。
 export const CLOUD_DOCS_NAVIGATION_ENABLED = false;
-// 通讯录仍可在消息页内切换，当前产品版本仅隐藏导航栏入口。
-export const CONTACTS_NAVIGATION_ENABLED = false;
+// 通讯录入口在消息按钮右侧展示，消息页内仍可切换。
+export const CONTACTS_NAVIGATION_ENABLED = true;
 // 漫剧工厂路由保持可用，当前产品版本隐藏「更多」菜单入口和置顶按钮。
 export const TOON_FACTORY_NAVIGATION_ENABLED = false;
 

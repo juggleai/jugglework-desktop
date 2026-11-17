@@ -443,10 +443,12 @@ describe("chat unread reminder", () => {
     expect(block).toContain(") : null}");
   });
 
-  test("hides the Contacts Rail entry while the flag is off", () => {
+  test("shows the Contacts Rail entry next to Chat", () => {
     const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
-    expect(source).toContain("export const CONTACTS_NAVIGATION_ENABLED = false;");
+    expect(source).toContain("export const CONTACTS_NAVIGATION_ENABLED = true;");
     expect(source).toContain("{CONTACTS_NAVIGATION_ENABLED ? <RailButton");
+    expect(source.indexOf('testId="app-rail-chat"')).toBeLessThan(source.indexOf('testId="app-rail-contacts"'));
+    expect(source.indexOf('testId="app-rail-contacts"')).toBeLessThan(source.indexOf('data-testid="app-rail-more"'));
   });
 });
 

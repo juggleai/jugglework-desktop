@@ -55,6 +55,7 @@ import { createJuggleChatSkillBridge } from "./jugglechat-skill-bridge.mjs";
 import { startRouterServer, stopRouterServer } from "./router-server.mjs";
 import { createApplicationMenu } from "./app-menu.mjs";
 import { applyBrandAppName } from "./brand-app-name.mjs";
+import { applyAsciiUserAgentFallback } from "./user-agent.mjs";
 import { createBrowserPanel } from "./browser-panel.mjs";
 import { createOfficePanel } from "./office-panel.mjs";
 import { createOfficeSelectionBridge } from "./office-selection-bridge.mjs";
@@ -238,6 +239,9 @@ import { createTerminalTargetResolver } from "./terminal-target-resolver.mjs";
 // Electron install from another local JuggleWork profile.
 app.setName(APP_NAME);
 app.setAppUserModelId(APP_IDENTIFIER);
+// TIPS: navigator.appVersion 会带上进程名（中文「北数Work」），服务端与第三方按
+// ASCII token 识别客户端；UA 里的应用标识统一为 beishuwork。
+applyAsciiUserAgentFallback(app);
 if (app.isPackaged && process.env.JUGGLEWORK_ELECTRON_DISABLE_PROTOCOL_REGISTRATION !== "1") {
   app.setAsDefaultProtocolClient(DESKTOP_PROTOCOL_SCHEME);
 }
@@ -3789,6 +3793,8 @@ if (!app.requestSingleInstanceLock()) {
       app,
       applicationMenu,
     });
+    // 品牌名可能在 ready 后更新，重新收敛一次 UA（幂等）。
+    applyAsciiUserAgentFallback(app);
     remoteSessionEventBridge = createMainRemoteSessionEventBridge();
     await workspaceActivityWatcher.initialize();
     remoteControlAgent = createMainRemoteControlAgent();
