@@ -190,6 +190,8 @@ describe("desktop session shell layout", () => {
     expect(topbar).toContain('isElectronRuntime() && actionSessionId');
     expect(topbar).toContain('isLocalWorkspace && actionSessionId');
     expect(topbar).toContain('props.settingsSlot && actionSessionId ? openExtensionsRailPane : props.onOpenSettings');
+    expect(sessionPage).toContain('windows:mr-[138px]');
+    expect(sessionPage).toContain('windows:pr-0');
   });
 
   test("removes the permanent right rail and constrains expanded Files to the rounded surface", () => {

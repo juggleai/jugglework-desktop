@@ -130,6 +130,7 @@ import {
   writeWindowsBrandShortcut,
   windowsIconFromNativeImage,
 } from "./brand-icon-windows.mjs";
+import { windowsTitleBarOptions, windowsTitleBarOverlay } from "./windows-titlebar.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
@@ -2421,6 +2422,11 @@ function macosVibrancyForCurrentTheme() {
 function applyNativeTheme(mode) {
   nativeTheme.themeSource = mode;
 
+  if (process.platform === "win32") {
+    mainWindow?.setTitleBarOverlay(windowsTitleBarOverlay(nativeTheme.shouldUseDarkColors));
+    return true;
+  }
+
   if (process.platform !== "darwin") {
     return true;
   }
@@ -3393,6 +3399,8 @@ async function createMainWindow() {
       vibrancy: macosVibrancyForCurrentTheme(),
       visualEffectState: "active",
     });
+  } else if (process.platform === "win32") {
+    Object.assign(windowAppearanceOptions, windowsTitleBarOptions(nativeTheme.shouldUseDarkColors));
   }
 
   const bootSidecar = await readBrandIconSidecar();
