@@ -189,6 +189,12 @@ describe("Toon Factory navigation", () => {
     expect(railSource).toContain('setAppNavigationItemPinned("toon-factory", !toonFactoryPinned)');
   });
 
+  test("hides the Toon Factory entry and ignores stale pins while the flag is off", () => {
+    expect(railSource).toContain("export const TOON_FACTORY_NAVIGATION_ENABLED = false;");
+    expect(railSource).toContain('{TOON_FACTORY_NAVIGATION_ENABLED ? <div');
+    expect(railSource).toContain('const toonFactoryPinned = TOON_FACTORY_NAVIGATION_ENABLED && pinnedNavigationItems.includes("toon-factory")');
+  });
+
   test("opens and activates only the current encoded workspace route", () => {
     expect(railSource).toContain("const workspaceId = props.workspaceId.trim()");
     expect(railSource).toContain('appPath?.view === "toon-factory" && appPath.workspaceId === workspaceId');
@@ -435,6 +441,12 @@ describe("chat unread reminder", () => {
     expect(block).toContain('testId="app-rail-chat"');
     expect(block).toContain('testId="app-rail-contacts"');
     expect(block).toContain(") : null}");
+  });
+
+  test("hides the Contacts Rail entry while the flag is off", () => {
+    const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
+    expect(source).toContain("export const CONTACTS_NAVIGATION_ENABLED = false;");
+    expect(source).toContain("{CONTACTS_NAVIGATION_ENABLED ? <RailButton");
   });
 });
 

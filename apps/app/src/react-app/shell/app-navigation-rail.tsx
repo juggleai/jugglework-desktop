@@ -75,6 +75,10 @@ export { APP_PRIMARY_RAIL_ORDER } from "./app-navigation-order";
 export const APP_NAVIGATION_RAIL_WIDTH = 48;
 // 云文档能力和深链保持可用，当前产品版本仅隐藏应用导航入口。
 export const CLOUD_DOCS_NAVIGATION_ENABLED = false;
+// 通讯录仍可在消息页内切换，当前产品版本仅隐藏导航栏入口。
+export const CONTACTS_NAVIGATION_ENABLED = false;
+// 漫剧工厂路由保持可用，当前产品版本隐藏「更多」菜单入口和置顶按钮。
+export const TOON_FACTORY_NAVIGATION_ENABLED = false;
 
 type AppNavigationRailProps = {
   /** Workspace used by workspace-bound destinations such as Toon Factory. */
@@ -485,7 +489,8 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
     setPinnedNavigationItems(setAppNavigationItemPinned("cloud-docs", !cloudDocsPinned));
   };
   const toonFactoryActive = appPath?.view === "toon-factory" && appPath.workspaceId === workspaceId;
-  const toonFactoryPinned = pinnedNavigationItems.includes("toon-factory");
+  // 入口隐藏时忽略历史置顶状态，避免升级后入口残留。
+  const toonFactoryPinned = TOON_FACTORY_NAVIGATION_ENABLED && pinnedNavigationItems.includes("toon-factory");
   const openToonFactory = () => {
     if (!workspaceId) return;
     setNavigationMenuOpen(false);
@@ -645,7 +650,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
             >
               <ChatRailIcon active={Boolean(props.chatActive && chatView !== "contacts")} />
             </RailButton>
-            <RailButton
+            {CONTACTS_NAVIGATION_ENABLED ? <RailButton
               label={t("navigation.contacts")}
               active={props.chatActive && chatView === "contacts"}
               onClick={() => openChatView("contacts")}
@@ -653,7 +658,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
               onPreviewMenuChange={props.onPreviewMenuChange}
             >
               <ContactsRailIcon active={Boolean(props.chatActive && chatView === "contacts")} />
-            </RailButton>
+            </RailButton> : null}
           </>
         ) : null}
         <DropdownMenu open={navigationMenuOpen} onOpenChange={setNavigationMenuOpen}>
@@ -665,13 +670,13 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
                 title={t("navigation.more")}
                 data-testid="app-rail-more"
                 data-app-rail-button
-                data-active={(navigationMenuOpen || (tasksActive && !tasksPinned) || (calendarActive && !calendarPinned) || (imNavigationVisible && meetingsActive && !meetingsPinned) || (cloudDocsActive && !cloudDocsPinned) || (props.reviewsActive && !reviewsPinned) || (toonFactoryActive && !toonFactoryPinned)) ? "true" : undefined}
+                data-active={(navigationMenuOpen || (tasksActive && !tasksPinned) || (calendarActive && !calendarPinned) || (imNavigationVisible && meetingsActive && !meetingsPinned) || (cloudDocsActive && !cloudDocsPinned) || (props.reviewsActive && !reviewsPinned) || (TOON_FACTORY_NAVIGATION_ENABLED && toonFactoryActive && !toonFactoryPinned)) ? "true" : undefined}
                 className={cn(
                   "relative flex size-9 items-center justify-center rounded-xl text-dls-secondary/80 transition-[background-color,color,transform] duration-150 mac:titlebar-no-drag",
                   "hover:bg-dls-hover hover:text-dls-text active:scale-[0.96]",
                   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/35 focus-visible:ring-offset-1 focus-visible:ring-offset-dls-sidebar",
                   "data-popup-open:bg-dls-active data-popup-open:text-dls-text",
-                  (navigationMenuOpen || (tasksActive && !tasksPinned) || (calendarActive && !calendarPinned) || (imNavigationVisible && meetingsActive && !meetingsPinned) || (cloudDocsActive && !cloudDocsPinned) || (props.reviewsActive && !reviewsPinned) || (toonFactoryActive && !toonFactoryPinned)) && "bg-dls-active text-dls-text",
+                  (navigationMenuOpen || (tasksActive && !tasksPinned) || (calendarActive && !calendarPinned) || (imNavigationVisible && meetingsActive && !meetingsPinned) || (cloudDocsActive && !cloudDocsPinned) || (props.reviewsActive && !reviewsPinned) || (TOON_FACTORY_NAVIGATION_ENABLED && toonFactoryActive && !toonFactoryPinned)) && "bg-dls-active text-dls-text",
                 )}
               >
                 <Ellipsis className="size-5" strokeWidth={2} />
@@ -892,7 +897,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
               </button>
             </div>
             ) : null}
-            <div
+            {TOON_FACTORY_NAVIGATION_ENABLED ? <div
               className="group flex items-center gap-1 rounded-2xl transition-colors hover:bg-accent focus-within:bg-accent"
               data-testid="app-navigation-more-toon-factory-row"
             >
@@ -929,7 +934,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
               >
                 <Pin className={cn("size-4", toonFactoryPinned && "fill-current")} />
               </button>
-            </div>
+            </div> : null}
           </DropdownMenuContent>
         </DropdownMenu>
         {tasksPinned || calendarPinned || (imNavigationVisible && meetingsPinned) || cloudDocsPinned || reviewsPinned || toonFactoryPinned ? (

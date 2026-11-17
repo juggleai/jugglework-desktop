@@ -20,11 +20,15 @@ export function parsePinnedAppNavigationItems(raw: string | null | undefined): P
   }
 }
 
+/** 用户从未调整过置顶时，「更多」菜单中的常用入口默认固定到导航栏。 */
+export const DEFAULT_PINNED_APP_NAVIGATION_ITEMS: readonly PinnableAppNavigationItem[] = ["tasks", "calendar", "meetings"];
+
 export function readPinnedAppNavigationItems(): PinnableAppNavigationItem[] {
-  if (typeof window === "undefined") return [];
-  return parsePinnedAppNavigationItems(
-    window.localStorage.getItem(APP_NAVIGATION_PINS_STORAGE_KEY),
-  );
+  if (typeof window === "undefined") return [...DEFAULT_PINNED_APP_NAVIGATION_ITEMS];
+  const raw = window.localStorage.getItem(APP_NAVIGATION_PINS_STORAGE_KEY);
+  // 已保存的选择（包括空列表）优先，只有从未保存过时才使用默认置顶。
+  if (raw === null) return [...DEFAULT_PINNED_APP_NAVIGATION_ITEMS];
+  return parsePinnedAppNavigationItems(raw);
 }
 
 export function setAppNavigationItemPinned(

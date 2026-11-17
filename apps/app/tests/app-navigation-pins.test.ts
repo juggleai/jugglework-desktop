@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 
 import {
   APP_NAVIGATION_PINS_STORAGE_KEY,
+  DEFAULT_PINNED_APP_NAVIGATION_ITEMS,
   appNavigationPinsChangedEvent,
   parsePinnedAppNavigationItems,
   readPinnedAppNavigationItems,
@@ -46,6 +47,20 @@ describe("app navigation pins", () => {
     expect(parsePinnedAppNavigationItems(null)).toEqual([]);
   });
 
+  test("pins Tasks, Calendar, and Meetings by default until the user saves a choice", () => {
+    const storage = memoryStorage();
+    Object.defineProperty(globalThis, "CustomEvent", { configurable: true, value: class { constructor(public type: string, init?: { detail?: unknown }) { Object.assign(this, init); } } });
+    Object.defineProperty(globalThis, "window", { configurable: true, value: { localStorage: storage, dispatchEvent: () => true } });
+
+    expect(DEFAULT_PINNED_APP_NAVIGATION_ITEMS).toEqual(["tasks", "calendar", "meetings"]);
+    expect(readPinnedAppNavigationItems()).toEqual(["tasks", "calendar", "meetings"]);
+    expect(setAppNavigationItemPinned("calendar", false)).toEqual(["tasks", "meetings"]);
+    expect(setAppNavigationItemPinned("tasks", false)).toEqual(["meetings"]);
+    expect(setAppNavigationItemPinned("meetings", false)).toEqual([]);
+    // 用户取消全部置顶后保持为空，不再回退到默认值。
+    expect(readPinnedAppNavigationItems()).toEqual([]);
+  });
+
   test("persists pin changes and broadcasts them in the current window", () => {
     const storage = memoryStorage();
     const events: Array<{ type: string; detail?: unknown }> = [];
@@ -70,6 +85,7 @@ describe("app navigation pins", () => {
         },
       },
     });
+    storage.setItem(APP_NAVIGATION_PINS_STORAGE_KEY, "[]");
 
     expect(setAppNavigationItemPinned("tasks", true)).toEqual(["tasks"]);
     expect(setAppNavigationItemPinned("reviews", true)).toEqual(["tasks", "reviews"]);
