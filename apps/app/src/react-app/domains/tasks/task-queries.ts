@@ -18,7 +18,10 @@ export const productTaskKeys = {
   activity: (scope: ProductTaskScope, taskId: string) => [...productTaskKeys.detail(scope, taskId), "activity"] as const,
   reminders: (scope: ProductTaskScope, taskId: string) => [...productTaskKeys.detail(scope, taskId), "reminders"] as const,
   taskLists: (scope: ProductTaskScope, archived: boolean) => [...productTaskKeys.all(scope), "task-lists", archived] as const,
+  taskListDetails: (scope: ProductTaskScope) => [...productTaskKeys.all(scope), "task-list-details"] as const,
+  taskListDetail: (scope: ProductTaskScope, listId: string) => [...productTaskKeys.taskListDetails(scope), listId] as const,
   organizationMembers: (scope: ProductTaskScope) => [...productTaskKeys.all(scope), "organization-members"] as const,
+  collaborationGroups: (scope: ProductTaskScope) => [...productTaskKeys.all(scope), "collaboration-groups"] as const,
   activityFeeds: (scope: ProductTaskScope) => [...productTaskKeys.all(scope), "activity-feed"] as const,
   activityFeed: (scope: ProductTaskScope, unreadOnly: boolean) => [...productTaskKeys.activityFeeds(scope), { unreadOnly }] as const,
 };
@@ -82,6 +85,36 @@ export function useProductTaskLists(input: { client: DenClient; scope: ProductTa
     enabled: (input.active ?? true) && Boolean(input.scope),
     queryFn: ({ signal }) => loadAllProductTaskLists({ client: input.client, organizationId: input.scope!.organizationId, archived: input.archived, signal }),
     staleTime: 30_000,
+    retry: false,
+  });
+}
+
+export function useProductTaskListDetail(input: { client: DenClient; scope: ProductTaskScope | null; listId: string | null }) {
+  return useQuery({
+    queryKey: input.scope && input.listId ? productTaskKeys.taskListDetail(input.scope, input.listId) : ["product-tasks", "task-list-detail", "unavailable"],
+    enabled: Boolean(input.scope && input.listId),
+    queryFn: () => input.client.getProductTaskList(input.scope!.organizationId, input.listId!),
+    staleTime: 20_000,
+    retry: false,
+  });
+}
+
+export function useProductTaskCollaborationGroups(input: { client: DenClient; scope: ProductTaskScope | null; active?: boolean }) {
+  return useQuery({
+    queryKey: input.scope ? productTaskKeys.collaborationGroups(input.scope) : ["product-tasks", "collaboration-groups", "unavailable"],
+    enabled: (input.active ?? true) && Boolean(input.scope),
+    queryFn: async ({ signal }) => {
+      const groups = [];
+      let offset = 0;
+      while (true) {
+        const page = await input.client.listCollaborationGroups(input.scope!.organizationId, { limit: 100, offset }, { signal });
+        groups.push(...page.groups);
+        offset += page.groups.length;
+        if (!page.groups.length || offset >= page.total) break;
+      }
+      return groups;
+    },
+    staleTime: 60_000,
     retry: false,
   });
 }

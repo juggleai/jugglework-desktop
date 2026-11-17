@@ -71,6 +71,10 @@ export type DenOrganizationMember = {
   user: { id: string; name: string | null; account: string | null; email: string | null; avatar: string | null };
 };
 export type DenOrganizationMemberPage = { members: DenOrganizationMember[]; total: number; limit: number; offset: number };
+export type DenCollaborationGroup = { id: string; name: string; avatar: string | null; groupType: number; organizationId: string };
+export type DenCollaborationGroupPage = { groups: DenCollaborationGroup[]; total: number };
+export type DenCollaborationGroupMember = { id: string; groupId: string; userId: string; name: string; account: string | null; avatar: string | null };
+export type DenCollaborationGroupMemberPage = { members: DenCollaborationGroupMember[]; total: number; limit: number; offset: number };
 export type DenProductTask = {
   id: string;
   /** Organization-scoped human-readable number. Null when reading an older server. */
@@ -139,7 +143,9 @@ export type DenProductTaskMoveResult = {
 };
 export type DenProductTaskList = { id: string; creatorMemberId: string; name: string; description: string; marker: string; visibility: DenProductTaskVisibility; version: number; archivedAt: string | null; createdAt: string; updatedAt: string };
 export type DenProductTaskListPage = { items: DenProductTaskList[]; nextCursor: string };
-export type DenProductTaskListResult = { list: DenProductTaskList; members: Array<{ memberId: string; role: "administrator" | "member" }>; permissions: { canView: boolean; canEdit: boolean; canManageMembers: boolean; canAddTasks: boolean; canArchive: boolean; canRestore: boolean }; replayed: boolean };
+export type DenProductTaskListPermissions = { canView: boolean; canEdit: boolean; canManageMembers: boolean; canTransferOwnership: boolean; canDelete: boolean; canAddTasks: boolean; canArchive: boolean; canRestore: boolean };
+export type DenProductTaskListResult = { list: DenProductTaskList; members: Array<{ memberId: string; role: "administrator" | "member" }>; permissions: DenProductTaskListPermissions; replayed: boolean };
+export type DenProductTaskListDeleteResult = { listId: string; replayed: boolean };
 export type DenProductTaskActivity = {
   comments: Array<{ id: string; authorMemberId: string; body: string; createdAt: string; updatedAt: string }>;
   events: Array<{ id: string; eventType: string; actorMemberId: string; affectedMemberId: string | null; taskVersion: number; createdAt: string }>;
@@ -1017,6 +1023,16 @@ function normalizeOrganizationMember(value: unknown): DenOrganizationMember | nu
   };
 }
 
+function normalizeCollaborationGroup(value: unknown): DenCollaborationGroup | null {
+  if (!isRecord(value) || typeof value.id !== "string" || typeof value.name !== "string" || typeof value.groupType !== "number" || typeof value.orgId !== "string" || value.avatar !== null && typeof value.avatar !== "string") return null;
+  return { id: value.id, name: value.name, avatar: value.avatar, groupType: value.groupType, organizationId: value.orgId };
+}
+
+function normalizeCollaborationGroupMember(value: unknown): DenCollaborationGroupMember | null {
+  if (!isRecord(value) || typeof value.id !== "string" || typeof value.groupId !== "string" || typeof value.userId !== "string" || typeof value.name !== "string" || value.account !== null && typeof value.account !== "string" || value.avatar !== null && typeof value.avatar !== "string") return null;
+  return { id: value.id, groupId: value.groupId, userId: value.userId, name: value.name, account: value.account, avatar: value.avatar };
+}
+
 function normalizeProductTaskMoveResult(value: unknown): DenProductTaskMoveResult {
   if (!isRecord(value) || typeof value.taskId !== "string" || !Number.isSafeInteger(value.version) || Number(value.version) < 1 ||
     value.listId !== null && typeof value.listId !== "string" ||
@@ -1035,19 +1051,29 @@ function normalizeProductTaskMoveResult(value: unknown): DenProductTaskMoveResul
 function normalizeProductTaskList(value: unknown): DenProductTaskList | null {
   if (!isRecord(value) || typeof value.id !== "string" || typeof value.creatorMemberId !== "string" ||
     typeof value.name !== "string" || typeof value.description !== "string" || typeof value.marker !== "string" ||
-    !["private", "members", "organization"].includes(String(value.visibility)) || typeof value.version !== "number" ||
+    !["private", "members", "organization"].includes(String(value.visibility)) || !Number.isSafeInteger(value.version) || Number(value.version) < 1 ||
+    value.archivedAt !== null && typeof value.archivedAt !== "string" ||
     typeof value.createdAt !== "string" || typeof value.updatedAt !== "string") return null;
   return { id: value.id, creatorMemberId: value.creatorMemberId, name: value.name, description: value.description, marker: value.marker,
-    visibility: value.visibility as DenProductTaskVisibility, version: value.version, archivedAt: typeof value.archivedAt === "string" ? value.archivedAt : null,
+    visibility: value.visibility as DenProductTaskVisibility, version: Number(value.version), archivedAt: value.archivedAt,
     createdAt: value.createdAt, updatedAt: value.updatedAt };
 }
 
 function normalizeProductTaskListResult(value: unknown): DenProductTaskListResult {
-  if (!isRecord(value) || !Array.isArray(value.members) || !isRecord(value.permissions)) throw new DenApiError(500, "invalid_task_list_payload", "Task list response was invalid.");
+  const permissionNames: Array<keyof DenProductTaskListPermissions> = ["canView", "canEdit", "canManageMembers", "canAddTasks", "canArchive", "canRestore"];
+  const backwardCompatiblePermissionNames: Array<keyof DenProductTaskListPermissions> = ["canTransferOwnership", "canDelete"];
+  if (!isRecord(value) || !Array.isArray(value.members) || !isRecord(value.permissions) || typeof value.replayed !== "boolean") throw new DenApiError(500, "invalid_task_list_payload", "Task list response was invalid.");
+  const permissions = value.permissions;
+  if (permissionNames.some((name) => typeof permissions[name] !== "boolean") || backwardCompatiblePermissionNames.some((name) => permissions[name] !== undefined && typeof permissions[name] !== "boolean")) throw new DenApiError(500, "invalid_task_list_payload", "Task list response was invalid.");
   const list = normalizeProductTaskList(value.list);
   const members = value.members.flatMap((member) => isRecord(member) && typeof member.memberId === "string" && ["administrator", "member"].includes(String(member.role)) ? [{ memberId: member.memberId, role: member.role as "administrator" | "member" }] : []);
-  if (!list || members.length !== value.members.length) throw new DenApiError(500, "invalid_task_list_payload", "Task list response was invalid.");
-  return { list, members, permissions: value.permissions as DenProductTaskListResult["permissions"], replayed: value.replayed === true };
+  if (!list || members.length !== value.members.length || !members.some((member) => member.memberId === list.creatorMemberId && member.role === "administrator")) throw new DenApiError(500, "invalid_task_list_payload", "Task list response was invalid.");
+  return { list, members, permissions: { ...permissions, canTransferOwnership: permissions.canTransferOwnership === true, canDelete: permissions.canDelete === true } as DenProductTaskListPermissions, replayed: value.replayed };
+}
+
+function normalizeProductTaskListDeleteResult(value: unknown): DenProductTaskListDeleteResult {
+  if (!isRecord(value) || typeof value.listId !== "string" || !value.listId || typeof value.replayed !== "boolean") throw new DenApiError(500, "invalid_task_list_delete_payload", "Task list delete response was invalid.");
+  return { listId: value.listId, replayed: value.replayed };
 }
 
 function normalizeProductTaskNotificationPage(value: unknown): DenProductTaskNotificationPage {
@@ -4277,6 +4303,25 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
       return { members: members as DenOrganizationMember[], total: Number(payload.total), limit: Number(payload.limit), offset: Number(payload.offset) };
     },
 
+    async listCollaborationGroups(orgId: string, options: { limit?: number; offset?: number } = {}, requestOptions: { signal?: AbortSignal } = {}): Promise<DenCollaborationGroupPage> {
+      const params = new URLSearchParams({ limit: String(options.limit ?? 100), offset: String(options.offset ?? 0) });
+      const payload = await requestJson<unknown>(baseUrls, `/v1/groups?${params}`, { method: "GET", token, organizationId: orgId, signal: requestOptions.signal });
+      if (!isRecord(payload) || !Array.isArray(payload.groups) || !Number.isSafeInteger(payload.total) || Number(payload.total) < 0) throw new DenApiError(500, "invalid_group_page", "Group page response was invalid.");
+      const groups = payload.groups.map(normalizeCollaborationGroup);
+      if (groups.some((group) => !group)) throw new DenApiError(500, "invalid_group_page", "Group page response was invalid.");
+      return { groups: groups as DenCollaborationGroup[], total: Number(payload.total) };
+    },
+
+    async listCollaborationGroupMembers(orgId: string, groupId: string, options: { limit?: number; offset?: number; search?: string } = {}, requestOptions: { signal?: AbortSignal } = {}): Promise<DenCollaborationGroupMemberPage> {
+      const params = new URLSearchParams({ limit: String(options.limit ?? 100), offset: String(options.offset ?? 0) });
+      if (options.search) params.set("search", options.search);
+      const payload = await requestJson<unknown>(baseUrls, `/v1/groups/${encodeURIComponent(groupId)}/members?${params}`, { method: "GET", token, organizationId: orgId, signal: requestOptions.signal });
+      if (!isRecord(payload) || !Array.isArray(payload.members) || !Number.isSafeInteger(payload.total) || Number(payload.total) < 0 || !Number.isSafeInteger(payload.limit) || !Number.isSafeInteger(payload.offset)) throw new DenApiError(500, "invalid_group_member_page", "Group member page response was invalid.");
+      const members = payload.members.map(normalizeCollaborationGroupMember);
+      if (members.some((member) => !member)) throw new DenApiError(500, "invalid_group_member_page", "Group member page response was invalid.");
+      return { members: members as DenCollaborationGroupMember[], total: Number(payload.total), limit: Number(payload.limit), offset: Number(payload.offset) };
+    },
+
     async listProductTasks(orgId: string, options: DenProductTaskListOptions = {}, requestOptions: { signal?: AbortSignal } = {}): Promise<DenProductTaskPage> {
       const payload = await requestJson<unknown>(baseUrls, `/v1/tasks${productTaskQuery(options)}`, {
         method: "GET", token, organizationId: orgId, signal: requestOptions.signal,
@@ -4317,7 +4362,9 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
     },
 
     async getProductTaskList(orgId: string, listId: string): Promise<DenProductTaskListResult> {
-      return normalizeProductTaskListResult(await requestJson<unknown>(baseUrls, `/v1/task-lists/${encodeURIComponent(listId)}`, { method: "GET", token, organizationId: orgId }));
+      const result = normalizeProductTaskListResult(await requestJson<unknown>(baseUrls, `/v1/task-lists/${encodeURIComponent(listId)}`, { method: "GET", token, organizationId: orgId }));
+      if (result.list.id !== listId) throw new DenApiError(500, "invalid_task_list_payload", "Task list response was invalid.");
+      return result;
     },
 
     async createProductTaskList(orgId: string, input: { idempotencyKey: string; name: string; description?: string; marker?: string; visibility?: DenProductTaskVisibility; members?: Array<{ memberId: string; role: "administrator" | "member" }> }): Promise<DenProductTaskListResult> {
@@ -4325,11 +4372,27 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
     },
 
     async updateProductTaskList(orgId: string, listId: string, input: { expectedVersion: number; idempotencyKey: string; name?: string; description?: string; marker?: string; visibility?: DenProductTaskVisibility; members?: Array<{ memberId: string; role: "administrator" | "member" }> }): Promise<DenProductTaskListResult> {
-      return normalizeProductTaskListResult(await requestJson<unknown>(baseUrls, `/v1/task-lists/${encodeURIComponent(listId)}`, { method: "PATCH", token, organizationId: orgId, body: input }));
+      const result = normalizeProductTaskListResult(await requestJson<unknown>(baseUrls, `/v1/task-lists/${encodeURIComponent(listId)}`, { method: "PATCH", token, organizationId: orgId, body: input }));
+      if (result.list.id !== listId) throw new DenApiError(500, "invalid_task_list_payload", "Task list response was invalid.");
+      return result;
+    },
+
+    async transferProductTaskListOwnership(orgId: string, listId: string, input: { expectedVersion: number; idempotencyKey: string; newOwnerMemberId: string }): Promise<DenProductTaskListResult> {
+      const result = normalizeProductTaskListResult(await requestJson<unknown>(baseUrls, `/v1/task-lists/${encodeURIComponent(listId)}/transfer-ownership`, { method: "POST", token, organizationId: orgId, body: input }));
+      if (result.list.id !== listId) throw new DenApiError(500, "invalid_task_list_payload", "Task list response was invalid.");
+      return result;
+    },
+
+    async deleteProductTaskList(orgId: string, listId: string, input: { expectedVersion: number; idempotencyKey: string; deleteUnassignedTasks: boolean }): Promise<DenProductTaskListDeleteResult> {
+      const result = normalizeProductTaskListDeleteResult(await requestJson<unknown>(baseUrls, `/v1/task-lists/${encodeURIComponent(listId)}`, { method: "DELETE", token, organizationId: orgId, body: input }));
+      if (result.listId !== listId) throw new DenApiError(500, "invalid_task_list_delete_payload", "Task list delete response was invalid.");
+      return result;
     },
 
     async transitionProductTaskList(orgId: string, listId: string, operation: "archive" | "restore", input: { expectedVersion: number; idempotencyKey: string }): Promise<DenProductTaskListResult> {
-      return normalizeProductTaskListResult(await requestJson<unknown>(baseUrls, `/v1/task-lists/${encodeURIComponent(listId)}/${operation}`, { method: "POST", token, organizationId: orgId, body: input }));
+      const result = normalizeProductTaskListResult(await requestJson<unknown>(baseUrls, `/v1/task-lists/${encodeURIComponent(listId)}/${operation}`, { method: "POST", token, organizationId: orgId, body: input }));
+      if (result.list.id !== listId) throw new DenApiError(500, "invalid_task_list_payload", "Task list response was invalid.");
+      return result;
     },
 
     async getProductTask(orgId: string, taskId: string, requestOptions: { signal?: AbortSignal } = {}): Promise<DenProductTaskResult> {

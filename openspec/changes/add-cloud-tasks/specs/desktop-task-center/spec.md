@@ -14,6 +14,18 @@ The Desktop SHALL provide Tasks in the More navigation menu, allow the user to p
 ### Requirement: Task information architecture
 The Desktop SHALL provide primary task secondary navigation for Today, Assigned to me, Following, and Activity. It SHALL provide an initially expanded, collapsible Quick access section for All tasks, Created by me, Assigned by me, and Completed, followed by task lists and their create/archive actions. Inbox, Trash, and Archived lists SHALL NOT be visible sidebar destinations.
 
+Sidebar task-list rows SHALL display a consistent task-list icon followed by the list name. They SHALL NOT prepend the list marker as visible text because a first-character marker duplicates the beginning of ordinary list names.
+
+The task-list section add action and the workbench New task list menu SHALL open the same auto-focused inline name input above the existing task lists instead of opening a task-list dialog. If the sidebar is collapsed, the workbench menu action SHALL expand it first. The input SHALL prefill and select a localized `Task list N` name so typing replaces it while immediate submission accepts the default. Enter or focus loss SHALL create a private list with an empty description and a marker derived from the first name character, then open the created list. Escape SHALL cancel without a mutation. A failed create SHALL preserve the entered name for retry.
+
+#### Scenario: Create a task list from the sidebar
+- **WHEN** the member activates the task-list section add action, enters a non-empty name, and presses Enter or moves focus away
+- **THEN** the Desktop creates a private task list inline and opens its workbench without showing the full creation dialog
+
+#### Scenario: Cancel sidebar task-list creation
+- **WHEN** the member presses Escape in the sidebar task-list name input
+- **THEN** the draft input closes and no task-list mutation is sent
+
 #### Scenario: Open tasks assigned by the current user
 - **WHEN** the user selects Assigned by me from Quick access
 - **THEN** the Desktop shows accessible tasks whose current assignees exclude the current member and whose current assignment provenance includes the current member
@@ -135,7 +147,7 @@ While a task-list page is active, no system collection navigation item SHALL rem
 - **THEN** the Desktop sorts the currently loaded tasks client-side and does not send unsupported `sort=start_at`
 
 ### Requirement: Assigned workbench creation menu
-The Assigned to me tool area SHALL expose exactly New task and New task list. New task SHALL open full creation. New task list SHALL open a dialog with name, description, marker, and private visibility default and SHALL expose mutation errors without leaking late results across scope changes.
+The Assigned to me tool area SHALL expose exactly New task and New task list. New task SHALL open full creation. New task list SHALL expand the sidebar when needed and open the shared inline task-list name input with private defaults. It SHALL expose mutation errors without leaking late results across scope changes.
 
 #### Scenario: Open the task creation menu
 - **WHEN** the user opens the Assigned to me creation menu

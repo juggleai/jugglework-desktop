@@ -220,3 +220,12 @@ export function writeTaskWorkbenchSettings(scope: ProductTaskScope | null, setti
     // Storage can be unavailable in hardened renderer contexts; settings remain usable in memory.
   }
 }
+
+export function removeTaskWorkbenchSettings(scope: ProductTaskScope | null, section: TaskWorkbenchSection = "assigned", listId?: string | null): void {
+	if (typeof localStorage === "undefined") return;
+	try {
+		localStorage.removeItem(taskWorkbenchStorageKey(scope, section, listId));
+	} catch {
+		// Storage can be unavailable in hardened renderer contexts.
+	}
+}
