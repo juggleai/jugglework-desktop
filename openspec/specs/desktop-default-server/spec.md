@@ -6,11 +6,11 @@ Define a consistent default server origin for fresh desktop installations while 
 
 ### Requirement: Default desktop server origin
 
-An unconfigured desktop installation SHALL use https://work.jugglechat.cn as its default server origin in both the renderer fallback and main-process bootstrap.
+An unconfigured desktop installation SHALL use https://dwork.jugglechat.cn as its default server origin in both the renderer fallback and main-process bootstrap.
 
 #### Scenario: Fresh installation
 - **WHEN** a desktop starts without an explicit bootstrap deployment or build override
-- **THEN** its default server origin is https://work.jugglechat.cn
+- **THEN** its default server origin is https://dwork.jugglechat.cn
 - **AND** the control-plane API resolves under /jwork/api on that origin
 
 #### Scenario: Explicit deployment configuration

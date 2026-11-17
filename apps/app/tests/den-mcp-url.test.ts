@@ -41,10 +41,10 @@ describe("buildDenMembershipUpgradeUrl", () => {
 
 describe("resolveDenBaseUrls", () => {
   test("defaults renderer and Electron bootstrap to the requested server", () => {
-    expect(DEFAULT_DEN_BASE_URL).toBe("https://work.jugglechat.cn");
+    expect(DEFAULT_DEN_BASE_URL).toBe("https://dwork.jugglechat.cn");
     expect(resolveDenBaseUrls(undefined)).toEqual({
-      baseUrl: "https://work.jugglechat.cn",
-      apiBaseUrl: "https://work.jugglechat.cn/jwork/api",
+      baseUrl: "https://dwork.jugglechat.cn",
+      apiBaseUrl: "https://dwork.jugglechat.cn/jwork/api",
     });
     const mainSource = readFileSync(new URL("../../desktop/electron/main.mjs", import.meta.url), "utf8");
     expect(mainSource).toContain(`const DEFAULT_DEN_BASE_URL = "${DEFAULT_DEN_BASE_URL}";`);

@@ -126,8 +126,15 @@ const DEFAULT_DESKTOP_BOOTSTRAP_PATH = (() => {
 const LEGACY_DESKTOP_BOOTSTRAP_PATH = path.join(os.homedir(), ".config", "jugglework", "desktop-bootstrap.json");
 const DESKTOP_BOOTSTRAP_FILENAME = "desktop-bootstrap.json";
 const STANDARD_DESKTOP_INSTALLER_PATTERN = /^jugglework-(?:mac-(?:arm64|x64)-.+\.dmg|win-x64-.+\.exe)$/i;
-const HOSTED_DESKTOP_WEB_URL = "https://work.juggle.im";
-const HOSTED_DESKTOP_API_URL = "https://work.juggle.im";
+const HOSTED_DESKTOP_WEB_URL = "https://dwork.jugglechat.cn";
+const HOSTED_DESKTOP_API_URL = "https://dwork.jugglechat.cn";
+// Hosted origins that earlier installers wrote into desktop-bootstrap.json.
+// They still count as the hosted deployment so candidate ordering and
+// installer reconfiguration keep treating them as ours.
+const LEGACY_HOSTED_DESKTOP_ORIGINS = new Set([
+  "https://work.jugglechat.cn",
+  "https://work.juggle.im",
+]);
 
 function bootstrapUrlOrigin(value) {
   if (typeof value !== "string" || !value.trim()) return "";
@@ -140,7 +147,9 @@ function bootstrapUrlOrigin(value) {
 
 function isHostedDesktopBootstrapConfig(config) {
   const baseUrlOrigin = bootstrapUrlOrigin(config?.baseUrl);
-  return baseUrlOrigin === HOSTED_DESKTOP_WEB_URL || baseUrlOrigin === HOSTED_DESKTOP_API_URL;
+  return baseUrlOrigin === HOSTED_DESKTOP_WEB_URL
+    || baseUrlOrigin === HOSTED_DESKTOP_API_URL
+    || LEGACY_HOSTED_DESKTOP_ORIGINS.has(baseUrlOrigin);
 }
 
 export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSignin, forceRequireSignin }) {

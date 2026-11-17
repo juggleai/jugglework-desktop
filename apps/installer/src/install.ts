@@ -37,8 +37,14 @@ const status: InstallStatus = {
   error: null,
 }
 
-const HOSTED_DESKTOP_WEB_URL = "https://work.juggle.im"
-const HOSTED_DESKTOP_API_URL = "https://work.juggle.im"
+const HOSTED_DESKTOP_WEB_URL = "https://dwork.jugglechat.cn"
+const HOSTED_DESKTOP_API_URL = "https://dwork.jugglechat.cn"
+// Hosted origins written by earlier installers stay classified as hosted so a
+// reinstall can still recognise and replace them.
+const LEGACY_HOSTED_DESKTOP_ORIGINS = new Set([
+  "https://work.jugglechat.cn",
+  "https://work.juggle.im",
+])
 const INSTALLER_APP_BUNDLE_NAME = "Install JuggleWork.app"
 
 type BootstrapCandidate = {
@@ -61,7 +67,9 @@ function bootstrapUrlOrigin(value: unknown): string {
 
 function isHostedBootstrapConfig(config: Record<string, unknown>): boolean {
   const baseUrlOrigin = bootstrapUrlOrigin(config.baseUrl)
-  return baseUrlOrigin === HOSTED_DESKTOP_WEB_URL || baseUrlOrigin === HOSTED_DESKTOP_API_URL
+  return baseUrlOrigin === HOSTED_DESKTOP_WEB_URL
+    || baseUrlOrigin === HOSTED_DESKTOP_API_URL
+    || LEGACY_HOSTED_DESKTOP_ORIGINS.has(baseUrlOrigin)
 }
 
 function readBootstrapCandidate(candidatePath: string): BootstrapCandidate | null {
