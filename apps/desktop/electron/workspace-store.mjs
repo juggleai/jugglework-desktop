@@ -925,6 +925,12 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
     let activeId = typeof state?.activeId === "string" ? state.activeId : null;
     let workspaces = Array.isArray(state?.workspaces) ? state.workspaces : [];
     let changed = false;
+    // TIPS: 默认办公工作区只需成功创建一次；旧状态文件没有该标记时，已有工作区即视为已完成。
+    let defaultWorkspaceProvisioned = state?.defaultWorkspaceProvisioned === true;
+    if (!defaultWorkspaceProvisioned && workspaces.length > 0) {
+      defaultWorkspaceProvisioned = true;
+      changed = true;
+    }
     if (!workspaceStateExists && process.env.JUGGLEWORK_DESKTOP_DISABLE_WORKSPACE_RECOVERY !== "1") {
       const recoveredWorkspaces = await recoverWorkspacesFromKnownState();
       if (recoveredWorkspaces.length > 0) {
@@ -940,9 +946,9 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
         changed = true;
       }
     }
-    // TIPS: 只在真正的首次启动（没有工作区状态文件、也没有可恢复的历史）时创建默认办公工作区。
-    // 状态文件一旦写入，用户主动删光工作区也不会被重新创建。
-    if (!workspaceStateExists && workspaces.length === 0 && defaultOfficeWorkspaceEnabled()) {
+    // TIPS: 本地没有任何工作区且默认办公工作区从未成功创建过时创建它（包括状态文件已被写成空列表、
+    // 或上次创建失败的情况）。成功后记录标记，用户主动删光工作区也不会被重新创建。
+    if (!defaultWorkspaceProvisioned && workspaces.length === 0 && defaultOfficeWorkspaceEnabled()) {
       const officeWorkspace = await createDefaultOfficeWorkspaceEntry().catch((error) => {
         console.warn("[workspace] failed to create the default office workspace", {
           error: error instanceof Error ? error.message : String(error),
@@ -954,6 +960,7 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
         watchedId = officeWorkspace.id;
         activeId = officeWorkspace.id;
         workspaces = [officeWorkspace];
+        defaultWorkspaceProvisioned = true;
         changed = true;
       }
     }
@@ -1049,6 +1056,7 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
       watchedId: resolvedWatchedId,
       activeId: resolvedActiveId,
       workspaces: dedupedWorkspaces,
+      defaultWorkspaceProvisioned,
     };
 
     if (changed) {
