@@ -16,6 +16,8 @@ declare global {
 type RuntimeEvent = "state" | "message" | "conversation" | "message-recalled" | "message-updated" | "message-reaction-changed" | "message-read" | "message-removed" | "message-set-top" | "stream-appended" | "stream-completed";
 type RuntimeListener = (payload: any, scope: ChatConnectionScope) => void;
 
+const IM_CONNECT_TIMEOUT_MS = 15_000;
+
 const CUSTOM_MESSAGES = [
   { name: "jw:meeting-sync", isCount: false, isStorage: false },
   { name: "jw:meeting-card", isCount: true, isStorage: true },
@@ -158,7 +160,19 @@ class JuggleChatRuntime {
     if (client.isConnected() && client.getCurrentUser()?.id === user.id) return client.getCurrentUser();
     const attempt = this.connectionAttempt;
     if (attempt && attempt.client === client) return attempt.promise;
-    const promise = Promise.resolve(client.connect({ userId: user.id, token: user.token }))
+    const sdkConnection = Promise.resolve(client.connect({ userId: user.id, token: user.token }));
+    const promise = new Promise<any>((resolve, reject) => {
+      const timeout = globalThis.setTimeout(() => {
+        // Some SDK failures occur inside a deferred callback and never settle
+        // connect(). Reset that abandoned client so Retry can start cleanly.
+        if (this.client === client) this.reset();
+        reject(new Error("IM 服务连接超时，请重试"));
+      }, IM_CONNECT_TIMEOUT_MS);
+      sdkConnection.then(
+        (value) => { globalThis.clearTimeout(timeout); resolve(value); },
+        (error) => { globalThis.clearTimeout(timeout); reject(error); },
+      );
+    })
       .finally(() => { if (this.connectionAttempt?.promise === promise) this.connectionAttempt = null; });
     this.connectionAttempt = { client, promise };
     return promise;

@@ -2076,7 +2076,7 @@ export function ConnectionBanner() {
   const acceptLogin = useJuggleChatStore((state) => state.acceptLogin);
   const clearError = useJuggleChatStore((state) => state.clearError);
   if (status !== "disconnected" && status !== "error" && !error) return null;
-  return <div className="jw-im-connection-banner"><CircleAlert size={16} /><span>{error || "Chat 网络连接已断开"}</span>{status === "disconnected" && user ? <button onClick={() => void acceptLogin(user)}><RefreshCw size={14} />重连</button> : <button onClick={clearError}><X size={14} /></button>}</div>;
+  return <div className="jw-im-connection-banner"><CircleAlert size={16} /><span>{error || "Chat 网络连接已断开"}</span>{user ? <button onClick={() => void acceptLogin(user)}><RefreshCw size={14} />重连</button> : <button onClick={clearError}><X size={14} /></button>}</div>;
 }
 
 function EmptyState(props: { icon: React.ReactNode; title: string; description: string }) {

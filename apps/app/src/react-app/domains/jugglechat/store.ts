@@ -502,7 +502,10 @@ export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
       return;
     }
     if (currentUser && !usesSameIMCredential) juggleChatRuntime.reset();
-    set({ status: "initializing", user });
+    // A new connection attempt supersedes any stale bootstrap/API error from
+    // the previous scope. Keeping that message while the SDK reports
+    // "connecting" makes a healthy retry look failed.
+    set({ status: "initializing", user, error: null });
     try {
       await juggleChatRuntime.connect(user);
       if (!currentScope(scope)) return;

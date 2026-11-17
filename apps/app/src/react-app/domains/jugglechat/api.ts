@@ -7,7 +7,20 @@ import type {
   OrganizationTeamsResult,
 } from "./types";
 import { readDenIMLoginBootstrap, readDenSettings, resolveDenBaseUrls } from "@/app/lib/den";
+import { desktopFetchViaMain } from "@/app/lib/desktop";
+import { isDesktopRuntime } from "@/app/lib/runtime-env";
 import { getServerSetting } from "./storage";
+
+/**
+ * Electron renderers use a localhost/file origin, while the Cloud API only
+ * trusts its deployed web origin. Route desktop requests through Main so
+ * authenticated Chat calls do not depend on browser CORS preflights.
+ */
+export function juggleChatFetch(input: RequestInfo | URL, init?: RequestInit) {
+  return isDesktopRuntime()
+    ? desktopFetchViaMain(input, init)
+    : globalThis.fetch(input, init);
+}
 
 function normalizeServer(value: string) {
   const trimmed = value.trim().replace(/\/$/, "");
@@ -44,7 +57,7 @@ async function organizationRequest<T>(path: string, init: RequestInit = {}, auth
   if (!headers.has("Content-Type") && init.body) headers.set("Content-Type", "application/json");
   if (authenticated && settings.authToken) headers.set("Authorization", `Bearer ${settings.authToken}`);
   if (authenticated && settings.activeOrgId) headers.set("x-jugglework-legacy-org-id", settings.activeOrgId);
-  const response = await fetch(`${organizationApiBase()}${path}`, { ...init, headers });
+  const response = await juggleChatFetch(`${organizationApiBase()}${path}`, { ...init, headers });
   const text = await response.text();
   let payload: unknown = {};
   if (text) {
@@ -71,7 +84,7 @@ export async function chatRequest<T>(pathOrUrl: string, init: RequestInit = {}) 
   if (!headers.has("Content-Type") && init.body) headers.set("Content-Type", "application/json");
   if (setting?.app_key) headers.set("AppKey", setting.app_key);
   if (settings.authToken) headers.set("Authorization", `Bearer ${settings.authToken}`);
-  const response = await fetch(url, { ...init, headers });
+  const response = await juggleChatFetch(url, { ...init, headers });
   if (response.status === 401) {
     window.dispatchEvent(new CustomEvent("jugglechat:unauthorized"));
   }

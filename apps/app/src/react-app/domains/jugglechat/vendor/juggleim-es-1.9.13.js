@@ -497,7 +497,12 @@ function max(arr, key) {
   }, arr[0]);
 }
 function getBrowserVersion() {
-  return navigator.appVersion;
+  // Electron folds the branded application name into appVersion. A tenant
+  // brand may contain CJK (for example "北数Work"), while XMLHttpRequest
+  // rejects header values containing code points outside ISO-8859-1. The IM
+  // connection sends this value as x-device, so encode it before it reaches
+  // setRequestHeader instead of allowing the SDK connection promise to hang.
+  return encodeURI(navigator.appVersion);
 }
 var utils = {
   Prosumer,
