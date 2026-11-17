@@ -295,7 +295,7 @@ function RailButton({
     <button
       type="button"
       aria-label={badge > 0 ? `${label}, ${resolvedBadgeLabel}` : label}
-      title={showTooltip ? (tooltipLabel ?? label) : undefined}
+      title={showTooltip && nativeTooltip ? (tooltipLabel ?? label) : undefined}
       disabled={disabled}
       onClick={onClick}
       onMouseEnter={() => {

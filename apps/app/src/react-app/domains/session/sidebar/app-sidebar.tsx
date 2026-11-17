@@ -180,7 +180,6 @@ function SessionLoadingIndicator({ status, isActiveWork }: SessionLoadingIndicat
       data-session-loading-indicator
       className="absolute right-2.5 top-1/2 z-10 flex size-5 -translate-y-1/2 items-center justify-center transition-opacity duration-150 group-hover/menu-sub-item:opacity-0 group-has-data-popup-open/menu-sub-item:opacity-0 group-has-[:focus-visible]/menu-sub-item:opacity-0"
       role="status"
-      title={title}
       aria-label={title}
     >
       <SessionCircularProgress className="dark:text-white" />
@@ -208,7 +207,6 @@ function SessionOutcomeIndicator({ className, status, isActiveWork, isCompleted 
         data-session-attention-indicator
         className={cn("size-2 shrink-0 rounded-full", className)}
         style={{ backgroundColor: OUTCOME_DOT_NEEDS_ACTION }}
-        title={title}
         aria-label={title}
       />
     );
@@ -221,7 +219,6 @@ function SessionOutcomeIndicator({ className, status, isActiveWork, isCompleted 
       data-session-attention-indicator
       className={cn("size-2 shrink-0 rounded-full", className)}
       style={{ backgroundColor: OUTCOME_DOT_UNREAD }}
-      title={t("workspace_list.session_completed_unseen")}
       aria-label={t("workspace_list.session_completed_unseen")}
     />
   );
@@ -2469,7 +2466,6 @@ function WorkspaceSidebarGroup({
                   <span
                     className="absolute right-0 top-1/2 flex size-6 -translate-y-1/2 items-center justify-center transition-opacity duration-150 group-hover/workspace-header:opacity-0 group-has-data-popup-open/workspace-header:opacity-0 group-has-[:focus-visible]/workspace-header:opacity-0"
                     role="status"
-                    title={t("workspace_list.session_streaming")}
                     aria-label={t("workspace_list.session_streaming")}
                   >
                     <SessionCircularProgress />
@@ -3308,7 +3304,7 @@ function SessionMenuItem({
           className={rowButtonClass}
         >
           {leading}
-          <span className="min-w-0 flex-1 truncate" title={itemTitle}>{displayTitle}</span>
+          <span className="min-w-0 flex-1 truncate">{displayTitle}</span>
         </SidebarMenuSubButton>
       </SessionContextMenu>
       {trailing}

@@ -366,7 +366,13 @@ describe("navigation rail visual proportions", () => {
     expect(source).toContain('onPreviewMenuChange?.(previewScope ?? null)');
     expect(source).toContain('onAppPreviewChange?.(appPreviewTarget, true)');
     expect(source).toContain('onAppPreviewChange?.(appPreviewTarget, false)');
-    expect(source).toContain('title={showTooltip ? (tooltipLabel ?? label) : undefined}');
+    expect(source).toContain('title={showTooltip && nativeTooltip ? (tooltipLabel ?? label) : undefined}');
+  });
+
+  test("keeps Windows drag regions from swallowing Rail clicks", () => {
+    const css = readFileSync(new URL("../src/app/index.css", import.meta.url), "utf8");
+    expect(css).toContain("html.jugglework-electron.jugglework-platform-windows .mac\\:titlebar-drag");
+    expect(css).toContain("html.jugglework-electron.jugglework-platform-windows .mac\\:titlebar-no-drag");
   });
 
   test("omits the cloud workspace destination from the primary Rail", () => {
