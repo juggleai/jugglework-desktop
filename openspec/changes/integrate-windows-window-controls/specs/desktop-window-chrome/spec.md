@@ -21,3 +21,18 @@ The Windows desktop main window SHALL render the native minimize, maximize/resto
 #### Scenario: Other desktop platforms
 - **WHEN** the desktop main window runs on macOS or Linux
 - **THEN** its existing title-bar and window-decoration behavior remains unchanged
+
+### Requirement: Windows interactive controls stay clickable under the hidden title bar
+Because the hidden Windows title bar makes `app-region` effective, the desktop app SHALL mark drag and no-drag regions identically on Windows and macOS.
+
+#### Scenario: Navigation rail on Windows
+- **WHEN** a user clicks a navigation rail destination such as Tasks, Plugins, Messages, Calendar, or Meetings on Windows
+- **THEN** the click reaches the button instead of starting a window drag
+
+### Requirement: No native hover tooltips on navigation and session rows
+Navigation rail buttons and session list rows SHALL NOT expose native `title` tooltips, so Windows does not show a system tooltip on hover. Accessible names SHALL remain available through `aria-label`.
+
+#### Scenario: Hovering on Windows
+- **WHEN** a user hovers a navigation rail button or a session row on Windows
+- **THEN** only the application's own tooltip, if any, is shown
+- **AND** the cloud-docs native view keeps its native title because DOM overlays render beneath it

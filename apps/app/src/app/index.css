@@ -57,6 +57,15 @@
   app-region: no-drag;
 }
 
+/* TIPS: Windows 主窗口隐藏原生标题栏后 app-region 同样生效；复用 macOS 的拖拽/非拖拽标记，避免整页拖拽区吞掉按钮点击。 */
+html.jugglework-electron.jugglework-platform-windows .mac\:titlebar-drag {
+  app-region: drag;
+  user-select: none;
+}
+html.jugglework-electron.jugglework-platform-windows .mac\:titlebar-no-drag {
+  app-region: no-drag;
+}
+
 /* 可滚动内容统一使用窄滚动条，避免系统轨道形成不透明的宽边栏。 */
 @supports not selector(::-webkit-scrollbar) {
   .subtle-scrollbar {
