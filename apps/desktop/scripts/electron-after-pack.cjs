@@ -4,6 +4,7 @@ const { spawnSync } = require("node:child_process");
 const asar = require("@electron/asar");
 const { OFFICE_ENGINE_PLATFORMS, copyOfficeEngineResources } = require("./office-engine-resources.cjs");
 const { copyOfficeAssets } = require("./office-assets.cjs");
+const { verifyPackagedPresentationGenerator } = require("./presentation-package-verifier.cjs");
 
 const computerUseHelperAppName = "JuggleWork Computer Use.app";
 const macTrayTemplateImages = [
@@ -453,6 +454,10 @@ async function afterPack(context) {
   const tools = verifyMediaTools(mediaRoot, target, { phase: target.platform === "win32" ? "any" : "built" });
   verifyMediaExecutables(tools);
   await runAfterPack(context);
+  const runtime = resolvePackagedExecutable(context);
+  const resourcesPath = resolvePackagedResourcesPath(context);
+  if (!runtime || !resourcesPath) throw new Error("Cannot resolve packaged runtime or resources for presentation verification");
+  verifyPackagedPresentationGenerator({ runtime, resourcesPath });
 }
 
 module.exports = afterPack;
@@ -471,3 +476,5 @@ module.exports.writePackagedUpdateConfiguration = writePackagedUpdateConfigurati
 module.exports.windowsPublisherNames = windowsPublisherNames;
 module.exports.packageBundledOfficeResources = packageBundledOfficeResources;
 module.exports.verifyRendererResources = verifyRendererResources;
+module.exports.resolvePackagedExecutable = resolvePackagedExecutable;
+module.exports.resolvePackagedResourcesPath = resolvePackagedResourcesPath;

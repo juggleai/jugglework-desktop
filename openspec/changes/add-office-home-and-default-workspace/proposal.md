@@ -9,6 +9,7 @@
 - Below the composer, show a workspace selector and the permission selector. While the home is visible, the permission selector moves out of the composer so it is shown once.
 - When no session is selected, the workspace page shows the same home instead of the "请选择或新建一个会话以开始。" starter cards (编辑 CSV, 浏览网页, 连接扩展). Its composer is an entry point: Enter or the send button creates a task with the typed text as its draft, and a scenario chip creates a task with that template. Nothing is sent automatically. The "connect a model provider" card stays below it when no model is connected.
 - The home returns to the normal chat layout as soon as the session has a message, is sending, streaming, preparing, has queued drafts, or shows an error. The split-view secondary pane never shows the home.
+- While a newly created session snapshot is loading, do not interpret the temporary empty message array as a real empty transcript: keep the transcript blank for the short loading grace period, show the delayed loading card only after that grace period, and never mount the legacy CSV/browser/extension starter cards when the office home is enabled.
 - On first launch only (no workspace state file and no recoverable workspace), the desktop shell creates the local workspace `~/Documents/北数Work/日常办公` and selects it. It is not recreated after the user removes every workspace. `JUGGLEWORK_DESKTOP_DISABLE_DEFAULT_WORKSPACE=1` turns this off; `JUGGLEWORK_DEFAULT_WORKSPACE_ROOT` overrides the directory.
 
 ## Impact

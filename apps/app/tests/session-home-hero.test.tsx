@@ -93,6 +93,17 @@ describe("session surface home layout", () => {
     expect(footer).toContain("{permissionModeSelector}");
   });
 
+  test("does not render legacy starter cards while a new-session snapshot is pending", () => {
+    const pendingGate = source.slice(
+      source.indexOf("{pendingSessionLoad ? ("),
+      source.indexOf(") : (snapshotQuery.isError", source.indexOf("{pendingSessionLoad ? (")),
+    );
+    expect(pendingGate).toContain("showDelayedLoading ? (");
+    expect(pendingGate).toContain('data-testid="session-snapshot-loading"');
+    expect(source.indexOf("{pendingSessionLoad ? (")).toBeLessThan(source.indexOf("<MessageListProvider"));
+    expect(source).toContain("displaySuggestions={shellConfig.starterCards && !props.home}");
+  });
+
   test("centers the title in the window and keeps chips and composer at the bottom", () => {
     const hero = readFileSync(new URL("../src/react-app/domains/session/surface/session-home-hero.tsx", import.meta.url), "utf8");
     expect(hero).toContain("absolute inset-x-0 top-[38%] -translate-y-1/2");

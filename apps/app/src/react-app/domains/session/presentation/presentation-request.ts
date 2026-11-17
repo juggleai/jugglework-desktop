@@ -24,6 +24,7 @@ export type PresentationRequest = {
 };
 
 const CONTROL_CHARACTER_RE = /[\u0000-\u001f\u007f]/;
+const WINDOWS_RESERVED_NAME_RE = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i;
 const SAFE_SOURCE_EXTENSIONS = new Set(["docx", "pptx", "xlsx", "csv", "pdf", "md", "markdown", "txt"]);
 
 function boundedText(value: unknown, field: string, max: number): string {
@@ -35,11 +36,13 @@ function boundedText(value: unknown, field: string, max: number): string {
 }
 
 function normalizeOutputName(value: unknown): string {
-  const outputName = boundedText(value, "Output name", 120);
-  if (outputName.includes("/") || outputName.includes("\\") || outputName === "." || outputName === "..") {
-    throw new Error("Output name must be a filename, not a path.");
+  const raw = boundedText(value, "Output name", 115);
+  const outputName = raw.toLowerCase().endsWith(".pptx") ? raw : `${raw}.pptx`;
+  const stem = outputName.slice(0, -5);
+  if (!stem || /[/\\<>:"|?*]/.test(outputName) || stem === "." || stem === ".." || /[. ]$/.test(stem) || WINDOWS_RESERVED_NAME_RE.test(stem)) {
+    throw new Error("Output name must be a safe cross-platform filename, not a path.");
   }
-  return outputName.toLowerCase().endsWith(".pptx") ? outputName : `${outputName}.pptx`;
+  return outputName;
 }
 
 function validateCurrentFile(value: unknown): PresentationRequest["currentFile"] {
@@ -87,18 +90,22 @@ export function validatePresentationRequest(value: unknown): PresentationRequest
 
 export function buildPresentationPrompt(value: unknown): string {
   const request = validatePresentationRequest(value);
+  const { version: requestVersion, ...requestDetails } = request;
   const source = request.currentFile
     ? `Use the attached structured file part named ${JSON.stringify(request.currentFile.name)} as source material.`
     : "Use this session's conversation as the source material; no current file was selected.";
   return [
-    "Create one editable PowerPoint presentation using 北数Work's bundled presentation generator.",
+    "Create one polished, logically structured, editable PowerPoint presentation using 北数Work's bundled presentation generator.",
     source,
     "Do not install packages, call Office lifecycle tools, handcraft an unvalidated artifact, or use artifact.register_outputs.",
-    "First turn the request into one compact JSON object with exactly: version=1; template=executive, editorial, or minimal; outputName as a safe .pptx filename; and slides as 1-30 objects containing title, optional subtitle, and optional bullets.",
+    "Unless the user explicitly requested direct generation, first build a concise slide-by-slide outline (one core message and one intended layout per slide), then use the question tool in this same task turn to show the outline and ask whether to generate or revise it. Do not invoke generation until that question is answered with confirmation. Continue in the same turn after confirmation so the generated file keeps this turn's delivery identity and opens automatically.",
+    "Write the outline, confirmation question, slide text, speaker notes, and final response in the same language as the user's purpose and outline unless the user explicitly requested another language.",
+    "After confirmation, or for an explicit direct-generation request, create one compact generator-spec JSON object with generatorSpecVersion=2 represented by the exact root field version: 2. Do not copy requestVersion into the generator spec. Use template=executive, editorial, or minimal; the exact requested safe .pptx outputName; and exactly the confirmed number of slides (1-30). Each slide must use exactly one supported layout: cover, agenda, section, bullets, cards, stats, comparison, process, table, or summary. Vary layouts, lead with the conclusion, keep one message per slide, finish with implications or next steps, and include concise speaker notes when useful.",
+    "Use these exact layout fields and no others: cover={title,subtitle?,kicker?,notes?}; agenda={title,items,notes?}; section={title,subtitle?,sectionNumber?,notes?}; bullets={title,takeaway?,bullets,notes?}; cards={title,cards:[{title,body}],notes?}; stats={title,stats:[{value,label,detail?}],notes?}; comparison={title,left:{title,items},right:{title,items},notes?}; process={title,steps:[{title,body?}],notes?}; table={title,columns,rows,notes?}; summary={title,takeaway,actions,notes?}. Structural limits: agenda 1-8 items; bullets 1-7; cards 1-4; stats 1-4; each comparison side 1-6 items; process 2-6 steps; table 2-6 columns and 1-8 rows with every row matching the column count; summary 1-5 actions. Keep narrow labels and actions to at most two concise lines. Do not invent facts or add fields from another layout. The bundled skill may provide design guidance, but this host-owned schema is complete and authoritative even if no global skill is available.",
     "Invoke jugglework_artifact_generate exactly once with program='jugglework:presentation-generator', args=['--spec-json', '<compact-json>', '--output', '<outputName>'], outputs=['<outputName>'], and timeoutMs=60000.",
     "The generator must write the requested PPTX into JUGGLEWORK_ARTIFACT_DIR. Return the delivered PPTX and no second PPTX.",
     "Presentation request:",
-    JSON.stringify(request, null, 2),
+    JSON.stringify({ requestVersion, ...requestDetails }, null, 2),
   ].join("\n\n");
 }
 

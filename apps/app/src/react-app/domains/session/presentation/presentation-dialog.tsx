@@ -64,7 +64,7 @@ export function PresentationDialog({ open, currentFile, busy = false, onOpenChan
       <DialogContent className="max-h-[calc(100vh-2rem)] overflow-y-auto sm:max-w-2xl" data-testid="presentation-dialog">
         <DialogHeader>
           <DialogTitle>Create presentation</DialogTitle>
-          <DialogDescription>Turn this conversation and an optional open file into one editable PowerPoint.</DialogDescription>
+          <DialogDescription>Plan a logical slide-by-slide story, confirm the outline, then generate one polished editable PowerPoint.</DialogDescription>
         </DialogHeader>
         <form className="grid gap-4" onSubmit={submit}>
           <div className="grid gap-4 sm:grid-cols-2">
@@ -106,7 +106,7 @@ export function PresentationDialog({ open, currentFile, busy = false, onOpenChan
           {error ? <div role="alert" className="text-sm text-destructive">{error}</div> : null}
           <DialogFooter className="mt-2">
             <Button type="button" variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button type="submit" disabled={busy}>{busy ? "Starting..." : "Create presentation"}</Button>
+            <Button type="submit" disabled={busy}>{busy ? "Starting..." : "Plan presentation"}</Button>
           </DialogFooter>
         </form>
       </DialogContent>

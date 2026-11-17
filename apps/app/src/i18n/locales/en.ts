@@ -352,7 +352,7 @@ export default {
   "session.home_scenario_plan": "Plan a proposal",
   "session.home_scenario_schedule": "Scheduled tasks",
   "session.home_scenario_document_prompt": "Write a [document type, e.g. work summary / notice / marketing copy] about [topic] for [audience], about [length] words, in a [formal / casual] tone. Deliver it as a Word document.",
-  "session.home_scenario_presentation_prompt": "Create a presentation about [topic] for [audience], about [number] slides, in a [clean business / lively] style. Include a cover, agenda, core content, and a summary slide, and deliver an editable .pptx file.",
+  "session.home_scenario_presentation_prompt": "Plan and create a presentation about [topic] for [audience], about [number] slides, in a [clean business / lively] style. First propose a logical slide-by-slide outline with each slide’s core message and layout; wait for my confirmation, then generate a polished editable .pptx file.",
   "session.home_scenario_data_prompt": "Analyze the data in [file name or description], focusing on [metric or question]. Summarize the key findings and produce charts and an Excel results sheet.",
   "session.home_scenario_research_prompt": "Research [topic] in depth: background, current state, main viewpoints, and trends. List reliable sources and deliver a well-structured research report.",
   "session.home_scenario_plan_prompt": "Plan a [event / project] with the goal of [goal], a budget of about [budget], and a timeline of [timeline]. Include goals, execution steps, schedule, owners, and risk contingencies.",

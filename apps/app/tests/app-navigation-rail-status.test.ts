@@ -499,7 +499,10 @@ describe("account menu", () => {
 });
 
 describe("Cloud Docs navigation", () => {
-  test("uses a dedicated cloud-document icon and supports a persistent pin", () => {
+  test("keeps Cloud Docs capability available while hiding its navigation entry", () => {
+    expect(railSource).toContain("export const CLOUD_DOCS_NAVIGATION_ENABLED = false");
+    expect(railSource).toContain("{CLOUD_DOCS_NAVIGATION_ENABLED ? <div");
+    expect(railSource).toContain("const cloudDocsPinned = CLOUD_DOCS_NAVIGATION_ENABLED && pinnedNavigationItems.includes");
     expect(railSource).toContain("function CloudDocsRailIcon");
     expect(railSource).toContain("data-cloud-docs-rail-icon");
     expect(railSource).toContain('data-testid="app-navigation-more-cloud-docs-row"');
@@ -508,8 +511,8 @@ describe("Cloud Docs navigation", () => {
     expect(railSource).toContain('setAppNavigationItemPinned("cloud-docs", !cloudDocsPinned)');
   });
 
-  test("keeps More active only while an unpinned Cloud Docs route is visible", () => {
-    expect(railSource).toContain('const cloudDocsActive = location.pathname.startsWith("/cloud-docs/")');
+  test("does not activate More for a hidden Cloud Docs route", () => {
+    expect(railSource).toContain('const cloudDocsActive = CLOUD_DOCS_NAVIGATION_ENABLED && location.pathname.startsWith("/cloud-docs/")');
     expect(railSource).toContain("cloudDocsActive && !cloudDocsPinned");
     expect(railSource).toContain("active={cloudDocsActive}");
     expect(railSource).toContain("onClick={openCloudDocs}");

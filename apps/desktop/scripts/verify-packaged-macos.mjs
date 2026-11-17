@@ -23,6 +23,7 @@ import { verifyMediaTools, verifyMediaExecutables } from "../electron/mediaTools
 import { verifyOpenCodePluginBundles } from "../../server/script/verify-opencode-plugin-bundles.mjs";
 
 const require = createRequire(import.meta.url);
+const { verifyPackagedPresentationGenerator } = require("./presentation-package-verifier.cjs");
 const { hasNotaryCredentials } = require("./macos-notary.cjs");
 const { verifyMacBunSignature } = require("./macos-bun-signature.cjs");
 
@@ -556,6 +557,17 @@ export async function verifyPackagedUiControlMcp(appPath) {
   }
 }
 
+export function verifyPackagedPresentation(appPath) {
+  try {
+    return verifyPackagedPresentationGenerator({
+      runtime: packagedExecutable(appPath),
+      resourcesPath: path.join(appPath, "Contents", "Resources"),
+    });
+  } catch (error) {
+    fail(`Packaged presentation generator smoke test failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 export async function main() {
   if (process.platform !== "darwin") fail("Packaged macOS verification must run on macOS");
   const appInput = readArg("--app") || process.argv[2];
@@ -616,11 +628,12 @@ export async function main() {
   );
   const nativeModules = verifyPackagedNativeModules(appPath);
   const uiControlMcp = await verifyPackagedUiControlMcp(appPath);
+  const presentationGenerator = verifyPackagedPresentation(appPath);
   if (verificationOutput) {
     const outputPath = path.resolve(verificationOutput);
     writeFileSync(outputPath, `${JSON.stringify(localVerification, null, 2)}\n`, { encoding: "utf8", flag: "wx", mode: 0o600 });
   }
-  process.stdout.write(`${JSON.stringify({ ok: true, appPath, architecture, metadata, updater, signature, toonFactory, trust, zip, dmg, dmgTrust, verificationOutput: verificationOutput || null, localVerification, tray, opencodePlugins, nativeModules, uiControlMcp }, null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify({ ok: true, appPath, architecture, metadata, updater, signature, toonFactory, trust, zip, dmg, dmgTrust, verificationOutput: verificationOutput || null, localVerification, tray, opencodePlugins, nativeModules, uiControlMcp, presentationGenerator }, null, 2)}\n`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

@@ -31,6 +31,12 @@ The system SHALL show a centered home on the primary session surface when the se
 - **WHEN** the session has a message or is sending, streaming, preparing, queued or in error
 - **THEN** the normal chat layout is shown with the composer docked at the bottom
 
+#### Scenario: New-session snapshot is still loading
+- **WHEN** navigation has selected a newly created session but its snapshot has not confirmed whether it has messages
+- **THEN** the application does not render the message-list empty state
+- **AND** the legacy CSV, browser, and extension starter cards are never shown
+- **AND** a delayed loading indicator may appear after the loading grace period before the office home is shown
+
 #### Scenario: No session selected
 - **WHEN** a workspace is open with no session selected
 - **THEN** the same robot, title, scenario chips, bottom composer and workspace selector are shown instead of the starter cards

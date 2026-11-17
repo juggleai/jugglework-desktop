@@ -36,6 +36,9 @@ describe("presentation request", () => {
     expect(() => validatePresentationRequest({ ...request, slideCount: 31 })).toThrow("between 1 and 30");
     expect(() => validatePresentationRequest({ ...request, template: "unknown" })).toThrow("template");
     expect(() => validatePresentationRequest({ ...request, outputName: "../deck.pptx" })).toThrow("filename");
+    for (const outputName of ["CON.pptx", "deck?.pptx", "deck. ", "NUL", "a:b.pptx"]) {
+      expect(() => validatePresentationRequest({ ...request, outputName })).toThrow("filename");
+    }
     expect(() => validatePresentationRequest({ ...request, currentFile: { path: "../source.pdf" } })).toThrow("workspace-relative");
     expect(() => validatePresentationRequest({ ...request, currentFile: { path: "source.exe" } })).toThrow("not supported");
   });
@@ -43,6 +46,19 @@ describe("presentation request", () => {
   test("builds one self-contained host capability prompt and a real current-file part", () => {
     const prompt = buildPresentationPrompt(request);
     expect(prompt).toContain("bundled presentation generator");
+    expect(prompt).toContain("slide-by-slide outline");
+    expect(prompt).toContain("question tool");
+    expect(prompt).toContain("same task turn");
+    expect(prompt).toContain("opens automatically");
+    expect(prompt).toContain("generatorSpecVersion=2");
+    expect(prompt).toContain('"requestVersion": 1');
+    expect(prompt).not.toContain('"version": 1');
+    expect(prompt).toContain("same language as the user's purpose and outline");
+    expect(prompt).toContain("exactly the confirmed number of slides");
+    expect(prompt).toContain("cover, agenda, section, bullets, cards, stats, comparison, process, table, or summary");
+    expect(prompt).toContain("cover={title,subtitle?,kicker?,notes?}");
+    expect(prompt).toContain("table 2-6 columns and 1-8 rows");
+    expect(prompt).toContain("host-owned schema is complete and authoritative even if no global skill is available");
     expect(prompt).toContain("jugglework_artifact_generate exactly once");
     expect(prompt).toContain("program='jugglework:presentation-generator'");
     expect(prompt).toContain('"template": "executive"');

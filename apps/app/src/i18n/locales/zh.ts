@@ -355,7 +355,7 @@ export default {
   "session.home_scenario_plan": "策划方案",
   "session.home_scenario_schedule": "定时任务",
   "session.home_scenario_document_prompt": "帮我写一篇关于【主题】的【文档类型，如：工作总结 / 通知 / 宣传文案】，面向【读者】，篇幅约【字数】字，语气【正式 / 轻松】。请输出为 Word 文档。",
-  "session.home_scenario_presentation_prompt": "帮我制作一份关于【主题】的 PPT，面向【听众】，约【页数】页，风格【简洁商务 / 活泼】。请包含封面、目录、核心内容和总结页，输出可编辑的 .pptx 文件。",
+  "session.home_scenario_presentation_prompt": "帮我策划并制作一份关于【主题】的 PPT，面向【听众】，约【页数】页，风格【简洁商务 / 活泼】。先给出有逻辑的逐页大纲，标明每页核心观点和版式，等我确认后再生成有排版、可编辑的 .pptx 文件。",
   "session.home_scenario_data_prompt": "帮我分析【文件名或数据描述】中的数据，重点关注【指标或问题】，总结关键发现，并生成图表和一份 Excel 结果表。",
   "session.home_scenario_research_prompt": "帮我深度研究【主题】，梳理背景、现状、主要观点和发展趋势，列出可靠来源，最后输出一份结构清晰的研究报告。",
   "session.home_scenario_plan_prompt": "帮我策划一份【活动 / 项目】方案，目标是【目标】，预算约【预算】，时间【时间】。请包含目标、执行步骤、时间安排、分工和风险预案。",

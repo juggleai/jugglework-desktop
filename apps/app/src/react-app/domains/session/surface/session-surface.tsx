@@ -2652,12 +2652,16 @@ export function SessionSurface(props: SessionSurfaceProps) {
               sessionId={props.sessionId}
               onOpenTarget={props.onOpenTarget}
             />}
-            {showDelayedLoading && pendingSessionLoad ? (
-              <div className="px-6 py-16">
-                <div className="mx-auto max-w-sm rounded-3xl border border-dls-border bg-dls-hover/60 px-8 py-10 text-center">
-                  <div className="text-sm text-dls-secondary">Opening session…</div>
+            {/* TIPS: snapshot 尚未确认时绝不能把 messages=[] 当成真正空会话。
+                前 2 秒保持消息区为空，超过 2 秒才显示加载提示；两种情况都不挂载旧 starter cards。 */}
+            {pendingSessionLoad ? (
+              showDelayedLoading ? (
+                <div className="px-6 py-16" data-testid="session-snapshot-loading">
+                  <div className="mx-auto max-w-sm rounded-3xl border border-dls-border bg-dls-hover/60 px-8 py-10 text-center">
+                    <div className="text-sm text-dls-secondary">Opening session…</div>
+                  </div>
                 </div>
-              </div>
+              ) : null
             ) : (snapshotQuery.isError || error) && !snapshot && renderedMessages.length === 0 ? (
               <div className="px-6 py-8">
                 {error ? (
@@ -2705,7 +2709,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
                       showThinking={showThinking}
                       highlightQuery={findHighlightQuery}
                       developerMode={props.developerMode}
-                      displaySuggestions={shellConfig.starterCards}
+                      // 新首页与旧 TaskSuggestions 互斥。即使以后 pending gate 调整，启用 home 的
+                      // Surface 也不能再闪出「编辑 CSV」等旧 starter cards。
+                      displaySuggestions={shellConfig.starterCards && !props.home}
                       providerConnectedCount={props.providerConnectedCount ?? 0}
                       dispatchAction={handleMessageListDispatchAction}
                       setPrompt={handleMessageListSetPrompt}

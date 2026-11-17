@@ -73,6 +73,8 @@ import { useDesktopPet } from "@/react-app/domains/pet/use-desktop-pet";
 export { APP_PRIMARY_RAIL_ORDER } from "./app-navigation-order";
 
 export const APP_NAVIGATION_RAIL_WIDTH = 48;
+// 云文档能力和深链保持可用，当前产品版本仅隐藏应用导航入口。
+export const CLOUD_DOCS_NAVIGATION_ENABLED = false;
 
 type AppNavigationRailProps = {
   /** Workspace used by workspace-bound destinations such as Toon Factory. */
@@ -470,8 +472,9 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
   };
   const workspaceId = props.workspaceId.trim();
   const appPath = parseWorkspaceAppPath(location.pathname);
-  const cloudDocsActive = location.pathname.startsWith("/cloud-docs/");
-  const cloudDocsPinned = pinnedNavigationItems.includes("cloud-docs");
+  const cloudDocsActive = CLOUD_DOCS_NAVIGATION_ENABLED && location.pathname.startsWith("/cloud-docs/");
+  // 功能关闭时忽略历史持久化的置顶状态，避免升级后入口残留。
+  const cloudDocsPinned = CLOUD_DOCS_NAVIGATION_ENABLED && pinnedNavigationItems.includes("cloud-docs");
   const openCloudDocs = () => {
     const tenantId = readDenSettings().activeOrgId;
     setNavigationMenuOpen(false);
@@ -689,7 +692,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
             className="w-[180px] rounded-2xl bg-popover/95 p-0.5 shadow-[0_18px_48px_rgba(0,0,0,0.20)] ring-1 ring-foreground/10 backdrop-blur-2xl"
             data-testid="app-navigation-more-menu"
           >
-            <div
+            {CLOUD_DOCS_NAVIGATION_ENABLED ? <div
               className="group flex items-center gap-1 rounded-2xl transition-colors hover:bg-accent focus-within:bg-accent"
               data-testid="app-navigation-more-cloud-docs-row"
             >
@@ -725,7 +728,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
               >
                 <Pin className={cn("size-4", cloudDocsPinned && "fill-current")} />
               </button>
-            </div>
+            </div> : null}
             <div
               className="group flex items-center gap-1 rounded-2xl transition-colors hover:bg-accent focus-within:bg-accent"
               data-testid="app-navigation-more-tasks-row"

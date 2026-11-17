@@ -16,6 +16,7 @@ const {
   packageBundledOfficeResources,
   verifyRendererResources,
 } = require("./electron-after-pack.cjs");
+const { verifyPackagedPresentationGenerator } = require("./presentation-package-verifier.cjs");
 
 test("Windows ARM64 保留桌面打包，不要求不存在的 Office SDK 或复制 x64 内核", (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "office-unsupported-package-"));
@@ -41,6 +42,25 @@ test("桌面安装包声明内置 Server 的全部生产依赖，避免源码依
   for (const [name, version] of Object.entries(server.dependencies)) {
     assert.equal(desktop.dependencies[name], version, `桌面缺少内置 Server 的配套生产依赖：${name}`);
   }
+});
+
+test("packaged presentation verifier generates with an empty PATH and package-owned resources", () => {
+  const resourcesPath = path.join(__dirname, "../resources");
+  // The verifier's resource/output contract is unit-tested with the current
+  // Node runtime. afterPack and final package verification always pass the
+  // actual packaged Electron executable and are the release-blocking checks.
+  const result = verifyPackagedPresentationGenerator({ runtime: process.execPath, resourcesPath });
+  assert.equal(result.pathSearchDisabled, true);
+  assert.ok(result.outputBytes > 1000);
+});
+
+test("packaged presentation verifier blocks packages with missing resources", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "packaged-presentation-missing-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  assert.throws(
+    () => verifyPackagedPresentationGenerator({ runtime: process.execPath, resourcesPath: root }),
+    /Missing packaged presentation generator/,
+  );
 });
 
 test("normalizes electron-builder numeric and string architectures", () => {
