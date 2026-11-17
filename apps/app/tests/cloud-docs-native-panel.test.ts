@@ -34,6 +34,7 @@ class NativeView {
   }
   getVisible() { return this.visible; }
   setBounds = mock((_bounds: { x: number; y: number; width: number; height: number }) => {});
+  setBorderRadius = mock((_radius: number) => {});
 }
 const views: NativeView[] = [];
 const clearedOrigins: string[] = [];
@@ -57,11 +58,12 @@ const { createCloudDocsPanel } =
 afterAll(() => mock.restore());
 
 test("原生视图在新文档授权前隐藏，401/403/404 隐藏并报告，旧实例不能覆盖新实例", async () => {
+  let zoom = 1;
   const host = {
     mainFrame: {},
     send: mock(() => {}),
     focus: mock(() => {}),
-    getZoomFactor: () => 1,
+    getZoomFactor: () => zoom,
   };
   const win = {
     webContents: host,
@@ -114,6 +116,16 @@ test("原生视图在新文档授权前隐藏，401/403/404 隐藏并报告，�
   bounds(a.instanceId);
   expect(first.visible).toBe(true);
   expect(first.webContents.focus).toHaveBeenCalledTimes(1);
+  // TIPS: 原生裁切随宿主缩放；移动到未指定圆角的文件面板时必须恢复直角。
+  zoom = 1.5;
+  events.get("jugglework:docs:bounds")!(
+    { sender: host, senderFrame: host.mainFrame },
+    { instanceId: a.instanceId, visible: true, x: 0, y: 0, width: 500, height: 400, borderRadius: 18 },
+  );
+  expect(first.setBorderRadius).toHaveBeenLastCalledWith(27);
+  zoom = 1;
+  bounds(a.instanceId);
+  expect(first.setBorderRadius).toHaveBeenLastCalledWith(0);
   const boundsCalls = first.setBounds.mock.calls.length;
   events.get("jugglework:docs:bounds")!(
     { sender: host, senderFrame: host.mainFrame },

@@ -56,9 +56,10 @@ export function sameBounds(
   );
 }
 
-export function hasNativeBrowserOccluder() {
+/** 检查会覆盖原生视图的宿主浮窗；云文档另包含导航提示，并保留当前画面垫底。 */
+export function hasNativeBrowserOccluder(includeRailTooltips = false) {
   // TIPS: 原生页面总在 DOM 上方，文件菜单和选择列表打开时也必须暂时隐藏，否则会遮住菜单下半部分。
-  const overlays = document.querySelectorAll('[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]');
+  const overlays = document.querySelectorAll('[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]' + (includeRailTooltips ? ', [data-app-rail-tooltip]' : ''));
   for (const overlay of overlays) {
     if (!(overlay instanceof HTMLElement)) {
       continue;

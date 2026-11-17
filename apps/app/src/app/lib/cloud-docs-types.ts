@@ -46,12 +46,14 @@ export interface CloudDocsBridge {
     instanceId: string;
     appearance: CloudDocsAppearance;
   }): void;
+  /** 按宿主容器的尺寸、圆角和可见状态布局原生云文档视图。 */
   setBounds(input: {
     instanceId: string;
     x: number;
     y: number;
     width: number;
     height: number;
+    borderRadius?: number;
     visible: boolean;
   }): void;
   onState(

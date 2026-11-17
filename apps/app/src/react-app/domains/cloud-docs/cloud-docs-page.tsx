@@ -191,7 +191,7 @@ export function CloudDocsPage(props: Props) {
       childList: true,
       subtree: true,
       attributes: true,
-      attributeFilter: ["data-state", "hidden"],
+      attributeFilter: ["data-state", "data-open", "data-closed", "hidden"],
     });
     window.addEventListener("resize", updateBounds);
     document.addEventListener("visibilitychange", updateBounds);
@@ -296,7 +296,7 @@ export function CloudDocsPage(props: Props) {
       <AppInsetSurface className="flex flex-col" testId="cloud-docs-surface">
         <div
           ref={host}
-          className="relative min-h-0 flex-1"
+          className="relative min-h-0 flex-1 overflow-hidden rounded-[inherit]"
           data-testid="cloud-docs-native-host"
         >
           {nativeBounds.snapshot && <img src={nativeBounds.snapshot} onLoad={nativeBounds.loaded} alt="" aria-hidden="true" className="pointer-events-none absolute inset-0 h-full w-full" />}

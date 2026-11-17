@@ -83,7 +83,7 @@ export function FileCloudDocView({
       subtree: true,
       childList: true,
       attributes: true,
-      attributeFilter: ["data-state"],
+      attributeFilter: ["data-state", "data-open", "data-closed", "hidden"],
     });
     window.addEventListener("resize", sync);
     sync();

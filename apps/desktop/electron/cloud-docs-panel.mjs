@@ -190,6 +190,11 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
       return;
     }
     item.view.setBounds({ x, y, width, height });
+    // TIPS: WebContentsView 独立于 DOM 裁切；与宿主共享圆角，并按窗口缩放换算。
+    const borderRadius = Number(input.borderRadius ?? 0);
+    item.view.setBorderRadius(Number.isFinite(borderRadius)
+      ? Math.max(0, Math.min(Math.round(borderRadius * zoom), Math.floor(Math.min(width, height) / 2)))
+      : 0);
     const visible = input.visible === true && item.ready && !item.denied && width > 0 && height > 0;
     if (visible && current !== item) {
       if (current) {

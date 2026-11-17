@@ -290,8 +290,6 @@ function RailButton({
   appPreviewTarget,
   onAppPreviewChange,
 }: RailButtonProps) {
-  // TIPS: 原生云文档视图始终高于 DOM；使用系统 title 提示，避免网页浮层被原生页面遮挡。
-  const nativeTooltip = useLocation().pathname.startsWith("/cloud-docs/");
   const resolvedBadgeLabel = badgeLabel ?? t("chat.unread_count", { count: badge });
   const button = (
     <button
@@ -360,7 +358,7 @@ function RailButton({
       ) : null}
     </button>
   );
-  if (!showTooltip || nativeTooltip) return button;
+  if (!showTooltip) return button;
   return (
     <Tooltip>
       <TooltipTrigger render={button} />
