@@ -28,7 +28,10 @@ mock.module("../src/react-app/infra/workspace-server-client", () => ({
   createWorkspaceServerClientResolver: () => (workspace: RouteWorkspace | null) => workspace ? {
     workspaceId: workspace.id.replace(/^rem_/, ""),
     opencodeBaseUrl: `http://test/${workspace.id}`, baseUrl: "http://test", token: "test",
-    isRemote: true, client: { listSessions: (id: string, options?: { signal?: AbortSignal }) => listSessions(id, options) },
+    isRemote: true, client: {
+      listSessions: (id: string, options?: { signal?: AbortSignal }) => listSessions(id, options),
+      listActiveSessionRuns: async () => ({ items: [{ sessionId: "same-session-id" }] }),
+    },
   } : null,
   useWorkspaceServerClient: () => null,
 }));
