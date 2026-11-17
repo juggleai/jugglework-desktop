@@ -119,7 +119,7 @@ test("keeps persisted empty desktop workspace state authoritative", async () => 
 
   await writeFile(
     path.join(userData, "jugglework-workspaces.json"),
-    JSON.stringify({ selectedId: "", activeId: null, watchedId: null, workspaces: [] }),
+    JSON.stringify({ selectedId: "", activeId: null, watchedId: null, workspaces: [], defaultWorkspaceProvisioned: true }),
     "utf8",
   );
   await writeFile(
@@ -251,6 +251,69 @@ test("creates and selects the default office workspace on first launch", async (
     // 第二次读取复用已持久化的状态，不重复创建。
     const again = await store.readWorkspaceState();
     assert.deepEqual(again.workspaces.map((workspace) => workspace.id), [state.workspaces[0].id]);
+  } finally {
+    restoreEnv("JUGGLEWORK_SERVER_CONFIG", previousServerConfig);
+  }
+});
+
+test("creates the default office workspace when an empty state file was written before provisioning", async () => {
+  const root = await realpath(await mkdtemp(path.join(tmpdir(), "jugglework-workspace-store-")));
+  const userData = path.join(root, "userData");
+  const documents = path.join(root, "Documents");
+  const previousServerConfig = process.env.JUGGLEWORK_SERVER_CONFIG;
+  process.env.JUGGLEWORK_SERVER_CONFIG = path.join(root, "missing-server.json");
+  try {
+    await mkdir(userData, { recursive: true });
+    await writeFile(
+      path.join(userData, "jugglework-workspaces.json"),
+      JSON.stringify({ selectedId: "", watchedId: null, activeId: null, workspaces: [] }),
+      "utf8",
+    );
+    const store = createWorkspaceStore({
+      app: { getPath: (name) => name === "userData" ? userData : name === "documents" ? documents : root },
+      defaultDenBaseUrl: "https://example.test",
+      defaultRequireSignin: false,
+      forceRequireSignin: false,
+    });
+
+    const state = await store.readWorkspaceState();
+    assert.equal(state.workspaces.length, 1);
+    assert.equal(state.workspaces[0].name, "日常办公");
+    assert.equal(state.selectedId, state.workspaces[0].id);
+    assert.equal(state.defaultWorkspaceProvisioned, true);
+  } finally {
+    restoreEnv("JUGGLEWORK_SERVER_CONFIG", previousServerConfig);
+  }
+});
+
+test("marks existing workspace state as provisioned without adding the default office workspace", async () => {
+  const root = await realpath(await mkdtemp(path.join(tmpdir(), "jugglework-workspace-store-")));
+  const userData = path.join(root, "userData");
+  const documents = path.join(root, "Documents");
+  const existing = path.join(root, "existing");
+  const previousServerConfig = process.env.JUGGLEWORK_SERVER_CONFIG;
+  process.env.JUGGLEWORK_SERVER_CONFIG = path.join(root, "missing-server.json");
+  try {
+    await mkdir(userData, { recursive: true });
+    await mkdir(existing, { recursive: true });
+    await writeFile(
+      path.join(userData, "jugglework-workspaces.json"),
+      JSON.stringify({ selectedId: "ws_existing", workspaces: [{ id: "ws_existing", name: "existing", path: existing, workspaceType: "local" }] }),
+      "utf8",
+    );
+    const store = createWorkspaceStore({
+      app: { getPath: (name) => name === "userData" ? userData : name === "documents" ? documents : root },
+      defaultDenBaseUrl: "https://example.test",
+      defaultRequireSignin: false,
+      forceRequireSignin: false,
+    });
+
+    const state = await store.readWorkspaceState();
+    assert.deepEqual(state.workspaces.map((workspace) => workspace.id), ["ws_existing"]);
+    assert.equal(state.defaultWorkspaceProvisioned, true);
+    await store.forgetWorkspace("ws_existing");
+    const again = await store.readWorkspaceState();
+    assert.equal(again.workspaces.length, 0);
   } finally {
     restoreEnv("JUGGLEWORK_SERVER_CONFIG", previousServerConfig);
   }

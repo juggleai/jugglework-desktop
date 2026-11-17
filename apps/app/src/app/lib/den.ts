@@ -406,7 +406,7 @@ export const DEFAULT_DEN_AUTH_NAME = "北数Work User";
 const BUILD_DEN_BASE_URL =
   (typeof import.meta !== "undefined" && typeof import.meta.env?.VITE_DEN_BASE_URL === "string"
     ? import.meta.env.VITE_DEN_BASE_URL
-    : "").trim() || "https://work.jugglechat.cn";
+    : "").trim() || "https://dwork.jugglechat.cn";
 const BUILD_DEN_REQUIRE_SIGNIN =
   (typeof import.meta !== "undefined" && typeof import.meta.env?.VITE_DEN_REQUIRE_SIGNIN === "string"
     ? /^(1|true|yes|on)$/i.test(import.meta.env.VITE_DEN_REQUIRE_SIGNIN.trim())
@@ -441,7 +441,16 @@ const BUILD_DEN_DEV_IM_LOGIN_BOOTSTRAP: DenIMLoginBootstrap | null = (() => {
   };
 })();
 
-export const HOSTED_DEFAULT_DEN_BASE_URL = "https://work.juggle.im";
+export const HOSTED_DEFAULT_DEN_BASE_URL = "https://dwork.jugglechat.cn";
+/**
+ * Every origin that has shipped as the hosted deployment default. Sign-in
+ * pages and legacy MCP URLs written by older builds still point at these, so
+ * hosted-only handling must keep recognising them after the default moves.
+ */
+const HOSTED_DEN_HOSTNAMES = new Set(
+  [HOSTED_DEFAULT_DEN_BASE_URL, "https://work.jugglechat.cn", "https://work.juggle.im"]
+    .map((value) => new URL(value).hostname),
+);
 export const DEFAULT_DEN_BASE_URL = BUILD_DEN_BASE_URL;
 
 /**
@@ -1710,7 +1719,7 @@ export function getDenModelCatalogUrl(baseUrl?: string | null): string | null {
 }
 
 function isHostedWebAppHost(hostname: string): boolean {
-  return hostname.trim().toLowerCase() === new URL(HOSTED_DEFAULT_DEN_BASE_URL).hostname;
+  return HOSTED_DEN_HOSTNAMES.has(hostname.trim().toLowerCase());
 }
 
 /**
