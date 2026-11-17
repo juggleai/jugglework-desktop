@@ -901,6 +901,7 @@ export default {
   "den.credentials_ready_badge": "Credential ready",
   "den.error_base_url": "Enter a valid http:// or https:// Cloud control plane URL.",
   "den.error_browser_open_failed": "We couldn't open your browser automatically.",
+  "den.error_connection_temporary": "JuggleWork Cloud is temporarily unreachable. Check your network or proxy; reconnecting automatically.",
   "den.error_load_orgs": "Failed to load orgs.",
   "den.error_no_session": "No active Cloud session found.",
   "den.error_no_token": "Desktop sign-in completed, but JuggleWork Cloud did not return a session token.",

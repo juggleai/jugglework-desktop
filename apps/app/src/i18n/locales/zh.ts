@@ -904,6 +904,7 @@ export default {
   "den.credentials_ready_badge": "凭据就绪",
   "den.error_base_url": "请输入有效的http:// 或https:// Cloud控制平面URL。",
   "den.error_browser_open_failed": "我们无法自动打开你的浏览器。",
+  "den.error_connection_temporary": "暂时无法连接 JuggleWork Cloud，请检查网络或代理；应用正在自动重连。",
   "den.error_load_orgs": "加载组织失败。",
   "den.error_no_session": "未找到有效的Cloud会话。",
   "den.error_no_token": "桌面登录已完成，但JuggleWork Cloud未返回会话令牌。",

@@ -218,7 +218,7 @@ Server SHALL 自行从当前会话最多两页、每页最多 60 条历史中提
 
 ### Requirement: 复用当前模型且失败安全降级
 
-首版 SHALL 使用当前会话 model ref，renderer SHALL 在 Desktop 模型策略明确允许时才派发，Server SHALL 复用有效 workspace 配置、模型启用/停用及黑白名单和 credential resolver；组织托管模型继续受 gateway 上游策略约束，不将 Server 配置检查冒充完整 Desktop policy。仅支持直接身份可解析的 OpenAI-compatible Chat Completions、OpenAI Responses、Anthropic Messages 文本协议。OAuth-only、无法解析身份、renderer 策略无法确认、reasoning budget 或其他不支持预算/协议的模型 SHALL 跳过；SHALL NOT 隐式切换供应商、small_model 或回退 Agent。请求 SHALL 非流式、无工具、最多 512 输出 tokens，自 Server 接受请求开始采用覆盖历史、模型解析、上游响应体及生成后校验的单一 8 秒 deadline 并支持取消，不自动重试；错误 SHALL 脱敏且不影响主会话。
+首版 SHALL 使用当前会话 model ref，renderer SHALL 在 Desktop 模型策略明确允许时才派发，Server SHALL 复用有效 workspace 配置、模型启用/停用及黑白名单和 credential resolver；组织托管模型继续受 gateway 上游策略约束，不将 Server 配置检查冒充完整 Desktop policy。仅支持直接身份可解析的 OpenAI-compatible Chat Completions、OpenAI Responses、Anthropic Messages 文本协议。请求 SHALL 非流式、无工具、最多 512 输出 tokens，自 Server 接受请求开始采用覆盖历史、模型解析、上游响应体及生成后校验的单一 8 秒 deadline 并支持取消，不自动重试；错误 SHALL 脱敏且不影响主会话。
 
 #### Scenario: 当前模型使用上游 alias 和网关 headers
 - **WHEN** 当前公开 model ref 对应配置模型 `id` 或引擎解析的 `api.id`，且配置了有效 provider/model headers
@@ -228,6 +228,7 @@ Server SHALL 自行从当前会话最多两页、每页最多 60 条历史中提
 #### Scenario: 当前模型不支持旁路调用
 - **WHEN** 聊天模型已连接，但其 OAuth/凭据/协议不能用于此生成路径
 - **THEN** 不显示建议，不改变模型选择，也不尝试另一模型
+- **AND** OAuth-only、无法解析身份、renderer 策略无法确认、reasoning budget 或其他不支持预算/协议的模型 SHALL 跳过；SHALL NOT 隐式切换供应商、small_model 或回退 Agent
 
 #### Scenario: 模型具备 reasoning 能力且支持有界输出
 - **WHEN** 当前模型仅声明 `reasoning` / `capabilities.reasoning` 能力，使用受支持的 Anthropic、Responses 或上游 GPT-5/GPT-6/o 系列 Chat 协议，且没有额外启用的 reasoning/thinking 配置
