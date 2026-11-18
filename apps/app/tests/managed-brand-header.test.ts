@@ -21,7 +21,8 @@ describe("managed brand navigation identity", () => {
 
     expect(source).toContain("mac:titlebar-drag mac:pt-[52px]");
     expect(source).toMatch(/data-testid=\{testId\}[\s\S]*mac:titlebar-no-drag/);
-    expect(source).toContain('className="relative mt-auto flex h-9 w-full items-center justify-center mac:titlebar-no-drag"');
+    expect(source).toMatch(/data-testid="app-rail-account-menu"[^>]*mac:titlebar-no-drag/);
+    expect(source).not.toMatch(/mt-auto[^"]*mac:titlebar-no-drag/);
     expect(source).toContain('data-testid="app-rail-account-menu"');
   });
 
@@ -34,6 +35,6 @@ describe("managed brand navigation identity", () => {
     expect(source).not.toContain('data-testid="app-rail-create-workspace"');
     expect(homeIndex).toBeGreaterThan(-1);
     expect(accountMenuIndex).toBeGreaterThan(homeIndex);
-    expect(source).toContain("<AvatarImage src={user.avatar} alt={identity} />");
+    expect(source).toContain("<AvatarImage src={profileUser.avatar} alt={identity} />");
   });
 });

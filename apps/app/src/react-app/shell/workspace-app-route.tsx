@@ -237,7 +237,7 @@ function WorkspaceAppRouteContent() {
   };
 
   return (
-    <div className="relative h-dvh min-h-screen w-full overflow-hidden">
+    <div data-workspace-window-shell className="relative h-dvh min-h-screen w-full overflow-hidden">
       <div
         ref={retainedSessionHost}
         className={settingsVisible || chatVisible || appsVisible || automationsVisible || tasksVisible || reviewsVisible || toonFactoryVisible || calendarVisible || meetingsVisible || cloudDocsVisible
@@ -441,6 +441,8 @@ function WorkspaceAppRouteContent() {
           />
         </div>
       ) : null}
+      {/* Keep this last so Electron subtracts these rectangles after the page drag regions. */}
+      <div data-window-gesture-regions aria-hidden="true" />
     </div>
   );
 }

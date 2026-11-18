@@ -1573,7 +1573,7 @@ export function SessionPage(props: SessionPageProps) {
           <>
             <span
               aria-hidden="true"
-              className="absolute left-12 top-0 z-20 hidden h-[var(--session-shell-top-inset)] w-[calc(var(--sidebar-width)-7rem)] mac:block mac:titlebar-drag"
+              className="absolute left-12 top-0 z-20 hidden h-[var(--session-shell-top-inset)] w-[calc(var(--sidebar-width)-5rem)] mac:block mac:titlebar-drag"
               style={{ WebkitAppRegion: "drag" } as CSSProperties}
               data-session-expanded-drag-region
             />
@@ -1607,7 +1607,7 @@ export function SessionPage(props: SessionPageProps) {
           {!props.embedded && shellConfig.sidebar && sidebarOpen ? (
             <span
               aria-hidden="true"
-              className="absolute -inset-y-px left-0 z-30 hidden w-px bg-dls-border md:block"
+              className="absolute -inset-y-px left-0 z-30 hidden w-px bg-dls-border md:block pointer-events-none"
               data-session-content-divider
             />
           ) : null}

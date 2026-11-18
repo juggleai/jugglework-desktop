@@ -96,3 +96,14 @@ The Computer Use helper SHALL register as a UI-element application before macOS 
 #### Scenario: User opens Computer Use permission setup
 - **WHEN** the user explicitly opens the Computer Use permission helper
 - **THEN** the helper changes to a regular application and presents its setup window
+
+### Requirement: Main window gestures preserve workspace controls
+The macOS desktop main window SHALL support dragging and double-clicking empty title-bar and primary navigation areas across workspace views. Double-clicking SHALL follow the macOS title-bar preference.
+
+#### Scenario: Drag the main window
+- **WHEN** the user drags an empty title-bar or navigation area
+- **THEN** a normal window moves at its current size, and a maximized or full-screen window keeps its current state and bounds
+
+#### Scenario: Use a control in the main window
+- **WHEN** the user clicks a window toolbar or navigation control, or drags the workspace sidebar resize handle
+- **THEN** the desktop handles the control's own interaction without moving the window

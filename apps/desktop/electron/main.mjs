@@ -1,3 +1,4 @@
+import { applyWindowChromeGesture } from "./window-chrome-gestures.mjs";
 import { createMeetingScreenPicker } from "./meeting-screen-picker.mjs";
 import { installMeetingDiagnostics } from "./meeting-diagnostics.mjs";
 import { installMeetingCompactWindow } from "./meeting-compact-window.mjs";
@@ -3602,6 +3603,12 @@ async function createMainWindow() {
 
   return mainWindow;
 }
+
+ipcMain.on("jugglework:window-chrome", (event, action, point) => {
+  if (process.platform !== "darwin" || !mainWindow || mainWindow.isDestroyed() ||
+      event.sender !== mainWindow.webContents || event.senderFrame !== event.sender.mainFrame) return;
+  applyWindowChromeGesture(mainWindow, action, point, systemPreferences);
+});
 
 ipcMain.on("jugglework:desktop-bootstrap-sync", (event) => {
   event.returnValue = workspaceStore.readDesktopBootstrapConfigSync();

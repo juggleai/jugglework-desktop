@@ -1,4 +1,9 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
+import { installWindowChromeGestures } from "./window-chrome-gestures.mjs";
+
+if (process.platform === "darwin" && process.isMainFrame) {
+  installWindowChromeGestures((action, point) => ipcRenderer.send("jugglework:window-chrome", action, point));
+}
 
 const NATIVE_DEEP_LINK_EVENT = "jugglework:deep-link-native";
 const NATIVE_MENU_OPEN_SETTINGS_EVENT = "jugglework:native-menu:open-settings";

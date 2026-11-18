@@ -71,7 +71,7 @@ describe("desktop session shell layout", () => {
     expect(sessionPage).toContain('data-session-collapsed-drag-region');
     expect(sessionPage).toContain('absolute left-0 top-0 h-[var(--session-shell-top-inset)] w-[76px] mac:titlebar-drag');
     expect(sessionPage).toContain('data-session-expanded-drag-region');
-    expect(sessionPage).toContain('left-12 top-0 z-20 hidden h-[var(--session-shell-top-inset)] w-[calc(var(--sidebar-width)-7rem)]');
+    expect(sessionPage).toContain('left-12 top-0 z-20 hidden h-[var(--session-shell-top-inset)] w-[calc(var(--sidebar-width)-5rem)]');
     expect(sessionPage).toContain('WebkitAppRegion: "drag"');
     expect(sessionPage).toContain('shellConfig.sidebar && !sidebarOpen && "mac:pl-[76px]"');
     expect(sessionPage).toContain('pointer-events-auto');
