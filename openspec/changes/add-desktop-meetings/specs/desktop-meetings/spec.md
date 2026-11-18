@@ -70,10 +70,10 @@ Electron SHALL present a meeting-window modal with desktop/window thumbnails and
 - **THEN** the modal remains open with a refresh/reselection message and no fallback capture starts.
 
 ### Requirement: Draggable meeting workbench
-The meeting workbench SHALL support window dragging on empty shell space without intercepting launcher or overview controls.
+The meeting workbench SHALL preserve native window dragging on empty shell space without intercepting launcher or overview controls.
 #### Scenario: Use a launcher action
 - **WHEN** the user clicks start, join or schedule in the launcher
-- **THEN** the requested action runs normally without triggering a window gesture.
+- **THEN** the requested action runs normally outside the native drag region.
 
 ### Requirement: 安装包中的会议设备授权
 

@@ -84,7 +84,7 @@ describe("desktop session shell layout", () => {
     expect(sessionPage).toContain('data-session-collapsed-drag-region');
     expect(sessionPage).toContain('absolute left-0 top-0 h-[var(--session-shell-top-inset)] w-[76px] mac:titlebar-drag');
     expect(sessionPage).toContain('data-session-expanded-drag-region');
-    expect(sessionPage).toContain('left-12 top-0 z-20 hidden h-[var(--session-shell-top-inset)] w-[calc(var(--sidebar-width)-5rem)]');
+    expect(sessionPage).toContain('left-12 top-0 z-20 hidden h-[var(--session-shell-top-inset)] w-[calc(var(--sidebar-width)-7rem)]');
     expect(sessionPage).toContain('WebkitAppRegion: "drag"');
     expect(sessionPage).toContain('shellConfig.sidebar && !sidebarOpen && "mac:pl-[76px] windows:pl-[76px]"');
     expect(sessionPage).toContain('pointer-events-auto');
@@ -110,9 +110,9 @@ describe("desktop session shell layout", () => {
     expect(expanded).toContain("left-[calc(var(--sidebar-width)-2rem)] top-1.5");
     expect(dragRegion.split(" ")).toContain("hidden");
     expect(dragRegion.split(" ")).toContain("windows:md:block");
-    // Keep dev's single-toggle drag span, which ends at the toggle's left edge.
+    // Preserve the latest dev drag span and its extra gap before the toggle.
     expect(dragRegion).toContain("left-12");
-    expect(dragRegion).toContain("w-[calc(var(--sidebar-width)-5rem)]");
+    expect(dragRegion).toContain("w-[calc(var(--sidebar-width)-7rem)]");
     expect(sessionPage).toContain('<SidebarTrigger className="mac:hidden windows:md:hidden windows:titlebar-no-drag" />');
     expect(sessionPage).toContain('!props.embedded && shellConfig.sidebar && !sidebarOpen && "mac:pl-[76px] windows:pl-[76px]"');
     const secondaryControls = readFileSync(new URL("../src/react-app/shell/app-secondary-sidebar-top-controls.tsx", import.meta.url), "utf8");

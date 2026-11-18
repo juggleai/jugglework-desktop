@@ -21,8 +21,7 @@ describe("managed brand navigation identity", () => {
 
     expect(source).toContain("mac:titlebar-drag mac:pt-[52px]");
     expect(source).toMatch(/data-testid=\{testId\}[\s\S]*mac:titlebar-no-drag/);
-    expect(source).toMatch(/data-testid="app-rail-account-menu"[^>]*mac:titlebar-no-drag/);
-    expect(source).not.toMatch(/mt-auto[^"]*mac:titlebar-no-drag/);
+    expect(source).toContain('className="mt-auto flex w-full flex-col items-center gap-2 mac:titlebar-no-drag"');
     expect(source).toContain('data-testid="app-rail-account-menu"');
   });
 
