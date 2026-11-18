@@ -366,7 +366,8 @@ describe("navigation rail visual proportions", () => {
     expect(source).toContain('onPreviewMenuChange?.(previewScope ?? null)');
     expect(source).toContain('onAppPreviewChange?.(appPreviewTarget, true)');
     expect(source).toContain('onAppPreviewChange?.(appPreviewTarget, false)');
-    expect(source).toContain('title={showTooltip && nativeTooltip ? (tooltipLabel ?? label) : undefined}');
+    // TIPS: Windows 隐藏原生标题栏后会显示系统 title 气泡；提示统一由应用内 Tooltip 提供。
+    expect(source).not.toContain('title={showTooltip ? (tooltipLabel ?? label) : undefined}');
   });
 
   test("keeps Windows drag regions from swallowing Rail clicks", () => {
