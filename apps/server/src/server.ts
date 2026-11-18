@@ -1370,6 +1370,7 @@ export async function startServer(config: ServerConfig, options: {
   }
   const sessionPermissionRootLocks = new RootSerialization();
   const sessionPermissionBroker = new SessionPermissionBroker({
+    resolveOpencodeDirectory,
     store: sessionPermissionStore,
     config,
     tokens,

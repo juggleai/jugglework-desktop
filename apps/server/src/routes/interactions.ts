@@ -273,6 +273,32 @@ function mergeOwnedInteractions<T extends PendingPermission | PendingQuestion>(
   return [...merged.values()];
 }
 
+/** Discovery only. A candidate still needs a fresh, complete snapshot under its root lock. */
+export async function pendingPermissionRoots(client: WorkspaceOpencodeClient, directory: string): Promise<Set<string> | null> {
+  const options = { signal: AbortSignal.timeout(3_000) };
+  const [legacyResult, v2Result] = await Promise.all([
+    client.permission.list(undefined, options),
+    client.v2.permission.request.list({ location: { directory } }, options),
+  ]);
+  const legacy = resultItems(legacyResult, false);
+  const v2 = resultItems(v2Result, true);
+  if (!legacy || !v2 || v2Result.data?.location?.directory !== directory) return null;
+  const pending = [...legacy, ...v2];
+  const roots = new Set<string>();
+  if (!pending.length) return roots;
+
+  const sessions = resultItems(await client.session.list(undefined, options), false);
+  if (!sessions) return null;
+  const ancestry = buildSessionAncestry(sessions.flatMap(value => sessionAncestryRecord(value) ?? []));
+  for (const request of pending) {
+    if (!isRecord(request) || typeof request.sessionID !== "string") return null;
+    const root = ancestry.rootOf(request.sessionID);
+    if (!root) return null;
+    roots.add(root);
+  }
+  return roots;
+}
+
 export async function readInteractionSnapshot(
   client: WorkspaceOpencodeClient,
   requestedSessionId: string,

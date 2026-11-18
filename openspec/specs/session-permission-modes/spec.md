@@ -85,6 +85,14 @@ When `Full access` is enabled, the owning server SHALL automatically resolve fut
 - **WHEN** a new runtime permission request belongs to a Full access root session and passes all current policy checks
 - **THEN** the system resolves the exact request with a one-time upstream approval without showing an approval prompt
 
+#### Scenario: Idle workspace with historical authorizations
+- **WHEN** the legacy and v2 discovery endpoints both report no pending requests for the configured workspace directory
+- **THEN** the broker can skip reading individual authorized session trees for that poll
+
+#### Scenario: Workspace discovery cannot establish the pending roots
+- **WHEN** workspace discovery is unavailable, returns a different directory, or cannot resolve a pending request's ancestry
+- **THEN** the broker uses per-root discovery and applies the existing approval checks
+
 #### Scenario: Request was pending before the mode changed
 - **WHEN** a permission request was already pending before Full access was enabled
 - **THEN** that request remains pending for an explicit user decision

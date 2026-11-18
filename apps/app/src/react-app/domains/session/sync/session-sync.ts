@@ -1112,17 +1112,7 @@ function upsertPart(messages: UIMessage[], messageId: string, partId: string, ne
   });
 }
 
-function appendDelta(messages: UIMessage[], messageId: string, partId: string, delta: string, reasoning: boolean) {
-  // Fast path: locate the target message by index, only clone that message
-  // and its parts array. The previous implementation ran messages.map AND
-  // message.parts.map on every delta event, which is O(N * P) per token.
-  // For an old session with hundreds of prior messages/parts that allocated
-  // thousands of objects per token and crushed the main thread after a
-  // handful of tokens.
-  const messageIndex = messages.findIndex((message) => message.id === messageId);
-  if (messageIndex === -1) return messages;
-
-  const target = messages[messageIndex]!;
+function appendDelta(target: UIMessage, partId: string, delta: string, reasoning: boolean): UIMessage {
   const lastPart = target.parts[target.parts.length - 1];
 
   let partIndex = -1;
@@ -1178,9 +1168,7 @@ function appendDelta(messages: UIMessage[], messageId: string, partId: string, d
     }
   }
 
-  const nextMessages = messages.slice();
-  nextMessages[messageIndex] = { ...target, parts: nextParts };
-  return nextMessages;
+  return { ...target, parts: nextParts };
 }
 
 export function coalescePendingDeltas(items: PendingDelta[]) {
@@ -1951,7 +1939,7 @@ function flushDeltas(entry: SyncEntry, workspaceId: string) {
       transcriptKey(workspaceId, sessionId),
       (current = []) => {
         let next = current;
-        const nextById = new Map(next.map((message) => [message.id, message]));
+
         for (const item of items) {
           // Resolve the part kind from the transcript instead of trusting
           // the inbound delta event (opencode emits `field: "text"` for
@@ -1962,16 +1950,14 @@ function flushDeltas(entry: SyncEntry, workspaceId: string) {
           // part — and reasoning content leaks into the response markdown
           // until the next reload reconstructs the transcript from the
           // snapshot.
-          const ownerMessage = nextById.get(item.messageId);
-          const ownerPartsById = new Map(
-            (ownerMessage?.parts ?? []).flatMap((part) => {
-              const id = part.type === "dynamic-tool" ? part.toolCallId : getPartMetadataId(part);
-              return id ? [[id, part] as const] : [];
-            }),
+          // Stream output normally targets the newest message and part.
+          const index = next.findLastIndex(message => message.id === item.messageId);
+          const ownerMessage = next[index];
+          const ownerPart = ownerMessage?.parts.findLast(part =>
+            (part.type === "dynamic-tool" ? part.toolCallId : getPartMetadataId(part)) === item.partId,
           );
-          const ownerPart = ownerPartsById.get(item.partId);
 
-          if (!ownerPart) {
+          if (!ownerMessage || !ownerPart) {
             // A delta can beat both message.updated and message.part.updated.
             // Buffer it without creating a role-guessed message shell. The
             // authoritative message event or typed part event will create the
@@ -2005,7 +1991,8 @@ function flushDeltas(entry: SyncEntry, workspaceId: string) {
           // A snapshot may have supplied the kind without resolving overlap or
           // overflow. Keep that marker until a declaration or fresh read resolves it.
           const reasoning = ownerPart.type === "reasoning";
-          next = appendDelta(next, item.messageId, item.partId, item.delta, reasoning);
+          if (next === current) next = current.slice();
+          next[index] = appendDelta(ownerMessage, item.partId, item.delta, reasoning);
         }
         return next;
       },

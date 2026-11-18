@@ -3,6 +3,7 @@
 // server reload-event polling, and desktop engine info. Extracted verbatim
 // from session-route.tsx; reload events are now typed (JuggleWorkReloadEvent)
 // instead of `any`.
+import { startWorkspaceEventPoll } from "./workspace-event-poll";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { engineInfo, engineRestart } from "@/app/lib/desktop";
@@ -71,6 +72,7 @@ export function useEngineReload(input: UseEngineReloadInput) {
     refreshRouteState,
   } = input;
   const reloadCoordinator = useReloadCoordinator();
+  const { markReloadRequired } = reloadCoordinator;
   const [engineReloadVersion, setEngineReloadVersion] = useState(0);
   const [routeEngineInfo, setRouteEngineInfo] = useState<EngineInfo | null>(null);
   const reloadEventCursorByWorkspaceRef = useRef<Record<string, number | null>>({});
@@ -167,20 +169,27 @@ export function useEngineReload(input: UseEngineReloadInput) {
         // agent while the session page is open.
         if (currentCursor === undefined || currentCursor === null) return;
         for (const event of response.items ?? []) {
-          reloadCoordinator.markReloadRequired(event.reason, event.trigger);
-        }      } catch {
+          markReloadRequired(event.reason, event.trigger);
+        }
+      } catch {
         // Reload-event polling is best-effort; normal route health checks still
         // surface connection failures.
       }
     };
 
-    void pollReloadEvents();
-    const interval = window.setInterval(() => void pollReloadEvents(), 3000);
+    const poll = startWorkspaceEventPoll(pollReloadEvents, () => true);
+    const refreshVisible = () => {
+      if (document.visibilityState !== "hidden") void poll.refresh();
+    };
+    document.addEventListener("visibilitychange", refreshVisible);
+    window.addEventListener("focus", refreshVisible);
     return () => {
       cancelled = true;
-      window.clearInterval(interval);
+      poll.stop();
+      document.removeEventListener("visibilitychange", refreshVisible);
+      window.removeEventListener("focus", refreshVisible);
     };
-  }, [client, endpointForWorkspace, reloadCoordinator, workspace, workspaceId]);
+  }, [client, endpointForWorkspace, markReloadRequired, workspace, workspaceId]);
 
   useEffect(() => {
     if (!isDesktopRuntime()) return;

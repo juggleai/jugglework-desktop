@@ -4,12 +4,22 @@ import Foundation
 import ScreenCaptureKit
 
 actor MCPServer {
-    private let runtime = ComputerUseRuntime()
-    private let input = InputService()
+    private lazy var runtime = ComputerUseRuntime()
+    private lazy var input = InputService()
     private var cuaSnapshotFrontmostPID: pid_t?
 
-    func run() async {
-        log("Computer Use server starting")
+    func run(firstCall: [String: Any]? = nil) async {
+        var call = firstCall ?? nextToolCall()
+        while let request = call {
+            let params = request["params"] as? [String: Any] ?? [:]
+            let content = await executeTool(name: params["name"] as? String ?? "", args: params["arguments"] as? [String: Any] ?? [:])
+            respond(id: request["id"], result: ["content": content])
+            call = nextToolCall()
+        }
+    }
+
+    // Discovery runs synchronously on the same stdio pipe before AppKit starts.
+    nonisolated func nextToolCall() -> [String: Any]? {
         while let line = readLine(strippingNewline: true) {
             guard !line.isEmpty else { continue }
             guard let data = line.data(using: .utf8),
@@ -20,7 +30,6 @@ actor MCPServer {
 
             let id = json["id"]
             let method = json["method"] as? String ?? ""
-            let params = json["params"] as? [String: Any] ?? [:]
 
             switch method {
             case "initialize":
@@ -34,19 +43,17 @@ actor MCPServer {
             case "tools/list":
                 respond(id: id, result: ["tools": toolSchemas()])
             case "tools/call":
-                let name = params["name"] as? String ?? ""
-                let args = params["arguments"] as? [String: Any] ?? [:]
-                let content = await executeTool(name: name, args: args)
-                respond(id: id, result: ["content": content])
+                return json
             default:
                 if id != nil {
                     respondError(id: id, code: -32601, message: "Method not found: \(method)")
                 }
             }
         }
+        return nil
     }
 
-    private func toolSchemas() -> [[String: Any]] {
+    private nonisolated func toolSchemas() -> [[String: Any]] {
         [
             toolSchema(
                 name: "snapshot",
@@ -154,7 +161,7 @@ actor MCPServer {
         ]
     }
 
-    private func toolSchema(name: String, description: String, properties: [String: Any]) -> [String: Any] {
+    private nonisolated func toolSchema(name: String, description: String, properties: [String: Any]) -> [String: Any] {
         ["name": name, "description": description, "inputSchema": ["type": "object", "properties": properties]]
     }
 
@@ -535,19 +542,19 @@ actor MCPServer {
         return nil
     }
 
-    private func respond(id: Any?, result: Any) {
+    private nonisolated func respond(id: Any?, result: Any) {
         var response: [String: Any] = ["jsonrpc": "2.0", "result": result]
         if let id { response["id"] = id }
         writeLine(response)
     }
 
-    private func respondError(id: Any?, code: Int, message: String) {
+    private nonisolated func respondError(id: Any?, code: Int, message: String) {
         var response: [String: Any] = ["jsonrpc": "2.0", "error": ["code": code, "message": message]]
         if let id { response["id"] = id }
         writeLine(response)
     }
 
-    private func writeLine(_ object: [String: Any]) {
+    private nonisolated func writeLine(_ object: [String: Any]) {
         guard let text = jsonString(object) else { return }
         print(text)
     }
@@ -560,7 +567,7 @@ actor MCPServer {
         textResult(jsonString(payload) ?? "{\"ok\":false,\"error\":\"Failed to serialize result.\"}")
     }
 
-    private func jsonString(_ value: Any) -> String? {
+    private nonisolated func jsonString(_ value: Any) -> String? {
         guard JSONSerialization.isValidJSONObject(value),
               let data = try? JSONSerialization.data(withJSONObject: value),
               let text = String(data: data, encoding: .utf8) else {
@@ -587,7 +594,7 @@ actor MCPServer {
         return payload
     }
 
-    private func log(_ message: String) {
+    private nonisolated func log(_ message: String) {
         fputs("[ComputerUse] \(message)\n", stderr)
     }
 

@@ -54,6 +54,10 @@ class FakeOpencode {
   permissions: FakePermission[] = [];
   replies: Array<{ requestID: string; reply: string; sessionID?: string }> = [];
   failReplies = false;
+  locationDiscovery: "supported" | "unavailable" | "wrong-directory" = "supported";
+  sessionListReads = 0;
+  legacyListReads = 0;
+  locationListReads = 0;
 
   private envelope<T>(data: T) {
     return { data, error: undefined, response: new Response(null, { status: 200 }) };
@@ -63,11 +67,12 @@ class FakeOpencode {
     const self = this;
     return {
       session: {
-        list: async () => self.envelope(self.sessions),
+        list: async () => { self.sessionListReads++; return self.envelope(self.sessions); },
       },
       permission: {
-        list: async () => self.envelope(
-          self.permissions
+        list: async () => {
+          self.legacyListReads++;
+          return self.envelope(self.permissions
             .filter((permission) => !permission.v2)
             .map((permission) => ({
               id: permission.id,
@@ -75,8 +80,8 @@ class FakeOpencode {
               permission: permission.permission,
               patterns: permission.patterns,
               always: permission.always,
-            })),
-        ),
+            })));
+        },
         reply: async ({ requestID, reply }: { requestID: string; reply: string }) => {
           if (self.failReplies) {
             return { data: undefined, error: { message: "upstream down" }, response: new Response(null, { status: 500 }) };
@@ -89,6 +94,16 @@ class FakeOpencode {
         list: async () => self.envelope([]),
       },
       v2: {
+        permission: { request: {
+          list: async ({ location }: { location: { directory: string } }) => {
+            self.locationListReads++;
+            if (self.locationDiscovery === "unavailable") throw new Error("Unsupported location list");
+            return self.envelope({
+              location: self.locationDiscovery === "wrong-directory" ? { directory: "/other" } : location,
+              data: self.locationDiscovery === "wrong-directory" ? [] : self.permissions.filter(p => p.v2),
+            });
+          },
+        } },
         session: {
           permission: {
             list: async ({ sessionID }: { sessionID: string }) =>
@@ -178,6 +193,7 @@ async function createHarness(options?: { hostToken?: string }): Promise<Harness>
   const tokens = new TokenService(config);
   const rootLocks = new RootSerialization();
   const broker = new SessionPermissionBroker({
+    resolveOpencodeDirectory: workspace => workspace.path,
     store,
     config,
     tokens,
@@ -243,6 +259,33 @@ afterEach(async () => {
 // ---------------------------------------------------------------------------
 
 describe("session permission broker", () => {
+  test("idle full-access roots share discovery without reading session trees", async () => {
+    const h = harness = await createHarness();
+    await activateFullAccess(h);
+    const second = h.store.updateMode({
+      workspaceId: h.workspace.id, rootSessionId: "ses_other", requestedMode: "full-access",
+      expectedRevision: 0, acknowledgementProfileVersion: 1,
+      authorizingPrincipal: await resolveLocalHostAuthorizingPrincipal(h.config),
+      activationExclusionRequestIds: [], now: NOW,
+    });
+    assert.ok(second.ok);
+    await h.runCycle();
+    assert.equal(h.engine.legacyListReads, 1);
+    assert.equal(h.engine.locationListReads, 1);
+    assert.equal(h.engine.sessionListReads, 0);
+  });
+
+  for (const locationDiscovery of ["unavailable", "wrong-directory"] as const) {
+    test(`v2-only child request is discovered when location list is ${locationDiscovery}`, async () => {
+      const h = harness = await createHarness();
+      await activateFullAccess(h);
+      h.engine.locationDiscovery = locationDiscovery;
+      h.engine.permissions = [{ id: "req_child", sessionID: "ses_child", v2: { action: "file.edit", resources: ["/repo/a"] } }];
+      await h.runCycle();
+      assert.equal(h.engine.replies[0]?.requestID, "req_child");
+    });
+  }
+
   test("full access auto-approves post-boundary requests with allow_once only", async () => {
     const h = harness = await createHarness();
     await activateFullAccess(h);

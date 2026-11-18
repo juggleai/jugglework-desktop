@@ -53,7 +53,11 @@ export function AutomationActivityProvider({ children }: { children: ReactNode }
     queryKey: ["automation-activity", client?.baseUrl, enabled],
     queryFn: ({ signal }) => client ? fetchActiveAutomationRuns(client, signal) : Promise.resolve([]),
     enabled,
-    refetchInterval: enabled ? 2_000 : false,
+    refetchInterval: (query) => {
+      if (!enabled) return false;
+      if (query.state.data?.length === 0 && typeof document !== "undefined" && document.visibilityState === "hidden") return 15_000;
+      return 2_000;
+    },
     refetchIntervalInBackground: true,
     retry: false,
     gcTime: 0,

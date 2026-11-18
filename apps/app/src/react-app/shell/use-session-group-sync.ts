@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 
 import type { JuggleWorkSessionGroupState } from "@/app/lib/jugglework-server";
 import type { ResolvedWorkspaceEndpoint } from "@/app/lib/workspace-endpoint";
@@ -12,11 +12,13 @@ import {
   type WorkspaceGroupState,
 } from "@/react-app/domains/session/sidebar/session-management-store";
 import type { RouteWorkspace } from "./route-workspaces";
+import { startWorkspaceEventPoll } from "./workspace-event-poll";
 
 const MIGRATION_PREFIX = "jugglework.sessionGroups.migrated.v2";
 
 type UseSessionGroupSyncInput = {
   workspaces: RouteWorkspace[];
+  selectedWorkspaceId: string | null;
   endpointForWorkspace: (workspace: RouteWorkspace | null | undefined) => ResolvedWorkspaceEndpoint | null;
 };
 
@@ -82,12 +84,17 @@ function writeMigrationComplete(endpoint: ResolvedWorkspaceEndpoint): void {
   }
 }
 
-export function useSessionGroupSync(input: UseSessionGroupSyncInput): void {
+export function useSessionGroupSync(input: UseSessionGroupSyncInput) {
   const { workspaces, endpointForWorkspace } = input;
   const workspacesRef = useRef(workspaces);
   const endpointForWorkspaceRef = useRef(endpointForWorkspace);
   const eventCursorByWorkspaceRef = useRef<Record<string, number | null>>({});
-  const pollInFlightRef = useRef(false);
+  const selectedRef = useRef(input.selectedWorkspaceId);
+  const polls = useRef(new Map<string, ReturnType<typeof startWorkspaceEventPoll>>());
+  useEffect(() => {
+    selectedRef.current = input.selectedWorkspaceId;
+    if (input.selectedWorkspaceId) void polls.current.get(input.selectedWorkspaceId)?.refresh();
+  }, [input.selectedWorkspaceId]);
   const groupSyncKey = useMemo(
     () => workspaceEndpointSyncKey(workspaces, endpointForWorkspace),
     [endpointForWorkspace, workspaces],
@@ -179,47 +186,60 @@ export function useSessionGroupSync(input: UseSessionGroupSyncInput): void {
     };
 
     for (const workspace of workspacesRef.current) {
-      void syncWorkspace(workspace, true).catch((error) => {
-        console.warn("[session-groups] initial sync failed", error);
-      });
-    }
-
-    const pollEvents = async () => {
-      if (pollInFlightRef.current) return;
-      pollInFlightRef.current = true;
-      try {
-        for (const workspace of workspacesRef.current) {
-          const endpoint = endpointForWorkspaceRef.current(workspace);
-          if (!endpoint) continue;
-          const key = `${endpoint.baseUrl}:${endpoint.workspaceId}`;
-          const currentCursor = eventCursorByWorkspaceRef.current[key];
-          try {
-            const response = await endpoint.client.listSessionGroupEvents(
-              endpoint.workspaceId,
-              typeof currentCursor === "number" ? { since: currentCursor } : undefined,
-            );
+      const endpoint = endpointForWorkspaceRef.current(workspace);
+      if (!endpoint) continue;
+      const key = `${endpoint.baseUrl}:${endpoint.workspaceId}`;
+      let initialSync = true;
+      // Load the sidebar immediately even if the peer's event endpoint is slow.
+      const initialRead = syncWorkspace(workspace, true).then(
+        () => { initialSync = false; },
+        () => { /* Retry via the poller. */ },
+      );
+      const poll = startWorkspaceEventPoll(async () => {
+        const cursor = eventCursorByWorkspaceRef.current[key];
+        try {
+          const response = await endpoint.client.listSessionGroupEvents(
+            endpoint.workspaceId, typeof cursor === "number" ? { since: cursor } : undefined,
+          );
+          await initialRead;
+          if (cancelled) return;
+          // A first cursor can include a change made after the initial snapshot.
+          if (initialSync || (cursor == null && (response.cursor ?? 0) > 0) || response.items?.length) {
+            await syncWorkspace(workspace, initialSync);
             if (cancelled) return;
-            eventCursorByWorkspaceRef.current[key] =
-              typeof response.cursor === "number"
-                ? response.cursor
-                : Math.max(currentCursor ?? 0, ...((response.items ?? []).map((item) => Number(item.seq) || 0)));
-            if (currentCursor === undefined || currentCursor === null) continue;
-            if ((response.items ?? []).length === 0) continue;
-            await syncWorkspace(workspace, false);
-          } catch {
-            // Best effort: normal workspace/session loading still surfaces connection issues.
+            initialSync = false;
+          }
+          eventCursorByWorkspaceRef.current[key] = typeof response.cursor === "number"
+            ? response.cursor : Math.max(cursor ?? 0, ...(response.items ?? []).map(item => Number(item.seq) || 0));
+        } catch {
+          await initialRead;
+          if (!cancelled && initialSync) {
+            try {
+              await syncWorkspace(workspace, true);
+              initialSync = false;
+            } catch { /* Retry on the next poll. */ }
           }
         }
-      } finally {
-        pollInFlightRef.current = false;
+      }, () => selectedRef.current === workspace.id);
+      polls.current.set(workspace.id, poll);
+    }
+    const refreshSelected = () => {
+      if (document.visibilityState !== "hidden" && selectedRef.current) {
+        void polls.current.get(selectedRef.current)?.refresh();
       }
     };
-
-    void pollEvents();
-    const interval = window.setInterval(() => void pollEvents(), 3000);
+    window.addEventListener("focus", refreshSelected);
+    document.addEventListener("visibilitychange", refreshSelected);
     return () => {
       cancelled = true;
-      window.clearInterval(interval);
+      window.removeEventListener("focus", refreshSelected);
+      document.removeEventListener("visibilitychange", refreshSelected);
+      for (const poll of polls.current.values()) poll.stop();
+      polls.current.clear();
     };
   }, [groupSyncKey]);
+
+  return useCallback((workspaceId: string) => {
+    void polls.current.get(workspaceId)?.refresh();
+  }, []);
 }

@@ -24,11 +24,12 @@ export function AutomationRunNotificationCoordinator() {
       const known = readNotifiedRuns();
       if (!initialized && !known.size) {
         terminal.forEach((run) => known.add(run.id));
-        writeNotifiedRuns(known);
+        if (known.size) writeNotifiedRuns(known);
         initialized = true;
         return;
       }
       initialized = true;
+      const initialSize = known.size;
       for (const run of terminal.reverse()) {
         if (known.has(run.id)) continue;
         const href = run.sessionId
@@ -39,7 +40,7 @@ export function AutomationRunNotificationCoordinator() {
           : { type: "automation.succeeded", automationName: run.automationName, href });
         known.add(run.id);
       }
-      writeNotifiedRuns(known);
+      if (known.size !== initialSize) writeNotifiedRuns(known);
     };
     void scan();
     const interval = window.setInterval(() => void scan(), SCAN_INTERVAL_MS);

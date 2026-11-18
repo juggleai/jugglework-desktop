@@ -79,6 +79,37 @@ describe("managed OpenCode lifecycle", () => {
     }
   });
 
+  test("handles a split ready line and drains output after startup", async () => {
+    const root = await mkdtemp(join(tmpdir(), "jugglework-output-"));
+    const file = join(root, "noisy-engine");
+    let managed: Awaited<ReturnType<typeof createManagedOpencodeServer>> | undefined;
+    try {
+      await writeFile(file, [
+        "#!/usr/bin/env bun",
+        "import { writeFileSync } from 'node:fs';",
+        "process.stdout.write('opencode server list');",
+        "await Bun.sleep(15);",
+        "process.stderr.write('startup diagnostic\\n');",
+        "process.stdout.write('ening on http://127.0.0.1:43210\\n');",
+        "for (const stream of [process.stdout, process.stderr]) {",
+        "  await new Promise(resolve => stream.write('x'.repeat(1 << 20), resolve));",
+        "}",
+        "writeFileSync('drained', 'ok');",
+        "setInterval(() => {}, 1000);",
+      ].join("\n"), { mode: 0o755 });
+      managed = await createManagedOpencodeServer({ bin: file, cwd: root });
+      expect(managed.url).toBe("http://127.0.0.1:43210");
+      for (let i = 0; i < 200; i++) {
+        if ((await logLines(join(root, "drained"))).length) break;
+        await Bun.sleep(10);
+      }
+      expect(await logLines(join(root, "drained"))).toEqual(["ok"]);
+    } finally {
+      await managed?.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   async function expectReadinessFailureClosesChild(
     behavior: "unready" | "invalid",
     message: string,

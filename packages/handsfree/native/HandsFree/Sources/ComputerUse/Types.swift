@@ -141,7 +141,7 @@ struct AppSnapshot: @unchecked Sendable {
     let pid: pid_t
     let windowNumber: Int?
     let windowTitle: String?
-    let screenshotData: Data
+    var screenshotData: Data
     let screenshotMimeType: String
     let screenshotMeta: ScreenshotMetadata
     let records: [AXElementRecord]

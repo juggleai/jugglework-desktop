@@ -33,6 +33,7 @@ import { hashToken } from "./utils.js";
 import { readInstallId } from "./workspace-key.js";
 import {
   dispatchPermissionReply,
+  pendingPermissionRoots,
   readInteractionSnapshot,
   readPendingPermissions,
   type InteractionWorkspaceOpencodeClient,
@@ -364,6 +365,7 @@ export type SessionPermissionBrokerOptions = {
   store: SessionPermissionModeStore;
   config: ServerConfig;
   tokens: TokenService;
+  resolveOpencodeDirectory: (workspace: WorkspaceInfo) => string | null;
   resolveWorkspace: (config: ServerConfig, id: string) => Promise<WorkspaceInfo>;
   createWorkspaceOpencodeClient: (config: ServerConfig, workspace: WorkspaceInfo) => InteractionWorkspaceOpencodeClient;
   interactionResolutions: InteractionResolutionCoordinator;
@@ -446,7 +448,19 @@ export class SessionPermissionBroker {
         ...this.store.listActiveFullAccessRoots(workspace.id),
         ...this.store.listGrantRoots(workspace.id),
       ]);
+      if (!rootIds.size) continue;
+      let pendingRoots: Set<string> | null = null;
+      try {
+        const directory = this.options.resolveOpencodeDirectory(workspace);
+        if (directory) {
+          const client = this.options.createWorkspaceOpencodeClient(this.options.config, workspace);
+          pendingRoots = await pendingPermissionRoots(client, directory);
+        }
+      } catch {
+        // Unknown scope or older engine. Use the existing per-root discovery path.
+      }
       for (const rootSessionId of rootIds) {
+        if (pendingRoots && !pendingRoots.has(rootSessionId)) continue;
         await this.options.rootLocks.with(`${workspace.id}\0${rootSessionId}`, async () => {
           await this.processRoot(workspace, rootSessionId).catch((error) => {
             this.options.log?.("session-permission:root-error", {
@@ -481,7 +495,7 @@ export class SessionPermissionBroker {
 
     const client = this.options.createWorkspaceOpencodeClient(this.options.config, workspace);
     const snapshot = await readInteractionSnapshot(client, rootSessionId, true);
-    if (snapshot.rootSessionId !== rootSessionId) return; // ancestry changed under us
+    if (snapshot.rootSessionId !== rootSessionId || !snapshot.permissions.length) return;
 
     const ceiling = await this.ceilingContext(workspaceId);
     const excluded = this.store.listExcludedRequestIds(workspaceId, rootSessionId);

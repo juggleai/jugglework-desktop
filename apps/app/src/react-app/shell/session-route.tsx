@@ -770,7 +770,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     }
     return selectedWorkspaceId;
   }, [selectedSessionId, selectedWorkspaceId, workspaceSessionGroups]);
-  useSessionGroupSync({ workspaces, endpointForWorkspace });
+  const refreshWorkspaceGroups = useSessionGroupSync({ workspaces, selectedWorkspaceId, endpointForWorkspace });
   const selectedWorkspaceGroupState = sessionManagementStore((state) => (
     selectedWorkspaceId ? state.groupsByWorkspace[selectedWorkspaceId] : undefined
   ));
@@ -2722,6 +2722,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
           return true;
         },
         onExpandWorkspace: (workspaceId) => {
+          refreshWorkspaceGroups(workspaceId);
           const workspace = workspaces.find((item) => item.id === workspaceId);
           if (!client || !workspace) return;
           void loadWorkspaceSessionsInBackground([workspace]);

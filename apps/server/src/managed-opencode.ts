@@ -129,30 +129,45 @@ export async function createManagedOpencodeServer(options: {
   let url: string;
   try {
     url = await new Promise<string>((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error(`Timeout waiting for OpenCode server after ${options.timeoutMs ?? 15000}ms`)), options.timeoutMs ?? 15000);
-      let output = "";
-      const done = (value: string) => {
+      const tailLimit = 8192;
+      let diagnosticTail = "";
+      let partialLine = "";
+      const timeout = setTimeout(() => fail(new Error(`Timeout waiting for OpenCode server after ${options.timeoutMs ?? 15000}ms`)), options.timeoutMs ?? 15000);
+      function cleanup() {
         clearTimeout(timeout);
-        resolve(value);
-      };
-      const fail = (error: Error) => {
-        clearTimeout(timeout);
+        child.stdout?.off("data", onStdout).resume();
+        child.stderr?.off("data", onStderr).resume();
+        child.off("exit", onExit);
+        child.off("error", fail);
+      }
+      function fail(error: Error) {
+        cleanup();
         reject(error);
-      };
-      child.stdout?.on("data", (chunk) => {
-        output += chunk.toString();
-        for (const line of output.split("\n")) {
+      }
+      function onExit(code: number | null) {
+        fail(new Error(`OpenCode server exited with code ${code}${diagnosticTail.trim() ? `\n${diagnosticTail.trim()}` : ""}`));
+      }
+      function onStderr(chunk: Buffer) {
+        diagnosticTail = (diagnosticTail + chunk.toString()).slice(-tailLimit);
+      }
+      function onStdout(chunk: Buffer) {
+        const text = chunk.toString();
+        diagnosticTail = (diagnosticTail + text).slice(-tailLimit);
+        const lines = (partialLine + text).split("\n");
+        partialLine = lines.pop()!.slice(-tailLimit);
+        for (const line of lines) {
           if (!line.startsWith("opencode server listening")) continue;
           const match = line.match(/on\s+(https?:\/\/[^\s]+)/);
-          if (!match?.[1]) return fail(new Error(`Failed to parse OpenCode server URL from: ${line}`));
-          done(match[1]);
+          if (!match?.[1]) return fail(new Error(`Failed to parse OpenCode server URL from: ${line.slice(0, tailLimit)}`));
+          cleanup();
+          resolve(match[1]);
+          return;
         }
-      });
-      child.stderr?.on("data", (chunk) => {
-        output += chunk.toString();
-      });
+      }
+      child.stdout?.on("data", onStdout);
+      child.stderr?.on("data", onStderr);
+      child.once("exit", onExit);
       child.once("error", fail);
-      child.once("exit", (code) => fail(new Error(`OpenCode server exited with code ${code}${output.trim() ? `\n${output}` : ""}`)));
     });
   } catch (error) {
     await close();

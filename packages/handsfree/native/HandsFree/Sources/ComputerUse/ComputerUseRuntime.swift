@@ -56,6 +56,9 @@ actor ComputerUseRuntime {
         let annotatedSnapshot = annotate(snapshot: snapshot)
         staleSnapshotReason = nil
         lastSnapshot = annotatedSnapshot
+        // Subsequent actions need the AX records and coordinates. The image
+        // bytes belong only to the snapshot response returned to the caller.
+        lastSnapshot?.screenshotData = Data()
         return annotatedSnapshot
     }
 

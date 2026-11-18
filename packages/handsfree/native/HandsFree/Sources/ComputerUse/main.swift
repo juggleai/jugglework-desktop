@@ -17,11 +17,11 @@ let subcommand = args.count >= 2 ? args[1] : ""
 
 switch subcommand {
 case "mcp":
+    let server = MCPServer()
     if ProcessInfo.processInfo.environment["JUGGLEWORK_COMPUTER_USE_CURSOR_OVERLAY"] == "0" {
-        let server = MCPServer()
         await server.run()
-    } else {
-        await runMCPServerWithOverlay()
+    } else if let firstCall = server.nextToolCall() {
+        await runMCPServerWithOverlay(server, firstCall: firstCall)
     }
 case "--check":
     // Fresh process → fresh TCC read → always accurate.
@@ -54,11 +54,10 @@ default:
 }
 
 @MainActor
-func runMCPServerWithOverlay() async {
+func runMCPServerWithOverlay(_ server: MCPServer, firstCall: [String: Any]) async {
     NSApplication.shared.setActivationPolicy(.accessory)
-    let server = MCPServer()
     Task.detached {
-        await server.run()
+        await server.run(firstCall: firstCall)
         await MainActor.run {
             NSApplication.shared.terminate(nil)
         }
