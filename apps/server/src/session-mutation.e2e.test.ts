@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { startServer } from "./server.js";
+import { registerTrustedOpencodeProcess, startServer } from "./server.js";
 import { AutomationRepository } from "./automation/repository.js";
 import { AUTOMATION_PERMISSION_PROFILE, type AutomationDefinition } from "@jugglework/types/automation";
 import { opencodeAdmissionId } from "./opencode-admission.js";
@@ -135,6 +135,7 @@ function startMockOpencode() {
         const sessionId = decodeURIComponent(sessionMatch[1]!);
         return Response.json(sessions.delete(sessionId));
       }
+      if (request.method === "GET" && url.pathname === "/config") return Response.json({});
       if (request.method === "POST" && url.pathname === "/instance/dispose") {
         disposes.push({ directory: url.searchParams.get("directory") });
         return Response.json({ disposed: true });
@@ -2199,7 +2200,7 @@ describe("authoritative session mutation APIs", () => {
     await expect(terminal.json()).resolves.toEqual({ items: [] });
   });
 
-  test("engine reload in another workspace is blocked until the authoritative active run clears", async () => {
+  test("reload fences the affected instance and global operations while a different local instance can reload", async () => {
     const engine = startMockOpencode();
     const harness = await startHarness(engine.server.port);
     const started = await fetch(`${runPath(harness.base, "ses_reload_gate")}/start`, {
@@ -2213,13 +2214,30 @@ describe("authoritative session mutation APIs", () => {
     });
     const { run } = await started.json() as { run: { runId: string } };
 
-    const blocked = await fetch(`${harness.base}/workspace/ws_2/engine/reload`, {
+    const reload = (path: string) => fetch(`${harness.base}/workspace/${path}`, {
       method: "POST",
       headers: harness.collaboratorHeaders,
     });
-    expect(blocked.status).toBe(409);
-    await expect(blocked.json()).resolves.toMatchObject({ code: "engine_reload_blocked_active_runs" });
+    // External engines have no verified directory isolation.
+    expect((await reload("ws_2/engine/reload")).status).toBe(409);
+    registerTrustedOpencodeProcess(harness.config, {
+      baseUrl: `http://127.0.0.1:${engine.server.port}`,
+      identity: "reload-test",
+      isAlive: () => true,
+    });
+    for (const path of ["ws_1/engine/reload", "ws_2/engine/reload?scope=global"]) {
+      const blocked = await reload(path);
+      expect(blocked.status).toBe(409);
+      await expect(blocked.json()).resolves.toMatchObject({ code: "engine_reload_blocked_active_runs" });
+    }
+    const second = harness.config.workspaces[1]!;
+    second.directory = harness.root;
+    expect((await reload("ws_2/engine/reload")).status).toBe(409);
+    delete second.directory;
     expect(engine.disposes).toEqual([]);
+    expect((await reload("ws_2/engine/reload")).status).toBe(200);
+    expect(engine.disposes).toEqual([{ directory: second.path }]);
+    expect(harness.server.listActiveSessionRuns?.()).toMatchObject([{ runId: run.runId }]);
 
     engine.messages.set("ses_reload_gate", [{ info: { id: "msg_reload", role: "assistant", finish: "stop", time: { created: Date.now(), completed: Date.now() } }, parts: [] }]);
     const terminal = await fetch(`${runPath(harness.base, "ses_reload_gate")}/${run.runId}/observations`, {

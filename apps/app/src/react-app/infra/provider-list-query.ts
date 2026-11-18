@@ -1,4 +1,7 @@
-import { useQuery, type QueryClient } from "@tanstack/react-query";
+import { useMemo } from "react";
+import { isCloudGroupRetired } from "@jugglework/cloud-provider";
+import { readDenSettings, readDenUserId } from "../../app/lib/den";
+import { skipToken, useQuery, type QueryClient } from "@tanstack/react-query";
 
 import type { Client, ModelRef, ProviderListItem } from "../../app/types";
 import { unwrap } from "../../app/lib/opencode";
@@ -63,6 +66,20 @@ export function getConnectedProviderItems(value: ProviderListResponse | null | u
       connected.has(provider.id) &&
       (provider.source !== "custom" || provider.id === "opencode" || Object.keys(provider.models ?? {}).length > 0),
   );
+}
+
+// The engine can still report retired groups until a safe instance reload.
+export function cloudGroupCatalogKey() {
+  const settings = readDenSettings();
+  return ["enabled-cloud-groups", settings.baseUrl, settings.activeOrgId, readDenUserId()] as const;
+}
+
+export function usePickerProviderItems(value: ProviderListResponse | null | undefined) {
+  const catalog = useQuery<string[]>({ queryKey: cloudGroupCatalogKey(), queryFn: skipToken });
+  return useMemo(() => {
+    const enabled = catalog.data && new Set(catalog.data);
+    return getConnectedProviderItems(value).filter((provider) => !isCloudGroupRetired(provider.id, enabled));
+  }, [catalog.data, value]);
 }
 
 export function getConnectedProviderSnapshot(value: ProviderListResponse | null | undefined): ConnectedProviderSnapshot {

@@ -57,6 +57,32 @@ async function readConfigFile(config: ServerConfig): Promise<Record<string, unkn
 }
 
 describe("jugglework runtime config file", () => {
+  test("queued workspace writes wait for the current instance to read its configuration", async () => {
+    const { config } = await setup();
+    for (const id of ["ws_1", "ws_2"]) {
+      await writeRuntimeOpencodeConfig(config, id, (current) => ({
+        ...current,
+        provider: { [id]: { name: id, models: {} } },
+      }));
+    }
+    let started!: () => void;
+    const applying = new Promise<void>((resolve) => { started = resolve; });
+    let release!: () => void;
+    const wait = new Promise<void>((resolve) => { release = resolve; });
+    const first = writeJuggleWorkRuntimeConfigFile(config, "ws_1", async () => {
+      started();
+      await wait;
+      expect(Object.keys((await readConfigFile(config)).provider as object)).toEqual(["ws_1"]);
+    });
+    await applying;
+    const second = writeJuggleWorkRuntimeConfigFile(config, "ws_2", async () => {
+      expect(Object.keys((await readConfigFile(config)).provider as object)).toEqual(["ws_2"]);
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    release();
+    await Promise.all([first, second]);
+  });
+
   test("writes runtime-DB MCPs and jugglework defaults into the file", async () => {
     const { config } = await setup();
     await writeRuntimeOpencodeConfig(config, "ws_1", (current) => ({

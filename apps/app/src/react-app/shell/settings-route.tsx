@@ -679,19 +679,19 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
 
   const activeReloadBlockingSessions = useMemo(
     () =>
-      Object.values(sessionsByWorkspaceId)
-        .flat()
-        .flatMap((session) => {
+      Object.entries(sessionsByWorkspaceId).flatMap(([workspaceId, sessions]) =>
+        sessions.flatMap((session) => {
           if (!isActiveSessionStatus(getSessionStatus(session))) return [];
           const id = String(session?.id ?? "");
           if (!id) return [];
           return [{
+            workspaceId,
             id,
             title:
               String(session?.title ?? session?.slug ?? session?.id ?? "").trim() ||
               t("session.untitled"),
           }];
-        }),
+        })),
     [sessionsByWorkspaceId],
   );
 
@@ -1689,6 +1689,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   useEffect(() => {
     return reloadCoordinator.registerWorkspaceReloadControls({
       workspaceId: selectedWorkspaceEndpoint?.workspaceId ?? selectedWorkspace?.id ?? (selectedWorkspaceId || null),
+      localActivityWorkspaceId: selectedWorkspace?.workspaceType === "local" ? selectedWorkspaceId : null,
       canReloadWorkspaceEngine: () => Boolean(juggleworkClient && (selectedWorkspace?.id || selectedWorkspaceId)),
       reloadWorkspaceEngine: reloadWorkspaceEngineFromUi,
       activeSessions: () => activeReloadBlockingSessions,
@@ -1706,6 +1707,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     selectedWorkspace?.id,
     selectedWorkspaceEndpoint?.workspaceId,
     selectedWorkspaceId,
+    selectedWorkspace?.workspaceType,
   ]);
 
   useEffect(() => {

@@ -65,6 +65,7 @@ function startMockOpencode(options?: {
       if (url.pathname === "/instance/dispose") {
         return options?.disposeResponse?.() ?? Response.json({ disposed: true });
       }
+      if (url.pathname === "/config" && request.method === "GET") return Response.json({});
       if (url.pathname === "/global/dispose") {
         return options?.disposeResponse?.() ?? Response.json({ disposed: true });
       }

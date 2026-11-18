@@ -21,7 +21,7 @@ import {
   useCheckDesktopRestriction,
   useDesktopAllowedModels,
 } from "@/react-app/domains/cloud/desktop-config-provider";
-import { getChatSelectableModelEntries, getConnectedProviderItems, useProviderListQuery } from "@/react-app/infra/provider-list-query";
+import { getChatSelectableModelEntries, usePickerProviderItems, useProviderListQuery } from "@/react-app/infra/provider-list-query";
 import {
   Command,
   CommandCollection,
@@ -72,6 +72,8 @@ function useModelOptions(open: boolean) {
     return () => window.removeEventListener(newProvidersEvent, handler);
   }, [client, refetch]);
 
+  const pickerProviders = usePickerProviderItems(data);
+
   // Apply org-level restrictions (dev #1505) on top of the raw model list
   // so the picker never surfaces blocked options:
   //   - `allowZenModel` hides the built-in OpenCode provider entries when false
@@ -86,7 +88,7 @@ function useModelOptions(open: boolean) {
       restriction: "allowCustomProviders",
     });
 
-    const options = getConnectedProviderItems(data)
+    const options = pickerProviders
       .flatMap((provider) =>
         getChatSelectableModelEntries(provider.models).map(([id, model]) => ({
           providerID: provider.id,
@@ -127,7 +129,7 @@ function useModelOptions(open: boolean) {
 
       return true;
     });
-  }, [allowedModels, checkDesktopRestriction, data]);
+  }, [allowedModels, checkDesktopRestriction, pickerProviders]);
 }
 
 type ModelSelectModelItem = {

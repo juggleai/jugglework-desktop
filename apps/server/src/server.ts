@@ -1,5 +1,6 @@
 import { normalizeCloudDocPromptParts } from "./cloud-docs/prompt.js";
 import { readFile, writeFile, rm, stat } from "node:fs/promises";
+import { statSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { createSessionCreationLedger } from "./session-create-idempotency.js";
 import { hasCurrentRunFinalResponse } from "./session-completion-evidence.js";
@@ -4196,9 +4197,24 @@ function createRoutes(
     readJsonBody,
     requireClientScope,
     resolveWorkspace,
-    hasAnyActiveSessionRuns: () => sessionMutations.listActive().length > 0,
     reloadOpencodeEngine: (routeConfig, workspace, options) =>
-      reloadOpencodeEngine(routeConfig, workspace, engineMcpServerState, options),
+      reloadOpencodeEngine(routeConfig, workspace, engineMcpServerState, {
+        ...options,
+        assertIdle: (scope) => {
+          const active = sessionMutations.listActive();
+          if (!active.length) return;
+          const directory = scope === "workspace" ? localInstanceDirectoryIdentity(routeConfig, workspace) : null;
+          const blocked = !directory || active.some((run) => {
+            if (run.workspaceId === workspace.id) return true;
+            const owner = routeConfig.workspaces.find((entry) => entry.id === run.workspaceId);
+            const activeDirectory = owner && localInstanceDirectoryIdentity(routeConfig, owner);
+            return !activeDirectory || activeDirectory === directory;
+          });
+          if (blocked) {
+            throw new ApiError(409, "engine_reload_blocked_active_runs", "Configuration reload is deferred until affected tasks finish");
+          }
+        },
+      }),
   });
 
   registerLocalOfficeRoutes({ routes, files: localOfficeFiles, documents: officeDocuments, jsonResponse, readJsonBody, ensureWritable: () => ensureWritable(config),
@@ -5399,6 +5415,19 @@ function resolveOpencodeDirectory(workspace: WorkspaceInfo): string | null {
   return null;
 }
 
+// Only relax the global fence for demonstrably distinct local instances.
+function localInstanceDirectoryIdentity(config: ServerConfig, workspace: WorkspaceInfo): string | null {
+  const directory = resolveOpencodeDirectory(workspace);
+  if (workspace.workspaceType !== "local" || !directory || !isAbsolute(directory) ||
+      !trustedOpencodeProcessIdentity(config, workspace)) return null;
+  try {
+    const info = statSync(directory, { bigint: true });
+    return info.isDirectory() && info.ino !== 0n ? `${info.dev}:${info.ino}` : null;
+  } catch {
+    return null;
+  }
+}
+
 function normalizeOpencodeDirectory(directory: string): string {
   // OpenCode stores/list-filters Windows sessions by regular drive paths
   // (`C:\Users\...`). Electron can persist local workspaces as extended-length
@@ -5442,8 +5471,10 @@ async function reloadOpencodeEngine(
   config: ServerConfig,
   workspace: WorkspaceInfo,
   serverState?: EngineMcpServerState,
-  options?: { scope?: "workspace" | "global" },
+  options?: { scope?: "workspace" | "global"; assertIdle?: (scope: "workspace" | "global") => void },
 ): Promise<void> {
+  const scope = options?.scope ?? "workspace";
+  options?.assertIdle?.(scope);
   const activeState = activeEngineMcpServerState(config, serverState);
   if (activeState) invalidateEngineMcpWorkspace(activeState, workspace.id);
   const connection = resolveWorkspaceOpencodeConnection(config, workspace);
@@ -5452,48 +5483,58 @@ async function reloadOpencodeEngine(
     throw new ApiError(400, "opencode_unconfigured", "OpenCode base URL is missing for this workspace");
   }
 
-  // A managed OpenCode process has one global OPENCODE_CONFIG file even when
-  // it serves several workspace directories. Rebuild that file from the
-  // target workspace before dispose, otherwise switching workspaces reloads
-  // the engine with whichever workspace happened to be primary at startup.
-  // External engines are not tied to this server-managed file.
-  if (trustedOpencodeProcessIdentity(config, workspace)) {
+  const directory = resolveOpencodeDirectory(workspace);
+  async function disposeInstance(managed: boolean) {
+    const targetUrl = buildOpencodeReloadUrl(baseUrl, directory, options?.scope);
+    const headers: Record<string, string> = {};
+    const auth = connection.authHeader ?? null;
+    if (auth) headers.Authorization = auth;
+
+    options?.assertIdle?.(scope);
+    let response: Response;
     try {
-      await writeJuggleWorkRuntimeConfigFile(config, workspace.id);
+      // OpenCode reload targets the managed loopback engine; CA trust is irrelevant.
+      response = await loopbackFetch(targetUrl, { method: "POST", headers });
     } catch (error) {
+      // The desktop fallback restarts the entire process.
+      options?.assertIdle?.("global");
       throw new ApiError(
-        500,
-        "opencode_runtime_config_refresh_failed",
-        "Failed to prepare the workspace runtime configuration for engine reload",
-        { cause: error instanceof Error ? error.message : String(error) },
+        503,
+        "opencode_engine_unreachable",
+        "OpenCode engine is not reachable; a full engine restart is required",
+        { baseUrl, cause: error instanceof Error ? error.message : String(error) },
       );
+    }
+    if (!response.ok) {
+      const body = parseOpencodeErrorBody(await response.text());
+      throw new ApiError(502, "opencode_reload_failed", "OpenCode reload failed", {
+        status: response.status,
+        body,
+      });
+    }
+
+    // Instance disposal is lazy. Make the new instance read its config before
+    // another workspace (or a background mirror write) can replace the file.
+    if (managed && scope === "workspace" && directory) {
+      const configUrl = new URL(targetUrl);
+      configUrl.pathname = "/config";
+      const ready = await loopbackFetch(configUrl.toString(), { headers, signal: AbortSignal.timeout(20_000) });
+      await ready.body?.cancel();
+      if (!ready.ok) throw new ApiError(502, "opencode_reload_failed", "OpenCode could not load the workspace configuration");
     }
   }
 
-  const directory = resolveOpencodeDirectory(workspace);
-  const targetUrl = buildOpencodeReloadUrl(baseUrl, directory, options?.scope);
-  const headers: Record<string, string> = {};
-  const auth = connection.authHeader ?? null;
-  if (auth) headers.Authorization = auth;
-
-  let response: Response;
-  try {
-    // OpenCode reload targets the managed loopback engine; CA trust is irrelevant.
-    response = await loopbackFetch(targetUrl, { method: "POST", headers });
-  } catch (error) {
-    throw new ApiError(
-      503,
-      "opencode_engine_unreachable",
-      "OpenCode engine is not reachable; a full engine restart is required",
-      { baseUrl, cause: error instanceof Error ? error.message : String(error) },
-    );
-  }
-  if (!response.ok) {
-    const body = parseOpencodeErrorBody(await response.text());
-    throw new ApiError(502, "opencode_reload_failed", "OpenCode reload failed", {
-      status: response.status,
-      body,
-    });
+  if (trustedOpencodeProcessIdentity(config, workspace)) {
+    try {
+      await writeJuggleWorkRuntimeConfigFile(config, workspace.id, () => disposeInstance(true));
+    } catch (error) {
+      if (error instanceof ApiError) throw error;
+      throw new ApiError(500, "opencode_runtime_config_refresh_failed", "Failed to apply the workspace runtime configuration", {
+        cause: error instanceof Error ? error.message : String(error),
+      });
+    }
+  } else {
+    await disposeInstance(false);
   }
 
   markJuggleWorkCloudMcpStale(workspace, directory);

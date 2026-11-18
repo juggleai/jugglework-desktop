@@ -19,7 +19,6 @@ interface RegisterOperationRoutesOptions {
     workspace: WorkspaceInfo,
     options?: { scope?: "workspace" | "global" },
   ) => Promise<void>;
-  hasAnyActiveSessionRuns: () => boolean;
 }
 
 export function registerOperationRoutes(options: RegisterOperationRoutesOptions): void {
@@ -31,7 +30,6 @@ export function registerOperationRoutes(options: RegisterOperationRoutesOptions)
     requireClientScope,
     resolveWorkspace,
     reloadOpencodeEngine,
-    hasAnyActiveSessionRuns,
   } = options;
 
   addRoute(routes, "GET", "/workspace/:id/events", "client", async (ctx) => {
@@ -45,10 +43,6 @@ export function registerOperationRoutes(options: RegisterOperationRoutesOptions)
   addRoute(routes, "POST", "/workspace/:id/engine/reload", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
     requireClientScope(ctx, "collaborator");
-    if (hasAnyActiveSessionRuns()) {
-      throw new ApiError(409, "engine_reload_blocked_active_runs", "Configuration reload is deferred until all active tasks finish");
-    }
-
     const scope = ctx.url.searchParams.get("scope") === "global" ? "global" : "workspace";
     await reloadOpencodeEngine(config, workspace, { scope });
 

@@ -63,6 +63,11 @@ Desktop SHALL treat an imported cloud provider as applied only when the engine p
 - **WHEN** the baseline already records the new model list but the engine still lists the provider with the previous models (for example because the reload returned 409)
 - **THEN** the next sync does not re-import the provider and instead requests one engine reload for that workspace
 
+#### Scenario: A retired organization group is still connected in the engine
+- **WHEN** a successful organization catalog refresh excludes a managed group that the engine still advertises
+- **THEN** both session model pickers hide that group immediately and Desktop requests a scoped reload for the difference, including when the last group was removed
+- **AND** locally configured providers remain available during reconciliation
+
 #### Scenario: Engine lacks the provider entirely
 - **WHEN** the baseline records a provider the engine does not list
 - **THEN** the sync re-imports the provider once

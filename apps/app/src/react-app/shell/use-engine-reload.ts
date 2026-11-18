@@ -56,7 +56,7 @@ export type UseEngineReloadInput = {
   endpointForWorkspace: (
     workspace: RouteWorkspace | null | undefined,
   ) => ResolvedWorkspaceEndpoint | null;
-  activeReloadBlockingSessions: { id: string; title: string }[];
+  activeReloadBlockingSessions: { workspaceId: string; id: string; title: string }[];
   onError: (message: string) => void;
   refreshRouteState: () => Promise<void>;
 };
@@ -123,6 +123,7 @@ export function useEngineReload(input: UseEngineReloadInput) {
   useEffect(() => {
     return reloadCoordinator.registerWorkspaceReloadControls({
       workspaceId: endpointForWorkspace(workspace)?.workspaceId ?? (workspaceId || null),
+      localActivityWorkspaceId: workspace?.workspaceType === "local" ? workspaceId : null,
       canReloadWorkspaceEngine: () => Boolean(client && workspaceId),
       reloadWorkspaceEngine: reloadWorkspaceEngineFromUi,
       activeSessions: () => activeReloadBlockingSessions,

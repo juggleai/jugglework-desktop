@@ -2894,7 +2894,7 @@ function parseDenOrgLlmProvider(value: unknown): DenOrgLlmProvider | null {
 
 function getDenOrgLlmProviders(payload: unknown): DenOrgLlmProvider[] {
   if (!isRecord(payload) || !Array.isArray(payload.llmProviders)) {
-    return [];
+    throw new DenApiError(502, "invalid_llm_provider_catalog", "The organization provider list is missing.");
   }
 
   return payload.llmProviders.flatMap((provider) => {

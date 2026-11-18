@@ -257,7 +257,11 @@ const fileWriteQueue = new Map<string, Promise<void>>();
  * Atomic (temp file + rename) so the engine never reads a partial file
  * mid-dispose.
  */
-export async function writeJuggleWorkRuntimeConfigFile(config: ServerConfig, workspaceId: string): Promise<string> {
+export async function writeJuggleWorkRuntimeConfigFile(
+  config: ServerConfig,
+  workspaceId: string,
+  apply?: () => Promise<void>,
+): Promise<string> {
   const path = juggleworkRuntimeConfigFilePath(config);
   const job = async () => {
     const content = await buildJuggleWorkRuntimeConfig(config, workspaceId);
@@ -265,6 +269,7 @@ export async function writeJuggleWorkRuntimeConfigFile(config: ServerConfig, wor
     const tmp = `${path}.${randomUUID()}.tmp`;
     await writeFile(tmp, content, "utf8");
     await rename(tmp, path);
+    await apply?.();
   };
   const previous = fileWriteQueue.get(path) ?? Promise.resolve();
   const next = previous.then(job, job);

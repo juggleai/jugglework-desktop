@@ -12,7 +12,7 @@ import {
   useDesktopAllowedModels,
 } from "@/react-app/domains/cloud/desktop-config-provider";
 import {
-  getConnectedProviderItems,
+  usePickerProviderItems,
   getChatSelectableModelEntries,
   useProviderListQuery,
 } from "@/react-app/infra/provider-list-query";
@@ -110,9 +110,8 @@ export function useModelPicker(input: UseModelPickerInput) {
     }
   }, [onLoadError, providerListQuery.error]);
 
+  const pickerProviders = usePickerProviderItems(providerListQuery.data);
   const modelOptions = useMemo(() => {
-    const data = providerListQuery.data;
-    if (!data?.all) return [];
 
     // Flag models from recently-added providers so they appear in the
     // "Recently added" section at the top of the picker.
@@ -127,7 +126,7 @@ export function useModelPicker(input: UseModelPickerInput) {
     }
 
     const next: ModelOption[] = [];
-    for (const provider of getConnectedProviderItems(data)) {
+    for (const provider of pickerProviders) {
       const isNew = !seenIds.has(provider.id) || recentProviderIds.has(provider.id);
       for (const [id, model] of getChatSelectableModelEntries(provider.models)) {
         const capabilities = parseNormalizedModelCapabilities(model);
@@ -153,7 +152,7 @@ export function useModelPicker(input: UseModelPickerInput) {
       }
     }
     return next;
-  }, [providerListQuery.data, recentProviderIds]);
+  }, [pickerProviders, recentProviderIds]);
 
   // Apply org-level restrictions (dev #1505) on top of the raw model list
   // so the picker never surfaces blocked options:

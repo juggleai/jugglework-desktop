@@ -1,9 +1,13 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { QueryClient } from "@tanstack/react-query";
+import { createElement } from "react";
+import { act, create, type ReactTestRenderer } from "react-test-renderer";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ProviderListResponse } from "@opencode-ai/sdk/v2/client";
 
 import type { Client } from "../src/app/types";
 import {
+  cloudGroupCatalogKey,
+  usePickerProviderItems,
   ensureProviderListQuery,
   PROVIDER_LIST_CACHE_MS,
   providerListQueryKey,
@@ -106,4 +110,40 @@ describe("ensureProviderListQuery", () => {
     expect(queryClient.getQueryState(backend.key)?.status).toBe("error");
     expect(queryClient.getQueryState(backend.key)?.dataUpdatedAt).toBe(cache === "stale" ? updatedAt : 0);
   });
+});
+
+test("open model pickers update from a confirmed cloud catalog while the raw engine list stays stale", async () => {
+  const client = new QueryClient();
+  const ids = ["lpr_relay", "lpr_codex", "my-local-provider"];
+  const raw = {
+    all: ids.map((id) => ({ ...recovered.all[0]!, id })),
+    connected: ids,
+    default: {},
+  };
+  let visible: string[] = [];
+  function Picker() {
+    visible = usePickerProviderItems(raw).map((provider) => provider.id);
+    return null;
+  }
+  const previous = Reflect.get(globalThis, "IS_REACT_ACT_ENVIRONMENT");
+  Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
+  let view: ReactTestRenderer | undefined;
+  try {
+    await act(async () => {
+      view = create(createElement(QueryClientProvider, { client }, createElement(Picker)));
+    });
+    expect(visible).toEqual(ids);
+    for (const enabled of [["lpr_codex"], [], ["lpr_relay"]]) {
+      await act(async () => {
+        client.setQueryData(cloudGroupCatalogKey(), enabled);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      });
+      expect(visible).toEqual([...enabled, "my-local-provider"]);
+    }
+    expect(raw.all.map(({ id }) => id)).toEqual(ids);
+  } finally {
+    await act(async () => view?.unmount());
+    client.clear();
+    Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", previous);
+  }
 });

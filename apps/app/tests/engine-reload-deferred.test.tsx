@@ -3,6 +3,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { readFileSync } from "node:fs";
 
+import { hasLiveSessionActivity } from "../src/react-app/shell/reload-coordinator";
 import { JuggleWorkServerError } from "../src/app/lib/jugglework-server";
 import {
   useSystemState,
@@ -167,4 +168,12 @@ describe("deferred engine reload recovery", () => {
     expect(latest!.reload.reloadPending).toBe(false);
     expect(latest!.reload.pendingWorkspaceIds).toEqual([]);
   });
+});
+
+
+test("workspace reload waits for its own live sessions while global reload waits for all", () => {
+  const statuses = { ws_active: { session: "retrying" }, ws_idle: { session: "idle" } } as const;
+  expect(hasLiveSessionActivity(statuses, ["ws_idle"])).toBe(false);
+  expect(hasLiveSessionActivity(statuses, ["ws_active"])).toBe(true);
+  expect(hasLiveSessionActivity(statuses)).toBe(true);
 });

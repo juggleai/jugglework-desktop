@@ -108,6 +108,7 @@ const LIVE_ACTIVITY_STATUSES: SessionActivityStatus[] = [
   "thinking",
   "responding",
   "stalled",
+  "retrying",
   "compacting",
   "waiting",
 ];
@@ -119,20 +120,25 @@ const LIVE_ACTIVITY_STATUSES: SessionActivityStatus[] = [
  * engine: it flips busy on task submit and also covers sessions waiting on
  * permission/question prompts (a dispose would orphan those).
  */
-function hasLiveSessionActivity(
+export function hasLiveSessionActivity(
   statusesByWorkspaceId: Record<string, Record<string, SessionActivityStatus>>,
+  workspaceIds?: readonly string[],
 ): boolean {
-  return Object.values(statusesByWorkspaceId).some((sessions) =>
+  const groups = workspaceIds
+    ? workspaceIds.map((id) => statusesByWorkspaceId[id] ?? {})
+    : Object.values(statusesByWorkspaceId);
+  return groups.some((sessions) =>
     Object.values(sessions).some((status) => LIVE_ACTIVITY_STATUSES.includes(status)),
   );
 }
 
-type ReloadSession = { id: string; title: string };
+type ReloadSession = { workspaceId: string; id: string; title: string };
 
 export type WorkspaceReloadControls = {
   /** Server workspace id this reload targets. Scoped pending reloads for
    *  this workspace become current (and auto-apply) while it is registered. */
   workspaceId?: string | null;
+  localActivityWorkspaceId?: string | null;
   canReloadWorkspaceEngine: () => boolean;
   reloadWorkspaceEngine: (options?: { scope?: "workspace" | "global" }) => Promise<boolean>;
   activeSessions?: () => ReloadSession[];
@@ -158,6 +164,7 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
   const controlsRef = useRef<WorkspaceReloadControls | null>(null);
   const [activeSessions, setActiveSessions] = useState<ReloadSession[]>([]);
   const [controlsWorkspaceId, setControlsWorkspaceId] = useState<string | null>(null);
+  const [localActivityWorkspaceId, setLocalActivityWorkspaceId] = useState<string | null>(null);
   const [orgOnboardingVisible, setOrgOnboardingVisible] = useState(false);
   const pendingReloadTriggerRef = useRef<ReloadTrigger | null>(null);
   const globalReloadRequiredRef = useRef(false);
@@ -168,12 +175,14 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
   const registerWorkspaceReloadControls = useCallback((controls: WorkspaceReloadControls | null) => {
     controlsRef.current = controls;
     setActiveSessions(controls?.activeSessions?.() ?? []);
+    setLocalActivityWorkspaceId(controls?.localActivityWorkspaceId ?? null);
     setControlsWorkspaceId(controls?.workspaceId?.trim() || null);
     return () => {
       if (controlsRef.current === controls) {
         controlsRef.current = null;
         setActiveSessions([]);
         setControlsWorkspaceId(null);
+        setLocalActivityWorkspaceId(null);
       }
     };
   }, []);
@@ -268,13 +277,24 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
     }
   }, [systemState.reload.reloadPending, systemState.reload.reloadTrigger]);
 
+  // Route snapshots use the sidebar id, while engine events can use the server id.
+  const globalReload = globalReloadRequiredRef.current;
+  const workspaceIds = useMemo(
+    () => localActivityWorkspaceId && !globalReload
+      ? [localActivityWorkspaceId, controlsWorkspaceId ?? localActivityWorkspaceId]
+      : undefined,
+    [controlsWorkspaceId, globalReload, localActivityWorkspaceId],
+  );
+  const blockingSessions = workspaceIds
+    ? activeSessions.some((session) => workspaceIds.includes(session.workspaceId))
+    : activeSessions.length > 0;
   const activityBlocked = useSessionActivityStore((state) =>
-    hasLiveSessionActivity(state.statusesByWorkspaceId),
+    hasLiveSessionActivity(state.statusesByWorkspaceId, workspaceIds),
   );
 
   const reloadIdle =
     systemState.reload.reloadPending &&
-    activeSessions.length === 0 &&
+    !blockingSessions &&
     !activityBlocked &&
     !orgOnboardingVisible;
 
@@ -312,21 +332,21 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
     const timer = window.setTimeout(() => {
       // Re-check at fire time: a task may have started during the debounce
       // window. The effect re-runs when activity ends and reschedules.
-      if (hasLiveSessionActivity(useSessionActivityStore.getState().statusesByWorkspaceId)) {
+      if (hasLiveSessionActivity(useSessionActivityStore.getState().statusesByWorkspaceId, workspaceIds)) {
         return;
       }
       lastAutoReloadAtRef.current = Date.now();
       void systemState.reloadWorkspaceEngine();
     }, delay);
     return () => window.clearTimeout(timer);
-  }, [reloadIdle, systemState]);
+  }, [reloadIdle, systemState, workspaceIds]);
 
   // Changes pending while tasks are running: quiet center entry instead of
   // a toast. The same dedupe key means the eventual "applied" receipt
   // replaces it.
   useEffect(() => {
     if (!systemState.reload.reloadPending) return;
-    if (activeSessions.length === 0 && !activityBlocked) return;
+    if (!blockingSessions && !activityBlocked) return;
     notifyEvent({
       kind: "reload",
       severity: "info",
@@ -334,7 +354,7 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
       title: t("notifications.reload_pending_title"),
       body: t("notifications.reload_pending_body"),
     });
-  }, [systemState.reload.reloadPending, activeSessions.length, activityBlocked]);
+  }, [systemState.reload.reloadPending, blockingSessions, activityBlocked]);
 
   // Reload failures are the one case that still warrants a toast (Alert
   // class): transient toast with Retry + persistent center entry.

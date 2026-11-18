@@ -114,6 +114,15 @@ describe("managed JuggleRouter Den provider parser", () => {
     expect(providers[1]?.enabled).toBe(false);
   });
 
+  test("a missing catalog cannot confirm removal of every organization provider", async () => {
+    Object.defineProperty(globalThis, "fetch", {
+      configurable: true,
+      value: async () => Response.json({}),
+    });
+    const client = createDenClient({ baseUrl: "https://cloud.example.test", token: "session-token" });
+    await expect(client.listOrgLlmProviders("org_test")).rejects.toMatchObject({ code: "invalid_llm_provider_catalog" });
+  });
+
   test("parses canonical JWorkRouter while preserving the legacy source discriminator", async () => {
     Object.defineProperty(globalThis, "fetch", { configurable: true, value: async () => new Response(JSON.stringify({ llmProviders: [managedJWorkRouter] }), { status: 200, headers: { "Content-Type": "application/json" } }) });
     const [provider] = await createDenClient({ baseUrl: "https://cloud.example.test", token: "session-token" }).listOrgLlmProviders("org_test");

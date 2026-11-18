@@ -152,6 +152,11 @@ export const getCurrentCloudManagedProviderIds = (input: {
 export const isCloudManagedProviderKey = (providerId: string) =>
   /^lpr_/i.test(providerId) || providerId.trim().toLowerCase() === "jugglework";
 
+/** A missing catalog means discovery has not succeeded for this authority yet. */
+export function isCloudGroupRetired(id: string, enabledIds?: ReadonlySet<string>): boolean {
+  return enabledIds !== undefined && /^lpr_/i.test(id) && !enabledIds.has(id);
+}
+
 export const isCloudProviderOutOfSync = (
   provider: CloudProvider,
   importedProvider: CloudImportedProvider,
@@ -237,6 +242,7 @@ export function unappliedCloudProviderReloadKey(input: {
   workspaceId: string;
   imported: Record<string, CloudImportedProvider>;
   engineProviders: readonly CloudProviderEngineEntry[];
+  enabledCloudGroupIds?: ReadonlySet<string>;
   /**
    * Provider ids the engine reports as authenticated. When given, a gateway
    * provider the engine lists without credentials counts as unapplied
@@ -257,6 +263,9 @@ export function unappliedCloudProviderReloadKey(input: {
     } else if (entry.gatewayMirror && input.engineConnectedProviderIds && !input.engineConnectedProviderIds.has(providerId)) {
       parts.set(providerId, `${providerId}{auth}`);
     }
+  }
+  for (const id of engineById.keys()) {
+    if (isCloudGroupRetired(id, input.enabledCloudGroupIds)) parts.set(id, `${id}{removed}`);
   }
   if (parts.size === 0) return null;
   const signature = [...parts.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([, part]) => part);

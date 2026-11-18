@@ -102,6 +102,20 @@ describe("model-level cloud provider reload marking", () => {
     expect(shouldMarkUnappliedCloudProviderReload({ ...input, imported: base })).toBe(false);
   });
 
+  test("a retired group alone keeps its workspace pending even after the last import is removed", () => {
+    const input = {
+      workspaceId: "ws_autotask",
+      imported: {},
+      engineProviders: [{ id: "lpr_relay" }, { id: "local-provider" }],
+    };
+    expect(shouldMarkUnappliedCloudProviderReload(input)).toBe(false);
+    const confirmed = { ...input, enabledCloudGroupIds: new Set<string>() };
+    expect(shouldMarkUnappliedCloudProviderReload(confirmed)).toBe(true);
+    expect(shouldMarkUnappliedCloudProviderReload(confirmed)).toBe(false);
+    expect(shouldMarkUnappliedCloudProviderReload({ ...confirmed, engineProviders: [{ id: "local-provider" }] })).toBe(false);
+    expect(shouldMarkUnappliedCloudProviderReload(confirmed)).toBe(true);
+  });
+
   test("extra engine-side models cannot cause a reload loop", () => {
     expect(shouldMarkUnappliedCloudProviderReload({
       workspaceId: "ws_a",

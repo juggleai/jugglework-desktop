@@ -38,7 +38,7 @@ import {
   filterProviderList,
 } from "../../../../app/utils/providers";
 import { getReactQueryClient } from "../../../infra/query-client";
-import { ensureProviderListQuery } from "../../../infra/provider-list-query";
+import { cloudGroupCatalogKey, ensureProviderListQuery } from "../../../infra/provider-list-query";
 import type { JuggleWorkServerStoreSnapshot } from "../jugglework-server-store";
 import {
   applyDisabledProviderEntry,
@@ -132,6 +132,7 @@ import {
 import { resolveGatewayCredentialRepairTarget } from "./gateway-credential-repair";
 import { digestGatewayCredential } from "./gateway-credential-digest";
 
+const cloudProviderCatalogSingleflight = createKeyedSingleflight<string, DenOrgLlmProvider[]>();
 const cloudProviderConnectionSingleflight =
   createKeyedSingleflight<string, DenOrgLlmProviderConnection>();
 const gatewayCredentialRepairSingleflight =
@@ -389,15 +390,11 @@ export const resetUnappliedCloudProviderReloadKeysForTest = () => {
 export function shouldMarkUnappliedCloudProviderReload(input: {
   workspaceId: string;
   imported: Record<string, CloudImportedProvider>;
+  enabledCloudGroupIds?: ReadonlySet<string>;
   engineProviders: ReadonlyArray<{ id: string; models?: Record<string, unknown> | null }>;
   engineConnectedProviderIds?: ReadonlySet<string> | null;
 }): boolean {
-  const reloadKey = unappliedCloudProviderReloadKey({
-    workspaceId: input.workspaceId,
-    imported: input.imported,
-    engineProviders: input.engineProviders,
-    engineConnectedProviderIds: input.engineConnectedProviderIds,
-  });
+  const reloadKey = unappliedCloudProviderReloadKey(input);
   if (!reloadKey) {
     lastUnappliedCloudProviderReloadKeys.delete(input.workspaceId);
     return false;
@@ -1110,8 +1107,8 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       baseUrl: settings.baseUrl,
       token,
     });
-    const request = client
-      .listOrgLlmProviders(orgId)
+    const catalogKey = cloudGroupCatalogKey();
+    const request = cloudProviderCatalogSingleflight.run(loadKey, () => client.listOrgLlmProviders(orgId))
       .then((providers) => {
         const supportedProviders = filterImportableCloudOrgProviders(providers);
         // An organization switch can finish while this request is in flight.
@@ -1120,6 +1117,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         if (getCloudOrgProvidersKey() !== loadKey) {
           return supportedProviders;
         }
+        getReactQueryClient().setQueryData(catalogKey, supportedProviders.map(getCloudManagedProviderId));
         mutateState((current) => ({
           ...current,
           cloudOrgProviders: supportedProviders,
@@ -2376,9 +2374,8 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   const markReloadWhenEngineMissesCloudProviders = async (
     workspaceId: string,
     knownProviderList: ProviderListResponse | null,
+    enabledCloudGroupIds: ReadonlySet<string>,
   ) => {
-    if (Object.keys(state.importedCloudProviders).length === 0) return;
-
     // Reuse the list a reload in this pass already fetched. Otherwise read the
     // cached one the settings and session UI render, so "missing here" is
     // exactly what the user is looking at. Never read `options.providers()`:
@@ -2397,6 +2394,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     if (!shouldMarkUnappliedCloudProviderReload({
       workspaceId,
       imported: state.importedCloudProviders,
+      enabledCloudGroupIds,
       engineProviders: providerList.all ?? [],
       engineConnectedProviderIds: Array.isArray(providerList.connected) ? new Set(providerList.connected) : null,
     })) return;
@@ -2597,6 +2595,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     await markReloadWhenEngineMissesCloudProviders(
       target.juggleworkWorkspaceId,
       reloadedProviderList ?? (configChanged ? null : engineProviderList),
+      new Set(liveProviderMap.keys()),
     );
 
     // Notify the UI about newly imported providers so the global toast

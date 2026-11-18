@@ -658,19 +658,19 @@ export function SessionRoute(props: SessionRouteProps = {}) {
 
   const activeReloadBlockingSessions = useMemo(
     () =>
-      Object.values(sessionsByWorkspaceId)
-        .flat()
-        .flatMap((session) => {
+      Object.entries(sessionsByWorkspaceId).flatMap(([workspaceId, sessions]) =>
+        sessions.flatMap((session) => {
           if (!isActiveSessionStatus(getSessionStatus(session))) return [];
           const id = String(session?.id ?? "");
           if (!id) return [];
           return [{
+            workspaceId,
             id,
             title:
               String(session?.title ?? session?.slug ?? session?.id ?? "").trim() ||
               t("session.untitled"),
           }];
-        }),
+        })),
     [sessionsByWorkspaceId],
   );
   const activeSelectedWorkspaceSessionIds = useMemo(
