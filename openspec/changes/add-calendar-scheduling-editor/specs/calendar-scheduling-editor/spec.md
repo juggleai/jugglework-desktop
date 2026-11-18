@@ -111,7 +111,8 @@ Scheduling 服务失败 MUST NOT 阻止成功的普通 Calendar bootstrap 持久
 #### Scenario: User starts a meeting from an enabled event
 
 - **WHEN** 已启用视频会议的日程详情包含可映射的组织参与人，且 Meeting 服务 ready
-- **THEN** Desktop 创建即时会议，以除发起人外的全部日程参与人 user IDs 作为 invitees，调用通知接口并打开该会议
+- **THEN** Desktop 在当前日程详情上方显示预入会弹窗，不跳转到会议页面；取消时保留详情，不创建会议或发送邀请
+- **AND** 只有用户在预览中确认「开始会议」后，Desktop 才创建即时会议，以除发起人外的全部日程参与人 user IDs 作为 invitees，调用通知接口并入会
 
 #### Scenario: User disables video meeting before saving
 
@@ -163,3 +164,13 @@ Calendar 筛选 SHALL 支持仅显示一个日历和从受限调色板覆盖其�
 
 - **WHEN** 某 timed event 所在 lane 右侧的连续 lanes 在该事件完整时段内均无重叠
 - **THEN** 该事件扩展到这些 lanes，但不得覆盖任何冲突事件
+
+### Requirement: 桌面日历助手按日程偏好提醒
+
+Desktop SHALL 在本机按服务地址、组织、成员和日程保存提醒时间。默认提前 5 分钟，允许关闭单个日程的提醒。提醒计划 SHALL 使用当前有权查看的日程及其重复实例。
+
+#### Scenario: 用户在其他功能页收到提醒
+
+- **WHEN** 已连接的桌面端到达某个日程实例配置的提醒时间
+- **THEN** 日历助手显示应用内提醒，同一实例和提前时间在本次运行中只提醒一次
+- **AND** 用户点击提醒后，日历打开对应日期和日程详情，继续检查当前组织和详情查看权限

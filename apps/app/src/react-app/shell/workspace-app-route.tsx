@@ -4,6 +4,8 @@ import { openCloudDocTab } from "@/app/lib/cloud-doc-tabs";
 import { readDenSettings } from "@/app/lib/den";
 import { denSessionUpdatedEvent, type DenSessionUpdatedDetail } from "@/app/lib/den-session-events";
 import { MeetingReminderHost } from "../domains/meeting/meeting-reminders";
+import { CalendarReminderHost } from "../domains/calendar/calendar-reminder-host";
+import { requestCalendarReminderNavigation } from "../domains/calendar/calendar-reminder-navigation";
 import { MeetingPage } from "../domains/meeting/meeting-page";
 import { MeetingRoomHost } from "../domains/meeting/meeting-room";
 import { AppNavigationRail, APP_NAVIGATION_RAIL_WIDTH } from "./app-navigation-rail";
@@ -273,6 +275,10 @@ function WorkspaceAppRouteContent() {
 
       <MeetingRoomHost />
       <MeetingReminderHost />
+      <CalendarReminderHost onOpen={(target) => {
+        requestCalendarReminderNavigation(target);
+        if (!calendarVisible) navigate("/calendar");
+      }} />
       <div className={appPath.view === "meetings" ? "absolute inset-0 z-10 flex bg-dls-sidebar" : "hidden"} aria-hidden={appPath.view !== "meetings" || undefined}>
         <div style={{ width: APP_NAVIGATION_RAIL_WIDTH }} className="h-full shrink-0">
           <AppNavigationRail workspaceId={activeSession.workspaceId} onOpenAccount={() => openSurfaceSettings("cloud-account", "/meetings")} onOpenHome={() => navigate(sessionPath)} onOpenApps={() => navigate(workspaceAppsRoute(activeSession.workspaceId))} onOpenChat={() => navigate(workspaceChatRoute(activeSession.workspaceId))} onOpenReviews={() => navigate(workspaceReviewsRoute(activeSession.workspaceId))} onOpenSettings={() => openSurfaceSettings("preferences", "/meetings")} onOpenTaskSearch={workspaceShellActions.openTaskSearch} onOpenCreateWorkspace={workspaceShellActions.openCreateWorkspace}/>

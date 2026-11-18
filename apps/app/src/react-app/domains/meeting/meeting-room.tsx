@@ -17,10 +17,12 @@ import { useJuggleChatStore } from "../jugglechat/store";
 import { meetingAPI } from "./api";
 import { useMeetingStore, forceMeetingCleanup } from "./store";
 import { MeetingDialog } from "./meeting-page";
+import { MeetingUserSettings, useMeetingUserPreferences } from "./meeting-user-settings";
+import { useParticipantSounds } from "./use-participant-sounds";
 import { MeetingIcon as Icon } from "./meeting-icons";
 import type { MediaTile } from "./zego-adapter";
 import "./meeting.css";
-function Video({ tile }: { tile: MediaTile }) {
+function Video({ tile, mirrorLocal = false }: { tile: MediaTile; mirrorLocal?: boolean }) {
   const ref = useRef<HTMLVideoElement>(null);
   const binding = useRef<ReturnType<typeof bindMeetingVideo> | null>(null);
   useEffect(() => {
@@ -32,7 +34,7 @@ function Video({ tile }: { tile: MediaTile }) {
   // SDK add/removeTrack calls need not dispatch MediaStream events. Device state
   // renders also reconcile the video-only view without replacing it on mic toggles.
   useEffect(() => { binding.current?.sync(); });
-  return <video ref={ref} autoPlay playsInline muted />;
+  return <video ref={ref} autoPlay playsInline muted data-mirrored={mirrorLocal && tile.id === "local" && !tile.screen} />;
 }
 function RemoteAudio({ tile, onBlocked }: { tile: MediaTile; onBlocked: (id: string, blocked: boolean) => void }) {
   const ref = useRef<HTMLAudioElement>(null);
@@ -57,6 +59,8 @@ export function MeetingRoomHost() {
     (id === imUser?.id ? imUser.name : contacts.find((c) => c.user_id === id)?.nickname) || fallback || "参会人";
   const [panel, setPanel] = useState<"members" | "chat" | null>(null);
   const [invite, setInvite] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const prefs = useMeetingUserPreferences();
   const [screenRequest, setScreenRequest] = useState<string | null>(null);
   const screenRequestRef = useRef<string | null>(null);
   const closeScreenPicker = useCallback(() => {
@@ -89,6 +93,7 @@ export function MeetingRoomHost() {
   }, [popup, miniPopup]);
   const uid = user?.id || "";
   const m = s.meeting;
+  useParticipantSounds(s.phase === "joined" ? m : null, uid, prefs.participantSounds);
   useEffect(() => { deviceRequest.current++; setDeviceBusy(false); }, [m?.id]);
   useEffect(() => {
     const open = (event: Event) => {
@@ -126,6 +131,7 @@ export function MeetingRoomHost() {
   useEffect(() => {
     if (!m) {
       setInvite(false);
+      setSettingsOpen(false);
       setLeaving(false);
       setMiniPopup(null);
       popup?.close();
@@ -220,6 +226,7 @@ export function MeetingRoomHost() {
       () => useMeetingStore.getState().phase !== "idle",
       () => {
         setInvite(false);
+        setSettingsOpen(false);
         setMessage("");
         setLeaving(true);
         focusWindow("meeting", w);
@@ -260,6 +267,7 @@ export function MeetingRoomHost() {
         </button>
       </div>
     ) : null;
+  const localTile = s.tiles.find(tile => tile.id === "local");
   const compactContent = (
     <div className="meeting-ui meeting-compact">
       <div className="compact-speaking">正在讲话：</div>
@@ -267,7 +275,7 @@ export function MeetingRoomHost() {
         <button title="展开会议" aria-label="展开会议" onClick={() => focusWindow("meeting")}><Icon name="expand" /></button>
         <button className={!s.mic ? "device-off" : ""} title={s.mic ? "静音" : "开启麦克风"} aria-label={s.mic ? "静音" : "开启麦克风"} disabled={deviceBusy || s.phase !== "joined"} onClick={() => void changeDevice("mic")}><Icon name="mic" off={!s.mic} /></button>
         <button className={!s.camera ? "device-off" : ""} title={s.camera ? "关闭摄像头" : "开启摄像头"} aria-label={s.camera ? "关闭摄像头" : "开启摄像头"} disabled={deviceBusy || s.phase !== "joined"} onClick={() => void changeDevice("camera")}><Icon off={!s.camera} /></button>
-        <button className="compact-hangup" title="离开会议" aria-label="离开会议" onClick={() => { focusWindow("meeting"); setLeaving(true); }}><Icon name="hangup" /></button>
+        <button className="compact-hangup" title="离开会议" aria-label="离开会议" onClick={() => { focusWindow("meeting"); setSettingsOpen(false); setLeaving(true); }}><Icon name="hangup" /></button>
       </div>
       {message || s.error ? <div className="compact-error"><MeetingPermissionNotice message={message || s.error || ""} onClose={() => { setMessage(""); useMeetingStore.setState({ error: null }); }} /></div> : null}
     </div>
@@ -283,6 +291,8 @@ export function MeetingRoomHost() {
             </span>
           </div>
           <div className="row room-header-tools">
+            <button type="button" className="ghost icon-button" aria-haspopup="dialog" aria-label="会议设置" title="会议设置"
+              onClick={() => setSettingsOpen(true)}><Icon name="settings" width={17} height={17} /></button>
             <button className="ghost icon-button" aria-label="导出诊断" title="导出诊断" onClick={() => void run(exportMeetingDiagnostics)}><Icon name="download" width={17} height={17} /></button>
             <button className="ghost" aria-pressed={speaker} onClick={() => setSpeaker(!speaker)}><Icon name="grid" width={16} height={16} />
               {speaker ? "宫格布局" : "焦点布局"}
@@ -345,7 +355,7 @@ export function MeetingRoomHost() {
                   >
                     <MeetingMemberAvatar contact={{ ...contact, user_id: p.userId, nickname: name,
                       avatar: p.userId === imUser?.id ? imUser.portrait || contact?.avatar : contact?.avatar }} />
-                    {tile ? <Video tile={tile} /> : null}
+                     {tile ? <Video tile={tile} mirrorLocal={prefs.mirrorPreview} /> : null}
                     <span className="tile-label">
                       {name}
                       {p.userId === uid ? "（我）" : ""}
@@ -504,6 +514,16 @@ export function MeetingRoomHost() {
         ? createPortal(content, popup.document.body)
         : null}
       {miniPopup && !miniPopup.closed ? createPortal(compactContent, miniPopup.document.body) : null}
+      {settingsOpen && popup && !popup.closed && !leaving && !screenRequest ? (
+        <MeetingDialog ownerDocument={popup.document} title="会议设置" className="meeting-settings-dialog" onClose={() => setSettingsOpen(false)}>
+          <MeetingUserSettings entry="room" prefs={prefs} camera={s.camera} preview={<div className="preview effect-preview">
+            {s.camera && localTile
+              ? <Video tile={localTile} mirrorLocal={prefs.mirrorPreview} />
+              : <Icon off width={32} height={32} />}
+            <span className="sub small">{!s.camera ? "摄像头已关闭" : localTile ? "已发布的视频" : "等待本地视频…"}</span>
+          </div>} />
+        </MeetingDialog>
+      ) : null}
       {screenRequest && !leaving ? <MeetingScreenPicker key={screenRequest} requestId={screenRequest} ownerDocument={popup?.document} onClose={closeScreenPicker} /> : null}
       {invite ? (
         <MeetingInvitePicker

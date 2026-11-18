@@ -137,8 +137,10 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
             ],
           }));
         },
-        (error) => {
-          if (run === generation) set({ error });
+        (error, cameraStopped) => {
+          if (run !== generation) return;
+          if (cameraStopped) { set({ error, camera: false }); announceState(); }
+          else set({ error });
         },
         () => {
           if (run !== generation) return;
@@ -238,7 +240,7 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
       await ensureMeetingMediaPermissions(device === "mic" && mic, device === "camera" && camera);
       if (run !== generation) return;
       await meetingDiagnosticStep("device.toggle", { device, mic, camera }, () => withMeetingDeviceDeadline(
-        () => target.setDevices(mic, camera),
+        () => target.setDevices(mic, device === "mic" ? get().camera : camera),
         () => {
           if (run !== generation) return;
           const current = lease;
@@ -247,7 +249,8 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
         },
       ));
       if (run !== generation) return;
-      set({ mic, camera });
+      // A canvas failure can independently close the camera during a mic request.
+      set(device === "mic" ? { mic } : { camera });
       announceState();
     } catch (error) {
       if (run !== generation) return;

@@ -1,4 +1,9 @@
 import { meetingDiagnostic, meetingDiagnosticError } from "./diagnostics";
+import { readMeetingPreferences, subscribeMeetingPreferences } from "./meeting-preferences";
+
+// setSinkId is asynchronous; serialize per element, including across stream rebinds.
+const pendingRoutes = new WeakMap<HTMLAudioElement, Promise<void>>();
+
 /** One audio sink per remote stream, independent of video tiles and window visibility. */
 export function bindRemoteAudio(
   element: HTMLAudioElement,
@@ -12,9 +17,29 @@ export function bindRemoteAudio(
     errorCode: element.error?.code, tracks: stream.getAudioTracks().map(t => ({ id: t.id, enabled: t.enabled, muted: t.muted, state: t.readyState })) });
   const sample = setInterval(() => meetingDiagnostic("audio.sink", snapshot()), 5000);
   meetingDiagnostic("audio.bind", { streamId: stream.id });
-  element.srcObject = stream;
+  let requestedSpeaker: string | undefined;
+  const applyOutput = () => {
+    const { outputVolume, speakerId } = readMeetingPreferences();
+    element.volume = outputVolume / 100;
+    if (requestedSpeaker === speakerId || typeof element.setSinkId !== "function") return;
+    requestedSpeaker = speakerId;
+    const route = async () => {
+      if (disposed || requestedSpeaker !== speakerId || element.sinkId === speakerId) return;
+      try { await element.setSinkId(speakerId); } // Empty string restores system routing.
+      catch (error) {
+        if (!disposed && requestedSpeaker === speakerId) {
+          requestedSpeaker = undefined;
+          meetingDiagnostic("audio.route.failed", meetingDiagnosticError(error));
+        }
+      }
+    };
+    const pending = pendingRoutes.get(element);
+    pendingRoutes.set(element, pending ? pending.then(route) : route());
+  };
+  applyOutput();
+  const unsubscribe = subscribeMeetingPreferences(applyOutput);
   element.muted = false;
-  element.volume = 1;
+  element.srcObject = stream;
   const play = async () => {
     const current = ++attempt;
     if (disposed || !stream.getAudioTracks().some(t => t.readyState === "live")) return;
@@ -40,6 +65,7 @@ export function bindRemoteAudio(
     play,
     dispose() {
       disposed = true;
+      unsubscribe();
       clearInterval(sample);
       meetingDiagnostic("audio.unbind", { streamId: stream.id });
       attempt++;

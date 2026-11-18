@@ -1,10 +1,13 @@
 import { focusMeetingWindow } from "@/app/lib/desktop";
 import { Temporal } from "@js-temporal/polyfill";
 import { MeetingPermissionNotice, MeetingPermissionRestart, MeetingPermissionSetup } from "./permission-notice";
-import { ensureMeetingMediaPermissions, meetingDeviceError } from "./media-permission";
+import { meetingDeviceError } from "./media-permission";
+import { startPrejoinPreview } from "./prejoin-preview";
+import { MeetingUserSettings, useMeetingUserPreferences } from "./meeting-user-settings";
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -37,6 +40,7 @@ import {
 import { MeetingIcon as Icon } from "./meeting-icons";
 import { MeetingMemberAvatar } from "./meeting-invite-picker";
 import { MeetingCode } from "./meeting-code";
+import { CalendarPrejoinDialog } from "./calendar-prejoin-dialog";
 import { useMeetingStore } from "./store";
 import "./meeting.css";
 const stamp = (date: string) =>
@@ -65,16 +69,17 @@ export function MeetingDialog({
   closeRef.current = onClose;
   useEffect(() => {
     const previous = ownerDocument.activeElement as HTMLElement | null;
-    (ref.current?.querySelector<HTMLElement>("input:not([disabled]),textarea:not([disabled])")
+    (ref.current?.querySelector<HTMLElement>("[data-meeting-initial-focus]")
+      || ref.current?.querySelector<HTMLElement>("input:not([disabled]),textarea:not([disabled])")
       || ref.current?.querySelector<HTMLElement>("button:not([disabled])"))?.focus();
     const key = (e: KeyboardEvent) => {
-      if (e.key === "Escape") closeRef.current();
+      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); if (!e.repeat) closeRef.current(); }
       if (e.key === "Tab") {
         const list = [
           ...ref.current!.querySelectorAll<HTMLElement>(
-            "button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled])",
+             "button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex='0']",
           ),
-        ];
+        ].filter(node => node.tabIndex >= 0 && !node.closest("[hidden]"));
         if (e.shiftKey && ownerDocument.activeElement === list[0]) {
           e.preventDefault();
           list.at(-1)?.focus();
@@ -840,106 +845,112 @@ export function MeetingPage({ active }: { active: boolean }) {
     </div>
   );
 }
-export function MeetingPrejoin({
-  meeting,
-  onClose,
-}: {
-  meeting: Meeting;
-  onClose: () => void;
-}) {
+type MeetingPrejoinProps = { onClose: () => void } & (
+  | { meeting: Meeting; calendarTitle?: never; startCalendarMeeting?: never }
+  | { meeting?: never; calendarTitle: string; startCalendarMeeting: () => Promise<Meeting> }
+);
+
+export function MeetingPrejoin({ meeting, calendarTitle, startCalendarMeeting, onClose }: MeetingPrejoinProps) {
   const imUser = useJuggleChatStore(s => s.user);
-  const [mic, setMic] = useState(false),
-    [camera, setCamera] = useState(false),
+  const prefs = useMeetingUserPreferences();
+  const [mic, setMic] = useState(prefs.defaultMic),
+    [camera, setCamera] = useState(prefs.defaultCamera),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
-  const video = useRef<HTMLVideoElement>(null);
-  const stream = useRef<MediaStream | null>(null);
+  // The calendar dialog mounts its portal after finding the launching popup.
+  const [video, setVideo] = useState<HTMLVideoElement | null>(null);
+  const settingsButton = useRef<HTMLButtonElement>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const releasePreview = useRef<() => void>(() => {});
+  const createdMeeting = useRef<Meeting | null>(null);
+  const submitting = useRef(false);
+  useEffect(() => () => { submitting.current = false; }, []);
   useEffect(() => {
-    let cancelled = false;
-    stream.current?.getTracks().forEach((t) => t.stop());
-    stream.current = null;
-    if (mic || camera)
-      void ensureMeetingMediaPermissions(mic, camera)
-        .then(() => {
-          if (cancelled) return null;
-          return navigator.mediaDevices.getUserMedia({ audio: mic, video: camera });
-        })
-        .then((v) => {
-          if (!v) return;
-          setError("");
-          if (cancelled) {
-            v.getTracks().forEach((t) => t.stop());
-            return;
-          }
-          stream.current = v;
-          if (video.current) video.current.srcObject = v;
-        })
-        .catch((e) => {
-          if (!cancelled) {
-            setError(meetingDeviceError(e, mic, camera));
-            setMic(false);
-            setCamera(false);
-          }
-        });
-    return () => {
-      cancelled = true;
-      stream.current?.getTracks().forEach((t) => t.stop());
-      stream.current = null;
-    };
-  }, [mic, camera]);
-  return (
-    <MeetingDialog
-      title="加入会议"
-      onClose={() => {
-        if (!busy) onClose();
-      }}
-    >
-      <div className="prejoin-heading"><h3>{meeting.title}</h3><span className="sub small">会议号 <MeetingCode code={meeting.code} /></span></div>
+    if (busy || (!mic && !camera) || !video) return;
+    const release = startPrejoinPreview(video, mic, camera, cause => {
+      setError(meetingDeviceError(cause, mic, camera));
+      setMic(false);
+      setCamera(false);
+    });
+    releasePreview.current = release;
+    return release;
+  }, [mic, camera, busy, video]);
+
+  const restoreFocus = useRef(false);
+  useLayoutEffect(() => {
+    if (!settingsOpen && restoreFocus.current) settingsButton.current?.focus({ preventScroll: true });
+    restoreFocus.current = settingsOpen;
+  }, [settingsOpen]);
+  const cancel = () => {
+    if (settingsOpen) setSettingsOpen(false);
+    else if (!submitting.current) onClose();
+  };
+  async function join() {
+    if (submitting.current) return;
+    submitting.current = true;
+    setBusy(true);
+    setError("");
+    releasePreview.current();
+    try {
+      const target = startCalendarMeeting
+        ? (createdMeeting.current ??= await startCalendarMeeting())
+        : meeting;
+      if (!submitting.current) return;
+      await useMeetingStore.getState().join(target, mic, camera);
+      if (submitting.current) onClose();
+    } catch (cause) {
+      if (submitting.current) setError(cause instanceof Error ? cause.message : String(cause || "入会失败，请重试。"));
+    } finally {
+      if (submitting.current) setBusy(false);
+      submitting.current = false;
+    }
+  }
+
+  const devices = (
+    <div className="prejoin-devices" role="group" aria-label="设备设置">
+      <button type="button" aria-pressed={mic} aria-label={startCalendarMeeting ? "麦克风" : undefined} className={!mic ? "device-off" : ""} disabled={busy} onClick={() => { setError(""); setMic(!mic); }}>
+        <Icon name="mic" off={!mic} /><span>{mic ? "麦克风开启" : "麦克风关闭"}</span>
+      </button>
+      <button type="button" aria-pressed={camera} aria-label={startCalendarMeeting ? "摄像头" : undefined} className={!camera ? "device-off" : ""} disabled={busy} onClick={() => { setError(""); setCamera(!camera); }}>
+        <Icon off={!camera} /><span>{camera ? "摄像头开启" : "摄像头关闭"}</span>
+      </button>
+    </div>
+  );
+  const content = <MeetingUserSettings entry="prejoin" camera={camera} prefs={prefs} preview={
       <div className="preview" data-camera-off={!camera}>
         <MeetingMemberAvatar contact={{user_id: imUser?.id || "me", nickname: imUser?.name || "我", avatar: imUser?.portrait}} />
-        <video autoPlay playsInline muted ref={video} style={{ visibility: camera ? "visible" : "hidden" }} />
-        <span className="sub small">
+        <video autoPlay playsInline muted ref={setVideo} data-mirrored={prefs.mirrorPreview} style={{ visibility: camera ? "visible" : "hidden" }} />
+        <span className={startCalendarMeeting ? "sr-only" : "sub small"}>
           {camera ? "本地预览" : "摄像头已关闭"}
         </span>
+        {!settingsOpen && <button type="button" className="preview-settings" ref={settingsButton} disabled={busy}
+          aria-label="会议设置" title="会议设置" onClick={() => setSettingsOpen(true)}>
+          <Icon name="settings" width={18} height={18} />设置
+        </button>}
       </div>
-      <p className="sub small">首次开启麦克风或摄像头时，请在系统提示中选择允许。</p>
+    } prejoin={settingsOpen ? undefined : {
+      heading: meeting && <div className="prejoin-heading"><h3>{meeting.title}</h3><span className="sub small">会议号 <MeetingCode code={meeting.code} /></span></div>,
+      controls: <>
+      {!startCalendarMeeting && <p className="sub small">首次开启麦克风或摄像头时，请在系统提示中选择允许。</p>}
       <MeetingPermissionRestart />
-      <div className="prejoin-devices">
-        <button aria-pressed={mic} className={!mic ? "device-off" : ""} disabled={busy} onClick={() => setMic(!mic)}>
-          <Icon name="mic" off={!mic} />
-          {mic ? "麦克风开启" : "麦克风关闭"}
-        </button>
-        <button aria-pressed={camera} className={!camera ? "device-off" : ""} disabled={busy} onClick={() => setCamera(!camera)}>
-          <Icon off={!camera} />
-          {camera ? "摄像头开启" : "摄像头关闭"}
-        </button>
-      </div>
+      {!startCalendarMeeting && devices}
       {error ? (
         <MeetingPermissionNotice message={error} onClose={() => setError("")} />
       ) : null}
       <div className="modal-foot">
-        <button onClick={onClose} disabled={busy}>
+        {startCalendarMeeting ? devices : <button type="button" onClick={cancel} disabled={busy}>
           取消
+        </button>}
+        <button type="button" className="primary" disabled={busy} onClick={() => void join()}>
+          {busy ? "正在加入…" : startCalendarMeeting ? "开始会议" : "加入会议"}
         </button>
-        <button
-          className="primary"
-          disabled={busy}
-          onClick={() => {
-            setBusy(true);
-            stream.current?.getTracks().forEach((t) => t.stop());
-            void useMeetingStore
-              .getState()
-              .join(meeting, mic, camera)
-              .then(onClose)
-              .catch((e) => setError(e.message))
-              .finally(() => setBusy(false));
-          }}
-        >
-          {busy ? "正在加入…" : "加入会议"}
-        </button>
-      </div>
-    </MeetingDialog>
-  );
+      </div></>,
+    }} />;
+  const settingsClass = settingsOpen ? "meeting-settings-dialog" : "";
+  return startCalendarMeeting
+    ? <CalendarPrejoinDialog className={settingsClass} title={settingsOpen ? "会议设置" : calendarTitle.trim() || "开始会议"}
+        closeLabel={settingsOpen ? "返回预览" : "取消"} busy={busy} onClose={cancel}>{content}</CalendarPrejoinDialog>
+    : <MeetingDialog className={settingsClass} title={settingsOpen ? "会议设置" : "加入会议"} onClose={cancel}>{content}</MeetingDialog>;
 }
 function MeetingSettingsDialog({
   readiness,

@@ -1220,6 +1220,7 @@ export default {
   "calendar.meeting_failed": "发起会议失败，请稍后重试。",
   "calendar.reminder_add": "添加提醒",
   "calendar.reminder_at_start": "日程开始时",
+  "calendar.reminder_assistant": "日历助手",
   "calendar.reminder_minutes_before": "提前{count}分钟",
   "calendar.reminder_hours_before": "提前{count}小时",
   "calendar.reminder_days_before": "提前{count}天",

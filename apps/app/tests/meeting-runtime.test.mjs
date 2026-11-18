@@ -6,10 +6,23 @@ const diagnosticSource = await fs.readFile(new URL('../src/react-app/domains/mee
 const diagnosticUrl = 'data:text/javascript;base64,' + Buffer.from(ts.transpileModule(diagnosticSource, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText).toString('base64');
 const deadlineSource = await fs.readFile(new URL('../src/react-app/domains/meeting/device-operation.ts', import.meta.url), 'utf8');
 const deadlineUrl = 'data:text/javascript;base64,' + Buffer.from(ts.transpileModule(deadlineSource, {compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText).toString('base64');
+const preferencesUrl = 'data:text/javascript;base64,' + Buffer.from(`
+ const defaults = {microphoneId:'',cameraId:'',speakerId:'',outputVolume:100,shareQuality:'balanced'};
+ const listeners = new Set(); let prefs = defaults;
+ export const readMeetingPreferences = () => prefs;
+ export const subscribeMeetingPreferences = cb => { listeners.add(cb); return () => listeners.delete(cb); };
+ export const setPrefs = (patch = {}) => { prefs = {...defaults,...patch}; for (const cb of listeners) cb(); };
+`).toString('base64');
+const {setPrefs} = await import(preferencesUrl);
+test.afterEach(() => setPrefs());
 function transpile(source, options) {
+ // Data-URL adapter tests inject the compositor and preference event source.
+ source = source.replace('import { createMeetingEffectTrack } from "./video-effects";', 'const createMeetingEffectTrack=(...args)=>globalThis.__effects.create(...args);')
+  .replace('import { readMeetingVideoEffects, subscribeMeetingVideoEffects } from "./video-effects-preferences";', `const readMeetingVideoEffects=()=>globalThis.__effects?.read() ?? {avatar:'none',background:'none',filter:'none',beauty:0}; const subscribeMeetingVideoEffects=fn=>globalThis.__effects.subscribe(fn);`);
  if (source.includes('withMeetingDeviceDeadline(') && !source.includes('function withMeetingDeviceDeadline'))
   source = `import {withMeetingDeviceDeadline} from "${deadlineUrl}";\n` + source;
- source = source.replace(/from "\.\/diagnostics"/g, `from "${diagnosticUrl}"`);
+  source = source.replace(/from "\.\/diagnostics"/g, `from "${diagnosticUrl}"`)
+   .replace(/from "\.\/meeting-preferences"/g, `from "${preferencesUrl}"`);
  // The store harness strips imports and provides its own dependencies.
  if (source.includes('meetingDiagnostic(') && !source.includes(diagnosticUrl))
   source = `import {meetingDiagnostic, meetingDiagnosticError, meetingDiagnosticStep} from "${diagnosticUrl}";\n` + source;
@@ -192,6 +205,25 @@ test('remote audio retries blocked playback, handles late audio tracks and detac
  assert.equal(plays,previous);
 });
 
+test('the bound remote sink follows live volume and speaker changes without replaying', async () => {
+ const {bindRemoteAudio}=await load('../src/react-app/domains/meeting/remote-audio.ts');
+ const stream=new EventTarget();stream.getAudioTracks=()=>[{readyState:'live'}];
+ const routes=[];let finish,plays=0;
+ const element={sinkId:'',play:async()=>{plays++},pause(){},async setSinkId(id){
+  routes.push(id);if(id==='headset')await new Promise(r=>{finish=r});this.sinkId=id;
+ }};
+ setPrefs({speakerId:'headset',outputVolume:35});
+ const binding=bindRemoteAudio(element,stream,()=>{});
+ try {
+  assert.equal(element.volume,0.35);
+  setPrefs({speakerId:'speakers',outputVolume:0});setPrefs({speakerId:'',outputVolume:0});
+  assert.equal(element.volume,0);finish();await new Promise(r=>setTimeout(r,0));
+  assert.deepEqual(routes,['headset','']);assert.equal(element.sinkId,'');assert.equal(plays,1);
+ } finally {binding.dispose()}
+ setPrefs({speakerId:'speakers',outputVolume:90});await Promise.resolve();
+ assert.equal(element.volume,0);assert.deepEqual(routes,['headset','']);
+});
+
 test('meeting cards pass chat type classification and have readable conversation previews', async () => {
  const source=await fs.readFile(new URL('../src/react-app/domains/jugglechat/components.tsx',import.meta.url),'utf8');
  const file=ts.createSourceFile('components.tsx',source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);
@@ -219,7 +251,8 @@ test('first unmute adds a real microphone over ZEGO silent placeholder', async (
  const video={kind:'video',readyState:'live'};
  const tracks=[placeholder];
  const local={getAudioTracks:()=>tracks,getVideoTracks:()=>[video]};
- Object.defineProperty(globalThis,'navigator',{configurable:true,value:{mediaDevices:{getUserMedia:async()=>{captures++;return {getAudioTracks:()=>[microphone],getTracks:()=>[microphone]};}}}});
+  setPrefs({microphoneId:'mic-1',cameraId:'camera-1'});
+  Object.defineProperty(globalThis,'navigator',{configurable:true,value:{mediaDevices:{getUserMedia:async options=>{assert.deepEqual(options,{audio:{deviceId:{exact:'mic-1'}},video:false});captures++;return {getAudioTracks:()=>[microphone],getTracks:()=>[microphone]};}}}});
  try {
   const media=new MeetingMedia(()=>updates++,()=>{},()=>{});
   media.local=local;media.cameraEnabled=true;media.microphoneCaptured=false;
@@ -227,7 +260,14 @@ test('first unmute adds a real microphone over ZEGO silent placeholder', async (
   await media.setDevices(true,true);
   assert.equal(captures,1);assert.equal(replacements,1);assert.equal(tracks[0],microphone);
   await media.setDevices(false,true);await media.setDevices(true,true);
-  assert.equal(captures,1);assert.equal(replacements,1);assert.equal(updates,0);
+   assert.equal(captures,1);assert.equal(replacements,1);assert.equal(updates,0);
+   const switches=[];
+   media.engine.useAudioDevice=async (s,id)=>{assert.equal(s,local);switches.push(id);return {errorCode:0}};
+   for(const microphoneId of ['mic-2','']) {
+    await media.setDevices(false,true);setPrefs({microphoneId});
+    assert.equal(microphone.enabled,false);await media.setDevices(true,true);
+   }
+   assert.deepEqual(switches,['mic-2','default']);assert.equal(captures,1);
   assert.equal(local.getVideoTracks()[0],video);
  } finally {if(original)Object.defineProperty(globalThis,'navigator',original);else delete globalThis.navigator;}
 });
@@ -276,8 +316,9 @@ test('camera toggles retain audio publication and microphone capture', async () 
  Object.defineProperty(globalThis,'navigator',{configurable:true,value:{mediaDevices:{getUserMedia:async c=>{assert.deepEqual(c,{audio:false,video:true});return {getVideoTracks:()=>[video],getTracks:()=>[video]};}}}});
  try{
  const media=new MeetingMedia(()=>assert.fail('video updates must not detach audio'),()=>{},()=>{});
- media.local=local;media.cameraEnabled=true;media.cameraCaptured=true;media.microphoneCaptured=true;
- media.engine={enableVideoCaptureDevice:async()=>true,removeTrack:async()=>{videos=[];return {errorCode:0}},addTrack:async(s,t)=>{videos=[t];return {errorCode:0}},stopPublishingStream:()=>assert.fail('must not restart publishing')};
+  media.local=local;media.cameraEnabled=true;media.microphoneCaptured=true;
+  const fresh={kind:'video',enabled:true,stop(){}};
+  media.engine={createStream:async()=>({getVideoTracks:()=>[fresh]}),replaceTrack:async(s,t)=>{assert.equal(video.stopped,true);assert.equal(t,fresh);videos=[t];return {errorCode:0}},stopPublishingStream:()=>assert.fail('must not restart publishing')};
  await media.setDevices(true,false);await media.setDevices(true,true);
  assert.equal(media.local,local);assert.equal(local.getAudioTracks()[0],audio);assert.equal(audio.enabled,true);assert.equal(media.microphoneCaptured,true);
  }finally{if(old)Object.defineProperty(globalThis,'navigator',old);else delete globalThis.navigator;}
@@ -329,8 +370,8 @@ test('first camera enable uses SDK-owned metadata and keeps source alive until d
  source=source.replace('import { ensureMeetingMediaPermissions, handleScreenCaptureDenied, meetingDeviceError } from "./media-permission";','const ensureMeetingMediaPermissions=async()=>{}; const handleScreenCaptureDenied=async()=>{throw Error("屏幕共享权限未开启")}; const meetingDeviceError=e=>e.message;');
  const {MeetingMedia}=await import('data:text/javascript;base64,'+Buffer.from(transpile(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText).toString('base64'));
  const audio={kind:'audio',readyState:'live',stop(){this.readyState='ended'}};
- const video={kind:'video',readyState:'live',stop(){this.readyState='ended'}};
- const tracks=[audio];const local={getAudioTracks:()=>[audio],getTracks:()=>tracks};
+  const video={kind:'video',enabled:true,readyState:'live',stop(){this.readyState='ended'}};
+  const tracks=[audio];const local={getAudioTracks:()=>[audio],getTracks:()=>tracks,getVideoTracks:()=>tracks.filter(t=>t.kind==='video')};
  const captured={getVideoTracks:()=>[video],getTracks:()=>[video]};
  const destroyed=[];
  const media=new MeetingMedia(()=>{},()=>{},()=>{});
@@ -353,6 +394,110 @@ test('hung device operations expire once and late completion cannot succeed', as
  assert.equal(await withMeetingDeviceDeadline(async()=>42,()=>cleanup++,50),42);
  await assert.rejects(withMeetingDeviceDeadline(async()=>{throw Error('denied')},()=>cleanup++,50),/denied/);
  assert.equal(cleanup,1);
+});
+
+test('meeting effects publish only registered camera output; preferences and teardown race safely', async t => {
+ const src=await fs.readFile(new URL('../src/react-app/domains/meeting/zego-adapter.ts',import.meta.url),'utf8');
+ const source=src.replace(/^import .* from "\.\/media-permission";$/m,'const ensureMeetingMediaPermissions=async()=>{};const meetingDeviceError=e=>e.message;');
+ const {MeetingMedia}=await import('data:text/javascript;base64,'+Buffer.from(transpile(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText).toString('base64'));
+ const oldWindow=globalThis.window, oldStream=globalThis.MediaStream;
+ const none={background:'none',avatar:'none',beauty:0,filter:'none'};
+ function setup(initial=none) {
+  const tracks=[], registered=new Set(), published=[], effects=[], errors=[], cameraRequests=[];
+  let prefs=initial, notify, engine;
+  function track(kind,label) {
+   const value={kind,label,enabled:true,readyState:'live',stop(){this.readyState='ended'},clone(){return track(kind,'private input')}};
+   tracks.push(value);return value;
+  }
+  globalThis.MediaStream=class {
+   constructor(list){this.list=[...list]}
+   getTracks(){return [...this.list]} getAudioTracks(){return this.list.filter(t=>t.kind==='audio')} getVideoTracks(){return this.list.filter(t=>t.kind==='video')}
+  };
+  globalThis.__effects={read:()=>prefs,subscribe:fn=>{notify=fn;return ()=>{notify=null}},create:async(input,read)=>{
+   const canvas=track('video','canvas');effects.push({input,read,canvas});return {track:canvas,stop:()=>canvas.stop()};
+  }};
+  globalThis.window={ZegoExpressEngine:class {
+   constructor(){engine=this} on(){} async loginRoom(){return true} logoutRoom(){} destroyEngine(){} muteMicrophone(){} stopPublishingStream(){}
+   async createStream({custom,camera}) {
+    if(camera)cameraRequests.push(camera);
+    const s=custom?new MediaStream(custom.source.getTracks()):new MediaStream([track('audio',camera.audio?'mic':'silent'),...(camera.video?[track('video','camera')]:[])]);
+    registered.add(s);return s;
+   }
+   destroyStream(s){assert.ok(registered.delete(s));s.getTracks().forEach(t=>t.stop())}
+   startPublishingStream(id,s){assert.ok(registered.has(s));published.push(s.getVideoTracks()[0]);return true}
+   async replaceTrack(s,v){assert.ok(s.getVideoTracks().length);return this.attach(s,v)}
+   async addTrack(s,v){assert.equal(s.getVideoTracks().length,0);return this.attach(s,v)}
+   attach(s,v){assert.ok(registered.has(s));assert.ok([...registered].some(p=>p.getVideoTracks().includes(v)));s.list=[...s.getAudioTracks(),v];return {errorCode:0}}
+  }};
+  const media=new MeetingMedia(()=>{},message=>errors.push(message),()=>{});
+  return {effects,media,errors,tracks,published,registered,cameraRequests,get engine(){return engine},get subscribed(){return !!notify},
+   join:(cam,mic=true)=>media.join({meeting:{id:'m'},roomId:'r',userId:'u',sessionId:'s'},mic,cam),
+   change(next){prefs={...none,...next};notify?.()},finish(){media.dispose();assert.equal(notify,null);assert.equal(registered.size,0);assert.ok(tracks.every(t=>t.readyState==='ended'))}};
+ }
+ try {
+  await t.test('effects before first publish and first enable, with or without a microphone publisher',async()=>{
+   for(const [mic,cam] of [[true,true],[true,false],[false,false]]){
+    const h=setup({...none,avatar:'cat'});try {
+     setPrefs({cameraId:'cam-a',microphoneId:'mic-a'});
+     await h.join(cam,mic);if(!cam){assert.equal(h.effects.length,0);await h.media.setDevices(mic,true)}
+     assert.deepEqual(h.cameraRequests,cam ? [{audio:true,video:true,audioInput:'mic-a',videoInput:'cam-a'}] : [
+      ...(mic?[{audio:true,video:false,audioInput:'mic-a'}]:[]),{audio:false,video:true,videoInput:'cam-a'}]);
+     assert.ok(!h.published.some(v=>v?.label==='camera'));assert.equal(h.media.local.getVideoTracks()[0],h.effects[0].canvas);
+     const audio=h.media.local.getAudioTracks()[0];await h.media.setDevices(mic,false);
+     assert.equal(h.effects[0].input.readyState,'ended');assert.equal(h.effects[0].canvas.readyState,'ended');
+     setPrefs({cameraId:'cam-b',microphoneId:'mic-b'});h.change({background:'sky'});await h.media.setDevices(mic,true);
+     assert.deepEqual(h.cameraRequests.at(-1),{audio:false,video:true,videoInput:'cam-b'});
+     assert.equal(h.media.local.getVideoTracks()[0],h.effects[1].canvas);assert.equal(h.media.local.getAudioTracks()[0],audio);
+     assert.equal(audio.readyState,'live');assert.equal(h.published.length,1);
+    }finally{h.finish()}
+   }
+  });
+  await t.test('raw default, synchronous privacy gate and live preferences through one canvas',async()=>{
+   const h=setup();try {
+    await h.join(true);const [raw]=h.published;assert.equal(raw.label,'camera');assert.equal(h.effects.length,0);
+    h.change({avatar:'cat'});assert.equal(raw.enabled,false);await h.media.cameraWork;
+    const effect=h.effects[0];assert.equal(raw.readyState,'ended');assert.equal(h.media.local.getVideoTracks()[0],effect.canvas);
+    for(const next of [none,{...none,beauty:30}]){h.change(next);assert.deepEqual(effect.read(),next)}
+    assert.equal(h.effects.length,1);assert.equal(h.errors.length,0);
+   }finally{h.finish()}
+  });
+  await t.test('unsupported canvas at join keeps the requested microphone without sending any camera',async()=>{
+   const h=setup({...none,background:'sky'});try {
+    globalThis.__effects.create=async()=>{throw Error('no canvas capture')};
+    await h.join(true);assert.deepEqual(h.published,[undefined]);assert.equal(h.media.local.getAudioTracks()[0].label,'mic');
+    assert.match(h.errors[0],/特效未能发布/);assert.equal(h.media.cameraEnabled,false);
+   }finally{h.finish()}
+  });
+  await t.test('SDK rejection or no-op reports failure; the old sender stays stopped',async()=>{
+   for(const result of [{errorCode:42},{errorCode:0},false]){
+    const h=setup();try{
+     await h.join(true);h.engine.replaceTrack=async()=>result;h.change({filter:'mono'});await h.media.cameraWork;
+     assert.equal(h.errors.length,1);assert.match(h.errors[0],/特效未能发布/);assert.equal(h.media.cameraEnabled,false);assert.equal(h.published[0].readyState,'ended');
+     assert.equal(h.media.local.getAudioTracks()[0].readyState,'live');assert.equal(h.effects[0].input.readyState,'ended');
+    }finally{h.finish()}
+   }
+  });
+  await t.test('preferences arriving inside the first raw SDK add gate that sender before completion',async()=>{
+   const h=setup();try {
+    await h.join(false);let raw;
+    h.engine.addTrack=async(s,v)=>{raw=v;h.change({avatar:'cat'});assert.equal(raw.enabled,false);return h.engine.attach(s,v)};
+    await h.media.setDevices(true,true);await h.media.cameraWork;
+    assert.equal(raw.readyState,'ended');assert.equal(h.media.local.getVideoTracks()[0],h.effects[0].canvas);assert.deepEqual(h.errors,[]);
+   }finally{h.finish()}
+  });
+  await t.test('closing camera or leaving while custom registration is pending cannot restore capture',async()=>{
+   for(const leave of [false,true]){
+    const h=setup();try{
+     await h.join(true);let resume,started;const pending=new Promise(r=>{started=r});const create=h.engine.createStream.bind(h.engine);
+     h.engine.createStream=async config=>{const preview=await create(config);started();await new Promise(r=>{resume=r});return preview};
+     h.change({avatar:'robot'});await pending;
+     if(leave)h.media.dispose();else await h.media.setDevices(true,false);
+     assert.equal(h.effects[0].input.readyState,'ended');resume();await h.media.cameraWork;
+     assert.equal(h.published.length,1);assert.equal(h.effects[0].canvas.readyState,'ended');assert.deepEqual(h.errors,[]);
+    }finally{h.finish()}
+   }
+  });
+ }finally{globalThis.window=oldWindow;globalThis.MediaStream=oldStream;delete globalThis.__effects}
 });
 
 test('camera capture returning after the deadline is destroyed without restoring exited media', async () => {
@@ -411,7 +556,7 @@ test('screen sharing distinguishes capture failures and releases failed or late 
  let published=0,stopped=0,destroyed=0;const previews=new Set();
  media.engine={async createStream({custom}){assert.ok(custom.source instanceof MediaStream);const preview=new MediaStream(custom.source.getVideoTracks());previews.add(preview);return preview;},destroyStream(stream){destroyed++;previews.delete(stream);stream.getTracks().forEach(t=>t.stop());},startPublishingStream(id,stream){assert.ok(previews.has(stream),'must register raw capture with ZEGO before publishing');published++;return true;},stopPublishingStream(){stopped++;},logoutRoom(){},destroyEngine(){}};
  const capture=()=>{
-  const track=Object.assign(new EventTarget(),{kind:'video',getSettings:()=>({width:800,height:500}),readyState:'live',stop(){this.readyState='ended';}});
+  const track=Object.assign(new EventTarget(),{kind:'video',contentHint:'',getSettings:()=>({width:800,height:500}),readyState:'live',stop(){this.readyState='ended';}});
   return {track,stream:{getTracks:()=>[track],getVideoTracks:()=>[track]}};
  };
  const reject=name=>({getDisplayMedia:async()=>{throw Object.assign(new Error('capture failed'),{name});}});
@@ -421,11 +566,14 @@ test('screen sharing distinguishes capture failures and releases failed or late 
   await assert.rejects(media.startShare(reject('InvalidStateError')),/返回会议窗口/);
   await assert.rejects(media.startShare(reject('NotReadableError')),/系统未能启动屏幕采集/);
   await assert.rejects(media.startShare(reject('NotFoundError')),/重新选择/);
-  const first=capture();
-  await media.startShare({getDisplayMedia:async(options)=>{assert.deepEqual(options,{video:true,audio:false});return first.stream;}});
-  assert.equal(updates.at(-1).tile.screen,true);assert.equal(published,1);assert.notEqual(updates.at(-1).tile.stream,first.stream);
-  first.track.dispatchEvent(new Event('ended'));
-  assert.equal(stopped,1);assert.equal(destroyed,1);assert.equal(first.track.readyState,'ended');assert.equal(updates.at(-1).tile,null);
+  for(const [shareQuality,width,height,fps,hint] of [['balanced',1920,1080,24,''],['detail',2560,1440,15,'detail'],['motion',1920,1080,30,'motion']]) {
+   setPrefs({shareQuality});const first=capture();
+   await media.startShare({getDisplayMedia:async(options)=>{assert.deepEqual(options,{video:{width:{ideal:width},height:{ideal:height},frameRate:{ideal:fps,max:fps}},audio:false});return first.stream;}});
+   assert.equal(updates.at(-1).tile.screen,true);assert.notEqual(updates.at(-1).tile.stream,first.stream);assert.equal(first.track.contentHint,hint);
+   first.track.dispatchEvent(new Event('ended'));
+   assert.equal(first.track.readyState,'ended');assert.equal(updates.at(-1).tile,null);
+  }
+  assert.equal(stopped,3);assert.equal(destroyed,3);assert.equal(published,3);
   for(const failure of [()=>false,()=>{throw Error('publisher failed');}]){
    const failed=capture();media.engine.startPublishingStream=failure;
    await assert.rejects(media.startShare({getDisplayMedia:async()=>failed.stream}));assert.equal(failed.track.readyState,'ended');

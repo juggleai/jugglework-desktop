@@ -25,3 +25,5 @@ Implementation boundaries and validation: `docs/meeting/04-implementation-status
 - [x] Explicit desktop/window thumbnail picker, safe pending-request lifecycle, real Electron selection/cancel/re-share and ZEGO cloud decode verification
 - [x] Move Meetings from the always-visible primary Rail into the IM-gated More menu, preserve route activity, and support the shared keyboard-accessible pin/unpin model below Calendar
 - [x] Align the meeting workspace with the shared resizable inset layout, show upcoming/history lists, and route scheduling through the shared Calendar event dialog
+- [x] 按 `meetingReminders` 实时启停 Meeting 开始提醒；覆盖在途返回、可见卡片和重新开启去重，保留日历及邀请的独立路径。
+- [x] 参会人进出会提示音接入常规设置及会议窗口，默认关闭。

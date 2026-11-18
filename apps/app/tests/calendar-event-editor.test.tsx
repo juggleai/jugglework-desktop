@@ -2,13 +2,16 @@ import { afterAll, beforeEach, expect, mock, spyOn, test } from "bun:test";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Temporal } from "@js-temporal/polyfill";
 import React from "react";
+import * as ReactDOM from "react-dom";
 import TestRenderer, { act } from "react-test-renderer";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 
 import { DenApiError, type DenCalendar, type DenCalendarEvent, type DenCalendarSchedulingEvent } from "../src/app/lib/den";
 import { calendarQueryKeys } from "../src/react-app/domains/calendar/calendar-query-keys";
+import { CALENDAR_REMINDER_PREFERENCES_CHANGED, readCalendarReminderMinutes, writeCalendarReminderMinutes } from "../src/react-app/domains/calendar/calendar-reminder-preferences";
 import { createCalendarScope } from "../src/react-app/domains/calendar/calendar-scope";
 import { calendarViewStorageKey } from "../src/react-app/domains/calendar/calendar-view-model";
+import type { Meeting } from "../src/react-app/domains/meeting/types";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -133,15 +136,30 @@ mock.module("../src/react-app/domains/cloud/desktop-config-provider", () => ({
   useDesktopConfig: () => ({ loading: false, config: { calendarEnabled: true, calendarWriteEnabled: true } }),
 }));
 const meetingCalls: Array<{ op: string; value?: unknown }> = [];
+const createdMeeting: Meeting = {
+  id: "meeting-1", code: "123456", organizationId: "org-a", title: "Title meeting-event", description: "Daily planning",
+  sourceKind: "workbench", sourceId: "", organizerId: "user-a", hostId: "user-a", status: "live", version: 1,
+  startAt: fixedNow.toString(), endAt: fixedNow.add({ minutes: 30 }).toString(), timezone: clock.timeZone(),
+  locked: false, invites: {}, participants: {},
+};
 mock.module("../src/react-app/domains/meeting/api", () => ({
   meetingAPI: {
-    settings: async () => ({ ready: true, settings: { enabled: true } }),
-    create: async (input: unknown) => { meetingCalls.push({ op: "create", value: input }); return { meeting: { id: "meeting-1" } }; },
+    settings: async () => { meetingCalls.push({ op: "settings" }); return { ready: true, settings: { enabled: true } }; },
+    create: async (input: unknown, key: string) => { meetingCalls.push({ op: "create", value: { input, key } }); return { meeting: createdMeeting }; },
     notify: async (id: string) => { meetingCalls.push({ op: "notify", value: id }); },
   },
 }));
+const meetingState = {
+  phase: "idle",
+  join: async (meeting: Meeting, mic: boolean, camera: boolean) => { meetingCalls.push({ op: "join", value: { meeting, mic, camera } }); },
+};
+mock.module("../src/react-app/domains/meeting/store", () => ({
+  useMeetingStore: Object.assign((select: (state: typeof meetingState) => unknown) => select(meetingState), { getState: () => meetingState }),
+}));
+mock.module("../src/react-app/domains/jugglechat/store", () => ({ useJuggleChatStore: (select: (state: { user: null }) => unknown) => select({ user: null }) }));
 
 const { CalendarPage } = await import("../src/react-app/domains/calendar/calendar-page");
+const { CalendarEventDetail } = await import("../src/react-app/domains/calendar/calendar-agenda");
 const { CalendarEventCreateDialog } = await import("../src/react-app/domains/calendar/calendar-event-create-dialog");
 const { t } = await import("../src/i18n");
 
@@ -163,18 +181,21 @@ beforeEach(() => {
   calendars = [calendar("cal-1", "Personal"), calendar("cal-2", "Side project")];
 });
 
-async function render(initialEntry: string | { pathname: string; state?: unknown } = "/calendar") {
+function CurrentPath() { return <output data-testid="current-path">{useLocation().pathname}</output>; }
+
+async function render(initialEntry: string | { pathname: string; state?: unknown } = "/calendar", options?: TestRenderer.TestRendererOptions) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const noop = () => undefined;
   let renderer!: TestRenderer.ReactTestRenderer;
   const tree = () => (
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={[initialEntry]}>
+        <CurrentPath />
         <CalendarPage workspaceId="" sessionPath="/session" clock={clock} onOpenAccount={noop} onOpenApps={noop} onOpenChat={noop} onOpenReviews={noop} onOpenSettings={noop} />
       </MemoryRouter>
     </QueryClientProvider>
   );
-  await act(async () => { renderer = TestRenderer.create(tree()); });
+  await act(async () => { renderer = TestRenderer.create(tree(), options); });
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
   return { renderer, queryClient };
 }
@@ -408,26 +429,125 @@ test("meeting, growing description, reminder, and calendar controls follow the r
   } finally { await act(async () => { renderer.unmount(); }); }
 });
 
-test("event detail closes on outside pointer and starts a meeting for every attendee", async () => {
+// TestRenderer has no DOM container for portals. Keep the real dialog and its controls in the test tree.
+function inlineMeetingDialog() {
+  const original = Object.getOwnPropertyDescriptor(globalThis, "document");
+  const originalElement = Object.getOwnPropertyDescriptor(globalThis, "HTMLElement");
+  if (!originalElement) Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: class {} });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: Object.assign(new EventTarget(), { body: {}, querySelector: () => null }) });
+  const portal = spyOn(ReactDOM, "createPortal").mockImplementation(children => children as React.ReactPortal);
+  return () => {
+    portal.mockRestore();
+    if (!originalElement) Reflect.deleteProperty(globalThis, "HTMLElement");
+    if (original) Object.defineProperty(globalThis, "document", original);
+    else Reflect.deleteProperty(globalThis, "document");
+  };
+}
+
+const meetingButton = (dialog: TestRenderer.ReactTestInstance, label: RegExp) =>
+  dialog.find(node => node.type === "button" && label.test(node.props["aria-label"] || text(node)));
+const dialogOptions: TestRenderer.TestRendererOptions = {
+  createNodeMock(node) {
+    if (node.type === "dialog") return { ownerDocument: document, showModal() {}, close() {} };
+    if (node.type === "span") return { ownerDocument: document, closest: () => null };
+    return null;
+  },
+};
+
+test("calendar meeting preview keeps the route and detail; only confirmation creates, notifies and joins", async () => {
   organizationMembers = [
     { id: "member-a", userId: "user-a", role: "member", user: { id: "user-a", name: "Ada", account: "ada", email: "ada@example.com", avatar: null } },
     { id: "member-b", userId: "user-b", role: "member", user: { id: "user-b", name: "Ben", account: "ben", email: "ben@example.com", avatar: null } },
   ];
-  events = [{ ...baseEvent("meeting-event"), videoConferenceEnabled: true, status: "active", attendees: [{ memberId: "member-a", responseStatus: "accepted" }, { memberId: "member-b", responseStatus: "needs-action" }], recurrence: null }];
-  const { renderer } = await render();
+  const event: DenCalendarSchedulingEvent = {
+    ...baseEvent("meeting-event"), description: "Daily planning", videoConferenceEnabled: true, status: "active", recurrence: null,
+    attendees: [{ memberId: "member-a", responseStatus: "accepted" }, { memberId: "member-b", responseStatus: "needs-action" }],
+  };
+  events = [event];
+  const restoreDialog = inlineMeetingDialog();
+  let renderer!: TestRenderer.ReactTestRenderer;
   try {
+    ({ renderer } = await render("/calendar", dialogOptions));
+    const preview = () => renderer.root.findByType("dialog");
+    const expectCalendarDetail = () => {
+      expect(text(byId(renderer, "current-path"))).toBe("/calendar");
+      expect(text(byId(renderer, "calendar-event-detail-title"))).toBe(event.title);
+    };
     await click(renderer, "calendar-day-event-2026-11-09-meeting-event");
     expect(has(renderer, "calendar-event-start-meeting")).toBe(true);
     await click(renderer, "calendar-event-start-meeting");
-    await settle();
+    expectCalendarDetail();
+    expect(text(preview())).toContain("Title meeting-event");
+    expect(meetingCalls).toEqual([]);
+    await act(async () => { meetingButton(preview(), /^取消$/).props.onClick(); });
+    expect(renderer.root.findAllByType("dialog")).toHaveLength(0);
+    expectCalendarDetail();
+    expect(meetingCalls).toEqual([]);
+
+    await click(renderer, "calendar-event-start-meeting");
+    expect(meetingCalls).toEqual([]);
+    await act(async () => { meetingButton(preview(), /^开始会议$/).props.onClick(); });
     expect(meetingCalls).toEqual([
-      { op: "create", value: expect.objectContaining({ title: "Title meeting-event", invitees: ["user-b"], immediate: true }) },
+      { op: "settings" },
+      { op: "create", value: { key: expect.any(String), input: expect.objectContaining({
+        title: event.title, description: event.description, invitees: ["user-b"], immediate: true,
+        startAt: "2026-11-09T04:00:00Z", endAt: "2026-11-09T04:30:00Z", timezone: "Asia/Shanghai",
+      }) } },
       { op: "notify", value: "meeting-1" },
+      { op: "join", value: { meeting: createdMeeting, mic: false, camera: false } },
     ]);
+    expect(renderer.root.findAllByType("dialog")).toHaveLength(0);
+    expectCalendarDetail();
     await click(renderer, "calendar-event-detail-dismiss-layer");
     expect(has(renderer, "calendar-event-detail")).toBe(false);
   } finally {
-    await act(async () => { renderer.unmount(); });
+    await act(async () => { renderer?.unmount(); });
+    restoreDialog();
+  }
+});
+
+test("calendar prejoin waits for the created meeting before joining, even on a repeated confirmation", async () => {
+  const { MeetingPrejoin } = await import("../src/react-app/domains/meeting/meeting-page");
+  const restoreDialog = inlineMeetingDialog();
+  const close = mock(() => {});
+  let resolve!: (meeting: Meeting) => void;
+  const pending = new Promise<Meeting>(done => { resolve = done; });
+  const start = mock(() => pending);
+  let renderer!: TestRenderer.ReactTestRenderer;
+  try {
+    await act(async () => { renderer = TestRenderer.create(<MeetingPrejoin calendarTitle="Planning" startCalendarMeeting={start} onClose={close} />, dialogOptions); });
+    expect(start).not.toHaveBeenCalled();
+    const confirm = meetingButton(renderer.root.findByType("dialog"), /^开始会议$/);
+    await act(async () => { confirm.props.onClick(); confirm.props.onClick(); });
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(confirm.props.disabled).toBe(true);
+    expect(meetingCalls).toEqual([]);
+    expect(close).not.toHaveBeenCalled();
+    await act(async () => { resolve(createdMeeting); });
+    expect(meetingCalls).toEqual([{ op: "join", value: { meeting: createdMeeting, mic: false, camera: false } }]);
+    expect(close).toHaveBeenCalledTimes(1);
+  } finally {
+    await act(async () => renderer?.unmount());
+    restoreDialog();
+  }
+});
+
+test("prejoin for an existing meeting joins it directly without creating or notifying", async () => {
+  const { MeetingPrejoin } = await import("../src/react-app/domains/meeting/meeting-page");
+  const restoreDialog = inlineMeetingDialog();
+  const close = mock(() => {});
+  let renderer!: TestRenderer.ReactTestRenderer;
+  try {
+    await act(async () => { renderer = TestRenderer.create(<MeetingPrejoin meeting={createdMeeting} onClose={close} />); });
+    const dialog = renderer.root.findByProps({ role: "dialog", "aria-modal": "true" });
+    expect(text(dialog)).toContain(createdMeeting.code);
+    expect(meetingCalls).toEqual([]);
+    await act(async () => { meetingButton(dialog, /^加入会议$/).props.onClick(); });
+    expect(meetingCalls).toEqual([{ op: "join", value: { meeting: createdMeeting, mic: false, camera: false } }]);
+    expect(close).toHaveBeenCalledTimes(1);
+  } finally {
+    await act(async () => renderer?.unmount());
+    restoreDialog();
   }
 });
 
@@ -817,6 +937,7 @@ test("multiple reminders can be changed and removed independently, including rem
     expect(text(byId(renderer, "calendar-form-reminder-row-1"))).toContain(t("calendar.reminder_minutes_before", { count: 15 }));
     expect(text(byId(renderer, "calendar-form-reminder-row-2"))).toContain(t("calendar.reminder_minutes_before", { count: 30 }));
     await click(renderer, "calendar-form-reminder-trigger-1");
+    expect(has(renderer, "calendar-form-reminder-option-5-1")).toBe(false);
     await click(renderer, "calendar-form-reminder-option-60-1");
     expect(has(renderer, "calendar-form-reminder-menu-1")).toBe(false);
     expect(text(byId(renderer, "calendar-form-reminder-row-1"))).toContain(t("calendar.reminder_hours_before", { count: 1 }));
@@ -835,4 +956,82 @@ test("multiple reminders can be changed and removed independently, including rem
     expect(text(byId(renderer, "calendar-form-reminder-row-3"))).toContain(t("calendar.reminder_minutes_before", { count: 5 }));
     expect(calls).toHaveLength(0);
   } finally { await act(async () => renderer.unmount()); }
+});
+
+test("reminders survive reopening; failed edits preserve them and reminder-only save can clear them", async () => {
+  const { renderer } = await render();
+  try {
+    await click(renderer, "calendar-create-event");
+    await change(renderer, "calendar-form-title", "Personal reminders");
+    await click(renderer, "calendar-form-reminder-trigger");
+    await click(renderer, "calendar-form-reminder-option-0");
+    await click(renderer, "calendar-form-reminder-add");
+    await submit(renderer);
+    const eventId = events[0]!.id;
+    expect(readCalendarReminderMinutes(calendarScope, eventId)).toEqual([0, 5]);
+
+    const edit = async () => {
+      await click(renderer, `calendar-day-event-2026-11-09-${eventId}`);
+      await click(renderer, "calendar-event-detail-edit");
+    };
+    await edit();
+    expect(text(byId(renderer, "calendar-form-reminder-trigger"))).toBe(t("calendar.reminder_at_start"));
+    await click(renderer, "calendar-form-reminder-remove");
+    await click(renderer, "calendar-form-reminder-remove-1");
+    await change(renderer, "calendar-form-title", "Rejected title");
+    failNext = () => new DenApiError(403, "forbidden", "update rejected");
+    await submit(renderer);
+    expect(formStatus(renderer)).toBe("failed");
+    expect(readCalendarReminderMinutes(calendarScope, eventId)).toEqual([0, 5]);
+
+    await change(renderer, "calendar-form-title", "Personal reminders");
+    const writes = calls.length;
+    await submit(renderer);
+    expect(calls).toHaveLength(writes);
+    expect(readCalendarReminderMinutes(calendarScope, eventId)).toEqual([]);
+    await edit();
+    expect(has(renderer, "calendar-form-reminder-trigger")).toBe(false);
+  } finally { await act(async () => renderer.unmount()); }
+});
+
+test("occurrence details share series reminders only within the same scope", async () => {
+  const seriesId = "series:计划/1";
+  writeCalendarReminderMinutes(calendarScope, seriesId, [60, 0, 60]);
+  const detail = (index: number, scope = calendarScope) => <CalendarEventDetail
+    scope={scope} recurringOccurrence event={baseEvent(`scheduling:${encodeURIComponent(seriesId)}:${index}`)}
+    calendar={calendars[0]} locale="en" onClose={() => {}} />;
+  let renderer!: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(detail(1)); });
+  try {
+    const labels = () => byId(renderer, "calendar-event-detail-reminder").findAllByType("li").map(text);
+    expect(labels()).toEqual([t("calendar.reminder_hours_before", { count: 1 }), t("calendar.reminder_at_start")]);
+    await act(async () => renderer.update(detail(2)));
+    expect(labels()).toHaveLength(2);
+    for (const field of ["memberId", "organizationId", "deployment"] as const) {
+      await act(async () => renderer.update(detail(1, { ...calendarScope, [field]: "other" })));
+      expect(labels()).toEqual([t("calendar.reminder_minutes_before", { count: 5 })]);
+    }
+    expect(readCalendarReminderMinutes(calendarScope, `${seriesId}-other`)).toEqual([5]);
+    writeCalendarReminderMinutes(calendarScope, seriesId, []);
+    await act(async () => renderer.update(detail(1)));
+    expect(has(renderer, "calendar-event-detail-reminder")).toBe(false);
+  } finally { await act(async () => renderer.unmount()); }
+});
+
+test("preference change notification contains the persisted unique minutes and original event id", () => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, "window");
+  const target = new EventTarget();
+  const listener = mock((event: Event) => {
+    expect((event as CustomEvent).detail).toEqual({ scope: calendarScope, eventId: "series", minutes: [15] });
+    expect(readCalendarReminderMinutes(calendarScope, "series")).toEqual([15]);
+  });
+  target.addEventListener(CALENDAR_REMINDER_PREFERENCES_CHANGED, listener);
+  Object.defineProperty(globalThis, "window", { configurable: true, value: target });
+  try {
+    writeCalendarReminderMinutes(calendarScope, "series", [15, 15]);
+    expect(listener).toHaveBeenCalledTimes(1);
+  } finally {
+    if (original) Object.defineProperty(globalThis, "window", original);
+    else Reflect.deleteProperty(globalThis, "window");
+  }
 });

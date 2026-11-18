@@ -25,6 +25,8 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { t } from "@/i18n";
 import { cn } from "@/lib/utils";
 import type { CalendarDayEntry } from "./calendar-event-layout";
+import { DEFAULT_CALENDAR_REMINDER_MINUTES, readCalendarReminderMinutes, reminderLabel } from "./calendar-reminder-preferences";
+import type { CalendarScope } from "./calendar-scope";
 import { formatCalendarTime, parseCalendarEventTime } from "./calendar-time-adapter";
 
 function entryTimeLabel(entry: CalendarDayEntry, locale: string): string {
@@ -91,6 +93,7 @@ export function CalendarAgenda(props: {
 
 export function CalendarEventDetail(props: {
   event: DenCalendarEvent;
+  scope?: CalendarScope;
   calendar: DenCalendar | undefined;
   locale: string;
   onClose: () => void;
@@ -115,6 +118,8 @@ export function CalendarEventDetail(props: {
     try { return parseCalendarEventTime(props.event.time); } catch { return null; }
   }, [props.event.time]);
   const scheduling = isSchedulingEvent(props.event) ? props.event : null;
+  const reminderEventId = props.recurringOccurrence || scheduling?.recurrence ? seriesIdFromDisplayId(props.event.id) : props.event.id;
+  const reminders = props.scope ? readCalendarReminderMinutes(props.scope, reminderEventId) : DEFAULT_CALENDAR_REMINDER_MINUTES;
   const owner = props.membersById?.get(props.event.ownerMemberId);
   const displayName = (memberId: string) => {
     const member = props.membersById?.get(memberId);
@@ -231,9 +236,9 @@ export function CalendarEventDetail(props: {
             </DetailRow>
           ) : null}
           {props.event.description ? <DetailRow icon={<FileText className="size-4" />} align="start"><p className="whitespace-pre-wrap break-words leading-[18px] text-dls-text" data-testid="calendar-event-detail-description">{props.event.description}</p></DetailRow> : null}
-          <DetailRow icon={<Bell className="size-4" />}>
-            <p className="leading-[18px] text-dls-text" data-testid="calendar-event-detail-reminder">{t("calendar.reminder_minutes_before", { count: 5 })}</p>
-          </DetailRow>
+          {reminders.length > 0 ? <DetailRow icon={<Bell className="size-4" />}>
+            <ul className="leading-[18px] text-dls-text" data-testid="calendar-event-detail-reminder">{reminders.map((minutes) => <li key={minutes}>{reminderLabel(minutes)}</li>)}</ul>
+          </DetailRow> : null}
           <DetailRow icon={<CalendarDays className="size-4" data-testid="calendar-event-detail-calendar-icon" />}>
             <p className="leading-[18px] text-dls-text" data-testid="calendar-event-detail-calendar">{calendarLabel ?? "—"}</p>
           </DetailRow>
@@ -324,6 +329,13 @@ function ResponseButton(props: { active: boolean; tone: "accepted" | "declined" 
       {props.children}
     </button>
   );
+}
+
+// CalendarPage uses scheduling:<encoded series id>:<index> for projected occurrences, including offline snapshots.
+function seriesIdFromDisplayId(id: string): string {
+  const encoded = /^scheduling:([^:]+):\d+$/.exec(id)?.[1];
+  if (!encoded) return id;
+  try { return decodeURIComponent(encoded); } catch { return id; }
 }
 
 function isSchedulingEvent(event: DenCalendarEvent): event is DenCalendarSchedulingEvent {

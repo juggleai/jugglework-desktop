@@ -1217,6 +1217,7 @@ export default {
   "calendar.meeting_failed": "Could not start the meeting. Try again later.",
   "calendar.reminder_add": "Add reminder",
   "calendar.reminder_at_start": "At event start",
+  "calendar.reminder_assistant": "Calendar assistant",
   "calendar.reminder_minutes_before": "{count} minutes before",
   "calendar.reminder_hours_before": "{count} hours before",
   "calendar.reminder_days_before": "{count} days before",

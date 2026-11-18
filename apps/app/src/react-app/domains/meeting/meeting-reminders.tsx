@@ -1,19 +1,26 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { useNavigate } from "react-router-dom";
 import { useDenAuth } from "../cloud/den-auth-provider";
 import { meetingAPI } from "./api";
 import type { Meeting } from "./types";
 import { MeetingIcon } from "./meeting-icons";
+import { readMeetingPreferences, subscribeMeetingPreferences } from "./meeting-preferences";
+
+const remindersEnabled = () => readMeetingPreferences().meetingReminders;
 
 // In-app reminders work while Desktop is running. No OS notification permission
 // is requested, and dismissed reminders are scoped to this account/organization.
 export function MeetingReminderHost() {
   const { user, activeOrganization } = useDenAuth();
+  const enabled = useSyncExternalStore(subscribeMeetingPreferences, remindersEnabled, remindersEnabled);
+  if (!enabled || !user?.id || !activeOrganization?.id) return null;
+  return <ScheduledMeetingReminder key={JSON.stringify([activeOrganization.id, user.id])} orgId={activeOrganization.id} userId={user.id} />;
+}
+
+function ScheduledMeetingReminder({ orgId, userId }: { orgId: string; userId: string }) {
   const [reminder, setReminder] = useState<Meeting | null>(null);
   const navigate = useNavigate();
   useEffect(() => {
-    setReminder(null);
-    if (!user?.id || !activeOrganization?.id) return;
     let alive = true;
     const seen = new Set<string>();
     const poll = async () => {
@@ -23,7 +30,9 @@ export function MeetingReminderHost() {
           new Date(now - 300000),
           new Date(now + 300000),
         );
-        if (!alive) return;
+        // A preference write can precede React's unsubscribe/cleanup. Do not consume
+        // a still-eligible reminder if the in-flight response lands in that gap.
+        if (!alive || !remindersEnabled()) return;
         setReminder((current) => {
           if (!current) return null;
           const fresh = meetings.find((m) => m.id === current.id);
@@ -31,18 +40,18 @@ export function MeetingReminderHost() {
         });
         const next = meetings.find((m) => {
           const at = Date.parse(m.startAt);
-          const key = `meeting.reminder:${activeOrganization.id}:${user.id}:${m.id}:${m.startAt}`;
+          const key = `meeting.reminder:${orgId}:${userId}:${m.id}:${m.startAt}`;
           return (
             m.status === "scheduled" &&
             at >= now - 300000 &&
             at <= now + 300000 &&
-            (m.organizerId === user.id || m.invites[user.id] === "accepted") &&
+            (m.organizerId === userId || m.invites[userId] === "accepted") &&
             !seen.has(key) &&
             sessionStorage.getItem(key) !== "shown"
           );
         });
         if (next) {
-          const key = `meeting.reminder:${activeOrganization.id}:${user.id}:${next.id}:${next.startAt}`;
+          const key = `meeting.reminder:${orgId}:${userId}:${next.id}:${next.startAt}`;
           seen.add(key);
           sessionStorage.setItem(key, "shown");
           setReminder(next);
@@ -60,7 +69,7 @@ export function MeetingReminderHost() {
       window.removeEventListener("meeting:changed", changed);
       clearInterval(timer);
     };
-  }, [user?.id, activeOrganization?.id]);
+  }, [userId, orgId]);
   if (!reminder) return null;
   return (
     <aside className="meeting-ui meeting-reminder" role="status">

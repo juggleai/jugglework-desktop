@@ -267,6 +267,118 @@
 .meeting-ui .prejoin-devices .device-off svg { color: #dc615b; }
 .meeting-ui .prejoin-devices button[aria-pressed="true"] { background: var(--meet-hover); border-color: color-mix(in srgb, var(--meet-text) 20%, var(--meet-line)); }
 
+/* A native top-layer dialog keeps calendar details mounted beneath the preview. */
+.calendar-prejoin-layer {
+  position: fixed; inset: 0; margin: auto; padding: 0; border: 0; border-radius: 20px;
+  width: min(800px, calc(100vw - 24px)); max-width: none; max-height: calc(100dvh - 24px);
+  overflow: auto; overscroll-behavior: contain; pointer-events: auto; color-scheme: light;
+  background: #fff; box-shadow: 0 24px 80px #10182733; -webkit-app-region: no-drag;
+}
+.calendar-prejoin-layer::backdrop { background: #10182766; pointer-events: auto; }
+.meeting-ui.calendar-prejoin {
+  --meet-bg: #fff; --meet-text: #1f2329; --meet-sub: #59616d; --meet-line: #dce0e5;
+  --meet-primary: #245bdb; --meet-on-primary: #fff;
+  height: auto; padding: clamp(16px, 3vw, 32px); overflow: visible;
+}
+.calendar-prejoin-head { display: grid; grid-template-columns: 32px minmax(0, 1fr) 32px; align-items: start; margin-bottom: 20px; }
+.calendar-prejoin-head h2 { grid-column: 2; align-self: center; text-align: center; overflow-wrap: anywhere; font-size: 20px; }
+.calendar-prejoin .preview { height: auto; aspect-ratio: 16 / 9; margin: 0; background: #e6e8eb; border-radius: 12px; }
+.calendar-prejoin .preview .avatar { width: clamp(72px, 16vw, 144px); height: auto; aspect-ratio: 1; font-size: clamp(28px, 6vw, 54px); box-shadow: none; }
+.calendar-prejoin .modal-foot { justify-content: space-between; align-items: center; gap: 14px; margin-top: 20px; padding: 0; border: 0; }
+.calendar-prejoin .prejoin-devices { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; }
+.calendar-prejoin .modal-foot .primary { min-height: 40px; margin-inline-start: auto; padding-inline: 24px; font-size: 14px; }
+.calendar-prejoin button:focus-visible { outline: 2px solid var(--meet-primary); }
+@media (max-width: 450px) {
+  .calendar-prejoin .prejoin-devices button { min-width: 40px; padding-inline: 8px; }
+  .calendar-prejoin .prejoin-devices button span { display: none; }
+}
+
+/* One effects surface in the launching dialog/window; keep the live preview mounted. */
+.meeting-ui .preview-settings { position: absolute; inset: 12px 12px auto auto; min-height: 32px; padding: 5px 10px; border: 1px solid #ffffff50; background: #17212ed9; color: #fff; font-size: 12px; }
+.meeting-ui .preview-settings:not(:disabled):hover, .meeting-ui .preview-settings[aria-expanded="true"] { background: #25344a; color: #fff; }
+.meeting-ui .effect-preview { color: #fff; }
+.meeting-ui .effect-settings { display: grid; gap: 16px; min-width: 0; }
+.meeting-ui .effect-hint { padding: 9px 12px; border-radius: 9px; background: var(--meet-hover); font-size: 12px; }
+.meeting-ui .effect-group { min-width: 0; margin: 0; padding: 0; border: 0; }
+.meeting-ui .effect-group legend, .meeting-ui .effect-group label { width: 100%; padding: 0; font-size: 13px; font-weight: 600; color: var(--meet-text); }
+.meeting-ui .effect-group label { display: flex; align-items: baseline; justify-content: space-between; }
+.meeting-ui .effect-group label span { font-weight: 400; color: var(--meet-sub); font-variant-numeric: tabular-nums; }
+.meeting-ui .effect-choices { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.meeting-ui .effect-choices button { padding: 4px 10px; min-height: 32px; font-size: 12px; }
+.meeting-ui .effect-swatch { display: grid; place-items: center; width: 18px; height: 18px; border-radius: 5px; font-size: 15px; line-height: 1; }
+.meeting-ui .effect-swatch[data-effect="studio"] { background: linear-gradient(150deg, #262947, #888bb6); }
+.meeting-ui .effect-swatch[data-effect="sky"] { background: linear-gradient(#427dc1, #c6ebfa 75%, #f9dfc2); }
+.meeting-ui .effect-swatch[data-effect="warm"] { background: linear-gradient(135deg, #f1cca9, #b98068); }
+.meeting-ui .effect-swatch[data-effect="cool"] { background: linear-gradient(135deg, #c3ddea, #7094b8); }
+.meeting-ui .effect-swatch[data-effect="mono"] { background: linear-gradient(135deg, #ddd, #555); }
+.meeting-ui .effect-choices button[aria-pressed="true"] { border-color: var(--meet-primary); color: var(--meet-primary); background: color-mix(in srgb, var(--meet-primary) 8%, var(--meet-bg)); }
+.meeting-ui .effect-group input[type="range"] { padding: 0; accent-color: var(--meet-primary); cursor: pointer; }
+.meeting-ui .effect-actions { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding-top: 14px; border-top: 1px solid var(--meet-line); }
+.meeting-ui video[data-mirrored="true"] { transform: scaleX(-1); }
+.meeting-dialog-backdrop > .meeting-ui.meeting-settings-dialog, .meeting-ui.calendar-prejoin.meeting-settings-dialog {
+  display: flex; flex-direction: column; width: min(840px, 100%); height: min(640px, calc(100dvh - 48px)); padding: 0; overflow: hidden;
+}
+.meeting-settings-dialog > :is(.modal-head, .calendar-prejoin-head) { display: flex; align-items: center; justify-content: space-between; padding: 12px 20px; margin: 0; border-bottom: 1px solid var(--meet-line); }
+.meeting-settings-dialog > header h2 { font-size: 17px; }
+.meeting-user-settings { display: grid; flex: 1; min-height: 0; grid-template-columns: 158px minmax(0, 1fr); }
+.settings-categories, .settings-content { overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.settings-categories { padding: 16px 10px; border-inline-end: 1px solid var(--meet-line); background: var(--meet-panel); }
+.meeting-ui .settings-categories button { width: 100%; gap: 12px; border: 0; border-radius: 8px; margin-bottom: 3px; padding: 10px 12px; justify-content: start; background: transparent; }
+.meeting-ui .settings-categories button[aria-current] { background: color-mix(in srgb, #417af5 12%, var(--meet-bg)); color: color-mix(in srgb, #417af5 72%, var(--meet-text)); font-weight: 600; }
+.settings-content { display: flex; flex-direction: column; align-items: stretch; gap: 14px; padding: 22px clamp(16px, 3vw, 32px); min-width: 0; }
+.settings-content > * { flex: none; }
+.settings-content > h3 { font-size: 18px; }
+.settings-content h4 { margin: 8px 0 0; padding-top: 14px; border-top: 1px solid var(--meet-line); }
+.meeting-ui .settings-content .check { font-size: 13px; padding: 4px 0; background: transparent; }
+.settings-content .capability-note { padding: 14px; border-radius: 10px; background: var(--meet-soft); border: 1px solid var(--meet-line); }
+.meeting-ui .settings-content .preview { height: auto; max-height: 280px; aspect-ratio: 16 / 9; margin: 0 auto; width: 100%; }
+.meeting-ui .effect-tabs { display: flex; flex-wrap: wrap; gap: 2px; border-bottom: 1px solid var(--meet-line); }
+.meeting-ui .effect-tabs button { border: 0; border-bottom: 2px solid transparent; background: transparent; border-radius: 0; }
+.meeting-ui .effect-tabs button[aria-selected="true"] { border-bottom-color: currentColor; color: color-mix(in srgb, #417af5 72%, var(--meet-text)); }
+.meeting-ui .settings-content .effect-choices button { flex-direction: column; gap: 5px; padding: 6px; }
+.settings-content .effect-swatch { width: 64px; height: 40px; font-size: 22px; background-color: var(--meet-hover); }
+.meeting-ui .effect-choices.avatar-gallery { display: grid; grid-template-columns: repeat(auto-fit, minmax(60px, 1fr)); gap: 8px; max-height: 250px; overflow-y: auto; padding: 3px; }
+.meeting-ui .avatar-gallery .effect-swatch { width: 100%; height: 44px; font-size: 31px; }
+.meeting-ui .background-group { container: background-picker / inline-size; }
+.meeting-ui .background-gallery {
+  display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px;
+  max-height: min(32vh, 250px); overflow-y: auto; scrollbar-width: thin; padding: 5px; margin-top: 6px;
+}
+.meeting-ui .background-tile {
+  display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; width: 100%; min-width: 0;
+  padding: 0; border: 0; border-radius: 8px; background: transparent; font-size: 12px;
+}
+.background-thumb {
+  display: grid; place-items: center; overflow: hidden; aspect-ratio: 16 / 9; border: 2px solid var(--meet-line);
+  border-radius: 8px; background: var(--meet-panel); color: var(--meet-sub); font-size: 22px; line-height: 1;
+}
+.background-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.background-thumb[data-effect="import"] { border-style: dashed; }
+.background-thumb[data-effect="blur"] { background: radial-gradient(ellipse at 70% 40%, #efd1b4, transparent 55%), linear-gradient(125deg, #92a9bb, #e5ddda 58%, #91a08f); }
+.background-thumb[data-effect="studio"] { background: linear-gradient(#262947, #676990 70%, #353552); }
+.background-thumb[data-effect="sky"] { background: linear-gradient(#427dc1, #c6ebfa 80%, #f9dfc2); }
+.background-tile[aria-pressed="true"] .background-thumb { border-color: #417af5; }
+.background-label { padding-inline: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.background-custom { position: relative; min-width: 0; }
+.meeting-ui .background-delete {
+  position: absolute; top: 3px; right: 3px; width: 24px; height: 24px; min-height: 0; padding: 0;
+  border: 0; border-radius: 50%; color: white; background: #1b243ad9; font-size: 16px;
+}
+.meeting-ui .background-delete:not(:disabled):hover { background: #1b243a; }
+@container background-picker (max-width: 415px) {
+  .meeting-ui .background-gallery { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@container background-picker (max-width: 245px) {
+  .meeting-ui .background-gallery { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 560px) {
+  .meeting-user-settings { grid-template-columns: 78px minmax(0, 1fr); }
+  .settings-categories { padding: 8px 4px; }
+  .meeting-ui .settings-categories button { flex-direction: column; gap: 2px; font-size: 11px; padding: 5px 2px; }
+  .settings-content { padding: 12px; gap: 10px; }
+  .meeting-ui .effect-tabs button { padding-inline: 5px; }
+}
+
 /* The meeting stage never animates on focus, audio or camera state changes. */
 .meeting-room-ui { overflow: hidden; }
 .meeting-ui .room { height: 100%; display: flex; flex-direction: column; }

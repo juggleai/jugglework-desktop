@@ -107,6 +107,13 @@ function seedEvents(queryClient: QueryClient, scope: CalendarScope, events: read
 
 type CalendarGenerationInput = { generation?: CalendarScopeGeneration | null };
 
+// The global reminder observer refreshes its own ranges even while the desktop
+// window is in the background. Other calendar consumers retain query defaults.
+type CalendarRefreshInput = { refetchInterval?: number };
+function refreshOptions({ refetchInterval }: CalendarRefreshInput) {
+  return refetchInterval ? { refetchInterval, refetchIntervalInBackground: true } : {};
+}
+
 export function useCalendarsQuery(input: { client: CalendarQueryClient; scope: CalendarScope | null; active?: boolean } & CalendarGenerationInput) {
   const queryClient = useQueryClient();
   const scope = useCapturedScope(input.scope);
@@ -121,10 +128,11 @@ export function useCalendarsQuery(input: { client: CalendarQueryClient; scope: C
   });
 }
 
-export function useCalendarCollaborationQuery(input: { client: CalendarCollaborationQueryClient; scope: CalendarScope | null; active?: boolean } & CalendarGenerationInput) {
+export function useCalendarCollaborationQuery(input: { client: CalendarCollaborationQueryClient; scope: CalendarScope | null; active?: boolean } & CalendarGenerationInput & CalendarRefreshInput) {
   const queryClient = useQueryClient();
   const scope = useCapturedScope(input.scope);
   return useQuery<DenCalendarCollaborationList>({
+    ...refreshOptions(input),
     queryKey: scope ? calendarQueryKeys.collaboration(scope) : unavailableKey("collaboration", scope),
     enabled: (input.active ?? true) && scope !== null,
     queryFn: async ({ signal }) => {
@@ -156,11 +164,12 @@ export function useCalendarOrganizationMembersQuery(input: { client: CalendarCol
   });
 }
 
-export function useCalendarSchedulingEventsQuery(input: { client: CalendarSchedulingQueryClient; scope: CalendarScope | null; range: DenCalendarSchedulingRange; active?: boolean } & CalendarGenerationInput) {
+export function useCalendarSchedulingEventsQuery(input: { client: CalendarSchedulingQueryClient; scope: CalendarScope | null; range: DenCalendarSchedulingRange; active?: boolean } & CalendarGenerationInput & CalendarRefreshInput) {
   const queryClient = useQueryClient();
   const scope = useCapturedScope(input.scope);
   const range = useMemo(() => Object.freeze({ ...input.range }), [input.range.startInstant, input.range.endInstantExclusive, input.range.timeZone]);
   return useQuery<DenCalendarSchedulingOccurrenceList>({
+    ...refreshOptions(input),
     queryKey: scope ? calendarQueryKeys.schedulingEvents(scope, range) : unavailableKey("scheduling-events", scope),
     enabled: (input.active ?? true) && scope !== null,
     retry: false,
@@ -216,13 +225,14 @@ export function useTeamCalendarSnapshotsQuery(input: {
   calendars: readonly { id: string; authorizationVersion: number }[];
   range: { startDate: string; endDateExclusive: string };
   active?: boolean;
-} & CalendarGenerationInput) {
+} & CalendarGenerationInput & CalendarRefreshInput) {
   const queryClient = useQueryClient();
   const scope = useCapturedScope(input.scope);
   const calendarsKey = JSON.stringify([...new Map(input.calendars.map((calendar) => [calendar.id, calendar])).values()].sort((left, right) => left.id.localeCompare(right.id)));
   const calendars = useMemo(() => JSON.parse(calendarsKey) as Array<{ id: string; authorizationVersion: number }>, [calendarsKey]);
   return useQueries({
     queries: calendars.map(({ id: calendarId, authorizationVersion }) => ({
+      ...refreshOptions(input),
       queryKey: scope ? calendarQueryKeys.teamSnapshot(scope, calendarId, authorizationVersion, input.range) : unavailableKey(`team-snapshot:${calendarId}`, scope),
       enabled: (input.active ?? true) && scope !== null,
       queryFn: async ({ signal }: { signal: AbortSignal }) => {
@@ -287,11 +297,12 @@ export function useCalendarQuery(input: { client: CalendarQueryClient; scope: Ca
   });
 }
 
-export function useCalendarBootstrapQuery(input: { client: CalendarQueryClient; scope: CalendarScope | null; range: Omit<DenCalendarRangeOptions, "cursor" | "limit">; active?: boolean } & CalendarGenerationInput) {
+export function useCalendarBootstrapQuery(input: { client: CalendarQueryClient; scope: CalendarScope | null; range: Omit<DenCalendarRangeOptions, "cursor" | "limit">; active?: boolean } & CalendarGenerationInput & CalendarRefreshInput) {
   const queryClient = useQueryClient();
   const scope = useCapturedScope(input.scope);
   const range = useCapturedRange(input.range);
   return useQuery<DenCalendarBootstrap>({
+    ...refreshOptions(input),
     queryKey: scope ? calendarQueryKeys.bootstrap(scope, range) : unavailableKey("bootstrap", scope),
     enabled: (input.active ?? true) && scope !== null,
     queryFn: async ({ signal }) => {

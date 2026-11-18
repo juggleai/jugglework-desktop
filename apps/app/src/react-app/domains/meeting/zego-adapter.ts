@@ -1,6 +1,23 @@
 import { meetingDiagnostic, meetingDiagnosticError, meetingDiagnosticStep, meetingNumericMetrics, meetingTrackSnapshot } from "./diagnostics";
 import { ensureMeetingMediaPermissions, handleScreenCaptureDenied, meetingDeviceError } from "./media-permission";
+import { readMeetingPreferences } from "./meeting-preferences";
 import type { MeetingJoin } from "./types";
+import { createMeetingEffectTrack } from "./video-effects";
+import { readMeetingVideoEffects, subscribeMeetingVideoEffects } from "./video-effects-preferences";
+
+function wantsEffects({ background, avatar, filter, beauty }: ReturnType<typeof readMeetingVideoEffects>) {
+  return background !== "none" || avatar !== "none" || filter !== "none" || beauty !== 0;
+}
+function cameraConfig(audio: boolean, video: boolean, { microphoneId, cameraId }: ReturnType<typeof readMeetingPreferences>) {
+  return { audio, video, ...(audio && microphoneId ? { audioInput: microphoneId } : {}), ...(video && cameraId ? { videoInput: cameraId } : {}) };
+}
+const shareProfiles = {
+  balanced: { width: 1920, height: 1080, frameRate: 24, hint: "" },
+  detail: { width: 2560, height: 1440, frameRate: 15, hint: "detail" },
+  motion: { width: 1920, height: 1080, frameRate: 30, hint: "motion" },
+} as const;
+const effectFailure = "摄像头特效未能发布，已停止输出摄像头画面。请重新开启摄像头。";
+class CameraEffectError extends Error {}
 // The vendored Web SDK is loaded once, without initializing JuggleCall.
 let loaded: Promise<void> | null = null;
 async function loadZego() {
@@ -41,19 +58,29 @@ export class MeetingMedia {
   private shareGeneration = 0;
   // Keep SDK-created source previews alive while their tracks are published.
   private cameraSource?: MediaStream;
+  // Only this raw track may be offered to ZEGO. The compositor reads an
+  // independent clone so we never have to unmute a previous sender.
+  private rawCandidate?: MediaStreamTrack;
+  private effectInput?: MediaStreamTrack;
+  private effect?: Awaited<ReturnType<typeof createMeetingEffectTrack>>;
+  private effectPreview?: MediaStream;
+  private pendingLocal?: MediaStream;
+  private unsubscribeEffects?: () => void;
+  private preferences = readMeetingVideoEffects();
+  private cameraWork: Promise<void> = Promise.resolve();
   private disposed = false;
   private cameraEnabled = false;
-  private cameraCaptured = false;
   // ZEGO creates a live silent WebAudio track even when camera.audio is false.
   // Track presence alone does not mean that microphone capture was authorized.
   private microphoneCaptured = false;
+  private capturedMicrophoneId = "";
   private diagnosticTimer?: ReturnType<typeof setInterval>;
   private diagnosticStreams = new Map<string, MediaStream>();
   private remote = new Set<string>();
   private remoteEpoch = new Map<string, number>();
   constructor(
     private update: (tile: MediaTile | null, id: string) => void,
-    private error: (message: string) => void,
+    private error: (message: string, cameraStopped?: boolean) => void,
     private disconnected: () => void,
   ) {}
   async join(info: MeetingJoin, mic: boolean, camera: boolean) {
@@ -64,6 +91,16 @@ export class MeetingMedia {
     ) => any;
     this.engine = new Engine(info.appId);
     this.joinInfo = info;
+    this.unsubscribeEffects = subscribeMeetingVideoEffects(() => {
+      this.preferences = readMeetingVideoEffects();
+      if (this.disposed || !this.rawCandidate || !wantsEffects(this.preferences)) return;
+      // Synchronous, including while addTrack/replaceTrack is awaiting the SDK.
+      this.rawCandidate.enabled = false;
+      void this.queueCamera(async () => {
+        if (this.cameraEnabled && this.local && this.rawCandidate)
+          await this.installEffects(this.local, this.rawCandidate, "replaceTrack");
+      }).catch(() => this.reportCameraStopped());
+    });
     meetingDiagnostic("rtc.join", { meetingId: info.meeting.id, roomId: info.roomId, userId: info.userId, sessionId: info.sessionId, mic, camera });
     const sampled = new Map<string, number>();
     for (const event of ["publisherStateUpdate", "playerStateUpdate", "roomStateUpdate", "publishQualityUpdate", "playQualityUpdate", "remoteMicStatusUpdate", "remoteCameraStatusUpdate", "deviceError"]) {
@@ -82,6 +119,12 @@ export class MeetingMedia {
     }
     let previousTick = performance.now();
     this.diagnosticTimer = setInterval(() => {
+      // A stopped canvas track does not dispatch 'ended' when its renderer
+      // calls stop() (e.g. context loss). Never fall back to the raw camera.
+      if (this.cameraEnabled && this.effect && this.effect.track.readyState === "ended") {
+        this.releaseCamera();
+        this.reportCameraStopped();
+      }
       const now = performance.now();
       meetingDiagnostic("rtc.sample", { elapsedMs: now - previousTick, visibility: document.visibilityState,
         cameraEnabled: this.cameraEnabled, microphoneCaptured: this.microphoneCaptured,
@@ -148,35 +191,117 @@ export class MeetingMedia {
     }
     if (mic || camera) {
       await meetingDiagnosticStep("device.permission", { mic, camera }, () => ensureMeetingMediaPermissions(mic, camera));
-      if (!this.disposed) await this.publish(mic, camera);
+      if (!this.disposed) await this.queueCamera(async () => {
+        try { await this.publish(mic, camera); }
+        catch (error) {
+          if (!(error instanceof CameraEffectError)) throw error;
+          if (this.disposed) return;
+          // The failed camera publisher was never started. Join with the
+          // requested microphone, without offering even a stopped raw track.
+          if (mic) await this.publish(true, false);
+          if (!this.disposed) this.error(effectFailure, true);
+        }
+      });
     }
   }
   private streamId(screen = false) {
     return `${this.joinInfo!.roomId}_${this.joinInfo!.userId}_${this.joinInfo!.sessionId}_${screen ? "screen" : "camera"}`;
   }
+  private queueCamera(work: () => Promise<void>) {
+    const next = this.cameraWork.then(() => this.disposed ? undefined : work());
+    this.cameraWork = next.catch(() => {});
+    return next;
+  }
+  private reportCameraStopped() {
+    if (!this.cameraEnabled || this.disposed) return;
+    this.cameraEnabled = false;
+    this.error(effectFailure, true);
+  }
+  private destroyPreview(stream: MediaStream) {
+    try { this.engine.destroyStream(stream); }
+    catch (error) { meetingDiagnostic("device.destroy.failed", meetingDiagnosticError(error)); }
+    finally { stream.getTracks().forEach(track => track.stop()); }
+  }
+  private releaseCamera() {
+    this.rawCandidate?.stop();
+    this.rawCandidate = undefined;
+    this.effectInput?.stop();
+    this.effectInput = undefined;
+    this.effect?.stop();
+    this.effect = undefined;
+    if (this.effectPreview) this.destroyPreview(this.effectPreview);
+    this.effectPreview = undefined;
+    if (this.cameraSource) this.destroyPreview(this.cameraSource);
+    this.cameraSource = undefined;
+  }
+  private async installEffects(local: MediaStream, raw: MediaStreamTrack, method: "addTrack" | "replaceTrack") {
+    raw.enabled = false;
+    const stalled = setTimeout(() => {
+      if (!this.disposed && this.effectInput) this.error("摄像头特效切换超时，尚未确认发布。请关闭后重新开启摄像头。");
+    }, 8000);
+    try {
+      const input = this.effectInput = raw.clone();
+      input.enabled = true;
+      raw.stop();
+      this.rawCandidate = undefined;
+      const effect = await createMeetingEffectTrack(input, () => this.preferences);
+      if (this.effectInput !== input) { effect.stop(); return; }
+      this.effect = effect;
+      if (effect.track === input || effect.track === raw || effect.track.readyState !== "live") throw Error(effectFailure);
+      // addTrack looks up videoInfo in the SDK preview list. Keep the
+      // video-only custom preview alive for the lifetime of this camera.
+      const preview: MediaStream = await this.engine.createStream({ custom: { source: new MediaStream([effect.track]) } });
+      if (this.effectInput !== input) { this.destroyPreview(preview); return; }
+      this.effectPreview = preview;
+      const [track] = preview.getVideoTracks();
+      if (!track || track.readyState !== "live" || track === raw || track === input) throw Error(effectFailure);
+      const result = await this.engine[method](local, track);
+      if (this.effectInput !== input) return;
+      if (result?.errorCode !== 0 || local.getVideoTracks().length !== 1 || local.getVideoTracks()[0] !== track || !track.enabled || track.readyState !== "live")
+        throw Error(effectFailure);
+      if (this.local === local) this.update({ id: "local", userId: this.joinInfo!.userId, stream: local, screen: false }, "local");
+    } catch (error) {
+      raw.stop();
+      this.releaseCamera();
+      meetingDiagnostic("device.effects.failed", meetingDiagnosticError(error));
+      throw new CameraEffectError(effectFailure);
+    } finally { clearTimeout(stalled); }
+  }
   private async publish(mic: boolean, camera: boolean) {
     if (this.disposed) return;
     let stream: MediaStream;
+    const devices = readMeetingPreferences();
     try {
-      stream = await meetingDiagnosticStep("device.create", { mic, camera }, () => this.engine.createStream({ camera: { audio: mic, video: camera } }) as Promise<MediaStream>);
+      stream = await meetingDiagnosticStep("device.create", { mic, camera }, () => this.engine.createStream({ camera: cameraConfig(mic, camera, devices) }) as Promise<MediaStream>);
     } catch (error) {
       throw new Error(meetingDeviceError(error, mic, camera));
     }
     if (this.disposed) {
-      this.engine.destroyStream(stream);
+      this.destroyPreview(stream);
       return;
     }
-    meetingDiagnostic("rtc.publish.start", { id: this.streamId(), tracks: meetingTrackSnapshot(stream) });
-    this.engine.muteMicrophone(!mic);
-    if (this.engine.startPublishingStream(this.streamId(), stream) === false) {
-      this.engine.destroyStream(stream);
-      throw new Error("无法发布音视频。");
-    }
+    this.pendingLocal = stream;
+    try {
+      if (camera) {
+        const raw = this.rawCandidate = stream.getVideoTracks()[0];
+        if (!raw) throw new Error("未获得摄像头画面");
+        this.preferences = readMeetingVideoEffects();
+        if (wantsEffects(this.preferences)) await this.installEffects(stream, raw, "replaceTrack");
+      }
+      if (this.disposed) return;
+      meetingDiagnostic("rtc.publish.start", { id: this.streamId(), tracks: meetingTrackSnapshot(stream) });
+      this.engine.muteMicrophone(!mic);
+      if (this.engine.startPublishingStream(this.streamId(), stream) === false) throw new Error("无法发布音视频。");
+    } catch (error) {
+      this.releaseCamera();
+      if (this.pendingLocal === stream) this.destroyPreview(stream);
+      throw error;
+    } finally { this.pendingLocal = undefined; }
     this.local = stream;
     this.diagnosticStreams.set("local", stream);
     this.cameraEnabled = camera;
-    this.cameraCaptured = camera;
     this.microphoneCaptured = mic;
+    this.capturedMicrophoneId = mic ? devices.microphoneId : "";
     this.update(
       { id: "local", userId: this.joinInfo!.userId, stream, screen: false },
       "local",
@@ -188,10 +313,11 @@ export class MeetingMedia {
     if (this.local && camera === this.cameraEnabled) {
       const local = this.local;
       let track = local.getAudioTracks()[0];
+      const microphoneId = mic ? readMeetingPreferences().microphoneId : "";
       if (mic && (!this.microphoneCaptured || !track || track.readyState === "ended")) {
         let captured: MediaStream;
         try {
-          captured = await meetingDiagnosticStep("device.getUserMedia", { mic: true, camera: false }, () => navigator.mediaDevices.getUserMedia({ audio: true, video: false }));
+          captured = await meetingDiagnosticStep("device.getUserMedia", { mic: true, camera: false }, () => navigator.mediaDevices.getUserMedia({ audio: microphoneId ? { deviceId: { exact: microphoneId } } : true, video: false }));
         } catch (error) {
           throw new Error(meetingDeviceError(error, true, false));
         }
@@ -208,40 +334,55 @@ export class MeetingMedia {
           if (this.disposed) { audio.stop(); return; }
           track = audio;
           this.microphoneCaptured = true;
+          this.capturedMicrophoneId = microphoneId;
         } catch (error) {
           captured.getTracks().forEach((t) => t.stop());
           throw error;
         }
+      } else if (mic && microphoneId !== this.capturedMicrophoneId) {
+        // The muted publisher still owns a real microphone. Let ZEGO retire
+        // that input (which may be behind a WebAudio mix) without touching video.
+        const result = await this.engine.useAudioDevice(local, microphoneId || "default");
+        if (this.disposed) return;
+        if (result?.errorCode !== 0) throw new Error("无法切换麦克风，请检查所选设备。");
+        this.capturedMicrophoneId = microphoneId;
+        track = local.getAudioTracks()[0];
       }
       if (this.engine.muteMicrophone(!mic) === false)
         throw new Error("无法切换麦克风，请重试");
       if (track) track.enabled = mic;
       return;
     }
-    if (this.local) {
-      // Preserve microphone publication and the remote subscription when camera changes.
-      const local = this.local;
-      if (this.cameraCaptured) {
-        const enabled = await meetingDiagnosticStep("device.enableVideoCaptureDevice", { kind: "camera" }, () => this.engine.enableVideoCaptureDevice(local, camera) as Promise<any>);
-        if (enabled === false) throw new Error("摄像头切换失败，请重试");
-      } else if (camera) {
-        let captured: MediaStream;
-        try { captured = await meetingDiagnosticStep("device.createCamera", {}, () => this.engine.createStream({ camera: { audio: false, video: true } }) as Promise<MediaStream>); }
-        catch (error) { throw new Error(meetingDeviceError(error, false, true)); }
-        if (this.disposed) { this.engine.destroyStream(captured); return; }
-        this.cameraSource = captured;
-        const video = captured.getVideoTracks()[0];
-        try {
-          const result = await meetingDiagnosticStep("device.addTrack", { kind: "video" }, () => this.engine.addTrack(local, video) as Promise<any>);
-          if (result?.errorCode) throw new Error("无法开启摄像头");
-          if (this.disposed) { this.engine.destroyStream(captured); return; }
-        } catch (error) { this.engine.destroyStream(captured); this.cameraSource = undefined; throw error; }
-      }
-      this.cameraEnabled = camera;
-      this.cameraCaptured = this.cameraCaptured || camera;
+    if (this.local && !camera) {
+      // Never resume SDK camera capture on this publisher: it can install a
+      // fresh raw track internally before giving the caller control again.
+      this.cameraEnabled = false;
+      this.local.getVideoTracks().forEach(track => track.stop());
+      this.releaseCamera();
       return;
     }
-    if (mic || camera) await this.publish(mic, camera);
+    await this.queueCamera(async () => {
+      const local = this.local;
+      if (!local) { if (mic || camera) await this.publish(mic, camera); return; }
+      let captured: MediaStream;
+      try { captured = await meetingDiagnosticStep("device.createCamera", {}, () => this.engine.createStream({ camera: cameraConfig(false, true, readMeetingPreferences()) }) as Promise<MediaStream>); }
+      catch (error) { throw new Error(meetingDeviceError(error, false, true)); }
+      if (this.disposed) { this.destroyPreview(captured); return; }
+      this.cameraSource = captured;
+      try {
+        const raw = this.rawCandidate = captured.getVideoTracks()[0];
+        if (!raw) throw new Error("未获得摄像头画面");
+        const method = local.getVideoTracks().length ? "replaceTrack" : "addTrack";
+        this.preferences = readMeetingVideoEffects();
+        if (wantsEffects(this.preferences)) await this.installEffects(local, raw, method);
+        else {
+          const result = await this.engine[method](local, raw);
+          if (result?.errorCode !== 0) throw new Error("无法开启摄像头");
+          if (!this.disposed && (!raw.enabled || wantsEffects(this.preferences))) await this.installEffects(local, raw, "replaceTrack");
+        }
+        if (!this.disposed) this.cameraEnabled = true;
+      } catch (error) { this.releaseCamera(); throw error; }
+    });
   }
 
   renew(token: string) {
@@ -255,9 +396,12 @@ export class MeetingMedia {
     this.shareStarting = true;
     try {
       let capture: MediaStream;
+      const { width, height, frameRate, hint } = shareProfiles[readMeetingPreferences().shareQuality];
       try {
         // Call the requesting window immediately, while its user gesture is active.
-        capture = await meetingDiagnosticStep("rtc.share.capture", {}, () => devices.getDisplayMedia({ video: true, audio: false }));
+        capture = await meetingDiagnosticStep("rtc.share.capture", {}, () => devices.getDisplayMedia({
+          video: { width: { ideal: width }, height: { ideal: height }, frameRate: { ideal: frameRate, max: frameRate } }, audio: false,
+        }));
       } catch (error) {
         const name = (error as { name?: string })?.name;
         if (name === "AbortError") return;
@@ -284,8 +428,9 @@ export class MeetingMedia {
         // child-window tracks in this renderer's realm, then register a custom
         // preview with the SDK before publishing. This does not recapture media.
         const source = new MediaStream(capture.getVideoTracks());
+        for (const track of source.getVideoTracks()) if ("contentHint" in track) track.contentHint = hint;
         stream = await meetingDiagnosticStep("rtc.share.register", {}, () => this.engine.createStream({
-          custom: { source, videoOptimizationMode: "detail" },
+          custom: { source, videoOptimizationMode: hint || "default" },
         }) as Promise<MediaStream>);
         if (this.disposed || run !== this.shareGeneration || !capture.getVideoTracks().some(t => t.readyState === "live")) {
           if (this.shareCapture === capture) this.shareCapture = undefined;
@@ -335,6 +480,10 @@ export class MeetingMedia {
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
+    this.unsubscribeEffects?.();
+    this.releaseCamera();
+    if (this.pendingLocal) this.destroyPreview(this.pendingLocal);
+    this.pendingLocal = undefined;
     meetingDiagnostic("rtc.dispose");
     clearInterval(this.diagnosticTimer);
     this.diagnosticStreams.clear();
@@ -344,10 +493,6 @@ export class MeetingMedia {
       this.engine.destroyStream(this.local);
       this.local = undefined;
       this.microphoneCaptured = false;
-    }
-    if (this.cameraSource) {
-      this.engine.destroyStream(this.cameraSource);
-      this.cameraSource = undefined;
     }
     for (const id of this.remote) this.engine?.stopPlayingStream(id);
     this.remote.clear();

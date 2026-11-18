@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 import { CalendarEditorSelect } from "./calendar-editor-select";
 import { CalendarEditorDatePicker, calendarEditorControl } from "./calendar-editor-date-picker";
 import type { CalendarScope } from "./calendar-scope";
+import { DEFAULT_CALENDAR_REMINDER_MINUTES, readCalendarReminderMinutes, reminderLabel, writeCalendarReminderMinutes } from "./calendar-reminder-preferences";
 import {
   calendarMutationConflict,
   useCalendarSchedulingEventMutations,
@@ -85,13 +86,6 @@ const inputClass = "h-8 w-full min-w-0 rounded-lg border border-dls-border bg-dl
 const timeOptions = Array.from({ length: 48 }, (_, index) => `${String(Math.floor(index / 2)).padStart(2, "0")}:${index % 2 ? "30" : "00"}`);
 const reminderOptions = [0, 5, 15, 30, 60, 120, 1440, 2880] as const;
 const MAX_SCHEDULING_MEMBERS = CALENDAR_EVENT_ATTENDEE_MAX;
-
-function reminderLabel(minutes: number): string {
-  if (minutes === 0) return t("calendar.reminder_at_start");
-  if (minutes < 60) return t("calendar.reminder_minutes_before", { count: minutes });
-  if (minutes < 1440) return t("calendar.reminder_hours_before", { count: minutes / 60 });
-  return t("calendar.reminder_days_before", { count: minutes / 1440 });
-}
 
 function memberName(member: DenOrganizationMember): string {
   return member.user.name?.trim() || member.user.account?.trim() || member.user.email?.trim() || member.userId;
@@ -357,8 +351,11 @@ export function CalendarEventEditor(props: CalendarEventEditorProps) {
   const [availabilityDate, setAvailabilityDate] = React.useState(props.initial.time.startDate);
   React.useEffect(() => { setAvailabilityDate(form.time.startDate); }, [form.time.startDate]);
   const [hiddenAvailabilityMemberIds, setHiddenAvailabilityMemberIds] = React.useState<Set<string>>(() => new Set());
-  const [reminders, setReminders] = React.useState(() => [{ id: 0, minutes: 5 }]);
-  const nextReminderId = React.useRef(1);
+  const [reminders, setReminders] = React.useState(() =>
+    (props.event ? readCalendarReminderMinutes(props.scope, props.event.id) : DEFAULT_CALENDAR_REMINDER_MINUTES)
+      .map((minutes, id) => ({ id, minutes })));
+  const nextReminderId = React.useRef(reminders.length);
+  const availableReminders = reminderOptions.filter((minutes) => !reminders.some((item) => item.minutes === minutes));
   const [openReminderId, setOpenReminderId] = React.useState<number | null>(null);
   const [zoneOpen, setZoneOpen] = React.useState(false);
   const descriptionInput = React.useRef<HTMLTextAreaElement | null>(null);
@@ -561,6 +558,11 @@ export function CalendarEventEditor(props: CalendarEventEditorProps) {
     }
   };
 
+  const finishSave = (event: DenCalendarEvent) => {
+    writeCalendarReminderMinutes(props.scope, event.id, reminders.map((item) => item.minutes));
+    props.onSaved(event);
+  };
+
   const submit = async () => {
     if (pending) return;
     // Offline never sends or queues an authoritative write.
@@ -595,7 +597,7 @@ export function CalendarEventEditor(props: CalendarEventEditorProps) {
       if (teamCalendarId && base) {
         const patch = calendarEventUpdatePatch(base, validation.values);
         if (Object.keys(patch).length === 0) {
-          props.onSaved(base);
+          finishSave(base);
           return;
         }
         const { calendarId: _calendarId, attendeeMemberIds: _attendees, recurrence: _recurrence, ...teamPatch } = patch;
@@ -606,7 +608,7 @@ export function CalendarEventEditor(props: CalendarEventEditorProps) {
       } else if (base && ("attendees" in base || validation.values.attendeeMemberIds.length > 0 || validation.values.recurrence !== null)) {
         const patch = calendarEventUpdatePatch(base, validation.values);
         if (Object.keys(patch).length === 0) {
-          props.onSaved(base);
+          finishSave(base);
           return;
         }
         const { attendeeMemberIds, ...corePatch } = patch;
@@ -616,7 +618,7 @@ export function CalendarEventEditor(props: CalendarEventEditorProps) {
       } else if (base) {
         const patch = calendarEventUpdatePatch(base, validation.values);
         if (Object.keys(patch).length === 0) {
-          props.onSaved(base);
+          finishSave(base);
           return;
         }
         result = await updateMutation.mutateAsync({ eventId: base.id, expectedVersion: base.version, patch });
@@ -628,7 +630,7 @@ export function CalendarEventEditor(props: CalendarEventEditorProps) {
           result = replay ? await createMutation.retryLastAsync() : await createMutation.mutateAsync(input);
         }
       }
-      props.onSaved(result.event);
+      finishSave(result.event);
     } catch (error) {
       fail(error, "save");
     }
@@ -1060,7 +1062,7 @@ export function CalendarEventEditor(props: CalendarEventEditorProps) {
                         options[(index + (event.key === "ArrowDown" ? 1 : -1) + options.length) % options.length]?.focus();
                       }
                     }}>
-                      {reminderOptions.map((minutes) => (
+                      {reminderOptions.filter((minutes) => minutes === reminder.minutes || availableReminders.includes(minutes)).map((minutes) => (
                         <button key={minutes} type="button" className={cn("flex h-8 w-full shrink-0 items-center justify-between rounded px-2 text-left text-sm text-dls-text hover:bg-dls-hover focus-visible:bg-dls-hover", minutes === reminder.minutes && "bg-dls-hover font-medium")} onClick={() => {
                           setReminders((current) => current.map((item) => item.id === reminder.id ? { ...item, minutes } : item));
                           setOpenReminderId(null);
@@ -1081,9 +1083,11 @@ export function CalendarEventEditor(props: CalendarEventEditorProps) {
                 </button>
               </div>;
             })}
-            <button type="button" className="-ml-2 flex h-8 items-center rounded-md px-2 text-dls-text hover:bg-dls-hover focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-dls-text/40" onClick={() => {
+            <button type="button" disabled={!availableReminders.length} className="-ml-2 flex h-8 items-center rounded-md px-2 text-dls-text hover:bg-dls-hover focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-dls-text/40 disabled:opacity-50" onClick={() => {
+              const minutes = availableReminders.find((value) => value !== 0) ?? availableReminders[0];
+              if (minutes === undefined) return;
               const id = nextReminderId.current++;
-              setReminders((current) => [...current, { id, minutes: [5, 15, 30, 60, 120, 1440, 2880, 0].find((minutes) => !current.some((item) => item.minutes === minutes)) ?? 5 }]);
+              setReminders((current) => [...current, { id, minutes }]);
             }} data-testid="calendar-form-reminder-add">{t("calendar.reminder_add")}</button>
           </div>
         </div>

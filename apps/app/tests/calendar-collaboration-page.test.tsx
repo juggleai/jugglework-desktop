@@ -6,6 +6,11 @@ import TestRenderer, { act } from "react-test-renderer";
 import { MemoryRouter } from "react-router-dom";
 
 import { DenApiError, type DenCalendar, type DenCalendarCollaborationResource, type DenCalendarEvent, type DenCalendarMembership, type DenCalendarCollaborationRole } from "../src/app/lib/den";
+import { requestCalendarReminderNavigation } from "../src/react-app/domains/calendar/calendar-reminder-navigation";
+import { writeCalendarReminderMinutes } from "../src/react-app/domains/calendar/calendar-reminder-preferences";
+import { writeHiddenCalendarIds } from "../src/react-app/domains/calendar/calendar-month-model";
+import { writeCalendarViewMode } from "../src/react-app/domains/calendar/calendar-view-model";
+import { CalendarEventDetail } from "../src/react-app/domains/calendar/calendar-agenda";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const originalConsoleError = console.error;
@@ -23,6 +28,7 @@ Object.defineProperty(globalThis, "localStorage", {
 
 mock.module("../src/i18n", () => ({ t: (key: string) => key, currentLocale: () => "en" }));
 mock.module("../src/react-app/shell/app-navigation-rail", () => ({ AppNavigationRail: () => <nav /> }));
+mock.module("../src/react-app/domains/meeting/meeting-page", () => ({ MeetingPrejoin: () => null }));
 mock.module("../src/components/ui/dialog", () => ({
   Dialog: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   DialogContent: ({ children, ...props }: React.ComponentProps<"div">) => <div {...props}>{children}</div>,
@@ -83,6 +89,7 @@ let membershipItems: DenCalendarMembership[] = [];
 let directoryOffsets: number[] = [];
 let membershipMutationGate: Promise<void> | null = null;
 const client = {
+  listCalendarSchedulingEvents: async (): Promise<import("../src/app/lib/den").DenCalendarSchedulingOccurrenceList> => ({ items: [] }),
   listCalendars: async () => [],
   listCalendarCollaboration: async () => ({ items: resources, authorizationGeneration: 1, reset: { mode: "replace" as const, namespace: "calendar-collaboration" as const } }),
   getCalendarBootstrap: async (_organizationId: string, range: { startDate: string; endDateExclusive: string }) => ({ calendars: [defaultPersonalCalendar], events: [event("personal")], coverage: { ...range, calendarIds: ["personal"] }, cursor: "cursor" }),
@@ -213,6 +220,83 @@ test("groups real role projections and snapshots only visible detail-capable tea
     await click(renderer, "calendar-all-day-event-event-editable-team");
     expect(has(renderer, "calendar-event-detail-edit")).toBe(true);
   } finally { await act(async () => renderer.unmount()); }
+});
+
+const scope = { deployment: "https://den.example/api", organizationId: "org-a", memberId: "member-a" };
+
+test("a queued reminder waits for the hidden team's snapshot without changing filters or replaying on remount", async () => {
+  writeHiddenCalendarIds(scope, ["view-team", "managed-team"]);
+  const target = { scope, calendarId: "view-team", eventId: "event-view-team", date: "2027-01-18", startDate: "2027-01-18" };
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const original = client.getTeamCalendarSnapshot;
+  const snapshot = spyOn(client, "getTeamCalendarSnapshot").mockImplementation(async (...args) => {
+    const result = await original(...args);
+    if (args[1] !== target.calendarId) return result;
+    await gate;
+    const range = args[2];
+    return { ...result, events: range.startDate <= target.date && range.endDateExclusive > target.date
+      ? [{ ...event(target.calendarId), time: { kind: "allDay", startDate: target.date, endDateExclusive: "2027-01-19" } }] : [] };
+  });
+  requestCalendarReminderNavigation(target);
+  let renderer = await render();
+  try {
+    expect(has(renderer, "calendar-event-panel")).toBe(false);
+    await act(async () => { release(); });
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+    expect(renderer.root.findByType(CalendarEventDetail).props.event.id).toBe(target.eventId);
+    expect(byId(renderer, "calendar-filter-view-team").props.checked).toBe(false);
+    expect(snapshotCalls).not.toContain("managed-team");
+    expect(snapshotCalls).not.toContain("busy-team");
+    await click(renderer, "calendar-event-detail-close");
+    await act(async () => renderer.unmount());
+    renderer = await render();
+    expect(has(renderer, "calendar-event-panel")).toBe(false);
+  } finally { release(); snapshot.mockRestore(); await act(async () => renderer.unmount()); }
+});
+
+test("live reminders match series ID, exact start and optional index under the active scope", async () => {
+  const series = { ...event("personal"), id: "series:/1", status: "active" as const, attendees: [], recurrence: { frequency: "daily" as const, interval: 1, end: { kind: "never" as const } } };
+  const time = (hour: string) => ({ kind: "timed" as const, startInstant: `2026-11-09T${hour}:00:00Z`, endInstantExclusive: `2026-11-09T${hour}:30:00Z`, timeZone: "UTC" });
+  const occurrences = spyOn(client, "listCalendarSchedulingEvents").mockResolvedValue({ items: [
+    { event: series, occurrenceIndex: 3, time: time("16") }, { event: series, occurrenceIndex: 4, time: time("17") },
+  ] });
+  const target = { scope, calendarId: "personal", eventId: series.id, date: "2026-11-09", startInstant: "2026-11-10T01:00:00+08:00" };
+  writeCalendarReminderMinutes(scope, series.id, [60]);
+  const renderer = await render();
+  const send = async (intent: Parameters<typeof requestCalendarReminderNavigation>[0]) => act(async () => requestCalendarReminderNavigation(intent));
+  try {
+    for (const other of [{ organizationId: "org-b" }, { deployment: "https://other.example" }, { memberId: "member-b" }]) {
+      await send({ ...target, scope: { ...scope, ...other } });
+      expect(has(renderer, "calendar-event-panel")).toBe(false);
+    }
+    await send(target); // When no index is supplied, the instant still identifies the occurrence.
+    const detail = renderer.root.findByType(CalendarEventDetail).props;
+    expect(detail.event.time).toEqual(time("17"));
+    expect(byId(renderer, "calendar-event-detail-reminder").findByType("li").children.join("")).toBe("calendar.reminder_hours_before");
+    await send({ ...target, occurrenceIndex: 3 }); // Correct index for the sibling, wrong instant.
+    expect(has(renderer, "calendar-event-panel")).toBe(false);
+    await send({ ...target, occurrenceIndex: 4, startInstant: undefined, startDate: target.date });
+    expect(has(renderer, "calendar-event-panel")).toBe(false);
+    await send({ ...target, occurrenceIndex: 4 });
+    expect(renderer.root.findByType(CalendarEventDetail).props.event.time).toEqual(time("17"));
+  } finally { occurrences.mockRestore(); await act(async () => renderer.unmount()); }
+});
+
+test("day view locates a timed event even when its stored date is yesterday in the viewer's zone", async () => {
+  writeCalendarViewMode(scope, "day");
+  const target = { scope, eventId: "late-call", calendarId: "personal", date: "2026-11-09", startInstant: "2026-11-09T23:30:00Z" };
+  const call = { ...event("personal"), id: target.eventId, time: { kind: "timed" as const, startInstant: target.startInstant, endInstantExclusive: "2026-11-10T00:00:00Z", timeZone: "UTC" } };
+  const original = client.getCalendarBootstrap;
+  const bootstrap = spyOn(client, "getCalendarBootstrap").mockImplementation(async (org, range) => ({
+    ...await original(org, range), events: range.startDate <= target.date && range.endDateExclusive > target.date ? [call] : [],
+  }));
+  requestCalendarReminderNavigation(target);
+  const renderer = await render();
+  try {
+    expect(renderer.root.findByType(CalendarEventDetail).props.event.id).toBe(call.id);
+    expect(bootstrap.mock.calls.some(([, range]) => range.startDate === "2026-11-09" && range.endDateExclusive === "2026-11-11")).toBe(true);
+  } finally { bootstrap.mockRestore(); await act(async () => renderer.unmount()); }
 });
 
 test("hides the team creation choice when the collaboration flag is off", async () => {

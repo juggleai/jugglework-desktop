@@ -51,3 +51,20 @@ Desktop source selection uses a custom React modal portaled into the meeting win
 The picker preserves each thumbnail's aspect ratio and clips the bitmap's own rounded corners to hide black OS-window corner pixels. Application icons use the highest available NativeImage scale representation; compact filter tiles are 36px (two thirds of the original size), with centered left/right navigation and refresh controls. Portal windows synchronize cloned styles without reloading their media DOM. The meeting workbench keeps its empty shell background draggable while launcher actions and overview controls remain outside the drag region; configuration guidance remains available when setup is incomplete.
 
 Dev integration preserves the current primary navigation order (automation below local workspace), inserts Meetings after Contacts, and keeps Calendar and Meetings in the retained-session visibility exclusions together.
+
+### 会议偏好：设置方与运行时的协作约定
+
+设置方提供 `./meeting-preferences`，负责默认值、持久化和变更通知。消费方用 `readMeetingPreferences()` 取当前值，用 `subscribeMeetingPreferences(cb)` 订阅；写入后再通知，订阅返回取消函数。不要在消费方复制默认值或另建一份存储。
+
+| 约定的真实选项 | 对应运行时 |
+| --- | --- |
+| `meetingReminders` | `MeetingReminderHost` 的应用内开始提醒；不控制日历助手、邀请或系统通知。 |
+| `defaultMic`、`defaultCamera` | 入会时的麦克风、摄像头初始选择；修改偏好本身不采集媒体。 |
+| `mirrorPreview` | 本机视频预览镜像。 |
+| `outputVolume`、`speakerId` | 会议音频播放音量与输出设备。 |
+| `shareQuality` | 屏幕共享质量。 |
+| `microphoneId`、`cameraId` | 会议采集端选择的麦克风和摄像头。 |
+
+会前与会中共享本机偏好，设置项接入对应设备、媒体或通知逻辑；尚未实现的类别仅说明能力边界。
+
+`participantSounds` 默认关闭。会议主窗口按成员名单的变化播放本地提示音；首次入会和刚打开开关时不播放，同批进出只播放一次，不申请设备或通知权限。
