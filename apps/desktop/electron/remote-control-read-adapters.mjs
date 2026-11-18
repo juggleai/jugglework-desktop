@@ -92,6 +92,9 @@ const snapshotResponseSchema = z.object({
     // carries workspace/session identity. Accept those transport fields while
     // projecting only the revisioned preference into the remote snapshot.
     modelPreference: z.object({ revision: z.number().int().nonnegative(), mode: z.enum(["auto", "explicit"]), model: z.object({ providerID: identifierSchema, modelID: identifierSchema }).strict().nullable(), updatedAt: z.number().int().nonnegative() }).passthrough(),
+    // The managed server also returns the local history paging cursor. Remote
+    // snapshots intentionally omit it, so accept the field without projecting it.
+    messagePage: z.object({ olderCursor: z.string().nullable(), hasOlder: z.boolean() }).strict().optional(),
   }).strict(),
 }).strict();
 
