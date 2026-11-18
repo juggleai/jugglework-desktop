@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>会议白板</title>
+    <script>
+      // Excalidraw resolves fonts against this base before its CDN fallback.
+      window.EXCALIDRAW_ASSET_PATH = new URL("./whiteboard-assets/", document.baseURI).href;
+    </script>
+  </head>
+  <body><div id="root"></div><script type="module" src="/src/whiteboard/main.tsx"></script></body>
+</html>

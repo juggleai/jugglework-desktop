@@ -50,6 +50,7 @@
     "@codemirror/language": "^6.11.0",
     "@codemirror/state": "^6.5.2",
     "@codemirror/view": "^6.38.0",
+    "@excalidraw/excalidraw": "0.18.1",
     "@fontsource-variable/geist": "^5.2.8",
     "@fontsource-variable/ibm-plex-sans": "^5.2.8",
     "@heroicons/react": "^2.2.0",

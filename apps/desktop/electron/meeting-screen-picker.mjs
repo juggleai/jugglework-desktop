@@ -2,8 +2,17 @@ import { createHash, randomUUID } from "node:crypto";
 
 // Own the pending Chromium request, not an independently armed source ID.
 // Confirming a thumbnail resolves this exact request; closing never captures.
-export function createMeetingScreenPicker({ desktopCapturer, getMainWindow, getMeetingWindow, timeoutMs = 120_000 }) {
+export const WHITEBOARD_INTENT_TTL_MS = 30_000;
+
+export function createMeetingScreenPicker({ desktopCapturer, getMainWindow, getMeetingWindow, getWhiteboardWindow = () => null, now = Date.now, timeoutMs = 120_000 }) {
   let pending = null;
+  // One-shot permission for the meeting window's next gesture-backed capture
+  // to share the app's own whiteboard window instead of opening the picker.
+  let whiteboardIntent = 0;
+  const liveWhiteboard = () => {
+    const board = getWhiteboardWindow();
+    return board && !board.isDestroyed() && !board.webContents.isDestroyed() ? board : null;
+  };
   function notify(channel, requestId) {
     const main = getMainWindow();
     if (main && !main.isDestroyed() && !main.webContents.isDestroyed()) main.webContents.send(channel, { requestId });
@@ -33,9 +42,31 @@ export function createMeetingScreenPicker({ desktopCapturer, getMainWindow, getM
     return pending;
   }
   return {
+    /**
+     * Armed by the main renderer (the meeting UI is its portal) right before the
+     * meeting window's own getDisplayMedia call.
+     */
+    armWhiteboard(event) {
+      assertCaller(event);
+      const meeting = getMeetingWindow();
+      if (!meeting || meeting.isDestroyed()) throw new Error("会议窗口已关闭");
+      if (!liveWhiteboard()) throw new Error("白板窗口未打开");
+      whiteboardIntent = now() + WHITEBOARD_INTENT_TTL_MS;
+    },
     handle(request, callback) {
       const main = getMainWindow();
-      const owner = [main, getMeetingWindow()].find(w => w && !w.isDestroyed() && request.frame === w.webContents.mainFrame);
+      const meeting = getMeetingWindow();
+      const armed = whiteboardIntent > 0;
+      const intentValid = armed && now() <= whiteboardIntent;
+      whiteboardIntent = 0;
+      if (intentValid && meeting && !meeting.isDestroyed() && request.frame === meeting.webContents.mainFrame) {
+        // A closed whiteboard must not silently turn into a desktop capture.
+        const board = request.userGesture ? liveWhiteboard() : null;
+        try { callback(board ? { video: board.webContents.mainFrame } : null); }
+        catch { /* The requesting frame may already have been destroyed. */ }
+        return;
+      }
+      const owner = [main, meeting].find(w => w && !w.isDestroyed() && request.frame === w.webContents.mainFrame);
       if (!owner || !main || !request.userGesture || pending) { callback(null); return; }
       const current = { id: randomUUID(), owner, main, frame: request.frame, callback, allowed: new Set(), selecting: false, timer: null, cancel: null };
       current.cancel = () => finish(current);

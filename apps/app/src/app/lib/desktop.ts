@@ -832,3 +832,13 @@ export function listMeetingScreenSources(requestId: string) {
 export function chooseMeetingScreenSource(requestId: string, sourceId: string | null) {
   return invokeElectronHelper("meetingScreenChoose", requestId, sourceId);
 }
+
+export function openMeetingWhiteboard(input: { meetingId: string; title?: string; theme?: "light" | "dark" }) {
+  return invokeElectronHelper("meetingWhiteboardOpen", input);
+}
+export function closeMeetingWhiteboard() {
+  return invokeElectronHelper("meetingWhiteboardClose");
+}
+export function armMeetingWhiteboardShare() {
+  return invokeElectronHelper("meetingWhiteboardArmShare");
+}

@@ -22,6 +22,7 @@
     "globals.d.ts",
     "src/index.react.tsx",
     "src/pet/**/*",
+    "src/whiteboard/**/*",
     "src/components/**/*",
     "src/i18n/**/*",
     "src/lib/**/*",
@@ -35,6 +36,7 @@
     "src/app/types.ts",
     "src/app/theme.ts",
     "src/app/mcp.ts",
-    "vite.config.ts"
+    "vite.config.ts",
+    "vite-whiteboard-assets.ts"
   ]
 }

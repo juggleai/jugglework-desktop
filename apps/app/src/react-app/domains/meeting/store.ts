@@ -1,8 +1,8 @@
 import { ensureMeetingMediaPermissions } from "./media-permission";
 import { withMeetingDeviceDeadline } from "./device-operation";
 import { meetingDiagnostic, meetingDiagnosticError, meetingDiagnosticStep } from "./diagnostics";
-import { acceptDeviceState, type MemberDeviceState } from "./device-state";
-import { readMeetingDesktopConfig } from "@/app/lib/desktop";
+import { acceptDeviceState, type MeetingShareKind, type MemberDeviceState } from "./device-state";
+import { armMeetingWhiteboardShare, closeMeetingWhiteboard, openMeetingWhiteboard, readMeetingDesktopConfig } from "@/app/lib/desktop";
 import { create } from "zustand";
 import { meetingAPI, meetingScope } from "./api";
 import { meetingClosed, type Meeting, type MeetingJoin } from "./types";
@@ -26,8 +26,10 @@ let stopWake: (() => void) | undefined;
 function announceState() {
   if (!lease || !chatroom) return;
   const state = useMeetingStore.getState();
+  const sharing = state.tiles.some((t) => t.id === "share");
   const signal = { meetingId: lease.meeting.id, sessionId: lease.sessionId,
-    seq: ++signalSeq, mic: state.mic, camera: state.camera };
+    seq: ++signalSeq, mic: state.mic, camera: state.camera,
+    ...(sharing ? { shareKind: state.shareKind } : {}) };
   meetingDiagnostic("signal.send", signal);
   void chatroom.signal(signal).then(() => meetingDiagnostic("signal.sent", { seq: signal.seq }))
     .catch(error => meetingDiagnostic("signal.failed", { seq: signal.seq, ...meetingDiagnosticError(error) }));
@@ -42,6 +44,8 @@ function dispose() {
   timer = undefined;
   media?.dispose();
   media = null;
+  // The whiteboard flushes its own scene on pagehide before closing.
+  if (window.__JUGGLEWORK_ELECTRON__?.invokeDesktop) void closeMeetingWhiteboard().catch(() => {});
   if (chatroom) void chatroom.leave().catch(() => {});
   chatroom = null;
   lease = null;
@@ -68,6 +72,8 @@ type MeetingState = {
   mic: boolean;
   camera: boolean;
   tiles: MediaTile[];
+  /** What the local share tile shows; meaningful only while it exists. */
+  shareKind: MeetingShareKind;
   messages: ChatMessage[];
   chatReady: boolean;
   error: string | null;
@@ -76,6 +82,8 @@ type MeetingState = {
   leave: (end?: boolean) => Promise<void>;
   toggleDevice: (device: "mic" | "camera") => Promise<void>;
   toggleShare: (devices?: MediaDevices) => Promise<void>;
+  /** Open the whiteboard window and share it. Caller confirms replacing a screen share first. */
+  shareWhiteboard: (devices?: MediaDevices) => Promise<void>;
   send: (text: string) => Promise<void>;
   action: (action: string, extra?: Record<string, unknown>) => Promise<void>;
   retryChat: () => Promise<void>;
@@ -87,6 +95,7 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
   mic: false,
   camera: false,
   tiles: [],
+  shareKind: "screen",
   messages: [],
   chatReady: false,
   error: null,
@@ -112,6 +121,7 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
       error: null,
       messages: [],
       tiles: [],
+      shareKind: "screen",
     });
     try {
       const localConfig = window.__JUGGLEWORK_ELECTRON__?.invokeDesktop
@@ -261,7 +271,28 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
   },
   async toggleShare(devices) {
     if (get().tiles.some((t) => t.id === "share")) media?.stopShare();
-    else await media?.startShare(devices);
+    else {
+      set({ shareKind: "screen" });
+      await media?.startShare(devices);
+    }
+    announceState();
+  },
+  async shareWhiteboard(devices) {
+    const meeting = get().meeting;
+    if (!media || !meeting || get().phase !== "joined") return;
+    const run = generation;
+    const theme = document.documentElement.dataset.theme === "dark" ? "dark" : "light";
+    // Open first: the share request below captures this window's own frame.
+    await openMeetingWhiteboard({ meetingId: meeting.id, title: meeting.title, theme });
+    if (run !== generation || !media) return;
+    const sharing = get().tiles.some((t) => t.id === "share");
+    if (sharing && get().shareKind === "whiteboard") return;
+    if (sharing) media.stopShare();
+    await armMeetingWhiteboardShare();
+    if (run !== generation || !media) return;
+    set({ shareKind: "whiteboard" });
+    await media.startShare(devices);
+    announceState();
   },
   async send(text) {
     if (!chatroom) throw new Error("聊天室尚未连接。");

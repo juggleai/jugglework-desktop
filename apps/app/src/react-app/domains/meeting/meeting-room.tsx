@@ -65,6 +65,8 @@ export function MeetingRoomHost() {
     if (id) void chooseMeetingScreenSource(id, null).catch(() => {});
   }, []);
   const [leaving, setLeaving] = useState(false);
+  // Confirmation before a whiteboard share replaces a running screen share.
+  const [switchToWhiteboard, setSwitchToWhiteboard] = useState(false);
   const [text, setText] = useState("");
   const deviceRequest = useRef(0);
   const [deviceBusy, setDeviceBusy] = useState(false);
@@ -111,6 +113,7 @@ export function MeetingRoomHost() {
     };
   }, [closeScreenPicker]);
   useEffect(() => { if (leaving || !m) closeScreenPicker(); }, [leaving, m?.id, closeScreenPicker]);
+  useEffect(() => { if (!m) setSwitchToWhiteboard(false); }, [m?.id]);
 
   const previousUser = useRef(uid);
   useEffect(() => {
@@ -183,6 +186,15 @@ export function MeetingRoomHost() {
     try { await s.toggleDevice(device); }
     catch (error) { setMessage(error instanceof Error ? error.message : "设备切换失败"); }
     finally { if (request === deviceRequest.current) setDeviceBusy(false); }
+  }
+  const sharing = s.tiles.some((t) => t.id === "share");
+  const sharingWhiteboard = sharing && s.shareKind === "whiteboard";
+  function startWhiteboard(devices?: MediaDevices) {
+    void run(() => s.shareWhiteboard(devices));
+  }
+  function shareLabel(userId: string) {
+    const kind = userId === uid ? (sharing ? s.shareKind : undefined) : s.memberDevices[userId]?.shareKind;
+    return kind === "whiteboard" ? "白板共享" : "屏幕共享";
   }
   function focusWindow(target: "main" | "meeting", child = popup) {
     if (window.__JUGGLEWORK_ELECTRON__?.invokeDesktop) {
@@ -319,7 +331,7 @@ export function MeetingRoomHost() {
                   <div className="tile share-stage" key={t.id} data-focused={speaker && i === 0}>
                     <Video tile={t} />
                     <span className="tile-label">
-                      屏幕共享 · {participantName(t.userId, m.participants[t.userId]?.name)}
+                      {shareLabel(t.userId)} · {participantName(t.userId, m.participants[t.userId]?.name)}
                     </span>
                   </div>
                 ))}
@@ -461,8 +473,24 @@ export function MeetingRoomHost() {
             }}
           >
             <Icon name="screen" />
-            {s.tiles.some((t) => t.id === "share") ? "停止共享" : "共享屏幕"}
+            {sharing ? "停止共享" : "共享屏幕"}
           </button>
+          {window.__JUGGLEWORK_ELECTRON__?.invokeDesktop ? (
+            <button
+              className="control"
+              aria-pressed={sharingWhiteboard}
+              title={sharingWhiteboard ? "打开白板窗口" : "打开白板并共享"}
+              disabled={busy || s.phase !== "joined"}
+              onClick={(event) => {
+                const devices = event.currentTarget.ownerDocument.defaultView?.navigator.mediaDevices;
+                if (sharing && !sharingWhiteboard) setSwitchToWhiteboard(true);
+                else startWhiteboard(devices);
+              }}
+            >
+              <Icon name="whiteboard" />
+              白板
+            </button>
+          ) : null}
           <button className="control" onClick={() => setInvite(true)} title="邀请参会成员">
             <Icon name="plus" />
             邀请
@@ -520,6 +548,23 @@ export function MeetingRoomHost() {
             setInvite(false);
           })}
         />
+      ) : null}
+      {switchToWhiteboard && !leaving ? (
+        <MeetingDialog ownerDocument={popup?.document} title="共享白板" onClose={() => { if (!busy) setSwitchToWhiteboard(false); }}>
+          <p className="sub">将停止当前屏幕共享并改为共享白板。</p>
+          <div className="modal-foot">
+            <button disabled={busy} onClick={() => setSwitchToWhiteboard(false)}>取消</button>
+            <button className="primary" disabled={busy}
+              onClick={(event) => {
+                // Keep this click's user activation for the capture request.
+                const devices = event.currentTarget.ownerDocument.defaultView?.navigator.mediaDevices;
+                setSwitchToWhiteboard(false);
+                startWhiteboard(devices);
+              }}>
+              改为共享白板
+            </button>
+          </div>
+        </MeetingDialog>
       ) : null}
       {leaving ? (
         <MeetingDialog

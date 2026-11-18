@@ -1,4 +1,7 @@
 import { createMeetingScreenPicker } from "./meeting-screen-picker.mjs";
+import { createMeetingWhiteboardWindow } from "./meeting-whiteboard-window.mjs";
+import { createWhiteboardStore } from "./whiteboard-store.mjs";
+import { registerWhiteboardIpc } from "./whiteboard-ipc.mjs";
 import { installMeetingDiagnostics } from "./meeting-diagnostics.mjs";
 import { installMeetingCompactWindow } from "./meeting-compact-window.mjs";
 import { installMainWindowRecovery } from "./main-window-recovery.mjs";
@@ -961,7 +964,21 @@ const IDLE_ROUTER_INFO = Object.freeze({
 let mainWindow = null;
 let meetingWindow = null;
 const requestMeetingPermission = createMeetingPermissionRequester(process.platform, systemPreferences, requestMainAppScreenRecording);
-const meetingScreenPicker = createMeetingScreenPicker({ desktopCapturer, getMainWindow: () => mainWindow, getMeetingWindow: () => meetingWindow });
+// The whiteboard is a dedicated page, not a portal: Excalidraw binds drawing
+// events to its own global window/document. userData is final by this point.
+const meetingWhiteboard = createMeetingWhiteboardWindow({
+  BrowserWindow,
+  store: createWhiteboardStore({ root: path.join(app.getPath("userData"), "whiteboards") }),
+  preloadPath: path.join(__dirname, "whiteboard-preload.cjs"),
+  getMeetingWindow: () => meetingWindow,
+  getMainWindow: () => mainWindow,
+  loadPage: async (window) => {
+    const url = process.env.JUGGLEWORK_ELECTRON_START_URL?.trim() || process.env.ELECTRON_START_URL?.trim();
+    if (url) await window.loadURL(new URL("/whiteboard.html", url).href);
+    else await window.loadFile(app.isPackaged ? path.join(process.resourcesPath, "app-dist/whiteboard.html") : path.resolve(__dirname, "../../app/dist/whiteboard.html"));
+  },
+});
+const meetingScreenPicker = createMeetingScreenPicker({ desktopCapturer, getMainWindow: () => mainWindow, getMeetingWindow: () => meetingWindow, getWhiteboardWindow: () => meetingWhiteboard.window() });
 /** @type {(() => {storageAvailable: boolean, records: Array<Record<string, unknown>>}) & {record?: (event: string, data?: Record<string, unknown>) => void}} */
 let readMeetingNativeDiagnostics = () => ({ storageAvailable: false, records: [] });
 let runtimeHealthMonitor = null;
@@ -2517,6 +2534,9 @@ const desktopCommandHandlers = {
     window.show();
     window.focus();
   },
+  "meetingWhiteboardOpen": (event, input) => meetingWhiteboard.open(event, input),
+  "meetingWhiteboardClose": async (event) => meetingWhiteboard.close(event),
+  "meetingWhiteboardArmShare": async (event) => meetingScreenPicker.armWhiteboard(event),
   "toonFactoryOpen": async (event, ...args) => {
     if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error("仅主窗口可打开漫剧工厂");
     return toonFactoryRuntime.open(args[0]);
@@ -3609,6 +3629,7 @@ async function createMainWindow() {
   return mainWindow;
 }
 
+registerWhiteboardIpc({ ipcMain, dialog, whiteboard: meetingWhiteboard });
 ipcMain.on("jugglework:desktop-bootstrap-sync", (event) => {
   event.returnValue = workspaceStore.readDesktopBootstrapConfigSync();
 });

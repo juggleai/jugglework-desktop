@@ -292,6 +292,14 @@ test('device state rejects stale sessions, duplicates and reordered signals', as
  assert.equal(acceptDeviceState({sessionId:'new',seq:5,mic:false,camera:false},'new',current).mic,false);
 });
 
+test('device state carries a validated shareKind; unknown values are dropped', async () => {
+ const {acceptDeviceState}=await load('../src/react-app/domains/meeting/device-state.ts');
+ assert.equal(acceptDeviceState({sessionId:'s',seq:1,mic:true,camera:false,shareKind:'whiteboard'},'s').shareKind,'whiteboard');
+ assert.equal(acceptDeviceState({sessionId:'s',seq:1,mic:true,camera:false,shareKind:'screen'},'s').shareKind,'screen');
+ assert.equal(acceptDeviceState({sessionId:'s',seq:1,mic:true,camera:false,shareKind:'<script>'},'s').shareKind,undefined);
+ assert.equal(acceptDeviceState({sessionId:'s',seq:1,mic:true,camera:false},'s').shareKind,undefined);
+});
+
 test('successful leave still disposes media when an in-flight renewal replaces the lease', async () => {
  let source=await fs.readFile(new URL('../src/react-app/domains/meeting/store.ts',import.meta.url),'utf8');
  source=source.replace(/^import .*;$/gm,'');

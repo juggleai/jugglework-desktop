@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+import { whiteboardAssetsPlugin } from "./vite-whiteboard-assets";
 
 const portValue = Number.parseInt(process.env.PORT ?? "", 10);
 const devPort = Number.isFinite(portValue) && portValue > 0 ? portValue : 5173;
@@ -121,6 +122,7 @@ export default defineConfig({
         });
       },
     },
+    whiteboardAssetsPlugin(appRoot),
     tailwindcss(),
     react({
       babel: {
@@ -141,6 +143,7 @@ export default defineConfig({
         overlay: resolve(appRoot, "overlay.html"),
         fileWindow: resolve(appRoot, "file-window.html"),
         pet: resolve(appRoot, "pet.html"),
+        whiteboard: resolve(appRoot, "whiteboard.html"),
       },
     },
   },
