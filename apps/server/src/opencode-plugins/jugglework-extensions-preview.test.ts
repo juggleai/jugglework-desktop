@@ -237,6 +237,20 @@ function startFakeJuggleWorkServer(options: { createSkillAvailable?: boolean; re
 }
 
 describe("JuggleWorkExtensionsPreview session tools", () => {
+  test("includes execution guidance in both primary and child session requests", async () => {
+    startFakeJuggleWorkServer();
+    const plugin = await JuggleWorkExtensionsPreview({ directory: "/tmp/main" });
+    for (const sessionID of ["ses_primary", "ses_child"]) {
+      const output: { system: string[] } = { system: [] };
+      await plugin["experimental.chat.system.transform"]({ sessionID }, output);
+      const guidance = output.system.filter(section => section.includes("independent file reads and searches"));
+      expect(guidance).toHaveLength(1);
+      expect(guidance[0]).toContain("in one assistant turn");
+      expect(guidance[0]).toContain("work in the current agent");
+      expect(guidance[0]).toContain("a concrete deliverable and a stopping condition");
+    }
+  });
+
   test("plugin entry exposes only the factory export for the OpenCode loader", () => {
     expect(Object.keys(JuggleWorkExtensionsPreviewEntry)).toEqual(["JuggleWorkExtensionsPreview"]);
   });

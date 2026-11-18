@@ -67,3 +67,10 @@ The client SHALL identify response-header and initial-output timeout failures an
 #### Scenario: Managed model never returns response headers
 - **WHEN** the bounded provider retry budget is exhausted
 - **THEN** the session ends with a provider-timeout explanation instead of a generic operation-timeout message
+
+### Requirement: Managed streaming attempts can be correlated by session
+When a managed streaming request carries an engine session ID and lacks a caller-supplied request ID, the desktop SHALL generate a gateway request ID with a stable hashed session prefix. The desktop SHALL preserve a caller-supplied request ID.
+
+#### Scenario: An empty response triggers a retry
+- **WHEN** the desktop retries a session's managed streaming request after an empty response and generates the request IDs
+- **THEN** the original attempt and retry have distinct request IDs with the same session prefix so their gateway timings can be inspected separately

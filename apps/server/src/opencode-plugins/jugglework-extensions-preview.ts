@@ -242,6 +242,10 @@ const sessionMessagesEnvelopeSchema = z.object({
   items: z.array(sessionMessageSchema),
 }).passthrough();
 
+const JUGGLEWORK_TASK_EXECUTION_INSTRUCTION =
+  `Issue independent file reads and searches together in one assistant turn. Inspect their results before issuing calls that depend on them. Sequence edits to shared files and wait for required approvals.
+Handle simple lookups, small edits and tightly coupled work in the current agent. When delegation is available and useful, dispatch independent subtasks together. Give each a distinct scope, a concrete deliverable and a stopping condition. Reuse their findings and verify the combined result.`;
+
 const JUGGLEWORK_AGENT_SURFACE_INSTRUCTION =
   `## JuggleWork app context
 Use jugglework_context when the request depends on the current JuggleWork screen, open tabs, split view, focused pane, sidebar, side panel, settings panel, or available app actions.
@@ -1199,6 +1203,7 @@ export const JuggleWorkExtensionsPreview = async (factoryInput?: unknown) => {
     const sections = combineInstructionSections(
       createInstructionSection("routing", extensionDiscovery.instruction),
       createInstructionSection("agent-surface", JUGGLEWORK_AGENT_SURFACE_INSTRUCTION),
+      createInstructionSection("task-execution", JUGGLEWORK_TASK_EXECUTION_INSTRUCTION),
       createInstructionSection("office-editing", `${OFFICE_EDITING_INSTRUCTION}\n${renderOfficeEditingContext(officeContext)}`),
       createInstructionSection("cloud-docs", CLOUD_DOCS_INSTRUCTION),
       createInstructionSection("file-delivery", "For Shell/Python document generation use jugglework_artifact_generate (artifact.generate_files). It runs the executable in a dedicated output directory and automatically collects files, even with silent stdout. Save only deliverables there; use the system temporary directory for scripts/cache. Use absolute input/script paths. Declare outputs for files written elsewhere in the workspace. Do not use background child processes."),

@@ -12,6 +12,8 @@
  * is handed to OpenCode immediately and is never replayed.
  */
 
+import { createHash, randomUUID } from "node:crypto";
+
 const MAX_ERROR_BODY_BYTES = 64 * 1024;
 const TLS_RETRY_DELAY_MS = 150;
 const EMPTY_STREAM_RETRY_DELAYS_MS = [1_000] as const;
@@ -233,7 +235,16 @@ async function fetchProviderResponse(
     timeoutMs,
   );
   try {
-    const response = await fetchWithTransientTlsRetry(base, new Request(request.clone(), { signal: combinedSignal }));
+    const outbound = new Request(request.clone(), { signal: combinedSignal });
+    const sessionId = outbound.headers.get("x-opencode-session-id") ?? outbound.headers.get("x-session-id");
+    if (sessionId && !outbound.headers.has("x-request-id")) {
+      // The gateway retains request_id alongside first_token_ms and latency_ms.
+      // Give each attempt a unique ID and group a session's rounds without
+      // writing a second copy of the stream or its contents to desktop logs.
+      const sessionHash = createHash("sha256").update(sessionId).digest("hex").slice(0, 16);
+      outbound.headers.set("x-request-id", `jw-${sessionHash}-${randomUUID()}`);
+    }
+    const response = await fetchWithTransientTlsRetry(base, outbound);
     return { response, abort: (reason) => timeoutController.abort(reason) };
   } catch (error) {
     if (timeoutController.signal.aborted && !request.signal.aborted) {

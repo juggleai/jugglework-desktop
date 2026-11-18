@@ -34,6 +34,33 @@ afterAll(() => {
 });
 
 describe("JuggleWorkContextOverflow fetch patch", () => {
+  test("links a session to each gateway attempt while preserving the output stream", async () => {
+    const url = "https://provider.test/jwork/api/gateway/v1/lpr_example/chat/completions";
+    const output = 'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n';
+    const stream = (body: string) => new Response(body, { headers: { "content-type": "text/event-stream" } });
+    const send = (headers: Record<string, string>) => patchedFetch(url, {
+      method: "POST", headers, body: JSON.stringify({ stream: true }),
+    });
+    receivedHeaders = [];
+    responseQueue = [stream(""), stream(output), stream(output), stream(output), stream(output)];
+    try {
+      expect(await (await send({ "x-opencode-session-id": "ses_example" })).text()).toBe(output);
+      await (await send({ "x-session-id": "ses_other" })).text();
+      await (await send({ "x-session-id": "ses_other", "X-Request-Id": "caller-request-id" })).text();
+      await (await send({})).text();
+      const ids = receivedHeaders.map(headers => headers.get("x-request-id"));
+      const sessionPrefix = ids[0]?.slice(0, 20);
+      expect(sessionPrefix).toMatch(/^jw-[0-9a-f]{16}-$/);
+      expect(ids[1]?.startsWith(sessionPrefix!)).toBe(true);
+      expect(ids[1]).not.toBe(ids[0]);
+      expect(ids[2]).toMatch(/^jw-[0-9a-f]{16}-/);
+      expect(ids[2]?.startsWith(sessionPrefix!)).toBe(false);
+      expect(ids.slice(3)).toEqual(["caller-request-id", null]);
+    } finally {
+      responseQueue = [];
+    }
+  });
+
   test.each([409, 429, 503])("makes exhausted points terminal even when the gateway returns %s", async (status) => {
     fetchCalls = 0;
     nextResponse = new Response(JSON.stringify({ error: {
