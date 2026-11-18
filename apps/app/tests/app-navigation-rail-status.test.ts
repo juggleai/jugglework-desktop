@@ -366,7 +366,14 @@ describe("navigation rail visual proportions", () => {
     expect(source).toContain('onPreviewMenuChange?.(previewScope ?? null)');
     expect(source).toContain('onAppPreviewChange?.(appPreviewTarget, true)');
     expect(source).toContain('onAppPreviewChange?.(appPreviewTarget, false)');
-    expect(source).toContain('title={showTooltip ? (tooltipLabel ?? label) : undefined}');
+    // TIPS: Windows 隐藏原生标题栏后会显示系统 title 气泡；提示统一由应用内 Tooltip 提供。
+    expect(source).not.toContain('title={showTooltip ? (tooltipLabel ?? label) : undefined}');
+  });
+
+  test("keeps Windows drag regions from swallowing Rail clicks", () => {
+    const css = readFileSync(new URL("../src/app/index.css", import.meta.url), "utf8");
+    expect(css).toContain("html.jugglework-electron.jugglework-platform-windows .mac\\:titlebar-drag");
+    expect(css).toContain("html.jugglework-electron.jugglework-platform-windows .mac\\:titlebar-no-drag");
   });
 
   test("omits the cloud workspace destination from the primary Rail", () => {

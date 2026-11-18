@@ -48,7 +48,6 @@ export function SessionDotMatrixLoader({ className, label }: SessionDotMatrixLoa
       data-session-loading-indicator
       role="status"
       aria-label={label}
-      title={label}
       className={cn(
         "inline-grid size-3.5 shrink-0 grid-cols-3 grid-rows-3 gap-px text-sidebar-foreground",
         className,

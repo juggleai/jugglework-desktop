@@ -167,7 +167,7 @@ describe("desktop session shell layout", () => {
     }
   });
 
-  test("fits Voice and optional sign-in in dev's narrow toolbar with its existing right padding", () => {
+  test("fits Voice and optional sign-in alongside native Windows caption buttons", () => {
     const title = controlClasses("data-session-topbar-title");
     const actions = controlClasses("data-session-topbar-actions");
     const header = sessionPage.slice(sessionPage.indexOf("const sessionTopBar"), sessionPage.indexOf("data-session-shell-topbar"));
@@ -178,12 +178,12 @@ describe("desktop session shell layout", () => {
     const titleGap = Number(title.match(/windows:max-md:gap-(\d+)/)![1]) * spacing;
     const actionGap = Number(actions.match(/windows:max-md:gap-(\d+)/)![1]) * spacing;
     const leftInset = Number(header.match(/windows:max-md:pl-\[(\d+)px\]/)![1]);
-    const rightPadding = Number(header.match(/\bpx-(\d+)/)![1]) * spacing;
+    const rightPadding = Number(actions.match(/windows:mr-\[(\d+)px\]/)![1]);
     const toolbar = sessionPage.slice(sessionPage.indexOf("data-session-topbar-actions"), sessionPage.indexOf("</header>"));
     expect(toolbar.match(/size="icon-sm"/g)).toHaveLength(6);
     expect(header).toContain("px-4 md:px-6");
-    expect(header).not.toContain("windows:pr-0");
-    expect(actions).not.toMatch(/windows:(?:mr|pr)-/);
+    expect(header).toContain("windows:pr-0");
+    expect(rightPadding).toBe(138);
     expect(titleMinimum).toBeGreaterThanOrEqual(buttonWidth + titleGap);
     expect(leftInset).toBe(76);
 
@@ -201,8 +201,8 @@ describe("desktop session shell layout", () => {
         }
       }
     }
-    // dev has ordinary window chrome, so use its actual 16px right padding.
-    expect(leftInset + titleMinimum + 7 * buttonWidth + 6 * actionGap + rightPadding).toBe(352);
+    // Reserve the native caption buttons instead of the former 16px padding.
+    expect(leftInset + titleMinimum + 7 * buttonWidth + 6 * actionGap + rightPadding).toBe(474);
   });
 
   test("uses a full-height content divider and an inset top-chrome divider", () => {
@@ -313,6 +313,8 @@ describe("desktop session shell layout", () => {
     expect(topbar).toContain('isElectronRuntime() && actionSessionId');
     expect(topbar).toContain('isLocalWorkspace && actionSessionId');
     expect(topbar).toContain('props.settingsSlot && actionSessionId ? openExtensionsRailPane : props.onOpenSettings');
+    expect(sessionPage).toContain('windows:mr-[138px]');
+    expect(sessionPage).toContain('windows:pr-0');
   });
 
   test("removes the permanent right rail and constrains expanded Files to the rounded surface", () => {

@@ -1239,7 +1239,7 @@ export function SessionPage(props: SessionPageProps) {
   const sessionTopBar = (
     <header
       className={cn(
-        "z-10 flex h-[var(--session-shell-top-inset)] min-h-[var(--session-shell-top-inset)] shrink-0 items-center justify-between border-b border-dls-border/70 bg-dls-sidebar px-4 md:px-6 mac:titlebar-drag",
+        "z-10 flex h-[var(--session-shell-top-inset)] min-h-[var(--session-shell-top-inset)] shrink-0 items-center justify-between border-b border-dls-border/70 bg-dls-sidebar px-4 md:px-6 windows:pr-0 mac:titlebar-drag",
         !props.embedded && shellConfig.sidebar && "windows:max-md:pl-[76px]",
         !props.embedded && shellConfig.sidebar && !sidebarOpen && "mac:pl-[76px] windows:pl-[76px]",
       )}
@@ -1354,7 +1354,7 @@ export function SessionPage(props: SessionPageProps) {
       </div>
 
       <div
-        className="flex shrink-0 items-center gap-1.5 text-gray-10 windows:max-md:gap-0 mac:titlebar-no-drag"
+        className="flex shrink-0 items-center gap-1.5 text-gray-10 windows:max-md:gap-0 windows:mr-[138px] mac:titlebar-no-drag"
         style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
         data-session-topbar-actions
       >
