@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
 import { Bell, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, RotateCcw } from "lucide-react";
 
 import type { DenProductTask, DenProductTaskReminder } from "@/app/lib/den";
@@ -68,10 +68,10 @@ function reminderKey(reminder: DenProductTaskReminder | null, dueAt: string | nu
   return null;
 }
 
-function DateTimeRow(props: { taskId: string; field: TaskTimeField; parts: DateParts; active: boolean; specific: boolean; pending: boolean; onActivate: () => void; onTimeChange: (hour: number, minute: number) => void }) {
+function DateTimeRow(props: { taskId: string; field: TaskTimeField; buttonRef?: Ref<HTMLButtonElement>; parts: DateParts; active: boolean; specific: boolean; pending: boolean; onActivate: () => void; onTimeChange: (hour: number, minute: number) => void }) {
   const dateLabel = props.parts.date ? props.parts.date.replaceAll("-", "/") : t(props.field === "startAt" ? "tasks.start_date_optional" : "tasks.due_date");
   return <div className={`mt-2 grid overflow-hidden rounded-lg border text-sm ${props.active ? "border-blue-8 ring-1 ring-blue-8/20" : "border-dls-border"} ${props.specific ? "grid-cols-[1fr_1px_1fr]" : "grid-cols-1"}`}>
-    <button type="button" data-testid={`task-time-date-input-${props.taskId}-${props.field}`} disabled={props.pending} onClick={props.onActivate} className={`h-10 truncate px-3 text-left ${props.parts.date ? "text-dls-text" : "text-dls-secondary"}`}>{dateLabel}</button>
+    <button ref={props.buttonRef} type="button" data-testid={`task-time-date-input-${props.taskId}-${props.field}`} disabled={props.pending} onClick={props.onActivate} className={`h-10 truncate px-3 text-left ${props.parts.date ? "text-dls-text" : "text-dls-secondary"}`}>{dateLabel}</button>
     {props.specific ? <><div className="my-2 bg-dls-border" /><DropdownMenu><DropdownMenuTrigger render={<button type="button" data-testid={`task-time-menu-trigger-${props.taskId}-${props.field}`} disabled={!props.parts.date || props.pending} onClick={props.onActivate} className="flex h-10 items-center justify-between px-3 text-left text-dls-text disabled:text-dls-secondary" />}><span>{props.parts.date ? timeLabel(props.parts.hour, props.parts.minute) : t(props.field === "startAt" ? "tasks.start_time" : "tasks.due_time")}</span><ChevronDown className="size-3.5 text-dls-secondary" /></DropdownMenuTrigger><DropdownMenuContent align="start" side="bottom" sideOffset={4} className="max-h-72 w-36 min-w-36 overflow-y-auto rounded-xl p-1.5">{timeOptions.map(({ hour, minute }) => { const selected = props.parts.hour === hour && props.parts.minute === minute; return <DropdownMenuItem key={`${hour}:${minute}`} data-testid={`task-time-option-${props.taskId}-${props.field}-${pad(hour)}-${pad(minute)}`} onClick={() => props.onTimeChange(hour, minute)} className={`rounded-lg px-3 py-2.5 ${selected ? "bg-dls-hover text-blue-10" : ""}`}><span className="flex-1">{timeLabel(hour, minute)}</span>{selected ? <Check className="size-4 text-blue-10" /> : null}</DropdownMenuItem>; })}</DropdownMenuContent></DropdownMenu></> : null}
   </div>;
 }
@@ -84,6 +84,16 @@ export function TaskDateTimeCell(props: { task: DenProductTask; field: TaskTimeF
   const [specific, setSpecific] = useState(() => valueParts(original.startAt).specific || valueParts(original.dueAt).specific);
   const [cursor, setCursor] = useState(() => monthStart(original[props.field] ? new Date(original[props.field]!) : new Date()));
   const [pending, setPending] = useState(false);
+  const [hoverDay, setHoverDay] = useState("");
+  const dueButton = useRef<HTMLButtonElement>(null);
+  const focusDue = useRef(false);
+  const session = useRef(0);
+  useEffect(() => {
+    if (!pending && activeField === "dueAt" && focusDue.current) {
+      focusDue.current = false;
+      dueButton.current?.focus({ preventScroll: true });
+    }
+  }, [activeField, pending]);
   const [selectedReminder, setSelectedReminder] = useState<ReminderKey | null>(null);
   useEffect(() => { const next = { startAt: props.task.startAt, dueAt: props.task.dueAt }; setSaved(next); setDrafts({ startAt: valueParts(next.startAt), dueAt: valueParts(next.dueAt) }); }, [props.task.startAt, props.task.dueAt]);
 
@@ -101,7 +111,19 @@ export function TaskDateTimeCell(props: { task: DenProductTask; field: TaskTimeF
     }
     return true;
   };
-  const commit = async (field: TaskTimeField, parts: DateParts) => { if (pending) return; setPending(true); const success = await persist(field, parts); if (!success) setDrafts((current) => ({ ...current, [field]: valueParts(saved[field]) })); setPending(false); };
+  const commit = async (field: TaskTimeField, parts: DateParts) => {
+    if (pending) return;
+    const origin = session.current;
+    setPending(true);
+    try {
+      if (!await persist(field, parts)) setDrafts((current) => ({ ...current, [field]: valueParts(saved[field]) }));
+      else if (field === "startAt" && origin === session.current) {
+        setHoverDay("");
+        focusDue.current = true;
+        setActiveField("dueAt");
+      }
+    } finally { setPending(false); }
+  };
   const setReminder = async (key: ReminderKey) => { const dueAt = isoValue(drafts.dueAt); if (!props.onReminderChange || !dueAt || pending) return; setPending(true); const success = await props.onReminderChange(props.task, reminderDraft(key, dueAt)); setPending(false); if (success) setSelectedReminder(key); };
   const toggleSpecific = async (enabled: boolean) => {
     if (pending) return;
@@ -116,17 +138,29 @@ export function TaskDateTimeCell(props: { task: DenProductTask; field: TaskTimeF
   };
   const clearAll = async () => { if (pending) return; setPending(true); for (const field of ["startAt", "dueAt"] as const) if (drafts[field].date) await persist(field, { ...drafts[field], date: "", specific: false }); if (selectedReminder && props.onReminderChange) await props.onReminderChange(props.task, null); setSelectedReminder(null); setSpecific(false); setPending(false); };
   const days = useMemo(() => monthDays(cursor), [cursor]);
+  const today = localDateKey(new Date());
+  const start = drafts.startAt.date;
+  const preview = activeField === "dueAt" && start && hoverDay >= start && hoverDay !== drafts.dueAt.date ? hoverDay : "";
+  const end = preview || drafts.dueAt.date;
   const reminderOptions = specific ? timedReminderOptions.map(([key]) => key) : dateReminderOptions;
   const triggerValue = saved[props.field];
   const triggerLabel = displayValue(triggerValue);
 
-  return <Popover onOpenChange={(open) => { if (!open) return; const next = { startAt: valueParts(saved.startAt), dueAt: valueParts(saved.dueAt) }; setDrafts(next); setActiveField(props.field); setSpecific(next.startAt.specific || next.dueAt.specific); setCursor(monthStart(saved[props.field] ? new Date(saved[props.field]!) : new Date())); if (props.onLoadReminders) void props.onLoadReminders(props.task).then((items) => setSelectedReminder(reminderKey(items.find((item) => item.state === "scheduled") ?? null, saved.dueAt))); }}>
+  return <Popover onOpenChange={(open) => { session.current++; setHoverDay(""); focusDue.current = false; if (!open) return; const next = { startAt: valueParts(saved.startAt), dueAt: valueParts(saved.dueAt) }; setDrafts(next); setActiveField(props.field); setSpecific(next.startAt.specific || next.dueAt.specific); setCursor(monthStart(saved[props.field] ? new Date(saved[props.field]!) : new Date())); if (props.onLoadReminders) void props.onLoadReminders(props.task).then((items) => setSelectedReminder(reminderKey(items.find((item) => item.state === "scheduled") ?? null, saved.dueAt))); }}>
     <PopoverTrigger render={<button type="button" data-testid={`task-time-trigger-${props.task.id}-${props.field}`} disabled={!props.onChange} className={props.triggerClassName ?? "flex min-h-8 min-w-24 items-center rounded-md px-1 text-left outline-none transition-colors hover:bg-dls-hover data-popup-open:ring-1 data-popup-open:ring-blue-8 disabled:cursor-default"} />}>{props.triggerContent ?? (triggerLabel ? <span>{triggerLabel}</span> : <CalendarDays className="size-[18px] text-dls-secondary/45" aria-label={t(props.field === "startAt" ? "tasks.field_start" : "tasks.field_due")} />)}</PopoverTrigger>
     <PopoverContent align="start" side="bottom" sideOffset={5} data-testid={`task-time-picker-${props.task.id}-${props.field}`} className="w-[360px] gap-0 rounded-xl border border-dls-border bg-dls-surface p-0 shadow-xl">
       <div className="p-4"><div className="mb-3 flex items-center justify-between"><button type="button" className="font-semibold text-dls-text" onClick={() => setCursor(monthStart(new Date()))}>{new Intl.DateTimeFormat(undefined, { year: "numeric", month: "long" }).format(cursor)}</button><div className="flex items-center gap-1"><button type="button" aria-label={t("tasks.previous_month")} className="flex size-8 items-center justify-center rounded-md hover:bg-dls-hover" onClick={() => setCursor((value) => shiftMonth(value, -1))}><ChevronLeft className="size-4" /></button><button type="button" aria-label={t("tasks.next_month")} className="flex size-8 items-center justify-center rounded-md hover:bg-dls-hover" onClick={() => setCursor((value) => shiftMonth(value, 1))}><ChevronRight className="size-4" /></button></div></div>
         <div className="grid grid-cols-7 text-center text-xs text-dls-secondary">{Array.from({ length: 7 }, (_, day) => <span key={day} className="py-2">{new Intl.DateTimeFormat(undefined, { weekday: "narrow" }).format(new Date(2026, 10, 1 + day))}</span>)}</div>
-        <div className="grid grid-cols-7 gap-y-1">{days.map((day) => { const key = localDateKey(day); const active = key === drafts[activeField].date; const currentMonth = day.getMonth() === cursor.getMonth(); return <button key={key} type="button" data-testid={`task-time-day-${props.task.id}-${props.field}-${key}`} disabled={pending} onClick={() => void commit(activeField, { ...drafts[activeField], date: key, specific })} className={`mx-auto flex size-9 items-center justify-center rounded-full text-sm ${active ? "bg-blue-9 text-white" : currentMonth ? "text-dls-text hover:bg-dls-hover" : "text-dls-secondary/55 hover:bg-dls-hover"}`}>{day.getDate()}</button>; })}</div>
-        <div className="mt-4"><DateTimeRow taskId={props.task.id} field="startAt" parts={drafts.startAt} active={activeField === "startAt"} specific={specific} pending={pending} onActivate={() => setActiveField("startAt")} onTimeChange={(hour, minute) => void commit("startAt", { ...drafts.startAt, specific: true, hour, minute })} /><DateTimeRow taskId={props.task.id} field="dueAt" parts={drafts.dueAt} active={activeField === "dueAt"} specific={specific} pending={pending} onActivate={() => setActiveField("dueAt")} onTimeChange={(hour, minute) => void commit("dueAt", { ...drafts.dueAt, specific: true, hour, minute })} /></div>
+        <div className="grid grid-cols-7 gap-y-1" onMouseLeave={() => setHoverDay("")}>{days.map((day) => {
+          const key = localDateKey(day);
+          const inRange = !!start && key >= start && key <= end && start !== end;
+          const endpoint = key === start || (key === drafts.dueAt.date && !preview);
+          return <button key={key} type="button" aria-label={key} aria-current={key === today ? "date" : undefined} aria-pressed={key === start || key === drafts.dueAt.date} data-testid={`task-time-day-${props.task.id}-${props.field}-${key}`} disabled={pending} onMouseEnter={() => setHoverDay(key)} onClick={() => void commit(activeField, { ...drafts[activeField], date: key, specific })} className="relative flex h-9 items-center justify-center text-sm">
+            {inRange && <span aria-hidden="true" className={`absolute inset-y-0 ${key === start ? "left-1/2" : "left-0"} ${key === end ? "right-1/2" : "right-0"} ${day.getDay() === 0 ? "rounded-l-full" : ""} ${day.getDay() === 6 ? "rounded-r-full" : ""} ${preview ? "bg-blue-3" : "bg-blue-4"}`} />}
+            <span className={`relative grid size-9 place-items-center rounded-full ${endpoint ? "bg-blue-9 text-white" : key === preview ? "bg-blue-3" : day.getMonth() === cursor.getMonth() ? "text-dls-text" : "text-dls-secondary/55"} ${key === today ? "ring-1 ring-blue-9 ring-offset-1" : ""}`}>{day.getDate()}</span>
+          </button>;
+        })}</div>
+        <div className="mt-4"><DateTimeRow taskId={props.task.id} field="startAt" parts={drafts.startAt} active={activeField === "startAt"} specific={specific} pending={pending} onActivate={() => setActiveField("startAt")} onTimeChange={(hour, minute) => void commit("startAt", { ...drafts.startAt, specific: true, hour, minute })} /><DateTimeRow buttonRef={dueButton} taskId={props.task.id} field="dueAt" parts={drafts.dueAt} active={activeField === "dueAt"} specific={specific} pending={pending} onActivate={() => setActiveField("dueAt")} onTimeChange={(hour, minute) => void commit("dueAt", { ...drafts.dueAt, specific: true, hour, minute })} /></div>
         <label className="mt-3 flex cursor-pointer items-center gap-2 text-sm text-dls-text"><input type="checkbox" data-testid={`task-time-specific-${props.task.id}-${props.field}`} checked={specific} disabled={pending} onChange={(event) => void toggleSpecific(event.target.checked)} className="size-4 accent-blue-9" />{t("tasks.specific_time")}</label>
       </div>
       <div className="border-t border-dls-border p-3"><DropdownMenu><DropdownMenuTrigger render={<button type="button" data-testid={`task-reminder-trigger-${props.task.id}`} disabled={!drafts.dueAt.date || pending} className="flex h-10 w-full items-center gap-3 rounded-lg px-2 text-left text-sm text-dls-text hover:bg-dls-hover disabled:text-dls-secondary" />}><Bell className="size-4" /><span className="min-w-0 flex-1 truncate">{selectedReminder ? t(`tasks.reminder_${selectedReminder}`) : t("tasks.due_reminder")}</span><ChevronDown className="size-4" /></DropdownMenuTrigger><DropdownMenuContent align="start" side="bottom" sideOffset={4} className="w-72 rounded-xl p-1.5">{reminderOptions.map((key) => <DropdownMenuItem key={key} data-testid={`task-reminder-option-${props.task.id}-${key}`} onClick={() => void setReminder(key)} className={`rounded-lg px-3 py-2.5 ${selectedReminder === key ? "bg-dls-hover text-blue-10" : ""}`}><span className="flex-1">{t(`tasks.reminder_${key}`)}</span>{selectedReminder === key ? <Check className="size-4 text-blue-10" /> : null}</DropdownMenuItem>)}</DropdownMenuContent></DropdownMenu></div>

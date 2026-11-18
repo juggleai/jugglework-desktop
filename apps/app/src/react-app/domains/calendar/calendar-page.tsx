@@ -301,7 +301,7 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
   }), [sourceEvents, visibleDays, visibleIds]);
 
   const [selectedEventId, setSelectedEventId] = React.useState<string | null>(null);
-  const [detailAnchor, setDetailAnchor] = React.useState<DOMRect | null>(null);
+  const [detailAnchor, setDetailAnchor] = React.useState<DetailAnchor | null>(null);
   const eventsById = React.useMemo(
     () => new Map((sourceEvents ?? []).map((event) => [event.id, event])),
     [sourceEvents],
@@ -385,13 +385,13 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
       ? { mode: "edit", instance: nextEditorInstance(), eventId: draft.baseEntity.id, draftId, form: restoredForm, draftBaseVersion: draft.baseEntity.version }
       : { mode: "create", instance: nextEditorInstance(), draftId, form: restoredForm });
   };
-  const openEvent = (eventId: string, date?: Temporal.PlainDate, anchor?: DOMRect) => {
+  const openEvent = (eventId: string, date: Temporal.PlainDate, click: React.MouseEvent<HTMLButtonElement>) => {
     if (!interactionSurfaceOpen) rememberOpener();
-    if (date) setNavigation(selectCalendarDate(date));
+    setNavigation(selectCalendarDate(date));
     setEditor(null);
     setMeetingError("");
     setActionError("");
-    setDetailAnchor(anchor ?? null);
+    setDetailAnchor(click?.currentTarget?.getBoundingClientRect?.() ?? null);
     setSelectedEventId(eventId);
   };
   const deleteSelectedEvent = async (scope: "this" | "this-and-following") => {
@@ -575,6 +575,7 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
   };
 
   return (
+    <>
     <div
       className="@container/calendar relative flex min-h-0 min-w-0 flex-1 overflow-y-auto"
       data-testid="calendar-layout"
@@ -692,7 +693,7 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
                   calendarsById={calendarsById}
                   locale={locale}
                   currentMemberId={props.scope.memberId}
-                  onOpenEvent={(eventId, anchor) => openEvent(eventId, date, anchor)}
+                  onOpenEvent={(eventId, click) => openEvent(eventId, date, click)}
                   onShowMore={() => setNavigation(selectCalendarDate(date))}
                   focusable={selected}
                   quickCreatePreview={quickPreview}
@@ -754,17 +755,23 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
           } : undefined}
           onMoreOptions={editor.mode === "create" ? (form) => setEditor({ mode: "create", instance: nextEditorInstance(), draftId: editor.draftId, form, presentation: "dialog" }) : undefined}
           onFormChange={editor.mode === "create" && editor.presentation === "quick" ? updateQuickCreateForm : undefined}
-          onSaved={(event) => { void closeEditorAfterAuthoritativeSave(editor.draftId); setEditor(null); setSelectedEventId(event.id); }}
+          onSaved={(event) => {
+            void closeEditorAfterAuthoritativeSave(editor.draftId);
+            setEditor(null);
+            setSelectedEventId(editor.mode === "edit" ? event.id : null);
+          }}
           onDeleted={() => { void closeEditorAfterAuthoritativeSave(editor.draftId); setEditor(null); setSelectedEventId(null); }}
           onCancel={() => setEditor(null)}
         />
         </div>
         </>
       ) : null}
+    </div>
+    </div>
       {detailCardOpen && selectedEvent ? (
         <>
         <button type="button" className="fixed inset-0 z-30 cursor-default bg-transparent" aria-label={t("calendar.close_detail")} onClick={() => { setSelectedEventId(null); setDetailAnchor(null); }} data-testid="calendar-event-detail-dismiss-layer" />
-        <aside className={cn("fixed z-40 h-[min(40rem,calc(100vh-2rem))] w-[min(25rem,calc(100vw-2rem))] overflow-hidden rounded-[14px] border border-black/[0.035] bg-dls-surface shadow-[0_18px_48px_rgba(15,23,42,0.18)] dark:border-white/10 dark:shadow-[0_20px_56px_rgba(0,0,0,0.46)]", !detailAnchor && "left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2")} style={detailAnchor ? anchoredDetailStyle(detailAnchor) : undefined} aria-label={t("calendar.event_panel")} data-detail-anchored={detailAnchor ? "true" : undefined} data-detail-layout="uniform" data-testid="calendar-event-panel">
+        <aside className={cn("fixed z-40 flex flex-col overflow-y-auto rounded-lg border border-black/[0.035] bg-dls-surface shadow-[0_18px_48px_rgba(15,23,42,0.18)] dark:border-white/10 dark:shadow-[0_20px_56px_rgba(0,0,0,0.46)]", !detailAnchor && "left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2")} style={detailPanelStyle(detailAnchor)} aria-label={t("calendar.event_panel")} data-detail-anchored={detailAnchor ? "true" : undefined} data-detail-layout="uniform" data-testid="calendar-event-panel">
           <CalendarEventDetail
             event={selectedEvent}
             calendar={calendarsById.get(selectedEvent.calendarId)}
@@ -796,8 +803,7 @@ function CalendarReadyView(props: { scope: CalendarScope; writeEnabled: boolean;
         if (open) return;
         closeMembersDialog();
       }} /> : null}
-    </div>
-    </div>
+    </>
   );
 }
 
@@ -807,18 +813,36 @@ function focusableDocument(): Document | null {
   return typeof document.querySelector === "function" ? document : null;
 }
 
-function anchoredDetailStyle(anchor: DOMRect): CSSProperties {
+type DetailAnchor = Pick<DOMRect, "left" | "right" | "top" | "bottom">;
+
+function detailPanelStyle(anchor: DetailAnchor | null): CSSProperties {
   const viewportWidth = typeof window === "undefined" ? 1024 : window.innerWidth;
   const viewportHeight = typeof window === "undefined" ? 768 : window.innerHeight;
   const margin = 16;
-  const gap = 8;
-  const width = Math.min(400, Math.max(280, viewportWidth - margin * 2));
-  const height = Math.min(640, viewportHeight - margin * 2);
-  const roomOnRight = viewportWidth - anchor.right - margin;
-  const preferredLeft = roomOnRight >= width + gap ? anchor.right + gap : anchor.left - width - gap;
-  const left = Math.min(Math.max(preferredLeft, margin), Math.max(margin, viewportWidth - width - margin));
-  const top = Math.min(Math.max(anchor.top - 24, margin), Math.max(margin, viewportHeight - height - margin));
-  return { left, top, width, height, maxWidth: `calc(100vw - ${margin * 2}px)`, maxHeight: `calc(100vh - ${margin * 2}px)` };
+  const gap = 6;
+  const width = Math.min(350, viewportWidth - margin * 2);
+  const maxHeight = Math.min(576, viewportHeight - margin * 2);
+  if (!anchor) return { width, maxHeight };
+
+  const right = anchor.right + gap;
+  const left = anchor.left - gap - width;
+  if (right + width <= viewportWidth - margin || left >= margin) {
+    const top = Math.max(margin, anchor.top);
+    // 100% is the rendered card height. Shift up only by the actual overflow.
+    const transform = `translateY(min(0px, calc(${viewportHeight - margin - top}px - 100%)))`;
+    return { left: right + width <= viewportWidth - margin ? right : left, top, transform, width, maxHeight };
+  }
+
+  // Wide day-view events can span the grid. Use the larger vertical gap.
+  const below = viewportHeight - margin - anchor.bottom - gap;
+  const above = anchor.top - gap - margin;
+  const alignedLeft = Math.max(margin, Math.min(anchor.left, viewportWidth - margin - width));
+  if (below >= maxHeight || below >= above) {
+    const height = Math.min(maxHeight, Math.max(160, below));
+    return { left: alignedLeft, top: Math.min(anchor.bottom + gap, viewportHeight - margin - height), width, maxHeight: height };
+  }
+  const height = Math.min(maxHeight, Math.max(160, above));
+  return { left: alignedLeft, bottom: Math.min(viewportHeight - anchor.top + gap, viewportHeight - margin - height), width, maxHeight: height };
 }
 
 function quickCreateStyle(anchor: { x: number; y: number }): CSSProperties {

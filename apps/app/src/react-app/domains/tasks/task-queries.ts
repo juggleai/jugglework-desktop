@@ -1,4 +1,5 @@
-import { keepPreviousData, useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery, type InfiniteData, type QueryClient } from "@tanstack/react-query";
+import { productTaskListIds, type DenProductTask, type DenProductTaskResult } from "@/app/lib/den";
 
 import { DenApiError, type DenClient, type DenOrganizationMember, type DenProductTaskActivityItem, type DenProductTaskList, type DenProductTaskListOptions, type DenProductTaskMember, type DenProductTaskPage } from "@/app/lib/den";
 
@@ -33,6 +34,25 @@ export function flattenProductTaskPages(data: { pages: DenProductTaskPage[] } | 
     seen.add(task.id);
     return true;
   });
+}
+
+export function applyTaskListMembership(client: QueryClient, scope: ProductTaskScope, result: { taskId: string; listId: string; added: boolean }) {
+  const update = (task: DenProductTask) => {
+    const ids = productTaskListIds(task);
+    const listIds = result.added ? [...new Set([...ids, result.listId])] : ids.filter((id) => id !== result.listId);
+    return { ...task, listIds, listId: listIds[0] ?? null };
+  };
+  client.setQueryData<DenProductTaskResult>(productTaskKeys.detail(scope, result.taskId), (data) => data && { ...data, task: update(data.task) });
+  // Remove rows that no longer match. Only the server can place a newly matching
+  // row in the right filtered page, so the caller refetches after this update.
+  for (const [key] of client.getQueriesData({ queryKey: productTaskKeys.lists(scope) })) {
+    const filter = (key.at(-1) as DenProductTaskListOptions).listId;
+    client.setQueryData<InfiniteData<DenProductTaskPage>>(key, (data) => data && ({ ...data, pages: data.pages.map((page) => ({ ...page, items: page.items.flatMap((task) => {
+      if (task.id !== result.taskId) return [task];
+      const next = update(task);
+      return !filter?.length || next.listIds.some((id) => filter.includes(id)) ? [next] : [];
+    }) })) }));
+  }
 }
 
 export function flattenProductTaskMembers(data: { pages: DenProductTaskPage[] } | undefined): Record<string, DenProductTaskMember[]> {
@@ -152,7 +172,7 @@ export function useProductTasks(input: { client: DenClient; scope: ProductTaskSc
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam, signal }) => input.client.listProductTasks(input.scope!.organizationId, { ...input.options, cursor: pageParam, limit: input.options.limit ?? 30 }, { signal }),
     getNextPageParam: (page) => page.nextCursor || undefined,
-    placeholderData: keepPreviousData,
+    placeholderData: (previous, query) => input.scope && productTaskKeys.lists(input.scope).every((part, i) => query?.queryKey[i] === part) ? previous : undefined,
     staleTime: 30_000,
     retry: (count, error) => !(typeof error === "object" && error && "status" in error && Number((error as { status: number }).status) < 500) && count < 2,
   });

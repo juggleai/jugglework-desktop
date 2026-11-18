@@ -104,9 +104,15 @@ test("assignee cells open a searchable people picker and persist multi-assignee 
     expect(renderer!.root.findByProps({ "data-testid": "task-assignee-option-task_todo_with_full_identifier-member_creator" }).props["aria-checked"]).toBe(true);
 
     const search = renderer!.root.findByProps({ "data-testid": "task-assignee-search-task_todo_with_full_identifier" });
-    await act(async () => { search.props.onChange({ currentTarget: { value: "alex" } }); });
+    const typeSearch = (value: string) => act(async () => { search.props.onInput({ currentTarget: { value } }); });
+    await typeSearch("al");
     expect(renderer!.root.findAllByProps({ "data-testid": "task-assignee-option-task_todo_with_full_identifier-member_assignee" })).toHaveLength(1);
     expect(renderer!.root.findAllByProps({ "data-testid": "task-assignee-option-task_todo_with_full_identifier-member_creator" })).toHaveLength(0);
+    await typeSearch("alx");
+    expect(picker.findAllByProps({ role: "checkbox" })).toHaveLength(0);
+    await typeSearch("");
+    expect(picker.findAllByProps({ role: "checkbox" })).toHaveLength(2);
+    expect(changes).toHaveLength(1);
   } finally { await act(async () => renderer!.unmount()); }
 });
 
@@ -170,6 +176,30 @@ test("task time picker supports optional dates, active fields, and half-hour spe
     expect(changes.at(-1)).toEqual(expect.any(String));
     await act(async () => { picker.findByProps({ "data-testid": "task-time-clear-task_todo_with_full_identifier-startAt" }).props.onClick(); });
     expect(changes.at(-1)).toBeNull();
+  } finally { await act(async () => renderer!.unmount()); }
+});
+
+test("task calendar marks today, focuses due after start, and previews the range without saving it", async () => {
+  const task = { ...tasks[0]!, startAt: null, dueAt: null };
+  const fields: string[] = [];
+  let focused = false;
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(<TaskDateTimeCell task={task} field="startAt" onChange={async (_, field) => { fields.push(field); return true; }} />, { createNodeMock: (el) => ({ focus: () => { focused = el.props["data-testid"] === `task-time-date-input-${task.id}-dueAt`; } }) }); });
+  try {
+    const today = new Date();
+    const key = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
+    const day = (n: number) => renderer!.root.findByProps({ "aria-label": `${key}-${String(n).padStart(2, "0")}` });
+    expect(day(today.getDate()).props["aria-current"]).toBe("date");
+    await act(async () => { day(5).props.onClick(); });
+    expect(focused).toBe(true);
+    await act(async () => { day(15).props.onMouseEnter(); });
+    expect(day(10).findAllByProps({ "aria-hidden": "true" })).toHaveLength(1);
+    expect(fields).toEqual(["startAt"]);
+    await act(async () => { day(15).props.onClick(); });
+    expect(fields).toEqual(["startAt", "dueAt"]);
+    expect(day(5).props["aria-pressed"]).toBe(true);
+    expect(day(15).props["aria-pressed"]).toBe(true);
+    expect(day(16).findAllByProps({ "aria-hidden": "true" })).toHaveLength(0);
   } finally { await act(async () => renderer!.unmount()); }
 });
 
@@ -512,7 +542,7 @@ test("board renders workbench groups and accessible lifecycle actions", async ()
     expect(renderer!.root.findByProps({ "data-testid": "task-group-menu" }).props.title).toBeUndefined();
     const groupMenu = renderer!.root.findByProps({ "data-testid": "task-group-menu" });
     expect(groupMenu.findAll((node) => node.props.value === "none")).toHaveLength(0);
-    expect(groupMenu.findAll((node) => node.props.value === "list")).toHaveLength(0);
+    expect(groupMenu.findAll((node) => node.props.value === "list").length).toBeGreaterThan(0);
     expect(renderer!.root.findAllByProps({ "aria-label": "Cancel task" })).toHaveLength(0);
     await act(async () => { renderer!.root.findAllByProps({ "aria-label": "Complete task" })[0]!.props.onClick(); });
     await act(async () => { renderer!.root.findAllByProps({ "aria-label": "Reopen task" })[0]!.props.onClick(); });
@@ -531,14 +561,14 @@ test("entering board defaults an ungrouped workbench to custom grouping", async 
   } finally { await act(async () => renderer!.unmount()); }
 });
 
-test("entering board replaces the unsupported task-list grouping with custom grouping", async () => {
+test("entering board preserves task-list grouping", async () => {
   const settings: typeof defaultTaskWorkbenchSettings[] = [];
   let renderer: TestRenderer.ReactTestRenderer;
   await act(async () => { renderer = TestRenderer.create(workbench({ ...defaultTaskWorkbenchSettings, group: "list" }, (next) => settings.push(next))); });
   try {
     const tabs = renderer!.root.findAll((node) => typeof node.props.onValueChange === "function")[0]!;
     await act(async () => { tabs.props.onValueChange("board"); });
-    expect(settings.at(-1)).toMatchObject({ view: "board", group: "custom" });
+    expect(settings.at(-1)).toMatchObject({ view: "board", group: "list" });
   } finally { await act(async () => renderer!.unmount()); }
 });
 
@@ -551,6 +581,22 @@ test("board groups cards by creator without changing active filters", async () =
     expect(renderer!.root.findAllByProps({ "data-testid": "task-board-new-group-trigger" })).toHaveLength(0);
   } finally { await act(async () => renderer!.unmount()); }
 });
+
+for (const view of ["list", "board"] as const) {
+  test(`${view} groups a task once under each projected list, ignoring the stale legacy id`, async () => {
+    const projected = [{ ...tasks[0]!, listId: "legacy_hidden", listIds: ["list_one", "list_two"] }, { ...tasks[1]!, listId: "legacy_hidden", listIds: [] }];
+    let renderer: TestRenderer.ReactTestRenderer;
+    await act(async () => { renderer = TestRenderer.create(React.cloneElement(workbench({ ...defaultTaskWorkbenchSettings, view, group: "list" }), { tasks: projected, lists: [...lists, { ...lists[0]!, id: "list_two", name: "Second" }] })); });
+    try {
+      const prefix = view === "list" ? "task-group-row-" : "task-board-group-";
+      for (const id of ["list_one", "list_two", ""]) expect(renderer!.root.findByProps({ "data-testid": prefix + id })).toBeDefined();
+      expect(renderer!.root.findAllByProps({ "data-testid": prefix + "legacy_hidden" })).toHaveLength(0);
+      const row = view === "list" ? "task-title-cell-" : "task-board-card-";
+      expect(renderer!.root.findAllByProps({ "data-testid": row + projected[0]!.id })).toHaveLength(2);
+      expect(renderer!.root.findAllByProps({ "data-testid": row + projected[1]!.id })).toHaveLength(1);
+    } finally { await act(async () => renderer!.unmount()); }
+  });
+}
 
 test("custom board creates a group inline while other board grouping hides the action", async () => {
   const settings: typeof defaultTaskWorkbenchSettings[] = [];

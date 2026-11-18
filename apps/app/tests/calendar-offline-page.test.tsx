@@ -368,7 +368,7 @@ test("reconnecting refreshes data but never auto-submits drafts; an explicit sub
     expect(calls).toHaveLength(1);
     expect(calls[0]).toMatchObject({ op: "create", input: { title: "Planned offline" } });
     expect(await cache.listDrafts(scope, "event")).toHaveLength(0);
-    expect(text(byId(renderer, "calendar-event-detail-title"))).toBe("Planned offline");
+    expect(has(renderer, "calendar-event-panel")).toBe(false);
   } finally { await act(async () => { renderer.unmount(); }); }
 });
 

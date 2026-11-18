@@ -47,6 +47,37 @@ test("product task client sends the delegated view token", async () => {
   expect(requestUrl).toContain("view=delegated");
 });
 
+test("membership writes encode both ids, send no body, and read the resulting state", async () => {
+  const client = createDenClient({ baseUrl: "https://work.example", token: "token_one" });
+  const taskId = task.id, listId = "list/two";
+  for (const added of [true, false]) {
+    globalThis.fetch = async (url, init) => {
+      expect(String(url)).toEndWith("/v1/tasks/task%2Fone/lists/list%2Ftwo");
+      expect(init?.method).toBe(added ? "PUT" : "DELETE");
+      expect(init?.body).toBeUndefined();
+      expect(new Headers(init?.headers).get("x-jugglework-legacy-org-id")).toBe("org_one");
+      return Response.json({ taskId, listId, added });
+    };
+    expect(await client.setProductTaskListMembership("org_one", taskId, listId, added)).toEqual({ taskId, listId, added });
+  }
+  for (const bad of [{ taskId, listId, added: 1 }, { taskId: "other", listId, added: true }, { taskId, listId: "other", added: true }]) {
+    globalThis.fetch = async () => Response.json(bad);
+    await expect(client.setProductTaskListMembership("org_one", taskId, listId, true)).rejects.toMatchObject({ code: "invalid_task_list_membership" });
+  }
+});
+
+test("detail and list honor the visible projection, including empty, before legacy listId", async () => {
+  const client = createDenClient({ baseUrl: "https://work.example", token: "token_one" });
+  for (const listIds of [undefined, [], ["one", "two"]]) {
+    const row = { ...task, listId: "legacy", listIds };
+    globalThis.fetch = async (url) => Response.json(String(url).includes("/tasks/task%2Fone") ? { ...result, task: row } : { items: [row], nextCursor: "" });
+    for (const normalized of [(await client.getProductTask("org_one", task.id)).task, (await client.listProductTasks("org_one")).items[0]!]) {
+      expect(normalized.listIds).toEqual(listIds ?? ["legacy"]);
+      expect(normalized.listId).toBe(listIds === undefined ? "legacy" : listIds[0] ?? null);
+    }
+  }
+});
+
 test("product task collaboration client strictly reads groups and group members", async () => {
   const requests: string[] = [];
   globalThis.fetch = async (input) => {

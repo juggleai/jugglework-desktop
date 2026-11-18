@@ -19,7 +19,7 @@ export function CalendarDayEvents(props: {
   calendarsById: ReadonlyMap<string, DenCalendar>;
   locale: string;
   currentMemberId: string;
-  onOpenEvent?: (eventId: string, anchor?: DOMRect) => void;
+  onOpenEvent?: (eventId: string, click: React.MouseEvent<HTMLButtonElement>) => void;
   onShowMore: () => void;
   /** Only the roving-focus day exposes its chips to Tab, so Tab moves cell → chips → next region. */
   focusable?: boolean;
@@ -29,10 +29,9 @@ export function CalendarDayEvents(props: {
   const { shown, hiddenCount } = splitCalendarDayOverflow(props.entries);
   const [overflowOpen, setOverflowOpen] = React.useState(false);
   const date = Temporal.PlainDate.from(props.date);
-  const openEvent = (eventId: string, event?: React.MouseEvent<HTMLButtonElement>) => {
-    const anchor = event?.currentTarget?.getBoundingClientRect?.();
+  const openEvent = (eventId: string, event: React.MouseEvent<HTMLButtonElement>) => {
     setOverflowOpen(false);
-    props.onOpenEvent?.(eventId, anchor);
+    props.onOpenEvent?.(eventId, event);
   };
   return (
     <ul className="flex min-h-0 min-w-0 flex-col gap-0.5" data-testid={`calendar-day-events-${props.date}`}>

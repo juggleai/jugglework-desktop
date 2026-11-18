@@ -85,6 +85,7 @@ mock.module("../src/components/ui/tabs", () => ({
 }));
 
 const { TaskPage, TaskShellContent } = await import("../src/react-app/domains/tasks/task-page");
+const { TaskDateTimeCell } = await import("../src/react-app/domains/tasks/task-date-time-cell");
 const { useUiStateStore } = await import("../src/react-app/shell/ui-state-store");
 const queryClients = new Set<QueryClient>();
 
@@ -350,7 +351,7 @@ test("Today renders an action summary and mutually exclusive overdue, due-today,
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const yesterdayNoon = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 12);
-  const overdue = { ...task(1, "Overdue launch", "", "today_overdue"), listId: "list_today", dueAt: yesterdayNoon.toISOString(), priority: "high" as const };
+  const overdue = { ...task(1, "Overdue launch", "", "today_overdue"), listId: "legacy_hidden", listIds: ["list_today", "second"], dueAt: yesterdayNoon.toISOString(), priority: "high" as const };
   const dueToday = { ...task(1, "Review today", "", "today_due"), creatorMemberId: "member_self", listId: "list_today", dueAt: today.toISOString() };
   const startsToday = { ...task(1, "Start research", "", "today_start"), listId: "list_today", startAt: today.toISOString() };
   const list: DenProductTaskList = { id: "list_today", creatorMemberId: "member_self", name: "Launch plan", description: "", marker: "L", visibility: "members", version: 1, archivedAt: null, createdAt: today.toISOString(), updatedAt: today.toISOString() };
@@ -361,7 +362,7 @@ test("Today renders an action summary and mutually exclusive overdue, due-today,
   };
   const client = connectedClient({
     listProductTasks: async () => ({ items: [startsToday, dueToday, overdue], membersByTaskId, nextCursor: "" }),
-    listProductTaskLists: async () => ({ items: [list], nextCursor: "" }),
+    listProductTaskLists: async () => ({ items: [list, { ...list, id: "second", name: "Planning" }], nextCursor: "" }),
     listOrganizationMembers: async () => ({ members: [{ id: "member_self", userId: "user_one", role: "member", user: { id: "user_one", name: "Self", account: null, email: null, avatar: null } }], total: 1, limit: 200, offset: 0 }),
   });
   let renderer: TestRenderer.ReactTestRenderer;
@@ -377,7 +378,7 @@ test("Today renders an action summary and mutually exclusive overdue, due-today,
     expect(renderer!.root.findAll((node) => node.props.children === "Assigned to me")).not.toHaveLength(0);
     expect(renderer!.root.findAll((node) => node.props.children === "Created by me")).not.toHaveLength(0);
     expect(renderer!.root.findAll((node) => node.props.children === "Following")).not.toHaveLength(0);
-    expect(renderer!.root.findAll((node) => Array.isArray(node.props.children) && node.props.children.includes("Launch plan"))).not.toHaveLength(0);
+    expect(renderer!.root.findByProps({ "data-testid": `today-task-row-${overdue.id}` }).findByProps({ children: "L Launch plan, L Planning" })).toBeDefined();
   } finally { await act(async () => { renderer!.unmount(); }); }
 });
 
@@ -1133,13 +1134,19 @@ test("shows full-create mutation failures without an unhandled rejection", async
   }
 });
 
-test("full task creation submits assignees, followers, due time, list, and description", async () => {
+test.each([
+  ["members", "member_other", "member_self", "members"],
+  ["private", "member_other", "member_self", "members"],
+  ["private", "member_self", "member_other", "members"],
+  ["private", "member_self", "member_self", "private"],
+  ["organization", "member_other", "member_self", "organization"],
+] as const)("full task creation: %s list, assignee %s and follower %s submit %s visibility", async (listVisibility, assignee, follower, expectedVisibility) => {
   const creates: Array<Record<string, unknown>> = [];
   const members = [
     { id: "member_self", userId: "user_one", role: "member", user: { id: "user_one", name: "Self", account: null, email: null, avatar: null } },
     { id: "member_other", userId: "user_two", role: "member", user: { id: "user_two", name: "Other", account: null, email: null, avatar: null } },
   ];
-  const list = { id: "list_one", creatorMemberId: "member_self", name: "Launch", description: "", marker: "L", visibility: "members" as const, version: 1, archivedAt: null, createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z" };
+  const list = { id: "list_one", creatorMemberId: "member_self", name: "Launch", description: "", marker: "L", visibility: listVisibility, version: 1, archivedAt: null, createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z" };
   const client = connectedClient({
     listOrganizationMembers: async () => ({ members, total: 2, limit: 200, offset: 0 }),
     listProductTaskLists: async () => ({ items: [list], nextCursor: "" }),
@@ -1165,22 +1172,51 @@ test("full task creation submits assignees, followers, due time, list, and descr
     await act(async () => { renderer!.root.findAll((node) => node.props.children === "Today")[0]!.props.onClick(); });
     await act(async () => { renderer!.root.findByProps({ "data-testid": "task-list-option-create-dialog-draft-list_one" }).props.onClick(); });
     await act(async () => { renderer!.root.findByProps({ "data-testid": "task-create-assignees-option-member_self" }).props.onClick(); });
-    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-create-assignees-option-member_other" }).props.onClick(); });
-    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-create-followers-option-member_self" }).props.onClick(); });
+    if (assignee !== "member_self") await act(async () => { renderer!.root.findByProps({ "data-testid": `task-create-assignees-option-${assignee}` }).props.onClick(); });
+    await act(async () => { renderer!.root.findByProps({ "data-testid": `task-create-followers-option-${follower}` }).props.onClick(); });
     await act(async () => { dialog.findByType("form").props.onSubmit({ preventDefault: () => undefined }); });
     await settle();
     expect(creates[0]).toMatchObject({
       title: "Full task",
       description: "Everything**text**",
       priority: "none",
-      visibility: "members",
+      visibility: expectedVisibility,
       listId: "list_one",
-      members: [{ memberId: "member_self", role: "assignee" }, { memberId: "member_other", role: "assignee" }, { memberId: "member_self", role: "follower" }],
+      members: [{ memberId: "member_self", role: "assignee" }, ...(assignee !== "member_self" ? [{ memberId: assignee, role: "assignee" }] : []), { memberId: follower, role: "follower" }],
     });
     expect(typeof creates[0]?.dueAt).toBe("string");
   } finally {
     await act(async () => { renderer!.unmount(); });
   }
+});
+
+test("full task creation keeps the selected start and due dates independent", async () => {
+  const creates: Array<Parameters<DenClient["createProductTask"]>[1]> = [];
+  const client = connectedClient({
+    createProductTask: async (_orgId, input) => { creates.push(input); return result(task(1, input.title)); },
+  });
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client)); });
+  await settle();
+  try {
+    const sidebar = renderer!.root.findByProps({ "data-testid": "tasks-sidebar" });
+    const allTasks = sidebar.findAllByType("button").find((button) => React.Children.toArray(button.props.children).includes("All tasks"))!;
+    await act(async () => { allTasks.props.onClick(); });
+    await settle();
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-create-menu" }).findAllByType("button")[0]!.props.onClick(); });
+    const dialog = renderer!.root.findByProps({ role: "dialog" });
+    await act(async () => { dialog.findByProps({ placeholder: "Enter a title and press Enter" }).props.onChange({ target: { value: "Scheduled task" } }); });
+    const cell = dialog.findByType(TaskDateTimeCell);
+    const dueAt = "2026-11-20T18:00:00.000Z";
+    const startAt = "2026-11-18T09:00:00.000Z";
+    await act(async () => { await cell.props.onChange(cell.props.task, "dueAt", dueAt); });
+    await act(async () => { await cell.props.onChange(cell.props.task, "startAt", startAt); });
+    expect(cell.props.task).toMatchObject({ startAt, dueAt });
+    await act(async () => { dialog.findByType("form").props.onSubmit({ preventDefault: () => undefined }); });
+    await settle();
+    expect(creates).toHaveLength(1);
+    expect(creates[0]).toMatchObject({ startAt, dueAt });
+  } finally { await act(async () => { renderer!.unmount(); }); }
 });
 
 test("full task creation can create and assign a custom group", async () => {
@@ -1373,151 +1409,93 @@ test("workbench time update loads the latest task permission and sends a CAS pat
   } finally { await act(async () => renderer!.unmount()); }
 });
 
-test("workbench creates a missing list then moves the task using the latest version", async () => {
-  const listed = task(1, "List task", "", "list_task");
-  const authoritative = result({ ...listed, version: 11, listId: null });
-  const order: string[] = [];
-  const moves: Array<Parameters<DenClient["moveProductTask"]>[2]> = [];
-  const createdList: DenProductTaskList = { id: "list_created", creatorMemberId: "member_self", name: "Testing list", description: "", marker: "T", visibility: "private", version: 1, archivedAt: null, createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z" };
-  const client = connectedClient({
-    listProductTasks: async () => ({ items: [listed], membersByTaskId: { [listed.id]: [] }, nextCursor: "" }),
-    getProductTask: async () => { order.push("get"); return authoritative; },
-    createProductTaskList: async () => { order.push("create"); return { list: createdList, members: [], permissions: { canView: true, canEdit: true, canManageMembers: true, canTransferOwnership: false, canDelete: false, canAddTasks: true, canArchive: true, canRestore: false }, replayed: false }; },
-    getProductTaskList: async () => ({ list: createdList, members: [], permissions: { canView: true, canEdit: true, canManageMembers: true, canTransferOwnership: false, canDelete: false, canAddTasks: true, canArchive: true, canRestore: false }, replayed: false }),
-    moveProductTask: async (_orgId, _taskId, input) => { order.push("move"); moves.push(input); return { taskId: listed.id, version: 12, listId: createdList.id, visibility: "private", replayed: false }; },
-  });
-  let renderer: TestRenderer.ReactTestRenderer;
-  await act(async () => { renderer = TestRenderer.create(connectedPage(client)); });
-  await settle();
-  try {
-    const sidebar = renderer!.root.findByProps({ "data-testid": "tasks-sidebar" });
-    await act(async () => { sidebar.findAllByType("button").find((button) => Array.isArray(button.props.children) && button.props.children.includes("Assigned to me"))!.props.onClick(); });
-    await settle();
-    const search = renderer!.root.findByProps({ "data-testid": "task-list-search-list_task" });
-    await act(async () => { search.props.onChange({ currentTarget: { value: "Testing list" } }); });
-    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-list-create-list_task" }).props.onClick(); });
-    await settle();
-    expect(order).toEqual(["create", "get", "move"]);
-    expect(moves[0]).toMatchObject({ expectedVersion: 11, destinationListId: "list_created", idempotencyKey: expect.any(String) });
-  } finally { await act(async () => renderer!.unmount()); }
-});
+const destination: DenProductTaskList = { id: "list_destination", creatorMemberId: "member_self", name: "Personal filing", description: "", marker: "P", visibility: "private", version: 1, archivedAt: null, createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z" };
+const destinationResult = () => ({ list: destination, members: [], permissions: { canView: true, canEdit: true, canManageMembers: true, canTransferOwnership: false, canDelete: false, canAddTasks: true, canArchive: true, canRestore: false }, replayed: false });
 
-const moveDestination: DenProductTaskList = { id: "list_destination", creatorMemberId: "member_self", name: "Shared destination", description: "", marker: "S", visibility: "members", version: 1, archivedAt: null, createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z" };
-const moveDestinationResult = () => ({ list: { ...moveDestination }, members: [], permissions: { canView: true, canEdit: true, canManageMembers: true, canTransferOwnership: false, canDelete: false, canAddTasks: true, canArchive: true, canRestore: false }, replayed: false });
-
-for (const scenario of [
-  { name: "cancel private sharing", confirm: false, moves: 0, prompts: 1 },
-  { name: "confirm private sharing", confirm: true, moves: 1, prompts: 1 },
-  { name: "organization-visible destination still requires confirmation", destinationVisibility: "organization", moves: 1, prompts: 1 },
-  { name: "deny task member management", canManageMembers: false, moves: 0, prompts: 0, denied: true },
-  { name: "deny visibility management", canManageVisibility: false, moves: 0, prompts: 0, denied: true },
-  { name: "deny destination add permission", canAddTasks: false, moves: 0, prompts: 0, denied: true },
-  { name: "deny archived destination", archived: true, moves: 0, prompts: 0, denied: true },
-  { name: "failed task read does not move", failure: "task", moves: 0, prompts: 0 },
-  { name: "failed destination read does not move", failure: "destination", moves: 0, prompts: 0 },
-  { name: "move conflict leaves displayed list unchanged", failure: "move", moves: 1, prompts: 1 },
-  { name: "private destination needs no visibility permission", destinationVisibility: "private", canManageVisibility: false, moves: 1, prompts: 0 },
-  { name: "already-shared task needs no sharing confirmation", taskVisibility: "members", canManageVisibility: false, moves: 1, prompts: 0 },
-  { name: "removing list needs no sharing confirmation", remove: true, canManageVisibility: false, moves: 1, prompts: 0 },
-] as const) {
-  test(`task list move: ${scenario.name}`, async () => {
-    const options = scenario as { confirm?: boolean; destinationVisibility?: DenProductTaskList["visibility"]; taskVisibility?: DenProductTask["visibility"]; canManageMembers?: boolean; canManageVisibility?: boolean; canAddTasks?: boolean; archived?: boolean; remove?: boolean; denied?: boolean; failure?: "task" | "destination" | "move" };
-    // Both picker and row data deliberately disagree with authoritative visibility.
-    const listed = { ...task(1, "Move task", "", "move_task"), listId: "list_old", visibility: "organization" as const };
-    const detail = result({ ...listed, version: 17, visibility: options.taskVisibility ?? "private" });
-    detail.permissions.canManageMembers = options.canManageMembers ?? true;
-    detail.permissions.canManageVisibility = options.canManageVisibility ?? true;
-    const destination = moveDestinationResult();
-    destination.list.visibility = options.destinationVisibility ?? "members";
-    destination.permissions.canAddTasks = options.canAddTasks ?? true;
-    destination.list.archivedAt = options.archived ? "2026-11-07T00:00:00Z" : null;
-    const moves: Array<{ orgId: string; taskId: string; input: Parameters<DenClient["moveProductTask"]>[2] }> = [];
-    const order: string[] = [];
+for (const surface of ["table", "detail"] as const) {
+  test(`${surface}: non-creator files a visible task, reloads, and removes just one membership`, async () => {
+    const original = { ...destination, id: "list_orig", name: "Original" };
+    let listed = { ...task(1), visibility: "members" as const, listIds: [original.id], listId: "legacy_hidden" };
+    let directory = [original];
+    const writes: Array<[string, string, string, boolean]> = [];
     const client = connectedClient({
       listProductTasks: async () => ({ items: [listed], nextCursor: "" }),
-      listProductTaskLists: async () => ({ items: [{ ...moveDestination, visibility: "private" }], nextCursor: "" }),
-      getProductTask: async () => { order.push("task"); if (options.failure === "task") throw new Error("Task read failed"); return detail; },
-      getProductTaskList: async (orgId, listId) => { expect(orgId).toBe("org_one"); expect(listId).toBe(moveDestination.id); order.push("destination"); if (options.failure === "destination") throw new Error("Destination read failed"); return destination; },
-      moveProductTask: async (orgId, taskId, input) => { order.push("move"); moves.push({ orgId, taskId, input }); if (options.failure === "move") throw new DenApiError(409, "task_version_conflict", "Changed elsewhere"); return { taskId, version: 18, listId: input.destinationListId, visibility: "members", replayed: false }; },
+      getProductTask: async () => { const detail = result(listed); detail.permissions.canManageMembers = detail.permissions.canManageVisibility = false; return detail; },
+      listProductTaskLists: async () => ({ items: directory, nextCursor: "" }),
+      createProductTaskList: async () => { directory = [original, destination]; return destinationResult(); },
+      getProductTaskList: async () => destinationResult(),
+      setProductTaskListMembership: async (org, taskId, listId, added) => {
+        writes.push([org, taskId, listId, added]);
+        listed = { ...listed, listIds: added ? [...listed.listIds, listId] : listed.listIds.filter((id) => id !== listId) };
+        return { taskId, listId, added };
+      },
     });
-    const originalConfirm = globalThis.confirm;
-    const messages: string[] = [];
-    globalThis.confirm = (message) => { order.push("confirm"); messages.push(message ?? ""); expect(moves).toHaveLength(0); return options.confirm ?? true; };
     let renderer: TestRenderer.ReactTestRenderer;
-    await act(async () => { renderer = TestRenderer.create(connectedPage(client)); });
-    await settle();
-    try {
-      await act(async () => { renderer!.root.findByProps({ "data-testid": "tasks-sidebar" }).findAllByType("button").find((button) => Array.isArray(button.props.children) && button.props.children.includes("All tasks"))!.props.onClick(); });
+    const mount = async () => {
+      await act(async () => { renderer = TestRenderer.create(connectedPage(client, surface === "detail" ? listed.id : undefined)); });
       await settle();
-      await act(async () => { renderer!.root.findByProps({ "data-testid": `task-list-option-move_task-${options.remove ? "none" : moveDestination.id}` }).props.onClick(); });
-      await settle();
-      expect(messages).toHaveLength(scenario.prompts);
-      if (scenario.prompts) {
-        expect(messages[0]).toContain("Shared destination");
-        expect(messages[0]).toContain("Members");
-        expect(messages[0]).toContain("Choose Cancel to keep the task private");
-        expect(order.slice(0, 3)).toEqual(["task", "destination", "confirm"]);
+      if (surface === "table") {
+        await act(async () => { renderer.root.findByProps({ "data-testid": "tasks-sidebar" }).findAllByType("button").find((b) => Array.isArray(b.props.children) && b.props.children.includes("All tasks"))!.props.onClick(); });
+        await settle();
       }
-      expect(moves).toHaveLength(scenario.moves);
-      if (scenario.moves) expect(moves[0]).toEqual({ orgId: "org_one", taskId: listed.id, input: { expectedVersion: 17, idempotencyKey: expect.any(String), destinationListId: options.remove ? "" : moveDestination.id, ...(scenario.prompts ? { confirmedVisibility: "members" } : {}) } });
-      if (options.denied) expect(toastErrors).toContain("You do not have permission to change this task list.");
-      if (options.failure === "task") expect(toastErrors).toContain("Task read failed");
-      if (options.failure === "destination") expect(toastErrors).toContain("Destination read failed");
-      if (options.failure === "move") expect(toastWarnings).toHaveLength(1);
-      if (!scenario.moves || options.failure) expect(renderer!.root.findByProps({ "data-testid": "task-list-trigger-move_task" }).findAll((node) => node.props.children === "Shared destination")).toHaveLength(0);
-    } finally {
-      globalThis.confirm = originalConfirm;
-      await act(async () => { renderer!.unmount(); });
-    }
+    };
+    const option = (id: string) => renderer.root.findByProps({ "data-testid": `task-list-option-${listed.id}-${id}` });
+    await mount();
+    try {
+      expect(option(original.id).props["aria-pressed"]).toBe(true);
+      expect(renderer!.root.findAllByProps({ "data-testid": `task-list-option-${listed.id}-none` })).toHaveLength(0);
+      await act(async () => { renderer.root.findByProps({ "data-testid": `task-list-search-${listed.id}` }).props.onChange({ currentTarget: { value: destination.name } }); });
+      await act(async () => { renderer.root.findByProps({ "data-testid": `task-list-create-${listed.id}` }).props.onClick(); });
+      await settle();
+      expect(option(original.id).props["aria-pressed"]).toBe(true);
+      expect(option(destination.id).props["aria-pressed"]).toBe(true);
+      await act(async () => renderer.unmount());
+      await mount(); // New query client; checked state must come from the server projection.
+      expect(option(destination.id).props["aria-pressed"]).toBe(true);
+      await act(async () => { option(destination.id).props.onClick(); });
+      await settle();
+      expect(option(original.id).props["aria-pressed"]).toBe(true);
+      expect(option(destination.id).props["aria-pressed"]).toBe(false);
+      expect(writes).toEqual([["org_one", listed.id, destination.id, true], ["org_one", listed.id, destination.id, false]]);
+    } finally { await act(async () => renderer.unmount()); }
   });
 }
 
-for (const phase of ["task", "destination", "confirmation", "confirmation-user", "confirmation-deployment", "confirmation-unmount"] as const) {
-  test(`task list move stops after scope switch during ${phase}`, async () => {
-    const pendingTask = deferred<DenProductTaskResult>();
-    const pendingDestination = deferred<ReturnType<typeof moveDestinationResult>>();
-    const listed = task(1, "Move task", "", "move_task");
-    let moves = 0;
-    let prompts = 0;
-    let destinationReads = 0;
+for (const boundary of ["read-only", "archived", "org", "user", "deployment", "unmount", "server-denied"] as const) {
+  test(`list membership respects ${boundary} boundary`, async () => {
+    const listed = task(1);
+    const pending = deferred<ReturnType<typeof destinationResult>>();
+    let writes = 0;
     const client = connectedClient({
-      listProductTasks: async () => ({ items: [listed], nextCursor: "" }),
-      listProductTaskLists: async () => ({ items: [moveDestination], nextCursor: "" }),
-      getProductTask: async () => phase === "task" ? pendingTask.promise : result(listed),
-      getProductTaskList: async () => { destinationReads += 1; return phase === "destination" ? pendingDestination.promise : moveDestinationResult(); },
-      moveProductTask: async () => { moves += 1; throw new Error("Must not write after scope switch"); },
+      listProductTaskLists: async () => ({ items: [destination], nextCursor: "" }),
+      getProductTask: async () => result(listed),
+      getProductTaskList: async () => pending.promise,
+      setProductTaskListMembership: async () => { writes++; throw new DenApiError(403, "forbidden", "Membership denied"); },
     });
     const queryClient = createQueryClient();
     setCloudSession(client);
     let renderer: TestRenderer.ReactTestRenderer;
-    const switchScope = () => {
-      if (phase === "confirmation-unmount") { act(() => renderer!.unmount()); return; }
-      setCloudSession(client, "org_two");
-      if (phase === "confirmation-user") { setCloudSession(client); cloudSession.user = { id: "user_two", name: "Other" }; }
-      if (phase === "confirmation-deployment") { setCloudSession(client); cloudSession.baseUrl = "https://other.example"; }
-      act(() => { renderer!.update(taskPage(queryClient)); });
-    };
-    const originalConfirm = globalThis.confirm;
-    globalThis.confirm = () => { prompts += 1; if (phase.startsWith("confirmation")) switchScope(); return true; };
-    await act(async () => { renderer = TestRenderer.create(taskPage(queryClient)); });
+    await act(async () => { renderer = TestRenderer.create(taskPage(queryClient, listed.id)); });
     await settle();
     try {
-      await act(async () => { renderer!.root.findByProps({ "data-testid": "tasks-sidebar" }).findAllByType("button").find((button) => Array.isArray(button.props.children) && button.props.children.includes("All tasks"))!.props.onClick(); });
+      const option = () => renderer.root.findByProps({ "data-testid": `task-list-option-${listed.id}-${destination.id}` });
+      await act(async () => { option().props.onClick(); });
+      if (boundary === "org") setCloudSession(client, "org_two");
+      if (boundary === "user") cloudSession.user = { id: "user_two", name: "Other" };
+      if (boundary === "deployment") cloudSession.baseUrl = "https://other.example";
+      if (boundary === "unmount") await act(async () => renderer.unmount());
+      else await act(async () => renderer.update(taskPage(queryClient, listed.id)));
+      const readable = destinationResult(); // The list remains visible even when not writable.
+      readable.permissions.canAddTasks = boundary !== "read-only";
+      if (boundary === "archived") readable.list = { ...destination, archivedAt: destination.createdAt };
+      await act(async () => { pending.resolve(readable); });
       await settle();
-      await act(async () => { renderer!.root.findByProps({ "data-testid": "task-list-option-move_task-list_destination" }).props.onClick(); });
-      if (!phase.startsWith("confirmation")) {
-        switchScope();
-        await act(async () => { pendingTask.resolve(result(listed)); pendingDestination.resolve(moveDestinationResult()); });
-      }
-      await settle();
-      expect(moves).toBe(0);
-      expect(prompts).toBe(phase.startsWith("confirmation") ? 1 : 0);
-      expect(destinationReads).toBe(phase === "task" ? 0 : 1);
-      expect(toastErrors).toHaveLength(0);
-    } finally {
-      globalThis.confirm = originalConfirm;
-      await act(async () => { renderer!.unmount(); });
-    }
+      expect(writes).toBe(boundary === "server-denied" ? 1 : 0);
+      if (["read-only", "archived", "server-denied"].includes(boundary)) {
+        expect(option().props["aria-pressed"]).toBe(false);
+        expect(toastErrors).toHaveLength(1);
+      } else expect(toastErrors).toHaveLength(0);
+    } finally { if (boundary !== "unmount") await act(async () => renderer.unmount()); }
   });
 }
 

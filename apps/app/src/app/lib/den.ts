@@ -81,6 +81,8 @@ export type DenProductTask = {
   displayNumber: number | null;
   creatorMemberId: string;
   listId: string | null;
+  /** Visible memberships. An empty projection supersedes the legacy listId. */
+  listIds?: string[];
   title: string;
   description: string;
   priority: DenProductTaskPriority;
@@ -104,6 +106,9 @@ export type DenProductTaskPermissions = {
   canManageVisibility: boolean; canComplete: boolean; canReopen: boolean; canCancel: boolean;
   canComment: boolean; canDelete: boolean; canRestore: boolean;
 };
+export function productTaskListIds(task: Pick<DenProductTask, "listId" | "listIds">): string[] {
+  return task.listIds ?? (task.listId ? [task.listId] : []);
+}
 export type DenProductTaskResult = { task: DenProductTask; members: DenProductTaskMember[]; permissions: DenProductTaskPermissions; tombstone: boolean; replayed: boolean };
 export type DenProductTaskPage = {
   items: DenProductTask[];
@@ -949,11 +954,14 @@ function normalizeProductTask(value: unknown): DenProductTask | null {
     !["todo", "completed", "canceled"].includes(String(value.status)) ||
     typeof value.createdAt !== "string" || typeof value.updatedAt !== "string") return null;
   const nullableString = (input: unknown) => typeof input === "string" ? input : null;
+  if ("listIds" in value && !(Array.isArray(value.listIds) && value.listIds.every((id) => typeof id === "string" && id.length > 0))) return null;
+  const listIds = Array.isArray(value.listIds) ? [...new Set<string>(value.listIds)] : productTaskListIds({ listId: nullableString(value.listId) });
   return {
     id: value.id,
     displayNumber: Number.isSafeInteger(value.displayNumber) && Number(value.displayNumber) > 0 ? Number(value.displayNumber) : null,
     creatorMemberId: value.creatorMemberId,
-    listId: nullableString(value.listId),
+    listId: listIds[0] ?? null,
+    listIds,
     title: value.title,
     description: value.description,
     priority: value.priority as DenProductTaskPriority,
@@ -4459,6 +4467,12 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
     async updateProductTask(orgId: string, taskId: string, input: DenProductTaskUpdateInput): Promise<DenProductTaskResult> {
       const payload = await requestJson<unknown>(baseUrls, `/v1/tasks/${encodeURIComponent(taskId)}`, { method: "PATCH", token, organizationId: orgId, body: input });
       return normalizeProductTaskResult(payload);
+    },
+
+    async setProductTaskListMembership(orgId: string, taskId: string, listId: string, added: boolean) {
+      const result = await requestJson<unknown>(baseUrls, `/v1/tasks/${encodeURIComponent(taskId)}/lists/${encodeURIComponent(listId)}`, { method: added ? "PUT" : "DELETE", token, organizationId: orgId });
+      if (!isRecord(result) || result.taskId !== taskId || result.listId !== listId || typeof result.added !== "boolean") throw new DenApiError(500, "invalid_task_list_membership", "Task list membership response was invalid.");
+      return { taskId, listId, added: result.added };
     },
 
     async moveProductTask(orgId: string, taskId: string, input: DenProductTaskMoveInput): Promise<DenProductTaskMoveResult> {

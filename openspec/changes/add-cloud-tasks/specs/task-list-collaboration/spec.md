@@ -7,6 +7,13 @@ The system SHALL allow organization members to create task lists with a name, de
 - **WHEN** a member creates a list without sharing it
 - **THEN** the list is private and the creator becomes its owner and administrator
 
+### Requirement: Organize shared tasks without sharing the destination list
+The task creator SHALL be able to place a shared task in any active list where the creator may add tasks, including a private list. Filing the task in a private list SHALL NOT change its visibility or explicit members, or grant those members access to that list.
+
+#### Scenario: File a task assigned to a colleague in a private list
+- **WHEN** the task creator moves the task into their private list
+- **THEN** its assignee can still see and work on the task without seeing the private list's identity or its other tasks
+
 ### Requirement: Task-list collaboration summary
 The Desktop SHALL show the first five currently authorized task-list viewers as member avatars in the selected task-list header and SHALL represent any additional viewers with a numeric overflow badge. The avatar group SHALL open collaborator management, while the adjacent Share action SHALL open the add-collaborator flow. A member without `canManageMembers` SHALL receive a read-only collaborator view without mutation controls.
 
@@ -81,35 +88,26 @@ The Desktop SHALL wait until confirmation before paging through selected groups,
 - **THEN** the Desktop then expands current group users that map to current organization members and includes them in the explicit list-member update
 - **AND** users outside the current organization are ignored
 
-### Requirement: Single list membership
-The system SHALL allow a task to belong to at most one task list in MVP.
+### Requirement: Independent task filings
+A member who can view a task and add tasks to an active destination list SHALL be able to add or remove that one filing without task edit or creator privileges. Repeating the operation SHALL have the same effect. Only list IDs visible to the caller SHALL appear in API results.
 
-#### Scenario: Move task between lists
-- **WHEN** an authorized member moves a task to a different list
-- **THEN** the previous list relationship is replaced and a task event is recorded
+#### Scenario: Classify the same task twice
+- **WHEN** a reader files an existing task in a second list
+- **THEN** both lists refer to the same task and completion state, and removing one filing leaves the other intact
 
-### Requirement: List-derived authorization
-The system SHALL grant task access from current list membership and SHALL revoke only that derived access when a member leaves the list or the task leaves the list.
+### Requirement: Preserve legacy list-derived authorization
+The system SHALL preserve the original authorization context for existing tasks. New filings SHALL NOT grant or revoke task access or edit privileges.
 
 #### Scenario: Remove list member
 - **WHEN** an administrator removes a list member who has no other task role
 - **THEN** that member immediately loses access to member-visible tasks in the list
 
-### Requirement: Private task sharing confirmation
-The system SHALL prevent a private task from entering a shared list until an authorized administrator confirms changing the task to members or organization visibility.
+### Requirement: Filing is not sharing
+Filing a private task in a shared list SHALL NOT change its visibility, members, or who can see the task in that list.
 
 #### Scenario: Add private task to shared list
-- **WHEN** a user selects a shared list for a private task
-- **THEN** the system requires explicit visibility confirmation before moving the task
-
-#### Scenario: Cancel private task sharing
-- **WHEN** the user cancels the visibility confirmation
-- **THEN** the Desktop sends no move or visibility mutation and preserves the displayed task list
-
-#### Scenario: Authorize and scope a Desktop sharing confirmation
-- **WHEN** a private task is moved to a shared list through the Desktop list picker
-- **THEN** the Desktop loads current task and destination-list permissions, requires task member/visibility management and destination add-task permission, and explains that confirming changes visibility to members and grants authorized list members access
-- **AND** it sends the move with the current task version only after confirmation while the captured deployment, user, organization, and page lifetime remain valid
+- **WHEN** a member can see the list but has no access to the task itself
+- **THEN** the filed task does not appear in their list results
 
 ### Requirement: Archive and restore lists
 The system SHALL allow list administrators to archive and restore lists without deleting their tasks.
@@ -141,10 +139,10 @@ Deleting a task list SHALL by default retain every task and clear its list relat
 
 #### Scenario: Delete list and retain tasks by default
 - **WHEN** the owner confirms deletion without selecting the unassigned-task option
-- **THEN** every task is retained, moved out of the list, versioned, and receives a list-change event before the list is permanently deleted
+- **THEN** every task is retained and its other filings are preserved
 
 #### Scenario: Delete currently unassigned tasks
 - **WHEN** the owner confirms deletion with `deleteUnassignedTasks` selected
-- **THEN** tasks with no assignee at transaction time are soft-deleted with a 30-day restore window
+- **THEN** only eligible tasks owned by the deleting member with no assignee and no other filing may be soft-deleted with a 30-day restore window
 - **AND** assigned tasks are retained and moved out of the list
 - **AND** the assignee decision does not rely on a Desktop snapshot
