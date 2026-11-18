@@ -5,14 +5,14 @@ import { compile } from "tailwindcss";
 const read = (path: string) => readFileSync(new URL(`../src/${path}`, import.meta.url), "utf8");
 
 describe("secondary app inset shells", () => {
-  test("calendar gives the empty strip above the inset its own native macOS title bar", () => {
-    const page = read("react-app/domains/calendar/calendar-page.tsx");
-    const strip = page.match(/<div[^>]*data-testid="calendar-titlebar-drag-region"[^>]*\/>/)?.[0];
-    expect(strip).toContain("mac:titlebar-drag");
-    expect(strip).toContain("h-11"); // Corresponds to AppInsetSurface's mt-11.
-    expect(strip).toContain("left-[76px]"); // Leave the native window controls alone.
-    expect(page.indexOf(strip!)).toBeLessThan(page.indexOf('<AppInsetSurface testId="calendar-inset-surface"'));
+  test("keeps the calendar title-bar drag region above the inset and clear of the macOS window buttons", () => {
+    const source = read("react-app/domains/calendar/calendar-page.tsx");
+    const strip = source.match(/<div[^>]*data-testid="calendar-titlebar-drag-region"[^>]*\/>/)?.[0];
+    expect(strip).toContain("absolute left-[76px] right-0 top-0");
+    expect(strip).toContain("h-11 select-none mac:block mac:titlebar-no-drag");
+    expect(source.indexOf(strip!)).toBeLessThan(source.indexOf('<AppInsetSurface testId="calendar-inset-surface"'));
   });
+
   test("defines one shared rounded inset surface contract", () => {
     const source = read("react-app/shell/app-inset-surface.tsx");
     expect(source).toContain("mt-11");

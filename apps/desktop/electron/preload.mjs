@@ -1,8 +1,8 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
-import { installWindowChromeGestures } from "./window-chrome-gestures.mjs";
+import { CALENDAR_WINDOW_GESTURE, installCalendarWindowGestures } from "./calendar-window-gestures.mjs";
 
 if (process.platform === "darwin" && process.isMainFrame) {
-  installWindowChromeGestures((action, point) => ipcRenderer.send("jugglework:window-chrome", action, point));
+  installCalendarWindowGestures((action, position) => ipcRenderer.send(CALENDAR_WINDOW_GESTURE, action, position));
 }
 
 const NATIVE_DEEP_LINK_EVENT = "jugglework:deep-link-native";

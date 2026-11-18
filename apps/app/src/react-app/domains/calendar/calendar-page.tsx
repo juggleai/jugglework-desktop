@@ -115,8 +115,12 @@ function CalendarPageFrame(props: CalendarPageProps & { children: React.ReactNod
         onOpenSettings={props.onOpenSettings}
         onOpenTaskSearch={props.onOpenTaskSearch}
       />
-      {/* Give Electron a distinct title-bar hit region above the inset, away from the traffic lights. */}
-      <div aria-hidden="true" className="absolute left-[76px] right-0 top-0 z-20 hidden h-11 select-none mac:block mac:titlebar-drag" data-testid="calendar-titlebar-drag-region" />
+      {/* Let the calendar title-bar listener receive mouse events in this strip. */}
+      <div
+        aria-hidden="true"
+        className="absolute left-[76px] right-0 top-0 z-20 hidden h-11 select-none mac:block mac:titlebar-no-drag"
+        data-testid="calendar-titlebar-drag-region"
+      />
       <AppInsetSurface testId="calendar-inset-surface">
         <main className="relative flex min-h-0 min-w-0 flex-1 flex-col" data-testid="calendar-main">
           <div className="flex h-[54px] shrink-0 items-center justify-between gap-4 border-b border-dls-border px-7" data-testid="calendar-page-header">

@@ -62,7 +62,7 @@ export function AppSecondarySidebarTopControls(props: {
       </div>
       {props.sidebarOpen ? <span
         aria-hidden="true"
-        className="absolute top-2 z-40 block h-7 w-px bg-dls-border pointer-events-none"
+        className="absolute top-2 z-40 block h-7 w-px bg-dls-border"
         style={{ left: expandedBoundary }}
         data-app-secondary-sidebar-top-divider
       /> : null}

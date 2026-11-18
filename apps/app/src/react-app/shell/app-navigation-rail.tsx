@@ -1009,7 +1009,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
         ) : null}
       </nav>
 
-      <div className="mt-auto flex w-full flex-col items-center gap-2">
+      <div className="mt-auto flex w-full flex-col items-center gap-2 mac:titlebar-no-drag">
         {desktopUpdateVisible ? (
           <RailButton
             label={desktopUpdateLabel}
@@ -1047,7 +1047,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
                 data-testid="app-rail-account-menu"
                 data-app-rail-button
                 className={cn(
-                  "relative flex size-9 items-center justify-center rounded-xl transition-[background-color,transform] duration-150 mac:titlebar-no-drag",
+                  "relative flex size-9 items-center justify-center rounded-xl transition-[background-color,transform] duration-150",
                   "hover:bg-dls-hover active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/35 focus-visible:ring-offset-1 focus-visible:ring-offset-dls-sidebar",
                   "data-popup-open:bg-dls-active",
                   props.settingsActive && "bg-dls-active",

@@ -57,36 +57,6 @@
   app-region: no-drag;
 }
 
-/* Keep real mouse events in the web view across the custom title bar and rail.
-   Electron otherwise sends a press on app-region: drag straight to AppKit,
-   where a failed native drag never reaches the shell's pointer handler.
-   These rectangles affect native hit testing only; DOM controls below still
-   receive clicks, hover and sidebar resize gestures. */
-.jugglework-platform-mac [data-window-gesture-regions] {
-  position: absolute;
-  inset: 0;
-  z-index: 2147483647;
-  pointer-events: none;
-}
-
-.jugglework-platform-mac [data-window-gesture-regions]::before,
-.jugglework-platform-mac [data-window-gesture-regions]::after {
-  content: "";
-  position: absolute;
-  app-region: no-drag;
-}
-
-.jugglework-platform-mac [data-window-gesture-regions]::before {
-  inset: 0 0 auto;
-  height: var(--app-topbar-height);
-}
-
-.jugglework-platform-mac [data-window-gesture-regions]::after {
-  inset-block: 0;
-  inset-inline-start: 0;
-  width: 3rem;
-}
-
 /* 可滚动内容统一使用窄滚动条，避免系统轨道形成不透明的宽边栏。 */
 @supports not selector(::-webkit-scrollbar) {
   .subtle-scrollbar {
