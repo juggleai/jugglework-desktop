@@ -85,6 +85,7 @@ mock.module("../src/components/ui/tabs", () => ({
 }));
 
 const { TaskPage, TaskShellContent } = await import("../src/react-app/domains/tasks/task-page");
+const { TaskDateTimeCell } = await import("../src/react-app/domains/tasks/task-date-time-cell");
 const { useUiStateStore } = await import("../src/react-app/shell/ui-state-store");
 const queryClients = new Set<QueryClient>();
 
@@ -153,6 +154,8 @@ function connectedClient(overrides: Partial<DenClient> = {}): DenClient {
     listProductTasks: async () => ({ items: [], membersByTaskId: {}, nextCursor: "" }),
     listProductTaskLists: async () => ({ items: [], nextCursor: "" }),
     listOrganizationMembers: async () => ({ members: [], total: 0, limit: 200, offset: 0 }),
+    listCollaborationGroups: async () => ({ groups: [], total: 0 }),
+    listCollaborationGroupMembers: async () => ({ members: [], total: 0, limit: 100, offset: 0 }),
     getProductTask: async () => result(task(1)),
     getProductTaskActivity: async () => ({ comments: [], events: [] }),
     listProductTaskActivity: async () => ({ items: [], nextCursor: "", hasMore: false, unreadCount: 0, latestSequence: 0 }),
@@ -348,7 +351,7 @@ test("Today renders an action summary and mutually exclusive overdue, due-today,
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const yesterdayNoon = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 12);
-  const overdue = { ...task(1, "Overdue launch", "", "today_overdue"), listId: "list_today", dueAt: yesterdayNoon.toISOString(), priority: "high" as const };
+  const overdue = { ...task(1, "Overdue launch", "", "today_overdue"), listId: "legacy_hidden", listIds: ["list_today", "second"], dueAt: yesterdayNoon.toISOString(), priority: "high" as const };
   const dueToday = { ...task(1, "Review today", "", "today_due"), creatorMemberId: "member_self", listId: "list_today", dueAt: today.toISOString() };
   const startsToday = { ...task(1, "Start research", "", "today_start"), listId: "list_today", startAt: today.toISOString() };
   const list: DenProductTaskList = { id: "list_today", creatorMemberId: "member_self", name: "Launch plan", description: "", marker: "L", visibility: "members", version: 1, archivedAt: null, createdAt: today.toISOString(), updatedAt: today.toISOString() };
@@ -359,7 +362,7 @@ test("Today renders an action summary and mutually exclusive overdue, due-today,
   };
   const client = connectedClient({
     listProductTasks: async () => ({ items: [startsToday, dueToday, overdue], membersByTaskId, nextCursor: "" }),
-    listProductTaskLists: async () => ({ items: [list], nextCursor: "" }),
+    listProductTaskLists: async () => ({ items: [list, { ...list, id: "second", name: "Planning" }], nextCursor: "" }),
     listOrganizationMembers: async () => ({ members: [{ id: "member_self", userId: "user_one", role: "member", user: { id: "user_one", name: "Self", account: null, email: null, avatar: null } }], total: 1, limit: 200, offset: 0 }),
   });
   let renderer: TestRenderer.ReactTestRenderer;
@@ -375,7 +378,7 @@ test("Today renders an action summary and mutually exclusive overdue, due-today,
     expect(renderer!.root.findAll((node) => node.props.children === "Assigned to me")).not.toHaveLength(0);
     expect(renderer!.root.findAll((node) => node.props.children === "Created by me")).not.toHaveLength(0);
     expect(renderer!.root.findAll((node) => node.props.children === "Following")).not.toHaveLength(0);
-    expect(renderer!.root.findAll((node) => Array.isArray(node.props.children) && node.props.children.includes("Launch plan"))).not.toHaveLength(0);
+    expect(renderer!.root.findByProps({ "data-testid": `today-task-row-${overdue.id}` }).findByProps({ children: "L Launch plan, L Planning" })).toBeDefined();
   } finally { await act(async () => { renderer!.unmount(); }); }
 });
 
@@ -480,7 +483,9 @@ test("selecting a sidebar task list constrains the shared workbench query", asyn
   try {
     const before = options.length;
     const sidebar = renderer!.root.findByProps({ "data-testid": "tasks-sidebar" });
-    const listButton = sidebar.findAllByType("button").find((button) => Array.isArray(button.props.children) && button.props.children.includes("Sidebar list"))!;
+    const listButton = sidebar.findByProps({ "data-testid": "tasks-sidebar-list-list_sidebar" });
+    expect(listButton.findAll((node) => node.type === "span" && node.props.children === "Sidebar list")).toHaveLength(1);
+    expect(listButton.findAll((node) => node.props.children === "S")).toHaveLength(0);
     await act(async () => { listButton.props.onClick(); });
     await settle();
     expect(options.slice(before).some((input) => input.view === "all" && JSON.stringify(input.listId) === JSON.stringify(["list_sidebar"]))).toBe(true);
@@ -489,7 +494,7 @@ test("selecting a sidebar task list constrains the shared workbench query", asyn
     expect(renderer!.root.findByProps({ "data-testid": "task-group-row-custom-default" })).toBeDefined();
     expect(renderer!.root.findByProps({ "data-testid": "task-custom-group-create-trigger" })).toBeDefined();
     const updatedSidebar = renderer!.root.findByProps({ "data-testid": "tasks-sidebar" });
-    const selectedListButton = updatedSidebar.findAllByType("button").find((button) => Array.isArray(button.props.children) && button.props.children.includes("Sidebar list"))!;
+    const selectedListButton = updatedSidebar.findByProps({ "data-testid": "tasks-sidebar-list-list_sidebar" });
     const allTasksButton = updatedSidebar.findAllByType("button").find((button) => Array.isArray(button.props.children) && button.props.children.includes("All tasks"))!;
     expect(selectedListButton.props["aria-current"]).toBe("page");
     expect(selectedListButton.props.className).toContain("bg-blue-3");
@@ -497,6 +502,366 @@ test("selecting a sidebar task list constrains the shared workbench query", asyn
     expect(allTasksButton.props["aria-current"]).toBeUndefined();
     expect(allTasksButton.props.className).not.toContain("bg-blue-3");
   } finally { await act(async () => renderer!.unmount()); }
+});
+
+test("task-list detail failure keeps header operations available instead of showing a permanent loader", async () => {
+  const list: DenProductTaskList = { id: "list_failed_detail", creatorMemberId: "member_self", name: "Available list", description: "", marker: "A", visibility: "private", version: 1, archivedAt: null, createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z" };
+  const client = connectedClient({
+    listProductTaskLists: async () => ({ items: [list], nextCursor: "" }),
+    getProductTaskList: async () => { throw new DenApiError(500, "invalid_task_list_payload", "Task list response was invalid."); },
+  });
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client)); });
+  await settle();
+  try {
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "tasks-sidebar-list-list_failed_detail" }).props.onClick(); });
+    await settle();
+    expect(renderer!.root.findByProps({ "data-testid": "tasks-page-title" }).props.children).toBe("Available list");
+    expect(renderer!.root.findAllByProps({ "data-testid": "task-list-collaboration-loading" })).toHaveLength(0);
+    expect(renderer!.root.findByProps({ "data-testid": "task-create-menu" })).toBeDefined();
+  } finally { await act(async () => renderer!.unmount()); }
+});
+
+test("task-list header shares with people and expands group members into collaborators", async () => {
+  const list: DenProductTaskList = { id: "list_shared", creatorMemberId: "member_self", name: "Launch list", description: "", marker: "L", visibility: "private", version: 3, archivedAt: null, createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z" };
+  const self = { id: "member_self", userId: "user_one", role: "member", user: { id: "user_one", name: "Self", account: null, email: null, avatar: "https://example.com/self.png" } };
+  const teammate = { id: "member_two", userId: "user_two", role: "member", user: { id: "user_two", name: "Teammate", account: null, email: null, avatar: null } };
+  const groupMate = { id: "member_three", userId: "user_three", role: "member", user: { id: "user_three", name: "Group mate", account: null, email: null, avatar: null } };
+  const existingAdmin = { id: "member_four", userId: "user_four", role: "member", user: { id: "user_four", name: "Existing admin", account: null, email: null, avatar: null } };
+  const updates: Array<{ listId: string; patch: Record<string, unknown> }> = [];
+  const groupMemberReads: string[] = [];
+  const detail = { list, members: [{ memberId: "member_self", role: "administrator" as const }, { memberId: "member_four", role: "administrator" as const }], permissions: { canView: true, canEdit: true, canManageMembers: true, canTransferOwnership: false, canDelete: false, canAddTasks: true, canArchive: true, canRestore: false }, replayed: false };
+  const client = connectedClient({
+    listProductTaskLists: async () => ({ items: [list], nextCursor: "" }),
+    getProductTaskList: async () => detail,
+    listOrganizationMembers: async () => ({ members: [self, teammate, groupMate, existingAdmin], total: 4, limit: 200, offset: 0 }),
+    listCollaborationGroups: async () => ({ groups: [{ id: "group_one", name: "Launch group", avatar: null, groupType: 0, organizationId: "org_one" }], total: 1 }),
+    listCollaborationGroupMembers: async (_orgId, groupId) => { groupMemberReads.push(groupId); return { members: [{ id: "relation_three", groupId: "group_one", userId: "user_three", name: "Group mate", account: null, avatar: null }], total: 1, limit: 100, offset: 0 }; },
+    updateProductTaskList: async (_orgId, listId, patch) => {
+      updates.push({ listId, patch });
+      return { ...detail, list: { ...list, visibility: "members", version: 4 }, members: [{ memberId: "member_self", role: "administrator" }, { memberId: "member_four", role: "administrator" }, { memberId: "member_two", role: "member" }, { memberId: "member_three", role: "member" }] };
+    },
+  });
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client)); });
+  await settle();
+  try {
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "tasks-sidebar-list-list_shared" }).props.onClick(); });
+    await settle();
+    expect(renderer!.root.findByProps({ "data-testid": "task-list-collaboration-summary" })).toBeDefined();
+    expect(renderer!.root.findAllByProps({ "data-testid": "task-create-menu" })).toHaveLength(0);
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-list-share-trigger" }).props.onClick(); });
+    await settle();
+    const dialog = renderer!.root.findByProps({ "data-testid": "task-list-share-dialog" });
+    const footer = dialog.findByProps({ "data-testid": "task-list-share-footer" });
+    expect(footer.props.className).toContain("mx-0");
+    expect(footer.props.className).toContain("mb-0");
+    expect(footer.props.className).toContain("rounded-b-2xl");
+    expect(dialog.findAllByProps({ "data-testid": "task-list-share-results" })).toHaveLength(0);
+    expect(dialog.findAllByProps({ "data-testid": "task-list-share-member-member_two" })).toHaveLength(0);
+    const search = dialog.findByProps({ "aria-label": "Search people and groups" });
+    await act(async () => { search.props.onChange({ currentTarget: { value: "Team" } }); });
+    expect(dialog.findAllByProps({ "data-testid": "task-list-share-results" })).toHaveLength(0);
+    await act(async () => { dialog.findByProps({ "data-testid": "task-list-share-search" }).props.onClick(); });
+    expect(dialog.findByProps({ "data-testid": "task-list-share-member-member_two" })).toBeDefined();
+    await act(async () => { dialog.findByProps({ "data-testid": "task-list-share-member-member_two" }).props.onClick(); });
+    expect(dialog.findByProps({ "data-testid": "task-list-share-chip-member-member_two" })).toBeDefined();
+    expect(dialog.findAllByProps({ "data-testid": "task-list-share-results" })).toHaveLength(0);
+    await act(async () => { dialog.findByProps({ "aria-label": "Remove Teammate" }).props.onClick(); });
+    expect(dialog.findAllByProps({ "data-testid": "task-list-share-chip-member-member_two" })).toHaveLength(0);
+    expect(dialog.findByProps({ "data-testid": "task-list-share-confirm" }).props.disabled).toBe(true);
+    await act(async () => { search.props.onChange({ currentTarget: { value: "Team" } }); });
+    await act(async () => { search.props.onKeyDown({ key: "Enter", preventDefault: () => undefined }); });
+    await act(async () => { dialog.findByProps({ "data-testid": "task-list-share-member-member_two" }).props.onClick(); });
+    await act(async () => { search.props.onChange({ currentTarget: { value: "Launch" } }); });
+    await act(async () => { search.props.onKeyDown({ key: "Enter", preventDefault: () => undefined }); });
+    await act(async () => { dialog.findByProps({ "data-testid": "task-list-share-group-group_one" }).props.onClick(); });
+    expect(dialog.findByProps({ "data-testid": "task-list-share-chip-group-group_one" })).toBeDefined();
+    expect(groupMemberReads).toHaveLength(0);
+    await act(async () => { dialog.findByProps({ "data-testid": "task-list-share-confirm" }).props.onClick(); });
+    await settle();
+    expect(groupMemberReads).toEqual(["group_one"]);
+    expect(updates).toHaveLength(1);
+    expect(updates[0]?.listId).toBe("list_shared");
+    expect(updates[0]?.patch).toMatchObject({ expectedVersion: 3, visibility: "members", members: [{ memberId: "member_self", role: "administrator" }, { memberId: "member_four", role: "administrator" }, { memberId: "member_two", role: "member" }, { memberId: "member_three", role: "member" }], idempotencyKey: expect.any(String) });
+    expect(renderer!.root.findAllByProps({ "data-testid": "task-list-share-dialog" })).toHaveLength(0);
+  } finally { await act(async () => { renderer!.unmount(); }); }
+});
+
+test("task-list sharing is read-only without member-management permission", async () => {
+  const list: DenProductTaskList = { id: "list_read_only", creatorMemberId: "member_owner", name: "Read only list", description: "", marker: "R", visibility: "members", version: 2, archivedAt: null, createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z" };
+  const owner = { id: "member_owner", userId: "user_owner", role: "member", user: { id: "user_owner", name: "Owner", account: null, email: null, avatar: null } };
+  const viewer = { id: "member_self", userId: "user_one", role: "member", user: { id: "user_one", name: "Viewer", account: null, email: null, avatar: null } };
+  const client = connectedClient({
+    listProductTaskLists: async () => ({ items: [list], nextCursor: "" }),
+    getProductTaskList: async () => ({ list, members: [{ memberId: "member_owner", role: "administrator" }, { memberId: "member_self", role: "member" }], permissions: { canView: true, canEdit: false, canManageMembers: false, canTransferOwnership: false, canDelete: false, canAddTasks: false, canArchive: false, canRestore: false }, replayed: false }),
+    listOrganizationMembers: async () => ({ members: [owner, viewer], total: 2, limit: 200, offset: 0 }),
+  });
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client)); });
+  await settle();
+  try {
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "tasks-sidebar-list-list_read_only" }).props.onClick(); });
+    await settle();
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-list-share-trigger" }).props.onClick(); });
+    const dialog = renderer!.root.findByProps({ "data-testid": "task-list-share-dialog" });
+    expect(dialog.findAllByProps({ "aria-label": "Search people and groups" })).toHaveLength(0);
+    expect(dialog.findAllByProps({ "data-testid": "task-list-share-search" })).toHaveLength(0);
+    expect(dialog.findAllByProps({ "data-testid": "task-list-share-confirm" })).toHaveLength(0);
+    expect(dialog.findAllByProps({ children: "You can view collaborators, but you do not have permission to change them." }).length).toBeGreaterThan(0);
+  } finally { await act(async () => { renderer!.unmount(); }); }
+});
+
+test("task-list collaborator avatars open management and save role and removal changes", async () => {
+  const list: DenProductTaskList = { id: "list_manage", creatorMemberId: "member_self", name: "Manage list", description: "", marker: "M", visibility: "members", version: 5, archivedAt: null, createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z" };
+  const directory = Array.from({ length: 7 }, (_, index) => ({ id: index === 0 ? "member_self" : `member_${index + 1}`, userId: `user_${index + 1}`, role: "member", user: { id: `user_${index + 1}`, name: index === 0 ? "Owner" : `Collaborator ${index + 1}`, account: null, email: null, avatar: null } }));
+  const detail = {
+    list,
+    members: [{ memberId: "member_self", role: "administrator" as const }, ...directory.slice(1).map((member) => ({ memberId: member.id, role: "member" as const }))],
+    permissions: { canView: true, canEdit: true, canManageMembers: true, canTransferOwnership: false, canDelete: false, canAddTasks: true, canArchive: true, canRestore: false },
+    replayed: false,
+  };
+  const updates: Array<Record<string, unknown>> = [];
+  const client = connectedClient({
+    listProductTaskLists: async () => ({ items: [list], nextCursor: "" }),
+    getProductTaskList: async () => detail,
+    listOrganizationMembers: async () => ({ members: directory, total: directory.length, limit: 200, offset: 0 }),
+    updateProductTaskList: async (_orgId, _listId, patch) => {
+      updates.push(patch);
+      return { ...detail, list: { ...list, version: 6 }, members: [{ memberId: "member_self", role: "administrator" }, { memberId: "member_2", role: "administrator" }, ...directory.slice(3).map((member) => ({ memberId: member.id, role: "member" as const }))] };
+    },
+  });
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client)); });
+  await settle();
+  try {
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "tasks-sidebar-list-list_manage" }).props.onClick(); });
+    await settle();
+    const summary = renderer!.root.findByProps({ "data-testid": "task-list-collaboration-summary" });
+    const avatarTrigger = summary.findByProps({ "data-testid": "task-list-collaborators-trigger" });
+    expect(avatarTrigger.props.children[0]).toHaveLength(5);
+    expect(summary.findByProps({ "data-testid": "task-list-collaborator-overflow" }).props.children).toEqual(["+", 2]);
+    await act(async () => { avatarTrigger.props.onClick(); });
+    let manage = renderer!.root.findByProps({ "data-testid": "task-list-collaborators-dialog" });
+    expect(manage.findByProps({ "data-testid": "task-list-collaborator-member_self" })).toBeDefined();
+    expect(manage.findAllByProps({ "data-testid": "task-list-collaborator-role-member_self" })).toHaveLength(0);
+
+    await act(async () => { manage.findByProps({ "data-testid": "task-list-add-collaborator" }).props.onClick(); });
+    expect(renderer!.root.findByProps({ "data-testid": "task-list-share-dialog" })).toBeDefined();
+    const addDialog = renderer!.root.findByProps({ "data-testid": "task-list-share-dialog" });
+    await act(async () => { addDialog.findAllByType("button").find((button) => button.props.children === "Cancel")!.props.onClick(); });
+    manage = renderer!.root.findByProps({ "data-testid": "task-list-collaborators-dialog" });
+
+    const memberTwoRow = manage.findByProps({ "data-testid": "task-list-collaborator-member_2" });
+    await act(async () => { memberTwoRow.findAllByType("button")[0]!.props.onClick(); });
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-list-collaborator-edit-member_2" }).props.onClick(); });
+    const memberThreeRow = manage.findByProps({ "data-testid": "task-list-collaborator-member_3" });
+    await act(async () => { memberThreeRow.findAllByType("button")[0]!.props.onClick(); });
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-list-collaborator-remove-member_3" }).props.onClick(); });
+    expect(manage.findAllByProps({ "data-testid": "task-list-collaborator-member_3" })).toHaveLength(0);
+    await act(async () => { manage.findByProps({ "data-testid": "task-list-collaborators-done" }).props.onClick(); });
+    await settle();
+    expect(updates).toHaveLength(1);
+    expect(updates[0]).toMatchObject({ expectedVersion: 5, visibility: "members", members: [{ memberId: "member_self", role: "administrator" }, { memberId: "member_2", role: "administrator" }, { memberId: "member_4", role: "member" }, { memberId: "member_5", role: "member" }, { memberId: "member_6", role: "member" }, { memberId: "member_7", role: "member" }] });
+    expect(renderer!.root.findAllByProps({ "data-testid": "task-list-collaborators-dialog" })).toHaveLength(0);
+  } finally { await act(async () => { renderer!.unmount(); }); }
+});
+
+test("task-list owner can transfer ownership to an existing collaborator", async () => {
+  const list: DenProductTaskList = { id: "list_transfer", creatorMemberId: "member_self", name: "Transfer list", description: "", marker: "T", visibility: "members", version: 2, archivedAt: null, createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z" };
+  const self = { id: "member_self", userId: "user_one", role: "member", user: { id: "user_one", name: "Owner", account: null, email: null, avatar: null } };
+  const teammate = { id: "member_two", userId: "user_two", role: "member", user: { id: "user_two", name: "Teammate", account: null, email: null, avatar: null } };
+  let detail = { list, members: [{ memberId: "member_self", role: "administrator" as const }, { memberId: "member_two", role: "member" as const }], permissions: { canView: true, canEdit: true, canManageMembers: true, canTransferOwnership: true, canDelete: true, canAddTasks: true, canArchive: true, canRestore: false }, replayed: false };
+  const transfers: Array<Record<string, unknown>> = [];
+  const client = connectedClient({
+    listProductTaskLists: async () => ({ items: [list], nextCursor: "" }),
+    getProductTaskList: async () => detail,
+    listOrganizationMembers: async () => ({ members: [self, teammate], total: 2, limit: 200, offset: 0 }),
+    transferProductTaskListOwnership: async (_orgId, listId, patch) => {
+      transfers.push({ listId, ...patch });
+      detail = { ...detail, list: { ...list, creatorMemberId: "member_two", version: 3 }, members: [{ memberId: "member_self", role: "administrator" }, { memberId: "member_two", role: "administrator" }], permissions: { ...detail.permissions, canTransferOwnership: false, canDelete: false } };
+      return detail;
+    },
+  });
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client)); });
+  await settle();
+  try {
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "tasks-sidebar-list-list_transfer" }).props.onClick(); });
+    await settle();
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-list-collaborators-trigger" }).props.onClick(); });
+    let manage = renderer!.root.findByProps({ "data-testid": "task-list-collaborators-dialog" });
+    const teammateRow = manage.findByProps({ "data-testid": "task-list-collaborator-member_two" });
+    await act(async () => { teammateRow.findAllByType("button")[0]!.props.onClick(); });
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-list-collaborator-owner-member_two" }).props.onClick(); });
+    await settle();
+    expect(transfers).toEqual([{ listId: "list_transfer", expectedVersion: 2, idempotencyKey: expect.any(String), newOwnerMemberId: "member_two" }]);
+    manage = renderer!.root.findByProps({ "data-testid": "task-list-collaborators-dialog" });
+    expect(manage.findByProps({ "data-testid": "task-list-collaborator-member_two" }).findAllByProps({ children: "Owner" }).length).toBeGreaterThan(0);
+    expect(manage.findAllByProps({ "data-testid": "task-list-collaborator-owner-member_self" })).toHaveLength(0);
+    expect(manage.findByProps({ "data-testid": "task-list-collaborator-member_self" }).findAllByProps({ children: "Can edit" }).length).toBeGreaterThan(0);
+  } finally { await act(async () => { renderer!.unmount(); }); }
+});
+
+test("task-list administrator who is not owner cannot see ownership transfer", async () => {
+  const list: DenProductTaskList = { id: "list_admin", creatorMemberId: "member_owner", name: "Admin list", description: "", marker: "A", visibility: "members", version: 2, archivedAt: null, createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z" };
+  const directory = [
+    { id: "member_owner", userId: "user_owner", role: "member", user: { id: "user_owner", name: "Owner", account: null, email: null, avatar: null } },
+    { id: "member_self", userId: "user_one", role: "member", user: { id: "user_one", name: "Administrator", account: null, email: null, avatar: null } },
+    { id: "member_two", userId: "user_two", role: "member", user: { id: "user_two", name: "Teammate", account: null, email: null, avatar: null } },
+  ];
+  const detail = { list, members: [{ memberId: "member_owner", role: "administrator" as const }, { memberId: "member_self", role: "administrator" as const }, { memberId: "member_two", role: "member" as const }], permissions: { canView: true, canEdit: true, canManageMembers: true, canTransferOwnership: false, canDelete: false, canAddTasks: true, canArchive: true, canRestore: false }, replayed: false };
+  const client = connectedClient({ listProductTaskLists: async () => ({ items: [list], nextCursor: "" }), getProductTaskList: async () => detail, listOrganizationMembers: async () => ({ members: directory, total: 3, limit: 200, offset: 0 }) });
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client)); });
+  await settle();
+  try {
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "tasks-sidebar-list-list_admin" }).props.onClick(); });
+    await settle();
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-list-collaboration-summary" }).findAllByType("button")[2]!.props.onClick(); });
+    expect(renderer!.root.findAllByProps({ "data-testid": "task-list-delete-action" })).toHaveLength(0);
+    expect(renderer!.root.findByProps({ "data-testid": "task-list-rename-action" })).toBeDefined();
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-list-collaborators-trigger" }).props.onClick(); });
+    const teammateRow = renderer!.root.findByProps({ "data-testid": "task-list-collaborator-member_two" });
+    await act(async () => { teammateRow.findAllByType("button")[0]!.props.onClick(); });
+    expect(renderer!.root.findAllByProps({ "data-testid": "task-list-collaborator-owner-member_two" })).toHaveLength(0);
+  } finally { await act(async () => { renderer!.unmount(); }); }
+});
+
+test("task-list owner renames the selected list from the header menu", async () => {
+  let list: DenProductTaskList = { id: "list_rename", creatorMemberId: "member_self", name: "Old list", description: "", marker: "O", visibility: "private", version: 3, archivedAt: null, createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z" };
+  const detail = { list, members: [{ memberId: "member_self", role: "administrator" as const }], permissions: { canView: true, canEdit: true, canManageMembers: true, canTransferOwnership: true, canDelete: true, canAddTasks: true, canArchive: true, canRestore: false }, replayed: false };
+  const updates: Array<Record<string, unknown>> = [];
+  const client = connectedClient({
+    listProductTaskLists: async () => ({ items: [list], nextCursor: "" }),
+    getProductTaskList: async () => detail,
+    updateProductTaskList: async (_orgId, _listId, patch) => { updates.push(patch); list = { ...list, name: "Renamed list", version: 4 }; return { ...detail, list }; },
+  });
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client)); });
+  await settle();
+  try {
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "tasks-sidebar-list-list_rename" }).props.onClick(); });
+    await settle();
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-list-collaboration-summary" }).findAllByType("button")[2]!.props.onClick(); });
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-list-rename-action" }).props.onClick(); });
+    const dialog = renderer!.root.findByProps({ "data-testid": "task-list-rename-dialog" });
+    await act(async () => { dialog.findByProps({ "aria-label": "Task list name" }).props.onChange({ target: { value: "  Renamed list  " } }); });
+    await act(async () => { dialog.findByProps({ "data-testid": "task-list-rename-confirm" }).props.onClick(); });
+    await settle();
+    expect(updates).toEqual([{ expectedVersion: 3, idempotencyKey: expect.any(String), name: "Renamed list" }]);
+    expect(renderer!.root.findByProps({ "data-testid": "tasks-page-title" }).props.children).toBe("Renamed list");
+  } finally { await act(async () => { renderer!.unmount(); }); }
+});
+
+test("task-list owner can delete the list and opt into deleting unassigned tasks", async () => {
+  const list: DenProductTaskList = { id: "list_delete", creatorMemberId: "member_self", name: "Delete list", description: "", marker: "D", visibility: "private", version: 5, archivedAt: null, createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z" };
+  const detail = { list, members: [{ memberId: "member_self", role: "administrator" as const }], permissions: { canView: true, canEdit: true, canManageMembers: true, canTransferOwnership: true, canDelete: true, canAddTasks: true, canArchive: true, canRestore: false }, replayed: false };
+  const deletes: Array<Record<string, unknown>> = [];
+  let lists = [list];
+  const client = connectedClient({
+    listProductTaskLists: async () => ({ items: lists, nextCursor: "" }),
+    getProductTaskList: async () => detail,
+    deleteProductTaskList: async (_orgId, listId, patch) => { deletes.push({ listId, ...patch }); lists = []; return { listId, replayed: false }; },
+  });
+  localStorage.setItem('jugglework:tasks:workbench:["https://work.example","user_one","org_one"]:all', JSON.stringify({ listIds: ["list_delete", "list_other"] }));
+  localStorage.setItem('jugglework:tasks:workbench:["https://work.example","user_one","org_one"]:list:list_delete', JSON.stringify({ group: "custom" }));
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client)); });
+  await settle();
+  try {
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "tasks-sidebar-list-list_delete" }).props.onClick(); });
+    await settle();
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-list-collaboration-summary" }).findAllByType("button")[2]!.props.onClick(); });
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-list-delete-action" }).props.onClick(); });
+    const dialog = renderer!.root.findByProps({ "data-testid": "task-list-delete-dialog" });
+    const checkbox = dialog.findByProps({ "data-testid": "task-list-delete-unassigned" });
+    expect(checkbox.props.checked).toBe(false);
+    await act(async () => { checkbox.props.onCheckedChange(true); });
+    await act(async () => { dialog.findByProps({ "data-testid": "task-list-delete-confirm" }).props.onClick(); });
+    await settle();
+    expect(deletes).toEqual([{ listId: "list_delete", expectedVersion: 5, idempotencyKey: expect.any(String), deleteUnassignedTasks: true }]);
+    expect(renderer!.root.findByProps({ "data-testid": "tasks-page-title" }).props.children).toBe("All tasks");
+    expect(renderer!.root.findAllByProps({ "data-testid": "tasks-sidebar-list-list_delete" })).toHaveLength(0);
+    expect(JSON.parse(localStorage.getItem('jugglework:tasks:workbench:["https://work.example","user_one","org_one"]:all')!).listIds).toEqual(["list_other"]);
+    expect(localStorage.getItem('jugglework:tasks:workbench:["https://work.example","user_one","org_one"]:list:list_delete')).toBeNull();
+  } finally { await act(async () => { renderer!.unmount(); }); }
+});
+
+test("creates a private task list inline from the sidebar and opens it", async () => {
+  const creates: Array<Record<string, unknown>> = [];
+  const createdList: DenProductTaskList = { id: "list_inline_sidebar", creatorMemberId: "member_self", name: "Launch plan", description: "", marker: "L", visibility: "private", version: 1, archivedAt: null, createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z" };
+  const client = connectedClient({
+    createProductTaskList: async (_orgId, input) => { creates.push(input); return { list: createdList, members: [], permissions: { canView: true, canEdit: true, canManageMembers: true, canTransferOwnership: true, canDelete: true, canAddTasks: true, canArchive: true, canRestore: false }, replayed: false }; },
+  });
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client)); });
+  await settle();
+  try {
+    const sidebar = renderer!.root.findByProps({ "data-testid": "tasks-sidebar" });
+    await act(async () => { sidebar.findByProps({ "aria-label": "Create task list" }).props.onClick(); });
+    const input = renderer!.root.findByProps({ "data-testid": "task-sidebar-list-create-input" });
+    expect(input.props.autoFocus).toBe(true);
+    expect(input.props.value).toBe("Task list 1");
+    let selections = 0;
+    input.props.onFocus({ currentTarget: { select: () => { selections += 1; } } });
+    expect(selections).toBe(1);
+    await act(async () => { input.props.onChange({ currentTarget: { value: "  Launch plan  " } }); });
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-sidebar-list-create" }).props.onSubmit({ preventDefault: () => undefined }); });
+    await settle();
+    expect(creates).toHaveLength(1);
+    expect(creates[0]).toMatchObject({ name: "Launch plan", description: "", marker: "L", visibility: "private", idempotencyKey: expect.any(String) });
+    expect(renderer!.root.findAllByProps({ "data-testid": "task-sidebar-list-create-input" })).toHaveLength(0);
+    expect(renderer!.root.findByProps({ "data-testid": "tasks-page-title" }).props.children).toBe("Launch plan");
+  } finally { await act(async () => { renderer!.unmount(); }); }
+});
+
+test("cancels an inline sidebar task-list draft with Escape", async () => {
+  const creates: Array<Record<string, unknown>> = [];
+  const client = connectedClient({ createProductTaskList: async (_orgId, input) => { creates.push(input); throw new Error("unexpected create"); } });
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client)); });
+  await settle();
+  try {
+    await act(async () => { renderer!.root.findByProps({ "aria-label": "Create task list" }).props.onClick(); });
+    const input = renderer!.root.findByProps({ "data-testid": "task-sidebar-list-create-input" });
+    await act(async () => { input.props.onChange({ currentTarget: { value: "Discard me" } }); });
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-sidebar-list-create-input" }).props.onKeyDown({ key: "Escape", preventDefault: () => undefined }); });
+    expect(renderer!.root.findAllByProps({ "data-testid": "task-sidebar-list-create-input" })).toHaveLength(0);
+    expect(creates).toHaveLength(0);
+  } finally { await act(async () => { renderer!.unmount(); }); }
+});
+
+test("keeps a failed inline sidebar task-list name for retry", async () => {
+  const creates: Array<Record<string, unknown>> = [];
+  const client = connectedClient({ createProductTaskList: async (_orgId, input) => { creates.push(input); throw new Error("Inline list failed"); } });
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client)); });
+  await settle();
+  try {
+    await act(async () => { renderer!.root.findByProps({ "aria-label": "Create task list" }).props.onClick(); });
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-sidebar-list-create-input" }).props.onChange({ currentTarget: { value: "Retry list" } }); });
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-sidebar-list-create" }).props.onSubmit({ preventDefault: () => undefined }); });
+    await settle();
+    expect(creates).toHaveLength(1);
+    expect(renderer!.root.findByProps({ "data-testid": "task-sidebar-list-create-input" }).props.value).toBe("Retry list");
+    expect(toastErrors).toContain("Inline list failed");
+  } finally { await act(async () => { renderer!.unmount(); }); }
+});
+
+test("dismisses a blank inline sidebar task-list draft on blur without creating", async () => {
+  const creates: Array<Record<string, unknown>> = [];
+  const client = connectedClient({ createProductTaskList: async (_orgId, input) => { creates.push(input); throw new Error("unexpected create"); } });
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client)); });
+  await settle();
+  try {
+    await act(async () => { renderer!.root.findByProps({ "aria-label": "Create task list" }).props.onClick(); });
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-sidebar-list-create-input" }).props.onChange({ currentTarget: { value: "   " } }); });
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-sidebar-list-create-input" }).props.onBlur({ currentTarget: { value: "   " } }); });
+    expect(renderer!.root.findAllByProps({ "data-testid": "task-sidebar-list-create-input" })).toHaveLength(0);
+    expect(creates).toHaveLength(0);
+  } finally { await act(async () => { renderer!.unmount(); }); }
 });
 
 test("assigned workbench repopulates its editable default while preserving non-person settings", async () => {
@@ -575,18 +940,20 @@ test("Assigned to me shows only List and Board tabs and the two creation options
     expect(renderer!.root.findByProps({ "aria-label": "Task list" })).toBeDefined();
     const createDialogRoot = renderer!.root.find((node) => node.props.open === true && typeof node.props.onOpenChange === "function");
     await act(async () => { createDialogRoot.props.onOpenChange(false); });
+    await act(async () => { useUiStateStore.getState().setSidebarOpen(false); });
+    await act(async () => { renderer!.update(connectedPage(client)); });
+    expect(renderer!.root.findAllByProps({ "data-testid": "tasks-sidebar" })).toHaveLength(0);
     await act(async () => { renderer!.root.findByProps({ "data-testid": "task-create-menu" }).findAllByType("button")[1]!.props.onClick(); });
-    expect(renderer!.root.findByProps({ role: "dialog" }).props["aria-label"]).toBe("New task list");
-    expect(renderer!.root.findByProps({ placeholder: "Task list name" })).toBeDefined();
-    expect(renderer!.root.findByProps({ placeholder: "Description" })).toBeDefined();
-    expect(renderer!.root.findByProps({ placeholder: "Marker" }).props.value).toBe("#");
-    expect(renderer!.root.findAll((node) => node.props.children === "Private visibility").length).toBeGreaterThan(0);
+    expect(useUiStateStore.getState().sidebarOpen).toBe(true);
+    expect(renderer!.root.findByProps({ "data-testid": "tasks-sidebar" })).toBeDefined();
+    expect(renderer!.root.findAllByProps({ role: "dialog" })).toHaveLength(0);
+    expect(renderer!.root.findByProps({ "data-testid": "task-sidebar-list-create-input" }).props.value).toBe("Task list 1");
   } finally {
     await act(async () => { renderer!.unmount(); });
   }
 });
 
-test("new task list uses the private list mutation and exposes failures", async () => {
+test("toolbar new task list uses the sidebar inline private mutation and exposes failures", async () => {
   const creates: Array<Record<string, unknown>> = [];
   const client = connectedClient({
     createProductTaskList: async (_orgId, input) => {
@@ -603,18 +970,13 @@ test("new task list uses the private list mutation and exposes failures", async 
     await act(async () => { assigned.props.onClick(); });
     await settle();
     await act(async () => { renderer!.root.findByProps({ "data-testid": "task-create-menu" }).findAllByType("button")[1]!.props.onClick(); });
-    const dialog = renderer!.root.findByProps({ role: "dialog" });
-    await act(async () => {
-      dialog.findByProps({ placeholder: "Task list name" }).props.onChange({ target: { value: "Launch list" } });
-      dialog.findByProps({ placeholder: "Description" }).props.onChange({ target: { value: "Launch tasks" } });
-      dialog.findByProps({ placeholder: "Marker" }).props.onChange({ target: { value: "L" } });
-    });
-    await act(async () => { dialog.findByType("form").props.onSubmit({ preventDefault: () => undefined }); });
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-sidebar-list-create-input" }).props.onChange({ currentTarget: { value: "Launch list" } }); });
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-sidebar-list-create" }).props.onSubmit({ preventDefault: () => undefined }); });
     await settle();
-    expect(creates[0]).toMatchObject({ name: "Launch list", description: "Launch tasks", marker: "L", visibility: "private" });
+    expect(creates[0]).toMatchObject({ name: "Launch list", description: "", marker: "L", visibility: "private" });
     expect(toastErrors).toContain("List create failed");
     expect(renderer!.root.findAll((node) => node.props.children === "List create failed")).toHaveLength(0);
-    expect(renderer!.root.findByProps({ role: "dialog" })).toBeDefined();
+    expect(renderer!.root.findByProps({ "data-testid": "task-sidebar-list-create-input" }).props.value).toBe("Launch list");
   } finally {
     await act(async () => { renderer!.unmount(); });
   }
@@ -642,6 +1004,36 @@ test("Assigned toolbar inline creation submits a title-only private task with no
     await settle();
     expect(creates[0]).toMatchObject({ title: "Inline task", priority: "none", visibility: "private", members: [] });
     expect(creates[0]?.idempotencyKey).toEqual(expect.any(String));
+  } finally { await act(async () => { renderer!.unmount(); }); }
+});
+
+test("selected shared task-list quick creation keeps the task in the current list with compatible visibility", async () => {
+  const list: DenProductTaskList = { id: "list_quick_create", creatorMemberId: "member_self", name: "Current list", description: "", marker: "C", visibility: "members", version: 1, archivedAt: null, createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z" };
+  const creates: Array<Record<string, unknown>> = [];
+  let created: DenProductTask | null = null;
+  const client = connectedClient({
+    listProductTaskLists: async () => ({ items: [list], nextCursor: "" }),
+    getProductTaskList: async () => ({ list, members: [{ memberId: "member_self", role: "administrator" }], permissions: { canView: true, canEdit: true, canManageMembers: true, canTransferOwnership: true, canDelete: true, canAddTasks: true, canArchive: true, canRestore: false }, replayed: false }),
+    listProductTasks: async (_orgId, input) => ({ items: input?.listId?.includes(list.id) && created ? [created] : [], membersByTaskId: created ? { [created.id]: [] } : {}, nextCursor: "" }),
+    createProductTask: async (_orgId, input) => {
+      creates.push(input);
+      created = { ...task(1, input.title, "", "list_inline_task"), listId: input.listId ?? null, visibility: input.visibility ?? "private" };
+      return result(created);
+    },
+  });
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client)); });
+  await settle();
+  try {
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "tasks-sidebar-list-list_quick_create" }).props.onClick(); });
+    await settle();
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-inline-create-top-trigger" }).props.onClick(); });
+    const row = renderer!.root.findByProps({ "data-testid": "task-inline-create-row-group-custom-default" });
+    await act(async () => { row.findByType("input").props.onChange({ target: { value: "List task" } }); });
+    await act(async () => { row.findByType("form").props.onSubmit({ preventDefault: () => undefined }); });
+    await settle();
+    expect(creates[0]).toMatchObject({ title: "List task", listId: "list_quick_create", visibility: "members", priority: "none", members: [] });
+    expect(renderer!.root.findByProps({ "data-testid": "task-title-cell-list_inline_task" })).toBeDefined();
   } finally { await act(async () => { renderer!.unmount(); }); }
 });
 
@@ -689,16 +1081,15 @@ test("pending task-list creation cannot close or alert in a new organization sco
     await act(async () => { assigned.props.onClick(); });
     await settle();
     await act(async () => { renderer!.root.findByProps({ "data-testid": "task-create-menu" }).findAllByType("button")[1]!.props.onClick(); });
-    const dialog = renderer!.root.findByProps({ role: "dialog" });
-    await act(async () => { dialog.findByProps({ placeholder: "Task list name" }).props.onChange({ target: { value: "Old list" } }); });
-    await act(async () => { dialog.findByType("form").props.onSubmit({ preventDefault: () => undefined }); });
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-sidebar-list-create-input" }).props.onChange({ currentTarget: { value: "Old list" } }); });
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-sidebar-list-create" }).props.onSubmit({ preventDefault: () => undefined }); });
 
     setCloudSession(client, "org_two");
     await act(async () => { renderer!.update(taskPage(queryClient)); });
     await settle();
     await act(async () => { pending.reject(new Error("Old list failure")); });
     await settle();
-    expect(renderer!.root.findAllByProps({ role: "dialog" })).toHaveLength(0);
+    expect(renderer!.root.findAllByProps({ "data-testid": "task-sidebar-list-create-input" })).toHaveLength(0);
     expect(renderer!.root.findAll((node) => node.props.children === "Old list failure")).toHaveLength(0);
   } finally {
     await act(async () => { renderer!.unmount(); });
@@ -743,13 +1134,19 @@ test("shows full-create mutation failures without an unhandled rejection", async
   }
 });
 
-test("full task creation submits assignees, followers, due time, list, and description", async () => {
+test.each([
+  ["members", "member_other", "member_self", "members"],
+  ["private", "member_other", "member_self", "members"],
+  ["private", "member_self", "member_other", "members"],
+  ["private", "member_self", "member_self", "private"],
+  ["organization", "member_other", "member_self", "organization"],
+] as const)("full task creation: %s list, assignee %s and follower %s submit %s visibility", async (listVisibility, assignee, follower, expectedVisibility) => {
   const creates: Array<Record<string, unknown>> = [];
   const members = [
     { id: "member_self", userId: "user_one", role: "member", user: { id: "user_one", name: "Self", account: null, email: null, avatar: null } },
     { id: "member_other", userId: "user_two", role: "member", user: { id: "user_two", name: "Other", account: null, email: null, avatar: null } },
   ];
-  const list = { id: "list_one", creatorMemberId: "member_self", name: "Launch", description: "", marker: "L", visibility: "private" as const, version: 1, archivedAt: null, createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z" };
+  const list = { id: "list_one", creatorMemberId: "member_self", name: "Launch", description: "", marker: "L", visibility: listVisibility, version: 1, archivedAt: null, createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z" };
   const client = connectedClient({
     listOrganizationMembers: async () => ({ members, total: 2, limit: 200, offset: 0 }),
     listProductTaskLists: async () => ({ items: [list], nextCursor: "" }),
@@ -775,22 +1172,51 @@ test("full task creation submits assignees, followers, due time, list, and descr
     await act(async () => { renderer!.root.findAll((node) => node.props.children === "Today")[0]!.props.onClick(); });
     await act(async () => { renderer!.root.findByProps({ "data-testid": "task-list-option-create-dialog-draft-list_one" }).props.onClick(); });
     await act(async () => { renderer!.root.findByProps({ "data-testid": "task-create-assignees-option-member_self" }).props.onClick(); });
-    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-create-assignees-option-member_other" }).props.onClick(); });
-    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-create-followers-option-member_self" }).props.onClick(); });
+    if (assignee !== "member_self") await act(async () => { renderer!.root.findByProps({ "data-testid": `task-create-assignees-option-${assignee}` }).props.onClick(); });
+    await act(async () => { renderer!.root.findByProps({ "data-testid": `task-create-followers-option-${follower}` }).props.onClick(); });
     await act(async () => { dialog.findByType("form").props.onSubmit({ preventDefault: () => undefined }); });
     await settle();
     expect(creates[0]).toMatchObject({
       title: "Full task",
       description: "Everything**text**",
       priority: "none",
-      visibility: "members",
+      visibility: expectedVisibility,
       listId: "list_one",
-      members: [{ memberId: "member_self", role: "assignee" }, { memberId: "member_other", role: "assignee" }, { memberId: "member_self", role: "follower" }],
+      members: [{ memberId: "member_self", role: "assignee" }, ...(assignee !== "member_self" ? [{ memberId: assignee, role: "assignee" }] : []), { memberId: follower, role: "follower" }],
     });
     expect(typeof creates[0]?.dueAt).toBe("string");
   } finally {
     await act(async () => { renderer!.unmount(); });
   }
+});
+
+test("full task creation keeps the selected start and due dates independent", async () => {
+  const creates: Array<Parameters<DenClient["createProductTask"]>[1]> = [];
+  const client = connectedClient({
+    createProductTask: async (_orgId, input) => { creates.push(input); return result(task(1, input.title)); },
+  });
+  let renderer: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(connectedPage(client)); });
+  await settle();
+  try {
+    const sidebar = renderer!.root.findByProps({ "data-testid": "tasks-sidebar" });
+    const allTasks = sidebar.findAllByType("button").find((button) => React.Children.toArray(button.props.children).includes("All tasks"))!;
+    await act(async () => { allTasks.props.onClick(); });
+    await settle();
+    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-create-menu" }).findAllByType("button")[0]!.props.onClick(); });
+    const dialog = renderer!.root.findByProps({ role: "dialog" });
+    await act(async () => { dialog.findByProps({ placeholder: "Enter a title and press Enter" }).props.onChange({ target: { value: "Scheduled task" } }); });
+    const cell = dialog.findByType(TaskDateTimeCell);
+    const dueAt = "2026-11-20T18:00:00.000Z";
+    const startAt = "2026-11-18T09:00:00.000Z";
+    await act(async () => { await cell.props.onChange(cell.props.task, "dueAt", dueAt); });
+    await act(async () => { await cell.props.onChange(cell.props.task, "startAt", startAt); });
+    expect(cell.props.task).toMatchObject({ startAt, dueAt });
+    await act(async () => { dialog.findByType("form").props.onSubmit({ preventDefault: () => undefined }); });
+    await settle();
+    expect(creates).toHaveLength(1);
+    expect(creates[0]).toMatchObject({ startAt, dueAt });
+  } finally { await act(async () => { renderer!.unmount(); }); }
 });
 
 test("full task creation can create and assign a custom group", async () => {
@@ -983,151 +1409,93 @@ test("workbench time update loads the latest task permission and sends a CAS pat
   } finally { await act(async () => renderer!.unmount()); }
 });
 
-test("workbench creates a missing list then moves the task using the latest version", async () => {
-  const listed = task(1, "List task", "", "list_task");
-  const authoritative = result({ ...listed, version: 11, listId: null });
-  const order: string[] = [];
-  const moves: Array<Parameters<DenClient["moveProductTask"]>[2]> = [];
-  const createdList: DenProductTaskList = { id: "list_created", creatorMemberId: "member_self", name: "Testing list", description: "", marker: "T", visibility: "private", version: 1, archivedAt: null, createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z" };
-  const client = connectedClient({
-    listProductTasks: async () => ({ items: [listed], membersByTaskId: { [listed.id]: [] }, nextCursor: "" }),
-    getProductTask: async () => { order.push("get"); return authoritative; },
-    createProductTaskList: async () => { order.push("create"); return { list: createdList, members: [], permissions: { canView: true, canEdit: true, canManageMembers: true, canAddTasks: true, canArchive: true, canRestore: false }, replayed: false }; },
-    getProductTaskList: async () => ({ list: createdList, members: [], permissions: { canView: true, canEdit: true, canManageMembers: true, canAddTasks: true, canArchive: true, canRestore: false }, replayed: false }),
-    moveProductTask: async (_orgId, _taskId, input) => { order.push("move"); moves.push(input); return { taskId: listed.id, version: 12, listId: createdList.id, visibility: "private", replayed: false }; },
-  });
-  let renderer: TestRenderer.ReactTestRenderer;
-  await act(async () => { renderer = TestRenderer.create(connectedPage(client)); });
-  await settle();
-  try {
-    const sidebar = renderer!.root.findByProps({ "data-testid": "tasks-sidebar" });
-    await act(async () => { sidebar.findAllByType("button").find((button) => Array.isArray(button.props.children) && button.props.children.includes("Assigned to me"))!.props.onClick(); });
-    await settle();
-    const search = renderer!.root.findByProps({ "data-testid": "task-list-search-list_task" });
-    await act(async () => { search.props.onChange({ currentTarget: { value: "Testing list" } }); });
-    await act(async () => { renderer!.root.findByProps({ "data-testid": "task-list-create-list_task" }).props.onClick(); });
-    await settle();
-    expect(order).toEqual(["create", "get", "move"]);
-    expect(moves[0]).toMatchObject({ expectedVersion: 11, destinationListId: "list_created", idempotencyKey: expect.any(String) });
-  } finally { await act(async () => renderer!.unmount()); }
-});
+const destination: DenProductTaskList = { id: "list_destination", creatorMemberId: "member_self", name: "Personal filing", description: "", marker: "P", visibility: "private", version: 1, archivedAt: null, createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z" };
+const destinationResult = () => ({ list: destination, members: [], permissions: { canView: true, canEdit: true, canManageMembers: true, canTransferOwnership: false, canDelete: false, canAddTasks: true, canArchive: true, canRestore: false }, replayed: false });
 
-const moveDestination: DenProductTaskList = { id: "list_destination", creatorMemberId: "member_self", name: "Shared destination", description: "", marker: "S", visibility: "members", version: 1, archivedAt: null, createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z" };
-const moveDestinationResult = () => ({ list: { ...moveDestination }, members: [], permissions: { canView: true, canEdit: true, canManageMembers: true, canAddTasks: true, canArchive: true, canRestore: false }, replayed: false });
-
-for (const scenario of [
-  { name: "cancel private sharing", confirm: false, moves: 0, prompts: 1 },
-  { name: "confirm private sharing", confirm: true, moves: 1, prompts: 1 },
-  { name: "organization-visible destination still requires confirmation", destinationVisibility: "organization", moves: 1, prompts: 1 },
-  { name: "deny task member management", canManageMembers: false, moves: 0, prompts: 0, denied: true },
-  { name: "deny visibility management", canManageVisibility: false, moves: 0, prompts: 0, denied: true },
-  { name: "deny destination add permission", canAddTasks: false, moves: 0, prompts: 0, denied: true },
-  { name: "deny archived destination", archived: true, moves: 0, prompts: 0, denied: true },
-  { name: "failed task read does not move", failure: "task", moves: 0, prompts: 0 },
-  { name: "failed destination read does not move", failure: "destination", moves: 0, prompts: 0 },
-  { name: "move conflict leaves displayed list unchanged", failure: "move", moves: 1, prompts: 1 },
-  { name: "private destination needs no visibility permission", destinationVisibility: "private", canManageVisibility: false, moves: 1, prompts: 0 },
-  { name: "already-shared task needs no sharing confirmation", taskVisibility: "members", canManageVisibility: false, moves: 1, prompts: 0 },
-  { name: "removing list needs no sharing confirmation", remove: true, canManageVisibility: false, moves: 1, prompts: 0 },
-] as const) {
-  test(`task list move: ${scenario.name}`, async () => {
-    const options = scenario as { confirm?: boolean; destinationVisibility?: DenProductTaskList["visibility"]; taskVisibility?: DenProductTask["visibility"]; canManageMembers?: boolean; canManageVisibility?: boolean; canAddTasks?: boolean; archived?: boolean; remove?: boolean; denied?: boolean; failure?: "task" | "destination" | "move" };
-    // Both picker and row data deliberately disagree with authoritative visibility.
-    const listed = { ...task(1, "Move task", "", "move_task"), listId: "list_old", visibility: "organization" as const };
-    const detail = result({ ...listed, version: 17, visibility: options.taskVisibility ?? "private" });
-    detail.permissions.canManageMembers = options.canManageMembers ?? true;
-    detail.permissions.canManageVisibility = options.canManageVisibility ?? true;
-    const destination = moveDestinationResult();
-    destination.list.visibility = options.destinationVisibility ?? "members";
-    destination.permissions.canAddTasks = options.canAddTasks ?? true;
-    destination.list.archivedAt = options.archived ? "2026-11-07T00:00:00Z" : null;
-    const moves: Array<{ orgId: string; taskId: string; input: Parameters<DenClient["moveProductTask"]>[2] }> = [];
-    const order: string[] = [];
+for (const surface of ["table", "detail"] as const) {
+  test(`${surface}: non-creator files a visible task, reloads, and removes just one membership`, async () => {
+    const original = { ...destination, id: "list_orig", name: "Original" };
+    let listed = { ...task(1), visibility: "members" as const, listIds: [original.id], listId: "legacy_hidden" };
+    let directory = [original];
+    const writes: Array<[string, string, string, boolean]> = [];
     const client = connectedClient({
       listProductTasks: async () => ({ items: [listed], nextCursor: "" }),
-      listProductTaskLists: async () => ({ items: [{ ...moveDestination, visibility: "private" }], nextCursor: "" }),
-      getProductTask: async () => { order.push("task"); if (options.failure === "task") throw new Error("Task read failed"); return detail; },
-      getProductTaskList: async (orgId, listId) => { expect(orgId).toBe("org_one"); expect(listId).toBe(moveDestination.id); order.push("destination"); if (options.failure === "destination") throw new Error("Destination read failed"); return destination; },
-      moveProductTask: async (orgId, taskId, input) => { order.push("move"); moves.push({ orgId, taskId, input }); if (options.failure === "move") throw new DenApiError(409, "task_version_conflict", "Changed elsewhere"); return { taskId, version: 18, listId: input.destinationListId, visibility: "members", replayed: false }; },
+      getProductTask: async () => { const detail = result(listed); detail.permissions.canManageMembers = detail.permissions.canManageVisibility = false; return detail; },
+      listProductTaskLists: async () => ({ items: directory, nextCursor: "" }),
+      createProductTaskList: async () => { directory = [original, destination]; return destinationResult(); },
+      getProductTaskList: async () => destinationResult(),
+      setProductTaskListMembership: async (org, taskId, listId, added) => {
+        writes.push([org, taskId, listId, added]);
+        listed = { ...listed, listIds: added ? [...listed.listIds, listId] : listed.listIds.filter((id) => id !== listId) };
+        return { taskId, listId, added };
+      },
     });
-    const originalConfirm = globalThis.confirm;
-    const messages: string[] = [];
-    globalThis.confirm = (message) => { order.push("confirm"); messages.push(message ?? ""); expect(moves).toHaveLength(0); return options.confirm ?? true; };
     let renderer: TestRenderer.ReactTestRenderer;
-    await act(async () => { renderer = TestRenderer.create(connectedPage(client)); });
-    await settle();
-    try {
-      await act(async () => { renderer!.root.findByProps({ "data-testid": "tasks-sidebar" }).findAllByType("button").find((button) => Array.isArray(button.props.children) && button.props.children.includes("All tasks"))!.props.onClick(); });
+    const mount = async () => {
+      await act(async () => { renderer = TestRenderer.create(connectedPage(client, surface === "detail" ? listed.id : undefined)); });
       await settle();
-      await act(async () => { renderer!.root.findByProps({ "data-testid": `task-list-option-move_task-${options.remove ? "none" : moveDestination.id}` }).props.onClick(); });
-      await settle();
-      expect(messages).toHaveLength(scenario.prompts);
-      if (scenario.prompts) {
-        expect(messages[0]).toContain("Shared destination");
-        expect(messages[0]).toContain("Members");
-        expect(messages[0]).toContain("Choose Cancel to keep the task private");
-        expect(order.slice(0, 3)).toEqual(["task", "destination", "confirm"]);
+      if (surface === "table") {
+        await act(async () => { renderer.root.findByProps({ "data-testid": "tasks-sidebar" }).findAllByType("button").find((b) => Array.isArray(b.props.children) && b.props.children.includes("All tasks"))!.props.onClick(); });
+        await settle();
       }
-      expect(moves).toHaveLength(scenario.moves);
-      if (scenario.moves) expect(moves[0]).toEqual({ orgId: "org_one", taskId: listed.id, input: { expectedVersion: 17, idempotencyKey: expect.any(String), destinationListId: options.remove ? "" : moveDestination.id, ...(scenario.prompts ? { confirmedVisibility: "members" } : {}) } });
-      if (options.denied) expect(toastErrors).toContain("You do not have permission to change this task list.");
-      if (options.failure === "task") expect(toastErrors).toContain("Task read failed");
-      if (options.failure === "destination") expect(toastErrors).toContain("Destination read failed");
-      if (options.failure === "move") expect(toastWarnings).toHaveLength(1);
-      if (!scenario.moves || options.failure) expect(renderer!.root.findByProps({ "data-testid": "task-list-trigger-move_task" }).findAll((node) => node.props.children === "Shared destination")).toHaveLength(0);
-    } finally {
-      globalThis.confirm = originalConfirm;
-      await act(async () => { renderer!.unmount(); });
-    }
+    };
+    const option = (id: string) => renderer.root.findByProps({ "data-testid": `task-list-option-${listed.id}-${id}` });
+    await mount();
+    try {
+      expect(option(original.id).props["aria-pressed"]).toBe(true);
+      expect(renderer!.root.findAllByProps({ "data-testid": `task-list-option-${listed.id}-none` })).toHaveLength(0);
+      await act(async () => { renderer.root.findByProps({ "data-testid": `task-list-search-${listed.id}` }).props.onChange({ currentTarget: { value: destination.name } }); });
+      await act(async () => { renderer.root.findByProps({ "data-testid": `task-list-create-${listed.id}` }).props.onClick(); });
+      await settle();
+      expect(option(original.id).props["aria-pressed"]).toBe(true);
+      expect(option(destination.id).props["aria-pressed"]).toBe(true);
+      await act(async () => renderer.unmount());
+      await mount(); // New query client; checked state must come from the server projection.
+      expect(option(destination.id).props["aria-pressed"]).toBe(true);
+      await act(async () => { option(destination.id).props.onClick(); });
+      await settle();
+      expect(option(original.id).props["aria-pressed"]).toBe(true);
+      expect(option(destination.id).props["aria-pressed"]).toBe(false);
+      expect(writes).toEqual([["org_one", listed.id, destination.id, true], ["org_one", listed.id, destination.id, false]]);
+    } finally { await act(async () => renderer.unmount()); }
   });
 }
 
-for (const phase of ["task", "destination", "confirmation", "confirmation-user", "confirmation-deployment", "confirmation-unmount"] as const) {
-  test(`task list move stops after scope switch during ${phase}`, async () => {
-    const pendingTask = deferred<DenProductTaskResult>();
-    const pendingDestination = deferred<ReturnType<typeof moveDestinationResult>>();
-    const listed = task(1, "Move task", "", "move_task");
-    let moves = 0;
-    let prompts = 0;
-    let destinationReads = 0;
+for (const boundary of ["read-only", "archived", "org", "user", "deployment", "unmount", "server-denied"] as const) {
+  test(`list membership respects ${boundary} boundary`, async () => {
+    const listed = task(1);
+    const pending = deferred<ReturnType<typeof destinationResult>>();
+    let writes = 0;
     const client = connectedClient({
-      listProductTasks: async () => ({ items: [listed], nextCursor: "" }),
-      listProductTaskLists: async () => ({ items: [moveDestination], nextCursor: "" }),
-      getProductTask: async () => phase === "task" ? pendingTask.promise : result(listed),
-      getProductTaskList: async () => { destinationReads += 1; return phase === "destination" ? pendingDestination.promise : moveDestinationResult(); },
-      moveProductTask: async () => { moves += 1; throw new Error("Must not write after scope switch"); },
+      listProductTaskLists: async () => ({ items: [destination], nextCursor: "" }),
+      getProductTask: async () => result(listed),
+      getProductTaskList: async () => pending.promise,
+      setProductTaskListMembership: async () => { writes++; throw new DenApiError(403, "forbidden", "Membership denied"); },
     });
     const queryClient = createQueryClient();
     setCloudSession(client);
     let renderer: TestRenderer.ReactTestRenderer;
-    const switchScope = () => {
-      if (phase === "confirmation-unmount") { act(() => renderer!.unmount()); return; }
-      setCloudSession(client, "org_two");
-      if (phase === "confirmation-user") { setCloudSession(client); cloudSession.user = { id: "user_two", name: "Other" }; }
-      if (phase === "confirmation-deployment") { setCloudSession(client); cloudSession.baseUrl = "https://other.example"; }
-      act(() => { renderer!.update(taskPage(queryClient)); });
-    };
-    const originalConfirm = globalThis.confirm;
-    globalThis.confirm = () => { prompts += 1; if (phase.startsWith("confirmation")) switchScope(); return true; };
-    await act(async () => { renderer = TestRenderer.create(taskPage(queryClient)); });
+    await act(async () => { renderer = TestRenderer.create(taskPage(queryClient, listed.id)); });
     await settle();
     try {
-      await act(async () => { renderer!.root.findByProps({ "data-testid": "tasks-sidebar" }).findAllByType("button").find((button) => Array.isArray(button.props.children) && button.props.children.includes("All tasks"))!.props.onClick(); });
+      const option = () => renderer.root.findByProps({ "data-testid": `task-list-option-${listed.id}-${destination.id}` });
+      await act(async () => { option().props.onClick(); });
+      if (boundary === "org") setCloudSession(client, "org_two");
+      if (boundary === "user") cloudSession.user = { id: "user_two", name: "Other" };
+      if (boundary === "deployment") cloudSession.baseUrl = "https://other.example";
+      if (boundary === "unmount") await act(async () => renderer.unmount());
+      else await act(async () => renderer.update(taskPage(queryClient, listed.id)));
+      const readable = destinationResult(); // The list remains visible even when not writable.
+      readable.permissions.canAddTasks = boundary !== "read-only";
+      if (boundary === "archived") readable.list = { ...destination, archivedAt: destination.createdAt };
+      await act(async () => { pending.resolve(readable); });
       await settle();
-      await act(async () => { renderer!.root.findByProps({ "data-testid": "task-list-option-move_task-list_destination" }).props.onClick(); });
-      if (!phase.startsWith("confirmation")) {
-        switchScope();
-        await act(async () => { pendingTask.resolve(result(listed)); pendingDestination.resolve(moveDestinationResult()); });
-      }
-      await settle();
-      expect(moves).toBe(0);
-      expect(prompts).toBe(phase.startsWith("confirmation") ? 1 : 0);
-      expect(destinationReads).toBe(phase === "task" ? 0 : 1);
-      expect(toastErrors).toHaveLength(0);
-    } finally {
-      globalThis.confirm = originalConfirm;
-      await act(async () => { renderer!.unmount(); });
-    }
+      expect(writes).toBe(boundary === "server-denied" ? 1 : 0);
+      if (["read-only", "archived", "server-denied"].includes(boundary)) {
+        expect(option().props["aria-pressed"]).toBe(false);
+        expect(toastErrors).toHaveLength(1);
+      } else expect(toastErrors).toHaveLength(0);
+    } finally { if (boundary !== "unmount") await act(async () => renderer.unmount()); }
   });
 }
 

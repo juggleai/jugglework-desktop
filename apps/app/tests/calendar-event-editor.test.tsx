@@ -240,7 +240,8 @@ test("creating a timed event shows it only after the authoritative response", as
     expect(typeof calls[0]!.input.idempotencyKey).toBe("string");
     expect(has(renderer, "calendar-event-form")).toBe(false);
     expect(has(renderer, "calendar-event-dialog")).toBe(false);
-    expect(has(renderer, "calendar-event-panel")).toBe(true);
+    expect(has(renderer, "calendar-event-panel")).toBe(false);
+    await click(renderer, "calendar-day-event-2026-11-09-new-1");
     expect(text(byId(renderer, "calendar-event-detail-title"))).toBe("Planning");
     expect(text(byId(renderer, "calendar-event-detail-calendar"))).toBe("Side project");
     expect(has(renderer, "calendar-day-event-2026-11-09-new-1")).toBe(true);
@@ -276,8 +277,21 @@ test("quick create saves the clicked half-hour slot through the authoritative cr
       recurrence: null,
     });
     expect(has(renderer, "calendar-quick-create")).toBe(false);
-    expect(has(renderer, "calendar-event-panel")).toBe(true);
+    expect(has(renderer, "calendar-event-panel")).toBe(false);
+    await act(async () => {
+      byId(renderer, "calendar-time-event-2026-11-09-new-1").props.onClick({ detail: 1, clientX: 980, clientY: 740, currentTarget: { getBoundingClientRect: () => ({ left: 800, right: 990, top: 710, bottom: 750 }) } });
+    });
+    expect(byId(renderer, "calendar-event-panel").props.style).toMatchObject({ left: 444, top: 710, maxHeight: 576 });
     expect(text(byId(renderer, "calendar-event-detail-title"))).toBe("Quick sync");
+    for (const [top, expected] of [[100, { top: 146 }], [600, { bottom: 174 }]] as const) {
+      await click(renderer, "calendar-event-detail-close");
+      await act(async () => {
+        byId(renderer, "calendar-time-event-2026-11-09-new-1").props.onClick({
+          currentTarget: { getBoundingClientRect: () => ({ left: 80, right: 990, top, bottom: top + 40 }) },
+        });
+      });
+      expect(byId(renderer, "calendar-event-panel").props.style).toMatchObject({ left: 80, ...expected });
+    }
   } finally { await act(async () => { renderer.unmount(); }); }
 });
 
@@ -344,7 +358,7 @@ test("dialog close requests cancel creation, but are ignored while a save is pen
     await act(async () => { release(); });
     await settle();
     expect(has(renderer, "calendar-event-dialog")).toBe(false);
-    expect(has(renderer, "calendar-event-detail")).toBe(true);
+    expect(has(renderer, "calendar-event-detail")).toBe(false);
   } finally { await act(async () => { renderer.unmount(); }); }
 });
 
@@ -466,6 +480,7 @@ test("created attendee event keeps every selected member in detail and when edit
     await submit(renderer);
 
     expect(calls[0]).toMatchObject({ op: "create", input: { attendees: [{ memberId: "member-a" }, { memberId: "member-b" }] } });
+    await click(renderer, "calendar-day-event-2026-11-09-new-1");
     expect(text(byId(renderer, "calendar-event-detail-attendees"))).toContain("Ada");
     expect(text(byId(renderer, "calendar-event-detail-attendees"))).toContain("Ben");
     expect(text(byId(renderer, "calendar-event-detail"))).toContain(t("calendar.attendees_count", { count: 2 }));

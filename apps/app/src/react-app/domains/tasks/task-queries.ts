@@ -1,4 +1,5 @@
-import { keepPreviousData, useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery, type InfiniteData, type QueryClient } from "@tanstack/react-query";
+import { productTaskListIds, type DenProductTask, type DenProductTaskResult } from "@/app/lib/den";
 
 import { DenApiError, type DenClient, type DenOrganizationMember, type DenProductTaskActivityItem, type DenProductTaskList, type DenProductTaskListOptions, type DenProductTaskMember, type DenProductTaskPage } from "@/app/lib/den";
 
@@ -18,7 +19,10 @@ export const productTaskKeys = {
   activity: (scope: ProductTaskScope, taskId: string) => [...productTaskKeys.detail(scope, taskId), "activity"] as const,
   reminders: (scope: ProductTaskScope, taskId: string) => [...productTaskKeys.detail(scope, taskId), "reminders"] as const,
   taskLists: (scope: ProductTaskScope, archived: boolean) => [...productTaskKeys.all(scope), "task-lists", archived] as const,
+  taskListDetails: (scope: ProductTaskScope) => [...productTaskKeys.all(scope), "task-list-details"] as const,
+  taskListDetail: (scope: ProductTaskScope, listId: string) => [...productTaskKeys.taskListDetails(scope), listId] as const,
   organizationMembers: (scope: ProductTaskScope) => [...productTaskKeys.all(scope), "organization-members"] as const,
+  collaborationGroups: (scope: ProductTaskScope) => [...productTaskKeys.all(scope), "collaboration-groups"] as const,
   activityFeeds: (scope: ProductTaskScope) => [...productTaskKeys.all(scope), "activity-feed"] as const,
   activityFeed: (scope: ProductTaskScope, unreadOnly: boolean) => [...productTaskKeys.activityFeeds(scope), { unreadOnly }] as const,
 };
@@ -30,6 +34,25 @@ export function flattenProductTaskPages(data: { pages: DenProductTaskPage[] } | 
     seen.add(task.id);
     return true;
   });
+}
+
+export function applyTaskListMembership(client: QueryClient, scope: ProductTaskScope, result: { taskId: string; listId: string; added: boolean }) {
+  const update = (task: DenProductTask) => {
+    const ids = productTaskListIds(task);
+    const listIds = result.added ? [...new Set([...ids, result.listId])] : ids.filter((id) => id !== result.listId);
+    return { ...task, listIds, listId: listIds[0] ?? null };
+  };
+  client.setQueryData<DenProductTaskResult>(productTaskKeys.detail(scope, result.taskId), (data) => data && { ...data, task: update(data.task) });
+  // Remove rows that no longer match. Only the server can place a newly matching
+  // row in the right filtered page, so the caller refetches after this update.
+  for (const [key] of client.getQueriesData({ queryKey: productTaskKeys.lists(scope) })) {
+    const filter = (key.at(-1) as DenProductTaskListOptions).listId;
+    client.setQueryData<InfiniteData<DenProductTaskPage>>(key, (data) => data && ({ ...data, pages: data.pages.map((page) => ({ ...page, items: page.items.flatMap((task) => {
+      if (task.id !== result.taskId) return [task];
+      const next = update(task);
+      return !filter?.length || next.listIds.some((id) => filter.includes(id)) ? [next] : [];
+    }) })) }));
+  }
 }
 
 export function flattenProductTaskMembers(data: { pages: DenProductTaskPage[] } | undefined): Record<string, DenProductTaskMember[]> {
@@ -86,6 +109,36 @@ export function useProductTaskLists(input: { client: DenClient; scope: ProductTa
   });
 }
 
+export function useProductTaskListDetail(input: { client: DenClient; scope: ProductTaskScope | null; listId: string | null }) {
+  return useQuery({
+    queryKey: input.scope && input.listId ? productTaskKeys.taskListDetail(input.scope, input.listId) : ["product-tasks", "task-list-detail", "unavailable"],
+    enabled: Boolean(input.scope && input.listId),
+    queryFn: () => input.client.getProductTaskList(input.scope!.organizationId, input.listId!),
+    staleTime: 20_000,
+    retry: false,
+  });
+}
+
+export function useProductTaskCollaborationGroups(input: { client: DenClient; scope: ProductTaskScope | null; active?: boolean }) {
+  return useQuery({
+    queryKey: input.scope ? productTaskKeys.collaborationGroups(input.scope) : ["product-tasks", "collaboration-groups", "unavailable"],
+    enabled: (input.active ?? true) && Boolean(input.scope),
+    queryFn: async ({ signal }) => {
+      const groups = [];
+      let offset = 0;
+      while (true) {
+        const page = await input.client.listCollaborationGroups(input.scope!.organizationId, { limit: 100, offset }, { signal });
+        groups.push(...page.groups);
+        offset += page.groups.length;
+        if (!page.groups.length || offset >= page.total) break;
+      }
+      return groups;
+    },
+    staleTime: 60_000,
+    retry: false,
+  });
+}
+
 export function useOrganizationMembers(input: { client: DenClient; scope: ProductTaskScope | null; fallback?: DenOrganizationMember | null; allowUnavailableFallback?: boolean; active?: boolean }) {
   return useQuery({
     queryKey: input.scope ? productTaskKeys.organizationMembers(input.scope) : ["product-tasks", "organization-members", "unavailable"],
@@ -119,7 +172,7 @@ export function useProductTasks(input: { client: DenClient; scope: ProductTaskSc
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam, signal }) => input.client.listProductTasks(input.scope!.organizationId, { ...input.options, cursor: pageParam, limit: input.options.limit ?? 30 }, { signal }),
     getNextPageParam: (page) => page.nextCursor || undefined,
-    placeholderData: keepPreviousData,
+    placeholderData: (previous, query) => input.scope && productTaskKeys.lists(input.scope).every((part, i) => query?.queryKey[i] === part) ? previous : undefined,
     staleTime: 30_000,
     retry: (count, error) => !(typeof error === "object" && error && "status" in error && Number((error as { status: number }).status) < 500) && count < 2,
   });

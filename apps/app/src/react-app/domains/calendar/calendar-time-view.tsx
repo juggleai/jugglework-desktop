@@ -47,7 +47,7 @@ export function CalendarTimeView(props: {
   selectedDate: Temporal.PlainDate;
   currentMemberId: string;
   onSelectDate: (date: Temporal.PlainDate) => void;
-  onOpenEvent: (eventId: string, date: Temporal.PlainDate) => void;
+  onOpenEvent: (eventId: string, date: Temporal.PlainDate, click: React.MouseEvent<HTMLButtonElement>) => void;
   onCreateAt?: (slot: { date: Temporal.PlainDate; startMinute: number; durationMinutes?: number; snapToHalfHour?: boolean; clientX: number; clientY: number }) => void;
   quickCreatePreview?: { title: string; calendarColor: string; startDate: string; startTime: string; endDate: string; endTime: string };
 }) {
@@ -133,7 +133,7 @@ export function CalendarTimeView(props: {
                   type="button"
                   className={cn("z-[1] m-0.5 truncate rounded px-2 py-1 text-left text-xs font-medium text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/50", declined && "bg-[#e5e6e8] text-[#8f959e] line-through dark:bg-white/[0.07] dark:text-white/25", tentative && "opacity-80")}
                   style={{ gridColumn: `${span.startIndex + 2} / ${span.endIndexExclusive + 2}`, gridRow: span.row + 1, backgroundColor: declined ? undefined : calendar?.color ?? "var(--dls-accent)" }}
-                  onClick={() => props.onOpenEvent(span.event.id, props.days[span.startIndex]!)}
+                  onClick={(click) => props.onOpenEvent(span.event.id, props.days[span.startIndex]!, click)}
                   data-testid={`calendar-all-day-event-${span.event.id}`}
                 >
                   {span.event.title}
@@ -235,7 +235,7 @@ export function CalendarTimeView(props: {
                         backgroundColor: declined ? undefined : `color-mix(in srgb, ${color} ${tentative ? 8 : 14}%, var(--dls-surface))`,
                         color: declined ? undefined : color,
                       }}
-                      onClick={() => props.onOpenEvent(segment.event.id, day)}
+                      onClick={(click) => props.onOpenEvent(segment.event.id, day, click)}
                       data-compact={compact ? "true" : undefined}
                       data-testid={`calendar-time-event-${day.toString()}-${segment.event.id}`}
                     >

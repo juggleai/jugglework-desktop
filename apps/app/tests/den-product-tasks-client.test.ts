@@ -47,6 +47,55 @@ test("product task client sends the delegated view token", async () => {
   expect(requestUrl).toContain("view=delegated");
 });
 
+test("membership writes encode both ids, send no body, and read the resulting state", async () => {
+  const client = createDenClient({ baseUrl: "https://work.example", token: "token_one" });
+  const taskId = task.id, listId = "list/two";
+  for (const added of [true, false]) {
+    globalThis.fetch = async (url, init) => {
+      expect(String(url)).toEndWith("/v1/tasks/task%2Fone/lists/list%2Ftwo");
+      expect(init?.method).toBe(added ? "PUT" : "DELETE");
+      expect(init?.body).toBeUndefined();
+      expect(new Headers(init?.headers).get("x-jugglework-legacy-org-id")).toBe("org_one");
+      return Response.json({ taskId, listId, added });
+    };
+    expect(await client.setProductTaskListMembership("org_one", taskId, listId, added)).toEqual({ taskId, listId, added });
+  }
+  for (const bad of [{ taskId, listId, added: 1 }, { taskId: "other", listId, added: true }, { taskId, listId: "other", added: true }]) {
+    globalThis.fetch = async () => Response.json(bad);
+    await expect(client.setProductTaskListMembership("org_one", taskId, listId, true)).rejects.toMatchObject({ code: "invalid_task_list_membership" });
+  }
+});
+
+test("detail and list honor the visible projection, including empty, before legacy listId", async () => {
+  const client = createDenClient({ baseUrl: "https://work.example", token: "token_one" });
+  for (const listIds of [undefined, [], ["one", "two"]]) {
+    const row = { ...task, listId: "legacy", listIds };
+    globalThis.fetch = async (url) => Response.json(String(url).includes("/tasks/task%2Fone") ? { ...result, task: row } : { items: [row], nextCursor: "" });
+    for (const normalized of [(await client.getProductTask("org_one", task.id)).task, (await client.listProductTasks("org_one")).items[0]!]) {
+      expect(normalized.listIds).toEqual(listIds ?? ["legacy"]);
+      expect(normalized.listId).toBe(listIds === undefined ? "legacy" : listIds[0] ?? null);
+    }
+  }
+});
+
+test("product task collaboration client strictly reads groups and group members", async () => {
+  const requests: string[] = [];
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    requests.push(url);
+    if (url.includes("/groups/group%2Fone/members")) return Response.json({ members: [{ id: "relation_one", groupId: "group/one", userId: "user_two", nickname: "Teammate", name: "Teammate", account: "teammate", avatar: null, joinedAt: "2026-11-01T00:00:00Z" }], total: 1, limit: 100, offset: 0 });
+    return Response.json({ groups: [{ id: "group/one", name: "Launch group", avatar: null, groupType: 0, ownerId: "user_one", orgId: "org_one", createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z" }], total: 1 });
+  };
+  const client = createDenClient({ baseUrl: "https://work.example", token: "token_one" });
+  expect((await client.listCollaborationGroups("org_one", { limit: 100, offset: 0 })).groups[0]?.name).toBe("Launch group");
+  expect((await client.listCollaborationGroupMembers("org_one", "group/one", { limit: 100, offset: 0 })).members[0]?.userId).toBe("user_two");
+  expect(requests[0]).toContain("/v1/groups?limit=100&offset=0");
+  expect(requests[1]).toContain("/v1/groups/group%2Fone/members?limit=100&offset=0");
+
+  globalThis.fetch = async () => Response.json({ groups: [{ id: "bad" }], total: 1 });
+  await expect(client.listCollaborationGroups("org_one")).rejects.toMatchObject({ code: "invalid_group_page" });
+});
+
 test("product task client preserves version conflict details", async () => {
   globalThis.fetch = async () => Response.json({ error: "task_version_conflict", message: "changed", details: { currentVersion: 7 } }, { status: 409 });
   const client = createDenClient({ baseUrl: "https://work.example", token: "token_one" });
@@ -85,6 +134,67 @@ test("product task client moves tasks through the dedicated move contract", asyn
 
   globalThis.fetch = async () => Response.json({ taskId: "task/one", version: "bad", listId: null, visibility: "private", replayed: false });
   await expect(client.moveProductTask("org_one", "task/one", { expectedVersion: 4, idempotencyKey: "move-two", destinationListId: "" })).rejects.toMatchObject({ code: "invalid_task_move_payload" });
+});
+
+test("product task client transfers task-list ownership through the dedicated contract", async () => {
+  const requests: Array<{ url: string; init?: RequestInit }> = [];
+  const listResult = { list: { id: "list/one", creatorMemberId: "member_two", name: "Launch", description: "", marker: "L", visibility: "members", version: 4, archivedAt: null, createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-17T00:00:00Z" }, members: [{ memberId: "member_one", role: "administrator" }, { memberId: "member_two", role: "administrator" }], permissions: { canView: true, canEdit: true, canManageMembers: true, canTransferOwnership: false, canDelete: false, canAddTasks: true, canArchive: true, canRestore: false }, replayed: false };
+  globalThis.fetch = async (input, init) => { requests.push({ url: String(input), init }); return Response.json(listResult); };
+  const client = createDenClient({ baseUrl: "https://work.example", token: "token_one" });
+  const transferred = await client.transferProductTaskListOwnership("org_one", "list/one", { expectedVersion: 3, idempotencyKey: "transfer-owner", newOwnerMemberId: "member_two" });
+  expect(requests[0]?.url).toContain("/v1/task-lists/list%2Fone/transfer-ownership");
+  expect(requests[0]?.init?.method).toBe("POST");
+  expect(JSON.parse(String(requests[0]?.init?.body))).toEqual({ expectedVersion: 3, idempotencyKey: "transfer-owner", newOwnerMemberId: "member_two" });
+  expect(transferred.list.creatorMemberId).toBe("member_two");
+});
+
+test("product task client strictly validates task-list ownership results", async () => {
+  const client = createDenClient({ baseUrl: "https://work.example", token: "token_one" });
+  const valid = { list: { id: "list_one", creatorMemberId: "member_one", name: "Launch", description: "", marker: "L", visibility: "members", version: 2, archivedAt: null, createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-17T00:00:00Z" }, members: [{ memberId: "member_one", role: "administrator" }], permissions: { canView: true, canEdit: true, canManageMembers: true, canTransferOwnership: true, canDelete: true, canAddTasks: true, canArchive: true, canRestore: false }, replayed: false };
+  for (const invalid of [
+    { ...valid, permissions: { ...valid.permissions, canTransferOwnership: "true" } },
+    { ...valid, permissions: { ...valid.permissions, canDelete: "true" } },
+    { ...valid, replayed: "false" },
+    { ...valid, list: { ...valid.list, version: 1.5 } },
+    { ...valid, list: { ...valid.list, archivedAt: 123 } },
+    { ...valid, members: [{ memberId: "member_one", role: "member" }] },
+  ]) {
+    globalThis.fetch = async () => Response.json(invalid);
+    await expect(client.getProductTaskList("org_one", "list_one")).rejects.toMatchObject({ code: "invalid_task_list_payload" });
+  }
+});
+
+test("product task client treats permissions absent from older task-list responses as unavailable", async () => {
+  const client = createDenClient({ baseUrl: "https://work.example", token: "token_one" });
+  const legacy = { list: { id: "list_one", creatorMemberId: "member_one", name: "Launch", description: "", marker: "L", visibility: "members", version: 2, archivedAt: null, createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-17T00:00:00Z" }, members: [{ memberId: "member_one", role: "administrator" }], permissions: { canView: true, canEdit: true, canManageMembers: true, canAddTasks: true, canArchive: true, canRestore: false }, replayed: false };
+  globalThis.fetch = async () => Response.json(legacy);
+  const result = await client.getProductTaskList("org_one", "list_one");
+  expect(result.permissions.canTransferOwnership).toBe(false);
+  expect(result.permissions.canDelete).toBe(false);
+});
+
+test("product task client deletes a task list through the dedicated strict contract", async () => {
+  const requests: Array<{ url: string; init?: RequestInit }> = [];
+  globalThis.fetch = async (input, init) => { requests.push({ url: String(input), init }); return Response.json({ listId: "list/one", replayed: false }); };
+  const client = createDenClient({ baseUrl: "https://work.example", token: "token_one" });
+  await expect(client.deleteProductTaskList("org_one", "list/one", { expectedVersion: 4, idempotencyKey: "delete-list", deleteUnassignedTasks: true })).resolves.toEqual({ listId: "list/one", replayed: false });
+  expect(requests[0]?.url).toContain("/v1/task-lists/list%2Fone");
+  expect(requests[0]?.init?.method).toBe("DELETE");
+  expect(JSON.parse(String(requests[0]?.init?.body))).toEqual({ expectedVersion: 4, idempotencyKey: "delete-list", deleteUnassignedTasks: true });
+
+  for (const invalid of [{ listId: "", replayed: false }, { listId: "list/one", replayed: "false" }, { replayed: false }]) {
+    globalThis.fetch = async () => Response.json(invalid);
+    await expect(client.deleteProductTaskList("org_one", "list/one", { expectedVersion: 4, idempotencyKey: "delete-list", deleteUnassignedTasks: false })).rejects.toMatchObject({ code: "invalid_task_list_delete_payload" });
+  }
+  globalThis.fetch = async () => Response.json({ listId: "list_two", replayed: false });
+  await expect(client.deleteProductTaskList("org_one", "list/one", { expectedVersion: 4, idempotencyKey: "delete-list", deleteUnassignedTasks: false })).rejects.toMatchObject({ code: "invalid_task_list_delete_payload" });
+});
+
+test("product task client rejects a task-list result for a different requested list", async () => {
+  const client = createDenClient({ baseUrl: "https://work.example", token: "token_one" });
+  const valid = { list: { id: "list_two", creatorMemberId: "member_one", name: "Launch", description: "", marker: "L", visibility: "members", version: 2, archivedAt: null, createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-17T00:00:00Z" }, members: [{ memberId: "member_one", role: "administrator" }], permissions: { canView: true, canEdit: true, canManageMembers: true, canTransferOwnership: true, canDelete: true, canAddTasks: true, canArchive: true, canRestore: false }, replayed: false };
+  globalThis.fetch = async () => Response.json(valid);
+  await expect(client.getProductTaskList("org_one", "list_one")).rejects.toMatchObject({ code: "invalid_task_list_payload" });
 });
 
 test("product task client rejects malformed pages", async () => {

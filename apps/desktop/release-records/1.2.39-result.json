@@ -1,0 +1,277 @@
+{
+  "schema": "com.juggleai.jugglework.desktop-release-result",
+  "schemaVersion": 1,
+  "channel": "stable",
+  "platform": "mac",
+  "architecture": "arm64",
+  "installedStateVerification": "not_performed",
+  "productMainAcceptance": "not_performed",
+  "gitCompletion": "Actual final records commit/push/dev-to-main fast-forward and fresh refs are recorded externally in git-closeout.json to avoid self-reference.",
+  "version": "1.2.39",
+  "completedAt": "2026-11-17T13:43:24.056336+00:00",
+  "sourceCommit": "603c73b37aca6c7afbe0b3b051ee30e29bb554a5",
+  "candidateRecordCommit": "33fdac794b30db7a24208fd577a4a755fe0df7ec",
+  "candidateSha256": "5401d3ebf31ab61a860de859ff9243dd25c4b917ff1fa9ef046c4ce45a1646eb",
+  "promotionToolingCommit": "33fdac794b30db7a24208fd577a4a755fe0df7ec",
+  "closeoutStartingHead": "70dee17ae764a1044b57c12e8158759d1366c80d",
+  "closeoutObservedParallelHead": "dd104e109728eb6dea195b8bf647be6877d9c071",
+  "gitCloseoutStatus": "User explicitly requested commit/push retry after the parallel commit; actual final commit and push outcome are recorded externally in git-closeout.json to avoid self-reference.",
+  "promotionWorkflow": "https://github.com/juggleai/jugglework-desktop/actions/runs/44087136045",
+  "promotionRunId": "44087136045",
+  "promotionRunAttempt": 1,
+  "promotionConclusion": "success",
+  "promotionVerifiedAt": "2026-11-17T13:07:02.879Z",
+  "promotionEvidenceSha256": "232d28ae1cccd7d76cedb226b1b4149b5a771164a172c93a82d4bddd476e4a79",
+  "stableManifest": {
+    "url": "https://downloads.jugglechat.cn/jugglework/releases/stable/mac/latest-mac.yml",
+    "size": 706,
+    "sha256": "9cd93c562b0d7ac4fa8a24b8fe0f230f5afe31bf3a0f7b9701554addc0d7caa5",
+    "cacheControl": "public, max-age=31536000",
+    "regionalIsolation": false,
+    "scope": "全球共享 Stable；仅 Den 配置变更为海外限定。"
+  },
+  "immutableManifest": {
+    "key": "jugglework/releases/v1.2.39/mac/latest-mac.yml",
+    "url": "https://downloads.jugglechat.cn/jugglework/releases/v1.2.39/mac/latest-mac.yml",
+    "sha256": "9cd93c562b0d7ac4fa8a24b8fe0f230f5afe31bf3a0f7b9701554addc0d7caa5",
+    "sha512": "Iga3IweYcP33gei+245BuGwmSvEZczyOOHZH4kn9HdOJRNU7TAc5FO2NnJIR51uoKT6TKEvByXU3XOBMKEjr0A==",
+    "size": 706,
+    "etag": "FlrBGNnG-IRQcta896srPEUGav5t",
+    "mime": "text/yaml"
+  },
+  "artifacts": [
+    {
+      "name": "jugglework-mac-arm64-1.2.39.zip",
+      "key": "jugglework/releases/v1.2.39/mac/arm64/jugglework-mac-arm64-1.2.39.zip",
+      "size": 423200212,
+      "sha256": "420b329bb3094a470c0b7b790cbea4e6f1d6c57a15a53cf1320ce815611b7411",
+      "sha512": "c3iWfCmxapEAbDUHHYTLmTi0QVrGyjQ+fjGC+ZYj3LFLXYsYZHmsxKMpeywX1KOXJWRs+8J+r0XiPUev/CQYQg==",
+      "etag": "lp3Nxkzaw95OlJyjGF2gsbm6Uwpn",
+      "mime": "application/zip",
+      "url": "https://downloads.jugglechat.cn/jugglework/releases/v1.2.39/mac/arm64/jugglework-mac-arm64-1.2.39.zip"
+    },
+    {
+      "name": "jugglework-mac-arm64-1.2.39.dmg",
+      "key": "jugglework/releases/v1.2.39/mac/arm64/jugglework-mac-arm64-1.2.39.dmg",
+      "size": 425718763,
+      "sha256": "7f639c6b39c898b4221fa8a370ebb5f045804e49dc0813d9ac177d971113d90b",
+      "sha512": "hY96sPgU5WjG28H65POstUzZXWgaDKeJgI1wx8Z70UZMBpHGGaecB37w7oI0GUfTWLSo0kalHhVzt3bmncFJfw==",
+      "etag": "lrmLlt-PAqulv_ITh5rinEvOfnPP",
+      "mime": "application/x-apple-diskimage",
+      "url": "https://downloads.jugglechat.cn/jugglework/releases/v1.2.39/mac/arm64/jugglework-mac-arm64-1.2.39.dmg"
+    },
+    {
+      "name": "jugglework-mac-arm64-1.2.39.zip.blockmap",
+      "key": "jugglework/releases/v1.2.39/mac/arm64/jugglework-mac-arm64-1.2.39.zip.blockmap",
+      "size": 443658,
+      "sha256": "12136aca498ba20761c4d9335078d8af43692d8376f22f0f078a7b8851f1f8c0",
+      "sha512": "C6SDGOzFSkzPxf+Vhxc6+cdzMFgY7LK7Xnfg47zoR5wQWF/AnGPO1Wd8F1C4k2nZe1894ORFEZqGYEx3+h+KpA==",
+      "etag": "Fl5Z-ApOkxMSB6FwzXthVtp5vFDC",
+      "mime": "application/octet-stream",
+      "url": "https://downloads.jugglechat.cn/jugglework/releases/v1.2.39/mac/arm64/jugglework-mac-arm64-1.2.39.zip.blockmap"
+    },
+    {
+      "name": "jugglework-mac-arm64-1.2.39.dmg.blockmap",
+      "key": "jugglework/releases/v1.2.39/mac/arm64/jugglework-mac-arm64-1.2.39.dmg.blockmap",
+      "size": 442074,
+      "sha256": "b6670fa0f36a269072764c0d6f0bbe0cb34e0f1b557d0f2e5d907e316c24f53c",
+      "sha512": "8mVRAKF3BLmwASZ+NkY1CCLSEQoCphCmgFiDYrAyjd0CRqbG7WtLgst5uDw3kINoig08ss40Gl9j1/JuwhYu0Q==",
+      "etag": "Ft_Ww4iCh5U0Gh-s3ienExHmPGLe",
+      "mime": "application/octet-stream",
+      "url": "https://downloads.jugglechat.cn/jugglework/releases/v1.2.39/mac/arm64/jugglework-mac-arm64-1.2.39.dmg.blockmap"
+    }
+  ],
+  "releasePolicy": {
+    "scope": "stable-mac-arm64-standing-policy",
+    "policyVersion": 1,
+    "minVersion": "1.2.35",
+    "currentCoordinates": {
+      "version": "1.2.39",
+      "channel": "stable",
+      "platform": "mac",
+      "architecture": "arm64",
+      "commit": "603c73b37aca6c7afbe0b3b051ee30e29bb554a5",
+      "immutableManifestDigest": "9cd93c562b0d7ac4fa8a24b8fe0f230f5afe31bf3a0f7b9701554addc0d7caa5",
+      "mutableManifestKey": "jugglework/releases/stable/mac/latest-mac.yml"
+    },
+    "reasons": {
+      "canary": "User standing authorization: skip real immutable-target and mutable Stable-feed lower-client upgrade canaries for matching stable macOS arm64 releases starting at 1.2.35.",
+      "mutableCacheControl": "User standing authorization: skip only Qiniu mutable manifest Cache-Control mutation and required-value validation for matching stable macOS arm64 releases starting at 1.2.35."
+    }
+  },
+  "workflow": {
+    "authorization": "standing_policy",
+    "explicit": true,
+    "canary": "skipped_by_standing_policy",
+    "mutableCacheControlMutation": "skipped_by_standing_policy",
+    "mutableCacheControlValidation": "skipped_by_standing_policy"
+  },
+  "olderVersionCacheRisk": true,
+  "trust": {
+    "bundleIdentifier": "com.juggleai.jugglework",
+    "teamIdentifier": "H7PDHSK3C7",
+    "deepStrictCodesign": "accepted",
+    "hardenedRuntime": "enabled",
+    "appSubmissionId": "37fe4de1-cc7d-460e-b431-bd7730065460",
+    "dmgSubmissionId": "21e9293c-cfe7-44fb-85c6-32029a171635",
+    "appAndDmgNotarizationStaplesGatekeeper": "accepted/validated",
+    "notarizationException": null
+  },
+  "toonFactory": {
+    "fileCount": 1034,
+    "inventorySha256": "47965d06fac59d49753132990410d81e7017ff89aa4bbb3e8faaa1cd52c6c933",
+    "manifestSha256": "aa17c892891bd276b8b3fc030f6eb4f32c292d392763f30993e4aba56a404de2",
+    "toonflow": {
+      "revision": "sha256:4668de11fde5a98644631999bfd044066c65bcef34f1d197eee0f6c2232b3e16",
+      "version": "unversioned",
+      "lockfileSha256": "eb490e0976076fee21ea6f84dad2cb8b7bc0cc33868deb9953a6210214f8a119"
+    },
+    "bun": {
+      "version": "1.3.14",
+      "platform": "darwin",
+      "arch": "arm64",
+      "executableName": "bun",
+      "format": "mach-o",
+      "bytes": 63096576,
+      "sha256": "e0c90ec15d33363e6b70713d56bc3b2c7585c17f40a0fe0f8fd9305901d4e233",
+      "provenance": {
+        "source": "official-github-release",
+        "version": "1.3.14",
+        "repositoryUrl": "https://github.com/oven-sh/bun",
+        "releaseUrl": "https://github.com/oven-sh/bun/releases/tag/bun-v1.3.14",
+        "shasumsUrl": "https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/SHASUMS256.txt",
+        "archive": {
+          "name": "bun-darwin-aarch64.zip",
+          "url": "https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/bun-darwin-aarch64.zip",
+          "sha256": "d8b96221828ad6f97ac7ac0ab7e95872341af763001e8803e8267652c2652620"
+        },
+        "binary": {
+          "sha256": "e0c90ec15d33363e6b70713d56bc3b2c7585c17f40a0fe0f8fd9305901d4e233"
+        }
+      }
+    },
+    "packagedInventorySha256": "47965d06fac59d49753132990410d81e7017ff89aa4bbb3e8faaa1cd52c6c933",
+    "blockmaps": "independently_recomputed_byte_identical",
+    "verifiedContainers": [
+      "app",
+      "zip",
+      "dmg"
+    ],
+    "independentMediaAcceptance": "26/26 passed; independent Electron host, not product main",
+    "nullDocumentDiagnostics": 7
+  },
+  "tests": {
+    "provenance": "历史精确源码/native 验证保留原始证据；本次仅执行 closeout-validation.json 所列最小检查。",
+    "freshCloseoutValidation": "closeout-validation.json",
+    "denPreapplySelfTests": 57,
+    "independentMediaChecks": 26,
+    "fullRepositoryGreenClaim": false
+  },
+  "den": {
+    "overseas": {
+      "verification": "passed",
+      "version": "1.2.39",
+      "observationSeconds": 130.892727,
+      "oldPid": 118378,
+      "newPid": 119655,
+      "binarySha256": "4f71915b4e4588aa82d5f41f1aa45b5531c1c0340a5428cb3b1b1a95f8b3011b",
+      "binaryUnchanged": true,
+      "nonVersionBytesUnchanged": true,
+      "backup": "/root/jugglework-server/backups/desktop-version-1.2.39-20261117T134101470203Z",
+      "backupRootOnlyVerified": true,
+      "backupDirectoryMode": "0700",
+      "backupFileModes": "0600",
+      "loopback8021": true,
+      "applyAttempts": 1,
+      "restartAttempts": 1,
+      "publishedCount": 26,
+      "allowedCount": 26,
+      "publicInventory": {
+        "latestAppVersion": "1.2.39",
+        "minAppVersion": "0.1.0",
+        "publishedDesktopVersions": [
+          "0.1.0",
+          "1.2.15",
+          "1.2.16",
+          "1.2.17",
+          "1.2.18",
+          "1.2.19",
+          "1.2.20",
+          "1.2.21",
+          "1.2.22",
+          "1.2.23",
+          "1.2.24",
+          "1.2.25",
+          "1.2.26",
+          "1.2.27",
+          "1.2.28",
+          "1.2.29",
+          "1.2.30",
+          "1.2.31",
+          "1.2.32",
+          "1.2.33",
+          "1.2.34",
+          "1.2.35",
+          "1.2.36",
+          "1.2.37",
+          "1.2.38",
+          "1.2.39"
+        ]
+      },
+      "effectiveAllowlistIncludesTarget": true,
+      "authenticatedContractVerified": false,
+      "rawStrictLogGate": {
+        "criticalSignatures": 0,
+        "http5xxSignatures": 0,
+        "controlStartup": true,
+        "streamingStartup": true,
+        "bytesChecked": 172346
+      },
+      "origin": "https://work.juggle.im",
+      "acceptedKnownWorker503Signatures": 0,
+      "knownWorkerRiskResolved": false,
+      "humanRiskAcceptance": "human-risk-acceptance.json",
+      "localPublicHTTP": "health/ready/runtime-config/console/app-version all 200",
+      "summary": "final-rollout-summary.json"
+    },
+    "china": {
+      "origin": "https://work.jugglechat.cn",
+      "latestAppVersion": "1.2.37",
+      "minAppVersion": "0.1.0",
+      "inventoryUnchanged": true,
+      "ssh": false,
+      "mutations": false,
+      "verificationScope": "仅公开 inventory；无进程/配置/二进制断言"
+    }
+  },
+  "rollback": {
+    "backup": "/root/jugglework-server/backups/desktop-version-1.2.39-20261117T134101470203Z",
+    "automaticRollbackPerformed": false,
+    "procedure": "If separately authorized: verify root-only backup/checksum and current state, stage exact config.yml backup, atomically replace current config, restart only overseas once and reverify. No binary or database restore.",
+    "restoreSha256": "5ddee5651faac39f64658674053bf698b014046eb83db727453c9af5633bfea3",
+    "expectedCurrentConfigSha256": "202449ce8a633a45a6cf25baac120e77b1c73eabc5594f8d743ce3f1d1648ad1",
+    "expectedCurrentBinarySha256": "4f71915b4e4588aa82d5f41f1aa45b5531c1c0340a5428cb3b1b1a95f8b3011b"
+  },
+  "limitations": [
+    "历史同 Worker tokens POST 503 根因仍未知、未解决，不标作 baseline/fixed；用户只接受本版本本环境该已知风险，其他 5xx/critical/migration/restart-loop 不获豁免。130.892727 秒原 strict critical/5xx=0/0，acceptedKnown503=0。",
+    "海外限定只适用于 Den；Stable 是全球共享 feed，中国客户端可能受其影响。中国 Den 仍为 1.2.37。",
+    "真实 immutable/mutable 低版本升级 canary 与 mutable Cache-Control 修改/必需值验证均 skipped_by_standing_policy；未验证安装、退出、重启、安装版本与状态保留。",
+    "Mutable Cache-Control public, max-age=31536000；CDN 刷新及当前精确回读不证明所有客户端/缓存已收敛，仍可能看到旧版本。",
+    "Independent current Electron host, not the candidate executable/main, updater, notarization or release gate.",
+    "UI automation uses candidate DOM events and Electron executeJavaScript; fixture canvas is seeded on disk, not imported through a file picker.",
+    "Scene detector is exercised on a short synthetic testsrc2 fixture; many-shot/10-minute limits and publication-await races require separate tests.",
+    "Cancellation tests SIGSTOP the next owned real ffmpeg child to make the UI round-trip deterministic, then require candidate cancellation to kill it and wait for close. This verifies lifecycle, not natural processing timing; publication-await races are covered separately.",
+    "独立媒体验收 26/26，保留 7 条 null-document diagnostics；并非产品 main/UI 全链路通过。",
+    "未验证生产认证 provider/Worker/Docs/calendar/meeting/desktop-config 业务契约；匿名 401/404、health 或二进制标记均非认证功能证据。",
+    "原 verifier runner 因缺少公证环境判为 NOT_RELEASE；原记录保留，append-only supplement 通过实际 release 验证。",
+    "原 shared-types 聚合脚本混用 Node/bun:test；native runner 证据不等于聚合脚本成功；不声称全仓测试通过。",
+    "历史 FINAL-LOCAL-REPORT/RESULT 的 zero-byte guide 限制与 RESULT.guide.bytes=8250 不一致；使用实际源码 git-show 核验，见 final-release-evidence.json，未改写历史证据。",
+    "x264 固定 archive/commit 不是独立上游签名证明；GPL 分发审核仍由发布负责人承担。",
+    "Windows、Intel/x64、网站、tag、GitHub Release、服务器二进制部署不在本次范围；本次收尾生产写入/重启均为 0。"
+  ],
+  "evidenceRoot": "release-evidence/jugglework-desktop/1.2.39/",
+  "promotionEvidence": "run-44087136045-attempt-1-final/release-evidence.json",
+  "finalEvidence": "final-release-evidence.json",
+  "report": "RELEASE-REPORT.md",
+  "evidenceIndex": "evidence-index.json"
+}

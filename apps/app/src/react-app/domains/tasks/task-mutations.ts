@@ -96,9 +96,32 @@ export function useProductTaskListMutations(client: DenClient, scope: ProductTas
     await Promise.all([false, true].map((archived) => queryClient.invalidateQueries({ queryKey: productTaskKeys.taskLists(captured.scope, archived) })));
   } };
   const create = useMutation({ retry: false, onMutate: () => captureScope(scope), mutationFn: (input: Parameters<DenClient["createProductTaskList"]>[1]) => client.createProductTaskList(scope!.organizationId, input), onSuccess: (_result, _input, captured) => refresh(captured) });
-  const update = useMutation({ retry: false, onMutate: () => captureScope(scope), mutationFn: (input: { listId: string; patch: Parameters<DenClient["updateProductTaskList"]>[2] }) => client.updateProductTaskList(scope!.organizationId, input.listId, input.patch), onSuccess: (_result, _input, captured) => refresh(captured) });
+  const refreshConflict = async (error: unknown, input: { listId: string }, captured?: CapturedMutationScope | null) => { if (captured && error instanceof DenApiError && error.status === 409) await queryClient.invalidateQueries({ queryKey: productTaskKeys.taskListDetail(captured.scope, input.listId), exact: true, refetchType: "active" }); };
+  const update = useMutation({ retry: false, onMutate: () => captureScope(scope), mutationFn: (input: { listId: string; patch: Parameters<DenClient["updateProductTaskList"]>[2] }) => client.updateProductTaskList(scope!.organizationId, input.listId, input.patch), onError: refreshConflict, onSuccess: (result, _input, captured) => {
+    if (captured) {
+      queryClient.setQueriesData<{ items: Array<typeof result.list>; nextCursor: string }>({ queryKey: productTaskKeys.taskLists(captured.scope, false), exact: true }, (current) => current ? { ...current, items: current.items.map((list) => list.id === result.list.id ? result.list : list) } : current);
+      queryClient.setQueryData(productTaskKeys.taskListDetail(captured.scope, result.list.id), result);
+    }
+    void refresh(captured);
+  } });
+  const transferOwnership = useMutation({ retry: false, onMutate: () => captureScope(scope), mutationFn: (input: { listId: string; patch: Parameters<DenClient["transferProductTaskListOwnership"]>[2] }) => client.transferProductTaskListOwnership(scope!.organizationId, input.listId, input.patch), onSuccess: (result, _input, captured) => {
+    if (captured) {
+      queryClient.setQueriesData<{ items: Array<typeof result.list>; nextCursor: string }>({ queryKey: productTaskKeys.taskLists(captured.scope, false), exact: true }, (current) => current ? { ...current, items: current.items.map((list) => list.id === result.list.id ? result.list : list) } : current);
+      queryClient.setQueryData(productTaskKeys.taskListDetail(captured.scope, result.list.id), result);
+    }
+    void refresh(captured);
+  } });
   const transition = useMutation({ retry: false, onMutate: () => captureScope(scope), mutationFn: (input: { listId: string; operation: "archive" | "restore"; expectedVersion: number; idempotencyKey: string }) => client.transitionProductTaskList(scope!.organizationId, input.listId, input.operation, input), onSuccess: (_result, _input, captured) => refresh(captured) });
-  return { create, update, transition };
+  const remove = useMutation({ retry: false, onMutate: () => captureScope(scope), mutationFn: (input: { listId: string; patch: Parameters<DenClient["deleteProductTaskList"]>[2] }) => client.deleteProductTaskList(scope!.organizationId, input.listId, input.patch), onError: refreshConflict, onSuccess: (result, _input, captured) => {
+    if (captured) {
+      for (const archived of [false, true]) queryClient.setQueriesData<{ items: Array<{ id: string }>; nextCursor: string }>({ queryKey: productTaskKeys.taskLists(captured.scope, archived), exact: true }, (current) => current ? { ...current, items: current.items.filter((list) => list.id !== result.listId) } : current);
+      queryClient.removeQueries({ queryKey: productTaskKeys.taskListDetail(captured.scope, result.listId), exact: true });
+      queryClient.removeQueries({ queryKey: productTaskKeys.details(captured.scope) });
+      void queryClient.invalidateQueries({ queryKey: productTaskKeys.lists(captured.scope) });
+    }
+    void refresh(captured);
+  } });
+  return { create, update, transferOwnership, transition, remove };
 }
 
 export function useProductTaskReminderMutations(client: DenClient, scope: ProductTaskScope | null, taskId: string | null) {

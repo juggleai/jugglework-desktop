@@ -46,6 +46,11 @@ import { useBootState } from "./boot-state";
 import { ensureDesktopLocalJuggleWorkConnection } from "./desktop-local-jugglework";
 import { resolveJuggleWorkConnection } from "./jugglework-connection";
 import {
+  backgroundWorkspaceDiscoveryCycleDelay,
+  backgroundWorkspaceSyncIsReady,
+  scheduleBatchedWorkspaceSync,
+} from "./workspace-sync-startup";
+import {
   classifyRouteSessionReadError,
   describeRouteError,
   isTransientStartupError,
@@ -145,7 +150,11 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
     navigate(workspaceSessionRoute(id, sessionId), options);
   }, [embedded, navigate, onSessionTargetChange]);
 
-  const { markRouteReady: markBootRouteReady } = useBootState();
+  const {
+    phase: bootPhase,
+    routeReady: bootRouteReady,
+    markRouteReady: markBootRouteReady,
+  } = useBootState();
   const [loading, setLoading] = useState(true);
   const [client, setClient] = useState<JuggleWorkServerClient | null>(null);
   const [baseUrl, setBaseUrl] = useState("");
@@ -161,6 +170,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
   const [modernRouteSessionResolution, setModernRouteSessionResolution] = useState<ModernRouteSessionResolution | null>(null);
   const [routeRefreshVersion, setRouteRefreshVersion] = useState(0);
   const [legacySelectedWorkspaceId, setLegacySelectedWorkspaceId] = useState<string>(() => readActiveWorkspaceId() ?? "");
+  const [backgroundActiveWorkspaceIds, setBackgroundActiveWorkspaceIds] = useState<Set<string>>(() => new Set());
   const selectedWorkspaceId = routeWorkspaceId || legacySelectedWorkspaceId;
   const selectedWorkspace = useMemo(
     () => workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? (selectedWorkspaceId ? null : workspaces[0] ?? null),
@@ -681,28 +691,98 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
     });
   }, []);
 
-  useEffect(() => {
-    const releases = workspaces.flatMap((workspace) => {
-      const endpoint = endpointForWorkspace(workspace);
-      if (!endpoint || workspace.remoteType === "opencode") return [];
-      return [ensureWorkspaceSessionSync({
-        workspaceId: endpoint.workspaceId,
-        baseUrl: endpoint.opencodeBaseUrl,
-        juggleworkToken: endpoint.token,
-        promptSuggestionsEndpoint: endpoint.client.baseUrl,
-        onSessionUpdated: (update) => {
-          const directory = update.info.directory;
-          if (!endpoint.isRemote && typeof directory === "string" && workspace.path &&
-            normalizeDirectoryPath(directory) !== normalizeDirectoryPath(workspace.path)) return;
-          handleRuntimeSessionUpdated(workspace.id, update);
-        },
-        onReconnect: () => {
-          void loadWorkspaceSessionsInBackground([workspace], { force: true });
-        },
-      })];
+  const subscribeWorkspaceSessionSync = useCallback((workspace: RouteWorkspace) => {
+    const endpoint = endpointForWorkspace(workspace);
+    if (!endpoint || workspace.remoteType === "opencode") return null;
+    return ensureWorkspaceSessionSync({
+      workspaceId: endpoint.workspaceId,
+      baseUrl: endpoint.opencodeBaseUrl,
+      juggleworkToken: endpoint.token,
+      promptSuggestionsEndpoint: endpoint.client.baseUrl,
+      onSessionUpdated: (update) => {
+        const directory = update.info.directory;
+        if (!endpoint.isRemote && typeof directory === "string" && workspace.path &&
+          normalizeDirectoryPath(directory) !== normalizeDirectoryPath(workspace.path)) return;
+        handleRuntimeSessionUpdated(workspace.id, update);
+      },
+      onReconnect: () => {
+        void loadWorkspaceSessionsInBackground([workspace], { force: true });
+      },
     });
-    return () => { for (const release of releases) release(); };
-  }, [workspaces, baseUrl, token, hostToken, endpointForWorkspace, handleRuntimeSessionUpdated, loadWorkspaceSessionsInBackground]);
+  }, [baseUrl, token, hostToken, endpointForWorkspace, handleRuntimeSessionUpdated, loadWorkspaceSessionsInBackground]);
+
+  const backgroundRuntimeReady = backgroundWorkspaceSyncIsReady({
+    desktop: isDesktopRuntime(),
+    phase: bootPhase,
+    routeReady: bootRouteReady,
+  });
+
+  // The visible workspace is latency-sensitive and always owns one live SSE.
+  useEffect(() => {
+    if (!selectedWorkspace) return;
+    const release = subscribeWorkspaceSessionSync(selectedWorkspace);
+    return () => release?.();
+  }, [selectedWorkspace, subscribeWorkspaceSessionSync]);
+
+  // Discover background work without keeping every workspace's OpenCode
+  // instance alive. A finite coordinator read is much cheaper than one SSE,
+  // heartbeat watchdog and reconnect loop per workspace. Failed probes retain
+  // the last known state so a transient outage cannot hide a running task.
+  useEffect(() => {
+    if (!backgroundRuntimeReady) return;
+    let disposed = false;
+    let releaseBatch: (() => void) | null = null;
+    let nextProbe: ReturnType<typeof globalThis.setTimeout> | null = null;
+
+    const probe = () => {
+      releaseBatch?.();
+      const candidates = workspaces.filter((workspace) => workspace.id !== selectedWorkspace?.id);
+      releaseBatch = scheduleBatchedWorkspaceSync(
+        candidates,
+        (workspace) => {
+          const endpoint = endpointForWorkspace(workspace);
+          if (
+            !endpoint ||
+            workspace.remoteType === "opencode" ||
+            typeof endpoint.client.listActiveSessionRuns !== "function"
+          ) return null;
+          void endpoint.client.listActiveSessionRuns(endpoint.workspaceId).then((result) => {
+            if (disposed) return;
+            const active = result.items.length > 0;
+            setBackgroundActiveWorkspaceIds((current) => {
+              if (current.has(workspace.id) === active) return current;
+              const next = new Set(current);
+              if (active) next.add(workspace.id);
+              else next.delete(workspace.id);
+              return next;
+            });
+          }).catch(() => undefined);
+          return null;
+        },
+      );
+      // Wait until every batch in this sweep has had a chance to start before
+      // scheduling the next sweep. A fixed interval would repeatedly cancel
+      // the tail of a very large workspace list and starve those workspaces.
+      nextProbe = globalThis.setTimeout(probe, backgroundWorkspaceDiscoveryCycleDelay(candidates.length));
+    };
+
+    probe();
+    return () => {
+      disposed = true;
+      if (nextProbe) globalThis.clearTimeout(nextProbe);
+      releaseBatch?.();
+    };
+  }, [backgroundRuntimeReady, endpointForWorkspace, selectedWorkspace?.id, workspaces]);
+
+  // Only background workspaces with an authoritative active run receive SSE.
+  // They are still connected in small batches after runtime readiness.
+  useEffect(() => {
+    if (!backgroundRuntimeReady) return;
+    const active = workspaces.filter((workspace) => (
+      workspace.id !== selectedWorkspace?.id && backgroundActiveWorkspaceIds.has(workspace.id)
+    ));
+    return scheduleBatchedWorkspaceSync(active, subscribeWorkspaceSessionSync);
+  }, [backgroundActiveWorkspaceIds, backgroundRuntimeReady, selectedWorkspace?.id, subscribeWorkspaceSessionSync, workspaces]);
   const handleRuntimeSessionCreated = useCallback((session: Session) => {
     if (!selectedWorkspaceId) return;
     rememberPendingCreatedSession(selectedWorkspaceId, session.id);

@@ -2,10 +2,10 @@
 import * as React from "react";
 import type { CSSProperties } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { AlignLeft, ArrowUp, AtSign, Bold, Bookmark, BookmarkCheck, BookmarkPlus, CalendarDays, Check, ChevronDown, CircleAlert, ImageIcon, Italic, Link, List as ListIcon, ListChecks, ListOrdered, ListTodo, LoaderCircle, MoreHorizontal, Plus, Quote, RefreshCw, Smile, Strikethrough, Underline, UserRound, X } from "lucide-react";
+import { AlignLeft, ArrowUp, AtSign, Bold, Bookmark, BookmarkCheck, BookmarkPlus, CalendarDays, Check, ChevronDown, ChevronLeft, CircleAlert, ImageIcon, Italic, Link, List as ListIcon, ListChecks, ListOrdered, ListTodo, LoaderCircle, MoreHorizontal, Pencil, Plus, Quote, RefreshCw, Smile, Strikethrough, Trash2, Underline, UserRound, UserRoundPlus, UsersRound, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
-import { DenApiError, isPersonalDenOrganization, type DenOrganizationMember, type DenProductTask, type DenProductTaskCompletionPolicy, type DenProductTaskCreateInput, type DenProductTaskList, type DenProductTaskUpdateInput, type DenProductTaskVisibility } from "@/app/lib/den";
+import { DenApiError, isPersonalDenOrganization, type DenCollaborationGroup, type DenOrganizationMember, type DenProductTask, type DenProductTaskCompletionPolicy, type DenProductTaskCreateInput, type DenProductTaskList, type DenProductTaskListResult, type DenProductTaskUpdateInput, type DenProductTaskVisibility } from "@/app/lib/den";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -25,12 +25,14 @@ import { AppSecondarySidebarTopControls } from "@/react-app/shell/app-secondary-
 import { useUiStateStore } from "@/react-app/shell/ui-state-store";
 import { appInsetSidebarCssWidth, useWorkspaceShellLayout } from "@/react-app/shell/workspace-shell-layout";
 import { useAddProductTaskComment, useCreateProductTask, useProductTaskListMutations, useProductTaskReminderMutations, useTransitionProductTask, useUpdateProductTask, type ProductTaskConflict } from "./task-mutations";
-import { flattenProductTaskActivityPages, flattenProductTaskMembers, flattenProductTaskPages, productTaskKeys, productTaskScopeKey, useOrganizationMembers, useProductTask, useProductTaskActivity, useProductTaskActivityFeed, useProductTaskLists, useProductTaskReminders, useProductTasks, type ProductTaskScope } from "./task-queries";
+import { flattenProductTaskActivityPages, flattenProductTaskMembers, flattenProductTaskPages, productTaskKeys, productTaskScopeKey, useOrganizationMembers, useProductTask, useProductTaskActivity, useProductTaskActivityFeed, useProductTaskCollaborationGroups, useProductTaskListDetail, useProductTaskLists, useProductTaskReminders, useProductTasks, type ProductTaskScope } from "./task-queries";
 import { productTaskEditDraft, readTaskSection, reapplyProductTaskDraft, taskSectionStorageKey, writeTaskSection, type ProductTaskEditDraft, type TaskSection } from "./task-page-state";
 import { TaskWorkbench, taskWorkbenchServerSort, taskWorkbenchStatuses } from "./task-workbench";
 import { TaskDateTimeCell, type TaskReminderDraft, type TaskTimeField } from "./task-date-time-cell";
 import { TaskListCell } from "./task-list-table";
-import { isTaskWorkbenchSection, readTaskWorkbenchSettings, taskSectionDefaultSettings, writeTaskWorkbenchSettings, type TaskWorkbenchSection, type TaskWorkbenchSettings } from "./task-view-state";
+import { productTaskListIds } from "@/app/lib/den";
+import { applyTaskListMembership } from "./task-queries";
+import { isTaskWorkbenchSection, readTaskWorkbenchSettings, removeTaskWorkbenchSettings, taskSectionDefaultSettings, writeTaskWorkbenchSettings, type TaskWorkbenchSection, type TaskWorkbenchSettings } from "./task-view-state";
 import { TasksSidebar, taskSectionHeading, type TasksSidebarRegistration } from "./tasks-sidebar";
 import { TodayTaskView } from "./today-task-view";
 import { TaskActivityView } from "./task-activity-view";
@@ -84,8 +86,11 @@ function ScopedConnectedTaskPage(props: TaskPageProps) {
   const [sort, setSort] = React.useState<"updated_at" | "due_at" | "created_at" | "priority">("updated_at");
   const [selectedTaskId, setSelectedTaskId] = React.useState<string | null>(props.routeTaskId ?? null);
   const [selectedListId, setSelectedListId] = React.useState<string | null>(null);
+  const [selectedListFallback, setSelectedListFallback] = React.useState<{ id: string; name: string } | null>(null);
+  const [listCollaborationDialog, setListCollaborationDialog] = React.useState<"manage" | "add" | null>(null);
+  const [listOperationDialog, setListOperationDialog] = React.useState<"rename" | "delete" | null>(null);
+  const [returnToCollaboratorManagement, setReturnToCollaboratorManagement] = React.useState(false);
   const [showFullCreate, setShowFullCreate] = React.useState(false);
-  const [showCreateList, setShowCreateList] = React.useState(false);
   const [activityUnreadOnly, setActivityUnreadOnly] = React.useState(false);
   const [workbenchSettings, setWorkbenchSettings] = React.useState<TaskWorkbenchSettings>(() => readTaskWorkbenchSettings(scope, isTaskWorkbenchSection(initialSection) ? initialSection : "assigned"));
   const [conflict, setConflict] = React.useState<ProductTaskConflict | null>(null);
@@ -155,6 +160,9 @@ function ScopedConnectedTaskPage(props: TaskPageProps) {
   const activityFeedQuery = activityUnreadOnly ? unreadActivityQuery : activitySummaryQuery;
   const activeListsQuery = useProductTaskLists({ client: cloud.client, scope, archived: false });
   const selectedTaskList = selectedListId ? (activeListsQuery.data?.items ?? []).find((list) => list.id === selectedListId) ?? null : null;
+  const selectedListTitle = selectedTaskList?.name ?? (selectedListFallback?.id === selectedListId ? selectedListFallback.name : null);
+  const selectedListDetailQuery = useProductTaskListDetail({ client: cloud.client, scope, listId: selectedListId });
+  const collaborationGroupsQuery = useProductTaskCollaborationGroups({ client: cloud.client, scope, active: listCollaborationDialog === "add" && Boolean(selectedListId) });
   const detailQuery = useProductTask({ client: cloud.client, scope, taskId: selectedTaskId });
   const activityQuery = useProductTaskActivity({ client: cloud.client, scope, taskId: selectedTaskId });
   const remindersQuery = useProductTaskReminders({ client: cloud.client, scope, taskId: selectedTaskId });
@@ -193,13 +201,16 @@ function ScopedConnectedTaskPage(props: TaskPageProps) {
     liveConflict.current = null;
     setSection(readTaskSection(scope));
     setSelectedListId(null);
+    setSelectedListFallback(null);
+    setListCollaborationDialog(null);
+    setListOperationDialog(null);
+    setReturnToCollaboratorManagement(false);
     setConflict(null);
     setEditDrafts({});
     discardedDraftTaskIds.current.clear();
     latestSaveAttempts.current.clear();
     latestCommentAttempts.current.clear();
     setShowFullCreate(false);
-    setShowCreateList(false);
     const nextSection = readTaskSection(scope);
     if (isTaskWorkbenchSection(nextSection)) setWorkbenchSettings(sectionSettings(nextSection));
   }, [scopeKey]);
@@ -317,7 +328,7 @@ function ScopedConnectedTaskPage(props: TaskPageProps) {
       return false;
     }
     const addsOtherMemberToPrivateTask = detail.task.visibility === "private" && assigneeMemberIds.some((memberId) => memberId !== detail.task.creatorMemberId);
-    if (addsOtherMemberToPrivateTask && (!detail.permissions.canManageVisibility || detail.task.listId)) {
+    if (addsOtherMemberToPrivateTask && (!detail.permissions.canManageVisibility || productTaskListIds(detail.task).length)) {
       toast.error(t("tasks.private_assignee_error"));
       return false;
     }
@@ -394,44 +405,30 @@ function ScopedConnectedTaskPage(props: TaskPageProps) {
     return result === true;
   };
 
-  const moveWorkbenchTaskToList = async (task: DenProductTask, destinationListId: string) => {
-    if (!scope) return false;
-    const capturedScope = scope;
-    const isCurrent = () => liveScopeKey.current === productTaskScopeKey(capturedScope);
-    const detail = await runMutation(() => cloud.client.getProductTask(capturedScope.organizationId, task.id), { isCurrent });
-    if (!detail) return false;
-    if (!detail.permissions.canManageMembers) { toast.error(t("tasks.list_edit_not_allowed")); return false; }
-    // The picker cache may be stale (or not yet contain an inline-created list).
-    const destination = destinationListId
-      ? await runMutation(() => cloud.client.getProductTaskList(capturedScope.organizationId, destinationListId), { isCurrent })
-      : null;
-    if (!isCurrent() || (destinationListId && !destination)) return false;
-    if (destination && (!destination.permissions.canAddTasks || destination.list.archivedAt)) { toast.error(t("tasks.list_edit_not_allowed")); return false; }
-    const requiresSharing = detail.task.visibility === "private" && destination && destination.list.visibility !== "private";
-    if (requiresSharing) {
-      if (!detail.permissions.canManageVisibility) { toast.error(t("tasks.list_edit_not_allowed")); return false; }
-      if (!globalThis.confirm(t("tasks.move_private_to_shared_confirm", { name: destination.list.name }))) return false;
-    }
-    // Confirmation must never authorize a write from an expired page/scope.
-    if (!isCurrent()) return false;
-    const result = await runMutation(() => cloud.client.moveProductTask(capturedScope.organizationId, task.id, {
-      expectedVersion: detail.task.version,
-      idempotencyKey: mutationKey("desktop-move-task-list"),
-      destinationListId,
-      ...(requiresSharing ? { confirmedVisibility: "members" as const } : {}),
-    }), { isCurrent });
+  const setTaskMembership = async (task: DenProductTask, listId: string, added: boolean) => {
+    if (!scope || !listId || liveScopeKey.current !== scopeKey) return false;
+    const list = await runMutation(() => cloud.client.getProductTaskList(scope.organizationId, listId));
+    if (!list || liveScopeKey.current !== scopeKey) return false;
+    if (!list.permissions.canAddTasks || list.list.archivedAt) { toast.error(t("tasks.list_edit_not_allowed")); return false; }
+    const result = await runMutation(() => cloud.client.setProductTaskListMembership(scope.organizationId, task.id, listId, added));
     if (!result) return false;
-    await queryClient.invalidateQueries({ queryKey: productTaskKeys.lists(capturedScope) });
-    return true;
+    applyTaskListMembership(queryClient, scope, result);
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: productTaskKeys.detail(scope, task.id) }),
+      queryClient.invalidateQueries({ queryKey: productTaskKeys.lists(scope) }),
+      queryClient.invalidateQueries({ queryKey: productTaskKeys.activityFeeds(scope) }),
+    ]);
+    return liveScopeKey.current === scopeKey && result.added === added;
   };
 
-  const createWorkbenchListAndMove = async (task: DenProductTask, name: string) => {
+  const toggleTaskList = (task: DenProductTask, listId: string) => setTaskMembership(task, listId, !productTaskListIds(task).includes(listId));
+
+  const createListAndAddTask = async (task: DenProductTask, name: string) => {
     if (!scope) return null;
     const visibility = task.visibility === "private" ? "private" as const : "members" as const;
     const created = await runMutation(() => listMutations.create.mutateAsync({ idempotencyKey: mutationKey("desktop-create-inline-task-list"), name, description: "", marker: name.slice(0, 1).toUpperCase() || "#", visibility }));
     if (!created) return null;
-    const moved = await moveWorkbenchTaskToList(task, created.list.id);
-    return moved ? created.list.id : null;
+    return await setTaskMembership(task, created.list.id, true) ? created.list.id : null;
   };
 
   const updateTaskFollowers = async (task: DenProductTask, followerMemberIds: string[]) => {
@@ -566,31 +563,55 @@ function ScopedConnectedTaskPage(props: TaskPageProps) {
     });
   };
 
+  const updateTaskListCollaborators = async (members: Array<{ memberId: string; role: "administrator" | "member" }>) => {
+    const current = selectedListDetailQuery.data;
+    if (!current || !scope) return false;
+    const normalized = new Map<string, "administrator" | "member">();
+    normalized.set(current.list.creatorMemberId, "administrator");
+    members.forEach((member) => normalized.set(member.memberId, member.memberId === current.list.creatorMemberId ? "administrator" : member.role));
+    const result = await runMutation(() => listMutations.update.mutateAsync({ listId: current.list.id, patch: {
+      expectedVersion: current.list.version,
+      idempotencyKey: mutationKey("desktop-update-task-list-collaborators"),
+      visibility: current.list.visibility === "organization" ? "organization" : normalized.size > 1 ? "members" : "private",
+      members: Array.from(normalized, ([memberId, role]) => ({ memberId, role })),
+    } }));
+    if (!result) return false;
+    queryClient.setQueryData(productTaskKeys.taskListDetail(scope, current.list.id), result);
+    return true;
+  };
+
+  const listHeaderActions = !selectedListId ? undefined : selectedListDetailQuery.data ? <TaskListCollaborationSummary result={selectedListDetailQuery.data} members={availableMembers} onManage={() => setListCollaborationDialog("manage")} onShare={() => { setReturnToCollaboratorManagement(false); setListCollaborationDialog("add"); }} onRename={() => setListOperationDialog("rename")} onDelete={() => setListOperationDialog("delete")} /> : selectedListDetailQuery.isLoading ? <span data-testid="task-list-collaboration-loading" className="inline-flex h-8 items-center gap-2 text-sm text-dls-secondary"><LoaderCircle className="size-4 animate-spin" />{t("tasks.loading")}</span> : undefined;
+
   let content: React.ReactNode;
   if (!scope) content = <TaskShellContent state={{ kind: "error", message: t("tasks.sign_in_required"), onRetry: props.onOpenAccount }} />;
   else if (section === "activity") content = <TaskActivityView items={activityItems} unreadOnly={activityUnreadOnly} unreadCount={activityUnreadCount} latestSequence={activityLatestSequence} loading={activityFeedQuery.isLoading} error={activityFeedQuery.isError ? (activityFeedQuery.error instanceof Error ? activityFeedQuery.error.message : t("tasks.activity_error_description")) : null} refreshing={activityFeedQuery.isFetching && !activityFeedQuery.isFetchingNextPage} canLoadMore={Boolean(activityFeedQuery.hasNextPage)} loadingMore={activityFeedQuery.isFetchingNextPage} markingRead={activityReadPending} onUnreadOnlyChange={setActivityUnreadOnly} onRetry={() => void activityFeedQuery.refetch()} onLoadMore={() => void activityFeedQuery.fetchNextPage()} onRead={(item) => void markActivityRead(item.event.id)} onReadAll={(sequence) => void markAllActivityRead(sequence)} onOpen={(item) => { if (item.readAt === null && item.attentionLevel !== "ambient") void markActivityRead(item.event.id); if (item.task.accessible) selectTask(item.task.id); }} onOpenList={(listId) => { setSection("all"); writeTaskSection(scope, "all"); setSelectedListId(listId); setWorkbenchSettings(sectionSettings("all", listId)); selectTask(null); }} />;
   else if (tasksQuery.isLoading) content = <TaskShellContent state={{ kind: "loading" }} />;
   else if (tasksQuery.isError) content = <TaskShellContent state={{ kind: "error", message: tasksQuery.error instanceof Error ? tasksQuery.error.message : undefined, onRetry: () => void tasksQuery.refetch() }} />;
   else if (section === "today") content = <TodayTaskView tasks={tasks} membersByTaskId={membersByTaskId} members={availableMembers} lists={activeListsQuery.data?.items ?? []} currentMemberId={currentMemberId} selectedTaskId={selectedTaskId} refreshing={tasksQuery.isFetching && !tasksQuery.isFetchingNextPage} canLoadMore={Boolean(tasksQuery.hasNextPage)} loadingMore={tasksQuery.isFetchingNextPage} onLoadMore={() => void tasksQuery.fetchNextPage()} onSelect={selectTask} onComplete={(task) => void transitionWorkbenchTask(task, "complete")} />;
-  else if (workbenchSection) content = <TaskWorkbench key={workbenchSection} tasks={tasks} membersByTaskId={membersByTaskId} members={availableMembers} lists={activeListsQuery.data?.items ?? []} listJoinError={activeListsQuery.isError ? (activeListsQuery.error instanceof Error ? activeListsQuery.error.message : t("tasks.list_join_error")) : null} memberDirectoryError={membersQuery.isError ? (membersQuery.error instanceof Error ? membersQuery.error.message : t("tasks.member_directory_error")) : null} settings={workbenchSettings} selectedTaskId={selectedTaskId} canLoadMore={Boolean(tasksQuery.hasNextPage)} loadingMore={tasksQuery.isFetchingNextPage} refreshing={tasksQuery.isFetching && !tasksQuery.isFetchingNextPage} quickCreatePending={createMutation.isPending} quickCreateMemberId={currentMemberId} onLoadMore={() => void tasksQuery.fetchNextPage()} onRetryListJoin={() => void activeListsQuery.refetch()} onRetryMemberDirectory={() => void membersQuery.refetch()} onSettingsChange={updateWorkbenchSettings} onSelect={selectTask} onTransition={(task, operation) => void transitionWorkbenchTask(task, operation)} onAssigneesChange={updateWorkbenchAssignees} onCompletionPolicyChange={updateWorkbenchCompletionPolicy} onTimeChange={updateWorkbenchTime} onLoadReminders={loadWorkbenchReminders} onReminderChange={updateWorkbenchReminder} onListChange={moveWorkbenchTaskToList} onListCreate={createWorkbenchListAndMove} onQuickCreate={async (title, defaults) => { const result = await runMutation(() => createMutation.mutateAsync({ title, ...defaults, visibility: "private", priority: "none", members: [], idempotencyKey: mutationKey("desktop-quick-create-task") })); return result?.task.id ?? false; }} />;
+  else if (workbenchSection) content = <TaskWorkbench key={workbenchSection} tasks={tasks} membersByTaskId={membersByTaskId} members={availableMembers} lists={activeListsQuery.data?.items ?? []} listJoinError={activeListsQuery.isError ? (activeListsQuery.error instanceof Error ? activeListsQuery.error.message : t("tasks.list_join_error")) : null} memberDirectoryError={membersQuery.isError ? (membersQuery.error instanceof Error ? membersQuery.error.message : t("tasks.member_directory_error")) : null} settings={workbenchSettings} selectedTaskId={selectedTaskId} canLoadMore={Boolean(tasksQuery.hasNextPage)} loadingMore={tasksQuery.isFetchingNextPage} refreshing={tasksQuery.isFetching && !tasksQuery.isFetchingNextPage} quickCreatePending={createMutation.isPending} quickCreateMemberId={currentMemberId} onLoadMore={() => void tasksQuery.fetchNextPage()} onRetryListJoin={() => void activeListsQuery.refetch()} onRetryMemberDirectory={() => void membersQuery.refetch()} onSettingsChange={updateWorkbenchSettings} onSelect={selectTask} onTransition={(task, operation) => void transitionWorkbenchTask(task, operation)} onAssigneesChange={updateWorkbenchAssignees} onCompletionPolicyChange={updateWorkbenchCompletionPolicy} onTimeChange={updateWorkbenchTime} onLoadReminders={loadWorkbenchReminders} onReminderChange={updateWorkbenchReminder} onListChange={toggleTaskList} onListCreate={createListAndAddTask} onQuickCreate={async (title, defaults) => { const targetListId = selectedListId ?? defaults.listId; const targetList = targetListId && selectedListDetailQuery.data?.list.id === targetListId ? selectedListDetailQuery.data.list : targetListId ? (activeListsQuery.data?.items ?? []).find((list) => list.id === targetListId) : null; const result = await runMutation(() => createMutation.mutateAsync({ title, ...defaults, ...(selectedListId ? { listId: selectedListId } : {}), visibility: targetList?.visibility ?? "private", priority: "none", members: [], idempotencyKey: mutationKey("desktop-quick-create-task") })); return result?.task.id ?? false; }} />;
   else content = <TaskList tasks={tasks} selectedTaskId={selectedTaskId} onSelect={selectTask} canLoadMore={Boolean(tasksQuery.hasNextPage)} loadingMore={tasksQuery.isFetchingNextPage} onLoadMore={() => void tasksQuery.fetchNextPage()} />;
 
   return (
-    <TaskPageFrame {...props} section={section} activityUnreadCount={activityUnreadCount} pageTitle={selectedTaskList?.name ?? null} onSectionChange={(next) => { selectSection(next); setSelectedListId(null); selectTask(null); }} filters={{ priority, setPriority, sort, setSort }} lists={activeListsQuery.data?.items ?? []} selectedListId={selectedListId} onSelectList={(listId) => { setSection("all"); writeTaskSection(scope, "all"); setSelectedListId(listId); setWorkbenchSettings(sectionSettings("all", listId)); selectTask(null); }} onCreateList={() => setShowCreateList(true)} onArchiveList={(listId, version) => void runMutation(() => listMutations.transition.mutateAsync({ listId, operation: "archive", expectedVersion: version, idempotencyKey: mutationKey("desktop-archive-list") }))}
-      onCreateTask={() => setShowFullCreate(true)} onCreateTaskList={() => setShowCreateList(true)}>
+    <TaskPageFrame {...props} section={section} activityUnreadCount={activityUnreadCount} pageTitle={selectedListTitle} listHeaderActions={listHeaderActions} onSectionChange={(next) => { selectSection(next); setSelectedListId(null); setSelectedListFallback(null); setListCollaborationDialog(null); setListOperationDialog(null); setReturnToCollaboratorManagement(false); selectTask(null); }} filters={{ priority, setPriority, sort, setSort }} lists={activeListsQuery.data?.items ?? []} selectedListId={selectedListId} onSelectList={(listId) => { setSection("all"); writeTaskSection(scope, "all"); setSelectedListId(listId); setSelectedListFallback(null); setListCollaborationDialog(null); setListOperationDialog(null); setReturnToCollaboratorManagement(false); setWorkbenchSettings(sectionSettings("all", listId)); selectTask(null); }} onCreateList={async (name) => { const result = await runMutation(() => listMutations.create.mutateAsync({ idempotencyKey: mutationKey("desktop-create-sidebar-list"), name, description: "", marker: name.slice(0, 1).toUpperCase() || "#", visibility: "private" })); if (!result || !scope) return false; queryClient.setQueryData(productTaskKeys.taskListDetail(scope, result.list.id), result); setSection("all"); writeTaskSection(scope, "all"); setSelectedListId(result.list.id); setSelectedListFallback({ id: result.list.id, name: result.list.name }); setWorkbenchSettings(sectionSettings("all", result.list.id)); selectTask(null); return true; }} onArchiveList={(listId, version) => void runMutation(() => listMutations.transition.mutateAsync({ listId, operation: "archive", expectedVersion: version, idempotencyKey: mutationKey("desktop-archive-list") }))}
+      onCreateTask={() => setShowFullCreate(true)}>
       {conflict ? <ConflictBanner conflict={conflict} pending={updateMutation.isPending} onDismiss={dismissConflict} onReload={() => void loadLatestForConflict()} onRetry={() => void retryConflictDraft()} /> : null}
       {content}
-      {selectedTaskId ? <TaskDetail key={`${scopeKey}:${selectedTaskId}`} result={detailQuery.data} activity={activityQuery.data} reminders={remindersQuery.data ?? []} members={availableMembers} lists={activeListsQuery.data?.items ?? []} groups={workbenchSettings.customGroups} defaultGroupName={workbenchSettings.customGroupName} groupId={workbenchSettings.customGroupAssignments[selectedTaskId] ?? "custom-default"} loading={detailQuery.isLoading} error={detailQuery.isError} currentMemberId={currentMemberId} preservedDraft={editDrafts[selectedTaskId] ?? null} onDraftChange={updateBufferedDraft} onClose={closeTask} onSave={saveTask} onComment={addComment} onFollowersChange={updateTaskFollowers} onListChange={moveWorkbenchTaskToList} onListCreate={createWorkbenchListAndMove} onTimeChange={updateWorkbenchTime} onGroupChange={setTaskGroup} onGroupsChange={(customGroups) => updateWorkbenchSettings({ ...workbenchSettings, customGroups })} onSetReminder={(scheduledAt) => void runMutation(() => reminderMutations.set.mutateAsync({ idempotencyKey: mutationKey("desktop-set-reminder"), mode: "absolute", scheduledAt, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }))} onCancelReminder={() => void runMutation(() => reminderMutations.cancel.mutateAsync(mutationKey("desktop-cancel-reminder")))} onTransition={(task, operation) => void runMutation(() => transitionMutation.mutateAsync({ taskId: task.id, operation, expectedVersion: task.version, idempotencyKey: mutationKey(`desktop-${operation}-task`) }))} /> : null}
+      {selectedTaskId ? <TaskDetail key={`${scopeKey}:${selectedTaskId}`} result={detailQuery.data} activity={activityQuery.data} reminders={remindersQuery.data ?? []} members={availableMembers} lists={activeListsQuery.data?.items ?? []} groups={workbenchSettings.customGroups} defaultGroupName={workbenchSettings.customGroupName} groupId={workbenchSettings.customGroupAssignments[selectedTaskId] ?? "custom-default"} loading={detailQuery.isLoading} error={detailQuery.isError} currentMemberId={currentMemberId} preservedDraft={editDrafts[selectedTaskId] ?? null} onDraftChange={updateBufferedDraft} onClose={closeTask} onSave={saveTask} onComment={addComment} onFollowersChange={updateTaskFollowers} onListChange={toggleTaskList} onListCreate={createListAndAddTask} onTimeChange={updateWorkbenchTime} onGroupChange={setTaskGroup} onGroupsChange={(customGroups) => updateWorkbenchSettings({ ...workbenchSettings, customGroups })} onSetReminder={(scheduledAt) => void runMutation(() => reminderMutations.set.mutateAsync({ idempotencyKey: mutationKey("desktop-set-reminder"), mode: "absolute", scheduledAt, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }))} onCancelReminder={() => void runMutation(() => reminderMutations.cancel.mutateAsync(mutationKey("desktop-cancel-reminder")))} onTransition={(task, operation) => void runMutation(() => transitionMutation.mutateAsync({ taskId: task.id, operation, expectedVersion: task.version, idempotencyKey: mutationKey(`desktop-${operation}-task`) }))} /> : null}
       {showFullCreate ? <TaskCreateDialog pending={createMutation.isPending} members={availableMembers} memberDirectoryLoading={membersQuery.isLoading && !fallbackMember} memberDirectoryError={membersQuery.isError ? (membersQuery.error instanceof Error ? membersQuery.error.message : t("tasks.member_directory_error")) : null} onRetryMemberDirectory={() => void membersQuery.refetch()} lists={activeListsQuery.data?.items ?? []} currentMemberId={currentMemberId} defaultListId={selectedListId} groups={workbenchSettings.customGroups} defaultGroupName={workbenchSettings.customGroupName} onGroupsChange={(customGroups) => updateWorkbenchSettings({ ...workbenchSettings, customGroups })} onCreateList={async (name) => { const result = await runMutation(() => listMutations.create.mutateAsync({ idempotencyKey: mutationKey("desktop-create-dialog-list"), name, description: "", marker: name.slice(0, 1).toUpperCase() || "#", visibility: "private" })); return result?.list.id ?? null; }} onClose={() => setShowFullCreate(false)} onCreate={async (input, groupId) => { const result = await runMutation(() => createMutation.mutateAsync({ ...input, idempotencyKey: mutationKey("desktop-create-task") })); if (!result) return; if (groupId && groupId !== "custom-default") updateWorkbenchSettings({ ...workbenchSettings, customGroupAssignments: { ...workbenchSettings.customGroupAssignments, [result.task.id]: groupId } }); setShowFullCreate(false); selectTask(result.task.id); }} /> : null}
-      {showCreateList ? <TaskListCreateDialog pending={listMutations.create.isPending} onClose={() => setShowCreateList(false)} onCreate={async (input) => { const result = await runMutation(() => listMutations.create.mutateAsync({ ...input, idempotencyKey: mutationKey("desktop-create-list"), visibility: "private" })); if (result) setShowCreateList(false); }} /> : null}
+      {listCollaborationDialog === "manage" && selectedListDetailQuery.data ? <TaskListCollaboratorsDialog key={`${selectedListDetailQuery.data.list.id}:${selectedListDetailQuery.data.list.version}`} result={selectedListDetailQuery.data} members={availableMembers} pending={listMutations.update.isPending || listMutations.transferOwnership.isPending} canTransferOwnership={currentMemberId === selectedListDetailQuery.data.list.creatorMemberId && selectedListDetailQuery.data.permissions.canTransferOwnership} onClose={() => setListCollaborationDialog(null)} onAdd={() => { setReturnToCollaboratorManagement(true); setListCollaborationDialog("add"); }} onTransferOwnership={async (newOwnerMemberId) => { const current = selectedListDetailQuery.data!; const result = await runMutation(() => listMutations.transferOwnership.mutateAsync({ listId: current.list.id, patch: { expectedVersion: current.list.version, idempotencyKey: mutationKey("desktop-transfer-task-list-ownership"), newOwnerMemberId } })); return Boolean(result); }} onSave={async (members) => { if (!await updateTaskListCollaborators(members)) return false; setListCollaborationDialog(null); return true; }} /> : null}
+      {listCollaborationDialog === "add" && selectedListDetailQuery.data && selectedListId && scope ? <TaskListShareDialog result={selectedListDetailQuery.data} members={availableMembers} groups={collaborationGroupsQuery.data ?? []} groupsLoading={collaborationGroupsQuery.isLoading} pending={listMutations.update.isPending} onClose={() => setListCollaborationDialog(returnToCollaboratorManagement ? "manage" : null)} onLoadGroupMembers={async (groupId) => (await runMutation(async () => { const memberIds: string[] = []; let offset = 0; while (true) { const page = await cloud.client.listCollaborationGroupMembers(scope.organizationId, groupId, { limit: 100, offset }); for (const groupMember of page.members) { const organizationMember = availableMembers.find((member) => member.userId === groupMember.userId); if (organizationMember && !memberIds.includes(organizationMember.id)) memberIds.push(organizationMember.id); } offset += page.members.length; if (!page.members.length || offset >= page.total) break; } return memberIds; })) ?? null} onSave={async (memberIds) => { const existingRoles = new Map(selectedListDetailQuery.data!.members.map((member) => [member.memberId, member.role])); if (!await updateTaskListCollaborators(memberIds.map((memberId) => ({ memberId, role: existingRoles.get(memberId) ?? "member" })))) return false; setListCollaborationDialog(returnToCollaboratorManagement ? "manage" : null); return true; }} /> : null}
+      {listOperationDialog === "rename" && selectedListDetailQuery.data ? <TaskListRenameDialog result={selectedListDetailQuery.data} pending={listMutations.update.isPending} onClose={() => setListOperationDialog(null)} onSave={async (name) => { const current = selectedListDetailQuery.data!; const result = await runMutation(() => listMutations.update.mutateAsync({ listId: current.list.id, patch: { expectedVersion: current.list.version, idempotencyKey: mutationKey("desktop-rename-task-list"), name } })); if (!result) return false; setSelectedListFallback({ id: result.list.id, name: result.list.name }); setListOperationDialog(null); return true; }} /> : null}
+      {listOperationDialog === "delete" && selectedListDetailQuery.data ? <TaskListDeleteDialog result={selectedListDetailQuery.data} pending={listMutations.remove.isPending} onClose={() => setListOperationDialog(null)} onDelete={async (deleteUnassignedTasks) => { const current = selectedListDetailQuery.data!; const result = await runMutation(() => listMutations.remove.mutateAsync({ listId: current.list.id, patch: { expectedVersion: current.list.version, idempotencyKey: mutationKey("desktop-delete-task-list"), deleteUnassignedTasks } })); if (!result) return false; const allSettings = readTaskWorkbenchSettings(scope, "all"); const nextAllSettings = { ...taskSectionDefaultSettings("all", currentMemberId, allSettings), listIds: allSettings.listIds.filter((listId) => listId !== current.list.id) }; writeTaskWorkbenchSettings(scope, nextAllSettings, "all"); removeTaskWorkbenchSettings(scope, "all", current.list.id); setListOperationDialog(null); setListCollaborationDialog(null); setSelectedListId(null); setSelectedListFallback(null); setSection("all"); writeTaskSection(scope, "all"); setWorkbenchSettings(nextAllSettings); selectTask(null); return true; }} /> : null}
     </TaskPageFrame>
   );
 }
 
-function TaskPageFrame(props: TaskPageProps & { children: React.ReactNode; section?: TaskSection; activityUnreadCount?: number; pageTitle?: string | null; onSectionChange?: (section: TaskSection) => void; filters?: { priority: string; setPriority: (value: "" | "low" | "medium" | "high") => void; sort: string; setSort: (value: "updated_at" | "due_at" | "created_at" | "priority") => void }; lists?: Array<{ id: string; name: string; marker: string; version: number }>; selectedListId?: string | null; onSelectList?: (id: string) => void; onCreateList?: () => void; onArchiveList?: (id: string, version: number) => void; onCreateTask?: () => void; onCreateTaskList?: () => void }) {
+function TaskPageFrame(props: TaskPageProps & { children: React.ReactNode; section?: TaskSection; activityUnreadCount?: number; pageTitle?: string | null; listHeaderActions?: React.ReactNode; onSectionChange?: (section: TaskSection) => void; filters?: { priority: string; setPriority: (value: "" | "low" | "medium" | "high") => void; sort: string; setSort: (value: "updated_at" | "due_at" | "created_at" | "priority") => void }; lists?: Array<{ id: string; name: string; marker: string; version: number }>; selectedListId?: string | null; onSelectList?: (id: string) => void; onCreateList?: (name: string) => Promise<boolean>; onArchiveList?: (id: string, version: number) => void; onCreateTask?: () => void }) {
   const navigate = useNavigate();
   const sidebarOpen = useUiStateStore((state) => state.sidebarOpen);
+  const setSidebarOpen = useUiStateStore((state) => state.setSidebarOpen);
   const toggleSidebar = useUiStateStore((state) => state.toggleSidebar);
+  const [createListRequested, setCreateListRequested] = React.useState(false);
   const { leftSidebarResizing, leftSidebarWidth, startLeftSidebarResize } = useWorkspaceShellLayout({ expandedRightWidth: 520 });
   const pageStyle = { "--jugglework-left-sidebar-width": appInsetSidebarCssWidth(leftSidebarWidth), WebkitAppRegion: "drag" } as CSSProperties;
   const activeSection = props.section ?? "today";
@@ -605,8 +626,10 @@ function TaskPageFrame(props: TaskPageProps & { children: React.ReactNode; secti
     selectedListId: props.selectedListId,
     onSelectList: props.onSelectList,
     onCreateList: props.onCreateList,
+    createListRequested,
+    onCreateListRequestHandled: () => setCreateListRequested(false),
     onArchiveList: props.onArchiveList,
-  }), [activeSection, props.activityUnreadCount, props.lists, props.onArchiveList, props.onCreateList, props.onSectionChange, props.onSelectList, props.selectedListId]);
+  }), [activeSection, createListRequested, props.activityUnreadCount, props.lists, props.onArchiveList, props.onCreateList, props.onSectionChange, props.onSelectList, props.selectedListId]);
   usePublishTasksSidebar(sidebarRegistration);
   return <div className="relative flex h-full min-h-0 w-full overflow-hidden bg-dls-sidebar mac:titlebar-drag" style={pageStyle}>
     <AppNavigationRail workspaceId={props.workspaceId} onOpenAccount={props.onOpenAccount} onOpenHome={() => navigate(props.sessionPath)} onOpenApps={props.onOpenApps} onOpenChat={props.onOpenChat} onOpenReviews={props.onOpenReviews} onOpenSettings={props.onOpenSettings} onOpenTaskSearch={props.onOpenTaskSearch} onOpenCreateWorkspace={props.onOpenCreateWorkspace} />
@@ -617,7 +640,7 @@ function TaskPageFrame(props: TaskPageProps & { children: React.ReactNode; secti
       </div>
       {sidebarOpen ? <AppSecondarySidebarResizeHandle resizing={leftSidebarResizing} onPointerDown={startLeftSidebarResize} /> : null}
       <main className="relative flex min-h-0 min-w-0 flex-1 flex-col" data-testid="tasks-main">
-        <div className={`flex h-[54px] shrink-0 items-center justify-between px-7 ${isTaskWorkbenchSection(activeSection) ? "" : "border-b border-dls-border"}`}><h2 className="text-[17px] font-semibold tracking-[-0.01em] text-dls-text" data-testid="tasks-page-title">{props.pageTitle ?? t(heading)}</h2><div className="flex items-center gap-2">{showHeaderFilters ? <><select aria-label={t("tasks.priority_filter")} value={props.filters!.priority} onChange={(event) => props.filters?.setPriority(event.target.value as "" | "low" | "medium" | "high")} className="h-8 rounded-md border border-dls-border bg-dls-surface px-2 text-sm"><option value="">{t("tasks.all_priorities")}</option><option value="low">{t("tasks.priority_low")}</option><option value="medium">{t("tasks.priority_medium")}</option><option value="high">{t("tasks.priority_high")}</option></select><select aria-label={t("tasks.sort")} value={props.filters!.sort} onChange={(event) => props.filters?.setSort(event.target.value as "updated_at" | "due_at" | "created_at" | "priority")} className="h-8 rounded-md border border-dls-border bg-dls-surface px-2 text-sm"><option value="updated_at">{t("tasks.sort_updated")}</option><option value="due_at">{t("tasks.sort_due")}</option><option value="created_at">{t("tasks.sort_created")}</option><option value="priority">{t("tasks.sort_priority")}</option></select></> : null}{showHeaderCreate ? isTaskWorkbenchSection(activeSection) ? <TaskCreateMenu onCreateTask={props.onCreateTask} onCreateList={props.onCreateTaskList} /> : props.onCreateTask ? <Button size="sm" onClick={props.onCreateTask}><Plus className="size-4" />{t("tasks.create")}</Button> : null : null}</div></div>
+        <div className={`flex h-[54px] shrink-0 items-center justify-between px-7 ${isTaskWorkbenchSection(activeSection) ? "" : "border-b border-dls-border"}`}><h2 className="text-[17px] font-semibold tracking-[-0.01em] text-dls-text" data-testid="tasks-page-title">{props.pageTitle ?? t(heading)}</h2><div className="flex items-center gap-2">{props.listHeaderActions ?? <>{showHeaderFilters ? <><select aria-label={t("tasks.priority_filter")} value={props.filters!.priority} onChange={(event) => props.filters?.setPriority(event.target.value as "" | "low" | "medium" | "high")} className="h-8 rounded-md border border-dls-border bg-dls-surface px-2 text-sm"><option value="">{t("tasks.all_priorities")}</option><option value="low">{t("tasks.priority_low")}</option><option value="medium">{t("tasks.priority_medium")}</option><option value="high">{t("tasks.priority_high")}</option></select><select aria-label={t("tasks.sort")} value={props.filters!.sort} onChange={(event) => props.filters?.setSort(event.target.value as "updated_at" | "due_at" | "created_at" | "priority")} className="h-8 rounded-md border border-dls-border bg-dls-surface px-2 text-sm"><option value="updated_at">{t("tasks.sort_updated")}</option><option value="due_at">{t("tasks.sort_due")}</option><option value="created_at">{t("tasks.sort_created")}</option><option value="priority">{t("tasks.sort_priority")}</option></select></> : null}{showHeaderCreate ? isTaskWorkbenchSection(activeSection) ? <TaskCreateMenu onCreateTask={props.onCreateTask} onCreateList={() => { setSidebarOpen(true); setCreateListRequested(true); }} /> : props.onCreateTask ? <Button size="sm" onClick={props.onCreateTask}><Plus className="size-4" />{t("tasks.create")}</Button> : null : null}</>}</div></div>
         <div className={`flex min-h-0 flex-1 items-center justify-center overflow-auto ${isTaskWorkbenchSection(activeSection) ? "p-0" : "p-6"}`}>{props.children}</div>
       </main>
     </div></AppInsetSurface>
@@ -626,6 +649,142 @@ function TaskPageFrame(props: TaskPageProps & { children: React.ReactNode; secti
 
 function TaskCreateMenu(props: { onCreateTask?: () => void; onCreateList?: () => void }) {
   return <div className="mac:titlebar-no-drag" data-testid="task-create-menu"><DropdownMenu><DropdownMenuTrigger render={<Button type="button" size="sm" className="h-9 rounded-lg bg-blue-9 px-3.5 text-[13px] font-medium text-white shadow-none hover:bg-blue-10" />}><Plus className="size-4" />{t("tasks.new")}<ChevronDown className="size-3" /></DropdownMenuTrigger><DropdownMenuContent align="end" className="min-w-44 rounded-xl border border-dls-border bg-dls-surface p-1.5 shadow-xl"><DropdownMenuItem onClick={props.onCreateTask} className="rounded-lg px-3 py-2 text-sm font-normal">{t("tasks.new_task")}</DropdownMenuItem><DropdownMenuItem onClick={props.onCreateList} className="rounded-lg px-3 py-2 text-sm font-normal">{t("tasks.new_task_list")}</DropdownMenuItem></DropdownMenuContent></DropdownMenu></div>;
+}
+
+function taskListViewerIds(result: DenProductTaskListResult, members: DenOrganizationMember[]) {
+  if (result.list.visibility === "organization") return members.map((member) => member.id);
+  return Array.from(new Set([result.list.creatorMemberId, ...result.members.map((member) => member.memberId)]));
+}
+
+function TaskListMemberAvatar(props: { member: DenOrganizationMember | undefined; memberId: string; className?: string }) {
+  const label = props.member ? memberLabel(props.member) : props.memberId;
+  return <Avatar className={props.className} title={label}><AvatarImage src={props.member?.user.avatar ?? undefined} /><AvatarFallback>{label.slice(0, 1).toUpperCase()}</AvatarFallback></Avatar>;
+}
+
+function TaskListCollaborationSummary(props: { result: DenProductTaskListResult; members: DenOrganizationMember[]; onManage: () => void; onShare: () => void; onRename: () => void; onDelete: () => void }) {
+  const memberById = new Map(props.members.map((member) => [member.id, member]));
+  const viewerIds = taskListViewerIds(props.result, props.members);
+  return <div data-testid="task-list-collaboration-summary" className="flex items-center gap-2 mac:titlebar-no-drag"><button type="button" data-testid="task-list-collaborators-trigger" aria-label={t("tasks.manage_collaborators")} onClick={props.onManage} className="flex -space-x-2 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-blue-8">{viewerIds.slice(0, 5).map((memberId) => <TaskListMemberAvatar key={memberId} memberId={memberId} member={memberById.get(memberId)} className="size-7 border-2 border-dls-surface" />)}{viewerIds.length > 5 ? <span data-testid="task-list-collaborator-overflow" className="flex size-7 items-center justify-center rounded-full border-2 border-dls-surface bg-dls-hover text-[10px] font-medium text-dls-secondary">+{viewerIds.length - 5}</span> : null}</button><Button type="button" variant="outline" size="sm" data-testid="task-list-share-trigger" className="h-8 gap-1.5 rounded-lg px-3 text-[13px] font-normal" onClick={props.onShare}><Link className="size-3.5" />{t("tasks.share_list")}</Button>{props.result.permissions.canEdit || props.result.permissions.canDelete ? <DropdownMenu><DropdownMenuTrigger data-testid="task-list-more-trigger" aria-label={t("tasks.list_more_actions")} render={<Button type="button" variant="ghost" size="icon-sm" className="size-8 rounded-lg" />}><MoreHorizontal className="size-4" /></DropdownMenuTrigger><DropdownMenuContent align="end" className="min-w-44 rounded-xl border border-dls-border bg-dls-surface p-1.5 shadow-xl">{props.result.permissions.canEdit ? <DropdownMenuItem data-testid="task-list-rename-action" onClick={props.onRename} className="rounded-lg px-3 py-2 font-normal"><Pencil className="size-4" />{t("tasks.rename_list")}</DropdownMenuItem> : null}{props.result.permissions.canDelete ? <DropdownMenuItem data-testid="task-list-delete-action" variant="destructive" onClick={props.onDelete} className="rounded-lg px-3 py-2 font-normal"><Trash2 className="size-4" />{t("tasks.delete_list")}</DropdownMenuItem> : null}</DropdownMenuContent></DropdownMenu> : null}</div>;
+}
+
+function TaskListRenameDialog(props: { result: DenProductTaskListResult; pending: boolean; onClose: () => void; onSave: (name: string) => Promise<boolean> }) {
+  const [name, setName] = React.useState(props.result.list.name);
+  const trimmed = name.trim();
+  return <Dialog open onOpenChange={(open) => { if (!open && !props.pending) props.onClose(); }}><DialogContent data-testid="task-list-rename-dialog" className="sm:max-w-md" showCloseButton={!props.pending}><DialogHeader><DialogTitle>{t("tasks.rename_list")}</DialogTitle><DialogDescription>{t("tasks.rename_list_description")}</DialogDescription></DialogHeader><Input autoFocus aria-label={t("tasks.list_name")} value={name} maxLength={120} disabled={props.pending} onChange={(event) => setName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && trimmed && trimmed !== props.result.list.name && !props.pending) void props.onSave(trimmed); }} /><DialogFooter><Button type="button" variant="outline" disabled={props.pending} onClick={props.onClose}>{t("common.cancel")}</Button><Button type="button" data-testid="task-list-rename-confirm" disabled={!trimmed || trimmed === props.result.list.name || props.pending} onClick={() => void props.onSave(trimmed)}>{props.pending ? <LoaderCircle className="size-4 animate-spin" /> : null}{t("tasks.rename")}</Button></DialogFooter></DialogContent></Dialog>;
+}
+
+function TaskListDeleteDialog(props: { result: DenProductTaskListResult; pending: boolean; onClose: () => void; onDelete: (deleteUnassignedTasks: boolean) => Promise<boolean> }) {
+  const [deleteUnassignedTasks, setDeleteUnassignedTasks] = React.useState(false);
+  return <Dialog open onOpenChange={(open) => { if (!open && !props.pending) props.onClose(); }}><DialogContent data-testid="task-list-delete-dialog" className="sm:max-w-[440px]" showCloseButton={!props.pending}><DialogHeader><DialogTitle>{t("tasks.delete_list_title", { name: props.result.list.name })}</DialogTitle><DialogDescription>{t("tasks.delete_list_description")}</DialogDescription></DialogHeader><label className="flex cursor-pointer items-start gap-3 rounded-xl border border-dls-border bg-dls-subtle px-4 py-3 text-sm text-dls-text"><Checkbox data-testid="task-list-delete-unassigned" checked={deleteUnassignedTasks} disabled={props.pending} onCheckedChange={(checked) => setDeleteUnassignedTasks(checked === true)} /><span><span className="block font-medium">{t("tasks.delete_unassigned_tasks")}</span><span className="mt-1 block text-xs leading-5 text-dls-secondary">{t("tasks.delete_unassigned_tasks_description")}</span></span></label><p className="text-xs leading-5 text-dls-secondary">{t("tasks.delete_list_irreversible")}</p><DialogFooter><Button type="button" variant="outline" disabled={props.pending} onClick={props.onClose}>{t("common.cancel")}</Button><Button type="button" data-testid="task-list-delete-confirm" variant="destructive" disabled={props.pending} onClick={() => void props.onDelete(deleteUnassignedTasks)}>{props.pending ? <LoaderCircle className="size-4 animate-spin" /> : <Trash2 className="size-4" />}{t("tasks.delete_list")}</Button></DialogFooter></DialogContent></Dialog>;
+}
+
+type TaskListCollaboratorRole = "administrator" | "member";
+
+function TaskListCollaboratorsDialog(props: { result: DenProductTaskListResult; members: DenOrganizationMember[]; pending: boolean; canTransferOwnership: boolean; onClose: () => void; onAdd: () => void; onTransferOwnership: (memberId: string) => Promise<boolean>; onSave: (members: Array<{ memberId: string; role: TaskListCollaboratorRole }>) => Promise<boolean> }) {
+  const creatorId = props.result.list.creatorMemberId;
+  const canManage = props.result.permissions.canManageMembers;
+  const memberById = new Map(props.members.map((member) => [member.id, member]));
+  const viewerIds = taskListViewerIds(props.result, props.members);
+  const persistedRoles = new Map(props.result.members.map((member) => [member.memberId, member.role]));
+  const [draftRoles, setDraftRoles] = React.useState<Map<string, TaskListCollaboratorRole>>(() => new Map([[creatorId, "administrator"], ...props.result.members.map((member) => [member.memberId, member.role] as const)]));
+  const [dirty, setDirty] = React.useState(false);
+  const setRole = (memberId: string, role: TaskListCollaboratorRole) => {
+    setDraftRoles((current) => { const next = new Map(current); next.set(memberId, role); return next; });
+    setDirty(true);
+  };
+  const remove = (memberId: string) => {
+    setDraftRoles((current) => { const next = new Map(current); next.delete(memberId); return next; });
+    setDirty(true);
+  };
+  const visibleIds = viewerIds.filter((memberId) => memberId === creatorId || props.result.list.visibility === "organization" || draftRoles.has(memberId));
+  const save = async () => {
+    if (props.pending) return;
+    if (!dirty) { props.onClose(); return; }
+    await props.onSave(Array.from(draftRoles, ([memberId, role]) => ({ memberId, role })));
+  };
+  return <Dialog open onOpenChange={(open) => { if (!open && !props.pending) props.onClose(); }}>
+    <DialogContent data-testid="task-list-collaborators-dialog" aria-label={t("tasks.manage_collaborators")} className="flex h-[min(620px,calc(100vh-2rem))] w-[min(560px,calc(100%-2rem))] max-w-none flex-col gap-0 overflow-hidden rounded-2xl bg-dls-surface p-0 sm:max-w-[560px]" showCloseButton={!props.pending}>
+      <DialogHeader className="shrink-0 px-7 pb-4 pt-6">
+        <DialogTitle className="text-xl">{t("tasks.share_list_title")}</DialogTitle>
+        <DialogDescription className="sr-only">{t("tasks.manage_collaborators_description")}</DialogDescription>
+        <div className="flex items-center gap-2 pt-4 text-base font-semibold text-dls-text"><ChevronLeft className="size-5 text-dls-secondary" />{t("tasks.manage_collaborators")}</div>
+      </DialogHeader>
+      <div className="min-h-0 flex-1 overflow-y-auto px-7 pb-5">
+        <p className="mb-3 text-sm text-dls-secondary">{t("tasks.collaborators_with_access")}</p>
+        <div className="space-y-1">{visibleIds.map((memberId) => {
+          const member = memberById.get(memberId);
+          const owner = memberId === creatorId;
+          const explicit = draftRoles.has(memberId);
+          const role = owner ? "administrator" : draftRoles.get(memberId) ?? "member";
+          const editable = canManage && !owner && (props.result.list.visibility !== "organization" || persistedRoles.has(memberId) || explicit);
+          return <div key={memberId} data-testid={`task-list-collaborator-${memberId}`} className="flex h-14 items-center gap-3">
+            <TaskListMemberAvatar memberId={memberId} member={member} className="size-9" />
+            <span className="min-w-0 flex-1 truncate text-sm font-medium text-dls-text">{member ? memberLabel(member) : memberId}</span>
+            {owner ? <span className="rounded-md bg-blue-3 px-2 py-1 text-xs text-blue-10">{t("tasks.list_owner")}</span> : null}
+            <div className="ml-auto">{owner ? <span className="text-sm text-dls-text">{t("tasks.list_owner")}</span> : editable ? <DropdownMenu>
+              <DropdownMenuTrigger render={<button type="button" data-testid={`task-list-collaborator-role-${memberId}`} disabled={props.pending} className="flex h-9 items-center gap-1 rounded-lg px-2 text-sm text-dls-text hover:bg-dls-hover disabled:opacity-50" />}><span>{role === "administrator" ? t("tasks.collaborator_can_edit") : t("tasks.collaborator_can_read")}</span><ChevronDown className="size-4" /></DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-40 rounded-xl bg-dls-surface p-1.5">
+                <DropdownMenuItem data-testid={`task-list-collaborator-read-${memberId}`} onClick={() => setRole(memberId, "member")} className="rounded-lg font-normal">{t("tasks.collaborator_can_read")}{role === "member" ? <Check className="ml-auto size-4 text-blue-10" /> : null}</DropdownMenuItem>
+                <DropdownMenuItem data-testid={`task-list-collaborator-edit-${memberId}`} onClick={() => setRole(memberId, "administrator")} className="rounded-lg font-normal">{t("tasks.collaborator_can_edit")}{role === "administrator" ? <Check className="ml-auto size-4 text-blue-10" /> : null}</DropdownMenuItem>
+                {props.canTransferOwnership ? <DropdownMenuItem data-testid={`task-list-collaborator-owner-${memberId}`} disabled={props.pending} onClick={() => void props.onTransferOwnership(memberId)} className="mt-1 rounded-lg border-t border-dls-border font-normal">{t("tasks.set_as_owner")}</DropdownMenuItem> : null}
+                <DropdownMenuItem data-testid={`task-list-collaborator-remove-${memberId}`} variant="destructive" onClick={() => remove(memberId)} className="mt-1 rounded-lg border-t border-dls-border font-normal">{t("tasks.remove_collaborator")}</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu> : <span className="text-sm text-dls-secondary">{role === "administrator" ? t("tasks.collaborator_can_edit") : t("tasks.collaborator_can_read")}</span>}</div>
+          </div>;
+        })}</div>
+      </div>
+      <DialogFooter data-testid="task-list-collaborators-footer" className="mx-0 mb-0 shrink-0 items-center rounded-b-2xl border-t border-dls-border bg-dls-surface px-7 py-4 sm:justify-between">
+        <button type="button" data-testid="task-list-add-collaborator" disabled={!canManage || props.pending} onClick={props.onAdd} className="flex h-9 items-center gap-2 rounded-lg px-2 text-sm text-dls-text hover:bg-dls-hover disabled:opacity-50"><UserRoundPlus className="size-4" />{t("tasks.add_collaborator")}</button>
+        <Button type="button" data-testid="task-list-collaborators-done" disabled={props.pending} onClick={() => void save()}>{props.pending ? t("common.saving") : t("tasks.done")}</Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>;
+}
+
+type TaskListShareSelection = { kind: "member"; id: string } | { kind: "group"; id: string };
+
+function TaskListShareDialog(props: { result: DenProductTaskListResult; members: DenOrganizationMember[]; groups: DenCollaborationGroup[]; groupsLoading: boolean; pending: boolean; onClose: () => void; onLoadGroupMembers: (groupId: string) => Promise<string[] | null>; onSave: (memberIds: string[]) => Promise<boolean> }) {
+  const [search, setSearch] = React.useState("");
+  const [submittedSearch, setSubmittedSearch] = React.useState("");
+  const [selected, setSelected] = React.useState<TaskListShareSelection[]>([]);
+  const [resolvingGroups, setResolvingGroups] = React.useState(false);
+  const canManage = props.result.permissions.canManageMembers;
+  const memberById = new Map(props.members.map((member) => [member.id, member]));
+  const groupById = new Map(props.groups.map((group) => [group.id, group]));
+  const existingIds = Array.from(new Set([props.result.list.creatorMemberId, ...props.result.members.map((member) => member.memberId)]));
+  const viewerIds = taskListViewerIds(props.result, props.members);
+  const query = submittedSearch.toLocaleLowerCase();
+  const selectedMemberIds = new Set(selected.filter((item): item is Extract<TaskListShareSelection, { kind: "member" }> => item.kind === "member").map((item) => item.id));
+  const selectedGroupIds = new Set(selected.filter((item): item is Extract<TaskListShareSelection, { kind: "group" }> => item.kind === "group").map((item) => item.id));
+  const memberOptions = submittedSearch ? props.members.filter((member) => !existingIds.includes(member.id) && !selectedMemberIds.has(member.id) && [member.user.name, member.user.account, member.user.email].some((value) => value?.toLocaleLowerCase().includes(query))) : [];
+  const groupOptions = submittedSearch ? props.groups.filter((group) => !selectedGroupIds.has(group.id) && group.name.toLocaleLowerCase().includes(query)) : [];
+  const submitSearch = () => {
+    const next = search.trim();
+    setSubmittedSearch(next);
+  };
+  const addSelection = (item: TaskListShareSelection) => {
+    setSelected((current) => [...current, item]);
+    setSearch("");
+    setSubmittedSearch("");
+  };
+  const removeSelection = (item: TaskListShareSelection) => setSelected((current) => current.filter((candidate) => candidate.kind !== item.kind || candidate.id !== item.id));
+  const confirm = async () => {
+    if (!canManage || props.pending || resolvingGroups || !selected.length) return;
+    setResolvingGroups(true);
+    try {
+      const additions = new Set(selectedMemberIds);
+      for (const groupId of selectedGroupIds) {
+        const memberIds = await props.onLoadGroupMembers(groupId);
+        if (memberIds === null) return;
+        memberIds.forEach((memberId) => additions.add(memberId));
+      }
+      await props.onSave(Array.from(new Set([...existingIds, ...additions])));
+    } finally {
+      setResolvingGroups(false);
+    }
+  };
+  const busy = props.pending || resolvingGroups;
+  return <Dialog open onOpenChange={(open) => { if (!open && !busy) props.onClose(); }}><DialogContent data-testid="task-list-share-dialog" aria-label={t("tasks.share_list_title")} className="w-[min(560px,calc(100%-2rem))] max-w-none gap-0 overflow-visible rounded-2xl bg-dls-surface p-0 sm:max-w-[560px]" showCloseButton={!busy}><DialogHeader className="px-7 pb-3 pt-6"><DialogTitle className="text-xl">{t("tasks.share_list_title")}</DialogTitle><DialogDescription className="sr-only">{canManage ? t("tasks.share_list_description") : t("tasks.share_list_read_only")}</DialogDescription></DialogHeader><div className="px-7 pb-6 pt-4"><div className="mb-4 flex items-center justify-between"><span className="text-base font-semibold text-dls-text">{t("tasks.invite_collaborators")}</span><div className="flex -space-x-2">{viewerIds.slice(0, 4).map((memberId) => <TaskListMemberAvatar key={memberId} memberId={memberId} member={memberById.get(memberId)} className="size-8 border-2 border-dls-surface" />)}{viewerIds.length > 4 ? <span className="flex size-8 items-center justify-center rounded-full border-2 border-dls-surface bg-dls-hover text-[10px] font-medium text-dls-secondary">+{viewerIds.length - 4}</span> : null}</div></div>{canManage ? <div className="relative"><div className="flex min-h-12 items-center rounded-lg border border-dls-border bg-dls-surface focus-within:border-blue-8 focus-within:ring-2 focus-within:ring-blue-8/20"><div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5 px-2.5 py-1.5">{selected.map((item) => { const member = item.kind === "member" ? memberById.get(item.id) : undefined; const group = item.kind === "group" ? groupById.get(item.id) : undefined; const label = member ? memberLabel(member) : group?.name ?? item.id; return <span key={`${item.kind}:${item.id}`} data-testid={`task-list-share-chip-${item.kind}-${item.id}`} className="inline-flex h-8 max-w-48 items-center gap-1.5 rounded-full bg-dls-hover px-2 text-sm text-dls-text">{member ? <TaskListMemberAvatar member={member} memberId={item.id} className="size-6" /> : <span className="flex size-6 items-center justify-center rounded-full bg-blue-3 text-blue-10"><UsersRound className="size-3.5" /></span>}<span className="truncate">{label}</span><button type="button" aria-label={t("tasks.remove_share_selection", { name: label })} onClick={() => removeSelection(item)} className="rounded-full text-dls-secondary hover:text-dls-text"><X className="size-3.5" /></button></span>; })}<input autoFocus disabled={busy} value={search} onChange={(event) => { setSearch(event.currentTarget.value); if (submittedSearch) setSubmittedSearch(""); }} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); submitSearch(); } }} aria-label={t("tasks.search_people_groups")} placeholder={selected.length ? "" : t("tasks.search_people_groups")} className="h-8 min-w-28 flex-1 bg-transparent px-1 text-sm text-dls-text outline-none placeholder:text-dls-secondary disabled:opacity-60" /></div><button type="button" aria-label={t("tasks.search_collaborators")} data-testid="task-list-share-search" disabled={busy || !search.trim()} onClick={submitSearch} className="flex h-10 w-12 shrink-0 items-center justify-center border-l border-dls-border text-dls-secondary hover:text-dls-text disabled:opacity-40"><Plus className="size-5" /></button></div>{submittedSearch ? <div data-testid="task-list-share-results" className="absolute left-0 right-0 top-[calc(100%+0.375rem)] z-20 max-h-72 overflow-y-auto rounded-xl border border-dls-border bg-dls-surface p-1.5 shadow-xl">{memberOptions.map((member) => <button key={member.id} type="button" data-testid={`task-list-share-member-${member.id}`} onClick={() => addSelection({ kind: "member", id: member.id })} className="flex h-12 w-full items-center gap-3 rounded-lg px-2 text-left text-sm hover:bg-dls-hover"><TaskListMemberAvatar member={member} memberId={member.id} className="size-9" /><span className="min-w-0 flex-1 truncate text-dls-text">{memberLabel(member)}</span></button>)}{props.groupsLoading ? <div className="px-3 py-4 text-sm text-dls-secondary">{t("tasks.loading")}</div> : groupOptions.map((group) => <button key={group.id} type="button" data-testid={`task-list-share-group-${group.id}`} onClick={() => addSelection({ kind: "group", id: group.id })} className="flex h-12 w-full items-center gap-3 rounded-lg px-2 text-left text-sm hover:bg-dls-hover"><span className="flex size-9 items-center justify-center rounded-full border border-blue-7 text-blue-10"><UsersRound className="size-4" /></span><span className="min-w-0 flex-1 truncate text-dls-text">{group.name}</span></button>)}{!memberOptions.length && !groupOptions.length && !props.groupsLoading ? <div className="px-3 py-6 text-center text-sm text-dls-secondary">{t("tasks.no_share_results")}</div> : null}</div> : null}</div> : <div className="rounded-lg bg-dls-hover px-4 py-3 text-sm text-dls-secondary">{t("tasks.share_list_read_only")}</div>}</div><DialogFooter data-testid="task-list-share-footer" className="mx-0 mb-0 rounded-b-2xl border-t border-dls-border bg-dls-hover/40 px-7 py-4"><Button type="button" variant="outline" disabled={busy} onClick={props.onClose}>{t("tasks.cancel")}</Button>{canManage ? <Button type="button" data-testid="task-list-share-confirm" disabled={busy || !selected.length} onClick={() => void confirm()}>{busy ? t("common.saving") : t("tasks.confirm_share")}</Button> : null}</DialogFooter></DialogContent></Dialog>;
 }
 
 function TaskList(props: { tasks: DenProductTask[]; selectedTaskId: string | null; onSelect: (id: string) => void; canLoadMore: boolean; loadingMore: boolean; onLoadMore: () => void }) {
@@ -743,31 +902,33 @@ function TaskCreateDialog(props: { pending: boolean; members: DenOrganizationMem
   const [description, setDescription] = React.useState("");
   const [assigneeIds, setAssigneeIds] = React.useState<string[]>([]);
   const [followerIds, setFollowerIds] = React.useState<string[]>([]);
+  const [startAt, setStartAt] = React.useState<string | null>(null);
   const [dueAt, setDueAt] = React.useState<string | null>(null);
   const [listId, setListId] = React.useState(props.defaultListId ?? "");
   const [groupId, setGroupId] = React.useState("custom-default");
   const [groupSearch, setGroupSearch] = React.useState("");
-  const visibility: DenProductTaskVisibility = [...assigneeIds, ...followerIds].some((id) => id !== props.currentMemberId) ? "members" : "private";
+  const selectedList = listId ? props.lists.find((list) => list.id === listId) ?? null : null;
+  const listVisibility = selectedList?.visibility ?? "private";
+  const hasOtherMembers = [...assigneeIds, ...followerIds].some((id) => id !== props.currentMemberId);
+  const visibility: DenProductTaskVisibility = listVisibility === "private" && hasOtherMembers ? "members" : listVisibility;
   const quickDue = (offset: number) => { const now = new Date(); setDueAt(new Date(now.getFullYear(), now.getMonth(), now.getDate() + offset).toISOString()); };
   const groupName = groupId === "custom-default" ? props.defaultGroupName || t("tasks.group_default") : props.groups.find((group) => group.id === groupId)?.name ?? t("tasks.group_default");
-  const draftTask: DenProductTask = { id: "create-dialog-draft", displayNumber: null, creatorMemberId: props.currentMemberId ?? "", listId: listId || null, title, description, priority: "none", visibility, completionPolicy: "any_assignee", status: "todo", version: 1, startAt: null, dueAt, completedAt: null, completedByMemberId: null, canceledAt: null, canceledByMemberId: null, deletedAt: null, restoreUntil: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
-  return <Dialog open onOpenChange={(open) => { if (!open && !props.pending) props.onClose(); }}><DialogContent data-testid="task-create-dialog" className="h-[min(460px,calc(100vh-2rem))] w-[min(680px,calc(100%-3rem))] max-w-none gap-0 overflow-visible rounded-xl bg-dls-surface p-0 sm:max-w-[680px]" aria-label={t("tasks.create")} showCloseButton={!props.pending}><DialogHeader className="sr-only"><DialogTitle>{t("tasks.create")}</DialogTitle><DialogDescription>{t("tasks.create_description")}</DialogDescription></DialogHeader><form className="flex h-full min-h-0 flex-col px-8 pb-3 pt-7" onSubmit={(event) => { event.preventDefault(); if (!title.trim()) return; void props.onCreate({ title: title.trim(), description, visibility, priority: "none", startAt: null, dueAt, listId: listId || undefined, members: [...assigneeIds.map((memberId) => ({ memberId, role: "assignee" as const })), ...followerIds.map((memberId) => ({ memberId, role: "follower" as const }))] }, groupId); }}>
+  const draftTask: DenProductTask = { id: "create-dialog-draft", displayNumber: null, creatorMemberId: props.currentMemberId ?? "", listId: listId || null, title, description, priority: "none", visibility, completionPolicy: "any_assignee", status: "todo", version: 1, startAt, dueAt, completedAt: null, completedByMemberId: null, canceledAt: null, canceledByMemberId: null, deletedAt: null, restoreUntil: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+  return <Dialog open onOpenChange={(open) => { if (!open && !props.pending) props.onClose(); }}><DialogContent data-testid="task-create-dialog" className="h-[min(460px,calc(100vh-2rem))] w-[min(680px,calc(100%-3rem))] max-w-none gap-0 overflow-visible rounded-xl bg-dls-surface p-0 sm:max-w-[680px]" aria-label={t("tasks.create")} showCloseButton={!props.pending}><DialogHeader className="sr-only"><DialogTitle>{t("tasks.create")}</DialogTitle><DialogDescription>{t("tasks.create_description")}</DialogDescription></DialogHeader><form className="flex h-full min-h-0 flex-col px-8 pb-3 pt-7" onSubmit={(event) => { event.preventDefault(); if (!title.trim()) return; void props.onCreate({ title: title.trim(), description, visibility, priority: "none", startAt, dueAt, listId: listId || undefined, members: [...assigneeIds.map((memberId) => ({ memberId, role: "assignee" as const })), ...followerIds.map((memberId) => ({ memberId, role: "follower" as const }))] }, groupId); }}>
     <input autoFocus value={title} onChange={(event) => setTitle(event.target.value)} placeholder={t("tasks.title_placeholder")} className="h-12 w-full bg-transparent text-[20px] font-medium text-dls-text outline-none placeholder:text-dls-secondary/70" />
     <div className="mt-3 flex items-center gap-3"><TaskFieldIcon label={t("tasks.assignees")}><UserRound className="size-5 text-dls-secondary" /></TaskFieldIcon><CreatePeoplePicker testId="task-create-assignees" label={t("tasks.add_assignee")} members={props.members} selected={assigneeIds} onChange={setAssigneeIds} /><span className="h-6 w-px bg-dls-border" /><Popover><PopoverTrigger render={<button type="button" data-testid="task-create-group-trigger" className="flex h-9 items-center gap-2 rounded-lg px-2 text-sm text-dls-text hover:bg-dls-hover" />}><span>{groupName}</span><ChevronDown className="size-3.5 text-dls-secondary" /></PopoverTrigger><PopoverContent align="start" className="w-72 gap-0 rounded-xl p-2"><Input autoFocus value={groupSearch} onChange={(event) => setGroupSearch(event.target.value)} placeholder={t("tasks.search_or_create_group")} className="mb-2 h-10" /><p className="px-2 py-1 text-xs font-medium text-dls-secondary">{t("tasks.assigned_to_me")}</p>{[{ id: "custom-default", name: props.defaultGroupName || t("tasks.group_default") }, ...props.groups].filter((group) => group.name.toLocaleLowerCase().includes(groupSearch.trim().toLocaleLowerCase())).map((group) => <button type="button" key={group.id} onClick={() => setGroupId(group.id)} className={`flex h-10 w-full items-center rounded-lg px-2 text-left text-sm ${groupId === group.id ? "bg-dls-hover text-blue-10" : "hover:bg-dls-hover"}`}><span className="flex-1 truncate">{group.name}</span>{groupId === group.id ? <Check className="size-4" /> : null}</button>)}{groupSearch.trim() && ![{ id: "custom-default", name: props.defaultGroupName || t("tasks.group_default") }, ...props.groups].some((group) => group.name.toLocaleLowerCase() === groupSearch.trim().toLocaleLowerCase()) ? <button type="button" data-testid="task-create-group-create" onClick={() => { const name = groupSearch.trim(); const id = `custom-${crypto.randomUUID()}`; props.onGroupsChange([...props.groups, { id, name }]); setGroupId(id); setGroupSearch(""); }} className="mt-1 flex h-11 w-full items-center gap-2 rounded-lg bg-dls-hover px-2 text-sm text-dls-secondary"><Plus className="size-4" />{t("tasks.create_group")} <strong className="text-dls-text">{groupSearch.trim()}</strong></button> : null}</PopoverContent></Popover></div>
-    <div className="mt-4 flex items-center gap-3"><TaskFieldIcon label={t("tasks.field_due")}><CalendarDays className="size-5 text-dls-secondary" /></TaskFieldIcon><Button type="button" variant="secondary" size="sm" className="h-8" onClick={() => quickDue(0)}>{t("tasks.today")}</Button><Button type="button" variant="secondary" size="sm" className="h-8" onClick={() => quickDue(1)}>{t("tasks.tomorrow")}</Button><TaskDateTimeCell task={draftTask} field="dueAt" triggerContent={<><CalendarDays className="size-4" />{t("tasks.other_time")}</>} triggerClassName="flex h-8 items-center gap-1.5 rounded-lg bg-dls-hover px-2 text-sm text-dls-text hover:bg-dls-active" onChange={async (_task, _field, value) => { setDueAt(value); return true; }} /></div>
-    <div className="mt-3 flex items-center gap-3"><TaskFieldIcon label={t("tasks.field_list")}><ListTodo className="size-5 text-dls-secondary" /></TaskFieldIcon><TaskListCell task={draftTask} lists={new Map(props.lists.map((list) => [list.id, list]))} onChange={async (_task, nextListId) => { setListId(nextListId); return true; }} onCreate={async (_task, name) => { const id = await props.onCreateList(name); if (id) setListId(id); return id; }} /></div>
+    <div className="mt-4 flex items-center gap-3"><TaskFieldIcon label={t("tasks.field_due")}><CalendarDays className="size-5 text-dls-secondary" /></TaskFieldIcon><Button type="button" variant="secondary" size="sm" className="h-8" onClick={() => quickDue(0)}>{t("tasks.today")}</Button><Button type="button" variant="secondary" size="sm" className="h-8" onClick={() => quickDue(1)}>{t("tasks.tomorrow")}</Button><TaskDateTimeCell task={draftTask} field="dueAt" triggerContent={<><CalendarDays className="size-4" />{t("tasks.other_time")}</>} triggerClassName="flex h-8 items-center gap-1.5 rounded-lg bg-dls-hover px-2 text-sm text-dls-text hover:bg-dls-active" onChange={async (_task, field, value) => {
+      if (field === "startAt") setStartAt(value);
+      else setDueAt(value);
+      return true;
+    }} /></div>
+    <div className="mt-3 flex items-center gap-3"><TaskFieldIcon label={t("tasks.field_list")}><ListTodo className="size-5 text-dls-secondary" /></TaskFieldIcon><TaskListCell task={draftTask} lists={new Map(props.lists.map((list) => [list.id, list]))} onChange={async (_task, nextListId) => { setListId(nextListId === listId ? "" : nextListId); return true; }} onCreate={async (_task, name) => { const id = await props.onCreateList(name); if (id) setListId(id); return id; }} /></div>
     <div className="mt-2 flex h-[168px] shrink-0 items-start gap-3"><TaskFieldIcon label={t("tasks.description_field")}><AlignLeft className="mt-2 size-5 text-dls-secondary" /></TaskFieldIcon><TaskDescriptionEditor value={description} onChange={setDescription} /></div>
     {props.memberDirectoryError ? <div className="mt-3 flex items-center gap-2 text-sm text-red-9" role="alert"><span>{t("tasks.member_directory_error")}</span><Button type="button" size="sm" variant="ghost" onClick={props.onRetryMemberDirectory}>{t("tasks.retry")}</Button></div> : props.memberDirectoryLoading ? <p className="mt-3 text-sm text-dls-secondary">{t("tasks.loading")}</p> : null}
     <DialogFooter data-testid="task-create-footer" className="mx-0 mb-0 mt-3 w-full flex-row items-center justify-between rounded-none border-0 bg-transparent p-0 sm:justify-between"><CreatePeoplePicker testId="task-create-followers" label={t("tasks.add_follower")} members={props.members} selected={followerIds} onChange={setFollowerIds} triggerClassName="flex h-9 min-w-0 items-center gap-2 rounded-lg px-1.5 text-sm text-dls-text hover:bg-dls-hover" triggerContent={<><BookmarkPlus className="size-5 shrink-0 text-dls-secondary" aria-hidden="true" />{followerIds.length ? <><span className="flex -space-x-1.5">{followerIds.slice(0, 2).map((id) => { const member = props.members.find((item) => item.id === id); return <Avatar key={id} size="sm"><AvatarImage src={member?.user.avatar ?? undefined} /><AvatarFallback>{member ? memberLabel(member).slice(0, 1).toUpperCase() : "?"}</AvatarFallback></Avatar>; })}</span><span>{t("tasks.people_selected", { count: followerIds.length })}</span></> : <span>{t("tasks.add_follower")}</span>}</>} /><div className="flex gap-2"><Button type="button" variant="outline" disabled={props.pending} onClick={props.onClose}>{t("tasks.cancel")}</Button><Button type="submit" disabled={!title.trim() || props.pending}>{t("tasks.create_action")}</Button></div></DialogFooter>
   </form></DialogContent></Dialog>;
 }
 
-function TaskListCreateDialog(props: { pending: boolean; onClose: () => void; onCreate: (input: { name: string; description: string; marker: string }) => Promise<void> }) {
-  const [name, setName] = React.useState("");
-  const [description, setDescription] = React.useState("");
-  const [marker, setMarker] = React.useState("#");
-  return <Dialog open onOpenChange={(open) => { if (!open && !props.pending) props.onClose(); }}><DialogContent aria-label={t("tasks.new_task_list")} showCloseButton={!props.pending}><DialogHeader><DialogTitle>{t("tasks.new_task_list")}</DialogTitle><DialogDescription>{t("tasks.private_visibility")}</DialogDescription></DialogHeader><form className="grid gap-4" onSubmit={(event) => { event.preventDefault(); void props.onCreate({ name: name.trim(), description, marker: marker.trim() || "#" }); }}><Input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder={t("tasks.list_name")} /><Textarea value={description} onChange={(event) => setDescription(event.target.value)} placeholder={t("tasks.description_field")} /><Input value={marker} onChange={(event) => setMarker(event.target.value)} placeholder={t("tasks.marker")} maxLength={16} /><DialogFooter><Button type="button" variant="outline" disabled={props.pending} onClick={props.onClose}>{t("tasks.cancel")}</Button><Button type="submit" disabled={!name.trim() || props.pending}>{t("tasks.create_list")}</Button></DialogFooter></form></DialogContent></Dialog>;
-}
 
 function ConflictBanner(props: { conflict: ProductTaskConflict; pending: boolean; onDismiss: () => void; onReload: () => void; onRetry: () => void }) {
   return <div className="absolute left-4 right-4 top-16 z-30 flex items-center gap-3 rounded-lg border border-amber-7 bg-amber-2 p-3 text-sm" role="alert"><CircleAlert className="size-4" /><span className="flex-1">{t("tasks.conflict")}</span>{props.conflict.latestLoaded ? <Button size="sm" variant="outline" disabled={props.pending} onClick={props.onRetry}>{t("tasks.retry")}</Button> : <Button size="sm" variant="outline" onClick={props.onReload}>{t("tasks.load_latest")}</Button>}<Button size="sm" variant="ghost" onClick={props.onDismiss}>{t("tasks.dismiss")}</Button></div>;

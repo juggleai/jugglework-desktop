@@ -18,7 +18,7 @@ JuggleWork 当前缺少一个独立、持久、可指派、可提醒的日常待
 ### New Capabilities
 
 - `cloud-task-management`: 云端任务、多人负责、可见范围、状态、时间、提醒、搜索视图和生命周期管理。
-- `task-list-collaboration`: 任务清单、清单成员角色、任务归类和归档恢复。
+- `task-list-collaboration`: 任务清单、清单成员角色、单一所有者及所有权转移、任务归类和归档恢复。
 - `desktop-task-center`: Desktop 可置顶任务导航、系统视图、列表、详情、筛选、活动和回收站体验。
 
 ### Modified Capabilities

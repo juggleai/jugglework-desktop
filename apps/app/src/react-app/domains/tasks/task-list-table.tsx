@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { ALargeSmall, CalendarDays, Check, ChevronDown, ChevronRight, Copy, Ellipsis, Flag, Link2, ListTodo, Pencil, Plus, RotateCcw, Trash2, UserRound, UserRoundPlus, type LucideIcon } from "lucide-react";
 
 import type { DenOrganizationMember, DenProductTask, DenProductTaskCompletionPolicy, DenProductTaskList, DenProductTaskMember, DenProductTaskReminder } from "@/app/lib/den";
+import { productTaskListIds } from "@/app/lib/den";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -48,8 +49,8 @@ function AssigneeCell(props: { task: DenProductTask; ids: string[]; members: Map
   useEffect(() => setSelectedIds(props.ids), [props.ids]);
   useEffect(() => setCompletionPolicy(props.task.completionPolicy), [props.task.completionPolicy]);
   if (!props.onChange && !props.onCompletionPolicyChange) return <MemberCell ids={props.ids} members={props.members} />;
+  const query = search.trim().toLocaleLowerCase();
   const options = [...props.members.values()].filter((member) => {
-    const query = search.trim().toLocaleLowerCase();
     if (!query) return true;
     return [member.user.name, member.user.account, member.user.email].some((value) => value?.toLocaleLowerCase().includes(query));
   });
@@ -73,7 +74,7 @@ function AssigneeCell(props: { task: DenProductTask; ids: string[]; members: Map
     <PopoverTrigger render={<button type="button" data-testid={`task-assignee-trigger-${props.task.id}`} aria-label={t("tasks.edit_assignees")} className="flex min-h-8 min-w-28 items-center rounded-md px-1 text-left outline-none transition-colors hover:bg-dls-hover data-popup-open:bg-dls-active data-popup-open:ring-1 data-popup-open:ring-blue-8 focus-visible:ring-2 focus-visible:ring-blue-8" />}>{selectedIds.length ? <MemberCell ids={selectedIds} members={props.members} /> : <EmptyAssigneeIcon />}</PopoverTrigger>
     <PopoverContent align="start" side="bottom" sideOffset={5} data-testid={`task-assignee-picker-${props.task.id}`} className="w-96 gap-0 rounded-xl border border-dls-border bg-dls-surface p-0 shadow-xl">
       <div className="border-b border-dls-border px-4 pt-3"><div className="inline-flex h-10 items-center border-b-2 border-blue-9 px-0.5 font-medium text-blue-10">{t("tasks.assign_to_people")}</div></div>
-      <div className="p-3"><input autoFocus data-testid={`task-assignee-search-${props.task.id}`} aria-label={t("tasks.search_assignees")} placeholder={t("tasks.add_assignee")} value={search} onChange={(event) => setSearch(event.currentTarget.value)} className="h-10 w-full rounded-lg border border-dls-border bg-dls-surface px-3 text-sm text-dls-text outline-none placeholder:text-dls-secondary focus:border-blue-8 focus:ring-2 focus:ring-blue-8/20" /></div>
+      <div className="p-3"><input autoFocus data-testid={`task-assignee-search-${props.task.id}`} aria-label={t("tasks.search_assignees")} placeholder={t("tasks.add_assignee")} value={search} onInput={(event) => setSearch(event.currentTarget.value)} className="h-10 w-full rounded-lg border border-dls-border bg-dls-surface px-3 text-sm text-dls-text outline-none placeholder:text-dls-secondary focus:border-blue-8 focus:ring-2 focus:ring-blue-8/20" /></div>
       <div className="max-h-80 overflow-y-auto px-2 pb-3">{options.length ? options.map((member) => { const active = selectedIds.includes(member.id); const name = taskMemberName(member.id, props.members); return <button key={member.id} type="button" role="checkbox" data-testid={`task-assignee-option-${props.task.id}-${member.id}`} aria-checked={active} disabled={pending} onClick={() => void toggle(member.id)} className="flex h-12 w-full items-center gap-3 rounded-lg px-2 text-left text-sm text-dls-text hover:bg-dls-hover disabled:opacity-60"><Avatar><AvatarImage src={member.user.avatar ?? undefined} /><AvatarFallback>{name.slice(0, 1).toUpperCase()}</AvatarFallback></Avatar><span className={`min-w-0 flex-1 truncate ${active ? "text-blue-10" : ""}`}>{name}</span>{active ? <Check className="size-4 shrink-0 text-blue-10" /> : null}</button>; }) : <div className="px-3 py-6 text-center text-sm text-dls-secondary">{t("tasks.no_matching_members")}</div>}</div>
       <div className="border-t border-dls-border px-3 py-3">
         <DropdownMenu>
@@ -100,35 +101,29 @@ function TaskIdCell({ id, displayNumber }: { id: string; displayNumber: number |
 
 export function TaskListCell(props: { task: DenProductTask; lists: Map<string, DenProductTaskList>; onChange?: (task: DenProductTask, listId: string) => Promise<boolean>; onCreate?: (task: DenProductTask, name: string) => Promise<string | null> }) {
   const [search, setSearch] = useState("");
-  const [selectedListId, setSelectedListId] = useState(props.task.listId ?? "");
+  const selectedIds = productTaskListIds(props.task);
   const [pending, setPending] = useState(false);
-  useEffect(() => setSelectedListId(props.task.listId ?? ""), [props.task.listId]);
   const query = search.trim();
   const options = [...props.lists.values()].filter((list) => list.name.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
   const exact = [...props.lists.values()].some((list) => list.name.trim().toLocaleLowerCase() === query.toLocaleLowerCase());
   const select = async (listId: string) => {
-    if (pending || listId === selectedListId || !props.onChange) return;
+    if (pending || !props.onChange) return;
     setPending(true);
-    const saved = await props.onChange(props.task, listId);
-    if (saved) setSelectedListId(listId);
-    setPending(false);
+    try { await props.onChange(props.task, listId); } finally { setPending(false); }
   };
   const create = async () => {
     if (pending || !query || exact || !props.onCreate) return;
     setPending(true);
-    const listId = await props.onCreate(props.task, query);
-    if (listId) { setSelectedListId(listId); setSearch(""); }
-    setPending(false);
+    try { if (await props.onCreate(props.task, query)) setSearch(""); } finally { setPending(false); }
   };
-  const selected = selectedListId ? props.lists.get(selectedListId) : null;
-  if (!props.onChange && !props.onCreate) return selected ? <span className="inline-flex rounded-md bg-dls-hover px-2 py-1 text-dls-text/85">{selected.name}</span> : <>{t("tasks.no_list")}</>;
+  const label = selectedIds.map((id) => props.lists.get(id)?.name ?? shortId(id)).join(", ") || t("tasks.no_list");
+  if (!props.onChange && !props.onCreate) return <span>{label}</span>;
   return <Popover onOpenChange={(open) => { if (!open) setSearch(""); }}>
-    <PopoverTrigger render={<button type="button" data-testid={`task-list-trigger-${props.task.id}`} className="flex min-h-8 min-w-24 max-w-48 items-center rounded-md px-1 text-left outline-none transition-colors hover:bg-dls-hover data-popup-open:ring-1 data-popup-open:ring-blue-8" />}><span className={`truncate ${selected ? "rounded-md bg-dls-hover px-2 py-1 text-dls-text/85" : "text-dls-secondary"}`}>{selected?.name ?? t("tasks.no_list")}</span></PopoverTrigger>
+    <PopoverTrigger render={<button type="button" title={label} data-testid={`task-list-trigger-${props.task.id}`} className="flex min-h-8 min-w-24 max-w-48 items-center rounded-md px-1 text-left outline-none transition-colors hover:bg-dls-hover data-popup-open:ring-1 data-popup-open:ring-blue-8" />}><span className={`truncate ${selectedIds.length ? "rounded-md bg-dls-hover px-2 py-1 text-dls-text/85" : "text-dls-secondary"}`}>{label}</span></PopoverTrigger>
     <PopoverContent align="start" side="bottom" sideOffset={5} data-testid={`task-list-picker-${props.task.id}`} className="w-80 gap-0 rounded-xl border border-dls-border bg-dls-surface p-0 shadow-xl">
       <div className="p-3"><input autoFocus data-testid={`task-list-search-${props.task.id}`} aria-label={t("tasks.search_or_create_list")} placeholder={t("tasks.search_or_create_list")} value={search} disabled={pending} onChange={(event) => setSearch(event.currentTarget.value)} onKeyDown={(event) => { if (event.key === "Enter" && query && !exact) { event.preventDefault(); void create(); } }} className="h-10 w-full rounded-lg border border-dls-border bg-dls-surface px-3 text-sm text-dls-text outline-none placeholder:text-dls-secondary focus:border-blue-8 focus:ring-2 focus:ring-blue-8/20" /></div>
       <div className="max-h-72 overflow-y-auto px-2 pb-2">
-        {!query ? <button type="button" data-testid={`task-list-option-${props.task.id}-none`} disabled={pending} onClick={() => void select("")} className="flex h-11 w-full items-center rounded-lg px-3 text-left text-sm text-dls-text hover:bg-dls-hover disabled:opacity-60"><span className="min-w-0 flex-1 truncate">{t("tasks.no_list")}</span>{selectedListId === "" ? <Check className="size-4 text-blue-10" /> : null}</button> : null}
-        {options.map((list) => <button key={list.id} type="button" data-testid={`task-list-option-${props.task.id}-${list.id}`} disabled={pending} onClick={() => void select(list.id)} className="flex h-11 w-full items-center rounded-lg px-3 text-left text-sm text-dls-text hover:bg-dls-hover disabled:opacity-60"><span className={`min-w-0 flex-1 truncate ${selectedListId === list.id ? "text-blue-10" : ""}`}>{list.name}</span>{selectedListId === list.id ? <Check className="size-4 text-blue-10" /> : null}</button>)}
+        {options.map((list) => <button key={list.id} type="button" aria-pressed={selectedIds.includes(list.id)} data-testid={`task-list-option-${props.task.id}-${list.id}`} disabled={pending} onClick={() => void select(list.id)} className="flex h-11 w-full items-center rounded-lg px-3 text-left text-sm text-dls-text hover:bg-dls-hover disabled:opacity-60"><span className="min-w-0 flex-1 truncate">{list.name}</span>{selectedIds.includes(list.id) ? <Check className="size-4 text-blue-10" /> : null}</button>)}
         {query && !exact ? <button type="button" data-testid={`task-list-create-${props.task.id}`} disabled={pending} onClick={() => void create()} className="mt-1 flex min-h-12 w-full items-center gap-2 rounded-lg bg-dls-hover px-3 text-left text-sm text-dls-secondary hover:bg-dls-active disabled:opacity-60"><Plus className="size-5 shrink-0" /><span>{t("tasks.create_list_inline")}</span><strong className="min-w-0 truncate font-semibold text-dls-text">{query}</strong></button> : null}
       </div>
     </PopoverContent>
@@ -170,15 +165,18 @@ export function timeGroupLabel(key: TimeGroupKey, kind: "start" | "due") {
   return t(`tasks.group_time_${key}`);
 }
 
-export function taskGroupValue(task: DenProductTask, group: TaskWorkbenchGroup, presentation: TaskPresentation, now: Date, customGroupLabel: string) {
-  if (group === "custom") return { key: defaultCustomTaskGroupKey, label: customGroupLabel };
-  if (group === "list") return { key: task.listId ?? "", label: task.listId ? presentation.listById.get(task.listId)?.name ?? shortId(task.listId) : t("tasks.no_list") };
-  if (group === "creator") return { key: task.creatorMemberId, label: taskMemberName(task.creatorMemberId, presentation.memberById) };
+export function taskGroupValues(task: DenProductTask, group: TaskWorkbenchGroup, presentation: TaskPresentation, now: Date, customGroupLabel: string) {
+  if (group === "custom") return [{ key: defaultCustomTaskGroupKey, label: customGroupLabel }];
+  if (group === "list") {
+    const ids = productTaskListIds(task);
+    return ids.length ? ids.map((key) => ({ key, label: presentation.listById.get(key)?.name ?? shortId(key) })) : [{ key: "", label: t("tasks.no_list") }];
+  }
+  if (group === "creator") return [{ key: task.creatorMemberId, label: taskMemberName(task.creatorMemberId, presentation.memberById) }];
   if (group === "start" || group === "due") {
     const key = taskTimeGroup(group === "start" ? task.startAt : task.dueAt, group, now);
-    return { key, label: timeGroupLabel(key, group) };
+    return [{ key, label: timeGroupLabel(key, group) }];
   }
-  return { key: "", label: "" };
+  return [{ key: "", label: "" }];
 }
 
 type InlineCreatePosition = "top" | "bottom";
@@ -269,11 +267,13 @@ export function TaskListTable(props: TaskPresentation & { fields: TaskWorkbenchF
   }
   for (const task of props.tasks) {
     const assignedCustomGroup = props.group === "custom" ? props.customGroupAssignments[task.id] : undefined;
-    const group = assignedCustomGroup && groups.has(assignedCustomGroup)
-      ? { key: assignedCustomGroup, label: groups.get(assignedCustomGroup)!.label }
-      : taskGroupValue(task, props.group, props, now, customGroupLabel);
-    const current = groups.get(group.key);
-    groups.set(group.key, { label: group.label, tasks: [...(current?.tasks ?? []), task] });
+    const values = assignedCustomGroup && groups.has(assignedCustomGroup)
+      ? [{ key: assignedCustomGroup, label: groups.get(assignedCustomGroup)!.label }]
+      : taskGroupValues(task, props.group, props, now, customGroupLabel);
+    for (const { key, label } of values) {
+      if (!groups.has(key)) groups.set(key, { label, tasks: [] });
+      groups.get(key)!.tasks.push(task);
+    }
   }
   const rows = props.group === "none" ? [["", { label: "", tasks: props.tasks }] as const] : [...groups.entries()];
   const toggleGroup = (key: string, expanded: boolean) => setGroupExpansion((current) => ({ ...current, [key]: !expanded }));
@@ -304,7 +304,7 @@ export function TaskListTable(props: TaskPresentation & { fields: TaskWorkbenchF
       const taskMembers = props.membersByTaskId[task.id] ?? [];
       const overdue = task.status === "todo" && Boolean(task.dueAt && new Date(task.dueAt).getTime() < Date.now());
       const currentAssigneeCompleted = task.status === "todo" && task.completionPolicy === "all_assignees" && taskMembers.some((member) => member.role === "assignee" && member.memberId === props.currentMemberId && Boolean(member.completedAt));
-      return <tr key={task.id} data-state={props.selectedTaskId === task.id ? "selected" : undefined} className="group h-12 transition-colors hover:bg-dls-hover/75 data-[state=selected]:bg-dls-active"><td className="border-b border-dls-border py-2 pl-[38px] align-middle"><div className="flex items-center gap-2" data-testid={`task-title-cell-${task.id}`}><button type="button" disabled={currentAssigneeCompleted} className={`flex size-4 shrink-0 items-center justify-center rounded-full border transition-colors disabled:cursor-default ${task.status === "completed" ? "border-green-8 bg-green-8 text-white" : currentAssigneeCompleted ? "border-blue-8 bg-blue-8 text-white" : task.status === "canceled" ? "border-dls-secondary text-dls-secondary" : "border-dls-secondary hover:border-dls-accent"}`} aria-label={currentAssigneeCompleted ? t("tasks.assignee_completed") : task.status === "todo" ? t("tasks.complete") : t("tasks.reopen")} title={currentAssigneeCompleted ? t("tasks.waiting_for_assignees") : undefined} onClick={() => { if (!currentAssigneeCompleted) props.onTransition(task, task.status === "todo" ? "complete" : "reopen"); }}>{task.status === "completed" || currentAssigneeCompleted ? <Check className="size-3" /> : task.status === "canceled" ? <RotateCcw className="size-2.5" /> : null}</button><button type="button" className={`block max-w-[290px] truncate text-left text-sm font-normal leading-5 text-dls-text hover:text-blue-10 ${task.status === "completed" ? "line-through opacity-60" : ""}`} onClick={() => props.onSelect(task.id)}>{task.title}</button></div></td>{visibleFields.map((field) => <td key={field} className={`border-b border-dls-border px-4 py-2 align-middle whitespace-nowrap ${field === "due" && overdue ? "font-medium text-red-9" : "text-dls-secondary"}`}><TaskFieldCell field={field} task={task} taskMembers={taskMembers} members={props.memberById} lists={props.listById} onAssigneesChange={props.onAssigneesChange} onCompletionPolicyChange={props.onCompletionPolicyChange} onTimeChange={props.onTimeChange} onLoadReminders={props.onLoadReminders} onReminderChange={props.onReminderChange} onListChange={props.onListChange} onListCreate={props.onListCreate} /></td>)}</tr>;
+      return <tr key={JSON.stringify([groupKey, task.id])} data-state={props.selectedTaskId === task.id ? "selected" : undefined} className="group h-12 transition-colors hover:bg-dls-hover/75 data-[state=selected]:bg-dls-active"><td className="border-b border-dls-border py-2 pl-[38px] align-middle"><div className="flex items-center gap-2" data-testid={`task-title-cell-${task.id}`}><button type="button" disabled={currentAssigneeCompleted} className={`flex size-4 shrink-0 items-center justify-center rounded-full border transition-colors disabled:cursor-default ${task.status === "completed" ? "border-green-8 bg-green-8 text-white" : currentAssigneeCompleted ? "border-blue-8 bg-blue-8 text-white" : task.status === "canceled" ? "border-dls-secondary text-dls-secondary" : "border-dls-secondary hover:border-dls-accent"}`} aria-label={currentAssigneeCompleted ? t("tasks.assignee_completed") : task.status === "todo" ? t("tasks.complete") : t("tasks.reopen")} title={currentAssigneeCompleted ? t("tasks.waiting_for_assignees") : undefined} onClick={() => { if (!currentAssigneeCompleted) props.onTransition(task, task.status === "todo" ? "complete" : "reopen"); }}>{task.status === "completed" || currentAssigneeCompleted ? <Check className="size-3" /> : task.status === "canceled" ? <RotateCcw className="size-2.5" /> : null}</button><button type="button" className={`block max-w-[290px] truncate text-left text-sm font-normal leading-5 text-dls-text hover:text-blue-10 ${task.status === "completed" ? "line-through opacity-60" : ""}`} onClick={() => props.onSelect(task.id)}>{task.title}</button></div></td>{visibleFields.map((field) => <td key={field} className={`border-b border-dls-border px-4 py-2 align-middle whitespace-nowrap ${field === "due" && overdue ? "font-medium text-red-9" : "text-dls-secondary"}`}><TaskFieldCell field={field} task={task} taskMembers={taskMembers} members={props.memberById} lists={props.listById} onAssigneesChange={props.onAssigneesChange} onCompletionPolicyChange={props.onCompletionPolicyChange} onTimeChange={props.onTimeChange} onLoadReminders={props.onLoadReminders} onReminderChange={props.onReminderChange} onListChange={props.onListChange} onListCreate={props.onListCreate} /></td>)}</tr>;
     }), props.group !== "none" && props.inlineCreatePosition === "bottom" ? groupInlineRow : null, props.group !== "none" && props.group !== "creator" ? <tr key={`create:${groupKey}`}><td className="py-2.5 pl-[38px]" colSpan={visibleFields.length + 1}><button type="button" data-testid={`task-inline-create-group-trigger-${groupKey}`} onClick={() => props.onInlineCreatePositionChange("bottom", groupKey)} className="text-[13px] text-dls-secondary/65 transition-colors hover:text-blue-10">{t("tasks.new_task")}</button></td></tr> : null] : groupInlineRow ? [groupInlineRow] : [])]; })}{props.group === "custom" ? <tr data-testid="task-custom-group-create-row"><td className="py-3 pl-[38px]" colSpan={visibleFields.length + 1}>{creatingCustomGroup ? <div className="flex items-center gap-2"><ChevronRight className="size-4 text-dls-secondary" /><input autoFocus data-testid="task-custom-group-create-input" aria-label={t("tasks.group_name")} placeholder={t("tasks.group_title_placeholder")} value={customGroupCreateDraft} maxLength={80} onChange={(event) => setCustomGroupCreateDraft(event.currentTarget.value)} onBlur={finishCustomGroupCreate} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); finishCustomGroupCreate(); } else if (event.key === "Escape") { event.preventDefault(); setCreatingCustomGroup(false); setCustomGroupCreateDraft(""); } }} className="h-9 w-80 rounded-md border border-blue-8 bg-dls-surface px-3 text-sm text-dls-text outline-none ring-2 ring-blue-8/20 placeholder:text-dls-secondary/65" /></div> : null}<button type="button" data-testid="task-custom-group-create-trigger" onClick={() => setCreatingCustomGroup(true)} className="mt-2 flex items-center gap-2 text-sm font-semibold text-dls-secondary/65 transition-colors hover:text-blue-10"><Plus className="size-4" />{t("tasks.new_group")}</button></td></tr> : null}{props.group === "none" && props.inlineCreatePosition === "bottom" ? inlineRow("task-inline-create-row-bottom") : null}{props.group === "none" ? <tr><td className="py-2.5 pl-[38px]" colSpan={visibleFields.length + 1}><button type="button" data-testid="task-inline-create-bottom-trigger" onClick={() => props.onInlineCreatePositionChange("bottom")} className="flex items-center gap-2 text-[13px] text-dls-secondary/65 transition-colors hover:text-blue-10"><span className="size-4 shrink-0" aria-hidden="true" />{t("tasks.new_task")}</button></td></tr> : null}</tbody>
   </table></div>;
 }

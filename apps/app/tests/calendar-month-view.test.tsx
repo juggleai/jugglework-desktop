@@ -543,16 +543,16 @@ test("a one-time attendee scheduling event keeps its real ID and remains editabl
     await click(renderer, "calendar-day-event-2026-11-09-attendee-event");
     expect(text(byId(renderer, "calendar-event-detail-title"))).toBe("Authoritative attendee event");
     expect(byId(renderer, "calendar-event-panel").props.className).toContain("left-1/2");
-    expect(byId(renderer, "calendar-event-panel").props.className).toContain("h-[min(40rem,calc(100vh-2rem))]");
-    expect(byId(renderer, "calendar-event-panel").props.className).toContain("w-[min(25rem,calc(100vw-2rem))]");
+    expect(byId(renderer, "calendar-event-panel").props.style.maxHeight).toBe(576);
+    expect(byId(renderer, "calendar-event-panel").props.style.width).toBe(350);
     expect(byId(renderer, "calendar-event-panel").props["data-detail-layout"]).toBe("uniform");
-    expect(byId(renderer, "calendar-event-detail").props.className).toContain("h-full");
+    expect(byId(renderer, "calendar-event-detail").props.className).toContain("min-h-0");
     expect(byId(renderer, "calendar-event-detail-hero").props.className).toContain("linear-gradient");
-    expect(byId(renderer, "calendar-event-detail-hero").props.className).toContain("pb-5");
-    expect(byId(renderer, "calendar-event-detail-hero").props.className).toContain("pt-3");
+    expect(byId(renderer, "calendar-event-detail-hero").props.className).toContain("pb-3");
+    expect(byId(renderer, "calendar-event-detail-hero").props.className).toContain("pt-2");
     expect(byId(renderer, "calendar-event-detail-actions").props.className).toContain("h-8");
     expect(byId(renderer, "calendar-event-detail-body").props.className).toContain("overflow-y-auto");
-    expect(byId(renderer, "calendar-event-detail-body").props.className).toContain("pt-5");
+    expect(byId(renderer, "calendar-event-detail-body").props.className).toContain("py-3");
     expect(has(renderer, "calendar-event-detail-delete")).toBe(true);
     expect(has(renderer, "calendar-event-detail-share")).toBe(false);
     expect(has(renderer, "calendar-event-detail-more")).toBe(false);
@@ -623,12 +623,12 @@ test("an overflowing day opens every event and anchors detail near the selected 
     expect(text(byId(renderer, "calendar-event-detail-title"))).toBe("Title e5");
     expect(byId(renderer, "calendar-event-panel").props["data-detail-anchored"]).toBe("true");
     expect(byId(renderer, "calendar-event-panel").props["data-detail-layout"]).toBe("uniform");
-    expect(byId(renderer, "calendar-event-panel").props.className).toContain("h-[min(40rem,calc(100vh-2rem))]");
-    expect(byId(renderer, "calendar-event-panel").props.className).toContain("w-[min(25rem,calc(100vw-2rem))]");
+    expect(byId(renderer, "calendar-event-panel").props.style.maxHeight).toBe(576);
+    expect(byId(renderer, "calendar-event-panel").props.style.width).toBe(350);
     expect(byId(renderer, "calendar-event-panel").props.className).toContain("fixed");
-    expect(byId(renderer, "calendar-event-panel").props.style.left).toBe(308);
-    expect(byId(renderer, "calendar-event-panel").props.style.top).toBe(112);
-    expect(byId(renderer, "calendar-event-panel").props.style.height).toBe(640);
+    expect(byId(renderer, "calendar-event-panel").props.style.left).toBe(306);
+    expect(byId(renderer, "calendar-event-panel").props.style.top).toBe(220);
+    expect(byId(renderer, "calendar-event-panel").props.style.height).toBeUndefined();
   } finally { await act(async () => { renderer.unmount(); }); }
 });
 

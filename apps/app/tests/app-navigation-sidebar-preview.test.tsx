@@ -38,7 +38,7 @@ test("renders the published Tasks sidebar and shares its live callbacks", async 
       lists: [{ id: "list-one", name: "Launch", marker: "#", version: 3 }],
       selectedListId: null,
       onSelectList: (id) => actions.push(`list:${id}`),
-      onCreateList: () => actions.push("create"),
+      onCreateList: async (name) => { actions.push(`create:${name}`); return true; },
       onArchiveList: (id, version) => actions.push(`archive:${id}:${version}`),
     }), [section]);
     usePublishTasksSidebar(registration);
@@ -79,13 +79,15 @@ test("renders the published Tasks sidebar and shares its live callbacks", async 
     const delegated = quickAccessNav.findAllByType("button")[2]!;
     await act(async () => { delegated.props.onClick(); });
     await act(async () => { quickAccess.props.onClick(); });
-    expect(sidebar.findByProps({ "aria-expanded": false })).toBeDefined();
+    expect(quickAccess.props["aria-expanded"]).toBe(false);
     expect(sidebar.findAllByProps({ "aria-label": t("tasks.quick_access") })).toHaveLength(0);
-    const list = sidebar.findAllByType("button").find((button) => Array.isArray(button.props.children) && button.props.children.includes("Launch"))!;
+    const list = sidebar.findByProps({ "data-testid": "tasks-sidebar-list-list-one" });
     await act(async () => { list.props.onClick(); });
     await act(async () => { sidebar.findByProps({ "aria-label": t("tasks.create_list") }).props.onClick(); });
+    await act(async () => { sidebar.findByProps({ "data-testid": "task-sidebar-list-create-input" }).props.onChange({ currentTarget: { value: "Preview list" } }); });
+    await act(async () => { sidebar.findByProps({ "data-testid": "task-sidebar-list-create" }).props.onSubmit({ preventDefault: () => undefined }); });
     await act(async () => { sidebar.findByProps({ "aria-label": t("tasks.archive_list") }).props.onClick(); });
-    expect(actions).toEqual(["section:delegated", "list:list-one", "create", "archive:list-one:3"]);
+    expect(actions).toEqual(["section:delegated", "list:list-one", "create:Preview list", "archive:list-one:3"]);
 
     await act(async () => {
       host.props.onMouseLeave();

@@ -14,6 +14,18 @@ The Desktop SHALL provide Tasks in the More navigation menu, allow the user to p
 ### Requirement: Task information architecture
 The Desktop SHALL provide primary task secondary navigation for Today, Assigned to me, Following, and Activity. It SHALL provide an initially expanded, collapsible Quick access section for All tasks, Created by me, Assigned by me, and Completed, followed by task lists and their create/archive actions. Inbox, Trash, and Archived lists SHALL NOT be visible sidebar destinations.
 
+Sidebar task-list rows SHALL display a consistent task-list icon followed by the list name. They SHALL NOT prepend the list marker as visible text because a first-character marker duplicates the beginning of ordinary list names.
+
+The task-list section add action and the workbench New task list menu SHALL open the same auto-focused inline name input above the existing task lists instead of opening a task-list dialog. If the sidebar is collapsed, the workbench menu action SHALL expand it first. The input SHALL prefill and select a localized `Task list N` name so typing replaces it while immediate submission accepts the default. Enter or focus loss SHALL create a private list with an empty description and a marker derived from the first name character, then open the created list. Escape SHALL cancel without a mutation. A failed create SHALL preserve the entered name for retry.
+
+#### Scenario: Create a task list from the sidebar
+- **WHEN** the member activates the task-list section add action, enters a non-empty name, and presses Enter or moves focus away
+- **THEN** the Desktop creates a private task list inline and opens its workbench without showing the full creation dialog
+
+#### Scenario: Cancel sidebar task-list creation
+- **WHEN** the member presses Escape in the sidebar task-list name input
+- **THEN** the draft input closes and no task-list mutation is sent
+
 #### Scenario: Open tasks assigned by the current user
 - **WHEN** the user selects Assigned by me from Quick access
 - **THEN** the Desktop shows accessible tasks whose current assignees exclude the current member and whose current assignment provenance includes the current member
@@ -88,7 +100,7 @@ When the user activates an editable Assignee cell, the List SHALL open a people 
 
 Editable Start time and Due time cells SHALL open one calendar picker containing editable Start date and Due date rows. A date MAY be stored without a specific time and SHALL then render each date as a full-width row at day precision. Enabling Specific time SHALL split each populated row into date and time columns and render at minute precision. Clicking either date input SHALL make it the active calendar target, so the next calendar selection updates that field. Time selection SHALL use a compact single-column menu in 30-minute intervals. Start date SHALL remain optional. Due reminder SHALL default to empty. For a specific due time, reminder choices SHALL be 5, 15, or 30 minutes, 1 or 2 hours, or 1 day before due. For a date-only due value, reminder choices SHALL be 18:00 on the due date, 09:00 one day before, or 09:00 two days before. Time changes SHALL load the latest task and permission, use the latest optimistic version, and persist reminder changes through the task reminder API.
 
-The Task list cell SHALL open a searchable list picker. Selecting an existing list SHALL load the latest task and permissions and move it through the dedicated move API using the latest optimistic version. When the entered name has no exact match, the picker SHALL show a prominent Create list row containing that name. Activating it SHALL create a compatible task list and then move the task into the new list; failure SHALL preserve the previous displayed list.
+The Task list cell SHALL open a searchable multi-select list picker. Checking or unchecking a list SHALL change only its own filing. Inline list creation SHALL append the new list without replacing previous filings; failure SHALL preserve the displayed selection.
 
 #### Scenario: Open a task list from the sidebar
 - **WHEN** the user selects an active task list in the Tasks sidebar
@@ -135,7 +147,7 @@ While a task-list page is active, no system collection navigation item SHALL rem
 - **THEN** the Desktop sorts the currently loaded tasks client-side and does not send unsupported `sort=start_at`
 
 ### Requirement: Assigned workbench creation menu
-The Assigned to me tool area SHALL expose exactly New task and New task list. New task SHALL open full creation. New task list SHALL open a dialog with name, description, marker, and private visibility default and SHALL expose mutation errors without leaking late results across scope changes.
+The Assigned to me tool area SHALL expose exactly New task and New task list. New task SHALL open full creation. New task list SHALL expand the sidebar when needed and open the shared inline task-list name input with private defaults. It SHALL expose mutation errors without leaking late results across scope changes.
 
 #### Scenario: Open the task creation menu
 - **WHEN** the user opens the Assigned to me creation menu
@@ -164,7 +176,7 @@ The Desktop SHALL support full creation in a compact dialog with a fixed, viewpo
 ### Requirement: Task detail work panel
 The detail title and description SHALL autosave when the title loses focus or focus leaves the complete description editor. Activating another field selector SHALL therefore save pending content first. The detail description SHALL reuse the creation dialog’s 168px rich-text editor and toolbar. Moving focus within that editor, including to a formatting action, SHALL NOT save prematurely. The panel SHALL NOT show a separate Save button.
 
-The Desktop SHALL open a fixed right-side task detail panel. The panel SHALL render as an opaque isolated surface above workbench sticky headers and rows so underlying borders and content cannot overlap or show through it. Its top-left control SHALL complete a todo task or reopen a completed task, and its top-right Follow control SHALL add or remove the signed-in member as a follower. The detail body SHALL expose the title, assignees, due time, the task's single authoritative task list, and the current workbench custom group. Task-list selection SHALL support search and inline list creation but SHALL NOT imply multiple server list memberships because the Task model has one `listId`. Custom-group selection SHALL support inline group creation and persist through current workbench settings. Subtasks and attachments are out of scope for this change.
+The Desktop SHALL open a fixed right-side task detail panel. The panel SHALL render as an opaque isolated surface above workbench sticky headers and rows so underlying borders and content cannot overlap or show through it. Its top-left control SHALL complete a todo task or reopen a completed task, and its top-right Follow control SHALL add or remove the signed-in member as a follower. The detail body SHALL expose the title, assignees, due time, the task's visible list filings, and the current workbench custom group. Task-list selection SHALL support independent multi-selection, search and inline list creation. Custom-group selection SHALL support inline group creation and persist through current workbench settings. Subtasks and attachments are out of scope for this change.
 
 Task-row separators in List view SHALL be inset from both the title-side content boundary and the right table edge. While the detail panel is open, clicking outside the panel SHALL close it and SHALL NOT activate an underlying task or workbench control.
 

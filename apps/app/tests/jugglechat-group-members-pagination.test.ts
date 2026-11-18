@@ -1,6 +1,47 @@
 import { expect, test } from "bun:test";
 
-import { collectAllGroupMembers } from "../src/react-app/domains/jugglechat/api";
+import { collectAllGroupMembers, juggleChatFetch } from "../src/react-app/domains/jugglechat/api";
+
+test("routes desktop Chat API requests through Electron Main instead of renderer CORS", async () => {
+  const previousWindow = globalThis.window;
+  const calls: unknown[][] = [];
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      __JUGGLEWORK_ELECTRON__: {
+        invokeDesktop: async (...args: unknown[]) => {
+          calls.push(args);
+          return {
+            status: 200,
+            statusText: "OK",
+            headers: [["content-type", "application/json"]],
+            body: '{"members":[]}',
+          };
+        },
+      },
+    },
+  });
+
+  try {
+    const response = await juggleChatFetch("https://work.example.test/jwork/api/v1/members", {
+      headers: {
+        Authorization: "Bearer session-token",
+        "x-jugglework-legacy-org-id": "org-one",
+      },
+    });
+
+    expect(response.ok).toBe(true);
+    expect(calls).toHaveLength(1);
+    const [command, url, init] = calls[0] as [string, string, { headers: Record<string, string> }];
+    expect(command).toBe("__fetch");
+    expect(url).toBe("https://work.example.test/jwork/api/v1/members");
+    expect(init.headers.authorization).toBe("Bearer session-token");
+    expect(init.headers["x-jugglework-legacy-org-id"]).toBe("org-one");
+  } finally {
+    if (previousWindow === undefined) Reflect.deleteProperty(globalThis, "window");
+    else Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+  }
+});
 
 test("collects every group-member page for complete-roster consumers", async () => {
   const offsets: string[] = [];

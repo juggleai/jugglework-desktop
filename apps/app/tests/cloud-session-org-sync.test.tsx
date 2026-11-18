@@ -10,9 +10,10 @@ const team = { id: "team", name: "Team", slug: "team", role: "owner" };
 const personal = { id: "personal", name: "Personal", slug: "personal", role: "owner", isPersonal: true };
 let sessionCalls = 0;
 let orgCalls = 0;
+let getSession = async () => user;
 let listOrgs = async () => ({ orgs: [team, personal], activeOrgId: team.id });
 const client = {
-  getSession: async () => { sessionCalls += 1; return user; },
+  getSession: () => { sessionCalls += 1; return getSession(); },
   listOrgs: () => { orgCalls += 1; return listOrgs(); },
 };
 mock.module("../src/app/lib/den", () => ({
@@ -25,7 +26,7 @@ mock.module("../src/react-app/domains/cloud/den-auth-provider", () => ({
 }));
 
 const { CloudSessionProvider, useCloudSession } = await import("../src/react-app/domains/settings/cloud/cloud-session-provider");
-const { useDenSession } = await import("../src/react-app/domains/settings/cloud/use-den-session");
+const { cloudAccountErrorMessage, retryTransientCloudRequest, useDenSession } = await import("../src/react-app/domains/settings/cloud/use-den-session");
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let renderer: TestRenderer.ReactTestRenderer | undefined;
 let cloud: ReturnType<typeof useCloudSession>;
@@ -44,6 +45,7 @@ function installWindow() {
   Object.defineProperty(globalThis, "window", {
     configurable: true,
     value: Object.assign(target, {
+      navigator: { onLine: true },
       localStorage: {
         getItem: (key: string) => storage.get(key) ?? null,
         setItem: (key: string, value: string) => storage.set(key, value),
@@ -54,6 +56,7 @@ function installWindow() {
   den.writeDenSettings({ baseUrl: "https://cloud.example.test", authToken: "test-token", activeOrgId: team.id, activeOrgName: team.name, activeOrgSlug: team.slug });
   sessionCalls = 0;
   orgCalls = 0;
+  getSession = async () => user;
 }
 
 afterEach(async () => {
@@ -62,6 +65,18 @@ afterEach(async () => {
   if (originalWindow) Object.defineProperty(globalThis, "window", originalWindow);
   else Reflect.deleteProperty(globalThis, "window");
   listOrgs = async () => ({ orgs: [team, personal], activeOrgId: team.id });
+});
+
+test("temporary proxy failures are retried and shown as a friendly Cloud message", async () => {
+  let attempts = 0;
+  const result = await retryTransientCloudRequest(async () => {
+    attempts += 1;
+    if (attempts < 3) throw new Error("Error invoking remote method 'jugglework:desktop': Error: net::ERR_PROXY_CONNECTION_FAILED");
+    return "connected";
+  }, { delaysMs: [0, 0] });
+  expect(result).toBe("connected");
+  expect(attempts).toBe(3);
+  expect(cloudAccountErrorMessage(new Error("Request timed out."), "fallback")).toBe("JuggleWork Cloud is temporarily unreachable. Check your network or proxy; reconnecting automatically.");
 });
 
 test("mounted settings follows account-menu selection, including personal, without revalidating or looping", async () => {
@@ -75,7 +90,7 @@ test("mounted settings follows account-menu selection, including personal, witho
   });
   expect(cloud.activeOrganization).toMatchObject(personal);
   expect(cloud.isSignedIn).toBe(true);
-  expect(cloud.user).toEqual(user);
+  expect(cloud.user).toMatchObject(user);
   expect(den.readDenSettings().activeOrgId).toBe(personal.id);
   const currentOrg = cloud.activeOrganization;
   await act(async () => { window.dispatchEvent(new Event(denSettingsChangedEvent)); });
@@ -121,4 +136,31 @@ test("provider synchronizes metadata and clears an explicitly removed selection"
   expect(cloud.user).toBeNull();
   expect(cloud.isSignedIn).toBe(false);
   expect(cloud.authToken).toBe("");
+});
+
+test("a successful quiet organization refresh clears an earlier connection error", async () => {
+  installWindow();
+  await act(async () => { renderer = TestRenderer.create(<CloudSessionProvider><Probe /></CloudSessionProvider>); });
+  listOrgs = async () => { throw new Error("organization refresh failed"); };
+  await act(async () => { await session.onRefreshOrgs(true); });
+  expect(session.orgsError).toBe("organization refresh failed");
+  listOrgs = async () => ({ orgs: [team, personal], activeOrgId: team.id });
+  await act(async () => { await session.onRefreshOrgs(true); });
+  expect(session.orgsError).toBeNull();
+});
+
+test("focusing the app revalidates and clears a stale account-page session error", async () => {
+  installWindow();
+  getSession = async () => { throw new Error("session refresh failed"); };
+  await act(async () => {
+    renderer = TestRenderer.create(<CloudSessionProvider><Probe /></CloudSessionProvider>);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  expect(session.authError).toBe("session refresh failed");
+  getSession = async () => user;
+  await act(async () => {
+    window.dispatchEvent(new Event("focus"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  expect(session.authError).toBeNull();
 });

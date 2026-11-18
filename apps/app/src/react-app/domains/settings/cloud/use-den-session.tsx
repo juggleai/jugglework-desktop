@@ -57,6 +57,40 @@ export type UseDenSessionProps = {
 };
 
 const SIGN_OUT_CLEANUP_TIMEOUT_MS = 5_000;
+export const DEN_ACCOUNT_RECOVERY_RETRY_INTERVAL_MS = 15_000;
+export const DEN_ACCOUNT_TRANSIENT_RETRY_DELAYS_MS = [1_000, 3_000, 6_000] as const;
+
+export function isTransientCloudAccountError(error: unknown): boolean {
+  if (error instanceof DenApiError) return error.status === 408 || error.status === 429 || error.status >= 500;
+  const message = error instanceof Error ? `${error.name} ${error.message}` : String(error ?? "");
+  return /Request timed out|Failed to fetch|fetch failed|network error|AbortError|ERR_(?:PROXY_CONNECTION_FAILED|TUNNEL_CONNECTION_FAILED|INTERNET_DISCONNECTED|NETWORK_CHANGED|CONNECTION_(?:RESET|REFUSED|CLOSED|TIMED_OUT)|NAME_NOT_RESOLVED)/i.test(message);
+}
+
+export function cloudAccountErrorMessage(error: unknown, fallback: string): string {
+  const message = error instanceof Error ? error.message.trim() : "";
+  if (isTransientCloudAccountError(error) || /Error invoking remote method|net::ERR_/i.test(message)) {
+    return t("den.error_connection_temporary");
+  }
+  return message || fallback;
+}
+
+export async function retryTransientCloudRequest<T>(
+  request: () => Promise<T>,
+  options: { delaysMs?: readonly number[]; shouldContinue?: () => boolean } = {},
+): Promise<T> {
+  const delays = options.delaysMs ?? DEN_ACCOUNT_TRANSIENT_RETRY_DELAYS_MS;
+  let retryIndex = 0;
+  while (true) {
+    try {
+      return await request();
+    } catch (error) {
+      if (!isTransientCloudAccountError(error) || retryIndex >= delays.length || options.shouldContinue?.() === false) throw error;
+      const delayMs = delays[retryIndex++] ?? 0;
+      await new Promise<void>((resolve) => globalThis.setTimeout(resolve, delayMs));
+      if (options.shouldContinue?.() === false) throw error;
+    }
+  }
+}
 
 async function runBeforeSignedOut(callback: UseDenSessionProps["onBeforeSignedOut"], settings: DenSettings): Promise<void> {
   if (!callback) return;
@@ -94,6 +128,7 @@ export function useDenSession({
     user,
   } = useCloudSession();
   const initial = React.useMemo(() => readDenSettings(), []);
+  const sessionRefreshSequence = React.useRef(0);
   const orgRefreshSequence = React.useRef(0);
 
   const [baseUrlDraft, setBaseUrlDraft] = React.useState(baseUrl);
@@ -337,8 +372,9 @@ export function useDenSession({
     }
   }, [baseUrlBusy, clearSignedInState, setBaseUrl]);
 
-  React.useEffect(() => {
+  const refreshSession = React.useCallback(async (quiet = false) => {
     const token = authToken.trim();
+    const sequence = ++sessionRefreshSequence.current;
     if (!token) {
       setSessionBusy(false);
       clearSessionState();
@@ -346,34 +382,37 @@ export function useDenSession({
       return;
     }
 
-    let cancelled = false;
     setSessionBusy(true);
-    setAuthError(null);
+    if (!quiet) setAuthError(null);
 
-    void client
-      .getSession()
-      .then((nextUser) => {
-        if (cancelled) return;
-        setUser(nextUser);
-        setStatusMessage(t("den.status_signed_in_as", { email: nextUser.email }));
-      })
-      .catch(async (error) => {
-        if (cancelled) return;
-        if (isDenSessionRevokedError(error)) {
-          await clearSignedInState();
-        }
-        // A timeout, offline state, or server failure does not invalidate the
-        // last confirmed session. Keep it available while surfacing the error.
-        setAuthError(error instanceof Error ? error.message : t("den.error_no_session"));
-      })
-      .finally(() => {
-        if (!cancelled) setSessionBusy(false);
+    try {
+      const nextUser = await retryTransientCloudRequest(() => client.getSession(), {
+        shouldContinue: () => sequence === sessionRefreshSequence.current,
       });
+      if (sequence !== sessionRefreshSequence.current) return;
+      setUser(nextUser);
+      setAuthError(null);
+      setStatusMessage(t("den.status_signed_in_as", { email: nextUser.email }));
+    } catch (error) {
+      if (sequence !== sessionRefreshSequence.current) return;
+      if (isDenSessionRevokedError(error)) {
+        await clearSignedInState();
+        return;
+      }
+      // A temporary network or proxy failure does not invalidate the last
+      // confirmed session. Keep it available while retrying in the background.
+      setAuthError(cloudAccountErrorMessage(error, t("den.error_no_session")));
+    } finally {
+      if (sequence === sessionRefreshSequence.current) setSessionBusy(false);
+    }
+  }, [authToken, clearSessionState, clearSignedInState, client, setStatusMessage, setUser]);
 
+  React.useEffect(() => {
+    void refreshSession();
     return () => {
-      cancelled = true;
+      sessionRefreshSequence.current += 1;
     };
-  }, [authToken, clearSessionState, clearSignedInState, client]);
+  }, [refreshSession]);
 
   const refreshOrgs = React.useCallback(
     async (quiet = false) => {
@@ -388,9 +427,12 @@ export function useDenSession({
       const sequence = ++orgRefreshSequence.current;
 
       try {
-        const response = await client.listOrgs();
+        const response = await retryTransientCloudRequest(() => client.listOrgs(), {
+          shouldContinue: () => sequence === orgRefreshSequence.current,
+        });
         if (sequence !== orgRefreshSequence.current) return;
         setOrgs(response.orgs);
+        setOrgsError(null);
         const current = readDenSettings().activeOrgId?.trim() || "";
 
         const nextOrg = response.orgs.find((org) => org.id === current) ?? resolveDenDefaultOrganization(response.orgs, {
@@ -424,7 +466,7 @@ export function useDenSession({
         }
       } catch (error) {
         if (sequence !== orgRefreshSequence.current) return;
-        setOrgsError(error instanceof Error ? error.message : t("den.error_load_orgs"));
+        setOrgsError(cloudAccountErrorMessage(error, t("den.error_load_orgs")));
       } finally {
         if (sequence === orgRefreshSequence.current) setOrgsBusy(false);
       }
@@ -436,6 +478,29 @@ export function useDenSession({
     if (!user) return;
     void refreshOrgs(true);
   }, [refreshOrgs, user]);
+
+  React.useEffect(() => {
+    if (typeof window === "undefined" || !authToken.trim() || (!authError && !orgsError)) return;
+    let disposed = false;
+    let inFlight = false;
+    const recover = () => {
+      if (disposed || inFlight || window.navigator?.onLine === false) return;
+      inFlight = true;
+      void (async () => {
+        if (authError) await refreshSession(true);
+        if (orgsError) await refreshOrgs(true);
+      })().finally(() => { inFlight = false; });
+    };
+    window.addEventListener("online", recover);
+    window.addEventListener("focus", recover);
+    const timer = globalThis.setInterval(recover, DEN_ACCOUNT_RECOVERY_RETRY_INTERVAL_MS);
+    return () => {
+      disposed = true;
+      window.removeEventListener("online", recover);
+      window.removeEventListener("focus", recover);
+      globalThis.clearInterval(timer);
+    };
+  }, [authError, authToken, orgsError, refreshOrgs, refreshSession]);
 
   React.useEffect(() => {
     let previous = readDenSettings();

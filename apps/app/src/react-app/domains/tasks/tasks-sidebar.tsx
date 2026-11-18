@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Activity,
   Archive,
@@ -42,7 +42,9 @@ export type TasksSidebarRegistration = {
   lists?: Array<{ id: string; name: string; marker: string; version: number }>;
   selectedListId?: string | null;
   onSelectList?: (id: string) => void;
-  onCreateList?: () => void;
+  onCreateList?: (name: string) => Promise<boolean>;
+  createListRequested?: boolean;
+  onCreateListRequestHandled?: () => void;
   onArchiveList?: (id: string, version: number) => void;
 };
 
@@ -52,6 +54,44 @@ export function taskSectionHeading(section: TaskSection) {
 
 export function TasksSidebar(props: TasksSidebarRegistration & { preview?: boolean }) {
   const [quickAccessExpanded, setQuickAccessExpanded] = useState(true);
+  const [creatingList, setCreatingList] = useState(false);
+  const [createListName, setCreateListName] = useState("");
+  const [createListPending, setCreateListPending] = useState(false);
+  const createListPendingRef = useRef(false);
+  const skipCreateListBlurRef = useRef(false);
+  const startCreatingList = () => {
+    skipCreateListBlurRef.current = false;
+    setCreateListName(`${t("tasks.lists").replace(/s$/i, "")} ${(props.lists?.length ?? 0) + 1}`);
+    setCreatingList(true);
+  };
+  useEffect(() => {
+    if (!props.createListRequested) return;
+    startCreatingList();
+    props.onCreateListRequestHandled?.();
+  }, [props.createListRequested]);
+  const cancelCreatingList = () => {
+    if (createListPendingRef.current) return;
+    setCreateListName("");
+    setCreatingList(false);
+  };
+  const submitCreateList = async (name = createListName) => {
+    const trimmed = name.trim();
+    if (!trimmed) {
+      cancelCreatingList();
+      return;
+    }
+    if (!props.onCreateList || createListPendingRef.current) return;
+    createListPendingRef.current = true;
+    setCreateListPending(true);
+    const created = await props.onCreateList(trimmed);
+    createListPendingRef.current = false;
+    setCreateListPending(false);
+    if (created) {
+      setCreateListName("");
+      setCreatingList(false);
+      return;
+    }
+  };
   const navigationButton = ([section, key, Icon]: [TaskSection, string, LucideIcon]) => (
     <button
       key={section}
@@ -104,9 +144,12 @@ export function TasksSidebar(props: TasksSidebarRegistration & { preview?: boole
         <section>
           <div className="flex h-9 items-center justify-between px-3 text-sm font-medium text-dls-text/75">
             <span>{t("tasks.lists")}</span>
-            {props.onCreateList ? <button type="button" onClick={props.onCreateList} aria-label={t("tasks.create_list")} className="rounded p-1 hover:bg-dls-hover hover:text-dls-text"><Plus className="size-3.5" /></button> : null}
+            {props.onCreateList ? <button type="button" onClick={startCreatingList} aria-label={t("tasks.create_list")} aria-expanded={creatingList} className="rounded p-1 hover:bg-dls-hover hover:text-dls-text"><Plus className="size-3.5" /></button> : null}
           </div>
-          <div className="mt-1.5 space-y-1">{props.lists?.map((list) => <div key={list.id} className="group flex items-center"><button type="button" aria-current={props.selectedListId === list.id ? "page" : undefined} className={`min-w-0 flex-1 truncate rounded-lg px-3 py-2 text-left text-sm transition-colors ${props.selectedListId === list.id ? "bg-blue-3 font-medium text-blue-11 dark:bg-blue-4/45 dark:text-blue-10" : "text-dls-secondary hover:bg-dls-hover hover:text-dls-text"}`} onClick={() => props.onSelectList?.(list.id)}>{list.marker} {list.name}</button><button type="button" className="invisible rounded p-1 text-dls-secondary hover:bg-dls-hover hover:text-dls-text group-hover:visible group-has-[:focus-visible]:visible focus:visible" aria-label={t("tasks.archive_list")} onClick={() => props.onArchiveList?.(list.id, list.version)}><Archive className="size-3.5" /></button></div>)}</div>
+          <div className="mt-1.5 space-y-1">
+            {creatingList ? <form data-testid="task-sidebar-list-create" className="rounded-lg bg-blue-3/70 px-2 py-1.5 dark:bg-blue-4/35" onSubmit={(event) => { event.preventDefault(); void submitCreateList(); }}><input autoFocus data-testid="task-sidebar-list-create-input" aria-label={t("tasks.list_name")} placeholder={t("tasks.list_name")} value={createListName} disabled={createListPending} onFocus={(event) => event.currentTarget.select()} onChange={(event) => setCreateListName(event.currentTarget.value)} onBlur={(event) => { if (skipCreateListBlurRef.current) { skipCreateListBlurRef.current = false; return; } if (!createListPendingRef.current) void submitCreateList(event.currentTarget.value); }} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); skipCreateListBlurRef.current = true; cancelCreatingList(); } }} className="h-8 w-full rounded-md border border-blue-8 bg-dls-surface px-2 text-sm text-dls-text outline-none ring-1 ring-blue-8/20 placeholder:text-dls-secondary/60 focus:ring-2 focus:ring-blue-8/35 disabled:opacity-60" /></form> : null}
+            {props.lists?.map((list) => <div key={list.id} className="group flex items-center"><button type="button" data-testid={`tasks-sidebar-list-${list.id}`} aria-current={props.selectedListId === list.id ? "page" : undefined} className={`flex min-w-0 flex-1 items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition-colors ${props.selectedListId === list.id ? "bg-blue-3 font-medium text-blue-11 dark:bg-blue-4/45 dark:text-blue-10" : "text-dls-secondary hover:bg-dls-hover hover:text-dls-text"}`} onClick={() => props.onSelectList?.(list.id)}><ListTodo aria-hidden="true" className="size-4 shrink-0" strokeWidth={1.7} /><span className="truncate">{list.name}</span></button><button type="button" className="invisible rounded p-1 text-dls-secondary hover:bg-dls-hover hover:text-dls-text group-hover:visible group-has-[:focus-visible]:visible focus:visible" aria-label={t("tasks.archive_list")} onClick={() => props.onArchiveList?.(list.id, list.version)}><Archive className="size-3.5" /></button></div>)}
+          </div>
         </section>
       </div>
     </aside>
