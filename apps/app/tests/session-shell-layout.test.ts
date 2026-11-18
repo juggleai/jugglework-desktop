@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, test } from "bun:test";
+import { compile } from "tailwindcss";
 
 const sessionPage = readFileSync(new URL("../src/react-app/domains/session/chat/session-page.tsx", import.meta.url), "utf8");
 const appSidebar = readFileSync(new URL("../src/react-app/domains/session/sidebar/app-sidebar.tsx", import.meta.url), "utf8");
@@ -10,6 +11,18 @@ const sessionSurface = readFileSync(new URL("../src/react-app/domains/session/su
 const composer = readFileSync(new URL("../src/react-app/domains/session/surface/composer/composer.tsx", import.meta.url), "utf8");
 const messageList = readFileSync(new URL("../src/components/chat/message-list.tsx", import.meta.url), "utf8");
 const quickNavigation = readFileSync(new URL("../src/react-app/domains/session/surface/session-quick-navigation.tsx", import.meta.url), "utf8");
+
+const controlTag = (marker: string) => {
+  expect(sessionPage).toContain(marker);
+  return sessionPage.slice(0, sessionPage.indexOf(marker)).split("<").at(-1)!;
+};
+const controlClasses = (marker: string) => controlTag(marker).match(/className="([^"]+)"/)![1];
+const platformVariants = appStyles.slice(appStyles.indexOf("@custom-variant windows"), appStyles.indexOf("@custom-variant linux"));
+const compilePlatformClasses = async (candidates: string[]) => {
+  const noDragUtility = appStyles.match(/@utility titlebar-no-drag\s*\{[^}]+\}/)![0];
+  const compiler = await compile(`@theme { --spacing: 4px; --breakpoint-md: 48rem; } ${platformVariants} ${noDragUtility} @tailwind utilities;`);
+  return compiler.build(candidates);
+};
 
 describe("desktop session shell layout", () => {
   test("uses distinct expand and collapse icons for the todo progress panel", () => {
@@ -73,13 +86,123 @@ describe("desktop session shell layout", () => {
     expect(sessionPage).toContain('data-session-expanded-drag-region');
     expect(sessionPage).toContain('left-12 top-0 z-20 hidden h-[var(--session-shell-top-inset)] w-[calc(var(--sidebar-width)-5rem)]');
     expect(sessionPage).toContain('WebkitAppRegion: "drag"');
-    expect(sessionPage).toContain('shellConfig.sidebar && !sidebarOpen && "mac:pl-[76px]"');
+    expect(sessionPage).toContain('shellConfig.sidebar && !sidebarOpen && "mac:pl-[76px] windows:pl-[76px]"');
     expect(sessionPage).toContain('pointer-events-auto');
     expect(sessionPage).toContain('WebkitAppRegion: "no-drag"');
     expect(appSidebar).toContain('onClick={props.onOpenTaskSearch}');
     expect(sessionPage).not.toContain('data-session-task-search');
     expect(sessionPage).not.toContain('!sidebarOpen ? <span className="hidden size-8 shrink-0 mac:block"');
     expect(appSidebar).not.toContain('titleEnd={<SidebarTrigger');
+  });
+
+  test("reveals one Windows desktop toggle outside the Rail and keeps its no-drag hit target", async () => {
+    const expanded = controlClasses("data-session-sidebar-controls");
+    const collapsed = controlClasses("data-session-collapsed-sidebar-controls");
+    const dragRegion = controlClasses("data-session-expanded-drag-region");
+    for (const marker of ["data-session-sidebar-controls", "data-session-collapsed-sidebar-controls", "data-session-sidebar-toggle", "data-session-collapsed-sidebar-toggle"]) {
+      expect(controlTag(marker)).toContain('WebkitAppRegion: "no-drag"');
+    }
+    for (const classes of [expanded, collapsed]) {
+      expect(classes.split(" ")).toContain("hidden");
+      expect(classes.split(" ")).toContain("windows:md:flex");
+      expect(classes.split(" ")).not.toContain("windows:flex");
+    }
+    expect(expanded).toContain("left-[calc(var(--sidebar-width)-2rem)] top-1.5");
+    expect(dragRegion.split(" ")).toContain("hidden");
+    expect(dragRegion.split(" ")).toContain("windows:md:block");
+    // Keep dev's single-toggle drag span, which ends at the toggle's left edge.
+    expect(dragRegion).toContain("left-12");
+    expect(dragRegion).toContain("w-[calc(var(--sidebar-width)-5rem)]");
+    expect(sessionPage).toContain('<SidebarTrigger className="mac:hidden windows:md:hidden windows:titlebar-no-drag" />');
+    expect(sessionPage).toContain('!props.embedded && shellConfig.sidebar && !sidebarOpen && "mac:pl-[76px] windows:pl-[76px]"');
+    const secondaryControls = readFileSync(new URL("../src/react-app/shell/app-secondary-sidebar-top-controls.tsx", import.meta.url), "utf8");
+    expect(secondaryControls).toContain("COLLAPSED_CONTROL_LEFT = 76");
+
+    const css = await compilePlatformClasses(["windows:md:flex", "windows:md:block", "windows:md:hidden", "windows:pl-[76px]", "windows:titlebar-no-drag"]);
+    for (const display of ["flex", "block", "hidden"]) {
+      const rule = css.slice(css.indexOf(`.windows\\:md\\:${display} {`)).split("\n.")[0];
+      expect(rule).toContain("html.jugglework-electron.jugglework-platform-windows &");
+      expect(rule).toContain("@media (width >= 48rem)");
+      expect(rule).toContain(`display: ${display === "hidden" ? "none" : display};`);
+    }
+    expect(css).toContain("padding-left: 76px;");
+    expect(css).toMatch(/\.windows\\:titlebar-no-drag\s*\{\s*html\.jugglework-electron\.jugglework-platform-windows &\s*\{\s*app-region: no-drag;/);
+  });
+
+  test("limits compact toolbar rules to Windows Sheet widths and restores desktop controls at 768px", async () => {
+    const title = controlClasses("data-session-topbar-title");
+    const actions = controlClasses("data-session-topbar-actions");
+    expect(title.split(" ")).toContain("gap-3");
+    expect(title.split(" ")).toContain("windows:max-md:gap-1");
+    expect(title.split(" ")).toContain("windows:max-md:min-w-9");
+    expect(actions.split(" ")).toContain("gap-1.5");
+    expect(actions.split(" ")).toContain("windows:max-md:gap-0");
+    expect(sessionPage).toContain('!props.embedded && shellConfig.sidebar && "windows:max-md:pl-[76px]"');
+    expect(sessionPage).toContain('inline-flex size-2.5 shrink-0 rounded-full windows:max-md:hidden');
+    expect(sessionPage).toContain('sm:block windows:max-md:hidden" aria-hidden="true"');
+    expect(sessionPage).toContain('className="windows:max-md:size-8 windows:max-md:px-0 mac:titlebar-no-drag"');
+    expect(sessionPage).toContain('<span className="windows:max-md:hidden">{t("den.signin_button")}</span>');
+    expect(sessionPage).toContain('aria-label={t("den.signin_title")}');
+    const mobileHook = readFileSync(new URL("../src/hooks/use-mobile.ts", import.meta.url), "utf8");
+    expect(mobileHook).toContain("MOBILE_BREAKPOINT = 768");
+
+    const candidates = [...new Set(sessionPage.match(/windows:max-md:[\w-]+(?:\[[^\]]+\])?/g))];
+    const css = await compilePlatformClasses(candidates);
+    const declarations: Record<string, string> = {
+      hidden: "display: none;",
+      "gap-0": "gap: calc(var(--spacing) * 0);",
+      "gap-1": "gap: calc(var(--spacing) * 1);",
+      "min-w-9": "min-width: calc(var(--spacing) * 9);",
+      "size-8": "width: calc(var(--spacing) * 8);",
+      "px-0": "padding-inline: calc(var(--spacing) * 0);",
+      "pl-[76px]": "padding-left: 76px;",
+    };
+    for (const candidate of candidates) {
+      const selector = candidate.replace(/[:\[\]]/g, "\\$&");
+      expect(css).toContain(`.${selector} {`);
+      const rule = css.slice(css.indexOf(`.${selector} {`)).split("\n.")[0];
+      expect(rule).toContain("html.jugglework-electron.jugglework-platform-windows &");
+      expect(rule).toContain("@media (width < 48rem)");
+      expect(rule).toContain(declarations[candidate.slice("windows:max-md:".length)]!);
+    }
+  });
+
+  test("fits Voice and optional sign-in in dev's narrow toolbar with its existing right padding", () => {
+    const title = controlClasses("data-session-topbar-title");
+    const actions = controlClasses("data-session-topbar-actions");
+    const header = sessionPage.slice(sessionPage.indexOf("const sessionTopBar"), sessionPage.indexOf("data-session-shell-topbar"));
+    const button = readFileSync(new URL("../src/components/ui/button.tsx", import.meta.url), "utf8");
+    const spacing = 4;
+    const buttonWidth = Number(button.match(/"icon-sm": "size-(\d+)"/)![1]) * spacing;
+    const titleMinimum = Number(title.match(/windows:max-md:min-w-(\d+)/)![1]) * spacing;
+    const titleGap = Number(title.match(/windows:max-md:gap-(\d+)/)![1]) * spacing;
+    const actionGap = Number(actions.match(/windows:max-md:gap-(\d+)/)![1]) * spacing;
+    const leftInset = Number(header.match(/windows:max-md:pl-\[(\d+)px\]/)![1]);
+    const rightPadding = Number(header.match(/\bpx-(\d+)/)![1]) * spacing;
+    const toolbar = sessionPage.slice(sessionPage.indexOf("data-session-topbar-actions"), sessionPage.indexOf("</header>"));
+    expect(toolbar.match(/size="icon-sm"/g)).toHaveLength(6);
+    expect(header).toContain("px-4 md:px-6");
+    expect(header).not.toContain("windows:pr-0");
+    expect(actions).not.toMatch(/windows:(?:mr|pr)-/);
+    expect(titleMinimum).toBeGreaterThanOrEqual(buttonWidth + titleGap);
+    expect(leftInset).toBe(76);
+
+    for (const width of [480, 640, 767]) {
+      for (const sidebarOpen of [false, true]) {
+        for (const signIn of [false, true]) {
+          // Below md the same flow toggle serves both persisted desktop states.
+          const count = 6 + Number(signIn);
+          const actionsWidth = count * buttonWidth + (count - 1) * actionGap;
+          const actionsStart = width - rightPadding - actionsWidth;
+          const context = JSON.stringify({ width, sidebarOpen, signIn });
+          expect(leftInset + titleMinimum, context).toBeLessThanOrEqual(actionsStart);
+          expect(leftInset + buttonWidth + titleGap, context).toBeLessThanOrEqual(actionsStart);
+          expect(actionsStart + actionsWidth, context).toBe(width - rightPadding);
+        }
+      }
+    }
+    // dev has ordinary window chrome, so use its actual 16px right padding.
+    expect(leftInset + titleMinimum + 7 * buttonWidth + 6 * actionGap + rightPadding).toBe(352);
   });
 
   test("uses a full-height content divider and an inset top-chrome divider", () => {

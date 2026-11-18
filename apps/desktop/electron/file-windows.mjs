@@ -48,6 +48,8 @@ export function createFileWindows({
   fetcher = fetch,
 }) {
   const entries = new Map();
+  const pendingAdds = new Map();
+  const pendingOpens = new Map();
   let cloudUploads = [];
   let cloudScope = null;
   const cloudLookups = new Set();
@@ -218,7 +220,17 @@ export function createFileWindows({
     )
       throw new Error("文件窗口工作区或聊天不匹配");
   };
-  const addFile = async (entry, relativePath, absolutePath, readOnly = false) => {
+  const addFile = (entry, relativePath, absolutePath, readOnly = false) => {
+    // TIPS: 覆盖整个异步预检及保存关闭重开，不能在新 documentId 返回前重复建立同路径标签。
+    const key = JSON.stringify([entry.window.id, relativePath]);
+    const pending = pendingAdds.get(key);
+    if (pending) return pending;
+    const operation = addFileToEntry(entry, relativePath, absolutePath, readOnly)
+      .finally(() => pendingAdds.delete(key));
+    pendingAdds.set(key, operation);
+    return operation;
+  };
+  const addFileToEntry = async (entry, relativePath, absolutePath, readOnly) => {
     if ((!entry.local || entry.conversation) && office.confirmFileTarget && !await office.confirmFileTarget(entry.window, {
       workspaceId: entry.workspaceId, sessionId: entry.sessionId, path: relativePath,
     })) return null;
@@ -253,9 +265,20 @@ export function createFileWindows({
             });
             if (document.state === "error")
               throw new Error(document.error ?? "文档打开失败");
-            tab.documentId = document.documentId;
-            if (!(await office.transfer(document.documentId, entry.window)))
-              return null;
+            const opened = office.openInWindow
+              ? await office.openInWindow(document, entry.window, async (source, restored) => {
+                  const original = entryFor(source.webContents);
+                  if (original) await addFile(original, relativePath, absolutePath, readOnly);
+                  else {
+                    await openSession?.({ workspaceId: restored.workspaceId, sessionId: restored.ownerSessionId });
+                    source.webContents.send("jugglework:file-window:open-in-panel", {
+                      workspaceId: restored.workspaceId, sessionId: restored.ownerSessionId, path: restored.relativePath,
+                    });
+                  }
+                })
+              : await office.transfer(document.documentId, entry.window) ? document : null;
+            if (!opened) return null;
+            tab.documentId = opened.documentId;
           } catch (error) {
             if (error?.serverCode !== "office_readonly_required") throw error;
             tab.readOnly = true;
@@ -302,7 +325,7 @@ export function createFileWindows({
     publish(entry);
     return true;
   };
-  const open = async ({
+  const openWindow = async ({
     workspaceId,
     sessionId,
     path: relativePath,
@@ -434,6 +457,16 @@ export function createFileWindows({
     if (entry.window.isMinimized()) entry.window.restore();
     entry.window.show();
     entry.window.focus();
+  };
+  const open = (input) => {
+    if (input.cloudDoc) return openWindow(input);
+    // TIPS: 首次开窗也需合并相同请求；entry 尚未登记时，addFile 的窗口内保护还未生效。
+    const key = JSON.stringify([input.workspaceId, input.sessionId, input.path]);
+    const pending = pendingOpens.get(key);
+    if (pending) return pending;
+    const operation = openWindow(input).finally(() => pendingOpens.delete(key));
+    pendingOpens.set(key, operation);
+    return operation;
   };
   const openLocal = async (absolutePath, { readOnly = false } = {}) => {
     if (!registerLocalFile) throw new Error("本机文件入口不可用");

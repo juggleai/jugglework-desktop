@@ -37,6 +37,8 @@ export function createOfficePanel({
   const assignedWindows = new Map();
   const visibleDocuments = new Map();
   const hosts = new Map();
+  const reopening = new Set();
+  const generations = new Map();
   const getResources = () =>
     typeof resources === "function" ? resources() : resources;
   const requireTransferSupport = () => {
@@ -188,6 +190,7 @@ export function createOfficePanel({
     return host;
   };
   const destroy = (documentId) => {
+    generations.set(documentId, (generations.get(documentId) ?? 0) + 1);
     hide(documentId);
     assignedWindows.delete(documentId);
     const entry = views.get(documentId);
@@ -209,6 +212,7 @@ export function createOfficePanel({
     });
   };
   const assign = (documentId, window) => {
+    if (reopening.has(documentId)) throw new Error("文档正在保存并重新打开，请稍候");
     if (!window || window.isDestroyed()) throw new Error("目标文件窗口已关闭");
     observeHost(window);
     const entry = views.get(documentId);
@@ -248,6 +252,7 @@ export function createOfficePanel({
     publishLocation(documentId);
   };
   const transfer = async (documentId, window, isCurrent = () => true) => {
+    if (reopening.has(documentId)) throw new Error("文档正在保存并重新打开，请稍候");
     if (!window || window.isDestroyed()) return false;
     const entry = views.get(documentId);
     if (entry && entry.window.id !== window.id) {
@@ -295,13 +300,17 @@ export function createOfficePanel({
     { workspaceId, documentId, bounds: rectangle, activate = false, prepareOnly = false },
     window = getWindow(),
   ) => {
+    if (reopening.has(documentId)) return;
     if (!window || window.isDestroyed()) return;
     const host = observeHost(window);
     const revision = host.revision;
+    const generation = generations.get(documentId) ?? 0;
     const focusRevision = host.focusRevision;
     // TIPS: 刷新/隐藏使旧布局失效；异步查询返回后也不能把旧视图重新挂回聊天界面。
     const isCurrent = () =>
       host.revision === revision &&
+      (generations.get(documentId) ?? 0) === generation &&
+      !reopening.has(documentId) &&
       !window.isDestroyed() &&
       (prepareOnly || window.isVisible()) &&
       !window.isMinimized();
@@ -616,7 +625,9 @@ export function createOfficePanel({
       throw new Error("文档编辑页面已失效，不能确认保存");
     if (entry.commit.error) throw entry.commit.error;
   };
-  const close = async (workspaceId, documentId) => {
+  const close = async (workspaceId, documentId, reopenTarget = null) => {
+    if (reopening.has(documentId) && !reopenTarget)
+      throw new Error("文档正在保存并重新打开，请稍候");
     let document = (await client.getJson(base(workspaceId, documentId)))
       .document;
     if (!document.dirty && document.state === "ready" && views.has(documentId)) {
@@ -625,39 +636,48 @@ export function createOfficePanel({
       document = (await client.getJson(base(workspaceId, documentId))).document;
     }
     const sourceWindow = views.get(documentId)?.window ?? getWindow();
+    if (reopenTarget) {
+      if (document.state !== "ready") throw new Error("文档尚未就绪，请稍候再打开独立窗口");
+      const status = await client.getJson(`${base(workspaceId, documentId)}/transfer-status`);
+      if (status.reason) throw new Error("请等待文档相关任务结束及交付完成后重试");
+    }
     const guardInput = { workspaceId, sessionId: document.ownerSessionId, closingDocumentId: documentId };
     const selectionGuard = await askSwitch(sourceWindow, guardInput);
     if (selectionGuard === false) return false;
     let decision = "save";
     if (
-      document.dirty ||
+      reopenTarget || document.dirty ||
       document.state === "opening" ||
       document.state === "error"
     ) {
       const options = {
         type: /** @type {const} */ ("question"),
-        title: "关闭文档",
-        message: `是否保存“${document.name}”的修改？`,
-        buttons: ["保存并关闭", "放弃修改", "取消"],
+        title: reopenTarget ? "在独立窗口重新打开" : "关闭文档",
+        message: reopenTarget ? `保存并在独立窗口重新打开“${document.name}”？` : `是否保存“${document.name}”的修改？`,
+        ...(reopenTarget ? { detail: "当前平台暂不支持无损接续编辑。将先保存并关闭原编辑会话，再打开同一文件；光标、选区和撤销历史不会保留。取消后保留原文档。" } : {}),
+        buttons: reopenTarget ? ["保存并转到独立窗口", "取消"] : ["保存并关闭", "放弃修改", "取消"],
         defaultId: 0,
-        cancelId: 2,
+        cancelId: reopenTarget ? 1 : 2,
         noLink: true,
       };
       const window = views.get(documentId)?.window ?? getWindow();
       const result = await (window
         ? dialog.showMessageBox(window, options)
         : dialog.showMessageBox(options));
-      if (result.response === 2) return false;
+      if (reopenTarget ? result.response !== 0 : result.response === 2) return false;
       decision = result.response === 0 ? "save" : "discard";
     }
     if (selectionGuard) {
       const current = await composer.request({ action: "guard", ...guardInput });
       if (current.epoch !== selectionGuard.epoch || current.scope !== selectionGuard.scope) return false;
     }
+    if (reopenTarget && (reopenTarget.isDestroyed() || sourceWindow?.isDestroyed())) return false;
     try {
-      await client.postJson(`${base(workspaceId, documentId)}/close`, {
+      const result = await client.postJson(`${base(workspaceId, documentId)}/close`, {
         decision,
       });
+      if (reopenTarget && result.document?.state !== "closed")
+        throw new Error("未确认原文档会话已关闭，已停止重新打开");
     } catch (error) {
       // A running agent may still use the model. Keep its view and tab intact,
       // but surface the server's actionable 409 instead of a generic IPC error.
@@ -678,6 +698,78 @@ export function createOfficePanel({
     // TIPS: 退出或重启中途取消时，已经关闭的模型也必须同步移除标签。
     onDocumentClosed?.(documentId);
     return true;
+  };
+  /** 显式保存关闭重开，不冒充存活页面迁移；只有文件窗口入口可选择此降级流程。 */
+  const openInWindow = async (document, window, restore) => {
+    const documentId = document.documentId;
+    const entry = views.get(documentId);
+    if (!entry || entry.window.id === window.id || (platform === "darwin" && arch === "arm64"))
+      return await transfer(documentId, window) ? document : null;
+    if (reopening.has(documentId)) throw new Error("文档正在保存并重新打开，请稍候");
+    const source = entry.window;
+    reopening.add(documentId);
+    // 使已经在途的布局失效，而不仅阻止新的 show；取消后由 finally 触发重新测量。
+    observeHost(source).revision++;
+    try {
+      if (!await close(document.workspaceId, documentId, window)) return null;
+      // close 的服务端响应确认模型已释放；同时等待旧页面真正销毁，避免重开时资源仍被占用。
+      const released = entry.view.webContents.isDestroyed() ? Promise.resolve() : new Promise((resolve, reject) => {
+          const contents = entry.view.webContents;
+          const done = () => { clearTimeout(timer); resolve(undefined); };
+          const timer = setTimeout(() => { contents.removeListener("destroyed", done); reject(new Error("原文档页面尚未释放，请稍后从文件列表重新打开")); }, 5000);
+          contents.once("destroyed", done);
+        });
+      let failedDocument = null;
+      const reopen = async (host) => {
+        await released;
+        if (host.isDestroyed()) throw new Error("目标文件窗口已关闭");
+        // TIPS: open 的启动失败会保留 error 会话；用户选择恢复后必须 recover 该身份，普通 open 只会复用错误。
+        const failed = failedDocument;
+        const { document: opened } = failed
+          ? await client.postJson(`${base(failed.workspaceId, failed.documentId)}/recover`, {})
+          : await client.postJson(`/workspace/${encodeURIComponent(document.workspaceId)}/office/open`, {
+              sessionId: document.ownerSessionId, path: document.relativePath,
+            });
+        if (failed) destroy(failed.documentId);
+        if (opened.state === "error") {
+          failedDocument = opened;
+          throw new Error(opened.error ?? "文档重新打开失败");
+        }
+        if (host.isDestroyed()) throw new Error("目标文件窗口已关闭");
+        // 使用新模型身份；原 documentId 只用于阻止旧布局请求重建页面。
+        reopening.delete(documentId);
+        assign(opened.documentId, host);
+        return opened;
+      };
+      try {
+        return await reopen(window);
+      } catch (error) {
+        const choice = await dialog.showMessageBox(!source.isDestroyed() ? source : getWindow(), {
+          type: "error", title: "独立窗口打开失败", message: "文档已保存，但未能在独立窗口重新打开。",
+          detail: `${error.message}\n可在原窗口重新打开同一文件；已保存的内容仍在原路径。`,
+          buttons: ["在原窗口重新打开", "稍后从文件列表打开"], defaultId: 0, cancelId: 1, noLink: true,
+        });
+        if (choice.response === 0 && !source.isDestroyed()) {
+          const opened = await reopen(source);
+          await restore(source, opened);
+          source.show(); source.focus();
+          // 主窗口可能已离开聊天路由；事件已发送不代表恢复成功，必须看到真实页面建立。
+          const deadline = Date.now() + 5000;
+          while (views.get(opened.documentId)?.window.id !== source.id) {
+            if (source.isDestroyed() || Date.now() >= deadline)
+              throw new Error("原窗口尚未完成恢复。文件已保存，请从文件列表重新打开同一路径");
+            await new Promise(resolve => setTimeout(resolve, 50));
+          }
+        }
+        return null;
+      }
+    } finally {
+      reopening.delete(documentId);
+      if (views.get(documentId) === entry && !source.isDestroyed()) {
+        publishLocation(documentId);
+        source.webContents.send("jugglework:office:layout-invalidated");
+      }
+    }
   };
   return {
     /** 原生页面已绑定身份，渲染层只报告显示区域。 */
@@ -950,6 +1042,7 @@ export function createOfficePanel({
     assign,
     /** 等待所属运行、交付与保存结束再交接；取消时保持原页面和模型。 */
     transfer,
+    openInWindow,
     /** 由独立窗口管理器关闭已确认属于该窗口的模型。 */
     close,
     /** 系统打开、文件选择器和独立窗口 tab 均先通过所属聊天草稿的切换检查。 */

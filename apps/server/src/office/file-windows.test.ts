@@ -15,6 +15,9 @@ const answers = {
   wait: undefined as ((options: any) => Promise<any>) | undefined,
   openError: null as string | null,
   review: undefined as ((options: any) => Promise<any>) | undefined,
+  reopen: 1,
+  recoverWindow: 1,
+  messages: [] as any[],
   dialogs: [] as string[],
 };
 const nativeApp = new EventEmitter();
@@ -132,6 +135,9 @@ mock.module("electron", () => ({ clipboard: { writeText: async () => {} },
     },
     showMessageBox: async (...args: any[]) => {
       const options = args.at(-1);
+      answers.messages.push(options);
+      if (options.title === "在独立窗口重新打开") return { response: answers.reopen };
+      if (options.title === "独立窗口打开失败") return { response: answers.recoverWindow };
       if (options.title === "核对文档修改" && answers.review) return answers.review(options);
       return options.signal && answers.wait
         ? answers.wait(options)
@@ -320,6 +326,9 @@ async function fixture(
   answers.openError = null;
   answers.save = { canceled: true, filePath: "" };
   answers.dialogs = [];
+  answers.reopen = 1;
+  answers.recoverWindow = 1;
+  answers.messages = [];
   const root = await mkdtemp(join(tmpdir(), "file-window-"));
   roots.push(root);
   const main = new FakeWindow();
@@ -390,6 +399,13 @@ async function fixture(
         throw Object.assign(new Error("Open failed"), {
           serverCode: answers.openError,
         });
+      if (path.endsWith("/open") && document.state === "closed") {
+        document.documentId = "od_reopened_A";
+        document.state = "ready";
+        document.dirty = false;
+        document.engineFileId = "reopened_A";
+        document.pageId = "reopened_page_A";
+      }
       if (path.endsWith("/context")) contexts.push(_body);
       if (path.endsWith("/save")) {
         saves.push(document.engineFileId);
@@ -479,7 +495,7 @@ async function fixture(
   const show = (window: FakeWindow) =>
     call("jugglework:office:show", window, {
       workspaceId: "ws",
-      documentId: "od_A",
+      documentId: document.documentId,
       bounds: { x: 0, y: 86, width: 1000, height: 700 },
     });
   const state = (window: FakeWindow) =>
@@ -1585,9 +1601,7 @@ for (const target of [
       await f.show(f.main);
       const original = [...f.main.children][0];
       f.document.dirty = true;
-      await expect(
-        f.files.open({ workspaceId: "ws", sessionId: "ses", path: name }),
-      ).rejects.toThrow("请先保存并关闭文档");
+      await f.files.open({ workspaceId: "ws", sessionId: "ses", path: name });
       expect(f.files.windows()).toHaveLength(0);
       expect([...f.main.children]).toEqual([original]);
       expect(original.visible).toBe(true);
@@ -1597,7 +1611,8 @@ for (const target of [
         engineFileId: "actual_A",
         state: "ready",
       });
-      expect(f.transfer.checks).toBe(0);
+      expect(f.transfer.checks).toBe(1);
+      expect(answers.messages.some(message => message.title === "在独立窗口重新打开")).toBe(true);
       expect(f.saves).toEqual([]);
 
       const fresh = await fixture(name, undefined, target);
@@ -1625,6 +1640,308 @@ for (const target of [
     }
   });
 }
+
+test("Windows 明确确认后保存关闭并重新打开同一文件，原页面释放且不复用撤销模型", async () => {
+  for (const name of ["报告.docx", "数据.csv", "预算.xlsx", "汇报.pptx"]) {
+    const f = await fixture(name, undefined, { platform: "win32", arch: "x64" });
+    await f.show(f.main);
+    const original = [...f.main.children][0] as FakeView;
+    f.document.dirty = true;
+    answers.reopen = 0;
+    await f.call("jugglework:file-window:open", f.main, { workspaceId: "ws", sessionId: "ses", path: name });
+    expect(f.closes).toEqual([{ decision: "save" }]);
+    expect(original.webContents.isDestroyed()).toBe(true);
+    expect(f.main.children.size).toBe(0);
+    const window = f.files.windows()[0];
+    expect((await f.state(window)).tabs[0].documentId).toBe("od_reopened_A");
+    expect(await f.show(window)).toEqual({ here: true });
+    expect([...window.children][0]).not.toBe(original);
+    expect(f.document.engineFileId).toBe("reopened_A");
+    expect(answers.messages.find(message => message.title === "在独立窗口重新打开").detail).toContain("撤销历史不会保留");
+    f.panel.destroy();
+  }
+});
+
+test("同工作区聊天文件同时首次开窗只建立一个窗口和标签", async () => {
+  const f = await fixture("报告.docx", undefined, { platform: "win32", arch: "x64" });
+  const input = { workspaceId: "ws", sessionId: "ses", path: "报告.docx" };
+  const post = f.client.postJson.bind(f.client);
+  let opens = 0;
+  f.client.postJson = async (path, body) => {
+    if (path.endsWith("/open")) opens++;
+    return post(path, body);
+  };
+  await Promise.all([f.files.open(input), f.files.open(input)]);
+  expect(f.files.windows()).toHaveLength(1);
+  const window = f.files.windows()[0];
+  expect((await f.state(window)).tabs).toEqual([
+    { path: "报告.docx", name: "报告.docx", documentId: "od_A" },
+  ]);
+  expect(opens).toBe(1);
+  f.panel.destroy();
+});
+
+test.each([false, true])("Windows 新 documentId 尚在 opening 时并发 addFile 不重复交接或插入标签（已有窗口=%s）", async (existing) => {
+  const f = await fixture("报告.docx", undefined, { platform: "win32", arch: "x64" });
+  if (existing) await f.files.open({ workspaceId: "ws", sessionId: "ses", path: "notes.md" });
+  await f.show(f.main);
+  const original = [...f.main.children][0] as FakeView;
+  answers.reopen = 0;
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  let entered!: () => void;
+  const started = new Promise<void>(resolve => { entered = resolve; });
+  const post = f.client.postJson.bind(f.client);
+  let opens = 0;
+  f.client.postJson = async (path, body) => {
+    if (path.endsWith("/open")) opens++;
+    const reopening = path.endsWith("/open") && f.document.state === "closed";
+    const result = await post(path, body);
+    if (reopening) {
+      f.document.state = "opening";
+      f.document.engineFileId = null;
+      entered();
+      await gate;
+      return { document: { ...f.document } };
+    }
+    return result;
+  };
+  const input = { workspaceId: "ws", sessionId: "ses", path: "报告.docx" };
+  const first = f.files.open(input);
+  await started;
+  const window = f.files.windows()[0];
+  expect(original.webContents.isDestroyed()).toBe(true);
+  expect(f.document.documentId).toBe("od_reopened_A");
+  const duplicateOpen = f.files.open(input);
+  const duplicateAdd = f.action(window, "open", input.path);
+  expect(opens).toBe(2);
+  release();
+  await Promise.all([first, duplicateOpen, duplicateAdd]);
+  const tabs = (await f.state(window)).tabs;
+  expect(f.files.windows()).toHaveLength(1);
+  expect(tabs.filter((tab: any) => tab.path === input.path)).toEqual([
+    { path: input.path, name: input.path, documentId: "od_reopened_A" },
+  ]);
+  expect(tabs).toHaveLength(existing ? 2 : 1);
+  expect(opens).toBe(2);
+  expect(f.closes).toEqual([{ decision: "save" }]);
+  expect(answers.messages.filter(message => message.title === "在独立窗口重新打开")).toHaveLength(1);
+  expect(await f.show(window)).toEqual({ here: true });
+  expect([...window.children][0]).not.toBe(original);
+  // 在途记录释放后，顺序打开仍复用同一标签，关闭也不残留重复项。
+  await f.action(window, "open", input.path);
+  expect((await f.state(window)).tabs).toHaveLength(existing ? 2 : 1);
+  f.document.state = "ready";
+  f.document.engineFileId = "reopened_A";
+  await f.action(window, "close", input.path);
+  expect((await f.state(window)).tabs.some((tab: any) => tab.path === input.path)).toBe(false);
+  f.panel.destroy();
+});
+
+test("Windows 保存关闭失败或任务未完成时不释放原页面、不重开模型", async () => {
+  for (const failure of ["save failed", "office_run_active", "running"]) {
+    const f = await fixture("报告.docx", undefined, { platform: "win32", arch: "x64" });
+    await f.show(f.main);
+    const original = [...f.main.children][0] as FakeView;
+    f.document.dirty = true;
+    answers.reopen = 0;
+    if (failure === "running") f.transfer.reasons = ["running"];
+    else f.preparation.closeError = failure;
+    await expect(f.files.open({ workspaceId: "ws", sessionId: "ses", path: "报告.docx" })).rejects.toThrow();
+    expect(f.files.windows()).toHaveLength(0);
+    expect([...f.main.children]).toEqual([original]);
+    expect(original.webContents.isDestroyed()).toBe(false);
+    expect(f.closes).toEqual([]);
+    expect(f.document.dirty).toBe(true);
+    f.panel.destroy();
+  }
+});
+
+test("Windows 无 dirty 仍等待真实页面提交，确认后只能保存关闭", async () => {
+  const f = await fixture("报告.docx", undefined, { platform: "win32", arch: "x64" });
+  await f.show(f.main);
+  const original = [...f.main.children][0] as FakeView;
+  answers.reopen = 0;
+  original.webContents.evaluationGate = async () => { throw new Error("commit failed"); };
+  await expect(f.files.open({ workspaceId: "ws", sessionId: "ses", path: "报告.docx" })).rejects.toThrow("commit failed");
+  expect(f.closes).toEqual([]);
+  expect(original.webContents.isDestroyed()).toBe(false);
+  original.webContents.evaluationGate = undefined;
+  await f.files.open({ workspaceId: "ws", sessionId: "ses", path: "报告.docx" });
+  expect(f.closes).toEqual([{ decision: "save" }]);
+  expect(original.webContents.evaluations.length).toBeGreaterThanOrEqual(2);
+  f.panel.destroy();
+});
+
+test("Windows 关闭选区确认取消或目标窗口加载失败均保留原文档", async () => {
+  for (const mode of ["selection", "load"]) {
+    const composer = { request: async () => ({ needsConfirmation: true, epoch: 1, scope: "original" }) };
+    const f = await fixture("报告.docx", async () => {
+      if (mode === "load") throw new Error("window load failed");
+    }, { platform: "win32", arch: "x64" }, undefined, mode === "selection" ? composer : undefined);
+    await f.show(f.main);
+    const original = [...f.main.children][0] as FakeView;
+    answers.reopen = 0;
+    const previous = answers.close;
+    answers.close = 0;
+    try {
+      const operation = f.files.open({ workspaceId: "ws", sessionId: "ses", path: "报告.docx" });
+      if (mode === "load") await expect(operation).rejects.toThrow("window load failed");
+      else await operation;
+      expect(f.closes).toEqual([]);
+      expect(original.webContents.isDestroyed()).toBe(false);
+      expect(f.files.windows()).toHaveLength(0);
+    } finally { answers.close = previous; f.panel.destroy(); }
+  }
+});
+
+test("Windows 重开忙碌时的布局不标记脱离，保存失败后重新发布原归属和布局", async () => {
+  const f = await fixture("报告.docx", undefined, { platform: "win32", arch: "x64" });
+  await f.show(f.main);
+  const original = [...f.main.children][0] as FakeView;
+  answers.reopen = 0;
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  let entered!: () => void;
+  const started = new Promise<void>(resolve => { entered = resolve; });
+  const post = f.client.postJson.bind(f.client);
+  f.client.postJson = async (path, body) => {
+    if (path.endsWith("/close")) { entered(); await gate; throw new Error("save failed"); }
+    return post(path, body);
+  };
+  const pending = f.files.open({ workspaceId: "ws", sessionId: "ses", path: "报告.docx" }).catch((error: Error) => error);
+  await started;
+  expect(await f.show(f.main)).toBeUndefined();
+  release();
+  expect((await pending).message).toBe("save failed");
+  expect(original.webContents.isDestroyed()).toBe(false);
+  expect(f.main.webContents.messages).toContainEqual({ name: "jugglework:office:location", value: { documentId: "od_A", here: true } });
+  expect(f.main.webContents.messages.some(message => message.name === "jugglework:office:layout-invalidated")).toBe(true);
+  expect(await f.show(f.main)).toEqual({ here: true });
+  f.panel.destroy();
+});
+
+test("Windows 独立重开失败可恢复原窗口入口，取消恢复仍保留原路径", async () => {
+  for (const recover of [0, 1]) {
+    const f = await fixture("报告.docx", undefined, { platform: "win32", arch: "x64" });
+    await f.show(f.main);
+    answers.reopen = 0;
+    answers.recoverWindow = recover;
+    const post = f.client.postJson.bind(f.client);
+    let opens = 0;
+    f.client.postJson = async (path, body) => {
+      if (path.endsWith("/open") && ++opens === 2) throw new Error("reopen failed");
+      return post(path, body);
+    };
+    const send = f.main.webContents.send.bind(f.main.webContents);
+    f.main.webContents.send = (name, value) => {
+      send(name, value);
+      if (name === "jugglework:file-window:open-in-panel") void f.show(f.main);
+    };
+    await f.files.open({ workspaceId: "ws", sessionId: "ses", path: "报告.docx" });
+    expect(f.closes).toEqual([{ decision: "save" }]);
+    expect(f.files.windows()).toHaveLength(0);
+    expect(answers.messages.some(message => message.title === "独立窗口打开失败")).toBe(true);
+    expect(f.main.webContents.messages.some(message => message.name === "jugglework:file-window:open-in-panel")).toBe(recover === 0);
+    expect(f.document.relativePath).toBe("报告.docx");
+    f.panel.destroy();
+  }
+});
+
+test.each([0, 1])("Windows open 返回 error 会话后原窗口恢复使用该新身份 recover（选择=%s）", async (recover) => {
+  const f = await fixture("报告.docx", undefined, { platform: "win32", arch: "x64" });
+  await f.show(f.main);
+  const original = [...f.main.children][0] as FakeView;
+  answers.reopen = 0;
+  answers.recoverWindow = recover;
+  const post = f.client.postJson.bind(f.client);
+  let opens = 0;
+  const recoveries: string[] = [];
+  f.client.postJson = async (path, body) => {
+    if (path.endsWith("/open")) opens++;
+    const reopening = path.endsWith("/open") && f.document.state === "closed";
+    if (path.endsWith("/recover")) {
+      recoveries.push(path);
+      expect(f.document.state).toBe("error");
+      f.document.pageId = "recovered_page_A";
+    }
+    const result = await post(path, body);
+    if (reopening) {
+      f.document.state = "error";
+      f.document.engineFileId = null;
+      f.document.previewUrl = "";
+      return { document: { ...f.document, error: "preview startup failed" } };
+    }
+    return result;
+  };
+  const restored: Promise<unknown>[] = [];
+  const send = f.main.webContents.send.bind(f.main.webContents);
+  f.main.webContents.send = (name, value) => {
+    send(name, value);
+    if (name === "jugglework:file-window:open-in-panel") restored.push(f.show(f.main));
+  };
+  await f.files.open({ workspaceId: "ws", sessionId: "ses", path: "报告.docx" });
+  await Promise.all(restored);
+  expect(opens).toBe(2);
+  expect(recoveries).toEqual(recover === 0 ? ["/workspace/ws/office/od_reopened_A/recover"] : []);
+  expect(f.document.documentId).toBe("od_reopened_A");
+  expect(f.document.state).toBe(recover === 0 ? "opening" : "error");
+  expect(f.files.windows()).toHaveLength(0);
+  expect(f.closes).toEqual([{ decision: "save" }]);
+  expect(original.webContents.isDestroyed()).toBe(true);
+  expect(f.main.children.size).toBe(recover === 0 ? 1 : 0);
+  if (recover === 0) {
+    expect([...f.main.children][0]).not.toBe(original);
+    expect(f.document.pageId).toBe("recovered_page_A");
+    expect(f.main.webContents.messages).toContainEqual({
+      name: "jugglework:office:location", value: { documentId: "od_reopened_A", here: true },
+    });
+  }
+  expect(answers.messages.find(message => message.title === "独立窗口打开失败").detail).toContain("preview startup failed");
+  f.panel.destroy();
+});
+
+test("Windows error 会话 recover 失败时不循环 open、不恢复旧页面，后续可再次打开", async () => {
+  const f = await fixture("报告.docx", undefined, { platform: "win32", arch: "x64" });
+  await f.show(f.main);
+  const original = [...f.main.children][0] as FakeView;
+  answers.reopen = 0;
+  answers.recoverWindow = 0;
+  const post = f.client.postJson.bind(f.client);
+  let opens = 0, recoveries = 0;
+  f.client.postJson = async (path, body) => {
+    if (path.endsWith("/open")) opens++;
+    if (path.endsWith("/recover")) {
+      recoveries++;
+      throw new Error("recovery failed");
+    }
+    const reopening = path.endsWith("/open") && f.document.state === "closed";
+    const result = await post(path, body);
+    if (reopening) {
+      f.document.state = "error";
+      f.document.engineFileId = null;
+      f.document.previewUrl = "";
+      return { document: { ...f.document } };
+    }
+    return result;
+  };
+  const input = { workspaceId: "ws", sessionId: "ses", path: "报告.docx" };
+  await expect(f.files.open(input)).rejects.toThrow("recovery failed");
+  expect(opens).toBe(2);
+  expect(recoveries).toBe(1);
+  expect(f.document.state).toBe("error");
+  expect(f.files.windows()).toHaveLength(0);
+  expect(f.main.children.size).toBe(0);
+  expect(original.webContents.isDestroyed()).toBe(true);
+  expect(f.main.webContents.messages.some(message => message.name === "jugglework:file-window:open-in-panel")).toBe(false);
+  // 失败后的开窗和 addFile 在途记录均须释放，不能把后续请求绑到旧的 rejected Promise。
+  f.client.postJson = post;
+  f.document.state = "ready";
+  await f.files.open(input);
+  expect(f.files.windows()).toHaveLength(1);
+  expect((await f.state(f.files.windows()[0])).tabs).toHaveLength(1);
+  f.panel.destroy();
+});
 
 test("透视表只读文件可在独立窗口打开，不迁移原生模型；其他打开错误仍抛出", async () => {
   const f = await fixture("透视表.xlsx");

@@ -1240,7 +1240,8 @@ export function SessionPage(props: SessionPageProps) {
     <header
       className={cn(
         "z-10 flex h-[var(--session-shell-top-inset)] min-h-[var(--session-shell-top-inset)] shrink-0 items-center justify-between border-b border-dls-border/70 bg-dls-sidebar px-4 md:px-6 mac:titlebar-drag",
-        !props.embedded && shellConfig.sidebar && !sidebarOpen && "mac:pl-[76px]",
+        !props.embedded && shellConfig.sidebar && "windows:max-md:pl-[76px]",
+        !props.embedded && shellConfig.sidebar && !sidebarOpen && "mac:pl-[76px] windows:pl-[76px]",
       )}
       style={{ WebkitAppRegion: "drag" } as CSSProperties}
       data-session-shell-topbar
@@ -1253,7 +1254,7 @@ export function SessionPage(props: SessionPageProps) {
             data-session-collapsed-drag-region
           />
         ) : null}
-        <div className="flex min-w-0 items-center gap-3">
+        <div className="flex min-w-0 items-center gap-3 windows:max-md:min-w-9 windows:max-md:gap-1" data-session-topbar-title>
         {props.embedded && !sidebarOpen ? (
           <div
             className="flex shrink-0 items-center gap-0 mac:titlebar-no-drag"
@@ -1273,10 +1274,10 @@ export function SessionPage(props: SessionPageProps) {
             </Button>
           </div>
         ) : null}
-        {!props.embedded && shellConfig.sidebar ? <SidebarTrigger className="mac:hidden" /> : null}
+        {!props.embedded && shellConfig.sidebar ? <SidebarTrigger className="mac:hidden windows:md:hidden windows:titlebar-no-drag" /> : null}
         {!props.embedded && shellConfig.sidebar && !sidebarOpen ? (
           <div
-            className="hidden shrink-0 items-center gap-0 mac:flex mac:titlebar-no-drag"
+            className="hidden shrink-0 items-center gap-0 mac:flex windows:md:flex mac:titlebar-no-drag"
             style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
             data-session-collapsed-sidebar-controls
           >
@@ -1293,7 +1294,7 @@ export function SessionPage(props: SessionPageProps) {
               <span
                 data-testid="session-readiness-status"
                 className={cn(
-                  "inline-flex size-2.5 shrink-0 rounded-full mac:titlebar-no-drag",
+                  "inline-flex size-2.5 shrink-0 rounded-full windows:max-md:hidden mac:titlebar-no-drag",
                   readinessTone === "ready" && "bg-green-9",
                   readinessTone === "pending" && "bg-amber-9",
                   readinessTone === "unavailable" && "bg-red-9",
@@ -1353,7 +1354,7 @@ export function SessionPage(props: SessionPageProps) {
       </div>
 
       <div
-        className="flex shrink-0 items-center gap-1.5 text-gray-10 mac:titlebar-no-drag"
+        className="flex shrink-0 items-center gap-1.5 text-gray-10 windows:max-md:gap-0 mac:titlebar-no-drag"
         style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
         data-session-topbar-actions
       >
@@ -1379,16 +1380,16 @@ export function SessionPage(props: SessionPageProps) {
           <Button
             variant="secondary"
             size="sm"
-            className="mac:titlebar-no-drag"
+            className="windows:max-md:size-8 windows:max-md:px-0 mac:titlebar-no-drag"
             onClick={openCloudSignIn}
             title={t("den.signin_title")}
             aria-label={t("den.signin_title")}
           >
             <Cloud className="size-3.5" />
-            <span>{t("den.signin_button")}</span>
+            <span className="windows:max-md:hidden">{t("den.signin_button")}</span>
           </Button>
         ) : null}
-        <div className="mx-0.5 hidden h-4 w-px bg-border sm:block" aria-hidden="true" />
+        <div className="mx-0.5 hidden h-4 w-px bg-border sm:block windows:max-md:hidden" aria-hidden="true" />
         {isElectronRuntime() && actionSessionId ? (
           <Button
             variant="ghost"
@@ -1573,12 +1574,12 @@ export function SessionPage(props: SessionPageProps) {
           <>
             <span
               aria-hidden="true"
-              className="absolute left-12 top-0 z-20 hidden h-[var(--session-shell-top-inset)] w-[calc(var(--sidebar-width)-5rem)] mac:block mac:titlebar-drag"
+              className="absolute left-12 top-0 z-20 hidden h-[var(--session-shell-top-inset)] w-[calc(var(--sidebar-width)-5rem)] mac:block windows:md:block mac:titlebar-drag"
               style={{ WebkitAppRegion: "drag" } as CSSProperties}
               data-session-expanded-drag-region
             />
             <div
-              className="pointer-events-auto absolute left-[calc(var(--sidebar-width)-2rem)] top-1.5 z-30 hidden items-center gap-0 mac:flex mac:titlebar-no-drag"
+              className="pointer-events-auto absolute left-[calc(var(--sidebar-width)-2rem)] top-1.5 z-30 hidden items-center gap-0 mac:flex windows:md:flex mac:titlebar-no-drag"
               style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
               data-session-sidebar-controls
             >

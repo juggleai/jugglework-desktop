@@ -59,7 +59,7 @@ import { applyBrandAppName } from "./brand-app-name.mjs";
 import { createBrowserPanel } from "./browser-panel.mjs";
 import { createOfficePanel } from "./office-panel.mjs";
 import { createOfficeSelectionBridge } from "./office-selection-bridge.mjs";
-import { createSystemFileOpening, systemOfficeFilePaths } from "./system-file-opening.mjs";
+import { createSystemFileOpening, systemOfficeFilePaths, secondInstanceOfficeFilePaths } from "./system-file-opening.mjs";
 import { createFileWindows } from "./file-windows.mjs";
 import { createFileWindowDesktopContext } from "./file-window-desktop-context.mjs";
 import { createFileContextBootstrap } from "./file-context-bootstrap.mjs";
@@ -185,7 +185,8 @@ const systemFiles = createSystemFileOpening({
     `${path.basename(file)}\n${error instanceof Error ? error.message : String(error)}`,
   ),
 });
-systemFiles.enqueue(systemOfficeFilePaths(process.argv, { packaged: app.isPackaged }));
+const startupOfficeFiles = systemOfficeFilePaths(process.argv, { packaged: app.isPackaged });
+systemFiles.enqueue(startupOfficeFiles);
 const APP_IDENTIFIER =
   process.env.JUGGLEWORK_ELECTRON_APP_IDENTIFIER?.trim() ||
   (isDevMode ? DEV_APP_IDENTIFIER : TAURI_APP_IDENTIFIER);
@@ -3694,7 +3695,7 @@ const { ensureAutoUpdater } = registerUpdaterIpc({
   },
 });
 
-if (!app.requestSingleInstanceLock()) {
+if (!app.requestSingleInstanceLock({ systemFileOpening: { version: 1, files: startupOfficeFiles } })) {
   app.quit();
 } else {
   app.on("before-quit", (event) => {
@@ -3764,8 +3765,8 @@ if (!app.requestSingleInstanceLock()) {
     applicationMenu.setFileWindowActive(Boolean(fileWindows.windowFor(window.webContents)));
   });
 
-  app.on("second-instance", async (_event, argv, workingDirectory) => {
-    const openedFiles = systemFiles.enqueue(systemOfficeFilePaths(argv, {
+  app.on("second-instance", async (_event, argv, workingDirectory, additionalData) => {
+    const openedFiles = systemFiles.enqueue(secondInstanceOfficeFilePaths(argv, additionalData, {
       cwd: workingDirectory, packaged: app.isPackaged,
     }));
     if (openedFiles && !forwardedDeepLinks(argv).length) return;

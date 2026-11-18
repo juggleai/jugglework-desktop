@@ -49,6 +49,18 @@ Define discovery and launch behavior for opening supported Office files in insta
 - **WHEN** 应用尚未运行且收到多个文件打开请求
 - **THEN** 就绪后在文件浏览器中打开相应标签，不强制激活聊天窗口
 
+#### Scenario: Windows 第二实例文件请求
+- **WHEN** 应用已经运行，用户通过资源管理器“打开方式”再次选择受支持的 Office 文件
+- **THEN** 启动实例按自身工作目录解析原始文件列表，通过单实例锁的版本化 additionalData 传给主实例；主实例校验绝对路径和支持格式并优先使用该列表，不依赖 Electron 可能重排的 argv，缺失或无效载荷才回退到来源 argv 和工作目录
+- **AND** 有效空列表不触发回退；无值或未知 Chromium 开关不得吞掉其后位置文件，已知有值选项的配置路径不得作为文档打开
+- **AND** 文件请求进入现有文件浏览器队列，仅文件打开不强制激活聊天窗口；单个文件失败有错误提示且后续文件仍可打开
+
+#### Scenario: 有值启动开关不产生文档请求
+- **WHEN** 启动参数包含 `--log-net-log`、`--crash-dumps-dir`、`--diagnostic-dir`、`--user-agent`、`--host-rules`、`--host-resolver-rules`、`--proxy-pac-url` 等明确有值开关，其配置值恰好以 Office 扩展名结尾
+- **THEN** 独立值和 `--key=value` 两种形式均不把配置值登记为文档，后续真实位置文件仍按启动实例工作目录解析
+- **AND** 解析列表经版本化 additionalData 序列化、接收和排队后仅打开真实文档；只有配置值时传递有效空列表，不因接收方 argv 重排而误开配置值；缺失 additionalData 的回退解析也排除配置值
+- **AND** 无值、未知开关仍不吞其后文档，`--` 后以连字符开头的文档继续作为位置参数处理
+
 #### Scenario: macOS 活动独立窗口
 - **WHEN** Office 独立窗口获得焦点
 - **THEN** macOS 应用菜单显示“JuggleWork 文件浏览器”，切回 Desktop 聊天主窗口恢复主应用显示名
