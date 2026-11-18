@@ -54,6 +54,7 @@ test("Windows 无值或未知开关不吞掉随后文档，有值选项仍不误
 });
 
 test("有值参数的 Office 后缀配置值不进入冷启动或 additionalData 文件队列", async () => {
+  /** @type {Parameters<typeof systemOfficeFilePaths>[1]} */
   const options = { platform: "win32", cwd: "D:\\项目" };
   const flags = [
     "--log-net-log", "--crash-dumps-dir", "--diagnostic-dir", "--user-agent",
@@ -93,6 +94,7 @@ test("有值参数的 Office 后缀配置值不进入冷启动或 additionalData
 });
 
 test("第二实例优先原始文件列表，argv 重排不影响打开；空列表有效，旧实例可回退", () => {
+  /** @type {Parameters<typeof systemOfficeFilePaths>[1]} */
   const options = { platform: "win32", cwd: "D:\\项目" };
   const argv = ["app.exe", "--user-data-dir", "C:\\原文件.docx", "other.xlsx"];
   const payload = { systemFileOpening: { version: 1, files: ["C:\\资料\\原文件.docx", "C:\\资料\\原文件.docx"] } };
@@ -122,6 +124,7 @@ test("空冷启动后可连续热打开，失败文件不阻塞后续请求", as
     onError: file => errors.push(file),
   });
   await opening.start();
+  /** @type {Parameters<typeof systemOfficeFilePaths>[1]} */
   const options = { platform: "win32", cwd: "D:\\资料" };
   opening.enqueue(secondInstanceOfficeFilePaths(["app.exe", "--disable-gpu", "报告.docx"], undefined, options));
   await opening.idle();
