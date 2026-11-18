@@ -117,6 +117,7 @@ import {
   persistConnectLinkBranding,
 } from "./connect-link-branding.mjs";
 import { resolveConnectLinkPublicKeys } from "./connect-link-keys.mjs";
+import { resolveDesktopProtocolRegistration } from "./desktop-protocol.mjs";
 import { openExternalUrl } from "./open-external.mjs";
 import { fetchAgentContextDiagnosticsResponse } from "./agent-context-diagnostics-fetch.mjs";
 import { openDevelopmentDevTools } from "./dev-tools.mjs";
@@ -166,7 +167,6 @@ const NATIVE_DEEP_LINK_EVENT = "jugglework:deep-link-native";
 const REMOTE_CONTROL_POLICY_RECOVERY_EVENT = "jugglework:remote-control:policy-recovery";
 const TAURI_APP_IDENTIFIER = "com.juggleai.jugglework";
 const DEV_APP_IDENTIFIER = "com.juggleai.jugglework.dev";
-const DESKTOP_PROTOCOL_SCHEME = "jugglework";
 const isDevMode = process.env.JUGGLEWORK_DEV_MODE === "1";
 const APP_NAME =
   process.env.JUGGLEWORK_ELECTRON_APP_NAME?.trim() ||
@@ -232,8 +232,14 @@ import { createTerminalTargetResolver } from "./terminal-target-resolver.mjs";
 // Electron install from another local JuggleWork profile.
 app.setName(APP_NAME);
 app.setAppUserModelId(APP_IDENTIFIER);
-if (app.isPackaged && process.env.JUGGLEWORK_ELECTRON_DISABLE_PROTOCOL_REGISTRATION !== "1") {
-  app.setAsDefaultProtocolClient(DESKTOP_PROTOCOL_SCHEME);
+const desktopProtocolRegistration = resolveDesktopProtocolRegistration({ isPackaged: app.isPackaged, env: process.env });
+if (desktopProtocolRegistration) {
+  // Unpackaged Electron must pass its entry script so the OS relaunches this
+  // dev process (not the bare Electron binary) for the callback URL.
+  const registered = app.isPackaged
+    ? app.setAsDefaultProtocolClient(desktopProtocolRegistration.scheme)
+    : app.setAsDefaultProtocolClient(desktopProtocolRegistration.scheme, process.execPath, [path.resolve(process.argv[1] ?? "")]);
+  console.log(`[desktop-protocol] ${desktopProtocolRegistration.scheme}:// registration ${registered ? "succeeded" : "failed"}`);
 }
 const userDataOverride = process.env.JUGGLEWORK_ELECTRON_USERDATA?.trim();
 if (userDataOverride) {

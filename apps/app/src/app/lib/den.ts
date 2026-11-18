@@ -2027,6 +2027,28 @@ export async function setDenBootstrapConfig(
   return readDenBootstrapConfig();
 }
 
+const DEFAULT_DESKTOP_AUTH_SCHEME = "jugglework";
+
+/**
+ * Callback scheme for the browser → desktop sign-in handoff. Source dev builds
+ * set VITE_JUGGLEWORK_DESKTOP_AUTH_SCHEME (e.g. `jugglework-dev`) so the grant
+ * reaches the dev app instead of an installed release that owns `jugglework://`.
+ */
+export function resolveDesktopAuthScheme(value: string | undefined): string {
+  const scheme = value?.trim().toLowerCase() ?? "";
+  return /^jugglework(?:-[a-z0-9]+)*$/.test(scheme) ? scheme : DEFAULT_DESKTOP_AUTH_SCHEME;
+}
+
+function configuredDesktopAuthScheme(): string {
+  const fromImportMeta =
+    typeof import.meta !== "undefined" ? import.meta.env?.VITE_JUGGLEWORK_DESKTOP_AUTH_SCHEME : undefined;
+  const fromProcess =
+    typeof process !== "undefined" ? process.env?.VITE_JUGGLEWORK_DESKTOP_AUTH_SCHEME : undefined;
+  return resolveDesktopAuthScheme(
+    typeof fromImportMeta === "string" && fromImportMeta.trim() ? fromImportMeta : fromProcess,
+  );
+}
+
 export function buildDenAuthUrl(baseUrl: string, mode: "sign-in" | "sign-up"): string {
   // The server serves the browser login + desktop handoff page at
   // `<origin>/jwork/login`; the bare origin is not a control plane route.
@@ -2034,7 +2056,7 @@ export function buildDenAuthUrl(baseUrl: string, mode: "sign-in" | "sign-up"): s
   target.searchParams.set("mode", mode);
   if (isDesktopDeployment()) {
     target.searchParams.set("desktopAuth", "1");
-    target.searchParams.set("desktopScheme", "jugglework");
+    target.searchParams.set("desktopScheme", configuredDesktopAuthScheme());
   }
   return target.toString();
 }
