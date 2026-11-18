@@ -345,6 +345,19 @@ describe("remote-control read adapters", () => {
     desktopRemoteOperationResultSchema.parse({ operation: "session.snapshot", payloadVersion: 1, result: result.value });
   });
 
+  it("accepts the managed snapshot message page without forwarding it", async () => {
+    // The managed server added item.messagePage for paged session history.
+    // A strict item schema must not turn that into internal_error for remote.
+    const body = snapshotBody();
+    body.item = { ...body.item, messagePage: { olderCursor: "cur_1", hasOlder: true } };
+    const testHarness = harness({ responses: { "/workspace/ws_local/sessions/ses_1/snapshot?limit=200": body } });
+    const result = await dispatch(testHarness.registry, "session.snapshot", { workspaceId: "ws_local", sessionId: "ses_1" });
+    assert.equal(result.ok, true, JSON.stringify(result.error));
+    assert.equal(Object.hasOwn(result.value, "messagePage"), false);
+    assert.equal(result.value.modelPreference.revision, 0);
+    desktopRemoteOperationResultSchema.parse({ operation: "session.snapshot", payloadVersion: 1, result: result.value });
+  });
+
   it("accepts persisted model preference identity fields without leaking them", async () => {
     const testHarness = harness({
       responses: {
