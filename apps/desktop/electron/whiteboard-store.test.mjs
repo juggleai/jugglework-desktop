@@ -56,12 +56,3 @@ test("a corrupt current pointer or scene starts fresh instead of failing", async
   await writeFile(path.join(root, "meeting_1", "current.json"), JSON.stringify({ whiteboardId: "../evil" }));
   assert.equal((await store.open("meeting_1")).whiteboardId, "wb_fixed0001");
 });
-
-test("saveSync applies the same validation and is readable on reopen", async () => {
-  const { store } = await fixture();
-  const { whiteboardId } = await store.open("meeting_1");
-  store.saveSync("meeting_1", whiteboardId, scene("sync"));
-  assert.equal((await store.open("meeting_1")).scene, scene("sync"));
-  assert.throws(() => store.saveSync("meeting_1", "wb_other", scene("x")), /已失效/);
-  assert.throws(() => store.saveSync("..", whiteboardId, scene("x")), /无效/);
-});

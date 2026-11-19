@@ -2,7 +2,7 @@ import { ensureMeetingMediaPermissions } from "./media-permission";
 import { withMeetingDeviceDeadline } from "./device-operation";
 import { meetingDiagnostic, meetingDiagnosticError, meetingDiagnosticStep } from "./diagnostics";
 import { acceptDeviceState, type MeetingShareKind, type MemberDeviceState } from "./device-state";
-import { armMeetingWhiteboardShare, closeMeetingWhiteboard, openMeetingWhiteboard, readMeetingDesktopConfig } from "@/app/lib/desktop";
+import { openMeetingWhiteboard, readMeetingDesktopConfig } from "@/app/lib/desktop";
 import { create } from "zustand";
 import { meetingAPI, meetingScope } from "./api";
 import { meetingClosed, type Meeting, type MeetingJoin } from "./types";
@@ -23,6 +23,8 @@ let deviceChanging = false;
 let signalSeq = 0;
 let lastSnapshot = 0;
 let stopWake: (() => void) | undefined;
+// A screen share request that is still waiting for the picker / capture.
+let screenShareRequest: Promise<void> | null = null;
 function announceState() {
   if (!lease || !chatroom) return;
   const state = useMeetingStore.getState();
@@ -44,8 +46,6 @@ function dispose() {
   timer = undefined;
   media?.dispose();
   media = null;
-  // The whiteboard flushes its own scene on pagehide before closing.
-  if (window.__JUGGLEWORK_ELECTRON__?.invokeDesktop) void closeMeetingWhiteboard().catch(() => {});
   if (chatroom) void chatroom.leave().catch(() => {});
   chatroom = null;
   lease = null;
@@ -54,6 +54,8 @@ function dispose() {
   chatJoining = false;
   releaseMediaSession("meeting");
 }
+/** The whiteboard embedded in the meeting stage. Its page saves on unmount. */
+export type MeetingWhiteboardSession = { meetingId: string; whiteboardId: string; title: string; scene: string | null };
 function addMessage(message: ChatMessage) {
   useMeetingStore.setState((s) => ({
     messages:
@@ -74,6 +76,8 @@ type MeetingState = {
   tiles: MediaTile[];
   /** What the local share tile shows; meaningful only while it exists. */
   shareKind: MeetingShareKind;
+  /** Set while the local whiteboard is open in the stage (before and during its share). */
+  whiteboard: MeetingWhiteboardSession | null;
   messages: ChatMessage[];
   chatReady: boolean;
   error: string | null;
@@ -82,8 +86,11 @@ type MeetingState = {
   leave: (end?: boolean) => Promise<void>;
   toggleDevice: (device: "mic" | "camera") => Promise<void>;
   toggleShare: (devices?: MediaDevices) => Promise<void>;
-  /** Open the whiteboard window and share it. Caller confirms replacing a screen share first. */
-  shareWhiteboard: (devices?: MediaDevices) => Promise<void>;
+  /** Open the whiteboard in the stage; it is published once its page reports a stream. */
+  shareWhiteboard: () => Promise<void>;
+  /** Called by the whiteboard page with its rendered canvas stream. */
+  publishWhiteboard: (whiteboardId: string, stream: MediaStream) => Promise<void>;
+  closeWhiteboard: (error?: string) => void;
   send: (text: string) => Promise<void>;
   action: (action: string, extra?: Record<string, unknown>) => Promise<void>;
   retryChat: () => Promise<void>;
@@ -96,6 +103,7 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
   camera: false,
   tiles: [],
   shareKind: "screen",
+  whiteboard: null,
   messages: [],
   chatReady: false,
   error: null,
@@ -122,6 +130,7 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
       messages: [],
       tiles: [],
       shareKind: "screen",
+      whiteboard: null,
     });
     try {
       const localConfig = window.__JUGGLEWORK_ELECTRON__?.invokeDesktop
@@ -145,6 +154,8 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
               ...s.tiles.filter((t) => t.id !== id),
               ...(tile ? [tile] : []),
             ],
+            // Stopping the share for any reason also closes the whiteboard.
+            ...(id === "share" && !tile ? { whiteboard: null } : {}),
           }));
         },
         (error) => {
@@ -204,6 +215,7 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
         phase: "idle",
         meeting: null,
         tiles: [],
+        whiteboard: null,
         visible: false,
         chatReady: false,
       });
@@ -232,6 +244,7 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
       phase: "idle",
       visible: false,
       tiles: [],
+      whiteboard: null,
       messages: [],
       chatReady: false,
     });
@@ -270,28 +283,57 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
     }
   },
   async toggleShare(devices) {
-    if (get().tiles.some((t) => t.id === "share")) media?.stopShare();
-    else {
+    if (get().tiles.some((t) => t.id === "share") || get().whiteboard) {
+      media?.stopShare();
+      set({ whiteboard: null });
+    } else if (media) {
       set({ shareKind: "screen" });
-      await media?.startShare(devices);
+      const request = media.startShare(devices);
+      screenShareRequest = request;
+      try { await request; } finally { if (screenShareRequest === request) screenShareRequest = null; }
     }
     announceState();
   },
-  async shareWhiteboard(devices) {
+  async shareWhiteboard() {
     const meeting = get().meeting;
     if (!media || !meeting || get().phase !== "joined") return;
     const run = generation;
-    const theme = document.documentElement.dataset.theme === "dark" ? "dark" : "light";
-    // Open first: the share request below captures this window's own frame.
-    await openMeetingWhiteboard({ meetingId: meeting.id, title: meeting.title, theme });
-    if (run !== generation || !media) return;
-    const sharing = get().tiles.some((t) => t.id === "share");
-    if (sharing && get().shareKind === "whiteboard") return;
-    if (sharing) media.stopShare();
-    await armMeetingWhiteboardShare();
-    if (run !== generation || !media) return;
+    // Choosing the whiteboard in the picker cancels that picker's capture first.
+    await screenShareRequest?.catch(() => {});
+    if (run !== generation) return;
+    // Screen and whiteboard share one stream; the user stops the current share first.
+    if (get().whiteboard || get().tiles.some((t) => t.id === "share")) return;
+    const opened = await openMeetingWhiteboard({ meetingId: meeting.id });
+    if (run !== generation || get().whiteboard || get().tiles.some((t) => t.id === "share")) return;
+    set({ whiteboard: { meetingId: meeting.id, whiteboardId: opened.whiteboardId, title: meeting.title, scene: opened.scene } });
+  },
+  async publishWhiteboard(whiteboardId, stream) {
+    const run = generation;
+    const target = media;
+    if (!target || get().whiteboard?.whiteboardId !== whiteboardId) {
+      stream.getTracks().forEach((track) => track.stop());
+      return;
+    }
     set({ shareKind: "whiteboard" });
-    await media.startShare(devices);
+    try {
+      await target.startCustomShare(stream);
+    } catch (error) {
+      if (run === generation) set({ whiteboard: null, error: error instanceof Error ? error.message : "白板共享失败，请重试。" });
+      return;
+    }
+    if (run !== generation) return;
+    if (!get().tiles.some((t) => t.id === "share")) {
+      // Not published (meeting closing or another share won the race).
+      stream.getTracks().forEach((track) => track.stop());
+      set({ whiteboard: null });
+      return;
+    }
+    announceState();
+  },
+  closeWhiteboard(error) {
+    if (!get().whiteboard) return;
+    if (get().tiles.some((t) => t.id === "share")) media?.stopShare();
+    set({ whiteboard: null, ...(error ? { error } : {}) });
     announceState();
   },
   async send(text) {
@@ -407,6 +449,7 @@ export function forceMeetingCleanup(error: string | null = null) {
     meeting: null,
     visible: false,
     tiles: [],
+    whiteboard: null,
     messages: [],
     chatReady: false,
     error,

@@ -2,6 +2,7 @@ import { bindMeetingVideo } from "./video-view";
 import { exportMeetingDiagnostics } from "./diagnostics-export";
 import { bindRemoteAudio } from "./remote-audio";
 import { MeetingScreenPicker } from "./meeting-screen-picker";
+import { MeetingWhiteboardStage } from "./meeting-whiteboard-stage";
 import { MeetingMembers } from "./meeting-members";
 import { MeetingChatToasts } from "./meeting-chat-toasts";
 import { MeetingCode } from "./meeting-code";
@@ -65,8 +66,6 @@ export function MeetingRoomHost() {
     if (id) void chooseMeetingScreenSource(id, null).catch(() => {});
   }, []);
   const [leaving, setLeaving] = useState(false);
-  // Confirmation before a whiteboard share replaces a running screen share.
-  const [switchToWhiteboard, setSwitchToWhiteboard] = useState(false);
   const [text, setText] = useState("");
   const deviceRequest = useRef(0);
   const [deviceBusy, setDeviceBusy] = useState(false);
@@ -113,7 +112,6 @@ export function MeetingRoomHost() {
     };
   }, [closeScreenPicker]);
   useEffect(() => { if (leaving || !m) closeScreenPicker(); }, [leaving, m?.id, closeScreenPicker]);
-  useEffect(() => { if (!m) setSwitchToWhiteboard(false); }, [m?.id]);
 
   const previousUser = useRef(uid);
   useEffect(() => {
@@ -188,9 +186,15 @@ export function MeetingRoomHost() {
     finally { if (request === deviceRequest.current) setDeviceBusy(false); }
   }
   const sharing = s.tiles.some((t) => t.id === "share");
-  const sharingWhiteboard = sharing && s.shareKind === "whiteboard";
-  function startWhiteboard(devices?: MediaDevices) {
-    void run(() => s.shareWhiteboard(devices));
+  // The local whiteboard replaces the local share preview in the stage.
+  const localWhiteboard = s.whiteboard;
+  const canShareWhiteboard = !!window.__JUGGLEWORK_ELECTRON__?.invokeDesktop;
+  // The share button's run() stays busy until the cancelled capture settles,
+  // so this cannot go through run(); the store waits for that capture itself.
+  function chooseWhiteboard() {
+    setMessage("");
+    void useMeetingStore.getState().shareWhiteboard()
+      .catch((error) => setMessage(error instanceof Error ? error.message : "无法打开白板"));
   }
   function shareLabel(userId: string) {
     const kind = userId === uid ? (sharing ? s.shareKind : undefined) : s.memberDevices[userId]?.shareKind;
@@ -325,10 +329,18 @@ export function MeetingRoomHost() {
         <div className="room-main">
           <div className="stage-area">
             <div className={`stage${speaker ? " stage-focus" : ""}`}>
+              {localWhiteboard ? (
+                <div className="tile share-stage whiteboard-stage" key="whiteboard" data-focused={speaker}>
+                  <MeetingWhiteboardStage session={localWhiteboard}
+                    theme={document.documentElement.dataset.theme === "dark" ? "dark" : "light"}
+                    onPublish={(id, stream) => void s.publishWhiteboard(id, stream)}
+                    onFail={(error) => s.closeWhiteboard(error)} />
+                </div>
+              ) : null}
               {s.tiles
-                .filter((t) => t.screen)
+                .filter((t) => t.screen && !(localWhiteboard && t.id === "share"))
                 .map((t, i) => (
-                  <div className="tile share-stage" key={t.id} data-focused={speaker && i === 0}>
+                  <div className="tile share-stage" key={t.id} data-focused={speaker && i === 0 && !localWhiteboard}>
                     <Video tile={t} />
                     <span className="tile-label">
                       {shareLabel(t.userId)} · {participantName(t.userId, m.participants[t.userId]?.name)}
@@ -353,7 +365,7 @@ export function MeetingRoomHost() {
                     className="tile"
                     key={p.userId}
                     data-camera-off={!cameraOn}
-                    data-focused={speaker && i === 0 && !s.tiles.some(t => t.screen)}
+                    data-focused={speaker && i === 0 && !localWhiteboard && !s.tiles.some(t => t.screen)}
                   >
                     <MeetingMemberAvatar contact={{ ...contact, user_id: p.userId, nickname: name,
                       avatar: p.userId === imUser?.id ? imUser.portrait || contact?.avatar : contact?.avatar }} />
@@ -465,7 +477,7 @@ export function MeetingRoomHost() {
           </button>
           <button
             className="control"
-            aria-pressed={s.tiles.some((t) => t.id === "share")}
+            aria-pressed={sharing || !!localWhiteboard}
             disabled={busy || s.phase !== "joined"}
             onClick={(event) => {
               const devices = event.currentTarget.ownerDocument.defaultView?.navigator.mediaDevices;
@@ -473,24 +485,8 @@ export function MeetingRoomHost() {
             }}
           >
             <Icon name="screen" />
-            {sharing ? "停止共享" : "共享屏幕"}
+            {sharing || localWhiteboard ? "停止共享" : "共享屏幕"}
           </button>
-          {window.__JUGGLEWORK_ELECTRON__?.invokeDesktop ? (
-            <button
-              className="control"
-              aria-pressed={sharingWhiteboard}
-              title={sharingWhiteboard ? "打开白板窗口" : "打开白板并共享"}
-              disabled={busy || s.phase !== "joined"}
-              onClick={(event) => {
-                const devices = event.currentTarget.ownerDocument.defaultView?.navigator.mediaDevices;
-                if (sharing && !sharingWhiteboard) setSwitchToWhiteboard(true);
-                else startWhiteboard(devices);
-              }}
-            >
-              <Icon name="whiteboard" />
-              白板
-            </button>
-          ) : null}
           <button className="control" onClick={() => setInvite(true)} title="邀请参会成员">
             <Icon name="plus" />
             邀请
@@ -532,7 +528,8 @@ export function MeetingRoomHost() {
         ? createPortal(content, popup.document.body)
         : null}
       {miniPopup && !miniPopup.closed ? createPortal(compactContent, miniPopup.document.body) : null}
-      {screenRequest && !leaving ? <MeetingScreenPicker key={screenRequest} requestId={screenRequest} ownerDocument={popup?.document} onClose={closeScreenPicker} /> : null}
+      {screenRequest && !leaving ? <MeetingScreenPicker key={screenRequest} requestId={screenRequest} ownerDocument={popup?.document} onClose={closeScreenPicker}
+        onChooseWhiteboard={canShareWhiteboard ? chooseWhiteboard : undefined} /> : null}
       {invite ? (
         <MeetingInvitePicker
           ownerDocument={popup?.document}
@@ -548,23 +545,6 @@ export function MeetingRoomHost() {
             setInvite(false);
           })}
         />
-      ) : null}
-      {switchToWhiteboard && !leaving ? (
-        <MeetingDialog ownerDocument={popup?.document} title="共享白板" onClose={() => { if (!busy) setSwitchToWhiteboard(false); }}>
-          <p className="sub">将停止当前屏幕共享并改为共享白板。</p>
-          <div className="modal-foot">
-            <button disabled={busy} onClick={() => setSwitchToWhiteboard(false)}>取消</button>
-            <button className="primary" disabled={busy}
-              onClick={(event) => {
-                // Keep this click's user activation for the capture request.
-                const devices = event.currentTarget.ownerDocument.defaultView?.navigator.mediaDevices;
-                setSwitchToWhiteboard(false);
-                startWhiteboard(devices);
-              }}>
-              改为共享白板
-            </button>
-          </div>
-        </MeetingDialog>
       ) : null}
       {leaving ? (
         <MeetingDialog

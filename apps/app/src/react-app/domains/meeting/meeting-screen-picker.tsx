@@ -12,9 +12,19 @@ async function listSharedScreens(requestId: string) {
   return listMeetingScreenSources(requestId);
 }
 
-export function MeetingScreenPicker({ requestId, ownerDocument, onClose,
+// The in-app whiteboard is offered next to native sources but never reaches
+// the main process: choosing it cancels this capture and opens the stage board.
+export const WHITEBOARD_SOURCE_ID = "jugglework:whiteboard";
+type PickerSource = Omit<MeetingScreenSource, "kind"> & { kind: MeetingScreenSource["kind"] | "whiteboard" };
+const WHITEBOARD_SOURCE: PickerSource = { id: WHITEBOARD_SOURCE_ID, kind: "whiteboard", name: "会议白板", thumbnail: "", appIcon: "", appKey: "" };
+const FILTERS = [{ key: "all", name: "全部", icon: "grid" }, { key: "screen", name: "桌面", icon: "monitor" },
+  { key: "whiteboard", name: "白板", icon: "whiteboard" }, { key: "window", name: "窗口", icon: "window" }] as const;
+
+export function MeetingScreenPicker({ requestId, ownerDocument, onClose, onChooseWhiteboard,
   listSources = listSharedScreens, chooseSource = chooseMeetingScreenSource,
 }: { requestId: string; ownerDocument?: Document; onClose: () => void;
+  /** Present when the whiteboard can be shared; the picker closes before it is called. */
+  onChooseWhiteboard?: () => void;
   listSources?: typeof listMeetingScreenSources; chooseSource?: typeof chooseMeetingScreenSource }) {
   const [sources, setSources] = useState<MeetingScreenSource[]>([]);
   const [filter, setFilter] = useState("all");
@@ -47,7 +57,7 @@ export function MeetingScreenPicker({ requestId, ownerDocument, onClose,
       if (sequence !== generation.current) return;
       setSources(next);
       setSelected(previous => next.some(source => source.id === previous) ? previous : "");
-      setFilter(previous => ["all", "screen", "window"].includes(previous) || next.some(source => source.appKey === previous) ? previous : "all");
+      setFilter(previous => ["all", "screen", "whiteboard", "window"].includes(previous) || next.some(source => source.appKey === previous) ? previous : "all");
     } catch (cause) {
       if (sequence === generation.current) {
         setSources([]);
@@ -58,11 +68,22 @@ export function MeetingScreenPicker({ requestId, ownerDocument, onClose,
   }
   useEffect(() => { void refresh(); return () => { generation.current++; }; }, [requestId]);
   const apps = [...new Map(sources.filter(source => source.appKey).map(source => [source.appKey, source])).values()];
-  const visible = sources.filter(source => filter === "all" || source.kind === filter || source.appKey === filter);
-  const selection = sources.find(source => source.id === selected);
+  // Desktops first, then the whiteboard, then windows.
+  const ordered: PickerSource[] = onChooseWhiteboard
+    ? [...sources.filter(source => source.kind === "screen"), WHITEBOARD_SOURCE, ...sources.filter(source => source.kind !== "screen")]
+    : sources;
+  const visible = ordered.filter(source => filter === "all" || source.kind === filter || source.appKey === filter);
+  const filters = FILTERS.filter(item => item.key !== "whiteboard" || onChooseWhiteboard);
+  const selection = ordered.find(source => source.id === selected);
   function changeFilter(value: string) { setFilter(value); setSelected(""); }
   async function confirm() {
-    if (!selection || submitting || loading) return;
+    if (!selection || submitting || (loading && selection.kind !== "whiteboard")) return;
+    if (selection.kind === "whiteboard") {
+      // Cancel the pending native capture first; the board opens in the stage.
+      onClose();
+      onChooseWhiteboard?.();
+      return;
+    }
     setSubmitting(true); setError("");
     try { if (await chooseSource(requestId, selection.id)) onClose(); }
     catch (cause) { setError(cause instanceof Error ? cause.message : "无法开始共享，请重试。"); }
@@ -73,8 +94,7 @@ export function MeetingScreenPicker({ requestId, ownerDocument, onClose,
     <div className="screen-filter-row">
       <button className="ghost icon-button screen-filter-nav" aria-label="向左浏览应用" disabled={!scrollable.left} onClick={() => scrollFilters(-1)}><Icon name="chevronLeft" /></button>
       <div className="screen-filters" ref={filtersRef} role="group" aria-label="共享内容筛选">
-        {([{ key: "all", name: "全部", icon: "grid" }, { key: "screen", name: "桌面", icon: "monitor" },
-          { key: "window", name: "窗口", icon: "window" }] as const).map(item =>
+        {filters.map(item =>
           <button key={item.key} className="screen-filter" aria-pressed={filter === item.key} onClick={() => changeFilter(item.key)}>
             <span className="screen-filter-icon"><Icon name={item.icon} /></span><span className="screen-filter-label">{item.name}</span>
           </button>)}
@@ -90,14 +110,17 @@ export function MeetingScreenPicker({ requestId, ownerDocument, onClose,
       <button className="ghost icon-button screen-filter-nav" aria-label="刷新共享列表" disabled={loading || submitting} onClick={() => void refresh()}><Icon name="refresh" /></button>
     </div>
     <div className="screen-source-list" aria-busy={loading}>
-      {loading && !sources.length ? <div className="screen-picker-empty" role="status"><Icon name="monitor" /><span>正在获取可共享的画面…</span></div> :
+      {loading && !sources.length && filter !== "whiteboard" ? <div className="screen-picker-empty" role="status"><Icon name="monitor" /><span>正在获取可共享的画面…</span></div> :
         !visible.length ? <div className="screen-picker-empty"><Icon name="window" /><span>{error ? "暂时无法获取画面" : "没有可共享的窗口"}</span><small>打开需要共享的窗口后，点击右上角刷新</small></div> :
         <div className="screen-source-grid" role="group" aria-label="选择共享画面">{visible.map(source =>
-          <button key={source.id} className="screen-source" aria-pressed={selected === source.id} disabled={loading || submitting}
+          <button key={source.id} className={`screen-source${source.kind === "whiteboard" ? " whiteboard-source" : ""}`} aria-pressed={selected === source.id}
+            disabled={submitting || (loading && source.kind !== "whiteboard")}
             onClick={() => setSelected(source.id)} title={source.name}>
             <span className="screen-source-preview">
-              {source.thumbnail ? <img className="screen-thumbnail" src={source.thumbnail} alt="" /> : <span className="screen-preview-unavailable"><Icon name={source.kind === "screen" ? "monitor" : "window"} />预览不可用</span>}
-              <span className="screen-source-badge">{source.appIcon ? <img src={source.appIcon} alt="" /> : <Icon name={source.kind === "screen" ? "monitor" : "window"} />}</span>
+              {source.kind === "whiteboard" ? <span className="whiteboard-source-art"><Icon name="whiteboard" /><small>在会议窗口中打开白板</small></span>
+                : source.thumbnail ? <img className="screen-thumbnail" src={source.thumbnail} alt="" />
+                : <span className="screen-preview-unavailable"><Icon name={source.kind === "screen" ? "monitor" : "window"} />预览不可用</span>}
+              <span className="screen-source-badge">{source.appIcon ? <img src={source.appIcon} alt="" /> : <Icon name={source.kind === "screen" ? "monitor" : source.kind === "whiteboard" ? "whiteboard" : "window"} />}</span>
               <span className="screen-source-check"><Icon name="check" /></span>
             </span><span className="screen-source-name">{source.name}</span>
           </button>)}</div>}
@@ -106,7 +129,7 @@ export function MeetingScreenPicker({ requestId, ownerDocument, onClose,
       <div className="screen-picker-status" role="status">{loading ? "正在刷新…" : ""}</div>}
     <MeetingPermissionRestart />
     <div className="modal-foot screen-picker-foot"><span title={selection?.name}>{selection ? `已选择：${selection.name}` : "请选择一个桌面或窗口"}</span>
-      <button onClick={onClose}>取消</button><button className="primary" disabled={!selection || loading || submitting} onClick={() => void confirm()}>{submitting ? "正在共享…" : "开始共享"}</button>
+      <button onClick={onClose}>取消</button><button className="primary" disabled={!selection || submitting || (loading && selection.kind !== "whiteboard")} onClick={() => void confirm()}>{submitting ? "正在共享…" : "开始共享"}</button>
     </div>
   </MeetingDialog>;
 }

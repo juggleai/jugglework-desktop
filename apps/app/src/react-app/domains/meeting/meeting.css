@@ -290,6 +290,10 @@
 .meeting-ui .tile-mic-status[data-state="unknown"] { color: #bdc5d0; }
 .meeting-ui .tile-mic-pending { position: absolute; right: 2px; bottom: -1px; font-size: 10px; line-height: 12px; }
 .meeting-ui .share-stage { grid-column: 1/-1; min-height: 300px; }
+/* The local whiteboard is drawn in place; it fills the share area like a shared screen. */
+.meeting-ui .whiteboard-stage { display: block; min-height: 420px; background: #fff; }
+.meeting-ui .stage-focus > .whiteboard-stage { min-height: 0; }
+.meeting-ui .meeting-whiteboard-frame { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: block; background: #fff; }
 .meeting-ui .stage.stage-focus { grid-template-columns: repeat(auto-fill, minmax(min(180px, 100%), 1fr)); grid-template-rows: minmax(260px, 1fr); grid-auto-rows: 148px; align-content: start; }
 .meeting-ui .stage-focus > .tile { min-height: 0; }
 .meeting-ui .stage-focus > .tile[data-focused="true"] { grid-column: 1/-1; }
@@ -528,6 +532,9 @@
 .meeting-screen-dialog .screen-source-check svg { width: 16px; height: 16px; }
 .meeting-screen-dialog .screen-source[aria-pressed="true"] .screen-source-preview { border-color: #3478ff; box-shadow: 0 0 0 3px #3478ff26; }
 .meeting-screen-dialog .screen-source[aria-pressed="true"] .screen-source-check { opacity: 1; transform: scale(1); }
+.meeting-screen-dialog .whiteboard-source-art { display: grid; place-items: center; align-content: center; gap: 8px; width: 100%; height: 100%; background: linear-gradient(135deg, color-mix(in srgb, #3478ff 8%, var(--meet-bg)), var(--meet-bg)); color: #3478ff; }
+.meeting-screen-dialog .whiteboard-source-art svg { width: 34px; height: 34px; }
+.meeting-screen-dialog .whiteboard-source-art small { color: var(--meet-sub); font-size: 12px; }
 .meeting-screen-dialog .screen-source[aria-pressed="true"] .screen-source-name { color: #3478ff; }
 .meeting-screen-dialog .screen-source:not(:disabled):hover .screen-source-preview { border-color: #3478ff88; }
 .meeting-screen-dialog .screen-source-name { width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 5px; line-height: 22px; }

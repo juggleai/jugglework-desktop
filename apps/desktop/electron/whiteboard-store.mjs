@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 // Meeting whiteboard scenes live under <userData>/whiteboards/<meetingId>/.
@@ -66,18 +65,6 @@ export function createWhiteboardStore({ root, randomId = () => `wb_${randomUUID(
         scene = content;
       } catch { scene = null; }
       return { whiteboardId, scene };
-    },
-    /** Same contract as save(), for the synchronous pagehide flush. */
-    saveSync(meetingId, whiteboardId, content) {
-      assertSegments(meetingId, whiteboardId);
-      let current = null;
-      try { current = JSON.parse(readFileSync(pointer(meetingId), "utf8"))?.whiteboardId; } catch { current = null; }
-      if (current !== whiteboardId) throw new Error("白板已失效，请重新打开");
-      assertScene(content);
-      const file = sceneFile(meetingId, whiteboardId);
-      const temp = `${file}.${process.pid}.${randomUUID()}.tmp`;
-      writeFileSync(temp, content, "utf8");
-      renameSync(temp, file);
     },
     async save(meetingId, whiteboardId, content) {
       assertSegments(meetingId, whiteboardId);

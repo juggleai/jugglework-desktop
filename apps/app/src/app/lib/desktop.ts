@@ -833,12 +833,12 @@ export function chooseMeetingScreenSource(requestId: string, sourceId: string | 
   return invokeElectronHelper("meetingScreenChoose", requestId, sourceId);
 }
 
-export function openMeetingWhiteboard(input: { meetingId: string; title?: string; theme?: "light" | "dark" }) {
+export function openMeetingWhiteboard(input: { meetingId: string }) {
   return invokeElectronHelper("meetingWhiteboardOpen", input);
 }
-export function closeMeetingWhiteboard() {
-  return invokeElectronHelper("meetingWhiteboardClose");
+export function saveMeetingWhiteboard(input: { meetingId: string; whiteboardId: string; content: string }) {
+  return invokeElectronHelper("meetingWhiteboardSave", input);
 }
-export function armMeetingWhiteboardShare() {
-  return invokeElectronHelper("meetingWhiteboardArmShare");
+export function exportMeetingWhiteboard(input: { title?: string; kind: "png" | "excalidraw"; data: string }) {
+  return invokeElectronHelper("meetingWhiteboardExport", input);
 }

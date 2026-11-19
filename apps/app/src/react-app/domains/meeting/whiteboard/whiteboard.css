@@ -5,18 +5,19 @@ html[data-theme="dark"] body { background: #121212; color: #e3e3e8; }
 .whiteboard-shell { display: flex; flex-direction: column; height: 100%; }
 .whiteboard-bar {
   display: flex; align-items: center; gap: 8px; flex: none;
-  height: 40px; padding: 0 12px; border-bottom: 1px solid rgba(0, 0, 0, 0.08);
-  -webkit-app-region: drag; font-size: 13px;
+  height: 40px; padding: 0 12px; border-bottom: 1px solid rgba(0, 0, 0, 0.08); font-size: 13px;
 }
 html[data-theme="dark"] .whiteboard-bar { border-bottom-color: rgba(255, 255, 255, 0.1); }
-.whiteboard-bar strong { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.whiteboard-bar strong { flex: none; }
+.whiteboard-live { flex: none; padding: 2px 8px; border-radius: 999px; background: #e7f6ee; color: #1f8a57; font-size: 12px; }
+html[data-theme="dark"] .whiteboard-live { background: #173326; color: #81d8b0; }
+.whiteboard-status { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #6b6b75; font-size: 12px; }
 .whiteboard-bar button {
-  -webkit-app-region: no-drag; height: 28px; padding: 0 10px; border-radius: 8px;
+  height: 28px; padding: 0 10px; border-radius: 8px;
   border: 1px solid rgba(0, 0, 0, 0.12); background: transparent; color: inherit; font: inherit; cursor: pointer;
 }
 html[data-theme="dark"] .whiteboard-bar button { border-color: rgba(255, 255, 255, 0.16); }
 .whiteboard-bar button:hover { background: rgba(0, 0, 0, 0.05); }
-.whiteboard-status { color: #6b6b75; font-size: 12px; }
 .whiteboard-canvas { position: relative; flex: 1; min-height: 0; }
 .whiteboard-message { display: grid; place-items: center; height: 100%; font-size: 14px; color: #6b6b75; }
 /* Phase one: no external library catalogue. */

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { createSceneSaver, parseWhiteboardScene } from "../src/react-app/domains/meeting/whiteboard/scene";
+import { createSceneSaver, mirrorSize, parseWhiteboardScene } from "../src/react-app/domains/meeting/whiteboard/scene";
 
 const scene = (extra: Record<string, unknown> = {}) => JSON.stringify({
   type: "excalidraw", version: 2, source: "local", elements: [{ id: "a" }],
@@ -83,4 +83,15 @@ test("default timers call the global setTimeout with the right receiver", async 
     globalThis.setTimeout = realSet;
     globalThis.clearTimeout = realClear;
   }
+});
+
+test("mirror output keeps the board's aspect ratio within 1080p and 2x density", () => {
+  expect(mirrorSize(800, 450, 2)).toEqual({ width: 1600, height: 900, scale: 2 });
+  // A large board is capped at 1080p, not stretched.
+  const big = mirrorSize(1600, 900, 2);
+  expect(big.width).toBe(1920);
+  expect(big.height).toBe(1080);
+  // Low density still renders at least 1x; dimensions are even for encoders.
+  expect(mirrorSize(641, 361, 1)).toEqual({ width: 642, height: 362, scale: 1 });
+  expect(mirrorSize(0, 0, 1)).toEqual({ width: 2, height: 2, scale: 1 });
 });

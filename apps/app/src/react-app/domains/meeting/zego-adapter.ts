@@ -277,39 +277,56 @@ export class MeetingMedia {
         capture.getTracks().forEach(track => track.stop());
         return;
       }
-      this.shareCapture = capture;
-      let stream: MediaStream | undefined;
-      try {
-        // ZEGO 3.12 rejects raw getDisplayMedia streams (1103044). Wrap the
-        // child-window tracks in this renderer's realm, then register a custom
-        // preview with the SDK before publishing. This does not recapture media.
-        const source = new MediaStream(capture.getVideoTracks());
-        stream = await meetingDiagnosticStep("rtc.share.register", {}, () => this.engine.createStream({
-          custom: { source, videoOptimizationMode: "detail" },
-        }) as Promise<MediaStream>);
-        if (this.disposed || run !== this.shareGeneration || !capture.getVideoTracks().some(t => t.readyState === "live")) {
-          if (this.shareCapture === capture) this.shareCapture = undefined;
-          this.releaseShare(stream, capture);
-          return;
-        }
-        if (this.engine.startPublishingStream(this.streamId(true), stream) === false)
-          throw new Error("共享发布失败");
-        this.share = stream;
-        this.diagnosticStreams.set("share", stream);
-        const published = stream;
-        for (const track of new Set([...capture.getVideoTracks(), ...stream.getVideoTracks()]))
-          track.addEventListener("ended", () => { if (this.share === published) this.stopShare(); }, { once: true });
-        meetingDiagnostic("rtc.share.published", { tracks: meetingTrackSnapshot(stream) });
-        this.update({ id: "share", userId: this.joinInfo!.userId, stream, screen: true }, "share");
-      } catch (error) {
-        if (this.shareCapture === capture) this.shareCapture = undefined;
-        this.releaseShare(stream, capture);
-        meetingDiagnostic("rtc.share.publish.failed", meetingDiagnosticError(error));
-        const code = (error as { errorCode?: number })?.errorCode;
-        throw new Error(`屏幕画面已采集，但共享发布失败${typeof code === "number" ? `（${code}）` : ""}，请重试。`);
-      }
+      await this.publishShare(capture, run, "屏幕画面已采集");
     } finally {
       if (run === this.shareGeneration) this.shareStarting = false;
+    }
+  }
+  /** Publish an in-app video source (the meeting whiteboard) on the same `_screen` stream. */
+  async startCustomShare(capture: MediaStream) {
+    if (this.share || this.shareStarting || this.disposed || !this.engine) {
+      capture.getTracks().forEach(track => track.stop());
+      return;
+    }
+    const run = ++this.shareGeneration;
+    this.shareStarting = true;
+    try {
+      await this.publishShare(capture, run, "白板画面已就绪");
+    } finally {
+      if (run === this.shareGeneration) this.shareStarting = false;
+    }
+  }
+  private async publishShare(capture: MediaStream, run: number, capturedLabel: string) {
+    this.shareCapture = capture;
+    let stream: MediaStream | undefined;
+    try {
+      // ZEGO 3.12 rejects raw getDisplayMedia streams (1103044). Wrap the
+      // child-window tracks in this renderer's realm, then register a custom
+      // preview with the SDK before publishing. This does not recapture media.
+      const source = new MediaStream(capture.getVideoTracks());
+      stream = await meetingDiagnosticStep("rtc.share.register", {}, () => this.engine.createStream({
+        custom: { source, videoOptimizationMode: "detail" },
+      }) as Promise<MediaStream>);
+      if (this.disposed || run !== this.shareGeneration || !capture.getVideoTracks().some(t => t.readyState === "live")) {
+        if (this.shareCapture === capture) this.shareCapture = undefined;
+        this.releaseShare(stream, capture);
+        return;
+      }
+      if (this.engine.startPublishingStream(this.streamId(true), stream) === false)
+        throw new Error("共享发布失败");
+      this.share = stream;
+      this.diagnosticStreams.set("share", stream);
+      const published = stream;
+      for (const track of new Set([...capture.getVideoTracks(), ...stream.getVideoTracks()]))
+        track.addEventListener("ended", () => { if (this.share === published) this.stopShare(); }, { once: true });
+      meetingDiagnostic("rtc.share.published", { tracks: meetingTrackSnapshot(stream) });
+      this.update({ id: "share", userId: this.joinInfo!.userId, stream, screen: true }, "share");
+    } catch (error) {
+      if (this.shareCapture === capture) this.shareCapture = undefined;
+      this.releaseShare(stream, capture);
+      meetingDiagnostic("rtc.share.publish.failed", meetingDiagnosticError(error));
+      const code = (error as { errorCode?: number })?.errorCode;
+      throw new Error(`${capturedLabel}，但共享发布失败${typeof code === "number" ? `（${code}）` : ""}，请重试。`);
     }
   }
   private releaseShare(stream: MediaStream | undefined, capture: MediaStream | undefined) {

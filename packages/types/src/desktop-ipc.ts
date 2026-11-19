@@ -643,9 +643,9 @@ export type DesktopCommandMap = {
   meetingDiagnosticsGet: { args: []; result: { storageAvailable: boolean; records: unknown[] } };
   meetingConfigGet: { args: []; result: { enabled: boolean; appId: number; filePath: string } };
   meetingWindowFocus: { args: [target: "main" | "meeting"]; result: void };
-  meetingWhiteboardOpen: { args: [input: { meetingId: string; title?: string; theme?: "light" | "dark" }]; result: { whiteboardId: string } };
-  meetingWhiteboardClose: { args: []; result: void };
-  meetingWhiteboardArmShare: { args: []; result: void };
+  meetingWhiteboardOpen: { args: [input: { meetingId: string }]; result: { whiteboardId: string; scene: string | null } };
+  meetingWhiteboardSave: { args: [input: { meetingId: string; whiteboardId: string; content: string }]; result: void };
+  meetingWhiteboardExport: { args: [input: { title?: string; kind: "png" | "excalidraw"; data: string }]; result: { saved: boolean } };
   toonFactoryOpen: { args: [workspaceId: string]; result: ToonFactoryStatus };
   toonFactoryHide: { args: []; result: void };
   toonFactoryClose: { args: []; result: void };

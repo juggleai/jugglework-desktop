@@ -60,3 +60,12 @@ export function createSceneSaver(save: (json: string) => Promise<unknown>, saveN
     onError(handler: (error: unknown) => void) { onError = handler; },
   };
 }
+
+/** Largest output size that keeps the board's aspect ratio within 1920x1080 and 2x pixel density. */
+export function mirrorSize(width: number, height: number, devicePixelRatio = 1) {
+  const w = Math.max(1, width), h = Math.max(1, height);
+  const scale = Math.min(2, Math.max(1, devicePixelRatio), 1920 / w, 1080 / h);
+  // Even dimensions keep H.264 encoders from cropping a pixel.
+  const even = (value: number) => Math.max(2, Math.round(value / 2) * 2);
+  return { width: even(w * scale), height: even(h * scale), scale };
+}
