@@ -326,8 +326,6 @@ export function ReviewSessionComposer(props: {
     searchFiles={EMPTY_LIST}
     onInsertMention={(_kind, value) => setDraft((current) => `${current}${value}`)}
     inputHistory={inputHistory}
-    onPasteText={(value) => setDraft((current) => `${current}${value}`)}
-    onUnsupportedFileLinks={() => undefined}
     pastedText={[]}
     onExpandPastedText={() => undefined}
     onRemovePastedText={() => undefined}

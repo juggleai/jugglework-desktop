@@ -25,7 +25,7 @@ import { resolveExtensionIconUrl } from "@/react-app/design-system/extension-ico
 import { ModelBehaviorSelect } from "@/components/model-behavior-select";
 import { ModelSelect } from "@/components/model-select";
 import { ImageAttachmentBadge } from "@/components/chat/image-attachment-badge";
-import { LexicalPromptEditor, type LexicalPromptEditorHandle } from "./editor";
+import { LexicalPromptEditor, type LexicalPromptEditorHandle, type PastedTextToken } from "./editor";
 import type { OfficeComposerGroup } from "./office-selection-draft";
 import { listRunningAppsForMention } from "./app-mentions";
 import type { ComposerMentionKind } from "./mention-encoding";
@@ -42,7 +42,6 @@ import {
   skillSlashCommandName,
   type ComposerSlashCommandOption,
 } from "./slash-command";
-import { FILE_URL_RE, HTTP_URL_RE } from "./pasted-text";
 import { resolveComposerSubmitAction } from "../queued-draft-policy";
 import { PresentationDialog } from "../../presentation/presentation-dialog";
 import type { PresentationRequest } from "../../presentation/presentation-request";
@@ -252,8 +251,7 @@ export type ComposerProps = {
   onRegisterCapability?: (capability: { kind: ComposerCapabilityKind; name: string; prompt: string }) => void;
   /** Sent-prompt history (oldest first) recalled with ArrowUp/ArrowDown (#2012). */
   inputHistory?: string[];
-  onPasteText: (text: string) => void;
-  onUnsupportedFileLinks: (links: string[]) => void;
+  registerPastedText?: (text: string) => PastedTextToken;
   pastedText: PastedTextChip[];
   onExpandPastedText: (id: string) => void;
   onRemovePastedText: (id: string) => void;
@@ -279,31 +277,6 @@ const DEFAULT_AGENT_NAME = "jugglework";
 
 function isNonDefaultAgent(agent: Agent) {
   return agent.name !== DEFAULT_AGENT_NAME;
-}
-
-/**
- * Extract external file/URL drops from a clipboard. Only used when the user
- * drag-drops a file reference from another app (Finder / browser), which sets
- * the text/uri-list MIME type explicitly. Plain text pastes — even ones that
- * contain absolute paths like "/Users/..." — are NEVER treated as links here
- * because that intercepted real text pastes and made composer paste feel
- * broken. Plain text goes straight into the editor via Lexical's default.
- */
-function parseClipboardUriList(clipboard: DataTransfer) {
-  const raw = clipboard.getData("text/uri-list") ?? "";
-  if (!raw.trim()) return [];
-  const links: string[] = [];
-  const seen = new Set<string>();
-  for (const line of raw.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    if (!FILE_URL_RE.test(trimmed) && !HTTP_URL_RE.test(trimmed)) continue;
-    const normalized = encodeURI(trimmed);
-    if (seen.has(normalized)) continue;
-    seen.add(normalized);
-    links.push(normalized);
-  }
-  return links;
 }
 
 function isImageAttachment(attachment: ComposerAttachment) {
@@ -1377,6 +1350,7 @@ export function ReactSessionComposer(props: ComposerProps) {
   }, [props.onDraftChange]);
 
   const handleKeyDownCapture: React.KeyboardEventHandler<HTMLDivElement> = (event) => {
+    if ((event.target as HTMLElement | null)?.closest?.("[data-composer-selection-toolbar]")) return;
     // Leave candidate confirmation, navigation and cancellation to the IME.
     const imeActive =
       imeComposingRef.current ||
@@ -1385,9 +1359,8 @@ export function ReactSessionComposer(props: ComposerProps) {
       event.keyCode === 229;
     // Candidate navigation and Escape belong to the IME too.
     if (imeActive) return;
-    // macOS Option+Enter / Windows Alt+Enter inserts a newline. Let the
-    // editor handle it before any open command or mention menu consumes it.
-    if (event.key === "Enter" && event.altKey) {
+    // Editing shortcuts belong to the input even when a suggestion menu is open.
+    if (event.key === "Enter" && (event.shiftKey || event.altKey)) {
       return;
     }
     const anyMenuOpen = plusMenuOpen || Boolean(activeMenu) || props.modelPickerOpen;
@@ -1948,7 +1921,7 @@ export function ReactSessionComposer(props: ComposerProps) {
               isComposing={() => imeComposingRef.current}
               onExpandPastedText={handleExpandPastedText}
               onRemoveAttachment={props.onRemoveAttachment}
-              onPasteText={props.onPasteText}
+              registerPastedText={props.registerPastedText}
               onPasteCapture={(event) => {
                 // TIPS: 必须早于 Lexical 的默认粘贴，避免链接被插入两次。
                 const pasted = event.clipboardData?.getData("text/plain")?.trim() ?? "";
@@ -1982,28 +1955,11 @@ export function ReactSessionComposer(props: ComposerProps) {
                 }
               }}
               onPaste={(event) => {
-                // Paste policy:
-                // 1. Actual files on the clipboard -> attach them.
-                // 2. Explicit text/uri-list (drag from Finder / browser) -> insert links.
-                // 3. Plain text -> DO NOTHING. Let Lexical's PlainTextPlugin
-                //    handle the paste natively so newlines render correctly
-                //    and no content is silently dropped. Previous behavior
-                //    hijacked pastes that merely contained absolute paths
-                //    like "/Users/..." or pastes longer than 10 lines, which
-                //    was the root cause of "paste into composer is broken".
+                // The editor owns textual pastes, including link lists.
                 const files = Array.from(event.clipboardData?.files ?? []);
                 if (files.length) {
                   event.preventDefault();
                   void addAttachments(files);
-                  return;
-                }
-
-                const uriList = event.clipboardData
-                  ? parseClipboardUriList(event.clipboardData)
-                  : [];
-                if (uriList.length) {
-                  event.preventDefault();
-                  props.onUnsupportedFileLinks(uriList);
                   return;
                 }
 

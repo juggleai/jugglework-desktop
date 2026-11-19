@@ -1,4 +1,5 @@
 import { Cloud } from "lucide-react";
+import { UserMessageText } from "./user-message-text";
 import { Badge } from "@/components/ui/badge";
 import { CloudDocsTurnCard } from "@/react-app/domains/cloud-docs/cloud-docs-turn-card";
 import { parseCloudDocToken, type CloudDocReference } from "@/app/lib/cloud-doc-reference";
@@ -872,20 +873,20 @@ const UserMessage = React.memo(
                       if (part.type === "text") {
                         const selection = part.providerMetadata?.opencode?.officeSelection as { text: string; selections: Array<{ label: string; name: string; range: string; text: string }> } | undefined;
                         if (selection && typeof selection.text === "string" && Array.isArray(selection.selections)) return (
-                          <span key={`office-${index}`} className="my-0.5 inline-flex w-full flex-wrap items-start gap-1.5">
+                          <div key={`office-${index}`} className="my-0.5 inline-flex w-full flex-wrap items-start gap-1.5">
                             {selection.selections.map((item, position) => <span key={position} tabIndex={0} className="group/selection relative inline-flex items-center gap-1 rounded-lg bg-foreground/5 px-2 py-0.5 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring">
                               <FileIcon size={14} aria-hidden />{item.label}
                               <span role="tooltip" className="pointer-events-none absolute bottom-full left-0 z-30 mb-2 hidden w-max max-w-80 rounded-xl border bg-popover p-3 text-sm font-normal text-popover-foreground shadow-lg group-hover/selection:block group-focus/selection:block">
                                 <span className="mb-1 block font-medium">{item.name}</span><span className="block">{item.range}</span>{item.text ? <span className="mt-1 line-clamp-3 block whitespace-pre-wrap text-muted-foreground">{item.text}</span> : null}
                               </span>
                             </span>)}
-                            <span className="whitespace-pre-wrap">{renderUserTextWithSkillChips(selection.text, highlightQuery)}</span>
-                          </span>
+                            <UserMessageText text={selection.text} highlightQuery={highlightQuery} renderText={renderUserTextWithSkillChips} />
+                          </div>
                         );
                         return (
-                          <span key={`text-${index}`} className="whitespace-pre-wrap">
-                            {renderUserTextWithSkillChips(typeof part.providerMetadata?.opencode?.cloudDocSourceText === "string" ? part.providerMetadata.opencode.cloudDocSourceText : part.text, highlightQuery)}
-                          </span>
+                          <UserMessageText key={`text-${index}`}
+                            text={typeof part.providerMetadata?.opencode?.cloudDocSourceText === "string" ? part.providerMetadata.opencode.cloudDocSourceText : part.text}
+                            highlightQuery={highlightQuery} renderText={renderUserTextWithSkillChips} />
                         )
                       }
                       if (isFileUIPart(part)) {

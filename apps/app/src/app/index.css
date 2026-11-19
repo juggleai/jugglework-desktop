@@ -13,6 +13,21 @@
 
 @import "@fontsource-variable/ibm-plex-sans";
 
+.composer-rich-link {
+  color: var(--color-blue-10, #2969d8);
+  text-decoration: none;
+}
+.composer-rich-link::before {
+  content: "";
+  display: inline-block;
+  width: .9em;
+  height: .9em;
+  margin-inline-end: .25em;
+  vertical-align: -.08em;
+  background-color: currentColor;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.7'%3E%3Ccircle cx='12' cy='12' r='10'/%3E%3Cellipse cx='12' cy='12' rx='4.5' ry='10'/%3E%3Cpath d='M2 12h20'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
 /* TIPS 放大版系统表情字体：textarea 无法给单个字符设样式，这里用 @font-face 的
    size-adjust + unicode-range，只把 emoji 码位交给系统表情字体并放大到 1.6 倍
    （消息页输入框正文 14px → 表情 22px，与表情面板里的字形同大），其余文字不受影响。

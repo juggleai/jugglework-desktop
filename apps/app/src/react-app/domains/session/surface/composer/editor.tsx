@@ -25,6 +25,7 @@ import {
   KEY_ARROW_LEFT_COMMAND,
   KEY_ARROW_RIGHT_COMMAND,
   KEY_BACKSPACE_COMMAND,
+  KEY_DOWN_COMMAND,
   KEY_ENTER_COMMAND,
   PASTE_COMMAND,
   HISTORIC_TAG,
@@ -51,14 +52,19 @@ import {
   parseComposerCapabilityToken,
   type ComposerCapabilityKind,
 } from "./capability-tags";
-import { shouldCollapsePastedText } from "./pasted-text";
+import { parseClipboardUriList, shouldCollapsePastedText } from "./pasted-text";
 import { insertStyledPastedText } from "./pasted-text-insertion";
 import { insertTextAtSelection } from "./editor-insertion";
+import { $continueComposerList, $editingBlock, $restoreRichDraft, $startComposerList, composerRichTheme, registerComposerMarkdown } from "./markdown-editing";
+import { LinkNode } from "@lexical/link";
+import { ListNode, ListItemNode } from "@lexical/list";
+import { HeadingNode } from "@lexical/rich-text";
+import { ComposerSelectionToolbar } from "./selection-toolbar";
 import { ComposerOfficeInstructionNode, ComposerOfficeSelectionTagNode, $createOfficeInstructionNode, $readOfficeComposerDraft, $syncOfficeInstructionNode, registerOfficeSelectionEditing, OfficeComposerContext } from "./office-selection-node";
 import { getComposerOfficeGroups, releasableOfficeReferences, useComposerStateStore } from "../composer-state-store";
 import type { OfficeComposerGroup } from "./office-selection-draft";
 
-type PastedTextToken = { label: string; lines: number; text: string };
+export type PastedTextToken = { label: string; lines: number; text: string };
 const EXTERNAL_SYNC_TAG = "composer-external-sync";
 const SUGGESTION_ACCEPT_TAG = "composer-suggestion-accept";
 
@@ -88,7 +94,7 @@ type EditorProps = {
   onRemoveAttachment?: (id: string) => void;
   onPaste?: React.ClipboardEventHandler<HTMLDivElement>;
   onPasteCapture?: React.ClipboardEventHandler<HTMLDivElement>;
-  onPasteText?: (text: string) => void;
+  registerPastedText?: (text: string) => PastedTextToken;
   onDrop?: React.DragEventHandler<HTMLDivElement>;
   onDragOver?: React.DragEventHandler<HTMLDivElement>;
   onDragLeave?: React.DragEventHandler<HTMLDivElement>;
@@ -814,6 +820,7 @@ function setPrompt(
     }
     paragraph = appendSegmentWithNewlines(paragraph, segment);
   }
+  $restoreRichDraft();
 }
 
 function appendSkillAtEnd(skillName: string, kind: ComposerCapabilityKind) {
@@ -920,7 +927,8 @@ function SyncPlugin(props: {
       // so the selection collapses to position 0. Use element-level
       // selection instead: place the cursor *after* the last child of
       // the last paragraph.
-      const lastParagraph = $getRoot().getLastChild();
+      const last = $getRoot().getLastChild();
+      const lastParagraph = last instanceof ListNode ? last.getLastChild() : last;
       if ($isElementNode(lastParagraph)) {
         const childCount = lastParagraph.getChildrenSize();
         lastParagraph.select(childCount, childCount);
@@ -933,15 +941,27 @@ function SyncPlugin(props: {
   return null;
 }
 
-function SubmitPlugin(props: { onSubmit: (options: { queue: boolean }) => void | Promise<void>; disabled: boolean; isComposing?: () => boolean }) {
+function ComposerEditingPlugin(props: Pick<EditorProps, "onSubmit" | "disabled" | "isComposing">) {
   const [editor] = useLexicalComposerContext();
   const onSubmitRef = useRef(props.onSubmit);
   const isComposingRef = useRef(props.isComposing);
+  useEffect(() => registerComposerMarkdown(editor), [editor]);
 
   useEffect(() => {
     onSubmitRef.current = props.onSubmit;
     isComposingRef.current = props.isComposing;
   }, [props.onSubmit, props.isComposing]);
+
+  useEffect(() => {
+    return editor.registerCommand(KEY_DOWN_COMMAND, (event) => {
+      if (event.key !== "." || event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey || props.disabled) return false;
+      if (editor.isComposing() || isComposingRef.current?.() || event.isComposing || event.keyCode === 229) return false;
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection) || !$startComposerList(selection)) return false;
+      event.preventDefault();
+      return true;
+    }, COMMAND_PRIORITY_HIGH);
+  }, [editor, props.disabled]);
 
   useEffect(() => {
     return editor.registerCommand(
@@ -951,16 +971,22 @@ function SubmitPlugin(props: { onSubmit: (options: { queue: boolean }) => void |
         // Capture returning early does not stop Lexical's command chain.
         // Include both composition states even when the key event lacks IME flags.
         if (editor.isComposing() || isComposingRef.current?.() || event?.isComposing === true || event?.keyCode === 229) return false;
-        // Shift+Enter and macOS Option+Enter / Windows Alt+Enter insert a
-        // newline — let the editor handle them.
-        if (event?.shiftKey || event?.altKey) return false;
+        if (event?.altKey || event?.defaultPrevented) return false;
         const selection = $getSelection();
         if (!$isRangeSelection(selection)) return false;
-        // Plain Enter submits. Cmd/Ctrl+Enter submits with the queue
-        // modifier — while the agent is busy this queues the message to
-        // send once the current task finishes.
+        const queue = event?.metaKey === true || event?.ctrlKey === true;
+        if (event?.shiftKey) {
+          if (queue) return false;
+          if (!$continueComposerList(selection)) {
+            if ($editingBlock(selection.anchor.getNode()) instanceof ComposerOfficeInstructionNode) return false;
+            selection.insertParagraph();
+          }
+          event.preventDefault();
+          return true;
+        }
+        if (!onSubmitRef.current) return false;
         event?.preventDefault();
-        void onSubmitRef.current({ queue: event?.metaKey === true || event?.ctrlKey === true });
+        void onSubmitRef.current({ queue });
         return true;
       },
       COMMAND_PRIORITY_HIGH,
@@ -970,29 +996,35 @@ function SubmitPlugin(props: { onSubmit: (options: { queue: boolean }) => void |
   return null;
 }
 
-function PasteChipPlugin(props: { onPasteText?: (text: string) => void }) {
+function PasteChipPlugin({ registerPastedText }: Pick<EditorProps, "registerPastedText">) {
   const [editor] = useLexicalComposerContext();
-  const onPasteTextRef = useRef(props.onPasteText);
-
-  useEffect(() => {
-    onPasteTextRef.current = props.onPasteText;
-  }, [props.onPasteText]);
 
   useEffect(() => {
     return editor.registerCommand(
       PASTE_COMMAND,
       (event: ClipboardEvent) => {
         if (event.defaultPrevented) return false;
-        // Only handle plain-text pastes; files and URI lists are handled in the React onPaste.
+        // File bytes are handled by the attachment UI. Insert all textual
+        // representations in this transaction while the paste selection is live.
         const files = event.clipboardData?.files;
         if (files && files.length > 0) return false;
-        if (event.clipboardData?.getData("text/uri-list").trim()) return false;
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) return false;
+        const links = event.clipboardData ? parseClipboardUriList(event.clipboardData) : [];
+        if (links.length) {
+          event.preventDefault();
+          selection.insertRawText(links.join("\n"));
+          return true;
+        }
         const text = event.clipboardData?.getData("text/plain") ?? "";
         if (!text.trim()) return false;
-        if (shouldCollapsePastedText(text)) {
-          if (!onPasteTextRef.current) return false;
+        if (registerPastedText && shouldCollapsePastedText(text) &&
+          !(selection.anchor.getNode().getTopLevelElement() instanceof ComposerOfficeInstructionNode)) {
           event.preventDefault();
-          onPasteTextRef.current(text);
+          const part = registerPastedText(text);
+          const chip = $createComposerPastedTextNode(part.label, part.lines);
+          selection.insertNodes([chip]);
+          setSelectionAfterNode(chip);
           return true;
         }
         event.preventDefault();
@@ -1000,7 +1032,7 @@ function PasteChipPlugin(props: { onPasteText?: (text: string) => void }) {
       },
       COMMAND_PRIORITY_CRITICAL,
     );
-  }, [editor]);
+  }, [editor, registerPastedText]);
 
   return null;
 }
@@ -1327,11 +1359,12 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
   const initialConfig = useMemo(
     () => ({
       namespace: "jugglework-react-session-composer",
+      theme: composerRichTheme,
       onError(error: Error) {
         throw error;
       },
         editable: !props.disabled,
-        nodes: [ComposerCloudDocNode, ComposerMentionNode, ComposerSlashCommandNode, ComposerSkillNode, ComposerPastedTextNode, ComposerAttachmentNode, ComposerOfficeInstructionNode, ComposerOfficeSelectionTagNode],
+        nodes: [HeadingNode, ListNode, ListItemNode, LinkNode, ComposerCloudDocNode, ComposerMentionNode, ComposerSlashCommandNode, ComposerSkillNode, ComposerPastedTextNode, ComposerAttachmentNode, ComposerOfficeInstructionNode, ComposerOfficeSelectionTagNode],
         editorState: () => {
           setPrompt(props.value, props.mentions, props.pastedText, props.attachments, props.officeGroups);
         },
@@ -1420,6 +1453,7 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
         </span>
         <OnChangePlugin onChange={syncPromptFromEditorState} />
         <HistoryPlugin />
+        {!props.disabled && <ComposerSelectionToolbar />}
         <OfficeSelectionEditingPlugin sessionId={props.officeSessionId} groups={props.officeGroups} />
         <SyncPlugin
           officeGroups={props.officeGroups}
@@ -1429,8 +1463,8 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
           attachments={props.attachments}
           disabled={props.disabled}
         />
-        {props.onSubmit ? <SubmitPlugin onSubmit={props.onSubmit} disabled={props.disabled} isComposing={props.isComposing} /> : null}
-        <PasteChipPlugin onPasteText={props.onPasteText} />
+        <ComposerEditingPlugin onSubmit={props.onSubmit} disabled={props.disabled} isComposing={props.isComposing} />
+        <PasteChipPlugin registerPastedText={props.registerPastedText} />
         <PastedTextExpandPlugin pastedText={props.pastedText} onExpandPastedText={props.onExpandPastedText} />
         <AttachmentRemovePlugin onRemoveAttachment={props.onRemoveAttachment} />
         <CloudDocClickPlugin sessionId={props.officeSessionId} />
