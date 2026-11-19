@@ -71,7 +71,7 @@ export function AnnotationToolbar({ state, send }: { state: AnnotationState; sen
       <div className="colors" role="radiogroup" aria-label="颜色">
         {ANNOTATION_COLORS.map((color) => (
           <button key={color} type="button" role="radio" aria-checked={state.tool.color === color} aria-label={`颜色 ${color}`}
-            className="swatch" style={{ background: color }} onClick={() => setTool({ color })} />
+            className="swatch" onClick={() => setTool({ color })}><span className="fill" style={{ background: color }} /></button>
         ))}
       </div>
       <div className="sizes" role="radiogroup" aria-label="粗细">
