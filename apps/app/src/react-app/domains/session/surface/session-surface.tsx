@@ -1308,7 +1308,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     let resolved = text;
     for (const group of officeGroups) resolved = resolved.replaceAll(`[office-instruction ${group.instruction.instructionId}]`, officeGroupText(group));
     for (const part of pasteParts) {
-      resolved = resolved.replace(`[pasted text ${part.label}]`, part.text);
+      resolved = resolved.replace(`[pasted text ${part.label}]`, () => part.text);
     }
     resolved = resolved.replace(/\[attachment [^\]]+\]/g, "");
     // 能力标签在这里展开成模型真正看到的文本：本地技能是一句自然语言，
@@ -1969,17 +1969,19 @@ export function SessionSurface(props: SessionSurfaceProps) {
     }
   };
 
-  const handlePasteText = (text: string) => {
+  const registerPastedText = (text: string) => {
     const id = `paste-${Math.random().toString(36).slice(2)}`;
-    const label = `${id.slice(-4)} · ${text.split(/\r?\n/).length} lines`;
-    setComposerPasteParts(props.sessionId, [...pasteParts, { id, label, text, lines: text.split(/\r?\n/).length }]);
-    setComposerDraft(props.sessionId, `${draft}[pasted text ${label}]`);
+    const lines = text.split(/\r?\n/).length;
+    const part = { id, label: `${id.slice(-4)} · ${lines} lines`, text, lines };
+    const current = getComposerPasteParts(useComposerStateStore.getState(), props.sessionId);
+    setComposerPasteParts(props.sessionId, [...current, part]);
+    return part;
   };
 
   const handleExpandPastedText = (id: string) => {
     const part = pasteParts.find((item) => item.id === id);
     if (!part) return;
-    setComposerDraft(props.sessionId, draft.replace(`[pasted text ${part.label}]`, part.text));
+    setComposerDraft(props.sessionId, draft.replace(`[pasted text ${part.label}]`, () => part.text));
     setComposerPasteParts(props.sessionId, pasteParts.filter((item) => item.id !== id));
   };
 
@@ -1988,11 +1990,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
     if (!target) return;
     setComposerDraft(props.sessionId, draft.replace(`[pasted text ${target.label}]`, ""));
     setComposerPasteParts(props.sessionId, pasteParts.filter((item) => item.id !== id));
-  };
-
-  const handleUnsupportedFileLinks = (links: string[]) => {
-    if (!links.length) return;
-    setComposerDraft(props.sessionId, `${draft}${draft && !draft.endsWith("\n") ? "\n" : ""}${links.join("\n")}`);
   };
 
   const typeComposerText = useCallback(async (text: string) => {
@@ -2880,8 +2877,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         onInsertMention={handleInsertMention}
         onRegisterCapability={handleRegisterCapability}
         inputHistory={inputHistory}
-        onPasteText={handlePasteText}
-        onUnsupportedFileLinks={handleUnsupportedFileLinks}
+        registerPastedText={registerPastedText}
         pastedText={pasteParts}
         onExpandPastedText={handleExpandPastedText}
         onRemovePastedText={handleRemovePastedText}

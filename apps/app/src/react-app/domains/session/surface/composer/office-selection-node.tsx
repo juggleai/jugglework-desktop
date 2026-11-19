@@ -1,4 +1,5 @@
 import { createContext, useContext } from "react";
+import { $richDraftText } from "./markdown-editing";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext.js";
 import {
   DecoratorNode, ParagraphNode, $applyNodeReplacement, $createTextNode, $createLineBreakNode,
@@ -143,7 +144,7 @@ export function $readOfficeComposerDraft(existing: OfficeComposerGroup[]) {
           : { bindingState: tags.length ? "needs-selection" as const : "detached" as const, referenceIds: [] as [] }) } });
       return officeInstructionToken(node.__instructionId);
     }
-    return $isElementNode(node) ? node.getChildren().map(serialize).join("") : node.getTextContent();
+    return $richDraftText(node);
   };
   return { draft: $getRoot().getChildren().map(serialize).join("\n"), groups };
 }
