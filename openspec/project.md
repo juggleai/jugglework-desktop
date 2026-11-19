@@ -18,3 +18,7 @@ JuggleWork 桌面应用（Electron + React）。pnpm monorepo，主要包：
 ## 外部服务
 
 - SkillHub 技能市场：`https://skillhub.juggle.im`，`GET /api/web/*` 匿名可读，技能包下载为 ZIP。
+
+## 云表格
+
+Docs 内置 FortuneSheet 的宿主设计见 [add-docs-spreadsheet](changes/add-docs-spreadsheet/proposal.md)。云表格和云幻灯片共用云文档视图、文件标签、一次上传和下载。PDF 由 Docs 生成后下载。云幻灯片右键菜单的剪切、复制和粘贴通过当前可见 Docs 视图的原生剪贴板命令执行。

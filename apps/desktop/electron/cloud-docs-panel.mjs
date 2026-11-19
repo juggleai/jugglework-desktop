@@ -370,6 +370,16 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
       if (!item) throw new Error("Forbidden");
       return exports.reveal(item, revealId, () => exportView(event) === item);
     });
+    // TIPS: 菜单激活来自当前可见产品页。菜单关闭后将原生焦点还给画布，再交付标准编辑事件。
+    ipcMain.handle("jugglework:docs:clipboard-command", (event, action) => {
+      const item = exportView(event);
+      if (!item || currents.get(item.ownerWindow.id) !== item ||
+        !["copy", "cut", "paste"].includes(action)) throw new Error("Forbidden");
+      if (new URL(event.senderFrame.url).origin !== item.origin)
+        throw new Error("Forbidden");
+      event.sender.focus();
+      event.sender[action]();
+    });
     ipcMain.on("jugglework:docs:layout-command", (event, input) => {
       const current = find(input);
       if (!trusted(event, input) || !current?.ready || current.denied ||

@@ -8,6 +8,28 @@ contextBridge.exposeInMainWorld("juggleworkDocsExport", {
   save: (input) => ipcRenderer.invoke("jugglework:docs:save-export", input),
   reveal: (revealId) => ipcRenderer.invoke("jugglework:docs:reveal-export", revealId),
 });
+// TIPS: 仅由真实的菜单激活事件授权同一任务里的单次剪贴板命令。
+let clipboardGesture;
+window.addEventListener("click", (event) => {
+  if (!event.isTrusted || !navigator.userActivation.isActive) return;
+  const action = event.target instanceof Element
+    ? event.target.closest("[data-jw-clipboard-action]")?.getAttribute("data-jw-clipboard-action")
+    : undefined;
+  if (!["copy", "cut", "paste"].includes(action)) return;
+  const gesture = { action };
+  clipboardGesture = gesture;
+  setTimeout(() => {
+    if (clipboardGesture === gesture) clipboardGesture = undefined;
+  }, 0);
+}, true);
+contextBridge.exposeInMainWorld("juggleworkDocsClipboard", {
+  run: (action) => {
+    if (!clipboardGesture || clipboardGesture.action !== action)
+      return Promise.reject(new Error("Clipboard action requires the menu gesture"));
+    clipboardGesture = undefined;
+    return ipcRenderer.invoke("jugglework:docs:clipboard-command", action);
+  },
+});
 ipcRenderer.on("jugglework:docs:layout-command", (_event, message) => {
   window.postMessage({ channel: "jugglework-docs-layout-command", message }, location.origin);
 });
