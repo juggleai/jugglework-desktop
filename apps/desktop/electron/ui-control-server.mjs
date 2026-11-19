@@ -11,7 +11,7 @@ import path from "node:path";
 import { app } from "electron";
 
 /** 创建本机控制服务；保存确认发送到文档所属原生页面，不激活窗口。 */
-export function createUiControlServer({ appName, appIdentifier, getWindow, prepareOfficeSave, cloudDocsRequest, readOfficeSelection, readOfficeText }) {
+export function createUiControlServer({ appName, appIdentifier, getWindow, prepareOfficeSave, cloudDocsRequest, nativeActionsRequest, readOfficeSelection, readOfficeText }) {
   let uiControlServer = null;
   let uiControlDiscoveryPath = null;
   const uiControlToken = randomBytes(32).toString("hex");
@@ -141,6 +141,20 @@ export function createUiControlServer({ appName, appIdentifier, getWindow, prepa
           if (!cloudDocsRequest) throw new Error("云文档通道不可用");
           const result = await cloudDocsRequest(await readJsonRequestBody(request));
           sendJsonResponse(response, 200, { ok: true, ...result });
+          return;
+        }
+        if (request.method === "POST" && url.pathname === "/native-actions/request") {
+          if (!nativeActionsRequest) {
+            sendJsonResponse(response, 200, { ok: false, code: "native_actions_unavailable", error: "原生能力通道不可用" });
+            return;
+          }
+          try {
+            const result = await nativeActionsRequest(await readJsonRequestBody(request));
+            sendJsonResponse(response, 200, { ok: true, result });
+          } catch (error) {
+            // TIPS: 结构化错误码原样回给 Server，方便区分"无结果"和"无法查询"。
+            sendJsonResponse(response, 200, { ok: false, code: typeof error?.code === "string" ? error.code : "native_action_failed", error: error instanceof Error ? error.message : String(error) });
+          }
           return;
         }
         if (request.method === "POST" && url.pathname === "/office/selection") {

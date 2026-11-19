@@ -1,4 +1,5 @@
 import { CloudDocsCoordinator } from "../domains/cloud-docs/cloud-docs-coordinator";
+import { NativeActionsResponder } from "../domains/native-actions/native-actions-responder";
 import { installUploadedCloudFiles } from "@/react-app/domains/cloud-docs/uploaded-files";
 /** @jsxImportSource react */
 
@@ -342,6 +343,7 @@ export function AppRoot() {
               <RootJuggleWorkServerProvider>
                 <FileWindowSessionStopCoordinator />
                 <CloudDocsCoordinator />
+                <NativeActionsResponder />
                 <DenSigninGate>
                   <AutomationActivityProvider>
                     <HostMarketplacePluginsProvider>

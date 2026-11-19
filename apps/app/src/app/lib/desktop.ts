@@ -74,6 +74,7 @@ declare global {
   interface Window {
     __JUGGLEWORK_ELECTRON__?: {
       cloudDocs?: CloudDocsBridge;
+      nativeActions?: import("../../react-app/domains/native-actions/types").NativeActionsBridge;
       desktopNotifications?: {
         /** 订阅主进程已校验的系统通知动作。 */
         onAction?: (callback: (action: DesktopNotificationAction) => void) => () => void;

@@ -6,6 +6,7 @@ import { z } from "zod";
 import { responseLanguageInstruction } from "@jugglework/types/response-language";
 import { generateArtifactFiles } from "./artifact-generate.js";
 import { CLOUD_DOCS_INSTRUCTION } from "./cloud-docs-context.js";
+import { NATIVE_ACTIONS_INSTRUCTION } from "./native-actions-context.js";
 import { OFFICE_EDITING_INSTRUCTION, renderOfficeEditingContext } from "./office-editing-context.js";
 import type { JuggleWorkAffordanceDescriptor, JuggleWorkAffordanceEffects } from "@jugglework/types/jugglework-affordance";
 import {
@@ -379,6 +380,45 @@ const cloudDocsAffordances: JuggleWorkAffordanceDescriptor[] = [
   },
 ];
 
+const nativeActionsProvider = { id: "jugglework-native", kind: "builtin" } as const;
+/**
+ * Read-only native JuggleWork data, run as the signed-in user of the calling
+ * turn. Writes (calendar, meetings, IM) are not offered here yet.
+ */
+const nativeActionAffordances: JuggleWorkAffordanceDescriptor[] = [
+  {
+    id: "product_tasks.list", kind: "query", title: "List my JuggleWork tasks",
+    description: "Query the user's native JuggleWork tasks (the Tasks page), NOT this conversation's internal todo list. Defaults: view=assigned (assigned to me) and status=todo (unfinished). For tasks due on a day pass dueOn as the user's local date YYYY-MM-DD; it covers local midnight to the next midnight and excludes earlier overdue tasks. Results are one page: when hasMore is true say the list is partial and pass nextCursor as cursor with the same other arguments. An empty items array means no matches; an error means the query failed, never that there are no tasks.",
+    provider: nativeActionsProvider,
+    arguments: [
+      { name: "dueOn", type: "string", required: false, description: "Local calendar date YYYY-MM-DD. Not combinable with dueFrom/dueBefore." },
+      { name: "dueFrom", type: "string", required: false, description: "Inclusive ISO instant lower bound on due time." },
+      { name: "dueBefore", type: "string", required: false, description: "Exclusive ISO instant upper bound on due time." },
+      { name: "status", type: "string", required: false, description: "todo (default), completed or canceled." },
+      { name: "view", type: "string", required: false, description: "assigned (default), created, delegated or following." },
+      { name: "limit", type: "number", required: false, description: "Page size, default 20, at most 50." },
+      { name: "cursor", type: "string", required: false, description: "nextCursor from the previous page of the same query." },
+    ],
+    effects: affordanceReadEffects, confirmation: "never", availability: { enabled: true }, executor: { kind: "jugglework" },
+  },
+  {
+    id: "contacts.search", kind: "query", title: "Search organization contacts",
+    description: "Find people in the signed-in organization's directory by name, account or email. Returns at most 10 candidates with an opaque ref. If several candidates match, show their distinguishing details and ask the user to choose; never pick a person yourself. truncated=true means more people matched than were returned.",
+    provider: nativeActionsProvider,
+    arguments: [
+      { name: "query", type: "string", required: true, description: "Name, account or email fragment." },
+      { name: "limit", type: "number", required: false, description: "At most 10." },
+    ],
+    effects: affordanceReadEffects, confirmation: "never", availability: { enabled: true }, executor: { kind: "jugglework" },
+  },
+];
+
+/** 原生能力调用的真实会话与轮次；身份由该轮登记的登录作用域决定。 */
+function nativeActionTurn(context: OpenCodeContext) {
+  if (!context.sessionID || !context.messageID) throw new Error("Native actions require the calling session and message");
+  return { sessionId: context.sessionID, messageId: context.messageID };
+}
+
 /** 云文档工具调用的真实对话与轮次，用于解析本轮可写范围。 */
 function cloudDocsTurn(context: OpenCodeContext) {
   if (!context.sessionID || !context.messageID) throw new Error("Cloud documents require the calling session and message");
@@ -605,7 +645,7 @@ async function readJuggleWorkAgentContext(
     readEngineMcpDescriptors(engineMcpStatusClient, engineMcpStatusDirectory),
   ]);
   const contributions = buildJuggleWorkProviderContributions(skills, mcps);
-  const providerAffordances = [...contributions.flatMap((contribution) => contribution.affordances), ...officeAffordances, ...cloudDocsAffordances];
+  const providerAffordances = [...contributions.flatMap((contribution) => contribution.affordances), ...officeAffordances, ...cloudDocsAffordances, ...nativeActionAffordances];
   const uiContext = isRecord(uiResult) && isRecord(uiResult.context) ? uiResult.context : null;
   if (!uiContext) {
     return {
@@ -650,6 +690,13 @@ async function queryJuggleWorkAffordance(rawArgs: unknown, context: OpenCodeCont
     if (args.mode) query.set("mode", args.mode);
     if (args.blockIds?.length) query.set("blockIds", args.blockIds.join(","));
     return affordanceResult(request.id, await serverGet(`${base}/read?${query}`), affordanceReadEffects);
+  }
+  if (request.id === "product_tasks.list" || request.id === "contacts.search") {
+    const workspace = await resolveContextWorkspace(context.workspaceId ?? context.workspaceID, context);
+    const path = request.id === "product_tasks.list" ? "product-tasks" : "contacts";
+    return affordanceResult(request.id, await postJson(`/workspace/${encodeURIComponent(workspace.id)}/native-actions/${path}`, {
+      ...nativeActionTurn(context), args: request.args ?? {},
+    }), affordanceReadEffects);
   }
   if (request.id === "office.tools") {
     if (!context.sessionID || !context.messageID) throw new Error("Office requires the calling session and message");
@@ -1206,6 +1253,7 @@ export const JuggleWorkExtensionsPreview = async (factoryInput?: unknown) => {
       createInstructionSection("task-execution", JUGGLEWORK_TASK_EXECUTION_INSTRUCTION),
       createInstructionSection("office-editing", `${OFFICE_EDITING_INSTRUCTION}\n${renderOfficeEditingContext(officeContext)}`),
       createInstructionSection("cloud-docs", CLOUD_DOCS_INSTRUCTION),
+      createInstructionSection("native-actions", NATIVE_ACTIONS_INSTRUCTION),
       createInstructionSection("file-delivery", "For Shell/Python document generation use jugglework_artifact_generate (artifact.generate_files). It runs the executable in a dedicated output directory and automatically collects files, even with silent stdout. Save only deliverables there; use the system temporary directory for scripts/cache. Use absolute input/script paths. Declare outputs for files written elsewhere in the workspace. Do not use background child processes."),
       createInstructionSection("skill-authoring", skillAuthoring.prompt),
       createInstructionSection("connect-skills", skillCatalog.instruction),

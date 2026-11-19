@@ -109,6 +109,11 @@ import { registerCloudDocsRoutes } from "./routes/cloud-docs.js";
 import { requestCloudDocsViaDesktop } from "./cloud-docs/bridge.js";
 import { CloudDocsService } from "./cloud-docs/service.js";
 import { CloudDocTurns } from "./cloud-docs/turns.js";
+import { requestNativeActionViaDesktop } from "./native-actions/bridge.js";
+import { NativeActionsService } from "./native-actions/service.js";
+import { NativeActionTurns } from "./native-actions/turns.js";
+import type { NativeActionScope } from "./native-actions/schema.js";
+import { registerNativeActionRoutes } from "./routes/native-actions.js";
 import { runtimeStorageDir } from "./runtime-db.js";
 import { FileDeliveryService } from "./artifacts/delivery.js";
 import { registerFileDeliveryRoutes } from "./routes/file-deliveries.js";
@@ -1042,6 +1047,8 @@ export async function startServer(config: ServerConfig, options: {
   let officeDocuments: OfficeDocuments | undefined;
   const cloudDocTurns = new CloudDocTurns(500, join(runtimeStorageDir(config), "cloud-doc-changes.json"));
   const cloudDocs = new CloudDocsService(cloudDocTurns, requestCloudDocsViaDesktop);
+  const nativeActionTurns = new NativeActionTurns();
+  const nativeActions = new NativeActionsService(nativeActionTurns, requestNativeActionViaDesktop);
   const sessionMutations = createSessionMutationCoordinator({
     allocateGeneration: sessionRunJournal.allocateGeneration,
     initialRuns: sessionRunJournal.listActive(),
@@ -1640,6 +1647,8 @@ export async function startServer(config: ServerConfig, options: {
     officeDocuments,
     cloudDocTurns,
     cloudDocs,
+    nativeActionTurns,
+    nativeActions,
     localOfficeFiles,
     (automationId, prepareOptions) => automationExecutor.prepareSession(automationId, prepareOptions),
   );
@@ -3126,6 +3135,8 @@ function createRoutes(
   officeDocuments: OfficeDocuments,
   cloudDocTurns: CloudDocTurns,
   cloudDocs: CloudDocsService,
+  nativeActionTurns: NativeActionTurns,
+  nativeActions: NativeActionsService,
   localOfficeFiles: LocalOfficeFiles,
   prepareAutomationSession: (
     automationId: string,
@@ -3245,10 +3256,12 @@ function createRoutes(
       const boundPrompt = run && workspace.workspaceType !== "remote"
         ? fileDeliveries.preparePrompt(workspace.id, sessionId, run.runId, prompt)
         : prompt;
-      const { officeSelectionRefs, officeInstructions, cloudDocTurn, ...enginePrompt } = boundPrompt;
+      const { officeSelectionRefs, officeInstructions, cloudDocTurn, nativeActionScope, ...enginePrompt } = boundPrompt;
       normalizeCloudDocPromptParts(enginePrompt.parts);
-      if (typeof enginePrompt.messageID === "string" && workspace.workspaceType !== "remote")
+      if (typeof enginePrompt.messageID === "string" && workspace.workspaceType !== "remote") {
         cloudDocTurns.register(workspace.id, sessionId, enginePrompt.messageID, (cloudDocTurn as import("./cloud-docs/turns.js").CloudDocTurnInput | undefined) ?? { currentTenantId: null, references: [], activeDoc: null });
+        nativeActionTurns.register(workspace.id, sessionId, enginePrompt.messageID, nativeActionScope as NativeActionScope | undefined);
+      }
       if (workspace.workspaceType === "remote" && ((Array.isArray(officeSelectionRefs) && officeSelectionRefs.length) || (Array.isArray(officeInstructions) && officeInstructions.length)))
         throw new ApiError(409, "office_selection_local_only", "选区编辑需要本机文档会话");
       if (workspace.workspaceType !== "remote" && typeof enginePrompt.messageID === "string") {
@@ -4272,6 +4285,10 @@ function createRoutes(
   });
   registerOfficeRoutes({ routes, config, documents: officeDocuments, jsonResponse, readJsonBody, ensureWritable, requireClientScope, resolveWorkspace });
   registerCloudDocsRoutes({ routes, config, service: cloudDocs, jsonResponse, readJsonBody, ensureWritable, requireClientScope, resolveWorkspace,
+    resolveTurn: async (workspaceId, sessionId, messageId) =>
+      (await fileDeliveries!.messageOrigin(workspaceId, sessionId, messageId))?.turnId ?? null,
+  });
+  registerNativeActionRoutes({ routes, config, service: nativeActions, jsonResponse, readJsonBody, resolveWorkspace,
     resolveTurn: async (workspaceId, sessionId, messageId) =>
       (await fileDeliveries!.messageOrigin(workspaceId, sessionId, messageId))?.turnId ?? null,
   });

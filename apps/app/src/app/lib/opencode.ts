@@ -28,6 +28,8 @@ type FieldsResult<T> =
 
 type PromptAsyncParameters = Parameters<ReturnType<typeof createOpencodeClient>["session"]["promptAsync"]>[0] & {
   juggleworkCloudDocTurn?: import("./cloud-doc-turn").CloudDocTurnInput;
+  /** Signed-in identity frozen for native conversation actions on this turn. */
+  juggleworkNativeActionScope?: { baseUrl: string; userId: string; organizationId: string } | null;
   juggleworkOfficeSelections?: { officeSelectionRefs?: string[]; officeInstructions?: import("@jugglework/types/office").OfficeSelectionInstruction[] };
   reasoning_effort?: string;
   juggleworkDelivery?: "steer";
@@ -812,6 +814,7 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
       juggleworkDefaultResponseLanguage,
       juggleworkOfficeSelections,
       juggleworkCloudDocTurn,
+      juggleworkNativeActionScope,
       model: selectedModel,
       ...body
     } = parameters;
@@ -827,7 +830,10 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
         const result = await juggleworkSessionClient.startSessionRun(juggleworkMount.workspaceId, sessionID, {
           origin: "local-renderer",
           startCommandCorrelationId: juggleworkAdmissionId ?? commandCorrelationId(),
-          prompt: { ...(selectedModel ? { model: selectedModel } : {}), ...body, ...juggleworkOfficeSelections, cloudDocTurn: juggleworkCloudDocTurn },
+          prompt: {
+            ...(selectedModel ? { model: selectedModel } : {}), ...body, ...juggleworkOfficeSelections, cloudDocTurn: juggleworkCloudDocTurn,
+            ...(juggleworkNativeActionScope ? { nativeActionScope: juggleworkNativeActionScope } : {}),
+          },
           ...(juggleworkDefaultResponseLanguage ? {
             responseLanguage: {
               ...(juggleworkDetectedResponseLanguage ? { detected: juggleworkDetectedResponseLanguage } : {}),

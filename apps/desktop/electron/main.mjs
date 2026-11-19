@@ -8,6 +8,7 @@ import { readMeetingConfig } from "./meeting-config.mjs";
 import { createCloudDocsPanel } from './cloud-docs-panel.mjs';
 import { createCloudDocAttachments } from "./cloud-doc-attachments.mjs";
 import { createCloudDocsApi } from "./cloud-docs-api.mjs";
+import { createNativeActionsApi } from "./native-actions-api.mjs";
 import "./socket-tos-compat.mjs";
 import { createToonFactoryRuntime } from "./toonFactoryRuntime.mjs";
 import { execFile, execFileSync, spawn } from "node:child_process";
@@ -208,8 +209,10 @@ const applicationMenu = createApplicationMenu({
 });
 
 const cloudDocsApi = createCloudDocsApi({ getWindow: () => mainWindow });
+const nativeActionsApi = createNativeActionsApi({ getWindow: () => mainWindow });
 const uiControlServer = createUiControlServer({
   cloudDocsRequest: (input) => cloudDocsApi.request(input),
+  nativeActionsRequest: (input) => nativeActionsApi.request(input),
   appName: APP_NAME,
   appIdentifier: APP_IDENTIFIER,
   getWindow: () => createMainWindow(),
@@ -3681,6 +3684,7 @@ for (const operation of ["open", "read", "write", "resize", "terminate", "restar
 browserPanel.registerIpc(ipcMain);
 cloudDocsPanel.registerIpc(ipcMain);
 cloudDocsApi.registerIpc(ipcMain);
+nativeActionsApi.registerIpc(ipcMain);
 officePanel.registerIpc(ipcMain);
 fileWindows.registerIpc(ipcMain);
 fileEditor.registerIpc(ipcMain);

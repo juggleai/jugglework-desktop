@@ -360,6 +360,12 @@ contextBridge.exposeInMainWorld("__JUGGLEWORK_ELECTRON__", {
       return () => ipcRenderer.removeListener("jugglework:file-window:open-in-panel", handler);
     },
   },
+  nativeActions: {
+    /** 监听本地 Server 经主进程转来的原生能力请求。 */
+    onRequest(callback) { const handler = (_event, value) => callback(value); ipcRenderer.on('jugglework:native-actions:request', handler); return () => ipcRenderer.removeListener('jugglework:native-actions:request', handler); },
+    /** 返回原生能力请求结果。 */
+    respond: (value) => ipcRenderer.send('jugglework:native-actions:response', value),
+  },
   cloudDocs: {
     status: instanceId => ipcRenderer.invoke("jugglework:docs:status", instanceId),
     /** 以一次性凭据进入当前组织的云文档。 */

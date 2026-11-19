@@ -227,6 +227,10 @@ function startFakeJuggleWorkServer(options: { createSkillAvailable?: boolean; re
         return Response.json({ ok: true, received: record.body });
       }
 
+      if (/^\/workspace\/ws_[12]\/native-actions\/(product-tasks|contacts)$/.test(url.pathname)) {
+        return Response.json({ items: [], hasMore: false, nextCursor: null });
+      }
+
       return Response.json({ message: "Not found" }, { status: 404 });
     },
   });
@@ -381,6 +385,24 @@ describe("JuggleWorkExtensionsPreview session tools", () => {
 
     expect(parsed.result.sessionId).toBe("ses_archive");
     expect(parsed.result.messages.at(-1)?.text).toContain("archive importer");
+  });
+
+  test("routes native task and contact queries with only the calling turn as identity", async () => {
+    const { requests } = startFakeJuggleWorkServer();
+    const plugin = await JuggleWorkExtensionsPreview();
+    const context = { sessionID: "ses_alpha", messageID: "msg_assistant", workspaceId: "ws_1" };
+
+    const tasks = JSON.parse(await plugin.tool.jugglework_query.execute({ id: "product_tasks.list", args: { dueOn: "2026-11-19" } }, context));
+    expect(tasks).toMatchObject({ ok: true, id: "product_tasks.list", effects: { data: "read", ui: "none", external: false } });
+    await plugin.tool.jugglework_query.execute({ id: "contacts.search", args: { query: "张" } }, context);
+
+    const native = requests.filter((entry) => entry.pathname.includes("/native-actions/"));
+    expect(native).toEqual([
+      expect.objectContaining({ pathname: "/workspace/ws_1/native-actions/product-tasks", method: "POST", body: { sessionId: "ses_alpha", messageId: "msg_assistant", args: { dueOn: "2026-11-19" } } }),
+      expect.objectContaining({ pathname: "/workspace/ws_1/native-actions/contacts", method: "POST", body: { sessionId: "ses_alpha", messageId: "msg_assistant", args: { query: "张" } } }),
+    ]);
+    // Without the calling turn there is no identity to run under.
+    await expect(plugin.tool.jugglework_query.execute({ id: "product_tasks.list", args: {} }, { workspaceId: "ws_1" })).rejects.toThrow(/calling session/);
   });
 
   test("searches past chat transcript text and prefers the user's matching message", async () => {

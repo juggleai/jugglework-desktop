@@ -20,6 +20,7 @@ import { captureAnalyticsEvent, markTaskRunStart } from "@/app/lib/analytics";
 import { trackSessionActive, trackTaskStarted } from "@/app/lib/den-telemetry";
 import { readWorkspaceProjectDimension } from "@/react-app/shell/session-memory";
 import { clearSessionTodos } from "./session-sync";
+import { liveNativeActionScope } from "../../native-actions/native-actions-responder";
 
 export type SessionDraftSubmissionInput = {
   draft: ComposerDraft; sessionId: string; workspaceId: string; workspaceRoot: string;
@@ -112,6 +113,7 @@ export async function submitSessionDraft(input: SessionDraftSubmissionInput) {
           }
           const request = {
             sessionID: sessionId, parts, juggleworkOfficeSelections: office, juggleworkCloudDocTurn: cloudDocTurn,
+            juggleworkNativeActionScope: liveNativeActionScope(),
             ...(submission.delivery !== "steer" && submission.messageID ? { messageID: submission.messageID } : {}),
             juggleworkDetectedResponseLanguage: detectResponseLanguage(draft) ?? undefined,
             juggleworkDefaultResponseLanguage: currentLocale() === "zh" ? "zh" as const : "en" as const,
