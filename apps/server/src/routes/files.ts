@@ -1,7 +1,10 @@
 import { createReadStream } from "node:fs";
-import { readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { Readable } from "node:stream";
+import { isSupportedWorkspaceTextFilePath } from "@jugglework/types/file-window";
+import { getOfficeDocumentKind } from "@jugglework/types/office";
+import { assertLocalTextFileBytes, assertLocalTextFileWritable, readLocalTextFile } from "../office/local-files.js";
 import { recordAudit } from "../audit.js";
 import { ApiError } from "../errors.js";
 import { FileSessionStore } from "../file-sessions.js";
@@ -45,7 +48,7 @@ interface RegisterFileRoutesOptions {
   /** 宿主重命名后同步产物身份，不改写历史快照。 */
   onFileRenamed?: (workspaceId: string, from: string, to: string) => void;
   /** 在修改磁盘路径前校验编辑模型，覆盖文件和父目录操作。 */
-  beforeFileMutation?: (workspaceId: string, paths: string[]) => void;
+  beforeFileMutation?: (workspaceId: string, paths: string[], operation?: "raw-text-write" | "content-text-write") => void;
   /** 文件助手登记的外部文件仍读取原路径，普通工作区路径保持既有解析。 */
   resolveExternalFile?: (workspaceId: string, path: string) => Promise<{ absolutePath: string } | null>;
 }
@@ -93,36 +96,7 @@ export function normalizeWorkspaceRelativePath(input: string, options: { allowSu
   return parts.join("/");
 }
 
-export function isSupportedWorkspaceTextFilePath(relativePath: string): boolean {
-  const lowered = relativePath.toLowerCase();
-  return [
-    ".md",
-    ".mdx",
-    ".markdown",
-    ".csv",
-    ".tsv",
-    ".json",
-    ".jsonc",
-    ".yaml",
-    ".yml",
-    ".toml",
-    ".xml",
-    ".html",
-    ".htm",
-    ".ts",
-    ".tsx",
-    ".js",
-    ".jsx",
-    ".mjs",
-    ".cjs",
-    ".css",
-    ".scss",
-    ".txt",
-    ".log",
-  ].some((ext) =>
-    lowered.endsWith(ext),
-  );
-}
+export { isSupportedWorkspaceTextFilePath } from "@jugglework/types/file-window";
 
 function resolveSafeChildPath(root: string, child: string): string {
   const rootResolved = resolve(root);
@@ -523,6 +497,29 @@ export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
     scopeRank,
   } = options;
   const fileSessions = new FileSessionStore();
+
+  /** 仅 raw/content 的明确文本写入可解析外部原件，其他 CRUD 保持工作区边界。 */
+  const externalTextWriteTarget = async (workspaceId: string, path: string, bytes: Buffer, baseUpdatedAt: number | null) => {
+    const external = await options.resolveExternalFile?.(workspaceId, path);
+    if (!external) return null;
+    if (getOfficeDocumentKind(path) || getOfficeDocumentKind(external.absolutePath))
+      throw new ApiError(409, "office_native_edit_required", "请通过已打开的 Office 文档编辑和保存原文件");
+    if (![path, external.absolutePath].every((value) => isSupportedWorkspaceTextFilePath(value) && !/\.(html|htm)$/i.test(value)))
+      throw new ApiError(403, "file_preview_read_only", "此文件仅支持只读预览");
+    assertLocalTextFileBytes(bytes);
+    if (baseUpdatedAt === null)
+      throw new ApiError(400, "base_updated_at_required", "保存原文件需要读取时的 baseUpdatedAt");
+    await assertExternalUnchanged(external.absolutePath, baseUpdatedAt);
+    return external;
+  };
+
+  const assertExternalUnchanged = async (path: string, baseUpdatedAt: number) => {
+    const current = await stat(path);
+    if (current.mtimeMs !== baseUpdatedAt)
+      throw new ApiError(409, "conflict", "File changed since it was loaded", { baseUpdatedAt, currentUpdatedAt: current.mtimeMs });
+    await readLocalTextFile(path);
+    await assertLocalTextFileWritable(path);
+  };
 
   const serializeFileSession = (session: {
     id: string;
@@ -1073,7 +1070,7 @@ export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
       throw new ApiError(413, "file_too_large", "File exceeds size limit", { maxBytes, size: info.size });
     }
 
-    const content = await readFile(absPath, "utf8");
+    const content = external ? (await readLocalTextFile(absPath)).toString("utf8") : await readFile(absPath, "utf8");
     return jsonResponse({ path: relativePath, content, bytes: info.size, updatedAt: info.mtimeMs });
   });
 
@@ -1144,13 +1141,14 @@ export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
     const baseUpdatedAt =
       typeof baseUpdatedAtRaw === "number" && Number.isFinite(baseUpdatedAtRaw) ? baseUpdatedAtRaw : null;
     const force = body.force === true;
-    const absPath = resolveSafeChildPath(workspace.path, relativePath);
+    const external = await externalTextWriteTarget(workspace.id, relativePath, bytes, baseUpdatedAt);
+    const absPath = external?.absolutePath ?? resolveSafeChildPath(workspace.path, relativePath);
     const before = (await exists(absPath)) ? await stat(absPath) : null;
     if (before && !before.isFile()) {
       throw new ApiError(400, "invalid_path", "Path must point to a file");
     }
     const beforeUpdatedAt = before ? before.mtimeMs : null;
-    if (!force && beforeUpdatedAt !== null && baseUpdatedAt !== null && beforeUpdatedAt !== baseUpdatedAt) {
+    if ((external || !force) && beforeUpdatedAt !== null && baseUpdatedAt !== null && beforeUpdatedAt !== baseUpdatedAt) {
       throw new ApiError(409, "conflict", "File changed since it was loaded", { baseUpdatedAt, currentUpdatedAt: beforeUpdatedAt });
     }
 
@@ -1161,11 +1159,18 @@ export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
       paths: [absPath],
     });
 
-    await ensureDir(dirname(absPath));
+    if (external) await assertExternalUnchanged(absPath, baseUpdatedAt!);
+    else await ensureDir(dirname(absPath));
     const tmp = `${absPath}.tmp-${shortId()}`;
-    options.beforeFileMutation?.(workspace.id, [relativePath]);
-    await writeFile(tmp, bytes);
-    await rename(tmp, absPath);
+    options.beforeFileMutation?.(workspace.id, [relativePath], external ? "raw-text-write" : undefined);
+    try {
+      await writeFile(tmp, bytes, external && before ? { mode: before.mode } : undefined);
+      if (external && before && process.platform !== "win32") await chmod(tmp, before.mode & 0o777);
+      if (external) await assertExternalUnchanged(absPath, baseUpdatedAt!);
+      await rename(tmp, absPath);
+    } finally {
+      await rm(tmp, { force: true });
+    }
     const after = await stat(absPath);
     const revision = fileRevision(after);
     recordWorkspaceFileEvent(workspace.id, { type: "write", path: relativePath, revision });
@@ -1189,9 +1194,6 @@ export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
 
     const requestedPath = String(body.path ?? "");
     const relativePath = normalizeWorkspaceRelativePath(requestedPath, { allowSubdirs: true });
-    if (!isSupportedWorkspaceTextFilePath(relativePath)) {
-      throw new ApiError(400, "invalid_path", "Only supported text artifact files can be edited inline");
-    }
 
     if (typeof body.content !== "string") {
       throw new ApiError(400, "invalid_payload", "content must be a string");
@@ -1208,14 +1210,18 @@ export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
       typeof baseUpdatedAtRaw === "number" && Number.isFinite(baseUpdatedAtRaw) ? baseUpdatedAtRaw : null;
     const force = body.force === true;
 
-    const absPath = resolveSafeChildPath(workspace.path, relativePath);
+    const external = await externalTextWriteTarget(workspace.id, relativePath, Buffer.from(content, "utf8"), baseUpdatedAt);
+    if (!isSupportedWorkspaceTextFilePath(relativePath)) {
+      throw new ApiError(400, "invalid_path", "Only supported text artifact files can be edited inline");
+    }
+    const absPath = external?.absolutePath ?? resolveSafeChildPath(workspace.path, relativePath);
 
     const before = (await exists(absPath)) ? await stat(absPath) : null;
     if (before && !before.isFile()) {
       throw new ApiError(400, "invalid_path", "Path must point to a file");
     }
     const beforeUpdatedAt = before ? before.mtimeMs : null;
-    if (!force && beforeUpdatedAt !== null && baseUpdatedAt !== null && beforeUpdatedAt !== baseUpdatedAt) {
+    if ((external || !force) && beforeUpdatedAt !== null && baseUpdatedAt !== null && beforeUpdatedAt !== baseUpdatedAt) {
       throw new ApiError(409, "conflict", "File changed since it was loaded", {
         baseUpdatedAt,
         currentUpdatedAt: beforeUpdatedAt,
@@ -1229,11 +1235,18 @@ export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
       paths: [absPath],
     });
 
-    await ensureDir(dirname(absPath));
+    if (external) await assertExternalUnchanged(absPath, baseUpdatedAt!);
+    else await ensureDir(dirname(absPath));
     const tmp = `${absPath}.tmp-${shortId()}`;
-    options.beforeFileMutation?.(workspace.id, [relativePath]);
-    await writeFile(tmp, content, "utf8");
-    await rename(tmp, absPath);
+    options.beforeFileMutation?.(workspace.id, [relativePath], external ? "content-text-write" : undefined);
+    try {
+      await writeFile(tmp, content, { encoding: "utf8", ...(external && before ? { mode: before.mode } : {}) });
+      if (external && before && process.platform !== "win32") await chmod(tmp, before.mode & 0o777);
+      if (external) await assertExternalUnchanged(absPath, baseUpdatedAt!);
+      await rename(tmp, absPath);
+    } finally {
+      await rm(tmp, { force: true });
+    }
     const after = await stat(absPath);
     const revision = fileRevision(after);
 

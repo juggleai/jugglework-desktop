@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import { test } from "node:test";
 import { EventEmitter } from "node:events";
+import { CALENDAR_WINDOW_GESTURE, installCalendarWindowGestures } from "./calendar-window-gestures.mjs";
 
 test("shared UI initialization is harmless but unrelated desktop IPC stays denied", async () => {
   /** @type {{ bridge?: { invokeDesktop(command: string, ...args: unknown[]): Promise<unknown> } }} */
@@ -41,7 +42,8 @@ test("subscription IDs remain private; early unsubscribe cancels Main after invo
   const source = readFileSync(new URL("./file-window-preload.mjs", import.meta.url), "utf8").replace('import { contextBridge, ipcRenderer } from "electron";', "");
   vm.runInNewContext(source, { process: { platform: "darwin" }, contextBridge: { exposeInMainWorld(_name, value) { bridge = value; } }, ipcRenderer: ipc });
   const events = [];
-  const stop = bridge.fileWindow.subscribeSessionEvents((event) => events.push(event));
+  const stop = bridge.fileWindow.subscribeSessionEvents({ workspaceId: "workspace-a" }, (event) => events.push(event));
+  assert.deepEqual(JSON.parse(JSON.stringify(calls[0])), ["jugglework:file-window:session-subscribe", { workspaceId: "workspace-a" }]);
   assert.equal(typeof stop, "function");
   ipc.emit("jugglework:file-window:session-event", {}, { id: "private-id", event: { type: "server.connected", properties: {} } });
   complete("private-id");
@@ -51,7 +53,8 @@ test("subscription IDs remain private; early unsubscribe cancels Main after invo
   stop(); stop();
   assert.equal(ipc.listenerCount("jugglework:file-window:session-event"), 0);
   assert.equal(calls.filter(([name]) => name.endsWith("session-unsubscribe")).length, 1);
-  const stopEarly = bridge.fileWindow.subscribeSessionEvents(() => assert.fail("unsubscribed"));
+  const stopEarly = bridge.fileWindow.subscribeSessionEvents({ workspaceId: "workspace-b" }, () => assert.fail("unsubscribed"));
+  assert.deepEqual(JSON.parse(JSON.stringify(calls.at(-1))), ["jugglework:file-window:session-subscribe", { workspaceId: "workspace-b" }]);
   stopEarly();
   complete("second-private-id");
   await Promise.resolve();
@@ -90,7 +93,9 @@ test("only Main preload exposes stop preparation and acknowledges cleanup withou
   const ipc = Object.assign(new EventEmitter(), { invoke: async (...args) => { calls.push(args); }, sendSync: () => null });
   const calls = [];
   const load = (name) => vm.runInNewContext(readFileSync(new URL(name, import.meta.url), "utf8")
-    .replace(/^import .* from "electron";$/m, ""), {
+    .replace(/^import .* from "electron";$/m, "")
+    .replace('import { CALENDAR_WINDOW_GESTURE, installCalendarWindowGestures } from "./calendar-window-gestures.mjs";', ""), {
+    CALENDAR_WINDOW_GESTURE, installCalendarWindowGestures,
     process: { platform: "darwin", versions: {} }, contextBridge: { exposeInMainWorld(_name, value) { bridge = value; } }, ipcRenderer: ipc,
   });
   load("./file-window-preload.mjs");

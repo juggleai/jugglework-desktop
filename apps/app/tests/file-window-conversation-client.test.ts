@@ -10,8 +10,8 @@ import { t } from "../src/i18n";
 test("event Response releases preload subscription on abort and cancellation", async () => {
   for (const mode of ["abort", "cancel"] as const) {
     const controller = new AbortController();
-    let emit!: Parameters<NonNullable<FileWindowBridge["subscribeSessionEvents"]>>[0], disposed = 0, connected = 0;
-    const response = fileWindowEventResponse({ subscribeSessionEvents(listener) { emit = listener; return () => { disposed++; }; } }, controller.signal, () => { connected++; });
+    let emit!: Parameters<NonNullable<FileWindowBridge["subscribeSessionEvents"]>>[1], disposed = 0, connected = 0;
+    const response = fileWindowEventResponse({ subscribeSessionEvents(input, listener) { expect(input).toEqual({ workspaceId: "ws" }); emit = listener; return () => { disposed++; }; } }, { workspaceId: "ws" }, controller.signal, () => { connected++; });
     const reader = response.body!.getReader();
     emit({ type: "server.connected", properties: {} });
     expect(new TextDecoder().decode((await reader.read()).value)).toContain('"type":"server.connected"');
@@ -20,6 +20,40 @@ test("event Response releases preload subscription on abort and cancellation", a
     expect(disposed).toBe(1);
     emit({ type: "server.heartbeat", properties: {} });
     expect((await reader.read()).done).toBe(true);
+  }
+});
+
+test("parallel SDK streams bind their URL workspace and cancel independently across tab changes", async () => {
+  const previousWindow = globalThis.window;
+  const listeners = new Map<string, (event: { type: string; properties: object }) => void>();
+  const disposed: string[] = [];
+  Object.defineProperty(globalThis, "window", { configurable: true, value: {
+    location: { pathname: "/file-window.html" },
+    __JUGGLEWORK_ELECTRON__: { fileWindow: { subscribeSessionEvents({ workspaceId }: { workspaceId: string }, listener: (event: { type: string; properties: object }) => void) {
+      listeners.set(workspaceId, listener); return () => { disposed.push(workspaceId); };
+    } } },
+  } });
+  const a = new AbortController(), b = new AbortController();
+  try {
+    const first = await createClient("http://127.0.0.1:1234/workspace/file%20a/opencode", "/a", { mode: "jugglework" }).event.subscribe(undefined, { signal: a.signal });
+    const second = await createClient("http://127.0.0.1:1234/workspace/file-b/opencode", "/b", { mode: "jugglework" }).event.subscribe(undefined, { signal: b.signal });
+    const ia = first.stream[Symbol.asyncIterator](), ib = second.stream[Symbol.asyncIterator]();
+    const na = ia.next(), nb = ib.next();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect([...listeners.keys()]).toEqual(["file a", "file-b"]);
+    listeners.get("file a")!({ type: "session.status", properties: { sessionID: "ses-a", status: { type: "busy" } } });
+    listeners.get("file-b")!({ type: "session.status", properties: { sessionID: "ses-b", status: { type: "idle" } } });
+    expect((await na).value?.properties).toMatchObject({ sessionID: "ses-a" });
+    expect((await nb).value?.properties).toMatchObject({ sessionID: "ses-b" });
+    a.abort(); await ia.return?.();
+    expect(disposed).toEqual(["file a"]);
+    const nextB = ib.next(); listeners.get("file-b")!({ type: "server.heartbeat", properties: {} });
+    expect((await nextB).value?.type).toBe("server.heartbeat");
+    b.abort(); await ib.return?.();
+    expect(disposed).toEqual(["file a", "file-b"]);
+  } finally {
+    a.abort(); b.abort();
+    if (previousWindow === undefined) Reflect.deleteProperty(globalThis, "window"); else Reflect.set(globalThis, "window", previousWindow);
   }
 });
 
@@ -37,12 +71,13 @@ test("real SDK uses tokenless Main fetch, shared admission/abort and preload SSE
     if (path.endsWith("/abort")) return Response.json({ abortRequested: true });
     throw new Error(`unexpected endpoint ${path}`);
   } });
-  let listener!: Parameters<NonNullable<FileWindowBridge["subscribeSessionEvents"]>>[0], unsubscribed = 0;
+  let listener!: Parameters<NonNullable<FileWindowBridge["subscribeSessionEvents"]>>[1], unsubscribed = 0;
   const controller = new AbortController();
   Object.defineProperty(globalThis, "window", { configurable: true, value: {
     location: { pathname: "/file-window.html" },
+    localStorage: { getItem: () => null },
     __JUGGLEWORK_ELECTRON__: {
-      fileWindow: { subscribeSessionEvents(callback: typeof listener) { listener = callback; return () => { unsubscribed++; }; } },
+      fileWindow: { subscribeSessionEvents(input: { workspaceId: string }, callback: typeof listener) { expect(input).toEqual({ workspaceId: "ws_file" }); listener = callback; return () => { unsubscribed++; }; } },
       invokeDesktop: async (command: string, url: string, init: RequestInit) => {
         expect(command).toBe("__fetch");
         expect(new Headers(init.headers).has("authorization")).toBe(false);

@@ -24,7 +24,7 @@ test("bundled preload executes with only sandbox electron require and retains th
         };
       },
     });
-    assert.deepEqual(Object.keys(bridge).sort(), ["fileEditor", "fileWindow", "invokeDesktop", "office", "platform"]);
+    assert.deepEqual(Object.keys(bridge).sort(), ["cloudDocs", "fileEditor", "fileWindow", "invokeDesktop", "office", "platform"]);
     await bridge.invokeDesktop("__setNativeTheme", "dark");
     await bridge.invokeDesktop("__setApplicationMenuVisible", false);
     assert.equal(calls.length, 0);
@@ -50,7 +50,8 @@ test("build, dev and packaged Main share the generated preload path", async () =
     const source = await read(entry);
     const build = source.indexOf('"build-file-window-preload.mjs"');
     assert.ok(build > source.indexOf('"build:electron-runtime"'), entry);
-    const launch = entry.includes("dev") ? source.indexOf('electronChild = run(') : source.indexOf('"check-electron-bridge.mjs"');
+    const launch = entry.includes("dev") ? source.indexOf('const child = run(electronExecutable,') : source.indexOf('"check-electron-bridge.mjs"');
+    assert.ok(launch >= 0, entry);
     assert.ok(build < launch, entry);
   }
   const config = parse(await read("../electron-builder.yml"));

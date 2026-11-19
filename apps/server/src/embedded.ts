@@ -22,7 +22,7 @@ import { findManagedEngineWorkspace } from "./workspaces.js";
 import { ensureFileAssistantWorkspace } from "./office/file-assistant-workspace.js";
 import { keepJuggleWorkRuntimeConfigFileFresh, writeJuggleWorkRuntimeConfigFile } from "./jugglework-runtime-config.js";
 import { sweepLegacyOpenCodeConfig } from "./legacy-config-sweep.js";
-import type { ServerConfig } from "./types.js";
+import type { ServerConfig, WorkspaceInfo } from "./types.js";
 
 export type EmbeddedServerOptions = CliArgs & {
   /** 文件助手默认目录，验收可使用隔离目录。 */
@@ -163,10 +163,13 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
     }
   };
 
+  let fileAssistantBootstrapWorkspace: WorkspaceInfo | undefined;
   if (!config.readOnly) {
     // TIPS: 文件模式没有用户工作区也需要真实会话引擎，先登记默认目录再选择引擎启动目录。
-    if (options.manageOpencode && !config.opencodeBaseUrl && !findManagedEngineWorkspace(config.workspaces)) await ensureFileAssistantWorkspace(config, options.fileAssistantRoot);
-    await ensureLocalWorkspaceFiles(config.workspaces);
+    if (options.manageOpencode && !config.opencodeBaseUrl && !findManagedEngineWorkspace(config.workspaces))
+      fileAssistantBootstrapWorkspace = await ensureFileAssistantWorkspace(config, options.fileAssistantRoot);
+    // 已登记文件助手由 Server 冷恢复校验后才可用，不先 bootstrap 可能已变成链接的 child。
+    await ensureLocalWorkspaceFiles(config.workspaces.filter((workspace) => !workspace.fileAssistantManaged));
   }
 
   // Bind the public server before spawning OpenCode. The Node adapter can
@@ -178,7 +181,7 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
   const serverUrl = `http://${config.host === "0.0.0.0" ? "127.0.0.1" : config.host}:${server.port}`;
 
   if (!config.opencodeBaseUrl && options.manageOpencode) {
-    const workspace = findManagedEngineWorkspace(config.workspaces);
+    const workspace = findManagedEngineWorkspace(config.workspaces) ?? fileAssistantBootstrapWorkspace;
     if (workspace) {
       // Server-managed config file: the engine re-reads it from disk on every
       // instance rebuild, and keepJuggleWorkRuntimeConfigFileFresh rewrites it

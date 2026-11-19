@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 mock.module("../src/react-app/domains/meeting/meeting-reminders", () => ({ MeetingReminderHost: () => null }));
-mock.module("../src/react-app/domains/meeting/meeting-page", () => ({ MeetingPage: () => null, MeetingDialog: () => null }));
+mock.module("../src/react-app/domains/meeting/meeting-page", () => ({ MeetingPage: () => null, MeetingDialog: () => null, MeetingPrejoin: () => null }));
 
 mock.module("../src/react-app/domains/meeting/meeting-room", () => ({ MeetingRoomHost: () => null }));
 

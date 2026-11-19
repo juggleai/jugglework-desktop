@@ -97,9 +97,9 @@ export function createFileEditor({ client, getWindows, authorizeFileEditor, canR
     },
     /** 注册共用编辑会话，文档内容仅在当前桌面的可信窗口间传递。 */
     registerIpc(ipcMain) {
-      const host = (event, input) => authorizeFileEditor(event, input);
+      const host = (event, input, operation = "write") => authorizeFileEditor(event, input, operation);
       ipcMain.handle("jugglework:file-editor:state", (event, input) => {
-        host(event, input);
+        host(event, input, "read");
         return record(input);
       });
       ipcMain.handle("jugglework:file-editor:update", (event, input, draft) => {
@@ -118,9 +118,14 @@ export function createFileEditor({ client, getWindows, authorizeFileEditor, canR
       });
       for (const action of ["prepare", "close"])
         ipcMain.handle(`jugglework:file-editor:${action}`, async (event, input) => {
-          const window = host(event, input);
+          const authorize = () => {
+            const window = host(event, input, "read");
+            if (record(input).draft) host(event, input);
+            return window;
+          };
+          const window = authorize();
           const result = await prepare(input, window, action === "close", () => { host(event, input); });
-          host(event, input);
+          authorize();
           return result;
         });
       ipcMain.handle(

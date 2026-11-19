@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { findManagedEngineWorkspace, visibleWorkspaces } from "./workspaces.js";
+import { buildWorkspaceInfos, findManagedEngineWorkspace, visibleWorkspaces } from "./workspaces.js";
 import type { WorkspaceInfo } from "./types.js";
 
 function ws(fields: {
@@ -20,6 +20,12 @@ function ws(fields: {
 }
 
 describe("findManagedEngineWorkspace", () => {
+  test("file-assistant 标记冷启动保留，普通 API 可见且可启动引擎", () => {
+    const managed = buildWorkspaceInfos([{ path: "/assistant", fileAssistantManaged: true }], "/")[0]!;
+    expect(managed.fileAssistantManaged).toBe(true);
+    expect(visibleWorkspaces([managed])).toEqual([managed]);
+    expect(findManagedEngineWorkspace([managed])).toBe(managed);
+  });
   test("hidden review workspaces are not exposed or selected as the managed engine root", () => {
     const hidden = { ...ws({ id: "review", path: "/hidden/review", workspaceType: "local" }), hidden: true };
     const local = ws({ id: "local", path: "/home/user/work", workspaceType: "local" });

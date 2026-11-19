@@ -6,10 +6,10 @@ import { useLocation, useNavigate } from "react-router-dom";
 export function MainOfficeComposerBridge() {
   const navigate = useNavigate();
   const location = useLocation();
-  const scope = useRef(location.pathname);
-  scope.current = location.pathname;
+  const scope = useRef(location.pathname + location.search);
+  scope.current = location.pathname + location.search;
   // TIPS: 共享模型可先于聊天页面打开；检查仍读取真实局部草稿，路由变化使旧确认失效。
-  useEffect(() => installOfficeComposerBridge({ navigate, scope: () => scope.current }), [navigate]);
+  useEffect(() => installOfficeComposerBridge({ navigate: (path) => navigate(path), scope: () => scope.current }), [navigate]);
   return null;
 }
 
@@ -17,7 +17,12 @@ export function MainOfficeComposerBridge() {
  * 在应用级处理原生选区，所属聊天不在前台时仍更新它自己的草稿。
  * @param options 路由只用于显式添加/发送后展示所属聊天，不能替代引用归属
  */
-export function installOfficeComposerBridge(options: { navigate: (path: string) => void; scope: () => string; accept?: (input: { workspaceId: string; sessionId: string }) => boolean }) {
+export function installOfficeComposerBridge(options: {
+  navigate: (path: string, input: { workspaceId: string; sessionId: string; reference: { documentId: string; preview: { path?: string } } }) => void | Promise<void>;
+  scope: (input: { workspaceId: string; sessionId: string }) => string;
+  accept?: (input: { workspaceId: string; sessionId: string }) => boolean;
+  preserveOnFileSwitch?: (input: { workspaceId: string; sessionId: string }) => boolean;
+}) {
   const office = window.__JUGGLEWORK_ELECTRON__?.office;
   const stopRequests = office?.onComposerRequest?.(async (input) => {
     if (options.accept && !options.accept(input)) throw new Error("选区不属于当前文件窗口");
@@ -26,18 +31,22 @@ export function installOfficeComposerBridge(options: { navigate: (path: string) 
     if (input.action === "prepare") return { epoch };
     if (input.action === "append") {
       if (input.reference.workspaceId !== input.workspaceId || input.reference.ownerSessionId !== input.sessionId) throw new Error("选区所属聊天已变化");
-      state.appendOfficeSelection({ ...input, mode: input.mode });
-      options.navigate(`/workspace/${encodeURIComponent(input.workspaceId)}/session/${encodeURIComponent(input.sessionId)}`);
+      await options.navigate(`/workspace/${encodeURIComponent(input.workspaceId)}/session/${encodeURIComponent(input.sessionId)}?exact=1`, input);
+      if (options.accept && !options.accept(input)) throw new Error("选区不属于当前文件窗口");
+      useComposerStateStore.getState().appendOfficeSelection({ ...input, mode: input.mode });
       return { ok: true };
     }
     if (input.action === "guard") {
+      if (!input.closingDocumentId && options.preserveOnFileSwitch?.(input)) {
+        return { epoch, scope: options.scope(input), referenceIds: [], needsConfirmation: false };
+      }
       const references = getComposerOfficeGroups(state, input.sessionId).flatMap((group) => group.references).filter((ref) => ref.workspaceId === input.workspaceId);
       const affected = references.filter((ref) => input.closingDocumentId ? ref.documentId === input.closingDocumentId
         : input.targetDocumentId ? ref.documentId !== input.targetDocumentId : !input.path || ref.preview.path !== input.path);
-      return { epoch, scope: options.scope(), referenceIds: [...new Set(affected.map((ref) => ref.referenceId))], needsConfirmation: affected.length > 0 };
+      return { epoch, scope: options.scope(input), referenceIds: [...new Set(affected.map((ref) => ref.referenceId))], needsConfirmation: affected.length > 0 };
     }
     if (input.action === "clear") {
-      if (options.scope() !== input.scope) return { ok: false };
+      if (options.scope(input) !== input.scope) return { ok: false };
       const ok = state.clearOfficeReferences(input.sessionId, input.epoch, input.referenceIds);
       return { ok, releaseIds: ok ? releasableOfficeReferences(useComposerStateStore.getState(), input.sessionId, input.referenceIds) : [] };
     }

@@ -26,7 +26,7 @@ async function dispatchComposerRequest(input) {
 ipcRenderer.on("jugglework:office:composer-request", (_event, input) => { void dispatchComposerRequest(input); });
 
 /** 订阅 ID 不进入页面 API；处理 invoke 返回之前的事件及提前卸载。 */
-function subscribeSessionEvents(listener) {
+function subscribeSessionEvents(input, listener) {
   let id;
   let stopped = false;
   const early = [];
@@ -44,7 +44,7 @@ function subscribeSessionEvents(listener) {
     ipcRenderer.removeListener(channel, handler);
     if (id) void ipcRenderer.invoke("jugglework:file-window:session-unsubscribe", id).catch(() => {});
   };
-  void ipcRenderer.invoke("jugglework:file-window:session-subscribe").then((value) => {
+  void ipcRenderer.invoke("jugglework:file-window:session-subscribe", { workspaceId: input?.workspaceId }).then((value) => {
     id = value;
     if (stopped) { void ipcRenderer.invoke("jugglework:file-window:session-unsubscribe", id).catch(() => {}); return; }
     for (const payload of early.splice(0)) if (payload?.id === id) listener(payload.event);
@@ -152,8 +152,8 @@ contextBridge.exposeInMainWorld("__JUGGLEWORK_ELECTRON__", {
     /** 由主进程选择工作区内的 Word 或 PowerPoint 目标并创建。 */
     create: (input) => ipcRenderer.invoke("jugglework:file-window:create", input),
     /** 执行原生文件动作。 */
-    action: (action, path) =>
-      ipcRenderer.invoke("jugglework:file-window:action", action, path),
+    action: (action, tabIdOrRecentPath) =>
+      ipcRenderer.invoke("jugglework:file-window:action", action, tabIdOrRecentPath),
     /** 接收标签与最近文件变化。 */
     onChanged: (callback) => listen("jugglework:file-window:changed", callback),
   },

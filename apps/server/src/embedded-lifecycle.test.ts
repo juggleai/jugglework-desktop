@@ -147,9 +147,31 @@ describe("embedded server lifecycle", () => {
       const handle = await startEmbeddedServer(options);
       fixture.handles.push(handle);
       expect(handle.config.workspaces).toHaveLength(1);
-      expect(handle.config.workspaces[0]).toMatchObject({ name: "文件助手", path: root, workspaceType: "local" });
+      expect(handle.config.workspaces[0]).toMatchObject({ name: "文件助手", path: root, workspaceType: "local", fileAssistantManaged: true });
       expect(handle.config.authorizedRoots).toContain(root);
       expect(handle.managedOpencode?.isAlive()).toBe(true);
+      await handle.stop();
+      const restored = await startEmbeddedServer(options);
+      fixture.handles.push(restored);
+      expect(restored.config.workspaces).toHaveLength(1);
+      expect(restored.config.workspaces[0]).toMatchObject({ path: root, fileAssistantManaged: true });
+      expect(restored.managedOpencode?.isAlive()).toBe(true);
+    } finally { await fixture.restore(); }
+  }, 30_000);
+
+  test.serial("旧 hidden 文件助手 root 保留历史且仍能作为文件模式引擎启动目录", async () => {
+    const fixture = await createFixture();
+    try {
+      const root = join(fixture.root, "FileAssistant");
+      const options = { ...managedOptions(fixture, "legacy-file-only"), workspaces: [], opencodeCwd: undefined, fileAssistantRoot: root };
+      await writeFile(options.configPath!, JSON.stringify({ workspaces: [{ path: root, name: "历史文件助手", hidden: true }] }));
+      const handle = await startEmbeddedServer(options);
+      fixture.handles.push(handle);
+      expect(handle.config.workspaces).toHaveLength(1);
+      expect(handle.config.workspaces[0]).toMatchObject({ name: "历史文件助手", path: root, hidden: true, fileAssistantManaged: true });
+      expect(handle.managedOpencode?.isAlive()).toBe(true);
+      const persisted = JSON.parse(await readFile(options.configPath!, "utf8"));
+      expect(persisted.workspaces[0]).toMatchObject({ hidden: true, fileAssistantManaged: true });
     } finally { await fixture.restore(); }
   }, 30_000);
 

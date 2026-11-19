@@ -6,6 +6,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { FileWindowState } from "@jugglework/types/file-window";
 import { t } from "../src/i18n";
 import { useComposerStateStore } from "../src/react-app/domains/session/surface/composer-state-store";
+import { singleSourceState } from "./fixtures/file-window-state";
+import { activeFileWindowTab } from "../src/react-app/domains/session/files/file-window-source";
 
 let conversationMounts = 0, conversationUnmounts = 0, viewerMounts = 0;
 function Conversation(props: any) {
@@ -33,10 +35,10 @@ test("file window updates split state, keeps its viewer and conversation mounted
   let stopped = 0;
   let officeRequest!: (input: any) => Promise<any>;
   const actions: string[] = [];
-  const state: FileWindowState = { workspaceId: "ws", sessionId: "ses", workspaceRoot: "/project", tabs: [{ path: "file.txt", name: "file.txt" }], activePath: "file.txt", recent: [], platform: "darwin", conversation: { desktopConfig: {} }, appearance: { theme: "dark", lang: "zh" } };
+  const state = singleSourceState({ workspaceId: "ws", sessionId: "ses", workspaceRoot: "/project", tabs: [{ path: "file.txt", name: "file.txt" }], activePath: "file.txt", recent: [], platform: "darwin", conversation: { desktopConfig: {} }, appearance: { theme: "dark", lang: "zh" } });
   const bridge = {
     state: async () => ({ ...state, baseUrl: "http://127.0.0.1:1234" }),
-    onChanged: (callback: typeof changed) => { changed = callback; return () => { stopped++; }; },
+    onChanged: (callback: typeof changed) => { changed = (next) => callback(singleSourceState(next)); return () => { stopped++; }; },
     action: async (action: string) => { actions.push(action); }, subscribeSessionEvents: () => () => {},
   };
   Object.defineProperty(globalThis, "window", { configurable: true, value: { __JUGGLEWORK_ELECTRON__: { fileWindow: bridge,
@@ -56,6 +58,10 @@ test("file window updates split state, keeps its viewer and conversation mounted
     await act(async () => { changed({ ...changedState, appearance: { theme: "system", lang: "invalid" } as unknown as FileWindowState["appearance"] }); });
     expect(appearanceChanged).toHaveBeenCalledTimes(1);
     expect(viewerMounts).toBe(1);
+    await act(async () => { changed({ ...state, tabs: state.tabs.map(tab => ({ ...tab, readOnly: true })) }); });
+    expect(view!.root.findByType(Viewer).props.readOnly).toBe(true);
+    await act(async () => { changed(state); });
+    expect(view!.root.findByType(Viewer).props.readOnly).toBeUndefined();
     expect(conversationMounts).toBe(0);
     expect(view!.root.findByType("header").findAllByProps({ "aria-controls": "file-window-conversation" })).toHaveLength(0);
     expect(view!.root.findByProps({ "data-file-editor-toolbar": true }).findAllByType("button").filter((item) => item.props["aria-controls"] === "file-window-conversation")).toHaveLength(1);
@@ -87,7 +93,7 @@ test("file window updates split state, keeps its viewer and conversation mounted
     expect(await officeRequest({ action: "prepare", workspaceId: "ws", sessionId: "ses" })).toEqual({ epoch: 0 });
     const ref = { referenceId: "file-ref", captureId: "capture", workspaceId: "ws", ownerSessionId: "ses", documentId: "doc", sourcePageId: "page",
       modelGeneration: "page:model", locator: { kind: "doc-text", ranges: [{ begin: 0, end: 2 }] }, contentStamp: "stamp", capturedAt: 1,
-      preview: { name: "file.docx", path: "file.docx", range: "0–2", text: "正文" } };
+      preview: { name: "file.txt", path: "file.txt", range: "0–2", text: "正文" } };
     await act(async () => { await officeRequest({ action: "append", workspaceId: "ws", sessionId: "ses", reference: ref, instructionId: "file-instruction", epoch: 0, text: "修改正文", mode: "add" }); });
     expect(view!.root.findByType("aside").props.hidden).toBe(false);
     expect(conversationMounts).toBe(1);
@@ -112,16 +118,16 @@ test("file window updates split state, keeps its viewer and conversation mounted
 test("unavailable conversation retries Main state, stays closed on failure, and recovers without reloading the viewer", async () => {
   const previousWindow = globalThis.window;
   let changed!: (state: FileWindowState) => void;
-  const available: FileWindowState = { workspaceId: "ws_retry", sessionId: "ses_retry", workspaceRoot: "/project", tabs: [{ path: "file.txt", name: "file.txt" }], activePath: "file.txt", recent: [], platform: "darwin", conversation: { desktopConfig: {} } };
-  let next: FileWindowState = { ...available, conversation: undefined };
+  const available = singleSourceState({ workspaceId: "ws_retry", sessionId: "ses_retry", workspaceRoot: "/project", tabs: [{ path: "file.txt", name: "file.txt" }], activePath: "file.txt", recent: [], platform: "darwin", conversation: { desktopConfig: {} } });
+  let next: FileWindowState = singleSourceState({ ...available, conversation: undefined });
   let finish!: (state: FileWindowState & { baseUrl: string }) => void;
   let delayed = false, reads = 0;
   const bridge = {
     state: async () => {
       reads++;
-      return delayed ? new Promise<FileWindowState & { baseUrl: string }>((resolve) => { finish = resolve; }) : { ...next, baseUrl: "http://127.0.0.1:1234" };
+      return delayed ? new Promise<FileWindowState & { baseUrl: string }>((resolve) => { finish = resolve; }) : { ...singleSourceState(next), baseUrl: "http://127.0.0.1:1234" };
     },
-    onChanged: (callback: typeof changed) => { changed = callback; return () => {}; },
+    onChanged: (callback: typeof changed) => { changed = (next) => callback(singleSourceState(next)); return () => {}; },
     action: async () => {}, subscribeSessionEvents: () => () => {},
   };
   Object.defineProperty(globalThis, "window", { configurable: true, value: { __JUGGLEWORK_ELECTRON__: { fileWindow: bridge }, addEventListener() {}, removeEventListener() {} } });
@@ -167,6 +173,55 @@ test("unavailable conversation retries Main state, stays closed on failure, and 
   } finally {
     await act(async () => { view?.unmount(); });
     query.clear();
+    if (previousWindow === undefined) Reflect.deleteProperty(globalThis, "window"); else Reflect.set(globalThis, "window", previousWindow);
+  }
+});
+
+test("tab actions use IDs even for equal paths and async save stays bound to its captured source", async () => {
+  const previousWindow = globalThis.window;
+  const calls: Array<[string, string | undefined]> = [], requests: string[] = [];
+  const source = (id: string) => ({ workspaceId: `ws_${id}`, sessionId: `ses_${id}`, workspaceRoot: `/file-${id}` });
+  const tabs = ["a", "b"].map((id) => ({ tabId: `tab-${id}`, source: source(id), path: "same.docx", name: `${id}.docx`, documentId: `doc-${id}`, conversation: { desktopConfig: {} } }));
+  let state: FileWindowState = { ...source("a"), group: { kind: "file-assistant" }, activeTabId: "tab-a", activePath: "same.docx", tabs, recent: [], platform: "darwin" };
+  let changed!: (state: FileWindowState) => void, keydown!: (event: any) => void, finish!: () => void;
+  const server = Bun.serve({ port: 0, fetch: async (request) => {
+    const path = new URL(request.url).pathname; requests.push(path);
+    if (path.endsWith("/save")) await new Promise<void>((resolve) => { finish = resolve; });
+    return Response.json({ document: { documentId: path.includes("ws_a") ? "doc-a" : "doc-b", state: "ready" } });
+  } });
+  const bridge = {
+    state: async () => ({ ...state, baseUrl: server.url.href.replace(/\/$/, "") }),
+    onChanged: (callback: typeof changed) => { changed = callback; return () => {}; },
+    action: async (action: string, id?: string) => { calls.push([action, id]); }, subscribeSessionEvents: () => () => {},
+  };
+  Object.defineProperty(globalThis, "window", { configurable: true, value: { __JUGGLEWORK_ELECTRON__: { fileWindow: bridge,
+    invokeDesktop: async (_command: string, url: string, init: RequestInit) => {
+      const response = await fetch(url, init);
+      return { status: response.status, headers: [...response.headers], body: await response.arrayBuffer() };
+    },
+  }, addEventListener: (name: string, handler: typeof keydown) => { if (name === "keydown") keydown = handler; }, removeEventListener() {} } });
+  const query = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  let view: TestRenderer.ReactTestRenderer | undefined;
+  try {
+    await act(async () => { view = TestRenderer.create(<QueryClientProvider client={query}><FileWindowApp /></QueryClientProvider>); });
+    const buttons = view!.root.findAllByProps({ role: "tab" });
+    expect(buttons.map((tab) => tab.props["aria-selected"])).toEqual([true, false]);
+    await act(async () => { buttons[1]!.props.onClick(); keydown({ key: "w", metaKey: true, preventDefault() {} }); });
+    expect(calls).toEqual([["select", "tab-b"], ["close", "tab-a"]]);
+    const toolbar = view!.root.findByProps({ "data-file-editor-toolbar": true }).parent!;
+    // The real App owns callbacks even though the visual toolbar is a DOM-only leaf.
+    let saving!: Promise<void>;
+    await act(async () => { saving = toolbar.props.onUploadCloud(); await new Promise((resolve) => setTimeout(resolve, 10)); });
+    expect(finish).toBeFunction();
+    await act(async () => { state = { ...state, activeTabId: "tab-b" }; changed(state); });
+    await act(async () => { finish(); await saving; await new Promise((resolve) => setTimeout(resolve, 10)); });
+    expect(requests).toContain("/workspace/ws_a/office/doc-a/save");
+    expect(requests).not.toContain("/workspace/ws_b/office/doc-a/save");
+    expect(calls.at(-1)).toEqual(["upload-cloud", "tab-a"]);
+    expect(activeFileWindowTab(state)?.source.workspaceId).toBe("ws_b");
+    expect(JSON.stringify(view!.toJSON())).not.toContain(t("file_window.new"));
+  } finally {
+    finish?.(); await act(async () => view?.unmount()); query.clear(); server.stop(true);
     if (previousWindow === undefined) Reflect.deleteProperty(globalThis, "window"); else Reflect.set(globalThis, "window", previousWindow);
   }
 });

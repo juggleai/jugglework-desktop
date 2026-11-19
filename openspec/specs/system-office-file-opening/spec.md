@@ -1,23 +1,28 @@
 # system-office-file-opening Specification
 
 ## Purpose
-Define discovery and launch behavior for opening supported Office files in installed system applications while preserving safe fallback and error handling.
+Define system file associations and runtime launch behavior for supported file-browser formats, including Office, Markdown, text and read-only previews.
 
 ## Requirements
 
 ### Requirement: 系统 Office 候选应用
-安装包 SHALL 将 JuggleWork 注册为 DOCX、XLSX、CSV、PPTX 的候选打开应用，且 SHALL NOT 主动修改用户默认应用。
+安装包 SHALL 将 JuggleWork 注册为 DOCX、XLSX、CSV、PPTX 的候选打开应用，且 SHALL NOT 主动修改用户默认应用。当前安装关联清单未加入 Markdown；运行时支持 Markdown SHALL NOT 被描述为已注册 Markdown 的 Finder 候选项或默认打开方式。
 
 #### Scenario: 从系统选择 JuggleWork
 - **WHEN** 用户通过“打开方式”选择 JuggleWork 打开受支持文件
-- **THEN** 文件在现有“JuggleWork 文件浏览器”独立 Office 窗口中打开
+- **THEN** 文件在现有“JuggleWork 文件浏览器”独立文件窗口中打开
 
 ### Requirement: 本机文件上下文
-系统入口 SHALL 只登记明确选择的文件，使用原路径编辑保存，且 SHALL NOT 自动创建聊天或将父目录加入工作区。
+系统入口 SHALL 只登记明确选择的文件，使用原路径编辑保存，不为隔离复制或移动原件，且 SHALL NOT 将原件父目录加入工作区。没有存活 Office owner 的外部文件 SHALL 登记或复用自己的文件助手子工作区与真实会话；会话创建本身 SHALL NOT 自动发送模型请求。已有存活模型 SHALL 优先沿用原 workspace/session/文档身份，不因新登记或迁移改变 owner。
 
 #### Scenario: 工作区外的文件
 - **WHEN** 用户打开任意本机目录中的受支持文件
-- **THEN** 文件可使用已有 Office 编辑器保存，父目录中的其他文件不因此获得访问入口
+- **THEN** 文件在对应文件助手来源中使用共享 FileViewer 和 AI 会话，Office 走原生编辑器、Markdown 及可编辑文本走共享 file-editor、预览格式保持只读；可编辑文件保存写回原件，父目录中的其他文件不因此获得访问入口
+
+#### Scenario: 规范化外部路径
+- **WHEN** 宿主登记原文件路径
+- **THEN** 以 realpath 解析后的路径计算稳定文件身份，Windows 身份额外规范化并折叠大小写，POSIX 保留大小写；子工作区目录仅使用固定长度 32 位 ASCII 十六进制 hash，不拼接原文件名
+- **AND** Windows 仅接受经过正常组件校验的盘符绝对路径或 UNC 文件路径；拒绝 ADS、设备命名空间、设备名、盘符相对路径、根相对路径及 NUL，不承诺 MAX_PATH 或超长路径可用
 
 #### Scenario: 重复打开
 - **WHEN** 同一文件通过原路径、符号链接或硬链接再次打开且已有存活模型
@@ -26,6 +31,17 @@ Define discovery and launch behavior for opening supported Office files in insta
 #### Scenario: 已打开文件的原位置异常
 - **WHEN** 已打开文件的父目录失效、访问被拒绝或设备暂不可用，用户请求打开无关文件或导出副本
 - **THEN** 无关文件的操作不受旧位置查询失败影响；保留旧模型最后可靠身份，目标可能指向该模型的硬链接时要求先关闭相关文档，不能另建写模型或覆盖目标；零 inode 不作为共享身份
+
+### Requirement: 通用文件入口共用格式名单
+原生 picker、系统 argv 与 Server 本机登记 SHALL 共用 `packages/types/src/file-window.ts` 的 `FILE_WINDOW_EXTENSIONS`，文本识别 SHALL 使用同模块的 `WORKSPACE_TEXT_FILE_EXTENSIONS` 单一来源，Electron runtime SHALL 来自该共享模块的构建。打开入口 SHALL NOT 仅以 Office 可编辑格式限制通用 FileViewer；Office helper SHALL 保持 DOCX、CSV、XLSX、PPTX 四格式，不加入 Markdown。
+
+#### Scenario: 选择或传入 Markdown
+- **WHEN** 用户通过原生 picker 选择 Markdown，或通过 argv 传入名单内 Markdown 路径
+- **THEN** 沿用本机文件登记及每文件工作区/会话链路，在通用独立文件窗口打开，不创建 Office 模型；该运行时行为不扩大安装包系统关联清单
+
+#### Scenario: 登记路径与真实目标格式
+- **WHEN** 输入路径或 realpath 目标不在共享格式名单，或非 Office 文本不是有效 UTF-8、包含 NUL、超过 5,000,000 字节
+- **THEN** 拒绝登记，不因伪装文本扩展名而打开真实的不支持目标
 
 ### Requirement: 文档与运行时生命周期
 系统 MUST 在替换或停止存活 Server 前完成文件保存确认，且 SHALL 将文档登记和实际页面加载分开计时。
@@ -47,7 +63,7 @@ Define discovery and launch behavior for opening supported Office files in insta
 
 #### Scenario: 多文件冷启动
 - **WHEN** 应用尚未运行且收到多个文件打开请求
-- **THEN** 就绪后在文件浏览器中打开相应标签，不强制激活聊天窗口
+- **THEN** 就绪后将无已有聊天归属的外部文件放入同一 file-assistant 分组窗口，各标签持有自己的固定来源；已有聊天来源继续按 workspace/session 对分窗，不强制激活聊天窗口
 
 #### Scenario: Windows 第二实例文件请求
 - **WHEN** 应用已经运行，用户通过资源管理器“打开方式”再次选择受支持的 Office 文件
@@ -79,3 +95,8 @@ Define discovery and launch behavior for opening supported Office files in insta
 - **THEN** Desk 使用当前账号及组织的新授权，在独立文件浏览器打开同一份云文档并保留原视图
 - **AND** 从独立窗口触发时，新标签加入当前窗口
 - **AND** 独立窗口的加号始终可打开文件选择器，保留云文档标签
+
+#### Scenario: 从云文档标签打开本地文件
+- **WHEN** 文件浏览器当前选中云文档，用户从加号菜单打开文件或选择最近文件
+- **THEN** 文件浏览器按已登记的窗口来源处理打开请求，工作区内文件显示在同一窗口的本地标签，云文档标签保留
+- **AND** 取消选择保留活动云文档，工作区外文件遵循本机文件已有的来源与分窗规则

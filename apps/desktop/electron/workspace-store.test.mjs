@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, realpath, utimes, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, realpath, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -219,6 +219,99 @@ test("prefers server config workspaces when desktop state is missing", async () 
     if (previous === undefined) delete process.env.JUGGLEWORK_SERVER_CONFIG;
     else process.env.JUGGLEWORK_SERVER_CONFIG = previous;
   }
+});
+
+test("file assistant markers survive server recovery, persistence, updates and local re-registration", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "jugglework-managed-workspaces-"));
+  const userData = path.join(root, "userData"), serverConfig = path.join(root, "server.json");
+  const previous = process.env.JUGGLEWORK_SERVER_CONFIG;
+  process.env.JUGGLEWORK_SERVER_CONFIG = serverConfig;
+  const createStore = () => createWorkspaceStore({ app: { getPath: (name) => name === "userData" ? userData : root },
+    defaultDenBaseUrl: "https://example.test", defaultRequireSignin: false, forceRequireSignin: false });
+  try {
+    const entries = [];
+    for (const id of ["assistant-root", "file-a", "file-b", "normal"]) {
+      const folder = path.join(root, id);
+      await mkdir(folder);
+      entries.push({ id, path: folder, name: id, workspaceType: "local", ...(id !== "normal" ? { fileAssistantManaged: true } : {}) });
+    }
+    await writeFile(serverConfig, JSON.stringify({ workspaces: entries }));
+    const store = createStore();
+    const recovered = await store.readWorkspaceState();
+    assert.deepEqual(recovered.workspaces.map((workspace) => workspace.fileAssistantManaged), [true, true, true, undefined]);
+    assert.equal(recovered.selectedId, "normal");
+    assert.equal(recovered.watchedId, "normal");
+    const persisted = JSON.parse(await readFile(path.join(userData, "jugglework-workspaces.json"), "utf8"));
+    assert.equal(persisted.workspaces[1].fileAssistantManaged, true);
+    await store.updateWorkspaceDisplayName({ workspaceId: "file-a", displayName: "Updated file" });
+    await store.createWorkspace({ workspaceId: "file-a", folderPath: entries[1].path, name: "Re-registered" });
+    const restored = await createStore().readWorkspaceState();
+    assert.equal(restored.workspaces.find((workspace) => workspace.id === "file-a").fileAssistantManaged, true);
+    assert.equal(restored.selectedId, "normal");
+    assert.equal(restored.activeId, "normal");
+    await store.writeWorkspaceState({ ...restored, selectedId: "file-a", watchedId: "file-b", workspaces: restored.workspaces.filter((workspace) => workspace.id !== "normal") });
+    const internalOnly = await createStore().readWorkspaceState();
+    assert.equal(internalOnly.workspaces.length, 3);
+    assert.equal(internalOnly.selectedId, "");
+    assert.equal(internalOnly.activeId, null);
+    assert.equal(internalOnly.watchedId, null);
+  } finally {
+    restoreEnv("JUGGLEWORK_SERVER_CONFIG", previous);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("three legacy hidden-only workspaces recover with empty default selection and retain hidden on updates", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "jugglework-hidden-workspaces-"));
+  const userData = path.join(root, "userData"), serverConfig = path.join(root, "server.json");
+  const previous = process.env.JUGGLEWORK_SERVER_CONFIG;
+  process.env.JUGGLEWORK_SERVER_CONFIG = serverConfig;
+  const createStore = () => createWorkspaceStore({ app: { getPath: (name) => name === "userData" ? userData : root },
+    defaultDenBaseUrl: "https://example.test", defaultRequireSignin: false, forceRequireSignin: false });
+  try {
+    const entries = [];
+    for (const id of ["legacy-root", "legacy-a", "legacy-b"]) {
+      const folder = path.join(root, id);
+      await mkdir(folder);
+      entries.push({ id, path: folder, name: id, workspaceType: "local", hidden: true });
+    }
+    await writeFile(serverConfig, JSON.stringify({ workspaces: entries }));
+    const store = createStore();
+    const assertHiddenOnly = (state) => {
+      assert.equal(state.workspaces.length, 3);
+      assert.ok(state.workspaces.every((workspace) => workspace.hidden === true && workspace.fileAssistantManaged === undefined));
+      assert.equal(state.selectedId, "");
+      assert.equal(state.activeId, null);
+      assert.equal(state.watchedId, null);
+    };
+    assertHiddenOnly(await store.readWorkspaceState());
+    const persisted = JSON.parse(await readFile(path.join(userData, "jugglework-workspaces.json"), "utf8"));
+    assertHiddenOnly(persisted);
+    assert.equal(persisted.selectedWorkspaceId, "");
+    assert.equal(persisted.watchedWorkspaceId, "");
+    await store.updateWorkspaceDisplayName({ workspaceId: "legacy-a", displayName: "Renamed" });
+    await store.createWorkspace({ workspaceId: "legacy-a", folderPath: entries[1].path, name: "Re-registered" });
+    assertHiddenOnly(await createStore().readWorkspaceState());
+    await store.setSelectedWorkspace("legacy-b");
+    assertHiddenOnly(await createStore().readWorkspaceState());
+  } finally {
+    restoreEnv("JUGGLEWORK_SERVER_CONFIG", previous);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("remote workspace normalization preserves an existing file assistant marker on update", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "jugglework-managed-remote-"));
+  try {
+    const store = createWorkspaceStore({ app: { getPath: () => root },
+      defaultDenBaseUrl: "https://example.test", defaultRequireSignin: false, forceRequireSignin: false });
+    await store.writeWorkspaceState({ selectedId: "", workspaces: [{ id: "rem_file", name: "File", path: "/remote", workspaceType: "remote", remoteType: "jugglework",
+      baseUrl: "https://example.test", juggleworkWorkspaceId: "file", fileAssistantManaged: true }] });
+    const state = await store.updateRemoteWorkspace({ workspaceId: "rem_file", displayName: "Renamed" });
+    assert.equal(state.workspaces[0].fileAssistantManaged, true);
+    assert.equal(state.selectedId, "");
+    assert.equal((await store.readWorkspaceState()).workspaces[0].fileAssistantManaged, true);
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
 
 test("does not create a default workspace when desktop state is absent", async () => {

@@ -16,6 +16,9 @@ import type { FileArtifact } from "@jugglework/types/file-artifacts";
 import type { OfficeDocumentSession } from "@jugglework/types/office";
 import { OfficeDocuments } from "./documents.js";
 import { ApiError } from "../errors.js";
+import { registerOfficeRoutes } from "../routes/office.js";
+import { matchRoute, type RequestContext, type Route } from "../routes/registry.js";
+import type { ServerConfig } from "../types.js";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -212,6 +215,66 @@ async function fixture(
   };
   return { root, documents, state, files, editors, mount, openReady };
 }
+
+test("Office open 结果精确区分新建、复用及重新打开", async () => {
+  const f = await fixture();
+  const first = await f.documents.openWithResult("ws", "ses_A", "报告 A.docx");
+  expect(first.created).toBe(true);
+  const reused = await f.documents.openWithResult("ws", "ses_A", "报告 A.docx");
+  expect(reused.created).toBe(false);
+  expect(reused.document.documentId).toBe(first.document.documentId);
+  await f.documents.close("ws", first.document.documentId, "discard", "ses_A");
+  const next = await f.documents.openWithResult("ws", "ses_A", "报告 A.docx");
+  expect(next.created).toBe(true);
+  expect(next.document.documentId).not.toBe(first.document.documentId);
+});
+
+test("Office 自动清理只关闭正确 owner 的干净模型，导入未就绪也不能丢弃 dirty", async () => {
+  const f = await fixture();
+  const document = await f.documents.open("ws", "ses_A", "报告 A.docx");
+  f.mount("报告 A.docx", "model_A");
+  await expect(f.documents.close("ws", document.documentId, "discard", "ses_B")).rejects.toThrow("文档不属于");
+  f.editors.get(join(f.root, "报告 A.docx"))!.is_dirty = true;
+  f.state.contentReady = false;
+  await expect(f.documents.close("ws", document.documentId, "discard", "ses_A")).rejects.toThrow("不能自动清理");
+  expect(f.state.closes).toEqual([]);
+  f.state.contentReady = true;
+  await expect(f.documents.close("ws", document.documentId, "discard", "ses_A")).rejects.toThrow("不能自动清理");
+  expect(f.state.closes).toEqual([]);
+  f.editors.get(join(f.root, "报告 A.docx"))!.is_dirty = false;
+  expect((await f.documents.close("ws", document.documentId, "discard", "ses_A")).state).toBe("closed");
+  expect(f.state.closes).toEqual([{ id: "model_A", discard: true }]);
+});
+
+test("真实 Office 路由返回 created，清理请求校验 owner/dirty 且保留正常关闭契约", async () => {
+  const f = await fixture();
+  const routes: Route[] = [];
+  registerOfficeRoutes({ routes, documents: f.documents, config: {} as ServerConfig,
+    jsonResponse: (data, status) => Response.json(data, { status }), readJsonBody: request => request.json() as Promise<Record<string, unknown>>,
+    ensureWritable: () => {}, requireClientScope: () => {},
+    resolveWorkspace: async () => ({ id: "ws", name: "Workspace", path: f.root, workspaceType: "local", preset: "starter" }),
+  });
+  const post = async (path: string, body: unknown) => {
+    const url = new URL(`http://localhost/workspace/ws/office/${path}`);
+    const route = matchRoute(routes, "POST", url.pathname)!;
+    return route.handler({ request: new Request(url, { method: "POST", body: JSON.stringify(body) }), url, params: route.params } as RequestContext);
+  };
+  const first = await (await post("open", { sessionId: "ses_A", path: "报告 A.docx" })).json() as { document: OfficeDocumentSession; created: boolean };
+  expect(first.created).toBe(true);
+  expect(await (await post("open", { sessionId: "ses_A", path: "报告 A.docx" })).json()).toMatchObject({ created: false, document: { documentId: first.document.documentId } });
+  const close = `${first.document.documentId}/close`;
+  await expect(post(close, { decision: "discard", onlyIfClean: true })).rejects.toMatchObject({ code: "invalid_payload" });
+  await expect(post(close, { decision: "save", onlyIfClean: true, sessionId: "ses_A" })).rejects.toMatchObject({ code: "invalid_payload" });
+  await expect(post(close, { decision: "discard", onlyIfClean: true, sessionId: "ses_B" })).rejects.toMatchObject({ code: "office_wrong_document" });
+  f.mount("报告 A.docx", "model_A");
+  f.editors.get(join(f.root, "报告 A.docx"))!.is_dirty = true;
+  await expect(post(close, { decision: "discard", onlyIfClean: true, sessionId: "ses_A" })).rejects.toMatchObject({ code: "office_cleanup_unavailable" });
+  expect(f.state.closes).toEqual([]);
+  expect(await (await post(close, { decision: "cancel" })).json()).toMatchObject({ document: { state: "ready", dirty: true } });
+  f.editors.get(join(f.root, "报告 A.docx"))!.is_dirty = false;
+  expect(await (await post(close, { decision: "discard", onlyIfClean: true, sessionId: "ses_A" })).json()).toMatchObject({ document: { state: "closed" } });
+  expect(f.state.closes).toEqual([{ id: "model_A", discard: true }]);
+});
 
 /** 使用真实 SDK 字段形状，选区采集、admission、回读与保存均经过 OfficeDocuments。 */
 async function pageSelectionFixture() {

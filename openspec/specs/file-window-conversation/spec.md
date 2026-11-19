@@ -33,7 +33,7 @@ Define how file windows and session workbenches share file identity, conversatio
 - **AND** 文档状态通知不清除菜单下的替代画面，快速关闭或切后台后，迟到截图不得再次隐藏页面或抢回焦点
 
 ### Requirement: 文件窗口继续已有本地会话
-从已有本地会话打开的文件窗口 SHALL 提供 AI 面板，固定来源 workspace/session。同一窗口文件标签 SHALL 共用该会话；不同会话使用其他窗口。无归属的外部文件 SHALL 使用默认文件助手工作区及真实会话。
+从已有本地会话打开的文件窗口 SHALL 提供 AI 面板，并继续按 workspace/session 对分窗，同来源文件标签共用该会话。无归属的外部文件 SHALL 各自使用 `~/Documents/JuggleWork/FileAssistant/files/<32ASCIIhash>` 子工作区及真实会话，并统一进入 file-assistant 分组窗口。每个活标签 SHALL 持有独立 tabId 和创建时固定的 source（workspaceId、sessionId、workspaceRoot）；activeTabId 决定活动来源，顶层 workspace/session/root/path/conversation SHALL 仅作活动标签投影，不作为整个窗口的唯一归属。
 
 #### Scenario: 主窗口切换会话
 - **WHEN** 从会话 A 打开文件窗口后主窗口切到 B
@@ -41,20 +41,25 @@ Define how file windows and session workbenches share file identity, conversatio
 
 #### Scenario: 系统打开外部文件
 - **WHEN** 文件没有已有会话归属
-- **THEN** 自动登记或复用 `~/Documents/JuggleWork/FileAssistant` 默认工作区，创建或恢复真实会话，允许 AI 对话及原生选区编辑，保存使用原文件
+- **THEN** 自动登记或复用该文件的文件助手子工作区，创建或恢复该子工作区内的真实会话，允许 AI 对话；支持原生选区的 Office 文件沿用选区编辑合同，Markdown 等文本沿用共享 file-editor，预览文件保持只读，可编辑文件保存使用原文件
 - **AND** 已有存活模型沿用其归属，不创建窗口副本；临时无效会话及伪造采集仍被拒绝
+
+#### Scenario: 文件助手切换不同来源标签
+- **WHEN** 外部文件 A、B 在同一个文件助手窗口中打开并切换活动标签
+- **THEN** 两个标签保持各自 tabId 和固定 source，AI 面板切换到对应会话，顶层投影随 activeTabId 更新；相同路径文字不能替代标签身份
+- **AND** 空窗的 activeTabId 为 null，顶层 workspace/session/root 为空且没有 conversation，不沿用最后一个已关闭来源的能力
 
 #### Scenario: 聊天文件窗口选择工作区外原件
 - **WHEN** 用户通过主窗口原生编辑区或聊天所属独立窗口的文件选择器，明确选择工作区外的本机文件
-- **THEN** 按既有本机登记链路在默认文件助手或原存活模型所属窗口打开原件，不因当前工作区限制拒绝，不把原聊天窗口改绑为文件助手
+- **THEN** 按既有本机登记链路在文件助手分组或原存活模型所属窗口打开原件，不因当前工作区限制拒绝，不把原聊天窗口改绑为文件助手
 - **AND** 同次选择中的工作区内文件继续按原宿主打开，取消选择不登记文件，打开失败保留原文档与草稿
 
 ### Requirement: 外部文件会话独立运行与恢复
-文件助手 SHALL 使用既有消息、运行、交互和 Office 编辑链路，不要求主窗口已有会话。默认工作区与原文件会话关联 SHALL 持久保存，原文件 SHALL 保留原目录。
+文件助手 SHALL 使用既有消息、运行、交互、Office 原生编辑及共享文本编辑链路，不要求主窗口已有会话。每文件子工作区与原文件会话关联 SHALL 持久保存，原文件 SHALL 保留原目录，不为工作区隔离复制或移动原件。管理根目录及子工作区 SHALL 标记 fileAssistantManaged，普通工作区 UI 隐藏该分类，正常 API 保持可见且主窗口支持精确 ID 定位；稳定文件身份、旧登记迁移和来源隔离 SHALL 遵循 file-assistant-workspaces 规范。
 
 #### Scenario: 无用户工作区冷启动
 - **WHEN** 用户直接从系统打开外部文件，应用没有用户工作区或主窗口
-- **THEN** 默认工作区能够启动既有引擎，文件窗口可加载可用模型、发送和停止任务；会话创建不自动发送模型请求
+- **THEN** 文件助手子工作区能够启动既有引擎，文件窗口可加载可用模型、发送和停止任务；会话创建不自动发送模型请求
 
 #### Scenario: 文件模式后首次打开零用户工作区主窗口
 - **WHEN** 默认文件运行时已经就绪，用户尚无已选工作区而打开主窗口，远程访问配置与现有服务一致
@@ -67,7 +72,8 @@ Define how file windows and session workbenches share file identity, conversatio
 
 #### Scenario: 重启后再次打开文件
 - **WHEN** 用户再次打开已登记原文件
-- **THEN** 使用稳定文件标识并恢复真实会话及历史；会话确已删除才创建新会话，网络错误不创建替代会话
+- **THEN** 使用稳定文件标识，在对应子工作区恢复真实会话及历史；已有会话查询只有明确返回 404 才创建替代会话，网络错误、无响应、其他错误或身份不匹配均不创建替代会话
+- **AND** v1 共享历史留在旧工作区，不将旧 sessionId 跨工作区绑定到子工作区；旧 Office owner 仍存活时优先沿用原归属并延后迁移
 
 #### Scenario: 无主窗口时 provider 失败
 - **WHEN** 本轮最新 assistant 持久化明确错误，且引擎与委派任务均已空闲
@@ -82,15 +88,30 @@ Define how file windows and session workbenches share file identity, conversatio
 - **THEN** 在既有存储创建请求审批记录并返回版本 1，持久回读保持相同模式，不创建授权；旧版本覆盖仍被拒绝
 
 #### Scenario: 原文件另存为或定位
-- **WHEN** 主窗口对默认工作区的已登记外部文件另存为或打开文件夹
+- **WHEN** 主窗口对文件助手工作区的已登记外部文件另存为或打开文件夹
 - **THEN** 从文件登记解析原路径，另存为取消不产生副本且不改变草稿；未登记键拒绝，其他工作区继续使用普通路径规则
 
 #### Scenario: 原文件写回与交付
 - **WHEN** AI 修改已登记外部文件并保存
-- **THEN** 修改回执、交付回读和保存均指向相同原路径；新产物进入默认工作区，未登记键不可回退到工作区路径读写
+- **THEN** 修改回执、交付回读和保存均指向相同原路径；新产物进入该来源的子工作区，未登记键不可回退到工作区路径读写
+
+### Requirement: 外部文本通过共享编辑器保存登记原件
+Markdown 和共享文本名单内其他可编辑 UTF-8 外部文本 SHALL 使用现有 FileViewer 与共享 file-editor；保存 SHALL 通过已有 raw/content 接口按来源登记键解析真实原件，不创建影子副本。Server SHALL 强制有效有限数值 `baseUpdatedAt`、UTF-8、无 NUL 和 5,000,000 字节上限，保留真实原路径审批并在审批后及替换前复核原件；mtime 冲突 SHALL 返回 409，`force` SHALL NOT 绕过。Office 原件 SHALL 继续仅用原生模型保存；PDF、图片、视频、HTML/HTM、XLS、ODS 外部原件 SHALL 保持只读。此保存例外 SHALL NOT 开放外部原件批量写入、删除、重命名或 renderer 通用 fetch 写入，也不改变每文件空间、会话及 UI 分类。
+
+#### Scenario: 共享草稿保存真实原件
+- **WHEN** 用户在任一宿主编辑已登记 Markdown 并通过共享 file-editor 保存
+- **THEN** 写回相同真实原路径，广播新内容与时间基准，其他来源原件不变，子工作区不生成同名影子文件
+
+#### Scenario: 缺失基准或外部修改
+- **WHEN** 保存未携带有效 baseUpdatedAt，或原件在读取后、审批等待期间发生 mtime 修改
+- **THEN** 缺失基准返回 400，mtime 冲突返回 409；即使 force 为 true 也不覆盖，失败保留草稿并清理临时文件
+
+#### Scenario: 写入不属于文本保存例外
+- **WHEN** 请求直接写 Office、只读预览原件、跨来源或未登记键，或对外部原件执行批量写入、删除、重命名
+- **THEN** 拒绝对应操作，Office 仍通过其原生模型保存，不回退为工作区路径写入；独立窗口通用 fetch 不因此获得写权限
 
 ### Requirement: 首次开窗继承目标会话选项
-主 App 打开独立文件窗口 SHALL 通过既有 open 参数传入目标 workspace/session 的 model、agent、variant 快照。模型及档位 SHALL 复用会话覆盖与全局默认的既有解析规则；未选择 agent 时 SHALL 显式传入 null，不能被历史消息的 agent 替代。Main SHALL 仅接受可信主窗口顶层发送的首次 seed，并校验字段白名单。文件窗口后续开文件、主窗口重新激活该窗口及策略刷新 SHALL 不覆盖该 seed 或 renderer 当前选择。策略与模型可用性 SHALL 仍由 Main 在提交时实时验证，不随 seed 授权。
+主 App 打开独立文件窗口 SHALL 通过既有 open 参数传入目标 workspace/session 的 model、agent、variant 快照。模型及档位 SHALL 复用会话覆盖与全局默认的既有解析规则；未选择 agent 时 SHALL 显式传入 null，不能被历史消息的 agent 替代。Main SHALL 仅接受可信主窗口顶层发送的来源首次 seed，并校验字段白名单。文件窗口 SHALL 按 source 保留 model、agent、variant 及窗口局部草稿；后续开文件、主窗口重新激活及策略刷新 SHALL 不覆盖该来源 seed 或 renderer 当前选择，也不得把其他来源选项带入当前面板。策略与模型可用性 SHALL 仍由 Main 在提交时实时验证，不随 seed 授权。窗口局部草稿 SHALL 不承诺跨 App 重启恢复。
 
 #### Scenario: 首次打开与窗口内独立选择
 - **WHEN** 主 App 已选择模型、agent 和推理档位后首次从该会话开窗
@@ -98,7 +119,11 @@ Define how file windows and session workbenches share file identity, conversatio
 
 #### Scenario: 文件宿主尝试覆盖选项
 - **WHEN** 已登记文件窗口通过 open 参数携带其他 conversationOptions
-- **THEN** Main 忽略该选项并只沿用当前 entry；关闭窗口后从主 App 新开才获取新快照
+- **THEN** Main 忽略该选项并只沿用已登记 source 的选项；关闭窗口后从主 App 新开才获取新快照
+
+#### Scenario: 切换来源保留局部输入
+- **WHEN** 用户在来源 A 选择模型、agent、variant 并输入未发送草稿，切到 B 后再返回 A
+- **THEN** A 恢复自己的选项和窗口局部草稿，B 保持自己的状态；同来源标签共用同一份来源状态，不改写主窗口草稿
 
 #### Scenario: 独立启动恢复含推理档位的历史
 - **WHEN** 历史用户消息的 model 同时包含 providerID、modelID 和 variant，且本窗口没有首次选项快照
@@ -120,14 +145,14 @@ AI 面板 SHALL 使用真实分栏并更新原生 bounds，窄屏切换文档/�
 - **THEN** 宿主先确认页面提交，再读取最新 dirty 状态决定是否询问保存；提交失败保留文档与标签，不执行默认保存关闭。已知 dirty 的文档仍允许用户明确放弃修改
 
 ### Requirement: 文件上下文在提交时确定
-切文件标签 SHALL 仅切当前上下文，不改已接受任务目标。选区操作 SHALL 沿用既有 selectionRef 校验，无有效选区能力时不得用历史引用或路径代替授权。
+切文件标签 SHALL 仅切当前上下文，不改已接受任务目标。提交 SHALL 捕获当时标签的固定 source 和文件上下文，后续切换活动投影不得改绑已接受任务。选区操作 SHALL 沿用既有 selectionRef 校验，无有效选区能力时不得用历史引用或路径代替授权。
 
 #### Scenario: 发送后切标签
 - **WHEN** 用户对文件 A 提交任务后切到 B
 - **THEN** 已接受任务保持 A 的上下文，不静默操作 B
 
 ### Requirement: 两种宿主共用 AI 选区编辑操作
-原生“AI 编辑”的采集、添加、发送、标签定位和移除 SHALL 复用已有选区合同。独立窗口 SHALL 使用自己的局部草稿并展开 AI 面板，保持原 workspace/session；Main SHALL 仅允许从真实原生页面采集并投递到该窗口、且文档仍登记的引用。关闭共享模型 SHALL 同时核对两端未发送的草稿引用。
+原生“AI 编辑”的采集、添加、发送、标签定位和移除 SHALL 复用已有选区合同。独立窗口 SHALL 使用按固定 source 隔离的窗口局部草稿并展开 AI 面板，保持文档原 workspace/session；Main SHALL 仅允许从真实原生页面采集并投递到该窗口对应来源、且文档仍登记的引用。关闭共享模型 SHALL 同时核对两端未发送的草稿引用，不改变 Office owner。
 
 #### Scenario: 独立窗口添加或发送选区要求
 - **WHEN** 用户在独立文件窗口选择普通正文，点击 AI 编辑并添加或发送修改要求
@@ -142,11 +167,11 @@ AI 面板 SHALL 使用真实分栏并更新原生 bounds，窄屏切换文档/�
 - **THEN** 只取消主窗口的待处理草稿请求及旧代次，独立窗口仍可向自己的局部草稿追加已准备的要求
 
 ### Requirement: 主窗口定位同一会话
-面板 SHALL 能请求主窗口打开相同 workspace/session，不创建副本或迁移文档。
+面板 SHALL 能按目标 tabId 请求主窗口打开该标签固定 source 的相同 workspace/session，通过精确 ID 定位被普通 UI 隐藏的文件助手工作区，不创建副本或迁移文档。普通默认工作区恢复 SHALL 不自动选择 fileAssistantManaged 工作区。
 
 #### Scenario: 在主窗口打开
 - **WHEN** 用户选择定位原会话
-- **THEN** 主窗口显示同一会话，文件窗口和 Office 模型保持不变
+- **THEN** 主窗口按该标签固定来源的精确 workspaceId/sessionId 显示同一会话，即使该工作区不在普通列表中；文件窗口和 Office 模型保持不变
 
 ### Requirement: 包内桌面页面资源完整
 桌面打包 SHALL 校验 index、file-window、overlay、pet 四个页面入口；本地脚本、样式及图片 SHALL 使用包内相对路径且对应文件存在。校验失败 SHALL 阻止产出可交付安装包。

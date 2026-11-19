@@ -39,6 +39,7 @@ import { PreviewError, PreviewLoading } from "../artifacts/preview";
 import { createOfficeFile } from "./office-create";
 import { OfficeCreateItems } from "./office-create-items";
 import { installOfficeComposerBridge } from "../surface/composer/office-composer-bridge";
+import { activeFileWindowTab, fileWindowSourceKey, projectFileWindowSource } from "./file-window-source";
 
 /** 独立文件窗口：原生标签栏、保存状态及文件操作；文档模型复用现有宿主。 */
 export function FileWindowApp({ onAppearanceChange }: { onAppearanceChange?: (appearance: FileWindowState["appearance"]) => void }) {
@@ -46,14 +47,19 @@ export function FileWindowApp({ onAppearanceChange }: { onAppearanceChange?: (ap
   const [state, setState] = React.useState<FileWindowState | null>(null);
   const [conversationOpen, setConversationOpen] = React.useState(false);
   const [conversationMounted, setConversationMounted] = React.useState(false);
-  const [conversationOptions, setConversationOptions] = React.useState<FileWindowConversationOptions | null>(null);
+  const [optionsBySource, setOptionsBySource] = React.useState<Record<string, FileWindowConversationOptions>>({});
+  const active = activeFileWindowTab(state);
+  const sourceKey = active ? fileWindowSourceKey(active.source) : "";
+  const conversationOptions = optionsBySource[sourceKey] ?? state?.conversation;
   const changeConversationOptions = React.useCallback<React.Dispatch<React.SetStateAction<FileWindowConversationOptions>>>((update) => {
-    setConversationOptions((current) => current === null ? current : typeof update === "function" ? update(current) : update);
-  }, []);
+    setOptionsBySource((current) => ({ ...current, [sourceKey]: typeof update === "function" ? update(current[sourceKey] ?? conversationOptions ?? {}) : update }));
+  }, [sourceKey, conversationOptions]);
+  const stateRef = React.useRef(state);
+  stateRef.current = state;
   const [conversationWidth, setConversationWidth] = React.useState(42);
   const contentRef = React.useRef<HTMLElement>(null);
   const canConverse = hasFileWindowConversation(state) && Boolean(bridge?.subscribeSessionEvents);
-  const canRetryConversation = Boolean(state?.workspaceRoot && state.workspaceId && state.sessionId && state.sessionId !== "file-browser" && !state.workspaceId.startsWith("rem_") && bridge?.subscribeSessionEvents);
+  const canRetryConversation = Boolean(active?.source.workspaceRoot && active.source.workspaceId && active.source.sessionId && active.source.sessionId !== "file-browser" && !active.source.workspaceId.startsWith("rem_") && bridge?.subscribeSessionEvents);
   const [retryingConversation, setRetryingConversation] = React.useState(false);
   const [client, setClient] = React.useState<JuggleWorkServerClient | null>(
     null,
@@ -61,25 +67,32 @@ export function FileWindowApp({ onAppearanceChange }: { onAppearanceChange?: (ap
   const [error, setError] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
   const queryClient = useQueryClient();
+  const updateState = React.useCallback((next: FileWindowState) => {
+    if (isLanguage(next.appearance?.lang) && (next.appearance?.theme === "light" || next.appearance?.theme === "dark")) {
+      onAppearanceChange?.(next.appearance);
+    }
+    const projected = projectFileWindowSource(next);
+    stateRef.current = projected;
+    setState(projected);
+    setOptionsBySource((current) => {
+      const seeded = { ...current };
+      for (const tab of next.tabs) {
+        const key = fileWindowSourceKey(tab.source);
+        if (tab.conversation && !seeded[key]) {
+          const { model, agent, variant } = tab.conversation;
+          seeded[key] = { model, agent, variant };
+        }
+      }
+      return seeded;
+    });
+  }, [onAppearanceChange]);
   React.useEffect(() => {
     if (!bridge) {
       setError(t("office.desktop_required"));
       return;
     }
     let cancelled = false;
-    const updateState = (next: FileWindowState) => {
-      if (cancelled) return;
-      if (isLanguage(next.appearance?.lang) && (next.appearance?.theme === "light" || next.appearance?.theme === "dark")) {
-        onAppearanceChange?.(next.appearance);
-      }
-      setState(next);
-      if (hasFileWindowConversation(next)) {
-        setConversationOptions((current) => current ?? {
-          model: next.conversation.model, agent: next.conversation.agent, variant: next.conversation.variant,
-        });
-      }
-    };
-    const stop = bridge.onChanged(updateState);
+    const stop = bridge.onChanged((next) => { if (!cancelled) updateState(next); });
     void bridge
       .state()
       .then((initial) => {
@@ -98,16 +111,27 @@ export function FileWindowApp({ onAppearanceChange }: { onAppearanceChange?: (ap
       cancelled = true;
       stop();
     };
-  }, [bridge, onAppearanceChange]);
-  const active = state?.tabs.find((tab) => tab.path === state.activePath);
+  }, [bridge, updateState]);
   React.useEffect(() => {
-    if (!canConverse || !state) return;
     return installOfficeComposerBridge({
-      scope: () => `file-window:${state.workspaceId}:${state.sessionId}`,
-      accept: (input) => input.workspaceId === state.workspaceId && input.sessionId === state.sessionId,
-      navigate: () => { setConversationMounted(true); setConversationOpen(true); },
+      scope: (input) => `file-window:${JSON.stringify([input.workspaceId, input.sessionId])}`,
+      accept: (input) => Boolean(stateRef.current?.tabs.some((tab) => tab.source.workspaceId === input.workspaceId && tab.source.sessionId === input.sessionId)),
+      preserveOnFileSwitch: (input) => {
+        const source = activeFileWindowTab(stateRef.current)?.source;
+        return Boolean(source && (source.workspaceId !== input.workspaceId || source.sessionId !== input.sessionId));
+      },
+      navigate: async (_path, input) => {
+        const tab = stateRef.current?.tabs.find((tab) => tab.source.workspaceId === input.workspaceId && tab.source.sessionId === input.sessionId &&
+          (tab.documentId === input.reference.documentId || tab.path === input.reference.preview.path));
+        if (!tab || !bridge) throw new Error("选区不属于当前文件窗口");
+        await bridge.action("select", tab.tabId);
+        const next = projectFileWindowSource(await bridge.state());
+        if (next.activeTabId !== tab.tabId) throw new Error("文件切换已取消");
+        updateState(next);
+        setConversationMounted(true); setConversationOpen(true);
+      },
     });
-  }, [canConverse, state?.workspaceId, state?.sessionId]);
+  }, [bridge, updateState]);
   const openConversation = () => {
     setConversationMounted(true);
     setConversationOpen(true);
@@ -117,12 +141,7 @@ export function FileWindowApp({ onAppearanceChange }: { onAppearanceChange?: (ap
     setRetryingConversation(true);
     try {
       const next = await bridge.state();
-      setState(next);
-      if (hasFileWindowConversation(next)) {
-        setConversationOptions((current) => current ?? {
-          model: next.conversation.model, agent: next.conversation.agent, variant: next.conversation.variant,
-        });
-      }
+      updateState(next);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error));
     } finally {
@@ -138,12 +157,12 @@ export function FileWindowApp({ onAppearanceChange }: { onAppearanceChange?: (ap
     queryKey: [
       "office-document",
       client?.baseUrl,
-      state?.workspaceId,
+      active?.source.workspaceId,
       active?.documentId,
     ],
     enabled: Boolean(client && state && active?.documentId),
     queryFn: () =>
-      client!.getOfficeDocument(state!.workspaceId, active!.documentId!),
+      client!.getOfficeDocument(active!.source.workspaceId, active!.documentId!),
     refetchInterval: 1000,
   }).data?.document;
   const action = async (
@@ -178,15 +197,15 @@ export function FileWindowApp({ onAppearanceChange }: { onAppearanceChange?: (ap
       event.preventDefault();
       void action(
         key === "w" ? "close" : "open",
-        key === "w" ? active?.path : undefined,
+        key === "w" ? active?.tabId : undefined,
       );
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [bridge, active?.path]);
+  }, [bridge, active?.tabId]);
   const draft = useFilesPanelStore((store) =>
-    state && active
-      ? store.sessions[state.sessionId]?.drafts[active.path]
+    active
+      ? store.sessions[active.source.sessionId]?.drafts[active.path]
       : undefined,
   );
   const save = async () => {
@@ -198,19 +217,19 @@ export function FileWindowApp({ onAppearanceChange }: { onAppearanceChange?: (ap
         if (draft)
           await saveSharedFileText(
             client,
-            state.workspaceId,
+            active.source.workspaceId,
             active.path,
             draft.content,
             draft.baseUpdatedAt,
           );
         return;
       }
-      await client.saveOfficeDocument(state.workspaceId, active.documentId);
+      await client.saveOfficeDocument(active.source.workspaceId, active.documentId);
       await queryClient.invalidateQueries({
         queryKey: [
           "office-document",
           client.baseUrl,
-          state.workspaceId,
+          active.source.workspaceId,
           active.documentId,
         ],
       });
@@ -234,14 +253,14 @@ export function FileWindowApp({ onAppearanceChange }: { onAppearanceChange?: (ap
         >
           {state?.tabs.map((tab) => (
             <div
-              className={`file-window-tab ${tab.path === state.activePath ? "is-active" : ""}`}
-              key={tab.path}
+              className={`file-window-tab ${tab.tabId === state.activeTabId ? "is-active" : ""}`}
+              key={tab.tabId}
             >
               <button
                 role="tab"
-                aria-selected={tab.path === state.activePath}
+                aria-selected={tab.tabId === state.activeTabId}
                 className="file-window-tab-select"
-                onClick={() => void action("select", tab.path)}
+                onClick={() => void action("select", tab.tabId)}
                 title={tab.name}
               >
                 <ArtifactIcon
@@ -253,7 +272,7 @@ export function FileWindowApp({ onAppearanceChange }: { onAppearanceChange?: (ap
               <button
                 className="file-window-close"
                 aria-label={`${t("common.close")} ${tab.name}`}
-                onClick={() => void action("close", tab.path)}
+                onClick={() => void action("close", tab.tabId)}
               >
                 <X className="size-3.5" />
               </button>
@@ -275,7 +294,7 @@ export function FileWindowApp({ onAppearanceChange }: { onAppearanceChange?: (ap
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" className="w-72">
             <DropdownMenuGroup>
-              {!state?.local && (
+              {state?.group.kind === "conversation" && !state.local && (
                 <DropdownMenuSub>
                   <DropdownMenuSubTrigger>
                     <Plus />
@@ -346,9 +365,9 @@ export function FileWindowApp({ onAppearanceChange }: { onAppearanceChange?: (ap
             (active.documentId ? document?.state !== "ready" : !draft)
           }
           onSave={() => void save()}
-          onReveal={() => void action("reveal")}
-          onSaveCopy={() => void action("save-copy")}
-          onUploadCloud={canUploadToCloud(active.name) && !active.cloudAttachment ? () => void (async () => { await save(); await action("upload-cloud"); })() : undefined}
+          onReveal={() => void action("reveal", active.tabId)}
+          onSaveCopy={() => void action("save-copy", active.tabId)}
+          onUploadCloud={canUploadToCloud(active.name) && !active.cloudAttachment ? () => void (async () => { await save(); await action("upload-cloud", active.tabId); })() : undefined}
           fileActionsDisabled={busy}
           trailingActions={
             canConverse && !conversationOpen ? (
@@ -364,29 +383,30 @@ export function FileWindowApp({ onAppearanceChange }: { onAppearanceChange?: (ap
             ) : null
           }
         >
-          {!active.cloudAttachment && canUploadToCloud(active.name) && <OfficeCloudUploadButton title={t("cloud_docs.upload")} onClick={() => void (async () => { await save(); await action("upload-cloud"); })()} />}
+          {!active.cloudAttachment && canUploadToCloud(active.name) && <OfficeCloudUploadButton title={t("cloud_docs.upload")} onClick={() => void (async () => { await save(); await action("upload-cloud", active.tabId); })()} />}
           {!active.cloudAttachment && active.cloudUpload && <CloudShareButton onClick={() => void (async () => {
-            try { await bridge?.action("share-cloud"); toast.success(t("cloud_docs.link_copied")); }
+            try { await bridge?.action("share-cloud", active.tabId); toast.success(t("cloud_docs.link_copied")); }
             catch { toast.error(t("cloud_docs.copy_link_failed")); }
           })()} />}
           {active.cloudAttachment && <span className="text-xs text-muted-foreground">{t("cloud_docs.attachment_readonly")}</span>}
         </FileEditorToolbar>
       )}
       <div className="file-window-viewer" style={{ position: "relative" }}>
-        {state?.tabs.filter(tab => tab.cloudDoc).map(tab => <FileCloudDocView key={tab.cloudDoc!.instanceId} tab={tab} sessionId={state.sessionId} active={tab.path === state.activePath} appearance={state.appearance} />)}
+        {state?.tabs.filter(tab => tab.cloudDoc).map(tab => <FileCloudDocView key={tab.cloudDoc!.instanceId} tab={tab} sessionId={tab.source.sessionId} active={tab.tabId === state.activeTabId} appearance={state.appearance} />)}
         {error ? (
           <PreviewError message={error} />
         ) : !state || !client ? (
           <PreviewLoading />
         ) : active?.cloudDoc ? null : active ? (
           <FileViewer
-            key={active.path}
+            key={active.tabId}
             client={client}
-            workspaceId={state.workspaceId}
-            sessionId={state.sessionId}
+            workspaceId={active.source.workspaceId}
+            sessionId={active.source.sessionId}
             path={active.path}
             name={active.name}
             draft={draft}
+            readOnly={active.readOnly}
             hideOfficeHeader
           />
         ) : (
@@ -419,11 +439,11 @@ export function FileWindowApp({ onAppearanceChange }: { onAppearanceChange?: (ap
         <div className="file-window-conversation-header">
           <img className="file-window-assistant-icon" src="./jugglework-assistant.png" alt="" />
           <span className="file-window-conversation-title">JuggleWork</span>
-          <Button className="file-window-open-session" variant="ghost" size="icon-sm" title={t("file_window.open_session")} aria-label={t("file_window.open_session")} onClick={() => void action("open-session")}><ArrowUpRight className="size-4" /></Button>
+          <Button className="file-window-open-session" variant="ghost" size="icon-sm" title={t("file_window.open_session")} aria-label={t("file_window.open_session")} onClick={() => void action("open-session", active?.tabId)}><ArrowUpRight className="size-4" /></Button>
           <Button className="file-window-close-conversation" variant="ghost" size="icon-sm" title={t("file_window.show_document")} aria-label={t("file_window.show_document")} onClick={() => setConversationOpen(false)}><X className="size-4" /></Button>
         </div>
         <div className="file-window-conversation-body">
-          <FileWindowConversation key={`${state.workspaceId}:${state.sessionId}`} state={state} client={client} bridge={bridge} visible={conversationOpen} options={conversationOptions} onOptionsChange={changeConversationOptions} />
+          <FileWindowConversation key={sourceKey} state={state} client={client} bridge={bridge} visible={conversationOpen} options={conversationOptions} onOptionsChange={changeConversationOptions} />
         </div>
       </aside>}
       </main>

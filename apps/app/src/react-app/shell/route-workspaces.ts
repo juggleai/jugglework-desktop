@@ -14,6 +14,7 @@ import {
   safeStringify,
 } from "@/app/utils";
 import { t } from "@/i18n";
+import { isOrdinaryWorkspace } from "@/app/lib/workspace-visibility";
 
 export type RouteWorkspace = JuggleWorkWorkspaceInfo & {
   displayNameResolved: string;
@@ -124,7 +125,19 @@ export function describeWorkspaceCreateError(error: unknown) {
 export function mergeRouteWorkspaces(
   serverWorkspaces: JuggleWorkWorkspaceInfo[],
   desktopWorkspaces: RouteWorkspace[],
+  exactWorkspaceId?: string,
 ): RouteWorkspace[] {
+  // Server 标记和从 Server 持久化恢复的 Desktop 标记均为正向证据。
+  // 缺失字段（旧版本/旧副本）不是解除分类的依据；先按 ID 统一再过滤。
+  const fileAssistantIds = new Set(
+    [...serverWorkspaces, ...desktopWorkspaces]
+      .filter((workspace) => workspace.fileAssistantManaged === true)
+      .map((workspace) => workspace.id),
+  );
+  serverWorkspaces = serverWorkspaces.map((workspace) => fileAssistantIds.has(workspace.id) ? { ...workspace, fileAssistantManaged: true } : workspace);
+  desktopWorkspaces = desktopWorkspaces.map((workspace) => fileAssistantIds.has(workspace.id) ? { ...workspace, fileAssistantManaged: true } : workspace);
+  serverWorkspaces = serverWorkspaces.filter((workspace) => isOrdinaryWorkspace(workspace) || workspace.id === exactWorkspaceId);
+  desktopWorkspaces = desktopWorkspaces.filter((workspace) => isOrdinaryWorkspace(workspace) || workspace.id === exactWorkspaceId);
   const desktopById = new Map(desktopWorkspaces.map((workspace) => [workspace.id, workspace]));
   const desktopByPath = new Map(
     desktopWorkspaces.flatMap((workspace) => {
@@ -225,7 +238,7 @@ export function toSessionGroups(
   errorsByWorkspaceId: Record<string, string | null>,
   loadingWorkspaceIds: Set<string>,
 ): WorkspaceSessionGroup[] {
-  return workspaces.map((workspace) => ({
+  return workspaces.filter(isOrdinaryWorkspace).map((workspace) => ({
     workspace,
     sessions: sessionsByWorkspaceId[workspace.id] ?? [],
     status: loadingWorkspaceIds.has(workspace.id)

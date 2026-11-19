@@ -28,7 +28,7 @@ function useOpenCloudTabRequests() {
       if (!isCurrent()) return;
       void (async () => {
         const list = await desktopBridge.workspaceBootstrap();
-        const workspaces = list.workspaces.filter(item => item.path && item.workspaceType !== "remote" && !item.hidden);
+        const workspaces = list.workspaces.filter(item => item.path && item.workspaceType !== "remote" && !item.hidden && !item.fileAssistantManaged);
         const route = parseWorkspaceAppPath(pathname);
         const inSession = route?.view === "session" && Boolean(route.sessionId) &&
           workspaces.some(item => item.id === route.workspaceId);

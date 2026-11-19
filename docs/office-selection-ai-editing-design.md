@@ -6,6 +6,14 @@
 
 用户在原生编辑页面选中支持的内容，点击“✦ AI 编辑”；PPT 缩略图区使用“✦”紧凑入口。输入要求后选择“添加”或“发送”。输入栏按稳定指令组保存选区与要求，发送后 Agent 使用本轮固定引用修改实际模型，由宿主核对内容并保存原文件。没有选区标签的普通文档任务保留当前文档规则。
 
+### 外部文件与多来源窗口
+
+没有存活 Office owner 的外部文件各自使用 `FileAssistant/files/<32ASCIIhash>` 子工作区和真实会话，原件留在原目录；多个文件助手来源可在同一窗口中以标签展示。每个活标签以 tabId 标识并固定 source（workspaceId、sessionId、workspaceRoot），activeTabId 只选择当前投影，不改文档 owner 或已有选区引用的归属。已有聊天文件继续按 workspace/session 对分窗，存活旧 owner 优先沿用并延后迁移。
+
+独立窗口的 model、agent、variant 和未发送草稿按 source 隔离；原生选区“添加/发送”根据固定文档来源定位标签并展开对应面板，不按当前全局焦点或另一标签改投。切换到其他来源再返回保留各自窗口局部输入，不改写主窗口草稿；窗口局部草稿不承诺跨 App 重启恢复。会话历史的持久恢复不能替代选区引用的模型代次校验。
+
+提交固定本轮来源和引用，切标签不改变已接受运行。Main fetch/SSE 始终校验 registered source authority，来源注销/窗口销毁只取消对应传输并拒绝迟到响应，不自动 abort 已接受运行；Office 保存、dirty 和关闭保护保持既有合同。v1 历史保留在旧共享工作区，不跨工作区复用旧 sessionId；重开已有会话只有明确 404 才新建。详细合同见 [文件助手隔离设计](../openspec/changes/isolate-file-assistant-workspaces/design.md)。相关自动化单元项已完成，真实 Windows/macOS Office 多来源选区全链路仍待验收。
+
 实现复用本地 `office-docs-ai-engine`、Electron、React、Lexical、Zustand 和已有 Agent 通道。页面使用项目维护的本地浮层，SDK 内置在线 AI 保持关闭。不依赖外部应用，不提供 Agent 新建文档；分享与上传保留 TODO。
 
 | 部分 | 当前状态 |

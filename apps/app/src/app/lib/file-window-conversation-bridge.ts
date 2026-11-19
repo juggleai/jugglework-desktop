@@ -1,7 +1,7 @@
 import type { FileWindowBridge } from "@jugglework/types/file-window";
 
 /** 把 preload 推送变为 SDK 已有的 SSE 消费输入，取消时同步释放订阅。 */
-export function fileWindowEventResponse(bridge: Pick<FileWindowBridge, "subscribeSessionEvents">, signal?: AbortSignal | null, onConnected?: () => void): Response {
+export function fileWindowEventResponse(bridge: Pick<FileWindowBridge, "subscribeSessionEvents">, input: { workspaceId: string }, signal?: AbortSignal | null, onConnected?: () => void): Response {
   const subscribe = bridge.subscribeSessionEvents;
   if (!subscribe) throw new Error("File-window session event bridge is unavailable.");
   const encoder = new TextEncoder();
@@ -21,7 +21,7 @@ export function fileWindowEventResponse(bridge: Pick<FileWindowBridge, "subscrib
       if (signal?.aborted) { dispose(); return; }
       signal?.addEventListener("abort", dispose, { once: true });
       try {
-        unsubscribe = subscribe((event) => {
+        unsubscribe = subscribe(input, (event) => {
           if (closed) return;
           if (event.type === "server.connected") onConnected?.();
           controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));

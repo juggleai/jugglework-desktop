@@ -21,6 +21,7 @@ export interface WorkspaceConfig {
   preset?: string;
   workspaceType?: WorkspaceType;
   hidden?: boolean;
+  fileAssistantManaged?: boolean;
   remoteType?: RemoteType;
   baseUrl?: string;
   directory?: string;
@@ -43,6 +44,7 @@ export interface WorkspaceInfo {
   preset: string;
   workspaceType: WorkspaceType;
   hidden?: boolean;
+  fileAssistantManaged?: boolean;
   remoteType?: RemoteType;
   baseUrl?: string;
   directory?: string;
@@ -102,6 +104,8 @@ export interface ServerConfig {
   approval: ApprovalConfig;
   corsOrigins: string[];
   workspaces: WorkspaceInfo[];
+  /** 仅运行时保留的无效文件助手登记；不参与路由或引擎选择，持久化时保留元数据。 */
+  quarantinedWorkspaces?: WorkspaceInfo[];
   authorizedRoots: string[];
   readOnly: boolean;
   /** True when this process owns the OpenCode runtime it exposes. */

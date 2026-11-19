@@ -262,7 +262,7 @@ describe("Desktop automation catalog and routes", () => {
     expect(workspaceSelect).toMatch(/workspaceOptionLabel\(workspace\)[\s\S]+selectedOption \? <Check className="size-4 shrink-0/);
     expect(workspaceSelect).not.toMatch(/rounded-md border border-\[#ebebeb\]/);
     expect(page).not.toMatch(/<select value=\{workspaceId\}/);
-    expect(page).toMatch(/filter\(\(item\) => item\.workspaceType === "local" && !item\.automationManaged\)/);
+    expect(page).toMatch(/filter\(\(item\) => item\.workspaceType === "local" && !item\.automationManaged && !item\.fileAssistantManaged && !item\.hidden\)/);
   });
 
   test("ends the advanced creation settings at effort", () => {

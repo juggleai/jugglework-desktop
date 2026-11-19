@@ -989,7 +989,7 @@ export function AppSidebar(props: AppSidebarProps) {
   // but those internal directories are not user-created local workspaces and must not
   // appear in the ordinary workspace/session sidebar.
   const sidebarWorkspaceSessionGroups = React.useMemo(
-    () => props.workspaceSessionGroups.filter((group) => !group.workspace.automationManaged),
+    () => props.workspaceSessionGroups.filter((group) => !group.workspace.automationManaged && !group.workspace.fileAssistantManaged && !group.workspace.hidden),
     [props.workspaceSessionGroups],
   );
   const lastWorkspaceByScope = useTaskScopeStore((state) => state.lastWorkspaceByScope);
@@ -1212,6 +1212,7 @@ export function AppSidebar(props: AppSidebarProps) {
     const orderedVisibleIds = [...visibleIds];
     const merged = props.workspaceSessionGroups.map((group) => {
       const isReorderableLocalWorkspace = !group.workspace.automationManaged
+        && !group.workspace.fileAssistantManaged && !group.workspace.hidden
         && workspaceTaskScope(group.workspace) === "local";
       return isReorderableLocalWorkspace
         ? orderedVisibleIds.shift() ?? group.workspace.id

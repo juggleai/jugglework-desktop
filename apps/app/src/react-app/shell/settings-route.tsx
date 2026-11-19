@@ -1,4 +1,5 @@
 /** @jsxImportSource react */
+import { ordinaryWorkspaceId } from "@/app/lib/workspace-visibility";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Navigate, useLocation, useNavigate, useParams } from "react-router-dom";
 import { toast } from "@/components/ui/sonner";
@@ -308,7 +309,7 @@ function reconcileSelectedWorkspaceId(
     if (pathMatch) return pathMatch.id;
   }
 
-  return serverList.activeId?.trim() || desktopSelectedId || workspaces[0]?.id || "";
+  return [serverList.activeId?.trim(), desktopSelectedId].find((id) => serverIds.has(id ?? "")) || workspaces[0]?.id || "";
 }
 
 const SETTINGS_HIDE_TITLEBAR_KEY = "jugglework.react.settings.hide-titlebar";
@@ -1528,11 +1529,11 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         setBaseUrl("");
         setToken("");
         setHostToken("");
-        setWorkspaces(desktopWorkspaces);
+        setWorkspaces(mergeRouteWorkspaces([], desktopWorkspaces));
         setSessionsByWorkspaceId({});
         setErrorsByWorkspaceId({});
         setLegacySelectedWorkspaceId((current) => {
-          const next = current || readActiveWorkspaceId() || resolveWorkspaceListSelectedId(desktopList) || desktopWorkspaces[0]?.id || "";
+          const next = ordinaryWorkspaceId(desktopWorkspaces, current, readActiveWorkspaceId(), resolveWorkspaceListSelectedId(desktopList));
           writeActiveWorkspaceId(next || null);
           return next;
         });
@@ -1637,9 +1638,9 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         dedupeKey: "settings-route-refresh",
       });
       if (desktopWorkspaces.length > 0) {
-        setWorkspaces(desktopWorkspaces);
+        setWorkspaces(mergeRouteWorkspaces([], desktopWorkspaces));
         setLegacySelectedWorkspaceId((current) => {
-          const next = current || readActiveWorkspaceId() || resolveWorkspaceListSelectedId(desktopList) || desktopWorkspaces[0]?.id || "";
+          const next = ordinaryWorkspaceId(desktopWorkspaces, current, readActiveWorkspaceId(), resolveWorkspaceListSelectedId(desktopList));
           writeActiveWorkspaceId(next || null);
           return next;
         });

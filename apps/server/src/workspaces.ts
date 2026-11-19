@@ -55,6 +55,7 @@ export function buildWorkspaceInfos(
       preset: workspace.preset?.trim() || (workspaceType === "remote" ? "remote" : "starter"),
       workspaceType,
       hidden: workspace.hidden,
+      fileAssistantManaged: workspace.fileAssistantManaged,
       remoteType,
       baseUrl: workspace.baseUrl,
       directory: workspace.directory,

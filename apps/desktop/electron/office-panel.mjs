@@ -18,13 +18,15 @@ import {
 
 /**
  * 承载唯一存活的 Office 页面；隐藏或切换标签时保留模型和撤销记录。
- * @param {{ getWindow: () => Electron.BrowserWindow | null, getWindows?: () => Electron.BrowserWindow[], resolveWindow?: (sender: Electron.WebContents) => Electron.BrowserWindow | null, authorizeReferences?: (event: Electron.IpcMainInvokeEvent, input: any) => void, onDocumentClosed?: (id: string) => void, onOpenFile?: (window: Electron.BrowserWindow, input: { workspaceId: string, sessionId: string }) => Promise<void>, composer?: { request: (input: any) => Promise<any> }, client: { getJson: (path: string, options?: { signal?: AbortSignal }) => Promise<any>, postJson: (path: string, body: unknown) => Promise<any>, postHostJson?: (path: string, body: unknown, options?: { signal?: AbortSignal }) => Promise<any> }, resources: ReturnType<import('./office-resources.mjs').createOfficeResources> | (() => ReturnType<import('./office-resources.mjs').createOfficeResources>), platform?: NodeJS.Platform, arch?: string }} options 宿主窗口、资源服务、已有 Server 客户端及平台能力
+ * @param {{ getWindow: () => Electron.BrowserWindow | null, getWindows?: () => Electron.BrowserWindow[], resolveWindow?: (sender: Electron.WebContents) => Electron.BrowserWindow | null, authorizeReferences?: (event: Electron.IpcMainInvokeEvent, input: any) => (() => void) | void, authorizeTarget?: (event: Electron.IpcMainInvokeEvent, input: any) => (() => void) | void, authorizeContext?: (event: Electron.IpcMainInvokeEvent, input: any) => (() => void) | void, onDocumentClosed?: (id: string) => void, onOpenFile?: (window: Electron.BrowserWindow, input: { workspaceId: string, sessionId: string }) => Promise<void>, composer?: { request: (input: any) => Promise<any> }, client: { getJson: (path: string, options?: { signal?: AbortSignal }) => Promise<any>, postJson: (path: string, body: unknown) => Promise<any>, postHostJson?: (path: string, body: unknown, options?: { signal?: AbortSignal }) => Promise<any> }, resources: ReturnType<import('./office-resources.mjs').createOfficeResources> | (() => ReturnType<import('./office-resources.mjs').createOfficeResources>), platform?: NodeJS.Platform, arch?: string }} options 宿主窗口、资源服务、已有 Server 客户端及平台能力
  */
 export function createOfficePanel({
   getWindow,
   getWindows = () => [],
   resolveWindow,
   authorizeReferences,
+  authorizeTarget,
+  authorizeContext,
   onDocumentClosed,
   onOpenFile,
   composer,
@@ -299,7 +301,9 @@ export function createOfficePanel({
   const show = async (
     { workspaceId, documentId, bounds: rectangle, activate = false, prepareOnly = false },
     window = getWindow(),
+    verify = () => {},
   ) => {
+    verify();
     if (reopening.has(documentId)) return;
     if (!window || window.isDestroyed()) return;
     const host = observeHost(window);
@@ -307,13 +311,15 @@ export function createOfficePanel({
     const generation = generations.get(documentId) ?? 0;
     const focusRevision = host.focusRevision;
     // TIPS: 刷新/隐藏使旧布局失效；异步查询返回后也不能把旧视图重新挂回聊天界面。
-    const isCurrent = () =>
-      host.revision === revision &&
+    const isCurrent = () => {
+      try { verify(); } catch { return false; }
+      return host.revision === revision &&
       (generations.get(documentId) ?? 0) === generation &&
       !reopening.has(documentId) &&
       !window.isDestroyed() &&
       (prepareOnly || window.isVisible()) &&
       !window.isMinimized();
+    };
     /** 仅恢复所属可见页面的原焦点；用户已经转向聊天或请求过期时不接管输入。 */
     const restoreFocus = (entry) => {
       if (
@@ -554,44 +560,58 @@ export function createOfficePanel({
     return true;
   };
   /** 先确认和准备目标，成功后才清理草稿引用；文件读取、引擎或页面失败都保留原选择。 */
-  const confirmFileTarget = async (window, input) => {
+  const confirmFileTarget = async (window, input, verify = () => {}, onCreated = undefined) => {
+    verify();
     if (!composer || input.sessionId === "file-browser") return true;
     input = { ...input, windowId: window?.id };
     const initial = await composer.request({ action: "guard", ...input });
+    verify();
     if (!initial.needsConfirmation) return true;
     const target = await client.postJson(`/workspace/${encodeURIComponent(input.workspaceId)}/office/check-open-target`, { sessionId: input.sessionId, path: input.path });
+    verify();
     const guardInput = { ...input, path: target.path, targetDocumentId: target.documentId };
     const guard = await askSwitch(window, guardInput);
+    verify();
     if (guard === false) return false;
     if (!guard) return true;
     let prepared = null, committed = false;
+    const cleanupPrepared = async () => {
+      if (!prepared || assignedWindows.has(prepared.documentId)) return;
+      await client.postJson(`${base(input.workspaceId, prepared.documentId)}/close`, { decision: "discard", onlyIfClean: true, sessionId: input.sessionId });
+      destroy(prepared.documentId);
+    };
     try {
-    if (target.office) {
+    if (target.office && !input.readOnly) {
       const result = await client.postJson(`/workspace/${encodeURIComponent(input.workspaceId)}/office/open`, { sessionId: input.sessionId, path: target.path, activate: false });
       const document = result.document;
-      if (!target.documentId) prepared = document;
-      await show({ workspaceId: input.workspaceId, documentId: document.documentId, prepareOnly: true, bounds: { x: 0, y: 0, width: 1, height: 1 } }, window);
+      if (result.created === true && document.workspaceId === input.workspaceId && document.ownerSessionId === input.sessionId) prepared = document;
+      verify();
+      await show({ workspaceId: input.workspaceId, documentId: document.documentId, prepareOnly: true, bounds: { x: 0, y: 0, width: 1, height: 1 } }, window, verify);
       const deadline = Date.now() + 30_000;
       for (;;) {
         const current = (await client.getJson(base(input.workspaceId, document.documentId))).document;
+        verify();
         if (current.state === "ready") break;
         if (current.state !== "opening" || Date.now() >= deadline) throw new Error(current.error ?? "目标文档尚未准备完成，请重试");
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
       if (assignedWindows.has(document.documentId) && assignedWindows.get(document.documentId) !== window.id) {
         const status = await client.getJson(`${base(input.workspaceId, document.documentId)}/transfer-status`);
+        verify();
         if (status.reason) throw new Error("请等待文档相关任务结束及交付完成后再切换");
       }
     }
     if (!window || window.isDestroyed()) return false;
+    verify();
     committed = await finishSwitch(input, guard);
+    // 布尔 API 保持不变；完整打开链负责在标签接管前回收预检新模型。
+    if (committed && prepared && onCreated) onCreated(prepared, cleanupPrepared);
     return committed;
     } finally {
       // TIPS: 仅清理本次预检新建且尚未分配到任何窗口的模型，不触及已有标签或可见编辑内容。
       if (!committed && prepared && !assignedWindows.has(prepared.documentId)) {
         try {
-          await client.postJson(`${base(input.workspaceId, prepared.documentId)}/close`, { decision: "discard" });
-          destroy(prepared.documentId);
+          await cleanupPrepared();
         } catch (error) { console.warn("Office 预检模型清理失败，保留服务端记录", prepared.documentId, String(error)); }
       }
     }
@@ -625,24 +645,29 @@ export function createOfficePanel({
       throw new Error("文档编辑页面已失效，不能确认保存");
     if (entry.commit.error) throw entry.commit.error;
   };
-  const close = async (workspaceId, documentId, reopenTarget = null) => {
+  const close = async (workspaceId, documentId, verify = () => {}, reopenTarget = null) => {
+    verify();
     if (reopening.has(documentId) && !reopenTarget)
       throw new Error("文档正在保存并重新打开，请稍候");
     let document = (await client.getJson(base(workspaceId, documentId)))
       .document;
+    verify();
     if (!document.dirty && document.state === "ready" && views.has(documentId)) {
       // TIPS: 输入或撤销/重做可能仍在页面缓冲中；先确认提交，再读取 dirty，避免静默保存关闭。
       await prepareSave({ workspaceId, documentId, pageId: document.pageId });
       document = (await client.getJson(base(workspaceId, documentId))).document;
+      verify();
     }
     const sourceWindow = views.get(documentId)?.window ?? getWindow();
     if (reopenTarget) {
       if (document.state !== "ready") throw new Error("文档尚未就绪，请稍候再打开独立窗口");
       const status = await client.getJson(`${base(workspaceId, documentId)}/transfer-status`);
+      verify();
       if (status.reason) throw new Error("请等待文档相关任务结束及交付完成后重试");
     }
     const guardInput = { workspaceId, sessionId: document.ownerSessionId, closingDocumentId: documentId };
     const selectionGuard = await askSwitch(sourceWindow, guardInput);
+    verify();
     if (selectionGuard === false) return false;
     let decision = "save";
     if (
@@ -664,11 +689,13 @@ export function createOfficePanel({
       const result = await (window
         ? dialog.showMessageBox(window, options)
         : dialog.showMessageBox(options));
+      verify();
       if (reopenTarget ? result.response !== 0 : result.response === 2) return false;
       decision = result.response === 0 ? "save" : "discard";
     }
     if (selectionGuard) {
       const current = await composer.request({ action: "guard", ...guardInput });
+      verify();
       if (current.epoch !== selectionGuard.epoch || current.scope !== selectionGuard.scope) return false;
     }
     if (reopenTarget && (reopenTarget.isDestroyed() || sourceWindow?.isDestroyed())) return false;
@@ -700,18 +727,20 @@ export function createOfficePanel({
     return true;
   };
   /** 显式保存关闭重开，不冒充存活页面迁移；只有文件窗口入口可选择此降级流程。 */
-  const openInWindow = async (document, window, restore) => {
+  const openInWindow = async (document, window, restore, isCurrent = () => true, onCreated = (_document) => {}) => {
+    const verify = () => { if (!isCurrent()) throw new Error("文件窗口来源已关闭"); };
+    verify();
     const documentId = document.documentId;
     const entry = views.get(documentId);
     if (!entry || entry.window.id === window.id || (platform === "darwin" && arch === "arm64"))
-      return await transfer(documentId, window) ? document : null;
+      return await transfer(documentId, window, isCurrent) ? document : null;
     if (reopening.has(documentId)) throw new Error("文档正在保存并重新打开，请稍候");
     const source = entry.window;
     reopening.add(documentId);
     // 使已经在途的布局失效，而不仅阻止新的 show；取消后由 finally 触发重新测量。
     observeHost(source).revision++;
     try {
-      if (!await close(document.workspaceId, documentId, window)) return null;
+      if (!await close(document.workspaceId, documentId, verify, window)) return null;
       // close 的服务端响应确认模型已释放；同时等待旧页面真正销毁，避免重开时资源仍被占用。
       const released = entry.view.webContents.isDestroyed() ? Promise.resolve() : new Promise((resolve, reject) => {
           const contents = entry.view.webContents;
@@ -720,16 +749,19 @@ export function createOfficePanel({
           contents.once("destroyed", done);
         });
       let failedDocument = null;
-      const reopen = async (host) => {
+      const reopen = async (host, verifyHost = () => {}) => {
         await released;
+        verifyHost();
         if (host.isDestroyed()) throw new Error("目标文件窗口已关闭");
         // TIPS: open 的启动失败会保留 error 会话；用户选择恢复后必须 recover 该身份，普通 open 只会复用错误。
         const failed = failedDocument;
-        const { document: opened } = failed
+        const { document: opened, created } = failed
           ? await client.postJson(`${base(failed.workspaceId, failed.documentId)}/recover`, {})
           : await client.postJson(`/workspace/${encodeURIComponent(document.workspaceId)}/office/open`, {
               sessionId: document.ownerSessionId, path: document.relativePath,
             });
+        if (created === true && opened.workspaceId === document.workspaceId && opened.ownerSessionId === document.ownerSessionId) onCreated(opened);
+        verifyHost();
         if (failed) destroy(failed.documentId);
         if (opened.state === "error") {
           failedDocument = opened;
@@ -742,8 +774,9 @@ export function createOfficePanel({
         return opened;
       };
       try {
-        return await reopen(window);
+        return await reopen(window, verify);
       } catch (error) {
+        verify();
         const choice = await dialog.showMessageBox(!source.isDestroyed() ? source : getWindow(), {
           type: "error", title: "独立窗口打开失败", message: "文档已保存，但未能在独立窗口重新打开。",
           detail: `${error.message}\n可在原窗口重新打开同一文件；已保存的内容仍在原路径。`,
@@ -752,6 +785,8 @@ export function createOfficePanel({
         if (choice.response === 0 && !source.isDestroyed()) {
           const opened = await reopen(source);
           await restore(source, opened);
+          // 原宿主已接回模型，不再属于目标窗口失败回滚可回收的模型。
+          onCreated(undefined);
           source.show(); source.focus();
           // 主窗口可能已离开聊天路由；事件已发送不代表恢复成功，必须看到真实页面建立。
           const deadline = Date.now() + 5000;
@@ -775,18 +810,20 @@ export function createOfficePanel({
     /** 原生页面已绑定身份，渲染层只报告显示区域。 */
     registerIpc(ipcMain) {
       ipcMain.handle("jugglework:office:reveal-selection", async (event, input) => {
-        owner(event);
-        authorizeReferences?.(event, input);
+        const window = owner(event);
+        const verify = authorizeReferences?.(event, input) || (() => {});
         const { reference } = await client.postJson(`/workspace/${encodeURIComponent(input.workspaceId)}/office/selection-references/reveal`, { sessionId: input.sessionId, referenceId: input.referenceId });
+        verify();
         const entry = views.get(reference.documentId);
         if (!entry || entry.pageId !== reference.sourcePageId || entry.workspaceId !== input.workspaceId ||
+          entry.window !== window ||
           entry.view.webContents.isDestroyed() || !entry.attached || visibleDocuments.get(entry.window.id) !== reference.documentId)
           throw new Error("请先打开选区所属文件，再点击标签定位");
         entry.window.show(); entry.window.focus(); entry.view.webContents.focus();
         await entry.view.webContents.executeJavaScript(`(${revealOfficePageSelection.toString()})(${JSON.stringify(reference.locator)})`);
         return { ok: true };
       });
-      ipcMain.handle("jugglework:office:confirm-file-switch", (event, input) => confirmFileTarget(owner(event), input));
+      ipcMain.handle("jugglework:office:confirm-file-switch", (event, input) => confirmFileTarget(owner(event), input, authorizeContext?.(event, input) || undefined));
       ipcMain.handle("jugglework:office:release-selections", (event, input) => {
         owner(event);
         authorizeReferences?.(event, input);
@@ -910,19 +947,20 @@ export function createOfficePanel({
       const owner = (event) => {
         const window =
           resolveWindow?.(event.sender) ??
-          (event.sender.id === getWindow()?.webContents.id
+          (event.sender === getWindow()?.webContents
             ? getWindow()
             : null);
-        if (!window || event.senderFrame !== event.sender.mainFrame) throw new Error("Office view requires its host window");
+        if (!window || window.isDestroyed() || event.sender.isDestroyed() || event.senderFrame !== event.sender.mainFrame) throw new Error("Office view requires its host window");
         return window;
       };
       ipcMain.handle("jugglework:office:show", async (event, input) => {
-        return show(input, owner(event));
+        return show(input, owner(event), authorizeTarget?.(event, input) || undefined);
       });
       ipcMain.handle(
         "jugglework:office:resources",
         async (event, input = {}) => {
           owner(event);
+          authorizeTarget?.(event, input);
           const service = getResources();
           if (!input.documentId || !views.has(input.documentId)) return null;
           return service.state(input.documentId);
@@ -930,14 +968,18 @@ export function createOfficePanel({
       );
       ipcMain.handle("jugglework:office:font-retry", async (event, id) => {
         owner(event);
+        const verify = authorizeTarget?.(event, { documentId: id }) || (() => {});
         const entry = views.get(id);
         await entry?.resourceSession?.retry();
+        verify();
       });
       ipcMain.handle("jugglework:office:recover", async (event, input) => {
         const window = owner(event);
+        const verify = authorizeTarget?.(event, input) || (() => {});
         const document = (
           await client.getJson(base(input.workspaceId, input.documentId))
         ).document;
+        verify();
         if (document.state !== "error") throw new Error("文档无需故障恢复");
         const result = await dialog.showMessageBox(window, {
           type: "warning",
@@ -950,12 +992,14 @@ export function createOfficePanel({
           noLink: true,
         });
         if (result.response !== 0) return null;
+        verify();
         const recovered = (
           await client.postJson(
             `${base(input.workspaceId, input.documentId)}/recover`,
             {},
           )
         ).document;
+        verify();
         destroy(input.documentId);
         assignedWindows.set(input.documentId, window.id);
         publishLocation(input.documentId);
@@ -964,14 +1008,18 @@ export function createOfficePanel({
       });
       ipcMain.handle("jugglework:office:snapshot", async (event, id) => {
         owner(event);
+        const verify = authorizeTarget?.(event, { documentId: id }) || (() => {});
         const entry = views.get(id);
         if (!entry || entry.view.webContents.isDestroyed()) return null;
-        return (await entry.view.webContents.capturePage()).toDataURL();
+        const image = await entry.view.webContents.capturePage();
+        verify();
+        return image.toDataURL();
       });
       ipcMain.handle(
         "jugglework:office:hide",
         async (event, id, snapshot = false) => {
           const window = owner(event);
+          const verify = authorizeTarget?.(event, { documentId: id }) || (() => {});
           const entry = views.get(id);
           if (
             snapshot &&
@@ -985,6 +1033,7 @@ export function createOfficePanel({
             !entry.view.webContents.isDestroyed()
               ? await entry.view.webContents.capturePage().catch(() => null)
               : null;
+          verify();
           if (!snapshot || visibleDocuments.get(window.id) !== id) {
             hide(id, window);
             if (snapshot) window.webContents.focus();
@@ -994,16 +1043,18 @@ export function createOfficePanel({
       );
       ipcMain.handle("jugglework:office:close", async (event, input) => {
         const window = owner(event);
+        const verify = authorizeTarget?.(event, input) || (() => {});
         const host = views.get(input.documentId)?.window;
         if (host && host.id !== window.id) {
           host.show();
           host.focus();
           return false;
         }
-        return close(input.workspaceId, input.documentId);
+        return close(input.workspaceId, input.documentId, verify);
       });
       ipcMain.handle("jugglework:office:destroy", (event, id) => {
         owner(event);
+        authorizeTarget?.(event, { documentId: id });
         destroy(id);
       });
     },

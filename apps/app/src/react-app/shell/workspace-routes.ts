@@ -159,6 +159,28 @@ export function settingsReturnRoute(
   return workspaceSessionRoute(workspaceId, sessionId);
 }
 
+/** 会话进入设置的导航状态：只继承同一会话的 exact 标记，不转存其他查询参数。 */
+export function sessionSettingsNavigation(
+  location: { pathname: string; search: string },
+  workspaceId: string,
+  sessionId: string | null,
+  route = "/settings/preferences",
+  embedded = false,
+) {
+  const tab = route.replace(/^\/settings\/?/, "").replace(/^\/+|\/+$/g, "") || "general";
+  const source = parseWorkspaceAppPath(location.pathname);
+  const exact = source?.view === "session" && source.workspaceId === workspaceId
+    && source.sessionId === sessionId && Boolean(sessionId)
+    && new URLSearchParams(location.search).get("exact") === "1";
+  const returnPath = embedded ? "/automations" : (workspaceId
+    ? workspaceSessionRoute(workspaceId, sessionId)
+    : legacySessionRoute(sessionId)) + (exact ? "?exact=1" : "");
+  return {
+    to: workspaceId ? workspaceSettingsRoute(workspaceId, tab) : route,
+    state: { workspaceId, sessionId, returnPath },
+  };
+}
+
 export function workspaceSettingsRoute(
   workspaceId: string,
   tab: SettingsTab | "extensions/mcp" | "extensions/plugins" | string = "general",

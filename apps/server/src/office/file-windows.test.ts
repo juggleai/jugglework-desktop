@@ -1,5 +1,6 @@
 import { afterEach, expect, mock, test } from "bun:test";
 import { getOfficeDocumentKind } from "@jugglework/types/office";
+import type { FileWindowTab } from "@jugglework/types/file-window";
 import { EventEmitter } from "node:events";
 import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -12,6 +13,8 @@ const answers = {
   close: 2,
   open: { canceled: true, filePaths: [] as string[] },
   save: { canceled: true, filePath: "" },
+  chooseOpen: undefined as (() => Promise<{ canceled: boolean; filePaths: string[] }>) | undefined,
+  chooseSave: undefined as (() => Promise<{ canceled: boolean; filePath: string }>) | undefined,
   wait: undefined as ((options: any) => Promise<any>) | undefined,
   openError: null as string | null,
   review: undefined as ((options: any) => Promise<any>) | undefined,
@@ -127,11 +130,11 @@ mock.module("electron", () => ({ clipboard: { writeText: async () => {} },
   dialog: {
     showOpenDialog: async () => {
       answers.dialogs.push("open");
-      return answers.open;
+      return answers.chooseOpen ? answers.chooseOpen() : answers.open;
     },
     showSaveDialog: async () => {
       answers.dialogs.push("save");
-      return answers.save;
+      return answers.chooseSave ? answers.chooseSave() : answers.save;
     },
     showMessageBox: async (...args: any[]) => {
       const options = args.at(-1);
@@ -202,6 +205,8 @@ afterEach(async () => {
   for (const root of roots.splice(0))
     await rm(root, { recursive: true, force: true });
   answers.review = undefined;
+  answers.chooseOpen = undefined;
+  answers.chooseSave = undefined;
 });
 
 test("actual file-window state and changed payloads contain no access token; reads authenticate only in Main", async () => {
@@ -252,6 +257,69 @@ test("file-window state rejects a window closed while awaiting access", async ()
   release();
   expect(await pending).toBeInstanceOf(Error);
   f.panel.destroy();
+});
+
+test("Office IPC 拒绝另一文件窗口未登记的模型，不转移页面、读取资源或展示目标窗口", async () => {
+  const f = await fixture();
+  await f.files.open({ workspaceId: "ws", sessionId: "ses", path: "报告.docx" });
+  const authorized = f.files.windows()[0];
+  await f.show(authorized);
+  const original = [...authorized.children][0];
+  await f.files.open({ workspaceId: "ws", sessionId: "unrelated", path: "notes.md" });
+  const stranger = f.files.windows()[1];
+  for (const [name, ...args] of [
+    ["show", { workspaceId: "ws", documentId: "od_A", activate: true, bounds: { x: 0, y: 0, width: 100, height: 100 } }],
+    ["resources", { documentId: "od_A" }], ["font-retry", "od_A"],
+    ["recover", { workspaceId: "ws", documentId: "od_A" }], ["snapshot", "od_A"],
+    ["hide", "od_A", true], ["close", { workspaceId: "ws", documentId: "od_A" }], ["destroy", "od_A"],
+    ["confirm-file-switch", { workspaceId: "ws", sessionId: "ses", path: "报告.docx" }],
+  ] as Array<[string, ...any[]]>) {
+    await expect(Promise.resolve().then(() => f.call(`jugglework:office:${name}`, stranger, ...args))).rejects.toThrow();
+  }
+  expect([...authorized.children]).toEqual([original]);
+  expect(original.visible).toBe(true);
+  expect(stranger.children.size).toBe(0);
+  expect(f.closes).toEqual([]);
+  f.files.dispose(); f.panel.destroy();
+});
+
+test.each(["switch", "close"])("Office snapshot 的捕获授权在 await 后 %s 时不读 active projection", async phase => {
+  const f = await fixture();
+  await f.files.open({ workspaceId: "ws", sessionId: "ses", path: "报告.docx" });
+  const window = f.files.windows()[0];
+  await f.show(window);
+  const page = [...window.children][0];
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  page.webContents.capturePage = async () => { await gate; return { toDataURL: () => "captured-A" }; };
+  const pending = f.call("jugglework:office:snapshot", window, "od_A");
+  const settled = pending.then((value: unknown) => value, (error: unknown) => error);
+  if (phase === "switch") await f.files.open({ workspaceId: "ws", sessionId: "ses", path: "notes.md" });
+  else f.files.documentClosed("od_A");
+  release();
+  if (phase === "switch") expect(await settled).toBe("captured-A");
+  else expect(await settled).toBeInstanceOf(Error);
+  f.files.dispose(); f.panel.destroy();
+});
+
+test("preload SSE 只传捕获 workspaceId，迟到订阅卸载不交付事件", async () => {
+  const bridge = rendererBridges[1];
+  const invokes: any[] = [];
+  const invoke = (rendererIpc as any).invoke;
+  let release!: (id: string) => void;
+  (rendererIpc as any).invoke = async (...args: any[]) => {
+    invokes.push(args);
+    if (args[0].endsWith(":session-subscribe")) return new Promise<string>(resolve => { release = resolve; });
+  };
+  const received: any[] = [];
+  try {
+    const stop = bridge.fileWindow.subscribeSessionEvents({ workspaceId: "a", sessionId: "forged" }, (event: any) => received.push(event));
+    rendererIpc.emit("jugglework:file-window:session-event", {}, { id: "sub-a", event: { type: "server.connected", properties: {} } });
+    stop(); release("sub-a");
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    expect(invokes).toEqual([["jugglework:file-window:session-subscribe", { workspaceId: "a" }], ["jugglework:file-window:session-unsubscribe", "sub-a"]]);
+    expect(received).toEqual([]);
+  } finally { (rendererIpc as any).invoke = invoke; }
 });
 
 test("file-window fetch binds registered top-level sender and revokes closed tabs/windows", async () => {
@@ -380,7 +448,7 @@ async function fixture(
       }
       return { document: { ...document } };
     },
-    async postJson(path: string, _body: unknown) {
+    async postJson(path: string, _body: unknown): Promise<any> {
       if (path.endsWith("/create")) {
         creations.push({ path, body: _body });
         return { document: { ...document } };
@@ -450,6 +518,9 @@ async function fixture(
     onDocumentClosed: (id: string) => files.documentClosed(id),
     resolveWindow: (sender: any) =>
       sender === main.webContents ? main : files.windowFor(sender),
+    authorizeTarget: (event: any, input: any) => event.sender === main.webContents ? undefined : files.authorizeOfficeTarget(event, input),
+    authorizeContext: (event: any, input: any) => event.sender === main.webContents ? undefined : files.authorizeOfficeContext(event, input),
+    authorizeReferences: (event: any, input: any) => event.sender === main.webContents ? undefined : files.authorizeOfficeReferences(event, input),
     onOpenFile: (window: any, input: any) => {
       const operation = files.openDialog(window, input);
       opens.push(operation);
@@ -500,8 +571,10 @@ async function fixture(
     });
   const state = (window: FakeWindow) =>
     call("jugglework:file-window:state", window);
-  const action = (window: FakeWindow, name: string, path?: string) =>
-    call("jugglework:file-window:action", window, name, path);
+  const action = async (window: FakeWindow, name: string, path?: string) => {
+    const tabId = path && name !== "open" ? (await state(window)).tabs.find((tab: any) => tab.path === path)?.tabId ?? path : path;
+    return call("jugglework:file-window:action", window, name, tabId);
+  };
   return {
     main,
     panel,
@@ -523,6 +596,112 @@ async function fixture(
     client,
     handlers,
     getAccess,
+  };
+}
+
+test.each(["confirmed", "stat", "open"])("预检成功后等待 %s 时来源撤销，清理无标签的新 clean 模型而不遗留 owner", async phase => {
+  const f = await preparedTargetFixture();
+  try {
+    const source = await f.startSource();
+    let release!: () => void, started!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const waiting = new Promise<void>(resolve => { started = resolve; });
+    f.waitAt(phase, async () => { started(); await gate; });
+    const pending = f.openTarget(source).then(() => null, (error: unknown) => error);
+    await waiting;
+    expect(f.model.state).toBe("ready");
+    expect((await f.state(source)).tabs.map((tab: any) => tab.path)).toEqual(["source.md"]);
+    await f.action(source, "close", "source.md");
+    release();
+    expect(await pending).toMatchObject({ message: "文件窗口来源已关闭" });
+    expect(f.cleanupAttempts).toEqual([{ decision: "discard", onlyIfClean: true, sessionId: "ses" }]);
+    expect(f.model.state).toBe("closed");
+    expect(f.disposed()).toBe(1);
+    expect((await f.state(source)).tabs).toEqual([]);
+    expect(f.openCalls()).toBe(phase === "open" ? 2 : 1);
+  } finally { answers.close = 2; f.files.dispose(); f.panel.destroy(); }
+});
+
+test.each(["success", "reused", "dirty", "stat-error", "preflight-error"])("预检模型清理责任覆盖完整打开链（%s），严格保留已接管/复用/dirty 模型", async ending => {
+  const f = await preparedTargetFixture(ending === "reused");
+  try {
+    const source = await f.startSource();
+    if (ending === "dirty") f.waitAt("stat", async () => {
+      f.model.dirty = true;
+      await f.action(source, "close", "source.md");
+    });
+    if (ending === "reused") f.waitAt("open", async () => { await f.action(source, "close", "source.md"); });
+    if (ending === "stat-error") f.waitAt("stat", async () => { throw new Error("stat failed"); });
+    if (ending === "preflight-error") f.waitAt("preflight", async () => { throw new Error("preflight failed"); });
+    if (ending === "success") {
+      await f.openTarget(source);
+      expect((await f.state(source)).tabs.find((tab: any) => tab.path === "target.docx")?.documentId).toBe("od_A");
+      expect(f.cleanupAttempts).toEqual([]);
+      expect(f.disposed()).toBe(0);
+    } else {
+      await expect(f.openTarget(source)).rejects.toThrow(ending.endsWith("error") ? ending === "stat-error" ? "stat failed" : "preflight failed" : "文件窗口来源已关闭");
+      expect(f.cleanupAttempts).toEqual(ending === "reused" ? [] : [{ decision: "discard", onlyIfClean: true, sessionId: "ses" }]);
+      expect(f.disposed()).toBe(ending === "stat-error" ? 1 : 0);
+    }
+    expect(f.model.state).toBe(["stat-error", "preflight-error"].includes(ending) ? "closed" : "ready");
+    if (ending === "dirty") expect(f.model.dirty).toBe(true);
+    if (ending === "success" || ending === "reused") expect(f.openCalls()).toBe(2);
+  } finally { answers.close = 2; f.files.dispose(); f.panel.destroy(); }
+});
+
+test("未传 onCreated 的 confirmFileTarget 消费者仍收到布尔成功，成功预检模型保持存活", async () => {
+  const f = await preparedTargetFixture();
+  try {
+    const source = await f.startSource();
+    expect(await f.panel.confirmFileTarget(source, { workspaceId: "ws", sessionId: "ses", path: "target.docx" })).toBe(true);
+    expect(f.model.state).toBe("ready");
+    expect(f.cleanupAttempts).toEqual([]);
+  } finally { answers.close = 2; f.files.dispose(); f.panel.destroy(); }
+});
+
+/** 使用真实 OfficePanel 预检、文件窗口 open IPC 和来源撤销，服务端 stub 严格执行 clean cleanup 契约。 */
+async function preparedTargetFixture(reused = false) {
+  let enabled = false, opens = 0, disposed = 0;
+  let phase: string, wait: (() => Promise<void>) | undefined;
+  const pause = async (at: string) => { if (phase === at) await wait?.(); };
+  const composer = { request: async (input: any) => {
+    if (input.action === "clear") { await pause("confirmed"); return { ok: true }; }
+    return { needsConfirmation: enabled, epoch: 1, scope: "source" };
+  } };
+  const f = await fixture("target.docx", undefined, undefined, {
+    attach: () => ({ dispose() { disposed++; } }),
+  }, composer);
+  if (reused) f.document.ownerSessionId = "other-owner";
+  const get = f.client.getJson.bind(f.client), post = f.client.postJson.bind(f.client);
+  const cleanupAttempts: any[] = [];
+  f.client.getJson = async (url, options) => {
+    if (enabled && url.includes("/files/stat")) await pause("stat");
+    if (url.endsWith("/office/od_A")) await pause("preflight");
+    return get(url, options);
+  };
+  f.client.postJson = async (url, body: any) => {
+    if (url.endsWith("/check-open-target")) return { office: true, path: "target.docx", ...(reused ? { documentId: "od_A" } : {}) };
+    if (url.endsWith("/open")) {
+      opens++;
+      if (opens > 1) await pause("open");
+      return { document: { ...f.document }, created: !reused && opens === 1 };
+    }
+    if (url.endsWith("/close") && body.onlyIfClean) {
+      cleanupAttempts.push(body);
+      expect(body).toEqual({ decision: "discard", onlyIfClean: true, sessionId: "ses" });
+      if (f.document.dirty) throw Object.assign(new Error("dirty model cannot be cleaned"), { serverCode: "office_cleanup_unavailable" });
+    }
+    return post(url, body);
+  };
+  return { ...f, model: f.document, cleanupAttempts, disposed: () => disposed, openCalls: () => opens,
+    waitAt: (at: string, callback: () => Promise<void>) => { phase = at; wait = callback; },
+    startSource: async () => {
+      await f.files.open({ workspaceId: "ws", sessionId: "ses", path: "source.md" });
+      enabled = true;
+      answers.close = 1;
+      return f.files.windows()[0];
+    },
+    openTarget: (window: FakeWindow) => f.call("jugglework:file-window:open", window, { workspaceId: "ws", sessionId: "ses", path: "target.docx" }),
   };
 }
 
@@ -558,7 +737,7 @@ test("conversation requires a real existing local session and trusted policy; na
   expect((await f.state(window)).conversation).toEqual({ desktopConfig: { allowCustomProviders: false, allowedModels: ["provider/model"] } });
   expect(JSON.stringify(window.webContents.messages)).not.toContain("forbidden");
   await f.action(window, "open-session");
-  expect(navigations).toEqual([{ workspaceId: "ws", sessionId: "ses" }]);
+  expect(navigations).toEqual([{ workspaceId: "ws", sessionId: "ses", exact: true }]);
   await expect(f.action(window, "open-session", "other-session")).rejects.toThrow();
   policy = null;
   expect(await f.state(window)).not.toHaveProperty("conversation");
@@ -591,12 +770,20 @@ test("云文档菜单在原独立窗口新增标签，加号仍可打开本地�
   try {
     await open("first");
     const [window] = f.files.windows();
+    const first = (await f.state(window)).tabs[0];
+    expect(first.source).toEqual({ workspaceId: "ws", sessionId: "ses", workspaceRoot: f.root });
     await f.action(window, "open");
     expect(answers.dialogs).toContain("open");
     await open("second", "first");
     expect(f.files.windows()).toEqual([window]);
-    expect((await f.state(window)).tabs.map(tab => tab.cloudDoc?.instanceId)).toEqual(["first", "second"]);
-    expect((await f.state(window)).activePath).toBe("cloud:second");
+    const state = await f.state(window);
+    expect(state.tabs.map((tab: FileWindowTab) => tab.cloudDoc?.instanceId)).toEqual(["first", "second"]);
+    expect(state.tabs[0]).toEqual(first);
+    expect(state.tabs[1].source).toEqual(first.source);
+    expect(state.tabs[1].tabId).toEqual(expect.any(String));
+    expect(state.tabs[1].tabId).not.toBe(first.tabId);
+    expect(state.activeTabId).toBe(state.tabs[1].tabId);
+    expect(state.activePath).toBe("cloud:second");
     await expect(open("third", "unknown")).rejects.toThrow("云文档来源已变化");
     expect((await f.state(window)).tabs).toHaveLength(2);
   } finally {
@@ -895,7 +1082,7 @@ test.each(["closed", "dispose", "unsubscribe", "render-process-gone"])(
         if (name === "jugglework:file-window:session-event" && value.event.type === "message.part.delta") received();
       };
       await expect(f.handlers.get("jugglework:file-window:session-subscribe")!({ sender: window.webContents, senderFrame: {} })).rejects.toThrow();
-      const id = await f.call("jugglework:file-window:session-subscribe", window);
+      const id = await f.call("jugglework:file-window:session-subscribe", window, { workspaceId: "ws" });
       const bounded = async (promise: Promise<void>, stage: string) => {
         let timer: ReturnType<typeof setTimeout> | undefined;
         try { await Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`SSE ${stage}: ${JSON.stringify(window.webContents.messages)}`)), 1000); })]); }
@@ -1709,9 +1896,13 @@ test("同工作区聊天文件同时首次开窗只建立一个窗口和标签",
   await Promise.all([f.files.open(input), f.files.open(input)]);
   expect(f.files.windows()).toHaveLength(1);
   const window = f.files.windows()[0];
-  expect((await f.state(window)).tabs).toEqual([
-    { path: "报告.docx", name: "报告.docx", documentId: "od_A" },
+  const state = await f.state(window);
+  expect(state.tabs).toEqual([
+    { path: "报告.docx", name: "报告.docx", documentId: "od_A", tabId: expect.any(String), source: { workspaceId: "ws", sessionId: "ses", workspaceRoot: f.root } },
   ]);
+  expect(state.activeTabId).toBe(state.tabs[0].tabId);
+  await f.files.open(input);
+  expect((await f.state(window)).tabs).toEqual(state.tabs);
   expect(opens).toBe(1);
   f.panel.destroy();
 });
@@ -1752,11 +1943,13 @@ test.each([false, true])("Windows 新 documentId 尚在 opening 时并发 addFil
   expect(opens).toBe(2);
   release();
   await Promise.all([first, duplicateOpen, duplicateAdd]);
-  const tabs = (await f.state(window)).tabs;
+  const state = await f.state(window);
+  const tabs = state.tabs;
   expect(f.files.windows()).toHaveLength(1);
   expect(tabs.filter((tab: any) => tab.path === input.path)).toEqual([
-    { path: input.path, name: input.path, documentId: "od_reopened_A" },
+    { path: input.path, name: input.path, documentId: "od_reopened_A", tabId: expect.any(String), source: { workspaceId: "ws", sessionId: "ses", workspaceRoot: f.root } },
   ]);
+  expect(state.activeTabId).toBe(tabs.find((tab: any) => tab.path === input.path).tabId);
   expect(tabs).toHaveLength(existing ? 2 : 1);
   expect(opens).toBe(2);
   expect(f.closes).toEqual([{ decision: "save" }]);
@@ -1765,7 +1958,7 @@ test.each([false, true])("Windows 新 documentId 尚在 opening 时并发 addFil
   expect([...window.children][0]).not.toBe(original);
   // 在途记录释放后，顺序打开仍复用同一标签，关闭也不残留重复项。
   await f.action(window, "open", input.path);
-  expect((await f.state(window)).tabs).toHaveLength(existing ? 2 : 1);
+  expect((await f.state(window)).tabs).toEqual(tabs);
   f.document.state = "ready";
   f.document.engineFileId = "reopened_A";
   await f.action(window, "close", input.path);
@@ -1978,8 +2171,8 @@ test("Windows error 会话 recover 失败时不循环 open、不恢复旧页面�
   f.panel.destroy();
 });
 
-test("透视表只读文件可在独立窗口打开，不迁移原生模型；其他打开错误仍抛出", async () => {
-  const f = await fixture("透视表.xlsx");
+test.each(["darwin", "win32"] as const)("%s 透视表只读文件可在独立窗口打开，不迁移原生模型；其他打开错误仍抛出", async (platform) => {
+  const f = await fixture("透视表.xlsx", undefined, { platform, arch: platform === "win32" ? "x64" : "arm64" });
   answers.openError = "office_readonly_required";
   await f.files.open({
     workspaceId: "ws",
@@ -1987,16 +2180,20 @@ test("透视表只读文件可在独立窗口打开，不迁移原生模型；�
     path: "透视表.xlsx",
   });
   const window = f.files.windows()[0];
-  expect((await f.state(window)).tabs).toEqual([
-    { path: "透视表.xlsx", name: "透视表.xlsx", readOnly: true },
+  const state = await f.state(window);
+  expect(state.tabs).toEqual([
+    { path: "透视表.xlsx", name: "透视表.xlsx", readOnly: true, tabId: expect.any(String), source: { workspaceId: "ws", sessionId: "ses", workspaceRoot: f.root } },
   ]);
+  expect(state.activeTabId).toBe(state.tabs[0].tabId);
   expect(window.children.size).toBe(0);
+  expect(f.closes).toEqual([]);
   expect(f.saves).toEqual([]);
+  expect(answers.messages.some(message => message.title === "在独立窗口重新打开")).toBe(false);
   answers.openError = "office_document_in_use";
   await expect(
     f.files.open({ workspaceId: "ws", sessionId: "ses", path: "其他.xlsx" }),
   ).rejects.toThrow("Open failed");
-  expect((await f.state(window)).tabs).toHaveLength(1);
+  expect((await f.state(window)).tabs).toEqual(state.tabs);
 });
 
 test("实时选区只读取所属可见页面，隐藏、旧代次及读取中销毁均不返回旧坐标", async () => {
@@ -2075,6 +2272,57 @@ test("运行中取消等待不迁移页面，清理空窗口并保留 dirty 内�
   }
 });
 
+test.each(["cancel", "failure"])("真实 Main open IPC：A 首次迁移 %s 时 B 已加入，保留 B 原生页及 dirty window close guard", async ending => {
+  const f = await fixture();
+  await f.show(f.main);
+  const original = [...f.main.children][0];
+  f.document.dirty = true;
+  f.transfer.reasons = ["running"];
+  const b = { ...f.document, documentId: "od_B", pageId: "page_B", name: "B.docx", relativePath: "B.docx", engineFileId: "actual_B", dirty: false };
+  const get = f.client.getJson, post = f.client.postJson;
+  f.client.getJson = async (url, options) => url === "/workspace/ws/office/od_B" ? { document: { ...b } } as any : get(url, options);
+  f.client.postJson = async (url, body: any) => url.endsWith("/open") && body.path === b.relativePath
+    ? { document: { ...b } } as any : url === "/workspace/ws/office/od_B/context"
+      ? { document: { ...b } } as any : post(url, body);
+  let waiting!: () => void, finish!: (answer: { response: number }) => void, fail!: (error: Error) => void;
+  const started = new Promise<void>(resolve => { waiting = resolve; });
+  answers.wait = async () => { waiting(); return new Promise((resolve, reject) => { finish = resolve; fail = reject; }); };
+  try {
+    const pending = f.call("jugglework:file-window:open", f.main, { workspaceId: "ws", sessionId: "ses", path: "报告.docx" });
+    const settled = pending.then(() => null, (error: unknown) => error);
+    await started;
+    const window = f.files.windows()[0];
+    await f.call("jugglework:file-window:open", f.main, { workspaceId: "ws", sessionId: "ses", path: b.relativePath });
+    await f.call("jugglework:office:show", window, { workspaceId: "ws", documentId: b.documentId, bounds: { x: 0, y: 0, width: 100, height: 100 } });
+    const pageB = [...window.children][0];
+    const tabB = (await f.state(window)).tabs.find((tab: any) => tab.documentId === b.documentId);
+    b.dirty = true;
+    if (ending === "cancel") finish({ response: 0 }); else fail(new Error("native transfer wait failed"));
+    if (ending === "cancel") expect(await settled).toBeNull();
+    else expect(await settled).toMatchObject({ message: "native transfer wait failed" });
+    expect(f.files.windows()).toEqual([window]);
+    expect(await f.state(window)).toMatchObject({ tabs: [tabB], activeTabId: tabB.tabId });
+    expect([...window.children]).toEqual([pageB]);
+    expect(pageB.webContents.isDestroyed()).toBe(false);
+    expect([...f.main.children]).toEqual([original]);
+    expect(f.document.dirty).toBe(true);
+    answers.close = 2;
+    const closeB = f.panel.close;
+    let confirmed!: () => void;
+    const checked = new Promise<void>(resolve => { confirmed = resolve; });
+    f.panel.close = async (...args: any[]) => { try { return await closeB(...args); } finally { confirmed(); } };
+    const preventDefault = mock(() => {});
+    window.emit("close", { preventDefault });
+    await checked;
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    expect(window.isDestroyed()).toBe(false);
+    expect((await f.state(window)).tabs).toEqual([tabB]);
+    expect(b.dirty).toBe(true);
+    expect(f.closes).toEqual([]);
+    expect(f.saves).toEqual([]);
+  } finally { answers.wait = undefined; answers.close = 2; f.files.dispose(); f.panel.destroy(); }
+});
+
 test("运行和交付结束后迁移同一页面，等待期间保留原宿主", async () => {
   const f = await fixture();
   await f.show(f.main);
@@ -2145,7 +2393,7 @@ test("CSV 独立窗口与 Word 共用 Office 页面、模型迁移及保存", as
   });
   const window = f.files.windows()[0];
   expect((await f.state(window)).tabs).toEqual([
-    { path: "客户.csv", name: "客户.csv", documentId: "od_A" },
+    { path: "客户.csv", name: "客户.csv", documentId: "od_A", tabId: expect.any(String), source: { workspaceId: "ws", sessionId: "ses", workspaceRoot: f.root } },
   ]);
   expect([...window.children][0]).toBe(original);
   expect(original.webContents.loads).toHaveLength(1);
@@ -2383,6 +2631,35 @@ test("重复打开激活已有窗口，关闭一个文件保留其他标签，�
   ]);
 });
 
+test("真实 Main open IPC 从文件助手 exact chat 返回，复用原标签和 dirty Office 页面", async () => {
+  const navigated: unknown[] = [];
+  const f = await fixture(undefined, undefined, undefined, undefined, undefined, {
+    getDesktopConfig: async () => ({}), openSession: async (input: unknown) => { navigated.push(input); },
+  });
+  const get = f.client.getJson;
+  f.client.getJson = async (url, options) => url.endsWith("/sessions/ses") ? { item: { id: "ses" } } as any : get(url, options);
+  try {
+    await f.files.open({ workspaceId: "ws", sessionId: "ses", path: "报告.docx", local: true,
+      absolutePath: join(f.root, "报告.docx"), group: { kind: "file-assistant" } });
+    const window = f.files.windows()[0];
+    await f.show(window);
+    const page = [...window.children][0];
+    const tab = (await f.state(window)).tabs[0];
+    f.document.dirty = true;
+    await f.action(window, "open-session", "报告.docx");
+    expect(navigated).toEqual([{ workspaceId: "ws", sessionId: "ses", exact: true }]);
+    await f.call("jugglework:file-window:open", f.main, { source: tab.source, path: tab.path,
+      group: { kind: "conversation", workspaceId: "ws", sessionId: "ses" } });
+    expect(f.files.windows()).toEqual([window]);
+    expect(await f.state(window)).toMatchObject({ group: { kind: "file-assistant" }, tabs: [tab], activeTabId: tab.tabId });
+    expect([...window.children]).toEqual([page]);
+    expect(page.webContents.loads).toHaveLength(1);
+    expect(f.document.dirty).toBe(true);
+    expect(f.closes).toEqual([]);
+    expect(f.saves).toEqual([]);
+  } finally { f.files.dispose(); f.panel.destroy(); }
+});
+
 test("关闭全部 tab 后保留文件浏览器主页和窗口归属，再打开复用原窗口", async () => {
   const f = await fixture();
   await f.files.open({ workspaceId: "ws", sessionId: "ses", path: "报告.docx" });
@@ -2399,6 +2676,189 @@ test("关闭全部 tab 后保留文件浏览器主页和窗口归属，再打开
   await f.files.open({ workspaceId: "ws", sessionId: "ses", path: "说明.md" });
   expect(f.files.windows()).toEqual([window]);
   expect((await f.state(window)).activePath).toBe("说明.md");
+});
+
+test("从云文档菜单打开同一文档时，独立窗口保留原标签并新增一个实例", async () => {
+  const doc = { tenantId: "org", workspaceId: "docs", docId: "doc", title: "云文档" };
+  const live = new Map<string, { owner: FakeWindow; document: typeof doc }>();
+  const cloudDocs = {
+    open: mock(async (launch: { instanceId: string }, owner: FakeWindow) => {
+      live.set(launch.instanceId, { owner, document: doc });
+    }),
+    documentFor: (instanceId: string, owner?: FakeWindow) => {
+      const source = live.get(instanceId);
+      return source && (!owner || owner === source.owner) ? source.document : null;
+    },
+  };
+  const f = await fixture("说明.md", undefined, undefined, undefined, undefined, { cloudDocs });
+  try {
+    live.set("main-cloud", { owner: f.main, document: doc });
+    const open = (instanceId: string, extra = {}) =>
+      f.call("jugglework:file-window:open-cloud", f.main, {
+        workspaceId: "ws", sessionId: "ses", document: doc,
+        launch: { tenantId: doc.tenantId, presentation: { instanceId, mode: "product" } },
+        ...extra,
+      });
+    await open("first", { sourceInstanceId: "main-cloud" });
+    const window = f.files.windows()[0];
+    const first = (await f.state(window)).tabs[0];
+    expect(first.source).toEqual({ workspaceId: "ws", sessionId: "ses", workspaceRoot: f.root });
+    await open("old-entry");
+    expect((await f.state(window)).tabs).toHaveLength(1);
+    await open("second", { sourceInstanceId: "first", workspaceId: "other" });
+    const { tabs, activeTabId } = await f.state(window);
+    expect(f.files.windows()).toEqual([window]);
+    expect(tabs.map((tab: any) => tab.cloudDoc.instanceId)).toEqual(["first", "second"]);
+    expect(tabs[0]).toEqual(first);
+    expect(tabs[1].source).toEqual(first.source);
+    expect(tabs[1].tabId).toEqual(expect.any(String));
+    expect(tabs[1].tabId).not.toBe(first.tabId);
+    expect(activeTabId).toBe(tabs[1].tabId);
+    await expect(open("wrong-doc", { sourceInstanceId: "first", document: { ...doc, docId: "other" } })).rejects.toThrow("来源已变化");
+    live.delete("first");
+    await expect(open("closed-source", { sourceInstanceId: "first" })).rejects.toThrow("来源已变化");
+    expect(cloudDocs.open).toHaveBeenCalledTimes(2);
+  } finally {
+    f.files.dispose();
+    f.panel.destroy();
+  }
+});
+
+test("选中云文档时可通过同窗口打开文件或最近文件", async () => {
+  const cloudDocs = { open: mock(async () => {}), close: mock(() => {}) };
+  const f = await fixture("说明.md", undefined, undefined, undefined, undefined, { cloudDocs });
+  try {
+    await f.call("jugglework:file-window:open-cloud", f.main, {
+      workspaceId: "ws",
+      sessionId: "ses",
+      document: { tenantId: "org", workspaceId: "docs", docId: "doc", title: "云表格" },
+      launch: { tenantId: "org", presentation: { instanceId: "cloud-instance", mode: "product" } },
+    });
+    const window = f.files.windows()[0];
+    const cloudTab = (await f.state(window)).tabs[0];
+    expect(cloudTab.cloudDoc.instanceId).toBe("cloud-instance");
+    await writeFile(join(f.root, "说明.md"), "本地文件");
+    answers.open = { canceled: false, filePaths: [join(f.root, "说明.md")] };
+
+    await f.action(window, "open");
+    expect(answers.dialogs).toEqual(["open"]);
+    const { tabs, activePath } = await f.state(window);
+    expect(tabs[0].tabId).toBe(cloudTab.tabId);
+    expect(tabs[1]).toMatchObject({
+      path: "说明.md",
+      source: { workspaceId: "ws", sessionId: "ses", workspaceRoot: f.root },
+    });
+    expect(activePath).toBe("说明.md");
+    expect(f.files.windows()).toEqual([window]);
+
+    await f.action(window, "select", cloudTab.path);
+    await f.action(window, "open", "说明.md");
+    expect((await f.state(window)).activeTabId).toBe(tabs[1].tabId);
+    await f.action(window, "select", cloudTab.path);
+    answers.open = { canceled: true, filePaths: [] };
+    await f.action(window, "open");
+    expect((await f.state(window)).activeTabId).toBe(cloudTab.tabId);
+    await expect(f.action(window, "reveal", cloudTab.path)).rejects.toThrow("云文档不支持本地文件操作");
+    expect(cloudDocs.open).toHaveBeenCalledTimes(1);
+    expect(cloudDocs.close).not.toHaveBeenCalled();
+  } finally {
+    f.files.dispose();
+    f.panel.destroy();
+  }
+});
+
+test.each(["picker", "new", "recent", "bridge"])("conversation 关闭最后 tab 后 %s 使用原始 group owner，空窗仍无 AI/fetch/SSE", async mode => {
+  const f = await fixture(undefined, undefined, undefined, undefined, undefined, { getDesktopConfig: async () => ({}) });
+  const get = f.client.getJson;
+  f.client.getJson = async (url, options) => url.endsWith("/sessions/ses") ? { item: { id: "ses" } } as any : get(url, options);
+  const post = f.client.postJson;
+  const modelOwners: any[] = [];
+  f.client.postJson = async (url, body: any) => {
+    if (url.endsWith("/open") || url.endsWith("/create")) {
+      modelOwners.push({ url, sessionId: body.sessionId, path: body.path });
+      Object.assign(f.document, { state: "ready", relativePath: body.path, name: body.path, ownerSessionId: body.sessionId });
+    }
+    return post(url, body);
+  };
+  await f.files.open({ source: { workspaceId: "ws", sessionId: "ses", workspaceRoot: f.root }, path: "报告.docx" });
+  const window = f.files.windows()[0];
+  await f.action(window, "close", "报告.docx");
+  const empty = await f.state(window);
+  expect(empty).toMatchObject({ group: { kind: "conversation", workspaceId: "ws", sessionId: "ses" }, tabs: [], activeTabId: null, workspaceId: "", sessionId: "", workspaceRoot: "" });
+  expect(empty).not.toHaveProperty("conversation");
+  const transport = mock(async () => Response.json({}));
+  const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
+  await expect(f.files.fetch(event, "http://127.0.0.1:1234/workspace/ws/opencode/provider", {}, transport)).rejects.toThrow();
+  await expect(f.call("jugglework:file-window:session-subscribe", window, { workspaceId: "ws" })).rejects.toThrow();
+  expect(transport).not.toHaveBeenCalled();
+  await expect(f.call("jugglework:file-window:create", window, { workspaceId: "forged", sessionId: "ses", kind: "docx" })).rejects.toThrow();
+  const name = mode === "recent" ? "报告.docx" : "新文件.docx";
+  modelOwners.length = 0;
+  if (mode === "picker") {
+    answers.open = { canceled: false, filePaths: [join(f.root, name)] };
+    await f.action(window, "open");
+  } else if (mode === "new") {
+    answers.save = { canceled: false, filePath: join(f.root, name) };
+    const created = await f.call("jugglework:file-window:create", window, { workspaceId: empty.workspaceId, sessionId: empty.sessionId, kind: "docx" });
+    expect(created).toEqual({ path: name });
+    expect(await f.state(window)).not.toHaveProperty("conversation");
+    await expect(f.files.fetch(event, "http://127.0.0.1:1234/workspace/ws/opencode/provider", {}, transport)).rejects.toThrow();
+    await f.action(window, "open", created.path);
+  } else if (mode === "bridge") {
+    await f.call("jugglework:file-window:open", window, { source: { workspaceId: "ws", sessionId: "ses", workspaceRoot: "/forged" }, path: name });
+  } else await f.action(window, "open", name);
+  expect(f.files.windows()).toEqual([window]);
+  const reopened = await f.state(window);
+  expect(reopened.tabs[0]).toMatchObject({ source: { workspaceId: "ws", sessionId: "ses", workspaceRoot: f.root }, path: name, documentId: "od_A" });
+  expect(reopened.conversation).toEqual({ desktopConfig: {} });
+  expect(f.document.ownerSessionId).toBe("ses");
+  expect(modelOwners).toEqual([
+    ...(mode === "new" ? [{ url: "/workspace/ws/office/create", sessionId: "ses", path: name }] : []),
+    { url: "/workspace/ws/office/open", sessionId: "ses", path: name },
+  ]);
+  f.files.dispose(); f.panel.destroy();
+});
+
+test.each(["picker", "new"])("空 conversation 的 %s 选择器返回前关闭窗口，捕获 group 不能复活或创建模型", async mode => {
+  const f = await fixture("notes.md");
+  await f.files.open({ workspaceId: "ws", sessionId: "ses", path: "notes.md" });
+  const window = f.files.windows()[0];
+  await f.action(window, "close", "notes.md");
+  let choose!: () => void;
+  const choosing = new Promise<void>(resolve => { choose = resolve; });
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  answers.chooseOpen = async () => { choose(); await gate; return { canceled: false, filePaths: [join(f.root, "new.docx")] }; };
+  answers.chooseSave = async () => { choose(); await gate; return { canceled: false, filePath: join(f.root, "new.docx") }; };
+  const post = mock(f.client.postJson);
+  f.client.postJson = post;
+  const pending = mode === "picker" ? f.action(window, "open") : f.call("jugglework:file-window:create", window, { workspaceId: "", sessionId: "", kind: "docx" });
+  await choosing; window.destroy(); release();
+  await pending;
+  expect(post).not.toHaveBeenCalled();
+  expect(f.files.windows()).toEqual([]);
+  f.panel.destroy();
+});
+
+test.each(["source", "source-reopen", "window"])("真实 create IPC 等待新建选择器时关闭 %s，迟到返回不能创建文档", async ending => {
+  const f = await fixture("notes.md");
+  await f.call("jugglework:file-window:open", f.main, { workspaceId: "ws", sessionId: "ses", path: "notes.md" });
+  const window = f.files.windows()[0];
+  let choose!: () => void, release!: () => void;
+  const choosing = new Promise<void>(resolve => { choose = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  answers.chooseSave = async () => { choose(); await gate; return { canceled: false, filePath: join(f.root, "late.docx") }; };
+  const pending = f.call("jugglework:file-window:create", window, { workspaceId: "ws", sessionId: "ses", kind: "docx" });
+  const settled = pending.then(() => null, (error: unknown) => error);
+  await choosing;
+  if (ending === "window") window.destroy();
+  else await f.action(window, "close", "notes.md");
+  if (ending === "source-reopen") await f.call("jugglework:file-window:open", f.main, { workspaceId: "ws", sessionId: "ses", path: "notes.md" });
+  release();
+  const result = await settled;
+  if (ending === "window") expect(result).toBeNull(); else expect(result).toBeInstanceOf(Error);
+  expect(f.creations).toEqual([]);
+  f.files.dispose(); f.panel.destroy();
 });
 
 test("原生编辑区的打开快捷键按当前宿主复用右侧或独立窗口标签，取消不改变文档", async () => {
@@ -2606,7 +3066,7 @@ for (const name of ["预算.xlsx", "汇报.pptx"]) {
     });
     const window = f.files.windows()[0];
     expect((await f.state(window)).tabs).toEqual([
-      { path: name, name, documentId: "od_A" },
+      { path: name, name, documentId: "od_A", tabId: expect.any(String), source: { workspaceId: "ws", sessionId: "ses", workspaceRoot: f.root } },
     ]);
     expect([...window.children][0]).toBe(original);
     expect(original.webContents.loads).toHaveLength(1);
@@ -2860,6 +3320,7 @@ test("系统外部文件复用一个多标签窗口，最近路径重新登记�
         sessionId: "file-browser",
         path: `id/${absolute.split("/").at(-1)}`,
         local: true,
+        group: { kind: "file-assistant" },
         absolutePath: absolute,
       };
     },

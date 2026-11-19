@@ -12,6 +12,7 @@ import {
   preserveWorkspaceRouteSession,
   removeWorkspaceRouteSession,
   settingsReturnRoute,
+  sessionSettingsNavigation,
   sessionIdForLegacyWorkspaceInference,
   workspaceAppsRoute,
   workspaceReviewsRoute,
@@ -97,6 +98,25 @@ describe("workspace app path parsing", () => {
 });
 
 describe("settings return route", () => {
+  test("settings entries retain only exact=1 for the matching source session", () => {
+    const location = { pathname: "/workspace/internal/session/owner", search: "?token=test-only&exact=1&documentId=private" };
+    for (const tab of ["preferences", "cloud-account", "ai", "connect", "extensions/mcp", "extensions/plugins", "extensions/skills"]) {
+      expect(sessionSettingsNavigation(location, "internal", "owner", `/settings/${tab}`)).toEqual({
+        to: `/workspace/internal/settings/${tab}`,
+        state: { workspaceId: "internal", sessionId: "owner", returnPath: "/workspace/internal/session/owner?exact=1" },
+      });
+    }
+    for (const source of [
+      { ...location, pathname: "/workspace/other/session/owner" },
+      { ...location, pathname: "/workspace/internal/session/other" },
+      { ...location, pathname: "/workspace/internal/settings/preferences" },
+      { ...location, search: "?exact=0&token=test-only" },
+    ]) expect(sessionSettingsNavigation(source, "internal", "owner").state.returnPath).toBe("/workspace/internal/session/owner");
+    expect(sessionSettingsNavigation(location, "internal", null).state.returnPath).toBe("/workspace/internal/session");
+    expect(sessionSettingsNavigation(location, "internal", "owner", undefined, true).state.returnPath).toBe("/automations");
+    expect(sessionSettingsNavigation({ pathname: "/session/legacy", search: "" }, "", "legacy").state.returnPath).toBe("/session/legacy");
+  });
+
   test("restores the session that opened settings", () => {
     expect(settingsReturnRoute("workspace-a", "workspace-a", "session-a")).toBe(
       "/workspace/workspace-a/session/session-a",

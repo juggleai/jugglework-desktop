@@ -2444,6 +2444,10 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
         timeoutMs: timeouts.binary,
       }),
     listWorkspaces: () => requestJson<JuggleWorkWorkspaceList>(baseUrl, "/workspaces", { token, hostToken, timeoutMs: timeouts.listWorkspaces }),
+    getWorkspace: async (workspaceId: string) => {
+      const list = await requestJson<JuggleWorkWorkspaceList>(baseUrl, `/w/${encodeURIComponent(workspaceId)}/workspaces`, { token, hostToken, timeoutMs: timeouts.listWorkspaces });
+      return list.items.find((workspace) => workspace.id === workspaceId) ?? null;
+    },
     getReviewConnection: async (workspaceId: string, requestOptions?: { signal?: AbortSignal }): Promise<ReviewConnectionStatus> => {
       const payload = await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/reviews/connection`, { token, hostToken, timeoutMs: timeouts.reviews, signal: requestOptions?.signal });
       return reviewConnectionStatusSchema.parse(payload);
@@ -3558,7 +3562,7 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
     /** 只释放未发送登记，已接收任务持有独立快照。 */
     releaseOfficeSelections: (workspaceId: string, sessionId: string, referenceIds: string[]) => requestJson<{ ok: boolean }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/office/selection-references/release`, { token, hostToken, method: "POST", body: { sessionId, referenceIds } }),
     /** 打开页面编辑会话，模型就绪由后续状态查询确认。 */
-    openOfficeDocument: (workspaceId: string, sessionId: string, path: string) => requestJson<{ document: OfficeDocumentSession }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/office/open`, { token, hostToken, method: "POST", body: { sessionId, path } }),
+    openOfficeDocument: (workspaceId: string, sessionId: string, path: string) => requestJson<{ document: OfficeDocumentSession; created: boolean }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/office/open`, { token, hostToken, method: "POST", body: { sessionId, path } }),
     /** 查询指定文档及实际模型状态。 */
     getOfficeDocument: (workspaceId: string, documentId: string) => requestJson<{ document: OfficeDocumentSession }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/office/${encodeURIComponent(documentId)}`, { token, hostToken }),
     /** 读取所属聊天的当前文档，不借用其他聊天焦点。 */

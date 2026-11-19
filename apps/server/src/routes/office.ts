@@ -163,15 +163,15 @@ export function registerOfficeRoutes(options: OfficeRouteOptions): void {
   addRoute(routes, "POST", `${base}/open`, "client", async (ctx) => {
     const target = await workspace(ctx, true);
     const body = await options.readJsonBody(ctx.request);
-    return jsonResponse({
-      document: await documents.open(
+    return jsonResponse(
+      await documents.openWithResult(
         target.id,
         text(body.sessionId, "sessionId"),
         text(body.path, "path"),
         false,
         body.activate !== false,
       ),
-    });
+    );
   });
   addRoute(routes, "POST", `${base}/check-open-target`, "client", async (ctx) => {
     const target = await workspace(ctx, true);
@@ -301,11 +301,14 @@ export function registerOfficeRoutes(options: OfficeRouteOptions): void {
           "invalid_payload",
           "关闭需要保存、放弃或取消决定",
         );
+      if (body.onlyIfClean === true && body.decision !== "discard")
+        throw new ApiError(400, "invalid_payload", "自动清理仅支持关闭干净模型");
       return jsonResponse({
         document: await documents.close(
           target.id,
           ctx.params.documentId,
           body.decision as "save" | "discard" | "cancel",
+          body.onlyIfClean === true ? text(body.sessionId, "sessionId") : undefined,
         ),
       });
     },

@@ -19,15 +19,17 @@ import { createSessionDraftSender } from "../sync/session-draft-sender";
 import { SessionSurface } from "../surface/session-surface";
 import { useModelBehavior } from "../surface/use-model-behavior";
 import { t } from "@/i18n";
+import { activeFileWindowTab, fileWindowSourceKey, projectFileWindowSource } from "./file-window-source";
 
 /** Main 仅给已登记真实会话提供 conversation，包含默认工作区中的外部文件会话。 */
 export function hasFileWindowConversation(state: FileWindowState | null): state is FileWindowState & { conversation: NonNullable<FileWindowState["conversation"]> } {
-  return Boolean(state?.conversation?.desktopConfig && state.workspaceRoot && state.workspaceId && state.sessionId && state.sessionId !== "file-browser" && !state.workspaceId.startsWith("rem_"));
+  const tab = activeFileWindowTab(state);
+  return Boolean(tab?.conversation?.desktopConfig && tab.source.workspaceRoot && tab.source.workspaceId && tab.source.sessionId && tab.source.sessionId !== "file-browser" && !tab.source.workspaceId.startsWith("rem_"));
 }
 
 /** 普通文件上下文不是选区权限；提交时捕获，之后切标签不改绑。 */
 export function fileWindowSubmissionContext(state: FileWindowState): string | undefined {
-  const tab = state.tabs.find((item) => item.path === state.activePath);
+  const tab = activeFileWindowTab(state);
   if (!tab) return undefined;
   return `Current file: ${JSON.stringify({ path: tab.path, name: tab.name })}. This identifies the file only; it does not authorize editing an Office selection. Use only a valid selection reference attached to this message for selection-scoped edits.`;
 }
@@ -38,7 +40,7 @@ const noNewSession = async () => null;
 const DEFAULT_POLICY: DenDesktopConfig = {};
 
 /** 文件入口的最小装配：只注入绑定 transport/导航/上下文，不装载 SessionRoute。 */
-export function FileWindowConversation({ state, client, bridge, visible, options, onOptionsChange }: {
+export function FileWindowConversation({ state: windowState, client, bridge, visible, options, onOptionsChange }: {
   state: FileWindowState;
   client: JuggleWorkServerClient;
   bridge: FileWindowBridge;
@@ -46,6 +48,8 @@ export function FileWindowConversation({ state, client, bridge, visible, options
   options: FileWindowConversationOptions;
   onOptionsChange: React.Dispatch<React.SetStateAction<FileWindowConversationOptions>>;
 }) {
+  const state = projectFileWindowSource(windowState);
+  const sourceTabs = state.tabs.filter((tab) => fileWindowSourceKey(tab.source) === fileWindowSourceKey(state));
   React.useEffect(() => {
     // A new child's first event can precede Main's ancestry proof. Read the
     // existing root snapshot even while SSE stays healthy; never trust that event.
@@ -111,8 +115,8 @@ export function FileWindowConversation({ state, client, bridge, visible, options
     }),
   }), [state, sdk, client, model, agent, modelVariantValue]);
   const listAgents = React.useCallback(async () => unwrap(await sdk.app.agents()).filter((agent) => !agent.hidden && agent.mode !== "subagent"), [sdk]);
-  const searchFiles = React.useCallback(async (query: string) => current.current.state.tabs.filter((tab) => tab.path.toLowerCase().includes(query.toLowerCase())).map((tab) => tab.path), []);
-  const navigateMain = () => { void bridge.action("open-session"); };
+  const searchFiles = async (query: string) => sourceTabs.filter((tab) => tab.path.toLowerCase().includes(query.toLowerCase())).map((tab) => tab.path);
+  const navigateMain = () => { void bridge.action("open-session", state.activeTabId ?? undefined); };
   const selectedInfo = providers.data?.all.find((provider) => provider.id === model?.providerID)?.models[model?.modelID ?? ""];
   return (
     <LocalProvider persist={false}>
@@ -132,9 +136,9 @@ export function FileWindowConversation({ state, client, bridge, visible, options
               onSendDraft={onSendDraft} onCreateNewSession={noNewSession} onDraftChange={noDraftChange}
               cloudMcpSubmissionState={IDLE_CLOUD_MCP_SUBMISSION_GATE_STATE} onOpenConnect={navigateMain}
               attachmentsEnabled={false} attachmentsDisabledReason={t("file_window.operation_unavailable")}
-              listCommands={emptyCommands} recentFiles={state.tabs.map((tab) => tab.path)} searchFiles={searchFiles}
+              listCommands={emptyCommands} recentFiles={sourceTabs.map((tab) => tab.path)} searchFiles={searchFiles}
               isRemoteWorkspace={false} isSandboxWorkspace={false} providerConnectedCount={getConnectedProviderItems(providers.data).length}
-              onOpenSettingsSection={navigateMain} onOpenTarget={(target) => { if (target.kind === "file" && state.tabs.some((tab) => tab.path === target.value)) void bridge.action("select", target.value); }}
+              onOpenSettingsSection={navigateMain} onOpenTarget={(target) => { const tab = sourceTabs.find((tab) => tab.path === target.value); if (target.kind === "file" && tab) void bridge.action("select", tab.tabId); }}
             />
           </WorkspaceProvider>
         </SessionDesktopConfigProvider>

@@ -518,10 +518,11 @@ const createDesktopFetch = (auth?: OpencodeAuth, onEventConnected?: () => void) 
     const shouldStream = requestIsStreaming(input, init);
     if (shouldStream && isFileWindowRuntime()) {
       const bridge = window.__JUGGLEWORK_ELECTRON__?.fileWindow;
-      if (!bridge || !/\/event(?:\?|$)/.test(getRequestUrl(input))) {
+      const match = new URL(getRequestUrl(input)).pathname.match(/\/(?:workspace|w)\/([^/]+)\/opencode\/event$/);
+      if (!bridge || !match) {
         throw new Error("Unsupported file-window stream.");
       }
-      return Promise.resolve(fileWindowEventResponse(bridge, init?.signal ?? (input instanceof Request ? input.signal : undefined), onEventConnected));
+      return Promise.resolve(fileWindowEventResponse(bridge, { workspaceId: decodeURIComponent(match[1]!) }, init?.signal ?? (input instanceof Request ? input.signal : undefined), onEventConnected));
     }
     const underlyingFetch = shouldStream
       ? nativeFetchRef()

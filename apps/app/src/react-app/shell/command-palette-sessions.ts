@@ -1,5 +1,6 @@
 import { getDisplaySessionTitle } from "@/app/lib/session-title";
 import { t } from "@/i18n";
+import { isOrdinaryWorkspace } from "@/app/lib/workspace-visibility";
 
 import type { SessionOption } from "./command-palette";
 import type { RouteSession, RouteWorkspace } from "./route-workspaces";
@@ -12,6 +13,7 @@ export function buildCommandPaletteSessions(
   const options: SessionOption[] = [];
 
   for (const workspace of workspaces) {
+    if (!isOrdinaryWorkspace(workspace)) continue;
     const workspaceTitle =
       workspace.displayName?.trim() ||
       workspace.name?.trim() ||

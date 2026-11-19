@@ -815,6 +815,8 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
       path: String(input.path ?? ""),
       preset: String(input.preset ?? "starter"),
       workspaceType: input.workspaceType === "remote" ? "remote" : "local",
+      ...(input.fileAssistantManaged === true ? { fileAssistantManaged: true } : {}),
+      ...(input.hidden === true ? { hidden: true } : {}),
       remoteType: input.remoteType ?? null,
       baseUrl: input.baseUrl ?? null,
       directory: input.directory ?? null,
@@ -829,6 +831,10 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
       sandboxRunId: input.sandboxRunId ?? null,
       sandboxContainerName: input.sandboxContainerName ?? null,
     };
+  }
+
+  function isOrdinaryWorkspace(workspace) {
+    return !workspace.fileAssistantManaged && !workspace.hidden;
   }
 
   async function readWorkspaceJuggleWorkConfig(workspacePath) {
@@ -849,8 +855,11 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
 
   async function writeWorkspaceState(nextState) {
     const outputPath = workspaceStatePath();
-    const selectedId = String(nextState?.selectedId ?? nextState?.activeId ?? "");
-    const watchedId = typeof nextState?.watchedId === "string" ? nextState.watchedId : "";
+    const workspaces = Array.isArray(nextState?.workspaces) ? nextState.workspaces : [];
+    const ordinarySelection = (id) => workspaces.some((workspace) => workspace.id === id && !isOrdinaryWorkspace(workspace))
+      ? workspaces.find(isOrdinaryWorkspace)?.id ?? "" : id;
+    const selectedId = ordinarySelection(String(nextState?.selectedId ?? nextState?.activeId ?? ""));
+    const watchedId = ordinarySelection(typeof nextState?.watchedId === "string" ? nextState.watchedId : "");
     const output = {
       ...nextState,
       // Tauri's Rust state uses selectedWorkspaceId/watchedWorkspaceId on disk
@@ -889,14 +898,14 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
     if (!workspaceStateExists && process.env.JUGGLEWORK_DESKTOP_DISABLE_WORKSPACE_RECOVERY !== "1") {
       const recoveredWorkspaces = await recoverWorkspacesFromKnownState();
       if (recoveredWorkspaces.length > 0) {
-        const selectedWorkspace = recoveredWorkspaces[0];
+        const selectedWorkspace = recoveredWorkspaces.find(isOrdinaryWorkspace);
         console.info("[migration] recovered desktop workspaces from persisted JuggleWork state", {
           count: recoveredWorkspaces.length,
-          selectedWorkspaceId: selectedWorkspace.id,
+          selectedWorkspaceId: selectedWorkspace?.id ?? null,
         });
-        selectedId = selectedWorkspace.id;
-        watchedId = selectedWorkspace.id;
-        activeId = selectedWorkspace.id;
+        selectedId = selectedWorkspace?.id ?? "";
+        watchedId = selectedWorkspace?.id ?? null;
+        activeId = selectedWorkspace?.id ?? null;
         workspaces = recoveredWorkspaces;
         changed = true;
       }
@@ -959,11 +968,12 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
     // Never let those dangling IDs prevent the desktop runtime from booting.
     const workspaceIds = new Set(
       dedupedWorkspaces
+        .filter(isOrdinaryWorkspace)
         .map((workspace) => String(workspace?.id ?? "").trim())
         .filter(Boolean),
     );
     const fallbackWorkspaceId = String(
-      dedupedWorkspaces.find((workspace) => String(workspace?.id ?? "").trim())?.id ?? "",
+      dedupedWorkspaces.find((workspace) => isOrdinaryWorkspace(workspace) && String(workspace?.id ?? "").trim())?.id ?? "",
     ).trim();
     const resolvedSelectedId = workspaceIds.has(migratedSelectedId)
       ? migratedSelectedId
@@ -1004,6 +1014,13 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
   async function mutateWorkspaceState(mutator) {
     const current = await readWorkspaceState();
     const next = await mutator({ ...current, workspaces: [...current.workspaces] });
+    // 普通更新/重新登记不负责解除 Server 分配的内部分类。
+    const currentById = new Map(current.workspaces.map((workspace) => [workspace.id, workspace]));
+    next.workspaces = next.workspaces.map((workspace) => ({
+      ...workspace,
+      ...(currentById.get(workspace.id)?.fileAssistantManaged === true ? { fileAssistantManaged: true } : {}),
+      ...(currentById.get(workspace.id)?.hidden === true ? { hidden: true } : {}),
+    }));
     return writeWorkspaceState(next);
   }
 

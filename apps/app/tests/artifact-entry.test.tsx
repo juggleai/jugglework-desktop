@@ -156,7 +156,7 @@ test.each([
           .props.onClick();
       });
       expect(opened).toEqual([
-        { workspaceId: "ws", sessionId, path: item.path, conversationOptions: { model, agent: "plan", variant: "high" } },
+        { source: { workspaceId: "ws", sessionId, workspaceRoot: "/workspace" }, path: item.path, conversationOptions: { model, agent: "plan", variant: "high" } },
       ]);
       expect(
         useFilesPanelStore.getState().sessions[sessionId]?.tabs ?? [],

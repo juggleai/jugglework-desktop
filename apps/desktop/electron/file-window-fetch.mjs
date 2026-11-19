@@ -94,8 +94,9 @@ export function authorizeFileWindowFetch(entry, access, input, init = {}) {
 }
 
 /** 限制完整响应（含流式 body）的字节数与时间，不将 renderer 传输/诊断选项透传。 */
-export async function fetchFileWindowResponse(entry, access, url, init, fetchImpl, signal, beforeAbort) {
-  const request = authorizeFileWindowFetch(entry, access, url, init);
+export async function fetchFileWindowResponse(entry, access, url, init, fetchImpl, signal, beforeAbort, capturedRequest) {
+  const request = capturedRequest ?? authorizeFileWindowFetch(entry, access, url, init);
+  if (request.conversation && !entry.conversation) throw conversationDenied();
   const requestedTimeout = Number(init?.timeoutMs);
   const timeout = Number.isFinite(requestedTimeout) && requestedTimeout > 0 ? Math.min(requestedTimeout, TIMEOUT_MS) : TIMEOUT_MS;
   const controller = new AbortController();

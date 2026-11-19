@@ -6,6 +6,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import type { ReactSessionComposer } from "../src/react-app/domains/session/surface/composer/composer";
 import type { Event } from "@opencode-ai/sdk/v2/client";
 import { currentLocale, setLocale, t } from "../src/i18n";
+import { singleSourceState } from "./fixtures/file-window-state";
 const toastInfo = mock();
 const sonner = await import("../src/components/ui/sonner");
 mock.module("../src/components/ui/sonner", () => ({ ...sonner, toast: Object.assign(() => {}, sonner.toast, { info: toastInfo }) }));
@@ -13,10 +14,12 @@ mock.module("../src/components/ui/sonner", () => ({ ...sonner, toast: Object.ass
 // Keep the real surface, runtime, providers, SDK and sender; replace DOM-only leaves.
 function Composer(props: React.ComponentProps<typeof ReactSessionComposer>) { return <div>{props.topAccessory}</div>; }
 mock.module("../src/react-app/domains/session/surface/composer/composer", () => ({ ReactSessionComposer: Composer }));
-mock.module("../src/components/chat/message-list", () => ({ MessageList: () => null }));
+function Messages({ messages }: any) { return <div data-history={JSON.stringify(messages)} />; }
+mock.module("../src/components/chat/message-list", () => ({ MessageList: Messages }));
 mock.module("../src/components/model-select", () => ({ ModelSelect: () => null }));
 mock.module("../src/components/ui/tooltip", () => ({ Tooltip: ({ children }: any) => children, TooltipTrigger: ({ children }: any) => children, TooltipContent: () => null }));
-mock.module("../src/react-app/domains/session/files/file-viewer", () => ({ FileViewer: () => null }));
+function Viewer(props: any) { return <div data-viewer-workspace={props.workspaceId} data-viewer-session={props.sessionId} />; }
+mock.module("../src/react-app/domains/session/files/file-viewer", () => ({ FileViewer: Viewer }));
 mock.module("../src/react-app/domains/session/files/file-editor-toolbar", () => ({ FileEditorToolbar: ({ trailingActions }: any) => <div>{trailingActions}</div>, getOfficeEditorStatus: () => "saved" }));
 const Box = ({ children }: React.PropsWithChildren) => <div>{children}</div>;
 mock.module("../src/components/ui/dropdown-menu", () => Object.fromEntries(["DropdownMenu", "DropdownMenuContent", "DropdownMenuGroup", "DropdownMenuItem", "DropdownMenuLabel", "DropdownMenuSeparator", "DropdownMenuSub", "DropdownMenuSubContent", "DropdownMenuSubTrigger", "DropdownMenuTrigger"].map((name) => [name, Box])));
@@ -69,8 +72,8 @@ test.each([
   let changed!: (state: any) => void;
   const bridge = {
     state: async () => ({ ...state, baseUrl: server.url.href.replace(/\/$/, "") }),
-    onChanged: (listener: typeof changed) => { changed = listener; return () => {}; },
-    action: mock(async () => {}), subscribeSessionEvents(listener: typeof emit) { subscriptions++; emit = listener; return () => { releases++; }; },
+    onChanged: (listener: typeof changed) => { changed = (next: any) => listener(singleSourceState(next)); return () => {}; },
+    action: mock(async () => {}), subscribeSessionEvents(input: { workspaceId: string }, listener: typeof emit) { expect(input.workspaceId).toBe("ws_mount"); subscriptions++; emit = listener; return () => { releases++; }; },
   };
   const windowStub = {
     location: { pathname: "/file-window.html" },
@@ -89,16 +92,16 @@ test.each([
   const queryClient = getReactQueryClient();
   queryClient.clear();
   const expectedModel = { providerID: "provider", modelID: fromHistory ? "fallback" : "model" };
-  const state = { workspaceId: "ws_mount", sessionId: session.id, workspaceRoot: "/project", local: seedVariant === "high" || fromHistory, platform: "darwin", tabs: [{ path: "first.docx", name: "First" }, { path: "second.docx", name: "Second" }], activePath: "first.docx", recent: [], conversation: { model: fromHistory ? undefined : expectedModel, agent: seedAgent, variant: seedVariant, desktopConfig: {} } };
+  const state = singleSourceState({ workspaceId: "ws_mount", sessionId: session.id, workspaceRoot: "/project", local: seedVariant === "high" || fromHistory, platform: "darwin", tabs: [{ path: "first.docx", name: "First" }, { path: "second.docx", name: "Second" }], activePath: "first.docx", recent: [], conversation: { model: fromHistory ? undefined : expectedModel, agent: seedAgent, variant: seedVariant, desktopConfig: {} } });
   let view: TestRenderer.ReactTestRenderer | undefined;
   const render = () => <QueryClientProvider client={queryClient}><PlatformProvider value={createDefaultPlatform()}><FileWindowApp /></PlatformProvider></QueryClientProvider>;
   const toggle = () => view!.root.findAllByType("button").find((item) => item.props["aria-controls"] === "file-window-conversation" || item.props["aria-label"] === t("file_window.show_document"))!.props.onClick();
   const composer = () => view!.root.findByType(Composer).props as React.ComponentProps<typeof ReactSessionComposer>;
   try {
     expect(hasFileWindowConversation({ ...state, local: true })).toBe(true);
-    expect(hasFileWindowConversation({ ...state, local: true, sessionId: "file-browser" })).toBe(false);
-    expect(hasFileWindowConversation({ ...state, workspaceId: "rem_remote" })).toBe(false);
-    expect(hasFileWindowConversation({ ...state, conversation: undefined })).toBe(false);
+    expect(hasFileWindowConversation(singleSourceState({ ...state, local: true, sessionId: "file-browser" }))).toBe(false);
+    expect(hasFileWindowConversation(singleSourceState({ ...state, workspaceId: "rem_remote" }))).toBe(false);
+    expect(hasFileWindowConversation(singleSourceState({ ...state, conversation: undefined }))).toBe(false);
     const queued = useComposerStateStore.getState().appendQueuedDraft(session.id, { text: "main-only follow-up", mode: "prompt", parts: [{ type: "text", text: "main-only follow-up" }], attachments: [] });
     await act(async () => { view = TestRenderer.create(render()); });
     await act(async () => { toggle(); });
@@ -251,7 +254,7 @@ test("mounted file host discovers a new unproved child via periodic snapshot and
   let timerId = 0, snapshots = 0, pending = false, replies = 0;
   let emit!: (event: Event) => void;
   const session = { id: "ses_new_child", title: "Root", time: { created: 1, updated: 1 } };
-  const state = { workspaceId: "ws_new_child", sessionId: session.id, workspaceRoot: "/project", platform: "darwin", tabs: [], activePath: null, recent: [], conversation: { desktopConfig: {} } };
+  const state = singleSourceState({ workspaceId: "ws_new_child", sessionId: session.id, workspaceRoot: "/project", platform: "darwin", tabs: [{ path: "file.docx", name: "File" }], activePath: "file.docx", recent: [], conversation: { desktopConfig: {} } });
   const entry: any = { ...state };
   const access = { baseUrl: "http://127.0.0.1:1234", clientToken: "synthetic-test-only" };
   const child = { id: "permission_child", sessionID: "child", targetSessionId: "child", rootSessionId: session.id, parentSessionId: session.id, ancestryPath: [session.id, "child"], protocol: "v2", action: "file.edit", resources: ["notes.md"], metadata: {} };
@@ -273,7 +276,7 @@ test("mounted file host discovers a new unproved child via periodic snapshot and
     if (path.endsWith("/session-runs")) return Response.json({ items: [] });
     throw new Error(`Unexpected request: ${path}`);
   };
-  const bridge = { action: async () => {}, subscribeSessionEvents(listener: typeof emit) { emit = listener; return () => {}; } };
+  const bridge = { action: async () => {}, subscribeSessionEvents(_input: { workspaceId: string }, listener: typeof emit) { emit = listener; return () => {}; } };
   Object.defineProperty(globalThis, "window", { configurable: true, value: {
     location: { pathname: "/file-window.html" }, localStorage: { getItem: () => null }, addEventListener() {}, removeEventListener() {},
     setTimeout: (callback: () => Promise<void>, delay: number) => {
@@ -326,6 +329,134 @@ test("mounted file host discovers a new unproved child via periodic snapshot and
   } finally {
     await act(async () => { view?.unmount(); });
     queryClient.clear();
+    if (previousWindow === undefined) Reflect.deleteProperty(globalThis, "window"); else Reflect.set(globalThis, "window", previousWindow);
+  }
+});
+
+test("multi-source file assistant restores real drafts/history/choices, routes Office while collapsed and never replays an accepted run", async () => {
+  const previousWindow = globalThis.window;
+  const query = getReactQueryClient(); query.clear();
+  const nativeFetch = globalThis.fetch;
+  const sources = ["a", "b"].map((id) => ({ workspaceId: `ws_${id}`, sessionId: `ses_${id}`, workspaceRoot: `/file-${id}` }));
+  const model = { id: "model", name: "Model", providerID: "p", limit: { context: 10000, output: 1000 }, capabilities: {}, variants: { low: {}, high: {} } };
+  const calls: string[] = [], subscriptions: string[] = [], releases: string[] = [];
+  let accept!: () => void;
+  const server = Bun.serve({ port: 0, fetch: async (request) => {
+    const path = new URL(request.url).pathname; calls.push(path);
+    const id = path.includes("/ws_a/") ? "a" : "b", sessionId = `ses_${id}`;
+    if (path.endsWith("/office/doc-b")) return Response.json({ document: { documentId: "doc-b", state: "ready" } });
+    if (path.endsWith("/provider")) return Response.json({ all: [{ id: "p", name: "P", models: { model, other: { ...model, id: "other" } } }], connected: ["p"], default: { p: "model" } });
+    if (path.endsWith("/interactions/snapshot")) return Response.json({ item: { rootSessionId: sessionId, permissions: [], questions: [], revision: 1 } });
+    if (path.endsWith("/snapshot")) return Response.json({ item: { session: { id: sessionId, title: id, time: { created: 1, updated: 1 } }, messages: [{ info: { id: `history_${id}`, sessionID: sessionId, role: "user", time: { created: 1 }, agent: "build", model: { providerID: "p", modelID: "model" } }, parts: [{ id: `text_${id}`, type: "text", text: `history-${id}`, sessionID: sessionId, messageID: `history_${id}` }] }], status: { type: "idle" }, todos: [] } });
+    if (path.endsWith("/permission-mode")) return Response.json({ state: null, grants: [], supported: true });
+    if (path.endsWith("/session-runs")) return Response.json({ items: [] });
+    if (path.endsWith("/runs/start")) { await new Promise<void>((resolve) => { accept = resolve; }); return Response.json({ run: { sessionId, runId: "run-a", generation: 1 } }); }
+    throw new Error(`Unexpected request ${path}`);
+  } });
+  const tabs = [
+    { tabId: "a1", source: sources[0]!, path: "same.txt", name: "A", conversation: { desktopConfig: {}, model: { providerID: "p", modelID: "model" }, agent: "plan", variant: "high" } },
+    { tabId: "a2", source: sources[0]!, path: "second.txt", name: "A2", conversation: { desktopConfig: {}, model: { providerID: "p", modelID: "other" } } },
+    { tabId: "b1", source: sources[1]!, path: "same.txt", name: "B", documentId: "doc-b", conversation: { desktopConfig: {}, model: { providerID: "p", modelID: "model" }, agent: "build", variant: "low" } },
+  ];
+  let state: import("@jugglework/types/file-window").FileWindowState = { group: { kind: "file-assistant" }, activeTabId: "a1", ...sources[0]!, tabs, activePath: "same.txt", recent: [], platform: "darwin", local: true };
+  let changed!: (state: typeof state) => void, office!: (input: any) => Promise<any>;
+  let bridgeInstalls = 0, bridgeReleases = 0;
+  let closed!: (input: any) => void, documentChanged!: (input: any) => void;
+  let cancelSelection = false;
+  const actions: Array<[string, string | undefined]> = [];
+  const publish = (id: string) => { state = { ...state, activeTabId: id }; changed(state); };
+  const bridge = {
+    state: async () => ({ ...state, baseUrl: server.url.href.replace(/\/$/, "") }),
+    onChanged: (listener: typeof changed) => { changed = listener; return () => {}; },
+    action: async (action: string, tabId?: string) => { actions.push([action, tabId]); if (action === "select" && !cancelSelection) publish(tabId!); },
+    subscribeSessionEvents: ({ workspaceId }: { workspaceId: string }, _listener: unknown) => { subscriptions.push(workspaceId); return () => releases.push(workspaceId); },
+  };
+  Object.defineProperty(globalThis, "window", { configurable: true, value: {
+    location: { pathname: "/file-window.html" }, localStorage: { getItem: () => null }, addEventListener() {}, removeEventListener() {},
+    setTimeout, clearTimeout, setInterval, clearInterval, requestAnimationFrame: (fn: FrameRequestCallback) => setTimeout(() => fn(0), 0), cancelAnimationFrame: clearTimeout,
+    __JUGGLEWORK_ELECTRON__: { fileWindow: bridge, office: {
+      onComposerRequest: (listener: typeof office) => { bridgeInstalls++; office = listener; return () => { bridgeReleases++; }; },
+      onClosed: (listener: typeof closed) => { closed = listener; return () => { bridgeReleases++; }; },
+      onDocumentChanged: (listener: typeof documentChanged) => { documentChanged = listener; return () => { bridgeReleases++; }; },
+    }, invokeDesktop: async (_command: string, url: string, init: RequestInit) => {
+      const response = await nativeFetch(url, init); return { status: response.status, headers: [...response.headers], body: await response.arrayBuffer() };
+    } },
+  } });
+  let view: TestRenderer.ReactTestRenderer | undefined;
+  const composer = () => view!.root.findByType(Composer).props as React.ComponentProps<typeof ReactSessionComposer>;
+  const history = () => view!.root.findByType(Messages).props.messages;
+  const settle = async () => { for (let i = 0; i < 30 && composer().submissionDisabled; i++) await act(async () => { await new Promise((resolve) => setTimeout(resolve, 5)); }); };
+  try {
+    await act(async () => { view = TestRenderer.create(<QueryClientProvider client={query}><PlatformProvider value={createDefaultPlatform()}><FileWindowApp /></PlatformProvider></QueryClientProvider>); });
+    expect(await office({ action: "prepare", ...sources[1] })).toEqual({ epoch: 0 });
+    await act(async () => { view!.root.findByProps({ "aria-controls": "file-window-conversation" }).props.onClick(); });
+    await settle();
+    expect(JSON.stringify(history())).toContain("history-a");
+    await act(async () => { composer().onDraftChange("draft-a"); composer().onModelChange({ providerID: "p", modelID: "other" }); composer().onSelectAgent("custom"); composer().onModelVariantChange("low"); });
+    await act(async () => { publish("a2"); });
+    expect(composer().draft).toBe("draft-a"); expect(composer().selectedModel.modelID).toBe("other");
+    expect(subscriptions).toEqual(["ws_a"]);
+    await act(async () => { publish("b1"); }); await settle();
+    expect(view!.root.findByType(Viewer).props).toMatchObject({ workspaceId: "ws_b", sessionId: "ses_b", path: "same.txt" });
+    expect(composer().draft).toBe(""); expect(composer().selectedAgent).toBe("build"); expect(composer().modelVariant).toBe("low");
+    expect(JSON.stringify(history())).toContain("history-b"); expect(JSON.stringify(history())).not.toContain("history-a");
+    await act(async () => { composer().onDraftChange("draft-b"); publish("a1"); }); await settle();
+    expect(composer().draft).toBe("draft-a"); expect(composer().selectedModel.modelID).toBe("other"); expect(composer().selectedAgent).toBe("custom"); expect(composer().modelVariant).toBe("low");
+    let sending!: Promise<unknown>;
+    await act(async () => { sending = composer().onSend(); await new Promise((resolve) => setTimeout(resolve, 10)); });
+    expect(accept).toBeFunction();
+    await act(async () => { publish("b1"); }); await settle();
+    await act(async () => { accept(); await sending; });
+    expect(composer().draft).toBe("draft-b");
+    expect(useComposerStateStore.getState().sessions.ses_a?.draft ?? "").toBe("");
+    expect(calls.filter((path) => path.endsWith("/runs/start"))).toEqual(["/workspace/ws_a/sessions/ses_a/runs/start"]);
+    expect(calls.some((path) => path.endsWith("/abort"))).toBe(false);
+    await act(async () => { publish("a1"); }); await settle();
+    const ref = { referenceId: "rb", captureId: "cb", workspaceId: "ws_b", ownerSessionId: "ses_b", documentId: "doc-b", sourcePageId: "page-b", modelGeneration: "generation-b", contentStamp: "stamp-b", capturedAt: 1, locator: { kind: "doc-text", ranges: [{ begin: 0, end: 2 }] }, preview: { name: "B", path: "same.txt", text: "正文" } };
+    useComposerStateStore.getState().appendOfficeSelection({ sessionId: "ses_b", reference: ref as any, instructionId: "ib", epoch: 0, text: "keep-b", mode: "add" });
+    const cross = await office({ action: "guard", ...sources[1], path: "another.txt" });
+    expect(cross.needsConfirmation).toBe(false);
+    const closing = await office({ action: "guard", ...sources[1], closingDocumentId: "doc-b" });
+    expect(closing.needsConfirmation).toBe(true);
+    const backgroundDraft = useComposerStateStore.getState().sessions.ses_b?.draft;
+    await act(async () => { expect(await office({ ...closing, action: "clear", ...sources[1] })).toMatchObject({ ok: true, releaseIds: ["rb"] }); });
+    expect(state.activeTabId).toBe("a1");
+    expect(useComposerStateStore.getState().sessions.ses_b?.draft).toBe(backgroundDraft);
+    expect(useComposerStateStore.getState().sessions.ses_b?.officeGroups[0]?.instruction.bindingState).toBe("needs-selection");
+    expect(actions).toEqual([]);
+    await act(async () => { view!.root.findByProps({ "aria-label": t("file_window.show_document") }).props.onClick(); });
+    const prepared = await office({ action: "prepare", ...sources[1] });
+    cancelSelection = true;
+    await act(async () => { await expect(office({ action: "append", ...sources[1], reference: ref, instructionId: "cancelled", epoch: prepared.epoch, text: "must not append", mode: "add" })).rejects.toThrow("切换已取消"); });
+    expect(view!.root.findByType("aside").props.hidden).toBe(true);
+    expect(useComposerStateStore.getState().sessions.ses_b?.officeGroups.some((group) => group.instruction.instructionId === "cancelled")).toBe(false);
+    actions.length = 0;
+    cancelSelection = false;
+    await act(async () => { await office({ action: "append", ...sources[1], reference: ref, instructionId: "ib2", epoch: prepared.epoch, text: "append-b", mode: "add" }); }); await settle();
+    expect(actions).toEqual([["select", "b1"]]);
+    expect(view!.root.findByType("aside").props.hidden).toBe(false);
+    expect(composer().draft).toContain("draft-b");
+    expect((await office({ action: "guard", ...sources[1], path: "another.txt" })).needsConfirmation).toBe(true);
+    expect(bridgeInstalls).toBe(1);
+    await act(async () => { publish("a1"); }); await settle();
+    await act(async () => { documentChanged({ workspaceId: "ws_b", ownerSessionId: "ses_b", documentId: "doc-b", pageId: "recovered-page", state: "ready" }); });
+    expect(state.activeTabId).toBe("a1");
+    expect((await office({ action: "guard", ...sources[1], closingDocumentId: "doc-b" })).needsConfirmation).toBe(false);
+    await act(async () => { closed({ workspaceId: "ws_b", sessionId: "ses_b", documentId: "doc-b" }); });
+    expect(state.activeTabId).toBe("a1");
+    // A policy retry does not remove a registered source's close/clear responder.
+    await act(async () => { changed({ ...state, tabs: state.tabs.map((tab) => tab.tabId === "b1" ? { ...tab, conversation: undefined } : tab) }); });
+    expect(await office({ action: "prepare", ...sources[1] })).toMatchObject({ epoch: expect.any(Number) });
+    await act(async () => { changed({ ...state, activeTabId: null, tabs: [], conversation: { desktopConfig: {} } }); });
+    expect(view!.root.findAllByType(Composer)).toHaveLength(0);
+    expect(view!.root.findAllByType(Viewer)).toHaveLength(0);
+    expect(subscriptions.length).toBe(releases.length);
+    await expect(office({ action: "prepare", ...sources[1] })).rejects.toThrow("不属于");
+    await act(async () => { view!.unmount(); view = undefined; });
+    expect(bridgeReleases).toBe(3);
+  } finally {
+    accept?.(); await act(async () => view?.unmount()); query.clear(); server.stop(true);
+    for (const source of sources) useComposerStateStore.getState().clearSession(source.sessionId);
     if (previousWindow === undefined) Reflect.deleteProperty(globalThis, "window"); else Reflect.set(globalThis, "window", previousWindow);
   }
 });

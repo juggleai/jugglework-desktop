@@ -7,7 +7,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { toast } from "@/components/ui/sonner";
 import type {
   ProviderListResponse,
@@ -179,6 +179,7 @@ import { useReactRenderWatchdog } from "./react-render-watchdog";
 import { readDenSettings } from "@/app/lib/den";
 import { denSessionUpdatedEvent, denSettingsChangedEvent } from "@/app/lib/den-session-events";
 import { useWorkbenchStore } from "@/react-app/domains/session/chat/workbench-store";
+import { isOrdinaryWorkspace } from "@/app/lib/workspace-visibility";
 
 import { filterProviderList } from "@/app/utils/providers";
 import { ensureDesktopLocalJuggleWorkConnection } from "./desktop-local-jugglework";
@@ -195,7 +196,7 @@ import { useRegisterWorkspaceShellActions } from "./workspace-shell-actions";
 import { getReactQueryClient } from "@/react-app/infra/query-client";
 import { generationDraftAvailableInCache, mediaModelQueryScope } from "@/react-app/domains/connections/media-model-queries";
 import { useSessionControlActions } from "@/react-app/domains/session/control/session-control-actions";
-import { legacySessionRoute, mergeWorkspaceRouteSession, workspaceAppsRoute, workspaceChatRoute, workspaceReviewsRoute, workspaceSessionRoute, workspaceSettingsRoute } from "./workspace-routes";
+import { sessionSettingsNavigation, mergeWorkspaceRouteSession, workspaceAppsRoute, workspaceChatRoute, workspaceReviewsRoute, workspaceSessionRoute } from "./workspace-routes";
 import { WorkspaceProvider } from "./workspace-provider";
 import type { OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
 import { SettingsSurface } from "./settings-route";
@@ -295,6 +296,7 @@ export type SessionRouteProps = {
 
 export function SessionRoute(props: SessionRouteProps = {}) {
   const navigate = useNavigate();
+  const location = useLocation();
   const platform = usePlatform();
   const denAuth = useDenAuth();
   const { config: shellConfig } = useShellConfig();
@@ -1283,14 +1285,10 @@ export function SessionRoute(props: SessionRouteProps = {}) {
 
   const handleOpenSettings = useCallback((route = "/settings/preferences", workspaceId = sidebarActiveWorkspaceId) => {
     const sessionId = workspaceId === sidebarActiveWorkspaceId ? selectedSessionId : null;
-    const tab = route.replace(/^\/settings\/?/, "").replace(/^\/+|\/+$/g, "") || "general";
-    const target = workspaceId ? workspaceSettingsRoute(workspaceId, tab) : route;
-    const returnPath = props.embedded ? "/automations" : workspaceId
-      ? workspaceSessionRoute(workspaceId, sessionId)
-      : legacySessionRoute(sessionId);
+    const { to, state } = sessionSettingsNavigation(location, workspaceId, sessionId, route, props.embedded);
     if (!props.embedded) writeActiveWorkspaceId(workspaceId || null);
-    navigate(target, { state: { workspaceId, sessionId, returnPath } });
-  }, [navigate, props.embedded, selectedSessionId, sidebarActiveWorkspaceId]);
+    navigate(to, { state });
+  }, [location.pathname, location.search, navigate, props.embedded, selectedSessionId, sidebarActiveWorkspaceId]);
 
   /**
    * 串行激活目标工作区，并只允许最后一次选择继续导航
@@ -1559,7 +1557,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         },
       }),
       cloudMcpSubmissionState,
-      onOpenConnect: () => navigate("/settings/connect"),
+      onOpenConnect: () => handleOpenSettings("/settings/connect"),
       onDraftChange: () => {
         // Draft persistence will be wired once the full React shell owns session state.
       },
@@ -2560,7 +2558,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
       selectedWorkspaceError={selectedWorkspaceError}
       runtimeWorkspaceId={selectedWorkspaceEndpoint?.workspaceId || null}
       opencodeBaseUrl={opencodeBaseUrl}
-      workspaces={workspaces}
+      workspaces={workspaces.filter(isOrdinaryWorkspace)}
       clientConnected={canAcceptTask}
       juggleworkServerClient={selectedWorkspaceEndpoint?.client ?? client}
       environmentClient={client}

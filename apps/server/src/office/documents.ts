@@ -341,6 +341,17 @@ export class OfficeDocuments {
     reopening = false,
     activate = true,
   ): Promise<OfficeDocumentSession> {
+    return (await this.openWithResult(workspaceId, sessionId, path, reopening, activate)).document;
+  }
+
+  /** 打开结果标明本次是否新建，供宿主撤销尚未接管的干净模型。 */
+  async openWithResult(
+    workspaceId: string,
+    sessionId: string,
+    path: string,
+    reopening = false,
+    activate = true,
+  ): Promise<{ document: OfficeDocumentSession; created: boolean }> {
     if (!getOfficeDocumentKind(path))
       throw new ApiError(
         400,
@@ -352,7 +363,7 @@ export class OfficeDocuments {
       throw new ApiError(404, "file_not_found", "文档已不存在");
     const identity = await fileIdentity(resolved.absolutePath);
     const existing = await this.findRecordByIdentity(identity);
-    if (existing) return this.reuseRecord(existing, workspaceId, sessionId, activate);
+    if (existing) return { document: this.reuseRecord(existing, workspaceId, sessionId, activate), created: false };
     if (resolved.file.editingOwner === "external" && !reopening)
       throw new ApiError(
         409,
@@ -377,7 +388,7 @@ export class OfficeDocuments {
     // 发布前同步复查已有身份，复查与登记间不再 await，无需引入锁或第二套模型所有者。
     const admitted = [...this.documents.values()].reverse().find((record) =>
       record.session.state !== "closed" && sameFileIdentity(record.identity, identity));
-    if (admitted) return this.reuseRecord(admitted, workspaceId, sessionId, activate);
+    if (admitted) return { document: this.reuseRecord(admitted, workspaceId, sessionId, activate), created: false };
     const session: OfficeDocumentSession = {
       documentId: `od_${randomUUID()}`,
       pageId: randomUUID(),
@@ -401,7 +412,7 @@ export class OfficeDocuments {
     };
     this.documents.set(session.documentId, record);
     if (activate) this.activateRecord(record);
-    return this.loadRecord(record);
+    return { document: await this.loadRecord(record), created: true };
   }
 
   /** 文件切换预检仅解析真实身份和存在性，不激活目标、不关闭原模型。 */
@@ -930,12 +941,17 @@ export class OfficeDocuments {
     workspaceId: string,
     documentId: string,
     decision: "save" | "discard" | "cancel",
+    cleanupOwnerSessionId?: string,
   ): Promise<OfficeDocumentSession> {
     const record = this.require(workspaceId, documentId);
+    if (cleanupOwnerSessionId !== undefined && record.session.ownerSessionId !== cleanupOwnerSessionId)
+      throw new ApiError(409, "office_wrong_document", "文档不属于待清理的聊天");
     if (decision === "cancel" || record.session.state === "closed")
       return structuredClone(record.session);
     await this.requireIdle(record);
     const session = await this.get(workspaceId, documentId);
+    if (cleanupOwnerSessionId !== undefined && (session.ownerSessionId !== cleanupOwnerSessionId || session.dirty || session.state === "external"))
+      throw new ApiError(409, "office_cleanup_unavailable", "文档已有修改或归属已变化，不能自动清理");
     if (
       decision === "save" &&
       session.state === "opening" &&
@@ -949,6 +965,11 @@ export class OfficeDocuments {
     const editor = session.engineFileId
       ? { file_id: session.engineFileId }
       : await this.options.engine.editor(record.absolutePath);
+    if (cleanupOwnerSessionId !== undefined) {
+      const current = await this.options.engine.editor(record.absolutePath);
+      if (current?.is_dirty || record.session.ownerSessionId !== cleanupOwnerSessionId || record.session.dirty || record.session.state === "external")
+        throw new ApiError(409, "office_cleanup_unavailable", "文档已有修改或归属已变化，不能自动清理");
+    }
     if (editor)
       await this.options.engine.close(editor.file_id, decision === "discard");
     record.session.state = "closed";

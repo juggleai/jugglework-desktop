@@ -12,6 +12,7 @@ export function useSharedFileEditor(
   sessionId: string,
   path: string,
   fallback?: FilesPanelDraft,
+  readOnly = false,
 ) {
   const query = useQueryClient();
   const bridge =
@@ -59,7 +60,7 @@ export function useSharedFileEditor(
       .state({ workspaceId, path })
       .then(async (state) => {
         if (disposed || changed) return;
-        if (local && !state.draft && !state.saved && !state.external)
+        if (!readOnly && local && !state.draft && !state.saved && !state.external)
           apply(await bridge.update({ workspaceId, path }, local));
         else apply(state);
       })
@@ -68,15 +69,16 @@ export function useSharedFileEditor(
       disposed = true;
       stop();
     };
-  }, [bridge, path, query, sessionId, workspaceId]);
+  }, [bridge, path, query, readOnly, sessionId, workspaceId]);
   const setDraft = React.useCallback(
     (next: FilesPanelDraft | null) => {
+      if (readOnly) return;
       useFilesPanelStore.getState().setDraft(sessionId, path, next);
       void bridge
         ?.update({ workspaceId, path }, next)
         .catch((error) => toast.error(String(error)));
     },
-    [bridge, path, sessionId, workspaceId],
+    [bridge, path, readOnly, sessionId, workspaceId],
   );
   return { draft, setDraft };
 }

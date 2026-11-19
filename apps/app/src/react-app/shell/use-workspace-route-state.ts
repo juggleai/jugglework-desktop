@@ -6,7 +6,8 @@
 // session-route.tsx as the final step of its decomposition; the route keeps
 // composition, handlers, and JSX.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
+import { isOrdinaryWorkspace, ordinaryWorkspaceId } from "@/app/lib/workspace-visibility";
 import type { Session } from "@opencode-ai/sdk/v2/client";
 
 import {
@@ -70,6 +71,7 @@ import {
 } from "./session-memory";
 import {
   legacySessionRoute,
+  parseWorkspaceAppPath,
   mergeWorkspaceRouteSession,
   reconcileWorkspaceSessionTitles,
   preserveWorkspaceRouteSession,
@@ -126,6 +128,7 @@ function waitForSessionRetry(ms: number, signal: AbortSignal): Promise<boolean> 
 export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
   const { developerMode, embedded, onSessionTargetChange, onServerSettingsChanged, onHostInfo } = input;
   const navigate = useNavigate();
+  const location = useLocation();
   const local = useLocal();
   const denAuth = useDenAuth();
   const params = useParams<{ workspaceId?: string; sessionId?: string }>();
@@ -135,6 +138,11 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
   const selectedSessionId = input.routeSessionId !== undefined
     ? input.routeSessionId?.trim() || null
     : params.sessionId?.trim() || null;
+  // 常驻会话保留自己的 target；只有 URL 实际匹配它时才负责自动导航。
+  const browserRoute = parseWorkspaceAppPath(location.pathname);
+  const ownsBrowserRoute = !embedded && browserRoute?.view === "session"
+    && browserRoute.workspaceId === routeWorkspaceId && browserRoute.sessionId === selectedSessionId;
+  const exactWorkspaceId = ownsBrowserRoute && new URLSearchParams(location.search).get("exact") === "1" && selectedSessionId ? routeWorkspaceId : "";
   const workspaceInferenceSessionId = sessionIdForLegacyWorkspaceInference(routeWorkspaceId, selectedSessionId);
   const navigateToWorkspaceSession = useCallback((workspaceId: string, sessionId?: string | null, options?: { replace?: boolean }) => {
     const id = workspaceId.trim();
@@ -220,7 +228,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
 
     // Seed a durable baseline after the first successful load and append newly
     // discovered workspaces without disturbing existing positions.
-    const stableOrderIds = ordered.map((workspace) => workspace.id);
+    const stableOrderIds = ordered.filter(isOrdinaryWorkspace).map((workspace) => workspace.id);
     const currentOrderIds = workspaceOrderIdsRef.current;
     if (
       stableOrderIds.length > 0
@@ -514,7 +522,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
         setBaseUrl("");
         setToken("");
         setHostToken("");
-        const orderedDesktopWorkspaces = stabilizeWorkspaceOrder(desktopWorkspaces);
+        const orderedDesktopWorkspaces = stabilizeWorkspaceOrder(mergeRouteWorkspaces([], desktopWorkspaces, exactWorkspaceId));
         setWorkspaces(orderedDesktopWorkspaces);
         sessionsByWorkspaceIdRef.current = {};
         setSessionsByWorkspaceId({});
@@ -545,8 +553,13 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
         hostToken: resolvedHostToken || undefined,
       });
       const list = await juggleworkClient.listWorkspaces();
+      let serverWorkspaces = list.items;
+      if (exactWorkspaceId && !serverWorkspaces.some((workspace) => workspace.id === exactWorkspaceId)) {
+        const exact = await juggleworkClient.getWorkspace(exactWorkspaceId);
+        if (exact) serverWorkspaces = [...serverWorkspaces, exact];
+      }
       const nextWorkspaces = stabilizeWorkspaceOrder(
-        mergeRouteWorkspaces(list.items, desktopWorkspaces),
+        mergeRouteWorkspaces(serverWorkspaces, desktopWorkspaces, exactWorkspaceId),
       );
 
       // Preserve any sessions we already have cached so switching routes
@@ -563,13 +576,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
         (routeWorkspaceId && nextWorkspaces.some((w) => w.id === routeWorkspaceId)
           ? routeWorkspaceId
           : "") ||
-        (persistedActiveId && nextWorkspaces.some((w) => w.id === persistedActiveId)
-          ? persistedActiveId
-          : "") ||
-        resolveWorkspaceListSelectedId(desktopList) ||
-        list.activeId?.trim() ||
-        nextWorkspaces[0]?.id ||
-        "";
+        ordinaryWorkspaceId(nextWorkspaces, persistedActiveId, resolveWorkspaceListSelectedId(desktopList), list.activeId?.trim());
       if (workspaceInferenceSessionId) {
         const match = cachedEntries.find((entry) =>
           entry.sessions.some((session) => session?.id === workspaceInferenceSessionId),
@@ -600,11 +607,11 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
       });
       setRetryingWorkspaceIds([]);
       setLegacySelectedWorkspaceId(nextWorkspaceId);
-      if (!embedded) writeActiveWorkspaceId(nextWorkspaceId || null);
+      if (!embedded && nextWorkspaces.some((workspace) => workspace.id === nextWorkspaceId && isOrdinaryWorkspace(workspace))) writeActiveWorkspaceId(nextWorkspaceId || null);
       // Keep the server registry's active workspace aligned with navigation.
       // Activation is intentionally non-destructive; configuration changes use
       // the explicit engine-reload path, which is gated while tasks are active.
-      if (!embedded && nextWorkspaceId && list.activeId !== nextWorkspaceId && !launchActivatedWorkspaceIdsRef.current.has(nextWorkspaceId)) {
+      if (!embedded && nextWorkspaceId && nextWorkspaces.some((workspace) => workspace.id === nextWorkspaceId && isOrdinaryWorkspace(workspace)) && list.activeId !== nextWorkspaceId && !launchActivatedWorkspaceIdsRef.current.has(nextWorkspaceId)) {
         const nextWorkspace = nextWorkspaces.find((workspace) => workspace.id === nextWorkspaceId) ?? null;
         const nextEndpoint = routeWorkspaceServerClientResolver(nextWorkspace);
         if (nextEndpoint) {
@@ -650,10 +657,10 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
       });
       setRouteError(message);
       if (desktopWorkspaces.length > 0) {
-        const orderedDesktopWorkspaces = stabilizeWorkspaceOrder(desktopWorkspaces);
+        const orderedDesktopWorkspaces = stabilizeWorkspaceOrder(mergeRouteWorkspaces([], desktopWorkspaces, exactWorkspaceId));
         setWorkspaces(orderedDesktopWorkspaces);
         setLegacySelectedWorkspaceId((current) =>
-          current || resolveWorkspaceListSelectedId(desktopList) || orderedDesktopWorkspaces[0]?.id || "",
+          ordinaryWorkspaceId(orderedDesktopWorkspaces, current, resolveWorkspaceListSelectedId(desktopList)),
         );
       }
     } finally {
@@ -666,7 +673,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
         markBootRouteReady();
       }
     }
-  }, [embedded, loadWorkspaceSessionsInBackground, markBootRouteReady, routeWorkspaceId, stabilizeWorkspaceOrder, updateLocalServer, workspaceInferenceSessionId]);
+  }, [embedded, exactWorkspaceId, loadWorkspaceSessionsInBackground, markBootRouteReady, routeWorkspaceId, stabilizeWorkspaceOrder, updateLocalServer, workspaceInferenceSessionId]);
   const refreshRouteStateQueue = useMemo(
     () => createLatestSyncQueue<() => Promise<void>>((refresh) => refresh()),
     [],
@@ -964,13 +971,14 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
   // Once workspaces + sessions are loaded and the URL has no sessionId, try to
   // restore the last session the user opened in the active workspace.
   useEffect(() => {
-    if (embedded || loading) return;
-    if (routeWorkspaceId && workspaces.length > 0 && !workspaces.some((workspace) => workspace.id === routeWorkspaceId)) {
-      const fallbackWorkspaceId = workspaces.some((workspace) => workspace.id === legacySelectedWorkspaceId)
-        ? legacySelectedWorkspaceId
-        : workspaces[0]?.id || "";
+    if (!ownsBrowserRoute || loading) return;
+    if (exactWorkspaceId) return;
+    if (routeWorkspaceId && !workspaces.some((workspace) => workspace.id === routeWorkspaceId)) {
+      const fallbackWorkspaceId = ordinaryWorkspaceId(workspaces, legacySelectedWorkspaceId);
       if (fallbackWorkspaceId) {
-        navigateToWorkspaceSession(fallbackWorkspaceId, selectedSessionId, { replace: true });
+        navigateToWorkspaceSession(fallbackWorkspaceId, null, { replace: true });
+      } else if (!routeError) {
+        navigateToWorkspaceSession("", null, { replace: true });
       }
       return;
     }
@@ -986,11 +994,13 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
     if (!sessions.some((session) => session?.id === remembered)) return;
     navigateToWorkspaceSession(selectedWorkspaceId, remembered, { replace: true });
   }, [
-    embedded,
+    ownsBrowserRoute,
+    exactWorkspaceId,
     loading,
     legacySelectedWorkspaceId,
     navigateToWorkspaceSession,
     routeWorkspaceId,
+    routeError,
     selectedSessionId,
     selectedWorkspaceId,
     sessionsByWorkspaceId,
@@ -1001,7 +1011,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
   // completed onboarding. Desktop only does this for the default hosted
   // bootstrap; org-bound desktops should keep their sign-in gate instead.
   useEffect(() => {
-    if (embedded || loading) return;
+    if (!ownsBrowserRoute || loading || exactWorkspaceId) return;
     if (workspaces.length > 0) return;
     if (local.prefs.hasCompletedOnboarding) return;
     if (isDesktopRuntime()) {
@@ -1010,7 +1020,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
       if (readDenBootstrapConfig().source !== "default") return;
     }
     navigate("/welcome", { replace: true });
-  }, [denAuth.isSignedIn, denAuth.status, embedded, loading, local.prefs.hasCompletedOnboarding, navigate, workspaces.length]);
+  }, [denAuth.isSignedIn, denAuth.status, ownsBrowserRoute, exactWorkspaceId, loading, local.prefs.hasCompletedOnboarding, navigate, workspaces.length]);
 
   // NOTE: Blueprint seeding was removed from the route.
   // It was firing `materializeBlueprintSessions` + a session re-fetch on every

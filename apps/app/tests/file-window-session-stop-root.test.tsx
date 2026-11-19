@@ -31,6 +31,7 @@ mock.module("../src/react-app/shell/notification-center", () => ({ NotificationC
 mock.module("../src/react-app/shell/jugglework-context-publisher", () => ({ JuggleWorkContextPublisher: empty }));
 mock.module("../src/react-app/domains/automations/automation-activity-provider", () => ({ AutomationActivityProvider: passthrough }));
 mock.module("../src/react-app/domains/automations/automation-run-notification-coordinator", () => ({ AutomationRunNotificationCoordinator: empty }));
+mock.module("../src/react-app/domains/tasks/product-task-notification-coordinator", () => ({ ProductTaskNotificationCoordinator: empty }));
 mock.module("../src/react-app/domains/settings/state/host-marketplace-plugins-provider", () => ({ HostMarketplacePluginsProvider: passthrough }));
 
 // Reference cleanup must never hold up Stop acknowledgement or navigation.

@@ -193,6 +193,7 @@ function serializeWorkspaceConfigEntry(workspace: WorkspaceInfo): Record<string,
     preset: workspace.preset,
     workspaceType: workspace.workspaceType,
     ...(workspace.hidden ? { hidden: true } : {}),
+    ...(workspace.fileAssistantManaged ? { fileAssistantManaged: true } : {}),
     ...(workspace.remoteType ? { remoteType: workspace.remoteType } : {}),
     ...(!isLocalWorkspace && workspace.baseUrl ? { baseUrl: workspace.baseUrl } : {}),
     ...(!isLocalWorkspace && workspace.directory ? { directory: workspace.directory } : {}),
@@ -214,9 +215,15 @@ export async function persistServerWorkspaceState(config: ServerConfig): Promise
   if (!configPath) return false;
 
   const parsed = await readServerConfigFile(configPath);
+  const activeIds = new Set(config.workspaces.map((workspace) => workspace.id));
+  // 只补回本次隔离的登记；正常重新登记的同 ID 条目优先，不合并磁盘旧列表。
+  const workspaces = [
+    ...config.workspaces,
+    ...(config.quarantinedWorkspaces ?? []).filter((workspace) => !activeIds.has(workspace.id)),
+  ];
   const next = {
     ...parsed,
-    workspaces: config.workspaces.map(serializeWorkspaceConfigEntry),
+    workspaces: workspaces.map(serializeWorkspaceConfigEntry),
     authorizedRoots: Array.from(new Set(config.authorizedRoots.map((root) => resolve(root)))),
   };
 
@@ -485,12 +492,17 @@ export function registerWorkspaceRoutes(options: RegisterWorkspaceRoutesOptions)
   addRoute(routes, "DELETE", "/workspaces/:id", "host", async (ctx) => {
     ensureWritable(config);
 
-    const workspace = await resolveWorkspaceForRegistry(ctx.params.id);
-    await prepareWorkspaceRemoval?.(workspace);
+    const workspaceId = ctx.params.id.trim();
+    const quarantined = !config.workspaces.some((entry) => entry.id === workspaceId)
+      ? config.quarantinedWorkspaces?.find((entry) => entry.id === workspaceId) : undefined;
+    const workspace = quarantined ?? await resolveWorkspaceForRegistry(workspaceId);
+    // 隔离项没有可运行的引擎；删除仅操作登记，不能访问其无效 cwd。
+    if (!quarantined) await prepareWorkspaceRemoval?.(workspace);
 
-    const before = config.workspaces.length;
+    const before = config.workspaces.length + (config.quarantinedWorkspaces?.length ?? 0);
     config.workspaces = config.workspaces.filter((entry) => entry.id !== workspace.id);
-    const deleted = before !== config.workspaces.length;
+    config.quarantinedWorkspaces = config.quarantinedWorkspaces?.filter((entry) => entry.id !== workspace.id);
+    const deleted = before !== config.workspaces.length + (config.quarantinedWorkspaces?.length ?? 0);
 
     if (deleted && workspace.workspaceType === "local") {
       // Only remove exact matches; authorizedRoots can contain broader entries.
@@ -499,7 +511,7 @@ export function registerWorkspaceRoutes(options: RegisterWorkspaceRoutesOptions)
     const persisted = await persistServerWorkspaceState(config);
     onWorkspacesChanged();
 
-    await recordAudit(workspace.path, {
+    if (!quarantined) await recordAudit(workspace.path, {
       id: shortId(),
       workspaceId: workspace.id,
       actor: ctx.actor ?? { type: "host" },

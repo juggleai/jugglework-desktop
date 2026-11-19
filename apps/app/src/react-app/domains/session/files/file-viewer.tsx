@@ -48,6 +48,7 @@ type FileViewerProps = {
   name: string;
   draft: FilesPanelDraft | undefined;
   hideOfficeHeader?: boolean;
+  readOnly?: boolean;
 };
 
 function describeError(cause: unknown): string {
@@ -78,8 +79,9 @@ export function FileViewer({
   name,
   draft,
   hideOfficeHeader,
+  readOnly,
 }: FileViewerProps) {
-  if (getOfficeDocumentKind(path))
+  if (!readOnly && getOfficeDocumentKind(path))
     return (
       <OfficeEditor
         client={client}
@@ -98,6 +100,7 @@ export function FileViewer({
       name={name}
       draft={draft}
       hideOfficeHeader={hideOfficeHeader}
+      readOnly={readOnly}
     />
   );
 }
@@ -110,6 +113,7 @@ function StandardFileViewer({
   name,
   draft: initialDraft,
   hideOfficeHeader,
+  readOnly = false,
 }: FileViewerProps) {
   const inRouter = useInRouterContext();
   const queryClient = useQueryClient();
@@ -118,6 +122,7 @@ function StandardFileViewer({
     sessionId,
     path,
     initialDraft,
+    readOnly,
   );
   const setDraft = (
     _session: string,
@@ -241,15 +246,15 @@ function StandardFileViewer({
 
   const isMarkdown = data?.presentation === "markdown";
   const editable =
-    !external &&
+    !readOnly && !external &&
     (isMarkdown ||
       data?.presentation === "text" ||
       data?.presentation === "sheet");
-  const value = draft?.content ?? data?.text ?? "";
+  const value = (readOnly ? data?.text : draft?.content ?? data?.text) ?? "";
   const dirty =
     editable && draft !== undefined && draft.content !== (data?.text ?? "");
   React.useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (typeof window === "undefined" || !editable) return;
     const onKey = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "s")
         return;
@@ -266,6 +271,7 @@ function StandardFileViewer({
   }, [
     data?.updatedAt,
     dirty,
+    editable,
     draft?.baseUpdatedAt,
     isSaving,
     path,
@@ -275,7 +281,7 @@ function StandardFileViewer({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      {external ? (
+      {external && !readOnly ? (
         <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2 text-xs text-muted-foreground">
           <span>{t("artifact.external_active")}</span>
           <Button
@@ -299,7 +305,7 @@ function StandardFileViewer({
           </Button>
         </div>
       ) : null}
-      {inRouter && !hideOfficeHeader && canUploadToCloud(path) && <div className="flex h-9 shrink-0 items-center justify-end gap-1 border-b border-border/60 px-3">
+      {inRouter && !readOnly && !hideOfficeHeader && canUploadToCloud(path) && <div className="flex h-9 shrink-0 items-center justify-end gap-1 border-b border-border/60 px-3">
         <CloudUploadButton client={client} localWorkspaceId={workspaceId} path={path} disabled={isSaving}
           prepare={async () => {
             if (editable && dirty) await saveAsync({ path, content: value, baseUpdatedAt: draft?.baseUpdatedAt ?? data?.updatedAt ?? null });
@@ -340,12 +346,12 @@ function StandardFileViewer({
       <div className="min-h-0 flex-1 overflow-hidden">
         {isLoading ? <PreviewLoading /> : null}
         {isError ? <PreviewError message={describeError(error)} /> : null}
-        {external &&
+        {(external || readOnly) &&
         data &&
-        (data.presentation === "text" || data.presentation === "markdown") ? (
+        (data.presentation === "text" || (external && data.presentation === "markdown")) ? (
           <PlainText content={data.text ?? ""} />
         ) : null}
-        {!external &&
+        {editable &&
         data &&
         (data.presentation === "text" || markdownEditing) ? (
           <React.Suspense fallback={<PreviewLoading />}>
@@ -384,10 +390,10 @@ function StandardFileViewer({
             </div>
           </React.Suspense>
         ) : null}
-        {!external && data?.presentation === "markdown" && !markdownEditing ? (
+        {!external && data?.presentation === "markdown" && (!editable || !markdownEditing) ? (
           <div className="relative h-full min-h-0">
             <MarkdownPreview content={value} />
-            <Button
+            {editable && <Button
               variant="outline"
               size="icon-sm"
               className="absolute right-3 top-3 z-10 bg-background/95 shadow-sm"
@@ -396,7 +402,7 @@ function StandardFileViewer({
               title={t("common.edit")}
             >
               <Pencil />
-            </Button>
+            </Button>}
           </div>
         ) : null}
         {data?.presentation === "image" && objectUrl ? (
@@ -416,7 +422,7 @@ function StandardFileViewer({
             <DelimitedFileView
               name={name}
               content={value}
-              editable={!external && sheetEditing}
+              editable={editable && sheetEditing}
               onChange={(content) =>
                 setDraft(
                   sessionId,
@@ -427,7 +433,7 @@ function StandardFileViewer({
                 )
               }
             />
-            {!external ? (
+            {editable ? (
               <Button
                 variant="outline"
                 size="icon-sm"
@@ -450,7 +456,7 @@ function StandardFileViewer({
           </div>
         ) : null}
         {data?.presentation === "binary" ? (
-          /\.(xls|ods)$/i.test(path) ? <React.Suspense fallback={<PreviewLoading />}><WorkbookFileView bytes={data.bytes} /></React.Suspense> : <PreviewUnavailable />
+          /\.(xls|ods)$/i.test(path) || (readOnly && /\.xlsx$/i.test(path)) ? <React.Suspense fallback={<PreviewLoading />}><WorkbookFileView bytes={data.bytes} /></React.Suspense> : <PreviewUnavailable />
         ) : null}
       </div>
     </div>

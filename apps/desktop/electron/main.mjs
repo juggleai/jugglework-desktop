@@ -1530,7 +1530,7 @@ const fileEditor = createFileEditor({
   client: fileHostClient,
   getWindows: () => [mainWindow, ...fileWindows.windows()].filter(Boolean),
   onDocumentChanged: (window, instanceId, document) => fileWindows.updateCloudDocument(window, instanceId, document),
-  authorizeFileEditor: (event, input) => fileWindows.authorizeFileEditor(event, input),
+  authorizeFileEditor: (event, input, operation) => fileWindows.authorizeFileEditor(event, input, operation),
   canReceiveFileEditor: (window, input) => fileWindows.canReceiveFileEditor(window, input),
 });
 let officeResources;
@@ -1554,8 +1554,10 @@ const officeSelectionBridge = createOfficeSelectionBridge({ ipcMain, getWindow: 
 const officePanel = createOfficePanel({
   getWindow: () => mainWindow,
   getWindows: () => fileWindows.windows(),
-  resolveWindow: (sender) => sender.id === mainWindow?.webContents.id ? mainWindow : fileWindows.windowFor(sender),
-  authorizeReferences: (event, input) => { if (event.sender !== mainWindow?.webContents) fileWindows.authorizeOfficeReferences(event, input); },
+  resolveWindow: (sender) => sender === mainWindow?.webContents ? mainWindow : fileWindows.windowFor(sender),
+  authorizeReferences: (event, input) => { if (event.sender !== mainWindow?.webContents) return fileWindows.authorizeOfficeReferences(event, input); },
+  authorizeTarget: (event, input) => { if (event.sender !== mainWindow?.webContents) return fileWindows.authorizeOfficeTarget(event, input); },
+  authorizeContext: (event, input) => { if (event.sender !== mainWindow?.webContents) return fileWindows.authorizeOfficeContext(event, input); },
   onDocumentClosed: (id) => fileWindows.documentClosed(id),
   onOpenFile: (window, input) => fileWindows.openDialog(window, input),
   client: fileHostClient,
@@ -1625,9 +1627,9 @@ const fileWindows = createFileWindows({
     mainWindow?.webContents.send("jugglework:file-window:upload-cloud", { ...input, requestId: crypto.randomUUID() });
   },
   fetcher: nodeFetch,
-  openSession: async ({ workspaceId, sessionId }) => {
+  openSession: async ({ workspaceId, sessionId, exact }) => {
     await createMainWindow();
-    await focusMainWindowFromNotification(`/workspace/${encodeURIComponent(workspaceId)}/session/${encodeURIComponent(sessionId)}`);
+    await focusMainWindowFromNotification(`/workspace/${encodeURIComponent(workspaceId)}/session/${encodeURIComponent(sessionId)}${exact ? "?exact=1" : ""}`);
   },
   registerLocalFile: async (file) => {
     const access = await runtimeManager.juggleworkServerInfo();

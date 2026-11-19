@@ -1,9 +1,10 @@
 import { getOfficeDocumentKind } from "@jugglework/types/office";
+import { FILE_WINDOW_EXTENSIONS } from "../dist/runtime/file-window.js";
 import { BrowserWindow, clipboard, dialog, shell } from "electron";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { saveArtifactFileCopy, resolveArtifactExternalSource } from "./artifact-file-operations.mjs";
-import { fetchFileWindowResponse } from "./file-window-fetch.mjs";
+import { authorizeFileWindowFetch, fetchFileWindowResponse } from "./file-window-fetch.mjs";
 import { fileWindowSessionEvent, validateFileWindowConversationOptions } from "./file-window-conversation.mjs";
 import { createManagedRuntimeSseClient } from "./managed-runtime-sse-client.mjs";
 import { randomUUID } from "node:crypto";
@@ -50,16 +51,38 @@ export function createFileWindows({
   const entries = new Map();
   const pendingAdds = new Map();
   const pendingOpens = new Map();
+  const sourceKey = (source) => JSON.stringify([source.workspaceId, source.sessionId]);
+  const activeTab = (entry) => entry.tabs.find(tab => tab.tabId === entry.activeTabId);
+  // 顶层仅用于旧 UI 投影；异步操作始终捕获独立 source context。
+  const selectTab = (entry, tab) => {
+    entry.activeTabId = tab?.tabId ?? null;
+    entry.activePath = tab?.path ?? null;
+    Object.assign(entry, tab?.source ?? { workspaceId: "", sessionId: "", workspaceRoot: "" });
+    entry.local = tab?.local ?? (entry.group.kind === "file-assistant");
+    entry.conversation = tab ? entry.sources.get(sourceKey(tab.source))?.conversation : undefined;
+  };
+  const contextFor = (entry, input) => {
+    const contexts = [...entry.sources.values()].filter(context => context.workspaceId === input?.workspaceId &&
+      (input?.sessionId === undefined || context.sessionId === input.sessionId) && context.tabs.length);
+    if (contexts.length !== 1) throw new Error("文件窗口工作区或聊天不匹配");
+    return contexts[0];
+  };
+  const requestContext = (entry, url) => {
+    const match = /\/workspace\/([^/]+)(?:\/|$)/.exec(new URL(url).pathname);
+    if (!match) throw new Error("文件窗口请求超出已登记文件范围");
+    return contextFor(entry, { workspaceId: decodeURIComponent(match[1]) });
+  };
+  const registered = (entry, context) => !entry.window.isDestroyed() && entry.sources.get(sourceKey(context)) === context && context.tabs.length > 0;
   let cloudUploads = [];
   let cloudScope = null;
   const cloudLookups = new Set();
   const lookupUpload = (entry) => {
-    const tab = entry.tabs.find(item => item.path === entry.activePath);
-    if (!cloudScope || !lookupCloud || !tab || tab.cloudDoc || tab.cloudAttachment || uploaded(entry.workspaceId, tab.path)) return;
-    const key = JSON.stringify([cloudScope, entry.workspaceId, tab.path]);
+    const tab = activeTab(entry);
+    if (!cloudScope || !lookupCloud || !tab || tab.cloudDoc || tab.cloudAttachment || uploaded(tab.source.workspaceId, tab.path)) return;
+    const key = JSON.stringify([cloudScope, tab.source.workspaceId, tab.path]);
     if (cloudLookups.has(key)) return;
     cloudLookups.add(key);
-    void lookupCloud({ workspaceId: entry.workspaceId, path: tab.path });
+    void lookupCloud({ workspaceId: tab.source.workspaceId, path: tab.path });
   };
   const uploaded = (workspaceId, filePath) => cloudUploads.find(item => item.localWorkspaceId === workspaceId && item.path === filePath);
   const pendingStops = new Map();
@@ -111,51 +134,56 @@ export function createFileWindows({
         .map((entry) => ({
           id: entry.window.id,
           title:
-            entry.tabs.find((tab) => tab.path === entry.activePath)?.name ??
+            activeTab(entry)?.name ??
             "JuggleWork 文件浏览器",
         })),
     );
   const state = (entry) => ({
+    group: entry.group,
+    activeTabId: entry.activeTabId,
     workspaceId: entry.workspaceId,
     sessionId: entry.sessionId,
     workspaceRoot: entry.workspaceRoot,
     local: entry.local,
-    tabs: entry.tabs.map(tab => ({ ...tab, ...(uploaded(entry.workspaceId, tab.path) ? { cloudUpload: { url: uploaded(entry.workspaceId, tab.path).url, tenantId: uploaded(entry.workspaceId, tab.path).tenantId } } : {}) })),
+    tabs: entry.tabs.map(({ local, ...tab }) => ({ ...tab, ...(entry.sources.get(sourceKey(tab.source))?.conversation ? { conversation: entry.sources.get(sourceKey(tab.source)).conversation } : {}), ...(uploaded(tab.source.workspaceId, tab.path) ? { cloudUpload: { url: uploaded(tab.source.workspaceId, tab.path).url, tenantId: uploaded(tab.source.workspaceId, tab.path).tenantId } } : {}) })),
     activePath: entry.activePath,
     recent: recent
       .filter(
         (item) =>
-          item.workspaceId === (entry.local ? "local" : entry.workspaceId),
+          item.workspaceId === (entry.local ? "local" : entry.workspaceId || entry.groupSource?.workspaceId),
       )
       .map(({ path, name }) => ({ path, name })),
     platform: process.platform,
     ...(entry.conversation ? { conversation: entry.conversation } : {}),
   });
   const cancelEntry = (entry) => {
+    if (entry.sources) { for (const context of entry.sources.values()) cancelEntry(context); return; }
     entry.verifiedDescendants = new Set();
     for (const controller of entry.requests) controller.abort();
     entry.requests.clear();
     for (const controller of entry.subscriptions.values()) controller.abort();
     entry.subscriptions.clear();
   };
-  const refreshConversation = async (entry) => {
-    if (!entry.workspaceRoot || !entry.sessionId || entry.sessionId === "file-browser" || entry.workspaceId.startsWith("rem_") || !getDesktopConfig) return;
-    const previous = entry.conversation;
+  const refreshConversation = async (entry, context) => {
+    if (!context) { await Promise.all([...entry.sources.values()].map(context => refreshConversation(entry, context))); return; }
+    if (!context.workspaceRoot || !context.sessionId || context.sessionId === "file-browser" || context.workspaceId.startsWith("rem_") || !getDesktopConfig) return;
+    const previous = context.conversation;
     const controller = new AbortController();
-    entry.requests.add(controller);
+    context.requests.add(controller);
     try {
       const [{ item }, desktopConfig] = await Promise.all([
-        client.getJson(`/workspace/${encodeURIComponent(entry.workspaceId)}/sessions/${encodeURIComponent(entry.sessionId)}`, { signal: controller.signal }),
+        client.getJson(`/workspace/${encodeURIComponent(context.workspaceId)}/sessions/${encodeURIComponent(context.sessionId)}`, { signal: controller.signal }),
         getDesktopConfig(),
       ]);
-      if (entry.window.isDestroyed() || controller.signal.aborted) throw new Error("文件窗口已关闭");
+      if (entry.window.isDestroyed() || controller.signal.aborted || entry.sources.get(sourceKey(context)) !== context) throw new Error("文件窗口已关闭");
       const policy = desktopConfigSchema.safeParse(desktopConfig);
-      entry.conversation = item?.id === entry.sessionId && policy.success ? { ...entry.conversationOptions, desktopConfig: policy.data } : undefined;
-    } catch { entry.conversation = undefined; }
-    finally { entry.requests.delete(controller); }
-    if (!entry.conversation) cancelEntry(entry);
+      context.conversation = item?.id === context.sessionId && policy.success ? { ...context.conversationOptions, desktopConfig: policy.data } : undefined;
+    } catch { context.conversation = undefined; }
+    finally { context.requests.delete(controller); }
+    if (!context.conversation) cancelEntry(context);
+    selectTab(entry, activeTab(entry));
     // Changed listeners may request state again. Publish transitions only, not every policy read.
-    if (!isDeepStrictEqual(previous, entry.conversation)) publish(entry);
+    if (!isDeepStrictEqual(previous, context.conversation)) publish(entry);
   };
   const publish = (entry) => {
     if (!entry.window.isDestroyed()) {
@@ -169,6 +197,7 @@ export function createFileWindows({
     }
   };
   const remember = async (entry, tab) => {
+    entry = { ...tab.source, local: tab.local };
     recent = [
       {
         workspaceId: entry.local ? "local" : entry.workspaceId,
@@ -213,91 +242,196 @@ export function createFileWindows({
     return window;
   };
   const assertEntryContext = (entry, input) => {
-    if (
-      entry &&
-      (input?.workspaceId !== entry.workspaceId ||
-        input?.sessionId !== entry.sessionId)
-    )
-      throw new Error("文件窗口工作区或聊天不匹配");
+    if (!input || typeof input.workspaceId !== "string" || typeof input.sessionId !== "string") throw new Error("文件窗口工作区或聊天不匹配");
+    if (entry) return contextFor(entry, input);
   };
-  const addFile = (entry, relativePath, absolutePath, readOnly = false) => {
-    // TIPS: 覆盖整个异步预检及保存关闭重开，不能在新 documentId 返回前重复建立同路径标签。
-    const key = JSON.stringify([entry.window.id, relativePath]);
+  /** 空 conversation 窗只保留原始组的文件打开/创建能力，不恢复会话请求授权。 */
+  const captureFileOperation = (entry, input) => {
+    const context = entry.tabs.length ? contextFor(entry, input) : null;
+    const source = context?.source ?? entry.groupSource;
+    if (!source || (!context && input &&
+      !((input.workspaceId === "" && input.sessionId === "") ||
+        (input.workspaceId === source.workspaceId && input.sessionId === source.sessionId)))) throw new Error("文件窗口工作区或聊天不匹配");
+    const group = entry.group;
+    const verify = () => {
+      if (entryFor(entry.window.webContents) !== entry || entry.group !== group ||
+        (context && !registered(entry, context)) || (!context && entry.groupSource !== source)) throw new Error("文件窗口来源已关闭");
+    };
+    verify();
+    return { entry, source, verify };
+  };
+  const registerSource = (entry, origin, local, conversationOptions) => {
+    let context = entry.sources.get(sourceKey(origin));
+    if (!context) {
+      if ([...entry.sources.values()].some(item => item.workspaceId === origin.workspaceId && item.sessionId !== origin.sessionId)) throw new Error("文件窗口同一工作区只能登记唯一聊天");
+      context = { ...origin, source: origin, local, conversationOptions, requests: new Set(), subscriptions: new Map(), officeReferences: new Map(), verifiedDescendants: new Set(), cloudDocument: entry.cloudDocument };
+      Object.defineProperty(context, "tabs", { get: () => entry.tabs.filter(tab => sourceKey(tab.source) === sourceKey(origin)) });
+      Object.defineProperty(context, "activePath", { get: () => context.tabs.find(tab => tab.tabId === entry.activeTabId)?.path ?? null });
+      entry.sources.set(sourceKey(origin), context);
+    }
+    return context;
+  };
+  const addCapturedFile = async (entry, captured, relativePath) => {
+    captured.verify();
+    const context = registerSource(entry, captured.source, false, entry.groupConversationOptions);
+    try {
+      await refreshConversation(entry, context);
+      captured.verify();
+      return await addFile(entry, context, relativePath, undefined, false, captured.verify);
+    } finally {
+      if (!context.tabs.length) { cancelEntry(context); entry.sources.delete(sourceKey(context)); }
+    }
+  };
+  const addFile = (entry, context, relativePath, absolutePath, readOnly = false, verifySource = () => {}) => {
+    // TIPS: 同来源同路径的预检及 Windows 保存关闭重开共用一个操作，其他 source 不合并。
+    const key = JSON.stringify([entry.window.id, sourceKey(context), relativePath]);
     const pending = pendingAdds.get(key);
     if (pending) return pending;
-    const operation = addFileToEntry(entry, relativePath, absolutePath, readOnly)
+    const operation = addFileToEntry(entry, context, relativePath, absolutePath, readOnly, verifySource)
       .finally(() => pendingAdds.delete(key));
     pendingAdds.set(key, operation);
     return operation;
   };
-  const addFileToEntry = async (entry, relativePath, absolutePath, readOnly) => {
-    if ((!entry.local || entry.conversation) && office.confirmFileTarget && !await office.confirmFileTarget(entry.window, {
-      workspaceId: entry.workspaceId, sessionId: entry.sessionId, path: relativePath,
-    })) return null;
-    const response = await client.getJson(
-      `/workspace/${encodeURIComponent(entry.workspaceId)}/files/stat?path=${encodeURIComponent(relativePath)}`,
-    );
-    if (!response.exists || response.kind !== "file")
-      throw new Error("文件不存在");
-    // TIPS: Main 加入已有文件窗口时只携带稳定标识；每个标签仍须从同一登记取得原件，不能依赖首次开窗参数。
-    absolutePath ??= await resolveArtifactExternalSource(client, entry.workspaceRoot, relativePath);
-    if (absolutePath) entry.local = true;
-    let tab = entry.tabs.find((tab) => tab.path === relativePath);
-    if (!tab) {
-      tab = {
-        path: relativePath,
-        name: path.basename(relativePath),
-        ...(absolutePath ? { absolutePath } : {}),
-      };
-      if (readOnly) {
-        // 云端附件副本只读预览，不打开可编辑的 Office 文档。
-        tab.readOnly = true;
-        tab.cloudAttachment = true;
-      } else if (getOfficeDocumentKind(relativePath)) {
-        const { available } = await client.getJson(
-          `${base(entry)}/capabilities`,
-        );
-        if (available) {
-          try {
-            const { document } = await client.postJson(`${base(entry)}/open`, {
-              sessionId: entry.sessionId,
-              path: relativePath,
-            });
-            if (document.state === "error")
-              throw new Error(document.error ?? "文档打开失败");
-            const opened = office.openInWindow
-              ? await office.openInWindow(document, entry.window, async (source, restored) => {
-                  const original = entryFor(source.webContents);
-                  if (original) await addFile(original, relativePath, absolutePath, readOnly);
-                  else {
-                    await openSession?.({ workspaceId: restored.workspaceId, sessionId: restored.ownerSessionId });
-                    source.webContents.send("jugglework:file-window:open-in-panel", {
-                      workspaceId: restored.workspaceId, sessionId: restored.ownerSessionId, path: restored.relativePath,
-                    });
-                  }
-                })
-              : await office.transfer(document.documentId, entry.window) ? document : null;
-            if (!opened) return null;
-            tab.documentId = opened.documentId;
-          } catch (error) {
-            if (error?.serverCode !== "office_readonly_required") throw error;
-            tab.readOnly = true;
+  const addFileToEntry = async (entry, context, relativePath, absolutePath, readOnly, verifySource) => {
+    const verify = () => {
+      verifySource();
+      if (entry.window.isDestroyed() || entry.sources.get(sourceKey(context)) !== context) throw new Error("文件窗口来源已关闭");
+    };
+    let createdDocument;
+    let cleanupPrepared;
+    const cleanupNewDocument = async () => {
+      if (!createdDocument || [...entries.values()].some(item => item.tabs.some(tab => tab.documentId === createdDocument.documentId))) return;
+      if (cleanupPrepared) return cleanupPrepared();
+      await client.postJson(`${base(context)}/${encodeURIComponent(createdDocument.documentId)}/close`, {
+        decision: "discard", onlyIfClean: true, sessionId: context.sessionId,
+      });
+    };
+    try {
+      verify();
+      if ((!context.local || context.conversation) && office.confirmFileTarget && !await office.confirmFileTarget(entry.window, {
+        workspaceId: context.workspaceId, sessionId: context.sessionId, path: relativePath, ...(readOnly ? { readOnly: true } : {}),
+      }, verify, (document, cleanup) => { createdDocument = document; cleanupPrepared = cleanup; })) return null;
+      verify();
+      const response = await client.getJson(
+        `/workspace/${encodeURIComponent(context.workspaceId)}/files/stat?path=${encodeURIComponent(relativePath)}`,
+      );
+      verify();
+      if (!response.exists || response.kind !== "file")
+        throw new Error("文件不存在");
+      // TIPS: Main 加入已有文件窗口时只携带稳定标识；每个标签仍须从同一登记取得原件，不能依赖首次开窗参数。
+      absolutePath ??= await resolveArtifactExternalSource(client, context.workspaceRoot, relativePath);
+      verify();
+      let tab = context.tabs.find((tab) => tab.path === relativePath);
+      const existing = tab;
+      const previous = activeTab(entry);
+      let openingDocument;
+      if (!tab) {
+        tab = {
+          tabId: randomUUID(),
+          source: context.source,
+          local: Boolean(absolutePath) || context.local,
+          path: relativePath,
+          name: path.basename(relativePath),
+          ...(absolutePath ? { absolutePath } : {}),
+        };
+        if (readOnly) {
+          // 云端附件副本只读预览，不打开可编辑的 Office 文档。
+          tab.readOnly = true;
+          tab.cloudAttachment = true;
+        } else if (getOfficeDocumentKind(relativePath)) {
+          const { available } = await client.getJson(
+            `${base(context)}/capabilities`,
+          );
+          verify();
+          if (available) {
+            try {
+              const { document, created } = await client.postJson(`${base(context)}/open`, {
+                sessionId: context.sessionId,
+                path: relativePath,
+              });
+              if (created === true && document.workspaceId === context.workspaceId && document.ownerSessionId === context.sessionId) {
+                createdDocument = document;
+                cleanupPrepared = undefined;
+              }
+              verify();
+              if (document.state === "error")
+                throw new Error(document.error ?? "文档打开失败");
+              openingDocument = document;
+            } catch (error) {
+              if (error?.serverCode !== "office_readonly_required") throw error;
+              tab.readOnly = true;
+            }
           }
         }
+        entry.tabs.push(tab);
       }
-      entry.tabs.push(tab);
-    } else if (
-      tab.documentId &&
-      !(await office.transfer(tab.documentId, entry.window))
-    )
-      return null;
-    entry.activePath = tab.path;
-    await remember(entry, tab);
-    publish(entry);
-    return tab;
+      selectTab(entry, tab);
+      const rollback = () => {
+        const selected = activeTab(entry);
+        if (!existing) removeTab(entry, tab);
+        if (selected === tab) selectTab(entry, entry.tabs.includes(previous) ? previous : activeTab(entry));
+      };
+      try {
+        await entry.prepareWindow();
+        verify();
+        const isCurrent = () => {
+          verify();
+          return entry.tabs.includes(tab);
+        };
+        let opened = openingDocument;
+        if (openingDocument) {
+          opened = office.openInWindow
+            ? await office.openInWindow(openingDocument, entry.window, async (source, restored) => {
+                const original = entryFor(source.webContents);
+                if (original) {
+                  const origin = Object.freeze({ workspaceId: restored.workspaceId, sessionId: restored.ownerSessionId, workspaceRoot: context.workspaceRoot });
+                  const restoredContext = registerSource(original, origin, context.local, context.conversationOptions);
+                  try { await addFile(original, restoredContext, restored.relativePath, absolutePath, readOnly); }
+                  finally {
+                    if (!restoredContext.tabs.length) { cancelEntry(restoredContext); original.sources.delete(sourceKey(restoredContext)); }
+                  }
+                } else {
+                  await openSession?.({ workspaceId: restored.workspaceId, sessionId: restored.ownerSessionId, exact: true });
+                  if (!source.isDestroyed()) source.webContents.send("jugglework:file-window:open-in-panel", {
+                    workspaceId: restored.workspaceId, sessionId: restored.ownerSessionId, path: restored.relativePath,
+                  });
+                }
+              }, isCurrent, document => { createdDocument = document; cleanupPrepared = undefined; })
+            : await office.transfer(openingDocument.documentId, entry.window, isCurrent) ? openingDocument : null;
+          if (opened) tab.documentId = opened.documentId;
+        }
+        if ((openingDocument && !opened) || (!openingDocument && tab.documentId && !await office.transfer(tab.documentId, entry.window, isCurrent))) {
+          rollback();
+          publish(entry);
+          return null;
+        }
+        verify();
+        if (!entry.tabs.includes(tab)) throw new Error("文件窗口来源已关闭");
+      } catch (error) {
+        rollback();
+        publish(entry);
+        throw error;
+      }
+      await remember(entry, tab);
+      publish(entry);
+      return tab;
+    } finally {
+      // 包含预检返回后的 verify/stat/resolve/open；复用模型从不获得清理责任。
+      try { await cleanupNewDocument(); }
+      catch (error) { console.warn("Office 打开模型清理失败，保留服务端记录", createdDocument?.documentId, String(error)); }
+    }
   };
-  const closeTab = async (entry, relativePath) => {
-    const tab = entry.tabs.find((tab) => tab.path === relativePath);
+  const removeTab = (entry, tab) => {
+    entry.tabs = entry.tabs.filter(item => item !== tab);
+    const context = entry.sources.get(sourceKey(tab.source));
+    if (context) {
+      for (const [id, documentId] of context.officeReferences ?? []) if (documentId === tab.documentId) context.officeReferences.delete(id);
+      if (!context.tabs.length) { cancelEntry(context); entry.sources.delete(sourceKey(context)); }
+    }
+    selectTab(entry, activeTab(entry) ?? entry.tabs.at(-1));
+  };
+  const closeTab = async (entry, tabId) => {
+    const tab = entry.tabs.find((tab) => tab.tabId === tabId);
     if (!tab) return true;
     if (tab.cloudDoc) {
       if (!await cloudDocs.prepareClose(tab.cloudDoc.instanceId)) throw new Error("文档尚未保存完成，请稍后再试");
@@ -306,28 +440,32 @@ export function createFileWindows({
     if (
       !tab.cloudDoc &&
       !tab.documentId &&
+      !tab.readOnly &&
       fileEditor &&
       !(await fileEditor.close(
-        { workspaceId: entry.workspaceId, path: tab.path },
+        { workspaceId: tab.source.workspaceId, path: tab.path },
         entry.window,
       ))
     )
       return false;
     if (
       tab.documentId &&
-      !(await office.close(entry.workspaceId, tab.documentId))
+      !(await office.close(tab.source.workspaceId, tab.documentId, () => {
+        if (entry.window.isDestroyed() || !entry.tabs.includes(tab)) throw new Error("文件窗口来源已关闭");
+      }))
     )
       return false;
-    // TIPS: 按路径移除；其余标签与原生页面保持存活。
-    entry.tabs = entry.tabs.filter((item) => item.path !== relativePath);
-    if (entry.activePath === relativePath)
-      entry.activePath = entry.tabs.at(-1)?.path ?? null;
+    // TIPS: 只移除当前标签身份；同名路径的其他来源保持存活。
+    removeTab(entry, tab);
     publish(entry);
     return true;
   };
   const openWindow = async ({
-    workspaceId,
-    sessionId,
+    source = undefined,
+    workspaceId = undefined,
+    sessionId = undefined,
+    workspaceRoot = undefined,
+    group: trustedGroup = undefined,
     path: relativePath,
     local = false,
     absolutePath = undefined,
@@ -335,21 +473,28 @@ export function createFileWindows({
     readOnly = false,
     cloudDoc = undefined,
     launch = undefined,
-    sourceEntry = undefined,
+    captured = undefined,
     verifyCloudSource = undefined,
   }) => {
     await loaded;
+    captured?.verify();
+    workspaceId = source?.workspaceId ?? workspaceId;
+    sessionId = source?.sessionId ?? sessionId;
+    workspaceRoot = source?.workspaceRoot ?? workspaceRoot;
+    const group = trustedGroup?.kind === "file-assistant" ? { kind: "file-assistant" }
+      : trustedGroup?.kind === "conversation" ? { kind: "conversation", workspaceId: trustedGroup.workspaceId, sessionId: trustedGroup.sessionId }
+      : { kind: "conversation", workspaceId, sessionId };
+    const key = group.kind === "file-assistant" ? "file-assistant" : JSON.stringify([group.workspaceId, group.sessionId]);
+    const options = validateFileWindowConversationOptions(conversationOptions);
+    const workspaces = await client.getJson("/workspaces");
+    captured?.verify();
     verifyCloudSource?.();
-    const key = JSON.stringify([workspaceId, sessionId]);
-    let entry = sourceEntry ?? entries.get(key);
-    const created = !entry;
+    const workspace = workspaces.items?.find(item => item.id === workspaceId && item.workspaceType !== "remote");
+    if (!local && !workspace?.path) throw new Error("工作区不可用");
+    if (workspaceRoot && workspace?.path && workspaceRoot !== workspace.path) throw new Error("工作区不可用");
+    const origin = Object.freeze({ workspaceId, sessionId, workspaceRoot: workspace?.path ?? workspaceRoot ?? "" });
+    let entry = captured?.entry ?? entries.get(key);
     if (!entry) {
-      const options = validateFileWindowConversationOptions(conversationOptions);
-      const workspaces = await client.getJson("/workspaces");
-      const workspace = workspaces.items?.find(
-        (item) => item.id === workspaceId && item.workspaceType !== "remote",
-      );
-      if (!local && !workspace?.path) throw new Error("工作区不可用");
       const window = new BrowserWindow({
         width: 1280,
         height: 860,
@@ -376,21 +521,28 @@ export function createFileWindows({
           plugins: true,
         },
       });
-      await dock?.prepareWindow(window);
       entry = {
         window,
-        workspaceId,
-        sessionId,
-        workspaceRoot: workspace?.path ?? "",
-        local,
-        conversationOptions: options,
+        group: Object.freeze(group),
+        groupSource: group.kind === "conversation" ? origin : undefined,
+        groupConversationOptions: options,
+        sources: new Map(),
+        workspaceId: "", sessionId: "", workspaceRoot: "",
         tabs: [],
         cloudDocument: tab => tab?.cloudDoc ? cloudDocs?.documentFor(tab.cloudDoc.instanceId, window) : null,
         activePath: null,
+        activeTabId: null,
         closing: false,
         closed: false,
-        requests: new Set(),
-        subscriptions: new Map(),
+        opening: 0,
+        opened: false,
+        loading: undefined,
+        // 首个标签登记后才加载；所有复用者等待同一初始化结果。
+        prepareWindow: () => entry.loading ??= Promise.resolve().then(async () => {
+          await dock?.prepareWindow(window);
+          if (window.isDestroyed()) throw new Error("文件窗口已关闭");
+          await loadWindow(window);
+        }),
       };
       entries.set(key, entry);
       window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
@@ -410,7 +562,7 @@ export function createFileWindows({
         void (async () => {
           try {
             for (const tab of [...entry.tabs])
-              if (!(await closeTab(entry, tab.path))) return;
+              if (!(await closeTab(entry, tab.tabId))) return;
             entry.closed = true;
             window.destroy();
           } catch (error) {
@@ -422,67 +574,63 @@ export function createFileWindows({
       });
       window.on("closed", () => {
         cancelEntry(entry);
-        entries.delete(key);
+        if (entries.get(key) === entry) entries.delete(key);
         updateDock();
       });
-      try {
-        await refreshConversation(entry);
-        await loadWindow(window);
-        if (!cloudDoc && !(await addFile(entry, relativePath, absolutePath, readOnly))) {
-          entry.closed = true;
-          if (!window.isDestroyed()) window.destroy();
-          return;
-        }
-      } catch (error) {
-        const main = getMainWindow();
-        if (main)
-          for (const tab of entry.tabs)
-            if (tab.documentId) office.assign(tab.documentId, main);
-        entry.closed = true;
-        window.destroy();
-        throw error;
-      }
-    } else {
-      await refreshConversation(entry);
-      if (!cloudDoc && !(await addFile(entry, relativePath, absolutePath, readOnly))) return;
     }
-    if (cloudDoc) {
-      const id = `cloud:${launch.presentation.instanceId}`;
-      const previous = entry.activePath;
-      try {
-        verifyCloudSource?.();
-        const existing = !verifyCloudSource && entry.tabs.find(tab => {
-          const current = entry.cloudDocument(tab);
-          return current?.tenantId === cloudDoc.tenantId && current.workspaceId === cloudDoc.workspaceId && current.docId === cloudDoc.docId;
-        });
-        if (existing) {
-          entry.activePath = existing.path;
-          publish(entry);
-        } else {
+    entry.opening++;
+    let context;
+    try {
+      context = registerSource(entry, origin, local, options);
+      await refreshConversation(entry, context);
+      captured?.verify();
+      verifyCloudSource?.();
+      if (!cloudDoc && !(await addFile(entry, context, relativePath, absolutePath, readOnly, captured?.verify))) return;
+      if (cloudDoc) {
+        const id = `cloud:${launch.presentation.instanceId}`;
+        const existing = !verifyCloudSource && entry.tabs.find(tab => { const current = entry.cloudDocument(tab); return current?.tenantId === cloudDoc.tenantId && current.workspaceId === cloudDoc.workspaceId && current.docId === cloudDoc.docId; });
+        if (existing) { selectTab(entry, existing); publish(entry); }
+        else {
+          const previous = activeTab(entry);
           const instanceId = launch.presentation.instanceId;
-          entry.tabs.push({ kind: "cloud-document", path: id, name: cloudDoc.title || "Untitled", cloudScope: JSON.stringify([launch.sourceServerOrigin, launch.sourceUserId, cloudDoc.tenantId]), cloudDoc: { tenantId: cloudDoc.tenantId, workspaceId: cloudDoc.workspaceId, docId: cloudDoc.docId, instanceId, docsOrigin: launch.docsOrigin } });
-          entry.activePath = id;
-          publish(entry);
-          await cloudDocs.open({ ...launch, instanceId, retain: true }, entry.window);
+          const tab = { tabId: randomUUID(), source: context.source, kind: 'cloud-document', path: id, name: cloudDoc.title || 'Untitled', cloudScope: JSON.stringify([launch.sourceServerOrigin, launch.sourceUserId, cloudDoc.tenantId]), cloudDoc: { tenantId: cloudDoc.tenantId, workspaceId: cloudDoc.workspaceId, docId: cloudDoc.docId, instanceId, docsOrigin: launch.docsOrigin } };
+          entry.tabs.push(tab);
+          selectTab(entry, tab); publish(entry);
+          try {
+            await entry.prepareWindow();
+            verifyCloudSource?.();
+            await cloudDocs.open({ ...launch, instanceId, retain: true }, entry.window);
+          }
+          catch (error) {
+            const selected = activeTab(entry) === tab;
+            removeTab(entry, tab);
+            if (selected && entry.tabs.includes(previous)) selectTab(entry, previous);
+            publish(entry);
+            throw error;
+          }
         }
-      } catch (error) {
-        entry.tabs = entry.tabs.filter(tab => tab.path !== id);
-        if (entry.activePath === id) entry.activePath = entry.tabs.some(tab => tab.path === previous) ? previous : entry.tabs.at(-1)?.path ?? null;
-        if (created && !entry.tabs.length && !entry.window.isDestroyed()) {
-          entry.closed = true;
-          entry.window.destroy();
-        } else if (!entry.window.isDestroyed()) publish(entry);
-        throw error;
+      }
+      if (entry.window.isDestroyed()) throw new Error("文件窗口已关闭");
+      entry.opened = true;
+      if (entry.window.isMinimized()) entry.window.restore();
+      entry.window.show();
+      entry.window.focus();
+    } finally {
+      entry.opening--;
+      if (context && !context.tabs.length && entry.sources.get(sourceKey(context)) === context) {
+        cancelEntry(context); entry.sources.delete(sourceKey(context));
+      }
+      // 失败打开只回收无人使用的新空窗；其他标签仍走正常 dirty close guard。
+      if (!entry.opened && !entry.opening && !entry.tabs.length && !entry.window.isDestroyed()) {
+        entry.closed = true; entry.window.destroy();
       }
     }
-    if (entry.window.isMinimized()) entry.window.restore();
-    entry.window.show();
-    entry.window.focus();
   };
   const open = (input) => {
     if (input.cloudDoc) return openWindow(input);
     // TIPS: 首次开窗也需合并相同请求；entry 尚未登记时，addFile 的窗口内保护还未生效。
-    const key = JSON.stringify([input.workspaceId, input.sessionId, input.path]);
+    const source = input.source ?? input;
+    const key = JSON.stringify([input.captured?.entry.window.id, input.group, source.workspaceId, source.sessionId, input.path]);
     const pending = pendingOpens.get(key);
     if (pending) return pending;
     const operation = openWindow(input).finally(() => pendingOpens.delete(key));
@@ -491,33 +639,36 @@ export function createFileWindows({
   };
   const openLocal = async (absolutePath, { readOnly = false } = {}) => {
     if (!registerLocalFile) throw new Error("本机文件入口不可用");
-    await open({ ...(await registerLocalFile(absolutePath)), readOnly });
+    const binding = await registerLocalFile(absolutePath);
+    if (!["file-assistant", "conversation"].includes(binding?.group?.kind) ||
+      (binding.group.kind === "conversation" && (binding.group.workspaceId !== binding.workspaceId || binding.group.sessionId !== binding.sessionId))) throw new Error("本机文件分组不可用");
+    await open({ ...binding, readOnly });
   };
   /** 关闭打开自指定目录的本机文件标签，供云文档附件缓存清理前调用。 */
   const closeLocalUnder = async (directory) => {
     const prefix = directory.endsWith(path.sep) ? directory : directory + path.sep;
     for (const entry of [...entries.values()])
       for (const tab of [...entry.tabs])
-        if (tab.absolutePath?.startsWith(prefix)) await closeTab(entry, tab.path);
+        if (tab.absolutePath?.startsWith(prefix)) await closeTab(entry, tab.tabId);
   };
   const openDialog = async (window, { workspaceId, sessionId }) => {
     const entry = [...entries.values()].find(
       (item) => item.window === window,
     );
-    if (entry?.local) {
+    const captured = entry?.group.kind === "conversation" ? captureFileOperation(entry, { workspaceId, sessionId }) : null;
+    const context = entry?.tabs.length ? contextFor(entry, { workspaceId, sessionId }) : null;
+    if (entry?.group.kind === "file-assistant" || context?.local) {
       const picked = await dialog.showOpenDialog(window, {
         title: "打开文件",
         properties: ["openFile", "multiSelections"],
-        filters: [
-          { name: "Office 文档", extensions: ["docx", "xlsx", "csv", "pptx"] },
-        ],
+        filters: [{ name: "支持的文件", extensions: [...FILE_WINDOW_EXTENSIONS] }],
       });
       if (!picked.canceled && !window.isDestroyed())
-        for (const absolute of picked.filePaths) await openLocal(absolute);
+        for (const absolute of picked.filePaths) { captured?.verify(); await openLocal(absolute); }
       return;
     }
     const workspaceRoot =
-      entry?.workspaceRoot ??
+      captured?.source.workspaceRoot ??
       (await client.getJson("/workspaces")).items?.find(
         (item) => item.id === workspaceId && item.workspaceType !== "remote",
       )?.path;
@@ -526,8 +677,10 @@ export function createFileWindows({
       title: "打开文件",
       defaultPath: workspaceRoot,
       properties: ["openFile", "multiSelections"],
+      filters: [{ name: "支持的文件", extensions: [...FILE_WINDOW_EXTENSIONS] }],
     });
     if (picked.canceled || window.isDestroyed()) return;
+    captured?.verify();
     for (const absolute of picked.filePaths) {
       let relative;
       try {
@@ -537,7 +690,9 @@ export function createFileWindows({
         await openLocal(absolute);
         continue;
       }
-      if (entry) await addFile(entry, relative);
+      if (entry) {
+        await addCapturedFile(entry, captured, relative);
+      }
       else
         window.webContents.send("jugglework:file-window:open-in-panel", {
           workspaceId,
@@ -550,14 +705,17 @@ export function createFileWindows({
     const entry = [...entries.values()].find(
       (item) => item.window === window,
     );
-    if (entry?.local) throw new Error("请在聊天工作区中新建文档");
-    const workspaceId = entry?.workspaceId ?? input?.workspaceId;
-    const sessionId = entry?.sessionId ?? input?.sessionId;
+    if (entry?.group.kind === "file-assistant") throw new Error("请在聊天工作区中新建文档");
+    const captured = entry ? captureFileOperation(entry, input) : null;
+    const context = entry?.tabs.length ? contextFor(entry, input) : null;
+    if (context?.local) throw new Error("请在聊天工作区中新建文档");
+    const workspaceId = captured?.source.workspaceId ?? input?.workspaceId;
+    const sessionId = captured?.source.sessionId ?? input?.sessionId;
     const kind = input?.kind;
     if (!workspaceId || !sessionId || !["docx", "pptx"].includes(kind))
       throw new Error("新建文档参数无效");
     const workspaceRoot =
-      entry?.workspaceRoot ??
+      captured?.source.workspaceRoot ??
       (await client.getJson("/workspaces")).items?.find(
         (item) => item.id === workspaceId && item.workspaceType !== "remote",
       )?.path;
@@ -576,6 +734,7 @@ export function createFileWindows({
       ],
     });
     if (picked.canceled || !picked.filePath || window.isDestroyed()) return null;
+    captured?.verify();
     if (path.extname(picked.filePath).toLowerCase() !== `.${kind}`)
       throw new Error(`请选择 .${kind} 文件`);
     const relativePath = workspaceFilePath(workspaceRoot, picked.filePath);
@@ -611,7 +770,7 @@ export function createFileWindows({
     async closeAll() {
       for (const entry of [...entries.values()]) {
         for (const tab of [...entry.tabs])
-          if (!(await closeTab(entry, tab.path))) return false;
+          if (!(await closeTab(entry, tab.tabId))) return false;
         entry.closed = true;
         entry.window.destroy();
       }
@@ -647,39 +806,65 @@ export function createFileWindows({
     },
     officeComposerWindow(input) {
       const entry = [...entries.values()].find((item) => item.window.id === input.windowId);
-      if (!entry || !entry.conversation || entry.workspaceId !== input.workspaceId ||
-          entry.sessionId !== input.sessionId || entry.window.isDestroyed()) return null;
+      if (!entry || entry.window.isDestroyed()) return null;
+      let context;
+      try { context = assertEntryContext(entry, input); } catch { return null; }
+      if (!context.conversation) return null;
       if (input.action === "append") {
         const ref = input.reference;
-        if (ref?.workspaceId !== entry.workspaceId || ref.ownerSessionId !== entry.sessionId ||
-            !entry.tabs.some((tab) => tab.documentId === ref.documentId)) return null;
-        (entry.officeReferences ??= new Map()).set(ref.referenceId, ref.documentId);
+        if (ref?.workspaceId !== context.workspaceId || ref.ownerSessionId !== context.sessionId ||
+            !context.tabs.some((tab) => tab.documentId === ref.documentId)) return null;
+        context.officeReferences.set(ref.referenceId, ref.documentId);
       }
       return entry.window;
     },
     /** 关闭共享模型时同时检查两种宿主的独立草稿。 */
     officeComposerWindows(workspaceId, sessionId) {
-      return [...entries.values()].filter((entry) => entry.conversation &&
-        entry.workspaceId === workspaceId && entry.sessionId === sessionId && !entry.window.isDestroyed()).map((entry) => entry.window);
+      return [...entries.values()].filter((entry) => !entry.window.isDestroyed() &&
+        [...entry.sources.values()].some(context => context.conversation && context.workspaceId === workspaceId && context.sessionId === sessionId && context.tabs.length)).map((entry) => entry.window);
     },
     /** 文件窗口只能操作 Main 已投递到当前窗口的选区身份。 */
     authorizeOfficeReferences(event, input) {
       const entry = resolve(event);
+      const context = assertEntryContext(entry, input);
       const ids = input.referenceIds ?? [input.referenceId];
-      if (entry.workspaceId !== input.workspaceId || entry.sessionId !== input.sessionId || !Array.isArray(ids) ||
-          ids.length > 16 || ids.some((id) => !entry.officeReferences?.has(id) ||
-            !entry.tabs.some((tab) => tab.documentId === entry.officeReferences.get(id)))) throw new Error("选区不属于当前文件窗口");
+      if (!Array.isArray(ids) ||
+          ids.length > 16 || ids.some((id) => !context.officeReferences.has(id) ||
+            !context.tabs.some((tab) => tab.documentId === context.officeReferences.get(id)))) throw new Error("选区不属于当前文件窗口");
+      return () => {
+        if (!registered(entry, context) || ids.some(id => !context.officeReferences.has(id) ||
+          !context.tabs.some(tab => tab.documentId === context.officeReferences.get(id)))) throw new Error("文件窗口来源已关闭");
+      };
+    },
+    /** Office IPC 只可访问本窗口已登记模型；返回闭包复核捕获身份，不读取活动标签。 */
+    authorizeOfficeTarget(event, input) {
+      const entry = resolve(event);
+      const tab = entry.tabs.find(tab => tab.documentId === input?.documentId &&
+        (input.workspaceId === undefined || tab.source.workspaceId === input.workspaceId));
+      if (!tab) throw new Error("文档不属于当前文件窗口");
+      return () => { if (entryFor(event.sender) !== entry || !entry.tabs.includes(tab)) throw new Error("文件窗口来源已关闭"); };
+    },
+    authorizeOfficeContext(event, input) {
+      const entry = resolve(event);
+      const context = assertEntryContext(entry, input);
+      const tab = context.tabs.find(tab => tab.path === input.path);
+      if (!tab) throw new Error("文件目标未登记");
+      return () => { if (!registered(entry, context) || !entry.tabs.includes(tab)) throw new Error("文件窗口来源已关闭"); };
     },
     /** 文本编辑 IPC 仅信任主窗口顶层或已登记文件窗口中的精确文件。 */
-    authorizeFileEditor(event, input) {
+    authorizeFileEditor(event, input, operation = "write") {
       assertTopLevel(event);
       if (typeof input?.workspaceId !== "string" || !input.workspaceId ||
           typeof input?.path !== "string" || !input.path)
         throw new Error("文件编辑目标无效");
+      // IPC 没有 tabId；同一 source/path 只要仍登记只读标签，就不能借其他标签或主窗口写入。
+      if (operation !== "read" && [...entries.values()].some((entry) => !entry.window.isDestroyed() &&
+          entry.tabs.some((tab) => tab.readOnly && tab.source.workspaceId === input.workspaceId && tab.path === input.path)))
+        throw new Error("只读文件不允许修改");
       const main = getMainWindow();
       if (main && !main.isDestroyed() && event.sender === main.webContents) return main;
       const entry = resolve(event);
-      if (input.workspaceId !== entry.workspaceId || !entry.tabs.some((tab) => tab.path === input.path))
+      if (!entry.tabs.some((tab) => tab.source.workspaceId === input.workspaceId && tab.path === input.path))
         throw new Error("文件编辑目标未授权");
       return entry.window;
     },
@@ -688,26 +873,30 @@ export function createFileWindows({
       if (!window || window.isDestroyed() || window.webContents.isDestroyed()) return false;
       if (window === getMainWindow()) return true;
       const entry = entryFor(window.webContents);
-      return entry?.window === window && input?.workspaceId === entry.workspaceId &&
-        entry.tabs.some((tab) => tab.path === input.path);
+      return entry?.window === window && entry.tabs.some((tab) => tab.source.workspaceId === input?.workspaceId && tab.path === input.path);
     },
     /** 通用 desktop fetch 的文件窗口分支只使用 Main 登记的上下文。 */
     async fetch(event, url, init, fetchImpl) {
       const entry = resolve(event);
+      const context = requestContext(entry, url);
+      const activePath = context.activePath;
+      const tabs = context.tabs;
       if (typeof url === "string" && /\/(?:sessions|session-runs|opencode)(?:\/|\?|$)/.test(new URL(url).pathname)) {
-        await refreshConversation(entry);
-        if (resolve(event) !== entry) throw new Error("文件窗口已关闭");
+        await refreshConversation(entry, context);
+        if (resolve(event) !== entry || !registered(entry, context)) throw new Error("文件窗口已关闭");
       }
       const access = await getAccess();
       // getAccess 期间窗口可能已关闭；不能沿用已注销的登记。
-      if (resolve(event) !== entry) throw new Error("文件窗口已关闭");
+      if (resolve(event) !== entry || !registered(entry, context)) throw new Error("文件窗口已关闭");
       const controller = new AbortController();
-      entry.requests.add(controller);
+      const request = authorizeFileWindowFetch({ ...context, tabs, activePath }, access, url, init);
+      if (request.tab && !context.tabs.includes(request.tab)) throw new Error("文件窗口来源已关闭");
+      context.requests.add(controller);
       let response;
-      try { response = await fetchFileWindowResponse(entry, access, url, init, fetchImpl, controller.signal, (signal) => prepareSessionStop(entry, signal)); }
-      finally { entry.requests.delete(controller); }
+      try { response = await fetchFileWindowResponse(context, access, url, init, fetchImpl, controller.signal, (signal) => prepareSessionStop(context, signal), request); }
+      finally { context.requests.delete(controller); }
       // 响应读取期间关闭窗口也会撤销登记，不能再向原宿主返回文件内容。
-      if (resolve(event) !== entry) throw new Error("文件窗口已关闭");
+      if (resolve(event) !== entry || !registered(entry, context)) throw new Error("文件窗口已关闭");
       return response;
     },
     /** Office 快捷键关闭后同步对应标签。 */
@@ -715,9 +904,7 @@ export function createFileWindows({
       for (const entry of entries.values()) {
         const tab = entry.tabs.find((tab) => tab.documentId === documentId);
         if (!tab) continue;
-        entry.tabs = entry.tabs.filter((item) => item !== tab);
-        if (entry.activePath === tab.path)
-          entry.activePath = entry.tabs.at(-1)?.path ?? null;
+        removeTab(entry, tab);
         publish(entry);
       }
     },
@@ -737,8 +924,7 @@ export function createFileWindows({
           for (const entry of entries.values()) {
             const stale = entry.tabs.filter(tab => tab.cloudDoc && tab.cloudScope !== cloudScope);
             for (const tab of stale) { cloudDocs?.hide(tab.cloudDoc.instanceId); void cloudDocs?.prepareClose(tab.cloudDoc.instanceId).then(ok => { if (ok) cloudDocs.close(tab.cloudDoc.instanceId); }); }
-            entry.tabs = entry.tabs.filter(tab => !stale.includes(tab));
-            if (!entry.tabs.some(tab => tab.path === entry.activePath)) entry.activePath = entry.tabs.at(-1)?.path ?? null;
+            for (const tab of stale) removeTab(entry, tab);
           }
         }
         cloudUploads = input?.scope && Array.isArray(input.records) ? input.records.slice(-200).filter(item => {
@@ -752,15 +938,28 @@ export function createFileWindows({
       });
       ipcMain.handle("jugglework:file-window:open", async (event, input) => {
         resolveHost(event);
-        const entry = entryFor(event.sender);
-        assertEntryContext(entry, input);
+        let entry = entryFor(event.sender);
+        const source = input?.source ?? input;
+        // Main 从 exact chat 返回时优先使用已登记 source 的组，不能由 renderer 指定。
+        entry ??= [...entries.values()].find(item => {
+          const context = item.sources.get(sourceKey(source ?? {}));
+          return context && registered(item, context);
+        });
+        if (entry && !entry.tabs.length && entry.group.kind === "conversation") {
+          await addCapturedFile(entry, captureFileOperation(entry, source), input.path);
+          return;
+        }
+        const context = assertEntryContext(entry, source);
+        const captured = entry ? captureFileOperation(entry, source) : undefined;
         // TIPS: Renderer 入口仍只能打开已有工作区文件；本机路径必须经过主进程登记。
         await open({
-          workspaceId: entry?.workspaceId ?? input.workspaceId,
-          sessionId: entry?.sessionId ?? input.sessionId,
+          source: context?.source ?? { workspaceId: source.workspaceId, sessionId: source.sessionId, workspaceRoot: source.workspaceRoot },
+          // Renderer 无法选择分组；文件窗口仅复用其 Main 登记分组。
+          group: entry?.group,
+          captured,
           path: input.path,
           // 仅 resolveHost 确认的主窗口顶层可 seed；文件宿主只沿用已有 entry。
-          conversationOptions: entry ? undefined : input.conversationOptions,
+          conversationOptions: event.sender === getMainWindow()?.webContents ? input.conversationOptions : undefined,
         });
       });
       ipcMain.handle("jugglework:file-window:open-cloud", async (event, input) => {
@@ -768,14 +967,18 @@ export function createFileWindows({
         const doc = input?.document, launch = input?.launch;
         if (!cloudDocs || !doc || !launch || doc.tenantId !== launch.tenantId || launch.presentation?.mode !== 'product' || ![doc.tenantId, doc.workspaceId, doc.docId].every(value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value))) throw new Error('Invalid cloud document');
         const sourceInstanceId = input.sourceInstanceId;
-        let sourceEntry, verifyCloudSource;
+        let captured, verifyCloudSource;
         if (sourceInstanceId !== undefined) {
           if (typeof sourceInstanceId !== "string" || !sourceInstanceId || sourceInstanceId === launch.presentation.instanceId)
             throw new Error("云文档来源无效");
-          sourceEntry = [...entries.values()].find(entry => entry.tabs.some(tab => tab.cloudDoc?.instanceId === sourceInstanceId));
-          const owner = sourceEntry?.window ?? getMainWindow();
-          // TIPS: 等待新交接凭据期间，原标签可能换页、关闭或切换账号。
+          const entry = [...entries.values()].find(item => item.tabs.some(tab => tab.cloudDoc?.instanceId === sourceInstanceId));
+          const original = entry?.tabs.find(tab => tab.cloudDoc?.instanceId === sourceInstanceId);
+          if (entry && original) captured = captureFileOperation(entry, original.source);
+          const owner = entry?.window ?? getMainWindow();
+          // TIPS: 请求新交接凭据期间，原标签可能已换页或关闭。
           verifyCloudSource = () => {
+            captured?.verify();
+            if (entry && !entry.tabs.includes(original)) throw new Error("云文档来源已变化");
             const current = cloudDocs.documentFor(sourceInstanceId, owner, {
               sourceServerOrigin: input.sourceServerOrigin,
               sourceUserId: input.sourceUserId,
@@ -783,14 +986,14 @@ export function createFileWindows({
             if (!current || current.tenantId !== doc.tenantId || current.workspaceId !== doc.workspaceId || current.docId !== doc.docId)
               throw new Error("云文档来源已变化");
           };
+          verifyCloudSource();
         }
         await open({
-          workspaceId: sourceEntry?.workspaceId ?? input.workspaceId,
-          sessionId: sourceEntry?.sessionId ?? input.sessionId,
+          source: captured?.source ?? input.source ?? input,
           path: "",
           cloudDoc: doc,
           launch: { ...launch, sourceServerOrigin: input.sourceServerOrigin, sourceUserId: input.sourceUserId },
-          sourceEntry,
+          captured,
           verifyCloudSource,
         });
       });
@@ -808,122 +1011,128 @@ export function createFileWindows({
           appearance,
         };
       });
-      ipcMain.handle("jugglework:file-window:session-subscribe", async (event) => {
+      ipcMain.handle("jugglework:file-window:session-subscribe", async (event, input) => {
         const entry = resolve(event);
-        await refreshConversation(entry);
-        if (resolve(event) !== entry) throw new Error("文件窗口已关闭");
-        if (!entry.conversation || entry.subscriptions.size >= 4) throw new Error("文件窗口会话不可用");
+        const context = contextFor(entry, input);
+        await refreshConversation(entry, context);
+        if (resolve(event) !== entry || !registered(entry, context)) throw new Error("文件窗口已关闭");
+        if (!context.conversation || context.subscriptions.size >= 4) throw new Error("文件窗口会话不可用");
         const id = randomUUID();
         const controller = new AbortController();
-        entry.subscriptions.set(id, controller);
+        context.subscriptions.set(id, controller);
         const sse = createManagedRuntimeSseClient({ getAccess: async () => {
           const access = await getAccess();
-          if (resolve(event) !== entry || controller.signal.aborted) throw new Error("文件窗口已关闭");
+          if (resolve(event) !== entry || !registered(entry, context) || controller.signal.aborted) throw new Error("文件窗口已关闭");
           const url = new URL(access.baseUrl);
           if (!["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)) throw new Error("本地服务不可用");
           return access;
         }, fetcher, maxBufferBytes: 1024 * 1024 });
-        void sse.subscribe({ workspaceId: entry.workspaceId, signal: controller.signal,
+        void sse.subscribe({ workspaceId: context.workspaceId, signal: controller.signal,
           onReconnectGap: () => {},
           onEvent: (raw) => {
-            if (controller.signal.aborted || entryFor(event.sender) !== entry) return;
-            const value = fileWindowSessionEvent(entry, raw);
+            if (controller.signal.aborted || entryFor(event.sender) !== entry || !registered(entry, context)) return;
+            const value = fileWindowSessionEvent(context, raw);
             if (value) entry.window.webContents.send("jugglework:file-window:session-event", { id, event: value });
           },
-        }).catch(() => {}).finally(() => { controller.abort(); entry.subscriptions.delete(id); });
+        }).catch(() => {}).finally(() => { controller.abort(); context.subscriptions.delete(id); });
         return id;
       });
       ipcMain.handle("jugglework:file-window:session-unsubscribe", (event, id) => {
         const entry = resolve(event);
-        entry.subscriptions.get(id)?.abort();
-        entry.subscriptions.delete(id);
+        for (const context of entry.sources.values()) {
+          context.subscriptions.get(id)?.abort();
+          context.subscriptions.delete(id);
+        }
       });
       ipcMain.handle("jugglework:file-window:create", async (event, input) => {
         const window = resolveHost(event);
-        assertEntryContext(entryFor(event.sender), input);
+        const entry = entryFor(event.sender);
+        if (!entry || entry.tabs.length) assertEntryContext(entry, input);
         return createDocument(window, input);
       });
       ipcMain.handle(
         "jugglework:file-window:action",
         async (event, action, requestedPath) => {
           const entry = resolve(event);
-          if (action === "open-session") {
-            if (requestedPath !== undefined || !entry.conversation || !openSession) throw new Error("文件窗口会话不可用");
-            await openSession({ workspaceId: entry.workspaceId, sessionId: entry.sessionId });
-            return;
-          }
-          // TIPS: 加号打开的是窗口文件选择器，活动云文档不是这次操作的目标。
+          // TIPS: 打开文件属于窗口操作，活动云文档只提供窗口来源，不是操作目标。
           if (action === "open") {
-            if (requestedPath) {
-              if (entry.local) {
-                // Renderer cannot grant itself a new absolute source. Only
-                // reopen a Main-recorded recent file; new files use the dialog.
-                if (!recent.some((item) => item.workspaceId === "local" && item.path === requestedPath)) {
-                  throw new Error("请通过文件选择框打开本机文件");
-                }
-                await openLocal(requestedPath);
+            if (!requestedPath) {
+              await openDialog(entry.window, entry);
+            } else if (entry.group.kind === "file-assistant" || entry.local) {
+              // 新的本机路径必须经过原生选择器，最近项只接受 Main 已登记的路径。
+              if (!recent.some((item) => item.workspaceId === "local" && item.path === requestedPath)) {
+                throw new Error("请通过文件选择框打开本机文件");
               }
-              else await addFile(entry, requestedPath);
-              return;
+              await openLocal(requestedPath);
+            } else {
+              const captured = captureFileOperation(entry, activeTab(entry)?.source);
+              await addCapturedFile(entry, captured, requestedPath);
             }
-            await openDialog(entry.window, entry);
             return;
           }
-          const tab = entry.tabs.find(
-            (tab) => tab.path === (requestedPath ?? entry.activePath),
-          );
+          const tab = entry.tabs.find(tab => tab.tabId === (requestedPath ?? entry.activeTabId));
+          const context = tab && contextFor(entry, tab.source);
+          if (action === "open-session") {
+            if (!context?.conversation || !openSession) throw new Error("文件窗口会话不可用");
+            await openSession({ workspaceId: context.workspaceId, sessionId: context.sessionId, exact: true });
+            return;
+          }
           if (tab?.cloudDoc && !["select", "close", "share-cloud"].includes(action)) throw new Error("云文档不支持本地文件操作");
           if (action === "share-cloud") {
-            const record = tab && uploaded(entry.workspaceId, tab.path);
+            const record = tab && uploaded(tab.source.workspaceId, tab.path);
             if (!record) throw new Error("该文件尚未上传到当前组织的云文档");
             await clipboard.writeText(record.url);
             return;
           }
           if (action === "upload-cloud") {
             if (!tab || !uploadCloud) throw new Error("云文档上传不可用");
-            await uploadCloud({ workspaceId: entry.workspaceId, path: tab.path });
+            await uploadCloud({ workspaceId: tab.source.workspaceId, path: tab.path });
             return;
           }
           if (action === "select") {
             if (tab) {
-              if ((!entry.local || entry.conversation) && entry.activePath !== tab.path && office.confirmFileTarget && !await office.confirmFileTarget(entry.window, {
-                workspaceId: entry.workspaceId, sessionId: entry.sessionId, path: tab.path,
-              })) return;
-              entry.activePath = tab.path;
+               if (entry.activeTabId !== tab.tabId && office.confirmFileTarget && !await office.confirmFileTarget(entry.window, {
+                 workspaceId: tab.source.workspaceId, sessionId: tab.source.sessionId, path: tab.path, ...(tab.readOnly ? { readOnly: true } : {}),
+               }, () => {
+                 if (entry.window.isDestroyed() || !entry.tabs.includes(tab)) throw new Error("文件窗口来源已关闭");
+               })) return;
+              if (!entry.tabs.includes(tab)) return;
+              selectTab(entry, tab);
               publish(entry);
             }
             return;
           }
           if (action === "close") {
-            if (tab) await closeTab(entry, tab.path);
+            if (tab) await closeTab(entry, tab.tabId);
             return;
           }
           if (!tab) return;
           if (action === "reveal") {
             shell.showItemInFolder(
-              tab.absolutePath ?? path.join(entry.workspaceRoot, tab.path),
+              tab.absolutePath ?? path.join(tab.source.workspaceRoot, tab.path),
             );
             return;
           }
           if (action === "save-copy") {
             if (
               !tab.documentId &&
+              !tab.readOnly &&
               fileEditor &&
               !(await fileEditor.prepare(
-                { workspaceId: entry.workspaceId, path: tab.path },
+                { workspaceId: tab.source.workspaceId, path: tab.path },
                 entry.window,
               ))
             )
               return;
             if (getOfficeDocumentKind(tab.path))
-              await client.postJson(`${base(entry)}/prepare-file`, {
-                sessionId: entry.sessionId,
+              await client.postJson(`${base(tab.source)}/prepare-file`, {
+                sessionId: tab.source.sessionId,
                 path: tab.path,
               });
             await saveArtifactFileCopy({
               workspaceRoot: tab.absolutePath
                 ? path.dirname(tab.absolutePath)
-                : entry.workspaceRoot,
+                : tab.source.workspaceRoot,
               relativePath: tab.absolutePath
                 ? path.basename(tab.absolutePath)
                 : tab.path,

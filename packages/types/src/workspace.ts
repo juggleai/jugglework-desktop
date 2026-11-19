@@ -26,6 +26,8 @@ export type WorkspaceWire = {
   hidden?: boolean | null;
   /** True when this local workspace was allocated internally for an automation run. */
   automationManaged?: boolean;
+  /** Internal file-assistant root or per-file workspace; normal UI lists filter this marker. */
+  fileAssistantManaged?: boolean;
   remoteType?: WorkspaceRemoteKind | null;
   baseUrl?: string | null;
   directory?: string | null;

@@ -204,8 +204,7 @@ export function ArtifactActionsProvider(props: {
           throw new Error(t("artifact.file_missing"));
         if (action === "window") {
           await window.__JUGGLEWORK_ELECTRON__?.fileWindow?.open({
-            workspaceId,
-            sessionId,
+            source: { workspaceId, sessionId, workspaceRoot },
             path,
             conversationOptions: readFileWindowConversationOptions(workspaceId, sessionId, local.prefs),
           });

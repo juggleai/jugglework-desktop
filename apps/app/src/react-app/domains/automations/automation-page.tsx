@@ -1270,7 +1270,7 @@ function AutomationEditor(props: {
 
   useEffect(() => {
     if (!props.client) return;
-    void props.client.listWorkspaces().then((list) => setWorkspaces((list.items ?? list.workspaces ?? []).filter((item) => item.workspaceType === "local" && !item.automationManaged)));
+    void props.client.listWorkspaces().then((list) => setWorkspaces((list.items ?? list.workspaces ?? []).filter((item) => item.workspaceType === "local" && !item.automationManaged && !item.fileAssistantManaged && !item.hidden)));
     if (!props.automationId) return;
     void props.client.getAutomation(props.automationId).then(({ item }) => {
       const definition = item.definition;

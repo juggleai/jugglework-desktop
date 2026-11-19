@@ -305,12 +305,13 @@ export function resolveWorkspaceListSelectedId(
   const activeId = list?.activeId?.trim() || "";
   if (!Array.isArray(list?.workspaces)) return selectedId || activeId;
 
+  const workspaces = list.workspaces.filter((workspace) => !workspace.fileAssistantManaged && !workspace.hidden);
   const workspaceIds = new Set(
-    list.workspaces.map((workspace) => workspace.id?.trim()).filter((id): id is string => Boolean(id)),
+    workspaces.map((workspace) => workspace.id?.trim()).filter((id): id is string => Boolean(id)),
   );
   if (selectedId && workspaceIds.has(selectedId)) return selectedId;
   if (activeId && workspaceIds.has(activeId)) return activeId;
-  return list.workspaces.find((workspace) => workspace.id?.trim())?.id?.trim() || "";
+  return workspaces.find((workspace) => workspace.id?.trim())?.id?.trim() || "";
 }
 
 // ---------------------------------------------------------------------------

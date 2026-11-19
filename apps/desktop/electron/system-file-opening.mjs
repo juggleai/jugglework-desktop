@@ -1,5 +1,5 @@
 import path from "node:path";
-import { getOfficeDocumentKind } from "@jugglework/types/office";
+import { isSupportedFileWindowPath } from "../dist/runtime/file-window.js";
 
 // Only these switches consume a separate value. Unknown/boolean Chromium
 // switches must not eat the next positional document supplied by Explorer.
@@ -42,7 +42,7 @@ export function systemOfficeFilePaths(
     if (
       !value ||
       /^[a-z][a-z0-9+.-]*:\/\//i.test(value) ||
-      !getOfficeDocumentKind(value)
+      !isSupportedFileWindowPath(value)
     )
       continue;
     result.push(paths.resolve(cwd, value));
@@ -61,7 +61,7 @@ export function secondInstanceOfficeFilePaths(argv, additionalData, options = {}
   const paths = (options.platform ?? process.platform) === "win32" ? path.win32 : path.posix;
   if (payload?.version === 1 && Array.isArray(payload.files) &&
       payload.files.every(file => typeof file === "string" && paths.isAbsolute(file) &&
-        !/^[a-z][a-z0-9+.-]*:\/\//i.test(file) && Boolean(getOfficeDocumentKind(file))))
+        !/^[a-z][a-z0-9+.-]*:\/\//i.test(file) && isSupportedFileWindowPath(file)))
     return [...new Set(payload.files)];
   return systemOfficeFilePaths(argv, options);
 }

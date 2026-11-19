@@ -116,6 +116,41 @@ test("Main 将同一冷启动文件列表通过单实例锁传递并在第二实
   assert.ok(main.includes("secondInstanceOfficeFilePaths(argv, additionalData, {"));
 });
 
+test("第二实例 MD/PDF 原始 payload 跨平台保留顺序和去重，冷启动与热打开使用同一契约", async () => {
+  /** @type {NodeJS.Platform[]} */
+  const platforms = ["win32", "darwin", "linux"];
+  for (const platform of platforms) {
+    const cwd = platform === "win32" ? "D:\\资料" : "/资料";
+    const separator = platform === "win32" ? "\\" : "/";
+    const options = { platform, cwd };
+    const expected = ["说明.MD", "季度 报告.PDF"].map(name => `${cwd}${separator}${name}`);
+    const parsed = systemOfficeFilePaths(["JuggleWork", "说明.MD", "季度 报告.PDF", "说明.MD",
+      "--user-data-dir", "profile.md", "jugglework://open/remote.pdf"], options);
+    assert.deepEqual(parsed, expected);
+    const payload = JSON.parse(JSON.stringify({ systemFileOpening: { version: 1, files: [...parsed, parsed[0]] } }));
+    // Electron 接收方的 argv 已丢失原文件；不能因此丢弃合法 payload 并误开另一文件。
+    const argv = ["JuggleWork", "错误回退.xlsx"];
+    const received = secondInstanceOfficeFilePaths(argv, payload, options);
+    assert.deepEqual(received, expected);
+    const calls = [];
+    const opening = createSystemFileOpening({ app: new EventEmitter(),
+      openFile: file => calls.push(file), onError: (_file, error) => { throw error; },
+    });
+    assert.equal(opening.enqueue(received), true);
+    assert.deepEqual(calls, []);
+    await opening.start();
+    opening.enqueue(secondInstanceOfficeFilePaths(argv, payload, options));
+    await opening.idle();
+    assert.deepEqual(calls, [...expected, ...expected]);
+    assert.deepEqual(secondInstanceOfficeFilePaths(argv, { systemFileOpening: { version: 1, files: [] } }, options), []);
+    for (const invalid of ["relative.md", "https://example.test/remote.pdf", `${cwd}${separator}unknown.exe`]) {
+      assert.deepEqual(secondInstanceOfficeFilePaths(argv, {
+        systemFileOpening: { version: 1, files: [...expected, invalid] },
+      }, options), [`${cwd}${separator}错误回退.xlsx`]);
+    }
+  }
+});
+
 test("空冷启动后可连续热打开，失败文件不阻塞后续请求", async () => {
   const app = new EventEmitter();
   const calls = [], errors = [];
@@ -166,4 +201,50 @@ test("ready 前的 macOS 事件与第二实例请求排队，单个失败后继�
   files.enqueue(["third.csv"]);
   await files.idle();
   assert.equal(calls.at(-1), "third.csv");
+});
+
+test("系统 argv 使用 File Viewer 格式集合，跨平台保留 Markdown 和已有预览格式", () => {
+  const names = ["说明.MD", "笔记.txt", "index.tsx", "data.json", "报告.pdf", "照片.png", "视频.mp4", "页面.html", "旧表.xls", "开放表.ods"];
+  /** @type {NodeJS.Platform[]} */
+  const platforms = ["win32", "darwin", "linux"];
+  for (const platform of platforms) {
+    const cwd = platform === "win32" ? "D:\\资料" : "/资料";
+    const separator = platform === "win32" ? "\\" : "/";
+    assert.deepEqual(systemOfficeFilePaths([
+      "JuggleWork", ...names, names[0], "unknown.exe", "archive.zip",
+      "https://example.test/remote.md", "jugglework://open/local.md",
+      "--user-data-dir", "profile.md", "--log-file=trace.txt",
+    ], { platform, cwd }), names.map(name => `${cwd}${separator}${name}`));
+  }
+  assert.deepEqual(systemOfficeFilePaths(["electron", "/repo/main.mjs", "--", "-notes.md"], {
+    platform: "darwin", cwd: "/资料", packaged: false,
+  }), ["/资料/-notes.md"]);
+});
+
+test("macOS Markdown 冷启动、排空期间的新事件和热打开均不丢失", async () => {
+  const app = new EventEmitter();
+  const calls = [];
+  /** @type {() => void} */
+  let release = () => {};
+  /** @type {Promise<void>} */
+  const gate = new Promise(resolve => { release = resolve; });
+  const files = createSystemFileOpening({
+    app,
+    openFile: async file => { calls.push(file); if (file === "/桌面/冷启动.md") await gate; },
+    onError: (_file, error) => { throw error; },
+  });
+  let prevented = 0;
+  const emit = file => app.emit("open-file", { preventDefault() { prevented++; } }, file);
+  emit("/桌面/冷启动.md");
+  assert.equal(files.requested(), true);
+  assert.deepEqual(calls, []);
+  const started = files.start();
+  emit("/桌面/排空期间.md");
+  release();
+  await started;
+  emit("/桌面/热打开.md");
+  await files.idle();
+  assert.equal(prevented, 3);
+  assert.deepEqual(calls, ["/桌面/冷启动.md", "/桌面/排空期间.md", "/桌面/热打开.md"]);
+  assert.equal(files.processing(), false);
 });
