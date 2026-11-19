@@ -7,7 +7,11 @@
 ## ADDED Requirements
 
 ### Requirement: Organization-scoped team calendars
-系统 SHALL 仅允许在一个组织内创建和共享团队日历。创建者 MUST 是该组织的有效成员，团队日历 MUST 绑定该组织，并且任何成员、权限或内容操作 MUST 拒绝跨组织主体及外部联系人。
+系统 SHALL 仅允许在非个人工作区内创建和共享团队日历，不依赖部署开关。创建者 MUST 是该组织的有效成员，团队日历 MUST 绑定该组织，并且任何成员、权限或内容操作 MUST 拒绝跨组织主体及外部联系人。
+
+#### Scenario: Desktop opens Calendar in a Personal workspace
+- **WHEN** 用户进入个人工作区，或客户端尚未确认当前工作区类型
+- **THEN** Desktop 保留个人日历，但不展示团队日历创建入口或请求团队日历 API
 
 #### Scenario: Active member creates a team calendar
 - **WHEN** 一个有效组织成员创建团队日历

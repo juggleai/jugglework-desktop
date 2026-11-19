@@ -131,8 +131,8 @@ type CalendarChange =
 |---|---:|---|
 | `invalid_calendar_request` | 400 | 可选字段错误映射 |
 | `calendar_not_found` | 404 | 空；不存在、已删除、跨 owner/组织一致 |
-| `calendar_disabled` | 404 | 空，fail closed |
-| `calendar_write_disabled` | 403 | 空 |
+| `calendar_disabled` | 404 | 空，服务端依赖未就绪 |
+| `calendar_write_disabled` | 403 | 旧服务端可能返回 |
 | `calendar_version_conflict` | 409 | `{ current: Calendar | CalendarEvent }`；若资源已不可见则改为 not found |
 | `calendar_idempotency_conflict` | 409 | 空，不回传原作用域内容 |
 | `calendar_cursor_resync_required` | 409 | `{ reason: "invalid" | "scope_mismatch" | "expired" | "version_unsupported" }` |
@@ -140,15 +140,16 @@ type CalendarChange =
 
 认证和 membership 错误继续使用现有 401/403 契约。
 
-## Feature capability projection
+## 旧版 Desktop 兼容字段
 
-当前组织能力投影增加：
+Server 可以继续为旧版客户端在 `/me/desktop-config` 中提供：
 
 ```ts
 {
   calendarEnabled: boolean;
   calendarWriteEnabled: boolean;
+  calendarCollaborationEnabled: boolean;
 }
 ```
 
-字段缺失或畸形时 Desktop 必须按 `false` 处理。`calendarWriteEnabled` 只有在 `calendarEnabled` 为 true 时才可为 true。disabled gate 不得触发默认 Calendar 惰性创建。
+新版 Desktop 忽略这三个字段，继续要求完整的登录和组织成员作用域。团队协作只在确认是非个人工作区时请求，写权限以服务端结果为准。

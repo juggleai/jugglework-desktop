@@ -24,12 +24,11 @@ const client = {
   getTeamCalendarSnapshot: mock(async (_org: string, id: string) => ({ calendar: team, events: [{ ...core, calendarId: id, id: "team-event", title: "Team" }] })),
   listCalendarSchedulingEvents: mock(async () => ({ items: [{ event: series, occurrenceIndex: 7, time: core.time }] })),
 };
-const session = { isSignedIn: false, baseUrl: scope.deployment, activeOrganization: { id: "org", orgMemberId: "member" }, client };
+const session = { isSignedIn: false, baseUrl: scope.deployment, activeOrganization: { id: "org", slug: "studio", kind: undefined as "organization" | undefined, orgMemberId: "member" }, client };
 mock.module("../src/react-app/domains/settings/cloud/cloud-session-provider", () => ({ useCloudSession: () => session }));
-mock.module("../src/react-app/domains/cloud/desktop-config-provider", () => ({ useDesktopConfig: () => ({ loading: false, config: { calendarEnabled: true, calendarCollaborationEnabled: true } }) }));
 const { CalendarReminderHost } = await import("../src/react-app/domains/calendar/calendar-reminder-host");
 
-test("ready gate, authorized team snapshot, refresh reconciliation and distinct open/dismiss actions", async () => {
+test("loads personal reminders first, then authorized team snapshots after workspace kind resolves", async () => {
   const cache = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const open = mock(() => {});
   const render = () => <QueryClientProvider client={cache}><CalendarReminderHost onOpen={open} /></QueryClientProvider>;
@@ -44,6 +43,11 @@ test("ready gate, authorized team snapshot, refresh reconciliation and distinct 
     await act(async () => { tree = TestRenderer.create(render()); });
     expect(client.getCalendarBootstrap).not.toHaveBeenCalled();
     session.isSignedIn = true;
+    await act(async () => { tree.update(render()); });
+    await settle(() => titles().length === 2);
+    expect(client.listCalendarCollaboration).not.toHaveBeenCalled();
+    expect(client.getTeamCalendarSnapshot).not.toHaveBeenCalled();
+    session.activeOrganization.kind = "organization";
     await act(async () => { tree.update(render()); });
     await settle(() => titles().length === 3);
     expect(client.getTeamCalendarSnapshot.mock.calls.map((args) => args[1])).toEqual(["team"]);

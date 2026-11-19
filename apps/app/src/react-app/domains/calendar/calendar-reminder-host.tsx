@@ -4,7 +4,6 @@ import { Temporal } from "@js-temporal/polyfill";
 import { CalendarClock, X } from "lucide-react";
 
 import { currentLocale, t } from "@/i18n";
-import { useDesktopConfig } from "@/react-app/domains/cloud/desktop-config-provider";
 import { useCloudSession } from "@/react-app/domains/settings/cloud/cloud-session-provider";
 import { resolveCalendarPageGate } from "./calendar-page-gate";
 import { useCalendarBootstrapQuery, useCalendarCollaborationQuery, useCalendarSchedulingEventsQuery, useTeamCalendarSnapshotsQuery } from "./calendar-queries";
@@ -18,20 +17,15 @@ const REFRESH_MS = 60_000;
 
 export function CalendarReminderHost({ onOpen }: CalendarReminderHostProps) {
   const cloud = useCloudSession();
-  const { loading, config } = useDesktopConfig();
-  const gate = resolveCalendarPageGate({
-    isSignedIn: cloud.isSignedIn, baseUrl: cloud.baseUrl, organizationId: cloud.activeOrganization?.id,
-    memberId: cloud.activeOrganization?.orgMemberId || cloud.activeOrganization?.membershipId,
-    configLoading: loading, calendarEnabled: config.calendarEnabled, calendarWriteEnabled: config.calendarWriteEnabled,
-  });
+  const gate = resolveCalendarPageGate(cloud);
   // Survives switching away and back during the grace period. Contains keys, never card content.
   const delivered = React.useRef(new Map<string, number>());
   if (gate.kind !== "ready") return null;
-  return <ScopedReminders key={calendarScopeIdentity(gate.scope)} scope={gate.scope} collaboration={config.calendarCollaborationEnabled === true} delivered={delivered.current} onOpen={onOpen} />;
+  return <ScopedReminders key={calendarScopeIdentity(gate.scope)} scope={gate.scope} supportsTeamCalendars={gate.workspaceKind === "organization"} delivered={delivered.current} onOpen={onOpen} />;
 }
 
-function ScopedReminders({ scope, collaboration, delivered, onOpen }: CalendarReminderHostProps & {
-  scope: CalendarScope; collaboration: boolean; delivered: Map<string, number>;
+function ScopedReminders({ scope, supportsTeamCalendars, delivered, onOpen }: CalendarReminderHostProps & {
+  scope: CalendarScope; supportsTeamCalendars: boolean; delivered: Map<string, number>;
 }) {
   const { client } = useCloudSession();
   const [tick, wake] = React.useReducer((n: number) => n + 1, 0);
@@ -42,21 +36,21 @@ function ScopedReminders({ scope, collaboration, delivered, onOpen }: CalendarRe
   const online = typeof navigator === "undefined" || navigator.onLine !== false;
   const query = { client, scope, active: online, refetchInterval: REFRESH_MS };
   const bootstrap = useCalendarBootstrapQuery({ ...query, range: windowRange.range });
-  const resources = useCalendarCollaborationQuery({ ...query, active: online && collaboration });
+  const resources = useCalendarCollaborationQuery({ ...query, scope: supportsTeamCalendars ? scope : null });
   const scheduling = useCalendarSchedulingEventsQuery({ ...query, range: windowRange.schedulingRange });
-  const readable = React.useMemo(() => resources.isSuccess && collaboration
+  const readable = React.useMemo(() => resources.isSuccess && supportsTeamCalendars
     ? resources.data.items.filter((c) => c.organizationId === scope.organizationId && c.capabilities.canViewDetails) : [],
-    [resources.isSuccess, resources.data, collaboration, scope.organizationId]);
+    [resources.isSuccess, resources.data, supportsTeamCalendars, scope.organizationId]);
   const teams = useTeamCalendarSnapshotsQuery({ ...query, range: windowRange.range, calendars: readable.filter((c) => c.kind === "team") });
 
   const occurrences = React.useMemo(() => {
-    const personalIds = new Set(collaboration ? readable.filter((c) => c.kind === "personal").map((c) => c.id) : bootstrap.data?.calendars.map((c) => c.id));
+    const personalIds = new Set(supportsTeamCalendars ? readable.filter((c) => c.kind === "personal").map((c) => c.id) : bootstrap.data?.calendars.map((c) => c.id));
     const teamIds = new Set(readable.filter((c) => c.kind === "team").map((c) => c.id));
     const ordinary = bootstrap.isSuccess ? bootstrap.data.events.filter((e) => personalIds.has(e.calendarId)) : [];
     const snapshots = teams.data.flatMap((s) => teamIds.has(s.calendar.id) ? s.events : []);
     const expanded = scheduling.isSuccess ? scheduling.data.items.filter(({ event }) => personalIds.has(event.calendarId) || teamIds.has(event.calendarId)) : [];
     return calendarReminderOccurrences([...ordinary, ...snapshots], expanded);
-  }, [bootstrap.data, bootstrap.isSuccess, collaboration, readable, scheduling.data, scheduling.isSuccess, teams.data]);
+  }, [bootstrap.data, bootstrap.isSuccess, supportsTeamCalendars, readable, scheduling.data, scheduling.isSuccess, teams.data]);
   const plan = React.useMemo(() => {
     const ids = new Set(occurrences.map(({ event }) => event.id));
     const preferences = new Map(Array.from(ids, (id) => [id, readCalendarReminderMinutes(scope, id)] as const));
@@ -83,13 +77,16 @@ function ScopedReminders({ scope, collaboration, delivered, onOpen }: CalendarRe
     for (const [key, at] of delivered) if (at < now - REMINDER_GRACE_MS) delivered.delete(key);
     const { due, nextMs } = calendarReminderTick(plan, now, delivered);
     // Wait for in-flight changes to this source, not an unrelated slow team snapshot.
-    const arrivals = online && !(collaboration && resources.isFetching) ? due.filter(({ target }) => {
+    const arrivals = online && !(supportsTeamCalendars && resources.isFetching) ? due.filter(({ target }) => {
       if (expandedIds.has(target.eventId)) return !scheduling.isFetching;
       return teamIds.has(target.calendarId) ? !teams.isFetching : !bootstrap.isFetching;
     }) : [];
     for (const r of arrivals) delivered.set(r.key, r.dueMs);
     const valid = new Set(online ? plan.map((r) => r.key) : []);
     setVisible((prev) => {
+      // Keep delivered keys while an unresolved workspace switches to the
+      // team-aware source. Cards still render only from the current plan.
+      if (online && supportsTeamCalendars && resources.isPending) return prev;
       const kept = prev.filter((key) => valid.has(key));
       return !arrivals.length && kept.length === prev.length ? prev : [...kept, ...arrivals.map((r) => r.key)];
     });
@@ -97,7 +94,7 @@ function ScopedReminders({ scope, collaboration, delivered, onOpen }: CalendarRe
     const deadline = Math.min(now + REFRESH_MS, windowRange.rolloverMs, nextMs ?? Infinity);
     const timer = setTimeout(wake, Math.max(1, deadline - now));
     return () => clearTimeout(timer);
-  }, [tick, plan, online, delivered, windowRange, collaboration, resources.isFetching, expandedIds, scheduling.isFetching, teamIds, teams.isFetching, bootstrap.isFetching]);
+  }, [tick, plan, online, delivered, windowRange, supportsTeamCalendars, resources.isFetching, resources.isPending, expandedIds, scheduling.isFetching, teamIds, teams.isFetching, bootstrap.isFetching]);
 
   const shown = new Set(visible);
   const cards = online ? plan.filter((r) => shown.has(r.key)) : [];

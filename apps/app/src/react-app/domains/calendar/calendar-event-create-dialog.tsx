@@ -7,10 +7,10 @@ import { denCalendarFromCollaborationResource, type DenCalendarEvent } from "@/a
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { t } from "@/i18n";
-import { useDesktopConfig } from "@/react-app/domains/cloud/desktop-config-provider";
 import { useCloudSession } from "@/react-app/domains/settings/cloud/cloud-session-provider";
 import { calendarEventFormWithNextHalfHour, defaultCalendarEventForm } from "./calendar-event-form-model";
 import { CalendarEventEditor } from "./calendar-event-editor";
+import { browserCalendarOnlineSource, useCalendarOnline } from "./calendar-offline-runtime";
 import { resolveCalendarPageGate } from "./calendar-page-gate";
 import { useCalendarBootstrapQuery, useCalendarCollaborationQuery, useCalendarsQuery } from "./calendar-queries";
 import { calendarScopeIdentity, type CalendarScope } from "./calendar-scope";
@@ -25,23 +25,13 @@ export type CalendarEventCreateDialogProps = {
 
 export function CalendarEventCreateDialog(props: CalendarEventCreateDialogProps) {
   const cloud = useCloudSession();
-  const desktopConfig = useDesktopConfig();
-  const gate = resolveCalendarPageGate({
-    isSignedIn: cloud.isSignedIn,
-    baseUrl: cloud.baseUrl,
-    organizationId: cloud.activeOrganization?.id,
-    memberId: cloud.activeOrganization?.orgMemberId || cloud.activeOrganization?.membershipId,
-    configLoading: desktopConfig.loading,
-    calendarEnabled: desktopConfig.config.calendarEnabled,
-    calendarWriteEnabled: desktopConfig.config.calendarWriteEnabled,
-  });
+  const gate = resolveCalendarPageGate(cloud);
 
   if (!props.open) return null;
-  if (gate.kind !== "ready" || !gate.writeEnabled) {
+  if (gate.kind !== "ready") {
     return (
       <CalendarCreateStatusDialog
-        loading={gate.kind === "loading-capability"}
-        message={gate.kind === "loading-capability" ? t("calendar.loading") : t("calendar.unavailable")}
+        message={t("calendar.unavailable")}
         onClose={() => props.onOpenChange(false)}
       />
     );
@@ -52,16 +42,17 @@ export function CalendarEventCreateDialog(props: CalendarEventCreateDialogProps)
       key={calendarScopeIdentity(gate.scope) ?? "calendar-create"}
       {...props}
       scope={gate.scope}
-      collaborationEnabled={desktopConfig.config.calendarCollaborationEnabled === true}
+      supportsTeamCalendars={gate.workspaceKind === "organization"}
     />
   );
 }
 
 function CalendarEventCreateDialogReady(props: CalendarEventCreateDialogProps & {
   scope: CalendarScope;
-  collaborationEnabled: boolean;
+  supportsTeamCalendars: boolean;
 }) {
   const cloud = useCloudSession();
+  const online = useCalendarOnline(browserCalendarOnlineSource);
   const timeZone = React.useMemo(() => props.timeZone?.() ?? Temporal.Now.timeZoneId(), [props.timeZone]);
   const now = React.useMemo(() => props.now?.() ?? Temporal.Now.instant(), [props.now]);
   const date = React.useMemo(() => now.toZonedDateTimeISO(timeZone).toPlainDate(), [now, timeZone]);
@@ -69,25 +60,26 @@ function CalendarEventCreateDialogReady(props: CalendarEventCreateDialogProps & 
     client: cloud.client,
     scope: props.scope,
     range: { startDate: date.toString(), endDateExclusive: date.add({ days: 1 }).toString() },
+    active: online,
   });
   const calendarsQuery = useCalendarsQuery({
     client: cloud.client,
     scope: props.scope,
-    active: !props.collaborationEnabled,
+    active: online && !props.supportsTeamCalendars,
   });
   const collaborationQuery = useCalendarCollaborationQuery({
     client: cloud.client,
-    scope: props.scope,
-    active: props.collaborationEnabled,
+    scope: props.supportsTeamCalendars ? props.scope : null,
+    active: online,
   });
 
-  const resources = props.collaborationEnabled ? collaborationQuery.data?.items ?? [] : [];
-  const calendars = props.collaborationEnabled
+  const resources = props.supportsTeamCalendars ? collaborationQuery.data?.items ?? [] : [];
+  const calendars = props.supportsTeamCalendars
     ? resources.map(denCalendarFromCollaborationResource)
     : calendarsQuery.data ?? [];
   const resourcesById = new Map(resources.map((resource) => [resource.id, resource]));
   const writableCalendars = calendars.filter((calendar) => {
-    if (!props.collaborationEnabled) return true;
+    if (!props.supportsTeamCalendars) return true;
     return resourcesById.get(calendar.id)?.capabilities.canEditEvents === true;
   });
   const authoritativeDefaultCalendarId = bootstrapQuery.data?.calendars.find((calendar) => calendar.isDefault)?.id;
@@ -105,9 +97,12 @@ function CalendarEventCreateDialogReady(props: CalendarEventCreateDialogProps & 
       ? { ...calendar, name: currentUserDisplayName }
       : calendar,
   );
-  const loading = bootstrapQuery.isLoading || (props.collaborationEnabled ? collaborationQuery.isLoading : calendarsQuery.isLoading);
-  const failed = bootstrapQuery.isError || (props.collaborationEnabled ? collaborationQuery.isError : calendarsQuery.isError);
+  const loading = bootstrapQuery.isLoading || (props.supportsTeamCalendars ? collaborationQuery.isLoading : calendarsQuery.isLoading);
+  const failed = bootstrapQuery.isError || (props.supportsTeamCalendars ? collaborationQuery.isError : calendarsQuery.isError);
 
+  if (!online && !defaultCalendarId) {
+    return <CalendarCreateStatusDialog message={t("calendar.offline_form_unavailable")} onClose={() => props.onOpenChange(false)} />;
+  }
   if (loading) {
     return <CalendarCreateStatusDialog loading message={t("calendar.loading")} onClose={() => props.onOpenChange(false)} />;
   }
@@ -137,7 +132,7 @@ function CalendarEventCreateDialogReady(props: CalendarEventCreateDialogProps & 
       timeZone={timeZone}
       now={() => now}
       initial={initial}
-      writeEnabled
+      online={online}
       onSaved={(event) => {
         props.onSaved?.(event);
         props.onOpenChange(false);

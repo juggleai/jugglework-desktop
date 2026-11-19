@@ -90,6 +90,13 @@ describe("Den desktop config client", () => {
     });
   });
 
+  test("ignores legacy calendar rollout fields while preserving other desktop policies", () => {
+    const policy = { connectEnabled: true, allowAlphaUpdates: false };
+    expect(normalizeDenDesktopConfig({
+      ...policy, calendarEnabled: false, calendarWriteEnabled: true, calendarCollaborationEnabled: true,
+    })).toEqual(normalizeDenDesktopConfig(policy));
+  });
+
   test("normalizes organization onboarding prompts from desktop config", () => {
     expect(normalizeDenDesktopConfig({
       onboardingPrompts: [" First task ", "Second task", "Third task"],

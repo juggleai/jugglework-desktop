@@ -21,7 +21,6 @@ import { AppSecondarySidebarResizeHandle } from "@/react-app/shell/app-secondary
 import { ListPanelHeader } from "@/react-app/shell/list-panel-header";
 import { appInsetSidebarCssWidth, useWorkspaceShellLayout } from "@/react-app/shell/workspace-shell-layout";
 import { useDenAuth } from "../cloud/den-auth-provider";
-import { useDesktopConfig } from "../cloud/desktop-config-provider";
 import { useCloudSession } from "../settings/cloud/cloud-session-provider";
 import { useJuggleChatStore } from "../jugglechat/store";
 import { CalendarEventCreateDialog } from "../calendar/calendar-event-create-dialog";
@@ -130,7 +129,6 @@ export function MeetingPage({ active }: { active: boolean }) {
   } as CSSProperties;
   const { activeOrganization, user } = useDenAuth();
   const cloud = useCloudSession();
-  const desktopConfig = useDesktopConfig();
   const contacts = useJuggleChatStore((s) => s.contacts);
   const imUser = useJuggleChatStore((s) => s.user);
   const displayName = imUser?.id === user?.id ? imUser?.name || user?.name : user?.name;
@@ -167,24 +165,10 @@ export function MeetingPage({ active }: { active: boolean }) {
     () => meetingOverviewWindow(Temporal.Now.instant(), timeZone),
     [timeZone, todayKey],
   );
+  const { activeOrganization: calendarOrganization, baseUrl, isSignedIn } = cloud;
   const calendarGate = useMemo(() => resolveCalendarPageGate({
-    isSignedIn: cloud.isSignedIn,
-    baseUrl: cloud.baseUrl,
-    organizationId: cloud.activeOrganization?.id,
-    memberId: cloud.activeOrganization?.orgMemberId || cloud.activeOrganization?.membershipId,
-    configLoading: desktopConfig.loading,
-    calendarEnabled: desktopConfig.config.calendarEnabled,
-    calendarWriteEnabled: desktopConfig.config.calendarWriteEnabled,
-  }), [
-    cloud.activeOrganization?.id,
-    cloud.activeOrganization?.membershipId,
-    cloud.activeOrganization?.orgMemberId,
-    cloud.baseUrl,
-    cloud.isSignedIn,
-    desktopConfig.config.calendarEnabled,
-    desktopConfig.config.calendarWriteEnabled,
-    desktopConfig.loading,
-  ]);
+    activeOrganization: calendarOrganization, baseUrl, isSignedIn,
+  }), [calendarOrganization, baseUrl, isSignedIn]);
   const calendarScope = calendarGate.kind === "ready" ? calendarGate.scope : null;
   const calendarBootstrap = useCalendarBootstrapQuery({
     client: cloud.client,

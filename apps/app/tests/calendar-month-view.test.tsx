@@ -102,11 +102,9 @@ const client = {
   },
 };
 mock.module("../src/react-app/domains/settings/cloud/cloud-session-provider", () => ({
-  useCloudSession: () => ({ isSignedIn: true, baseUrl: "https://den.example/api", user: { id: "user-a", name: "Ada", account: "ada", email: "ada@example.com" }, activeOrganization: { id: "org-a", orgMemberId: "member-a" }, client }),
+  useCloudSession: () => ({ isSignedIn: true, baseUrl: "https://den.example/api", user: { id: "user-a", name: "Ada", account: "ada", email: "ada@example.com" }, activeOrganization: { id: "org-a", kind: "personal", orgMemberId: "member-a" }, client }),
 }));
-mock.module("../src/react-app/domains/cloud/desktop-config-provider", () => ({
-  useDesktopConfig: () => ({ loading: false, config: { calendarEnabled: true, calendarWriteEnabled: true } }),
-}));
+mock.module("../src/react-app/domains/meeting/meeting-page", () => ({ MeetingPrejoin: () => null }));
 
 const { CalendarPage } = await import("../src/react-app/domains/calendar/calendar-page");
 

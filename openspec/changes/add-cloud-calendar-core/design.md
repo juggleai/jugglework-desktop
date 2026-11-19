@@ -139,13 +139,11 @@ TanStack Query key 同样包含 deployment、organization、member、范围和 C
 
 核心页面直接调用日历 API client，不经过 Agent tool、Session、AI Provider 或本地 workspace。未来可以另行增加 Agent capability，但不能成为此页面或服务端 API 的前置依赖。
 
-### 12. 服务端能力门控制 Desktop 可见性和灰度
+### 12. 日历以组织成员身份和资源权限为准
 
-服务端增加 fail-closed calendar configuration：全局 `enabled`、可选 organization allowlist 和独立写入开关。`enabled=false` 时所有组织关闭；allowlist 为空时 `enabled=true` 对所有组织开放，非空时只开放大小写敏感的精确匹配。API 在认证和 membership 后检查 gate；Desktop config 为当前 organization 投影 `calendarEnabled`/`calendarWriteEnabled`，导航和 mutation 按同一服务端能力显示。服务端仍是最终授权，客户端 flag 只控制体验。
+日历不再使用部署开关或组织白名单。个人与组织工作区均可使用基础日历读写；团队日历仅对非个人工作区开放。Desktop 需要完整的登录和组织成员作用域，服务端仍负责最终授权与运行时就绪检查。旧 Desktop config 字段仅用于客户端兼容。
 
-首轮先只读内部组织验证 bootstrap、cursor 和查询；随后对 canary organization 开启写入，再按 deployment 扩大。指标只记录 operation、状态码、延迟、结果数、cursor reset、version/idempotency conflict 和 scope 哈希，不记录标题、描述、草稿或搜索文本。
-
-组织 allowlist 比仅靠 Desktop build flag 更适合灰度，因为旧客户端和直接 API 请求同样受控；独立写开关允许出现问题时保留已缓存/云端只读查看。
+上线前在测试环境验证 bootstrap、cursor、查询和写入。指标只记录 operation、状态码、延迟、结果数、cursor reset、version/idempotency conflict 和 scope 哈希，不记录标题、描述、草稿或搜索文本。
 
 ### 13. 后续阶段通过新 capability 扩展而非提前耦合
 
@@ -172,6 +170,6 @@ TanStack Query key 同样包含 deployment、organization、member、范围和 C
 3. 开启内部组织只读 gate，运行 bootstrap、范围、搜索、cursor、跨成员/组织拒绝和 tz/DST canary；确认无内容日志且指标正常。
 4. 发布带隐藏 Calendar 路由、IndexedDB schema 和 UI 的 Desktop；只有服务端 config 对当前组织开放时显示 More/置顶入口。
 5. 对内部组织开启写 gate，验证默认 Calendar、CRUD、幂等重放、版本冲突、软删除、多设备收敛、scope 切换和离线草稿。
-6. 扩大 organization allowlist，监控 API error/latency、cursor reset、conflict、IndexedDB failure 和 migration readiness，再逐 deployment 开启。
-7. 回滚优先关闭写 gate，再关闭 calendar enabled gate并隐藏 Desktop 入口；保留 additive 表、云端数据和按 scope 的本地缓存，不执行破坏性 down migration。
+6. 服务端先于新版 Desktop 部署，监控 API error/latency、cursor reset、conflict、IndexedDB failure 和 migration readiness。
+7. 旧开关不再用于回滚；保留 additive 表、云端数据和按 scope 的本地缓存，不执行破坏性 down migration。
 8. 修复后重新开启时，Desktop 用保留 cursor 继续同步；cursor 已失效则执行 bootstrap。若本地 cache schema 不兼容，只失效对应 calendar 分区，绝不迁移或合并到其他 scope。

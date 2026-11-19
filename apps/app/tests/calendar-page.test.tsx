@@ -24,11 +24,7 @@ let cloudSession: Record<string, unknown> = {};
 mock.module("../src/react-app/domains/settings/cloud/cloud-session-provider", () => ({
   useCloudSession: () => cloudSession,
 }));
-
-let desktopConfig: { loading: boolean; config: Record<string, unknown> } = { loading: false, config: {} };
-mock.module("../src/react-app/domains/cloud/desktop-config-provider", () => ({
-  useDesktopConfig: () => desktopConfig,
-}));
+mock.module("../src/react-app/domains/meeting/meeting-page", () => ({ MeetingPrejoin: () => null }));
 
 const { CalendarPage } = await import("../src/react-app/domains/calendar/calendar-page");
 
@@ -39,7 +35,8 @@ const signedIn = {
   activeOrganization: { id: "org-a", orgMemberId: "member-a" },
   client: {
     listCalendars: async () => [],
-    getCalendarBootstrap: async (_org: string, range: { startDate: string; endDateExclusive: string }) => ({ calendars: [], events: [], coverage: { ...range, calendarIds: [] }, cursor: "c1" }),
+    getCalendarBootstrap: mock(async (_org: string, range: { startDate: string; endDateExclusive: string }) => ({ calendars: [], events: [], coverage: { ...range, calendarIds: [] }, cursor: "c1" })),
+    listCalendarSchedulingEvents: async () => ({ items: [] }),
   },
 };
 
@@ -69,14 +66,13 @@ async function render() {
 const hasTestId = (renderer: TestRenderer.ReactTestRenderer, id: string) =>
   renderer.root.findAll((node) => node.props["data-testid"] === id).length > 0;
 
-test("renders the ready calendar without a workspace, Session, Agent, or AI Provider", async () => {
+test("renders the ready calendar without desktop config, a workspace, Session, Agent, or AI Provider", async () => {
   cloudSession = signedIn;
-  desktopConfig = { loading: false, config: { calendarEnabled: true, calendarWriteEnabled: false } };
   const renderer = await render();
   try {
     expect(hasTestId(renderer, "calendar-page-title")).toBe(true);
-    const ready = renderer.root.find((node) => node.props["data-testid"] === "calendar-ready");
-    expect(ready.props["data-calendar-write-enabled"]).toBe("false");
+    expect(hasTestId(renderer, "calendar-ready")).toBe(true);
+    expect(renderer.root.find((node) => node.props["data-testid"] === "calendar-add-calendar").props.disabled).toBe(false);
   } finally {
     await act(async () => { renderer.unmount(); });
   }
@@ -84,7 +80,6 @@ test("renders the ready calendar without a workspace, Session, Agent, or AI Prov
 
 test("shows a sign-in state and no calendar content when signed out", async () => {
   cloudSession = { ...signedIn, isSignedIn: false };
-  desktopConfig = { loading: false, config: { calendarEnabled: true, calendarWriteEnabled: true } };
   const renderer = await render();
   try {
     expect(hasTestId(renderer, "calendar-gate-signed-out")).toBe(true);
@@ -94,21 +89,14 @@ test("shows a sign-in state and no calendar content when signed out", async () =
   }
 });
 
-test("fails closed while the capability is unknown or disabled", async () => {
-  cloudSession = signedIn;
-  desktopConfig = { loading: true, config: {} };
-  let renderer = await render();
+test("does not fetch or render scoped calendar data before membership resolves", async () => {
+  signedIn.client.getCalendarBootstrap.mockClear();
+  cloudSession = { ...signedIn, activeOrganization: { id: "org-a", kind: "organization" } };
+  const renderer = await render();
   try {
-    expect(hasTestId(renderer, "calendar-gate-loading")).toBe(true);
+    expect(hasTestId(renderer, "calendar-gate-membership-unavailable")).toBe(true);
     expect(hasTestId(renderer, "calendar-ready")).toBe(false);
-  } finally {
-    await act(async () => { renderer.unmount(); });
-  }
-  desktopConfig = { loading: false, config: { calendarEnabled: false } };
-  renderer = await render();
-  try {
-    expect(hasTestId(renderer, "calendar-gate-disabled")).toBe(true);
-    expect(hasTestId(renderer, "calendar-ready")).toBe(false);
+    expect(signedIn.client.getCalendarBootstrap).not.toHaveBeenCalled();
   } finally {
     await act(async () => { renderer.unmount(); });
   }

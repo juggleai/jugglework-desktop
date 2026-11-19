@@ -23,7 +23,7 @@ export type CalendarOfflineRuntime = {
   now: () => Temporal.Instant;
 };
 
-const browserOnlineSource: CalendarOnlineSource = {
+export const browserCalendarOnlineSource: CalendarOnlineSource = {
   // Unknown connectivity counts as online: the server stays authoritative and write failures surface normally.
   isOnline: () => typeof navigator === "undefined" || navigator.onLine !== false,
   subscribe: (listener) => {
@@ -50,7 +50,7 @@ function defaultCache(): CalendarOfflineCache | null {
 }
 
 export function defaultCalendarOfflineRuntime(): CalendarOfflineRuntime {
-  return { online: browserOnlineSource, cache: defaultCache(), now: () => Temporal.Now.instant() };
+  return { online: browserCalendarOnlineSource, cache: defaultCache(), now: () => Temporal.Now.instant() };
 }
 
 export function useCalendarOnline(source: CalendarOnlineSource): boolean {

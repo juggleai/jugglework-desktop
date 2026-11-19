@@ -75,8 +75,8 @@ const defaultPersonalCalendar: DenCalendar = {
   version: 1, createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z",
 };
 
-let collaborationEnabled = true;
-let calendarWriteEnabled = true;
+let workspaceKind: "personal" | "organization" | undefined;
+const collaborationCalls: string[] = [];
 const snapshotCalls: string[] = [];
 const putMembershipCalls: Array<{ memberId: string; role: DenCalendarCollaborationRole; expectedAuthorizationVersion: number }> = [];
 const revokeMembershipCalls: Array<{ memberId: string; expectedAuthorizationVersion: number }> = [];
@@ -90,8 +90,11 @@ let directoryOffsets: number[] = [];
 let membershipMutationGate: Promise<void> | null = null;
 const client = {
   listCalendarSchedulingEvents: async (): Promise<import("../src/app/lib/den").DenCalendarSchedulingOccurrenceList> => ({ items: [] }),
-  listCalendars: async () => [],
-  listCalendarCollaboration: async () => ({ items: resources, authorizationGeneration: 1, reset: { mode: "replace" as const, namespace: "calendar-collaboration" as const } }),
+  listCalendars: async () => [defaultPersonalCalendar],
+  listCalendarCollaboration: async (org: string) => {
+    collaborationCalls.push(org);
+    return { items: resources, authorizationGeneration: 1, reset: { mode: "replace" as const, namespace: "calendar-collaboration" as const } };
+  },
   getCalendarBootstrap: async (_organizationId: string, range: { startDate: string; endDateExclusive: string }) => ({ calendars: [defaultPersonalCalendar], events: [event("personal")], coverage: { ...range, calendarIds: ["personal"] }, cursor: "cursor" }),
   getTeamCalendarSnapshot: async (_organizationId: string, calendarId: string, range: { startDate: string; endDateExclusive: string }) => {
     snapshotCalls.push(calendarId);
@@ -151,10 +154,7 @@ const client = {
   },
 };
 mock.module("../src/react-app/domains/settings/cloud/cloud-session-provider", () => ({
-  useCloudSession: () => ({ isSignedIn: true, baseUrl: "https://den.example/api", user: { id: "user-a", name: "Ada Manager", account: "ada", email: "ada@example.com" }, activeOrganization: { id: "org-a", orgMemberId: "member-a" }, client }),
-}));
-mock.module("../src/react-app/domains/cloud/desktop-config-provider", () => ({
-  useDesktopConfig: () => ({ loading: false, config: { calendarEnabled: true, calendarWriteEnabled, calendarCollaborationEnabled: collaborationEnabled } }),
+  useCloudSession: () => ({ isSignedIn: true, baseUrl: "https://den.example/api", user: { id: "user-a", name: "Ada Manager", account: "ada", email: "ada@example.com" }, activeOrganization: { id: "org-a", slug: "studio", kind: workspaceKind, orgMemberId: "member-a" }, client }),
 }));
 
 const { CalendarPage } = await import("../src/react-app/domains/calendar/calendar-page");
@@ -162,7 +162,7 @@ const clock = { now: () => Temporal.Instant.from("2026-11-09T04:00:00Z"), timeZo
 const noop = () => undefined;
 
 beforeEach(() => {
-  values.clear(); snapshotCalls.length = 0; putMembershipCalls.length = 0; revokeMembershipCalls.length = 0; teamEventCreateCalls.length = 0; teamEventUpdateCalls.length = 0; personalCalendarCreateCalls.length = 0; teamCalendarCreateCalls.length = 0; directoryOffsets = []; collaborationEnabled = true; calendarWriteEnabled = true;
+  values.clear(); snapshotCalls.length = 0; collaborationCalls.length = 0; putMembershipCalls.length = 0; revokeMembershipCalls.length = 0; teamEventCreateCalls.length = 0; teamEventUpdateCalls.length = 0; personalCalendarCreateCalls.length = 0; teamCalendarCreateCalls.length = 0; directoryOffsets = []; workspaceKind = "organization";
   membershipAuthorizationVersion = 1; membershipMutationGate = null;
   membershipItems = [
     { memberId: "member-a", role: "manager", createdByMemberId: "member-a", createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z" },
@@ -216,6 +216,7 @@ test("groups real role projections and snapshots only visible detail-capable tea
     expect(has(renderer, "calendar-all-day-event-event-view-team")).toBe(true);
     await click(renderer, "calendar-all-day-event-event-view-team");
     expect(has(renderer, "calendar-event-detail-edit")).toBe(false);
+    expect(has(renderer, "calendar-event-detail-delete")).toBe(false);
     await click(renderer, "calendar-event-detail-close");
     await click(renderer, "calendar-all-day-event-event-editable-team");
     expect(has(renderer, "calendar-event-detail-edit")).toBe(true);
@@ -299,13 +300,16 @@ test("day view locates a timed event even when its stored date is yesterday in t
   } finally { bootstrap.mockRestore(); await act(async () => renderer.unmount()); }
 });
 
-test("hides the team creation choice when the collaboration flag is off", async () => {
-  collaborationEnabled = false;
+test.each(["personal", undefined] as const)("uses only personal calendar APIs for workspace kind %s", async (kind) => {
+  workspaceKind = kind;
   const renderer = await render();
   try {
     await click(renderer, "calendar-add-calendar");
     expect(has(renderer, "calendar-create-personal")).toBe(true);
     expect(has(renderer, "calendar-create-team")).toBe(false);
+    expect(has(renderer, "calendar-filter-personal")).toBe(true);
+    expect(has(renderer, "calendar-filter-managed-team")).toBe(false);
+    expect(collaborationCalls).toEqual([]);
     expect(snapshotCalls).toEqual([]);
   } finally { await act(async () => renderer.unmount()); }
 });
@@ -375,15 +379,6 @@ test("only managers see the independent accessible member-management entry", asy
     await click(renderer, "calendar-manage-members-managed-team");
     expect(byId(renderer, "calendar-filter-managed-team").props.checked).toBe(true);
     expect(byId(renderer, "calendar-members-dialog").props["aria-label"]).toBe("calendar.manage_members_label");
-  } finally { await act(async () => renderer.unmount()); }
-});
-
-test("hides member-management writes when global calendar writes are disabled", async () => {
-  calendarWriteEnabled = false;
-  const renderer = await render();
-  try {
-    expect(has(renderer, "calendar-manage-members-managed-team")).toBe(false);
-    expect(has(renderer, "calendar-members-dialog")).toBe(false);
   } finally { await act(async () => renderer.unmount()); }
 });
 

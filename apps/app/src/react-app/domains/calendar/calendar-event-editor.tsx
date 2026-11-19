@@ -66,7 +66,7 @@ export type CalendarEventEditorProps = {
   /** false while offline: authoritative save/delete are unavailable; only a local draft may be kept. */
   online?: boolean;
   /** false when the Calendar write policy is revoked while the editor is open. */
-  writeEnabled?: boolean;
+  canWrite?: boolean;
   /** Present when local draft storage is available. */
   onSaveDraft?: (form: CalendarEventFormValues, base: DenCalendarEvent | undefined) => Promise<void>;
   /** Shown when the form was restored from an unsynced local draft. */
@@ -379,7 +379,7 @@ export function CalendarEventEditor(props: CalendarEventEditorProps) {
   const dialogPresentation = props.presentation === "dialog";
   const quickPresentation = props.presentation === "quick";
   const online = props.online ?? true;
-  const writeEnabled = props.writeEnabled ?? true;
+  const canWrite = props.canWrite ?? true;
   const pending = status.kind === "pending";
   const errors = status.kind === "validation" ? status.errors : {};
   const activeIds = props.calendars.map((calendar) => calendar.id);
@@ -566,7 +566,7 @@ export function CalendarEventEditor(props: CalendarEventEditorProps) {
   const submit = async () => {
     if (pending) return;
     // Offline never sends or queues an authoritative write.
-    if (!online || !writeEnabled) return;
+    if (!online || !canWrite) return;
     const validation = validateCalendarEventForm(form, activeIds, teamSelected ? undefined : creatorMemberId);
     if (!validation.ok) {
       setStatus({ kind: "validation", errors: validation.errors });
@@ -637,7 +637,7 @@ export function CalendarEventEditor(props: CalendarEventEditorProps) {
   };
 
   const remove = async () => {
-    if (!base || pending || !online || !writeEnabled) return;
+    if (!base || pending || !online || !canWrite) return;
     setStatus({ kind: "pending" });
     try {
       setCanonicalCalendarEvent(queryClient, props.scope, base);
@@ -807,7 +807,7 @@ export function CalendarEventEditor(props: CalendarEventEditorProps) {
           <button type="button" className="mr-auto rounded-md px-2 py-1.5 text-sm font-medium text-dls-accent hover:bg-[rgba(var(--dls-accent-rgb),0.08)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/40 dark:text-[color:color-mix(in_oklab,var(--dls-accent)_38%,white)] dark:hover:bg-[color:color-mix(in_oklab,color-mix(in_oklab,var(--dls-accent)_65%,white)_14%,transparent)]" disabled={pending} onClick={() => props.onMoreOptions?.(form)} data-testid="calendar-quick-more-options">{t("calendar.more_options")}</button>
           <Button type="button" size="sm" variant="outline" className="min-w-20" disabled={pending} onClick={props.onCancel} data-testid="calendar-form-cancel">{t("calendar.cancel")}</Button>
           {props.onSaveDraft && (!online || (status.kind === "failed" && status.failure.kind === "network")) ? <Button type="button" size="sm" variant="outline" disabled={pending} onClick={() => void keepDraft()} data-testid="calendar-form-save-draft">{t("calendar.draft_keep")}</Button> : null}
-          <Button type="submit" size="sm" className="min-w-20" disabled={!online || !writeEnabled || pending} data-testid="calendar-form-save">{status.kind === "failed" && status.failure.kind === "network" ? t("calendar.retry_save") : t("calendar.save")}</Button>
+          <Button type="submit" size="sm" className="min-w-20" disabled={!online || !canWrite || pending} data-testid="calendar-form-save">{status.kind === "failed" && status.failure.kind === "network" ? t("calendar.retry_save") : t("calendar.save")}</Button>
         </div>
       </form>
     );
@@ -819,7 +819,7 @@ export function CalendarEventEditor(props: CalendarEventEditorProps) {
       dialogPresentation && "mt-auto min-h-20 shrink-0 gap-3 border-t border-dls-border bg-dls-surface px-6 py-6",
     )} data-testid="calendar-form-actions">
       {base ? (
-        <Button type="button" size="sm" variant="ghost" disabled={pending || !online || !writeEnabled} title={!online ? t("calendar.offline_delete_unavailable") : undefined} onClick={() => setConfirmingDelete(true)} aria-label={t("calendar.delete_event")} data-testid="calendar-form-delete">
+        <Button type="button" size="sm" variant="ghost" disabled={pending || !online || !canWrite} title={!online ? t("calendar.offline_delete_unavailable") : undefined} onClick={() => setConfirmingDelete(true)} aria-label={t("calendar.delete_event")} data-testid="calendar-form-delete">
           <Trash2 className="size-4" aria-hidden="true" />
         </Button>
       ) : null}
@@ -829,7 +829,7 @@ export function CalendarEventEditor(props: CalendarEventEditorProps) {
           {t("calendar.draft_keep")}
         </Button>
       ) : null}
-      <Button type="submit" size="sm" className={cn("min-w-24", dialogPresentation && "h-8 min-w-20 rounded-md px-5 font-normal before:rounded-md")} disabled={!online || !writeEnabled || pending || (status.kind === "conflict")} data-testid="calendar-form-save">
+      <Button type="submit" size="sm" className={cn("min-w-24", dialogPresentation && "h-8 min-w-20 rounded-md px-5 font-normal before:rounded-md")} disabled={!online || !canWrite || pending || (status.kind === "conflict")} data-testid="calendar-form-save">
         {status.kind === "failed" && status.failure.kind === "network" ? t("calendar.retry_save") : t("calendar.save")}
       </Button>
     </div>
@@ -1144,7 +1144,7 @@ export function CalendarEventEditor(props: CalendarEventEditorProps) {
         <div className="flex flex-col gap-2 rounded-lg border border-red-500/40 p-2" role="alertdialog" aria-label={t("calendar.delete_event")} data-testid="calendar-form-delete-confirm">
           <p className="text-xs text-dls-text">{t("calendar.delete_confirm")}</p>
           <div className="flex gap-2">
-            <Button type="button" size="sm" variant="destructive" disabled={pending || !online || !writeEnabled} onClick={() => void remove()} data-testid="calendar-form-delete-confirm-button">{t("calendar.delete_event")}</Button>
+            <Button type="button" size="sm" variant="destructive" disabled={pending || !online || !canWrite} onClick={() => void remove()} data-testid="calendar-form-delete-confirm-button">{t("calendar.delete_event")}</Button>
             <Button type="button" size="sm" variant="ghost" onClick={() => setConfirmingDelete(false)} data-testid="calendar-form-delete-cancel">{t("calendar.cancel")}</Button>
           </div>
         </div>

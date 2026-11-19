@@ -10,7 +10,6 @@ import {
   normalizeDenCalendarSchedulingEvent,
   normalizeDenCalendarSchedulingRecurrence,
   normalizeDenCalendarAvailability,
-  normalizeDenDesktopConfig,
 } from "../src/app/lib/den";
 
 const fixture = await Bun.file(new URL("./fixtures/desktop-calendar-contract-v1.json", import.meta.url)).json();
@@ -61,13 +60,6 @@ describe("Den calendar contract", () => {
     expect(normalizeDenCalendar(fixture.calendar)).toEqual(fixture.calendar);
     expect(normalizeDenCalendarEvent(fixture.allDayEvent)).toEqual(fixture.allDayEvent);
     expect(normalizeDenCalendarEvent(fixture.timedEvent)).toEqual(fixture.timedEvent);
-  });
-
-  test("normalizes calendar capability projection fail closed", () => {
-    expect(normalizeDenDesktopConfig({})).toMatchObject({ calendarEnabled: false, calendarWriteEnabled: false, calendarCollaborationEnabled: false });
-    expect(normalizeDenDesktopConfig({ calendarEnabled: "true", calendarWriteEnabled: true, calendarCollaborationEnabled: true })).toMatchObject({ calendarEnabled: false, calendarWriteEnabled: false, calendarCollaborationEnabled: false });
-    expect(normalizeDenDesktopConfig({ calendarEnabled: true, calendarWriteEnabled: "true", calendarCollaborationEnabled: "true" })).toMatchObject({ calendarEnabled: true, calendarWriteEnabled: false, calendarCollaborationEnabled: false });
-    expect(normalizeDenDesktopConfig(fixture.featureCapability)).toMatchObject(fixture.featureCapability);
   });
 
   test("uses the strict calendar collaboration projection and routes", async () => {

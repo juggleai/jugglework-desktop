@@ -540,11 +540,7 @@ export type DenBootstrapConfig = DenBaseUrls & {
   prepared?: DenBootstrapPrepared | null;
 };
 
-export type DenDesktopConfig = SharedDesktopConfig & {
-  calendarEnabled?: boolean;
-  calendarWriteEnabled?: boolean;
-  calendarCollaborationEnabled?: boolean;
-};
+export type DenDesktopConfig = SharedDesktopConfig;
 
 export type DenOrgSummary = {
   id: string;
@@ -1608,15 +1604,7 @@ function getDenAppVersionMetadata(payload: unknown): DenAppVersionMetadata | nul
 }
 
 export function normalizeDenDesktopConfig(payload: unknown): DenDesktopConfig {
-  const config = normalizeDesktopConfig(payload);
-  const raw = isRecord(payload) ? payload : null;
-  const calendarEnabled = raw?.calendarEnabled === true;
-  return {
-    ...config,
-    calendarEnabled,
-    calendarWriteEnabled: calendarEnabled && raw?.calendarWriteEnabled === true,
-    calendarCollaborationEnabled: calendarEnabled && raw?.calendarCollaborationEnabled === true,
-  };
+  return normalizeDesktopConfig(payload);
 }
 
 function readTimestampRecord(value: unknown): Record<string, string> {

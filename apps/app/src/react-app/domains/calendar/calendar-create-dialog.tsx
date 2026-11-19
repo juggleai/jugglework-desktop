@@ -16,15 +16,14 @@ export function CalendarCreateDialog(props: {
   open: boolean;
   client: DenClient;
   scope: CalendarScope;
-  collaborationEnabled: boolean;
+  supportsTeamCalendars: boolean;
   online: boolean;
-  writeEnabled: boolean;
   defaultColor: string;
   onOpenChange: (open: boolean) => void;
 }) {
   const queryClient = useQueryClient();
   const personal = useCreateCalendarMutation(props.client, props.scope);
-  const team = useCreateTeamCalendarMutation(props.client, props.scope);
+  const team = useCreateTeamCalendarMutation(props.client, props.supportsTeamCalendars ? props.scope : null);
   const [kind, setKind] = React.useState<"personal" | "team">("personal");
   const [name, setName] = React.useState("");
   const [color, setColor] = React.useState(props.defaultColor);
@@ -40,10 +39,11 @@ export function CalendarCreateDialog(props: {
       setError(null);
     }
     wasOpen.current = props.open;
-  }, [props.defaultColor, props.open]);
+    if (!props.supportsTeamCalendars) setKind("personal");
+  }, [props.defaultColor, props.open, props.supportsTeamCalendars]);
 
   const submit = async () => {
-    if (!props.writeEnabled) return;
+    if (!props.online || pending || (kind === "team" && !props.supportsTeamCalendars)) return;
     const trimmed = name.trim();
     if (!trimmed) {
       setError(t("calendar.calendar_name_required"));
@@ -55,7 +55,7 @@ export function CalendarCreateDialog(props: {
       if (kind === "team") await team.mutateAsync(input);
       else {
         await personal.mutateAsync(input);
-        if (props.collaborationEnabled) await queryClient.invalidateQueries({ queryKey: calendarQueryKeys.collaboration(props.scope) });
+        if (props.supportsTeamCalendars) await queryClient.invalidateQueries({ queryKey: calendarQueryKeys.collaboration(props.scope) });
       }
       props.onOpenChange(false);
     } catch {
@@ -71,13 +71,13 @@ export function CalendarCreateDialog(props: {
           <DialogDescription>{t("calendar.create_calendar_description")}</DialogDescription>
         </DialogHeader>
         <form className="flex flex-col gap-4" onSubmit={(event) => { event.preventDefault(); void submit(); }} data-testid="calendar-create-form">
-          <fieldset className="flex flex-col gap-2" disabled={pending || !props.online || !props.writeEnabled}>
+          <fieldset className="flex flex-col gap-2" disabled={pending || !props.online}>
             <legend className="mb-1 text-xs font-medium text-dls-secondary">{t("calendar.calendar_type")}</legend>
             <label className="flex items-center gap-2 text-sm text-dls-text">
               <input type="radio" name="calendar-kind" value="personal" checked={kind === "personal"} onChange={() => setKind("personal")} data-testid="calendar-create-personal" />
               {t("calendar.personal_calendar")}
             </label>
-            {props.collaborationEnabled ? (
+            {props.supportsTeamCalendars ? (
               <label className="flex items-center gap-2 text-sm text-dls-text">
                 <input type="radio" name="calendar-kind" value="team" checked={kind === "team"} onChange={() => setKind("team")} data-testid="calendar-create-team" />
                 {t("calendar.team_calendar")}
@@ -111,7 +111,7 @@ export function CalendarCreateDialog(props: {
           {!props.online ? <p className="text-sm text-dls-secondary" role="note">{t("calendar.offline_create_calendar")}</p> : null}
           <DialogFooter>
             <Button type="button" variant="outline" disabled={pending} onClick={() => props.onOpenChange(false)}>{t("calendar.cancel")}</Button>
-            <Button type="submit" disabled={pending || !props.online || !props.writeEnabled} data-testid="calendar-create-submit">
+            <Button type="submit" disabled={pending || !props.online} data-testid="calendar-create-submit">
               {pending ? <LoaderCircle className="size-4 animate-spin" aria-hidden="true" /> : null}
               {pending ? t("calendar.creating") : t("calendar.create_calendar")}
             </Button>

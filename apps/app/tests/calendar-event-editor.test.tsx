@@ -132,9 +132,6 @@ const client = {
 mock.module("../src/react-app/domains/settings/cloud/cloud-session-provider", () => ({
   useCloudSession: () => ({ isSignedIn: true, baseUrl: "https://den.example/api", activeOrganization: { id: "org-a", orgMemberId: "member-a" }, client }),
 }));
-mock.module("../src/react-app/domains/cloud/desktop-config-provider", () => ({
-  useDesktopConfig: () => ({ loading: false, config: { calendarEnabled: true, calendarWriteEnabled: true } }),
-}));
 const meetingCalls: Array<{ op: string; value?: unknown }> = [];
 const createdMeeting: Meeting = {
   id: "meeting-1", code: "123456", organizationId: "org-a", title: "Title meeting-event", description: "Daily planning",
@@ -219,7 +216,7 @@ const submit = async (renderer: TestRenderer.ReactTestRenderer) => {
 };
 const formStatus = (renderer: TestRenderer.ReactTestRenderer) => byId(renderer, "calendar-event-form").props["data-status"];
 
-test("cross-page create entry opens the shared calendar event dialog in place", async () => {
+test("cross-page create entry saves in place without desktop config", async () => {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   function Harness() {
     const [open, setOpen] = React.useState(true);
@@ -233,9 +230,38 @@ test("cross-page create entry opens the shared calendar event dialog in place", 
   try {
     expect(has(renderer, "calendar-event-dialog")).toBe(true);
     expect(byId(renderer, "calendar-form-video-conference-remove")).toBeTruthy();
-    await click(renderer, "calendar-form-cancel");
+    await change(renderer, "calendar-form-title", "Scheduled from meetings");
+    await submit(renderer);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ op: "create", input: { calendarId: "cal-1", title: "Scheduled from meetings" } });
     expect(has(renderer, "calendar-event-dialog")).toBe(false);
   } finally { await act(async () => { renderer.unmount(); }); }
+});
+
+test("the cross-page create entry does not fetch or submit while offline", async () => {
+  const navigatorState = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: { onLine: false } });
+  const bootstrap = spyOn(client, "getCalendarBootstrap");
+  const list = spyOn(client, "listCalendars");
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  let renderer!: TestRenderer.ReactTestRenderer;
+  try {
+    await act(async () => {
+      renderer = TestRenderer.create(<QueryClientProvider client={queryClient}>
+        <CalendarEventCreateDialog open onOpenChange={() => {}} now={clock.now} timeZone={clock.timeZone} />
+      </QueryClientProvider>);
+    });
+    expect(text(byId(renderer, "calendar-create-status-dialog"))).toContain(t("calendar.offline_form_unavailable"));
+    expect(has(renderer, "calendar-event-form")).toBe(false);
+    expect(bootstrap).not.toHaveBeenCalled();
+    expect(list).not.toHaveBeenCalled();
+  } finally {
+    await act(async () => { renderer?.unmount(); });
+    bootstrap.mockRestore();
+    list.mockRestore();
+    if (navigatorState) Object.defineProperty(globalThis, "navigator", navigatorState);
+    else Reflect.deleteProperty(globalThis, "navigator");
+  }
 });
 
 test("creating a timed event shows it only after the authoritative response", async () => {
