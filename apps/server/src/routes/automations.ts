@@ -23,6 +23,7 @@ import type { McpItem, ServerConfig, TokenScope } from "../types.js";
 import type { WorkspaceInfo } from "../types.js";
 import type { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import { addRoute, type RequestContext, type Route } from "./registry.js";
+import type { WorkspaceProviderCredentialResolver } from "../provider-credential-resolver.js";
 
 /** 会话与自动化共用的内置默认智能体名，选择器里以“默认智能体”呈现，不重复列出。 */
 const DEFAULT_AGENT_NAME = "jugglework";
@@ -47,6 +48,7 @@ export interface RegisterAutomationRoutesOptions {
   resolveWorkspace?: (config: ServerConfig, id: string) => Promise<WorkspaceInfo>;
   createWorkspaceOpencodeClient?: (config: ServerConfig, workspace: WorkspaceInfo) => ReturnType<typeof createOpencodeClient>;
   listWorkspaceMcp?: (config: ServerConfig, workspaceId: string, workspaceRoot: string) => Promise<McpItem[]>;
+  providerCredentials?: WorkspaceProviderCredentialResolver;
   /** 到 jugglework-server 事件中继 API 的客户端；未提供时回落到"未配置"兜底实现。 */
   githubEventRelay?: GithubEventRelayClient;
   /**
@@ -222,8 +224,10 @@ export function registerAutomationRoutes(options: RegisterAutomationRoutesOption
     ]);
     // TIPS:与会话输入栏的模型选择口径一致——只列 engine 报告为已连接的 provider，
     // 且过滤掉没有模型的自定义 provider；否则 models.dev 全量目录里大量没有凭据的模型都会进来。
-    const connectedProviderIds = new Set(providers.data?.connected ?? []);
-    const connectedProviders = (providers.data?.all ?? []).filter((provider) =>
+    const catalog = providers.data && options.providerCredentials
+      ? await options.providerCredentials.filterCatalog(workspace.id, providers.data) : providers.data;
+    const connectedProviderIds = new Set(catalog?.connected ?? []);
+    const connectedProviders = (catalog?.all ?? []).filter((provider) =>
       connectedProviderIds.has(provider.id)
       && (provider.source !== "custom" || provider.id === "opencode" || Object.keys(provider.models ?? {}).length > 0)
     );

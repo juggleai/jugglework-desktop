@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import type { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import { desktopRemotePromptPartSchema } from "@jugglework/types/desktop-remote-control";
 import { isChatSelectableProviderModel } from "@jugglework/types/media-generation";
+import { createWorkspaceProviderCredentialResolver } from "../provider-credential-resolver.js";
 import { z } from "zod";
 import {
   detectResponseLanguageFromText,
@@ -73,6 +74,7 @@ interface RegisterSessionRoutesOptions {
     workspace: WorkspaceInfo,
     sessionId: string,
     prompt: Record<string, unknown>,
+    beforeDispatch?: () => void,
   ) => Promise<void>;
   dispatchSessionAbort: (config: ServerConfig, workspace: WorkspaceInfo, sessionId: string) => Promise<boolean>;
   sessionMutations: SessionMutationCoordinator;
@@ -368,11 +370,18 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions) {
     onSessionDeleted,
   } = options;
   const resolveSuggestionModel = createTextModelResolver({ config, env: options.env });
+  const credentials = createWorkspaceProviderCredentialResolver({ config, env: options.env, readOnly: true });
+
+  async function preparePromptModel(workspace: WorkspaceInfo, model: unknown) {
+    if (!isRecord(model) || typeof model.providerID !== "string" || typeof model.modelID !== "string") return undefined;
+    return credentials.prepareTextSubmission(workspace, { providerID: model.providerID, modelID: model.modelID });
+  }
 
   async function validateExplicitModel(workspace: WorkspaceInfo, model: { providerID: string; modelID: string }) {
+    const scopeCurrent = credentials.capture(workspace.id);
     const catalog = await createWorkspaceOpencodeClient(config, workspace).provider.list();
     if (catalog.error || !catalog.data || !catalog.response.ok) throw new ApiError(502, "model_catalog_unavailable", "Model catalog unavailable");
-    const { all, connected } = catalog.data;
+    const { all, connected } = await credentials.filterCatalog(workspace.id, catalog.data, scopeCurrent);
     const provider = all.find((item) => item.id === model.providerID && connected.includes(item.id));
     const selected = provider?.models[model.modelID];
     if (!selected || !isChatSelectableProviderModel(selected)) throw new ApiError(400, "model_unavailable", "Selected chat model is unavailable");
@@ -1077,6 +1086,15 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions) {
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const responseLanguage = promptResponseLanguage(input);
+    const scopeCurrent = credentials.capture(workspace.id);
+    const prepareSubmission = async () => {
+      const beforeDispatch = await preparePromptModel(workspace, input.prompt.model);
+      if (!beforeDispatch) return undefined;
+      return () => {
+        if (!scopeCurrent()) throw new ApiError(403, "managed_provider_scope_unavailable", "Managed model scope is unavailable.");
+        beforeDispatch();
+      };
+    };
     if (input.origin === "remote-control" && isRecord(input.prompt.model)) {
       if (input.whenBusy !== "reject") throw new ApiError(400, "invalid_payload", "Explicit model requires whenBusy reject");
       await validateExplicitModel(workspace, input.prompt.model as { providerID: string; modelID: string });
@@ -1164,10 +1182,13 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions) {
             })
             : undefined;
           try {
+            const beforeDispatch = await prepareSubmission();
+            beforeDispatch?.();
             await options.preparePromptAdmission({ workspaceId: workspace.id, sessionId: input.sessionId, source: "local-steer", id: input.startCommandCorrelationId }, {
               officeSelectionRefs: input.prompt.officeSelectionRefs as string[] | undefined,
               officeInstructions: input.prompt.officeInstructions as OfficeSelectionSubmission["officeInstructions"],
             });
+            beforeDispatch?.();
             await admitOpencodePrompt(createWorkspaceOpencodeClient(config, workspace), {
               workspaceId: workspace.id,
               sessionId: input.sessionId,
@@ -1252,11 +1273,13 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions) {
         await validateExplicitModel(workspace, input.prompt.model as { providerID: string; modelID: string });
       }
       try {
+        const beforeDispatch = await prepareSubmission();
         await dispatchSessionPromptAsync(
           config,
           workspace,
           input.sessionId,
           selectedResponseLanguage ? withResponseLanguageSystem(input.prompt, selectedResponseLanguage) : input.prompt,
+          beforeDispatch,
         );
       } catch (error) {
         languageMutation?.rollback();

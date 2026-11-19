@@ -132,6 +132,7 @@ export interface FileWindowBridge {
     tabIdOrRecentPath?: string,
   ): Promise<void>;
   onChanged(callback: (state: FileWindowState) => void): () => void;
+  onProviderCatalogChanged?(callback: () => void): () => void;
   /** 仅转发既有 OpenCode Event；订阅身份由 preload 私有维护。 */
   subscribeSessionEvents?(input: { workspaceId: string }, listener: (event: { type: string; properties: object }) => void): () => void;
   /** 仅主窗口接收：目标由 Main 已登记文件窗口及当前 run 确认，清理后才允许 abort。 */

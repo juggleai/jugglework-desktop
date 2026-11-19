@@ -2392,6 +2392,15 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
     )),
     googleWorkspaceStatus: () => requestJson<GoogleWorkspaceAuthStatus>(baseUrl, "/experimental/google-workspace/status", { token, hostToken, timeoutMs: timeouts.status }),
     setConnectState: (connectEnabled: boolean) => requestJson<JuggleWorkConnectState>(baseUrl, "/experimental/connect/state", { token, hostToken, method: "PUT", body: { connectEnabled }, timeoutMs: timeouts.config }),
+
+    managedProviderRevision: () => requestJson<{ revision: string }>(baseUrl, "/managed-provider-authority", { hostToken, timeoutMs: timeouts.config }),
+    fenceManagedProviderAuthority: (revision?: string) => requestJson<{ revision: string | null }>(baseUrl, `/managed-provider-authority${revision ? `?revision=${encodeURIComponent(revision)}` : ""}`, { hostToken, method: "DELETE", timeoutMs: timeouts.config }),
+    confirmManagedProviderAuthority: (input: { revision: string; deployment: string; userId: string; organizationId: string; session: string }) =>
+      requestJson<{ id: string }>(baseUrl, "/managed-provider-authority", { hostToken, method: "PUT", body: input, timeoutMs: timeouts.config }),
+    setManagedProviderReadiness: (workspaceId: string, authorityId: string, ready: boolean) =>
+      requestJson<{ ok: boolean }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/managed-provider-readiness`, { hostToken, method: "PUT", body: { authorityId, ready }, timeoutMs: timeouts.config }),
+    managedProviderInventory: (workspaceId: string) =>
+      requestJson<import("@opencode-ai/sdk/v2/client").ProviderListResponse>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/managed-provider-inventory`, { hostToken, timeoutMs: timeouts.config }),
     // TIPS: 这是 GitHub 事件触发自动化 resolveAuth 的真实生产落点——apps/server 自己
     // 从来没有登录态，渲染进程本来就持有真实的云端 session，登录/刷新后把它转发进
     // apps/server 的内存，别的什么都不用做。cloudBaseUrl 是云端 API 根地址（不是这个

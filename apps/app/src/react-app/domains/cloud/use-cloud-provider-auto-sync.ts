@@ -2,6 +2,7 @@
 import { useEffect, useRef } from "react";
 
 import { denSettingsChangedEvent } from "../../../app/lib/den-session-events";
+import { subscribeManagedProviderSwitchSettled } from "../../../app/lib/managed-provider-scope";
 import { useDenAuth } from "./den-auth-provider";
 
 type CloudProviderSyncReason = "sign_in" | "app_resume";
@@ -84,10 +85,12 @@ export function useCloudProviderAutoSync(sync: SyncFn) {
         void tick(reason);
       },
     });
+    const unsubscribeSettled = subscribeManagedProviderSwitchSettled(() => { void tick("sign_in"); });
 
     return () => {
       cancelled = true;
       unsubscribe();
+      unsubscribeSettled();
     };
   }, [denAuth.isSignedIn]);
 }

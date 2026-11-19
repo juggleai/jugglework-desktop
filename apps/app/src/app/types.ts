@@ -160,6 +160,7 @@ export type ComposerImageStyle = "auto" | "photographic" | "illustration" | "ani
 
 export type ComposerImageGenerationOptions = {
   model: ModelRef;
+  managedScope?: string;
   modelName: string;
   providerName: string;
   aspectRatio: ComposerImageAspectRatio;
@@ -170,6 +171,7 @@ export type ComposerVideoAspectRatio = "auto" | "3:4" | "4:3" | "9:16" | "16:9" 
 
 export type ComposerVideoGenerationOptions = {
   model: ModelRef;
+  managedScope?: string;
   modelName: string;
   providerName: string;
   aspectRatio: ComposerVideoAspectRatio;

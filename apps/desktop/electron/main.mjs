@@ -2633,6 +2633,13 @@ const desktopCommandHandlers = {
       fileContextBootstrap.invalidate();
       await fileWindowDesktopContext.sync(input);
   },
+  "invalidateFileWindowProviderCatalog": async (event) => {
+      if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents || event.senderFrame !== event.sender.mainFrame)
+        throw new Error("仅主窗口可通知文件模式模型目录变化");
+      for (const window of fileWindows.windows()) {
+        if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send("jugglework:file-window:provider-catalog-changed");
+      }
+  },
   "desktopRemoteControlEnroll": async (event, ...args) => {
       if (!remoteControlAgent) return stoppedRemoteControlAgentStatus();
       remoteControlLifecycleManager.assertMutationAvailable();

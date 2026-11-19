@@ -12,6 +12,7 @@ import { normalizeCloudUrl } from "./cloud-url.js";
 import type { CliRenderer } from "./render.js";
 import { createRuntime, type RuntimeConnection } from "./runtime.js";
 import { chooseWorkspace } from "./controller.js";
+import { confirmOwnedManagedProviders, hasManagedProviderAuthority, suspendOwnedManagedProviders } from "./managed-provider-scope.js";
 
 export type ProviderMutationStage = "host_authority" | "connection" | "environment" | "authentication" | "runtime_config" | "baseline" | "reload" | "verification";
 
@@ -42,7 +43,7 @@ function deploymentCatalog(payload: unknown): DeploymentModelCatalog | null {
   return (providers && typeof providers === "object" && !Array.isArray(providers) ? providers : root) as DeploymentModelCatalog;
 }
 
-export async function importProvider(input: { cloud: Pick<CloudClient, "providerConnection" | "catalog">; runtime: RuntimeApi; token: string; organizationId: string; workspaceId: string; cloudProviderId: string; registerSecrets?: (values: string[]) => void }): Promise<RuntimeProviderStatus> {
+export async function importProvider(input: { cloud: Pick<CloudClient, "providerConnection" | "catalog">; runtime: RuntimeApi; token: string; organizationId: string; workspaceId: string; cloudProviderId: string; authorityId?: string; registerSecrets?: (values: string[]) => void }): Promise<RuntimeProviderStatus> {
   const completed: ProviderMutationStage[] = [];
   await stage("import", "host_authority", completed, () => input.runtime.preflightProviderAuthority(input.workspaceId));
   const provider = await stage("import", "connection", completed, () => input.cloud.providerConnection(input.token, input.organizationId, input.cloudProviderId));
@@ -77,7 +78,7 @@ export async function importProvider(input: { cloud: Pick<CloudClient, "provider
     catalog = deploymentCatalog(await input.cloud.catalog());
     return input.runtime.patchCloudProviderConfig(input.workspaceId, buildRuntimeProviderPatch(provider, localProviderId, existing?.cloudProviderId === provider.id ? existing.providerId : null, catalog));
   });
-  const baseline = buildCloudImportedProvider(provider, Date.now(), input.organizationId, mirror, catalog);
+  const baseline = { ...buildCloudImportedProvider(provider, Date.now(), input.organizationId, mirror, catalog), ...(input.authorityId ? { authorityId: input.authorityId } : {}) };
   await stage("import", "baseline", completed, () => input.runtime.setCloudProviderImport(input.workspaceId, provider.id, baseline as unknown as JsonRecord));
   await stage("import", "reload", completed, () => input.runtime.reloadEngine(input.workspaceId));
   const status = await stage("import", "verification", completed, () => input.runtime.providerStatus(input.workspaceId, localProviderId));
@@ -102,14 +103,15 @@ export async function removeProvider(input: { runtime: RuntimeApi; workspaceId: 
   await stage("remove", "reload", completed, () => input.runtime.reloadEngine(input.workspaceId));
 }
 
-async function selectedCloud(options: CliOptions): Promise<{ cloud: CloudClient; token: string; organizationId: string }> {
+async function selectedCloud(options: CliOptions) {
   const urls = normalizeCloudUrl(options.cloudUrl);
   const store = new CloudProfileStore(cloudProfilePath(options.configPath));
   const profile = options.cloudToken ? null : await store.get(urls.origin);
   const token = options.cloudToken ?? profile?.token ?? null;
   if (!token) throw new Error("Not signed in to JuggleWork Cloud. Run 'jugglework login'.");
   const cloud = new CloudClient(urls);
-  const selected = resolveCloudOrganization(await cloud.organizationState(token), {
+  const state = await cloud.organizationState(token);
+  const selected = resolveCloudOrganization(state, {
     explicit: options.cloudOrg,
     remembered: profile?.user?.id ? await store.rememberedOrganization(urls.origin, profile.user.id) : null,
     current: profile?.organizationId,
@@ -120,7 +122,7 @@ async function selectedCloud(options: CliOptions): Promise<{ cloud: CloudClient;
       : "This account has no available organizations.");
   }
   if (!options.cloudToken && profile && profile.organizationId !== selected.id) await store.selectOrganization(urls.origin, selected.id);
-  return { cloud, token, organizationId: selected.id };
+  return { cloud, token, organizationId: selected.id, activeOrgId: state.activeOrgId, deployment: urls.apiBaseUrl, expectedUserId: profile?.user?.id };
 }
 
 export async function executeProviderCommand(options: CliOptions, renderer: CliRenderer): Promise<number> {
@@ -130,10 +132,18 @@ export async function executeProviderCommand(options: CliOptions, renderer: CliR
     connection = await createRuntime(options);
     const api = new JuggleWorkApiClient(connection.url, connection.token, connection.hostToken);
     const workspaceId = (await chooseWorkspace(api, options, null)).id;
+    await api.preflightProviderAuthority(workspaceId);
+    if (!connection.owned && await hasManagedProviderAuthority(api)) {
+      throw new Error("Manage organization providers from the connected host or run this command with a standalone CLI runtime.");
+    }
     if (options.command.action === "import") {
+      const revision = connection.owned ? await suspendOwnedManagedProviders(api, workspaceId) : null;
       const cloud = await selectedCloud(options);
       renderer.registerSecretValues([cloud.token]);
-      const status = await importProvider({ ...cloud, runtime: api, workspaceId, cloudProviderId: options.command.target, registerSecrets: (values) => renderer.registerSecretValues(values) });
+      const authorityId = revision !== null ? await confirmOwnedManagedProviders({ ...cloud, api, workspaceId, revision }) : undefined;
+      // The standalone command tears down its runtime after import. The next
+      // launch verifies all publications before marking the workspace ready.
+      const status = await importProvider({ ...cloud, runtime: api, workspaceId, cloudProviderId: options.command.target, authorityId, registerSecrets: (values) => renderer.registerSecretValues(values) });
       renderer.providerMutation("imported", options.command.target, status);
     } else {
       await removeProvider({ runtime: api, workspaceId, cloudProviderId: options.command.target });

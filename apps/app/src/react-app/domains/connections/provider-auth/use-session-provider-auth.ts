@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ProviderListResponse } from "@opencode-ai/sdk/v2/client";
 
 import type { Client, ProviderListItem, WorkspaceDisplay } from "@/app/types";
+import { useManagedProviderEpoch } from "@/app/lib/managed-provider-scope";
 import type { ResolvedWorkspaceEndpoint } from "@/app/lib/workspace-endpoint";
 import {
   useCheckDesktopRestriction,
@@ -159,12 +160,14 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
     },
     [checkDesktopRestriction, markReloadRequired],
   );
+  const managedScopeEpoch = useManagedProviderEpoch();
   const cloudProviderSyncContext = useMemo(() => ({
     client: opencodeClient,
     workspaceId: selectedWorkspaceEndpoint?.workspaceId ?? null,
     workspaceRoot: selectedWorkspaceRoot,
     cloudSessionVersion,
-  }), [cloudSessionVersion, opencodeClient, selectedWorkspaceEndpoint?.workspaceId, selectedWorkspaceRoot]);
+    managedScopeEpoch,
+  }), [cloudSessionVersion, managedScopeEpoch, opencodeClient, selectedWorkspaceEndpoint?.workspaceId, selectedWorkspaceRoot]);
   const cloudProviderReadinessAttemptRef = useRef<{
     context: typeof cloudProviderSyncContext;
     count: number;

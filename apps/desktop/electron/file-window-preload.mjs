@@ -156,5 +156,6 @@ contextBridge.exposeInMainWorld("__JUGGLEWORK_ELECTRON__", {
       ipcRenderer.invoke("jugglework:file-window:action", action, tabIdOrRecentPath),
     /** 接收标签与最近文件变化。 */
     onChanged: (callback) => listen("jugglework:file-window:changed", callback),
+    onProviderCatalogChanged: (callback) => listen("jugglework:file-window:provider-catalog-changed", callback),
   },
 });

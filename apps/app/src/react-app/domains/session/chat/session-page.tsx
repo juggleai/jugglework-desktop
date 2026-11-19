@@ -45,6 +45,7 @@ import { useAppNavigationSidebarPreview } from "../../../shell/app-navigation-si
 import { useSessionManagementStore } from "../sidebar/session-management-store";
 import type { TaskScope } from "../sidebar/task-scope-store";
 import { SessionSurface, type SessionSurfaceProps } from "../surface/session-surface";
+import { useManagedProviderEpoch } from "@/app/lib/managed-provider-scope";
 import { AutomationSessionStatus } from "../../automations/automation-session-status";
 import { useSessionFindStore } from "../surface/find-store";
 import {
@@ -362,6 +363,9 @@ function controlStringArg(args: unknown, key: string) {
 const ACTIVE_SESSION_STATUSES = new Set(["thinking", "responding", "compacting"]);
 
 export function SessionPage(props: SessionPageProps) {
+  // SessionSurface owns the media queries; rerender it to use the new scope
+  // without remounting the editor or losing drafts and submitted tasks.
+  useManagedProviderEpoch();
   const { config: shellConfig } = useShellConfig();
   const platform = usePlatform();
   const denAuth = useDenAuth();

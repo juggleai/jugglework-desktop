@@ -243,6 +243,7 @@ export function registerToonflowRoutes(options: {
 
   async function models(workspaceId: string) {
     const workspace = await resolveWorkspace(config, workspaceId);
+    const scopeCurrent = credentials.capture(workspaceId);
     const effective = await readEffectiveWorkspaceOpencodeConfig(config, workspace);
     const disabled = new Set((Array.isArray(effective.disabled_providers) ? effective.disabled_providers : []).map((id: unknown) => String(id).toLowerCase()));
     const enabled = Array.isArray(effective.enabled_providers) ? new Set(effective.enabled_providers) : null;
@@ -265,6 +266,8 @@ export function registerToonflowRoutes(options: {
     for (const [providerId, configuredValue] of Object.entries(configuredProviders)) {
       if (disabled.has(providerId.toLowerCase()) || (enabled && !enabled.has(providerId))) continue;
       const providerConfig = record(configuredValue);
+      const beforeDispatch = credentials.beforeDispatch(workspaceId, providerId, providerConfig);
+      if (beforeDispatch && !scopeCurrent()) continue;
       const liveProvider = record(live?.all.find(item => item.id === providerId));
       const provider: Record<string, any> = {
         ...liveProvider, ...providerConfig,
@@ -278,7 +281,7 @@ export function registerToonflowRoutes(options: {
         const image = readyImageModels.get(`${providerId}\0${modelId}`);
         if (image) {
           result.push({ providerId, providerLabel: String(image.providerName ?? provider.name ?? providerId), modelId,
-            label: String(image.modelName ?? model.name ?? modelId), protocol: "openai-completions", type: "image", image: image.capabilities });
+            label: String(image.modelName ?? model.name ?? modelId), protocol: "openai-completions", type: "image", image: image.capabilities, beforeDispatch });
           continue;
         }
         if (model.imageGeneration !== undefined) continue;
@@ -293,14 +296,17 @@ export function registerToonflowRoutes(options: {
         result.push({ providerId, providerLabel: String(provider.name ?? providerId), modelId, label: String(model.name ?? modelId),
           protocol, type: video ? "video" : "text", video,
           contextWindow: record(model.limit).context, maxOutputTokens: record(model.limit).output,
-          baseURL, key, upstreamModelId, headers });
+           baseURL, key, upstreamModelId, headers, beforeDispatch });
       }
     }
-    return result;
+    return result.filter((model) => !model.beforeDispatch || scopeCurrent());
   }
 
   addRoute(routes, "GET", "/workspace/:id/toonflow/models", "client", async (ctx) =>
-    jsonResponse({ models: (await models(ctx.params.id)).map(({ key, baseURL, upstreamModelId, headers, ...publicModel }) => publicModel) }));
+    jsonResponse({ models: (await models(ctx.params.id)).flatMap(({ key, baseURL, upstreamModelId, headers, beforeDispatch, ...publicModel }) => {
+      try { beforeDispatch?.(); } catch { return []; }
+      return [publicModel];
+    }) }));
 
   addRoute(routes, "POST", "/workspace/:id/toonflow/proxy/:providerId/:operation", "client", async (ctx) => {
     if (config.readOnly) throw new ApiError(403, "read_only", "当前服务为只读模式");
@@ -399,7 +405,7 @@ export function registerToonflowRoutes(options: {
     if (!payload.success) invalidRequest();
     const requestBody: Record<string, unknown> = { ...payload.data, model: input.modelId };
     const timeoutSignal = AbortSignal.timeout(180_000);
-    const upstream = await requestTextModel({ model: { protocol: model.protocol as TextProtocol, baseURL: model.baseURL!, key: model.key!, upstreamModelId: model.upstreamModelId!, headers: model.headers! },
+    const upstream = await requestTextModel({ model: { protocol: model.protocol as TextProtocol, baseURL: model.baseURL!, key: model.key!, upstreamModelId: model.upstreamModelId!, headers: model.headers!, beforeDispatch: model.beforeDispatch },
       payload: requestBody, signal: AbortSignal.any([ctx.request.signal, timeoutSignal]), requestSignal: ctx.request.signal });
     const contentType = upstream.headers.get("content-type") ?? "";
     const streaming = requestBody.stream === true;

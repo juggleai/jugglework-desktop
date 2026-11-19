@@ -31,6 +31,14 @@ Desktop SHALL NOT remove imported cloud providers or their credentials merely be
 - **THEN** Desktop fetches the current engine list rather than relying on the cached response
 - **AND** ordinary cached provider-list reads revalidate expired entries and await the fresh result
 
+### Requirement: Cloud-managed models follow the verified workspace
+Desktop SHALL keep Cloud-managed model discovery and new requests scoped to the verified signed-in session and its active organization. A previous scope's cached catalog, runtime imports, or pending drafts SHALL NOT authorize new managed requests while a switch or reconciliation is pending. Explicitly configured local providers remain independent of Cloud scope.
+
+#### Scenario: Old runtime models remain after an organization switch
+- **WHEN** Desktop switches organization and the engine still advertises models from the previous organization
+- **THEN** Desktop hides those models and its local runtime rejects new use until the active scope and its imports are verified
+- **AND** a pending managed media draft is not sent under a different scope, while already-admitted work keeps its original binding
+
 ### Requirement: Desktop recognizes both managed router generations
 Desktop SHALL recognize `managedIdentity=jwork_router` as the canonical managed routing identity and SHALL recognize the legacy `juggle_router` managed discriminator when the canonical field is absent.
 

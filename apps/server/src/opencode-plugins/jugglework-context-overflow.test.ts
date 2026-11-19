@@ -8,9 +8,18 @@ let nextError: unknown = null;
 let fetchCalls = 0;
 let receivedHeaders: Headers[] = [];
 let fetchHandler: ((request: Request) => Promise<Response>) | null = null;
+const hostUrl = "http://127.0.0.1:41234";
+let authorize = () => true;
+let authorityChecks: Array<{ directory: string; providerID?: string; digest: string }> = [];
+const previousHost = process.env.JUGGLEWORK_SERVER_URL;
+const previousToken = process.env.JUGGLEWORK_SERVER_TOKEN;
 const fakeBase = Object.assign(async (input: Parameters<typeof fetch>[0], init?: RequestInit): Promise<Response> => {
-  fetchCalls += 1;
   const request = new Request(input, init);
+  if (request.url === `${hostUrl}/internal/managed-provider-dispatch`) {
+    authorityChecks.push(await request.json());
+    return Response.json({ allowed: authorize() });
+  }
+  fetchCalls += 1;
   receivedHeaders.push(request.headers);
   if (fetchHandler) return fetchHandler(request);
   if (nextError) {
@@ -23,14 +32,20 @@ const fakeBase = Object.assign(async (input: Parameters<typeof fetch>[0], init?:
 let patchedFetch: typeof fetch;
 
 beforeAll(async () => {
+  process.env.JUGGLEWORK_SERVER_URL = hostUrl;
+  process.env.JUGGLEWORK_SERVER_TOKEN = "fixture-client";
   globalThis.fetch = fakeBase;
-  await JuggleWorkContextOverflow();
+  await JuggleWorkContextOverflow({ directory: "/test/first" });
   patchedFetch = globalThis.fetch;
   globalThis.fetch = originalFetch;
 });
 
 afterAll(() => {
   globalThis.fetch = originalFetch;
+  if (previousHost === undefined) delete process.env.JUGGLEWORK_SERVER_URL;
+  else process.env.JUGGLEWORK_SERVER_URL = previousHost;
+  if (previousToken === undefined) delete process.env.JUGGLEWORK_SERVER_TOKEN;
+  else process.env.JUGGLEWORK_SERVER_TOKEN = previousToken;
 });
 
 describe("JuggleWorkContextOverflow fetch patch", () => {
@@ -39,7 +54,7 @@ describe("JuggleWorkContextOverflow fetch patch", () => {
     const output = 'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n';
     const stream = (body: string) => new Response(body, { headers: { "content-type": "text/event-stream" } });
     const send = (headers: Record<string, string>) => patchedFetch(url, {
-      method: "POST", headers, body: JSON.stringify({ stream: true }),
+      method: "POST", headers: { Authorization: "Bearer fixture-model", ...headers }, body: JSON.stringify({ stream: true }),
     });
     receivedHeaders = [];
     responseQueue = [stream(""), stream(output), stream(output), stream(output), stream(output)];
@@ -611,8 +626,8 @@ describe("JuggleWorkContextOverflow fetch patch", () => {
     });
     try {
       await expect(patchedFetch(
-        "https://work.juggle.im/jwork/api/gateway/v1/lpr_managed/chat/completions",
-        { method: "POST", body: JSON.stringify({ stream: true }) },
+        "https://provider.test/jwork/api/gateway/v1/lpr_managed/chat/completions",
+        { method: "POST", headers: { Authorization: "Bearer fixture-model" }, body: JSON.stringify({ stream: true }) },
       )).rejects.toThrow("Managed model produced no output after 2 attempts (response_timeout).");
       expect(fetchCalls).toBe(2);
     } finally {
@@ -620,6 +635,25 @@ describe("JuggleWorkContextOverflow fetch patch", () => {
       delete process.env.JUGGLEWORK_PROVIDER_RESPONSE_TIMEOUT_MS;
     }
   }, 10_000);
+
+  test("reauthorizes a retry and does not send it when the workspace is no longer ready", async () => {
+    const hooks = await JuggleWorkContextOverflow({ directory: "/test/second" });
+    const provider = { options: {} as Record<string, unknown> };
+    await hooks.config({ provider: { lpr_fixture: provider } });
+    authorityChecks = [];
+    fetchCalls = 0;
+    authorize = () => authorityChecks.length === 1;
+    responseQueue = [new Response("", { headers: { "content-type": "text/event-stream" } })];
+    try {
+      const response = await (provider.options.fetch as typeof fetch)("https://provider.test/jwork/api/gateway/v1/lpr_fixture/chat/completions", {
+        method: "POST", headers: { Authorization: "Bearer fixture-model" }, body: JSON.stringify({ stream: true }),
+      });
+      expect(response.status).toBe(403);
+      expect(fetchCalls).toBe(1);
+      expect(authorityChecks).toHaveLength(2);
+      for (const item of authorityChecks) expect(item).toMatchObject({ directory: "/test/second", providerID: "lpr_fixture", digest: expect.stringMatching(/^[a-f0-9]{64}$/) });
+    } finally { authorize = () => true; responseQueue = []; }
+  });
 
   test("does not continue retrying after the request is aborted", async () => {
     fetchCalls = 0;

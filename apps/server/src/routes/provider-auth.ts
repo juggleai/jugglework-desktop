@@ -1,5 +1,6 @@
 import type { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import type { Auth } from "@opencode-ai/sdk/v2/types";
+import { resolve, sep } from "node:path";
 
 import { ApiError } from "../errors.js";
 import { readJuggleWorkWorkspaceConfig, writeJuggleWorkWorkspaceConfig } from "../jugglework-workspace-config-store.js";
@@ -11,6 +12,8 @@ import {
   cloudGatewayMirrorOwnerId,
 } from "@jugglework/types/provider-credentials";
 import { addRoute, type Route } from "./registry.js";
+import { managedProviderAuthority } from "../managed-provider-authority.js";
+import { createWorkspaceProviderCredentialResolver } from "../provider-credential-resolver.js";
 
 type WorkspaceOpencodeClient = ReturnType<typeof createOpencodeClient>;
 type JsonResponse = (data: unknown, status?: number) => Response;
@@ -116,6 +119,58 @@ export function registerProviderAuthRoutes(options: RegisterProviderAuthRoutesOp
     createWorkspaceOpencodeClient,
     env,
   } = options;
+
+  const authority = managedProviderAuthority(config);
+  addRoute(routes, "GET", "/managed-provider-authority", "host-token", async () =>
+    jsonResponse({ revision: authority.currentRevision() }));
+  addRoute(routes, "DELETE", "/managed-provider-authority", "host-token", async (ctx) => {
+    const expected = new URL(ctx.request.url).searchParams.get("revision");
+    return jsonResponse({ revision: expected !== null ? authority.fenceIfCurrent(expected) : authority.fence() });
+  });
+  addRoute(routes, "PUT", "/managed-provider-authority", "host-token", async (ctx) => {
+    const { revision, deployment, userId, organizationId, session } = await readJsonBody(ctx.request);
+    if (typeof revision !== "string" || typeof deployment !== "string" || typeof userId !== "string" ||
+      typeof organizationId !== "string" || typeof session !== "string" || !userId.trim() || !organizationId.trim() ||
+      !/^[a-f0-9]{64}$/.test(session) || !URL.canParse(deployment) || !/^https?:\/\//.test(deployment)) {
+      throw new ApiError(400, "invalid_managed_provider_authority", "Managed provider scope is invalid");
+    }
+    const active = authority.confirm(revision, { deployment, userId, organizationId, session });
+    if (!active) throw new ApiError(409, "stale_managed_provider_authority", "Managed provider scope changed");
+    return jsonResponse({ id: active.id });
+  });
+  addRoute(routes, "PUT", "/workspace/:id/managed-provider-readiness", "host-token", async (ctx) => {
+    const { authorityId, ready } = await readJsonBody(ctx.request);
+    if (typeof authorityId !== "string" || typeof ready !== "boolean" || !config.workspaces.some((ws) => ws.id === ctx.params.id && ws.workspaceType !== "remote") ||
+      !authority.setWorkspaceReady(authorityId, ctx.params.id, ready)) {
+      throw new ApiError(409, "stale_managed_provider_authority", "Managed provider scope changed");
+    }
+    return jsonResponse({ ok: true });
+  });
+  addRoute(routes, "GET", "/workspace/:id/managed-provider-inventory", "host-token", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const result = await createWorkspaceOpencodeClient(config, workspace).provider.list();
+    if (!result.response.ok || !result.data) throw new ApiError(502, "model_catalog_unavailable", "Model catalog unavailable");
+    const { all, connected, default: defaults } = result.data;
+    return jsonResponse({ connected, default: defaults, all: all.map(({ id, name, source, models }) => ({
+      id, name, source, models: Object.fromEntries(Object.keys(models ?? {}).map((modelId) => [modelId, {}])),
+    })) });
+  });
+
+  // Used by the managed engine at actual egress (including retries). A caller
+  // may ask a yes/no question, but cannot set the authority with its client token.
+  addRoute(routes, "POST", "/internal/managed-provider-dispatch", "client", async (ctx) => {
+    const { directory, providerID, url, digest } = await readJsonBody(ctx.request);
+    if (typeof directory !== "string" || typeof url !== "string" || typeof digest !== "string" || !/^[a-f0-9]{64}$/.test(digest)) {
+      return jsonResponse({ allowed: false });
+    }
+    const path = resolve(directory);
+    const matches = config.workspaces.filter((workspace) => workspace.workspaceType !== "remote" &&
+      (path === resolve(workspace.path) || path.startsWith(`${resolve(workspace.path)}${sep}`)))
+      .sort((a, b) => resolve(b.path).length - resolve(a.path).length);
+    if (!directory || !matches[0] || (matches[1] && resolve(matches[0].path) === resolve(matches[1].path))) return jsonResponse({ allowed: false });
+    const credentials = createWorkspaceProviderCredentialResolver({ config, env, readOnly: true });
+    return jsonResponse({ allowed: await credentials.canDispatch(matches[0], { providerID: typeof providerID === "string" ? providerID : undefined, url, digest }) });
+  });
 
   addRoute(routes, "GET", "/workspace/:id/provider-auth", "host-token", async (ctx) => {
     await resolveWorkspace(config, ctx.params.id);

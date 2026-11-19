@@ -42,6 +42,12 @@ test("CLI startup and model picker read providers through the real Server worksp
         baseUrl: `http://127.0.0.1:${address.port}` }],
     }, { logger: { log: () => {} } });
     const api = new JuggleWorkApiClient(`http://127.0.0.1:${server.port}`, "cli-test-token", "cli-test-host");
+    assert.deepEqual(await api.providerList("ws_test"), { all: [catalog.all[1]], connected: ["opencode"], default: {} });
+    const { revision } = await api.managedProviderRevision();
+    const { id: authorityId } = await api.confirmManagedProviderAuthority({ revision, deployment: "https://cloud.example.test/jwork/api", userId: "user", organizationId: "org", session: "a".repeat(64) });
+    const { mirror } = await api.setCloudProviderMirror("ws_test", "lpr_example", "org", "fixture-gateway-credential");
+    await api.setCloudProviderImport("ws_test", "lpr_example", { cloudProviderId: "lpr_example", providerId: "lpr_example", organizationId: "org", authorityId, gatewayMirror: mirror, modelIds: ["model-a"], metadataVersion: 11 });
+    await api.setManagedProviderReadiness("ws_test", authorityId, true);
     assert.deepEqual(await api.providerList("ws_test"), catalog);
     assert.deepEqual(await loadAvailableModels(api, { id: "ws_test" }), [{
       id: "lpr_example/model-a", provider: "lpr_example", providerName: "Organization Provider", model: "model-a", label: "Model A", variants: ["high"],
@@ -49,7 +55,9 @@ test("CLI startup and model picker read providers through the real Server worksp
     assert.deepEqual(await resolveModelContext(api, { id: "ws_test" }, { model: null, reasoningEffort: "high" }), {
       provider: "lpr_example", providerName: "Organization Provider", model: "model-a", reasoningEffort: "high", source: "runtime",
     });
-    assert.equal(providerRequests.length, 3);
+    await api.fenceManagedProviderAuthority();
+    assert.deepEqual(await loadAvailableModels(api, { id: "ws_test" }), []);
+    assert.equal(providerRequests.length, 5);
     assert.ok(providerRequests.every((directory) => directory === root));
   } finally {
     await server?.stop();

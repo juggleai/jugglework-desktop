@@ -30,6 +30,7 @@ export async function openAiCompatibleVideoAdapters(
   workspaceId: string,
   resolveCredential: ProviderCredentialResolver,
   resolveProvenance?: ProviderProvenanceResolver,
+  beforeDispatch?: (workspaceId: string, providerID: string, providerConfig: unknown) => (() => void) | undefined,
 ): Promise<VideoGenerationAdapter[]> {
   const adapters: VideoGenerationAdapter[] = [];
   for (const [providerID, raw] of Object.entries(config.provider ?? {})) {
@@ -42,6 +43,7 @@ export async function openAiCompatibleVideoAdapters(
     const parsed = new URL(baseURL);
     if (parsed.protocol !== "https:" && !["localhost", "127.0.0.1", "::1"].includes(parsed.hostname)) continue;
     const models = isRecord(raw.models) ? raw.models : {};
+    const guard = beforeDispatch?.(workspaceId, providerID, raw);
     const arkModelIDs: string[] = [];
     const openAiModelIDs: string[] = [];
     for (const [modelID, modelRaw] of Object.entries(models)) {
@@ -57,6 +59,7 @@ export async function openAiCompatibleVideoAdapters(
       modelIDs: [modelID],
       baseURL,
       credential: () => resolveCredential({ workspaceId, providerID, modelID, declaredEnvKeys: envKeys, providerConfig: raw }),
+      beforeDispatch: guard,
       binding: { configFingerprint: cloudProviderConfigFingerprint(raw), cloudProviderId: provenance?.cloudProviderId ?? null, organizationId: provenance?.organizationId ?? null },
       }));
     }
@@ -67,6 +70,7 @@ export async function openAiCompatibleVideoAdapters(
       modelIDs: [modelID],
       baseURL,
       credential: () => resolveCredential({ workspaceId, providerID, modelID, declaredEnvKeys: envKeys, providerConfig: raw }),
+      beforeDispatch: guard,
       binding: { configFingerprint: cloudProviderConfigFingerprint(raw), cloudProviderId: provenance?.cloudProviderId ?? null, organizationId: provenance?.organizationId ?? null },
       }));
     }

@@ -77,6 +77,7 @@ export type AutomationExecutorOptions = {
   repository: AutomationRepository;
   resolveWorkspace: (config: ServerConfig, id: string) => Promise<WorkspaceInfo>;
   createWorkspaceOpencodeClient: (config: ServerConfig, workspace: WorkspaceInfo) => WorkspaceOpencodeClient;
+  filterProviderCatalog?: (workspaceId: string, catalog: import("@opencode-ai/sdk/v2/client").ProviderListResponse) => Promise<import("@opencode-ai/sdk/v2/client").ProviderListResponse>;
   /** 用于事件触发运行的写回授权铸造；省略时事件触发运行的 `github-app` preflight 直接判定不可用。 */
   githubEventRelay?: GithubEventRelayClient;
   /** 把铸造出的写回授权真正接到 agent 能调用的工具上；省略时同样判定 `github-app` preflight 不可用——见 `WriteBackMcpProvisioner` 的 TIPS。 */
@@ -207,7 +208,7 @@ export class AutomationExecutor {
     // after session.create can race that initialization and reject an otherwise
     // valid selected model with ProviderModelNotFoundError. Loading providers
     // here gives the new instance the same readiness path used by run preflight.
-    await this.waitForInitialConversationModel(definition, opencode);
+    await this.waitForInitialConversationModel(definition, opencode, workspace.id);
     const prompt = {
       sessionID: sessionId,
       ...(definition.model.mode === "explicit" ? {
@@ -264,6 +265,7 @@ export class AutomationExecutor {
   private async waitForInitialConversationModel(
     definition: AutomationRunSnapshot["definition"],
     opencode: WorkspaceOpencodeClient,
+    workspaceId: string,
   ): Promise<void> {
     let readProviders = false;
     for (let attempt = 0; attempt < INITIAL_CONVERSATION_MODEL_ATTEMPTS; attempt += 1) {
@@ -272,7 +274,8 @@ export class AutomationExecutor {
         readProviders = true;
         if (definition.model.mode === "auto") return;
         const model = definition.model;
-        const provider = providers.data.all.find((item) => item.id === model.providerId);
+        const catalog = await this.options.filterProviderCatalog?.(workspaceId, providers.data) ?? providers.data;
+        const provider = catalog.all.find((item) => item.id === model.providerId);
         if (provider && Object.prototype.hasOwnProperty.call(provider.models, model.modelId)) return;
       }
       if (attempt + 1 < INITIAL_CONVERSATION_MODEL_ATTEMPTS) {
@@ -744,7 +747,8 @@ export class AutomationExecutor {
     if (definition.model.mode === "explicit") {
       const model = definition.model;
       const providers = await opencode.provider.list();
-      const providerList = providers.data?.all ?? [];
+      const catalog = providers.data && (await this.options.filterProviderCatalog?.(workspace.id, providers.data) ?? providers.data);
+      const providerList = catalog?.all ?? [];
       const provider = providerList.find((item) => item.id === model.providerId);
       if (!provider || !Object.prototype.hasOwnProperty.call(provider.models, model.modelId)) {
         throw failure("model_unavailable", "指定模型当前不可用");

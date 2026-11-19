@@ -29,9 +29,12 @@ async function resolveExternalFetch(): Promise<ExternalFetch> {
   return globalFetch;
 }
 
-export function externalFetch(input: string, init?: RequestInit): Promise<Response> {
+export function externalFetch(input: string, init?: RequestInit, beforeDispatch?: () => void): Promise<Response> {
   externalFetchPromise ??= resolveExternalFetch();
-  return externalFetchPromise.then((resolvedFetch) => resolvedFetch(input, init));
+  return externalFetchPromise.then((resolvedFetch) => {
+    beforeDispatch?.();
+    return resolvedFetch(input, init);
+  });
 }
 
 /**

@@ -15,16 +15,17 @@ import { CloudProfileStore, cloudProfilePath } from "./cloud-profiles.js";
 import { normalizeCloudUrl } from "./cloud-url.js";
 import { modelFitsAvailablePoints } from "./managed-points.js";
 import { availableModels } from "./model-catalog.js";
+import { confirmOwnedManagedProviders, hasManagedProviderAuthority, suspendOwnedManagedProviders, type ManagedProviderApi, type ManagedProviderCloud } from "./managed-provider-scope.js";
 import { importProvider, removeProvider } from "./provider-command.js";
 import type { CliRenderer } from "./render.js";
 
-type SyncApi = Pick<JuggleWorkApiClient,
+type SyncApi = ManagedProviderApi & Pick<JuggleWorkApiClient,
   "workspaceConfig" | "providerList" | "providerStatus" | "preflightProviderAuthority" |
   "upsertUserEnvironment" | "removeUserEnvironment" | "setCloudProviderMirror" | "removeCloudProviderMirror" | "setProviderAuth" | "removeProviderAuth" |
   "patchCloudProviderConfig" | "reloadEngine" | "getCloudProviderImport" | "setCloudProviderImport" | "removeCloudProviderImport"
 >;
 
-type SyncCloud = Pick<CloudClient, "organizationState" | "providers" | "providerConnection" | "catalog" | "tenantAccount">;
+type SyncCloud = ManagedProviderCloud & Pick<CloudClient, "providers" | "providerConnection" | "catalog" | "tenantAccount">;
 type SyncStore = Pick<CloudProfileStore, "get" | "rememberedOrganization" | "selectOrganization">;
 type SyncRenderer = Pick<CliRenderer, "info" | "warn" | "registerSecretValues">;
 
@@ -77,6 +78,8 @@ export async function synchronizeCloudRuntime(input: {
 }): Promise<CloudRuntimeSyncResult> {
   const { options, api, workspace, renderer } = input;
   const empty = { organizationId: null, autoModel: null, imported: [], removed: [] };
+  const owned = input.ownedRuntime !== false;
+  const revision = owned ? await suspendOwnedManagedProviders(api, workspace.id) : null;
   // An environment token is intentionally temporary; never persist its credentials into a workspace.
   if (options.cloudToken) return empty;
   const urls = normalizeCloudUrl(options.cloudUrl);
@@ -114,6 +117,15 @@ export async function synchronizeCloudRuntime(input: {
       throw error;
     }
   }
+  // A connected CLI must not change the Desktop host's identity or overwrite
+  // its credentials with the CLI profile. It can use the host's current list.
+  if (!owned && (providers.length || Object.keys(previous).length) && await hasManagedProviderAuthority(api)) {
+    return { ...empty, organizationId: organization.id };
+  }
+  const authorityId = revision !== null && (providers.length || Object.keys(previous).length)
+    ? await confirmOwnedManagedProviders({ api, cloud, token: profile.token, workspaceId: workspace.id, organizationId: organization.id,
+      activeOrgId: state.activeOrgId, deployment: urls.apiBaseUrl, revision, expectedUserId: profile.user?.id })
+    : undefined;
   const liveIds = new Set(providers.map((provider) => provider.id));
   const removed: string[] = [];
   for (const old of Object.values(previous)) {
@@ -128,11 +140,11 @@ export async function synchronizeCloudRuntime(input: {
     const providerId = getCloudManagedProviderId(provider);
     const baseline = previous[provider.id];
     const status = await api.providerStatus(workspace.id, providerId);
-    const needsImport = !baseline || isCloudProviderOutOfSync(provider, baseline, organization.id) || !status.loaded || !status.authenticated || status.enabled === false;
+    const needsImport = !baseline || (authorityId !== undefined && baseline.authorityId !== authorityId) || isCloudProviderOutOfSync(provider, baseline, organization.id) || !status.loaded || !status.authenticated || status.enabled === false;
     if (needsImport) {
       const updated = await importProvider({
         cloud, runtime: api, token: profile.token, organizationId: organization.id,
-        workspaceId: workspace.id, cloudProviderId: provider.id,
+        workspaceId: workspace.id, cloudProviderId: provider.id, authorityId,
         registerSecrets: (values) => renderer.registerSecretValues(values),
       });
       statuses.set(providerId, updated);
@@ -142,9 +154,27 @@ export async function synchronizeCloudRuntime(input: {
     }
   }
 
-  const selectable = providers.length
-    ? new Set(availableModels(await api.providerList(workspace.id)).map((model) => model.id))
-    : new Set<string>();
+  const inventoryReady = providers.every((provider) => {
+    const status = statuses.get(getCloudManagedProviderId(provider));
+    return provider.models.length === 0 || Boolean(status?.loaded && status.authenticated && status.enabled !== false &&
+      provider.models.every((model) => status.models.some((entry) => entry.id === model.id && entry.enabled)));
+  });
+  if (authorityId && inventoryReady && providers.length) await api.setManagedProviderReadiness(workspace.id, authorityId, true);
+  const selectable = await (async () => {
+    if (!providers.length || (authorityId && !inventoryReady)) return new Set<string>();
+    try {
+      const catalog = await api.providerList(workspace.id);
+      if (authorityId && providers.some((provider) => {
+        const id = getCloudManagedProviderId(provider);
+        const entry = catalog.all?.find((item) => item.id === id);
+        return provider.models.length > 0 && (!catalog.connected?.includes(id) || provider.models.some((model) => !Object.hasOwn(entry?.models ?? {}, model.id)));
+      })) throw new Error("Organization models could not be verified in the runtime catalog.");
+      return new Set(availableModels(catalog).map((model) => model.id));
+    } catch (error) {
+      if (authorityId) await api.setManagedProviderReadiness(workspace.id, authorityId, false).catch(() => undefined);
+      throw error;
+    }
+  })();
   const preferred = recommendedModel(providers, statuses, selectable, availablePoints);
   const preferredProvider = providers.find((provider) => getCloudManagedProviderId(provider) === preferred?.split("/")[0]);
   const preferredLabel = preferred && preferredProvider
@@ -182,6 +212,7 @@ export async function synchronizeCloudRuntime(input: {
 }
 
 export async function removeImportedCloudRuntimeProviders(api: SyncApi, workspace: WorkspaceInfo): Promise<string[]> {
+  await api.fenceManagedProviderAuthority();
   const existing = importedCloudProviders(await api.workspaceConfig(workspace.id));
   const removed: string[] = [];
   for (const item of Object.values(existing)) {

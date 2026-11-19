@@ -35,7 +35,7 @@ import {
   type DenUser,
 } from "../../../app/lib/den";
 import { classifyAccountTransition, reconcileDenAccountIdentity } from "./den-account-switch";
-import { runOrganizationCloudCleanup } from "../connections/provider-auth/cloud-provider-cleanup";
+import { fenceManagedProviderHost } from "../../../app/lib/managed-provider-scope";
 import { exchangeHandoffAndSignIn } from "../../../app/lib/den-handoff";
 import {
   denSessionRevokedEvent,
@@ -291,7 +291,9 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
     const run = (async () => {
       const client = createDenClient({ baseUrl: settings.baseUrl, token });
       const response = await client.listOrgs();
-      if (generation !== accountRefreshGenerationRef.current) return;
+      const live = readDenSettings();
+      if (generation !== accountRefreshGenerationRef.current || live.authToken !== token || live.baseUrl !== settings.baseUrl || live.activeOrgId !== settings.activeOrgId) return;
+      const serverActive = response.orgs.find((organization) => organization.id === response.activeOrgId);
       const active = resolveDenDefaultOrganization(response.orgs, {
         rememberedOrgId: readDenLastOrganization(readDenUserId()),
         currentOrgId: settings.activeOrgId,
@@ -301,19 +303,17 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
       });
       setOrganizations(response.orgs);
       setActiveOrganization(active);
+      // A menu fallback is not evidence of an active Cloud organization.
+      // Only bootstrap or an explicit switch may establish that identity.
+      writeDenSettings({ ...settings, activeOrgId: serverActive?.id ?? null,
+        activeOrgSlug: serverActive?.slug ?? null, activeOrgName: serverActive?.name ?? null }, { persistBootstrap: false });
       if (!active) {
         setTenantAccount(null);
         accountSnapshotRef.current = true;
         accountLastRefreshAtRef.current = Date.now();
         return;
       }
-      writeDenSettings({
-        ...settings,
-        activeOrgId: active.id,
-        activeOrgSlug: active.slug,
-        activeOrgName: active.name,
-      }, { persistBootstrap: false });
-      writeDenLastOrganization(readDenUserId(), active.id);
+      if (serverActive) writeDenLastOrganization(readDenUserId(), serverActive.id);
       // Older Den deployments may not expose tenant accounts yet. Keep the
       // identity and organization menu usable while tier/balance degrades to
       // the directory summary or an em dash.
@@ -343,7 +343,7 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
     const settings = readDenSettings();
     const token = settings.authToken?.trim() ?? "";
     if (!token) throw new Error(t("den.signed_out"));
-    if (next.id === activeOrganization?.id || next.id === settings.activeOrgId?.trim()) return;
+    if (next.id === settings.activeOrgId?.trim()) return;
 
     accountRefreshGenerationRef.current += 1;
     const generation = ++organizationSwitchGenerationRef.current;
@@ -355,7 +355,6 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
       const docs = await window.__JUGGLEWORK_ELECTRON__?.cloudDocs?.close(undefined, { requireSaved: true });
       if (docs?.closed === false) throw new Error(t("cloud_docs.close_save_pending"));
       await closeToonFactoryForDenSession(authorityChange);
-      await runOrganizationCloudCleanup();
       if (generation !== organizationSwitchGenerationRef.current) return;
       const client = createDenClient({ baseUrl: settings.baseUrl, token });
       // TIPS: 这次切换的响应里带着新组织重新供给的 IM 凭据（可能是 null，比如切进一个
@@ -395,7 +394,7 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
       if (generation === organizationSwitchGenerationRef.current)
         setAccountBusy(false);
     }
-  }, [activeOrganization?.id, organizations]);
+  }, [organizations]);
 
   const signOut = useCallback(async () => {
     if (signOutBusy) return;
@@ -405,9 +404,14 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
     // renderer session before attempting remote revocation so an expired token,
     // unavailable Den, or proxy-generated 401 cannot strand the old app UI.
     refreshTokenRef.current += 1;
+    organizationSwitchGenerationRef.current += 1;
+    accountRefreshGenerationRef.current += 1;
     setSignOutBusy(true);
-    await window.__JUGGLEWORK_ELECTRON__?.cloudDocs?.close();
+    // Clear the local identity before the first await so background sync cannot
+    // re-confirm the just-fenced scope during document cleanup.
     clearDenSession();
+    await fenceManagedProviderHost().catch(() => undefined);
+    await window.__JUGGLEWORK_ELECTRON__?.cloudDocs?.close();
     clearAccountState();
     setAccountBusy(false);
     setPendingServerSwitch(null);
@@ -466,6 +470,7 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
       // before anything reads it under the new account.
       const accountTransition = classifyAccountTransition(readDenUserId(), nextUser?.id);
       if (accountTransition === "switched") {
+        await fenceManagedProviderHost().catch(() => undefined);
         organizationSwitchGenerationRef.current += 1;
         await window.__JUGGLEWORK_ELECTRON__?.cloudDocs?.close();
         await closeToonFactoryForDenSession(
@@ -498,6 +503,7 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
       if (currentRun !== refreshTokenRef.current) return;
 
       const failureStatus = resolveDenAuthFailureStatus(nextError);
+      void fenceManagedProviderHost().catch(() => undefined);
       if (failureStatus === "signed_out") {
         clearDenSession();
         clearAccountState();
@@ -538,6 +544,7 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
       // while the fingerprint comparison prevents a late 401 from an older
       // account from signing out a newly authenticated session.
       refreshTokenRef.current += 1;
+      void fenceManagedProviderHost().catch(() => undefined);
       clearDenSession();
       clearAccountState();
       setAccountBusy(false);

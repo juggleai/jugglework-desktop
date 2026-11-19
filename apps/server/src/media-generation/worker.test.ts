@@ -7,6 +7,10 @@ import { automationSqliteAdapter } from "../automation/sqlite.js";
 import { MediaGenerationRepository } from "./repository.js";
 import { MediaGenerationWorker } from "./worker.js";
 import type { VideoGenerationAdapter } from "./types.js";
+import { MediaGenerationService } from "./service.js";
+import { OpenAiCompatibleVideoAdapter } from "./openai-compatible-adapter.js";
+import { VolcengineArkV3VideoAdapter } from "./volcengine-ark-v3-adapter.js";
+import { VideoSubmissionError } from "./redaction.js";
 
 const cleanup: Array<() => void | Promise<void>> = [];
 afterEach(async () => { while (cleanup.length) await cleanup.pop()?.(); });
@@ -22,6 +26,47 @@ const mp4 = new Uint8Array([0, 0, 0, 24, 102, 116, 121, 112, 105, 115, 111, 109]
 const binding = { adapterId: "fake", protocol: "openai", origin: "https://api.example.test", configFingerprint: "config", cloudProviderId: null, organizationId: null };
 
 describe("MediaGenerationWorker", () => {
+  test.each([OpenAiCompatibleVideoAdapter, VolcengineArkV3VideoAdapter])("blocks new submission after credential resolution while retaining an accepted job's polling transport", async (Adapter) => {
+    const repo = repository();
+    const root = await mkdtemp(join(tmpdir(), "jugglework-worker-scope-"));
+    cleanup.push(() => rm(root, { recursive: true, force: true }));
+    const workspace = { id: "ws", path: root } as never;
+    const model = { providerID: "lpr_fixture", modelID: "video" };
+    const worker = new MediaGenerationWorker({ repository: repo, resolveAdapters: async () => [], workspaceRoot: () => root, pollIntervalMs: 5 });
+    const requests: Request[] = [];
+    const original = globalThis.fetch;
+    globalThis.fetch = Object.assign(async (url: string, init?: RequestInit) => {
+      const request = new Request(url, init);
+      expect(new URL(url).origin).toBe("https://provider.example.test");
+      requests.push(request);
+      if (request.method === "POST") return Response.json({ id: "only-this-job" });
+      expect(request.url).toEndWith("/only-this-job");
+      return Response.json({ status: "failed" });
+    }, original) as typeof fetch;
+    let current = true;
+    let fenceOnCredentialRead = false;
+    const adapter = new Adapter({ providerID: model.providerID, modelIDs: [model.modelID], baseURL: "https://provider.example.test/v1",
+      credential: async () => { if (fenceOnCredentialRead) current = false; return "fixture-model-credential"; },
+      beforeDispatch: () => { if (!current) throw new VideoSubmissionError("rejected", "managed_provider_scope_unavailable", "Scope changed"); },
+    });
+    const service = new MediaGenerationService({ repository: repo, adapters: [adapter], submissionEnabled: true, onSubmitted: (job, transport) => worker.rememberAdapter(job, transport) });
+    worker.start();
+    try {
+      const input = { workspace, model, mode: "text-to-video" as const, prompt: "waves" };
+      const accepted = await service.submit({ ...input, clientRequestId: "before-switch" });
+      expect(accepted.status).toBe("submitted");
+      fenceOnCredentialRead = true;
+      const denied = await service.submit({ ...input, clientRequestId: "during-switch" });
+      expect(denied.error?.code).toBe("managed_provider_scope_unavailable");
+      for (let attempt = 0; attempt < 80 && repo.get(accepted.id)?.status !== "failed"; attempt++) await Bun.sleep(5);
+      expect(repo.get(accepted.id)?.error?.code).toBe("video_provider_failed");
+      expect(requests.map((request) => request.method)).toEqual(["POST", "GET"]);
+    } finally {
+      await worker.dispose();
+      globalThis.fetch = original;
+    }
+  });
+
   test("retries unknown polling status without resubmitting and eventually downloads", async () => {
     const repo = repository();
     const root = await mkdtemp(join(tmpdir(), "jugglework-worker-retry-")); cleanup.push(() => rm(root, { recursive: true, force: true }));

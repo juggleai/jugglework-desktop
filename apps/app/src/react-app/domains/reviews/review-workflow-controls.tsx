@@ -10,6 +10,8 @@ import type { ReviewConnectionStatus, ReviewMutationInput, ReviewRun } from "@ju
 import type { ReviewPreview } from "./review-types";
 import { useCloudSession } from "../settings/cloud/cloud-session-provider";
 import { readStoredDefaultModel } from "@/react-app/kernel/model-config";
+import { managedProviderEpoch, managedProviderSwitchPending, useManagedProviderCatalogRevision, useManagedProviderEpoch } from "@/app/lib/managed-provider-scope";
+import { isManagedProvider } from "@jugglework/types/provider-credentials";
 
 const text = (en: string, zh: string) => currentLocale() === "zh" ? zh : en;
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
@@ -53,7 +55,12 @@ export function ReviewWorkflowControls(props: {
     staleTime: 10_000,
     refetchInterval: (query) => props.active && query.state.data?.run?.status === "running" ? 3_000 : false,
   });
-  const dependencies = useQuery({ queryKey: ["review-models", endpoint.baseUrl, endpoint.workspaceId], queryFn: () => endpoint.client.listAutomationDependencies(endpoint.workspaceId), enabled: dialog === "ai", staleTime: 60_000 });
+  const modelScopeEpoch = useManagedProviderEpoch();
+  const catalogRevision = useManagedProviderCatalogRevision();
+  const dependencies = useQuery({ queryKey: ["review-models", endpoint.baseUrl, endpoint.workspaceId, modelScopeEpoch, catalogRevision], queryFn: async () => {
+    const result = await endpoint.client.listAutomationDependencies(endpoint.workspaceId);
+    return modelScopeEpoch === managedProviderEpoch() && !managedProviderSwitchPending() ? result : { ...result, models: result.models.filter((item) => !isManagedProvider(item.providerId)) };
+  }, enabled: dialog === "ai", staleTime: 60_000 });
   const run = runs.data?.run;
   const relatedSessions = [
     ...(run?.sessionId ? [{ id: run.sessionId, kind: "review" as const, revision: run.headRevision }] : []),
@@ -73,8 +80,12 @@ export function ReviewWorkflowControls(props: {
     retry: false,
     onMutate: () => ({ scope }),
     mutationFn: () => {
+      if (modelScopeEpoch !== managedProviderEpoch()) throw new Error(text("The model scope changed. Choose a model again.", "模型所属身份已变化，请重新选择模型。"));
       const chosen = dependencies.data?.models.find((item) => `${item.providerId}/${item.modelId}` === model);
       const selectedModel = chosen ? { providerID: chosen.providerId, modelID: chosen.modelId } : readStoredDefaultModel();
+      if (selectedModel && isManagedProvider(selectedModel.providerID) && (managedProviderSwitchPending() || !dependencies.data?.models.some((item) => item.providerId === selectedModel.providerID && item.modelId === selectedModel.modelID))) {
+        throw new Error(text("The selected managed model is not available.", "所选托管模型当前不可用。"));
+      }
       return endpoint.client.startReviewRun(endpoint.workspaceId, review.id, { expectedHeadRevision: review.headRevision, ...(selectedModel ? { model: selectedModel } : {}) });
     },
     onSuccess: (data, _variables, context) => {

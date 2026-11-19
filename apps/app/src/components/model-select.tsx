@@ -46,7 +46,7 @@ function getProviderDisplayName(providerId: string) {
     .join(" ");
 }
 
-function useModelOptions(open: boolean) {
+function useModelOptions(open: boolean, fileWindow: boolean) {
   const { client, opencodeBaseUrl, selectedWorkspaceRoot } = useWorkspace();
   const checkDesktopRestriction = useCheckDesktopRestriction();
   const allowedModels = useDesktopAllowedModels();
@@ -72,7 +72,7 @@ function useModelOptions(open: boolean) {
     return () => window.removeEventListener(newProvidersEvent, handler);
   }, [client, refetch]);
 
-  const pickerProviders = usePickerProviderItems(data);
+  const pickerProviders = usePickerProviderItems(data, { fileWindow });
 
   // Apply org-level restrictions (dev #1505) on top of the raw model list
   // so the picker never surfaces blocked options:
@@ -196,7 +196,7 @@ export function ModelSelect({
 }: ModelSelectProps) {
   const [search, setSearch] = React.useState("");
   const searchInputRef = React.useRef<HTMLInputElement>(null);
-  const modelOptions = useModelOptions(open);
+  const modelOptions = useModelOptions(open, restrictedHost);
 
   const focusSearchInput = React.useCallback(() => {
     window.requestAnimationFrame(() => {

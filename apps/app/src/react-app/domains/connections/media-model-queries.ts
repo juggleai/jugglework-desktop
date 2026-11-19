@@ -4,6 +4,8 @@ import { parseComposerImageModels, imageModelKey, type ComposerImageModelOption 
 import { parseComposerVideoModels, videoModelKey, type ComposerVideoModelOption } from "../session/surface/composer/video-generation";
 import { generationDraftAvailable } from "../session/surface/composer/generation-model-reconciliation";
 import type { QueryClient, QueryKey } from "@tanstack/react-query";
+import { managedProviderCatalogRevision, managedProviderConfirmationCurrent, managedProviderEpoch } from "@/app/lib/managed-provider-scope";
+import { isManagedProvider } from "@jugglework/types/provider-credentials";
 
 import type { ProviderAuthStore } from "./provider-auth/store";
 
@@ -29,7 +31,14 @@ export function mediaModelQueryScope(input: MediaModelQueryScope): MediaModelQue
   };
 }
 
-function mediaModelQueryKey(kind: "image" | "video", scope: MediaModelQueryScope): QueryKey {
+const captureMediaCatalog = () => ({ epoch: managedProviderEpoch(), revision: managedProviderCatalogRevision() });
+type MediaCatalog = ReturnType<typeof captureMediaCatalog>;
+// Epochs restart with the renderer; persisted drafts must not match a new process by accident.
+const rendererScope = Array.from(globalThis.crypto.getRandomValues(new Uint32Array(4))).join("-");
+export const managedMediaScope = (epoch = managedProviderEpoch()) => `${rendererScope}:${epoch}`;
+export const isManagedMediaModel = (model: { providerID: string; managed?: boolean }) => model.managed === true || isManagedProvider(model.providerID);
+
+function mediaModelQueryKey(kind: "image" | "video", scope: MediaModelQueryScope, catalog = captureMediaCatalog()): QueryKey {
   const normalized = mediaModelQueryScope(scope);
   return [
     ...MEDIA_MODEL_QUERY_ROOT,
@@ -37,11 +46,21 @@ function mediaModelQueryKey(kind: "image" | "video", scope: MediaModelQueryScope
     normalized.endpoint,
     normalized.workspaceId,
     normalized.workspaceRoot,
+    catalog.epoch,
+    catalog.revision,
   ] as const;
 }
 
 export const imageModelQueryKey = (scope: MediaModelQueryScope) => mediaModelQueryKey("image", scope);
 export const videoModelQueryKey = (scope: MediaModelQueryScope) => mediaModelQueryKey("video", scope);
+
+function mediaCatalogCurrent(catalog: MediaCatalog) {
+  return managedProviderConfirmationCurrent(catalog.epoch) && catalog.revision === managedProviderCatalogRevision();
+}
+
+function visibleMediaModels<T extends { providerID: string; managed?: boolean }>(models: T[], catalog: MediaCatalog) {
+  return mediaCatalogCurrent(catalog) ? models : models.filter((model) => !isManagedMediaModel(model));
+}
 
 export async function invalidateMediaModelQueries(
   queryClient: QueryClient,
@@ -140,7 +159,8 @@ export function withProviderMediaModelRefresh(
 
 /** 主输入栏及后台队列共用image模型发现，使用目标工作区的服务与目录。 */
 export function imageModelsQueryOptions(client: JuggleWorkServerClient, scope: MediaModelQueryScope) {
-  return { queryKey: imageModelQueryKey(scope),
+  const catalog = captureMediaCatalog();
+  return { queryKey: mediaModelQueryKey("image", scope, catalog),
     queryFn: async () => {
       const response = await client.callExtensionAction({
         extensionId: "openai-image-generation",
@@ -152,7 +172,7 @@ export function imageModelsQueryOptions(client: JuggleWorkServerClient, scope: M
         },
       });
       if (!response.ok) throw new Error(response.message);
-      return parseComposerImageModels(response.result);
+      return visibleMediaModels(parseComposerImageModels(response.result), catalog);
     },
     staleTime: 30_000, retry: 1,
   };
@@ -160,7 +180,8 @@ export function imageModelsQueryOptions(client: JuggleWorkServerClient, scope: M
 
 /** 主输入栏及后台队列共用video模型发现，使用目标工作区的服务与目录。 */
 export function videoModelsQueryOptions(client: JuggleWorkServerClient, scope: MediaModelQueryScope) {
-  return { queryKey: videoModelQueryKey(scope),
+  const catalog = captureMediaCatalog();
+  return { queryKey: mediaModelQueryKey("video", scope, catalog),
     queryFn: async () => {
       const context = {
         workspaceId: scope.workspaceId,
@@ -186,7 +207,7 @@ export function videoModelsQueryOptions(client: JuggleWorkServerClient, scope: M
         ? statusResponse.result as Record<string, unknown>
         : null;
       if (status?.submissionEnabled !== true) return [];
-      return parseComposerVideoModels(modelsResponse.result);
+      return visibleMediaModels(parseComposerVideoModels(modelsResponse.result), catalog);
     },
     staleTime: 30_000, retry: 1,
   };
@@ -194,8 +215,11 @@ export function videoModelsQueryOptions(client: JuggleWorkServerClient, scope: M
 
 /** 在异步准备后复查原目标的生成模型；无生成选项时不发起额外探测。 */
 export function generationDraftAvailableInCache(query: QueryClient, scope: MediaModelQueryScope, draft: ComposerDraft) {
-  const imageKey = imageModelQueryKey(scope), videoKey = videoModelQueryKey(scope);
+  const catalog = captureMediaCatalog();
+  const imageKey = mediaModelQueryKey("image", scope, catalog), videoKey = mediaModelQueryKey("video", scope, catalog);
   const unavailable = (key: QueryKey) => { const state = query.getQueryState(key); return !state || state.status !== "success" || state.fetchStatus !== "idle" || state.isInvalidated; };
-  return generationDraftAvailable({ selection: draft.imageGeneration, models: query.getQueryData<ComposerImageModelOption[]>(imageKey) ?? [], unavailable: unavailable(imageKey), modelKey: imageModelKey })
-    && generationDraftAvailable({ selection: draft.videoGeneration, models: query.getQueryData<ComposerVideoModelOption[]>(videoKey) ?? [], unavailable: unavailable(videoKey), modelKey: videoModelKey });
+  const matchesScope = <T extends { providerID: string; managed?: boolean }>(models: T[], scope?: string) => visibleMediaModels(models, catalog)
+    .filter((model) => scope || isManagedMediaModel(model) ? scope === managedMediaScope(catalog.epoch) : true);
+  return generationDraftAvailable({ selection: draft.imageGeneration, models: matchesScope(query.getQueryData<ComposerImageModelOption[]>(imageKey) ?? [], draft.imageGeneration?.managedScope), unavailable: unavailable(imageKey), modelKey: imageModelKey })
+    && generationDraftAvailable({ selection: draft.videoGeneration, models: matchesScope(query.getQueryData<ComposerVideoModelOption[]>(videoKey) ?? [], draft.videoGeneration?.managedScope), unavailable: unavailable(videoKey), modelKey: videoModelKey });
 }

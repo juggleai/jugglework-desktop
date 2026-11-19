@@ -20,6 +20,8 @@ import { SessionSurface } from "../surface/session-surface";
 import { useModelBehavior } from "../surface/use-model-behavior";
 import { t } from "@/i18n";
 import { activeFileWindowTab, fileWindowSourceKey, projectFileWindowSource } from "./file-window-source";
+import { invalidateManagedProviderScope, managedProviderEpoch, useManagedProviderEpoch } from "@/app/lib/managed-provider-scope";
+import { isManagedProvider } from "@jugglework/types/provider-credentials";
 
 /** Main 仅给已登记真实会话提供 conversation，包含默认工作区中的外部文件会话。 */
 export function hasFileWindowConversation(state: FileWindowState | null): state is FileWindowState & { conversation: NonNullable<FileWindowState["conversation"]> } {
@@ -50,6 +52,8 @@ export function FileWindowConversation({ state: windowState, client, bridge, vis
 }) {
   const state = projectFileWindowSource(windowState);
   const sourceTabs = state.tabs.filter((tab) => fileWindowSourceKey(tab.source) === fileWindowSourceKey(state));
+  const providerEpoch = useManagedProviderEpoch();
+  React.useEffect(() => bridge.onProviderCatalogChanged?.(invalidateManagedProviderScope), [bridge]);
   React.useEffect(() => {
     // A new child's first event can precede Main's ancestry proof. Read the
     // existing root snapshot even while SSE stays healthy; never trust that event.
@@ -85,7 +89,9 @@ export function FileWindowConversation({ state: windowState, client, bridge, vis
   // TIPS: 历史模型可能附带 variant；身份字段和档位分别提交，不能把历史扩展字段透传到受限桥。
   const historyModel = lastUser?.role === "user" ? lastUser.model : null;
   const preferred = choice ?? (historyModel ? { providerID: historyModel.providerID, modelID: historyModel.modelID } : null);
-  const model = preferred ?? resolveConnectedProviderModel(providers.data, null, { isAllowed: ({ model }) => isAllowed(model) });
+  const model = preferred && !isManagedProvider(preferred.providerID)
+    ? preferred
+    : resolveConnectedProviderModel(providers.data, preferred, { isAllowed: ({ model }) => isAllowed(model) });
   const { modelVariantValue, modelVariantLabel, modelBehaviorOptions } = useModelBehavior({
     providerList: providers.data, defaultModel: model, modelVariant: variant === undefined ? historyModel?.variant ?? null : variant,
   });
@@ -102,7 +108,7 @@ export function FileWindowConversation({ state: windowState, client, bridge, vis
     sessionId: state.sessionId, workspaceId: state.workspaceId, workspaceRoot: state.workspaceRoot,
     client: sdk, host: client, endpoint: null, hostKind: "file", workspaceType: "local",
     agent, systemContext: fileWindowSubmissionContext(state),
-    canSubmit: () => mounted.current && hasFileWindowConversation(current.current.state) && Boolean(model && current.current.isAllowed(model) && isModelAvailableInConnectedProviders(current.current.providers, model)),
+    canSubmit: () => providerEpoch === managedProviderEpoch() && mounted.current && hasFileWindowConversation(current.current.state) && Boolean(model && current.current.isAllowed(model) && isModelAvailableInConnectedProviders(current.current.providers, model)),
     prepare: async () => ({ model, variant: modelVariantValue }),
     cloudSubmit: async (input) => {
       if (!input.skipGate) throw new Error(t("file_window.operation_unavailable"));
@@ -110,10 +116,10 @@ export function FileWindowConversation({ state: windowState, client, bridge, vis
       return submitWithoutCloudMcpGate(input.send);
     },
     captureContext: () => ({
-      isCurrent: () => mounted.current && current.current.state.workspaceId === state.workspaceId && current.current.state.sessionId === state.sessionId,
+      isCurrent: () => providerEpoch === managedProviderEpoch() && mounted.current && current.current.state.workspaceId === state.workspaceId && current.current.state.sessionId === state.sessionId,
       validateGeneration: (draft) => !draft.imageGeneration && !draft.videoGeneration,
     }),
-  }), [state, sdk, client, model, agent, modelVariantValue]);
+  }), [state, sdk, client, model, agent, modelVariantValue, providerEpoch]);
   const listAgents = React.useCallback(async () => unwrap(await sdk.app.agents()).filter((agent) => !agent.hidden && agent.mode !== "subagent"), [sdk]);
   const searchFiles = async (query: string) => sourceTabs.filter((tab) => tab.path.toLowerCase().includes(query.toLowerCase())).map((tab) => tab.path);
   const navigateMain = () => { void bridge.action("open-session", state.activeTabId ?? undefined); };

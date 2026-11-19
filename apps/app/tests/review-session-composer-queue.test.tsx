@@ -6,6 +6,7 @@ import TestRenderer, { act } from "react-test-renderer";
 import type { ResolvedWorkspaceEndpoint } from "../src/app/lib/workspace-endpoint";
 import type { JuggleWorkSessionMessage } from "../src/app/lib/jugglework-server";
 import type { ReactSessionComposer } from "../src/react-app/domains/session/surface/composer/composer";
+import { invalidateManagedProviderScope } from "../src/app/lib/managed-provider-scope";
 
 type ComposerProps = ComponentProps<typeof ReactSessionComposer>;
 function Composer(props: ComposerProps) { return <div>{props.topAccessory}</div>; }
@@ -28,9 +29,11 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 const start = mock(async (_workspace: string, _session: string, _request: Request): Promise<unknown> => ({}));
 const messages = mock(async (_workspace: string, _session: string): Promise<{ items: JuggleWorkSessionMessage[] }> => ({ items: [] }));
 const submitted = mock(async () => {});
+type DependencyModels = Awaited<ReturnType<ResolvedWorkspaceEndpoint["client"]["listAutomationDependencies"]>>["models"];
+let models: DependencyModels = [];
 const endpoint = {
   workspaceId: "source-workspace", opencodeBaseUrl: "http://localhost:1234",
-  client: { startSessionRun: start, getSessionMessages: messages, listAutomationDependencies: async () => ({ models: [] }) },
+  client: { startSessionRun: start, getSessionMessages: messages, listAutomationDependencies: async () => ({ models }) },
 } as unknown as ResolvedWorkspaceEndpoint;
 let view: TestRenderer.ReactTestRenderer;
 let props: Props;
@@ -61,6 +64,7 @@ async function failQueued() {
   await update({ busy: false });
 }
 beforeEach(() => {
+  models = [];
   start.mockReset(); start.mockImplementation(async () => ({}));
   messages.mockReset(); messages.mockImplementation(async () => ({ items: [] }));
   submitted.mockReset(); submitted.mockImplementation(async () => {});
@@ -224,6 +228,18 @@ test("switching directly to an idle session cannot drain the previous session's 
   expect(start).not.toHaveBeenCalled();
   expect(composer().queuedCount).toBe(0);
   expect(view.root.findAllByProps({ role: "alert" })).toHaveLength(0);
+});
+
+test("a queued review cannot reuse a managed model ID after the provider scope changes", async () => {
+  models = [{ providerId: "lpr_shared", modelId: "model", providerName: "Managed", modelName: "Model", variants: [] }];
+  await render();
+  await act(async () => { composer().onModelChange({ providerID: "lpr_shared", modelID: "model" }); });
+  await queue("keep this draft");
+  await act(async () => { invalidateManagedProviderScope(); });
+  await update({ busy: false });
+  expect(start).not.toHaveBeenCalled();
+  expect(composer().queuedCount).toBe(1);
+  expect(JSON.stringify(view.toJSON())).toContain("No queued request was sent");
 });
 
 test("StrictMode and rerenders while sending cannot dispatch the head twice", async () => {

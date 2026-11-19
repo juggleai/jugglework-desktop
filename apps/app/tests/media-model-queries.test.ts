@@ -1,12 +1,19 @@
 import { describe, expect, test } from "bun:test";
 import { QueryClient } from "@tanstack/react-query";
+import type { JuggleWorkServerClient } from "../src/app/lib/jugglework-server";
+import type { ComposerDraft } from "../src/app/types";
+import { invalidateManagedProviderScope, notifyManagedProviderCatalogChanged } from "../src/app/lib/managed-provider-scope";
 
 import {
   imageModelQueryKey,
+  imageModelsQueryOptions,
+  generationDraftAvailableInCache,
+  managedMediaScope,
   invalidateMediaModelQueries,
   refreshMediaModelsAfterProviderListTransition,
   runProviderMutationWithMediaRefresh,
   videoModelQueryKey,
+  videoModelsQueryOptions,
   withProviderMediaModelRefresh,
 } from "../src/react-app/domains/connections/media-model-queries";
 
@@ -17,6 +24,52 @@ const scope = {
 };
 
 describe("media model queries", () => {
+  const descriptors = [
+    { ref: { providerID: "lpr_previous", modelID: "model" } },
+    { ref: { providerID: "gateway-alias", modelID: "model" }, managed: true },
+    { ref: { providerID: "explicit-local", modelID: "model" } },
+  ];
+
+  test.each([imageModelsQueryOptions, videoModelsQueryOptions])("late media queries drop managed models, including aliases, while retaining local models", async (options) => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const client = { callExtensionAction: async ({ action }: { action: string }) => {
+      if (action === "status") return { ok: true, result: { submissionEnabled: true } };
+      await gate;
+      return { ok: true, result: { models: descriptors } };
+    } } as unknown as JuggleWorkServerClient;
+    const old = options(client, scope);
+    const pending = old.queryFn();
+    invalidateManagedProviderScope();
+    release();
+    expect((await pending).map((model) => model.providerID)).toEqual(["explicit-local"]);
+    const current = options(client, scope);
+    expect(current.queryKey).not.toEqual(old.queryKey);
+    notifyManagedProviderCatalogChanged();
+    expect(options(client, scope).queryKey).not.toEqual(current.queryKey);
+  });
+
+  test("a new scope cannot drain old or unbound managed image/video drafts even when it has the same models", () => {
+    const query = new QueryClient();
+    const populate = () => {
+      const models = descriptors.map(({ ref, managed }) => ({ ...ref, managed, modelName: "model", providerName: ref.providerID }));
+      query.setQueryData(imageModelQueryKey(scope), models);
+      query.setQueryData(videoModelQueryKey(scope), models);
+    };
+    const base: ComposerDraft = { mode: "prompt", text: "generate", attachments: [], parts: [] };
+    const selection = { model: descriptors[1]!.ref, modelName: "model", providerName: "alias", aspectRatio: "auto" as const };
+    const imageDraft: ComposerDraft = { ...base, imageGeneration: { ...selection, style: "auto", managedScope: managedMediaScope() } };
+    const videoDraft: ComposerDraft = { ...base, videoGeneration: { ...selection, durationSeconds: 5, managedScope: managedMediaScope() } };
+    populate();
+    for (const draft of [imageDraft, videoDraft]) expect(generationDraftAvailableInCache(query, scope, draft)).toBe(true);
+    invalidateManagedProviderScope();
+    populate();
+    for (const draft of [imageDraft, videoDraft]) expect(generationDraftAvailableInCache(query, scope, draft)).toBe(false);
+    expect(generationDraftAvailableInCache(query, scope, { ...base, videoGeneration: { ...selection, durationSeconds: 5 } })).toBe(false);
+    expect(generationDraftAvailableInCache(query, scope, { ...base, imageGeneration: { ...selection, model: descriptors[2]!.ref, style: "auto" } })).toBe(true);
+    query.clear();
+  });
+
   test("invalidates only image and video queries in the captured endpoint/workspace/root scope", async () => {
     const queryClient = new QueryClient();
     const otherScope = { ...scope, workspaceId: "workspace-b", workspaceRoot: "/work/b" };

@@ -7,6 +7,7 @@ import { callOpenAiImageGenerationExtensionAction, downloadPublicImageResult, re
 import { cloudGatewayCredentialEnvName, cloudGatewayMirrorEnvName, cloudGatewayMirrorOwnerId, cloudProviderConfigFingerprint } from "@jugglework/types/provider-credentials";
 import { writeRuntimeOpencodeConfig } from "../runtime-opencode-config-store.js";
 import { writeJuggleWorkWorkspaceConfig } from "../jugglework-workspace-config-store.js";
+import { managedProviderAuthority } from "../managed-provider-authority.js";
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))); mock.restore(); });
@@ -113,6 +114,8 @@ describe("configured OpenAI image generation", () => {
   test("reports a reserved cloud credential ready only with its workspace import baseline", async () => {
     const fx = await fixture();
     const owner = { organizationId: "org_current", cloudProviderId: "lpr_images" };
+    const store = managedProviderAuthority(fx.config);
+    const scope = store.confirm(store.currentRevision(), { organizationId: owner.organizationId, deployment: "https://cloud.example.test", userId: "user", session: "fixture" })!;
     const mirrorKey = cloudGatewayMirrorEnvName(owner);
     const providerConfig = {
       npm: "@ai-sdk/openai-compatible",
@@ -128,13 +131,34 @@ describe("configured OpenAI image generation", () => {
       lpr_images: {
         cloudProviderId: "lpr_images", providerId: "lpr_images", sourceProviderId: "openai",
         name: "Cloud Images", source: "custom", updatedAt: null, modelIds: ["painter"],
-        importedAt: Date.now(), metadataVersion: 10, organizationId: "org_current",
+         importedAt: Date.now(), metadataVersion: 10, organizationId: "org_current",
+         authorityId: scope.id,
         providerConfigFingerprint: cloudProviderConfigFingerprint(providerConfig), gatewayMirror: { ...owner, key: mirrorKey },
       },
     } } }));
     const env = { list: async () => [{ key: mirrorKey, value: "gateway-secret", owner: cloudGatewayMirrorOwnerId(owner) }] } as never;
+    const list = () => callOpenAiImageGenerationExtensionAction(fx.config, env, "image_models_list", { mode: "text-to-image" }, fx.context);
+    expect(await list()).toMatchObject({ result: { models: [] } });
+    expect(store.setWorkspaceReady(scope.id, "ws", true)).toBe(true);
     const ready = await callOpenAiImageGenerationExtensionAction(fx.config, env, "image_models_list", { mode: "text-to-image" }, fx.context) as { result: { models: unknown[] } };
     expect(ready.result.models).toHaveLength(1);
+
+    const send = mock(async () => Response.json({}));
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = send as never;
+    try {
+      let reads = 0;
+      const switchDuringSubmit = { list: async () => {
+        if (++reads === 3) store.fence();
+        return [{ key: mirrorKey, value: "gateway-secret", owner: cloudGatewayMirrorOwnerId(owner) }];
+      } } as typeof env;
+      await expect(callOpenAiImageGenerationExtensionAction(fx.config, switchDuringSubmit, "image_generate", {
+        prompt: "cat", model: { providerID: "lpr_images", modelID: "painter" },
+      }, fx.context)).rejects.toMatchObject({ code: "managed_provider_scope_unavailable" });
+      expect(await list()).toMatchObject({ result: { models: [] } });
+      expect(await callOpenAiImageGenerationExtensionAction(fx.config, env, "image_generate", { prompt: "cat", model: { providerID: "lpr_images", modelID: "painter" } }, fx.context)).toMatchObject({ ok: false, error: "no_image_model_available" });
+      expect(send).not.toHaveBeenCalled();
+    } finally { globalThis.fetch = originalFetch; }
 
     await writeJuggleWorkWorkspaceConfig(fx.config, "ws", (current) => ({ ...current, cloudImports: { providers: {} } }));
     const isolated = await callOpenAiImageGenerationExtensionAction(fx.config, env, "image_models_list", { mode: "text-to-image" }, fx.context) as { result: { models: unknown[] } };

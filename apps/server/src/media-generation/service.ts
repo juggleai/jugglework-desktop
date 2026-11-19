@@ -4,7 +4,7 @@ import { readFile, stat } from "node:fs/promises";
 import type { VideoGenerationMode, VideoModelRef } from "@jugglework/types/media-generation";
 import type { WorkspaceInfo } from "../types.js";
 import { MediaGenerationRepository } from "./repository.js";
-import type { VideoGenerationAdapter, VideoGenerationJob } from "./types.js";
+import type { VideoGenerationAdapter, VideoGenerationJob, VideoReconciliationAdapter } from "./types.js";
 import { redactProviderMessage, VideoSubmissionError } from "./redaction.js";
 
 export type SubmitVideoRequest = {
@@ -40,6 +40,7 @@ export class MediaGenerationService {
     repository: MediaGenerationRepository;
     adapters: VideoGenerationAdapter[];
     submissionEnabled: boolean;
+    onSubmitted?: (job: VideoGenerationJob, adapter: VideoReconciliationAdapter) => void;
     maxDurationSeconds?: number;
     maxConcurrentJobs?: number;
     audit?: (event: { action: string; jobId: string; workspaceId: string; sessionId?: string; providerID: string; modelID: string; mode: VideoGenerationMode; status: string }) => void;
@@ -81,6 +82,7 @@ export class MediaGenerationService {
         prompt: input.prompt.trim(), ...(sourceImage ? { sourceImagePath: sourceImage.path } : {}), options: input.options ?? {},
       }, signal);
       const accepted = this.options.repository.transition(job.id, job.revision, "submitted", { providerJobId: submitted.providerJobId, adapterBinding: adapter.binding, nextPollAt: Date.now() });
+      if (submitted.reconciliation) this.options.onSubmitted?.(accepted, submitted.reconciliation);
       this.options.audit?.({ action: "video_generation_submitted", jobId: accepted.id, workspaceId: accepted.workspaceId, ...(accepted.sessionId ? { sessionId: accepted.sessionId } : {}), providerID: accepted.model.providerID, modelID: accepted.model.modelID, mode: accepted.mode, status: accepted.status });
       return accepted;
     } catch (error) {

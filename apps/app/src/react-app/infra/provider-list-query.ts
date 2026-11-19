@@ -1,5 +1,6 @@
 import { useMemo } from "react";
-import { isCloudGroupRetired } from "@jugglework/cloud-provider";
+import { isManagedProvider } from "@jugglework/types/provider-credentials";
+import { managedProviderEpoch, managedProviderSwitchPending, useManagedProviderEpoch } from "../../app/lib/managed-provider-scope";
 import { readDenSettings, readDenUserId } from "../../app/lib/den";
 import { skipToken, useQuery, type QueryClient } from "@tanstack/react-query";
 
@@ -32,11 +33,13 @@ const connectedProviderSnapshotChanges = new Map<string, ConnectedProviderSnapsh
 export function providerListQueryKey(input: {
   baseUrl?: string | null;
   directory?: string | null;
+  scopeEpoch?: number;
 }) {
   return [
     ...PROVIDER_LIST_QUERY_ROOT,
     input.baseUrl?.trim() ?? "",
     input.directory?.trim() ?? "",
+    input.scopeEpoch ?? managedProviderEpoch(),
   ] as const;
 }
 
@@ -49,14 +52,20 @@ export async function fetchProviderList(input: {
   client: Client;
   baseUrl?: string | null;
   directory?: string | null;
+  scopeEpoch?: number;
 }): Promise<ProviderListResponse> {
+  const epoch = input.scopeEpoch ?? managedProviderEpoch();
   const value = unwrap(
     await input.client.provider.list({
       directory: input.directory?.trim() || undefined,
     }),
   );
-  recordConnectedProviderSnapshot(input, value);
-  return value;
+  const hosted = /\/opencode(?:\/|$)/.test(input.baseUrl ?? "");
+  const all = hosted && epoch === managedProviderEpoch() && !managedProviderSwitchPending() ? value.all : value.all.filter((item) => !isManagedProvider(item.id, item));
+  const ids = new Set(all.map((item) => item.id));
+  const filtered = { ...value, all, connected: value.connected.filter((id) => ids.has(id)), default: Object.fromEntries(Object.entries(value.default ?? {}).filter(([id]) => ids.has(id))) };
+  if (epoch === managedProviderEpoch()) recordConnectedProviderSnapshot(input, filtered);
+  return filtered;
 }
 
 export function getConnectedProviderItems(value: ProviderListResponse | null | undefined) {
@@ -71,15 +80,20 @@ export function getConnectedProviderItems(value: ProviderListResponse | null | u
 // The engine can still report retired groups until a safe instance reload.
 export function cloudGroupCatalogKey() {
   const settings = readDenSettings();
-  return ["enabled-cloud-groups", settings.baseUrl, settings.activeOrgId, readDenUserId()] as const;
+  return ["enabled-cloud-groups", settings.baseUrl, settings.activeOrgId, readDenUserId(), managedProviderEpoch()] as const;
 }
 
-export function usePickerProviderItems(value: ProviderListResponse | null | undefined) {
+export function usePickerProviderItems(value: ProviderListResponse | null | undefined, options?: { fileWindow?: boolean }) {
+  const scopeEpoch = useManagedProviderEpoch();
+  const scopeCurrent = scopeEpoch === managedProviderEpoch() && !managedProviderSwitchPending();
   const catalog = useQuery<string[]>({ queryKey: cloudGroupCatalogKey(), queryFn: skipToken });
+  // The isolated file renderer has no Den authority store. Its workspace
+  // proxy already checks readiness, and Main invalidates its query on changes.
+  const fileWindow = options?.fileWindow === true;
   return useMemo(() => {
     const enabled = catalog.data && new Set(catalog.data);
-    return getConnectedProviderItems(value).filter((provider) => !isCloudGroupRetired(provider.id, enabled));
-  }, [catalog.data, value]);
+    return getConnectedProviderItems(value).filter((provider) => !isManagedProvider(provider.id, provider) || (scopeCurrent && (fileWindow || enabled?.has(provider.id))));
+  }, [catalog.data, fileWindow, scopeCurrent, value]);
 }
 
 export function getConnectedProviderSnapshot(value: ProviderListResponse | null | undefined): ConnectedProviderSnapshot {
@@ -176,6 +190,7 @@ function recordConnectedProviderSnapshot(
   input: {
     baseUrl?: string | null;
     directory?: string | null;
+    scopeEpoch?: number;
   },
   value: ProviderListResponse,
 ) {
@@ -193,8 +208,9 @@ function recordConnectedProviderSnapshot(
 function connectedProviderSnapshotKey(input: {
   baseUrl?: string | null;
   directory?: string | null;
+  scopeEpoch?: number;
 }) {
-  return JSON.stringify(providerListQueryKey(input));
+  return JSON.stringify(providerListQueryKey(input).slice(0, -1));
 }
 
 function dispatchConnectedProviderChanges(
@@ -247,12 +263,14 @@ export function ensureProviderListQuery(
     client: Client;
     baseUrl?: string | null;
     directory?: string | null;
+    scopeEpoch?: number;
     force?: boolean;
   },
 ) {
+  const scopeEpoch = input.scopeEpoch ?? managedProviderEpoch();
   const options = {
-    queryKey: providerListQueryKey(input),
-    queryFn: () => fetchProviderList(input),
+    queryKey: providerListQueryKey({ ...input, scopeEpoch }),
+    queryFn: () => fetchProviderList({ ...input, scopeEpoch }),
     gcTime: PROVIDER_LIST_CACHE_MS,
   };
   if (input.force) {
@@ -273,8 +291,9 @@ export function useProviderListQuery(input: {
   directory?: string | null;
   enabled?: boolean;
 }) {
+  const scopeEpoch = useManagedProviderEpoch();
   return useQuery({
-    queryKey: providerListQueryKey(input),
+    queryKey: providerListQueryKey({ ...input, scopeEpoch }),
     enabled: Boolean(input.client) && (input.enabled ?? true),
     staleTime: PROVIDER_LIST_CACHE_MS,
     gcTime: PROVIDER_LIST_CACHE_MS,
@@ -290,6 +309,7 @@ export function useProviderListQuery(input: {
         client: input.client,
         baseUrl: input.baseUrl,
         directory: input.directory,
+        scopeEpoch,
       });
     },
   });

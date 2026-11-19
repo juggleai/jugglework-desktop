@@ -1,6 +1,6 @@
 import { existingVideoArtifact, publishVideoArtifact } from "./artifact-publisher.js";
 import { MediaGenerationRepository } from "./repository.js";
-import type { VideoGenerationAdapter, VideoGenerationJob } from "./types.js";
+import { TERMINAL_VIDEO_JOB_STATUSES, type VideoGenerationJob, type VideoReconciliationAdapter } from "./types.js";
 
 export class MediaGenerationWorker {
   private timer: ReturnType<typeof setTimeout> | null = null;
@@ -8,9 +8,10 @@ export class MediaGenerationWorker {
   private stopped = true;
   private readonly controllers = new Set<AbortController>();
   private readonly pollFailures = new Map<string, number>();
+  private readonly submittedAdapters = new Map<string, VideoReconciliationAdapter>();
   constructor(private readonly options: {
     repository: MediaGenerationRepository;
-    resolveAdapters: (workspaceId: string) => Promise<VideoGenerationAdapter[]>;
+    resolveAdapters: (workspaceId: string) => Promise<VideoReconciliationAdapter[]>;
     workspaceRoot: (workspaceId: string) => string | null;
     pollIntervalMs?: number;
     maxOutputBytes?: number;
@@ -20,6 +21,11 @@ export class MediaGenerationWorker {
     pollFailureBackoff?: (attempts: number) => number;
   }) {}
   start() { if (!this.stopped) return; this.stopped = false; this.schedule(0); }
+  rememberAdapter(job: VideoGenerationJob, adapter: VideoReconciliationAdapter) {
+    if (!this.stopped && job.status === "submitted" && job.providerJobId && sameBinding(adapter.binding, job.adapterBinding)) {
+      this.submittedAdapters.set(job.id, adapter);
+    }
+  }
   wake() { if (!this.stopped) this.schedule(0); }
   async dispose() {
     this.stopped = true;
@@ -27,6 +33,7 @@ export class MediaGenerationWorker {
     this.timer = null;
     for (const controller of this.controllers) controller.abort();
     await this.active?.catch(() => undefined);
+    this.submittedAdapters.clear();
   }
   private schedule(delay: number) {
     if (this.stopped) return;
@@ -34,6 +41,10 @@ export class MediaGenerationWorker {
     this.timer = setTimeout(() => { this.timer = null; this.active = this.pass().finally(() => { this.active = null; this.schedule(this.options.pollIntervalMs ?? 5_000); }); }, delay);
   }
   private async pass() {
+    for (const id of this.submittedAdapters.keys()) {
+      const job = this.options.repository.get(id);
+      if (!job || TERMINAL_VIDEO_JOB_STATUSES.has(job.status)) this.submittedAdapters.delete(id);
+    }
     for (const job of this.options.repository.listReconcilable(Date.now())) {
       if (this.stopped) break;
       await this.reconcile(job).catch(() => undefined);
@@ -49,7 +60,8 @@ export class MediaGenerationWorker {
         return;
       }
     }
-    const adapters = await this.options.resolveAdapters(job.workspaceId);
+    const pinned = this.submittedAdapters.get(job.id);
+    const adapters = pinned ? [pinned] : await this.options.resolveAdapters(job.workspaceId);
     const adapter = adapters.find((candidate) => candidate.matches(job.model) && sameBinding(candidate.binding, job.adapterBinding));
     if (!job.providerJobId) {
       if (job.status === "submitting") {
@@ -147,7 +159,7 @@ export class MediaGenerationWorker {
 
 function backoff(attempts: number) { return Math.min(30_000, 2_000 * 2 ** Math.min(attempts, 4)); }
 
-function sameBinding(left: VideoGenerationAdapter["binding"], right: VideoGenerationJob["adapterBinding"]): boolean {
+function sameBinding(left: VideoReconciliationAdapter["binding"], right: VideoGenerationJob["adapterBinding"]): boolean {
   return Boolean(right) && left.adapterId === right!.adapterId && left.protocol === right!.protocol && left.origin === right!.origin &&
     left.configFingerprint === right!.configFingerprint && left.cloudProviderId === right!.cloudProviderId && left.organizationId === right!.organizationId;
 }

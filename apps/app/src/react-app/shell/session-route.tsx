@@ -136,6 +136,8 @@ import type {
 } from "@/react-app/domains/workspace/types";
 import { isCloudManagedProviderKey } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
 import { isManagedModelSubmissionReady } from "@/react-app/domains/connections/provider-auth/cloud-provider-readiness";
+import { managedProviderConfirmationCurrent, useManagedProviderEpoch } from "@/app/lib/managed-provider-scope";
+import { isManagedProvider } from "@jugglework/types/provider-credentials";
 import { useSessionProviderAuth } from "@/react-app/domains/connections/provider-auth/use-session-provider-auth";
 import {
   disabledProvidersFromConfig,
@@ -1024,6 +1026,9 @@ export function SessionRoute(props: SessionRouteProps = {}) {
   // 触发模型选择器的那个面板对应的会话；null 表示落到当前选中的会话。
   const [modelPickerSessionId, setModelPickerSessionId] = useState<string | null>(null);
   const modelPickerTargetSessionId = modelPickerSessionId ?? selectedSessionId;
+  const managedScopeEpoch = useManagedProviderEpoch();
+  const isManagedModel = useCallback((model: ModelRef) => isManagedProvider(model.providerID,
+    providerListQuery.data?.all.find((provider) => provider.id === model.providerID)), [providerListQuery.data]);
   /**
    * 判断某个模型在当前工作区是否不可用（被组织策略拦截，或所属 provider 未连接）
    * @param model 待检查的模型，null 视为可用（还没选模型时不报错）
@@ -1032,7 +1037,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
   const isModelUnavailable = useCallback((model: ModelRef | null) => {
     if (!model || !selectedWorkspaceId || !opencodeClient || loading) return false;
 
-    const usesCloudProvider = isCloudManagedProviderKey(model.providerID);
+    const usesCloudProvider = isManagedModel(model);
     // 云端 provider 的连接状态同步完成前不下结论，避免误报「模型不可用」。
     if (usesCloudProvider && !cloudProviderSyncReady) return false;
 
@@ -1061,6 +1066,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     checkDesktopRestriction,
     cloudProviderList,
     cloudProviderSyncReady,
+    isManagedModel,
     loading,
     opencodeClient,
     providerListQuery.data,
@@ -1069,16 +1075,15 @@ export function SessionRoute(props: SessionRouteProps = {}) {
   const selectedModelUnavailable = isModelUnavailable(activeModel);
   const isManagedModelReady = useCallback((model: ModelRef | null) => (
     !model ||
-    !isCloudManagedProviderKey(model.providerID) ||
-    isManagedModelSubmissionReady({
+    !isManagedModel(model) ||
+    (managedProviderConfirmationCurrent(managedScopeEpoch) && isManagedModelSubmissionReady({
       cloudProviderSyncReady,
       providerList: providerListQuery.data,
       model,
-    })
-  ), [cloudProviderSyncReady, providerListQuery.data]);
+    }))
+  ), [cloudProviderSyncReady, isManagedModel, managedScopeEpoch, providerListQuery.data]);
   const selectedManagedModelPreparing = Boolean(
     activeModel &&
-    isCloudManagedProviderKey(activeModel.providerID) &&
     !isManagedModelReady(activeModel),
   );
   const selectedModelUnavailableKey = selectedModelUnavailable && activeModel
@@ -1435,7 +1440,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
           taskSubmissionDisabled: Boolean(
             !canAcceptTask ||
             isModelUnavailable(model) ||
-            (model && isCloudManagedProviderKey(model.providerID) && !isManagedModelReady(model)),
+            !isManagedModelReady(model),
           ),
           modelVariant: behavior.modelVariantValue,
           modelVariantLabel: behavior.modelVariantLabel,
@@ -1500,11 +1505,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
               const targetChoice = resolveModelForSession(targetSessionId);
               const targetModel = targetChoice.model;
               const targetVariant = describeModel(targetModel, targetChoice.variant).modelVariantValue;
-              if (
-                targetModel &&
-                isCloudManagedProviderKey(targetModel.providerID) &&
-                !isManagedModelReady(targetModel)
-              ) {
+              if (!isManagedModelReady(targetModel)) {
                 throw new Error(t("app.error_managed_model_preparing"));
               }
               if (isModelUnavailable(targetModel)) throw new Error("Selected model is unavailable. Choose another model before sending.");
@@ -1551,6 +1552,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
                 }
               }
 
+              if (!isManagedModelReady(targetModel)) return { outcome: "cancelled", reason: "context_changed" };
               return { model: targetModel, variant: targetVariant ?? null };
             },
           };
