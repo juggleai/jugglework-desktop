@@ -25,7 +25,7 @@ function fakeWindow(options) {
     setFocusable(flag) { win.focusable = flag; },
     showInactive() { win.visible = true; }, show() { win.visible = true; },
     raised: 0, moveTop() { win.raised++; },
-    focus() { win.focused = true; win.emit("focus"); }, blur() { win.focused = false; },
+    blurs: 0, focus() { win.focused = true; win.emit("focus"); }, blur() { win.focused = false; win.blurs++; },
   });
   return win;
 }
@@ -55,7 +55,7 @@ test("toolbar sits centered at the top of the work area", () => {
     { x: -237 + 600, y: -1055 + 12, width: 720, height: 52 });
   // The default toolbar fits the full tool set on a 1512pt-wide laptop screen.
   const fit = annotationToolbarBounds({ x: 0, y: 25, width: 1512, height: 957 });
-  assert.equal(fit.width >= 880 && fit.x + fit.width <= 1512, true);
+  assert.equal(fit.width >= 560 && fit.x + fit.width <= 1512, true);
   assert.deepEqual(annotationToolbarBounds({ x: 0, y: 25, width: 600, height: 900 }, { width: 720, height: 52 }),
     { x: 0, y: 37, width: 600, height: 52 });
 });
@@ -84,7 +84,7 @@ test("open covers the full bounds of the shared display; toolbar is protected an
   assert.equal(canvas.protected, false, "the canvas must be captured");
   assert.equal(toolbar.protected, true);
   assert.equal(canvas.workspaces[0], true);
-  assert.deepEqual(canvas.ignore, [false, false], "starts in draw mode");
+  assert.deepEqual(canvas.ignore, [true, true], "starts on the mouse tool: clicks reach the apps below");
   assert.equal(canvas.visible && toolbar.visible, true);
   assert.deepEqual(f.annotation.state(f.fromMain), { available: true, active: true });
   // Second open reuses the same windows.
@@ -98,36 +98,76 @@ test("open covers the full bounds of the shared display; toolbar is protected an
   assert.equal(granted, false);
 });
 
-test("pointer mode passes the mouse through and keeps the canvas; draw mode takes it back", async () => {
+const tool = (name, color = "#ef4444") => ({ type: "tool", tool: { tool: name, color, size: 4 } });
+
+test("the mouse tool passes clicks through and keeps the canvas; a drawing tool takes them back", async () => {
   const f = fixture();
   await f.annotation.open(f.fromMain);
   const canvas = canvasOf(f), toolbar = toolbarOf(f);
   const fromToolbar = { sender: toolbar.webContents };
-  f.listeners["jugglework:annotation:command"](fromToolbar, { type: "mode", mode: "pointer" });
+  assert.equal(canvas.focusable, false);
+  f.listeners["jugglework:annotation:command"](fromToolbar, tool("pen"));
+  assert.deepEqual(canvas.ignore, [false, false]);
+  assert.equal(canvas.focusable, true);
+  assert.ok(canvas.webContents.sent.some(([c, v]) => c === "jugglework:annotation:state" && v.mode === "draw" && v.tool.tool === "pen"));
+  f.listeners["jugglework:annotation:command"](fromToolbar, tool("pointer"));
   assert.deepEqual(canvas.ignore, [true, true]);
   assert.equal(canvas.focusable, false);
   assert.equal(canvas.destroyed, false);
-  assert.ok(canvas.webContents.sent.some(([c, v]) => c === "jugglework:annotation:state" && v.mode === "pointer"));
-  f.listeners["jugglework:annotation:command"](fromToolbar, { type: "mode", mode: "draw" });
+  // The laser draws on the canvas too.
+  f.listeners["jugglework:annotation:command"](fromToolbar, tool("laser"));
   assert.deepEqual(canvas.ignore, [false, false]);
-  assert.equal(canvas.focusable, true);
+});
+
+test("Esc on the canvas goes back to the mouse tool and keeps the annotation open", async () => {
+  const f = fixture();
+  await f.annotation.open(f.fromMain);
+  const canvas = canvasOf(f), toolbar = toolbarOf(f);
+  f.listeners["jugglework:annotation:command"]({ sender: toolbar.webContents }, tool("arrow", "#3b82f6"));
+  f.listeners["jugglework:annotation:command"]({ sender: canvas.webContents }, { type: "escape" });
+  const last = toolbar.webContents.sent.at(-1)[1];
+  assert.deepEqual([last.mode, last.tool.tool, last.tool.color], ["pointer", "pointer", "#3b82f6"]);
+  assert.deepEqual(canvas.ignore, [true, true]);
+  assert.equal(canvas.destroyed || toolbar.destroyed, false);
+  // Only the toolbar can close; the canvas cannot send exit.
+  f.listeners["jugglework:annotation:command"]({ sender: canvas.webContents }, { type: "exit" });
+  assert.equal(canvas.destroyed, false);
+});
+
+test("reopening starts on the mouse tool again", async () => {
+  const f = fixture();
+  await f.annotation.open(f.fromMain);
+  f.listeners["jugglework:annotation:command"]({ sender: toolbarOf(f).webContents }, tool("pen", "#22c55e"));
+  f.annotation.close(f.fromMain);
+  await f.annotation.open(f.fromMain);
+  const reopened = f.created.filter((w) => w.view === "toolbar").at(-1);
+  const state = await f.handlers["jugglework:annotation:init"]({ sender: reopened.webContents });
+  assert.deepEqual([state.mode, state.tool.tool, state.history], ["pointer", "pointer", { canUndo: false, canClear: false }]);
 });
 
 test("tool changes and commands from the toolbar reach the canvas; history goes back to the toolbar", async () => {
   const f = fixture();
   await f.annotation.open(f.fromMain);
   const canvas = canvasOf(f), toolbar = toolbarOf(f);
-  f.listeners["jugglework:annotation:command"]({ sender: toolbar.webContents }, { type: "tool", tool: { tool: "arrow", color: "#ef4444", size: 6 } });
-  assert.deepEqual(canvas.webContents.sent.at(-1)[1].tool, { tool: "arrow", color: "#ef4444", size: 6 });
+  // One fixed stroke width: a size sent by the toolbar is ignored.
+  f.listeners["jugglework:annotation:command"]({ sender: toolbar.webContents }, { type: "tool", tool: { tool: "arrow", color: "#EF4444", size: 30 } });
+  assert.deepEqual(canvas.webContents.sent.at(-1)[1].tool, { tool: "arrow", color: "#ef4444", size: 4 });
   f.listeners["jugglework:annotation:command"]({ sender: toolbar.webContents }, { type: "undo" });
   assert.deepEqual(canvas.webContents.sent.at(-1), ["jugglework:annotation:action", "undo"]);
-  f.listeners["jugglework:annotation:history"]({ sender: canvas.webContents }, { canUndo: true, canRedo: false });
-  assert.deepEqual(toolbar.webContents.sent.at(-1)[1].history, { canUndo: true, canRedo: false });
+  f.listeners["jugglework:annotation:command"]({ sender: toolbar.webContents }, { type: "clear" });
+  assert.deepEqual(canvas.webContents.sent.at(-1), ["jugglework:annotation:action", "clear"]);
+  f.listeners["jugglework:annotation:history"]({ sender: canvas.webContents }, { canUndo: true, canClear: true });
+  assert.deepEqual(toolbar.webContents.sent.at(-1)[1].history, { canUndo: true, canClear: true });
   // Commands from anything but the toolbar, unknown tools and actions are ignored.
   const before = canvas.webContents.sent.length;
   f.listeners["jugglework:annotation:command"]({ sender: canvas.webContents }, { type: "undo" });
-  f.listeners["jugglework:annotation:command"]({ sender: toolbar.webContents }, { type: "tool", tool: { tool: "spray", color: "#000", size: 4 } });
+  f.listeners["jugglework:annotation:command"]({ sender: toolbar.webContents }, { type: "tool", tool: { tool: "spray", color: "#ef4444", size: 4 } });
   f.listeners["jugglework:annotation:command"]({ sender: toolbar.webContents }, { type: "tool", tool: { tool: "pen", color: "red;}", size: 4 } });
+  // Removed tools and colors outside the Feishu palette are rejected.
+  for (const name of ["text", "line"]) f.listeners["jugglework:annotation:command"]({ sender: toolbar.webContents }, tool(name));
+  f.listeners["jugglework:annotation:command"]({ sender: toolbar.webContents }, tool("pen", "#111827"));
+  f.listeners["jugglework:annotation:command"]({ sender: toolbar.webContents }, { type: "redo" });
+  f.listeners["jugglework:annotation:command"]({ sender: toolbar.webContents }, { type: "mode", mode: "draw" });
   f.listeners["jugglework:annotation:command"]({ sender: toolbar.webContents }, { type: "rm -rf" });
   assert.equal(canvas.webContents.sent.length, before);
 });
@@ -135,7 +175,6 @@ test("tool changes and commands from the toolbar reach the canvas; history goes 
 test("every exit path destroys both windows and becomes inactive", async () => {
   const exits = {
     toolbar: (f) => f.listeners["jugglework:annotation:command"]({ sender: toolbarOf(f).webContents }, { type: "exit" }),
-    escape: (f) => f.listeners["jugglework:annotation:command"]({ sender: canvasOf(f).webContents }, { type: "exit" }),
     close: (f) => f.annotation.close(f.fromMain),
     meetingClosed: (f) => f.meeting.emit("closed"),
     mainNavigated: (f) => f.main.webContents.emit("did-start-navigation", { isSameDocument: false, isMainFrame: true }),
@@ -210,7 +249,21 @@ test("the toolbar stays above the focused canvas (Windows ignores the relative l
   const before = toolbar.raised;
   canvas.focus();
   assert.equal(toolbar.raised > before, true);
-  f.listeners["jugglework:annotation:command"]({ sender: toolbar.webContents }, { type: "mode", mode: "pointer" });
-  f.listeners["jugglework:annotation:command"]({ sender: toolbar.webContents }, { type: "mode", mode: "draw" });
+  f.listeners["jugglework:annotation:command"]({ sender: toolbar.webContents }, tool("pen"));
+  f.listeners["jugglework:annotation:command"]({ sender: toolbar.webContents }, tool("pointer"));
   assert.equal(toolbar.raised > before + 1, true);
+});
+
+test("going back to the mouse never hides the canvas on macOS (no blur), but still blurs on Windows", async () => {
+  for (const { platform, blurs } of [{ platform: "darwin", blurs: 0 }, { platform: "win32", blurs: 1 }]) {
+    const f = fixture({ platform });
+    await f.annotation.open(f.fromMain);
+    const canvas = canvasOf(f), toolbar = toolbarOf(f);
+    f.listeners["jugglework:annotation:command"]({ sender: toolbar.webContents }, tool("pen"));
+    const before = canvas.blurs;
+    f.listeners["jugglework:annotation:command"]({ sender: canvas.webContents }, { type: "escape" });
+    assert.equal(canvas.blurs - before, blurs, platform);
+    assert.deepEqual(canvas.ignore, [true, true], platform);
+    assert.equal(canvas.focusable, false, platform);
+  }
 });

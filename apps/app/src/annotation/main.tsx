@@ -2,16 +2,16 @@
 import { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { AnnotationCanvas, type AnnotationCanvasBridge } from "../react-app/domains/annotation/annotation-canvas";
-import type { AnnotationState } from "../react-app/domains/annotation/annotation-model";
+import type { AnnotationHistoryState, AnnotationState } from "../react-app/domains/annotation/annotation-model";
 import { AnnotationToolbar, type AnnotationCommand } from "../react-app/domains/annotation/annotation-toolbar";
 import "../react-app/domains/annotation/annotation.css";
 
 type AnnotationBridge = {
   init(): Promise<AnnotationState>;
   onState(callback: (state: AnnotationState) => void): () => void;
-  onAction(callback: (action: "undo" | "redo" | "clear") => void): () => void;
+  onAction(callback: (action: "undo" | "clear") => void): () => void;
   command(command: AnnotationCommand): void;
-  history(value: { canUndo: boolean; canRedo: boolean }): void;
+  history(value: AnnotationHistoryState): void;
 };
 
 declare global { interface Window { __JUGGLEWORK_ANNOTATION__?: AnnotationBridge } }
@@ -29,7 +29,7 @@ function AnnotationPage({ bridge }: { bridge: AnnotationBridge }) {
   const canvasBridge = useMemo<AnnotationCanvasBridge>(() => ({
     onAction: (callback) => bridge.onAction(callback),
     history: (value) => bridge.history(value),
-    exit: () => bridge.command({ type: "exit" }),
+    escape: () => bridge.command({ type: "escape" }),
   }), [bridge]);
   if (!state) return null;
   return view === "toolbar"

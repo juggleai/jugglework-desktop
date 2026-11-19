@@ -3,11 +3,6 @@ body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft
 
 /* Canvas: fully transparent, only strokes are captured. */
 .annotation-canvas { position: fixed; inset: 0; }
-.annotation-text-editor {
-  position: absolute; min-width: 160px; max-width: 60vw; padding: 2px 4px; margin: 0;
-  border: 1.5px dashed currentColor; border-radius: 4px; outline: none; resize: none; overflow: hidden;
-  background: rgba(255, 255, 255, 0.04); line-height: 1.25; white-space: pre; field-sizing: content;
-}
 
 /* Toolbar: a single rounded bar; the window itself is transparent. */
 .annotation-toolbar {
@@ -25,8 +20,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft
 .annotation-toolbar button[aria-checked="true"] { background: #3478ff; color: #fff; }
 .annotation-toolbar .grip { min-width: 20px; padding: 0; cursor: grab; color: #9ca3af; }
 .annotation-toolbar .grip:active { cursor: grabbing; }
-.annotation-toolbar .segmented { display: flex; gap: 2px; padding: 2px; border-radius: 10px; background: rgba(255, 255, 255, 0.06); }
-.annotation-toolbar .tools, .annotation-toolbar .sizes { display: flex; align-items: center; gap: 1px; }
+.annotation-toolbar .tools { display: flex; align-items: center; gap: 1px; }
 .annotation-toolbar .colors { display: flex; align-items: center; gap: 0; }
 .annotation-toolbar .sep { flex: none; width: 1px; height: 22px; margin: 0 3px; background: rgba(255, 255, 255, 0.14); }
 /* The selection ring is the swatch's own border around an inset fill, so it
@@ -41,8 +35,6 @@ body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft
 /* Mouse clicks leave no focus ring; keyboard focus gets one drawn inside the button. */
 .annotation-toolbar button:focus { outline: none; }
 .annotation-toolbar button:focus-visible { outline: 2px solid #60a5fa; outline-offset: -2px; }
-.annotation-toolbar .sizes button { min-width: 24px; padding: 0; }
-.annotation-toolbar .sizes button[aria-checked="true"] { background: rgba(255, 255, 255, 0.18); }
-.annotation-toolbar .dot { display: block; border-radius: 50%; background: currentColor; }
-.annotation-toolbar .exit { margin-left: auto; background: #e85853; color: #fff; padding: 0 10px; }
-.annotation-toolbar .exit:hover:not(:disabled) { background: #d84c47; }
+/* Feishu: the close button sits at the right end of the toolbar. */
+.annotation-toolbar .close { margin-left: auto; }
+.annotation-toolbar .close:hover:not(:disabled) { background: #e85853; color: #fff; }

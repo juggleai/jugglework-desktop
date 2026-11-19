@@ -2,11 +2,16 @@
 // canvas covers the shared display so the system capture records the strokes;
 // a separate, content-protected toolbar drives it. Neither window loads the
 // app runtime, IM or meeting media.
+// Tools follow Feishu meetings: "pointer" (鼠标, the default) lets the mouse
+// through to the apps below; every other tool draws on the canvas.
 
-export const ANNOTATION_TOOLS = ["pen", "highlighter", "laser", "line", "arrow", "rectangle", "ellipse", "text", "eraser"];
-const ACTIONS = new Set(["undo", "redo", "clear"]);
-const COLOR = /^#[0-9a-f]{6}$/i;
-const TOOLBAR_SIZE = { width: 900, height: 52 };
+export const ANNOTATION_TOOLS = ["pointer", "laser", "pen", "highlighter", "ellipse", "rectangle", "arrow", "eraser"];
+export const ANNOTATION_COLORS = ["#ef4444", "#facc15", "#22c55e", "#3b82f6", "#a855f7"];
+const STROKE_SIZE = 4;
+const ACTIONS = new Set(["undo", "clear"]);
+const TOOLBAR_SIZE = { width: 600, height: 52 };
+const initialState = () => ({ mode: "pointer", tool: { tool: "pointer", color: ANNOTATION_COLORS[0], size: STROKE_SIZE }, history: { canUndo: false, canClear: false } });
+const modeOf = (tool) => tool === "pointer" ? "pointer" : "draw";
 
 /** Toolbar default: centered just below the top of the display's work area. */
 export function annotationToolbarBounds(workArea, size = TOOLBAR_SIZE) {
@@ -15,8 +20,7 @@ export function annotationToolbarBounds(workArea, size = TOOLBAR_SIZE) {
 }
 
 function validTool(value) {
-  return value && ANNOTATION_TOOLS.includes(value.tool) && typeof value.color === "string" && COLOR.test(value.color)
-    && Number.isFinite(value.size) && value.size >= 1 && value.size <= 64;
+  return value && ANNOTATION_TOOLS.includes(value.tool) && typeof value.color === "string" && ANNOTATION_COLORS.includes(value.color.toLowerCase());
 }
 
 /**
@@ -28,7 +32,7 @@ function validTool(value) {
 export function createMeetingAnnotation({ BrowserWindow, screen, ipcMain, preloadPath, loadPage, getMainWindow, getMeetingWindow, getSharedDisplayId, clearShared, platform = process.platform }) {
   let session = null;
   let opening = null;
-  let state = { mode: "draw", tool: { tool: "pen", color: "#ef4444", size: 4 }, history: { canUndo: false, canRedo: false } };
+  let state = initialState();
 
   const live = (win) => win && !win.isDestroyed();
   const display = (id) => screen.getAllDisplays().find((d) => d.id === id) ?? null;
@@ -46,7 +50,10 @@ export function createMeetingAnnotation({ BrowserWindow, screen, ipcMain, preloa
     if (!live(canvas)) return;
     if (state.mode === "pointer") {
       canvas.setIgnoreMouseEvents(true, { forward: true });
-      canvas.blur?.();
+      // On macOS, Electron's blur() orders the window out and back in, which
+      // drops the strokes from the screen capture for a few frames. The next
+      // click goes through to the app below and takes focus there anyway.
+      if (platform !== "darwin") canvas.blur?.();
       canvas.setFocusable(false);
     } else {
       canvas.setFocusable(true);
@@ -126,13 +133,22 @@ export function createMeetingAnnotation({ BrowserWindow, screen, ipcMain, preloa
     };
     const current = { canvas, toolbar, displayId, detach };
     session = current;
-    state = { ...state, mode: "draw", history: { canUndo: false, canRedo: false } };
+    // Every annotation session starts on the mouse tool with an empty canvas.
+    state = initialState();
     await Promise.all([loadPage(canvas, "canvas"), loadPage(toolbar, "toolbar")]);
     // Closed while loading: never reveal stale windows.
     if (session !== current || !live(canvas) || !live(toolbar)) { if (session === current) teardown(); return; }
     canvas.showInactive();
     toolbar.showInactive();
     applyMode();
+    publish();
+  }
+
+  function setTool(tool) {
+    const mode = modeOf(tool.tool);
+    const changed = mode !== state.mode;
+    state = { ...state, mode, tool: { tool: tool.tool, color: tool.color.toLowerCase(), size: STROKE_SIZE } };
+    if (changed) applyMode();
     publish();
   }
 
@@ -144,14 +160,12 @@ export function createMeetingAnnotation({ BrowserWindow, screen, ipcMain, preloa
     if (!session) return;
     const fromToolbar = event.sender === session.toolbar.webContents;
     const fromCanvas = event.sender === session.canvas.webContents;
-    if (command?.type === "exit" && (fromToolbar || fromCanvas)) { teardown(); return; }
+    if (command?.type === "exit" && fromToolbar) { teardown(); return; }
+    // Esc on the canvas puts the mouse back; the strokes stay.
+    if (command?.type === "escape" && fromCanvas) { setTool({ ...state.tool, tool: "pointer" }); return; }
     if (!fromToolbar) return;
-    if (command?.type === "mode" && (command.mode === "draw" || command.mode === "pointer")) {
-      state = { ...state, mode: command.mode }; applyMode(); publish();
-    } else if (command?.type === "tool" && validTool(command.tool)) {
-      state = { ...state, tool: { tool: command.tool.tool, color: command.tool.color.toLowerCase(), size: command.tool.size } };
-      if (state.mode === "pointer") { state = { ...state, mode: "draw" }; applyMode(); }
-      publish();
+    if (command?.type === "tool" && validTool(command.tool)) {
+      setTool(command.tool);
     } else if (command?.type === "action" || ACTIONS.has(command?.type)) {
       const action = command.type === "action" ? command.action : command.type;
       if (ACTIONS.has(action) && live(session.canvas)) session.canvas.webContents.send("jugglework:annotation:action", action);
@@ -167,7 +181,7 @@ export function createMeetingAnnotation({ BrowserWindow, screen, ipcMain, preloa
   });
   ipcMain.on("jugglework:annotation:history", (event, history) => {
     if (!session || event.sender !== session.canvas.webContents) return;
-    state = { ...state, history: { canUndo: history?.canUndo === true, canRedo: history?.canRedo === true } };
+    state = { ...state, history: { canUndo: history?.canUndo === true, canClear: history?.canClear === true } };
     if (live(session.toolbar)) session.toolbar.webContents.send("jugglework:annotation:state", state);
   });
 

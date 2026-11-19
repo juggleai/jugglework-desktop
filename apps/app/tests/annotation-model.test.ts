@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import {
-  ANNOTATION_HISTORY_LIMIT, LASER_FADE_MS, commitAnnotation, createAnnotationHistory, createDrawElement, createTextElement,
-  eraseElements, isMeaningful, laserOpacity, redoAnnotation, toNormalized, toPixels, undoAnnotation, updateDrawElement,
+  ANNOTATION_COLORS, ANNOTATION_HISTORY_LIMIT, LASER_FADE_MS, commitAnnotation, createAnnotationHistory, createDrawElement,
+  eraseElements, isMeaningful, laserOpacity, toNormalized, toPixels, undoAnnotation, updateDrawElement,
 } from "../src/react-app/domains/annotation/annotation-model";
 
 const size = { width: 1000, height: 500 };
@@ -24,8 +24,15 @@ test("pen and highlighter keep every point; shapes keep two corners", () => {
   expect(rect.type === "shape" && [rect.x1, rect.y1, rect.x2, rect.y2]).toEqual([0.5, 0.5, 0.2, 0.8]);
   const arrow = updateDrawElement(createDrawElement("arrow", { x: 0.1, y: 0.1 }, "#000000", 2)!, { x: 0.4, y: 0.1 });
   expect(arrow.type === "shape" && arrow.kind).toBe("arrow");
-  expect(createDrawElement("text", { x: 0, y: 0 }, "#000000", 2)).toBeNull();
+  const ellipse = createDrawElement("ellipse", { x: 0.1, y: 0.1 }, "#000000", 2)!;
+  expect(ellipse.type === "shape" && ellipse.kind).toBe("ellipse");
+  // The mouse and the eraser do not create elements.
+  expect(createDrawElement("pointer", { x: 0, y: 0 }, "#000000", 2)).toBeNull();
   expect(createDrawElement("eraser", { x: 0, y: 0 }, "#000000", 2)).toBeNull();
+});
+
+test("the palette matches Feishu: red, yellow, green, blue, purple", () => {
+  expect([...ANNOTATION_COLORS]).toEqual(["#ef4444", "#facc15", "#22c55e", "#3b82f6", "#a855f7"]);
 });
 
 test("a click without movement is not committed", () => {
@@ -37,26 +44,17 @@ test("a click without movement is not committed", () => {
   expect(isMeaningful(updateDrawElement(pen, { x: 0.5, y: 0.5 }), size)).toBe(true);
 });
 
-test("text keeps its content, trims empty input and scales with the screen", () => {
-  expect(createTextElement({ x: 0.2, y: 0.3 }, "   ", "#000000", 4)).toBeNull();
-  const text = createTextElement({ x: 0.2, y: 0.3 }, " 重点  ", "#ef4444", 4)!;
-  expect(text.text).toBe("重点");
-  expect(text.fontSize).toBeGreaterThan(0);
-  expect(text.fontSize).toBeLessThan(0.2);
-});
-
-test("undo, redo and clear form one bounded history", () => {
+test("undo and clear form one bounded history", () => {
   let h = createAnnotationHistory();
   const a = createDrawElement("pen", { x: 0, y: 0 }, "#000000", 2)!, b = createDrawElement("pen", { x: 1, y: 1 }, "#000000", 2)!;
   h = commitAnnotation(h, [a]); h = commitAnnotation(h, [a, b]);
   h = undoAnnotation(h); expect(h.present).toEqual([a]);
-  h = redoAnnotation(h); expect(h.present).toEqual([a, b]);
+  h = commitAnnotation(h, [a, b]);
+  // Clear is one step, so undo brings the strokes back.
   h = commitAnnotation(h, []); expect(h.present).toEqual([]);
   h = undoAnnotation(h); expect(h.present).toEqual([a, b]);
-  // A new edit drops the redo branch.
-  h = commitAnnotation(undoAnnotation(h), [b]); expect(h.future).toEqual([]);
   // No-op commits do not create history entries.
-  expect(commitAnnotation(h, [b])).toBe(h);
+  expect(commitAnnotation(h, [a, b])).toBe(h);
   for (let i = 0; i < ANNOTATION_HISTORY_LIMIT + 20; i++) h = commitAnnotation(h, [createDrawElement("pen", { x: 0, y: 0 }, "#000000", i + 1)!]);
   expect(h.past.length).toBe(ANNOTATION_HISTORY_LIMIT);
   expect(undoAnnotation(createAnnotationHistory())).toEqual(createAnnotationHistory());
