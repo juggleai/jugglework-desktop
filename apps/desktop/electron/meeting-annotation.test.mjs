@@ -24,14 +24,15 @@ function fakeWindow(options) {
     setIgnoreMouseEvents(flag, opts) { win.ignore = [flag, opts?.forward === true]; },
     setFocusable(flag) { win.focusable = flag; },
     showInactive() { win.visible = true; }, show() { win.visible = true; },
-    focus() { win.focused = true; }, blur() { win.focused = false; },
+    raised: 0, moveTop() { win.raised++; },
+    focus() { win.focused = true; win.emit("focus"); }, blur() { win.focused = false; },
   });
   return win;
 }
 
 function fixture({ displays = [{ id: 1, bounds: { x: 0, y: 0, width: 1512, height: 982 }, workArea: { x: 0, y: 25, width: 1512, height: 957 } },
   { id: 3, bounds: { x: -237, y: -1080, width: 1920, height: 1080 }, workArea: { x: -237, y: -1055, width: 1920, height: 1055 } }],
-  shared = 1 } = {}) {
+  shared = 1, platform = "darwin" } = {}) {
   const created = [], handlers = {}, listeners = {};
   const screen = Object.assign(new EventEmitter(), { getAllDisplays: () => displays });
   const ipcMain = { handle: (c, fn) => { handlers[c] = fn; }, on: (c, fn) => { listeners[c] = fn; } };
@@ -42,7 +43,7 @@ function fixture({ displays = [{ id: 1, bounds: { x: 0, y: 0, width: 1512, heigh
     screen, ipcMain, preloadPath: "/p.cjs",
     loadPage: async (win, view) => { win.view = view; },
     getMainWindow: () => main, getMeetingWindow: () => meeting,
-    getSharedDisplayId: () => sharedDisplay, clearShared: () => { sharedDisplay = null; },
+    getSharedDisplayId: () => sharedDisplay, clearShared: () => { sharedDisplay = null; }, platform,
   });
   const fromMain = { sender: main.webContents, senderFrame: main.webContents.mainFrame };
   return { annotation, created, handlers, listeners, screen, main, meeting, fromMain, displays, setShared: (v) => { sharedDisplay = v; } };
@@ -196,4 +197,20 @@ test("a load that finishes after close does not reopen the windows", async () =>
   releases.forEach((r) => r());
   await opening.catch(() => {});
   assert.equal(f.created.every((w) => w.destroyed && !w.visible), true);
+});
+
+test("the toolbar stays above the focused canvas (Windows ignores the relative level)", async () => {
+  const mac = fixture();
+  await mac.annotation.open(mac.fromMain);
+  assert.equal(toolbarOf(mac).options.parent, undefined, "macOS keeps level ordering");
+  const f = fixture({ platform: "win32" });
+  await f.annotation.open(f.fromMain);
+  const canvas = canvasOf(f), toolbar = toolbarOf(f);
+  assert.equal(toolbar.options.parent, canvas, "an owned window always stays above its owner");
+  const before = toolbar.raised;
+  canvas.focus();
+  assert.equal(toolbar.raised > before, true);
+  f.listeners["jugglework:annotation:command"]({ sender: toolbar.webContents }, { type: "mode", mode: "pointer" });
+  f.listeners["jugglework:annotation:command"]({ sender: toolbar.webContents }, { type: "mode", mode: "draw" });
+  assert.equal(toolbar.raised > before + 1, true);
 });

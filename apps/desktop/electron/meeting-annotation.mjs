@@ -23,9 +23,9 @@ function validTool(value) {
  * @param {{ BrowserWindow: any, screen: any, ipcMain: any, preloadPath: string,
  *   loadPage: (window: any, view: "canvas" | "toolbar") => Promise<void>,
  *   getMainWindow: () => any, getMeetingWindow: () => any,
- *   getSharedDisplayId: () => number | null, clearShared: () => void }} options
+ *   getSharedDisplayId: () => number | null, clearShared: () => void, platform?: string }} options
  */
-export function createMeetingAnnotation({ BrowserWindow, screen, ipcMain, preloadPath, loadPage, getMainWindow, getMeetingWindow, getSharedDisplayId, clearShared }) {
+export function createMeetingAnnotation({ BrowserWindow, screen, ipcMain, preloadPath, loadPage, getMainWindow, getMeetingWindow, getSharedDisplayId, clearShared, platform = process.platform }) {
   let session = null;
   let opening = null;
   let state = { mode: "draw", tool: { tool: "pen", color: "#ef4444", size: 4 }, history: { canUndo: false, canRedo: false } };
@@ -53,6 +53,13 @@ export function createMeetingAnnotation({ BrowserWindow, screen, ipcMain, preloa
       canvas.setIgnoreMouseEvents(false);
       canvas.focus();
     }
+    raiseToolbar();
+  }
+  // Focusing the canvas reorders top-most windows on Windows, where the
+  // relative level is ignored; keep the toolbar above it.
+  function raiseToolbar() {
+    const toolbar = session?.toolbar;
+    if (live(toolbar)) toolbar.moveTop?.();
   }
   function harden(win) {
     win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
@@ -79,7 +86,11 @@ export function createMeetingAnnotation({ BrowserWindow, screen, ipcMain, preloa
       webPreferences: { preload: preloadPath, partition: "meeting-annotation", sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false },
     };
     const canvas = new BrowserWindow({ ...common, ...target.bounds, transparent: true, backgroundColor: "#00000000", enableLargerThanScreen: true, focusable: true });
-    const toolbar = new BrowserWindow({ ...common, ...annotationToolbarBounds(target.workArea), transparent: true, backgroundColor: "#00000000", focusable: true });
+    // Windows ignores the relative top-most level, so a focused canvas would
+    // cover the toolbar. An owned window always stays above its owner there.
+    // macOS keeps the level-based ordering (child windows would follow the canvas).
+    const toolbar = new BrowserWindow({ ...common, ...annotationToolbarBounds(target.workArea), ...(platform === "win32" ? { parent: canvas } : {}),
+      transparent: true, backgroundColor: "#00000000", focusable: true });
     // The canvas must stay capturable; only the toolbar is excluded.
     toolbar.setContentProtection(true);
     canvas.setAlwaysOnTop(true, "screen-saver");
@@ -97,6 +108,7 @@ export function createMeetingAnnotation({ BrowserWindow, screen, ipcMain, preloa
     const onMainNavigate = (details) => { if (details?.isMainFrame !== false && !details?.isSameDocument) close(); };
     const main = getMainWindow(), meeting = getMeetingWindow();
     canvas.on("closed", close); toolbar.on("closed", close);
+    canvas.on("focus", raiseToolbar);
     canvas.webContents.on("render-process-gone", close); toolbar.webContents.on("render-process-gone", close);
     meeting?.on("closed", close);
     main?.on("closed", close);

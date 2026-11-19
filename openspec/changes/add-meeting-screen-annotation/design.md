@@ -48,6 +48,7 @@
 - 主进程 `meeting-annotation.mjs` 管理一个标注窗口和一个工具栏窗口，二者都加载 `annotation.html`（以 `?view=canvas` / `?view=toolbar` 区分），共用窄 preload `annotation-preload.cjs`。
 - 标注窗口：覆盖目标显示器完整 `bounds`；`transparent`、`frame: false`、`hasShadow: false`、`skipTaskbar`、`resizable: false`、`movable: false`、`minimizable: false`、`fullscreenable: false`、`enableLargerThanScreen: true`；`setAlwaysOnTop(true, "screen-saver")`；`setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })`。**不**设置内容保护。
 - 工具栏：900×52 的小窗口（可容纳全部工具），默认在目标屏幕工作区顶部居中、位于菜单栏下方；层级比标注窗口高一级（`setAlwaysOnTop(true, "screen-saver", 1)`），`setContentProtection(true)`，可拖动。
+- Windows 不区分置顶的相对层级，标注窗口获得焦点后会盖住工具栏。所以在 Windows 上，工具栏创建为标注窗口的从属窗口（`parent: canvas`）：Windows 始终把从属窗口放在所有者之上。标注窗口每次获得焦点、切换模式时再调用 `toolbar.moveTop()`。macOS 按层级排序，不设从属关系（从属窗口会跟随所有者移动和隐藏）。
 - 两个窗口 `sandbox`、`contextIsolation`、无 Node；拒绝新窗口、跳转和所有权限请求；独立 partition `meeting-annotation`，与主应用的页面缩放和存储隔离。
 
 ### 3. 模式
