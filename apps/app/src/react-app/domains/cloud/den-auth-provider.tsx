@@ -352,7 +352,8 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
     setAccountError(null);
     try {
       const authorityChange = createDenCredentialAuthorityChange("organization_switched");
-      await window.__JUGGLEWORK_ELECTRON__?.cloudDocs?.close();
+      const docs = await window.__JUGGLEWORK_ELECTRON__?.cloudDocs?.close(undefined, { requireSaved: true });
+      if (docs?.closed === false) throw new Error(t("cloud_docs.close_save_pending"));
       await closeToonFactoryForDenSession(authorityChange);
       await runOrganizationCloudCleanup();
       if (generation !== organizationSwitchGenerationRef.current) return;

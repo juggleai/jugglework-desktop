@@ -312,6 +312,12 @@ contextBridge.exposeInMainWorld("__JUGGLEWORK_ELECTRON__", {
   fileWindow: {
     /** 仅主窗口可提交一次性 Docs 交接创建独立标签。 */
     openCloud: (input) => ipcRenderer.invoke("jugglework:file-window:open-cloud", input),
+    /** 仅主窗口接收已由 Main 核验的云文档新标签请求。 */
+    onOpenCloudTabRequest(callback) {
+      const handler = (_event, input) => callback(input);
+      ipcRenderer.on("jugglework:file-window:open-cloud-tab-request", handler);
+      return () => ipcRenderer.removeListener("jugglework:file-window:open-cloud-tab-request", handler);
+    },
     /** 仅主窗口处理 Main 固定目标的停止准备；确认前不会中止运行。 */
     onSessionStopRequest(callback) {
       const handler = async (_event, input) => {
@@ -359,7 +365,7 @@ contextBridge.exposeInMainWorld("__JUGGLEWORK_ELECTRON__", {
     /** 以一次性凭据进入当前组织的云文档。 */
     open: (input) => ipcRenderer.invoke('jugglework:docs:open', input),
     /** 释放指定实例或全部云文档视图。 */
-    close: (instanceId) => ipcRenderer.invoke('jugglework:docs:close', instanceId),
+    close: (instanceId, options) => ipcRenderer.invoke('jugglework:docs:close', instanceId, options),
     /** 宿主浮窗打开时保留云文档画面，不销毁编辑会话。 */
     snapshot: (instanceId) => ipcRenderer.invoke('jugglework:docs:snapshot', instanceId),
     /** 对齐 React 内容区域并在宿主菜单打开时隐藏原生视图。 */

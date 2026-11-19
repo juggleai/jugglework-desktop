@@ -2,6 +2,7 @@ const { ipcRenderer, contextBridge } = require("electron");
 
 // TIPS: 只声明原生展示环境，不向远端页面开放宿主方法。
 contextBridge.exposeInMainWorld("juggleworkDocsDesktop", true);
+contextBridge.exposeInMainWorld("juggleworkDocsDetachedTab", true);
 ipcRenderer.on("jugglework:docs:layout-command", (_event, message) => {
   window.postMessage({ channel: "jugglework-docs-layout-command", message }, location.origin);
 });
@@ -69,6 +70,7 @@ window.addEventListener("message", (event) => {
       "docs.layout",
       "docs.open-attachment",
       "docs.ai-reference",
+      "docs.open-in-new-tab",
     ].includes(message?.type)
   )
     return;
@@ -87,6 +89,7 @@ window.addEventListener("message", (event) => {
     ...(message.type === "docs.ai-reference"
       ? { docId: message.docId, title: message.title, action: message.action, blockIds: message.blockIds }
       : {}),
+    ...(message.type === "docs.open-in-new-tab" ? { docId: message.docId } : {}),
   });
 });
 

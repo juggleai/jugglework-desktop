@@ -74,3 +74,41 @@ test("组织 A 的迟到 AI 上传在切到 B 后拒绝，不能读取文件或�
   await expect(uploadCloudFile({ bridge: bridge as any, fileClient: { statWorkspaceFile: reads, downloadWorkspaceFile: mock() } as any, localWorkspaceId: "local", relativePath: "方案.docx", expectedTenantId: "org-a", onDuplicate: async () => "new" })).rejects.toThrow("switch_organization_required");
   expect(reads).not.toHaveBeenCalled();
 });
+
+test("表格转换须由用户确认原报告，取消后再次上传使用新请求", async () => {
+  tenant = "org-a";
+  const digest = "a".repeat(64);
+  const calls: Array<{ action: string; requestId: string; warningAckDigest?: string }> = [];
+  const previous = bridge.fileIntake;
+  bridge.fileIntake = async input => {
+    calls.push(input);
+    return input.action === "lookup" ? { existing: [] }
+      : input.action === "upload" ? { workspaceId: "native-ws", pageId: "staged", state: "preparing", warningDigest: digest, warnings: ["sheet_xlsx_advanced_filter"] }
+      : input.action === "cancel" ? { workspaceId: "native-ws", pageId: "staged", state: "cancelled" }
+      : { workspaceId: "native-ws", pageId: "spreadsheet", state: "completed" };
+  };
+  try {
+    const input = {
+      bridge, localWorkspaceId: "local", relativePath: "报表.xlsx",
+      fileClient: {
+        statWorkspaceFile: async () => ({ exists: true, kind: "file", size: 1 }),
+        downloadWorkspaceFile: async () => ({ data: new Uint8Array([8]).buffer, filename: "报表.xlsx", contentType: "application/octet-stream" }),
+      },
+      onDuplicate: async () => "new",
+    } as Parameters<typeof uploadCloudFile>[0];
+    expect(await uploadCloudFile({ ...input, onConversionWarnings: async () => false })).toBeNull();
+    expect(calls.map(call => call.action)).toEqual(["lookup", "upload", "cancel"]);
+    expect(calls[2].requestId).toBe(calls[1].requestId);
+    const result = await uploadCloudFile({ ...input, onConversionWarnings: async warnings => {
+      expect(warnings).toEqual(["sheet_xlsx_advanced_filter"]);
+      return true;
+    } });
+    expect(calls.map(call => call.action)).toEqual(["lookup", "upload", "cancel", "lookup", "upload", "commit"]);
+    expect(calls[4].requestId).not.toBe(calls[1].requestId);
+    expect(calls[5].requestId).toBe(calls[4].requestId);
+    expect(calls[5].warningAckDigest).toBe(digest);
+    expect(result).toMatchObject({ status: "uploaded", pageId: "spreadsheet", warnings: ["sheet_xlsx_advanced_filter"] });
+  } finally {
+    bridge.fileIntake = previous;
+  }
+});

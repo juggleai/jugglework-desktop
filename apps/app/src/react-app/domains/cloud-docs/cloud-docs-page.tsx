@@ -133,7 +133,7 @@ export function CloudDocsPage(props: Props) {
         instanceId,
         appearance: {
           theme: dark ? "dark" : "light",
-          locale: currentLocale(),
+          locale: document.documentElement.lang || currentLocale(),
           fontFamily: styles.fontFamily,
           colors: {
             background: color("--background", dark ? "#111113" : "#ffffff"),
@@ -182,7 +182,7 @@ export function CloudDocsPage(props: Props) {
     const appearanceObserver = new MutationObserver(updateAppearance);
     appearanceObserver.observe(document.documentElement, {
       attributes: true,
-      attributeFilter: ["class", "style", "data-theme", "data-brand-accent"],
+      attributeFilter: ["class", "style", "lang", "data-theme", "data-brand-accent"],
     });
     const resize = new ResizeObserver(updateBounds);
     if (host.current) resize.observe(host.current);

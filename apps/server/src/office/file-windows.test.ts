@@ -570,6 +570,41 @@ test("conversation requires a real existing local session and trusted policy; na
   f.files.dispose(); f.panel.destroy();
 });
 
+test("云文档菜单在原独立窗口新增标签，加号仍可打开本地选择器", async () => {
+  const document = { tenantId: "tenant", workspaceId: "cloud-ws", docId: "cloud-doc", title: "云文档" };
+  const sourceServerOrigin = "https://work.example.test";
+  const sourceUserId = "source-user";
+  const sources = new Map<string, FakeWindow>();
+  const f = await fixture("notes.md", undefined, undefined, undefined, undefined, {
+    cloudDocs: {
+      open: async (input: { instanceId: string }, owner: FakeWindow) => sources.set(input.instanceId, owner),
+      documentFor: (instanceId: string, owner: FakeWindow) => sources.get(instanceId) === owner ? document : null,
+      close: (instanceId: string) => sources.delete(instanceId),
+    },
+  });
+  const open = (instanceId: string, sourceInstanceId?: string) =>
+    f.call("jugglework:file-window:open-cloud", f.main, {
+      workspaceId: "ws", sessionId: sourceInstanceId ? "unrelated-session" : "ses",
+      document, sourceServerOrigin, sourceUserId, sourceInstanceId,
+      launch: { tenantId: document.tenantId, docsOrigin: "https://docs.example.test", presentation: { instanceId, mode: "product" } },
+    });
+  try {
+    await open("first");
+    const [window] = f.files.windows();
+    await f.action(window, "open");
+    expect(answers.dialogs).toContain("open");
+    await open("second", "first");
+    expect(f.files.windows()).toEqual([window]);
+    expect((await f.state(window)).tabs.map(tab => tab.cloudDoc?.instanceId)).toEqual(["first", "second"]);
+    expect((await f.state(window)).activePath).toBe("cloud:second");
+    await expect(open("third", "unknown")).rejects.toThrow("云文档来源已变化");
+    expect((await f.state(window)).tabs).toHaveLength(2);
+  } finally {
+    f.files.dispose();
+    f.panel.destroy();
+  }
+});
+
 test.each([false, true])("文件选区绑定真实会话（外部文件=%s），Main 投递后才可校验/发送；关闭标签撤销能力", async (local) => {
   const f = await fixture(undefined, undefined, undefined, undefined, undefined, { getDesktopConfig: async () => ({}) });
   const original = f.client.getJson;

@@ -1,3 +1,5 @@
+> 云表格类型和保存宿主以 [add-docs-spreadsheet](../add-docs-spreadsheet/design.md)为准（待实现）；XLSX/CSV 的云端结果可为 spreadsheet，原生文档 AI 和一次上传规则继续有效。旧 tasks 为既有实现事实。
+
 > 后续优化设计见 [单域名与 IM 解耦](../optimize-docs-single-origin-and-im-isolation/design.md)。其中 IM 分类前置、租户子域名和宿主边界的冲突要求以新设计为准；其余要求及旧版本验收事实保留。新设计待开发项以对应 tasks 为准。
 
 # Desktop 云文档上传、附件查看与 AI 编辑

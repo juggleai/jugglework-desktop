@@ -73,7 +73,8 @@ test("原生视图在新文档授权前隐藏，401/403/404 隐藏并报告，�
   };
   const handlers = new Map<string, Function>(),
     events = new Map<string, Function>();
-  const panel = createCloudDocsPanel({ getWindow: () => win });
+  const openInNewTab = mock((_input: unknown) => {});
+  const panel = createCloudDocsPanel({ getWindow: () => win, onOpenInNewTab: openInNewTab });
   panel.registerIpc({
     handle: (name: string, fn: Function) => handlers.set(name, fn),
     on: (name: string, fn: Function) => events.set(name, fn),
@@ -116,6 +117,25 @@ test("原生视图在新文档授权前隐藏，401/403/404 隐藏并报告，�
   bounds(a.instanceId);
   expect(first.visible).toBe(true);
   expect(first.webContents.focus).toHaveBeenCalledTimes(1);
+  first.webContents.url = "http://docs.localhost:13000/workspace/ws/doc";
+  const openFromPage = (docId: string, frame = first.webContents.mainFrame) =>
+    events.get("jugglework:docs:message")!(
+      { sender: first.webContents, senderFrame: frame },
+      { contractVersion: 1, instanceId: a.instanceId, tenantId, docId, type: "docs.open-in-new-tab" },
+    );
+  openFromPage("other");
+  openFromPage("doc", {});
+  first.setVisible(false);
+  openFromPage("doc");
+  first.setVisible(true);
+  expect(openInNewTab).not.toHaveBeenCalled();
+  openFromPage("doc");
+  expect(openInNewTab).toHaveBeenCalledWith({
+    sourceInstanceId: a.instanceId,
+    sourceServerOrigin: "https://source.test",
+    sourceUserId: "u",
+    document: { tenantId, workspaceId: "ws", docId: "doc", title: "" },
+  });
   // TIPS: 原生裁切随宿主缩放；移动到未指定圆角的文件面板时必须恢复直角。
   zoom = 1.5;
   events.get("jugglework:docs:bounds")!(
@@ -397,8 +417,12 @@ test("File Browser 只控制所属原生页，关闭须收到原生本地保存�
 test("退出和更新等待所有窗口落盘；关闭主窗口不销毁独立云文档", async () => {
   const owner = (id: number) => ({ id, webContents: { mainFrame: {}, send: mock(() => {}), getZoomFactor: () => 1 }, isDestroyed: () => false, contentView: { addChildView() {}, removeChildView() {} } });
   const main = owner(11), file = owner(12), events = new Map<string,Function>();
+  const handlers = new Map<string, Function>();
   const panel = createCloudDocsPanel({ getWindow: () => main, getWindows: () => [main, file] });
-  panel.registerIpc({handle() {}, on: (name: string, callback: Function) => events.set(name,callback)});
+  panel.registerIpc({
+    handle: (name: string, callback: Function) => handlers.set(name, callback),
+    on: (name: string, callback: Function) => events.set(name,callback),
+  });
   const values = [];
   for (const window of [main, file]) {
     const instanceId = randomUUID();
@@ -412,6 +436,22 @@ test("退出和更新等待所有窗口落盘；关闭主窗口不销毁独立�
     events.get("jugglework:docs:file-intake")!({sender:view.webContents,senderFrame:view.webContents.mainFrame},{...command,ok:true,result:{persisted:index===0}});
   }
   expect(await preparing).toBe(false);
+  expect(values.every(value => !value.view.webContents.closed)).toBe(true);
+  values[0].view.setVisible(true);
+  const switching = handlers.get("jugglework:docs:close")!(
+    { sender: main.webContents, senderFrame: main.webContents.mainFrame },
+    undefined,
+    { requireSaved: true },
+  );
+  for (const [index, { view }] of values.entries()) {
+    const command = view.webContents.send.mock.calls.at(-1)![1] as any;
+    events.get("jugglework:docs:file-intake")!(
+      { sender: view.webContents, senderFrame: view.webContents.mainFrame },
+      { ...command, ok: true, result: { persisted: index === 0 } },
+    );
+  }
+  expect(await switching).toEqual({ closed: false });
+  expect(values[0].view.visible).toBe(true);
   expect(values.every(value => !value.view.webContents.closed)).toBe(true);
   panel.closeWindow(main);
   expect(values[0].view.webContents.closed).toBe(true);

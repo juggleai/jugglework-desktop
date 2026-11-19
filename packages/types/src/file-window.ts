@@ -46,10 +46,19 @@ export interface FileWindowState {
 /** 宿主允许用户手动新建的 Office 格式。 */
 export type OfficeCreationKind = "docx" | "pptx";
 
+type CloudFileWindowDocument = { tenantId: string; workspaceId: string; docId: string; title: string };
+
 /** 独立窗口最小桥；文件操作通过同一 Server 和原生对话框执行。 */
 export interface FileWindowBridge {
   /** 主窗口将已授权的原生云文档交接给现有 File Browser，不传源长期 Token。 */
-  openCloud?(input: { workspaceId: string; sessionId: string; document: { tenantId: string; workspaceId: string; docId: string; title: string }; launch: { tenantId: string; bootstrapUrl: string; docsOrigin: string; launchGrant: string; presentation: { instanceId: string; mode: "product" | "manage" } }; sourceServerOrigin: string; sourceUserId: string }): Promise<void>;
+  openCloud?(input: { workspaceId: string; sessionId: string; document: CloudFileWindowDocument; launch: { tenantId: string; bootstrapUrl: string; docsOrigin: string; launchGrant: string; presentation: { instanceId: string; mode: "product" | "manage" } }; sourceServerOrigin: string; sourceUserId: string; sourceInstanceId?: string }): Promise<void>;
+  /** 仅主窗口接收 Main 核验过的云文档新标签请求。 */
+  onOpenCloudTabRequest?(callback: (input: {
+    sourceInstanceId: string;
+    sourceServerOrigin: string;
+    sourceUserId: string;
+    document: CloudFileWindowDocument;
+  }) => void): () => void;
   /** 仅主窗口更新当前来源范围的上传结果，供独立文件窗口展示分享入口。 */
   setCloudUploads?(input: { scope: string | null; records: Array<{ localWorkspaceId: string; path: string; tenantId: string; url: string }> }): Promise<void>;
   /** 查询当前主进程是否已注册文件窗口入口，兼容开发时尚未重启的旧主进程。 */

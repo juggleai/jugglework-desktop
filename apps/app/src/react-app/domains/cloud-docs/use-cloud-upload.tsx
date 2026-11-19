@@ -31,6 +31,7 @@ export function useCloudUpload(client: JuggleWorkServerClient, localWorkspaceId:
   const navigate = useNavigate();
   const [uploading, setUploading] = React.useState(false);
   const [duplicate, setDuplicate] = React.useState<{ resolve: (choice: Choice) => void } | null>(null);
+  const [conversion, setConversion] = React.useState<{ warnings: string[]; resolve: (confirmed: boolean) => void } | null>(null);
   const running = React.useRef(false);
   const view = React.useCallback((tenantId: string, workspaceId: string, pageId: string) => {
     navigate(`/cloud-docs/${encodeURIComponent(tenantId)}?pageId=${encodeURIComponent(pageId)}&workspaceId=${encodeURIComponent(workspaceId)}`);
@@ -47,6 +48,7 @@ export function useCloudUpload(client: JuggleWorkServerClient, localWorkspaceId:
       const outcome = await uploadCloudFile({
         bridge, fileClient: client, localWorkspaceId, relativePath,
         onDuplicate: () => new Promise<Choice>(resolve => setDuplicate({ resolve })),
+        onConversionWarnings: warnings => new Promise<boolean>(resolve => setConversion({ warnings, resolve })),
       });
       if (!outcome) return;
       if (outcome.status === "opened") { view(outcome.tenantId, outcome.workspaceId, outcome.pageId); return; }
@@ -64,7 +66,9 @@ export function useCloudUpload(client: JuggleWorkServerClient, localWorkspaceId:
     }
   }, [client, localWorkspaceId, view]);
   const settle = (choice: Choice) => { duplicate?.resolve(choice); setDuplicate(null); };
-  const dialog = (
+  const settleConversion = (confirmed: boolean) => { conversion?.resolve(confirmed); setConversion(null); };
+  const hasFilterWarning = conversion?.warnings.includes("sheet_xlsx_advanced_filter");
+  const dialog = (<>
     <AlertDialog open={!!duplicate} onOpenChange={open => { if (!open) settle("cancel"); }}>
       <AlertDialogContent>
         <AlertDialogHeader>
@@ -77,7 +81,21 @@ export function useCloudUpload(client: JuggleWorkServerClient, localWorkspaceId:
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
-  );
+    <AlertDialog open={!!conversion} onOpenChange={open => { if (!open) settleConversion(false); }}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{t("cloud_docs.conversion_title")}</AlertDialogTitle>
+          <AlertDialogDescription>
+            {t(hasFilterWarning ? "cloud_docs.conversion_filter_warning" : "cloud_docs.conversion_description")}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <Button variant="outline" onClick={() => settleConversion(false)}>{t("cloud_docs.conversion_cancel")}</Button>
+          <Button onClick={() => settleConversion(true)}>{t("cloud_docs.conversion_confirm")}</Button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  </>);
   return { upload, uploading, dialog };
 }
 

@@ -35,8 +35,8 @@ export interface CloudDocsBridge {
     retain?: boolean;
     presentation?: { instanceId: string; mode: "product" | "manage" };
   }): Promise<{ instanceId: string }>;
-  /** 关闭指定实例；原生本地保存尚未确认时返回 closed=false 并保留页面。 */
-  close(instanceId?: string): Promise<{ closed: boolean }>;
+  /** 关闭视图。未确认保存时保留页面；切换组织可要求所有视图保存后一起关闭。 */
+  close(instanceId?: string, options?: { requireSaved?: boolean }): Promise<{ closed: boolean }>;
   /** 获取当前实例画面，供宿主浮窗覆盖原生视图时保留页面背景。 */
   snapshot(instanceId: string): Promise<string | null>;
   /** 查询已登记实例状态，不重新申请登录交接。 */
@@ -65,10 +65,12 @@ export interface CloudDocsBridge {
       title?: string;
     }) => void,
   ): () => void;
-  /** 在当前组织 product 视图中执行文件上传：lookup 查重复，upload 创建云文档。 */
+  /** 在当前组织的 Docs 视图查重、上传文件，或确认与取消原转换任务。 */
   fileIntake(
     input:
       | { action: "lookup"; instanceId?: string; tenantId?: string; requestId: string; checksum: string }
+      | { action: "commit"; instanceId: string; requestId: string; checksum: string; warningAckDigest: string }
+      | { action: "cancel"; instanceId: string; requestId: string; checksum: string }
       | {
           action: "upload";
           instanceId?: string;
@@ -99,6 +101,7 @@ export type CloudFileIntakeResult = {
   pageId?: string;
   state?: string;
   warnings?: string[];
+  warningDigest?: string;
 };
 
 /** 页面选区引用，只含 blockId，不含正文。 */

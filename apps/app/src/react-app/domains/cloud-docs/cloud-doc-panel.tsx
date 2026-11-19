@@ -2,7 +2,7 @@ import { rememberCloudDocsOrigin } from "./product-view";
 import * as React from "react";
 import { LoaderCircle } from "lucide-react";
 import { t, currentLocale } from "@/i18n";
-import { getResolvedThemeMode } from "@/app/theme";
+import { getResolvedThemeMode, subscribeToTheme } from "@/app/theme";
 import { createDenClient, readDenSettings, readDenUserId, denCredentialFingerprint, isCurrentDenSessionRevocation } from "@/app/lib/den";
 import {
   cloudDocTabKey, cloudDocTabsSnapshot, registerCloudDocTabCloser, subscribeCloudDocTabs, type CloudDocTab, type CloudDocHighlight,
@@ -64,7 +64,7 @@ function CloudDocView({ tab, highlight, sessionId, active }: { tab: CloudDocTab;
       const styles = getComputedStyle(host.current);
       const color = (token: string, fallback: string) => { const v = styles.getPropertyValue(token).trim(); return CSS.supports("color", v) ? v : fallback; };
       const dark = getResolvedThemeMode() === "dark";
-      bridge.setAppearance({ instanceId, appearance: { theme: dark ? "dark" : "light", locale: currentLocale(), fontFamily: styles.fontFamily, colors: {
+      bridge.setAppearance({ instanceId, appearance: { theme: dark ? "dark" : "light", locale: document.documentElement.lang || currentLocale(), fontFamily: styles.fontFamily, colors: {
         background: color("--background", dark ? "#111113" : "#ffffff"), foreground: color("--foreground", dark ? "#edeef0" : "#1c2024"),
         sidebar: color("--dls-sidebar", dark ? "#18191b" : "#f7f7f7"), border: color("--dls-border", dark ? "#303136" : "#e5e7eb"),
         muted: color("--muted-foreground", dark ? "#a0a0a0" : "#6b7280"), accent: color("--dls-accent", dark ? "#e5e7eb" : "#011627"),
@@ -106,6 +106,10 @@ function CloudDocView({ tab, highlight, sessionId, active }: { tab: CloudDocTab;
       if (activeRef.current && reference.instanceId === instanceId && reference.tenantId === tab.tenantId)
         window.dispatchEvent(new CustomEvent("jugglework:cloud-doc-reference", { detail: { sessionId, reference } }));
     });
+    const stopTheme = subscribeToTheme(appearance);
+    // TIPS: 使用 Desk 已应用到窗口的语言，避免热更新后的模块状态与实际语言不一致。
+    const locale = new MutationObserver(appearance);
+    locale.observe(document.documentElement, { attributes: true, attributeFilter: ["lang"] });
     const resize = new ResizeObserver(() => {
       bounds();
       if (ready && activeRef.current) bridge.layoutCommand({ instanceId, action: "request-state" });
@@ -140,6 +144,8 @@ function CloudDocView({ tab, highlight, sessionId, active }: { tab: CloudDocTab;
       unsubscribe();
       stopLayout();
       stopReference();
+      stopTheme();
+      locale.disconnect();
       window.removeEventListener("resize", bounds);
       document.removeEventListener("visibilitychange", bounds);
       if (!released) void bridge.close(instanceId);

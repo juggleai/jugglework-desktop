@@ -50,9 +50,9 @@ export function validateCloudDocsLaunch(input) {
 
 /**
  * 独立受限原生视图承载云文档，来源／账号隔离，不复用通用浏览器会话。
- * @param {{getWindow:()=>any,getWindows?:()=>any[],onDocumentChanged?:(window:any,instanceId:string,document:{tenantId:string,workspaceId:string,docId:string,title:string})=>void,attachments?:{open:(input:any)=>Promise<any>,clearScope:(scope:any)=>Promise<void>,clearContext?:(scope:any,contextId:string)=>Promise<void>}}} options 宿主窗口与受限附件访问
+ * @param {{getWindow:()=>any,getWindows?:()=>any[],onDocumentChanged?:(window:any,instanceId:string,document:{tenantId:string,workspaceId:string,docId:string,title:string})=>void,onOpenInNewTab?:(request:{sourceInstanceId:string,sourceServerOrigin:string,sourceUserId:string,document:{tenantId:string,workspaceId:string,docId:string,title:string}})=>void,attachments?:{open:(input:any)=>Promise<any>,clearScope:(scope:any)=>Promise<void>,clearContext?:(scope:any,contextId:string)=>Promise<void>}}} options 宿主窗口、受限附件访问与独立标签入口
  */
-export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow()], onDocumentChanged, attachments }) {
+export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow()], onDocumentChanged, onOpenInNewTab, attachments }) {
   const currents = new Map();
   const backgrounds = new Map();
   const retained = new Map();
@@ -77,10 +77,12 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
     return !!owner && (input?.instanceId || owner === getWindow()) && (!item || item.ownerWindow === owner);
   };
 
-  /** 从受限原生页的实际路由取得当前文档，不能让 Renderer 覆盖当前可写目标。 */
-  function documentFor(instanceId, ownerWindow) {
+  /** 从受限原生页的实际路由取得当前文档，并按需要核对宿主及来源账号。 */
+  function documentFor(instanceId, ownerWindow, scope) {
     const item = find({ instanceId });
     if (!item?.ready || item.denied || (ownerWindow && item.ownerWindow !== ownerWindow)) return null;
+    if (scope && (scope.sourceServerOrigin !== item.input.sourceServerOrigin ||
+      scope.sourceUserId !== item.input.sourceUserId)) return null;
     try {
       const url = new URL(item.view.webContents.getURL());
       const path = /^\/workspace\/([\w-]+)\/([\w-]+)\/?$/.exec(url.pathname);
@@ -119,13 +121,13 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
     if (!old.view.webContents.isDestroyed()) old.view.webContents.close();
   }
 
-  /** 仅等待原生本地存储确认；超时不销毁含未确认更新的视图。 */
+  /** 等待文档或表格各自的持久化确认，超时保留原视图。 */
   function prepareClose(instanceId) {
     const item = find({ instanceId });
     if (!item || !item.hasBeenReady || item.view.webContents.isDestroyed()) return Promise.resolve(true);
     const requestId = randomUUID();
     return new Promise(resolve => {
-      const timer = setTimeout(() => { intakes.delete(requestId); resolve(false); }, 5000);
+      const timer = setTimeout(() => { intakes.delete(requestId); resolve(false); }, 30_000);
       intakes.set(requestId, { item, timer, resolve: result => resolve(result?.persisted === true), reject: () => resolve(false) });
       item.view.webContents.send('jugglework:docs:prepare-close', { instanceId, requestId });
     });
@@ -418,15 +420,18 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
       if (!item?.ready || item.denied || item.input.background || item.view.webContents.isDestroyed()) return null;
       return (await item.view.webContents.capturePage()).toDataURL();
     });
-    ipcMain.handle("jugglework:docs:close", async (event, instanceId) => {
+    ipcMain.handle("jugglework:docs:close", async (event, instanceId, options) => {
       if (!trusted(event, { instanceId }) || (!instanceId && ownerFor(event) !== getWindow())) throw new Error("Forbidden");
       // TIPS: 不带实例的整体关闭发生在切换账号、组织或退出登录时，附件缓存随当前范围清理。
       const scopes = !instanceId ? items().map((item) => item.input) : [];
       const targets = instanceId ? [find({ instanceId })].filter(Boolean) : items();
+      const requireSaved = !instanceId && options?.requireSaved === true;
+      // TIPS: 主动切换组织要先统一确认，失败时保留当前组织及页面供用户重试。
+      if (requireSaved && !(await prepareQuit())) return { closed: false };
       if (!instanceId) for (const item of targets) item.view.setVisible(false);
       let closed = true;
       for (const item of targets) {
-        const saved = await prepareClose(item.input.instanceId);
+        const saved = requireSaved || await prepareClose(item.input.instanceId);
         if (saved) close(item.input.instanceId);
         else closed = false;
       }
@@ -443,10 +448,11 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
         (input?.instanceId
           ? input.instanceId !== item.input.instanceId
           : input?.tenantId !== item.input.tenantId) ||
-        !["lookup", "upload"].includes(input?.action) ||
+        !["lookup", "upload", "commit", "cancel"].includes(input?.action) ||
         !/^[a-f0-9-]{36}$/i.test(input?.requestId ?? "") ||
         typeof input?.checksum !== "string" ||
         !/^[a-f0-9]{64}$/i.test(input.checksum) ||
+        (input?.action === "commit" && !/^[a-f0-9]{64}$/i.test(input.warningAckDigest ?? "")) ||
         (upload &&
           (typeof input?.fileName !== "string" ||
             typeof input?.mimeType !== "string" ||
@@ -474,6 +480,7 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
             ...(upload
               ? { fileName: input.fileName, mimeType: input.mimeType, fileData: input.fileData }
               : {}),
+            ...(input.action === "commit" ? { warningAckDigest: input.warningAckDigest } : {}),
           },
         });
       });
@@ -562,6 +569,17 @@ export function createCloudDocsPanel({ getWindow, getWindows = () => [getWindow(
             rightOpen: layout.rightOpen,
             leftWidth: layout.leftWidth * item.view.webContents.getZoomFactor() / win.webContents.getZoomFactor(),
           },
+        });
+      } else if (message.type === "docs.open-in-new-tab") {
+        // TIPS: 菜单只能打开当前可见的真实路由，不能由文档提供其他目标或任意 URL。
+        if (item.input.background || !item.view.getVisible() || item.input.presentation?.mode !== "product") return;
+        const document = documentFor(item.input.instanceId, item.ownerWindow);
+        if (!document || message.tenantId !== document.tenantId || message.docId !== document.docId) return;
+        onOpenInNewTab?.({
+          sourceInstanceId: item.input.instanceId,
+          sourceServerOrigin: item.input.sourceServerOrigin,
+          sourceUserId: item.input.sourceUserId,
+          document,
         });
       } else if (
         message.type === "docs.open-attachment" ||

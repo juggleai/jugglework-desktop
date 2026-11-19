@@ -4,6 +4,7 @@
 
 ## What Changes
 
+- XLSX/CSV 的云端表格适配见 [add-docs-spreadsheet](../add-docs-spreadsheet/proposal.md)，本地 Office 保持原有保存和编辑。
 - 文件操作与 Office 顶栏提供“上传云文档”：一次性上传，成功后留在当前页面，通过提示打开结果。
 - 云文档页面中的 Office 附件由 Desk 下载并用本地 Office 引擎只读打开。
 - 工作区会话中，云文档在右侧文件面板打开；AI 通过选区标签、`@云文档`、粘贴链接、“交给 Desk AI”或名称定位云文档并直接修改，对话显示本轮变更并支持撤销。

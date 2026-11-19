@@ -1039,6 +1039,15 @@ const cloudDocsPanel = createCloudDocsPanel({
   getWindow: () => mainWindow,
   getWindows: () => [mainWindow, ...fileWindows.windows()].filter(Boolean),
   onDocumentChanged: (window, instanceId, document) => fileWindows.updateCloudDocument(window, instanceId, document),
+  onOpenInNewTab: (request) => {
+    const notifyMain = (window) => {
+      if (window && !window.isDestroyed()) {
+        window.webContents.send("jugglework:file-window:open-cloud-tab-request", request);
+      }
+    };
+    if (mainWindow && !mainWindow.isDestroyed()) notifyMain(mainWindow);
+    else void createMainWindow().then(notifyMain).catch(() => undefined);
+  },
   attachments: cloudDocAttachments,
 });
 

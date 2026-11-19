@@ -10,10 +10,18 @@ const storage = new Map<string, string>();
 const hostWindow = new EventTarget() as any;
 const hostDocument = new EventTarget() as any;
 hostDocument.body = {};
+hostDocument.documentElement = { lang: "en" };
 (globalThis as any).window = hostWindow;
 (globalThis as any).document = hostDocument;
 (globalThis as any).ResizeObserver = class { observe() {} disconnect() {} };
-(globalThis as any).MutationObserver = class { observe() {} disconnect() {} };
+const observeLanguage = new Set<() => void>();
+(globalThis as any).MutationObserver = class {
+  constructor(private readonly callback: () => void) {}
+  observe(target: unknown) {
+    if (target === hostDocument.documentElement) observeLanguage.add(this.callback);
+  }
+  disconnect() { observeLanguage.delete(this.callback); }
+};
 (globalThis as any).getComputedStyle = () => ({ fontFamily: "sans-serif", getPropertyValue: () => "#fff" });
 (globalThis as any).CSS = { supports: () => true };
 let tenantId = "tenant-a";
@@ -23,6 +31,7 @@ const opened: Array<{ instanceId: string }> = [];
 const closed: string[] = [];
 let closeAllowed = true;
 const visibility = new Map<string, boolean>();
+const locales = new Map<string, string>();
 const states = new Set<(value: unknown) => void>();
 mock.module("../src/app/lib/den", () => ({ ...actualDen,
   readDenSettings: () => ({ baseUrl: "https://source.test", activeOrgId: tenantId, authToken: "fixture" }),
@@ -43,7 +52,11 @@ hostWindow.__JUGGLEWORK_ELECTRON__ = { cloudDocs: {
     return { closed: closeAllowed };
   },
   onState: (fn: (value: unknown) => void) => { states.add(fn); return () => states.delete(fn); },
-  onLayout: () => () => {}, onAiReference: () => () => {}, setAppearance() {}, layoutCommand() {}, highlightBlocks() {},
+  onLayout: () => () => {}, onAiReference: () => () => {},
+  setAppearance(input: { instanceId: string; appearance: { locale: string } }) {
+    locales.set(input.instanceId, input.appearance.locale);
+  },
+  layoutCommand() {}, highlightBlocks() {},
 } };
 const { CloudDocPanel } = await import("../src/react-app/domains/cloud-docs/cloud-doc-panel");
 const { FileTabs } = await import("../src/react-app/domains/session/files/file-tabs");
@@ -90,6 +103,13 @@ test("本地与多篇云文档反复切换保留各自实例；关闭标签和�
   expect(closed).toEqual([]);
   expect(visibility.get(a)).toBe(true);
   expect(visibility.get(b)).toBe(false);
+  expect(locales.get(a)).toBe("en");
+  await act(async () => {
+    hostDocument.documentElement.lang = "zh";
+    for (const callback of observeLanguage) callback();
+  });
+  expect(locales.get(a)).toBe("zh");
+  expect(locales.get(b)).toBe("zh");
   switchAllowed = false;
   await act(async () => activateCloudDocTab(sessionId, "cloud-ws/b"));
   expect(cloudDocTabsSnapshot(sessionId).active).toBe("cloud-ws/a");

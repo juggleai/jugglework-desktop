@@ -335,10 +335,14 @@ export function createFileWindows({
     readOnly = false,
     cloudDoc = undefined,
     launch = undefined,
+    sourceEntry = undefined,
+    verifyCloudSource = undefined,
   }) => {
     await loaded;
+    verifyCloudSource?.();
     const key = JSON.stringify([workspaceId, sessionId]);
-    let entry = entries.get(key);
+    let entry = sourceEntry ?? entries.get(key);
+    const created = !entry;
     if (!entry) {
       const options = validateFileWindowConversationOptions(conversationOptions);
       const workspaces = await client.getJson("/workspaces");
@@ -444,14 +448,31 @@ export function createFileWindows({
     }
     if (cloudDoc) {
       const id = `cloud:${launch.presentation.instanceId}`;
-      const existing = entry.tabs.find(tab => { const current = entry.cloudDocument(tab); return current?.tenantId === cloudDoc.tenantId && current.workspaceId === cloudDoc.workspaceId && current.docId === cloudDoc.docId; });
-      if (existing) { entry.activePath = existing.path; publish(entry); }
-      else {
-        const instanceId = launch.presentation.instanceId;
-        entry.tabs.push({ kind: 'cloud-document', path: id, name: cloudDoc.title || 'Untitled', cloudScope: JSON.stringify([launch.sourceServerOrigin, launch.sourceUserId, cloudDoc.tenantId]), cloudDoc: { tenantId: cloudDoc.tenantId, workspaceId: cloudDoc.workspaceId, docId: cloudDoc.docId, instanceId, docsOrigin: launch.docsOrigin } });
-        entry.activePath = id; publish(entry);
-        try { await cloudDocs.open({ ...launch, instanceId, retain: true }, entry.window); }
-        catch (error) { entry.tabs = entry.tabs.filter(tab => tab.path !== id); publish(entry); throw error; }
+      const previous = entry.activePath;
+      try {
+        verifyCloudSource?.();
+        const existing = !verifyCloudSource && entry.tabs.find(tab => {
+          const current = entry.cloudDocument(tab);
+          return current?.tenantId === cloudDoc.tenantId && current.workspaceId === cloudDoc.workspaceId && current.docId === cloudDoc.docId;
+        });
+        if (existing) {
+          entry.activePath = existing.path;
+          publish(entry);
+        } else {
+          const instanceId = launch.presentation.instanceId;
+          entry.tabs.push({ kind: "cloud-document", path: id, name: cloudDoc.title || "Untitled", cloudScope: JSON.stringify([launch.sourceServerOrigin, launch.sourceUserId, cloudDoc.tenantId]), cloudDoc: { tenantId: cloudDoc.tenantId, workspaceId: cloudDoc.workspaceId, docId: cloudDoc.docId, instanceId, docsOrigin: launch.docsOrigin } });
+          entry.activePath = id;
+          publish(entry);
+          await cloudDocs.open({ ...launch, instanceId, retain: true }, entry.window);
+        }
+      } catch (error) {
+        entry.tabs = entry.tabs.filter(tab => tab.path !== id);
+        if (entry.activePath === id) entry.activePath = entry.tabs.some(tab => tab.path === previous) ? previous : entry.tabs.at(-1)?.path ?? null;
+        if (created && !entry.tabs.length && !entry.window.isDestroyed()) {
+          entry.closed = true;
+          entry.window.destroy();
+        } else if (!entry.window.isDestroyed()) publish(entry);
+        throw error;
       }
     }
     if (entry.window.isMinimized()) entry.window.restore();
@@ -746,7 +767,32 @@ export function createFileWindows({
         if (resolveHost(event) !== getMainWindow() || entryFor(event.sender)) throw new Error('Forbidden');
         const doc = input?.document, launch = input?.launch;
         if (!cloudDocs || !doc || !launch || doc.tenantId !== launch.tenantId || launch.presentation?.mode !== 'product' || ![doc.tenantId, doc.workspaceId, doc.docId].every(value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value))) throw new Error('Invalid cloud document');
-        await open({ workspaceId: input.workspaceId, sessionId: input.sessionId, path: '', cloudDoc: doc, launch: { ...launch, sourceServerOrigin: input.sourceServerOrigin, sourceUserId: input.sourceUserId } });
+        const sourceInstanceId = input.sourceInstanceId;
+        let sourceEntry, verifyCloudSource;
+        if (sourceInstanceId !== undefined) {
+          if (typeof sourceInstanceId !== "string" || !sourceInstanceId || sourceInstanceId === launch.presentation.instanceId)
+            throw new Error("云文档来源无效");
+          sourceEntry = [...entries.values()].find(entry => entry.tabs.some(tab => tab.cloudDoc?.instanceId === sourceInstanceId));
+          const owner = sourceEntry?.window ?? getMainWindow();
+          // TIPS: 等待新交接凭据期间，原标签可能换页、关闭或切换账号。
+          verifyCloudSource = () => {
+            const current = cloudDocs.documentFor(sourceInstanceId, owner, {
+              sourceServerOrigin: input.sourceServerOrigin,
+              sourceUserId: input.sourceUserId,
+            });
+            if (!current || current.tenantId !== doc.tenantId || current.workspaceId !== doc.workspaceId || current.docId !== doc.docId)
+              throw new Error("云文档来源已变化");
+          };
+        }
+        await open({
+          workspaceId: sourceEntry?.workspaceId ?? input.workspaceId,
+          sessionId: sourceEntry?.sessionId ?? input.sessionId,
+          path: "",
+          cloudDoc: doc,
+          launch: { ...launch, sourceServerOrigin: input.sourceServerOrigin, sourceUserId: input.sourceUserId },
+          sourceEntry,
+          verifyCloudSource,
+        });
       });
       ipcMain.handle("jugglework:file-window:state", async (event) => {
         const entry = resolve(event);
@@ -806,6 +852,23 @@ export function createFileWindows({
             await openSession({ workspaceId: entry.workspaceId, sessionId: entry.sessionId });
             return;
           }
+          // TIPS: 加号打开的是窗口文件选择器，活动云文档不是这次操作的目标。
+          if (action === "open") {
+            if (requestedPath) {
+              if (entry.local) {
+                // Renderer cannot grant itself a new absolute source. Only
+                // reopen a Main-recorded recent file; new files use the dialog.
+                if (!recent.some((item) => item.workspaceId === "local" && item.path === requestedPath)) {
+                  throw new Error("请通过文件选择框打开本机文件");
+                }
+                await openLocal(requestedPath);
+              }
+              else await addFile(entry, requestedPath);
+              return;
+            }
+            await openDialog(entry.window, entry);
+            return;
+          }
           const tab = entry.tabs.find(
             (tab) => tab.path === (requestedPath ?? entry.activePath),
           );
@@ -833,22 +896,6 @@ export function createFileWindows({
           }
           if (action === "close") {
             if (tab) await closeTab(entry, tab.path);
-            return;
-          }
-          if (action === "open") {
-            if (requestedPath) {
-              if (entry.local) {
-                // Renderer cannot grant itself a new absolute source. Only
-                // reopen a Main-recorded recent file; new files use the dialog.
-                if (!recent.some((item) => item.workspaceId === "local" && item.path === requestedPath)) {
-                  throw new Error("请通过文件选择框打开本机文件");
-                }
-                await openLocal(requestedPath);
-              }
-              else await addFile(entry, requestedPath);
-              return;
-            }
-            await openDialog(entry.window, entry);
             return;
           }
           if (!tab) return;

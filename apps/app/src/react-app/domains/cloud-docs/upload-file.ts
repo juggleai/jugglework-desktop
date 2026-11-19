@@ -56,6 +56,8 @@ export async function uploadCloudFile(input: {
   /** AI 请求所属组织；组织切换后的迟到请求不得上传到当前其他组织。 */
   expectedTenantId?: string;
   onDuplicate: (existing: NonNullable<CloudFileIntakeResult["existing"]>) => Promise<"open" | "new" | "cancel">;
+  /** 用户确认本次转换报告后才发布表格。后台调用不能自动接受警告。 */
+  onConversionWarnings?: (warnings: string[]) => Promise<boolean>;
 }): Promise<CloudUploadOutcome | null> {
   const { bridge, fileClient } = input;
   const settings = readDenSettings();
@@ -97,15 +99,33 @@ export async function uploadCloudFile(input: {
       fresh = true;
     }
     const requestId = requestIdFor(scope, fresh);
-    const result = await bridge.fileIntake({
+    let result = await bridge.fileIntake({
       action: "upload", ...target, requestId, checksum, fileName,
       mimeType: original.contentType || "application/octet-stream", fileData: original.data,
+    }).catch(error => {
+      if (/file_intake_preview_expired|sheet_import_cancelled/.test(String(error))) clearRequest(requestId);
+      throw error;
     });
+    const warnings = result.warnings ?? [];
     assertScope();
+    if (result.state === "preparing" && result.warningDigest) {
+      const warningAckDigest = result.warningDigest;
+      const accepted = await input.onConversionWarnings?.(warnings);
+      assertScope();
+      result = await bridge.fileIntake(accepted
+        ? { action: "commit", ...target, requestId, checksum, warningAckDigest }
+        : { action: "cancel", ...target, requestId, checksum });
+      assertScope();
+      if (result.state === "cancelled" || result.state === "expired") {
+        clearRequest(requestId);
+        if (!input.onConversionWarnings) throw new Error("sheet_import_confirmation_required");
+        return null;
+      }
+    }
     if (!result.pageId || !result.workspaceId || result.state !== "completed") throw new Error("cloud_upload_result_unknown");
     clearRequest(requestId);
     remember(result.workspaceId, result.pageId);
-    return { status: "uploaded", tenantId, workspaceId: result.workspaceId, pageId: result.pageId, warnings: result.warnings ?? [] };
+    return { status: "uploaded", tenantId, workspaceId: result.workspaceId, pageId: result.pageId, warnings };
   });
   /** 记录可分享的原生页面地址；链接不包含交接凭据，也不改变页面权限。 */
   function remember(workspaceId: string, pageId: string) {

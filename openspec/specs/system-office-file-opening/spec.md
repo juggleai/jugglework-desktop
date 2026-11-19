@@ -68,3 +68,14 @@ Define discovery and launch behavior for opening supported Office files in insta
 #### Scenario: 文件浏览器空白主页
 - **WHEN** 独立窗口的全部文档 tab 已关闭，显示打开文件或新建 Word 文档的主页
 - **THEN** 保留同一个文件浏览器窗口，窗口标题和 macOS 应用菜单仍显示“JuggleWork 文件浏览器”，再次打开文件复用该窗口
+
+### Requirement: 云文档文件浏览器
+
+支持独立标签的 Desk SHALL 通过同一组织的授权在现有文件浏览器打开云文档。
+
+#### Scenario: 在独立文件浏览器打开云文档新标签
+
+- **WHEN** 用户从 Desk 云文档页头选择「在新标签页打开」
+- **THEN** Desk 使用当前账号及组织的新授权，在独立文件浏览器打开同一份云文档并保留原视图
+- **AND** 从独立窗口触发时，新标签加入当前窗口
+- **AND** 独立窗口的加号始终可打开文件选择器，保留云文档标签
