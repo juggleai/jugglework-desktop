@@ -99,8 +99,9 @@ mock.module(modulePath("react-app/domains/jugglechat/runtime.ts"), () => ({
 mock.module(modulePath("react-app/domains/jugglechat/skill-bridge.ts"), () => ({
   startJuggleChatSkillBridge: () => {},
 }));
+let members: Array<{ id: string; role?: string; user: { id: string; imUserId: string; name?: string; account?: string; avatar?: string } }> = [];
 mock.module(modulePath("react-app/domains/jugglechat/api.ts"), () => ({
-  getMembers: async () => ({ members: [] }),
+  getMembers: async () => ({ members }),
   getChatGroupsForContacts: async () => [],
 }));
 mock.module(
@@ -185,6 +186,19 @@ beforeEach(async () => {
     isFinished: true,
   });
   history = async () => ({ messages: [], isFinished: true });
+  members = [];
+});
+
+test("组织通讯录包含当前登录人", async () => {
+  await store.getState().bootstrap();
+  store.setState({ user: { id: "shared-im-user", token: "t", authorization: "a", name: "我" } });
+  members = [
+    { id: "m_self", user: { id: "u_self", imUserId: "shared-im-user", name: "我" } },
+    { id: "m_other", user: { id: "u_other", imUserId: "other-im-user", name: "同事" } },
+    { id: "m_no_im", user: { id: "u_no_im", imUserId: "" } },
+  ];
+  await store.getState().loadContacts();
+  expect(store.getState().contacts.map((contact) => contact.user_id)).toEqual(["shared-im-user", "other-im-user"]);
 });
 
 test("不同 AppKey 组织切换直接使用 SDK 会话，无 Docs 分类依赖", async () => {

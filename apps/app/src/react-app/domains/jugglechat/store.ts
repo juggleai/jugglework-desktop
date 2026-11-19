@@ -662,7 +662,9 @@ export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
         avatar: member.user.avatar || undefined,
         conversationType: 1,
         role: member.role,
-      } satisfies ChatContact)).filter((contact) => contact.user_id && contact.user_id !== get().user?.id);
+      } satisfies ChatContact)).filter((contact) => contact.user_id);
+      // TIPS: 通讯录展示的是组织全部成员，当前登录人也属于组织，必须保留。需要排除自己的场景
+      // （邀请入会、拉人进群等）在各自的调用处按当前用户 id 过滤，不在数据源里统一剔除。
       const groups = chatGroups.map((group) => {
         return {
           user_id: group.id,

@@ -1658,7 +1658,8 @@ function GroupManagementModal({ conversation, onClose }: { conversation: ChatCon
   const existingIMIds = new Set(group.members.map(groupMemberId).filter(Boolean));
   const existingIdentityIds = new Set(group.members.map((member) => String(member.identity_user_id || "")).filter(Boolean));
   const availableContacts = contacts.filter((contact) => (
-    !existingIMIds.has(contact.user_id)
+    contact.user_id !== currentUser?.id
+    && !existingIMIds.has(contact.user_id)
     && !existingIdentityIds.has(String(contact.identity_user_id || ""))
   ));
 
