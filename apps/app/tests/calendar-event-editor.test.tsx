@@ -6,7 +6,7 @@ import * as ReactDOM from "react-dom";
 import TestRenderer, { act } from "react-test-renderer";
 import { MemoryRouter, useLocation } from "react-router-dom";
 
-import { DenApiError, type DenCalendar, type DenCalendarEvent, type DenCalendarSchedulingEvent } from "../src/app/lib/den";
+import { DenApiError, type DenCalendar, type DenCalendarCollaborationList, type DenCalendarEvent, type DenCalendarSchedulingEvent } from "../src/app/lib/den";
 import { calendarQueryKeys } from "../src/react-app/domains/calendar/calendar-query-keys";
 import { CALENDAR_REMINDER_PREFERENCES_CHANGED, readCalendarReminderMinutes, writeCalendarReminderMinutes } from "../src/react-app/domains/calendar/calendar-reminder-preferences";
 import { createCalendarScope } from "../src/react-app/domains/calendar/calendar-scope";
@@ -66,8 +66,10 @@ let version = 1;
 let organizationMembers: Array<{ id: string; userId: string; role: "member"; user: { id: string; name: string; account: string; email: string; avatar: null } }> = [];
 let availabilityBusy: Record<string, Array<{ startInstant: string; endInstantExclusive: string }>> = {};
 let staleSchedulingRead = false;
+let workspaceKind: "organization" | undefined;
 const client = {
   listCalendars: async () => calendars,
+  listCalendarCollaboration: async (): Promise<DenCalendarCollaborationList> => ({ items: [], authorizationGeneration: 1, reset: { mode: "replace", namespace: "calendar-collaboration" } }),
   getCalendarBootstrap: async (_org: string, range: { startDate: string; endDateExclusive: string }) => ({ calendars, events, coverage: { ...range, calendarIds: [] }, cursor: "c1" }),
   listCalendarSchedulingEvents: async () => ({ items: (staleSchedulingRead ? [] : events).filter((event) => "attendees" in event).map((event) => ({ event, occurrenceIndex: 1, time: event.time })) }),
   getCalendarSchedulingAvailability: async (_org: string, input: { memberIds: string[] }) => ({ members: input.memberIds.map((memberId) => ({ memberId, busy: availabilityBusy[memberId] ?? [] })) }),
@@ -130,7 +132,7 @@ const client = {
   },
 };
 mock.module("../src/react-app/domains/settings/cloud/cloud-session-provider", () => ({
-  useCloudSession: () => ({ isSignedIn: true, baseUrl: "https://den.example/api", activeOrganization: { id: "org-a", orgMemberId: "member-a" }, client }),
+  useCloudSession: () => ({ isSignedIn: true, baseUrl: "https://den.example/api", activeOrganization: { id: "org-a", orgMemberId: "member-a", kind: workspaceKind }, client }),
 }));
 const meetingCalls: Array<{ op: string; value?: unknown }> = [];
 const createdMeeting: Meeting = {
@@ -175,6 +177,7 @@ beforeEach(() => {
   availabilityBusy = {};
   meetingCalls.length = 0;
   staleSchedulingRead = false;
+  workspaceKind = undefined;
   calendars = [calendar("cal-1", "Personal"), calendar("cal-2", "Side project")];
 });
 
@@ -236,6 +239,70 @@ test("cross-page create entry saves in place without desktop config", async () =
     expect(calls[0]).toMatchObject({ op: "create", input: { calendarId: "cal-1", title: "Scheduled from meetings" } });
     expect(has(renderer, "calendar-event-dialog")).toBe(false);
   } finally { await act(async () => { renderer.unmount(); }); }
+});
+
+test("meeting reservation opens without a calendar snapshot or completed team discovery", async () => {
+  workspaceKind = "organization";
+  const bootstrap = spyOn(client, "getCalendarBootstrap").mockImplementation(() => new Promise(() => {}));
+  let completeDiscovery!: (result: DenCalendarCollaborationList) => void;
+  const discoveryResult = new Promise<DenCalendarCollaborationList>((resolve) => { completeDiscovery = resolve; });
+  const discovery = spyOn(client, "listCalendarCollaboration").mockReturnValue(discoveryResult);
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  let renderer!: TestRenderer.ReactTestRenderer;
+  try {
+    await act(async () => {
+      renderer = TestRenderer.create(<QueryClientProvider client={queryClient}>
+        <CalendarEventCreateDialog open onOpenChange={() => {}} now={clock.now} timeZone={clock.timeZone} />
+      </QueryClientProvider>);
+    });
+    await settle();
+    expect(bootstrap).not.toHaveBeenCalled();
+    expect(discovery).toHaveBeenCalledTimes(1);
+    expect(has(renderer, "calendar-create-status-dialog")).toBe(false);
+    expect(text(byId(renderer, "calendar-form-calendar"))).toContain("Personal");
+    await change(renderer, "calendar-form-title", "Reservation in progress");
+
+    const team = {
+      ...calendar("team-editable", "Editable team"), kind: "team" as const, role: "editor" as const, authorizationVersion: 1,
+      capabilities: { canViewFreeBusy: true, canViewDetails: true, canEditEvents: true, canManage: false },
+    };
+    await act(async () => { completeDiscovery({
+      authorizationGeneration: 1,
+      reset: { mode: "replace", namespace: "calendar-collaboration" },
+      items: [team, { ...team, id: "team-read-only", role: "viewer", capabilities: { ...team.capabilities, canEditEvents: false } }],
+    }); });
+    await settle();
+    expect(byId(renderer, "calendar-form-title").props.value).toBe("Reservation in progress");
+    await click(renderer, "calendar-form-calendar");
+    expect(has(renderer, "calendar-form-calendar-option-team-editable")).toBe(true);
+    expect(has(renderer, "calendar-form-calendar-option-team-read-only")).toBe(false);
+  } finally {
+    await act(async () => { renderer?.unmount(); });
+    bootstrap.mockRestore();
+    discovery.mockRestore();
+  }
+});
+
+test("meeting reservation offers a retry when the initial calendar list fails", async () => {
+  const list = spyOn(client, "listCalendars").mockRejectedValueOnce(new Error("Calendar service unavailable"));
+  const queryClient = new QueryClient();
+  let renderer!: TestRenderer.ReactTestRenderer;
+  try {
+    await act(async () => {
+      renderer = TestRenderer.create(<QueryClientProvider client={queryClient}>
+        <CalendarEventCreateDialog open onOpenChange={() => {}} now={clock.now} timeZone={clock.timeZone} />
+      </QueryClientProvider>);
+    });
+    await settle();
+    expect(text(byId(renderer, "calendar-create-status-dialog"))).toContain(t("calendar.events_unavailable"));
+    expect(list).toHaveBeenCalledTimes(1);
+    await click(renderer, "calendar-create-retry");
+    expect(list).toHaveBeenCalledTimes(2);
+    expect(has(renderer, "calendar-event-form")).toBe(true);
+  } finally {
+    await act(async () => { renderer?.unmount(); });
+    list.mockRestore();
+  }
 });
 
 test("the cross-page create entry does not fetch or submit while offline", async () => {

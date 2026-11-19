@@ -12,7 +12,7 @@ import { calendarEventFormWithNextHalfHour, defaultCalendarEventForm } from "./c
 import { CalendarEventEditor } from "./calendar-event-editor";
 import { browserCalendarOnlineSource, useCalendarOnline } from "./calendar-offline-runtime";
 import { resolveCalendarPageGate } from "./calendar-page-gate";
-import { useCalendarBootstrapQuery, useCalendarCollaborationQuery, useCalendarsQuery } from "./calendar-queries";
+import { useCalendarCollaborationQuery, useCalendarsQuery } from "./calendar-queries";
 import { calendarScopeIdentity, type CalendarScope } from "./calendar-scope";
 
 export type CalendarEventCreateDialogProps = {
@@ -56,61 +56,46 @@ function CalendarEventCreateDialogReady(props: CalendarEventCreateDialogProps & 
   const timeZone = React.useMemo(() => props.timeZone?.() ?? Temporal.Now.timeZoneId(), [props.timeZone]);
   const now = React.useMemo(() => props.now?.() ?? Temporal.Now.instant(), [props.now]);
   const date = React.useMemo(() => now.toZonedDateTimeISO(timeZone).toPlainDate(), [now, timeZone]);
-  const bootstrapQuery = useCalendarBootstrapQuery({
-    client: cloud.client,
-    scope: props.scope,
-    range: { startDate: date.toString(), endDateExclusive: date.add({ days: 1 }).toString() },
-    active: online,
-  });
   const calendarsQuery = useCalendarsQuery({
     client: cloud.client,
     scope: props.scope,
-    active: online && !props.supportsTeamCalendars,
+    active: online,
+    retry: false,
   });
+  // The personal list ensures the default calendar exists. Team discovery
+  // adds optional destinations without blocking the editor.
   const collaborationQuery = useCalendarCollaborationQuery({
     client: cloud.client,
     scope: props.supportsTeamCalendars ? props.scope : null,
-    active: online,
+    active: online && calendarsQuery.data !== undefined,
   });
 
-  const resources = props.supportsTeamCalendars ? collaborationQuery.data?.items ?? [] : [];
-  const calendars = props.supportsTeamCalendars
-    ? resources.map(denCalendarFromCollaborationResource)
-    : calendarsQuery.data ?? [];
-  const resourcesById = new Map(resources.map((resource) => [resource.id, resource]));
-  const writableCalendars = calendars.filter((calendar) => {
-    if (!props.supportsTeamCalendars) return true;
-    return resourcesById.get(calendar.id)?.capabilities.canEditEvents === true;
-  });
-  const authoritativeDefaultCalendarId = bootstrapQuery.data?.calendars.find((calendar) => calendar.isDefault)?.id;
-  const defaultCalendarId = writableCalendars.find((calendar) => calendar.id === authoritativeDefaultCalendarId)?.id
-    ?? writableCalendars.find((calendar) => calendar.isDefault)?.id
-    ?? writableCalendars[0]?.id
-    ?? "";
-  const teamCalendarIds = React.useMemo(
-    () => new Set(resources.filter((resource) => resource.kind === "team").map((resource) => resource.id)),
-    [resources],
-  );
+  const writableTeams = React.useMemo(() => (collaborationQuery.data?.items ?? [])
+    .filter((resource) => resource.kind === "team" && resource.capabilities.canEditEvents)
+    .map(denCalendarFromCollaborationResource), [collaborationQuery.data]);
+  const writableCalendars = [...(calendarsQuery.data ?? []), ...writableTeams];
+  const authoritativeDefaultCalendarId = calendarsQuery.data?.find((calendar) => calendar.isDefault)?.id;
+  const defaultCalendarId = authoritativeDefaultCalendarId ?? writableCalendars[0]?.id;
+  const teamCalendarIds = React.useMemo(() => new Set(writableTeams.map((calendar) => calendar.id)), [writableTeams]);
   const currentUserDisplayName = cloud.user?.name?.trim() || cloud.user?.account?.trim() || "";
   const editorCalendars = writableCalendars.map((calendar) =>
     calendar.id === authoritativeDefaultCalendarId && currentUserDisplayName
       ? { ...calendar, name: currentUserDisplayName }
       : calendar,
   );
-  const loading = bootstrapQuery.isLoading || (props.supportsTeamCalendars ? collaborationQuery.isLoading : calendarsQuery.isLoading);
-  const failed = bootstrapQuery.isError || (props.supportsTeamCalendars ? collaborationQuery.isError : calendarsQuery.isError);
-
-  if (!online && !defaultCalendarId) {
-    return <CalendarCreateStatusDialog message={t("calendar.offline_form_unavailable")} onClose={() => props.onOpenChange(false)} />;
-  }
-  if (loading) {
-    return <CalendarCreateStatusDialog loading message={t("calendar.loading")} onClose={() => props.onOpenChange(false)} />;
-  }
-  if (failed || !defaultCalendarId) {
+  if (!defaultCalendarId) {
+    const paused = calendarsQuery.isPaused || collaborationQuery.isPaused;
+    const loading = online && !paused && (calendarsQuery.isLoading || collaborationQuery.isLoading);
+    const failedQuery = calendarsQuery.isError ? calendarsQuery : collaborationQuery.isError ? collaborationQuery : null;
+    const message = !online || paused ? t("calendar.offline_form_unavailable")
+      : loading ? t("calendar.loading")
+        : failedQuery ? t("calendar.events_unavailable") : t("calendar.no_calendars");
     return (
       <CalendarCreateStatusDialog
-        message={failed ? t("calendar.events_unavailable") : t("calendar.no_calendars")}
+        loading={loading}
+        message={message}
         onClose={() => props.onOpenChange(false)}
+        onRetry={online && !paused && !loading && failedQuery ? () => { void failedQuery.refetch(); } : undefined}
       />
     );
   }
@@ -143,7 +128,7 @@ function CalendarEventCreateDialogReady(props: CalendarEventCreateDialogProps & 
   );
 }
 
-function CalendarCreateStatusDialog(props: { loading?: boolean; message: string; onClose: () => void }) {
+function CalendarCreateStatusDialog(props: { loading?: boolean; message: string; onClose: () => void; onRetry?: () => void }) {
   return (
     <Dialog open onOpenChange={(open) => { if (!open) props.onClose(); }}>
       <DialogContent className="w-[min(26rem,calc(100%-2rem))] rounded-xl border border-dls-border bg-dls-surface" aria-label={t("calendar.create_event")} data-testid="calendar-create-status-dialog">
@@ -154,7 +139,12 @@ function CalendarCreateStatusDialog(props: { loading?: boolean; message: string;
             {props.message}
           </DialogDescription>
         </DialogHeader>
-        {!props.loading ? <Button type="button" variant="outline" className="ml-auto" onClick={props.onClose}>{t("calendar.cancel")}</Button> : null}
+        {!props.loading ? (
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="outline" onClick={props.onClose}>{t("calendar.cancel")}</Button>
+            {props.onRetry ? <Button type="button" onClick={props.onRetry} data-testid="calendar-create-retry">{t("common.retry")}</Button> : null}
+          </div>
+        ) : null}
       </DialogContent>
     </Dialog>
   );

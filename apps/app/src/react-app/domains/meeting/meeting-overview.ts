@@ -5,6 +5,7 @@ import type {
   DenCalendarEventTime,
   DenCalendarSchedulingOccurrence,
 } from "@/app/lib/den";
+import { meetingClosed, type Meeting } from "./types";
 
 const OVERVIEW_PAST_DAYS = 30;
 const OVERVIEW_FUTURE_DAYS = 31;
@@ -29,6 +30,30 @@ export type CalendarMeetingOccurrence = {
   attendeeMemberIds: string[];
   collapsedCount?: number;
 };
+
+export type MeetingHistoryEntry =
+  | { kind: "meeting"; value: Meeting }
+  | { kind: "calendar"; value: CalendarMeetingOccurrence };
+
+export function meetingOverviewLists(
+  meetings: readonly Meeting[],
+  calendarOccurrences: readonly CalendarMeetingOccurrence[],
+  now: number,
+): { upcoming: CalendarMeetingOccurrence[]; history: MeetingHistoryEntry[] } {
+  // A meeting room (including one just launched from a calendar entry) is not a reservation.
+  const upcoming = calendarOccurrences
+    .filter((occurrence) => Date.parse(occurrence.endAt) > now)
+    .sort((a, b) => Date.parse(a.startAt) - Date.parse(b.startAt));
+  const pastCalendarOccurrences = collapseHistoricalCalendarOccurrences(
+    calendarOccurrences.filter((occurrence) => Date.parse(occurrence.endAt) <= now),
+  );
+  const history: MeetingHistoryEntry[] = [
+    ...meetings.filter(meetingClosed).map((value) => ({ kind: "meeting" as const, value })),
+    ...pastCalendarOccurrences.map((value) => ({ kind: "calendar" as const, value })),
+  ];
+  history.sort((a, b) => Date.parse(b.value.startAt) - Date.parse(a.value.startAt));
+  return { upcoming, history };
+}
 
 /**
  * Keep both Meeting and Calendar reads on the same rolling window. Sixty-one
